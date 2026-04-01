@@ -1,0 +1,20 @@
+{
+  "name": "my-agent",
+  "version": "0.1.0",
+  "description": "Personal AI Agent for learning purposes — exploring prompt building, workspace management, and agent architecture patterns",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.1.0"
+  }
+}
