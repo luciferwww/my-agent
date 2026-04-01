@@ -1,34 +1,27 @@
-import { mkdir, writeFile } from 'fs/promises';
-import { join } from 'path';
+import { mkdir, readFile, writeFile } from 'fs/promises';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
-/**
- * 内置模板，首次初始化时写入工作区。
- * 与 OpenClaw 不同，模板内容直接内置在代码中，无需外部 templates 目录。
- */
-const TEMPLATES: Record<string, string> = {
-  'IDENTITY.md': `# Identity
-
-- **Name:** _(your agent's name)_
-- **Role:** _(what it does)_
-- **Emoji:** _(signature emoji)_
-`,
-  'SOUL.md': `# Soul
-
-Be genuinely helpful, not performatively helpful.
-Have opinions. Be concise when needed, thorough when it matters.
-`,
-  'AGENTS.md': `# Agents
-
-_(Define task execution rules and workflows here)_
-`,
-  'TOOLS.md': `# Tools - Local Notes
-
-_(Add environment-specific tool usage notes here)_
-`,
-};
+/** 模板文件名列表 */
+const TEMPLATE_FILES = [
+  'IDENTITY.md',
+  'SOUL.md',
+  'AGENTS.md',
+  'TOOLS.md',
+] as const;
 
 /** .agent 子目录名称 */
 const AGENT_DIR = '.agent';
+
+/** 模板目录（相对于当前文件） */
+const TEMPLATES_DIR = join(dirname(fileURLToPath(import.meta.url)), 'templates');
+
+/**
+ * 加载模板文件内容。
+ */
+async function loadTemplate(name: string): Promise<string> {
+  return readFile(join(TEMPLATES_DIR, name), 'utf-8');
+}
 
 /**
  * 将内容写入文件，仅当文件不存在时。
@@ -62,8 +55,9 @@ export async function ensureWorkspace(workspaceDir: string): Promise<void> {
   // 确保 .agent/ 目录存在
   await mkdir(agentDir, { recursive: true });
 
-  // 逐个写入模板文件（已存在则跳过）
-  for (const [name, content] of Object.entries(TEMPLATES)) {
+  // 逐个加载模板并写入（已存在则跳过）
+  for (const name of TEMPLATE_FILES) {
+    const content = await loadTemplate(name);
     await writeFileIfMissing(join(agentDir, name), content);
   }
 }
