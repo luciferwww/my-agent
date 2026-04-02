@@ -40,7 +40,7 @@ export interface SessionRecord extends TranscriptEntryBase {
 export interface MessageRecord extends TranscriptEntryBase {
   type: 'message';
   message: {
-    role: 'user' | 'assistant' | 'system';
+    role: 'user' | 'assistant';
     content: string | ContentBlock[];
   };
 }

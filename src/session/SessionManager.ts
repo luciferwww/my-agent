@@ -5,9 +5,7 @@ import { loadStore, updateStore } from './store.js';
 import { loadTranscript, resolveLinearPath, appendToTranscript } from './transcript.js';
 import type {
   SessionEntry,
-  SessionStore,
   TranscriptState,
-  TranscriptEntry,
   MessageRecord,
   SessionRecord,
   ContentBlock,
@@ -152,7 +150,7 @@ export class SessionManager {
   async appendMessage(
     key: string,
     message: {
-      role: 'user' | 'assistant' | 'system';
+      role: 'user' | 'assistant';
       content: string | ContentBlock[];
     },
   ): Promise<string> {

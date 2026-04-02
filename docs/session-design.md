@@ -114,18 +114,21 @@ interface SessionRecord extends TranscriptEntryBase {
 interface MessageRecord extends TranscriptEntryBase {
   type: 'message';
   message: {
-    role: 'user' | 'assistant' | 'system';
+    role: 'user' | 'assistant';    // 不含 system（system prompt 由 prompt-builder 实时生成，不存进历史）
     content: string | ContentBlock[];
   };
 }
 
 // ContentBlock 类型（对齐 Anthropic API）
+// 注：tool_result 是 user role 下的 content block，不是独立的 role
 type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; tool_use_id: string; content: string };
 ```
+
+> **为什么不存 system prompt**：OpenClaw 也不把 system prompt 存进 JSONL。system prompt 由 prompt-builder 每次实时生成（因为时间、工具、contextFiles 每次可能不同），LLM API 只关心当前这次调用的 system prompt。OpenClaw 在 SessionEntry 中保存了一个 `systemPromptReport`（元数据报告：字符数、注入了哪些文件等），但不保存实际文本内容。
 
 **compaction 记录**（压缩摘要，未来执行引擎使用）：
 ```typescript
