@@ -1,7 +1,7 @@
 import type { PromptMode } from './core.js';
 import type { MediaAttachment } from './media.js';
 
-export type { ContextFile } from '../../types/context-file.js';
+export type { ContextFile } from '../../workspace/types.js';
 
 /** 工具定义 */
 export interface ToolDefinition {
@@ -23,7 +23,7 @@ export interface SystemPromptBuildParams {
   /** 安全约束级别，默认 'normal'，'relaxed' 跳过安全 Section */
   safetyLevel?: 'strict' | 'normal' | 'relaxed';
   /** 注入的上下文文件（IDENTITY.md、SOUL.md 等） */
-  contextFiles?: import('../../types/context-file.js').ContextFile[];
+  contextFiles?: import('../../workspace/types.js').ContextFile[];
 }
 
 /** UserPromptBuilder.build() 的输入 */

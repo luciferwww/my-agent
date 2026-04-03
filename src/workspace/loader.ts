@@ -1,6 +1,6 @@
 import { readFile } from 'fs/promises';
 import { join } from 'path';
-import type { ContextFile } from '../types/index.js';
+import type { ContextFile } from './types.js';
 
 /** .agent 子目录名称 */
 const AGENT_DIR = '.agent';

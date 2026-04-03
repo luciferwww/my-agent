@@ -63,10 +63,6 @@
 
 ```
 src/
-├── types/
-│   ├── context-file.ts               # ContextFile（workspace 和 prompt-builder 共享）
-│   └── index.ts                      # re-export
-│
 ├── prompt-builder/
 │   ├── index.ts                      # 公共入口，统一导出
 │   │
@@ -75,7 +71,7 @@ src/
 │   │   ├── hook.ts                   # ContextHook, ContextHookMetadata
 │   │   ├── media.ts                  # MediaAttachment, ImageAttachment, FileAttachment
 │   │   ├── builder.ts                # SystemPromptBuildParams, ToolDefinition,
-│   │   │                             # UserPromptInput, BuiltUserPrompt（re-export ContextFile）
+│   │   │                             # UserPromptInput, BuiltUserPrompt（re-export ContextFile from workspace）
 │   │   └── index.ts                  # re-export all types
 │   │
 │   ├── system/
@@ -90,11 +86,12 @@ src/
 │
 └── workspace/
     ├── index.ts                      # 公共入口
+    ├── types.ts                      # ContextFile 类型定义（由 workspace 生产）
     ├── init.ts                       # 工作区初始化（模板 seed）
     └── loader.ts                     # 上下文文件加载
 ```
 
-> `ContextFile` 类型定义在 `src/types/context-file.ts`，被 workspace 和 prompt-builder 共享引用，避免模块间反向依赖。
+> `ContextFile` 类型定义在 `workspace/types.ts`（生产方拥有），prompt-builder 从 workspace 引用。
 > `workspace/` 模块详见 [workspace-design.md](./workspace-design.md)。
 
 ---
@@ -115,8 +112,8 @@ export type PromptMode = 'full' | 'minimal' | 'none';
 ```typescript
 // types/builder.ts
 
-// ContextFile 从 src/types/context-file.ts re-export
-export type { ContextFile } from '../../types/context-file.js';
+// ContextFile 从 workspace 模块引用（生产方拥有）
+export type { ContextFile } from '../../workspace/types.js';
 
 export interface SystemPromptBuildParams {
   mode?: PromptMode;                   // 默认 'full'

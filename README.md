@@ -6,9 +6,11 @@ Personal AI Agent for learning purposes — exploring prompt building, workspace
 
 ```
 src/
-├── types/                  # Shared types
+├── workspace/              # Workspace initialization & context file loading
 ├── prompt-builder/         # System & User prompt construction
-└── workspace/              # Workspace initialization & context file loading
+├── session/                # Session management (tree-shaped JSONL)
+├── llm-client/             # LLM API client (Anthropic SDK)
+└── agent-runner/           # Agent execution engine (tool use loop)
 ```
 
 ## Getting Started
