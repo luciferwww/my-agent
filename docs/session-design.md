@@ -109,18 +109,27 @@ interface SessionRecord extends TranscriptEntryBase {
 }
 ```
 
-**message 记录**（消息，对齐 Anthropic API）：
+**message 记录**（消息）：
 ```typescript
 interface MessageRecord extends TranscriptEntryBase {
   type: 'message';
   message: {
-    role: 'user' | 'assistant';    // 不含 system（system prompt 由 prompt-builder 实时生成，不存进历史）
+    role: 'user' | 'assistant' | 'toolResult';
     content: string | ContentBlock[];
   };
 }
+```
+
+> **role 说明**：
+> - `'user'`：用户消息
+> - `'assistant'`：LLM 回复
+> - `'toolResult'`：工具执行结果
+>
+> `'toolResult'` 是 pi-ai 库的设计决策（`ToolResultMessage.role = "toolResult"`），OpenClaw 直接继承。存储时用独立 role 区分清楚，发送给 Anthropic API 时由 agent-runner 转换为 `role: 'user'` + `{ type: 'tool_result', ... }` content block。
+>
+> system prompt 不存进历史（由 prompt-builder 每次实时生成）。
 
 // ContentBlock 类型（对齐 Anthropic API）
-// 注：tool_result 是 user role 下的 content block，不是独立的 role
 type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
@@ -242,6 +251,9 @@ class SessionManager {
   /** 创建新 Session，生成 UUID，创建 JSONL 文件（含 session 首行记录） */
   async createSession(key: string, opts?: { spawnedBy?: string }): Promise<SessionEntry>;
 
+  /** 获取已有 Session 或创建新的，返回 { entry, isNew } */
+  async resolveSession(key: string, opts?: { spawnedBy?: string }): Promise<{ entry: SessionEntry; isNew: boolean }>;
+
   /** 通过 key 获取 SessionEntry，不存在返回 undefined */
   getSession(key: string): SessionEntry | undefined;
 
@@ -258,7 +270,7 @@ class SessionManager {
 
   /** 追加消息到当前分支末端，parentId 自动设为当前 leafId */
   async appendMessage(key: string, message: {
-    role: 'user' | 'assistant' | 'system';
+    role: 'user' | 'assistant' | 'toolResult';
     content: string | ContentBlock[];
   }): Promise<string>;  // 返回新消息的 id
 

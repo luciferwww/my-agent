@@ -1,21 +1,27 @@
-import { readFile, writeFile } from 'fs/promises';
+import { readFileSync } from 'fs';
+import { writeFile } from 'fs/promises';
 import { withFileLock } from './lock.js';
 import type { SessionStore } from './types.js';
 
 /**
- * 读取 sessions.json。文件不存在返回空对象。
+ * 读取 sessions.json。文件不存在返回空对象，其他错误抛出。
  */
 export function loadStore(storePath: string): SessionStore {
   try {
-    const { readFileSync } = require('fs') as typeof import('fs');
     const raw = readFileSync(storePath, 'utf-8');
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return parsed as SessionStore;
     }
     return {};
-  } catch {
-    return {};
+  } catch (err: unknown) {
+    const error = err as { code?: string };
+    // 文件不存在 → 正常，返回空对象
+    if (error?.code === 'ENOENT') {
+      return {};
+    }
+    // 其他错误 → 抛出，不静默吞掉
+    throw err;
   }
 }
 

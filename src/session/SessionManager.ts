@@ -93,6 +93,21 @@ export class SessionManager {
     return entry;
   }
 
+  /**
+   * 获取已有 Session 或创建新的。
+   */
+  async resolveSession(
+    key: string,
+    opts?: { spawnedBy?: string },
+  ): Promise<{ entry: SessionEntry; isNew: boolean }> {
+    const existing = this.getSession(key);
+    if (existing) {
+      return { entry: existing, isNew: false };
+    }
+    const entry = await this.createSession(key, opts);
+    return { entry, isNew: true };
+  }
+
   /** 通过 key 获取 SessionEntry，不存在返回 undefined */
   getSession(key: string): SessionEntry | undefined {
     const store = loadStore(this.storePath);
@@ -150,7 +165,7 @@ export class SessionManager {
   async appendMessage(
     key: string,
     message: {
-      role: 'user' | 'assistant';
+      role: 'user' | 'assistant' | 'toolResult';
       content: string | ContentBlock[];
     },
   ): Promise<string> {
