@@ -117,7 +117,7 @@ for (const msg of messages) {
   const role = msg.message.role;
   const content = typeof msg.message.content === 'string'
     ? msg.message.content
-    : JSON.stringify(msg.message.content).slice(0, 80) + '...';
+    : JSON.stringify(msg.message.content, null, 2);
   console.log(`  [${role}] ${content}`);
 }
 

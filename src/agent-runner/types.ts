@@ -1,16 +1,7 @@
 import type { ChatContentBlock, TokenUsage } from '../llm-client/types.js';
+import type { ToolResult, ToolExecutor } from '../tools/types.js';
 
-/** 工具执行结果 */
-export interface ToolResult {
-  content: string;
-  isError?: boolean;
-}
-
-/** 工具执行回调 */
-export type ToolExecutor = (
-  toolName: string,
-  input: Record<string, unknown>,
-) => Promise<ToolResult>;
+export type { ToolResult, ToolExecutor };
 
 /** AgentRunner 构造参数 */
 export interface AgentRunnerConfig {
