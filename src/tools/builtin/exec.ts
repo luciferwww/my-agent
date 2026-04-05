@@ -1,10 +1,18 @@
-import { spawn } from 'node:child_process';
+import { resolve as resolvePath } from 'node:path';
 
 import type { Tool } from '../types.js';
+import type {
+  NormalizedExecRequest,
+  ProcessRecord,
+  TerminalProcessStatus,
+} from './exec-types.js';
+import { processRegistry } from './process-registry.js';
+import { runCommand } from './run-command.js';
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
+let runIdCounter = 0;
 
-// exec 的 env 只接受 string:string，避免把复杂对象直接混进 process.env。
+// exec only accepts string:string env entries so complex objects are never merged into process.env.
 function isStringRecord(value: unknown): value is Record<string, string> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return false;
@@ -15,23 +23,169 @@ function isStringRecord(value: unknown): value is Record<string, string> {
 
 function normalizeTimeout(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    return DEFAULT_TIMEOUT_SECONDS;
+    return 0;
   }
 
   return value;
 }
 
 function normalizeCwd(value: unknown, defaultCwd: string): string {
-  return typeof value === 'string' && value.trim() ? value : defaultCwd;
+  if (typeof value !== 'string' || !value.trim()) {
+    return defaultCwd;
+  }
+
+  return resolvePath(defaultCwd, value);
 }
 
 function normalizeEnv(value: unknown): Record<string, string> {
   return isStringRecord(value) ? value : {};
 }
 
+function normalizeYieldMs(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+
+  return Math.floor(value);
+}
+
+function createRunId(): string {
+  runIdCounter += 1;
+  return `proc_${Date.now()}_${runIdCounter}`;
+}
+
+function buildManagedRecord(
+  request: NormalizedExecRequest,
+  runId: string,
+  visibility: ProcessRecord['visibility'],
+): ProcessRecord {
+  return {
+    runId,
+    command: request.command,
+    cwd: request.cwd,
+    env: request.env,
+    status: 'starting',
+    visibility,
+    createdAt: Date.now(),
+    chunks: [],
+    output: '',
+  };
+}
+
+function mapForegroundStatusToToolResult(
+  status: TerminalProcessStatus,
+  output: string,
+  exitCode?: number | null,
+  signal?: string | null,
+  errorMessage?: string,
+) {
+  if (status === 'completed') {
+    return { content: output };
+  }
+
+  const suffix =
+    errorMessage
+      ? errorMessage
+      : status === 'timed_out'
+        ? 'Process timed out'
+        : status === 'aborted'
+        ? `Process aborted${signal ? ` with signal ${signal}` : ''}`
+        : `Process exited with code ${exitCode ?? 'unknown'}`;
+
+  return {
+    content: `${output}\n\n${suffix}`.trim(),
+    isError: true,
+  };
+}
+
+function normalizeExecRequest(params: Record<string, unknown>, defaultCwd: string):
+  | { request: NormalizedExecRequest }
+  | { error: string } {
+  const command = params.command;
+  if (typeof command !== 'string' || !command.trim()) {
+    return {
+      error: 'Invalid input for tool "exec": "command" must be a non-empty string',
+    };
+  }
+
+  const background = params.background === true;
+  const yieldMs = background ? undefined : normalizeYieldMs(params.yieldMs);
+  const cwd = normalizeCwd(params.cwd, defaultCwd);
+  const env = normalizeEnv(params.env);
+  const timeoutSeconds = normalizeTimeout(params.timeout);
+
+  if (params.timeout !== undefined && timeoutSeconds === 0) {
+    return {
+      error: 'Invalid input for tool "exec": "timeout" must be a positive number',
+    };
+  }
+
+  if (params.yieldMs !== undefined && !background && yieldMs === undefined) {
+    return {
+      error: 'Invalid input for tool "exec": "yieldMs" must be a positive number',
+    };
+  }
+
+  return {
+    request: {
+      command: command.trim(),
+      cwd,
+      env,
+      timeoutMs: timeoutSeconds > 0 ? timeoutSeconds * 1000 : background || yieldMs ? undefined : DEFAULT_TIMEOUT_SECONDS * 1000,
+      mode: background ? 'background' : yieldMs ? 'yield' : 'foreground',
+      yieldMs,
+    },
+  };
+}
+
+function startManagedCommand(request: NormalizedExecRequest, runId: string, visibility: ProcessRecord['visibility'], signal?: AbortSignal) {
+  processRegistry.create(buildManagedRecord(request, runId, visibility));
+
+  let childRef: ReturnType<typeof runCommand>['child'] | undefined;
+  const running = runCommand({
+    command: request.command,
+    cwd: request.cwd,
+    env: request.env,
+    timeoutMs: request.timeoutMs,
+    signal,
+    onStdout: (chunk) => {
+      processRegistry.appendOutput(runId, chunk);
+    },
+    onStderr: (chunk) => {
+      processRegistry.appendOutput(runId, chunk);
+    },
+    onSpawn: (pid) => {
+      processRegistry.markRunning(runId, {
+        pid,
+        startedAt: Date.now(),
+        child: childRef,
+      });
+    },
+    onExit: (result) => {
+      processRegistry.complete(runId, {
+        status: result.status,
+        endedAt: Date.now(),
+        exitCode: result.exitCode,
+        signal: result.signal,
+        errorMessage: result.errorMessage,
+      });
+    },
+  });
+
+  childRef = running.child;
+
+  return running;
+}
+
+function formatBackgroundStarted(runId: string, yielded: boolean): string {
+  return yielded
+    ? `Process is still running.\nrunId: ${runId}\nUse the process tool to check status, read logs, or kill it.`
+    : `Process started in background.\nrunId: ${runId}\nUse the process tool to check status, read logs, or kill it.`;
+}
+
 export const execTool: Tool = {
   name: 'exec',
-  description: 'Execute a shell command in the workspace and return combined stdout/stderr output.',
+  description: 'Execute a shell command. Supports foreground execution, yield continuation with yieldMs, and immediate background execution with background=true.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -41,7 +195,7 @@ export const execTool: Tool = {
       },
       timeout: {
         type: 'number',
-        description: 'Timeout in seconds. Defaults to 30.',
+        description: 'Timeout in seconds.',
       },
       cwd: {
         type: 'string',
@@ -52,84 +206,108 @@ export const execTool: Tool = {
         description: 'Additional environment variables to pass to the command.',
         additionalProperties: { type: 'string' },
       },
+      yieldMs: {
+        type: 'number',
+        description: 'Run in foreground briefly, then switch to background if still running.',
+      },
+      background: {
+        type: 'boolean',
+        description: 'Start in background immediately and return a runId.',
+      },
     },
     required: ['command'],
   },
   execute: async (params, context) => {
-    const command = params.command;
-    if (typeof command !== 'string' || !command.trim()) {
+    const normalized = normalizeExecRequest(params, process.cwd());
+    if ('error' in normalized) {
       return {
-        content: 'Invalid input for tool "exec": "command" must be a non-empty string',
+        content: normalized.error,
         isError: true,
       };
     }
 
-    const timeoutSeconds = normalizeTimeout(params.timeout);
-    const cwd = normalizeCwd(params.cwd, process.cwd());
-    const env = normalizeEnv(params.env);
+    const { request } = normalized;
 
-    return await new Promise((resolve) => {
-      // 通过 shell:true 复用当前平台默认 shell，避免把实现写死到 Unix shell。
-      const child = spawn(command, {
-        cwd,
-        env: { ...process.env, ...env },
-        shell: true,
+    if (request.mode === 'foreground') {
+      // The pure foreground path bypasses the registry and behaves like a synchronous command run.
+      const running = runCommand({
+        command: request.command,
+        cwd: request.cwd,
+        env: request.env,
+        timeoutMs: request.timeoutMs,
         signal: context?.signal,
       });
+      const outcome = await running.completion;
+      return mapForegroundStatusToToolResult(
+        outcome.status,
+        outcome.output,
+        outcome.exitCode,
+        outcome.signal,
+        outcome.errorMessage,
+      );
+    }
 
-      const chunks: Array<{ timestamp: number; text: string }> = [];
-      let timedOut = false;
+    const runId = createRunId();
+    const visibility = request.mode === 'background' ? 'background' : 'internal';
+    const running = startManagedCommand(request, runId, visibility, context?.signal);
 
-      // stdout/stderr 分开监听，再按时间排序合并，和设计文档保持一致。
-      const pushChunk = (data: Buffer | string) => {
-        chunks.push({
-          timestamp: Date.now(),
-          text: data.toString(),
-        });
+    try {
+      await running.started;
+    } catch (error) {
+      processRegistry.delete(runId);
+      return {
+        content: `Error executing command: ${error instanceof Error ? error.message : String(error)}`,
+        isError: true,
       };
+    }
 
-      child.stdout.on('data', pushChunk);
-      child.stderr.on('data', pushChunk);
+    if (request.mode === 'background') {
+      return {
+        content: formatBackgroundStarted(runId, false),
+      };
+    }
 
-      const timer = setTimeout(() => {
-        timedOut = true;
-        child.kill();
-      }, timeoutSeconds * 1000);
+    // The yield path races command completion against the yield deadline to decide whether to hand off to process management.
+    const race = await Promise.race([
+      running.completion.then((outcome) => ({ type: 'completed' as const, outcome })),
+      new Promise<{ type: 'yield' }>((resolve) => {
+        setTimeout(() => resolve({ type: 'yield' }), request.yieldMs);
+      }),
+    ]);
 
-      child.on('error', (error) => {
-        clearTimeout(timer);
-        resolve({
-          content: `Error executing command: ${error.message}`,
-          isError: true,
-        });
-      });
+    if (race.type === 'completed') {
+      processRegistry.delete(runId);
+      return mapForegroundStatusToToolResult(
+        race.outcome.status,
+        race.outcome.output,
+        race.outcome.exitCode,
+        race.outcome.signal,
+        race.outcome.errorMessage,
+      );
+    }
 
-      child.on('close', (code) => {
-        clearTimeout(timer);
-        const output = chunks
-          .sort((left, right) => left.timestamp - right.timestamp)
-          .map((chunk) => chunk.text)
-          .join('');
+    const record = processRegistry.get(runId);
+    if (!record || (record.status !== 'starting' && record.status !== 'running')) {
+      // The process may have finished just as the yield deadline was reached; in that case, fall back to a foreground result.
+      const outcome = await running.completion;
+      processRegistry.delete(runId);
+      return mapForegroundStatusToToolResult(
+        outcome.status,
+        outcome.output,
+        outcome.exitCode,
+        outcome.signal,
+        outcome.errorMessage,
+      );
+    }
 
-        // 超时和非零退出都保留已有输出，方便上层定位问题。
-        if (timedOut) {
-          resolve({
-            content: `${output}\n\nProcess timed out after ${timeoutSeconds} seconds`.trim(),
-            isError: true,
-          });
-          return;
-        }
-
-        if (code !== 0) {
-          resolve({
-            content: `${output}\n\nProcess exited with code ${code ?? 'unknown'}`.trim(),
-            isError: true,
-          });
-          return;
-        }
-
-        resolve({ content: output });
-      });
+    // Only still-running tasks are promoted from an internal record to a background-visible record.
+    processRegistry.exposeToBackground(runId, {
+      exposedAt: Date.now(),
+      yielded: true,
     });
+
+    return {
+      content: formatBackgroundStarted(runId, true),
+    };
   },
 };

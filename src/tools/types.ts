@@ -1,39 +1,39 @@
-/** 工具执行上下文（可选，用于传递 signal 等） */
+/** Tool execution context, optionally used to pass an AbortSignal and similar metadata. */
 export interface ToolContext {
   signal?: AbortSignal;
 }
 
-/** 工具执行结果 */
+/** Tool execution result. */
 export interface ToolResult {
   content: string;
   isError?: boolean;
 }
 
 /**
- * 工具执行回调。
- * agent-runner 引用此类型作为构造参数。
+ * Tool execution callback.
+ * agent-runner uses this type as a constructor dependency.
  */
 export type ToolExecutor = (
   toolName: string,
   input: Record<string, unknown>,
 ) => Promise<ToolResult>;
 
-/** 工具定义 */
+/** Tool definition. */
 export interface Tool {
-  /** 工具名称（唯一标识，传给 LLM） */
+  /** Tool name, used as the unique identifier exposed to the LLM. */
   name: string;
-  /** 工具描述（传给 LLM，让它知道何时使用） */
+  /** Tool description, used to help the LLM decide when to call it. */
   description: string;
-  /** 参数的 JSON Schema（传给 LLM，让它知道怎么调用） */
+  /** JSON Schema for the tool input, exposed to the LLM. */
   inputSchema: Record<string, unknown>;
-  /** 执行函数 */
+  /** Tool implementation. */
   execute: (
     params: Record<string, unknown>,
     context?: ToolContext,
   ) => Promise<ToolResult>;
 }
 
-/** 传给 LLM 的工具定义（不含 execute） */
+/** Tool definition sent to the LLM, without the execute function. */
 export interface ToolDefinition {
   name: string;
   description: string;

@@ -10,7 +10,10 @@
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:tool:list-cwd": "npx tsx scripts/test-exec-list-cwd.ts",
+    "test:tool:background": "npx tsx scripts/test-exec-background.ts",
+    "test:tool:yield": "npx tsx scripts/test-exec-yield.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

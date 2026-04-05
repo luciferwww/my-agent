@@ -1,7 +1,7 @@
 /**
- * 直接调用 builtin tools 的冒烟测试。
+ * Smoke test for calling builtin tools directly.
  *
- * 用法：
+ * Usage:
  *   npx tsx scripts/test-builtin-tools.ts
  *   npm run test:tool:direct
  */
@@ -32,10 +32,10 @@ async function runCase(name: string, test: AsyncTest): Promise<void> {
   }
 }
 
-console.log('\n🚀 builtin tools 直接调用测试开始');
+console.log('\n🚀 Starting direct builtin tools test');
 console.log(`cwd: ${process.cwd()}`);
 
-await runCase('1. 直接调用 execTool.execute()', async () => {
+await runCase('1. Call execTool.execute() directly', async () => {
   const result = await execTool.execute({
     command: 'node -p "process.cwd()"',
     cwd: process.cwd(),
@@ -44,10 +44,10 @@ await runCase('1. 直接调用 execTool.execute()', async () => {
 
   assert.ok(!result.isError, `expected success, got: ${result.content}`);
   assert.equal(result.content.trim(), process.cwd());
-  console.log(`返回目录: ${result.content.trim()}`);
+  console.log(`Returned directory: ${result.content.trim()}`);
 });
 
-await runCase('2. 通过 createToolExecutor 调用 builtin exec', async () => {
+await runCase('2. Call builtin exec through createToolExecutor', async () => {
   const toolExecutor = createToolExecutor([execTool]);
   const result = await toolExecutor('exec', {
     command: 'node -e "console.log(\'executor-ok\')"',
@@ -59,7 +59,7 @@ await runCase('2. 通过 createToolExecutor 调用 builtin exec', async () => {
   console.log(result.content.trim());
 });
 
-await runCase('3. 验证 stdout/stderr 合并输出', async () => {
+await runCase('3. Verify merged stdout/stderr output', async () => {
   const result = await execTool.execute({
     command: 'node -e "console.log(\'stdout-line\'); console.error(\'stderr-line\')"',
     timeout: 10,
@@ -71,7 +71,7 @@ await runCase('3. 验证 stdout/stderr 合并输出', async () => {
   console.log(result.content.trim());
 });
 
-await runCase('4. 非零退出码会返回 isError', async () => {
+await runCase('4. Non-zero exit codes return isError', async () => {
   const result = await execTool.execute({
     command: 'node -e "console.error(\'boom\'); process.exit(2)"',
     timeout: 10,
@@ -83,10 +83,10 @@ await runCase('4. 非零退出码会返回 isError', async () => {
   console.log(result.content.trim());
 });
 
-console.log(`\n📊 测试结果：${passed} passed / ${failed} failed`);
+console.log(`\n📊 Test results: ${passed} passed / ${failed} failed`);
 
 if (failed > 0) {
   process.exit(1);
 }
 
-console.log('✅ builtin tools 直接调用测试完成\n');
+console.log('✅ Direct builtin tools test complete\n');

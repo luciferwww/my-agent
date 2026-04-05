@@ -1,6 +1,34 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { execTool } from './exec.js';
+import { processTool } from './process.js';
+import { processRegistry } from './process-registry.js';
+
+function extractRunId(content: string): string {
+  const match = content.match(/runId:\s*(\S+)/);
+  if (!match) {
+    throw new Error(`runId not found in content: ${content}`);
+  }
+
+  return match[1]!;
+}
+
+async function waitFor(predicate: () => Promise<boolean> | boolean, timeoutMs = 1000): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await predicate()) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  throw new Error('Timed out waiting for condition');
+}
+
+afterEach(() => {
+  processRegistry.reset();
+});
 
 describe('execTool', () => {
   it('returns stdout for a simple command', async () => {
@@ -49,5 +77,42 @@ describe('execTool', () => {
     expect(result.isError).toBeUndefined();
     expect(result.content).toContain('out');
     expect(result.content).toContain('err');
+  });
+
+  it('returns a runId when background=true', async () => {
+    const result = await execTool.execute({
+      command: 'node -e "setTimeout(() => console.log(\'done\'), 150)"',
+      background: true,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const runId = extractRunId(result.content);
+    const status = await processTool.execute({ action: 'status', runId });
+    expect(status.content).toContain(`runId: ${runId}`);
+  });
+
+  it('yields long-running commands into process management', async () => {
+    const result = await execTool.execute({
+      command: 'node -e "setTimeout(() => console.log(\'yielded\'), 150)"',
+      yieldMs: 25,
+    });
+
+    const runId = extractRunId(result.content);
+    await waitFor(async () => {
+      const status = await processTool.execute({ action: 'status', runId });
+      return status.content.includes(`runId: ${runId}`);
+    });
+  });
+
+  it('does not leak short yield commands into process.list', async () => {
+    const result = await execTool.execute({
+      command: 'node -e "console.log(\'fast\')"',
+      yieldMs: 100,
+    });
+
+    expect(result.content).toContain('fast');
+
+    const list = await processTool.execute({ action: 'list' });
+    expect(list.content).toBe('No background processes.');
   });
 });

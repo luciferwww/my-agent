@@ -1,7 +1,8 @@
 /**
- * Tools 模块集成测试 — 三个场景验证 LLM 参数推理能力。
+ * Tools module integration test.
+ * Verifies LLM parameter inference across several scenarios.
  *
- * 用法：
+ * Usage:
  *   npx tsx scripts/test-tool-use.ts
  */
 
@@ -18,7 +19,7 @@ const ANTHROPIC_BASE_URL = 'http://localhost:5000';
 const MODEL = 'claude-sonnet-4-6';
 const WORKSPACE_DIR = './test-workspace';
 
-// ── 工具定义 ────────────────────────────────────────────
+// Tool definitions
 
 const tools: Tool[] = [
   execTool,
@@ -78,7 +79,7 @@ const tools: Tool[] = [
   },
 ];
 
-// ── 初始化 ──────────────────────────────────────────────
+// Initialization
 
 const llmClient = new AnthropicClient({
   apiKey: ANTHROPIC_AUTH_TOKEN,
@@ -97,12 +98,12 @@ const systemPrompt = new SystemPromptBuilder().build({
 const toolExecutor = createToolExecutor(tools);
 const toolDefinitions = getToolDefinitions(tools);
 
-// ── 运行场景 ────────────────────────────────────────────
+// Scenarios
 
 async function runScenario(scenarioName: string, message: string) {
   console.log(`\n${'='.repeat(60)}`);
-  console.log(`场景: ${scenarioName}`);
-  console.log(`用户: ${message}`);
+  console.log(`Scenario: ${scenarioName}`);
+  console.log(`User: ${message}`);
   console.log('='.repeat(60));
 
   const sessionKey = `scenario-${Date.now()}`;
@@ -142,7 +143,7 @@ async function runScenario(scenarioName: string, message: string) {
     maxToolRounds: 5,
   });
 
-  console.log(`\n--- Session 消息 ---`);
+  console.log(`\n--- Session Messages ---`);
   const messages = sessionManager.getMessages(sessionKey);
   for (const msg of messages) {
     const role = msg.message.role;
@@ -153,34 +154,34 @@ async function runScenario(scenarioName: string, message: string) {
   }
 }
 
-// ── 执行三个场景 ────────────────────────────────────────
+// Execute the scenarios
 
-console.log('\n🧪 Tools 集成测试 — LLM 参数推理能力验证');
+console.log('\n🧪 Tools integration test — LLM parameter inference');
 console.log(`Model: ${MODEL}`);
 console.log(`Tools: ${tools.map(t => t.name).join(', ')}`);
 
-// 场景 1：单参数，LLM 需要理解"yesterday"
+// Scenario 1: single-parameter inference
 await runScenario(
-  '1. 单参数推理',
+  '1. Single-parameter inference',
   'What day is yesterday?',
 );
 
-// 场景 2：多参数（含必填）
+// Scenario 2: multi-parameter inference
 await runScenario(
-  '2. 多参数推理',
+  '2. Multi-parameter inference',
   "What's the weather like tomorrow in Shanghai?",
 );
 
-// 场景 3：多步工具调用（先获取位置，再查天气）
+// Scenario 3: multi-step tool use
 await runScenario(
-  '3. 多步工具调用',
+  '3. Multi-step tool use',
   "What's the weather like tomorrow in my city?",
 );
 
-// 场景 4：真实命令执行
+// Scenario 4: real command execution
 await runScenario(
-  '4. exec 端到端',
+  '4. exec end-to-end',
   'Use the exec tool to run a command that prints the current working directory, then tell me the directory path you found.',
 );
 
-console.log('\n\n✅ 所有场景完成\n');
+console.log('\n\n✅ All scenarios completed\n');

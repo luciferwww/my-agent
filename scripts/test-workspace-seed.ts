@@ -1,10 +1,10 @@
 /**
- * 验证 workspace 初始化（模板 seed）功能。
+ * Validate workspace initialization and template seeding.
  *
- * 用法：
+ * Usage:
  *   npx tsx scripts/test-workspace-seed.ts [workspaceDir]
  *
- * 默认工作区目录：./test-workspace
+ * Default workspace directory: ./test-workspace
  */
 
 import { ensureWorkspace, loadContextFiles } from '../src/workspace/index.js';
@@ -14,31 +14,31 @@ import { join } from 'path';
 const workspaceDir = process.argv[2] || './test-workspace';
 const agentDir = join(workspaceDir, '.agent');
 
-console.log(`\n=== Workspace Seed 验证 ===\n`);
-console.log(`工作区目录: ${workspaceDir}`);
-console.log(`上下文文件目录: ${agentDir}\n`);
+console.log(`\n=== Workspace Seed Validation ===\n`);
+console.log(`Workspace directory: ${workspaceDir}`);
+console.log(`Context files directory: ${agentDir}\n`);
 
-// Step 1: 初始化
-console.log('--- Step 1: 初始化工作区 ---');
+// Step 1: initialize the workspace
+console.log('--- Step 1: Initialize Workspace ---');
 await ensureWorkspace(workspaceDir);
 const files = await readdir(agentDir);
-console.log(`.agent/ 目录下的文件: ${files.join(', ')}`);
+console.log(`Files in .agent/: ${files.join(', ')}`);
 
-// Step 2: 加载
-console.log('\n--- Step 2: 加载上下文文件 ---');
+// Step 2: load context files
+console.log('\n--- Step 2: Load Context Files ---');
 const contextFiles = await loadContextFiles(workspaceDir);
 for (const file of contextFiles) {
   console.log(`\n[${file.path}] (${file.content.length} chars)`);
   console.log(file.content);
 }
 
-// Step 3: 再次初始化（验证不覆盖）
-console.log('\n--- Step 3: 再次初始化（验证不覆盖） ---');
+// Step 3: initialize again to verify files are not overwritten
+console.log('\n--- Step 3: Initialize Again (Verify No Overwrite) ---');
 await ensureWorkspace(workspaceDir);
 const contextFiles2 = await loadContextFiles(workspaceDir);
 const unchanged = contextFiles.every((f, i) => f.content === contextFiles2[i]?.content);
-console.log(`文件内容未变化: ${unchanged ? '✅ 是' : '❌ 否'}`);
+console.log(`File contents unchanged: ${unchanged ? '✅ yes' : '❌ no'}`);
 
-console.log('\n=== 验证完成 ===');
-console.log(`\n提示: 你可以手动编辑 ${agentDir} 下的文件，再次运行此脚本验证加载效果。`);
-console.log(`清理: rm -rf ${workspaceDir}\n`);
+console.log('\n=== Validation Complete ===');
+console.log(`\nTip: you can manually edit files under ${agentDir} and run this script again to verify loading behavior.`);
+console.log(`Cleanup: rm -rf ${workspaceDir}\n`);
