@@ -3,6 +3,8 @@
 > 分析日期：2026-04-03  
 > 参考项目：C:\dev\my-agent\openclaw
 
+> 注：这份文档保留为第一次分析时的“简化版结论”。如果要看基于最新源码的接线方式、`pi-coding-agent` 适配层、以及 `before_tool_call` / `after_tool_call` 的真实落点，请优先参考 `openclaw-tool-system-analysis-current.md`。
+
 ---
 
 ## 1. 三层架构

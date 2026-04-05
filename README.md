@@ -10,6 +10,7 @@ src/
 ├── prompt-builder/         # System & User prompt construction
 ├── session/                # Session management (tree-shaped JSONL)
 ├── llm-client/             # LLM API client (Anthropic SDK)
+├── tools/                  # Tool definitions, executor, builtin tools
 └── agent-runner/           # Agent execution engine (tool use loop)
 ```
 
@@ -25,7 +26,11 @@ npm test
 
 Design documents are in the `docs/` directory:
 
+- [Agent Runner Design](docs/agent-runner-design.md)
+- [LLM Client Design](docs/llm-client-design.md)
 - [Prompt Builder Design](docs/prompt-builder-design.md)
+- [Session Design](docs/session-design.md)
+- [Tools Design](docs/tools-design.md)
 - [Workspace Design](docs/workspace-design.md)
 - [OpenClaw Analysis](docs/openclaw-analysis.md)
 - [OpenClaw Prompt System Deep Dive](docs/openclaw-prompt-system-deep-dive.md)

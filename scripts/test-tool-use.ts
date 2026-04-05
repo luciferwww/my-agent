@@ -10,7 +10,7 @@ import { AnthropicClient } from '../src/llm-client/index.js';
 import { SessionManager } from '../src/session/index.js';
 import { SystemPromptBuilder } from '../src/prompt-builder/index.js';
 import { ensureWorkspace, loadContextFiles } from '../src/workspace/index.js';
-import { createToolExecutor, getToolDefinitions } from '../src/tools/index.js';
+import { createToolExecutor, execTool, getToolDefinitions } from '../src/tools/index.js';
 import type { Tool } from '../src/tools/index.js';
 
 const ANTHROPIC_AUTH_TOKEN = 'EMPTY';
@@ -21,6 +21,7 @@ const WORKSPACE_DIR = './test-workspace';
 // ── 工具定义 ────────────────────────────────────────────
 
 const tools: Tool[] = [
+  execTool,
   {
     name: 'get_current_time',
     description: 'Get the current date and time. No parameters needed.',
@@ -174,6 +175,12 @@ await runScenario(
 await runScenario(
   '3. 多步工具调用',
   "What's the weather like tomorrow in my city?",
+);
+
+// 场景 4：真实命令执行
+await runScenario(
+  '4. exec 端到端',
+  'Use the exec tool to run a command that prints the current working directory, then tell me the directory path you found.',
 );
 
 console.log('\n\n✅ 所有场景完成\n');
