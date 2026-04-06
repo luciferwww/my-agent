@@ -1,7 +1,7 @@
 # Session 模块设计文档
 
 > 创建日期：2026-04-02  
-> 参考：OpenClaw 的 Session 管理系统（详见 [openclaw-session-analysis.md](./openclaw-session-analysis.md)）
+> 参考：OpenClaw 的 Session 管理系统（详见 [openclaw-session-analysis.md](../analysis/openclaw/openclaw-session-analysis.md)）
 
 ---
 
@@ -410,7 +410,7 @@ branch(key, entryId)
   └─ leafId = entryId    ← 只修改内存指针，不写文件
   
   后续 appendMessage 的 parentId 将指向 entryId，
-  形成新分��。旧分支的记录仍在 JSONL 文件中。
+  形成新分支。旧分支的记录仍在 JSONL 文件中。
 ```
 
 ### 7.5 加载已有 Session
@@ -566,7 +566,7 @@ await session.appendMessage('main', { role: 'assistant', content: response.conte
 
 ---
 
-## 10. 测试计���
+## 10. 测试计划
 
 ### 10.1 lock.ts 测试
 
@@ -593,7 +593,7 @@ await session.appendMessage('main', { role: 'assistant', content: response.conte
 | 加载线性消息 | byId 包含所有记录，leafId 指向最后一条 |
 | 加载含分支的消息 | byId 包含所有分支的记录 |
 | 追加记录 | 文件末尾追加一行 |
-| 空行 / 格式错误行 | 跳过，不���错 |
+| 空行 / 格式错误行 | 跳过，不报错 |
 | 并发追加 | 通过锁保证顺序 |
 
 ### 10.4 SessionManager.ts 测试

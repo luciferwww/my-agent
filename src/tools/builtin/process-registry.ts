@@ -1,4 +1,5 @@
 import type { OutputChunk, ProcessRecord, ProcessStatus } from './exec-types.js';
+import { killProcessTree } from './kill-process-tree.js';
 
 export interface ProcessRegistry {
   create(record: ProcessRecord): void;
@@ -9,6 +10,16 @@ export interface ProcessRegistry {
   exposeToBackground(runId: string, update: { exposedAt: number; yielded: boolean }): void;
   appendOutput(runId: string, chunk: OutputChunk): void;
   complete(
+    runId: string,
+    update: {
+      status: Exclude<ProcessStatus, 'starting' | 'running'>;
+      endedAt: number;
+      exitCode?: number | null;
+      signal?: string | null;
+      errorMessage?: string;
+    },
+  ): void;
+  forceComplete(
     runId: string,
     update: {
       status: Exclude<ProcessStatus, 'starting' | 'running'>;
@@ -124,10 +135,40 @@ export class InMemoryProcessRegistry implements ProcessRegistry {
     record.child = undefined;
   }
 
+  forceComplete(
+    runId: string,
+    update: {
+      status: Exclude<ProcessStatus, 'starting' | 'running'>;
+      endedAt: number;
+      exitCode?: number | null;
+      signal?: string | null;
+      errorMessage?: string;
+    },
+  ): void {
+    const record = this.records.get(runId);
+    if (!record) {
+      return;
+    }
+
+    // Manual kill may race with the child closing on its own, so this path intentionally overwrites an earlier terminal state.
+    record.status = update.status;
+    record.endedAt = update.endedAt;
+    record.exitCode = update.exitCode;
+    record.signal = update.signal;
+    record.errorMessage = update.errorMessage;
+    record.child = undefined;
+  }
+
   reset(): void {
     for (const record of this.records.values()) {
-      if (record.child && !TERMINAL_STATUSES.has(record.status)) {
-        record.child.kill();
+      if ((record.child || record.pid) && !TERMINAL_STATUSES.has(record.status)) {
+        // reset is best-effort cleanup for tests and process teardown, so failures are intentionally ignored here.
+        void killProcessTree({
+          pid: record.pid,
+          child: record.child,
+          reason: 'abort',
+          graceMs: 0,
+        });
       }
     }
 

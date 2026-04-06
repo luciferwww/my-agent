@@ -1,7 +1,7 @@
 # Prompt Builder 系统设计文档
 
 > 创建日期：2026-03-31  
-> 参考：OpenClaw prompt 构建系统（深度分析见 openclaw-prompt-system-deep-dive.md）
+> 参考：OpenClaw prompt 构建系统（深度分析见 [openclaw-prompt-system-deep-dive.md](../analysis/openclaw/openclaw-prompt-system-deep-dive.md)）
 
 ---
 
@@ -667,7 +667,7 @@ const prompt = await userBuilder.build({
 
 | 测试用例 | 预期行为 |
 |---------|---------|
-| 纯文本，无 hook | `text` 等于��始输入 |
+| 纯文本，无 hook | `text` 等于原始输入 |
 | 有 hook + 文本 | `text` = chunks + `\n\n` + 原始输入 |
 | 有 attachments | `attachments` 直传，不嵌入 `text` |
 | 无 attachments | `attachments` 为空数组 |

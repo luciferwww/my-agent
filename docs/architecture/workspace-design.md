@@ -160,7 +160,7 @@ _(Add environment-specific tool usage notes here)_
 
 ### 4.3 与 OpenClaw 的对比
 
-OpenClaw 的上下文文件加载链路涉及 4 个文件、6 个步骤（详见 [openclaw-contextfiles-flow.md](./openclaw-contextfiles-flow.md)）：
+OpenClaw 的上下文文件加载链路涉及 4 个文件、6 个步骤（详见 [openclaw-contextfiles-flow.md](../analysis/openclaw/openclaw-contextfiles-flow.md)）：
 
 ```
 loadWorkspaceBootstrapFiles()       ← workspace.ts（读磁盘）

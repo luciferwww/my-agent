@@ -147,6 +147,7 @@ function startManagedCommand(request: NormalizedExecRequest, runId: string, visi
     cwd: request.cwd,
     env: request.env,
     timeoutMs: request.timeoutMs,
+    detached: process.platform !== 'win32',
     signal,
     onStdout: (chunk) => {
       processRegistry.appendOutput(runId, chunk);

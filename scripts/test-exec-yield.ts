@@ -3,7 +3,6 @@
  *
  * Usage:
  *   npx tsx scripts/test-exec-yield.ts
- *   npm run test:tool:yield
  */
 
 import assert from 'node:assert/strict';

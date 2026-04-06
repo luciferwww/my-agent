@@ -140,6 +140,7 @@ export interface RunCommandOptions {
   cwd: string;
   env: Record<string, string>;
   timeoutMs?: number;
+  detached?: boolean;
   signal?: AbortSignal;
   onStdout?: (chunk: OutputChunk) => void;
   onStderr?: (chunk: OutputChunk) => void;

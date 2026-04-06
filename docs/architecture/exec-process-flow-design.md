@@ -4,7 +4,7 @@
 > 适用项目：C:\dev\my-agent\my-agent  
 > 参考：OpenClaw 的 `exec + process` 组合，但只吸收我们当前需要的最小结构，不引入 approval、sandbox、PTY、多宿主路由等平台级复杂度。
 
-> 当前状态：截至 2026-04-05，本文件已对齐 `src/tools/builtin/exec.ts`、`process.ts`、`run-command.ts`、`process-registry.ts` 的 v1 实现。后文若同时出现“设计建议”和“当前行为”，以“当前行为/已实现语义”为准。
+> 当前状态：截至 2026-04-06，本文件已对齐 `src/tools/builtin/exec.ts`、`process.ts`、`run-command.ts`、`process-registry.ts`、`resolve-command-invocation.ts`、`kill-process-tree.ts` 的当前实现。后文若同时出现“设计建议”和“当前行为”，以“当前行为/已实现语义”为准。最小版 `v2` 与 `v2.1` 核心运行时底座（kill-tree、显式 shell wrapper、Windows close-state settle）均已落地；更完整的平台 shim / shebang resolver 仍属于后续扩展范围。
 
 ---
 
@@ -50,7 +50,7 @@
 
 ## 3. 总体架构
 
-当前 v1 实现可以理解成 4 个主要模块，加上 1 个内嵌的输出聚合职责。
+当前最小版 `v2` 实现可以理解成 4 个主要模块，加上 1 个内嵌的输出聚合职责。
 
 ### 3.0 总体结构图
 
@@ -94,6 +94,7 @@ flowchart LR
 职责：
 
 - 统一启动子进程
+- 通过显式平台 shell wrapper 启动 shell 命令文本
 - 监听 stdout / stderr
 - 处理 timeout / abort / close / error
 - 把运行态变化转给注册表或上层回调
@@ -116,7 +117,7 @@ flowchart LR
 - 为前台路径保留局部输出缓存
 - 为后台路径把输出持续写入 registry
 
-当前 v1 中这部分不是独立模块，而是分散在两处：
+当前实现中这部分不是独立模块，而是分散在两处：
 
 - `runCommand()` 内部维护前台执行所需的局部 chunk 缓存
 - `exec/process-registry` 通过 `onStdout/onStderr -> appendOutput()` 维护后台任务的累计输出
@@ -206,7 +207,7 @@ flowchart LR
 
 ### 4.4 参数优先级和 timeout 语义
 
-当前 v1 采用下面几条规则。
+当前实现采用下面几条规则。
 
 #### 参数优先级
 
@@ -221,7 +222,7 @@ flowchart LR
 
 #### timeout 语义
 
-当前 v1 把 `timeout` 解释为**整个进程生命周期的上限**，不是“只限制前台等待时间”。
+当前实现把 `timeout` 解释为**整个进程生命周期的上限**，不是“只限制前台等待时间”。
 
 这样一来：
 
@@ -343,7 +344,7 @@ type CommandRunOutcome =
     };
 ```
 
-这个类型在共享类型里仍然保留，但当前 v1 的 `runCommand()` 实际返回的是一个 `RunningCommand` 句柄：
+这个类型在共享类型里仍然保留，但当前实现的 `runCommand()` 实际返回的是一个 `RunningCommand` 句柄：
 
 ```typescript
 interface RunningCommand {
@@ -831,7 +832,7 @@ flowchart TD
 
 1. agent 调用 `process({ action: 'status', runId })`
 2. `process` 从 registry 读取对应记录
-3. 当前 v1 返回：`runId / status / command / pid / startedAt / endedAt / yielded / summary`
+3. 当前实现返回：`runId / status / command / pid / startedAt / endedAt / yielded / summary`
 
 说明：
 
@@ -874,15 +875,17 @@ flowchart TD
 
 1. agent 调用 `process({ action: 'kill', runId })`
 2. `process` 查找对应 `ProcessRecord`
-3. 如果进程仍在运行，调用 `child.kill()`
+3. 如果进程仍在运行，调用 `killProcessTree()`，由 helper 按平台选择终止策略
 4. 显式 kill 触发时，优先将状态记为 `aborted`
 5. 返回终止结果
+
+这里需要特别补一句：当前实现已经升级到跨平台 kill-tree。Windows 下走 `taskkill /T` 并在必要时升级到 `/F /T`；Unix 下优先对 process group 发信号，再回退到单 pid。`process.kill` 最终仍然把语义状态固定成 `aborted`。
 
 建议把 `kill` 设计成尽量幂等：
 
 - 如果任务仍在运行，执行 kill 并返回 `aborted`
 - 如果任务已经结束，直接返回当前终态摘要，而不是再报一次错误
-- 如果 `child.kill()` 返回 `false`，当前实现也会回退成“返回当前摘要”，不额外制造新错误
+- 如果 kill helper 发现进程已经消失或无法再次终止，当前实现也会回退成“返回当前摘要”，不额外制造新错误
 
 ### 8.5 `process` 动作流程图
 
@@ -978,7 +981,7 @@ stateDiagram-v2
    - 聚合后的完整字符串
    - 便于当前 `ToolResult.content` 直接返回
 
-当前 v1 规则：
+当前实现规则：
 
 - 前台路径在 `runCommand()` 内部先缓存 chunk，再在 completion 时拼出最终 `output`
 - 后台路径通过 `appendOutput()` 同步维护 `chunks` 和 `output`
@@ -1032,9 +1035,9 @@ flowchart TD
 
 ---
 
-## 12. 第一版最小落地建议
+## 12. 当前最小版 v2 已落地能力
 
-截至当前 v1，下面这些能力已经落地。
+截至当前最小版 `v2`，下面这些能力已经落地。
 
 ### 12.1 `exec`
 
@@ -1060,7 +1063,7 @@ flowchart TD
 - 进程退出清理
 - yield timer 和 provisional record 管理
 
-第一版不要加入：
+当前阶段不要加入：
 
 - `stdin write`
 - `send-keys`
@@ -1073,13 +1076,13 @@ flowchart TD
 
 ## 13. 后续能力边界：是否考虑“会话控制台”能力
 
-我的建议是：**应该纳入后续能力边界，但不要进入第一版实现范围。**
+我的建议是：**应该纳入后续能力边界，但不要进入当前最小版实现范围。**
 
 也就是说，这类能力适合被定义成：
 
 - 明确的后续扩展方向
 - 只有在出现真实交互式进程需求时才启动实现
-- 独立于第一版任务型 `process` 的第二阶段能力
+- 独立于当前任务型 `process` 的后续阶段能力
 
 ### 13.1 为什么值得保留在后续规划里
 
@@ -1092,7 +1095,7 @@ flowchart TD
 
 这些场景一旦出现，OpenClaw 那种“会话控制台”式 process 模型就会变得合理。
 
-### 13.2 为什么不该进入第一版
+### 13.2 为什么不该进入当前阶段
 
 因为一旦支持这类能力，复杂度会明显跃升：
 
@@ -1123,8 +1126,8 @@ flowchart TD
 
 这样做的好处是：
 
-- 第一版保持简单，足够支撑 dev server / watch task / 长命令
-- 未来如果要扩展，不需要否定第一版设计，只需要在 `process` 上增加交互层
+- 当前最小版保持简单，足够支撑 dev server / watch task / 长命令
+- 未来如果要扩展，不需要否定当前设计，只需要在 `process` 上增加交互层
 
 ---
 
@@ -1157,7 +1160,7 @@ flowchart TD
 
 ## 16. 实现落地顺序
 
-这一节保留为当前 v1 的实际落地顺序和验收点。Phase 0 到 Phase 5 已完成，后续如果继续扩展，可在此基础上新增后续 phase。
+这一节保留为当前最小版 `v2` 的实际落地顺序和验收点。Phase 0 到 Phase 5 已完成，后续如果继续扩展，可在此基础上新增后续 phase。
 
 ### 16.1 开发阶段划分
 
@@ -1317,7 +1320,9 @@ flowchart TD
 
 ## 17. 测试覆盖现状与回归要求
 
-当前 v1 已按下面 4 层建立基础覆盖；后续改动仍建议按这套分层回归，而不是只依赖最外层工具测试。
+当前最小版 `v2` 已按下面 4 层建立基础覆盖；后续改动仍建议按这套分层回归，而不是只依赖最外层工具测试。
+
+当前可直接复用的命令清单见 [../roadmap/exec-process-platform-regression-checklist.md](../roadmap/exec-process-platform-regression-checklist.md)。如果只是想重跑平台相关核心回归，优先以这份清单为准；本节更偏向解释“为什么这些测试需要存在”。
 
 ### 17.1 测试分层
 
@@ -1374,6 +1379,7 @@ flowchart TD
 - `exec` 三种运行模式
 - `process` 四个动作
 - `exec -> process` 跨调用衔接
+- 平台 wrapper、kill-tree、timeout、abort 的真实宿主行为
 
 关键断言：
 
@@ -1381,10 +1387,11 @@ flowchart TD
 - yield 长任务返回 `runId` 后，`process.status` 能查到运行中状态
 - immediate background 之后，`process.log` 能读到持续增长的输出
 - `process.kill` 之后，`status` 显示 `aborted`
+- fast-exit race、无输出 kill、已结束任务幂等 kill 都有稳定行为
 
-### 17.2 第一版必须覆盖的测试用例
+### 17.2 当前最小回归集
 
-下面这些用例已经构成当前 v1 的最小回归集；后续改动至少不能低于这组覆盖面。
+下面这些用例已经构成当前最小版 `v2` 的最小回归集；后续改动至少不能低于这组覆盖面。
 
 #### A. `exec` foreground
 
@@ -1399,6 +1406,7 @@ flowchart TD
 - 长命令超过 `yieldMs`，返回 `runId`
 - 返回 `runId` 后记录已对 `process.list` 可见
 - 在 yield 窗口内完成的 provisional record 不会泄露到 `list`
+- yielded handoff 后的树状任务仍可被 `process.kill` 终止
 
 #### C. `exec` immediate background
 
@@ -1410,6 +1418,8 @@ flowchart TD
 
 - 只返回 `background` 可见记录
 - 返回项包含最小摘要字段
+- foreground / short-yield 任务不会泄露到列表
+- running / completed / aborted / yielded handoff 的摘要保持稳定
 
 #### E. `process.status`
 
@@ -1430,8 +1440,28 @@ flowchart TD
 - 运行中任务可终止
 - 终止后状态进入 `aborted`
 - 对已结束任务调用时保持幂等
+- 无输出任务 kill 后日志契约保持稳定
+- fast-exit race 下最终状态保持 `aborted` 或 `completed` 之一，且后续一致
 
-### 17.3 推荐测试命令策略
+### 17.3 当前已落地的脚本集合
+
+当前和上述最小回归集一一对应的脚本主要是：
+
+- `scripts/test-exec-list-cwd.ts`
+- `scripts/test-exec-platform-shell.ts`
+- `scripts/test-exec-background.ts`
+- `scripts/test-exec-yield.ts`
+- `scripts/test-exec-timeout-tree.ts`
+- `scripts/test-exec-abort-tree.ts`
+- `scripts/test-process-kill.ts`
+- `scripts/test-process-kill-no-output.ts`
+- `scripts/test-process-kill-after-exit.ts`
+- `scripts/test-process-kill-race.ts`
+- `scripts/test-process-kill-tree.ts`
+- `scripts/test-process-kill-yield-tree.ts`
+- `scripts/test-process-list-lifecycle.ts`
+
+### 17.4 推荐测试命令策略
 
 为了让测试更稳定，建议优先使用这类命令：
 
@@ -1440,14 +1470,14 @@ flowchart TD
 - 可控等待几百毫秒到几秒的命令
 - 能稳定输出多行内容的命令
 
-不建议在第一版测试里依赖：
+不建议在当前最小回归集里依赖：
 
 - 外部网络
 - 包管理器安装流程
 - 长时间启动且不可控的 dev server
 - 依赖特定本地环境的命令
 
-### 17.4 回归节奏建议
+### 17.5 回归节奏建议
 
 建议每次改动时按下面节奏跑测试：
 
@@ -1456,9 +1486,9 @@ flowchart TD
 3. 改 `exec/process` 工具时，跑 L3 + L4
 4. 合并前至少跑一遍完整最小回归集
 
-### 17.5 完成实现前的验收标准
+### 17.6 完成实现前的验收标准
 
-只有同时满足下面这些条件，才算第一版可以进入后续文档同步或更大范围接入：
+只有同时满足下面这些条件，才算当前最小版实现可以进入后续文档同步或更大范围接入：
 
 1. foreground、yield、background 三条主路径都有稳定测试
 2. `process.list/status/log/kill` 四个动作都有正向和错误路径测试

@@ -3,7 +3,6 @@
  *
  * Usage:
  *   npx tsx scripts/test-exec-background.ts
- *   npm run test:tool:background
  */
 
 import assert from 'node:assert/strict';

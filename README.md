@@ -24,14 +24,14 @@ npm test
 
 ## Documentation
 
-Design documents are in the `docs/` directory:
+Design documents are grouped by purpose under the `docs/` directory. Start with [Documentation Index](docs/README.md).
 
-- [Agent Runner Design](docs/agent-runner-design.md)
-- [LLM Client Design](docs/llm-client-design.md)
-- [Prompt Builder Design](docs/prompt-builder-design.md)
-- [Session Design](docs/session-design.md)
-- [Tools Design](docs/tools-design.md)
-- [Workspace Design](docs/workspace-design.md)
-- [OpenClaw Analysis](docs/openclaw-analysis.md)
-- [OpenClaw Prompt System Deep Dive](docs/openclaw-prompt-system-deep-dive.md)
-- [OpenClaw Context Files Flow](docs/openclaw-contextfiles-flow.md)
+- [Agent Runner Design](docs/architecture/agent-runner-design.md)
+- [LLM Client Design](docs/architecture/llm-client-design.md)
+- [Prompt Builder Design](docs/architecture/prompt-builder-design.md)
+- [Session Design](docs/architecture/session-design.md)
+- [Tools Design](docs/architecture/tools-design.md)
+- [Workspace Design](docs/architecture/workspace-design.md)
+- [OpenClaw Analysis](docs/analysis/openclaw/openclaw-analysis.md)
+- [OpenClaw Prompt System Deep Dive](docs/analysis/openclaw/openclaw-prompt-system-deep-dive.md)
+- [OpenClaw Context Files Flow](docs/analysis/openclaw/openclaw-contextfiles-flow.md)

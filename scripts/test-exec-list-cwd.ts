@@ -3,7 +3,6 @@
  *
  * Usage:
  *   npx tsx scripts/test-exec-list-cwd.ts
- *   npm run test:tool:list-cwd
  */
 
 import assert from 'node:assert/strict';
