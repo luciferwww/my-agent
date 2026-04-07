@@ -16,7 +16,10 @@ src/
 
 ## Getting Started
 
+This project is pinned to Node 22, and npm will reject installs on other Node major versions.
+
 ```bash
+nvm use
 npm install
 npm run build
 npm test

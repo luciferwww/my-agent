@@ -28,8 +28,12 @@ export class SqliteMemoryStore implements MemoryStore {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
+    const deleteFtsStmt = this.db.prepare(`
+      DELETE FROM chunks_fts WHERE id = ?
+    `);
+
     const ftsStmt = this.db.prepare(`
-      INSERT OR REPLACE INTO chunks_fts (id, content, path, source, model, start_line, end_line)
+      INSERT INTO chunks_fts (id, content, path, source, model, start_line, end_line)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
@@ -50,6 +54,9 @@ export class SqliteMemoryStore implements MemoryStore {
           embeddingBlob,
           chunk.updatedAt,
         );
+
+        // chunks_fts is a standalone FTS5 table, so replacing a chunk row does not evict old indexed text.
+        deleteFtsStmt.run(chunk.id);
 
         ftsStmt.run(
           chunk.id,
