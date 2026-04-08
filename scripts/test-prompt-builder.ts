@@ -26,7 +26,7 @@ const systemBuilder = new SystemPromptBuilder();
 const systemPrompt = systemBuilder.build({
   tools: [
     { name: 'search_web', description: 'Search the internet for latest information' },
-    { name: 'search_memory', description: 'Search local knowledge base and history' },
+    { name: 'memory_search', description: 'Search local knowledge base and history' },
     { name: 'read_file', description: 'Read local file contents' },
     { name: 'write_file', description: 'Write content to a file' },
   ],

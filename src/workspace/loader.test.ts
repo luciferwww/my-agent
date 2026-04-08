@@ -77,14 +77,16 @@ describe('loadContextFiles', () => {
       expect(files).toHaveLength(4);
     });
 
-    it('mode minimal currently loads all 4 files (same as full)', async () => {
+    it('mode minimal loads only identity and soul files', async () => {
       await writeFile(join(agentDir, 'IDENTITY.md'), '# Identity', 'utf-8');
       await writeFile(join(agentDir, 'SOUL.md'), '# Soul', 'utf-8');
       await writeFile(join(agentDir, 'AGENTS.md'), '# Agents', 'utf-8');
       await writeFile(join(agentDir, 'TOOLS.md'), '# Tools', 'utf-8');
 
       const files = await loadContextFiles(workspaceDir, { mode: 'minimal' });
-      expect(files).toHaveLength(4);
+      expect(files).toHaveLength(2);
+      expect(files[0]!.path).toBe('IDENTITY.md');
+      expect(files[1]!.path).toBe('SOUL.md');
     });
   });
 

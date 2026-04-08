@@ -24,7 +24,7 @@ describe('SystemPromptBuilder', () => {
     it('minimal mode skips memory-instructions', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
-        tools: [{ name: 'search_memory', description: 'search' }],
+        tools: [{ name: 'memory_search', description: 'search' }],
       });
       expect(prompt).toContain('# Identity');
       expect(prompt).not.toContain('# Memory Recall');
@@ -132,16 +132,16 @@ describe('SystemPromptBuilder', () => {
   // ── memory-instructions ───────────────────────────────────
 
   describe('memory-instructions', () => {
-    it('shows when tools contain search_memory', () => {
+    it('shows when tools contain memory_search', () => {
       const prompt = new SystemPromptBuilder().build({
-        tools: [{ name: 'search_memory', description: 'search' }],
+        tools: [{ name: 'memory_search', description: 'search' }],
       });
       expect(prompt).toContain('# Memory Recall');
     });
 
-    it('shows when tools contain memory_search', () => {
+    it('keeps legacy compatibility for search_memory', () => {
       const prompt = new SystemPromptBuilder().build({
-        tools: [{ name: 'memory_search', description: 'search' }],
+        tools: [{ name: 'search_memory', description: 'search' }],
       });
       expect(prompt).toContain('# Memory Recall');
     });
@@ -168,7 +168,7 @@ describe('SystemPromptBuilder', () => {
     it('skips in minimal mode even with memory tools', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
-        tools: [{ name: 'search_memory', description: 'search' }],
+        tools: [{ name: 'memory_search', description: 'search' }],
       });
       expect(prompt).not.toContain('# Memory Recall');
     });

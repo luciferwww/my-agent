@@ -164,7 +164,7 @@ export class SystemPromptBuilder {
 
     lines.push('# Memory Recall');
     lines.push(
-      'Before answering anything about prior work, decisions, dates, people, preferences, or todos: run search_memory first; then use only the relevant results.',
+      'Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search first; then use only the relevant results.',
     );
     lines.push(
       'Citations: include the source path when referencing memory snippets.',
