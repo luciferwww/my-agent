@@ -1,10 +1,10 @@
 /**
- * LLM Client 集成测试 — 真实 API 调用。
+ * LLM Client integration test using a real API call.
  *
- * 用法：
+ * Usage:
  *   ANTHROPIC_API_KEY=your-key npx tsx scripts/test-llm-client.ts
  *
- * 或者使用自定义 baseURL（如 LiteLLM Proxy）：
+ * Or use a custom baseURL, for example with a LiteLLM proxy:
  *   ANTHROPIC_API_KEY=your-key ANTHROPIC_BASE_URL=http://localhost:4000 npx tsx scripts/test-llm-client.ts
  */
 
@@ -12,7 +12,7 @@ import { AnthropicClient } from '../src/llm-client/index.js';
 
 const apiKey = process.env.ANTHROPIC_API_KEY;
 if (!apiKey) {
-  console.error('请设置 ANTHROPIC_API_KEY 环境变量');
+  console.error('Please set the ANTHROPIC_API_KEY environment variable');
   process.exit(1);
 }
 
@@ -23,13 +23,13 @@ const client = new AnthropicClient({
 
 const model = process.env.MODEL ?? 'claude-sonnet-4-6';
 
-console.log('\n=== LLM Client 集成测试 ===\n');
+console.log('\n=== LLM Client Integration Test ===\n');
 console.log(`Model: ${model}`);
 console.log(`Base URL: ${process.env.ANTHROPIC_BASE_URL ?? '(default)'}\n`);
 
-// ── 测试 1：非流式调用 ───────────────────────────────────
+// Test 1: non-streaming call
 
-console.log('--- 测试 1：非流式调用（chat） ---\n');
+console.log('--- Test 1: Non-Streaming Call (chat) ---\n');
 
 const response = await client.chat({
   model,
@@ -42,9 +42,9 @@ console.log('Response:', response.content);
 console.log('Stop reason:', response.stopReason);
 console.log('Usage:', response.usage);
 
-// ── 测试 2：流式调用 ────────────────────────────────────
+// Test 2: streaming call
 
-console.log('\n--- 测试 2：流式调用（chatStream） ---\n');
+console.log('\n--- Test 2: Streaming Call (chatStream) ---\n');
 
 process.stdout.write('Streaming: ');
 for await (const event of client.chatStream({
@@ -69,9 +69,9 @@ for await (const event of client.chatStream({
   }
 }
 
-// ── 测试 3：多轮对话 ────────────────────────────────────
+// Test 3: multi-turn conversation
 
-console.log('\n--- 测试 3：多轮对话 ---\n');
+console.log('\n--- Test 3: Multi-Turn Conversation ---\n');
 
 const multiTurnResponse = await client.chat({
   model,
@@ -85,4 +85,4 @@ const multiTurnResponse = await client.chat({
 
 console.log('Response:', multiTurnResponse.content);
 
-console.log('\n=== 测试完成 ===\n');
+console.log('\n=== Test Complete ===\n');

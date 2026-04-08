@@ -1,7 +1,7 @@
 /**
- * 打印真实的 System Prompt 和 User Prompt 构建结果。
+ * Print real System Prompt and User Prompt build output.
  *
- * 用法：
+ * Usage:
  *   npx tsx scripts/test-prompt-builder.ts
  */
 
@@ -11,14 +11,14 @@ import { UserPromptBuilder } from '../src/prompt-builder/user/UserPromptBuilder.
 
 const workspaceDir = './test-workspace';
 
-// ── 1. 初始化工作区 + 加载上下文文件 ────────────────────────
+// 1. Initialize the workspace and load context files
 
-console.log('=== 初始化工作区 ===\n');
+console.log('=== Initialize Workspace ===\n');
 await ensureWorkspace(workspaceDir);
 const contextFiles = await loadContextFiles(workspaceDir);
-console.log(`加载了 ${contextFiles.length} 个上下文文件: ${contextFiles.map(f => f.path).join(', ')}\n`);
+console.log(`Loaded ${contextFiles.length} context files: ${contextFiles.map(f => f.path).join(', ')}\n`);
 
-// ── 2. 构建 System Prompt ───────────────────────────────────
+// 2. Build the system prompt
 
 console.log('=== System Prompt (full mode) ===\n');
 
@@ -36,7 +36,7 @@ const systemPrompt = systemBuilder.build({
 console.log(systemPrompt);
 console.log(`\n--- (${systemPrompt.length} chars) ---\n`);
 
-// ── 3. 构建 User Prompt ────────────────────────────────────
+// 3. Build the user prompt
 
 console.log('=== User Prompt (with context hook) ===\n');
 
@@ -44,8 +44,8 @@ const userBuilder = new UserPromptBuilder()
   .useContextHook({
     id: 'memory-recall',
     provider: async (rawInput) => {
-      // 模拟记忆召回
-      return `<relevant_memories>\n- 2026-03-31: 讨论了 prompt builder 的设计\n- 2026-03-30: 分析了 OpenClaw 的架构\n</relevant_memories>`;
+      // Simulate memory recall.
+      return `<relevant_memories>\n- 2026-03-31: Discussed the prompt builder design\n- 2026-03-30: Analyzed the OpenClaw architecture\n</relevant_memories>`;
     },
   })
   .useContextHook({
@@ -56,7 +56,7 @@ const userBuilder = new UserPromptBuilder()
   });
 
 const userPrompt = await userBuilder.build({
-  text: '上次我们讨论的项目进度怎么样了？',
+  text: 'How is the project progress we discussed last time?',
 });
 
 console.log(userPrompt.text);
@@ -64,6 +64,6 @@ console.log(`\n--- (${userPrompt.text.length} chars) ---`);
 console.log(`attachments: ${userPrompt.attachments.length}`);
 console.log(`_debug:`, userPrompt._debug);
 
-// ── 4. 清理提示 ────────────────────────────────────────────
+// 4. Cleanup hint
 
-console.log(`\n清理: rm -rf ${workspaceDir}`);
+console.log(`\nCleanup: rm -rf ${workspaceDir}`);

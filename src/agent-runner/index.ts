@@ -4,6 +4,7 @@ export type {
   RunParams,
   RunResult,
   AgentEvent,
+  ToolDefinition,
   ToolResult,
   ToolExecutor,
 } from './types.js';

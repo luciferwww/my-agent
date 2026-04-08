@@ -1,7 +1,7 @@
 import type { ChatContentBlock, TokenUsage } from '../llm-client/types.js';
-import type { ToolResult, ToolExecutor } from '../tools/types.js';
+import type { ToolDefinition, ToolResult, ToolExecutor } from '../tools/types.js';
 
-export type { ToolResult, ToolExecutor };
+export type { ToolDefinition, ToolResult, ToolExecutor };
 
 /** AgentRunner 构造参数 */
 export interface AgentRunnerConfig {
@@ -26,11 +26,7 @@ export interface RunParams {
   /** System prompt（由调用方通过 prompt-builder 构建） */
   systemPrompt: string;
   /** 工具定义（传给 LLM） */
-  tools?: Array<{
-    name: string;
-    description: string;
-    input_schema: Record<string, unknown>;
-  }>;
+  tools?: ToolDefinition[];
   /** 最大 token 数，默认 4096 */
   maxTokens?: number;
   /** 内层循环：tool use 最大循环次数，每次外层迭代独立计数，默认 10 */

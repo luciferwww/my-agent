@@ -1,7 +1,7 @@
 # Agent Runner 模块设计文档
 
 > 创建日期：2026-04-02  
-> 参考：OpenClaw 的执行引擎（详见 [openclaw-agent-runner-analysis.md](./openclaw-agent-runner-analysis.md)）
+> 参考：OpenClaw 的执行引擎（详见 [openclaw-agent-runner-analysis.md](../analysis/openclaw/openclaw-agent-runner-analysis.md)）
 
 ---
 

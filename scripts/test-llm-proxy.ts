@@ -1,7 +1,7 @@
 /**
- * 通过 LLMProxy 调用 LLM 的示例。
+ * Example of calling the LLM through LLMProxy.
  *
- * 用法：
+ * Usage:
  *   npx tsx scripts/test-llm-proxy.ts
  */
 
@@ -16,13 +16,13 @@ const client = new AnthropicClient({
   baseURL: ANTHROPIC_BASE_URL,
 });
 
-console.log(`\n=== LLMProxy 测试 ===`);
+console.log(`\n=== LLMProxy Test ===`);
 console.log(`Base URL: ${ANTHROPIC_BASE_URL}`);
 console.log(`Model: ${MODEL}\n`);
 
-// ── 非流式 ──────────────────────────────────────────────
+// Non-streaming
 
-console.log('--- 非流式调用 ---\n');
+console.log('--- Non-Streaming Call ---\n');
 
 const response = await client.chat({
   model: MODEL,
@@ -38,9 +38,9 @@ for (const block of response.content) {
 console.log('Stop reason:', response.stopReason);
 console.log('Usage:', response.usage);
 
-// ── 流式 ────────────────────────────────────────────────
+// Streaming
 
-console.log('\n--- 流式调用 ---\n');
+console.log('\n--- Streaming Call ---\n');
 
 process.stdout.write('Reply: ');
 for await (const event of client.chatStream({
@@ -62,4 +62,4 @@ for await (const event of client.chatStream({
   }
 }
 
-console.log('\n=== 完成 ===\n');
+console.log('\n=== Done ===\n');

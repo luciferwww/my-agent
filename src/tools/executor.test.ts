@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createToolExecutor, getToolDefinitions } from './executor.js';
 import type { Tool } from './types.js';
 
-// ── 测试用工具 ──────────────────────────────────────────
+// Test fixtures
 
 const echoTool: Tool = {
   name: 'echo',
@@ -62,7 +62,7 @@ const optionalParamTool: Tool = {
   },
 };
 
-// ── createToolExecutor ──────────────────────────────────
+// createToolExecutor
 
 describe('createToolExecutor', () => {
   it('executes a registered tool', async () => {
@@ -118,7 +118,7 @@ describe('createToolExecutor', () => {
   });
 });
 
-// ── getToolDefinitions ──────────────────────────────────
+// getToolDefinitions
 
 describe('getToolDefinitions', () => {
   it('converts tools to LLM definitions', () => {

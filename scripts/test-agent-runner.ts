@@ -1,7 +1,8 @@
 /**
- * Agent Runner 集成测试 — 串联所有模块完成一次真实对话。
+ * Agent Runner integration test.
+ * Wires all modules together to complete a real conversation.
  *
- * 用法：
+ * Usage:
  *   npx tsx scripts/test-agent-runner.ts
  */
 
@@ -16,13 +17,13 @@ const ANTHROPIC_BASE_URL = 'http://localhost:5000';
 const MODEL = 'claude-sonnet-4-6';
 const WORKSPACE_DIR = './test-workspace';
 
-console.log('\n=== Agent Runner 集成测试 ===\n');
+console.log('\n=== Agent Runner Integration Test ===\n');
 console.log(`Model: ${MODEL}`);
 console.log(`Base URL: ${ANTHROPIC_BASE_URL}`);
 console.log(`maxToolRounds: 2`);
 console.log(`maxFollowUpRounds: 2\n`);
 
-// ── 1. 初始化所有模块 ───────────────────────────────────
+// 1. Initialize all modules
 
 const llmClient = new AnthropicClient({
   apiKey: ANTHROPIC_AUTH_TOKEN,
@@ -31,19 +32,19 @@ const llmClient = new AnthropicClient({
 
 const sessionManager = new SessionManager(WORKSPACE_DIR);
 
-// 初始化工作区 + 加载上下文文件
+// Initialize the workspace and load context files.
 await ensureWorkspace(WORKSPACE_DIR);
 const contextFiles = await loadContextFiles(WORKSPACE_DIR);
-console.log(`加载了 ${contextFiles.length} 个上下文文件\n`);
+console.log(`Loaded ${contextFiles.length} context files\n`);
 
-// 构建 System Prompt
+// Build the system prompt.
 const systemPrompt = new SystemPromptBuilder().build({ contextFiles });
 
-// 获取或创建 Session
+// Resolve or create the session.
 const { entry: sessionEntry, isNew } = await sessionManager.resolveSession('main');
-console.log(`Session: ${sessionEntry.sessionId} (${isNew ? '新建' : '已有'})\n`);
+console.log(`Session: ${sessionEntry.sessionId} (${isNew ? 'new' : 'existing'})\n`);
 
-// 创建 AgentRunner（带 dummy tool executor + 事件回调）
+// Create AgentRunner with a dummy tool executor and event callback.
 const runner = new AgentRunner({
   llmClient,
   sessionManager,
@@ -78,9 +79,9 @@ const runner = new AgentRunner({
   },
 });
 
-// ── 2. 第一轮对话 ───────────────────────────────────────
+// 2. First turn
 
-console.log('--- 第一轮对话 ---\n');
+console.log('--- First Turn ---\n');
 
 const result1 = await runner.run({
   sessionKey: 'main',
@@ -93,9 +94,9 @@ const result1 = await runner.run({
 
 console.log(`\nUsage: in=${result1.usage.inputTokens} out=${result1.usage.outputTokens}`);
 
-// ── 3. 第二轮对话（验证多轮历史） ────────────────────────
+// 3. Second turn, validating multi-turn history
 
-console.log('\n--- 第二轮对话（验证历史） ---\n');
+console.log('\n--- Second Turn (History Validation) ---\n');
 
 const result2 = await runner.run({
   sessionKey: 'main',
@@ -108,9 +109,9 @@ const result2 = await runner.run({
 
 console.log(`\nUsage: in=${result2.usage.inputTokens} out=${result2.usage.outputTokens}`);
 
-// ── 4. 查看 Session 中的消息 ────────────────────────────
+// 4. Inspect session messages
 
-console.log('\n--- Session 消息 ---\n');
+console.log('\n--- Session Messages ---\n');
 
 const messages = sessionManager.getMessages('main');
 for (const msg of messages) {
@@ -121,5 +122,5 @@ for (const msg of messages) {
   console.log(`  [${role}] ${content}`);
 }
 
-console.log(`\n总消息数: ${messages.length}`);
-console.log('\n=== 完成 ===\n');
+console.log(`\nTotal messages: ${messages.length}`);
+console.log('\n=== Done ===\n');

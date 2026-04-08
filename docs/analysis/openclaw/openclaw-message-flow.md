@@ -144,9 +144,9 @@
 │  │    tool_call   → 执行工具 → 返回结果 → 继续生成            │       │
 │  │    stop        → 结束                                     │       │
 │  │  }                                                        │       │
-│  └──────────���────────────────────────────────────────────────┘       │
+│  └───────────────────────────────────────────────────────────┘       │
 │                                                                     │
-│  ┌─ 7f. Session 持久化 ────��────────────────────────────────┐       │
+│  ┌─ 7f. Session 持久化 ─────────────────────────────────────┐       │
 │  │  sessionManager.appendMessage({ role: 'user', ... })      │       │
 │  │  sessionManager.appendMessage({ role: 'assistant', ... }) │       │
 │  │  sessionManager.write()  → JSONL 文件                     │       │
@@ -466,7 +466,7 @@ sessionManager.write()  → JSONL 文件
 
 ## 10. 结果回传
 
-**文��**：`src/agents/command/delivery.ts`
+**文件**：`src/agents/command/delivery.ts`
 
 ```
 deliverAgentCommandResult()

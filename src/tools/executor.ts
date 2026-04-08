@@ -1,8 +1,8 @@
 import type { Tool, ToolExecutor, ToolResult, ToolDefinition } from './types.js';
 
 /**
- * 将 Tool[] 转换为 ToolExecutor 回调，供 agent-runner 使用。
- * 按 name 查找工具并执行，异常自动捕获转为 ToolResult。
+ * Convert Tool[] into a ToolExecutor callback for agent-runner.
+ * Tools are resolved by name, and thrown errors are converted into ToolResult.
  */
 export function createToolExecutor(tools: Tool[]): ToolExecutor {
   return async (toolName: string, input: Record<string, unknown>): Promise<ToolResult> => {
@@ -26,7 +26,7 @@ export function createToolExecutor(tools: Tool[]): ToolExecutor {
 }
 
 /**
- * 从 Tool[] 提取传给 LLM 的工具定义数组（不含 execute）。
+ * Extract the LLM-facing tool definitions from Tool[] without execute handlers.
  */
 export function getToolDefinitions(tools: Tool[]): ToolDefinition[] {
   return tools.map((t) => ({

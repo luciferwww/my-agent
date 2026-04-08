@@ -10,12 +10,16 @@ src/
 ├── prompt-builder/         # System & User prompt construction
 ├── session/                # Session management (tree-shaped JSONL)
 ├── llm-client/             # LLM API client (Anthropic SDK)
+├── tools/                  # Tool definitions, executor, builtin tools
 └── agent-runner/           # Agent execution engine (tool use loop)
 ```
 
 ## Getting Started
 
+This project is pinned to Node 22, and npm will reject installs on other Node major versions.
+
 ```bash
+nvm use
 npm install
 npm run build
 npm test
@@ -23,10 +27,14 @@ npm test
 
 ## Documentation
 
-Design documents are in the `docs/` directory:
+Design documents are grouped by purpose under the `docs/` directory. Start with [Documentation Index](docs/README.md).
 
-- [Prompt Builder Design](docs/prompt-builder-design.md)
-- [Workspace Design](docs/workspace-design.md)
-- [OpenClaw Analysis](docs/openclaw-analysis.md)
-- [OpenClaw Prompt System Deep Dive](docs/openclaw-prompt-system-deep-dive.md)
-- [OpenClaw Context Files Flow](docs/openclaw-contextfiles-flow.md)
+- [Agent Runner Design](docs/architecture/agent-runner-design.md)
+- [LLM Client Design](docs/architecture/llm-client-design.md)
+- [Prompt Builder Design](docs/architecture/prompt-builder-design.md)
+- [Session Design](docs/architecture/session-design.md)
+- [Tools Design](docs/architecture/tools-design.md)
+- [Workspace Design](docs/architecture/workspace-design.md)
+- [OpenClaw Analysis](docs/analysis/openclaw/openclaw-analysis.md)
+- [OpenClaw Prompt System Deep Dive](docs/analysis/openclaw/openclaw-prompt-system-deep-dive.md)
+- [OpenClaw Context Files Flow](docs/analysis/openclaw/openclaw-contextfiles-flow.md)
