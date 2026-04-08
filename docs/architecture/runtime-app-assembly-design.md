@@ -246,14 +246,35 @@ export interface RuntimeAppOptions {
 
 ### 6.2 RuntimeDependencies
 
+Runtime 依赖接口应尽量接收“运行时映射后的局部 options”，而不是把完整 `AgentDefaults` 直接继续下传。
+
 ```typescript
+export interface RuntimeLLMClientOptions {
+  apiKey: string;
+  baseURL?: string;
+  defaultModel?: string;
+  maxTokens?: number;
+}
+
+export interface RuntimeMemoryOptions {
+  workspaceDir: string;
+  enabled: boolean;
+  dbPath?: string;
+  embedding?: AgentDefaults['memory']['embedding'];
+  search?: AgentDefaults['memory']['search'];
+}
+
+export interface RuntimeBuiltinToolOptions {
+  workspaceDir: string;
+  webFetchEnabled?: boolean;
+  execEnabled?: boolean;
+  processEnabled?: boolean;
+}
+
 export interface RuntimeDependencies {
-  createLLMClient(config: AgentDefaults): LLMClient;
+  createLLMClient(options: RuntimeLLMClientOptions): LLMClient;
   createSessionManager(workspaceDir: string): SessionManager;
-  createMemoryManager(
-    workspaceDir: string,
-    config: AgentDefaults,
-  ): Promise<MemoryManager | null>;
+  createMemoryManager(options: RuntimeMemoryOptions): Promise<MemoryManager | null>;
   createSystemPromptBuilder(): SystemPromptBuilder;
   createAgentRunner(params: {
     llmClient: LLMClient;
@@ -261,11 +282,11 @@ export interface RuntimeDependencies {
     toolExecutor: ToolExecutor;
     onEvent?: RuntimeAppOptions['onEvent'];
   }): AgentRunner;
-  getBuiltinTools(config: AgentDefaults): Tool[];
+  getBuiltinTools(options: RuntimeBuiltinToolOptions): Tool[];
 }
 ```
 
-这个接口的目标是显式依赖注入，而不是把 RuntimeApp 写死成只能通过集成脚本验证。
+这个接口的目标是显式依赖注入，同时让 Runtime 真正承担“把全局配置映射为局部 options”的职责，而不是把 RuntimeApp 写死成只能通过集成脚本验证。
 
 ### 6.3 RunTurnParams
 
@@ -458,13 +479,29 @@ export async function bootstrapRuntime(
   const deps = createDefaultRuntimeDependencies(options.dependencies);
 
   const sessionManager = deps.createSessionManager(options.workspaceDir);
-  const llmClient = deps.createLLMClient(resolvedConfig);
-  const memoryManager = await deps.createMemoryManager(options.workspaceDir, resolvedConfig);
+  const llmClient = deps.createLLMClient({
+    apiKey: resolvedConfig.llm.apiKey,
+    baseURL: resolvedConfig.llm.baseURL,
+    defaultModel: resolvedConfig.llm.model,
+    maxTokens: resolvedConfig.llm.maxTokens,
+  });
+  const memoryManager = await deps.createMemoryManager({
+    workspaceDir: options.workspaceDir,
+    enabled: resolvedConfig.memory.enabled,
+    dbPath: resolvedConfig.memory.dbPath,
+    embedding: resolvedConfig.memory.embedding,
+    search: resolvedConfig.memory.search,
+  });
   const systemPromptBuilder = deps.createSystemPromptBuilder();
 
   const toolBundle = assembleRuntimeTools({
     config: resolvedConfig,
-    builtinTools: deps.getBuiltinTools(resolvedConfig),
+    builtinTools: deps.getBuiltinTools({
+      workspaceDir: options.workspaceDir,
+      webFetchEnabled: true,
+      execEnabled: true,
+      processEnabled: true,
+    }),
     memoryManager,
   });
 

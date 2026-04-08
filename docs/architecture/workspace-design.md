@@ -203,10 +203,10 @@ loadContextFiles(workspaceDir, opts?)
 |------|:------:|:---------:|
 | IDENTITY.md | ✅ | ✅ |
 | SOUL.md | ✅ | ✅ |
-| AGENTS.md | ✅ | ✅ |
-| TOOLS.md | ✅ | ✅ |
+| AGENTS.md | ✅ | ❌ |
+| TOOLS.md | ✅ | ❌ |
 
-> 当前 4 个文件在 full 和 minimal 模式下均加载。`mode` 参数预留——未来新增文件（如 USER.md、MEMORY.md）时，minimal 模式可能只加载其中一部分。
+> 当前 minimal 模式只加载 `IDENTITY.md` 和 `SOUL.md`。`mode` 参数仍然保留扩展空间，未来新增文件（如 USER.md、MEMORY.md）时，可以继续细化不同模式下的加载集合。
 
 ### 4.6 API
 
@@ -258,13 +258,13 @@ const contextFiles = await loadContextFiles('./my-project');
 // 3. 构建 System Prompt
 const prompt = new SystemPromptBuilder().build({
   tools: [
-    { name: 'search_memory', description: '搜索本地知识库' },
+    { name: 'memory_search', description: '搜索本地知识库' },
     { name: 'read_file', description: '读取文件内容' },
   ],
   outputLanguage: '中文',
   contextFiles,
 });
-// memory-instructions 自动显示（因为 tools 中有 search_memory）
+// memory-instructions 自动显示（因为 tools 中有 memory_search）
 ```
 
 ### Sub Agent（minimal 模式）
@@ -303,7 +303,7 @@ my-project/                         ← workspaceDir
     │
     └── TOOLS.md
           # Tools - Local Notes
-          search_memory 工具适合查找历史对话和决策。
+          memory_search 工具适合查找历史对话和决策。
           read_file 工具读取前先确认文件路径。
 ```
 
