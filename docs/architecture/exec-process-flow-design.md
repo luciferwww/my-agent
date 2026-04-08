@@ -1131,24 +1131,24 @@ flowchart TD
 
 ---
 
-## 14. 与 OpenClaw 的关系
+## 14. 设计取舍
 
-我们借鉴 OpenClaw 的不是“全部 exec 细节”，而是它最重要的结构判断：
+这份设计文档的核心判断是：
 
-- `exec` 不负责独自完成后台生命周期管理
-- 后台命令必须有一个配套的 `process` 工具
-- `exec + process` 是一对能力，而不是两个互不相关的工具
-- `yield continuation` 是一个很值得借鉴的中间语义：先跑一小段，再决定是否切换到 `process`
+- `exec` 不负责独自完成后台生命周期管理；
+- 后台命令必须有一个配套的 `process` 工具；
+- `exec + process` 是一对能力，而不是两个互不相关的工具；
+- `yield continuation` 是一个有价值的中间语义：先跑一小段，再决定是否切换到 `process`。
 
-在这之外，OpenClaw 还进一步把 `process` 做成了“会话控制台”。这部分我们现在不做，但建议保留为后续可能演进的方向。
-
-我们主动不借的部分是：
+当前刻意不纳入的部分包括：
 
 - approval
 - allowlist
 - sandbox / gateway / node host
 - PTY 交互
 - `write/send-keys/paste` 这些高级 process 动作
+
+如果未来确实出现交互式命令会话需求，再在 `process` 上继续增加交互层，而不是在当前最小版里预先引入复杂度。
 
 ---
 

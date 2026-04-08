@@ -13,6 +13,11 @@ const ALL_FILES = [
   'TOOLS.md',
 ] as const;
 
+const MINIMAL_FILES = [
+  'IDENTITY.md',
+  'SOUL.md',
+] as const;
+
 /**
  * 截断策略的常量。
  * 参考 OpenClaw 的 bootstrap.ts：
@@ -64,7 +69,7 @@ function truncateContent(content: string, fileName: string, maxChars: number): {
 }
 
 export interface LoadContextFilesOptions {
-  /** 加载模式，默认 'full'。当前 full 和 minimal 加载相同文件，预留未来扩展。 */
+  /** 加载模式，默认 'full'。minimal 只加载 IDENTITY.md 和 SOUL.md。 */
   mode?: 'full' | 'minimal';
   /** 单文件最大字符数，默认 20,000（与 OpenClaw 一致） */
   maxFileChars?: number;
@@ -94,6 +99,7 @@ export async function loadContextFiles(
   workspaceDir: string,
   opts?: LoadContextFilesOptions,
 ): Promise<ContextFile[]> {
+  const fileList = opts?.mode === 'minimal' ? MINIMAL_FILES : ALL_FILES;
   const maxFileChars = opts?.maxFileChars ?? DEFAULT_MAX_FILE_CHARS;
   const maxTotalChars = Math.max(1, opts?.maxTotalChars ?? DEFAULT_MAX_TOTAL_CHARS);
   const warn = opts?.warn ?? console.warn;
@@ -102,7 +108,7 @@ export async function loadContextFiles(
   const results: ContextFile[] = [];
   let remainingTotalChars = maxTotalChars;
 
-  for (const name of ALL_FILES) {
+  for (const name of fileList) {
     // 总预算已用完
     if (remainingTotalChars <= 0) {
       break;

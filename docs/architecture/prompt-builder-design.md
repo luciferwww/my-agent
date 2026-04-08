@@ -20,7 +20,7 @@
 | System Prompt 的 25 个 Section 硬编码，但混杂了大量多渠道网关专有逻辑 | 精简为 7 个 Section，只保留个人 Agent 真正需要的部分 |
 | User Prompt 构建逻辑散落在多个文件中（attempt.ts / body.ts / inbound-text.ts），无统一抽象 | 统一的 `UserPromptBuilder` 类，清晰可复用 |
 
-**关于 RAG**：采用 **Tool Use 模式**（与 OpenClaw 一致），由 LLM 自主决定何时调用 `search_memory` 等检索工具。不在 Prompt Builder 层做手动注入，RAG 工具定义放在未来的 Agent 执行引擎中。
+**关于 RAG**：采用 **Tool Use 模式**（与 OpenClaw 一致），由 LLM 自主决定何时调用 `memory_search` 等检索工具。不在 Prompt Builder 层做手动注入，RAG 工具定义放在未来的 Agent 执行引擎中。
 
 **关于 Section 注册表**：采用与 OpenClaw 相同的**硬编码方式**。对个人项目而言，动态注册表的设计成本超过收益；直接硬编码 7 个 Section 更简单可靠，且与 Tool Use 理念一致（能力扩展靠工具，而不是靠堆 Section）。
 
@@ -286,40 +286,28 @@ private buildProjectContextSection(lines: string[], params: SystemPromptBuildPar
 
 ## 6. User Prompt Builder
 
-### 6.1 与 OpenClaw 的对比
+### 6.1 设计取舍
 
-OpenClaw 的 User Prompt 构建没有独立类，逻辑散落在执行引擎的多个文件中（`attempt.ts`、`body.ts`、`agent-command.ts`）。我们将其统一为 `UserPromptBuilder` 类。
+User Prompt Builder 的重点不是覆盖所有可能的前置内容，而是把“原始用户输入 + 可选前置上下文”收敛成一个稳定抽象。
 
-| 能力 | OpenClaw | 我们 |
-|------|---------|------|
-| 统一抽象 | ❌ 无独立类，散落在 attempt.ts / body.ts / agent-command.ts | ✅ `UserPromptBuilder` 类 |
-| 前置上下文 | `prependContext`（插件 hook 返回） | `ContextPrepender`（hook 注册，相同机制） |
-| 内部事件注入 | `prependInternalEventContext()` — sub agent 完成通知 | ❌ 暂不需要（可通过 ContextHook 实现） |
-| 中止提示 | `applySessionHints()` — 上次运行被中止时提醒 | ❌ 暂不需要（可通过 ContextHook 实现） |
-| Bootstrap 警告 | `prependBootstrapPromptWarning()` | ❌ 暂不需要（可通过 ContextHook 实现） |
-| 图像处理 | `detectAndLoadPromptImages()` — 从文本自动检测图像路径并加载（执行引擎层，非 Prompt Builder） | `attachments` 参数直接传入 |
-| 媒体分离 | ✅ `{ images }` 单独传入 LLM API | ✅ `attachments` 单独返回 |
+当前的关键设计决策是：
 
-**关键设计决策**：OpenClaw 有 4 种前置内容（内部事件、中止提示、bootstrap 警告、插件 hook），各自硬编码。我们用一个 `ContextHook` 机制统一处理——如果将来需要中止提示或事件通知，注册一个 hook 即可，不需要修改 Builder 核心代码。
+- 使用独立的 `UserPromptBuilder` 类，而不是把拼接逻辑散落到执行引擎；
+- 用 `ContextPrepender` / `ContextHook` 统一处理前置上下文；
+- 暂不内建内部事件、中止提示、bootstrap 警告等专用分支；
+- 媒体附件通过 `attachments` 单独传递，不混入最终文本。
+
+这样如果将来需要新增某类前置提示，优先通过 hook 扩展，而不是修改 Builder 核心拼接流程。
 
 ### 6.2 拼接顺序
 
-参考 OpenClaw 的 prepend 模式，原始消息永远在最后：
+原始消息永远在最后：
 
 ```
 前置上下文 chunk 1（按注册顺序，先注册的在前）
 前置上下文 chunk 2
 ...
 用户原始消息（永远在最后）
-```
-
-OpenClaw 的拼接顺序：
-```
-内部事件（prependInternalEventContext）
-中止提示（applySessionHints）
-Bootstrap 警告（prependBootstrapPromptWarning）
-Hook 上下文（hookResult.prependContext）
-用户原始消息
 ```
 
 我们的设计：
@@ -525,7 +513,7 @@ import { SystemPromptBuilder } from './prompt-builder';
 const prompt = new SystemPromptBuilder().build({
   tools: [
     { name: 'search_web', description: '搜索互联网获取最新信息' },
-    { name: 'search_memory', description: '搜索本地知识库和历史记忆' },
+    { name: 'memory_search', description: '搜索本地知识库和历史记忆' },
     { name: 'read_file', description: '读取本地文件内容' },
   ],
   contextFiles: [
@@ -533,7 +521,7 @@ const prompt = new SystemPromptBuilder().build({
     { path: 'SOUL.md', content: '简洁、准确。避免废话，直接给出答案。匹配用户语气。' },
   ],
 });
-// memory-instructions 自动显示（因为 tools 中有 search_memory）
+// memory-instructions 自动显示（因为 tools 中有 memory_search）
 ```
 
 ### 场景 2：minimal 模式（子 Agent）
@@ -645,7 +633,7 @@ const prompt = await userBuilder.build({
 | safety-constraints — `'strict'` | 包含严格安全约束 |
 | safety-constraints — `'normal'`（默认） | 包含普通安全约束 |
 | safety-constraints — `'relaxed'` | 跳过此 Section |
-| memory-instructions — tools 中有 `search_memory` | 显示 memory 使用说明 |
+| memory-instructions — tools 中有 `memory_search` | 显示 memory 使用说明 |
 | memory-instructions — tools 中无 memory 工具 | 跳过此 Section |
 | project-context — 有 contextFiles | 注入文件内容，包含 `# Project Context` 标题 |
 | project-context — 无 contextFiles | 跳过此 Section |
@@ -687,7 +675,7 @@ const prompt = await userBuilder.build({
 | project-context 放在 prompt 末尾 | 与 OpenClaw 一致，项目上下文在最后注入；LLM 倾向于遵从更接近末尾的具体描述 |
 | 保留 none 模式 | 预留以备未来扩展；实现成本极低（一行 return ''） |
 | RAG 用 Tool Use 而非文本注入 | LLM 自主判断何时检索，实现更简单，不需要在 Prompt Builder 层处理 |
-| memory-instructions 有 memory 工具才显示 | 自动检查 tools 中是否有 search_memory 等工具，无需额外的 memoryEnabled 参数（与 OpenClaw 一致） |
+| memory-instructions 有 memory 工具才显示 | 自动检查 tools 中是否有 memory_search 等工具，无需额外的 memoryEnabled 参数（与 OpenClaw 一致） |
 | 参数精简为 4 个 | 去掉了 disableTools（不传 tools 即可）、customRules / disableDefaultRules（通过 AGENTS.md 实现）、memoryEnabled（自动检查 tools）、outputLanguage / outputFormat（通过 SOUL.md 实现）、[key: string]（硬编码方式不需要透传） |
 | 不在 Prompt Builder 里做对话历史管理 | 职责分离，与 OpenClaw 分层一致；历史管理属于 Agent 执行引擎的职责 |
 | attachments 不嵌入文本，单独返回 | 图像需单独传入 LLM API（与 OpenClaw 一致） |

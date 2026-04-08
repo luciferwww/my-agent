@@ -30,6 +30,7 @@ npm test
 Design documents are grouped by purpose under the `docs/` directory. Start with [Documentation Index](docs/README.md).
 
 - [Agent Runner Design](docs/architecture/agent-runner-design.md)
+- [Runtime / App Assembly Design](docs/architecture/runtime-app-assembly-design.md)
 - [LLM Client Design](docs/architecture/llm-client-design.md)
 - [Prompt Builder Design](docs/architecture/prompt-builder-design.md)
 - [Session Design](docs/architecture/session-design.md)

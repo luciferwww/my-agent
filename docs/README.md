@@ -28,6 +28,7 @@ npx tsx scripts/test-process-list-lifecycle.ts
 ## Architecture
 
 - [Agent Runner Design](architecture/agent-runner-design.md)
+- [Runtime / App Assembly Design](architecture/runtime-app-assembly-design.md)
 - [LLM Client Design](architecture/llm-client-design.md)
 - [Prompt Builder Design](architecture/prompt-builder-design.md)
 - [Session Design](architecture/session-design.md)
@@ -56,7 +57,13 @@ npx tsx scripts/test-process-list-lifecycle.ts
 - [OpenClaw Tool System Analysis](analysis/openclaw/openclaw-tool-system-analysis.md)
 
 
+## 用户级记忆文件：
+<User-Home>\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\memory-tool\memories\collaboration-preferences.md
+
 ## 记住几条原则：
 - Spec driven development — 先写设计文档，确认后再写代码；
-- 改动前先确认 — 任何修改都先跟你沟通，得到同意后再动手；
-- 编码规范 - 编码必须遵循编码规范文档中的约定（my-agent\docs\architecture\coding-standards.md）
+- 改动前先确认 — 任何修改都先沟通，得到同意后再动手；
+- 编码规范 — 编码必须遵循编码规范文档中的约定（my-agent\docs\architecture\coding-standards.md）；
+- 协作风格 — 如果有不同判断，要明确提出理由，不要为了迎合而一味附和。
+
+NOTE: 可以把这些加入用户级记忆文件，可能的路径：%HOMEPATH%\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\memory-tool\memories\collaboration-preferences.md

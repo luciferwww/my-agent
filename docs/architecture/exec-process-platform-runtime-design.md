@@ -193,9 +193,9 @@ Unix 统一走：
 
 这里明确选 `/bin/sh -c` 而不是“当前用户 shell”，因为行为更可预测，也更接近工具执行 shell 命令的最小语义。
 
-### 6.3 为什么暂时不做 OpenClaw 式 shim
+### 6.3 为什么暂时不做更完整的 shim
 
-OpenClaw 那套 `.cmd/.bat`、`npm/npx`、`pnpm/yarn` shim 处理，建立在它能明确控制 `program + argv` 的前提上。当前 `my-agent` 的输入仍然是 shell 文本，因此：
+更完整的 `.cmd/.bat`、`npm/npx`、`pnpm/yarn` shim 处理，通常建立在调用方能明确控制 `program + argv` 的前提上。当前 `my-agent` 的输入仍然是 shell 文本，因此：
 
 - 直接对 shell 文本做包管理器 shim 重写并不稳
 - 容易和用户原本写的管道、重定向、复合命令冲突

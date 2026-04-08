@@ -1,7 +1,7 @@
 # Tools 模块设计文档
 
 > 创建日期：2026-04-03  
-> 参考：OpenClaw 的工具系统（详见 [openclaw-tool-system-analysis.md](../analysis/openclaw/openclaw-tool-system-analysis.md)）
+> 参考：相关工具系统分析（详见 [openclaw-tool-system-analysis.md](../analysis/openclaw/openclaw-tool-system-analysis.md)）
 
 > 当前状态：截至 2026-04-06，Tools 模块已经落地完整的非 memory builtin tools 集合：`list_dir`、`read_file`、`file_search`、`grep_search`、`apply_patch`、`write_file`、`edit_file`、`web_fetch`、`exec`、`process`。其中 `exec + process` 仍然是运行时最复杂的一组，相关 helper 包括 `run-command.ts`、`process-registry.ts`、`resolve-command-invocation.ts`、`kill-process-tree.ts`。本文按当前实现同步，后文若出现“后续可扩展”，指的是在现有最小版 `v2` 之上的继续增强，而不是这些能力尚未存在。
 
@@ -25,20 +25,40 @@ Tools 模块负责工具的定义、执行和内置工具的提供。
 - 工具策略/权限过滤 — 暂不需要
 - beforeToolCall / afterToolCall hook — 暂不需要
 - 安全性检测（危险命令等）— 留给 system prompt / AGENTS.md 约束
+- 配置加载与解析（应由 runtime 层完成后显式传入）
 
-### 与 OpenClaw 的对比
+### 配置边界
 
-| | OpenClaw / pi-agent-core | 我们 |
-|---|---|---|
-| 工具定义 | `AgentTool`（name + description + parameters(TypeBox) + execute + label） | `Tool`（name + description + inputSchema(JSON Schema) + execute） |
-| 参数 schema | TypeBox（`@sinclair/typebox`） | 普通 JSON Schema 对象 |
-| execute 签名 | `(toolCallId, params, signal?, onUpdate?)` | `(params, context?)` |
-| 工具集合 | 数组，直接传给 Agent | 数组，通过 `createToolExecutor` 转为回调 |
-| 工具注册 | 工厂函数 + 插件 registerTool | 直接构造 Tool 对象 |
-| 内置工具 | 30+（文件、命令、浏览器、网络、会话等） | 当前代码已落地完整的非 memory builtin tools 集合，memory 相关仍保留在后续阶段 |
-| 策略过滤 | 多层策略管道 | 不需要 |
-| 安全检测 | 审批流程（elevated） | 不在工具层做，留给 prompt 约束 |
-| 执行模式 | sequential / parallel | sequential |
+Tools 模块负责“如何定义和执行工具”，不负责“从哪里读取全局配置”。
+
+因此，Tools 模块原则上不应直接访问 config：
+
+- 不应直接调用 `loadConfig()` 或 `resolveAgentConfig()`；
+- 不应通过 `process.env` 自行读取关键运行配置；
+- 不应依赖完整 `AgentDefaults` 作为常规输入。
+
+推荐的边界是：
+
+- Runtime 层先完成配置解析；
+- Runtime 根据配置决定实际暴露哪些工具；
+- Tools 模块通过显式参数或局部 options 接收自己真正需要的最小配置子集。
+
+这样 Tools 才能保持为稳定、可复用的能力层，而不是隐式耦合全局配置的应用层。
+
+> Note：Tools 模块当前追求的是清晰、可测试的最小能力面：普通 JSON Schema、显式 `Tool[]` 集合、顺序执行、无策略管道、无审批和沙箱。复杂的平台化工具治理不在本阶段引入。
+
+### 命名原则
+
+Tools 模块中的工具名统一使用 snake_case，但不强求所有工具都采用同一种语序。
+
+当前采用的是“分类统一”规则：
+
+- 资源操作类优先使用 `verb_resource`：如 `read_file`、`write_file`、`edit_file`、`list_dir`
+- 检索 / 抓取类优先使用 `resource_action`：如 `file_search`、`memory_search`、`web_fetch`
+- 同一子系统内保持统一前缀：如 `memory_search`、`memory_get`、`memory_write`
+- 极少数运行控制工具可保留短名：如 `exec`、`process`
+
+按这个规则，`grep_search` 当前也保留不改：它虽然偏工程术语，但能准确表达“按文本 / 正则逐行匹配”的 grep-like 语义，并与 `file_search` 形成清晰分工。
 
 ---
 
@@ -203,7 +223,7 @@ function getToolDefinitions(tools: Tool[]): ToolDefinition[] {
 | 文件读取与发现 | 让 agent 能理解工作区内容 | `read_file`、`list_dir`、`file_search`、`grep_search` |
 | 文件修改 | 让 agent 能落地代码和文档变更 | `write_file`、`edit_file`、`apply_patch` |
 | 命令与进程 | 让 agent 能运行命令并管理长任务 | `exec`、`process` |
-| 记忆与检索 | 让 agent 能查历史决策、知识和上下文 | `search_memory` 或等价 memory tool |
+| 记忆与检索 | 让 agent 能查历史决策、知识和上下文 | `memory_search` 或等价 memory tool |
 | 外部信息获取 | 让 agent 能按需获取工作区外部信息 | `web_search`、`web_fetch` 一类工具 |
 
 这几个分组里，`exec/process` 只是第三组，不应该代表整个 builtin tool 设计。
@@ -215,7 +235,7 @@ function getToolDefinitions(tools: Tool[]): ToolDefinition[] {
 - 文件读取与发现：`read_file`、`list_dir`、`file_search`、`grep_search`
 - 文件修改：`write_file`、`edit_file`、`apply_patch`
 - 命令与进程：`exec`、`process`
-- 记忆检索：`search_memory` 或同类 memory tool
+- 记忆检索：`memory_search` 或同类 memory tool
 
 原因很直接：
 
@@ -295,19 +315,14 @@ function getToolDefinitions(tools: Tool[]): ToolDefinition[] {
 
 这些工具默认都受 workspace 边界约束，底层共用 `common/path-policy.ts` 和 `common/workspace-walk.ts`。
 
-### 6.2 当前 `exec + process` 与 OpenClaw 的对比
+### 6.2 当前 `exec + process` 的能力边界
 
-| | OpenClaw `exec/process` | pi-coding-agent `bash` | 我们当前实现 |
-|---|---|---|---|
-| `exec` 参数 | command + workdir + env + timeout + background + yieldMs + pty + elevated | command + timeout | command + cwd + timeout + env + yieldMs + background |
-| 后台执行 | ✅（配合 process 工具） | ❌ | ✅ |
-| `process` 动作 | list / poll / log / write / send-keys / kill / ... | ❌ | list / status / log / kill |
-| PTY 支持 | ✅ | ❌ | ❌ |
-| 权限提升 | ✅（审批流程） | ❌ | ❌ |
-| 沙箱隔离 | ✅（Docker） | ❌ | ❌ |
-| 输出处理 | spawn 分别监听 stdout/stderr，内存中按时间合并 | 类似 | 前台与后台都按 chunk 聚合，并把后台输出写入 registry |
-| kill 语义 | Windows / Unix 平台特化，树状终止 | ❌ | ✅ 最小版 kill-tree 已落地 |
-| shell 语义 | 显式平台 wrapper + 更完整 resolver | 依赖 SDK 路径 | ✅ 显式 Windows / Unix wrapper 已落地 |
+当前这组能力的边界如下：
+
+- `exec` 支持 `command / cwd / timeout / env / yieldMs / background`；
+- `process` 支持 `list / status / log / kill`；
+- 支持后台执行、显式平台 shell wrapper 和最小版 kill-tree；
+- 不做 PTY、stdin 交互、审批、沙箱、多宿主路由。
 
 ### 6.3 `exec` 参数
 
@@ -421,14 +436,11 @@ const status = await toolExecutor('process', { action: 'status', runId });
 const log = await toolExecutor('process', { action: 'log', runId, tailLines: 50 });
 ```
 
-### 6.8 当前结论：和 OpenClaw `exec/process` 的差异
+### 6.8 当前结论：`exec + process` 的边界
 
-两边的核心结构已经接近，但复杂度层级仍然明显不同。
+当前实现已经具备最小版 `exec + process` 组合，但仍是“任务管理器式 process”，不做 PTY、stdin 交互、多宿主路由和审批体系。
 
-- OpenClaw 的 `exec/process` 更像完整的命令会话平台，带 supervisor、session-console、shim resolver、host 路由和更丰富的 process 动作。
-- 我们当前已经具备最小版 `exec + process` 组合，但仍是“任务管理器式 process”，不做 PTY、stdin 交互、多宿主路由和审批体系。
-
-所以这里不应该追求“对齐 OpenClaw 全量能力”，而应该按成本和收益挑选性吸收。
+因此，这里不追求扩展为完整命令会话平台，而是按实际需求逐步增强。
 
 ### 6.9 最值得继续吸收的点
 
@@ -444,7 +456,7 @@ const log = await toolExecutor('process', { action: 'log', runId, tailLines: 50 
 - PTY 与交互式终端控制
 - 工具层危险命令分析
 
-这些能力在 OpenClaw 是合理的，因为它本身就是多环境、多会话、可托管执行的 agent 平台；对我们当前这个“最小版 `exec + process` + 本地工作区”模型来说，复杂度明显高于收益。
+这些能力对当前这个“最小版 `exec + process` + 本地工作区”模型来说，复杂度明显高于收益。
 
 ### 6.11 推荐演进顺序
 
