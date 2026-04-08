@@ -28,6 +28,7 @@ npx tsx scripts/test-process-list-lifecycle.ts
 ## Architecture
 
 - [Agent Runner Design](architecture/agent-runner-design.md)
+- [Runtime / App Assembly Design](architecture/runtime-app-assembly-design.md)
 - [LLM Client Design](architecture/llm-client-design.md)
 - [Prompt Builder Design](architecture/prompt-builder-design.md)
 - [Session Design](architecture/session-design.md)
@@ -55,6 +56,9 @@ npx tsx scripts/test-process-list-lifecycle.ts
 - [OpenClaw Tool System Analysis (Current)](analysis/openclaw/openclaw-tool-system-analysis-current.md)
 - [OpenClaw Tool System Analysis](analysis/openclaw/openclaw-tool-system-analysis.md)
 
+
+## 用户级记忆文件：
+<User-Home>\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\memory-tool\memories\collaboration-preferences.md
 
 ## 记住几条原则：
 - Spec driven development — 先写设计文档，确认后再写代码；
