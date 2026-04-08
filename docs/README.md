@@ -54,3 +54,9 @@ npx tsx scripts/test-process-list-lifecycle.ts
 - [OpenClaw Session Analysis](analysis/openclaw/openclaw-session-analysis.md)
 - [OpenClaw Tool System Analysis (Current)](analysis/openclaw/openclaw-tool-system-analysis-current.md)
 - [OpenClaw Tool System Analysis](analysis/openclaw/openclaw-tool-system-analysis.md)
+
+
+## 记住几条原则：
+- Spec driven development — 先写设计文档，确认后再写代码；
+- 改动前先确认 — 任何修改都先跟你沟通，得到同意后再动手；
+- 编码规范 - 编码必须遵循编码规范文档中的约定（my-agent\docs\architecture\coding-standards.md）

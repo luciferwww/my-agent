@@ -352,8 +352,6 @@ const resolved = resolveAgentConfig(config, {
 
 ## 10. 开发计划
 
-### 阶段一：Config 模块本身
-
 1. 创建 `src/config/types.ts` — 所有类型定义
 2. 创建 `src/config/defaults.ts` — 硬编码默认值常量
 3. 创建 `src/config/loader.ts` — `loadConfig()`、`resolveAgentConfig()`、`deepMerge()`
@@ -363,21 +361,7 @@ const resolved = resolveAgentConfig(config, {
 
 **交付物**：独立可用的 config 模块，不改动现有模块。
 
-### 阶段二：各模块接入（后续）
-
-各模块逐步从自己的硬编码常量迁移到从 config 读取，由 orchestrator/entrypoint 统一传入。
-
-- agent-runner：`maxToolRounds`、`maxFollowUpRounds` 改为从 `RunnerConfig` 读取
-- llm-client：`apiKey`、`baseURL`、`maxTokens` 改为从 `LLMConfig` 读取
-- memory：`dbPath`、`chunkChars`、搜索参数等改为从 `MemoryModuleConfig` 读取
-- prompt-builder：`mode`、`safetyLevel` 改为从 `PromptConfig` 读取
-- session：`dir` 改为从 `SessionConfig` 读取
-- tools：各超时/限制值改为从 `ToolsConfig` 读取
-- workspace：`agentDir`、context 限制改为从 `WorkspaceConfig` 读取
-
-### 阶段三：CLI 入口（后续）
-
-创建 entrypoint/CLI 模块，串联 `loadConfig()` → `resolveAgentConfig()` → 各模块初始化，支持 `--model`、`--no-memory` 等命令行参数。
+如何将 config 与各模块串联（读取配置 → 参数传入 → 初始化），属于 entrypoint 模块的职责，见其独立设计文档。
 
 ## 11. 测试计划
 
