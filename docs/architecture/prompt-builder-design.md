@@ -286,40 +286,28 @@ private buildProjectContextSection(lines: string[], params: SystemPromptBuildPar
 
 ## 6. User Prompt Builder
 
-### 6.1 与 OpenClaw 的对比
+### 6.1 设计取舍
 
-OpenClaw 的 User Prompt 构建没有独立类，逻辑散落在执行引擎的多个文件中（`attempt.ts`、`body.ts`、`agent-command.ts`）。我们将其统一为 `UserPromptBuilder` 类。
+User Prompt Builder 的重点不是覆盖所有可能的前置内容，而是把“原始用户输入 + 可选前置上下文”收敛成一个稳定抽象。
 
-| 能力 | OpenClaw | 我们 |
-|------|---------|------|
-| 统一抽象 | ❌ 无独立类，散落在 attempt.ts / body.ts / agent-command.ts | ✅ `UserPromptBuilder` 类 |
-| 前置上下文 | `prependContext`（插件 hook 返回） | `ContextPrepender`（hook 注册，相同机制） |
-| 内部事件注入 | `prependInternalEventContext()` — sub agent 完成通知 | ❌ 暂不需要（可通过 ContextHook 实现） |
-| 中止提示 | `applySessionHints()` — 上次运行被中止时提醒 | ❌ 暂不需要（可通过 ContextHook 实现） |
-| Bootstrap 警告 | `prependBootstrapPromptWarning()` | ❌ 暂不需要（可通过 ContextHook 实现） |
-| 图像处理 | `detectAndLoadPromptImages()` — 从文本自动检测图像路径并加载（执行引擎层，非 Prompt Builder） | `attachments` 参数直接传入 |
-| 媒体分离 | ✅ `{ images }` 单独传入 LLM API | ✅ `attachments` 单独返回 |
+当前的关键设计决策是：
 
-**关键设计决策**：OpenClaw 有 4 种前置内容（内部事件、中止提示、bootstrap 警告、插件 hook），各自硬编码。我们用一个 `ContextHook` 机制统一处理——如果将来需要中止提示或事件通知，注册一个 hook 即可，不需要修改 Builder 核心代码。
+- 使用独立的 `UserPromptBuilder` 类，而不是把拼接逻辑散落到执行引擎；
+- 用 `ContextPrepender` / `ContextHook` 统一处理前置上下文；
+- 暂不内建内部事件、中止提示、bootstrap 警告等专用分支；
+- 媒体附件通过 `attachments` 单独传递，不混入最终文本。
+
+这样如果将来需要新增某类前置提示，优先通过 hook 扩展，而不是修改 Builder 核心拼接流程。
 
 ### 6.2 拼接顺序
 
-参考 OpenClaw 的 prepend 模式，原始消息永远在最后：
+原始消息永远在最后：
 
 ```
 前置上下文 chunk 1（按注册顺序，先注册的在前）
 前置上下文 chunk 2
 ...
 用户原始消息（永远在最后）
-```
-
-OpenClaw 的拼接顺序：
-```
-内部事件（prependInternalEventContext）
-中止提示（applySessionHints）
-Bootstrap 警告（prependBootstrapPromptWarning）
-Hook 上下文（hookResult.prependContext）
-用户原始消息
 ```
 
 我们的设计：

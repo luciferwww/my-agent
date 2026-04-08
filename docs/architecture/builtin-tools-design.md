@@ -65,30 +65,22 @@
 
 ---
 
-## 2. 与 OpenClaw 的关系
+## 2. 当前设计范围
 
-OpenClaw 对我们最有价值的不是“固定有哪些工具”，而是下面三点：
+builtin tools 当前只服务于本地 coding agent 的核心工作流，不追求一次性覆盖所有可能的工具类别。
 
-1. coding tools 和业务工具是组合出来的，不是一个平铺列表
-2. 文件工具、命令工具、外部工具各自有清晰的输入输出边界
-3. `apply_patch`、`exec`、`process`、`web_fetch` 这些高价值工具已经形成较稳定的接口习惯
+本文采用的策略是：
 
-但我们不应该直接照搬 OpenClaw 的完整工具面。
-
-| | OpenClaw | 我们当前 builtin tools 设计 |
-|---|---|---|
-| 目标场景 | 通用 agent 平台 | 本地 coding agent |
-| 工具总量 | 很大，含 session/channel/plugin/browser 等 | 先聚焦 coding 工作流 |
-| 文件工具 | `read` / `write` / `edit` / `apply_patch` | `read_file` / `write_file` / `edit_file` / `apply_patch` |
-| 命令工具 | `exec` / `process` | `exec` / `process` |
-| 外部工具 | `web_fetch` / `web_search` / browser | 先只做 `web_fetch` |
-| memory | `memory_search` / `memory_get` | 先保留工具名与最小语义，详细设计延后 |
-
-因此，本文采用的策略是：
-
-1. 借鉴 OpenClaw 已经稳定的工具语义
+1. 让 coding workflow 直接需要的高价值工具先稳定下来
 2. 维持本项目自己的命名和简化边界
 3. 只为当前阶段真正需要的 builtin tools 定义最小 schema
+
+当前的重点是把下面几类工具打磨清楚：
+
+- 文件读取与修改
+- 命令执行与后台进程管理
+- 必要的外部获取能力
+- 通过薄封装接入 memory 能力
 
 ---
 

@@ -20,6 +20,24 @@ my-agent 目前只有 Session 级的对话存储（JSONL）。每次新会话启
 - **压缩前自动保存**（上下文窗口快满时自动提醒 Agent 保存重要信息）— 依赖尚未实现的 compaction 机制
 - **对话历史搜索**（跨会话搜索过去的对话内容）— 可作为后续增强
 
+### 1.2 配置边界
+
+Memory 模块负责“如何索引、检索和维护记忆”，不负责“从哪里读取全局配置”。
+
+因此，Memory 模块原则上不应直接访问 config：
+
+- 不应直接调用 `loadConfig()` 或 `resolveAgentConfig()`；
+- 不应通过 `process.env` 自行读取 embedding provider、数据库路径或搜索阈值等关键运行配置；
+- 不应依赖完整 `AgentDefaults` 作为常规输入。
+
+推荐的边界是：
+
+- Runtime 层先完成配置解析；
+- Runtime 将 memory 相关字段映射为 `MemoryConfig` 或更小的局部 options；
+- Memory 模块只接收自己真正需要的配置子集，例如 `workspaceDir`、`dbPath`、`embedding`、`search`。
+
+这样 Memory 才能保持为可测试、可替换的领域模块，而不是把全局配置结构带进索引、检索和文件写入逻辑中。
+
 ---
 
 ## 2. 记忆模型
