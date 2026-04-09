@@ -188,6 +188,7 @@ import type { AgentRunner } from '../agent-runner/AgentRunner.js';
 import type { SessionManager } from '../session/SessionManager.js';
 import type { MemoryManager } from '../memory/MemoryManager.js';
 import type { SystemPromptBuilder } from '../prompt-builder/system/SystemPromptBuilder.js';
+import type { UserPromptBuilder } from '../prompt-builder/UserPromptBuilder.js';
 
 export interface RuntimeToolBundle {
   tools: Tool[];
@@ -204,6 +205,7 @@ export interface RuntimeResourceSet {
   llmClient: LLMClient;
   memoryManager: MemoryManager | null;
   systemPromptBuilder: SystemPromptBuilder;
+  userPromptBuilder: UserPromptBuilder;
   toolBundle: RuntimeToolBundle;
   contextFiles: ContextFile[];
   agentRunner: AgentRunner;
@@ -521,6 +523,7 @@ export async function bootstrapRuntime(
       llmClient,
       memoryManager,
       systemPromptBuilder,
+      userPromptBuilder,
       toolBundle,
       contextFiles,
       agentRunner,
