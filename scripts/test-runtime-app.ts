@@ -34,6 +34,8 @@ async function main() {
   console.log(`Workspace: ${workspaceDir}`);
   console.log(`Model: ${model}`);
   console.log(`Base URL: ${baseURL}`);
+  console.log(`Memory Enabled: true`);
+
 
   // 3. 启动 runtime
   const events: any[] = [];
@@ -41,7 +43,7 @@ async function main() {
     workspaceDir,
     envOverrides: {
       llm: { apiKey, baseURL, model },
-      memory: { enabled: false },
+      memory: { enabled: true },
     },
     onEvent: (event) => {
       events.push(event);
