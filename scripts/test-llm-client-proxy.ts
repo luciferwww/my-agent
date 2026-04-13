@@ -7,12 +7,12 @@
 
 import { AnthropicClient } from '../src/llm-client/index.js';
 
-const ANTHROPIC_AUTH_TOKEN = 'EMPTY'
+const ANTHROPIC_API_KEY = 'EMPTY'
 const ANTHROPIC_BASE_URL = 'http://localhost:5000'
-const MODEL = 'claude-opus-4.6-fast'
+const MODEL = 'gpt-4.1'
 
 const client = new AnthropicClient({
-  apiKey: ANTHROPIC_AUTH_TOKEN,
+  apiKey: ANTHROPIC_API_KEY,
   baseURL: ANTHROPIC_BASE_URL,
 });
 

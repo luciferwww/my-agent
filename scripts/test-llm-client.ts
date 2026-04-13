@@ -10,18 +10,14 @@
 
 import { AnthropicClient } from '../src/llm-client/index.js';
 
-const apiKey = process.env.ANTHROPIC_API_KEY;
-if (!apiKey) {
-  console.error('Please set the ANTHROPIC_API_KEY environment variable');
-  process.exit(1);
-}
-
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "EMPTY";
+const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL ?? 'http://localhost:5000';
 const client = new AnthropicClient({
-  apiKey,
-  ...(process.env.ANTHROPIC_BASE_URL ? { baseURL: process.env.ANTHROPIC_BASE_URL } : {}),
+  apiKey: ANTHROPIC_API_KEY,
+  baseURL: ANTHROPIC_BASE_URL,
 });
 
-const model = process.env.MODEL ?? 'claude-sonnet-4-6';
+const model = process.env.MODEL ?? 'gpt-4.1';
 
 console.log('\n=== LLM Client Integration Test ===\n');
 console.log(`Model: ${model}`);

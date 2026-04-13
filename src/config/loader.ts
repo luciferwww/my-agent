@@ -15,11 +15,15 @@ const CONFIG_FILE_NAME = 'config.json';
  * - source 值为 undefined → 保留 target 值
  * - 其他情况 → source 覆盖 target
  */
-export function deepMerge<T extends Record<string, unknown>>(
+type MergeableObject<T> = {
+  [K in keyof T]: unknown;
+};
+
+export function deepMerge<T extends MergeableObject<T>>(
   target: T,
   source: DeepPartial<T>,
 ): T {
-  const result = { ...target };
+  const result = { ...target } as T;
 
   for (const key of Object.keys(source) as Array<keyof T>) {
     const sourceVal = source[key];

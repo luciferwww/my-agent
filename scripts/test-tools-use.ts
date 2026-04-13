@@ -14,7 +14,7 @@ import { ensureWorkspace, loadContextFiles } from '../src/workspace/index.js';
 import { createToolExecutor, execTool, getToolDefinitions } from '../src/tools/index.js';
 import type { Tool } from '../src/tools/index.js';
 
-const ANTHROPIC_AUTH_TOKEN = 'EMPTY';
+const ANTHROPIC_API_KEY = 'EMPTY';
 const ANTHROPIC_BASE_URL = 'http://localhost:5000';
 const MODEL = 'claude-sonnet-4-6';
 const WORKSPACE_DIR = './test-workspace';
@@ -82,7 +82,7 @@ const tools: Tool[] = [
 // Initialization
 
 const llmClient = new AnthropicClient({
-  apiKey: ANTHROPIC_AUTH_TOKEN,
+  apiKey: ANTHROPIC_API_KEY,
   baseURL: ANTHROPIC_BASE_URL,
 });
 

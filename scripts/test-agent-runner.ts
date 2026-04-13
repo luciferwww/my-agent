@@ -12,7 +12,7 @@ import { SessionManager } from '../src/session/index.js';
 import { SystemPromptBuilder } from '../src/prompt-builder/index.js';
 import { ensureWorkspace, loadContextFiles } from '../src/workspace/index.js';
 
-const ANTHROPIC_AUTH_TOKEN = 'EMPTY';
+const ANTHROPIC_API_KEY = 'EMPTY';
 const ANTHROPIC_BASE_URL = 'http://localhost:5000';
 const MODEL = 'claude-sonnet-4-6';
 const WORKSPACE_DIR = './test-workspace';
@@ -26,7 +26,7 @@ console.log(`maxFollowUpRounds: 2\n`);
 // 1. Initialize all modules
 
 const llmClient = new AnthropicClient({
-  apiKey: ANTHROPIC_AUTH_TOKEN,
+  apiKey: ANTHROPIC_API_KEY,
   baseURL: ANTHROPIC_BASE_URL,
 });
 
