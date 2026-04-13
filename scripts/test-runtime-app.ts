@@ -12,18 +12,18 @@
  * 5. 关闭 runtime，打印 shutdown report
  */
 
-import { mkdtemp, writeFile, rm, mkdir } from 'fs/promises';
-import { tmpdir } from 'os';
-import { join } from 'path';
+import { writeFile } from 'fs/promises';
+// import { mkdtemp, rm } from 'fs/promises';
+// import { tmpdir } from 'os';
+import { resolve, join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
 
 async function main() {
-  // 1. 创建临时 workspace
-  const workspaceDir = await mkdtemp(join(tmpdir(), 'runtime-app-test-'));
-  const agentDir = join(workspaceDir, '.agent');
-  await mkdir(agentDir, { recursive: true });
-  const identityPath = join(agentDir, 'IDENTITY.md');
-  await writeFile(identityPath, '# Identity\nThis is a test identity.\n', 'utf-8');
+  // 1. 使用固定 workspace（保留历史和记忆，更接近真实 agent 工作环境）
+  //    原代码：const workspaceDir = await mkdtemp(join(tmpdir(), 'runtime-app-test-'));
+  //    .agent/ 目录和模板文件（IDENTITY.md 等）由 ensureWorkspace() 自动创建
+  const workspaceDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'test-workspace');
 
   // 2. 读取环境变量
   const apiKey = process.env.ANTHROPIC_API_KEY ?? 'EMPTY';
@@ -88,6 +88,7 @@ async function main() {
 
   // 6. reloadContextFiles 测试
   console.log('\n--- Context Reload ---\n');
+  const identityPath = join(workspaceDir, '.agent', 'IDENTITY.md');
   await writeFile(identityPath, '# Identity\nReloaded identity marker.\n', 'utf-8');
   await app.runTurn({
     sessionKey: 'main',
@@ -103,8 +104,8 @@ async function main() {
   const shutdownReport = await app.close('test complete');
   console.log('Shutdown report:', shutdownReport);
 
-  // 8. 清理临时目录
-  await rm(workspaceDir, { recursive: true, force: true });
+  // 8. 固定 workspace，不再清理（保留历史和记忆）
+  //    原代码：await rm(workspaceDir, { recursive: true, force: true });
 }
 
 main().catch((err) => {
