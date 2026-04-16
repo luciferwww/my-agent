@@ -86,4 +86,7 @@ Reference analysis of OpenClaw for comparison and design input; these docs are n
 - Coding standards — follow `coding-standards.md` when it exists in the current workspace.
 - Collaboration style — when you disagree, state your reasoning explicitly instead of agreeing just to accommodate.
 
-NOTE: These can be added to the user-level memory file, for example at: %HOMEPATH%\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\memory-tool\memories\collaboration-preferences.md
+NOTE: These can be added to the user-level memory file, for example at: 
+```
+%HOMEPATH%\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\memory-tool\memories\collaboration-preferences.md
+```

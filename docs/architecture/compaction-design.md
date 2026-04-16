@@ -71,40 +71,52 @@ const messages: ChatMessage[] = [
 三层渐进式设计，每层独立可用：
 
 ```
-Layer 1: Tool Result 裁剪                    [不调 LLM，纯字符串操作]
+Layer 1: Tool Result 裁剪（per-result）        [不调 LLM，纯字符串操作]
   ↓ 裁剪后仍超限
-Layer 2: 预判检测 + 路由                      [不调 LLM，token 估算]
-  ↓ 判定需要压缩
-Layer 3: LLM 摘要压缩                        [调 LLM，生成摘要替换旧消息]
+Layer 2: 预判检测 + 路由                       [不调 LLM，token 估算]
+  ├─ truncate_tool_results_only → Layer 1.5: Tool Result 聚合裁剪  [不调 LLM]
+  └─ compact → Layer 3: LLM 摘要压缩          [调 LLM，生成摘要替换旧消息]
 ```
 
 ### 在 AgentRunner.run() 中的插入点
 
 ```
-run(params)
+run(params)  [外层 retry 循环，最多 MAX_COMPACTION_RETRIES 次]
   │
-  ├─ loadHistory() → 全量消息
-  ├─ 保存用户消息到 session
-  ├─ 构建 messages 数组
+  ├─ catch ContextOverflowError
+  │     ├─ compactHistory(sessionKey, ...)    ← 压缩 session
+  │     ├─ compactionAttempts++
+  │     └─ retry（重新执行 runAttempt）
   │
-  ├─ ★ [新增] Layer 1: pruneToolResults(messages)
-  │     裁剪超大的 tool result，不改变持久化数据
-  │
-  ├─ ★ [新增] Layer 2: checkContextBudget(messages, system, config)
-  │     估算 token，判断是否超限
-  │     ├─ fits → 继续
-  │     ├─ needs_compaction → 触发 Layer 3
-  │     └─ overflow_after_compaction → 抛错
-  │
-  ├─ ★ [新增] Layer 3: compactHistory(sessionKey, messages, config)
-  │     LLM 摘要 → 替换旧消息 → 持久化压缩记录
-  │     → 用压缩后的 messages 继续
-  │
-  ├─ 内层循环：LLM 调用 + tool use
-  │     ├─ ★ [新增] 每轮 tool result 返回后，执行 Layer 1 裁剪
-  │     └─ ★ [新增] 每轮 LLM 调用前，执行 Layer 2 检查
-  │
-  └─ 返回结果
+  └─ runAttempt(params)
+       │
+       ├─ loadHistory() → 全量历史消息
+       ├─ 保存用户消息到 session
+       ├─ messages = [...history]             ← 不含当前用户消息
+       │
+       ├─ ★ [新增] Layer 1: pruneToolResults(messages)
+       │     裁剪超大的 tool result（per-result），不改变持久化数据
+       │
+       ├─ ★ [新增] Layer 2: checkContextBudget(messages, systemPrompt, currentPrompt)
+       │     估算 token（历史、systemPrompt、currentPrompt 分别传入），判断是否超限
+       │     ├─ fits → 直接继续
+       │     ├─ truncate_tool_results_only
+       │     │     └─ Layer 1.5: pruneToolResultsAggregate(messages)
+       │     │           更激进地裁剪，将所有 tool result 总量压入聚合预算
+       │     │           → 裁剪后直接继续，无需调 LLM
+       │     └─ compact → throw ContextOverflowError → 外层 retry
+       │
+       ├─ ★ [新增] messages = [...messages, currentUserMessage]
+       │     检查通过后才 append 当前用户消息
+       │
+       ├─ 内层循环：LLM 调用 + tool use
+       │     ├─ ★ [新增] 每轮 tool result 后，执行 Layer 1 裁剪
+       │     ├─ ★ [新增] 每轮 tool result 后，执行 90% 阈值检查
+       │     │     └─ 超限 → throw ContextOverflowError → 外层 retry
+       │     └─ LLM API 返回 context overflow 错误
+       │           └─ throw ContextOverflowError → 外层 retry
+       │
+       └─ 返回结果
 ```
 
 ---
@@ -120,14 +132,17 @@ run(params)
 export interface CompactionConfig {
   /** 是否启用压缩 */
   enabled: boolean;
-  /** 上下文窗口大小（tokens），应与模型实际窗口匹配 */
-  contextWindowTokens: number;
-  /** 预留 token 数（为新回复留出空间） */
+  /** 预留 token 数（仅为模型输出留出空间；currentPrompt 已显式计入估算） */
   reserveTokens: number;
   /** 压缩后保留最近 N 个用户轮次的完整消息 */
   keepRecentTurns: number;
-  /** Tool result 裁剪：单个结果的最大字符数 */
-  toolResultMaxChars: number;
+  /**
+   * 单条 tool result 最大占 context window 的比例。
+   * 运行时计算：maxChars = contextWindowTokens × TOOL_RESULT_CHARS_PER_TOKEN × toolResultContextShare
+   * 其中 TOOL_RESULT_CHARS_PER_TOKEN = 2（tool result 比普通文本更密集）。
+   * 例：200k 窗口 × 2 × 0.5 = 200,000 字符；32k 窗口 × 2 × 0.5 = 32,000 字符。
+   */
+  toolResultContextShare: number;
   /** Tool result 裁剪：保留头部字符数 */
   toolResultHeadChars: number;
   /** Tool result 裁剪：保留尾部字符数 */
@@ -139,6 +154,9 @@ export interface CompactionConfig {
 }
 ```
 
+> 注意：上下文窗口大小（`contextWindowTokens`）定义在 `LLMConfig` 中，不在 `CompactionConfig` 里。
+> 压缩逻辑从调用方接收 `config.llm.contextWindowTokens`，默认值 200,000 适用于 Claude 3.5 Sonnet / Claude 4 系列。
+
 ### 4.2 默认值
 
 ```typescript
@@ -146,10 +164,9 @@ export interface CompactionConfig {
 
 compaction: {
   enabled: true,
-  contextWindowTokens: 200_000,   // Claude 3.5 Sonnet
-  reserveTokens: 20_000,          // 为新回复和 system prompt 留出空间
+  reserveTokens: 20_000,          // 仅覆盖模型输出预留量（currentPrompt 已显式计入估算）
   keepRecentTurns: 3,             // 最近 3 轮用户消息不压缩
-  toolResultMaxChars: 30_000,     // 超过此大小才裁剪
+  toolResultContextShare: 0.5,    // 单条 tool result 最大占 context window 的 50%
   toolResultHeadChars: 10_000,    // 保留头部 10K
   toolResultTailChars: 5_000,     // 保留尾部 5K
   timeoutSeconds: 300,            // 5 分钟超时
@@ -199,7 +216,7 @@ export interface CompactionRecord extends TranscriptEntryBase {
   tokensBefore: number;
   /** 压缩后的估算 token 数 */
   tokensAfter: number;                // ← 新增
-  /** 触��原因 */
+  /** 触发原因 */
   trigger: 'preemptive' | 'overflow' | 'manual';  // ← 新增
   /** 被丢弃的消息数量 */
   droppedMessages: number;            // ← 新增
@@ -216,6 +233,8 @@ export interface RunParams {
 
   /** 压缩配置（由 RuntimeApp 传入） */
   compaction?: CompactionConfig;      // ← 新增
+  /** 模型上下文窗口大小（由 RuntimeApp 从 config.llm.contextWindowTokens 传入） */
+  contextWindowTokens?: number;       // ← 新增
 }
 ```
 
@@ -280,19 +299,22 @@ export const SAFETY_MARGIN = 1.2;
 /** 估算单条消息的 token 数 */
 export function estimateMessageTokens(message: ChatMessage): number;
 
-/** 估算消息数组 + system prompt 的总 token 数 */
+/** 估算消息数组 + system prompt + 当前用户消息的总 token 数 */
 export function estimatePromptTokens(params: {
   messages: ChatMessage[];
   systemPrompt?: string;
+  /** 当前用户消息字符串，单独计入，不纳入 messages（不会被压缩） */
+  currentPrompt?: string;
 }): number;
 ```
 
 ### 5.2 估算逻辑
 
 ```
-estimatePromptTokens({ messages, systemPrompt })
+estimatePromptTokens({ messages, systemPrompt, currentPrompt })
   │
   ├─ systemPrompt → chars / 4
+  ├─ currentPrompt → chars / 4 + 4 tokens（消息开销，单独计入）
   ├─ 每条 message:
   │   ├─ content 为 string → chars / 4
   │   ├─ content 为 ContentBlock[]:
@@ -317,12 +339,18 @@ estimatePromptTokens({ messages, systemPrompt })
 /**
  * Tool result 裁剪。
  *
- * 对超过 maxChars 的 tool result 内容，保留头部和尾部，中间用省略标记替代。
+ * 对超过动态阈值的 tool result 内容，保留头部和尾部，中间用省略标记替代。
+ * 阈值由 contextWindowTokens × TOOL_RESULT_CHARS_PER_TOKEN × toolResultContextShare 计算得出。
  * 纯字符串操作，不调用 LLM，不修改持久化数据，仅影响发给 LLM 的 messages。
  */
+
+/** tool result 每 token 对应字符数（比普通文本更保守） */
+export const TOOL_RESULT_CHARS_PER_TOKEN = 2;
+
 export function pruneToolResults(
   messages: ChatMessage[],
-  config: Pick<CompactionConfig, 'toolResultMaxChars' | 'toolResultHeadChars' | 'toolResultTailChars'>,
+  config: Pick<CompactionConfig, 'toolResultContextShare' | 'toolResultHeadChars' | 'toolResultTailChars'>,
+  contextWindowTokens: number,
   onPruned?: (info: { index: number; originalChars: number; prunedChars: number }) => void,
 ): ChatMessage[];
 ```
@@ -332,10 +360,16 @@ export function pruneToolResults(
 对 messages 中每个 `role: 'user'` 且 content 包含 `tool_result` block 的消息：
 
 ```
+// 运行时计算动态阈值
+maxChars = contextWindowTokens × TOOL_RESULT_CHARS_PER_TOKEN × toolResultContextShare
+         = contextWindowTokens × 2 × 0.5
+         = contextWindowTokens
+// 例：200k 窗口 → 200,000 字符；32k 窗口 → 32,000 字符
+
 对每个 tool_result block:
   originalChars = block.content.length
   
-  if originalChars <= toolResultMaxChars:
+  if originalChars <= maxChars:
     不裁剪
   else:
     head = block.content.slice(0, toolResultHeadChars)
@@ -355,6 +389,53 @@ export function pruneToolResults(
 - 图片 block 不裁剪（跳过 `type: 'image'` ）
 - 发给 LLM 的 messages 中 tool_result 是 `role: 'user'` + `type: 'tool_result'`
 
+### 6.4 Layer 1.5: 聚合裁剪（truncate_tool_results_only 路由专用）
+
+当 Layer 2 返回 `truncate_tool_results_only` 时，执行更激进的裁剪，使所有 tool result 的**总字符数**落入聚合预算内。
+
+```typescript
+/**
+ * tool result 聚合预算份额。
+ * 聚合预算 = contextWindowTokens × CHARS_PER_TOKEN(4) × AGGREGATE_TOOL_RESULT_CONTEXT_SHARE
+ *          = contextWindowTokens × 1.2 chars
+ * 例：200k 窗口 → 240,000 字符 = 60,000 tokens = 30% 的上下文给所有 tool result
+ */
+export const AGGREGATE_TOOL_RESULT_CONTEXT_SHARE = 0.3;
+
+/**
+ * 聚合裁剪：将所有 tool result 总量压入聚合预算。
+ *
+ * context-budget.ts 的 estimateToolResultReductionPotential() import 本文件的
+ * AGGREGATE_TOOL_RESULT_CONTEXT_SHARE，两处使用同一常量，保证估算与实际裁剪一致。
+ *
+ * 每条 result 按当前大小比例分配预算，但不裁剪到低于最小保留量
+ * (toolResultHeadChars + toolResultTailChars)。
+ * 返回新的 messages 数组（immutable）。
+ */
+export function pruneToolResultsAggregate(
+  messages: ChatMessage[],
+  contextWindowTokens: number,
+  config: Pick<CompactionConfig, 'toolResultHeadChars' | 'toolResultTailChars'>,
+): ChatMessage[];
+```
+
+裁剪算法（`CHARS_PER_TOKEN = 4` 为路由层常量，由 context-budget.ts 定义）：
+
+```
+aggregateBudgetChars = contextWindowTokens × 4 × AGGREGATE_TOOL_RESULT_CONTEXT_SHARE
+minKeepChars         = config.toolResultHeadChars + config.toolResultTailChars
+
+1. 统计所有 tool result 的 totalChars
+2. 如果 totalChars <= aggregateBudgetChars，直接返回原数组（无需裁剪）
+3. 对每条 tool result 按比例分配预算：
+     perResultTarget = max(
+       floor(aggregateBudgetChars × (result.length / totalChars)),  // 按比例分配
+       minKeepChars                                                   // 不低于最小保留量
+     )
+     如果 result.length > perResultTarget → 裁剪（同 pruneToolResults 的头尾格式）
+4. 返回修改后的新数组
+```
+
 ---
 
 ## 7. Layer 2: 预判检测与路由
@@ -370,78 +451,158 @@ export function pruneToolResults(
  * 在发送 LLM 前估算总 token，决定路由策略。
  */
 
-export type ContextBudgetRoute =
-  | 'fits'                      // 不需要任何处理
-  | 'compact'                   // 需要 LLM 摘要压缩
-  | 'overflow';                 // 压缩后也不够（异常情况）
+// 路由数学用常量（仅在本文件内部使用）
+const CHARS_PER_TOKEN = 4;               // 通用文本估算：chars / 4 ≈ tokens
+const TRUNCATION_BUFFER_TOKENS = 512;    // 路由阈值安全冗余
 
-export function checkContextBudget(params: {
-  messages: ChatMessage[];
-  systemPrompt?: string;
-  config: CompactionConfig;
-}): {
+// 从 tool-result-pruning.ts import（两处使用同一常量，避免分歧）
+import { AGGREGATE_TOOL_RESULT_CONTEXT_SHARE } from './tool-result-pruning.js';
+
+export type ContextBudgetRoute =
+  | 'fits'                        // 不需要任何处理
+  | 'truncate_tool_results_only'  // 更激进裁剪 tool result 即可解决溢出，无需 LLM
+  | 'compact';                    // 需要 LLM 摘要压缩
+
+export interface ContextBudgetResult {
   route: ContextBudgetRoute;
   estimatedTokens: number;
   availableTokens: number;
   overflowTokens: number;
-};
+  /** 聚合裁剪可节省的字符数（estimateToolResultReductionPotential 的计算结果） */
+  reducibleChars: number;
+}
+
+export function checkContextBudget(params: {
+  /** 历史消息（不含当前用户消息，已经过 Layer 1 裁剪） */
+  messages: ChatMessage[];
+  systemPrompt?: string;
+  /** 当前用户消息字符串，独立传入，显式计入 token 估算，不会被压缩 */
+  currentPrompt?: string;
+  /** 由调用方从 config.llm.contextWindowTokens 传入 */
+  contextWindowTokens: number;
+  config: Pick<CompactionConfig,
+    'reserveTokens' | 'toolResultHeadChars' | 'toolResultTailChars'>;
+}): ContextBudgetResult;
 ```
 
 ### 7.2 路由逻辑
 
+> **设计说明**：`messages` 传入时不含当前用户消息；`currentPrompt` 作为独立字符串参数显式传入，单独计入 token 估算。
+> `reserveTokens`（默认 20,000）仅覆盖模型输出预留量，不再代理当前用户消息的体积。
+> 这样设计的原因：压缩/裁剪只操作历史 `messages`，`currentPrompt` 永远不会被压缩，职责边界清晰。
+
 ```
-checkContextBudget({ messages, systemPrompt, config })
+checkContextBudget({ messages, systemPrompt, currentPrompt, contextWindowTokens, config })
   │
-  ├─ estimatedTokens = estimatePromptTokens({ messages, systemPrompt })
-  ├─ availableTokens = config.contextWindowTokens - config.reserveTokens
+  ├─ estimatedTokens = estimatePromptTokens({ messages, systemPrompt, currentPrompt })
+  │                    （历史 + systemPrompt + currentPrompt）
+  ├─ availableTokens = contextWindowTokens - config.reserveTokens
   ├─ overflowTokens  = max(0, estimatedTokens - availableTokens)
   │
   ├─ overflowTokens === 0
-  │   └─ route = "fits"
+  │   └─ route = "fits"，reducibleChars = 0
   │
-  ├─ overflowTokens > 0
-  │   └─ route = "compact"
-  │
-  └─ 返回 { route, estimatedTokens, availableTokens, overflowTokens }
+  └─ overflowTokens > 0
+      │
+      ├─ reducibleChars = estimateToolResultReductionPotential(
+      │     messages, contextWindowTokens,
+      │     config.toolResultHeadChars, config.toolResultTailChars
+      │   )
+      │   │
+      │   │  aggregateBudgetChars = contextWindowTokens × CHARS_PER_TOKEN
+      │   │                        × AGGREGATE_TOOL_RESULT_CONTEXT_SHARE
+      │   │  minKeepChars = config.toolResultHeadChars + config.toolResultTailChars
+      │   │  totalToolResultChars = 所有 tool_result block 的 content.length 之和
+      │   │
+      │   │  // 不能裁剪低于最小保留量的部分
+      │   │  maxSaveablePerResult = max(0, result.length - minKeepChars)
+      │   │  totalMaxSaveable     = sum(maxSaveablePerResult for all results)
+      │   │
+      │   └─ reducibleChars = min(
+      │         max(0, totalToolResultChars - aggregateBudgetChars),  // 聚合预算约束
+      │         totalMaxSaveable                                       // 最小保留量约束
+      │       )
+      │
+      ├─ truncateOnlyThreshold = max(
+      │     overflowTokens × CHARS_PER_TOKEN + TRUNCATION_BUFFER_TOKENS × CHARS_PER_TOKEN,
+      │     ceil(overflowTokens × CHARS_PER_TOKEN × 1.5)
+      │   )
+      │   （CHARS_PER_TOKEN=4，TRUNCATION_BUFFER_TOKENS=512，阈值含 50% 安全冗余）
+      │
+      ├─ reducibleChars >= truncateOnlyThreshold
+      │   └─ route = "truncate_tool_results_only"（聚合裁剪足以覆盖溢出，无需 LLM）
+      │
+      └─ otherwise
+          └─ route = "compact"（需要 LLM 摘要压缩，throw ContextOverflowError）
 ```
 
 ### 7.3 在 AgentRunner.run() 中的集成
 
 ```typescript
-// AgentRunner.run() 内，构建 messages 之后：
+// AgentRunner.run() 内：
+const contextWindowTokens = params.contextWindowTokens ?? 200_000;
 
-// Layer 1: 裁剪 tool results
-messages = pruneToolResults(messages, compaction, (info) => {
+// messages 仅含历史，当前用户消息暂不 append
+const messages = [...this.loadHistory(params.sessionKey)];
+
+// Layer 1: per-result 裁剪（只操作历史，不会触碰当前消息）
+messages = pruneToolResults(messages, compaction, contextWindowTokens, (info) => {
   this.emit({ type: 'tool_result_pruned', ... });
 });
 
 // Layer 2: 检查上下文预算
-const budget = checkContextBudget({ messages, systemPrompt, config: compaction });
+const budget = checkContextBudget({
+  messages,
+  systemPrompt,
+  currentPrompt: params.message,  // 单独传入，不合入 messages，不会被压缩
+  contextWindowTokens,
+  config: compaction,   // Pick: reserveTokens + toolResultHeadChars + toolResultTailChars
+});
 
-if (budget.route === 'compact') {
-  // Layer 3: LLM 摘要压缩
-  this.emit({ type: 'compaction_start', trigger: 'preemptive', estimatedTokens: budget.estimatedTokens });
-  const compactResult = await this.compactHistory(sessionKey, messages, compaction);
-  messages = compactResult.messages;
-  this.emit({ type: 'compaction_end', ... });
+if (budget.route === 'truncate_tool_results_only') {
+  // Layer 1.5: 聚合裁剪（比 Layer 1 更激进，但无需 LLM）
+  messages = pruneToolResultsAggregate(messages, contextWindowTokens, compaction);
+  // 裁剪后直接继续，不调 LLM
+} else if (budget.route === 'compact') {
+  // Layer 3: 需要 LLM 摘要压缩，交由外层 retry 循环处理
+  throw new ContextOverflowError(
+    `Preemptive compaction required: estimated ${budget.estimatedTokens} tokens `
+    + `exceeds budget ${budget.availableTokens} tokens`,
+  );
 }
 
-// 继续正常的 LLM 调��循环...
+// 压缩/裁剪完成后，将当前用户消息 append 进 messages
+messages.push({ role: 'user', content: params.message });
+
+// 继续正常的 LLM 调用循环...
 ```
 
 ### 7.4 内层循环中的检查
 
-每轮 tool result 返回后、下一次 LLM 调用前，也需要执行 Layer 1 + Layer 2 检查：
+内层循环里不做就地压缩，而是通过抛出 `ContextOverflowError` 交由外层 retry 循环处理。有两个触发点：
+
+**触发点 1 — 90% 阈值检查（主动，避免 API 报错）**
 
 ```typescript
 // 内层循环中，tool result push 到 messages 之后：
-messages = pruneToolResults(messages, compaction);
-const budget = checkContextBudget({ messages, systemPrompt, config: compaction });
-if (budget.route === 'compact') {
-  const compactResult = await this.compactHistory(sessionKey, messages, compaction);
-  messages = compactResult.messages;
+messages = pruneToolResults(messages, compaction, contextWindowTokens);
+
+const estimated = estimatePromptTokens({ messages, systemPrompt });
+if (estimated > params.contextWindowTokens * 0.9) {
+  throw new ContextOverflowError('Context exceeds 90% threshold during tool loop');
 }
 ```
+
+**触发点 2 — LLM API 报错（被动兜底）**
+
+```typescript
+// LLM 调用失败时：
+if (isContextOverflowError(error)) {
+  throw new ContextOverflowError(error.message);
+}
+```
+
+两条路径都抛出同一个 `ContextOverflowError`，外层 retry 循环统一处理。
 
 ---
 
@@ -732,11 +893,20 @@ export function findLastCompaction(state: TranscriptState): CompactionRecord | n
 
 ## 10. Overflow 错误处理
 
-除了预判式压缩，还需要处理 LLM 返回的溢出错误（作为第二道防线）：
+所有 overflow 情况（外层预判、内层 90% 检查、LLM API 报错）统一抛出 `ContextOverflowError`，由外层 retry 循环集中处理。
 
-### 10.1 错误检测
+### 10.1 ContextOverflowError
 
-在 `AgentRunner.callLLMStream()` 中检测溢出错误：
+```typescript
+export class ContextOverflowError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ContextOverflowError';
+  }
+}
+```
+
+### 10.2 LLM API 错误检测
 
 ```typescript
 function isContextOverflowError(error: Error): boolean {
@@ -750,20 +920,46 @@ function isContextOverflowError(error: Error): boolean {
 }
 ```
 
-### 10.2 错误恢复流程
+### 10.3 外层 retry 循环
+
+```typescript
+// AgentRunner.run() 外层结构
+
+const MAX_COMPACTION_RETRIES = 3;
+let compactionAttempts = 0;
+
+while (true) {
+  try {
+    return await this.runAttempt(params);
+  } catch (error) {
+    if (error instanceof ContextOverflowError && compactionAttempts < MAX_COMPACTION_RETRIES) {
+      // 压缩 session，重新执行整个 attempt
+      await this.compactHistory(params.sessionKey, { trigger: 'overflow' });
+      compactionAttempts++;
+      // continue → 重新执行 runAttempt，loadHistory 会加载压缩后的 session
+    } else {
+      throw error;
+    }
+  }
+}
+```
+
+### 10.4 三条触发路径
 
 ```
-LLM 调用失败
-  │
-  ├─ isContextOverflowError(error)?
-  │   ├─ 否 → 抛出原始错误
-  │   └─ 是 ↓
-  │
-  ├─ 已经压缩过了（本轮已触发过压缩）？
-  │   └─ 是 → 抛出 CompactionError("Context still overflows after compaction")
-  │
-  └─ 触发 Layer 3 压缩（trigger = 'overflow'）
-      → 压缩后重新调用 LLM
+外层 checkContextBudget 超限
+  └─ throw ContextOverflowError
+       ↓
+内层 90% 阈值检查超限
+  └─ throw ContextOverflowError
+       ↓
+内层 LLM API 返回 context overflow
+  └─ isContextOverflowError() → throw ContextOverflowError
+       ↓
+       外层 retry 循环捕获
+         ├─ compactionAttempts < MAX_COMPACTION_RETRIES
+         │   → compactHistory() → retry runAttempt
+         └─ 超过限制 → 抛出原始错误
 ```
 
 ---
@@ -794,7 +990,8 @@ const result = await agentRunner.run({
   maxTokens: config.llm.maxTokens,
   maxToolRounds: config.runner.maxToolRounds,
   maxFollowUpRounds: config.runner.maxFollowUpRounds,
-  compaction: config.compaction,      // ← 新增
+  compaction: config.compaction,                        // ← 新增
+  contextWindowTokens: config.llm.contextWindowTokens,  // ← 新增
 });
 ```
 
@@ -804,35 +1001,45 @@ const result = await agentRunner.run({
 
 ### Phase 1: 基础防护（Token 估算 + Tool Result 裁剪 + 预判检测）
 
-- [ ] `src/agent-runner/token-estimation.ts`
-  - [ ] `estimateMessageTokens()`
-  - [ ] `estimatePromptTokens()`
-  - [ ] 单元测试
-- [ ] `src/agent-runner/tool-result-pruning.ts`
-  - [ ] `pruneToolResults()`
-  - [ ] 单元测试
-- [ ] `src/agent-runner/context-budget.ts`
-  - [ ] `checkContextBudget()`
-  - [ ] 单元测试
-- [ ] `src/config/types.ts`
-  - [ ] 新增 `CompactionConfig` 接口
-  - [ ] `AgentDefaults` 添加 `compaction` 字段
-- [ ] `src/config/defaults.ts`
-  - [ ] 添加 `compaction` 默认值
-- [ ] `src/agent-runner/types.ts`
-  - [ ] `AgentEvent` 新增 `tool_result_pruned` 事件
-- [ ] `src/agent-runner/AgentRunner.ts`
-  - [ ] `run()` 中 LLM 调用前插入 `pruneToolResults()` + `checkContextBudget()`
-  - [ ] 内层循环每轮 tool result 后也执行检查
-  - [ ] `checkContextBudget` 返回 `compact` 时暂时抛出明确错误（Phase 2 替换为压缩）
+- [x] `src/agent-runner/token-estimation.ts`
+  - [x] `estimateMessageTokens()`
+  - [x] `estimatePromptTokens()`
+  - [x] 单元测试
+- [x] `src/agent-runner/tool-result-pruning.ts`
+  - [x] `pruneToolResults()` — per-result 裁剪
+  - [x] `pruneToolResultsAggregate()` — 聚合裁剪（truncate_tool_results_only 专用）
+  - [x] 单元测试
+- [x] `src/agent-runner/context-budget.ts`
+  - [x] `checkContextBudget()` — 3 路路由：fits / truncate_tool_results_only / compact
+  - [x] `estimateToolResultReductionPotential()` — 内部函数，估算聚合裁剪可节省的字符数
+  - [x] 单元测试
+- [x] `src/config/types.ts`
+  - [x] 新增 `CompactionConfig` 接口
+  - [x] `AgentDefaults` 添加 `compaction` 字段
+  - [x] `LLMConfig` 新增 `contextWindowTokens`
+- [x] `src/config/defaults.ts`
+  - [x] 添加 `compaction` 默认值
+  - [x] `llm` 新增 `contextWindowTokens: 200_000`
+- [x] `src/agent-runner/types.ts`
+  - [x] `RunParams` 新增 `compaction?: CompactionConfig`
+  - [x] `RunParams` 新增 `contextWindowTokens?: number`
+  - [x] `RunResult` 新增 `compacted` / `compactionStats`
+  - [x] `AgentEvent` 新增 `tool_result_pruned` 事件
+  - [ ] `AgentEvent` 新增 `compaction_start` / `compaction_end`（Phase 2）
+- [x] `src/agent-runner/AgentRunner.ts`
+  - [x] `run()` 中 LLM 调用前插入 `pruneToolResults()` + `checkContextBudget()`（含 `truncate_tool_results_only` 路由处理）
+  - [x] 内层循环每轮 tool result 后执行 90% 阈值检查（Phase 2 替换为 `ContextOverflowError`）
 
-### Phase 2: LLM 摘要压缩
+### Phase 2: LLM 摘要压缩 + Overflow 处理
 
 - [ ] `src/agent-runner/compaction.ts`
   - [ ] `splitForCompaction()` — 消息拆分（tool_use/tool_result 配对保护）
   - [ ] `generateSummary()` — LLM 摘要生成 + 两级降级
   - [ ] `compactMessages()` — 完整压缩流程
   - [ ] 单元测试
+- [ ] `src/agent-runner/errors.ts`
+  - [ ] `ContextOverflowError` 类
+  - [ ] `isContextOverflowError()` — LLM API 溢出错误分类
 - [ ] `src/session/types.ts`
   - [ ] `CompactionRecord` 扩展字段（`tokensAfter`, `trigger`, `droppedMessages`）
 - [ ] `src/session/transcript.ts`
@@ -843,21 +1050,16 @@ const result = await agentRunner.run({
 - [ ] `src/agent-runner/AgentRunner.ts`
   - [ ] 新增 `compactHistory()` 私有方法
   - [ ] `loadHistory()` 改造：感知压缩记录，注入摘要
-  - [ ] `checkContextBudget` 返回 `compact` 时触发压缩（替代 Phase 1 的抛错）
+  - [ ] `run()` 外层改为 retry 循环（`MAX_COMPACTION_RETRIES = 3`），捕获 `ContextOverflowError` → `compactHistory()` → retry `runAttempt`
+  - [ ] `callLLMStream()` 捕获 LLM API 溢出错误 → throw `ContextOverflowError`
   - [ ] 压缩完成后更新 SessionEntry 元数据
 - [ ] `src/agent-runner/types.ts`
   - [ ] `AgentEvent` 新增 `compaction_start` / `compaction_end`
-  - [ ] `RunParams` 添加 `compaction` 字段
-  - [ ] `RunResult` 添加 `compacted` / `compactionStats`
 - [ ] `src/runtime/RuntimeApp.ts`
-  - [ ] `runTurnInternal()` 传入 `compaction` 配置
+  - [ ] `runTurnInternal()` 传入 `compaction` 配置和 `contextWindowTokens`
 
 ### Phase 3: 增强特性
 
-- [ ] Overflow 错误检测与自动恢复
-  - [ ] `isContextOverflowError()` 错误分类
-  - [ ] `callLLMStream()` 捕获溢出错误 → 触发压缩 → 重试
-  - [ ] 防止无限重试（已压缩过则抛错）
 - [ ] 级联重试
   - [ ] 压缩后仍溢出 → 减少 `keepRecentTurns` 再次压缩（最低保留 1 轮）
 - [ ] 压缩指标上报
@@ -895,11 +1097,22 @@ const result = await agentRunner.run({
 | 测试用例 | 预期行为 |
 |---------|---------|
 | token < available | route = "fits" |
-| token > available | route = "compact" |
+| token > available，无可裁剪 tool result | route = "compact" |
+| token > available，聚合裁剪可覆盖溢出 | route = "truncate_tool_results_only" |
+| token > available，聚合裁剪不足以覆盖溢出 | route = "compact" |
 | 临界值（恰好等于 available） | route = "fits" |
-| 极端情况（available <= 0） | route = "compact" |
+| reducibleChars 恰好等于 truncateOnlyThreshold | route = "truncate_tool_results_only" |
 
-### 13.4 消息拆分
+### 13.4 聚合裁剪（pruneToolResultsAggregate）
+
+| 测试用例 | 预期行为 |
+|---------|---------|
+| 总 chars <= 聚合预算 | 返回原数组引用，不裁剪 |
+| 总 chars 超预算，各 result 等大 | 等比裁剪，各 result 缩至相同大小 |
+| 含极小 result（小于 minKeepChars） | 小 result 不裁剪，预算多余部分让给其他 result |
+| 不修改原数组 | 原始 messages 不变 |
+
+### 13.5 消息拆分
 
 | 测试用例 | 预期行为 |
 |---------|---------|
@@ -908,7 +1121,7 @@ const result = await agentRunner.run({
 | tool_use + tool_result 在边界上 | 配对不被拆散，向前移动 splitIndex |
 | 只有 user/assistant 消息（无 tool） | 正常拆分 |
 
-### 13.5 LLM 摘要压缩（集成测试）
+### 13.6 LLM 摘要压缩（集成测试）
 
 | 测试用例 | 预期行为 |
 |---------|---------|
@@ -918,7 +1131,7 @@ const result = await agentRunner.run({
 | 多次压缩同一 session | compactionCount 递增，每次有独立的 CompactionRecord |
 | 压缩后再加载历史 | loadHistory 注入最近摘要 + 保留区消息 |
 
-### 13.6 Overflow 错误恢复
+### 13.7 Overflow 错误恢复
 
 | 测试用例 | 预期行为 |
 |---------|---------|
@@ -926,7 +1139,7 @@ const result = await agentRunner.run({
 | LLM 返回其他错误 | 正常抛出，不触发压缩 |
 | 压缩后重试仍然失败 | 抛出 CompactionError（不无限重试） |
 
-### 13.7 端到端测试（test-runtime-app.ts）
+### 13.8 端到端测试（test-runtime-app.ts）
 
 | 测试场景 | 验证方式 |
 |---------|---------|
@@ -956,11 +1169,11 @@ const result = await agentRunner.run({
 
 | 文件 | 变更 |
 |------|------|
-| `src/config/types.ts` | 新增 `CompactionConfig`，`AgentDefaults` 添加 `compaction` |
-| `src/config/defaults.ts` | 添加 `compaction` 默认值 |
+| `src/config/types.ts` | 新增 `CompactionConfig`；`AgentDefaults` 添加 `compaction`；`LLMConfig` 新增 `contextWindowTokens` |
+| `src/config/defaults.ts` | 添加 `compaction` 默认值；`llm` 新增 `contextWindowTokens: 200_000` |
 | `src/session/types.ts` | `CompactionRecord` 扩展字段 |
 | `src/session/transcript.ts` | 新增 `findLastCompaction()` |
 | `src/session/SessionManager.ts` | 新增 `appendCompactionRecord()`、`getLastCompactionSummary()` |
-| `src/agent-runner/types.ts` | `RunParams`/`RunResult`/`AgentEvent` 扩展 |
+| `src/agent-runner/types.ts` | `RunParams`/`RunResult`/`AgentEvent` 扩展；`RunParams` 新增 `contextWindowTokens` |
 | `src/agent-runner/AgentRunner.ts` | 集成三层压缩逻辑 |
 | `src/runtime/RuntimeApp.ts` | 传入 `compaction` 配置 |

@@ -464,11 +464,69 @@ if (toolResultReducibleChars <= 0) {
 
 ## 6. 上下文裁剪（Context Pruning）
 
+OpenClaw 有两个独立的裁剪机制，职责不同：
+
+| 机制 | 文件 | 层级 | 触发时机 |
+|------|------|------|---------|
+| **Tool Result Context Guard** | `tool-result-context-guard.ts` | 内嵌 Runner | 每次 LLM 调用前（含内层 tool 循环） |
+| **Context Pruning（Hooks）** | `pruner.ts` | Hooks 层 | 每轮自动，基于 ratio 阈值 |
+
+### 6.0 Tool Result Context Guard（内层循环保护）
+
+**文件**：`src/agents/pi-embedded-runner/tool-result-context-guard.ts`
+
+这是内嵌 runner 在每次 LLM 调用前执行的轻量保护，通过劫持 `agent.transformContext` 实现，同时做两件事：
+
+**第一步：截断单条过大的 tool result**
+
+```typescript
+// tool-result-context-guard.ts:14-15
+const SINGLE_TOOL_RESULT_CONTEXT_SHARE = 0.5;          // 单条最大占 50%
+// tool-result-char-estimator.ts:4
+export const TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE = 2; // tool result 每 token 约 2 字符
+
+maxSingleToolResultChars = contextWindowTokens × 2 × 0.5 = contextWindowTokens
+// 200k 窗口 → 单条最大 200,000 字符；32k 窗口 → 32,000 字符
+```
+
+截断方式：头部保留，超出部分加 `[... N more characters truncated]` 标记。
+
+**第二步：检查总量是否超 90% 阈值**
+
+```typescript
+// tool-result-context-guard.ts:15
+const PREEMPTIVE_OVERFLOW_RATIO = 0.9;
+
+maxContextChars = contextWindowTokens × CHARS_PER_TOKEN_ESTIMATE × 0.9
+               = contextWindowTokens × 4 × 0.9
+
+if (totalChars > maxContextChars) {
+  throw new Error(PREEMPTIVE_CONTEXT_OVERFLOW_MESSAGE);
+}
+```
+
+这个 `PREEMPTIVE_CONTEXT_OVERFLOW_MESSAGE` 抛出后，被外层 retry 循环（`run.ts`）捕获，触发压缩并重试整个 attempt。
+
+**两步保护的意义**
+
+- 第一步将单条 result 上限设为 50% 窗口，保证单条不能撑满上下文
+- 第二步检查 90% 时，溢出一定是**历史积累**导致的（不是当前 result 过大）
+- 因此压缩历史后 retry 必然有效，不会陷入循环
+
+**与 `pruner.ts` 的区别**
+
+| | Tool Result Context Guard | Context Pruning (pruner.ts) |
+|--|--|--|
+| 触发层 | 内嵌 Runner（`transformContext`） | Hooks 层 |
+| 截断上限 | 动态：50% × contextWindow | 静态配置值 |
+| 超限行为 | throw → 外层 retry → 压缩 | 继续当前 turn（无 retry） |
+| 90% 检查 | ✅ | ❌ |
+
+### 6.1 Context Pruning（Hooks 层）两级裁剪
+
 **文件**：`src/agents/pi-hooks/context-pruning/pruner.ts`（382 行）
 
 最轻量的压缩层，**不调用 LLM，不修改持久化数据**，仅在发送给 LLM 前对 messages 做内存级裁剪。
-
-### 6.1 两级裁剪
 
 | 级别 | 触发条件 | 操作 |
 |------|---------|------|
@@ -703,7 +761,9 @@ Session Store 更新：
 
 | 文件 | 行数 | 说明 |
 |------|------|------|
-| `src/agents/pi-hooks/context-pruning/pruner.ts` | 382 | Soft trim + Hard clear 实现 |
+| `src/agents/pi-embedded-runner/tool-result-context-guard.ts` | 241 | 内层循环 tool result 截断 + 90% 溢出检测（`SINGLE_TOOL_RESULT_CONTEXT_SHARE=0.5`） |
+| `src/agents/pi-embedded-runner/tool-result-char-estimator.ts` | 166 | tool result 字符估算（`TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE=2`） |
+| `src/agents/pi-hooks/context-pruning/pruner.ts` | 382 | Soft trim + Hard clear 实现（Hooks 层） |
 | `src/agents/pi-hooks/context-pruning/settings.ts` | — | 裁剪配置解析 |
 | `src/agents/pi-hooks/context-pruning/tools.ts` | — | 可裁剪工具判定 |
 
