@@ -28,6 +28,7 @@ export const DEFAULT_AGENT_CONFIG: AgentDefaults = {
     // baseURL: undefined — 可选，不设则用 Anthropic 官方端点
     // model: undefined — 预留，当前 AnthropicClient 不支持选模型
     maxTokens: 4096,
+    contextWindowTokens: 200_000,
   },
 
   runner: {
@@ -75,5 +76,15 @@ export const DEFAULT_AGENT_CONFIG: AgentDefaults = {
     agentDir: '.agent',
     maxFileChars: 20_000,
     maxTotalChars: 150_000,
+  },
+
+  compaction: {
+    enabled: true,
+    reserveTokens: 20_000,
+    keepRecentTurns: 3,
+    toolResultContextShare: 0.5,
+    toolResultHeadChars: 10_000,
+    toolResultTailChars: 5_000,
+    timeoutSeconds: 300,
   },
 };

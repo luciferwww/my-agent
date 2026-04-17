@@ -792,19 +792,55 @@ await sessionManager.updateSession(sessionKey, {
 
 ### 9.2 SessionManager 扩展
 
-需要为 SessionManager 添加两个方法供 AgentRunner 调用：
+需要为 SessionManager 添加以下方法和接口供 AgentRunner / bootstrap 调用：
 
 ```typescript
 // src/session/SessionManager.ts — 新增
 
+/**
+ * 写盘时硬上限裁剪选项。
+ * toolResultHeadChars + toolResultTailChars 同时设置才生效。
+ * Bootstrap 从 resolvedConfig.compaction 传入。
+ */
+export interface SessionManagerOptions {
+  toolResultHeadChars?: number;
+  toolResultTailChars?: number;
+}
+
 /** 追加压缩记录到 JSONL（不影响 leafId） */
 async appendCompactionRecord(
   key: string,
-  record: CompactionRecord,
+  record: Omit<CompactionRecord, 'parentId' | 'firstKeptEntryId'>,
+  firstKeptEntryId: string,
 ): Promise<void>;
 
 /** 获取最近一次压缩摘要（用于 loadHistory 时注入） */
 getLastCompactionSummary(key: string): string | null;
+
+/** 获取最近一次压缩记录完整信息（loadHistory 用于截断历史） */
+getLastCompactionRecord(key: string): CompactionRecord | null;
+```
+
+**写盘截断（Gap 2 对齐 OpenClaw）**：
+
+`appendMessage()` 写入 JSONL 之前，对 `role === 'toolResult'` 的消息执行硬上限裁剪，裁剪配置来自构造选项：
+
+```typescript
+// appendMessage() 内部
+const persistedMessage = message.role === 'toolResult'
+  ? { ...message, content: this.capToolResults(message.content) }
+  : message;
+// 写盘后磁盘上就是截断数据，后续 loadHistory() 无需重复裁剪
+```
+
+Bootstrap 注入：
+
+```typescript
+// src/runtime/bootstrap.ts
+const sessionManager = deps.createSessionManager(options.workspaceDir, {
+  toolResultHeadChars: resolvedConfig.compaction.toolResultHeadChars,
+  toolResultTailChars: resolvedConfig.compaction.toolResultTailChars,
+});
 ```
 
 ### 9.3 loadHistory 中的摘要注入
@@ -1025,38 +1061,46 @@ const result = await agentRunner.run({
   - [x] `RunParams` 新增 `contextWindowTokens?: number`
   - [x] `RunResult` 新增 `compacted` / `compactionStats`
   - [x] `AgentEvent` 新增 `tool_result_pruned` 事件
-  - [ ] `AgentEvent` 新增 `compaction_start` / `compaction_end`（Phase 2）
+  - [x] `AgentEvent` 新增 `compaction_start` / `compaction_end`（Phase 2）
 - [x] `src/agent-runner/AgentRunner.ts`
   - [x] `run()` 中 LLM 调用前插入 `pruneToolResults()` + `checkContextBudget()`（含 `truncate_tool_results_only` 路由处理）
-  - [x] 内层循环每轮 tool result 后执行 90% 阈值检查（Phase 2 替换为 `ContextOverflowError`）
+  - [x] 内层循环每轮 tool result 后执行 90% 阈值检查（throw `ContextOverflowError`）
 
 ### Phase 2: LLM 摘要压缩 + Overflow 处理
 
-- [ ] `src/agent-runner/compaction.ts`
-  - [ ] `splitForCompaction()` — 消息拆分（tool_use/tool_result 配对保护）
-  - [ ] `generateSummary()` — LLM 摘要生成 + 两级降级
-  - [ ] `compactMessages()` — 完整压缩流程
-  - [ ] 单元测试
-- [ ] `src/agent-runner/errors.ts`
-  - [ ] `ContextOverflowError` 类
-  - [ ] `isContextOverflowError()` — LLM API 溢出错误分类
-- [ ] `src/session/types.ts`
-  - [ ] `CompactionRecord` 扩展字段（`tokensAfter`, `trigger`, `droppedMessages`）
-- [ ] `src/session/transcript.ts`
-  - [ ] 新增 `findLastCompaction()`
-- [ ] `src/session/SessionManager.ts`
-  - [ ] 新增 `appendCompactionRecord()`
-  - [ ] 新增 `getLastCompactionSummary()`
-- [ ] `src/agent-runner/AgentRunner.ts`
-  - [ ] 新增 `compactHistory()` 私有方法
-  - [ ] `loadHistory()` 改造：感知压缩记录，注入摘要
-  - [ ] `run()` 外层改为 retry 循环（`MAX_COMPACTION_RETRIES = 3`），捕获 `ContextOverflowError` → `compactHistory()` → retry `runAttempt`
-  - [ ] `callLLMStream()` 捕获 LLM API 溢出错误 → throw `ContextOverflowError`
-  - [ ] 压缩完成后更新 SessionEntry 元数据
-- [ ] `src/agent-runner/types.ts`
-  - [ ] `AgentEvent` 新增 `compaction_start` / `compaction_end`
-- [ ] `src/runtime/RuntimeApp.ts`
-  - [ ] `runTurnInternal()` 传入 `compaction` 配置和 `contextWindowTokens`
+- [x] `src/agent-runner/compaction.ts`
+  - [x] `splitForCompaction()` — 消息拆分（tool_use/tool_result 配对保护）
+  - [x] `generateSummary()` — LLM 摘要生成 + 两级降级
+  - [x] `compactMessages()` — 完整压缩流程
+  - [x] 单元测试
+- [x] `src/agent-runner/errors.ts`
+  - [x] `ContextOverflowError` 类
+  - [x] `isContextOverflowError()` — LLM API 溢出错误分类
+- [x] `src/session/types.ts`
+  - [x] `CompactionRecord` 扩展字段（`tokensAfter`, `trigger`, `droppedMessages`）
+- [x] `src/session/transcript.ts`
+  - [x] 新增 `findLastCompaction()`
+- [x] `src/session/SessionManager.ts`
+  - [x] 新增 `SessionManagerOptions` 接口（`toolResultHeadChars` / `toolResultTailChars`）
+  - [x] 构造函数接受 `SessionManagerOptions`，写盘前对 toolResult 执行硬上限裁剪（`capToolResults()`）
+  - [x] 新增 `appendCompactionRecord()`
+  - [x] 新增 `getLastCompactionSummary()`
+  - [x] 新增 `getLastCompactionRecord()`
+- [x] `src/agent-runner/AgentRunner.ts`
+  - [x] 新增 `compactHistory()` 私有方法
+  - [x] `loadHistory()` 改造：感知压缩记录，注入摘要
+  - [x] `run()` 外层改为 retry 循环（`MAX_COMPACTION_RETRIES = 3`），捕获 `ContextOverflowError` → `compactHistory()` → retry `runAttempt`
+  - [x] `callLLMStream()` 捕获 LLM API 溢出错误 → throw `ContextOverflowError`
+  - [x] 压缩完成后更新 SessionEntry 元数据
+- [x] `src/agent-runner/types.ts`
+  - [x] `AgentEvent` 新增 `compaction_start` / `compaction_end`
+- [x] `src/runtime/RuntimeApp.ts`
+  - [x] `runTurnInternal()` 传入 `compaction` 配置和 `contextWindowTokens`
+- [x] `src/runtime/bootstrap.ts`
+  - [x] `createDefaultRuntimeDependencies()` 的 `createSessionManager` 接受并透传 `SessionManagerOptions`
+  - [x] `bootstrapRuntime()` 从 `resolvedConfig.compaction` 传入 `toolResultHeadChars` / `toolResultTailChars`
+- [x] `src/runtime/types.ts`
+  - [x] `RuntimeDependencies.createSessionManager` 签名增加 `options?: SessionManagerOptions`
 
 ### Phase 3: 增强特性
 
@@ -1173,7 +1217,9 @@ const result = await agentRunner.run({
 | `src/config/defaults.ts` | 添加 `compaction` 默认值；`llm` 新增 `contextWindowTokens: 200_000` |
 | `src/session/types.ts` | `CompactionRecord` 扩展字段 |
 | `src/session/transcript.ts` | 新增 `findLastCompaction()` |
-| `src/session/SessionManager.ts` | 新增 `appendCompactionRecord()`、`getLastCompactionSummary()` |
+| `src/session/SessionManager.ts` | 新增 `SessionManagerOptions` 接口；构造函数接受选项，写盘前对 toolResult 做硬上限裁剪；新增 `appendCompactionRecord()`、`getLastCompactionSummary()`、`getLastCompactionRecord()` |
 | `src/agent-runner/types.ts` | `RunParams`/`RunResult`/`AgentEvent` 扩展；`RunParams` 新增 `contextWindowTokens` |
 | `src/agent-runner/AgentRunner.ts` | 集成三层压缩逻辑 |
 | `src/runtime/RuntimeApp.ts` | 传入 `compaction` 配置 |
+| `src/runtime/bootstrap.ts` | `createSessionManager` 透传 `SessionManagerOptions`；`bootstrapRuntime()` 从 compaction 配置传入写盘截断参数 |
+| `src/runtime/types.ts` | `RuntimeDependencies.createSessionManager` 签名增加 `options?: SessionManagerOptions` |

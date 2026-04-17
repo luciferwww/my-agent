@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { appendFile } from 'fs/promises';
 import { withFileLock } from './lock.js';
-import type { TranscriptEntry, TranscriptState } from './types.js';
+import type { CompactionRecord, TranscriptEntry, TranscriptState } from './types.js';
 
 /**
  * 加载 JSONL 文件，构建 byId Map 和 leafId。
@@ -77,4 +77,34 @@ export async function appendToTranscript(
   await withFileLock(filePath, async () => {
     await appendFile(filePath, JSON.stringify(entry) + '\n', 'utf-8');
   });
+}
+
+/**
+ * 在 TranscriptState 中查找最近一次压缩记录。
+ *
+ * resolveLinearPath() 在遍历 parentId 链时会跳过 type !== 'message' 的记录，
+ * 因此压缩记录不会出现在 getMessages() 的返回值中。
+ * 此函数专门从 byId Map 中扫描所有 type === 'compaction' 的记录，
+ * 并返回时间戳最新的一条（即最近一次压缩）。
+ *
+ * 用途：AgentRunner.loadHistory() 调用此函数，判断是否需要：
+ *   1. 截断历史（只取 firstKeptEntryId 之后的消息）
+ *   2. 在历史消息最前面注入摘要消息
+ *
+ * @returns 最近一次 CompactionRecord，若从未压缩则返回 null
+ */
+export function findLastCompaction(state: TranscriptState): CompactionRecord | null {
+  let last: CompactionRecord | null = null;
+
+  for (const entry of state.byId.values()) {
+    if (entry.type !== 'compaction') continue;
+
+    const record = entry as CompactionRecord;
+    // 以 timestamp 字符串比较（ISO 8601 格式天然支持字典序比较）
+    if (!last || record.timestamp > last.timestamp) {
+      last = record;
+    }
+  }
+
+  return last;
 }

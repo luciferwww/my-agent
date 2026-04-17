@@ -3,7 +3,7 @@ import type { ChatContentBlock, ChatToolDefinition, LLMClient, TokenUsage } from
 import type { MemoryManager } from '../memory/MemoryManager.js';
 import type { SystemPromptBuilder } from '../prompt-builder/system/SystemPromptBuilder.js';
 import type { ToolDefinition as PromptToolDefinition } from '../prompt-builder/types/builder.js';
-import type { SessionManager } from '../session/SessionManager.js';
+import type { SessionManager, SessionManagerOptions } from '../session/SessionManager.js';
 import type { Tool, ToolExecutor } from '../tools/types.js';
 import type { ContextFile } from '../workspace/types.js';
 import type { AgentRunner, AgentRunnerConfig } from '../agent-runner/index.js';
@@ -55,7 +55,7 @@ export interface RuntimeBuiltinToolOptions {
 
 export interface RuntimeDependencies {
   createLLMClient(options: RuntimeLLMClientOptions): LLMClient;
-  createSessionManager(workspaceDir: string): SessionManager;
+  createSessionManager(workspaceDir: string, options?: SessionManagerOptions): SessionManager;
   createMemoryManager(options: RuntimeMemoryOptions): Promise<MemoryManager | null>;
   createSystemPromptBuilder(): SystemPromptBuilder;
   createAgentRunner(config: AgentRunnerConfig): AgentRunner;

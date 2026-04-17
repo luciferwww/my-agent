@@ -48,9 +48,30 @@ export interface MessageRecord extends TranscriptEntryBase {
 /** compaction 记录（压缩摘要） */
 export interface CompactionRecord extends TranscriptEntryBase {
   type: 'compaction';
+  /** LLM 生成的历史摘要文本（失败时为兜底文本） */
   summary: string;
+  /**
+   * 保留区第一条消息的 ID。
+   * loadHistory() 用此字段截断历史：只取 firstKeptEntryId 之后的消息，
+   * 并在最前面注入摘要，避免重复加载已被压缩的旧消息。
+   */
   firstKeptEntryId: string;
+  /** 压缩前的估算 token 数（含 SAFETY_MARGIN） */
   tokensBefore: number;
+  /** 压缩后的估算 token 数（含 SAFETY_MARGIN） */
+  tokensAfter: number;
+  /**
+   * 触发原因：
+   *   'preemptive' — runAttempt 开头的预判检测（checkContextBudget 返回 compact）
+   *   'overflow'   — 内层 90% 阈值检查或 LLM API 报错后的被动触发
+   *   'manual'     — 未来预留（用户手动触发）
+   */
+  trigger: 'preemptive' | 'overflow' | 'manual';
+  /**
+   * 被摘要替代的消息条数（压缩区消息数）。
+   * 纯审计字段，不参与运行时决策。
+   */
+  droppedMessages: number;
 }
 
 /** 所有 Transcript 记录的联合类型 */

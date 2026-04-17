@@ -2,18 +2,34 @@ import { randomUUID } from 'crypto';
 import { mkdir, unlink, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { loadStore, updateStore } from './store.js';
-import { loadTranscript, resolveLinearPath, appendToTranscript } from './transcript.js';
+import { loadTranscript, resolveLinearPath, appendToTranscript, findLastCompaction } from './transcript.js';
 import type {
   SessionEntry,
   TranscriptState,
   MessageRecord,
   SessionRecord,
+  CompactionRecord,
   ContentBlock,
 } from './types.js';
 
 const SESSIONS_DIR = 'sessions';
 const STORE_FILE = 'sessions.json';
 const TRANSCRIPT_VERSION = 1;
+
+/**
+ * SessionManager 构造选项。
+ *
+ * toolResultHeadChars / toolResultTailChars：
+ *   写入 JSONL 前对 tool result 内容做硬上限裁剪。
+ *   裁剪后磁盘上存储的就是截断数据，后续每次 loadHistory() 加载时无需重复裁剪。
+ *   两个字段同时设置才生效；未设置则不裁剪（向后兼容）。
+ */
+export interface SessionManagerOptions {
+  /** 保留 tool result 头部的最大字符数 */
+  toolResultHeadChars?: number;
+  /** 保留 tool result 尾部的最大字符数 */
+  toolResultTailChars?: number;
+}
 
 /**
  * Session 管理器。
@@ -29,13 +45,15 @@ const TRANSCRIPT_VERSION = 1;
 export class SessionManager {
   private readonly sessionsDir: string;
   private readonly storePath: string;
+  private readonly options: SessionManagerOptions;
 
   /** 每个 Session 的内存状态（byId Map + leafId） */
   private transcripts = new Map<string, TranscriptState>();
 
-  constructor(workspaceDir: string) {
+  constructor(workspaceDir: string, options: SessionManagerOptions = {}) {
     this.sessionsDir = join(workspaceDir, '.agent', SESSIONS_DIR);
     this.storePath = join(this.sessionsDir, STORE_FILE);
+    this.options = options;
   }
 
   // ── Session CRUD ─────────────────────────────────────
@@ -172,12 +190,18 @@ export class SessionManager {
     const state = this.ensureTranscriptLoaded(key);
     const filePath = this.resolveTranscriptPath(key);
 
+    // 写盘前对 toolResult 做硬上限裁剪。
+    // 裁剪后 JSONL 存储的是截断数据，后续 loadHistory() 无需重复裁剪。
+    const persistedMessage = message.role === 'toolResult'
+      ? { ...message, content: this.capToolResults(message.content as ContentBlock[]) }
+      : message;
+
     const record: MessageRecord = {
       type: 'message',
       id: randomUUID(),
       parentId: state.leafId,
       timestamp: new Date().toISOString(),
-      message,
+      message: persistedMessage,
     };
 
     // 写入 JSONL
@@ -226,7 +250,104 @@ export class SessionManager {
     return state.leafId;
   }
 
+  // ── 压缩记录操作 ──────────────────────────────────────
+
+  /**
+   * 将压缩记录追加到 JSONL，并更新内存中的 byId。
+   *
+   * 与 appendMessage() 的关键区别：
+   *   - parentId 自动设为当前 leafId（记录在压缩发生时的链表末端位置）
+   *   - **不更新 leafId**：压缩记录是一个"标记节点"，不是消息链表的一部分，
+   *     后续消息仍然从原 leafId 继续追加，不从压缩记录分叉
+   *   - 写入后通过 findLastCompaction() 可查询到此记录
+   *
+   * @param key       Session key
+   * @param record    compactMessages() 返回的 record（parentId 和 firstKeptEntryId 由此方法填入）
+   * @param firstKeptEntryId  保留区第一条消息的 ID，用于 loadHistory() 截断历史
+   */
+  async appendCompactionRecord(
+    key: string,
+    record: Omit<CompactionRecord, 'parentId' | 'firstKeptEntryId'>,
+    firstKeptEntryId: string,
+  ): Promise<void> {
+    const state = this.ensureTranscriptLoaded(key);
+    const filePath = this.resolveTranscriptPath(key);
+
+    const fullRecord: CompactionRecord = {
+      ...record,
+      parentId: state.leafId,   // 记录在当前链表末端
+      firstKeptEntryId,
+    };
+
+    // 写入 JSONL
+    await appendToTranscript(filePath, fullRecord);
+
+    // 更新内存 byId（不动 leafId）
+    state.byId.set(fullRecord.id, fullRecord);
+
+    // 更新 Store 元数据：递增压缩次数、更新时间戳
+    await updateStore(this.storePath, (store) => {
+      const entry = store[key];
+      if (entry) {
+        entry.compactionCount = (entry.compactionCount ?? 0) + 1;
+        entry.updatedAt = Date.now();
+      }
+    });
+  }
+
+  /**
+   * 获取最近一次压缩的摘要文本。
+   *
+   * 供 loadHistory() 判断是否需要在历史消息前注入摘要。
+   * 若 session 从未压缩过，返回 null。
+   *
+   * @returns 摘要字符串，或 null（未压缩）
+   */
+  getLastCompactionSummary(key: string): string | null {
+    const state = this.ensureTranscriptLoaded(key);
+    const record = findLastCompaction(state);
+    return record?.summary ?? null;
+  }
+
+  /**
+   * 获取最近一次压缩记录的完整信息。
+   *
+   * 供 loadHistory() 读取 firstKeptEntryId，用于截断历史消息列表。
+   * 若 session 从未压缩过，返回 null。
+   */
+  getLastCompactionRecord(key: string): CompactionRecord | null {
+    const state = this.ensureTranscriptLoaded(key);
+    return findLastCompaction(state);
+  }
+
   // ── 内部方法 ──────────────────────────────────────────
+
+  /**
+   * 对 toolResult 消息的每个 block 做硬上限裁剪（写盘专用）。
+   *
+   * 仅当 options.toolResultHeadChars 和 toolResultTailChars 均已设置时生效。
+   * 裁剪格式与 Layer 1 pruneToolResults 一致（head + "..." + tail + 标记行），
+   * 保证裁剪后内容对 LLM 可读，且不会在未来加载时被再次误裁剪。
+   */
+  private capToolResults(blocks: ContentBlock[]): ContentBlock[] {
+    const { toolResultHeadChars, toolResultTailChars } = this.options;
+    if (!toolResultHeadChars || !toolResultTailChars) {
+      return blocks; // 未配置则不裁剪
+    }
+
+    const maxChars = toolResultHeadChars + toolResultTailChars;
+    return blocks.map((block) => {
+      if (block.type !== 'tool_result' || block.content.length <= maxChars) {
+        return block;
+      }
+      const head = block.content.slice(0, toolResultHeadChars);
+      const tail = block.content.slice(-toolResultTailChars);
+      const capped = `${head}\n\n...\n\n${tail}`
+        + `\n\n[Tool result trimmed: kept first ${toolResultHeadChars} and last ${toolResultTailChars}`
+        + ` of ${block.content.length} chars]`;
+      return { ...block, content: capped };
+    });
+  }
 
   /**
    * 确保 Transcript 已加载到内存。

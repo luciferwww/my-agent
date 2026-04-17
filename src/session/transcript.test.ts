@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile, readFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { loadTranscript, resolveLinearPath, appendToTranscript } from './transcript.js';
-import type { MessageRecord, SessionRecord } from './types.js';
+import { loadTranscript, resolveLinearPath, appendToTranscript, findLastCompaction } from './transcript.js';
+import type { MessageRecord, SessionRecord, CompactionRecord } from './types.js';
 
 describe('transcript', () => {
   let dir: string;
@@ -148,6 +148,109 @@ describe('transcript', () => {
       const raw = await readFile(filePath, 'utf-8');
       const lines = raw.trim().split('\n');
       expect(lines).toHaveLength(5);
+    });
+  });
+
+  // ── findLastCompaction ────────────────────────────────────
+
+  describe('findLastCompaction', () => {
+    /** 构造一条 CompactionRecord（parentId 可选） */
+    function makeCompactionRecord(id: string, timestamp: string): CompactionRecord {
+      return {
+        type: 'compaction',
+        id,
+        parentId: null,
+        timestamp,
+        summary: `Summary from ${id}`,
+        firstKeptEntryId: 'm1',
+        tokensBefore: 1000,
+        tokensAfter: 200,
+        trigger: 'overflow',
+        droppedMessages: 5,
+      };
+    }
+
+    it('returns null when byId contains no compaction records', () => {
+      const session: SessionRecord = {
+        type: 'session', id: 's1', parentId: null,
+        timestamp: '2026-04-01T00:00:00Z', version: 1,
+      };
+      const m1: MessageRecord = {
+        type: 'message', id: 'm1', parentId: 's1',
+        timestamp: '2026-04-01T00:00:01Z',
+        message: { role: 'user', content: 'hi' },
+      };
+      const state = { byId: new Map([['s1', session], ['m1', m1]]), leafId: 'm1' };
+
+      expect(findLastCompaction(state)).toBeNull();
+    });
+
+    it('returns the single compaction record when only one exists', () => {
+      const c1 = makeCompactionRecord('c1', '2026-04-01T10:00:00Z');
+      const state = { byId: new Map([['c1', c1]]), leafId: null };
+
+      const result = findLastCompaction(state);
+      expect(result).not.toBeNull();
+      expect(result!.id).toBe('c1');
+      expect(result!.summary).toBe('Summary from c1');
+    });
+
+    it('returns the most recent compaction record when multiple exist', () => {
+      // c2 的 timestamp 晚于 c1，应该返回 c2
+      const c1 = makeCompactionRecord('c1', '2026-04-01T08:00:00Z');
+      const c2 = makeCompactionRecord('c2', '2026-04-01T12:00:00Z');
+      const state = { byId: new Map([['c1', c1], ['c2', c2]]), leafId: null };
+
+      const result = findLastCompaction(state);
+      expect(result!.id).toBe('c2');
+    });
+
+    it('uses ISO 8601 string comparison (lexicographic order)', () => {
+      // 两条记录同一天，不同时间
+      const c1 = makeCompactionRecord('c1', '2026-04-01T23:59:59Z');
+      const c2 = makeCompactionRecord('c2', '2026-04-02T00:00:01Z');
+      const state = { byId: new Map([['c1', c1], ['c2', c2]]), leafId: null };
+
+      // c2 的字典序更大（"2026-04-02..." > "2026-04-01..."）
+      expect(findLastCompaction(state)!.id).toBe('c2');
+    });
+
+    it('ignores non-compaction records (message, session)', () => {
+      const session: SessionRecord = {
+        type: 'session', id: 's1', parentId: null,
+        timestamp: '2026-04-01T00:00:00Z', version: 1,
+      };
+      const m1: MessageRecord = {
+        type: 'message', id: 'm1', parentId: 's1',
+        timestamp: '2026-04-01T00:00:01Z',
+        message: { role: 'user', content: 'hi' },
+      };
+      const c1 = makeCompactionRecord('c1', '2026-04-01T10:00:00Z');
+      const state = { byId: new Map([['s1', session], ['m1', m1], ['c1', c1]]), leafId: 'm1' };
+
+      const result = findLastCompaction(state);
+      expect(result!.id).toBe('c1');
+      expect(result!.type).toBe('compaction');
+    });
+
+    it('persists compaction record to JSONL and can be reloaded', async () => {
+      const filePath = join(dir, 'with-compaction.jsonl');
+      const session: SessionRecord = {
+        type: 'session', id: 's1', parentId: null,
+        timestamp: '2026-04-01T00:00:00Z', version: 1,
+      };
+      const c1 = makeCompactionRecord('c1', '2026-04-01T10:00:00Z');
+
+      await appendToTranscript(filePath, session);
+      await appendToTranscript(filePath, c1);
+
+      // 重新从磁盘加载，验证持久化后仍可查询
+      const loaded = loadTranscript(filePath);
+      const result = findLastCompaction(loaded);
+      expect(result).not.toBeNull();
+      expect(result!.id).toBe('c1');
+      expect(result!.trigger).toBe('overflow');
+      expect(result!.droppedMessages).toBe(5);
     });
   });
 });

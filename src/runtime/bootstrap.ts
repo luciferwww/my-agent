@@ -25,8 +25,8 @@ export function createDefaultRuntimeDependencies(
       });
     },
 
-    createSessionManager(workspaceDir) {
-      return new SessionManager(workspaceDir);
+    createSessionManager(workspaceDir, options) {
+      return new SessionManager(workspaceDir, options);
     },
 
     async createMemoryManager(options) {
@@ -86,7 +86,10 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
     });
 
     const deps = createDefaultRuntimeDependencies(options.dependencies);
-    const sessionManager = deps.createSessionManager(options.workspaceDir);
+    const sessionManager = deps.createSessionManager(options.workspaceDir, {
+      toolResultHeadChars: resolvedConfig.compaction.toolResultHeadChars,
+      toolResultTailChars: resolvedConfig.compaction.toolResultTailChars,
+    });
     const llmClient = deps.createLLMClient({
       apiKey: resolvedConfig.llm.apiKey,
       baseURL: resolvedConfig.llm.baseURL,

@@ -46,6 +46,7 @@ Design baselines for the current implementation, including module boundaries, da
 - [LLM Client Design](architecture/llm-client-design.md)
 - [Prompt Builder Design](architecture/prompt-builder-design.md)
 - [Session Design](architecture/session-design.md)
+- [Compaction Design](architecture/compaction-design.md)
 - [Memory Design](architecture/memory-design.md)
 - [Tools Design](architecture/tools-design.md)
 - [Builtin Tools Design](architecture/builtin-tools-design.md)

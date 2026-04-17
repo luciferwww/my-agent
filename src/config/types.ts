@@ -28,6 +28,36 @@ export interface LLMConfig {
   model?: string;
   /** 默认 max tokens */
   maxTokens: number;
+  /**
+   * 模型上下文窗口大小（tokens）。
+   * 默认 200,000，适用于 Claude 3.5 Sonnet / Claude 4 系列。
+   * 压缩逻辑从此字段读取窗口大小，用于动态计算裁剪阈值和预算。
+   */
+  contextWindowTokens: number;
+}
+
+/** 对话压缩配置 */
+export interface CompactionConfig {
+  /** 是否启用压缩 */
+  enabled: boolean;
+  /** 预留 token 数（仅为模型输出留出空间；currentPrompt 已显式计入估算） */
+  reserveTokens: number;
+  /** 压缩后保留最近 N 个用户轮次的完整消息 */
+  keepRecentTurns: number;
+  /**
+   * 单条 tool result 最大占 context window 的比例。
+   * 运行时计算：maxChars = contextWindowTokens × TOOL_RESULT_CHARS_PER_TOKEN × toolResultContextShare
+   * 例：200k 窗口 × 2 × 0.5 = 200,000 字符。
+   */
+  toolResultContextShare: number;
+  /** Tool result 裁剪：保留头部字符数 */
+  toolResultHeadChars: number;
+  /** Tool result 裁剪：保留尾部字符数 */
+  toolResultTailChars: number;
+  /** 压缩超时（秒） */
+  timeoutSeconds: number;
+  /** 摘要生成的自定义指令（追加到默认指令后） */
+  customInstructions?: string;
 }
 
 /** Agent Runner 配置 */
@@ -129,6 +159,7 @@ export interface AgentDefaults {
   session: SessionConfig;
   tools: ToolsConfig;
   workspace: WorkspaceConfig;
+  compaction: CompactionConfig;
 }
 
 /** agents.list 中的单项：id + 覆盖字段 */

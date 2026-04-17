@@ -212,6 +212,8 @@ export class RuntimeApp {
       maxToolRounds: params.maxToolRounds ?? this.resources.resolvedConfig.runner.maxToolRounds,
       maxFollowUpRounds:
         params.maxFollowUpRounds ?? this.resources.resolvedConfig.runner.maxFollowUpRounds,
+      compaction: this.resources.resolvedConfig.compaction,
+      contextWindowTokens: this.resources.resolvedConfig.llm.contextWindowTokens,
     });
 
     return {

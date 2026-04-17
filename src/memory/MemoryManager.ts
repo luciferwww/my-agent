@@ -55,8 +55,8 @@ export class MemoryManager {
     // 1. 嵌入提供者（失败则为 null → 降级搜索）
     const embeddingProvider = await createEmbeddingProvider(config.embedding);
 
-    // 2. SQLite 存储
-    const dbPath = config.dbPath ?? join(workspaceDir, DEFAULT_DB_PATH);
+    // 2. SQLite 存储（dbPath 约定为相对 workspaceDir 的路径，始终转为绝对路径）
+    const dbPath = join(workspaceDir, config.dbPath ?? DEFAULT_DB_PATH);
     await mkdir(dirname(dbPath), { recursive: true });
     const store = new SqliteMemoryStore(dbPath);
 
