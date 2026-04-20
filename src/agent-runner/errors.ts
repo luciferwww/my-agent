@@ -14,9 +14,12 @@
  *   3. LLM API 被动兜底：callLLMStream 收到 context overflow 类型的 API 错误
  */
 export class ContextOverflowError extends Error {
-  constructor(message: string) {
+  readonly trigger: 'preemptive' | 'overflow';
+
+  constructor(message: string, trigger: 'preemptive' | 'overflow' = 'overflow') {
     super(message);
     this.name = 'ContextOverflowError';
+    this.trigger = trigger;
   }
 }
 

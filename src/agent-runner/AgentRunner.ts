@@ -105,7 +105,7 @@ export class AgentRunner {
         if (err instanceof ContextOverflowError && compactionAttempts < MAX_COMPACTION_RETRIES) {
           // 执行 LLM 摘要压缩，写入持久化，然后重试 runAttempt
           // runAttempt 的 loadHistory() 会重新加载压缩后的 session，自动感知摘要
-          await this.compactHistory(params, compaction, 'overflow');
+          await this.compactHistory(params, compaction, err.trigger);
           compacted = true;
           compactionAttempts++;
           continue;
@@ -171,6 +171,7 @@ export class AgentRunner {
         throw new ContextOverflowError(
           `Preemptive compaction required: estimated ${budget.estimatedTokens} tokens `
           + `exceeds budget ${budget.availableTokens} tokens`,
+          'preemptive',
         );
       }
       // route === 'fits' → 直接继续
