@@ -1,4 +1,4 @@
-import type { EmbeddingProvider } from '../types.js';
+import type { EmbeddingProvider } from './types.js';
 
 const DEFAULT_MODEL = 'Xenova/all-MiniLM-L6-v2';
 const DEFAULT_DIMENSIONS = 384;

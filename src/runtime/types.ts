@@ -1,8 +1,8 @@
 import type { AppConfig, AgentDefaults, DeepPartial } from '../config/types.js';
 import type { ChatContentBlock, ChatToolDefinition, LLMClient, TokenUsage } from '../llm-client/types.js';
 import type { MemoryManager } from '../memory/MemoryManager.js';
-import type { SystemPromptBuilder } from '../prompt-builder/system/SystemPromptBuilder.js';
-import type { ToolDefinition as PromptToolDefinition } from '../prompt-builder/types/builder.js';
+import type { SystemPromptBuilder } from '../prompt-builder/SystemPromptBuilder.js';
+import type { ToolDefinition as PromptToolDefinition } from '../prompt-builder/types.js';
 import type { SessionManager, SessionManagerOptions } from '../session/SessionManager.js';
 import type { Tool, ToolExecutor } from '../tools/types.js';
 import type { ContextFile } from '../workspace/types.js';
@@ -15,7 +15,7 @@ export interface RuntimeToolBundle {
   promptDefinitions: PromptToolDefinition[];
 }
 
-import type { UserPromptBuilder } from '../prompt-builder/user/UserPromptBuilder.js';
+import type { UserPromptBuilder } from '../prompt-builder/UserPromptBuilder.js';
 
 export interface RuntimeResourceSet {
   appConfig: AppConfig;

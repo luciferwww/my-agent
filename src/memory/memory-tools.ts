@@ -1,7 +1,7 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import type { Tool, ToolResult } from '../../tools/types.js';
-import type { MemoryManager } from '../MemoryManager.js';
+import type { MemoryManager } from './MemoryManager.js';
 
 /**
  * 创建 memory 工具集，注册到 AgentRunner。

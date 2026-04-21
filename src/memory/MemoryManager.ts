@@ -1,5 +1,5 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { join, dirname, isAbsolute } from 'node:path';
 import type {
   MemoryConfig,
   MemoryStore,
@@ -7,8 +7,8 @@ import type {
   SearchOptions,
   EmbeddingProvider,
 } from './types.js';
-import { SqliteMemoryStore } from './store/sqlite-store.js';
-import { createEmbeddingProvider } from './embedding/LocalEmbeddingProvider.js';
+import { SqliteMemoryStore } from './sqlite-store.js';
+import { createEmbeddingProvider } from './LocalEmbeddingProvider.js';
 import { MemoryIndexer } from './MemoryIndexer.js';
 import { MemorySearcher } from './MemorySearcher.js';
 import { RecallTracker } from './RecallTracker.js';
@@ -55,8 +55,9 @@ export class MemoryManager {
     // 1. 嵌入提供者（失败则为 null → 降级搜索）
     const embeddingProvider = await createEmbeddingProvider(config.embedding);
 
-    // 2. SQLite 存储（dbPath 约定为相对 workspaceDir 的路径，始终转为绝对路径）
-    const dbPath = join(workspaceDir, config.dbPath ?? DEFAULT_DB_PATH);
+    // 2. SQLite 存储（相对路径以 workspaceDir 为基础，绝对路径直接使用）
+    const resolvedDbPath = config.dbPath ?? DEFAULT_DB_PATH;
+    const dbPath = isAbsolute(resolvedDbPath) ? resolvedDbPath : join(workspaceDir, resolvedDbPath);
     await mkdir(dirname(dbPath), { recursive: true });
     const store = new SqliteMemoryStore(dbPath);
 

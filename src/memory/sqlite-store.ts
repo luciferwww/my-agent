@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import type { MemoryStore, MemoryChunk, IndexedFileInfo } from '../types.js';
+import type { MemoryStore, MemoryChunk, IndexedFileInfo } from './types.js';
 
 /**
  * 基于 SQLite 的记忆存储实现。

@@ -3,7 +3,7 @@ import type {
   ContextHook,
   UserPromptInput,
   BuiltUserPrompt,
-} from '../types/index.js';
+} from './types.js';
 
 /**
  * 构建 User Prompt。

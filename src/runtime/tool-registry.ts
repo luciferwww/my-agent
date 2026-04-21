@@ -1,7 +1,7 @@
 import type { ChatToolDefinition } from '../llm-client/types.js';
 import type { MemoryManager } from '../memory/MemoryManager.js';
-import { createMemoryTools } from '../memory/tools/memory-tools.js';
-import type { ToolDefinition as PromptToolDefinition } from '../prompt-builder/types/builder.js';
+import { createMemoryTools } from '../memory/memory-tools.js';
+import type { ToolDefinition as PromptToolDefinition } from '../prompt-builder/types.js';
 import {
   applyPatchTool,
   createToolExecutor,

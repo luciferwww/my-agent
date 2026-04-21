@@ -2,7 +2,7 @@ import type {
   SystemPromptBuildParams,
   ToolDefinition,
   ContextFile,
-} from '../types/index.js';
+} from './types.js';
 
 /**
  * 构建 System Prompt。

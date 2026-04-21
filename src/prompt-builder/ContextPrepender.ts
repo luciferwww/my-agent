@@ -1,4 +1,4 @@
-import type { ContextHook, ContextHookMetadata } from '../types/index.js';
+import type { ContextHook, ContextHookMetadata } from './types.js';
 
 /**
  * 管理 context hook 的注册和执行。

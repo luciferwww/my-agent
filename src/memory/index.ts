@@ -2,9 +2,9 @@ export { MemoryManager } from './MemoryManager.js';
 export { MemoryIndexer } from './MemoryIndexer.js';
 export { MemorySearcher } from './MemorySearcher.js';
 export { RecallTracker } from './RecallTracker.js';
-export { LocalEmbeddingProvider, createEmbeddingProvider } from './embedding/LocalEmbeddingProvider.js';
-export { SqliteMemoryStore } from './store/sqlite-store.js';
-export { createMemoryTools } from './tools/memory-tools.js';
+export { LocalEmbeddingProvider, createEmbeddingProvider } from './LocalEmbeddingProvider.js';
+export { SqliteMemoryStore } from './sqlite-store.js';
+export { createMemoryTools } from './memory-tools.js';
 export type {
   EmbeddingProvider,
   MemoryChunk,

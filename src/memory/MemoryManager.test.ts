@@ -4,11 +4,11 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./store/sqlite-store.js', () => ({
+vi.mock('./sqlite-store.js', () => ({
   SqliteMemoryStore: vi.fn(),
 }));
 
-vi.mock('./embedding/LocalEmbeddingProvider.js', () => ({
+vi.mock('./LocalEmbeddingProvider.js', () => ({
   createEmbeddingProvider: vi.fn(),
 }));
 
@@ -16,8 +16,8 @@ import { MemoryIndexer } from './MemoryIndexer.js';
 import { MemoryManager } from './MemoryManager.js';
 import { MemorySearcher } from './MemorySearcher.js';
 import { RecallTracker } from './RecallTracker.js';
-import { createEmbeddingProvider } from './embedding/LocalEmbeddingProvider.js';
-import { SqliteMemoryStore } from './store/sqlite-store.js';
+import { createEmbeddingProvider } from './LocalEmbeddingProvider.js';
+import { SqliteMemoryStore } from './sqlite-store.js';
 import type { MemorySearchResult, MemoryStore } from './types.js';
 
 function createStore(overrides: Partial<MemoryStore> = {}): MemoryStore {

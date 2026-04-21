@@ -1,5 +1,5 @@
 import type { AgentDefaults } from '../config/types.js';
-import type { ToolDefinition as PromptToolDefinition, SystemPromptBuildParams } from '../prompt-builder/types/builder.js';
+import type { ToolDefinition as PromptToolDefinition, SystemPromptBuildParams } from '../prompt-builder/types.js';
 import type { ContextFile } from '../workspace/types.js';
 import type { RunTurnParams } from './types.js';
 
