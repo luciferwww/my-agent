@@ -10,6 +10,8 @@ import type {
   ToolExecutor,
 } from './types.js';
 import type { CompactionConfig } from '../config/types.js';
+import type { HookName, HookHandlerMap, HookRegistration } from './hooks/index.js';
+import { runBeforeToolCall, runAfterToolCall } from './hooks/index.js';
 import { pruneToolResults, pruneToolResultsAggregate } from './tool-result-pruning.js';
 import { checkContextBudget } from './context-budget.js';
 import { estimatePromptTokens } from './token-estimation.js';
@@ -69,12 +71,34 @@ export class AgentRunner {
   private sessionManager: SessionManager;
   private toolExecutor?: ToolExecutor;
   private onEvent?: (event: AgentEvent) => void;
+  private hookRegistrations: HookRegistration[] = [];
 
   constructor(config: AgentRunnerConfig) {
     this.llmClient = config.llmClient;
     this.sessionManager = config.sessionManager;
     this.toolExecutor = config.toolExecutor;
     this.onEvent = config.onEvent;
+  }
+
+  on<K extends HookName>(
+    hookName: K,
+    handler: HookHandlerMap[K],
+    options?: { priority?: number; name?: string },
+  ): this {
+    this.hookRegistrations.push({
+      hookName,
+      handler,
+      priority: options?.priority ?? 0,
+      name: options?.name,
+    } as HookRegistration);
+    return this;
+  }
+
+  private getHooks<K extends HookName>(hookName: K): Array<{ handler: HookHandlerMap[K]; name?: string }> {
+    return this.hookRegistrations
+      .filter((r): r is HookRegistration<K> => r.hookName === hookName)
+      .sort((a, b) => b.priority - a.priority)
+      .map((r) => ({ handler: r.handler as HookHandlerMap[K], name: r.name }));
   }
 
   // ── 公共入口 ─────────────────────────────────────────────
@@ -247,14 +271,48 @@ export class AgentRunner {
           // 执行工具
           const toolResultBlocks: ChatContentBlock[] = [];
           for (const toolUse of toolUseBlocks) {
+            // tool_use 事件发原始 input（hook 运行之前）
             this.emit({ type: 'tool_use', name: toolUse.name, input: toolUse.input });
-            const result = await this.executeTool(toolUse.name, toolUse.input);
+
+            // before_tool_call hooks（sequential，priority 降序）
+            let effectiveInput = toolUse.input;
+            const beforeHooks = this.getHooks('before_tool_call');
+            if (beforeHooks.length > 0) {
+              const beforeResult = await runBeforeToolCall(beforeHooks, {
+                toolName: toolUse.name,
+                input: toolUse.input,
+              });
+              if (beforeResult.action === 'deny') {
+                const blocked: ToolResult = { content: `Tool blocked: ${beforeResult.reason}`, isError: true };
+                this.emit({ type: 'tool_result', name: toolUse.name, result: blocked });
+                toolResultBlocks.push({ type: 'tool_result', tool_use_id: toolUse.id, content: blocked.content });
+                continue;
+              }
+              effectiveInput = beforeResult.input;
+            }
+
+            // 执行工具
+            const startTime = Date.now();
+            const result = await this.executeTool(toolUse.name, effectiveInput);
+            const durationMs = Date.now() - startTime;
+
             this.emit({ type: 'tool_result', name: toolUse.name, result });
             toolResultBlocks.push({
               type: 'tool_result',
               tool_use_id: toolUse.id,
               content: result.content,
             });
+
+            // after_tool_call hooks（fire-and-forget，使用修改后的 input）
+            const afterHooks = this.getHooks('after_tool_call');
+            if (afterHooks.length > 0) {
+              runAfterToolCall(afterHooks, {
+                toolName: toolUse.name,
+                input: effectiveInput,
+                result,
+                durationMs,
+              });
+            }
           }
 
           // toolResult push 到 messages（Anthropic API 格式：role=user）

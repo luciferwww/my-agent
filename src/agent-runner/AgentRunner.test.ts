@@ -490,4 +490,167 @@ describe('AgentRunner', () => {
       expect(events.some((e) => e.type === 'error')).toBe(true);
     });
   });
+
+  // ── Hook on() API ───────────────────────────────────────
+
+  describe('hooks', () => {
+    it('before_tool_call allow passes through', async () => {
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'tool_use', id: 'tool_01', name: 'search', input: { q: 'test' } },
+          { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'Done.' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 15, outputTokens: 5 } },
+        ],
+      ]);
+
+      const executedTools: string[] = [];
+      const runner = new AgentRunner({
+        llmClient,
+        sessionManager,
+        toolExecutor: async (name) => { executedTools.push(name); return { content: 'ok' }; },
+      });
+      runner.on('before_tool_call', async () => ({ action: 'allow' }));
+
+      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '' });
+
+      expect(executedTools).toEqual(['search']);
+    });
+
+    it('before_tool_call deny blocks tool and returns error to LLM', async () => {
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'tool_use', id: 'tool_01', name: 'exec', input: { cmd: 'rm -rf /' } },
+          { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'Tool was blocked.' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 15, outputTokens: 5 } },
+        ],
+      ]);
+
+      const executedTools: string[] = [];
+      const events: AgentEvent[] = [];
+      const runner = new AgentRunner({
+        llmClient,
+        sessionManager,
+        toolExecutor: async (name) => { executedTools.push(name); return { content: 'ok' }; },
+        onEvent: (e) => events.push(e),
+      });
+      runner.on('before_tool_call', async () => ({ action: 'deny', reason: 'dangerous command' }));
+
+      const result = await runner.run({ sessionKey: 'main', message: 'Run it', model: 'test', systemPrompt: '' });
+
+      expect(executedTools).toHaveLength(0);
+      expect(result.text).toBe('Tool was blocked.');
+      const toolResult = events.find((e) => e.type === 'tool_result');
+      expect(toolResult?.type === 'tool_result' && toolResult.result.isError).toBe(true);
+    });
+
+    it('before_tool_call modifies input', async () => {
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'tool_use', id: 'tool_01', name: 'search', input: { q: 'original' } },
+          { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'Done.' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 15, outputTokens: 5 } },
+        ],
+      ]);
+
+      const capturedInputs: Record<string, unknown>[] = [];
+      const runner = new AgentRunner({
+        llmClient,
+        sessionManager,
+        toolExecutor: async (_, input) => { capturedInputs.push(input); return { content: 'ok' }; },
+      });
+      runner.on('before_tool_call', async ({ input }) => ({
+        action: 'allow',
+        input: { ...input, q: 'modified' },
+      }));
+
+      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '' });
+
+      expect(capturedInputs[0]?.q).toBe('modified');
+    });
+
+    it('after_tool_call fires after execution', async () => {
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'tool_use', id: 'tool_01', name: 'search', input: {} },
+          { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'Done.' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 15, outputTokens: 5 } },
+        ],
+      ]);
+
+      const afterPayloads: { toolName: string; durationMs: number }[] = [];
+      const runner = new AgentRunner({
+        llmClient,
+        sessionManager,
+        toolExecutor: async () => ({ content: 'result' }),
+      });
+      runner.on('after_tool_call', async ({ toolName, durationMs }) => {
+        afterPayloads.push({ toolName, durationMs });
+      });
+
+      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '' });
+
+      // after_tool_call is fire-and-forget; give it a tick to resolve
+      await new Promise((r) => setTimeout(r, 10));
+      expect(afterPayloads).toHaveLength(1);
+      expect(afterPayloads[0]?.toolName).toBe('search');
+      expect(afterPayloads[0]?.durationMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it('priority: higher priority hook runs first', async () => {
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'tool_use', id: 'tool_01', name: 'search', input: { q: 'original' } },
+          { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'Done.' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 15, outputTokens: 5 } },
+        ],
+      ]);
+
+      const order: number[] = [];
+      const runner = new AgentRunner({
+        llmClient,
+        sessionManager,
+        toolExecutor: async () => ({ content: 'ok' }),
+      });
+      runner
+        .on('before_tool_call', async () => { order.push(1); return { action: 'allow' }; }, { priority: 1 })
+        .on('before_tool_call', async () => { order.push(10); return { action: 'allow' }; }, { priority: 10 });
+
+      await runner.run({ sessionKey: 'main', message: 'Go', model: 'test', systemPrompt: '' });
+
+      expect(order).toEqual([10, 1]);
+    });
+
+    it('on() supports chaining', () => {
+      const runner = new AgentRunner({ llmClient: createMockLLMClient([]), sessionManager });
+      const result = runner
+        .on('before_tool_call', async () => ({ action: 'allow' }))
+        .on('after_tool_call', async () => {});
+      expect(result).toBe(runner);
+    });
+  });
 });
