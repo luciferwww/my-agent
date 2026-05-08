@@ -180,6 +180,12 @@ export interface AgentsConfig {
   list: AgentEntry[];
 }
 
+/** Logger 配置 */
+export interface LoggerModuleConfig {
+  /** 全局最低输出级别；默认 'info' */
+  minLevel?: 'debug' | 'info' | 'warn' | 'error';
+}
+
 /**
  * 应用顶层配置。
  *
@@ -191,6 +197,8 @@ export interface AppConfig {
   workspaceDir: string;
   /** agent 配置（defaults + list） */
   agents: AgentsConfig;
+  /** logger 配置 */
+  logger: LoggerModuleConfig;
 }
 
 // ── Config File Schema ───────────────────────────────────
@@ -206,4 +214,5 @@ export interface ConfigFile {
     defaults?: DeepPartial<AgentDefaults>;
     list?: AgentEntry[];
   };
+  logger?: LoggerModuleConfig;
 }

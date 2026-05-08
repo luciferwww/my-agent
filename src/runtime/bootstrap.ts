@@ -1,6 +1,7 @@
 import { AgentRunner } from '../agent-runner/index.js';
 import { loadConfig, resolveAgentConfig } from '../config/index.js';
 import { AnthropicClient } from '../llm-client/index.js';
+import { ConsoleAdapter, Logger } from '../logger/index.js';
 import { MemoryManager } from '../memory/index.js';
 import { SystemPromptBuilder, UserPromptBuilder } from '../prompt-builder/index.js';
 import { SessionManager } from '../session/index.js';
@@ -71,6 +72,12 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
 
   try {
     const appConfig = loadConfig({ workspaceDir: options.workspaceDir });
+
+    await Logger.configure({
+      adapters: [new ConsoleAdapter()],
+      minLevel: appConfig.logger.minLevel ?? 'info',
+    });
+
     const resolvedConfig = resolveAgentConfig(appConfig, {
       agentId: options.agentId,
       envOverrides: options.envOverrides,

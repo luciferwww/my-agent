@@ -125,6 +125,9 @@ export function loadConfig(options: LoadConfigOptions): AppConfig {
       defaults,
       list: file.agents?.list ?? [],
     },
+    logger: {
+      minLevel: file.logger?.minLevel ?? 'info',
+    },
   };
 }
 
