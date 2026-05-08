@@ -140,6 +140,7 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
       llmClient,
       sessionManager,
       toolExecutor: toolBundle.executor,
+      onEvent: options.onAgentEvent,
     });
 
     const state = {

@@ -1,3 +1,7 @@
+import { randomUUID } from 'node:crypto';
+import type { AgentEvent } from '../agent-runner/index.js';
+import { ApprovalManager } from '../channel/ApprovalManager.js';
+import type { Channel, ChannelRunRequest } from '../channel/types.js';
 import { loadContextFiles } from '../workspace/index.js';
 import type { ContextFile } from '../workspace/types.js';
 import { bootstrapRuntime } from './bootstrap.js';
@@ -20,6 +24,19 @@ import type {
 export class RuntimeApp {
   private readonly onEvent?: RuntimeAppOptions['onEvent'];
   private readonly inFlightRuns = new Set<Promise<unknown>>();
+  /** Per-session 串行 gate：同一 sessionKey 同时只允许一个 turn。跨 session 可并发 */
+  private readonly inFlightSessions = new Set<string>();
+
+  // ── Channel 层 ──────────────────────────────────────────────────
+  /** 与 bootstrap fanout 闭包共享引用：registerChannel 后注册的新 channel 实时可见 */
+  private readonly channels: Channel[];
+  private readonly approvalManager: ApprovalManager;
+  /** turnId → 起源 channel，approval 路由用 */
+  private readonly originChannelByTurn = new Map<string, Channel>();
+  /** turnId → 起源 client（WebSocketChannel 用此字段定向） */
+  private readonly originClientByTurn = new Map<string, string>();
+  private approvalRoutingWired = false;
+  private channelsStarted = false;
 
   private closePromise?: Promise<RuntimeShutdownReport>;
   private shutdownReport?: RuntimeShutdownReport;
@@ -27,15 +44,41 @@ export class RuntimeApp {
   private constructor(
     private readonly resources: RuntimeResourceSet,
     private state: RuntimeLifecycleState,
+    channels: Channel[],
     onEvent?: RuntimeAppOptions['onEvent'],
   ) {
+    this.channels = channels;
     this.onEvent = onEvent;
+    this.approvalManager = new ApprovalManager();
   }
 
   static async create(options: RuntimeAppOptions): Promise<RuntimeApp> {
-    const { resources, state } = await bootstrapRuntime(options);
-    return new RuntimeApp(resources, state, options.onEvent);
+    // 与未来 RuntimeApp 实例共享的可变数组：registerChannel 后填充，fanout 实时读取
+    const channels: Channel[] = [];
+    const userObserver = options.onAgentEvent;
+
+    const fanout = (event: AgentEvent) => {
+      for (const channel of channels) {
+        try {
+          channel.send(event);
+        } catch (err) {
+          // channel.send 抛错不应中断事件分发；记录到 stderr 即可
+          // eslint-disable-next-line no-console
+          console.error(`[RuntimeApp] channel ${channel.id} send failed:`, err);
+        }
+      }
+      userObserver?.(event);
+    };
+
+    const { resources, state } = await bootstrapRuntime({
+      ...options,
+      onAgentEvent: fanout,
+    });
+
+    return new RuntimeApp(resources, state, channels, options.onEvent);
   }
+
+  // ── 状态查询 ──────────────────────────────────────────────────────
 
   getState(): RuntimeLifecycleState {
     return {
@@ -52,20 +95,122 @@ export class RuntimeApp {
     return this.resources.toolBundle.tools.map((tool) => tool.name);
   }
 
-  async runTurn(params: RunTurnParams): Promise<RunTurnResult> {
-    this.assertCanRun();
+  // ── Channel 注册与生命周期 ────────────────────────────────────────
 
+  /**
+   * 注册 channel，绑定 onMessage 与（如有）onApprovalDecision。
+   * 须在 startChannels() 前调用；多次调用支持注册多个 channel。
+   */
+  registerChannel(channel: Channel): void {
+    this.assertNotClosed();
+    this.channels.push(channel);
+    channel.onMessage(this.makeMessageHandler(channel));
+    channel.approval?.onApprovalDecision((id, decision) => {
+      this.approvalManager.resolve(id, decision);
+    });
+  }
+
+  /**
+   * 依次启动所有已注册 channel。先调 wireApprovalRouting() 把 hook 装上，
+   * 再依次调 channel.start()。
+   *
+   * 注意：CliChannel.start() 是阻塞的（readline 循环），多 channel 启动应并行；
+   * 这里使用 Promise.all 让阻塞 channel 不阻塞其他 channel 的启动。
+   */
+  async startChannels(): Promise<void> {
+    if (this.channelsStarted) return;
+    this.channelsStarted = true;
+    this.wireApprovalRouting();
+    await Promise.all(this.channels.map((c) => c.start()));
+  }
+
+  /** 依次调用所有已注册 channel 的 stop()；幂等 */
+  async stopChannels(): Promise<void> {
+    await Promise.allSettled(this.channels.map((c) => c.stop()));
+  }
+
+  // ── Approval 路由（详见 channel-design.md §4.3）────────────────────
+
+  /**
+   * 启动时调用一次。仅在至少一个 channel 提供 approval 能力时才注册 hook，
+   * 否则库模式所有 tool 调用直通。
+   */
+  private wireApprovalRouting(): void {
+    if (this.approvalRoutingWired) return;
+    if (!this.channels.some((c) => c.approval)) return;
+    this.approvalRoutingWired = true;
+
+    // ① hook → ApprovalManager
+    this.resources.agentRunner.on(
+      'before_tool_call',
+      async ({ toolName, input, turnId, sessionKey }) => {
+        const result = await this.approvalManager.request({
+          toolName,
+          input,
+          sessionKey,
+          turnId,
+          originClientId: this.originClientByTurn.get(turnId),
+        });
+        return result.decision === 'allow'
+          ? { action: 'allow' as const }
+          : {
+              action: 'deny' as const,
+              reason: result.reason === 'timeout' ? 'Denied by timeout' : 'Denied by user',
+            };
+      },
+    );
+
+    // ② ApprovalManager → 起源 channel
+    this.approvalManager.onRequest((request) => {
+      const originChannel = this.originChannelByTurn.get(request.turnId);
+      if (!originChannel?.approval) return;  // 起源不可达：让 ApprovalManager 走超时
+      originChannel.approval.sendApprovalRequest(request);
+    });
+
+    this.approvalManager.onExpire((request) => {
+      const originChannel = this.originChannelByTurn.get(request.turnId);
+      originChannel?.approval?.sendApprovalExpired(request);
+    });
+  }
+
+  /** 每个 channel 一份消息处理器，闭包绑定 channel 自身用于路由表登记 */
+  private makeMessageHandler(channel: Channel) {
+    return async (req: ChannelRunRequest) => {
+      const turnId = randomUUID();
+      this.originChannelByTurn.set(turnId, channel);
+      if (req.clientId) this.originClientByTurn.set(turnId, req.clientId);
+      try {
+        await this.runTurn({
+          sessionKey: req.sessionKey,
+          message: req.message,
+          model: req.model,
+          maxTokens: req.maxTokens,
+          maxToolRounds: req.maxToolRounds,
+          turnId,
+        });
+      } finally {
+        this.originChannelByTurn.delete(turnId);
+        this.originClientByTurn.delete(turnId);
+      }
+    };
+  }
+
+  // ── runTurn ───────────────────────────────────────────────────────
+
+  async runTurn(params: RunTurnParams): Promise<RunTurnResult> {
+    this.assertCanRunForSession(params.sessionKey);
+
+    this.inFlightSessions.add(params.sessionKey);
     this.state.activeRunCount += 1;
     this.state.lastRunStartedAt = Date.now();
-    this.setPhase('running');
     this.emit({
       type: 'turn_start',
       sessionKey: params.sessionKey,
       contextVersion: this.state.contextVersion,
     });
 
-    // Track the active promise so close() can wait for in-flight work to settle.
-    const runPromise = this.runTurnInternal(params);
+    const turnId = params.turnId ?? randomUUID();
+    const runPromise = this.runTurnInternal({ ...params, turnId });
     this.inFlightRuns.add(runPromise);
 
     try {
@@ -82,12 +227,9 @@ export class RuntimeApp {
       throw createRuntimeError(info);
     } finally {
       this.inFlightRuns.delete(runPromise);
+      this.inFlightSessions.delete(params.sessionKey);
       this.state.activeRunCount = Math.max(0, this.state.activeRunCount - 1);
       this.state.lastRunEndedAt = Date.now();
-
-      if (this.state.phase === 'running') {
-        this.setPhase('ready');
-      }
     }
   }
 
@@ -136,7 +278,13 @@ export class RuntimeApp {
       try {
         await Promise.allSettled([...this.inFlightRuns]);
 
-        // Dispose each resource independently so one failure does not block the rest.
+        // 先停 channel（阻塞循环退出），再关 approvalManager 和其他 disposable
+        await this.stopChannels();
+        completed.push('channels');
+
+        this.approvalManager.close();
+        completed.push('approvalManager');
+
         for (const [name, disposable] of this.collectDisposables()) {
           try {
             await Promise.resolve(disposable.close());
@@ -180,7 +328,9 @@ export class RuntimeApp {
     return this.closePromise;
   }
 
-  private async runTurnInternal(params: RunTurnParams): Promise<RunTurnResult> {
+  // ── 内部辅助 ──────────────────────────────────────────────────────
+
+  private async runTurnInternal(params: RunTurnParams & { turnId: string }): Promise<RunTurnResult> {
     await this.resources.sessionManager.resolveSession(params.sessionKey);
 
     if (params.reloadContextFiles) {
@@ -196,10 +346,8 @@ export class RuntimeApp {
       }),
     );
 
-    // 使用 userPromptBuilder 处理用户输入
     const builtUserPrompt = await this.resources.userPromptBuilder.build({
       text: params.message,
-      // 可扩展：attachments/metadata 支持
     });
 
     const result = await this.resources.agentRunner.run({
@@ -207,6 +355,7 @@ export class RuntimeApp {
       message: builtUserPrompt.text,
       model: this.requireModel(params.model),
       systemPrompt,
+      turnId: params.turnId,
       tools: this.resources.toolBundle.llmDefinitions,
       maxTokens: params.maxTokens ?? this.resources.resolvedConfig.llm.maxTokens,
       maxToolRounds: params.maxToolRounds ?? this.resources.resolvedConfig.runner.maxToolRounds,
@@ -250,13 +399,29 @@ export class RuntimeApp {
     return model;
   }
 
-  private assertCanRun(): void {
-    if (this.state.phase !== 'ready') {
+  /**
+   * Per-session 并发控制：同 session 串行（消息历史一致性），跨 session 可并发。
+   * runtime 关闭后任何 turn 都拒绝。
+   */
+  private assertCanRunForSession(sessionKey: string): void {
+    if (
+      this.state.phase === 'closing' ||
+      this.state.phase === 'closed' ||
+      this.state.phase === 'failed'
+    ) {
       throw createRuntimeError({
         scope: 'run',
         severity: 'recoverable',
         code: 'RUN_REJECTED',
         message: `Cannot run when runtime phase is ${this.state.phase}.`,
+      });
+    }
+    if (this.inFlightSessions.has(sessionKey)) {
+      throw createRuntimeError({
+        scope: 'run',
+        severity: 'recoverable',
+        code: 'RUN_REJECTED',
+        message: `Session ${sessionKey} already has a turn in flight.`,
       });
     }
   }
@@ -268,6 +433,17 @@ export class RuntimeApp {
         severity: 'recoverable',
         code: 'CONTEXT_LOAD_FAILED',
         message: `Cannot reload context files when runtime phase is ${this.state.phase}.`,
+      });
+    }
+  }
+
+  private assertNotClosed(): void {
+    if (this.state.phase === 'closing' || this.state.phase === 'closed' || this.state.phase === 'failed') {
+      throw createRuntimeError({
+        scope: 'startup',
+        severity: 'recoverable',
+        code: 'RUN_REJECTED',
+        message: `Cannot register channel when runtime phase is ${this.state.phase}.`,
       });
     }
   }

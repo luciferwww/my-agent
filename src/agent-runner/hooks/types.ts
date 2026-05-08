@@ -5,6 +5,10 @@ import type { ToolResult } from '../../tools/types.js';
 export interface BeforeToolCallPayload {
   toolName: string;
   input: Record<string, unknown>;
+  /** 本次 turn 的唯一 id，由 RuntimeApp.runTurn 生成 */
+  turnId: string;
+  /** 本次 turn 所属 session */
+  sessionKey: string;
 }
 
 export type BeforeToolCallResult =
@@ -23,6 +27,10 @@ export interface AfterToolCallPayload {
   input: Record<string, unknown>;
   result: ToolResult;
   durationMs: number;
+  /** 本次 turn 的唯一 id，由 RuntimeApp.runTurn 生成 */
+  turnId: string;
+  /** 本次 turn 所属 session */
+  sessionKey: string;
 }
 
 export type AfterToolCallHook = (

@@ -6,7 +6,7 @@ import type { ToolDefinition as PromptToolDefinition } from '../prompt-builder/t
 import type { SessionManager, SessionManagerOptions } from '../session/SessionManager.js';
 import type { Tool, ToolExecutor } from '../tools/types.js';
 import type { ContextFile } from '../workspace/types.js';
-import type { AgentRunner, AgentRunnerConfig } from '../agent-runner/index.js';
+import type { AgentEvent, AgentRunner, AgentRunnerConfig } from '../agent-runner/index.js';
 
 export interface RuntimeToolBundle {
   tools: Tool[];
@@ -69,6 +69,11 @@ export interface RuntimeAppOptions {
   cliOverrides?: DeepPartial<AgentDefaults>;
   dependencies?: Partial<RuntimeDependencies>;
   onEvent?: (event: RuntimeEvent) => void;
+  /**
+   * 可选的 AgentEvent 观察者（telemetry/调试日志用）。
+   * RuntimeApp 在 fanout 闭包末尾调用此回调，与 channel.send 并行触发。
+   */
+  onAgentEvent?: (event: AgentEvent) => void;
 }
 
 export interface RunTurnParams {
@@ -81,6 +86,8 @@ export interface RunTurnParams {
   promptMode?: AgentDefaults['prompt']['mode'];
   safetyLevel?: AgentDefaults['prompt']['safetyLevel'];
   reloadContextFiles?: boolean;
+  /** 可选 turn 标识；不提供则由 RuntimeApp 自动生成 UUID */
+  turnId?: string;
 }
 
 export interface RunTurnResult {

@@ -1,3 +1,4 @@
+import { Logger } from '../../logger/index.js';
 import type {
   BeforeToolCallHook,
   BeforeToolCallPayload,
@@ -5,6 +6,8 @@ import type {
   AfterToolCallHook,
   AfterToolCallPayload,
 } from './types.js';
+
+const logger = Logger.get('HookRunner');
 
 type NamedHandler<T> = { handler: T; name?: string };
 
@@ -22,10 +25,15 @@ export async function runBeforeToolCall(
   let currentInput = payload.input;
 
   for (const { handler, name } of hooks) {
-    const result = await handler({ toolName: payload.toolName, input: currentInput });
+    const result = await handler({
+      toolName: payload.toolName,
+      input: currentInput,
+      turnId: payload.turnId,
+      sessionKey: payload.sessionKey,
+    });
     if (result.action === 'deny') {
       const tag = name ? `:${name}` : '';
-      console.warn(`[hook${tag}] before_tool_call denied: tool=${payload.toolName} reason=${result.reason}`);
+      logger.warn(`[hook${tag}] before_tool_call denied`, { tool: payload.toolName, reason: result.reason });
       return { action: 'deny', reason: result.reason, input: currentInput };
     }
     if ('input' in result) {
@@ -47,7 +55,7 @@ export function runAfterToolCall(
   for (const { handler, name } of hooks) {
     Promise.resolve(handler(payload)).catch((err) => {
       const tag = name ? `:${name}` : '';
-      console.warn(`[hook${tag}] after_tool_call failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn(`[hook${tag}] after_tool_call failed`, { error: err instanceof Error ? err.message : String(err) });
     });
   }
 }

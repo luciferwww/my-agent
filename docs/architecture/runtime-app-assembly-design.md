@@ -234,7 +234,14 @@ export interface RuntimeAppOptions {
   envOverrides?: DeepPartial<AgentDefaults>;
   cliOverrides?: DeepPartial<AgentDefaults>;
   dependencies?: Partial<RuntimeDependencies>;
+  /** Runtime 生命周期事件（app_start / turn_start / shutdown_* 等） */
   onEvent?: (event: RuntimeEvent) => void;
+  /**
+   * 可选的 AgentEvent 观察者（telemetry / 调试日志用）。
+   * RuntimeApp 在 fanout 闭包末尾调用此回调，与 channel.send 并行触发。
+   * 详见 channel-design.md §9.6。
+   */
+  onAgentEvent?: (event: AgentEvent) => void;
 }
 ```
 
@@ -244,7 +251,8 @@ export interface RuntimeAppOptions {
 - `agentId` 预留给后续 per-agent 配置；
 - `envOverrides` 和 `cliOverrides` 直接复用 config 模块的覆盖模型；
 - `dependencies` 用于测试替换依赖；
-- `onEvent` 用于暴露 Runtime 层事件。
+- `onEvent` 用于暴露 Runtime 层生命周期事件（**不含 AgentEvent**）；
+- `onAgentEvent` 用于库消费者订阅 AgentEvent 流，与 channel 路径独立。
 
 ### 6.2 RuntimeDependencies
 
@@ -303,6 +311,8 @@ export interface RunTurnParams {
   promptMode?: AgentDefaults['prompt']['mode'];
   safetyLevel?: AgentDefaults['prompt']['safetyLevel'];
   reloadContextFiles?: boolean;
+  /** 可选 turn 标识；不提供则由 RuntimeApp 自动生成 UUID 后透传给 AgentRunner */
+  turnId?: string;
 }
 ```
 
@@ -310,7 +320,8 @@ export interface RunTurnParams {
 
 - 绝大多数字段默认继承 resolved config；
 - 单轮允许局部覆盖；
-- `reloadContextFiles` 是一个显式动作，不默认每轮触发。
+- `reloadContextFiles` 是一个显式动作，不默认每轮触发；
+- `turnId` 由 RuntimeApp 在 channel 接入路径生成（详见 channel-design.md §4.3 的 `makeMessageHandler`），库消费者也可显式传入用于日志关联。**不暴露 `clientId`**——它属于 channel ↔ RuntimeApp 的内部路由元数据。
 
 ### 6.4 RunTurnResult
 
@@ -611,7 +622,7 @@ flowchart TD
 ```typescript
 export class RuntimeApp {
   async runTurn(params: RunTurnParams): Promise<RunTurnResult> {
-    this.assertCanRun();
+    this.assertCanRunForSession(params.sessionKey);
     this.emit({
       type: 'turn_start',
       sessionKey: params.sessionKey,
@@ -812,24 +823,20 @@ P0 的状态转换规则建议固定如下：
 
 - `starting -> ready`：启动成功；
 - `starting -> failed`：启动阶段发生 fatal 错误；
-- `ready -> running`：开始执行 `runTurn()`；
-- `running -> ready`：本轮结束；
 - `ready -> closing`：开始关闭；
-- `running -> closing`：允许，但必须先阻止新请求，再等待当前 run 收尾；
 - `closing -> closed`：资源释放完成；
 - `closing -> failed`：关闭阶段出现不可恢复异常；
 - `closed`：终态，不允许再次 `runTurn()`；
 - `failed`：终态，建议重新 create，不再复用。
+
+> **并发控制变更（与 channel 层接入相关）**：单个 `runTurn()` 的执行**不再**让 phase 在 `ready ↔ running` 之间切换。phase 是 runtime 级别的生命周期标记，per-turn 的并发控制由独立的 `inFlightSessions: Set<string>` 完成——同一 sessionKey 串行（消息历史一致性硬约束），跨 session 可并发（多 channel / 多 client 场景需要）。`activeRunCount` 字段保留作为 metric。详见 channel-design.md §9.3。
 
 ```mermaid
 stateDiagram-v2
   [*] --> starting
   starting --> ready: bootstrap success
   starting --> failed: startup fatal error
-  ready --> running: runTurn start
-  running --> ready: runTurn finished
   ready --> closing: close
-  running --> closing: close while run active
   closing --> closed: dispose success
   closing --> failed: shutdown fatal error
   closed --> [*]
@@ -839,12 +846,17 @@ stateDiagram-v2
 建议 `RuntimeApp` 内部实现以下守卫：
 
 ```typescript
-private assertCanRun(): void;
+private assertCanRunForSession(sessionKey: string): void;  // 替代旧 assertCanRun
 private assertCanReload(): void;
 private assertNotClosed(): void;
 private setPhase(next: RuntimeLifecyclePhase): void;
 private recordError(scope: RuntimeErrorScope, error: Error): void;
 ```
+
+`assertCanRunForSession` 行为：
+- runtime 处于 `closing`/`closed`/`failed` → throw `RUN_REJECTED`
+- 同 sessionKey 已有 turn 在 `inFlightSessions` 中 → throw `RUN_REJECTED`
+- 否则放行（不同 session 互不阻塞）
 
 这里刻意把应用级状态和单轮运行状态分开，避免状态语义混杂。
 
@@ -857,12 +869,13 @@ private recordError(scope: RuntimeErrorScope, error: Error): void;
 建议的关闭顺序：
 
 ```
-1. 阻止新 runTurn 进入
+1. 阻止新 runTurn 进入（phase = closing 后 assertCanRunForSession 直接拒绝）
 2. 等待当前 runTurn 收尾
-3. 停止未来可能新增的后台观察器
-4. 关闭 MemoryManager
-5. 清理 Runtime 层缓存引用
-6. 标记 closed
+3. 调 stopChannels()——依次关闭所有已注册 channel（释放 readline / WS 等 I/O 资源）
+4. 调 approvalManager.close()——拒绝所有 pending 审批，清理 timer
+5. 关闭 MemoryManager 等其他 disposable
+6. 清理 Runtime 层缓存引用
+7. 标记 closed
 ```
 
 建议定义最小的可释放资源接口：
@@ -893,8 +906,63 @@ private async disposeResources(): Promise<void> {
 
 - `close()` 必须幂等；
 - `close()` 后不能再 `runTurn()`；
-- `close()` 允许在 `running` 阶段触发，但要先等当前轮次结束；
+- `close()` 允许在仍有 turn 在 `inFlightSessions` 中时触发，但要先阻止新 turn 进入并等待当前轮次结束；
 - 局部资源释放失败应记录 warning，但不阻止其它资源关闭。
+
+---
+
+## 11.5 Channel 层接入
+
+Channel 层（CLI / WebSocket 等）作为独立模块挂接 RuntimeApp，**完整设计见 [channel-design.md](./channel-design.md)**。这里只点明 RuntimeApp 侧承担的责任与新增的接口面。
+
+### 新增公开方法
+
+```typescript
+class RuntimeApp {
+  /** 注册 channel；可多次调用注册多个 channel。须在 startChannels() 前 */
+  registerChannel(channel: Channel): void;
+
+  /** 启动所有已注册 channel；先调 wireApprovalRouting() 再并行 channel.start() */
+  startChannels(): Promise<void>;
+
+  /** 停止所有 channel；幂等。close() 内部会自动调用 */
+  stopChannels(): Promise<void>;
+}
+```
+
+### 新增内部字段
+
+| 字段 | 用途 |
+|------|------|
+| `channels: Channel[]` | 与 bootstrap fanout 闭包**共享引用**——闭包遍历此数组分发 AgentEvent 到每个 channel |
+| `approvalManager: ApprovalManager` | 进程内 Promise bus，连接 `before_tool_call` hook 与 channel 的 approval adapter |
+| `originChannelByTurn: Map<turnId, Channel>` | turn → 起源 channel；approval 按此路由（不广播） |
+| `originClientByTurn: Map<turnId, clientId>` | turn → 起源 client；WebSocket 内部 client 级路由 |
+| `inFlightSessions: Set<string>` | per-session 串行 gate（替代旧的全局 phase gate） |
+| `approvalRoutingWired: boolean` | wireApprovalRouting 幂等标记 |
+
+### create() 与 bootstrap 协作
+
+`RuntimeApp.create()` 预先创建空的 `channels[]` 数组，构造 fanout 闭包后传给 bootstrap 作为 `onAgentEvent`，再用同一份 `channels[]` 引用构造 `RuntimeApp` 实例。`registerChannel` 后续 push 进的 channel 闭包都能即时看到。
+
+```typescript
+static async create(options: RuntimeAppOptions): Promise<RuntimeApp> {
+  const channels: Channel[] = [];
+  const userObserver = options.onAgentEvent;
+
+  const fanout = (event: AgentEvent) => {
+    for (const channel of channels) channel.send(event);
+    userObserver?.(event);
+  };
+
+  const { resources, state } = await bootstrapRuntime({ ...options, onAgentEvent: fanout });
+  return new RuntimeApp(resources, state, channels, options.onEvent);
+}
+```
+
+### Approval 路由策略
+
+只有起源 channel 收到审批请求（按 `turnId` 反查 `originChannelByTurn`），不在 channel 间广播。库模式（无任何 approval channel 注册）下 RuntimeApp **根本不注册 hook**，所有 tool 直通。详见 channel-design.md §4.3。
 
 ---
 

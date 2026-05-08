@@ -58,6 +58,7 @@ describe('AgentRunner', () => {
         message: 'Hi',
         model: 'test',
         systemPrompt: 'You are helpful.',
+        turnId: 'test-turn',
       });
 
       expect(result.text).toBe('Hello!');
@@ -82,10 +83,10 @@ describe('AgentRunner', () => {
       const runner = new AgentRunner({ llmClient, sessionManager });
 
       // 第一轮
-      await runner.run({ sessionKey: 'main', message: 'First', model: 'test', systemPrompt: '' });
+      await runner.run({ sessionKey: 'main', message: 'First', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       // 第二轮——应该能看到第一轮的历史
-      await runner.run({ sessionKey: 'main', message: 'Second', model: 'test', systemPrompt: '' });
+      await runner.run({ sessionKey: 'main', message: 'Second', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       // 第二轮的 messages 应包含第一轮的历史
       // user(First) + assistant([{type:'text',text:'Response'}]) + user(Second)
@@ -110,6 +111,7 @@ describe('AgentRunner', () => {
         message: 'Hi',
         model: 'test',
         systemPrompt: '',
+        turnId: 'test-turn',
       });
 
       expect(result.text).toBe('');
@@ -147,6 +149,7 @@ describe('AgentRunner', () => {
         message: 'Weather?',
         model: 'test',
         systemPrompt: '',
+        turnId: 'test-turn',
         tools: [{ name: 'get_weather', description: 'Get weather', input_schema: {} }],
       });
 
@@ -186,6 +189,7 @@ describe('AgentRunner', () => {
         message: 'Do tasks',
         model: 'test',
         systemPrompt: '',
+        turnId: 'test-turn',
       });
 
       expect(result.text).toBe('Done.');
@@ -213,6 +217,7 @@ describe('AgentRunner', () => {
         message: 'Loop',
         model: 'test',
         systemPrompt: '',
+        turnId: 'test-turn',
         maxToolRounds: 3,
       });
 
@@ -245,6 +250,7 @@ describe('AgentRunner', () => {
         message: 'Search something',
         model: 'test',
         systemPrompt: '',
+        turnId: 'test-turn',
       });
 
       expect(result.text).toBe('Sorry, I cannot search.');
@@ -276,6 +282,7 @@ describe('AgentRunner', () => {
         message: 'Try tool',
         model: 'test',
         systemPrompt: '',
+        turnId: 'test-turn',
       });
 
       expect(result.text).toBe('The tool failed.');
@@ -296,6 +303,7 @@ describe('AgentRunner', () => {
         message: 'Hi',
         model: 'test',
         systemPrompt: '',
+        turnId: 'test-turn',
       });
 
       expect(result.stopReason).toBe('error');
@@ -322,7 +330,7 @@ describe('AgentRunner', () => {
         onEvent: (e) => events.push(e),
       });
 
-      await runner.run({ sessionKey: 'main', message: 'Hi', model: 'test', systemPrompt: '' });
+      await runner.run({ sessionKey: 'main', message: 'Hi', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       expect(events[0]!.type).toBe('run_start');
       expect(events[events.length - 1]!.type).toBe('run_end');
@@ -345,7 +353,7 @@ describe('AgentRunner', () => {
         onEvent: (e) => { if (e.type === 'text_delta') textDeltas.push(e.text); },
       });
 
-      await runner.run({ sessionKey: 'main', message: 'Hi', model: 'test', systemPrompt: '' });
+      await runner.run({ sessionKey: 'main', message: 'Hi', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       expect(textDeltas).toEqual(['Hello', ' world']);
     });
@@ -372,7 +380,7 @@ describe('AgentRunner', () => {
         onEvent: (e) => events.push(e),
       });
 
-      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '' });
+      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       const toolUseEvent = events.find((e) => e.type === 'tool_use');
       const toolResultEvent = events.find((e) => e.type === 'tool_result');
@@ -405,7 +413,7 @@ describe('AgentRunner', () => {
         onEvent: (e) => { if (e.type === 'llm_call') llmCalls.push(e.round); },
       });
 
-      await runner.run({ sessionKey: 'main', message: 'Go', model: 'test', systemPrompt: '' });
+      await runner.run({ sessionKey: 'main', message: 'Go', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       expect(llmCalls).toEqual([0, 1]);
     });
@@ -424,7 +432,7 @@ describe('AgentRunner', () => {
       ]);
 
       const runner = new AgentRunner({ llmClient, sessionManager });
-      await runner.run({ sessionKey: 'main', message: 'Hello', model: 'test', systemPrompt: '' });
+      await runner.run({ sessionKey: 'main', message: 'Hello', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       const messages = sessionManager.getMessages('main');
       expect(messages).toHaveLength(2);
@@ -453,7 +461,7 @@ describe('AgentRunner', () => {
         toolExecutor: async () => ({ content: 'result' }),
       });
 
-      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '' });
+      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       const messages = sessionManager.getMessages('main');
       // user(Search) → assistant(tool_use) → toolResult → assistant(Done)
@@ -484,7 +492,7 @@ describe('AgentRunner', () => {
       });
 
       await expect(
-        runner.run({ sessionKey: 'main', message: 'Hi', model: 'test', systemPrompt: '' }),
+        runner.run({ sessionKey: 'main', message: 'Hi', model: 'test', systemPrompt: '', turnId: 'test-turn' }),
       ).rejects.toThrow('API error');
 
       expect(events.some((e) => e.type === 'error')).toBe(true);
@@ -516,7 +524,7 @@ describe('AgentRunner', () => {
       });
       runner.on('before_tool_call', async () => ({ action: 'allow' }));
 
-      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '' });
+      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       expect(executedTools).toEqual(['search']);
     });
@@ -545,7 +553,7 @@ describe('AgentRunner', () => {
       });
       runner.on('before_tool_call', async () => ({ action: 'deny', reason: 'dangerous command' }));
 
-      const result = await runner.run({ sessionKey: 'main', message: 'Run it', model: 'test', systemPrompt: '' });
+      const result = await runner.run({ sessionKey: 'main', message: 'Run it', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       expect(executedTools).toHaveLength(0);
       expect(result.text).toBe('Tool was blocked.');
@@ -578,7 +586,7 @@ describe('AgentRunner', () => {
         input: { ...input, q: 'modified' },
       }));
 
-      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '' });
+      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       expect(capturedInputs[0]?.q).toBe('modified');
     });
@@ -607,7 +615,7 @@ describe('AgentRunner', () => {
         afterPayloads.push({ toolName, durationMs });
       });
 
-      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '' });
+      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       // after_tool_call is fire-and-forget; give it a tick to resolve
       await new Promise((r) => setTimeout(r, 10));
@@ -640,7 +648,7 @@ describe('AgentRunner', () => {
         .on('before_tool_call', async () => { order.push(1); return { action: 'allow' }; }, { priority: 1 })
         .on('before_tool_call', async () => { order.push(10); return { action: 'allow' }; }, { priority: 10 });
 
-      await runner.run({ sessionKey: 'main', message: 'Go', model: 'test', systemPrompt: '' });
+      await runner.run({ sessionKey: 'main', message: 'Go', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       expect(order).toEqual([10, 1]);
     });

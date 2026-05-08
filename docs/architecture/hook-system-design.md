@@ -47,6 +47,10 @@ import type { ToolResult } from '../../tools/types.js';
 export interface BeforeToolCallPayload {
   toolName: string;
   input: Record<string, unknown>;
+  /** 本次 turn 的唯一 id，由 RuntimeApp.runTurn 生成 */
+  turnId: string;
+  /** 本次 turn 所属 session */
+  sessionKey: string;
 }
 
 export type BeforeToolCallResult =
@@ -65,6 +69,10 @@ export interface AfterToolCallPayload {
   input: Record<string, unknown>;
   result: ToolResult;
   durationMs: number;
+  /** 本次 turn 的唯一 id（与 BeforeToolCallPayload 对称，便于日志关联） */
+  turnId: string;
+  /** 本次 turn 所属 session */
+  sessionKey: string;
 }
 
 export type AfterToolCallHook = (
@@ -161,7 +169,12 @@ export async function runBeforeToolCall(
   let currentInput = payload.input;
 
   for (const { handler, name } of hooks) {
-    const result = await handler({ toolName: payload.toolName, input: currentInput });
+    const result = await handler({
+      toolName: payload.toolName,
+      input: currentInput,
+      turnId: payload.turnId,
+      sessionKey: payload.sessionKey,
+    });
     if (result.action === 'deny') {
       const tag = name ? `:${name}` : '';
       console.warn(`[hook${tag}] before_tool_call denied: tool=${payload.toolName} reason=${result.reason}`);

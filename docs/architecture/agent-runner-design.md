@@ -84,7 +84,12 @@ export interface AgentRunnerConfig {
   sessionManager: SessionManager;
   /** 工具执行回调，不提供则 tool_use 时返回错误 */
   toolExecutor?: ToolExecutor;
-  /** 运行时事件回调 */
+  /**
+   * 运行时事件回调（统一入口）。
+   * RuntimeApp 在 bootstrap 时注入 fanout 闭包，由它转发事件到所有已注册 channel
+   * 与可选的 RuntimeAppOptions.onAgentEvent 观察者；详见 channel-design.md §9.5。
+   * 库消费者直接使用 AgentRunner 时也可在此注入自己的 handler。
+   */
   onEvent?: (event: AgentEvent) => void;
 }
 
@@ -98,6 +103,14 @@ export interface RunParams {
   model: string;
   /** System prompt（由调用方通过 prompt-builder 构建） */
   systemPrompt: string;
+  /**
+   * 本次 turn 的唯一 id；由 RuntimeApp 生成并传入。
+   * AgentRunner 用于：
+   *   - emit 时自动注入到每个 AgentEvent
+   *   - 触发 before/after_tool_call hook 时注入 payload
+   * 直接调用 AgentRunner 的库消费者需自行生成 UUID。
+   */
+  turnId: string;
   /** 工具定义（传给 LLM，让它知道有哪些工具可用） */
   tools?: Array<{ name: string; description: string; input_schema: Record<string, unknown> }>;
   /** 最大 token 数 */
@@ -122,15 +135,21 @@ export interface RunResult {
   toolRounds: number;
 }
 
-/** 运行时事件 */
+/**
+ * 运行时事件。
+ *
+ * 每个变体都自带 `sessionKey` 和 `turnId` 字段（不引入公共基类型抽象）——
+ * AgentRunner.emit 内部通过私有的分发式 Omit 类型作为输入，从 currentParams
+ * 自动注入这两个字段，调用方不必手写。详见 channel-design.md §9.2。
+ */
 export type AgentEvent =
-  | { type: 'run_start' }
-  | { type: 'text_delta'; text: string }
-  | { type: 'tool_use'; name: string; input: Record<string, unknown> }
-  | { type: 'tool_result'; name: string; result: ToolResult }
-  | { type: 'llm_call'; round: number }
-  | { type: 'run_end'; result: RunResult }
-  | { type: 'error'; error: Error };
+  | { type: 'run_start'; sessionKey: string; turnId: string }
+  | { type: 'text_delta'; sessionKey: string; turnId: string; text: string }
+  | { type: 'tool_use'; sessionKey: string; turnId: string; name: string; input: Record<string, unknown> }
+  | { type: 'tool_result'; sessionKey: string; turnId: string; name: string; result: ToolResult }
+  | { type: 'llm_call'; sessionKey: string; turnId: string; round: number }
+  | { type: 'run_end'; sessionKey: string; turnId: string; result: RunResult }
+  | { type: 'error'; sessionKey: string; turnId: string; error: Error };
 ```
 
 ---

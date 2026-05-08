@@ -26,6 +26,8 @@ export interface RunParams {
   model: string;
   /** System prompt（由调用方通过 prompt-builder 构建） */
   systemPrompt: string;
+  /** 本次 turn 的唯一 id；由 RuntimeApp 生成并传入 */
+  turnId: string;
   /** 工具定义（传给 LLM） */
   tools?: ToolDefinition[];
   /** 最大 token 数，默认 4096 */
@@ -58,16 +60,48 @@ export interface RunResult {
 
 /** 运行时事件 */
 export type AgentEvent =
-  | { type: 'run_start' }
-  | { type: 'text_delta'; text: string }
-  | { type: 'tool_use'; name: string; input: Record<string, unknown> }
-  | { type: 'tool_result'; name: string; result: ToolResult }
-  | { type: 'llm_call'; round: number }
-  | { type: 'run_end'; result: RunResult }
-  | { type: 'error'; error: Error }
+  | { type: 'run_start'; sessionKey: string; turnId: string }
+  | { type: 'text_delta'; sessionKey: string; turnId: string; text: string }
+  | {
+      type: 'tool_use';
+      sessionKey: string;
+      turnId: string;
+      name: string;
+      input: Record<string, unknown>;
+    }
+  | {
+      type: 'tool_result';
+      sessionKey: string;
+      turnId: string;
+      name: string;
+      result: ToolResult;
+    }
+  | { type: 'llm_call'; sessionKey: string; turnId: string; round: number }
+  | { type: 'run_end'; sessionKey: string; turnId: string; result: RunResult }
+  | { type: 'error'; sessionKey: string; turnId: string; error: Error }
   /** tool result 被 per-result 裁剪（Layer 1）时触发 */
-  | { type: 'tool_result_pruned'; toolUseId: string; originalChars: number; prunedChars: number }
+  | {
+      type: 'tool_result_pruned';
+      sessionKey: string;
+      turnId: string;
+      toolUseId: string;
+      originalChars: number;
+      prunedChars: number;
+    }
   /** 压缩开始：LLM 摘要生成前触发，包含触发原因和压缩前 token 数 */
-  | { type: 'compaction_start'; trigger: 'preemptive' | 'overflow' | 'manual'; tokensBefore: number }
+  | {
+      type: 'compaction_start';
+      sessionKey: string;
+      turnId: string;
+      trigger: 'preemptive' | 'overflow' | 'manual';
+      tokensBefore: number;
+    }
   /** 压缩结束：摘要写入 session 后触发，包含压缩效果统计 */
-  | { type: 'compaction_end'; tokensBefore: number; tokensAfter: number; droppedMessages: number };
+  | {
+      type: 'compaction_end';
+      sessionKey: string;
+      turnId: string;
+      tokensBefore: number;
+      tokensAfter: number;
+      droppedMessages: number;
+    };

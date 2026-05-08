@@ -72,6 +72,11 @@ export class AgentRunner {
   private toolExecutor?: ToolExecutor;
   private onEvent?: (event: AgentEvent) => void;
   private hookRegistrations: HookRegistration[] = [];
+  /**
+   * 当前正在运行的 turn 的参数。emit 用此读取 sessionKey/turnId 注入事件。
+   * run() 入口设置，外层 finally 清理。
+   */
+  private currentParams: RunParams | null = null;
 
   constructor(config: AgentRunnerConfig) {
     this.llmClient = config.llmClient;
@@ -107,39 +112,45 @@ export class AgentRunner {
     const contextWindowTokens = params.contextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
     const compaction = params.compaction ?? DEFAULT_COMPACTION_CONFIG;
 
-    this.emit({ type: 'run_start' });
+    this.currentParams = params;
 
-    // 保存用户消息到 session（在所有重试前只保存一次，避免重复写入）
-    await this.sessionManager.appendMessage(params.sessionKey, {
-      role: 'user',
-      content: params.message,
-    });
+    try {
+      this.emit({ type: 'run_start' });
 
-    let compactionAttempts = 0;
-    let compacted = false;
+      // 保存用户消息到 session（在所有重试前只保存一次，避免重复写入）
+      await this.sessionManager.appendMessage(params.sessionKey, {
+        role: 'user',
+        content: params.message,
+      });
 
-    // 外层压缩重试循环：捕获 ContextOverflowError，压缩 session 后重试
-    while (true) {
-      try {
-        const result = await this.runAttempt(params, contextWindowTokens, compaction);
-        const finalResult: RunResult = { ...result, compacted };
-        this.emit({ type: 'run_end', result: finalResult });
-        return finalResult;
-      } catch (err) {
-        if (err instanceof ContextOverflowError && compactionAttempts < MAX_COMPACTION_RETRIES) {
-          // 执行 LLM 摘要压缩，写入持久化，然后重试 runAttempt
-          // runAttempt 的 loadHistory() 会重新加载压缩后的 session，自动感知摘要
-          await this.compactHistory(params, compaction, err.trigger);
-          compacted = true;
-          compactionAttempts++;
-          continue;
+      let compactionAttempts = 0;
+      let compacted = false;
+
+      // 外层压缩重试循环：捕获 ContextOverflowError，压缩 session 后重试
+      while (true) {
+        try {
+          const result = await this.runAttempt(params, contextWindowTokens, compaction);
+          const finalResult: RunResult = { ...result, compacted };
+          this.emit({ type: 'run_end', result: finalResult });
+          return finalResult;
+        } catch (err) {
+          if (err instanceof ContextOverflowError && compactionAttempts < MAX_COMPACTION_RETRIES) {
+            // 执行 LLM 摘要压缩，写入持久化，然后重试 runAttempt
+            // runAttempt 的 loadHistory() 会重新加载压缩后的 session，自动感知摘要
+            await this.compactHistory(params, compaction, err.trigger);
+            compacted = true;
+            compactionAttempts++;
+            continue;
+          }
+
+          // 超过重试上限，或非 ContextOverflowError → 向上抛出
+          const error = err instanceof Error ? err : new Error(String(err));
+          this.emit({ type: 'error', error });
+          throw error;
         }
-
-        // 超过重试上限，或非 ContextOverflowError → 向上抛出
-        const error = err instanceof Error ? err : new Error(String(err));
-        this.emit({ type: 'error', error });
-        throw error;
       }
+    } finally {
+      this.currentParams = null;
     }
   }
 
@@ -281,6 +292,8 @@ export class AgentRunner {
               const beforeResult = await runBeforeToolCall(beforeHooks, {
                 toolName: toolUse.name,
                 input: toolUse.input,
+                turnId: params.turnId,
+                sessionKey: params.sessionKey,
               });
               if (beforeResult.action === 'deny') {
                 const blocked: ToolResult = { content: `Tool blocked: ${beforeResult.reason}`, isError: true };
@@ -311,6 +324,8 @@ export class AgentRunner {
                 input: effectiveInput,
                 result,
                 durationMs,
+                turnId: params.turnId,
+                sessionKey: params.sessionKey,
               });
             }
           }
@@ -581,7 +596,27 @@ export class AgentRunner {
     return [];
   }
 
-  private emit(event: AgentEvent): void {
-    this.onEvent?.(event);
+  private emit(event: AgentEventInput): void {
+    if (!this.onEvent) return;
+    if (!this.currentParams) {
+      // 防御性：理论上 emit 只应在 run() 期间调用，currentParams 必然已设置
+      return;
+    }
+    this.onEvent({
+      ...event,
+      sessionKey: this.currentParams.sessionKey,
+      turnId: this.currentParams.turnId,
+    } as AgentEvent);
   }
 }
+
+/**
+ * AgentRunner 内部 emit 的输入类型：每个 AgentEvent 变体去掉 sessionKey/turnId 后的形式。
+ * 使用条件类型分发，确保每个变体保留各自的 discriminator 字段。
+ * sessionKey/turnId 由 emit 从 currentParams 注入，调用方不必手动填。
+ */
+type AgentEventInput = AgentEvent extends infer E
+  ? E extends AgentEvent
+    ? Omit<E, 'sessionKey' | 'turnId'>
+    : never
+  : never;
