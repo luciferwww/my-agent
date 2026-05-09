@@ -37,7 +37,7 @@
 
 ---
 
-## 3. 类型定义（`src/agent-runner/hooks/types.ts`）
+## 3. 类型定义（`src/core/runner/hooks/types.ts`）
 
 ```typescript
 import type { ToolResult } from '../../tools/types.js';
@@ -103,7 +103,7 @@ runner
   .on('after_tool_call', auditHook);
 ```
 
-`on()` 签名（`src/agent-runner/AgentRunner.ts`）：
+`on()` 签名（`src/core/runner/AgentRunner.ts`）：
 
 ```typescript
 on<K extends HookName>(
@@ -113,7 +113,7 @@ on<K extends HookName>(
 ): this
 ```
 
-`HookName` 和 `HookHandlerMap` 定义在 `src/agent-runner/hooks/types.ts`：
+`HookName` 和 `HookHandlerMap` 定义在 `src/core/runner/hooks/types.ts`：
 
 ```typescript
 export type HookName = 'before_tool_call' | 'after_tool_call';
@@ -143,7 +143,7 @@ export interface HookRegistration<K extends HookName = HookName> {
 
 ---
 
-## 5. 执行引擎（`src/agent-runner/hooks/runner.ts`）
+## 5. 执行引擎（`src/core/runner/hooks/runner.ts`）
 
 runner 接收 `{ handler, name? }[]`（由 `AgentRunner.getHooks()` 提供），`name` 用于 warn log 标记。
 
@@ -240,7 +240,7 @@ private getHooks<K extends HookName>(hookName: K): Array<{ handler: HookHandlerM
 
 ### 6.2 `executeTool()` 包装
 
-当前 `executeTool()` 在 `runAttempt()` 的 tool loop 中被调用（[AgentRunner.ts:275](../../src/agent-runner/AgentRunner.ts#L275)）：
+当前 `executeTool()` 在 `runAttempt()` 的 tool loop 中被调用（[AgentRunner.ts:275](../../src/core/runner/AgentRunner.ts#L275)）：
 
 ```typescript
 this.emit({ type: 'tool_use', name: toolUse.name, input: toolUse.input });
@@ -297,10 +297,10 @@ if (afterHooks.length > 0) {
 
 ## 7. 文件结构
 
-hook 文件放在 `src/agent-runner/hooks/` 子目录下。理由：Phase 1 的唯一消费方是 `AgentRunner`，模块边界不变；随着 Phase 2 增加到 8-10 个 hook，子目录避免 `src/agent-runner/` 根目录变得嘈杂。my-agent 没有 plugin 系统，不需要独立顶层 `src/hooks/` 模块。
+hook 文件放在 `src/core/runner/hooks/` 子目录下。理由：Phase 1 的唯一消费方是 `AgentRunner`，模块边界不变；随着 Phase 2 增加到 8-10 个 hook，子目录避免 `src/core/runner/` 根目录变得嘈杂。my-agent 没有 plugin 系统，不需要独立顶层 `src/hooks/` 模块。
 
 ```
-src/agent-runner/
+src/core/runner/
   hooks/
     types.ts    # BeforeToolCallHook / AfterToolCallHook、HookName / HookHandlerMap / HookRegistration
     runner.ts   # runBeforeToolCall / runAfterToolCall 执行引擎

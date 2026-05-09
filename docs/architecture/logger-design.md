@@ -64,7 +64,7 @@
 
 ---
 
-## 3. 类型定义（`src/logger/types.ts`）
+## 3. 类型定义（`src/platform/logger/types.ts`）
 
 ```typescript
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -105,7 +105,7 @@ export interface LoggerModuleConfig {
 
 ---
 
-## 4. Logger（`src/logger/Logger.ts`）
+## 4. Logger（`src/platform/logger/Logger.ts`）
 
 ### 4.1 公开 API
 
@@ -180,7 +180,7 @@ private write(level: LogLevel, message: string, context?: Record<string, unknown
 
 ---
 
-## 5. ConsoleAdapter（`src/logger/ConsoleAdapter.ts`）
+## 5. ConsoleAdapter（`src/platform/logger/ConsoleAdapter.ts`）
 
 同步写 stdout/stderr，无需 `start` / `close`。
 
@@ -209,7 +209,7 @@ export interface ConsoleAdapterConfig {
 
 ---
 
-## 6. FileAdapter（`src/logger/FileAdapter.ts`）
+## 6. FileAdapter（`src/platform/logger/FileAdapter.ts`）
 
 每行一条 JSONL，异步写文件，内部维护写队列。
 
@@ -308,7 +308,7 @@ beforeEach(async () => {
 
 ## 8. 对其它模块的改动
 
-### 8.1 `src/config/types.ts`
+### 8.1 `src/platform/config/types.ts`
 
 新增 `LoggerModuleConfig`，并加入 `AppConfig` 和 `ConfigFile`：
 
@@ -341,7 +341,7 @@ beforeEach(async () => {
 +},
 ```
 
-### 8.3 `src/logger/` （新增模块）
+### 8.3 `src/platform/logger/` （新增模块）
 
 见 §8 文件结构。
 
@@ -350,7 +350,7 @@ beforeEach(async () => {
 ## 9. 文件结构
 
 ```
-src/logger/
+src/platform/logger/
   types.ts          # LogLevel / LogEntry / LogAdapter / LoggerConfig / LoggerModuleConfig
   Logger.ts         # 全局注册表 + LoggerInstance
   ConsoleAdapter.ts # 同步写 stdout/stderr

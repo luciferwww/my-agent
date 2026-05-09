@@ -3,7 +3,7 @@
 > 创建日期：2026-04-06  
 > 参考：OpenClaw 的 coding tools / `apply_patch` / `web_fetch`，以及本项目现有的 [tools-design.md](./tools-design.md)
 
-> 当前状态：截至 2026-04-06，本文所列的非 memory builtin tools 已全部落地到 `src/tools/builtin/`，包括 `read_file`、`list_dir`、`file_search`、`grep_search`、`apply_patch`、`write_file`、`edit_file`、`web_fetch`、`exec`、`process`。当前剩余未实现的只有延后到独立 memory 模块阶段的 `memory_search` / `memory_get`。
+> 当前状态：截至 2026-04-06，本文所列的非 memory builtin tools 已全部落地到 `src/core/tools/builtin/`，包括 `read_file`、`list_dir`、`file_search`、`grep_search`、`apply_patch`、`write_file`、`edit_file`、`web_fetch`、`exec`、`process`。当前剩余未实现的只有延后到独立 memory 模块阶段的 `memory_search` / `memory_get`。
 
 > 相关文档：如果想看 Tools 模块的公共类型、executor、当前 `exec + process` 运行时边界，请回到 [tools-design.md](./tools-design.md)。
 
@@ -891,7 +891,7 @@ src/
 
 截至 2026-04-06，非 memory builtin tools 当前采用三层验证：
 
-1. 单元测试：`src/tools/builtin/*.test.ts`
+1. 单元测试：`src/core/tools/builtin/**/*.test.ts`
 2. 直接 smoke：`scripts/test-builtin-tools.ts`
 3. executor 级集成：`scripts/test-builtin-tools-integration.ts`
 

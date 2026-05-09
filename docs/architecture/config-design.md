@@ -314,7 +314,7 @@ interface ConfigFile {
 ## 7. 文件结构
 
 ```
-src/config/
+src/platform/config/
 ├── index.ts          # 公共导出
 ├── types.ts          # 完整类型定义
 ├── defaults.ts       # DEFAULT_AGENT_CONFIG 常量
@@ -411,11 +411,11 @@ const resolved = resolveAgentConfig(config, {
 
 ## 10. 开发计划
 
-1. 创建 `src/config/types.ts` — 所有类型定义
-2. 创建 `src/config/defaults.ts` — 硬编码默认值常量
-3. 创建 `src/config/loader.ts` — `loadConfig()`、`resolveAgentConfig()`、`deepMerge()`
-4. 创建 `src/config/index.ts` — 公共导出
-5. 创建 `src/config/loader.test.ts` — 单元测试
+1. 创建 `src/platform/config/types.ts` — 所有类型定义
+2. 创建 `src/platform/config/defaults.ts` — 硬编码默认值常量
+3. 创建 `src/platform/config/loader.ts` — `loadConfig()`、`resolveAgentConfig()`、`deepMerge()`
+4. 创建 `src/platform/config/index.ts` — 公共导出
+5. 创建 `src/platform/config/loader.test.ts` — 单元测试
 6. 创建 `scripts/test-config-integration.ts` — 集成测试
 
 **交付物**：独立可用的 config 模块，不改动现有模块。
@@ -440,6 +440,6 @@ const resolved = resolveAgentConfig(config, {
 ### 运行方式
 
 ```bash
-npx vitest run src/config/
+npx vitest run src/platform/config/
 npx tsx scripts/test-config-integration.ts
 ```

@@ -431,7 +431,7 @@ class RecallTracker {
 
 ## 8. Agent 工具
 
-暴露三个工具给 Agent，遵循现有 `Tool` 接口（`src/tools/types.ts`）。
+暴露三个工具给 Agent，遵循现有 `Tool` 接口（`src/core/tools/types.ts`）。
 
 ### 8.1 memory_search
 

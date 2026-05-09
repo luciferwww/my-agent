@@ -37,7 +37,7 @@
 
 ### 2.1 当前问题
 
-`AgentRunner.run()` 的消息加载流程（`src/agent-runner/AgentRunner.ts:49-61`）：
+`AgentRunner.run()` 的消息加载流程（`src/core/runner/AgentRunner.ts:49-61`）：
 
 ```typescript
 const history = this.loadHistory(params.sessionKey);   // ← 加载全量历史
@@ -55,14 +55,14 @@ const messages: ChatMessage[] = [
 
 | 已有 | 位置 | 状态 |
 |------|------|------|
-| `CompactionRecord` 类型 | `src/session/types.ts:49-54` | 已定义，未使用 |
-| `SessionEntry.compactionCount` 字段 | `src/session/types.ts:17` | 已定义，从未递增 |
-| `SessionEntry.totalTokens` 等字段 | `src/session/types.ts:13-15` | 已定义，从未更新 |
-| `SessionManager.updateSession()` | `src/session/SessionManager.ts:124-135` | 可用于更新元数据 |
-| `appendToTranscript()` | `src/session/transcript.ts:73-80` | 可用于写入压缩记录 |
-| `resolveLinearPath()` 过滤非 message 类型 | `src/session/transcript.ts:49-68` | 已过滤 `type !== 'message'`，需扩展 |
-| 树形 parentId 结构 | `src/session/types.ts:24-30` | 天然支持压缩分支 |
-| `RunResult.usage` | `src/agent-runner/types.ts:47` | 已收集但未用于决策 |
+| `CompactionRecord` 类型 | `src/core/session/types.ts:49-54` | 已定义，未使用 |
+| `SessionEntry.compactionCount` 字段 | `src/core/session/types.ts:17` | 已定义，从未递增 |
+| `SessionEntry.totalTokens` 等字段 | `src/core/session/types.ts:13-15` | 已定义，从未更新 |
+| `SessionManager.updateSession()` | `src/core/session/SessionManager.ts:124-135` | 可用于更新元数据 |
+| `appendToTranscript()` | `src/core/session/transcript.ts:73-80` | 可用于写入压缩记录 |
+| `resolveLinearPath()` 过滤非 message 类型 | `src/core/session/transcript.ts:49-68` | 已过滤 `type !== 'message'`，需扩展 |
+| 树形 parentId 结构 | `src/core/session/types.ts:24-30` | 天然支持压缩分支 |
+| `RunResult.usage` | `src/core/runner/types.ts:47` | 已收集但未用于决策 |
 
 ---
 
@@ -126,7 +126,7 @@ run(params)  [外层 retry 循环，最多 MAX_COMPACTION_RETRIES 次]
 ### 4.1 CompactionConfig（新增）
 
 ```typescript
-// src/config/types.ts — 新增
+// src/platform/config/types.ts — 新增
 
 /** 对话压缩配置 */
 export interface CompactionConfig {
@@ -160,7 +160,7 @@ export interface CompactionConfig {
 ### 4.2 默认值
 
 ```typescript
-// src/config/defaults.ts — 新增
+// src/platform/config/defaults.ts — 新增
 
 compaction: {
   enabled: true,
@@ -176,7 +176,7 @@ compaction: {
 ### 4.3 AgentDefaults 扩展
 
 ```typescript
-// src/config/types.ts — 修改
+// src/platform/config/types.ts — 修改
 
 export interface AgentDefaults {
   llm: LLMConfig;
@@ -192,7 +192,7 @@ export interface AgentDefaults {
 
 ### 4.4 CompactionRecord 扩展
 
-当前定义（`src/session/types.ts:49-54`）：
+当前定义（`src/core/session/types.ts:49-54`）：
 
 ```typescript
 export interface CompactionRecord extends TranscriptEntryBase {
@@ -226,7 +226,7 @@ export interface CompactionRecord extends TranscriptEntryBase {
 ### 4.5 RunParams 扩展
 
 ```typescript
-// src/agent-runner/types.ts — 修改
+// src/core/runner/types.ts — 修改
 
 export interface RunParams {
   // ... 现有字段 ...
@@ -241,7 +241,7 @@ export interface RunParams {
 ### 4.6 RunResult 扩展
 
 ```typescript
-// src/agent-runner/types.ts — 修改
+// src/core/runner/types.ts — 修改
 
 export interface RunResult {
   // ... 现有字段 ...
@@ -261,7 +261,7 @@ export interface RunResult {
 ### 4.7 AgentEvent 扩展
 
 ```typescript
-// src/agent-runner/types.ts — 修改
+// src/core/runner/types.ts — 修改
 
 export type AgentEvent =
   | { type: 'run_start' }
@@ -283,7 +283,7 @@ export type AgentEvent =
 
 ### 5.1 函数设计
 
-新建文件 `src/agent-runner/token-estimation.ts`：
+新建文件 `src/core/runner/context/token-estimation.ts`：
 
 ```typescript
 /**
@@ -333,7 +333,7 @@ estimatePromptTokens({ messages, systemPrompt, currentPrompt })
 
 ### 6.1 设计
 
-新建文件 `src/agent-runner/tool-result-pruning.ts`：
+新建文件 `src/core/runner/context/tool-result-pruning.ts`：
 
 ```typescript
 /**
@@ -442,7 +442,7 @@ minKeepChars         = config.toolResultHeadChars + config.toolResultTailChars
 
 ### 7.1 函数设计
 
-新建文件 `src/agent-runner/context-budget.ts`：
+新建文件 `src/core/runner/context/context-budget.ts`：
 
 ```typescript
 /**
@@ -610,7 +610,7 @@ if (isContextOverflowError(error)) {
 
 ### 8.1 文件结构
 
-新建文件 `src/agent-runner/compaction.ts`：
+新建文件 `src/core/runner/context/compaction.ts`：
 
 ```typescript
 /**
@@ -795,7 +795,7 @@ await sessionManager.updateSession(sessionKey, {
 需要为 SessionManager 添加以下方法和接口供 AgentRunner / bootstrap 调用：
 
 ```typescript
-// src/session/SessionManager.ts — 新增
+// src/core/session/SessionManager.ts — 新增
 
 /**
  * 写盘时硬上限裁剪选项。
@@ -869,7 +869,7 @@ private loadHistory(sessionKey: string): ChatMessage[] {
 
 ### 9.4 resolveLinearPath 扩展
 
-当前 `resolveLinearPath()`（`src/session/transcript.ts:49-68`）只返回 `type === 'message'` 的记录。需要扩展以支持 compaction 记录的感知：
+当前 `resolveLinearPath()`（`src/core/session/transcript.ts:49-68`）只返回 `type === 'message'` 的记录。需要扩展以支持 compaction 记录的感知：
 
 ```typescript
 // 方案：不修改 resolveLinearPath，保持只返回 message
@@ -1037,62 +1037,62 @@ const result = await agentRunner.run({
 
 ### Phase 1: 基础防护（Token 估算 + Tool Result 裁剪 + 预判检测）
 
-- [x] `src/agent-runner/token-estimation.ts`
+- [x] `src/core/runner/context/token-estimation.ts`
   - [x] `estimateMessageTokens()`
   - [x] `estimatePromptTokens()`
   - [x] 单元测试
-- [x] `src/agent-runner/tool-result-pruning.ts`
+- [x] `src/core/runner/context/tool-result-pruning.ts`
   - [x] `pruneToolResults()` — per-result 裁剪
   - [x] `pruneToolResultsAggregate()` — 聚合裁剪（truncate_tool_results_only 专用）
   - [x] 单元测试
-- [x] `src/agent-runner/context-budget.ts`
+- [x] `src/core/runner/context/context-budget.ts`
   - [x] `checkContextBudget()` — 3 路路由：fits / truncate_tool_results_only / compact
   - [x] `estimateToolResultReductionPotential()` — 内部函数，估算聚合裁剪可节省的字符数
   - [x] 单元测试
-- [x] `src/config/types.ts`
+- [x] `src/platform/config/types.ts`
   - [x] 新增 `CompactionConfig` 接口
   - [x] `AgentDefaults` 添加 `compaction` 字段
   - [x] `LLMConfig` 新增 `contextWindowTokens`
-- [x] `src/config/defaults.ts`
+- [x] `src/platform/config/defaults.ts`
   - [x] 添加 `compaction` 默认值
   - [x] `llm` 新增 `contextWindowTokens: 200_000`
-- [x] `src/agent-runner/types.ts`
+- [x] `src/core/runner/types.ts`
   - [x] `RunParams` 新增 `compaction?: CompactionConfig`
   - [x] `RunParams` 新增 `contextWindowTokens?: number`
   - [x] `RunResult` 新增 `compacted` / `compactionStats`
   - [x] `AgentEvent` 新增 `tool_result_pruned` 事件
   - [x] `AgentEvent` 新增 `compaction_start` / `compaction_end`（Phase 2）
-- [x] `src/agent-runner/AgentRunner.ts`
+- [x] `src/core/runner/AgentRunner.ts`
   - [x] `run()` 中 LLM 调用前插入 `pruneToolResults()` + `checkContextBudget()`（含 `truncate_tool_results_only` 路由处理）
   - [x] 内层循环每轮 tool result 后执行 90% 阈值检查（throw `ContextOverflowError`）
 
 ### Phase 2: LLM 摘要压缩 + Overflow 处理
 
-- [x] `src/agent-runner/compaction.ts`
+- [x] `src/core/runner/context/compaction.ts`
   - [x] `splitForCompaction()` — 消息拆分（tool_use/tool_result 配对保护）
   - [x] `generateSummary()` — LLM 摘要生成 + 两级降级
   - [x] `compactMessages()` — 完整压缩流程
   - [x] 单元测试
-- [x] `src/agent-runner/errors.ts`
+- [x] `src/core/runner/errors.ts`
   - [x] `ContextOverflowError` 类
   - [x] `isContextOverflowError()` — LLM API 溢出错误分类
-- [x] `src/session/types.ts`
+- [x] `src/core/session/types.ts`
   - [x] `CompactionRecord` 扩展字段（`tokensAfter`, `trigger`, `droppedMessages`）
-- [x] `src/session/transcript.ts`
+- [x] `src/core/session/transcript.ts`
   - [x] 新增 `findLastCompaction()`
-- [x] `src/session/SessionManager.ts`
+- [x] `src/core/session/SessionManager.ts`
   - [x] 新增 `SessionManagerOptions` 接口（`toolResultHeadChars` / `toolResultTailChars`）
   - [x] 构造函数接受 `SessionManagerOptions`，写盘前对 toolResult 执行硬上限裁剪（`capToolResults()`）
   - [x] 新增 `appendCompactionRecord()`
   - [x] 新增 `getLastCompactionSummary()`
   - [x] 新增 `getLastCompactionRecord()`
-- [x] `src/agent-runner/AgentRunner.ts`
+- [x] `src/core/runner/AgentRunner.ts`
   - [x] 新增 `compactHistory()` 私有方法
   - [x] `loadHistory()` 改造：感知压缩记录，注入摘要
   - [x] `run()` 外层改为 retry 循环（`MAX_COMPACTION_RETRIES = 3`），捕获 `ContextOverflowError` → `compactHistory()` → retry `runAttempt`
   - [x] `callLLMStream()` 捕获 LLM API 溢出错误 → throw `ContextOverflowError`
   - [x] 压缩完成后更新 SessionEntry 元数据
-- [x] `src/agent-runner/types.ts`
+- [x] `src/core/runner/types.ts`
   - [x] `AgentEvent` 新增 `compaction_start` / `compaction_end`
 - [x] `src/runtime/RuntimeApp.ts`
   - [x] `runTurnInternal()` 传入 `compaction` 配置和 `contextWindowTokens`
@@ -1200,26 +1200,26 @@ const result = await agentRunner.run({
 
 | 文件 | 说明 |
 |------|------|
-| `src/agent-runner/token-estimation.ts` | Token 估算工具 |
-| `src/agent-runner/tool-result-pruning.ts` | Tool result 裁剪 |
-| `src/agent-runner/context-budget.ts` | 上下文预算检查 |
-| `src/agent-runner/compaction.ts` | LLM 摘要压缩核心 |
-| `src/agent-runner/token-estimation.test.ts` | 单元测试 |
-| `src/agent-runner/tool-result-pruning.test.ts` | 单元测试 |
-| `src/agent-runner/context-budget.test.ts` | 单元测试 |
-| `src/agent-runner/compaction.test.ts` | 单元测试 |
+| `src/core/runner/context/token-estimation.ts` | Token 估算工具 |
+| `src/core/runner/context/tool-result-pruning.ts` | Tool result 裁剪 |
+| `src/core/runner/context/context-budget.ts` | 上下文预算检查 |
+| `src/core/runner/context/compaction.ts` | LLM 摘要压缩核心 |
+| `src/core/runner/context/token-estimation.test.ts` | 单元测试 |
+| `src/core/runner/context/tool-result-pruning.test.ts` | 单元测试 |
+| `src/core/runner/context/context-budget.test.ts` | 单元测试 |
+| `src/core/runner/context/compaction.test.ts` | 单元测试 |
 
 ### 修改文件
 
 | 文件 | 变更 |
 |------|------|
-| `src/config/types.ts` | 新增 `CompactionConfig`；`AgentDefaults` 添加 `compaction`；`LLMConfig` 新增 `contextWindowTokens` |
-| `src/config/defaults.ts` | 添加 `compaction` 默认值；`llm` 新增 `contextWindowTokens: 200_000` |
-| `src/session/types.ts` | `CompactionRecord` 扩展字段 |
-| `src/session/transcript.ts` | 新增 `findLastCompaction()` |
-| `src/session/SessionManager.ts` | 新增 `SessionManagerOptions` 接口；构造函数接受选项，写盘前对 toolResult 做硬上限裁剪；新增 `appendCompactionRecord()`、`getLastCompactionSummary()`、`getLastCompactionRecord()` |
-| `src/agent-runner/types.ts` | `RunParams`/`RunResult`/`AgentEvent` 扩展；`RunParams` 新增 `contextWindowTokens` |
-| `src/agent-runner/AgentRunner.ts` | 集成三层压缩逻辑 |
+| `src/platform/config/types.ts` | 新增 `CompactionConfig`；`AgentDefaults` 添加 `compaction`；`LLMConfig` 新增 `contextWindowTokens` |
+| `src/platform/config/defaults.ts` | 添加 `compaction` 默认值；`llm` 新增 `contextWindowTokens: 200_000` |
+| `src/core/session/types.ts` | `CompactionRecord` 扩展字段 |
+| `src/core/session/transcript.ts` | 新增 `findLastCompaction()` |
+| `src/core/session/SessionManager.ts` | 新增 `SessionManagerOptions` 接口；构造函数接受选项，写盘前对 toolResult 做硬上限裁剪；新增 `appendCompactionRecord()`、`getLastCompactionSummary()`、`getLastCompactionRecord()` |
+| `src/core/runner/types.ts` | `RunParams`/`RunResult`/`AgentEvent` 扩展；`RunParams` 新增 `contextWindowTokens` |
+| `src/core/runner/AgentRunner.ts` | 集成三层压缩逻辑 |
 | `src/runtime/RuntimeApp.ts` | 传入 `compaction` 配置 |
 | `src/runtime/bootstrap.ts` | `createSessionManager` 透传 `SessionManagerOptions`；`bootstrapRuntime()` 从 compaction 配置传入写盘截断参数 |
 | `src/runtime/types.ts` | `RuntimeDependencies.createSessionManager` 签名增加 `options?: SessionManagerOptions` |

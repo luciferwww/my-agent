@@ -4,7 +4,7 @@
 > 适用项目：C:\dev\my-agent\my-agent  
 > 参考：OpenClaw 的 `exec + process` 组合，但只吸收我们当前需要的最小结构，不引入 approval、sandbox、PTY、多宿主路由等平台级复杂度。
 
-> 当前状态：截至 2026-04-06，本文件已对齐 `src/tools/builtin/exec.ts`、`process.ts`、`run-command.ts`、`process-registry.ts`、`resolve-command-invocation.ts`、`kill-process-tree.ts` 的当前实现。后文若同时出现“设计建议”和“当前行为”，以“当前行为/已实现语义”为准。最小版 `v2` 与 `v2.1` 核心运行时底座（kill-tree、显式 shell wrapper、Windows close-state settle）均已落地；更完整的平台 shim / shebang resolver 仍属于后续扩展范围。
+> 当前状态：截至 2026-04-06，本文件已对齐 `src/core/tools/builtin/exec/exec.ts`、`process.ts`、`run-command.ts`、`process-registry.ts`、`resolve-command-invocation.ts`、`kill-process-tree.ts` 的当前实现。后文若同时出现“设计建议”和“当前行为”，以“当前行为/已实现语义”为准。最小版 `v2` 与 `v2.1` 核心运行时底座（kill-tree、显式 shell wrapper、Windows close-state settle）均已落地；更完整的平台 shim / shebang resolver 仍属于后续扩展范围。
 
 ---
 
@@ -545,7 +545,7 @@ interface ProcessRegistryDraft {
 如果后面要开始写代码，我建议先按下面这组文件边界落地：
 
 ```typescript
-// src/tools/builtin/exec-types.ts
+// src/core/tools/builtin/exec/exec-types.ts
 export type {
   ExecToolInput,
   ExecToolResultPayload,
@@ -561,7 +561,7 @@ export type {
   CommandRunOutcome,
 };
 
-// src/tools/builtin/process-registry.ts
+// src/core/tools/builtin/exec/process-registry.ts
 export interface ProcessRegistry {
   create(record: ProcessRecord): void;
   get(runId: string): ProcessRecord | undefined;

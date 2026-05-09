@@ -635,7 +635,7 @@ agent-runner 的 `AgentRunnerConfig.toolExecutor` 类型改为引用 `tools/type
 
 截至 2026-04-06，Vitest 已恢复为有效验收路径，不再存在此前因 Windows 主机安装了错误 esbuild 平台包而导致的环境性假失败。当前：
 
-- `src/tools/builtin` 目录下的 Vitest 可直接作为 builtin tools 单元验收
+- `src/core/tools/builtin` 目录下的 Vitest 可直接作为 builtin tools 单元验收
 - `scripts/test-builtin-tools.ts` 与 `scripts/test-builtin-tools-integration.ts` 可作为 smoke / 集成验收
 - 全仓 `npm test` 也已通过
 
