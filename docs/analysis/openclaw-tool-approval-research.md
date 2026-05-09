@@ -10,7 +10,7 @@
 讨论起因：`chat.ts` CLI 中 agent 拒绝访问 workspace 外的文件。
 
 - `path-policy.ts` 在工具层**硬性拦截**越界路径（非 AGENTS.md 软约束）
-- 设计文档 `builtin-tools-design.md` §3.4 明确规定文件类 tool 以 workspace 为边界
+- 设计文档 `core-tools-builtin-design.md` §3.4 明确规定文件类 tool 以 workspace 为边界
 - 需求演变为：做一个**通用 approval 机制**，不把 approval 逻辑耦合进每个 tool
 
 ---
@@ -125,7 +125,7 @@ my-agent 已有 `AgentEvent`（`text_delta`、`tool_use`、`tool_result`、`comp
 ### 3.4 当前 my-agent 现状
 
 ```typescript
-// src/tools/types.ts — 无任何 hook 相关字段
+// src/core/tools/types.ts — 无任何 hook 相关字段
 export interface Tool {
   name: string;
   description: string;
@@ -133,7 +133,7 @@ export interface Tool {
   execute: (params, context?) => Promise<ToolResult>;
 }
 
-// src/agent-runner/types.ts — AgentEvent 为只读观察者，无拦截能力
+// src/core/runner/types.ts — AgentEvent 为只读观察者，无拦截能力
 type AgentEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'tool_use'; name: string; input: Record<string, unknown> }

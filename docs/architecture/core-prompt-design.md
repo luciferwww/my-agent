@@ -92,7 +92,7 @@ src/
 ```
 
 > `ContextFile` 类型定义在 `workspace/types.ts`（生产方拥有），prompt-builder 从 workspace 引用。
-> `workspace/` 模块详见 [workspace-design.md](./workspace-design.md)。
+> `workspace/` 模块详见 [core-workspace-design.md](./core-workspace-design.md)。
 
 ---
 
@@ -604,7 +604,7 @@ const prompt = await userBuilder.build({
 ### Step 6 · 完善
 - [ ] `prompt-builder/index.ts` — 公共入口
 
-> Workspace 模块的实施步骤见 [workspace-design.md](./workspace-design.md)。
+> Workspace 模块的实施步骤见 [core-workspace-design.md](./core-workspace-design.md)。
 
 ---
 

@@ -434,7 +434,7 @@ SessionManager.open(sessionFile)           // 从磁盘加载原始 session
 |------|-------------|------|
 | history + user message 拼接 | 由底层 SDK 在 `runAgentLoop()` 中通过数组展开合并，应用层不手动拼接 | 我们的 AgentRunner 也应在 SDK 层处理，RuntimeApp 不应直接操作 messages 数组 |
 | Memory 注入 | 不放在 user message 中；指引在 system prompt，内容通过 context files 和 tool results | 我们的 UserPromptBuilder 不需要关心 memory 注入 |
-| Context files | 直接嵌入 system prompt 末尾，不是单独的 message | 与我们 prompt-builder-design.md 的设计一致 |
+| Context files | 直接嵌入 system prompt 末尾，不是单独的 message | 与我们 core-prompt-design.md 的设计一致 |
 | User prompt 处理 | 多步预处理后仍是纯文本，由 SDK 包装为 `{ role: "user" }` | 我们的 UserPromptBuilder.build() 只需输出文本 + attachments |
 | convertToLlm | 默认只过滤 role，不做格式转换 | 简单可靠，我们可以直接采用相同策略 |
 
@@ -442,12 +442,12 @@ SessionManager.open(sessionFile)           // 从磁盘加载原始 session
 
 | OpenClaw 组件 | 我们的对应设计 | 设计文档 |
 |-------------|-------------|---------|
-| `buildAgentSystemPrompt()` | `SystemPromptBuilder.build()` | [prompt-builder-design.md](../../architecture/prompt-builder-design.md) |
-| `attempt.ts` 中的 user prompt 预处理 | `UserPromptBuilder.build()` + ContextHooks | [prompt-builder-design.md](../../architecture/prompt-builder-design.md) |
-| `pi-agent-core` Agent + agentLoop | `AgentRunner` | [agent-runner-design.md](../../architecture/agent-runner-design.md) |
-| `SessionManager` | `SessionManager` | [session-design.md](../../architecture/session-design.md) |
-| `memory-state.ts` 插件机制 | `MemoryManager` | [memory-design.md](../../architecture/memory-design.md) |
-| `attempt.ts` 整体编排 | `RuntimeApp.runTurn()` | [runtime-app-assembly-design.md](../../architecture/runtime-app-assembly-design.md) |
+| `buildAgentSystemPrompt()` | `SystemPromptBuilder.build()` | [core-prompt-design.md](../../architecture/core-prompt-design.md) |
+| `attempt.ts` 中的 user prompt 预处理 | `UserPromptBuilder.build()` + ContextHooks | [core-prompt-design.md](../../architecture/core-prompt-design.md) |
+| `pi-agent-core` Agent + agentLoop | `AgentRunner` | [core-runner-design.md](../../architecture/core-runner-design.md) |
+| `SessionManager` | `SessionManager` | [core-session-design.md](../../architecture/core-session-design.md) |
+| `memory-state.ts` 插件机制 | `MemoryManager` | [core-memory-design.md](../../architecture/core-memory-design.md) |
+| `attempt.ts` 整体编排 | `RuntimeApp.runTurn()` | [runtime-design.md](../../architecture/runtime-design.md) |
 
 ### 10.3 UserPromptBuilder 设计确认
 
@@ -456,4 +456,4 @@ SessionManager.open(sessionFile)           // 从磁盘加载原始 session
 - **应该做**：hook 注入前置上下文 + 拼接用户原始文本 + 分离 attachments
 - **不应该做**：注入 memory 内容、管理 conversation history、包装为 `{ role: "user" }` 消息对象
 
-这与 [prompt-builder-design.md](../../architecture/prompt-builder-design.md) 第 6 节的设计一致。
+这与 [core-prompt-design.md](../../architecture/core-prompt-design.md) 第 6 节的设计一致。

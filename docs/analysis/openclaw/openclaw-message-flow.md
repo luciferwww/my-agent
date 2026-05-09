@@ -547,7 +547,7 @@ deliverAgentCommandResult()
 
 | 文件 | 职责 |
 |------|------|
-| `src/config/sessions/store.ts` | Session CRUD |
-| `src/config/sessions/transcript.ts` | 会话文件读写（JSONL） |
+| `src/platform/config/sessions/store.ts` | Session CRUD |
+| `src/platform/config/sessions/transcript.ts` | 会话文件读写（JSONL） |
 | `src/agents/pi-embedded-runner/compact.ts` | 对话压缩 |
 | `src/agents/context-window-guard.ts` | 上下文窗口计算 |

@@ -12,12 +12,12 @@ This directory is grouped by document purpose rather than by module.
 
 For a high-level understanding of the current design, start with the runtime assembly view and then drill down into the main runtime modules.
 
-1. [Runtime / App Assembly Design](architecture/runtime-app-assembly-design.md)
-2. [Agent Runner Design](architecture/agent-runner-design.md)
-3. [Prompt Builder Design](architecture/prompt-builder-design.md)
-4. [Workspace Design](architecture/workspace-design.md)
-5. [Tools Design](architecture/tools-design.md)
-6. [Session Design](architecture/session-design.md)
+1. [Runtime / App Assembly Design](architecture/runtime-design.md)
+2. [Agent Runner Design](architecture/core-runner-design.md)
+3. [Prompt Builder Design](architecture/core-prompt-design.md)
+4. [Workspace Design](architecture/core-workspace-design.md)
+5. [Tools Design](architecture/core-tools-design.md)
+6. [Session Design](architecture/core-session-design.md)
 
 Examples:
 
@@ -40,19 +40,19 @@ npx tsx scripts/test-process-list-lifecycle.ts
 
 Design baselines for the current implementation, including module boundaries, data flow, and behavior contracts.
 
-- [Agent Runner Design](architecture/agent-runner-design.md)
-- [Runtime / App Assembly Design](architecture/runtime-app-assembly-design.md)
-- [Config Design](architecture/config-design.md)
-- [LLM Client Design](architecture/llm-client-design.md)
-- [Prompt Builder Design](architecture/prompt-builder-design.md)
-- [Session Design](architecture/session-design.md)
-- [Compaction Design](architecture/compaction-design.md)
-- [Memory Design](architecture/memory-design.md)
-- [Tools Design](architecture/tools-design.md)
-- [Builtin Tools Design](architecture/builtin-tools-design.md)
-- [Workspace Design](architecture/workspace-design.md)
-- [Exec / Process Flow Design](architecture/exec-process-flow-design.md)
-- [Exec / Process Platform Runtime Design](architecture/exec-process-platform-runtime-design.md)
+- [Agent Runner Design](architecture/core-runner-design.md)
+- [Runtime / App Assembly Design](architecture/runtime-design.md)
+- [Config Design](architecture/platform-config-design.md)
+- [LLM Client Design](architecture/adapters-llm-design.md)
+- [Prompt Builder Design](architecture/core-prompt-design.md)
+- [Session Design](architecture/core-session-design.md)
+- [Compaction Design](architecture/core-runner-context-design.md)
+- [Memory Design](architecture/core-memory-design.md)
+- [Tools Design](architecture/core-tools-design.md)
+- [Builtin Tools Design](architecture/core-tools-builtin-design.md)
+- [Workspace Design](architecture/core-workspace-design.md)
+- [Exec / Process Flow Design](architecture/core-tools-builtin-exec-flow-design.md)
+- [Exec / Process Platform Runtime Design](architecture/core-tools-builtin-exec-runtime-design.md)
 - [Coding Standards](architecture/coding-standards.md)
 
 ## Roadmap

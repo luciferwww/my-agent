@@ -666,7 +666,7 @@ const MAX_INSTRUCTION_LENGTH = 800;  // ~200 tokens，防止 prompt 膨胀
 
 ## 9. 配置参考
 
-**定义文件**：`src/config/types.agent-defaults.ts`
+**定义文件**：`src/platform/config/types.agent-defaults.ts`
 
 完整配置结构（`agents.defaults.compaction`）：
 
@@ -772,7 +772,7 @@ Session Store 更新：
 | 文件 | 行数 | 说明 |
 |------|------|------|
 | `src/agents/pi-hooks/compaction-instructions.ts` | 69 | 摘要指令构建与优先级 |
-| `src/config/types.agent-defaults.ts` | ~417 | 配置类型定义 |
+| `src/platform/config/types.agent-defaults.ts` | ~417 | 配置类型定义 |
 
 ### 错误处理与重试
 
@@ -794,7 +794,7 @@ Session Store 更新：
 
 ## 12. 对 my-agent 的借鉴意义
 
-当前 `my-agent` 的 `AgentRunner`（`src/agent-runner/AgentRunner.ts`）将**全量历史**发送给 LLM，随着对话增长，必然会触达上下文窗口上限。
+当前 `my-agent` 的 `AgentRunner`（`src/core/runner/AgentRunner.ts`）将**全量历史**发送给 LLM，随着对话增长，必然会触达上下文窗口上限。
 
 ### 建议的渐进式引入路径
 

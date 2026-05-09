@@ -66,7 +66,7 @@ openclaw/
 | `src/agents/agent-command.ts` | Agent 命令执行编排（~900+ 行） |
 | `src/auto-reply/reply/commands-system-prompt.ts` | 命令系统 Prompt |
 | `src/agents/prompt-composition-scenarios.ts` | Prompt 场景测试 |
-| `src/memory/prompt-section.ts` | 内存 Prompt 部分 |
+| `src/core/memory/prompt-section.ts` | 内存 Prompt 部分 |
 | `src/gateway/agent-prompt.ts` | Gateway Prompt 构建 |
 
 ### 3.2 核心函数签名
@@ -257,6 +257,6 @@ my-agent/
 | Agent 执行编排 | `src/agents/agent-command.ts` |
 | Skills 系统 | `src/infra/skills-remote.ts` + `src/agents/skills.ts` |
 | 工具摘要生成 | `src/agents/tool-summaries.ts` |
-| 会话管理 | `src/sessions/` + `src/config/sessions.ts` |
+| 会话管理 | `src/sessions/` + `src/platform/config/sessions.ts` |
 | CLI 入口 | `src/cli/run-main.ts` |
 | Gateway 路由 | `src/gateway/server.ts` |

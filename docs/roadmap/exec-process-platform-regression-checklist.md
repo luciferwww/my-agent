@@ -27,7 +27,7 @@
 ### 2.1 核心运行时单测
 
 ```bash
-npx vitest run src/tools/builtin/resolve-command-invocation.test.ts src/tools/builtin/kill-process-tree.test.ts src/tools/builtin/run-command.test.ts
+npx vitest run src/core/tools/builtin/resolve-command-invocation.test.ts src/core/tools/builtin/kill-process-tree.test.ts src/core/tools/builtin/run-command.test.ts
 ```
 
 覆盖重点：
@@ -122,7 +122,7 @@ npx tsx scripts/test-process-list-lifecycle.ts
 适用于小改动，例如只改状态文案、只改 `process` 输出格式：
 
 ```bash
-npx vitest run src/tools/builtin/run-command.test.ts
+npx vitest run src/core/tools/builtin/run-command.test.ts
 npx tsx scripts/test-process-kill.ts
 npx tsx scripts/test-process-list-lifecycle.ts
 ```
@@ -132,7 +132,7 @@ npx tsx scripts/test-process-list-lifecycle.ts
 适用于改 wrapper、kill-tree、timeout、abort、yield 等运行时路径：
 
 ```bash
-npx vitest run src/tools/builtin/resolve-command-invocation.test.ts src/tools/builtin/kill-process-tree.test.ts src/tools/builtin/run-command.test.ts
+npx vitest run src/core/tools/builtin/resolve-command-invocation.test.ts src/core/tools/builtin/kill-process-tree.test.ts src/core/tools/builtin/run-command.test.ts
 npx tsx scripts/test-exec-platform-shell.ts
 npx tsx scripts/test-exec-timeout-tree.ts
 npx tsx scripts/test-exec-abort-tree.ts
@@ -146,7 +146,7 @@ npx tsx scripts/test-process-list-lifecycle.ts
 适用于改 `exec / process` 主流程、registry、或者准备提交前做集中验收：
 
 ```bash
-npx vitest run src/tools/builtin/resolve-command-invocation.test.ts src/tools/builtin/kill-process-tree.test.ts src/tools/builtin/run-command.test.ts
+npx vitest run src/core/tools/builtin/resolve-command-invocation.test.ts src/core/tools/builtin/kill-process-tree.test.ts src/core/tools/builtin/run-command.test.ts
 npx tsx scripts/test-exec-list-cwd.ts
 npx tsx scripts/test-exec-platform-shell.ts
 npx tsx scripts/test-exec-background.ts

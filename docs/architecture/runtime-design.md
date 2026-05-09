@@ -1,7 +1,7 @@
 # Runtime / App Assembly 模块设计文档
 
 > 创建日期：2026-04-09  
-> 参考：现有模块设计文档，尤其是 [agent-runner-design.md](./agent-runner-design.md)、[config-design.md](./config-design.md)、[tools-design.md](./tools-design.md)、[memory-design.md](./memory-design.md)
+> 参考：现有模块设计文档，尤其是 [core-runner-design.md](./core-runner-design.md)、[platform-config-design.md](./platform-config-design.md)、[core-tools-design.md](./core-tools-design.md)、[core-memory-design.md](./core-memory-design.md)
 
 ---
 
@@ -239,7 +239,7 @@ export interface RuntimeAppOptions {
   /**
    * 可选的 AgentEvent 观察者（telemetry / 调试日志用）。
    * RuntimeApp 在 fanout 闭包末尾调用此回调，与 channel.send 并行触发。
-   * 详见 channel-design.md §9.6。
+   * 详见 adapters-channel-design.md §9.6。
    */
   onAgentEvent?: (event: AgentEvent) => void;
 }
@@ -321,7 +321,7 @@ export interface RunTurnParams {
 - 绝大多数字段默认继承 resolved config；
 - 单轮允许局部覆盖；
 - `reloadContextFiles` 是一个显式动作，不默认每轮触发；
-- `turnId` 由 RuntimeApp 在 channel 接入路径生成（详见 channel-design.md §4.3 的 `makeMessageHandler`），库消费者也可显式传入用于日志关联。**不暴露 `clientId`**——它属于 channel ↔ RuntimeApp 的内部路由元数据。
+- `turnId` 由 RuntimeApp 在 channel 接入路径生成（详见 adapters-channel-design.md §4.3 的 `makeMessageHandler`），库消费者也可显式传入用于日志关联。**不暴露 `clientId`**——它属于 channel ↔ RuntimeApp 的内部路由元数据。
 
 ### 6.4 RunTurnResult
 
@@ -829,7 +829,7 @@ P0 的状态转换规则建议固定如下：
 - `closed`：终态，不允许再次 `runTurn()`；
 - `failed`：终态，建议重新 create，不再复用。
 
-> **并发控制变更（与 channel 层接入相关）**：单个 `runTurn()` 的执行**不再**让 phase 在 `ready ↔ running` 之间切换。phase 是 runtime 级别的生命周期标记，per-turn 的并发控制由独立的 `inFlightSessions: Set<string>` 完成——同一 sessionKey 串行（消息历史一致性硬约束），跨 session 可并发（多 channel / 多 client 场景需要）。`activeRunCount` 字段保留作为 metric。详见 channel-design.md §9.3。
+> **并发控制变更（与 channel 层接入相关）**：单个 `runTurn()` 的执行**不再**让 phase 在 `ready ↔ running` 之间切换。phase 是 runtime 级别的生命周期标记，per-turn 的并发控制由独立的 `inFlightSessions: Set<string>` 完成——同一 sessionKey 串行（消息历史一致性硬约束），跨 session 可并发（多 channel / 多 client 场景需要）。`activeRunCount` 字段保留作为 metric。详见 adapters-channel-design.md §9.3。
 
 ```mermaid
 stateDiagram-v2
@@ -913,7 +913,7 @@ private async disposeResources(): Promise<void> {
 
 ## 11.5 Channel 层接入
 
-Channel 层（CLI / WebSocket 等）作为独立模块挂接 RuntimeApp，**完整设计见 [channel-design.md](./channel-design.md)**。这里只点明 RuntimeApp 侧承担的责任与新增的接口面。
+Channel 层（CLI / WebSocket 等）作为独立模块挂接 RuntimeApp，**完整设计见 [adapters-channel-design.md](./adapters-channel-design.md)**。这里只点明 RuntimeApp 侧承担的责任与新增的接口面。
 
 ### 新增公开方法
 
@@ -962,7 +962,7 @@ static async create(options: RuntimeAppOptions): Promise<RuntimeApp> {
 
 ### Approval 路由策略
 
-只有起源 channel 收到审批请求（按 `turnId` 反查 `originChannelByTurn`），不在 channel 间广播。库模式（无任何 approval channel 注册）下 RuntimeApp **根本不注册 hook**，所有 tool 直通。详见 channel-design.md §4.3。
+只有起源 channel 收到审批请求（按 `turnId` 反查 `originChannelByTurn`），不在 channel 间广播。库模式（无任何 approval channel 注册）下 RuntimeApp **根本不注册 hook**，所有 tool 直通。详见 adapters-channel-design.md §4.3。
 
 ---
 

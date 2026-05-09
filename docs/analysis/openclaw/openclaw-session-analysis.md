@@ -38,7 +38,7 @@ OpenClaw 的 Session 管理由两层存储组成：
 
 ### 2.1 SessionEntry（元数据）
 
-**定义文件**：`src/config/sessions/types.ts`
+**定义文件**：`src/platform/config/sessions/types.ts`
 
 核心字段（精简后，去掉多渠道网关特有的）：
 
@@ -119,7 +119,7 @@ type SessionEntry = {
 
 ## 4. Session Key 命名规则
 
-**定义文件**：`src/routing/session-key.ts`、`src/config/sessions/session-key.ts`
+**定义文件**：`src/routing/session-key.ts`、`src/platform/config/sessions/session-key.ts`
 
 格式：`agent:{agentId}:{channel}:{scope}:{peerId}`
 
@@ -290,7 +290,7 @@ compactEmbeddedPiSession()
 
 ## 9. Session Store 读写
 
-**文件**：`src/config/sessions/store.ts`
+**文件**：`src/platform/config/sessions/store.ts`
 
 ```typescript
 // 读取（带缓存 + 自动重试）
@@ -311,7 +311,7 @@ withSessionStoreLock(async () => {
 
 ## 10. Session 维护（清理）
 
-**文件**：`src/config/sessions/store-maintenance.ts`
+**文件**：`src/platform/config/sessions/store-maintenance.ts`
 
 | 操作 | 默认阈值 | 说明 |
 |------|---------|------|
@@ -329,24 +329,24 @@ withSessionStoreLock(async () => {
 
 | 文件 | 内容 |
 |------|------|
-| `src/config/sessions/types.ts` | SessionEntry 完整类型定义 |
-| `src/config/sessions/session-key.ts` | Session Key 规范化 |
-| `src/config/sessions/group.ts` | 群组 Session Key 解析 |
+| `src/platform/config/sessions/types.ts` | SessionEntry 完整类型定义 |
+| `src/platform/config/sessions/session-key.ts` | Session Key 规范化 |
+| `src/platform/config/sessions/group.ts` | 群组 Session Key 解析 |
 
 ### 存储管理
 
 | 文件 | 内容 |
 |------|------|
-| `src/config/sessions/store.ts` | Session Store CRUD（loadSessionStore / updateSessionStore） |
-| `src/config/sessions/store-cache.ts` | Store 内存缓存 |
-| `src/config/sessions/store-maintenance.ts` | 清理、轮转、配额 |
-| `src/config/sessions/paths.ts` | 文件路径解析 |
+| `src/platform/config/sessions/store.ts` | Session Store CRUD（loadSessionStore / updateSessionStore） |
+| `src/platform/config/sessions/store-cache.ts` | Store 内存缓存 |
+| `src/platform/config/sessions/store-maintenance.ts` | 清理、轮转、配额 |
+| `src/platform/config/sessions/paths.ts` | 文件路径解析 |
 
 ### Session 生命周期
 
 | 文件 | 内容 |
 |------|------|
-| `src/config/sessions/session-file.ts` | Session 文件创建和关联 |
+| `src/platform/config/sessions/session-file.ts` | Session 文件创建和关联 |
 | `src/gateway/session-utils.fs.ts` | JSONL 文件读写（readSessionMessages） |
 | `src/gateway/sessions-resolve.ts` | Session 解析（resolveSessionKeyFromResolveParams） |
 

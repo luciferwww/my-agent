@@ -87,7 +87,7 @@ export interface AgentRunnerConfig {
   /**
    * 运行时事件回调（统一入口）。
    * RuntimeApp 在 bootstrap 时注入 fanout 闭包，由它转发事件到所有已注册 channel
-   * 与可选的 RuntimeAppOptions.onAgentEvent 观察者；详见 channel-design.md §9.5。
+   * 与可选的 RuntimeAppOptions.onAgentEvent 观察者；详见 adapters-channel-design.md §9.5。
    * 库消费者直接使用 AgentRunner 时也可在此注入自己的 handler。
    */
   onEvent?: (event: AgentEvent) => void;
@@ -140,7 +140,7 @@ export interface RunResult {
  *
  * 每个变体都自带 `sessionKey` 和 `turnId` 字段（不引入公共基类型抽象）——
  * AgentRunner.emit 内部通过私有的分发式 Omit 类型作为输入，从 currentParams
- * 自动注入这两个字段，调用方不必手写。详见 channel-design.md §9.2。
+ * 自动注入这两个字段，调用方不必手写。详见 adapters-channel-design.md §9.2。
  */
 export type AgentEvent =
   | { type: 'run_start'; sessionKey: string; turnId: string }

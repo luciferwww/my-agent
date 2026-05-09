@@ -2,7 +2,7 @@
 
 > 创建日期：2026-04-13  
 > 参考：OpenClaw 压缩机制分析（详见 [openclaw-compaction-analysis.md](../analysis/openclaw/openclaw-compaction-analysis.md)）  
-> 前置文档：[agent-runner-design.md](agent-runner-design.md)、[session-design.md](session-design.md)
+> 前置文档：[core-runner-design.md](core-runner-design.md)、[core-session-design.md](core-session-design.md)
 
 ---
 
@@ -29,7 +29,7 @@
 2. **安全配对**：tool_use / tool_result 永远不被拆散
 3. **可追溯**：压缩记录写入 JSONL，摘要内容可审计
 4. **透明降级**：摘要失败时有明确的 fallback 路径
-5. **与现有架构对齐**：压缩逻辑放在 AgentRunner 层（session-design.md 已声明此边界）
+5. **与现有架构对齐**：压缩逻辑放在 AgentRunner 层（core-session-design.md 已声明此边界）
 
 ---
 

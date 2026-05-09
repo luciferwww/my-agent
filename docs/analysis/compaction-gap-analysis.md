@@ -3,7 +3,7 @@
 > 初版日期：2026-04-16  
 > 最后更新：2026-04-17（Phase 1 + Phase 2 + Gap 2 完成）  
 > 基于 OpenClaw 代码路径：`C:\dev\my-agent\openclaw`  
-> 基于 my-agent 设计文档：`docs/architecture/compaction-design.md`
+> 基于 my-agent 设计文档：`docs/architecture/core-runner-context-design.md`
 
 ---
 
@@ -99,7 +99,7 @@ reducibleChars = min(
 在 `appendMessage()` 写入 JSONL 之前，对 `role === 'toolResult'` 的消息执行硬上限裁剪：
 
 ```typescript
-// src/session/SessionManager.ts
+// src/core/session/SessionManager.ts
 
 export interface SessionManagerOptions {
   toolResultHeadChars?: number;

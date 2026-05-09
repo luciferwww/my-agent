@@ -4,7 +4,7 @@
 > 适用项目：C:\dev\my-agent\my-agent  
 > 背景：这份路线图最初写于“最小可用 exec”阶段；截至 2026-04-06，代码已经具备最小版 `v2` 和 `v2.1` 核心运行时底座。本文保留为演进记录，但其中凡是提到“未来要支持 background / process”的地方，都应理解为“这些能力已经落地，后续讨论的是继续增强什么”。
 
-> 详细运行与交互流程见 [exec-process-flow-design.md](../architecture/exec-process-flow-design.md)。
+> 详细运行与交互流程见 [core-tools-builtin-exec-flow-design.md](../architecture/core-tools-builtin-exec-flow-design.md)。
 
 ---
 
@@ -230,7 +230,7 @@ interface RunCommandOptions {
 2. Windows 命令解析兼容
 3. Windows 退出状态兼容
 
-详细落地建议见 [exec-process-platform-adoption-plan.md](./exec-process-platform-adoption-plan.md)，实现设计见 [exec-process-platform-runtime-design.md](../architecture/exec-process-platform-runtime-design.md)。
+详细落地建议见 [exec-process-platform-adoption-plan.md](./exec-process-platform-adoption-plan.md)，实现设计见 [core-tools-builtin-exec-runtime-design.md](../architecture/core-tools-builtin-exec-runtime-design.md)。
 
 把它归到 `v2.x` 里的原因是：
 

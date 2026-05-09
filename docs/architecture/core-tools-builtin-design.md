@@ -1,11 +1,11 @@
 # Builtin Tools 设计文档
 
 > 创建日期：2026-04-06  
-> 参考：OpenClaw 的 coding tools / `apply_patch` / `web_fetch`，以及本项目现有的 [tools-design.md](./tools-design.md)
+> 参考：OpenClaw 的 coding tools / `apply_patch` / `web_fetch`，以及本项目现有的 [core-tools-design.md](./core-tools-design.md)
 
 > 当前状态：截至 2026-04-06，本文所列的非 memory builtin tools 已全部落地到 `src/core/tools/builtin/`，包括 `read_file`、`list_dir`、`file_search`、`grep_search`、`apply_patch`、`write_file`、`edit_file`、`web_fetch`、`exec`、`process`。当前剩余未实现的只有延后到独立 memory 模块阶段的 `memory_search` / `memory_get`。
 
-> 相关文档：如果想看 Tools 模块的公共类型、executor、当前 `exec + process` 运行时边界，请回到 [tools-design.md](./tools-design.md)。
+> 相关文档：如果想看 Tools 模块的公共类型、executor、当前 `exec + process` 运行时边界，请回到 [core-tools-design.md](./core-tools-design.md)。
 
 ---
 
@@ -15,7 +15,7 @@
 
 换句话说：
 
-- [tools-design.md](./tools-design.md) 负责说明 Tools 模块整体边界
+- [core-tools-design.md](./core-tools-design.md) 负责说明 Tools 模块整体边界
 - 本文负责说明 **我们最终需要哪些 builtin tools、这些工具的最小输入输出 schema 是什么、以及应如何分阶段落地**
 
 ### 1.1 设计目标
@@ -255,9 +255,9 @@ src/
 
 这部分已经落地，详细设计见：
 
-1. [tools-design.md](./tools-design.md)
-2. [exec-process-flow-design.md](./exec-process-flow-design.md)
-3. [exec-process-platform-runtime-design.md](./exec-process-platform-runtime-design.md)
+1. [core-tools-design.md](./core-tools-design.md)
+2. [core-tools-builtin-exec-flow-design.md](./core-tools-builtin-exec-flow-design.md)
+3. [core-tools-builtin-exec-runtime-design.md](./core-tools-builtin-exec-runtime-design.md)
 
 后续 builtin tools 的 milestone 默认都建立在这组基线上。
 

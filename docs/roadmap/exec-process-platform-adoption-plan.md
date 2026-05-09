@@ -4,7 +4,7 @@
 > 适用项目：`C:\dev\my-agent\my-agent`  
 > 详细依据：[openclaw-exec-process-platform-analysis.md](../analysis/openclaw/openclaw-exec-process-platform-analysis.md)
 
-> 当前定位：这份文档定义的是当前最小版 `v2` 之后的下一步实现计划。更细的运行时实现设计见 [exec-process-platform-runtime-design.md](../architecture/exec-process-platform-runtime-design.md)。
+> 当前定位：这份文档定义的是当前最小版 `v2` 之后的下一步实现计划。更细的运行时实现设计见 [core-tools-builtin-exec-runtime-design.md](../architecture/core-tools-builtin-exec-runtime-design.md)。
 
 > 更新状态：截至 2026-04-06，本文里的 P0、P1 已完成并进入代码与测试；当前真正剩余的事项主要是 P2 级别的 resolver / shebang 补强，而不是继续补最小 kill-tree 或显式 shell wrapper。
 
@@ -32,10 +32,10 @@
 
 当前本地实现的核心文件：
 
-- [../../src/tools/builtin/exec.ts](../../src/tools/builtin/exec.ts)
-- [../../src/tools/builtin/process.ts](../../src/tools/builtin/process.ts)
-- [../../src/tools/builtin/run-command.ts](../../src/tools/builtin/run-command.ts)
-- [../../src/tools/builtin/process-registry.ts](../../src/tools/builtin/process-registry.ts)
+- [../../src/core/tools/builtin/exec.ts](../../src/core/tools/builtin/exec.ts)
+- [../../src/core/tools/builtin/process.ts](../../src/core/tools/builtin/process.ts)
+- [../../src/core/tools/builtin/run-command.ts](../../src/core/tools/builtin/run-command.ts)
+- [../../src/core/tools/builtin/process-registry.ts](../../src/core/tools/builtin/process-registry.ts)
 
 当前代码已经具备的最小版 `v2` 能力：
 
@@ -124,9 +124,9 @@ Linux 和 macOS 在这里可以先合并看作 Unix 语义，重点不是命令 
 
 当前落点：
 
-- 新增 `src/tools/builtin/kill-process-tree.ts`
-- 在 [../../src/tools/builtin/process.ts](../../src/tools/builtin/process.ts) 的 `kill` 路径里改用它
-- 在 [../../src/tools/builtin/run-command.ts](../../src/tools/builtin/run-command.ts) 里复用同一 helper 处理 timeout / abort 路径
+- 新增 `src/core/tools/builtin/kill-process-tree.ts`
+- 在 [../../src/core/tools/builtin/process.ts](../../src/core/tools/builtin/process.ts) 的 `kill` 路径里改用它
+- 在 [../../src/core/tools/builtin/run-command.ts](../../src/core/tools/builtin/run-command.ts) 里复用同一 helper 处理 timeout / abort 路径
 
 参考实现：
 
@@ -151,8 +151,8 @@ Linux 和 macOS 在这里可以先合并看作 Unix 语义，重点不是命令 
 
 当前落点：
 
-- 在 [../../src/tools/builtin/run-command.ts](../../src/tools/builtin/run-command.ts) 前面引入 invocation resolver
-- 新增 `src/tools/builtin/resolve-command-invocation.ts`
+- 在 [../../src/core/tools/builtin/run-command.ts](../../src/core/tools/builtin/run-command.ts) 前面引入 invocation resolver
+- 新增 `src/core/tools/builtin/resolve-command-invocation.ts`
 
 参考实现：
 
@@ -181,7 +181,7 @@ Linux 和 macOS 在这里可以先合并看作 Unix 语义，重点不是命令 
 
 当前落点：
 
-- [../../src/tools/builtin/run-command.ts](../../src/tools/builtin/run-command.ts)
+- [../../src/core/tools/builtin/run-command.ts](../../src/core/tools/builtin/run-command.ts)
 
 参考实现：
 
@@ -225,8 +225,8 @@ Linux 和 macOS 在这里可以先合并看作 Unix 语义，重点不是命令 
 
 这样改的好处是：
 
-- [../../src/tools/builtin/exec.ts](../../src/tools/builtin/exec.ts) 继续只做模式选择和结果映射
-- [../../src/tools/builtin/process.ts](../../src/tools/builtin/process.ts) 继续只做动作分发和 registry 访问
+- [../../src/core/tools/builtin/exec.ts](../../src/core/tools/builtin/exec.ts) 继续只做模式选择和结果映射
+- [../../src/core/tools/builtin/process.ts](../../src/core/tools/builtin/process.ts) 继续只做动作分发和 registry 访问
 - 平台分支集中在 helper 里，后续测试也更容易单独补
 
 ---
@@ -239,7 +239,7 @@ Linux 和 macOS 在这里可以先合并看作 Unix 语义，重点不是命令 
 
 - 给 invocation resolver 补 Windows 条件分支测试
 - 给 kill-tree helper 补 Windows / Unix 分支测试
-- 保持 [../../src/tools/builtin/exec.test.ts](../../src/tools/builtin/exec.test.ts)、[../../src/tools/builtin/process.test.ts](../../src/tools/builtin/process.test.ts)、[../../src/tools/builtin/run-command.test.ts](../../src/tools/builtin/run-command.test.ts) 继续通过
+- 保持 [../../src/core/tools/builtin/exec.test.ts](../../src/core/tools/builtin/exec.test.ts)、[../../src/core/tools/builtin/process.test.ts](../../src/core/tools/builtin/process.test.ts)、[../../src/core/tools/builtin/run-command.test.ts](../../src/core/tools/builtin/run-command.test.ts) 继续通过
 
 ### 7.2 集成脚本
 

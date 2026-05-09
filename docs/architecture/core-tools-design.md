@@ -5,7 +5,7 @@
 
 > 当前状态：截至 2026-04-06，Tools 模块已经落地完整的非 memory builtin tools 集合：`list_dir`、`read_file`、`file_search`、`grep_search`、`apply_patch`、`write_file`、`edit_file`、`web_fetch`、`exec`、`process`。其中 `exec + process` 仍然是运行时最复杂的一组，相关 helper 包括 `run-command.ts`、`process-registry.ts`、`resolve-command-invocation.ts`、`kill-process-tree.ts`。本文按当前实现同步，后文若出现“后续可扩展”，指的是在现有最小版 `v2` 之上的继续增强，而不是这些能力尚未存在。
 
-> 相关文档：如果只想看 builtin tools 的工具面、最小 schema 和分阶段落地顺序，请直接看 [builtin-tools-design.md](./builtin-tools-design.md)。
+> 相关文档：如果只想看 builtin tools 的工具面、最小 schema 和分阶段落地顺序，请直接看 [core-tools-builtin-design.md](./core-tools-builtin-design.md)。
 
 ---
 
@@ -467,7 +467,7 @@ const log = await toolExecutor('process', { action: 'log', runId, tailLines: 50 
 3. 只有当确实出现交互式进程需求时，再进入会话控制台能力。
 
 更细的分阶段实施说明见 [exec-evolution-roadmap.md](../roadmap/exec-evolution-roadmap.md)。
-`exec + process` 的详细运行与交互流程见 [exec-process-flow-design.md](./exec-process-flow-design.md)。
+`exec + process` 的详细运行与交互流程见 [core-tools-builtin-exec-flow-design.md](./core-tools-builtin-exec-flow-design.md)。
 
 ---
 

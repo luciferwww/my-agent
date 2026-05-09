@@ -109,14 +109,14 @@ Memory 采用 **"文件即真相"（Source-of-truth Markdown）** 的设计：
 | 路径 | 职责 |
 |------|------|
 | `extensions/memory-core/index.ts` | 主记忆插件入口，注册工具/CLI/Dreaming |
-| `extensions/memory-core/src/memory/manager.ts` | `MemoryIndexManager` — SQLite 索引管理 |
-| `extensions/memory-core/src/memory/manager-search.ts` | 关键字和向量搜索实现 |
-| `extensions/memory-core/src/memory/hybrid.ts` | 混合搜索结果合并 |
-| `extensions/memory-core/src/memory/embeddings.ts` | Embedding 提供者抽象层 |
-| `extensions/memory-core/src/memory/search-manager.ts` | 搜索管理器工厂 & 路由 |
-| `extensions/memory-core/src/memory/qmd-manager.ts` | QMD 后端实现 |
-| `extensions/memory-core/src/memory/manager-sync-ops.ts` | 文件监听、同步、索引操作 |
-| `extensions/memory-core/src/memory/manager-reindex-state.ts` | Provider 变更检测与重建索引 |
+| `extensions/memory-core/src/core/memory/manager.ts` | `MemoryIndexManager` — SQLite 索引管理 |
+| `extensions/memory-core/src/core/memory/manager-search.ts` | 关键字和向量搜索实现 |
+| `extensions/memory-core/src/core/memory/hybrid.ts` | 混合搜索结果合并 |
+| `extensions/memory-core/src/core/memory/embeddings.ts` | Embedding 提供者抽象层 |
+| `extensions/memory-core/src/core/memory/search-manager.ts` | 搜索管理器工厂 & 路由 |
+| `extensions/memory-core/src/core/memory/qmd-manager.ts` | QMD 后端实现 |
+| `extensions/memory-core/src/core/memory/manager-sync-ops.ts` | 文件监听、同步、索引操作 |
+| `extensions/memory-core/src/core/memory/manager-reindex-state.ts` | Provider 变更检测与重建索引 |
 
 ### 工具 & CLI
 
@@ -147,7 +147,7 @@ Memory 采用 **"文件即真相"（Source-of-truth Markdown）** 的设计：
 | `src/auto-reply/reply/memory-flush.ts` | 压缩前记忆刷写 |
 | `src/auto-reply/reply/agent-runner-memory.ts` | 记忆上下文注入 |
 | `src/agents/memory-search.ts` | 记忆搜索工具注册 |
-| `src/config/types.memory.ts` | 配置类型定义 |
+| `src/platform/config/types.memory.ts` | 配置类型定义 |
 | `src/plugins/` | 记忆运行时 & 状态管理 |
 
 ---
@@ -533,7 +533,7 @@ memorySearch: {
 
 #### 场景 1: 会话启动 — 加载记忆上下文
 
-- **文件**: `extensions/memory-core/src/memory/manager.ts`
+- **文件**: `extensions/memory-core/src/core/memory/manager.ts`
 - **触发**: 会话中第一次调用 `memory_search` 时执行 `warmSession(sessionKey)`
 - **条件**: `sync.onSessionStart === true`
 - **操作**: 调用 `sync({ reason: "session-start" })`，将 `MEMORY.md` + 今天/昨天的 `memory/YYYY-MM-DD.md` 加载并建立索引
@@ -567,7 +567,7 @@ memorySearch: {
 
 #### 场景 5: 搜索时异步同步 — On-Search Sync
 
-- **文件**: `extensions/memory-core/src/memory/manager.ts`
+- **文件**: `extensions/memory-core/src/core/memory/manager.ts`
 - **触发**: 每次 `search()` 调用时，如果索引标记为脏
 - **条件**: `sync.onSearch === true`
 - **操作**: 后台异步 `startAsyncSearchSync()`，不阻塞搜索结果返回但更新索引
@@ -630,7 +630,7 @@ memorySearch: {
 
 #### 场景 10: 文件监听自动同步 — File Watcher
 
-- **文件**: `extensions/memory-core/src/memory/manager-sync-ops.ts`
+- **文件**: `extensions/memory-core/src/core/memory/manager-sync-ops.ts`
 - **触发**: 文件系统 `add` / `change` / `unlink` 事件
 - **监听目标**:
   - `MEMORY.md`, `memory.md`（工作区根目录）
@@ -643,7 +643,7 @@ memorySearch: {
 
 #### 场景 11: 会话转录同步 — Session Transcript Sync
 
-- **文件**: `extensions/memory-core/src/memory/manager-sync-ops.ts`
+- **文件**: `extensions/memory-core/src/core/memory/manager-sync-ops.ts`
 - **触发**: `onSessionTranscriptUpdate()` 事件监听
 - **防抖**: 5000ms
 - **阈值**: `deltaBytes` / `deltaMessages` / `postCompactionForce`
@@ -651,13 +651,13 @@ memorySearch: {
 
 #### 场景 12: 定时轮询同步 — Interval Sync
 
-- **文件**: `extensions/memory-core/src/memory/manager-sync-ops.ts`
+- **文件**: `extensions/memory-core/src/core/memory/manager-sync-ops.ts`
 - **触发**: 周期定时器，按 `sync.intervalMinutes` 间隔
 - **操作**: 后台 `sync({ reason: "interval" })`，不阻塞操作
 
 #### 场景 13: 配置/Provider 变更 — 全量重建
 
-- **文件**: `extensions/memory-core/src/memory/manager-reindex-state.ts`
+- **文件**: `extensions/memory-core/src/core/memory/manager-reindex-state.ts`
 - **触发条件**:
   - Embedding provider 切换（不同模型向量不兼容）
   - Embedding model 变更
@@ -695,7 +695,7 @@ openclaw memory dream           # 手动触发 Dreaming 全流程
 
 #### 场景 17: 索引同步清理
 
-- **文件**: `extensions/memory-core/src/memory/manager-sync-ops.ts`
+- **文件**: `extensions/memory-core/src/core/memory/manager-sync-ops.ts`
 - **触发**: 全量 sync 操作期间
 - **操作**: 删除磁盘上已不存在的文件对应的 chunks、FTS 表、vector 表条目
 
