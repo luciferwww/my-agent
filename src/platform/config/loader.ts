@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DEFAULT_AGENT_CONFIG } from './defaults.js';
-import type { AppConfig, AgentDefaults, AgentEntry, ConfigFile, DeepPartial } from './types.js';
+import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from './defaults.js';
+import type { AppConfig, AgentDefaults, AgentEntry, ConfigFile, DeepPartial, LoggerModuleConfig } from './types.js';
 
 const CONFIG_FILE_NAME = 'config.json';
 
@@ -119,15 +119,18 @@ export function loadConfig(options: LoadConfigOptions): AppConfig {
     defaults = deepMerge(defaults, file.agents.defaults);
   }
 
+  // 3. 合并 logger 配置（默认值 + 文件覆盖）
+  const logger: LoggerModuleConfig = file.logger
+    ? deepMerge(DEFAULT_LOGGER_CONFIG, file.logger)
+    : { ...DEFAULT_LOGGER_CONFIG };
+
   return {
     workspaceDir,
     agents: {
       defaults,
       list: file.agents?.list ?? [],
     },
-    logger: {
-      minLevel: file.logger?.minLevel ?? 'info',
-    },
+    logger,
   };
 }
 

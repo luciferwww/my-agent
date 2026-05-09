@@ -1,4 +1,4 @@
-import type { AgentDefaults } from './types.js';
+import type { AgentDefaults, LoggerModuleConfig } from './types.js';
 
 /**
  * 所有模块的默认配置值。
@@ -86,5 +86,25 @@ export const DEFAULT_AGENT_CONFIG: AgentDefaults = {
     toolResultHeadChars: 10_000,
     toolResultTailChars: 5_000,
     timeoutSeconds: 300,
+  },
+};
+
+/**
+ * Logger 模块的默认配置。
+ *
+ * console.enabled 默认 true（保持现有 stdout/stderr 行为）。
+ * file.enabled 默认 false（不写文件，向后兼容；需要时在 config.json 中显式打开）。
+ * file.dir 解释为相对 workspaceDir 的路径。
+ */
+export const DEFAULT_LOGGER_CONFIG: LoggerModuleConfig = {
+  minLevel: 'info',
+  console: {
+    enabled: true,
+  },
+  file: {
+    enabled: false,
+    dir: 'logs',
+    prefix: 'app',
+    maxQueueSize: 10_000,
   },
 };

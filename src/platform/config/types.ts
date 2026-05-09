@@ -180,10 +180,39 @@ export interface AgentsConfig {
   list: AgentEntry[];
 }
 
+/** 日志级别（与 platform/logger 的 LogLevel 同义；此处复制定义避免跨模块依赖） */
+export type LoggerLevel = 'debug' | 'info' | 'warn' | 'error';
+
+/** Console adapter 的配置段 */
+export interface LoggerConsoleConfig {
+  /** 是否启用 Console adapter；默认 true */
+  enabled?: boolean;
+  /** 此 adapter 的最低输出级别；不设跟随全局 minLevel */
+  minLevel?: LoggerLevel;
+}
+
+/** File adapter 的配置段 */
+export interface LoggerFileConfig {
+  /** 是否启用 File adapter；默认 false（不写文件） */
+  enabled?: boolean;
+  /** 日志文件目录；解释为相对 workspaceDir 的相对路径，默认 'logs' */
+  dir?: string;
+  /** 文件名前缀，默认 'app'（→ app.YYYY-MM-DD.log） */
+  prefix?: string;
+  /** 此 adapter 的最低输出级别；不设跟随全局 minLevel */
+  minLevel?: LoggerLevel;
+  /** 内部队列上限，超出后丢弃并触发 onError；默认 10000 */
+  maxQueueSize?: number;
+}
+
 /** Logger 配置 */
 export interface LoggerModuleConfig {
   /** 全局最低输出级别；默认 'info' */
-  minLevel?: 'debug' | 'info' | 'warn' | 'error';
+  minLevel?: LoggerLevel;
+  /** Console adapter 子配置 */
+  console?: LoggerConsoleConfig;
+  /** File adapter 子配置 */
+  file?: LoggerFileConfig;
 }
 
 /**

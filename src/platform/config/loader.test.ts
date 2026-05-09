@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { loadConfig, resolveAgentConfig, deepMerge } from './loader.js';
-import { DEFAULT_AGENT_CONFIG } from './defaults.js';
+import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from './defaults.js';
 
 // ── deepMerge ────────────────────────────────────────────
 
@@ -59,6 +59,7 @@ describe('loadConfig', () => {
     expect(config.workspaceDir).toBe(tmpDir);
     expect(config.agents.defaults).toEqual(DEFAULT_AGENT_CONFIG);
     expect(config.agents.list).toEqual([]);
+    expect(config.logger).toEqual(DEFAULT_LOGGER_CONFIG);
   });
 
   it('merges config file agents.defaults with hardcoded defaults', async () => {
@@ -127,6 +128,29 @@ describe('loadConfig', () => {
     expect(config.agents.list).toHaveLength(2);
     expect(config.agents.list[0]!.id).toBe('coding');
     expect(config.agents.list[1]!.id).toBe('quick');
+  });
+
+  it('merges logger config from file with defaults', async () => {
+    await mkdir(join(tmpDir, '.agent'), { recursive: true });
+    await writeFile(join(tmpDir, '.agent', 'config.json'), JSON.stringify({
+      logger: {
+        minLevel: 'debug',
+        file: { enabled: true, dir: 'custom-logs', minLevel: 'warn' },
+      },
+    }));
+
+    const config = loadConfig({ workspaceDir: tmpDir });
+
+    // Overridden values
+    expect(config.logger.minLevel).toBe('debug');
+    expect(config.logger.file?.enabled).toBe(true);
+    expect(config.logger.file?.dir).toBe('custom-logs');
+    expect(config.logger.file?.minLevel).toBe('warn');
+
+    // Inherited defaults
+    expect(config.logger.console?.enabled).toBe(true);
+    expect(config.logger.file?.prefix).toBe('app');
+    expect(config.logger.file?.maxQueueSize).toBe(10_000);
   });
 });
 
