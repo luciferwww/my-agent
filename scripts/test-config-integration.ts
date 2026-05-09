@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
 
-import { loadConfig, resolveAgentConfig, getEnvOverrides, DEFAULT_AGENT_CONFIG } from '../src/config/index.js';
+import { loadConfig, resolveAgentConfig, getEnvOverrides, DEFAULT_AGENT_CONFIG } from '../src/platform/config/index.js';
 
 // ── helpers ────────────────────────────────────────────────────────────
 

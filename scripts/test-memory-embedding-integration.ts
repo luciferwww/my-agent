@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict';
 import process from 'node:process';
 
-import { LocalEmbeddingProvider } from '../src/memory/embedding/LocalEmbeddingProvider.js';
+import { LocalEmbeddingProvider } from '../src/core/memory/internal/LocalEmbeddingProvider.js';
 
 // ── helpers ────────────────────────────────────────────────────────────
 

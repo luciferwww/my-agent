@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { ChatParams, ChatResponse, LLMClient, StreamEvent } from '../llm-client/types.js';
-import { SessionManager } from '../session/SessionManager.js';
+import type { ChatParams, ChatResponse, LLMClient, StreamEvent } from '../adapters/llm/types.js';
+import { SessionManager } from '../core/session/SessionManager.js';
 import { RuntimeApp } from './RuntimeApp.js';
 
 describe('RuntimeApp integration', () => {

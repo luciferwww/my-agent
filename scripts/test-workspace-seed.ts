@@ -7,7 +7,7 @@
  * Default workspace directory: ./test-workspace
  */
 
-import { ensureWorkspace, loadContextFiles } from '../src/workspace/index.js';
+import { ensureWorkspace, loadContextFiles } from '../src/core/workspace/index.js';
 import { readdir } from 'fs/promises';
 import { join } from 'path';
 

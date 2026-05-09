@@ -2,8 +2,8 @@ import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { RunResult } from '../agent-runner/types.js';
-import type { Tool } from '../tools/types.js';
+import type { RunResult } from '../core/runner/types.js';
+import type { Tool } from '../core/tools/types.js';
 import { RuntimeApp } from './RuntimeApp.js';
 import type { RuntimeDependencies, RuntimeEvent } from './types.js';
 

@@ -1,7 +1,7 @@
-import type { ChatToolDefinition } from '../llm-client/types.js';
-import type { MemoryManager } from '../memory/MemoryManager.js';
-import { createMemoryTools } from '../memory/memory-tools.js';
-import type { ToolDefinition as PromptToolDefinition } from '../prompt-builder/types.js';
+import type { ChatToolDefinition } from '../adapters/llm/types.js';
+import type { MemoryManager } from '../core/memory/MemoryManager.js';
+import { createMemoryTools } from '../core/memory/memory-tools.js';
+import type { ToolDefinition as PromptToolDefinition } from '../core/prompt/types.js';
 import {
   applyPatchTool,
   createToolExecutor,
@@ -15,8 +15,8 @@ import {
   readFileTool,
   webFetchTool,
   writeFileTool,
-} from '../tools/index.js';
-import type { Tool } from '../tools/types.js';
+} from '../core/tools/index.js';
+import type { Tool } from '../core/tools/types.js';
 import type { RuntimeBuiltinToolOptions, RuntimeToolBundle } from './types.js';
 
 export interface AssembleRuntimeToolsParams {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentDefaults } from '../config/types.js';
+import type { AgentDefaults } from '../platform/config/types.js';
 import { buildSystemPromptParams, resolveContextLoadMode } from './prompt-factory.js';
 
 const baseConfig: AgentDefaults = {

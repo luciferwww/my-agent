@@ -1,12 +1,12 @@
-import type { AppConfig, AgentDefaults, DeepPartial } from '../config/types.js';
-import type { ChatContentBlock, ChatToolDefinition, LLMClient, TokenUsage } from '../llm-client/types.js';
-import type { MemoryManager } from '../memory/MemoryManager.js';
-import type { SystemPromptBuilder } from '../prompt-builder/SystemPromptBuilder.js';
-import type { ToolDefinition as PromptToolDefinition } from '../prompt-builder/types.js';
-import type { SessionManager, SessionManagerOptions } from '../session/SessionManager.js';
-import type { Tool, ToolExecutor } from '../tools/types.js';
-import type { ContextFile } from '../workspace/types.js';
-import type { AgentEvent, AgentRunner, AgentRunnerConfig } from '../agent-runner/index.js';
+import type { AppConfig, AgentDefaults, DeepPartial } from '../platform/config/types.js';
+import type { ChatContentBlock, ChatToolDefinition, LLMClient, TokenUsage } from '../adapters/llm/types.js';
+import type { MemoryManager } from '../core/memory/MemoryManager.js';
+import type { SystemPromptBuilder } from '../core/prompt/SystemPromptBuilder.js';
+import type { ToolDefinition as PromptToolDefinition } from '../core/prompt/types.js';
+import type { SessionManager, SessionManagerOptions } from '../core/session/SessionManager.js';
+import type { Tool, ToolExecutor } from '../core/tools/types.js';
+import type { ContextFile } from '../core/workspace/types.js';
+import type { AgentEvent, AgentRunner, AgentRunnerConfig } from '../core/runner/index.js';
 
 export interface RuntimeToolBundle {
   tools: Tool[];
@@ -15,7 +15,7 @@ export interface RuntimeToolBundle {
   promptDefinitions: PromptToolDefinition[];
 }
 
-import type { UserPromptBuilder } from '../prompt-builder/UserPromptBuilder.js';
+import type { UserPromptBuilder } from '../core/prompt/UserPromptBuilder.js';
 
 export interface RuntimeResourceSet {
   appConfig: AppConfig;

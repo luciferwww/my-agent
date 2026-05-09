@@ -23,7 +23,7 @@ import {
   readFileTool,
   webFetchTool,
   writeFileTool,
-} from '../src/tools/index.js';
+} from '../src/core/tools/index.js';
 
 type AsyncTest = () => Promise<void>;
 

@@ -18,7 +18,7 @@
 
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CliChannel } from '../src/channel/index.js';
+import { CliChannel } from '../src/adapters/channel/index.js';
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
 
 const WORKSPACE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'test-workspace');

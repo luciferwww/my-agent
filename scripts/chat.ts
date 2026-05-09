@@ -21,9 +21,9 @@
 import * as readline from 'readline';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { AgentRunner } from '../src/agent-runner/index.js';
+import { AgentRunner } from '../src/core/runner/index.js';
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
-import type { AgentEvent } from '../src/agent-runner/types.js';
+import type { AgentEvent } from '../src/core/runner/types.js';
 
 // ── Constants ─────────────────────────────────────────────────────
 

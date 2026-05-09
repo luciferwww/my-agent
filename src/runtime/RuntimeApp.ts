@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type { AgentEvent } from '../agent-runner/index.js';
-import { ApprovalManager } from '../channel/ApprovalManager.js';
-import type { Channel, ChannelRunRequest } from '../channel/types.js';
-import { loadContextFiles } from '../workspace/index.js';
-import type { ContextFile } from '../workspace/types.js';
+import type { AgentEvent } from '../core/runner/index.js';
+import { ApprovalManager } from '../adapters/channel/ApprovalManager.js';
+import type { Channel, ChannelRunRequest } from '../adapters/channel/types.js';
+import { loadContextFiles } from '../core/workspace/index.js';
+import type { ContextFile } from '../core/workspace/types.js';
 import { bootstrapRuntime } from './bootstrap.js';
 import { classifyRuntimeError, createRuntimeError } from './errors.js';
 import { buildSystemPromptParams, resolveContextLoadMode } from './prompt-factory.js';

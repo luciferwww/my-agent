@@ -25,9 +25,9 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import process from 'node:process';
 
-import { AgentRunner } from '../src/agent-runner/index.js';
-import { SessionManager } from '../src/session/index.js';
-import type { StreamEvent, ChatParams } from '../src/llm-client/types.js';
+import { AgentRunner } from '../src/core/runner/index.js';
+import { SessionManager } from '../src/core/session/index.js';
+import type { StreamEvent, ChatParams } from '../src/adapters/llm/types.js';
 
 // ── runStep 脚手架 ──────────────────────────────────────────────
 

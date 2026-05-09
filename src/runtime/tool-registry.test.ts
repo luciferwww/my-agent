@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { MemoryManager } from '../memory/MemoryManager.js';
-import type { Tool } from '../tools/types.js';
+import type { MemoryManager } from '../core/memory/MemoryManager.js';
+import type { Tool } from '../core/tools/types.js';
 import {
   assembleRuntimeTools,
   getDefaultBuiltinTools,

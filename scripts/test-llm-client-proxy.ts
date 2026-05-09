@@ -5,7 +5,7 @@
  *   npx tsx scripts/test-llm-proxy.ts
  */
 
-import { AnthropicClient } from '../src/llm-client/index.js';
+import { AnthropicClient } from '../src/adapters/llm/index.js';
 
 const ANTHROPIC_API_KEY = 'EMPTY'
 const ANTHROPIC_BASE_URL = 'http://localhost:5000'

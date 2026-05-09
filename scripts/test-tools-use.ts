@@ -6,13 +6,13 @@
  *   npx tsx scripts/test-tool-use.ts
  */
 
-import { AgentRunner } from '../src/agent-runner/index.js';
-import { AnthropicClient } from '../src/llm-client/index.js';
-import { SessionManager } from '../src/session/index.js';
-import { SystemPromptBuilder } from '../src/prompt-builder/index.js';
-import { ensureWorkspace, loadContextFiles } from '../src/workspace/index.js';
-import { createToolExecutor, execTool, getToolDefinitions } from '../src/tools/index.js';
-import type { Tool } from '../src/tools/index.js';
+import { AgentRunner } from '../src/core/runner/index.js';
+import { AnthropicClient } from '../src/adapters/llm/index.js';
+import { SessionManager } from '../src/core/session/index.js';
+import { SystemPromptBuilder } from '../src/core/prompt/index.js';
+import { ensureWorkspace, loadContextFiles } from '../src/core/workspace/index.js';
+import { createToolExecutor, execTool, getToolDefinitions } from '../src/core/tools/index.js';
+import type { Tool } from '../src/core/tools/index.js';
 
 const ANTHROPIC_API_KEY = 'EMPTY';
 const ANTHROPIC_BASE_URL = 'http://localhost:5000';

@@ -8,7 +8,7 @@
  *   ANTHROPIC_API_KEY=your-key ANTHROPIC_BASE_URL=http://localhost:4000 npx tsx scripts/test-llm-client.ts
  */
 
-import { AnthropicClient } from '../src/llm-client/index.js';
+import { AnthropicClient } from '../src/adapters/llm/index.js';
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "EMPTY";
 const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL ?? 'http://localhost:5000';

@@ -6,9 +6,9 @@
 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ConsoleAdapter } from '../src/logger/ConsoleAdapter.js';
-import { FileAdapter } from '../src/logger/FileAdapter.js';
-import { Logger } from '../src/logger/Logger.js';
+import { ConsoleAdapter } from '../src/platform/logger/ConsoleAdapter.js';
+import { FileAdapter } from '../src/platform/logger/FileAdapter.js';
+import { Logger } from '../src/platform/logger/Logger.js';
 
 const LOG_DIR = join(tmpdir(), 'demo-logs');
 

@@ -5,9 +5,9 @@
  *   npx tsx scripts/test-prompt-builder.ts
  */
 
-import { ensureWorkspace, loadContextFiles } from '../src/workspace/index.js';
-import { SystemPromptBuilder } from '../src/prompt-builder/system/SystemPromptBuilder.js';
-import { UserPromptBuilder } from '../src/prompt-builder/user/UserPromptBuilder.js';
+import { ensureWorkspace, loadContextFiles } from '../src/core/workspace/index.js';
+import { SystemPromptBuilder } from '../src/core/prompt/SystemPromptBuilder.js';
+import { UserPromptBuilder } from '../src/core/prompt/UserPromptBuilder.js';
 
 const workspaceDir = './test-workspace';
 

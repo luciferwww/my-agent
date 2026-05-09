@@ -24,11 +24,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
 
-import { AgentRunner } from '../src/agent-runner/index.js';
-import { ContextOverflowError } from '../src/agent-runner/errors.js';
-import { SessionManager } from '../src/session/index.js';
-import type { StreamEvent } from '../src/llm-client/types.js';
-import type { CompactionConfig } from '../src/config/types.js';
+import { AgentRunner } from '../src/core/runner/index.js';
+import { ContextOverflowError } from '../src/core/runner/errors.js';
+import { SessionManager } from '../src/core/session/index.js';
+import type { StreamEvent } from '../src/adapters/llm/types.js';
+import type { CompactionConfig } from '../src/platform/config/types.js';
 
 // ── runStep 脚手架 ──────────────────────────────────────────────
 
