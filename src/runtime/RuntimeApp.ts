@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgentEvent } from '../core/runner/index.js';
 import { ApprovalManager } from '../adapters/channel/ApprovalManager.js';
 import type { Channel, ChannelRunRequest } from '../adapters/channel/types.js';
+import { Logger } from '../platform/logger/index.js';
 import { loadContextFiles } from '../core/workspace/index.js';
 import type { ContextFile } from '../core/workspace/types.js';
 import { bootstrapRuntime } from './bootstrap.js';
@@ -20,6 +21,8 @@ import type {
   RuntimeResourceSet,
   RuntimeShutdownReport,
 } from './types.js';
+
+const log = Logger.get('RuntimeApp');
 
 export class RuntimeApp {
   private readonly onEvent?: RuntimeAppOptions['onEvent'];
@@ -62,9 +65,12 @@ export class RuntimeApp {
         try {
           channel.send(event);
         } catch (err) {
-          // channel.send 抛错不应中断事件分发；记录到 stderr 即可
-          // eslint-disable-next-line no-console
-          console.error(`[RuntimeApp] channel ${channel.id} send failed:`, err);
+          // channel.send 抛错不应中断事件分发
+          log.warn('channel.send failed', {
+            channelId: channel.id,
+            eventType: event.type,
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }
       userObserver?.(event);
@@ -108,6 +114,11 @@ export class RuntimeApp {
     channel.approval?.onApprovalDecision((id, decision) => {
       this.approvalManager.resolve(id, decision);
     });
+    log.info('channel registered', {
+      channelId: channel.id,
+      hasApproval: !!channel.approval,
+      total: this.channels.length,
+    });
   }
 
   /**
@@ -121,6 +132,10 @@ export class RuntimeApp {
     if (this.channelsStarted) return;
     this.channelsStarted = true;
     this.wireApprovalRouting();
+    log.info('starting channels', {
+      count: this.channels.length,
+      approvalWired: this.approvalRoutingWired,
+    });
     await Promise.all(this.channels.map((c) => c.start()));
   }
 
@@ -210,6 +225,14 @@ export class RuntimeApp {
     });
 
     const turnId = params.turnId ?? randomUUID();
+    const turnStartedAt = Date.now();
+    log.debug('turn start', {
+      sessionKey: params.sessionKey,
+      turnId,
+      messageChars: params.message.length,
+      activeRuns: this.state.activeRunCount,
+    });
+
     const runPromise = this.runTurnInternal({ ...params, turnId });
     this.inFlightRuns.add(runPromise);
 
@@ -220,9 +243,25 @@ export class RuntimeApp {
         sessionKey: params.sessionKey,
         result,
       });
+      log.info('turn end', {
+        sessionKey: params.sessionKey,
+        turnId,
+        durationMs: Date.now() - turnStartedAt,
+        toolRounds: result.toolRounds,
+        stopReason: result.stopReason,
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
+      });
       return result;
     } catch (error) {
       const info = classifyRuntimeError('run', error);
+      log.error('turn failed', {
+        sessionKey: params.sessionKey,
+        turnId,
+        durationMs: Date.now() - turnStartedAt,
+        code: info.code,
+        message: info.message,
+      });
       this.recordError('run', info);
       throw createRuntimeError(info);
     } finally {
@@ -267,6 +306,11 @@ export class RuntimeApp {
       return this.closePromise;
     }
 
+    log.info('shutdown start', {
+      reason,
+      inFlightTurns: this.inFlightRuns.size,
+      channels: this.channels.length,
+    });
     this.emit({ type: 'shutdown_start', reason });
     this.setPhase('closing');
 
@@ -292,6 +336,7 @@ export class RuntimeApp {
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             failed.push({ resource: name, message });
+            log.warn('disposable close failed', { resource: name, error: message });
             this.recordError('shutdown', {
               scope: 'shutdown',
               severity: 'warning',
@@ -315,10 +360,16 @@ export class RuntimeApp {
         } satisfies RuntimeShutdownReport;
 
         this.shutdownReport = report;
+        log.info('shutdown complete', {
+          durationMs: report.finishedAt - report.startedAt,
+          completed: completed.length,
+          failed: failed.length,
+        });
         this.emit({ type: 'shutdown_end', report });
         return report;
       } catch (error) {
         const info = classifyRuntimeError('shutdown', error);
+        log.error('shutdown failed', { code: info.code, message: info.message });
         this.recordError('shutdown', info);
         this.setPhase('failed');
         throw createRuntimeError(info);

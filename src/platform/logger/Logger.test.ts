@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Logger } from './Logger.js';
 import type { LogAdapter, LogEntry } from './types.js';
 
@@ -11,6 +11,13 @@ function makeMockAdapter(): LogAdapter & { entries: LogEntry[] } {
 }
 
 describe('Logger', () => {
+  // Test setup (src/test-setup.ts) globally mocks Logger.configure to silence
+  // logger output during tests. This file's tests EXERCISE Logger.configure,
+  // so we restore the real implementation here.
+  beforeAll(() => {
+    vi.restoreAllMocks();
+  });
+
   afterEach(async () => {
     // 重置为默认 ConsoleAdapter 状态
     await Logger.configure({ adapters: [], minLevel: 'error' });

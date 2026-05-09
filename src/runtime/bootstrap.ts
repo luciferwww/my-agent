@@ -11,6 +11,8 @@ import { resolveContextLoadMode } from './prompt-factory.js';
 import { assembleRuntimeTools, getDefaultBuiltinTools } from './tool-registry.js';
 import type { RuntimeAppOptions, RuntimeBootstrapResult, RuntimeDependencies, RuntimeEvent } from './types.js';
 
+const log = Logger.get('RuntimeBootstrap');
+
 export function createDefaultRuntimeDependencies(
   overrides?: Partial<RuntimeDependencies>,
 ): RuntimeDependencies {
@@ -65,6 +67,10 @@ export function createDefaultRuntimeDependencies(
 
 export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<RuntimeBootstrapResult> {
   const startedAt = Date.now();
+  log.info('bootstrap start', {
+    workspaceDir: options.workspaceDir,
+    agentId: options.agentId,
+  });
   emit(options.onEvent, {
     type: 'app_start',
     workspaceDir: options.workspaceDir,
@@ -77,6 +83,7 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
       adapters: [new ConsoleAdapter()],
       minLevel: appConfig.logger.minLevel ?? 'info',
     });
+    log.debug('logger configured', { minLevel: appConfig.logger.minLevel ?? 'info' });
 
     const resolvedConfig = resolveAgentConfig(appConfig, {
       agentId: options.agentId,
@@ -90,6 +97,10 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
       mode: resolveContextLoadMode(resolvedConfig.prompt.mode),
       maxFileChars: resolvedConfig.workspace.maxFileChars,
       maxTotalChars: resolvedConfig.workspace.maxTotalChars,
+    });
+    log.debug('context files loaded', {
+      fileCount: contextFiles.length,
+      mode: resolvedConfig.prompt.mode,
     });
 
     const deps = createDefaultRuntimeDependencies(options.dependencies);
@@ -115,7 +126,12 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
         embedding: resolvedConfig.memory.embedding,
         search: resolvedConfig.memory.search,
       });
+      if (memoryManager) {
+        log.info('memory manager ready', { dbPath: resolvedConfig.memory.dbPath });
+      }
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.warn('memory init failed, continuing without memory', { error: message });
       emit(options.onEvent, {
         type: 'warning',
         info: {
@@ -151,6 +167,12 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
       contextVersion: 1,
     };
 
+    log.info('bootstrap complete', {
+      durationMs: Date.now() - startedAt,
+      tools: toolBundle.tools.length,
+      memoryEnabled: memoryManager !== null,
+      contextFiles: contextFiles.length,
+    });
     emit(options.onEvent, {
       type: 'app_ready',
       workspaceDir: options.workspaceDir,
@@ -177,6 +199,10 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
     };
   } catch (error) {
     const info = classifyRuntimeError('startup', error);
+    log.error('bootstrap failed', {
+      code: info.code,
+      message: info.message,
+    });
     emit(options.onEvent, { type: 'error', info });
     throw error;
   }
