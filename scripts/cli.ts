@@ -53,6 +53,7 @@ async function main(): Promise<void> {
   });
 
   const cli = new CliChannel({
+    approval: true,
     sessionKey,
     prompt: '\n> ',
   });
