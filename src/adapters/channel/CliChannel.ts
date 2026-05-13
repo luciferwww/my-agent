@@ -8,12 +8,58 @@ import type {
   ChannelRunRequest,
 } from './types.js';
 
-const MAX_TOOL_RESULT_PREVIEW = 200;
+// Tool result preview budget: head + tail lines visible, middle elided.
+// 10:6 split leans toward head because most CLI output (lists, file content,
+// command echo) puts context up front; tail mainly catches errors / summaries.
+const PREVIEW_HEAD_LINES = 10;
+const PREVIEW_TAIL_LINES = 6;
+// Per-line cap so a single very long line can't blow up the preview format.
+const PREVIEW_LINE_MAX_CHARS = 200;
 
 // ── ANSI helpers ────────────────────────────────────────────────────
 const dim = (s: string) => `\x1b[90m${s}\x1b[0m`;
 const yellow = (s: string) => `\x1b[33m${s}\x1b[0m`;
 const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
+
+function truncateLine(line: string): string {
+  return line.length > PREVIEW_LINE_MAX_CHARS
+    ? line.slice(0, PREVIEW_LINE_MAX_CHARS) + '…'
+    : line;
+}
+
+// Collapse consecutive blank lines (incl. whitespace-only) to one.
+// Keeps paragraph separators but prevents long runs of blanks from eating
+// the head/tail budget. Non-empty lines are pushed verbatim — leading
+// indentation is preserved.
+function collapseEmptyLines(lines: string[]): string[] {
+  const result: string[] = [];
+  let prevEmpty = false;
+  for (const line of lines) {
+    const isEmpty = line.trim() === '';
+    if (isEmpty && prevEmpty) continue;
+    result.push(line);
+    prevEmpty = isEmpty;
+  }
+  return result;
+}
+
+// Returns the lines to render for a tool result (display only — full content
+// still goes to the LLM via the tool executor).
+//   1. drop trailing blank lines
+//   2. collapse consecutive blanks
+//   3. if total ≤ HEAD+TAIL, show all; else head + omission marker + tail
+function formatToolResultPreview(content: string): string[] {
+  const trimmed = content.replace(/\n+$/, '');
+  if (!trimmed) return [];
+  const lines = collapseEmptyLines(trimmed.split('\n'));
+  if (lines.length <= PREVIEW_HEAD_LINES + PREVIEW_TAIL_LINES) {
+    return lines.map(truncateLine);
+  }
+  const head = lines.slice(0, PREVIEW_HEAD_LINES).map(truncateLine);
+  const tail = lines.slice(-PREVIEW_TAIL_LINES).map(truncateLine);
+  const omitted = lines.length - PREVIEW_HEAD_LINES - PREVIEW_TAIL_LINES;
+  return [...head, `... [${omitted} lines omitted]`, ...tail];
+}
 
 export interface CliChannelConfig {
   input?: NodeJS.ReadableStream;
@@ -72,11 +118,18 @@ export class CliChannel implements Channel {
         break;
 
       case 'tool_result': {
-        const preview = event.result.content.length > MAX_TOOL_RESULT_PREVIEW
-          ? event.result.content.slice(0, MAX_TOOL_RESULT_PREVIEW) + '…'
-          : event.result.content;
         const label = event.result.isError ? red('[tool error]') : dim('[tool result]');
-        this.output.write(`${label} ${dim(preview)}\n`);
+        const previewLines = formatToolResultPreview(event.result.content);
+        if (previewLines.length === 0) {
+          this.output.write(`${label}\n`);
+        } else if (previewLines.length === 1) {
+          this.output.write(`${label} ${dim(previewLines[0])}\n`);
+        } else {
+          this.output.write(`${label}\n`);
+          for (const line of previewLines) {
+            this.output.write(dim(`  ${line}`) + '\n');
+          }
+        }
         break;
       }
 

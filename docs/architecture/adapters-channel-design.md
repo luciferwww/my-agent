@@ -513,7 +513,7 @@ export class CliChannel implements Channel {
 |------------|----------|
 | `text_delta` | `process.stdout.write(event.text)` |
 | `tool_use` | `dim("[tool: name]\n")` |
-| `tool_result` | `dim("[tool result] preview…\n")` 或 `red("[tool error]…")` |
+| `tool_result` | `[tool result]` / `[tool error]` 标签 + 多行预览（见 §5.2.1） |
 | `compaction_start` | `yellow("[compacting… trigger=X]\n")` |
 | `compaction_end` | `yellow("[compacted: X → Y tokens]\n")` |
 | `error` | 仅 `breakStream()`，**不打印**——避免与 §5.3 的 catch 输出重复（runner 触发 error event 后会立刻 throw） |
@@ -522,6 +522,30 @@ export class CliChannel implements Channel {
 未列出的事件类型（`run_start`/`llm_call`/`tool_result_pruned`）默认忽略，不输出到 CLI。
 
 > **关于 `error` 的处理：** AgentRunner 的设计是"既 emit 又 throw"，让 channel 自由选择呈现路径。CliChannel 选择**只在 catch 路径打印**，避免双行；WebSocketChannel 等其他实现可以选择推送 `error` 事件给 client（catch 可能不在同一进程边界内）。
+
+### 5.2.1 tool_result 预览渲染（CliChannel 专属）
+
+**这是 CliChannel 的渲染选择，不是 Channel 层通用行为。** 其他 channel 实现各自决定如何呈现 tool result——例如 WebSocketChannel 直接转发完整 `result.content` 给前端，由前端按需折叠 / 分页 / 高亮。
+
+CliChannel 做截断的原因是终端约束：长输出会刷屏挤掉 prompt 和后续 LLM 文本。LLM 仍通过 tool executor 收到完整内容，截断只影响 CLI 显示。
+
+**预算：**
+- 总行数 ≤ 16 行（10 head + 6 tail）
+- 单行字符上限 200，超出末尾追加 `…`
+- 10:6 偏向 head 的设计：CLI 工具输出（`list_dir` / `read_file` / 命令回显）通常前部信息密度高，tail 主要保留错误堆栈和 summary
+
+**预处理：**
+1. 去掉尾部空行
+2. 连续空行（含纯空白行）折叠为 1 行——保留段落分隔感，避免空行吃掉行预算
+3. 非空行原样保留（不 trim 缩进）
+
+**输出格式：**
+- 总行数 ≤ 16 → 全显示
+- 超过 → head + `... [N lines omitted]` + tail
+- 单行结果（含截断后）→ 内联 `[tool result] xxx`
+- 多行结果 → 标签独占一行，正文各行缩进 2 空格
+
+**实现位置：** `formatToolResultPreview()` / `collapseEmptyLines()` / `truncateLine()` 都是模块级纯函数，便于单元测试。
 
 ### 5.3 onMessage 实现
 
