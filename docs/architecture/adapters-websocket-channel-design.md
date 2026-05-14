@@ -638,13 +638,13 @@ flowchart TD
   A[socket close] --> B{socket context has clientId?}
   B -- no --> Z[clear socket context and return]
   B -- yes --> C[read bound clientId]
-  C --> D{socket == clients[clientId]?}
+  C --> D{socket is current active socket for clientId?}
   D -- no --> Y[treat as stale close and ignore]
-  D -- yes --> E[delete clients[clientId]]
-  E --> F[read clientSessions[clientId]]
-  F --> G[remove clientId from each sessions[sessionKey]]
+  D -- yes --> E[delete active client entry]
+  E --> F[read sessions bound to clientId]
+  F --> G[remove clientId from each bound session]
   G --> H[delete empty session sets]
-  H --> I[delete clientSessions[clientId]]
+  H --> I[delete client session index entry]
   I --> J[clear socket context]
   J --> K[disconnect cleanup done]
 ```
