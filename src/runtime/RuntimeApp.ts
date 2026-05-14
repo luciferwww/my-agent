@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentEvent } from '../core/runner/index.js';
-import { ApprovalManager } from '../adapters/channel/ApprovalManager.js';
-import type { Channel, ChannelRunRequest } from '../adapters/channel/types.js';
+import { TurnInteractionManager } from '../adapters/channel/TurnInteractionManager.js';
+import type {
+  ApprovalInteractionRequest,
+  Channel,
+  ChannelRunRequest,
+  TurnInteractionResponse,
+} from '../adapters/channel/types.js';
 import { Logger } from '../platform/logger/index.js';
 import { loadContextFiles } from '../core/workspace/index.js';
 import type { ContextFile } from '../core/workspace/types.js';
@@ -33,7 +38,7 @@ export class RuntimeApp {
   // ── Channel 层 ──────────────────────────────────────────────────
   /** 与 bootstrap fanout 闭包共享引用：registerChannel 后注册的新 channel 实时可见 */
   private readonly channels: Channel[];
-  private readonly approvalManager: ApprovalManager;
+  private readonly turnInteractionManager: TurnInteractionManager;
   /** turnId → 起源 channel，approval 路由用 */
   private readonly originChannelByTurn = new Map<string, Channel>();
   /** turnId → 起源 client（WebSocketChannel 用此字段定向） */
@@ -52,7 +57,7 @@ export class RuntimeApp {
   ) {
     this.channels = channels;
     this.onEvent = onEvent;
-    this.approvalManager = new ApprovalManager();
+    this.turnInteractionManager = new TurnInteractionManager();
   }
 
   static async create(options: RuntimeAppOptions): Promise<RuntimeApp> {
@@ -104,18 +109,22 @@ export class RuntimeApp {
   // ── Channel 注册与生命周期 ────────────────────────────────────────
 
   /**
-   * 注册 channel，绑定 onMessage 与（如有）onApprovalDecision。
+   * 注册 channel，绑定 onMessage 与（如有）interaction / approval 响应处理器。
    * 须在 startChannels() 前调用；多次调用支持注册多个 channel。
    */
   registerChannel(channel: Channel): void {
     this.assertNotClosed();
     this.channels.push(channel);
     channel.onMessage(this.makeMessageHandler(channel));
+    channel.interaction?.onInteractionResponse((response) => {
+      this.handleInteractionResponse(response);
+    });
     channel.approval?.onApprovalDecision((id, decision) => {
-      this.approvalManager.resolve(id, decision);
+      this.turnInteractionManager.resolve(id, decision);
     });
     log.info('channel registered', {
       channelId: channel.id,
+      hasInteraction: !!channel.interaction,
       hasApproval: !!channel.approval,
       total: this.channels.length,
     });
@@ -135,31 +144,43 @@ export class RuntimeApp {
     log.info('starting channels', {
       count: this.channels.length,
       approvalWired: this.approvalRoutingWired,
+      channelIds: this.channels.map((channel) => channel.id),
     });
     await Promise.all(this.channels.map((c) => c.start()));
   }
 
   /** 依次调用所有已注册 channel 的 stop()；幂等 */
   async stopChannels(): Promise<void> {
-    await Promise.allSettled(this.channels.map((c) => c.stop()));
+    log.info('stopping channels', {
+      count: this.channels.length,
+      channelIds: this.channels.map((channel) => channel.id),
+    });
+
+    const results = await Promise.allSettled(this.channels.map((c) => c.stop()));
+    const failed = results.filter((result) => result.status === 'rejected').length;
+
+    log.info('channels stopped', {
+      count: this.channels.length,
+      failed,
+    });
   }
 
   // ── Approval 路由（详见 channel-design.md §4.3）────────────────────
 
   /**
-   * 启动时调用一次。仅在至少一个 channel 提供 approval 能力时才注册 hook，
+   * 启动时调用一次。仅在至少一个 channel 提供 interaction/approval 能力时才注册 hook，
    * 否则库模式所有 tool 调用直通。
    */
   private wireApprovalRouting(): void {
     if (this.approvalRoutingWired) return;
-    if (!this.channels.some((c) => c.approval)) return;
+    if (!this.channels.some((c) => c.interaction || c.approval)) return;
     this.approvalRoutingWired = true;
 
-    // ① hook → ApprovalManager
+    // ① hook → TurnInteractionManager
     this.resources.agentRunner.on(
       'before_tool_call',
       async ({ toolName, input, turnId, sessionKey }) => {
-        const result = await this.approvalManager.request({
+        const result = await this.turnInteractionManager.request({
           toolName,
           input,
           sessionKey,
@@ -175,17 +196,101 @@ export class RuntimeApp {
       },
     );
 
-    // ② ApprovalManager → 起源 channel
-    this.approvalManager.onRequest((request) => {
+    // ② TurnInteractionManager → 起源 channel
+    this.turnInteractionManager.onRequest((request) => {
       const originChannel = this.originChannelByTurn.get(request.turnId);
-      if (!originChannel?.approval) return;  // 起源不可达：让 ApprovalManager 走超时
-      originChannel.approval.sendApprovalRequest(request);
+      if (!originChannel) {
+        log.warn('interaction request has no origin channel', {
+          interactionId: request.id,
+          toolName: request.toolName,
+          turnId: request.turnId,
+          sessionKey: request.sessionKey,
+          originClientId: request.originClientId,
+        });
+        return;  // 起源不可达：让 TurnInteractionManager 走超时
+      }
+
+      log.info('routing interaction request to origin channel', {
+        interactionId: request.id,
+        toolName: request.toolName,
+        turnId: request.turnId,
+        sessionKey: request.sessionKey,
+        originClientId: request.originClientId,
+        channelId: originChannel.id,
+        route: originChannel.interaction ? 'interaction' : 'approval',
+      });
+
+      if (originChannel.interaction) {
+        const interactionRequest: ApprovalInteractionRequest = {
+          ...request,
+          kind: 'approval',
+        };
+        originChannel.interaction.sendInteractionRequest(interactionRequest);
+        return;
+      }
+
+      originChannel.approval?.sendApprovalRequest(request);
     });
 
-    this.approvalManager.onExpire((request) => {
+    this.turnInteractionManager.onExpire((request) => {
       const originChannel = this.originChannelByTurn.get(request.turnId);
+      if (!originChannel) {
+        log.warn('interaction expiry has no origin channel', {
+          interactionId: request.id,
+          toolName: request.toolName,
+          turnId: request.turnId,
+          sessionKey: request.sessionKey,
+          originClientId: request.originClientId,
+        });
+        return;
+      }
+
+      log.info('routing interaction expiry to origin channel', {
+        interactionId: request.id,
+        toolName: request.toolName,
+        turnId: request.turnId,
+        sessionKey: request.sessionKey,
+        originClientId: request.originClientId,
+        channelId: originChannel.id,
+        route: originChannel.interaction ? 'interaction' : 'approval',
+      });
+
+      if (originChannel?.interaction) {
+        const interactionRequest: ApprovalInteractionRequest = {
+          ...request,
+          kind: 'approval',
+        };
+        originChannel.interaction.sendInteractionExpired(interactionRequest);
+        return;
+      }
+
       originChannel?.approval?.sendApprovalExpired(request);
     });
+  }
+
+  private handleInteractionResponse(response: TurnInteractionResponse): void {
+    log.info('interaction response received from channel', {
+      interactionId: response.id,
+      kind: response.kind,
+      outcome: response.outcome,
+      decision: 'decision' in response ? response.decision : undefined,
+    });
+
+    if (response.kind !== 'approval') {
+      log.warn('unsupported interaction response', {
+        interactionId: response.id,
+        kind: response.kind,
+        outcome: response.outcome,
+      });
+      return;
+    }
+
+    if (response.outcome === 'submitted') {
+      this.turnInteractionManager.resolve(response.id, response.decision);
+      return;
+    }
+
+    this.turnInteractionManager.resolve(response.id, 'deny');
   }
 
   /** 每个 channel 一份消息处理器，闭包绑定 channel 自身用于路由表登记 */
@@ -194,6 +299,18 @@ export class RuntimeApp {
       const turnId = randomUUID();
       this.originChannelByTurn.set(turnId, channel);
       if (req.clientId) this.originClientByTurn.set(turnId, req.clientId);
+
+      log.info('channel message received', {
+        channelId: channel.id,
+        clientId: req.clientId,
+        sessionKey: req.sessionKey,
+        turnId,
+        hasModelOverride: req.model !== undefined,
+        hasMaxTokens: req.maxTokens !== undefined,
+        hasMaxToolRounds: req.maxToolRounds !== undefined,
+        messageChars: req.message.length,
+      });
+
       try {
         await this.runTurn({
           sessionKey: req.sessionKey,
@@ -206,6 +323,12 @@ export class RuntimeApp {
       } finally {
         this.originChannelByTurn.delete(turnId);
         this.originClientByTurn.delete(turnId);
+        log.debug('channel message routing cleared', {
+          channelId: channel.id,
+          clientId: req.clientId,
+          sessionKey: req.sessionKey,
+          turnId,
+        });
       }
     };
   }
@@ -322,12 +445,12 @@ export class RuntimeApp {
       try {
         await Promise.allSettled([...this.inFlightRuns]);
 
-        // 先停 channel（阻塞循环退出），再关 approvalManager 和其他 disposable
+        // 先停 channel（阻塞循环退出），再关 turnInteractionManager 和其他 disposable
         await this.stopChannels();
         completed.push('channels');
 
-        this.approvalManager.close();
-        completed.push('approvalManager');
+        this.turnInteractionManager.close();
+        completed.push('turnInteractionManager');
 
         for (const [name, disposable] of this.collectDisposables()) {
           try {

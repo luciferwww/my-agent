@@ -14,6 +14,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
+    "agent:websocket": "npx tsx scripts/websocket.ts",
     "test:tool:list-cwd": "npx tsx scripts/test-exec-list-cwd.ts",
     "test:tool:background": "npx tsx scripts/test-exec-background.ts",
     "test:tool:yield": "npx tsx scripts/test-exec-yield.ts"

@@ -1,14 +1,18 @@
 import * as readline from 'node:readline';
 import type { AgentEvent } from '../../core/runner/types.js';
+import { Logger } from '../../platform/logger/index.js';
 import type {
   ApprovalDecision,
   ApprovalRequest,
   Channel,
   ChannelApprovalAdapter,
+  ChannelInteractionAdapter,
   ChannelRunRequest,
+  TurnInteractionResponse,
 } from './types.js';
 
 const MAX_TOOL_RESULT_PREVIEW = 200;
+const log = Logger.get('CliChannel');
 
 // ── ANSI helpers ────────────────────────────────────────────────────
 const dim = (s: string) => `\x1b[90m${s}\x1b[0m`;
@@ -27,6 +31,7 @@ export interface CliChannelConfig {
 
 export class CliChannel implements Channel {
   readonly id = 'cli';
+  readonly interaction?: ChannelInteractionAdapter;
   readonly approval?: ChannelApprovalAdapter;
 
   private readonly input: NodeJS.ReadableStream;
@@ -37,6 +42,7 @@ export class CliChannel implements Channel {
 
   private messageHandler?: (req: ChannelRunRequest) => Promise<void>;
   private approvalDecisionHandler?: (id: string, decision: ApprovalDecision) => void;
+  private interactionResponseHandler?: (response: TurnInteractionResponse) => void;
 
   /** 流式输出过程中插入 tool/error 行前需要先换行；run_end / 显式插入会重置 */
   private inStream = false;
@@ -53,6 +59,7 @@ export class CliChannel implements Channel {
     this.sessionKey = config.sessionKey ?? 'main';
 
     if (config.approval) {
+      this.interaction = this.makeInteractionAdapter();
       this.approval = this.makeApprovalAdapter();
     }
   }
@@ -110,6 +117,10 @@ export class CliChannel implements Channel {
 
   onMessage(handler: (req: ChannelRunRequest) => Promise<void>): void {
     this.messageHandler = handler;
+    log.debug('message handler registered', {
+      channelId: this.id,
+      sessionKey: this.sessionKey,
+    });
   }
 
   // ── 生命周期 ───────────────────────────────────────────────────────
@@ -118,6 +129,8 @@ export class CliChannel implements Channel {
     if (!this.messageHandler) {
       throw new Error('CliChannel.start: no message handler registered (call registerChannel first)');
     }
+
+    this.stopped = false;
 
     this.rl = readline.createInterface({
       input: this.input,
@@ -128,6 +141,16 @@ export class CliChannel implements Channel {
     // readline 关闭时也视作 stop
     this.rl.on('close', () => {
       this.stopped = true;
+      log.info('cli channel readline closed', {
+        channelId: this.id,
+        sessionKey: this.sessionKey,
+      });
+    });
+
+    log.info('cli channel started', {
+      channelId: this.id,
+      sessionKey: this.sessionKey,
+      approvalEnabled: !!this.interaction,
     });
 
     while (!this.stopped) {
@@ -144,22 +167,46 @@ export class CliChannel implements Channel {
       const trimmed = line.trim();
       if (!trimmed) continue;
 
+      log.info('cli input received', {
+        channelId: this.id,
+        sessionKey: this.sessionKey,
+        length: trimmed.length,
+      });
+
       try {
         await this.messageHandler({
           sessionKey: this.sessionKey,
           message: trimmed,
         });
+        log.debug('cli input dispatched', {
+          channelId: this.id,
+          sessionKey: this.sessionKey,
+        });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.breakStream();
         this.output.write(red(`[error] ${message}\n`));
+        log.error('cli message handling failed', {
+          channelId: this.id,
+          sessionKey: this.sessionKey,
+          error: message,
+        });
       }
     }
+
+    log.info('cli channel stopped', {
+      channelId: this.id,
+      sessionKey: this.sessionKey,
+    });
   }
 
   async stop(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
+    log.info('cli channel stopping', {
+      channelId: this.id,
+      sessionKey: this.sessionKey,
+    });
     this.pendingPromptReject?.(new Error('CliChannel stopped'));
     this.rl?.close();
     this.rl = undefined;
@@ -191,36 +238,116 @@ export class CliChannel implements Channel {
   private makeApprovalAdapter(): ChannelApprovalAdapter {
     return {
       sendApprovalRequest: (request: ApprovalRequest) => {
-        this.breakStream();
-        this.output.write(
-          yellow(
-            `[approval] tool: ${request.toolName}\n           input: ${JSON.stringify(request.input)}\n`,
-          ),
-        );
-        // 在 messageHandler 阻塞期间另起一个 question 读 y/n。
-        // readline 的主 prompt 此时已 resolved，未在 listen，可安全复用。
-        this.question(yellow('approve? (y/n)> ')).then(
-          (answer) => {
-            if (this.expiredApprovalIds.delete(request.id)) {
-              // 用户回答晚于超时，吞掉不再回填
-              return;
-            }
-            const decision: ApprovalDecision =
-              answer.trim().toLowerCase() === 'y' ? 'allow' : 'deny';
-            this.approvalDecisionHandler?.(request.id, decision);
-          },
-          () => {
-            // stop() 引发 reject，忽略
-          },
-        );
+        log.info('approval request received for cli', {
+          channelId: this.id,
+          approvalId: request.id,
+          toolName: request.toolName,
+          sessionKey: request.sessionKey,
+          turnId: request.turnId,
+        });
+        this.promptApproval(request, (decision) => {
+          this.dispatchApprovalSubmission(request.id, decision);
+        });
       },
       sendApprovalExpired: (request: ApprovalRequest) => {
-        this.expiredApprovalIds.add(request.id);
-        this.output.write(yellow(`\n[approval] timed out (denied)\n`));
+        this.expireApproval(request.id);
       },
       onApprovalDecision: (handler) => {
         this.approvalDecisionHandler = handler;
       },
     };
+  }
+
+  private makeInteractionAdapter(): ChannelInteractionAdapter {
+    return {
+      sendInteractionRequest: (request) => {
+        if (request.kind !== 'approval') {
+          throw new Error(`CliChannel does not support interaction kind: ${request.kind}`);
+        }
+        this.promptApproval(request, (decision) => {
+          this.dispatchApprovalSubmission(request.id, decision);
+        });
+      },
+      sendInteractionExpired: (request) => {
+        if (request.kind !== 'approval') {
+          throw new Error(`CliChannel does not support interaction kind: ${request.kind}`);
+        }
+        this.expireApproval(request.id);
+      },
+      onInteractionResponse: (handler) => {
+        this.interactionResponseHandler = handler;
+      },
+    };
+  }
+
+  private dispatchApprovalSubmission(id: string, decision: ApprovalDecision): void {
+    log.info('approval submitted from cli', {
+      channelId: this.id,
+      approvalId: id,
+      decision,
+      routedAs: this.interactionResponseHandler ? 'interaction' : 'approval',
+    });
+
+    if (this.interactionResponseHandler) {
+      this.interactionResponseHandler({
+        id,
+        kind: 'approval',
+        outcome: 'submitted',
+        decision,
+      });
+      return;
+    }
+
+    this.approvalDecisionHandler?.(id, decision);
+  }
+
+  private promptApproval(
+    request: Pick<ApprovalRequest, 'id' | 'toolName' | 'input'>,
+    onDecision: (decision: ApprovalDecision) => void,
+  ): void {
+    this.breakStream();
+    this.output.write(
+      yellow(
+        `[approval] tool: ${request.toolName}\n           input: ${JSON.stringify(request.input)}\n`,
+      ),
+    );
+    // 在 messageHandler 阻塞期间另起一个 question 读 y/n。
+    // readline 的主 prompt 此时已 resolved，未在 listen，可安全复用。
+    this.question(yellow('approve? (y/n)> ')).then(
+      (answer) => {
+        if (this.expiredApprovalIds.delete(request.id)) {
+          // 用户回答晚于超时，吞掉不再回填
+          log.warn('cli approval answer arrived after expiry', {
+            channelId: this.id,
+            approvalId: request.id,
+          });
+          return;
+        }
+        const decision: ApprovalDecision =
+          answer.trim().toLowerCase() === 'y' ? 'allow' : 'deny';
+        log.debug('cli approval answer captured', {
+          channelId: this.id,
+          approvalId: request.id,
+          decision,
+        });
+        onDecision(decision);
+      },
+      () => {
+        // stop() 引发 reject，忽略
+        log.debug('cli approval prompt aborted', {
+          channelId: this.id,
+          approvalId: request.id,
+        });
+      },
+    );
+  }
+
+  private expireApproval(id: string): void {
+    this.expiredApprovalIds.add(id);
+    this.output.write(yellow(`\n[approval] timed out (denied)\n`));
+    log.info('cli approval expired', {
+      channelId: this.id,
+      approvalId: id,
+    });
   }
 }
