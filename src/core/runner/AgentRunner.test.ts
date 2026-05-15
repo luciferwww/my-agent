@@ -309,6 +309,120 @@ describe('AgentRunner', () => {
       expect(result.stopReason).toBe('error');
       expect(result.text).toBe('Error occurred');
     });
+
+    it('injects in-turn messages as steering when mode is steer', async () => {
+      const capturedCalls: ChatParams['messages'][] = [];
+      let callIndex = 0;
+      let injected = false;
+
+      const llmClient: LLMClient = {
+        async *chatStream(params: ChatParams) {
+          capturedCalls.push(params.messages.map((m) => ({ ...m })));
+
+          if (callIndex === 0) {
+            callIndex++;
+            yield { type: 'message_start' } as StreamEvent;
+            yield { type: 'tool_use', id: 'tool_01', name: 'search', input: {} } as StreamEvent;
+            yield {
+              type: 'message_end',
+              stopReason: 'tool_use',
+              usage: { inputTokens: 10, outputTokens: 5 },
+            } as StreamEvent;
+            return;
+          }
+
+          yield { type: 'message_start' } as StreamEvent;
+          yield { type: 'text_delta', text: 'done' } as StreamEvent;
+          yield {
+            type: 'message_end',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 12, outputTokens: 6 },
+          } as StreamEvent;
+        },
+        async chat() {
+          throw new Error('Not used');
+        },
+      };
+
+      const runner = new AgentRunner({
+        llmClient,
+        sessionManager,
+        toolExecutor: async () => ({ content: 'ok' }),
+      });
+
+      const result = await runner.run({
+        sessionKey: 'main',
+        message: 'start',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'test-turn',
+        inTurnMessageMode: 'steer',
+        getInTurnMessages: () => {
+          if (injected) return [];
+          injected = true;
+          return [{ role: 'user', content: 'interrupt now' }];
+        },
+      });
+
+      expect(result.text).toBe('done');
+      expect(capturedCalls).toHaveLength(2);
+      expect(capturedCalls[1]!.some((m) => m.role === 'user' && m.content === 'interrupt now')).toBe(true);
+    });
+
+    it('injects in-turn messages as followup when mode is followup', async () => {
+      const capturedCalls: ChatParams['messages'][] = [];
+      let callIndex = 0;
+      let injected = false;
+
+      const llmClient: LLMClient = {
+        async *chatStream(params: ChatParams) {
+          capturedCalls.push(params.messages.map((m) => ({ ...m })));
+
+          if (callIndex === 0) {
+            callIndex++;
+            yield { type: 'message_start' } as StreamEvent;
+            yield { type: 'text_delta', text: 'first' } as StreamEvent;
+            yield {
+              type: 'message_end',
+              stopReason: 'end_turn',
+              usage: { inputTokens: 8, outputTokens: 4 },
+            } as StreamEvent;
+            return;
+          }
+
+          yield { type: 'message_start' } as StreamEvent;
+          yield { type: 'text_delta', text: 'second' } as StreamEvent;
+          yield {
+            type: 'message_end',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 9, outputTokens: 4 },
+          } as StreamEvent;
+        },
+        async chat() {
+          throw new Error('Not used');
+        },
+      };
+
+      const runner = new AgentRunner({ llmClient, sessionManager });
+
+      const result = await runner.run({
+        sessionKey: 'main',
+        message: 'start',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'test-turn',
+        inTurnMessageMode: 'followup',
+        getInTurnMessages: () => {
+          if (injected) return [];
+          injected = true;
+          return [{ role: 'user', content: 'queued followup' }];
+        },
+      });
+
+      expect(result.text).toBe('second');
+      expect(capturedCalls).toHaveLength(2);
+      expect(capturedCalls[1]!.some((m) => m.role === 'user' && m.content === 'queued followup')).toBe(true);
+    });
   });
 
   // ── 事件回调 ────────────────────────────────────────

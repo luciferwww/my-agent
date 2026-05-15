@@ -4,7 +4,7 @@ import { buildSystemPromptParams, resolveContextLoadMode } from './prompt-factor
 
 const baseConfig: AgentDefaults = {
   llm: { maxTokens: 4096 },
-  runner: { maxToolRounds: 10, maxFollowUpRounds: 5 },
+  runner: { maxToolRounds: 10, maxFollowUpRounds: 5, inTurnMessageMode: 'followup' },
   memory: {
     enabled: false,
     dbPath: '.agent/memory.sqlite',

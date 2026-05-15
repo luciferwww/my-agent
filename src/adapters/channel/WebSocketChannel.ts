@@ -5,7 +5,9 @@ import type {
   ApprovalRequest,
   Channel,
   ChannelApprovalAdapter,
+  ChannelInteractionAdapter,
   ChannelRunRequest,
+  TurnInteractionResponse,
 } from './types.js';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 
@@ -65,6 +67,7 @@ class ProtocolError extends Error {
 
 export class WebSocketChannel implements Channel {
   readonly id = 'websocket';
+  readonly interaction?: ChannelInteractionAdapter;
   readonly approval?: ChannelApprovalAdapter;
 
   private readonly host: string;
@@ -74,6 +77,7 @@ export class WebSocketChannel implements Channel {
   private server?: WebSocketServer;
   private messageHandler?: (req: ChannelRunRequest) => Promise<void>;
   private approvalDecisionHandler?: (id: string, decision: ApprovalDecision) => void;
+  private interactionResponseHandler?: (response: TurnInteractionResponse) => void;
 
   private readonly clients = new Map<string, WebSocket>();
   private readonly sessions = new Map<string, Set<string>>();
@@ -88,16 +92,26 @@ export class WebSocketChannel implements Channel {
     this.maxClients = config.maxClients;
 
     if (config.approval) {
+      this.interaction = this.makeInteractionAdapter();
       this.approval = this.makeApprovalAdapter();
     }
   }
 
   send(event: AgentEvent): void {
-    const subscribedClientIds = this.sessions.get(event.sessionKey);
-    if (!subscribedClientIds || subscribedClientIds.size === 0) return;
+    const sessionAudience = this.sessions.get(event.sessionKey);
+    if (!sessionAudience || sessionAudience.size === 0) return;
+
+    if (event.type !== 'text_delta') {
+      log.debug('broadcasting event to session audience', {
+        channelId: this.id,
+        eventType: event.type,
+        sessionKey: event.sessionKey,
+        audienceSize: sessionAudience.size,
+      });
+    }
 
     const payload = this.serializeEvent(event);
-    for (const clientId of subscribedClientIds) {
+    for (const clientId of sessionAudience) {
       const socket = this.clients.get(clientId);
       if (!socket || socket.readyState !== WebSocket.OPEN) continue;
       this.sendJson(socket, payload);
@@ -274,8 +288,18 @@ export class WebSocketChannel implements Channel {
     this.clients.set(message.clientId, socket);
     this.socketClientIds.set(socket, message.clientId);
 
+    log.info('client hello acknowledged', {
+      channelId: this.id,
+      clientId: message.clientId,
+      replacedExistingConnection: Boolean(previousSocket && previousSocket !== socket),
+    });
+
     // 同一 clientId 只允许一个逻辑活跃连接；旧连接的晚到 close 会在 handleSocketClose 中被忽略。
     if (previousSocket && previousSocket !== socket) {
+      log.info('closing superseded client connection', {
+        channelId: this.id,
+        clientId: message.clientId,
+      });
       previousSocket.close(CLOSE_CODE_SUPERSEDED, 'superseded by newer connection');
     }
 
@@ -295,7 +319,16 @@ export class WebSocketChannel implements Channel {
       throw new ProtocolError('SERVER_NOT_READY', 'Message handler is not ready.');
     }
 
-    this.addSessionSubscription(clientId, message.sessionKey);
+    this.registerSessionAudience(clientId, message.sessionKey);
+    log.info('run_turn received', {
+      channelId: this.id,
+      clientId,
+      sessionKey: message.sessionKey,
+      hasModelOverride: Boolean(message.model),
+      hasMaxTokens: message.maxTokens !== undefined,
+      hasMaxToolRounds: message.maxToolRounds !== undefined,
+      messageLength: message.message.length,
+    });
     await handler({
       clientId,
       sessionKey: message.sessionKey,
@@ -310,13 +343,14 @@ export class WebSocketChannel implements Channel {
     socket: WebSocket,
     message: Extract<ClientMessage, { type: 'approval_resolve' }>,
   ): void {
-    this.requireBoundClientId(socket);
-
-    if (!this.approval || !this.approvalDecisionHandler) {
-      throw new ProtocolError('UNSUPPORTED_MESSAGE', 'Approval is not enabled for this channel.');
-    }
-
-    this.approvalDecisionHandler(message.id, message.decision);
+    const clientId = this.requireBoundClientId(socket);
+    log.info('approval response received', {
+      channelId: this.id,
+      clientId,
+      approvalId: message.id,
+      decision: message.decision,
+    });
+    this.dispatchApprovalSubmission(message.id, message.decision);
   }
 
   private handleSocketClose(socket: WebSocket): void {
@@ -326,14 +360,18 @@ export class WebSocketChannel implements Channel {
     this.socketClientIds.delete(socket);
     // 新连接接管后，旧连接的 close 仍可能晚到；这类 stale close 不得清掉当前活跃状态。
     if (this.clients.get(clientId) !== socket) {
+      log.debug('ignoring stale socket close', {
+        channelId: this.id,
+        clientId,
+      });
       return;
     }
 
     this.clients.delete(clientId);
 
-    const subscribedSessions = this.clientSessions.get(clientId);
-    if (subscribedSessions) {
-      for (const sessionKey of subscribedSessions) {
+    const sessionAudienceKeys = this.clientSessions.get(clientId);
+    if (sessionAudienceKeys) {
+      for (const sessionKey of sessionAudienceKeys) {
         const clientIds = this.sessions.get(sessionKey);
         if (!clientIds) continue;
         clientIds.delete(clientId);
@@ -358,7 +396,8 @@ export class WebSocketChannel implements Channel {
     return clientId;
   }
 
-  private addSessionSubscription(clientId: string, sessionKey: string): void {
+  // 当前这张表只表示“谁应该继续收到该 session 的 AgentEvent 广播”，不表示共享 UI 或自动共享历史。
+  private registerSessionAudience(clientId: string, sessionKey: string): void {
     let clientIds = this.sessions.get(sessionKey);
     if (!clientIds) {
       clientIds = new Set<string>();
@@ -373,35 +412,142 @@ export class WebSocketChannel implements Channel {
     }
     // 反向索引用于断线时按 clientId 做 O(关联 session 数) 清理，而不是全表扫描 sessions。
     sessionKeys.add(sessionKey);
+
+    log.debug('session audience registered', {
+      channelId: this.id,
+      clientId,
+      sessionKey,
+      sessionAudienceSize: clientIds.size,
+      clientSessionCount: sessionKeys.size,
+    });
   }
 
   private makeApprovalAdapter(): ChannelApprovalAdapter {
     return {
       sendApprovalRequest: (request) => {
-        if (!request.originClientId) return;
-        const socket = this.clients.get(request.originClientId);
-        if (!socket || socket.readyState !== WebSocket.OPEN) return;
-        this.sendJson(socket, {
-          type: 'approval_requested',
-          id: request.id,
-          toolName: request.toolName,
-          input: request.input,
-          timeoutMs: request.timeoutMs,
-        });
+        this.sendApprovalRequestMessage(request);
       },
       sendApprovalExpired: (request) => {
-        if (!request.originClientId) return;
-        const socket = this.clients.get(request.originClientId);
-        if (!socket || socket.readyState !== WebSocket.OPEN) return;
-        this.sendJson(socket, {
-          type: 'approval_expired',
-          id: request.id,
-        });
+        this.sendApprovalExpiredMessage(request.id, request.originClientId);
       },
       onApprovalDecision: (handler) => {
         this.approvalDecisionHandler = handler;
       },
     };
+  }
+
+  private makeInteractionAdapter(): ChannelInteractionAdapter {
+    return {
+      sendInteractionRequest: (request) => {
+        if (request.kind !== 'approval') {
+          throw new Error(`WebSocketChannel does not support interaction kind: ${request.kind}`);
+        }
+        this.sendApprovalRequestMessage(request);
+      },
+      sendInteractionExpired: (request) => {
+        if (request.kind !== 'approval') {
+          throw new Error(`WebSocketChannel does not support interaction kind: ${request.kind}`);
+        }
+        this.sendApprovalExpiredMessage(request.id, request.originClientId);
+      },
+      onInteractionResponse: (handler) => {
+        this.interactionResponseHandler = handler;
+      },
+    };
+  }
+
+  private dispatchApprovalSubmission(id: string, decision: ApprovalDecision): void {
+    if (this.interactionResponseHandler) {
+      log.debug('routing approval submission through interaction adapter', {
+        channelId: this.id,
+        approvalId: id,
+        decision,
+      });
+      this.interactionResponseHandler({
+        id,
+        kind: 'approval',
+        outcome: 'submitted',
+        decision,
+      });
+      return;
+    }
+
+    if (this.approvalDecisionHandler) {
+      log.debug('routing approval submission through approval adapter', {
+        channelId: this.id,
+        approvalId: id,
+        decision,
+      });
+      this.approvalDecisionHandler(id, decision);
+      return;
+    }
+
+    throw new ProtocolError('UNSUPPORTED_MESSAGE', 'Approval is not enabled for this channel.');
+  }
+
+  private sendApprovalRequestMessage(
+    request: Pick<ApprovalRequest, 'id' | 'toolName' | 'input' | 'originClientId' | 'timeoutMs'>,
+  ): void {
+    if (!request.originClientId) {
+      log.debug('skipping approval request without origin client', {
+        channelId: this.id,
+        approvalId: request.id,
+        toolName: request.toolName,
+      });
+      return;
+    }
+    const socket = this.clients.get(request.originClientId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      log.warn('unable to deliver approval request to client', {
+        channelId: this.id,
+        approvalId: request.id,
+        toolName: request.toolName,
+        originClientId: request.originClientId,
+      });
+      return;
+    }
+    log.info('delivering approval request to client', {
+      channelId: this.id,
+      approvalId: request.id,
+      toolName: request.toolName,
+      originClientId: request.originClientId,
+      timeoutMs: request.timeoutMs,
+    });
+    this.sendJson(socket, {
+      type: 'approval_requested',
+      id: request.id,
+      toolName: request.toolName,
+      input: request.input,
+      timeoutMs: request.timeoutMs,
+    });
+  }
+
+  private sendApprovalExpiredMessage(id: string, originClientId?: string): void {
+    if (!originClientId) {
+      log.debug('skipping approval expiry notification without origin client', {
+        channelId: this.id,
+        approvalId: id,
+      });
+      return;
+    }
+    const socket = this.clients.get(originClientId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      log.warn('unable to deliver approval expiry to client', {
+        channelId: this.id,
+        approvalId: id,
+        originClientId,
+      });
+      return;
+    }
+    log.info('delivering approval expiry to client', {
+      channelId: this.id,
+      approvalId: id,
+      originClientId,
+    });
+    this.sendJson(socket, {
+      type: 'approval_expired',
+      id,
+    });
   }
 
   private sendChannelError(socket: WebSocket, code: ChannelErrorCode, message: string): void {

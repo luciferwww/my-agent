@@ -872,7 +872,7 @@ private recordError(scope: RuntimeErrorScope, error: Error): void;
 1. 阻止新 runTurn 进入（phase = closing 后 assertCanRunForSession 直接拒绝）
 2. 等待当前 runTurn 收尾
 3. 调 stopChannels()——依次关闭所有已注册 channel（释放 readline / WS 等 I/O 资源）
-4. 调 approvalManager.close()——拒绝所有 pending 审批，清理 timer
+4. 调 turnInteractionManager.close()——拒绝所有 pending 交互；当前 approval 统一按 timeout-deny 收口
 5. 关闭 MemoryManager 等其他 disposable
 6. 清理 Runtime 层缓存引用
 7. 标记 closed
@@ -935,7 +935,7 @@ class RuntimeApp {
 | 字段 | 用途 |
 |------|------|
 | `channels: Channel[]` | 与 bootstrap fanout 闭包**共享引用**——闭包遍历此数组分发 AgentEvent 到每个 channel |
-| `approvalManager: ApprovalManager` | 进程内 Promise bus，连接 `before_tool_call` hook 与 channel 的 approval adapter |
+| `turnInteractionManager: TurnInteractionManager` | 进程内 Promise bus，连接 `before_tool_call` hook 与 channel 的 interaction / approval adapter |
 | `originChannelByTurn: Map<turnId, Channel>` | turn → 起源 channel；approval 按此路由（不广播） |
 | `originClientByTurn: Map<turnId, clientId>` | turn → 起源 client；WebSocket 内部 client 级路由 |
 | `inFlightSessions: Set<string>` | per-session 串行 gate（替代旧的全局 phase gate） |

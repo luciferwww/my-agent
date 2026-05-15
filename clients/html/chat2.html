@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>my-agent web client</title>
+  <script src="https://unpkg.com/vue@3.5.13/dist/vue.global.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    html, body, #app { height: 100%; margin: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      font-size: 14px;
+    }
+    #app {
+      display: flex;
+      flex-direction: column;
+      max-width: 900px;
+      margin: 0 auto;
+      border-left: 1px solid #333;
+      border-right: 1px solid #333;
+    }
+
+    header, .meta, footer {
+      padding: 8px 12px;
+      border-bottom: 1px solid #333;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    header { font-weight: 600; }
+    header .title { margin-right: auto; }
+    .status.on { color: #4ec9b0; }
+    .status.off { color: #888; }
+
+    input[type="text"], textarea {
+      background: #2d2d2d;
+      color: #d4d4d4;
+      border: 1px solid #444;
+      border-radius: 3px;
+      padding: 4px 8px;
+      font-family: inherit;
+      font-size: inherit;
+    }
+    input[type="text"]:focus, textarea:focus {
+      outline: none;
+      border-color: #007acc;
+    }
+    .meta input { flex: 1; min-width: 0; }
+    .meta code { color: #9cdcfe; font-size: 12px; }
+
+    button {
+      background: #0e639c;
+      color: white;
+      border: none;
+      border-radius: 3px;
+      padding: 5px 12px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    button:hover:not(:disabled) { background: #1177bb; }
+    button:disabled { background: #444; color: #888; cursor: not-allowed; }
+    button.danger { background: #a1260d; }
+    button.danger:hover:not(:disabled) { background: #c42b0e; }
+
+    .stream {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      font-family: 'Cascadia Code', 'Consolas', 'Menlo', monospace;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .item { margin-bottom: 4px; }
+    .item.text pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #d4d4d4;
+    }
+    .turn-marker {
+      color: #6a6a6a;
+      text-align: center;
+      margin: 12px 0 6px;
+      font-size: 12px;
+    }
+    .turn-end {
+      color: #6a6a6a;
+      font-size: 12px;
+      margin-top: 6px;
+    }
+    .tool-header {
+      color: #9cdcfe;
+      cursor: pointer;
+      user-select: none;
+    }
+    .tool-header.error { color: #f48771; }
+    .tool-header .hint {
+      color: #6a6a6a;
+      font-size: 11px;
+      margin-left: 4px;
+    }
+    .tool-block pre {
+      margin: 2px 0 6px 16px;
+      padding: 6px 10px;
+      background: #252525;
+      border-left: 2px solid #444;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #c8c8c8;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .item.error {
+      color: #f48771;
+      padding: 4px 8px;
+      background: rgba(244, 135, 113, 0.1);
+      border-left: 2px solid #f48771;
+    }
+    .item.channel-error {
+      color: #f48771;
+      font-style: italic;
+    }
+
+    .approval {
+      padding: 12px;
+      background: #4d3a00;
+      border-top: 2px solid #d7ba7d;
+      border-bottom: 2px solid #d7ba7d;
+    }
+    .approval h3 {
+      margin: 0 0 6px;
+      color: #d7ba7d;
+      font-size: 13px;
+    }
+    .approval pre {
+      margin: 6px 0;
+      padding: 6px 10px;
+      background: rgba(0,0,0,0.3);
+      border-radius: 3px;
+      max-height: 200px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+    }
+    .approval .actions { display: flex; gap: 8px; margin-top: 8px; }
+
+    footer {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+      border-top: 1px solid #333;
+      border-bottom: none;
+    }
+    footer textarea {
+      width: 100%;
+      min-height: 60px;
+      resize: vertical;
+      font-family: inherit;
+    }
+    footer .row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    footer .hint {
+      color: #6a6a6a;
+      font-size: 11px;
+      margin-right: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- ── Header: connection control ───────────────────────────── -->
+    <header>
+      <span class="title">my-agent web client</span>
+      <input type="text" v-model="serverUrl" :disabled="isConnected" style="width:240px">
+      <button v-if="!isConnected" @click="connect">Connect</button>
+      <button v-else class="danger" @click="disconnect">Disconnect</button>
+      <span :class="['status', isConnected ? 'on' : 'off']">
+        {{ isConnected ? '●' : '○' }} {{ status }}
+      </span>
+    </header>
+
+    <!-- ── Meta: client + session identity ──────────────────────── -->
+    <div class="meta">
+      <span>Client:</span>
+      <code>{{ clientId }}</code>
+      <span style="margin-left:12px">Session:</span>
+      <input type="text" v-model="sessionKey" :disabled="isConnected" style="max-width:200px">
+    </div>
+
+    <!-- ── Event stream ─────────────────────────────────────────── -->
+    <main class="stream" ref="streamEl">
+      <div v-if="stream.length === 0" style="color:#6a6a6a;text-align:center;margin-top:20px">
+        No events yet. Connect, then send a message below.
+      </div>
+      <div v-for="(item, i) in stream" :key="i" :class="['item', item.type]">
+        <template v-if="item.type === 'text'">
+          <pre>{{ item.text }}</pre>
+        </template>
+
+        <template v-else-if="item.type === 'tool_use'">
+          <div class="tool-block">
+            <div class="tool-header" @click="item.expanded = !item.expanded">
+              [tool: {{ item.name }}]
+              <span class="hint">({{ item.expanded ? 'hide input' : 'show input' }})</span>
+            </div>
+            <pre v-if="item.expanded">{{ formatJson(item.input) }}</pre>
+          </div>
+        </template>
+
+        <template v-else-if="item.type === 'tool_result'">
+          <div class="tool-block">
+            <div :class="['tool-header', item.isError ? 'error' : '']" @click="item.expanded = !item.expanded">
+              {{ item.isError ? '[tool error]' : '[tool result]' }}
+              <span class="hint">
+                ({{ item.lineCount }} lines, {{ item.charCount }} chars,
+                {{ item.expanded ? 'collapse' : 'expand' }})
+              </span>
+            </div>
+            <pre>{{ item.expanded ? item.content : item.preview }}</pre>
+          </div>
+        </template>
+
+        <template v-else-if="item.type === 'turn_start'">
+          <div class="turn-marker">— turn {{ item.turnId.slice(0, 8) }} —</div>
+        </template>
+
+        <template v-else-if="item.type === 'turn_end'">
+          <div class="turn-end">[run_end] stop={{ item.stopReason }} usage={{ formatUsage(item.usage) }} rounds={{ item.toolRounds }}</div>
+        </template>
+
+        <template v-else-if="item.type === 'error'">
+          <div>[error] {{ item.message }}</div>
+        </template>
+
+        <template v-else-if="item.type === 'channel-error'">
+          [channel-error] {{ item.code }}: {{ item.message }}
+        </template>
+      </div>
+    </main>
+
+    <!-- ── Approval modal (inline) ──────────────────────────────── -->
+    <div v-if="pendingApproval" class="approval">
+      <h3>Approval needed — tool: {{ pendingApproval.toolName }}</h3>
+      <pre>{{ formatJson(pendingApproval.input) }}</pre>
+      <div class="actions">
+        <button @click="resolveApproval('allow')">Allow</button>
+        <button class="danger" @click="resolveApproval('deny')">Deny</button>
+        <span class="hint" v-if="pendingApproval.timeoutMs">
+          (server timeout in ~{{ Math.round(pendingApproval.timeoutMs / 1000) }}s)
+        </span>
+      </div>
+    </div>
+
+    <!-- ── Input panel ──────────────────────────────────────────── -->
+    <footer>
+      <textarea
+        v-model="messageDraft"
+        @keydown.ctrl.enter="sendMessage"
+        @keydown.meta.enter="sendMessage"
+        placeholder="Type message... (Ctrl/Cmd+Enter to send)"
+        :disabled="!isConnected"></textarea>
+      <div class="row">
+        <span class="hint">Ctrl/Cmd+Enter to send</span>
+        <button @click="clearStream">Clear</button>
+        <button @click="sendMessage" :disabled="!canSend">Send</button>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    // Default preview: first 8 lines collapsed; click header to expand to full content.
+    const PREVIEW_LINES = 8;
+
+    function makePreview(content) {
+      const lines = content.split('\n');
+      if (lines.length <= PREVIEW_LINES) return content;
+      return lines.slice(0, PREVIEW_LINES).join('\n') + `\n... [${lines.length - PREVIEW_LINES} more lines]`;
+    }
+
+    Vue.createApp({
+      data() {
+        return {
+          serverUrl: 'ws://127.0.0.1:8787/ws',
+          clientId: crypto.randomUUID(),
+          sessionKey: 'main',
+          ws: null,
+          status: 'disconnected', // 'disconnected' | 'connecting' | 'connected'
+          stream: [],
+          pendingApproval: null,
+          messageDraft: '',
+        };
+      },
+      computed: {
+        isConnected() { return this.status === 'connected'; },
+        canSend() { return this.isConnected && this.messageDraft.trim().length > 0; },
+      },
+      methods: {
+        connect() {
+          if (this.ws) return;
+          this.status = 'connecting';
+          try {
+            this.ws = new WebSocket(this.serverUrl);
+          } catch (err) {
+            this.appendChannelError('CONNECT_FAILED', err.message ?? String(err));
+            this.status = 'disconnected';
+            return;
+          }
+          this.ws.onopen = () => {
+            // Bind clientId before any business message; server enforces this order.
+            this.ws.send(JSON.stringify({ type: 'hello', clientId: this.clientId }));
+          };
+          this.ws.onmessage = (ev) => {
+            let msg;
+            try { msg = JSON.parse(ev.data); }
+            catch { this.appendChannelError('PARSE', 'Server sent non-JSON payload'); return; }
+            this.handleMessage(msg);
+          };
+          this.ws.onerror = () => {
+            // Browser hides details; surface a generic notice. Real cause usually shows on close.
+            this.appendChannelError('SOCKET_ERROR', 'WebSocket error (see browser console)');
+          };
+          this.ws.onclose = (ev) => {
+            this.ws = null;
+            this.status = 'disconnected';
+            this.pendingApproval = null;
+            if (ev.code !== 1000 && ev.code !== 1001) {
+              this.appendChannelError('CLOSED', `Connection closed (code=${ev.code} ${ev.reason || ''})`);
+            }
+          };
+        },
+
+        disconnect() {
+          this.ws?.close(1000, 'user disconnect');
+        },
+
+        sendMessage() {
+          if (!this.canSend) return;
+          const text = this.messageDraft.trim();
+          this.ws.send(JSON.stringify({
+            type: 'run_turn',
+            sessionKey: this.sessionKey,
+            message: text,
+          }));
+          this.messageDraft = '';
+          this.scrollToBottom();
+        },
+
+        resolveApproval(decision) {
+          if (!this.pendingApproval) return;
+          this.ws.send(JSON.stringify({
+            type: 'approval_resolve',
+            id: this.pendingApproval.id,
+            decision,
+          }));
+          this.pendingApproval = null;
+        },
+
+        clearStream() {
+          this.stream = [];
+        },
+
+        handleMessage(msg) {
+          switch (msg.type) {
+            case 'hello_ack':
+              this.status = 'connected';
+              return;
+            case 'channel_error':
+              this.appendChannelError(msg.code, msg.message);
+              return;
+            case 'approval_requested':
+              this.pendingApproval = {
+                id: msg.id,
+                toolName: msg.toolName,
+                input: msg.input,
+                timeoutMs: msg.timeoutMs,
+              };
+              return;
+            case 'approval_expired':
+              if (this.pendingApproval?.id === msg.id) {
+                this.pendingApproval = null;
+              }
+              this.appendChannelError('APPROVAL_EXPIRED', `Approval ${msg.id.slice(0,8)} timed out`);
+              return;
+
+            // AgentEvent stream — types match src/core/runner/types.ts AgentEvent
+            case 'run_start':
+              this.stream.push({ type: 'turn_start', turnId: msg.turnId });
+              break;
+            case 'text_delta':
+              this.appendText(msg.text);
+              break;
+            case 'tool_use':
+              this.stream.push({ type: 'tool_use', name: msg.name, input: msg.input, expanded: false });
+              break;
+            case 'tool_result': {
+              const content = msg.result?.content ?? '';
+              this.stream.push({
+                type: 'tool_result',
+                name: msg.name,
+                content,
+                preview: makePreview(content),
+                lineCount: content.split('\n').length,
+                charCount: content.length,
+                isError: !!msg.result?.isError,
+                expanded: false,
+              });
+              break;
+            }
+            case 'run_end':
+              this.stream.push({
+                type: 'turn_end',
+                stopReason: msg.result?.stopReason,
+                usage: msg.result?.usage,
+                toolRounds: msg.result?.toolRounds,
+              });
+              break;
+            case 'error':
+              this.stream.push({ type: 'error', message: msg.error });
+              break;
+            // llm_call / compaction_* / tool_result_pruned: silently ignored for v1
+          }
+          this.scrollToBottom();
+        },
+
+        appendText(text) {
+          const last = this.stream[this.stream.length - 1];
+          if (last?.type === 'text') {
+            last.text += text;
+          } else {
+            this.stream.push({ type: 'text', text });
+          }
+        },
+
+        appendChannelError(code, message) {
+          this.stream.push({ type: 'channel-error', code, message });
+        },
+
+        formatJson(value) {
+          try { return JSON.stringify(value, null, 2); }
+          catch { return String(value); }
+        },
+
+        formatUsage(usage) {
+          if (!usage) return '?';
+          const parts = [];
+          if (usage.inputTokens != null) parts.push(`in=${usage.inputTokens}`);
+          if (usage.outputTokens != null) parts.push(`out=${usage.outputTokens}`);
+          return parts.join(' ') || JSON.stringify(usage);
+        },
+
+        scrollToBottom() {
+          this.$nextTick(() => {
+            const el = this.$refs.streamEl;
+            if (el) el.scrollTop = el.scrollHeight;
+          });
+        },
+      },
+    }).mount('#app');
+  </script>
+</body>
+</html>

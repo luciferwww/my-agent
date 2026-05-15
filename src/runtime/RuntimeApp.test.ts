@@ -58,6 +58,7 @@ describe('RuntimeApp', () => {
         message: 'Hello runtime',
         model: 'test-model',
         systemPrompt: 'SYSTEM_PROMPT',
+        inTurnMessageMode: 'followup',
       }),
     );
     expect(result.sessionKey).toBe('main');
@@ -114,6 +115,42 @@ describe('RuntimeApp', () => {
     expect(memoryClose).toHaveBeenCalledTimes(1);
     await expect(app.runTurn({ sessionKey: 'main', message: 'after close' })).rejects.toThrow(
       'Cannot run when runtime phase is closed.',
+    );
+  });
+
+  it('allows per-turn inTurnMessageMode override', async () => {
+    const runnerRun = vi.fn(async (): Promise<RunResult> => ({
+      text: 'ok',
+      content: [{ type: 'text', text: 'ok' }],
+      stopReason: 'end_turn',
+      usage: { inputTokens: 1, outputTokens: 1 },
+      toolRounds: 0,
+    }));
+
+    const deps = createTestDependencies({
+      createAgentRunner: () => ({ run: runnerRun } as never),
+      createMemoryManager: async () => null,
+    });
+
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'test-model' },
+        memory: { enabled: false },
+      },
+      dependencies: deps,
+    });
+
+    await app.runTurn({
+      sessionKey: 'main',
+      message: 'Hello runtime',
+      inTurnMessageMode: 'steer',
+    });
+
+    expect(runnerRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inTurnMessageMode: 'steer',
+      }),
     );
   });
 });

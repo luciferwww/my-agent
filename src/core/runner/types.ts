@@ -1,8 +1,11 @@
-import type { ChatContentBlock, TokenUsage } from '../../adapters/llm/types.js';
+import type { ChatContentBlock, ChatMessage, TokenUsage } from '../../adapters/llm/types.js';
 import type { ToolDefinition, ToolResult, ToolExecutor } from '../tools/types.js';
 import type { CompactionConfig } from '../../platform/config/types.js';
 
 export type { ToolDefinition, ToolResult, ToolExecutor };
+
+export type InTurnMessageMode = 'steer' | 'followup';
+export type PendingMessageReader = () => ChatMessage[] | Promise<ChatMessage[]>;
 
 /** AgentRunner 构造参数 */
 export interface AgentRunnerConfig {
@@ -36,6 +39,17 @@ export interface RunParams {
   maxToolRounds?: number;
   /** 外层循环：followUp 最大循环次数，默认 5 */
   maxFollowUpRounds?: number;
+  /** turn 内新消息注入模式：'steer' 立即注入，'followup' 外层排队 */
+  inTurnMessageMode?: InTurnMessageMode;
+  /**
+   * 通用 turn 内消息读取回调。
+   * 根据 inTurnMessageMode，AgentRunner 会在 steering 或 followUp 注入点消费。
+   */
+  getInTurnMessages?: PendingMessageReader;
+  /** steering 专用消息读取回调（总在 steering 注入点消费） */
+  getSteeringMessages?: PendingMessageReader;
+  /** followUp 专用消息读取回调（总在 followUp 注入点消费） */
+  getFollowUpMessages?: PendingMessageReader;
   /** 压缩配置（由 RuntimeApp 传入） */
   compaction?: CompactionConfig;
   /** 模型上下文窗口大小（由 RuntimeApp 从 config.llm.contextWindowTokens 传入），默认 200,000 */

@@ -15,7 +15,7 @@
 - WS 协议的消息格式、错误语义、广播语义如何落地
 - 断线、超时、重复提交、非法消息等边界条件如何处理
 
-本文档**不重复**定义 Channel 抽象、ApprovalManager 设计、`turnId` / `sessionKey` / `originClientId` 的整体数据流；这些内容仍以 [adapters-channel-design.md](./adapters-channel-design.md) 为准。
+本文档**不重复**定义 Channel 抽象、TurnInteractionManager 设计、`turnId` / `sessionKey` / `originClientId` 的整体数据流；这些内容仍以 [adapters-channel-design.md](./adapters-channel-design.md) 为准。
 
 ### 定位
 
@@ -93,15 +93,15 @@ class WebSocketChannel implements Channel {
 - WebSocketChannel 是显式注册的 channel，不应静默降级
 - 启动失败通常是配置问题，应尽快暴露给调用方
 
-### 3.3 停机时的 approval 行为
+### 3.3 停机时的交互收口
 
-`stop()` 不直接调用 `ApprovalManager.resolve()`。
+`stop()` 不直接调用 `TurnInteractionManager.resolve()`。
 
 关闭流程保持和总设计一致：
 
 1. `RuntimeApp.stopChannels()` 先关闭 channel
-2. `RuntimeApp.close()` 再调用 `approvalManager.close()`
-3. 所有 pending approval 统一按 timeout-deny 收口
+2. `RuntimeApp.close()` 再调用 `turnInteractionManager.close()`
+3. 所有 pending interaction 统一由上层 manager 收口；当前 approval 仍按 timeout-deny 处理
 
 这样可以避免 transport 层和审批决策层双重收口。
 
@@ -123,7 +123,7 @@ class WebSocketChannel implements Channel {
 - 它表示“这个客户端是谁”
 - 它也表示“新的 websocket 连接是否应继承之前这个客户端的状态”
 
-Phase 1 默认假设 websocket 运行在可信环境中，因此 `clientId` 作为逻辑身份标识使用，但**不额外承担安全认证语义**。服务端接受客户端对 `clientId` 的自声明，并据此建立当前活跃连接绑定；若上层存在按 `clientId` 管理的未决交互，也可以在握手成功后按该身份触发重投递。
+Phase 1 默认假设 websocket 运行在可信环境中，因此 `clientId` 作为逻辑身份标识使用，但**不额外承担安全认证语义**。服务端接受客户端对 `clientId` 的自声明，并据此建立当前活跃连接绑定。当前源码尚未在握手成功后自动通知上层做交互重投递；若未来接入该钩子，仍应由上层决定是否需要再次下发交互。
 
 为避免一个逻辑客户端同时绑定多条活跃连接，Phase 1 采用**后连覆盖前连**策略：当同一 `clientId` 的新连接完成绑定时，旧连接若仍存在，服务端应立即主动关闭旧连接。从新连接接管成功的那一刻起，旧连接即视为失效连接，不再参与任何业务收发或状态清理。
 
@@ -420,9 +420,9 @@ Phase 1 默认采取“报错但不断开”的宽松策略，便于客户端联
 3. 将当前连接绑定为该 `clientId` 的唯一活跃连接，并在该 socket 的关联上下文中记录已绑定 `clientId`
 4. 若该 `clientId` 已绑定旧连接，则立即主动关闭旧连接
 5. 回复 `hello_ack { clientId }`
-6. 若上层存在按 `clientId` 管理的未决交互，则触发一次针对该 `clientId` 的自动重投递
+6. 若未来上层接入按 `clientId` 管理的未决交互重投递钩子，则可触发一次针对该 `clientId` 的重新下发
 
-这里的自动重投递不意味着 `WebSocketChannel` 自己维护了 pending approval 或 pending decision。权威状态仍在上层 manager；`WebSocketChannel` 只是在 `hello(clientId)` 成功后提供一个“该 client 已重新就绪”的传输层触发点。
+这里的 future 重投递不意味着 `WebSocketChannel` 自己维护了 pending approval 或 pending decision。权威状态仍在上层 manager；即使后续实现该能力，`WebSocketChannel` 也最多只是在 `hello(clientId)` 成功后提供一个“该 client 已重新就绪”的传输层触发点。
 
 这里的关键规则是：旧连接的物理关闭可以稍后完成，但其逻辑失效发生在新连接接管成功的瞬间。旧连接之后若继续发送 `run_turn` 或 `approval_resolve`，应视为无效消息；旧连接晚到的 `close` 事件也不得再触发当前活跃状态的清理。
 
@@ -478,11 +478,11 @@ sequenceDiagram
 `run_turn` 有两个副作用：
 
 - 发起一次 turn
-- 隐式声明“当前客户端希望订阅这个 `sessionKey` 的后续事件”
+- 隐式声明“当前客户端应加入这个 `sessionKey` 的后续 AgentEvent 广播受众”
 
-因此同一个 `clientId` 可以通过多次 `run_turn` 加入多个 session 的订阅集合；这些集合描述的是该逻辑客户端当前应接收哪些 session 的广播，而不是某一条 websocket 连接的历史。
+因此同一个 `clientId` 可以通过多次 `run_turn` 加入多个 session 的广播集合；这些集合描述的是该逻辑客户端当前应接收哪些 session 的 AgentEvent，而不是某一条 websocket 连接的历史。
 
-这些订阅关系只服务于当前活跃连接的广播与断线清理，不构成 transport 层恢复机制。连接关闭后，`WebSocketChannel` 会立即清理对应的 session 路由；客户端若重连后仍要继续参与某个 session，需要继续以该 `sessionKey` 发起后续请求。
+这些广播关系只服务于当前活跃连接的事件投递与断线清理，不构成 transport 层恢复机制，也不等于“自动共享 conversation history / 聊天视图”。连接关闭后，`WebSocketChannel` 会立即清理对应的 session 路由；客户端若重连后仍要继续参与某个 session，需要继续以该 `sessionKey` 发起后续请求。
 
 #### 图 2：`run_turn` 到 session 广播的最小路径
 
@@ -512,21 +512,21 @@ sequenceDiagram
 1. 解析并校验消息
 2. 确认当前连接已完成 `hello`
 3. 若当前 channel 未开启 approval，回复 `channel_error(UNSUPPORTED_MESSAGE)`
-4. 调用 `approvalDecisionHandler(id, decision)`
+4. 优先调用 `interactionResponseHandler({...})`；若未启用 interaction 适配器，再兼容调用 `approvalDecisionHandler(id, decision)`
 
-重复提交无需在 transport 层去重。`ApprovalManager.resolve()` 对未知或已过期 id 是幂等静默忽略的。
+重复提交无需在 transport 层去重。`TurnInteractionManager.resolve()` 对未知或已过期 id 是幂等静默忽略的。
 
 ### 6.3.1 `approval_resolve` 与客户端身份
 
 Phase 1 不要求 `approval_resolve` 再显式携带 `clientId`。原因是：
 
 - 当前连接在 `hello` 阶段已绑定逻辑客户端身份
-- 实际可否 resolve 某个审批 id 的最终判断交给上层 `ApprovalManager`
+- 实际可否 resolve 某个审批 id 的最终判断交给上层 `TurnInteractionManager`
 - transport 层只需保证消息来自一个已经绑定身份的连接
 
 ### 6.4 连接加入 session 的时机
 
-客户端不是在“连接建立时”自动绑定 session，而是在首次发送某个 `run_turn` 时加入对应 session。
+客户端不是在“连接建立时”自动绑定 session，而是在首次发送某个 `run_turn` 时加入对应 session 的 AgentEvent 广播受众。
 
 原因：
 
@@ -534,7 +534,7 @@ Phase 1 不要求 `approval_resolve` 再显式携带 `clientId`。原因是：
 - 同一个连接允许在多个 session 上发起 turn，广播时可同时订阅多个 session
 - 避免引入额外的 `subscribe` / `join_session` 协议复杂度
 
-这意味着 Phase 1 的 websocket 行为更像“通过发消息隐式订阅 session”。
+这意味着 Phase 1 的 websocket 行为更像“通过发消息隐式加入 session 事件广播”，而不是“加入 session 就自动同步完整会话视图”。
 
 ---
 
@@ -567,10 +567,10 @@ Phase 1 广播以下事件：
 
 ### 7.3 approval 定向发送
 
-当 `RuntimeApp` 调用：
+当 `RuntimeApp` 调用下列任一路径时：
 
-- `channel.approval.sendApprovalRequest(request)`
-- `channel.approval.sendApprovalExpired(request)`
+- `channel.interaction.sendInteractionRequest(request)` / `sendInteractionExpired(request)`
+- `channel.approval.sendApprovalRequest(request)` / `sendApprovalExpired(request)`
 
 `WebSocketChannel` 的处理规则：
 
@@ -583,7 +583,7 @@ Phase 1 广播以下事件：
 之所以静默忽略，而不是反向触发 deny：
 
 - transport 层不负责决策
-- 上层已有 ApprovalManager timeout 收口
+- 上层已有 TurnInteractionManager timeout 收口
 - 断线是正常网络条件，不是协议错误
 
 ---
@@ -638,13 +638,13 @@ flowchart TD
   A[socket close] --> B{socket context has clientId?}
   B -- no --> Z[clear socket context and return]
   B -- yes --> C[read bound clientId]
-  C --> D{socket == clients[clientId]?}
+  C --> D{socket is current active socket for clientId?}
   D -- no --> Y[treat as stale close and ignore]
-  D -- yes --> E[delete clients[clientId]]
-  E --> F[read clientSessions[clientId]]
-  F --> G[remove clientId from each sessions[sessionKey]]
+  D -- yes --> E[delete active client entry]
+  E --> F[read sessions bound to clientId]
+  F --> G[remove clientId from each bound session]
   G --> H[delete empty session sets]
-  H --> I[delete clientSessions[clientId]]
+  H --> I[delete client session index entry]
   I --> J[clear socket context]
   J --> K[disconnect cleanup done]
 ```
@@ -675,13 +675,17 @@ inactive
 1. 服务端将该逻辑客户端重新绑定到新连接
 2. 旧连接若仍存在，则会被立即主动关闭
 3. 该客户端后续可继续使用原有 `sessionKey` 发起新请求
-4. 若上层存在仍未过期的 pending interactions，可在 `hello` 成功后自动向新连接重投递
+4. 若未来上层接入 pending interactions 重投递钩子，可在 `hello` 成功后向新连接再次投递
 
-Phase 1 的重连后行为只保证：
+Phase 1 当前源码只保证：
 
 - 重新绑定逻辑客户端身份
 - 建立新的当前活跃连接
-- 为上层 pending interactions 重投递提供一个稳定触发点
+
+Phase 1 当前**尚未实现**：
+
+- future：`hello(clientId)` 后自动通知上层重投递 pending interactions
+- 基于该钩子的自动交互补发
 
 Phase 1 **不保证**：
 
@@ -697,11 +701,11 @@ Phase 1 **不保证**：
 
 - `WebSocketChannel` 负责维护 `clientId -> active WebSocket`、`sessionKey -> clientId[]`，以及废弃 websocket 的清理
 - 上层 manager 负责维护 pending interactions 的权威状态、过期时间与是否仍需投递的判断
-- `hello(clientId)` 成功后，`WebSocketChannel` 只负责触发“该 client 已重新就绪”，由上层决定是否向当前活跃连接再次下发交互消息
+- 若未来接入该能力，`hello(clientId)` 成功后，`WebSocketChannel` 最多只负责触发“该 client 已重新就绪”，由上层决定是否向当前活跃连接再次下发交互消息
 
 因此 `WebSocketChannel` 不维护额外的业务交互子状态，也不决定某个交互是否应该继续存在。
 
-#### 图 4：`hello(clientId)` 后的 pending interactions 重投递
+#### 图 4：`hello(clientId)` 后的 pending interactions 重投递（未来预留）
 
 ```mermaid
 sequenceDiagram
@@ -730,7 +734,7 @@ sequenceDiagram
 - 普通 AgentEvent 仍会继续生成，但断线窗口内该 client 可能漏收部分事件
 - 同 session 的其他在线 client 仍可继续收到广播
 - 该 client 重新连接后，不会自动收到此前遗漏的普通事件
-- 若上层仍持有未过期的 pending interactions，可在 `hello(clientId)` 成功后再次投递到新连接
+- 若未来上层接入重投递钩子，仍未过期的 pending interactions 可在 `hello(clientId)` 成功后再次投递到新连接
 
 这符合当前总设计里的“起源 channel 不可达时走 timeout 收口”。
 
@@ -850,7 +854,7 @@ Phase 1 不做更复杂的背压、排队、优先级策略。
 - 同一 `clientId` 重连是否主动关闭旧连接
 - 旧连接在被接管后继续发送业务消息时是否被拒绝或忽略
 - 旧连接晚到的 `close` 是否不会误清理当前活跃状态
-- `hello(clientId)` 成功后是否会触发上层 pending interactions 重投递钩子
+- 未来若实现重投递钩子：`hello(clientId)` 成功后是否会触发上层 pending interactions 重投递
 
 ### 11.2 集成测试
 
@@ -858,7 +862,7 @@ Phase 1 不做更复杂的背压、排队、优先级策略。
 - 多 client 同 session：都收到同一 turn 的事件流
 - 多 client 不同 session：不会串流
 - approval 开启时：只有起源 client 收到 `approval_requested`
-- 起源 client 断线后重连并再次 `hello(clientId)` 时：上层未过期的 pending interaction 可重新投递到新连接
+- 起源 client 断线后重连并再次 `hello(clientId)` 时：当前实现不自动重投递；若后续补该钩子，应验证未过期 interaction 可重新投递
 - 起源 client 长时间不重连时：approval 最终 timeout deny
 
 ### 11.3 联调 smoke case
@@ -891,7 +895,7 @@ Phase 1 不做更复杂的背压、排队、优先级策略。
 
 1. 先实现最小 server 生命周期和 `hello + run_turn`
 2. 再补 `send(event)` 广播
-3. 然后补 approval 定向发送、`approval_resolve` 与 `hello(clientId)` 后的上层重投递触发
+3. 然后补 approval 定向发送与 `approval_resolve`
 4. 最后补协议错误反馈、日志和边界测试
 
 这样可以尽快得到一个可联调的 websocket transport，而不是一开始就把所有边界复杂度堆满。
@@ -906,7 +910,7 @@ Phase 1 不做更复杂的背压、排队、优先级策略。
 2. `channel_error` 是否需要增加 `requestId` 之类的关联字段。
 3. `maxClients` 超限时使用哪个 close code 更合适。
 4. 是否允许单 websocket 连接同时订阅多个 session；本文档暂时按“允许”设计。
-5. `hello(clientId)` 成功后通知上层重投递 pending interactions 的接口形状应是什么。
+5. 若要补 `hello(clientId)` 后的上层重投递，接口形状应是什么。
 6. 是否要在 Phase 1 就支持 `run_turn.maxFollowUpRounds` 等额外参数透传。
 
 这些问题都不影响当前 WebSocketChannel 的最小落地。

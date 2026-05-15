@@ -66,6 +66,8 @@ export interface RunnerConfig {
   maxToolRounds: number;
   /** 外层 followUp 最大轮数 */
   maxFollowUpRounds: number;
+  /** turn 内新消息默认注入策略 */
+  inTurnMessageMode: 'steer' | 'followup';
 }
 
 /** 嵌入配置 */

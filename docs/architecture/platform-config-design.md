@@ -178,6 +178,7 @@ interface LLMConfig {
 interface RunnerConfig {
   maxToolRounds: number;    // 内层 tool-use 最大轮数 → 10
   maxFollowUpRounds: number; // 外层 followUp 最大轮数 → 5
+  inTurnMessageMode: 'steer' | 'followup'; // turn 内新消息默认注入策略 → 'followup'
 }
 
 /** Memory 模块配置 */

@@ -1,7 +1,7 @@
 import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
-import type { ApprovalRequest } from './types.js';
+import type { ApprovalInteractionRequest } from './types.js';
 import { WebSocketChannel } from './WebSocketChannel.js';
 
 describe('WebSocketChannel', () => {
@@ -47,19 +47,20 @@ describe('WebSocketChannel', () => {
     });
   });
 
-  it('routes approval messages to the origin client and forwards approval decisions', async () => {
-    const approvalDecision = vi.fn();
+  it('routes approval interactions to the origin client and forwards interaction responses', async () => {
+    const interactionResponse = vi.fn();
     channel = new WebSocketChannel({ port: 0, approval: true });
     channel.onMessage(async () => undefined);
-    channel.approval?.onApprovalDecision(approvalDecision);
+    channel.interaction?.onInteractionResponse(interactionResponse);
     await channel.start();
 
     const client = await connectClient(channel);
     client.send(JSON.stringify({ type: 'hello', clientId: 'client-1' }));
     await expectMessage(client, { type: 'hello_ack', clientId: 'client-1' });
 
-    const request: ApprovalRequest = {
+    const request: ApprovalInteractionRequest = {
       id: 'apr-1',
+      kind: 'approval',
       toolName: 'write_file',
       input: { path: 'README.md' },
       sessionKey: 'main',
@@ -67,7 +68,7 @@ describe('WebSocketChannel', () => {
       originClientId: 'client-1',
       timeoutMs: 5000,
     };
-    channel.approval?.sendApprovalRequest(request);
+    channel.interaction?.sendInteractionRequest(request);
 
     await expectMessage(client, {
       type: 'approval_requested',
@@ -80,7 +81,12 @@ describe('WebSocketChannel', () => {
     client.send(JSON.stringify({ type: 'approval_resolve', id: 'apr-1', decision: 'allow' }));
 
     await vi.waitFor(() => {
-      expect(approvalDecision).toHaveBeenCalledWith('apr-1', 'allow');
+      expect(interactionResponse).toHaveBeenCalledWith({
+        id: 'apr-1',
+        kind: 'approval',
+        outcome: 'submitted',
+        decision: 'allow',
+      });
     });
   });
 });

@@ -8,6 +8,7 @@ import type {
   AgentEvent,
   ToolResult,
   ToolExecutor,
+  PendingMessageReader,
 } from './types.js';
 import type { CompactionConfig } from '../../platform/config/types.js';
 import type { HookName, HookHandlerMap, HookRegistration } from './hooks/index.js';
@@ -23,6 +24,7 @@ import { compactMessages } from './context/compaction.js';
 const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_MAX_TOOL_ROUNDS = 10;
 const DEFAULT_MAX_FOLLOWUP_ROUNDS = 5;
+const DEFAULT_IN_TURN_MESSAGE_MODE = 'followup';
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000;
 
 /**
@@ -169,6 +171,7 @@ export class AgentRunner {
   ): Promise<Omit<RunResult, 'compacted'>> {
     const maxToolRounds = params.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
     const maxFollowUpRounds = params.maxFollowUpRounds ?? DEFAULT_MAX_FOLLOWUP_ROUNDS;
+    const inTurnMessageMode = params.inTurnMessageMode ?? DEFAULT_IN_TURN_MESSAGE_MODE;
     const maxTokens = params.maxTokens ?? DEFAULT_MAX_TOKENS;
 
     // 1. 加载历史消息（不含当前用户消息）
@@ -356,13 +359,20 @@ export class AgentRunner {
 
           toolRounds++;
           totalToolRounds++;
+
+          // 每轮 tool 执行后检查 steering 消息。
+          const steeringMessages = await this.getSteeringMessages(params, inTurnMessageMode);
+          if (steeringMessages.length > 0) {
+            await this.appendInjectedMessages(params.sessionKey, messages, steeringMessages);
+          }
         }
       }
       // 内层退出
 
-      // 检查 followUp 消息（当前预留，返回空）
-      const followUpMessages = this.getFollowUpMessages();
+      // 内层退出后检查 followUp 消息。
+      const followUpMessages = await this.getFollowUpMessages(params, inTurnMessageMode);
       if (followUpMessages.length > 0) {
+        await this.appendInjectedMessages(params.sessionKey, messages, followUpMessages);
         followUpRounds++;
         continue outer;
       }
@@ -589,11 +599,63 @@ export class AgentRunner {
       .join('');
   }
 
-  /**
-   * 获取 followUp 消息。当前预留为空，将来实现 steering/followUp 时填充。
-   */
-  private getFollowUpMessages(): ChatMessage[] {
-    return [];
+  private async appendInjectedMessages(
+    sessionKey: string,
+    targetMessages: ChatMessage[],
+    injectedMessages: ChatMessage[],
+  ): Promise<void> {
+    for (const message of injectedMessages) {
+      targetMessages.push(message);
+      await this.sessionManager.appendMessage(sessionKey, {
+        role: message.role,
+        content: message.content,
+      });
+    }
+  }
+
+  private async readPendingMessages(reader?: PendingMessageReader): Promise<ChatMessage[]> {
+    if (!reader) {
+      return [];
+    }
+
+    const result = await reader();
+    if (!Array.isArray(result)) {
+      return [];
+    }
+
+    return result.filter((message): message is ChatMessage => {
+      if (!message || typeof message !== 'object') {
+        return false;
+      }
+      if (message.role !== 'user' && message.role !== 'assistant') {
+        return false;
+      }
+      return Object.hasOwn(message, 'content');
+    });
+  }
+
+  private async getSteeringMessages(
+    params: RunParams,
+    inTurnMessageMode: 'steer' | 'followup',
+  ): Promise<ChatMessage[]> {
+    const explicit = await this.readPendingMessages(params.getSteeringMessages);
+    if (inTurnMessageMode !== 'steer') {
+      return explicit;
+    }
+    const generic = await this.readPendingMessages(params.getInTurnMessages);
+    return [...explicit, ...generic];
+  }
+
+  private async getFollowUpMessages(
+    params: RunParams,
+    inTurnMessageMode: 'steer' | 'followup',
+  ): Promise<ChatMessage[]> {
+    const explicit = await this.readPendingMessages(params.getFollowUpMessages);
+    if (inTurnMessageMode !== 'followup') {
+      return explicit;
+    }
+    const generic = await this.readPendingMessages(params.getInTurnMessages);
+    return [...explicit, ...generic];
   }
 
   private emit(event: AgentEventInput): void {
