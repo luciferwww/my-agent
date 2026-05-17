@@ -17,4 +17,8 @@ export type {
   BeforeToolCallResult,
   AfterToolCallHook,
   AfterToolCallPayload,
+  BeforeCompactionHook,
+  BeforeCompactionPayload,
+  AfterCompactionHook,
+  AfterCompactionPayload,
 } from './hooks/index.js';

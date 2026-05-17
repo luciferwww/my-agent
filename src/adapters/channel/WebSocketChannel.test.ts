@@ -33,7 +33,12 @@ describe('WebSocketChannel', () => {
     client.send(JSON.stringify({ type: 'hello', clientId: 'client-1' }));
     await expectMessage(client, { type: 'hello_ack', clientId: 'client-1' });
 
-    client.send(JSON.stringify({ type: 'run_turn', sessionKey: 'main', message: 'hello ws' }));
+    client.send(JSON.stringify({
+      type: 'run_turn',
+      sessionKey: 'main',
+      message: 'hello ws',
+      maxLlmCalls: 7,
+    }));
 
     await vi.waitFor(() => {
       expect(handler).toHaveBeenCalledWith({
@@ -42,7 +47,7 @@ describe('WebSocketChannel', () => {
         message: 'hello ws',
         model: undefined,
         maxTokens: undefined,
-        maxToolRounds: undefined,
+        maxLlmCalls: 7,
       });
     });
   });

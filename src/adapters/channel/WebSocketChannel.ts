@@ -35,7 +35,7 @@ type ClientMessage =
       message: string;
       model?: string;
       maxTokens?: number;
-      maxToolRounds?: number;
+      maxLlmCalls?: number;
     }
   | {
       type: 'approval_resolve';
@@ -260,7 +260,7 @@ export class WebSocketChannel implements Channel {
           message: readNonEmptyString(parsed.message, 'message'),
           model: readOptionalString(parsed.model, 'model'),
           maxTokens: readOptionalPositiveInteger(parsed.maxTokens, 'maxTokens'),
-          maxToolRounds: readOptionalPositiveInteger(parsed.maxToolRounds, 'maxToolRounds'),
+          maxLlmCalls: readOptionalPositiveInteger(parsed.maxLlmCalls, 'maxLlmCalls'),
         };
       case 'approval_resolve': {
         const decision = parsed.decision;
@@ -326,7 +326,7 @@ export class WebSocketChannel implements Channel {
       sessionKey: message.sessionKey,
       hasModelOverride: Boolean(message.model),
       hasMaxTokens: message.maxTokens !== undefined,
-      hasMaxToolRounds: message.maxToolRounds !== undefined,
+      hasMaxLlmCalls: message.maxLlmCalls !== undefined,
       messageLength: message.message.length,
     });
     await handler({
@@ -335,7 +335,7 @@ export class WebSocketChannel implements Channel {
       message: message.message,
       model: message.model,
       maxTokens: message.maxTokens,
-      maxToolRounds: message.maxToolRounds,
+      maxLlmCalls: message.maxLlmCalls,
     });
   }
 

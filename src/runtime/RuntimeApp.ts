@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentEvent } from '../core/runner/index.js';
+import type { ChatMessage } from '../adapters/llm/types.js';
 import { TurnInteractionManager } from '../adapters/channel/TurnInteractionManager.js';
 import type {
   ApprovalInteractionRequest,
@@ -13,6 +14,12 @@ import type { ContextFile } from '../core/workspace/types.js';
 import { bootstrapRuntime } from './bootstrap.js';
 import { classifyRuntimeError, createRuntimeError } from './errors.js';
 import { buildSystemPromptParams, resolveContextLoadMode } from './prompt-factory.js';
+import type {
+  MessageRouteContext,
+  PendingSteeringInput,
+  QueuedChannelTurn,
+  TurnLaunchContext,
+} from './queue-types.js';
 import type {
   RunTurnParams,
   RunTurnResult,
@@ -34,15 +41,22 @@ export class RuntimeApp {
   private readonly inFlightRuns = new Set<Promise<unknown>>();
   /** Per-session 串行 gate：同一 sessionKey 同时只允许一个 turn。跨 session 可并发 */
   private readonly inFlightSessions = new Set<string>();
+  /** 每个 session 的普通消息队列；消息在真正启动 turn 前先进入这里。 */
+  private readonly messageQueueBySession = new Map<string, QueuedChannelTurn[]>();
+  /** 当前活动 run-turn 的 steering inbox；由 runner 在执行过程中的注入点拉取并清空。 */
+  private readonly steeringInboxBySession = new Map<string, PendingSteeringInput[]>();
+  /**
+   * 仅跟踪当前正在运行的 run-turn；steering 路由依赖这个最小运行态。
+   * 它和 inFlightSessions 的区别是：前者表达“是否 busy”，这里表达“是否存在可接 steering 的活动 run-turn”。
+   */
+  private readonly activeTurnIdBySession = new Map<string, string>();
 
   // ── Channel 层 ──────────────────────────────────────────────────
   /** 与 bootstrap fanout 闭包共享引用：registerChannel 后注册的新 channel 实时可见 */
   private readonly channels: Channel[];
   private readonly turnInteractionManager: TurnInteractionManager;
-  /** turnId → 起源 channel，approval 路由用 */
-  private readonly originChannelByTurn = new Map<string, Channel>();
-  /** turnId → 起源 client（WebSocketChannel 用此字段定向） */
-  private readonly originClientByTurn = new Map<string, string>();
+  /** turnId → 交互路由上下文；当前最小实现仍用 channel 引用加 originClientId 做定向。 */
+  private readonly routeContextByTurn = new Map<string, MessageRouteContext>();
   private approvalRoutingWired = false;
   private channelsStarted = false;
 
@@ -185,7 +199,7 @@ export class RuntimeApp {
           input,
           sessionKey,
           turnId,
-          originClientId: this.originClientByTurn.get(turnId),
+          originClientId: this.routeContextByTurn.get(turnId)?.originClientId,
         });
         return result.decision === 'allow'
           ? { action: 'allow' as const }
@@ -198,7 +212,7 @@ export class RuntimeApp {
 
     // ② TurnInteractionManager → 起源 channel
     this.turnInteractionManager.onRequest((request) => {
-      const originChannel = this.originChannelByTurn.get(request.turnId);
+      const originChannel = this.routeContextByTurn.get(request.turnId)?.originChannel;
       if (!originChannel) {
         log.warn('interaction request has no origin channel', {
           interactionId: request.id,
@@ -233,7 +247,7 @@ export class RuntimeApp {
     });
 
     this.turnInteractionManager.onExpire((request) => {
-      const originChannel = this.originChannelByTurn.get(request.turnId);
+      const originChannel = this.routeContextByTurn.get(request.turnId)?.originChannel;
       if (!originChannel) {
         log.warn('interaction expiry has no origin channel', {
           interactionId: request.id,
@@ -296,41 +310,166 @@ export class RuntimeApp {
   /** 每个 channel 一份消息处理器，闭包绑定 channel 自身用于路由表登记 */
   private makeMessageHandler(channel: Channel) {
     return async (req: ChannelRunRequest) => {
-      const turnId = randomUUID();
-      this.originChannelByTurn.set(turnId, channel);
-      if (req.clientId) this.originClientByTurn.set(turnId, req.clientId);
-
       log.info('channel message received', {
         channelId: channel.id,
         clientId: req.clientId,
         sessionKey: req.sessionKey,
-        turnId,
         hasModelOverride: req.model !== undefined,
         hasMaxTokens: req.maxTokens !== undefined,
-        hasMaxToolRounds: req.maxToolRounds !== undefined,
+        hasMaxLlmCalls: req.maxLlmCalls !== undefined,
         messageChars: req.message.length,
       });
 
-      try {
-        await this.runTurn({
-          sessionKey: req.sessionKey,
-          message: req.message,
-          model: req.model,
-          maxTokens: req.maxTokens,
-          maxToolRounds: req.maxToolRounds,
-          turnId,
-        });
-      } finally {
-        this.originChannelByTurn.delete(turnId);
-        this.originClientByTurn.delete(turnId);
-        log.debug('channel message routing cleared', {
-          channelId: channel.id,
-          clientId: req.clientId,
-          sessionKey: req.sessionKey,
-          turnId,
-        });
-      }
+      await this.handleInboundChannelMessage(channel, req);
     };
+  }
+
+  /**
+   * Channel 入站统一先过 runtime intake。
+   * 这里先做最小分流：命中 steering 条件则附着到当前 turn，否则进入普通消息队列。
+   */
+  private async handleInboundChannelMessage(
+    channel: Channel,
+    req: ChannelRunRequest,
+  ): Promise<void> {
+    if (this.shouldRouteMessageToSteering(req.sessionKey)) {
+      this.enqueueSteeringInput(req.sessionKey, req.message, this.buildMessageRouteContext(channel, req));
+      log.info('channel message routed to steering', {
+        channelId: channel.id,
+        clientId: req.clientId,
+        sessionKey: req.sessionKey,
+        messageChars: req.message.length,
+      });
+      return;
+    }
+
+    const queuedTurn: QueuedChannelTurn = {
+      sessionKey: req.sessionKey,
+      message: req.message,
+      launchContext: this.buildTurnLaunchContext(req),
+      routeContext: this.buildMessageRouteContext(channel, req),
+    };
+
+    this.enqueueQueuedTurn(queuedTurn);
+    log.info('channel message enqueued', {
+      channelId: channel.id,
+      clientId: req.clientId,
+      sessionKey: req.sessionKey,
+      queueLength: this.messageQueueBySession.get(req.sessionKey)?.length ?? 0,
+      messageChars: req.message.length,
+    });
+
+    const started = this.scheduleNextQueuedTurn(req.sessionKey);
+    if (started) {
+      await started;
+    }
+  }
+
+  /**
+   * steering 只在配置开启 steer 模式且当前 session 确实有活动 run-turn 时接收。
+   * 这样可以保证“没有活动 turn 的消息默认回到普通排队路径”。
+   */
+  private shouldRouteMessageToSteering(sessionKey: string): boolean {
+    return this.resources.resolvedConfig.runner.inTurnMessageMode === 'steer'
+      && this.activeTurnIdBySession.has(sessionKey);
+  }
+
+  private buildTurnLaunchContext(req: ChannelRunRequest): TurnLaunchContext | undefined {
+    if (
+      req.model === undefined
+      && req.maxTokens === undefined
+      && req.maxLlmCalls === undefined
+    ) {
+      return undefined;
+    }
+
+    return {
+      model: req.model,
+      maxTokens: req.maxTokens,
+      maxLlmCalls: req.maxLlmCalls,
+    };
+  }
+
+  private buildMessageRouteContext(channel: Channel, req: ChannelRunRequest): MessageRouteContext {
+    return {
+      originChannel: channel,
+      originClientId: req.clientId,
+    };
+  }
+
+  /** 普通消息入队只修改局部 queue state；真正何时启动 turn 交给 scheduleNextQueuedTurn 决定。 */
+  private enqueueQueuedTurn(item: QueuedChannelTurn): void {
+    const queue = this.messageQueueBySession.get(item.sessionKey) ?? [];
+    queue.push(item);
+    this.messageQueueBySession.set(item.sessionKey, queue);
+  }
+
+  /**
+   * 活动 turn 的 steering inbox 采用追加写入；
+   * 当前 runner 只消费文本，但这里仍保留 routeContext 以对齐统一消息模型，便于后续审计或扩展站内交互路由。
+   */
+  private enqueueSteeringInput(
+    sessionKey: string,
+    message: string,
+    routeContext?: MessageRouteContext,
+  ): void {
+    const inbox = this.steeringInboxBySession.get(sessionKey) ?? [];
+    inbox.push({ message, routeContext });
+    this.steeringInboxBySession.set(sessionKey, inbox);
+  }
+
+  /**
+   * 最小调度器：同 session 只拉起一条队头消息。
+   * 如果该 session 当前仍 busy，就保持队列静止，等当前 turn 释放后再续跑下一条。
+   */
+  private scheduleNextQueuedTurn(sessionKey: string): Promise<RunTurnResult> | undefined {
+    if (this.inFlightSessions.has(sessionKey)) {
+      return undefined;
+    }
+
+    const queue = this.messageQueueBySession.get(sessionKey);
+    if (!queue || queue.length === 0) {
+      return undefined;
+    }
+
+    const next = queue.shift();
+    if (!next) {
+      return undefined;
+    }
+
+    if (queue.length === 0) {
+      this.messageQueueBySession.delete(sessionKey);
+    }
+
+    return this.startQueuedTurn(next);
+  }
+
+  /**
+   * 队列项真正启动时才生成 turnId 并登记 origin 路由。
+   * 这样排队阶段不占用 turn 级资源，同时仍能把审批/交互回到原始 channel/client。
+   */
+  private async startQueuedTurn(item: QueuedChannelTurn): Promise<RunTurnResult> {
+    const turnId = randomUUID();
+    if (item.routeContext) {
+      this.routeContextByTurn.set(turnId, item.routeContext);
+    }
+
+    try {
+      return await this.runTurn({
+        sessionKey: item.sessionKey,
+        message: item.message,
+        model: item.launchContext?.model,
+        maxTokens: item.launchContext?.maxTokens,
+        maxLlmCalls: item.launchContext?.maxLlmCalls,
+        turnId,
+      });
+    } finally {
+      this.routeContextByTurn.delete(turnId);
+      log.debug('queued turn routing cleared', {
+        sessionKey: item.sessionKey,
+        turnId,
+      });
+    }
   }
 
   // ── runTurn ───────────────────────────────────────────────────────
@@ -349,6 +488,7 @@ export class RuntimeApp {
 
     const turnId = params.turnId ?? randomUUID();
     const turnStartedAt = Date.now();
+    this.activeTurnIdBySession.set(params.sessionKey, turnId);
     log.debug('turn start', {
       sessionKey: params.sessionKey,
       turnId,
@@ -390,8 +530,24 @@ export class RuntimeApp {
     } finally {
       this.inFlightRuns.delete(runPromise);
       this.inFlightSessions.delete(params.sessionKey);
+      if (this.activeTurnIdBySession.get(params.sessionKey) === turnId) {
+        this.activeTurnIdBySession.delete(params.sessionKey);
+      }
+      // steering 只服务当前这一轮活动 turn；turn 结束后整包丢弃，避免泄漏到下一轮。
+      this.steeringInboxBySession.delete(params.sessionKey);
       this.state.activeRunCount = Math.max(0, this.state.activeRunCount - 1);
       this.state.lastRunEndedAt = Date.now();
+
+      // 当前 turn 释放后，再尝试推进同 session 队头下一条消息，保持 session 内串行执行。
+      const next = this.scheduleNextQueuedTurn(params.sessionKey);
+      if (next) {
+        void next.catch((error) => {
+          log.warn('queued turn failed after scheduling', {
+            sessionKey: params.sessionKey,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
     }
   }
 
@@ -504,6 +660,10 @@ export class RuntimeApp {
 
   // ── 内部辅助 ──────────────────────────────────────────────────────
 
+  /**
+   * turn 一旦真正开始执行后，就进入既有的 turn body bridge：
+   * resolve session、按需 reload context、构建 prompts，然后把一次完整 turn 委托给 agentRunner。
+   */
   private async runTurnInternal(params: RunTurnParams & { turnId: string }): Promise<RunTurnResult> {
     await this.resources.sessionManager.resolveSession(params.sessionKey);
 
@@ -532,11 +692,11 @@ export class RuntimeApp {
       turnId: params.turnId,
       tools: this.resources.toolBundle.llmDefinitions,
       maxTokens: params.maxTokens ?? this.resources.resolvedConfig.llm.maxTokens,
-      maxToolRounds: params.maxToolRounds ?? this.resources.resolvedConfig.runner.maxToolRounds,
-      maxFollowUpRounds:
-        params.maxFollowUpRounds ?? this.resources.resolvedConfig.runner.maxFollowUpRounds,
+      maxLlmCalls: params.maxLlmCalls ?? this.resources.resolvedConfig.runner.maxLlmCalls,
       inTurnMessageMode:
         params.inTurnMessageMode ?? this.resources.resolvedConfig.runner.inTurnMessageMode,
+      // runtime 只提供“读取并清空当前 steering inbox”的能力，具体消费时机仍由 runner 控制。
+      getSteeringMessages: async () => this.drainSteeringMessages(params.sessionKey),
       compaction: this.resources.resolvedConfig.compaction,
       contextWindowTokens: this.resources.resolvedConfig.llm.contextWindowTokens,
     });
@@ -549,6 +709,29 @@ export class RuntimeApp {
       usage: result.usage,
       toolRounds: result.toolRounds,
     };
+  }
+
+  /**
+   * steering 输入在被 runner 读取后立即从 inbox 删除，避免同一条输入在多个注入点重复消费。
+   */
+  private async drainSteeringMessages(sessionKey: string): Promise<ChatMessage[]> {
+    const inbox = this.steeringInboxBySession.get(sessionKey);
+    if (!inbox || inbox.length === 0) {
+      return [];
+    }
+
+    this.steeringInboxBySession.delete(sessionKey);
+
+    const messages = await Promise.all(inbox.map(async (item) => {
+      // 当前 runner 只消费文本；routeContext 仍保留在 inbox 项里，用于后续扩展统一消息路由模型。
+      const builtUserPrompt = await this.resources.userPromptBuilder.build({ text: item.message });
+      return {
+        role: 'user' as const,
+        content: builtUserPrompt.text,
+      } satisfies ChatMessage;
+    }));
+
+    return messages;
   }
 
   private collectDisposables(): Array<[string, RuntimeDisposable]> {

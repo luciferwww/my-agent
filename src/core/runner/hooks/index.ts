@@ -4,8 +4,12 @@ export type {
   BeforeToolCallResult,
   AfterToolCallHook,
   AfterToolCallPayload,
+  BeforeCompactionHook,
+  BeforeCompactionPayload,
+  AfterCompactionHook,
+  AfterCompactionPayload,
   HookName,
   HookHandlerMap,
   HookRegistration,
 } from './types.js';
-export { runBeforeToolCall, runAfterToolCall } from './runner.js';
+export { runBeforeToolCall, runAfterToolCall, runBeforeCompaction, runAfterCompaction } from './runner.js';

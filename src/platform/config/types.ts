@@ -62,10 +62,8 @@ export interface CompactionConfig {
 
 /** Agent Runner 配置 */
 export interface RunnerConfig {
-  /** 内层 tool-use 最大轮数 */
-  maxToolRounds: number;
-  /** 外层 followUp 最大轮数 */
-  maxFollowUpRounds: number;
+  /** 单次 run 允许的最大 LLM 调用次数 */
+  maxLlmCalls: number;
   /** turn 内新消息默认注入策略 */
   inTurnMessageMode: 'steer' | 'followup';
 }

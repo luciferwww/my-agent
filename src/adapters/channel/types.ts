@@ -8,7 +8,7 @@ export interface ChannelRunRequest {
   message: string;
   model?: string;
   maxTokens?: number;
-  maxToolRounds?: number;
+  maxLlmCalls?: number;
   /** 发起本次请求的逻辑客户端标识；由具体 channel 提供，用于将交互请求路由回原始客户端 */
   clientId?: string;
 }

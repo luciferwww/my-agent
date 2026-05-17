@@ -218,7 +218,7 @@ export interface ChannelRunRequest {
   message: string;
   model?: string;
   maxTokens?: number;
-  maxToolRounds?: number;
+  maxLlmCalls?: number;
   /** 发起本次请求的逻辑客户端标识；WebSocketChannel 从客户端握手消息中读取并透传 */
   clientId?: string;
 }
@@ -757,7 +757,7 @@ src/adapters/channel/
     | { type: 'run_end'; sessionKey: string; turnId: string; result: RunResult }
     | { type: 'error'; sessionKey: string; turnId: string; error: Error }
     | { type: 'tool_result_pruned'; sessionKey: string; turnId: string; toolUseId: string; originalChars: number; prunedChars: number }
-    | { type: 'compaction_start'; sessionKey: string; turnId: string; trigger: 'preemptive' | 'overflow' | 'manual'; tokensBefore: number }
+    | { type: 'compaction_start'; sessionKey: string; turnId: string; trigger: 'preemptive' | 'overflow' | 'manual'; estimatedTokens: number }
     | { type: 'compaction_end'; sessionKey: string; turnId: string; tokensBefore: number; tokensAfter: number; droppedMessages: number };
   ```
 
@@ -885,7 +885,7 @@ async runTurn(params: RunTurnParams): Promise<RunTurnResult> {
    message: string;
    model?: string;
    maxTokens?: number;
-   maxToolRounds?: number;
+  maxLlmCalls?: number;
 +  /** 可选 turn 标识；不提供则由 RuntimeApp 自动生成 UUID */
 +  turnId?: string;
  }

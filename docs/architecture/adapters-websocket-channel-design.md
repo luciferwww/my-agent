@@ -199,7 +199,7 @@ type ClientMessage =
       message: string;
       model?: string;
       maxTokens?: number;
-      maxToolRounds?: number;
+      maxLlmCalls?: number;
     }
   | {
       type: 'approval_resolve';
@@ -214,7 +214,7 @@ type ClientMessage =
 - `sessionKey` 必须是非空字符串
 - `message` 必须是非空字符串
 - `model` 若存在必须是字符串
-- `maxTokens` / `maxToolRounds` 若存在必须是正整数
+- `maxTokens` / `maxLlmCalls` 若存在必须是正整数
 - `approval_resolve.id` 必须是非空字符串
 - `approval_resolve.decision` 仅允许 `'allow' | 'deny'`
 
@@ -246,13 +246,13 @@ type ClientMessage =
 | `message` | `string` | 是 | 本次用户输入 |
 | `model` | `string` | 否 | 覆盖默认模型 |
 | `maxTokens` | `number` | 否 | 覆盖默认最大输出 token |
-| `maxToolRounds` | `number` | 否 | 覆盖默认最大工具轮次 |
+| `maxLlmCalls` | `number` | 否 | 覆盖默认最大 LLM 调用次数 |
 
 约束：
 
 - `sessionKey.trim().length > 0`
 - `message.trim().length > 0`
-- `maxTokens`、`maxToolRounds` 若存在则必须为正整数
+- `maxTokens`、`maxLlmCalls` 若存在则必须为正整数
 - `run_turn` 必须发生在 `hello` 之后
 
 示例：
@@ -264,7 +264,7 @@ type ClientMessage =
   "message": "Summarize the latest build errors",
   "model": "claude-sonnet-4",
   "maxTokens": 2048,
-  "maxToolRounds": 6
+  "maxLlmCalls": 6
 }
 ```
 
@@ -469,7 +469,7 @@ sequenceDiagram
 4. 从连接上下文取 `clientId`
 5. 将 `clientId` 加入 `sessions[sessionKey]`
 6. 将 `sessionKey` 加入 `clientSessions[clientId]`
-7. 调用 `messageHandler({ sessionKey, message, model, maxTokens, maxToolRounds, clientId })`
+7. 调用 `messageHandler({ sessionKey, message, model, maxTokens, maxLlmCalls, clientId })`
 
 这里不在 WebSocketChannel 内生成 `turnId`。`turnId` 仍由 `RuntimeApp.makeMessageHandler()` 统一生成。
 
@@ -911,6 +911,6 @@ Phase 1 不做更复杂的背压、排队、优先级策略。
 3. `maxClients` 超限时使用哪个 close code 更合适。
 4. 是否允许单 websocket 连接同时订阅多个 session；本文档暂时按“允许”设计。
 5. 若要补 `hello(clientId)` 后的上层重投递，接口形状应是什么。
-6. 是否要在 Phase 1 就支持 `run_turn.maxFollowUpRounds` 等额外参数透传。
+6. 是否要在 Phase 1 就把 `run_turn.maxLlmCalls` 开放给所有客户端入口。
 
 这些问题都不影响当前 WebSocketChannel 的最小落地。

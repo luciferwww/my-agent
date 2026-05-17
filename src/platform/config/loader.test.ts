@@ -81,7 +81,7 @@ describe('loadConfig', () => {
     expect(config.agents.defaults.memory.search.maxResults).toBe(10);
 
     // Non-overridden values stay default
-    expect(config.agents.defaults.runner.maxToolRounds).toBe(10);
+    expect(config.agents.defaults.runner.maxLlmCalls).toBe(12);
     expect(config.agents.defaults.memory.search.minScore).toBe(0.25);
     expect(config.agents.defaults.memory.embedding.model).toBe('Xenova/all-MiniLM-L6-v2');
   });
@@ -182,6 +182,7 @@ describe('resolveAgentConfig', () => {
           },
         ],
       },
+      logger: {},
     };
 
     const resolved = resolveAgentConfig(config, { agentId: 'coding' });
@@ -192,7 +193,7 @@ describe('resolveAgentConfig', () => {
     expect(resolved.memory.enabled).toBe(false);
 
     // Inherited from defaults
-    expect(resolved.runner.maxToolRounds).toBe(10);
+    expect(resolved.runner.maxLlmCalls).toBe(12);
     expect(resolved.memory.embedding.model).toBe('Xenova/all-MiniLM-L6-v2');
     expect(resolved.prompt.mode).toBe('full');
   });
@@ -206,6 +207,7 @@ describe('resolveAgentConfig', () => {
           { id: 'main', llm: { apiKey: 'from-list' } },
         ],
       },
+      logger: {},
     };
 
     const resolved = resolveAgentConfig(config, {

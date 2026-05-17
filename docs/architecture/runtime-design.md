@@ -306,8 +306,7 @@ export interface RunTurnParams {
   message: string;
   model?: string;
   maxTokens?: number;
-  maxToolRounds?: number;
-  maxFollowUpRounds?: number;
+  maxLlmCalls?: number;
   promptMode?: AgentDefaults['prompt']['mode'];
   safetyLevel?: AgentDefaults['prompt']['safetyLevel'];
   reloadContextFiles?: boolean;
@@ -651,10 +650,8 @@ export class RuntimeApp {
       systemPrompt,
       tools: this.resources.toolBundle.llmDefinitions,
       maxTokens: params.maxTokens ?? this.resources.resolvedConfig.llm.maxTokens,
-      maxToolRounds:
-        params.maxToolRounds ?? this.resources.resolvedConfig.runner.maxToolRounds,
-      maxFollowUpRounds:
-        params.maxFollowUpRounds ?? this.resources.resolvedConfig.runner.maxFollowUpRounds,
+      maxLlmCalls:
+        params.maxLlmCalls ?? this.resources.resolvedConfig.runner.maxLlmCalls,
     });
 
     const wrapped: RunTurnResult = {

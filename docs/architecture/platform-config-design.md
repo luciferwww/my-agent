@@ -176,8 +176,7 @@ interface LLMConfig {
 
 /** Agent Runner 配置 */
 interface RunnerConfig {
-  maxToolRounds: number;    // 内层 tool-use 最大轮数 → 10
-  maxFollowUpRounds: number; // 外层 followUp 最大轮数 → 5
+  maxLlmCalls: number;       // 单次 run 允许的最大 LLM 调用次数 → 12
   inTurnMessageMode: 'steer' | 'followup'; // turn 内新消息默认注入策略 → 'followup'
 }
 

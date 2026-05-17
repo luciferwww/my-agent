@@ -1,7 +1,7 @@
-# Hook System — Phase 1 设计文档
+# Hook System 设计文档
 
-> 状态：Phase 1 已实现
-> 范围：Phase 1（`before_tool_call` + `after_tool_call`）
+> 状态：已实现 `before_tool_call`、`after_tool_call`、`before_compaction`、`after_compaction`
+> 范围：tool 调用拦截 + compaction 观察 hook
 > 参考：OpenClaw hook 实现（pi-tools.before-tool-call.ts / pi-embedded-subscribe.handlers.tools.ts）
 
 ---
@@ -18,6 +18,8 @@
 
 - `before_tool_call` — 执行前拦截（approval、block、参数修改）
 - `after_tool_call` — 执行后观察（日志、审计）
+- `before_compaction` — 压缩开始前观察（预算记录、遥测）
+- `after_compaction` — 压缩完成后观察（压缩效果、审计）
 
 ### 不在 Phase 1 范围内
 
@@ -33,7 +35,7 @@
 | 类型 | 执行方式 | 能否修改数据 | 典型用途 |
 |------|----------|------------|---------|
 | **Interceptor** | sequential，逐个 await | 是（modify / deny） | `before_tool_call` |
-| **Observer** | parallel，fire-and-forget | 否 | `after_tool_call` |
+| **Observer** | parallel，fire-and-forget | 否 | `after_tool_call`、`before_compaction`、`after_compaction` |
 
 ---
 
@@ -78,6 +80,30 @@ export interface AfterToolCallPayload {
 export type AfterToolCallHook = (
   payload: AfterToolCallPayload,
 ) => void | Promise<void>;
+
+export interface BeforeCompactionPayload {
+  trigger: 'preemptive' | 'overflow' | 'manual';
+  estimatedTokens: number;
+  turnId: string;
+  sessionKey: string;
+}
+
+export type BeforeCompactionHook = (
+  payload: BeforeCompactionPayload,
+) => void | Promise<void>;
+
+export interface AfterCompactionPayload {
+  trigger: 'preemptive' | 'overflow' | 'manual';
+  tokensBefore: number;
+  tokensAfter: number;
+  droppedMessages: number;
+  turnId: string;
+  sessionKey: string;
+}
+
+export type AfterCompactionHook = (
+  payload: AfterCompactionPayload,
+) => void | Promise<void>;
 ```
 
 ### 设计说明
@@ -116,11 +142,13 @@ on<K extends HookName>(
 `HookName` 和 `HookHandlerMap` 定义在 `src/core/runner/hooks/types.ts`：
 
 ```typescript
-export type HookName = 'before_tool_call' | 'after_tool_call';
+export type HookName = 'before_tool_call' | 'after_tool_call' | 'before_compaction' | 'after_compaction';
 
 export type HookHandlerMap = {
   before_tool_call: BeforeToolCallHook;
   after_tool_call: AfterToolCallHook;
+  before_compaction: BeforeCompactionHook;
+  after_compaction: AfterCompactionHook;
 };
 
 export interface HookRegistration<K extends HookName = HookName> {
@@ -341,12 +369,10 @@ src/core/runner/
 
 | 当前 AgentEvent | 对应 OpenClaw hook | 类型 | 说明 |
 |---|---|---|---|
-| `compaction_start` | `before_compaction` | Observer | 当初为省事直接 emit，应改为 hook |
-| `compaction_end` | `after_compaction` | Observer | 同上 |
 | `run_end` | `agent_end` | Observer | run 结束通知，OpenClaw 是 hook |
 | `llm_call` | `llm_input` | Observer | OpenClaw 的 `llm_input` 携带完整 LLM payload，比 `llm_call` 更丰富 |
 
-迁移是破坏性变更（影响所有 `onEvent` 消费方），需独立设计文档，不在 Phase 1 范围。
+`before_compaction` / `after_compaction` 已作为 hook 暴露；现有 `compaction_start` / `compaction_end` 事件继续保留，避免破坏已有 `onEvent` 消费方。其余迁移仍需独立设计文档。
 
 ### 10.2 新增 hook（无对应 AgentEvent）
 

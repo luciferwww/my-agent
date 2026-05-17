@@ -3,8 +3,8 @@ import type { AgentDefaults } from '../platform/config/types.js';
 import { buildSystemPromptParams, resolveContextLoadMode } from './prompt-factory.js';
 
 const baseConfig: AgentDefaults = {
-  llm: { maxTokens: 4096 },
-  runner: { maxToolRounds: 10, maxFollowUpRounds: 5, inTurnMessageMode: 'followup' },
+  llm: { maxTokens: 4096, contextWindowTokens: 200_000 },
+  runner: { maxLlmCalls: 12, inTurnMessageMode: 'followup' },
   memory: {
     enabled: false,
     dbPath: '.agent/memory.sqlite',
@@ -16,6 +16,15 @@ const baseConfig: AgentDefaults = {
   session: { dir: 'sessions' },
   tools: { execTimeout: 30, readMaxLines: 200, webFetchTimeout: 30_000, webFetchMaxChars: 50_000 },
   workspace: { agentDir: '.agent', maxFileChars: 20_000, maxTotalChars: 150_000 },
+  compaction: {
+    enabled: true,
+    reserveTokens: 20_000,
+    keepRecentTurns: 3,
+    toolResultContextShare: 0.5,
+    toolResultHeadChars: 10_000,
+    toolResultTailChars: 5_000,
+    timeoutSeconds: 300,
+  },
 };
 
 describe('runtime prompt factory', () => {

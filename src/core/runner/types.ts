@@ -35,10 +35,8 @@ export interface RunParams {
   tools?: ToolDefinition[];
   /** 最大 token 数，默认 4096 */
   maxTokens?: number;
-  /** 内层循环：tool use 最大循环次数，每次外层迭代独立计数，默认 10 */
-  maxToolRounds?: number;
-  /** 外层循环：followUp 最大循环次数，默认 5 */
-  maxFollowUpRounds?: number;
+  /** 单次 run 允许的最大 LLM 调用次数，默认 12 */
+  maxLlmCalls?: number;
   /** turn 内新消息注入模式：'steer' 立即注入，'followup' 外层排队 */
   inTurnMessageMode?: InTurnMessageMode;
   /**
@@ -108,7 +106,7 @@ export type AgentEvent =
       sessionKey: string;
       turnId: string;
       trigger: 'preemptive' | 'overflow' | 'manual';
-      tokensBefore: number;
+      estimatedTokens: number;
     }
   /** 压缩结束：摘要写入 session 后触发，包含压缩效果统计 */
   | {

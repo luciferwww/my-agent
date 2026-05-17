@@ -196,7 +196,7 @@ describe('AgentRunner', () => {
       expect(result.toolRounds).toBe(2);
     });
 
-    it('respects maxToolRounds limit', async () => {
+    it('respects maxLlmCalls limit', async () => {
       // LLM 每次都返回 tool_use
       const infiniteToolResponses = Array.from({ length: 20 }, () => [
         { type: 'message_start' as const },
@@ -218,15 +218,13 @@ describe('AgentRunner', () => {
         model: 'test',
         systemPrompt: '',
         turnId: 'test-turn',
-        maxToolRounds: 3,
+        maxLlmCalls: 3,
       });
 
-      // maxToolRounds=3 意味着最多执行 3 轮工具调用
-      // 第一次 LLM 调用（hasMoreToolCalls=true）→ tool_use → 执行 → toolRounds=1
-      // 第二次 LLM 调用 → tool_use → 执行 → toolRounds=2
-      // 第三次 LLM 调用 → tool_use → 执行 → toolRounds=3
-      // 第四次 LLM 调用 → tool_use → toolRounds(3) >= maxToolRounds(3) → break
+      // maxLlmCalls=3 意味着本次 run 最多只进行 3 次 LLM 调用。
       expect(result.toolRounds).toBe(3);
+      expect(result.stopReason).toBe('max_llm_calls');
+      expect(result.text).toBe('');
     });
 
     it('returns error when no toolExecutor and LLM requests tool', async () => {
@@ -422,6 +420,47 @@ describe('AgentRunner', () => {
       expect(result.text).toBe('second');
       expect(capturedCalls).toHaveLength(2);
       expect(capturedCalls[1]!.some((m) => m.role === 'user' && m.content === 'queued followup')).toBe(true);
+    });
+
+    it('stops before followup retry when maxLlmCalls is exhausted', async () => {
+      let injected = false;
+      const capturedCalls: ChatParams['messages'][] = [];
+
+      const llmClient: LLMClient = {
+        async *chatStream(params: ChatParams) {
+          capturedCalls.push(params.messages.map((m) => ({ ...m })));
+          yield { type: 'message_start' } as StreamEvent;
+          yield { type: 'text_delta', text: 'first pass' } as StreamEvent;
+          yield {
+            type: 'message_end',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 8, outputTokens: 4 },
+          } as StreamEvent;
+        },
+        async chat() {
+          throw new Error('Not used');
+        },
+      };
+
+      const runner = new AgentRunner({ llmClient, sessionManager });
+      const result = await runner.run({
+        sessionKey: 'main',
+        message: 'start',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'test-turn',
+        inTurnMessageMode: 'followup',
+        maxLlmCalls: 1,
+        getInTurnMessages: () => {
+          if (injected) return [];
+          injected = true;
+          return [{ role: 'user', content: 'queued followup' }];
+        },
+      });
+
+      expect(capturedCalls).toHaveLength(1);
+      expect(result.stopReason).toBe('max_llm_calls');
+      expect(result.text).toBe('first pass');
     });
   });
 
@@ -738,6 +777,65 @@ describe('AgentRunner', () => {
       expect(afterPayloads[0]?.durationMs).toBeGreaterThanOrEqual(0);
     });
 
+    it('before_compaction and after_compaction fire around preemptive compaction', async () => {
+      await sessionManager.appendMessage('main', { role: 'user', content: 'A'.repeat(800) });
+      await sessionManager.appendMessage('main', { role: 'assistant', content: 'B'.repeat(800) });
+      await sessionManager.appendMessage('main', { role: 'user', content: 'recent question' });
+      await sessionManager.appendMessage('main', { role: 'assistant', content: 'recent answer' });
+
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'Condensed summary.' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 20, outputTokens: 5 } },
+        ],
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'Done after compaction.' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 15, outputTokens: 5 } },
+        ],
+      ]);
+
+      const beforePayloads: Array<{ trigger: string; estimatedTokens: number }> = [];
+      const afterPayloads: Array<{ trigger: string; tokensBefore: number; tokensAfter: number; droppedMessages: number }> = [];
+      const runner = new AgentRunner({ llmClient, sessionManager });
+      runner.on('before_compaction', async ({ trigger, estimatedTokens }) => {
+        beforePayloads.push({ trigger, estimatedTokens });
+      });
+      runner.on('after_compaction', async ({ trigger, tokensBefore, tokensAfter, droppedMessages }) => {
+        afterPayloads.push({ trigger, tokensBefore, tokensAfter, droppedMessages });
+      });
+
+      const result = await runner.run({
+        sessionKey: 'main',
+        message: 'Continue',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'test-turn',
+        contextWindowTokens: 120,
+        compaction: {
+          enabled: true,
+          reserveTokens: 0,
+          keepRecentTurns: 1,
+          toolResultContextShare: 0.5,
+          toolResultHeadChars: 100,
+          toolResultTailChars: 100,
+          timeoutSeconds: 30,
+        },
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(result.compacted).toBe(true);
+      expect(beforePayloads).toHaveLength(1);
+      expect(beforePayloads[0]?.trigger).toBe('preemptive');
+      expect(beforePayloads[0]?.estimatedTokens).toBeGreaterThan(120);
+      expect(afterPayloads).toHaveLength(1);
+      expect(afterPayloads[0]?.trigger).toBe('preemptive');
+      expect(afterPayloads[0]?.tokensBefore).toBeGreaterThan(afterPayloads[0]?.tokensAfter ?? 0);
+      expect(afterPayloads[0]?.droppedMessages).toBe(4);
+    });
+
     it('priority: higher priority hook runs first', async () => {
       const llmClient = createMockLLMClient([
         [
@@ -765,14 +863,6 @@ describe('AgentRunner', () => {
       await runner.run({ sessionKey: 'main', message: 'Go', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       expect(order).toEqual([10, 1]);
-    });
-
-    it('on() supports chaining', () => {
-      const runner = new AgentRunner({ llmClient: createMockLLMClient([]), sessionManager });
-      const result = runner
-        .on('before_tool_call', async () => ({ action: 'allow' }))
-        .on('after_tool_call', async () => {});
-      expect(result).toBe(runner);
     });
   });
 });

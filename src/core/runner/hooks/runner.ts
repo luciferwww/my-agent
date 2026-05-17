@@ -5,11 +5,30 @@ import type {
   BeforeToolCallResult,
   AfterToolCallHook,
   AfterToolCallPayload,
+  BeforeCompactionHook,
+  BeforeCompactionPayload,
+  AfterCompactionHook,
+  AfterCompactionPayload,
 } from './types.js';
 
 const logger = Logger.get('HookRunner');
 
 type NamedHandler<T> = { handler: T; name?: string };
+
+type ObserverHook<TPayload> = (payload: TPayload) => void | Promise<void>;
+
+function runObserverHooks<TPayload>(
+  hooks: NamedHandler<ObserverHook<TPayload>>[],
+  payload: TPayload,
+  hookName: string,
+): void {
+  for (const { handler, name } of hooks) {
+    Promise.resolve(handler(payload)).catch((err) => {
+      const tag = name ? `:${name}` : '';
+      logger.warn(`[hook${tag}] ${hookName} failed`, { error: err instanceof Error ? err.message : String(err) });
+    });
+  }
+}
 
 /**
  * 顺序执行所有 before_tool_call hooks。
@@ -52,10 +71,19 @@ export function runAfterToolCall(
   hooks: NamedHandler<AfterToolCallHook>[],
   payload: AfterToolCallPayload,
 ): void {
-  for (const { handler, name } of hooks) {
-    Promise.resolve(handler(payload)).catch((err) => {
-      const tag = name ? `:${name}` : '';
-      logger.warn(`[hook${tag}] after_tool_call failed`, { error: err instanceof Error ? err.message : String(err) });
-    });
-  }
+  runObserverHooks(hooks, payload, 'after_tool_call');
+}
+
+export function runBeforeCompaction(
+  hooks: NamedHandler<BeforeCompactionHook>[],
+  payload: BeforeCompactionPayload,
+): void {
+  runObserverHooks(hooks, payload, 'before_compaction');
+}
+
+export function runAfterCompaction(
+  hooks: NamedHandler<AfterCompactionHook>[],
+  payload: AfterCompactionPayload,
+): void {
+  runObserverHooks(hooks, payload, 'after_compaction');
 }

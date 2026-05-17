@@ -32,8 +32,7 @@ export const DEFAULT_AGENT_CONFIG: AgentDefaults = {
   },
 
   runner: {
-    maxToolRounds: 10,
-    maxFollowUpRounds: 5,
+    maxLlmCalls: 12,
     inTurnMessageMode: 'followup',
   },
 

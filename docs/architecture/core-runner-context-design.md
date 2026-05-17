@@ -10,6 +10,8 @@
 
 对话压缩模块为 AgentRunner 提供上下文窗口管理能力，防止长对话超出 LLM 上下文窗口导致调用失败。
 
+本设计是 AgentRunner 的子设计文档。AgentRunner 负责压缩触发判断、执行编排和 retry 控制流；本文件描述其使用的上下文预算与压缩机制。
+
 **职责**：
 - Token 估算（发送 LLM 前预判上下文大小）
 - Tool result 裁剪（不调 LLM，仅内存操作）
@@ -248,15 +250,13 @@ export interface RunResult {
 
   /** 本次运行是否触发了压缩 */
   compacted?: boolean;                // ← 新增
-  /** 压缩统计（仅在 compacted=true 时有值） */
-  compactionStats?: {                 // ← 新增
-    tokensBefore: number;
-    tokensAfter: number;
-    droppedMessages: number;
-    trigger: 'preemptive' | 'overflow' | 'manual';
-  };
 }
 ```
+
+当前不在 `RunResult` 中增加 `compactionStats`。详细压缩统计通过 `compaction_end` 事件提供。
+是否需要在 `RunResult` 暴露压缩统计，待明确消费场景和字段语义后再讨论。
+
+压缩生命周期对扩展点开放时，优先通过 `before_compaction` / `after_compaction` hook 暴露；`compaction_start` / `compaction_end` 事件继续保留给现有事件消费方。
 
 ### 4.7 AgentEvent 扩展
 
@@ -1024,8 +1024,7 @@ const result = await agentRunner.run({
   systemPrompt,
   tools: toolBundle.llmDefinitions,
   maxTokens: config.llm.maxTokens,
-  maxToolRounds: config.runner.maxToolRounds,
-  maxFollowUpRounds: config.runner.maxFollowUpRounds,
+  maxLlmCalls: config.runner.maxLlmCalls,
   compaction: config.compaction,                        // ← 新增
   contextWindowTokens: config.llm.contextWindowTokens,  // ← 新增
 });
@@ -1059,7 +1058,7 @@ const result = await agentRunner.run({
 - [x] `src/core/runner/types.ts`
   - [x] `RunParams` 新增 `compaction?: CompactionConfig`
   - [x] `RunParams` 新增 `contextWindowTokens?: number`
-  - [x] `RunResult` 新增 `compacted` / `compactionStats`
+  - [x] `RunResult` 新增 `compacted`
   - [x] `AgentEvent` 新增 `tool_result_pruned` 事件
   - [x] `AgentEvent` 新增 `compaction_start` / `compaction_end`（Phase 2）
 - [x] `src/core/runner/AgentRunner.ts`
@@ -1109,6 +1108,8 @@ const result = await agentRunner.run({
 - [ ] 压缩指标上报
   - [ ] `RuntimeApp` 的 `onEvent` 转发压缩事件
   - [ ] `getState()` 返回中包含最近压缩统计
+- [ ] 是否在 `RunResult` 暴露 `compactionStats`
+  - [ ] 先明确消费方，以及字段语义是“最后一次压缩”还是“整次 run 汇总”
 
 ---
 

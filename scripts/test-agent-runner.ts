@@ -20,8 +20,7 @@ const WORKSPACE_DIR = './test-workspace';
 console.log('\n=== Agent Runner Integration Test ===\n');
 console.log(`Model: ${MODEL}`);
 console.log(`Base URL: ${ANTHROPIC_BASE_URL}`);
-console.log(`maxToolRounds: 2`);
-console.log(`maxFollowUpRounds: 2\n`);
+console.log(`maxLlmCalls: 4\n`);
 
 // 1. Initialize all modules
 
@@ -88,8 +87,7 @@ const result1 = await runner.run({
   message: 'Hello! My name is Alice.',
   model: MODEL,
   systemPrompt,
-  maxToolRounds: 2,
-  maxFollowUpRounds: 2,
+  maxLlmCalls: 4,
 });
 
 console.log(`\nUsage: in=${result1.usage.inputTokens} out=${result1.usage.outputTokens}`);
@@ -103,8 +101,7 @@ const result2 = await runner.run({
   message: 'What is my name?',
   model: MODEL,
   systemPrompt,
-  maxToolRounds: 2,
-  maxFollowUpRounds: 2,
+  maxLlmCalls: 4,
 });
 
 console.log(`\nUsage: in=${result2.usage.inputTokens} out=${result2.usage.outputTokens}`);

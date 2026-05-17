@@ -81,8 +81,7 @@ export interface RunTurnParams {
   message: string;
   model?: string;
   maxTokens?: number;
-  maxToolRounds?: number;
-  maxFollowUpRounds?: number;
+  maxLlmCalls?: number;
   inTurnMessageMode?: 'steer' | 'followup';
   promptMode?: AgentDefaults['prompt']['mode'];
   safetyLevel?: AgentDefaults['prompt']['safetyLevel'];

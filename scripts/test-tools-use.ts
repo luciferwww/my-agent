@@ -140,7 +140,7 @@ async function runScenario(scenarioName: string, message: string) {
     model: MODEL,
     systemPrompt,
     tools: toolDefinitions,
-    maxToolRounds: 5,
+    maxLlmCalls: 5,
   });
 
   console.log(`\n--- Session Messages ---`);

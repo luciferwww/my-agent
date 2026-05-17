@@ -12,7 +12,7 @@ import type {
 } from './types.js';
 import type { CompactionConfig } from '../../platform/config/types.js';
 import type { HookName, HookHandlerMap, HookRegistration } from './hooks/index.js';
-import { runBeforeToolCall, runAfterToolCall } from './hooks/index.js';
+import { runBeforeToolCall, runAfterToolCall, runBeforeCompaction, runAfterCompaction } from './hooks/index.js';
 import { pruneToolResults, pruneToolResultsAggregate } from './context/tool-result-pruning.js';
 import { checkContextBudget } from './context/context-budget.js';
 import { estimatePromptTokens } from './context/token-estimation.js';
@@ -22,8 +22,7 @@ import { compactMessages } from './context/compaction.js';
 // ── 常量 ────────────────────────────────────────────────────
 
 const DEFAULT_MAX_TOKENS = 4096;
-const DEFAULT_MAX_TOOL_ROUNDS = 10;
-const DEFAULT_MAX_FOLLOWUP_ROUNDS = 5;
+const DEFAULT_MAX_LLM_CALLS = 12;
 const DEFAULT_IN_TURN_MESSAGE_MODE = 'followup';
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000;
 
@@ -169,8 +168,7 @@ export class AgentRunner {
     contextWindowTokens: number,
     compaction: CompactionConfig,
   ): Promise<Omit<RunResult, 'compacted'>> {
-    const maxToolRounds = params.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
-    const maxFollowUpRounds = params.maxFollowUpRounds ?? DEFAULT_MAX_FOLLOWUP_ROUNDS;
+    const maxLlmCalls = params.maxLlmCalls ?? DEFAULT_MAX_LLM_CALLS;
     const inTurnMessageMode = params.inTurnMessageMode ?? DEFAULT_IN_TURN_MESSAGE_MODE;
     const maxTokens = params.maxTokens ?? DEFAULT_MAX_TOKENS;
 
@@ -223,20 +221,27 @@ export class AgentRunner {
     let totalToolRounds = 0;
     let lastContent: ChatContentBlock[] = [];
     let lastStopReason = 'end_turn';
-    let followUpRounds = 0;
+    let llmCallCount = 0;
 
-    // 外层：处理 followUp（当前预留为空，将来实现 steering 时填充）
+    // 外层：处理 followUp 注入
     outer: while (true) {
-      if (followUpRounds >= maxFollowUpRounds) {
-        break;
-      }
-
-      let toolRounds = 0; // 每次外层迭代重置（每轮独立额度）
       let hasMoreToolCalls = true; // 初始 true，保证至少一次 LLM 调用
 
       // 内层：LLM 调用 + tool use
       while (hasMoreToolCalls) {
-        this.emit({ type: 'llm_call', round: totalToolRounds });
+        if (llmCallCount >= maxLlmCalls) {
+          const text = this.extractText(lastContent);
+          return {
+            text,
+            content: lastContent,
+            stopReason: 'max_llm_calls',
+            usage: totalUsage,
+            toolRounds: totalToolRounds,
+          };
+        }
+
+        this.emit({ type: 'llm_call', round: llmCallCount });
+        llmCallCount++;
 
         // 流式调用 LLM（内部捕获 API 级别的 context overflow 错误）
         const llmResult = await this.callLLMStream({
@@ -276,12 +281,6 @@ export class AgentRunner {
           // 没有 tool calls → 退出内层循环
           hasMoreToolCalls = false;
         } else {
-          // 安全检查：toolRounds >= maxToolRounds → 不执行工具，退出内层
-          if (toolRounds >= maxToolRounds) {
-            hasMoreToolCalls = false;
-            break;
-          }
-
           // 执行工具
           const toolResultBlocks: ChatContentBlock[] = [];
           for (const toolUse of toolUseBlocks) {
@@ -357,7 +356,6 @@ export class AgentRunner {
             }
           }
 
-          toolRounds++;
           totalToolRounds++;
 
           // 每轮 tool 执行后检查 steering 消息。
@@ -373,7 +371,6 @@ export class AgentRunner {
       const followUpMessages = await this.getFollowUpMessages(params, inTurnMessageMode);
       if (followUpMessages.length > 0) {
         await this.appendInjectedMessages(params.sessionKey, messages, followUpMessages);
-        followUpRounds++;
         continue outer;
       }
 
@@ -407,9 +404,19 @@ export class AgentRunner {
   ): Promise<void> {
     // 加载当前历史消息（用于压缩，不含当前用户消息）
     const messages = this.loadHistory(params.sessionKey);
-    const tokensBefore = estimatePromptTokens({ messages });
+    const estimatedTokens = estimatePromptTokens({ messages });
 
-    this.emit({ type: 'compaction_start', trigger, tokensBefore });
+    const beforeCompactionHooks = this.getHooks('before_compaction');
+    if (beforeCompactionHooks.length > 0) {
+      runBeforeCompaction(beforeCompactionHooks, {
+        trigger,
+        estimatedTokens,
+        turnId: params.turnId,
+        sessionKey: params.sessionKey,
+      });
+    }
+
+    this.emit({ type: 'compaction_start', trigger, estimatedTokens });
 
     // 执行 LLM 摘要压缩
     const compactResult = await compactMessages({
@@ -434,6 +441,18 @@ export class AgentRunner {
       compactResult.record,
       firstKeptEntryId,
     );
+
+    const afterCompactionHooks = this.getHooks('after_compaction');
+    if (afterCompactionHooks.length > 0) {
+      runAfterCompaction(afterCompactionHooks, {
+        trigger,
+        tokensBefore: compactResult.stats.tokensBefore,
+        tokensAfter: compactResult.stats.tokensAfter,
+        droppedMessages: compactResult.stats.droppedMessages,
+        turnId: params.turnId,
+        sessionKey: params.sessionKey,
+      });
+    }
 
     this.emit({
       type: 'compaction_end',
