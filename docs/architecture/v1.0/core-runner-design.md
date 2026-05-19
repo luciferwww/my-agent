@@ -18,12 +18,12 @@ Agent Runner 是执行引擎，串联 `adapters/llm`、`core/session`、`core/to
 
 ### 1.1 职责
 
-- 编排 LLM 调用 → tool 执行 → tool 结果回传 → LLM 继续的两层循环；
+- 编排 LLM 调用 → tool 执行 → tool 结果回传 → LLM 继续的执行循环；
 - 上下文预算管理：决定何时裁剪 / 何时聚合裁剪 / 何时触发摘要压缩；
 - 压缩编排与外层重试：捕获 `ContextOverflowError`，调用 `compactMessages` 写入 session 后再次尝试 run；
 - 消息持久化：用户消息、assistant 回复、tool result 在产生时立即写入 session；
 - 触发 hook（`before_tool_call` / `after_tool_call` / `before_compaction` / `after_compaction`）与 event（`run_start` / `text_delta` / `tool_use` / `tool_result` / `llm_call` / `run_end` / `error` / `compaction_*` / `tool_result_pruned`）；
-- 在 turn 内注入点拉取 steering / followUp 消息（通过 reader 抽象，runtime 决定 reader 的实现）。
+- 在 turn 内 tool 迭代之间通过 `getSteeringMessages` reader 拉取 steering 消息（reader 实现由 runtime 提供）。
 
 ### 1.2 不属于本模块的职责
 
@@ -49,7 +49,6 @@ Runtime 层先完成配置解析，再把 Agent Runner 真正需要的最小输�
 - `tools`
 - `maxTokens`
 - `maxLlmCalls`
-- `inTurnMessageMode`
 - `compaction`
 - `contextWindowTokens`
 
@@ -72,12 +71,11 @@ Runtime 层先完成配置解析，再把 Agent Runner 真正需要的最小输�
 │   │   │   │    ├─ 'truncate_tool_results_only' → Layer 1.5 聚合裁剪      │
 │   │   │   │    └─ 'compact' → 抛 ContextOverflowError                    │
 │   │   │   ├─ delay-append currentPrompt                                  │
-│   │   │   ├─ 两层循环（外层 followup / 内层 tool use）                   │
+│   │   │   ├─ 执行循环（LLM 调用 + tool use）                              │
 │   │   │   │    ├─ callLLMStream → emit events                            │
 │   │   │   │    ├─ before_tool_call hook → executeTool → after_tool_call  │
-│   │   │   │    ├─ 内层 90% 阈值检查                                       │
-│   │   │   │    ├─ getSteeringMessages reader                             │
-│   │   │   │    └─ getFollowUpMessages reader（内层退出后）               │
+│   │   │   │    ├─ 90% 阈值检查                                            │
+│   │   │   │    └─ getSteeringMessages reader（每轮 tool 后）              │
 │   │   │   └─ return RunResult                                            │
 │   │   └─ catch ContextOverflowError → compactHistory → retry             │
 │   └─ emit run_end                                                        │
@@ -164,32 +162,21 @@ export interface RunParams {
   maxTokens?: number;
   /** 单次 run 允许的最大 LLM 调用次数，默认 12 */
   maxLlmCalls?: number;
-  /** turn 内新消息注入模式 */
-  inTurnMessageMode?: InTurnMessageMode;
-  /**
-   * 通用 turn 内消息读取回调。
-   * 根据 inTurnMessageMode，AgentRunner 会在 steering 或 followUp 注入点消费。
-   */
-  getInTurnMessages?: PendingMessageReader;
-  /** steering 专用消息读取回调（总在 steering 注入点消费） */
+  /** steering 消息读取回调（runner 在每轮 tool 执行后调用） */
   getSteeringMessages?: PendingMessageReader;
-  /** followUp 专用消息读取回调（总在 followUp 注入点消费） */
-  getFollowUpMessages?: PendingMessageReader;
   /** 压缩配置（由 RuntimeApp 传入） */
   compaction?: CompactionConfig;
   /** 模型上下文窗口大小（由 RuntimeApp 从 config.llm.contextWindowTokens 传入），默认 200,000 */
   contextWindowTokens?: number;
 }
 
-export type InTurnMessageMode = 'steer' | 'followup';
 export type PendingMessageReader = () => ChatMessage[] | Promise<ChatMessage[]>;
 ```
 
 设计要点：
 
 - **`turnId` 是必填字段**——AgentRunner 内部 emit / hook payload 都依赖它；RuntimeApp 层对调用方是可选（不传则自动生成），到达 AgentRunner 时已保证存在；
-- **`getSteeringMessages` 与 `getFollowUpMessages` 都是 reader 抽象**——AgentRunner 在注入点拉取，runtime 决定 reader 的实现（详见 [message-flow](./core-runner-message-flow.md)）；
-- **`getInTurnMessages` 是通用 reader**——按 `inTurnMessageMode` 路由到 steering 或 followUp 注入点；目前 RuntimeApp 不使用，留给未来"双路径"或"按消息内容动态判断"扩展。
+- **`getSteeringMessages` 是 reader 抽象**——AgentRunner 在每轮 tool 执行后调用，runtime 决定 reader 的实现（详见 [message-flow](./core-runner-message-flow.md)）；reader 未提供时 runner 视为无 steering 输入。
 
 ### 3.3 RunResult
 
@@ -343,7 +330,6 @@ private async runAttempt(
   compaction: CompactionConfig,
 ): Promise<Omit<RunResult, 'compacted'>> {
   const maxLlmCalls = params.maxLlmCalls ?? DEFAULT_MAX_LLM_CALLS;            // 12
-  const inTurnMessageMode = params.inTurnMessageMode ?? DEFAULT_IN_TURN_MESSAGE_MODE; // 'followup'
   const maxTokens = params.maxTokens ?? DEFAULT_MAX_TOKENS;                   // 4096
 
   // 1. 加载历史（自动感知压缩记录）
@@ -372,7 +358,7 @@ private async runAttempt(
   // 4. delay-append：预判通过后才把当前用户消息加入 messages
   messages = [...messages, { role: 'user', content: params.message }];
 
-  // 5. 两层循环（见 §5）
+  // 5. 执行循环（见 §5）
   // ...
 }
 ```
@@ -385,63 +371,55 @@ private async runAttempt(
 
 ---
 
-## 5. 两层循环
+## 5. 执行循环
 
 ```
 runAttempt 主体
   │
   ├─ 初始化：totalUsage / totalToolRounds / lastContent / lastStopReason / llmCallCount = 0
+  │  hasMoreToolCalls = true   ← 初始 true，保证至少一次 LLM 调用
   │
-  │  外层 while (true):  ← 处理 followUp 注入
+  │  while (hasMoreToolCalls):   ← 处理 LLM 调用 + tool calls + steering
   │    │
-  │    │  hasMoreToolCalls = true   ← 初始 true，保证至少一次 LLM 调用
+  │    ├─ 安全检查：llmCallCount >= maxLlmCalls?
+  │    │   └─ YES → return { stopReason: 'max_llm_calls', ... }
   │    │
-  │    │  内层 while (hasMoreToolCalls):  ← 处理 tool calls + steering
-  │    │    │
-  │    │    ├─ 安全检查：llmCallCount >= maxLlmCalls?
-  │    │    │   └─ YES → return { stopReason: 'max_llm_calls', ... }
-  │    │    │
-  │    │    ├─ emit { type: 'llm_call', round: llmCallCount }
-  │    │    ├─ llmCallCount++
-  │    │    │
-  │    │    ├─ callLLMStream({ model, system, messages, tools, maxTokens })
-  │    │    │   ├─ for await event of llmClient.chatStream:
-  │    │    │   │   ├─ text_delta → emit + 收集
-  │    │    │   │   ├─ tool_use   → 收集 content block
-  │    │    │   │   ├─ message_end → 记录 stopReason + usage
-  │    │    │   │   └─ error      → throw
-  │    │    │   └─ catch isContextOverflowError → throw ContextOverflowError
-  │    │    │
-  │    │    ├─ 累计 totalUsage
-  │    │    ├─ messages.push({ role: 'assistant', content: llmResult.content })
-  │    │    ├─ session.appendMessage('assistant', content)
-  │    │    │
-  │    │    ├─ stopReason ∈ {'error', 'aborted'}? → return
-  │    │    │
-  │    │    ├─ 检查 content 中有 tool_use blocks?
-  │    │    │   ├─ NO → hasMoreToolCalls = false
-  │    │    │   └─ YES:
-  │    │    │       ├─ 遍历每个 toolUse:
-  │    │    │       │   ├─ emit { type: 'tool_use', name, input }
-  │    │    │       │   ├─ before_tool_call hooks（sequential, priority 降序）
-  │    │    │       │   │   ├─ deny → 用 blocked ToolResult 占位、emit tool_result
-  │    │    │       │   │   └─ allow → effectiveInput = beforeResult.input
-  │    │    │       │   ├─ executeTool(name, effectiveInput)
-  │    │    │       │   ├─ emit { type: 'tool_result', name, result }
-  │    │    │       │   └─ after_tool_call hooks（parallel, fire-and-forget）
-  │    │    │       │
-  │    │    │       ├─ messages.push({ role: 'user', content: toolResultBlocks })
-  │    │    │       ├─ session.appendMessage('toolResult', toolResultBlocks)
-  │    │    │       ├─ Layer 1: pruneToolResults（新 tool result 追加后）
-  │    │    │       ├─ 内层 90% 阈值检查：
-  │    │    │       │   ├─ estimatePromptTokens > contextWindow * 0.9? → throw ContextOverflowError
-  │    │    │       ├─ totalToolRounds++
-  │    │    │       └─ getSteeringMessages reader → 若有则 appendInjectedMessages
-  │    │    │
-  │    │    内层退出（hasMoreToolCalls = false）
+  │    ├─ emit { type: 'llm_call', round: llmCallCount }
+  │    ├─ llmCallCount++
   │    │
-  │    └─ getFollowUpMessages reader → 若有则 appendInjectedMessages → continue 外层
-  │       否则 break 外层
+  │    ├─ callLLMStream({ model, system, messages, tools, maxTokens })
+  │    │   ├─ for await event of llmClient.chatStream:
+  │    │   │   ├─ text_delta → emit + 收集
+  │    │   │   ├─ tool_use   → 收集 content block
+  │    │   │   ├─ message_end → 记录 stopReason + usage
+  │    │   │   └─ error      → throw
+  │    │   └─ catch isContextOverflowError → throw ContextOverflowError
+  │    │
+  │    ├─ 累计 totalUsage
+  │    ├─ messages.push({ role: 'assistant', content: llmResult.content })
+  │    ├─ session.appendMessage('assistant', content)
+  │    │
+  │    ├─ stopReason ∈ {'error', 'aborted'}? → return
+  │    │
+  │    ├─ 检查 content 中有 tool_use blocks?
+  │    │   ├─ NO → hasMoreToolCalls = false
+  │    │   └─ YES:
+  │    │       ├─ 遍历每个 toolUse:
+  │    │       │   ├─ emit { type: 'tool_use', name, input }
+  │    │       │   ├─ before_tool_call hooks（sequential, priority 降序）
+  │    │       │   │   ├─ deny → 用 blocked ToolResult 占位、emit tool_result
+  │    │       │   │   └─ allow → effectiveInput = beforeResult.input
+  │    │       │   ├─ executeTool(name, effectiveInput)
+  │    │       │   ├─ emit { type: 'tool_result', name, result }
+  │    │       │   └─ after_tool_call hooks（parallel, fire-and-forget）
+  │    │       │
+  │    │       ├─ messages.push({ role: 'user', content: toolResultBlocks })
+  │    │       ├─ session.appendMessage('toolResult', toolResultBlocks)
+  │    │       ├─ Layer 1: pruneToolResults（新 tool result 追加后）
+  │    │       ├─ 90% 阈值检查：
+  │    │       │   ├─ estimatePromptTokens > contextWindow * 0.9? → throw ContextOverflowError
+  │    │       ├─ totalToolRounds++
+  │    │       └─ getSteeringMessages reader → 若有则 appendInjectedMessages
   │
   └─ return { text, content, stopReason, usage, toolRounds }
 ```
@@ -582,41 +560,28 @@ try {
 
 ## 7. In-turn 消息注入
 
-`RunParams` 提供三个 reader：
+Runner 只有一个 in-turn 注入点：**每轮 tool 执行结束后**，调用 `getSteeringMessages` reader 拉取额外消息并合并到 `messages`。
 
-- **`getSteeringMessages`**：总在 steering 注入点（内层循环每轮 tool 执行后）消费；
-- **`getFollowUpMessages`**：总在 followUp 注入点（内层循环退出后）消费；
-- **`getInTurnMessages`**：通用 reader，按 `inTurnMessageMode` 路由到对应注入点。
+reader 实现由 runtime 提供；不提供时 runner 视为无 steering 输入（reader 返回 `[]`，注入点空操作）。详见 [message-flow](./core-runner-message-flow.md)。
 
 ### 7.1 注入时机
 
 ```
-内层循环每轮 tool 执行后:
-  └─ getSteeringMessages reader（总是消费）
-  └─ inTurnMessageMode === 'steer' → 同时消费 getInTurnMessages reader
-
-内层循环退出后（hasMoreToolCalls = false）:
-  └─ getFollowUpMessages reader（总是消费）
-  └─ inTurnMessageMode === 'followup' → 同时消费 getInTurnMessages reader
+执行循环每轮 tool 执行后:
+  └─ getSteeringMessages reader → 若有则 appendInjectedMessages
 ```
 
 实现：
 
 ```typescript
-private async getSteeringMessages(params: RunParams, mode: InTurnMessageMode): Promise<ChatMessage[]> {
-  const explicit = await this.readPendingMessages(params.getSteeringMessages);
-  if (mode !== 'steer') return explicit;
-  const generic = await this.readPendingMessages(params.getInTurnMessages);
-  return [...explicit, ...generic];
-}
-
-private async getFollowUpMessages(params: RunParams, mode: InTurnMessageMode): Promise<ChatMessage[]> {
-  const explicit = await this.readPendingMessages(params.getFollowUpMessages);
-  if (mode !== 'followup') return explicit;
-  const generic = await this.readPendingMessages(params.getInTurnMessages);
-  return [...explicit, ...generic];
+// 每轮 tool 后内联调用
+const steeringMessages = await this.readPendingMessages(params.getSteeringMessages);
+if (steeringMessages.length > 0) {
+  await this.appendInjectedMessages(params.sessionKey, messages, steeringMessages);
 }
 ```
+
+`readPendingMessages` 是私有 helper，未提供 reader 时直接返回 `[]`。
 
 ### 7.2 注入消息的处理
 
@@ -637,13 +602,7 @@ private async appendInjectedMessages(
 
 - **同时追加到内存 `messages` 和持久化 session**：保证下次 `loadHistory` 能看到；
 - **`readPendingMessages` 做防御性过滤**：要求每条消息有 `role` ∈ `{user, assistant}` 与 `content` 字段，非法形态被丢弃；
-- **当前 runtime 仅 wire `getSteeringMessages`**：reader 由 `RuntimeApp.drainSteeringMessages` 提供，followUp 走 runtime 队列而非 reader（详见 [message-flow](./core-runner-message-flow.md)）。
-
-### 7.3 默认模式
-
-`DEFAULT_IN_TURN_MESSAGE_MODE = 'followup'`。
-
-`'followup'` 更保守：新消息不打断当前 turn 的执行流，等内层循环自然结束后注入。`'steer'` 在每轮 tool 执行后注入，能更快地影响后续 LLM 决策，但延迟仍受 "当前 LLM 调用剩余时间 + 一组 tool 执行时长" 限制（软 steering）。
+- **runner 不感知 followup 语义**：followup 由 RuntimeApp 入站队列承担——上一个 turn 结束后队头自然启动新 turn，runner 端只处理单 turn 内的 steering。
 
 ---
 
@@ -896,7 +855,6 @@ const result = await this.resources.agentRunner.run({
   tools: this.resources.toolBundle.llmDefinitions,
   maxTokens: params.maxTokens ?? this.resources.resolvedConfig.llm.maxTokens,
   maxLlmCalls: params.maxLlmCalls ?? this.resources.resolvedConfig.runner.maxLlmCalls,
-  inTurnMessageMode: params.inTurnMessageMode ?? this.resources.resolvedConfig.runner.inTurnMessageMode,
   getSteeringMessages: async () => this.drainSteeringMessages(params.sessionKey),
   compaction: this.resources.resolvedConfig.compaction,
   contextWindowTokens: this.resources.resolvedConfig.llm.contextWindowTokens,
@@ -917,7 +875,7 @@ const result = await this.resources.agentRunner.run({
 | Compaction hooks | `before_compaction` / `after_compaction` 触发；payload 正确 |
 | 上下文管理 | Layer 1 触发 `tool_result_pruned`；Layer 2 路由 fits / truncate / compact；Layer 3 写入 compaction record 与 session 元数据；retry 后 `loadHistory` 看到摘要 |
 | ContextOverflowError 三条路径 | 预判路径、内层 90%、API 错误三种触发 + 外层 retry + 超过 `MAX_COMPACTION_RETRIES` 后抛出 |
-| In-turn message readers | `getSteeringMessages` 内层每轮消费；`getFollowUpMessages` 内层退出后消费；`getInTurnMessages` 按 mode 路由 |
+| In-turn message readers | `getSteeringMessages` 每轮 tool 后消费；reader 未提供时返回空 |
 | AgentEvent 形状 | 所有 variant 都自带 `sessionKey` / `turnId`；emit 自动注入；`currentParams = null` 时不 emit |
 
 新增测试时建议用 `test-helpers.makeRunParams()` 减少 `turnId` 等样板。
@@ -943,7 +901,7 @@ const result = await this.resources.agentRunner.run({
 
 Agent Runner 把"一次对话循环如何执行"封装为单一引擎：
 
-1. **两层循环**：外层处理 followUp 注入，内层处理 LLM 调用 + tool use + steering；
+1. **执行循环**：LLM 调用 + tool use + steering 注入，单层 `while`；
 2. **上下文管理**：4 层渐进策略（per-result 裁剪 → 聚合裁剪 → 预判路由 → LLM 摘要），所有溢出路径统一为 `ContextOverflowError` + 外层重试；
 3. **事件与 hook 分层**：emit 走单一 onEvent 入口，hook 走 `on()` 注册 API，sessionKey/turnId 由 `currentParams` 自动注入；
 4. **配置边界清晰**：runtime 解析配置后只传需要的最小子集，runner 不接触 config loader；

@@ -34,14 +34,14 @@ v0.9 中"P0 明确不包含"列出的若干能力（session queue、compaction�
 |---|---|---|
 | Channel 入站如何启动 turn | `makeMessageHandler` 内立即生成 `turnId` 并直接 `runTurn()` | `makeMessageHandler` 只调 `handleInboundChannelMessage()`，由其决定入队 / 路由 steering，`turnId` 在真正启动 turn 时（`startQueuedTurn`）才生成 |
 | 同 sessionKey 的并发消息 | 直接拒绝（`RUN_REJECTED`） | 进入 per-session 队列，按 FIFO 串行执行；不再因 busy 而对外报错 |
-| Steering 入口 | 不存在（仅设计阶段） | `inTurnMessageMode='steer'` 且存在活动 turn 时，新消息追加进 `steeringInboxBySession`，由 runner 通过 reader 拉取 |
-| FollowUp 入口 | 由 AgentRunner 自己处理（`maxFollowUpRounds`） | RuntimeApp 不区分 followup 与首条消息；followup 语义由 "per-session 队列串行" 自然兑现 |
+| Steering 入口 | 不存在（仅设计阶段） | `runner.inTurnMessageMode='steer'` 且存在活动 turn 时，新消息追加进 `steeringInboxBySession`，由 runner 通过 `getSteeringMessages` reader 拉取 |
+| FollowUp 入口 | 由 AgentRunner 自己处理（`maxFollowUpRounds`） | RuntimeApp 不区分 followup 与首条消息；followup 语义由 "per-session 队列串行" 自然兑现；runner 端不再有 followUp 注入点 |
 | Turn 配额 | `maxToolRounds` + `maxFollowUpRounds` 双参数 | 单一 `maxLlmCalls`（默认 12） |
-| 默认 in-turn 消息模式 | 未定义 | `inTurnMessageMode='followup'`（runtime 层与 runner 层默认值一致） |
+| 默认 in-turn 消息模式 | 未定义 | `runner.inTurnMessageMode='followup'`（仅 RuntimeApp 入站层读取，runner 不感知） |
 | Approval / interaction 路由元数据 | `originChannelByTurn: Map<turnId, Channel>` + `originClientByTurn: Map<turnId, string>` | `routeContextByTurn: Map<turnId, MessageRouteContext>`，`MessageRouteContext = { originChannel?, originClientId? }` |
 | Turn 收尾责任 | 释放 `inFlightSessions` 与 `activeRunCount` | 上述之外，还需清空当前 session 的 steering inbox、清理 `activeTurnIdBySession`、并尝试 `scheduleNextQueuedTurn()` 推进队头 |
 | Compaction 透传 | 未实现 | `runTurnInternal` 在调用 `agentRunner.run()` 时透传 `compaction` 与 `contextWindowTokens` |
-| `RunTurnParams` 新字段 | 无 | `maxLlmCalls`、`inTurnMessageMode` |
+| `RunTurnParams` 新字段 | 无 | `maxLlmCalls` |
 
 ---
 
@@ -383,8 +383,6 @@ private async runTurnInternal(params: RunTurnParams & { turnId: string }): Promi
     tools: this.resources.toolBundle.llmDefinitions,
     maxTokens: params.maxTokens ?? this.resources.resolvedConfig.llm.maxTokens,
     maxLlmCalls: params.maxLlmCalls ?? this.resources.resolvedConfig.runner.maxLlmCalls,
-    inTurnMessageMode:
-      params.inTurnMessageMode ?? this.resources.resolvedConfig.runner.inTurnMessageMode,
     getSteeringMessages: async () => this.drainSteeringMessages(params.sessionKey),
     compaction: this.resources.resolvedConfig.compaction,
     contextWindowTokens: this.resources.resolvedConfig.llm.contextWindowTokens,
@@ -396,8 +394,9 @@ private async runTurnInternal(params: RunTurnParams & { turnId: string }): Promi
 
 差异要点：
 
-- 新增 `inTurnMessageMode`、`getSteeringMessages`、`compaction`、`contextWindowTokens` 四个透传字段。
-- **RuntimeApp 仅 wire `getSteeringMessages`**；不 wire `getFollowUpMessages`——followup 语义靠 per-session 队列保证。
+- 新增 `getSteeringMessages`、`compaction`、`contextWindowTokens` 三个透传字段。
+- RuntimeApp 不向 runner 透传 `inTurnMessageMode`——runner 没有 mode 概念，只有"是否有 reader"。in-turn 模式仅在 RuntimeApp 入站层（`shouldRouteMessageToSteering`）使用。
+- followup 语义靠 per-session 队列保证；runner 端没有 followUp 注入点也没有 `getFollowUpMessages` reader。
 - 模型解析仍走 `requireModel()`，缺失则抛 `MODEL_MISSING`。
 
 ---
@@ -518,7 +517,6 @@ export interface RunTurnParams {
   model?: string;
   maxTokens?: number;
   maxLlmCalls?: number;                          // v1.0 新增（取代 maxToolRounds + maxFollowUpRounds）
-  inTurnMessageMode?: 'steer' | 'followup';      // v1.0 新增（per-turn 覆盖 runner 配置）
   promptMode?: AgentDefaults['prompt']['mode'];
   safetyLevel?: AgentDefaults['prompt']['safetyLevel'];
   reloadContextFiles?: boolean;
@@ -577,11 +575,10 @@ v1.0 集中验证以下契约（位于 `src/runtime/RuntimeApp.test.ts` / `Runti
 | 测试 | 验证点 |
 |---|---|
 | `queues busy-session channel messages and runs them serially` | 第二条入站消息在第一条 turn 仍 busy 时进入队列；第一条完成后第二条自动启动；启动顺序按 FIFO；第二条携带的 `maxLlmCalls` 等覆盖参数被正确透传 |
-| `routes busy-session channel input to steering when steer mode is enabled` | `inTurnMessageMode='steer'` 配置下，busy 期间的入站消息走 steering 路径；runner 通过 `getSteeringMessages` reader 拉取，消息以 `{ role: 'user', content }` 形式呈现 |
+| `routes busy-session channel input to steering when steer mode is enabled` | `runner.inTurnMessageMode='steer'` 配置下，busy 期间的入站消息走 steering 路径；runner 通过 `getSteeringMessages` reader 拉取，消息以 `{ role: 'user', content }` 形式呈现 |
 | `routes queued websocket approvals to the queued turn origin client end-to-end` | 队列中的第二条 turn 启动后，其触发的 approval 请求按"该 queued turn 的 originClientId"路由，而不是第一条 turn 的 client |
 | `routes queued turn approval expiry to the queued turn origin client` | 同上，approval 超时通知也按 queued turn 的 originClientId 路由 |
-| `allows per-turn inTurnMessageMode override` | `RunTurnParams.inTurnMessageMode` 能覆盖 `runner.inTurnMessageMode` 配置默认值 |
-| `creates, resolves a session automatically, and delegates a turn to AgentRunner` | 默认情况下 `inTurnMessageMode='followup'` 被透传给 runner；其它默认值（model、maxTokens 等）来自 config |
+| `creates, resolves a session automatically, and delegates a turn to AgentRunner` | 默认情况下基本参数（model、maxTokens 等）透传给 runner；defaults 来自 config |
 | `reloads context files, closes idempotently, and rejects future runs after close` | `close()` 幂等；close 后 `runTurn()` 抛 `RUN_REJECTED` |
 
 新增测试建议（规划）：

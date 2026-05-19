@@ -693,8 +693,6 @@ export class RuntimeApp {
       tools: this.resources.toolBundle.llmDefinitions,
       maxTokens: params.maxTokens ?? this.resources.resolvedConfig.llm.maxTokens,
       maxLlmCalls: params.maxLlmCalls ?? this.resources.resolvedConfig.runner.maxLlmCalls,
-      inTurnMessageMode:
-        params.inTurnMessageMode ?? this.resources.resolvedConfig.runner.inTurnMessageMode,
       // runtime 只提供“读取并清空当前 steering inbox”的能力，具体消费时机仍由 runner 控制。
       getSteeringMessages: async () => this.drainSteeringMessages(params.sessionKey),
       compaction: this.resources.resolvedConfig.compaction,

@@ -308,7 +308,7 @@ describe('AgentRunner', () => {
       expect(result.text).toBe('Error occurred');
     });
 
-    it('injects in-turn messages as steering when mode is steer', async () => {
+    it('injects steering messages between tool iterations', async () => {
       const capturedCalls: ChatParams['messages'][] = [];
       let callIndex = 0;
       let injected = false;
@@ -354,8 +354,7 @@ describe('AgentRunner', () => {
         model: 'test',
         systemPrompt: '',
         turnId: 'test-turn',
-        inTurnMessageMode: 'steer',
-        getInTurnMessages: () => {
+        getSteeringMessages: () => {
           if (injected) return [];
           injected = true;
           return [{ role: 'user', content: 'interrupt now' }];
@@ -365,102 +364,6 @@ describe('AgentRunner', () => {
       expect(result.text).toBe('done');
       expect(capturedCalls).toHaveLength(2);
       expect(capturedCalls[1]!.some((m) => m.role === 'user' && m.content === 'interrupt now')).toBe(true);
-    });
-
-    it('injects in-turn messages as followup when mode is followup', async () => {
-      const capturedCalls: ChatParams['messages'][] = [];
-      let callIndex = 0;
-      let injected = false;
-
-      const llmClient: LLMClient = {
-        async *chatStream(params: ChatParams) {
-          capturedCalls.push(params.messages.map((m) => ({ ...m })));
-
-          if (callIndex === 0) {
-            callIndex++;
-            yield { type: 'message_start' } as StreamEvent;
-            yield { type: 'text_delta', text: 'first' } as StreamEvent;
-            yield {
-              type: 'message_end',
-              stopReason: 'end_turn',
-              usage: { inputTokens: 8, outputTokens: 4 },
-            } as StreamEvent;
-            return;
-          }
-
-          yield { type: 'message_start' } as StreamEvent;
-          yield { type: 'text_delta', text: 'second' } as StreamEvent;
-          yield {
-            type: 'message_end',
-            stopReason: 'end_turn',
-            usage: { inputTokens: 9, outputTokens: 4 },
-          } as StreamEvent;
-        },
-        async chat() {
-          throw new Error('Not used');
-        },
-      };
-
-      const runner = new AgentRunner({ llmClient, sessionManager });
-
-      const result = await runner.run({
-        sessionKey: 'main',
-        message: 'start',
-        model: 'test',
-        systemPrompt: '',
-        turnId: 'test-turn',
-        inTurnMessageMode: 'followup',
-        getInTurnMessages: () => {
-          if (injected) return [];
-          injected = true;
-          return [{ role: 'user', content: 'queued followup' }];
-        },
-      });
-
-      expect(result.text).toBe('second');
-      expect(capturedCalls).toHaveLength(2);
-      expect(capturedCalls[1]!.some((m) => m.role === 'user' && m.content === 'queued followup')).toBe(true);
-    });
-
-    it('stops before followup retry when maxLlmCalls is exhausted', async () => {
-      let injected = false;
-      const capturedCalls: ChatParams['messages'][] = [];
-
-      const llmClient: LLMClient = {
-        async *chatStream(params: ChatParams) {
-          capturedCalls.push(params.messages.map((m) => ({ ...m })));
-          yield { type: 'message_start' } as StreamEvent;
-          yield { type: 'text_delta', text: 'first pass' } as StreamEvent;
-          yield {
-            type: 'message_end',
-            stopReason: 'end_turn',
-            usage: { inputTokens: 8, outputTokens: 4 },
-          } as StreamEvent;
-        },
-        async chat() {
-          throw new Error('Not used');
-        },
-      };
-
-      const runner = new AgentRunner({ llmClient, sessionManager });
-      const result = await runner.run({
-        sessionKey: 'main',
-        message: 'start',
-        model: 'test',
-        systemPrompt: '',
-        turnId: 'test-turn',
-        inTurnMessageMode: 'followup',
-        maxLlmCalls: 1,
-        getInTurnMessages: () => {
-          if (injected) return [];
-          injected = true;
-          return [{ role: 'user', content: 'queued followup' }];
-        },
-      });
-
-      expect(capturedCalls).toHaveLength(1);
-      expect(result.stopReason).toBe('max_llm_calls');
-      expect(result.text).toBe('first pass');
     });
   });
 

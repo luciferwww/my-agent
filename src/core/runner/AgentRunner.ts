@@ -23,7 +23,6 @@ import { compactMessages } from './context/compaction.js';
 
 const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_MAX_LLM_CALLS = 12;
-const DEFAULT_IN_TURN_MESSAGE_MODE = 'followup';
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000;
 
 /**
@@ -169,7 +168,6 @@ export class AgentRunner {
     compaction: CompactionConfig,
   ): Promise<Omit<RunResult, 'compacted'>> {
     const maxLlmCalls = params.maxLlmCalls ?? DEFAULT_MAX_LLM_CALLS;
-    const inTurnMessageMode = params.inTurnMessageMode ?? DEFAULT_IN_TURN_MESSAGE_MODE;
     const maxTokens = params.maxTokens ?? DEFAULT_MAX_TOKENS;
 
     // 1. 加载历史消息（不含当前用户消息）
@@ -216,165 +214,150 @@ export class AgentRunner {
     // 4. delay-append：预判检查通过后才将当前用户消息 append 进 messages
     messages = [...messages, { role: 'user', content: params.message }];
 
-    // 5. 两层循环
+    // 5. 主循环：LLM 调用 + tool use
     let totalUsage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
     let totalToolRounds = 0;
     let lastContent: ChatContentBlock[] = [];
     let lastStopReason = 'end_turn';
     let llmCallCount = 0;
+    let hasMoreToolCalls = true; // 初始 true，保证至少一次 LLM 调用
 
-    // 外层：处理 followUp 注入
-    outer: while (true) {
-      let hasMoreToolCalls = true; // 初始 true，保证至少一次 LLM 调用
-
-      // 内层：LLM 调用 + tool use
-      while (hasMoreToolCalls) {
-        if (llmCallCount >= maxLlmCalls) {
-          const text = this.extractText(lastContent);
-          return {
-            text,
-            content: lastContent,
-            stopReason: 'max_llm_calls',
-            usage: totalUsage,
-            toolRounds: totalToolRounds,
-          };
-        }
-
-        this.emit({ type: 'llm_call', round: llmCallCount });
-        llmCallCount++;
-
-        // 流式调用 LLM（内部捕获 API 级别的 context overflow 错误）
-        const llmResult = await this.callLLMStream({
-          model: params.model,
-          system: params.systemPrompt,
-          messages,
-          tools: params.tools,
-          maxTokens,
-        });
-
-        totalUsage = {
-          inputTokens: totalUsage.inputTokens + llmResult.usage.inputTokens,
-          outputTokens: totalUsage.outputTokens + llmResult.usage.outputTokens,
+    while (hasMoreToolCalls) {
+      if (llmCallCount >= maxLlmCalls) {
+        const text = this.extractText(lastContent);
+        return {
+          text,
+          content: lastContent,
+          stopReason: 'max_llm_calls',
+          usage: totalUsage,
+          toolRounds: totalToolRounds,
         };
+      }
 
-        lastContent = llmResult.content;
-        lastStopReason = llmResult.stopReason;
+      this.emit({ type: 'llm_call', round: llmCallCount });
+      llmCallCount++;
 
-        messages.push({ role: 'assistant', content: llmResult.content });
+      // 流式调用 LLM（内部捕获 API 级别的 context overflow 错误）
+      const llmResult = await this.callLLMStream({
+        model: params.model,
+        system: params.systemPrompt,
+        messages,
+        tools: params.tools,
+        maxTokens,
+      });
 
-        await this.sessionManager.appendMessage(params.sessionKey, {
-          role: 'assistant',
-          content: llmResult.content,
-        });
+      totalUsage = {
+        inputTokens: totalUsage.inputTokens + llmResult.usage.inputTokens,
+        outputTokens: totalUsage.outputTokens + llmResult.usage.outputTokens,
+      };
 
-        // error / aborted → 提前返回（与 pi-agent-core 一致）
-        if (lastStopReason === 'error' || lastStopReason === 'aborted') {
-          const text = this.extractText(lastContent);
-          return { text, content: lastContent, stopReason: lastStopReason, usage: totalUsage, toolRounds: totalToolRounds };
-        }
+      lastContent = llmResult.content;
+      lastStopReason = llmResult.stopReason;
 
-        const toolUseBlocks = llmResult.content.filter(
-          (b): b is Extract<ChatContentBlock, { type: 'tool_use' }> => b.type === 'tool_use',
-        );
+      messages.push({ role: 'assistant', content: llmResult.content });
 
-        if (toolUseBlocks.length === 0) {
-          // 没有 tool calls → 退出内层循环
-          hasMoreToolCalls = false;
-        } else {
-          // 执行工具
-          const toolResultBlocks: ChatContentBlock[] = [];
-          for (const toolUse of toolUseBlocks) {
-            // tool_use 事件发原始 input（hook 运行之前）
-            this.emit({ type: 'tool_use', name: toolUse.name, input: toolUse.input });
+      await this.sessionManager.appendMessage(params.sessionKey, {
+        role: 'assistant',
+        content: llmResult.content,
+      });
 
-            // before_tool_call hooks（sequential，priority 降序）
-            let effectiveInput = toolUse.input;
-            const beforeHooks = this.getHooks('before_tool_call');
-            if (beforeHooks.length > 0) {
-              const beforeResult = await runBeforeToolCall(beforeHooks, {
-                toolName: toolUse.name,
-                input: toolUse.input,
-                turnId: params.turnId,
-                sessionKey: params.sessionKey,
-              });
-              if (beforeResult.action === 'deny') {
-                const blocked: ToolResult = { content: `Tool blocked: ${beforeResult.reason}`, isError: true };
-                this.emit({ type: 'tool_result', name: toolUse.name, result: blocked });
-                toolResultBlocks.push({ type: 'tool_result', tool_use_id: toolUse.id, content: blocked.content });
-                continue;
-              }
-              effectiveInput = beforeResult.input;
-            }
+      // error / aborted → 提前返回（与 pi-agent-core 一致）
+      if (lastStopReason === 'error' || lastStopReason === 'aborted') {
+        const text = this.extractText(lastContent);
+        return { text, content: lastContent, stopReason: lastStopReason, usage: totalUsage, toolRounds: totalToolRounds };
+      }
 
-            // 执行工具
-            const startTime = Date.now();
-            const result = await this.executeTool(toolUse.name, effectiveInput);
-            const durationMs = Date.now() - startTime;
+      const toolUseBlocks = llmResult.content.filter(
+        (b): b is Extract<ChatContentBlock, { type: 'tool_use' }> => b.type === 'tool_use',
+      );
 
-            this.emit({ type: 'tool_result', name: toolUse.name, result });
-            toolResultBlocks.push({
-              type: 'tool_result',
-              tool_use_id: toolUse.id,
-              content: result.content,
+      if (toolUseBlocks.length === 0) {
+        // 没有 tool calls → 退出循环
+        hasMoreToolCalls = false;
+      } else {
+        // 执行工具
+        const toolResultBlocks: ChatContentBlock[] = [];
+        for (const toolUse of toolUseBlocks) {
+          // tool_use 事件发原始 input（hook 运行之前）
+          this.emit({ type: 'tool_use', name: toolUse.name, input: toolUse.input });
+
+          // before_tool_call hooks（sequential，priority 降序）
+          let effectiveInput = toolUse.input;
+          const beforeHooks = this.getHooks('before_tool_call');
+          if (beforeHooks.length > 0) {
+            const beforeResult = await runBeforeToolCall(beforeHooks, {
+              toolName: toolUse.name,
+              input: toolUse.input,
+              turnId: params.turnId,
+              sessionKey: params.sessionKey,
             });
-
-            // after_tool_call hooks（fire-and-forget，使用修改后的 input）
-            const afterHooks = this.getHooks('after_tool_call');
-            if (afterHooks.length > 0) {
-              runAfterToolCall(afterHooks, {
-                toolName: toolUse.name,
-                input: effectiveInput,
-                result,
-                durationMs,
-                turnId: params.turnId,
-                sessionKey: params.sessionKey,
-              });
+            if (beforeResult.action === 'deny') {
+              const blocked: ToolResult = { content: `Tool blocked: ${beforeResult.reason}`, isError: true };
+              this.emit({ type: 'tool_result', name: toolUse.name, result: blocked });
+              toolResultBlocks.push({ type: 'tool_result', tool_use_id: toolUse.id, content: blocked.content });
+              continue;
             }
+            effectiveInput = beforeResult.input;
           }
 
-          // toolResult push 到 messages（Anthropic API 格式：role=user）
-          messages.push({ role: 'user', content: toolResultBlocks });
+          // 执行工具
+          const startTime = Date.now();
+          const result = await this.executeTool(toolUse.name, effectiveInput);
+          const durationMs = Date.now() - startTime;
 
-          await this.sessionManager.appendMessage(params.sessionKey, {
-            role: 'toolResult',
-            content: toolResultBlocks,
+          this.emit({ type: 'tool_result', name: toolUse.name, result });
+          toolResultBlocks.push({
+            type: 'tool_result',
+            tool_use_id: toolUse.id,
+            content: result.content,
           });
 
-          // 内层 Layer 1: 新 tool result 追加后做 per-result 裁剪
-          if (compaction.enabled) {
-            messages = pruneToolResults(messages, compaction, contextWindowTokens);
-          }
-
-          // 内层 90% 阈值检查：主动检测，避免等待 LLM API 报错
-          if (compaction.enabled) {
-            const estimated = estimatePromptTokens({ messages, systemPrompt: params.systemPrompt });
-            if (estimated > contextWindowTokens * INNER_LOOP_OVERFLOW_THRESHOLD) {
-              throw new ContextOverflowError(
-                `Context exceeds ${INNER_LOOP_OVERFLOW_THRESHOLD * 100}% threshold during tool loop `
-                + `(estimated ${estimated} of ${contextWindowTokens} tokens)`,
-              );
-            }
-          }
-
-          totalToolRounds++;
-
-          // 每轮 tool 执行后检查 steering 消息。
-          const steeringMessages = await this.getSteeringMessages(params, inTurnMessageMode);
-          if (steeringMessages.length > 0) {
-            await this.appendInjectedMessages(params.sessionKey, messages, steeringMessages);
+          // after_tool_call hooks（fire-and-forget，使用修改后的 input）
+          const afterHooks = this.getHooks('after_tool_call');
+          if (afterHooks.length > 0) {
+            runAfterToolCall(afterHooks, {
+              toolName: toolUse.name,
+              input: effectiveInput,
+              result,
+              durationMs,
+              turnId: params.turnId,
+              sessionKey: params.sessionKey,
+            });
           }
         }
-      }
-      // 内层退出
 
-      // 内层退出后检查 followUp 消息。
-      const followUpMessages = await this.getFollowUpMessages(params, inTurnMessageMode);
-      if (followUpMessages.length > 0) {
-        await this.appendInjectedMessages(params.sessionKey, messages, followUpMessages);
-        continue outer;
-      }
+        // toolResult push 到 messages（Anthropic API 格式：role=user）
+        messages.push({ role: 'user', content: toolResultBlocks });
 
-      break;
+        await this.sessionManager.appendMessage(params.sessionKey, {
+          role: 'toolResult',
+          content: toolResultBlocks,
+        });
+
+        // Layer 1: 新 tool result 追加后做 per-result 裁剪
+        if (compaction.enabled) {
+          messages = pruneToolResults(messages, compaction, contextWindowTokens);
+        }
+
+        // 90% 阈值检查：主动检测，避免等待 LLM API 报错
+        if (compaction.enabled) {
+          const estimated = estimatePromptTokens({ messages, systemPrompt: params.systemPrompt });
+          if (estimated > contextWindowTokens * INNER_LOOP_OVERFLOW_THRESHOLD) {
+            throw new ContextOverflowError(
+              `Context exceeds ${INNER_LOOP_OVERFLOW_THRESHOLD * 100}% threshold during tool loop `
+              + `(estimated ${estimated} of ${contextWindowTokens} tokens)`,
+            );
+          }
+        }
+
+        totalToolRounds++;
+
+        // 每轮 tool 执行后检查 steering 消息。
+        const steeringMessages = await this.readPendingMessages(params.getSteeringMessages);
+        if (steeringMessages.length > 0) {
+          await this.appendInjectedMessages(params.sessionKey, messages, steeringMessages);
+        }
+      }
     }
 
     const text = this.extractText(lastContent);
@@ -651,30 +634,6 @@ export class AgentRunner {
       }
       return Object.hasOwn(message, 'content');
     });
-  }
-
-  private async getSteeringMessages(
-    params: RunParams,
-    inTurnMessageMode: 'steer' | 'followup',
-  ): Promise<ChatMessage[]> {
-    const explicit = await this.readPendingMessages(params.getSteeringMessages);
-    if (inTurnMessageMode !== 'steer') {
-      return explicit;
-    }
-    const generic = await this.readPendingMessages(params.getInTurnMessages);
-    return [...explicit, ...generic];
-  }
-
-  private async getFollowUpMessages(
-    params: RunParams,
-    inTurnMessageMode: 'steer' | 'followup',
-  ): Promise<ChatMessage[]> {
-    const explicit = await this.readPendingMessages(params.getFollowUpMessages);
-    if (inTurnMessageMode !== 'followup') {
-      return explicit;
-    }
-    const generic = await this.readPendingMessages(params.getInTurnMessages);
-    return [...explicit, ...generic];
   }
 
   private emit(event: AgentEventInput): void {

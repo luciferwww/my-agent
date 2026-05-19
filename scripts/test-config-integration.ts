@@ -76,6 +76,7 @@ await runStep('No config file → all defaults', async () => {
   assert.equal(resolved.llm.maxTokens, 4096);
   assert.equal(resolved.llm.apiKey, undefined);
   assert.equal(resolved.runner.maxLlmCalls, 12);
+  assert.equal(resolved.runner.inTurnMessageMode, 'followup');
   assert.equal(resolved.memory.enabled, true);
   assert.equal(resolved.memory.embedding.model, 'Xenova/all-MiniLM-L6-v2');
   assert.equal(resolved.prompt.mode, 'full');

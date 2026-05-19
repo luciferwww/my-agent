@@ -822,7 +822,7 @@ src/adapters/channel/
 | 为什么按 turn 而非 session 跟踪起源路由？ | 多个 client 可以共享同一 session，若按 session 跟踪会出现并发覆盖与误删 | turn 是一次交互的天然边界，`Map<turnId, MessageRouteContext>` 在并发场景下互不干扰 |
 | 为什么 `BeforeToolCallPayload` 加 `turnId` 而非 `originClientId`？ | hook 的职责是工具拦截，不应感知 channel/client 概念 | `turnId` 是 agent 运行的通用上下文，channel 层通过 turnId 反查 originClient，保持 hook 与 channel 解耦 |
 | 超时为什么用推送 `approval_expired` 而非拉取 `waitDecision`？ | my-agent WS 协议是全推送模型，拉取需要额外一次交互且存在竞态窗口 | 推送与现有协议风格一致，client 状态机更简单：收到 `approval_requested` 展示 UI，收到 `approval_expired` 或 `approval_resolve` 关闭 UI |
-| `send` 为什么不再携带显式 `sessionKey` 参数？ | 事件自带 `sessionKey`，无需额外参数 | `AgentEvent` 富化后路由信息内嵌在事件中，channel 直接读取 |
+| `send` 为什么不携带显式 `sessionKey` 参数？ | 事件自带 `sessionKey`，无需额外参数 | `AgentEvent` 富化后路由信息内嵌在事件中，channel 直接读取 |
 | 为什么不直接在 hook 里 await readline？ | hook 不感知 I/O，channel 层负责适配 | 未来换 WS channel 时 hook 不用改 |
 | 为什么用进程内 Promise bus 而非 WS RPC？ | my-agent 是 library，不应内置 WS Server 作为必须依赖 | WS Server 只是其中一种 channel；CliChannel 不需要它 |
 | approval 为什么是可选的？ | 没有审批需求的场景（纯 CLI 脚本）不应承担额外复杂度 | 与 hook 系统的可选注册保持一致 |

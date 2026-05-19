@@ -82,7 +82,6 @@ export interface RunTurnParams {
   model?: string;
   maxTokens?: number;
   maxLlmCalls?: number;
-  inTurnMessageMode?: 'steer' | 'followup';
   promptMode?: AgentDefaults['prompt']['mode'];
   safetyLevel?: AgentDefaults['prompt']['safetyLevel'];
   reloadContextFiles?: boolean;

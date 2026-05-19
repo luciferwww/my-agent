@@ -146,6 +146,7 @@ try {
 
     await runner.run({
       sessionKey: 'main',
+      turnId: randomUUID(),
       message: 'Current question',
       model: 'test',
       systemPrompt: '',
@@ -184,6 +185,7 @@ try {
 
     await runner.run({
       sessionKey: 'main',
+      turnId: randomUUID(),
       message: 'Current question',
       model: 'test',
       systemPrompt: '',
@@ -244,6 +246,7 @@ try {
 
     await runner.run({
       sessionKey: 'main',
+      turnId: randomUUID(),
       message: 'Post-restart question',
       model: 'test',
       systemPrompt: '',
@@ -304,6 +307,7 @@ try {
 
     await runner.run({
       sessionKey: 'main',
+      turnId: randomUUID(),
       message: 'Current',
       model: 'test',
       systemPrompt: '',
@@ -346,6 +350,7 @@ try {
 
     await runner.run({
       sessionKey: 'main',
+      turnId: randomUUID(),
       message: 'Current',
       model: 'test',
       systemPrompt: '',

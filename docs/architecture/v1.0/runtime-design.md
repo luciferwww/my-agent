@@ -315,8 +315,6 @@ export interface RunTurnParams {
   maxTokens?: number;
   /** 单次 run 允许的最大 LLM 调用次数；不传则使用 runner.maxLlmCalls */
   maxLlmCalls?: number;
-  /** turn 内新消息注入模式；不传则使用 runner.inTurnMessageMode */
-  inTurnMessageMode?: 'steer' | 'followup';
   promptMode?: AgentDefaults['prompt']['mode'];
   safetyLevel?: AgentDefaults['prompt']['safetyLevel'];
   reloadContextFiles?: boolean;
@@ -879,8 +877,6 @@ private async runTurnInternal(params: RunTurnParams & { turnId: string }): Promi
     tools: this.resources.toolBundle.llmDefinitions,
     maxTokens: params.maxTokens ?? this.resources.resolvedConfig.llm.maxTokens,
     maxLlmCalls: params.maxLlmCalls ?? this.resources.resolvedConfig.runner.maxLlmCalls,
-    inTurnMessageMode:
-      params.inTurnMessageMode ?? this.resources.resolvedConfig.runner.inTurnMessageMode,
     getSteeringMessages: async () => this.drainSteeringMessages(params.sessionKey),
     compaction: this.resources.resolvedConfig.compaction,
     contextWindowTokens: this.resources.resolvedConfig.llm.contextWindowTokens,
@@ -899,7 +895,7 @@ private async runTurnInternal(params: RunTurnParams & { turnId: string }): Promi
 
 要点：
 
-- **RuntimeApp 只 wire `getSteeringMessages`**；不 wire `getFollowUpMessages`——followup 语义由 per-session 队列承担，runner 的 followup 注入点对 RuntimeApp 而言是空函数；
+- **RuntimeApp 只 wire `getSteeringMessages`**——runner 端只有一个 in-turn 注入点；followup 语义由 per-session 队列（`messageQueueBySession`）承担，不需要透传给 runner；
 - 模型解析走 `requireModel()`，缺失则抛 `MODEL_MISSING`；
 - `compaction` 与 `contextWindowTokens` 总是从 resolved config 取，runtime 不接受单轮覆盖。
 
@@ -917,7 +913,7 @@ runTurn.model
 
 Runtime 层不写死默认模型，默认值必须由 config 明确表达。
 
-其余参数（`maxTokens` / `maxLlmCalls` / `inTurnMessageMode`）统一遵循：
+其余参数（`maxTokens` / `maxLlmCalls`）统一遵循：
 
 ```
 runTurn override > resolvedConfig > 模块默认值
@@ -1317,7 +1313,6 @@ Runtime 内所有关键路径都通过 `Logger.get('RuntimeApp')` 输出结构�
 - `create()` 调用顺序正确；
 - `runTurn()` 自动 `resolveSession()`；
 - 模型优先级正确（override > config > 报错）；
-- `inTurnMessageMode` 单轮覆盖能透传给 runner；
 - `reloadContextFiles()` 成功后 `contextVersion` 递增；
 - `close()` 幂等，关闭后 `runTurn()` 被拒绝；
 - memory 初始化失败时 app 仍可 ready，但 memory tools 不存在；
@@ -1340,7 +1335,7 @@ Runtime 内所有关键路径都通过 `Logger.get('RuntimeApp')` 输出结构�
 
 ### 16.4 烟雾脚本
 
-保留 `scripts/` 下的脚本作为本地联调与手工演示工具，不再承担主回归保障。
+保留 `scripts/` 下的脚本作为本地联调与手工演示工具，不承担主回归保障。
 
 ---
 

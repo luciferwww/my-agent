@@ -22,6 +22,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import process from 'node:process';
 
 import { AgentRunner } from '../src/core/runner/index.js';
@@ -172,6 +173,7 @@ try {
     const runner = new AgentRunner({ llmClient, sessionManager: manager });
     const result = await runner.run({
       sessionKey: 'main',
+      turnId: randomUUID(),
       message: 'New question',
       model: 'test',
       systemPrompt: '',
@@ -197,6 +199,7 @@ try {
     const runner = new AgentRunner({ llmClient, sessionManager: manager });
     await runner.run({
       sessionKey: 'main',
+      turnId: randomUUID(),
       message: 'Hello',
       model: 'test',
       systemPrompt: '',
@@ -232,7 +235,7 @@ try {
       onEvent: (e) => {
         eventTypes.push(e.type);
         if (e.type === 'compaction_start') {
-          console.log(`  compaction_start: trigger=${e.trigger}, tokensBefore=${e.tokensBefore}`);
+          console.log(`  compaction_start: trigger=${e.trigger}, estimatedTokens=${e.estimatedTokens}`);
         }
         if (e.type === 'compaction_end') {
           console.log(`  compaction_end: before=${e.tokensBefore}, after=${e.tokensAfter}, dropped=${e.droppedMessages}`);
@@ -242,6 +245,7 @@ try {
 
     await runner.run({
       sessionKey: 'main',
+      turnId: randomUUID(),
       message: 'Hello',
       model: 'test',
       systemPrompt: '',
@@ -266,6 +270,7 @@ try {
     const runner = new AgentRunner({ llmClient, sessionManager: manager });
     const result = await runner.run({
       sessionKey: 'main',
+      turnId: randomUUID(),
       message: 'Hello',
       model: 'test',
       systemPrompt: '',
@@ -299,6 +304,7 @@ try {
     const runner = new AgentRunner({ llmClient, sessionManager: manager });
     const result = await runner.run({
       sessionKey: 'main',
+      turnId: randomUUID(),
       message: 'Short question',
       model: 'test',
       systemPrompt: '',
@@ -337,6 +343,7 @@ try {
 
     await runner.run({
       sessionKey: 'main',
+      turnId: randomUUID(),
       message: 'Hi',
       model: 'test',
       systemPrompt: '',
@@ -369,6 +376,7 @@ try {
     try {
       await runner.run({
         sessionKey: 'main',
+        turnId: randomUUID(),
         message: 'Test',
         model: 'test',
         systemPrompt: '',
@@ -396,6 +404,7 @@ try {
     try {
       await runner.run({
         sessionKey: 'main',
+        turnId: randomUUID(),
         message: 'Test',
         model: 'test',
         systemPrompt: '',
@@ -432,6 +441,7 @@ try {
     try {
       await runner.run({
         sessionKey: 'main',
+        turnId: randomUUID(),
         message: 'Test',
         model: 'test',
         systemPrompt: '',

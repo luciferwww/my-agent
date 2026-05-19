@@ -14,13 +14,12 @@
 | 维度 | v0.9 | v1.0 |
 |---|---|---|
 | 配额参数 | `maxLlmCalls`（已在 v0.9 文档中应用） | 同 v0.9；默认 12 在 runner 内 `DEFAULT_MAX_LLM_CALLS` |
-| In-turn message reader API | 文档仅描述抽象概念，refs `steering-followup-design.md` | 显式三个 reader：`getInTurnMessages` / `getSteeringMessages` / `getFollowUpMessages`；按 `inTurnMessageMode` 路由 |
-| 默认 `inTurnMessageMode` | 未定义 | `'followup'`（`DEFAULT_IN_TURN_MESSAGE_MODE`） |
+| In-turn message reader API | 文档仅描述抽象概念，refs `steering-followup-design.md` | 单 reader：`getSteeringMessages`（每轮 tool 后消费）；followUp 不再走 runner 注入点，由 RuntimeApp 入站队列承担 |
 | 上下文管理 | 仅有"压缩是后续优化"的说明 | 4 层渐进策略落地（Layer 1 / 1.5 / 2 / 3） |
 | 压缩重试 | 无 | 外层 `run()` 捕获 `ContextOverflowError` + `MAX_COMPACTION_RETRIES = 3` 重试 |
 | 内层 90% 阈值 | 无 | 每次 tool result 追加后做主动检测 |
 | LLM API context overflow 处理 | 无 | `callLLMStream` 内捕获 + 包装为 `ContextOverflowError` |
-| `RunParams` 新增字段 | — | `compaction` / `contextWindowTokens` / `getInTurnMessages` / `getSteeringMessages` / `getFollowUpMessages` |
+| `RunParams` 新增字段 | — | `compaction` / `contextWindowTokens` / `getSteeringMessages` |
 | `RunResult` 新增字段 | — | `compacted: boolean` |
 | `AgentEvent` 新增 variant | `run_start` / `text_delta` / `tool_use` / `tool_result` / `llm_call` / `run_end` / `error` | 新增 `tool_result_pruned` / `compaction_start` / `compaction_end` |
 | `compaction_start` payload | n/a | 含 `estimatedTokens`（不是已知准确的 `tokensBefore`） |
@@ -47,16 +46,8 @@
    tools?: ToolDefinition[];
    maxTokens?: number;
    maxLlmCalls?: number;
-   inTurnMessageMode?: 'steer' | 'followup';
-+  /**
-+   * 通用 turn 内消息读取回调。
-+   * 根据 inTurnMessageMode 路由到 steering 或 followUp 注入点。
-+   */
-+  getInTurnMessages?: PendingMessageReader;
-+  /** steering 专用消息读取回调（总在 steering 注入点消费） */
++  /** steering 消息读取回调（runner 在每轮 tool 执行后调用） */
 +  getSteeringMessages?: PendingMessageReader;
-+  /** followUp 专用消息读取回调（总在 followUp 注入点消费） */
-+  getFollowUpMessages?: PendingMessageReader;
 +  /** 压缩配置（由 RuntimeApp 传入） */
 +  compaction?: CompactionConfig;
 +  /** 模型上下文窗口大小（由 RuntimeApp 从 config.llm.contextWindowTokens 传入），默认 200,000 */
@@ -64,14 +55,13 @@
  }
 
 +export type PendingMessageReader = () => ChatMessage[] | Promise<ChatMessage[]>;
-+export type InTurnMessageMode = 'steer' | 'followup';
 ```
 
 **影响**：
 
 - 直接调用 `AgentRunner.run()` 的库消费者，若想启用 compaction 必须显式传 `compaction` 与 `contextWindowTokens`，否则使用 `DEFAULT_COMPACTION_CONFIG`（启用、默认参数）；
 - 想接入 in-turn steering 必须自己提供 `getSteeringMessages` reader——RuntimeApp 已经为 channel 场景接好（详见 [message-flow](./core-runner-message-flow.md)）；
-- `inTurnMessageMode` 缺省值 `'followup'`，与 runtime config 默认一致。
+- 不再有 `inTurnMessageMode` / `getInTurnMessages` 字段——runner 没有 mode 概念，只有 `getSteeringMessages` 单一注入点。in-turn 路由策略由 RuntimeApp 在入站层完成（基于 `runner.inTurnMessageMode` config）。
 
 ### 2.2 `RunResult` 新增 `compacted`
 
@@ -136,9 +126,9 @@
 
 ### 3.1 外层压缩重试循环
 
-v0.9：`run()` 内只有两层循环，遇到 context overflow 直接抛错。
+v0.9：`run()` 内只有内层循环，遇到 context overflow 直接抛错。
 
-v1.0：`run()` 在两层循环外再包一层重试：
+v1.0：`run()` 在循环外再包一层重试：
 
 ```typescript
 async run(params): Promise<RunResult> {
@@ -252,30 +242,23 @@ messages = [...messages, { role: 'user', content: params.message }];
 - 当前用户消息永远不会被 Layer 1 / 1.5 裁剪——它是本轮的主输入；
 - 预判失败抛出 `ContextOverflowError` 时，messages 没被污染，retry 时重新走一遍预判。
 
-### 3.5 In-turn message readers
+### 3.5 In-turn message reader
 
 v0.9：仅描述抽象概念，引用已删除的 `steering-followup-design.md`。
 
-v1.0：显式三个 reader，由 `getSteeringMessages` / `getFollowUpMessages` 私有方法消费：
+v1.0：单一 reader `getSteeringMessages`，runner 在每轮 tool 执行后调用：
 
 ```typescript
-private async getSteeringMessages(params, mode): Promise<ChatMessage[]> {
-  const explicit = await this.readPendingMessages(params.getSteeringMessages);
-  if (mode !== 'steer') return explicit;
-  const generic = await this.readPendingMessages(params.getInTurnMessages);
-  return [...explicit, ...generic];
-}
-
-private async getFollowUpMessages(params, mode): Promise<ChatMessage[]> {
-  const explicit = await this.readPendingMessages(params.getFollowUpMessages);
-  if (mode !== 'followup') return explicit;
-  const generic = await this.readPendingMessages(params.getInTurnMessages);
-  return [...explicit, ...generic];
+// 每轮 tool 后内联读取
+const steeringMessages = await this.readPendingMessages(params.getSteeringMessages);
+if (steeringMessages.length > 0) {
+  await this.appendInjectedMessages(params.sessionKey, messages, steeringMessages);
 }
 ```
 
 - `readPendingMessages` 做防御性过滤：每条消息必须有 `role` ∈ `{user, assistant}` 和 `content`；
-- 注入消息同时追加到内存 `messages` 与持久化 session（通过 `appendInjectedMessages`）。
+- 注入消息同时追加到内存 `messages` 与持久化 session（通过 `appendInjectedMessages`）；
+- runner 没有 followUp 注入点也没有 in-turn message mode 概念——所有的"什么时候有新消息可注入"由 runtime 在入站层决定（驱动是否提供 reader / 是否走入站队列）。
 
 详细的 reader 来源、与 RuntimeApp 的关系见 [message-flow](./core-runner-message-flow.md)。
 
@@ -343,9 +326,7 @@ try {
 | `executeTool(toolName, input)` | tool 执行 + 缺省 toolExecutor 错误兜底 |
 | `extractText(content)` | 从 content blocks 中提取文本 |
 | `appendInjectedMessages(sessionKey, targetMessages, injectedMessages)` | 注入消息同时追加内存 + session |
-| `readPendingMessages(reader)` | 调 reader 并做防御性过滤 |
-| `getSteeringMessages(params, mode)` | 拉取 steering 注入点消费的消息 |
-| `getFollowUpMessages(params, mode)` | 拉取 followUp 注入点消费的消息 |
+| `readPendingMessages(reader)` | 调 reader 并做防御性过滤；reader 未提供时返回 `[]` |
 | `getHooks(hookName)` | 按 hook 名取已注册 handler（priority 降序排序） |
 | `emit(event)` | 内部 emit 工具（自动注入 sessionKey/turnId） |
 
@@ -354,7 +335,6 @@ try {
 ```typescript
 const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_MAX_LLM_CALLS = 12;
-const DEFAULT_IN_TURN_MESSAGE_MODE = 'followup';
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000;
 const MAX_COMPACTION_RETRIES = 3;
 const INNER_LOOP_OVERFLOW_THRESHOLD = 0.9;
@@ -410,7 +390,7 @@ export type HookName =
 2. **`RunResult`**：若依赖完整字段集，注意新增 `compacted?: boolean`；
 3. **直接调用 `runner.run({...})`**：若想启用 compaction，需显式传 `compaction` 与 `contextWindowTokens`；不传则使用 `DEFAULT_COMPACTION_CONFIG`；
 4. **测试断言**：用 `toEqual` 严格匹配 AgentEvent 的代码若失败，改用 `toMatchObject` 或补 `expect.objectContaining`；
-5. **steering / followUp**：需要的话提供 `getSteeringMessages` / `getFollowUpMessages` reader；library 模式下若不需要 in-turn 注入，全部留空即可；
+5. **steering**：需要的话提供 `getSteeringMessages` reader；library 模式下若不需要 steering 注入，留空即可。followUp 语义不再由 runner 承担——caller 在 `run()` 返回后自行驱动下一次 `run()`，或通过 RuntimeApp 的入站队列由 channel 自动触发；
 6. **Hook 消费方**：若想观察压缩，可注册 `before_compaction` / `after_compaction` hook；若仅想记录 metric，订阅 `compaction_*` event 也一样；
 7. **ContextOverflowError 处理**：若调用方主动 catch `run()` 的异常，注意可能收到 `ContextOverflowError`（当重试用完仍失败时）。
 
@@ -421,9 +401,9 @@ export type HookName =
 以下接口与行为在 v0.9 与 v1.0 之间保持一致：
 
 - `AgentRunnerConfig` 三个字段（`llmClient` / `sessionManager` / `toolExecutor` / `onEvent`）；
-- `RunParams` 已有字段（`sessionKey` / `message` / `model` / `systemPrompt` / `turnId` / `tools` / `maxTokens` / `maxLlmCalls` / `inTurnMessageMode`）；
+- `RunParams` 已有字段（`sessionKey` / `message` / `model` / `systemPrompt` / `turnId` / `tools` / `maxTokens` / `maxLlmCalls`）；
 - `RunResult` 已有字段（`text` / `content` / `stopReason` / `usage` / `toolRounds`）；
-- 两层循环（外层 followUp / 内层 tool use）的整体结构；
+- 主执行循环（LLM 调用 + tool use）的整体结构；
 - Session 持久化时序（user → assistant(tool_use) → toolResult → assistant(text)）；
 - `error` 事件既 emit 又 throw 的行为；
 - `stopReason` 取值（`'end_turn'` / `'max_llm_calls'` / `'error'` / `'aborted'` 等）；
