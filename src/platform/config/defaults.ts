@@ -24,9 +24,9 @@ import type { AgentDefaults, LoggerModuleConfig } from './types.js';
  */
 export const DEFAULT_AGENT_CONFIG: AgentDefaults = {
   llm: {
-    // apiKey: undefined — 必须由 env 或配置文件提供
-    // baseURL: undefined — 可选，不设则用 Anthropic 官方端点
-    // model: undefined — 预留，当前 AnthropicClient 不支持选模型
+    apiKey: undefined, // 可选，不设则由 env 或配置文件提供
+    baseURL: undefined, // 可选，不设则用 Anthropic 官方端点
+    model: undefined, // 预留，当前 AnthropicClient 不支持选模型
     maxTokens: 4096,
     contextWindowTokens: 200_000,
   },
