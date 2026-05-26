@@ -3,18 +3,18 @@ import type { MemoryManager } from '../core/memory/MemoryManager.js';
 import { createMemoryTools } from '../core/memory/memory-tools.js';
 import type { ToolDefinition as PromptToolDefinition } from '../core/prompt/types.js';
 import {
-  applyPatchTool,
+  createApplyPatchTool,
+  createEditFileTool,
+  createFileSearchTool,
+  createGrepSearchTool,
+  createListDirTool,
+  createReadFileTool,
   createToolExecutor,
-  editFileTool,
+  createWriteFileTool,
   execTool,
-  fileSearchTool,
   getToolDefinitions,
-  grepSearchTool,
-  listDirTool,
   processTool,
-  readFileTool,
   webFetchTool,
-  writeFileTool,
 } from '../core/tools/index.js';
 import type { Tool } from '../core/tools/types.js';
 import type { RuntimeBuiltinToolOptions, RuntimeToolBundle } from './types.js';
@@ -40,14 +40,16 @@ export function assembleRuntimeTools(params: AssembleRuntimeToolsParams): Runtim
 }
 
 export function getDefaultBuiltinTools(options: RuntimeBuiltinToolOptions): Tool[] {
+  const { workspaceDir, fsWorkspaceOnly = true } = options;
+
   const tools: Tool[] = [
-    listDirTool,
-    readFileTool,
-    fileSearchTool,
-    grepSearchTool,
-    applyPatchTool,
-    writeFileTool,
-    editFileTool,
+    createListDirTool(workspaceDir, fsWorkspaceOnly),
+    createReadFileTool(workspaceDir, fsWorkspaceOnly),
+    createFileSearchTool(workspaceDir),
+    createGrepSearchTool(workspaceDir),
+    createApplyPatchTool(workspaceDir, fsWorkspaceOnly),
+    createWriteFileTool(workspaceDir, fsWorkspaceOnly),
+    createEditFileTool(workspaceDir, fsWorkspaceOnly),
   ];
 
   if (options.webFetchEnabled !== false) {

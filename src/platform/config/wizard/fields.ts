@@ -16,7 +16,6 @@ import type {
   EmbeddingProviderType,
   LoggerLevel,
   LoggerModuleConfig,
-  PromptMode,
   SafetyLevel,
 } from '../types.js';
 
@@ -297,11 +296,6 @@ export async function askAdvancedFields(
   process.stdout.write('\n── prompt ──\n');
   await askField({
     session, collected: a, existing: existing.agentsDefaults, defaults: DEFAULT_AGENT_CONFIG,
-    path: 'prompt.mode', label: 'Prompt mode',
-    parse: parseEnum<PromptMode>(['full', 'minimal', 'none']),
-  });
-  await askField({
-    session, collected: a, existing: existing.agentsDefaults, defaults: DEFAULT_AGENT_CONFIG,
     path: 'prompt.safetyLevel', label: 'Safety level',
     parse: parseEnum<SafetyLevel>(['strict', 'normal', 'relaxed']),
   });
@@ -330,6 +324,10 @@ export async function askAdvancedFields(
   await askField({
     session, collected: a, existing: existing.agentsDefaults, defaults: DEFAULT_AGENT_CONFIG,
     path: 'tools.webFetchMaxChars', label: 'web_fetch max chars', parse: parseInteger,
+  });
+  await askField({
+    session, collected: a, existing: existing.agentsDefaults, defaults: DEFAULT_AGENT_CONFIG,
+    path: 'tools.fs.workspaceOnly', label: 'Restrict fs tools to workspace dir', parse: parseBoolean,
   });
 
   // ── workspace ──

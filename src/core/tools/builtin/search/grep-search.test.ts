@@ -4,18 +4,18 @@ import { tmpdir } from 'node:os';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { grepSearchTool } from './grep-search.js';
+import { createGrepSearchTool } from './grep-search.js';
+import type { Tool } from '../../types.js';
 
 let workspaceDir = '';
-const originalCwd = process.cwd();
+let grepSearchTool: Tool;
 
 beforeEach(async () => {
   workspaceDir = await mkdtemp(join(tmpdir(), 'grep-search-tool-'));
-  process.chdir(workspaceDir);
+  grepSearchTool = createGrepSearchTool(workspaceDir);
 });
 
 afterEach(async () => {
-  process.chdir(originalCwd);
   if (workspaceDir) {
     await rm(workspaceDir, { recursive: true, force: true });
   }

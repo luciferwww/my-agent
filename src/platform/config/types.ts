@@ -10,9 +10,6 @@ export type DeepPartial<T> = {
 /** 嵌入提供者类型 */
 export type EmbeddingProviderType = 'local' | 'openai';
 
-/** 提示模式 */
-export type PromptMode = 'full' | 'minimal' | 'none';
-
 /** 安全等级 */
 export type SafetyLevel = 'strict' | 'normal' | 'relaxed';
 
@@ -114,8 +111,6 @@ export interface MemoryModuleConfig {
 
 /** Prompt 配置 */
 export interface PromptConfig {
-  /** 提示模式 */
-  mode: PromptMode;
   /** 安全等级 */
   safetyLevel: SafetyLevel;
 }
@@ -148,6 +143,15 @@ export interface ToolApprovalConfig {
   deny: string[];
 }
 
+/** 文件系统工具配置 */
+export interface FsToolsConfig {
+  /**
+   * 是否将文件系统工具限制在工作区目录内。
+   * 默认 true；设为 false 允许访问工作区外的路径。
+   */
+  workspaceOnly: boolean;
+}
+
 /** Tools 配置 */
 export interface ToolsConfig {
   /** exec 默认超时（秒） */
@@ -158,6 +162,8 @@ export interface ToolsConfig {
   webFetchTimeout: number;
   /** web_fetch 最大响应字符数 */
   webFetchMaxChars: number;
+  /** 文件系统工具配置 */
+  fs: FsToolsConfig;
   /** 工具审批策略 */
   approval: ToolApprovalConfig;
 }

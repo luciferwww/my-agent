@@ -224,81 +224,83 @@ async function ensureParentDir(filePath: string): Promise<void> {
   await mkdir(parentDir, { recursive: true });
 }
 
-export const applyPatchTool: Tool = {
-  name: 'apply_patch',
-  description: 'Apply a multi-file patch using the *** Begin Patch / *** End Patch format.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      input: {
-        type: 'string',
-        description: 'Full patch contents including *** Begin Patch and *** End Patch.',
+export function createApplyPatchTool(workspaceDir: string, workspaceOnly = true): Tool {
+  return {
+    name: 'apply_patch',
+    description: 'Apply a multi-file patch using the *** Begin Patch / *** End Patch format.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        input: {
+          type: 'string',
+          description: 'Full patch contents including *** Begin Patch and *** End Patch.',
+        },
       },
+      required: ['input'],
     },
-    required: ['input'],
-  },
-  execute: async (params) => {
-    try {
-      const input = typeof params.input === 'string' ? params.input : '';
-      if (!input.trim()) {
+    execute: async (params) => {
+      try {
+        const input = typeof params.input === 'string' ? params.input : '';
+        if (!input.trim()) {
+          return {
+            content: 'Invalid input for tool "apply_patch": "input" must be a non-empty string',
+            isError: true,
+          };
+        }
+
+        const hunks = parsePatchText(input);
+        if (hunks.length === 0) {
+          return {
+            content: 'Error executing tool "apply_patch": No files were modified.',
+            isError: true,
+          };
+        }
+
+        const summary: ApplyPatchSummary = { added: [], modified: [], deleted: [] };
+
+        for (const hunk of hunks) {
+          if (hunk.kind === 'add') {
+            const target = resolveWorkspacePath(hunk.path, workspaceDir, workspaceOnly);
+            await ensureParentDir(target.resolvedPath);
+            await writeFile(target.resolvedPath, hunk.contents, 'utf8');
+            recordSummary(summary, 'added', target.displayPath);
+            continue;
+          }
+
+          if (hunk.kind === 'delete') {
+            const target = resolveWorkspacePath(hunk.path, workspaceDir, workspaceOnly);
+            await rm(target.resolvedPath);
+            recordSummary(summary, 'deleted', target.displayPath);
+            continue;
+          }
+
+          const target = resolveWorkspacePath(hunk.path, workspaceDir, workspaceOnly);
+          const updatedContent = await applyUpdateHunk(target.resolvedPath, hunk.chunks, {
+            readFile: (filePath) => readFile(filePath, 'utf8'),
+          });
+
+          if (hunk.movePath) {
+            const moveTarget = resolveWorkspacePath(hunk.movePath, workspaceDir, workspaceOnly);
+            await ensureParentDir(moveTarget.resolvedPath);
+            await writeFile(moveTarget.resolvedPath, updatedContent, 'utf8');
+            await rm(target.resolvedPath);
+            recordSummary(summary, 'modified', moveTarget.displayPath);
+            continue;
+          }
+
+          await writeFile(target.resolvedPath, updatedContent, 'utf8');
+          recordSummary(summary, 'modified', target.displayPath);
+        }
+
         return {
-          content: 'Invalid input for tool "apply_patch": "input" must be a non-empty string',
+          content: formatSummary(summary),
+        };
+      } catch (error) {
+        return {
+          content: `Error executing tool "apply_patch": ${error instanceof Error ? error.message : String(error)}`,
           isError: true,
         };
       }
-
-      const hunks = parsePatchText(input);
-      if (hunks.length === 0) {
-        return {
-          content: 'Error executing tool "apply_patch": No files were modified.',
-          isError: true,
-        };
-      }
-
-      const summary: ApplyPatchSummary = { added: [], modified: [], deleted: [] };
-
-      for (const hunk of hunks) {
-        if (hunk.kind === 'add') {
-          const target = resolveWorkspacePath(hunk.path);
-          await ensureParentDir(target.resolvedPath);
-          await writeFile(target.resolvedPath, hunk.contents, 'utf8');
-          recordSummary(summary, 'added', target.displayPath);
-          continue;
-        }
-
-        if (hunk.kind === 'delete') {
-          const target = resolveWorkspacePath(hunk.path);
-          await rm(target.resolvedPath);
-          recordSummary(summary, 'deleted', target.displayPath);
-          continue;
-        }
-
-        const target = resolveWorkspacePath(hunk.path);
-        const updatedContent = await applyUpdateHunk(target.resolvedPath, hunk.chunks, {
-          readFile: (filePath) => readFile(filePath, 'utf8'),
-        });
-
-        if (hunk.movePath) {
-          const moveTarget = resolveWorkspacePath(hunk.movePath);
-          await ensureParentDir(moveTarget.resolvedPath);
-          await writeFile(moveTarget.resolvedPath, updatedContent, 'utf8');
-          await rm(target.resolvedPath);
-          recordSummary(summary, 'modified', moveTarget.displayPath);
-          continue;
-        }
-
-        await writeFile(target.resolvedPath, updatedContent, 'utf8');
-        recordSummary(summary, 'modified', target.displayPath);
-      }
-
-      return {
-        content: formatSummary(summary),
-      };
-    } catch (error) {
-      return {
-        content: `Error executing tool "apply_patch": ${error instanceof Error ? error.message : String(error)}`,
-        isError: true,
-      };
-    }
-  },
-};
+    },
+  };
+}

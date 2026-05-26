@@ -4,18 +4,18 @@ import { tmpdir } from 'node:os';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { applyPatchTool } from './apply-patch.js';
+import { createApplyPatchTool } from './apply-patch.js';
+import type { Tool } from '../../types.js';
 
 let workspaceDir = '';
-const originalCwd = process.cwd();
+let applyPatchTool: Tool;
 
 beforeEach(async () => {
   workspaceDir = await mkdtemp(join(tmpdir(), 'apply-patch-tool-'));
-  process.chdir(workspaceDir);
+  applyPatchTool = createApplyPatchTool(workspaceDir);
 });
 
 afterEach(async () => {
-  process.chdir(originalCwd);
   if (workspaceDir) {
     await rm(workspaceDir, { recursive: true, force: true });
   }

@@ -4,18 +4,18 @@ import { tmpdir } from 'node:os';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { readFileTool } from './read-file.js';
+import { createReadFileTool } from './read-file.js';
+import type { Tool } from '../../types.js';
 
 let workspaceDir = '';
-const originalCwd = process.cwd();
+let readFileTool: Tool;
 
 beforeEach(async () => {
   workspaceDir = await mkdtemp(join(tmpdir(), 'read-file-tool-'));
-  process.chdir(workspaceDir);
+  readFileTool = createReadFileTool(workspaceDir);
 });
 
 afterEach(async () => {
-  process.chdir(originalCwd);
   if (workspaceDir) {
     await rm(workspaceDir, { recursive: true, force: true });
   }

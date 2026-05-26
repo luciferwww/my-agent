@@ -158,6 +158,11 @@ describe('loadConfig', () => {
     expect(config.agents.defaults.tools.approval).toEqual({ allow: [], deny: [] });
   });
 
+  it('tools.fs.workspaceOnly defaults to true', () => {
+    const config = loadConfig({ workspaceDir: '/tmp' });
+    expect(config.agents.defaults.tools.fs.workspaceOnly).toBe(true);
+  });
+
   it('merges tools.approval arrays from config file', async () => {
     await mkdir(join(tmpDir, '.agent'), { recursive: true });
     await writeFile(join(tmpDir, '.agent', 'config.json'), JSON.stringify({
@@ -223,7 +228,7 @@ describe('resolveAgentConfig', () => {
     // Inherited from defaults
     expect(resolved.runner.maxLlmCalls).toBe(12);
     expect(resolved.memory.embedding.model).toBe('Xenova/all-MiniLM-L6-v2');
-    expect(resolved.prompt.mode).toBe('full');
+    expect(resolved.prompt.safetyLevel).toBe('normal');
   });
 
   it('envOverrides override list values', () => {

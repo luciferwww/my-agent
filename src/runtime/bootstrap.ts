@@ -9,7 +9,6 @@ import { SystemPromptBuilder, UserPromptBuilder } from '../core/prompt/index.js'
 import { SessionManager } from '../core/session/index.js';
 import { ensureWorkspace, loadContextFiles } from '../core/workspace/index.js';
 import { classifyRuntimeError } from './errors.js';
-import { resolveContextLoadMode } from './prompt-factory.js';
 import { assembleRuntimeTools, getDefaultBuiltinTools } from './tool-registry.js';
 import type { RuntimeAppOptions, RuntimeBootstrapResult, RuntimeDependencies, RuntimeEvent } from './types.js';
 
@@ -113,13 +112,12 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
     await ensureWorkspace(options.workspaceDir);
 
     const contextFiles = await loadContextFiles(options.workspaceDir, {
-      mode: resolveContextLoadMode(resolvedConfig.prompt.mode),
+      mode: 'full',
       maxFileChars: resolvedConfig.workspace.maxFileChars,
       maxTotalChars: resolvedConfig.workspace.maxTotalChars,
     });
     log.debug('context files loaded', {
       fileCount: contextFiles.length,
-      mode: resolvedConfig.prompt.mode,
     });
 
     const deps = createDefaultRuntimeDependencies(options.dependencies);
@@ -164,6 +162,7 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
     const toolBundle = assembleRuntimeTools({
       builtinTools: deps.getBuiltinTools({
         workspaceDir: options.workspaceDir,
+        fsWorkspaceOnly: resolvedConfig.tools.fs.workspaceOnly,
         webFetchEnabled: true,
         execEnabled: true,
         processEnabled: true,

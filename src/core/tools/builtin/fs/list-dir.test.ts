@@ -4,18 +4,18 @@ import { tmpdir } from 'node:os';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { listDirTool } from './list-dir.js';
+import { createListDirTool } from './list-dir.js';
+import type { Tool } from '../../types.js';
 
 let workspaceDir = '';
-const originalCwd = process.cwd();
+let listDirTool: Tool;
 
 beforeEach(async () => {
   workspaceDir = await mkdtemp(join(tmpdir(), 'list-dir-tool-'));
-  process.chdir(workspaceDir);
+  listDirTool = createListDirTool(workspaceDir);
 });
 
 afterEach(async () => {
-  process.chdir(originalCwd);
   if (workspaceDir) {
     await rm(workspaceDir, { recursive: true, force: true });
   }

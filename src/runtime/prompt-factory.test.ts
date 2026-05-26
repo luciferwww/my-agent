@@ -12,9 +12,9 @@ const baseConfig: AgentDefaults = {
     chunking: { chunkChars: 100, overlapChars: 10 },
     search: { maxResults: 6, minScore: 0.25, vectorWeight: 0.7, textWeight: 0.3 },
   },
-  prompt: { mode: 'full', safetyLevel: 'normal' },
+  prompt: { safetyLevel: 'normal' },
   session: { dir: 'sessions' },
-  tools: { execTimeout: 30, readMaxLines: 200, webFetchTimeout: 30_000, webFetchMaxChars: 50_000, approval: { allow: [], deny: [] } },
+  tools: { execTimeout: 30, readMaxLines: 200, webFetchTimeout: 30_000, webFetchMaxChars: 50_000, fs: { workspaceOnly: true }, approval: { allow: [], deny: [] } },
   workspace: { agentDir: '.agent', maxFileChars: 20_000, maxTotalChars: 150_000 },
   compaction: {
     enabled: true,

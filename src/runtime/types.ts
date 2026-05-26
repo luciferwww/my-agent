@@ -48,6 +48,7 @@ export interface RuntimeMemoryOptions {
 
 export interface RuntimeBuiltinToolOptions {
   workspaceDir: string;
+  fsWorkspaceOnly?: boolean;
   webFetchEnabled?: boolean;
   execEnabled?: boolean;
   processEnabled?: boolean;
@@ -82,7 +83,8 @@ export interface RunTurnParams {
   model?: string;
   maxTokens?: number;
   maxLlmCalls?: number;
-  promptMode?: AgentDefaults['prompt']['mode'];
+  /** v1.0 必填；调用方明确传入，不再回退 config。交互式场景传 'full'，sub-agent / 定时任务传 'minimal' 或 'none' */
+  promptMode: 'full' | 'minimal' | 'none';
   safetyLevel?: AgentDefaults['prompt']['safetyLevel'];
   reloadContextFiles?: boolean;
   /** 可选 turn 标识；不提供则由 RuntimeApp 自动生成 UUID */

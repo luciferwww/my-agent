@@ -42,100 +42,102 @@ function formatResults(
   ].join('\n');
 }
 
-export const grepSearchTool: Tool = {
-  name: 'grep_search',
-  description: 'Search workspace files for matching text or regex patterns.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      query: {
-        type: 'string',
-        description: 'Text or regex pattern to search for.',
+export function createGrepSearchTool(workspaceDir: string): Tool {
+  return {
+    name: 'grep_search',
+    description: 'Search workspace files for matching text or regex patterns.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Text or regex pattern to search for.',
+        },
+        isRegexp: {
+          type: 'boolean',
+          description: 'Whether query should be treated as a regular expression.',
+        },
+        includePattern: {
+          type: 'string',
+          description: 'Optional glob-like file path filter.',
+        },
+        maxResults: {
+          type: 'number',
+          description: 'Maximum number of matches to return.',
+        },
       },
-      isRegexp: {
-        type: 'boolean',
-        description: 'Whether query should be treated as a regular expression.',
-      },
-      includePattern: {
-        type: 'string',
-        description: 'Optional glob-like file path filter.',
-      },
-      maxResults: {
-        type: 'number',
-        description: 'Maximum number of matches to return.',
-      },
+      required: ['query', 'isRegexp'],
     },
-    required: ['query', 'isRegexp'],
-  },
-  execute: async (params) => {
-    try {
-      if (typeof params.query !== 'string' || !params.query.trim()) {
-        return {
-          content: 'Invalid input for tool "grep_search": "query" must be a non-empty string',
-          isError: true,
-        };
-      }
-
-      if (typeof params.isRegexp !== 'boolean') {
-        return {
-          content: 'Invalid input for tool "grep_search": "isRegexp" must be a boolean',
-          isError: true,
-        };
-      }
-
-      const maxResults = parsePositiveInteger(params.maxResults, 'maxResults');
-      const includeMatcher =
-        typeof params.includePattern === 'string' && params.includePattern.trim()
-          ? buildPathMatcher(params.includePattern)
-          : undefined;
-      const contentMatcher = buildContentMatcher(params.query, params.isRegexp);
-      const files = await listWorkspaceFiles(process.cwd());
-      const matches: Array<{ path: string; lineNumber: number; line: string }> = [];
-
-      for (const file of files) {
-        if (includeMatcher && !includeMatcher(file.relativePath)) {
-          continue;
+    execute: async (params) => {
+      try {
+        if (typeof params.query !== 'string' || !params.query.trim()) {
+          return {
+            content: 'Invalid input for tool "grep_search": "query" must be a non-empty string',
+            isError: true,
+          };
         }
 
-        let content: string;
-        try {
-          content = await readFile(file.absolutePath, 'utf8');
-        } catch {
-          continue;
+        if (typeof params.isRegexp !== 'boolean') {
+          return {
+            content: 'Invalid input for tool "grep_search": "isRegexp" must be a boolean',
+            isError: true,
+          };
         }
 
-        const lines = content.replace(/\r\n/g, '\n').split('\n');
-        if (lines.length > 0 && lines[lines.length - 1] === '') {
-          lines.pop();
-        }
+        const maxResults = parsePositiveInteger(params.maxResults, 'maxResults');
+        const includeMatcher =
+          typeof params.includePattern === 'string' && params.includePattern.trim()
+            ? buildPathMatcher(params.includePattern)
+            : undefined;
+        const contentMatcher = buildContentMatcher(params.query, params.isRegexp);
+        const files = await listWorkspaceFiles(workspaceDir);
+        const matches: Array<{ path: string; lineNumber: number; line: string }> = [];
 
-        for (let index = 0; index < lines.length; index += 1) {
-          if (!contentMatcher(lines[index]!)) {
+        for (const file of files) {
+          if (includeMatcher && !includeMatcher(file.relativePath)) {
             continue;
           }
 
-          matches.push({
-            path: file.relativePath,
-            lineNumber: index + 1,
-            line: lines[index]!,
-          });
+          let content: string;
+          try {
+            content = await readFile(file.absolutePath, 'utf8');
+          } catch {
+            continue;
+          }
 
-          if (maxResults && matches.length >= maxResults) {
-            return {
-              content: formatResults(params.query, params.isRegexp, matches),
-            };
+          const lines = content.replace(/\r\n/g, '\n').split('\n');
+          if (lines.length > 0 && lines[lines.length - 1] === '') {
+            lines.pop();
+          }
+
+          for (let index = 0; index < lines.length; index += 1) {
+            if (!contentMatcher(lines[index]!)) {
+              continue;
+            }
+
+            matches.push({
+              path: file.relativePath,
+              lineNumber: index + 1,
+              line: lines[index]!,
+            });
+
+            if (maxResults && matches.length >= maxResults) {
+              return {
+                content: formatResults(params.query, params.isRegexp, matches),
+              };
+            }
           }
         }
-      }
 
-      return {
-        content: formatResults(params.query, params.isRegexp, matches),
-      };
-    } catch (error) {
-      return {
-        content: `Error executing tool "grep_search": ${error instanceof Error ? error.message : String(error)}`,
-        isError: true,
-      };
-    }
-  },
-};
+        return {
+          content: formatResults(params.query, params.isRegexp, matches),
+        };
+      } catch (error) {
+        return {
+          content: `Error executing tool "grep_search": ${error instanceof Error ? error.message : String(error)}`,
+          isError: true,
+        };
+      }
+    },
+  };
+}

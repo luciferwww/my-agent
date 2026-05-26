@@ -57,7 +57,6 @@ export const DEFAULT_AGENT_CONFIG: AgentDefaults = {
   },
 
   prompt: {
-    mode: 'full',
     safetyLevel: 'normal',
   },
 
@@ -70,6 +69,9 @@ export const DEFAULT_AGENT_CONFIG: AgentDefaults = {
     readMaxLines: 200,
     webFetchTimeout: 30_000,
     webFetchMaxChars: 50_000,
+    fs: {
+      workspaceOnly: true,
+    },
     approval: {
       allow: [],
       deny: [],
