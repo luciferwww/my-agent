@@ -14,7 +14,7 @@ const baseConfig: AgentDefaults = {
   },
   prompt: { mode: 'full', safetyLevel: 'normal' },
   session: { dir: 'sessions' },
-  tools: { execTimeout: 30, readMaxLines: 200, webFetchTimeout: 30_000, webFetchMaxChars: 50_000 },
+  tools: { execTimeout: 30, readMaxLines: 200, webFetchTimeout: 30_000, webFetchMaxChars: 50_000, approval: { allow: [], deny: [] } },
   workspace: { agentDir: '.agent', maxFileChars: 20_000, maxTotalChars: 150_000 },
   compaction: {
     enabled: true,

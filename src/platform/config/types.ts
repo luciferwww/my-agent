@@ -126,6 +126,28 @@ export interface SessionConfig {
   dir: string;
 }
 
+/**
+ * 工具审批策略配置。
+ *
+ * 条目语法：
+ *   精确名称  "exec"           工具名完全相等（大小写敏感）
+ *   Glob      "memory_*"       * 匹配任意字符序列，? 匹配单字符
+ *   组简写    "group:fs"       展开为预定义工具集合
+ *
+ * 预定义工具组：
+ *   group:fs      read_file, write_file, edit_file, apply_patch, list_dir
+ *   group:exec    exec, process
+ *   group:search  grep_search, file_search
+ *   group:web     web_fetch
+ *   group:memory  memory_search, memory_get, memory_write
+ */
+export interface ToolApprovalConfig {
+  /** 直接放行的工具列表 */
+  allow: string[];
+  /** 直接拒绝的工具列表（优先于 allow） */
+  deny: string[];
+}
+
 /** Tools 配置 */
 export interface ToolsConfig {
   /** exec 默认超时（秒） */
@@ -136,6 +158,8 @@ export interface ToolsConfig {
   webFetchTimeout: number;
   /** web_fetch 最大响应字符数 */
   webFetchMaxChars: number;
+  /** 工具审批策略 */
+  approval: ToolApprovalConfig;
 }
 
 /** Workspace 配置 */

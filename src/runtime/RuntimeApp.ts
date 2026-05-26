@@ -14,6 +14,7 @@ import type { ContextFile } from '../core/workspace/types.js';
 import { bootstrapRuntime } from './bootstrap.js';
 import { classifyRuntimeError, createRuntimeError } from './errors.js';
 import { buildSystemPromptParams, resolveContextLoadMode } from './prompt-factory.js';
+import { resolveToolApprovalAction } from './tool-approval-policy.js';
 import type {
   MessageRouteContext,
   PendingSteeringInput,
@@ -182,18 +183,31 @@ export class RuntimeApp {
   // ── Approval 路由（详见 channel-design.md §4.3）────────────────────
 
   /**
-   * 启动时调用一次。仅在至少一个 channel 提供 interaction/approval 能力时才注册 hook，
-   * 否则库模式所有 tool 调用直通。
+   * 启动时调用一次。始终注册 before_tool_call hook，通过配置和 origin channel 能力执行三档审批策略。
    */
   private wireApprovalRouting(): void {
     if (this.approvalRoutingWired) return;
-    if (!this.channels.some((c) => c.interaction || c.approval)) return;
     this.approvalRoutingWired = true;
 
-    // ① hook → TurnInteractionManager
+    // ① hook → 三档审批策略
     this.resources.agentRunner.on(
       'before_tool_call',
       async ({ toolName, input, turnId, sessionKey }) => {
+        const originChannel = this.routeContextByTurn.get(turnId)?.originChannel;
+        const hasApprovalCapability = !!(originChannel?.interaction || originChannel?.approval);
+        const approvalConfig = this.resources.resolvedConfig.tools.approval;
+
+        const action = resolveToolApprovalAction(toolName, approvalConfig, hasApprovalCapability);
+
+        if (action === 'allow') return { action: 'allow' as const };
+        if (action === 'deny') {
+          return {
+            action: 'deny' as const,
+            reason: hasApprovalCapability ? 'Tool denied by policy' : 'Tool not in allowlist (no approval channel)',
+          };
+        }
+
+        // action === 'prompt': 交给 TurnInteractionManager 等待用户决策
         const result = await this.turnInteractionManager.request({
           toolName,
           input,

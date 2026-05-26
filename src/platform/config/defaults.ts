@@ -70,6 +70,10 @@ export const DEFAULT_AGENT_CONFIG: AgentDefaults = {
     readMaxLines: 200,
     webFetchTimeout: 30_000,
     webFetchMaxChars: 50_000,
+    approval: {
+      allow: [],
+      deny: [],
+    },
   },
 
   workspace: {

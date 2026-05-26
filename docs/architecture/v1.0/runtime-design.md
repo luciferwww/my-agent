@@ -1150,21 +1150,77 @@ class RuntimeApp {
 
 ## 13. Approval / Interaction 路由
 
-`wireApprovalRouting` 在第一次 `startChannels()` 时调用，仅在至少一个 channel 提供 `interaction` 或 `approval` 能力时才装上 hook，否则库模式所有 tool 调用直通。
+`wireApprovalRouting` 在第一次 `startChannels()` 时调用，**始终注册** `before_tool_call` hook（不再以"是否存在 approval channel"为条件），由 hook 内部在运行时判断起源 channel 能力，执行三档策略。
+
+### 13.1 三档审批策略
+
+```
+before_tool_call(toolName, input):
+  // 无 approval channel（sub-agent / 定时任务场景）：只有 allowlist 能执行
+  if !originChannel?.approval && !originChannel?.interaction:
+    if matchesAllow(toolName, config.tools.approval.allow):
+      return { action: 'allow' }
+    return { action: 'deny', reason: 'tool not in allowlist' }
+
+  // 有 approval channel：deny → allow → prompt
+  if matchesDeny(toolName, config.tools.approval.deny):
+    return { action: 'deny', reason: 'blocked by policy' }
+  if matchesAllow(toolName, config.tools.approval.allow):
+    return { action: 'allow' }
+  return await TurnInteractionManager.request(toolName, input)
+```
+
+**策略优先级**（有 approval channel 时）：deny 命中 > allow 命中 > 触发 prompt。deny 优先于 allow，防止通配符意外豁免 deny 中的工具。
+
+**无 approval channel 的语义**：交互式 turn 必然有 channel，此分支只会在 sub-agent、定时任务等无 channel 场景触发。默认 `allow: []` 意味着无 channel 时所有工具均被拒绝，须显式声明允许的工具——这是 fail-closed 的最小权限设计。
+
+### 13.2 模式匹配语法
+
+每个 allow / deny 条目支持三种形式：
+
+| 形式 | 示例 | 说明 |
+|------|------|------|
+| 精确名称 | `"Bash"` | 工具名完全相等（大小写敏感） |
+| Glob | `"Read*"` | `*` 匹配任意字符序列，`?` 匹配单字符 |
+| 组简写 | `"group:fs"` | 展开为预定义工具集合 |
+
+**预定义工具组：**
+
+| 组名 | 包含工具 |
+|------|----------|
+| `group:fs` | `Read`, `Write`, `Edit` |
+| `group:exec` | `Bash` |
+| `group:search` | `Grep`, `Glob` |
+| `group:web` | `WebFetch` |
+| `group:memory` | memory 相关工具 |
+
+匹配逻辑封装在独立的 `src/runtime/tool-approval-policy.ts` 中（纯函数，便于单测）。
+
+### 13.3 实现骨架
 
 ```typescript
 private wireApprovalRouting(): void {
   if (this.approvalRoutingWired) return;
-  if (!this.channels.some((c) => c.interaction || c.approval)) return;
   this.approvalRoutingWired = true;
 
-  // hook → TurnInteractionManager
   this.resources.agentRunner.on('before_tool_call', async ({ toolName, input, turnId, sessionKey }) => {
+    const originChannel = this.routeContextByTurn.get(turnId)?.originChannel;
+    const hasApproval = !!(originChannel?.interaction || originChannel?.approval);
+    const policy = this.resources.resolvedConfig.tools.approval;
+
+    if (!hasApproval) {
+      return matchesAllow(toolName, policy.allow)
+        ? { action: 'allow' as const }
+        : { action: 'deny' as const, reason: 'tool not in allowlist' };
+    }
+
+    if (matchesDeny(toolName, policy.deny))
+      return { action: 'deny' as const, reason: 'blocked by policy' };
+    if (matchesAllow(toolName, policy.allow))
+      return { action: 'allow' as const };
+
     const result = await this.turnInteractionManager.request({
-      toolName,
-      input,
-      sessionKey,
-      turnId,
+      toolName, input, sessionKey, turnId,
       originClientId: this.routeContextByTurn.get(turnId)?.originClientId,
     });
     return result.decision === 'allow'
@@ -1172,7 +1228,7 @@ private wireApprovalRouting(): void {
       : { action: 'deny' as const, reason: result.reason === 'timeout' ? 'Denied by timeout' : 'Denied by user' };
   });
 
-  // TurnInteractionManager → 起源 channel
+  // TurnInteractionManager → 起源 channel（路由逻辑不变）
   this.turnInteractionManager.onRequest((request) => {
     const originChannel = this.routeContextByTurn.get(request.turnId)?.originChannel;
     if (!originChannel) return;  // 起源不可达：让 TurnInteractionManager 走超时
@@ -1197,14 +1253,12 @@ private wireApprovalRouting(): void {
 }
 ```
 
-设计要点：
+### 13.4 设计要点
 
+- **始终注册 hook**：不再以"是否存在 approval channel"为条件，hook 始终装上；渠道能力判断移入 hook 内部，在运行时按 turn 的起源 channel 动态决定；
 - **起源路由，不广播**：approval / interaction 严格按 turnId 反查 `routeContextByTurn` 定位起源；
-- **起源不可达的容错策略**：`onRequest` / `onExpire` 中若 `routeContext` 已被清理（最常见的情况：turn 已结束但 manager 还有残留事件），回调直接 `return`；不抛错，也不广播。`TurnInteractionManager` 自身的超时机制兜底；
-- **interaction 优先于 approval**：若 channel 同时实现两个 adapter，优先走通用 interaction 路径（Phase 2 形态），approval 仅作向后兼容；
-- **库模式自动直通**：所有 channel 都没有 `interaction` / `approval` 时，hook 根本不注册，runner 不会被任何 approval 阻塞。
-
-`channel.interaction.onInteractionResponse` 的入站桥接由 `handleInteractionResponse` 处理：仅处理 `kind === 'approval'`，未提交一律按 `deny` 兜底；不支持的 kind 记 warn。
+- **起源不可达的容错策略**：`onRequest` / `onExpire` 中若 `routeContext` 已被清理，回调直接 `return`；`TurnInteractionManager` 自身的超时机制兜底；
+- **interaction 优先于 approval**：若 channel 同时实现两个 adapter，优先走通用 interaction 路径，approval 仅作向后兼容。
 
 ---
 

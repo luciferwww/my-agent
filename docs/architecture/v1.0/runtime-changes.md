@@ -10,7 +10,7 @@
 > - 未变更或仅小幅修订的旁路文档继续以 v0.9 路径为准：
 >   - [../core-runner-context-design.md](../core-runner-context-design.md)
 >   - [../core-runner-hooks-design.md](../core-runner-hooks-design.md)
->   - [../platform-config-design.md](../platform-config-design.md)
+>   - [platform-config-design.md（v1.0）](./platform-config-design.md)
 
 ---
 
@@ -23,6 +23,7 @@ Runtime / App Assembly 模块的总体职责（统一装配 / 显式依赖注入
 3. **Turn 调用配额改造**：`maxToolRounds + maxFollowUpRounds` 合并为单一的 `maxLlmCalls`。
 4. **Approval 路由元数据收口**：原本 `originChannelByTurn` + `originClientByTurn` 两个并行 Map 合并为单一的 `routeContextByTurn`（值为 `MessageRouteContext`）。
 5. **Compaction wiring 完成**：RuntimeApp 在调用 `AgentRunner.run()` 时显式透传 `compaction` 与 `contextWindowTokens`；compaction hook（`before_compaction` / `after_compaction`）从 runner 侧暴露，本文件只点到为止，细节见 hooks 文档。
+6. **工具审批三档策略**：`wireApprovalRouting()` 从"有 approval/interaction channel 才装 hook"改为始终装 hook；hook 内部按 origin channel 能力 + `tools.approval.allow/deny` 配置执行三档策略（deny → allow → prompt）；无 approval channel 时仅 allowlist 内工具可执行（fail-closed），适配 sub-agent / 定时任务等无人值守场景。配置类型扩展见 [platform-config-design.md（v1.0）](./platform-config-design.md) §5.3。
 
 v0.9 中"P0 明确不包含"列出的若干能力（session queue、compaction、跨 channel 等）在 v1.0 已部分落地。新的 "已知未实现 / 规划项" 列表见 §9。
 
@@ -42,6 +43,7 @@ v0.9 中"P0 明确不包含"列出的若干能力（session queue、compaction�
 | Turn 收尾责任 | 释放 `inFlightSessions` 与 `activeRunCount` | 上述之外，还需清空当前 session 的 steering inbox、清理 `activeTurnIdBySession`、并尝试 `scheduleNextQueuedTurn()` 推进队头 |
 | Compaction 透传 | 未实现 | `runTurnInternal` 在调用 `agentRunner.run()` 时透传 `compaction` 与 `contextWindowTokens` |
 | `RunTurnParams` 新字段 | 无 | `maxLlmCalls` |
+| 工具审批策略 | 无 approval channel 时全部直通；有 approval channel 时全部触发 approval | 始终注册 hook；deny 命中直接拒绝，allow 命中直接放行，两者均不匹配才触发 prompt；无 approval channel 时仅 allowlist 内工具可执行（fail-closed） |
 
 ---
 

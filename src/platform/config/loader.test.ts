@@ -152,6 +152,34 @@ describe('loadConfig', () => {
     expect(config.logger.file?.prefix).toBe('app');
     expect(config.logger.file?.maxQueueSize).toBe(10_000);
   });
+
+  it('tools.approval defaults to empty allow and deny arrays', () => {
+    const config = loadConfig({ workspaceDir: '/tmp' });
+    expect(config.agents.defaults.tools.approval).toEqual({ allow: [], deny: [] });
+  });
+
+  it('merges tools.approval arrays from config file', async () => {
+    await mkdir(join(tmpDir, '.agent'), { recursive: true });
+    await writeFile(join(tmpDir, '.agent', 'config.json'), JSON.stringify({
+      agents: {
+        defaults: {
+          tools: {
+            approval: {
+              allow: ['group:fs', 'exec'],
+              deny: ['web_fetch'],
+            },
+          },
+        },
+      },
+    }));
+
+    const config = loadConfig({ workspaceDir: tmpDir });
+
+    expect(config.agents.defaults.tools.approval.allow).toEqual(['group:fs', 'exec']);
+    expect(config.agents.defaults.tools.approval.deny).toEqual(['web_fetch']);
+    // Other tools fields remain default
+    expect(config.agents.defaults.tools.execTimeout).toBe(30);
+  });
 });
 
 // ── resolveAgentConfig ───────────────────────────────────
