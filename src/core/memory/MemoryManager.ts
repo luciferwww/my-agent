@@ -12,6 +12,9 @@ import { createEmbeddingProvider } from './internal/LocalEmbeddingProvider.js';
 import { MemoryIndexer } from './internal/MemoryIndexer.js';
 import { MemorySearcher } from './internal/MemorySearcher.js';
 import { RecallTracker } from './internal/RecallTracker.js';
+import { Logger } from '../../platform/logger/index.js';
+
+const log = Logger.get('MemoryManager');
 
 const DEFAULT_DB_PATH = '.agent/memory.sqlite';
 const RECALL_DIR = '.agent/memory/.recalls';
@@ -54,12 +57,14 @@ export class MemoryManager {
 
     // 1. 嵌入提供者（失败则为 null → 降级搜索）
     const embeddingProvider = await createEmbeddingProvider(config.embedding);
+    log.info('Embedding provider', { provider: embeddingProvider ? embeddingProvider.modelId : 'none (keyword-only)' });
 
     // 2. SQLite 存储（相对路径以 workspaceDir 为基础，绝对路径直接使用）
     const resolvedDbPath = config.dbPath ?? DEFAULT_DB_PATH;
     const dbPath = isAbsolute(resolvedDbPath) ? resolvedDbPath : join(workspaceDir, resolvedDbPath);
     await mkdir(dirname(dbPath), { recursive: true });
     const store = new SqliteMemoryStore(dbPath);
+    log.info('MemoryManager init', { dbPath });
 
     // 3. 组件
     const indexer = new MemoryIndexer(store, embeddingProvider);
@@ -77,6 +82,7 @@ export class MemoryManager {
 
     // 4. 首次索引
     await indexer.indexAll(workspaceDir);
+    log.info('MemoryManager ready');
 
     return manager;
   }
@@ -87,7 +93,9 @@ export class MemoryManager {
    * 搜索记忆。搜索后异步记录召回日志。
    */
   async search(query: string, options?: SearchOptions): Promise<MemorySearchResult[]> {
+    log.debug('search', { query, maxResults: options?.maxResults, minScore: options?.minScore });
     const results = await this.searcher.search(query, options);
+    log.debug('search results', { count: results.length });
 
     // 异步记录召回（fire-and-forget）
     this.recallTracker.record({
@@ -123,6 +131,7 @@ export class MemoryManager {
    * 写入记忆文件 + 自动重索引。
    */
   async writeFile(path: string, content: string, mode: 'append' | 'overwrite'): Promise<void> {
+    log.debug('writeFile', { path, mode });
     const fullPath = join(this.workspaceDir, path);
     await mkdir(dirname(fullPath), { recursive: true });
 
@@ -143,6 +152,7 @@ export class MemoryManager {
    * 重建所有索引。
    */
   async reindex(): Promise<void> {
+    log.info('reindex triggered');
     await this.indexer.indexAll(this.workspaceDir);
   }
 

@@ -1,4 +1,7 @@
 import type { EmbeddingProvider } from '../types.js';
+import { Logger } from '../../../platform/logger/index.js';
+
+const log = Logger.get('LocalEmbeddingProvider');
 
 const DEFAULT_MODEL = 'Xenova/all-MiniLM-L6-v2';
 const DEFAULT_DIMENSIONS = 384;
@@ -59,9 +62,12 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async initPipeline(): Promise<any> {
+    log.info('Loading embedding model', { modelId: this.modelId });
     // 动态 import，避免未安装 @xenova/transformers 时模块加载失败
     const { pipeline } = await import('@xenova/transformers');
-    return pipeline('feature-extraction', this.modelId);
+    const pipe = await pipeline('feature-extraction', this.modelId);
+    log.info('Embedding model loaded', { modelId: this.modelId });
+    return pipe;
   }
 }
 
@@ -79,7 +85,10 @@ export async function createEmbeddingProvider(
     try {
       const model = config?.model ?? DEFAULT_MODEL;
       return new LocalEmbeddingProvider(model);
-    } catch {
+    } catch (err) {
+      log.warn('Failed to create local embedding provider, falling back to keyword-only search', {
+        error: err instanceof Error ? err.message : String(err),
+      });
       return null;
     }
   }

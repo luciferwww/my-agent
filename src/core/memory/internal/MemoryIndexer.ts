@@ -3,6 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readdir, stat } from 'node:fs/promises';
 import type { MemoryStore, MemoryChunk, EmbeddingProvider } from '../types.js';
+import { Logger } from '../../../platform/logger/index.js';
+
+const log = Logger.get('MemoryIndexer');
 
 const DEFAULT_CHUNK_CHARS = 1600;   // ~400 tokens
 const DEFAULT_OVERLAP_CHARS = 320;  // ~80 tokens
@@ -31,8 +34,11 @@ export class MemoryIndexer {
     const existing = this.store.getFile(relativePath);
 
     if (existing && existing.hash === hash) {
+      log.debug('indexFile skip (unchanged)', { path: relativePath });
       return; // 文件未变，跳过
     }
+
+    log.debug('indexFile', { path: relativePath });
 
     // 分块
     const rawChunks = splitIntoChunks(content, DEFAULT_CHUNK_CHARS, DEFAULT_OVERLAP_CHARS);
@@ -77,11 +83,17 @@ export class MemoryIndexer {
    * 索引所有记忆文件（MEMORY.md + memory/*.md）。
    */
   async indexAll(workspaceDir: string): Promise<void> {
+    log.info('indexAll start', { workspaceDir });
+    let indexed = 0;
+
     // 索引 MEMORY.md
     const memoryPath = join(workspaceDir, 'MEMORY.md');
     const memoryContent = await readFileSafe(memoryPath);
     if (memoryContent !== null) {
       await this.indexFile('MEMORY.md', memoryContent);
+      indexed++;
+    } else {
+      log.info('MEMORY.md not found, skipping');
     }
 
     // 索引 memory/*.md
@@ -96,8 +108,11 @@ export class MemoryIndexer {
       const content = await readFileSafe(filePath);
       if (content !== null) {
         await this.indexFile(`memory/${entry}`, content);
+        indexed++;
       }
     }
+
+    log.info('indexAll done', { indexed });
   }
 
   /**
