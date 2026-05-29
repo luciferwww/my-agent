@@ -451,7 +451,7 @@ async function testFanoutForwardsAgentEventsToAllChannelsAndObserver(): Promise<
       app.registerChannel(a.channel);
       app.registerChannel(b.channel);
 
-      await app.runTurn({ sessionKey: 'main', message: 'trigger fanout' });
+      await app.runTurn({ sessionKey: 'main', message: 'trigger fanout', promptMode: 'full' });
 
       const aTypes = a.sentEvents.map((e) => e.type);
       const bTypes = b.sentEvents.map((e) => e.type);

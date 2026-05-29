@@ -7,21 +7,21 @@ export interface BuildSystemPromptParamsInput {
   config: AgentDefaults;
   contextFiles: ContextFile[];
   promptDefinitions: PromptToolDefinition[];
-  overrides?: Pick<RunTurnParams, 'promptMode' | 'safetyLevel'>;
+  overrides: Pick<RunTurnParams, 'promptMode' | 'safetyLevel'>;
 }
 
 export function buildSystemPromptParams(
   input: BuildSystemPromptParamsInput,
 ): SystemPromptBuildParams {
   return {
-    mode: input.overrides?.promptMode ?? input.config.prompt.mode,
-    safetyLevel: input.overrides?.safetyLevel ?? input.config.prompt.safetyLevel,
+    mode: input.overrides.promptMode,
+    safetyLevel: input.overrides.safetyLevel ?? input.config.prompt.safetyLevel,
     contextFiles: input.contextFiles,
     tools: input.promptDefinitions,
   };
 }
 
-export function resolveContextLoadMode(promptMode: AgentDefaults['prompt']['mode']): 'full' | 'minimal' {
+export function resolveContextLoadMode(promptMode: 'full' | 'minimal' | 'none'): 'full' | 'minimal' {
   // Even when prompt mode is none, Runtime keeps a warm context cache so later reloads or overrides
   // do not need a separate bootstrap path.
   return promptMode === 'minimal' ? 'minimal' : 'full';

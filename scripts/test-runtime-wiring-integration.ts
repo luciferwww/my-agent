@@ -120,6 +120,7 @@ async function testBootsAndRunsTurn(): Promise<void> {
       const result = await app.runTurn({
         sessionKey: 'main',
         message: 'Hello integration runtime',
+        promptMode: 'full',
       });
 
       assert.equal(result.text, 'Integration hello', 'result.text should be "Integration hello"');
@@ -185,6 +186,7 @@ async function testMemoryToolsInjection(): Promise<void> {
       const result = await app.runTurn({
         sessionKey: 'memory-main',
         message: 'Hello memory runtime',
+        promptMode: 'full',
       });
 
       assert.equal(result.text, 'Memory integration', 'result.text should be "Memory integration"');
@@ -228,7 +230,7 @@ async function testReloadContextFiles(): Promise<void> {
     });
 
     try {
-      await app.runTurn({ sessionKey: 'reload-main', message: 'First turn' });
+      await app.runTurn({ sessionKey: 'reload-main', message: 'First turn', promptMode: 'full' });
 
       await writeFile(
         join(workspaceDir, '.agent', 'IDENTITY.md'),
@@ -240,6 +242,7 @@ async function testReloadContextFiles(): Promise<void> {
       await app.runTurn({
         sessionKey: 'reload-main',
         message: 'Second turn',
+        promptMode: 'full',
         reloadContextFiles: true,
       });
 

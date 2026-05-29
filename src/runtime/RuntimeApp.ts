@@ -13,7 +13,7 @@ import { loadContextFiles } from '../core/workspace/index.js';
 import type { ContextFile } from '../core/workspace/types.js';
 import { bootstrapRuntime } from './bootstrap.js';
 import { classifyRuntimeError, createRuntimeError } from './errors.js';
-import { buildSystemPromptParams, resolveContextLoadMode } from './prompt-factory.js';
+import { buildSystemPromptParams } from './prompt-factory.js';
 import { resolveToolApprovalAction } from './tool-approval-policy.js';
 import type {
   MessageRouteContext,
@@ -472,6 +472,7 @@ export class RuntimeApp {
       return await this.runTurn({
         sessionKey: item.sessionKey,
         message: item.message,
+        promptMode: 'full',
         model: item.launchContext?.model,
         maxTokens: item.launchContext?.maxTokens,
         maxLlmCalls: item.launchContext?.maxLlmCalls,
@@ -570,7 +571,7 @@ export class RuntimeApp {
 
     try {
       const nextFiles = await loadContextFiles(this.resources.workspaceDir, {
-        mode: resolveContextLoadMode(this.resources.resolvedConfig.prompt.mode),
+        mode: 'full',
         maxFileChars: this.resources.resolvedConfig.workspace.maxFileChars,
         maxTotalChars: this.resources.resolvedConfig.workspace.maxTotalChars,
       });

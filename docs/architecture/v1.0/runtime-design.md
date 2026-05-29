@@ -315,7 +315,8 @@ export interface RunTurnParams {
   maxTokens?: number;
   /** 单次 run 允许的最大 LLM 调用次数；不传则使用 runner.maxLlmCalls */
   maxLlmCalls?: number;
-  promptMode?: AgentDefaults['prompt']['mode'];
+  /** v1.0 必填；调用方明确传入，不再回退 config。交互式场景传 'full'，sub-agent / 定时任务传 'minimal' 或 'none' */
+  promptMode: 'full' | 'minimal' | 'none';
   safetyLevel?: AgentDefaults['prompt']['safetyLevel'];
   reloadContextFiles?: boolean;
   /** 可选 turn 标识；不提供则由 RuntimeApp 自动生成 UUID 后透传给 AgentRunner */
@@ -499,7 +500,7 @@ export async function bootstrapRuntime(
   await ensureWorkspace(options.workspaceDir);
 
   const contextFiles = await loadContextFiles(options.workspaceDir, {
-    mode: resolveContextLoadMode(resolvedConfig.prompt.mode),
+    mode: 'full',
     maxFileChars: resolvedConfig.workspace.maxFileChars,
     maxTotalChars: resolvedConfig.workspace.maxTotalChars,
   });

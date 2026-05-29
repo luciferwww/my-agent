@@ -287,7 +287,7 @@ parse: (s) => s === '--' ? undefined : s,
 | memory.chunking | `memory.chunking.chunkChars`, `memory.chunking.overlapChars` |
 | memory.search | `memory.search.maxResults`, `memory.search.minScore`, `memory.search.vectorWeight`, `memory.search.textWeight` |
 | memory.misc | `memory.dbPath` |
-| prompt | `prompt.mode`, `prompt.safetyLevel` |
+| prompt | `prompt.safetyLevel` |
 | session | `session.dir` |
 | tools | `tools.execTimeout`, `tools.readMaxLines`, `tools.webFetchTimeout`, `tools.webFetchMaxChars` |
 | workspace | `workspace.agentDir`, `workspace.maxFileChars`, `workspace.maxTotalChars` |

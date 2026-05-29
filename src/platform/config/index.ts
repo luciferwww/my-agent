@@ -17,7 +17,6 @@ export type {
   ConfigFile,
   DeepPartial,
   EmbeddingProviderType,
-  PromptMode,
   SafetyLevel,
 } from './types.js';
 

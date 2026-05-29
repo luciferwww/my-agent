@@ -51,6 +51,7 @@ describe('RuntimeApp', () => {
     const result = await app.runTurn({
       sessionKey: 'main',
       message: 'Hello runtime',
+      promptMode: 'full',
     });
 
     expect(resolveSession).toHaveBeenCalledWith('main');
@@ -115,7 +116,7 @@ describe('RuntimeApp', () => {
     await app.close('test shutdown');
 
     expect(memoryClose).toHaveBeenCalledTimes(1);
-    await expect(app.runTurn({ sessionKey: 'main', message: 'after close' })).rejects.toThrow(
+    await expect(app.runTurn({ sessionKey: 'main', message: 'after close', promptMode: 'full' })).rejects.toThrow(
       'Cannot run when runtime phase is closed.',
     );
   });

@@ -142,7 +142,7 @@ async function testCloseWaitsForInFlight(): Promise<void> {
       },
     });
 
-    const turnPromise = app.runTurn({ sessionKey: 'main', message: 'long running' });
+    const turnPromise = app.runTurn({ sessionKey: 'main', message: 'long running', promptMode: 'full' });
     // 等 runner 真正进入等待
     await waitFor(() => app.getState().activeRunCount === 1, {
       label: 'runner active',
@@ -261,7 +261,7 @@ async function testRunTurnRejectedAfterClose(): Promise<void> {
 
     let err: unknown;
     try {
-      await app.runTurn({ sessionKey: 'main', message: 'after close' });
+      await app.runTurn({ sessionKey: 'main', message: 'after close', promptMode: 'full' });
     } catch (e) {
       err = e;
     }

@@ -207,7 +207,6 @@ interface MemoryModuleConfig {
 
 /** Prompt 配置 */
 interface PromptConfig {
-  mode: 'full' | 'minimal' | 'none';          // → 'full'
   safetyLevel: 'strict' | 'normal' | 'relaxed'; // → 'normal'
 }
 
@@ -370,7 +369,7 @@ function deepMerge<T>(target: T, source: DeepPartial<T>): T
 | agent-runner | `AgentRunner.ts` DEFAULT_MAX_TOKENS / DEFAULT_MAX_TOOL_ROUNDS / DEFAULT_MAX_FOLLOWUP_ROUNDS | `runner.*`, `llm.maxTokens` |
 | llm-client | `AnthropicClient.ts` DEFAULT_MAX_TOKENS | `llm.apiKey`, `llm.baseURL`, `llm.maxTokens` |
 | memory | `MemoryManager.ts` DEFAULT_DB_PATH, `MemoryIndexer.ts` DEFAULT_CHUNK_CHARS / DEFAULT_OVERLAP_CHARS, `MemorySearcher.ts` DEFAULT_MAX_RESULTS / DEFAULT_MIN_SCORE / DEFAULT_*_WEIGHT, `LocalEmbeddingProvider.ts` DEFAULT_MODEL / DEFAULT_DIMENSIONS | `memory.*` |
-| prompt-builder | `SystemPromptBuilder.ts` 构建参数 | `prompt.mode`, `prompt.safetyLevel` |
+| prompt-builder | `SystemPromptBuilder.ts` 构建参数 | `prompt.safetyLevel`（mode 由调用方在 `RunTurnParams.promptMode` 传入，不纳入 config） |
 | session | `SessionManager.ts` SESSIONS_DIR | `session.dir` |
 | tools | `exec.ts` DEFAULT_TIMEOUT_SECONDS, `read-file.ts` DEFAULT_MAX_LINES, `web-fetch.ts` DEFAULT_TIMEOUT_MS / DEFAULT_MAX_CHARS | `tools.execTimeout`, `tools.readMaxLines`, `tools.webFetchTimeout`, `tools.webFetchMaxChars` |
 | tools（审批） | `RuntimeApp.ts` wireApprovalRouting — 固定触发 approval | `tools.approval.*` |
