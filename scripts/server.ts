@@ -54,9 +54,11 @@ async function main(): Promise<void> {
     workspaceDir: WORKSPACE_DIR,
     envOverrides: {
       llm: { apiKey, baseURL, model },
-      memory: { enabled: false },
+      memory: { enabled: true },
     },
   });
+
+  console.log(`Tools     : ${app.getToolNames().join(', ')}`);
 
   const ws = new WebSocketChannel({
     port,
