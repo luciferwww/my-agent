@@ -457,17 +457,9 @@
         line-height: 1.3;
       }
 
-      .rich-text h1 {
-        font-size: 1.5em;
-      }
-
-      .rich-text h2 {
-        font-size: 1.32em;
-      }
-
-      .rich-text h3 {
-        font-size: 1.18em;
-      }
+      .rich-text h1 { font-size: 1.5em; }
+      .rich-text h2 { font-size: 1.32em; }
+      .rich-text h3 { font-size: 1.18em; }
 
       .rich-text hr {
         border: 0;
@@ -542,6 +534,29 @@
         background: transparent;
         border: 0;
         box-shadow: none;
+      }
+
+      /* Tool call toggle button */
+      .turn-tools-toggle {
+        align-self: flex-start;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 14px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(191, 160, 128, 0.28);
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+      }
+
+      .turn-tools-toggle:hover {
+        background: rgba(255, 255, 255, 0.96);
+        color: var(--text);
+        transform: translateY(-1px);
       }
 
       .composer {
@@ -807,22 +822,12 @@
 
       /* Motion and responsive */
       @keyframes rise {
-        from {
-          opacity: 0;
-          transform: translateY(8px);
-        }
-        to {
-          opacity: 1;
-          transform: translateY(0);
-        }
+        from { opacity: 0; transform: translateY(8px); }
+        to   { opacity: 1; transform: translateY(0); }
       }
 
       @media (max-width: 980px) {
-        body {
-          height: auto;
-          overflow: auto;
-        }
-
+        body { height: auto; overflow: auto; }
         #app {
           grid-template-columns: 1fr;
           width: min(100vw - 20px, 980px);
@@ -830,15 +835,8 @@
           height: auto;
           min-height: calc(100vh - 20px);
         }
-
-        .sidebar {
-          order: 2;
-        }
-
-        .chat-shell {
-          order: 1;
-          min-height: 70vh;
-        }
+        .sidebar { order: 2; }
+        .chat-shell { order: 1; min-height: 70vh; }
       }
     </style>
   </head>
@@ -861,9 +859,7 @@
             </div>
             <div class="status-pill" :class="statusClass">{{ connectionStatus }}</div>
           </div>
-          <p class="muted-copy status-copy">
-            {{ lastStatusMessage }}
-          </p>
+          <p class="muted-copy status-copy">{{ lastStatusMessage }}</p>
         </section>
 
         <section class="section">
@@ -897,7 +893,7 @@
               {{ isConnected ? 'Connected' : isConnecting ? 'Connecting…' : 'Connect' }}
             </button>
             <button class="secondary" @click="disconnect" :disabled="!socket">Disconnect</button>
-            <button class="ghost" @click="resetChat" :disabled="messages.length === 0">Clear Chat</button>
+            <button class="ghost" @click="resetChat" :disabled="chatItems.length === 0">Clear Chat</button>
           </div>
         </section>
 
@@ -934,7 +930,7 @@
         </header>
 
         <section ref="chatLogEl" class="chat-log">
-          <div v-if="messages.length === 0" class="empty-state">
+          <div v-if="chatItems.length === 0" class="empty-state">
             <h3>准备开始一轮会话</h3>
             <p>先连接 websocket agent，再发送第一条消息。这个 demo 当前重点是观察同一 session 下的 AgentEvent 流。</p>
             <ul class="empty-state-list">
@@ -945,73 +941,116 @@
           </div>
 
           <article
-            v-for="message in messages"
-            :key="message.id"
+            v-for="item in chatItems"
+            :key="item.id"
             class="message"
-            :class="message.role"
+            :class="itemRoleClass(item)"
           >
             <div class="message-meta">
-              <span>{{ message.label }}</span>
-              <span v-if="message.turnId">turn {{ message.turnId.slice(0, 8) }}</span>
-              <span>{{ formatTime(message.timestamp) }}</span>
+              <span>{{ item.label }}</span>
+              <span v-if="item.turnId">turn {{ item.turnId.slice(0, 8) }}</span>
+              <span>{{ formatTime(item.timestamp) }}</span>
             </div>
-            <template v-if="message.role === 'approval'">
-              <section class="approval-card" :class="message.approval.status">
-                <div class="eyebrow">Approval Required</div>
-                <h3>{{ message.approval.toolName }}</h3>
-                <div class="approval-meta">
-                  <span>ID: {{ message.approval.id }}</span>
-                  <span v-if="message.approval.timeoutMs">Timeout: {{ Math.ceil(message.approval.timeoutMs / 1000) }}s</span>
+
+            <!-- ── Assistant turn: segments ── -->
+            <template v-if="item.kind === 'turn'">
+              <template v-for="(seg, idx) in item.segments" :key="seg.id">
+
+                <!-- Toggle button before the first tool_use segment -->
+                <button
+                  v-if="seg.type === 'tool_use' && isFirstToolSeg(item.segments, idx)"
+                  class="turn-tools-toggle"
+                  @click="item.toolsExpanded = !item.toolsExpanded"
+                >
+                  {{ item.toolsExpanded ? '▼' : '▶' }}
+                  {{ countToolCalls(item) }} tool call{{ countToolCalls(item) !== 1 ? 's' : '' }}
+                </button>
+
+                <!-- Text bubble -->
+                <div v-if="seg.type === 'text'" class="bubble">
+                  <div class="rich-text" v-html="renderAssistantText(seg.text)"></div>
                 </div>
-                <div class="approval-status" :class="approvalStatusClass(message.approval.status)">
-                  {{ approvalStatusLabel(message.approval.status) }}
-                </div>
-                <pre class="approval-code">{{ prettyJson(message.approval.input) }}</pre>
-                <div class="approval-actions">
-                  <button
-                    class="secondary"
-                    @click="resolveApproval(message, 'deny')"
-                    :disabled="message.approval.status !== 'pending'"
-                  >
-                    Deny
-                  </button>
-                  <button
-                    class="primary"
-                    @click="resolveApproval(message, 'allow')"
-                    :disabled="message.approval.status !== 'pending'"
-                  >
-                    Allow
-                  </button>
-                </div>
-              </section>
-            </template>
-            <template v-else-if="message.toolResult">
-              <section class="tool-result-card" :class="{ 'is-error': message.toolResult.isError }">
-                <div class="tool-result-header">
-                  <div class="tool-result-title">
-                    <span class="tool-result-name">{{ message.toolResult.name }}</span>
-                    <span class="tool-result-badge">{{ message.toolResult.isError ? 'Error' : 'Result' }}</span>
+
+                <!-- Tool use card (visible when expanded) -->
+                <section
+                  v-if="seg.type === 'tool_use' && item.toolsExpanded"
+                  class="tool-result-card"
+                >
+                  <div class="tool-result-header">
+                    <div class="tool-result-title">
+                      <span class="tool-result-name">{{ seg.name }}</span>
+                      <span class="tool-result-badge">Tool call</span>
+                    </div>
                   </div>
-                  <button
-                    v-if="isToolResultTruncated(message)"
-                    class="secondary"
-                    @click="toggleToolResult(message)"
-                  >
-                    {{ message.toolResult.expanded ? 'Collapse' : 'Expand' }}
-                  </button>
-                </div>
-                <div v-if="!message.toolResult.expanded" class="tool-result-preview">
-                  <pre class="tool-result-scroll">{{ toolResultPreview(message).text }}</pre>
-                </div>
-                <div v-else class="tool-result-body">
-                  <pre class="tool-result-scroll">{{ message.toolResult.content }}</pre>
-                </div>
-              </section>
+                  <div class="tool-result-preview">
+                    <pre class="tool-result-scroll">{{ prettyJson(seg.input) }}</pre>
+                  </div>
+                </section>
+
+                <!-- Approval card (always visible, not affected by toolsExpanded) -->
+                <section
+                  v-if="seg.type === 'approval'"
+                  class="approval-card"
+                  :class="seg.approval.status"
+                >
+                  <div class="eyebrow">Approval Required</div>
+                  <h3>{{ seg.approval.toolName }}</h3>
+                  <div class="approval-meta">
+                    <span>ID: {{ seg.approval.id }}</span>
+                    <span v-if="seg.approval.timeoutMs">Timeout: {{ Math.ceil(seg.approval.timeoutMs / 1000) }}s</span>
+                  </div>
+                  <div class="approval-status" :class="approvalStatusClass(seg.approval.status)">
+                    {{ approvalStatusLabel(seg.approval.status) }}
+                  </div>
+                  <pre class="approval-code">{{ prettyJson(seg.approval.input) }}</pre>
+                  <div class="approval-actions">
+                    <button
+                      class="secondary"
+                      @click="resolveApproval(seg, 'deny')"
+                      :disabled="seg.approval.status !== 'pending'"
+                    >Deny</button>
+                    <button
+                      class="primary"
+                      @click="resolveApproval(seg, 'allow')"
+                      :disabled="seg.approval.status !== 'pending'"
+                    >Allow</button>
+                  </div>
+                </section>
+
+                <section
+                  v-if="seg.type === 'tool_result' && item.toolsExpanded"
+                  class="tool-result-card"
+                  :class="{ 'is-error': seg.isError }"
+                >
+                  <div class="tool-result-header">
+                    <div class="tool-result-title">
+                      <span class="tool-result-name">{{ seg.name }}</span>
+                      <span class="tool-result-badge">{{ seg.isError ? 'Error' : 'Result' }}</span>
+                    </div>
+                    <button
+                      v-if="segResultTruncated(seg)"
+                      class="secondary"
+                      @click="seg.expanded = !seg.expanded"
+                    >
+                      {{ seg.expanded ? 'Collapse' : 'Expand' }}
+                    </button>
+                  </div>
+                  <div v-if="!seg.expanded" class="tool-result-preview">
+                    <pre class="tool-result-scroll">{{ segResultPreview(seg).text }}</pre>
+                  </div>
+                  <div v-else class="tool-result-body">
+                    <pre class="tool-result-scroll">{{ seg.content }}</pre>
+                  </div>
+                </section>
+
+              </template>
             </template>
-            <div v-else class="bubble">
-              <div v-if="message.role === 'assistant'" class="rich-text" v-html="renderAssistantText(message.text)"></div>
-              <template v-else>{{ message.text }}</template>
-            </div>
+
+            <!-- ── User / error / system plain bubble ── -->
+            <template v-else>
+              <div class="bubble">{{ item.text }}</div>
+            </template>
+
           </article>
         </section>
 
@@ -1066,23 +1105,29 @@
             connectionStatus: 'disconnected',
             helloAcknowledged: false,
             draft: '',
-            messages: [],
+            // ── Chat model ──────────────────────────────────────
+            // Unified list of chat items. Each item has a `kind`:
+            //   'user'     — user message bubble
+            //   'turn'     — assistant turn (contains segments[])
+            //   'approval' — approval card
+            //   'error'    — error bubble
+            //   'system'   — system info bubble (compaction, etc.)
+            chatItems: [],
+            // Maps turnId → turn object for fast segment appending
+            turnMap: {},
+            nextId: 1,
+            // ────────────────────────────────────────────────────
             eventFeed: [],
-            turnMessageIds: {},
+            nextEventId: 1,
             approvalRequest: null,
             isWaitingForReply: false,
-            nextMessageId: 1,
-            nextEventId: 1,
             lastStatusMessage: 'Not connected.',
           };
         },
+
         computed: {
-          isConnected() {
-            return this.connectionStatus === 'connected';
-          },
-          isConnecting() {
-            return this.connectionStatus === 'connecting';
-          },
+          isConnected() { return this.connectionStatus === 'connected'; },
+          isConnecting() { return this.connectionStatus === 'connecting'; },
           canSend() {
             return this.isConnected && this.helloAcknowledged && this.draft.trim().length > 0;
           },
@@ -1096,19 +1141,23 @@
             if (this.isConnecting) return 'Attempting handshake';
             return 'Socket offline';
           },
-          endpointPreview() {
-            return this.form.url || DEFAULT_SOCKET_URL;
-          },
-          headerEndpoint() {
-            return this.form.url || DEFAULT_SOCKET_URL;
-          },
+          endpointPreview() { return this.form.url || DEFAULT_SOCKET_URL; },
+          headerEndpoint() { return this.form.url || DEFAULT_SOCKET_URL; },
           pendingApprovalCount() {
-            return this.messages.filter(
-              (message) => message.role === 'approval' && message.approval && message.approval.status === 'pending'
-            ).length;
+            let count = 0;
+            for (const item of this.chatItems) {
+              if (item.kind === 'turn') {
+                for (const seg of item.segments) {
+                  if (seg.type === 'approval' && seg.approval?.status === 'pending') count++;
+                }
+              }
+            }
+            return count;
           },
         },
+
         methods: {
+          // ── Connection ────────────────────────────────────────
           clearTransientState() {
             this.helloAcknowledged = false;
             this.approvalRequest = null;
@@ -1120,12 +1169,10 @@
               this.lastStatusMessage = 'Socket opened. Sending hello…';
               this.sendJson({ type: 'hello', clientId: this.form.clientId });
             });
-
             socket.addEventListener('message', (event) => {
               if (this.socket !== socket) return;
               this.handleServerMessage(event.data);
             });
-
             socket.addEventListener('close', (event) => {
               if (this.socket !== socket) return;
               const detail = event.wasClean
@@ -1137,7 +1184,6 @@
               this.lastStatusMessage = detail;
               this.pushEvent('close', detail);
             });
-
             socket.addEventListener('error', () => {
               if (this.socket !== socket) return;
               this.lastStatusMessage = 'WebSocket error.';
@@ -1146,7 +1192,6 @@
           },
           connect() {
             if (this.isConnecting || this.isConnected) return;
-
             try {
               this.disconnect({ silent: true });
               const socket = new WebSocket(this.form.url);
@@ -1175,10 +1220,18 @@
             }
             current.close(1000, 'client disconnect');
           },
+
+          // ── Sending ───────────────────────────────────────────
+          sendJson(payload) {
+            if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+              throw new Error('Socket is not open.');
+            }
+            this.socket.send(JSON.stringify(payload));
+          },
           sendMessage() {
             if (!this.canSend) return;
             const text = this.draft.trim();
-            this.appendMessage('user', text, null, 'You');
+            this.appendChatItem({ kind: 'user', label: 'You', text });
             this.sendJson({
               type: 'run_turn',
               sessionKey: this.form.sessionKey,
@@ -1189,26 +1242,15 @@
             this.draft = '';
             this.isWaitingForReply = true;
           },
-          resolveApproval(message, decision) {
-            if (!message || message.role !== 'approval' || message.approval.status !== 'pending') return;
-            this.sendJson({
-              type: 'approval_resolve',
-              id: message.approval.id,
-              decision,
-            });
-            message.approval.status = decision === 'allow' ? 'resolved' : 'denied';
-            message.timestamp = Date.now();
-            this.pushEvent('approval', `${decision === 'allow' ? 'Allowed' : 'Denied'} ${message.approval.toolName}`);
-            if (this.approvalRequest && this.approvalRequest.id === message.approval.id) {
-              this.approvalRequest = null;
-            }
+          resolveApproval(seg, decision) {
+            if (!seg || seg.type !== 'approval' || seg.approval.status !== 'pending') return;
+            this.sendJson({ type: 'approval_resolve', id: seg.approval.id, decision });
+            seg.approval.status = decision === 'allow' ? 'resolved' : 'denied';
+            if (this.approvalRequest?.id === seg.approval.id) this.approvalRequest = null;
+            this.pushEvent('approval', `${decision === 'allow' ? 'Allowed' : 'Denied'} ${seg.approval.toolName}`);
           },
-          sendJson(payload) {
-            if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-              throw new Error('Socket is not open.');
-            }
-            this.socket.send(JSON.stringify(payload));
-          },
+
+          // ── Message handling ──────────────────────────────────
           handleServerMessage(raw) {
             let message;
             try {
@@ -1217,12 +1259,10 @@
               this.pushEvent('parse', `Received non-JSON payload: ${String(raw).slice(0, 120)}`);
               return;
             }
-
             if (!message || typeof message !== 'object') {
               this.pushEvent('parse', 'Ignored non-object server payload');
               return;
             }
-
             switch (message.type) {
               case 'hello_ack':
                 this.connectionStatus = 'connected';
@@ -1230,139 +1270,245 @@
                 this.lastStatusMessage = `Hello acknowledged as ${message.clientId}`;
                 this.pushEvent('hello', `Server acknowledged client ${message.clientId}`);
                 return;
-              case 'approval_requested':
+              case 'approval_requested': {
+                // Route approval into the active turn's segments so it stays
+                // in the correct position within the turn's event sequence.
+                const activeTurn = [...this.chatItems].reverse().find(i => i.kind === 'turn');
+                if (activeTurn) {
+                  activeTurn.segments.push({
+                    type: 'approval',
+                    id: this.nextId++,
+                    approval: { ...message, status: 'pending' },
+                  });
+                  this.scrollChatToBottom();
+                }
                 this.approvalRequest = message;
                 this.pushEvent('approval', `Approval requested for ${message.toolName}`);
-                this.appendMessage('approval', '', null, 'Approval', {
-                  approval: {
-                    ...message,
-                    status: 'pending',
-                  },
-                });
                 return;
+              }
               case 'approval_expired':
-                this.markApprovalMessage(message.id, 'expired');
-                if (this.approvalRequest && this.approvalRequest.id === message.id) {
-                  this.approvalRequest = null;
-                }
+                this.markApprovalExpired(message.id);
+                if (this.approvalRequest?.id === message.id) this.approvalRequest = null;
                 this.pushEvent('approval', `Approval expired: ${message.id}`);
                 return;
               case 'channel_error':
                 this.pushEvent('channel_error', `${message.code}: ${message.message}`);
-                this.appendMessage('error', `${message.code}: ${message.message}`, null, 'Channel');
+                this.appendChatItem({ kind: 'error', label: 'Channel', text: `${message.code}: ${message.message}` });
                 return;
             }
-
             this.handleAgentEvent(message);
           },
+
           handleAgentEvent(event) {
             switch (event.type) {
               case 'run_start':
                 this.pushEvent('run_start', `Turn ${event.turnId} started`);
                 return;
+
               case 'text_delta':
-                this.upsertAssistantMessage(event.turnId, event.text);
+                this.appendTextToTurn(event.turnId, event.text);
                 return;
-              case 'tool_use':
-                this.appendMessage(
-                  'tool',
-                  `Tool: ${event.name}\n${this.prettyJson(event.input)}`,
-                  event.turnId,
-                  'Tool call'
-                );
-                this.pushEvent('tool_use', `${event.name}`);
+
+              case 'tool_use': {
+                const turn = this.getOrCreateTurn(event.turnId);
+                turn.segments.push({
+                  type: 'tool_use',
+                  id: this.nextId++,
+                  name: event.name,
+                  input: event.input,
+                });
+                this.pushEvent('tool_use', event.name);
+                this.scrollChatToBottom();
                 return;
-              case 'tool_result':
-                this.appendMessage(
-                  event.result && event.result.isError ? 'error' : 'tool',
-                  '',
-                  event.turnId,
-                  'Tool result',
-                  {
-                    toolResult: {
-                      name: event.name,
-                      content: this.normalizeToolResultContent(event.result ? event.result.content : ''),
-                      isError: Boolean(event.result && event.result.isError),
-                      expanded: false,
-                    },
-                  }
-                );
+              }
+
+              case 'tool_result': {
+                const turn = this.getOrCreateTurn(event.turnId);
+                turn.segments.push({
+                  type: 'tool_result',
+                  id: this.nextId++,
+                  name: event.name,
+                  content: this.normalizeToolResultContent(event.result?.content),
+                  isError: Boolean(event.result?.isError),
+                  expanded: false,
+                });
+                this.scrollChatToBottom();
                 return;
+              }
+
               case 'llm_call':
                 this.pushEvent('llm_call', `Round ${event.round} for turn ${event.turnId}`);
                 return;
+
               case 'run_end':
                 this.isWaitingForReply = false;
                 this.pushEvent('run_end', `Turn ${event.turnId} finished with ${event.result.stopReason}`);
                 return;
+
               case 'error':
                 this.isWaitingForReply = false;
-                this.appendMessage('error', event.error || 'Unknown runtime error', event.turnId, 'Runtime');
+                this.appendChatItem({ kind: 'error', label: 'Runtime', turnId: event.turnId, text: event.error || 'Unknown runtime error' });
                 this.pushEvent('error', `Turn ${event.turnId} failed`);
                 return;
+
               case 'compaction_start':
-                this.appendMessage(
-                  'system',
-                  `Compaction started (${event.trigger}), tokens before: ${event.tokensBefore}`,
-                  event.turnId,
-                  'Compaction'
-                );
+                this.appendChatItem({
+                  kind: 'system',
+                  label: 'Compaction',
+                  turnId: event.turnId,
+                  text: `Compaction started (${event.trigger}), tokens before: ${event.estimatedTokens}`,
+                });
                 return;
+
               case 'compaction_end':
-                this.appendMessage(
-                  'system',
-                  `Compaction finished: ${event.tokensBefore} -> ${event.tokensAfter}, dropped ${event.droppedMessages} messages`,
-                  event.turnId,
-                  'Compaction'
-                );
+                this.appendChatItem({
+                  kind: 'system',
+                  label: 'Compaction',
+                  turnId: event.turnId,
+                  text: `Compaction finished: ${event.tokensBefore} → ${event.tokensAfter}, dropped ${event.droppedMessages} messages`,
+                });
                 return;
+
               case 'tool_result_pruned':
-                this.pushEvent(
-                  'tool_result_pruned',
-                  `${event.toolUseId}: ${event.originalChars} -> ${event.prunedChars}`
-                );
+                this.pushEvent('tool_result_pruned', `${event.toolUseId}: ${event.originalChars} → ${event.prunedChars}`);
                 return;
+
               default:
                 this.pushEvent('event', `Unhandled event: ${event.type || 'unknown'}`);
             }
           },
-          upsertAssistantMessage(turnId, delta) {
-            const existingId = this.turnMessageIds[turnId];
-            if (!existingId) {
-              const id = this.appendMessage('assistant', delta, turnId, 'Assistant');
-              this.turnMessageIds[turnId] = id;
-              return;
-            }
 
-            const message = this.messages.find((item) => item.id === existingId);
-            if (message) {
-              message.text += delta;
-              message.timestamp = Date.now();
-              this.scrollChatToBottom();
+          // ── Turn / segment helpers ────────────────────────────
+
+          // Find or lazily create the turn entry for a given turnId.
+          getOrCreateTurn(turnId) {
+            if (this.turnMap[turnId]) return this.turnMap[turnId];
+            const turn = {
+              kind: 'turn',
+              id: this.nextId++,
+              turnId,
+              label: 'Assistant',
+              timestamp: Date.now(),
+              toolsExpanded: true,
+              segments: [],
+            };
+            this.chatItems.push(turn);
+            this.turnMap[turnId] = turn;
+            return turn;
+          },
+
+          // Append text to the last text segment of a turn,
+          // or create a new text segment if the last segment is a tool segment.
+          appendTextToTurn(turnId, delta) {
+            const turn = this.getOrCreateTurn(turnId);
+            const last = turn.segments[turn.segments.length - 1];
+            if (last && last.type === 'text') {
+              last.text += delta;
+            } else {
+              turn.segments.push({ type: 'text', id: this.nextId++, text: delta });
+            }
+            turn.timestamp = Date.now();
+            this.scrollChatToBottom();
+          },
+
+          // Returns true if the segment at idx is the first tool_use in the list
+          // (used to decide where to render the toggle button).
+          isFirstToolSeg(segments, idx) {
+            if (segments[idx].type !== 'tool_use') return false;
+            for (let i = 0; i < idx; i++) {
+              if (segments[i].type === 'tool_use') return false;
+            }
+            return true;
+          },
+
+          countToolCalls(turn) {
+            return turn.segments.filter(s => s.type === 'tool_use').length;
+          },
+
+          // ── Chat item helpers ─────────────────────────────────
+          appendChatItem(fields) {
+            const item = {
+              id: this.nextId++,
+              timestamp: Date.now(),
+              text: '',
+              turnId: null,
+              ...fields,
+            };
+            this.chatItems.push(item);
+            this.scrollChatToBottom();
+            return item;
+          },
+
+          markApprovalExpired(approvalId) {
+            for (const item of this.chatItems) {
+              if (item.kind !== 'turn') continue;
+              const seg = item.segments.find(s => s.type === 'approval' && s.approval?.id === approvalId);
+              if (seg) { seg.approval.status = 'expired'; return; }
             }
           },
-          appendMessage(role, text, turnId, label, extra = {}) {
-            const id = this.nextMessageId++;
-            this.messages.push({
-              id,
-              role,
-              text,
-              turnId,
-              label,
-              timestamp: Date.now(),
-              ...extra,
-            });
-            this.scrollChatToBottom();
-            return id;
+
+          itemRoleClass(item) {
+            if (item.kind === 'turn') return 'assistant';
+            if (item.kind === 'user') return 'user';
+            if (item.kind === 'approval') return 'approval';
+            if (item.kind === 'error') return 'error';
+            if (item.kind === 'system') return 'system';
+            return item.kind;
           },
-          markApprovalMessage(approvalId, status) {
-            const message = this.messages.find(
-              (item) => item.role === 'approval' && item.approval && item.approval.id === approvalId
-            );
-            if (!message) return;
-            message.approval.status = status;
-            message.timestamp = Date.now();
-            this.scrollChatToBottom();
+
+          resetChat() {
+            this.chatItems = [];
+            this.turnMap = {};
+            this.eventFeed = [];
+            this.approvalRequest = null;
+            this.isWaitingForReply = false;
+          },
+
+          // ── Tool result preview ───────────────────────────────
+          previewLines(content) {
+            const lines = String(content || '').split('\n');
+            const lineNumberWidth = String(lines.length).length;
+            const previewLineCount = TOOL_RESULT_PREVIEW_HEAD_LINES + TOOL_RESULT_PREVIEW_TAIL_LINES;
+            if (lines.length <= previewLineCount) {
+              return {
+                text: lines.map((l, i) => this.formatLine(i + 1, l, lineNumberWidth)).join('\n'),
+                omittedCount: 0,
+              };
+            }
+            const head = lines.slice(0, TOOL_RESULT_PREVIEW_HEAD_LINES)
+              .map((l, i) => this.formatLine(i + 1, l, lineNumberWidth));
+            const tailStart = lines.length - TOOL_RESULT_PREVIEW_TAIL_LINES + 1;
+            const tail = lines.slice(-TOOL_RESULT_PREVIEW_TAIL_LINES)
+              .map((l, i) => this.formatLine(tailStart + i, l, lineNumberWidth));
+            const omittedCount = lines.length - previewLineCount;
+            return {
+              text: [...head, `...  ${omittedCount} more lines`, ...tail].join('\n'),
+              omittedCount,
+            };
+          },
+          formatLine(lineNumber, line, width) {
+            return `${String(lineNumber).padStart(width, ' ')} ${line}`;
+          },
+          segResultPreview(seg) {
+            return this.previewLines(seg.content);
+          },
+          segResultTruncated(seg) {
+            return this.segResultPreview(seg).omittedCount > 0;
+          },
+
+          // ── Misc helpers ──────────────────────────────────────
+          seedExample() {
+            this.draft = '请先查看当前工作目录，然后总结一下有哪些文件。';
+          },
+          normalizeToolResultContent(value) {
+            if (typeof value === 'string') return value;
+            if (value == null) return '';
+            if (typeof value === 'object') return this.prettyJson(value);
+            return String(value);
+          },
+          prettyJson(value) {
+            try { return JSON.stringify(value, null, 2); }
+            catch { return String(value); }
           },
           pushEvent(title, detail) {
             this.eventFeed.unshift({ id: this.nextEventId++, title, detail });
@@ -1370,116 +1516,48 @@
               this.eventFeed.length = MAX_EVENT_FEED_ITEMS;
             }
           },
-          resetChat() {
-            this.messages = [];
-            this.turnMessageIds = {};
-            this.eventFeed = [];
-            this.approvalRequest = null;
-            this.isWaitingForReply = false;
+          scrollChatToBottom() {
+            nextTick(() => {
+              const el = this.$refs.chatLogEl;
+              if (el) el.scrollTop = el.scrollHeight;
+            });
           },
-          seedExample() {
-            this.draft = '请先查看当前工作目录，然后总结一下有哪些文件。';
+          approvalStatusClass(status) {
+            if (status === 'resolved') return 'allowed';
+            return status;
           },
-          prettyJson(value) {
-            try {
-              return JSON.stringify(value, null, 2);
-            } catch {
-              return String(value);
+          approvalStatusLabel(status) {
+            switch (status) {
+              case 'pending':  return 'Awaiting decision';
+              case 'resolved': return 'Allowed';
+              case 'denied':   return 'Denied';
+              case 'expired':  return 'Expired';
+              default:         return status;
             }
           },
-          normalizeToolResultContent(value) {
-            if (typeof value === 'string') {
-              return value;
-            }
-
-            if (value == null) {
-              return '';
-            }
-
-            if (typeof value === 'object') {
-              return this.prettyJson(value);
-            }
-
-            return String(value);
+          formatTime(ts) {
+            return new Date(ts).toLocaleTimeString([], {
+              hour: '2-digit', minute: '2-digit', second: '2-digit',
+            });
           },
-          isToolResultTruncated(message) {
-            const preview = this.toolResultPreview(message);
-            return preview.omittedCount > 0;
-          },
-          toolResultPreview(message) {
-            if (!message || !message.toolResult) {
-              return {
-                text: '',
-                omittedCount: 0,
-              };
-            }
 
-            const content = String(message.toolResult.content || '');
-            const lines = content.split('\n');
-            const lineNumberWidth = String(lines.length).length;
-            const previewLineCount = TOOL_RESULT_PREVIEW_HEAD_LINES + TOOL_RESULT_PREVIEW_TAIL_LINES;
-
-            if (lines.length <= previewLineCount) {
-              return {
-                text: lines
-                  .map((line, index) => this.formatToolResultPreviewLine(index + 1, line, lineNumberWidth))
-                  .join('\n'),
-                omittedCount: 0,
-              };
-            }
-
-            const head = lines
-              .slice(0, TOOL_RESULT_PREVIEW_HEAD_LINES)
-              .map((line, index) => this.formatToolResultPreviewLine(index + 1, line, lineNumberWidth));
-            const tailStart = lines.length - TOOL_RESULT_PREVIEW_TAIL_LINES + 1;
-            const tail = lines
-              .slice(-TOOL_RESULT_PREVIEW_TAIL_LINES)
-              .map((line, index) => this.formatToolResultPreviewLine(tailStart + index, line, lineNumberWidth));
-            const omittedCount = lines.length - previewLineCount;
-
-            return {
-              text: [...head, `...  ${omittedCount} more lines`, ...tail].join('\n'),
-              omittedCount,
-            };
-          },
-          formatToolResultPreviewLine(lineNumber, line, width) {
-            return `${String(lineNumber).padStart(width, ' ')} ${line}`;
-          },
-          toggleToolResult(message) {
-            if (!message || !message.toolResult) {
-              return;
-            }
-
-            message.toolResult.expanded = !message.toolResult.expanded;
-            message.timestamp = Date.now();
-          },
+          // ── Markdown renderer (unchanged) ─────────────────────
           renderAssistantText(text) {
             const normalized = String(text || '').replace(/\r\n?/g, '\n');
-            if (!normalized.trim()) {
-              return '';
-            }
-
+            if (!normalized.trim()) return '';
             const blocks = [];
             const codeFencePattern = /```(?:([^\n`]+))?\n([\s\S]*?)```/g;
             let lastIndex = 0;
             let match;
-
             while ((match = codeFencePattern.exec(normalized))) {
               const before = normalized.slice(lastIndex, match.index);
-              if (before.trim()) {
-                blocks.push(...this.renderTextBlocks(before));
-              }
-
+              if (before.trim()) blocks.push(...this.renderTextBlocks(before));
               const code = this.escapeHtml(match[2].replace(/\n$/, ''));
               blocks.push(`<pre><code>${code}</code></pre>`);
               lastIndex = match.index + match[0].length;
             }
-
             const tail = normalized.slice(lastIndex);
-            if (tail.trim()) {
-              blocks.push(...this.renderTextBlocks(tail));
-            }
-
+            if (tail.trim()) blocks.push(...this.renderTextBlocks(tail));
             return blocks.join('');
           },
           renderTextBlocks(text) {
@@ -1489,84 +1567,46 @@
             let paragraphLines = [];
             let listType = null;
             let listItems = [];
-
             const flushParagraph = () => {
-              if (paragraphLines.length === 0) {
-                return;
-              }
-
-              blocks.push(`<p>${paragraphLines.map((line) => this.renderInlineText(line)).join('<br />')}</p>`);
+              if (!paragraphLines.length) return;
+              blocks.push(`<p>${paragraphLines.map(l => this.renderInlineText(l)).join('<br />')}</p>`);
               paragraphLines = [];
             };
-
             const flushList = () => {
-              if (listItems.length === 0 || !listType) {
-                return;
-              }
-
-              blocks.push(
-                `<${listType}>${listItems
-                  .map((item) => `<li>${this.renderInlineText(item)}</li>`)
-                  .join('')}</${listType}>`
-              );
+              if (!listItems.length || !listType) return;
+              blocks.push(`<${listType}>${listItems.map(i => `<li>${this.renderInlineText(i)}</li>`).join('')}</${listType}>`);
               listItems = [];
               listType = null;
             };
-
             for (const rawLine of lines) {
               const line = rawLine.trimEnd();
               const trimmed = line.trim();
-
-              if (!trimmed) {
-                flushParagraph();
-                flushList();
-                continue;
-              }
-
+              if (!trimmed) { flushParagraph(); flushList(); continue; }
               if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
-                flushParagraph();
-                flushList();
-                blocks.push('<hr />');
-                continue;
+                flushParagraph(); flushList(); blocks.push('<hr />'); continue;
               }
-
               const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
               if (headingMatch) {
-                flushParagraph();
-                flushList();
-                const level = headingMatch[1].length;
-                blocks.push(`<h${level}>${this.renderInlineText(headingMatch[2])}</h${level}>`);
+                flushParagraph(); flushList();
+                blocks.push(`<h${headingMatch[1].length}>${this.renderInlineText(headingMatch[2])}</h${headingMatch[1].length}>`);
                 continue;
               }
-
               const unorderedMatch = trimmed.match(/^[-*]\s+(.+)$/);
               if (unorderedMatch) {
                 flushParagraph();
-                if (listType && listType !== 'ul') {
-                  flushList();
-                }
-                listType = 'ul';
-                listItems.push(unorderedMatch[1]);
-                continue;
+                if (listType && listType !== 'ul') flushList();
+                listType = 'ul'; listItems.push(unorderedMatch[1]); continue;
               }
-
               const orderedMatch = trimmed.match(/^\d+\.\s+(.+)$/);
               if (orderedMatch) {
                 flushParagraph();
-                if (listType && listType !== 'ol') {
-                  flushList();
-                }
-                listType = 'ol';
-                listItems.push(orderedMatch[1]);
-                continue;
+                if (listType && listType !== 'ol') flushList();
+                listType = 'ol'; listItems.push(orderedMatch[1]); continue;
               }
-
               flushList();
               paragraphLines.push(line);
             }
-
-            flushParagraph();
-            flushList();
+            flushParagraph(); flushList();
             return blocks;
           },
           renderInlineText(text) {
@@ -1576,59 +1616,15 @@
               codeSegments.push(`<code>${code}</code>`);
               return token;
             });
-
             rendered = rendered.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-            rendered = rendered.replace(
-              /(https?:\/\/[^\s<]+)/g,
-              '<a href="$1" target="_blank" rel="noreferrer noopener">$1</a>'
-            );
-
-            codeSegments.forEach((segment, index) => {
-              rendered = rendered.replace(`__CODE_SPAN_${index}__`, segment);
-            });
-
+            rendered = rendered.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noreferrer noopener">$1</a>');
+            codeSegments.forEach((seg, i) => { rendered = rendered.replace(`__CODE_SPAN_${i}__`, seg); });
             return rendered;
           },
           escapeHtml(value) {
             return String(value)
-              .replace(/&/g, '&amp;')
-              .replace(/</g, '&lt;')
-              .replace(/>/g, '&gt;')
-              .replace(/"/g, '&quot;')
-              .replace(/'/g, '&#39;');
-          },
-          approvalStatusClass(status) {
-            if (status === 'resolved') return 'allowed';
-            return status;
-          },
-          approvalStatusLabel(status) {
-            switch (status) {
-              case 'pending':
-                return 'Awaiting decision';
-              case 'resolved':
-                return 'Allowed';
-              case 'denied':
-                return 'Denied';
-              case 'expired':
-                return 'Expired';
-              default:
-                return status;
-            }
-          },
-          formatTime(ts) {
-            return new Date(ts).toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-              second: '2-digit',
-            });
-          },
-          scrollChatToBottom() {
-            nextTick(() => {
-              const el = this.$refs.chatLogEl;
-              if (el) {
-                el.scrollTop = el.scrollHeight;
-              }
-            });
+              .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
           },
         },
       }).mount('#app');
