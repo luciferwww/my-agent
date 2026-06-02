@@ -221,8 +221,9 @@ export class AgentRunner {
     let lastStopReason = 'end_turn';
     let llmCallCount = 0;
     let hasMoreToolCalls = true; // 初始 true，保证至少一次 LLM 调用
+    let pendingSteeringMessages: ChatMessage[] = [];
 
-    while (hasMoreToolCalls) {
+    while (hasMoreToolCalls || pendingSteeringMessages.length > 0) {
       if (llmCallCount >= maxLlmCalls) {
         const text = this.extractText(lastContent);
         return {
@@ -232,6 +233,12 @@ export class AgentRunner {
           usage: totalUsage,
           toolRounds: totalToolRounds,
         };
+      }
+
+      // 注入上一轮积累的 steering 消息（LLM 调用前，保证 tool_result 在前、steering 在后）
+      if (pendingSteeringMessages.length > 0) {
+        await this.appendInjectedMessages(params.sessionKey, messages, pendingSteeringMessages);
+        pendingSteeringMessages = [];
       }
 
       this.emit({ type: 'llm_call', round: llmCallCount });
@@ -351,13 +358,10 @@ export class AgentRunner {
         }
 
         totalToolRounds++;
-
-        // 每轮 tool 执行后检查 steering 消息。
-        const steeringMessages = await this.readPendingMessages(params.getSteeringMessages);
-        if (steeringMessages.length > 0) {
-          await this.appendInjectedMessages(params.sessionKey, messages, steeringMessages);
-        }
       }
+
+      // 每轮结束后检查 steering 消息（无论有无 tool call），留给下次迭代的 LLM 调用前注入。
+      pendingSteeringMessages = await this.readPendingMessages(params.getSteeringMessages);
     }
 
     const text = this.extractText(lastContent);
