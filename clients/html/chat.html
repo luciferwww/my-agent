@@ -1098,7 +1098,7 @@
             <div class="button-row">
               <button class="secondary" @click="draft = ''" :disabled="!draft">Reset</button>
               <button class="primary" @click="sendMessage" :disabled="!canSend">
-                {{ isWaitingForReply ? 'Waiting…' : 'Send' }}
+                {{ isWaitingForReply ? 'Waiting…' : pendingApprovalCount > 0 ? 'Approval pending…' : 'Send' }}
               </button>
             </div>
           </div>
@@ -1156,7 +1156,8 @@
           isConnected() { return this.connectionStatus === 'connected'; },
           isConnecting() { return this.connectionStatus === 'connecting'; },
           canSend() {
-            return this.isConnected && this.helloAcknowledged && this.draft.trim().length > 0;
+            return this.isConnected && this.helloAcknowledged && this.draft.trim().length > 0
+              && this.pendingApprovalCount === 0;
           },
           statusClass() {
             if (this.connectionStatus === 'connected') return 'connected';
