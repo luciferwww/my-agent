@@ -38,7 +38,7 @@ const dim = (s: string) => `\x1b[90m${s}\x1b[0m`;
 async function main(): Promise<void> {
   const apiKey = process.env.ANTHROPIC_API_KEY ?? 'EMPTY';
   const baseURL = /*process.env.ANTHROPIC_BASE_URL ??*/ 'http://localhost:5000';
-  const model = process.env.MY_AGENT_MODEL ?? 'gpt-4.1';
+  const model = process.env.MY_AGENT_MODEL ?? 'claude-sonnet-4.6';
   const port = parseIntArg('port', Number.parseInt(process.env.MY_AGENT_WS_PORT ?? '8787', 10) || 8787);
   const host = process.env.MY_AGENT_WS_HOST ?? '127.0.0.1';
 
