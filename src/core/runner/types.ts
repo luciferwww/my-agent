@@ -106,4 +106,16 @@ export type AgentEvent =
       tokensBefore: number;
       tokensAfter: number;
       droppedMessages: number;
+    }
+  /**
+   * 会话末尾被净化：runAttempt / compactHistory 开头检测到当前分支末尾
+   * 是孤立的 trailing user message，已通过 branch(parentId) 回退 leafId。
+   * 仅修改内存，不写 JSONL；被丢弃的 entry 仍保留在文件中可审计。
+   */
+  | {
+      type: 'session_tail_sanitized';
+      sessionKey: string;
+      turnId: string;
+      discardedEntryId: string;
+      discardedRole: 'user';
     };

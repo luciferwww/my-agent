@@ -736,7 +736,11 @@ describe('AgentRunner', () => {
       expect(afterPayloads).toHaveLength(1);
       expect(afterPayloads[0]?.trigger).toBe('preemptive');
       expect(afterPayloads[0]?.tokensBefore).toBeGreaterThan(afterPayloads[0]?.tokensAfter ?? 0);
-      expect(afterPayloads[0]?.droppedMessages).toBe(4);
+      // 当前 user 消息（'Continue'）下沉到 preflight 之后才 append，preemptive 压缩在
+      // append 之前抛出，因此 compactHistory 看到的是 4 条预置消息（非 5 条），
+      // keepRecentTurns:1 保留最近 1 个 user turn (recent question + recent answer = 2 条)，
+      // 丢弃前 2 条。这是"压缩输入不被当前 user 污染"的预期表现。
+      expect(afterPayloads[0]?.droppedMessages).toBe(2);
     });
 
     it('priority: higher priority hook runs first', async () => {
@@ -766,6 +770,131 @@ describe('AgentRunner', () => {
       await runner.run({ sessionKey: 'main', message: 'Go', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       expect(order).toEqual([10, 1]);
+    });
+  });
+
+  // ── sanitizeSessionTail / trailing user 清洗 ──────────
+
+  describe('sanitizeSessionTail', () => {
+    it('user 消息已下沉到 runAttempt: run() 不再于入口立即 append', async () => {
+      // 让 LLM 抛错，run() 会在 emit error 后抛出。
+      // 关键断言：此时 session 中已有 user 消息（说明 runAttempt 在 preflight 通过后 append 了）。
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'error', error: new Error('boom') },
+        ],
+      ]);
+
+      const runner = new AgentRunner({ llmClient, sessionManager });
+      await expect(
+        runner.run({ sessionKey: 'main', message: 'Hello', model: 'test', systemPrompt: '', turnId: 'test-turn' }),
+      ).rejects.toThrow('boom');
+
+      // runAttempt preflight 通过后会 append user，所以 LLM 报错时 user 已经在 session
+      const messages = sessionManager.getMessages('main');
+      expect(messages.length).toBeGreaterThanOrEqual(1);
+      expect(messages[0]!.message.role).toBe('user');
+      expect(messages[0]!.message.content).toBe('Hello');
+    });
+
+    it('启动时若末尾存在孤立 trailing user, runAttempt 入口将其从内存视图剥离', async () => {
+      // 手工伪造一条"上一轮失败遗留"的孤立 user 消息
+      await sessionManager.appendMessage('main', { role: 'user', content: 'orphan' });
+      const beforeCount = sessionManager.getMessages('main').length;
+      expect(beforeCount).toBe(1);
+
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'ok' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 5, outputTokens: 1 } },
+        ],
+      ]);
+
+      let capturedMessages: ChatParams['messages'] = [];
+      const sniffer: LLMClient = {
+        async *chatStream(params: ChatParams) {
+          capturedMessages = params.messages.map(m => ({ ...m }));
+          yield* llmClient.chatStream(params);
+        },
+        async chat() { throw new Error('Not used'); },
+      };
+
+      const events: AgentEvent[] = [];
+      const runner = new AgentRunner({
+        llmClient: sniffer,
+        sessionManager,
+        onEvent: (e) => events.push(e),
+      });
+
+      await runner.run({ sessionKey: 'main', message: 'real', model: 'test', systemPrompt: '', turnId: 't1' });
+
+      // sniffer 看到的 user content 应是 'real'，不含 'orphan'
+      const userMsgs = capturedMessages.filter(m => m.role === 'user');
+      expect(userMsgs).toHaveLength(1);
+      expect(userMsgs[0]!.content).toBe('real');
+
+      // session 视图：orphan 已被 branch 剥离，新视图为 user(real) + assistant
+      const afterMessages = sessionManager.getMessages('main');
+      expect(afterMessages).toHaveLength(2);
+      expect(afterMessages[0]!.message.content).toBe('real');
+      expect(afterMessages[1]!.message.role).toBe('assistant');
+
+      // emit 了 session_tail_sanitized 事件
+      const sanitized = events.find(e => e.type === 'session_tail_sanitized');
+      expect(sanitized).toBeDefined();
+      expect((sanitized as { discardedRole: string }).discardedRole).toBe('user');
+    });
+
+    it('空 session: sanitize 不报错也不 emit', async () => {
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'ok' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 5, outputTokens: 1 } },
+        ],
+      ]);
+      const events: AgentEvent[] = [];
+      const runner = new AgentRunner({ llmClient, sessionManager, onEvent: (e) => events.push(e) });
+
+      await runner.run({ sessionKey: 'main', message: 'first', model: 'test', systemPrompt: '', turnId: 't1' });
+
+      expect(events.find(e => e.type === 'session_tail_sanitized')).toBeUndefined();
+    });
+
+    it('末尾为 assistant 时不触发清洗', async () => {
+      // 先完成一轮正常对话，末尾是 assistant
+      const llmClient1 = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'reply1' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 5, outputTokens: 1 } },
+        ],
+      ]);
+      const runner1 = new AgentRunner({ llmClient: llmClient1, sessionManager });
+      await runner1.run({ sessionKey: 'main', message: 'q1', model: 'test', systemPrompt: '', turnId: 't1' });
+      const tail = sessionManager.getMessages('main').slice(-1)[0];
+      expect(tail!.message.role).toBe('assistant');
+
+      // 第二轮：sanitize 应是 no-op
+      const events: AgentEvent[] = [];
+      const llmClient2 = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'reply2' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 5, outputTokens: 1 } },
+        ],
+      ]);
+      const runner2 = new AgentRunner({ llmClient: llmClient2, sessionManager, onEvent: (e) => events.push(e) });
+      await runner2.run({ sessionKey: 'main', message: 'q2', model: 'test', systemPrompt: '', turnId: 't2' });
+
+      expect(events.find(e => e.type === 'session_tail_sanitized')).toBeUndefined();
+
+      // 完整序列: u(q1) → a(reply1) → u(q2) → a(reply2)
+      const all = sessionManager.getMessages('main');
+      expect(all).toHaveLength(4);
+      expect(all.map(r => r.message.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
     });
   });
 });

@@ -18,6 +18,9 @@ import { checkContextBudget } from './context/context-budget.js';
 import { estimatePromptTokens } from './context/token-estimation.js';
 import { ContextOverflowError, isContextOverflowError } from './errors.js';
 import { compactMessages } from './context/compaction.js';
+import { Logger } from '../../platform/logger/index.js';
+
+const logger = Logger.get('AgentRunner');
 
 // ── 常量 ────────────────────────────────────────────────────
 
@@ -106,6 +109,52 @@ export class AgentRunner {
       .map((r) => ({ handler: r.handler as HookHandlerMap[K], name: r.name }));
   }
 
+  /**
+   * 净化会话末尾的孤立 trailing user 消息。
+   *
+   * 在 runAttempt / compactHistory 入口处调用，将上一次失败/中断遗留的
+   * 末尾 user 消息从内存视图中剥离（branch 回其 parentId），使得后续的
+   * loadHistory / append 不会看到这条孤儿。仅修改内存指针 leafId，不写
+   * JSONL；被丢弃的 entry 仍然保留在文件里以供审计。
+   *
+   * 若末尾不是 user message（例如是 toolResult，说明 LLM 中途中断），
+   * 仅 warn 记录，不主动修复 —— 这类破损需要更复杂的语义恢复策略。
+   */
+  private sanitizeSessionTail(sessionKey: string): void {
+    const records = this.sessionManager.getMessages(sessionKey);
+    if (records.length === 0) return;
+
+    const last = records[records.length - 1]!;
+    if (last.message.role !== 'user') {
+      if (last.message.role === 'toolResult') {
+        logger.warn('[sanitizeSessionTail] session tail is toolResult (interrupted mid-tool-call); skipping cleanup', {
+          sessionKey,
+          entryId: last.id,
+        });
+      }
+      return;
+    }
+
+    // 末尾是 user：回退到其 parentId（首条 user 时 parentId 指向 session 根记录）
+    // SessionManager.branch() 只验证 byId.has(entryId)，session 根记录在 createSession
+    // 时已被加入 byId，因此这里始终安全。
+    const parentId = last.parentId;
+    if (!parentId) {
+      logger.warn('[sanitizeSessionTail] trailing user has no parentId; skipping', {
+        sessionKey,
+        entryId: last.id,
+      });
+      return;
+    }
+
+    this.sessionManager.branch(sessionKey, parentId);
+    this.emit({
+      type: 'session_tail_sanitized',
+      discardedEntryId: last.id,
+      discardedRole: 'user',
+    });
+  }
+
   // ── 公共入口 ─────────────────────────────────────────────
 
   async run(params: RunParams): Promise<RunResult> {
@@ -117,11 +166,9 @@ export class AgentRunner {
     try {
       this.emit({ type: 'run_start' });
 
-      // 保存用户消息到 session（在所有重试前只保存一次，避免重复写入）
-      await this.sessionManager.appendMessage(params.sessionKey, {
-        role: 'user',
-        content: params.message,
-      });
+      // 注意：用户消息的 append 已下沉到 runAttempt() 内部，在 Layer 2 preflight
+      // 通过之后才写入；这样 ContextOverflowError → compactHistory 重试期间，
+      // 当前 user 消息不会污染待压缩的历史，也不会被重复写入。
 
       let compactionAttempts = 0;
       let compacted = false;
@@ -135,6 +182,14 @@ export class AgentRunner {
           return finalResult;
         } catch (err) {
           if (err instanceof ContextOverflowError && compactionAttempts < MAX_COMPACTION_RETRIES) {
+            logger.info('compaction retry triggered', {
+              sessionKey: params.sessionKey,
+              turnId: params.turnId,
+              trigger: err.trigger,
+              attempt: compactionAttempts + 1,
+              maxAttempts: MAX_COMPACTION_RETRIES,
+              reason: err.message,
+            });
             // 执行 LLM 摘要压缩，写入持久化，然后重试 runAttempt
             // runAttempt 的 loadHistory() 会重新加载压缩后的 session，自动感知摘要
             await this.compactHistory(params, compaction, err.trigger);
@@ -145,6 +200,15 @@ export class AgentRunner {
 
           // 超过重试上限，或非 ContextOverflowError → 向上抛出
           const error = err instanceof Error ? err : new Error(String(err));
+          if (err instanceof ContextOverflowError) {
+            logger.error('compaction retries exhausted', {
+              sessionKey: params.sessionKey,
+              turnId: params.turnId,
+              attempts: compactionAttempts,
+              maxAttempts: MAX_COMPACTION_RETRIES,
+              reason: err.message,
+            });
+          }
           this.emit({ type: 'error', error });
           throw error;
         }
@@ -169,6 +233,9 @@ export class AgentRunner {
   ): Promise<Omit<RunResult, 'compacted'>> {
     const maxLlmCalls = params.maxLlmCalls ?? DEFAULT_MAX_LLM_CALLS;
     const maxTokens = params.maxTokens ?? DEFAULT_MAX_TOKENS;
+
+    // 0. 净化会话末尾的孤立 trailing user（来自上一次失败/中断的遗留）
+    this.sanitizeSessionTail(params.sessionKey);
 
     // 1. 加载历史消息（不含当前用户消息）
     //    若 session 有压缩记录，loadHistory 会自动截断并注入摘要
@@ -197,6 +264,14 @@ export class AgentRunner {
         config: compaction,
       });
 
+      logger.debug('context budget route', {
+        sessionKey: params.sessionKey,
+        turnId: params.turnId,
+        route: budget.route,
+        estimatedTokens: budget.estimatedTokens,
+        availableTokens: budget.availableTokens,
+      });
+
       if (budget.route === 'truncate_tool_results_only') {
         // Layer 1.5: 聚合裁剪，将所有 tool result 总量压入聚合预算（不调 LLM）
         messages = pruneToolResultsAggregate(messages, contextWindowTokens, compaction);
@@ -211,7 +286,14 @@ export class AgentRunner {
       // route === 'fits' → 直接继续
     }
 
-    // 4. delay-append：预判检查通过后才将当前用户消息 append 进 messages
+    // 4. preflight 通过 → 此时才将本次 user 消息持久化到 session
+    //    并 append 进 messages 进入主循环。
+    //    顺序：先 append 到 session（持久化）再 push 到 messages（内存）。
+    //    若 ContextOverflowError 抛出在 preflight 之前，则 session 不会被污染。
+    await this.sessionManager.appendMessage(params.sessionKey, {
+      role: 'user',
+      content: params.message,
+    });
     messages = [...messages, { role: 'user', content: params.message }];
 
     // 5. 主循环：LLM 调用 + tool use
@@ -350,6 +432,13 @@ export class AgentRunner {
         if (compaction.enabled) {
           const estimated = estimatePromptTokens({ messages, systemPrompt: params.systemPrompt });
           if (estimated > contextWindowTokens * INNER_LOOP_OVERFLOW_THRESHOLD) {
+            logger.warn('inner-loop overflow threshold breached', {
+              sessionKey: params.sessionKey,
+              turnId: params.turnId,
+              estimatedTokens: estimated,
+              contextWindowTokens,
+              thresholdPct: INNER_LOOP_OVERFLOW_THRESHOLD * 100,
+            });
             throw new ContextOverflowError(
               `Context exceeds ${INNER_LOOP_OVERFLOW_THRESHOLD * 100}% threshold during tool loop `
               + `(estimated ${estimated} of ${contextWindowTokens} tokens)`,
@@ -389,6 +478,12 @@ export class AgentRunner {
     compaction: CompactionConfig,
     trigger: 'preemptive' | 'overflow' | 'manual',
   ): Promise<void> {
+    // 0. 净化会话末尾的孤立 trailing user（同 runAttempt 入口）
+    //    若 preemptive 触发：runAttempt 已先净化，此处 no-op。
+    //    若 overflow 触发：runAttempt 已 append 过 user，此处需要把这条剥离，
+    //    避免它进入 compactMessages 的输入。
+    this.sanitizeSessionTail(params.sessionKey);
+
     // 加载当前历史消息（用于压缩，不含当前用户消息）
     const messages = this.loadHistory(params.sessionKey);
     const estimatedTokens = estimatePromptTokens({ messages });
@@ -428,6 +523,16 @@ export class AgentRunner {
       compactResult.record,
       firstKeptEntryId,
     );
+
+    logger.info('compaction wrote record', {
+      sessionKey: params.sessionKey,
+      turnId: params.turnId,
+      trigger,
+      firstKeptEntryId,
+      tokensBefore: compactResult.stats.tokensBefore,
+      tokensAfter: compactResult.stats.tokensAfter,
+      droppedMessages: compactResult.stats.droppedMessages,
+    });
 
     const afterCompactionHooks = this.getHooks('after_compaction');
     if (afterCompactionHooks.length > 0) {
@@ -561,6 +666,12 @@ export class AgentRunner {
     } catch (err) {
       // 将 LLM API 的 context overflow 错误统一包装为 ContextOverflowError
       if (err instanceof Error && isContextOverflowError(err)) {
+        logger.warn('LLM API returned context overflow', {
+          sessionKey: this.currentParams?.sessionKey,
+          turnId: this.currentParams?.turnId,
+          model: params.model,
+          originalMessage: err.message,
+        });
         throw new ContextOverflowError(`LLM API context overflow: ${err.message}`);
       }
       throw err;
