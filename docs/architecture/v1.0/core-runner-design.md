@@ -61,23 +61,24 @@ Runtime 层先完成配置解析，再把 Agent Runner 真正需要的最小输�
 │                           AgentRunner                                    │
 │                                                                          │
 │  run()                                                                   │
-│   ├─ appendMessage(user)                                                 │
 │   ├─ 外层压缩重试循环                                                     │
 │   │   ├─ runAttempt()                                                    │
+│   │   │   ├─ sanitizeSessionTail（清洗孤立 trailing user）               │
 │   │   │   ├─ loadHistory (感知 compaction record)                        │
 │   │   │   ├─ Layer 1: pruneToolResults                                   │
 │   │   │   ├─ Layer 2: checkContextBudget → 路由决定                      │
 │   │   │   │    ├─ 'fits' → 继续                                          │
 │   │   │   │    ├─ 'truncate_tool_results_only' → Layer 1.5 聚合裁剪      │
 │   │   │   │    └─ 'compact' → 抛 ContextOverflowError                    │
-│   │   │   ├─ delay-append currentPrompt                                  │
+│   │   │   ├─ appendMessage(user) + push 到 messages（preflight 之后）    │
 │   │   │   ├─ 执行循环（LLM 调用 + tool use）                              │
 │   │   │   │    ├─ callLLMStream → emit events                            │
 │   │   │   │    ├─ before_tool_call hook → executeTool → after_tool_call  │
 │   │   │   │    ├─ 90% 阈值检查                                            │
 │   │   │   │    └─ getSteeringMessages reader（每轮 tool 后）              │
 │   │   │   └─ return RunResult                                            │
-│   │   └─ catch ContextOverflowError → compactHistory → retry             │
+│   │   └─ catch ContextOverflowError                                      │
+│   │       └─ compactHistory（开头亦 sanitizeSessionTail） → retry        │
 │   └─ emit run_end                                                        │
 │                                                                          │
 │  外部依赖：                                                              │
@@ -234,6 +235,18 @@ export type AgentEvent =
       tokensBefore: number;
       tokensAfter: number;
       droppedMessages: number;
+    }
+  | {
+      /**
+       * runAttempt / compactHistory 入口处检测到当前分支末尾是孤立的 trailing
+       * user message，已通过 branch(parentId) 回退 leafId。仅修改内存，不写
+       * JSONL；被丢弃的 entry 仍保留在文件中可审计。
+       */
+      type: 'session_tail_sanitized';
+      sessionKey: string;
+      turnId: string;
+      discardedEntryId: string;
+      discardedRole: 'user';
     };
 ```
 
@@ -258,11 +271,11 @@ async run(params: RunParams): Promise<RunResult> {
   try {
     this.emit({ type: 'run_start' });
 
-    // 用户消息只在所有重试前保存一次
-    await this.sessionManager.appendMessage(params.sessionKey, {
-      role: 'user',
-      content: params.message,
-    });
+    // 用户消息不在 run() 入口落盘——已下沉到 runAttempt() 内部，
+    // 在 Layer 2 preflight 通过之后才写入。这样：
+    //   - preemptive 压缩抛出时不会留下污染当前历史的孤立 user
+    //   - 压缩重试不会重复 append user message
+    // 详见 §9.2 sanitizeSessionTail。
 
     let compactionAttempts = 0;
     let compacted = false;
@@ -294,7 +307,7 @@ async run(params: RunParams): Promise<RunResult> {
 
 关键不变量：
 
-- **用户消息只 append 一次**：放在外层重试循环之前，避免多次写入；
+- **每次 retry 都会重新 append user 消息**：append 点下沉到 `runAttempt` 内、preflight 之后；配合 `sanitizeSessionTail` 在 `runAttempt`/`compactHistory` 入口清洗上一轮残留的孤立 trailing user，避免重复写入与 role alternation 冲突；
 - **`runAttempt` 重新 `loadHistory` 才能感知压缩**：每次 retry 都从 session 重新读历史，新的 compaction record 会被 `loadHistory` 自动识别（截断 + 摘要注入）；
 - **`MAX_COMPACTION_RETRIES = 3`**：兜底次数；超过则把 `ContextOverflowError` 向上抛给调用方；
 - **`DEFAULT_COMPACTION_CONFIG` 占位**：库消费者不传 `compaction` 时使用，避免 nullable 检查散落到每条路径。
@@ -332,6 +345,10 @@ private async runAttempt(
   const maxLlmCalls = params.maxLlmCalls ?? DEFAULT_MAX_LLM_CALLS;            // 12
   const maxTokens = params.maxTokens ?? DEFAULT_MAX_TOKENS;                   // 4096
 
+  // 0. 净化当前分支末尾的孤立 trailing user（来自上一次失败/中断的遗留）
+  //    详见 §9.2 sanitizeSessionTail
+  this.sanitizeSessionTail(params.sessionKey);
+
   // 1. 加载历史（自动感知压缩记录）
   let messages = this.loadHistory(params.sessionKey);
 
@@ -355,7 +372,11 @@ private async runAttempt(
     }
   }
 
-  // 4. delay-append：预判通过后才把当前用户消息加入 messages
+  // 4. preflight 通过 → 此时才把本次 user 消息持久化到 session 并 push 到 messages
+  //    顺序：先 appendMessage（落盘）再 push（内存）。预判失败时不会污染 session。
+  await this.sessionManager.appendMessage(params.sessionKey, {
+    role: 'user', content: params.message,
+  });
   messages = [...messages, { role: 'user', content: params.message }];
 
   // 5. 执行循环（见 §5）
@@ -365,9 +386,10 @@ private async runAttempt(
 
 要点：
 
-- **delay-append**：预判检查所用的 `messages` 不含当前用户消息，`currentPrompt` 由 `checkContextBudget` 单独计入；这样当前用户消息永远不会被压缩，预判失败时不会污染重试；
+- **入口先清洗**：`sanitizeSessionTail` 把上一次失败/中断遗留的孤立 trailing user 从当前分支剥离（branch 回 parentId，仅改内存 `leafId`），保证后续 append 不会产生连续 user 或重复内容；
+- **append 在 preflight 之后**：预判检查所用的 `messages` 不含当前用户消息，`currentPrompt` 由 `checkContextBudget` 单独计入；preflight 抛 `ContextOverflowError('preemptive')` 时 user 尚未落盘，下一轮压缩重试的输入干净；
 - **Layer 1 / Layer 1.5 / Layer 2** 都在循环之前完成；Layer 3（LLM 摘要）由外层捕获 `ContextOverflowError` 后驱动；
-- 详细的层级语义见 [context-design](../core-runner-context-design.md)。
+- 详细的层级语义见 [context-design](../core-runner-context-design.md)，落盘点下沉的设计动机见 [core-runner-turn-flow-spec](../core-runner-turn-flow-spec.md)。
 
 ---
 
@@ -499,6 +521,13 @@ private async compactHistory(
   compaction: CompactionConfig,
   trigger: 'preemptive' | 'overflow' | 'manual',
 ): Promise<void> {
+  // 0. 净化当前分支末尾的孤立 trailing user
+  //    - preemptive 触发：runAttempt 已先净化，此处 no-op；
+  //    - overflow 触发：runAttempt 已 append 过 user，此处把这条剥离，
+  //      避免它进入 compactMessages 的输入，并稳定 firstKeptEntryId 指针。
+  //    详见 §9.2 sanitizeSessionTail。
+  this.sanitizeSessionTail(params.sessionKey);
+
   const messages = this.loadHistory(params.sessionKey);
   const estimatedTokens = estimatePromptTokens({ messages });
 
@@ -638,8 +667,11 @@ priority 数字越大越先执行；`name` 用于诊断日志。
 每条消息在产生时立即保存到 session，而不是等全部结束后批量保存：
 
 ```
-时间线：
-  ├─ appendMessage('user', 用户输入)                ← run() 入口立即保存（外层重试前只保存一次）
+时间线（每次 runAttempt）：
+  ├─ sanitizeSessionTail                            ← 清掉上一次失败/中断遗留的 trailing user
+  ├─ loadHistory（感知 compaction record）
+  ├─ Layer 1 / Layer 2 预判
+  ├─ appendMessage('user', 用户输入)                ← preflight 通过后才写入
   ├─ LLM 调用 #1
   ├─ appendMessage('assistant', [text + tool_use])  ← 助手回复立即保存
   ├─ appendMessage('toolResult', [tool_result])     ← 工具结果立即保存（独立 role）
@@ -647,6 +679,8 @@ priority 数字越大越先执行；`name` 用于诊断日志。
   ├─ appendMessage('assistant', [text])             ← 最终回复立即保存
   └─ 返回结果
 ```
+
+> 用户消息不在 `run()` 入口落盘，而是在 `runAttempt` 内、Layer 2 preflight 通过之后才写入；每次压缩重试都会重新执行此序列。
 
 注入消息（steering / followUp）也走 `appendMessage`，同时追加到内存 `messages` 与 session。
 
@@ -689,6 +723,41 @@ private loadHistory(sessionKey: string): ChatMessage[] {
 - **压缩记录决定截断锚点**：`firstKeptEntryId` 是 session 中的 entry id，找到下标后切片；
 - **摘要作为 `user` 消息注入开头**：让 LLM 感知"之前发生过什么"；
 - **每次 `runAttempt` 都重新 `loadHistory`**：retry 期间产生的新压缩记录会被即时应用。
+
+### 9.2 `sanitizeSessionTail`：清洗孤立 trailing user
+
+`runAttempt` 与 `compactHistory` 入口都会调用 `sanitizeSessionTail(sessionKey)`。它检查 `getMessages(sessionKey)` 返回的当前分支末尾，若末尾消息 `role === 'user'`（即上一次 LLM 调用未触达或失败、进程崩溃等场景遗留的孤立 user），则通过 `branch(parentId)` 把 leaf 指针回退到其父节点，并 emit `session_tail_sanitized`。
+
+```typescript
+private sanitizeSessionTail(sessionKey: string): void {
+  const records = this.sessionManager.getMessages(sessionKey);
+  if (records.length === 0) return;
+
+  const last = records[records.length - 1]!;
+  if (last.message.role !== 'user') {
+    if (last.message.role === 'toolResult') {
+      logger.warn('[sanitizeSessionTail] session tail is toolResult (interrupted mid-tool-call); skipping cleanup', {
+        sessionKey, entryId: last.id,
+      });
+    }
+    return;
+  }
+
+  const parentId = last.parentId;
+  if (!parentId) return;  // 防御性：user message 在 byId 中必有 parentId 指向 session 根
+
+  this.sessionManager.branch(sessionKey, parentId);
+  this.emit({ type: 'session_tail_sanitized', discardedEntryId: last.id, discardedRole: 'user' });
+}
+```
+
+要点：
+
+- **仅修改内存 `leafId`，不写 JSONL**：被剥离的 entry 仍保留在文件中可审计，多次 retry 不会破坏 append-only 契约；
+- **只清 trailing user，不清 trailing toolResult**：tool 可能已经产生副作用（写文件、发消息等），保留 toolResult 让下一轮 LLM 基于已有进度继续推理；末尾若是 toolResult 仅记 warn 日志，不主动修复；
+- **`compactHistory` 也需调用**：overflow 触发的压缩此时 `runAttempt` 已 append 过当前轮 user；若不清掉，`appendCompactionRecord(firstKeptEntryId)` 会把指针写到一条"下轮即将被清出当前分支"的 entry 上，导致下一轮 `loadHistory` 的 `findIndex(firstKeptEntryId)` 返回 -1、截断失效、摘要与全量历史重叠；
+- **幂等**：清洗一次后末尾不再是 user，再调一次直接 return；
+- **设计动机与边界场景**详见 [core-runner-turn-flow-spec](../core-runner-turn-flow-spec.md)。
 
 ---
 
@@ -875,6 +944,7 @@ const result = await this.resources.agentRunner.run({
 | Compaction hooks | `before_compaction` / `after_compaction` 触发；payload 正确 |
 | 上下文管理 | Layer 1 触发 `tool_result_pruned`；Layer 2 路由 fits / truncate / compact；Layer 3 写入 compaction record 与 session 元数据；retry 后 `loadHistory` 看到摘要 |
 | ContextOverflowError 三条路径 | 预判路径、内层 90%、API 错误三种触发 + 外层 retry + 超过 `MAX_COMPACTION_RETRIES` 后抛出 |
+| `sanitizeSessionTail` | 末尾为 user 时回退 leaf + emit `session_tail_sanitized`；末尾为 assistant/toolResult/空 session 时 no-op；幂等；首条 user 时回退到 session 根；overflow 压缩重试链路下 `firstKeptEntryId` 截断仍生效 |
 | In-turn message readers | `getSteeringMessages` 每轮 tool 后消费；reader 未提供时返回空 |
 | AgentEvent 形状 | 所有 variant 都自带 `sessionKey` / `turnId`；emit 自动注入；`currentParams = null` 时不 emit |
 

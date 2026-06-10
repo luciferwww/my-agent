@@ -136,11 +136,13 @@ AgentEvent =
   | { type: 'tool_result_pruned'; sessionKey; turnId; toolUseId; originalChars; prunedChars }
   | { type: 'compaction_start';   sessionKey; turnId; trigger; estimatedTokens }
   | { type: 'compaction_end';     sessionKey; turnId; tokensBefore; tokensAfter; droppedMessages }
+  | { type: 'session_tail_sanitized'; sessionKey; turnId; discardedEntryId; discardedRole: 'user' }
 ```
 
-设计要点：
-- `compaction_start.estimatedTokens` 是估算值；准确的 `tokensBefore` 在 `compaction_end` 给出
-- `error` 既 emit 又 throw，让 channel 与库消费者自由选择呈现路径
+设计要点:
+- `compaction_start.estimatedTokens` 是估算值;准确的 `tokensBefore` 在 `compaction_end` 给出
+- `error` 既 emit 又 throw,让 channel 与库消费者自由选择呈现路径
+- `session_tail_sanitized` 由 runAttempt / compactHistory 入口的 `sanitizeSessionTail` 触发(见 §7.3)
 
 ---
 
@@ -151,19 +153,18 @@ AgentEvent =
 ```mermaid
 flowchart TD
     A[run 入口] --> B[emit run_start]
-    B --> C[appendMessage user\n只保存一次]
-    C --> D{外层压缩重试循环}
-    D --> E[runAttempt]
+    B --> D{外层压缩重试循环}
+    D --> E[runAttempt\n入口含 sanitizeSessionTail\n+ preflight 后 appendMessage user]
     E --> F{成功?}
     F -- 是 --> G[emit run_end\n返回 RunResult]
     F -- 否 --> H{ContextOverflowError\n且 attempts < 3?}
-    H -- 是 --> I[compactHistory\nattempts++]
+    H -- 是 --> I[compactHistory\n入口亦 sanitizeSessionTail\nattempts++]
     I --> D
     H -- 否 --> J[emit error\nthrow]
 ```
 
-关键不变量：
-- **用户消息只 append 一次**：在外层循环之前，retry 期间不重复写入
+关键不变量:
+- **每次 retry 都会重新 append user**:append 下沉到 runAttempt 内 preflight 之后;`sanitizeSessionTail` 在入口清掉上一轮残留的孤立 trailing user,保证不出现重复写入或连续 user role(见 §7.3)
 - **`MAX_COMPACTION_RETRIES = 3`**：超过则向上抛出 `ContextOverflowError`
 - **每次 retry 重新 `loadHistory`**：能自动感知压缩写入的新 compaction record
 
@@ -177,24 +178,26 @@ sequenceDiagram
     participant TOOL as ToolExecutor
     participant SESS as SessionManager
 
-    RA->>SESS: loadHistory（压缩感知）
-    RA->>CTX: Layer 1 pruneToolResults（历史 tool result）
+    RA->>SESS: sanitizeSessionTail(清掉孤立 trailing user)
+    RA->>SESS: loadHistory(压缩感知)
+    RA->>CTX: Layer 1 pruneToolResults(历史 tool result)
     RA->>CTX: Layer 2 checkContextBudget
     note over RA,CTX: fits → 继续\ntruncate_tool_results_only → Layer 1.5\ncompact → throw ContextOverflowError
-    RA->>RA: delay-append 当前用户消息
+    RA->>SESS: appendMessage user (preflight 之后)
+    RA->>RA: push user 到 messages
     loop 执行循环
         RA->>LLM: callLLMStream
         LLM-->>RA: text_delta / tool_use / message_end
         RA->>SESS: appendMessage assistant
-        RA->>TOOL: executeTool（每个 tool_use block）
+        RA->>TOOL: executeTool(每个 tool_use block)
         RA->>SESS: appendMessage toolResult
-        RA->>CTX: Layer 1 pruneToolResults（新 tool result）
+        RA->>CTX: Layer 1 pruneToolResults(新 tool result)
         RA->>CTX: 90% 阈值检查
         RA->>RA: getSteeringMessages reader
     end
 ```
 
-**delay-append**：预判检查所用的 `messages` 不含当前用户消息（`currentPrompt` 单独传入）；预判通过后才 push——当前消息永远不会被 Layer 1/1.5 裁剪，预判失败时不污染 retry。
+**user 落盘下沉到 preflight 之后**:预判检查所用的 `messages` 不含当前用户消息(`currentPrompt` 单独传入);预判通过后才 `appendMessage` + push——当前消息永远不会被 Layer 1/1.5 裁剪,preemptive 压缩抛出时也不会污染下一轮 retry 的输入。
 
 ---
 
@@ -300,6 +303,7 @@ return { text, content, stopReason, usage, toolRounds }
 ```
 compactHistory(params, compaction, trigger):
 
+  sanitizeSessionTail(sessionKey)   // 同 runAttempt 入口;overflow 触发时把已落盘的本轮 user 剥离
   messages = loadHistory(sessionKey)
   estimatedTokens = estimatePromptTokens({ messages })
 
@@ -330,16 +334,43 @@ compactHistory(params, compaction, trigger):
 ### 7.1 消息写入时序
 
 ```
-run() 入口    → appendMessage('user',      用户输入)   ← 重试前只写一次
-LLM 调用 #1  → callLLMStream
-              → appendMessage('assistant', [text + tool_use])
-              → appendMessage('toolResult',[tool_result])
-LLM 调用 #2  → callLLMStream
-              → appendMessage('assistant', [text])
+runAttempt 入口 → sanitizeSessionTail                         ← 清掉上一次失败/中断遗留的 trailing user
+                → loadHistory(压缩感知)
+                → Layer 1 / Layer 2 预判
+                → appendMessage('user',      用户输入)         ← preflight 通过后才写入(每轮 retry 都写一次)
+LLM 调用 #1     → callLLMStream
+                → appendMessage('assistant', [text + tool_use])
+                → appendMessage('toolResult',[tool_result])
+LLM 调用 #2     → callLLMStream
+                → appendMessage('assistant', [text])
 return
 ```
 
-注入消息（steering）也走 `appendMessage`，同步追加到内存 `messages` 和 session。
+注入消息(steering)也走 `appendMessage`,同步追加到内存 `messages` 和 session。
+
+### 7.3 sanitizeSessionTail:清洗孤立 trailing user
+
+`runAttempt` 与 `compactHistory` 入口都会调用 `sanitizeSessionTail(sessionKey)`。它检查当前分支末尾,若 `role === 'user'`(上一次失败/中断遗留的孤立 user),则通过 `session.branch(parentId)` 把 leaf 指针回退到其父节点,并 emit `session_tail_sanitized`。
+
+```
+sanitizeSessionTail(sessionKey):
+  records = session.getMessages(sessionKey)
+  if records empty: return
+  last = records[最后一项]
+  if last.role !== 'user':
+    if last.role === 'toolResult':
+      warn("session tail is toolResult; skipping")    // 不主动修复,见下
+    return
+  session.branch(sessionKey, last.parentId)           // 仅改内存 leafId,不写 JSONL
+  emit { type: 'session_tail_sanitized', discardedEntryId: last.id, discardedRole: 'user' }
+```
+
+要点:
+- **只清 trailing user,不清 trailing toolResult**:tool 可能已经产生副作用,保留 toolResult 让下一轮 LLM 基于已有进度继续推理;末尾若是 toolResult 仅记 warn 日志
+- **compactHistory 也需调用**:overflow 触发的压缩此时 runAttempt 已 append 过本轮 user;若不清掉,`appendCompactionRecord(firstKeptEntryId)` 会写到一条下轮即将被剥离当前分支的 entry 上,导致下一轮 loadHistory 的截断失效、摘要与全量历史重叠
+- **幂等**:清洗一次后末尾不再是 user,再调一次直接 return
+- **仅修改内存 `leafId`**:被剥离的 entry 仍保留在 JSONL 中可审计,append-only 契约不破坏
+- **设计动机与边界场景**详见 [core-runner-turn-flow-spec](../core-runner-turn-flow-spec.md)
 
 ### 7.2 loadHistory 与压缩感知
 
