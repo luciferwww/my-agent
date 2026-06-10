@@ -703,6 +703,47 @@
         font-size: 13px;
       }
 
+      .meta-tag {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(231, 164, 125, 0.2);
+        color: #9d562e;
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .meta-tag-warn {
+        background: rgba(180, 35, 24, 0.1);
+        color: var(--danger);
+      }
+
+      .meta-tag-muted {
+        background: rgba(122, 103, 80, 0.12);
+        color: var(--muted);
+      }
+
+      .message.assistant.is-interrupted .bubble,
+      .message.assistant.is-interrupted .tool-result-card {
+        opacity: 0.82;
+      }
+
+      .message.assistant.is-interrupted::after {
+        content: "";
+        margin-top: 2px;
+        width: 48px;
+        height: 2px;
+        border-radius: 999px;
+        background: repeating-linear-gradient(
+          90deg,
+          rgba(180, 35, 24, 0.45) 0 6px,
+          transparent 6px 10px
+        );
+      }
+
       .approval-actions {
         display: flex;
         justify-content: flex-start;
@@ -971,10 +1012,13 @@
             v-for="item in chatItems"
             :key="item.id"
             class="message"
-            :class="itemRoleClass(item)"
+            :class="[itemRoleClass(item), { 'is-interrupted': item.kind === 'turn' && item.interrupted }]"
           >
             <div class="message-meta">
               <span>{{ item.label }}</span>
+              <span v-if="item.kind === 'user' && item.isSteer" class="meta-tag">steer</span>
+              <span v-if="item.kind === 'turn' && item.isContinuation" class="meta-tag meta-tag-muted">continued</span>
+              <span v-if="item.kind === 'turn' && item.interrupted" class="meta-tag meta-tag-warn">steered</span>
               <span v-if="item.turnId">turn {{ item.turnId.slice(0, 8) }}</span>
               <span>{{ formatTime(item.timestamp) }}</span>
             </div>
@@ -1098,7 +1142,7 @@
             <div class="button-row">
               <button class="secondary" @click="draft = ''" :disabled="!draft">Reset</button>
               <button class="primary" @click="sendMessage" :disabled="!canSend">
-                {{ isWaitingForReply ? 'Waiting…' : pendingApprovalCount > 0 ? 'Approval pending…' : 'Send' }}
+                {{ pendingApprovalCount > 0 ? 'Approval pending…' : isWaitingForReply ? 'Steer' : 'Send' }}
               </button>
             </div>
           </div>
@@ -1259,14 +1303,15 @@
           sendMessage() {
             if (!this.canSend) return;
             const text = this.draft.trim();
-            this.appendChatItem({ kind: 'user', label: 'You', text });
+            const isSteer = this.isWaitingForReply;
+            this.appendChatItem({ kind: 'user', label: 'You', text, isSteer });
             this.sendJson({
               type: 'run_turn',
               sessionKey: this.form.sessionKey,
               message: text,
               ...(this.form.model ? { model: this.form.model } : {}),
             });
-            this.pushEvent('run_turn', `Sent message to session ${this.form.sessionKey}`);
+            this.pushEvent(isSteer ? 'steer' : 'run_turn', `Sent ${isSteer ? 'steer ' : ''}message to session ${this.form.sessionKey}`);
             this.draft = '';
             this.isWaitingForReply = true;
           },
@@ -1409,8 +1454,30 @@
           // ── Turn / segment helpers ────────────────────────────
 
           // Find or lazily create the turn entry for a given turnId.
+          // If the existing turn entry is no longer the last chat item (e.g. the
+          // user inserted a steer message mid-turn), mark the old entry as
+          // interrupted and start a fresh continuation entry so subsequent
+          // text/tool events render *after* the interrupting messages.
           getOrCreateTurn(turnId) {
-            if (this.turnMap[turnId]) return this.turnMap[turnId];
+            const existing = this.turnMap[turnId];
+            if (existing) {
+              const lastItem = this.chatItems[this.chatItems.length - 1];
+              if (lastItem === existing) return existing;
+              existing.interrupted = true;
+              const continuation = {
+                kind: 'turn',
+                id: this.nextId++,
+                turnId,
+                label: 'Assistant',
+                timestamp: Date.now(),
+                toolsExpanded: existing.toolsExpanded,
+                segments: [],
+                isContinuation: true,
+              };
+              this.chatItems.push(continuation);
+              this.turnMap[turnId] = continuation;
+              return continuation;
+            }
             const turn = {
               kind: 'turn',
               id: this.nextId++,
