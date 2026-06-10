@@ -107,7 +107,9 @@ describe('execTool', () => {
   it('does not leak short yield commands into process.list', async () => {
     const result = await execTool.execute({
       command: 'node -e "console.log(\'fast\')"',
-      yieldMs: 100,
+      // 给 Node 冷启动留足窗口（Windows 上 node -e 启动常 >100ms），
+      // 否则进程会被错误判定为长运行并进入 process management，导致断言失败。
+      yieldMs: 5000,
     });
 
     expect(result.content).toContain('fast');
