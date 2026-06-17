@@ -906,6 +906,35 @@
         .sidebar { order: 2; }
         .chat-shell { order: 1; min-height: 70vh; }
       }
+
+      /* ── Attachments ───────────────────────────────────────── */
+      .composer.is-dragging { outline: 2px dashed var(--accent); outline-offset: -8px; }
+      .composer-attachments { display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px; }
+      .composer-attach-error { color: var(--danger, #c0382b); font-size: 12px; }
+      .attachment-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+      .attachment-chip {
+        display: flex; align-items: center; gap: 8px;
+        padding: 6px 8px; border: 1px solid var(--border, #2a2a2a); border-radius: 8px;
+        background: var(--panel-muted, rgba(255,255,255,0.03));
+      }
+      .attachment-chip img { width: 36px; height: 36px; object-fit: cover; border-radius: 4px; }
+      .attachment-chip-meta { display: flex; flex-direction: column; font-size: 11px; line-height: 1.3; }
+      .attachment-chip-name { color: var(--fg, #e5e5e5); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .attachment-chip-size { color: var(--fg-muted, #888); }
+      .attachment-chip-badge {
+        display: inline-block; margin-top: 2px; padding: 0 6px; border-radius: 999px;
+        background: var(--accent-soft, rgba(100,180,255,0.15)); color: var(--accent, #6cb6ff); font-size: 10px;
+      }
+      .attachment-chip-remove {
+        appearance: none; background: transparent; border: none; cursor: pointer;
+        color: var(--fg-muted, #888); font-size: 16px; padding: 0 4px;
+      }
+      .attachment-chip-remove:hover { color: var(--danger, #c0382b); }
+      .bubble-text + .bubble-attachments { margin-top: 8px; }
+      .bubble-attachments { display: flex; flex-wrap: wrap; gap: 8px; }
+      .bubble-attachment { display: flex; flex-direction: column; gap: 4px; max-width: 240px; }
+      .bubble-attachment img { width: 100%; max-height: 240px; object-fit: contain; border-radius: 6px; background: rgba(0,0,0,0.2); }
+      .bubble-attachment-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--fg-muted, #888); }
     </style>
   </head>
   <body>
@@ -1119,28 +1148,81 @@
 
             <!-- ── User / error / system plain bubble ── -->
             <template v-else>
-              <div class="bubble">{{ item.text }}</div>
+              <div class="bubble">
+                <div v-if="item.text" class="bubble-text">{{ item.text }}</div>
+                <div v-if="item.attachments && item.attachments.length > 0" class="bubble-attachments">
+                  <div v-for="att in item.attachments" :key="att.id" class="bubble-attachment">
+                    <img :src="att.previewUrl" :alt="att.name" />
+                    <div class="bubble-attachment-meta">
+                      <span>{{ att.name }}</span>
+                      <span>{{ formatBytes(att.sizeBytes) }}{{ att.willResize ? ' · 已压缩' : '' }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </template>
 
           </article>
         </section>
 
-        <footer class="composer">
+        <footer
+          class="composer"
+          :class="{ 'is-dragging': dragHover }"
+          @dragenter="onComposerDragEnter"
+          @dragover="onComposerDragOver"
+          @dragleave="onComposerDragLeave"
+          @drop="onComposerDrop"
+        >
+          <div v-if="attachments.length > 0 || attachError" class="composer-attachments">
+            <div v-if="attachError" class="composer-attach-error">{{ attachError }}</div>
+            <div v-if="attachments.length > 0" class="attachment-chip-row">
+              <div v-for="a in attachments" :key="a.id" class="attachment-chip">
+                <img :src="a.previewUrl" :alt="a.name" />
+                <div class="attachment-chip-meta">
+                  <span class="attachment-chip-name">{{ a.name }}</span>
+                  <span class="attachment-chip-size">{{ formatBytes(a.sizeBytes) }}</span>
+                  <span v-if="a.willResize" class="attachment-chip-badge">已压缩</span>
+                </div>
+                <button class="attachment-chip-remove" @click="removeAttachment(a.id)" aria-label="移除附件">×</button>
+              </div>
+            </div>
+            <div v-if="isWaitingForReply && attachments.length > 0" class="composer-attach-error">
+              打断中的回复不能携带附件，请移除后发送。
+            </div>
+          </div>
+
           <label>
             Message
             <textarea
               v-model="draft"
               placeholder="给 agent 发送一条消息…"
               @keydown.enter.exact.prevent="sendMessage"
+              @paste="onPaste"
             ></textarea>
           </label>
+
+          <input
+            ref="fileInput"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            multiple
+            hidden
+            @change="onFileInputChange"
+          />
+
           <div class="composer-row">
             <div class="composer-hint">
-              <span>Enter 发送，Shift+Enter 换行。</span>
+              <span>Enter 发送，Shift+Enter 换行。📎 / 拖拽 / 粘贴均可附图（≤ 10 MB，最多 {{ maxAttachmentsPerMessage }} 张）。</span>
               <span>连接成功后会自动发送 <code>hello</code> 并等待 <code>hello_ack</code>；首次 <code>run_turn</code> 后才会加入当前 session 的事件广播受众。</span>
             </div>
             <div class="button-row">
-              <button class="secondary" @click="draft = ''" :disabled="!draft">Reset</button>
+              <button
+                class="secondary"
+                @click="onAttachClick"
+                :disabled="!isConnected || isWaitingForReply"
+                :title="isWaitingForReply ? 'Steering 状态不支持附件' : '添加图片'"
+              >📎 图片</button>
+              <button class="secondary" @click="resetComposer" :disabled="!draft && attachments.length === 0">Reset</button>
               <button class="primary" @click="sendMessage" :disabled="!canSend">
                 {{ pendingApprovalCount > 0 ? 'Approval pending…' : isWaitingForReply ? 'Steer' : 'Send' }}
               </button>
@@ -1158,6 +1240,12 @@
       const MAX_EVENT_FEED_ITEMS = 40;
       const TOOL_RESULT_PREVIEW_HEAD_LINES = 6;
       const TOOL_RESULT_PREVIEW_TAIL_LINES = 4;
+      // Attachment constants — must stay aligned with server src/core/media/constants.ts.
+      const SUPPORTED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+      const ATTACHMENT_INLINE_THRESHOLD_BYTES = 2 * 1024 * 1024;
+      const ATTACHMENT_RAW_MAX_BYTES = 10 * 1024 * 1024;
+      const ATTACHMENT_TOTAL_MAX_BYTES = 10 * 1024 * 1024;
+      const MAX_ATTACHMENTS_PER_MESSAGE = 20;
 
       function createClientId() {
         return `browser-${Math.random().toString(36).slice(2, 8)}`;
@@ -1193,6 +1281,11 @@
             approvalRequest: null,
             isWaitingForReply: false,
             lastStatusMessage: 'Not connected.',
+            // ── Attachments ─────────────────────────────────────
+            attachments: [],
+            attachError: '',
+            dragHover: false,
+            dragDepth: 0,
           };
         },
 
@@ -1200,8 +1293,12 @@
           isConnected() { return this.connectionStatus === 'connected'; },
           isConnecting() { return this.connectionStatus === 'connecting'; },
           canSend() {
-            return this.isConnected && this.helloAcknowledged && this.draft.trim().length > 0
-              && this.pendingApprovalCount === 0;
+            if (!this.isConnected || !this.helloAcknowledged) return false;
+            if (this.pendingApprovalCount > 0) return false;
+            if (this.isWaitingForReply && this.attachments.length > 0) return false;
+            const hasText = this.draft.trim().length > 0;
+            const hasAttachments = this.attachments.length > 0;
+            return hasText || hasAttachments;
           },
           statusClass() {
             if (this.connectionStatus === 'connected') return 'connected';
@@ -1226,6 +1323,7 @@
             }
             return count;
           },
+          maxAttachmentsPerMessage() { return MAX_ATTACHMENTS_PER_MESSAGE; },
         },
 
         methods: {
@@ -1304,16 +1402,174 @@
             if (!this.canSend) return;
             const text = this.draft.trim();
             const isSteer = this.isWaitingForReply;
-            this.appendChatItem({ kind: 'user', label: 'You', text, isSteer });
+            const hasAttachments = this.attachments.length > 0;
+
+            let wireMessage;
+            if (!hasAttachments) {
+              wireMessage = text;
+            } else {
+              const blocks = [];
+              if (text) blocks.push({ type: 'text', text });
+              for (const a of this.attachments) {
+                blocks.push({
+                  type: 'image',
+                  source: { type: 'base64', media_type: a.mediaType, data: a.base64 },
+                });
+              }
+              wireMessage = blocks;
+            }
+
+            this.appendChatItem({
+              kind: 'user',
+              label: 'You',
+              text,
+              isSteer,
+              attachments: hasAttachments
+                ? this.attachments.map(a => ({
+                    id: a.id,
+                    previewUrl: a.previewUrl,
+                    name: a.name,
+                    sizeBytes: a.sizeBytes,
+                    willResize: a.willResize,
+                  }))
+                : [],
+            });
+
             this.sendJson({
               type: 'run_turn',
               sessionKey: this.form.sessionKey,
-              message: text,
+              message: wireMessage,
               ...(this.form.model ? { model: this.form.model } : {}),
             });
-            this.pushEvent(isSteer ? 'steer' : 'run_turn', `Sent ${isSteer ? 'steer ' : ''}message to session ${this.form.sessionKey}`);
+            this.pushEvent(
+              isSteer ? 'steer' : 'run_turn',
+              `Sent ${isSteer ? 'steer ' : ''}message to session ${this.form.sessionKey}`
+                + (hasAttachments ? ` (${this.attachments.length} attachment${this.attachments.length !== 1 ? 's' : ''})` : ''),
+            );
             this.draft = '';
+            // Do NOT revoke previewUrl here — the bubble still references it.
+            this.attachments = [];
+            this.attachError = '';
             this.isWaitingForReply = true;
+          },
+
+          // ── Attachments ───────────────────────────────────────
+          async ingestFiles(fileList) {
+            const incoming = Array.from(fileList ?? []);
+            if (incoming.length === 0) return;
+            const errors = [];
+            const accepted = [];
+            let runningTotal = this.attachments.reduce((sum, a) => sum + a.sizeBytes, 0);
+            let runningCount = this.attachments.length;
+
+            for (const file of incoming) {
+              if (!SUPPORTED_IMAGE_MIME.has(file.type)) {
+                errors.push(`${file.name || '未命名'}：类型 ${file.type || '未知'} 不支持`);
+                continue;
+              }
+              if (file.size > ATTACHMENT_RAW_MAX_BYTES) {
+                errors.push(`${file.name}：超过单图 ${ATTACHMENT_RAW_MAX_BYTES / 1024 / 1024} MB 限制`);
+                continue;
+              }
+              if (runningCount + 1 > MAX_ATTACHMENTS_PER_MESSAGE) {
+                errors.push(`最多 ${MAX_ATTACHMENTS_PER_MESSAGE} 张，已截断剩余文件`);
+                break;
+              }
+              if (runningTotal + file.size > ATTACHMENT_TOTAL_MAX_BYTES) {
+                errors.push(`总额超限（累计上限 ${ATTACHMENT_TOTAL_MAX_BYTES / 1024 / 1024} MB），已截断 ${file.name} 及后续文件`);
+                break;
+              }
+              accepted.push(file);
+              runningTotal += file.size;
+              runningCount += 1;
+            }
+
+            for (const file of accepted) {
+              try {
+                const base64 = await this.readAsBase64(file);
+                this.attachments.push({
+                  id: this.nextId++,
+                  file,
+                  name: file.name,
+                  mediaType: file.type,
+                  sizeBytes: file.size,
+                  base64,
+                  willResize: file.size > ATTACHMENT_INLINE_THRESHOLD_BYTES,
+                  previewUrl: URL.createObjectURL(file),
+                });
+              } catch (err) {
+                errors.push(`${file.name}：读取失败（${err?.message || err}）`);
+              }
+            }
+
+            this.attachError = errors.join('；');
+          },
+          readAsBase64(file) {
+            return new Promise((resolve, reject) => {
+              const r = new FileReader();
+              r.onerror = () => reject(r.error ?? new Error('FileReader failed'));
+              r.onload = () => {
+                const s = String(r.result ?? '');
+                const i = s.indexOf(',');
+                resolve(i >= 0 ? s.slice(i + 1) : s);
+              };
+              r.readAsDataURL(file);
+            });
+          },
+          removeAttachment(id) {
+            const idx = this.attachments.findIndex(a => a.id === id);
+            if (idx >= 0) {
+              URL.revokeObjectURL(this.attachments[idx].previewUrl);
+              this.attachments.splice(idx, 1);
+            }
+          },
+          clearAttachments() {
+            for (const a of this.attachments) URL.revokeObjectURL(a.previewUrl);
+            this.attachments = [];
+          },
+          resetComposer() {
+            this.draft = '';
+            this.clearAttachments();
+            this.attachError = '';
+          },
+          onAttachClick() { this.$refs.fileInput?.click(); },
+          onFileInputChange(e) {
+            this.ingestFiles(e.target.files);
+            e.target.value = '';
+          },
+          onPaste(e) {
+            const files = [];
+            for (const it of e.clipboardData?.items ?? []) {
+              if (it.kind === 'file') {
+                const f = it.getAsFile();
+                if (f) files.push(f);
+              }
+            }
+            if (files.length) {
+              e.preventDefault();
+              this.ingestFiles(files);
+            }
+          },
+          onComposerDragEnter(e) {
+            e.preventDefault();
+            this.dragDepth++;
+            this.dragHover = true;
+          },
+          onComposerDragOver(e) { e.preventDefault(); },
+          onComposerDragLeave() {
+            this.dragDepth = Math.max(0, this.dragDepth - 1);
+            if (this.dragDepth === 0) this.dragHover = false;
+          },
+          onComposerDrop(e) {
+            e.preventDefault();
+            this.dragDepth = 0;
+            this.dragHover = false;
+            this.ingestFiles(e.dataTransfer?.files);
+          },
+          formatBytes(n) {
+            if (n < 1024) return `${n} B`;
+            if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+            return `${(n / 1024 / 1024).toFixed(1)} MB`;
           },
           resolveApproval(seg, decision) {
             if (!seg || seg.type !== 'approval' || seg.approval.status !== 'pending') return;

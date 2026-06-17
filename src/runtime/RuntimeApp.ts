@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentEvent } from '../core/runner/index.js';
-import type { ChatMessage } from '../adapters/llm/types.js';
+import type { ChatContentBlock, ChatMessage } from '../adapters/llm/types.js';
 import { TurnInteractionManager } from '../adapters/channel/TurnInteractionManager.js';
 import type {
   ApprovalInteractionRequest,
@@ -11,6 +11,11 @@ import type {
 import { Logger } from '../platform/logger/index.js';
 import { loadContextFiles } from '../core/workspace/index.js';
 import type { ContextFile } from '../core/workspace/types.js';
+import {
+  processInboundMessage,
+  type DroppedAttachment,
+} from '../core/media/attachment-pipeline.js';
+import { ATTACHMENT_DROP_NOTICE_DEFAULT } from '../core/media/constants.js';
 import { bootstrapRuntime } from './bootstrap.js';
 import { classifyRuntimeError, createRuntimeError } from './errors.js';
 import { buildSystemPromptParams } from './prompt-factory.js';
@@ -331,7 +336,8 @@ export class RuntimeApp {
         hasModelOverride: req.model !== undefined,
         hasMaxTokens: req.maxTokens !== undefined,
         hasMaxLlmCalls: req.maxLlmCalls !== undefined,
-        messageChars: req.message.length,
+        messageChars: typeof req.message === 'string' ? req.message.length : undefined,
+        attachmentCount: Array.isArray(req.message) ? req.message.length : 0,
       });
 
       await this.handleInboundChannelMessage(channel, req);
@@ -340,26 +346,52 @@ export class RuntimeApp {
 
   /**
    * Channel 入站统一先过 runtime intake。
-   * 这里先做最小分流：命中 steering 条件则附着到当前 turn，否则进入普通消息队列。
+   * 顺序：media 处理 → 占位装配 → steering 剥离 → 普通队列。
+   * 决策 8：失败即丢弃 + 可选文本占位；不发任何事件 / 拒收。
    */
   private async handleInboundChannelMessage(
     channel: Channel,
     req: ChannelRunRequest,
   ): Promise<void> {
+    // ① Media 处理：永不整体失败，失败 / 超限的附件已进 dropped[]
+    const { normalized, dropped } = await processInboundMessage(req.message);
+
+    // ② 占位装配：失败提示 + 空消息回落 + 退化输入 skip
+    const assembled = this.assembleInboundMessage(normalized, dropped);
+    if (assembled === undefined) return;
+
+    const assembledMessageChars =
+      typeof assembled === 'string' ? assembled.length : undefined;
+    const assembledAttachmentCount = Array.isArray(assembled) ? assembled.length : 0;
+
+    // ③ Steering 剥离：steering 路径只接文本
     if (this.shouldRouteMessageToSteering(req.sessionKey)) {
-      this.enqueueSteeringInput(req.sessionKey, req.message, this.buildMessageRouteContext(channel, req));
+      const steeringText = typeof assembled === 'string'
+        ? assembled
+        : assembled
+            .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+            .map((b) => b.text)
+            .join('\n\n');
+      if (steeringText.trim() === '') return;
+      this.enqueueSteeringInput(
+        req.sessionKey,
+        steeringText,
+        this.buildMessageRouteContext(channel, req),
+      );
       log.info('channel message routed to steering', {
         channelId: channel.id,
         clientId: req.clientId,
         sessionKey: req.sessionKey,
-        messageChars: req.message.length,
+        messageChars: steeringText.length,
+        droppedAttachments: dropped.length,
       });
       return;
     }
 
+    // ④ 普通队列
     const queuedTurn: QueuedChannelTurn = {
       sessionKey: req.sessionKey,
-      message: req.message,
+      message: assembled,
       launchContext: this.buildTurnLaunchContext(req),
       routeContext: this.buildMessageRouteContext(channel, req),
     };
@@ -370,13 +402,56 @@ export class RuntimeApp {
       clientId: req.clientId,
       sessionKey: req.sessionKey,
       queueLength: this.messageQueueBySession.get(req.sessionKey)?.length ?? 0,
-      messageChars: req.message.length,
+      messageChars: assembledMessageChars,
+      attachmentCount: assembledAttachmentCount,
+      droppedAttachments: dropped.length,
     });
 
     const started = this.scheduleNextQueuedTurn(req.sessionKey);
     if (started) {
       await started;
     }
+  }
+
+  /**
+   * 占位装配（决策 8）：把 media 输出 + dropped 列表组装成可入队的消息。
+   *
+   * 返回值语义：
+   *   string | ChatContentBlock[] → 正常入队
+   *   undefined                   → 退化输入（无文本、无成功附件、占位也空），调用方 skip
+   */
+  private assembleInboundMessage(
+    normalized: string | ChatContentBlock[],
+    dropped: DroppedAttachment[],
+  ): string | ChatContentBlock[] | undefined {
+    const notice = dropped.length > 0 && ATTACHMENT_DROP_NOTICE_DEFAULT
+      ? `[系统提示：${dropped.length} 个附件因无法处理已忽略]`
+      : '';
+
+    if (typeof normalized === 'string') {
+      const body = notice ? (normalized ? `${normalized}\n\n${notice}` : notice) : normalized;
+      return body.trim() === '' ? undefined : body;
+    }
+
+    // 数组：是否含「有意义内容」= 任一非 text block，或任一 trim 后非空的 text。
+    const hasContent = normalized.some(
+      (b) => b.type !== 'text' || (b as { type: 'text'; text: string }).text.trim() !== '',
+    );
+    if (!hasContent) {
+      return notice ? notice : undefined;
+    }
+    if (!notice) return normalized;
+
+    // 追加提示行：并入首个 text block，无则在末尾插一个 text block
+    const hostIndex = normalized.findIndex((b) => b.type === 'text');
+    if (hostIndex >= 0) {
+      return normalized.map((b, i) =>
+        i === hostIndex
+          ? { type: 'text', text: `${(b as { type: 'text'; text: string }).text}\n\n${notice}` }
+          : b,
+      );
+    }
+    return [...normalized, { type: 'text', text: notice }];
   }
 
   /**
@@ -507,7 +582,8 @@ export class RuntimeApp {
     log.debug('turn start', {
       sessionKey: params.sessionKey,
       turnId,
-      messageChars: params.message.length,
+      messageChars: typeof params.message === 'string' ? params.message.length : undefined,
+      attachmentCount: Array.isArray(params.message) ? params.message.length : 0,
       activeRuns: this.state.activeRunCount,
     });
 
@@ -695,13 +771,32 @@ export class RuntimeApp {
       }),
     );
 
-    const builtUserPrompt = await this.resources.userPromptBuilder.build({
-      text: params.message,
-    });
+    // context-hook prepend 只作用于文本部分：数组消息保持图文混排顺序与原始内容
+    let runnerMessage: string | ChatContentBlock[];
+    if (typeof params.message === 'string') {
+      runnerMessage = (await this.resources.userPromptBuilder.build({
+        text: params.message,
+      })).text;
+    } else {
+      // 用首个 text block 作为 prepend 宿主；其余 block 保持原序原值
+      const hostIndex = params.message.findIndex((b) => b.type === 'text');
+      const hostText = hostIndex >= 0
+        ? (params.message[hostIndex] as { type: 'text'; text: string }).text
+        : '';
+      const prepended = (await this.resources.userPromptBuilder.build({
+        text: hostText,
+      })).text;
+
+      runnerMessage = hostIndex >= 0
+        ? params.message.map((b, i) =>
+            i === hostIndex ? { type: 'text', text: prepended } : b,
+          )
+        : [{ type: 'text', text: prepended }, ...params.message];
+    }
 
     const result = await this.resources.agentRunner.run({
       sessionKey: params.sessionKey,
-      message: builtUserPrompt.text,
+      message: runnerMessage,
       model: this.requireModel(params.model),
       systemPrompt,
       turnId: params.turnId,

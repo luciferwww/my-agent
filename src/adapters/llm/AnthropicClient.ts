@@ -185,15 +185,29 @@ export class AnthropicClient implements LLMClient {
 // ── 内部转换函数 ────────────────────────────────────────────
 
 /**
+ * 出站去掉 image 上的 `dimensions`（内部 metadata，不属于 Anthropic API）。
+ * 其他 block 透传。
+ */
+function toAnthropicContentBlock(block: ChatContentBlock): ChatContentBlock | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } } {
+  if (block.type === 'image') {
+    return { type: 'image', source: block.source };
+  }
+  return block;
+}
+
+/**
  * 将我们的 ChatMessage 转换为 Anthropic SDK 的消息格式。
- * 两者结构相同（都对齐 Anthropic API），直接透传。
+ * 两者结构相同（都对齐 Anthropic API），但 image block 需 strip dimensions（内部字段）。
  */
 function convertMessages(
   messages: ChatMessage[],
 ): Anthropic.MessageParam[] {
   return messages.map((msg) => ({
     role: msg.role,
-    content: msg.content as Anthropic.MessageParam['content'],
+    content:
+      typeof msg.content === 'string'
+        ? msg.content
+        : (msg.content.map(toAnthropicContentBlock) as Anthropic.MessageParam['content']),
   }));
 }
 

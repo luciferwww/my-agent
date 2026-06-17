@@ -17,8 +17,11 @@ export const SAFETY_MARGIN = 1.2;
 /** 每条消息的固定开销（role 标签、格式化 token 等） */
 const MESSAGE_OVERHEAD_TOKENS = 4;
 
-/** 图片内容的固定 token 估算值 */
-const IMAGE_TOKEN_ESTIMATE = 2000;
+/**
+ * Anthropic 图像 patch 边长（像素）。token = ceil(w/28) * ceil(h/28)。
+ * TODO: provider 化时迁到 compaction config。export 供 compaction dehydrate 复用。
+ */
+export const ANTHROPIC_PATCH_SIZE = 28;
 
 /** chars / CHARS_PER_TOKEN = 粗略 token 数 */
 const CHARS_PER_TOKEN = 4;
@@ -45,7 +48,10 @@ function estimateBlockTokens(block: ChatContentBlock): number {
     case 'tool_result':
       return estimateTextTokens(block.content);
     case 'image':
-      return IMAGE_TOKEN_ESTIMATE;
+      return (
+        Math.ceil(block.dimensions.width / ANTHROPIC_PATCH_SIZE) *
+        Math.ceil(block.dimensions.height / ANTHROPIC_PATCH_SIZE)
+      );
     default:
       return 0;
   }
@@ -76,13 +82,14 @@ export function estimateMessageTokens(message: ChatMessage): number {
  * 估算完整 prompt 的 token 数（system prompt + messages + 当前用户消息）。
  *
  * currentPrompt 独立传入，不纳入 messages（不会被压缩），单独计入 token 估算。
+ * 可传 string（纯文本消息）或 ChatContentBlock[]（含附件的多 block 消息）。
  * 返回值已乘以 SAFETY_MARGIN，可直接与 contextWindowTokens 比较。
  */
 export function estimatePromptTokens(params: {
   messages: ChatMessage[];
   systemPrompt?: string;
-  /** 当前用户消息字符串，独立传入，显式计入 token 估算，不会被压缩 */
-  currentPrompt?: string;
+  /** 当前用户消息：string 走旧路径；ChatContentBlock[] 逐 block 累加 */
+  currentPrompt?: string | ChatContentBlock[];
 }): number {
   let rawTokens = 0;
 
@@ -97,8 +104,14 @@ export function estimatePromptTokens(params: {
   }
 
   // 当前用户消息（独立计入，不合入 messages）
+  // truthy 判据保留：空串 / 空数组都跳过；非空数组 truthy
   if (params.currentPrompt) {
-    rawTokens += estimateTextTokens(params.currentPrompt) + MESSAGE_OVERHEAD_TOKENS;
+    rawTokens += MESSAGE_OVERHEAD_TOKENS;
+    if (typeof params.currentPrompt === 'string') {
+      rawTokens += estimateTextTokens(params.currentPrompt);
+    } else {
+      for (const b of params.currentPrompt) rawTokens += estimateBlockTokens(b);
+    }
   }
 
   // 乘以安全边际并向上取整

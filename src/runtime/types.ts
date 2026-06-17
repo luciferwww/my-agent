@@ -79,7 +79,7 @@ export interface RuntimeAppOptions {
 
 export interface RunTurnParams {
   sessionKey: string;
-  message: string;
+  message: string | ChatContentBlock[];
   model?: string;
   maxTokens?: number;
   maxLlmCalls?: number;

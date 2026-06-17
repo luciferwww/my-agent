@@ -1,5 +1,6 @@
 import type { AgentEvent } from '../../core/runner/types.js';
 import { Logger } from '../../platform/logger/index.js';
+import { WS_MAX_PAYLOAD_BYTES } from '../../core/media/constants.js';
 import type {
   ApprovalDecision,
   ApprovalRequest,
@@ -7,6 +8,7 @@ import type {
   ChannelApprovalAdapter,
   ChannelInteractionAdapter,
   ChannelRunRequest,
+  InboundContentBlock,
   TurnInteractionResponse,
 } from './types.js';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
@@ -32,7 +34,7 @@ type ClientMessage =
   | {
       type: 'run_turn';
       sessionKey: string;
-      message: string;
+      message: string | InboundContentBlock[];
       model?: string;
       maxTokens?: number;
       maxLlmCalls?: number;
@@ -132,6 +134,7 @@ export class WebSocketChannel implements Channel {
       host: this.host,
       path: this.path,
       port: this.config.port,
+      maxPayload: WS_MAX_PAYLOAD_BYTES,
     });
 
     this.server.on('connection', (socket, request) => {
@@ -257,7 +260,7 @@ export class WebSocketChannel implements Channel {
         return {
           type,
           sessionKey: readNonEmptyString(parsed.sessionKey, 'sessionKey'),
-          message: readNonEmptyString(parsed.message, 'message'),
+          message: readRunTurnMessage(parsed.message),
           model: readOptionalString(parsed.model, 'model'),
           maxTokens: readOptionalPositiveInteger(parsed.maxTokens, 'maxTokens'),
           maxLlmCalls: readOptionalPositiveInteger(parsed.maxLlmCalls, 'maxLlmCalls'),
@@ -327,7 +330,8 @@ export class WebSocketChannel implements Channel {
       hasModelOverride: Boolean(message.model),
       hasMaxTokens: message.maxTokens !== undefined,
       hasMaxLlmCalls: message.maxLlmCalls !== undefined,
-      messageLength: message.message.length,
+      messageLength: typeof message.message === 'string' ? message.message.length : undefined,
+      blockCount: Array.isArray(message.message) ? message.message.length : undefined,
     });
     await handler({
       clientId,
@@ -607,4 +611,62 @@ function readOptionalPositiveInteger(value: unknown, field: string): number | un
     throw new ProtocolError('INVALID_MESSAGE', `${field} must be a positive integer.`);
   }
   return value;
+}
+
+/**
+ * Wire-level shape check for `run_turn.message`. Accepts either a non-empty string
+ * or an array of `InboundContentBlock`. Channel layer does NOT validate business
+ * rules (MIME, byte budgets, etc.) — those belong to the media pipeline.
+ */
+function readRunTurnMessage(value: unknown): string | InboundContentBlock[] {
+  if (typeof value === 'string') {
+    if (value.trim().length === 0) {
+      throw new ProtocolError('INVALID_MESSAGE', 'message must be a non-empty string or content-block array.');
+    }
+    return value;
+  }
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ProtocolError('INVALID_MESSAGE', 'message must be a non-empty string or content-block array.');
+  }
+  const blocks: InboundContentBlock[] = [];
+  for (let i = 0; i < value.length; i++) {
+    blocks.push(parseInboundContentBlock(value[i], i));
+  }
+  return blocks;
+}
+
+function parseInboundContentBlock(value: unknown, index: number): InboundContentBlock {
+  if (!isRecord(value)) {
+    throw new ProtocolError('INVALID_MESSAGE', `message[${index}] must be an object.`);
+  }
+  const type = value.type;
+  if (type === 'text') {
+    if (typeof value.text !== 'string') {
+      throw new ProtocolError('INVALID_MESSAGE', `message[${index}].text must be a string.`);
+    }
+    return { type: 'text', text: value.text };
+  }
+  if (type === 'image') {
+    const source = value.source;
+    if (!isRecord(source) || source.type !== 'base64') {
+      throw new ProtocolError('INVALID_MESSAGE', `message[${index}].source must be {type:'base64',...}.`);
+    }
+    const mediaType = source.media_type;
+    if (
+      mediaType !== 'image/png'
+      && mediaType !== 'image/jpeg'
+      && mediaType !== 'image/webp'
+      && mediaType !== 'image/gif'
+    ) {
+      throw new ProtocolError('INVALID_MESSAGE', `message[${index}].source.media_type unsupported at wire layer.`);
+    }
+    if (typeof source.data !== 'string' || source.data.length === 0) {
+      throw new ProtocolError('INVALID_MESSAGE', `message[${index}].source.data must be a non-empty string.`);
+    }
+    return {
+      type: 'image',
+      source: { type: 'base64', media_type: mediaType, data: source.data },
+    };
+  }
+  throw new ProtocolError('INVALID_MESSAGE', `message[${index}].type unsupported.`);
 }

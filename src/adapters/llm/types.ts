@@ -4,7 +4,16 @@ export type ChatRole = 'user' | 'assistant';
 
 export type ChatContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+  | {
+      type: 'image';
+      source: { type: 'base64'; media_type: string; data: string };
+      /**
+       * Internal-only — never sent on the wire. The type-system enforces that any
+       * image block in runner/session state was produced by a successful sniff;
+       * AnthropicClient strips this field before hitting the API.
+       */
+      dimensions: { width: number; height: number };
+    }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; tool_use_id: string; content: string };
 

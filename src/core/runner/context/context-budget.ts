@@ -7,7 +7,7 @@
  * - compact:                   需要触发 LLM 摘要压缩（Layer 3）
  */
 
-import type { ChatMessage } from '../../../adapters/llm/types.js';
+import type { ChatMessage, ChatContentBlock } from '../../../adapters/llm/types.js';
 import type { CompactionConfig } from '../../../platform/config/types.js';
 import { estimatePromptTokens } from './token-estimation.js';
 import { AGGREGATE_TOOL_RESULT_CONTEXT_SHARE } from './tool-result-pruning.js';
@@ -113,8 +113,8 @@ export function checkContextBudget(params: {
   /** 历史消息（不含当前用户消息，已经过 Layer 1 裁剪） */
   messages: ChatMessage[];
   systemPrompt?: string;
-  /** 当前用户消息字符串，独立传入，显式计入 token 估算，不会被压缩 */
-  currentPrompt?: string;
+  /** 当前用户消息：string 或多 block 数组（含附件场景）；独立传入，显式计入 token 估算，不会被压缩 */
+  currentPrompt?: string | ChatContentBlock[];
   contextWindowTokens: number;
   config: Pick<CompactionConfig, 'reserveTokens' | 'toolResultHeadChars' | 'toolResultTailChars'>;
 }): ContextBudgetResult {

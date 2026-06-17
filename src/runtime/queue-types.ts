@@ -1,4 +1,5 @@
 import type { Channel } from '../adapters/channel/types.js';
+import type { ChatContentBlock } from '../adapters/llm/types.js';
 import type { RunTurnParams } from './types.js';
 
 export type TurnLaunchContext = Pick<
@@ -17,7 +18,7 @@ export type MessageRouteContext = {
  */
 export type QueuedChannelTurn = {
   sessionKey: string;
-  message: string;
+  message: string | ChatContentBlock[];
   launchContext?: TurnLaunchContext;
   routeContext?: MessageRouteContext;
 };

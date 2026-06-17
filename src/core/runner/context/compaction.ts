@@ -13,7 +13,7 @@ import type { ChatMessage } from '../../../adapters/llm/types.js';
 import type { LLMClient } from '../../../adapters/llm/types.js';
 import type { CompactionConfig } from '../../../platform/config/types.js';
 import type { CompactionRecord } from '../../session/types.js';
-import { estimatePromptTokens } from './token-estimation.js';
+import { estimatePromptTokens, ANTHROPIC_PATCH_SIZE } from './token-estimation.js';
 
 // ── 类型 ────────────────────────────────────────────────────
 
@@ -134,6 +134,14 @@ function serializeMessagesForSummary(messages: ChatMessage[]): string {
             ? b.content.slice(0, MAX_TOOL_RESULT_CHARS) + '...[truncated]'
             : b.content;
           parts.push(`[Tool Result]: ${preview}`);
+        } else if (b.type === 'image') {
+          const img = block as {
+            source: { media_type: string };
+            dimensions: { width: number; height: number };
+          };
+          const n = Math.ceil(img.dimensions.width / ANTHROPIC_PATCH_SIZE)
+                  * Math.ceil(img.dimensions.height / ANTHROPIC_PATCH_SIZE);
+          parts.push(`[Image]: media_type=${img.source.media_type}, ~${n} tokens`);
         }
       }
     }

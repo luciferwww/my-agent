@@ -22,8 +22,8 @@ export interface AgentRunnerConfig {
 export interface RunParams {
   /** Session key */
   sessionKey: string;
-  /** 用户消息文本 */
-  message: string;
+  /** 用户消息文本或多模态 content blocks */
+  message: string | ChatContentBlock[];
   /** 模型名称 */
   model: string;
   /** System prompt（由调用方通过 prompt-builder 构建） */

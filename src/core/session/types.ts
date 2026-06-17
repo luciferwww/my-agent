@@ -81,7 +81,11 @@ export type TranscriptEntry = SessionRecord | MessageRecord | CompactionRecord;
 
 export type ContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+  | {
+      type: 'image';
+      source: { type: 'base64'; media_type: string; data: string };
+      dimensions: { width: number; height: number };
+    }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; tool_use_id: string; content: string };
 

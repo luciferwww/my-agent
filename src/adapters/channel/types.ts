@@ -2,10 +2,27 @@ import type { AgentEvent } from '../../core/runner/types.js';
 
 // ── 入站消息 ──────────────────────────────────────────────────
 
+/**
+ * Wire-level inbound content block.
+ *
+ * 与内部 `ChatContentBlock` 的关键区别：image 不带 `dimensions`（runtime 会重新 sniff）。
+ * Channel 仅做 shape check，不做 MIME/字节量校验——交给 media 层。
+ */
+export type InboundContentBlock =
+  | { type: 'text'; text: string }
+  | {
+      type: 'image';
+      source: {
+        type: 'base64';
+        media_type: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+        data: string;
+      };
+    };
+
 /** Channel 发给 RuntimeApp 的运行请求 */
 export interface ChannelRunRequest {
   sessionKey: string;
-  message: string;
+  message: string | InboundContentBlock[];
   model?: string;
   maxTokens?: number;
   maxLlmCalls?: number;

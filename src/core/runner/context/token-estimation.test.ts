@@ -58,17 +58,31 @@ describe('token-estimation', () => {
       expect(tokens).toBe(254);
     });
 
-    it('estimates image block with fixed value', () => {
+    it('estimates image block via Anthropic patch formula (ceil(w/28) * ceil(h/28))', () => {
       const msg: ChatMessage = {
         role: 'user',
         content: [{
           type: 'image',
           source: { type: 'base64', media_type: 'image/png', data: 'abc' },
+          dimensions: { width: 2000, height: 1500 },
         }],
       };
       const tokens = estimateMessageTokens(msg);
-      // 2000 (image) + 4 overhead = 2004
-      expect(tokens).toBe(2004);
+      // ceil(2000/28) * ceil(1500/28) = 72 * 54 = 3888, + 4 overhead = 3892
+      expect(tokens).toBe(3892);
+    });
+
+    it('estimates small image: 200x200 → 8*8 = 64 patches', () => {
+      const msg: ChatMessage = {
+        role: 'user',
+        content: [{
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/png', data: 'abc' },
+          dimensions: { width: 200, height: 200 },
+        }],
+      };
+      // 64 + 4 overhead = 68
+      expect(estimateMessageTokens(msg)).toBe(68);
     });
 
     it('estimates message with mixed blocks', () => {
@@ -117,6 +131,33 @@ describe('token-estimation', () => {
       const tokens = estimatePromptTokens({ messages });
       // 3 messages × (25 + 4 overhead) = 87 raw → ceil(87 * 1.2) = 105
       expect(tokens).toBe(105);
+    });
+
+    it('counts currentPrompt array (text + image blocks)', () => {
+      const baseline = estimatePromptTokens({ messages: [] });
+      expect(baseline).toBe(0);
+      const withArray = estimatePromptTokens({
+        messages: [],
+        currentPrompt: [
+          { type: 'text', text: 'a'.repeat(100) }, // 25 tokens
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: 'abc' },
+            dimensions: { width: 200, height: 200 },
+          }, // 64 patches
+        ],
+      });
+      // 25 + 64 + 4 overhead = 93 raw → ceil(93 * 1.2) = 112
+      expect(withArray).toBe(112);
+    });
+
+    it('preserves existing string-currentPrompt path (no regression)', () => {
+      const tokens = estimatePromptTokens({
+        messages: [],
+        currentPrompt: 'a'.repeat(400),
+      });
+      // 100 + 4 overhead = 104 raw → ceil(104 * 1.2) = 125
+      expect(tokens).toBe(125);
     });
   });
 });

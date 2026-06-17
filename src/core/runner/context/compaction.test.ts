@@ -297,4 +297,90 @@ describe('compactMessages', () => {
     expect(result.record.id).toBeTruthy();
     expect(result.record.timestamp).toBeTruthy();
   });
+
+  it('dehydrates image blocks in summary prompt (no base64; patch-formula token estimate)', async () => {
+    // Capture the summary prompt sent to the LLM.
+    let capturedPrompt = '';
+    const llmClient = {
+      chatStream: vi.fn().mockImplementation(async function* (params: { messages: ChatMessage[] }) {
+        capturedPrompt = params.messages[0]!.content as string;
+        yield { type: 'text_delta', text: 'Summary.' };
+        yield { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 1, outputTokens: 1 } };
+      }),
+    };
+
+    const BIG_BASE64 = 'AAAA'.repeat(500); // 2000 chars — must NOT appear in prompt
+    const imageMsg: ChatMessage = {
+      role: 'user',
+      content: [
+        {
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/png', data: BIG_BASE64 },
+          dimensions: { width: 200, height: 200 },
+        },
+      ],
+    };
+    const originalImageBlock = (imageMsg.content as any[])[0];
+
+    const messages: ChatMessage[] = [
+      userMsg('turn 1'),
+      imageMsg,
+      userMsg('turn 2'), assistantMsg('reply 2'),
+    ];
+
+    await compactMessages({
+      messages,
+      config: { ...BASE_CONFIG, keepRecentTurns: 1 },
+      llmClient: llmClient as any,
+      model: 'claude-test',
+      trigger: 'preemptive',
+    });
+
+    // ceil(200/28) * ceil(200/28) = 8 * 8 = 64
+    expect(capturedPrompt).toContain('[Image]: media_type=image/png, ~64 tokens');
+    expect(capturedPrompt).not.toContain(BIG_BASE64);
+
+    // Input message not mutated.
+    expect((imageMsg.content as any[])[0]).toBe(originalImageBlock);
+    expect(originalImageBlock.source.data).toBe(BIG_BASE64);
+    expect(originalImageBlock.dimensions).toEqual({ width: 200, height: 200 });
+  });
+
+  it('silently skips unknown / incomplete blocks in summary prompt', async () => {
+    let capturedPrompt = '';
+    const llmClient = {
+      chatStream: vi.fn().mockImplementation(async function* (params: { messages: ChatMessage[] }) {
+        capturedPrompt = params.messages[0]!.content as string;
+        yield { type: 'text_delta', text: 'Summary.' };
+        yield { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 1, outputTokens: 1 } };
+      }),
+    };
+
+    const messages: ChatMessage[] = [
+      userMsg('turn 1'),
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'hello' },
+          // Unknown block type — must be silently skipped, no throw.
+          { type: 'mystery' } as any,
+          // tool_result with falsy content — falsy guard skips it (no throw).
+          { type: 'tool_result', tool_use_id: 'x', content: '' } as any,
+        ],
+      },
+      userMsg('turn 2'), assistantMsg('reply 2'),
+      userMsg('turn 3'), assistantMsg('reply 3'),
+    ];
+
+    await compactMessages({
+      messages,
+      config: { ...BASE_CONFIG, keepRecentTurns: 1 },
+      llmClient: llmClient as any,
+      model: 'claude-test',
+      trigger: 'preemptive',
+    });
+
+    expect(capturedPrompt).toContain('hello');
+    expect(capturedPrompt).not.toContain('mystery');
+  });
 });

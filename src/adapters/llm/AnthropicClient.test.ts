@@ -157,6 +157,56 @@ describe('AnthropicClient', () => {
     });
   });
 
+  describe('outbound conversion', () => {
+    it('strips dimensions from image blocks when calling the SDK', async () => {
+      const client = new AnthropicClient({ apiKey: 'test-key' });
+
+      const fakeStream: AsyncIterable<unknown> & { finalMessage: () => Promise<unknown> } = {
+        [Symbol.asyncIterator]() {
+          return {
+            async next() {
+              return { value: undefined, done: true };
+            },
+          };
+        },
+        finalMessage: async () => ({
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 0, output_tokens: 0 },
+        }),
+      };
+
+      const streamMock = vi.fn().mockReturnValue(fakeStream);
+      (client as unknown as { client: { messages: { stream: typeof streamMock } } }).client = {
+        messages: { stream: streamMock },
+      };
+
+      await client.chat({
+        model: 'claude-sonnet-4-6',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: { type: 'base64', media_type: 'image/png', data: 'abc' },
+                dimensions: { width: 100, height: 100 },
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(streamMock).toHaveBeenCalledOnce();
+      const callArgs = streamMock.mock.calls[0]![0] as {
+        messages: { content: Array<Record<string, unknown>> }[];
+      };
+      const sentBlock = callArgs.messages[0]!.content[0]!;
+      expect(sentBlock.type).toBe('image');
+      expect(sentBlock.source).toEqual({ type: 'base64', media_type: 'image/png', data: 'abc' });
+      expect('dimensions' in sentBlock).toBe(false);
+    });
+  });
+
   describe('chatStream (with mock)', () => {
     it('yields events in order', async () => {
       const client = new AnthropicClient({ apiKey: 'test-key' });
