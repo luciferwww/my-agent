@@ -91,41 +91,108 @@ my-agent 走"取其形、不取其规模"路线：吸收 Claude Code 的**对外
 
 ## 6. 模块布局
 
-```
-src/core/subagent/                          ← 新模块
-├── types.ts                                # SubagentProfile / RunRequest / RunTrigger / RunLifecycle / SubagentRunResult / SubagentRole
-├── session-key.ts                          # formatSubagentSessionKey / parseSubagentSessionKey / getSubagentDepth
-├── capabilities.ts                         # resolveSubagentCapabilities（depth → role → canSpawn）
-├── profile-loader.ts                       # 读 .my-agent/agents/*.md，解析 frontmatter + body
-├── tool-selector.ts                        # tools / disable-tools 合并规则
-├── SubagentRunner.ts                       # 薄壳：组装 RunParams，复用 AgentRunner
-└── index.ts                                # 公共导出（含 RunTrigger / RunLifecycle，未来 scheduler 复用）
+### 6.1 新增 / 修改表瘦变胖原则
 
-src/core/tools/builtin/task/                ← 新内置工具
-├── task-tool.ts                            # createTaskTool(...) 工厂，描述/schema/execute
-└── index.ts
+- **新增首选 `core/subagent/`**：subagent 特有逻辑全部集中，防止散落到 `core/runner/` 或 `runtime/`。
+- **仅扩展，不重写**：`AgentRunner / SessionManager / SystemPromptBuilder` 的现有公共方法不改；只加 section 渲染 / `AgentEvent` union variant 这些加法改动。
+- **保持 `RuntimeApp` 瘦**：subagent 装配 / 事件构造抽到 `runtime/subagent-orchestration.ts`，与现有 `tool-approval-policy.ts` / `prompt-factory.ts` 同风格。
+- **`task` 工具是有状态工厂**：不能像 `webFetchTool` / `execTool` 那样无状态导出，必须接受 SubagentRunner / profile registry / depth provider 依赖。
 
-src/runtime/                                ← 装配变更（不改 AgentRunner）
-├── tool-registry.ts                        # 新增 assembleSubagentSupport(...)
-├── prompt-factory.ts                       # 新增 collectAvailableSubagents(...)，注入 prompt
-└── RuntimeApp.ts                           # 新增 runSubagentTurn(...) + subagent_start/end fanout
-
-src/core/runner/types.ts                    ← 仅扩展 AgentEvent union（不改逻辑）
-```
-
-**不动现有 `AgentRunner`、`SessionManager`、`SystemPromptBuilder` 的核心方法**。`SubagentRunner` 是"参数装配 + 复用"的薄壳；`task` 工具是"调用 SubagentRunner + 返回 final text"的薄壳。
-
-**未来扩展位**（v2+，本 spec 不实现，但**类型导出必须在 v1 就到位**，详见 §15）：
+### 6.2 新增与修改的文件清单
 
 ```
-src/core/scheduler/                         ← 未来：cron / at / every 触发器
-├── types.ts                                # 复用 core/subagent 导出的 RunTrigger / RunLifecycle
-└── ...                                     # Schedule / Job / Catch-up / Delivery 由 scheduler 内部决定
-
-src/runtime/RuntimeApp.ts                   ← 未来：dispatchDetachedRun(...) 入口、activeDetachedRuns registry
+src/core/subagent/                                  ← 新模块
+├── types.ts                                        # subagent-specific 类型：
+│                                                    SubagentProfile / SubagentRunRequest /
+│                                                    SubagentRunResult / SubagentRole / SubagentCapabilities
+│                                                  # “通用执行契约”类型临时也住在这：
+│                                                    RunRequest / RunTrigger / RunLifecycle
+│                                                  # （v2 scheduler PR 考虑上提；详见 §17 #6）
+├── session-key.ts                                  # sessionKey 命名 / depth 推导：
+│                                                    formatSubagentSessionKey / parseSubagentSessionKey
+│                                                    getSubagentDepth / isSubagentSessionKey
+│                                                  # （跨模块复用时考虑迁到 core/session/，详见 §17 #6）
+├── capabilities.ts                                 # resolveSubagentCapabilities（depth → role → canSpawn）
+├── profile-loader.ts                               # 读 .my-agent/agents/*.md + frontmatter 解析 + 启动期校验
+│                                                  # + buildGeneralPurposeProfile(opts) 内置 profile 工厂
+├── profile-tools.ts                                # 基于 profile 合并出子 Agent 工具集
+│                                                  # （tools / disable-tools / 防递归剔除 task；之前名 tool-selector.ts）
+├── available-subagents.ts                          # 给 SystemPromptBuilder 的 <available-subagents> section：
+│                                                    AvailableSubagentEntry 类型
+│                                                    collectAvailableSubagents(profiles, opts)
+│                                                    renderAvailableSubagentsSection(entries) 字符串输出
+├── SubagentRunner.ts                               # 薄壳：
+│                                                    • 生成 runId（UUID）
+│                                                    • 组装 RunParams（含子 sessionKey / promptMode='minimal'）
+│                                                    • emit subagent_start → 调 AgentRunner.run → emit subagent_end
+└── index.ts                                        # 仅导出公共 API
 ```
 
-scheduler 模块**只**通过 `RuntimeApp.runSubagentTurn(...)` / 未来的 `dispatchDetachedRun(...)` 与 subagent 接界，不直接 import `SubagentRunner` 内部实现。
+```
+src/core/tools/builtin/task/                        ← 新内置工具
+├── task-tool.ts                                    # createTaskTool(deps): Tool
+│                                                  #   deps = {
+│                                                  #     subagentRunner: SubagentRunner;
+│                                                  #     profileRegistry: ReadonlyMap<name, SubagentProfile>;
+│                                                  #     getSubagentCapabilities: (sessionKey) => SubagentCapabilities;
+│                                                  #     maxSubagentDepth: number;
+│                                                  #   }
+└── index.ts                                        # 仅导出 createTaskTool
+```
+
+```
+src/core/prompt/SystemPromptBuilder.ts              ← 修改：增一个 section 渲染分支
+                                                    数据由 prompt-factory 通过 buildSystemPromptParams 注入
+                                                    渲染逻辑调用 core/subagent/available-subagents.ts 的 render…
+```
+
+```
+src/core/runner/types.ts                            ← 修改：仅扩展 AgentEvent union
+                                                    （加 subagent_start / subagent_end，含 runId / lifecycle / trigger）
+```
+
+```
+src/runtime/                                        ← 装配变更（不改 AgentRunner）
+├── types.ts                                        # RuntimeResourceSet 新增两字段：
+│                                                    subagentProfiles: ReadonlyMap<string, SubagentProfile>;
+│                                                    subagentRunner: SubagentRunner;
+├── bootstrap.ts                                    # 启动期加载 profiles + 构造 SubagentRunner 装进 ResourceSet
+├── tool-registry.ts                                # 新增 buildTaskToolIfEnabled(deps): Tool | null
+│                                                  # subagents.enabled === false 返回 null
+├── prompt-factory.ts                               # buildSystemPromptParams 增 availableSubagents 字段
+│                                                  # 数据来自 collectAvailableSubagents(...)
+├── subagent-orchestration.ts                       # 新文件：代 RuntimeApp 完成
+│                                                  #   • SubagentRunner 装配（复用 fanout 闭包、sessionManager、llmClient…）
+│                                                  #   • runSubagentTurn(...) 入口实现
+│                                                  #   • v2 位置：dispatchDetachedRun(...) 将添加在这里
+└── RuntimeApp.ts                                   # 仅增 public method：
+                                                       runSubagentTurn(req) 薄壳，内部调 subagent-orchestration
+```
+
+### 6.3 未来扩展位（v2+，本 spec 不实现）
+
+```
+src/core/scheduler/                                 ← 未来：cron / at / every 触发器
+├── types.ts                                        # import 主项的 RunTrigger / RunLifecycle
+│                                                    （如 §17 #6 决定迁移，这里 import 路径随之调整）
+└── ...                                             # Schedule / Job / Catch-up / Delivery 由 scheduler 内部决定
+
+src/runtime/subagent-orchestration.ts               ← 未来：增 dispatchDetachedRun(...) +
+                                                       activeDetachedRuns registry。RuntimeApp 不需再拆文件。
+```
+
+scheduler 模块**只**通过 `RuntimeApp.runSubagentTurn(...)` / 未来的 `RuntimeApp.dispatchDetachedRun(...)` 与 subagent 接界，不直接 import `SubagentRunner` 内部实现。
+
+### 6.4 依赖方向（必须不反转）
+
+```
+runtime/                          依赖  core/subagent/
+core/subagent/                    依赖  core/runner / core/session / core/prompt / core/tools
+core/tools/builtin/task/          依赖  core/subagent（工厂签名） + core/tools赢 的公共接口
+core/prompt/SystemPromptBuilder   依赖  core/subagent/available-subagents 的渲染函数 + 类型
+```
+
+**`core/subagent/` 不依赖 `runtime/`**（composition root 完整在 runtime 层）。`task` 工具从 `core/tools/builtin/` 依赖 `core/subagent/` 是一个特例：其他内置工具都不依赖 subagent 模块。
 
 ---
 
@@ -464,13 +531,13 @@ resolveSubagentCapabilities(sessionKey: string, maxSubagentDepth: number): Subag
 
 ### 9.3 内置 general-purpose profile
 
-不依赖文件存在，runtime 在 `assembleSubagentSupport` 时合成：
+不依赖文件存在。`core/subagent/profile-loader.ts` 暴露 `buildGeneralPurposeProfile(opts)` 工厂；`runtime/bootstrap.ts` 在装配 profile registry 时调它合成第一条记录（在加载磁盘 profile 之前）：
 
 ```
 {
   name: 'general-purpose',
   description: '通用任务执行助手。当任务不匹配任何具名 subagent 时使用。',
-  systemPrompt: <由 prompt-factory 生成，含 workspace info + 子 Agent 行为约束>,
+  systemPrompt: <buildGeneralPurposeProfile 内置模板，含 workspace info + 子 Agent 行为约束>,
   model: 'inherit',
   toolSelection: { mode: 'inherit' },     // 继承父默认集减 task
   sourceFile: '<built-in>',
@@ -570,7 +637,12 @@ Guidelines:
 - `promptMode='minimal'` 也不注入（minimal 已经在裁剪 prompt 体积）。
 - `promptMode='none'` 当然不注入。
 
-实现位置：`runtime/prompt-factory.ts` 的 `buildSystemPromptParams` 新增 `availableSubagents` 字段；`SystemPromptBuilder` 增对应渲染函数。
+实现分工（详见 §6）：
+
+- **数据采集**：`core/subagent/available-subagents.ts` 的 `collectAvailableSubagents(profiles, opts)` 输出 `AvailableSubagentEntry[]`。
+- **装配**：`runtime/prompt-factory.ts` 的 `buildSystemPromptParams` 新增 `availableSubagents: AvailableSubagentEntry[]` 字段。
+- **渲染**：`SystemPromptBuilder` 调 `core/subagent/available-subagents.ts` 的 `renderAvailableSubagentsSection(entries)` 拼出上面的文本块。
+- **`SystemPromptBuilder` 不反向依赖 `core/subagent/`**：只依赖后者导出的**类型与纯函数（`AvailableSubagentEntry` + `renderAvailableSubagentsSection`）**，不接触 SubagentRunner / SubagentRunRequest 这些运行时产物。
 
 ---
 
@@ -612,7 +684,7 @@ subagents: {
 
 ### v1 范围（本 spec 覆盖）
 
-- `core/subagent/` 新模块（types / session-key / capabilities / profile-loader / tool-selector / SubagentRunner），**含 `RunTrigger / RunLifecycle` 类型导出**
+- `core/subagent/` 新模块（types / session-key / capabilities / profile-loader / profile-tools / available-subagents / SubagentRunner），**含 `RunTrigger / RunLifecycle` 类型导出**
 - `core/tools/builtin/task/` 新工具
 - `runtime/tool-registry.ts` / `prompt-factory.ts` / `RuntimeApp.ts` 装配改动
 - `core/runner/types.ts` 仅 `AgentEvent` union 扩展
@@ -726,12 +798,12 @@ Run                                 (一次 task 调用 / 一次 cron fire / 一
 | PR | 内容 | 测试范围 |
 |---|---|---|
 | **PR-0** | `core/subagent/types.ts` + `session-key.ts` + `capabilities.ts` + 单元测试 | 纯函数，全单测 |
-| **PR-1** | `core/subagent/profile-loader.ts` + `tool-selector.ts` + fixtures 单测 | 文件读 + 校验 |
-| **PR-2** | `core/runner/types.ts` AgentEvent union 扩展（仅类型，无逻辑） | tsc + 不破坏现有测试 |
-| **PR-3** | `core/subagent/SubagentRunner.ts` + 单测（mock LLMClient / SessionManager） | 复用 AgentRunner |
-| **PR-4** | `core/tools/builtin/task/` + 单测（mock SubagentRunner） | 工具契约 |
-| **PR-5** | `runtime/tool-registry.ts` + `prompt-factory.ts` 装配 | 含 `<available-subagents>` 注入 |
-| **PR-6** | `runtime/RuntimeApp.ts` 增 `runSubagentTurn` + 事件 fanout 集成测试 | end-to-end with mock LLM |
+| **PR-1** | `core/subagent/profile-loader.ts` + `profile-tools.ts` + fixtures 单测 | 文件读 + 校验 |
+| **PR-2** | `core/runner/types.ts` AgentEvent union 扩展（含 `runId / lifecycle / trigger` 字段，仅类型，无逻辑） | tsc + 不破坏现有测试 |
+| **PR-3** | `core/subagent/SubagentRunner.ts` + `available-subagents.ts` + 单测（mock LLMClient / SessionManager） | 复用 AgentRunner；emit `subagent_start/end` 带 runId |
+| **PR-4** | `core/tools/builtin/task/` + 单测（mock SubagentRunner） | 工具契约；trigger 构造为 `'llm-tool'` variant |
+| **PR-5** | `runtime/tool-registry.ts` `buildTaskToolIfEnabled` + `prompt-factory.ts` 装配 + `SystemPromptBuilder` 增渲染分支 | 含 `<available-subagents>` 注入 |
+| **PR-6** | `runtime/subagent-orchestration.ts` + `RuntimeApp.runSubagentTurn`（trigger 构造为 `'library'` variant）+ `RuntimeResourceSet` 字段增加 + `bootstrap.ts` 改动 + 集成测试 | end-to-end with mock LLM |
 | **PR-7**（可选） | CLI / WebSocket channel 端 UI 适配（嵌套渲染） | 视后续 channel 决策 |
 
 ---
