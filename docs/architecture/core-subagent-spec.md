@@ -671,15 +671,32 @@ subagents: {
 
 ## 13. 安全 / 失败模式
 
+### 13.1 风险 / 缓解表
+
 | 风险 | 缓解 |
 |---|---|
 | LLM 把整个父对话作为 `prompt` 传给子 → 隐私 / token 泄露 | 工具 description 明确"prompt 应只含子需要的信息"；不在底层强制（影响表达力）。 |
 | 子 Agent 写文件破坏 workspace | 复用现有 `fsWorkspaceOnly` 路径策略 + approval allowlist。子默认无 `apply_patch / write_file / edit_file`（继承父默认集时通过 `tools` 子集裁剪——v1 由用户在 profile 显式列）。 |
 | 子 Agent 死循环吃 token | profile 的 `max-turns` 强制；缺省走父 `maxLlmCalls`（v1.0 默认 12）。 |
 | 父 abort 时子继续跑 | v1 最小实现：`task.execute` 入口检查 `signal.aborted`；启动后 signal 不向 runner 内传播。**已知 gap**，v2 通过 `AgentRunner` 消费 `RunParams.signal` 修复。 |
-| 子 LLM 调用栈溢出（误配 + 多层 spawn） | depth 限制双保险：默认子无 `task` 工具 + `maxSubagentDepth` 阈值兜底。 |
+| 子 LLM 调用栈溢出（误配 + 多层 spawn） | depth 限制双保险：默认子无 `task` 工具 + `maxSubagentDepth` 阈值兑底。 |
 | profile 文件被恶意修改 | 启动期 fail-fast 校验；profile 不通过网络拉取，仅读 workspace 内。 |
 | 子 session 与父 session 同名冲突 | sessionKey 命名规则保证唯一（含 parentTurnId + 序号）。 |
+
+### 13.2 `task` 工具失败矩阵（§17 #5 决定）
+
+`task.execute` 需处理两个独立失败通道：子返回但 `outcome ≠ 'ok'`，以及 `SubagentRunner.run` 招异常。一律转为 `ToolResult { isError: true }` + 面向 LLM 的结构化修复建议，**不**吞掉错误返回部分文本（防静默数据腐败传染）。
+
+| 触发 | `task` 返回 | content 示例 |
+|---|---|---|
+| `outcome: 'ok'` | `{ content: result.text }` | 子的最终回复 |
+| `outcome: 'max_llm_calls'` | `{ content: …, isError: true }` | `Subagent stopped after N rounds before completing. Partial output:\n<text>` |
+| `outcome: 'aborted'` | `{ content: …, isError: true }` | `Subagent was aborted before completing.` |
+| `outcome: 'error'` | `{ content: …, isError: true }` | `Subagent failed: <reason>` |
+| 抛 `ContextOverflowError` | `{ content: …, isError: true }` | `Subagent context overflow: the task was too large for the subagent's context window even after compaction. Consider breaking the task into smaller pieces, simplifying the prompt, or providing less background.` |
+| 其他意外抛错 | 让 `createToolExecutor` 兑底（转通用 isError） | `Error executing tool "task": <message>` |
+
+实现提示：taskTool 内部抽一个 `formatSubagentFailure(result: SubagentRunResult): string` 辅助函数，按 outcome 拼上面字符串；ContextOverflowError 单独 catch。`max_llm_calls` 路径仍带部分 text，但 `isError: true` 让父 LLM 明确知道受截断了。
 
 ---
 
@@ -818,7 +835,7 @@ Run                                 (一次 task 调用 / 一次 cron fire / 一
 2. **subagent_type 取值约束**（已决定，2026-06-22）：`general-purpose / fork / worker` 三个是 reserved name，用户 profile 文件中 `name` 命中任一者启动期 fail-fast。用户想自定义默认助手请重命名（例如 `default-helper`）。与 Claude Code “Built-in agents are provided by default and cannot be modified” 及 openclaw “main is reserved and cannot be used as the new agent id” 两处依据一致。
 3. **token 统计**（已决定，2026-06-22）：`RunResult` **不**新增 `subagentUsage` / `subagentRuns` 字段；父 `RunResult.usage` 的语义钉死为"父自身"。调用方想拿总账走事件订阅或 runtime 提供的可选 helper `aggregateUsageDuring(...)`。拒绝聚合字段的决定性理由：未来引入 `lifecycle: 'detached'` / `trigger.source: 'scheduled'` 后，“父 RunResult 含所有子 usage”的承诺会破；AgentEvent 流才是唯一真理源。与 Claude Code（usage 仅主线程）、openclaw（每个 cron / subagent run 独立 metrics）两处依据一致。
 4. **库 API 命名**（已决定，2026-06-22）：`RuntimeApp.runSubagentTurn(req): Promise<SubagentRunResult>`。与现有 `RuntimeApp.runTurn(params)` 形成 `run*Turn` 家族；"Turn" 语义在 [core_runner.md](./current/core_runner.md) §1 已钉死。未来 detached / scheduled 形态以 `dispatchDetachedRun(...)` 等 `<动词><形容词>Run` 风格扩展，与本命名协调。
-5. **抛错 vs 返回 error**：`task` 工具内部子 Agent 抛 `ContextOverflowError` 时，工具返回 `ToolResult{ isError: true, content }` 还是吞掉并返回部分文本？倾向**返回 isError**（让父 LLM 看到失败，自行决定重试或换策略）。
+5. **抛错 vs 返回 error**（已决定，2026-06-22）：`task` 工具显式捕获 `ContextOverflowError` 并返回 `ToolResult { isError: true }` 带修复建议；同时按 `SubagentRunResult.outcome` 区分 `ok / max_llm_calls / aborted / error` 四种结果。详见 §13.2 失败矩阵。拒绝"吞错返回部分文本"路径以防静默数据腐败传染。
 6. **`Run*` 类型的归属**（§15 引入后新增）：v1 把 `RunRequest / RunTrigger / RunLifecycle` 放在 `core/subagent/types.ts` 导出。等 v2 引入 scheduler 时，是否要上提到 `core/runner/types.ts` 或新建 `core/execution/types.ts`？倾向**v1 不动**，等 scheduler PR 一起决定迁移；本 spec 仅承诺类型名稳定。
 
 ---
