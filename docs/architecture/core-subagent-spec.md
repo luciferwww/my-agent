@@ -399,6 +399,7 @@ SubagentRunner.run({
 
 - `subagent_type: 'general-purpose'`（默认或省略）→ 内置 profile，无 frontmatter 文件，system prompt 由 `prompt-factory.ts` 提供一段标准化模板（含 workspace 信息 + 通用助手定位），tools 继承父默认集减 `task`。
 - `subagent_type: <name>` → 查 `subagentProfiles.get(name)`，未命中返回 tool error（不 fallback 到 general-purpose，避免静默走错）。
+- **保留名不可被用户 profile 覆盖**：`general-purpose / fork / worker` 三个名字是 reserved，在用户文件里出现 `name: general-purpose`（以及 `fork / worker`）会启动期 fail-fast（详见 §9.1）。用户想自定义默认助手请用别的名字（如 `default-helper`）。
 - **不实现** `fork / worker`，传这两个值返回 tool error（错误信息提示这两个是 v2 计划，建议用 general-purpose）。
 
 ---
@@ -505,6 +506,7 @@ resolveSubagentCapabilities(sessionKey: string, maxSubagentDepth: number): Subag
   - frontmatter 缺失 / 非法 YAML → 启动失败（fail-fast）。
   - `name` / `description` 缺失 → 启动失败。
   - `name` 与文件名不匹配 → 启动失败。
+  - `name` 命中保留名 `general-purpose` / `fork` / `worker` → 启动失败（报错信息：`Profile name 'X' is reserved for the built-in subagent type; rename the file to use a custom name.`）。
   - `tools` 含 `task` → 启动失败（v1 禁止递归）。
   - `model` 既非 `'inherit'` 也非合法 model id → 启动失败。
   - `tools` 引用未注册的工具名 → 启动失败（防 typo）。
@@ -811,7 +813,7 @@ Run                                 (一次 task 调用 / 一次 cron fire / 一
 ## 17. 待确认的开放问题
 
 1. **profile 目录约定**（已决定，2026-06-22）：profile 文件住 `<workspaceDir>/<config.workspace.agentDir>/agents/`，`agentDir` 默认 `.agent`，与现有 `config.json`、`sessions/`、`memory.sqlite` 同根，不引入 profile 专用配置项。之前“.my-agent/”候选被否决——收集 codebase 后发现现有约定完全走 `.agent/`（[loader.ts](../../src/platform/config/loader.ts)、[defaults.ts](../../src/platform/config/defaults.ts)）。
-2. **subagent_type 取值约束**：v1 是 `'general-purpose' | profile.name`。是否允许 `'general-purpose'` 被 profile 覆盖（即用户写一个 `name: general-purpose` 的文件）？倾向**禁止**（保留为内置语义），但需要在 loader 加校验。
+2. **subagent_type 取值约束**（已决定，2026-06-22）：`general-purpose / fork / worker` 三个是 reserved name，用户 profile 文件中 `name` 命中任一者启动期 fail-fast。用户想自定义默认助手请重命名（例如 `default-helper`）。与 Claude Code “Built-in agents are provided by default and cannot be modified” 及 openclaw “main is reserved and cannot be used as the new agent id” 两处依据一致。
 3. **token 统计**：子 usage 通过 `subagent_end` 暴露后，是否在父 `RunResult` 里增一个 `subagentUsage?: TokenUsage[]` 累加字段（供编排脚本方便统计）？倾向**v1 不加**，由订阅 `subagent_end` 的上层自己加。
 4. **库 API 命名**：`RuntimeApp.runSubagentTurn` vs `RuntimeApp.runSubagent`。倾向前者（与 `runTurn` 系列一致）。
 5. **抛错 vs 返回 error**：`task` 工具内部子 Agent 抛 `ContextOverflowError` 时，工具返回 `ToolResult{ isError: true, content }` 还是吞掉并返回部分文本？倾向**返回 isError**（让父 LLM 看到失败，自行决定重试或换策略）。
