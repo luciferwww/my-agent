@@ -836,7 +836,7 @@ Run                                 (一次 task 调用 / 一次 cron fire / 一
 3. **token 统计**（已决定，2026-06-22）：`RunResult` **不**新增 `subagentUsage` / `subagentRuns` 字段；父 `RunResult.usage` 的语义钉死为"父自身"。调用方想拿总账走事件订阅或 runtime 提供的可选 helper `aggregateUsageDuring(...)`。拒绝聚合字段的决定性理由：未来引入 `lifecycle: 'detached'` / `trigger.source: 'scheduled'` 后，“父 RunResult 含所有子 usage”的承诺会破；AgentEvent 流才是唯一真理源。与 Claude Code（usage 仅主线程）、openclaw（每个 cron / subagent run 独立 metrics）两处依据一致。
 4. **库 API 命名**（已决定，2026-06-22）：`RuntimeApp.runSubagentTurn(req): Promise<SubagentRunResult>`。与现有 `RuntimeApp.runTurn(params)` 形成 `run*Turn` 家族；"Turn" 语义在 [core_runner.md](./current/core_runner.md) §1 已钉死。未来 detached / scheduled 形态以 `dispatchDetachedRun(...)` 等 `<动词><形容词>Run` 风格扩展，与本命名协调。
 5. **抛错 vs 返回 error**（已决定，2026-06-22）：`task` 工具显式捕获 `ContextOverflowError` 并返回 `ToolResult { isError: true }` 带修复建议；同时按 `SubagentRunResult.outcome` 区分 `ok / max_llm_calls / aborted / error` 四种结果。详见 §13.2 失败矩阵。拒绝"吞错返回部分文本"路径以防静默数据腐败传染。
-6. **`Run*` 类型的归属**（§15 引入后新增）：v1 把 `RunRequest / RunTrigger / RunLifecycle` 放在 `core/subagent/types.ts` 导出。等 v2 引入 scheduler 时，是否要上提到 `core/runner/types.ts` 或新建 `core/execution/types.ts`？倾向**v1 不动**，等 scheduler PR 一起决定迁移；本 spec 仅承诺类型名稳定。
+6. **`Run*` 类型的归属**（已决定，2026-06-22）：v1 把 `RunRequest / RunTrigger / RunLifecycle` 放在 `core/subagent/types.ts` 导出，不上提；等 v2 引入 scheduler PR 时根据彼时实际复用情况再 revisit 是否迁移到 `core/runner/types.ts` 或新建 `core/execution/types.ts`。本 spec 仅承诺**类型名稳定**（迁移只改 import 路径）。
 
 ---
 
