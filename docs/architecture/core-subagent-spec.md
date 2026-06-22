@@ -295,10 +295,11 @@ v1 默认 `maxSubagentDepth=1`，于是只有 `main` 和 `leaf` 两种状态—�
 
 具体规则：
 
-- 父 `RunResult.usage` **只统计父自身的 LLM 调用**，不含子 Agent。
+- 父 `RunResult.usage` **只统计父自身的 LLM 调用**，不含子 Agent。`RunResult` **不**新增 `subagentUsage` / `subagentRuns` 类字段（详见 §17 #3：detached / scheduled 引入后聚合语义会破，AgentEvent 流才是唯一真理源）。
 - 子 Agent 的 usage 通过 `subagent_end` 事件单独暴露（带 `usage: TokenUsage` 字段）。
 - `task` 工具返回的 `ToolResult.content` 只放子的最终文本，**绝不**把 usage 序列化进去（否则父 LLM 会"看到"，污染思维）。
-- 上层（telemetry / billing）想算"含子的总账"自己加。
+- 为方便调用方快速拿总账，runtime 提供可选 helper `aggregateUsageDuring(runtimeApp, fn): { result, totalUsage }`（PR-6 附带）：实现上只是订阅 `subagent_end` + 父 `RunResult.usage` 累加，不污染 `RunResult` 类型。
+- 上层（telemetry / billing）想算"含子的总账"可走 helper，也可直接订阅事件自行聚合。
 
 ### 决策 7：审批策略 = 复用 v1.0 "无 channel = fail-closed allowlist"
 
@@ -694,6 +695,7 @@ subagents: {
 - `<available-subagents>` system prompt section
 - `subagent_start / subagent_end` 事件（含 `runId / lifecycle / trigger` 字段）
 - `RuntimeApp.runSubagentTurn(...)` 库 API
+- `runtime/aggregateUsageDuring(...)` 可选 helper（订阅 `subagent_end` 加总 token，不污染 `RunResult` 类型；详见 §7 决策 6）
 - 配置 `subagents.{enabled, maxSubagentDepth, generalPurposeEnabled}`
 - **`trigger.source` v1 实际只支持 `'llm-tool' | 'library'` 两种 variant；`'scheduled' / 'webhook'` 在类型 union 中存在但 v1 不构造**
 
@@ -805,7 +807,7 @@ Run                                 (一次 task 调用 / 一次 cron fire / 一
 | **PR-3** | `core/subagent/SubagentRunner.ts` + `available-subagents.ts` + 单测（mock LLMClient / SessionManager） | 复用 AgentRunner；emit `subagent_start/end` 带 runId |
 | **PR-4** | `core/tools/builtin/task/` + 单测（mock SubagentRunner） | 工具契约；trigger 构造为 `'llm-tool'` variant |
 | **PR-5** | `runtime/tool-registry.ts` `buildTaskToolIfEnabled` + `prompt-factory.ts` 装配 + `SystemPromptBuilder` 增渲染分支 | 含 `<available-subagents>` 注入 |
-| **PR-6** | `runtime/subagent-orchestration.ts` + `RuntimeApp.runSubagentTurn`（trigger 构造为 `'library'` variant）+ `RuntimeResourceSet` 字段增加 + `bootstrap.ts` 改动 + 集成测试 | end-to-end with mock LLM |
+| **PR-6** | `runtime/subagent-orchestration.ts` + `RuntimeApp.runSubagentTurn`（trigger 构造为 `'library'` variant）+ `RuntimeResourceSet` 字段增加 + `bootstrap.ts` 改动 + `aggregateUsageDuring` helper + 集成测试 | end-to-end with mock LLM；helper 单测验证 父+子 usage 累加正确 |
 | **PR-7**（可选） | CLI / WebSocket channel 端 UI 适配（嵌套渲染） | 视后续 channel 决策 |
 
 ---
@@ -814,7 +816,7 @@ Run                                 (一次 task 调用 / 一次 cron fire / 一
 
 1. **profile 目录约定**（已决定，2026-06-22）：profile 文件住 `<workspaceDir>/<config.workspace.agentDir>/agents/`，`agentDir` 默认 `.agent`，与现有 `config.json`、`sessions/`、`memory.sqlite` 同根，不引入 profile 专用配置项。之前“.my-agent/”候选被否决——收集 codebase 后发现现有约定完全走 `.agent/`（[loader.ts](../../src/platform/config/loader.ts)、[defaults.ts](../../src/platform/config/defaults.ts)）。
 2. **subagent_type 取值约束**（已决定，2026-06-22）：`general-purpose / fork / worker` 三个是 reserved name，用户 profile 文件中 `name` 命中任一者启动期 fail-fast。用户想自定义默认助手请重命名（例如 `default-helper`）。与 Claude Code “Built-in agents are provided by default and cannot be modified” 及 openclaw “main is reserved and cannot be used as the new agent id” 两处依据一致。
-3. **token 统计**：子 usage 通过 `subagent_end` 暴露后，是否在父 `RunResult` 里增一个 `subagentUsage?: TokenUsage[]` 累加字段（供编排脚本方便统计）？倾向**v1 不加**，由订阅 `subagent_end` 的上层自己加。
+3. **token 统计**（已决定，2026-06-22）：`RunResult` **不**新增 `subagentUsage` / `subagentRuns` 字段；父 `RunResult.usage` 的语义钉死为"父自身"。调用方想拿总账走事件订阅或 runtime 提供的可选 helper `aggregateUsageDuring(...)`。拒绝聚合字段的决定性理由：未来引入 `lifecycle: 'detached'` / `trigger.source: 'scheduled'` 后，“父 RunResult 含所有子 usage”的承诺会破；AgentEvent 流才是唯一真理源。与 Claude Code（usage 仅主线程）、openclaw（每个 cron / subagent run 独立 metrics）两处依据一致。
 4. **库 API 命名**：`RuntimeApp.runSubagentTurn` vs `RuntimeApp.runSubagent`。倾向前者（与 `runTurn` 系列一致）。
 5. **抛错 vs 返回 error**：`task` 工具内部子 Agent 抛 `ContextOverflowError` 时，工具返回 `ToolResult{ isError: true, content }` 还是吞掉并返回部分文本？倾向**返回 isError**（让父 LLM 看到失败，自行决定重试或换策略）。
 6. **`Run*` 类型的归属**（§15 引入后新增）：v1 把 `RunRequest / RunTrigger / RunLifecycle` 放在 `core/subagent/types.ts` 导出。等 v2 引入 scheduler 时，是否要上提到 `core/runner/types.ts` 或新建 `core/execution/types.ts`？倾向**v1 不动**，等 scheduler PR 一起决定迁移；本 spec 仅承诺类型名稳定。
