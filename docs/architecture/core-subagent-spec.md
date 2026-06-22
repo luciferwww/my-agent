@@ -41,7 +41,7 @@ my-agent 走"取其形、不取其规模"路线：吸收 Claude Code 的**对外
 ## 3. 非目标
 
 - **不做并行 spawn**：v1 一次 `task` 调用阻塞返回；同轮多 `tool_use` 在底层会串行执行（与父 toolUseBlocks 行为一致）。并行能力放到 v2。
-- **不做 fork 模式**：不复制父对话历史到子，不强制父模型。接口预留 `inheritContext?` 字段但 v1 始终为 false。
+- **不做 fork 模式**：不复制父对话历史到子，不强制父模型。v1 **不**暴露 `inheritContext` 类字段；v2 引入时再添加（加可选字段是兼容性扩展，不会 breaking）。
 - **不做 worktree / remote 隔离**：不创建 git worktree，不走远程沙箱。可选 `cwd` 字段替代基本需求。
 - **不做跨 agent 通信工具**（Claude Code 的 `SendMessage`）：v1 子 Agent 之间不通信，父子之间只有"prompt 进 / final text 出"。
 - **不做后台子 Agent**（`run_in_background`）：v1 全部阻塞同步。
@@ -57,14 +57,14 @@ my-agent 走"取其形、不取其规模"路线：吸收 Claude Code 的**对外
 |---|---|---|---|
 | 入口工具 | `Task`（外名 `Agent`），三参数 `description/prompt/subagent_type` | `sessions_spawn`（参数 ~15 个） | 抄 Claude Code 形态：`task` 工具，参数 `description / prompt / subagent_type?` |
 | Profile 文件 | `.claude/agents/*.md` + YAML frontmatter | 全部走 config + agentId 多租户 | 抄 Claude Code：`<agentDir>/agents/*.md`（`agentDir` 从 `config.workspace.agentDir` 派生，默认 `.agent`），frontmatter 字段取子集 |
-| tools 选择 | `tools` 替换默认集；`disable-tools` 在默认集上减法；前者覆盖后者 | 复杂 allowlist/denylist 多层合并 | 抄 Claude Code 规则，原样实现（§7.3） |
+| tools 选择 | `tools` 替换默认集；`disable-tools` 在默认集上减法；前者覆盖后者 | 复杂 allowlist/denylist 多层合并 | 抄 Claude Code 规则，原样实现（§7 决策 5） |
 | 嵌套限制 | "teammates cannot spawn teammates"（参数维度） | depth 编码 + role/controlScope 推导（"main/orchestrator/leaf"） | 抄 openclaw：depth 写进 sessionKey，role 推导 canSpawn |
 | 子 sessionKey | （二进制黑盒，不可见） | `agent:<id>:...:subagent:<n>:...`，可嵌套 | 抄 openclaw 思路，简化为 `<parent>:subagent:<turnId>:<n>` |
 | Token 计费 | usage 只算主线程（`!parent_tool_use_id`） | 独立 metrics | 抄 Claude Code：子 usage 不向父 `RunResult.usage` 累加；通过 `subagent_end` 事件单独暴露 |
 | 审批 | 有"交接安全分类器" + 父继承 | gateway 层多策略 | 复用现有"无 channel = fail-closed allowlist"（v1.0 已规定），不加二次分类 |
 | 事件命名 | `SubagentStart / SubagentStop / TaskCreated / TaskCompleted`（4 个） | `subagent-complete / subagent-error / subagent-killed / session-reset / session-delete`（5 个 reason）+ outcome | 折中：v1 两个事件 `subagent_start / subagent_end`，但 `subagent_end.reason` 命名抄 openclaw（向上兼容扩展） |
 | Profile 注入 prompt | 运行期消息 `Available agent types for the Agent tool: ...` | 复杂 | 抄 Claude Code：`SystemPromptBuilder` 增 `<available-subagents>` 段 |
-| fork 模式 | 继承父全部 history + 强制父模型 | 无对应 | v1 不做，接口预留 `inheritContext?: boolean`（false-only） |
+| fork 模式 | 继承父全部 history + 强制父模型 | 无对应 | v1 不做，不暴露字段；v2 用户提需求时再加 |
 | 隔离 | `isolation: worktree / remote` | sandbox 配置 | v1 不做，profile 可写 `cwd` 字段（仅作 `SubagentRunParams.cwd` 传递，runner 本身不消费——只是供未来 exec 工具用） |
 | 通信 | `SendMessage` 工具 | gateway 路由 | v1 不做，无对应字段 |
 | 后台 | `run_in_background` + 通知 | gateway 异步任务 | v1 不做，无对应字段 |
@@ -76,7 +76,7 @@ my-agent 走"取其形、不取其规模"路线：吸收 Claude Code 的**对外
 | 层 | 现状 | 影响 |
 |---|---|---|
 | `RunTurnParams.promptMode` | 已含 `'full' / 'minimal' / 'none'`（[src/runtime/types.ts](../../src/runtime/types.ts#L86)） | 子 Agent 直接传 `'minimal'`，无需扩展 |
-| `sessionKey` | 任意字符串，已规划 `"subagent:xxx"` 命名（[core-session-design.md](./core-session-design.md#L62)） | depth 编码方案直接可用，无需 schema 改动 |
+| `sessionKey` | 任意字符串，已规划 `"subagent:xxx"` 命名（[current/core_session.md](./current/core_session.md) §3） | depth 编码方案直接可用，无需 schema 改动 |
 | `SessionManager` | append-only JSONL + sessions.json 元数据，已支持 `spawnedBy?` 字段 | 子 Agent 直接复用，写入到同一目录 |
 | 审批策略 | `wireApprovalRouting` 始终装 hook，无 channel 时仅 `tools.approval.allow` 内可执行（fail-closed） | 子 Agent 天然继承策略，无需新增分支 |
 | `AgentRunner` | 纯执行引擎，接收最小参数子集，不调 `loadConfig()` | `SubagentRunner` 可直接复用，无需在 runner 内开洞 |
@@ -91,7 +91,7 @@ my-agent 走"取其形、不取其规模"路线：吸收 Claude Code 的**对外
 
 ## 6. 模块布局
 
-### 6.1 新增 / 修改表瘦变胖原则
+### 6.1 总体原则
 
 - **新增首选 `core/subagent/`**：subagent 特有逻辑全部集中，防止散落到 `core/runner/` 或 `runtime/`。
 - **仅扩展，不重写**：`AgentRunner / SessionManager / SystemPromptBuilder` 的现有公共方法不改；只加 section 渲染 / `AgentEvent` union variant 这些加法改动。
@@ -108,9 +108,12 @@ src/core/subagent/                                  ← 新模块
 │                                                  # “通用执行契约”类型临时也住在这：
 │                                                    RunRequest / RunTrigger / RunLifecycle
 │                                                  # （v2 scheduler PR 考虑上提；详见 §17 #6）
-├── session-key.ts                                  # sessionKey 命名 / depth 推导：
-│                                                    formatSubagentSessionKey / parseSubagentSessionKey
-│                                                    getSubagentDepth / isSubagentSessionKey
+├── session-key.ts                                  # sessionKey 命名 / depth 推导（§7 决策 3）：
+│                                                    formatSubagentSessionKey({ rootLabel, runId, depth })
+│                                                    parseSubagentSessionKey(key) → { rootLabel, runId, depth, isSynthetic }
+│                                                    getSubagentDepth(key) → 数 `:subagent:` 出现次数
+│                                                    isSubagentSessionKey(key) → 是否含 `:subagent:`
+│                                                  # isSynthetic = true 当 rootLabel 为 library/scheduled/webhook 合成标签
 │                                                  # （跨模块复用时考虑迁到 core/session/，详见 §17 #6）
 ├── capabilities.ts                                 # resolveSubagentCapabilities（depth → role → canSpawn）
 ├── profile-loader.ts                               # 读 <agentDir>/agents/*.md + frontmatter 解析 + 启动期校验
@@ -122,9 +125,12 @@ src/core/subagent/                                  ← 新模块
 │                                                    collectAvailableSubagents(profiles, opts)
 │                                                    renderAvailableSubagentsSection(entries) 字符串输出
 ├── SubagentRunner.ts                               # 薄壳：
-│                                                    • 生成 runId（UUID）
-│                                                    • 组装 RunParams（含子 sessionKey / promptMode='minimal'）
-│                                                    • emit subagent_start → 调 AgentRunner.run → emit subagent_end
+│                                                    • **预生成** runId（UUID）+ childTurnId（UUID）
+│                                                    • 根据 trigger.source 拼出子 sessionKey（§7 决策 3）
+│                                                    • 组装 RunParams（sessionKey / promptMode='minimal' / turnId=childTurnId）
+│                                                    • emit subagent_start（携带 runId + childTurnId，与后续 run_start.turnId 一致）
+│                                                    • 调 AgentRunner.run(RunParams)
+│                                                    • emit subagent_end（携带同 runId）
 └── index.ts                                        # 仅导出公共 API
 ```
 
@@ -188,7 +194,7 @@ scheduler 模块**只**通过 `RuntimeApp.runSubagentTurn(...)` / 未来的 `Run
 ```
 runtime/                          依赖  core/subagent/
 core/subagent/                    依赖  core/runner / core/session / core/prompt / core/tools
-core/tools/builtin/task/          依赖  core/subagent（工厂签名） + core/tools赢 的公共接口
+core/tools/builtin/task/          依赖  core/subagent（工厂签名） + core/tools 的公共接口
 core/prompt/SystemPromptBuilder   依赖  core/subagent/available-subagents 的渲染函数 + 类型
 ```
 
@@ -246,15 +252,29 @@ Output a punch list grouped by severity.
 
 ### 决策 3：depth 编码进 sessionKey，**不是** 注册表
 
-**采用**：openclaw 的方案。子 sessionKey 形如：
+**采用**：openclaw 的方案。子 sessionKey 使用统一格式，与 trigger 类型无关：
 
 ```
-父：    main
-深度1：  main:subagent:<parentTurnId>:1
-深度2：  main:subagent:<parentTurnId>:1:subagent:<childTurnId>:2
+通用格式（所有 trigger 共用）：
+  <rootLabel>:subagent:<runId>:<depth>
+
+根据 trigger.source 填充 rootLabel：
+  'llm-tool'  → rootLabel = parentSessionKey（如 'main'）
+  'library'   → rootLabel = callerLabel || 'library'（合成标签，不指向真实 session）
+  'scheduled' → (v2) rootLabel = 'scheduled:<jobId>'
+  'webhook'   → (v2+) rootLabel = 'webhook:<requestId>'
+
+runId 由 SubagentRunner 预生成（UUID），与 subagent_start/end 事件中的 runId 一致。
+depth 始终从父 depth + 1 推导（root 层为 0、library/scheduled/webhook 的第一层子为 1）。
+
+示例：
+  main:subagent:abc-123:1                            ← llm-tool 入口的子
+  my-script:subagent:def-456:1                       ← library 入口 (callerLabel='my-script')
+  library:subagent:ghi-789:1                         ← library 入口 (无 callerLabel)
+  main:subagent:abc-123:1:subagent:jkl-012:2         ← v2 嵌套 (depth=2，maxSubagentDepth>=2 才能出现)
 ```
 
-`getSubagentDepth(key)` 实现就是数 `:subagent:` 出现次数。
+`getSubagentDepth(key)` 实现就是数 `:subagent:` 出现次数。`parseSubagentSessionKey(key)` 返回 `{ rootLabel, runId, depth, isSynthetic }`，其中 `isSynthetic = true` 当 rootLabel 不指向真实 session（library / scheduled / webhook 入口）。
 
 理由：
 
@@ -466,8 +486,11 @@ RunRequest {                            // 库 API + 工具内部共用
 SubagentRunResult {
   runId: string                         // 执行实例 id；与事件中的 runId 一致
   sessionKey: string                    // 子的 sessionKey，便于上层定位历史
-  turnId: string                        // 子的第一个 turn id
-  text: string                          // 子的最终回复（task 工具返回这个作为 ToolResult.content）
+  turnId: string                        // 子的第一个 turn id（由 SubagentRunner 预生成，与 run_start.turnId 一致）
+  text: string                          // outcome='ok'           → 子的最终回复文本
+                                        // outcome='max_llm_calls' → 最后一次 LLM assistant 响应文本（可能为空）
+                                        // outcome='aborted'       → 截断前最后一次 LLM 响应（可能为空）
+                                        // outcome='error'         → 通常为空字符串
   outcome: 'ok' | 'error' | 'aborted' | 'max_llm_calls'
   reason?: string
   usage: TokenUsage
@@ -595,20 +618,23 @@ sequenceDiagram
 
 ```
 RuntimeApp.runSubagentTurn({
-  parentSessionKey: 'main',
-  prompt: 'Audit src/auth/',
   subagentType: 'code-reviewer',
+  description: 'Audit auth module',
+  prompt: 'Audit src/auth/ for OWASP issues. Report file paths + line numbers.',
+  trigger: { source: 'library', callerLabel: 'cli-script' },
+  lifecycle: 'blocking',
 }) → Promise<SubagentRunResult>
 ```
 
 内部步骤：
 
-1. 生成 `parentToolUseId = 'manual:' + uuid()`，`parentTurnId = 'manual:' + uuid()`。
-2. 查 profile。
-3. 走 `SubagentRunner.run(req)`，事件照常 fanout。
-4. 返回 `SubagentRunResult`。
+1. 查 `profileRegistry.get(subagentType)`；未命中招错。
+2. 走 `SubagentRunner.run(req)`：内部生成 `runId`（UUID）、以文件调用者身份生成子 sessionKey、emit `subagent_start` → 调 `AgentRunner.run` → emit `subagent_end`，事件照常 fanout。
+3. 返回 `SubagentRunResult`。
 
-**与工具入口的唯一区别**是 parent 标识不来自真实 LLM tool_use。channel 上行为完全一致。
+**与工具入口的唯一区别**：caller 主动构造 `trigger: { source: 'library', callerLabel? }` 而不是 `{ source: 'llm-tool', parentSessionKey, parentTurnId, parentToolUseId }`。Channel / UI 看 `trigger.source` 决定如何呈现（嵌套渲染 vs 独立任务面板）。
+
+子 sessionKey 设计（§7 决策 3 统一格式的 library variant）：rootLabel = `callerLabel || 'library'`，示例 `my-script:subagent:<runId>:1` 或 `library:subagent:<runId>:1`。`parseSubagentSessionKey` 返回的 `rootLabel` 不是真实 session（`isSynthetic === true`）。
 
 ---
 
@@ -635,7 +661,7 @@ Guidelines:
 
 注入条件：
 
-- profile 数量 > 0 **或** runtime 配置启用 general-purpose（默认启用）。
+- 只要 `subagents.enabled === true`（默认 true）就注入；general-purpose 默认启用保证至少有一条可用 subagent。`enabled === false` 时完全不注入（也不注册 `task` 工具）。
 - 子 Agent 自己的 system prompt 中**不**注入此 section（子默认无 `task`，告诉它这事没意义；且会污染子的注意力）。
 - `promptMode='minimal'` 也不注入（minimal 已经在裁剪 prompt 体积）。
 - `promptMode='none'` 当然不注入。
@@ -663,7 +689,7 @@ subagents: {
 
 不引入：
 
-- `profilesDir`（v1 不引入。profile 目录始终为 `<workspaceDir>/<config.workspace.agentDir>/agents/`，复用现有 `workspace.agentDir` 配置，避免路径双套件並保持与 sessions/memory 同根）。
+- `profilesDir`（v1 不引入。profile 目录始终为 `<workspaceDir>/<config.workspace.agentDir>/agents/`，复用现有 `workspace.agentDir` 配置，避免路径分散，与 sessions / memory 保持同根）。
 - per-profile 配置覆盖（profile 本身就是配置文件）。
 - token 预算配额（v1 复用父 `contextWindowTokens` 默认值）。
 
@@ -679,9 +705,9 @@ subagents: {
 | 子 Agent 写文件破坏 workspace | 复用现有 `fsWorkspaceOnly` 路径策略 + approval allowlist。子默认无 `apply_patch / write_file / edit_file`（继承父默认集时通过 `tools` 子集裁剪——v1 由用户在 profile 显式列）。 |
 | 子 Agent 死循环吃 token | profile 的 `max-turns` 强制；缺省走父 `maxLlmCalls`（v1.0 默认 12）。 |
 | 父 abort 时子继续跑 | v1 最小实现：`task.execute` 入口检查 `signal.aborted`；启动后 signal 不向 runner 内传播。**已知 gap**，v2 通过 `AgentRunner` 消费 `RunParams.signal` 修复。 |
-| 子 LLM 调用栈溢出（误配 + 多层 spawn） | depth 限制双保险：默认子无 `task` 工具 + `maxSubagentDepth` 阈值兑底。 |
+| 子 LLM 调用栈溢出（误配 + 多层 spawn） | depth 限制双保险：默认子无 `task` 工具 + `maxSubagentDepth` 阈值兜底。 |
 | profile 文件被恶意修改 | 启动期 fail-fast 校验；profile 不通过网络拉取，仅读 workspace 内。 |
-| 子 session 与父 session 同名冲突 | sessionKey 命名规则保证唯一（含 parentTurnId + 序号）。 |
+| 子 session 与父 session 同名冲突 | sessionKey 命名规则保证唯一（统一格式 `<rootLabel>:subagent:<runId>:<depth>`，runId 为 UUID）。 |
 
 ### 13.2 `task` 工具失败矩阵（§17 #5 决定）
 
@@ -694,7 +720,7 @@ subagents: {
 | `outcome: 'aborted'` | `{ content: …, isError: true }` | `Subagent was aborted before completing.` |
 | `outcome: 'error'` | `{ content: …, isError: true }` | `Subagent failed: <reason>` |
 | 抛 `ContextOverflowError` | `{ content: …, isError: true }` | `Subagent context overflow: the task was too large for the subagent's context window even after compaction. Consider breaking the task into smaller pieces, simplifying the prompt, or providing less background.` |
-| 其他意外抛错 | 让 `createToolExecutor` 兑底（转通用 isError） | `Error executing tool "task": <message>` |
+| 其他意外抛错 | 让 `createToolExecutor` 兜底（转通用 isError） | `Error executing tool "task": <message>` |
 
 实现提示：taskTool 内部抽一个 `formatSubagentFailure(result: SubagentRunResult): string` 辅助函数，按 outcome 拼上面字符串；ContextOverflowError 单独 catch。`max_llm_calls` 路径仍带部分 text，但 `isError: true` 让父 LLM 明确知道受截断了。
 
@@ -822,9 +848,9 @@ Run                                 (一次 task 调用 / 一次 cron fire / 一
 | **PR-1** | `core/subagent/profile-loader.ts` + `profile-tools.ts` + fixtures 单测 | 文件读 + 校验 |
 | **PR-2** | `core/runner/types.ts` AgentEvent union 扩展（含 `runId / lifecycle / trigger` 字段，仅类型，无逻辑） | tsc + 不破坏现有测试 |
 | **PR-3** | `core/subagent/SubagentRunner.ts` + `available-subagents.ts` + 单测（mock LLMClient / SessionManager） | 复用 AgentRunner；emit `subagent_start/end` 带 runId |
-| **PR-4** | `core/tools/builtin/task/` + 单测（mock SubagentRunner） | 工具契约；trigger 构造为 `'llm-tool'` variant |
+| **PR-4** | `core/tools/builtin/task/` + 单测（mock SubagentRunner） | 工具契约；trigger 构造为 `'llm-tool'` variant；**必覆盖 case：**(a) `parentToolUseId` 从 tool_use.id 正确传入、(b) `subagentType='general-purpose'` 走内置 profile、(c) depth 超 `maxSubagentDepth` 时返回 isError 且**不**调 SubagentRunner（决策 3 第二层防护）、(d) §13.2 失败矩阵的每一行 outcome 映射 |
 | **PR-5** | `runtime/tool-registry.ts` `buildTaskToolIfEnabled` + `prompt-factory.ts` 装配 + `SystemPromptBuilder` 增渲染分支 | 含 `<available-subagents>` 注入 |
-| **PR-6** | `runtime/subagent-orchestration.ts` + `RuntimeApp.runSubagentTurn`（trigger 构造为 `'library'` variant）+ `RuntimeResourceSet` 字段增加 + `bootstrap.ts` 改动 + `aggregateUsageDuring` helper + 集成测试 | end-to-end with mock LLM；helper 单测验证 父+子 usage 累加正确 |
+| **PR-6** | `runtime/subagent-orchestration.ts` + `RuntimeApp.runSubagentTurn`（trigger 构造为 `'library'` variant）+ `RuntimeResourceSet` 字段增加 + `bootstrap.ts` 改动 + `aggregateUsageDuring` helper + 集成测试 | end-to-end with mock LLM；**必覆盖 case：**(a) helper 验证 父+子 usage 累加正确、(b) 子 `outcome='error'` 时父 `RunResult.usage` **不**被污染（决策 6子不向父累加）、(c) helper 在子失败（outcome≠'ok'）时仍正确累加子的 usage |
 | **PR-7**（可选） | CLI / WebSocket channel 端 UI 适配（嵌套渲染） | 视后续 channel 决策 |
 
 ---
