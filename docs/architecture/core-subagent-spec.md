@@ -30,7 +30,7 @@ my-agent 走"取其形、不取其规模"路线：吸收 Claude Code 的**对外
 
 - 父 Agent 可以通过一个内置工具 `task` 发起一次**同进程、阻塞、独立上下文**的子 Agent 执行。
 - 子 Agent 有自己的 `sessionKey`、独立 history、独立 system prompt、独立工具集，**只把最终文本返回给父**。
-- 提供基于 `<workspace>/.my-agent/agents/<name>.md` 的 frontmatter profile 机制，让用户能定义 `code-reviewer / planner / security-auditor` 等专门角色。
+- 提供基于 `<workspaceDir>/<config.workspace.agentDir>/agents/<name>.md`（默认 `.agent/agents/`）的 frontmatter profile 机制，让用户能定义 `code-reviewer / planner / security-auditor` 等专门角色。
 - 默认无 channel 场景下子 Agent 走 fail-closed 审批白名单（已有策略复用）。
 - 子 Agent 的 `AgentEvent` 通过现有 fanout 链路转发到父 channel，UI/CLI 能区分父子。
 - 实现"嵌套深度限制"：默认子 Agent 自己**没有** `task` 工具（不可再 spawn），通过 depth 阈值兜底。
@@ -56,7 +56,7 @@ my-agent 走"取其形、不取其规模"路线：吸收 Claude Code 的**对外
 | 主题 | Claude Code 做法 | openclaw 做法 | my-agent v1 决策 |
 |---|---|---|---|
 | 入口工具 | `Task`（外名 `Agent`），三参数 `description/prompt/subagent_type` | `sessions_spawn`（参数 ~15 个） | 抄 Claude Code 形态：`task` 工具，参数 `description / prompt / subagent_type?` |
-| Profile 文件 | `.claude/agents/*.md` + YAML frontmatter | 全部走 config + agentId 多租户 | 抄 Claude Code：`<workspace>/.my-agent/agents/*.md`，frontmatter 字段取子集 |
+| Profile 文件 | `.claude/agents/*.md` + YAML frontmatter | 全部走 config + agentId 多租户 | 抄 Claude Code：`<agentDir>/agents/*.md`（`agentDir` 从 `config.workspace.agentDir` 派生，默认 `.agent`），frontmatter 字段取子集 |
 | tools 选择 | `tools` 替换默认集；`disable-tools` 在默认集上减法；前者覆盖后者 | 复杂 allowlist/denylist 多层合并 | 抄 Claude Code 规则，原样实现（§7.3） |
 | 嵌套限制 | "teammates cannot spawn teammates"（参数维度） | depth 编码 + role/controlScope 推导（"main/orchestrator/leaf"） | 抄 openclaw：depth 写进 sessionKey，role 推导 canSpawn |
 | 子 sessionKey | （二进制黑盒，不可见） | `agent:<id>:...:subagent:<n>:...`，可嵌套 | 抄 openclaw 思路，简化为 `<parent>:subagent:<turnId>:<n>` |
@@ -113,7 +113,7 @@ src/core/subagent/                                  ← 新模块
 │                                                    getSubagentDepth / isSubagentSessionKey
 │                                                  # （跨模块复用时考虑迁到 core/session/，详见 §17 #6）
 ├── capabilities.ts                                 # resolveSubagentCapabilities（depth → role → canSpawn）
-├── profile-loader.ts                               # 读 .my-agent/agents/*.md + frontmatter 解析 + 启动期校验
+├── profile-loader.ts                               # 读 <agentDir>/agents/*.md + frontmatter 解析 + 启动期校验
 │                                                  # + buildGeneralPurposeProfile(opts) 内置 profile 工厂
 ├── profile-tools.ts                                # 基于 profile 合并出子 Agent 工具集
 │                                                  # （tools / disable-tools / 防递归剔除 task；之前名 tool-selector.ts）
@@ -216,7 +216,7 @@ core/prompt/SystemPromptBuilder   依赖  core/subagent/available-subagents 的�
 
 ### 决策 2：子 Agent 通过 frontmatter 文件定义角色，**不是** config / 不是代码
 
-**采用**：`<workspaceDir>/.my-agent/agents/<name>.md` 单文件 = 一个 profile。YAML frontmatter 描述元数据 + 工具集，body 是 system prompt。
+**采用**：`<workspaceDir>/<config.workspace.agentDir>/agents/<name>.md` 单文件 = 一个 profile（默认路径即 `<workspaceDir>/.agent/agents/<name>.md`，与现有 `<agentDir>/config.json`、`<agentDir>/sessions/`、`<agentDir>/memory.sqlite` 同根）。YAML frontmatter 描述元数据 + 工具集，body 是 system prompt。
 
 ```markdown
 ---
@@ -499,7 +499,7 @@ resolveSubagentCapabilities(sessionKey: string, maxSubagentDepth: number): Subag
 
 ### 9.1 路径与发现
 
-- 根目录：`<workspaceDir>/.my-agent/agents/`
+- 根目录：`<workspaceDir>/<config.workspace.agentDir>/agents/`（默认 `.agent/agents/`）。`agentDir` 与现有 sessions / memory / config 共享，从 `config.workspace.agentDir` 派生，不重复引入 profile 专用配置项。
 - 文件：`*.md`，扫一层（不递归子目录）。
 - 启动期一次性加载；出错的文件：
   - frontmatter 缺失 / 非法 YAML → 启动失败（fail-fast）。
@@ -660,7 +660,7 @@ subagents: {
 
 不引入：
 
-- `profilesDir`（v1 写死 `.my-agent/agents/`，避免可配置带来的安全问题）。
+- `profilesDir`（v1 不引入。profile 目录始终为 `<workspaceDir>/<config.workspace.agentDir>/agents/`，复用现有 `workspace.agentDir` 配置，避免路径双套件並保持与 sessions/memory 同根）。
 - per-profile 配置覆盖（profile 本身就是配置文件）。
 - token 预算配额（v1 复用父 `contextWindowTokens` 默认值）。
 
@@ -688,7 +688,7 @@ subagents: {
 - `core/tools/builtin/task/` 新工具
 - `runtime/tool-registry.ts` / `prompt-factory.ts` / `RuntimeApp.ts` 装配改动
 - `core/runner/types.ts` 仅 `AgentEvent` union 扩展
-- `<workspaceDir>/.my-agent/agents/*.md` profile 文件机制
+- `<workspaceDir>/<config.workspace.agentDir>/agents/*.md` profile 文件机制（默认 `.agent/agents/`）
 - `<available-subagents>` system prompt section
 - `subagent_start / subagent_end` 事件（含 `runId / lifecycle / trigger` 字段）
 - `RuntimeApp.runSubagentTurn(...)` 库 API
@@ -810,7 +810,7 @@ Run                                 (一次 task 调用 / 一次 cron fire / 一
 
 ## 17. 待确认的开放问题
 
-1. **profile 目录约定**：`.my-agent/agents/` vs `.agent/agents/`。我倾向前者，理由是 my-agent 项目名清晰；但既有目录 `<workspaceDir>/.agent/sessions/` 已存在，前缀不统一是个 nit。建议：要么本 spec 决定全部改 `.my-agent/`（含未来 sessions/memory 迁移），要么本 spec 跟随既有 `.agent/agents/`。
+1. **profile 目录约定**（已决定，2026-06-22）：profile 文件住 `<workspaceDir>/<config.workspace.agentDir>/agents/`，`agentDir` 默认 `.agent`，与现有 `config.json`、`sessions/`、`memory.sqlite` 同根，不引入 profile 专用配置项。之前“.my-agent/”候选被否决——收集 codebase 后发现现有约定完全走 `.agent/`（[loader.ts](../../src/platform/config/loader.ts)、[defaults.ts](../../src/platform/config/defaults.ts)）。
 2. **subagent_type 取值约束**：v1 是 `'general-purpose' | profile.name`。是否允许 `'general-purpose'` 被 profile 覆盖（即用户写一个 `name: general-purpose` 的文件）？倾向**禁止**（保留为内置语义），但需要在 loader 加校验。
 3. **token 统计**：子 usage 通过 `subagent_end` 暴露后，是否在父 `RunResult` 里增一个 `subagentUsage?: TokenUsage[]` 累加字段（供编排脚本方便统计）？倾向**v1 不加**，由订阅 `subagent_end` 的上层自己加。
 4. **库 API 命名**：`RuntimeApp.runSubagentTurn` vs `RuntimeApp.runSubagent`。倾向前者（与 `runTurn` 系列一致）。
