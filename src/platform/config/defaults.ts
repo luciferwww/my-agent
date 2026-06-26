@@ -9,18 +9,25 @@ import type { AgentDefaults, LoggerModuleConfig } from './types.js';
  * 值来源映射：
  *   llm.maxTokens          ← AnthropicClient.ts DEFAULT_MAX_TOKENS
  *   runner.*               ← AgentRunner.ts DEFAULT_MAX_TOOL_ROUNDS / DEFAULT_MAX_FOLLOWUP_ROUNDS
- *   memory.dbPath           ← MemoryManager.ts DEFAULT_DB_PATH
- *   memory.embedding.*      ← LocalEmbeddingProvider.ts DEFAULT_MODEL / DEFAULT_DIMENSIONS
+ *   memory.embedding.*      ← LocalEmbeddingProvider.ts DEFAULT_MODEL（dimensions 由 model 反查）
  *   memory.chunking.*       ← MemoryIndexer.ts DEFAULT_CHUNK_CHARS / DEFAULT_OVERLAP_CHARS
  *   memory.search.*         ← MemorySearcher.ts DEFAULT_MAX_RESULTS / DEFAULT_MIN_SCORE / DEFAULT_*_WEIGHT
  *   prompt.*                ← SystemPromptBuilder.ts default params
- *   session.dir             ← SessionManager.ts SESSIONS_DIR
- *   tools.execTimeout       ← exec.ts DEFAULT_TIMEOUT_SECONDS
- *   tools.readMaxLines      ← read-file.ts DEFAULT_MAX_LINES
- *   tools.webFetch*         ← web-fetch.ts DEFAULT_TIMEOUT_MS / DEFAULT_MAX_CHARS
- *   workspace.agentDir      ← init.ts AGENT_DIR
+ *   tools.fs.workspaceOnly  ← path-policy.ts DEFAULT_WORKSPACE_ONLY
  *   workspace.maxFileChars  ← loader.ts DEFAULT_MAX_FILE_CHARS
  *   workspace.maxTotalChars ← loader.ts DEFAULT_MAX_TOTAL_CHARS
+ *   subagents.*             ← core-subagent-spec.md §12
+ *
+ * 已删除字段（spec §8.2/§8.3）：
+ *   memory.dbPath           → 固定 `<workspaceDir>/.agent/memory.sqlite`
+ *   memory.embedding.dimensions → 由 model 反查（KNOWN_DIMENSIONS 表 + 动态探测）
+ *   session.dir             → SessionManager hardcode `'sessions'`
+ *   workspace.agentDir      → 固定 `.agent/`
+ *   tools.execTimeout / readMaxLines / webFetchTimeout / webFetchMaxChars → 工具自身 DEFAULT_* 常量
+ *   tools.approval          → 平移到 tools.allow / deny（语义升级，见 spec §10.3）
+ *   logger.file.dir         → bootstrap 固定传 `<workspaceDir>/logs/`
+ *   logger.file.prefix      → FileAdapter 默认 'app'
+ *   logger.file.maxQueueSize → FileAdapter 默认 10_000
  */
 export const DEFAULT_AGENT_CONFIG: AgentDefaults = {
   llm: {
@@ -38,11 +45,10 @@ export const DEFAULT_AGENT_CONFIG: AgentDefaults = {
 
   memory: {
     enabled: true,
-    dbPath: '.agent/memory.sqlite',
     embedding: {
       provider: 'local',
       model: 'Xenova/all-MiniLM-L6-v2',
-      dimensions: 384,
+      // dimensions 由 LocalEmbeddingProvider 启动时反查
     },
     chunking: {
       chunkChars: 1600,
@@ -60,26 +66,15 @@ export const DEFAULT_AGENT_CONFIG: AgentDefaults = {
     safetyLevel: 'normal',
   },
 
-  session: {
-    dir: 'sessions',
-  },
-
   tools: {
-    execTimeout: 30,
-    readMaxLines: 200,
-    webFetchTimeout: 30_000,
-    webFetchMaxChars: 50_000,
     fs: {
       workspaceOnly: true,
     },
-    approval: {
-      allow: [],
-      deny: [],
-    },
+    allow: [],
+    deny: [],
   },
 
   workspace: {
-    agentDir: '.agent',
     maxFileChars: 20_000,
     maxTotalChars: 150_000,
   },
@@ -93,6 +88,12 @@ export const DEFAULT_AGENT_CONFIG: AgentDefaults = {
     toolResultTailChars: 5_000,
     timeoutSeconds: 300,
   },
+
+  subagents: {
+    enabled: true,
+    maxDepth: 1,
+    list: [],
+  },
 };
 
 /**
@@ -100,7 +101,8 @@ export const DEFAULT_AGENT_CONFIG: AgentDefaults = {
  *
  * console.enabled 默认 true（保持现有 stdout/stderr 行为）。
  * file.enabled 默认 false（不写文件，向后兼容；需要时在 config.json 中显式打开）。
- * file.dir 解释为相对 workspaceDir 的路径。
+ * file 子字段（dir / prefix / maxQueueSize）由 FileAdapter 内部默认决定，
+ * bootstrap 启动时固定传 `<workspaceDir>/logs/` 给 dir。
  */
 export const DEFAULT_LOGGER_CONFIG: LoggerModuleConfig = {
   minLevel: 'info',
@@ -109,8 +111,5 @@ export const DEFAULT_LOGGER_CONFIG: LoggerModuleConfig = {
   },
   file: {
     enabled: false,
-    dir: 'logs',
-    prefix: 'app',
-    maxQueueSize: 10_000,
   },
 };

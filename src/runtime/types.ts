@@ -41,7 +41,6 @@ export interface RuntimeLLMClientOptions {
 export interface RuntimeMemoryOptions {
   workspaceDir: string;
   enabled: boolean;
-  dbPath?: string;
   embedding?: AgentDefaults['memory']['embedding'];
   search?: AgentDefaults['memory']['search'];
 }

@@ -4,13 +4,28 @@ import { Logger } from '../../../platform/logger/index.js';
 const log = Logger.get('LocalEmbeddingProvider');
 
 const DEFAULT_MODEL = 'Xenova/all-MiniLM-L6-v2';
-const DEFAULT_DIMENSIONS = 384;
+
+/**
+ * 常见 Xenova 模型的向量维度静态映射表。
+ *
+ * 命中此表 → 同步取值；未命中 → 加载 pipeline 后动态探测（首次启动多一次毫秒级推理）。
+ * 以后遇到新常用 model 补上即可。
+ */
+const KNOWN_DIMENSIONS: Record<string, number> = {
+  'Xenova/all-MiniLM-L6-v2':       384,
+  'Xenova/all-mpnet-base-v2':      768,
+  'Xenova/bge-base-en-v1.5':       768,
+  'Xenova/multilingual-e5-small':  384,
+  'Xenova/multilingual-e5-base':   768,
+  'Xenova/multilingual-e5-large':  1024,
+};
 
 /**
  * 本地嵌入提供者，使用 @xenova/transformers 在 Node.js 中运行轻量级模型。
  *
  * 默认模型: Xenova/all-MiniLM-L6-v2（384 维，~90MB）
- * - 首次调用 embed() 时懒加载 pipeline（避免启动延迟）
+ * - 维度由 createEmbeddingProvider 工厂确定后传入（命中表或运行时探测）
+ * - 首次调用 embed() 时懒加载 pipeline（避免启动延迟；探测路径会提前加载一次）
  * - 模型自动缓存到 ~/.cache/huggingface/
  */
 export class LocalEmbeddingProvider implements EmbeddingProvider {
@@ -21,7 +36,7 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private pipelinePromise: Promise<any> | null = null;
 
-  constructor(modelId: string = DEFAULT_MODEL, dimensions: number = DEFAULT_DIMENSIONS) {
+  constructor(modelId: string, dimensions: number) {
     this.modelId = modelId;
     this.dimensions = dimensions;
   }
@@ -38,8 +53,10 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
         normalize: true,
       });
 
-      // output.data 是 Float32Array，转为普通数组并截取到目标维度
-      const embedding = Array.from(output.data as Float32Array).slice(0, this.dimensions);
+      // output.data 是 Float32Array → 普通数组。
+      // 不再 slice 截断：dimensions 由 model 反查得到，永远等于 output.data.length；
+      // 保留截断只会掩盖维度不匹配 bug（spec §7.5）。
+      const embedding = Array.from(output.data as Float32Array);
       results.push(embedding);
     }
 
@@ -72,7 +89,24 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
 }
 
 /**
+ * 动态探测未知模型的向量维度：加载 pipeline → 跑一次空字符串推理 → 取 output.data.length。
+ * 失败时抛出错误，由调用方决定如何降级。
+ */
+async function detectDimensions(modelId: string): Promise<number> {
+  const { pipeline } = await import('@xenova/transformers');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pipe: any = await pipeline('feature-extraction', modelId);
+  const output = await pipe('', { pooling: 'mean', normalize: true });
+  return (output.data as Float32Array).length;
+}
+
+/**
  * 尝试创建嵌入提供者。返回 null 表示不可用（系统降级为纯关键词搜索）。
+ *
+ * 维度反查规则（spec §7.5）：
+ *   1. 命中 KNOWN_DIMENSIONS → 直接用（无额外开销）
+ *   2. 未命中 → 加载 pipeline 探测一次（毫秒级），同时 info log 提示「未知 model，
+ *      探测到 dims=N」方便以后补表
  *
  * 后续扩展点：可在此处检测 OPENAI_API_KEY 等环境变量，创建对应的远程 provider。
  */
@@ -80,19 +114,30 @@ export async function createEmbeddingProvider(
   config?: { provider?: string; model?: string },
 ): Promise<EmbeddingProvider | null> {
   const providerType = config?.provider ?? 'local';
+  if (providerType !== 'local') return null;
 
-  if (providerType === 'local') {
+  const model = config?.model ?? DEFAULT_MODEL;
+
+  let dimensions = KNOWN_DIMENSIONS[model];
+  if (dimensions === undefined) {
     try {
-      const model = config?.model ?? DEFAULT_MODEL;
-      return new LocalEmbeddingProvider(model);
+      dimensions = await detectDimensions(model);
+      log.info('Detected embedding dimensions for unknown model', { model, dimensions });
     } catch (err) {
-      log.warn('Failed to create local embedding provider, falling back to keyword-only search', {
+      log.warn('Failed to detect embedding dimensions, falling back to keyword-only search', {
+        model,
         error: err instanceof Error ? err.message : String(err),
       });
       return null;
     }
   }
 
-  // 后续实现其他 provider
-  return null;
+  try {
+    return new LocalEmbeddingProvider(model, dimensions);
+  } catch (err) {
+    log.warn('Failed to create local embedding provider, falling back to keyword-only search', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
 }

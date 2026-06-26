@@ -1,49 +1,30 @@
-import type { ToolApprovalConfig } from '../platform/config/types.js';
-
-const TOOL_GROUPS: Record<string, string[]> = {
-  'group:fs': ['read_file', 'write_file', 'edit_file', 'apply_patch', 'list_dir'],
-  'group:exec': ['exec', 'process'],
-  'group:search': ['grep_search', 'file_search'],
-  'group:web': ['web_fetch'],
-  'group:memory': ['memory_search', 'memory_get', 'memory_write'],
-};
-
-function globMatch(name: string, pattern: string): boolean {
-  const regex = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '.*')
-    .replace(/\?/g, '.');
-  return new RegExp(`^${regex}$`).test(name);
-}
-
-function matchesPatterns(toolName: string, patterns: string[]): boolean {
-  for (const pattern of patterns) {
-    const group = TOOL_GROUPS[pattern];
-    if (group) {
-      if (group.includes(toolName)) return true;
-    } else {
-      if (globMatch(toolName, pattern)) return true;
-    }
-  }
-  return false;
-}
+import type { ToolsConfig } from '../platform/config/types.js';
+import { matchesAny } from './glob-match.js';
 
 /**
- * 根据审批配置和 channel 能力决定工具执行策略。
+ * 根据工具策略和 channel 能力决定执行动作。
  *
- * - 有 approval/interaction channel 时：deny → allow → prompt
- * - 无 channel 时（fail-closed）：仅 allow 命中的工具可执行
+ * 三档（spec §5.1）：
+ *   - allow 命中 → 'allow'（直接执行，免审批）
+ *   - deny  命中 → 'deny'（理论上 deny 已在注册时被 applyDenyFilter 过滤掉，
+ *                          运行时不应到这里；防御性保留分支）
+ *   - 都没命中 + 有 channel → 'prompt'
+ *   - 都没命中 + 无 channel → 'deny'（fail-closed）
+ *
+ * deny 优先于 allow（同一工具同时出现在两者中时按 deny 处理）。
+ *
+ * 条目语法：精确名 或 glob（`*` `?`，见 [glob-match.ts](./glob-match.ts)）。
+ * v1 起不再支持 `group:*` 简写——这类字符串会被当作字面名，不展开。
  */
-export function resolveToolApprovalAction(
+export function resolveToolPolicy(
   toolName: string,
-  config: ToolApprovalConfig,
+  tools: ToolsConfig,
   hasApprovalCapability: boolean,
 ): 'allow' | 'deny' | 'prompt' {
-  if (!hasApprovalCapability) {
-    return matchesPatterns(toolName, config.allow) ? 'allow' : 'deny';
-  }
+  const allow = tools.allow ?? [];
+  const deny = tools.deny ?? [];
 
-  if (matchesPatterns(toolName, config.deny)) return 'deny';
-  if (matchesPatterns(toolName, config.allow)) return 'allow';
-  return 'prompt';
+  if (matchesAny(toolName, deny)) return 'deny';
+  if (matchesAny(toolName, allow)) return 'allow';
+  return hasApprovalCapability ? 'prompt' : 'deny';
 }

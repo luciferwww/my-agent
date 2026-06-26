@@ -1,5 +1,5 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { join, dirname, isAbsolute } from 'node:path';
+import { join, dirname } from 'node:path';
 import type {
   MemoryConfig,
   MemoryStore,
@@ -16,7 +16,8 @@ import { Logger } from '../../platform/logger/index.js';
 
 const log = Logger.get('MemoryManager');
 
-const DEFAULT_DB_PATH = '.agent/memory.sqlite';
+const DB_FILE = 'memory.sqlite';
+const AGENT_DIR = '.agent';
 const RECALL_DIR = '.agent/memory/.recalls';
 
 /**
@@ -59,9 +60,8 @@ export class MemoryManager {
     const embeddingProvider = await createEmbeddingProvider(config.embedding);
     log.info('Embedding provider', { provider: embeddingProvider ? embeddingProvider.modelId : 'none (keyword-only)' });
 
-    // 2. SQLite 存储（相对路径以 workspaceDir 为基础，绝对路径直接使用）
-    const resolvedDbPath = config.dbPath ?? DEFAULT_DB_PATH;
-    const dbPath = isAbsolute(resolvedDbPath) ? resolvedDbPath : join(workspaceDir, resolvedDbPath);
+    // 2. SQLite 存储（路径固定在 <workspaceDir>/.agent/memory.sqlite，不可配）
+    const dbPath = join(workspaceDir, AGENT_DIR, DB_FILE);
     await mkdir(dirname(dbPath), { recursive: true });
     const store = new SqliteMemoryStore(dbPath);
     log.info('MemoryManager init', { dbPath });

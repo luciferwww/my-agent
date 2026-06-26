@@ -65,14 +65,12 @@ export interface RunnerConfig {
   inTurnMessageMode: 'steer' | 'followup';
 }
 
-/** 嵌入配置 */
+/** 嵌入配置。维度由 model 反查（见 LocalEmbeddingProvider.KNOWN_DIMENSIONS），不再接受配置。 */
 export interface EmbeddingConfig {
   /** 提供者类型 */
   provider: EmbeddingProviderType;
   /** 模型标识 */
   model: string;
-  /** 向量维度 */
-  dimensions: number;
 }
 
 /** 分块配置 */
@@ -95,12 +93,10 @@ export interface SearchConfig {
   textWeight: number;
 }
 
-/** Memory 模块配置 */
+/** Memory 模块配置。DB 路径固定为 `<workspaceDir>/.agent/memory.sqlite`，不可配。 */
 export interface MemoryModuleConfig {
   /** 是否启用 */
   enabled: boolean;
-  /** SQLite 路径（相对 workspaceDir） */
-  dbPath: string;
   /** 嵌入配置 */
   embedding: EmbeddingConfig;
   /** 分块配置 */
@@ -115,34 +111,6 @@ export interface PromptConfig {
   safetyLevel: SafetyLevel;
 }
 
-/** Session 配置 */
-export interface SessionConfig {
-  /** session 存储目录名（相对 .agent/） */
-  dir: string;
-}
-
-/**
- * 工具审批策略配置。
- *
- * 条目语法：
- *   精确名称  "exec"           工具名完全相等（大小写敏感）
- *   Glob      "memory_*"       * 匹配任意字符序列，? 匹配单字符
- *   组简写    "group:fs"       展开为预定义工具集合
- *
- * 预定义工具组：
- *   group:fs      read_file, write_file, edit_file, apply_patch, list_dir
- *   group:exec    exec, process
- *   group:search  grep_search, file_search
- *   group:web     web_fetch
- *   group:memory  memory_search, memory_get, memory_write
- */
-export interface ToolApprovalConfig {
-  /** 直接放行的工具列表 */
-  allow: string[];
-  /** 直接拒绝的工具列表（优先于 allow） */
-  deny: string[];
-}
-
 /** 文件系统工具配置 */
 export interface FsToolsConfig {
   /**
@@ -152,30 +120,89 @@ export interface FsToolsConfig {
   workspaceOnly: boolean;
 }
 
-/** Tools 配置 */
+/**
+ * Tools 配置。
+ *
+ * 单一一对 `allow / deny`，用户视角下三档语义（见 spec §5.1）：
+ *   - 在 `deny`         → 禁用（LLM 看不到 schema，注册时过滤）
+ *   - 在 `allow`        → 直接执行（运行时免审批）
+ *   - 都不在         → 需审批（有 channel 弹 prompt；无 channel fail-closed deny）
+ *
+ * 同一工具同时出现在 allow 与 deny 时 deny 优先。
+ *
+ * 条目语法：
+ *   精确名称  "exec"     工具名完全相等（大小写敏感）
+ *   Glob       "memory_*" * 匹配任意字符序列，? 匹配单字符
+ *
+ * v1 起不再支持 `group:*` 简写；显式列名或用 glob 替代。
+ */
 export interface ToolsConfig {
-  /** exec 默认超时（秒） */
-  execTimeout: number;
-  /** read_file 默认最大行数 */
-  readMaxLines: number;
-  /** web_fetch 超时（毫秒） */
-  webFetchTimeout: number;
-  /** web_fetch 最大响应字符数 */
-  webFetchMaxChars: number;
-  /** 文件系统工具配置 */
-  fs: FsToolsConfig;
-  /** 工具审批策略 */
-  approval: ToolApprovalConfig;
+  /** 文件系统工具路径限制 */
+  fs?: FsToolsConfig;
+  /**
+   * 直接执行的工具列表（精确名或 glob）。
+   * 命中即跳过审批；运行时由 before_tool_call hook 短路。
+   * 默认 [] = 无工具免审批，全部走 prompt（有 channel）/ deny（无 channel）。
+   */
+  allow?: string[];
+  /**
+   * 禁用的工具列表（精确名或 glob）。
+   * 命中即在工具注册组件中过滤掉——LLM 完全看不到该工具的 schema。
+   * deny 优先于 allow。默认 [] = 不禁用任何工具。
+   */
+  deny?: string[];
 }
 
-/** Workspace 配置 */
+/** Workspace 配置。Agent 目录固定为 `.agent/`，不可配。 */
 export interface WorkspaceConfig {
-  /** agent 目录名 */
-  agentDir: string;
   /** 上下文文件单文件最大字符数 */
   maxFileChars: number;
   /** 上下文文件总字符数上限 */
   maxTotalChars: number;
+}
+
+// ── Subagents ────────────────────────────────────────────
+
+/**
+ * subagent 工具策略，与主 agent tools.allow/deny 语义一致。
+ *
+ * 不对称设计（spec §5.3）：
+ *   - allow 写了 → 完全替换主 agent allow（让 subagent 能「更紧」限制免审批集）
+ *   - deny  写了 → 在主 agent deny 基础上叠加（保证 subagent 不会「更宽松」）
+ *   - 不写    → 降级用主 agent 同名列表
+ *
+ * 请勿为了「对称」重构：双边叠加 / 双边替换都会破坏隔离语义。
+ */
+export interface SubagentToolsConfig {
+  /** 不写时降级用主 agent 的 tools.allow */
+  allow?: string[];
+  /** 不写时降级用主 agent 的 tools.deny；写了则在主 agent deny 基础上叠加 */
+  deny?: string[];
+}
+
+/** 单个 subagent 的配置条目 */
+export interface SubagentConfigEntry {
+  /** 唯一标识符 */
+  id: string;
+  /** 给父 LLM 看的「何时使用」 */
+  description: string;
+  /** 'inherit'（默认）或具体 model id */
+  model?: string;
+  /** 子 Agent 的 maxLlmCalls；不写沿用父 maxLlmCalls */
+  maxTurns?: number;
+  /** 工具策略 */
+  tools?: SubagentToolsConfig;
+  // agentDir / cwd 按约定推导或预留未实现，不接受 config（见 spec §8.2）
+}
+
+/** subagents 节 */
+export interface SubagentsConfig {
+  /** 默认 true；false 则不注册 task 工具 */
+  enabled: boolean;
+  /** 子 agent 嵌套深度上限；默认 1 */
+  maxDepth: number;
+  /** subagent 定义列表 */
+  list?: SubagentConfigEntry[];
 }
 
 // ── Agent-level Config ───────────────────────────────────
@@ -186,10 +213,11 @@ export interface AgentDefaults {
   runner: RunnerConfig;
   memory: MemoryModuleConfig;
   prompt: PromptConfig;
-  session: SessionConfig;
   tools: ToolsConfig;
   workspace: WorkspaceConfig;
   compaction: CompactionConfig;
+  /** subagents 节；未提供时走 DEFAULT_AGENT_CONFIG.subagents */
+  subagents?: SubagentsConfig;
 }
 
 /** agents.list 中的单项：id + 覆盖字段 */
@@ -221,18 +249,12 @@ export interface LoggerConsoleConfig {
   minLevel?: LoggerLevel;
 }
 
-/** File adapter 的配置段 */
+/** File adapter 的配置段。路径/前缀/队列上限等由 FileAdapter 内部默认决定。 */
 export interface LoggerFileConfig {
   /** 是否启用 File adapter；默认 false（不写文件） */
   enabled?: boolean;
-  /** 日志文件目录；解释为相对 workspaceDir 的相对路径，默认 'logs' */
-  dir?: string;
-  /** 文件名前缀，默认 'app'（→ app.YYYY-MM-DD.log） */
-  prefix?: string;
   /** 此 adapter 的最低输出级别；不设跟随全局 minLevel */
   minLevel?: LoggerLevel;
-  /** 内部队列上限，超出后丢弃并触发 onError；默认 10000 */
-  maxQueueSize?: number;
 }
 
 /** Logger 配置 */

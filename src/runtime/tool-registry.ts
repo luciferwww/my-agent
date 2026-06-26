@@ -17,19 +17,44 @@ import {
   webFetchTool,
 } from '../core/tools/index.js';
 import type { Tool } from '../core/tools/types.js';
+import { matchesAny } from './glob-match.js';
 import type { RuntimeBuiltinToolOptions, RuntimeToolBundle } from './types.js';
+
+/**
+ * 按 deny 列表过滤工具。spec §5.2：注册时一次性应用。
+ *
+ * 注册入口约定（spec §5.2）：
+ * 凡是把工具注入运行时 toolBundle 的代码路径，**都必须在自己的注入点调一次 applyDenyFilter**。
+ * 不能依赖 assembleRuntimeTools 里那一次过滤——那是启动时的一次性调用，
+ * 运行时后动态注入的工具不会被重复过滤。
+ *
+ * 当前入口：
+ *   - bootstrap.ts → assembleRuntimeTools (builtin + memory tools)
+ * 未来入口（接入时必须调 applyDenyFilter）：
+ *   - MCP server 连上后注入工具——在 MCP 适配层自己调一次后再 push 进 toolBundle
+ *   - 用户自定义动态工具注册 API——同上
+ */
+export function applyDenyFilter(tools: Tool[], deny: readonly string[]): Tool[] {
+  if (deny.length === 0) return tools;
+  return tools.filter((t) => !matchesAny(t.name, deny));
+}
 
 export interface AssembleRuntimeToolsParams {
   builtinTools: Tool[];
   memoryManager: MemoryManager | null;
+  /** 来自 resolvedConfig.tools.deny ?? []。空数组表示「不过滤」是合法值。 */
+  deny: readonly string[];
 }
 
 export function assembleRuntimeTools(params: AssembleRuntimeToolsParams): RuntimeToolBundle {
-  const tools = [...params.builtinTools];
+  let tools = [...params.builtinTools];
 
   if (params.memoryManager) {
     tools.push(...createMemoryTools(params.memoryManager));
   }
+
+  // 过滤在 memory tools 加入之后做——这样 deny:['memory_*'] 能命中 memory 工具
+  tools = applyDenyFilter(tools, params.deny);
 
   return {
     tools,

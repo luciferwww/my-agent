@@ -98,9 +98,9 @@ describe('loadConfig', () => {
     expect(config.agents.defaults.runner).toEqual(DEFAULT_AGENT_CONFIG.runner);
     expect(config.agents.defaults.memory).toEqual(DEFAULT_AGENT_CONFIG.memory);
     expect(config.agents.defaults.prompt).toEqual(DEFAULT_AGENT_CONFIG.prompt);
-    expect(config.agents.defaults.session).toEqual(DEFAULT_AGENT_CONFIG.session);
     expect(config.agents.defaults.tools).toEqual(DEFAULT_AGENT_CONFIG.tools);
     expect(config.agents.defaults.workspace).toEqual(DEFAULT_AGENT_CONFIG.workspace);
+    expect(config.agents.defaults.subagents).toEqual(DEFAULT_AGENT_CONFIG.subagents);
   });
 
   it('invalid JSON file degrades to defaults', async () => {
@@ -135,7 +135,7 @@ describe('loadConfig', () => {
     await writeFile(join(tmpDir, '.agent', 'config.json'), JSON.stringify({
       logger: {
         minLevel: 'debug',
-        file: { enabled: true, dir: 'custom-logs', minLevel: 'warn' },
+        file: { enabled: true, minLevel: 'warn' },
       },
     }));
 
@@ -144,35 +144,32 @@ describe('loadConfig', () => {
     // Overridden values
     expect(config.logger.minLevel).toBe('debug');
     expect(config.logger.file?.enabled).toBe(true);
-    expect(config.logger.file?.dir).toBe('custom-logs');
     expect(config.logger.file?.minLevel).toBe('warn');
 
     // Inherited defaults
     expect(config.logger.console?.enabled).toBe(true);
-    expect(config.logger.file?.prefix).toBe('app');
-    expect(config.logger.file?.maxQueueSize).toBe(10_000);
+    // file.dir / prefix / maxQueueSize 字段已删（spec §8.3）——FileAdapter 内部默认接手
   });
 
-  it('tools.approval defaults to empty allow and deny arrays', () => {
+  it('tools.allow and deny default to empty arrays', () => {
     const config = loadConfig({ workspaceDir: '/tmp' });
-    expect(config.agents.defaults.tools.approval).toEqual({ allow: [], deny: [] });
+    expect(config.agents.defaults.tools.allow).toEqual([]);
+    expect(config.agents.defaults.tools.deny).toEqual([]);
   });
 
   it('tools.fs.workspaceOnly defaults to true', () => {
     const config = loadConfig({ workspaceDir: '/tmp' });
-    expect(config.agents.defaults.tools.fs.workspaceOnly).toBe(true);
+    expect(config.agents.defaults.tools.fs?.workspaceOnly).toBe(true);
   });
 
-  it('merges tools.approval arrays from config file', async () => {
+  it('merges tools.allow / deny arrays from config file', async () => {
     await mkdir(join(tmpDir, '.agent'), { recursive: true });
     await writeFile(join(tmpDir, '.agent', 'config.json'), JSON.stringify({
       agents: {
         defaults: {
           tools: {
-            approval: {
-              allow: ['group:fs', 'exec'],
-              deny: ['web_fetch'],
-            },
+            allow: ['read_file', 'exec'],
+            deny: ['web_fetch'],
           },
         },
       },
@@ -180,10 +177,10 @@ describe('loadConfig', () => {
 
     const config = loadConfig({ workspaceDir: tmpDir });
 
-    expect(config.agents.defaults.tools.approval.allow).toEqual(['group:fs', 'exec']);
-    expect(config.agents.defaults.tools.approval.deny).toEqual(['web_fetch']);
+    expect(config.agents.defaults.tools.allow).toEqual(['read_file', 'exec']);
+    expect(config.agents.defaults.tools.deny).toEqual(['web_fetch']);
     // Other tools fields remain default
-    expect(config.agents.defaults.tools.execTimeout).toBe(30);
+    expect(config.agents.defaults.tools.fs?.workspaceOnly).toBe(true);
   });
 });
 

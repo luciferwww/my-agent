@@ -7,15 +7,13 @@ const baseConfig: AgentDefaults = {
   runner: { maxLlmCalls: 12, inTurnMessageMode: 'followup' },
   memory: {
     enabled: false,
-    dbPath: '.agent/memory.sqlite',
-    embedding: { provider: 'local', model: 'x', dimensions: 384 },
+    embedding: { provider: 'local', model: 'x' },
     chunking: { chunkChars: 100, overlapChars: 10 },
     search: { maxResults: 6, minScore: 0.25, vectorWeight: 0.7, textWeight: 0.3 },
   },
   prompt: { safetyLevel: 'normal' },
-  session: { dir: 'sessions' },
-  tools: { execTimeout: 30, readMaxLines: 200, webFetchTimeout: 30_000, webFetchMaxChars: 50_000, fs: { workspaceOnly: true }, approval: { allow: [], deny: [] } },
-  workspace: { agentDir: '.agent', maxFileChars: 20_000, maxTotalChars: 150_000 },
+  tools: { fs: { workspaceOnly: true }, allow: [], deny: [] },
+  workspace: { maxFileChars: 20_000, maxTotalChars: 150_000 },
   compaction: {
     enabled: true,
     reserveTokens: 20_000,

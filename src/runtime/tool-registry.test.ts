@@ -55,6 +55,7 @@ describe('runtime tool registry', () => {
     const bundleWithoutMemory = assembleRuntimeTools({
       builtinTools,
       memoryManager: null,
+      deny: [],
     });
     const bundleWithMemory = assembleRuntimeTools({
       builtinTools,
@@ -65,6 +66,7 @@ describe('runtime tool registry', () => {
         reindex: async () => {},
         close: () => {},
       } as unknown as MemoryManager,
+      deny: [],
     });
 
     expect(bundleWithoutMemory.tools.map((tool) => tool.name)).toEqual(['demo_tool']);

@@ -195,10 +195,10 @@ describe('MemoryManager', () => {
     expect((manager as unknown as { embeddingProvider: unknown }).embeddingProvider).toBeNull();
   });
 
-  it('create() respects a custom dbPath and passes through the embedding provider', async () => {
+  it('create() writes DB to the convention path <workspaceDir>/.agent/memory.sqlite', async () => {
     const store = createStore();
     const embeddingProvider = { embed: vi.fn(), dimensions: 3, modelId: 'mock-model' };
-    const dbPath = join(workspaceDir, 'var', 'memory', 'custom.sqlite');
+    const expectedDbPath = join(workspaceDir, '.agent', 'memory.sqlite');
 
     vi.mocked(SqliteMemoryStore).mockImplementation(() => store as never);
     vi.mocked(createEmbeddingProvider).mockResolvedValue(embeddingProvider);
@@ -206,14 +206,14 @@ describe('MemoryManager', () => {
 
     const manager = await MemoryManager.create({
       workspaceDir,
-      dbPath,
+      enabled: true,
       embedding: { provider: 'local', model: 'custom-model' },
     });
 
     expect(createEmbeddingProvider).toHaveBeenCalledWith({ provider: 'local', model: 'custom-model' });
-    expect(SqliteMemoryStore).toHaveBeenCalledWith(dbPath);
+    expect(SqliteMemoryStore).toHaveBeenCalledWith(expectedDbPath);
     expect(indexAllSpy).toHaveBeenCalledWith(workspaceDir);
     expect((manager as unknown as { embeddingProvider: unknown }).embeddingProvider).toBe(embeddingProvider);
-    await expect(readFile(dbPath, 'utf-8')).rejects.toThrow();
+    await expect(readFile(expectedDbPath, 'utf-8')).rejects.toThrow();
   });
 });

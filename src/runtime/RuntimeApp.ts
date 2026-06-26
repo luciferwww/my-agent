@@ -19,7 +19,7 @@ import { ATTACHMENT_DROP_NOTICE_DEFAULT } from '../core/media/constants.js';
 import { bootstrapRuntime } from './bootstrap.js';
 import { classifyRuntimeError, createRuntimeError } from './errors.js';
 import { buildSystemPromptParams } from './prompt-factory.js';
-import { resolveToolApprovalAction } from './tool-approval-policy.js';
+import { resolveToolPolicy } from './tool-approval-policy.js';
 import type {
   MessageRouteContext,
   PendingSteeringInput,
@@ -200,9 +200,9 @@ export class RuntimeApp {
       async ({ toolName, input, turnId, sessionKey }) => {
         const originChannel = this.routeContextByTurn.get(turnId)?.originChannel;
         const hasApprovalCapability = !!(originChannel?.interaction || originChannel?.approval);
-        const approvalConfig = this.resources.resolvedConfig.tools.approval;
+        const toolsConfig = this.resources.resolvedConfig.tools;
 
-        const action = resolveToolApprovalAction(toolName, approvalConfig, hasApprovalCapability);
+        const action = resolveToolPolicy(toolName, toolsConfig, hasApprovalCapability);
 
         if (action === 'allow') return { action: 'allow' as const };
         if (action === 'deny') {

@@ -40,7 +40,6 @@ export function createDefaultRuntimeDependencies(
 
       return MemoryManager.create({
         workspaceDir: options.workspaceDir,
-        dbPath: options.dbPath,
         embedding: options.embedding,
         search: options.search,
         enabled: options.enabled,
@@ -88,10 +87,9 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
     if (appConfig.logger.file?.enabled) {
       const fileCfg = appConfig.logger.file;
       adapters.push(new FileAdapter({
-        dir: join(options.workspaceDir, fileCfg.dir ?? 'logs'),
-        ...(fileCfg.prefix !== undefined ? { prefix: fileCfg.prefix } : {}),
+        // 路径固定为 <workspaceDir>/logs/；prefix / maxQueueSize 走 FileAdapter 内部默认
+        dir: join(options.workspaceDir, 'logs'),
         ...(fileCfg.minLevel !== undefined ? { minLevel: fileCfg.minLevel } : {}),
-        ...(fileCfg.maxQueueSize !== undefined ? { maxQueueSize: fileCfg.maxQueueSize } : {}),
       }));
     }
     await Logger.configure({
@@ -139,12 +137,11 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
       memoryManager = await deps.createMemoryManager({
         workspaceDir: options.workspaceDir,
         enabled: resolvedConfig.memory.enabled,
-        dbPath: resolvedConfig.memory.dbPath,
         embedding: resolvedConfig.memory.embedding,
         search: resolvedConfig.memory.search,
       });
       if (memoryManager) {
-        log.info('memory manager ready', { dbPath: resolvedConfig.memory.dbPath });
+        log.info('memory manager ready', { workspaceDir: options.workspaceDir });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -162,12 +159,13 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
     const toolBundle = assembleRuntimeTools({
       builtinTools: deps.getBuiltinTools({
         workspaceDir: options.workspaceDir,
-        fsWorkspaceOnly: resolvedConfig.tools.fs.workspaceOnly,
+        fsWorkspaceOnly: resolvedConfig.tools.fs?.workspaceOnly ?? true,
         webFetchEnabled: true,
         execEnabled: true,
         processEnabled: true,
       }),
       memoryManager,
+      deny: resolvedConfig.tools.deny ?? [],
     });
 
     const agentRunner = deps.createAgentRunner({

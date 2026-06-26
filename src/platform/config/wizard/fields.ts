@@ -284,12 +284,6 @@ export async function askAdvancedFields(
       session, collected: a, existing: existing.agentsDefaults, defaults: DEFAULT_AGENT_CONFIG,
       path: 'memory.search.textWeight', label: 'Text weight (0..1)', parse: parseNumber,
     });
-
-    process.stdout.write('\n── memory.misc ──\n');
-    await askField({
-      session, collected: a, existing: existing.agentsDefaults, defaults: DEFAULT_AGENT_CONFIG,
-      path: 'memory.dbPath', label: 'SQLite db path (rel workspaceDir)', parse: parseString,
-    });
   }
 
   // ── prompt ──
@@ -300,31 +294,8 @@ export async function askAdvancedFields(
     parse: parseEnum<SafetyLevel>(['strict', 'normal', 'relaxed']),
   });
 
-  // ── session ──
-  process.stdout.write('\n── session ──\n');
-  await askField({
-    session, collected: a, existing: existing.agentsDefaults, defaults: DEFAULT_AGENT_CONFIG,
-    path: 'session.dir', label: 'Sessions dir (rel .agent/)', parse: parseString,
-  });
-
   // ── tools ──
   process.stdout.write('\n── tools ──\n');
-  await askField({
-    session, collected: a, existing: existing.agentsDefaults, defaults: DEFAULT_AGENT_CONFIG,
-    path: 'tools.execTimeout', label: 'exec timeout (seconds)', parse: parseInteger,
-  });
-  await askField({
-    session, collected: a, existing: existing.agentsDefaults, defaults: DEFAULT_AGENT_CONFIG,
-    path: 'tools.readMaxLines', label: 'read_file max lines', parse: parseInteger,
-  });
-  await askField({
-    session, collected: a, existing: existing.agentsDefaults, defaults: DEFAULT_AGENT_CONFIG,
-    path: 'tools.webFetchTimeout', label: 'web_fetch timeout (ms)', parse: parseInteger,
-  });
-  await askField({
-    session, collected: a, existing: existing.agentsDefaults, defaults: DEFAULT_AGENT_CONFIG,
-    path: 'tools.webFetchMaxChars', label: 'web_fetch max chars', parse: parseInteger,
-  });
   await askField({
     session, collected: a, existing: existing.agentsDefaults, defaults: DEFAULT_AGENT_CONFIG,
     path: 'tools.fs.workspaceOnly', label: 'Restrict fs tools to workspace dir', parse: parseBoolean,
@@ -332,10 +303,6 @@ export async function askAdvancedFields(
 
   // ── workspace ──
   process.stdout.write('\n── workspace ──\n');
-  await askField({
-    session, collected: a, existing: existing.agentsDefaults, defaults: DEFAULT_AGENT_CONFIG,
-    path: 'workspace.agentDir', label: 'Agent dir name', parse: parseString,
-  });
   await askField({
     session, collected: a, existing: existing.agentsDefaults, defaults: DEFAULT_AGENT_CONFIG,
     path: 'workspace.maxFileChars', label: 'Context file max chars (per file)', parse: parseInteger,

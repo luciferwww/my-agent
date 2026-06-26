@@ -4,6 +4,7 @@ import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from './defaults.js';
 import type { AppConfig, AgentDefaults, AgentEntry, ConfigFile, DeepPartial, LoggerModuleConfig } from './types.js';
 
 const CONFIG_FILE_NAME = 'config.json';
+const AGENT_DIR = '.agent';   // 与 workspace/init.ts 保持一致；spec §4.1 约定路径
 
 // ── 深度合并 ──────────────────────────────────────────────
 
@@ -75,8 +76,7 @@ export function getEnvOverrides(): DeepPartial<AgentDefaults> {
 
 /** 从 .agent/config.json 读取配置。文件不存在或格式错误返回空对象。 */
 function readConfigFile(workspaceDir: string): ConfigFile {
-  const agentDir = DEFAULT_AGENT_CONFIG.workspace.agentDir;
-  const configPath = join(workspaceDir, agentDir, CONFIG_FILE_NAME);
+  const configPath = join(workspaceDir, AGENT_DIR, CONFIG_FILE_NAME);
 
   try {
     const raw = readFileSync(configPath, 'utf-8');
