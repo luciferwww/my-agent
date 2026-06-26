@@ -30,7 +30,7 @@ describe('SystemPromptBuilder', () => {
       expect(prompt).not.toContain('# Memory Recall');
     });
 
-    it('minimal mode keeps identity, datetime, tools, behavior, safety, output, project-context', () => {
+    it('minimal mode keeps identity, datetime, behavior, safety, project-context', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
         tools: [{ name: 'read_file', description: 'read' }],
@@ -38,7 +38,8 @@ describe('SystemPromptBuilder', () => {
       });
       expect(prompt).toContain('# Identity');
       expect(prompt).toContain('# Current Date & Time');
-      expect(prompt).toContain('# Available Tools');
+      // tool-definitions section is disabled; tools are passed via LLM API
+      expect(prompt).not.toContain('# Available Tools');
       expect(prompt).toContain('# Behavior Rules');
       expect(prompt).toContain('# Safety');
       expect(prompt).toContain('# Project Context');
@@ -71,31 +72,11 @@ describe('SystemPromptBuilder', () => {
   });
 
   // ── tool-definitions ──────────────────────────────────────
-
-  describe('tool-definitions', () => {
-    it('lists tools with descriptions when provided', () => {
-      const prompt = new SystemPromptBuilder().build({
-        tools: [
-          { name: 'search_web', description: 'Search the internet' },
-          { name: 'read_file', description: 'Read file contents' },
-        ],
-      });
-      expect(prompt).toContain('# Available Tools');
-      expect(prompt).toContain('**search_web**');
-      expect(prompt).toContain('Search the internet');
-      expect(prompt).toContain('**read_file**');
-    });
-
-    it('skips section when no tools provided', () => {
-      const prompt = new SystemPromptBuilder().build();
-      expect(prompt).not.toContain('# Available Tools');
-    });
-
-    it('skips section when tools is empty array', () => {
-      const prompt = new SystemPromptBuilder().build({ tools: [] });
-      expect(prompt).not.toContain('# Available Tools');
-    });
-  });
+  //
+  // 该 section 已在 SystemPromptBuilder 中停用（buildToolDefinitionsSection
+  // 被注释掉）。工具定义现由 LLM API 的 `tools` 参数传递，在 system
+  // prompt 里重复列为冗余。原有测试（断言 # Available Tools 出现 /
+  // **search_web** 等）随代码一同移除。
 
   // ── behavior-rules ────────────────────────────────────────
 

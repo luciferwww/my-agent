@@ -16,7 +16,6 @@ import type {
  *  6. memory-instructions  — memory tool 使用说明       [full only, 有 memory 工具时]
  *  7. project-context      — contextFiles 注入          [有 contextFiles 时]
  *
- * 参考 OpenClaw 的 buildAgentSystemPrompt()（src/agents/system-prompt.ts）。
  */
 export class SystemPromptBuilder {
   /**
@@ -31,7 +30,20 @@ export class SystemPromptBuilder {
 
     this.buildIdentitySection(lines);
     this.buildDatetimeSection(lines);
-    this.buildToolDefinitionsSection(lines, params);
+    // buildToolDefinitionsSection 已停用。
+    //
+    // 原因：对于原生支持 tool_use 的模型（Claude 及所有兼容 Anthropic API 的模型），
+    // 工具定义通过 LLM API 的 `tools` 参数传递，模型直接从该结构化参数中获取工具信息，
+    // 在 system prompt 里重复列出只会造成冗余。
+    //
+    // 对于通过 LLM proxy（如 LiteLLM、One API）接入的不原生支持 tool_use 的模型
+    // （如 DeepSeek、GLM 等），成熟的 proxy 通常会自行将 `tools` 参数转换为 prompt
+    // 注入，无需 my-agent 侧额外处理。
+    //
+    // 如未来发现有 proxy 不做此转换、需要 my-agent 直接在 prompt 中提供工具定义，
+    // 可取消注释此行并在 System Prompt 中补充结构化的工具说明。
+    //
+    // this.buildToolDefinitionsSection(lines, params);
     this.buildBehaviorRulesSection(lines);
     this.buildSafetySection(lines, params);
     if (!isMinimal) this.buildMemorySection(lines, params);
