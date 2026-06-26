@@ -1011,7 +1011,18 @@ ASCII 备用（mermaid 渲染失败时参考）：
 
 ## 11. SystemPromptBuilder 改动
 
-在现有 7 个 section 之外，新增第 8 个 section `<available-subagents>`：
+在现有 7 个 section 之外，新增两个 section：第 8 个 `workspace`，第 9 个 `<available-subagents>`。
+
+### Section 8：workspace
+
+```
+# Workspace
+Your working directory is: <workspaceDir>
+```
+
+注入条件：`promptMode !== 'none'`（full 和 minimal 都注入）。`workspaceDir` 由 `prompt-factory.ts` 注入。理由：主 agent 和 subagent 都需要文件工具锚点，minimal 也保留。
+
+### Section 9：available-subagents
 
 ```
 <available-subagents>
@@ -1037,6 +1048,21 @@ Guidelines:
 - 子 Agent 自己的 system prompt 中**不**注入此 section（子默认无 `task`，告诉它这事没意义；且会污染子的注意力）。
 - `promptMode='minimal'` 也不注入（minimal 已经在裁剪 prompt 体积）。
 - `promptMode='none'` 当然不注入。
+
+> **NOTE**：v1 subagent 统一传 `promptMode='minimal'`，故所有子一律不注入此 section。若未来支持 subagent 嵌套（orchestrator 持有 `task` 工具），需重新设计注入条件——例如改为"有 `task` 工具时注入"，而非依赖 `promptMode`。
+
+### minimal 模式 section 跳过汇总
+
+| Section | full | minimal | 说明 |
+|---|---|---|---|
+| 1. identity | ✓ | **✗** | behavioral addendum 已定义子角色，通用声明是冗余 |
+| 2. datetime | ✓ | ✓ | 工具调用可能需要时间上下文 |
+| 4. behavior-rules | ✓ | **✗** | 面向对话式主 agent；子不与用户交互，保留是噪音 |
+| 5. safety | ✓ | ✓ | 安全约束不分主/子都要有 |
+| 6. memory-instructions | ✓ | **✗** | 已跳过（原有逻辑） |
+| 7. project-context | ✓ | ✓ | 子 contextFiles 来自 agentDir（或 fallback 父） |
+| 8. workspace | ✓ | ✓ | 文件工具锚点 |
+| 9. available-subagents | ✓ | **✗** | 已跳过（子无 task 工具） |
 
 实现分工（详见 §6）：
 
