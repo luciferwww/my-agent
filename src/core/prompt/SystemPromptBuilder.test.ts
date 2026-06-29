@@ -26,23 +26,35 @@ describe('SystemPromptBuilder', () => {
         mode: 'minimal',
         tools: [{ name: 'memory_search', description: 'search' }],
       });
-      expect(prompt).toContain('# Identity');
       expect(prompt).not.toContain('# Memory Recall');
     });
 
-    it('minimal mode keeps identity, datetime, behavior, safety, project-context', () => {
+    it('minimal mode skips identity / behavior-rules / memory / available-subagents (spec §11)', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
-        tools: [{ name: 'read_file', description: 'read' }],
+        tools: [{ name: 'memory_search', description: 'search' }],
         contextFiles: [{ path: 'IDENTITY.md', content: '# test' }],
+        availableSubagents: [{ id: 'a', description: 'desc' }],
       });
-      expect(prompt).toContain('# Identity');
+      expect(prompt).not.toContain('# Identity');
+      expect(prompt).not.toContain('# Behavior Rules');
+      expect(prompt).not.toContain('# Memory Recall');
+      expect(prompt).not.toContain('<available-subagents>');
+    });
+
+    it('minimal mode keeps datetime / safety / project-context / workspace', () => {
+      const prompt = new SystemPromptBuilder().build({
+        mode: 'minimal',
+        contextFiles: [{ path: 'IDENTITY.md', content: '# test' }],
+        workspaceDir: '/work',
+      });
       expect(prompt).toContain('# Current Date & Time');
       // tool-definitions section is disabled; tools are passed via LLM API
       expect(prompt).not.toContain('# Available Tools');
-      expect(prompt).toContain('# Behavior Rules');
       expect(prompt).toContain('# Safety');
       expect(prompt).toContain('# Project Context');
+      expect(prompt).toContain('# Workspace');
+      expect(prompt).toContain('Your working directory is: /work');
     });
 
     it('none mode returns empty string', () => {
@@ -208,6 +220,72 @@ describe('SystemPromptBuilder', () => {
       });
       expect(prompt).toContain('## IDENTITY.md');
       expect(prompt).not.toContain('## EMPTY.md');
+    });
+  });
+
+  // ── workspace (Section 7) ────────────────────────────────
+
+  describe('workspace section (Section 7)', () => {
+    it('renders "# Workspace" with workingDir when workspaceDir is set', () => {
+      const prompt = new SystemPromptBuilder().build({ workspaceDir: '/work/space' });
+      expect(prompt).toContain('# Workspace');
+      expect(prompt).toContain('Your working directory is: /work/space');
+    });
+
+    it('renders workspace section in minimal mode too', () => {
+      const prompt = new SystemPromptBuilder().build({
+        mode: 'minimal',
+        workspaceDir: '/work/space',
+      });
+      expect(prompt).toContain('# Workspace');
+    });
+
+    it('skips workspace section when workspaceDir is not provided', () => {
+      const prompt = new SystemPromptBuilder().build();
+      expect(prompt).not.toContain('# Workspace');
+    });
+
+    it('returns empty string in none mode regardless of workspaceDir', () => {
+      const prompt = new SystemPromptBuilder().build({
+        mode: 'none',
+        workspaceDir: '/work/space',
+      });
+      expect(prompt).toBe('');
+    });
+  });
+
+  // ── available-subagents (Section 8) ──────────────────────
+
+  describe('available-subagents section (Section 8)', () => {
+    it('renders <available-subagents> block in full mode when entries provided', () => {
+      const prompt = new SystemPromptBuilder().build({
+        availableSubagents: [
+          { id: 'general-purpose', description: 'fallback' },
+          { id: 'reviewer', description: 'reviews code' },
+        ],
+      });
+      expect(prompt).toContain('<available-subagents>');
+      expect(prompt).toContain('- general-purpose: fallback');
+      expect(prompt).toContain('- reviewer: reviews code');
+      expect(prompt).toContain('</available-subagents>');
+    });
+
+    it('skips the section when entries array is empty', () => {
+      const prompt = new SystemPromptBuilder().build({ availableSubagents: [] });
+      expect(prompt).not.toContain('<available-subagents>');
+    });
+
+    it('skips the section when availableSubagents is undefined', () => {
+      const prompt = new SystemPromptBuilder().build();
+      expect(prompt).not.toContain('<available-subagents>');
+    });
+
+    it('skips the section in minimal mode even when entries are provided', () => {
+      const prompt = new SystemPromptBuilder().build({
+        mode: 'minimal',
+        availableSubagents: [{ id: 'reviewer', description: 'reviews' }],
+      });
+      expect(prompt).not.toContain('<available-subagents>');
     });
   });
 });

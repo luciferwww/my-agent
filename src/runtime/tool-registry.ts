@@ -16,6 +16,7 @@ import {
   processTool,
   webFetchTool,
 } from '../core/tools/index.js';
+import { createTaskTool, type TaskToolDeps } from '../core/tools/builtin/task/index.js';
 import type { Tool } from '../core/tools/types.js';
 import { matchesAny } from './glob-match.js';
 import type { RuntimeBuiltinToolOptions, RuntimeToolBundle } from './types.js';
@@ -102,4 +103,24 @@ export function toPromptToolDefinitions(tools: Tool[]): PromptToolDefinition[] {
 
 export function toLlmToolDefinitions(tools: Tool[]): ChatToolDefinition[] {
   return getToolDefinitions(tools);
+}
+
+/**
+ * Parameters for {@link buildTaskToolIfEnabled}: the same dependency set
+ * `createTaskTool` needs, plus a runtime `enabled` flag.
+ */
+export interface BuildTaskToolParams extends TaskToolDeps {
+  /** When `false`, `task` is not registered (e.g. `subagents.enabled === false`). */
+  enabled: boolean;
+}
+
+/**
+ * Build the LLM-facing `task` tool, or return `null` when subagents are
+ * disabled. Sugar over `createTaskTool(deps)`; lets the caller stay free
+ * of a manual `if (enabled)` guard.
+ */
+export function buildTaskToolIfEnabled(params: BuildTaskToolParams): Tool | null {
+  if (!params.enabled) return null;
+  const { enabled: _enabled, ...deps } = params;
+  return createTaskTool(deps);
 }

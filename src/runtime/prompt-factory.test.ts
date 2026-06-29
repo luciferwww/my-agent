@@ -43,6 +43,45 @@ describe('runtime prompt factory', () => {
     expect(params.tools).toHaveLength(1);
   });
 
+  it('threads workspaceDir into the SystemPromptBuildParams', () => {
+    const params = buildSystemPromptParams({
+      config: baseConfig,
+      contextFiles: [],
+      promptDefinitions: [],
+      overrides: { promptMode: 'full' },
+      workspaceDir: '/work/space',
+    });
+    expect(params.workspaceDir).toBe('/work/space');
+  });
+
+  it('threads availableSubagents into the SystemPromptBuildParams', () => {
+    const params = buildSystemPromptParams({
+      config: baseConfig,
+      contextFiles: [],
+      promptDefinitions: [],
+      overrides: { promptMode: 'full' },
+      availableSubagents: [
+        { id: 'general-purpose', description: 'fallback' },
+        { id: 'reviewer', description: 'review' },
+      ],
+    });
+    expect(params.availableSubagents).toEqual([
+      { id: 'general-purpose', description: 'fallback' },
+      { id: 'reviewer', description: 'review' },
+    ]);
+  });
+
+  it('leaves workspaceDir / availableSubagents undefined when caller omits them', () => {
+    const params = buildSystemPromptParams({
+      config: baseConfig,
+      contextFiles: [],
+      promptDefinitions: [],
+      overrides: { promptMode: 'full' },
+    });
+    expect(params.workspaceDir).toBeUndefined();
+    expect(params.availableSubagents).toBeUndefined();
+  });
+
   it('keeps a full context cache when prompt mode is none', () => {
     expect(resolveContextLoadMode('none')).toBe('full');
     expect(resolveContextLoadMode('minimal')).toBe('minimal');

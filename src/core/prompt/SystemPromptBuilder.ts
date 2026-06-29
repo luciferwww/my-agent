@@ -3,24 +3,25 @@ import type {
   ToolDefinition,
   ContextFile,
 } from './types.js';
+import { renderAvailableSubagentsSection } from '../subagent/available-subagents.js';
 
 /**
  * 构建 System Prompt。
  *
- * 当前 6 个 active section，顺序固定：
- *  1. agent-identity       — 固定身份声明
- *  2. agent-datetime       — 当前日期时间
- *  3. behavior-rules       — 行为准则 + 工具使用规范
- *  4. safety-constraints   — 安全约束                   [safetyLevel 控制]
- *  5. memory-instructions  — memory tool 使用说明       [full only, 有 memory 工具时]
- *  6. project-context      — contextFiles 注入          [有 contextFiles 时]
+ * 当前 6 个 active section（编号 1–6），顺序固定；minimal 模式跳过若干（见 §spec §11）：
+ *  1. agent-identity       — 固定身份声明                   [full only]
+ *  2. agent-datetime       — 当前日期时间                   [full + minimal]
+ *  3. behavior-rules       — 行为准则 + 工具使用规范          [full only]
+ *  4. safety-constraints   — 安全约束                       [full + minimal, safetyLevel 控制]
+ *  5. memory-instructions  — memory tool 使用说明            [full only, 有 memory 工具时]
+ *  6. project-context      — contextFiles 注入              [full + minimal, 有 contextFiles 时]
  *
  * 保留 slot（当前未渲染、代码卷裹以便未来复活）：
  *  · tool-definitions     — 可用工具列表，见 build() 里被注释掉的调用
  *
- * 依存扩展（§​task spec）：
- *  7. workspace            — working directory 锚点
- *  8. available-subagents  — task 工具可用的 subagent 列表
+ * 依存扩展（§task spec §11）：
+ *  7. workspace            — working directory 锚点         [full + minimal]
+ *  8. available-subagents  — task 工具可用的 subagent 列表     [full only]
  */
 export class SystemPromptBuilder {
   /**
@@ -33,9 +34,13 @@ export class SystemPromptBuilder {
     const isMinimal = mode === 'minimal';
     const lines: string[] = [];
 
-    this.buildIdentitySection(lines);
+    // 1. identity — full only
+    if (!isMinimal) this.buildIdentitySection(lines);
+
+    // 2. datetime — full + minimal
     this.buildDatetimeSection(lines);
-    // buildToolDefinitionsSection 已停用。
+
+    // tool-definitions slot — 已停用。
     //
     // 原因：对于原生支持 tool_use 的模型（Claude 及所有兼容 Anthropic API 的模型），
     // 工具定义通过 LLM API 的 `tools` 参数传递，模型直接从该结构化参数中获取工具信息，
@@ -49,10 +54,24 @@ export class SystemPromptBuilder {
     // 可取消注释此行并在 System Prompt 中补充结构化的工具说明。
     //
     // this.buildToolDefinitionsSection(lines, params);
-    this.buildBehaviorRulesSection(lines);
+
+    // 3. behavior-rules — full only
+    if (!isMinimal) this.buildBehaviorRulesSection(lines);
+
+    // 4. safety — full + minimal
     this.buildSafetySection(lines, params);
+
+    // 5. memory-instructions — full only
     if (!isMinimal) this.buildMemorySection(lines, params);
+
+    // 6. project-context — full + minimal
     this.buildProjectContextSection(lines, params);
+
+    // 7. workspace — full + minimal (any mode except 'none', already filtered above)
+    this.buildWorkspaceSection(lines, params);
+
+    // 8. available-subagents — full only
+    if (!isMinimal) this.buildAvailableSubagentsSection(lines, params);
 
     return lines.join('\n');
   }
@@ -217,5 +236,31 @@ export class SystemPromptBuilder {
     for (const file of files) {
       lines.push(`## ${file.path}`, '', file.content, '');
     }
+  }
+
+  // ── Section 7: workspace ───────────────────────────────────
+
+  private buildWorkspaceSection(
+    lines: string[],
+    params: SystemPromptBuildParams,
+  ): void {
+    if (!params.workspaceDir) return;
+    lines.push('# Workspace');
+    lines.push(`Your working directory is: ${params.workspaceDir}`);
+    lines.push('');
+  }
+
+  // ── Section 8: available-subagents ─────────────────────────
+
+  private buildAvailableSubagentsSection(
+    lines: string[],
+    params: SystemPromptBuildParams,
+  ): void {
+    const entries = params.availableSubagents;
+    if (!entries?.length) return;
+    const section = renderAvailableSubagentsSection(entries);
+    if (!section) return;
+    lines.push(section);
+    lines.push('');
   }
 }

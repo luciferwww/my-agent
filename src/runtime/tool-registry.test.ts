@@ -3,10 +3,13 @@ import type { MemoryManager } from '../core/memory/MemoryManager.js';
 import type { Tool } from '../core/tools/types.js';
 import {
   assembleRuntimeTools,
+  buildTaskToolIfEnabled,
   getDefaultBuiltinTools,
   toLlmToolDefinitions,
   toPromptToolDefinitions,
 } from './tool-registry.js';
+import type { SubagentCapabilities, SubagentProfile } from '../core/subagent/types.js';
+import type { SubagentRunner } from '../core/subagent/SubagentRunner.js';
 
 describe('runtime tool registry', () => {
   it('converts tools into llm and prompt definitions from the same source list', () => {
@@ -89,5 +92,62 @@ describe('runtime tool registry', () => {
     expect(tools.map((tool) => tool.name)).not.toContain('web_fetch');
     expect(tools.map((tool) => tool.name)).not.toContain('exec');
     expect(tools.map((tool) => tool.name)).not.toContain('process');
+  });
+});
+
+// ── buildTaskToolIfEnabled ──────────────────────────────────
+
+describe('buildTaskToolIfEnabled', () => {
+  const dummyProfile: SubagentProfile = {
+    id: 'general-purpose',
+    description: 'fallback',
+    agentDir: '/ws/.agent/subagents/general-purpose',
+  };
+  const dummyRegistry = new Map<string, SubagentProfile>([['general-purpose', dummyProfile]]);
+  const stubCapabilities = (): SubagentCapabilities => ({
+    depth: 0,
+    role: 'main',
+    canSpawn: true,
+  });
+  // SubagentRunner.run is never invoked in this test; stub the field shape.
+  const stubSubagentRunner = {
+    run: async () => {
+      throw new Error('should not be called by buildTaskToolIfEnabled tests');
+    },
+  } as unknown as SubagentRunner;
+
+  it('returns null when enabled=false', () => {
+    const tool = buildTaskToolIfEnabled({
+      enabled: false,
+      subagentRunner: stubSubagentRunner,
+      profileRegistry: dummyRegistry,
+      getCapabilities: stubCapabilities,
+      maxDepth: 1,
+    });
+    expect(tool).toBeNull();
+  });
+
+  it('returns a Tool with name="task" when enabled=true', () => {
+    const tool = buildTaskToolIfEnabled({
+      enabled: true,
+      subagentRunner: stubSubagentRunner,
+      profileRegistry: dummyRegistry,
+      getCapabilities: stubCapabilities,
+      maxDepth: 1,
+    });
+    expect(tool).not.toBeNull();
+    expect(tool!.name).toBe('task');
+    expect(typeof tool!.execute).toBe('function');
+  });
+
+  it('does NOT leak the "enabled" flag into the resulting Tool', () => {
+    const tool = buildTaskToolIfEnabled({
+      enabled: true,
+      subagentRunner: stubSubagentRunner,
+      profileRegistry: dummyRegistry,
+      getCapabilities: stubCapabilities,
+      maxDepth: 1,
+    });
+    expect((tool as unknown as Record<string, unknown>).enabled).toBeUndefined();
   });
 });

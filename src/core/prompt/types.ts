@@ -1,4 +1,5 @@
 import type { ContextFile } from '../workspace/types.js';
+import type { AvailableSubagentEntry } from '../subagent/available-subagents.js';
 
 export type { ContextFile };
 
@@ -90,6 +91,13 @@ export interface SystemPromptBuildParams {
    * v1 PR-3 接受字段但未渲染；实际渲染逻辑由 PR-5 添加。
    */
   workspaceDir?: string;
+  /**
+   * `<available-subagents>` section 的条目列表（spec §11 Section 8）。
+   *
+   * 只在 full 模式 + `subagents.enabled === true` 时由 prompt-factory 注入。
+   * minimal 模式（subagent 自身的 prompt）跳过此 section。
+   */
+  availableSubagents?: AvailableSubagentEntry[];
 }
 
 /** UserPromptBuilder.build() 的输入 */
