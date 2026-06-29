@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createEditFileTool } from './edit-file.js';
 import type { Tool } from '../../types.js';
+import { TEST_TOOL_CONTEXT } from '../../test-utils.js';
 
 let workspaceDir = '';
 let editFileTool: Tool;
@@ -29,7 +30,7 @@ describe('editFileTool', () => {
       path: 'sample.txt',
       oldText: 'beta',
       newText: 'beta-updated',
-    });
+    }, TEST_TOOL_CONTEXT);
 
     expect(result.isError).toBeUndefined();
     expect(result.content).toContain('replacements: 1');
@@ -43,7 +44,7 @@ describe('editFileTool', () => {
       path: 'sample.txt',
       oldText: 'beta',
       newText: 'gamma',
-    });
+    }, TEST_TOOL_CONTEXT);
 
     expect(result.isError).toBe(true);
     expect(result.content).toContain('oldText not found');
@@ -56,7 +57,7 @@ describe('editFileTool', () => {
       path: 'sample.txt',
       oldText: 'beta',
       newText: 'gamma',
-    });
+    }, TEST_TOOL_CONTEXT);
 
     expect(result.isError).toBe(true);
     expect(result.content).toContain('matched 2 times');

@@ -80,31 +80,24 @@ export interface LoadContextFilesOptions {
 }
 
 /**
- * 从工作目录的 .agent/ 子目录读取上下文文件，返回 ContextFile[]。
+ * 内部 helper：按给定 baseDir + 白名单文件序列读取并应用预算/截断。
  *
- * 行为规则：
- * - 按固定顺序读取：IDENTITY.md → SOUL.md → AGENTS.md → TOOLS.md
- * - 文件不存在 → 跳过（不报错）
- * - 文件为空（trim 后） → 跳过
- * - 文件超出 maxFileChars → 截断（前 70% + 后 20% + 截断标记）+ warn
- * - 累计超出 maxTotalChars → 截断当前文件或跳过后续文件 + warn
- * - 剩余预算 < 64 字符 → 跳过后续文件 + warn
+ * 不在路径上 append `.agent/`，调用方负责传完整 baseDir。
  *
- * 参考 OpenClaw 的 buildBootstrapContextFiles()（src/agents/pi-embedded-helpers/bootstrap.ts）。
- *
- * @param workspaceDir - 工作区根目录路径
- * @param opts - 可选配置
+ * - `loadContextFiles(workspaceDir, ...)` 调用时传 `<workspaceDir>/.agent/`。
+ * - `loadContextFilesFromDir(absDir, ...)` 调用时传 `absDir` 原样。
  */
-export async function loadContextFiles(
-  workspaceDir: string,
-  opts?: LoadContextFilesOptions,
+async function loadFilesFromBaseDir(
+  baseDir: string,
+  fileList: readonly string[],
+  opts: {
+    maxFileChars: number;
+    maxTotalChars: number;
+    warn: (msg: string) => void;
+  },
 ): Promise<ContextFile[]> {
-  const fileList = opts?.mode === 'minimal' ? MINIMAL_FILES : ALL_FILES;
-  const maxFileChars = opts?.maxFileChars ?? DEFAULT_MAX_FILE_CHARS;
-  const maxTotalChars = Math.max(1, opts?.maxTotalChars ?? DEFAULT_MAX_TOTAL_CHARS);
-  const warn = opts?.warn ?? console.warn;
-
-  const agentDir = join(workspaceDir, AGENT_DIR);
+  const { maxFileChars, warn } = opts;
+  const maxTotalChars = Math.max(1, opts.maxTotalChars);
   const results: ContextFile[] = [];
   let remainingTotalChars = maxTotalChars;
 
@@ -123,7 +116,7 @@ export async function loadContextFiles(
     // 读取文件
     let rawContent: string;
     try {
-      rawContent = await readFile(join(agentDir, name), 'utf-8');
+      rawContent = await readFile(join(baseDir, name), 'utf-8');
     } catch {
       // 文件不存在或无法读取，跳过
       continue;
@@ -151,4 +144,64 @@ export async function loadContextFiles(
   }
 
   return results;
+}
+
+/**
+ * 从工作目录的 .agent/ 子目录读取上下文文件，返回 ContextFile[]。
+ *
+ * 行为规则：
+ * - 按固定顺序读取：IDENTITY.md → SOUL.md → AGENTS.md → TOOLS.md
+ * - 文件不存在 → 跳过（不报错）
+ * - 文件为空（trim 后） → 跳过
+ * - 文件超出 maxFileChars → 截断（前 70% + 后 20% + 截断标记）+ warn
+ * - 累计超出 maxTotalChars → 截断当前文件或跳过后续文件 + warn
+ * - 剩余预算 < 64 字符 → 跳过后续文件 + warn
+ *
+ * 参考 OpenClaw 的 buildBootstrapContextFiles()（src/agents/pi-embedded-helpers/bootstrap.ts）。
+ *
+ * @param workspaceDir - 工作区根目录路径
+ * @param opts - 可选配置
+ */
+export async function loadContextFiles(
+  workspaceDir: string,
+  opts?: LoadContextFilesOptions,
+): Promise<ContextFile[]> {
+  return loadFilesFromBaseDir(
+    join(workspaceDir, AGENT_DIR),
+    opts?.mode === 'minimal' ? MINIMAL_FILES : ALL_FILES,
+    {
+      maxFileChars: opts?.maxFileChars ?? DEFAULT_MAX_FILE_CHARS,
+      maxTotalChars: opts?.maxTotalChars ?? DEFAULT_MAX_TOTAL_CHARS,
+      warn: opts?.warn ?? console.warn,
+    },
+  );
+}
+
+/**
+ * 按**绝对目录**加载 contextFiles。文件白名单与 {@link loadContextFiles} 共享同一个
+ * `ALL_FILES` / `MINIMAL_FILES` 常量（当前为 `IDENTITY.md / SOUL.md / AGENTS.md / TOOLS.md`）。
+ * **不**读白名单之外的文件。
+ *
+ * 与 `loadContextFiles(workspaceDir, opts)` 的区别：
+ *  - 不在路径上 append `.agent/`，直接读 `<absDir>/<filename>`
+ *  - 调用方负责传完整路径（例如 SubagentRunner 传 `<ws>/.agent/subagents/<id>/`）
+ *
+ * 截断 / 预算 / mode 行为与 `loadContextFiles` 完全一致。
+ *
+ * @param absDir - 直接读取的绝对目录路径
+ * @param opts - 可选配置
+ */
+export async function loadContextFilesFromDir(
+  absDir: string,
+  opts?: LoadContextFilesOptions,
+): Promise<ContextFile[]> {
+  return loadFilesFromBaseDir(
+    absDir,
+    opts?.mode === 'minimal' ? MINIMAL_FILES : ALL_FILES,
+    {
+      maxFileChars: opts?.maxFileChars ?? DEFAULT_MAX_FILE_CHARS,
+      maxTotalChars: opts?.maxTotalChars ?? DEFAULT_MAX_TOTAL_CHARS,
+      warn: opts?.warn ?? console.warn,
+    },
+  );
 }

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createApplyPatchTool } from './apply-patch.js';
 import type { Tool } from '../../types.js';
+import { TEST_TOOL_CONTEXT } from '../../test-utils.js';
 
 let workspaceDir = '';
 let applyPatchTool: Tool;
@@ -25,7 +26,7 @@ describe('applyPatchTool', () => {
   it('adds a file', async () => {
     const result = await applyPatchTool.execute({
       input: `*** Begin Patch\n*** Add File: added.txt\n+hello\n+world\n*** End Patch`,
-    });
+    }, TEST_TOOL_CONTEXT);
 
     expect(result.isError).toBeUndefined();
     expect(result.content).toContain('A added.txt');
@@ -37,7 +38,7 @@ describe('applyPatchTool', () => {
 
     const result = await applyPatchTool.execute({
       input: `*** Begin Patch\n*** Update File: sample.txt\n@@\n alpha\n-beta\n+beta-updated\n gamma\n*** End Patch`,
-    });
+    }, TEST_TOOL_CONTEXT);
 
     expect(result.isError).toBeUndefined();
     expect(result.content).toContain('M sample.txt');
@@ -49,7 +50,7 @@ describe('applyPatchTool', () => {
 
     const result = await applyPatchTool.execute({
       input: `*** Begin Patch\n*** Delete File: obsolete.txt\n*** End Patch`,
-    });
+    }, TEST_TOOL_CONTEXT);
 
     expect(result.isError).toBeUndefined();
     expect(result.content).toContain('D obsolete.txt');

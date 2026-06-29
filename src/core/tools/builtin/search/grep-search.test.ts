@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createGrepSearchTool } from './grep-search.js';
 import type { Tool } from '../../types.js';
+import { TEST_TOOL_CONTEXT } from '../../test-utils.js';
 
 let workspaceDir = '';
 let grepSearchTool: Tool;
@@ -26,7 +27,7 @@ describe('grepSearchTool', () => {
     await mkdir(join(workspaceDir, 'src'), { recursive: true });
     await writeFile(join(workspaceDir, 'src', 'alpha.ts'), 'const token = 123;\nconst other = 456;\n');
 
-    const result = await grepSearchTool.execute({ query: 'token', isRegexp: false });
+    const result = await grepSearchTool.execute({ query: 'token', isRegexp: false }, TEST_TOOL_CONTEXT);
     expect(result.isError).toBeUndefined();
     expect(result.content).toContain('src/alpha.ts:1: const token = 123;');
   });
@@ -40,7 +41,7 @@ describe('grepSearchTool', () => {
       query: 'value\\s*=\\s*\\d+',
       isRegexp: true,
       includePattern: 'src/*.ts',
-    });
+    }, TEST_TOOL_CONTEXT);
 
     expect(result.isError).toBeUndefined();
     expect(result.content).toContain('src/alpha.ts:1: const value = 123;');

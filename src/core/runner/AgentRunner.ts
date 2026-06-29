@@ -10,6 +10,7 @@ import type {
   ToolExecutor,
   PendingMessageReader,
 } from './types.js';
+import type { ToolContext } from '../tools/types.js';
 import type { CompactionConfig } from '../../platform/config/types.js';
 import type { HookName, HookHandlerMap, HookRegistration } from './hooks/index.js';
 import { runBeforeToolCall, runAfterToolCall, runBeforeCompaction, runAfterCompaction } from './hooks/index.js';
@@ -391,7 +392,13 @@ export class AgentRunner {
 
           // 执行工具
           const startTime = Date.now();
-          const result = await this.executeTool(toolUse.name, effectiveInput);
+          const toolCtx: ToolContext = {
+            sessionKey: params.sessionKey,
+            turnId: params.turnId,
+            toolUseId: toolUse.id,
+            signal: undefined, // v1 abort 子系统未接入；exec.ts 接受 undefined 退化为无 abort
+          };
+          const result = await this.executeTool(toolUse.name, effectiveInput, toolCtx);
           const durationMs = Date.now() - startTime;
 
           this.emit({ type: 'tool_result', name: toolUse.name, result });
@@ -690,6 +697,7 @@ export class AgentRunner {
   private async executeTool(
     toolName: string,
     input: Record<string, unknown>,
+    ctx: ToolContext,
   ): Promise<ToolResult> {
     if (!this.toolExecutor) {
       return {
@@ -699,7 +707,7 @@ export class AgentRunner {
     }
 
     try {
-      return await this.toolExecutor(toolName, input);
+      return await this.toolExecutor(toolName, input, ctx);
     } catch (err) {
       return {
         content: `Error executing tool "${toolName}": ${err instanceof Error ? err.message : String(err)}`,

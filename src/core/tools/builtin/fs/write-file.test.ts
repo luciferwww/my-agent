@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createWriteFileTool } from './write-file.js';
 import type { Tool } from '../../types.js';
+import { TEST_TOOL_CONTEXT } from '../../test-utils.js';
 
 let workspaceDir = '';
 let writeFileTool: Tool;
@@ -23,7 +24,7 @@ afterEach(async () => {
 
 describe('writeFileTool', () => {
   it('creates a new file', async () => {
-    const result = await writeFileTool.execute({ path: 'notes/new.txt', content: 'hello\n' });
+    const result = await writeFileTool.execute({ path: 'notes/new.txt', content: 'hello\n' }, TEST_TOOL_CONTEXT);
 
     expect(result.isError).toBeUndefined();
     expect(result.content).toContain('created: true');
@@ -31,8 +32,8 @@ describe('writeFileTool', () => {
   });
 
   it('overwrites an existing file', async () => {
-    await writeFileTool.execute({ path: 'notes.txt', content: 'old\n' });
-    const result = await writeFileTool.execute({ path: 'notes.txt', content: 'new\n' });
+    await writeFileTool.execute({ path: 'notes.txt', content: 'old\n' }, TEST_TOOL_CONTEXT);
+    const result = await writeFileTool.execute({ path: 'notes.txt', content: 'new\n' }, TEST_TOOL_CONTEXT);
 
     expect(result.isError).toBeUndefined();
     expect(result.content).toContain('created: false');

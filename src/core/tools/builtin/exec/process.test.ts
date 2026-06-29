@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { execTool } from './exec.js';
 import { processTool } from './process.js';
 import { processRegistry } from './process-registry.js';
+import { TEST_TOOL_CONTEXT } from '../../test-utils.js';
 
 function extractRunId(content: string): string {
   const match = content.match(/runId:\s*(\S+)/);
@@ -35,10 +36,10 @@ describe('processTool', () => {
     const started = await execTool.execute({
       command: 'node -e "setTimeout(() => console.log(\'background\'), 150)"',
       background: true,
-    });
+    }, TEST_TOOL_CONTEXT);
 
     const runId = extractRunId(started.content);
-    const list = await processTool.execute({ action: 'list' });
+    const list = await processTool.execute({ action: 'list' }, TEST_TOOL_CONTEXT);
     expect(list.content).toContain(runId);
   });
 
@@ -46,15 +47,15 @@ describe('processTool', () => {
     const started = await execTool.execute({
       command: 'node -e "setTimeout(() => console.log(\'background-log\'), 50)"',
       background: true,
-    });
+    }, TEST_TOOL_CONTEXT);
 
     const runId = extractRunId(started.content);
     await waitFor(async () => {
-      const logs = await processTool.execute({ action: 'log', runId });
+      const logs = await processTool.execute({ action: 'log', runId }, TEST_TOOL_CONTEXT);
       return logs.content.includes('background-log');
     });
 
-    const logs = await processTool.execute({ action: 'log', runId });
+    const logs = await processTool.execute({ action: 'log', runId }, TEST_TOOL_CONTEXT);
     expect(logs.content).toContain('background-log');
   });
 
@@ -62,18 +63,18 @@ describe('processTool', () => {
     const started = await execTool.execute({
       command: 'node -e "setInterval(() => console.log(\'tick\'), 50)"',
       background: true,
-    });
+    }, TEST_TOOL_CONTEXT);
 
     const runId = extractRunId(started.content);
-    const killed = await processTool.execute({ action: 'kill', runId });
+    const killed = await processTool.execute({ action: 'kill', runId }, TEST_TOOL_CONTEXT);
     expect(killed.content).toContain('status: aborted');
 
-    const status = await processTool.execute({ action: 'status', runId });
+    const status = await processTool.execute({ action: 'status', runId }, TEST_TOOL_CONTEXT);
     expect(status.content).toContain('status: aborted');
   });
 
   it('returns not found for unknown runId', async () => {
-    const result = await processTool.execute({ action: 'status', runId: 'missing' });
+    const result = await processTool.execute({ action: 'status', runId: 'missing' }, TEST_TOOL_CONTEXT);
     expect(result.isError).toBe(true);
     expect(result.content).toContain('runId not found');
   });

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createFileSearchTool } from './file-search.js';
 import type { Tool } from '../../types.js';
+import { TEST_TOOL_CONTEXT } from '../../test-utils.js';
 
 let workspaceDir = '';
 let fileSearchTool: Tool;
@@ -27,7 +28,7 @@ describe('fileSearchTool', () => {
     await writeFile(join(workspaceDir, 'src', 'alpha.ts'), 'export const alpha = 1;\n');
     await writeFile(join(workspaceDir, 'src', 'beta.ts'), 'export const beta = 1;\n');
 
-    const result = await fileSearchTool.execute({ query: 'alpha' });
+    const result = await fileSearchTool.execute({ query: 'alpha' }, TEST_TOOL_CONTEXT);
     expect(result.isError).toBeUndefined();
     expect(result.content).toContain('src/alpha.ts');
     expect(result.content).not.toContain('src/beta.ts');
@@ -38,7 +39,7 @@ describe('fileSearchTool', () => {
     await writeFile(join(workspaceDir, 'docs', 'one.md'), '# one\n');
     await writeFile(join(workspaceDir, 'docs', 'two.txt'), 'two\n');
 
-    const result = await fileSearchTool.execute({ query: 'docs/*.md' });
+    const result = await fileSearchTool.execute({ query: 'docs/*.md' }, TEST_TOOL_CONTEXT);
     expect(result.isError).toBeUndefined();
     expect(result.content).toContain('docs/one.md');
     expect(result.content).not.toContain('docs/two.txt');

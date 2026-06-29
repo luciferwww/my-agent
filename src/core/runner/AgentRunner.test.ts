@@ -196,6 +196,48 @@ describe('AgentRunner', () => {
       expect(result.toolRounds).toBe(2);
     });
 
+    it('passes ToolContext (sessionKey/turnId/toolUseId) to toolExecutor', async () => {
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'tool_use', id: 'tool_ctx_42', name: 'inspect', input: {} },
+          { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'ok' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+      ]);
+
+      const seen: Array<{ name: string; ctx: unknown }> = [];
+      const runner = new AgentRunner({
+        llmClient,
+        sessionManager,
+        toolExecutor: async (name, _input, ctx) => {
+          seen.push({ name, ctx });
+          return { content: 'noted' };
+        },
+      });
+
+      await runner.run({
+        sessionKey: 'main',
+        message: 'inspect ctx',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'turn-ctx-99',
+      });
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0]!.name).toBe('inspect');
+      expect(seen[0]!.ctx).toEqual({
+        sessionKey: 'main',
+        turnId: 'turn-ctx-99',
+        toolUseId: 'tool_ctx_42',
+        signal: undefined,
+      });
+    });
+
     it('respects maxLlmCalls limit', async () => {
       // LLM 每次都返回 tool_use
       const infiniteToolResponses = Array.from({ length: 20 }, () => [

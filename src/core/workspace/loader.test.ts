@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { loadContextFiles } from './loader.js';
+import { loadContextFiles, loadContextFilesFromDir } from './loader.js';
 
 describe('loadContextFiles', () => {
   let workspaceDir: string;
@@ -208,5 +208,77 @@ describe('loadContextFiles', () => {
 
       expect(warn).not.toHaveBeenCalled();
     });
+  });
+});
+
+// ── loadContextFilesFromDir ───────────────────────────────────
+
+describe('loadContextFilesFromDir', () => {
+  let baseDir: string;
+
+  beforeEach(async () => {
+    baseDir = await mkdtemp(join(tmpdir(), 'loader-fromdir-test-'));
+  });
+
+  afterEach(async () => {
+    await rm(baseDir, { recursive: true, force: true });
+  });
+
+  it('reads files from absolute dir without appending .agent/', async () => {
+    await writeFile(join(baseDir, 'IDENTITY.md'), '# Identity', 'utf-8');
+    await writeFile(join(baseDir, 'SOUL.md'), '# Soul', 'utf-8');
+
+    const files = await loadContextFilesFromDir(baseDir);
+
+    expect(files).toHaveLength(2);
+    expect(files[0]!.path).toBe('IDENTITY.md');
+    expect(files[0]!.content).toBe('# Identity');
+    expect(files[1]!.path).toBe('SOUL.md');
+  });
+
+  it('does NOT read from a nested .agent/ subdir (no auto-append)', async () => {
+    // Put files in `<baseDir>/.agent/...` and confirm they are NOT picked up.
+    const stowed = join(baseDir, '.agent');
+    await mkdir(stowed, { recursive: true });
+    await writeFile(join(stowed, 'IDENTITY.md'), '# Identity (stowed)', 'utf-8');
+
+    const files = await loadContextFilesFromDir(baseDir);
+    expect(files).toHaveLength(0);
+  });
+
+  it('skips missing files without error', async () => {
+    await writeFile(join(baseDir, 'SOUL.md'), '# Soul', 'utf-8');
+
+    const files = await loadContextFilesFromDir(baseDir);
+    expect(files).toHaveLength(1);
+    expect(files[0]!.path).toBe('SOUL.md');
+  });
+
+  it('respects mode=minimal filter', async () => {
+    await writeFile(join(baseDir, 'IDENTITY.md'), '# Identity', 'utf-8');
+    await writeFile(join(baseDir, 'SOUL.md'), '# Soul', 'utf-8');
+    await writeFile(join(baseDir, 'AGENTS.md'), '# Agents', 'utf-8');
+    await writeFile(join(baseDir, 'TOOLS.md'), '# Tools', 'utf-8');
+
+    const files = await loadContextFilesFromDir(baseDir, { mode: 'minimal' });
+    expect(files.map((f) => f.path)).toEqual(['IDENTITY.md', 'SOUL.md']);
+  });
+
+  it('truncates files exceeding maxFileChars', async () => {
+    const content = 'A'.repeat(1000);
+    await writeFile(join(baseDir, 'IDENTITY.md'), content, 'utf-8');
+    const warn = vi.fn();
+
+    const files = await loadContextFilesFromDir(baseDir, { maxFileChars: 200, warn });
+
+    expect(files[0]!.content).toContain('[...truncated');
+    expect(files[0]!.content.length).toBeLessThan(content.length);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('IDENTITY.md is 1000 chars'));
+  });
+
+  it('returns empty array for missing directory', async () => {
+    const missing = join(baseDir, 'does-not-exist');
+    const files = await loadContextFilesFromDir(missing);
+    expect(files).toHaveLength(0);
   });
 });

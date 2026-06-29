@@ -5,7 +5,7 @@ import type { Tool, ToolExecutor, ToolResult, ToolDefinition } from './types.js'
  * Tools are resolved by name, and thrown errors are converted into ToolResult.
  */
 export function createToolExecutor(tools: Tool[]): ToolExecutor {
-  return async (toolName: string, input: Record<string, unknown>): Promise<ToolResult> => {
+  return async (toolName, input, ctx): Promise<ToolResult> => {
     const tool = tools.find((t) => t.name === toolName);
     if (!tool) {
       return {
@@ -15,7 +15,7 @@ export function createToolExecutor(tools: Tool[]): ToolExecutor {
     }
 
     try {
-      return await tool.execute(input);
+      return await tool.execute(input, ctx);
     } catch (err) {
       return {
         content: `Error executing tool "${toolName}": ${err instanceof Error ? err.message : String(err)}`,

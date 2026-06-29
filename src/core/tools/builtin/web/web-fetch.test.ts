@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { webFetchTool } from './web-fetch.js';
+import { TEST_TOOL_CONTEXT } from '../../test-utils.js';
 
 let server: ReturnType<typeof createServer>;
 let baseUrl = '';
@@ -45,20 +46,20 @@ afterEach(async () => {
 
 describe('webFetchTool', () => {
   it('extracts readable content from html', async () => {
-    const result = await webFetchTool.execute({ url: `${baseUrl}/html`, extractMode: 'text' });
+    const result = await webFetchTool.execute({ url: `${baseUrl}/html`, extractMode: 'text' }, TEST_TOOL_CONTEXT);
     expect(result.isError).toBeUndefined();
     expect(result.content).toContain('Hello');
     expect(result.content).toContain('World');
   });
 
   it('returns text responses as-is', async () => {
-    const result = await webFetchTool.execute({ url: `${baseUrl}/text` });
+    const result = await webFetchTool.execute({ url: `${baseUrl}/text` }, TEST_TOOL_CONTEXT);
     expect(result.isError).toBeUndefined();
     expect(result.content).toContain('plain text body');
   });
 
   it('rejects unsupported protocols', async () => {
-    const result = await webFetchTool.execute({ url: 'file:///tmp/example.txt' });
+    const result = await webFetchTool.execute({ url: 'file:///tmp/example.txt' }, TEST_TOOL_CONTEXT);
     expect(result.isError).toBe(true);
     expect(result.content).toContain('only http and https');
   });
