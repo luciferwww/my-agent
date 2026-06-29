@@ -7,15 +7,20 @@ import type {
 /**
  * 构建 System Prompt。
  *
- * 包含 7 个硬编码 Section，顺序固定：
+ * 当前 6 个 active section，顺序固定：
  *  1. agent-identity       — 固定身份声明
  *  2. agent-datetime       — 当前日期时间
- *  3. tool-definitions     — 可用工具列表
- *  4. behavior-rules       — 行为准则 + 工具使用规范
- *  5. safety-constraints   — 安全约束                   [safetyLevel 控制]
- *  6. memory-instructions  — memory tool 使用说明       [full only, 有 memory 工具时]
- *  7. project-context      — contextFiles 注入          [有 contextFiles 时]
+ *  3. behavior-rules       — 行为准则 + 工具使用规范
+ *  4. safety-constraints   — 安全约束                   [safetyLevel 控制]
+ *  5. memory-instructions  — memory tool 使用说明       [full only, 有 memory 工具时]
+ *  6. project-context      — contextFiles 注入          [有 contextFiles 时]
  *
+ * 保留 slot（当前未渲染、代码卷裹以便未来复活）：
+ *  · tool-definitions     — 可用工具列表，见 build() 里被注释掉的调用
+ *
+ * 依存扩展（§​task spec）：
+ *  7. workspace            — working directory 锚点
+ *  8. available-subagents  — task 工具可用的 subagent 列表
  */
 export class SystemPromptBuilder {
   /**

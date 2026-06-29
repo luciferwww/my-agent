@@ -124,7 +124,7 @@ interface SubagentConfigEntry {
   id: string;
   description: string;
   model?: string;
-  maxTurns?: number;
+  maxLlmCalls?: number;   // 对齐主 agent RunParams.maxLlmCalls；详 spec §7.4
   tools?: SubagentToolsConfig;
 }
 

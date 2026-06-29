@@ -109,7 +109,7 @@
             "id":          "code-reviewer",
             "description": "审计代码安全问题，合并前使用。",
             "model":       "inherit",
-            "maxTurns":    20,
+            "maxLlmCalls": 20,
             "tools": {
               "deny": ["exec", "write_file", "apply_patch", "edit_file"]
             }
@@ -336,7 +336,10 @@ interface SubagentConfigEntry {
   id:          string;
   description: string;
   model?:      string;          // 'inherit'（默认）或具体 model id
-  maxTurns?:   number;
+  maxLlmCalls?: number;          // 与主 agent `RunParams.maxLlmCalls` 同语义；不写沿用父。
+                                  // 用 maxLlmCalls 而非 maxTurns 是为了与主 agent 术语一致——
+                                  // 一个 turn = 一轮用户消息 → 最终回复，可能含多次 LLM 调用
+                                  // （详 core-subagent-spec.md §9.2 字段表）。
   tools?:      SubagentToolsConfig;
   // 删除 agentDir：按约定固定为 <workspaceDir>/.agent/subagents/<id>/，目录不存在 = 匿名 subagent
   // 删除 cwd：预留未消费，需要时再加
