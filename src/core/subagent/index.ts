@@ -26,3 +26,8 @@ export {
 export type { ParsedSubagentKey } from './session-key.js';
 
 export { resolveSubagentCapabilities } from './capabilities.js';
+
+export { loadSubagentProfiles, buildGeneralPurposeProfile } from './config-loader.js';
+
+export { resolveSubagentTools } from './profile-tools.js';
+export type { ResolvedSubagentTools } from './profile-tools.js';

@@ -188,8 +188,8 @@ export interface SubagentConfigEntry {
   description: string;
   /** 'inherit'（默认）或具体 model id */
   model?: string;
-  /** 子 Agent 的 maxLlmCalls；不写沿用父 maxLlmCalls */
-  maxTurns?: number;
+  /** 子 Agent 的 LLM 调用上限；不写沿用父 maxLlmCalls。对齐 RunParams.maxLlmCalls。 */
+  maxLlmCalls?: number;
   /** 工具策略 */
   tools?: SubagentToolsConfig;
   // agentDir / cwd 按约定推导或预留未实现，不接受 config（见 spec §8.2）
