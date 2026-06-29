@@ -8,3 +8,5 @@ export { createEditFileTool } from './fs/edit-file.js';
 export { webFetchTool } from './web/web-fetch.js';
 export { execTool } from './exec/exec.js';
 export { processTool } from './exec/process.js';
+export { createTaskTool } from './task/index.js';
+export type { TaskToolDeps } from './task/index.js';
