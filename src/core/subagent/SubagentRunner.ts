@@ -71,6 +71,15 @@ export class SubagentRunner {
     // (host needs the routing to be in place for fanout to reach the right channel).
     this.deps.host.registerTurnContext(childTurnId, parentTurnId);
 
+    // 4) Materialize the child session entry. AgentRunner.run requires the
+    // session to exist in SessionManager's store (it calls getMessages /
+    // sanitizeSessionTail during runAttempt). For the main agent this is
+    // done by RuntimeApp.runTurn via resolveSession; the subagent path has
+    // no equivalent wrapper, so the runner must create it here.
+    await this.deps.sessionManager.resolveSession(childSessionKey, {
+      spawnedBy: parentSessionKey,
+    });
+
     // 4) Build the child system prompt.
     const childFiles = await this.loadChildContextFiles(profile);
     const parentFiles = this.deps.host.getParentContextFiles();

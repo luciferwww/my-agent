@@ -117,7 +117,14 @@ function makeDeps(opts: BuildDepsOpts = {}) {
   const sessionManagerDelete = vi.fn(
     opts.sessionManagerDelete ?? (async (_key: string) => {}),
   );
-  const sessionManager = { deleteSession: sessionManagerDelete };
+  const sessionManagerResolve = vi.fn(
+    async (_key: string, _opts?: { spawnedBy?: string }) =>
+      ({ entry: {}, isNew: true }) as never,
+  );
+  const sessionManager = {
+    deleteSession: sessionManagerDelete,
+    resolveSession: sessionManagerResolve,
+  };
 
   const loader = vi.fn(
     opts.loader ?? (async (_absDir: string) => opts.childFiles ?? []),
@@ -147,6 +154,7 @@ function makeDeps(opts: BuildDepsOpts = {}) {
     events,
     agentRunnerRun: agentRunner.run,
     sessionManagerDelete,
+    sessionManagerResolve,
     loader,
     promptBuilderBuild,
     host,
@@ -551,6 +559,48 @@ describe('SubagentRunner.run', () => {
       const runner = new SubagentRunner(deps);
       const result = await runner.run(makeRequest());
       expect(result.outcome).toBe('ok');
+    });
+  });
+
+  // ── Session materialization (regression for the E2E demo bug) ───
+
+  describe('session materialization', () => {
+    it('resolves the child session BEFORE delegating to AgentRunner.run', async () => {
+      const callOrder: string[] = [];
+      const { deps } = makeDeps({
+        agentRunnerRun: async () => {
+          callOrder.push('agentRunner.run');
+          return {
+            text: 'x',
+            content: [],
+            stopReason: 'end_turn',
+            usage: { inputTokens: 0, outputTokens: 0 },
+            toolRounds: 0,
+          };
+        },
+      });
+      const resolveSpy = (deps.sessionManager as unknown as {
+        resolveSession: ReturnType<typeof vi.fn>;
+      }).resolveSession;
+      resolveSpy.mockImplementation(async () => {
+        callOrder.push('resolveSession');
+        return { entry: {}, isNew: true };
+      });
+
+      const runner = new SubagentRunner(deps);
+      const result = await runner.run(makeRequest());
+      expect(callOrder).toEqual(['resolveSession', 'agentRunner.run']);
+      expect(resolveSpy.mock.calls[0]![0]).toBe(result.sessionKey);
+    });
+
+    it('passes spawnedBy = parentSessionKey to resolveSession', async () => {
+      const { deps } = makeDeps();
+      const resolveSpy = (deps.sessionManager as unknown as {
+        resolveSession: ReturnType<typeof vi.fn>;
+      }).resolveSession;
+      const runner = new SubagentRunner(deps);
+      await runner.run(makeRequest({ parentSessionKey: 'main' }));
+      expect(resolveSpy.mock.calls[0]![1]).toEqual({ spawnedBy: 'main' });
     });
   });
 
