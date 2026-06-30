@@ -6,6 +6,23 @@ export type { ToolDefinition, ToolResult, ToolExecutor };
 
 export type PendingMessageReader = () => ChatMessage[] | Promise<ChatMessage[]>;
 
+/**
+ * 一次 run 期间事件标识所需的最小上下文。
+ *
+ * AgentRunner 内部沿调用链显式透传给所有 emit() 调用点，替代过往把
+ * RunParams 整体挂在实例字段（this.currentParams）上的做法。这样：
+ *  - emit 不再依赖隐式实例状态，类对事件标签无副作用、可重入、可并发；
+ *  - 编译期强制每个 emit 调用提供 ctx；
+ *  - SubagentRunner 嵌套 AgentRunner.run() 不再有任何状态串号风险。
+ *
+ * 仅 sessionKey/turnId 两字段，故不复用 RunParams（后者太重，包含 message
+ * / tools / model 等不适合作为事件 tag 到处传的内容）。
+ */
+export interface TurnContext {
+  readonly sessionKey: string;
+  readonly turnId: string;
+}
+
 /** AgentRunner 构造参数 */
 export interface AgentRunnerConfig {
   /** LLM 客户端 */

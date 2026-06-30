@@ -583,6 +583,109 @@ describe('AgentRunner', () => {
         expect(e.turnId).toBe('parent-turn');
       }
     });
+
+    // Two follow-up regression tests added by the v2 emit-context refactor
+    // (docs/architecture/core-runner-emit-context-refactor.md §4.3). They
+    // pin down the post-refactor invariant: turnCtx is sourced from the
+    // current run()'s call frame, not any instance state — so neither
+    // sequential runs nor concurrent runs can pollute each other's events.
+
+    it('tags emits with the active run\'s turnCtx — sequential runs do not leak ctx into each other', async () => {
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'A' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 1, outputTokens: 1 } },
+        ],
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'B' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 1, outputTokens: 1 } },
+        ],
+      ]);
+
+      const events: AgentEvent[] = [];
+      const runner = new AgentRunner({
+        llmClient,
+        sessionManager,
+        onEvent: (e) => events.push(e),
+      });
+
+      await runner.run({
+        sessionKey: 'main', message: 'first', model: 'test', systemPrompt: '', turnId: 'turn-A',
+      });
+      await sessionManager.createSession('other');
+      await runner.run({
+        sessionKey: 'other', message: 'second', model: 'test', systemPrompt: '', turnId: 'turn-B',
+      });
+
+      const aEvents = events.filter((e) => e.sessionKey === 'main');
+      const bEvents = events.filter((e) => e.sessionKey === 'other');
+      expect(aEvents.length).toBeGreaterThan(0);
+      expect(bEvents.length).toBeGreaterThan(0);
+      for (const e of aEvents) expect(e.turnId).toBe('turn-A');
+      for (const e of bEvents) expect(e.turnId).toBe('turn-B');
+    });
+
+    it('concurrent runs on the same AgentRunner instance do not interleave each other\'s turnCtx', async () => {
+      // Two independent runs in flight on the SAME runner instance. The mock
+      // LLM yields control between message_start and text_delta via a real
+      // await, forcing the two runs to interleave inside the same event loop.
+      let resolveLatch!: () => void;
+      const latch = new Promise<void>((r) => { resolveLatch = r; });
+
+      const llmClient: LLMClient = {
+        chatStream: (() => {
+          let call = 0;
+          return async function* () {
+            const which = call++;
+            yield { type: 'message_start' } as StreamEvent;
+            if (which === 0) {
+              // First run: park here until the second run has also started.
+              await latch;
+            } else {
+              // Second run: release the first.
+              resolveLatch();
+            }
+            yield { type: 'text_delta', text: which === 0 ? 'A' : 'B' } as StreamEvent;
+            yield {
+              type: 'message_end',
+              stopReason: 'end_turn',
+              usage: { inputTokens: 1, outputTokens: 1 },
+            } as StreamEvent;
+          };
+        })(),
+        async chat(): Promise<ChatResponse> { throw new Error('Not used in this test'); },
+      };
+
+      const events: AgentEvent[] = [];
+      const runner = new AgentRunner({
+        llmClient,
+        sessionManager,
+        onEvent: (e) => events.push(e),
+      });
+      await sessionManager.createSession('concurrent-B');
+
+      await Promise.all([
+        runner.run({
+          sessionKey: 'main', message: 'p-A', model: 'test', systemPrompt: '', turnId: 'turn-A',
+        }),
+        runner.run({
+          sessionKey: 'concurrent-B', message: 'p-B', model: 'test', systemPrompt: '', turnId: 'turn-B',
+        }),
+      ]);
+
+      // Every event must carry the (sessionKey, turnId) pair of the run that
+      // produced it. If the pre-refactor instance-state design were in place,
+      // run A's text_delta (emitted AFTER B set currentParams) would carry
+      // run B's tag.
+      const a = events.filter((e) => e.sessionKey === 'main');
+      const b = events.filter((e) => e.sessionKey === 'concurrent-B');
+      expect(a.length).toBeGreaterThan(0);
+      expect(b.length).toBeGreaterThan(0);
+      for (const e of a) expect(e.turnId).toBe('turn-A');
+      for (const e of b) expect(e.turnId).toBe('turn-B');
+    });
   });
 
   // ── Session 持久化 ─────────────────────────────────

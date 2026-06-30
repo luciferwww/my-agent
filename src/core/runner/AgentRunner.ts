@@ -9,6 +9,7 @@ import type {
   ToolResult,
   ToolExecutor,
   PendingMessageReader,
+  TurnContext,
 } from './types.js';
 import type { ToolContext } from '../tools/types.js';
 import type { CompactionConfig } from '../../platform/config/types.js';
@@ -76,11 +77,6 @@ export class AgentRunner {
   private toolExecutor?: ToolExecutor;
   private onEvent?: (event: AgentEvent) => void;
   private hookRegistrations: HookRegistration[] = [];
-  /**
-   * 当前正在运行的 turn 的参数。emit 用此读取 sessionKey/turnId 注入事件。
-   * run() 入口设置，外层 finally 清理。
-   */
-  private currentParams: RunParams | null = null;
 
   constructor(config: AgentRunnerConfig) {
     this.llmClient = config.llmClient;
@@ -132,7 +128,8 @@ export class AgentRunner {
    * 若末尾不是 user message（例如是 toolResult，说明 LLM 中途中断），
    * 仅 warn 记录，不主动修复 —— 这类破损需要更复杂的语义恢复策略。
    */
-  private sanitizeSessionTail(sessionKey: string): void {
+  private sanitizeSessionTail(turnCtx: TurnContext): void {
+    const { sessionKey } = turnCtx;
     const records = this.sessionManager.getMessages(sessionKey);
     if (records.length === 0) return;
 
@@ -160,7 +157,7 @@ export class AgentRunner {
     }
 
     this.sessionManager.branch(sessionKey, parentId);
-    this.emit({
+    this.emit(turnCtx, {
       type: 'session_tail_sanitized',
       discardedEntryId: last.id,
       discardedRole: 'user',
@@ -173,76 +170,61 @@ export class AgentRunner {
     const contextWindowTokens = params.contextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
     const compaction = params.compaction ?? DEFAULT_COMPACTION_CONFIG;
 
-    // FIXME(arch-debt, v2): Stash-and-restore is a bandage for the fact that
-    // `emit()` reads sessionKey/turnId from instance state (this.currentParams),
-    // and SubagentRunner reuses the SAME AgentRunner instance via a nested
-    // run() call. Without the stash, the inner run's finally resets
-    // currentParams to null and the parent's subsequent emit() calls
-    // (tool_result, second llm_call, run_end) all early-return silently.
-    //
-    // Cleaner alternatives for v2 (pick one):
-    //   (B) Drop this.currentParams entirely; pass { sessionKey, turnId } as
-    //       an explicit argument to emit(). Class becomes stateless w.r.t.
-    //       event tagging — supports any reentry/concurrency for free.
-    //   (A) Give SubagentRunner its own AgentRunner instance.
-    //   (C) Wrap run() in AsyncLocalStorage and read currentParams from there.
-    //
-    // v1 picks the smallest patch (B is preferred long-term).
-    const previousParams = this.currentParams;
-    this.currentParams = params;
+    // emit 上下文沿调用链显式透传：消除"实例字段保存当前 run"的隐式状态，
+    // SubagentRunner 嵌套 run() / 任何并发 run() 都不会互相串号事件。
+    const turnCtx: TurnContext = {
+      sessionKey: params.sessionKey,
+      turnId: params.turnId,
+    };
 
-    try {
-      this.emit({ type: 'run_start' });
+    this.emit(turnCtx, { type: 'run_start' });
 
-      // 注意：用户消息的 append 已下沉到 runAttempt() 内部，在 Layer 2 preflight
-      // 通过之后才写入；这样 ContextOverflowError → compactHistory 重试期间，
-      // 当前 user 消息不会污染待压缩的历史，也不会被重复写入。
+    // 注意：用户消息的 append 已下沉到 runAttempt() 内部，在 Layer 2 preflight
+    // 通过之后才写入；这样 ContextOverflowError → compactHistory 重试期间，
+    // 当前 user 消息不会污染待压缩的历史，也不会被重复写入。
 
-      let compactionAttempts = 0;
-      let compacted = false;
+    let compactionAttempts = 0;
+    let compacted = false;
 
-      // 外层压缩重试循环：捕获 ContextOverflowError，压缩 session 后重试
-      while (true) {
-        try {
-          const result = await this.runAttempt(params, contextWindowTokens, compaction);
-          const finalResult: RunResult = { ...result, compacted };
-          this.emit({ type: 'run_end', result: finalResult });
-          return finalResult;
-        } catch (err) {
-          if (err instanceof ContextOverflowError && compactionAttempts < MAX_COMPACTION_RETRIES) {
-            logger.info('compaction retry triggered', {
-              sessionKey: params.sessionKey,
-              turnId: params.turnId,
-              trigger: err.trigger,
-              attempt: compactionAttempts + 1,
-              maxAttempts: MAX_COMPACTION_RETRIES,
-              reason: err.message,
-            });
-            // 执行 LLM 摘要压缩，写入持久化，然后重试 runAttempt
-            // runAttempt 的 loadHistory() 会重新加载压缩后的 session，自动感知摘要
-            await this.compactHistory(params, compaction, err.trigger);
-            compacted = true;
-            compactionAttempts++;
-            continue;
-          }
-
-          // 超过重试上限，或非 ContextOverflowError → 向上抛出
-          const error = err instanceof Error ? err : new Error(String(err));
-          if (err instanceof ContextOverflowError) {
-            logger.error('compaction retries exhausted', {
-              sessionKey: params.sessionKey,
-              turnId: params.turnId,
-              attempts: compactionAttempts,
-              maxAttempts: MAX_COMPACTION_RETRIES,
-              reason: err.message,
-            });
-          }
-          this.emit({ type: 'error', error });
-          throw error;
+    // 外层压缩重试循环：捕获 ContextOverflowError，压缩 session 后重试
+    while (true) {
+      try {
+        const result = await this.runAttempt(turnCtx, params, contextWindowTokens, compaction);
+        const finalResult: RunResult = { ...result, compacted };
+        this.emit(turnCtx, { type: 'run_end', result: finalResult });
+        return finalResult;
+      } catch (err) {
+        if (err instanceof ContextOverflowError && compactionAttempts < MAX_COMPACTION_RETRIES) {
+          logger.info('compaction retry triggered', {
+            sessionKey: params.sessionKey,
+            turnId: params.turnId,
+            trigger: err.trigger,
+            attempt: compactionAttempts + 1,
+            maxAttempts: MAX_COMPACTION_RETRIES,
+            reason: err.message,
+          });
+          // 执行 LLM 摘要压缩，写入持久化，然后重试 runAttempt
+          // runAttempt 的 loadHistory() 会重新加载压缩后的 session，自动感知摘要
+          await this.compactHistory(turnCtx, params, compaction, err.trigger);
+          compacted = true;
+          compactionAttempts++;
+          continue;
         }
+
+        // 超过重试上限，或非 ContextOverflowError → 向上抛出
+        const error = err instanceof Error ? err : new Error(String(err));
+        if (err instanceof ContextOverflowError) {
+          logger.error('compaction retries exhausted', {
+            sessionKey: params.sessionKey,
+            turnId: params.turnId,
+            attempts: compactionAttempts,
+            maxAttempts: MAX_COMPACTION_RETRIES,
+            reason: err.message,
+          });
+        }
+        this.emit(turnCtx, { type: 'error', error });
+        throw error;
       }
-    } finally {
-      this.currentParams = previousParams;
     }
   }
 
@@ -255,6 +237,7 @@ export class AgentRunner {
    * 从而"看到"摘要消息而非原始的全量历史。
    */
   private async runAttempt(
+    turnCtx: TurnContext,
     params: RunParams,
     contextWindowTokens: number,
     compaction: CompactionConfig,
@@ -263,7 +246,7 @@ export class AgentRunner {
     const maxTokens = params.maxTokens ?? DEFAULT_MAX_TOKENS;
 
     // 0. 净化会话末尾的孤立 trailing user（来自上一次失败/中断的遗留）
-    this.sanitizeSessionTail(params.sessionKey);
+    this.sanitizeSessionTail(turnCtx);
 
     // 1. 加载历史消息（不含当前用户消息）
     //    若 session 有压缩记录，loadHistory 会自动截断并注入摘要
@@ -272,7 +255,7 @@ export class AgentRunner {
     // 2. Layer 1: per-result 裁剪（仅操作历史消息，不触碰当前用户消息）
     if (compaction.enabled) {
       messages = pruneToolResults(messages, compaction, contextWindowTokens, (info) => {
-        this.emit({
+        this.emit(turnCtx, {
           type: 'tool_result_pruned',
           toolUseId: info.toolUseId ?? `index:${info.index}`,
           originalChars: info.originalChars,
@@ -351,11 +334,11 @@ export class AgentRunner {
         pendingSteeringMessages = [];
       }
 
-      this.emit({ type: 'llm_call', round: llmCallCount });
+      this.emit(turnCtx, { type: 'llm_call', round: llmCallCount });
       llmCallCount++;
 
       // 流式调用 LLM（内部捕获 API 级别的 context overflow 错误）
-      const llmResult = await this.callLLMStream({
+      const llmResult = await this.callLLMStream(turnCtx, {
         model: params.model,
         system: params.systemPrompt,
         messages,
@@ -396,7 +379,7 @@ export class AgentRunner {
         const toolResultBlocks: ChatContentBlock[] = [];
         for (const toolUse of toolUseBlocks) {
           // tool_use 事件发原始 input（hook 运行之前）
-          this.emit({ type: 'tool_use', name: toolUse.name, input: toolUse.input });
+          this.emit(turnCtx, { type: 'tool_use', name: toolUse.name, input: toolUse.input });
 
           // before_tool_call hooks（sequential，priority 降序）
           let effectiveInput = toolUse.input;
@@ -410,7 +393,7 @@ export class AgentRunner {
             });
             if (beforeResult.action === 'deny') {
               const blocked: ToolResult = { content: `Tool blocked: ${beforeResult.reason}`, isError: true };
-              this.emit({ type: 'tool_result', name: toolUse.name, result: blocked });
+              this.emit(turnCtx, { type: 'tool_result', name: toolUse.name, result: blocked });
               toolResultBlocks.push({ type: 'tool_result', tool_use_id: toolUse.id, content: blocked.content });
               continue;
             }
@@ -428,7 +411,7 @@ export class AgentRunner {
           const result = await this.executeTool(toolUse.name, effectiveInput, toolCtx);
           const durationMs = Date.now() - startTime;
 
-          this.emit({ type: 'tool_result', name: toolUse.name, result });
+          this.emit(turnCtx, { type: 'tool_result', name: toolUse.name, result });
           toolResultBlocks.push({
             type: 'tool_result',
             tool_use_id: toolUse.id,
@@ -508,6 +491,7 @@ export class AgentRunner {
    * @param trigger 触发原因（'preemptive' | 'overflow' | 'manual'）
    */
   private async compactHistory(
+    turnCtx: TurnContext,
     params: RunParams,
     compaction: CompactionConfig,
     trigger: 'preemptive' | 'overflow' | 'manual',
@@ -516,7 +500,7 @@ export class AgentRunner {
     //    若 preemptive 触发：runAttempt 已先净化，此处 no-op。
     //    若 overflow 触发：runAttempt 已 append 过 user，此处需要把这条剥离，
     //    避免它进入 compactMessages 的输入。
-    this.sanitizeSessionTail(params.sessionKey);
+    this.sanitizeSessionTail(turnCtx);
 
     // 加载当前历史消息（用于压缩，不含当前用户消息）
     const messages = this.loadHistory(params.sessionKey);
@@ -532,7 +516,7 @@ export class AgentRunner {
       });
     }
 
-    this.emit({ type: 'compaction_start', trigger, estimatedTokens });
+    this.emit(turnCtx, { type: 'compaction_start', trigger, estimatedTokens });
 
     // 执行 LLM 摘要压缩
     const compactResult = await compactMessages({
@@ -580,7 +564,7 @@ export class AgentRunner {
       });
     }
 
-    this.emit({
+    this.emit(turnCtx, {
       type: 'compaction_end',
       tokensBefore: compactResult.stats.tokensBefore,
       tokensAfter: compactResult.stats.tokensAfter,
@@ -649,13 +633,16 @@ export class AgentRunner {
    * 额外处理：捕获 LLM API 返回的 context overflow 类型错误，
    * 包装成 ContextOverflowError 向上抛出，使外层 retry 循环能统一处理。
    */
-  private async callLLMStream(params: {
-    model: string;
-    system?: string;
-    messages: ChatMessage[];
-    tools?: RunParams['tools'];
-    maxTokens: number;
-  }): Promise<{ content: ChatContentBlock[]; stopReason: string; usage: TokenUsage }> {
+  private async callLLMStream(
+    turnCtx: TurnContext,
+    params: {
+      model: string;
+      system?: string;
+      messages: ChatMessage[];
+      tools?: RunParams['tools'];
+      maxTokens: number;
+    },
+  ): Promise<{ content: ChatContentBlock[]; stopReason: string; usage: TokenUsage }> {
     const contentBlocks: ChatContentBlock[] = [];
     let currentText = '';
     let stopReason = 'end_turn';
@@ -672,7 +659,7 @@ export class AgentRunner {
         switch (event.type) {
           case 'text_delta':
             currentText += event.text;
-            this.emit({ type: 'text_delta', text: event.text });
+            this.emit(turnCtx, { type: 'text_delta', text: event.text });
             break;
 
           case 'tool_use':
@@ -701,8 +688,8 @@ export class AgentRunner {
       // 将 LLM API 的 context overflow 错误统一包装为 ContextOverflowError
       if (err instanceof Error && isContextOverflowError(err)) {
         logger.warn('LLM API returned context overflow', {
-          sessionKey: this.currentParams?.sessionKey,
-          turnId: this.currentParams?.turnId,
+          sessionKey: turnCtx.sessionKey,
+          turnId: turnCtx.turnId,
           model: params.model,
           originalMessage: err.message,
         });
@@ -786,24 +773,24 @@ export class AgentRunner {
     });
   }
 
-  private emit(event: AgentEventInput): void {
+  /**
+   * 发出 AgentEvent。turnCtx 显式由调用方提供，AgentRunner 自身不持有
+   * "当前 run 是哪个"的状态——这让嵌套 / 并发 run() 都能正确标签事件。
+   */
+  private emit(turnCtx: TurnContext, event: AgentEventInput): void {
     if (!this.onEvent) return;
-    if (!this.currentParams) {
-      // 防御性：理论上 emit 只应在 run() 期间调用，currentParams 必然已设置
-      return;
-    }
     this.onEvent({
       ...event,
-      sessionKey: this.currentParams.sessionKey,
-      turnId: this.currentParams.turnId,
+      sessionKey: turnCtx.sessionKey,
+      turnId: turnCtx.turnId,
     } as AgentEvent);
   }
 }
 
 /**
- * AgentRunner 内部 emit 的输入类型：每个 AgentEvent 变体去掉 sessionKey/turnId 后的形式。
- * 使用条件类型分发，确保每个变体保留各自的 discriminator 字段。
- * sessionKey/turnId 由 emit 从 currentParams 注入，调用方不必手动填。
+ * AgentRunner 内部 emit 的输入类型：每个 AgentEvent 变体去掉 sessionKey/turnId
+ * 后的形式。使用条件类型分发，确保每个变体保留各自的 discriminator 字段。
+ * sessionKey/turnId 由 emit 从显式传入的 TurnContext 注入，调用方不必手动填。
  */
 type AgentEventInput = AgentEvent extends infer E
   ? E extends AgentEvent
