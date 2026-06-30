@@ -173,6 +173,22 @@ export class AgentRunner {
     const contextWindowTokens = params.contextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
     const compaction = params.compaction ?? DEFAULT_COMPACTION_CONFIG;
 
+    // FIXME(arch-debt, v2): Stash-and-restore is a bandage for the fact that
+    // `emit()` reads sessionKey/turnId from instance state (this.currentParams),
+    // and SubagentRunner reuses the SAME AgentRunner instance via a nested
+    // run() call. Without the stash, the inner run's finally resets
+    // currentParams to null and the parent's subsequent emit() calls
+    // (tool_result, second llm_call, run_end) all early-return silently.
+    //
+    // Cleaner alternatives for v2 (pick one):
+    //   (B) Drop this.currentParams entirely; pass { sessionKey, turnId } as
+    //       an explicit argument to emit(). Class becomes stateless w.r.t.
+    //       event tagging — supports any reentry/concurrency for free.
+    //   (A) Give SubagentRunner its own AgentRunner instance.
+    //   (C) Wrap run() in AsyncLocalStorage and read currentParams from there.
+    //
+    // v1 picks the smallest patch (B is preferred long-term).
+    const previousParams = this.currentParams;
     this.currentParams = params;
 
     try {
@@ -226,7 +242,7 @@ export class AgentRunner {
         }
       }
     } finally {
-      this.currentParams = null;
+      this.currentParams = previousParams;
     }
   }
 

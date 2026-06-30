@@ -515,6 +515,74 @@ describe('AgentRunner', () => {
 
       expect(llmCalls).toEqual([0, 1]);
     });
+
+    it('preserves the parent run\'s emit context when a tool re-enters run() (nested subagent regression)', async () => {
+      // Simulates the subagent path: the parent's toolExecutor invokes
+      // runner.run(...) for a CHILD turn with a different sessionKey/turnId,
+      // then control returns to the parent. If currentParams were reset to
+      // null after the nested call, the parent's subsequent emit() events
+      // (tool_result, second llm_call, run_end) would all be dropped.
+      const llmClient = createMockLLMClient([
+        // Parent round 1: emit tool_use.
+        [
+          { type: 'message_start' },
+          { type: 'tool_use', id: 'tu-1', name: 'nested', input: {} },
+          { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+        // Child run (triggered from inside toolExecutor).
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'child' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 5, outputTokens: 2 } },
+        ],
+        // Parent round 2 (after tool result).
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'parent-final' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 15, outputTokens: 7 } },
+        ],
+      ]);
+
+      const events: AgentEvent[] = [];
+      const runner = new AgentRunner({
+        llmClient,
+        sessionManager,
+        onEvent: (e) => events.push(e),
+        toolExecutor: async () => {
+          // Re-enter run() with a different sessionKey, mirroring SubagentRunner.
+          await sessionManager.createSession('child').catch(() => undefined);
+          await runner.run({
+            sessionKey: 'child',
+            message: 'child-msg',
+            model: 'test',
+            systemPrompt: '',
+            turnId: 'child-turn',
+          });
+          return { content: 'tool-output' };
+        },
+      });
+
+      const result = await runner.run({
+        sessionKey: 'main',
+        message: 'Parent kicks off',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'parent-turn',
+      });
+
+      // Parent-only assertions: post-nested events must reach onEvent with
+      // the parent's sessionKey/turnId.
+      expect(result.text).toBe('parent-final');
+      const parentEvents = events.filter((e) => e.sessionKey === 'main');
+      const parentTypes = parentEvents.map((e) => e.type);
+      expect(parentTypes).toContain('tool_result');
+      expect(parentTypes.filter((t) => t === 'llm_call').length).toBe(2);
+      expect(parentTypes).toContain('run_end');
+      // Confirm tagging: every parent event carries the parent's turnId.
+      for (const e of parentEvents) {
+        expect(e.turnId).toBe('parent-turn');
+      }
+    });
   });
 
   // ── Session 持久化 ─────────────────────────────────
