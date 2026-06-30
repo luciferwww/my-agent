@@ -919,6 +919,14 @@ export class RuntimeApp {
         contextFiles: this.resources.contextFiles,
         promptDefinitions: this.resources.toolBundle.promptDefinitions,
         overrides: params,
+        workspaceDir: this.resources.workspaceDir,
+        // Only inject the <available-subagents> section when the feature is
+        // on. SystemPromptBuilder additionally suppresses it in minimal mode
+        // (which is what subagents themselves get).
+        availableSubagents:
+          this.resources.resolvedConfig.subagents?.enabled !== false
+            ? this.getAvailableSubagents()
+            : undefined,
       }),
     );
 
