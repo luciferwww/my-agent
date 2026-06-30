@@ -94,6 +94,109 @@ describe('WebSocketChannel', () => {
       });
     });
   });
+
+  // PR-7: subagent_* events carry the child sessionKey; WebSocketChannel must
+  // route them to the parent's audience so subscribers actually see them.
+  describe('subagent event audience routing', () => {
+    it('routes subagent_start to the parent sessionKey audience', async () => {
+      const handler = vi.fn(async () => undefined);
+      channel = new WebSocketChannel({ port: 0 });
+      channel.onMessage(handler);
+      await channel.start();
+
+      const client = await connectClient(channel);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'client-1' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'client-1' });
+
+      // Subscribe to 'main' by running a turn against it.
+      client.send(JSON.stringify({ type: 'run_turn', sessionKey: 'main', message: 'hi' }));
+      await vi.waitFor(() => expect(handler).toHaveBeenCalled());
+
+      channel.send({
+        type: 'subagent_start',
+        runId: 'run-1',
+        sessionKey: 'main:subagent:run-1:1',
+        turnId: 'child-turn-1',
+        depth: 1,
+        subagentType: 'general-purpose',
+        lifecycle: 'blocking',
+        trigger: {
+          source: 'llm-tool',
+          parentSessionKey: 'main',
+          parentTurnId: 'parent-turn-1',
+          parentToolUseId: 'tu-1',
+        },
+      });
+
+      await expectMessage(client, {
+        type: 'subagent_start',
+        runId: 'run-1',
+        sessionKey: 'main:subagent:run-1:1',
+        turnId: 'child-turn-1',
+        depth: 1,
+        subagentType: 'general-purpose',
+        lifecycle: 'blocking',
+        trigger: {
+          source: 'llm-tool',
+          parentSessionKey: 'main',
+          parentTurnId: 'parent-turn-1',
+          parentToolUseId: 'tu-1',
+        },
+      });
+    });
+
+    it('routes subagent_end to the parent sessionKey audience', async () => {
+      const handler = vi.fn(async () => undefined);
+      channel = new WebSocketChannel({ port: 0 });
+      channel.onMessage(handler);
+      await channel.start();
+
+      const client = await connectClient(channel);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'client-1' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'client-1' });
+
+      client.send(JSON.stringify({ type: 'run_turn', sessionKey: 'main', message: 'hi' }));
+      await vi.waitFor(() => expect(handler).toHaveBeenCalled());
+
+      channel.send({
+        type: 'subagent_end',
+        runId: 'run-1',
+        sessionKey: 'main:subagent:run-1:1',
+        turnId: 'child-turn-1',
+        depth: 1,
+        subagentType: 'general-purpose',
+        lifecycle: 'blocking',
+        trigger: {
+          source: 'llm-tool',
+          parentSessionKey: 'main',
+          parentTurnId: 'parent-turn-1',
+          parentToolUseId: 'tu-1',
+        },
+        outcome: 'ok',
+        usage: { inputTokens: 10, outputTokens: 5 },
+        durationMs: 123,
+      });
+
+      await expectMessage(client, {
+        type: 'subagent_end',
+        runId: 'run-1',
+        sessionKey: 'main:subagent:run-1:1',
+        turnId: 'child-turn-1',
+        depth: 1,
+        subagentType: 'general-purpose',
+        lifecycle: 'blocking',
+        trigger: {
+          source: 'llm-tool',
+          parentSessionKey: 'main',
+          parentTurnId: 'parent-turn-1',
+          parentToolUseId: 'tu-1',
+        },
+        outcome: 'ok',
+        usage: { inputTokens: 10, outputTokens: 5 },
+        durationMs: 123,
+      });
+    });
+  });
 });
 
 async function connectClient(channel: WebSocketChannel): Promise<WebSocket> {

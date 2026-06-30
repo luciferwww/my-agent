@@ -25,6 +25,7 @@ const log = Logger.get('CliChannel');
 const dim = (s: string) => `\x1b[90m${s}\x1b[0m`;
 const yellow = (s: string) => `\x1b[33m${s}\x1b[0m`;
 const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
+const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
 
 function truncateLine(line: string): string {
   return line.length > PREVIEW_LINE_MAX_CHARS
@@ -164,6 +165,27 @@ export class CliChannel implements Channel {
       case 'run_end':
         this.breakStream();
         break;
+
+      case 'subagent_start':
+        // Open a visual nesting level for the subagent. We don't track
+        // indentation state here; the depth tag is enough for a CLI.
+        this.breakStream();
+        this.output.write(
+          cyan(`[▶ subagent: ${event.subagentType} (depth=${event.depth})]\n`),
+        );
+        break;
+
+      case 'subagent_end': {
+        this.breakStream();
+        const colorize = event.outcome === 'ok' ? cyan : red;
+        const reasonSuffix = event.reason ? ` reason="${event.reason}"` : '';
+        this.output.write(
+          colorize(
+            `[◀ subagent: ${event.subagentType} outcome=${event.outcome} ${event.durationMs}ms${reasonSuffix}]\n`,
+          ),
+        );
+        break;
+      }
 
       // run_start / llm_call / tool_result_pruned 默认忽略
     }

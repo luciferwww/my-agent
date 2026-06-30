@@ -1,4 +1,5 @@
 import type { AgentEvent } from '../../core/runner/types.js';
+import { isSubagentSessionKey, parseSubagentSessionKey } from '../../core/subagent/index.js';
 import { Logger } from '../../platform/logger/index.js';
 import { WS_MAX_PAYLOAD_BYTES } from '../../core/media/constants.js';
 import type {
@@ -100,7 +101,15 @@ export class WebSocketChannel implements Channel {
   }
 
   send(event: AgentEvent): void {
-    const sessionAudience = this.sessions.get(event.sessionKey);
+    // Subagent events carry the CHILD sessionKey (e.g. "main:subagent:abc:1"),
+    // but WebSocket clients subscribe to the parent's sessionKey. Re-derive
+    // the root label so events reach the right audience.
+    const audienceKey =
+      (event.type === 'subagent_start' || event.type === 'subagent_end') &&
+      isSubagentSessionKey(event.sessionKey)
+        ? parseSubagentSessionKey(event.sessionKey).rootLabel
+        : event.sessionKey;
+    const sessionAudience = this.sessions.get(audienceKey);
     if (!sessionAudience || sessionAudience.size === 0) return;
 
     if (event.type !== 'text_delta') {
@@ -108,6 +117,7 @@ export class WebSocketChannel implements Channel {
         channelId: this.id,
         eventType: event.type,
         sessionKey: event.sessionKey,
+        audienceKey,
         audienceSize: sessionAudience.size,
       });
     }
