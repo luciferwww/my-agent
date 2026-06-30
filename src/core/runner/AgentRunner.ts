@@ -89,6 +89,17 @@ export class AgentRunner {
     this.onEvent = config.onEvent;
   }
 
+  /**
+   * 替换 toolExecutor。供 RuntimeApp.create() 在 bootstrap 之后追加 `task` 工具时调用：
+   * task 工具依赖 SubagentRunner，SubagentRunner 又依赖 RuntimeApp 实例字段，
+   * 因此 toolBundle 只能在 RuntimeApp.create 内部完工，AgentRunner 必须支持后置替换。
+   *
+   * 仅在 RuntimeApp.create 内部、`run()` 启动之前调用；运行中调用结果未定义。
+   */
+  setToolExecutor(executor: ToolExecutor): void {
+    this.toolExecutor = executor;
+  }
+
   on<K extends HookName>(
     hookName: K,
     handler: HookHandlerMap[K],

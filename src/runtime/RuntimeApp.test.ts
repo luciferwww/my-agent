@@ -35,7 +35,7 @@ describe('RuntimeApp', () => {
     const deps = createTestDependencies({
       createSessionManager: () => ({ resolveSession } as never),
       createSystemPromptBuilder: () => ({ build } as never),
-      createAgentRunner: () => ({ run: runnerRun } as never),
+      createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} } as never),
       createMemoryManager: async () => null,
     });
 
@@ -134,7 +134,7 @@ describe('RuntimeApp', () => {
       }));
 
     const deps = createTestDependencies({
-      createAgentRunner: () => ({ run: runnerRun } as never),
+      createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} } as never),
       createMemoryManager: async () => null,
     });
 
@@ -209,7 +209,7 @@ describe('RuntimeApp', () => {
     });
 
     const deps = createTestDependencies({
-      createAgentRunner: () => ({ run: runnerRun } as never),
+      createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} } as never),
       createMemoryManager: async () => null,
     });
 
@@ -294,6 +294,7 @@ describe('RuntimeApp', () => {
           return agentRunner;
         }),
         run: runnerRun,
+        setToolExecutor: vi.fn(),
       };
 
       const deps = createTestDependencies({
@@ -499,6 +500,7 @@ function createTestDependencies(
         usage: { inputTokens: 1, outputTokens: 1 },
         toolRounds: 0,
       }),
+      setToolExecutor: () => {},
     }) as never,
     getBuiltinTools: () => [builtinTool],
     ...overrides,

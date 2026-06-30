@@ -374,6 +374,7 @@ async function buildApp(
       ({
         run: runnerRun,
         on: vi.fn(),
+        setToolExecutor: vi.fn(),
       }) as unknown as AgentRunner,
     getBuiltinTools: () => [builtinTool],
   };

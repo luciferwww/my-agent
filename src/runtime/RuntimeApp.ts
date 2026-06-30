@@ -9,7 +9,7 @@ import type {
   TurnInteractionResponse,
 } from '../adapters/channel/types.js';
 import { Logger } from '../platform/logger/index.js';
-import { loadContextFiles } from '../core/workspace/index.js';
+import { loadContextFiles, loadContextFilesFromDir } from '../core/workspace/index.js';
 import type { ContextFile } from '../core/workspace/types.js';
 import {
   processInboundMessage,
@@ -20,6 +20,30 @@ import { bootstrapRuntime } from './bootstrap.js';
 import { classifyRuntimeError, createRuntimeError } from './errors.js';
 import { buildSystemPromptParams } from './prompt-factory.js';
 import { resolveToolPolicy } from './tool-approval-policy.js';
+import {
+  applyDenyFilter,
+  buildTaskToolIfEnabled,
+  toLlmToolDefinitions,
+  toPromptToolDefinitions,
+} from './tool-registry.js';
+import { createToolExecutor } from '../core/tools/index.js';
+import {
+  createSubagentHostBindings,
+  runSubagentTurn as runSubagentTurnImpl,
+} from './subagent-orchestration.js';
+import { SubagentRunner } from '../core/subagent/SubagentRunner.js';
+import {
+  buildGeneralPurposeProfile,
+  loadSubagentProfiles,
+  resolveSubagentCapabilities,
+  collectAvailableSubagents,
+} from '../core/subagent/index.js';
+import type {
+  SubagentProfile,
+  SubagentRunInput,
+  SubagentRunResult,
+} from '../core/subagent/types.js';
+import type { AvailableSubagentEntry } from '../core/subagent/index.js';
 import type {
   MessageRouteContext,
   PendingSteeringInput,
@@ -69,6 +93,21 @@ export class RuntimeApp {
   private closePromise?: Promise<RuntimeShutdownReport>;
   private shutdownReport?: RuntimeShutdownReport;
 
+  /**
+   * Profile registry including the built-in `general-purpose` entry. Filled
+   * by `create()` after `bootstrapRuntime()` returns; not part of
+   * RuntimeResourceSet because it is consumed only by RuntimeApp itself
+   * (the public surface is `runSubagentTurn()`).
+   */
+  private subagentProfiles!: ReadonlyMap<string, SubagentProfile>;
+  /**
+   * SubagentRunner instance. Depends on `routeContextByTurn` (RuntimeApp
+   * instance field) via the host bindings, so it can only be constructed
+   * after `new RuntimeApp(...)` returns. Definite-assignment (`!`) is
+   * scoped to the two lines in `create()` that fill it.
+   */
+  private subagentRunner!: SubagentRunner;
+
   private constructor(
     private readonly resources: RuntimeResourceSet,
     private state: RuntimeLifecycleState,
@@ -106,7 +145,92 @@ export class RuntimeApp {
       onAgentEvent: fanout,
     });
 
-    return new RuntimeApp(resources, state, channels, options.onEvent);
+    const app = new RuntimeApp(resources, state, channels, options.onEvent);
+
+    // ── Subagent post-bootstrap wiring ───────────────────────────────
+    //
+    // SubagentRunner + task tool need RuntimeApp instance state
+    // (routeContextByTurn) and a live getter over resources.contextFiles,
+    // so they cannot be built inside bootstrapRuntime. They are assembled
+    // here, then the agentRunner's toolExecutor is swapped to include the
+    // task tool.
+
+    // 1. Profile registry: built-in general-purpose first (Map insertion
+    //    order drives <available-subagents> ordering downstream), then
+    //    user-defined entries from config.
+    const registeredToolNames = new Set(resources.toolBundle.tools.map((t) => t.name));
+    const userProfiles = loadSubagentProfiles(
+      resources.resolvedConfig.subagents?.list ?? [],
+      options.workspaceDir,
+      registeredToolNames,
+    );
+    const generalPurpose = buildGeneralPurposeProfile(options.workspaceDir);
+    const subagentProfilesMap = new Map<string, SubagentProfile>();
+    subagentProfilesMap.set(generalPurpose.id, generalPurpose);
+    for (const p of userProfiles) {
+      subagentProfilesMap.set(p.id, p);
+    }
+    const subagentProfiles: ReadonlyMap<string, SubagentProfile> = subagentProfilesMap;
+
+    // 2. Host bindings — share app.routeContextByTurn map by reference.
+    //    Dot access to a private field is legal from a static method on
+    //    the same class (TS class-private is class-level, not instance-level).
+    const host = createSubagentHostBindings({
+      getParentContextFiles: () => resources.contextFiles,
+      routeContextByTurn: app.routeContextByTurn,
+      resolvedConfig: resources.resolvedConfig,
+      workspaceDir: options.workspaceDir,
+    });
+
+    // 3. SubagentRunner — reuses the SAME AgentRunner instance used by the
+    //    parent. Per-call isolation is provided by RunParams.sessionKey /
+    //    turnId, not by separate runner instances (spec §10).
+    const subagentRunner = new SubagentRunner({
+      agentRunner: resources.agentRunner,
+      sessionManager: resources.sessionManager,
+      systemPromptBuilder: resources.systemPromptBuilder,
+      onEvent: fanout,
+      host,
+      loadContextFilesFromDir: (absDir) =>
+        loadContextFilesFromDir(absDir, {
+          maxFileChars: resources.resolvedConfig.workspace.maxFileChars,
+          maxTotalChars: resources.resolvedConfig.workspace.maxTotalChars,
+        }),
+    });
+
+    // 4. Task tool: append to toolBundle when enabled, then rebuild the
+    //    derived executor / definitions and swap them onto the
+    //    AgentRunner. Re-applies the deny filter so a config that listed
+    //    'task' in deny still drops it (defensive).
+    const taskTool = buildTaskToolIfEnabled({
+      enabled: resources.resolvedConfig.subagents?.enabled !== false,
+      subagentRunner,
+      profileRegistry: subagentProfiles,
+      getCapabilities: (sessionKey) =>
+        resolveSubagentCapabilities(sessionKey, host.maxDepth),
+      maxDepth: host.maxDepth,
+    });
+
+    if (taskTool) {
+      const merged = applyDenyFilter(
+        [...resources.toolBundle.tools, taskTool],
+        resources.resolvedConfig.tools?.deny ?? [],
+      );
+      const newExecutor = createToolExecutor(merged);
+      resources.toolBundle = {
+        tools: merged,
+        executor: newExecutor,
+        llmDefinitions: toLlmToolDefinitions(merged),
+        promptDefinitions: toPromptToolDefinitions(merged),
+      };
+      resources.agentRunner.setToolExecutor(newExecutor);
+    }
+
+    // 5. Fill in the definite-assignment private fields.
+    app.subagentProfiles = subagentProfiles;
+    app.subagentRunner = subagentRunner;
+
+    return app;
   }
 
   // ── 状态查询 ──────────────────────────────────────────────────────
@@ -640,6 +764,33 @@ export class RuntimeApp {
         });
       }
     }
+  }
+
+  /**
+   * Library entry point: spawn a subagent run outside any LLM tool call.
+   *
+   * Resolves `input.subagentType` against the registered profiles
+   * (fail-fast on unknown ids — unlike the LLM `task` tool which falls
+   * back to general-purpose), then delegates to the SubagentRunner.
+   *
+   * The returned `SubagentRunResult` always exists — the runner never
+   * rethrows; failures surface as `outcome: 'error'`.
+   */
+  async runSubagentTurn(input: SubagentRunInput): Promise<SubagentRunResult> {
+    return runSubagentTurnImpl(input, {
+      subagentRunner: this.subagentRunner,
+      profileRegistry: this.subagentProfiles,
+    });
+  }
+
+  /**
+   * Snapshot the projection of `subagentProfiles` used for the
+   * `<available-subagents>` system prompt section. Caller (typically
+   * the prompt-factory layer) decides whether to inject it based on
+   * `subagents.enabled` and the prompt mode.
+   */
+  getAvailableSubagents(): AvailableSubagentEntry[] {
+    return collectAvailableSubagents(this.subagentProfiles);
   }
 
   async reloadContextFiles(): Promise<ContextFile[]> {
