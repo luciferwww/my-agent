@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
 
-import { loadConfig, resolveAgentConfig, getEnvOverrides, DEFAULT_AGENT_CONFIG } from '../src/config/index.js';
+import { loadConfig, resolveAgentConfig, getEnvOverrides, DEFAULT_AGENT_CONFIG } from '../src/platform/config/index.js';
 
 // ── helpers ────────────────────────────────────────────────────────────
 
@@ -75,7 +75,8 @@ await runStep('No config file → all defaults', async () => {
   assert.equal(config.workspaceDir, tmpDir);
   assert.equal(resolved.llm.maxTokens, 4096);
   assert.equal(resolved.llm.apiKey, undefined);
-  assert.equal(resolved.runner.maxToolRounds, 10);
+  assert.equal(resolved.runner.maxLlmCalls, 12);
+  assert.equal(resolved.runner.inTurnMessageMode, 'followup');
   assert.equal(resolved.memory.enabled, true);
   assert.equal(resolved.memory.embedding.model, 'Xenova/all-MiniLM-L6-v2');
   assert.equal(resolved.prompt.mode, 'full');
@@ -108,7 +109,7 @@ await runStep('Config file merges with defaults', async () => {
   assert.equal(resolved.tools.execTimeout, 60);
 
   // Non-overridden stay default
-  assert.equal(resolved.runner.maxToolRounds, 10);
+  assert.equal(resolved.runner.maxLlmCalls, 12);
   assert.equal(resolved.memory.embedding.model, 'Xenova/all-MiniLM-L6-v2');
   assert.equal(resolved.memory.search.vectorWeight, 0.7);
 
@@ -141,7 +142,7 @@ await runStep('Per-agent override via resolveAgentConfig', async () => {
   assert.equal(coding.llm.model, 'claude-opus-4-20250514');
   assert.equal(coding.llm.maxTokens, 16384);
   assert.equal(coding.memory.enabled, false);
-  assert.equal(coding.runner.maxToolRounds, 10); // inherited
+  assert.equal(coding.runner.maxLlmCalls, 12); // inherited
 
   // Quick agent
   const quick = resolveAgentConfig(config, { agentId: 'quick' });

@@ -1,0 +1,1923 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>my-agent WebSocket Chat</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://unpkg.com/marked@18.0.4/lib/marked.umd.js"></script>
+    <style>
+      /* Base */
+      :root {
+        --bg: #f6efe6;
+        --panel: rgba(255, 251, 246, 0.94);
+        --panel-strong: #fffaf4;
+        --surface: #fffdf9;
+        --surface-soft: #fbf5ee;
+        --border: rgba(191, 160, 128, 0.24);
+        --border-strong: rgba(220, 184, 149, 0.5);
+        --text: #33271e;
+        --muted: #8a7763;
+        --accent: #e7a47d;
+        --accent-strong: #d8895c;
+        --accent-2: #f3c5ad;
+        --success: #b9ddd2;
+        --danger: #b42318;
+        --shadow: 0 20px 50px rgba(132, 97, 57, 0.08);
+        --radius: 24px;
+        --message-min-width: min(320px, 100%);
+        --message-max-width: 80%;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        height: 100vh;
+        overflow: hidden;
+        font-family: "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(231, 164, 125, 0.22), transparent 24%),
+          linear-gradient(180deg, #fbf7f1 0%, #f5ece1 48%, #f1e3d2 100%);
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.42), transparent 28%);
+      }
+
+      /* Layout */
+      #app {
+        position: relative;
+        display: grid;
+        grid-template-columns: 320px minmax(0, 1fr);
+        gap: 18px;
+        width: min(1480px, calc(100vw - 28px));
+        height: calc(100vh - 28px);
+        margin: 14px auto;
+      }
+
+      .panel {
+        min-height: 0;
+        backdrop-filter: blur(12px);
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+      }
+
+      .sidebar {
+        padding: 22px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        overflow: auto;
+      }
+
+      /* Sidebar */
+      .brand {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .eyebrow {
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        font-size: 11px;
+        color: var(--muted);
+        font-weight: 700;
+      }
+
+      .brand-title {
+        margin: 0;
+        font-size: 30px;
+        line-height: 1;
+        font-weight: 700;
+      }
+
+      .muted-copy {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.45;
+      }
+
+      .status-copy {
+        margin-top: 10px;
+      }
+
+      .status-card {
+        padding: 16px 18px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid var(--border);
+      }
+
+      .status-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        padding: 7px 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.88);
+        color: var(--muted);
+      }
+
+      .status-pill::before {
+        content: "";
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: #9aa29b;
+      }
+
+      .status-pill.connected::before {
+        background: #6bb39c;
+        box-shadow: 0 0 0 4px rgba(107, 179, 156, 0.16);
+      }
+
+      .status-pill.connecting::before {
+        background: var(--accent-strong);
+        box-shadow: 0 0 0 4px rgba(216, 137, 92, 0.14);
+      }
+
+      .section {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .section-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .section-title h2 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      .section-note {
+        margin: -4px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .section-title small {
+        color: var(--muted);
+      }
+
+      .field-grid {
+        display: grid;
+        gap: 10px;
+      }
+
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .field-label-text {
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+
+      input,
+      textarea,
+      button {
+        font: inherit;
+      }
+
+      input,
+      textarea {
+        width: 100%;
+        padding: 12px 14px;
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.9);
+        border: 1px solid rgba(191, 160, 128, 0.25);
+        border-radius: 14px;
+        outline: none;
+        transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+      }
+
+      input:focus,
+      textarea:focus {
+        border-color: rgba(216, 137, 92, 0.42);
+        box-shadow: 0 0 0 4px rgba(231, 164, 125, 0.14);
+      }
+
+      textarea {
+        min-height: 108px;
+        resize: vertical;
+      }
+
+      .button-row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 11px 16px;
+        cursor: pointer;
+        transition: transform 140ms ease, opacity 140ms ease, box-shadow 140ms ease;
+      }
+
+      button:hover:not(:disabled) {
+        transform: translateY(-1px);
+      }
+
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .primary {
+        color: #fff;
+        background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+        box-shadow: 0 12px 24px rgba(216, 137, 92, 0.24);
+      }
+
+      .secondary {
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.88);
+        border: 1px solid rgba(191, 160, 128, 0.22);
+      }
+
+      .ghost {
+        color: var(--muted);
+        background: rgba(122, 103, 80, 0.08);
+      }
+
+      /* Conversation */
+      .chat-shell {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        min-height: 0;
+        overflow: hidden;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 251, 247, 0.92));
+      }
+
+      .chat-header {
+        padding: 22px 24px 18px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+      }
+
+      .chat-title {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 700;
+      }
+
+      .chat-subtitle {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 15px;
+      }
+
+      .chat-header-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .waiting-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 14px 18px;
+        border-radius: 999px;
+        border: 1px solid rgba(231, 164, 125, 0.42);
+        background: rgba(255, 246, 239, 0.92);
+        color: #9d562e;
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .chat-log {
+        overflow: auto;
+        min-height: 0;
+        padding: 22px 24px 30px;
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+      }
+
+      .empty-state {
+        margin: auto;
+        max-width: 560px;
+        padding: 24px 28px;
+        border-radius: 24px;
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.72);
+        text-align: left;
+        color: var(--muted);
+        line-height: 1.6;
+        display: grid;
+        gap: 12px;
+      }
+
+      .empty-state h3 {
+        margin: 0;
+        color: var(--text);
+        font-size: 20px;
+      }
+
+      .empty-state p {
+        margin: 0;
+      }
+
+      .empty-state-list {
+        margin: 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .message {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        animation: rise 220ms ease;
+      }
+
+      .message.user {
+        align-items: flex-end;
+      }
+
+      .message.assistant,
+      .message.system,
+      .message.tool,
+      .message.approval,
+      .message.error {
+        align-items: flex-start;
+      }
+
+      .message-meta {
+        font-size: 13px;
+        color: var(--muted);
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        font-weight: 600;
+      }
+
+      .message.user .message-meta {
+        justify-content: flex-end;
+      }
+
+      .bubble {
+        max-width: var(--message-max-width);
+        padding: 18px 26px;
+        border-radius: 28px;
+        line-height: 1.68;
+        white-space: pre-wrap;
+        word-break: break-word;
+        border: 1px solid rgba(191, 160, 128, 0.18);
+        background: rgba(255, 255, 255, 0.92);
+      }
+
+      .message.user .bubble {
+        background: linear-gradient(180deg, #f7e6d9, #f4dccd);
+        color: var(--text);
+        border-color: rgba(231, 164, 125, 0.24);
+        border-top-right-radius: 12px;
+      }
+
+      .message.assistant .bubble {
+        background: rgba(255, 255, 255, 0.96);
+        border-top-left-radius: 12px;
+      }
+
+      .rich-text {
+        display: grid;
+        gap: 14px;
+        white-space: normal;
+        overflow-x: auto;
+      }
+
+      .rich-text table {
+        border-collapse: collapse;
+        width: max-content;
+        min-width: 100%;
+        font-size: 0.95em;
+      }
+
+      .rich-text th,
+      .rich-text td {
+        padding: 7px 14px;
+        border: 1px solid rgba(191, 160, 128, 0.3);
+        text-align: left;
+        white-space: nowrap;
+      }
+
+      .rich-text th {
+        background: rgba(231, 164, 125, 0.12);
+        font-weight: 600;
+      }
+
+      .rich-text tr:nth-child(even) td {
+        background: rgba(231, 164, 125, 0.04);
+      }
+
+      .rich-text > :first-child {
+        margin-top: 0;
+      }
+
+      .rich-text > :last-child {
+        margin-bottom: 0;
+      }
+
+      .rich-text p,
+      .rich-text ul,
+      .rich-text ol,
+      .rich-text pre,
+      .rich-text h1,
+      .rich-text h2,
+      .rich-text h3,
+      .rich-text h4,
+      .rich-text h5,
+      .rich-text h6,
+      .rich-text hr {
+        margin: 0;
+      }
+
+      .rich-text h1,
+      .rich-text h2,
+      .rich-text h3,
+      .rich-text h4,
+      .rich-text h5,
+      .rich-text h6 {
+        color: #241810;
+        line-height: 1.3;
+      }
+
+      .rich-text h1 { font-size: 1.5em; }
+      .rich-text h2 { font-size: 1.32em; }
+      .rich-text h3 { font-size: 1.18em; }
+
+      .rich-text hr {
+        border: 0;
+        border-top: 1px solid rgba(191, 160, 128, 0.35);
+      }
+
+      .rich-text ul,
+      .rich-text ol {
+        padding-left: 24px;
+      }
+
+      .rich-text li + li {
+        margin-top: 6px;
+      }
+
+      .rich-text a {
+        color: #9d562e;
+        text-decoration: underline;
+        text-decoration-thickness: 1px;
+        text-underline-offset: 3px;
+      }
+
+      .rich-text strong {
+        font-weight: 700;
+      }
+
+      .rich-text code {
+        display: inline;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(47, 36, 30, 0.08);
+        color: #6c3f21;
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 0.95em;
+      }
+
+      .rich-text pre {
+        max-width: 100%;
+        overflow-x: auto;
+        padding: 14px 16px;
+        border-radius: 18px;
+        background: #2f241e;
+        color: #f8efe4;
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .rich-text pre code {
+        display: block;
+        padding: 0;
+        border-radius: 0;
+        background: transparent;
+        color: inherit;
+        font-size: inherit;
+      }
+
+      .message.system .bubble,
+      .message.tool .bubble {
+        background: rgba(255, 249, 242, 0.9);
+        color: #54422c;
+      }
+
+      .message.error .bubble {
+        color: var(--danger);
+        background: rgba(180, 35, 24, 0.08);
+        border-color: rgba(180, 35, 24, 0.18);
+      }
+
+      .message.approval .bubble {
+        padding: 0;
+        background: transparent;
+        border: 0;
+        box-shadow: none;
+      }
+
+      /* Tool call toggle button */
+      .turn-tools-toggle {
+        align-self: flex-start;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 14px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(191, 160, 128, 0.28);
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+      }
+
+      .turn-tools-toggle:hover {
+        background: rgba(255, 255, 255, 0.96);
+        color: var(--text);
+        transform: translateY(-1px);
+      }
+
+      .composer {
+        padding: 18px 24px 24px;
+        border-top: 1px solid var(--border);
+        display: grid;
+        gap: 12px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.48), rgba(255,255,255,0.84));
+      }
+
+      .composer textarea {
+        min-height: 94px;
+      }
+
+      .composer-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+
+      .composer-hint {
+        display: grid;
+        gap: 4px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      /* Approval and tool cards */
+      .approval-card {
+        width: fit-content;
+        min-width: var(--message-min-width);
+        max-width: var(--message-max-width);
+        padding: 22px;
+        background: #fff7ef;
+        border: 1px solid rgba(231, 164, 125, 0.26);
+        border-radius: 26px;
+        box-shadow: none;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .approval-card.pending {
+        border-color: rgba(239, 131, 84, 0.28);
+      }
+
+      .approval-card.resolved {
+        border-color: rgba(107, 179, 156, 0.32);
+        background: #f5fbf9;
+      }
+
+      .approval-card.expired,
+      .approval-card.denied {
+        background: #fff7f4;
+      }
+
+      .approval-card h3 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      .approval-code {
+        margin: 0;
+        padding: 14px;
+        border-radius: 22px;
+        background: #2f241e;
+        color: #f8efe4;
+        border: 1px solid rgba(47, 36, 30, 0.16);
+        max-width: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        white-space: pre;
+        word-break: normal;
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .approval-code,
+      .tool-result-scroll {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(122, 103, 80, 0.72) rgba(47, 36, 30, 0.08);
+      }
+
+      .approval-code::-webkit-scrollbar,
+      .tool-result-scroll::-webkit-scrollbar {
+        height: 12px;
+        width: 12px;
+      }
+
+      .approval-code::-webkit-scrollbar-track,
+      .tool-result-scroll::-webkit-scrollbar-track {
+        background: rgba(47, 36, 30, 0.08);
+        border-radius: 999px;
+      }
+
+      .approval-code::-webkit-scrollbar-thumb,
+      .tool-result-scroll::-webkit-scrollbar-thumb {
+        background: rgba(122, 103, 80, 0.72);
+        border-radius: 999px;
+        border: 2px solid rgba(47, 36, 30, 0.08);
+      }
+
+      .approval-code::-webkit-scrollbar-thumb:hover,
+      .tool-result-scroll::-webkit-scrollbar-thumb:hover {
+        background: rgba(122, 103, 80, 0.9);
+      }
+
+      .approval-meta {
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .meta-tag {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(231, 164, 125, 0.2);
+        color: #9d562e;
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .meta-tag-warn {
+        background: rgba(180, 35, 24, 0.1);
+        color: var(--danger);
+      }
+
+      .meta-tag-muted {
+        background: rgba(122, 103, 80, 0.12);
+        color: var(--muted);
+      }
+
+      .message.assistant.is-interrupted .bubble,
+      .message.assistant.is-interrupted .tool-result-card {
+        opacity: 0.82;
+      }
+
+      .message.assistant.is-interrupted::after {
+        content: "";
+        margin-top: 2px;
+        width: 48px;
+        height: 2px;
+        border-radius: 999px;
+        background: repeating-linear-gradient(
+          90deg,
+          rgba(180, 35, 24, 0.45) 0 6px,
+          transparent 6px 10px
+        );
+      }
+
+      .approval-actions {
+        display: flex;
+        justify-content: flex-start;
+        gap: 10px;
+      }
+
+      .tool-result-card {
+        width: fit-content;
+        min-width: var(--message-min-width);
+        max-width: var(--message-max-width);
+        display: grid;
+        gap: 12px;
+        padding: 18px 20px;
+        border-radius: 22px;
+        border: 1px solid rgba(191, 160, 128, 0.2);
+        background: rgba(255, 250, 244, 0.92);
+      }
+
+      .tool-result-card.is-error {
+        border-color: rgba(180, 35, 24, 0.18);
+        background: rgba(180, 35, 24, 0.06);
+      }
+
+      .tool-result-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .tool-result-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .tool-result-name {
+        font-weight: 700;
+      }
+
+      .tool-result-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 5px 10px;
+        border-radius: 999px;
+        background: rgba(47, 36, 30, 0.08);
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .tool-result-card.is-error .tool-result-badge {
+        background: rgba(180, 35, 24, 0.1);
+        color: var(--danger);
+      }
+
+      .tool-result-preview {
+        max-width: 100%;
+        border-radius: 16px;
+        overflow: hidden;
+        padding: 8px;
+        background: rgba(47, 36, 30, 0.05);
+        color: #5c4a36;
+      }
+
+      .tool-result-body {
+        max-width: 100%;
+        border-radius: 18px;
+        overflow: hidden;
+        padding: 8px;
+        background: #2f241e;
+        color: #f8efe4;
+      }
+
+      .tool-result-scroll {
+        display: block;
+        margin: 0;
+        max-width: 100%;
+        overflow: auto;
+        border-radius: 12px;
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 13px;
+        line-height: 1.55;
+        white-space: pre;
+      }
+
+      .tool-result-preview .tool-result-scroll {
+        padding: 4px 6px 6px;
+      }
+
+      .tool-result-body .tool-result-scroll {
+        padding: 6px 8px 8px;
+        font-family: Consolas, "Courier New", monospace;
+      }
+
+      .approval-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        width: fit-content;
+        padding: 7px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        color: var(--muted);
+        background: rgba(114, 86, 48, 0.08);
+      }
+
+      .approval-status.pending {
+        color: #8c4d24;
+        background: rgba(231, 164, 125, 0.2);
+      }
+
+      .approval-status.allowed {
+        color: #0f5b52;
+        background: rgba(107, 179, 156, 0.18);
+      }
+
+      .approval-status.denied,
+      .approval-status.expired {
+        color: var(--danger);
+        background: rgba(180, 35, 24, 0.1);
+      }
+
+      /* Event feed */
+      .event-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 190px;
+        overflow: auto;
+      }
+
+      .event-item {
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--muted);
+        padding: 10px 12px;
+        background: rgba(255, 255, 255, 0.82);
+        border-radius: 12px;
+        border: 1px solid rgba(191, 160, 128, 0.16);
+      }
+
+      /* Motion and responsive */
+      @keyframes rise {
+        from { opacity: 0; transform: translateY(8px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+
+      @media (max-width: 980px) {
+        body { height: auto; overflow: auto; }
+        #app {
+          grid-template-columns: 1fr;
+          width: min(100vw - 20px, 980px);
+          margin: 10px auto;
+          height: auto;
+          min-height: calc(100vh - 20px);
+        }
+        .sidebar { order: 2; }
+        .chat-shell { order: 1; min-height: 70vh; }
+      }
+
+      /* ── Attachments ───────────────────────────────────────── */
+      .composer.is-dragging { outline: 2px dashed var(--accent); outline-offset: -8px; }
+      .composer-attachments { display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px; }
+      .composer-attach-error { color: var(--danger, #c0382b); font-size: 12px; }
+      .attachment-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+      .attachment-chip {
+        display: flex; align-items: center; gap: 8px;
+        padding: 6px 8px; border: 1px solid var(--border, #2a2a2a); border-radius: 8px;
+        background: var(--panel-muted, rgba(255,255,255,0.03));
+      }
+      .attachment-chip img { width: 36px; height: 36px; object-fit: cover; border-radius: 4px; }
+      .attachment-chip-meta { display: flex; flex-direction: column; font-size: 11px; line-height: 1.3; }
+      .attachment-chip-name { color: var(--fg, #e5e5e5); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .attachment-chip-size { color: var(--fg-muted, #888); }
+      .attachment-chip-badge {
+        display: inline-block; margin-top: 2px; padding: 0 6px; border-radius: 999px;
+        background: var(--accent-soft, rgba(100,180,255,0.15)); color: var(--accent, #6cb6ff); font-size: 10px;
+      }
+      .attachment-chip-remove {
+        appearance: none; background: transparent; border: none; cursor: pointer;
+        color: var(--fg-muted, #888); font-size: 16px; padding: 0 4px;
+      }
+      .attachment-chip-remove:hover { color: var(--danger, #c0382b); }
+      .bubble-text + .bubble-attachments { margin-top: 8px; }
+      .bubble-attachments { display: flex; flex-wrap: wrap; gap: 8px; }
+      .bubble-attachment { display: flex; flex-direction: column; gap: 4px; max-width: 240px; }
+      .bubble-attachment img { width: 100%; max-height: 240px; object-fit: contain; border-radius: 6px; background: rgba(0,0,0,0.2); }
+      .bubble-attachment-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--fg-muted, #888); }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <aside class="panel sidebar">
+        <header class="brand">
+          <div class="eyebrow">WebSocket Client</div>
+          <h1 class="brand-title">my-agent chat</h1>
+          <p class="muted-copy">
+            一个不需要构建的单文件客户端。连接当前 websocket channel，发送消息，接收流式回复，并处理 approval。
+          </p>
+        </header>
+
+        <section class="status-card">
+          <div class="status-row">
+            <div>
+              <div class="eyebrow">Connection</div>
+              <strong>{{ connectionLabel }}</strong>
+            </div>
+            <div class="status-pill" :class="statusClass">{{ connectionStatus }}</div>
+          </div>
+          <p class="muted-copy status-copy">{{ lastStatusMessage }}</p>
+        </section>
+
+        <section class="section">
+          <div class="section-title">
+            <h2>Connection</h2>
+            <small>{{ endpointPreview }}</small>
+          </div>
+          <p class="section-note">
+            Client ID 标识逻辑客户端；Session Key 决定这条消息落到哪条会话，并影响当前页面收到哪些 session 事件。
+          </p>
+          <div class="field-grid">
+            <label>
+              <span class="field-label-text">WebSocket URL</span>
+              <input v-model.trim="form.url" placeholder="ws://127.0.0.1:3001/ws" />
+            </label>
+            <label>
+              <span class="field-label-text">Client ID</span>
+              <input v-model.trim="form.clientId" placeholder="browser-client" />
+            </label>
+            <label>
+              <span class="field-label-text">Session Key</span>
+              <input v-model.trim="form.sessionKey" placeholder="main" />
+            </label>
+            <label>
+              <span class="field-label-text">Model Override</span>
+              <input v-model.trim="form.model" placeholder="留空则使用服务端默认模型" />
+            </label>
+          </div>
+          <div class="button-row">
+            <button class="primary" @click="connect" :disabled="isConnecting || isConnected">
+              {{ isConnected ? 'Connected' : isConnecting ? 'Connecting…' : 'Connect' }}
+            </button>
+            <button class="secondary" @click="disconnect" :disabled="!socket">Disconnect</button>
+            <button class="ghost" @click="resetChat" :disabled="chatItems.length === 0">Clear Chat</button>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">
+            <h2>Event Feed</h2>
+            <small>{{ eventFeed.length }} items</small>
+          </div>
+          <p class="section-note">这里保留最近的 transport/runtime 事件，便于观察 websocket 连接和 turn 生命周期。</p>
+          <div class="event-list">
+            <div v-if="eventFeed.length === 0" class="event-item">No events yet.</div>
+            <div v-for="item in eventFeed" :key="item.id" class="event-item">
+              <strong>{{ item.title }}</strong><br />
+              <span>{{ item.detail }}</span>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <main class="panel chat-shell">
+        <header class="chat-header">
+          <div>
+            <h2 class="chat-title">Conversation</h2>
+            <p class="chat-subtitle">Session {{ form.sessionKey }} over {{ headerEndpoint }}</p>
+          </div>
+          <div class="chat-header-actions">
+            <div v-if="pendingApprovalCount > 0" class="waiting-badge">
+              {{ pendingApprovalCount }} approval request waiting
+            </div>
+          </div>
+        </header>
+
+        <section ref="chatLogEl" class="chat-log">
+          <div v-if="chatItems.length === 0" class="empty-state">
+            <h3>准备开始一轮会话</h3>
+            <p>先连接 websocket agent，再发送第一条消息。这个 demo 当前重点是观察同一 session 下的 AgentEvent 流。</p>
+            <ul class="empty-state-list">
+              <li>连接成功后会先发送 <code>hello</code>，等服务端返回 <code>hello_ack</code>。</li>
+              <li>首次发送 <code>run_turn</code> 后，当前客户端才会加入该 session 的事件广播受众。</li>
+              <li>不会自动拉取历史；但同 session 内其他 client（含 CLI）发送的用户消息会自动回显。</li>
+            </ul>
+          </div>
+
+          <article
+            v-for="item in chatItems"
+            :key="item.id"
+            class="message"
+            :class="[itemRoleClass(item), { 'is-interrupted': item.kind === 'turn' && item.interrupted }]"
+          >
+            <div class="message-meta">
+              <span>{{ item.label }}</span>
+              <span v-if="item.kind === 'user' && item.isSteer" class="meta-tag">steer</span>
+              <span v-if="item.kind === 'turn' && item.isContinuation" class="meta-tag meta-tag-muted">continued</span>
+              <span v-if="item.kind === 'turn' && item.interrupted" class="meta-tag meta-tag-warn">steered</span>
+              <span v-if="item.turnId">turn {{ item.turnId.slice(0, 8) }}</span>
+              <span>{{ formatTime(item.timestamp) }}</span>
+            </div>
+
+            <!-- ── Assistant turn: segments ── -->
+            <template v-if="item.kind === 'turn'">
+              <template v-for="(seg, idx) in item.segments" :key="seg.id">
+
+                <!-- Toggle button before the first tool_use segment -->
+                <button
+                  v-if="seg.type === 'tool_use' && isFirstToolSeg(item.segments, idx)"
+                  class="turn-tools-toggle"
+                  @click="item.toolsExpanded = !item.toolsExpanded"
+                >
+                  {{ item.toolsExpanded ? '▼' : '▶' }}
+                  {{ countToolCalls(item) }} tool call{{ countToolCalls(item) !== 1 ? 's' : '' }}
+                </button>
+
+                <!-- Text bubble -->
+                <div v-if="seg.type === 'text'" class="bubble">
+                  <div class="rich-text" v-html="renderAssistantText(seg.text)"></div>
+                </div>
+
+                <!-- Tool use card (visible when expanded) -->
+                <section
+                  v-if="seg.type === 'tool_use' && item.toolsExpanded"
+                  class="tool-result-card"
+                >
+                  <div class="tool-result-header">
+                    <div class="tool-result-title">
+                      <span class="tool-result-name">{{ seg.name }}</span>
+                      <span class="tool-result-badge">Tool call</span>
+                    </div>
+                  </div>
+                  <div class="tool-result-preview">
+                    <pre class="tool-result-scroll">{{ prettyJson(seg.input) }}</pre>
+                  </div>
+                </section>
+
+                <!-- Approval card (always visible, not affected by toolsExpanded) -->
+                <section
+                  v-if="seg.type === 'approval'"
+                  class="approval-card"
+                  :class="seg.approval.status"
+                >
+                  <div class="eyebrow">Approval Required</div>
+                  <h3>{{ seg.approval.toolName }}</h3>
+                  <div class="approval-meta">
+                    <span>ID: {{ seg.approval.id }}</span>
+                    <span v-if="seg.approval.timeoutMs">Timeout: {{ Math.ceil(seg.approval.timeoutMs / 1000) }}s</span>
+                  </div>
+                  <div class="approval-status" :class="approvalStatusClass(seg.approval.status)">
+                    {{ approvalStatusLabel(seg.approval.status) }}
+                  </div>
+                  <pre class="approval-code">{{ prettyJson(seg.approval.input) }}</pre>
+                  <div class="approval-actions">
+                    <button
+                      class="secondary"
+                      @click="resolveApproval(seg, 'deny')"
+                      :disabled="seg.approval.status !== 'pending'"
+                    >Deny</button>
+                    <button
+                      class="primary"
+                      @click="resolveApproval(seg, 'allow')"
+                      :disabled="seg.approval.status !== 'pending'"
+                    >Allow</button>
+                  </div>
+                </section>
+
+                <section
+                  v-if="seg.type === 'tool_result' && item.toolsExpanded"
+                  class="tool-result-card"
+                  :class="{ 'is-error': seg.isError }"
+                >
+                  <div class="tool-result-header">
+                    <div class="tool-result-title">
+                      <span class="tool-result-name">{{ seg.name }}</span>
+                      <span class="tool-result-badge">{{ seg.isError ? 'Error' : 'Result' }}</span>
+                    </div>
+                    <button
+                      v-if="segResultTruncated(seg)"
+                      class="secondary"
+                      @click="seg.expanded = !seg.expanded"
+                    >
+                      {{ seg.expanded ? 'Collapse' : 'Expand' }}
+                    </button>
+                  </div>
+                  <div v-if="!seg.expanded" class="tool-result-preview">
+                    <pre class="tool-result-scroll">{{ segResultPreview(seg).text }}</pre>
+                  </div>
+                  <div v-else class="tool-result-body">
+                    <pre class="tool-result-scroll">{{ seg.content }}</pre>
+                  </div>
+                </section>
+
+              </template>
+            </template>
+
+            <!-- ── User / error / system plain bubble ── -->
+            <template v-else>
+              <div class="bubble">
+                <div v-if="item.text" class="bubble-text">{{ item.text }}</div>
+                <div v-if="item.attachments && item.attachments.length > 0" class="bubble-attachments">
+                  <div v-for="att in item.attachments" :key="att.id" class="bubble-attachment">
+                    <img :src="att.previewUrl" :alt="att.name" />
+                    <div class="bubble-attachment-meta">
+                      <span>{{ att.name }}</span>
+                      <span>{{ formatBytes(att.sizeBytes) }}{{ att.willResize ? ' · 已压缩' : '' }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="item.attachmentSummaries && item.attachmentSummaries.length > 0" class="bubble-attachments">
+                  <div v-for="(s, i) in item.attachmentSummaries" :key="i" class="attachment-chip">
+                    <div class="attachment-chip-meta">
+                      <span class="attachment-chip-name">{{ s.type }}{{ s.mime ? ' · ' + s.mime : '' }}</span>
+                      <span v-if="s.bytes != null" class="attachment-chip-size">{{ formatBytes(s.bytes) }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+
+          </article>
+        </section>
+
+        <footer
+          class="composer"
+          :class="{ 'is-dragging': dragHover }"
+          @dragenter="onComposerDragEnter"
+          @dragover="onComposerDragOver"
+          @dragleave="onComposerDragLeave"
+          @drop="onComposerDrop"
+        >
+          <div v-if="attachments.length > 0 || attachError" class="composer-attachments">
+            <div v-if="attachError" class="composer-attach-error">{{ attachError }}</div>
+            <div v-if="attachments.length > 0" class="attachment-chip-row">
+              <div v-for="a in attachments" :key="a.id" class="attachment-chip">
+                <img :src="a.previewUrl" :alt="a.name" />
+                <div class="attachment-chip-meta">
+                  <span class="attachment-chip-name">{{ a.name }}</span>
+                  <span class="attachment-chip-size">{{ formatBytes(a.sizeBytes) }}</span>
+                  <span v-if="a.willResize" class="attachment-chip-badge">已压缩</span>
+                </div>
+                <button class="attachment-chip-remove" @click="removeAttachment(a.id)" aria-label="移除附件">×</button>
+              </div>
+            </div>
+            <div v-if="isWaitingForReply && attachments.length > 0" class="composer-attach-error">
+              打断中的回复不能携带附件，请移除后发送。
+            </div>
+          </div>
+
+          <label>
+            Message
+            <textarea
+              v-model="draft"
+              placeholder="给 agent 发送一条消息…"
+              @keydown.enter.exact.prevent="sendMessage"
+              @paste="onPaste"
+            ></textarea>
+          </label>
+
+          <input
+            ref="fileInput"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            multiple
+            hidden
+            @change="onFileInputChange"
+          />
+
+          <div class="composer-row">
+            <div class="composer-hint">
+              <span>Enter 发送，Shift+Enter 换行。📎 / 拖拽 / 粘贴均可附图（≤ 10 MB，最多 {{ maxAttachmentsPerMessage }} 张）。</span>
+              <span>连接成功后会自动发送 <code>hello</code> 并等待 <code>hello_ack</code>；首次 <code>run_turn</code> 后才会加入当前 session 的事件广播受众。</span>
+            </div>
+            <div class="button-row">
+              <button
+                class="secondary"
+                @click="onAttachClick"
+                :disabled="!isConnected || isWaitingForReply"
+                :title="isWaitingForReply ? 'Steering 状态不支持附件' : '添加图片'"
+              >📎 图片</button>
+              <button class="secondary" @click="resetComposer" :disabled="!draft && attachments.length === 0">Reset</button>
+              <button class="primary" @click="sendMessage" :disabled="!canSend">
+                {{ pendingApprovalCount > 0 ? 'Approval pending…' : isWaitingForReply ? 'Steer' : 'Send' }}
+              </button>
+            </div>
+          </div>
+        </footer>
+      </main>
+
+    </div>
+
+    <script>
+      const { createApp, nextTick } = Vue;
+      const DEFAULT_SOCKET_URL = 'ws://127.0.0.1:3001/ws';
+      const DEFAULT_SESSION_KEY = 'main';
+      const MAX_EVENT_FEED_ITEMS = 40;
+      const TOOL_RESULT_PREVIEW_HEAD_LINES = 6;
+      const TOOL_RESULT_PREVIEW_TAIL_LINES = 4;
+      // Attachment constants — must stay aligned with server src/core/media/constants.ts.
+      const SUPPORTED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+      const ATTACHMENT_INLINE_THRESHOLD_BYTES = 2 * 1024 * 1024;
+      const ATTACHMENT_RAW_MAX_BYTES = 10 * 1024 * 1024;
+      const ATTACHMENT_TOTAL_MAX_BYTES = 10 * 1024 * 1024;
+      const MAX_ATTACHMENTS_PER_MESSAGE = 20;
+
+      function createClientId() {
+        return `browser-${Math.random().toString(36).slice(2, 8)}`;
+      }
+
+      createApp({
+        data() {
+          return {
+            form: {
+              url: DEFAULT_SOCKET_URL,
+              clientId: createClientId(),
+              sessionKey: DEFAULT_SESSION_KEY,
+              model: '',
+            },
+            socket: null,
+            connectionStatus: 'disconnected',
+            helloAcknowledged: false,
+            draft: '',
+            // ── Chat model ──────────────────────────────────────
+            // Unified list of chat items. Each item has a `kind`:
+            //   'user'     — user message bubble
+            //   'turn'     — assistant turn (contains segments[])
+            //   'approval' — approval card
+            //   'error'    — error bubble
+            //   'system'   — system info bubble (compaction, etc.)
+            chatItems: [],
+            // Maps turnId → turn object for fast segment appending
+            turnMap: {},
+            nextId: 1,
+            // ────────────────────────────────────────────────────
+            eventFeed: [],
+            nextEventId: 1,
+            approvalRequest: null,
+            isWaitingForReply: false,
+            lastStatusMessage: 'Not connected.',
+            // ── Attachments ─────────────────────────────────────
+            attachments: [],
+            attachError: '',
+            dragHover: false,
+            dragDepth: 0,
+          };
+        },
+
+        computed: {
+          isConnected() { return this.connectionStatus === 'connected'; },
+          isConnecting() { return this.connectionStatus === 'connecting'; },
+          canSend() {
+            if (!this.isConnected || !this.helloAcknowledged) return false;
+            if (this.pendingApprovalCount > 0) return false;
+            if (this.isWaitingForReply && this.attachments.length > 0) return false;
+            const hasText = this.draft.trim().length > 0;
+            const hasAttachments = this.attachments.length > 0;
+            return hasText || hasAttachments;
+          },
+          statusClass() {
+            if (this.connectionStatus === 'connected') return 'connected';
+            if (this.connectionStatus === 'connecting') return 'connecting';
+            return '';
+          },
+          connectionLabel() {
+            if (this.isConnected) return 'Socket ready';
+            if (this.isConnecting) return 'Attempting handshake';
+            return 'Socket offline';
+          },
+          endpointPreview() { return this.form.url || DEFAULT_SOCKET_URL; },
+          headerEndpoint() { return this.form.url || DEFAULT_SOCKET_URL; },
+          pendingApprovalCount() {
+            let count = 0;
+            for (const item of this.chatItems) {
+              if (item.kind === 'turn') {
+                for (const seg of item.segments) {
+                  if (seg.type === 'approval' && seg.approval?.status === 'pending') count++;
+                }
+              }
+            }
+            return count;
+          },
+          maxAttachmentsPerMessage() { return MAX_ATTACHMENTS_PER_MESSAGE; },
+        },
+
+        methods: {
+          // ── Connection ────────────────────────────────────────
+          clearTransientState() {
+            this.helloAcknowledged = false;
+            this.approvalRequest = null;
+            this.isWaitingForReply = false;
+          },
+          attachSocketListeners(socket) {
+            socket.addEventListener('open', () => {
+              if (this.socket !== socket) return;
+              this.lastStatusMessage = 'Socket opened. Sending hello…';
+              this.sendJson({ type: 'hello', clientId: this.form.clientId });
+            });
+            socket.addEventListener('message', (event) => {
+              if (this.socket !== socket) return;
+              this.handleServerMessage(event.data);
+            });
+            socket.addEventListener('close', (event) => {
+              if (this.socket !== socket) return;
+              const detail = event.wasClean
+                ? `Socket closed (${event.code || 'no-code'})`
+                : `Socket closed unexpectedly (${event.code || 'no-code'})`;
+              this.socket = null;
+              this.connectionStatus = 'disconnected';
+              this.clearTransientState();
+              this.lastStatusMessage = detail;
+              this.pushEvent('close', detail);
+            });
+            socket.addEventListener('error', () => {
+              if (this.socket !== socket) return;
+              this.lastStatusMessage = 'WebSocket error.';
+              this.pushEvent('error', 'WebSocket transport error');
+            });
+          },
+          connect() {
+            if (this.isConnecting || this.isConnected) return;
+            try {
+              this.disconnect({ silent: true });
+              const socket = new WebSocket(this.form.url);
+              this.socket = socket;
+              this.connectionStatus = 'connecting';
+              this.clearTransientState();
+              this.lastStatusMessage = 'Opening websocket…';
+              this.pushEvent('socket', `Connecting to ${this.form.url}`);
+              this.attachSocketListeners(socket);
+            } catch (error) {
+              this.connectionStatus = 'disconnected';
+              this.clearTransientState();
+              this.lastStatusMessage = error instanceof Error ? error.message : String(error);
+              this.pushEvent('error', this.lastStatusMessage);
+            }
+          },
+          disconnect(options = {}) {
+            if (!this.socket) return;
+            const current = this.socket;
+            this.socket = null;
+            this.connectionStatus = 'disconnected';
+            this.clearTransientState();
+            if (!options.silent) {
+              this.lastStatusMessage = 'Disconnected by client.';
+              this.pushEvent('socket', 'Disconnected by client');
+            }
+            current.close(1000, 'client disconnect');
+          },
+
+          // ── Sending ───────────────────────────────────────────
+          sendJson(payload) {
+            if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+              throw new Error('Socket is not open.');
+            }
+            this.socket.send(JSON.stringify(payload));
+          },
+          sendMessage() {
+            if (!this.canSend) return;
+            const text = this.draft.trim();
+            const isSteer = this.isWaitingForReply;
+            const hasAttachments = this.attachments.length > 0;
+
+            let wireMessage;
+            if (!hasAttachments) {
+              wireMessage = text;
+            } else {
+              const blocks = [];
+              if (text) blocks.push({ type: 'text', text });
+              for (const a of this.attachments) {
+                blocks.push({
+                  type: 'image',
+                  source: { type: 'base64', media_type: a.mediaType, data: a.base64 },
+                });
+              }
+              wireMessage = blocks;
+            }
+
+            this.appendChatItem({
+              kind: 'user',
+              label: 'You',
+              text,
+              isSteer,
+              attachments: hasAttachments
+                ? this.attachments.map(a => ({
+                    id: a.id,
+                    previewUrl: a.previewUrl,
+                    name: a.name,
+                    sizeBytes: a.sizeBytes,
+                    willResize: a.willResize,
+                  }))
+                : [],
+            });
+
+            this.sendJson({
+              type: 'run_turn',
+              sessionKey: this.form.sessionKey,
+              message: wireMessage,
+              ...(this.form.model ? { model: this.form.model } : {}),
+            });
+            this.pushEvent(
+              isSteer ? 'steer' : 'run_turn',
+              `Sent ${isSteer ? 'steer ' : ''}message to session ${this.form.sessionKey}`
+                + (hasAttachments ? ` (${this.attachments.length} attachment${this.attachments.length !== 1 ? 's' : ''})` : ''),
+            );
+            this.draft = '';
+            // Do NOT revoke previewUrl here — the bubble still references it.
+            this.attachments = [];
+            this.attachError = '';
+            this.isWaitingForReply = true;
+          },
+
+          // ── Attachments ───────────────────────────────────────
+          async ingestFiles(fileList) {
+            const incoming = Array.from(fileList ?? []);
+            if (incoming.length === 0) return;
+            const errors = [];
+            const accepted = [];
+            let runningTotal = this.attachments.reduce((sum, a) => sum + a.sizeBytes, 0);
+            let runningCount = this.attachments.length;
+
+            for (const file of incoming) {
+              if (!SUPPORTED_IMAGE_MIME.has(file.type)) {
+                errors.push(`${file.name || '未命名'}：类型 ${file.type || '未知'} 不支持`);
+                continue;
+              }
+              if (file.size > ATTACHMENT_RAW_MAX_BYTES) {
+                errors.push(`${file.name}：超过单图 ${ATTACHMENT_RAW_MAX_BYTES / 1024 / 1024} MB 限制`);
+                continue;
+              }
+              if (runningCount + 1 > MAX_ATTACHMENTS_PER_MESSAGE) {
+                errors.push(`最多 ${MAX_ATTACHMENTS_PER_MESSAGE} 张，已截断剩余文件`);
+                break;
+              }
+              if (runningTotal + file.size > ATTACHMENT_TOTAL_MAX_BYTES) {
+                errors.push(`总额超限（累计上限 ${ATTACHMENT_TOTAL_MAX_BYTES / 1024 / 1024} MB），已截断 ${file.name} 及后续文件`);
+                break;
+              }
+              accepted.push(file);
+              runningTotal += file.size;
+              runningCount += 1;
+            }
+
+            for (const file of accepted) {
+              try {
+                const base64 = await this.readAsBase64(file);
+                this.attachments.push({
+                  id: this.nextId++,
+                  file,
+                  name: file.name,
+                  mediaType: file.type,
+                  sizeBytes: file.size,
+                  base64,
+                  willResize: file.size > ATTACHMENT_INLINE_THRESHOLD_BYTES,
+                  previewUrl: URL.createObjectURL(file),
+                });
+              } catch (err) {
+                errors.push(`${file.name}：读取失败（${err?.message || err}）`);
+              }
+            }
+
+            this.attachError = errors.join('；');
+          },
+          readAsBase64(file) {
+            return new Promise((resolve, reject) => {
+              const r = new FileReader();
+              r.onerror = () => reject(r.error ?? new Error('FileReader failed'));
+              r.onload = () => {
+                const s = String(r.result ?? '');
+                const i = s.indexOf(',');
+                resolve(i >= 0 ? s.slice(i + 1) : s);
+              };
+              r.readAsDataURL(file);
+            });
+          },
+          removeAttachment(id) {
+            const idx = this.attachments.findIndex(a => a.id === id);
+            if (idx >= 0) {
+              URL.revokeObjectURL(this.attachments[idx].previewUrl);
+              this.attachments.splice(idx, 1);
+            }
+          },
+          clearAttachments() {
+            for (const a of this.attachments) URL.revokeObjectURL(a.previewUrl);
+            this.attachments = [];
+          },
+          resetComposer() {
+            this.draft = '';
+            this.clearAttachments();
+            this.attachError = '';
+          },
+          onAttachClick() { this.$refs.fileInput?.click(); },
+          onFileInputChange(e) {
+            this.ingestFiles(e.target.files);
+            e.target.value = '';
+          },
+          onPaste(e) {
+            const files = [];
+            for (const it of e.clipboardData?.items ?? []) {
+              if (it.kind === 'file') {
+                const f = it.getAsFile();
+                if (f) files.push(f);
+              }
+            }
+            if (files.length) {
+              e.preventDefault();
+              this.ingestFiles(files);
+            }
+          },
+          onComposerDragEnter(e) {
+            e.preventDefault();
+            this.dragDepth++;
+            this.dragHover = true;
+          },
+          onComposerDragOver(e) { e.preventDefault(); },
+          onComposerDragLeave() {
+            this.dragDepth = Math.max(0, this.dragDepth - 1);
+            if (this.dragDepth === 0) this.dragHover = false;
+          },
+          onComposerDrop(e) {
+            e.preventDefault();
+            this.dragDepth = 0;
+            this.dragHover = false;
+            this.ingestFiles(e.dataTransfer?.files);
+          },
+          formatBytes(n) {
+            if (n < 1024) return `${n} B`;
+            if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+            return `${(n / 1024 / 1024).toFixed(1)} MB`;
+          },
+          resolveApproval(seg, decision) {
+            if (!seg || seg.type !== 'approval' || seg.approval.status !== 'pending') return;
+            this.sendJson({ type: 'approval_resolve', id: seg.approval.id, decision });
+            seg.approval.status = decision === 'allow' ? 'resolved' : 'denied';
+            if (this.approvalRequest?.id === seg.approval.id) this.approvalRequest = null;
+            this.pushEvent('approval', `${decision === 'allow' ? 'Allowed' : 'Denied'} ${seg.approval.toolName}`);
+          },
+
+          // ── Message handling ──────────────────────────────────
+          handleServerMessage(raw) {
+            let message;
+            try {
+              message = JSON.parse(raw);
+            } catch {
+              this.pushEvent('parse', `Received non-JSON payload: ${String(raw).slice(0, 120)}`);
+              return;
+            }
+            if (!message || typeof message !== 'object') {
+              this.pushEvent('parse', 'Ignored non-object server payload');
+              return;
+            }
+            switch (message.type) {
+              case 'hello_ack':
+                this.connectionStatus = 'connected';
+                this.helloAcknowledged = true;
+                this.lastStatusMessage = `Hello acknowledged as ${message.clientId}`;
+                this.pushEvent('hello', `Server acknowledged client ${message.clientId}`);
+                return;
+              case 'approval_requested': {
+                // Route approval into the active turn's segments so it stays
+                // in the correct position within the turn's event sequence.
+                const activeTurn = [...this.chatItems].reverse().find(i => i.kind === 'turn');
+                if (activeTurn) {
+                  activeTurn.segments.push({
+                    type: 'approval',
+                    id: this.nextId++,
+                    approval: { ...message, status: 'pending' },
+                  });
+                  this.scrollChatToBottom();
+                }
+                this.approvalRequest = message;
+                this.pushEvent('approval', `Approval requested for ${message.toolName}`);
+                return;
+              }
+              case 'approval_expired':
+                this.markApprovalExpired(message.id);
+                if (this.approvalRequest?.id === message.id) this.approvalRequest = null;
+                this.pushEvent('approval', `Approval expired: ${message.id}`);
+                return;
+              case 'channel_error':
+                this.pushEvent('channel_error', `${message.code}: ${message.message}`);
+                this.appendChatItem({ kind: 'error', label: 'Channel', text: `${message.code}: ${message.message}` });
+                return;
+            }
+            this.handleAgentEvent(message);
+          },
+
+          handleAgentEvent(event) {
+            switch (event.type) {
+              case 'run_start':
+                this.pushEvent('run_start', `Turn ${event.turnId} started`);
+                return;
+
+              case 'text_delta':
+                this.appendTextToTurn(event.turnId, event.text);
+                return;
+
+              case 'tool_use': {
+                const turn = this.getOrCreateTurn(event.turnId);
+                turn.segments.push({
+                  type: 'tool_use',
+                  id: this.nextId++,
+                  name: event.name,
+                  input: event.input,
+                });
+                this.pushEvent('tool_use', event.name);
+                this.scrollChatToBottom();
+                return;
+              }
+
+              case 'tool_result': {
+                const turn = this.getOrCreateTurn(event.turnId);
+                turn.segments.push({
+                  type: 'tool_result',
+                  id: this.nextId++,
+                  name: event.name,
+                  content: this.normalizeToolResultContent(event.result?.content),
+                  isError: Boolean(event.result?.isError),
+                  expanded: false,
+                });
+                this.scrollChatToBottom();
+                return;
+              }
+
+              case 'llm_call':
+                this.pushEvent('llm_call', `Round ${event.round} for turn ${event.turnId}`);
+                return;
+
+              case 'run_end':
+                this.isWaitingForReply = false;
+                this.pushEvent('run_end', `Turn ${event.turnId} finished with ${event.result.stopReason}`);
+                return;
+
+              case 'error':
+                this.isWaitingForReply = false;
+                this.appendChatItem({ kind: 'error', label: 'Runtime', turnId: event.turnId, text: event.error || 'Unknown runtime error' });
+                this.pushEvent('error', `Turn ${event.turnId} failed`);
+                return;
+
+              case 'compaction_start':
+                this.appendChatItem({
+                  kind: 'system',
+                  label: 'Compaction',
+                  turnId: event.turnId,
+                  text: `Compaction started (${event.trigger}), tokens before: ${event.estimatedTokens}`,
+                });
+                return;
+
+              case 'compaction_end':
+                this.appendChatItem({
+                  kind: 'system',
+                  label: 'Compaction',
+                  turnId: event.turnId,
+                  text: `Compaction finished: ${event.tokensBefore} → ${event.tokensAfter}, dropped ${event.droppedMessages} messages`,
+                });
+                return;
+
+              case 'tool_result_pruned':
+                this.pushEvent('tool_result_pruned', `${event.toolUseId}: ${event.originalChars} → ${event.prunedChars}`);
+                return;
+
+              case 'user_message': {
+                // Dedup: origin client already rendered a local "You" bubble in sendMessage().
+                if (event.originClientId === this.form.clientId) return;
+                const label = event.originClientId
+                  ? `user @${event.originClientId.slice(0, 6)}`
+                  : 'user (external)';
+                this.appendChatItem({
+                  kind: 'user',
+                  label,
+                  text: event.content ?? '',
+                  isSteer: event.deliveryMode === 'steering',
+                  attachmentSummaries: event.attachmentSummaries ?? [],
+                });
+                return;
+              }
+
+              default:
+                this.pushEvent('event', `Unhandled event: ${event.type || 'unknown'}`);
+            }
+          },
+
+          // ── Turn / segment helpers ────────────────────────────
+
+          // Find or lazily create the turn entry for a given turnId.
+          // If the existing turn entry is no longer the last chat item (e.g. the
+          // user inserted a steer message mid-turn), mark the old entry as
+          // interrupted and start a fresh continuation entry so subsequent
+          // text/tool events render *after* the interrupting messages.
+          getOrCreateTurn(turnId) {
+            const existing = this.turnMap[turnId];
+            if (existing) {
+              const lastItem = this.chatItems[this.chatItems.length - 1];
+              if (lastItem === existing) return existing;
+              existing.interrupted = true;
+              const continuation = {
+                kind: 'turn',
+                id: this.nextId++,
+                turnId,
+                label: 'Assistant',
+                timestamp: Date.now(),
+                toolsExpanded: existing.toolsExpanded,
+                segments: [],
+                isContinuation: true,
+              };
+              this.chatItems.push(continuation);
+              this.turnMap[turnId] = continuation;
+              return continuation;
+            }
+            const turn = {
+              kind: 'turn',
+              id: this.nextId++,
+              turnId,
+              label: 'Assistant',
+              timestamp: Date.now(),
+              toolsExpanded: true,
+              segments: [],
+            };
+            this.chatItems.push(turn);
+            this.turnMap[turnId] = turn;
+            return turn;
+          },
+
+          // Append text to the last text segment of a turn,
+          // or create a new text segment if the last segment is a tool segment.
+          appendTextToTurn(turnId, delta) {
+            const turn = this.getOrCreateTurn(turnId);
+            const last = turn.segments[turn.segments.length - 1];
+            if (last && last.type === 'text') {
+              last.text += delta;
+            } else {
+              turn.segments.push({ type: 'text', id: this.nextId++, text: delta });
+            }
+            turn.timestamp = Date.now();
+            this.scrollChatToBottom();
+          },
+
+          // Returns true if the segment at idx is the first tool_use in the list
+          // (used to decide where to render the toggle button).
+          isFirstToolSeg(segments, idx) {
+            if (segments[idx].type !== 'tool_use') return false;
+            for (let i = 0; i < idx; i++) {
+              if (segments[i].type === 'tool_use') return false;
+            }
+            return true;
+          },
+
+          countToolCalls(turn) {
+            return turn.segments.filter(s => s.type === 'tool_use').length;
+          },
+
+          // ── Chat item helpers ─────────────────────────────────
+          appendChatItem(fields) {
+            const item = {
+              id: this.nextId++,
+              timestamp: Date.now(),
+              text: '',
+              turnId: null,
+              ...fields,
+            };
+            this.chatItems.push(item);
+            this.scrollChatToBottom();
+            return item;
+          },
+
+          markApprovalExpired(approvalId) {
+            for (const item of this.chatItems) {
+              if (item.kind !== 'turn') continue;
+              const seg = item.segments.find(s => s.type === 'approval' && s.approval?.id === approvalId);
+              if (seg) { seg.approval.status = 'expired'; return; }
+            }
+          },
+
+          itemRoleClass(item) {
+            if (item.kind === 'turn') return 'assistant';
+            if (item.kind === 'user') return 'user';
+            if (item.kind === 'approval') return 'approval';
+            if (item.kind === 'error') return 'error';
+            if (item.kind === 'system') return 'system';
+            return item.kind;
+          },
+
+          resetChat() {
+            this.chatItems = [];
+            this.turnMap = {};
+            this.eventFeed = [];
+            this.approvalRequest = null;
+            this.isWaitingForReply = false;
+          },
+
+          // ── Tool result preview ───────────────────────────────
+          previewLines(content) {
+            const lines = String(content || '').split('\n');
+            const lineNumberWidth = String(lines.length).length;
+            const previewLineCount = TOOL_RESULT_PREVIEW_HEAD_LINES + TOOL_RESULT_PREVIEW_TAIL_LINES;
+            if (lines.length <= previewLineCount) {
+              return {
+                text: lines.map((l, i) => this.formatLine(i + 1, l, lineNumberWidth)).join('\n'),
+                omittedCount: 0,
+              };
+            }
+            const head = lines.slice(0, TOOL_RESULT_PREVIEW_HEAD_LINES)
+              .map((l, i) => this.formatLine(i + 1, l, lineNumberWidth));
+            const tailStart = lines.length - TOOL_RESULT_PREVIEW_TAIL_LINES + 1;
+            const tail = lines.slice(-TOOL_RESULT_PREVIEW_TAIL_LINES)
+              .map((l, i) => this.formatLine(tailStart + i, l, lineNumberWidth));
+            const omittedCount = lines.length - previewLineCount;
+            return {
+              text: [...head, `...  ${omittedCount} more lines`, ...tail].join('\n'),
+              omittedCount,
+            };
+          },
+          formatLine(lineNumber, line, width) {
+            return `${String(lineNumber).padStart(width, ' ')} ${line}`;
+          },
+          segResultPreview(seg) {
+            return this.previewLines(seg.content);
+          },
+          segResultTruncated(seg) {
+            return this.segResultPreview(seg).omittedCount > 0;
+          },
+
+          // ── Misc helpers ──────────────────────────────────────
+          normalizeToolResultContent(value) {
+            if (typeof value === 'string') return value;
+            if (value == null) return '';
+            if (typeof value === 'object') return this.prettyJson(value);
+            return String(value);
+          },
+          prettyJson(value) {
+            try { return JSON.stringify(value, null, 2); }
+            catch { return String(value); }
+          },
+          pushEvent(title, detail) {
+            this.eventFeed.unshift({ id: this.nextEventId++, title, detail });
+            if (this.eventFeed.length > MAX_EVENT_FEED_ITEMS) {
+              this.eventFeed.length = MAX_EVENT_FEED_ITEMS;
+            }
+          },
+          scrollChatToBottom() {
+            nextTick(() => {
+              const el = this.$refs.chatLogEl;
+              if (el) el.scrollTop = el.scrollHeight;
+            });
+          },
+          approvalStatusClass(status) {
+            if (status === 'resolved') return 'allowed';
+            return status;
+          },
+          approvalStatusLabel(status) {
+            switch (status) {
+              case 'pending':  return 'Awaiting decision';
+              case 'resolved': return 'Allowed';
+              case 'denied':   return 'Denied';
+              case 'expired':  return 'Expired';
+              default:         return status;
+            }
+          },
+          formatTime(ts) {
+            return new Date(ts).toLocaleTimeString([], {
+              hour: '2-digit', minute: '2-digit', second: '2-digit',
+            });
+          },
+
+          // ── Markdown renderer ─────────────────────────────────
+          renderAssistantText(text) {
+            const normalized = String(text || '').replace(/\r\n?/g, '\n');
+            if (!normalized.trim()) return '';
+            return marked.parse(normalized);
+          },
+        },
+      }).mount('#app');
+    </script>
+  </body>
+</html>

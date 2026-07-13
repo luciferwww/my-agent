@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import process from 'node:process';
 
-import { createToolExecutor, execTool } from '../src/tools/index.js';
+import { createToolExecutor, execTool } from '../src/core/tools/index.js';
 
 function getListCommand(): string {
   return process.platform === 'win32' ? 'dir' : 'ls';

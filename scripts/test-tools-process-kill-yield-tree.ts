@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import os from 'node:os';
 import process from 'node:process';
 
-import { createToolExecutor, execTool, processTool } from '../src/tools/index.js';
+import { createToolExecutor, execTool, processTool } from '../src/core/tools/index.js';
 
 function extractRunId(content: string): string {
   const match = content.match(/runId:\s*(\S+)/);

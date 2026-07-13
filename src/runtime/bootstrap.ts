@@ -1,14 +1,18 @@
-import { AgentRunner } from '../agent-runner/index.js';
-import { loadConfig, resolveAgentConfig } from '../config/index.js';
-import { AnthropicClient } from '../llm-client/index.js';
-import { MemoryManager } from '../memory/index.js';
-import { SystemPromptBuilder, UserPromptBuilder } from '../prompt-builder/index.js';
-import { SessionManager } from '../session/index.js';
-import { ensureWorkspace, loadContextFiles } from '../workspace/index.js';
+import { join } from 'node:path';
+import { AgentRunner } from '../core/runner/index.js';
+import { loadConfig, resolveAgentConfig } from '../platform/config/index.js';
+import { AnthropicClient } from '../adapters/llm/index.js';
+import { ConsoleAdapter, FileAdapter, Logger } from '../platform/logger/index.js';
+import type { LogAdapter } from '../platform/logger/index.js';
+import { MemoryManager } from '../core/memory/index.js';
+import { SystemPromptBuilder, UserPromptBuilder } from '../core/prompt/index.js';
+import { SessionManager } from '../core/session/index.js';
+import { ensureWorkspace, loadContextFiles } from '../core/workspace/index.js';
 import { classifyRuntimeError } from './errors.js';
-import { resolveContextLoadMode } from './prompt-factory.js';
 import { assembleRuntimeTools, getDefaultBuiltinTools } from './tool-registry.js';
 import type { RuntimeAppOptions, RuntimeBootstrapResult, RuntimeDependencies, RuntimeEvent } from './types.js';
+
+const log = Logger.get('RuntimeBootstrap');
 
 export function createDefaultRuntimeDependencies(
   overrides?: Partial<RuntimeDependencies>,
@@ -25,8 +29,8 @@ export function createDefaultRuntimeDependencies(
       });
     },
 
-    createSessionManager(workspaceDir) {
-      return new SessionManager(workspaceDir);
+    createSessionManager(workspaceDir, options) {
+      return new SessionManager(workspaceDir, options);
     },
 
     async createMemoryManager(options) {
@@ -36,7 +40,6 @@ export function createDefaultRuntimeDependencies(
 
       return MemoryManager.create({
         workspaceDir: options.workspaceDir,
-        dbPath: options.dbPath,
         embedding: options.embedding,
         search: options.search,
         enabled: options.enabled,
@@ -64,6 +67,10 @@ export function createDefaultRuntimeDependencies(
 
 export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<RuntimeBootstrapResult> {
   const startedAt = Date.now();
+  log.info('bootstrap start', {
+    workspaceDir: options.workspaceDir,
+    agentId: options.agentId,
+  });
   emit(options.onEvent, {
     type: 'app_start',
     workspaceDir: options.workspaceDir,
@@ -71,6 +78,29 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
 
   try {
     const appConfig = loadConfig({ workspaceDir: options.workspaceDir });
+
+    const adapters: LogAdapter[] = [];
+    if (appConfig.logger.console?.enabled !== false) {
+      const consoleMin = appConfig.logger.console?.minLevel;
+      adapters.push(new ConsoleAdapter(consoleMin ? { minLevel: consoleMin } : {}));
+    }
+    if (appConfig.logger.file?.enabled) {
+      const fileCfg = appConfig.logger.file;
+      adapters.push(new FileAdapter({
+        // 路径固定为 <workspaceDir>/logs/；prefix / maxQueueSize 走 FileAdapter 内部默认
+        dir: join(options.workspaceDir, 'logs'),
+        ...(fileCfg.minLevel !== undefined ? { minLevel: fileCfg.minLevel } : {}),
+      }));
+    }
+    await Logger.configure({
+      adapters,
+      minLevel: appConfig.logger.minLevel ?? 'info',
+    });
+    log.debug('logger configured', {
+      minLevel: appConfig.logger.minLevel ?? 'info',
+      adapters: adapters.map((a) => a.constructor.name),
+    });
+
     const resolvedConfig = resolveAgentConfig(appConfig, {
       agentId: options.agentId,
       envOverrides: options.envOverrides,
@@ -80,13 +110,19 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
     await ensureWorkspace(options.workspaceDir);
 
     const contextFiles = await loadContextFiles(options.workspaceDir, {
-      mode: resolveContextLoadMode(resolvedConfig.prompt.mode),
+      mode: 'full',
       maxFileChars: resolvedConfig.workspace.maxFileChars,
       maxTotalChars: resolvedConfig.workspace.maxTotalChars,
     });
+    log.debug('context files loaded', {
+      fileCount: contextFiles.length,
+    });
 
     const deps = createDefaultRuntimeDependencies(options.dependencies);
-    const sessionManager = deps.createSessionManager(options.workspaceDir);
+    const sessionManager = deps.createSessionManager(options.workspaceDir, {
+      toolResultHeadChars: resolvedConfig.compaction.toolResultHeadChars,
+      toolResultTailChars: resolvedConfig.compaction.toolResultTailChars,
+    });
     const llmClient = deps.createLLMClient({
       apiKey: resolvedConfig.llm.apiKey,
       baseURL: resolvedConfig.llm.baseURL,
@@ -101,11 +137,15 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
       memoryManager = await deps.createMemoryManager({
         workspaceDir: options.workspaceDir,
         enabled: resolvedConfig.memory.enabled,
-        dbPath: resolvedConfig.memory.dbPath,
         embedding: resolvedConfig.memory.embedding,
         search: resolvedConfig.memory.search,
       });
+      if (memoryManager) {
+        log.info('memory manager ready', { workspaceDir: options.workspaceDir });
+      }
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.warn('memory init failed, continuing without memory', { error: message });
       emit(options.onEvent, {
         type: 'warning',
         info: {
@@ -119,17 +159,20 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
     const toolBundle = assembleRuntimeTools({
       builtinTools: deps.getBuiltinTools({
         workspaceDir: options.workspaceDir,
+        fsWorkspaceOnly: resolvedConfig.tools.fs?.workspaceOnly ?? true,
         webFetchEnabled: true,
         execEnabled: true,
         processEnabled: true,
       }),
       memoryManager,
+      deny: resolvedConfig.tools.deny ?? [],
     });
 
     const agentRunner = deps.createAgentRunner({
       llmClient,
       sessionManager,
       toolExecutor: toolBundle.executor,
+      onEvent: options.onAgentEvent,
     });
 
     const state = {
@@ -140,6 +183,12 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
       contextVersion: 1,
     };
 
+    log.info('bootstrap complete', {
+      durationMs: Date.now() - startedAt,
+      tools: toolBundle.tools.length,
+      memoryEnabled: memoryManager !== null,
+      contextFiles: contextFiles.length,
+    });
     emit(options.onEvent, {
       type: 'app_ready',
       workspaceDir: options.workspaceDir,
@@ -166,6 +215,10 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
     };
   } catch (error) {
     const info = classifyRuntimeError('startup', error);
+    log.error('bootstrap failed', {
+      code: info.code,
+      message: info.message,
+    });
     emit(options.onEvent, { type: 'error', info });
     throw error;
   }

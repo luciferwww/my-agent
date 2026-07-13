@@ -1,12 +1,12 @@
-import type { AppConfig, AgentDefaults, DeepPartial } from '../config/types.js';
-import type { ChatContentBlock, ChatToolDefinition, LLMClient, TokenUsage } from '../llm-client/types.js';
-import type { MemoryManager } from '../memory/MemoryManager.js';
-import type { SystemPromptBuilder } from '../prompt-builder/system/SystemPromptBuilder.js';
-import type { ToolDefinition as PromptToolDefinition } from '../prompt-builder/types/builder.js';
-import type { SessionManager } from '../session/SessionManager.js';
-import type { Tool, ToolExecutor } from '../tools/types.js';
-import type { ContextFile } from '../workspace/types.js';
-import type { AgentRunner, AgentRunnerConfig } from '../agent-runner/index.js';
+import type { AppConfig, AgentDefaults, DeepPartial } from '../platform/config/types.js';
+import type { ChatContentBlock, ChatToolDefinition, LLMClient, TokenUsage } from '../adapters/llm/types.js';
+import type { MemoryManager } from '../core/memory/MemoryManager.js';
+import type { SystemPromptBuilder } from '../core/prompt/SystemPromptBuilder.js';
+import type { ToolDefinition as PromptToolDefinition } from '../core/prompt/types.js';
+import type { SessionManager, SessionManagerOptions } from '../core/session/SessionManager.js';
+import type { Tool, ToolExecutor } from '../core/tools/types.js';
+import type { ContextFile } from '../core/workspace/types.js';
+import type { AgentEvent, AgentRunner, AgentRunnerConfig } from '../core/runner/index.js';
 
 export interface RuntimeToolBundle {
   tools: Tool[];
@@ -15,7 +15,7 @@ export interface RuntimeToolBundle {
   promptDefinitions: PromptToolDefinition[];
 }
 
-import type { UserPromptBuilder } from '../prompt-builder/user/UserPromptBuilder.js';
+import type { UserPromptBuilder } from '../core/prompt/UserPromptBuilder.js';
 
 export interface RuntimeResourceSet {
   appConfig: AppConfig;
@@ -41,13 +41,13 @@ export interface RuntimeLLMClientOptions {
 export interface RuntimeMemoryOptions {
   workspaceDir: string;
   enabled: boolean;
-  dbPath?: string;
   embedding?: AgentDefaults['memory']['embedding'];
   search?: AgentDefaults['memory']['search'];
 }
 
 export interface RuntimeBuiltinToolOptions {
   workspaceDir: string;
+  fsWorkspaceOnly?: boolean;
   webFetchEnabled?: boolean;
   execEnabled?: boolean;
   processEnabled?: boolean;
@@ -55,7 +55,7 @@ export interface RuntimeBuiltinToolOptions {
 
 export interface RuntimeDependencies {
   createLLMClient(options: RuntimeLLMClientOptions): LLMClient;
-  createSessionManager(workspaceDir: string): SessionManager;
+  createSessionManager(workspaceDir: string, options?: SessionManagerOptions): SessionManager;
   createMemoryManager(options: RuntimeMemoryOptions): Promise<MemoryManager | null>;
   createSystemPromptBuilder(): SystemPromptBuilder;
   createAgentRunner(config: AgentRunnerConfig): AgentRunner;
@@ -69,18 +69,31 @@ export interface RuntimeAppOptions {
   cliOverrides?: DeepPartial<AgentDefaults>;
   dependencies?: Partial<RuntimeDependencies>;
   onEvent?: (event: RuntimeEvent) => void;
+  /**
+   * 可选的 AgentEvent 观察者（telemetry/调试日志用）。
+   * RuntimeApp 在 fanout 闭包末尾调用此回调，与 channel.send 并行触发。
+   */
+  onAgentEvent?: (event: AgentEvent) => void;
 }
 
 export interface RunTurnParams {
   sessionKey: string;
-  message: string;
+  message: string | ChatContentBlock[];
   model?: string;
   maxTokens?: number;
-  maxToolRounds?: number;
-  maxFollowUpRounds?: number;
-  promptMode?: AgentDefaults['prompt']['mode'];
+  maxLlmCalls?: number;
+  /** v1.0 必填；调用方明确传入，不再回退 config。交互式场景传 'full'，sub-agent / 定时任务传 'minimal' 或 'none' */
+  promptMode: 'full' | 'minimal' | 'none';
   safetyLevel?: AgentDefaults['prompt']['safetyLevel'];
   reloadContextFiles?: boolean;
+  /** 可选 turn 标识；不提供则由 RuntimeApp 自动生成 UUID */
+  turnId?: string;
+  /**
+   * 触发本 turn 的 `user_message.messageId`。仅由 handleInboundChannelMessage → startQueuedTurn
+   * 内部透传；直接调用 runTurn 一般不需要。
+   * 见 channel-multi-client-user-message-spec §5.1 D6。
+   */
+  originMessageId?: string;
 }
 
 export interface RunTurnResult {

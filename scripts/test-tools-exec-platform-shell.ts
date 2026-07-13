@@ -14,7 +14,7 @@ import { join, resolve } from 'node:path';
 import os from 'node:os';
 import process from 'node:process';
 
-import { createToolExecutor, execTool } from '../src/tools/index.js';
+import { createToolExecutor, execTool } from '../src/core/tools/index.js';
 
 function normalizePathForCompare(value: string): string {
   return process.platform === 'win32' ? value.toLowerCase() : value;

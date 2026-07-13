@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import os from 'node:os';
 import process from 'node:process';
 
-import { execTool } from '../src/tools/index.js';
+import { execTool } from '../src/core/tools/index.js';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

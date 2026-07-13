@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
 
-import { MemoryManager } from '../src/memory/MemoryManager.js';
+import { MemoryManager } from '../src/core/memory/MemoryManager.js';
 
 // ── helpers ────────────────────────────────────────────────────────────
 

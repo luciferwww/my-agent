@@ -15,8 +15,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
 
-import { SqliteMemoryStore } from '../src/memory/store/sqlite-store.js';
-import { MemoryIndexer } from '../src/memory/MemoryIndexer.js';
+import { SqliteMemoryStore } from '../src/core/memory/internal/sqlite-store.js';
+import { MemoryIndexer } from '../src/core/memory/internal/MemoryIndexer.js';
 
 // ── helpers ────────────────────────────────────────────────────────────
 

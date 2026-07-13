@@ -1,0 +1,88 @@
+import type { ToolResult } from '../../tools/types.js';
+
+// ── before_tool_call ─────────────────────────────────────────────────────────
+
+export interface BeforeToolCallPayload {
+  toolName: string;
+  input: Record<string, unknown>;
+  /** 本次 turn 的唯一 id，由 RuntimeApp.runTurn 生成 */
+  turnId: string;
+  /** 本次 turn 所属 session */
+  sessionKey: string;
+}
+
+export type BeforeToolCallResult =
+  | { action: 'allow' }
+  | { action: 'allow'; input: Record<string, unknown> }
+  | { action: 'deny'; reason: string };
+
+export type BeforeToolCallHook = (
+  payload: BeforeToolCallPayload,
+) => BeforeToolCallResult | Promise<BeforeToolCallResult>;
+
+// ── after_tool_call ──────────────────────────────────────────────────────────
+
+export interface AfterToolCallPayload {
+  toolName: string;
+  input: Record<string, unknown>;
+  result: ToolResult;
+  durationMs: number;
+  /** 本次 turn 的唯一 id，由 RuntimeApp.runTurn 生成 */
+  turnId: string;
+  /** 本次 turn 所属 session */
+  sessionKey: string;
+}
+
+export type AfterToolCallHook = (
+  payload: AfterToolCallPayload,
+) => void | Promise<void>;
+
+// ── before_compaction / after_compaction ───────────────────────────────────
+
+export interface BeforeCompactionPayload {
+  trigger: 'preemptive' | 'overflow' | 'manual';
+  estimatedTokens: number;
+  /** 本次 turn 的唯一 id，由 RuntimeApp.runTurn 生成 */
+  turnId: string;
+  /** 本次 turn 所属 session */
+  sessionKey: string;
+}
+
+export type BeforeCompactionHook = (
+  payload: BeforeCompactionPayload,
+) => void | Promise<void>;
+
+export interface AfterCompactionPayload {
+  trigger: 'preemptive' | 'overflow' | 'manual';
+  tokensBefore: number;
+  tokensAfter: number;
+  droppedMessages: number;
+  /** 本次 turn 的唯一 id，由 RuntimeApp.runTurn 生成 */
+  turnId: string;
+  /** 本次 turn 所属 session */
+  sessionKey: string;
+}
+
+export type AfterCompactionHook = (
+  payload: AfterCompactionPayload,
+) => void | Promise<void>;
+
+// ── Hook 注册系统 ─────────────────────────────────────────────────────────────
+
+export type HookName = 'before_tool_call' | 'after_tool_call' | 'before_compaction' | 'after_compaction';
+
+export type HookHandlerMap = {
+  before_tool_call: BeforeToolCallHook;
+  after_tool_call: AfterToolCallHook;
+  before_compaction: BeforeCompactionHook;
+  after_compaction: AfterCompactionHook;
+};
+
+export interface HookRegistration<K extends HookName = HookName> {
+  hookName: K;
+  handler: HookHandlerMap[K];
+  /** 执行优先级，数字越大越先执行，默认 0（对齐 OpenClaw） */
+  priority: number;
+  /** 可选标识符，用于 warn log 定位 */
+  name?: string;
+}

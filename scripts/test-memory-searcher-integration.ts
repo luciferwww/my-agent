@@ -15,11 +15,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
 
-import { SqliteMemoryStore } from '../src/memory/store/sqlite-store.js';
-import { MemorySearcher } from '../src/memory/MemorySearcher.js';
-import { MemoryIndexer } from '../src/memory/MemoryIndexer.js';
-import { LocalEmbeddingProvider } from '../src/memory/embedding/LocalEmbeddingProvider.js';
-import type { MemoryChunk } from '../src/memory/types.js';
+import { SqliteMemoryStore } from '../src/core/memory/internal/sqlite-store.js';
+import { MemorySearcher } from '../src/core/memory/internal/MemorySearcher.js';
+import { MemoryIndexer } from '../src/core/memory/internal/MemoryIndexer.js';
+import { LocalEmbeddingProvider } from '../src/core/memory/internal/LocalEmbeddingProvider.js';
+import type { MemoryChunk } from '../src/core/memory/types.js';
 
 // ── helpers ────────────────────────────────────────────────────────────
 
