@@ -59,6 +59,12 @@ export interface RunParams {
   compaction?: CompactionConfig;
   /** 模型上下文窗口大小（由 RuntimeApp 从 config.llm.contextWindowTokens 传入），默认 200,000 */
   contextWindowTokens?: number;
+  /**
+   * 触发本 turn 的 `user_message.messageId`。由 RuntimeApp 从 queued 路径透传；
+   * 传入即在 run_start 上回写为 originMessageId，供客户端反向关联。
+   * 见 channel-multi-client-user-message-spec §5.1 D6。
+   */
+  originMessageId?: string;
 }
 
 /** 单次 run 的结果 */
@@ -77,9 +83,56 @@ export interface RunResult {
   compacted?: boolean;
 }
 
+/**
+ * 用户消息附件摘要。仅广播用；原始字节仍走 transcript / LLM 路径。
+ * 见 channel-multi-client-user-message-spec §5.1 D8。
+ */
+export interface AttachmentSummary {
+  /** UI 至少要知道渲染哪种占位；未来加类型是 additive */
+  type: 'image' | 'other';
+  /** 文件名（若可得） */
+  name?: string;
+  /** 原始字节数（若可得） */
+  bytes?: number;
+  /** MIME type（若可得） */
+  mime?: string;
+}
+
 /** 运行时事件 */
 export type AgentEvent =
-  | { type: 'run_start'; sessionKey: string; turnId: string }
+  | {
+      type: 'run_start';
+      sessionKey: string;
+      turnId: string;
+      /**
+       * 反向关联到触发本 turn 的 `user_message.messageId`。
+       * 仅 queued 路径有值；直接调用 runTurn / steering 无此字段。
+       * 见 channel-multi-client-user-message-spec §5.1 D6。
+       */
+      originMessageId?: string;
+    }
+  /**
+   * 用户输入广播。emit 时机在 assemble 通过后、queued/steering 分歧前，
+   * 用于同 session 多 client 之间的可见性对齐。见 channel-multi-client-user-message-spec §5.3。
+   *
+   * 与 turnId 解耦：steering 消息不产生 turn，messageId 是独立生命周期。
+   */
+  | {
+      type: 'user_message';
+      sessionKey: string;
+      /** emit 时生成的 UUID；后续 run_start 通过 originMessageId 反向关联 */
+      messageId: string;
+      /** 用户输入的文本部分（从 assembled 抽出并拼接） */
+      content: string;
+      /** 附件摘要；无附件时省略 */
+      attachmentSummaries?: AttachmentSummary[];
+      /** WS clientId；来自非 WS channel（CLI / library API）则为 null */
+      originClientId: string | null;
+      /** queued = 走 session 队列；steering = 注入运行中 turn */
+      deliveryMode: 'queued' | 'steering';
+      /** ms since epoch */
+      timestamp: number;
+    }
   | { type: 'text_delta'; sessionKey: string; turnId: string; text: string }
   | {
       type: 'tool_use';

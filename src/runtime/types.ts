@@ -88,6 +88,12 @@ export interface RunTurnParams {
   reloadContextFiles?: boolean;
   /** 可选 turn 标识；不提供则由 RuntimeApp 自动生成 UUID */
   turnId?: string;
+  /**
+   * 触发本 turn 的 `user_message.messageId`。仅由 handleInboundChannelMessage → startQueuedTurn
+   * 内部透传；直接调用 runTurn 一般不需要。
+   * 见 channel-multi-client-user-message-spec §5.1 D6。
+   */
+  originMessageId?: string;
 }
 
 export interface RunTurnResult {

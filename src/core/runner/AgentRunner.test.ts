@@ -580,6 +580,7 @@ describe('AgentRunner', () => {
       expect(parentTypes).toContain('run_end');
       // Confirm tagging: every parent event carries the parent's turnId.
       for (const e of parentEvents) {
+        if (e.type === 'user_message') continue;
         expect(e.turnId).toBe('parent-turn');
       }
     });
@@ -623,8 +624,14 @@ describe('AgentRunner', () => {
       const bEvents = events.filter((e) => e.sessionKey === 'other');
       expect(aEvents.length).toBeGreaterThan(0);
       expect(bEvents.length).toBeGreaterThan(0);
-      for (const e of aEvents) expect(e.turnId).toBe('turn-A');
-      for (const e of bEvents) expect(e.turnId).toBe('turn-B');
+      for (const e of aEvents) {
+        if (e.type === 'user_message') continue;
+        expect(e.turnId).toBe('turn-A');
+      }
+      for (const e of bEvents) {
+        if (e.type === 'user_message') continue;
+        expect(e.turnId).toBe('turn-B');
+      }
     });
 
     it('concurrent runs on the same AgentRunner instance do not interleave each other\'s turnCtx', async () => {
@@ -683,8 +690,14 @@ describe('AgentRunner', () => {
       const b = events.filter((e) => e.sessionKey === 'concurrent-B');
       expect(a.length).toBeGreaterThan(0);
       expect(b.length).toBeGreaterThan(0);
-      for (const e of a) expect(e.turnId).toBe('turn-A');
-      for (const e of b) expect(e.turnId).toBe('turn-B');
+      for (const e of a) {
+        if (e.type === 'user_message') continue;
+        expect(e.turnId).toBe('turn-A');
+      }
+      for (const e of b) {
+        if (e.type === 'user_message') continue;
+        expect(e.turnId).toBe('turn-B');
+      }
     });
   });
 

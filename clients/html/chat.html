@@ -1020,9 +1020,6 @@
             <div v-if="pendingApprovalCount > 0" class="waiting-badge">
               {{ pendingApprovalCount }} approval request waiting
             </div>
-            <button class="secondary" @click="seedExample" :disabled="!isConnected">
-              Insert Example Prompt
-            </button>
           </div>
         </header>
 
@@ -1033,7 +1030,7 @@
             <ul class="empty-state-list">
               <li>连接成功后会先发送 <code>hello</code>，等服务端返回 <code>hello_ack</code>。</li>
               <li>首次发送 <code>run_turn</code> 后，当前客户端才会加入该 session 的事件广播受众。</li>
-              <li>不会自动拉取历史，也不会自动回显别的客户端本地输入的用户消息。</li>
+              <li>不会自动拉取历史；但同 session 内其他 client（含 CLI）发送的用户消息会自动回显。</li>
             </ul>
           </div>
 
@@ -1156,6 +1153,14 @@
                     <div class="bubble-attachment-meta">
                       <span>{{ att.name }}</span>
                       <span>{{ formatBytes(att.sizeBytes) }}{{ att.willResize ? ' · 已压缩' : '' }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="item.attachmentSummaries && item.attachmentSummaries.length > 0" class="bubble-attachments">
+                  <div v-for="(s, i) in item.attachmentSummaries" :key="i" class="attachment-chip">
+                    <div class="attachment-chip-meta">
+                      <span class="attachment-chip-name">{{ s.type }}{{ s.mime ? ' · ' + s.mime : '' }}</span>
+                      <span v-if="s.bytes != null" class="attachment-chip-size">{{ formatBytes(s.bytes) }}</span>
                     </div>
                   </div>
                 </div>
@@ -1702,6 +1707,22 @@
                 this.pushEvent('tool_result_pruned', `${event.toolUseId}: ${event.originalChars} → ${event.prunedChars}`);
                 return;
 
+              case 'user_message': {
+                // Dedup: origin client already rendered a local "You" bubble in sendMessage().
+                if (event.originClientId === this.form.clientId) return;
+                const label = event.originClientId
+                  ? `user @${event.originClientId.slice(0, 6)}`
+                  : 'user (external)';
+                this.appendChatItem({
+                  kind: 'user',
+                  label,
+                  text: event.content ?? '',
+                  isSteer: event.deliveryMode === 'steering',
+                  attachmentSummaries: event.attachmentSummaries ?? [],
+                });
+                return;
+              }
+
               default:
                 this.pushEvent('event', `Unhandled event: ${event.type || 'unknown'}`);
             }
@@ -1848,9 +1869,6 @@
           },
 
           // ── Misc helpers ──────────────────────────────────────
-          seedExample() {
-            this.draft = '请先查看当前工作目录，然后总结一下有哪些文件。';
-          },
           normalizeToolResultContent(value) {
             if (typeof value === 'string') return value;
             if (value == null) return '';

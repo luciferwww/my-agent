@@ -21,6 +21,12 @@ export type QueuedChannelTurn = {
   message: string | ChatContentBlock[];
   launchContext?: TurnLaunchContext;
   routeContext?: MessageRouteContext;
+  /**
+   * emit `user_message` 时生成的 UUID；启动 turn 时透传到 run_start.originMessageId，
+   * 客户端据此把 turn 反向关联到触发它的用户消息。
+   * 见 channel-multi-client-user-message-spec §5.1 D6。
+   */
+  originMessageId?: string;
 };
 
 /** 当前活动 run-turn 可在执行中途消费的最小 steering 输入形态。 */

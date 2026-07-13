@@ -145,6 +145,55 @@ describe('WebSocketChannel', () => {
       });
     });
 
+    it('broadcasts user_message to every client on the session (including origin)', async () => {
+      // channel-multi-client-user-message-spec §7: multi-client visibility
+      const handler = vi.fn(async () => undefined);
+      channel = new WebSocketChannel({ port: 0 });
+      channel.onMessage(handler);
+      await channel.start();
+
+      const clientA = await connectClient(channel);
+      clients.push(clientA);
+      clientA.send(JSON.stringify({ type: 'hello', clientId: 'client-A' }));
+      await expectMessage(clientA, { type: 'hello_ack', clientId: 'client-A' });
+
+      const clientB = await connectClient(channel);
+      clients.push(clientB);
+      clientB.send(JSON.stringify({ type: 'hello', clientId: 'client-B' }));
+      await expectMessage(clientB, { type: 'hello_ack', clientId: 'client-B' });
+
+      // Both subscribe to 'main' via run_turn
+      clientA.send(JSON.stringify({ type: 'run_turn', sessionKey: 'main', message: 'first' }));
+      clientB.send(JSON.stringify({ type: 'run_turn', sessionKey: 'main', message: 'second' }));
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(2));
+
+      const timestamp = Date.now();
+      channel.send({
+        type: 'user_message',
+        sessionKey: 'main',
+        messageId: 'msg-abc',
+        content: 'hello everyone',
+        attachmentSummaries: [{ type: 'image', mime: 'image/png', bytes: 1024 }],
+        originClientId: 'client-A',
+        deliveryMode: 'queued',
+        timestamp,
+      });
+
+      const expected = {
+        type: 'user_message',
+        sessionKey: 'main',
+        messageId: 'msg-abc',
+        content: 'hello everyone',
+        attachmentSummaries: [{ type: 'image', mime: 'image/png', bytes: 1024 }],
+        originClientId: 'client-A',
+        deliveryMode: 'queued',
+        timestamp,
+      };
+
+      await expectMessage(clientA, expected);
+      await expectMessage(clientB, expected);
+    });
+
     it('routes subagent_end to the parent sessionKey audience', async () => {
       const handler = vi.fn(async () => undefined);
       channel = new WebSocketChannel({ port: 0 });

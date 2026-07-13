@@ -121,6 +121,21 @@ export class CliChannel implements Channel {
         this.output.write(event.text);
         break;
 
+      case 'user_message': {
+        // originClientId === null 表示来自 CLI / library 入口 —— CLI 用户自己刚敲下过，
+        // 无需回显；仅在外部客户端触发时在终端渲染。
+        // 已知 limitation G1：library 注入也走 null 分支，见 spec §5.4。
+        if (event.originClientId === null) break;
+        this.breakStream();
+        const count = event.attachmentSummaries?.length ?? 0;
+        const attachHint = count
+          ? dim(` (+${count} attachment${count > 1 ? 's' : ''})`)
+          : '';
+        const who = ` @${event.originClientId.slice(0, 6)}`;
+        this.output.write(cyan(`[user${who}]`) + ` ${event.content}${attachHint}\n`);
+        break;
+      }
+
       case 'tool_use':
         this.breakStream();
         this.output.write(dim(`[tool: ${event.name}]\n`));

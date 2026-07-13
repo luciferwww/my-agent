@@ -177,7 +177,7 @@ export class AgentRunner {
       turnId: params.turnId,
     };
 
-    this.emit(turnCtx, { type: 'run_start' });
+    this.emit(turnCtx, { type: 'run_start', originMessageId: params.originMessageId });
 
     // 注意：用户消息的 append 已下沉到 runAttempt() 内部，在 Layer 2 preflight
     // 通过之后才写入；这样 ContextOverflowError → compactHistory 重试期间，

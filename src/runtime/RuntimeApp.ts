@@ -19,6 +19,7 @@ import { ATTACHMENT_DROP_NOTICE_DEFAULT } from '../core/media/constants.js';
 import { bootstrapRuntime } from './bootstrap.js';
 import { classifyRuntimeError, createRuntimeError } from './errors.js';
 import { buildSystemPromptParams } from './prompt-factory.js';
+import { summarizeAssembled } from './summarize-assembled.js';
 import { resolveToolPolicy } from './tool-approval-policy.js';
 import {
   applyDenyFilter,
@@ -94,6 +95,15 @@ export class RuntimeApp {
   private shutdownReport?: RuntimeShutdownReport;
 
   /**
+   * Fanout entry for AgentEvent broadcasts. Set inside `create()` after the
+   * bootstrap closure builds it; instance methods (notably
+   * `handleInboundChannelMessage`) call this to emit `user_message` events
+   * without needing to import the fanout closure.
+   * 见 channel-multi-client-user-message-spec §5.3。
+   */
+  private fanoutAgentEvent!: (event: AgentEvent) => void;
+
+  /**
    * Profile registry including the built-in `general-purpose` entry. Filled
    * by `create()` after `bootstrapRuntime()` returns; not part of
    * RuntimeResourceSet because it is consumed only by RuntimeApp itself
@@ -146,6 +156,7 @@ export class RuntimeApp {
     });
 
     const app = new RuntimeApp(resources, state, channels, options.onEvent);
+    app.fanoutAgentEvent = fanout;
 
     // ── Subagent post-bootstrap wiring ───────────────────────────────
     //
@@ -470,8 +481,10 @@ export class RuntimeApp {
 
   /**
    * Channel 入站统一先过 runtime intake。
-   * 顺序：media 处理 → 占位装配 → steering 剥离 → 普通队列。
+   * 顺序：media 处理 → 占位装配 → user_message 广播 → steering 剥离 → 普通队列。
    * 决策 8：失败即丢弃 + 可选文本占位；不发任何事件 / 拒收。
+   * user_message emit 时机对齐 channel-multi-client-user-message-spec §5.3
+   * （assemble 后、route 分歧前，覆盖 queued+steering 两条路径）。
    */
   private async handleInboundChannelMessage(
     channel: Channel,
@@ -488,36 +501,56 @@ export class RuntimeApp {
       typeof assembled === 'string' ? assembled.length : undefined;
     const assembledAttachmentCount = Array.isArray(assembled) ? assembled.length : 0;
 
-    // ③ Steering 剥离：steering 路径只接文本
-    if (this.shouldRouteMessageToSteering(req.sessionKey)) {
-      const steeringText = typeof assembled === 'string'
-        ? assembled
-        : assembled
-            .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
-            .map((b) => b.text)
-            .join('\n\n');
-      if (steeringText.trim() === '') return;
+    // ③ 路由分歧前先广播 user_message（spec §5.3）
+    const routeToSteering = this.shouldRouteMessageToSteering(req.sessionKey);
+    const deliveryMode: 'queued' | 'steering' = routeToSteering ? 'steering' : 'queued';
+    const { text: broadcastText, attachmentSummaries } = summarizeAssembled(assembled);
+    const messageId = randomUUID();
+
+    this.fanoutAgentEvent({
+      type: 'user_message',
+      sessionKey: req.sessionKey,
+      messageId,
+      content: broadcastText,
+      attachmentSummaries: attachmentSummaries.length ? attachmentSummaries : undefined,
+      originClientId: req.clientId ?? null,
+      deliveryMode,
+      timestamp: Date.now(),
+    });
+
+    // ④ Steering 剥离：steering 路径只接文本（R1）；纯附件消息不入队（R1'）
+    if (routeToSteering) {
+      if (broadcastText.trim() === '') {
+        log.info('steering message has no text after summarize; skipping enqueue', {
+          channelId: channel.id,
+          clientId: req.clientId,
+          sessionKey: req.sessionKey,
+          attachmentCount: attachmentSummaries.length,
+        });
+        return;
+      }
       this.enqueueSteeringInput(
         req.sessionKey,
-        steeringText,
+        broadcastText,
         this.buildMessageRouteContext(channel, req),
       );
       log.info('channel message routed to steering', {
         channelId: channel.id,
         clientId: req.clientId,
         sessionKey: req.sessionKey,
-        messageChars: steeringText.length,
+        messageChars: broadcastText.length,
         droppedAttachments: dropped.length,
       });
       return;
     }
 
-    // ④ 普通队列
+    // ⑤ 普通队列
     const queuedTurn: QueuedChannelTurn = {
       sessionKey: req.sessionKey,
       message: assembled,
       launchContext: this.buildTurnLaunchContext(req),
       routeContext: this.buildMessageRouteContext(channel, req),
+      originMessageId: messageId,
     };
 
     this.enqueueQueuedTurn(queuedTurn);
@@ -676,6 +709,7 @@ export class RuntimeApp {
         maxTokens: item.launchContext?.maxTokens,
         maxLlmCalls: item.launchContext?.maxLlmCalls,
         turnId,
+        originMessageId: item.originMessageId,
       });
     } finally {
       this.routeContextByTurn.delete(turnId);
@@ -966,6 +1000,7 @@ export class RuntimeApp {
       getSteeringMessages: async () => this.drainSteeringMessages(params.sessionKey),
       compaction: this.resources.resolvedConfig.compaction,
       contextWindowTokens: this.resources.resolvedConfig.llm.contextWindowTokens,
+      originMessageId: params.originMessageId,
     });
 
     return {
