@@ -371,7 +371,7 @@ describe('SessionManager', () => {
       const longContent = 'A'.repeat(50_000);
       const msgId = await manager.appendMessage('main', {
         role: 'toolResult',
-        content: [{ type: 'tool_result', content: longContent }],
+        content: [{ type: 'tool_result', tool_use_id: 'tu_test', content: longContent }],
       });
 
       // 重新加载后内容应原样保留
@@ -392,7 +392,7 @@ describe('SessionManager', () => {
 
       await cappedManager.appendMessage('capped', {
         role: 'toolResult',
-        content: [{ type: 'tool_result', content: longContent }],
+        content: [{ type: 'tool_result', tool_use_id: 'tu_test', content: longContent }],
       });
 
       // 重新加载，验证磁盘上已经是裁剪后的数据
@@ -415,7 +415,7 @@ describe('SessionManager', () => {
 
       await cappedManager.appendMessage('small', {
         role: 'toolResult',
-        content: [{ type: 'tool_result', content: shortContent }],
+        content: [{ type: 'tool_result', tool_use_id: 'tu_test', content: shortContent }],
       });
 
       const manager2 = new SessionManager(workspaceDir);
@@ -434,14 +434,14 @@ describe('SessionManager', () => {
 
       await cappedManager.appendMessage('mixed', {
         role: 'toolResult',
-        content: [{ type: 'text', content: longText }],
+        content: [{ type: 'text', text: longText }],
       });
 
       const manager2 = new SessionManager(workspaceDir);
       const msgs = manager2.getMessages('mixed');
-      const block = (msgs[0]!.message.content as Array<{ type: string; content: string }>)[0]!;
+      const block = (msgs[0]!.message.content as Array<{ type: string; text: string }>)[0]!;
       // type !== 'tool_result' → not capped
-      expect(block.content).toBe(longText);
+      expect(block.text).toBe(longText);
     });
   });
 });

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MockInstance } from 'vitest';
 import { ConsoleAdapter } from './ConsoleAdapter.js';
 import type { LogEntry } from './types.js';
 
@@ -13,8 +14,8 @@ function makeEntry(overrides?: Partial<LogEntry>): LogEntry {
 }
 
 describe('ConsoleAdapter', () => {
-  let stdoutSpy: ReturnType<typeof vi.spyOn>;
-  let stderrSpy: ReturnType<typeof vi.spyOn>;
+  let stdoutSpy: MockInstance<typeof process.stdout.write>;
+  let stderrSpy: MockInstance<typeof process.stderr.write>;
 
   beforeEach(() => {
     stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);

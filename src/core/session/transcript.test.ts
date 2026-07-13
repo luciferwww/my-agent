@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile, readFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { loadTranscript, resolveLinearPath, appendToTranscript, findLastCompaction } from './transcript.js';
-import type { MessageRecord, SessionRecord, CompactionRecord } from './types.js';
+import type { MessageRecord, SessionRecord, CompactionRecord, TranscriptEntry } from './types.js';
 
 describe('transcript', () => {
   let dir: string;
@@ -180,7 +180,10 @@ describe('transcript', () => {
         timestamp: '2026-04-01T00:00:01Z',
         message: { role: 'user', content: 'hi' },
       };
-      const state = { byId: new Map([['s1', session], ['m1', m1]]), leafId: 'm1' };
+      const state = {
+        byId: new Map<string, TranscriptEntry>([['s1', session], ['m1', m1]]),
+        leafId: 'm1',
+      };
 
       expect(findLastCompaction(state)).toBeNull();
     });
@@ -226,7 +229,10 @@ describe('transcript', () => {
         message: { role: 'user', content: 'hi' },
       };
       const c1 = makeCompactionRecord('c1', '2026-04-01T10:00:00Z');
-      const state = { byId: new Map([['s1', session], ['m1', m1], ['c1', c1]]), leafId: 'm1' };
+      const state = {
+        byId: new Map<string, TranscriptEntry>([['s1', session], ['m1', m1], ['c1', c1]]),
+        leafId: 'm1',
+      };
 
       const result = findLastCompaction(state);
       expect(result!.id).toBe('c1');
