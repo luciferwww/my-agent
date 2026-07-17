@@ -72,7 +72,11 @@ export interface SubagentRunInput {
   prompt: string;
   trigger: RunTrigger;
   lifecycle: RunLifecycle;
-  /** Reserved for the future abort subsystem; v1 ignores it (spec §6.1 decision 1). */
+  /**
+   * User abort / turn timeout / shutdown signal, forwarded down the chain to
+   * `SubagentRunRequest.signal` → child `RunParams.signal`. See
+   * core-abort-spec.md §6.4 / §8.4.
+   */
   signal?: AbortSignal;
 }
 
@@ -136,7 +140,12 @@ export interface SubagentRunRequest {
   prompt: string;
   trigger: RunTrigger;
   lifecycle: RunLifecycle;
-  /** Reserved for the future abort subsystem; v1 ignores it. */
+  /**
+   * Forwarded from `SubagentRunInput.signal` (library API) or `ToolContext.signal`
+   * (task tool). SubagentRunner passes it to the child `AgentRunner.run` as
+   * `RunParams.signal`, so abort cascades naturally into the child turn.
+   * See core-abort-spec.md §9.
+   */
   signal?: AbortSignal;
   parentSessionKey: string;
   /** Replaces a raw `channel/clientId` pair: the parent turn id. */

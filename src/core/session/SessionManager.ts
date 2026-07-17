@@ -185,6 +185,12 @@ export class SessionManager {
     message: {
       role: 'user' | 'assistant' | 'toolResult';
       content: string | ContentBlock[];
+      /**
+       * abort 路径标记，透明持久化到 JSONL（详见 types.ts MessageRecord
+       * 与 core-abort-spec.md §6.5 / §7.2）。write / read 皆透传，实现无需
+       * 显式处理——下面 `persistedMessage` 的对象展开自然带上此字段。
+       */
+      abortMeta?: { partial: boolean; stopReason: 'aborted' };
     },
   ): Promise<string> {
     const state = this.ensureTranscriptLoaded(key);

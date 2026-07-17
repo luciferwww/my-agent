@@ -5,10 +5,10 @@
  * origin of the call and are used by approval hooks, audit logs, and the
  * `task` subagent tool (which sets `parentToolUseId = ctx.toolUseId`).
  *
- * `signal` is reserved for the future abort subsystem (subagent spec §6.1
- * decision 1). v1 always sets it to `undefined`; the only current consumer
- * is the `exec` builtin tool, which degrades to no-abort behavior when the
- * signal is missing.
+ * `signal` carries user abort / turn timeout / shutdown interrupts. Whether
+ * a tool actually responds is decided per tool (see field JSDoc). Abort's
+ * invariant is "stop the LOOP (no next tool starts)"; in-flight tool calls
+ * are NOT guaranteed to terminate immediately. See core-abort-spec.md §6.2.
  */
 export interface ToolContext {
   /** Tool run's owning sessionKey; used by approval hooks / routing / logs. */
@@ -20,7 +20,24 @@ export interface ToolContext {
    * The `task` tool reads this to populate `SubagentRunInput.trigger.parentToolUseId`.
    */
   toolUseId: string;
-  /** Reserved for the future abort subsystem; v1 is always `undefined`. */
+  /**
+   * User abort / turn timeout / shutdown interrupt signal.
+   *
+   * Contract: my-agent guarantees a valid signal is passed, but whether the
+   * tool responds is **decided by each tool**. Abort's invariant is "stop the
+   * LOOP (no next tool starts)"; it does **not** guarantee in-flight calls
+   * terminate. Reason: MCP / third-party tools are heterogeneous and cannot
+   * be forced to implement signal handling.
+   *
+   * v1 actual behavior:
+   *  - `exec` tool: reads `ctx.signal` and forwards to `child_process` → killed
+   *  - other builtins (`web_fetch` / `search` / `fs` / `apply_patch`): v1 does
+   *    not respond; runs to completion
+   *  - MCP / third-party tools: response is up to the implementation
+   *
+   * Third-party tool authors: for long operations (>500ms) please check
+   * `if (ctx.signal?.aborted)` around await points and throw `AbortError`.
+   */
   signal?: AbortSignal;
 }
 

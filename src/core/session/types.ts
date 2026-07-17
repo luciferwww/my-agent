@@ -42,6 +42,16 @@ export interface MessageRecord extends TranscriptEntryBase {
   message: {
     role: 'user' | 'assistant' | 'toolResult';
     content: string | ContentBlock[];
+    /**
+     * abort 路径标记。**透明持久化到 JSONL**，供调试 / audit / 未来不同
+     * UI 渲染使用；**不反向影响 LLM 请求**——AgentRunner.loadHistory() 转
+     * ChatMessage 时丢弃此字段，LLM 看到的历史与正常消息一致。
+     * 详见 core-abort-spec.md §6.5。
+     */
+    abortMeta?: {
+      partial: boolean;
+      stopReason: 'aborted';
+    };
   };
 }
 

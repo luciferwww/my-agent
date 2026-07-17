@@ -142,6 +142,41 @@ describe('SessionManager', () => {
       const id = await manager.appendMessage('main', { role: 'user', content: 'Hello' });
       expect(manager.getLeafId('main')).toBe(id);
     });
+
+    // core-abort-spec.md §6.5 — abortMeta 透明持久化
+    it('preserves abortMeta on in-memory read', async () => {
+      await manager.createSession('main');
+      await manager.appendMessage('main', {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'partial…' }],
+        abortMeta: { partial: true, stopReason: 'aborted' },
+      });
+
+      const messages = manager.getMessages('main');
+      expect(messages).toHaveLength(1);
+      expect(messages[0]!.message.abortMeta).toEqual({
+        partial: true,
+        stopReason: 'aborted',
+      });
+    });
+
+    it('abortMeta survives reload from disk (JSONL round-trip)', async () => {
+      await manager.createSession('main');
+      await manager.appendMessage('main', {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'partial…' }],
+        abortMeta: { partial: true, stopReason: 'aborted' },
+      });
+
+      // 新 manager 实例走磁盘反序列化路径
+      const manager2 = new SessionManager(workspaceDir);
+      const messages = manager2.getMessages('main');
+      expect(messages).toHaveLength(1);
+      expect(messages[0]!.message.abortMeta).toEqual({
+        partial: true,
+        stopReason: 'aborted',
+      });
+    });
   });
 
   describe('getMessages', () => {

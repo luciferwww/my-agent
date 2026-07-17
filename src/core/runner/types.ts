@@ -65,6 +65,13 @@ export interface RunParams {
    * 见 channel-multi-client-user-message-spec §5.1 D6。
    */
   originMessageId?: string;
+  /**
+   * 用户中断 / turn timeout / shutdown 等都通过此 signal 传递。
+   * AgentRunner 在 chatStream 调用 + ToolContext 构造时透传；
+   * catch AbortError 后返回 RunResult.stopReason='aborted'，不抛。
+   * 见 core-abort-spec.md §6.1。
+   */
+  signal?: AbortSignal;
 }
 
 /** 单次 run 的结果 */
@@ -188,6 +195,21 @@ export type AgentEvent =
       turnId: string;
       discardedEntryId: string;
       discardedRole: 'user';
+    }
+  /**
+   * 孤儿 tool_use 修复：runAttempt 入口检测到 session 末尾 assistant/user pair
+   * 里存在缺失 tool_result 的 tool_use，已写 synthetic tool_result 补齐。
+   *  - source='abort'：来自本项目 abort 路径（末尾 assistant 携 abortMeta.partial=true）
+   *  - source='recovered'：其他来源（进程崩溃 / kill / bug 等，无 abortMeta）
+   * 详见 core-abort-spec.md §7.3。
+   */
+  | {
+      type: 'orphan_tool_results_repaired';
+      sessionKey: string;
+      turnId: string;
+      /** 本次补写的 synthetic tool_result 块数（= 孤儿 tool_use id 数） */
+      count: number;
+      source: 'abort' | 'recovered';
     }
   // FIXME(arch-debt, v2): 下面两个 subagent_* 变体让 `core/runner/types.ts` 反向
   // import `core/subagent/types.js` 拿 `RunTrigger`，违反 spec §6.4 "core/runner/ 不依赖

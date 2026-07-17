@@ -1123,4 +1123,514 @@ describe('AgentRunner', () => {
       expect(all.map(r => r.message.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
     });
   });
+
+  // ── Abort（core-abort-spec.md §7） ──────────────────
+
+  describe('abort', () => {
+    // ① abort before run starts → 立即返回
+    it('abort before run starts → 立即返回 aborted，无 LLM 调用', async () => {
+      const controller = new AbortController();
+      controller.abort();
+
+      let llmCalled = false;
+      const llmClient: LLMClient = {
+        async *chatStream() {
+          llmCalled = true;
+          yield { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 0, outputTokens: 0 } };
+        },
+        async chat() { throw new Error('Not used'); },
+      };
+
+      const events: AgentEvent[] = [];
+      const runner = new AgentRunner({ llmClient, sessionManager, onEvent: (e) => events.push(e) });
+
+      const result = await runner.run({
+        sessionKey: 'main',
+        message: 'Hi',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-early-abort',
+        signal: controller.signal,
+      });
+
+      expect(result.stopReason).toBe('aborted');
+      expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+      expect(result.toolRounds).toBe(0);
+      expect(llmCalled).toBe(false);
+      // run_start + run_end 事件对完整
+      expect(events.find(e => e.type === 'run_start')).toBeDefined();
+      expect(events.find(e => e.type === 'run_end')).toBeDefined();
+    });
+
+    // ② abort during LLM stream → stopReason='aborted', partial assistant 写入（带 abortMeta）
+    it('abort during LLM stream → stopReason=aborted, partial assistant 带 abortMeta 写入', async () => {
+      const controller = new AbortController();
+
+      const llmClient: LLMClient = {
+        async *chatStream(params: ChatParams) {
+          yield { type: 'message_start' };
+          yield { type: 'text_delta', text: 'partial reply…' };
+          // 触发外部 abort，然后模拟 SDK 抛 AbortError
+          controller.abort();
+          if (params.signal?.aborted) {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            throw err;
+          }
+          yield { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 5, outputTokens: 2 } };
+        },
+        async chat() { throw new Error('Not used'); },
+      };
+
+      const runner = new AgentRunner({ llmClient, sessionManager });
+      const result = await runner.run({
+        sessionKey: 'main',
+        message: 'Hi',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-stream-abort',
+        signal: controller.signal,
+      });
+
+      expect(result.stopReason).toBe('aborted');
+      expect(result.text).toBe('partial reply…');
+
+      // session 里最后一条 assistant 应含 abortMeta
+      const records = sessionManager.getMessages('main');
+      const last = records[records.length - 1]!;
+      expect(last.message.role).toBe('assistant');
+      expect(last.message.abortMeta).toEqual({ partial: true, stopReason: 'aborted' });
+    });
+
+    // ③ abort during tool loop → 当前工具跑完，下一工具不启动
+    it('abort during tool loop → 当前工具跑完，下一工具不启动', async () => {
+      const controller = new AbortController();
+
+      // LLM 返回两个 tool_use 块
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'tool_use', id: 'tu-1', name: 'echo', input: { msg: 'a' } },
+          { type: 'tool_use', id: 'tu-2', name: 'echo', input: { msg: 'b' } },
+          { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 5, outputTokens: 3 } },
+        ],
+      ]);
+
+      let toolCallCount = 0;
+      const runner = new AgentRunner({
+        llmClient,
+        sessionManager,
+        toolExecutor: async (_name, input) => {
+          toolCallCount++;
+          // 第一个工具跑完后触发 abort，第二个工具不应启动
+          if (toolCallCount === 1) {
+            controller.abort();
+          }
+          return { content: `echoed ${(input as { msg: string }).msg}` };
+        },
+      });
+
+      const result = await runner.run({
+        sessionKey: 'main',
+        message: 'run tools',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-tool-loop-abort',
+        signal: controller.signal,
+      });
+
+      expect(result.stopReason).toBe('aborted');
+      // 第一个 tool 跑完，第二个不启动
+      expect(toolCallCount).toBe(1);
+    });
+
+    // ④ 【孤儿修复—turn 起点（abort source）】
+    it('orphan repair: abort 造孤儿 → 下一 turn 起点写 aborted 内容 + emit source:abort', async () => {
+      // 手工模拟：上一 turn abort 遗留一条 assistant 含 tool_use 且带 abortMeta
+      await sessionManager.appendMessage('main', {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'starting…' },
+          { type: 'tool_use', id: 'orphan-1', name: 'echo', input: { msg: 'x' } },
+        ],
+        abortMeta: { partial: true, stopReason: 'aborted' },
+      });
+
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'continue' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 5, outputTokens: 2 } },
+        ],
+      ]);
+
+      const events: AgentEvent[] = [];
+      const runner = new AgentRunner({ llmClient, sessionManager, onEvent: (e) => events.push(e) });
+
+      await runner.run({
+        sessionKey: 'main',
+        message: 'retry',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-repair-abort',
+      });
+
+      // repair emit
+      const repairEvent = events.find(e => e.type === 'orphan_tool_results_repaired');
+      expect(repairEvent).toBeDefined();
+      expect((repairEvent as { count: number; source: string }).count).toBe(1);
+      expect((repairEvent as { source: string }).source).toBe('abort');
+
+      // session：assistant(with tool_use) → toolResult(synthetic aborted) → user(retry) → assistant(continue)
+      const records = sessionManager.getMessages('main');
+      const toolResultRecord = records.find(r => r.message.role === 'toolResult');
+      expect(toolResultRecord).toBeDefined();
+      const trContent = toolResultRecord!.message.content as Array<{ type: string; tool_use_id: string; content: string }>;
+      expect(trContent[0]!.tool_use_id).toBe('orphan-1');
+      // Option 1: 统一中性 content，不区分 abort vs recovered——source 字段承担区分职责
+      expect(trContent[0]!.content).toBe('[tool call interrupted; session recovered]');
+    });
+
+    // ⑤ 【孤儿修复—非-abort 来源（recovered）】
+    it('orphan repair: 无 abortMeta 孤儿（模拟崩溃恢复）→ 写 recovered 内容 + emit source:recovered', async () => {
+      // 预置一条无 abortMeta 的 assistant 含 tool_use 孤儿（模拟进程崩溃）
+      await sessionManager.appendMessage('main', {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'crash-1', name: 'echo', input: { msg: 'y' } },
+        ],
+      });
+
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'ok' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 5, outputTokens: 2 } },
+        ],
+      ]);
+
+      const events: AgentEvent[] = [];
+      const runner = new AgentRunner({ llmClient, sessionManager, onEvent: (e) => events.push(e) });
+
+      await runner.run({
+        sessionKey: 'main',
+        message: 'hi',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-repair-recovered',
+      });
+
+      const repairEvent = events.find(e => e.type === 'orphan_tool_results_repaired');
+      expect(repairEvent).toBeDefined();
+      expect((repairEvent as { source: string }).source).toBe('recovered');
+
+      const records = sessionManager.getMessages('main');
+      const toolResultRecord = records.find(r => r.message.role === 'toolResult');
+      const trContent = toolResultRecord!.message.content as Array<{ tool_use_id: string; content: string }>;
+      expect(trContent[0]!.content).toBe('[tool call interrupted; session recovered]');
+    });
+
+    // ⑥ 【孤儿修复—no-op】
+    it('orphan repair: 干净 session（无孤儿）→ 不写盘、不 emit', async () => {
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'ok' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 5, outputTokens: 2 } },
+        ],
+      ]);
+
+      const events: AgentEvent[] = [];
+      const appendSpy = vi.spyOn(sessionManager, 'appendMessage');
+
+      const runner = new AgentRunner({ llmClient, sessionManager, onEvent: (e) => events.push(e) });
+      await runner.run({
+        sessionKey: 'main',
+        message: 'hi',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-no-orphan',
+      });
+
+      // 没有 orphan_tool_results_repaired 事件
+      expect(events.find(e => e.type === 'orphan_tool_results_repaired')).toBeUndefined();
+      // appendMessage 调用中不应有 role='toolResult' 的调用（因为不存在真实 tool_use）
+      const toolResultCalls = appendSpy.mock.calls.filter(c => (c[1] as { role: string }).role === 'toolResult');
+      expect(toolResultCalls).toHaveLength(0);
+    });
+
+    // ⑦ 【孤儿修复—write 失败不 crash】
+    it('orphan repair: write 失败 → log warn，turn 继续启动（不 rethrow）', async () => {
+      // 预置一个孤儿
+      await sessionManager.appendMessage('main', {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'x-1', name: 'echo', input: {} }],
+      });
+
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'still ok' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 5, outputTokens: 2 } },
+        ],
+      ]);
+
+      // 让 appendMessage 在 repair 阶段（role='toolResult'）抛错，其他角色正常
+      const originalAppend = sessionManager.appendMessage.bind(sessionManager);
+      const appendSpy = vi.spyOn(sessionManager, 'appendMessage').mockImplementation(async (key, msg) => {
+        if (msg.role === 'toolResult') {
+          throw new Error('disk full');
+        }
+        return originalAppend(key, msg);
+      });
+
+      const runner = new AgentRunner({ llmClient, sessionManager });
+
+      const result = await runner.run({
+        sessionKey: 'main',
+        message: 'hi',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-repair-fail',
+      });
+
+      // turn 未 crash，正常完成
+      expect(result.stopReason).toBe('end_turn');
+      expect(result.text).toBe('still ok');
+      appendSpy.mockRestore();
+    });
+
+    // ⑧ 【孤儿修复—partial-assistant 写盘失败边角（从磁盘为真的免疫属性）】
+    it('orphan repair: partial-assistant 写盘失败 → 磁盘无 assistant → 下轮 repair no-op', async () => {
+      const controller = new AbortController();
+
+      // 让 assistant 写盘抛 IO error（模拟磁盘满）
+      const originalAppend = sessionManager.appendMessage.bind(sessionManager);
+      const appendSpy = vi.spyOn(sessionManager, 'appendMessage').mockImplementation(async (key, msg) => {
+        if (msg.role === 'assistant') {
+          throw new Error('disk full');
+        }
+        return originalAppend(key, msg);
+      });
+
+      // 第一 turn：LLM 中途 abort（触发 partial assistant 写路径）
+      const llmClient1: LLMClient = {
+        async *chatStream(params: ChatParams) {
+          yield { type: 'message_start' };
+          yield { type: 'text_delta', text: 'partial' };
+          controller.abort();
+          if (params.signal?.aborted) {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            throw err;
+          }
+        },
+        async chat() { throw new Error('Not used'); },
+      };
+
+      const runner1 = new AgentRunner({ llmClient: llmClient1, sessionManager });
+      const result1 = await runner1.run({
+        sessionKey: 'main',
+        message: 'hi',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-partial-fail',
+        signal: controller.signal,
+      });
+
+      // §4 never throws + 走 isAbortError fallback → aborted
+      expect(result1.stopReason).toBe('aborted');
+
+      // 磁盘上只有 user（assistant 写失败），无孤儿
+      const recordsAfterAbort = sessionManager.getMessages('main');
+      expect(recordsAfterAbort.map(r => r.message.role)).toEqual(['user']);
+
+      appendSpy.mockRestore();
+
+      // 第二 turn：起点 repair 应 no-op（因为磁盘没有孤儿）
+      const events: AgentEvent[] = [];
+      const llmClient2 = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'retry' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 5, outputTokens: 2 } },
+        ],
+      ]);
+      const runner2 = new AgentRunner({ llmClient: llmClient2, sessionManager, onEvent: (e) => events.push(e) });
+      await runner2.run({
+        sessionKey: 'main',
+        message: 'retry',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-partial-fail-retry',
+      });
+
+      expect(events.find(e => e.type === 'orphan_tool_results_repaired')).toBeUndefined();
+    });
+
+    // ⑨ 【R2 usage 累计】
+    it('R2 usage 累计: abort 前跑过 3 轮 tool → 返回 usage 累计值，非 0/0', async () => {
+      const controller = new AbortController();
+      let round = 0;
+
+      // 每次 chatStream 调用返回一轮 mock usage {100,50}
+      const llmClient: LLMClient = {
+        async *chatStream(params: ChatParams) {
+          round++;
+          yield { type: 'message_start' };
+          if (round < 4) {
+            // 前 3 轮：返回 tool_use 触发下一轮
+            yield { type: 'tool_use', id: `tu-${round}`, name: 'echo', input: {} };
+            yield { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 100, outputTokens: 50 } };
+          } else {
+            // 第 4 轮：LLM stream abort（partial stream 分支）
+            yield { type: 'text_delta', text: 'partial' };
+            controller.abort();
+            if (params.signal?.aborted) {
+              const err = new Error('aborted');
+              err.name = 'AbortError';
+              throw err;
+            }
+          }
+        },
+        async chat() { throw new Error('Not used'); },
+      };
+
+      const runner = new AgentRunner({
+        llmClient,
+        sessionManager,
+        toolExecutor: async () => ({ content: 'ok' }),
+      });
+
+      const result = await runner.run({
+        sessionKey: 'main',
+        message: 'go',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-usage-accum',
+        signal: controller.signal,
+      });
+
+      expect(result.stopReason).toBe('aborted');
+      // 3 轮 tool + partial stream 分支的 usage {0,0}
+      expect(result.usage).toEqual({ inputTokens: 300, outputTokens: 150 });
+      expect(result.toolRounds).toBe(3);
+    });
+
+    // ⑩ 【R8 partial tool_use 完整性】
+    it('R8 partial tool_use: stream 到 tool_use 之前 abort → assistant 内容不含残缺 tool_use', async () => {
+      const controller = new AbortController();
+
+      const llmClient: LLMClient = {
+        async *chatStream(params: ChatParams) {
+          yield { type: 'message_start' };
+          yield { type: 'text_delta', text: 'thinking…' };
+          // 在下发 tool_use（AnthropicClient 只在 content_block_stop 才 yield 完整 tool_use）
+          // 之前 abort：mock 层不发 tool_use 事件，直接抛 AbortError
+          controller.abort();
+          if (params.signal?.aborted) {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            throw err;
+          }
+        },
+        async chat() { throw new Error('Not used'); },
+      };
+
+      const runner = new AgentRunner({ llmClient, sessionManager });
+      const result = await runner.run({
+        sessionKey: 'main',
+        message: 'hi',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-r8',
+        signal: controller.signal,
+      });
+
+      expect(result.stopReason).toBe('aborted');
+      // session 里 assistant 消息只含 text，不含任何 tool_use
+      const records = sessionManager.getMessages('main');
+      const assistant = records.find(r => r.message.role === 'assistant')!;
+      const content = assistant.message.content as Array<{ type: string }>;
+      expect(content.every(b => b.type === 'text')).toBe(true);
+      expect(content.some(b => b.type === 'tool_use')).toBe(false);
+    });
+
+    // ⑪ 【R11 isAbortError fallback + 诊断 log】
+    it('R11 fallback: NetworkError + signal.aborted → 走 abort 分支 + log.warn 命中', async () => {
+      const controller = new AbortController();
+      const agentLogger = (await import('../../platform/logger/index.js')).Logger.get('AgentRunner');
+      const warnSpy = vi.spyOn(agentLogger, 'warn');
+
+      const llmClient: LLMClient = {
+        async *chatStream(params: ChatParams) {
+          yield { type: 'message_start' };
+          controller.abort();
+          // 名字不是 AbortError（模拟 SDK 内部把 err.name 吞成 NetworkError），
+          // 但 signal.aborted 为真 → isAbortError fallback 命中
+          if (params.signal?.aborted) {
+            const err = new Error('network broken');
+            err.name = 'NetworkError';
+            throw err;
+          }
+        },
+        async chat() { throw new Error('Not used'); },
+      };
+
+      const runner = new AgentRunner({ llmClient, sessionManager });
+      const result = await runner.run({
+        sessionKey: 'main',
+        message: 'hi',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-r11',
+        signal: controller.signal,
+      });
+
+      expect(result.stopReason).toBe('aborted');
+      // warn log 被调用，携带 errName='NetworkError'
+      const swallowedCall = warnSpy.mock.calls.find(
+        c => c[0] === 'non-abort error swallowed by abort fallback',
+      );
+      expect(swallowedCall).toBeDefined();
+      expect((swallowedCall![1] as { errName: string }).errName).toBe('NetworkError');
+      warnSpy.mockRestore();
+    });
+
+    // R11 对照组：真 AbortError 不应触发该 warn log
+    it('R11 对照组: 真 AbortError 名字 → 不触发 fallback warn log', async () => {
+      const controller = new AbortController();
+      const agentLogger = (await import('../../platform/logger/index.js')).Logger.get('AgentRunner');
+      const warnSpy = vi.spyOn(agentLogger, 'warn');
+
+      const llmClient: LLMClient = {
+        async *chatStream(params: ChatParams) {
+          yield { type: 'message_start' };
+          controller.abort();
+          if (params.signal?.aborted) {
+            const err = new Error('aborted');
+            err.name = 'AbortError'; // 名字命中主判据
+            throw err;
+          }
+        },
+        async chat() { throw new Error('Not used'); },
+      };
+
+      const runner = new AgentRunner({ llmClient, sessionManager });
+      await runner.run({
+        sessionKey: 'main',
+        message: 'hi',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-r11-ctrl',
+        signal: controller.signal,
+      });
+
+      const swallowedCall = warnSpy.mock.calls.find(
+        c => c[0] === 'non-abort error swallowed by abort fallback',
+      );
+      expect(swallowedCall).toBeUndefined();
+      warnSpy.mockRestore();
+    });
+  });
 });

@@ -1,6 +1,6 @@
 import type { LLMClient, ChatMessage, ChatContentBlock, TokenUsage } from '../../adapters/llm/types.js';
 import type { SessionManager } from '../session/SessionManager.js';
-import type { MessageRecord } from '../session/types.js';
+import type { ContentBlock, MessageRecord } from '../session/types.js';
 import type {
   AgentRunnerConfig,
   RunParams,
@@ -164,6 +164,177 @@ export class AgentRunner {
     });
   }
 
+  /**
+   * 修复 session 末尾 assistant/user pair 里未被 tool_result 覆盖的 tool_use。
+   *
+   * 与 `sanitizeSessionTail` 平级：runAttempt 入口串行调用，把上一次遗留的
+   * 磁盘破损修干净。详见 core-abort-spec.md §7.3。
+   *
+   * 覆盖来源：user abort、进程崩溃 / SIGKILL / 断电、未处理 exception、
+   * 未来未知路径 Bug。判定基于**磁盘状态**（getMessages），天然规避 in-memory /
+   * 磁盘不一致（例如 partial-assistant 写盘失败）。
+   *
+   * 内容文案：assistant.abortMeta?.partial === true → aborted 语义；
+   * 否则 → recovered 语义（非 abort 来源）。
+   *
+   * try/catch 整包：写盘失败仅 log warn，不抛。未成功修复时下次 runAttempt
+   * 再试；实在修不了时 LLM 调用会返回 API 400，属于 caller 可见的错误而
+   * 非隐瞒崩溃。
+   */
+  private async repairOrphanToolUses(turnCtx: TurnContext): Promise<void> {
+    const { sessionKey } = turnCtx;
+    try {
+      const records = this.sessionManager.getMessages(sessionKey);
+      if (records.length === 0) return;
+
+      const last = records[records.length - 1]!.message;
+      let orphanIds: string[] = [];
+      let hint: MessageRecord['message']['abortMeta'] | undefined;
+
+      // 情况 A：末尾是 assistant 含 tool_use — 全部 tool_use 都是孤儿
+      if (last.role === 'assistant' && Array.isArray(last.content)) {
+        orphanIds = last.content
+          .filter((b): b is Extract<ContentBlock, { type: 'tool_use' }> => b.type === 'tool_use')
+          .map((b) => b.id);
+        hint = last.abortMeta;
+      }
+      // 情况 B：末尾是 toolResult，上一条 assistant 的 tool_use 对应不全
+      // 【R9】包含 R6' 场景（tool 内部响应 signal 抛 AbortError 被 executeTool
+      // swallow 为 isError=true 的 tool_result——已写入 tool_result，差集自然排除，
+      // 不重复补写）
+      else if (last.role === 'toolResult' && Array.isArray(last.content) && records.length >= 2) {
+        const prev = records[records.length - 2]!.message;
+        if (prev.role === 'assistant' && Array.isArray(prev.content)) {
+          const useIds = new Set(
+            prev.content
+              .filter((b): b is Extract<ContentBlock, { type: 'tool_use' }> => b.type === 'tool_use')
+              .map((b) => b.id),
+          );
+          const resultIds = new Set(
+            last.content
+              .filter((b): b is Extract<ContentBlock, { type: 'tool_result' }> => b.type === 'tool_result')
+              .map((b) => b.tool_use_id),
+          );
+          orphanIds = [...useIds].filter((id) => !resultIds.has(id));
+          hint = prev.abortMeta;
+        }
+      }
+
+      if (orphanIds.length === 0) return;
+
+      // 统一中性 synth 文案（参考 openclaw `repairToolUseResultPairing`），不假装
+      // 区分成因。source 字段读 abortMeta 仅供 audit / test 断言，不驱动 content。
+      // 详见 core-abort-spec.md §7.3。
+      const source: 'abort' | 'recovered' = hint?.partial === true ? 'abort' : 'recovered';
+      const content = '[tool call interrupted; session recovered]';
+      const blocks: ContentBlock[] = orphanIds.map((id) => ({
+        type: 'tool_result',
+        tool_use_id: id,
+        content,
+      }));
+
+      await this.sessionManager.appendMessage(sessionKey, {
+        role: 'toolResult',
+        content: blocks,
+      });
+      this.emit(turnCtx, {
+        type: 'orphan_tool_results_repaired',
+        count: orphanIds.length,
+        source,
+      });
+    } catch (err) {
+      logger.warn('[repairOrphanToolUses] repair failed; leaving session as-is', {
+        sessionKey,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // ── Abort 相关工具函数（详见 core-abort-spec.md §7.1） ─────
+
+  /**
+   * 名字判据：错误对象名字或 code 是否表明它是 abort 类型。callLLMStream /
+   * runAttempt catch / `logIfSwallowedByAbortFallback` 三处复用，避免在多点
+   * 重写同一份名字列表。
+   *
+   * 标准 DOMException + Node native fetch: name === 'AbortError'
+   * Anthropic SDK 可能抛 `APIUserAbortError` 或 `AbortError` — 实现时
+   * 需 manual verify（跳进 @anthropic-ai/sdk 看），必要时补加名字。
+   */
+  private isAbortByName(err: Error): boolean {
+    return (
+      err.name === 'AbortError'
+      || err.name === 'APIUserAbortError'
+      || (err as { code?: string }).code === 'ABORT_ERR'
+    );
+  }
+
+  /**
+   * 判定 err 是否应按 abort 处理。用于 catch 分支决定"归 abort 优雅返回"
+   * 还是"其他 error 上抛"。
+   *
+   * Fallback：SDK 升级或第三方 wrapper 可能吞掉 err.name。若调用方能提供
+   * 关联 signal 且 signal.aborted === true，倾向按 abort 处理，避免 abort
+   * 语义悄悄退化成 'error' 停止原因。调用点凡是拿得到 signal 都应传入。
+   *
+   * 【副作用，读者必知】本 fallback 是粗粒度的——**只要 signal 已 abort，任何
+   * error 都会被归到 abort 分支**，包括与 abort 无关的 IO error / TypeError /
+   * 其他 Bug 引发的 exception。这是主动取舍：§4 "never throws" 优先于 "错误
+   * 类型保真"——宁可丢失非-abort error 的具体类型（降为 stopReason='aborted'
+   * 返回），也不能让 abort 路径抛错。
+   *
+   * 【诊断兜底】fallback 命中的非-abort error 必须在调用方 catch 里显式
+   * 写一条 warn log（见 `logIfSwallowedByAbortFallback`，在 catch 点调用）——
+   * 否则内部 Bug 会被完全静默，无法从 stopReason='aborted' 反推真相。
+   */
+  private isAbortError(err: unknown, signal?: AbortSignal): boolean {
+    if (!(err instanceof Error)) return false;
+    if (this.isAbortByName(err)) return true;
+    if (signal?.aborted) return true;
+    return false;
+  }
+
+  /**
+   * 当 `isAbortError` 返回 true 但 err 并非 abort 名字（仅被 signal fallback
+   * 兜进来）时，写一条 warn log。runAttempt 外层 catch 与 callLLMStream catch
+   * 两处复用。
+   */
+  private logIfSwallowedByAbortFallback(err: unknown, sessionKey: string): void {
+    if (err instanceof Error && !this.isAbortByName(err)) {
+      logger.warn('non-abort error swallowed by abort fallback', {
+        sessionKey,
+        errName: err.name,
+        errMessage: err.message,
+      });
+    }
+  }
+
+  /**
+   * 构造 abort 时的返回值。返回 `Omit<RunResult, 'compacted'>`，run() 顶层
+   * 负责拼 compacted flag（与现有正常路径一致）。
+   *
+   * `lastContent` 传空数组表示"还没跑过任何 LLM 调用"（run() 顶层 signal.aborted
+   * 早退路径）；否则传出 catch/aborted 分支时的最后一条 assistant content。
+   *
+   * `accumulated`：runAttempt 在 abort 命中之前已跑过 N 轮 LLM/tool 调用，
+   * 那些 usage 早已被 Anthropic 计费、tool rounds 也真实发生。abort 路径
+   * 必须把截止时刻的累计值传上来，否则 telemetry / cost 追踪会以为这一
+   * turn 免费——违反 audit 完整性。顶层 signal.aborted 早退路径可省略
+   * （默认 {0,0}/0），因为那条路径下一次 LLM 调用都没发生。
+   */
+  private buildAbortedResult(
+    lastContent: ChatContentBlock[],
+    accumulated?: { usage: TokenUsage; toolRounds: number },
+  ): Omit<RunResult, 'compacted'> {
+    return {
+      text: this.extractText(lastContent),
+      content: lastContent,
+      stopReason: 'aborted',
+      usage: accumulated?.usage ?? { inputTokens: 0, outputTokens: 0 },
+      toolRounds: accumulated?.toolRounds ?? 0,
+    };
+  }
+
   // ── 公共入口 ─────────────────────────────────────────────
 
   async run(params: RunParams): Promise<RunResult> {
@@ -178,6 +349,19 @@ export class AgentRunner {
     };
 
     this.emit(turnCtx, { type: 'run_start', originMessageId: params.originMessageId });
+
+    // 顶层快速检查：入口就被 abort 时直接返回，不做任何 LLM 调用。
+    // run_start 已先发，此处发 run_end 保证事件对完整。
+    // usage/toolRounds 天然为 0（此路径下未跑任何调用），用 buildAbortedResult 默认值。
+    // 详见 core-abort-spec.md §7.1。
+    if (params.signal?.aborted) {
+      const finalResult: RunResult = {
+        ...this.buildAbortedResult([]),
+        compacted: false,
+      };
+      this.emit(turnCtx, { type: 'run_end', result: finalResult });
+      return finalResult;
+    }
 
     // 注意：用户消息的 append 已下沉到 runAttempt() 内部，在 Layer 2 preflight
     // 通过之后才写入；这样 ContextOverflowError → compactHistory 重试期间，
@@ -194,6 +378,21 @@ export class AgentRunner {
         this.emit(turnCtx, { type: 'run_end', result: finalResult });
         return finalResult;
       } catch (err) {
+        // Abort 防御性优先分支（core-abort-spec.md §4 "abort never throws"）：
+        // 正常情况下 runAttempt 内部已把 abort 消化为 stopReason='aborted' 返回，
+        // 不会抛到这里；本分支兜底两类罕见路径：
+        //  (a) runAttempt 因 ContextOverflow 抛出，但期间 signal 已 abort
+        //  (b) 下面 compactHistory 里的 LLM 调用被 abort（见嵌套 catch）
+        if (this.isAbortError(err, params.signal)) {
+          this.logIfSwallowedByAbortFallback(err, params.sessionKey);
+          const finalResult: RunResult = {
+            ...this.buildAbortedResult([]),
+            compacted,
+          };
+          this.emit(turnCtx, { type: 'run_end', result: finalResult });
+          return finalResult;
+        }
+
         if (err instanceof ContextOverflowError && compactionAttempts < MAX_COMPACTION_RETRIES) {
           logger.info('compaction retry triggered', {
             sessionKey: params.sessionKey,
@@ -205,7 +404,21 @@ export class AgentRunner {
           });
           // 执行 LLM 摘要压缩，写入持久化，然后重试 runAttempt
           // runAttempt 的 loadHistory() 会重新加载压缩后的 session，自动感知摘要
-          await this.compactHistory(turnCtx, params, compaction, err.trigger);
+          try {
+            await this.compactHistory(turnCtx, params, compaction, err.trigger);
+          } catch (compactErr) {
+            // compactHistory 内部 LLM 调用若被 abort，走 §4 兜底：clean return aborted。
+            if (this.isAbortError(compactErr, params.signal)) {
+              this.logIfSwallowedByAbortFallback(compactErr, params.sessionKey);
+              const finalResult: RunResult = {
+                ...this.buildAbortedResult([]),
+                compacted,
+              };
+              this.emit(turnCtx, { type: 'run_end', result: finalResult });
+              return finalResult;
+            }
+            throw compactErr;
+          }
           compacted = true;
           compactionAttempts++;
           continue;
@@ -247,6 +460,11 @@ export class AgentRunner {
 
     // 0. 净化会话末尾的孤立 trailing user（来自上一次失败/中断的遗留）
     this.sanitizeSessionTail(turnCtx);
+
+    // 0'. 修复末尾 assistant/user pair 里未被 tool_result 覆盖的 tool_use
+    //     （抗 abort / 崩溃 / kill / 未知 Bug，从磁盘状态出发）
+    //     详见 core-abort-spec.md §7.3。
+    await this.repairOrphanToolUses(turnCtx);
 
     // 1. 加载历史消息（不含当前用户消息）
     //    若 session 有压缩记录，loadHistory 会自动截断并注入摘要
@@ -316,162 +534,227 @@ export class AgentRunner {
     let hasMoreToolCalls = true; // 初始 true，保证至少一次 LLM 调用
     let pendingSteeringMessages: ChatMessage[] = [];
 
-    while (hasMoreToolCalls || pendingSteeringMessages.length > 0) {
-      if (llmCallCount >= maxLlmCalls) {
-        const text = this.extractText(lastContent);
-        return {
-          text,
-          content: lastContent,
-          stopReason: 'max_llm_calls',
-          usage: totalUsage,
-          toolRounds: totalToolRounds,
-        };
-      }
-
-      // 注入上一轮积累的 steering 消息（LLM 调用前，保证 tool_result 在前、steering 在后）
-      if (pendingSteeringMessages.length > 0) {
-        await this.appendInjectedMessages(params.sessionKey, messages, pendingSteeringMessages);
-        pendingSteeringMessages = [];
-      }
-
-      this.emit(turnCtx, { type: 'llm_call', round: llmCallCount });
-      llmCallCount++;
-
-      // 流式调用 LLM（内部捕获 API 级别的 context overflow 错误）
-      const llmResult = await this.callLLMStream(turnCtx, {
-        model: params.model,
-        system: params.systemPrompt,
-        messages,
-        tools: params.tools,
-        maxTokens,
-      });
-
-      totalUsage = {
-        inputTokens: totalUsage.inputTokens + llmResult.usage.inputTokens,
-        outputTokens: totalUsage.outputTokens + llmResult.usage.outputTokens,
-      };
-
-      lastContent = llmResult.content;
-      lastStopReason = llmResult.stopReason;
-
-      messages.push({ role: 'assistant', content: llmResult.content });
-
-      await this.sessionManager.appendMessage(params.sessionKey, {
-        role: 'assistant',
-        content: llmResult.content,
-      });
-
-      // error / aborted → 提前返回（与 pi-agent-core 一致）
-      if (lastStopReason === 'error' || lastStopReason === 'aborted') {
-        const text = this.extractText(lastContent);
-        return { text, content: lastContent, stopReason: lastStopReason, usage: totalUsage, toolRounds: totalToolRounds };
-      }
-
-      const toolUseBlocks = llmResult.content.filter(
-        (b): b is Extract<ChatContentBlock, { type: 'tool_use' }> => b.type === 'tool_use',
-      );
-
-      if (toolUseBlocks.length === 0) {
-        // 没有 tool calls → 退出循环
-        hasMoreToolCalls = false;
-      } else {
-        // 执行工具
-        const toolResultBlocks: ChatContentBlock[] = [];
-        for (const toolUse of toolUseBlocks) {
-          // tool_use 事件发原始 input（hook 运行之前）
-          this.emit(turnCtx, { type: 'tool_use', name: toolUse.name, input: toolUse.input });
-
-          // before_tool_call hooks（sequential，priority 降序）
-          let effectiveInput = toolUse.input;
-          const beforeHooks = this.getHooks('before_tool_call');
-          if (beforeHooks.length > 0) {
-            const beforeResult = await runBeforeToolCall(beforeHooks, {
-              toolName: toolUse.name,
-              input: toolUse.input,
-              turnId: params.turnId,
+    try {
+      while (hasMoreToolCalls || pendingSteeringMessages.length > 0) {
+        // ∅ 每个 LLM 调用前 abort check（core-abort-spec.md §7.2）
+        //
+        // 若此时 pendingSteeringMessages 里有已 drain 但未注入的 steering 消息：
+        // 丢弃（不写 session，不回填 inbox）。与 D3 "abort 清空 queue" 语义一致。
+        // 该丢弃仅写 log，不 emit event——触发窗口极窄、count 实际多为 0 或 1，
+        // 而 messages_dropped event 产生点在 RuntimeApp.abortTurn，那里拿不到
+        // runAttempt 局部变量。运维只需 log grep 即可回溯。
+        if (params.signal?.aborted) {
+          if (pendingSteeringMessages.length > 0) {
+            logger.info('dropped pending steering on abort', {
               sessionKey: params.sessionKey,
-            });
-            if (beforeResult.action === 'deny') {
-              const blocked: ToolResult = { content: `Tool blocked: ${beforeResult.reason}`, isError: true };
-              this.emit(turnCtx, { type: 'tool_result', name: toolUse.name, result: blocked });
-              toolResultBlocks.push({ type: 'tool_result', tool_use_id: toolUse.id, content: blocked.content });
-              continue;
-            }
-            effectiveInput = beforeResult.input;
-          }
-
-          // 执行工具
-          const startTime = Date.now();
-          const toolCtx: ToolContext = {
-            sessionKey: params.sessionKey,
-            turnId: params.turnId,
-            toolUseId: toolUse.id,
-            signal: undefined, // v1 abort 子系统未接入；exec.ts 接受 undefined 退化为无 abort
-          };
-          const result = await this.executeTool(toolUse.name, effectiveInput, toolCtx);
-          const durationMs = Date.now() - startTime;
-
-          this.emit(turnCtx, { type: 'tool_result', name: toolUse.name, result });
-          toolResultBlocks.push({
-            type: 'tool_result',
-            tool_use_id: toolUse.id,
-            content: result.content,
-          });
-
-          // after_tool_call hooks（fire-and-forget，使用修改后的 input）
-          const afterHooks = this.getHooks('after_tool_call');
-          if (afterHooks.length > 0) {
-            runAfterToolCall(afterHooks, {
-              toolName: toolUse.name,
-              input: effectiveInput,
-              result,
-              durationMs,
-              turnId: params.turnId,
-              sessionKey: params.sessionKey,
+              count: pendingSteeringMessages.length,
             });
           }
+          throw new DOMException('Aborted', 'AbortError');
         }
 
-        // toolResult push 到 messages（Anthropic API 格式：role=user）
-        messages.push({ role: 'user', content: toolResultBlocks });
+        if (llmCallCount >= maxLlmCalls) {
+          const text = this.extractText(lastContent);
+          return {
+            text,
+            content: lastContent,
+            stopReason: 'max_llm_calls',
+            usage: totalUsage,
+            toolRounds: totalToolRounds,
+          };
+        }
+
+        // 注入上一轮积累的 steering 消息（LLM 调用前，保证 tool_result 在前、steering 在后）
+        if (pendingSteeringMessages.length > 0) {
+          await this.appendInjectedMessages(params.sessionKey, messages, pendingSteeringMessages);
+          pendingSteeringMessages = [];
+        }
+
+        this.emit(turnCtx, { type: 'llm_call', round: llmCallCount });
+        llmCallCount++;
+
+        // 流式调用 LLM（内部捕获 API 级别的 context overflow 错误 + abort）
+        const llmResult = await this.callLLMStream(turnCtx, {
+          model: params.model,
+          system: params.systemPrompt,
+          messages,
+          tools: params.tools,
+          maxTokens,
+        }, params.signal);
+
+        totalUsage = {
+          inputTokens: totalUsage.inputTokens + llmResult.usage.inputTokens,
+          outputTokens: totalUsage.outputTokens + llmResult.usage.outputTokens,
+        };
+
+        lastContent = llmResult.content;
+        lastStopReason = llmResult.stopReason;
+
+        // ⑰ Partial stream 分支：callLLMStream 优雅返回 stopReason='aborted'
+        //
+        // 【前提不变量】本分支进入时 params.signal.aborted === true：callLLMStream
+        // 仅在 isAbortError=true 时返回 'aborted'，而在本项目中真 AbortError 只从
+        // 外部触发一 controller.abort() 产生（signal 已 flip）。未来若放宽
+        // callLLMStream 返回 'aborted' 的触发条件（例如 SDK 内部 timeout 也走
+        // AbortError），此不变量会失效，需在本处重新审视 IO 抛错处理。
+        //
+        // appendMessage 同其他调用点一致，不为 abort 路径特化错误处理：若 IO 抛出，
+        // 依靠 §7.1 isAbortError fallback（signal.aborted 为真）将其归入 abort 分支，
+        // §4 "never throws" 仍成立——前提不变量失效时本保障同时失效。
+        //
+        // 孤儿 tool_use 不在本处处理：下一 turn 起点的 repairOrphanToolUses 会从
+        // 磁盘状态统一修（§7.3），避免与 in-memory / IO 失败纠缠。
+        if (lastStopReason === 'aborted') {
+          messages.push({ role: 'assistant', content: llmResult.content });
+          await this.sessionManager.appendMessage(params.sessionKey, {
+            role: 'assistant',
+            content: llmResult.content,
+            abortMeta: { partial: true, stopReason: 'aborted' },
+          });
+          return this.buildAbortedResult(lastContent, {
+            usage: totalUsage,
+            toolRounds: totalToolRounds,
+          });
+        }
+
+        messages.push({ role: 'assistant', content: llmResult.content });
 
         await this.sessionManager.appendMessage(params.sessionKey, {
-          role: 'toolResult',
-          content: toolResultBlocks,
+          role: 'assistant',
+          content: llmResult.content,
         });
 
-        // Layer 1: 新 tool result 追加后做 per-result 裁剪
-        if (compaction.enabled) {
-          messages = pruneToolResults(messages, compaction, contextWindowTokens);
+        // error → 提前返回（aborted 已在上面 ⑰ 分支处理，此处仅剩 error）
+        if (lastStopReason === 'error') {
+          const text = this.extractText(lastContent);
+          return { text, content: lastContent, stopReason: lastStopReason, usage: totalUsage, toolRounds: totalToolRounds };
         }
 
-        // 90% 阈值检查：主动检测，避免等待 LLM API 报错
-        if (compaction.enabled) {
-          const estimated = estimatePromptTokens({ messages, systemPrompt: params.systemPrompt });
-          if (estimated > contextWindowTokens * INNER_LOOP_OVERFLOW_THRESHOLD) {
-            logger.warn('inner-loop overflow threshold breached', {
+        const toolUseBlocks = llmResult.content.filter(
+          (b): b is Extract<ChatContentBlock, { type: 'tool_use' }> => b.type === 'tool_use',
+        );
+
+        if (toolUseBlocks.length === 0) {
+          // 没有 tool calls → 退出循环
+          hasMoreToolCalls = false;
+        } else {
+          // 执行工具
+          const toolResultBlocks: ChatContentBlock[] = [];
+          for (const toolUse of toolUseBlocks) {
+            // ② 工具循环 abort check：下一 tool 启动前检查
+            // R6' / D6：正在跑的 tool 不打断（跑完才退），检查只在 tool 之间。
+            if (params.signal?.aborted) {
+              throw new DOMException('Aborted', 'AbortError');
+            }
+
+            // tool_use 事件发原始 input（hook 运行之前）
+            this.emit(turnCtx, { type: 'tool_use', name: toolUse.name, input: toolUse.input });
+
+            // before_tool_call hooks（sequential，priority 降序）
+            let effectiveInput = toolUse.input;
+            const beforeHooks = this.getHooks('before_tool_call');
+            if (beforeHooks.length > 0) {
+              const beforeResult = await runBeforeToolCall(beforeHooks, {
+                toolName: toolUse.name,
+                input: toolUse.input,
+                turnId: params.turnId,
+                sessionKey: params.sessionKey,
+              });
+              if (beforeResult.action === 'deny') {
+                const blocked: ToolResult = { content: `Tool blocked: ${beforeResult.reason}`, isError: true };
+                this.emit(turnCtx, { type: 'tool_result', name: toolUse.name, result: blocked });
+                toolResultBlocks.push({ type: 'tool_result', tool_use_id: toolUse.id, content: blocked.content });
+                continue;
+              }
+              effectiveInput = beforeResult.input;
+            }
+
+            // 执行工具
+            const startTime = Date.now();
+            const toolCtx: ToolContext = {
               sessionKey: params.sessionKey,
               turnId: params.turnId,
-              estimatedTokens: estimated,
-              contextWindowTokens,
-              thresholdPct: INNER_LOOP_OVERFLOW_THRESHOLD * 100,
+              toolUseId: toolUse.id,
+              signal: params.signal, // core-abort-spec.md §7.5：透传给 tool；tool 自行决定是否响应
+            };
+            const result = await this.executeTool(toolUse.name, effectiveInput, toolCtx);
+            const durationMs = Date.now() - startTime;
+
+            this.emit(turnCtx, { type: 'tool_result', name: toolUse.name, result });
+            toolResultBlocks.push({
+              type: 'tool_result',
+              tool_use_id: toolUse.id,
+              content: result.content,
             });
-            throw new ContextOverflowError(
-              `Context exceeds ${INNER_LOOP_OVERFLOW_THRESHOLD * 100}% threshold during tool loop `
-              + `(estimated ${estimated} of ${contextWindowTokens} tokens)`,
-            );
+
+            // after_tool_call hooks（fire-and-forget，使用修改后的 input）
+            const afterHooks = this.getHooks('after_tool_call');
+            if (afterHooks.length > 0) {
+              runAfterToolCall(afterHooks, {
+                toolName: toolUse.name,
+                input: effectiveInput,
+                result,
+                durationMs,
+                turnId: params.turnId,
+                sessionKey: params.sessionKey,
+              });
+            }
           }
+
+          // toolResult push 到 messages（Anthropic API 格式：role=user）
+          messages.push({ role: 'user', content: toolResultBlocks });
+
+          await this.sessionManager.appendMessage(params.sessionKey, {
+            role: 'toolResult',
+            content: toolResultBlocks,
+          });
+
+          // Layer 1: 新 tool result 追加后做 per-result 裁剪
+          if (compaction.enabled) {
+            messages = pruneToolResults(messages, compaction, contextWindowTokens);
+          }
+
+          // 90% 阈值检查：主动检测，避免等待 LLM API 报错
+          if (compaction.enabled) {
+            const estimated = estimatePromptTokens({ messages, systemPrompt: params.systemPrompt });
+            if (estimated > contextWindowTokens * INNER_LOOP_OVERFLOW_THRESHOLD) {
+              logger.warn('inner-loop overflow threshold breached', {
+                sessionKey: params.sessionKey,
+                turnId: params.turnId,
+                estimatedTokens: estimated,
+                contextWindowTokens,
+                thresholdPct: INNER_LOOP_OVERFLOW_THRESHOLD * 100,
+              });
+              throw new ContextOverflowError(
+                `Context exceeds ${INNER_LOOP_OVERFLOW_THRESHOLD * 100}% threshold during tool loop `
+                + `(estimated ${estimated} of ${contextWindowTokens} tokens)`,
+              );
+            }
+          }
+
+          totalToolRounds++;
         }
 
-        totalToolRounds++;
+        // 每轮结束后检查 steering 消息（无论有无 tool call），留给下次迭代的 LLM 调用前注入。
+        pendingSteeringMessages = await this.readPendingMessages(params.getSteeringMessages);
       }
 
-      // 每轮结束后检查 steering 消息（无论有无 tool call），留给下次迭代的 LLM 调用前注入。
-      pendingSteeringMessages = await this.readPendingMessages(params.getSteeringMessages);
+      const text = this.extractText(lastContent);
+      return { text, content: lastContent, stopReason: lastStopReason, usage: totalUsage, toolRounds: totalToolRounds };
+    } catch (err) {
+      // Abort 出口：不修孤儿（§7.3 turn 起点会从磁盘统一修），只专注"优雅返回 aborted"。
+      // 详见 core-abort-spec.md §7.1 R1 / §7.2 分支 (2)。
+      if (this.isAbortError(err, params.signal)) {
+        // 【fallback 诊断 log】若命中仅因 signal.aborted fallback（非 abort 名字），
+        // 写条 warn 使 §7.1 "错误内容在 log 里可见" 的兑现属实。
+        this.logIfSwallowedByAbortFallback(err, params.sessionKey);
+        return this.buildAbortedResult(lastContent, {
+          usage: totalUsage,
+          toolRounds: totalToolRounds,
+        });
+      }
+      throw err; // 非 abort（如 ContextOverflowError）控制权还给 run() 外层 retry
     }
-
-    const text = this.extractText(lastContent);
-    return { text, content: lastContent, stopReason: lastStopReason, usage: totalUsage, toolRounds: totalToolRounds };
   }
 
   // ── 压缩 ──────────────────────────────────────────────────
@@ -630,8 +913,16 @@ export class AgentRunner {
   /**
    * 流式调用 LLM，一边触发 onEvent 一边收集结果。
    *
-   * 额外处理：捕获 LLM API 返回的 context overflow 类型错误，
-   * 包装成 ContextOverflowError 向上抛出，使外层 retry 循环能统一处理。
+   * 额外处理：
+   *  - 捕获 LLM API 返回的 context overflow 类型错误，包装成 ContextOverflowError
+   *    向上抛出，使外层 retry 循环能统一处理。
+   *  - 捕获 abort（SDK 抛 AbortError 或 signal.aborted fallback）：flush 已 buffered
+   *    的 text，返回 `stopReason='aborted'`（不抛），由 runAttempt 走 partial stream
+   *    分支处理（core-abort-spec.md §7.2 分支 (1)）。
+   *
+   * 关于 R8（残缺 tool_use 过滤）：AnthropicClient 只在 `content_block_stop` 事件
+   * 时才 yield 完整的 `tool_use`（含 parsed input），未完成的块自然不会出现在
+   * StreamEvent 里。因此 contentBlocks 里的 tool_use 一定是完整的，无需额外过滤。
    */
   private async callLLMStream(
     turnCtx: TurnContext,
@@ -642,6 +933,7 @@ export class AgentRunner {
       tools?: RunParams['tools'];
       maxTokens: number;
     },
+    signal?: AbortSignal,
   ): Promise<{ content: ChatContentBlock[]; stopReason: string; usage: TokenUsage }> {
     const contentBlocks: ChatContentBlock[] = [];
     let currentText = '';
@@ -655,6 +947,7 @@ export class AgentRunner {
         messages: params.messages,
         tools: params.tools,
         maxTokens: params.maxTokens,
+        signal,
       })) {
         switch (event.type) {
           case 'text_delta':
@@ -685,6 +978,21 @@ export class AgentRunner {
         }
       }
     } catch (err) {
+      // Abort 优先判定（在 ContextOverflow 之前）：signal 已 flip / 名字匹配即走 aborted 返回。
+      // 不 rethrow：由 runAttempt 的 ⑰ 分支处理 partial assistant + abortMeta 持久化。
+      if (this.isAbortError(err, signal)) {
+        this.logIfSwallowedByAbortFallback(err, turnCtx.sessionKey);
+        // flush 已 buffered 的 currentText 到 contentBlocks（tool_use 已在 content_block_stop
+        // 时被 AnthropicClient yield，contentBlocks 里天然只含完整块，无需 R8 过滤）
+        if (currentText) {
+          contentBlocks.push({ type: 'text', text: currentText });
+        }
+        return {
+          content: contentBlocks,
+          stopReason: 'aborted',
+          usage, // 中断发生在 message_end 之前 → {0,0}（best-effort，Anthropic API 已计费但 SDK 未返回）
+        };
+      }
       // 将 LLM API 的 context overflow 错误统一包装为 ContextOverflowError
       if (err instanceof Error && isContextOverflowError(err)) {
         logger.warn('LLM API returned context overflow', {
