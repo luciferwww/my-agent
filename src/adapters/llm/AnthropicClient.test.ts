@@ -236,5 +236,46 @@ describe('AnthropicClient', () => {
       expect(events[1]!.type).toBe('text_delta');
       expect(events[2]!.type).toBe('message_end');
     });
+
+    // core-abort-spec.md §11 —— signal 透传到 SDK 后，pre-aborted signal 应立即产出 error event。
+    // 底层 SDK 使用 fetch，收到 pre-aborted signal 会抛 AbortError；chatStream 的 outer catch
+    // 将其转成 { type: 'error', error }。
+    it('yields error event when signal is already aborted', async () => {
+      const client = new AnthropicClient({ apiKey: 'test-key' });
+
+      // 直接替换 SDK 的 messages.stream，模拟 SDK 在 signal 已 abort 时抛 AbortError。
+      // 纯测试目的的 as-cast，等价于 mocking SDK 行为。
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sdkClient = (client as any).client;
+      const streamSpy = vi.spyOn(sdkClient.messages, 'stream');
+      streamSpy.mockImplementation((..._args: unknown[]) => {
+        // 模拟真实 SDK：signal 已 abort 时构造流即抛
+        const opts = _args[1] as { signal?: AbortSignal } | undefined;
+        if (opts?.signal?.aborted) {
+          const err = new Error('The operation was aborted');
+          err.name = 'AbortError';
+          throw err;
+        }
+        throw new Error('unexpected: signal not aborted');
+      });
+
+      const controller = new AbortController();
+      controller.abort();
+
+      const events: StreamEvent[] = [];
+      for await (const event of client.chatStream({
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'Hi' }],
+        signal: controller.signal,
+      })) {
+        events.push(event);
+      }
+
+      // 应产出 error event，AgentRunner.callLLMStream 的 isAbortError 会识别并归 abort
+      const errorEvent = events.find((e) => e.type === 'error');
+      expect(errorEvent).toBeDefined();
+      const err = (errorEvent as Extract<StreamEvent, { type: 'error' }>).error;
+      expect(err.name).toBe('AbortError');
+    });
   });
 });
