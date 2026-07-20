@@ -2,22 +2,60 @@
 
 User-initiated turn abort for my-agent v1.
 
-Status: **READY** — all open decisions locked. See §0 for the audit trail.
+Status: **READY** — all open decisions locked. See §0.3 for the decision table.
 
-## 0. Open Decisions
+## 0. What happens when I press Ctrl+C
 
-Items marked `?` need user confirmation before implementation. Each has a
-recommended option + rationale; flip the marker to `✓` (accept) or
-`✗ (alt)` to lock in.
+在长任务跑到一半（大量 tool 调用 / 卡 LLM 请求 / subagent 嵌套）时按下 Ctrl+C，会发生：
 
-| # | Question | Recommendation | Status |
+1. **CLI 拦到 SIGINT** —— `CliChannel` 里的 handler 触发。
+2. **通知 runtime** —— 调 `RuntimeApp.abortTurn(sessionKey)`，找到该 session 的
+   `AbortController` 调 `abort()`，`params.signal.aborted` 立刻置 true。
+3. **传播下去** —— 同一个 signal 已经透传给 `AgentRunner.run` → `AnthropicClient.chatStream`
+   → `ToolContext.signal`。SDK 收到 signal 会抛 `AbortError`，正在跑的 exec 子进程会被 kill，
+   正在流式吐 token 的 LLM 立即中断；即将执行的下一个 tool 不会启动。
+4. **优雅返回** —— `AgentRunner` catch 到 abort 后**不抛错**，改为返回一个
+   `RunResult.stopReason='aborted'`；对调用方看起来跟正常完成一样，只是 stopReason 不同。
+5. **partial 数据处理** —— LLM 已经吐出的 partial text 会写进 session（打上
+   `abortMeta` 标签），当次 turn 里跑过的 tool 结果也保留。
+6. **下轮起来时自愈** —— 下一 turn 起点 `repairOrphanToolUses` 从磁盘扫末尾，若发现
+   `assistant` 消息含 tool_use 但没配对 `tool_result`（可能来自 abort、崩溃、SIGKILL 或
+   任何 Bug），就补写 synthetic tool_result 保证 Anthropic API 能接受历史。
+7. **同一 session 队列里排队的后续消息**同样会被 drop（`messages_dropped` runtime event
+   告知调用方），符合 "用户按 Ctrl+C 是想 '别再跑了'" 的直觉。
+
+WebSocket 客户端与 library 调用方走的是相同链路，只是触发源换成了
+`{type:'abort_turn'}` 消息或 `app.abortTurn(sk)` 直调；从 `RuntimeApp.abortTurn` 往下完全一致。
+
+## 0.1 如何读本文
+
+按你的目标挑重点：
+
+- **只想理解 abort 语义与失败场景** → §0（本节） + §5 架构图 + §7.3（orphan 修复）
+- **只想 review 决策** → §0.3 决策表 + §4 Goals + §8.5 shutdown 契约
+- **要 impl** → §6–§13（分模块清单），另外 §14 tests + §16 PR breakdown 指导拆包
+- **想追踪历史** → §18 Design Log（收敛掉的设计更替）
+
+术语约定：技术专名保留英文（`AbortSignal` / `partial stream` / `abortMeta` / `stopReason` /
+`fallback` / `cascade` 等），叙述连词与理由用中文。
+
+## 0.2 Related docs
+
+- **openclaw** ([openclaw/src/acp](../../openclaw/src/acp/), [openclaw/src/gateway/chat-abort.ts](../../openclaw/src/gateway/chat-abort.ts)) — per-session controller、`AbortSignal.any` 组合、双击 Ctrl+C UX、partial 持久化。详细对比见 §15。
+- **Claude Code 逆向报告** — 触发语义、双击退出窗口。
+
+## 0.3 Open Decisions
+
+结论 lock-in。展开理由散在各章节；表格只给一句总结。
+
+| # | Question | Resolution | Detail |
 |---|---|---|---|
-| D1 | Ctrl+C 第一次按下时**无活动 turn**怎样？ | `warn` — 显示 "press again within 1s to exit" 提示，不立刻退出。1s 内二次 → `process.exit(130)`。 | `✓` |
-| D2 | LLM 流到一半 abort，partial assistant 文本怎样？ | **保留** — 写入 session 作为 assistant msg + 加 `abortMeta: { stopReason: 'aborted', partial: true }`。理由：用户已经看到了 N tokens，再问一次浪费；下次 turn 的 prompt 历史也连贯。 | `✓` |
-| D3 | session 消息队列里**未处理**的 turn，abort 时怎样？ | **同时清空** — `abortTurn(sk)` 既 abort 当前 turn 也 `messageQueueBySession.delete(sk)`。CLI 单次 Ctrl+C 干净。理由：用户按 Ctrl+C 时通常想"我不要 agent 继续了"，而不是"只停这个，下条还要跑"。`followup` 队列里的消息只是字符串副本，user 知道发过什么，必要时再敲一次成本低。被 drop 的消息数会写 log + emit `messages_dropped` runtime event，避免静默丢失。 | `✓` |
-| D4 | `RuntimeApp.close()` shutdown 路径 | **abort-then-wait** — 关闭前先把所有 active turn `abort()`，再 `Promise.allSettled` 等回收。理由：避免 shutdown 被一个慢 turn 卡住。 | `✓` |
-| D5 | WebSocketChannel abort 协议 | **单向 inbound message** `{type:'abort_turn', sessionKey}`，无显式 ack。客户端通过随后的 `run_end.stopReason==='aborted'` event 自然感知。 | `✓` |
-| D6 | abort 期间已开始执行的 tool 怎样？ | **跑完才退出**。abort 检查只在工具循环之间（next tool 启动前）。`ToolContext.signal` 仍传给 tool（基础设施已就位），但 v1 **不**强制任何工具响应：<br/>• `exec` 工具历史上已在自己内部读 ctx.signal 透给 child_process — 这是巧合的好处，保留<br/>• 其他 builtin（web_fetch / search / fs / apply_patch）v1 不加 signal 响应<br/>• MCP / 第三方工具：响应与否由各工具自己决定，my-agent 不强制<br/><br/>理由：(a) MCP 等第三方工具无法强制实现 signal；(b) 工具种类异构，承诺"abort 即取消"会是半真话，不如契约清晰；(c) 单工具大多 <1s，循环间检查的延迟用户能接受；(d) 真有"web_fetch 卡 30s" 这种用户痛点，v1.x 单独补 web_fetch 一行即可，不在 v1 范围。 | `✓` |
+| D1 | 第一次 Ctrl+C 时无 active turn 怎样？ | **warn** — 提示 "press again within 1s to exit"，1s 内二次 → `process.exit(130)` | §12 |
+| D2 | LLM 流到一半 abort，partial assistant 怎样？ | **保留** — 写 session 携 `abortMeta: { partial: true, stopReason: 'aborted' }` | §6.5, §7.2 |
+| D3 | session 队列里未处理的消息 abort 时怎样？ | **同时清空** — `abortTurn(sk)` 顺带 drop queue，emit `messages_dropped` | §8.3 |
+| D4 | `RuntimeApp.close()` shutdown 怎么走？ | **abort-then-wait** — 先 abort 所有 active turn，再 `Promise.allSettled` 等回收 | §8.5 |
+| D5 | WebSocket abort 协议？ | **单向 inbound message** `{type:'abort_turn', sessionKey}`，无 ack，客户端通过 `run_end.stopReason==='aborted'` 感知 | §13 |
+| D6 | abort 期间已开始执行的 tool 怎样？ | **跑完才退出**，abort 检查只在工具循环之间；`ToolContext.signal` 透传但工具**自愿**响应 | §6.2 |
 
 ---
 
@@ -41,11 +79,7 @@ v1 subagent 落地后剩下的最显眼用户体验问题：长任务（大量�
 
 ## 3. Reference implementations
 
-借鉴自：
-- **openclaw** ([openclaw/src/acp](../../openclaw/src/acp/), [openclaw/src/gateway/chat-abort.ts](../../openclaw/src/gateway/chat-abort.ts)) — per-session controller、`AbortSignal.any` 组合、双击 Ctrl+C UX、partial 持久化
-- **Claude Code 逆向报告** — 触发语义、双击退出窗口
-
-详细对比见 §15。
+见 §0.2。详细对比见 §15。
 
 ## 4. Goals
 
@@ -119,9 +153,25 @@ export interface RunParams {
 
 新增 `RunResult.stopReason` 取值 `'aborted'`（注：union 是 string，已经接受）。
 
+> 未来可能扩展 `RunResult.abortReason?: 'user' | 'timeout' | 'shutdown'` 区分 abort 来源，v1 不加——见 §17。
+
 ### 6.2 `core/tools/types.ts`
 
-删除 ToolContext.signal 的"v1 不消费"注释，更新为：
+`ToolContext.signal` 的语义澄清——这是决策 D6 的落地。
+
+**D6 详细选择**：`ToolContext.signal` 传给 tool 但 v1 **不强制任何工具响应**：
+
+- `exec` 工具：内部已读 `ctx.signal` 透给 `child_process`，进程被 kill（历史巧合的好处，保留）
+- 其他 builtin（`web_fetch` / `search` / `fs` / `apply_patch`）：v1 不加 signal 响应，跑完才退
+- MCP / 第三方工具：响应与否由各工具自己决定，my-agent 不强制
+
+**为什么不强制**：
+1. MCP 等第三方工具无法强制实现 signal
+2. 工具种类异构，承诺"abort 即取消"会是半真话，不如契约清晰
+3. 单工具大多 <1s，循环间检查的延迟用户能接受
+4. 真有"web_fetch 卡 30s"这种用户痛点，v1.x 单独补 web_fetch 一行即可（见 §17 D6 follow-up）
+
+**类型注释同步更新**：删除 `ToolContext.signal` 的"v1 不消费"陈旧注释，改为反映真实契约：
 
 ```typescript
 /**
@@ -154,7 +204,7 @@ export interface ChatParams {
 
 `SubagentRunInput.signal?` 与 `SubagentRunRequest.signal?` 均已存在（前者为库 API / task tool 入口，后者为 `SubagentRunner.run(...)` 内部请求）——删除两处的 “v1 未消费 / Reserved” 注释，注明语义。
 
-### 6.5 `core/session/types.ts` + `SessionManager`【B2 需同步改】
+### 6.5 `core/session/types.ts` + `SessionManager`
 
 D2 决策要求 partial assistant 写 session 时携 `abortMeta` marker——当前
 `SessionManager.appendMessage` 和 `MessageRecord` 类型**都不接受该字段**，
@@ -218,7 +268,7 @@ async run(params: RunParams): Promise<RunResult> {
   this.emit(turnCtx, { type: 'run_start' });   // ← 已于顶层 signal 检查之前发出
 
   // 顶层快速检查（防御性 — 入口就被 abort 时直接返回）
-  // R1'：run_start 已先发，下面发 run_end 保证事件对完整。
+  // run_start 已先发，下面发 run_end 保证事件对完整。
   // 此路径下未跑任何 LLM 调用，usage/toolRounds 天然为 0，用 helper 默认值。
   if (params.signal?.aborted) {
     const finalResult: RunResult = {
@@ -334,97 +384,33 @@ private buildAbortedResult(
 }
 ```
 
-**关键设计变更**（R1）：abort 由 `runAttempt` 内部 catch + return 处理（§7.2），
+**关键设计选择**：abort 由 `runAttempt` 内部 catch + return 处理（§7.2），
 **不** rethrow 到 `run()`。理由：让 abort 路径直接产生 `stopReason='aborted'` 的正常
 return，避免 `run()` 顶层 catch 需要判 abort vs 其他 error 两条分支；abort 与
 正常完成在 `run()` 视角外观完全一致（都是一个合法 RunResult），只靠
-`stopReason` 区分。旧版本曾以 “run() catch scope 拿不到 in-memory messages” 为
-理由，该理由随 §7.3 重构后已失效（修复改从磁盘读），结论仍成立，
-但支撑论据已换。
+`stopReason` 区分。
 
-### 7.2 Partial assistant + runAttempt 内部 abort 处理（D2 + R1 决策）
+### 7.2 Partial assistant + runAttempt 内部 abort 处理（D2）
 
-两个 abort 触发点都在 `runAttempt` 内处理（不 rethrow到 `run()`）：
+`runAttempt` 里 abort 有**两个触发点**，都在函数内被优雅消化为 `stopReason='aborted'`
+返回，绝不 rethrow 到 `run()`：
 
-**（1）callLLMStream 拿到 AbortError（partial stream）**：
+- **触发点 A：partial stream** —— SDK 抛 AbortError 时，`callLLMStream` catch 内部把
+  buffered 的 text 打包成 aborted 结果返回（§7.2.1）。
+- **触发点 B：tool 循环之间** —— `runAttempt` 主 while 顶部与 tool for-loop 顶部各有
+  `signal?.aborted` 检查，命中就 throw `AbortError`，被 `runAttempt` 自己的 try/catch
+  接住并返回 aborted 结果（§7.2.2）。
 
-```typescript
-// callLLMStream catch 分支——返回类型保持现状，仅用 stopReason 区分
-// （M3：不加 aborted: true 字段，避免 inline 返回类型满天飞 bool flag）
-catch (err) {
-  if (this.isAbortError(err, params.signal)) {
-    // 【fallback 诊断 log】与 §7.2 (2) runAttempt 外层 catch 同样需要：
-    // 仅因 signal.aborted fallback 命中的非-abort error 必须写 warn log。
-    this.logIfSwallowedByAbortFallback(err, params.sessionKey);
-    // flush 已 buffered 的 currentText 到 contentBlocks
-    if (currentText) contentBlocks.push({ type: 'text', text: currentText });
-    // 【R8】过滤未闭合的 tool_use：Anthropic streaming 的 tool_use.input
-    // 是由 input_json_delta 增量组装，abort 命中时可能是 `'{"path": "foo/ba'`
-    // 这种残缺 JSON。若直接把残缺 block 写进 session，下一 turn LLM 看到
-    // input=null 或半截 JSON 的 assistant 消息可能触发奇怪重试。
-    //
-    // 【不变量（正确性硬约束）】**仅当该 tool_use block 已收到 SDK 的
-    // `content_block_stop` 事件后才 flush 进 contentBlocks**；未闭合的
-    // 一律丢弃——`content_block_stop` 是 Anthropic streaming 协议中
-    // "该 block 完成"的唯一权威信号，其他判据（例如本地尝试 JSON.parse
-    // 成功）都是启发式，可能在 partial JSON 恰好构成合法子对象时误判。
-    //
-    // impl 侧在 callLLMStream 里维护 in-progress block 的 `done` 标记
-    // （例如 Set<index> 或每个累积 block 上的 boolean），仅把 done=true
-    // 的 block push 到 contentBlocks。效果：flush 出去的 contentBlocks 里
-    // 每个 tool_use.input 必然是可 parse 的完整对象，Anthropic API 下一
-    // turn 不会因半截 JSON 拒绝请求。
-    return {
-      content: contentBlocks,
-      stopReason: 'aborted',   // ← 调用方判这个值走 abort 分支
-      usage,                    // {0,0} (best-effort)
-    };
-  }
-  // ...其他 catch 不变
-}
-```
-
-> **usage** 说明：中断发生在 `message_end` 事件之前 → SDK 未返回 usage →
-> 处为 `{0,0}` (best-effort)。理论上 Anthropic API 已计费完整 input tokens，
-> 这里丢失计量；v2 如需精准可启 streaming usage delta。
-
-**（2）runAttempt 内部 while + tool 循环包 try/catch**，同时处理上面两种 abort 来源：
+`runAttempt` 骨架（省略与 abort 无关的现有逻辑）：
 
 ```typescript
-private async runAttempt(
-  turnCtx: TurnContext,
-  params: RunParams,
-  contextWindowTokens: number,
-  compaction: CompactionConfig,
-): Promise<Omit<RunResult, 'compacted'>> {
-  // ...现有 preflight / loadHistory / 当前 user msg append...
+private async runAttempt(turnCtx, params, ...): Promise<Omit<RunResult, 'compacted'>> {
+  // ...现有 sanitize / repairOrphanToolUses / loadHistory / user msg append...
 
-  const messages: ChatMessage[] = ...;
-  let lastContent: ChatContentBlock[] = [];
-  
   try {
     while (hasMoreToolCalls || pendingSteeringMessages.length > 0) {
-      // ∅ 每个 LLM 调用前 abort check。
-      // 【R5' 行为声明】若此时 pendingSteeringMessages 里有已 drain 但未注入
-      // 的 steering 消息：**丢弃**（不写 session，不回填 inbox）。与 D3
-      // "abort 清空 queue" 语义一致——用户 abort 时就是想停一切，包括
-      // 即将被消费的 steering。
-      //
-      // 【R5''】该丢弃**仅写 log，不 emit event**。理由：
-      //  1. pendingSteering 非空的时间窗极窄（上一轮 tool 循环末尾
-      //     pull inbox 与下一次 LLM 调用启动之间），count 实际为 0 或 1 居多
-      //  2. `messages_dropped` event 的产生点在 `RuntimeApp.abortTurn`（§8.3），
-      //     那里拿不到 `runAttempt` 局部变量 —— 强行合并 event 会造成
-      //     turnCtx 反向传递 count / event emit 延迟到 finally 等跨模块耦合，
-      //     代价远高于信息价值
-      //  3. 运维只需 log grep 即可回溯，CLI/UI 也不需要区分
-      //     "steering vs queue" 来渲染丢弃总数
-      //  4. D3 "避免静默丢失" 原 scope 是 `messageQueueBySession`，本
-      //     内存 pending 属于 R5' 开拓的次要 case，log-only 满足审计需求
-      //
-      // 日志级别建议 `info`（预期行为不是 warn，但默认可见便于追查
-      // "用户抱怨 steering 没生效" 类场景）。数组不需显式清空——
-      // runAttempt 抛后函数退栈，局部 const 自然 GC。
+      // 【触发点 B-1】每个 LLM 调用前 abort check。
+      // 若 pendingSteeringMessages 非空需写 log.info ——完整逻辑见 §7.2.3。
       if (params.signal?.aborted) {
         if (pendingSteeringMessages.length > 0) {
           log.info('dropped pending steering on abort', {
@@ -434,68 +420,151 @@ private async runAttempt(
         }
         throw new DOMException('Aborted', 'AbortError');
       }
-      // ...pendingSteering 注入 / llm_call emit / callLLMStream...
-      
-      lastContent = llmResult.content;
-      
-      // ⑰ Partial stream 分支：callLLMStream 优雅返回 stopReason='aborted'
+
+      // ...pendingSteering 注入 / llm_call emit...
+      const llmResult = await this.callLLMStream(turnCtx, { ...params, signal: params.signal });
+
+      // 【触发点 A】callLLMStream 优雅返回 aborted → 写 partial + 立即 return（§7.2.4）
       if (llmResult.stopReason === 'aborted') {
         messages.push({ role: 'assistant', content: llmResult.content });
-        // 【前提不变量】本分支进入时 `params.signal.aborted === true`：
-        // callLLMStream 仅在 `isAbortError=true` 时返回 'aborted'，而在本项目中
-        // 真 AbortError 只从外部触发一 controller.abort() 产生（signal 已 flip）。
-        // 未来若放宽 callLLMStream 返回 'aborted' 的触发条件（例如 SDK 内部
-        // timeout 也走 AbortError），这个不变量会失效，需在本处重新审视 IO
-        // 抛错处理。
-        // appendMessage 同其他调用点一致，不为 abort 路径特化错误处理：
-        // 若 IO 抛出，依靠 §7.1 isAbortError fallback（signal.aborted 为真）将其
-        // 归入 abort 分支，§4 "never throws" 仍成立——前提不变量失效时本
-        // 保障同时失效。
-        // 孤儿 tool_use 不在本处处理：下一 turn 起点的 `repairOrphanToolUses`
-        // 会从磁盘状态统一修（§7.3），避免与 in-memory / IO 失败纠缠。
         await this.sessionManager.appendMessage(params.sessionKey, {
           role: 'assistant',
           content: llmResult.content,
-          abortMeta: { partial: true, stopReason: 'aborted' },   // 需 §6.5
+          abortMeta: { partial: true, stopReason: 'aborted' },
         });
-        return this.buildAbortedResult(lastContent, {
-          usage: totalUsage,
-          toolRounds: totalToolRounds,
-        });
+        return this.buildAbortedResult(lastContent, { usage: totalUsage, toolRounds: totalToolRounds });
       }
-      
-      // ...现有 stop reason 'error' / 'aborted' 提前返回黑名单
-      // （'aborted' 已在上面分支处理，现有 branch 不变）
-      
-      // ② 工具循环 abort check
+
+      // ...现有 assistant 写入 + error stopReason 早退...
+
       for (const toolUse of toolUseBlocks) {
-        if (params.signal?.aborted) {
-          throw new DOMException('Aborted', 'AbortError');
-        }
-        // ...现有 tool_use 处理不变...
+        // 【触发点 B-2】下一 tool 启动前 check——正在跑的 tool 不打断（D6）
+        if (params.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        // ...executeTool + tool_result 处理...
       }
-      // ...现有 tool loop 后的 90% 阈值检查、steering 拉取不变...
     }
-    
-    // 正常完成
-    const text = this.extractText(lastContent);
-    return { text, content: lastContent, stopReason: lastStopReason, usage: totalUsage, toolRounds: totalToolRounds };
+    return { /* 正常完成 */ };
   } catch (err) {
     if (this.isAbortError(err, params.signal)) {
-      // 【fallback 诊断 log】若命中仅因 signal.aborted fallback（非 abort 名字），
-      // 写条 warn 使 §7.1 “错误内容在 log 里可见” 的兑现属实。
+      // 触发点 B 汇集处：优雅返回 aborted（§7.2.5 fallback log + orphan 留给 §7.3）
       this.logIfSwallowedByAbortFallback(err, params.sessionKey);
-      // 不在此处修孤儿：下一 turn 起点的 `repairOrphanToolUses` 从磁盘
-      // 状态统一修复（§7.3）。本处只专注于“优雅返回 aborted”。
-      return this.buildAbortedResult(lastContent, {
-        usage: totalUsage,
-        toolRounds: totalToolRounds,
-      });
+      return this.buildAbortedResult(lastContent, { usage: totalUsage, toolRounds: totalToolRounds });
     }
-    throw err;   // 非 abort（如 ContextOverflowError）控制权还给 run() 外层 retry
+    throw err; // 非 abort（如 ContextOverflowError）交给 run() 外层
   }
 }
 ```
+
+下面几个小节展开具体细节。
+
+#### 7.2.1 callLLMStream abort catch
+
+```typescript
+// callLLMStream 内部 for-await 的 try/catch——SDK 抛 AbortError 时进入
+catch (err) {
+  if (this.isAbortError(err, params.signal)) {
+    this.logIfSwallowedByAbortFallback(err, params.sessionKey);
+    if (currentText) contentBlocks.push({ type: 'text', text: currentText });
+    return {
+      content: contentBlocks,
+      stopReason: 'aborted',   // ← 调用方判这个值走 partial stream 分支
+      usage,                    // {0,0} (best-effort)，见下方 usage 说明
+    };
+  }
+  // ...其他 catch（ContextOverflow 等）不变
+}
+```
+
+**usage 说明**：中断发生在 `message_end` 事件之前 → SDK 未返回 usage → 处为 `{0,0}`
+(best-effort)。理论上 Anthropic API 已计费完整 input tokens，这里丢失计量；v2 如需
+精准可启 streaming usage delta。
+
+#### 7.2.2 partial tool_use 过滤：不变量
+
+`contentBlocks` 里绝不能出现残缺 tool_use block——LLM streaming 里 `tool_use.input`
+由 `input_json_delta` 增量组装，abort 命中时可能只到 `'{"path": "foo/ba'` 这种半截 JSON。
+若写进 session，下一 turn LLM 看到 `input=null` 或半截 JSON 的 assistant 消息会触发
+奇怪重试。
+
+**正确性硬约束**：**仅当该 tool_use block 已收到 SDK 的 `content_block_stop` 事件后
+才 flush 进 contentBlocks**。`content_block_stop` 是 Anthropic streaming 协议中"该 block
+完成"的唯一权威信号；其他判据（例如本地尝试 `JSON.parse` 成功）都是启发式，可能在
+partial JSON 恰好构成合法子对象时误判。
+
+**impl 侧**：`callLLMStream` 里维护 in-progress block 的 `done` 标记（`Set<index>` 或每
+累积 block 上的 boolean），仅把 `done=true` 的 block push 到 `contentBlocks`。效果：flush
+出去的 contentBlocks 里每个 tool_use.input 必然是可 parse 的完整对象。
+
+#### 7.2.3 pending steering 的丢弃处理
+
+进入触发点 B-1（while 顶 abort check）时，若 `pendingSteeringMessages` 里有已从 inbox
+drain 但还没注入到 messages 的 steering 消息，一律**丢弃**（不写 session，不回填 inbox）。
+与 D3 "abort 清空 queue" 语义一致——用户 abort 时就是想停一切，包括即将被消费的 steering。
+
+```typescript
+if (params.signal?.aborted) {
+  if (pendingSteeringMessages.length > 0) {
+    log.info('dropped pending steering on abort', {
+      sessionKey: params.sessionKey,
+      count: pendingSteeringMessages.length,
+    });
+  }
+  throw new DOMException('Aborted', 'AbortError');
+}
+```
+
+**只写 log，不 emit `messages_dropped` event**。理由：
+
+1. pendingSteering 非空的时间窗极窄（上一轮 tool 循环末尾 pull inbox 与下一次 LLM 调用
+   启动之间），count 实际多为 0 或 1
+2. `messages_dropped` event 的产生点在 `RuntimeApp.abortTurn`（§8.3），那里拿不到
+   `runAttempt` 局部变量——强行合并会造成跨模块耦合，代价远高于信息价值
+3. 运维只需 log grep 即可回溯，CLI/UI 也不需要区分 "steering vs queue" 来渲染丢弃总数
+4. D3 "避免静默丢失" 原 scope 是 `messageQueueBySession`，本内存 pending 属于次要 case，
+   log-only 已满足审计需求
+
+日志级别用 `info`（预期行为不是 warn，但默认可见便于追查 "用户抱怨 steering 没生效"
+类场景）。数组不需显式清空——`runAttempt` 抛后函数退栈，局部 const 自然 GC。
+
+#### 7.2.4 partial stream 分支的 IO 前提不变量
+
+触发点 A 命中（`llmResult.stopReason === 'aborted'`）后写 partial assistant 到 session，
+这个 write 走的是**普通 `appendMessage`，不加 try/catch**。这依赖一个**前提不变量**：
+
+> 进入本分支时 `params.signal.aborted === true`。
+
+论据：`callLLMStream` 仅在 `isAbortError=true` 时返回 `'aborted'`，而在本项目中真
+AbortError 只从外部触发一次 `controller.abort()` 产生（signal 已 flip）。所以若
+`appendMessage` 抛 IO error，外层 catch 依靠 `isAbortError` 的 `signal.aborted` fallback
+（§7.1）会将其归入 abort 分支，`§4 "never throws"` 契约仍成立。
+
+**未来若放宽 `callLLMStream` 返回 'aborted' 的触发条件**（例如 SDK 内部 timeout 也走
+AbortError），此不变量会失效——需在此处重新审视 IO 抛错处理。
+
+**孤儿 tool_use 不在此处处理**：下一 turn 起点的 `repairOrphanToolUses` 会从磁盘状态
+统一修（§7.3），避免与 in-memory / IO 失败纠缠。
+
+> “为什么不在此处包 try/catch” 的取舍已在 §18.5 明示记录。
+
+#### 7.2.5 外层 catch 的 abort 汇集
+
+`runAttempt` 主 try/catch 的 abort 分支：
+
+```typescript
+} catch (err) {
+  if (this.isAbortError(err, params.signal)) {
+    // fallback 命中的非-abort error（signal.aborted fallback 兜进来的）在此写 warn，
+    // 使 §7.1 “错误内容在 log 里可见” 兑现。
+    this.logIfSwallowedByAbortFallback(err, params.sessionKey);
+    return this.buildAbortedResult(lastContent, { usage: totalUsage, toolRounds: totalToolRounds });
+  }
+  throw err;  // 非 abort（如 ContextOverflowError）交给 run() 外层 retry
+}
+```
+
+- **不修孤儿**：`repairOrphanToolUses` 在下一 turn 起点从磁盘统一修（§7.3），本处只
+  专注 "优雅返回 aborted"
+- **不重复 emit run_end**：`run()` 外层已负责发 run_end，`runAttempt` 只负责返回值
 
 ### 7.3 孤儿 tool_use 修复（turn 起点处理，载入边界不变量）
 
@@ -558,10 +627,10 @@ private async repairOrphanToolUses(turnCtx: TurnContext): Promise<void> {
         .map(b => b.id);
       hint = last.abortMeta;
     }
-    // 情况 B：末尾是 toolResult，上一条 assistant 的 tool_use 对应不全
-    // 【R9】包含 R6' 场景（tool 内部响应 signal 抛 AbortError 被
-    // executeTool swallow 为 isError=true tool_result——已写入 tool_result，
-    // 下面差集自然排除，不重复补写）
+    // 情况 B：末尾是 toolResult，上一条 assistant 的 tool_use 对应不全。
+    // 兼容内部 signal-响应场景：tool 内部响应 signal 抛 AbortError 会被
+    // executeTool swallow 为 isError=true 的 tool_result（已写入 tool_result，
+    // 差集自然排除，不会重复补写）。
     else if (last.role === 'toolResult' && Array.isArray(last.content) && records.length >= 2) {
       const prev = records[records.length - 2]!.message;
       if (prev.role === 'assistant' && Array.isArray(prev.content)) {
@@ -629,7 +698,7 @@ const toolCtx: ToolContext = {
 };
 ```
 
-> **【R6' 与 executeTool 交互奇思】**：tool 若响应 signal（例如 exec 内部杀子进程后
+> **【executeTool 交互细节】**：tool 若响应 signal（例如 exec 内部杀子进程后
 > 抛 AbortError），会被 `executeTool` 现有的 catch 块 swallow 成
 > `ToolResult { isError: true, content: 'Error executing tool ...' }`——不会
 > 直接抛到 runAttempt 的 try/catch。因此 abort 不是靠工具抛错检测，而是靠
@@ -720,7 +789,7 @@ private async runTurnInternal(params: RunTurnParams & { turnId: string }): Promi
  *
  * 【pending steering 处理】runAttempt 内 abort 命中时未注入的 steering
  * 消息会被丢弃，仅写 `log.info`，**不计入本 API 的 `dropped` 返回值，
- * 也不计入 `messages_dropped` event**。见 §7.2 R5'。
+ * 也不计入 `messages_dropped` event**。见 §7.2 pending steering 丢弃说明。
  *
  * 【emit 契约】本 API 声明 "never throws"，但 Node EventEmitter.emit 是
  * 同步调用 subscriber——subscriber 抛错默认会传出。所以 emit 必须包
@@ -743,7 +812,7 @@ abortTurn(sessionKey: string): { aborted: boolean; dropped: number } {
       type: 'messages_dropped',
       sessionKey,
       reason: 'abort',
-      dropped,   // = messageQueueBySession 丢弃数；pending steering 不计入（§7.2 R5'）
+      dropped,   // = messageQueueBySession 丢弃数；pending steering 不计入（§7.2 pending steering 处理）
     });
   }
   log.info('turn aborted by user', { sessionKey, aborted, dropped });
@@ -780,7 +849,7 @@ private safeEmit(event: RuntimeEvent): void {
      * 与 event 两条路径对齐。
      *
      * **不包含以下丢弃源**：
-     *  - `runAttempt` 内 `pendingSteeringMessages` 未注入部分（§7.2 R5'）
+     *  - `runAttempt` 内 `pendingSteeringMessages` 未注入部分（§7.2 pending steering 处理）
      *    ——仅写 log，不计入本字段。理由：触发窗口极窄 (count 实际多为 0
      *    或 1)，而且 pending 位于 AgentRunner 局部变量、RuntimeApp 拿不到；
      *    强行传递会引入 turnCtx / finally 合并 emit 等跨模块耦合，代价远高于
@@ -794,7 +863,7 @@ private safeEmit(event: RuntimeEvent): void {
 > 可省略不 emit（无 audit 价值）。pending steering 丢弃信息在 log
 > 里可 grep，不进该 event。
 
-### 8.4 `runSubagentTurn` signal【M2】
+### 8.4 `runSubagentTurn` signal
 
 库 API 不需要加 options 参数——`SubagentRunInput.signal?` 已存在（§6.4）。
 caller 直接通过 input 传：
@@ -825,7 +894,7 @@ async close(reason?: string): Promise<RuntimeShutdownReport> {
     controller.abort();
   }
   // activeAborts 不主动清，让各 runTurnInternal 自己的 finally 清。
-  // 【R7 注释】此处遍历同时 in-flight finally 会 `delete` 同一 map：Node
+  // 此处遍历同时 in-flight finally 会 `delete` 同一 map：Node
   // 单线程 + `controller.abort()` 只是同步 flip signal + queue microtask
   // emit 'abort' 事件，不会同步 resolve await——所以 runTurnInternal 的
   // finally 不会在本 for 循环内被同步触发，遍历安全。impl 如把 abort
@@ -965,7 +1034,7 @@ export class CliChannel implements Channel {
   async start(): Promise<void> {
     // ...existing readline 逻辑...
     
-    // 【M1】接管 SIGINT——需先 removeAllListeners('SIGINT')。
+    // 接管 SIGINT——需先 removeAllListeners('SIGINT')。
     // 原因：readline.Interface 默认在 process 上有个 SIGINT listener
     // （由 Interface 构造函数添加），会额外调用 close() 之类逻辑。
     // 我们要独占控制时机（abort / warn / exit），先清除后装自己的。
@@ -986,11 +1055,11 @@ export class CliChannel implements Channel {
   }
 
   async stop(): Promise<void> {
-    // 【M1'】卸载自己装的 SIGINT handler，避免：
+    // 卸载自己装的 SIGINT handler，避免：
     //  (a) 宿主进程后续不再希望 CliChannel 拦截 Ctrl+C 时 handler 泄漏
     //  (b) 将来 restart（同一进程内 stop()→start()）双绑
     // 不负责恢复 start() 时被 `removeAllListeners('SIGINT')` 清掉的其他 listener
-    // ——与 §12 M1 同源假设（CliChannel 独占进程 SIGINT）。
+    // ——与上述 “CliChannel 独占进程 SIGINT” 假设同源。
     process.off('SIGINT', this.boundSigIntHandler);
     // ...existing shutdown 逻辑...
   }
@@ -1007,12 +1076,12 @@ export class CliChannel implements Channel {
     
     this.lastCtrlCAt = now;
     
-    // 【R2 与 D3 语义一致】判断"是否有东西可 abort"时必须同时考虑：
+    // 【与 D3 语义一致】判断"是否有东西可 abort"时必须同时考虑：
     //  (i) 有 active turn（→ 会被 abort）
     //  (ii) 有 queued messages（→ 会被 drop，见 §8.3 D3）
     // 仅当两者都为空时才提示 "press again to exit"；否则统一走
     // abortTurn 路径——否则将出现 "queue 有堆积消息但 Ctrl+C 只提示退出"
-    // 的不一致（与 §14.1 CliChannel R2 测例矛盾）。
+    // 的不一致（与 §14.1 CliChannel 无-active-turn-有-queue 测例矛盾）。
     const targets = this.abortHooks?.querySessionsNeedingAbort() ?? [];
     if (targets.length === 0) {
       this.output.write(dim('\n[press Ctrl+C again within 1s to exit]\n'));
@@ -1093,7 +1162,7 @@ registerChannel(channel: Channel): void {
 > RuntimeEvent `messages_dropped` 仍照常 emit（library 用户、telemetry 用），
 > CLI 渲染走返回值这条独立通路不依赖 event。
 >
-> **【N2】时序保证**：`RuntimeApp.registerChannel` 在 channel 注册时同步调用 `bindAbortHooks?(...)`；channel 随后在其 `start()` 里注册 SIGINT handler。调用顺序必是 register → start，所以 SIGINT 发生时 hooks 必已 bound，无 race。
+> **【时序保证】**：`RuntimeApp.registerChannel` 在 channel 注册时同步调用 `bindAbortHooks?(...)`；channel 随后在其 `start()` 里注册 SIGINT handler。调用顺序必是 register → start，所以 SIGINT 发生时 hooks 必已 bound，无 race。
 
 ### `subagent_end{outcome:'aborted'}` 渲染
 
@@ -1154,9 +1223,9 @@ WebSocketChannel 实现 `bindAbortHooks?` — 与 CliChannel 共用 §12 的 `Ab
   - **【孤儿修复—no-op】** 干净 session（末尾非 assistant 或 pair 完整）→ repair 不写盘、不 emit
   - **【孤儿修复—write 失败不 crash】** mock `sessionManager.appendMessage` 在 repair 时抛 → log warn，turn 继续启动（不 rethrow）
   - **【孤儿修复—partial-assistant 写盘失败边角】** mock partial assistant appendMessage 抛 IO error → 磁盘无 assistant → 下轮 getMessages 无孤儿 → repair no-op（验证 “从磁盘为真” 的不一致免疫属性）
-  - **【R2 usage 累计】** abort 前跑过 3 轮 tool call，每轮 mock usage `{in:100,out:50}`；abort 命中 partial stream 分支 → 返回 `RunResult.usage = {in:300,out:150}` + `toolRounds:3`（非 0/0）
-  - **【R8 partial tool_use 完整性】** stream 到 tool_use.input 半截时 abort → session 里 assistant 消息**不含**残缺 tool_use block（只含完整的 text + 完整的 tool_use）
-  - **【R11 isAbortError fallback + 诊断 log】** SDK 抛 `Error` 名字为 `"NetworkError"` 但 `params.signal.aborted === true` → runAttempt 走 abort 分支 **且** `log.warn('non-abort error swallowed by abort fallback', ...)` 被调用（断言 errName === 'NetworkError'）；对照组：`err.name === 'AbortError'` 时不应调用该 warn log
+  - **【usage 累计】** abort 前跑过 3 轮 tool call，每轮 mock usage `{in:100,out:50}`；abort 命中 partial stream 分支 → 返回 `RunResult.usage = {in:300,out:150}` + `toolRounds:3`（非 0/0）
+  - **【partial tool_use 完整性】** stream 到 tool_use.input 半截时 abort → session 里 assistant 消息**不含**残缺 tool_use block（只含完整的 text + 完整的 tool_use）
+  - **【isAbortError fallback + 诊断 log】** SDK 抛 `Error` 名字为 `"NetworkError"` 但 `params.signal.aborted === true` → runAttempt 走 abort 分支 **且** `log.warn('non-abort error swallowed by abort fallback', ...)` 被调用（断言 errName === 'NetworkError'）；对照组：`err.name === 'AbortError'` 时不应调用该 warn log
 - SubagentRunner.test.ts:
   - parent signal abort → child outcome='aborted'，runner 不抛
 - RuntimeApp.test.ts:
@@ -1168,13 +1237,13 @@ WebSocketChannel 实现 `bindAbortHooks?` — 与 CliChannel 共用 §12 的 `Ab
   - 无 active + 无 queue → 返回 `{ aborted: false, dropped: 0 }`，不 emit
   - 跨 session 不受影响：abortTurn(sk1) 不动 sk2 的 queue
   - **【pending steering log-only】** runAttempt 内 `pendingSteeringMessages.length > 0` 时命中 abort → log.info('dropped pending steering on abort', {sessionKey, count}) 被调用；`messages_dropped` event **无变化**（`dropped` 仍只反映 queue 丢弃数，不含 steering count）
-  - **【R10 safeEmit】** 注册一个抛错的 RuntimeEvent subscriber → 调 abortTurn 触发 emit → subscriber 抛 → API 仍正常返回 `{ aborted, dropped }`（反映真实状态），不 rethrow + log warn
+  - **【safeEmit】** 注册一个抛错的 RuntimeEvent subscriber → 调 abortTurn 触发 emit → subscriber 抛 → API 仍正常返回 `{ aborted, dropped }`（反映真实状态），不 rethrow + log warn
   - shutdown 路径：先 abort active turn 再 close
   - **shutdown timing（响应 signal 路径）**：close() 调用时有 active turn，turn 内是响应 signal 的 mock LLM stream（200ms 后 abort 自然完成）→ close() 在 300ms 内 resolve。**不覆盖** "不响应 signal 的 tool 场景"——那是 v1 明示的已知局限（§8.5），close 会等到 tool 自然完成，由 caller 场景决定是否可接受（跑 30s mock tool 让测试挂 30s 无意义）。
 - CliChannel.test.ts (新建):
   - 单 Ctrl+C 触发 `abortHooks.abortTurn`；双 Ctrl+C 在窗口内退出（mock process.exit）
   - hooks 未 bind 时（独立运行）Ctrl+C 退一样工作
-  - **【R2 aborted 语义】** active turn 不存在 + queue 有 3 条 → Ctrl+C 后 CLI 输出 `dropped 3 queued message(s)` 但**不**出现 `aborted N turn(s)` 段（`totalAborted === 0`）
+  - **【无 active turn + queue 非空时的输出】** active turn 不存在 + queue 有 3 条 → Ctrl+C 后 CLI 输出 `dropped 3 queued message(s)` 但**不**出现 `aborted N turn(s)` 段（`totalAborted === 0`）
 - WebSocketChannel.test.ts:
   - inbound `abort_turn` 触发 `abortHooks.abortTurn` 回调
   - `run_end{stopReason:'aborted'}` event 被 fanout 至 WS subscriber（证实客户端通过 run_end 感知 abort完成的接口可用）
@@ -1229,3 +1298,69 @@ WebSocketChannel 实现 `bindAbortHooks?` — 与 CliChannel 共用 §12 的 `Ab
   - `grep_search` / `file_search`：walker 加 `if (ctx.signal?.aborted)` 检查
   - `apply_patch`：hunk 间 check（参考 openclaw）
   - 每条改动独立、可增量上 — 不需要重构架构
+- **`RunResult.abortReason?: 'user' | 'timeout' | 'shutdown'`**：当前 `stopReason='aborted'` 不区分 abort 来源。未来若 caller 需要区分"用户主动断"/"turn timeout 自动断"/"shutdown 时被开关断"，可加此字段。v1 不加因为只有用户主动断一种来源；timeout 本身属于未来项。接入机制：`AbortController.abort(reason)` 已能携 `reason`，SDK / `AbortSignal.reason` 递上来可直接映射。
+- **partial assistant 只保留 text，不写 tool_use block**：当前遗留已闭合的 tool_use（§7.2.2 不变量）。另一种选择是写 partial assistant 时完全抛弃 tool_use 只留 text，让下一 turn 完全重新开始——好处是孤儿修复一定无事可做（缺点是丢失 "LLM 已决定要调用哪些 tool" 的重要信号，下轮需重新生成同样的 tool 决策，多付一次输出 tokens）。若孤儿修复在生产上被证实为真实痛点，可重新评估。
+
+## 18. Design Log
+
+本节记录 spec 迭代过程中**被替换掉的设计方案**及替换理由，供后续维护者
+追溯"为什么现在是这样"。当前 spec 的正文只描述最终决策。
+
+### 18.1 Orphan tool_use 修复位置：abort 出口 → turn 起点
+
+- **早期方案**：在 `runAttempt` 的 abort 出口（catch 分支）调 `appendOrphanToolResultsIfAny`
+  helper，扫 in-memory `messages` 数组补 synthetic tool_result。
+- **改成**：在 `runAttempt` 入口调 `repairOrphanToolUses`（§7.3），从 `sessionManager.getMessages`
+  读磁盘状态判定。
+- **原因**：
+  1. 结构性不变量优于过程性契约——载入边界修复覆盖所有孤儿源（abort / 崩溃 / SIGKILL
+     / Bug），不再依赖 abort 代码无缺陷执行到尾
+  2. 磁盘为真——partial-assistant 写盘失败等 in-memory / 磁盘不一致场景自然免疫
+  3. abort 出口代码简化——只专注 "优雅返回 aborted"，不背负 session 修复职责
+
+### 18.2 Orphan repair content 文案：区分成因 → 统一中性
+
+- **早期方案**：repair 时按 `abortMeta.partial === true` 区分内容——命中写
+  `'[tool execution aborted by user]'`，否则写 `'[tool call interrupted; session recovered]'`。
+- **改成**：**统一一句中性文案** `'[tool call interrupted; session recovered]'`；`abortMeta`
+  只驱动 event `source: 'abort' | 'recovered'`，不驱动 content。
+- **原因**：
+  1. 磁盘状态无法区分 tool-loop abort 与崩溃遗留（两者产生完全相同的 assistant + orphan
+     tool_use 形状）。若写 'aborted'，对崩溃案例是说谎；若两者共存，用户看到语义分岔
+     （partial-stream abort 得到 'aborted'，tool-loop abort 得到 'recovered'——同一动作两种命运）
+  2. 参考 openclaw `makeMissingToolResult` 用一句通用 "missing tool result in session history"，
+     不假装区分成因
+  3. 追查真实 abort 起因的权威源是 `run_end{stopReason:'aborted'}` event，不是 session 磁盘
+
+### 18.3 `run()` 内层 catch 处理 abort 的理由更替
+
+- **早期理由**：`run()` 顶层 catch scope 拿不到 `runAttempt` 的 in-memory `messages` 数组，
+  而 orphan helper 需要它。
+- **该理由失效**：随 §7.3 重构后（改从磁盘读），helper 不再需要 in-memory messages。
+- **保留结论**：abort 由 `runAttempt` 内部消化，理由改为 "让 abort 与正常完成在 `run()` 视角
+  外观完全一致（都是合法 RunResult），只靠 `stopReason` 区分"。
+
+### 18.4 §4 "≤200ms" SLA → 诚实的非承诺
+
+- **早期方案**：goal 里承诺 "用户 Ctrl+C 后 ≤200ms 内停止 LLM streaming + exec 进程"。
+- **改成**：只承诺 "signal **同步** flip 到 `params.signal`（微秒级，纯内存操作）"；
+  实际停止延迟受 SDK / event loop / OS / 第三方工具影响，**v1 不承诺硬性墙钟 SLA**。
+- **原因**：200ms 无法从代码层保证——SDK 内部读循环粒度、Node event loop 拥塞、
+  `child_process.kill` OS 语义、第三方工具是否合作，全都不在 my-agent 掌控范围。诚实
+  非承诺优于虚假 SLA。
+
+### 18.5 partial-assistant 写盘 IO error 依靠 signal.aborted fallback 兜底
+
+- **候选方案**：在 partial-assistant 分支内部包 try/catch，专处理写盘失败（例如磁盘满 / IO 报错）
+  以保留 IO error 的具体类型信息。
+- **选择**：不包。IO error 依靠 `runAttempt` 外层 catch + `isAbortError` 的 `signal.aborted`
+  fallback（§7.1）将其归并到 abort 分支（§7.2.4 "前提不变量"）。IO error 的具体类型会丢失，
+  用户仅从 `stopReason='aborted'` 无从判断是真 abort 还是 IO 失败变型——只能 log grep 才知。
+- **原因**：主动取舍——§4 "never throws" 契约 > IO error 类型保真。两个考量点：
+  1. 前提不变量（进入本分支必意味着 `signal.aborted === true`）使得 fallback 归并在逻辑上合理，
+     不是逗巧命中
+  2. `logIfSwallowedByAbortFallback`（§7.1）会写 warn log 含 `errName` 与 `errMessage`，运维可
+     grep 回溯 IO error 真相，不至于静默丢失
+
+  若未来 IO error 在 abort 路径上变为频繁痛点（例如需向 caller 暴露 partial-write 失败 metric），
+  可重新评估——方案不影响公开接口，内部重构可行。
