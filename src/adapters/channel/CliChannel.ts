@@ -258,9 +258,16 @@ export class CliChannel implements Channel {
       });
     });
 
-    // 接管 SIGINT——需先 removeAllListeners('SIGINT') 清除 readline.Interface
-    // 默认装的 close-on-SIGINT listener，否则 Ctrl+C 会直接关闭 readline，
-    // 剥夺 `handleSigInt` 控制 abort / 双击退出的机会。
+    // 【关键】给 rl 实例挂 SIGINT listener 才能拦截 readline 的 default 行为
+    // （空 prompt 收到 ^C 会 emit 'SIGINT' + rl.close()）。挂了 listener 后
+    // readline 只 emit 'SIGINT' 而不再 close，控制权交给 handleSigInt。
+    // 未挂时 readline 会调 `process.kill(process.pid, 'SIGINT')` 让 process-
+    // level handler 兜底——但空 prompt 那条路径同时会关掉 rl，等价于直接退出。
+    this.rl.on('SIGINT', () => this.handleSigInt());
+
+    // 接管进程级 SIGINT，覆盖外部 kill signal（`kill -INT pid`）等
+    // readline 触不到的场景。需先 removeAllListeners('SIGINT') 清除
+    // readline.Interface 构造时可能装的默认 process-level listener。
     //
     // 【假设：CliChannel 独占进程 SIGINT】`removeAllListeners('SIGINT')`
     // 是刻意的粗暴：它会连带清除宿主进程中其他库（测试框架、外层 embed
