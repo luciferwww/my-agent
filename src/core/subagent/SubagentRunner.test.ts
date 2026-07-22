@@ -539,6 +539,52 @@ describe('SubagentRunner.run', () => {
     });
   });
 
+  // ── Abort cascade (core-abort-spec.md §9) ──────────────
+
+  describe('abort cascade', () => {
+    it('forwards req.signal as RunParams.signal so parent aborts reach the child turn', async () => {
+      const controller = new AbortController();
+      const { deps, agentRunnerRun } = makeDeps();
+      const runner = new SubagentRunner(deps);
+      await runner.run(makeRequest({ signal: controller.signal }));
+
+      const runParams = agentRunnerRun.mock.calls[0]![0] as RunParams;
+      expect(runParams.signal).toBe(controller.signal);
+    });
+
+    it('maps stopReason="aborted" to outcome="aborted" without throwing', async () => {
+      // AgentRunner's abort path returns RunResult with stopReason='aborted'
+      // (see AgentRunner.buildAbortedResult); SubagentRunner must not
+      // rethrow and must not fall back to 'ok' or 'max_llm_calls'.
+      const events: AgentEvent[] = [];
+      const { deps } = makeDeps({
+        onEvent: (e) => events.push(e),
+        agentRunnerRun: async (): Promise<RunResult> => ({
+          text: 'partial-answer',
+          content: [{ type: 'text', text: 'partial-answer' }],
+          stopReason: 'aborted',
+          usage: { inputTokens: 30, outputTokens: 12 },
+          toolRounds: 1,
+        }),
+      });
+      const runner = new SubagentRunner(deps);
+      const result = await runner.run(makeRequest());
+
+      expect(result.outcome).toBe('aborted');
+      expect(result.text).toBe('partial-answer');
+      expect(result.usage).toEqual({ inputTokens: 30, outputTokens: 12 });
+      // Not the catch-branch shape (which zeros usage + sets reason).
+      expect(result.reason).toBeUndefined();
+
+      const end = events.find((e) => e.type === 'subagent_end') as Extract<
+        AgentEvent,
+        { type: 'subagent_end' }
+      >;
+      expect(end.outcome).toBe('aborted');
+      expect(end.usage).toEqual({ inputTokens: 30, outputTokens: 12 });
+    });
+  });
+
   // ── Cleanup ─────────────────────────────────────────────
 
   describe('cleanup', () => {

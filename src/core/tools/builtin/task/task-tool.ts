@@ -83,9 +83,11 @@ export function createTaskTool(deps: TaskToolDeps): Tool {
     inputSchema: INPUT_SCHEMA,
 
     async execute(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
-      // NOTE: v1 has no abort wiring — `ctx.signal` is always undefined here
-      // (spec §6.1 decision 1). The abort subsystem will add an `aborted` early
-      // return + cancellation cleanup here when it lands.
+      // Abort cascade: `ctx.signal` (populated by the parent turn's
+      // AbortController per core-abort-spec.md §8.1) flows through
+      // SubagentRunRequest.signal → child RunParams.signal, so an abort on
+      // the parent turn stops this subagent too. Its outcome then maps to
+      // `'aborted'` in `formatSubagentResult` below.
 
       const params = input as unknown as TaskInput;
       const subagentType = params.subagent_type ?? GENERAL_PURPOSE_ID;
@@ -160,9 +162,11 @@ export function createTaskTool(deps: TaskToolDeps): Tool {
  *
  * - `'ok'`             → plain text, no isError
  * - `'max_llm_calls'`  → isError + partial-text hint
- * - `'aborted'`        → isError + "aborted" message. Unreachable in v1
- *                        (spec §6.1 decision 1); preserved for the future
- *                        abort subsystem.
+ * - `'aborted'`        → isError + "aborted" message. Produced when the parent
+ *                        turn's AbortController fires while the child is still
+ *                        running (core-abort-spec.md §9). The LLM sees this
+ *                        tool_result but the parent turn is unwinding, so the
+ *                        message is mostly for the transcript log.
  * - `'error'`          → isError + the failure reason
  */
 function formatSubagentResult(result: SubagentRunResult): ToolResult {

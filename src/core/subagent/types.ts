@@ -85,7 +85,11 @@ export interface SubagentRunResult {
   sessionKey: string;
   turnId: string;
   text: string;
-  /** `'aborted'` is reserved for the v2 abort subsystem; v1 never produces it. */
+  /**
+   * `'aborted'` fires when the caller-supplied `AbortSignal` trips before the
+   * child turn reaches `end_turn` / `max_llm_calls`. Cascades from the parent's
+   * `RuntimeApp.abortTurn(...)` via `RunParams.signal`.
+   */
   outcome: 'ok' | 'error' | 'aborted' | 'max_llm_calls';
   reason?: string;
   /** Self + all transitive descendants (spec §6.1 decision 6). */

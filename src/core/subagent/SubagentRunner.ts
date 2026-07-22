@@ -112,6 +112,11 @@ export class SubagentRunner {
     // per-subagent tool bundle is computed by the runtime layer in PR-5 / PR-6
     // and threaded through the host. PR-3 tests pass a mocked AgentRunner.run
     // and assert on the fields populated here.
+    //
+    // `req.signal` cascades down to the child turn: the parent's AbortController
+    // (owned by RuntimeApp per core-abort-spec.md §8.1) fires → the same signal
+    // reaches child AgentRunner.run → child `stopReason='aborted'` → outcome
+    // mapping below turns it into `'aborted'`. See core-abort-spec.md §9.
     const runParams: RunParams = {
       sessionKey: childSessionKey,
       message: prompt,
@@ -121,6 +126,7 @@ export class SubagentRunner {
       maxTokens: this.deps.host.llmDefaults.maxTokens,
       maxLlmCalls: profile.maxLlmCalls, // undefined → AgentRunner default
       contextWindowTokens: this.deps.host.llmDefaults.contextWindowTokens,
+      signal: req.signal,
     };
 
     // 7) Emit start, run, emit end / catch / finally.
@@ -138,11 +144,17 @@ export class SubagentRunner {
     let result: SubagentRunResult;
     try {
       const runResult = await this.deps.agentRunner.run(runParams);
+      // `'aborted'` is checked FIRST so a signal that fires between AgentRunner's
+      // last LLM call and its return does not get miscategorized as `'ok'` /
+      // `'max_llm_calls'`. AgentRunner produces `stopReason='aborted'` via its
+      // `buildAbortedResult` path (core-abort-spec.md §7.2). The `'error'`
+      // outcome still belongs exclusively to the catch branch below.
       const outcome: SubagentRunResult['outcome'] =
-        runResult.stopReason === 'max_llm_calls' ? 'max_llm_calls' : 'ok';
-      // 'aborted' is unreachable in v1: Anthropic API never returns that
-      // stopReason and no other call path produces it (spec §6.1 decision 1).
-      // The 'error' outcome belongs to the catch branch below.
+        runResult.stopReason === 'aborted'
+          ? 'aborted'
+          : runResult.stopReason === 'max_llm_calls'
+            ? 'max_llm_calls'
+            : 'ok';
       result = {
         runId,
         sessionKey: childSessionKey,
