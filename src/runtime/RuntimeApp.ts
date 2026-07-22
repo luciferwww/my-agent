@@ -82,6 +82,15 @@ export class RuntimeApp {
    */
   private readonly activeTurnIdBySession = new Map<string, string>();
 
+  /**
+   * Per-session active turn 的 AbortController，供 `abortTurn(sk)` / shutdown 触发中止。
+   *  - 写：runTurnInternal 入口（清 stale + 设新）
+   *  - 写：runTurnInternal finally（清掉自己注册的那个）
+   *  - 读：abortTurn / close / bindAbortHooks.querySessionsNeedingAbort
+   * 详见 core-abort-spec.md §8.1。
+   */
+  private readonly activeAborts = new Map<string, AbortController>();
+
   // ── Channel 层 ──────────────────────────────────────────────────
   /** 与 bootstrap fanout 闭包共享引用：registerChannel 后注册的新 channel 实时可见 */
   private readonly channels: Channel[];
@@ -277,12 +286,88 @@ export class RuntimeApp {
     channel.approval?.onApprovalDecision((id, decision) => {
       this.turnInteractionManager.resolve(id, decision);
     });
+
+    // 注入 abort hooks（core-abort-spec.md §12）——同步调用，channel.start() 里
+    // 装 SIGINT handler 之前必然已 bound，无 race。
+    channel.bindAbortHooks?.({
+      querySessionsNeedingAbort: () => {
+        const set = new Set<string>(this.activeAborts.keys());
+        for (const [sk, queue] of this.messageQueueBySession) {
+          if (queue.length > 0) set.add(sk);
+        }
+        return [...set];
+      },
+      // 直接透传——RuntimeApp.abortTurn 返回值形状与 AbortHookBindings.abortTurn 契约一致（§8.3）
+      abortTurn: (sk) => this.abortTurn(sk),
+    });
+
     log.info('channel registered', {
       channelId: channel.id,
       hasInteraction: !!channel.interaction,
       hasApproval: !!channel.approval,
+      hasAbortHooks: !!channel.bindAbortHooks,
       total: this.channels.length,
     });
+  }
+
+  /**
+   * Abort the active turn on `sessionKey` AND drop any queued (followup)
+   * messages for that session. See core-abort-spec.md §0.3 D3 — single-step
+   * "stop everything for this session" semantics.
+   *
+   * 返回 `{ aborted, dropped }`（两个字段正交）：
+   *  - `aborted`：是否有 active turn 被 abort（`activeAborts` 命中）
+   *  - `dropped`：从 `messageQueueBySession` 里被清空的消息数（可为 0）
+   *
+   * `aborted === false && dropped === 0` 时表示无事发生，此时也不 emit event。
+   *
+   * Never throws —— 包括 EventEmitter subscriber 抛错也会被 `safeEmit` swallow 为 log warn。
+   *
+   * Cascade：通过 AbortSignal 透传，正在跑的子 subagent 也会自动 abort。
+   *
+   * `messages_dropped` runtime event 仍照常 emit（供 library 用户 / telemetry 消费）；
+   * 事件字段 `dropped` 与本返回值 `dropped` 同义。Channel 侧走返回值路径以避免
+   * event 订阅顺序敏感问题。
+   *
+   * **pending steering 处理**：runAttempt 内 abort 命中时未注入的 steering 消息会
+   * 被丢弃、仅写 `log.info`，**不计入本返回值 `dropped`，也不进 `messages_dropped`
+   * event**。理由见 core-abort-spec.md §7.2.3。
+   */
+  abortTurn(sessionKey: string): { aborted: boolean; dropped: number } {
+    const controller = this.activeAborts.get(sessionKey);
+    const queue = this.messageQueueBySession.get(sessionKey);
+    const dropped = queue?.length ?? 0;
+    const aborted = !!controller;
+
+    if (!aborted && dropped === 0) return { aborted: false, dropped: 0 };
+
+    if (controller) controller.abort();
+    if (dropped > 0) {
+      this.messageQueueBySession.delete(sessionKey);
+      this.safeEmit({
+        type: 'messages_dropped',
+        sessionKey,
+        reason: 'abort',
+        dropped, // pending steering 不计入（§7.2.3）
+      });
+    }
+    log.info('turn aborted by user', { sessionKey, aborted, dropped });
+    return { aborted, dropped };
+  }
+
+  /**
+   * emit 抛错时降级为 warn 而非传出，保证调用方 "never throws" 契约。
+   * Node EventEmitter 语义下 subscriber 抛错默认会传出——`safeEmit` 兜底。
+   */
+  private safeEmit(event: RuntimeEvent): void {
+    try {
+      this.emit(event);
+    } catch (err) {
+      log.warn('RuntimeEvent subscriber threw; swallowed', {
+        eventType: event.type,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /**
@@ -875,6 +960,21 @@ export class RuntimeApp {
       const failed: Array<{ resource: string; message: string }> = [];
 
       try {
+        // Abort-then-wait（D4）：先 abort 所有 active turn，避免 shutdown 被响应
+        // signal 的慢 turn 卡住；再 allSettled 等 in-flight Promise 收完。
+        //
+        // 遍历安全：controller.abort() 只是同步 flip signal + queue microtask，
+        // 不会同步触发 runTurnInternal 的 finally（后者要等 await 链解开）；所以
+        // for-of 期间 map 不会被并发 mutate。impl 未来如把 abort 改成同步等 cleanup
+        // 完成，必须先 snapshot entries 再遍历。详见 core-abort-spec.md §8.5。
+        for (const [sessionKey, controller] of this.activeAborts) {
+          log.info('aborting in-flight turn on shutdown', { sessionKey });
+          controller.abort();
+        }
+        // activeAborts 不主动清；各 runTurnInternal finally 自己清。
+
+        // 老实等所有 in-flight Promise 收完——多久都等（不响应 signal 的 tool 会
+        // 使 close 挂到 tool 自然完成为止；runtime 不设内建 timeout，见 §8.5 shutdown 时长界限）。
         await Promise.allSettled([...this.inFlightRuns]);
 
         // 先停 channel（阻塞循环退出），再关 turnInteractionManager 和其他 disposable
@@ -941,76 +1041,97 @@ export class RuntimeApp {
    * resolve session、按需 reload context、构建 prompts，然后把一次完整 turn 委托给 agentRunner。
    */
   private async runTurnInternal(params: RunTurnParams & { turnId: string }): Promise<RunTurnResult> {
-    await this.resources.sessionManager.resolveSession(params.sessionKey);
-
-    if (params.reloadContextFiles) {
-      await this.reloadContextFiles();
+    // 防御性 stale 清理（core-abort-spec.md §8.2）：正常流由下面 finally 保证 cleanup，
+    // 不会遗留 stale entry。仅为防未来意外路径（finally 本身 throw / 某次重构意外
+    // 提前 return）留一层兜底。命中即 log warn。
+    const stale = this.activeAborts.get(params.sessionKey);
+    if (stale) {
+      log.warn('stale abort controller cleared (defensive)', { sessionKey: params.sessionKey });
+      this.activeAborts.delete(params.sessionKey);
     }
 
-    const systemPrompt = this.resources.systemPromptBuilder.build(
-      buildSystemPromptParams({
-        config: this.resources.resolvedConfig,
-        contextFiles: this.resources.contextFiles,
-        promptDefinitions: this.resources.toolBundle.promptDefinitions,
-        overrides: params,
-        workspaceDir: this.resources.workspaceDir,
-        // Only inject the <available-subagents> section when the feature is
-        // on. SystemPromptBuilder additionally suppresses it in minimal mode
-        // (which is what subagents themselves get).
-        availableSubagents:
-          this.resources.resolvedConfig.subagents?.enabled !== false
-            ? this.getAvailableSubagents()
-            : undefined,
-      }),
-    );
+    // 注册本 turn 的 controller —— abortTurn / shutdown 拿它来 abort。
+    const controller = new AbortController();
+    this.activeAborts.set(params.sessionKey, controller);
 
-    // context-hook prepend 只作用于文本部分：数组消息保持图文混排顺序与原始内容
-    let runnerMessage: string | ChatContentBlock[];
-    if (typeof params.message === 'string') {
-      runnerMessage = (await this.resources.userPromptBuilder.build({
-        text: params.message,
-      })).text;
-    } else {
-      // 用首个 text block 作为 prepend 宿主；其余 block 保持原序原值
-      const hostIndex = params.message.findIndex((b) => b.type === 'text');
-      const hostText = hostIndex >= 0
-        ? (params.message[hostIndex] as { type: 'text'; text: string }).text
-        : '';
-      const prepended = (await this.resources.userPromptBuilder.build({
-        text: hostText,
-      })).text;
+    try {
+      await this.resources.sessionManager.resolveSession(params.sessionKey);
 
-      runnerMessage = hostIndex >= 0
-        ? params.message.map((b, i) =>
-            i === hostIndex ? { type: 'text', text: prepended } : b,
-          )
-        : [{ type: 'text', text: prepended }, ...params.message];
+      if (params.reloadContextFiles) {
+        await this.reloadContextFiles();
+      }
+
+      const systemPrompt = this.resources.systemPromptBuilder.build(
+        buildSystemPromptParams({
+          config: this.resources.resolvedConfig,
+          contextFiles: this.resources.contextFiles,
+          promptDefinitions: this.resources.toolBundle.promptDefinitions,
+          overrides: params,
+          workspaceDir: this.resources.workspaceDir,
+          // Only inject the <available-subagents> section when the feature is
+          // on. SystemPromptBuilder additionally suppresses it in minimal mode
+          // (which is what subagents themselves get).
+          availableSubagents:
+            this.resources.resolvedConfig.subagents?.enabled !== false
+              ? this.getAvailableSubagents()
+              : undefined,
+        }),
+      );
+
+      // context-hook prepend 只作用于文本部分：数组消息保持图文混排顺序与原始内容
+      let runnerMessage: string | ChatContentBlock[];
+      if (typeof params.message === 'string') {
+        runnerMessage = (await this.resources.userPromptBuilder.build({
+          text: params.message,
+        })).text;
+      } else {
+        // 用首个 text block 作为 prepend 宿主；其余 block 保持原序原值
+        const hostIndex = params.message.findIndex((b) => b.type === 'text');
+        const hostText = hostIndex >= 0
+          ? (params.message[hostIndex] as { type: 'text'; text: string }).text
+          : '';
+        const prepended = (await this.resources.userPromptBuilder.build({
+          text: hostText,
+        })).text;
+
+        runnerMessage = hostIndex >= 0
+          ? params.message.map((b, i) =>
+              i === hostIndex ? { type: 'text', text: prepended } : b,
+            )
+          : [{ type: 'text', text: prepended }, ...params.message];
+      }
+
+      const result = await this.resources.agentRunner.run({
+        sessionKey: params.sessionKey,
+        message: runnerMessage,
+        model: this.requireModel(params.model),
+        systemPrompt,
+        turnId: params.turnId,
+        tools: this.resources.toolBundle.llmDefinitions,
+        maxTokens: params.maxTokens ?? this.resources.resolvedConfig.llm.maxTokens,
+        maxLlmCalls: params.maxLlmCalls ?? this.resources.resolvedConfig.runner.maxLlmCalls,
+        // runtime 只提供"读取并清空当前 steering inbox"的能力，具体消费时机仍由 runner 控制。
+        getSteeringMessages: async () => this.drainSteeringMessages(params.sessionKey),
+        compaction: this.resources.resolvedConfig.compaction,
+        contextWindowTokens: this.resources.resolvedConfig.llm.contextWindowTokens,
+        originMessageId: params.originMessageId,
+        signal: controller.signal, // core-abort-spec.md §8.2
+      });
+
+      return {
+        sessionKey: params.sessionKey,
+        text: result.text,
+        content: result.content,
+        stopReason: result.stopReason,
+        usage: result.usage,
+        toolRounds: result.toolRounds,
+      };
+    } finally {
+      // 只清自己注册的那一个（防止"另一个 turn 已重置 map"误清）
+      if (this.activeAborts.get(params.sessionKey) === controller) {
+        this.activeAborts.delete(params.sessionKey);
+      }
     }
-
-    const result = await this.resources.agentRunner.run({
-      sessionKey: params.sessionKey,
-      message: runnerMessage,
-      model: this.requireModel(params.model),
-      systemPrompt,
-      turnId: params.turnId,
-      tools: this.resources.toolBundle.llmDefinitions,
-      maxTokens: params.maxTokens ?? this.resources.resolvedConfig.llm.maxTokens,
-      maxLlmCalls: params.maxLlmCalls ?? this.resources.resolvedConfig.runner.maxLlmCalls,
-      // runtime 只提供“读取并清空当前 steering inbox”的能力，具体消费时机仍由 runner 控制。
-      getSteeringMessages: async () => this.drainSteeringMessages(params.sessionKey),
-      compaction: this.resources.resolvedConfig.compaction,
-      contextWindowTokens: this.resources.resolvedConfig.llm.contextWindowTokens,
-      originMessageId: params.originMessageId,
-    });
-
-    return {
-      sessionKey: params.sessionKey,
-      text: result.text,
-      content: result.content,
-      stopReason: result.stopReason,
-      usage: result.usage,
-      toolRounds: result.toolRounds,
-    };
   }
 
   /**

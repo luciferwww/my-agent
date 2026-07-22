@@ -1632,5 +1632,59 @@ describe('AgentRunner', () => {
       expect(swallowedCall).toBeUndefined();
       warnSpy.mockRestore();
     });
+
+    // 【pending steering log-only】runAttempt 内 pendingSteering 非空时命中 abort →
+    // 触发 log.info('dropped pending steering on abort', ...)。核心 §7.2.3 行为。
+    // 注：spec §14.1 把这条列在 RuntimeApp tests，实际行为发生在 AgentRunner，故此处实现。
+    it('pending steering log-only: pendingSteering 非空时命中 abort 触发 log.info', async () => {
+      const controller = new AbortController();
+      const agentLogger = (await import('../../platform/logger/index.js')).Logger.get('AgentRunner');
+      const infoSpy = vi.spyOn(agentLogger, 'info');
+
+      // 触发链路：第一轮 LLM 返回 tool_use → 跑完 tool → 拉 steering 消息（3 条）→
+      // 进入下一轮 while 迭代顶部时 signal 已 abort，命中丢弃分支。
+      let round = 0;
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'tool_use', id: 'tu-1', name: 'echo', input: {} },
+          { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 5, outputTokens: 3 } },
+        ],
+      ]);
+
+      const runner = new AgentRunner({
+        llmClient,
+        sessionManager,
+        toolExecutor: async () => {
+          round++;
+          // tool 跑完后 abort → 下一轮 while 顶命中 signal check
+          controller.abort();
+          return { content: 'ok' };
+        },
+      });
+
+      await runner.run({
+        sessionKey: 'main',
+        message: 'go',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-pending-steering',
+        signal: controller.signal,
+        // getSteeringMessages 返回 3 条 steering，触发 pendingSteering 非空
+        getSteeringMessages: async () => [
+          { role: 'user', content: 's1' },
+          { role: 'user', content: 's2' },
+          { role: 'user', content: 's3' },
+        ],
+      });
+
+      expect(round).toBe(1);
+      const infoCall = infoSpy.mock.calls.find(
+        (c) => c[0] === 'dropped pending steering on abort',
+      );
+      expect(infoCall).toBeDefined();
+      expect((infoCall![1] as { count: number }).count).toBe(3);
+      infoSpy.mockRestore();
+    });
   });
 });

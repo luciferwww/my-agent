@@ -201,6 +201,25 @@ export type RuntimeEvent =
   | {
       type: 'shutdown_end';
       report: RuntimeShutdownReport;
+    }
+  /**
+   * abort 时从 `messageQueueBySession` 里被丢弃的 queued/followup 消息计数。
+   * 与 `RuntimeApp.abortTurn()` 返回值的 `dropped` 字段同义，供 caller / telemetry
+   * 消费者跨返回值与 event 两条路径对齐。详见 core-abort-spec.md §8.3。
+   *
+   * **不包含**：
+   *  - `runAttempt` 内 `pendingSteeringMessages` 未注入部分（仅写 log；见 §7.2 pending
+   *    steering 处理）——那些位于 AgentRunner 局部变量，RuntimeApp 拿不到
+   *
+   * `dropped === 0` 且 abort 命中 active turn 时 event 不 emit（无 audit 价值）。
+   */
+  | {
+      type: 'messages_dropped';
+      sessionKey: string;
+      /** v1 只有 'abort'，预留 'shutdown' 等 */
+      reason: 'abort';
+      /** 从 messageQueueBySession 中被丢弃的 queued/followup 消息数（≥1） */
+      dropped: number;
     };
 
 export interface RuntimeDisposable {

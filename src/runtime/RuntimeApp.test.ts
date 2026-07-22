@@ -374,6 +374,379 @@ describe('RuntimeApp', () => {
       vi.useRealTimers();
     }
   });
+
+  // ── Abort（core-abort-spec.md §8） ──────────────────
+
+  describe('abort', () => {
+    // helper：跑一个 turn 并给它一个可 abort 的 hook；runnerRun 内部可自定义
+    async function makeAppWithRunner(runnerRun: (params: unknown) => Promise<RunResult>): Promise<RuntimeApp> {
+      const deps = createTestDependencies({
+        createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
+        createMemoryManager: async () => null,
+      });
+      return RuntimeApp.create({
+        workspaceDir,
+        cliOverrides: {
+          llm: { apiKey: 'test-key', model: 'test-model' },
+          memory: { enabled: false },
+        },
+        dependencies: deps,
+      });
+    }
+
+    // ① abortTurn 无 active + 无 queue → { aborted: false, dropped: 0 }，不 emit
+    it('abortTurn: 无 active + 无 queue → returns { false, 0 }, no emit', async () => {
+      const events: RuntimeEvent[] = [];
+      const app = await makeAppWithRunner(async () => ({
+        text: 'ok',
+        content: [{ type: 'text', text: 'ok' }],
+        stopReason: 'end_turn',
+        usage: { inputTokens: 1, outputTokens: 1 },
+        toolRounds: 0,
+      }));
+      // 事后注入 event collector：override onEvent 通过创建时的方式（重建更简单）
+      const app2 = await RuntimeApp.create({
+        workspaceDir,
+        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        dependencies: createTestDependencies({ createMemoryManager: async () => null }),
+        onEvent: (e) => events.push(e),
+      });
+
+      const result = app2.abortTurn('no-such-session');
+      expect(result).toEqual({ aborted: false, dropped: 0 });
+      expect(events.find((e) => e.type === 'messages_dropped')).toBeUndefined();
+      await app.close();
+      await app2.close();
+    });
+
+    // ② abortTurn 有 active turn + queue 空 → { aborted: true, dropped: 0 }，不 emit
+    it('abortTurn: 有 active turn + queue 空 → aborts turn, no emit', async () => {
+      const events: RuntimeEvent[] = [];
+      const releaseRun = createDeferred<void>();
+      let capturedSignal: AbortSignal | undefined;
+
+      const runnerRun = vi.fn(async (params: { signal?: AbortSignal }): Promise<RunResult> => {
+        capturedSignal = params.signal;
+        await releaseRun.promise;
+        return {
+          text: 'aborted',
+          content: [],
+          stopReason: 'aborted',
+          usage: { inputTokens: 0, outputTokens: 0 },
+          toolRounds: 0,
+        };
+      });
+
+      const app = await RuntimeApp.create({
+        workspaceDir,
+        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        dependencies: createTestDependencies({
+          createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
+          createMemoryManager: async () => null,
+        }),
+        onEvent: (e) => events.push(e),
+      });
+
+      const turnPromise = app.runTurn({ sessionKey: 'main', message: 'go', promptMode: 'full' });
+
+      // 等 runner 收到 signal
+      await vi.waitFor(() => expect(capturedSignal).toBeDefined());
+
+      const abortResult = app.abortTurn('main');
+      expect(abortResult).toEqual({ aborted: true, dropped: 0 });
+      expect(capturedSignal!.aborted).toBe(true);
+      expect(events.find((e) => e.type === 'messages_dropped')).toBeUndefined();
+
+      // 释放 runner，等 turn 收尾
+      releaseRun.resolve();
+      await turnPromise;
+      await app.close();
+    });
+
+    // ③ abortTurn 无 active + queue 有 N → 只清 queue + emit messages_dropped{ dropped: N }
+    it('abortTurn: 无 active turn + queue 有 N → clears queue, emits messages_dropped', async () => {
+      const events: RuntimeEvent[] = [];
+      const app = await RuntimeApp.create({
+        workspaceDir,
+        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        dependencies: createTestDependencies({ createMemoryManager: async () => null }),
+        onEvent: (e) => events.push(e),
+      });
+
+      // 手工向 messageQueueBySession 塞 3 条（模拟 queued 消息）
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const queueMap = (app as any).messageQueueBySession as Map<string, unknown[]>;
+      queueMap.set('main', [{ dummy: 1 }, { dummy: 2 }, { dummy: 3 }]);
+
+      const result = app.abortTurn('main');
+      expect(result).toEqual({ aborted: false, dropped: 3 });
+
+      // queue 已清
+      expect(queueMap.has('main')).toBe(false);
+
+      // 有 messages_dropped event
+      const dropEvent = events.find((e) => e.type === 'messages_dropped');
+      expect(dropEvent).toBeDefined();
+      expect(dropEvent).toMatchObject({
+        type: 'messages_dropped',
+        sessionKey: 'main',
+        reason: 'abort',
+        dropped: 3,
+      });
+
+      await app.close();
+    });
+
+    // ④ abortTurn 有 active turn + queue 有 N → 两者都清 + emit messages_dropped
+    it('abortTurn: 有 active turn + queue 有 N → aborts and drops both, emits', async () => {
+      const events: RuntimeEvent[] = [];
+      const releaseRun = createDeferred<void>();
+      let capturedSignal: AbortSignal | undefined;
+
+      const runnerRun = vi.fn(async (params: { signal?: AbortSignal }): Promise<RunResult> => {
+        capturedSignal = params.signal;
+        await releaseRun.promise;
+        return {
+          text: 'aborted',
+          content: [],
+          stopReason: 'aborted',
+          usage: { inputTokens: 0, outputTokens: 0 },
+          toolRounds: 0,
+        };
+      });
+
+      const app = await RuntimeApp.create({
+        workspaceDir,
+        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        dependencies: createTestDependencies({
+          createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
+          createMemoryManager: async () => null,
+        }),
+        onEvent: (e) => events.push(e),
+      });
+
+      const turnPromise = app.runTurn({ sessionKey: 'main', message: 'go', promptMode: 'full' });
+      await vi.waitFor(() => expect(capturedSignal).toBeDefined());
+
+      // 塞 2 条 queue
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const queueMap = (app as any).messageQueueBySession as Map<string, unknown[]>;
+      queueMap.set('main', [{ dummy: 1 }, { dummy: 2 }]);
+
+      const result = app.abortTurn('main');
+      expect(result).toEqual({ aborted: true, dropped: 2 });
+      expect(capturedSignal!.aborted).toBe(true);
+      expect(queueMap.has('main')).toBe(false);
+      expect(events.find((e) => e.type === 'messages_dropped')).toMatchObject({ dropped: 2 });
+
+      releaseRun.resolve();
+      await turnPromise;
+      await app.close();
+    });
+
+    // ⑤ 跨 session 独立：abortTurn(sk1) 不动 sk2 的 queue
+    it('abortTurn: cross-session isolation — sk1 abort does not touch sk2 queue', async () => {
+      const app = await RuntimeApp.create({
+        workspaceDir,
+        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        dependencies: createTestDependencies({ createMemoryManager: async () => null }),
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const queueMap = (app as any).messageQueueBySession as Map<string, unknown[]>;
+      queueMap.set('sk1', [{ x: 1 }]);
+      queueMap.set('sk2', [{ y: 1 }, { y: 2 }]);
+
+      const result = app.abortTurn('sk1');
+      expect(result).toEqual({ aborted: false, dropped: 1 });
+      expect(queueMap.has('sk1')).toBe(false);
+      expect(queueMap.get('sk2')?.length).toBe(2);
+
+      await app.close();
+    });
+
+    // ⑥ stale controller 防御：手动 pre-set stale entry → 启新 turn → 旧 entry 被清
+    it('stale controller defense: pre-existing entry is cleared on new turn', async () => {
+      const runnerRun = vi.fn(async (): Promise<RunResult> => ({
+        text: 'ok',
+        content: [{ type: 'text', text: 'ok' }],
+        stopReason: 'end_turn',
+        usage: { inputTokens: 1, outputTokens: 1 },
+        toolRounds: 0,
+      }));
+
+      const app = await RuntimeApp.create({
+        workspaceDir,
+        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        dependencies: createTestDependencies({
+          createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
+          createMemoryManager: async () => null,
+        }),
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const activeAborts = (app as any).activeAborts as Map<string, AbortController>;
+      const staleController = new AbortController();
+      activeAborts.set('main', staleController);
+
+      await app.runTurn({ sessionKey: 'main', message: 'hi', promptMode: 'full' });
+
+      // 新 turn 后：stale 已被清、finally 也清了新的 controller → map 里不该有 'main'
+      expect(activeAborts.has('main')).toBe(false);
+
+      await app.close();
+    });
+
+    // ⑦ safeEmit：subscriber 抛错 → API 仍正常返回，不 rethrow
+    it('safeEmit: throwing subscriber does not break abortTurn contract', async () => {
+      // 用 flag 控制：bootstrap 期间的 app_start / app_ready 正常放行，
+      // 只在 messages_dropped 到来时抛错——模拟"运行期 subscriber 出 bug"。
+      let armed = false;
+      const app = await RuntimeApp.create({
+        workspaceDir,
+        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        dependencies: createTestDependencies({ createMemoryManager: async () => null }),
+        onEvent: (e) => {
+          if (armed && e.type === 'messages_dropped') {
+            throw new Error('subscriber boom');
+          }
+        },
+      });
+      armed = true;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const queueMap = (app as any).messageQueueBySession as Map<string, unknown[]>;
+      queueMap.set('main', [{ dummy: 1 }]);
+
+      // API 不该抛，返回值反映真实状态
+      const result = app.abortTurn('main');
+      expect(result).toEqual({ aborted: false, dropped: 1 });
+      expect(queueMap.has('main')).toBe(false);
+
+      await app.close();
+    });
+
+    // ⑧ shutdown：先 abort 所有 active turn 再 allSettled 等回收
+    it('shutdown: aborts all active turns before waiting', async () => {
+      const releaseRun = createDeferred<void>();
+      let capturedSignal: AbortSignal | undefined;
+
+      const runnerRun = vi.fn(async (params: { signal?: AbortSignal }): Promise<RunResult> => {
+        capturedSignal = params.signal;
+        // 等 signal.aborted 后再返回，模拟响应 signal 的 turn
+        await new Promise<void>((resolve) => {
+          const check = () => {
+            if (params.signal?.aborted) resolve();
+          };
+          params.signal?.addEventListener('abort', check);
+          check();
+        });
+        await releaseRun.promise;
+        return {
+          text: 'aborted',
+          content: [],
+          stopReason: 'aborted',
+          usage: { inputTokens: 0, outputTokens: 0 },
+          toolRounds: 0,
+        };
+      });
+
+      const app = await RuntimeApp.create({
+        workspaceDir,
+        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        dependencies: createTestDependencies({
+          createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
+          createMemoryManager: async () => null,
+        }),
+      });
+
+      const turnPromise = app.runTurn({ sessionKey: 'main', message: 'go', promptMode: 'full' });
+      await vi.waitFor(() => expect(capturedSignal).toBeDefined());
+
+      const closePromise = app.close();
+
+      // close 应立即调 abort（signal 同步 flip）
+      await vi.waitFor(() => expect(capturedSignal!.aborted).toBe(true));
+
+      releaseRun.resolve();
+      await turnPromise;
+      await closePromise;
+    });
+
+    // ⑨ shutdown timing：响应 signal 的 mock 应在合理时间内 abort 完成
+    it('shutdown timing: responsive signal path completes within 300ms', async () => {
+      let capturedSignal: AbortSignal | undefined;
+      const runnerRun = vi.fn(async (params: { signal?: AbortSignal }): Promise<RunResult> => {
+        capturedSignal = params.signal;
+        // 200ms 后自然回收——响应 signal 场景
+        await new Promise<void>((resolve) => {
+          if (params.signal?.aborted) return resolve();
+          params.signal?.addEventListener('abort', () => setTimeout(resolve, 200));
+        });
+        return {
+          text: 'aborted',
+          content: [],
+          stopReason: 'aborted',
+          usage: { inputTokens: 0, outputTokens: 0 },
+          toolRounds: 0,
+        };
+      });
+
+      const app = await RuntimeApp.create({
+        workspaceDir,
+        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        dependencies: createTestDependencies({
+          createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
+          createMemoryManager: async () => null,
+        }),
+      });
+
+      const turnPromise = app.runTurn({ sessionKey: 'main', message: 'go', promptMode: 'full' });
+      await vi.waitFor(() => expect(capturedSignal).toBeDefined());
+
+      const closeStart = Date.now();
+      await Promise.all([app.close(), turnPromise]);
+      const closeDurationMs = Date.now() - closeStart;
+
+      // 200ms mock + 些许调度余量 → 期望 < 500ms（宽松阈值避免 CI flake）
+      expect(closeDurationMs).toBeLessThan(500);
+    });
+
+    // ⑩ bindAbortHooks wiring：registerChannel 时同步注入 hooks，可查询 & 触发
+    it('bindAbortHooks: registerChannel injects querySessionsNeedingAbort + abortTurn', async () => {
+      const app = await RuntimeApp.create({
+        workspaceDir,
+        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        dependencies: createTestDependencies({ createMemoryManager: async () => null }),
+      });
+
+      let capturedHooks: { querySessionsNeedingAbort: () => string[]; abortTurn: (sk: string) => { aborted: boolean; dropped: number } } | undefined;
+      const testChannel = createTestChannel('abort-hooks-test');
+      // 手工插入 bindAbortHooks 到测试 channel
+      (testChannel.channel as Channel).bindAbortHooks = (hooks) => {
+        capturedHooks = hooks;
+      };
+
+      app.registerChannel(testChannel.channel);
+      expect(capturedHooks).toBeDefined();
+
+      // 塞 queued 消息到某 session
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const queueMap = (app as any).messageQueueBySession as Map<string, unknown[]>;
+      queueMap.set('sk-with-queue', [{ x: 1 }, { x: 2 }]);
+
+      // querySessionsNeedingAbort 应包含 'sk-with-queue'
+      const sessions = capturedHooks!.querySessionsNeedingAbort();
+      expect(sessions).toContain('sk-with-queue');
+
+      // 通过 hook 触发 abort，应清 queue + 返回真实数字
+      const result = capturedHooks!.abortTurn('sk-with-queue');
+      expect(result).toEqual({ aborted: false, dropped: 2 });
+      expect(queueMap.has('sk-with-queue')).toBe(false);
+
+      await app.close();
+    });
+  });
 });
 
 function createDeferred<T>(): {

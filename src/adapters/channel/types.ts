@@ -130,6 +130,25 @@ export type ApprovalResult =
 // ── Channel 接口 ───────────────────────────────────────────────
 
 /**
+ * Runtime → Channel 注入的 abort 交互能力。
+ *
+ * 让 channel 想自主触发 abort（如 CLI 的 Ctrl+C、Web 的 Stop 按钮）时不需要
+ * 反向 import `RuntimeApp`。Runtime 在 `registerChannel` 时通过 optional
+ * `bindAbortHooks?(...)` 注入这一组回调。详见 core-abort-spec.md §12。
+ */
+export interface AbortHookBindings {
+  /**
+   * 返回当前需要 abort 的 sessionKey 列表 —— 包含：
+   *  (i) 有 active turn 的 session（`activeAborts` 命中）
+   *  (ii) 有 queued/followup messages 的 session（`messageQueueBySession` 非空）
+   * 两者 union、去重。为空时 CLI 可安全地仅提示退出，不需要调 abortTurn。
+   */
+  querySessionsNeedingAbort(): string[];
+  /** 触发 abort + drop queue；返回精确数字供 channel 渲染（不依赖 event）。 */
+  abortTurn(sessionKey: string): { aborted: boolean; dropped: number };
+}
+
+/**
  * channel 适配器接口。
  *
  * 实现此接口即可将任意 I/O 方式接入 RuntimeApp。
@@ -160,6 +179,16 @@ export interface Channel {
 
   /** 审批交互能力（可选） */
   approval?: ChannelApprovalAdapter;
+
+  /**
+   * 可选：channel 想自主触发 abort（如 CLI 的 Ctrl+C、Web 的 Stop 按钮）时，
+   * Runtime 通过此方法注入 `AbortHookBindings`。channel 不需要 import `RuntimeApp`。
+   * 详见 core-abort-spec.md §12。
+   *
+   * **时序**：`registerChannel` 同步调用；channel 随后在其 `start()` 里安装 SIGINT
+   * handler（或类似触发源）。所以任何 abort 触发时 hooks 必已 bound，无 race。
+   */
+  bindAbortHooks?(hooks: AbortHookBindings): void;
 }
 
 /**
