@@ -2,6 +2,7 @@ import * as readline from 'node:readline';
 import type { AgentEvent } from '../../core/runner/types.js';
 import { Logger } from '../../platform/logger/index.js';
 import type {
+  AbortHookBindings,
   ApprovalDecision,
   ApprovalRequest,
   Channel,
@@ -19,6 +20,13 @@ const PREVIEW_TAIL_LINES = 6;
 // Per-line cap so a single very long line can't blow up the preview format.
 const PREVIEW_LINE_MAX_CHARS = 200;
 const MAX_TOOL_RESULT_PREVIEW = 200;
+
+/**
+ * Ctrl+C 双击退出窗口。在此区间内连按两次 → process.exit(130)；超时
+ * 则重置为单击。与 openclaw 对齐（core-abort-spec.md §12 D1）。
+ */
+const CTRL_C_EXIT_WINDOW_MS = 1000;
+
 const log = Logger.get('CliChannel');
 
 // ── ANSI helpers ────────────────────────────────────────────────────
@@ -99,6 +107,18 @@ export class CliChannel implements Channel {
   private pendingPromptReject?: (err: Error) => void;
   /** 已超时但仍可能等到用户输入的 approval id，用户回答时直接吞掉不再回填 */
   private expiredApprovalIds = new Set<string>();
+
+  // ── Abort / Ctrl+C 状态（core-abort-spec.md §12）─────────────
+  /** 上次 Ctrl+C 时间戳（epoch ms）；0 = 没有近期按键。用于双击检测。 */
+  private lastCtrlCAt = 0;
+  /** RuntimeApp 通过 `bindAbortHooks` 注入的回调；未注册 channel 时为 undefined。 */
+  private abortHooks?: AbortHookBindings;
+  /**
+   * SIGINT handler 存为 bound instance field，`stop()` 时用同一引用
+   * `process.off(...)` 才能干净解绑。若每次现场用 arrow 装配则无法解绑，
+   * 反复 start/stop 会导致 handler 堆积。
+   */
+  private readonly boundSigIntHandler = () => this.handleSigInt();
 
   constructor(config: CliChannelConfig = {}) {
     this.input = config.input ?? process.stdin;
@@ -238,6 +258,24 @@ export class CliChannel implements Channel {
       });
     });
 
+    // 接管 SIGINT——需先 removeAllListeners('SIGINT') 清除 readline.Interface
+    // 默认装的 close-on-SIGINT listener，否则 Ctrl+C 会直接关闭 readline，
+    // 剥夺 `handleSigInt` 控制 abort / 双击退出的机会。
+    //
+    // 【假设：CliChannel 独占进程 SIGINT】`removeAllListeners('SIGINT')`
+    // 是刻意的粗暴：它会连带清除宿主进程中其他库（测试框架、外层 embed
+    // 场景的 host 等）注册的 listener。此假设对应 CliChannel 的典型用例：
+    // interactive CLI 独占前台进程。若未来出现 "CliChannel 被嵌入其他进程"
+    // 的场景，需重新设计——候选方案：
+    //   (a) 先 snapshot 现有 listener、在 CliChannel.stop() 里恢复；
+    //   (b) 不清除，只叠加自己的 handler，依赖 Node 会调用所有 listener
+    //       的行为——但 readline 默认 listener 的 close 逻辑会干扰双击
+    //       退出 UX，需要额外协调；
+    //   (c) 通过构造参数让 caller 显式选择接管策略。
+    // 详见 core-abort-spec.md §12。
+    process.removeAllListeners('SIGINT');
+    process.on('SIGINT', this.boundSigIntHandler);
+
     log.info('cli channel started', {
       channelId: this.id,
       sessionKey: this.sessionKey,
@@ -298,9 +336,85 @@ export class CliChannel implements Channel {
       channelId: this.id,
       sessionKey: this.sessionKey,
     });
+    // 卸载自己装的 SIGINT handler，避免：
+    //  (a) 宿主进程后续不再希望 CliChannel 拦截 Ctrl+C 时 handler 泄漏
+    //  (b) 将来 restart（同一进程内 stop() → start()）双绑
+    // 不负责恢复 start() 时被 `removeAllListeners('SIGINT')` 清掉的其他 listener
+    // ——与上述 “CliChannel 独占进程 SIGINT” 假设同源。
+    process.off('SIGINT', this.boundSigIntHandler);
     this.pendingPromptReject?.(new Error('CliChannel stopped'));
     this.rl?.close();
     this.rl = undefined;
+  }
+
+  // ── Abort / Ctrl+C 处理（core-abort-spec.md §12）────────────────
+
+  bindAbortHooks(hooks: AbortHookBindings): void {
+    this.abortHooks = hooks;
+    log.debug('abort hooks bound', { channelId: this.id });
+  }
+
+  /**
+   * SIGINT 处理主干。精确语义见 core-abort-spec.md §12：
+   *
+   *  1. 若上一次在窗口内→ process.exit(130)（约定俗成 signal-based exit code）。
+   *  2. 更新 lastCtrlCAt（为双击窗口计时）。
+   *  3. 查 `querySessionsNeedingAbort()`：
+   *     - 空（无 active turn + 无 queue）→ 仅提示 "press again to exit"，不调 abort。
+   *     - 非空→ 对每个 sessionKey 调 `abortHooks.abortTurn(sk)`，依返回值中
+   *       `aborted` / `dropped` 非零部分拼提示（可能只有其中一部分）。
+   *
+   * `abortHooks` 未 bind 时直接当作 “无东西可 abort” 处理（退到提示分支），
+   * 支持 CliChannel 单独跑（不接 RuntimeApp）下 Ctrl+C 仍能双击退出。
+   */
+  private handleSigInt(): void {
+    const now = Date.now();
+    const sinceLast = now - this.lastCtrlCAt;
+
+    // 双击：窗口内连按两次 → exit
+    if (this.lastCtrlCAt > 0 && sinceLast <= CTRL_C_EXIT_WINDOW_MS) {
+      this.breakStream();
+      this.output.write(red('[exiting]\n'));
+      log.info('cli exiting on double Ctrl+C', { channelId: this.id });
+      process.exit(130);
+    }
+
+    this.lastCtrlCAt = now;
+
+    // 【与 D3 语义一致】判断 “是否有东西可 abort” 时必须同时考虑：
+    //  (i) 有 active turn（→ 会被 abort）
+    //  (ii) 有 queued messages（→ 会被 drop）
+    // 仅两者都为空时才提示 "press again to exit"；否则统一走 abortTurn 路径。
+    // 详见 core-abort-spec.md §12。
+    const targets = this.abortHooks?.querySessionsNeedingAbort() ?? [];
+    if (targets.length === 0) {
+      this.breakStream();
+      this.output.write(dim('[press Ctrl+C again within 1s to exit]\n'));
+      return;
+    }
+
+    // 有 active turn 或 queued messages → 对所有目标 abort；abortTurn 返回
+    // { aborted, dropped }，一次拿到全部信息后本地直接渲染，不依赖 event。
+    let totalAborted = 0;
+    let totalDropped = 0;
+    for (const sk of targets) {
+      const r = this.abortHooks!.abortTurn(sk);
+      if (r.aborted) totalAborted += 1;
+      totalDropped += r.dropped;
+    }
+
+    // 渲染：totalAborted / totalDropped 可能各自为 0——只拼非零部分。
+    const parts: string[] = [];
+    if (totalAborted > 0) parts.push(`aborted ${totalAborted} turn(s)`);
+    if (totalDropped > 0) parts.push(`dropped ${totalDropped} queued message(s)`);
+    this.breakStream();
+    this.output.write(yellow(`[⚠ ${parts.join('; ')}]\n`));
+    log.info('cli abort triggered by Ctrl+C', {
+      channelId: this.id,
+      sessions: targets.length,
+      totalAborted,
+      totalDropped,
+    });
   }
 
   // ── 内部辅助 ───────────────────────────────────────────────────────

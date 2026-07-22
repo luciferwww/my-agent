@@ -1,6 +1,7 @@
 import { PassThrough } from 'node:stream';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi, afterEach } from 'vitest';
 import type { AgentEvent } from '../../core/runner/types.js';
+import type { AbortHookBindings } from './types.js';
 import { CliChannel } from './CliChannel.js';
 
 // Strip ANSI escape sequences so assertions don't fight color codes.
@@ -127,5 +128,110 @@ describe('CliChannel user_message rendering', () => {
     expect(out).not.toContain('secret.png');
     expect(out).not.toContain('999999');
     expect(out).not.toContain('image/png');
+  });
+});
+
+// ── Ctrl+C / abort（core-abort-spec.md §12）─────────────────────────
+
+describe('CliChannel Ctrl+C / abort handling', () => {
+  // handleSigInt 是 private——测试通过桥接类型直接调用，避免依赖 process.emit
+  // 触发全局 SIGINT listener（会牵动 vitest 自己装的 handler）。start() 里
+  // 装 handler 的行为由 spec §12 的 code review 保证；这里只测行为矩阵。
+  type CliChannelInternal = { handleSigInt(): void };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function makeHooks(
+    partial: Partial<AbortHookBindings> = {},
+  ): { hooks: AbortHookBindings; abortTurn: ReturnType<typeof vi.fn>; query: ReturnType<typeof vi.fn> } {
+    const abortTurn = vi.fn(
+      partial.abortTurn ?? (() => ({ aborted: false, dropped: 0 })),
+    );
+    const query = vi.fn(partial.querySessionsNeedingAbort ?? (() => []));
+    return {
+      hooks: { querySessionsNeedingAbort: query, abortTurn },
+      abortTurn,
+      query,
+    };
+  }
+
+  it('single Ctrl+C with an active turn → calls abortHooks.abortTurn and renders "[⚠ aborted N turn(s)]"', () => {
+    const { channel, captured } = makeChannel();
+    const { hooks, abortTurn, query } = makeHooks({
+      querySessionsNeedingAbort: () => ['main'],
+      abortTurn: () => ({ aborted: true, dropped: 0 }),
+    });
+    channel.bindAbortHooks(hooks);
+
+    (channel as unknown as CliChannelInternal).handleSigInt();
+
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(abortTurn).toHaveBeenCalledTimes(1);
+    expect(abortTurn).toHaveBeenCalledWith('main');
+    const out = captured();
+    expect(out).toContain('aborted 1 turn(s)');
+    // No "dropped ..." fragment because dropped === 0
+    expect(out).not.toMatch(/dropped \d+ queued message/);
+    // Does not enter "press again to exit" hint path
+    expect(out).not.toContain('press Ctrl+C again');
+  });
+
+  it('double Ctrl+C within 1s → calls process.exit(130)', () => {
+    const { channel } = makeChannel();
+    // Hooks bound but nothing to abort — makes the FIRST Ctrl+C fall into
+    // the "press again to exit" branch (arms lastCtrlCAt) instead of the
+    // abort path. Second Ctrl+C then trips the double-tap exit.
+    channel.bindAbortHooks(makeHooks().hooks);
+
+    // process.exit throws to unwind the current call stack — matches the
+    // real-world "we never come back" semantic without actually killing
+    // vitest. Cast return type via `never`.
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`__test_exit__:${code ?? ''}`);
+    }) as never);
+
+    const internal = channel as unknown as CliChannelInternal;
+    internal.handleSigInt(); // first — arms lastCtrlCAt
+    expect(exitSpy).not.toHaveBeenCalled();
+
+    expect(() => internal.handleSigInt()).toThrow(/__test_exit__:130/);
+    expect(exitSpy).toHaveBeenCalledWith(130);
+  });
+
+  it('hooks not bound (standalone CLI) → Ctrl+C renders exit hint and never crashes', () => {
+    const { channel, captured } = makeChannel();
+
+    // No bindAbortHooks call — abortHooks is undefined.
+    expect(() =>
+      (channel as unknown as CliChannelInternal).handleSigInt(),
+    ).not.toThrow();
+
+    const out = captured();
+    expect(out).toContain('press Ctrl+C again within 1s to exit');
+    expect(out).not.toMatch(/aborted \d+ turn/);
+    expect(out).not.toMatch(/dropped \d+ queued/);
+  });
+
+  it('no active turn + non-empty queue → renders "dropped 3 queued message(s)" and omits "aborted N turn(s)"', () => {
+    const { channel, captured } = makeChannel();
+    const { hooks, abortTurn } = makeHooks({
+      // querySessionsNeedingAbort returns sessions with queued msgs even
+      // when there's no active turn (spec §12 note (ii)).
+      querySessionsNeedingAbort: () => ['main'],
+      // Runtime side: no active abort but 3 dropped messages.
+      abortTurn: () => ({ aborted: false, dropped: 3 }),
+    });
+    channel.bindAbortHooks(hooks);
+
+    (channel as unknown as CliChannelInternal).handleSigInt();
+
+    expect(abortTurn).toHaveBeenCalledWith('main');
+    const out = captured();
+    expect(out).toContain('dropped 3 queued message(s)');
+    // Critically: no "aborted 0 turn(s)" or "aborted N turn(s)" fragment
+    // when totalAborted === 0.
+    expect(out).not.toMatch(/aborted \d+ turn/);
   });
 });
