@@ -42,7 +42,7 @@ async function main(): Promise<void> {
   console.log(`Base URL  : ${baseURL}`);
   console.log(`Model     : ${model}`);
   console.log(`Session   : ${sessionKey}`);
-  console.log(dim('Press Ctrl+C to quit.\n'));
+  console.log(dim('Ctrl+C: abort current turn / drop queue. Twice within 1s: quit.\nCtrl+D or EOF: quit gracefully.\n'));
 
   const app = await RuntimeApp.create({
     workspaceDir: WORKSPACE_DIR,
@@ -60,19 +60,15 @@ async function main(): Promise<void> {
 
   app.registerChannel(cli);
 
-  // Graceful shutdown on Ctrl+C
-  let shuttingDown = false;
-  const shutdown = async () => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    process.stdout.write('\n');
-    await app.close('user exit');
-    process.exit(0);
-  };
-  process.on('SIGINT', () => void shutdown());
-
-  // start blocks until CliChannel's readline loop ends (e.g. via stop()/close())
+  // NOTE: 不再自己 register SIGINT handler——CliChannel.start() 会
+  // `process.removeAllListeners('SIGINT')` 后转交给自己的双击-退出 UX（
+  // core-abort-spec.md §12）。下面 startChannels 发回后（readline 自然 close
+  // 或 CliChannel 内部 exit）才走 app.close() 做优雅 shutdown。
   await app.startChannels();
+
+  // 正常回新到这里意味着 readline close（Ctrl+D / EOF）。走一遍 graceful
+  // close；双-Ctrl+C 路径已在 handleSigInt 里 process.exit(130)，不到这里。
+  await app.close('cli exit');
 }
 
 main().catch((err) => {
