@@ -3,6 +3,7 @@ import { isSubagentSessionKey, parseSubagentSessionKey } from '../../core/subage
 import { Logger } from '../../platform/logger/index.js';
 import { WS_MAX_PAYLOAD_BYTES } from '../../core/media/constants.js';
 import type {
+  AbortHookBindings,
   ApprovalDecision,
   ApprovalRequest,
   Channel,
@@ -44,6 +45,13 @@ type ClientMessage =
       type: 'approval_resolve';
       id: string;
       decision: ApprovalDecision;
+    }
+  | {
+      // core-abort-spec.md §13: single-direction inbound abort. No ack;
+      // clients observe completion via `run_end{stopReason:'aborted'}`
+      // (§13.1). v1 has no auth check—WS server is a single trust domain.
+      type: 'abort_turn';
+      sessionKey: string;
     };
 
 type OutboundMessage =
@@ -86,6 +94,13 @@ export class WebSocketChannel implements Channel {
   private readonly sessions = new Map<string, Set<string>>();
   private readonly clientSessions = new Map<string, Set<string>>();
   private readonly socketClientIds = new WeakMap<WebSocket, string>();
+
+  /**
+   * `RuntimeApp.registerChannel` 同步注入（core-abort-spec.md §12 时序保证）：
+   * bindAbortHooks 先于 start()。inbound `abort_turn` 到达时必已绑定，
+   * 未绑定时静默丢弃（单玩 channel 不接 Runtime 的开发可能性）。
+   */
+  private abortHooks?: AbortHookBindings;
 
   private started = false;
 
@@ -231,6 +246,9 @@ export class WebSocketChannel implements Channel {
         case 'approval_resolve':
           this.handleApprovalResolve(socket, message);
           return;
+        case 'abort_turn':
+          this.handleAbortTurn(socket, message);
+          return;
       }
     } catch (error) {
       if (error instanceof ProtocolError) {
@@ -286,6 +304,11 @@ export class WebSocketChannel implements Channel {
           decision,
         };
       }
+      case 'abort_turn':
+        return {
+          type,
+          sessionKey: readNonEmptyString(parsed.sessionKey, 'sessionKey'),
+        };
       default:
         throw new ProtocolError('UNSUPPORTED_MESSAGE', `Unsupported message type: ${type}`);
     }
@@ -365,6 +388,46 @@ export class WebSocketChannel implements Channel {
       decision: message.decision,
     });
     this.dispatchApprovalSubmission(message.id, message.decision);
+  }
+
+  // ── Abort（core-abort-spec.md §13）────────────────────────────
+
+  bindAbortHooks(hooks: AbortHookBindings): void {
+    this.abortHooks = hooks;
+    log.debug('abort hooks bound', { channelId: this.id });
+  }
+
+  /**
+   * inbound `abort_turn`：`sessionKey` 已通过 parseMessage 校验非空。
+   * v1 不做 sessionKey ↔ 发送方 clientId 的 owner 关系校验（§0.3 D5：
+   * 单信任域假设），任何已 hello 的客户端都能 abort 任何 sessionKey；
+   * 多客户端隔离由未来 auth 层处理。
+   *
+   * abort 完成通过 `run_end{result.stopReason:'aborted'}` 通道通知，
+   * 无 inline ack；abortHooks 未 bind 时静默丢弃并 warn（开发时不接
+   * RuntimeApp 单跑本 channel 场景）。
+   */
+  private handleAbortTurn(
+    socket: WebSocket,
+    message: Extract<ClientMessage, { type: 'abort_turn' }>,
+  ): void {
+    const clientId = this.requireBoundClientId(socket);
+    if (!this.abortHooks) {
+      log.warn('abort_turn received but abortHooks not bound; ignoring', {
+        channelId: this.id,
+        clientId,
+        sessionKey: message.sessionKey,
+      });
+      return;
+    }
+    const result = this.abortHooks.abortTurn(message.sessionKey);
+    log.info('abort_turn dispatched', {
+      channelId: this.id,
+      clientId,
+      sessionKey: message.sessionKey,
+      aborted: result.aborted,
+      dropped: result.dropped,
+    });
   }
 
   private handleSocketClose(socket: WebSocket): void {

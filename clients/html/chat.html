@@ -1228,6 +1228,13 @@
                 :title="isWaitingForReply ? 'Steering 状态不支持附件' : '添加图片'"
               >📎 图片</button>
               <button class="secondary" @click="resetComposer" :disabled="!draft && attachments.length === 0">Reset</button>
+              <button
+                v-if="isWaitingForReply"
+                class="secondary abort-btn"
+                @click="abortTurn"
+                :disabled="!isConnected"
+                title="中断当前 turn 并丢弃排队消息（core-abort-spec.md §13.1）"
+              >⏹ Stop</button>
               <button class="primary" @click="sendMessage" :disabled="!canSend">
                 {{ pendingApprovalCount > 0 ? 'Approval pending…' : isWaitingForReply ? 'Steer' : 'Send' }}
               </button>
@@ -1537,6 +1544,21 @@
             this.clearAttachments();
             this.attachError = '';
           },
+
+          // Send inbound `abort_turn`; server-side stops the current turn
+          // and drops queued/followup messages for this session
+          // (core-abort-spec.md §8.3 / §13). No inline ack — completion
+          // is observed via run_end{stopReason:'aborted'} (special-cased
+          // below in handleServerMessage's run_end branch).
+          abortTurn() {
+            if (!this.isConnected) return;
+            try {
+              this.sendJson({ type: 'abort_turn', sessionKey: this.form.sessionKey });
+              this.pushEvent('abort_turn', `Sent abort_turn for session ${this.form.sessionKey}`);
+            } catch (err) {
+              this.pushEvent('error', `Failed to send abort_turn: ${err?.message ?? err}`);
+            }
+          },
           onAttachClick() { this.$refs.fileInput?.click(); },
           onFileInputChange(e) {
             this.ingestFiles(e.target.files);
@@ -1676,7 +1698,21 @@
 
               case 'run_end':
                 this.isWaitingForReply = false;
-                this.pushEvent('run_end', `Turn ${event.turnId} finished with ${event.result.stopReason}`);
+                // spec §13.1: special-case aborted so users can distinguish
+                // it from a normal end_turn. Rendered as a system bubble
+                // rather than reused text bubble to make the interruption
+                // visually distinct.
+                if (event.result?.stopReason === 'aborted') {
+                  this.appendChatItem({
+                    kind: 'system',
+                    label: 'Aborted',
+                    turnId: event.turnId,
+                    text: '⚠ Turn aborted',
+                  });
+                  this.pushEvent('run_end', `Turn ${event.turnId} aborted`);
+                } else {
+                  this.pushEvent('run_end', `Turn ${event.turnId} finished with ${event.result.stopReason}`);
+                }
                 return;
 
               case 'error':

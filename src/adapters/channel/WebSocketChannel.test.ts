@@ -246,6 +246,79 @@ describe('WebSocketChannel', () => {
       });
     });
   });
+
+  // ── Abort (core-abort-spec.md §13) ─────────────────────
+
+  describe('abort_turn', () => {
+    it('inbound abort_turn → abortHooks.abortTurn called with sessionKey', async () => {
+      const abortTurn = vi.fn(() => ({ aborted: true, dropped: 0 }));
+      const query = vi.fn(() => []);
+
+      channel = new WebSocketChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      channel.bindAbortHooks({
+        querySessionsNeedingAbort: query,
+        abortTurn,
+      });
+      await channel.start();
+
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'client-abort' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'client-abort' });
+
+      client.send(JSON.stringify({ type: 'abort_turn', sessionKey: 'main' }));
+
+      await vi.waitFor(() => {
+        expect(abortTurn).toHaveBeenCalledTimes(1);
+        expect(abortTurn).toHaveBeenCalledWith('main');
+      });
+    });
+
+    it("run_end{stopReason:'aborted'} is fanned out to subscribed WS clients", async () => {
+      // Proves the client-facing signal used to detect abort completion
+      // (spec §13: no inline ack — client observes via run_end).
+      const handler = vi.fn(async () => undefined);
+      channel = new WebSocketChannel({ port: 0 });
+      channel.onMessage(handler);
+      await channel.start();
+
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'client-observer' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'client-observer' });
+
+      // Subscribe to the session audience so send() will fan to this client.
+      client.send(JSON.stringify({ type: 'run_turn', sessionKey: 'main', message: 'anything' }));
+      await vi.waitFor(() => expect(handler).toHaveBeenCalled());
+
+      channel.send({
+        type: 'run_end',
+        sessionKey: 'main',
+        turnId: 'turn-aborted-1',
+        result: {
+          text: 'partial reply',
+          content: [{ type: 'text', text: 'partial reply' }],
+          stopReason: 'aborted',
+          usage: { inputTokens: 12, outputTokens: 3 },
+          toolRounds: 0,
+        },
+      });
+
+      await expectMessage(client, {
+        type: 'run_end',
+        sessionKey: 'main',
+        turnId: 'turn-aborted-1',
+        result: {
+          text: 'partial reply',
+          content: [{ type: 'text', text: 'partial reply' }],
+          stopReason: 'aborted',
+          usage: { inputTokens: 12, outputTokens: 3 },
+          toolRounds: 0,
+        },
+      });
+    });
+  });
 });
 
 async function connectClient(channel: WebSocketChannel): Promise<WebSocket> {
