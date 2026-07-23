@@ -258,14 +258,17 @@ export class AgentRunner {
    * 重写同一份名字列表。
    *
    * 标准 DOMException + Node native fetch: name === 'AbortError'
-   * Anthropic SDK 可能抛 `APIUserAbortError` 或 `AbortError` — 实现时
-   * 需 manual verify（跳进 @anthropic-ai/sdk 看），必要时补加名字。
+   * Anthropic SDK 抛法（v0.82 实测）：把 upstream abort 包成 plain `Error`
+   * (name === 'Error') with message === 'Request was aborted.'；名字判据无
+   * 从识别，靠 message 精确匹配补上。将来若 SDK 换成 `APIUserAbortError`
+   * 之类专有类名，可以把 message 匹配删除。
    */
   private isAbortByName(err: Error): boolean {
     return (
       err.name === 'AbortError'
       || err.name === 'APIUserAbortError'
       || (err as { code?: string }).code === 'ABORT_ERR'
+      || err.message === 'Request was aborted.'
     );
   }
 
