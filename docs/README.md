@@ -82,10 +82,13 @@ Reference analysis of OpenClaw for comparison and design input; these docs are n
 
 
 ## Collaboration Principles
-- Spec-driven development — write and confirm design/spec docs before writing code.
+
+- Spec-driven development — write and confirm design docs before writing code.
 - Confirm before changes — discuss any modification first and only proceed after approval.
 - Coding standards — follow `coding-standards.md` when it exists in the current workspace.
 - Collaboration style — when you disagree, state your reasoning explicitly instead of agreeing just to accommodate.
+- Reviewer feedback — treat as suggestions, not directives. Verify facts, triage each item (accept/reject/modify) with reasoning, then apply only accepted changes. Do not blindly accept.
+- Commit messages — English only, no Chinese in commit subject or body. Applies to all repos.
 
 NOTE: These can be added to the user-level memory file, for example at: 
 ```
