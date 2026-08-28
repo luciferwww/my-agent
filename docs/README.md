@@ -47,8 +47,10 @@ npx tsx scripts/test-process-list-lifecycle.ts
 
 ## Architecture
 
-Current implementation facts, design baselines, Specs, and related implementation records. A document's own status determines its authority; this directory is not yet a single verified Current Architecture.
+Current implementation facts, accepted architecture constraints, design baselines, Specs, and related implementation records. A document's own status determines its authority; this directory is not yet a single verified Current Architecture.
 
+- [Architecture Principles](architecture/architecture-principles.md)
+- [Domain Glossary](architecture/domain-glossary.md)
 - [Agent Runner Design](architecture/core-runner-design.md)
 - [Runtime / App Assembly Design](architecture/runtime-design.md)
 - [Config Design](architecture/platform-config-design.md)
@@ -69,26 +71,13 @@ Current implementation facts, design baselines, Specs, and related implementatio
 Planned evolution documents, adoption sequencing, and regression checklists for larger refactors.
 
 - [Architecture Foundation Plan](roadmap/architecture-foundation-plan.md) — accepted target-architecture, spike, migration, and legacy-exit plan
-- [Exec Evolution Roadmap](roadmap/exec-evolution-roadmap.md)
-- [Exec / Process Platform Adoption Plan](roadmap/exec-process-platform-adoption-plan.md)
-- [Exec / Process Platform Regression Checklist](roadmap/exec-process-platform-regression-checklist.md)
 
-## OpenClaw Analysis
+## Analysis
 
-Reference analysis of OpenClaw for comparison and design input; these docs are not the source of truth for this repository's implementation.
+Reference comparisons and design input; these docs are not the source of truth for this repository's implementation.
 
-- [OpenClaw Analysis](analysis/openclaw/openclaw-analysis.md)
-- [OpenClaw Agent Command Flow](analysis/openclaw/openclaw-agent-command-flow.md)
-- [OpenClaw Agent Runner Analysis](analysis/openclaw/openclaw-agent-runner-analysis.md)
-- [OpenClaw Context Files Flow](analysis/openclaw/openclaw-contextfiles-flow.md)
-- [OpenClaw Exec / Process Platform Analysis](analysis/openclaw/openclaw-exec-process-platform-analysis.md)
-- [OpenClaw Memory Module Analysis](analysis/openclaw/openclaw-memory-module-analysis.md)
-- [OpenClaw Message Flow](analysis/openclaw/openclaw-message-flow.md)
-- [OpenClaw PI Builtin Tools Memo](analysis/openclaw/openclaw-pi-builtin-tools-memo.md)
-- [OpenClaw Prompt System Deep Dive](analysis/openclaw/openclaw-prompt-system-deep-dive.md)
-- [OpenClaw Session Analysis](analysis/openclaw/openclaw-session-analysis.md)
-- [OpenClaw Tool System Analysis (Current)](analysis/openclaw/openclaw-tool-system-analysis-current.md)
-- [OpenClaw Tool System Analysis](analysis/openclaw/openclaw-tool-system-analysis.md)
+- [Claude Code Subagent Analysis](analysis/claude-code-subagent-analysis.md)
+- [Subagent Systems Overview](analysis/subagent-systems-overview.md)
 
 
 ## Local Collaboration Notes (Non-authoritative)

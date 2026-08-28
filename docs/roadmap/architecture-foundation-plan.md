@@ -3,7 +3,7 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 0.7
+- **版本：** 0.8
 - **日期：** 2026-08-28
 - **范围：** my-agent 目标架构定义、关键边界验证、渐进迁移和 Legacy 退出
 - **执行方式：** Architecture Foundation 以两周为目标、四周为硬上限，随后采用一周 Architecture Slice 迭代
@@ -50,7 +50,7 @@ my-agent 已经实现 Agent Runner、Session、Memory、Tools、Channel、Subage
 - 一个外部 Extension 可以同时贡献 Channel、Tool、Hook、配置和可选能力，并在自身边界内共享私有资源；
 - 新增带专有协议和平台能力的聊天软件 Extension 时，不修改 Runtime、Runner 或中央类型联合；
 - 已安装并加载的 Extension 可以在运行中受控启用、停用或更新 Contribution，且不改变进行中 Turn 的能力快照；
-- Model 切换同时切换 Client、Protocol、Endpoint 和 Capability Snapshot；
+- Model 切换同时切换用于模型调用的 core-owned Port、Protocol、Endpoint 和 Model Capability facts；
 - 内置模块与外部模块经过同一注册、启动和关闭流程；
 - 每个迁移 Slice 完成后，被替代的旧生产路径被删除；
 - 新文档可以明确回答“当前事实、目标设计、进行中工作和历史参考分别在哪里”。
@@ -81,7 +81,7 @@ Architecture Foundation 阶段不实施：
 5. Registry 发布版本化不可变 Snapshot；Extension 变更必须经过校验、原子切换、排空、资源释放和失败回滚；
 6. 一个概念只有一个权威类型和一个权威运行路径；
 7. Compatibility Adapter 只能单向调用新核心，新代码不得反向依赖 Legacy；
-8. Extension 只能获得已声明能力所需的最小上下文，不能依赖 `RuntimeApp` 私有状态或通用 Service Locator；
+8. Extension 只能获得已声明 Extension Capability 所需的最小上下文，不能依赖 `RuntimeApp` 私有状态或通用 Service Locator；
 9. 公共 API、Event、并发和生命周期必须有契约测试；
 10. Spike 代码默认可丢弃，不自动晋升为生产抽象；
 11. 优雅以依赖方向、可替换性和变更局部性衡量，不以抽象数量衡量。
@@ -206,6 +206,8 @@ Legacy 只提供历史证据，不自动成为目标设计。
 
 ### AF-02：领域词汇与架构原则
 
+**状态：** Completed（2026-08-28）
+
 **目标：** 在目录和类型重命名前统一概念。
 
 **至少定义：**
@@ -285,7 +287,7 @@ Legacy 只提供历史证据，不自动成为目标设计。
 
 - Fake Anthropic Provider；
 - Fake OpenAI-compatible Provider；
-- 两组不同 context limit、max output、protocol 和 media capability；
+- 两组不同 context limit、max output、protocol 和 Model Capability facts；
 - Parent Turn 和 Subagent Turn 可选择不同 Model；
 - 保留现有静态配置兼容输入。
 
@@ -293,7 +295,7 @@ Legacy 只提供历史证据，不自动成为目标设计。
 
 - Provider 差异不进入 Runner、Channel 或 Session；
 - 一个 Turn 只有一个 `ResolvedModel` 权威快照；
-- Model 切换同步切换 Client、Endpoint、Protocol 和 Capability；
+- Model 切换同步切换用于模型调用的 core-owned Port、Endpoint、Protocol 和 Model Capability facts；
 - 兼容配置只通过单向 Adapter 进入新模型；
 - 不要求为第二个 Provider 增加 RuntimeApp 分支。
 
@@ -360,8 +362,8 @@ Legacy 只提供历史证据，不自动成为目标设计。
 
 Foundation 只有在以下条件全部满足时才可进入生产迁移：
 
-- [ ] Development Workflow 已 `Accepted`；
-- [ ] Architecture Principles 和 Domain Glossary 已确认；
+- [x] Development Workflow 已 `Accepted`；
+- [x] Architecture Principles 和 Domain Glossary 已确认；
 - [ ] Target Architecture 已 `Accepted`；
 - [ ] Provider/Model Spike 有 Results，关键 Hypothesis 通过；
 - [ ] Extension Framework Spike 有 Results，关键 Hypothesis 通过；
@@ -434,7 +436,7 @@ Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accept
 
 - Channel Factory Registry；
 - CLI 和 WebSocket 作为 Builtin Module；
-- Channel start/stop 和 optional capability 绑定；
+- Channel start/stop 和 optional Channel Capability 绑定；
 - 外部聊天软件 Extension 的 Channel Contribution。
 
 **删除条件：**
@@ -589,7 +591,7 @@ Architecture Slice 只有在以下适用条件全部满足时才可标记 `Compl
 - 记录 Provider、SDK/API 版本和执行日期；
 - 区分 Provider 返回事实、本地 Override 和 Conservative Fallback；
 - 限制请求数量和成本；
-- 不用宽松重试掩盖协议或 Capability 错误；
+- 不用宽松重试掩盖协议或 Model Capability 错误；
 - Results 不声称未执行的 Provider/Model 已通过。
 
 ## 17. 状态模型
@@ -663,7 +665,7 @@ Foundation（M0–M3）以 **两周完成为目标、四周为硬上限**。第�
 | 新旧路径长期共存 | Slice DoD 强制迁移真实调用方和删除旧路径 |
 | 重构破坏已实现行为 | Characterization + Contract + Regression 分层验证 |
 | Provider Metadata 不完整 | Live Discovery + Bundled Catalog + Explicit Override + Conservative Fallback |
-| Extension 获得过多权限 | Capability、受限上下文、配置 Namespace、生命周期和信任策略显式化 |
+| Extension 获得过多权限 | Extension Capability、受限上下文、配置 Namespace、生命周期和信任策略显式化 |
 | 动态 Registry 产生混合版本或资源泄漏 | 不可变版本 Snapshot、per-turn 捕获、原子切换、排空、资源作用域和失败回滚 |
 | 文档体系再次膨胀 | 每种工件单一职责；完成后迁移、合并或删除过程文档 |
 | AI 误用 Legacy | Compat 明确命名、不导出、Fitness Test 禁止反向依赖、旧实现及时删除 |
@@ -694,9 +696,8 @@ Foundation（M0–M3）以 **两周完成为目标、四周为硬上限**。第�
 
 按以下顺序推进：
 
-1. 执行 AF-02，建立 Architecture Principles 与 Domain Glossary；
-2. 执行 AF-03，形成可评审的 Target Architecture；
-3. 建立 AF-04 Characterization/Fitness 保护线，并为 AF-05、AF-06 编写 Spike Spec；
-4. Target Architecture 与对应 Spike Spec `Accepted` 后，依次执行 AF-05 和 AF-06。
+1. 执行 AF-03，形成可评审的 Target Architecture；
+2. 建立 AF-04 Characterization/Fitness 保护线，并为 AF-05、AF-06 编写 Spike Spec；
+3. Target Architecture 与对应 Spike Spec `Accepted` 后，依次执行 AF-05 和 AF-06。
 
 在 AF-05 Results 完成前，不进入生产 Model Registry 实现；在 AF-06 Results 完成前，不冻结生产 Extension API。
