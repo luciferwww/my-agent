@@ -227,6 +227,8 @@ Legacy 只提供历史证据，不自动成为目标设计。
 
 ### AF-03：Target Architecture
 
+**执行计划：** [AF-03 Target Architecture Execution Plan](af-03-target-architecture-plan.md)（`Accepted`）
+
 **目标：** 定义新架构骨架和迁移边界。
 
 **必须覆盖：**

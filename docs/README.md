@@ -71,6 +71,7 @@ Current implementation facts, accepted architecture constraints, design baseline
 Planned evolution documents, adoption sequencing, and regression checklists for larger refactors.
 
 - [Architecture Foundation Plan](roadmap/architecture-foundation-plan.md) — accepted target-architecture, spike, migration, and legacy-exit plan
+- [AF-03 Target Architecture Execution Plan](roadmap/af-03-target-architecture-plan.md) — accepted phase and checklist plan for producing the Target Architecture
 
 ## Analysis
 
