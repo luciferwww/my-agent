@@ -71,19 +71,19 @@
 
 ### Check Items
 
-- [ ] 建立 AF-03 必须覆盖项到 Target Architecture 章节的追踪矩阵；
-- [ ] 建立 AP-01 至 AP-13 到设计章节和验证方式的追踪矩阵；
-- [ ] 列出可作为 Current Fact 的文档与测试证据，并记录各自状态；
-- [ ] 列出存在冲突或过期风险的文档，只作为取证输入而非权威事实；
-- [ ] 建立术语检查清单，禁止用 Config、Facts、Policy 或 Snapshot 相互代称；
-- [ ] 创建 `docs/architecture/target-architecture.md` 骨架，状态为 `Draft`；
-- [ ] 记录 AF-03 的初始 Open Questions、Assumptions 和 Deferred 项。
+- [x] 建立 AF-03 必须覆盖项到 Target Architecture 章节的追踪矩阵；
+- [x] 建立 AP-01 至 AP-13 到设计章节和验证方式的追踪矩阵；
+- [x] 列出可作为 Current Fact 的文档与测试证据，并记录各自状态；
+- [x] 列出存在冲突或过期风险的文档，只作为取证输入而非权威事实；
+- [x] 建立术语检查清单，禁止用 Config、Facts、Policy 或 Snapshot 相互代称；
+- [x] 创建 `docs/architecture/target-architecture.md` 骨架，状态为 `Draft`；
+- [x] 记录 AF-03 的初始 Open Questions、Assumptions 和 Deferred 项。
 
 ### Exit Gate
 
-- [ ] 每个父计划必覆盖项都有唯一目标章节；
-- [ ] 每条原则都有预期设计证据和后续验证类型；
-- [ ] 没有把未验证文档整体当作 Current Architecture。
+- [x] 每个父计划必覆盖项都有唯一目标章节；
+- [x] 每条原则都有预期设计证据和后续验证类型；
+- [x] 没有把未验证文档整体当作 Current Architecture。
 
 ## 6. Phase 1：逻辑边界与依赖方向
 
@@ -287,7 +287,7 @@ Architecture Review 必须选择：修订当前 Phase、提出 ADR、转为 Spik
 
 | Phase | 状态 | 完成日期 | 证据/备注 |
 |---|---|---|---|
-| Phase 0：输入基线与追踪矩阵 | Not Started |  |  |
+| Phase 0：输入基线与追踪矩阵 | Completed | 2026-08-28 | `target-architecture.md` §1–3、§10–12、Appendix A–D；独立复审完成并修正 3 High / 4 Medium；项目所有者已接受 |
 | Phase 1：逻辑边界与依赖方向 | Not Started |  |  |
 | Phase 2：Model Resolution 架构 | Not Started |  |  |
 | Phase 3：Extension Framework 静态骨架 | Not Started |  |  |

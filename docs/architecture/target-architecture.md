@@ -1,0 +1,394 @@
+# Target Architecture
+
+## 1. 文档状态与证据规则
+
+- **状态：** Draft
+- **版本：** 0.1
+- **日期：** 2026-08-28
+- **所有者：** 项目所有者
+- **执行计划：** [AF-03 Target Architecture Execution Plan](../roadmap/af-03-target-architecture-plan.md)
+- **父计划：** [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) AF-03
+- **规范词汇：** [Domain Glossary](domain-glossary.md)
+- **架构约束：** [Architecture Principles](architecture-principles.md)
+
+本文档是目标架构草案，不描述当前实现已经完成的结构，也不授权生产迁移。AF-05/AF-06 尚未执行的内容必须保持为 Hypothesis 或 Open Question；只有对应 Spike Results 可以将其升级为有执行证据的结论。
+
+### 1.1 证据分类
+
+| 标记 | 含义 | 可以支持 | 不能支持 |
+|---|---|---|---|
+| `Accepted Constraint` | 已接受 Plan、Principle、Glossary 或 Workflow 中的约束 | Target Architecture 必须遵守的边界 | 当前代码已实现该边界 |
+| `Current Fact Candidate` | 现有文档对当前实现的描述，本次未重新核验代码 | 迁移映射和 Characterization 输入 | 未经 AF-04 或代码/测试证据确认的当前事实 |
+| `Historically Verified` | 文档明确记录曾做代码或测试核验 | 高优先级 Characterization 候选 | 本次仍与生产代码一致 |
+| `Target Decision` | 本文经评审接受的目标结构或依赖 | 后续 ADR、Spec 和 Slice 的设计输入 | 已经实现或已经过 Spike 验证 |
+| `Hypothesis` | 必须由 AF-05/AF-06 或其他 Spike 验证的可证伪判断 | Spike Spec 输入 | Accepted Result 或生产承诺 |
+| `Deferred` | 明确不在 AF-03 决定或实施的事项 | 后续 Plan Item 或 Spike | 当前交付范围 |
+| `Legacy Candidate` | 可能已过时、冲突或将被替代的路径/文档 | 迁移和删除审计输入 | 目标权威来源 |
+
+### 1.2 权威输入
+
+| 文档 | 状态 | AF-03 中的用途 |
+|---|---|---|
+| [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) | Accepted v0.8 | AF-03 范围、验收、Foundation Gate 和 Slice 顺序 |
+| [AF-03 Execution Plan](../roadmap/af-03-target-architecture-plan.md) | Accepted v1.0 | Phase、Check Items、Exit Gates 和停止条件 |
+| [Architecture Principles](architecture-principles.md) | Accepted v1.0 | AP-01 至 AP-13 的稳定约束和验证候选 |
+| [Domain Glossary](domain-glossary.md) | Accepted v1.0 | 规范术语、逻辑所有者和非含义 |
+| [Development Workflow](../development-workflow.md) | Accepted v1.0 | 状态、评审、证据、DoR/DoD 和文档治理 |
+
+发生冲突时遵循 Architecture Foundation Plan 的权威优先级。本节其他证据不得覆盖上述 `Accepted Constraint`。
+
+## 2. Scope、Non-goals 与标注约定
+
+### 2.1 Scope
+
+本 Target Architecture 将定义：
+
+- Domain、Application、Infrastructure、Composition 的职责与依赖方向；
+- Provider/Model Resolution 和 per-turn Resolved Model；
+- Extension、Runtime Module、Contribution、Registry 和 Registry Snapshot；
+- Tool、Hook、Channel 注册与消费边界；
+- Config Namespace、Schema、Extension Capability 和私有资源；
+- Event、Error、Lifecycle、Resource Ownership 和 Shutdown；
+- Runtime Builder、RuntimeApp、Runner 和 Session 的责任边界；
+- Parent Turn、Subagent Turn、Tool、Channel、Extension 变更与关闭调用流；
+- Legacy/Compat 单向依赖和 Slice 1–6 迁移边界；
+- AF-04、AF-05、AF-06 所需的验证输入。
+
+### 2.2 Non-goals
+
+- 修改生产代码、目录、公共类型或配置格式；
+- 实现 Characterization/Fitness Tests；
+- 执行 Provider/Model 或 Extension Framework Spike；
+- 将 Hypothesis 写成已验证的接口、Schema 或并发算法；
+- 提前允许生产动态 Contribution 变更；
+- 设计 Marketplace、远程下载、任意热加载、沙箱或分布式 Event Bus；
+- 解除 Subagent Batch、并发、Background、Detached、Handoff 或 Agent Team 的 Foundation 范围冻结；
+- 让全部生产 Slice 提前达到 Definition of Ready。
+
+### 2.3 章节状态
+
+Phase 1–6 填写目标章节时，每个重要结论必须使用以下前缀之一：
+
+- **Accepted Constraint：** 来自 1.2 节权威输入且不可被本 Draft 静默改写的约束；
+- **Target Decision：** AF-03 可以接受的目标边界；
+- **Hypothesis：** 必须由 Spike 执行证据验证；
+- **Open Question：** 当前证据不足且会影响后续边界；
+- **Deferred：** 已确认不属于 AF-03；
+- **Current Fact Candidate：** 仅用于描述迁移起点，并链接证据等级。
+
+## 3. Evidence Baseline
+
+本节记录 Phase 0 的文档证据盘点。所有 Current Fact 均为文档证据，除非特别标记为 `Historically Verified`；本阶段没有扫描生产代码。
+
+### 3.1 Current Fact 候选
+
+| 文档 | 证据等级 | 可用于 AF-03 的范围 | 局限 |
+|---|---|---|---|
+| [Current Overview](current/overview.md) | Current Fact Candidate | 2026-05 模块地图、Turn 流和模块职责候选 | 快照可能落后；只部分同步到 2026-08-27 |
+| [Current Runtime](current/runtime.md) | Current Fact Candidate | Runtime 装配、队列、路由、Fanout、Abort、Lifecycle 候选 | 文档自列与 v1.0 的差异和规划项 |
+| [Current Runner](current/core_runner.md) | Current Fact Candidate | Tool Use Loop、上下文管理、Event 和 in-turn 输入候选 | 本次未复核实现；后续行为可能未同步 |
+| [Current Channel](current/adapter_channel.md) | Current Fact Candidate | CLI/WebSocket、Interaction、路由和多客户端候选 | 存在设计演进和规划项 |
+| [Current Config](current/platform_config.md) | Current Fact Candidate | Config 来源、合并和工具策略候选 | 文档明确记录与代码及后续配置文档的差异 |
+| [Current LLM Adapter](current/adapter_llm.md) | Current Fact Candidate | LLM Port/Adapter 和 Anthropic 协议映射候选 | 未按 Target Model Resolution 术语组织 |
+| [Current Tools](current/core_tools.md) | Current Fact Candidate | Tool Contract、执行与定义转换候选 | 不代表统一 Extension Registry 已存在 |
+| [Current Builtin Tools](current/core_tools_builtin.md) | Current Fact Candidate | Builtin Tool 分类和资源需求候选 | 不能作为 Runtime Module 目标结构的证据 |
+| [Current Session](current/core_session.md) | Current Fact Candidate | JSONL、Session/Transcript 和并发边界候选 | 需 AF-04 Characterization 保护 |
+| [Current Prompt](current/core_prompt.md) | Current Fact Candidate | Prompt 构建和 Context Hook 候选 | 与未来 Extension Hook 边界需重新区分 |
+| [Current Memory](current/core_memory.md) | Current Fact Candidate | Memory Port/Store 和可选降级候选 | 本次未复核实现和资源关闭行为 |
+| [Current Workspace](current/core_workspace.md) | Current Fact Candidate | Workspace 初始化和上下文加载候选 | 不自动决定 Domain/Application 归属 |
+| [Current Logger](current/platform_logger.md) | Current Fact Candidate | Logger Port/Adapter、启动缓冲和关闭候选 | 全局状态与目标 Resource Ownership 需评审 |
+| [Agent Capabilities](../agent-capabilities.md) | Mixed Evidence Summary | 当前能力、限制和验证等级总览 | 二级汇总，不能替代源文档或本次代码核验 |
+
+### 3.2 文档记录曾核验的行为
+
+| 文档 | 证据等级 | 记录的核验范围 | AF-03 用法 |
+|---|---|---|---|
+| [Multi-client User Message Spec](channel-multi-client-user-message-spec.md) | Historically Verified | Runtime intake、WebSocket broadcast、CLI rendering、message/run correlation | AF-04 Characterization 输入；保持 Fanout/关联行为 |
+| [Abort Spec](core-abort-spec.md) | Historically Verified | Runtime、Runner、LLM、Channel、Subagent、Exec 的 Abort 链路 | AF-04 Characterization 输入；保持级联中止和队列语义 |
+| [Agent Capabilities](../agent-capabilities.md) | Historically Verified Summary | 2026-08-27 对广播和 Abort 的代码/测试核验记录 | 只证明文档记录过核验，不代表本次重新验证 |
+
+### 3.3 混合、冲突与 Legacy 风险
+
+| 文档或区域 | 风险 | AF-03 使用规则 |
+|---|---|---|
+| [Root README](../../README.md) | Project Structure 仍是旧顶层目录形态 | 仅作为产品入口，不作为模块映射权威 |
+| `docs/architecture/current/` | 2026-05 快照，部分文档自列差异或规划项 | 逐文件作为 Current Fact Candidate，不整体升级为 Current Architecture |
+| [Current Config](current/platform_config.md) | 工具命名、logger、fs 等与 v1.0 描述存在差异 | Config 目标边界受 AP-02 和 AF-05/06 约束；旧字段不自动成为目标 |
+| [Platform Config Restructure Implementation](platform-config-restructure-impl.md) | Implementation 记录无 Accepted/Validated 状态 | 作为迁移历史和候选调用方，不固定目标 API |
+| [Channel Design](adapters-channel-design.md) | 状态为设计中、待确认 | 作为历史设计输入，不覆盖 Accepted Principles |
+| [WebSocket Channel Design](adapters-websocket-channel-design.md) | 状态为设计中、待确认 | 只提取传输约束候选 |
+| [Subagent Evolution Proposal](core-subagent-evolution-proposal.md) | Proposal，未进入 Accepted Spec | 作为 Deferred/后续方向，不解除 Foundation 冻结 |
+| [Subagent v2 Spec](core-subagent-v2-spec.md) | 并发设计与当前 Foundation 范围冻结并存 | 作为历史或未来输入，不写入 AF-03 当前交付范围 |
+| [Runner Emit Context Refactor](core-runner-emit-context-refactor.md) | 明确未实施 | 作为架构债候选，不作为 Current Fact |
+| [Exec Flow Design](core-tools-builtin-exec-flow-design.md) | 引用已不存在的回归清单 | AF-04 需重建验证输入，不依赖失效链接 |
+
+`docs/analysis/` 当前包含有效的比较分析入口，但它们只作为设计参考，不是 my-agent Current Fact 或 Target Constraint。
+
+### 3.4 术语防混用检查清单
+
+以下检查依据 [Domain Glossary](domain-glossary.md) 的定义与非含义建立，并适用于本文后续所有 Target Decision、Hypothesis、图和追踪矩阵：
+
+- [x] `Config`/`Provider Connection` 只表示部署或连接输入，不代称 `Model Descriptor` 中的 Model Facts；
+- [x] `Model Descriptor`/Model Facts 只表示可追踪的模型事实，不代称 `Model Policy`、用户偏好或 Request Override；
+- [x] `Model Policy` 只表示选择、允许、fallback 和限制规则，不代称 Facts、Connection 或最终执行配置；
+- [x] `Request Override` 只表示单个 Turn 的允许字段覆盖，不代称全局 Config、Facts 或 Policy；
+- [x] `Resolved Model` 表示一次 Turn 的不可变模型执行结果，不代称 Model Reference、Catalog 条目或可变 Client；
+- [x] `Registry` 表示可发现 Contribution 的集合和查找机制，不代称一次 Turn 固定的 `Registry Snapshot`；
+- [x] `Registry Snapshot` 表示某一版本的不可变视图，不代称 Config、Registry 本体或动态启停事务；
+- [x] `Extension Capability` 表示最小受限平台能力，不代称 Model Capability、Channel Capability 或通用 Service Locator；
+- [x] `Runtime Module` 与 `External Extension` 表示不同来源，不能代称其提供的 `Contribution`；
+- [x] `Current Architecture`、`Target Architecture`、`Hypothesis` 和 `Legacy` 按证据状态使用，不按文档目录或年代推断。
+
+## 4. Logical Boundaries and Dependency Direction
+
+**Phase：** 1
+
+本节将在 Phase 1 定义 Domain、Application、Infrastructure、Composition、Stable Core、Port、Adapter、Runtime Builder、RuntimeApp 和 Composition Root。
+
+### 4.1 待产出
+
+- 四个逻辑边界的职责表；
+- 允许和禁止的源码依赖边；
+- 当前模块到目标逻辑边界的候选映射；
+- Runtime、Runner 和 Composition 的职责对照；
+- Mermaid 依赖图及语义一致的 ASCII fallback；
+- 可转化为 AF-04 Fitness Tests 的依赖规则。
+
+### 4.2 Phase 1 完成条件
+
+- [ ] Stable Core 不依赖具体 Provider/Channel SDK、Store 或 Composition；
+- [ ] Runtime/Runner/Composition 无重叠所有权；
+- [ ] 不引入通用 DI Container 或 Service Locator；
+- [ ] 依赖规则可以由静态检查表达。
+
+## 5. Provider and Model Resolution
+
+**Phase：** 2
+
+本节将在 Phase 2 定义 Provider、Provider Connection、Protocol、Model Reference、Model Descriptor、Model Policy、Request Override、Model Catalog、Model Resolver、Resolved Model 和模型调用 Port。
+
+### 5.1 待产出
+
+- 事实、连接、策略和请求覆盖的来源/所有权表；
+- Parent Turn 与 Subagent Turn 的 Model Resolution 调用流；
+- Resolved Model 的 per-turn 不变量；
+- Provider Adapter 与 core-owned Port 的依赖方向；
+- AF-05 Hypothesis、最小实验、成功条件和停止条件。
+
+### 5.2 Phase 2 完成条件
+
+- [ ] Runner 只消费 Resolved Model，不加载 Config 或推断 Model Facts；
+- [ ] Model 切换同步切换 Port、Protocol、Endpoint 和 Model Capability facts；
+- [ ] Parent/Subagent 可以解析不同 Model 且不共享可变 Client 状态；
+- [ ] 未验证的 Catalog/fallback 规则仍标记为 Hypothesis。
+
+## 6. Extension、Module、Contribution and Registry
+
+**Phase：** 3
+
+本节将在 Phase 3 定义 Runtime Module、External Extension、Contribution、Tool/Hook/Channel Registry、启动期只读 Registry Snapshot、Config Namespace、Schema、Extension Capability 和私有资源边界。
+
+### 6.1 待产出
+
+- Builtin/External 共同注册和 Lifecycle 模型；
+- Tool、Hook、Channel Contribution 的分类与消费关系；
+- Extension 配置和受限上下文边界；
+- 跨 Channel/Tool/Hook 测试 Extension 静态组合图；
+- AF-06 待验证的接口形状和失败条件。
+
+### 6.2 Phase 3 完成条件
+
+- [ ] 新 Extension 不要求修改 Runtime、Runner、Bootstrap 或中央类型联合；
+- [ ] Extension 私有资源不成为全局 Service Locator；
+- [ ] Builtin/External 差异不泄漏给 Contribution 消费者；
+- [ ] Slice 3/4 只使用启动期只读 Snapshot。
+
+## 7. Registry Snapshot and Lifecycle Transactions
+
+**Phase：** 4
+
+本节将在 Phase 4 定义版本化不可变 Snapshot、per-turn 捕获、Extension 变更事务、原子切换、排空、取消、回滚、部分失败清理和 Shutdown 顺序。
+
+### 7.1 待产出
+
+- Snapshot 和 Extension 变更事务不变量；
+- enable、disable、failure rollback 和 shutdown 调用流；
+- Resource Ownership 与唯一 Lifecycle Owner 表；
+- AF-06 并发、排空和资源实验输入。
+
+### 7.2 Phase 4 完成条件
+
+- [ ] 一个 Turn 不观察混合版本 Contribution；
+- [ ] 失败后当前 Snapshot 仍可用且无部分资源残留；
+- [ ] AF-06 验证完整机制，Slice 5 才实现并开放生产运行时变更；
+- [ ] 未经 Spike 验证的算法和接口仍标记为 Hypothesis。
+
+## 8. Runtime Call Flows and Ownership
+
+**Phase：** 5
+
+本节将在 Phase 5 使用端到端调用流验证分层和唯一所有权。
+
+### 8.1 待产出
+
+- Channel 入站到结果 Fanout 的完整 Turn 流；
+- Tool Definition、Tool 执行和 Tool Result 流；
+- Channel 注册、start/stop 和 optional Channel Capability 流；
+- Subagent 委派、独立 Model Resolution、Usage/Event/Abort 返回流；
+- Runtime 启动、部分失败清理和 Shutdown 流；
+- Event、Error、Abort、并发和资源释放所有权表；
+- Mermaid 调用流及语义一致的 ASCII fallback。
+
+### 8.2 Phase 5 完成条件
+
+- [ ] Turn、Tool、Channel 和 Subagent 四类流支持 AF-03 边界验收；
+- [ ] 简单调用链没有无业务价值的机械转换层；
+- [ ] 每个长生命周期资源有唯一创建和释放责任；
+- [ ] RuntimeApp 最终只保留队列、Turn、路由、Fanout 和 Shutdown 编排。
+
+## 9. Legacy、Compat and Migration Boundaries
+
+**Phase：** 5
+
+本节将在 Phase 5 映射 Current 类型到目标术语，并定义 Slice 1–6 的新权威路径、Compatibility 和删除边界。
+
+### 9.1 待产出
+
+- Current/Target 术语迁移表；
+- Legacy Public API -> Compatibility Adapter -> New Authoritative Core 单向依赖图；
+- Slice 1–6 的候选真实调用方和删除条件；
+- Legacy 文档候选与后继入口；
+- Feature Flag、发布回滚和 Compatibility 到期规则。
+
+### 9.2 Phase 5 完成条件
+
+- [ ] 新核心不依赖 Compat/Legacy；
+- [ ] 每个 Slice 都指向真实调用方和旧路径删除条件；
+- [ ] 不在 AF-03 执行目录/类型重命名或生产迁移。
+
+## 10. Verification and Acceptance Matrix
+
+**Phase：** 6
+
+本节将在 Phase 6 汇总 AF-03 覆盖、原则、证据和独立评审结果。
+
+### 10.1 Foundation AF-03 追踪矩阵
+
+“主责章节”是该要求的唯一权威定义位置；“支持章节”只引用、应用或验证该定义，不得创建第二套语义。
+
+| 类型 | Foundation AF-03 要求 | 主责章节 | 支持章节 | 当前状态 | 预期证据 |
+|---|---|---:|---:|---|---|
+| 必须覆盖 | 模块职责与依赖方向 | 4 | 8、10 | Planned | 边界表、依赖图、允许/禁止边 |
+| 必须覆盖 | Provider/Model Resolution | 5 | 8、Appendix B | Planned | 责任表、Parent/Subagent 调用流、AF-05 输入 |
+| 必须覆盖 | Extension/Module/Contribution/Registry | 6 | 7、Appendix C | Planned | 静态组合图、注册和配置边界 |
+| 必须覆盖 | Snapshot/事务/原子切换/排空/回滚 | 7 | 8、Appendix C | Planned | 不变量、动态流、AF-06 输入 |
+| 必须覆盖 | Runtime Builder 与 RuntimeApp | 4 | 8 | Planned | 职责表、启动/Turn/Shutdown 流 |
+| 必须覆盖 | Tool/Hook/Channel 注册 | 6 | 8 | Planned | Registry 关系和端到端流 |
+| 必须覆盖 | Config Namespace 与 Schema | 6 | Appendix C | Planned | 所有权选项和 AF-06 Hypothesis |
+| 必须覆盖 | 私有资源/受限上下文/平台能力 | 6 | 7、Appendix C | Planned | Extension Capability、作用域、Lifecycle |
+| 必须覆盖 | Event/Error/Lifecycle/Resource Ownership | 8 | 7、10 | Planned | 所有权表、失败和关闭流 |
+| 必须覆盖 | Legacy/Compat | 9 | 10 | Planned | 单向依赖、Slice 迁移/删除边界 |
+| 必须覆盖 | 关键调用流和关闭顺序 | 8 | 5、7 | Planned | Mermaid + ASCII 调用流 |
+| 验收 | Turn/Tool/Channel/Subagent 调用流验证分层 | 8 | 10 | Planned | 四类调用流评审记录 |
+| 验收 | 跨 Channel/Tool/Hook External Extension | 6 | 7、10、Appendix C | Planned | 组合图与 AF-06 实验输入 |
+| 验收 | 旧/新 Registry Snapshot 一致性 | 7 | 10、Appendix C | Planned | 不变量与 AF-06 验证场景 |
+| 验收 | 无业务价值机械转换层 | 8 | 4、10 | Planned | 调用链审查记录 |
+| 验收 | Stable Core/Infrastructure Adapter 边界 | 4 | 10 | Planned | 依赖图与 Fitness Test 输入 |
+| 验收 | 无通用 Service Locator | 4 | 6、10 | Planned | 显式 Port/Extension Capability 映射 |
+
+### 10.2 Architecture Principles 映射
+
+| Principle | 主要目标章节 | 设计证据 | 后续验证 | 当前状态 |
+|---|---:|---|---|---|
+| AP-01 Stable Core 不依赖具体集成 | 4、5 | 依赖图、Port/Adapter 边界 | FT-01、FT-02、Contract | Planned |
+| AP-02 配置/事实/策略分离 | 5 | 来源和所有权表 | Resolver Unit Tests | Planned |
+| AP-03 per-turn Resolved Model | 5、8 | Parent/Subagent 调用流 | Resolver/Runner Contract | Planned |
+| AP-04 Builtin/External 同机制 | 6 | 跨贡献 Extension 组合图 | AF-06、Contract | Planned |
+| AP-05 不可变 Registry Snapshot | 7 | Snapshot/事务不变量 | AF-06、immutability tests | Planned |
+| AP-06 单一权威来源 | 4、5、6、9 | 责任表和迁移表 | 类型/导出/调用路径审计 | Planned |
+| AP-07 Compat 单向进入新核心 | 9 | 单向依赖和删除规则 | FT-04、Slice 审计 | Planned |
+| AP-08 最小 Extension Capability | 6、7 | Capability/私有资源边界 | AF-06、denial tests | Planned |
+| AP-09 公共行为显式契约 | 7、8、10 | Event/Error/并发/Lifecycle 表 | Contract/Integration | Planned |
+| AP-10 唯一 Lifecycle Owner | 7、8 | Resource Ownership 和关闭流 | failure injection | Planned |
+| AP-11 Runtime/Composition 分责 | 4、8 | 职责表和启动/Turn 流 | FT-05、RuntimeApp/Runner 职责测试、构造依赖与变更局部性检查 | Planned |
+| AP-12 抽象由当前证据证明 | 4、5、6、8 | 第二实现/Fake/Spike 映射 | Architecture Review | Planned |
+| AP-13 区分事实/目标/历史 | 1、3、9、10 | 证据分类和 Legacy 表 | 文档状态/链接检查 | In Progress |
+
+## 11. Assumptions、Open Questions and Deferred
+
+### 11.1 Assumptions
+
+1. AF-03 的权威约束只来自本文件 1.2 节列出的 Accepted 文档；
+2. Current 文档只作为候选迁移起点，需 AF-04 或后续代码/测试证据升级；
+3. Target Architecture 可以接受逻辑骨架和可验证契约，但不能把 AF-05/AF-06 Hypothesis 写成 Results；
+4. 历史核验过的用户消息 Fanout/correlation 与 Abort 行为优先保留；更广的 Runner、Session 和 Channel 行为只是 AF-04 前的保留候选；
+5. 动态 Registry 在 AF-06 验证完整机制，Slice 3/4 只接入启动期只读 Snapshot，Slice 5 才开放生产运行时变更；
+6. 目录、类型和公共接口映射由 Phase 1–5 逐步定义，本 Phase 不做重命名或实现。
+
+### 11.2 Open Questions
+
+| ID | Question | 影响 | 解决阶段 |
+|---|---|---|---|
+| OQ-01 | 哪些 Current 文档可在 AF-04 后升级为 Current Architecture 权威入口？ | 迁移起点和 Legacy 清单 | AF-04 / Slice 6 |
+| OQ-02 | Model Catalog 事实来源的合并优先级和缺失事实 fallback 是什么？ | Resolved Model 正确性 | Phase 2 -> AF-05 |
+| OQ-03 | Parent/Subagent 不同 Model 的最小共享边界是什么？ | Client 状态和 Usage/Abort/Event | Phase 2 -> AF-05 |
+| OQ-04 | Extension Config 使用自校验 Namespace 还是中央 Schema 注册？ | 配置所有权和启用事务 | Phase 3 -> AF-06 |
+| OQ-05 | Extension Capability 和受限运行上下文的最小接口是什么？ | 权限和平台专有 Tool | Phase 3 -> AF-06 |
+| OQ-06 | Extension 停用时哪些工作排空、哪些按策略取消？ | Snapshot 和资源释放 | Phase 4 -> AF-06 |
+| OQ-07 | Config 重构后哪些字段和工具策略是 Current Fact？ | Current/Target 映射 | Phase 0/1 -> AF-04 |
+| OQ-08 | Exec 回归清单缺失后，AF-04 使用哪些现有测试重建保护线？ | Characterization 完整性 | AF-04 |
+
+### 11.3 Deferred
+
+| Item | Deferred To | 理由 |
+|---|---|---|
+| 生产代码、目录和公共类型修改 | Architecture Slice | AF-03 只定义目标骨架 |
+| Characterization/Fitness Test 实现 | AF-04 | AF-03 只提供规则和行为输入 |
+| Provider/Model Catalog/fallback 执行验证 | AF-05 | 需要可证伪实验和 Provider 证据 |
+| Extension 动态启停、Snapshot、排空和回滚执行验证 | AF-06 | 需要失败注入和资源实验 |
+| Marketplace、远程下载、任意热加载、沙箱、分布式 Event Bus | Future Plan | Foundation 非目标 |
+| Subagent Batch、并发、Background、Detached、Handoff、Agent Team | Future Plan | Foundation 范围冻结 |
+| 生产动态 Contribution 变更 | Slice 5 | AF-06 先验证，Slice 3/4 仅只读 Snapshot |
+
+## 12. Phase 0 Checklist
+
+- [x] 建立 AF-03 必须覆盖项到 Target Architecture 章节的追踪矩阵；
+- [x] 建立 AP-01 至 AP-13 到设计章节和验证方式的追踪矩阵；
+- [x] 列出可作为 Current Fact Candidate 的文档并记录证据等级；
+- [x] 列出混合、冲突或过期风险文档及使用规则；
+- [x] 建立术语检查清单，禁止 Config、Facts、Policy 或 Snapshot 相互代称；
+- [x] 创建 Target Architecture Draft 骨架；
+- [x] 记录初始 Assumptions、Open Questions 和 Deferred；
+- [x] 独立复审 Phase 0 证据基线和追踪矩阵，并修正唯一主责章节、术语证据、原则映射和过度表述；
+
+独立复审未发现 Critical 问题；首轮发现 3 个 High 和 4 个 Medium 问题，均已在 Draft v0.1 内处理。项目所有者于 2026-08-28 接受 Phase 0 的输入基线、证据边界、章节骨架和追踪矩阵；该接受不代表 Target Architecture 整体已接受。
+
+## Appendix A. AF-04 Inputs
+
+Phase 6 将在此维护 Characterization 行为、Fitness Test 规则和预期失败样例。Phase 0 的初始输入包括：
+
+- Runtime 启动和 Shutdown；
+- Turn Event 顺序与 Tool Use/Result 配对；
+- Session、Compaction 和 per-session 串行；
+- Channel 路由、Approval/Interaction 和 Fanout；
+- 用户消息广播与 run correlation；
+- Abort、队列清理和 Subagent 级联；
+- FT-01 至 FT-09 与 AP-01 至 AP-13 的 many-to-many 映射，以及 AP-12 所需的 ADR、调用流、实现数量和抽象评审证据。
+
+## Appendix B. AF-05 Provider/Model Spike Input
+
+Phase 2 将补充 Hypothesis、最小实验、成功条件和停止条件。当前仅保留父计划边界：验证在不复制 Runner 的前提下，根据 Model Reference 解析 Provider/Model，并让每个 Parent/Subagent Turn 消费内部一致的 Resolved Model。
+
+## Appendix C. AF-06 Extension Framework Spike Input
+
+Phase 3–4 将补充 Hypothesis、最小实验、成功条件和停止条件。当前仅保留父计划边界：验证一个跨 Channel/Tool/Hook Extension、受限 Extension Capability、私有资源共享、不可变 Snapshot、原子切换、排空、资源释放和失败回滚。
+
+## Appendix D. Evidence Inventory Maintenance
+
+证据升级规则：
+
+1. 文档声明不能自动升级为当前代码事实；
+2. AF-04 Characterization 或明确的代码/测试核验可以将 Candidate 升级为 Current Fact；
+3. Spike Results 只能支持其实际执行的环境、版本和场景；
+4. Target Decision 不因写入本文而成为 Implemented；
+5. 冲突或被替代文档必须记录后继入口和 Legacy 处理方式。
