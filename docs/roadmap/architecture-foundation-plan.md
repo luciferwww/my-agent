@@ -3,7 +3,7 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 0.6
+- **版本：** 0.7
 - **日期：** 2026-08-28
 - **范围：** my-agent 目标架构定义、关键边界验证、渐进迁移和 Legacy 退出
 - **执行方式：** Architecture Foundation 以两周为目标、四周为硬上限，随后采用一周 Architecture Slice 迭代
@@ -184,6 +184,8 @@ Legacy 只提供历史证据，不自动成为目标设计。
 ## 9. Foundation 工作包
 
 ### AF-01：开发治理基线
+
+**状态：** Completed（2026-08-28）
 
 **目标：** 建立轻量、可执行的开发和文档流程。
 
@@ -692,10 +694,9 @@ Foundation（M0–M3）以 **两周完成为目标、四周为硬上限**。第�
 
 按以下顺序推进：
 
-1. 执行 AF-01，起草 `docs/development-workflow.md`、`CONTRIBUTING.md` 和四类模板；
-2. 执行 AF-02，建立 Architecture Principles 与 Domain Glossary；
-3. 执行 AF-03，形成可评审的 Target Architecture；
-4. 建立 AF-04 Characterization/Fitness 保护线，并为 AF-05、AF-06 编写 Spike Spec；
-5. Target Architecture 与对应 Spike Spec `Accepted` 后，依次执行 AF-05 和 AF-06。
+1. 执行 AF-02，建立 Architecture Principles 与 Domain Glossary；
+2. 执行 AF-03，形成可评审的 Target Architecture；
+3. 建立 AF-04 Characterization/Fitness 保护线，并为 AF-05、AF-06 编写 Spike Spec；
+4. Target Architecture 与对应 Spike Spec `Accepted` 后，依次执行 AF-05 和 AF-06。
 
 在 AF-05 Results 完成前，不进入生产 Model Registry 实现；在 AF-06 Results 完成前，不冻结生产 Extension API。

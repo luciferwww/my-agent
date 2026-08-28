@@ -8,9 +8,18 @@ This directory is grouped by document purpose rather than by module.
 - These scripts are intended to be run directly via `npx tsx scripts/<name>.ts` when needed.
 - They are not exposed as `package.json` scripts unless they become stable, frequently used project workflows.
 
+## Development Governance
+
+- [Development Workflow](development-workflow.md) — authoritative work classification, approval, readiness, validation, review, and completion rules
+- [Contributing](../CONTRIBUTING.md) — concise setup and contribution entry point
+- [ADR Template](templates/adr-template.md)
+- [Module Spec Template](templates/module-spec-template.md)
+- [Spike Spec Template](templates/spike-spec-template.md)
+- [Spike Results Template](templates/spike-results-template.md)
+
 ## Recommended Reading Order
 
-For a high-level understanding of the current design, start with the runtime assembly view and then drill down into the main runtime modules.
+For a high-level understanding of the existing design documentation, start with the runtime assembly view and then drill down into the main runtime modules. Check each document's own status before treating it as verified current fact.
 
 1. [Runtime / App Assembly Design](architecture/runtime-design.md)
 2. [Agent Runner Design](architecture/core-runner-design.md)
@@ -38,7 +47,7 @@ npx tsx scripts/test-process-list-lifecycle.ts
 
 ## Architecture
 
-Design baselines for the current implementation, including module boundaries, data flow, and behavior contracts.
+Current implementation facts, design baselines, Specs, and related implementation records. A document's own status determines its authority; this directory is not yet a single verified Current Architecture.
 
 - [Agent Runner Design](architecture/core-runner-design.md)
 - [Runtime / App Assembly Design](architecture/runtime-design.md)
@@ -59,6 +68,7 @@ Design baselines for the current implementation, including module boundaries, da
 
 Planned evolution documents, adoption sequencing, and regression checklists for larger refactors.
 
+- [Architecture Foundation Plan](roadmap/architecture-foundation-plan.md) — accepted target-architecture, spike, migration, and legacy-exit plan
 - [Exec Evolution Roadmap](roadmap/exec-evolution-roadmap.md)
 - [Exec / Process Platform Adoption Plan](roadmap/exec-process-platform-adoption-plan.md)
 - [Exec / Process Platform Regression Checklist](roadmap/exec-process-platform-regression-checklist.md)
@@ -81,7 +91,9 @@ Reference analysis of OpenClaw for comparison and design input; these docs are n
 - [OpenClaw Tool System Analysis](analysis/openclaw/openclaw-tool-system-analysis.md)
 
 
-## Collaboration Principles
+## Local Collaboration Notes (Non-authoritative)
+
+These personal collaboration preferences do not define repository governance. The [Development Workflow](development-workflow.md) is authoritative when they differ.
 
 - Spec-driven development — write and confirm design docs before writing code.
 - Confirm before changes — discuss any modification first and only proceed after approval.
@@ -90,7 +102,7 @@ Reference analysis of OpenClaw for comparison and design input; these docs are n
 - Reviewer feedback — treat as suggestions, not directives. Verify facts, triage each item (accept/reject/modify) with reasoning, then apply only accepted changes. Do not blindly accept.
 - Commit messages — English only, no Chinese in commit subject or body. Applies to all repos.
 
-NOTE: These can be added to the user-level memory file, for example at: 
+NOTE: These can be added to the user-level memory file, for example at:
 ```
 %HOMEPATH%\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\memory-tool\memories\collaboration-preferences.md
 ```
