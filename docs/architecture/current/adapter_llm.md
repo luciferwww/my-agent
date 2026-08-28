@@ -1,6 +1,7 @@
 # Adapter LLM 设计文档
 
 > 文档日期：2026-05-29
+> 状态同步：2026-08-27（AbortSignal）
 > 关联文档：`core_runner.md` · `runtime.md`
 
 ---
@@ -42,7 +43,7 @@ ChatParams {
   messages: ChatMessage[]
   tools?: ChatToolDefinition[]
   maxTokens?: number
-  signal?: AbortSignal          // 预留，用于取消请求
+  signal?: AbortSignal          // 透传给 SDK，用于取消流式请求
 }
 ```
 
@@ -130,4 +131,4 @@ Anthropic API 抛出 context length 错误时，`chatStream` 捕获并重新抛�
 | `LLMClient` 接口与实现分离 | AgentRunner 依赖接口，测试可注入 mock，不依赖网络 |
 | tool_use 分片组装在 adapter 层 | AgentRunner 收到的始终是完整的 `tool_use` 事件，不感知 Anthropic 流式分片协议 |
 | `chat()` 便捷方法 | 内部调用 `chatStream` 收集完整响应——不引入第二套代码路径 |
-| `signal` 字段预留 | AbortSignal 取消支持尚未在 runner 侧落地，类型预留 |
+| `signal` 透传 | `chatStream` 把 AbortSignal 传给 Anthropic SDK；Runner 将中止归一化为 `stopReason='aborted'` |

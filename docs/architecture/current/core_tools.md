@@ -1,6 +1,7 @@
 # Core Tools 框架设计文档
 
 > 文档日期：2026-05-29
+> 状态同步：2026-08-27（ToolContext / AbortSignal）
 > 关联文档：`runtime.md` · `core_tools_builtin.md`
 
 ---
@@ -30,7 +31,7 @@ Tool {
   name: string                  // LLM 看到的唯一标识符
   description: string           // 帮助 LLM 决定何时调用
   inputSchema: Record<string, unknown>   // JSON Schema（字段名 inputSchema）
-  execute(params, context?): Promise<ToolResult>
+  execute(params, context): Promise<ToolResult>
 }
 
 ToolResult {
@@ -39,7 +40,10 @@ ToolResult {
 }
 
 ToolContext {
-  signal?: AbortSignal          // 预留，当前工具执行未消费
+  sessionKey: string
+  turnId: string
+  toolUseId: string
+  signal?: AbortSignal          // 用户中止 / shutdown 信号；工具自行决定是否响应
 }
 
 // 发送给 LLM API 的定义格式（字段名改为 input_schema）
@@ -50,7 +54,7 @@ ToolDefinition {
 }
 
 // AgentRunner 构造依赖
-ToolExecutor = (toolName: string, input: Record<string, unknown>) => Promise<ToolResult>
+ToolExecutor = (toolName: string, input: Record<string, unknown>, context: ToolContext) => Promise<ToolResult>
 ```
 
 **`inputSchema` vs `input_schema` 区别**：
@@ -70,11 +74,13 @@ createToolExecutor(tools: Tool[]): ToolExecutor
 // 行为：
 按 toolName 在 tools[] 中查找
   找不到 → ToolResult { isError: true, content: 'Tool "X" not found' }
-  找到   → tool.execute(input)
+  找到   → tool.execute(input, context)
   执行抛错 → catch → ToolResult { isError: true, content: '...' }
 ```
 
 异常被转为 `isError: true` 的 `ToolResult`，不向外抛出。这让 AgentRunner 能把工具错误作为正常 tool_result 送给 LLM，让 LLM 自行决定如何应对。
+
+`ToolContext.signal` 已接通用户主动中止。框架保证 signal 会传给工具，但工具是否立即响应由实现决定；当前 `exec` 会终止子进程树，其他短时内置工具可能运行到自然结束。中止后 Runner 不会启动下一个工具。
 
 ### 4.2 getToolDefinitions
 

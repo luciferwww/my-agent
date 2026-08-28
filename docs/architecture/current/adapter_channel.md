@@ -2,6 +2,7 @@
 
 > 基准版本：v1.0
 > 文档日期：2026-05-29
+> 状态同步：2026-08-27（用户消息广播、用户主动中止）
 > 关联文档：`runtime.md` · `core_runner.md`
 
 ---
@@ -46,6 +47,7 @@ WS client 或 CLI 输入
 channel.onMessage(handler)   ← handler 由 RuntimeApp.registerChannel 注入
   ▼
 RuntimeApp.handleInboundChannelMessage
+  ├─ 输入装配完成后 emit user_message → 同 session 所有 client
   ├─ steering 条件 → steeringInboxBySession
   └─ 普通入站 → enqueueQueuedTurn → scheduleNextQueuedTurn
                    ▼
@@ -58,6 +60,7 @@ RuntimeApp.handleInboundChannelMessage
 - **turnId 在 startQueuedTurn 才生成**——排队阶段不占用 turn 级资源
 - **clientId 不进 RunTurnParams**——封装在 `MessageRouteContext`，runner 不感知 transport 概念
 - **channel 不绕过队列**——永远通过 handler 入站，不直接调 runTurn
+- **用户输入是一等事件**——`user_message` 在 queued / steering 分流前广播；queued 消息通过 `run_start.originMessageId` 关联后续 turn
 
 ### 3.2 出站（agent → client）
 
@@ -76,6 +79,19 @@ channel.send 实现:
 - **事件自描述**：AgentEvent 自带 `sessionKey` / `turnId`，channel 直接读取自路由
 - **fanout 共享 `channels[]` 引用**：registerChannel 后新增的 channel 即时可见
 - **send 抛错被吞为 warning**：单个 channel 故障不中断分发
+- **附件广播只含摘要**：`user_message.attachmentSummaries` 不携带原始 Base64
+
+### 3.4 Abort（channel → runtime）
+
+```
+CLI Ctrl+C / WS { type:'abort_turn', sessionKey }
+  → Channel AbortHookBindings.abortTurn(sessionKey)
+  → RuntimeApp.abortTurn(sessionKey)
+  → abort active turn + drop queued messages
+  → run_end.result.stopReason = 'aborted'
+```
+
+Channel 通过可选 `bindAbortHooks` 接收 Runtime 注入的中止能力，不反向依赖 RuntimeApp。WebSocket 的 `abort_turn` 无单独 Ack；客户端通过 `run_end` 感知中止完成。
 
 ### 3.3 Approval / Interaction（hook ↔ channel）
 
@@ -234,6 +250,7 @@ CliChannelConfig {
 | `text_delta` | `stdout.write(text)`（流式） |
 | `tool_use` | dim `[tool: name]\n` |
 | `tool_result` | `[tool result]` / `[tool error]` + 截断预览（见下） |
+| `user_message` | 仅渲染来自外部 client 的用户输入；本地 CLI 输入不重复回显 |
 | `compaction_start` | yellow `[compacting… trigger=X]\n` |
 | `compaction_end` | yellow `[compacted: X → Y tokens, dropped N messages]\n` |
 | `error` | 仅 breakStream()，不打印——runner emit error 后立刻 throw，由 start() 的 catch 统一打印，避免双行 |
@@ -287,6 +304,7 @@ WebSocketChannelConfig {
 | `{ type:'hello'; clientId }` | 建连后第一条，绑定逻辑 clientId |
 | `{ type:'run_turn'; sessionKey; message; model?; maxTokens?; maxLlmCalls? }` | 发起 turn |
 | `{ type:'approval_resolve'; id; decision }` | 提交审批决策 |
+| `{ type:'abort_turn'; sessionKey }` | 中止该 session 的活动 turn 并清空普通队列 |
 
 **Server → Client：**
 

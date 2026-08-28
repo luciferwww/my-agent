@@ -2,7 +2,7 @@
 
 User-initiated turn abort for my-agent v1.
 
-Status: **READY** — all open decisions locked. See §0.3 for the decision table.
+Status: **IMPLEMENTED** — verified against runtime, runner, LLM, channel, subagent, and exec tests on 2026-08-27. See §0.3 for the decision table.
 
 ## 0. What happens when I press Ctrl+C
 
@@ -44,7 +44,7 @@ WebSocket 客户端与 library 调用方走的是相同链路，只是触发源�
 - **openclaw** ([openclaw/src/acp](../../openclaw/src/acp/), [openclaw/src/gateway/chat-abort.ts](../../openclaw/src/gateway/chat-abort.ts)) — per-session controller、`AbortSignal.any` 组合、双击 Ctrl+C UX、partial 持久化。详细对比见 §15。
 - **Claude Code 逆向报告** — 触发语义、双击退出窗口。
 
-## 0.3 Open Decisions
+## 0.3 Locked Decisions
 
 结论 lock-in。展开理由散在各章节；表格只给一句总结。
 
@@ -59,10 +59,10 @@ WebSocket 客户端与 library 调用方走的是相同链路，只是触发源�
 
 ---
 
-## 1. Background
+## 1. Background (pre-implementation)
 
-v1 subagent 落地后剩下的最显眼用户体验问题：长任务（大量工具调用 / 卡 LLM
-请求 / subagent 嵌套）一旦启动，用户**无法中断**。需要：
+本节记录实现前的问题背景。v1 subagent 刚落地时，长任务（大量工具调用 / 卡 LLM
+请求 / subagent 嵌套）一旦启动，用户**无法中断**。本 spec 随后实现了：
 
 - CLI: `Ctrl+C` → abort 当前 turn
 - WebSocket: 客户端发 `abort_turn` 消息

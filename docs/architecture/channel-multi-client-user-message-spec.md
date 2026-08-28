@@ -2,11 +2,11 @@
 
 Multi-client user-message visibility for my-agent v1.
 
-Status: **READY** — all open decisions locked.
+Status: **IMPLEMENTED** — verified against Runtime intake, WebSocket broadcast, CLI rendering, and correlation tests on 2026-08-27.
 
-## 0. Open Decisions
+## 0. Locked Decisions
 
-Items marked `?` need user confirmation before implementation.
+All decisions below are implemented. The table is retained as the design record.
 
 | # | Question | Recommendation | Status |
 |---|---|---|---|
@@ -21,16 +21,16 @@ Items marked `?` need user confirmation before implementation.
 
 ---
 
-## 1. Background
+## 1. Background (pre-implementation)
 
-WebSocketChannel 支持多客户端订阅同一 session：`sessions: Map<sessionKey, Set<clientId>>`，`send(event)` 会广播 `AgentEvent` 给该 session 下所有 client。
+本节记录实现前的问题背景。WebSocketChannel 当时已支持多客户端订阅同一 session：`sessions: Map<sessionKey, Set<clientId>>`，`send(event)` 会广播 `AgentEvent` 给该 session 下所有 client。
 
-但当前实现存在**事件不对称**：
+当时的实现存在**事件不对称**（以下两条均为实施前状态）：
 
-- ✅ Server → clients 的事件（`text_delta` / `tool_use` / `tool_result` / `subagent_start` / `subagent_end` / …）会广播到所有订阅者。
-- ❌ Client → server 的 user 输入（`run_turn` 消息里的 user message）**不产生任何 AgentEvent**，因此不会广播到同 session 的其他 client。
+- 当时 Server → clients 的事件（`text_delta` / `tool_use` / `tool_result` / `subagent_start` / `subagent_end` / …）已经会广播到所有订阅者。
+- 当时 Client → server 的 user 输入尚不产生 `AgentEvent`，因此不会广播到同 session 的其他 client；当前已由 `user_message` 事件补齐。
 
-用户实测现象：两个 client 加入同一 session，A 发消息后 B 看不到那条 user message，但**能看到** server 对该消息的回复——因为回复走的是 assistant event 广播路径。
+实现前的用户实测现象是：两个 client 加入同一 session，A 发消息后 B 看不到那条 user message，但**能看到** server 对该消息的回复——因为回复走的是 assistant event 广播路径。该问题现已由 `user_message` 事件解决。
 
 ## 2. Non-Goals (v1)
 
@@ -38,7 +38,7 @@ WebSocketChannel 支持多客户端订阅同一 session：`sessions: Map<session
 - **不做**权限校验：与 [core-abort-spec](core-abort-spec.md) §2 保持一致——WS server 单信任域，不区分 client 身份权限。
 - **不改**用户消息的持久化路径：`SessionManager` 现有 append 语义不动。
 
-## 3. Root cause
+## 3. Root cause (pre-implementation)
 
 ```
 Client A                  RuntimeApp                     AgentRunner            Channel.send()      All clients
@@ -55,7 +55,7 @@ Client A                  RuntimeApp                     AgentRunner            
   │                           │                                │                      │        ✅ 所有 client 看到
 ```
 
-`AgentEvent` 联合类型（[src/core/runner/types.ts:81-100](../../src/core/runner/types.ts#L81-L100)）**没有 `user_message` 变体**——它只描述 runner 的产出。User 输入在 `RuntimeApp.handleInboundChannelMessage`（[src/runtime/RuntimeApp.ts:454-538](../../src/runtime/RuntimeApp.ts#L454-L538)）里被直接塞进 message queue，从未通过 event 通道回流到 `WebSocketChannel.send()`（[src/adapters/channel/WebSocketChannel.ts:103-131](../../src/adapters/channel/WebSocketChannel.ts#L103-L131)）——广播管线只覆盖 runner 事件，不覆盖 client 输入。
+实现前，`AgentEvent` 联合类型没有 `user_message` 变体，只描述 Runner 的产出；User 输入在 `RuntimeApp.handleInboundChannelMessage` 中直接进入 Message Queue，没有通过 Event 通道回流到 `WebSocketChannel.send()`。当前实现已增加 `user_message`、Runtime Fanout 以及 `run_start.originMessageId` 关联。
 
 ## 4. Goals
 

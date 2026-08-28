@@ -2,6 +2,7 @@
 
 > 基准版本：v1.0
 > 文档日期：2026-05-29
+> 状态同步：2026-08-27（用户主动中止）
 > 关联文档：`runtime.md` · `adapter_channel.md` · `platform_config.md`
 
 ---
@@ -87,7 +88,7 @@ AgentRunnerConfig {
 ```
 RunParams {
   sessionKey: string
-  message: string
+  message: string | ChatContentBlock[]
   model: string
   systemPrompt: string
   turnId: string                        // 必填；emit / hook payload 依赖
@@ -97,6 +98,8 @@ RunParams {
   getSteeringMessages?: PendingMessageReader  // 每轮 tool 后 runner 拉取
   compaction?: CompactionConfig
   contextWindowTokens?: number          // 默认 200,000
+  originMessageId?: string              // queued user_message 的关联 id
+  signal?: AbortSignal                  // 用户中止 / shutdown 信号
 }
 
 type PendingMessageReader = () => ChatMessage[] | Promise<ChatMessage[]>
@@ -122,11 +125,12 @@ RunResult {
 
 ### 3.4 AgentEvent
 
-每个 variant 都带 `sessionKey` + `turnId`（由 `emit` 从 `currentParams` 自动注入）：
+所有事件都带 `sessionKey`。Runner 产生的 turn 内事件带 `turnId`；Runtime 产生的 `user_message` 与 turn 解耦，使用 `messageId`：
 
 ```
 AgentEvent =
-  | { type: 'run_start';  sessionKey; turnId }
+  | { type: 'run_start';  sessionKey; turnId; originMessageId? }
+  | { type: 'user_message'; sessionKey; messageId; content; attachmentSummaries?; originClientId; deliveryMode; timestamp }
   | { type: 'text_delta'; sessionKey; turnId; text }
   | { type: 'tool_use';   sessionKey; turnId; name; input }
   | { type: 'tool_result';sessionKey; turnId; name; result }
@@ -214,7 +218,9 @@ while (hasMoreToolCalls):
   emit { type: 'llm_call', round }
   llmCallCount++
 
-  llmResult = callLLMStream(...)
+  if signal.aborted: return stopReason='aborted'
+
+  llmResult = callLLMStream(..., signal)
     for await event of llmClient.chatStream:
       text_delta  → emit + 收集
       tool_use    → 收集 content block
@@ -237,7 +243,7 @@ while (hasMoreToolCalls):
         deny  → blocked ToolResult 占位 + emit tool_result + continue
         allow → effectiveInput = result.input
 
-      result = executeTool(name, effectiveInput)
+      result = executeTool(name, effectiveInput, { sessionKey, turnId, toolUseId, signal })
       emit { type: 'tool_result', name, result }
 
       after_tool_call hooks（parallel, fire-and-forget）
@@ -540,10 +546,15 @@ messages = pruneToolResults(messages, compaction, contextWindowTokens);
 | 项目 | 状态 |
 |---|---|
 | 模型 fallback（主模型失败切换备用） | 规划中 |
-| AbortSignal 用户取消 | 规划中 |
 | 硬 steering（AbortSignal + tool 取消协议） | 规划中 |
 | `before_compaction` 否决能力（`skip/continue`） | 规划中 |
 | `manual` trigger 对外暴露手动压缩入口 | 规划中 |
 | tool use 阶段前检查 steering（缩短长 tool 延迟） | 规划中 |
 | `RunResult.compactionStats` 字段 | 待讨论 |
 | 历史裁剪的轻量级窗口截断（除压缩之外） | 规划中 |
+
+### 13.1 已落地的用户主动中止
+
+`RunParams.signal` 已接通 Runtime、LLM、ToolContext 和 Subagent。Runner 在 LLM 调用前与工具调度间检查 signal；中止时返回 `stopReason='aborted'`。流式调用已经产生的 Partial Assistant 内容会携带 `abortMeta` 持久化；下一轮通过 `repairOrphanToolUses` 修复未配对的 Tool Use。
+
+工具是否立即停止取决于其是否响应 `ToolContext.signal`。框架保证中止后不再启动后续工具，不保证所有第三方 in-flight 工具瞬时终止。详见 [core-abort-spec](../core-abort-spec.md)。

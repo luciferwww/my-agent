@@ -2,6 +2,7 @@
 
 > 关联 spec：`docs/architecture/core-subagent-spec.md`
 > 文档日期：2026-06-29
+> 状态同步：2026-08-27（AbortSignal 已由后续 Abort Spec 接通）
 
 ---
 
@@ -19,8 +20,8 @@
 | `SystemPromptBuilder` | **6 个 active section**（`tool-definitions` slot 代码保留但已停用） | PR-5 新增第 7 个 workspace、第 8 个 available-subagents |
 | `ToolContext` | 仅 `signal?: AbortSignal` 字段；**没有** `sessionKey / turnId / toolUseId` | **G1 gap**：PR-(-1) 必须先扩字段 |
 | `ToolExecutor` 签名 | `(toolName, input) => Promise<ToolResult>`，**不传 ctx** | **G2 gap**：PR-(-1) 必须扩签名 + AgentRunner 透传 |
-| `AgentRunner.run` | **不消费** `RunParams.signal`（字段存在但内部不读） | spec §决策 1 已对齐：v1 abort 通路全断；保留接口预留给将来 abort 子系统 |
-| `RunResult.stopReason` 实际值 | `'end_turn' / 'max_llm_calls' / 'error'`；**`'aborted'` 是死分支**，Anthropic API 不产生（核 `AgentRunner.runAttempt` 的 stopReason 赋值点 [AgentRunner.ts:303 / 314 / 344 / 354](../../src/core/runner/AgentRunner.ts#L303)） | impl 内 outcome 推断逻辑只覆盖前三种 |
+| `AgentRunner.run` | Subagent 实施时不消费 `RunParams.signal`；后续 Abort Spec 已接通 Runtime → Runner → ToolContext → Subagent 的 signal 链 | 当前支持用户主动中止与 shutdown 级联 |
+| `RunResult.stopReason` | Subagent 实施时 `'aborted'` 尚不可达；后续 Abort Spec 已实现 `'aborted'` 正常返回 | SubagentRunner 映射为 `outcome='aborted'`，不抛错 |
 | `loadContextFiles(workspaceDir, opts)` | 固定读 `<workspaceDir>/.agent/<name>` | **I2 gap**：PR-(-1) 或 PR-3 内必须扩 loader 加 `loadContextFilesFromDir(absDir)` 底层 API，避免双 `.agent/` 拼接 |
 | `RuntimeApp.routeContextByTurn` | `Map<turnId, MessageRouteContext>` 已存在（`RuntimeApp.ts:65`） | PR-6 的 `SubagentHostBindings` 实现内部通过此 map 做 parentTurnId → originChannel 查询，不暴露 channel 类型给 core/subagent |
 

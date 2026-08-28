@@ -394,7 +394,7 @@ ASCII 备用（mermaid 渲染失败时参考）：
 代价：
 
 - 单条 turn 时长可能成倍延长（父 LLM 等子 Agent 跑完）。可接受，等用户提"想并行"再做 v2。
-- 父 abort 时需要把 `AbortSignal` 向下传给子的 LLM 调用——**v1 整个 runtime 未接通 abort 通路**：RuntimeApp 不创建 AbortController，AgentRunner 不填充 `RunParams.signal` 与 `ToolContext.signal`（始终 `undefined`）。`signal?: AbortSignal` 字段作为接口占位保留，**为未来 abort 子系统（独立 spec：待写 `runtime-abort-spec.md`）对接**。现有读 `ctx.signal` 的内置工具（仅 `exec.ts`，传给 `runCommand` / `startManagedCommand`）拿到 `undefined` 后退化为无 signal 行为（与当前一致，RunCommand 静默允许 undefined signal）。subagent v1 不引入新的 abort 机制，跟随主 agent 现状。
+- 父 abort 通过同一个 `AbortSignal` 自然透传到子 Agent：RuntimeApp 创建 per-session `AbortController`，AgentRunner 将 `RunParams.signal` 传入 `ToolContext.signal`，`task` 工具再传给 SubagentRunner 和子 Runner。子 Agent 以 `outcome='aborted'` 正常返回。详见 [core-abort-spec](./core-abort-spec.md)。
 
 **注：阻塞调用是 v1 的范围约束，不是最终设计。** 复杂任务场景下父 agent 需要并行派发多个独立子任务，串行会导致时间成倍增长。v2 将在 `AgentRunner` tool 循环层面支持同轮多 `task` 并发（详见 §14 v2+ 路标）。
 
@@ -758,7 +758,7 @@ SubagentRunInput {                      // 外部入口类型：LLM `task` 工�
   prompt: string                        // 子的 user message
   trigger: RunTrigger
   lifecycle: RunLifecycle
-  signal?: AbortSignal                  // 预留，为未来 abort 子系统接入；v1 未消费（§决策 1）
+  signal?: AbortSignal                  // 用户中止 / shutdown 信号；传入子 Agent 执行链
 }
 ```
 
@@ -775,7 +775,7 @@ SubagentRunResult {
                                         // outcome='max_llm_calls' → 最后一次 LLM assistant 响应文本（可能为空）
                                         // outcome='aborted'       → 截断前最后一次 LLM 响应（可能为空）
                                         // outcome='error'         → 通常为空字符串
-  outcome: 'ok' | 'error' | 'aborted' | 'max_llm_calls'   // 'aborted' v1 不产生，预留接口（§决策 1）
+  outcome: 'ok' | 'error' | 'aborted' | 'max_llm_calls'   // AgentRunner stopReason='aborted' 时映射为 aborted
   reason?: string
   usage: TokenUsage                     // 自身 + 所有子孙 Agent 的累计消耗（与 RunResult.usage 同语义；详 §决策 6）
   durationMs: number
@@ -854,7 +854,7 @@ export interface SubagentRunRequest {
   prompt: string;                   // 子的 user message
   trigger: RunTrigger;              // 区分 llm-tool / library 入口
   lifecycle: RunLifecycle;          // v1 only 'blocking'
-  signal?: AbortSignal;             // 预留，为未来 abort 子系统接入；v1 未消费（§决策 1）
+  signal?: AbortSignal;             // 用户中止 / shutdown 信号；透传给子 AgentRunner
   parentSessionKey: string;
   parentTurnId: string;             // 替代裸 channel/clientId；host 自己用此查 routeContextByTurn
 }
@@ -1253,7 +1253,7 @@ SubagentConfigEntry {
 | LLM 把整个父对话作为 `prompt` 传给子 → 隐私 / token 泄露 | 工具 description 明确"prompt 应只含子需要的信息"；不在底层强制（影响表达力）。 |
 | 子 Agent 写文件破坏 workspace | 复用现有 `fsWorkspaceOnly` 路径策略 + approval allowlist。子默认无 `apply_patch / write_file / edit_file`（继承父默认集时通过 `tools` 子集裁剪——v1 由用户在 config subagent 条目显式列）。 |
 | 子 Agent 死循环吃 token | config 里 `maxLlmCalls` 强制；缺省走父 `maxLlmCalls`（v1.0 默认 12）。 |
-| abort 时 subagent 与父 agent 同步停止 | **v1 整个 runtime 未接通 abort 通路**（主 agent 也未支持）：`ToolContext.signal` / `RunParams.signal` / `SubagentRunInput.signal` 都是预留接口，运行时始终为 `undefined`（AgentRunner 主动设 undefined）。现有唯一读 `ctx.signal` 的工具（`exec.ts`）拿到 undefined 后退化为无 signal 行为。`AgentRunner` `stopReason === 'aborted'` 检查是死代码，Anthropic API 不产生该值。**abort 子系统作为独立 PR 链设计**（未来 `runtime-abort-spec.md`），覆盖 SIGINT 接管 / RuntimeApp.cancel API / AgentRunner 填充 signal / SubagentRunner 树形传播。subagent v1 不领践。 |
+| abort 时 subagent 与父 agent 同步停止 | 已由 [core-abort-spec](./core-abort-spec.md) 落地：父 `AbortSignal` 经 `ToolContext.signal` / `SubagentRunInput.signal` 传给子 Runner，子返回 `outcome='aborted'`；signal 未响应工具仍可能运行到自然结束。 |
 | 子 LLM 调用栈溢出（误配 + 多层 spawn） | depth 限制双保险：默认子无 `task` 工具 + `maxDepth` 阈值兜底。 |
 | profile 文件被恶意修改 | 不适用——v1 无独立 profile 文件，subagent 定义在 config 里，agentDir 的 md 文件与主 agent workspace 文件同等信任级别。 |
 | 子 session 与父 session 同名冲突 | sessionKey 命名规则保证唯一（统一格式 `<rootLabel>:subagent:<runId>:<depth>`，runId 为 UUID）。 |
@@ -1266,7 +1266,7 @@ SubagentConfigEntry {
 |---|---|---|
 | `outcome: 'ok'` | `{ content: result.text }` | 子的最终回复 |
 | `outcome: 'max_llm_calls'` | `{ content: …, isError: true }` | `Subagent stopped after N rounds before completing. Partial output:\n<text>` |
-| `outcome: 'aborted'` | `{ content: …, isError: true }` | `Subagent was aborted before completing.`（v1 不会出现；接口预留给未来 abort 子系统） |
+| `outcome: 'aborted'` | `{ content: …, isError: true }` | `Subagent was aborted before completing.` |
 | `outcome: 'error'` | `{ content: …, isError: true }` | `Subagent failed: <reason>` |
 | 抛 `ContextOverflowError` | `{ content: …, isError: true }` | `Subagent context overflow: the task was too large for the subagent's context window even after compaction. Consider breaking the task into smaller pieces, simplifying the prompt, or providing less background.` |
 | 其他意外抛错 | 让 `createToolExecutor` 兜底（转通用 isError） | `Error executing tool "task": <message>` |
@@ -1309,7 +1309,7 @@ SubagentConfigEntry {
 | 特性 | 触发条件 / 备注 |
 |---|---|
 | **同轮并行多 `task`** | 用户报"task 串行慢"；改 `AgentRunner` tool 循环 + Tool 接口加 `parallelSafe?: boolean` |
-| **abort 子系统**（独立 spec：待写 `runtime-abort-spec.md`） | **v1 整个 runtime 未接通 abort**。该 PR 链覆盖：SIGINT 接管、`RuntimeApp.cancel(sessionKey?)` API、`AgentRunner` 消费 `RunParams.signal`、ToolExecutor 透传 `ctx.signal`、SubagentRunner 父→子 signal tree-cascade。subagent v1 各类型保留 `signal?` 字段作为对接预留 |
+| **abort 子系统** | ✅ 已由 [core-abort-spec](./core-abort-spec.md) 实现：CLI SIGINT、WebSocket `abort_turn`、`RuntimeApp.abortTurn(sessionKey)`、Runner/Tool/Subagent signal 传播与父子级联中止 |
 | **全局并发预算 / rate-limit** | RuntimeApp 增 `globalRunSemaphore` |
 
 **B. 定时任务**

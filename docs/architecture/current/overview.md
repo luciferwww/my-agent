@@ -1,6 +1,7 @@
 # 架构总览
 
 > 文档日期：2026-05-29
+> 状态同步：2026-08-27（用户消息广播、用户主动中止）
 
 ---
 
@@ -81,6 +82,8 @@ core/session  core/prompt   core/tools   adapters/llm
 Channel 入站消息
   ↓
 RuntimeApp.handleInboundChannelMessage
+  → media 处理 + 输入装配
+  → emit user_message（同 session 多 client 广播）
   → enqueueQueuedTurn → scheduleNextQueuedTurn
   → startQueuedTurn（生成 turnId）
   ↓
@@ -105,6 +108,12 @@ AgentRunner.run(RunParams)
 AgentEvent fanout
   → channel.send(event)                  ← CliChannel / WebSocketChannel
   → RuntimeAppOptions.onAgentEvent?
+
+用户主动中止（CLI Ctrl+C / WS abort_turn / library abortTurn）
+  → RuntimeApp.abortTurn(sessionKey)
+  → AbortSignal 传入 Runner / LLM / Tool / Subagent
+  → RunResult.stopReason = 'aborted'
+  → 清空同 session 普通消息队列并 emit messages_dropped
 ```
 
 ### 4.2 压缩触发流程
@@ -146,6 +155,6 @@ AgentRunner.compactHistory
 | **Composition Root 唯一** | 只有 `runtime/` 调用 `loadConfig()`；底层模块只接收最小参数子集 |
 | **接口与实现分离** | `LLMClient`、`MemoryStore`、`Channel`、`LogAdapter` 均为接口，实现可替换 |
 | **可选能力降级** | Memory 初始化失败不阻塞启动；无 approval channel 时直接不注册 hook |
-| **事件自描述** | `AgentEvent` 自带 `sessionKey + turnId`，fanout 无需查表 |
+| **事件自描述** | `AgentEvent` 自带 `sessionKey`；turn 内事件带 `turnId`，`user_message` 用 `messageId` 并由 `run_start.originMessageId` 关联 |
 | **持久化立即写入** | 消息产生即写 JSONL，不批量——崩溃后可从磁盘恢复历史 |
 | **配置边界清晰** | 每层只传下游需要的字段，不透传完整 `AgentDefaults` |

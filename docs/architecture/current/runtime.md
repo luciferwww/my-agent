@@ -2,6 +2,7 @@
 
 > 基准版本：v1.0
 > 文档日期：2026-05-27
+> 状态同步：2026-08-27（用户消息广播、用户主动中止）
 > 关联文档：`adapter_channel.md` · `core_runner.md` · `platform_config.md`
 
 ---
@@ -20,6 +21,8 @@
 | 调度 | per-session 串行队列；steering inbox 与普通队列分离 |
 | 执行 | 每轮构建 prompt，委托给 `AgentRunner.run()` |
 | 路由 | approval / interaction 按起源 channel + clientId 精准回路，不广播 |
+| 广播 | 入站装配完成后发送 `user_message`，让同 session 多 client 共享用户消息时间线 |
+| 中止 | 维护 per-session `AbortController`，支持 CLI / WebSocket / library 主动中止并清空普通队列 |
 | 生命周期 | 统一管理启动、运行、关闭三段 |
 
 ### 1.2 容易混淆的边界
@@ -128,7 +131,7 @@ RuntimeDependencies {
 ```
 RunTurnParams {
   sessionKey: string
-  message: string
+  message: string | ChatContentBlock[]
   promptMode: 'full' | 'minimal' | 'none'   // v1.0 必填，不再回退 config
   model?: string              // 覆盖 config 默认模型
   maxTokens?: number
@@ -136,6 +139,7 @@ RunTurnParams {
   safetyLevel?: string
   reloadContextFiles?: boolean
   turnId?: string             // 外部传入用于日志关联；不传则自动生成
+  originMessageId?: string    // channel queued 路径内部透传；关联 user_message
 }
 ```
 
@@ -421,13 +425,14 @@ stateDiagram-v2
 ```
 1. emit shutdown_start，setPhase('closing')
    → assertCanRunForSession 开始拒绝新 turn
-2. await Promise.allSettled([...inFlightRuns])   // 等待当前 turn 收尾
-3. stopChannels()                                // 释放 readline / WebSocket I/O
-4. turnInteractionManager.close()               // 拒绝 pending 交互
-5. 遍历 collectDisposables()，逐个 close()      // MemoryManager 等
-6. resources.contextFiles = []
-7. setPhase('closed')
-8. emit shutdown_end，返回 RuntimeShutdownReport
+2. abort 所有 active turn                         // Abort-then-wait
+3. await Promise.allSettled([...inFlightRuns])    // 等待当前 turn 收尾
+4. stopChannels()                                 // 释放 readline / WebSocket I/O
+5. turnInteractionManager.close()                // 拒绝 pending 交互
+6. 遍历 collectDisposables()，逐个 close()       // MemoryManager 等
+7. resources.contextFiles = []
+8. setPhase('closed')
+9. emit shutdown_end，返回 RuntimeShutdownReport
 ```
 
 `close()` 幂等：第一次调用的 Promise 被缓存，重入直接返回同一个结果。  
@@ -458,11 +463,19 @@ stateDiagram-v2
 
 - **`RuntimeEvent`**（via `onEvent`）：应用装配与生命周期事件
   - `app_start` / `app_ready` / `turn_start` / `turn_end`
-  - `context_reload` / `warning` / `error`
+  - `context_reload` / `messages_dropped` / `warning` / `error`
   - `shutdown_start` / `shutdown_end`
 
 - **`AgentEvent`**（via `onAgentEvent` + `channel.send`）：turn 内执行事件
-  - `text_delta` / `tool_use` / `tool_result` / `llm_call` / `compaction_*` 等
+  - `user_message` / `text_delta` / `tool_use` / `tool_result` / `llm_call` / `compaction_*` 等
+
+`user_message` 在输入装配完成后、queued / steering 分流前由 Runtime 产生。它使用独立 `messageId`；queued 消息后续通过 `run_start.originMessageId` 与实际 turn 关联。附件只广播摘要，不广播原始 Base64。
+
+### 12.1 用户主动中止
+
+三个入口共享 `RuntimeApp.abortTurn(sessionKey)`：CLI `Ctrl+C`、WebSocket `abort_turn`、library 直接调用。Runtime 为每个 active session 保存一个 `AbortController`，并把 signal 透传给 Runner；中止同时清空该 session 尚未启动的普通队列。Runner 以 `stopReason='aborted'` 正常返回，不把用户中止当作普通错误抛出。
+
+主动中止不等于硬 steering：它终止当前 turn，不把一条新指令注入被中止的执行流。硬 steering 仍是规划项。
 
 两套平面不互替；前者给应用监控，后者给 UI 实时展示。
 
