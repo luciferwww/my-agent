@@ -3,7 +3,7 @@
 ## 1. 文档状态与证据规则
 
 - **状态：** Draft
-- **版本：** 0.1
+- **版本：** 0.2
 - **日期：** 2026-08-28
 - **所有者：** 项目所有者
 - **执行计划：** [AF-03 Target Architecture Execution Plan](../roadmap/af-03-target-architecture-plan.md)
@@ -143,23 +143,162 @@ Phase 1–6 填写目标章节时，每个重要结论必须使用以下前缀�
 
 **Phase：** 1
 
-本节将在 Phase 1 定义 Domain、Application、Infrastructure、Composition、Stable Core、Port、Adapter、Runtime Builder、RuntimeApp 和 Composition Root。
+本节定义逻辑所有权和源码依赖方向，不要求当前目录立即重排。目录、文件和公共类型的迁移只能在 Characterization/Fitness 保护下由后续 Architecture Slice 执行。
 
-### 4.1 待产出
+### 4.1 四个逻辑边界
 
-- 四个逻辑边界的职责表；
-- 允许和禁止的源码依赖边；
-- 当前模块到目标逻辑边界的候选映射；
-- Runtime、Runner 和 Composition 的职责对照；
-- Mermaid 依赖图及语义一致的 ASCII fallback；
-- 可转化为 AF-04 Fitness Tests 的依赖规则。
+| 边界 | 拥有 | 可以依赖 | 禁止拥有或依赖 |
+|---|---|---|---|
+| Domain | Session、Turn、Message、Event 等核心概念、值、不变量和与集成无关的行为 | Domain 内部类型和标准语言能力 | Application 用例、Provider/Channel SDK、Transport、Store 实现、Config loader、Runtime、Composition |
+| Application | Turn Execution、Model Resolution、Subagent Orchestration 等用例；Application Policy；所需的 core-owned Port | Domain；Application 自己拥有的 Port/Contract | 具体 SDK、Transport、Store、配置文件格式、Composition Root、进程级资源创建和释放 |
+| Infrastructure | Provider、Channel、Store、文件系统、日志和其他外部机制的 Adapter；协议、错误、事件和数据映射 | 被实现或调用的 core-owned Port/Contract；必要 Domain 类型；外部 SDK | 业务 Policy、Application 用例所有权、Composition Root、RuntimeApp 私有状态 |
+| Composition | 配置加载与验证、具体实现选择、Module/Extension 发现、对象图构建、进程级资源启动和部分失败清理 | Domain、Application、Infrastructure 的公开构造/注册入口 | Turn/队列业务、Runner 执行循环、领域规则、通用 DI Container、任意模块可访问的服务集合 |
 
-### 4.2 Phase 1 完成条件
+**Accepted Constraint：** Stable Core 是 Domain、Application 及其拥有的公共契约，不是单个目录。Stable Core 不依赖 Infrastructure 或 Composition；Port 由需要外部行为的 Stable Core 边界拥有，Adapter 依赖并实现该 Port。
 
-- [ ] Stable Core 不依赖具体 Provider/Channel SDK、Store 或 Composition；
-- [ ] Runtime/Runner/Composition 无重叠所有权；
-- [ ] 不引入通用 DI Container 或 Service Locator；
-- [ ] 依赖规则可以由静态检查表达。
+**Target Decision：** Runtime Application 属于 Application 边界。它可以编排 Domain 概念和 Application 服务，但不能加载配置、发现实现或识别具体 Provider/Channel 类型。
+
+### 4.2 源码依赖方向
+
+箭头只表示源码依赖方向，不保证运行时调用同向。Infrastructure Adapter 在运行时可以被 Application 通过 Port 调用，但源码仍由 Adapter 指向 core-owned Port。
+
+```mermaid
+flowchart TB
+	Composition[Composition / Runtime Builder]
+	Infrastructure[Infrastructure Adapters]
+	Application[Application / Runtime Application]
+	Ports[Application-owned Ports and Contracts]
+	Domain[Domain]
+	External[External SDKs / Transports / Stores]
+
+	Composition --> Infrastructure
+	Composition --> Application
+	Composition --> Domain
+	Infrastructure --> Ports
+	Infrastructure --> Domain
+	Infrastructure --> External
+	Application --> Ports
+	Application --> Domain
+	Ports --> Domain
+```
+
+```text
+Composition / Runtime Builder ──> Infrastructure Adapters ──> External SDKs
+			  │                         │
+			  │                         ├─implements─> Application-owned Ports
+			  │                         └────────────> Domain types
+			  ├─────────────────────────────────────> Application
+			  └─────────────────────────────────────> Domain
+
+Application / Runtime Application ──> Application-owned Ports ──> Domain
+Application / Runtime Application ──────────────────────────────> Domain
+
+Forbidden reverse edges:
+Domain -X-> Application / Infrastructure / Composition
+Application -X-> Infrastructure / Composition / concrete SDKs
+Infrastructure -X-> Composition / RuntimeApp private state
+```
+
+允许边：
+
+- Domain 只能依赖 Domain 内部；
+- Application 可以依赖 Domain 和 Application 拥有的 Port/Contract；
+- Infrastructure 可以依赖其实现的 Stable Core Port/Contract、必要 Domain 类型和外部 SDK；
+- Composition 可以依赖所有边界的公开构造/注册入口，以选择并连接具体实现；
+- 测试 Fake 可以实现 core-owned Port，但不能成为生产 Service Locator。
+
+禁止边：
+
+- Domain/Application 导入 Infrastructure、Composition 或具体 Provider/Channel SDK；
+- Stable Core 的公共契约暴露外部 SDK 类型；
+- RuntimeApp/Runner 导入 Config loader、具体 Provider/Channel、可变 Registry 或 Extension loader；
+- Adapter 访问 RuntimeApp 私有状态或从 Composition 反向解析服务；
+- 新核心依赖 Compatibility Adapter 或 Legacy 权威路径；
+- 为每个类机械创建无第二实现、Fake 或独立验证价值的 Port。
+
+### 4.3 Runtime、Runner 与 Composition
+
+| 所有者 | 唯一职责 | 不负责 |
+|---|---|---|
+| Composition Root | 进程入口处选择 Config source、Builtin Runtime Module、External Extension 和具体 Adapter；调用 Runtime Builder | 队列、Turn、Model Resolution、Runner 循环、Channel 路由 |
+| Runtime Builder | 验证构建输入，发现并创建组件，收集 Contribution，建立 Registry/资源图，按依赖顺序启动，并清理部分启动失败 | 处理用户消息、调度 Turn、执行 Tool Use Loop、成为全局服务容器 |
+| RuntimeApp | 接收入站请求，维护 per-session 队列，创建和调度 Turn，捕获 Turn 所需 Snapshot，维护路由/Fanout/取消，并编排 Shutdown 请求 | 加载 Config、发现 Module/Extension、解析 Model Facts、构造具体 Adapter、执行 LLM/Tool 循环 |
+| Runner | 在一个 Turn 内执行 LLM/Tool 循环、上下文预算/压缩、Tool 前后 Hook、执行事件和结果 | 加载 Config、创建 Session/Provider/Channel、发现 Module、管理进程级资源、调度其他 Session |
+
+**Target Decision：** 当前 `src/runtime/` 的职责必须按上表逻辑拆分：`RuntimeApp` 的队列/Turn/路由/Fanout/取消属于 Runtime Application；bootstrap、具体实现选择和注册表构建属于 Composition。该决定不要求 AF-03 内移动目录。
+
+**Target Decision：** Runtime Builder 把构建完成的显式依赖交给 RuntimeApp。RuntimeApp 与 Runner 不得保存 Runtime Builder、Composition Root 或可解析任意服务的容器引用。
+
+### 4.4 Provider 的分发与扩展边界
+
+**Target Decision：** my-agent 发行版只捆绑并由项目维护 Anthropic Provider Integration。Anthropic 是 Bundled Runtime Module，但必须通过与 External Extension 相同的 core-owned Provider Contract、Contribution、Registry 和 Lifecycle 机制接入；Stable Core 不包含 Anthropic 特殊分支。
+
+**Target Decision：** OpenAI、Gemini、Bedrock 等其他 Provider 不属于 my-agent 的内置能力或兼容性承诺。它们可以由第三方 External Extension 提供，具体 Adapter、SDK、配置、Model Facts、测试、发布和兼容性由该 Extension 维护者负责。
+
+**Accepted Constraint：** my-agent 负责 Provider Extension Contract、注册冲突检测、Registry Snapshot、Model Resolution 公共语义和 Contract Test Kit；第三方负责其 Provider Contribution 的正确性。Builtin 与 External 的来源差异不能泄漏给 Application 消费者。
+
+**Accepted Constraint：** 可运行发行版必须至少捆绑一个 Provider Integration，但 Provider 已注册不等于 Runtime 已就绪。缺少有效 Provider Connection 或 Model Reference 时必须显式进入不可接受 Turn 的状态，不能静默切换 Provider、产生费用或使用测试 Fake。
+
+**Deferred：** Provider Contribution 字段、Model Catalog/Descriptor 关系、Connection Schema、Model Resolution 顺序和失败语义由 Phase 2–3 定义；动态启停、Snapshot 切换、排空和回滚由 Phase 4/AF-06 验证。AF-05 可以使用独立 Fake 或实验 Provider 验证第二实现，不构成对 OpenAI 或其他 Provider 的生产支持承诺。
+
+### 4.5 当前模块到目标边界的候选映射
+
+以下映射是基于 Current 文档的 `Current Fact Candidate`，不是本次代码核验结果，也不授权立即移动文件。
+
+| 当前区域 | 目标逻辑所有权候选 | 迁移说明 |
+|---|---|---|
+| `src/runtime/RuntimeApp.ts` 及队列/路由状态 | Application / Runtime Application | 保留队列、Turn、路由、Fanout、取消和 Shutdown 编排；移出构建与具体实现选择 |
+| `src/runtime/bootstrap.ts`、具体注册表构建、配置到实现映射 | Composition / Runtime Builder | 从 RuntimeApp 运行职责中分离；只保留公开构造/注册入口依赖 |
+| `src/core/runner/` | Application / Turn Execution | 保留执行循环；Port/领域类型按所有权拆分，不读取 Config 或发现实现 |
+| `src/core/session/` | Domain + Application Port + Infrastructure Store | Session 语义和 Contract 留在 Stable Core；JSONL/I/O 实现归 Infrastructure |
+| `src/core/prompt/` | Application | 编排 Prompt 用例；Provider 特有消息格式归 Provider Adapter |
+| `src/core/tools/` | Domain Contract + Application Tool Execution | Tool 契约和执行语义留在 Stable Core；外部 I/O 由 Adapter/Module 实现 |
+| `src/core/tools/builtin/` | Bundled Runtime Module + Infrastructure | 作为 Bundled Contribution 接入；文件、网络、进程 I/O 不成为 Domain |
+| `src/core/memory/` | Application Port/Policy + Infrastructure Store | 检索用例与存储/索引实现按 Port 分离 |
+| `src/core/workspace/` | Application Use Case + Infrastructure File Adapter | Workspace 规则与文件系统读取按所有权分离 |
+| `src/adapters/llm/` | Infrastructure Provider Integration | Model invocation Port 移交 Stable Core 所有；Anthropic 实现成为 Bundled Runtime Module |
+| `src/adapters/channel/` | Infrastructure Channel Integration | Channel Contract 移交 Stable Core；CLI/WebSocket Transport 留在 Adapter；Interaction 协调责任由后续调用流确认 |
+| `src/platform/config/` | Composition + Configuration Input | Config 加载/验证在 Composition；不能把 Config 对象透传为全局服务 |
+| `src/platform/logger/` | Application-owned Observability Port + Infrastructure Adapter | 目标边界使用显式 Port；当前全局静态状态作为 Legacy Candidate 评估 |
+
+**Legacy Candidate：** `src/runtime/`、`src/core/session/`、`src/core/memory/`、`src/core/workspace/` 和 `src/platform/logger/` 都可能同时包含多个逻辑边界。后续 Slice 应迁移权威类型和真实调用方，而不是仅为目录整齐做一次性重排。
+
+### 4.6 不使用通用 DI Container 或 Service Locator
+
+Phase 1 的构造原则足以表达当前目标对象图：
+
+1. Composition Root 显式选择 Module、Extension 和 Adapter；
+2. Runtime Builder 依据声明的构建输入创建有限对象图；
+3. 消费者通过构造参数或明确用例参数接收所需 Port、Registry Snapshot 或受限 Capability；
+4. Registry 只查询特定领域的 Contribution，不解析任意应用服务；
+5. Extension Capability 只暴露获准的最小平台能力，不能取得 RuntimeApp 或容器；
+6. Resource Ownership 表记录创建者和关闭者，不能依靠容器作用域隐式释放。
+
+因此，通用 `get<T>(token)`、全局服务映射或 RuntimeApp 私有状态访问不会提供必要业务语义，只会隐藏依赖和 Lifecycle Owner，属于禁止设计。
+
+### 4.7 AF-04 Fitness Test 候选
+
+| ID | 候选规则 | 验证方式 | 对应原则 |
+|---|---|---|---|
+| P1-FT-01 | Domain/Application 不导入 Infrastructure 或 Composition | import graph / dependency rule | AP-01 |
+| P1-FT-02 | Provider/Channel SDK 只出现在对应 Infrastructure Integration | package import allowlist | AP-01 |
+| P1-FT-03 | Runner 不依赖 Config loader、具体 Provider、Extension loader 或可变 Registry | import rule + public constructor check | AP-01、AP-03、AP-05、AP-11 |
+| P1-FT-04 | RuntimeApp 不依赖具体 Provider/Channel 类型或 Composition 服务 | import rule + RuntimeApp responsibility tests | AP-01、AP-11 |
+| P1-FT-05 | Infrastructure Adapter 依赖并实现 core-owned Port，Stable Core 不导入 Adapter | import graph + Fake Adapter Contract Tests | AP-01、AP-06 |
+| P1-FT-06 | Extension/Module 不访问 RuntimeApp 私有状态或通用 Service Locator | forbidden import/symbol rule | AP-08、AP-11 |
+| P1-FT-07 | 新增测试 Provider Extension 不修改 Runner、RuntimeApp 或核心领域联合类型 | change-locality test / review check | AP-01、AP-04、AP-12 |
+| P1-FT-08 | 新核心不依赖 Compat/Legacy 路径 | import graph / path denylist | AP-06、AP-07 |
+
+这些是 AF-04 的候选输入，不表示当前目录已经满足规则。AF-04 必须根据实际代码、测试和构建工具确认可执行路径与必要例外。
+
+### 4.8 Phase 1 完成条件
+
+- [x] Stable Core 不依赖具体 Provider/Channel SDK、Store 或 Composition；
+- [x] Runtime/Runner/Composition 无重叠所有权；
+- [x] 不引入通用 DI Container 或 Service Locator；
+- [x] 依赖规则可以由静态检查表达。
+
+独立复审未发现 Critical 或 High 问题，并确认 10 个 Phase 1 Check Items、3 个 Exit Gate、Mermaid/ASCII 等价性和 AF-04 Fitness Test 候选均有设计证据。项目所有者于 2026-08-28 接受 Phase 1 的逻辑边界、依赖方向、Provider 分发约束和候选迁移映射。该接受只完成 Phase 1，不表示当前代码已满足目标依赖规则，也不表示 Target Architecture 整体已接受。
 
 ## 5. Provider and Model Resolution
 

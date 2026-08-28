@@ -91,22 +91,22 @@
 
 ### Check Items
 
-- [ ] 定义 Domain 拥有的概念、不变量和禁止依赖；
-- [ ] 定义 Application 拥有的用例、Policy、Port 和禁止依赖；
-- [ ] 定义 Infrastructure Adapter 的 SDK/Transport/Store 隔离责任；
-- [ ] 定义 Composition Root、Runtime Builder 和具体实现选择责任；
-- [ ] 定义 Runtime 与 Runtime Composition 的差异；
-- [ ] 给出现有主要模块到目标逻辑边界的候选映射；
-- [ ] 标记需要迁移而不是立即重排的当前目录；
-- [ ] 绘制源码依赖图和 ASCII fallback；
-- [ ] 明确允许边、禁止边和由 core-owned Port 实现的依赖倒置；
-- [ ] 证明不需要通用 DI Container 或 Service Locator。
+- [x] 定义 Domain 拥有的概念、不变量和禁止依赖；
+- [x] 定义 Application 拥有的用例、Policy、Port 和禁止依赖；
+- [x] 定义 Infrastructure Adapter 的 SDK/Transport/Store 隔离责任；
+- [x] 定义 Composition Root、Runtime Builder 和具体实现选择责任；
+- [x] 定义 Runtime 与 Runtime Composition 的差异；
+- [x] 给出现有主要模块到目标逻辑边界的候选映射；
+- [x] 标记需要迁移而不是立即重排的当前目录；
+- [x] 绘制源码依赖图和 ASCII fallback；
+- [x] 明确允许边、禁止边和由 core-owned Port 实现的依赖倒置；
+- [x] 证明不需要通用 DI Container 或 Service Locator。
 
 ### Exit Gate
 
-- [ ] Stable Core 不依赖具体 Provider/Channel SDK、Store 或 Composition；
-- [ ] Runtime/Runner/Composition 的职责没有重叠所有权；
-- [ ] 依赖图可以直接转化为 AF-04 Fitness Test 候选。
+- [x] Stable Core 不依赖具体 Provider/Channel SDK、Store 或 Composition；
+- [x] Runtime/Runner/Composition 的职责没有重叠所有权；
+- [x] 依赖图可以直接转化为 AF-04 Fitness Test 候选。
 
 ## 7. Phase 2：Model Resolution 架构
 
@@ -288,7 +288,7 @@ Architecture Review 必须选择：修订当前 Phase、提出 ADR、转为 Spik
 | Phase | 状态 | 完成日期 | 证据/备注 |
 |---|---|---|---|
 | Phase 0：输入基线与追踪矩阵 | Completed | 2026-08-28 | `target-architecture.md` §1–3、§10–12、Appendix A–D；独立复审完成并修正 3 High / 4 Medium；项目所有者已接受 |
-| Phase 1：逻辑边界与依赖方向 | Not Started |  |  |
+| Phase 1：逻辑边界与依赖方向 | Completed | 2026-08-28 | `target-architecture.md` §4 Draft v0.2；独立复审无 Critical/High；项目所有者已接受逻辑边界、依赖方向和 Provider 分发约束 |
 | Phase 2：Model Resolution 架构 | Not Started |  |  |
 | Phase 3：Extension Framework 静态骨架 | Not Started |  |  |
 | Phase 4：动态 Registry 与 Lifecycle 契约 | Not Started |  |  |
