@@ -3,8 +3,8 @@
 ## 1. 文档状态与证据规则
 
 - **状态：** Draft
-- **版本：** 0.3
-- **日期：** 2026-08-28
+- **版本：** 0.4
+- **日期：** 2026-08-31
 - **所有者：** 项目所有者
 - **执行计划：** [AF-03 Target Architecture Execution Plan](../roadmap/af-03-target-architecture-plan.md)
 - **父计划：** [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) AF-03
@@ -30,9 +30,9 @@
 | 文档 | 状态 | AF-03 中的用途 |
 |---|---|---|
 | [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) | Accepted v0.8 | AF-03 范围、验收、Foundation Gate 和 Slice 顺序 |
-| [AF-03 Execution Plan](../roadmap/af-03-target-architecture-plan.md) | Accepted v1.0 | Phase、Check Items、Exit Gates 和停止条件 |
+| [AF-03 Execution Plan](../roadmap/af-03-target-architecture-plan.md) | Accepted v1.1 | Phase、Check Items、Exit Gates 和停止条件 |
 | [Architecture Principles](architecture-principles.md) | Accepted v1.0 | AP-01 至 AP-13 的稳定约束和验证候选 |
-| [Domain Glossary](domain-glossary.md) | Accepted v1.0 | 规范术语、逻辑所有者和非含义 |
+| [Domain Glossary](domain-glossary.md) | Accepted v1.2 | 规范术语、逻辑所有者和非含义 |
 | [Development Workflow](../development-workflow.md) | Accepted v1.0 | 状态、评审、证据、DoR/DoD 和文档治理 |
 
 发生冲突时遵循 Architecture Foundation Plan 的权威优先级。本节其他证据不得覆盖上述 `Accepted Constraint`。
@@ -546,22 +546,191 @@ AF-05 不以接入 OpenAI 或其他生产 Provider 为成功条件；独立 Fake
 
 **Phase：** 3
 
-本节将在 Phase 3 定义 Runtime Module、External Extension、Contribution、Tool/Hook/Channel Registry、启动期只读 Registry Snapshot、Config Namespace、Schema、Extension Capability 和私有资源边界。
+### 6.1 设计状态与静态范围
 
-### 6.1 待产出
+本节定义 Runtime Module 与 External Extension 在启动期的发现、加载、注册、校验和消费边界。它只授权 Runtime Builder 在 RuntimeApp 启动前构建一个只读 Registry Snapshot；文件变化通过进程重启生效，不授权 watcher、运行中 reload、动态 Contribution 事务、Snapshot 代际切换或旧资源排空。
 
-- Builtin/External 共同注册和 Lifecycle 模型；
-- Tool、Hook、Channel Contribution 的分类与消费关系；
-- Extension 配置和受限上下文边界；
-- 跨 Channel/Tool/Hook 测试 Extension 静态组合图；
-- AF-06 待验证的接口形状和失败条件。
+**Target Decision：** Agent Home 是 my-agent 管理本机运行数据的规范根目录，`<agent-home>/extensions` 是唯一默认 External Extension 安装和自动发现根目录。Discovery 只枚举该目录的直接子目录；每个候选必须以 `extension.json` 作为 Extension Descriptor，不递归搜索、不执行散落脚本、不扫描 `node_modules`，也不接受任意配置扫描路径。
 
-### 6.2 Phase 3 完成条件
+**Evidence Boundary：** 本节冻结逻辑责任、错误原子性、消费边界和最小公开语义，不冻结 Agent Home 的 OS 路径解析、`extension.json` 字段集合、TypeScript 接口、模块格式、Config Schema API、Capability 对象或 Lifecycle 方法形状。这些形状必须由 AF-06 Spike 验证后进入 Architecture Slice。
 
-- [ ] 新 Extension 不要求修改 Runtime、Runner、Bootstrap 或中央类型联合；
-- [ ] Extension 私有资源不成为全局 Service Locator；
-- [ ] Builtin/External 差异不泄漏给 Contribution 消费者；
-- [ ] Slice 3/4 只使用启动期只读 Snapshot。
+### 6.2 Source acquisition、Discovery、Descriptor 与 Loader
+
+| 概念 | 所有者 | 输入 | 输出 | 不负责 |
+|---|---|---|---|---|
+| Agent Home resolution | Composition / Configuration | CLI、环境或平台默认位置 | 一个已规范化 Agent Home 路径 | 扫描扩展、执行入口、注册能力 |
+| Extension Discovery | Runtime Composition | `<agent-home>/extensions` | 未执行代码的 Extension Descriptor 候选与发现诊断 | 加载入口、修改 Registry、启动资源 |
+| Extension Descriptor | Extension Framework Contract | 每个直接子目录的 `extension.json` | Extension 身份、版本和可加载入口所需的静态描述 | Contribution、运行配置、私有资源、已执行代码 |
+| Extension Loader | Runtime Composition | 已验证 Descriptor 和安装目录 | 一个可调用统一注册入口的已加载 Extension 单元，或加载诊断 | 直接修改 Registry、授予 Runtime 私有状态、启动长生命周期资源 |
+| Builtin source acquisition | Composition Root | 应用构建直接提供的 Runtime Module | 一个可调用统一注册入口的 Builtin 单元 | 伪装成文件系统安装或绕过后续注册校验 |
+
+**Target Decision：** Discovery 必须在执行任何 Extension 代码前完成 Descriptor 的静态校验。候选按规范化安装目录名升序形成确定扫描顺序；文件系统原始枚举顺序不得影响最终 Snapshot。目录名因此是 External Extension 冲突的显式优先级，用户可以通过重命名安装目录改变后续启动的赢家。目录名规范化和跨平台比较算法由 AF-06 验证。
+
+**Target Decision：** Source acquisition 是 Builtin/External 唯一允许不同的阶段：Builtin Runtime Module 由 Composition Root 显式提供，External Extension 由规范目录发现并经 Loader 加载。进入 Registration 后，两者使用相同 Extension API、Contribution Contract、暂存校验和 Snapshot 构建路径。
+
+### 6.3 单一 Extension API 与类型化 Contribution
+
+**Target Decision：** Extension 作者只面对一个受限、author-facing Extension API。初始 API 提供具名、类型化的 `registerTool`、`registerHook`、`registerChannel` 和 `registerProvider` 语义；这些名称表达目标能力，不冻结方法签名。四类是首批 Contribution Kind，不是穷尽集合，也不建立四套彼此独立的 Extension 系统。
+
+| Contribution Kind | Contract 所有者 | 实现所有者 | Snapshot 消费者 | 注册期禁止行为 |
+|---|---|---|---|---|
+| Tool Contribution | Stable Core / Tool Domain | Runtime Module 或 Extension | Runner / Tool Execution 的 Tool projection | 执行 Tool、读取 RuntimeApp 私有状态 |
+| Hook Contribution | Stable Core / Hook Contract | Runtime Module 或 Extension | 对应 Runtime/Turn 生命周期点的 Hook projection | 替换 Runner、订阅未命名全局事件 |
+| Channel Contribution | Stable Core / Channel Contract | Runtime Module 或 Extension | Runtime Builder 和 RuntimeApp 的 Channel projection | 注册时启动 Transport 或隐式创建 Session |
+| Provider Contribution | Stable Core / Provider Extension Contract | Runtime Module 或 Extension | Model Catalog/Resolver 和 Runtime Builder 的 Provider projection | 创建 per-turn 状态、把 SDK 类型暴露给 Stable Core |
+
+每项 Contribution 都必须包含类型化声明及其实现 binding，并保留来源 Extension/Module 身份。实现 binding 只允许通过对应 Contract 被消费；Contribution 不能携带任意服务映射、RuntimeApp 引用或可由消费者关闭的私有资源句柄。
+
+**Target Decision：** Extension 注册到私有 staging collector，而不是直接修改共享 Registry。所有单元完成 staging 后，Registry Builder 才按确定冲突规则校验和发布。一个 Extension 的全部 Contribution 作为一个原子候选单元完成类型、身份、命名、启动期 Extension Capability 要求和跨 Contribution 一致性校验；只有整组有效时才进入启动期 Registry Builder。现有 Contribution Kind 的新实例不要求修改 Runtime、Runner、Bootstrap 或中央 Extension 类型联合；新增平台级 Contribution Kind 则必须先增加明确的 core-owned Contract 和 typed projection，不能通过不透明的 `register(any)` 绕过治理。
+
+### 6.4 External Extension 隔离与启动结果
+
+**Target Decision：** External Extension 的 Descriptor 无效、入口缺失、加载失败、注册抛错或任一 Contribution 无效时，Runtime Builder 丢弃该 Extension 的整个 staging unit，编排失败阶段的资源清理，记录结构化、可关联的启动诊断，然后继续处理其他候选。失败 Extension 的任何部分 Contribution 都不得进入 Snapshot。
+
+**Target Decision：** 在一个 Extension/Module 的 staging unit 成功原子交接给 Runtime Builder 前，创建资源的一方始终保留 rollback ownership，并必须提供可由 Builder 编排的失败清理行为；Builder 不因编排清理而成为该私有资源的语义所有者。原子交接后，已接受单元的唯一 Lifecycle Owner 按 Resource Ownership 记录负责后续关闭。具体 handoff 和 cleanup 接口由 AF-06 验证。
+
+冲突结果必须与枚举顺序无关且可解释：
+
+- Builtin 单元之间出现重复 Extension ID 或 Contribution identity 冲突时，整个启动失败；
+- External 与 Builtin 出现 Extension ID 或 Contribution identity 冲突时，Builtin 胜出，External 单元整体隔离，并记录结构化 startup warning；
+- External 候选按规范化安装目录名顺序校验；重复 Extension ID 时 first wins，后续重复候选整组隔离，并记录结构化 startup warning；
+- 不同 External ID 出现 Contribution identity 冲突时，同样按规范化安装目录名顺序 first wins，后续冲突单元整组隔离，并记录结构化 startup warning；
+- 每条冲突 warning 必须包含赢家、被隔离方、冲突 identity 和用于裁决的安装目录顺序；不得使用文件系统原始枚举顺序或注册调用先后裁决；
+- 最终 Snapshot 记录已接受来源和隔离诊断摘要，但消费者只取得其所需 typed projection；
+- 诊断必须通过启动结果/Observability 明确暴露，不能把缺少能力伪装成加载成功。
+
+**Target Decision：** External Extension 隔离属于可降级启动策略，不覆盖发行版和显式运行要求。无效 Builtin Runtime Module、无法构建内部一致 Snapshot、缺少发行版要求的 Anthropic Provider Contribution，或其他被 Runtime 启动契约标记为必需的能力失败时，Runtime Builder 必须使整个启动失败。Provider 已注册但 Connection/Model 不可解析时仍遵循 §4.4 和 §5 的 Turn 前显式失败语义。
+
+### 6.5 一个 Registry Snapshot 与 narrow typed projections
+
+**Target Decision：** 启动期只有一个权威 Registry Builder 和一个内部一致、不可变的 Registry Snapshot。Snapshot 以来源和 Contribution identity 建立共同版本边界，并暴露 Tool、Hook、Channel、Provider 等 narrow typed projections；“Tool Registry”“Hook Registry”等只可作为 projection 的描述，不能成为独立发布、独立版本或可变注册入口。
+
+| 消费者 | 可接收 | 不可接收 |
+|---|---|---|
+| Runtime Builder | 构建期 staging/validation 能力和完成的 Snapshot | Extension 私有对象图、运行中可变 Registry |
+| RuntimeApp | Channel/Hook 等完成构建的窄视图及 Turn 所需 Snapshot 引用 | Extension Loader、Descriptor、staging collector |
+| Runner | 当前 Turn 固定 Snapshot 的 Tool/Hook 窄视图 | Registry Builder、Channel/Provider 管理视图 |
+| Model Resolver | Provider/Model 所需窄视图 | Tool/Channel 实现、Extension 来源分支 |
+| Extension 实现 | 注册时 Extension API；执行时经授权的最小上下文 | Snapshot 全量枚举、Registry mutation、其他 Extension 私有资源 |
+
+RuntimeApp 在创建 Turn 时捕获启动期 Snapshot，Runner 在该 Turn 内只使用同一 Snapshot 的 projections。Phase 3 不要求真正的多代 Snapshot，但 Snapshot 身份不得被省略为若干裸 `Map`；版本、原子发布和旧 Turn pinning 的完整不变量由 Phase 4/AF-06 定义。
+
+### 6.6 Config Namespace、Extension Capability 与私有资源
+
+**Target Decision：** 每个 Extension 只拥有与规范 Extension ID 对应的 Config Namespace。Configuration 负责读取部署输入并保持 Namespace 隔离；Extension 提供自身配置语义和 Schema，Runtime Composition 负责在对应 Extension 注册或启动前协调校验。中央配置不得复制每个第三方字段，也不得把未经校验的全局 Config 对象交给 Extension。Schema 的发现时机、版本迁移和两阶段加载接口是 AF-06 Hypothesis。
+
+**Target Decision：** Extension API 只提供 Contribution 注册能力，不是运行时 Service Locator。Contribution 实现在执行时只获得其 Contract 定义且经 Runtime Composition/Policy 授权的最小 Extension Capability 或受限调用上下文。缺失 required 启动期 Extension Capability 时，整个 External staging unit 隔离；缺失 contract-declared optional 启动能力时，Extension 可以形成一个预先定义、可诊断且仍需整组通过校验的降级单元，不能在校验失败后由 Registry Builder 临时删去单项 Contribution。调用期 Channel Capability 随调用上下文变化，缺失时只按对应 Contract 拒绝或降级本次调用，不改变 Snapshot 或 Extension 可用状态。
+
+Extension 可以在自身边界内创建并让多类 Contribution 共享私有资源，但必须满足：
+
+- 共享者和关闭权不越过该 Extension 边界；
+- 私有资源不以任意 token 注册到 Registry 或全局服务集合；
+- Contribution 消费者持有实现 Contract 不等于获得资源关闭权；
+- 资源创建、部分失败清理、启动和逆序关闭有唯一 Lifecycle Owner；
+- 具体 factory、Capability 和 Lifecycle 接口形状由 AF-06 验证。
+
+平台专有消息或交互能力必须由 Channel Contract、Channel Capability 或受限消息上下文表达。Tool/Hook 不得通过识别具体 Channel 类型、Transport payload 或全局当前客户端来访问审批、结构化选择、附件等能力；能力缺失时按显式 Contract 拒绝或降级。
+
+### 6.7 启动期静态组合流
+
+```mermaid
+flowchart TB
+	Home[Agent Home/extensions]
+	Discovery[Extension Discovery]
+	Descriptors[Validated Descriptors]
+	Loader[Extension Loader]
+	Builtins[Builtin Runtime Modules]
+	Api[Extension API]
+	Stage[Per-unit Staging and Validation]
+	Degraded[Predefined Degraded Unit]
+	ExternalCleanup[Creator Cleanup for Non-conflict External Failure]
+	ConflictCleanup[Creator Cleanup for Conflicting External]
+	BuiltinCleanup[Creator Cleanup for Failed Builtin]
+	Rejected[Isolated External Unit plus Diagnostic]
+	Warning[Isolated Conflicting External plus Startup Warning]
+	Fatal[Fatal Startup Failure]
+	Registry[Startup Registry Builder]
+	AcceptedCleanup[Builder Orchestrates Accepted Lifecycle Owner Cleanup]
+	Snapshot[Immutable Registry Snapshot]
+	Tools[Tool Projection]
+	Hooks[Hook Projection]
+	Channels[Channel Projection]
+	Providers[Provider Projection]
+
+	Home --> Discovery
+	Discovery -->|valid descriptor| Descriptors --> Loader
+	Discovery -->|invalid descriptor| Rejected
+	Loader -->|load success| Api
+	Loader -->|external load failure| ExternalCleanup
+	Builtins --> Api
+	Api --> Stage
+	Stage -->|invalid external or required External capability missing| ExternalCleanup
+	Stage -->|External conflicts with Builtin or later External conflict| ConflictCleanup
+	Stage -->|optional External capability missing| Degraded
+	Degraded -->|atomic validation fails| ExternalCleanup
+	Degraded -->|atomic validation succeeds| Registry
+	Stage -->|invalid or conflicting Builtin| BuiltinCleanup
+	ExternalCleanup --> Rejected
+	ConflictCleanup --> Warning
+	BuiltinCleanup --> Fatal
+	Stage -->|valid unit and atomic handoff| Registry --> Snapshot
+	Registry -->|inconsistent snapshot| AcceptedCleanup --> Fatal
+	Snapshot --> Tools
+	Snapshot --> Hooks
+	Snapshot --> Channels
+	Snapshot --> Providers
+```
+
+```text
+<agent-home>/extensions -> Discovery
+	|-- invalid Descriptor -> isolate External unit + startup diagnostic
+	`-- valid Descriptor -> Loader
+		|-- External load failure -> Builder invokes creator-supplied cleanup
+		|   `-- isolate External unit + startup diagnostic
+		`-- load success ------------------------------------------------------┐
+Builtin Runtime Modules -------------------------------------------------------> Extension API
+																			   `-> per-unit staging and validation
+	|-- invalid External / required Capability missing
+	|   `-> Builder invokes creator-supplied cleanup -> isolate unit + diagnostic
+	|-- External conflicts with Builtin / later External conflict
+	|   `-> Builder invokes creator-supplied cleanup -> isolate unit + structured startup warning
+	|-- optional Capability missing -> predefined degraded unit
+	|   |-- atomic validation fails -> creator-supplied cleanup -> isolate unit + diagnostic
+	|   `-- atomic validation succeeds -> Startup Registry Builder
+	|-- invalid/conflicting Builtin unit
+	|   `-> Builder invokes creator-supplied cleanup -> fatal startup failure
+	`-- valid unit --atomic handoff--> Startup Registry Builder
+		|-- inconsistent Snapshot
+		|   `-> Builder orchestrates cleanup by accepted Lifecycle Owners -> fatal startup failure
+		`-- immutable Registry Snapshot
+			|-- Tool projection
+			|-- Hook projection
+			|-- Channel projection
+			`-- Provider projection
+```
+
+一个 AF-06 测试 Extension 必须通过同一 Extension API 同时贡献 Channel、Tool 和 Hook，并在 Extension 边界内共享一个 instrumented 私有资源。该实验用于证明三类消费者不识别 Extension 来源、不访问私有资源，并能在失败时观察整组隔离；它不授权生产运行中 reload。
+
+### 6.8 AF-06 Hypotheses and experiment inputs
+
+| ID | Hypothesis | 最小实验 | 成功条件 | 停止条件 |
+|---|---|---|---|---|
+| P3-H01 | Descriptor 静态校验、直接子目录发现和目录名排序足以在执行代码前拒绝无效安装并确定冲突优先级 | 构造有效、缺字段、越界入口、重复 External ID、External/External 与 Builtin/External Contribution 冲突、无效 Builtin、重复 Builtin ID、Builtin/Builtin Contribution 冲突、散落脚本、嵌套目录和不同文件系统枚举/来源获取顺序样例 | 只加载有效直接子目录候选；Builtin 始终胜出；规范化目录顺序和 External first-wins 结果可重复；后续冲突 External 单元整组隔离且每个冲突产生一条包含赢家、被隔离方、冲突 identity 和排序依据的 warning；无效/冲突 Builtin 导致清理后启动失败且不发布 Snapshot；无效 Descriptor 代码执行计数为零 | 必须执行入口才能确定最小身份/入口安全、路径可逃逸安装目录，或跨平台目录顺序无法稳定定义 |
+| P3-H02 | per-unit staging 和原子 ownership handoff 可在继续启动时保证失败 External Extension 零部分发布和零资源残留 | 跨 Channel/Tool/Hook Extension 在加载、各注册点、最终校验、交接前后注入失败；instrument 创建方 cleanup 调用、ownership 状态和 Builder 编排 | 交接前创建方保持 rollback ownership 且 cleanup 恰好一次；交接后唯一 Lifecycle Owner 可定位；每次失败均无部分 Contribution/资源残留；其他有效 Extension 的 Snapshot 相同且诊断可关联 | 任一失败污染 Snapshot、改变无关 Extension 结果、交接时出现无 Owner/多 Owner、重复清理或泄漏资源 |
+| P3-H03 | 一个 Extension API 加 typed projections 足以支持首批四类 Contribution 而不成为 Service Locator | Builtin 与 External Contract Test 使用相同注册入口并分别消费窄视图 | 消费者不按来源分支；不能取得 Registry mutation 或无关 projection | 需要 `get(any token)`、RuntimeApp 私有状态或中央 Extension 类型联合分支 |
+| P3-H04 | Namespace 隔离和 Extension-owned Schema 可在不泄漏全局 Config 的情况下完成启动校验 | 用两个字段重名的 Extension 验证配置读取、Schema 失败和诊断 | 字段不冲突；Extension 只见自身已校验配置；一个 External Schema 失败整组隔离 | 必须集中复制第三方字段或把全局可变 Config 交给 Extension |
+| P3-H05 | 启动期 Extension Capability 和调用期 Channel Capability 可以在不改变 Snapshot 的情况下支持显式降级 | 分别注入 required/optional 启动能力缺失，并让同一 Tool 在支持和不支持目标 Channel Capability 的上下文运行 | required 缺失整组隔离；optional 缺失只产生预定义降级单元；调用期缺失只影响本次调用；无具体 Channel/Transport 类型依赖 | 出现校验失败后的偶然部分发布，或需要全局当前 Channel、具体 Adapter downcast、Snapshot mutation 或通用 Runtime 服务访问 |
+
+### 6.9 Phase 3 完成条件
+
+- [x] 新 Extension 不要求修改 Runtime、Runner、Bootstrap 或中央 Extension 类型联合；
+- [x] Extension 私有资源不成为全局 Service Locator；
+- [x] Builtin/External 差异仅存在于 source acquisition，不泄漏给 Contribution 消费者；
+- [x] 无效 External Extension 整组隔离且无部分 Contribution 发布；
+- [x] Slice 3/4 只使用启动期只读 Snapshot，扩展变化通过进程重启生效；
+- [x] 未验证的 Descriptor、Schema、Capability 和 Lifecycle 接口形状仍标记为 AF-06 Hypothesis。
+
+独立复审首轮发现 1 个 High、3 个 Medium 和 2 个 Low 文档问题。项目所有者确认 External Extension 按规范化安装目录名顺序 first-wins、后续冲突单元整组隔离并记录结构化 startup warning，同时接受 Capability 时点和 rollback ownership 修正。后续复审补齐单一跨类型 Registry、Builtin 冲突、Snapshot 构建失败清理、Mermaid/ASCII 失败路径和 AF-06 实验覆盖；最终复审确认无 Critical、High 或 Medium 问题。项目所有者于 2026-08-31 接受 Phase 3 静态骨架。该接受不表示生产实现或 AF-06 实验已完成，也不授权文件系统 watcher 或运行中 reload。
 
 ## 7. Registry Snapshot and Lifecycle Transactions
 
@@ -692,8 +861,8 @@ AF-05 不以接入 OpenAI 或其他生产 Provider 为成功条件；独立 Fake
 | OQ-01 | 哪些 Current 文档可在 AF-04 后升级为 Current Architecture 权威入口？ | 迁移起点和 Legacy 清单 | AF-04 / Slice 6 |
 | OQ-02 | Model Catalog 事实来源的合并优先级和缺失事实 fallback 是什么？ | Resolved Model 正确性 | Phase 2 -> AF-05 |
 | OQ-03 | Parent/Subagent 不同 Model 的最小共享边界是什么？ | Client 状态和 Usage/Abort/Event | Phase 2 -> AF-05 |
-| OQ-04 | Extension Config 使用自校验 Namespace 还是中央 Schema 注册？ | 配置所有权和启用事务 | Phase 3 -> AF-06 |
-| OQ-05 | Extension Capability 和受限运行上下文的最小接口是什么？ | 权限和平台专有 Tool | Phase 3 -> AF-06 |
+| OQ-04 | Extension-owned Schema 的发现时机、版本迁移和两阶段加载接口是什么？ | 配置校验和 External Extension 隔离 | AF-06 |
+| OQ-05 | Extension Capability 和受限运行上下文的最小 TypeScript 接口是什么？ | 权限和平台专有 Tool | AF-06 |
 | OQ-06 | Extension 停用时哪些工作排空、哪些按策略取消？ | Snapshot 和资源释放 | Phase 4 -> AF-06 |
 | OQ-07 | Config 重构后哪些字段和工具策略是 Current Fact？ | Current/Target 映射 | Phase 0/1 -> AF-04 |
 | OQ-08 | Exec 回归清单缺失后，AF-04 使用哪些现有测试重建保护线？ | Characterization 完整性 | AF-04 |
@@ -706,6 +875,7 @@ AF-05 不以接入 OpenAI 或其他生产 Provider 为成功条件；独立 Fake
 | Characterization/Fitness Test 实现 | AF-04 | AF-03 只提供规则和行为输入 |
 | Provider/Model Catalog/fallback 执行验证 | AF-05 | 需要可证伪实验和 Provider 证据 |
 | Extension 动态启停、Snapshot、排空和回滚执行验证 | AF-06 | 需要失败注入和资源实验 |
+| 文件系统 watcher 和运行中 reload | Phase 4 -> AF-06 / Slice 5 | Phase 3 仅允许启动期发现，扩展变化通过进程重启生效 |
 | Marketplace、远程下载、任意热加载、沙箱、分布式 Event Bus | Future Plan | Foundation 非目标 |
 | Subagent Batch、并发、Background、Detached、Handoff、Agent Team | Future Plan | Foundation 范围冻结 |
 | 生产动态 Contribution 变更 | Slice 5 | AF-06 先验证，Slice 3/4 仅只读 Snapshot |
@@ -741,7 +911,7 @@ Phase 2 的 Hypothesis、最小实验、成功条件和停止条件见 §5.5、�
 
 ## Appendix C. AF-06 Extension Framework Spike Input
 
-Phase 3–4 将补充 Hypothesis、最小实验、成功条件和停止条件。当前仅保留父计划边界：验证一个跨 Channel/Tool/Hook Extension、受限 Extension Capability、私有资源共享、不可变 Snapshot、原子切换、排空、资源释放和失败回滚。
+Phase 3 的静态骨架 Hypothesis、最小实验、成功条件和停止条件见 §6.8；Phase 4 将补充动态事务实验。AF-06 必须先验证规范目录发现、Descriptor 静态校验、External Extension 整组隔离、一个 Extension API、typed projections、受限 Extension Capability、私有资源共享和不可变 Snapshot，再验证原子切换、排空、资源释放和失败回滚。文件系统 watcher 和生产运行中 reload 不属于 Phase 3。
 
 ## Appendix D. Evidence Inventory Maintenance
 

@@ -3,7 +3,7 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 1.1
+- **版本：** 1.2
 - **日期：** 2026-08-31
 - **所有者：** 项目所有者
 - **关联计划：** [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) AF-02
@@ -190,6 +190,34 @@ Agent ─executes─> Turn <─contained by─ Session
 
 ## 5. Extension Framework
 
+### Agent Home
+
+- **定义：** my-agent 管理本机运行数据、配置引用和已安装 External Extension 的规范根目录。
+- **职责：** 为不同部署提供一个可解析的持久位置，并作为 `<agent-home>/extensions` 的父边界。
+- **所有者：** Runtime Composition / Configuration。
+- **不表示：** Workspace、当前工作目录、Extension Registry、任意可扫描目录，或进程内全局状态。
+
+### Extension Discovery
+
+- **定义：** 在执行 Extension 代码前，从规范安装根目录枚举并静态校验 Extension Descriptor 候选的启动期过程。
+- **职责：** 识别直接子目录中的候选、产生确定顺序，并报告不执行代码即可发现的安装诊断。
+- **所有者：** Runtime Composition。
+- **不表示：** Extension Loader、Contribution 注册、运行中 reload、Marketplace 搜索，或 `node_modules` 扫描。
+
+### Extension Descriptor
+
+- **定义：** External Extension 安装目录中由 `extension.json` 表达的静态身份和加载描述。
+- **职责：** 在代码执行前提供 Extension 身份、版本和入口等加载所需事实，并支持静态校验。
+- **所有者：** Extension Framework 定义契约；Extension 作者提供具体描述。
+- **不表示：** Extension 运行配置、Contribution 集合、已加载代码、私有资源，或 Registry Snapshot。
+
+### Extension Loader
+
+- **定义：** 根据已验证 Extension Descriptor 加载 External Extension 入口，并将其转换为可调用统一注册入口的 Composition 组件。
+- **职责：** 隔离模块加载机制和加载错误，将成功结果交给 Extension 注册阶段。
+- **所有者：** Runtime Composition。
+- **不表示：** Extension Discovery、Registry mutation、Service Locator、Contribution 消费者，或运行中热替换器。
+
 ### Tool
 
 - **定义：** 可由 Agent 请求执行、具有名称、输入契约、结果语义和明确副作用边界的能力。
@@ -262,10 +290,10 @@ Agent ─executes─> Turn <─contained by─ Session
 
 ### Registry
 
-- **定义：** 校验、索引并发布某类 Contribution 的权威集合管理器。
-- **职责：** 生成版本化不可变 Registry Snapshot，并通过受控事务改变后续可见集合。
+- **定义：** 校验、索引并发布已接受的跨类型 Contribution 集合的唯一权威管理器。
+- **职责：** 生成一个版本化、内部一致且不可变的 Registry Snapshot；按类型的访问只通过 Snapshot 的 narrow typed projection 暴露，并通过受控事务改变后续可见集合。
 - **所有者：** Extension Framework / Runtime Composition。
-- **不表示：** 可由消费者修改的 `Map`、依赖注入容器、Service Locator、Extension Loader，或 Marketplace。
+- **不表示：** 每个 Contribution Kind 各自发布的独立 Registry、可由消费者修改的 `Map`、依赖注入容器、Service Locator、Extension Loader，或 Marketplace。
 
 ### Registry Snapshot
 

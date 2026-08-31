@@ -3,8 +3,8 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 1.0
-- **日期：** 2026-08-28
+- **版本：** 1.1
+- **日期：** 2026-08-31
 - **所有者：** 项目所有者
 - **父计划：** [Architecture Foundation Plan](architecture-foundation-plan.md) AF-03
 - **前置工件：** [Architecture Principles](../architecture/architecture-principles.md)、[Domain Glossary](../architecture/domain-glossary.md)
@@ -38,6 +38,7 @@
 - Stable Core、Port、Adapter、Runtime Builder 和 RuntimeApp 边界；
 - Provider/Model Resolution 的逻辑组件、事实来源和调用方向；
 - Extension、Runtime Module、Contribution、Registry 和 Registry Snapshot 边界；
+- Agent Home、`<agent-home>/extensions` 启动期受控发现、Extension Descriptor 和 Extension Loader 边界；
 - Tool、Hook、Channel 的注册、解析和执行关系；
 - Config Namespace、Schema、Extension Capability 和 Resource Ownership；
 - Event、Error、Lifecycle、启动、排空、回滚与 Shutdown 责任；
@@ -52,6 +53,7 @@
 - 执行 Provider/Model 或 Extension Framework Spike；
 - 冻结未经 Spike 验证的具体 API、Schema 或并发算法；
 - 设计 Marketplace、远程下载、任意热加载、沙箱或分布式 Event Bus；
+- 实现文件系统 watcher、运行中 reload、Snapshot 代际切换或旧资源排空；
 - 为每个未来 Provider、Channel 或 Extension 设计完整实现；
 - 让全部 Slice 1–6 提前达到 Definition of Ready。
 
@@ -133,27 +135,32 @@
 
 ## 8. Phase 3：Extension Framework 静态骨架
 
-**目标：** 定义 Builtin/External 共用的贡献、注册、能力和配置边界。
+**目标：** 定义 Builtin/External 共用的启动期发现、贡献、注册、能力和配置边界。
 
 ### Check Items
 
-- [ ] 定义 Extension 与 Runtime Module 的共同点和不同点；
-- [ ] 定义 Contribution 的分类、校验和实现绑定边界；
-- [ ] 定义 Tool、Hook、Channel Registry 的逻辑责任；
-- [ ] 定义启动期只读 Registry Snapshot 的生成和消费关系；
-- [ ] 定义 Builtin Module 与 External Extension 使用同一注册路径；
-- [ ] 定义 Extension Config Namespace 和 Schema 所有权选项；
-- [ ] 定义 Extension Capability 授予和受限运行上下文；
-- [ ] 定义平台专有消息标识和 Channel Capability 的隔离方式；
-- [ ] 定义 Extension 私有资源可共享范围，禁止注册为全局 Service Locator；
-- [ ] 绘制跨 Channel/Tool/Hook 测试 Extension 的静态组合图和 ASCII fallback；
-- [ ] 标记 Config Schema、Capability 和 Lifecycle 接口形状为 AF-06 待验证项。
+- [x] 定义 Extension 与 Runtime Module 的共同点和不同点；
+- [x] 定义 Agent Home 及唯一规范 External Extension 发现根目录 `<agent-home>/extensions`；
+- [x] 定义 Extension Discovery、Extension Descriptor、Extension Loader 与 Registration 的责任边界；
+- [x] 定义 Extension Descriptor 校验、确定性加载顺序和 External Extension 级原子隔离语义；
+- [x] 定义 Contribution 的分类、校验和实现绑定边界；
+- [x] 定义 Tool、Hook、Channel Registry 的逻辑责任；
+- [x] 定义启动期只读 Registry Snapshot 的生成和消费关系；
+- [x] 定义 Builtin Module 与 External Extension 使用同一注册路径；
+- [x] 定义 Extension Config Namespace 和 Schema 所有权选项；
+- [x] 定义 Extension Capability 授予和受限运行上下文；
+- [x] 定义平台专有消息标识和 Channel Capability 的隔离方式；
+- [x] 定义 Extension 私有资源可共享范围，禁止注册为全局 Service Locator；
+- [x] 绘制跨 Channel/Tool/Hook 测试 Extension 的静态组合图和 ASCII fallback；
+- [x] 标记 Config Schema、Capability 和 Lifecycle 接口形状为 AF-06 待验证项。
 
 ### Exit Gate
 
-- [ ] 新 Extension 不要求修改 Runtime、Runner、Bootstrap 或中央类型联合；
-- [ ] Builtin/External 的差异不泄漏到 Contribution 消费者；
-- [ ] Slice 3/4 只使用启动期只读 Snapshot，未提前开放生产动态变更。
+- [x] External Extension 只从规范安装目录自动发现，目录扫描不扩展到 `node_modules` 或任意配置路径；
+- [x] 无效 External Extension 不发布任何部分 Contribution，产生可观测诊断并允许其余有效 Extension 继续启动；
+- [x] 新 Extension 不要求修改 Runtime、Runner、Bootstrap 或中央类型联合；
+- [x] Builtin/External 的差异不泄漏到 Contribution 消费者；
+- [x] Slice 3/4 只使用启动期只读 Snapshot，扩展变化通过进程重启生效，未提前开放生产动态变更。
 
 ## 9. Phase 4：动态 Registry 与 Lifecycle 契约
 
@@ -237,7 +244,7 @@
 |---|---|---|---|---|
 | 必须覆盖 | 模块职责与依赖方向 | Phase 1：四边界职责、候选映射、允许/禁止边 | 依赖图可转化为 Fitness Test 候选 | 边界表、依赖图、允许/禁止边 |
 | 必须覆盖 | Provider/Model Resolution | Phase 2：来源、Resolver、Resolved Model、Parent/Subagent 流 | AF-05 可直接提取实验和失败条件 | 组件责任与 Parent/Subagent 调用流 |
-| 必须覆盖 | Extension/Module/Contribution/Registry | Phase 3：共同机制、Contribution 分类、Registry 责任 | Builtin/External 差异不泄漏给消费者 | 静态组合图、注册与配置边界 |
+| 必须覆盖 | Extension/Module/Contribution/Registry | Phase 3：受控发现、共同机制、Contribution 分类、Registry 责任 | Builtin/External 差异不泄漏给消费者 | 启动发现流、静态组合图、注册与配置边界 |
 | 必须覆盖 | Snapshot/事务/原子切换/排空/回滚 | Phase 4：Snapshot 不变量、事务、排空、回滚 | 无混合版本且失败无部分资源残留 | 动态流、不变量、AF-06 输入 |
 | 必须覆盖 | Runtime Builder 与 RuntimeApp | Phase 1/5：职责拆分、启动、Turn、Shutdown | Runtime/Runner/Composition 无重叠所有权 | 责任表、启动/Turn/Shutdown 流 |
 | 必须覆盖 | Tool/Hook/Channel 注册 | Phase 3/5：Registry 责任与端到端流 | Builtin/External 共用注册和生命周期边界 | Registry 关系和端到端调用流 |
@@ -290,7 +297,7 @@ Architecture Review 必须选择：修订当前 Phase、提出 ADR、转为 Spik
 | Phase 0：输入基线与追踪矩阵 | Completed | 2026-08-28 | `target-architecture.md` §1–3、§10–12、Appendix A–D；独立复审完成并修正 3 High / 4 Medium；项目所有者已接受 |
 | Phase 1：逻辑边界与依赖方向 | Completed | 2026-08-28 | `target-architecture.md` §4 Draft v0.2；独立复审无 Critical/High；项目所有者已接受逻辑边界、依赖方向和 Provider 分发约束 |
 | Phase 2：Model Resolution 架构 | Completed | 2026-08-31 | `target-architecture.md` §5 Draft v0.3、`domain-glossary.md` Accepted v1.1；独立复审问题已修正，最终复审无 Critical/High；项目所有者已接受，AF-05 仍未执行 |
-| Phase 3：Extension Framework 静态骨架 | Not Started |  |  |
+| Phase 3：Extension Framework 静态骨架 | Completed | 2026-08-31 | `target-architecture.md` §6 Draft v0.4、`domain-glossary.md` Accepted v1.2；项目所有者已确认 first-wins、startup warning、Capability 和 rollback ownership；最终独立评审无 Critical/High/Medium，AF-06 仍未执行 |
 | Phase 4：动态 Registry 与 Lifecycle 契约 | Not Started |  |  |
 | Phase 5：Runtime 调用流与迁移边界 | Not Started |  |  |
 | Phase 6：验证映射与架构评审 | Not Started |  |  |
