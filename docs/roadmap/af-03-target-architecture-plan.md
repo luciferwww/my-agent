@@ -3,7 +3,7 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 1.2
+- **版本：** 1.3
 - **日期：** 2026-08-31
 - **所有者：** 项目所有者
 - **父计划：** [Architecture Foundation Plan](architecture-foundation-plan.md) AF-03
@@ -199,23 +199,23 @@
 
 ### Check Items
 
-- [ ] 绘制一个完整 Turn 从 Channel 入站到结果 Fanout 的调用流；
-- [ ] 绘制 Tool Definition 解析、Tool 执行和 Tool Result 返回流；
-- [ ] 绘制 Channel 注册、start/stop 和 optional Channel Capability 流；
-- [ ] 绘制 Subagent 委派、独立 Model Resolution、Usage/Event/Abort 返回流；
-- [ ] 绘制 Runtime 启动、部分失败清理和 Shutdown 流；
-- [ ] 为 Event、Error、Abort、并发和资源释放指定唯一所有者；
-- [ ] 检查简单调用链，移除无业务价值的机械转换层；
-- [ ] 为 Slice 1–6 标记新增权威路径、Compatibility 和删除边界；
-- [ ] 明确 RuntimeApp 最终只保留队列、Turn、路由、Fanout 和 Shutdown 编排；
-- [ ] 明确 Legacy/Compat 只能单向进入新核心；
-- [ ] 记录 Current 类型到目标术语的迁移，不在 AF-03 执行重命名。
+- [x] 绘制一个完整 Turn 从 Channel 入站到结果 Fanout 的调用流；
+- [x] 绘制 Tool Definition 解析、Tool 执行和 Tool Result 返回流；
+- [x] 绘制 Channel 注册、start/stop 和 optional Channel Capability 流；
+- [x] 绘制 Subagent 委派、独立 Model Resolution、Usage/Event/Abort 返回流；
+- [x] 绘制 Runtime 启动、部分失败清理和 Shutdown 流；
+- [x] 为 Event、Error、Abort、并发和资源释放指定唯一所有者；
+- [x] 检查简单调用链，移除无业务价值的机械转换层；
+- [x] 为 Slice 1–6 标记新增权威路径、Compatibility 和删除边界；
+- [x] 明确 RuntimeApp 最终只保留队列、Turn、路由、Fanout 和 Shutdown 编排；
+- [x] 明确 Legacy/Compat 只能单向进入新核心；
+- [x] 记录 Current 类型到目标术语的迁移，不在 AF-03 执行重命名。
 
 ### Exit Gate
 
-- [ ] Turn、Tool、Channel 和 Subagent 四类调用流均支持边界验收；
-- [ ] 每个长生命周期资源都有一个创建和释放责任；
-- [ ] 每个 Slice 都能指向真实调用方和旧路径删除条件。
+- [x] Turn、Tool、Channel 和 Subagent 四类调用流均支持边界验收；
+- [x] 每个长生命周期资源都有一个创建和释放责任；
+- [x] 每个 Slice 都能指向真实调用方和旧路径删除条件。
 
 ## 11. Phase 6：验证映射与架构评审
 
@@ -306,5 +306,5 @@ Architecture Review 必须选择：修订当前 Phase、提出 ADR、转为 Spik
 | Phase 2：Model Resolution 架构 | Completed | 2026-08-31 | `target-architecture.md` §5 Draft v0.3、`domain-glossary.md` Accepted v1.1；独立复审问题已修正，最终复审无 Critical/High；项目所有者已接受，AF-05 仍未执行 |
 | Phase 3：Extension Framework 静态骨架 | Completed | 2026-08-31 | `target-architecture.md` §6 Draft v0.4、`domain-glossary.md` Accepted v1.2；项目所有者已确认 first-wins、startup warning、Capability 和 rollback ownership；最终独立评审无 Critical/High/Medium，AF-06 仍未执行 |
 | Phase 4：动态 Registry 与 Lifecycle 契约 | Completed | 2026-08-31 | `target-architecture.md` §7 Draft v0.5、`domain-glossary.md` Accepted v1.3；项目所有者已确认最小单代 retirement 模型；最终独立评审无未解决 Critical/High/Medium 或 blocking overdesign；AF-06 仍未执行 |
-| Phase 5：Runtime 调用流与迁移边界 | Not Started |  |  |
+| Phase 5：Runtime 调用流与迁移边界 | Completed | 2026-08-31 | `target-architecture.md` §8–§9 Draft v0.6；Owner 已确认 Event/concurrency、Tool/Hook allowlist fallback 与 two-stage Shutdown；最终独立评审无未解决 Critical/High/Medium/Low 或 blocking overdesign；AF-04/AF-05/AF-06 与生产迁移仍未执行 |
 | Phase 6：验证映射与架构评审 | Not Started |  |  |

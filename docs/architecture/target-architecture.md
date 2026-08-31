@@ -3,7 +3,7 @@
 ## 1. 文档状态与证据规则
 
 - **状态：** Draft
-- **版本：** 0.5
+- **版本：** 0.6
 - **日期：** 2026-08-31
 - **所有者：** 项目所有者
 - **执行计划：** [AF-03 Target Architecture Execution Plan](../roadmap/af-03-target-architecture-plan.md)
@@ -74,11 +74,12 @@ Phase 1–6 填写目标章节时，每个重要结论必须使用以下前缀�
 - **Hypothesis：** 必须由 Spike 执行证据验证；
 - **Open Question：** 当前证据不足且会影响后续边界；
 - **Deferred：** 已确认不属于 AF-03；
+- **Verified Current Fact：** Phase 5 直接读取生产代码确认的迁移事实；只描述核验时点的当前实现，不升级为 Target Decision；
 - **Current Fact Candidate：** 仅用于描述迁移起点，并链接证据等级。
 
 ## 3. Evidence Baseline
 
-本节记录 Phase 0 的文档证据盘点。所有 Current Fact 均为文档证据，除非特别标记为 `Historically Verified`；本阶段没有扫描生产代码。
+本节记录 Phase 0 的文档证据盘点。Phase 0–4 没有扫描生产代码，所有 Current Fact 均为文档证据，除非特别标记为 `Historically Verified`。Phase 5 经项目所有者授权读取生产代码后，只把带源码位置和核验日期的结论标记为 `Verified Current Fact`；未直接核验的文档陈述继续保持 `Current Fact Candidate`。
 
 ### 3.1 Current Fact 候选
 
@@ -441,7 +442,7 @@ RuntimeApp 只提供当前 Turn 上下文并接收结果，不解释 Facts 或�
 
 ### 5.7 Subagent 独立 Model Resolution 调用流
 
-**Target Decision：** Parent Turn 和每个 Child Turn 分别拥有自己的 Resolved Model。Model Resolver 的成功结果同时产生规范化的有效 Model Reference 作为 Turn-owned resolution metadata；RuntimeApp/Turn orchestration 保留该 metadata，只把 Resolved Model 交给 Runner。Subagent Orchestration 通过显式、只读的 Turn Model Resolution Context 取得 Parent 有效 Model Reference，Runner 不读取、解释或转发该 Reference。该 Context 是逻辑责任，不在 Phase 2 冻结接口形状，也不是 RuntimeApp 私有状态或 Service Locator。
+**Target Decision：** Parent Turn 和每个 Child Turn 分别拥有自己的 Resolved Model。Model Resolver 的成功结果同时产生规范化的有效 Model Reference 作为 Turn-owned resolution metadata；RuntimeApp/Turn orchestration 保留该 metadata，只把 Resolved Model 交给 Runner。Subagent Orchestration 通过显式、只读的 Turn Model Resolution Context 取得 Parent 有效 Model Reference，Runner 不读取、解释或转发该 Reference。该 Context 是逻辑责任，不在 Phase 2 冻结接口形状，也不是 RuntimeApp 私有状态或 Service Locator。§5.7 只拥有 Child Model Reference 选择和独立 resolution 语义；Child 创建、tracking、Abort、completion、cleanup 和 Fanout 一律委托 §8.6 的 RuntimeApp tracked lifecycle，不存在 Orchestration 直调未登记 Child Runner 的旁路。
 
 Subagent Profile 指定具体 Model Reference 时独立解析；`model: inherit` 继承上述 Parent 有效 Model Reference，而不是 Parent 的 Resolved Model、Provider SDK Client 或全局默认 model 字符串，然后为 Child Turn 重新解析。
 
@@ -450,6 +451,7 @@ sequenceDiagram
 	participant Parent as Parent Runner
 	participant Sub as Subagent Orchestration
 	participant Context as Turn Model Resolution Context
+	participant Runtime as RuntimeApp
 	participant Resolver as Model Resolver
 	participant Child as Child Runner
 	participant Port as Child Model Invocation Port
@@ -458,18 +460,20 @@ sequenceDiagram
 	Sub->>Context: read effective parent Model Reference
 	Context-->>Sub: effective parent Model Reference
 	Sub->>Sub: choose profile reference or inherit effective parent reference
-	Sub->>Resolver: resolve(child Turn context, child reference, child policy)
+	Sub->>Runtime: request tracked Child under Parent + chosen reference
+	Runtime->>Resolver: resolve(tracked Child context, reference, policy)
 	alt child resolution succeeds
-		Resolver-->>Sub: child Resolved Model
-		Sub->>Child: run(child Turn, child Resolved Model, signal)
+		Resolver-->>Runtime: child Resolved Model
+		Runtime->>Child: run tracked Child with Resolved Model + tree signal
 		Child->>Port: invoke(child request)
 		Port-->>Child: stream / usage / error
-		Child-->>Sub: child result / usage / events
-		Sub-->>Parent: normalized child result / usage / events
+		Child-->>Runtime: child result / usage / events
 	else child resolution fails
-		Resolver-->>Sub: child Resolution Failure
-		Sub-->>Parent: child failure without Provider invocation
+		Resolver-->>Runtime: child Resolution Failure; no Provider invocation
 	end
+	Runtime-->>Sub: tracked terminal child outcome + usage/events
+	Sub-->>Parent: normalized child result / usage / events
+	Note over Runtime,Child: exact completion, Abort and cleanup follow section 8.6
 ```
 
 ```text
@@ -481,23 +485,25 @@ Turn Model Resolution Context -> Subagent Orchestration:
 	effective parent Model Reference
 Subagent Orchestration -> Subagent Orchestration:
 	choose Profile reference OR inherit effective parent Model Reference
-Subagent Orchestration -> Model Resolver:
-	resolve(child Turn context, child reference, child policy)
+Subagent Orchestration -> RuntimeApp:
+	request tracked Child under Parent + chosen Model Reference
+RuntimeApp -> Model Resolver:
+	resolve(tracked Child context, reference, policy)
 
 Success:
-	Model Resolver -> Subagent Orchestration: child Resolved Model
-	Subagent Orchestration -> Child Runner:
-		run(child Turn, child Resolved Model, signal)
+	Model Resolver -> RuntimeApp: child Resolved Model
+	RuntimeApp -> Child Runner:
+		run tracked Child with Resolved Model + inherited tree signal
 	Child Runner -> Child Model Invocation Port: invoke(child request)
 	Child Model Invocation Port -> Child Runner: stream / usage / error
-	Child Runner -> Subagent Orchestration: child result / usage / events
-	Subagent Orchestration -> Parent Runner:
-		normalized child result / usage / events
+	Child Runner -> RuntimeApp: child result / usage / events
 
 Failure:
-	Model Resolver -> Subagent Orchestration: child Resolution Failure
-	Subagent Orchestration -> Parent Runner:
-		child failure without Provider invocation
+	Model Resolver -> RuntimeApp: child Resolution Failure without Provider invocation
+
+RuntimeApp -> Subagent Orchestration: tracked terminal child outcome + usage/events
+Subagent Orchestration -> Parent Runner: normalized child result / usage / events
+Exact Child completion, Abort, cleanup and Fanout follow section 8.6.
 ```
 
 Parent/Child 可以解析为不同 Provider/Model，但不得共享 per-turn 可变请求状态。Usage 聚合、Abort 级联、Event correlation、Session 隔离和父子阻塞/并发语义不由 Model Resolution 改写。
@@ -748,7 +754,7 @@ Builtin Runtime Modules ------------------------------------------------------->
 
 每个成功发布的 Registry Snapshot 具有单调递增且在进程内唯一的 generation identity。Snapshot 及其 narrow typed projections 在发布后不可修改；generation 只表达该进程内的发布顺序，不作为 Extension 版本、跨重启持久 ID 或分布式一致性编号。
 
-**Target Decision：** RuntimeApp 在 Root Turn 创建时原子捕获 current Snapshot；排队、等待执行或运行中的 Root Turn 始终固定该 generation。Child Turn 继承 Parent Turn 的 Snapshot generation，即使 Child 在新 generation 发布后才创建，也不能改用 current generation。一个 Parent/Child Turn tree 因此只观察一个内部一致的 Contribution 集合。
+**Target Decision：** RuntimeApp 接受输入时只创建带稳定 `requestId` 的 `AcceptedRequest`；queued `AcceptedRequest` 不是 Turn，不捕获 Snapshot，也不持有 generation pin。该请求从 Session queue 开始执行时，RuntimeApp 才原子创建带稳定 `turnId` 的 Root Turn并捕获 current Snapshot/pin，同时保留 `requestId -> turnId` correlation；此后等待下游、运行中或正在收敛的 Root Turn 始终固定该 generation。Child Turn 继承 Parent Turn 的 Snapshot generation，即使 Child 在新 generation 发布后才创建，也不能改用 current generation。一个已创建的 Parent/Child Turn tree 因此只观察一个内部一致的 Contribution 集合。
 
 Turn tree 的 pin 在最后一个相关 Turn 完成、失败或 Abort 后释放。Snapshot pin 只保护该 generation 的 Contribution 和资源可用性，不赋予 Turn 关闭资源、修改 Registry 或延长进程 Shutdown deadline 的权力。
 
@@ -992,44 +998,615 @@ Lifecycle Owners -> Runtime Builder: successes + protected residuals + aggregate
 
 **Phase：** 5
 
-本节将在 Phase 5 使用端到端调用流验证分层和唯一所有权。
+### 8.1 设计状态与证据边界
 
-### 8.1 待产出
+本节使用端到端调用流验证 Phase 1–4 的分层和唯一所有权，不增加通用 Event Bus、第二个 Turn scheduler、Hook scheduler、DI Container 或 Shutdown framework。具体 TypeScript 接口、deadline 数值、Event/Error 联合类型和配置字段由 AF-04/AF-05/AF-06 后的 Slice Spec 决定。
 
-- Channel 入站到结果 Fanout 的完整 Turn 流；
-- Tool Definition、Tool 执行和 Tool Result 流；
-- Channel 注册、start/stop 和 optional Channel Capability 流；
-- Subagent 委派、独立 Model Resolution、Usage/Event/Abort 返回流；
-- Runtime 启动、部分失败清理和 Shutdown 流；
-- Event、Error、Abort、并发和资源释放所有权表；
-- Mermaid 调用流及语义一致的 ASCII fallback。
+以下逐项 `Verified Current Fact` 均于 2026-08-31 核验，只覆盖列出的 symbol/scope；它们是迁移起点，不是目标 API 承诺：
 
-### 8.2 Phase 5 完成条件
+| 已核验当前事实 | Source location（2026-08-31） | 有限结论 |
+|---|---|---|
+| RuntimeApp 维护 per-session queue、Root AbortController 和 Turn route | [`RuntimeApp.messageQueueBySession`](../../src/runtime/RuntimeApp.ts#L76)、[`activeAborts`](../../src/runtime/RuntimeApp.ts#L92)、[`routeContextByTurn`](../../src/runtime/RuntimeApp.ts#L99) | 当前 Root concurrency/routing/Abort 集中在 RuntimeApp；不证明目标接口形状 |
+| Agent Event 通过 RuntimeApp 内直接 callback 循环分发 | [`RuntimeApp.create()` fanout](../../src/runtime/RuntimeApp.ts#L142-L164) | 已检查路径没有语义 Event Bus；当前仅隔离 `channel.send`，observer 隔离是下文 Target Decision |
+| AgentRunner 为每次 `run()` 创建显式 `TurnContext` | [`AgentRunner.run()`](../../src/core/runner/AgentRunner.ts#L343-L379) | 当前 Runner 不依赖旧式 per-run mutable current params；不证明 Snapshot pin 已存在 |
+| RuntimeApp 当前 `close()` 自行等待 Turn、停止 Channel 和清理部分资源 | [`RuntimeApp.close()`](../../src/runtime/RuntimeApp.ts#L940-L1003) | 当前等待没有 §8.7 的两个独立 bounded deadline；不是目标 Shutdown 语义 |
+| bootstrap startup catch 分类并重抛，但没有 creator/Owner rollback stack | [`bootstrapRuntime()` catch](../../src/runtime/bootstrap.ts#L206-L217) | 只对该 bootstrap 路径确认缺少统一 startup rollback |
+| library Subagent 入口直接调用 SubagentRunner，Child route 在 Runner 内注册/释放 | [`runSubagentTurn()`](../../src/runtime/subagent-orchestration.ts#L105)、[`SubagentRunner.run()`](../../src/core/subagent/SubagentRunner.ts#L43-L72)、[`releaseTurnContext`](../../src/core/subagent/SubagentRunner.ts#L210) | 已检查 library 路径未进入 RuntimeApp Root/Child tracking；不是对所有未来入口的断言 |
+| checked Runtime/Runner/Subagent/bootstrap scopes 没有 Registry Snapshot generation pin | 上述 symbol 加 [`RuntimeResourceSet`](../../src/runtime/types.ts#L20-L32) | 这是限定 scope 的 absence finding；动态机制仍由 §7/AF-06 定义 |
 
-- [ ] Turn、Tool、Channel 和 Subagent 四类流支持 AF-03 边界验收；
-- [ ] 简单调用链没有无业务价值的机械转换层；
-- [ ] 每个长生命周期资源有唯一创建和释放责任；
-- [ ] RuntimeApp 最终只保留队列、Turn、路由、Fanout 和 Shutdown 编排。
+**Target Decision：** Stable Core/Application 拥有 Event Contract；RuntimeApp、Runner 和 Subagent Orchestration 只产生各自责任域的语义事件，RuntimeApp 负责 correlation、有序 Fanout 和单个投递失败隔离，Channel Adapter 只做 Transport 映射与投递。保持直接 callback/subscription，不增加通用 Event Bus、持久 Event Store 或隐式全局订阅。
+
+**Target Decision：** RuntimeApp 是 Turn concurrency、Root/Child Turn tree、queue、Snapshot pin 和 Abort 的唯一 Application Owner。Runner 只执行一个 Turn 内的 LLM/Tool 顺序；Subagent Orchestration 只编排 Child Turn 生命周期；Runtime Builder 不调度 Turn。所有入口，包括 Channel、library 和 Subagent，必须进入同一 Turn/Turn-tree tracking，不能绕过 Shutdown、Abort 或 generation pin。
+
+**Target Decision：** Runtime Builder 是进程 Lifecycle coordinator：它发起启动/Shutdown 阶段、维护资源依赖和 Ownership 记录，并编排 creator/Lifecycle Owner 清理；RuntimeApp 只负责 Turn ingress、drain、Abort convergence 和报告，不直接关闭 Provider、Extension 私有资源或 Channel Transport 内部资源。
+
+### 8.2 Cross-flow ownership
+
+| Concern | 唯一语义所有者 | 生产者/执行者 | 消费或边界 | 禁止责任漂移 |
+|---|---|---|---|---|
+| Event Contract | Stable Core / Application Contract | RuntimeApp、Runner、Subagent Orchestration 只按 Contract 产生各自事件 | RuntimeApp correlation/Fanout；Channel Adapter 只映射和投递 | Channel 定义 Agent 语义；通用 Event Bus 成为第二权威 |
+| Event correlation 与有序 Fanout | RuntimeApp | 接受请求时分配关联身份；聚合各语义 producer 的事件 | Channel/observer target；caller-facing terminal boundary | Runner/Channel 重写 correlation；单 target failure 改变 Turn result |
+| Error taxonomy | Stable Core / Application Contract | Resolver、Provider/Channel Adapter、Tool Execution、Subagent Orchestration 和 Lifecycle Owner 把本地失败映射为 canonical category | RuntimeApp/Builder 只消费 canonical failure | Adapter 错误泄漏 SDK/Transport 类型；每个边界定义第二套 taxonomy |
+| caller-facing Turn outcome | RuntimeApp | public completion gate 把 canonical Turn failure/Abort/Shutdown 映射为恰好一个 outcome | Caller 与 correlated terminal Event | 日志代替终态；late worker 改写 public outcome |
+| aggregated Lifecycle/Shutdown Report | Runtime Builder | 聚合 RuntimeApp convergence report 与 Lifecycle Owner close result | Host / embedded caller | Builder 改写 Turn outcome；单个 close failure 阻止独立 close |
+| Abort | RuntimeApp / Turn orchestration | Root 创建 controller；Child 继承 tree signal；Tool/Provider/interaction 协作响应 | Runner、Tool、Provider Port、Subagent、approval wait | Channel/Tool 私自取消其他 Turn；library 路径绕过 tracking |
+| Turn concurrency | RuntimeApp | per-session queue、跨 Session 调度、Turn tree/pin accounting | Runner 接收一个已固定 Turn；Subagent Orchestration 请求 Child Turn | Runner/Builder 建立第二个跨 Turn scheduler |
+| Tool loop ordering | Runner / Turn Execution | Model call、before Hook、Policy、Tool、after Hook、Tool Result | pinned Tool/Hook projection 和 Resolved Model | RuntimeApp 重建 executor；detached Hook 越过 Turn/pin |
+| Resource Lifecycle | creator（handoff 前）/ recorded Lifecycle Owner（handoff 后） | Runtime Builder 编排依赖顺序；Owner 执行 start/close | RuntimeApp 提供 Turn/pin convergence report | 消费者因持有引用获得 close 权；失败被吞掉 |
+
+### 8.3 Channel/library ingress 到 Turn result Fanout
+
+Channel 和 library caller 使用同一个 Runtime Application ingress。Channel 提供 route 和可选 Channel Capability；library caller 没有隐式 Channel，也不能因进程曾启动过某个 Channel 而获得交互能力。RuntimeApp 对同一 Session 的 Root Turn 串行化，不同 Session 可并行；Child Turn 属于 Parent Turn tree，不进入第二个全局 scheduler。
+
+**Target Decision：** RuntimeApp 接受输入时先分配稳定 `requestId`，建立 message/Session/AcceptedRequest correlation，再按既有多客户端语义产生带 `requestId` 的 `user_message`。请求从队列开始执行时，RuntimeApp 原子分配稳定 `turnId`、建立 `requestId -> turnId` correlation 并捕获 Registry Snapshot/pin，再执行 Model Resolution；started request 的后续事件/结果携带两者，未开始即被 Shutdown 终结的 queued request 只需 `requestId`。Resolution Failure 在任何 Provider 调用前成为可分类的 Turn failure；Runner/Provider failure 和 Turn Abort 也必须经 §8.7 的同一 public completion gate/Fanout 边界恰好一次返回。排队请求在开始前不是 Root Turn，不捕获 Snapshot 或 Resolved Model。
+
+**Target Decision：** 一个 Turn 内的语义 Event 保持产生顺序；RuntimeApp 逐个隔离 Fanout target 的同步失败，单个 Channel 或 observer 失败不得反向改变 Turn result，也不得阻止其他 target。Channel Adapter 对本地发送接受、Transport backpressure、远端断开和呈现负责；RuntimeApp 不承诺远端 delivery acknowledgment。不同 Turn 之间不建立无业务需求的全局总序。
+
+```mermaid
+sequenceDiagram
+	participant Caller as Channel / Library Caller
+	participant Runtime as RuntimeApp
+	participant Resolver as Model Resolver
+	participant Runner
+	participant Port as Model Invocation Port
+	participant Fanout as Channels / Observer
+
+	Caller->>Runtime: submit input + session + route/capabilities
+	Runtime->>Runtime: allocate AcceptedRequest requestId
+	Runtime->>Fanout: user_message correlated by requestId
+	Runtime->>Runtime: enqueue; serialize Root Turns per Session
+	Runtime->>Runtime: dequeue; atomically create Root turnId + capture Snapshot/pin
+	Runtime->>Runtime: record requestId -> turnId correlation
+	Runtime->>Resolver: resolve Turn Model Reference
+	alt resolution fails
+		Resolver-->>Runtime: Resolution Failure
+	else resolution succeeds
+		Resolver-->>Runtime: immutable Resolved Model
+		Runtime->>Runner: run Turn + Snapshot projections + signal
+		loop LLM / Tool steps
+			Runner->>Port: invoke through Resolved Model binding
+			Port-->>Runner: normalized stream / usage / error
+			Runner->>Runtime: execution events with requestId + turnId
+			Runtime->>Fanout: ordered, target-isolated fanout
+		end
+		alt Runner/Provider fails
+			Runner-->>Runtime: canonical Turn failure + incurred Usage
+		else Turn signal aborts
+			Runner-->>Runtime: aborted outcome + incurred Usage
+		else Turn completes
+			Runner-->>Runtime: completed result + Usage
+		end
+	end
+	Runtime->>Runtime: completion gate selects one terminal outcome
+	Runtime->>Fanout: terminal event with requestId + turnId
+	Runtime-->>Caller: exactly one result with requestId + turnId
+	Runtime->>Runtime: release pin; start next Session item
+```
+
+```text
+Channel / Library Caller -> RuntimeApp:
+	submit input + Session + explicit route/capabilities
+RuntimeApp: allocate stable AcceptedRequest requestId
+RuntimeApp -> Channels / Observer: user_message correlated by requestId
+RuntimeApp: enqueue; serialize Root Turns per Session
+when the request dequeues:
+	atomically create stable Root turnId + capture Registry Snapshot/pin
+	record requestId -> turnId correlation
+RuntimeApp -> Model Resolver: resolve Turn Model Reference
+
+if resolution fails:
+	Model Resolver -> RuntimeApp: Resolution Failure
+else:
+	Model Resolver -> RuntimeApp: immutable Resolved Model
+	RuntimeApp -> Runner: Turn + Snapshot projections + Abort signal
+	Runner -> Model Invocation Port: invoke through Resolved Model binding
+	Model Invocation Port -> Runner: normalized stream / Usage / Error
+	Runner -> RuntimeApp: execution events carrying requestId + turnId
+	if Runner/Provider fails: canonical Turn failure + incurred Usage
+	else if Turn signal aborts: aborted outcome + incurred Usage
+	else: completed result + Usage
+
+RuntimeApp public completion gate: select one terminal outcome
+RuntimeApp -> Channels / Observer:
+	ordered, target-isolated terminal event carrying requestId + turnId
+RuntimeApp -> Caller: exactly one result carrying requestId + turnId
+RuntimeApp: release pin; start next queued item for the Session
+```
+
+### 8.4 Tool Definition、Policy、Hook 与 Tool Result
+
+Tool Domain 的 canonical Tool Contract 是 Tool identity、输入契约和 Result 语义的唯一来源。Registry Snapshot 的 Tool projection 提供当前 Turn 可见的 canonical definitions/implementations；Provider Adapter 只把 definitions 映射到具体 wire format，并把 Provider tool request 归一化为 core-owned Tool Call。RuntimeApp 不再派生 Provider Tool schema、Prompt-only duplicate definition 或替换 Runner executor。
+
+Tool Call 固定使用以下顺序：
+
+1. Runner 以 Turn-pinned Tool/Hook projection 解析 Provider 返回的 Tool Call identity；
+2. `before_tool_call` Hook 按确定顺序 awaited，允许按 Contract 变换输入或拒绝；异常 fail closed；
+3. 对 effective input 执行 canonical schema validation；
+4. Application Tool Policy 对 effective call 决策：显式 deny 优先；allowlist 命中则允许；未命中且当前调用上下文提供 approval Channel Capability 时请求审批；未命中且无该 Capability 时拒绝；
+5. approval wait 必须观察 Turn Abort 和 Shutdown，并返回 approved、denied、aborted、unavailable 或 failed 等可分类结果；Channel 只承载交互，不拥有 Policy；
+6. 允许时由 Tool Execution 调用 Tool implementation；拒绝、校验失败、Tool exception 和 Abort 都归一化为与原 call identity 配对的 Tool Result/terminal outcome；
+7. Runner 产生配对的 Tool Call/Result 语义事件并写入后续模型上下文；事件不得把 transformed effective input 错报为实际未执行的输入，具体字段由后续 Spec 决定；
+8. `after_tool_call` Hook 可以并行且失败隔离，但必须由 Runner `allSettled` 后才继续下一次 Model invocation 或结束 Turn；Hook 不得 detached 越过 Turn completion 或 Snapshot pin。
+
+**Target Decision：** allowlist 是 Application Tool Policy 的显式部署/Agent Policy 输入，不是 Channel Capability，也不由 Hook 注册历史决定。无审批能力只改变 unmatched call 的本次结果，不修改 Snapshot、Tool 可用集合或后续调用；deny 规则始终高于 allowlist。具体 pattern 语法、配置来源合并和审批结果类型由后续 Tool Policy Spec 冻结。
+
+```mermaid
+sequenceDiagram
+	participant Runner
+	participant Hooks as Pinned Hook Projection
+	participant Policy as Application Tool Policy
+	participant Approval as Approval Capability
+	participant Tool as Tool Execution
+
+	Runner->>Runner: normalize Provider request; resolve pinned Tool
+	Runner->>Hooks: await before hooks in deterministic order
+	Hooks-->>Runner: effective call or deny
+	alt before hook denies or fails
+		Runner->>Runner: create correlated denied Tool Result
+	else before hooks allow
+		Runner->>Runner: validate effective input
+		alt validation fails
+			Runner->>Runner: create correlated invalid Tool Result
+		else input is valid
+			Runner->>Policy: decide effective call
+			alt explicit deny
+				Policy-->>Runner: deny
+				Runner->>Runner: create correlated denied Tool Result
+			else allowlist match
+				Policy-->>Runner: allow
+				Runner->>Runner: mark execution authorized
+			else unmatched with approval capability
+				Policy-->>Runner: requiresApproval
+				Runner->>Approval: request per-call decision; race Turn Abort/Shutdown
+				Approval-->>Runner: approved / denied / aborted / unavailable / failed
+				alt approved
+					Runner->>Runner: mark execution authorized
+				else not approved
+					Runner->>Runner: create classified Tool Result
+				end
+			else unmatched without approval capability
+				Policy-->>Runner: deny
+				Runner->>Runner: create correlated denied Tool Result
+			end
+		end
+	end
+	opt execution authorized
+		Runner->>Tool: execute(effective call, signal)
+		alt Tool returns
+			Tool-->>Runner: normalized successful Tool Result
+		else Tool throws/fails
+			Tool-->>Runner: canonical Tool failure
+			Runner->>Runner: create paired failed Tool Result
+		else Turn signal aborts execution
+			Tool-->>Runner: aborted execution + incurred Usage if any
+			Runner->>Runner: create paired aborted Tool Result/outcome
+		end
+	end
+	Runner->>Runner: emit correlated events; append Tool Result
+	Runner->>Hooks: run after hooks concurrently; await allSettled
+	Runner->>Runner: continue Model invocation or complete Turn
+```
+
+```text
+Runner: normalize Provider tool request + resolve Tool from pinned projection
+Runner -> pinned Hook projection: await ordered before_tool_call hooks
+Hook projection -> Runner: effective call OR deny
+
+if before Hook denies or fails:
+	create correlated denied Tool Result
+else:
+	Runner: validate effective input
+	if validation fails:
+		create correlated invalid Tool Result
+	else:
+		Runner -> Application Tool Policy: decide effective call
+		if explicit deny:
+			Policy -> Runner: deny
+			Runner creates correlated denied Tool Result
+		else if allowlist matches:
+			Policy -> Runner: allow
+			mark execution authorized
+		else if approval Channel Capability exists:
+			Policy -> Runner: requiresApproval
+			Runner -> current-call Approval Capability:
+				request per-call approval while racing Turn Abort/Shutdown
+			if approved: mark execution authorized
+			else: Runner creates classified denied/aborted/unavailable/failed Tool Result
+		else:
+			Policy -> Runner: deny
+			Runner creates denied Tool Result
+
+if execution is authorized:
+	Runner -> Tool Execution: execute effective call + Turn signal
+	if Tool returns: use normalized successful Tool Result
+	else if Tool throws/fails: create paired failed Tool Result
+	else if Turn signal aborts execution:
+		create paired aborted Tool Result/outcome and preserve incurred Usage
+
+Runner: emit correlated Tool Call/Result events + append Tool Result
+Runner -> after_tool_call hooks: run concurrently + await allSettled
+Runner may now continue Model invocation or complete the Turn
+```
+
+### 8.5 Channel Contribution、Capability 与 Lifecycle
+
+Channel Contribution 只描述由 Runtime Builder 构建 Channel binding 所需的 core-owned Contract；它不能在注册时启动 Transport、隐式创建 Session 或直接修改 RuntimeApp。Builtin CLI/WebSocket 与 External Channel 使用同一 staging、Snapshot projection、Capability 和 Lifecycle 路径。
+
+**Target Decision：** Runtime Builder 在 Snapshot publish/Runtime ingress 前，按依赖关系创建并启动 accepted Channel bindings。Creator 在 ownership handoff 前负责 rollback；handoff 后每个 binding 的 recorded Lifecycle Owner 负责幂等 stop。任一 required Channel/Builtin 启动失败时，本次启动失败并逆序清理所有已启动 candidate resources；可隔离 External Channel 必须按 §6 整组隔离，不能留下部分 Contribution 或 started Transport。独立 Channel 可以并行启动，但成功判定、失败聚合和 rollback 必须由同一 Builder phase 收口。
+
+**Target Decision：** RuntimeApp 只取得构建完成的 narrow Channel routing/capability bindings。Channel Capability 是当前 call/route 的显式事实，不是全局“当前 Channel”或进程曾启动过某 Channel 的历史。RuntimeApp 拥有 inbound correlation、Turn routing 和 semantic Fanout；Channel Adapter 拥有连接/client concurrency、本地 send 接受语义，并只把 Transport failure 映射为 Stable Core 的 canonical Error taxonomy。单个 outbound target 失败被 RuntimeApp 隔离并记录，不停止其他 target；required Channel 的持续不可用是否升级为 Runtime health failure，由后续 Channel Spec 决定。
+
+```mermaid
+sequenceDiagram
+	participant Source as Module / Extension
+	participant Builder as Runtime Builder
+	participant Creator as Channel Binding Creator
+	participant Owner as Recorded Lifecycle Owner
+	participant Runtime as RuntimeApp
+	participant Client
+
+	Source->>Builder: staged Channel Contribution
+	Builder->>Builder: validate unit + build candidate projection
+	Builder->>Creator: create/start binding before ingress
+	alt start fails before handoff
+		Creator-->>Builder: failure
+		Builder->>Creator: orchestrate creator-owned rollback
+		Builder-->>Source: isolate External or fail required startup
+	else start succeeds and ownership transfers
+		Creator-->>Builder: accepted binding + capabilities
+		Builder->>Owner: atomic ownership handoff
+		Builder->>Runtime: immutable narrow routing/capability view
+		Client->>Runtime: inbound through Channel binding
+		Runtime->>Runtime: correlate and submit Turn
+		Runtime-->>Client: semantic events through target-isolated Fanout
+		Builder->>Runtime: stop new ingress; drain/Abort Turns
+		Runtime-->>Client: final terminal Fanout before Channel stop
+		Runtime-->>Builder: Turn/pin convergence report after terminal Fanout
+		Builder->>Owner: stop once in reverse dependency order
+	end
+```
+
+```text
+Module / Extension -> Runtime Builder: staged Channel Contribution
+Runtime Builder: validate unit + build candidate Channel projection
+Runtime Builder -> Channel Binding Creator: create/start before Runtime ingress
+
+if start fails before ownership handoff:
+	Builder orchestrates creator-owned rollback
+	isolate External unit OR fail required startup
+else:
+	Channel Binding Creator -> Runtime Builder: accepted binding + capabilities
+	Runtime Builder -> recorded Channel Lifecycle Owner: atomic ownership handoff
+	Runtime Builder -> RuntimeApp: immutable narrow routing/capability view
+	Client -> RuntimeApp: inbound through Channel binding
+	RuntimeApp: correlate and submit Turn
+	RuntimeApp -> Client: semantic events through target-isolated Fanout
+	on Shutdown, Builder asks RuntimeApp to stop ingress and converge Turns
+	RuntimeApp -> Client: final terminal Fanout before Channel stop
+	RuntimeApp -> Builder: Turn/pin convergence report after terminal Fanout
+	Builder -> Channel Owner: stop exactly once in reverse dependency order
+```
+
+### 8.6 Subagent delegation、独立 resolution 与结果归一化
+
+Phase 5 保持当前单 Parent 阻塞等待 Child 的最小语义，不引入 Subagent Batch、Background、Detached、Agent Team 或第二个 scheduler。Subagent Profile 和 Parent effective Model Reference 的选择遵循 §5；Child 继承 Parent Registry Snapshot generation/pin protection，但必须独立解析自己的 Resolved Model。
+
+**Target Decision：** Parent Runner 通过 Subagent Tool/用例调用 Subagent Orchestration；Orchestration 解析 Profile 和 child Model Reference，并请求 RuntimeApp 在 Parent Turn tree 下创建 Child Turn。RuntimeApp 是 Child identity、parent-child correlation、route、tree signal、Snapshot generation/pin、completion record 和 execution tracking 的唯一 Owner；Orchestration 只使用 RuntimeApp 分配的 identity 提供 parent-child lifecycle facts，不直接启动未登记的 Runner。Child registration、setup、resolution 和 execution 全部与继承的 Parent Abort/Shutdown signal 竞争同一个 RuntimeApp Child completion gate；第一个 terminal outcome 产生恰好一次 correlated child end。RuntimeApp 只释放已成功注册的 route；Orchestration 只清理已实际取得的 temporary session/prompt resource，二者都位于共同 terminal/`finally` 边界。
+
+**Target Decision：** Child Runner 产生 node-local execution Event 和 Usage；Subagent Orchestration 提供 parent-child lifecycle facts，并把 child success、failure、aborted、Usage 和必要 Event summary 对称归一化为 parent Tool Result。RuntimeApp 分配 correlation、记录 Child completion 并负责 shared Fanout。Parent Abort/Shutdown 沿 Turn tree signal 级联到 registration/setup wait、Model Resolution、approval、Tool、Provider 和 Child Runner；Child 不创建独立 Root controller。具体 Usage 聚合字段由后续 Spec 决定，但不得重复计费或把失败/Abort 重置为零以掩盖已发生 Usage。
+
+```mermaid
+sequenceDiagram
+	participant Parent as Parent Runner
+	participant Sub as Subagent Orchestration
+	participant Runtime as RuntimeApp
+	participant Resolver as Model Resolver
+	participant Child as Child Runner
+
+	Parent->>Sub: delegate(profile, parent Turn, tree signal)
+	Sub->>Sub: choose profile reference or parent effective reference
+	Sub->>Runtime: create tracked Child Turn under Parent
+	Runtime->>Runtime: allocate Child identity; inherit generation/signal
+	alt Parent Abort/Shutdown wins at any Child lifecycle stage
+		Runtime->>Runtime: classify aborted outcome + preserve incurred Usage
+	else Child lifecycle continues
+		alt Child registration fails
+			Runtime->>Runtime: classify setup failure; no Provider call
+		else Child is registered
+			Runtime->>Runtime: register route/tree
+			Sub->>Sub: set up temporary session/prompt under inherited signal
+			alt setup fails
+				Sub-->>Runtime: classified setup failure; no Provider call
+			else setup succeeds
+				Runtime->>Resolver: resolve child context/reference/policy with signal
+				alt resolution fails
+					Resolver-->>Runtime: classified child Resolution Failure; no Provider call
+				else resolution succeeds
+					Resolver-->>Runtime: child Resolved Model
+					Runtime->>Child: run tracked Child + inherited signal/projections
+					alt Child execution fails
+						Child-->>Runtime: classified failure + incurred Usage
+					else Child completes
+						Child-->>Runtime: success + Usage
+					end
+				end
+			end
+		end
+	end
+	Runtime->>Runtime: completion gate records one child outcome/end + preserved Usage
+	Runtime->>Runtime: shared correlated child events/end Fanout
+	Runtime->>Runtime: release registered route if present
+	Runtime-->>Sub: terminal child outcome + preserved Usage
+	Sub->>Sub: clean up temporary session/prompt resources if acquired
+	Sub-->>Parent: normalized success/failure/aborted Tool Result + child Usage/events
+```
+
+```text
+Parent Runner -> Subagent Orchestration:
+	delegate(Profile, Parent Turn identity, tree signal)
+Subagent Orchestration:
+	choose Profile Model Reference OR Parent effective Model Reference
+Subagent Orchestration -> RuntimeApp:
+	create tracked Child Turn under Parent
+RuntimeApp:
+	allocate Child identity + inherit Parent Snapshot generation/tree signal
+
+if Parent Abort/Shutdown wins at any Child lifecycle stage:
+	RuntimeApp classifies aborted outcome and preserves incurred Usage
+else:
+	if Child registration fails:
+		RuntimeApp classifies setup failure without Provider call
+	else:
+		RuntimeApp registers Child route/tree
+		Subagent Orchestration sets up temporary session/prompt under inherited signal
+		if setup fails:
+			Subagent Orchestration returns classified setup failure without Provider call
+		else:
+			RuntimeApp -> Model Resolver: resolve child context + reference + policy with signal
+			if resolution fails:
+				return classified child Resolution Failure without Provider call
+			else:
+				RuntimeApp -> Child Runner: tracked Child + Resolved Model + inherited signal/projections
+				if Child execution fails: Child returns classified failure + incurred Usage
+				else: Child returns success + Usage
+
+RuntimeApp Child completion gate:
+	record exactly one success/failure/aborted child outcome/end + preserved Usage
+RuntimeApp: shared correlated child events/end Fanout
+RuntimeApp: release registered route if present
+RuntimeApp -> Subagent Orchestration: terminal child outcome + preserved Usage
+Subagent Orchestration:
+	clean up temporary session/prompt resources if actually acquired
+Subagent Orchestration -> Parent Runner:
+	normalized success/failure/aborted Tool Result + child Usage/Event summary
+```
+
+### 8.7 Startup、two-stage Shutdown 与 Host boundary
+
+Startup 沿 §6 的 staging/ownership handoff 构建完整对象图：Runtime Builder 依赖正序创建、校验和启动 resources，成功后发布启动 Snapshot 并开放 Runtime ingress。失败时，未 handoff resource 由 creator rollback；已 handoff resource 由 recorded Lifecycle Owner 逆序关闭。外部可隔离单元与 required/Builtin fatal failure 遵循 §6.4，不因进入 Phase 5 改变。
+
+**Target Decision：** RuntimeApp 为每个 accepted caller-facing request 维护一个原子的 public completion gate。正常完成、失败、Abort、queued shutdown 和 non-converged shutdown 竞争同一个 terminal transition；只有第一个 transition 可以同时结算 caller result 并产生一个 correlated terminal event，后续 worker completion/error 只能更新诊断，不能再次改变 public outcome 或产生语义 terminal event。
+
+**Target Decision：** 正常 Shutdown 使用两阶段 Turn convergence，不沿用当前 `RuntimeApp.close()` 的无界等待：
+
+1. Host/Composition 向 Runtime Builder 请求 Shutdown；Builder 建立单一 shutdown result，拒绝新的 reload/candidate，并请求 RuntimeApp 停止 Root/Child ingress；
+2. RuntimeApp 经 public completion gate 对每个 queued/unstarted request 恰好一次结算 caller result，并在 Channel/Fanout 仍可用时产生只携带 `requestId` 的 correlated `shutdown/cancelled` terminal event；该请求从未创建 Root Turn，因此不分配/伪造 `turnId`。所有 pending approval/interaction/capability wait 立即收到 shutdown/aborted 终态并清除，以免人为 timeout 阻塞 drain；关联 Turn 同时进入取消路径；
+3. 保持 Channel outbound/Fanout 暂时可用，对其余已运行且不等待交互的 Turn tree 执行 bounded graceful drain；
+4. drain deadline 到达后，RuntimeApp Abort 全部剩余 Turn tree，并在独立的 bounded Abort-convergence deadline 内等待 Hook、Tool、Provider、Child Turn 和 Snapshot pin 收敛；
+5. Abort-convergence deadline 到达时，RuntimeApp 对每个仍未收敛的 caller-facing Turn request 恰好一次结算为 classified `shutdown/non-converged` outcome，并在 Channel/Fanout 仍可用时产生对应 terminal event；此后迟到 worker completion/error 不得改变 caller result 或再次产生语义 terminal event，只能更新内部诊断，并在真实收敛时释放自己的 generation pin；
+6. RuntimeApp 向 Builder 返回 completed/aborted/non-converged Turn、仍持有的 pin 和 failure report；对外 request 已结算不表示内部 worker 已收敛，Builder 不得因此强制关闭其 generation-protected resources；
+7. Builder 按依赖逆序要求每个 Lifecycle Owner 幂等关闭无 pin/使用者的资源；Channel/Transport 在所有 caller-facing terminal event 已发送后关闭；一个 close 失败不跳过其他独立 eligible resource；
+8. Builder 聚合 queued/interaction/Turn/pin/Owner/resource failure，返回唯一 Shutdown Report；重复 Shutdown 共享或返回同一终态，不启动第二次关闭流程。
+
+**Target Decision：** 正常进程 Host 的 overall shutdown deadline 必须覆盖 graceful drain、Abort convergence、caller terminal Fanout 和 report allowance；在该 cooperative window 内适用上述恰好一次结算保证。第二次 forceable signal 是显式运维强制例外，可以中断尚未完成的 settlement/report；Host 必须尽力记录 interrupted requests/protected residuals，但进程终止不伪装为这些 request 已结算。overall deadline 到达后 Host 也可以停止继续等待并强制退出；该 Host policy 不授权 Builder 关闭受 pin 保护的资源。library/embedded caller 不得由 Runtime library 自行 `process.exit()`，只接收结构化 Shutdown Report 并由宿主决定后续，因而仍受正常有界结算契约保护。具体 deadline 数值、signal 映射和 exit code 由 AF-06/Host Spec 决定。
+
+```mermaid
+sequenceDiagram
+	participant Host
+	participant Builder as Runtime Builder
+	participant Runtime as RuntimeApp
+	participant Waiters as Approval / Interaction
+	participant Channels as Channel / Fanout
+	participant Owners as Lifecycle Owners
+
+	Host->>Builder: shutdown request
+	Builder->>Builder: reject reload/candidate; create single shutdown result
+	Builder->>Runtime: stop Root/Child ingress
+	Runtime->>Runtime: settle queued/unstarted once by requestId; no turnId
+	Runtime->>Channels: queued terminal events with requestId only
+	Runtime->>Waiters: settle pending waits as shutdown/aborted
+	Runtime->>Channels: retain outbound delivery during convergence
+	Runtime->>Runtime: bounded graceful drain active Turn trees
+	opt work remains at drain deadline
+		Runtime->>Runtime: Abort remaining trees; bounded convergence wait
+	end
+	alt worker converged within deadlines
+		Runtime->>Runtime: completion gate settles once as completed/aborted
+	else worker remains non-converged
+		Runtime->>Runtime: completion gate settles once as shutdown/non-converged
+		Runtime->>Runtime: seal semantic outcome; retain worker pin until actual convergence
+	end
+	Runtime->>Channels: deliver all remaining caller-facing terminal events
+	Runtime-->>Builder: Turn/pin/failure convergence report
+	Builder->>Owners: after all terminal events, close eligible resources in reverse order
+	Owners-->>Builder: successes + protected residuals + failures
+	Builder-->>Host: aggregated Shutdown Report
+	opt process Host deadline or second forceable signal
+		Host->>Host: force exit without unsafe resource close
+	end
+```
+
+```text
+Host -> Runtime Builder: Shutdown request
+Runtime Builder: reject reload/candidate + create one Shutdown result
+Runtime Builder -> RuntimeApp: stop Root/Child ingress
+RuntimeApp public completion gate:
+	settle every queued/unstarted caller exactly once by requestId; allocate no turnId
+RuntimeApp -> Channel/Fanout:
+	emit one requestId-only shutdown/cancelled terminal event per queued request
+RuntimeApp -> approval/interaction waiters: settle shutdown/aborted + clear
+RuntimeApp -> Channel/Fanout: retain outbound delivery during convergence
+RuntimeApp: bounded graceful drain of active Turn trees
+if work remains at drain deadline:
+	Abort remaining trees + bounded Abort-convergence wait
+if a worker converged within the deadlines:
+	completion gate settles its caller-facing request exactly once as completed/aborted
+else if a worker remains non-converged:
+	completion gate settles its caller-facing request exactly once as shutdown/non-converged
+	seal its semantic outcome; suppress late worker semantic events
+	retain its generation pin until actual worker convergence
+RuntimeApp -> Channel/Fanout: deliver all remaining caller-facing terminal events
+RuntimeApp -> Runtime Builder: Turn/pin/failure convergence report
+Runtime Builder -> Lifecycle Owners:
+	after all caller-facing terminal events, close eligible resources once in reverse dependency order
+Lifecycle Owners -> Runtime Builder:
+	successes + generation-protected residuals + close failures
+Runtime Builder -> Host: aggregated Shutdown Report
+if process Host overall deadline/second forceable signal occurs:
+	overall deadline normally envelopes both stages + Fanout/report allowance
+	second forceable signal may preempt settlement as an explicit operator override
+	Host force exits without pretending interrupted requests settled or protected resources closed
+library/embedded Host receives report and decides; Runtime library never exits process
+```
+
+### 8.8 Current gaps converted to migration constraints
+
+以下 `Verified Current Fact` 只决定 Characterization/迁移前置条件，不要求 AF-03 修复代码：
+
+| 当前事实（均核验于 2026-08-31） | Source location | 目标约束 | 进入 Slice 前的最小验证 |
+|---|---|---|---|
+| `RuntimeApp.close()` 无界等待 Root Turn/Channel stop，且先等 Turn 再关闭 interaction | [`RuntimeApp.close()`](../../src/runtime/RuntimeApp.ts#L940-L1003) | §8.7 先终结 waiters、两阶段有界 convergence | AF-04 覆盖 approval-wait、nonresponsive Tool/Channel、重复 Shutdown |
+| Channel 并行 start 失败后不 rollback，retry 变为 no-op | [`RuntimeApp.startChannels()`](../../src/runtime/RuntimeApp.ts#L380-L391) | Builder startup phase 必须原子收口并逆序 rollback | AF-04 记录现状；Slice 4 failure injection |
+| library Subagent 绕过 Runtime tracking；setup 在 terminal `try/finally` 前开始 | [`runSubagentTurn()`](../../src/runtime/subagent-orchestration.ts#L105)、[`SubagentRunner.run()` setup](../../src/core/subagent/SubagentRunner.ts#L43-L72)、[`try/finally` 与 cleanup](../../src/core/subagent/SubagentRunner.ts#L145-L210) | 所有 Child 进入 Turn tree，setup/terminal cleanup 对称 | AF-04 覆盖 library/tool 两入口；Slice 2 contract |
+| after Tool/compaction Hook detached | [`runObserverHooks()` / `runAfterToolCall()`](../../src/core/runner/hooks/runner.ts#L16-L74) | Hook 必须在 Turn/pin 内 settled | AF-04 固定当前事件顺序；Slice 3 验证 Abort/Shutdown |
+| Channel/observer Fanout failure 隔离不一致 | [`RuntimeApp.create()` fanout](../../src/runtime/RuntimeApp.ts#L142-L164) | 每个 target failure 隔离且不改变 Turn result | AF-04 多 target/observer failure characterization |
+| approval Hook 是否安装取决于 `startChannels()` 历史 | [`startChannels()`](../../src/runtime/RuntimeApp.ts#L380-L391)、[`wireApprovalRouting()`](../../src/runtime/RuntimeApp.ts#L413-L469) | Policy 只看 §8.4 的 explicit deny/allowlist 和 current-call Channel Capability | AF-04 覆盖 library before/after Channel startup；Slice 3/4 Contract |
+
+### 8.9 Phase 5 完成条件
+
+- [x] Turn、Tool、Channel 和 Subagent 四类流支持 AF-03 边界验收；
+- [x] 简单调用链没有无业务价值的机械转换层；
+- [x] 每个长生命周期资源有唯一创建和释放责任；
+- [x] RuntimeApp 最终只保留队列、Turn、路由、Fanout 和 Shutdown 编排。
 
 ## 9. Legacy、Compat and Migration Boundaries
 
 **Phase：** 5
 
-本节将在 Phase 5 映射 Current 类型到目标术语，并定义 Slice 1–6 的新权威路径、Compatibility 和删除边界。
+本节把 Phase 5 于 2026-08-31 核验的生产入口转换为迁移约束。它不要求 AF-03 重命名类型、移动目录或修改生产代码，也不把 Current 类型视为目标 Contract。
 
-### 9.1 待产出
+以下位置是 §9.1–§9.3 的 `Verified Current Fact` 锚点；每条只支持相应迁移起点，不证明 Target 已实现：
 
-- Current/Target 术语迁移表；
-- Legacy Public API -> Compatibility Adapter -> New Authoritative Core 单向依赖图；
-- Slice 1–6 的候选真实调用方和删除条件；
-- Legacy 文档候选与后继入口；
-- Feature Flag、发布回滚和 Compatibility 到期规则。
+| 迁移起点 | Source location（2026-08-31） |
+|---|---|
+| bootstrap 直接创建 LLM client/主要资源图 | [`createDefaultRuntimeDependencies()`](../../src/runtime/bootstrap.ts#L17-L52)、[`bootstrapRuntime()` LLM/tool/Runner assembly](../../src/runtime/bootstrap.ts#L121-L166) |
+| RuntimeApp 从 raw LLM config 拼装 Runner 参数 | [`runTurnInternal()`](../../src/runtime/RuntimeApp.ts#L1043-L1134)、[`requireModel()`](../../src/runtime/RuntimeApp.ts#L1171-L1180) |
+| RuntimeApp post-bootstrap 创建 Subagent/Task Tool 并替换 executor | [`RuntimeApp.create()` post-bootstrap wiring](../../src/runtime/RuntimeApp.ts#L171-L250) |
+| Subagent 使用 host LLM defaults 和 Profile string | [`SubagentRunner.run()` model/run params](../../src/core/subagent/SubagentRunner.ts#L103-L137)、[`createSubagentHostBindings()`](../../src/runtime/subagent-orchestration.ts#L45-L83) |
+| 中央 Tool bundle 同时派生 executor、LLM 和 prompt definitions | [`assembleRuntimeTools()`](../../src/runtime/tool-registry.ts#L49-L67)、[`RuntimeToolBundle`](../../src/runtime/types.ts#L11-L16) |
+| 完整 prompt Tool definitions 仍被派生/传递，但渲染已停用；active memory 判断只读取 name | [`toPromptToolDefinitions()`](../../src/runtime/tool-registry.ts#L96-L103)、[`buildSystemPromptParams()`](../../src/runtime/prompt-factory.ts#L25-L34)、[`SystemPromptBuilder.build()`](../../src/core/prompt/SystemPromptBuilder.ts#L46-L65)、[`buildMemorySection()`](../../src/core/prompt/SystemPromptBuilder.ts#L190-L199) |
+| 三个进程脚本直接构造并注册/启动 concrete Channel | [`scripts/cli.ts`](../../scripts/cli.ts#L55-L67)、[`scripts/server.ts`](../../scripts/server.ts#L63-L83)、[`scripts/websocket.ts`](../../scripts/websocket.ts#L85-L107) |
 
-### 9.2 Phase 5 完成条件
+### 9.1 Current 到 Target 术语与权威来源
 
-- [ ] 新核心不依赖 Compat/Legacy；
-- [ ] 每个 Slice 都指向真实调用方和旧路径删除条件；
-- [ ] 不在 AF-03 执行目录/类型重命名或生产迁移。
+| Current 类型/字段/入口（`Verified Current Fact`） | 单一 Target 概念 | 权威 Owner | 迁移解释 |
+|---|---|---|---|
+| `RuntimeDependencies.createLLMClient` | Provider Integration Binding | Provider Extension Contract；Composition 提供 binding | 从 Runtime 直接构造具体 client，迁移为 Builder 通过 Provider Module 建立 binding |
+| `RuntimeResourceSet.llmClient` | Model Invocation Port binding | Stable Core 拥有 Port；Provider Adapter 实现 | RuntimeApp 不再保存具体 SDK client；Turn 只从 Resolved Model 取得匹配的 Port binding |
+| `resolvedConfig.llm.apiKey/baseURL` | Provider Connection | Provider Integration | Compatibility 只映射旧部署/连接输入；Configuration 和 RuntimeApp 不拥有 Connection 语义 |
+| `resolvedConfig.llm.model`、`RunTurnParams.model` 的模型选择语义 | Model Reference | Model Resolution；由调用方/Profile 提供 | Compatibility 按来源映射默认/显式 Reference，不能把它变成 Model Facts |
+| `RunTurnParams.maxTokens` 等单 Turn 执行限制 | Request Override | Turn 输入提供者声明；Model Resolution 校验 | Compatibility 只映射允许覆盖的字段，不能产生跨 Turn 状态或切换未授权 Provider |
+| `RuntimeApp.requireModel()` 及其 model/context/max-token 参数拼装 | Resolved Model | Model Resolution 生成；Turn Execution 消费 | RuntimeApp 只触发 resolution，不再从 raw Config fallback 或拼装模型执行事实 |
+| `SubagentProfile.model`、`SubagentHostBindings.llmDefaults.model` | Child Model Reference | Model Resolution；由 Subagent Profile/Parent effective reference 提供 | `inherit` 迁移为 Parent effective Model Reference，不是进程全局 LLM default |
+| `SubagentHostBindings.llmDefaults.contextWindowTokens` | Model Descriptor fact | Model Catalog / Model Resolution | Child 不从 host default 复制模型事实；Resolver 从受信 Catalog 取得并保留来源 |
+| `SubagentHostBindings.llmDefaults.maxTokens` | Model Policy output limit | Application Policy | Compatibility 把当前全局默认映射为 Policy 输入；未来显式 Child override 走独立 Request Override 契约，二者都不能成为 Model Descriptor fact |
+| `getDefaultBuiltinTools()`、`assembleRuntimeTools()` 的工具列表 | Tool Contribution | 提供该工具的 Runtime Module/External Extension | Builtin/External 经同一 core-owned Tool Contract 注册，不保留中央 Builtin 特例列表 |
+| `RuntimeToolBundle` 的中央 mutable 工具集合 | Registry Snapshot Tool projection | Registry | Runner/Provider/Prompt 消费各自窄只读投影，不以 mutable bundle 为权威源 |
+| `AgentRunner.on(...)` Hook 列表 | Hook Contribution | Registry | 旧 Public 注册如保留，只在边界适配成 Contribution；Runner 从 Turn 捕获的 Snapshot 取得 Hook 投影 |
+| `AgentRunner` 内 Hook 调用 | Hook execution pipeline | Runner | Runner 保持 §8.4 的 before/after 顺序、等待和错误语义，不承担注册表 lifecycle |
+| `wireApprovalRouting()` 的 allow/deny/prompt 决策 | Tool Policy | Application Policy | Policy 使用显式输入，不由 `startChannels()` 安装历史决定 |
+| `wireApprovalRouting()` 查询 `originChannel` | current-call Approval Capability | RuntimeApp | RuntimeApp 从当前 route 的 narrow Channel binding 提供能力事实，不使用进程全局 Channel 历史 |
+| 脚本直接构造 CLI/WebSocket Channel | Channel Contribution | 提供该 Channel 的 Runtime Module/External Extension | CLI/WebSocket 变为 Builtin Module；Builtin/External 经同一 Contribution Contract |
+| `RuntimeApp.registerChannel()` / `startChannels()` | Channel binding lifecycle | Runtime Builder；handoff 后为 recorded Lifecycle Owner | Builder 负责 staging/start/rollback/handoff；RuntimeApp 不启动 Transport |
+| `RuntimeApp.create()` + `bootstrapRuntime()` + `RuntimeResourceSet` 的对象图装配 | Runtime Builder | Composition | Builder 成为唯一对象图/资源图协调者并交付显式依赖；RuntimeApp 不再做 post-bootstrap composition |
+| session queues | Root Turn concurrency | RuntimeApp | 保持同 Session 串行、跨 Session 可并发，不引入第二 scheduler |
+| `routeContextByTurn` | Turn routing/correlation | RuntimeApp | Child/Root route 由同一 Turn tree ownership 管理，不暴露私有 map 给 Adapter |
+| 直接 callback fanout | ordered target-isolated Fanout | RuntimeApp | 保留直接调用，不引入 Event Bus；单 target failure 不改变 Turn result |
+| `activeAborts` | Turn tree Abort ownership | RuntimeApp | Root controller 和 Child 级联信号由 RuntimeApp 统一跟踪，Runner/Orchestration 不创建第二 Root owner |
+
+### 9.2 单向 Compatibility 与禁止依赖
+
+```mermaid
+flowchart LR
+	Caller[Legacy Public API / Config Caller]
+	Compat[Compatibility Adapter]
+	Core[New Authoritative Core]
+	Snapshot[Registry Snapshot / Resolved Model]
+
+	Caller --> Compat
+	Compat --> Core
+	Core --> Snapshot
+
+	Core -. forbidden .-> Compat
+	Snapshot -. forbidden .-> Compat
+```
+
+```text
+Legacy Public API / Config Caller
+	-> Compatibility Adapter
+	-> New Authoritative Core
+	-> Registry Snapshot / Resolved Model
+
+Forbidden:
+	New Authoritative Core -X-> Compatibility Adapter / Legacy types
+	Registry Snapshot / Resolved Model -X-> Compatibility Adapter / Legacy types
+```
+
+**Target Decision：** Compatibility 只允许在边界映射旧参数、默认值、返回值和错误；它不得拥有 Model Facts、Policy、Registry、lifecycle、Turn state 或资源。新实现、External Extension 和新测试 Fake 只针对新 Contract；不能通过 Compat 反向调用旧 bootstrap、旧 mutable bundle 或旧 Channel registration 来完成新路径。
+
+**Target Decision：** 每个 Slice 迁移至少一个真实生产调用方，并在同一 Slice 删除被替代路径或把剩余 Public API 降级为有 Owner、到期 Slice 和删除条件的 Compatibility。Compatibility 不从主 barrel 作为推荐入口导出。Slice 完成后生产回退依赖版本/发布回滚，不承诺长期保留双向 runtime switch。
+
+### 9.3 Slice 1–6 迁移与删除边界
+
+| Slice | Current migration entry/path | 新权威路径 | 允许的单向 Compat | 完成时删除/退出条件 |
+|---|---|---|---|---|
+| 1 Model Resolution | `bootstrapRuntime()` 经 `createLLMClient()` 直接构造 Anthropic client；`RuntimeApp.requireModel()` 和 `resolvedConfig.llm` 补齐每次 Runner 参数 | Anthropic Builtin Provider Module -> Provider Registry Snapshot -> Model Resolver -> Parent Resolved Model -> Runner Port | 旧静态 LLM config/`RunTurnParams.model` 映射为 Provider Connection、Model Reference 和受限 Request Override | bootstrap 不再 import/构造 Anthropic；RuntimeApp 不再读取 raw LLM config 或 `requireModel()`；Runner 不再接收由 RuntimeApp 拼装的 model/context/max-token facts；`RuntimeResourceSet.llmClient` 不再是权威 client slot |
+| 2 Subagent Model Resolution | `SubagentRunner` 从 Profile string 或 `SubagentHostBindings.llmDefaults` 选择 model/max/context；library entry 绕过 Runtime Turn tracking | Parent Tool/Library use case -> Subagent Orchestration -> RuntimeApp tracked Child -> Child Model Resolver -> Child Resolved Model -> Runner | 旧 Profile model string 映射为 Model Reference；`inherit` 映射 Parent effective Model Reference；旧 library result/error 仅在边界归一化 | 删除 `llmDefaults` 复制和 Child 对全局默认的 fallback；不存在直接启动未登记 Child Runner 的生产入口；setup/terminal cleanup、Usage、Event 和 Abort 都经 §8.6 路径 |
+| 3 Tool 与 Hook Module | `getDefaultBuiltinTools()` + `assembleRuntimeTools()` 构造中央 mutable bundle；`RuntimeApp.create()` 追加 Task Tool、重建派生值并 `setToolExecutor()`；`startChannels()` 安装 approval Hook | Builtin/External Tool/Hook Contributions -> Registry Snapshot Tool/Hook projections -> Runner canonical Tool pipeline | 若保留 `AgentRunner.on(...)` Public API，只将旧注册调用适配成 Hook Contribution；旧 allow/deny config 映射为 Tool Policy input | 删除中央 Builtin Tool 特例列表、Task Tool 后装配和 executor setter；approval 不依赖 Channel startup 历史；detached Hook 不跨 Turn/pin；不再为已禁用的 tool-definition prompt slot 派生完整 `PromptToolDefinition`，当前已核验的 memory 条件改读窄 tool-name/capability projection，除非新 Spec 验证完整渲染需求 |
+| 4 Channel Module | `scripts/cli.ts`、`scripts/server.ts`、`scripts/websocket.ts` 直接构造 concrete Channel 后调用 `registerChannel()`/`startChannels()` | CLI/WebSocket Builtin Modules + External Channel Contributions -> Builder-created bindings -> RuntimeApp narrow routing/capability view | 旧 `registerChannel/startChannels` Public API 如需过渡，只适配为 startup-only Contribution input；不能绕过 Builder lifecycle | 生产脚本不再构造/注册具体 Channel；RuntimeApp 不识别具体 Channel 类型或启动 Transport；Builtin/External 同 staging、rollback、handoff、stop；approval capability 为 current-call/route 事实 |
+| 5 Runtime Composition | `bootstrapRuntime()` 构造主要资源；`RuntimeApp.create()` 再发现 Subagent Profile、创建 Subagent Runner、追加 Task Tool；`RuntimeResourceSet` 可变；shutdown/rollback 分散 | Composition Root -> Runtime Builder -> immutable Registry Snapshot/explicit dependencies -> RuntimeApp；Builder/unique Owners 负责 startup/reload/retirement/shutdown resource graph | `RuntimeApp.create(options)` 如仍是 Public API，只成为调用 Builder 的薄适配入口；旧 dependency overrides 映射为明确 Module/Fake Contributions | 删除 RuntimeApp post-bootstrap composition、mutable `toolBundle`/`setToolExecutor()`、重复 lifecycle ownership 和不完整 startup rollback；RuntimeApp 只保留 §4.3/§8 的队列、Turn tree、routing、Fanout、Abort 与 Shutdown 编排；生产动态变更仅在 AF-06 结果支持后开放 |
+| 6 Documentation/Legacy | `Current Fact Candidate`：`docs/architecture/current/`、Proposal/Implementation、Root README；由 Slice 6 文档 inventory 和 active-link audit 核验，不声称为 production caller | 唯一 Current Architecture + Accepted ADR/Spec + Results/Plan 分责；Capability Inventory 和活跃链接指向后继入口 | Legacy 文档只保留状态、后继链接和必要历史定位，不继续同步目标/当前事实 | 每个当前事实只有一个权威入口；长期决策/未完成事项/执行证据已分别迁入 ADR/Plan/Results；入站链接更新；无独有价值文档经 Review 删除，Git History 保存历史；新实现不引用 Legacy |
+
+**Target Decision：** 上表给出 Slice 的架构退出条件，不替代各 Slice 的 DoR/DoD、Characterization、Contract、Fitness 和 failure-injection 验证。若 Spike/实现证据否定某条路径，先更新 Accepted Architecture/ADR 和本表，不能通过保留第二套权威路径规避删除条件。
+
+### 9.4 Feature Flag、回退与 Compatibility 到期
+
+- Feature Flag 只允许在 Slice 实施/发布窗口切换完整旧路径和完整新路径，必须有 Owner、默认值、观测信号、回退触发条件和删除 Slice；Slice 3/4 的 flag 只能在进程 startup 选择完整的 startup-configured path，不能触发生产动态 Contribution/Registry visibility 变更；
+- Slice 5 后若 AF-06/Accepted ADR 允许 request/Turn 级 migration selection，queued `AcceptedRequest` 不提前固定该选择；RuntimeApp 在 dequeue/start transition 中原子选择完整 migration path，并在新路径上同时创建 Root Turn、捕获 Registry Snapshot，随后完成 Resolved Model。该选择由整个 Root/Child Turn tree 继承；flag 不能在 Turn 内重选路径，也不能自身修改 Snapshot/Contribution visibility；
+- 新路径在发布前失败可以切回旧版本/旧完整路径；Registry candidate 的 pre-publish failure 遵循 §7 containment，post-publish retirement failure 不回滚已发布 Snapshot；
+- Slice 完成时 Flag 和被替代生产路径应删除；确需保留的 Public Compatibility 必须记录 Owner、到期 Slice、调用方清单和测试，且不能接收新功能；
+- Compatibility 删除后，回退只通过版本/发布回滚；不保留隐藏环境变量、未记录分支或反向 dependency；
+- 每个 Slice 满足 `Legacy_end < Legacy_start`；只增加 facade/registry/adapter 而未迁移真实调用方和删除旧路径，不算完成。
+
+### 9.5 Legacy 文档候选与后继入口
+
+| 候选 | Phase 5 状态 | 后继/处置 |
+|---|---|---|
+| `docs/architecture/current/*.md` | Current Fact Candidate，不整体升级 | AF-04 按代码/测试核验后合并为唯一 Current Architecture；随后逐份 `Pending -> Migrating -> Migrated -> Reviewed -> Deleted` |
+| `platform-config-restructure-impl.md` | 历史 Implementation | 有效当前事实进入 Current Architecture；长期决定进入 ADR；其余由 Git History 保存 |
+| `adapters-channel-design.md`、`adapters-websocket-channel-design.md` | 未 Accepted 的历史设计 | Channel 当前事实进入 Current Architecture，目标约束由本文件/后续 Accepted Spec 接管 |
+| `core-subagent-evolution-proposal.md`、`core-subagent-v2-spec.md` | Foundation Deferred/Future | 保留后继链接或移入 Legacy；不得作为 Batch/Background/Team 的活跃实现授权 |
+| `core-runner-emit-context-refactor.md` | 未实施 Proposal | 未完成事项若仍有效进入 Plan，否则 Review 后删除 |
+| `core-tools-builtin-exec-flow-design.md` | 验证链接失效 | AF-04 重建 Characterization 输入后，迁移独有内容并 Review 删除 |
+| Root `README.md` 的 Project Structure | 产品入口中的过时结构说明 | Slice 6 更新为唯一 Current Architecture 的简短链接/准确结构，不复制模块权威说明 |
+
+### 9.6 Phase 5 完成条件
+
+- [x] 新核心不依赖 Compat/Legacy；
+- [x] 每个 Slice 都指向真实调用方和旧路径删除条件；
+- [x] 不在 AF-03 执行目录/类型重命名或生产迁移。
+
+**Review Disposition：** Phase 5 已完成独立架构复审。评审中发现的 Shutdown caller settlement、Event/Error/approval 唯一所有权、Root/Tool/Child failure 与 Abort 分支、Current Fact 定位、migration flag capture、`AcceptedRequest`/Root Turn Snapshot 时点以及 §5.7/§8.6 Subagent cross-flow 冲突均已逐项修正并复核；最终门禁无未解决 Critical、High、Medium、Low 或 blocking overdesign。该结论只接受 §8–§9 的目标调用流和迁移边界，不表示 AF-04/AF-05/AF-06、Phase 6、生产迁移或整体 Foundation Gate 已完成。
 
 ## 10. Verification and Acceptance Matrix
 
