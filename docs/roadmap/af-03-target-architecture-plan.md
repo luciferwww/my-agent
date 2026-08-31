@@ -114,22 +114,22 @@
 
 ### Check Items
 
-- [ ] 定义 Provider、Provider Connection、Protocol 的所有权和关联方式；
-- [ ] 定义 Model Reference、Descriptor、Policy、Request Override 的来源；
-- [ ] 定义 Model Catalog 和事实来源追踪责任；
-- [ ] 定义 Model Resolver 的输入、输出、失败和保守 fallback 边界；
-- [ ] 定义 Resolved Model 的不可变内容和 per-turn 生命周期；
-- [ ] 定义用于模型调用的 core-owned Port 与 Provider Adapter 关系；
-- [ ] 明确 Runner 只消费 Resolved Model，不加载 Config 或推断 Model Facts；
-- [ ] 绘制 Parent Turn Model Resolution 调用流与 ASCII fallback；
-- [ ] 绘制 Subagent 使用独立 Model Reference 的调用流与 ASCII fallback；
-- [ ] 标记 Model Catalog 合并优先级等必须由 AF-05 验证的 Hypothesis。
+- [x] 定义 Provider、Provider Connection、Protocol 的所有权和关联方式；
+- [x] 定义 Model Reference、Descriptor、Policy、Request Override 的来源；
+- [x] 定义 Model Catalog 和事实来源追踪责任；
+- [x] 定义 Model Resolver 的输入、输出、失败和保守 fallback 边界；
+- [x] 定义 Resolved Model 的不可变内容和 per-turn 生命周期；
+- [x] 定义用于模型调用的 core-owned Port 与 Provider Adapter 关系；
+- [x] 明确 Runner 只消费 Resolved Model，不加载 Config 或推断 Model Facts；
+- [x] 绘制 Parent Turn Model Resolution 调用流与 ASCII fallback；
+- [x] 绘制 Subagent 使用独立 Model Reference 的调用流与 ASCII fallback；
+- [x] 标记 Model Catalog 合并优先级等必须由 AF-05 验证的 Hypothesis。
 
 ### Exit Gate
 
-- [ ] Connection、Facts、Policy 和 Request Override 不共享含糊所有权；
-- [ ] Model 切换同时切换 Port、Protocol、Endpoint 和 Model Capability facts；
-- [ ] AF-05 可以从本文档直接提取最小实验和失败条件。
+- [x] Connection、Facts、Policy 和 Request Override 不共享含糊所有权；
+- [x] Model 切换同时切换 Port、Protocol、Endpoint 和 Model Capability facts；
+- [x] AF-05 可以从本文档直接提取最小实验和失败条件。
 
 ## 8. Phase 3：Extension Framework 静态骨架
 
@@ -289,7 +289,7 @@ Architecture Review 必须选择：修订当前 Phase、提出 ADR、转为 Spik
 |---|---|---|---|
 | Phase 0：输入基线与追踪矩阵 | Completed | 2026-08-28 | `target-architecture.md` §1–3、§10–12、Appendix A–D；独立复审完成并修正 3 High / 4 Medium；项目所有者已接受 |
 | Phase 1：逻辑边界与依赖方向 | Completed | 2026-08-28 | `target-architecture.md` §4 Draft v0.2；独立复审无 Critical/High；项目所有者已接受逻辑边界、依赖方向和 Provider 分发约束 |
-| Phase 2：Model Resolution 架构 | Not Started |  |  |
+| Phase 2：Model Resolution 架构 | Completed | 2026-08-31 | `target-architecture.md` §5 Draft v0.3、`domain-glossary.md` Accepted v1.1；独立复审问题已修正，最终复审无 Critical/High；项目所有者已接受，AF-05 仍未执行 |
 | Phase 3：Extension Framework 静态骨架 | Not Started |  |  |
 | Phase 4：动态 Registry 与 Lifecycle 契约 | Not Started |  |  |
 | Phase 5：Runtime 调用流与迁移边界 | Not Started |  |  |

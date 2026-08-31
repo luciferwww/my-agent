@@ -3,7 +3,7 @@
 ## 1. 文档状态与证据规则
 
 - **状态：** Draft
-- **版本：** 0.2
+- **版本：** 0.3
 - **日期：** 2026-08-28
 - **所有者：** 项目所有者
 - **执行计划：** [AF-03 Target Architecture Execution Plan](../roadmap/af-03-target-architecture-plan.md)
@@ -304,22 +304,243 @@ Phase 1 的构造原则足以表达当前目标对象图：
 
 **Phase：** 2
 
-本节将在 Phase 2 定义 Provider、Provider Connection、Protocol、Model Reference、Model Descriptor、Model Policy、Request Override、Model Catalog、Model Resolver、Resolved Model 和模型调用 Port。
+### 5.1 设计状态与证据边界
 
-### 5.1 待产出
+本节定义 Provider/Model 身份、连接、事实、策略、请求覆盖、解析结果和执行消费的目标边界。它保留当前 `LLMClient` 隔离、流事件映射、Usage 和 Abort 透传作为迁移候选，但不把当前散装的 `model`、`maxTokens`、`contextWindowTokens` 和 `llmClient` 参数形态固定为目标 API。
 
-- 事实、连接、策略和请求覆盖的来源/所有权表；
-- Parent Turn 与 Subagent Turn 的 Model Resolution 调用流；
-- Resolved Model 的 per-turn 不变量；
-- Provider Adapter 与 core-owned Port 的依赖方向；
-- AF-05 Hypothesis、最小实验、成功条件和停止条件。
+**Target Decision：** 每个 Parent Turn 和 Child Turn 必须在进入 Runner 前独立完成 Model Resolution，并在该 Turn 内固定一个不可变 Resolved Model。RuntimeApp 编排解析时机，但不加载 Model Facts、选择具体 Provider 或拼装 Provider Client；Runner 只消费 Resolved Model。
 
-### 5.2 Phase 2 完成条件
+**Evidence Boundary：** 本节确定逻辑所有权、依赖方向、fail-closed 语义和可证伪契约，不冻结 TypeScript 字段、Provider Contribution Schema、Catalog 合并算法、Client Pool 或具体错误联合类型。后者分别由 Phase 3、AF-05 和 Architecture Slice 决定。
 
-- [ ] Runner 只消费 Resolved Model，不加载 Config 或推断 Model Facts；
-- [ ] Model 切换同步切换 Port、Protocol、Endpoint 和 Model Capability facts；
-- [ ] Parent/Subagent 可以解析不同 Model 且不共享可变 Client 状态；
-- [ ] 未验证的 Catalog/fallback 规则仍标记为 Hypothesis。
+### 5.2 所有权、来源与非含义
+
+| 概念 | 权威所有者 | 输入/来源 | 输出或消费者 | 不得承担 |
+|---|---|---|---|---|
+| Provider 身份 | Model Resolution | Provider Contribution 的稳定标识 | Model Reference、Catalog、Resolver | Endpoint、凭据、SDK Client、选择策略 |
+| Provider Connection | Provider Integration | Configuration 加载并做语法校验的部署输入、凭据引用、Endpoint、租户或代理设置 | Composition 提供 binding；Resolver 通过 core-owned Contract 校验可用性与兼容性；Provider Adapter 使用连接 | Model Capability、默认模型、fallback Policy |
+| Protocol | Provider Integration | Provider Contract/Contribution 声明和 Adapter 实现 | Resolved Model、Provider Adapter | 网络库、Endpoint、Provider 品牌别名 |
+| Model Reference | Model Resolution；由调用方或 Agent/Subagent Profile 提供 | Turn 请求、Agent Profile、Subagent Profile 或显式默认 | Model Resolver | 完整 Facts、Client、Endpoint、解析结果 |
+| Model Descriptor | Model Catalog / Model Resolution | Provider Contribution、受信发现结果或显式运维覆盖 | Model Resolver、预算校验 | 用户偏好、Connection、Request Override |
+| Model Policy | Application Policy | Agent Policy、运行约束和调用上下文 | Model Resolver | Model Facts、Connection、最终执行配置 |
+| Request Override | Turn 输入提供者声明；Model Resolution 校验 | 当前 Turn 的显式请求字段 | Model Resolver | 全局 Config、Provider 切换、跨 Turn 状态 |
+| Model Catalog | Model Resolution | 带来源和可信级别的 Model Descriptor | Model Resolver | Connection Store、Client Pool、未标注默认值 |
+| Provider Integration Binding | Provider Extension Contract；由 Composition 提供 | 启动期可用 Provider Contribution/Snapshot | Model Resolver、Model Invocation Port | SDK 类型泄漏、RuntimeApp 私有状态、Service Locator |
+| Model Resolver | Application / Model Resolution | Reference、Catalog、Connection、Policy、Override、Binding | Resolved Model 或显式 Resolution Failure | Config 加载、SDK Client 构造、Runner 执行循环 |
+| Resolved Model | Model Resolution 生成；Turn Execution 消费 | 一次成功解析的全部已校验结果 | Runner、上下文预算和 Model Invocation Port | Catalog 可变引用、SDK Client、跨 Turn 自动更新 |
+
+**Target Decision：** Provider Integration 是 Provider Connection 语义及使用方式的唯一所有者。Configuration 只加载并做格式/Schema 校验，Composition 只提供选定 binding，Model Resolver 只通过 core-owned Contract 校验该连接对当前 Provider/Model 是否可用和兼容；这些协作者都不重新定义 Connection 语义。Configuration 不能把 Connection、Descriptor、Policy 和 Request Override 合并成同一个 `LLMConfig` 语义。每个最终值必须保留逻辑来源；具体 provenance 字段形状由 AF-05 后的 Slice 决定。
+
+### 5.3 core-owned Model Invocation Port
+
+Stable Core 拥有用于模型调用的 Model Invocation Port、请求/流事件、Usage、Abort 和错误归一化契约。Provider Adapter 实现该 Port，并在内部完成 Protocol、SDK、Tool Use 分片、流事件和 Provider 错误映射。
+
+```text
+Application / Runner
+		|
+		v
+core-owned Model Invocation Port <----- Infrastructure Provider Adapter
+										   |
+										   v
+									Provider SDK / Protocol
+```
+
+源码依赖方向为 `Provider Adapter -> core-owned Port`。运行时调用可以由 Runner 经 Port 到 Adapter，但 Runner、RuntimeApp 和 Domain 不导入 Provider SDK 类型。Anthropic Bundled Runtime Module 与第三方 External Provider Extension 必须实现同一 Port/Contract；来源差异不能出现在 Runner 分支中。
+
+Phase 2 只要求 Resolver 能获得一个与 Provider 身份一致的 Provider Integration Binding。Provider Contribution、Registry、Snapshot 和冲突校验的具体形状由 Phase 3 定义，动态切换由 Phase 4/AF-06 定义。
+
+### 5.4 Resolved Model 的 per-turn 不变量
+
+成功解析产生的 Resolved Model 在逻辑上必须原子绑定：
+
+- Provider 和 Model 的规范身份；
+- 与该 Provider 对应的 core-owned Model Invocation Port binding；
+- Protocol 和解析后的 Endpoint 身份；
+- 带来源的 Model Capability facts、上下文上限和最大输出上限；
+- Model Policy 选择结果和允许的 Request Override；
+- 执行所需请求限制及其来源记录。
+
+Resolved Model 不包含明文凭据、Provider SDK Client、Config loader、可变 Catalog/Policy 引用或跨 Turn 可变请求状态。Connection 可通过不暴露凭据的稳定 binding/reference 参与解析；具体秘密注入和 Client 生命周期属于 Provider Integration 与 Composition 的责任。
+
+**Target Decision：** Model 切换必须原子切换 Port binding、Protocol、Endpoint 和 Model Capability facts。只替换 model 字符串而复用上一 Provider 的 Client、Endpoint 或能力事实属于无效解析。
+
+**Target Decision：** Turn 捕获 Resolved Model 后，Catalog、Policy、Config 或 Provider Registry 的后续变化不得改变该 Turn 的执行输入。Runner 内的压缩重试和多轮 Tool Use 继续使用同一个 Resolved Model；创建新的 Child Turn 则执行新的解析。
+
+### 5.5 解析阶段、失败和保守 fallback
+
+Model Resolver 的目标阶段顺序是：
+
+1. 规范化并校验 Model Reference；
+2. 查找 Provider 身份及可用 Provider Integration Binding；
+3. 解析并校验对应 Provider Connection；
+4. 从 Model Catalog 取得带来源的 Model Descriptor；
+5. 应用 Model Policy，得到允许的候选或显式拒绝；
+6. 校验并应用仅限白名单字段的 Request Override；
+7. 对 Protocol、Endpoint、Capability 和请求限制做一致性检查；
+8. 原子生成 Resolved Model，或返回可分类、可追踪的 Resolution Failure。
+
+以下情况必须在 Provider 网络调用前显式失败：Provider 未注册、Connection 缺失或无效、Model 身份不存在或有歧义、执行所需 Facts 不足、Policy 拒绝、Request Override 越权、Protocol 不兼容或 Capability 不支持请求。
+
+**Accepted Constraint：** 默认行为 fail-closed。不得静默切换 Provider、使用测试 Fake、猜测缺失 Capability、从 Provider 品牌推导上下文上限，或在失败后发起可能产生费用的探测调用。
+
+**Target Decision：** fallback 只能由显式 Model Policy 授权。每个 fallback 候选、采用原因和拒绝原因必须可追踪；如果没有满足 Connection、Facts、Policy 和 Capability 的候选，则解析失败。
+
+**Hypothesis P2-H01：** Model Catalog 的多来源合并可以使用与注册/枚举顺序无关的确定性优先级，同时保留字段级 provenance 和冲突诊断，而不把运维覆盖误写为 Provider 权威事实。具体来源等级、字段覆盖粒度和冲突算法必须由 AF-05 验证。
+
+**Hypothesis P2-H02：** 对预先分类为非执行关键的 Facts 可以保留明确的 `unknown` 并继续执行，但任何影响请求合法性、上下文预算或 Tool Use 编码的未知事实都必须阻止该候选。关键/非关键事实分类、事实最小集和保守 fallback 阈值必须由 AF-05 以正反案例验证。
+
+### 5.6 Parent Turn Model Resolution 调用流
+
+```mermaid
+sequenceDiagram
+	participant Caller as Channel / Library Caller
+	participant Runtime as RuntimeApp
+	participant Resolver as Model Resolver
+	participant Sources as Catalog / Policy / Connection / Binding
+	participant Runner
+	participant Port as Model Invocation Port
+
+	Caller->>Runtime: submit Turn(Model Reference?, Request Override?)
+	Runtime->>Resolver: resolve(Turn context, Agent Model Reference, Override)
+	Resolver->>Sources: query facts, policy, connection and binding
+	Sources-->>Resolver: sourced inputs
+	alt resolvable and allowed
+		Resolver-->>Runtime: immutable Resolved Model
+		Runtime->>Runner: run(Turn input, Resolved Model)
+		Runner->>Port: invoke(request, Resolved Model, signal)
+		Port-->>Runner: normalized stream / usage / error
+	else missing, conflicting or denied
+		Resolver-->>Runtime: Resolution Failure
+		Runtime-->>Caller: reject before Provider invocation
+	end
+```
+
+```text
+Channel / Library Caller -> RuntimeApp:
+	submit Turn(Model Reference?, Request Override?)
+RuntimeApp -> Model Resolver:
+	resolve(Turn context, Agent Model Reference, Override)
+Model Resolver -> Catalog / Policy / Connection / Binding:
+	query sourced inputs
+Catalog / Policy / Connection / Binding -> Model Resolver:
+	sourced inputs
+
+Success:
+	Model Resolver -> RuntimeApp: immutable Resolved Model
+	RuntimeApp -> Runner: run(Turn input, Resolved Model)
+	Runner -> Model Invocation Port:
+		invoke(request, Resolved Model, signal)
+	Model Invocation Port -> Runner: normalized stream / usage / error
+
+Failure:
+	Model Resolver -> RuntimeApp: Resolution Failure
+	RuntimeApp -> Channel / Library Caller:
+		reject before any Provider invocation
+```
+
+RuntimeApp 只提供当前 Turn 上下文并接收结果，不解释 Facts 或按 Provider 类型分支。Model Resolver 不执行 LLM/Tool 循环；Runner 不重做任何 Model Resolution。
+
+### 5.7 Subagent 独立 Model Resolution 调用流
+
+**Target Decision：** Parent Turn 和每个 Child Turn 分别拥有自己的 Resolved Model。Model Resolver 的成功结果同时产生规范化的有效 Model Reference 作为 Turn-owned resolution metadata；RuntimeApp/Turn orchestration 保留该 metadata，只把 Resolved Model 交给 Runner。Subagent Orchestration 通过显式、只读的 Turn Model Resolution Context 取得 Parent 有效 Model Reference，Runner 不读取、解释或转发该 Reference。该 Context 是逻辑责任，不在 Phase 2 冻结接口形状，也不是 RuntimeApp 私有状态或 Service Locator。
+
+Subagent Profile 指定具体 Model Reference 时独立解析；`model: inherit` 继承上述 Parent 有效 Model Reference，而不是 Parent 的 Resolved Model、Provider SDK Client 或全局默认 model 字符串，然后为 Child Turn 重新解析。
+
+```mermaid
+sequenceDiagram
+	participant Parent as Parent Runner
+	participant Sub as Subagent Orchestration
+	participant Context as Turn Model Resolution Context
+	participant Resolver as Model Resolver
+	participant Child as Child Runner
+	participant Port as Child Model Invocation Port
+
+	Parent->>Sub: delegate(Subagent Profile, parent Turn identity, signal)
+	Sub->>Context: read effective parent Model Reference
+	Context-->>Sub: effective parent Model Reference
+	Sub->>Sub: choose profile reference or inherit effective parent reference
+	Sub->>Resolver: resolve(child Turn context, child reference, child policy)
+	alt child resolution succeeds
+		Resolver-->>Sub: child Resolved Model
+		Sub->>Child: run(child Turn, child Resolved Model, signal)
+		Child->>Port: invoke(child request)
+		Port-->>Child: stream / usage / error
+		Child-->>Sub: child result / usage / events
+		Sub-->>Parent: normalized child result / usage / events
+	else child resolution fails
+		Resolver-->>Sub: child Resolution Failure
+		Sub-->>Parent: child failure without Provider invocation
+	end
+```
+
+```text
+Parent Runner -> Subagent Orchestration:
+	delegate(Profile, parent Turn identity, signal)
+Subagent Orchestration -> Turn Model Resolution Context:
+	read effective parent Model Reference
+Turn Model Resolution Context -> Subagent Orchestration:
+	effective parent Model Reference
+Subagent Orchestration -> Subagent Orchestration:
+	choose Profile reference OR inherit effective parent Model Reference
+Subagent Orchestration -> Model Resolver:
+	resolve(child Turn context, child reference, child policy)
+
+Success:
+	Model Resolver -> Subagent Orchestration: child Resolved Model
+	Subagent Orchestration -> Child Runner:
+		run(child Turn, child Resolved Model, signal)
+	Child Runner -> Child Model Invocation Port: invoke(child request)
+	Child Model Invocation Port -> Child Runner: stream / usage / error
+	Child Runner -> Subagent Orchestration: child result / usage / events
+	Subagent Orchestration -> Parent Runner:
+		normalized child result / usage / events
+
+Failure:
+	Model Resolver -> Subagent Orchestration: child Resolution Failure
+	Subagent Orchestration -> Parent Runner:
+		child failure without Provider invocation
+```
+
+Parent/Child 可以解析为不同 Provider/Model，但不得共享 per-turn 可变请求状态。Usage 聚合、Abort 级联、Event correlation、Session 隔离和父子阻塞/并发语义不由 Model Resolution 改写。
+
+Subagent Orchestration 负责成功与失败结果的对称归一化并返回 Parent；Phase 2 不改变既有 Usage/Event/Abort 契约的具体形状，其完整调用流仍由 Phase 5 定义。
+
+**Hypothesis P2-H03：** Parent/Child 可以共享只读 Provider Integration 资源或由唯一 Lifecycle Owner 管理的受控连接池，同时不共享 Resolved Model、请求构建器、流状态或其他 per-turn 可变 Client 状态。允许共享的最小资源边界、唯一 Lifecycle Owner、借用/释放和 Shutdown 行为必须由 AF-05 验证。
+
+### 5.8 Current 到 Target 的迁移输入
+
+| Current Fact Candidate | Target 解释 | 迁移要求 |
+|---|---|---|
+| Runner 接收 `llmClient` 和散装 `model`/`maxTokens`/`contextWindowTokens` | 一个 Resolved Model 消费边界 | AF-04 先保护执行循环、预算、Usage 和 Abort；Slice 再替换参数边界 |
+| Runtime 使用 `runTurn.model > resolvedConfig.llm.model` | Model Reference 来源和优先级候选 | 不直接升级为 Target Policy；由 AF-05 验证来源冲突和 fallback |
+| `LLMConfig` 同时含 apiKey/baseURL/model/maxTokens/contextWindowTokens | Connection、Reference、Override 和 Descriptor Facts 混合 | 拆为不同所有者，保留兼容读取只作为 Legacy Adapter 输入 |
+| `LLMClient` 隔离 Anthropic SDK 和流事件 | core-owned Model Invocation Port 的起点 | 移交 Stable Core 所有；Anthropic Adapter 继续做 Protocol/SDK 映射 |
+| Subagent `model: inherit` 回退 `llmDefaults.model` | Child Model Reference 继承候选 | Target 改为继承 Parent 有效 Reference 后独立解析；兼容影响先由 AF-04 确认 |
+| Parent/Child 当前可复用同进程 `LLMClient` | 资源共享的 Current Fact Candidate | 不证明 per-turn 状态隔离；交给 P2-H03/AF-05 验证 |
+
+这些映射不授权当前目录重排，也不保证旧 `LLMConfig` 或 `RunParams` 形状继续成为公共契约。
+
+### 5.9 AF-05 Provider/Model Spike 输入
+
+| ID | Hypothesis / Contract | 最小实验 | 成功条件 | 停止条件 |
+|---|---|---|---|---|
+| P2-E01 | 第二 Provider Binding 不要求修改 Runner | 使用 Anthropic Adapter 加独立 Fake/实验 Provider 实现同一 Port，分别解析并运行相同最小 Turn | Runner/RuntimeApp 无 Provider 分支；两者输出归一化事件 | 需要复制 Runner、泄漏 SDK 类型或新增中央 Provider 联合分支 |
+| P2-E02 | Model 切换原子绑定全部执行事实 | 两个候选使用不同 Port、Protocol、Endpoint 和 Capability；重复切换并记录调用 | 每次调用只观察一个候选的完整一致集合 | 出现旧 Client/Endpoint/Facts 与新 model 混用 |
+| P2-E03 | Catalog 合并可确定且可追踪 | 注入冲突的 Provider、运维覆盖和发现 Facts，并置换来源注册/枚举顺序 | 所有顺序产生同一结果；字段来源和冲突可诊断 | 结果依赖未记录顺序或静默覆盖关键 Facts |
+| P2-E04 | 缺失 Facts 可以按分类保守处理 | 先给出关键/非关键 Fact 分类；分别删除上下文上限、Tool Use 等关键事实和一个不影响当前请求的非关键事实 | 关键 Facts 缺失时调用前失败；非关键 `unknown` 正例可以执行且保持 unknown，不被猜测 | 分类无法稳定表达，或关键缺失产生调用/费用，或非关键 unknown 被填入猜测值 |
+| P2-E05 | Parent/Child 独立解析且共享资源不泄漏 per-turn 状态 | 在仅用于 Spike 的受控重叠 harness 中，强制 Parent/Child 使用同一 instrumented 只读资源/连接池但选择不同 Provider/Model；记录借用、流、Usage、Abort、释放和 Shutdown | 各 Turn 的 Port/Facts/Usage/Event/Abort 无串扰；唯一 Lifecycle Owner 可定位；每次借用恰好释放且共享资源只关闭一次 | 需要授权生产 Subagent 并发，或出现请求状态/串流/取消/Usage 串扰、重复释放、泄漏或多 Lifecycle Owner |
+| P2-E06 | Turn 内 Resolved Model 不漂移 | Turn 运行中替换 Catalog、Policy、Config 或可用 Binding | 活跃 Turn 保持原 Resolved Model；新 Turn 使用新结果 | 活跃 Turn 观察到混合版本或重新解析 |
+| P2-E07 | Resolution Failure 不触发 Provider | 分别注入 Provider 未注册、Connection 缺失、Connection 无效、Model 未知、Model 身份歧义、关键 Facts 不足、Policy deny、越权 Override、Protocol 不兼容和 Capability 不支持 | 每类返回可分类失败且 Provider 调用计数为零 | 任一失败路径发起探测、切换 Provider、产生费用或使用 Fake |
+
+AF-05 不以接入 OpenAI 或其他生产 Provider 为成功条件；独立 Fake/实验 Provider 足以验证第二实现和变更局部性，也不扩大 my-agent 的兼容性承诺。
+
+### 5.10 Phase 2 完成条件
+
+- [x] Runner 只消费 Resolved Model，不加载 Config 或推断 Model Facts；
+- [x] Model 切换同步切换 Port、Protocol、Endpoint 和 Model Capability facts；
+- [x] Parent/Subagent 可以解析不同 Model 且不共享可变 Client 状态；
+- [x] 未验证的 Catalog/fallback 规则仍标记为 Hypothesis。
+
+独立复审首轮发现 3 个 High 和 3 个 Medium 文档问题，已修正 Provider Connection 单一语义所有权、Parent 有效 Model Reference 权威传递路径、AF-05 实验覆盖、Mermaid/ASCII 等价性和 Subagent 结果归一化责任。跟进复审发现 Domain Glossary 仍存在共同所有权冲突；项目所有者批准将其修订为 Accepted v1.1 后，最终复审确认无 Critical/High，10 个 Phase 2 Check Items 和 3 个 Exit Gate 均有目标设计证据。项目所有者于 2026-08-31 接受 Phase 2 提案及 Connection 所有权修订。该接受只完成文档设计，不表示生产实现、AF-05 实验或 Provider 兼容性验证已完成。
 
 ## 6. Extension、Module、Contribution and Registry
 
@@ -418,7 +639,7 @@ Phase 1 的构造原则足以表达当前目标对象图：
 | 类型 | Foundation AF-03 要求 | 主责章节 | 支持章节 | 当前状态 | 预期证据 |
 |---|---|---:|---:|---|---|
 | 必须覆盖 | 模块职责与依赖方向 | 4 | 8、10 | Planned | 边界表、依赖图、允许/禁止边 |
-| 必须覆盖 | Provider/Model Resolution | 5 | 8、Appendix B | Planned | 责任表、Parent/Subagent 调用流、AF-05 输入 |
+| 必须覆盖 | Provider/Model Resolution | 5 | 8、Appendix B | Target Design Complete | 责任表、Parent/Subagent 调用流和 AF-05 输入已复审；执行证据仍待 AF-05 |
 | 必须覆盖 | Extension/Module/Contribution/Registry | 6 | 7、Appendix C | Planned | 静态组合图、注册和配置边界 |
 | 必须覆盖 | Snapshot/事务/原子切换/排空/回滚 | 7 | 8、Appendix C | Planned | 不变量、动态流、AF-06 输入 |
 | 必须覆盖 | Runtime Builder 与 RuntimeApp | 4 | 8 | Planned | 职责表、启动/Turn/Shutdown 流 |
@@ -516,7 +737,7 @@ Phase 6 将在此维护 Characterization 行为、Fitness Test 规则和预期�
 
 ## Appendix B. AF-05 Provider/Model Spike Input
 
-Phase 2 将补充 Hypothesis、最小实验、成功条件和停止条件。当前仅保留父计划边界：验证在不复制 Runner 的前提下，根据 Model Reference 解析 Provider/Model，并让每个 Parent/Subagent Turn 消费内部一致的 Resolved Model。
+Phase 2 的 Hypothesis、最小实验、成功条件和停止条件见 §5.5、§5.7 和 §5.9。AF-05 必须验证：在不复制 Runner、不扩大生产 Provider 支持承诺的前提下，根据 Model Reference 解析 Provider/Model，并让每个 Parent/Subagent Turn 消费内部一致的 Resolved Model。
 
 ## Appendix C. AF-06 Extension Framework Spike Input
 

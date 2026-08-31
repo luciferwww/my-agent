@@ -3,8 +3,8 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 1.0
-- **日期：** 2026-08-28
+- **版本：** 1.1
+- **日期：** 2026-08-31
 - **所有者：** 项目所有者
 - **关联计划：** [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) AF-02
 
@@ -33,8 +33,8 @@
 ### Provider Connection
 
 - **定义：** 访问某个 Provider 实例所需的部署级连接信息，包括凭据引用、Endpoint、租户或代理设置。
-- **职责：** 让 Provider Adapter 建立可用连接，并隔离部署环境差异。
-- **所有者：** Provider Integration / Configuration。
+- **职责：** 让 Provider Adapter 建立可用连接，并隔离部署环境差异；Configuration 只加载并做格式/Schema 校验。
+- **所有者：** Provider Integration。
 - **不表示：** Provider 身份、Model 能力事实、Model 选择，或 per-turn 参数。
 
 ### Protocol
