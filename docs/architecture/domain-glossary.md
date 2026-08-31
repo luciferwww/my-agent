@@ -3,7 +3,7 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 1.2
+- **版本：** 1.3
 - **日期：** 2026-08-31
 - **所有者：** 项目所有者
 - **关联计划：** [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) AF-02
@@ -297,10 +297,24 @@ Agent ─executes─> Turn <─contained by─ Session
 
 ### Registry Snapshot
 
-- **定义：** Registry 在一个版本上的不可变、内部一致的 Contribution 视图。
-- **职责：** 保证一个 Turn 在整个执行期间观察到固定能力集合。
+- **定义：** Registry 在一个进程内唯一 generation 上的不可变、内部一致的 Contribution 视图。
+- **职责：** 保证一个 Root/Child Turn tree 在整个执行期间观察到固定能力集合；generation 只表达当前进程内的发布顺序。
 - **所有者：** Registry 生成；Turn 捕获和消费。
-- **不表示：** Registry 本身、深复制全部 Extension 状态，或对进行中 Turn 的实时更新。
+- **不表示：** Registry 本身、Extension 版本、跨重启持久 ID、分布式一致性编号、深复制全部 Extension 状态，或对进行中 Turn 的实时更新。
+
+### Reload Transaction
+
+- **定义：** 对已加载 Extension 的 enable、disable 或 Contribution replacement 从候选准备到 Registry Snapshot 原子发布的进程内状态变更过程。
+- **职责：** 在 publish 前隔离并校验 candidate，在失败或 superseded 时清理候选，并以一次原子 publish 作为成功完成点。
+- **所有者：** Runtime Composition / Runtime Builder。
+- **不表示：** 重新扫描或加载 Extension 代码、Generation Retirement、文件 watcher、分布式事务，或包含旧资源排空的长事务。
+
+### Generation Retirement
+
+- **定义：** 新 Registry Snapshot 发布后，对旧 generation 独立执行 ingress 关闭、Turn tree 排空、必要 Abort 和旧资源释放的生命周期过程。
+- **职责：** 在不回滚已发布 Snapshot 的前提下，让旧 generation 安全退出并释放其独有资源。
+- **所有者：** Runtime Builder 编排；各资源 Lifecycle Owner 执行清理。
+- **不表示：** Reload Transaction 的未完成阶段、已发布 Snapshot 的回滚、Extension 代码卸载，或允许多代并行排空的通用任务系统。
 
 ### Extension Framework 关系
 

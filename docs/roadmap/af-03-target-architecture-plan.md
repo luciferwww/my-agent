@@ -3,7 +3,7 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 1.1
+- **版本：** 1.2
 - **日期：** 2026-08-31
 - **所有者：** 项目所有者
 - **父计划：** [Architecture Foundation Plan](architecture-foundation-plan.md) AF-03
@@ -168,23 +168,30 @@
 
 ### Check Items
 
-- [ ] 定义 Registry Snapshot 的版本和不可变性不变量；
-- [ ] 定义 Turn 捕获 Snapshot 的时点和使用范围；
-- [ ] 定义 Extension 变更事务的校验与原子发布边界；
-- [ ] 定义进行中 Turn 使用旧 Snapshot、新 Turn 使用新 Snapshot 的一致性要求；
-- [ ] 定义启用、停用和 Contribution 更新失败的回滚结果；
-- [ ] 定义旧工作排空与按策略取消的决策点；
-- [ ] 定义 Extension、Module 和共享资源的唯一 Lifecycle Owner；
-- [ ] 定义部分启动失败、重复关闭和 Shutdown 逆序释放；
-- [ ] 绘制 enable、disable、failure rollback 和 shutdown 调用流及 ASCII fallback；
-- [ ] 明确 AF-06 验证完整机制，Slice 5 才实现并开放生产运行时变更；
-- [ ] 将无法由设计确认的并发/资源问题转换为 AF-06 Hypothesis 和停止条件。
+- [x] 定义 Registry Snapshot 的版本和不可变性不变量；
+- [x] 定义 Turn 捕获 Snapshot 的时点和使用范围；
+- [x] 定义 Root Turn 在创建时捕获 Snapshot、Child Turn 继承 Parent Snapshot generation；
+- [x] 定义 Extension 变更事务的校验与原子发布边界；
+- [x] 定义 Reload Transaction 结束于原子 publish，publish 前候选可由更新请求中断并按 latest-wins 替换；
+- [x] 定义候选 Extension 在发布前达到 quiescent readiness，发布后才开放 ingress；
+- [x] 定义进行中 Turn 使用旧 Snapshot、新 Turn 使用新 Snapshot 的一致性要求；
+- [x] 定义启用、停用和 Contribution 更新失败的回滚结果；
+- [x] 定义 Generation Retirement 是 publish 后独立流程，retirement 失败不回滚已发布 Snapshot；
+- [x] 定义旧工作排空与按策略取消的决策点；
+- [x] 定义默认有界排空 deadline，以及超时后沿既有 Abort 链取消旧工作；
+- [x] 定义 retirement 期间的新变更请求只合并为一个 pending latest，并在 retirement 完成后执行；
+- [x] 定义 Extension、Module 和共享资源的唯一 Lifecycle Owner；
+- [x] 定义部分启动失败、重复关闭和 Shutdown 逆序释放；
+- [x] 绘制 enable、disable、failure rollback 和 shutdown 调用流及 ASCII fallback；
+- [x] 明确 AF-06 验证完整机制，Slice 5 才实现并开放生产运行时变更；
+- [x] 将无法由设计确认的并发/资源问题转换为 AF-06 Hypothesis 和停止条件；
+- [x] 保持最多一个 current generation、一个 retiring generation 和一个 pending latest，不预建多代并行 retirement 或通用任务调度框架。
 
 ### Exit Gate
 
-- [ ] 一个 Turn 不可能观察到混合版本 Contribution；
-- [ ] 失败后当前 Snapshot 可继续使用且无部分资源残留；
-- [ ] AF-06 可以从本文档直接提取场景、注入点和预期结果。
+- [x] 一个 Turn 不可能观察到混合版本 Contribution；
+- [x] pre-publish 失败后 current Snapshot 可继续使用；candidate 清理正常完成时无残留，清理不收敛时残留可观测、可归属且阻止新 candidate/reload；retirement/Shutdown 残留遵循同一安全门槛；
+- [x] AF-06 可以从本文档直接提取场景、注入点和预期结果。
 
 ## 10. Phase 5：Runtime 调用流与迁移边界
 
@@ -245,7 +252,7 @@
 | 必须覆盖 | 模块职责与依赖方向 | Phase 1：四边界职责、候选映射、允许/禁止边 | 依赖图可转化为 Fitness Test 候选 | 边界表、依赖图、允许/禁止边 |
 | 必须覆盖 | Provider/Model Resolution | Phase 2：来源、Resolver、Resolved Model、Parent/Subagent 流 | AF-05 可直接提取实验和失败条件 | 组件责任与 Parent/Subagent 调用流 |
 | 必须覆盖 | Extension/Module/Contribution/Registry | Phase 3：受控发现、共同机制、Contribution 分类、Registry 责任 | Builtin/External 差异不泄漏给消费者 | 启动发现流、静态组合图、注册与配置边界 |
-| 必须覆盖 | Snapshot/事务/原子切换/排空/回滚 | Phase 4：Snapshot 不变量、事务、排空、回滚 | 无混合版本且失败无部分资源残留 | 动态流、不变量、AF-06 输入 |
+| 必须覆盖 | Snapshot/事务/原子切换/排空/回滚 | Phase 4：Snapshot 不变量、事务、排空、回滚 | 无部分 Contribution 可见；清理不收敛的残留可归属且阻断 reload | 动态流、不变量、AF-06 输入 |
 | 必须覆盖 | Runtime Builder 与 RuntimeApp | Phase 1/5：职责拆分、启动、Turn、Shutdown | Runtime/Runner/Composition 无重叠所有权 | 责任表、启动/Turn/Shutdown 流 |
 | 必须覆盖 | Tool/Hook/Channel 注册 | Phase 3/5：Registry 责任与端到端流 | Builtin/External 共用注册和生命周期边界 | Registry 关系和端到端调用流 |
 | 必须覆盖 | Config Namespace 与 Schema | Phase 3：Namespace 与 Schema 所有权选项 | AF-06 可提取 Config 验证 Hypothesis | 所有权选项和 AF-06 Hypothesis |
@@ -254,7 +261,7 @@
 | 必须覆盖 | Legacy/Compat | Phase 5：单向依赖、迁移接缝、删除边界 | 每个 Slice 指向真实调用方和删除条件 | 单向依赖、Slice 迁移/删除边界 |
 | 必须覆盖 | 关键调用流和关闭顺序 | Phase 2/4/5：Model、Registry、Turn、Shutdown 流 | 四类调用流支持边界验收 | Mermaid + ASCII 调用流 |
 | 验收 | Turn/Tool/Channel/Subagent 调用流验证分层 | Phase 5：四类完整调用流 | 四类调用流均支持边界验收 | 调用流与 Phase 6 评审记录 |
-| 验收 | 跨 Channel/Tool/Hook External Extension | Phase 3/4：静态组合、能力、资源和动态契约 | 新 Extension 不修改核心且无部分资源残留 | 组合图与 AF-06 实验输入 |
+| 验收 | 跨 Channel/Tool/Hook External Extension | Phase 3/4：静态组合、能力、资源和动态契约 | 新 Extension 不修改核心；正常清理无残留，不收敛残留可归属且阻断 reload | 组合图与 AF-06 实验输入 |
 | 验收 | 旧/新 Registry Snapshot 一致性 | Phase 4：捕获时点、切换和并行不变量 | 一个 Turn 不观察混合版本 | 不变量与 AF-06 验证场景 |
 | 验收 | 无业务价值的机械转换层 | Phase 1/5：边界和调用链审查 | Runtime/Runner/Composition 无重叠所有权 | 调用链审查记录 |
 | 验收 | Stable Core/Infrastructure Adapter 边界 | Phase 1：依赖倒置、Port 与 Adapter | Stable Core 不依赖具体集成 | 依赖图与 Fitness Test 输入 |
@@ -298,6 +305,6 @@ Architecture Review 必须选择：修订当前 Phase、提出 ADR、转为 Spik
 | Phase 1：逻辑边界与依赖方向 | Completed | 2026-08-28 | `target-architecture.md` §4 Draft v0.2；独立复审无 Critical/High；项目所有者已接受逻辑边界、依赖方向和 Provider 分发约束 |
 | Phase 2：Model Resolution 架构 | Completed | 2026-08-31 | `target-architecture.md` §5 Draft v0.3、`domain-glossary.md` Accepted v1.1；独立复审问题已修正，最终复审无 Critical/High；项目所有者已接受，AF-05 仍未执行 |
 | Phase 3：Extension Framework 静态骨架 | Completed | 2026-08-31 | `target-architecture.md` §6 Draft v0.4、`domain-glossary.md` Accepted v1.2；项目所有者已确认 first-wins、startup warning、Capability 和 rollback ownership；最终独立评审无 Critical/High/Medium，AF-06 仍未执行 |
-| Phase 4：动态 Registry 与 Lifecycle 契约 | Not Started |  |  |
+| Phase 4：动态 Registry 与 Lifecycle 契约 | Completed | 2026-08-31 | `target-architecture.md` §7 Draft v0.5、`domain-glossary.md` Accepted v1.3；项目所有者已确认最小单代 retirement 模型；最终独立评审无未解决 Critical/High/Medium 或 blocking overdesign；AF-06 仍未执行 |
 | Phase 5：Runtime 调用流与迁移边界 | Not Started |  |  |
 | Phase 6：验证映射与架构评审 | Not Started |  |  |

@@ -78,7 +78,7 @@ Architecture Foundation 阶段不实施：
 2. Runtime 只消费已解析的执行配置，不自行推断 Model Facts；
 3. Provider/Model Facts、User Policy 和 per-turn Request Override 分别拥有清晰来源；
 4. 内置 Module 和外部 Extension 使用同一 Contribution/Registry；
-5. Registry 发布版本化不可变 Snapshot；Extension 变更必须经过校验、原子切换、排空、资源释放和失败回滚；
+5. Registry 发布版本化不可变 Snapshot；Extension 变更必须经过受控的 pre-publish 校验/失败清理、原子切换和 post-publish retirement；
 6. 一个概念只有一个权威类型和一个权威运行路径；
 7. Compatibility Adapter 只能单向调用新核心，新代码不得反向依赖 Legacy；
 8. Extension 只能获得已声明 Extension Capability 所需的最小上下文，不能依赖 `RuntimeApp` 私有状态或通用 Service Locator；
@@ -335,7 +335,7 @@ Legacy 只提供历史证据，不自动成为目标设计。
 - Registry 发布版本化不可变 Snapshot，Extension 变更只通过受控事务原子切换；
 - 进行中 Turn 的 Snapshot 保持不变，新 Turn 只使用切换完成后的 Snapshot；
 - 停用能够排空或按策略取消旧工作，并在无使用者后释放 Extension 资源；
-- 启用、停用或校验失败可回滚，不影响当前可用 Snapshot；
+- pre-publish prepare、校验或 readiness 失败保持 current Snapshot 不变并有界清理 candidate；清理不收敛时报告可归属残留并阻断后续 reload；post-publish retirement 失败保持新 Snapshot，报告可归属残留，拒绝 pending/后续 reload，并只在有界 Shutdown 中重试；
 - Extension 失败可定位，Shutdown 按逆序释放已启动资源；
 - Hook 不需要替换整个 AgentRunner Factory。
 
@@ -346,7 +346,7 @@ Legacy 只提供历史证据，不自动成为目标设计。
 - Config 必须为每个 Extension 修改中央 Type Union；
 - 平台专有能力只能通过污染通用 Message 或 Channel 类型表达；
 - Registry 原地修改导致一个 Turn 观察到混合版本的 Contribution；
-- Extension 变更失败后无法恢复原 Snapshot 或遗留部分注册资源；
+- pre-publish Extension 变更失败后 current Snapshot 被改变，candidate-only 残留不可观测/不可归属，或清理不收敛后仍允许新 candidate/reload；post-publish retirement 失败未保持新 Snapshot、残留不可观测/不可归属，或仍允许 pending/后续 reload；
 - 注册顺序只能依赖隐式副作用。
 
 ### AF-07：Architecture Decision

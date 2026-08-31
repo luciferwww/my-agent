@@ -101,14 +101,14 @@ Domain/Application MUST NOT depend on Infrastructure or Composition.
 
 ### AP-05：Registry 只发布版本化不可变 Snapshot
 
-**原则：** Registry 的消费者必须读取不可变 Snapshot；Contribution 变更必须通过校验、原子切换、排空、资源释放和失败回滚的受控事务。
+**原则：** Registry 的消费者必须读取不可变 Snapshot；Contribution 变更必须通过受控的 pre-publish 校验/失败清理、原子切换和 post-publish retirement。
 
 **含义：**
 
 - Turn 启动时捕获一个 Registry Snapshot，并在整个执行期间保持不变；
 - 新 Turn 只看到完整切换后的新版本；
 - 消费者不得持有或修改 Registry 内部可变集合；
-- 启用、停用或更新失败不得污染当前可用 Snapshot 或遗留部分资源；
+- pre-publish 失败不得污染 current Snapshot；candidate 清理失败必须可归属并阻断后续变更；post-publish retirement 失败不得回滚已提交 Snapshot，受 pin 保护的残留必须可观测并由唯一 Owner 持有；
 - Slice 3/4 的生产接入只使用启动期只读 Snapshot，Slice 5 完成事务闭环后才开放生产运行时变更。
 
 **验证：** Snapshot immutability tests、旧 Turn/新 Turn 并行测试、失败注入、排空和资源泄漏检查。
