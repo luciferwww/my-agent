@@ -3,7 +3,7 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 1.3
+- **版本：** 1.4
 - **日期：** 2026-08-31
 - **所有者：** 项目所有者
 - **父计划：** [Architecture Foundation Plan](architecture-foundation-plan.md) AF-03
@@ -20,15 +20,15 @@
 
 ### 2.2 总体退出条件
 
-- [ ] Target Architecture 使用 Domain Glossary 中的规范词汇；
-- [ ] AP-01 至 AP-13 均有设计映射或明确的不适用说明；
-- [ ] Foundation Plan 中 AF-03 的全部“必须覆盖”项可追踪到目标文档章节；
-- [ ] Foundation Plan 中 AF-03 的全部验收项具有 Target Architecture 文档证据，或明确记录后续 Spike 的 Hypothesis、实验输入、成功条件和停止条件；
-- [ ] 未经证据确认的边界标记为 Hypothesis/Open Question，不写成当前实现事实；
-- [ ] AF-04 Characterization/Fitness Test 输入清单完成；
-- [ ] AF-05 和 AF-06 Spike 输入、成功条件与停止条件边界完成；
-- [ ] 独立架构评审无 Critical/High 阻断项；
-- [ ] 项目所有者确认 Target Architecture 并晋升为 `Accepted`。
+- [x] Target Architecture 使用 Domain Glossary 中的规范词汇；
+- [x] AP-01 至 AP-13 均有设计映射或明确的不适用说明；
+- [x] Foundation Plan 中 AF-03 的全部“必须覆盖”项可追踪到目标文档章节；
+- [x] Foundation Plan 中 AF-03 的全部验收项具有 Target Architecture 文档证据，或明确记录后续 Spike 的 Hypothesis、实验输入、成功条件和停止条件；
+- [x] 未经证据确认的边界标记为 Hypothesis/Open Question，不写成当前实现事实；
+- [x] AF-04 Characterization/Fitness Test 输入清单完成；
+- [x] AF-05 和 AF-06 Spike 输入、成功条件与停止条件边界完成；
+- [x] 独立架构评审无 Critical/High 阻断项；
+- [x] 项目所有者确认 Target Architecture 并晋升为 `Accepted`。
 
 ## 3. 范围
 
@@ -223,27 +223,27 @@
 
 ### Check Items
 
-- [ ] 完成 AF-03 必须覆盖项追踪矩阵并清除缺口；
-- [ ] 完成 AP-01 至 AP-13 设计/验证矩阵；
-- [ ] 为 AF-04 输出 Characterization 行为清单；
-- [ ] 为 AF-04 输出 Fitness Test 规则清单和预期失败样例；
-- [ ] 为 AF-05 输出 Provider/Model Hypothesis、最小实验和停止条件；
-- [ ] 为 AF-06 输出 Extension Framework Hypothesis、最小实验和停止条件；
-- [ ] 检查 Mermaid 与 ASCII 图语义一致；
-- [ ] 检查所有核心术语均来自 Domain Glossary；
-- [ ] 检查 Current Fact、Target Decision、Hypothesis 和 Deferred 明确区分；
-- [ ] 执行独立架构评审，将 Findings 逐项标记为接受、修改后接受或拒绝，并记录理由；
-- [ ] 修复所有 Critical/High 阻断项并重新评审；
-- [ ] 项目所有者确认剩余风险和 Deferred 项；
-- [ ] 将 Target Architecture 晋升为 `Accepted`；
-- [ ] 同步父计划 AF-03 状态、Foundation Gate 和文档索引。
+- [x] 完成 AF-03 必须覆盖项追踪矩阵并清除缺口；
+- [x] 完成 AP-01 至 AP-13 设计/验证矩阵；
+- [x] 为 AF-04 输出 Characterization 行为清单；
+- [x] 为 AF-04 输出 Fitness Test 规则清单和预期失败样例；
+- [x] 为 AF-05 输出 Provider/Model Hypothesis、最小实验和停止条件；
+- [x] 为 AF-06 输出 Extension Framework Hypothesis、最小实验和停止条件；
+- [x] 检查 Mermaid 与 ASCII 图语义一致；
+- [x] 检查所有核心术语均来自 Domain Glossary；
+- [x] 检查 Current Fact、Target Decision、Hypothesis 和 Deferred 明确区分；
+- [x] 执行独立架构评审，将 Findings 逐项标记为接受、修改后接受或拒绝，并记录理由；
+- [x] 修复所有 Critical/High 阻断项并重新评审；
+- [x] 项目所有者确认剩余风险和 Deferred 项；
+- [x] 将 Target Architecture 晋升为 `Accepted`；
+- [x] 同步父计划 AF-03 状态、Foundation Gate 和文档索引。
 
 ### Exit Gate
 
-- [ ] Foundation Plan 的 AF-03 验收项全部有 Target Architecture 文档证据；需 Spike 验证的项仅形成 Hypothesis、实验输入、成功条件和停止条件，不计为 Spike Results；
-- [ ] 无 Critical/High 未解决 Finding；
-- [ ] Target Architecture 已 `Accepted`，但 AF-05/AF-06 未验证项仍明确标记为 Hypothesis；
-- [ ] 未授权任何生产 Architecture Slice 提前进入 Delivery。
+- [x] Foundation Plan 的 AF-03 验收项全部有 Target Architecture 文档证据；需 Spike 验证的项仅形成 Hypothesis、实验输入、成功条件和停止条件，不计为 Spike Results；
+- [x] 无 Critical/High 未解决 Finding；
+- [x] Target Architecture 已 `Accepted`，但 AF-05/AF-06 未验证项仍明确标记为 Hypothesis；
+- [x] 未授权任何生产 Architecture Slice 提前进入 Delivery。
 
 ## 12. 需求追踪矩阵
 
@@ -307,4 +307,4 @@ Architecture Review 必须选择：修订当前 Phase、提出 ADR、转为 Spik
 | Phase 3：Extension Framework 静态骨架 | Completed | 2026-08-31 | `target-architecture.md` §6 Draft v0.4、`domain-glossary.md` Accepted v1.2；项目所有者已确认 first-wins、startup warning、Capability 和 rollback ownership；最终独立评审无 Critical/High/Medium，AF-06 仍未执行 |
 | Phase 4：动态 Registry 与 Lifecycle 契约 | Completed | 2026-08-31 | `target-architecture.md` §7 Draft v0.5、`domain-glossary.md` Accepted v1.3；项目所有者已确认最小单代 retirement 模型；最终独立评审无未解决 Critical/High/Medium 或 blocking overdesign；AF-06 仍未执行 |
 | Phase 5：Runtime 调用流与迁移边界 | Completed | 2026-08-31 | `target-architecture.md` §8–§9 Draft v0.6；Owner 已确认 Event/concurrency、Tool/Hook allowlist fallback 与 two-stage Shutdown；最终独立评审无未解决 Critical/High/Medium/Low 或 blocking overdesign；AF-04/AF-05/AF-06 与生产迁移仍未执行 |
-| Phase 6：验证映射与架构评审 | Not Started |  |  |
+| Phase 6：验证映射与架构评审 | Completed | 2026-08-31 | `target-architecture.md` Accepted v1.0、`domain-glossary.md` Accepted v1.4；14 个 Check Items 和 4 个 Exit Gates 已满足；P6-R01..P6-R12 全部关闭，最终独立复审无未解决 Critical/High/Medium/Low 或 blocking overdesign；项目所有者已确认剩余风险与 Deferred；AF-04/AF-05/AF-06、Foundation Gate 和生产迁移仍未完成 |

@@ -51,6 +51,7 @@ Current implementation facts, accepted architecture constraints, design baseline
 
 - [Architecture Principles](architecture/architecture-principles.md)
 - [Domain Glossary](architecture/domain-glossary.md)
+- [Target Architecture](architecture/target-architecture.md) — accepted target boundaries, ownership, runtime flows, lifecycle, and migration constraints; not current implementation status
 - [Agent Runner Design](architecture/core-runner-design.md)
 - [Runtime / App Assembly Design](architecture/runtime-design.md)
 - [Config Design](architecture/platform-config-design.md)
@@ -71,7 +72,7 @@ Current implementation facts, accepted architecture constraints, design baseline
 Planned evolution documents, adoption sequencing, and regression checklists for larger refactors.
 
 - [Architecture Foundation Plan](roadmap/architecture-foundation-plan.md) — accepted target-architecture, spike, migration, and legacy-exit plan
-- [AF-03 Target Architecture Execution Plan](roadmap/af-03-target-architecture-plan.md) — accepted phase and checklist plan for producing the Target Architecture
+- [AF-03 Target Architecture Execution Plan](roadmap/af-03-target-architecture-plan.md) — completed phase record and acceptance evidence for the Target Architecture
 
 ## Analysis
 

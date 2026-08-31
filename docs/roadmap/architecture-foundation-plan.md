@@ -3,8 +3,8 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 0.8
-- **日期：** 2026-08-28
+- **版本：** 0.9
+- **日期：** 2026-08-31
 - **范围：** my-agent 目标架构定义、关键边界验证、渐进迁移和 Legacy 退出
 - **执行方式：** Architecture Foundation 以两周为目标、四周为硬上限，随后采用一周 Architecture Slice 迭代
 - **范围冻结：** Foundation Gate 通过前，暂停会穿透待定架构边界的大型生产功能；缺陷、小型局部变更、文档、测试、Spec 和 Spike 可继续
@@ -227,6 +227,8 @@ Legacy 只提供历史证据，不自动成为目标设计。
 
 ### AF-03：Target Architecture
 
+**状态：** Completed（2026-08-31）
+
 **执行计划：** [AF-03 Target Architecture Execution Plan](af-03-target-architecture-plan.md)（`Accepted`）
 
 **目标：** 定义新架构骨架和迁移边界。
@@ -366,7 +368,7 @@ Foundation 只有在以下条件全部满足时才可进入生产迁移：
 
 - [x] Development Workflow 已 `Accepted`；
 - [x] Architecture Principles 和 Domain Glossary 已确认；
-- [ ] Target Architecture 已 `Accepted`；
+- [x] Target Architecture 已 `Accepted`；
 - [ ] Provider/Model Spike 有 Results，关键 Hypothesis 通过；
 - [ ] Extension Framework Spike 有 Results，关键 Hypothesis 通过；
 - [ ] AF-06 已通过 Spike 证据验证已加载 Extension 的运行时启停、Snapshot 一致性、排空和回滚；
@@ -698,8 +700,8 @@ Foundation（M0–M3）以 **两周完成为目标、四周为硬上限**。第�
 
 按以下顺序推进：
 
-1. 执行 AF-03，形成可评审的 Target Architecture；
-2. 建立 AF-04 Characterization/Fitness 保护线，并为 AF-05、AF-06 编写 Spike Spec；
-3. Target Architecture 与对应 Spike Spec `Accepted` 后，依次执行 AF-05 和 AF-06。
+1. 执行 AF-04，建立 Characterization/Fitness 保护线，并根据已 `Accepted` Target Architecture 的输入为 AF-05、AF-06 编写和接受 Spike Spec；
+2. 对应 Spike Spec `Accepted` 后，依次执行 AF-05 和 AF-06，并记录可复现的 Spike Results；
+3. 根据 Spike Results 执行 AF-07、重新评估 Foundation Gate；Gate 通过前不启动生产 Architecture Slice。
 
 在 AF-05 Results 完成前，不进入生产 Model Registry 实现；在 AF-06 Results 完成前，不冻结生产 Extension API。

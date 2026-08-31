@@ -3,7 +3,7 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 1.3
+- **版本：** 1.4
 - **日期：** 2026-08-31
 - **所有者：** 项目所有者
 - **关联计划：** [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) AF-02
@@ -36,6 +36,13 @@
 - **职责：** 让 Provider Adapter 建立可用连接，并隔离部署环境差异；Configuration 只加载并做格式/Schema 校验。
 - **所有者：** Provider Integration。
 - **不表示：** Provider 身份、Model 能力事实、Model 选择，或 per-turn 参数。
+
+### Provider Integration Binding
+
+- **定义：** 由 Composition 选择并提供、供 Model Resolution 和 Model Invocation 使用的 contract-visible Provider 集成绑定。
+- **职责：** 将所选 Provider Contribution 的核心可见契约能力交给解析和调用流程，而不泄漏具体集成实现。
+- **所有者：** Provider Extension Contract 定义语义；Runtime Composition 选择并提供具体绑定。
+- **不表示：** Provider Connection、Provider Adapter、SDK Client、RuntimeApp 状态、Registry replacement，或 Service Locator。
 
 ### Protocol
 
@@ -151,6 +158,13 @@ Request Override ────┘
 - **所有者：** Session Domain。
 - **不表示：** 网络连接、Client、单次请求、Agent 身份，或正在运行的 Turn。
 
+### Accepted Request
+
+- **定义：** RuntimeApp 已接受并分配稳定 `requestId`、但尚未开始 Root Turn 的 caller request。
+- **职责：** 在 Turn 创建前承载排队、correlation 和 caller settlement，并在开始执行时原子转换为对应 Root Turn。
+- **所有者：** Runtime Application。
+- **不表示：** Turn、`turnId`、Registry Snapshot 或 generation pin、Resolved Model、Provider invocation，或 Runner 已启动的证明。
+
 ### Turn
 
 - **定义：** 从一个已接收用户输入开始，到该输入对应的 Agent 执行完成、失败或中止为止的一次可追踪执行单元。
@@ -224,6 +238,13 @@ Agent ─executes─> Turn <─contained by─ Session
 - **职责：** 将受控操作暴露给 Turn Execution，并返回结构化成功或错误结果。
 - **所有者：** Tool Domain；具体实现由对应 Module 或 Extension 所有。
 - **不表示：** 任意函数、Provider API、Hook、Channel，或未经声明的 Runtime 访问权。
+
+### Application Tool Policy
+
+- **定义：** 对 normalized、schema-valid effective Tool Call 返回 `deny`、`allow` 或 `requiresApproval` 决策的 Application Policy；显式 deny 高于 allowlist。
+- **职责：** 根据显式部署和 Agent Policy 输入决定 Tool Call 是否可执行或需要审批，不执行审批交互或 Tool implementation。
+- **所有者：** Application Policy。
+- **不表示：** Tool Contract、schema validator、Hook、Channel Capability 或 approval transport、Registry，或 Tool executor。
 
 ### Channel
 

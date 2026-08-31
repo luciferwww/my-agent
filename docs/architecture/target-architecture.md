@@ -2,8 +2,8 @@
 
 ## 1. 文档状态与证据规则
 
-- **状态：** Draft
-- **版本：** 0.6
+- **状态：** Accepted
+- **版本：** 1.0
 - **日期：** 2026-08-31
 - **所有者：** 项目所有者
 - **执行计划：** [AF-03 Target Architecture Execution Plan](../roadmap/af-03-target-architecture-plan.md)
@@ -11,7 +11,7 @@
 - **规范词汇：** [Domain Glossary](domain-glossary.md)
 - **架构约束：** [Architecture Principles](architecture-principles.md)
 
-本文档是目标架构草案，不描述当前实现已经完成的结构，也不授权生产迁移。AF-05/AF-06 尚未执行的内容必须保持为 Hypothesis 或 Open Question；只有对应 Spike Results 可以将其升级为有执行证据的结论。
+本文档是已接受的目标架构，不描述当前实现已经完成的结构，也不授权生产迁移。AF-05/AF-06 尚未执行的内容必须保持为 Hypothesis 或 Open Question；只有对应 Spike Results 可以将其升级为有执行证据的结论。
 
 ### 1.1 证据分类
 
@@ -29,10 +29,10 @@
 
 | 文档 | 状态 | AF-03 中的用途 |
 |---|---|---|
-| [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) | Accepted v0.8 | AF-03 范围、验收、Foundation Gate 和 Slice 顺序 |
-| [AF-03 Execution Plan](../roadmap/af-03-target-architecture-plan.md) | Accepted v1.2 | Phase、Check Items、Exit Gates 和停止条件 |
+| [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) | Accepted v0.9 | AF-03 范围、验收、Foundation Gate 和 Slice 顺序 |
+| [AF-03 Execution Plan](../roadmap/af-03-target-architecture-plan.md) | Accepted v1.4 | Phase、Check Items、Exit Gates 和停止条件 |
 | [Architecture Principles](architecture-principles.md) | Accepted v1.0 | AP-01 至 AP-13 的稳定约束和验证候选 |
-| [Domain Glossary](domain-glossary.md) | Accepted v1.3 | 规范术语、逻辑所有者和非含义 |
+| [Domain Glossary](domain-glossary.md) | Accepted v1.4 | 规范术语、逻辑所有者和非含义 |
 | [Development Workflow](../development-workflow.md) | Accepted v1.0 | 状态、评审、证据、DoR/DoD 和文档治理 |
 
 发生冲突时遵循 Architecture Foundation Plan 的权威优先级。本节其他证据不得覆盖上述 `Accepted Constraint`。
@@ -69,7 +69,7 @@
 
 Phase 1–6 填写目标章节时，每个重要结论必须使用以下前缀之一：
 
-- **Accepted Constraint：** 来自 1.2 节权威输入且不可被本 Draft 静默改写的约束；
+- **Accepted Constraint：** 来自 1.2 节权威输入且不可被本文静默改写的约束；
 - **Target Decision：** AF-03 可以接受的目标边界；
 - **Hypothesis：** 必须由 Spike 执行证据验证；
 - **Open Question：** 当前证据不足且会影响后续边界；
@@ -171,6 +171,7 @@ flowchart TB
 	Ports[Application-owned Ports and Contracts]
 	Domain[Domain]
 	External[External SDKs / Transports / Stores]
+	RuntimePrivate[RuntimeApp private state]
 
 	Composition --> Infrastructure
 	Composition --> Application
@@ -181,6 +182,14 @@ flowchart TB
 	Application --> Ports
 	Application --> Domain
 	Ports --> Domain
+	Domain -. forbidden .-> Application
+	Domain -. forbidden .-> Infrastructure
+	Domain -. forbidden .-> Composition
+	Application -. forbidden .-> Infrastructure
+	Application -. forbidden .-> Composition
+	Application -. forbidden .-> External
+	Infrastructure -. forbidden .-> Composition
+	Infrastructure -. forbidden .-> RuntimePrivate
 ```
 
 ```text
@@ -279,16 +288,19 @@ Phase 1 的构造原则足以表达当前目标对象图：
 
 ### 4.7 AF-04 Fitness Test 候选
 
+以下 ID 和规则直接复用 [Architecture Principles §5](architecture-principles.md#5-fitness-test-候选) 的 canonical `FT-01..09`，不建立 `P1-FT-*` 别名或第二套编号。
+
 | ID | 候选规则 | 验证方式 | 对应原则 |
 |---|---|---|---|
-| P1-FT-01 | Domain/Application 不导入 Infrastructure 或 Composition | import graph / dependency rule | AP-01 |
-| P1-FT-02 | Provider/Channel SDK 只出现在对应 Infrastructure Integration | package import allowlist | AP-01 |
-| P1-FT-03 | Runner 不依赖 Config loader、具体 Provider、Extension loader 或可变 Registry | import rule + public constructor check | AP-01、AP-03、AP-05、AP-11 |
-| P1-FT-04 | RuntimeApp 不依赖具体 Provider/Channel 类型或 Composition 服务 | import rule + RuntimeApp responsibility tests | AP-01、AP-11 |
-| P1-FT-05 | Infrastructure Adapter 依赖并实现 core-owned Port，Stable Core 不导入 Adapter | import graph + Fake Adapter Contract Tests | AP-01、AP-06 |
-| P1-FT-06 | Extension/Module 不访问 RuntimeApp 私有状态或通用 Service Locator | forbidden import/symbol rule | AP-08、AP-11 |
-| P1-FT-07 | 新增测试 Provider Extension 不修改 Runner、RuntimeApp 或核心领域联合类型 | change-locality test / review check | AP-01、AP-04、AP-12 |
-| P1-FT-08 | 新核心不依赖 Compat/Legacy 路径 | import graph / path denylist | AP-06、AP-07 |
+| FT-01 | Domain/Application 不导入 Infrastructure 或 Composition | import graph / dependency rule | AP-01 |
+| FT-02 | Provider/Channel SDK 只出现在对应 Integration Adapter | package import allowlist | AP-01 |
+| FT-03 | Runner 不依赖全局 Config loader、Provider SDK 或可变 Registry | import rule + public constructor check | AP-02、AP-03、AP-05 |
+| FT-04 | 新核心不依赖 Compat/Legacy 路径 | import graph / path denylist | AP-06、AP-07 |
+| FT-05 | Extension/Module 不访问 RuntimeApp 私有状态或 Service Locator | forbidden import/symbol rule | AP-08、AP-11 |
+| FT-06 | 新 Provider 不修改 Runner；新 Extension 不修改 Runtime/Runner 中央分支 | change-locality test / review check | AP-01、AP-04 |
+| FT-07 | Registry 消费者只接收 Snapshot，不接收内部可变集合 | public constructor/type boundary check | AP-05 |
+| FT-08 | 公共 Event、Lifecycle 和 Port 具有对应 Contract Test | test inventory / contract coverage rule | AP-09、AP-10 |
+| FT-09 | 活跃架构文档具有状态，Legacy 文档不作为新实现依赖 | documentation metadata / link rule | AP-13 |
 
 这些是 AF-04 的候选输入，不表示当前目录已经满足规则。AF-04 必须根据实际代码、测试和构建工具确认可执行路径与必要例外。
 
@@ -334,6 +346,13 @@ Phase 1 的构造原则足以表达当前目标对象图：
 ### 5.3 core-owned Model Invocation Port
 
 Stable Core 拥有用于模型调用的 Model Invocation Port、请求/流事件、Usage、Abort 和错误归一化契约。Provider Adapter 实现该 Port，并在内部完成 Protocol、SDK、Tool Use 分片、流事件和 Provider 错误映射。
+
+```mermaid
+flowchart LR
+	Runner[Application / Runner] --> Port[core-owned Model Invocation Port]
+	Adapter[Infrastructure Provider Adapter] -->|implements| Port
+	Adapter --> SDK[Provider SDK / Protocol]
+```
 
 ```text
 Application / Runner
@@ -529,7 +548,7 @@ Subagent Orchestration 负责成功与失败结果的对称归一化并返回 Pa
 
 | ID | Hypothesis / Contract | 最小实验 | 成功条件 | 停止条件 |
 |---|---|---|---|---|
-| P2-E01 | 第二 Provider Binding 不要求修改 Runner | 使用 Anthropic Adapter 加独立 Fake/实验 Provider 实现同一 Port，分别解析并运行相同最小 Turn | Runner/RuntimeApp 无 Provider 分支；两者输出归一化事件 | 需要复制 Runner、泄漏 SDK 类型或新增中央 Provider 联合分支 |
+| P2-E01 | 第二 Provider Binding 和旧静态配置兼容输入都不要求修改 Runner 或让新核心反向依赖 Legacy | 使用 Anthropic Adapter 加独立 Fake/实验 Provider 实现同一 Port，分别解析并运行相同最小 Turn；再把一份等价旧静态 LLM config 通过单向 Compatibility Adapter 输入同一 Resolver | 两个 Provider 输出归一化事件；旧静态输入与等价新输入产生同一 Resolved Model；Runner/RuntimeApp 无 Provider/Compat 分支；New Core -> Legacy/Compat dependency count 为 0 | 需要复制 Runner、泄漏 SDK 类型、新增中央 Provider 联合分支，或 Resolver/New Core 必须读取 Legacy config/反向调用 Compat 才能解析 |
 | P2-E02 | Model 切换原子绑定全部执行事实 | 两个候选使用不同 Port、Protocol、Endpoint 和 Capability；重复切换并记录调用 | 每次调用只观察一个候选的完整一致集合 | 出现旧 Client/Endpoint/Facts 与新 model 混用 |
 | P2-E03 | Catalog 合并可确定且可追踪 | 注入冲突的 Provider、运维覆盖和发现 Facts，并置换来源注册/枚举顺序 | 所有顺序产生同一结果；字段来源和冲突可诊断 | 结果依赖未记录顺序或静默覆盖关键 Facts |
 | P2-E04 | 缺失 Facts 可以按分类保守处理 | 先给出关键/非关键 Fact 分类；分别删除上下文上限、Tool Use 等关键事实和一个不影响当前请求的非关键事实 | 关键 Facts 缺失时调用前失败；非关键 `unknown` 正例可以执行且保持 unknown，不被猜测 | 分类无法稳定表达，或关键缺失产生调用/费用，或非关键 unknown 被填入猜测值 |
@@ -648,6 +667,7 @@ flowchart TB
 	Builtins[Builtin Runtime Modules]
 	Api[Extension API]
 	Stage[Per-unit Staging and Validation]
+	Builder[Runtime Builder Cleanup Coordinator]
 	Degraded[Predefined Degraded Unit]
 	ExternalCleanup[Creator Cleanup for Non-conflict External Failure]
 	ConflictCleanup[Creator Cleanup for Conflicting External]
@@ -667,15 +687,18 @@ flowchart TB
 	Discovery -->|valid descriptor| Descriptors --> Loader
 	Discovery -->|invalid descriptor| Rejected
 	Loader -->|load success| Api
-	Loader -->|external load failure| ExternalCleanup
+	Loader -->|external load failure| Builder
 	Builtins --> Api
 	Api --> Stage
-	Stage -->|invalid external or required External capability missing| ExternalCleanup
-	Stage -->|External conflicts with Builtin or later External conflict| ConflictCleanup
+	Stage -->|invalid external or required External capability missing| Builder
+	Stage -->|External conflicts with Builtin or later External conflict| Builder
 	Stage -->|optional External capability missing| Degraded
-	Degraded -->|atomic validation fails| ExternalCleanup
+	Degraded -->|atomic validation fails| Builder
 	Degraded -->|atomic validation succeeds| Registry
-	Stage -->|invalid or conflicting Builtin| BuiltinCleanup
+	Stage -->|invalid or conflicting Builtin| Builder
+	Builder -->|orchestrate non-conflict External creator cleanup| ExternalCleanup
+	Builder -->|orchestrate conflicting External creator cleanup| ConflictCleanup
+	Builder -->|orchestrate failed Builtin creator cleanup| BuiltinCleanup
 	ExternalCleanup --> Rejected
 	ConflictCleanup --> Warning
 	BuiltinCleanup --> Fatal
@@ -722,10 +745,10 @@ Builtin Runtime Modules ------------------------------------------------------->
 | ID | Hypothesis | 最小实验 | 成功条件 | 停止条件 |
 |---|---|---|---|---|
 | P3-H01 | Descriptor 静态校验、直接子目录发现和目录名排序足以在执行代码前拒绝无效安装并确定冲突优先级 | 构造有效、缺字段、越界入口、重复 External ID、External/External 与 Builtin/External Contribution 冲突、无效 Builtin、重复 Builtin ID、Builtin/Builtin Contribution 冲突、散落脚本、嵌套目录和不同文件系统枚举/来源获取顺序样例 | 只加载有效直接子目录候选；Builtin 始终胜出；规范化目录顺序和 External first-wins 结果可重复；后续冲突 External 单元整组隔离且每个冲突产生一条包含赢家、被隔离方、冲突 identity 和排序依据的 warning；无效/冲突 Builtin 导致清理后启动失败且不发布 Snapshot；无效 Descriptor 代码执行计数为零 | 必须执行入口才能确定最小身份/入口安全、路径可逃逸安装目录，或跨平台目录顺序无法稳定定义 |
-| P3-H02 | per-unit staging 和原子 ownership handoff 可在继续启动时保证失败 External Extension 零部分发布和零资源残留 | 跨 Channel/Tool/Hook Extension 在加载、各注册点、最终校验、交接前后注入失败；instrument 创建方 cleanup 调用、ownership 状态和 Builder 编排 | 交接前创建方保持 rollback ownership 且 cleanup 恰好一次；交接后唯一 Lifecycle Owner 可定位；每次失败均无部分 Contribution/资源残留；其他有效 Extension 的 Snapshot 相同且诊断可关联 | 任一失败污染 Snapshot、改变无关 Extension 结果、交接时出现无 Owner/多 Owner、重复清理或泄漏资源 |
-| P3-H03 | 一个 Extension API 加 typed projections 足以支持首批四类 Contribution 而不成为 Service Locator | Builtin 与 External Contract Test 使用相同注册入口并分别消费窄视图 | 消费者不按来源分支；不能取得 Registry mutation 或无关 projection | 需要 `get(any token)`、RuntimeApp 私有状态或中央 Extension 类型联合分支 |
-| P3-H04 | Namespace 隔离和 Extension-owned Schema 可在不泄漏全局 Config 的情况下完成启动校验 | 用两个字段重名的 Extension 验证配置读取、Schema 失败和诊断 | 字段不冲突；Extension 只见自身已校验配置；一个 External Schema 失败整组隔离 | 必须集中复制第三方字段或把全局可变 Config 交给 Extension |
-| P3-H05 | 启动期 Extension Capability 和调用期 Channel Capability 可以在不改变 Snapshot 的情况下支持显式降级 | 分别注入 required/optional 启动能力缺失，并让同一 Tool 在支持和不支持目标 Channel Capability 的上下文运行 | required 缺失整组隔离；optional 缺失只产生预定义降级单元；调用期缺失只影响本次调用；无具体 Channel/Transport 类型依赖 | 出现校验失败后的偶然部分发布，或需要全局当前 Channel、具体 Adapter downcast、Snapshot mutation 或通用 Runtime 服务访问 |
+| P3-H02 | per-unit staging 和原子 ownership handoff 可在继续启动时保证失败 External Extension 零部分发布和零资源残留 | 在 `runtime/` 外建立一个集成 External chat Extension fixture，经同一 API 注册 proprietary WebSocket Channel、平台 Tool、Hook、Config，并让三类运行贡献共享一个 instrumented 私有连接/限流资源；在加载、各注册点、最终校验、交接前后注入失败并记录 creator cleanup、ownership 和 Builder 编排 | 交接前创建方保持 rollback ownership 且 cleanup 恰好一次；交接后唯一 Lifecycle Owner 可定位；每次失败均无部分 Contribution/资源残留；其他有效 Extension 的 Snapshot 相同且诊断可关联；共享资源不泄漏给消费者 | 任一失败污染 Snapshot、改变无关 Extension 结果、交接时出现无 Owner/多 Owner、重复清理/泄漏资源，或 fixture 必须进入 `runtime/`/访问 RuntimeApp 私有状态才能工作 |
+| P3-H03 | 一个 Extension API 加 typed projections 足以支持首批四类 Contribution 而不成为 Service Locator | Builtin 与 External Contract Test 分别通过同一 API 注册 Tool、Hook、Channel、Provider 四类 Contribution；每个消费者只取得并执行/解析其 typed projection，Provider fixture 也不增加 Runner source branch | 四类都能注册/消费且消费者不按来源分支；不能取得 Registry mutation、无关 projection、RuntimeApp 私有状态或 arbitrary service token | 任一 Contribution Kind 需要独立注册系统、`get(any token)`、RuntimeApp 私有状态、中央 Extension 类型联合或 Runner Provider 分支 |
+| P3-H04 | Namespace 隔离、Extension-owned versioned Schema 和两阶段 discovery/load 可在执行 Extension 代码前确定最小配置校验边界，且不泄漏全局 Config | 使用两个字段重名 Extension 和同一 Extension 的 supported/obsolete/future Schema 版本 fixture；第一阶段只读取静态 Descriptor/Schema identity 并记录 Extension 代码执行计数，第二阶段仅对已接受版本加载/注册；分别测试无需迁移、显式迁移成功、无迁移路径拒绝和 Schema 内容失败 | 字段不冲突；静态拒绝时 Extension 代码执行计数为 0；支持版本或显式迁移产生同一已校验 namespace input；obsolete/future/失败迁移整组隔离并可诊断；Extension 只见自身已校验配置 | 必须先执行任意 Extension 入口才能发现 Schema/版本，版本结果依赖加载副作用，必须集中复制第三方字段/泄漏全局 Config，或无法对无迁移路径版本 fail closed |
+| P3-H05 | 启动期 Extension Capability 和调用期 Channel Capability 可以在不改变 Snapshot 的情况下支持 typed platform identity 与显式降级 | 使用 P3-H02 的同一 chat Extension：Channel 产生受限 typed platform message identity，平台 Tool 经可选 current-call capability 执行 proprietary action；分别注入 required/optional 启动能力和调用期 capability 存在/缺失，验证 Hook/Tool 消费者不能 downcast proprietary Transport payload | required 缺失整组隔离；optional 缺失只产生预定义降级单元；调用期缺失只影响本次调用；identity/capability 足以完成平台 action；无具体 Channel/Transport 类型依赖或 Snapshot mutation | 出现校验失败后的偶然部分发布，或平台 Tool 需要全局当前 Channel、具体 Adapter/payload downcast、Snapshot mutation、通用 Runtime 服务访问，或缺失 capability 仍执行 proprietary action |
 
 ### 6.9 Phase 3 完成条件
 
@@ -754,13 +777,25 @@ Builtin Runtime Modules ------------------------------------------------------->
 
 每个成功发布的 Registry Snapshot 具有单调递增且在进程内唯一的 generation identity。Snapshot 及其 narrow typed projections 在发布后不可修改；generation 只表达该进程内的发布顺序，不作为 Extension 版本、跨重启持久 ID 或分布式一致性编号。
 
-**Target Decision：** RuntimeApp 接受输入时只创建带稳定 `requestId` 的 `AcceptedRequest`；queued `AcceptedRequest` 不是 Turn，不捕获 Snapshot，也不持有 generation pin。该请求从 Session queue 开始执行时，RuntimeApp 才原子创建带稳定 `turnId` 的 Root Turn并捕获 current Snapshot/pin，同时保留 `requestId -> turnId` correlation；此后等待下游、运行中或正在收敛的 Root Turn 始终固定该 generation。Child Turn 继承 Parent Turn 的 Snapshot generation，即使 Child 在新 generation 发布后才创建，也不能改用 current generation。一个已创建的 Parent/Child Turn tree 因此只观察一个内部一致的 Contribution 集合。
+**Target Decision：** RuntimeApp 接受输入时只创建带稳定 `requestId` 的 Accepted Request；queued Accepted Request 不是 Turn，不捕获 Snapshot，也不持有 generation pin。该请求从 Session queue 开始执行时，RuntimeApp 才原子创建带稳定 `turnId` 的 Root Turn并捕获 current Snapshot/pin，同时保留 `requestId -> turnId` correlation；此后等待下游、运行中或正在收敛的 Root Turn 始终固定该 generation。Child Turn 继承 Parent Turn 的 Snapshot generation，即使 Child 在新 generation 发布后才创建，也不能改用 current generation。一个已创建的 Parent/Child Turn tree 因此只观察一个内部一致的 Contribution 集合。
 
 Turn tree 的 pin 在最后一个相关 Turn 完成、失败或 Abort 后释放。Snapshot pin 只保护该 generation 的 Contribution 和资源可用性，不赋予 Turn 关闭资源、修改 Registry 或延长进程 Shutdown deadline 的权力。
 
 ### 7.3 Reload Transaction 与原子 publish
 
 `Reload Transaction` 表示一次已加载 Extension 状态变更从候选准备到原子 publish 的过程。它结束于 publish 成功，**不包含**旧 generation 的排空和资源释放。
+
+```mermaid
+flowchart LR
+	Requested[requested] --> Preparing[preparing]
+	Preparing --> Validating[validating]
+	Validating --> Ready[ready]
+	Ready --> Publishing[publishing]
+	Publishing --> Published[published]
+	Preparing -. pre-publish failure / Abort .-> Failed[aborted / failed before publish]
+	Validating -. pre-publish failure / Abort .-> Failed
+	Ready -. pre-publish failure / Abort .-> Failed
+```
 
 ```text
 requested -> preparing -> validating -> ready -> publishing -> published
@@ -1038,7 +1073,7 @@ Lifecycle Owners -> Runtime Builder: successes + protected residuals + aggregate
 
 Channel 和 library caller 使用同一个 Runtime Application ingress。Channel 提供 route 和可选 Channel Capability；library caller 没有隐式 Channel，也不能因进程曾启动过某个 Channel 而获得交互能力。RuntimeApp 对同一 Session 的 Root Turn 串行化，不同 Session 可并行；Child Turn 属于 Parent Turn tree，不进入第二个全局 scheduler。
 
-**Target Decision：** RuntimeApp 接受输入时先分配稳定 `requestId`，建立 message/Session/AcceptedRequest correlation，再按既有多客户端语义产生带 `requestId` 的 `user_message`。请求从队列开始执行时，RuntimeApp 原子分配稳定 `turnId`、建立 `requestId -> turnId` correlation 并捕获 Registry Snapshot/pin，再执行 Model Resolution；started request 的后续事件/结果携带两者，未开始即被 Shutdown 终结的 queued request 只需 `requestId`。Resolution Failure 在任何 Provider 调用前成为可分类的 Turn failure；Runner/Provider failure 和 Turn Abort 也必须经 §8.7 的同一 public completion gate/Fanout 边界恰好一次返回。排队请求在开始前不是 Root Turn，不捕获 Snapshot 或 Resolved Model。
+**Target Decision：** RuntimeApp 接受输入时先分配稳定 `requestId`，建立 message/Session/Accepted Request correlation，再按既有多客户端语义产生带 `requestId` 的 `user_message`。请求从队列开始执行时，RuntimeApp 原子分配稳定 `turnId`、建立 `requestId -> turnId` correlation 并捕获 Registry Snapshot/pin，再执行 Model Resolution；started request 的后续事件/结果携带两者，未开始即被 Shutdown 终结的 queued request 只需 `requestId`。Resolution Failure 在任何 Provider 调用前成为可分类的 Turn failure；Runner/Provider failure 和 Turn Abort 也必须经 §8.7 的同一 public completion gate/Fanout 边界恰好一次返回。排队请求在开始前不是 Root Turn，不捕获 Snapshot 或 Resolved Model。
 
 **Target Decision：** 一个 Turn 内的语义 Event 保持产生顺序；RuntimeApp 逐个隔离 Fanout target 的同步失败，单个 Channel 或 observer 失败不得反向改变 Turn result，也不得阻止其他 target。Channel Adapter 对本地发送接受、Transport backpressure、远端断开和呈现负责；RuntimeApp 不承诺远端 delivery acknowledgment。不同 Turn 之间不建立无业务需求的全局总序。
 
@@ -1052,7 +1087,7 @@ sequenceDiagram
 	participant Fanout as Channels / Observer
 
 	Caller->>Runtime: submit input + session + route/capabilities
-	Runtime->>Runtime: allocate AcceptedRequest requestId
+	Runtime->>Runtime: allocate Accepted Request requestId
 	Runtime->>Fanout: user_message correlated by requestId
 	Runtime->>Runtime: enqueue; serialize Root Turns per Session
 	Runtime->>Runtime: dequeue; atomically create Root turnId + capture Snapshot/pin
@@ -1086,7 +1121,7 @@ sequenceDiagram
 ```text
 Channel / Library Caller -> RuntimeApp:
 	submit input + Session + explicit route/capabilities
-RuntimeApp: allocate stable AcceptedRequest requestId
+RuntimeApp: allocate stable Accepted Request requestId
 RuntimeApp -> Channels / Observer: user_message correlated by requestId
 RuntimeApp: enqueue; serialize Root Turns per Session
 when the request dequeues:
@@ -1122,20 +1157,20 @@ Tool Call 固定使用以下顺序：
 1. Runner 以 Turn-pinned Tool/Hook projection 解析 Provider 返回的 Tool Call identity；
 2. `before_tool_call` Hook 按确定顺序 awaited，允许按 Contract 变换输入或拒绝；异常 fail closed；
 3. 对 effective input 执行 canonical schema validation；
-4. Application Tool Policy 对 effective call 决策：显式 deny 优先；allowlist 命中则允许；未命中且当前调用上下文提供 approval Channel Capability 时请求审批；未命中且无该 Capability 时拒绝；
-5. approval wait 必须观察 Turn Abort 和 Shutdown，并返回 approved、denied、aborted、unavailable 或 failed 等可分类结果；Channel 只承载交互，不拥有 Policy；
+4. Application Tool Policy 对 effective call 返回 `deny`、`allow` 或 `requiresApproval`：显式 deny 优先；allowlist 命中则允许；其他匹配规则和输入由后续 Spec 冻结；
+5. Runner 对 `requiresApproval` 决策执行审批 I/O：当前调用上下文缺少 approval Channel Capability 时 fail closed；否则 approval wait 必须观察 Turn Abort 和 Shutdown，并返回 approved、denied、aborted、unavailable 或 failed 等可分类结果；Channel 只承载交互，不拥有 Policy；
 6. 允许时由 Tool Execution 调用 Tool implementation；拒绝、校验失败、Tool exception 和 Abort 都归一化为与原 call identity 配对的 Tool Result/terminal outcome；
 7. Runner 产生配对的 Tool Call/Result 语义事件并写入后续模型上下文；事件不得把 transformed effective input 错报为实际未执行的输入，具体字段由后续 Spec 决定；
 8. `after_tool_call` Hook 可以并行且失败隔离，但必须由 Runner `allSettled` 后才继续下一次 Model invocation 或结束 Turn；Hook 不得 detached 越过 Turn completion 或 Snapshot pin。
 
-**Target Decision：** allowlist 是 Application Tool Policy 的显式部署/Agent Policy 输入，不是 Channel Capability，也不由 Hook 注册历史决定。无审批能力只改变 unmatched call 的本次结果，不修改 Snapshot、Tool 可用集合或后续调用；deny 规则始终高于 allowlist。具体 pattern 语法、配置来源合并和审批结果类型由后续 Tool Policy Spec 冻结。
+**Target Decision：** allowlist 是 Application Tool Policy 的显式部署/Agent Policy 输入，不是 Channel Capability，也不由 Hook 注册历史决定。Runner 对 `requiresApproval` 决策执行审批 I/O；无审批能力只改变本次决策的最终结果，不修改 Snapshot、Tool 可用集合或后续调用；deny 规则始终高于 allowlist。具体 pattern 语法、配置来源合并和审批结果类型由后续 Application Tool Policy Spec 冻结。
 
 ```mermaid
 sequenceDiagram
 	participant Runner
 	participant Hooks as Pinned Hook Projection
 	participant Policy as Application Tool Policy
-	participant Approval as Approval Capability
+	participant Approval as Current-call Approval Capability
 	participant Tool as Tool Execution
 
 	Runner->>Runner: normalize Provider request; resolve pinned Tool
@@ -1524,8 +1559,8 @@ library/embedded Host receives report and decides; Runtime library never exits p
 | `RuntimeToolBundle` 的中央 mutable 工具集合 | Registry Snapshot Tool projection | Registry | Runner/Provider/Prompt 消费各自窄只读投影，不以 mutable bundle 为权威源 |
 | `AgentRunner.on(...)` Hook 列表 | Hook Contribution | Registry | 旧 Public 注册如保留，只在边界适配成 Contribution；Runner 从 Turn 捕获的 Snapshot 取得 Hook 投影 |
 | `AgentRunner` 内 Hook 调用 | Hook execution pipeline | Runner | Runner 保持 §8.4 的 before/after 顺序、等待和错误语义，不承担注册表 lifecycle |
-| `wireApprovalRouting()` 的 allow/deny/prompt 决策 | Tool Policy | Application Policy | Policy 使用显式输入，不由 `startChannels()` 安装历史决定 |
-| `wireApprovalRouting()` 查询 `originChannel` | current-call Approval Capability | RuntimeApp | RuntimeApp 从当前 route 的 narrow Channel binding 提供能力事实，不使用进程全局 Channel 历史 |
+| `wireApprovalRouting()` 的 allow/deny/prompt 决策 | Application Tool Policy | Application Policy | Policy 使用显式输入，不由 `startChannels()` 安装历史决定 |
+| `wireApprovalRouting()` 查询 `originChannel` | current-call Approval Capability | Channel Contract | Channel Adapter 声明支持，RuntimeApp 只从当前 route 的 narrow Channel binding 传递能力事实，不使用进程全局 Channel 历史 |
 | 脚本直接构造 CLI/WebSocket Channel | Channel Contribution | 提供该 Channel 的 Runtime Module/External Extension | CLI/WebSocket 变为 Builtin Module；Builtin/External 经同一 Contribution Contract |
 | `RuntimeApp.registerChannel()` / `startChannels()` | Channel binding lifecycle | Runtime Builder；handoff 后为 recorded Lifecycle Owner | Builder 负责 staging/start/rollback/handoff；RuntimeApp 不启动 Transport |
 | `RuntimeApp.create()` + `bootstrapRuntime()` + `RuntimeResourceSet` 的对象图装配 | Runtime Builder | Composition | Builder 成为唯一对象图/资源图协调者并交付显式依赖；RuntimeApp 不再做 post-bootstrap composition |
@@ -1572,7 +1607,7 @@ Forbidden:
 |---|---|---|---|---|
 | 1 Model Resolution | `bootstrapRuntime()` 经 `createLLMClient()` 直接构造 Anthropic client；`RuntimeApp.requireModel()` 和 `resolvedConfig.llm` 补齐每次 Runner 参数 | Anthropic Builtin Provider Module -> Provider Registry Snapshot -> Model Resolver -> Parent Resolved Model -> Runner Port | 旧静态 LLM config/`RunTurnParams.model` 映射为 Provider Connection、Model Reference 和受限 Request Override | bootstrap 不再 import/构造 Anthropic；RuntimeApp 不再读取 raw LLM config 或 `requireModel()`；Runner 不再接收由 RuntimeApp 拼装的 model/context/max-token facts；`RuntimeResourceSet.llmClient` 不再是权威 client slot |
 | 2 Subagent Model Resolution | `SubagentRunner` 从 Profile string 或 `SubagentHostBindings.llmDefaults` 选择 model/max/context；library entry 绕过 Runtime Turn tracking | Parent Tool/Library use case -> Subagent Orchestration -> RuntimeApp tracked Child -> Child Model Resolver -> Child Resolved Model -> Runner | 旧 Profile model string 映射为 Model Reference；`inherit` 映射 Parent effective Model Reference；旧 library result/error 仅在边界归一化 | 删除 `llmDefaults` 复制和 Child 对全局默认的 fallback；不存在直接启动未登记 Child Runner 的生产入口；setup/terminal cleanup、Usage、Event 和 Abort 都经 §8.6 路径 |
-| 3 Tool 与 Hook Module | `getDefaultBuiltinTools()` + `assembleRuntimeTools()` 构造中央 mutable bundle；`RuntimeApp.create()` 追加 Task Tool、重建派生值并 `setToolExecutor()`；`startChannels()` 安装 approval Hook | Builtin/External Tool/Hook Contributions -> Registry Snapshot Tool/Hook projections -> Runner canonical Tool pipeline | 若保留 `AgentRunner.on(...)` Public API，只将旧注册调用适配成 Hook Contribution；旧 allow/deny config 映射为 Tool Policy input | 删除中央 Builtin Tool 特例列表、Task Tool 后装配和 executor setter；approval 不依赖 Channel startup 历史；detached Hook 不跨 Turn/pin；不再为已禁用的 tool-definition prompt slot 派生完整 `PromptToolDefinition`，当前已核验的 memory 条件改读窄 tool-name/capability projection，除非新 Spec 验证完整渲染需求 |
+| 3 Tool 与 Hook Module | `getDefaultBuiltinTools()` + `assembleRuntimeTools()` 构造中央 mutable bundle；`RuntimeApp.create()` 追加 Task Tool、重建派生值并 `setToolExecutor()`；`startChannels()` 安装 approval Hook | Builtin/External Tool/Hook Contributions -> Registry Snapshot Tool/Hook projections -> Runner canonical Tool pipeline | 若保留 `AgentRunner.on(...)` Public API，只将旧注册调用适配成 Hook Contribution；旧 allow/deny config 映射为 Application Tool Policy input | 删除中央 Builtin Tool 特例列表、Task Tool 后装配和 executor setter；approval 不依赖 Channel startup 历史；detached Hook 不跨 Turn/pin；不再为已禁用的 tool-definition prompt slot 派生完整 `PromptToolDefinition`，当前已核验的 memory 条件改读窄 tool-name/capability projection，除非新 Spec 验证完整渲染需求 |
 | 4 Channel Module | `scripts/cli.ts`、`scripts/server.ts`、`scripts/websocket.ts` 直接构造 concrete Channel 后调用 `registerChannel()`/`startChannels()` | CLI/WebSocket Builtin Modules + External Channel Contributions -> Builder-created bindings -> RuntimeApp narrow routing/capability view | 旧 `registerChannel/startChannels` Public API 如需过渡，只适配为 startup-only Contribution input；不能绕过 Builder lifecycle | 生产脚本不再构造/注册具体 Channel；RuntimeApp 不识别具体 Channel 类型或启动 Transport；Builtin/External 同 staging、rollback、handoff、stop；approval capability 为 current-call/route 事实 |
 | 5 Runtime Composition | `bootstrapRuntime()` 构造主要资源；`RuntimeApp.create()` 再发现 Subagent Profile、创建 Subagent Runner、追加 Task Tool；`RuntimeResourceSet` 可变；shutdown/rollback 分散 | Composition Root -> Runtime Builder -> immutable Registry Snapshot/explicit dependencies -> RuntimeApp；Builder/unique Owners 负责 startup/reload/retirement/shutdown resource graph | `RuntimeApp.create(options)` 如仍是 Public API，只成为调用 Builder 的薄适配入口；旧 dependency overrides 映射为明确 Module/Fake Contributions | 删除 RuntimeApp post-bootstrap composition、mutable `toolBundle`/`setToolExecutor()`、重复 lifecycle ownership 和不完整 startup rollback；RuntimeApp 只保留 §4.3/§8 的队列、Turn tree、routing、Fanout、Abort 与 Shutdown 编排；生产动态变更仅在 AF-06 结果支持后开放 |
 | 6 Documentation/Legacy | `Current Fact Candidate`：`docs/architecture/current/`、Proposal/Implementation、Root README；由 Slice 6 文档 inventory 和 active-link audit 核验，不声称为 production caller | 唯一 Current Architecture + Accepted ADR/Spec + Results/Plan 分责；Capability Inventory 和活跃链接指向后继入口 | Legacy 文档只保留状态、后继链接和必要历史定位，不继续同步目标/当前事实 | 每个当前事实只有一个权威入口；长期决策/未完成事项/执行证据已分别迁入 ADR/Plan/Results；入站链接更新；无独有价值文档经 Review 删除，Git History 保存历史；新实现不引用 Legacy |
@@ -1582,7 +1617,7 @@ Forbidden:
 ### 9.4 Feature Flag、回退与 Compatibility 到期
 
 - Feature Flag 只允许在 Slice 实施/发布窗口切换完整旧路径和完整新路径，必须有 Owner、默认值、观测信号、回退触发条件和删除 Slice；Slice 3/4 的 flag 只能在进程 startup 选择完整的 startup-configured path，不能触发生产动态 Contribution/Registry visibility 变更；
-- Slice 5 后若 AF-06/Accepted ADR 允许 request/Turn 级 migration selection，queued `AcceptedRequest` 不提前固定该选择；RuntimeApp 在 dequeue/start transition 中原子选择完整 migration path，并在新路径上同时创建 Root Turn、捕获 Registry Snapshot，随后完成 Resolved Model。该选择由整个 Root/Child Turn tree 继承；flag 不能在 Turn 内重选路径，也不能自身修改 Snapshot/Contribution visibility；
+- Slice 5 后若 AF-06/Accepted ADR 允许 request/Turn 级 migration selection，queued Accepted Request 不提前固定该选择；RuntimeApp 在 dequeue/start transition 中原子选择完整 migration path，并在新路径上同时创建 Root Turn、捕获 Registry Snapshot，随后完成 Resolved Model。该选择由整个 Root/Child Turn tree 继承；flag 不能在 Turn 内重选路径，也不能自身修改 Snapshot/Contribution visibility；
 - 新路径在发布前失败可以切回旧版本/旧完整路径；Registry candidate 的 pre-publish failure 遵循 §7 containment，post-publish retirement failure 不回滚已发布 Snapshot；
 - Slice 完成时 Flag 和被替代生产路径应删除；确需保留的 Public Compatibility 必须记录 Owner、到期 Slice、调用方清单和测试，且不能接收新功能；
 - Compatibility 删除后，回退只通过版本/发布回滚；不保留隐藏环境变量、未记录分支或反向 dependency；
@@ -1606,13 +1641,13 @@ Forbidden:
 - [x] 每个 Slice 都指向真实调用方和旧路径删除条件；
 - [x] 不在 AF-03 执行目录/类型重命名或生产迁移。
 
-**Review Disposition：** Phase 5 已完成独立架构复审。评审中发现的 Shutdown caller settlement、Event/Error/approval 唯一所有权、Root/Tool/Child failure 与 Abort 分支、Current Fact 定位、migration flag capture、`AcceptedRequest`/Root Turn Snapshot 时点以及 §5.7/§8.6 Subagent cross-flow 冲突均已逐项修正并复核；最终门禁无未解决 Critical、High、Medium、Low 或 blocking overdesign。该结论只接受 §8–§9 的目标调用流和迁移边界，不表示 AF-04/AF-05/AF-06、Phase 6、生产迁移或整体 Foundation Gate 已完成。
+**Review Disposition：** Phase 5 已完成独立架构复审。评审中发现的 Shutdown caller settlement、Event/Error/approval 唯一所有权、Root/Tool/Child failure 与 Abort 分支、Current Fact 定位、migration flag capture、Accepted Request/Root Turn Snapshot 时点以及 §5.7/§8.6 Subagent cross-flow 冲突均已逐项修正并复核；最终门禁无未解决 Critical、High、Medium、Low 或 blocking overdesign。该结论只接受 §8–§9 的目标调用流和迁移边界，不表示 AF-04/AF-05/AF-06、Phase 6、生产迁移或整体 Foundation Gate 已完成。
 
 ## 10. Verification and Acceptance Matrix
 
 **Phase：** 6
 
-本节将在 Phase 6 汇总 AF-03 覆盖、原则、证据和独立评审结果。
+本节汇总 AF-03 覆盖、原则、证据和独立评审结果。`Applicable` 只表示该 Architecture Principle 适用于本 Target；`Target Evidence Complete` 只表示 AF-03 目标设计已有可定位证据；`Spike Input Complete` 表示 Hypothesis/实验/成功/停止条件已定义。这些标记都不表示生产实现、AF-04 测试或 AF-05/AF-06 Spike 已执行。
 
 ### 10.1 Foundation AF-03 追踪矩阵
 
@@ -1620,41 +1655,106 @@ Forbidden:
 
 | 类型 | Foundation AF-03 要求 | 主责章节 | 支持章节 | 当前状态 | 预期证据 |
 |---|---|---:|---:|---|---|
-| 必须覆盖 | 模块职责与依赖方向 | 4 | 8、10 | Planned | 边界表、依赖图、允许/禁止边 |
-| 必须覆盖 | Provider/Model Resolution | 5 | 8、Appendix B | Target Design Complete | 责任表、Parent/Subagent 调用流和 AF-05 输入已复审；执行证据仍待 AF-05 |
-| 必须覆盖 | Extension/Module/Contribution/Registry | 6 | 7、Appendix C | Planned | 静态组合图、注册和配置边界 |
-| 必须覆盖 | Snapshot/事务/原子切换/排空/回滚 | 7 | 8、Appendix C | Planned | 不变量、动态流、AF-06 输入 |
-| 必须覆盖 | Runtime Builder 与 RuntimeApp | 4 | 8 | Planned | 职责表、启动/Turn/Shutdown 流 |
-| 必须覆盖 | Tool/Hook/Channel 注册 | 6 | 8 | Planned | Registry 关系和端到端流 |
-| 必须覆盖 | Config Namespace 与 Schema | 6 | Appendix C | Planned | 所有权选项和 AF-06 Hypothesis |
-| 必须覆盖 | 私有资源/受限上下文/平台能力 | 6 | 7、Appendix C | Planned | Extension Capability、作用域、Lifecycle |
-| 必须覆盖 | Event/Error/Lifecycle/Resource Ownership | 8 | 7、10 | Planned | 所有权表、失败和关闭流 |
-| 必须覆盖 | Legacy/Compat | 9 | 10 | Planned | 单向依赖、Slice 迁移/删除边界 |
-| 必须覆盖 | 关键调用流和关闭顺序 | 8 | 5、7 | Planned | Mermaid + ASCII 调用流 |
-| 验收 | Turn/Tool/Channel/Subagent 调用流验证分层 | 8 | 10 | Planned | 四类调用流评审记录 |
-| 验收 | 跨 Channel/Tool/Hook External Extension | 6 | 7、10、Appendix C | Planned | 组合图与 AF-06 实验输入 |
-| 验收 | 旧/新 Registry Snapshot 一致性 | 7 | 10、Appendix C | Planned | 不变量与 AF-06 验证场景 |
-| 验收 | 无业务价值机械转换层 | 8 | 4、10 | Planned | 调用链审查记录 |
-| 验收 | Stable Core/Infrastructure Adapter 边界 | 4 | 10 | Planned | 依赖图与 Fitness Test 输入 |
-| 验收 | 无通用 Service Locator | 4 | 6、10 | Planned | 显式 Port/Extension Capability 映射 |
+| 必须覆盖 | 模块职责与依赖方向 | 4 | 8、10 | Target Evidence Complete | 边界表、依赖图、允许/禁止边；AF-04 以 FT-01/02/03/05/06 验证 |
+| 必须覆盖 | Provider/Model Resolution | 5 | 8、Appendix B | Target Evidence Complete / Spike Input Complete | 责任表、Parent/Subagent 调用流和 AF-05 输入已复审；执行证据仍待 AF-05 |
+| 必须覆盖 | Extension/Module/Contribution/Registry | 6 | 7、Appendix C | Target Evidence Complete / Spike Input Complete | 静态组合图、注册/配置边界；动态可行性仍待 AF-06 |
+| 必须覆盖 | Snapshot/事务/原子切换/排空/回滚 | 7 | 8、Appendix C | Target Evidence Complete / Spike Input Complete | 不变量、动态流、AF-06 失败注入输入；未授权生产动态变更 |
+| 必须覆盖 | Runtime Builder 与 RuntimeApp | 4 | 8 | Target Evidence Complete | 职责表、启动/Turn/Shutdown 流；AF-04 以 FT-03/05/06 和 Contract 验证 |
+| 必须覆盖 | Tool/Hook/Channel 注册 | 6 | 8 | Target Evidence Complete | Registry 关系、typed projections 和端到端流；AF-06/Contract 验证 |
+| 必须覆盖 | Config Namespace 与 Schema | 6 | Appendix C | Target Evidence Complete / Spike Input Complete | 所有权选项和 P3-H04；Schema 形状仍待 AF-06 |
+| 必须覆盖 | 私有资源/受限上下文/平台能力 | 6 | 7、Appendix C | Target Evidence Complete / Spike Input Complete | Extension Capability、作用域、Lifecycle 和 P3-H02/03/05 |
+| 必须覆盖 | Event/Error/Lifecycle/Resource Ownership | 8 | 7、10 | Target Evidence Complete | 唯一所有权表、failure/completion gate、两阶段 Shutdown；AF-04/06 验证 |
+| 必须覆盖 | Legacy/Compat | 9 | 10 | Target Evidence Complete | 单向依赖、逐 Slice 迁移/删除边界；FT-04/09 与 Slice 审计验证 |
+| 必须覆盖 | 关键调用流和关闭顺序 | 8 | 5、7 | Target Evidence Complete | Mermaid + ASCII 调用流和 Phase 1–5 review disposition |
+| 验收 | Turn/Tool/Channel/Subagent 调用流验证分层 | 8 | 10 | Target Evidence Complete | 四类流覆盖 Event/Error/Abort/concurrency/Usage/resource 并经 Phase 5 终审 |
+| 验收 | 跨 Channel/Tool/Hook External Extension | 6 | 7、10、Appendix C | Target Evidence Complete / Spike Input Complete | 同一 Extension API 组合图与 P3-H01..05/P4-H01..07；执行仍待 AF-06 |
+| 验收 | 旧/新 Registry Snapshot 一致性 | 7 | 10、Appendix C | Target Evidence Complete / Spike Input Complete | generation/pin/atomic publish 不变量与 P4-H01..07 |
+| 验收 | 无业务价值机械转换层 | 8 | 4、9、10 | Target Evidence Complete | 保留直接 callback Fanout；删除未使用完整 Prompt Tool 转换的 Slice 3 条件；AP-12 review |
+| 验收 | Stable Core/Infrastructure Adapter 边界 | 4 | 5、8、10 | Target Evidence Complete | 依赖图、canonical Error/Port mapping；FT-01/02/03/06 |
+| 验收 | 无通用 Service Locator | 4 | 6、10 | Target Evidence Complete | 显式 Port/typed projection/Extension Capability；FT-05 和 AF-06 denial test |
 
 ### 10.2 Architecture Principles 映射
 
 | Principle | 主要目标章节 | 设计证据 | 后续验证 | 当前状态 |
 |---|---:|---|---|---|
-| AP-01 Stable Core 不依赖具体集成 | 4、5 | 依赖图、Port/Adapter 边界 | FT-01、FT-02、Contract | Planned |
-| AP-02 配置/事实/策略分离 | 5 | 来源和所有权表 | Resolver Unit Tests | Planned |
-| AP-03 per-turn Resolved Model | 5、8 | Parent/Subagent 调用流 | Resolver/Runner Contract | Planned |
-| AP-04 Builtin/External 同机制 | 6 | 跨贡献 Extension 组合图 | AF-06、Contract | Planned |
-| AP-05 不可变 Registry Snapshot | 7 | Snapshot/事务不变量 | AF-06、immutability tests | Planned |
-| AP-06 单一权威来源 | 4、5、6、9 | 责任表和迁移表 | 类型/导出/调用路径审计 | Planned |
-| AP-07 Compat 单向进入新核心 | 9 | 单向依赖和删除规则 | FT-04、Slice 审计 | Planned |
-| AP-08 最小 Extension Capability | 6、7 | Capability/私有资源边界 | AF-06、denial tests | Planned |
-| AP-09 公共行为显式契约 | 7、8、10 | Event/Error/并发/Lifecycle 表 | Contract/Integration | Planned |
-| AP-10 唯一 Lifecycle Owner | 7、8 | Resource Ownership 和关闭流 | failure injection | Planned |
-| AP-11 Runtime/Composition 分责 | 4、8 | 职责表和启动/Turn 流 | FT-05、RuntimeApp/Runner 职责测试、构造依赖与变更局部性检查 | Planned |
-| AP-12 抽象由当前证据证明 | 4、5、6、8 | 第二实现/Fake/Spike 映射 | Architecture Review | Planned |
-| AP-13 区分事实/目标/历史 | 1、3、9、10 | 证据分类和 Legacy 表 | 文档状态/链接检查 | In Progress |
+| AP-01 Stable Core 不依赖具体集成 | 4、5 | 依赖图、core-owned Port/Adapter 边界 | FT-01、FT-02、FT-06、Contract | Applicable / Target Evidence Complete |
+| AP-02 配置/事实/策略分离 | 5、8 | §5.2 来源/Owner 表、Application Tool Policy/current capability 分离 | FT-03、Resolver Unit Tests | Applicable / Target Evidence Complete |
+| AP-03 per-turn Resolved Model | 5、7、8 | Parent/Child 独立 resolution、Turn-owned immutable result | FT-03、Resolver/Runner Contract、AF-05 | Applicable / Target Evidence Complete / Spike Input Complete |
+| AP-04 Builtin/External 同机制 | 6、8 | 同一 Extension API、Contribution/Registry/Channel lifecycle | FT-06、AF-06、Contract | Applicable / Target Evidence Complete / Spike Input Complete |
+| AP-05 不可变 Registry Snapshot | 7、8 | generation、pin、atomic publish/retirement 不变量 | FT-03、FT-07、AF-06、immutability tests | Applicable / Target Evidence Complete / Spike Input Complete |
+| AP-06 单一权威来源 | 4、5、6、8、9 | atomic Owner maps、single Runtime path、migration authority map | FT-04、类型/导出/调用路径审计 | Applicable / Target Evidence Complete |
+| AP-07 Compat 单向进入新核心 | 9 | 单向依赖图、flag/expiry/delete rules | FT-04、Slice 审计 | Applicable / Target Evidence Complete |
+| AP-08 最小 Extension Capability | 6、7、8 | typed Capability、私有资源和 current-call Channel Capability | FT-05、AF-06、denial tests | Applicable / Target Evidence Complete / Spike Input Complete |
+| AP-09 公共行为显式契约 | 7、8 | Event/Error/concurrency/completion/Lifecycle/Shutdown flow | FT-08、Contract/Integration | Applicable / Target Evidence Complete |
+| AP-10 唯一 Lifecycle Owner | 6、7、8 | creator handoff、generation pin、reverse close/aggregate report | FT-08、AF-06 failure injection | Applicable / Target Evidence Complete / Spike Input Complete |
+| AP-11 Runtime/Composition 分责 | 4、8、9 | RuntimeApp/Builder/Runner responsibility and migration deletion | FT-03、FT-05、FT-06、职责测试 | Applicable / Target Evidence Complete |
+| AP-12 抽象由当前证据证明 | 4、5、6、8、9 | Fake/Spike/second implementation inputs；Event Bus/extra scheduler/DI framework excluded | FT-06、Architecture Review；执行充分性仍待 Spike Results/Slice review | Applicable / Target Evidence Complete |
+| AP-13 区分事实/目标/历史 | 1、2、3、8、9、Appendix D | evidence taxonomy、dated facts、Legacy successor table | FT-09、文档状态/链接检查 | Applicable / Target Evidence Complete |
+
+### 10.3 Diagram and ASCII fallback audit
+
+Phase 6 逐图检查 participant、允许/禁止 edge、唯一 Owner、失败/Abort 分支和调用顺序。`Equivalent` 表示两种表示在架构粒度语义一致，不表示图已由生产测试验证。
+
+| Section / topic | Mermaid | ASCII fallback | Phase 6 disposition |
+|---|---|---|---|
+| §4.2 source dependency direction | flowchart | dependency tree + forbidden edges | Equivalent；allowed/forbidden edges 均显式 |
+| §5.3 Model Invocation Port dependency | flowchart | dependency arrows | Equivalent；Adapter implements core-owned Port |
+| §5.6 Parent Model Resolution | sequence | success/failure sequence | Equivalent；failure 在 Provider invocation 前终止 |
+| §5.7 Child Model Resolution | sequence | success/failure sequence | Equivalent；lifecycle 委托 §8.6 tracked Child path |
+| §6.7 startup static composition | flowchart | staged startup tree | Equivalent；Builder 协调 creator/Owner cleanup，不取得资源 ownership |
+| §7.3 Reload Transaction states | flowchart | linear state flow | Equivalent；failure/Abort 只发生在 atomic publishing 前 |
+| §7.7 reload and Generation Retirement | sequence | transaction/retirement flow | Equivalent；publish 完成 reload，retirement 独立且不回滚 |
+| §7.8 dynamic lifecycle Shutdown | sequence | shutdown flow | Equivalent；pin-protected resources 不被强制关闭 |
+| §8.3 ingress to Turn result Fanout | sequence | request/Turn flow | Equivalent；`requestId`/`turnId` capture 和 completion 顺序一致 |
+| §8.4 Tool/Hook/Policy | sequence | decision/execution flow | Equivalent；current-call approval、Tool Result pairing 和 awaited Hook 一致 |
+| §8.5 Channel lifecycle | sequence | startup/ingress/close flow | Equivalent；creator/Owner handoff 与 terminal Fanout 顺序一致 |
+| §8.6 Child lifecycle | sequence | setup/resolution/execution flow | Equivalent；all-stage Abort、completion、Usage 和 acquired-only cleanup 一致 |
+| §8.7 two-stage Shutdown | sequence | bounded shutdown flow | Equivalent；caller settlement、worker pin、Channel close 与 Host exception 一致 |
+| §9.2 Compatibility direction | flowchart | allowed/forbidden arrows | Equivalent；只有 Legacy -> Compat -> New Core |
+
+§7.4 的 `current N+1 + retiring N + pending latest` 是容量/状态不变量表达，不是调用或依赖图，因此保留 text-only，不要求重复 Mermaid。
+
+### 10.4 Canonical terminology audit
+
+Phase 6 对 §4–§10、Appendix 和 diagram labels 使用的架构词执行审计。规范概念必须来自 [Domain Glossary](domain-glossary.md)；流程字段和局部控制标签可以留在 Target，但必须明确不是新的 Domain identity、公共服务或冻结的 TypeScript API。
+
+| Expression | Disposition | Phase 6 result |
+|---|---|---|
+| Domain/Application/Infrastructure/Composition、Session、Turn、Run、Tool、Channel、Hook | Canonical Glossary term | Pass；未发现跨边界代称 |
+| Model Reference/Descriptor/Policy/Resolver、Request Override、Resolved Model、Provider Connection | Canonical Glossary term | Pass；§5/§8/§9 Owner 与非含义一致 |
+| Extension/Runtime Module/Contribution/Registry/Registry Snapshot、Reload Transaction、Generation Retirement | Canonical Glossary term | Pass；Registry/Snapshot 和 reload/retirement 未混用 |
+| Extension Capability、Channel Capability、Lifecycle Owner、Runtime Builder | Canonical Glossary term | Pass；§9.1 已修正 Channel Contract 拥有能力语义，Adapter 声明，RuntimeApp 传递 current-route fact |
+| Accepted Request | Canonical Glossary term | Pass；跨 §7–§9 拥有稳定 `requestId`、非 Turn/no pin 不变量，并与 Turn 明确区分 |
+| Provider Integration Binding | Canonical Glossary term | Pass；跨 §5/§9 表达 Composition 提供给 Resolver/Invocation 的 selected binding，并与 Connection、Adapter、SDK Client 区分 |
+| Application Tool Policy | Canonical Glossary term | Pass；跨 §8/§9 返回 deny/allow/requiresApproval，Runner 拥有 approval I/O，并与 Hook、Channel Capability 和 approval transport 区分 |
+| `requestId` / `turnId` | Local correlation field labels | `requestId` 只标识 accepted caller request；`turnId` 继续对应 canonical Turn identity；字段形状由后续 Spec 决定 |
+| public/Child completion gate | Local RuntimeApp control label | 同一 exactly-once terminal transition pattern 的 Root/caller 与 Child 应用，不是 Domain service、通用 gate framework 或新 scheduler |
+| RuntimeApp | Target-local Runtime Application role/instance label | 不作为 canonical `Runtime` 同义词，也不冻结当前 TypeScript class API；职责由 §4.3/§8 定义 |
+| Tool/Hook/Channel/Provider projection | Qualified Registry Snapshot narrow typed projection | 不是第二个 Registry 或独立 mutable store；首次语义由 §6.5/§7.2 定义 |
+| current-call Approval Capability | Approval-specific use of Channel Capability | 不是新的 Capability family；Channel Contract 拥有语义，Adapter 声明，RuntimeApp 从当前 route 传递 |
+
+项目所有者于 2026-08-31 批准将 Accepted Request、Provider Integration Binding 和 Application Tool Policy 纳入 Domain Glossary v1.4。Phase 6 术语审计未发现剩余 canonical term misuse；该术语决定本身只关闭术语门禁，整体 Target Architecture 的接受记录见 §10.5，且不表示 AF-04/AF-05/AF-06 已执行。
+
+### 10.5 Phase 6 independent review register
+
+Reviewer 为独立只读 architecture review agent，日期均为 2026-08-31。`Accepted after change` 表示建议经权威文档/目标不变量核验后采纳，并已由同范围复审关闭；它不表示关联生产能力已实现。
+
+| ID | Finding | Severity | Triage / rationale | Correction evidence | State |
+|---|---|---|---|---|---|
+| P6-R01 | §10 AF/AP matrix 仍为 Phase 0 `Planned` 状态 | Medium | Accepted after change；与 Phase 1–5 已完成目标设计证据冲突 | §10.1/§10.2 使用已定义的 `Applicable`、`Target Evidence Complete`、`Spike Input Complete`，并保留未执行 caveat | Closed |
+| P6-R02 | §4.7 `P1-FT-*` 与 Accepted Principles `FT-01..09` 形成双编号 | Medium | Accepted after change；违反 AP-06 且阻碍 AF-04 执行映射 | §4.7 直接复用 canonical FT-01..09；Appendix A.2 同编号 | Closed |
+| P6-R03 | AF-03 Execution Plan 权威输入版本仍写 v1.2 | Low | Accepted after change；属于可定位 governance drift | §1.2 已同步当前 Accepted v1.4；Phase 6 review baseline 为 v1.3 | Closed |
+| P6-R04 | Appendix A 只有行为主题，没有 evidence/disposition/priority/test scope 和 expected-failure fixture | High | Accepted after change；无法作为 AF-04 可执行输入 | Appendix A.1 CH-01..14、A.2 FT-01..09、A.3 Results boundary | Closed |
+| P6-R05 | Appendix A 的 P0/P1 缺少交付后果 | Medium | Accepted after change；优先级不可操作 | Appendix A.1 定义 Slice/AF-04 gate semantics | Closed |
+| P6-R06 | §4.2/§6.7/§8.4 diagram pair 不完全等价；§5.3/§7.3 缺 Mermaid | Medium | Accepted after change；只补现有 edge/Owner/state，不增加机制 | §4.2、§5.3、§6.7、§7.3、§8.4；§10.3 inventory 终审 Equivalent | Closed |
+| P6-R07 | §9.1 把 current-call Approval Capability 的语义 ownership 给 RuntimeApp | High | Accepted after change；与 Accepted Channel Capability Glossary 冲突 | §9.1 改为 Channel Contract Owner；Adapter 声明、RuntimeApp 传递 route fact | Closed |
+| P6-R08 | Accepted Request、Provider Integration Binding、Application Tool Policy 无 canonical Glossary entry | High | Accepted after Owner decision；三者跨章节拥有稳定 Owner/不变量，项目所有者已批准最小 Glossary 增补 | Domain Glossary v1.4；§10.4 canonical terminology disposition | Closed |
+| P6-R09 | AF-05 缺父计划要求的旧静态配置单向 Compat 实验 | High | Accepted after change；必须证明同一 Resolver 结果和零反向 dependency | §5.9 P2-E01、Appendix B | Closed |
+| P6-R10 | AF-06 未使 Schema discovery timing/version migration/two-stage load 可证伪 | High | Accepted after change；§6.6 已明确委托 AF-06 | §6.8 P3-H04、Appendix C | Closed |
+| P6-R11 | AF-06 未把 proprietary Channel/typed identity/platform Tool/Hook/Config/private resource 合为一个外部 fixture | High | Accepted after change；父计划要求验证跨 Contribution 组合 | §6.8 P3-H02/P3-H05 共用 external chat Extension fixture | Closed |
+| P6-R12 | P3-H03 声称四类 Contribution，但实验未明确逐类注册/消费 | Medium | Accepted after change；Provider 可被遗漏而实验仍误通过 | §6.8 P3-H03 明确 Tool/Hook/Channel/Provider 与 typed projections | Closed |
+
+截至本 register 更新，P6-R01..P6-R12 均已关闭；Phase 6 最终独立复审无未解决 Critical、High、Medium、Low 或 blocking overdesign。项目所有者于 2026-08-31 确认剩余风险和 Deferred 项，并接受整体 Target Architecture v1.0。该接受不表示 AF-04/AF-05/AF-06 已执行，不表示 Foundation Gate 已通过，也不授权任何生产 Architecture Slice。
 
 ## 11. Assumptions、Open Questions and Deferred
 
@@ -1708,23 +1808,58 @@ Forbidden:
 
 ## Appendix A. AF-04 Inputs
 
-Phase 6 将在此维护 Characterization 行为、Fitness Test 规则和预期失败样例。Phase 0 的初始输入包括：
+AF-04 先固定迁移前的可观察行为和已知差异，再实现防止目标依赖倒退的 Fitness Tests。`Preserve` 表示后续 Slice 默认必须保持；`Characterize then replace` 表示先记录当前行为，再由已接受 Target Contract 有意改变；`Baseline` 只建立定位能力，不把偶然内部结构升级为公共承诺。
 
-- Runtime 启动和 Shutdown；
-- Turn Event 顺序与 Tool Use/Result 配对；
-- Session、Compaction 和 per-session 串行；
-- Channel 路由、Approval/Interaction 和 Fanout；
-- 用户消息广播与 run correlation；
-- Abort、队列清理和 Subagent 级联；
-- FT-01 至 FT-09 与 AP-01 至 AP-13 的 many-to-many 映射，以及 AP-12 所需的 ADR、调用流、实现数量和抽象评审证据。
+### A.1 Characterization behavior inputs
+
+`P0` 必须在任何会改变该行为边界的 Architecture Slice 进入 Delivery 前完成；`P1` 必须在 AF-04 关闭前完成，并且任何 Slice 在把该行为作为迁移不变量前也必须先完成对应 Characterization。
+
+| ID | 行为边界 | 当前证据 | 迁移 disposition | Priority | 建议测试层 |
+|---|---|---|---|---|---|
+| CH-01 | 同一 Session 的 Root request 串行、不同 Session 可并行；queued request 尚未开始时不执行 Runner | `Verified Current Fact`：§8.1 的 queue/Abort source；目标边界见 §7.2/§8.3 | Preserve concurrency；新增 Accepted Request/Snapshot capture 语义由后续 Contract 覆盖 | P0 | Runtime integration + barrier |
+| CH-02 | `user_message`、execution event、terminal result 的 correlation 和每 Turn 有序性 | `Historically Verified`/Current docs candidate；目标 identity 见 §8.3 | Preserve 用户消息 Fanout；补测 `requestId` 与 started `turnId` 的目标迁移 | P0 | Runtime/Channel integration |
+| CH-03 | Provider Tool Call 与 canonical Tool Result 成对；deny、invalid、Tool failure 和 Abort 不留下孤立 Tool Call | Current docs/test candidate；目标顺序见 §8.4 | Preserve 配对和上下文顺序；目标 Policy/Hook ownership 在 Slice 3 替换 | P0 | Runner contract |
+| CH-04 | before Hook 顺序 awaited；after Tool/compaction Hook 当前 detached | `Verified Current Fact`：§8.8 hook source | Characterize then replace：Slice 3 改为 after Hook `allSettled` 于 Turn/pin 内收敛 | P0 | Runner unit + deferred-promise barrier |
+| CH-05 | Channel send failure 当前隔离，observer throw 当前未同等隔离；其他 target 是否继续 | `Verified Current Fact`：§8.1/§8.8 fanout source | Characterize then replace：目标为每 target 隔离且不改变 Turn result | P0 | Multi-target integration |
+| CH-06 | allowlist/deny/approval 三档结果；无 origin approval capability 时 unmatched Tool fail closed | `Verified Current Fact`：§8.8 approval sources | Preserve deny/allowlist fallback；replace `startChannels()` history dependency with current-call capability | P0 | Application Tool Policy + Channel Capability contract |
+| CH-07 | Channel `start()` 成功/失败、部分成功、重复 start/stop 和当前 retry 行为 | `Verified Current Fact`：§8.8 Channel startup source | Characterize then replace：Slice 4 增加 creator rollback、atomic handoff 和 close-once | P0 | Runtime startup failure injection |
+| CH-08 | Runtime shutdown 对 active Turn、queued request、approval wait、Channel stop 和 close failure 的当前顺序/等待 | `Verified Current Fact`：§8.1/§8.8 `RuntimeApp.close()` | Characterize then replace：目标为 §8.7 completion gate 与 two-stage bounded Shutdown | P0 | Runtime shutdown integration + nonresponsive fake |
+| CH-09 | Abort active Root、丢弃同 Session queue、事件/返回值和跨 Session 隔离 | `Historically Verified`/Current docs candidate；§8.1 source | Preserve 用户可见 Abort/queue semantics；扩展到 exactly-once completion | P0 | Runtime integration |
+| CH-10 | Subagent Profile 选择、blocking Parent wait、Child Usage/Event/Abort result 和 route/session cleanup | `Verified Current Fact`：§8.1/§8.8 Subagent sources | Preserve blocking baseline/result shape where public；replace untracked library path and asymmetric setup cleanup via §8.6 | P0 | Tool + library Subagent contract |
+| CH-11 | Session history、compaction trigger/result、孤立 Tool Use 修复和 Abort 后持久状态 | `Current Fact Candidate`：current Runner/Session docs and tests | Preserve only after AF-04 code/test verification；目标架构不重写 Session/compaction semantics | P1 | Runner/Session integration |
+| CH-12 | Runtime startup success/failure event、optional memory degradation、已创建资源 cleanup | `Current Fact Candidate` + `Verified Current Fact` bootstrap rollback gap in §8.1 | Baseline success/degradation；Characterize then replace incomplete rollback via Builder lifecycle | P1 | Bootstrap integration + failure injection |
+| CH-13 | Model missing/invalid、Provider failure、Usage/stream error 的 caller-facing分类与 Provider call count | `Current Fact Candidate`；目标 Resolution Failure 见 §5/§8.3 | Baseline current mapping；AF-05/Slice 1 明确改变 resolution ownership，失败必须保持 pre-call/fail-closed | P1 | Runtime/Provider fake contract |
+| CH-14 | 完整 Prompt Tool definitions 当前被派生/传递但不渲染；memory 条件只依赖 tool name | `Verified Current Fact`：§9 evidence anchor | Baseline mechanical path；Slice 3 删除完整重复转换并以窄 projection 保持 memory 行为 | P1 | Prompt unit + Tool projection contract |
+
+AF-04 对 `Current Fact Candidate` 必须先定位现有代码/测试或运行证据，再决定断言；不能仅按旧文档生成 golden output。对于 `Characterize then replace`，当前测试与目标 Contract 测试应使用不同名称/状态，避免旧缺陷在 Slice 完成后继续作为通过条件。
+
+### A.2 Fitness Test rules and expected failures
+
+以下 ID 是 [Architecture Principles §5](architecture-principles.md#5-fitness-test-候选) 和 §4.7 的同一 canonical `FT-01..09`。AF-04 可以选择现有 lint/import-graph/type-test/test-inventory 工具，但不能改变规则语义来适配当前违规代码；当前违规应作为预期失败基线或有期限例外记录。
+
+| ID | 可执行边界与通过条件 | 最小 expected-failure example | Principles |
+|---|---|---|---|
+| FT-01 | 扫描 production import graph；Domain/Application 节点到 Infrastructure/Composition 的边数必须为 0 | fixture 让 `AgentRunner` import `runtime/bootstrap`，规则必须失败并报告 source/target boundary | AP-01 |
+| FT-02 | Provider/Channel SDK package import 只允许在其 Integration Adapter/Module allowlist | fixture 让 RuntimeApp 直接 import Anthropic SDK 或 WebSocket Transport package，规则必须失败 | AP-01 |
+| FT-03 | Runner production imports/constructors 不得读取 Config loader、Provider SDK 或 mutable Registry；只接收 Resolved Model/Snapshot projection 等显式 Turn 输入 | fixture 给 Runner 增加 `loadConfig()` 或 mutable Registry 参数，import/type boundary check 必须失败 | AP-02、AP-03、AP-05 |
+| FT-04 | New Authoritative Core 的 production graph 不得指向 Compat/Legacy path/export | fixture 让 Model Resolver import legacy LLM config adapter，path denylist 必须失败 | AP-06、AP-07 |
+| FT-05 | Extension/Module 不得 import RuntimeApp private implementation，也不能请求 `get(any token)`/Service Locator；只使用声明的 Contract/Capability | fixture Extension import `RuntimeApp` 或调用 generic `services.get()`，forbidden symbol/import rule 必须失败 | AP-08、AP-11 |
+| FT-06 | 第二 Provider fake 或跨 Tool/Hook/Channel test Extension 必须只实现/注册既有 Contract；核心不得含该 fixture identity 的 branch/central union edit | fixture 只有在给 Runner/RuntimeApp 增加 provider/extension ID 分支后才能工作，change-locality gate 必须失败 | AP-01、AP-04、AP-12 |
+| FT-07 | Registry 消费者 public boundary 只接受 readonly Snapshot/typed projection，不接受 Builder、mutable map 或 Registry mutation API | compile-fail fixture 尝试从 Runner 修改 Tool projection，或向 RuntimeApp 注入 mutable Registry，type test 必须拒绝 | AP-05 |
+| FT-08 | 每个 exported Event/Error/Port/Lifecycle Contract 必须出现在 Contract Test inventory，且至少覆盖 success 和一个 failure/Abort/close case | fixture 新增 exported Lifecycle Contract 但没有 inventory entry/negative test，coverage rule 必须失败 | AP-09、AP-10 |
+| FT-09 | 活跃 architecture/ADR/spec/plan 文档必须有状态和后继链接规则；production/source docs 不得链接 Legacy 为新实现权威 | fixture 活跃 Spec 缺状态，或新 Module doc 链接 `docs/legacy/...` 作为规范，metadata/link rule 必须失败 | AP-13 |
+
+### A.3 AF-04 output boundary
+
+AF-04 的 Results 至少记录：实际测试/工具、被核验的 source scope、通过与预期失败样例、当前违规/有期限例外、非确定性控制和仍未覆盖的风险。AF-04 不接受以下替代品：只运行全量测试但不定位行为边界；只写 import 规则而没有 expected-failure fixture；把 AF-05/AF-06 Hypothesis 当作已通过；或为满足 Fitness Test 静默修改 Architecture boundary。
 
 ## Appendix B. AF-05 Provider/Model Spike Input
 
-Phase 2 的 Hypothesis、最小实验、成功条件和停止条件见 §5.5、§5.7 和 §5.9。AF-05 必须验证：在不复制 Runner、不扩大生产 Provider 支持承诺的前提下，根据 Model Reference 解析 Provider/Model，并让每个 Parent/Subagent Turn 消费内部一致的 Resolved Model。
+本 Appendix 只是 Spike 输入索引，不是执行证据、Spike Results 或生产 Provider/迁移授权。Phase 2 的 Hypothesis、最小实验、成功条件和停止条件见 §5.5、§5.7 和 §5.9；旧静态配置的单向 Compatibility 输入见 §5.8/§5.9 P2-E01。AF-05 必须验证：在不复制 Runner、不扩大生产 Provider 支持承诺且不让 New Core 反向依赖 Legacy/Compat 的前提下，根据 Model Reference 解析 Provider/Model，并让每个 Parent/Subagent Turn 消费内部一致的 Resolved Model。
 
 ## Appendix C. AF-06 Extension Framework Spike Input
 
-Phase 3 的静态骨架 Hypothesis、最小实验、成功条件和停止条件见 §6.8；Phase 4 的动态事务和 Lifecycle 实验见 §7.9。AF-06 必须先验证规范目录发现、Descriptor 静态校验、External Extension 整组隔离、一个 Extension API、typed projections、受限 Extension Capability、私有资源共享和不可变 Snapshot，再验证原子切换、Turn tree generation 固定、pre-publish latest-wins、单代 retirement、有界排空、Abort、资源释放和失败回滚。文件系统 watcher、Extension 代码 reload 和多代并行 retirement 不属于该最小机制。
+本 Appendix 只是 Spike 输入索引，不是执行证据、Spike Results、生产动态变更或第三方平台支持授权。Phase 3 的静态骨架 Hypothesis、最小实验、成功条件和停止条件见 §6.6/§6.8；Phase 4 的动态事务和 Lifecycle 实验见 §7.9。AF-06 必须先用 P3-H02/H05 的同一外部 chat Extension fixture 验证 proprietary Channel、typed platform identity/Tool、Hook、Config、共享私有资源和 optional capability，再验证规范目录发现、Descriptor/Schema 两阶段静态校验与版本处理、External Extension 整组隔离、一个 Extension API、四类 typed projections、受限 Extension Capability 和不可变 Snapshot；随后验证原子切换、Turn tree generation 固定、pre-publish latest-wins、单代 retirement、有界排空、Abort、资源释放和失败回滚。文件系统 watcher、Extension 代码 reload 和多代并行 retirement 不属于该最小机制。
 
 ## Appendix D. Evidence Inventory Maintenance
 
