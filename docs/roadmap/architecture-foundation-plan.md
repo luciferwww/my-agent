@@ -3,12 +3,13 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 1.0
-- **日期：** 2026-08-31
+- **版本：** 1.1
+- **日期：** 2026-09-01
 - **范围：** my-agent 目标架构定义、关键边界验证、渐进迁移和 Legacy 退出
 - **执行方式：** Architecture Foundation 以两周为目标、四周为硬上限，随后采用一周 Architecture Slice 迭代
 - **范围冻结：** Foundation Gate 通过前，暂停会穿透待定架构边界的大型生产功能；缺陷、小型局部变更、文档、测试、Spec 和 Spike 可继续
 - **批准：** 本计划已由项目所有者确认并晋升为 `Accepted`
+- **v1.1 修订：** 项目所有者于 2026-09-01 确认 §7.4 文档语言与术语约定；该确认时点是规则的生效边界
 
 本 Plan 使用 `Proposed -> Accepted -> Superseded | Cancelled` 状态流。`Accepted` 表示项目所有者批准执行 Architecture Foundation，不表示 Foundation Gate 已通过，也不授权提前进入生产迁移。
 
@@ -151,6 +152,73 @@ flowchart LR
 - 第三至第四周只处理 Foundation Gate 阻塞项，不新增范围；
 - 第四周末仍未通过 Gate 时强制进行 Architecture Review，不自动延期。
 
+### 7.4 当前架构重构文档的语言与术语约定
+
+#### 适用范围
+
+本约定仅约束 Architecture Foundation 当前重构范围内，在父计划 v1.1 于 2026-09-01 获项目所有者确认后新建或发生实质修改的 Plan、ADR、Spec、Spike Spec、Spike Results、Current Architecture 和 Architecture Slice 文档内容。
+
+以下内容不受追溯调整：
+
+- 与当前 Architecture Foundation 重构无关的项目文档；
+- v1.1 修订确认前已经存在且本次工作未触及的内容；
+- v1.1 修订确认前已经完成的文档修改，包括尚未提交的工作树修改；
+- 只更新状态、日期、版本、链接、拼写、标点、排版或不新增决策与契约的简短事实说明；
+- 命令输出、日志、错误消息、协议原文、供应商原文和外部引用。
+
+本约定不授权批量翻译或整理既有文档。既有内容的整体语言收敛必须作为单独批准的 Documentation 工作执行，不得夹带在 Characterization、Defect、Spike 或 Architecture Slice 中。
+
+#### 核心原则
+
+重构文档采用“中文叙述优先、技术与行业术语保留英文”的约定。目标是提高准确性、可读性和同系列工件的一致性，而不是减少英文数量或追求逐词翻译。
+
+本文中的 `MUST`、`SHOULD` 和 `MAY` 分别表示强制要求、默认要求和允许选择。
+
+1. 叙述正文、章节标题、表头和元数据字段名 SHOULD 使用中文；同一次文档工作中新建或实质重写的同级结构 MUST 保持一致语言，不要求追溯调整未触及的同级结构。
+2. 新文档没有既有系列约定时，结构标题 SHOULD 优先使用中文，例如“状态”“背景”“决策”“验证”“风险”和“后续工作”。示例只说明推荐风格，不是固定标题集合。
+3. ADR、Spec、Spike、C4、RFC 等工件名或行业缩写 MAY 保留英文。结构术语在正文中作为概念使用时 MAY 保留英文；作为新章节标题或表头时 SHOULD 优先使用自然、准确的中文。
+4. 不得为形式统一制造不准确的翻译、更严重的中英文混排或与同系列文档冲突的表达。
+
+#### 术语决策规则
+
+术语没有固定的中英文白名单。遇到本节未列举或语义随上下文变化的词时，按以下顺序决定：
+
+1. 代码、协议、标准或外部产品具有正式拼写时 MUST 保留正式形式；
+2. [Domain Glossary](../architecture/domain-glossary.md) 已定义规范词汇时 MUST 使用其正式名称和大小写；
+3. `Accepted` ADR、Spec 或 Target Architecture 已建立稳定用法时 SHOULD 保持一致；
+4. 其余术语按技术准确性、目标读者可理解性、中文表达自然度和同一文档或同系列文档的一致性综合判断；
+5. 仍可能改变含义、规范强度或权威关系时 MUST 保留原文并进入 Review，不得自行翻译定案。
+
+Provider、Model、Extension、Module、Contribution、Registry Snapshot、Turn、Tool、Hook、Channel、Runtime、Runner、Lifecycle、Shutdown、Abort、Fanout、Port 和 Adapter 等只是在当前重构中常见的示例，不构成封闭词表，也不要求在所有语境中机械保留英文。
+
+#### 必须保持正式形式的内容
+
+以下内容 MUST 保持原始英文、正式拼写或项目定义形式：
+
+- 代码、类型、接口、函数、变量和其他 symbol；
+- 文件路径、文件名、命令、命令参数、配置键和环境变量；
+- API、SDK、Provider、协议、标准名称及其字段；
+- Event、Error 和公共 Contract 定义的字段或枚举值；
+- `REQ-*`、`AC-*`、`TBD-TECH-*`、CH/FT 编号、测试场景 ID 和其他稳定标识符；
+- 命令输出、日志、错误消息、供应商原文、协议原文和引用内容。
+
+需要解释原文时，应在原文之后补充中文说明，不得改写原始内容。
+
+#### 状态、文件名与 Commit
+
+1. 元数据字段名 SHOULD 使用中文，项目定义的状态值 MUST 保留英文，例如 `状态：Accepted`。
+2. `Draft`、`In Review`、`Proposed`、`Accepted`、`Implemented`、`Validated`、`Provisional Pass`、`Completed`、`Superseded`、`Deprecated`、`Rejected`、`Blocked`、`Deferred` 和 `Cancelled` 等状态值以 [Development Workflow](../development-workflow.md) 为准；不得翻译出第二套状态枚举。
+3. 新文档文件名 SHOULD 使用稳定的英文 `kebab-case`；不得仅为语言统一重命名既有文件。
+4. Commit subject 和 body MUST 使用英文，不受正文语言约定影响。
+
+#### 增量适用与必读要求
+
+1. 父计划 v1.1 修订确认后新建的重构文档 SHOULD 整体遵循本约定。
+2. 对既有文档新增章节或实质重写完整章节时，新增或重写的章节 SHOULD 遵循本约定，不要求同步改写未触及内容。
+3. “实质修改”指新增一个有独立职责的章节，或重写章节的主要事实、决策、契约或论证；小型元数据、链接、格式和措辞修正不属于实质修改。
+4. 执行 AF-04、AF-05、AF-06 或后续 Architecture Slice 的文档工作前 MUST 读取本节；对应子计划、Spec 或 Results MUST 将本 Plan 列为权威输入并指向 §7.4，不复制一份可能漂移的语言规则。
+5. 文档模板规定工件必须覆盖的职责，不强制最终文档沿用模板的英文标题；翻译标题时不得删除或改变模板要求的信息。
+
 ## 8. 权威工件
 
 ### 8.1 计划内工件
@@ -289,6 +357,8 @@ Legacy 只提供历史证据，不自动成为目标设计。
 
 ### AF-05：Provider/Model Resolution Spike
 
+**文档约束：** 创建或实质修改本工作包的 Spike Spec、Results、ADR 或后续 Spec 前，必须读取并引用本 Plan §7.4。
+
 **Hypothesis：** 现有 Runner 可保留；在其上游增加 Model Resolver，即可根据 Model Reference 动态选择 Provider Client，并立即应用 Model Facts。
 
 **最小实验：**
@@ -315,6 +385,8 @@ Legacy 只提供历史证据，不自动成为目标设计。
 - Subagent 使用不同 Model 必须共享可变 Client 状态。
 
 ### AF-06：Extension Framework Spike
+
+**文档约束：** 创建或实质修改本工作包的 Spike Spec、Results、ADR 或后续 Spec 前，必须读取并引用本 Plan §7.4。
 
 **Hypothesis：** 统一 Extension/Module/Registry 可以让一个外部 Extension 组合 Channel、Tool、Hook、配置和平台能力，共享自身资源，并通过版本化不可变 Snapshot 在运行中受控启停，而不修改 Runtime 核心或获得对其内部状态的通用访问权。
 
@@ -388,6 +460,8 @@ Foundation 只有在以下条件全部满足时才可进入生产迁移：
 ## 11. 生产迁移路线
 
 本节定义 Slice Charter，包括目标范围、默认依赖和删除条件；它们不因此自动达到 `Ready`。每个 Slice 进入 Delivery 前，必须根据已 `Accepted` 的 Target Architecture、ADR 和 Spike Results 补齐用户可观察结果、非目标、验收场景与分层验证范围，并满足 Definition of Ready。
+
+创建或实质修改任一 Slice 的 Plan Item、Spec、Results 或 Current Architecture 前，必须读取并引用本 Plan §7.4。
 
 Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accepted` Spike Results、`Accepted` ADR 或已完成 Slice 的实现证据证明依赖关系变化时，才允许调整顺序；调整前必须先更新本 Plan、依赖、验收、验证和删除条件。文档在每个 Slice 中同步，Slice 6 负责最终 Current Architecture 合并与 Legacy 收口。
 

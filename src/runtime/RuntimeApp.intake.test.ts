@@ -10,10 +10,10 @@ import type {
 import type { ChatContentBlock, ChatMessage } from '../adapters/llm/types.js';
 import type { RunResult } from '../core/runner/types.js';
 import type { Tool } from '../core/tools/types.js';
-import type {
-  AgentEvent,
+import {
   AgentRunner,
-  AgentRunnerConfig,
+  type AgentEvent,
+  type AgentRunnerConfig,
 } from '../core/runner/index.js';
 import type {
   DroppedAttachment,
@@ -307,7 +307,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     await rm(workspaceDir, { recursive: true, force: true });
   });
 
-  it('queued path: emits exactly one user_message with correct fields', async () => {
+  it('CH-02 threads the queued user_message ID to the runner', async () => {
     processInboundMock.mockResolvedValue({ normalized: 'hello world', dropped: [] });
 
     const { app, testChannel, agentEvents, runnerRun } = await buildApp(workspaceDir);
@@ -334,8 +334,9 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
 
     // originMessageId threaded to runner
     expect(runnerRun).toHaveBeenCalledTimes(1);
-    const runParams = runnerRun.mock.calls[0]?.[0] as { originMessageId?: string };
+    const runParams = runnerRun.mock.calls[0]?.[0] as { originMessageId?: string; turnId?: string };
     expect(runParams.originMessageId).toBe(evt.messageId);
+    expect(runParams.turnId).toMatch(/^[0-9a-f-]{36}$/i);
 
     await app.close();
   });
@@ -526,23 +527,11 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     await app.close();
   });
 
-  it('regression: event order is user_message before subsequent run events', async () => {
+  it('CH-02 correlates a runtime-generated message ID through real runner events', async () => {
     processInboundMock.mockResolvedValue({ normalized: 'go', dropped: [] });
 
-    const emittedEvents: AgentEvent[] = [];
-    const runnerRun = vi.fn(async (params: {
-      turnId: string;
-      sessionKey: string;
-    }): Promise<RunResult> => {
-      // Simulate runner emitting run_start via the same fanout path the test observes.
-      // We can't reach the real emit chain from a mock, so we just note that
-      // handleInboundChannelMessage returns before invoking runner — which
-      // implies user_message was fanned out first (synchronous emit vs async run).
-      return defaultRunResult('ok');
-    });
-
     const { app, testChannel, agentEvents } = await buildApp(workspaceDir, {
-      runnerRun,
+      useRealRunner: true,
     });
 
     await testChannel.dispatch({
@@ -551,12 +540,18 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
       clientId: 'c1',
     });
 
-    // Push a marker after dispatch settles — user_message must precede it
-    emittedEvents.push(...agentEvents);
-    const firstEvent = emittedEvents[0];
-    expect(firstEvent?.type).toBe('user_message');
-    // runner was invoked exactly once and its call is after user_message emit
-    expect(runnerRun).toHaveBeenCalledTimes(1);
+    const correlatedEvents = agentEvents.filter((event) =>
+      event.type === 'user_message' || event.type === 'run_start' || event.type === 'run_end');
+    expect(correlatedEvents.map((event) => event.type)).toEqual([
+      'user_message',
+      'run_start',
+      'run_end',
+    ]);
+    const userMessage = correlatedEvents[0] as Extract<AgentEvent, { type: 'user_message' }>;
+    const runStart = correlatedEvents[1] as Extract<AgentEvent, { type: 'run_start' }>;
+    const runEnd = correlatedEvents[2] as Extract<AgentEvent, { type: 'run_end' }>;
+    expect(runStart.originMessageId).toBe(userMessage.messageId);
+    expect(runEnd.turnId).toBe(runStart.turnId);
 
     await app.close();
   });
@@ -612,6 +607,7 @@ async function buildApp(
   options: {
     steerMode?: boolean;
     runnerRun?: ReturnType<typeof vi.fn>;
+    useRealRunner?: boolean;
   } = {},
 ): Promise<{
   app: RuntimeApp;
@@ -634,17 +630,35 @@ async function buildApp(
   };
 
   const deps: Partial<RuntimeDependencies> = {
-    createLLMClient: () => ({}) as never,
-    createSessionManager: () =>
-      ({ resolveSession: vi.fn(async () => ({ entry: {}, isNew: true })) }) as never,
+    createLLMClient: () => options.useRealRunner
+      ? ({
+          async *chatStream() {
+            yield { type: 'message_start' };
+            yield { type: 'text_delta', text: 'ok' };
+            yield {
+              type: 'message_end',
+              stopReason: 'end_turn',
+              usage: { inputTokens: 1, outputTokens: 1 },
+            };
+          },
+          async chat() { throw new Error('Not used in tests'); },
+        }) as never
+      : ({}) as never,
+    ...(options.useRealRunner
+      ? {}
+      : {
+          createSessionManager: () =>
+            ({ resolveSession: vi.fn(async () => ({ entry: {}, isNew: true })) }) as never,
+        }),
     createMemoryManager: async () => null,
     createSystemPromptBuilder: () => ({ build: () => 'SYSTEM_PROMPT' }) as never,
-    createAgentRunner: (_config: AgentRunnerConfig) =>
-      ({
-        run: runnerRun,
-        on: vi.fn(),
-        setToolExecutor: vi.fn(),
-      }) as unknown as AgentRunner,
+    createAgentRunner: (config: AgentRunnerConfig) => options.useRealRunner
+      ? new AgentRunner(config)
+      : ({
+          run: runnerRun,
+          on: vi.fn(),
+          setToolExecutor: vi.fn(),
+        }) as unknown as AgentRunner,
     getBuiltinTools: () => [builtinTool],
   };
 

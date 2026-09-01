@@ -121,17 +121,26 @@ describe('RuntimeApp', () => {
     );
   });
 
-  it('queues busy-session channel messages and runs them serially', async () => {
+  it('CH-01 serializes a busy session while another session runs concurrently', async () => {
     const firstRun = createDeferred<RunResult>();
-    const runnerRun = vi.fn()
-      .mockImplementationOnce(async (): Promise<RunResult> => firstRun.promise)
-      .mockImplementationOnce(async (): Promise<RunResult> => ({
-        text: 'second',
-        content: [{ type: 'text', text: 'second' }],
+    const secondRun = createDeferred<RunResult>();
+    const otherRun = createDeferred<RunResult>();
+    const runnerRun = vi.fn(async (params: { sessionKey: string; message: string }): Promise<RunResult> => {
+      if (params.sessionKey === 'main' && params.message === 'first') {
+        return firstRun.promise;
+      }
+      if (params.sessionKey === 'other') {
+        return otherRun.promise;
+      }
+      return secondRun.promise;
+    });
+    const result = (text: string): RunResult => ({
+        text,
+        content: [{ type: 'text', text }],
         stopReason: 'end_turn',
         usage: { inputTokens: 1, outputTokens: 1 },
         toolRounds: 0,
-      }));
+      });
 
     const deps = createTestDependencies({
       createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} } as never),
@@ -170,25 +179,40 @@ describe('RuntimeApp', () => {
     await secondDispatch;
     expect(runnerRun).toHaveBeenCalledTimes(1);
 
-    firstRun.resolve({
-      text: 'first',
-      content: [{ type: 'text', text: 'first' }],
-      stopReason: 'end_turn',
-      usage: { inputTokens: 1, outputTokens: 1 },
-      toolRounds: 0,
+    const otherDispatch = testChannel.dispatch({
+      sessionKey: 'other',
+      message: 'parallel',
+      clientId: 'client-2',
     });
 
-    await firstDispatch;
     await vi.waitFor(() => {
       expect(runnerRun).toHaveBeenCalledTimes(2);
     });
-    expect(runnerRun.mock.calls[1]?.[0]).toEqual(
+    expect(runnerRun.mock.calls.map(([params]) => [params.sessionKey, params.message])).toEqual([
+      ['main', 'first'],
+      ['other', 'parallel'],
+    ]);
+
+    firstRun.resolve(result('first'));
+
+    await firstDispatch;
+    await vi.waitFor(() => {
+      expect(runnerRun).toHaveBeenCalledTimes(3);
+    });
+    expect(runnerRun.mock.calls[2]?.[0]).toEqual(
       expect.objectContaining({
         sessionKey: 'main',
         message: 'second',
         maxLlmCalls: 9,
       }),
     );
+
+    secondRun.resolve(result('second'));
+    otherRun.resolve(result('parallel'));
+    await otherDispatch;
+    await vi.waitFor(() => {
+      expect(app.getState().activeRunCount).toBe(0);
+    });
   });
 
   it('routes busy-session channel input to steering when steer mode is enabled', async () => {

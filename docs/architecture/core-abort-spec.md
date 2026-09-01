@@ -4,6 +4,8 @@ User-initiated turn abort for my-agent v1.
 
 Status: **IMPLEMENTED** — verified against runtime, runner, LLM, channel, subagent, and exec tests on 2026-08-27. See §0.3 for the decision table.
 
+> **Authority note (2026-09-01):** 本文继续描述已实现的当前 Abort 基线。[Accepted ADR-001](adr-001-tool-result-closure-and-recovery.md) 已替代 §7.2 中“受控 Abort 故意不闭合完整 Tool Use”及 §7.3 将其纳入通用未知来源 repair 的目标决定；D6 与 crash/未知故障的 §7.3 repair 保留。独立 Module Spec 和生产 Slice 完成前，不得把新的 closure 语义写成 Current Fact，也不得据此跳过现有 repair。
+
 ## 0. What happens when I press Ctrl+C
 
 在长任务跑到一半（大量 tool 调用 / 卡 LLM 请求 / subagent 嵌套）时按下 Ctrl+C，会发生：
@@ -17,7 +19,8 @@ Status: **IMPLEMENTED** — verified against runtime, runner, LLM, channel, suba
 4. **优雅返回** —— `AgentRunner` catch 到 abort 后**不抛错**，改为返回一个
    `RunResult.stopReason='aborted'`；对调用方看起来跟正常完成一样，只是 stopReason 不同。
 5. **partial 数据处理** —— LLM 已经吐出的 partial text 会写进 session（打上
-   `abortMeta` 标签），当次 turn 里跑过的 tool 结果也保留。
+  `abortMeta` 标签）。已写入 session 的 tool result 会保留；若 Abort 发生在结果批次写入前，
+  即使 Tool 已完成，其真实结果也可能未持久化并留下 orphan，这是 ADR-001 待迁移的现状。
 6. **下轮起来时自愈** —— 下一 turn 起点 `repairOrphanToolUses` 从磁盘扫末尾，若发现
    `assistant` 消息含 tool_use 但没配对 `tool_result`（可能来自 abort、崩溃、SIGKILL 或
    任何 Bug），就补写 synthetic tool_result 保证 Anthropic API 能接受历史。
@@ -41,6 +44,7 @@ WebSocket 客户端与 library 调用方走的是相同链路，只是触发源�
 
 ## 0.2 Related docs
 
+- **Accepted target delta:** [ADR-001 Tool Result Closure and Recovery](adr-001-tool-result-closure-and-recovery.md) — 区分受控 Abort 的当轮精确闭合与 crash/未知故障的 next-turn repair；尚未实现。
 - **openclaw** ([openclaw/src/acp](../../openclaw/src/acp/), [openclaw/src/gateway/chat-abort.ts](../../openclaw/src/gateway/chat-abort.ts)) — per-session controller、`AbortSignal.any` 组合、双击 Ctrl+C UX、partial 持久化。详细对比见 §15。
 - **Claude Code 逆向报告** — 触发语义、双击退出窗口。
 

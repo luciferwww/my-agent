@@ -4,7 +4,9 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { AgentRunner } from './AgentRunner.js';
 import { SessionManager } from '../session/SessionManager.js';
-import type { LLMClient, ChatParams, ChatResponse, StreamEvent } from '../../adapters/llm/types.js';
+import type { ChatContentBlock, LLMClient, ChatParams, ChatResponse, StreamEvent } from '../../adapters/llm/types.js';
+import { createToolExecutor } from '../tools/executor.js';
+import type { ToolExecutor } from '../tools/types.js';
 import type { AgentEvent } from './types.js';
 
 // ── Mock LLMClient ──────────────────────────────────────
@@ -412,7 +414,7 @@ describe('AgentRunner', () => {
   // ── 事件回调 ────────────────────────────────────────
 
   describe('events', () => {
-    it('emits run_start and run_end', async () => {
+    it('CH-02 correlates run_start with the origin message and run_end', async () => {
       const llmClient = createMockLLMClient([
         [
           { type: 'message_start' },
@@ -428,10 +430,26 @@ describe('AgentRunner', () => {
         onEvent: (e) => events.push(e),
       });
 
-      await runner.run({ sessionKey: 'main', message: 'Hi', model: 'test', systemPrompt: '', turnId: 'test-turn' });
+      await runner.run({
+        sessionKey: 'main',
+        message: 'Hi',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'test-turn',
+        originMessageId: 'message-1',
+      });
 
-      expect(events[0]!.type).toBe('run_start');
-      expect(events[events.length - 1]!.type).toBe('run_end');
+      expect(events[0]).toMatchObject({
+        type: 'run_start',
+        sessionKey: 'main',
+        turnId: 'test-turn',
+        originMessageId: 'message-1',
+      });
+      expect(events[events.length - 1]).toMatchObject({
+        type: 'run_end',
+        sessionKey: 'main',
+        turnId: 'test-turn',
+      });
     });
 
     it('emits text_delta events for streaming', async () => {
@@ -753,6 +771,82 @@ describe('AgentRunner', () => {
       expect(messages[2]!.message.role).toBe('toolResult');
       expect(messages[3]!.message.role).toBe('assistant');
     });
+
+    it.each([
+      {
+        label: 'unknown tool',
+        toolName: 'missing',
+        executor: createToolExecutor([]),
+        expectedError: 'not found',
+      },
+      {
+        label: 'executor-reported invalid input',
+        toolName: 'validate',
+        executor: async () => ({ content: 'Invalid input: value is required', isError: true }),
+        expectedError: 'Invalid input',
+      },
+      {
+        label: 'executor throw',
+        toolName: 'explode',
+        executor: async () => { throw new Error('executor boom'); },
+        expectedError: 'executor boom',
+      },
+    ] satisfies Array<{
+      label: string;
+      toolName: string;
+      executor: ToolExecutor;
+      expectedError: string;
+    }>)('CH-03 persists a paired error tool result for $label', async ({ toolName, executor, expectedError }) => {
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'tool_use', id: 'tool-error', name: toolName, input: {} },
+          { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'Handled.' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 15, outputTokens: 5 } },
+        ],
+      ]);
+      const events: AgentEvent[] = [];
+      const runner = new AgentRunner({
+        llmClient,
+        sessionManager,
+        toolExecutor: executor,
+        onEvent: (event) => events.push(event),
+      });
+
+      await runner.run({
+        sessionKey: 'main',
+        message: 'Use a tool',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'test-turn',
+      });
+
+      const messages = sessionManager.getMessages('main');
+      expect(messages.map(({ message }) => message.role)).toEqual([
+        'user',
+        'assistant',
+        'toolResult',
+        'assistant',
+      ]);
+      const assistantBlocks = messages[1]!.message.content as ChatContentBlock[];
+      expect(assistantBlocks).toContainEqual(
+        expect.objectContaining({ type: 'tool_use', id: 'tool-error', name: toolName }),
+      );
+      const resultBlocks = messages[2]!.message.content as ChatContentBlock[];
+      expect(resultBlocks).toEqual([
+        expect.objectContaining({
+          type: 'tool_result',
+          tool_use_id: 'tool-error',
+          content: expect.stringContaining(expectedError),
+        }),
+      ]);
+      const resultEvent = events.find((event) => event.type === 'tool_result');
+      expect(resultEvent?.type === 'tool_result' && resultEvent.result.isError).toBe(true);
+    });
   });
 
   // ── 错误处理 ────────────────────────────────────────
@@ -811,7 +905,7 @@ describe('AgentRunner', () => {
       expect(executedTools).toEqual(['search']);
     });
 
-    it('before_tool_call deny blocks tool and returns error to LLM', async () => {
+    it('CH-03 persists a paired error tool result when before_tool_call denies execution', async () => {
       const llmClient = createMockLLMClient([
         [
           { type: 'message_start' },
@@ -841,6 +935,24 @@ describe('AgentRunner', () => {
       expect(result.text).toBe('Tool was blocked.');
       const toolResult = events.find((e) => e.type === 'tool_result');
       expect(toolResult?.type === 'tool_result' && toolResult.result.isError).toBe(true);
+      const messages = sessionManager.getMessages('main');
+      expect(messages.map(({ message }) => message.role)).toEqual([
+        'user',
+        'assistant',
+        'toolResult',
+        'assistant',
+      ]);
+      const assistantBlocks = messages[1]!.message.content as ChatContentBlock[];
+      expect(assistantBlocks).toContainEqual(
+        expect.objectContaining({ type: 'tool_use', id: 'tool_01', name: 'exec' }),
+      );
+      expect(messages[2]!.message.content).toEqual([
+        {
+          type: 'tool_result',
+          tool_use_id: 'tool_01',
+          content: 'Tool blocked: dangerous command',
+        },
+      ]);
     });
 
     it('before_tool_call modifies input', async () => {
@@ -1203,7 +1315,7 @@ describe('AgentRunner', () => {
     });
 
     // ③ abort during tool loop → 当前工具跑完，下一工具不启动
-    it('abort during tool loop → 当前工具跑完，下一工具不启动', async () => {
+    it('CH-03 characterizes deferred orphan repair after abort between tool calls', async () => {
       const controller = new AbortController();
 
       // LLM 返回两个 tool_use 块
@@ -1242,6 +1354,59 @@ describe('AgentRunner', () => {
       expect(result.stopReason).toBe('aborted');
       // 第一个 tool 跑完，第二个不启动
       expect(toolCallCount).toBe(1);
+      const records = sessionManager.getMessages('main');
+      expect(records.map(({ message }) => message.role)).toEqual(['user', 'assistant']);
+      const assistantBlocks = records[1]!.message.content as ChatContentBlock[];
+      expect(assistantBlocks.filter((block) => block.type === 'tool_use').map((block) => block.id)).toEqual([
+        'tu-1',
+        'tu-2',
+      ]);
+
+      const repairEvents: AgentEvent[] = [];
+      const recoveryRunner = new AgentRunner({
+        llmClient: createMockLLMClient([[
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'Recovered.' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 5, outputTokens: 2 } },
+        ]]),
+        sessionManager,
+        onEvent: (event) => repairEvents.push(event),
+      });
+      await recoveryRunner.run({
+        sessionKey: 'main',
+        message: 'continue',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-after-tool-loop-abort',
+      });
+
+      const repairedRecords = sessionManager.getMessages('main');
+      expect(repairedRecords.map(({ message }) => message.role)).toEqual([
+        'user',
+        'assistant',
+        'toolResult',
+        'user',
+        'assistant',
+      ]);
+      expect(repairedRecords[2]!.message.content).toEqual([
+        {
+          type: 'tool_result',
+          tool_use_id: 'tu-1',
+          content: '[tool call interrupted; session recovered]',
+        },
+        {
+          type: 'tool_result',
+          tool_use_id: 'tu-2',
+          content: '[tool call interrupted; session recovered]',
+        },
+      ]);
+      expect(repairEvents).toContainEqual(
+        expect.objectContaining({
+          type: 'orphan_tool_results_repaired',
+          count: 2,
+          source: 'recovered',
+        }),
+      );
     });
 
     // ④ 【孤儿修复—turn 起点（abort source）】
