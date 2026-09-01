@@ -3,7 +3,7 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 0.9
+- **版本：** 1.0
 - **日期：** 2026-08-31
 - **范围：** my-agent 目标架构定义、关键边界验证、渐进迁移和 Legacy 退出
 - **执行方式：** Architecture Foundation 以两周为目标、四周为硬上限，随后采用一周 Architecture Slice 迭代
@@ -257,6 +257,10 @@ Legacy 只提供历史证据，不自动成为目标设计。
 - 不依赖通用 Service Locator。
 
 ### AF-04：Characterization 与 Fitness Tests
+
+**状态：** In Progress（2026-08-31）
+
+**执行计划：** [AF-04 Characterization and Fitness Execution Plan](af-04-characterization-fitness-plan.md)（`Accepted`）
 
 **目标：** 在迁移前锁定现有关键行为，并把新架构原则自动化。
 

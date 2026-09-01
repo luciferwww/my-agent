@@ -73,6 +73,7 @@ Planned evolution documents, adoption sequencing, and regression checklists for 
 
 - [Architecture Foundation Plan](roadmap/architecture-foundation-plan.md) — accepted target-architecture, spike, migration, and legacy-exit plan
 - [AF-03 Target Architecture Execution Plan](roadmap/af-03-target-architecture-plan.md) — completed phase record and acceptance evidence for the Target Architecture
+- [AF-04 Characterization and Fitness Execution Plan](roadmap/af-04-characterization-fitness-plan.md) — accepted evidence, test-protection, and architecture-fitness execution plan
 
 ## Analysis
 

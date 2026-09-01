@@ -3,7 +3,7 @@
 ## 1. 文档状态与证据规则
 
 - **状态：** Accepted
-- **版本：** 1.0
+- **版本：** 1.1
 - **日期：** 2026-08-31
 - **所有者：** 项目所有者
 - **执行计划：** [AF-03 Target Architecture Execution Plan](../roadmap/af-03-target-architecture-plan.md)
@@ -29,7 +29,7 @@
 
 | 文档 | 状态 | AF-03 中的用途 |
 |---|---|---|
-| [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) | Accepted v0.9 | AF-03 范围、验收、Foundation Gate 和 Slice 顺序 |
+| [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) | Accepted v1.0 | AF-03 范围、验收、Foundation Gate 和 Slice 顺序 |
 | [AF-03 Execution Plan](../roadmap/af-03-target-architecture-plan.md) | Accepted v1.4 | Phase、Check Items、Exit Gates 和停止条件 |
 | [Architecture Principles](architecture-principles.md) | Accepted v1.0 | AP-01 至 AP-13 的稳定约束和验证候选 |
 | [Domain Glossary](domain-glossary.md) | Accepted v1.4 | 规范术语、逻辑所有者和非含义 |
@@ -266,12 +266,15 @@ Infrastructure -X-> Composition / RuntimeApp private state
 | `src/core/tools/builtin/` | Bundled Runtime Module + Infrastructure | 作为 Bundled Contribution 接入；文件、网络、进程 I/O 不成为 Domain |
 | `src/core/memory/` | Application Port/Policy + Infrastructure Store | 检索用例与存储/索引实现按 Port 分离 |
 | `src/core/workspace/` | Application Use Case + Infrastructure File Adapter | Workspace 规则与文件系统读取按所有权分离 |
+| `src/core/media/` | Application Media Processing + Infrastructure Image Adapter | 附件限制、规范化、drop/result 语义和纯 metadata 解析留在 Stable Core/Application；`sharp` 编解码、Adapter-owned Channel/LLM block 映射和 WebSocket payload 限制归 Infrastructure |
 | `src/adapters/llm/` | Infrastructure Provider Integration | Model invocation Port 移交 Stable Core 所有；Anthropic 实现成为 Bundled Runtime Module |
 | `src/adapters/channel/` | Infrastructure Channel Integration | Channel Contract 移交 Stable Core；CLI/WebSocket Transport 留在 Adapter；Interaction 协调责任由后续调用流确认 |
 | `src/platform/config/` | Composition + Configuration Input | Config 加载/验证在 Composition；不能把 Config 对象透传为全局服务 |
 | `src/platform/logger/` | Application-owned Observability Port + Infrastructure Adapter | 目标边界使用显式 Port；当前全局静态状态作为 Legacy Candidate 评估 |
 
-**Legacy Candidate：** `src/runtime/`、`src/core/session/`、`src/core/memory/`、`src/core/workspace/` 和 `src/platform/logger/` 都可能同时包含多个逻辑边界。后续 Slice 应迁移权威类型和真实调用方，而不是仅为目录整齐做一次性重排。
+**Legacy Candidate：** `src/runtime/`、`src/core/session/`、`src/core/memory/`、`src/core/workspace/`、`src/core/media/` 和 `src/platform/logger/` 都可能同时包含多个逻辑边界。后续 Slice 应迁移权威类型和真实调用方，而不是仅为目录整齐做一次性重排。
+
+**Evidence Boundary：** 项目所有者于 2026-08-31 根据 AF-04 Phase 0 代码取证接受 `src/core/media/` 的逻辑所有权增补。该映射只补齐 FT-01 的当前目录到目标边界候选，不冻结文件移动、Port/API、媒体类型或实现机制，也不表示生产代码已满足目标依赖方向。
 
 ### 4.6 不使用通用 DI Container 或 Service Locator
 
