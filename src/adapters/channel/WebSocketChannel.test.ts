@@ -71,16 +71,14 @@ describe('WebSocketChannel', () => {
       sessionKey: 'main',
       turnId: 'turn-1',
       originClientId: 'client-1',
-      timeoutMs: 5000,
     };
-    channel.interaction?.sendInteractionRequest(request);
+    expect(channel.interaction?.sendInteractionRequest(request)).toEqual({ status: 'accepted' });
 
     await expectMessage(client, {
       type: 'approval_requested',
       id: 'apr-1',
       toolName: 'write_file',
       input: { path: 'README.md' },
-      timeoutMs: 5000,
     });
 
     client.send(JSON.stringify({ type: 'approval_resolve', id: 'apr-1', decision: 'allow' }));
@@ -92,6 +90,171 @@ describe('WebSocketChannel', () => {
         outcome: 'submitted',
         decision: 'allow',
       });
+    });
+  });
+
+  it('returns unavailable when an approval origin cannot receive the request', async () => {
+    channel = new WebSocketChannel({ port: 0, approval: true });
+    channel.onMessage(async () => undefined);
+    await channel.start();
+
+    expect(channel.interaction?.sendInteractionRequest({
+      id: 'apr-missing',
+      kind: 'approval',
+      toolName: 'write_file',
+      input: {},
+      sessionKey: 'main',
+      turnId: 'turn-missing',
+      originClientId: 'missing-client',
+    })).toEqual({ status: 'unavailable', reason: 'delivery_failed' });
+  });
+
+  it('sends approval_closed for a non-user terminal outcome', async () => {
+    channel = new WebSocketChannel({ port: 0, approval: true });
+    channel.onMessage(async () => undefined);
+    await channel.start();
+
+    const client = await connectClient(channel);
+    clients.push(client);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'client-close' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'client-close' });
+
+    const request: ApprovalInteractionRequest = {
+      id: 'apr-close',
+      kind: 'approval',
+      toolName: 'write_file',
+      input: {},
+      sessionKey: 'main',
+      turnId: 'turn-close',
+      originClientId: 'client-close',
+    };
+    expect(channel.interaction?.sendInteractionRequest(request)).toEqual({ status: 'accepted' });
+    await expectMessage(client, {
+      type: 'approval_requested',
+      id: 'apr-close',
+      toolName: 'write_file',
+      input: {},
+    });
+
+    channel.interaction?.sendInteractionClosed(request, {
+      outcome: 'aborted',
+      reason: 'turn',
+    });
+    await expectMessage(client, {
+      type: 'approval_closed',
+      id: 'apr-close',
+      outcome: 'aborted',
+      reason: 'turn',
+    });
+  });
+
+  it('keeps pending approval bound across same-client socket replacement', async () => {
+    const interactionResponse = vi.fn();
+    const interactionUnavailable = vi.fn();
+    channel = new WebSocketChannel({ port: 0, approval: true });
+    channel.onMessage(async () => undefined);
+    channel.interaction?.onInteractionResponse(interactionResponse);
+    channel.interaction?.onInteractionUnavailable(interactionUnavailable);
+    await channel.start();
+
+    const firstClient = await connectClient(channel);
+    clients.push(firstClient);
+    firstClient.send(JSON.stringify({ type: 'hello', clientId: 'client-replace' }));
+    await expectMessage(firstClient, { type: 'hello_ack', clientId: 'client-replace' });
+
+    const request: ApprovalInteractionRequest = {
+      id: 'apr-replace',
+      kind: 'approval',
+      toolName: 'write_file',
+      input: {},
+      sessionKey: 'main',
+      turnId: 'turn-replace',
+      originClientId: 'client-replace',
+    };
+    channel.interaction?.sendInteractionRequest(request);
+    await expectMessage(firstClient, {
+      type: 'approval_requested',
+      id: 'apr-replace',
+      toolName: 'write_file',
+      input: {},
+    });
+
+    const serverSocket = (channel as unknown as { clients: Map<string, WebSocket> })
+      .clients.get('client-replace')!;
+    const closeSpy = vi.spyOn(serverSocket, 'close').mockImplementation(() => undefined);
+    const replacementClient = await connectClient(channel);
+    clients.push(replacementClient);
+    replacementClient.send(JSON.stringify({ type: 'hello', clientId: 'client-replace' }));
+    await expectMessage(replacementClient, { type: 'hello_ack', clientId: 'client-replace' });
+
+    firstClient.send(JSON.stringify({
+      type: 'approval_resolve',
+      id: 'apr-replace',
+      decision: 'allow',
+    }));
+    await expectMessage(firstClient, {
+      type: 'channel_error',
+      code: 'INVALID_MESSAGE',
+      message: 'This connection has been superseded.',
+    });
+    expect(interactionResponse).not.toHaveBeenCalled();
+
+    const firstClosed = once(firstClient, 'close');
+    closeSpy.mockRestore();
+    serverSocket.close();
+    await firstClosed;
+    expect(interactionUnavailable).not.toHaveBeenCalled();
+
+    replacementClient.send(JSON.stringify({
+      type: 'approval_resolve',
+      id: 'apr-replace',
+      decision: 'deny',
+    }));
+    await vi.waitFor(() => {
+      expect(interactionResponse).toHaveBeenCalledWith({
+        id: 'apr-replace',
+        kind: 'approval',
+        outcome: 'submitted',
+        decision: 'deny',
+      });
+    });
+  });
+
+  it('reports unavailable when the current approval origin disconnects', async () => {
+    const interactionUnavailable = vi.fn();
+    channel = new WebSocketChannel({ port: 0, approval: true });
+    channel.onMessage(async () => undefined);
+    channel.interaction?.onInteractionUnavailable(interactionUnavailable);
+    await channel.start();
+
+    const client = await connectClient(channel);
+    clients.push(client);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'client-disconnect' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'client-disconnect' });
+
+    channel.interaction?.sendInteractionRequest({
+      id: 'apr-disconnect',
+      kind: 'approval',
+      toolName: 'write_file',
+      input: {},
+      sessionKey: 'main',
+      turnId: 'turn-disconnect',
+      originClientId: 'client-disconnect',
+    });
+    await expectMessage(client, {
+      type: 'approval_requested',
+      id: 'apr-disconnect',
+      toolName: 'write_file',
+      input: {},
+    });
+
+    client.close();
+    await once(client, 'close');
+    await vi.waitFor(() => {
+      expect(interactionUnavailable).toHaveBeenCalledWith(
+        'apr-disconnect',
+        'origin_disconnected',
+      );
     });
   });
 

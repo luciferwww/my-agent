@@ -9,6 +9,8 @@ export interface BeforeToolCallPayload {
   turnId: string;
   /** 本次 turn 所属 session */
   sessionKey: string;
+  /** 本次执行 turn 的生命周期 signal；approval 等阻塞式 hook 必须观察 */
+  signal?: AbortSignal;
 }
 
 export type BeforeToolCallResult =

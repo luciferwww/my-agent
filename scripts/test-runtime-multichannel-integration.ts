@@ -10,10 +10,10 @@
  *      - approval_requested 必须只发给第二条 turn 的 origin（client-2），不能发给 client-1；
  *      - client-2 回 approval_resolve → 第二个 run 收到 allow 决策。
  *
- *   2. queued WebSocket approval expiry routes to the queued turn's origin client
+ *   2. queued WebSocket approval stays pending and Abort closes it at the queued turn's origin
  *      （从原 RuntimeApp.integration.test.ts 迁移）
  *      - 同上，但 channel 不回 approval_resolve；
- *      - TurnInteractionManager 超时后 approval_expired 必须只发给 client-2。
+ *      - 短窗口内没有自动结束；Turn Abort 后 approval_closed 必须只发给 client-2。
  *
  *   3. fanout forwards every AgentEvent to every registered channel and onAgentEvent observer
  *      - 注册两个普通 channel；runner stub 主动 emit run_start/run_end；
@@ -198,6 +198,7 @@ async function testQueuedWebSocketApprovalRoutesToQueuedOrigin(): Promise<void> 
             input: { approval: true },
             turnId: params.turnId,
             sessionKey: params.sessionKey,
+            signal: params.signal,
           });
           return {
             text: 'second',
@@ -212,6 +213,7 @@ async function testQueuedWebSocketApprovalRoutesToQueuedOrigin(): Promise<void> 
       };
 
       const agentRunner = {
+        setToolExecutor() {},
         on(hookName: string, handler: BeforeToolCallHook) {
           if (hookName === 'before_tool_call') beforeToolCallHook = handler;
           return agentRunner;
@@ -288,7 +290,7 @@ async function testQueuedWebSocketApprovalRoutesToQueuedOrigin(): Promise<void> 
   });
 }
 
-async function testQueuedWebSocketApprovalExpiryRoutesToQueuedOrigin(): Promise<void> {
+async function testQueuedWebSocketApprovalAbortRoutesToQueuedOrigin(): Promise<void> {
   await withWorkspace(async (workspaceDir) => {
     const clients: WebSocket[] = [];
     let app: RuntimeApp | undefined;
@@ -310,12 +312,23 @@ async function testQueuedWebSocketApprovalExpiryRoutesToQueuedOrigin(): Promise<
             input: { approval: true },
             turnId: params.turnId,
             sessionKey: params.sessionKey,
+            signal: params.signal,
           });
           return {
-            text: 'timed out',
-            content: [{ type: 'text', text: 'timed out' }],
+            text: 'approved',
+            content: [{ type: 'text', text: 'approved' }],
             stopReason: 'end_turn',
             usage: { inputTokens: 1, outputTokens: 1 },
+            toolRounds: 0,
+          };
+        } catch (error) {
+          if (!(error instanceof DOMException) || error.name !== 'AbortError') throw error;
+          secondDecision = 'aborted';
+          return {
+            text: '',
+            content: [],
+            stopReason: 'aborted',
+            usage: { inputTokens: 0, outputTokens: 0 },
             toolRounds: 0,
           };
         } finally {
@@ -324,6 +337,7 @@ async function testQueuedWebSocketApprovalExpiryRoutesToQueuedOrigin(): Promise<
       };
 
       const agentRunner = {
+        setToolExecutor() {},
         on(hookName: string, handler: BeforeToolCallHook) {
           if (hookName === 'before_tool_call') beforeToolCallHook = handler;
           return agentRunner;
@@ -342,15 +356,6 @@ async function testQueuedWebSocketApprovalExpiryRoutesToQueuedOrigin(): Promise<
           createMemoryManager: async () => null,
         },
       });
-
-      // 缩短 TurnInteractionManager.request 默认超时，避免脚本阻塞太久
-      const tim = (app as unknown as {
-        turnInteractionManager: {
-          request(params: Record<string, unknown>): Promise<unknown>;
-        };
-      }).turnInteractionManager;
-      const origRequest = tim.request.bind(tim);
-      tim.request = (params) => origRequest({ ...params, timeoutMs: 150 });
 
       channel = new WebSocketChannel({ port: 0, approval: true });
       app.registerChannel(channel);
@@ -388,18 +393,21 @@ async function testQueuedWebSocketApprovalExpiryRoutesToQueuedOrigin(): Promise<
       const approvalReq = await readMessage(client2);
       assert.equal(approvalReq.type, 'approval_requested', `expected approval_requested on client2, got: ${JSON.stringify(approvalReq)}`);
 
-      const expired = await readMessage(client2);
-      assert.equal(expired.type, 'approval_expired', `expected approval_expired on client2, got: ${JSON.stringify(expired)}`);
-      assert.equal(expired.id, approvalReq.id, 'expired id should match request id');
+      await expectNoMessage(client2, 200);
+      assert.equal(secondDecision, undefined, 'approval must remain pending without a response');
+
+      assert.deepEqual(app.abortTurn('main'), { aborted: true, dropped: 0 });
+      const closed = await readMessage(client2);
+      assert.deepEqual(closed, {
+        type: 'approval_closed',
+        id: approvalReq.id,
+        outcome: 'aborted',
+        reason: 'turn',
+      });
 
       await expectNoMessage(client1, 50);
       await secondRunFinished.promise;
-
-      assert.deepEqual(
-        secondDecision,
-        { action: 'deny', reason: 'Denied by timeout' },
-        `expected deny-by-timeout decision; got: ${JSON.stringify(secondDecision)}`,
-      );
+      assert.equal(secondDecision, 'aborted');
     } finally {
       for (const c of clients.splice(0)) c.close();
       await app?.close('test complete').catch(() => undefined);
@@ -424,6 +432,7 @@ async function testFanoutForwardsAgentEventsToAllChannelsAndObserver(): Promise<
         createAgentRunner: (config: { onEvent?: (e: AgentEvent) => void }) => {
           runnerEmit = config.onEvent;
           return {
+            setToolExecutor() {},
             run: async (params: RunParams): Promise<RunResult> => {
               runnerEmit?.({
                 type: 'run_start',
@@ -486,8 +495,8 @@ async function main(): Promise<void> {
     testQueuedWebSocketApprovalRoutesToQueuedOrigin,
   );
   await runStep(
-    'routes queued websocket approval expiry back to the queued turn\'s origin client',
-    testQueuedWebSocketApprovalExpiryRoutesToQueuedOrigin,
+    'keeps queued websocket approval pending until Abort closes it at the queued turn\'s origin client',
+    testQueuedWebSocketApprovalAbortRoutesToQueuedOrigin,
   );
   await runStep(
     'fanout forwards each AgentEvent to every registered channel and the onAgentEvent observer',

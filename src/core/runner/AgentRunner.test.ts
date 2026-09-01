@@ -26,6 +26,17 @@ function createMockLLMClient(responses: StreamEvent[][]): LLMClient {
   };
 }
 
+function createDeferred<T = void>(): {
+  promise: Promise<T>;
+  resolve(value: T | PromiseLike<T>): void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
 // ── 测试 ────────────────────────────────────────────────
 
 describe('AgentRunner', () => {
@@ -878,6 +889,50 @@ describe('AgentRunner', () => {
   // ── Hook on() API ───────────────────────────────────────
 
   describe('hooks', () => {
+    it('CH-04 awaits before_tool_call before executing the Tool', async () => {
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'tool_use', id: 'tool_01', name: 'search', input: {} },
+          { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'Done.' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 15, outputTokens: 5 } },
+        ],
+      ]);
+      const hookEntered = createDeferred();
+      const releaseHook = createDeferred();
+      const hookCompleted = createDeferred();
+      const toolExecutor = vi.fn(async () => ({ content: 'result' }));
+      const runner = new AgentRunner({ llmClient, sessionManager, toolExecutor });
+      runner.on('before_tool_call', async () => {
+        hookEntered.resolve();
+        await releaseHook.promise;
+        hookCompleted.resolve();
+        return { action: 'allow' };
+      });
+
+      const runPromise = runner.run({
+        sessionKey: 'main',
+        message: 'Search',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'test-turn',
+      });
+
+      await hookEntered.promise;
+      try {
+        expect(toolExecutor).not.toHaveBeenCalled();
+      } finally {
+        releaseHook.resolve();
+      }
+      await runPromise;
+      await hookCompleted.promise;
+      expect(toolExecutor).toHaveBeenCalledTimes(1);
+    });
+
     it('before_tool_call allow passes through', async () => {
       const llmClient = createMockLLMClient([
         [
@@ -898,11 +953,24 @@ describe('AgentRunner', () => {
         sessionManager,
         toolExecutor: async (name) => { executedTools.push(name); return { content: 'ok' }; },
       });
-      runner.on('before_tool_call', async () => ({ action: 'allow' }));
+      const controller = new AbortController();
+      let hookSignal: AbortSignal | undefined;
+      runner.on('before_tool_call', async ({ signal }) => {
+        hookSignal = signal;
+        return { action: 'allow' };
+      });
 
-      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '', turnId: 'test-turn' });
+      await runner.run({
+        sessionKey: 'main',
+        message: 'Search',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'test-turn',
+        signal: controller.signal,
+      });
 
       expect(executedTools).toEqual(['search']);
+      expect(hookSignal).toBe(controller.signal);
     });
 
     it('CH-03 persists a paired error tool result when before_tool_call denies execution', async () => {
@@ -985,7 +1053,7 @@ describe('AgentRunner', () => {
       expect(capturedInputs[0]?.q).toBe('modified');
     });
 
-    it('after_tool_call fires after execution', async () => {
+    it('CH-04 detaches after_tool_call from Turn settlement', async () => {
       const llmClient = createMockLLMClient([
         [
           { type: 'message_start' },
@@ -999,6 +1067,9 @@ describe('AgentRunner', () => {
         ],
       ]);
 
+      const hookEntered = createDeferred();
+      const releaseHook = createDeferred();
+      const hookCompleted = createDeferred();
       const afterPayloads: { toolName: string; durationMs: number }[] = [];
       const runner = new AgentRunner({
         llmClient,
@@ -1007,18 +1078,31 @@ describe('AgentRunner', () => {
       });
       runner.on('after_tool_call', async ({ toolName, durationMs }) => {
         afterPayloads.push({ toolName, durationMs });
+        hookEntered.resolve();
+        await releaseHook.promise;
+        hookCompleted.resolve();
       });
 
-      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '', turnId: 'test-turn' });
+      const runPromise = runner.run({
+        sessionKey: 'main',
+        message: 'Search',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'test-turn',
+      });
 
-      // after_tool_call is fire-and-forget; give it a tick to resolve
-      await new Promise((r) => setTimeout(r, 10));
+      await hookEntered.promise;
+      const result = await runPromise;
+      releaseHook.resolve();
+      await hookCompleted.promise;
+
+      expect(result.stopReason).toBe('end_turn');
       expect(afterPayloads).toHaveLength(1);
       expect(afterPayloads[0]?.toolName).toBe('search');
       expect(afterPayloads[0]?.durationMs).toBeGreaterThanOrEqual(0);
     });
 
-    it('before_compaction and after_compaction fire around preemptive compaction', async () => {
+    it('CH-04 detaches compaction observer Hooks from compaction and Turn settlement', async () => {
       await sessionManager.appendMessage('main', { role: 'user', content: 'A'.repeat(800) });
       await sessionManager.appendMessage('main', { role: 'assistant', content: 'B'.repeat(800) });
       await sessionManager.appendMessage('main', { role: 'user', content: 'recent question' });
@@ -1037,17 +1121,29 @@ describe('AgentRunner', () => {
         ],
       ]);
 
+      const beforeHookEntered = createDeferred();
+      const releaseBeforeHook = createDeferred();
+      const beforeHookCompleted = createDeferred();
+      const afterHookEntered = createDeferred();
+      const releaseAfterHook = createDeferred();
+      const afterHookCompleted = createDeferred();
       const beforePayloads: Array<{ trigger: string; estimatedTokens: number }> = [];
       const afterPayloads: Array<{ trigger: string; tokensBefore: number; tokensAfter: number; droppedMessages: number }> = [];
       const runner = new AgentRunner({ llmClient, sessionManager });
       runner.on('before_compaction', async ({ trigger, estimatedTokens }) => {
         beforePayloads.push({ trigger, estimatedTokens });
+        beforeHookEntered.resolve();
+        await releaseBeforeHook.promise;
+        beforeHookCompleted.resolve();
       });
       runner.on('after_compaction', async ({ trigger, tokensBefore, tokensAfter, droppedMessages }) => {
         afterPayloads.push({ trigger, tokensBefore, tokensAfter, droppedMessages });
+        afterHookEntered.resolve();
+        await releaseAfterHook.promise;
+        afterHookCompleted.resolve();
       });
 
-      const result = await runner.run({
+      const runPromise = runner.run({
         sessionKey: 'main',
         message: 'Continue',
         model: 'test',
@@ -1065,7 +1161,11 @@ describe('AgentRunner', () => {
         },
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await Promise.all([beforeHookEntered.promise, afterHookEntered.promise]);
+      const result = await runPromise;
+      releaseBeforeHook.resolve();
+      releaseAfterHook.resolve();
+      await Promise.all([beforeHookCompleted.promise, afterHookCompleted.promise]);
 
       expect(result.compacted).toBe(true);
       expect(beforePayloads).toHaveLength(1);

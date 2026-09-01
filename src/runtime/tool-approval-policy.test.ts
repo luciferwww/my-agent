@@ -6,7 +6,7 @@ const empty: ToolsConfig = { allow: [], deny: [] };
 
 // ── no approval channel (fail-closed) ────────────────────
 
-describe('resolveToolPolicy — no approval channel', () => {
+describe('CH-06 resolveToolPolicy — no approval channel', () => {
   it('denies any tool when allow is empty', () => {
     expect(resolveToolPolicy('exec', empty, false)).toBe('deny');
   });
@@ -43,7 +43,7 @@ describe('resolveToolPolicy — no approval channel', () => {
 
 // ── with approval channel ─────────────────────────────────
 
-describe('resolveToolPolicy — with approval channel', () => {
+describe('CH-06 resolveToolPolicy — with approval channel', () => {
   it('prompts when both allow and deny are empty', () => {
     expect(resolveToolPolicy('exec', empty, true)).toBe('prompt');
   });

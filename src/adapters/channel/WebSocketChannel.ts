@@ -4,6 +4,7 @@ import { Logger } from '../../platform/logger/index.js';
 import { WS_MAX_PAYLOAD_BYTES } from '../../core/media/constants.js';
 import type {
   AbortHookBindings,
+  ApprovalClosedResult,
   ApprovalDecision,
   ApprovalRequest,
   Channel,
@@ -56,8 +57,8 @@ type ClientMessage =
 
 type OutboundMessage =
   | { type: 'hello_ack'; clientId: string }
-  | { type: 'approval_requested'; id: string; toolName: string; input: Record<string, unknown>; timeoutMs?: number }
-  | { type: 'approval_expired'; id: string }
+  | { type: 'approval_requested'; id: string; toolName: string; input: Record<string, unknown> }
+  | { type: 'approval_closed'; id: string; outcome: ApprovalClosedResult['outcome']; reason: string }
   | { type: 'channel_error'; code: ChannelErrorCode; message: string }
   | Record<string, unknown>;
 
@@ -89,11 +90,14 @@ export class WebSocketChannel implements Channel {
   private messageHandler?: (req: ChannelRunRequest) => Promise<void>;
   private approvalDecisionHandler?: (id: string, decision: ApprovalDecision) => void;
   private interactionResponseHandler?: (response: TurnInteractionResponse) => void;
+  private approvalUnavailableHandler?: (id: string, reason: 'origin_disconnected') => void;
+  private interactionUnavailableHandler?: (id: string, reason: 'origin_disconnected') => void;
 
   private readonly clients = new Map<string, WebSocket>();
   private readonly sessions = new Map<string, Set<string>>();
   private readonly clientSessions = new Map<string, Set<string>>();
   private readonly socketClientIds = new WeakMap<WebSocket, string>();
+  private readonly pendingApprovalClientIds = new Map<string, string>();
 
   /**
    * `RuntimeApp.registerChannel` 同步注入（core-abort-spec.md §12 时序保证）：
@@ -446,6 +450,12 @@ export class WebSocketChannel implements Channel {
 
     this.clients.delete(clientId);
 
+    for (const [approvalId, pendingClientId] of this.pendingApprovalClientIds) {
+      if (pendingClientId !== clientId) continue;
+      this.pendingApprovalClientIds.delete(approvalId);
+      this.dispatchApprovalUnavailable(approvalId, 'origin_disconnected');
+    }
+
     const sessionAudienceKeys = this.clientSessions.get(clientId);
     if (sessionAudienceKeys) {
       for (const sessionKey of sessionAudienceKeys) {
@@ -469,6 +479,9 @@ export class WebSocketChannel implements Channel {
     const clientId = this.socketClientIds.get(socket);
     if (!clientId) {
       throw new ProtocolError('SERVER_NOT_READY', 'hello must complete before business messages.');
+    }
+    if (this.clients.get(clientId) !== socket) {
+      throw new ProtocolError('INVALID_MESSAGE', 'This connection has been superseded.');
     }
     return clientId;
   }
@@ -502,13 +515,16 @@ export class WebSocketChannel implements Channel {
   private makeApprovalAdapter(): ChannelApprovalAdapter {
     return {
       sendApprovalRequest: (request) => {
-        this.sendApprovalRequestMessage(request);
+        return this.sendApprovalRequestMessage(request);
       },
-      sendApprovalExpired: (request) => {
-        this.sendApprovalExpiredMessage(request.id, request.originClientId);
+      sendApprovalClosed: (request, result) => {
+        this.sendApprovalClosedMessage(request.id, request.originClientId, result);
       },
       onApprovalDecision: (handler) => {
         this.approvalDecisionHandler = handler;
+      },
+      onApprovalUnavailable: (handler) => {
+        this.approvalUnavailableHandler = handler;
       },
     };
   }
@@ -519,21 +535,25 @@ export class WebSocketChannel implements Channel {
         if (request.kind !== 'approval') {
           throw new Error(`WebSocketChannel does not support interaction kind: ${request.kind}`);
         }
-        this.sendApprovalRequestMessage(request);
+        return this.sendApprovalRequestMessage(request);
       },
-      sendInteractionExpired: (request) => {
+      sendInteractionClosed: (request, result) => {
         if (request.kind !== 'approval') {
           throw new Error(`WebSocketChannel does not support interaction kind: ${request.kind}`);
         }
-        this.sendApprovalExpiredMessage(request.id, request.originClientId);
+        this.sendApprovalClosedMessage(request.id, request.originClientId, result);
       },
       onInteractionResponse: (handler) => {
         this.interactionResponseHandler = handler;
+      },
+      onInteractionUnavailable: (handler) => {
+        this.interactionUnavailableHandler = handler;
       },
     };
   }
 
   private dispatchApprovalSubmission(id: string, decision: ApprovalDecision): void {
+    this.pendingApprovalClientIds.delete(id);
     if (this.interactionResponseHandler) {
       log.debug('routing approval submission through interaction adapter', {
         channelId: this.id,
@@ -562,16 +582,27 @@ export class WebSocketChannel implements Channel {
     throw new ProtocolError('UNSUPPORTED_MESSAGE', 'Approval is not enabled for this channel.');
   }
 
-  private sendApprovalRequestMessage(
-    request: Pick<ApprovalRequest, 'id' | 'toolName' | 'input' | 'originClientId' | 'timeoutMs'>,
+  private dispatchApprovalUnavailable(
+    id: string,
+    reason: 'origin_disconnected',
   ): void {
+    if (this.interactionUnavailableHandler) {
+      this.interactionUnavailableHandler(id, reason);
+      return;
+    }
+    this.approvalUnavailableHandler?.(id, reason);
+  }
+
+  private sendApprovalRequestMessage(
+    request: Pick<ApprovalRequest, 'id' | 'toolName' | 'input' | 'originClientId'>,
+  ): { status: 'accepted' } | { status: 'unavailable'; reason: 'origin_missing' | 'delivery_failed' } {
     if (!request.originClientId) {
       log.debug('skipping approval request without origin client', {
         channelId: this.id,
         approvalId: request.id,
         toolName: request.toolName,
       });
-      return;
+      return { status: 'unavailable', reason: 'origin_missing' };
     }
     const socket = this.clients.get(request.originClientId);
     if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -581,27 +612,32 @@ export class WebSocketChannel implements Channel {
         toolName: request.toolName,
         originClientId: request.originClientId,
       });
-      return;
+      return { status: 'unavailable', reason: 'delivery_failed' };
     }
     log.info('delivering approval request to client', {
       channelId: this.id,
       approvalId: request.id,
       toolName: request.toolName,
       originClientId: request.originClientId,
-      timeoutMs: request.timeoutMs,
     });
+    this.pendingApprovalClientIds.set(request.id, request.originClientId);
     this.sendJson(socket, {
       type: 'approval_requested',
       id: request.id,
       toolName: request.toolName,
       input: request.input,
-      timeoutMs: request.timeoutMs,
     });
+    return { status: 'accepted' };
   }
 
-  private sendApprovalExpiredMessage(id: string, originClientId?: string): void {
+  private sendApprovalClosedMessage(
+    id: string,
+    originClientId: string | undefined,
+    result: ApprovalClosedResult,
+  ): void {
+    this.pendingApprovalClientIds.delete(id);
     if (!originClientId) {
-      log.debug('skipping approval expiry notification without origin client', {
+      log.debug('skipping approval closure without origin client', {
         channelId: this.id,
         approvalId: id,
       });
@@ -609,21 +645,23 @@ export class WebSocketChannel implements Channel {
     }
     const socket = this.clients.get(originClientId);
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      log.warn('unable to deliver approval expiry to client', {
+      log.warn('unable to deliver approval closure to client', {
         channelId: this.id,
         approvalId: id,
         originClientId,
       });
       return;
     }
-    log.info('delivering approval expiry to client', {
+    log.info('delivering approval closure to client', {
       channelId: this.id,
       approvalId: id,
       originClientId,
     });
     this.sendJson(socket, {
-      type: 'approval_expired',
+      type: 'approval_closed',
       id,
+      outcome: result.outcome,
+      reason: 'reason' in result ? result.reason : 'failed',
     });
   }
 

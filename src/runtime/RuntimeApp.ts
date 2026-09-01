@@ -283,8 +283,14 @@ export class RuntimeApp {
     channel.interaction?.onInteractionResponse((response) => {
       this.handleInteractionResponse(response);
     });
+    channel.interaction?.onInteractionUnavailable((id, reason) => {
+      this.turnInteractionManager.settle(id, { outcome: 'unavailable', reason });
+    });
     channel.approval?.onApprovalDecision((id, decision) => {
       this.turnInteractionManager.resolve(id, decision);
+    });
+    channel.approval?.onApprovalUnavailable((id, reason) => {
+      this.turnInteractionManager.settle(id, { outcome: 'unavailable', reason });
     });
 
     // 注入 abort hooks（core-abort-spec.md §12）——同步调用，channel.start() 里
@@ -417,7 +423,7 @@ export class RuntimeApp {
     // ① hook → 三档审批策略
     this.resources.agentRunner.on(
       'before_tool_call',
-      async ({ toolName, input, turnId, sessionKey }) => {
+      async ({ toolName, input, turnId, sessionKey, signal }) => {
         const originChannel = this.routeContextByTurn.get(turnId)?.originChannel;
         const hasApprovalCapability = !!(originChannel?.interaction || originChannel?.approval);
         const toolsConfig = this.resources.resolvedConfig.tools;
@@ -433,19 +439,45 @@ export class RuntimeApp {
         }
 
         // action === 'prompt': 交给 TurnInteractionManager 等待用户决策
+        if (!signal) {
+          return {
+            action: 'deny' as const,
+            reason: 'Approval unavailable: missing Turn signal',
+          };
+        }
+
         const result = await this.turnInteractionManager.request({
-          toolName,
-          input,
-          sessionKey,
-          turnId,
-          originClientId: this.routeContextByTurn.get(turnId)?.originClientId,
+          request: {
+            toolName,
+            input,
+            sessionKey,
+            turnId,
+            originClientId: this.routeContextByTurn.get(turnId)?.originClientId,
+          },
+          signal,
         });
-        return result.decision === 'allow'
-          ? { action: 'allow' as const }
-          : {
-              action: 'deny' as const,
-              reason: result.reason === 'timeout' ? 'Denied by timeout' : 'Denied by user',
-            };
+        if (result.outcome === 'approved') {
+          return { action: 'allow' as const };
+        }
+        if (result.outcome === 'denied') {
+          return {
+            action: 'deny' as const,
+            reason: result.reason === 'user_cancelled' ? 'Approval cancelled by user' : 'Denied by user',
+          };
+        }
+        if (result.outcome === 'aborted') {
+          throw new DOMException('Approval wait aborted', 'AbortError');
+        }
+        if (result.outcome === 'unavailable') {
+          return {
+            action: 'deny' as const,
+            reason: `Approval unavailable: ${result.reason}`,
+          };
+        }
+        return {
+          action: 'deny' as const,
+          reason: `Approval failed: ${result.message}`,
+        };
       },
     );
 
@@ -460,7 +492,7 @@ export class RuntimeApp {
           sessionKey: request.sessionKey,
           originClientId: request.originClientId,
         });
-        return;  // 起源不可达：让 TurnInteractionManager 走超时
+        return { status: 'unavailable', reason: 'origin_missing' };
       }
 
       log.info('routing interaction request to origin channel', {
@@ -478,17 +510,17 @@ export class RuntimeApp {
           ...request,
           kind: 'approval',
         };
-        originChannel.interaction.sendInteractionRequest(interactionRequest);
-        return;
+        return originChannel.interaction.sendInteractionRequest(interactionRequest);
       }
 
-      originChannel.approval?.sendApprovalRequest(request);
+      return originChannel.approval?.sendApprovalRequest(request)
+        ?? { status: 'unavailable', reason: 'origin_missing' };
     });
 
-    this.turnInteractionManager.onExpire((request) => {
+    this.turnInteractionManager.onClose((request, result) => {
       const originChannel = this.routeContextByTurn.get(request.turnId)?.originChannel;
       if (!originChannel) {
-        log.warn('interaction expiry has no origin channel', {
+        log.warn('interaction closure has no origin channel', {
           interactionId: request.id,
           toolName: request.toolName,
           turnId: request.turnId,
@@ -498,7 +530,7 @@ export class RuntimeApp {
         return;
       }
 
-      log.info('routing interaction expiry to origin channel', {
+      log.info('routing interaction closure to origin channel', {
         interactionId: request.id,
         toolName: request.toolName,
         turnId: request.turnId,
@@ -513,11 +545,11 @@ export class RuntimeApp {
           ...request,
           kind: 'approval',
         };
-        originChannel.interaction.sendInteractionExpired(interactionRequest);
+        originChannel.interaction.sendInteractionClosed(interactionRequest, result);
         return;
       }
 
-      originChannel?.approval?.sendApprovalExpired(request);
+      originChannel?.approval?.sendApprovalClosed(request, result);
     });
   }
 
@@ -543,7 +575,18 @@ export class RuntimeApp {
       return;
     }
 
-    this.turnInteractionManager.resolve(response.id, 'deny');
+    if (response.outcome === 'cancelled') {
+      this.turnInteractionManager.settle(response.id, {
+        outcome: 'denied',
+        reason: 'user_cancelled',
+      });
+      return;
+    }
+
+    this.turnInteractionManager.settle(response.id, {
+      outcome: 'aborted',
+      reason: 'turn',
+    });
   }
 
   /** 每个 channel 一份消息处理器，闭包绑定 channel 自身用于路由表登记 */
@@ -969,7 +1012,7 @@ export class RuntimeApp {
         // 完成，必须先 snapshot entries 再遍历。详见 core-abort-spec.md §8.5。
         for (const [sessionKey, controller] of this.activeAborts) {
           log.info('aborting in-flight turn on shutdown', { sessionKey });
-          controller.abort();
+          controller.abort('shutdown');
         }
         // activeAborts 不主动清；各 runTurnInternal finally 自己清。
 

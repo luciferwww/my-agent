@@ -10,13 +10,14 @@ function stripAnsi(s: string): string {
   return s.replace(ANSI_RE, '');
 }
 
-function makeChannel(): { channel: CliChannel; captured: () => string } {
+function makeChannel(approval = false): { channel: CliChannel; captured: () => string } {
   const output = new PassThrough();
   const chunks: Buffer[] = [];
   output.on('data', (c: Buffer) => chunks.push(c));
   const channel = new CliChannel({
     input: new PassThrough(),
     output: output as unknown as NodeJS.WritableStream,
+    approval,
   });
   return {
     channel,
@@ -128,6 +129,50 @@ describe('CliChannel user_message rendering', () => {
     expect(out).not.toContain('secret.png');
     expect(out).not.toContain('999999');
     expect(out).not.toContain('image/png');
+  });
+});
+
+describe('CliChannel approval lifecycle', () => {
+  it('cancels the underlying readline question when approval closes', async () => {
+    const { channel } = makeChannel(true);
+    let questionSignal: AbortSignal | undefined;
+    let answerQuestion: ((answer: string) => void) | undefined;
+    (channel as unknown as {
+      rl: {
+        question(
+          prompt: string,
+          options: { signal: AbortSignal },
+          callback: (answer: string) => void,
+        ): void;
+      };
+    }).rl = {
+      question(_prompt, options, callback) {
+        questionSignal = options.signal;
+        answerQuestion = callback;
+      },
+    };
+    const responseHandler = vi.fn();
+    channel.interaction?.onInteractionResponse(responseHandler);
+    const request = {
+      id: 'approval-1',
+      kind: 'approval' as const,
+      toolName: 'write_file',
+      input: {},
+      sessionKey: 'main',
+      turnId: 'turn-1',
+    };
+
+    expect(channel.interaction?.sendInteractionRequest(request)).toEqual({ status: 'accepted' });
+    expect(questionSignal?.aborted).toBe(false);
+
+    channel.interaction?.sendInteractionClosed(request, {
+      outcome: 'aborted',
+      reason: 'turn',
+    });
+    expect(questionSignal?.aborted).toBe(true);
+    answerQuestion?.('y');
+    await Promise.resolve();
+    expect(responseHandler).not.toHaveBeenCalled();
   });
 });
 

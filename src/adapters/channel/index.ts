@@ -1,16 +1,17 @@
 export {
   TurnInteractionManager,
-  type TurnInteractionManagerConfig,
   TurnInteractionManager as ApprovalManager,
-  type TurnInteractionManagerConfig as ApprovalManagerConfig,
 } from './TurnInteractionManager.js';
 export { CliChannel, type CliChannelConfig } from './CliChannel.js';
 export { WebSocketChannel, type WebSocketChannelConfig } from './WebSocketChannel.js';
 export type {
   ApprovalDecision,
+  ApprovalDeliveryResult,
+  ApprovalClosedResult,
   ApprovalInteractionRequest,
   ApprovalInteractionResponse,
   ApprovalRequest,
+  ApprovalRequestOptions,
   ApprovalResult,
   Channel,
   ChannelApprovalAdapter,

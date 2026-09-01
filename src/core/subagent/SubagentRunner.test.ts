@@ -3,6 +3,7 @@ import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SubagentRunner } from './SubagentRunner.js';
+import { TurnInteractionManager } from '../../adapters/channel/TurnInteractionManager.js';
 import { getSubagentDepth } from './session-key.js';
 import type {
   SubagentHostBindings,
@@ -542,6 +543,45 @@ describe('SubagentRunner.run', () => {
   // ── Abort cascade (core-abort-spec.md §9) ──────────────
 
   describe('abort cascade', () => {
+    it('settles a pending child approval when the parent signal aborts', async () => {
+      const controller = new AbortController();
+      const approvalManager = new TurnInteractionManager();
+      approvalManager.onRequest(() => ({ status: 'accepted' }));
+      let markApprovalStarted!: () => void;
+      const approvalStarted = new Promise<void>((resolve) => {
+        markApprovalStarted = resolve;
+      });
+      const { deps } = makeDeps({
+        agentRunnerRun: async (params): Promise<RunResult> => {
+          const approval = approvalManager.request({
+            request: {
+              toolName: 'write_file',
+              input: {},
+              sessionKey: params.sessionKey,
+              turnId: params.turnId,
+            },
+            signal: params.signal!,
+          });
+          markApprovalStarted();
+          await expect(approval).resolves.toEqual({ outcome: 'aborted', reason: 'turn' });
+          return {
+            text: '',
+            content: [],
+            stopReason: 'aborted',
+            usage: { inputTokens: 0, outputTokens: 0 },
+            toolRounds: 0,
+          };
+        },
+      });
+      const runner = new SubagentRunner(deps);
+
+      const run = runner.run(makeRequest({ signal: controller.signal }));
+      await approvalStarted;
+      controller.abort('turn');
+
+      await expect(run).resolves.toEqual(expect.objectContaining({ outcome: 'aborted' }));
+    });
+
     it('forwards req.signal as RunParams.signal so parent aborts reach the child turn', async () => {
       const controller = new AbortController();
       const { deps, agentRunnerRun } = makeDeps();

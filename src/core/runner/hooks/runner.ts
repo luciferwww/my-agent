@@ -49,6 +49,7 @@ export async function runBeforeToolCall(
       input: currentInput,
       turnId: payload.turnId,
       sessionKey: payload.sessionKey,
+      signal: payload.signal,
     });
     if (result.action === 'deny') {
       const tag = name ? `:${name}` : '';

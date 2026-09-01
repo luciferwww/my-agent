@@ -3,7 +3,13 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage } from '../adapters/llm/types.js';
-import type { ApprovalDecision, ApprovalRequest, Channel, ChannelRunRequest } from '../adapters/channel/types.js';
+import type {
+  ApprovalClosedResult,
+  ApprovalDecision,
+  ApprovalRequest,
+  Channel,
+  ChannelRunRequest,
+} from '../adapters/channel/types.js';
 import type { BeforeToolCallHook } from '../core/runner/index.js';
 import type { RunResult } from '../core/runner/types.js';
 import type { Tool } from '../core/tools/types.js';
@@ -67,6 +73,94 @@ describe('RuntimeApp', () => {
     expect(result.sessionKey).toBe('main');
     expect(result.text).toBe('hello');
     expect(app.getState().phase).toBe('ready');
+  });
+
+  it('CH-05 isolates channel.send failures without changing Turn execution', async () => {
+    const runnerRun = vi.fn(async (): Promise<RunResult> => ({
+      text: 'done',
+      content: [{ type: 'text', text: 'done' }],
+      stopReason: 'end_turn',
+      usage: { inputTokens: 1, outputTokens: 1 },
+      toolRounds: 0,
+    }));
+    const observedEvents = vi.fn();
+    const deps = createTestDependencies({
+      createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} } as never),
+      createMemoryManager: async () => null,
+    });
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'test-model' },
+        memory: { enabled: false },
+      },
+      dependencies: deps,
+      onAgentEvent: observedEvents,
+    });
+
+    const failingChannel = createTestChannel('failing-channel');
+    failingChannel.channel.send = vi.fn(() => {
+      throw new Error('channel failed');
+    });
+    const receivingChannel = createTestChannel('receiving-channel');
+    const receivedEvents = vi.fn();
+    receivingChannel.channel.send = receivedEvents;
+    app.registerChannel(failingChannel.channel);
+    app.registerChannel(receivingChannel.channel);
+
+    await failingChannel.dispatch({
+      sessionKey: 'main',
+      message: 'fan out',
+      clientId: 'client-1',
+    });
+
+    expect(receivedEvents).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'user_message',
+        sessionKey: 'main',
+        content: 'fan out',
+      }),
+    );
+    expect(observedEvents).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'user_message', sessionKey: 'main' }),
+    );
+    expect(runnerRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('CH-05 propagates an onAgentEvent observer failure before Runner execution', async () => {
+    const runnerRun = vi.fn(async (): Promise<RunResult> => ({
+      text: 'unreachable',
+      content: [{ type: 'text', text: 'unreachable' }],
+      stopReason: 'end_turn',
+      usage: { inputTokens: 1, outputTokens: 1 },
+      toolRounds: 0,
+    }));
+    const observerError = new Error('observer failed');
+    const deps = createTestDependencies({
+      createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} } as never),
+      createMemoryManager: async () => null,
+    });
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'test-model' },
+        memory: { enabled: false },
+      },
+      dependencies: deps,
+      onAgentEvent: (event) => {
+        if (event.type === 'user_message') throw observerError;
+      },
+    });
+    const testChannel = createTestChannel('observer-failure-channel');
+    app.registerChannel(testChannel.channel);
+
+    await expect(testChannel.dispatch({
+      sessionKey: 'main',
+      message: 'observe',
+      clientId: 'client-1',
+    })).rejects.toBe(observerError);
+
+    expect(runnerRun).not.toHaveBeenCalled();
   });
 
   it('degrades to warning when memory initialization fails', async () => {
@@ -280,30 +374,51 @@ describe('RuntimeApp', () => {
     ]);
   });
 
-  it('routes queued turn approval expiry to the queued turn origin client', async () => {
+  it('CH-06 keeps queued turn approval pending past 120 seconds and closes it on Turn abort', async () => {
     vi.useFakeTimers();
 
     try {
       const firstRun = createDeferred<RunResult>();
       const approvalRequests: ApprovalRequest[] = [];
-      const approvalExpiries: ApprovalRequest[] = [];
+      const approvalClosures: Array<{
+        request: ApprovalRequest;
+        result: ApprovalClosedResult;
+      }> = [];
       let beforeToolCallHook: BeforeToolCallHook | undefined;
+      let approvalDecision: unknown;
 
       const runnerRun = vi.fn()
         .mockImplementationOnce(async (): Promise<RunResult> => firstRun.promise)
-        .mockImplementationOnce(async (params: { turnId: string; sessionKey: string }): Promise<RunResult> => {
-          const decision = await beforeToolCallHook?.({
-            toolName: 'demo_tool',
-            input: { approval: true },
-            turnId: params.turnId,
-            sessionKey: params.sessionKey,
-          });
-
-          expect(decision).toEqual({ action: 'deny', reason: 'Denied by timeout' });
+        .mockImplementationOnce(async (params: {
+          turnId: string;
+          sessionKey: string;
+          signal?: AbortSignal;
+        }): Promise<RunResult> => {
+          try {
+            approvalDecision = await beforeToolCallHook?.({
+              toolName: 'demo_tool',
+              input: { approval: true },
+              turnId: params.turnId,
+              sessionKey: params.sessionKey,
+              signal: params.signal,
+            });
+          } catch (error) {
+            if (!(error instanceof DOMException) || error.name !== 'AbortError') {
+              throw error;
+            }
+            approvalDecision = 'aborted';
+            return {
+              text: '',
+              content: [],
+              stopReason: 'aborted',
+              usage: { inputTokens: 0, outputTokens: 0 },
+              toolRounds: 0,
+            };
+          }
 
           return {
-            text: 'timed out',
-            content: [{ type: 'text', text: 'timed out' }],
+            text: 'approved',
+            content: [{ type: 'text', text: 'approved' }],
             stopReason: 'end_turn',
             usage: { inputTokens: 1, outputTokens: 1 },
             toolRounds: 0,
@@ -337,7 +452,7 @@ describe('RuntimeApp', () => {
 
       const testChannel = createApprovalTestChannel('approval-expiry-queue-test', {
         approvalRequests,
-        approvalExpiries,
+        approvalClosures,
         autoDecision: null,
       });
       app.registerChannel(testChannel.channel);
@@ -376,9 +491,18 @@ describe('RuntimeApp', () => {
       });
 
       await vi.advanceTimersByTimeAsync(120_000);
+      expect(approvalClosures).toHaveLength(0);
+      expect(approvalDecision).toBeUndefined();
+
+      expect(app.abortTurn('main')).toEqual({ aborted: true, dropped: 0 });
       await vi.waitFor(() => {
-        expect(approvalExpiries).toHaveLength(1);
+        expect(approvalClosures).toHaveLength(1);
       });
+
+      const queuedRunPromise = runnerRun.mock.results[1]?.value;
+      expect(queuedRunPromise).toBeDefined();
+      await queuedRunPromise;
+      expect(approvalDecision).toBe('aborted');
 
       expect(approvalRequests[0]).toEqual(
         expect.objectContaining({
@@ -387,16 +511,166 @@ describe('RuntimeApp', () => {
           originClientId: 'client-2',
         }),
       );
-      expect(approvalExpiries[0]).toEqual(
-        expect.objectContaining({
+      expect(approvalClosures[0]).toEqual({
+        request: expect.objectContaining({
           sessionKey: 'main',
           toolName: 'demo_tool',
           originClientId: 'client-2',
         }),
-      );
+        result: { outcome: 'aborted', reason: 'turn' },
+      });
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('CH-06 approval routing depends on startChannels and fails closed without origin capability', async () => {
+    let beforeToolCallHook: BeforeToolCallHook | undefined;
+    const decisions: unknown[] = [];
+    const runnerRun = vi.fn(async (params: { turnId: string; sessionKey: string }): Promise<RunResult> => {
+      if (beforeToolCallHook) {
+        decisions.push(await beforeToolCallHook({
+          toolName: 'unmatched_tool',
+          input: {},
+          turnId: params.turnId,
+          sessionKey: params.sessionKey,
+        }));
+      }
+      return {
+        text: 'done',
+        content: [{ type: 'text', text: 'done' }],
+        stopReason: 'end_turn',
+        usage: { inputTokens: 1, outputTokens: 1 },
+        toolRounds: 0,
+      };
+    });
+    const agentRunner = {
+      on: vi.fn((hookName: string, handler: BeforeToolCallHook) => {
+        if (hookName === 'before_tool_call') {
+          beforeToolCallHook = handler;
+        }
+        return agentRunner;
+      }),
+      run: runnerRun,
+      setToolExecutor: vi.fn(),
+    };
+    const deps = createTestDependencies({
+      createAgentRunner: () => agentRunner as never,
+      createMemoryManager: async () => null,
+    });
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'test-model' },
+        memory: { enabled: false },
+        tools: { allow: [], deny: [] },
+      },
+      dependencies: deps,
+    });
+    const testChannel = createTestChannel('no-approval-channel');
+    app.registerChannel(testChannel.channel);
+
+    await testChannel.dispatch({ sessionKey: 'main', message: 'before startup' });
+    expect(beforeToolCallHook).toBeUndefined();
+    expect(decisions).toEqual([]);
+
+    await app.startChannels();
+    expect(beforeToolCallHook).toBeDefined();
+    await testChannel.dispatch({ sessionKey: 'main', message: 'after startup' });
+
+    expect(decisions).toEqual([
+      {
+        action: 'deny',
+        reason: 'Tool not in allowlist (no approval channel)',
+      },
+    ]);
+  });
+
+  it('CH-06 shutdown closes a pending approval before waiting for Turn convergence', async () => {
+    const approvalRequests: ApprovalRequest[] = [];
+    const approvalClosures: Array<{
+      request: ApprovalRequest;
+      result: ApprovalClosedResult;
+    }> = [];
+    let beforeToolCallHook: BeforeToolCallHook | undefined;
+
+    const agentRunner = {
+      on: vi.fn((hookName: string, handler: BeforeToolCallHook) => {
+        if (hookName === 'before_tool_call') {
+          beforeToolCallHook = handler;
+        }
+        return agentRunner;
+      }),
+      run: vi.fn(async (params: {
+        turnId: string;
+        sessionKey: string;
+        signal?: AbortSignal;
+      }): Promise<RunResult> => {
+        try {
+          await beforeToolCallHook?.({
+            toolName: 'demo_tool',
+            input: {},
+            turnId: params.turnId,
+            sessionKey: params.sessionKey,
+            signal: params.signal,
+          });
+          throw new Error('approval unexpectedly settled without shutdown');
+        } catch (error) {
+          if (!(error instanceof DOMException) || error.name !== 'AbortError') {
+            throw error;
+          }
+          return {
+            text: '',
+            content: [],
+            stopReason: 'aborted',
+            usage: { inputTokens: 0, outputTokens: 0 },
+            toolRounds: 0,
+          };
+        }
+      }),
+      setToolExecutor: vi.fn(),
+    };
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'test-model' },
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies({
+        createAgentRunner: () => agentRunner as never,
+        createMemoryManager: async () => null,
+      }),
+    });
+    const testChannel = createApprovalTestChannel('approval-shutdown-test', {
+      approvalRequests,
+      approvalClosures,
+      autoDecision: null,
+    });
+    app.registerChannel(testChannel.channel);
+    await app.startChannels();
+
+    const dispatch = testChannel.dispatch({
+      sessionKey: 'main',
+      message: 'wait for approval',
+      clientId: 'client-1',
+    });
+    await vi.waitFor(() => {
+      expect(approvalRequests).toHaveLength(1);
+    });
+
+    await expect(app.close('approval shutdown test')).resolves.toEqual(
+      expect.objectContaining({ failed: [] }),
+    );
+    await dispatch;
+    expect(approvalClosures).toEqual([
+      {
+        request: expect.objectContaining({
+          toolName: 'demo_tool',
+          originClientId: 'client-1',
+        }),
+        result: { outcome: 'aborted', reason: 'shutdown' },
+      },
+    ]);
   });
 
   // ── Abort（core-abort-spec.md §8） ──────────────────
@@ -822,7 +1096,10 @@ function createApprovalTestChannel(
   id: string,
   options: {
     approvalRequests: ApprovalRequest[];
-    approvalExpiries?: ApprovalRequest[];
+    approvalClosures?: Array<{
+      request: ApprovalRequest;
+      result: ApprovalClosedResult;
+    }>;
     autoDecision?: ApprovalDecision | null;
   },
 ): {
@@ -854,12 +1131,16 @@ function createApprovalTestChannel(
           if (autoDecision) {
             approvalDecisionHandler?.(request.id, autoDecision);
           }
+          return { status: 'accepted' };
         },
-        sendApprovalExpired(request) {
-          options.approvalExpiries?.push(request);
+        sendApprovalClosed(request, result) {
+          options.approvalClosures?.push({ request, result });
         },
         onApprovalDecision(handler) {
           approvalDecisionHandler = handler;
+        },
+        onApprovalUnavailable() {
+          // This test channel remains available for its full lifetime.
         },
       },
     },

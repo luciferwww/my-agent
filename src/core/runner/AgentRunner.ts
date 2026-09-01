@@ -662,6 +662,7 @@ export class AgentRunner {
                 input: toolUse.input,
                 turnId: params.turnId,
                 sessionKey: params.sessionKey,
+                signal: params.signal,
               });
               if (beforeResult.action === 'deny') {
                 const blocked: ToolResult = { content: `Tool blocked: ${beforeResult.reason}`, isError: true };

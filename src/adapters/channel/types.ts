@@ -51,7 +51,6 @@ interface TurnInteractionRequestBase<K extends TurnInteractionKind> {
   turnId: string;
   /** 发起本次 run 的客户端标识符；WebSocketChannel 用此字段定向路由，CliChannel 可忽略 */
   originClientId?: string;
-  timeoutMs?: number;
 }
 
 export interface ApprovalInteractionRequest
@@ -75,7 +74,6 @@ export type TurnInteractionRequest =
 export type TurnInteractionOutcome =
   | 'submitted'
   | 'cancelled'
-  | 'expired'
   | 'aborted';
 
 interface TurnInteractionResponseBase<K extends TurnInteractionKind> {
@@ -90,7 +88,7 @@ export type ApprovalInteractionResponse =
       decision: ApprovalDecision;
     })
   | (TurnInteractionResponseBase<'approval'> & {
-      outcome: 'cancelled' | 'expired' | 'aborted';
+      outcome: 'cancelled' | 'aborted';
     });
 
 export type SelectInteractionResponse =
@@ -99,7 +97,7 @@ export type SelectInteractionResponse =
       value: string;
     })
   | (TurnInteractionResponseBase<'select'> & {
-      outcome: 'cancelled' | 'expired' | 'aborted';
+      outcome: 'cancelled' | 'aborted';
     });
 
 export type TurnInteractionResponse =
@@ -117,15 +115,36 @@ export interface ApprovalRequest {
   turnId: string;
   /** 发起本次 run 的客户端标识符；WebSocketChannel 用此字段定向路由，CliChannel 忽略 */
   originClientId?: string;
-  timeoutMs?: number;
 }
 
 export type ApprovalDecision = 'allow' | 'deny';
 
-/** 审批结果。拒绝时携带原因以便上层区分用户行为与超时。 */
 export type ApprovalResult =
-  | { decision: 'allow' }
-  | { decision: 'deny'; reason: 'user' | 'timeout' };
+  | { outcome: 'approved' }
+  | { outcome: 'denied'; reason: 'user' | 'user_cancelled' }
+  | { outcome: 'aborted'; reason: 'turn' | 'shutdown' }
+  | {
+      outcome: 'unavailable';
+      reason: 'origin_missing' | 'delivery_failed' | 'origin_disconnected';
+    }
+  | { outcome: 'failed'; message: string };
+
+export interface ApprovalRequestOptions {
+  request: Omit<ApprovalRequest, 'id'>;
+  signal: AbortSignal;
+}
+
+export type ApprovalClosedResult = Extract<
+  ApprovalResult,
+  { outcome: 'aborted' | 'unavailable' | 'failed' }
+>;
+
+export type ApprovalDeliveryResult =
+  | { status: 'accepted' }
+  | {
+      status: 'unavailable';
+      reason: 'origin_missing' | 'delivery_failed';
+    };
 
 // ── Channel 接口 ───────────────────────────────────────────────
 
@@ -198,14 +217,19 @@ export interface Channel {
  */
 export interface ChannelInteractionAdapter {
   /** RuntimeApp 推送交互请求给 channel（channel 负责呈现给用户） */
-  sendInteractionRequest(request: TurnInteractionRequest): void;
+  sendInteractionRequest(request: TurnInteractionRequest): ApprovalDeliveryResult;
 
-  /** RuntimeApp 推送交互结束/过期通知给 channel（channel 负责关闭对应 UI） */
-  sendInteractionExpired(request: TurnInteractionRequest): void;
+  /** RuntimeApp 推送非人工终态（channel 负责关闭对应 UI） */
+  sendInteractionClosed(request: TurnInteractionRequest, result: ApprovalClosedResult): void;
 
   /** channel 注册交互响应处理器（由 RuntimeApp 在 registerChannel 时调用） */
   onInteractionResponse(
     handler: (response: TurnInteractionResponse) => void,
+  ): void;
+
+  /** channel 报告已投递 origin 在 pending 期间失效 */
+  onInteractionUnavailable(
+    handler: (id: string, reason: 'origin_disconnected') => void,
   ): void;
 }
 
@@ -213,18 +237,22 @@ export interface ChannelInteractionAdapter {
  * 审批交互适配器。
  *
  * RuntimeApp 检测到 channel.approval 存在时自动接入 TurnInteractionManager。
- * 不实现此接口的 channel 不具备审批能力，
- * TurnInteractionManager 将在超时后按默认策略处理。
+ * 不实现此接口的 channel 不具备审批能力，Tool Policy fail closed。
  */
 export interface ChannelApprovalAdapter {
   /** RuntimeApp 推送审批请求给 channel（channel 负责呈现给用户） */
-  sendApprovalRequest(request: ApprovalRequest): void;
+  sendApprovalRequest(request: ApprovalRequest): ApprovalDeliveryResult;
 
-  /** RuntimeApp 推送超时通知给 channel（channel 负责关闭审批 UI） */
-  sendApprovalExpired(request: ApprovalRequest): void;
+  /** RuntimeApp 推送非人工终态（channel 负责关闭审批 UI） */
+  sendApprovalClosed(request: ApprovalRequest, result: ApprovalClosedResult): void;
 
   /** channel 注册审批决策处理器（由 RuntimeApp 在 registerChannel 时调用） */
   onApprovalDecision(
     handler: (id: string, decision: ApprovalDecision) => void,
+  ): void;
+
+  /** channel 报告已投递 origin 在 pending 期间失效 */
+  onApprovalUnavailable(
+    handler: (id: string, reason: 'origin_disconnected') => void,
   ): void;
 }

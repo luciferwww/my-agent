@@ -3,6 +3,7 @@ import type { AgentEvent } from '../../core/runner/types.js';
 import { Logger } from '../../platform/logger/index.js';
 import type {
   AbortHookBindings,
+  ApprovalClosedResult,
   ApprovalDecision,
   ApprovalRequest,
   Channel,
@@ -103,11 +104,8 @@ export class CliChannel implements Channel {
   /** 流式输出过程中插入 tool/error 行前需要先换行；run_end / 显式插入会重置 */
   private inStream = false;
   private stopped = false;
-  /** 当前 readline.question 的 reject，用于 stop() 时唤醒阻塞的 prompt */
-  private pendingPromptReject?: (err: Error) => void;
-  /** 已超时但仍可能等到用户输入的 approval id，用户回答时直接吞掉不再回填 */
-  private expiredApprovalIds = new Set<string>();
-
+  /** 当前 readline.question 的 AbortController，用于 closure/stop 时取消底层读操作 */
+  private pendingPromptAbort?: AbortController;
   // ── Abort / Ctrl+C 状态（core-abort-spec.md §12）─────────────
   /** 上次 Ctrl+C 时间戳（epoch ms）；0 = 没有近期按键。用于双击检测。 */
   private lastCtrlCAt = 0;
@@ -349,7 +347,7 @@ export class CliChannel implements Channel {
     // 不负责恢复 start() 时被 `removeAllListeners('SIGINT')` 清掉的其他 listener
     // ——与上述 “CliChannel 独占进程 SIGINT” 假设同源。
     process.off('SIGINT', this.boundSigIntHandler);
-    this.pendingPromptReject?.(new Error('CliChannel stopped'));
+    this.pendingPromptAbort?.abort(new Error('CliChannel stopped'));
     this.rl?.close();
     this.rl = undefined;
   }
@@ -439,9 +437,21 @@ export class CliChannel implements Channel {
         reject(new Error('readline not initialized'));
         return;
       }
-      this.pendingPromptReject = reject;
-      this.rl.question(prompt, (answer) => {
-        this.pendingPromptReject = undefined;
+      const controller = new AbortController();
+      const clear = () => {
+        if (this.pendingPromptAbort === controller) {
+          this.pendingPromptAbort = undefined;
+        }
+        controller.signal.removeEventListener('abort', onAbort);
+      };
+      const onAbort = () => {
+        clear();
+        reject(controller.signal.reason);
+      };
+      this.pendingPromptAbort = controller;
+      controller.signal.addEventListener('abort', onAbort, { once: true });
+      this.rl.question(prompt, { signal: controller.signal }, (answer) => {
+        clear();
         resolve(answer);
       });
     });
@@ -457,15 +467,18 @@ export class CliChannel implements Channel {
           sessionKey: request.sessionKey,
           turnId: request.turnId,
         });
-        this.promptApproval(request, (decision) => {
+        return this.promptApproval(request, (decision) => {
           this.dispatchApprovalSubmission(request.id, decision);
         });
       },
-      sendApprovalExpired: (request: ApprovalRequest) => {
-        this.expireApproval(request.id);
+      sendApprovalClosed: (request: ApprovalRequest, result: ApprovalClosedResult) => {
+        this.closeApproval(request.id, result);
       },
       onApprovalDecision: (handler) => {
         this.approvalDecisionHandler = handler;
+      },
+      onApprovalUnavailable: () => {
+        // CLI approval origin shares the channel process lifecycle.
       },
     };
   }
@@ -476,18 +489,21 @@ export class CliChannel implements Channel {
         if (request.kind !== 'approval') {
           throw new Error(`CliChannel does not support interaction kind: ${request.kind}`);
         }
-        this.promptApproval(request, (decision) => {
+        return this.promptApproval(request, (decision) => {
           this.dispatchApprovalSubmission(request.id, decision);
         });
       },
-      sendInteractionExpired: (request) => {
+      sendInteractionClosed: (request, result) => {
         if (request.kind !== 'approval') {
           throw new Error(`CliChannel does not support interaction kind: ${request.kind}`);
         }
-        this.expireApproval(request.id);
+        this.closeApproval(request.id, result);
       },
       onInteractionResponse: (handler) => {
         this.interactionResponseHandler = handler;
+      },
+      onInteractionUnavailable: () => {
+        // CLI approval origin shares the channel process lifecycle.
       },
     };
   }
@@ -516,7 +532,10 @@ export class CliChannel implements Channel {
   private promptApproval(
     request: Pick<ApprovalRequest, 'id' | 'toolName' | 'input'>,
     onDecision: (decision: ApprovalDecision) => void,
-  ): void {
+  ): { status: 'accepted' } | { status: 'unavailable'; reason: 'delivery_failed' } {
+    if (!this.rl) {
+      return { status: 'unavailable', reason: 'delivery_failed' };
+    }
     this.breakStream();
     this.output.write(
       yellow(
@@ -527,14 +546,6 @@ export class CliChannel implements Channel {
     // readline 的主 prompt 此时已 resolved，未在 listen，可安全复用。
     this.question(yellow('approve? (y/n)> ')).then(
       (answer) => {
-        if (this.expiredApprovalIds.delete(request.id)) {
-          // 用户回答晚于超时，吞掉不再回填
-          log.warn('cli approval answer arrived after expiry', {
-            channelId: this.id,
-            approvalId: request.id,
-          });
-          return;
-        }
         const decision: ApprovalDecision =
           answer.trim().toLowerCase() === 'y' ? 'allow' : 'deny';
         log.debug('cli approval answer captured', {
@@ -552,14 +563,16 @@ export class CliChannel implements Channel {
         });
       },
     );
+    return { status: 'accepted' };
   }
 
-  private expireApproval(id: string): void {
-    this.expiredApprovalIds.add(id);
-    this.output.write(yellow(`\n[approval] timed out (denied)\n`));
-    log.info('cli approval expired', {
+  private closeApproval(id: string, result: ApprovalClosedResult): void {
+    this.pendingPromptAbort?.abort(new Error('Approval closed'));
+    this.output.write(yellow(`\n[approval] closed (${result.outcome})\n`));
+    log.info('cli approval closed', {
       channelId: this.id,
       approvalId: id,
+      outcome: result.outcome,
     });
   }
 }
