@@ -2,7 +2,7 @@
 
 > 基准版本：v1.0
 > 文档日期：2026-05-29
-> 状态同步：2026-08-27（用户消息广播、用户主动中止）
+> 状态同步：2026-09-01（Approval response-or-Abort lifecycle）
 > 关联文档：`runtime.md` · `core_runner.md`
 
 ---
@@ -102,24 +102,25 @@ sequenceDiagram
     participant RT as RuntimeApp
     participant CH as Channel
 
-    RUNNER->>RT: before_tool_call hook { toolName, input, turnId }
-    RT->>TIM: request({ toolName, input, turnId, originClientId })
+    RUNNER->>RT: before_tool_call hook { toolName, input, turnId, signal }
+    RT->>TIM: request({ request, signal })
     TIM->>RT: onRequest(request)
-    RT->>CH: originChannel.interaction.sendInteractionRequest\n或 .approval.sendApprovalRequest
+    RT->>CH: sendInteractionRequest / sendApprovalRequest
+    CH-->>TIM: accepted / unavailable
     note over CH: 呈现给用户，等待决策
     CH->>RT: onInteractionResponse / onApprovalDecision
     RT->>TIM: resolve(id, decision)
-    TIM-->>RT: ApprovalResult { decision, reason? }
+    TIM-->>RT: classified ApprovalResult
     RT-->>RUNNER: { action: 'allow' } 或 { action: 'deny', reason }
 ```
 
-超时路径：TurnInteractionManager 内部 timer 触发 → resolve `{ decision:'deny', reason:'timeout' }` → onExpire 回调 → RuntimeApp 通知起源 channel 关闭 UI。
+  非人工终态路径：Turn Abort、Shutdown、初始 delivery failure 或 origin disconnect → classified settlement → `onClose` → RuntimeApp 通知起源 channel 关闭 UI。elapsed time 不改变 pending 状态。
 
 关键路由规则：
 - **起源路由不广播**：按 turnId 查 `routeContextByTurn` 只通知起源 channel
 - **interaction 优先于 approval**：channel 同时实现两者时走 `interaction`
-- **起源不可达时不主动 deny**：直接 return，让超时机制兜底
-- **库模式（无 channel）直接不注册 hook**：所有 tool 调用直通，不等待
+- **起源不可达时 fail closed**：分类为 unavailable，不伪装成用户 deny
+- **当前调用无 capability 时 fail closed**：unmatched Tool 不依赖启动历史，不直接放行
 
 ---
 
@@ -152,15 +153,17 @@ Channel {
 }
 
 ChannelInteractionAdapter {
-  sendInteractionRequest(request: TurnInteractionRequest): void
-  sendInteractionExpired(request: TurnInteractionRequest): void
+  sendInteractionRequest(request: TurnInteractionRequest): ApprovalDeliveryResult
+  sendInteractionClosed(request: TurnInteractionRequest, result: ApprovalClosedResult): void
   onInteractionResponse(handler: (response: TurnInteractionResponse) => void): void
+  onInteractionUnavailable(handler: (id: string, reason: 'origin_disconnected') => void): void
 }
 
 ChannelApprovalAdapter {
-  sendApprovalRequest(request: ApprovalRequest): void
-  sendApprovalExpired(request: ApprovalRequest): void
+  sendApprovalRequest(request: ApprovalRequest): ApprovalDeliveryResult
+  sendApprovalClosed(request: ApprovalRequest, result: ApprovalClosedResult): void
   onApprovalDecision(handler: (id: string, decision: ApprovalDecision) => void): void
+  onApprovalUnavailable(handler: (id: string, reason: 'origin_disconnected') => void): void
 }
 ```
 
@@ -174,12 +177,14 @@ ApprovalRequest {
   sessionKey: string
   turnId: string
   originClientId?: string
-  timeoutMs?: number
 }
 
 ApprovalResult =
-  | { decision: 'allow' }
-  | { decision: 'deny'; reason: 'user' | 'timeout' }  // 区分主动拒绝与超时
+  | { outcome: 'approved' }
+  | { outcome: 'denied'; reason: 'user' | 'user_cancelled' }
+  | { outcome: 'aborted'; reason: 'turn' | 'shutdown' }
+  | { outcome: 'unavailable'; reason: 'origin_missing' | 'delivery_failed' | 'origin_disconnected' }
+  | { outcome: 'failed'; message: string }
 ```
 
 ### 4.4 通用 turn 交互类型
@@ -192,11 +197,11 @@ TurnInteractionRequest =
   | SelectInteractionRequest   { kind:'select'; options; title?; ... }
 
 TurnInteractionResponse =
-  | ApprovalInteractionResponse { outcome:'submitted'; decision } | { outcome: 'cancelled'|'expired'|'aborted' }
-  | SelectInteractionResponse   { outcome:'submitted'; value   } | { outcome: 'cancelled'|'expired'|'aborted' }
+  | ApprovalInteractionResponse { outcome:'submitted'; decision } | { outcome: 'cancelled'|'aborted' }
+  | SelectInteractionResponse   { outcome:'submitted'; value   } | { outcome: 'cancelled'|'aborted' }
 ```
 
-`outcome` 区分用户提交、主动取消、超时、abort 四种结束方式。`select` 类型已在类型层定义，但当前两个内置 channel 尚未真正实现。
+`outcome` 区分用户提交、主动取消和 abort。`select` 类型已在类型层定义，但当前两个内置 channel 尚未真正实现。
 
 ---
 
@@ -206,23 +211,22 @@ TurnInteractionResponse =
 
 ```
 TurnInteractionManager {
-  request(params): Promise<ApprovalResult>  // before_tool_call hook 调用，阻塞等待
+  request({ request, signal }): Promise<ApprovalResult> // before_tool_call hook 调用，阻塞等待
   resolve(id, decision): void               // channel 收到用户决策后调用
   onRequest(handler): void                  // RuntimeApp 注册，request 创建时路由给起源 channel
-  onExpire(handler): void                   // RuntimeApp 注册，超时时通知起源 channel 关闭 UI
-  close(): void                             // 拒绝所有 pending 请求（应用关闭时调用）
+  onClose(handler): void                    // RuntimeApp 注册，非人工终态时关闭起源 channel UI
+  close(): void                             // 以 aborted/shutdown 结束所有 pending 请求
 }
 ```
 
-内部结构：`Map<id, { resolve, timer, request }>`，每个 pending 请求独立管理 Promise 和超时 timer。
+内部结构：`Map<id, { resolve, request, signal, abortHandler }>`。没有 elapsed-time timer。
 
 **request() 流程：**
 ```
 id = randomUUID()
-创建 timer（timeoutMs 或 defaultTimeoutMs=120,000）
-pending.set(id, { resolve, timer, request })
-同步触发 requestHandler（RuntimeApp 路由给起源 channel）
-return Promise // 等待 resolve() 调用或 timer 触发
+pending.set(id, { resolve, request, signal, abortHandler })
+同步触发 requestHandler，并检查 delivery result
+return Promise // 等待用户决策、Abort、Shutdown 或 origin unavailable
 ```
 
 ---
@@ -274,7 +278,7 @@ CliChannelConfig {
 开启 `approval: true` 时同时构造 `interaction` 和 `approval` 两个适配器：
 - `sendInteractionRequest`（kind=`'approval'`）和 `sendApprovalRequest` 最终都走同一个 `promptApproval()` → readline `y/n` prompt
 - 非 approval 的 interaction kind → **throw**（CliChannel 不支持）
-- 超时到达后若用户仍然作答，`expiredApprovalIds` 集合检测并静默丢弃该答案
+- 非人工 closure 或 `stop()` 通过 AbortSignal 取消底层 readline question；Promise 已 reject 后的 late callback 不会提交决策
 - 响应优先走 `interactionResponseHandler`，未注册则回退 `approvalDecisionHandler`
 
 ---
@@ -312,8 +316,8 @@ WebSocketChannelConfig {
 |---|---|
 | `{ type:'hello_ack'; clientId }` | 单播，握手确认 |
 | AgentEvent 全部 variant | 广播给同 session 所有已连接 client |
-| `{ type:'approval_requested'; id; toolName; input; timeoutMs? }` | 定向发给 originClientId |
-| `{ type:'approval_expired'; id }` | 定向发给 originClientId |
+| `{ type:'approval_requested'; id; toolName; input }` | 定向发给 originClientId |
+| `{ type:'approval_closed'; id; outcome; reason }` | 定向发给 originClientId；只承载 aborted/unavailable/failed |
 | `{ type:'channel_error'; code; message }` | 单播，协议错误通知 |
 
 ### 7.3 内部状态（双表）

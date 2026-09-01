@@ -176,17 +176,16 @@ AgentRunner 调用 tool 前
    │ Promise resolve → ApprovalResult { decision, reason:'user' }│
    └────────────────────────────────────────────────────────────┘
 
-   ┌─ 超时路径 ─────────────────────────────────────────────────┐
-  │ TurnInteractionManager 内部 timer 触发 expire(id)           │
-   │      │                                                      │
-   │      ├─ Promise resolve → ApprovalResult                    │
-   │      │       { decision:'deny', reason:'timeout' }          │
-   │      └─ 触发 onExpire 回调                                  │
-   │                │                                            │
-   │                ▼                                            │
-   │       Channel.approval.sendApprovalExpired(req)             │
-   │       → 通知 client 关闭审批 UI                             │
-   └────────────────────────────────────────────────────────────┘
+  ┌─ 非人工终态路径 ───────────────────────────────────────────┐
+  │ Turn Abort / Shutdown / origin unavailable / internal fail │
+  │      │                                                      │
+  │      ├─ Promise resolve → classified ApprovalResult         │
+  │      └─ 触发 onClose(request, result)                       │
+  │                │                                            │
+  │                ▼                                            │
+  │       Channel.approval.sendApprovalClosed(req, result)      │
+  │       → 通知 client 关闭审批 UI                             │
+  └────────────────────────────────────────────────────────────┘
         │
         ▼
    Hook handler 根据 ApprovalResult 返回:
@@ -234,15 +233,16 @@ export interface ApprovalRequest {
   turnId: string;
   /** 发起本次 run 的逻辑客户端标识符；WebSocketChannel 用此字段定向路由，CliChannel 忽略 */
   originClientId?: string;
-  timeoutMs?: number;
 }
 
 export type ApprovalDecision = 'allow' | 'deny';
 
-/** 审批结果。拒绝时携带原因以便上层区分用户行为与超时。 */
 export type ApprovalResult =
-  | { decision: 'allow' }
-  | { decision: 'deny'; reason: 'user' | 'timeout' };
+  | { outcome: 'approved' }
+  | { outcome: 'denied'; reason: 'user' | 'user_cancelled' }
+  | { outcome: 'aborted'; reason: 'turn' | 'shutdown' }
+  | { outcome: 'unavailable'; reason: 'origin_missing' | 'delivery_failed' | 'origin_disconnected' }
+  | { outcome: 'failed'; message: string };
 
 // ── Channel 接口 ───────────────────────────────────────────────
 
@@ -286,14 +286,18 @@ export interface Channel {
  */
 export interface ChannelInteractionAdapter {
   /** RuntimeApp 推送交互请求给 channel（channel 负责呈现给用户） */
-  sendInteractionRequest(request: TurnInteractionRequest): void;
+  sendInteractionRequest(request: TurnInteractionRequest): ApprovalDeliveryResult;
 
-  /** RuntimeApp 推送交互结束/过期通知给 channel（channel 负责关闭对应 UI） */
-  sendInteractionExpired(request: TurnInteractionRequest): void;
+  /** RuntimeApp 推送非人工终态给 channel（channel 负责关闭对应 UI） */
+  sendInteractionClosed(request: TurnInteractionRequest, result: ApprovalClosedResult): void;
 
   /** channel 注册交互响应处理器（由 RuntimeApp 在 registerChannel 时调用） */
   onInteractionResponse(
     handler: (response: TurnInteractionResponse) => void,
+  ): void;
+
+  onInteractionUnavailable(
+    handler: (id: string, reason: 'origin_disconnected') => void,
   ): void;
 }
 
@@ -302,18 +306,22 @@ export interface ChannelInteractionAdapter {
  *
  * RuntimeApp 检测到 channel.approval 存在时自动接入 TurnInteractionManager。
  * 不实现此接口的 channel 不具备审批能力，
- * TurnInteractionManager 将在超时后按默认策略处理。
+ * 不实现此接口的 channel 不具备审批能力，Tool Policy fail closed。
  */
 export interface ChannelApprovalAdapter {
   /** RuntimeApp 推送审批请求给 channel（channel 负责呈现给用户） */
-  sendApprovalRequest(request: ApprovalRequest): void;
+  sendApprovalRequest(request: ApprovalRequest): ApprovalDeliveryResult;
 
-  /** RuntimeApp 推送超时通知给 channel（channel 负责关闭审批 UI） */
-  sendApprovalExpired(request: ApprovalRequest): void;
+  /** RuntimeApp 推送非人工终态给 channel（channel 负责关闭审批 UI） */
+  sendApprovalClosed(request: ApprovalRequest, result: ApprovalClosedResult): void;
 
   /** channel 注册审批决策处理器（由 RuntimeApp 在 registerChannel 时调用） */
   onApprovalDecision(
     handler: (id: string, decision: ApprovalDecision) => void,
+  ): void;
+
+  onApprovalUnavailable(
+    handler: (id: string, reason: 'origin_disconnected') => void,
   ): void;
 }
 ```
@@ -329,18 +337,12 @@ export interface ChannelApprovalAdapter {
 ### 4.1 公开 API
 
 ```typescript
-export interface TurnInteractionManagerConfig {
-  /** 默认超时（毫秒），超时后按 deny 处理；默认 120_000 */
-  defaultTimeoutMs?: number;
-}
-
 export class TurnInteractionManager {
-  constructor(config?: TurnInteractionManagerConfig);
-
-  request(params: Omit<ApprovalRequest, 'id'>): Promise<ApprovalResult>;
+  request(options: ApprovalRequestOptions): Promise<ApprovalResult>;
   resolve(id: string, decision: ApprovalDecision): void;
-  onRequest(handler: (request: ApprovalRequest) => void): void;
-  onExpire(handler: (request: ApprovalRequest) => void): void;
+  settle(id: string, result: ApprovalResult): boolean;
+  onRequest(handler: (request: ApprovalRequest) => ApprovalDeliveryResult): void;
+  onClose(handler: (request: ApprovalRequest, result: ApprovalClosedResult) => void): void;
   close(): void;
 }
 ```
@@ -350,23 +352,24 @@ export class TurnInteractionManager {
 ```typescript
 type PendingEntry = {
   resolve: (result: ApprovalResult) => void;
-  timer: NodeJS.Timeout;
   request: ApprovalRequest;
+  signal: AbortSignal;
+  abortHandler: () => void;
 };
 
 private pending = new Map<string, PendingEntry>();
-private requestHandler?: (request: ApprovalRequest) => void;
-private expireHandler?: (request: ApprovalRequest) => void;
+private requestHandler?: (request: ApprovalRequest) => ApprovalDeliveryResult;
+private closeHandler?: (request: ApprovalRequest, result: ApprovalClosedResult) => void;
 ```
 
 ### 4.3 与 hook 和 channel 的连接
 
-三者由 RuntimeApp 串联：**hook 注册一次、`onRequest` / `onExpire` 注册一次**，按 `turnId` 路由给起源 channel。`registerChannel` 负责把 channel 加入 `channels[]`，并同时绑定 `onMessage`、`onInteractionResponse` 与 `onApprovalDecision`。
+三者由 RuntimeApp 串联：**hook 注册一次、`onRequest` / `onClose` 注册一次**，按 `turnId` 路由给起源 channel。`registerChannel` 负责把 channel 加入 `channels[]`，并同时绑定 response/decision 与 unavailable callbacks。
 
 当前接线规则：
 
 - `before_tool_call` hook 调 `turnInteractionManager.request(...)`
-- `onRequest` / `onExpire` 先按 `turnId` 找 `originChannelByTurn`
+- `onRequest` / `onClose` 先按 `turnId` 找当前 call 的 route context
 - 若起源 channel 提供 `interaction`，优先走 `channel.interaction.*`
 - 否则兼容走 `channel.approval.*`
 - channel 回传响应时，若走 `interaction` 路径则进入 `handleInteractionResponse()`，若走兼容接口则直接 `resolve(id, decision)`
@@ -374,60 +377,52 @@ private expireHandler?: (request: ApprovalRequest) => void;
 **RuntimeApp 内部接线（伪代码）：**
 
 ```typescript
-private originChannelByTurn = new Map<string, Channel>();
-private originClientByTurn = new Map<string, string>();
+private routeContextByTurn = new Map<string, { originChannel?: Channel; originClientId?: string }>();
 private approvalRoutingWired = false;
 
 private wireApprovalRouting(): void {
   if (this.approvalRoutingWired) return;
-  if (!this.channels.some((c) => c.interaction || c.approval)) return;
   this.approvalRoutingWired = true;
 
-  this.agentRunner.on('before_tool_call', async ({ toolName, input, turnId, sessionKey }) => {
-    const result = await this.turnInteractionManager.request({
-      toolName,
-      input,
-      sessionKey,
-      turnId,
-      originClientId: this.originClientByTurn.get(turnId),
-    });
+  this.agentRunner.on('before_tool_call', async ({ toolName, input, turnId, sessionKey, signal }) => {
+    const originChannel = this.routeContextByTurn.get(turnId)?.originChannel;
+    const hasApprovalCapability = !!(originChannel?.interaction || originChannel?.approval);
+    const action = resolveToolPolicy(toolName, toolsConfig, hasApprovalCapability);
+    if (action !== 'prompt') return mapPolicyAction(action);
+    if (!signal) return { action: 'deny', reason: 'Approval unavailable: missing Turn signal' };
 
-    return result.decision === 'allow'
-      ? { action: 'allow' }
-      : {
-          action: 'deny',
-          reason: result.reason === 'timeout' ? 'Denied by timeout' : 'Denied by user',
-        };
+    const result = await this.turnInteractionManager.request({
+      request: { toolName, input, sessionKey, turnId, originClientId: this.routeContextByTurn.get(turnId)?.originClientId },
+      signal,
+    });
+    return mapApprovalResult(result);
   });
 
   this.turnInteractionManager.onRequest((request) => {
-    const originChannel = this.originChannelByTurn.get(request.turnId);
-    if (!originChannel) return;
+    const originChannel = this.routeContextByTurn.get(request.turnId)?.originChannel;
+    if (!originChannel) return { status: 'unavailable', reason: 'origin_missing' };
 
     if (originChannel.interaction) {
-      originChannel.interaction.sendInteractionRequest({
+      return originChannel.interaction.sendInteractionRequest({
         ...request,
         kind: 'approval',
       });
-      return;
     }
 
-    originChannel.approval?.sendApprovalRequest(request);
+    return originChannel.approval?.sendApprovalRequest(request)
+      ?? { status: 'unavailable', reason: 'origin_missing' };
   });
 
-  this.turnInteractionManager.onExpire((request) => {
-    const originChannel = this.originChannelByTurn.get(request.turnId);
+  this.turnInteractionManager.onClose((request, result) => {
+    const originChannel = this.routeContextByTurn.get(request.turnId)?.originChannel;
     if (!originChannel) return;
 
     if (originChannel.interaction) {
-      originChannel.interaction.sendInteractionExpired({
-        ...request,
-        kind: 'approval',
-      });
+      originChannel.interaction.sendInteractionClosed({ ...request, kind: 'approval' }, result);
       return;
     }
 
-    originChannel.approval?.sendApprovalExpired(request);
+    originChannel.approval?.sendApprovalClosed(request, result);
   });
 }
 
@@ -437,8 +432,14 @@ registerChannel(channel: Channel): void {
   channel.interaction?.onInteractionResponse((response) => {
     this.handleInteractionResponse(response);
   });
+  channel.interaction?.onInteractionUnavailable((id, reason) => {
+    this.turnInteractionManager.settle(id, { outcome: 'unavailable', reason });
+  });
   channel.approval?.onApprovalDecision((id, decision) => {
     this.turnInteractionManager.resolve(id, decision);
+  });
+  channel.approval?.onApprovalUnavailable((id, reason) => {
+    this.turnInteractionManager.settle(id, { outcome: 'unavailable', reason });
   });
 }
 ```
@@ -451,8 +452,8 @@ registerChannel(channel: Channel): void {
 | 路由时机 | channel.onMessage 入口写入 turnId→channel 映射，turn 结束（finally）清除 |
 | 路由依据 | 当前 approval 请求仍携带 `turnId`；RuntimeApp 在 `onRequest` handler 内查表找 originChannel |
 | 安全性 | 只有起源 channel 的 interaction / approval adapter 能呈现交互 UI，避免任意 channel 干预他人 turn |
-| 库模式自动放行 | RuntimeApp 启动时若 `channels.some(c => c.interaction || c.approval)` 为 false，则根本不注册 hook，所有 tool 调用直通 |
-| 起源 channel 不可达 | 起源 channel 不可达时不主动 deny，让 TurnInteractionManager 继续走 timeout 收口，便于诊断 |
+| 库模式 fail closed | 当前调用没有 origin approval capability 时，未匹配 allowlist 的 Tool 被 policy 拒绝 |
+| 起源 channel 不可达 | 初始 delivery failure 或 pending 期间 origin disconnect 立即分类为 unavailable，不伪装成用户 deny |
 
 `originChannelByTurn` / `originClientByTurn` 都按 turn 而非 session 跟踪。多个 client 共享同一 session 时，每个 turn 仍是独立交互边界，不会并发覆盖。`clientId` 不进入 `RunTurnParams`，仍然只是 channel↔RuntimeApp 的内部路由信息。
 
@@ -542,13 +543,13 @@ readline 逐行读取。`/exit`、`/clear` 等命令由调用方在 handler 外�
 
 `config.approval = true` 时，当前实现会同时构造：
 
-- `ChannelInteractionAdapter`：统一接收交互请求与过期通知
+- `ChannelInteractionAdapter`：统一接收交互请求、delivery 结果与非人工 closure 通知
 - `ChannelApprovalAdapter`：保留给 Phase 1 兼容调用点
 
 但 `CliChannel` 目前真正支持的交互种类仍只有 `approval`：
 
 - `sendInteractionRequest` / `sendApprovalRequest` 最终都落成同一个 readline `y/n` prompt
-- `sendInteractionExpired` / `sendApprovalExpired` 都会把该 approval 标记为超时
+- `sendInteractionClosed` / `sendApprovalClosed` 都会按 classified outcome 关闭该 approval
 - 用户提交后优先走 `interactionResponseHandler`；若未配置，再兼容回退到 `approvalDecisionHandler`
 
 ---
@@ -586,10 +587,10 @@ readline 逐行读取。`/exit`、`/clear` 等命令由调用方在 handler 外�
 { type: 'error';       error: string }
 
 /** 审批请求（由 TurnInteractionManager 触发，或由兼容 approval 路径落成） */
-{ type: 'approval_requested'; id: string; toolName: string; input: Record<string, unknown>; timeoutMs?: number }
+{ type: 'approval_requested'; id: string; toolName: string; input: Record<string, unknown> }
 
-/** 审批超时（由 TurnInteractionManager 超时后触发，通知 client 关闭审批 UI） */
-{ type: 'approval_expired'; id: string }
+/** 非人工审批终态，通知 client 关闭审批 UI */
+{ type: 'approval_closed'; id: string; outcome: 'aborted' | 'unavailable' | 'failed'; reason: string }
 ```
 
 ### 6.2 广播行为
@@ -599,7 +600,7 @@ readline 逐行读取。`/exit`、`/clear` 等命令由调用方在 handler 外�
 | `text_delta` / `tool_use` / `tool_result` / `run_end` | 广播给同 session 的所有已连接客户端 |
 | `error` | 广播给同 session 的所有已连接客户端 |
 | `approval_requested` | 起源 channel 是 WebSocketChannel 才会收到此请求；channel 内部按 `originClientId` 定向给该 client。其他 channel 不收到（由 RuntimeApp 按 turnId 路由过滤） |
-| `approval_expired` | 同上，定向发给 `originClientId`（同 `approval_requested` 路由路径） |
+| `approval_closed` | 同上，定向发给 `originClientId`（同 `approval_requested` 路由路径） |
 | `approval_resolve`（入站） | 单次有效，Manager 自动忽略重复提交 |
 
 ### 6.3 配置
@@ -828,7 +829,7 @@ expect(event).toEqual({ type: 'text_delta', text: 'hi', sessionKey: 'main', turn
 - 私有方法：`wireApprovalRouting()`（启动时调用一次；详见 §4.3）、`makeMessageHandler(channel)`
 - `startChannels` 入口先调 `wireApprovalRouting()` 再依次 `channel.start()`
 - `runTurn` 入口：若 `params.turnId` 未提供则生成 UUID，透传 `turnId` 给 `AgentRunner.run`
-- `registerChannel` 只把 channel 加入 `channels[]`，绑定 `onMessage` / `onApprovalDecision`，**不再** 注册 `onRequest` / `onExpire`（这两个由 `wireApprovalRouting` 一次性注册）
+- `registerChannel` 把 channel 加入 `channels[]`，绑定 message、response/decision 与 unavailable callbacks；`onRequest` / `onClose` 由 `wireApprovalRouting` 一次性注册
 - `close()` 内部调用 `stopChannels()` 并 `turnInteractionManager.close()`
 
 `close()` 本身是否已存在：若已存在则在其中补调 `stopChannels()`；若不存在则本次新增。
@@ -1013,15 +1014,15 @@ registerChannel(channel: Channel): void {
 |------|------|------|
 | `AgentEvent` 怎么从 runner 转发到多个 channel？ | 富化 `AgentEvent` 类型让每个事件自带 `sessionKey`/`turnId`；RuntimeApp 在 bootstrap 时给 `AgentRunnerConfig.onEvent` 注入 fanout 闭包，闭包共享 `channels[]` 引用，遍历调 `channel.send(event)` | 单一事件入口避免多机制并行（per-call + 构造时）造成处理代码分散；事件自描述对 telemetry/log 也更友好；`channels[]` 数组共享引用使 registerChannel 时机宽松；多 session 并发时事件携带自身路由信息，无需闭包/查表 |
 | `AgentEvent` 是否要保留 per-call onEvent 选项？ | 不保留，统一走 `AgentRunnerConfig.onEvent` | per-call onEvent 与构造时 onEvent 并存会让事件处理代码分散到两处，调试与重构成本高；事件富化方案下，单入口已能完全表达路由意图，没有 per-call 的必要 |
-| 多 channel 同时启用交互能力时怎么避免广播？ | RuntimeApp 维护 `originChannelByTurn: Map<turnId, Channel>` 路由表；`onRequest` / `onExpire` 在 RuntimeApp 启动时**注册一次**，handler 内按 turnId 查表只通知起源 channel | "谁发起的 turn 谁处理交互"符合直觉与安全；复杂度集中在 RuntimeApp 路由层；若起源 channel 已注销则不主动 deny，让 TurnInteractionManager 走超时按 deny 处理，便于诊断 |
-| 库模式（无 channel 直调 runTurn）触发 tool 时怎么处理 approval？ | RuntimeApp 启动时若 `channels.some(c => c.approval)` 为 false 则**根本不注册 hook**，所有 tool 调用直通 | 没有可呈现 UI 的 channel 就没有人能做决策，等待超时只会拖慢库消费者；不注册 hook 等价于"无审批机制"，行为最直观；与 hook 系统的可选注册保持一致 |
+| 多 channel 同时启用交互能力时怎么避免广播？ | RuntimeApp 维护 per-turn route context；`onRequest` / `onClose` 在 RuntimeApp 启动时注册一次，handler 内按 turnId 只通知起源 channel | "谁发起的 turn 谁处理交互"符合直觉与安全；初始不可达或后续断线被显式分类为 unavailable |
+| 库模式（无 channel 直调 runTurn）触发 tool 时怎么处理 approval？ | Hook 始终注册，Policy 基于当前 call 的 origin capability 判断；没有 capability 时 unmatched Tool fail closed | 不依赖 `startChannels()` 历史，也不会无 UI 直通敏感 Tool |
 | 跨 session 是否允许并发 turn？ | 允许；以 `inFlightSessions: Set<string>` 做 per-session 串行，不再用全局 phase 阻塞 | 同 session 串行是消息历史一致性的硬约束；跨 session 的状态完全隔离（独立的会话历史与压缩状态），没有理由互斥；WebSocket 多 client 多 session 场景需要并发能力，全局 phase gate 会让任意 turn 阻塞所有其他用户 |
 | 为什么 `clientId` 不进入 `RunTurnParams`？ | `clientId` 是 channel↔RuntimeApp 的路由元数据，library 调用方（直接调用 `runTurn`）不应感知 transport 概念 | 与 openclaw 有意差异化：openclaw 的 `RunEmbeddedPiAgentParams` 直接携带 `messageChannel` / `messageTo` 等真实平台寻址字段（agent 层据此决定格式、注入 hook context，并复用为 approval 请求的 `turnSource*` 字段路由回原平台）；my-agent 的 `clientId` 只表达“当前 channel 用来标识客户端的内部路由值”，由 `originClientByTurn` 等映射管理更合适，不污染 library API；在 WebSocketChannel 中，这个值可进一步特化为客户端自声明并持久化的逻辑客户端标识 |
 | 为什么 `turnId` 在 `RunTurnParams` 中可选、在 `RunParams` 中必填？ | 对 library 调用方可选（可让 RuntimeApp 生成），但 AgentRunner 需要稳定的 turnId 写入 hook payload，不允许缺失 | 外层友好、内层严格是常见边界设计：RuntimeApp 负责补全默认值 |
-| `request()` 为什么仍返回 `ApprovalResult` 而非 `ApprovalDecision`？ | hook 需要区分"用户主动拒绝"与"超时"以生成不同的 deny reason，单一的 `'allow'/'deny'` 无法表达 | 用显式字段 `reason: 'user' \| 'timeout'` 比用 `null` 暗示超时更易读；TurnInteractionManager 判断时机，hook 只做文案映射，职责清晰 |
+| `request()` 为什么返回 `ApprovalResult` 而非 `ApprovalDecision`？ | hook 需要区分 approved、denied、aborted、unavailable 与 failed，单一的 `'allow'/'deny'` 无法表达 | 只有明确人工 deny 才是 denied；生命周期和能力失效不会伪装成用户行为 |
 | 为什么按 turn 而非 session 跟踪 originClient？ | 多个 client 可以共享同一 session，若按 session 跟踪会出现并发覆盖与误删 | turn 是一次交互的天然边界，`Map<turnId, clientId>` 在并发场景下互不干扰。（openclaw 通过 `runId` 关联 agent 运行与 gateway 审批调用，但没有 client 路由表这种结构——它的路由靠把 messaging 字段直接传给 gateway 实现，与本设计机制不同） |
 | 为什么 `BeforeToolCallPayload` 加 `turnId` 而非 `originClientId`？ | hook 的职责是工具拦截，不应感知 channel/client 概念 | `turnId` 是 agent 运行的通用上下文，channel 层通过 turnId 反查 originClient，保持 hook 与 channel 解耦 |
-| 超时为什么用推送 `approval_expired` 而非拉取 `waitDecision`？ | my-agent WS 协议是全推送模型，拉取需要额外一次交互且存在竞态窗口（超时发生在 client 发送订阅请求之前） | 推送与现有协议风格一致，client 状态机更简单：收到 `approval_requested` 展示 UI，收到 `approval_expired` 或 `approval_resolve` 关闭 UI |
+| 非人工终态为什么推送 `approval_closed`？ | client 需要关闭 pending UI，同时保留 aborted、unavailable 与 failed 的语义差异 | 推送与现有协议风格一致，且不会把未响应解释成 deny |
 | `send` 为什么携带 `sessionKey`？ | `Channel` 实例共享于所有 session，`send` 需要 sessionKey 才能将 event 路由给正确的 client 集合 | 路由上下文由调用方传入而非存储于 channel 实例，`send` 保持无状态；CliChannel 单客户端可忽略此参数 |
 | 为什么不直接在 hook 里 await readline？ | hook 不感知 I/O，channel 层负责适配 | 未来换 WS channel 时 hook 不用改 |
 | 为什么用进程内 Promise bus 而非 WS RPC？ | my-agent 是 library，不应内置 WS Server 作为必须依赖 | OpenClaw 的 WS Gateway 是多进程平台服务，my-agent 场景不同 |

@@ -39,7 +39,8 @@
 |---|---|---|
 | [Development Workflow](../development-workflow.md) | Accepted v1.0 | 状态、批准、验证、评审和提交规则 |
 | [Architecture Foundation Plan](architecture-foundation-plan.md) | Accepted v1.1 | AF-04 范围、Foundation Gate 与 §7.4 文档语言和术语约定 |
-| [Target Architecture](../architecture/target-architecture.md) | Accepted v1.1 | CH-01..CH-14、FT-01..FT-09、迁移 disposition 和结果边界 |
+| [Target Architecture](../architecture/target-architecture.md) | Accepted v1.2 | CH-01..CH-14、FT-01..FT-09、迁移 disposition 和结果边界 |
+| [ADR-002 Context Budgeting and Compaction Recovery](../architecture/adr-002-context-budgeting-and-compaction-recovery.md) | Accepted | Provider-owned model limits、预算权威、Compaction 验收、overflow correction 和生命周期边界 |
 | [Architecture Principles](../architecture/architecture-principles.md) | Accepted v1.0 | Fitness Test 规范语义 |
 | [Domain Glossary](../architecture/domain-glossary.md) | Accepted v1.4 | Current、Target、Policy、Registry、Turn 等规范词义 |
 
@@ -253,14 +254,14 @@ VS Code Test Runner 曾以 Node ABI `115` 加载 ABI `127` 的 `better-sqlite3`�
 | CH-01 | `RuntimeApp` per-session queue / in-flight set；Batch 1 busy-session barrier test | Verified | 已验证同 Session queued request 串行、不同 Session 并行、queued 未启动时不调用 Runner；deferred Runner barrier + call counter | Runtime integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-01"` | Preserve Root request concurrency；steering 是当前 Turn 的 in-turn input，不属于 CH-01；Accepted Request/Snapshot 语义留给后续 Contract |
 | CH-02 | `RuntimeApp` inbound `user_message`、`originMessageId`；Batch 1 runtime-to-real-Runner correlation tests | Verified | 已验证 runtime-generated message ID 贯穿 `user_message` -> `run_start`，并由同一 `turnId` 闭合 `run_end`；当前没有 Target `requestId` | Runtime/Channel integration；`npm test -- src/runtime/RuntimeApp.intake.test.ts src/core/runner/AgentRunner.test.ts -t "CH-02"` | Preserve user-message Fanout；目标 `requestId`/`turnId` 迁移另测 |
 | CH-03 | `AgentRunner` Tool loop / `ToolExecutor`；Batch 1 deny、unknown/invalid、throw、Abort pairing tests | Verified | 已观察受控 Abort 在 Tool 间发生时丢失已完成真实结果，并在下一 Turn 将全部缺失 ID 统一 repair；fake LLM + executor + AbortController | Runner contract；`npm test -- src/core/runner/AgentRunner.test.ts -t "CH-03"` | Preserve pairing/context order；Characterize then replace 受控 Abort 的延迟通用 repair；目标方向由 [Accepted ADR-001](../architecture/adr-001-tool-result-closure-and-recovery.md) 约束，生产实现仍需 Accepted Module Spec 与独立 Slice；Slice 3 替换 Policy/Hook ownership |
-| CH-04 | `runBeforeToolCall()` awaited；observer hooks detached；现有 priority/compaction tests | Verified | 用 deferred promise 取代 timeout tick，明确 before tool 顺序与 after/compaction detached | Runner unit；`npm test -- src/core/runner/AgentRunner.test.ts -t "CH-04"` | Characterize then replace：after Hook 在 Turn/pin 内 `allSettled` |
-| CH-05 | `RuntimeApp.create()` AgentEvent Fanout | Verified | `channel.send` 按 target 隔离，但 `onAgentEvent` 未隔离；two fake channels + throwing observer | Multi-target Runtime integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-05"` | Characterize then replace：目标每 target 隔离且不改变 Turn result |
-| CH-06 | `resolveToolPolicy()` + `wireApprovalRouting()`；policy matrix/expiry tests | Verified | 补 Runtime no-capability fail-closed 与 startup-history dependency；fake approval channel + fake clock | Policy unit + Runtime integration；`npm test -- src/runtime/tool-approval-policy.test.ts` | Preserve deny/allowlist fallback；改为 current-call capability |
+| CH-04 | `runBeforeToolCall()` awaited；observer Hooks detached；Batch 2 deferred-barrier tests | Verified | 已验证 before Tool Hook 阻塞 Tool 执行，after Tool 与 compaction observer Hooks 不阻塞 Turn settlement；所有 barrier 在 teardown 前释放并等待完成 | Runner unit；`npm test -- src/core/runner/AgentRunner.test.ts -t "CH-04"` | Characterize then replace：Compaction observer 按 [ADR-002](../architecture/adr-002-context-budgeting-and-compaction-recovery.md) 在对应生命周期边界内 failure-isolated settlement；after Tool transformation/ordering 另由 Tool Hook Contract 冻结 |
+| CH-05 | `RuntimeApp.create()` AgentEvent Fanout；Batch 2 multi-target failure tests | Verified | 已分别验证单个 `channel.send` 失败不影响其他 target 或 Turn，而 `onAgentEvent` 抛错会传播并阻止 Runner 启动 | Multi-target Runtime integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-05"` | Characterize then replace：目标每 target 隔离且不改变 Turn result |
+| CH-06 | `resolveToolPolicy()` + `wireApprovalRouting()`；Batch 2 policy/runtime tests | Verified | 已验证 deny/allow/prompt matrix、无 capability fail-closed、capable origin 的隐藏固定 120 秒 timeout-deny routing，以及 approval Hook 仅在 `startChannels()` 后安装的 startup-history dependency | Policy unit + Runtime integration；`npm test -- src/runtime/tool-approval-policy.test.ts src/runtime/RuntimeApp.test.ts -t "CH-06"` | Preserve deny/allowlist fallback；改为 current-call capability；移除默认 120 秒 timeout-deny，目标 approval wait 为 response-or-abort |
 | CH-07 | `RuntimeApp.startChannels()` / `stopChannels()` | Verified | 当前 partial start 无 rollback、flag 使 retry no-op；fake channels + start/stop counters + injected rejection | Runtime startup integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-07"` | Characterize then replace：creator rollback、atomic handoff、close-once |
 | CH-08 | `RuntimeApp.close()`；现有 abort-before-wait/idempotent tests | Verified | 补 queued/approval wait、nonresponsive in-flight、Channel stop failure；deferred promises + test-side bounded race | Runtime shutdown integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-08"` | Characterize then replace：two-stage bounded Shutdown |
 | CH-09 | `RuntimeApp.abortTurn()` + Runner Abort；现有 active/queue/cross-session tests | Verified | 通过 public Channel queue 补 active+queued、late steering 在 Turn 结束时的丢弃现状与 exactly-once observation；barrier + event recorder | Runtime integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-09"` | Preserve public Abort/queue semantics；目标补 exactly-once completion；late-steering disposition 待该批次确认 |
 | CH-10 | Task Tool、library `runSubagentTurn()`、`SubagentRunner`；现有 outcome/event/Abort tests | Verified | 补 RuntimeApp library path、Usage/Event/route/session cleanup；fake child runner + cleanup counters | Tool + library Subagent contract；`npm test -- src/runtime/subagent-orchestration.test.ts -t "CH-10"` | Preserve blocking baseline；Slice 2 统一 tracked Child path |
-| CH-11 | `SessionManager`/transcript + Runner compaction/orphan repair；现有 persistence tests | Verified | 将 history、compaction、orphan repair、Abort persistence 组合为可定位 baseline；temp directory + fake LLM | Runner/Session integration；`npm test -- src/core/runner/AgentRunner.test.ts -t "CH-11"` | Preserve only after AF-04 verification |
+| CH-11 | `SessionManager`/transcript + Runner compaction/orphan repair；现有 persistence tests | Verified | 将 history、compaction、orphan repair、Abort persistence 组合为可定位 baseline；temp directory + fake LLM | Runner/Session integration；`npm test -- src/core/runner/AgentRunner.test.ts -t "CH-11"` | Characterize current behavior；Tool closure 目标由 [ADR-001](../architecture/adr-001-tool-result-closure-and-recovery.md) 约束，Context Budgeting/Compaction Recovery 目标由 [ADR-002](../architecture/adr-002-context-budgeting-and-compaction-recovery.md) 约束 |
 | CH-12 | `bootstrapRuntime()` + Runtime close；现有 memory degradation test | Verified | 当前 later bootstrap failure 不 cleanup earlier resources；injected failure + close counters + temp directory | Bootstrap integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-12"` | Baseline success/degradation；replace incomplete rollback |
 | CH-13 | `RuntimeApp.requireModel()` + Runner stream failure/Usage | Candidate | missing model 可 pre-call fail；invalid model 当前无独立本地校验；provider call counter + fake stream error | Runtime/Provider fake contract；`npm test -- src/core/runner/AgentRunner.test.ts -t "CH-13"` | Baseline current mapping；Slice 1 保持 pre-call/fail-closed |
 | CH-14 | `tool-registry` -> `prompt-factory` -> `SystemPromptBuilder` | Verified | 补 full-mode complete definitions 不渲染；确认 memory 只看 tool name | Prompt unit + Tool projection contract；`npm test -- src/core/prompt/SystemPromptBuilder.test.ts -t "CH-14"` | Baseline mechanical path；Slice 3 删除重复转换并保持 memory 行为 |
@@ -382,7 +383,7 @@ AF-04 完成时至少产生：
 | Phase | 状态 | 完成日期 | 证据/备注 |
 |---|---|---|---|
 | Phase 0：证据基线与执行映射 | Completed | 2026-08-31 | 项目所有者接受 evidence baseline、implementation batches 与 exception format；独立复审为 Critical/High/Medium/Low 0/0/0/0，blocking-overdesign 0；尚未授权 Phase 1、测试实现或生产代码变更 |
-| Phase 1：P0 Characterization | In Progress |  | 项目所有者于 2026-09-01 接受 Batch 1（CH-01、CH-02、CH-03）characterization baseline 与 disposition；CH-01 private-state 断言已删除，steering 另归 in-turn input/CH-09；未授权后续批次或生产代码变更 |
+| Phase 1：P0 Characterization | In Progress |  | 项目所有者于 2026-09-01 接受 Batch 1（CH-01、CH-02、CH-03）；Batch 2（CH-04、CH-05、CH-06）test-only implementation、验证和独立复审已完成；CH-06 migration disposition 已确认，CH-04/CH-05 Owner disposition 仍待确认；未授权 Batch 3 或生产代码变更 |
 | Phase 2：P1 Characterization | Not Started |  |  |
 | Phase 3：Architecture Fitness Tests | Not Started |  |  |
 | Phase 4：Completion Record 与收口评审 | Not Started |  |  |
@@ -412,3 +413,24 @@ Batch 1 没有修改 production code、公共契约或 Accepted Target Architect
 3. crash 或其他非 Abort 缺口无法证明 Tool 是否执行，repair 只能写 outcome-unknown error；恢复层不隐式续跑或重放旧 Turn，后续行为由新 Turn 重新规划。
 
 当前 CH-03 测试准确记录“受控 Abort 可留下 orphan，并在下一 Turn 将已完成与未启动 Tool 统一 repair”的现状，因此作为 Characterization baseline 保留；该行为标记为 `Characterize then replace`，不是目标契约。生产修复必须等待 Accepted Module Spec 和单独批准的 Defect 或 Architecture Slice。Batch 1 的接受不授权 Phase 1 Batch 2。
+
+### Phase 1 Batch 2 evidence
+
+| Scope | Command | Result |
+|---|---|---|
+| CH-04 | VS Code Test Runner：3 个 `CH-04` tests | Pass；3 tests；deferred barrier，无 timeout tick |
+| CH-05 | VS Code Test Runner：`CH-04`、`CH-05` | Pass；5 tests，其中 CH-05 2 tests |
+| CH-06 | VS Code Test Runner：`CH-06` | Pass；15 tests |
+| Related regression | VS Code Test Runner：`AgentRunner.test.ts`、`RuntimeApp.test.ts`、`tool-approval-policy.test.ts` | Pass；80 tests |
+| TypeScript baseline | `npm run lint` | Pass；exit 0 |
+| Patch hygiene | `git diff --check` | Pass；exit 0 |
+
+Batch 2 只修改 Characterization Tests，没有修改 production code、公共 Contract 或 Accepted Target Architecture，也没有新增 dependency 或 production test seam。独立复审累计关闭 2 个 Medium 与 1 个 Low finding：拆分 CH-05 两类 failure observation、等待 CH-04 detached callback cleanup，并将 CH-06 timeout decision 断言移到测试主体且等待 queued Runner Promise。最终复审结果为 Critical/High/Medium/Low `0/0/0/0`，blocking-overdesign `0`。
+
+### Phase 1 Batch 2 Owner disposition
+
+Partial。项目所有者于 2026-09-01 确认 CH-06 的 Characterization 与 migration disposition：现有 deny/allow/prompt matrix、无 capability fail-closed、`startChannels()` startup-history dependency 和 capable origin 的隐藏固定 120 秒 timeout-deny 均作为迁移前事实保留；目标移除默认 120 秒 timeout-deny，人工 approval 采用 response-or-abort，并观察 Turn Abort、Shutdown 和当前调用 capability 可用性。未来 `Allow all`、`Always allow` 或其他持久/会话级授权机制暂不讨论，不属于本 disposition。
+
+CH-04 detached observer Hooks 与 CH-05 `onAgentEvent` failure propagation 的 Owner disposition 仍为 Pending，因此 Batch 2 整体尚未接受；本节不授权 Phase 1 Batch 3 或生产代码变更。CH-06 生产迁移必须先有 Accepted Module Spec，并作为独立 Architecture Slice 获得 Delivery 批准。
+
+项目所有者于 2026-09-01 接受 [Approval Lifecycle Module Spec](../architecture/approval-lifecycle-spec.md) v0.1，并单独批准 CH-06 Approval Lifecycle Architecture Slice 进入 Delivery。该授权只覆盖移除默认 120 秒 timeout-deny、接入 response-or-abort 生命周期及所需 Channel/client/test 迁移；不接受 CH-04/CH-05 disposition，不授权 Phase 1 Batch 3，也不包含 `Allow all`、`Always allow` 或其他持久/会话级授权机制。

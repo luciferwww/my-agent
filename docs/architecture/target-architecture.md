@@ -3,11 +3,12 @@
 ## 1. 文档状态与证据规则
 
 - **状态：** Accepted
-- **版本：** 1.1
-- **日期：** 2026-08-31
+- **版本：** 1.3
+- **日期：** 2026-09-01
 - **所有者：** 项目所有者
 - **执行计划：** [AF-03 Target Architecture Execution Plan](../roadmap/af-03-target-architecture-plan.md)
 - **父计划：** [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) AF-03
+- **相关重要决策：** [ADR-001 Tool Result Closure and Recovery](adr-001-tool-result-closure-and-recovery.md), [ADR-002 Context Budgeting and Compaction Recovery](adr-002-context-budgeting-and-compaction-recovery.md)
 - **规范词汇：** [Domain Glossary](domain-glossary.md)
 - **架构约束：** [Architecture Principles](architecture-principles.md)
 
@@ -336,15 +337,19 @@ Phase 1 的构造原则足以表达当前目标对象图：
 | Provider Connection | Provider Integration | Configuration 加载并做语法校验的部署输入、凭据引用、Endpoint、租户或代理设置 | Composition 提供 binding；Resolver 通过 core-owned Contract 校验可用性与兼容性；Provider Adapter 使用连接 | Model Capability、默认模型、fallback Policy |
 | Protocol | Provider Integration | Provider Contract/Contribution 声明和 Adapter 实现 | Resolved Model、Provider Adapter | 网络库、Endpoint、Provider 品牌别名 |
 | Model Reference | Model Resolution；由调用方或 Agent/Subagent Profile 提供 | Turn 请求、Agent Profile、Subagent Profile 或显式默认 | Model Resolver | 完整 Facts、Client、Endpoint、解析结果 |
-| Model Descriptor | Model Catalog / Model Resolution | Provider Contribution、受信发现结果或显式运维覆盖 | Model Resolver、预算校验 | 用户偏好、Connection、Request Override |
+| Model Descriptor | Model Catalog / Model Resolution | Provider Integration 通过 core-owned Contract 返回其已解析的模型事实、有效上限和 provenance | Model Resolver、预算校验 | 用户偏好、跨 Provider 推断、Request Override |
 | Model Policy | Application Policy | Agent Policy、运行约束和调用上下文 | Model Resolver | Model Facts、Connection、最终执行配置 |
 | Request Override | Turn 输入提供者声明；Model Resolution 校验 | 当前 Turn 的显式请求字段 | Model Resolver | 全局 Config、Provider 切换、跨 Turn 状态 |
-| Model Catalog | Model Resolution | 带来源和可信级别的 Model Descriptor | Model Resolver | Connection Store、Client Pool、未标注默认值 |
+| Model Catalog | Model Resolution | 各 Provider Integration 通过 Contract 提供的带来源 Model Descriptor | Model Resolver | Provider 私有目录的合并算法、Connection Store、Client Pool |
 | Provider Integration Binding | Provider Extension Contract；由 Composition 提供 | 启动期可用 Provider Contribution/Snapshot | Model Resolver、Model Invocation Port | SDK 类型泄漏、RuntimeApp 私有状态、Service Locator |
 | Model Resolver | Application / Model Resolution | Reference、Catalog、Connection、Policy、Override、Binding | Resolved Model 或显式 Resolution Failure | Config 加载、SDK Client 构造、Runner 执行循环 |
 | Resolved Model | Model Resolution 生成；Turn Execution 消费 | 一次成功解析的全部已校验结果 | Runner、上下文预算和 Model Invocation Port | Catalog 可变引用、SDK Client、跨 Turn 自动更新 |
 
 **Target Decision：** Provider Integration 是 Provider Connection 语义及使用方式的唯一所有者。Configuration 只加载并做格式/Schema 校验，Composition 只提供选定 binding，Model Resolver 只通过 core-owned Contract 校验该连接对当前 Provider/Model 是否可用和兼容；这些协作者都不重新定义 Connection 语义。Configuration 不能把 Connection、Descriptor、Policy 和 Request Override 合并成同一个 `LLMConfig` 语义。每个最终值必须保留逻辑来源；具体 provenance 字段形状由 AF-05 后的 Slice 决定。
+
+**Target Decision：** Provider Integration 是模型参数来源解释和有效上限计算的唯一权威 producer；Model Catalog / Model Resolution 保持 Model Descriptor 的逻辑所有权、来源校验和 Turn 绑定责任。成功生成 Resolved Model 需要 Provider Contract 返回正整数 `effective context limit` 及其来源；Provider 可以在内部组合部署覆盖、Provider 元数据、静态目录、受信发现、既有观测和保守默认值，但这些来源的可行性和优先级仍是 P2-H01/P2-H02。Provider 若为已接受但缺少专属 metadata 的模型选择 fallback，必须标注为 `provider-default`；`200,000` 仅是待 AF-05 验证的 bundled Anthropic Provider compatibility candidate，不是 Stable Core、Model Resolver 或全局 Catalog 的默认事实。Core 不按 Provider 品牌或 Model 字符串猜测上限，也不解释 Provider 内部来源优先级。
+
+上述模型上限来源、预算权威和 Provider fallback 的理由与迁移约束由 [ADR-002](adr-002-context-budgeting-and-compaction-recovery.md) 记录。
 
 ### 5.3 core-owned Model Invocation Port
 
@@ -378,7 +383,7 @@ Phase 2 只要求 Resolver 能获得一个与 Provider 身份一致的 Provider 
 - Provider 和 Model 的规范身份；
 - 与该 Provider 对应的 core-owned Model Invocation Port binding；
 - Protocol 和解析后的 Endpoint 身份；
-- 带来源的 Model Capability facts、上下文上限和最大输出上限；
+- Provider 返回且带来源的 Model Capability facts、有效上下文上限和最大输出上限；
 - Model Policy 选择结果和允许的 Request Override；
 - 执行所需请求限制及其来源记录。
 
@@ -388,6 +393,10 @@ Resolved Model 不包含明文凭据、Provider SDK Client、Config loader、可
 
 **Target Decision：** Turn 捕获 Resolved Model 后，Catalog、Policy、Config 或 Provider Registry 的后续变化不得改变该 Turn 的执行输入。Runner 内的压缩重试和多轮 Tool Use 继续使用同一个 Resolved Model；创建新的 Child Turn 则执行新的解析。
 
+**Target Decision：** Provider Adapter 必须负责把可识别的上下文超限响应归一化为 core-owned `ContextOverflowError`。Provider 可以根据明确返回的真实上限或仅能证明的保守上界，附带 Provider 解释后的 limit correction，并可以更新其按 Provider、Endpoint/Deployment 和 Model 隔离的内部观测；Runner 不解析 Provider 原始错误，也不自行反推模型上限。同一 Turn 的 Resolved Model 仍保持不可变，correction 只允许作为 Turn-local 收紧预算用于后续 Compaction retry，不得放宽原上限；后续新 Turn 通过重新解析取得 Provider 更新后的事实。Runner 负责 Compaction 决策、内容选择、调用 Session-owned Contract 请求记录持久化以及有界重试；Session 继续拥有历史和持久化机制。Provider 不执行会话压缩或写入 Session。
+
+Compaction candidate 验收、Tool Call/Result-safe 边界、Abort/deadline、有界 no-progress recovery 和 Compaction observer 生命周期以 [ADR-002](adr-002-context-budgeting-and-compaction-recovery.md) 为权威；具体接口和参数仍需 AF-05 Results 与 Accepted Module Spec。
+
 ### 5.5 解析阶段、失败和保守 fallback
 
 Model Resolver 的目标阶段顺序是：
@@ -395,21 +404,21 @@ Model Resolver 的目标阶段顺序是：
 1. 规范化并校验 Model Reference；
 2. 查找 Provider 身份及可用 Provider Integration Binding；
 3. 解析并校验对应 Provider Connection；
-4. 从 Model Catalog 取得带来源的 Model Descriptor；
+4. 通过选定 Provider Integration Binding 取得 Provider 已解析、带来源的 Model Descriptor；
 5. 应用 Model Policy，得到允许的候选或显式拒绝；
 6. 校验并应用仅限白名单字段的 Request Override；
 7. 对 Protocol、Endpoint、Capability 和请求限制做一致性检查；
 8. 原子生成 Resolved Model，或返回可分类、可追踪的 Resolution Failure。
 
-以下情况必须在 Provider 网络调用前显式失败：Provider 未注册、Connection 缺失或无效、Model 身份不存在或有歧义、执行所需 Facts 不足、Policy 拒绝、Request Override 越权、Protocol 不兼容或 Capability 不支持请求。
+以下情况必须在 Provider 网络调用前显式失败：Provider 未注册、Connection 缺失或无效、Model 身份不存在或有歧义、Provider 未能按 Contract 解析出执行所需 Facts（包括有效上下文上限或显式 Provider fallback）、Policy 拒绝、Request Override 越权、Protocol 不兼容或 Capability 不支持请求。
 
-**Accepted Constraint：** 默认行为 fail-closed。不得静默切换 Provider、使用测试 Fake、猜测缺失 Capability、从 Provider 品牌推导上下文上限，或在失败后发起可能产生费用的探测调用。
+**Accepted Constraint：** 默认行为 fail-closed。不得静默切换 Provider、使用测试 Fake，或由 Core/Resolver 猜测缺失 Capability、从 Provider 品牌推导上下文上限。Provider 自己声明并标注来源的保守 fallback 属于该 Provider 的事实解析，不属于 Model Policy fallback，也不得被 Core 重标为受信发现结果。
 
 **Target Decision：** fallback 只能由显式 Model Policy 授权。每个 fallback 候选、采用原因和拒绝原因必须可追踪；如果没有满足 Connection、Facts、Policy 和 Capability 的候选，则解析失败。
 
-**Hypothesis P2-H01：** Model Catalog 的多来源合并可以使用与注册/枚举顺序无关的确定性优先级，同时保留字段级 provenance 和冲突诊断，而不把运维覆盖误写为 Provider 权威事实。具体来源等级、字段覆盖粒度和冲突算法必须由 AF-05 验证。
+**Hypothesis P2-H01：** 每个 Provider 可以在自身边界内以确定性优先级合并部署覆盖、Provider 元数据、静态 Catalog、观测修正和 Provider fallback，同时保留字段级 provenance 和冲突诊断；Core 无需拥有跨 Provider 模型目录或来源合并算法。无论 Provider 选择何种正常来源优先级，fallback 只能补全缺失事实，不能覆盖适用的非 fallback 事实；overflow 观测只能保守收紧既有有效上限，不能将其放宽。具体 Provider Contract、正常来源等级和冲突规则必须由 AF-05 验证。
 
-**Hypothesis P2-H02：** 对预先分类为非执行关键的 Facts 可以保留明确的 `unknown` 并继续执行，但任何影响请求合法性、上下文预算或 Tool Use 编码的未知事实都必须阻止该候选。关键/非关键事实分类、事实最小集和保守 fallback 阈值必须由 AF-05 以正反案例验证。
+**Hypothesis P2-H02：** Provider 可以为未知模型解析出带 `provider-default` provenance 的有效上下文上限，而不要求 Core 引入 `unknown` 预算分支；无法由 Provider 解析且影响请求编码或执行安全的其他关键事实仍必须阻止该候选。事实最小集、Provider fallback 和不可 fallback 的反例必须由 AF-05 验证。
 
 ### 5.6 Parent Turn Model Resolution 调用流
 
@@ -553,11 +562,12 @@ Subagent Orchestration 负责成功与失败结果的对称归一化并返回 Pa
 |---|---|---|---|---|
 | P2-E01 | 第二 Provider Binding 和旧静态配置兼容输入都不要求修改 Runner 或让新核心反向依赖 Legacy | 使用 Anthropic Adapter 加独立 Fake/实验 Provider 实现同一 Port，分别解析并运行相同最小 Turn；再把一份等价旧静态 LLM config 通过单向 Compatibility Adapter 输入同一 Resolver | 两个 Provider 输出归一化事件；旧静态输入与等价新输入产生同一 Resolved Model；Runner/RuntimeApp 无 Provider/Compat 分支；New Core -> Legacy/Compat dependency count 为 0 | 需要复制 Runner、泄漏 SDK 类型、新增中央 Provider 联合分支，或 Resolver/New Core 必须读取 Legacy config/反向调用 Compat 才能解析 |
 | P2-E02 | Model 切换原子绑定全部执行事实 | 两个候选使用不同 Port、Protocol、Endpoint 和 Capability；重复切换并记录调用 | 每次调用只观察一个候选的完整一致集合 | 出现旧 Client/Endpoint/Facts 与新 model 混用 |
-| P2-E03 | Catalog 合并可确定且可追踪 | 注入冲突的 Provider、运维覆盖和发现 Facts，并置换来源注册/枚举顺序 | 所有顺序产生同一结果；字段来源和冲突可诊断 | 结果依赖未记录顺序或静默覆盖关键 Facts |
-| P2-E04 | 缺失 Facts 可以按分类保守处理 | 先给出关键/非关键 Fact 分类；分别删除上下文上限、Tool Use 等关键事实和一个不影响当前请求的非关键事实 | 关键 Facts 缺失时调用前失败；非关键 `unknown` 正例可以执行且保持 unknown，不被猜测 | 分类无法稳定表达，或关键缺失产生调用/费用，或非关键 unknown 被填入猜测值 |
+| P2-E03 | Provider 内部事实合并可确定、可追踪且保守 | 实验 Provider 先声明自身正常来源优先级；再注入冲突的部署覆盖、Provider 元数据、静态目录、观测修正和 fallback，逐项指定预期 winner，加入 fallback 覆盖适用受信值、观测放宽既有上限两个反例，并置换来源枚举顺序 | 每组正常冲突均由声明规则选出预期 winner；fallback 只补缺且观测只收紧；所有顺序产生同一结果；字段来源和冲突可诊断；Core 不含 Provider/Model 表或合并分支 | winner 违反 Provider 已声明规则、fallback 覆盖适用的非 fallback 事实、观测放宽既有有效上限、结果依赖未记录顺序、静默覆盖关键 Facts，或 Resolver 开始解释 Provider 私有来源 |
+| P2-E04 | Provider fallback 可补全未知模型而不成为 Core 默认值 | 分别让 Provider 返回受信上限、未知模型的 `provider-default: 200000`，以及在带 Tool 的请求中缺少 Tool Use 编码能力 Fact；执行相同最小 Turn | 前两者产生带不同 provenance 的 Resolved Model；Tool Use 编码能力缺失时调用前失败；Core 中无 `200000` 模型事实默认值 | Core 猜测模型上限、丢失 provenance、为缺失 Tool Use 能力猜值，或 Provider Contract 不完整仍发起调用 |
 | P2-E05 | Parent/Child 独立解析且共享资源不泄漏 per-turn 状态 | 在仅用于 Spike 的受控重叠 harness 中，强制 Parent/Child 使用同一 instrumented 只读资源/连接池但选择不同 Provider/Model；记录借用、流、Usage、Abort、释放和 Shutdown | 各 Turn 的 Port/Facts/Usage/Event/Abort 无串扰；唯一 Lifecycle Owner 可定位；每次借用恰好释放且共享资源只关闭一次 | 需要授权生产 Subagent 并发，或出现请求状态/串流/取消/Usage 串扰、重复释放、泄漏或多 Lifecycle Owner |
 | P2-E06 | Turn 内 Resolved Model 不漂移 | Turn 运行中替换 Catalog、Policy、Config 或可用 Binding | 活跃 Turn 保持原 Resolved Model；新 Turn 使用新结果 | 活跃 Turn 观察到混合版本或重新解析 |
-| P2-E07 | Resolution Failure 不触发 Provider | 分别注入 Provider 未注册、Connection 缺失、Connection 无效、Model 未知、Model 身份歧义、关键 Facts 不足、Policy deny、越权 Override、Protocol 不兼容和 Capability 不支持 | 每类返回可分类失败且 Provider 调用计数为零 | 任一失败路径发起探测、切换 Provider、产生费用或使用 Fake |
+| P2-E07 | Resolution Failure 不触发模型调用或付费探测 | 分别注入 Provider 未注册、Connection 缺失、Connection 无效、Provider 拒绝或无法规范化的 Model Reference、Model 身份歧义、关键 Facts 不足、Policy deny、越权 Override、Protocol 不兼容和 Capability 不支持；分别记录本地 Provider resolution Contract 与 Model Invocation Port/SDK network 调用 | 每类返回可分类失败；允许完成本地 Provider resolution，但 Model Invocation Port、SDK network 和付费探测调用计数均为零；Provider 接受但缺少专属元数据的模型只按 P2-E04 处理 | 任一失败路径调用 Model Invocation Port、发起网络/付费探测、切换 Provider、产生费用或使用测试 Fake |
+| P2-E08 | Provider overflow correction 不破坏 Turn pin 或 Compaction/Session 所有权 | 实验 Provider 对明确真实上限、仅保守上界和无修正详情三类 overflow 分别归一化；对前两类分别运行“只返回 Turn-local correction”和“按 Provider + Endpoint/Deployment + Model 持久观测”模式，并用相同 key 与不同 key 创建下一 Turn | 所有分支统一返回 `ContextOverflowError`；明确值/上界只收紧当前 Turn retry budget 且不改变 Resolved Model；无详情分支仍可触发 Runner 的有界 Compaction recovery，但不产生 limit correction；持久模式只让下一相同 key Turn 取得收紧事实，Turn-local 模式不改变下一 Turn，不同 key 均不受影响；Runner 负责 Compaction/重试并通过 Session Contract 持久化记录 | Runner 解析原始 Provider 错误、当前 Turn 放宽或突变 Resolved Model、无详情分支产生猜测 correction、观测跨 key 污染、Provider 执行会话压缩/写 Session，或 Runner 接管 Session 持久化机制 |
 
 AF-05 不以接入 OpenAI 或其他生产 Provider 为成功条件；独立 Fake/实验 Provider 足以验证第二实现和变更局部性，也不扩大 my-agent 的兼容性承诺。
 
@@ -568,7 +578,7 @@ AF-05 不以接入 OpenAI 或其他生产 Provider 为成功条件；独立 Fake
 - [x] Parent/Subagent 可以解析不同 Model 且不共享可变 Client 状态；
 - [x] 未验证的 Catalog/fallback 规则仍标记为 Hypothesis。
 
-独立复审首轮发现 3 个 High 和 3 个 Medium 文档问题，已修正 Provider Connection 单一语义所有权、Parent 有效 Model Reference 权威传递路径、AF-05 实验覆盖、Mermaid/ASCII 等价性和 Subagent 结果归一化责任。跟进复审发现 Domain Glossary 仍存在共同所有权冲突；项目所有者批准将其修订为 Accepted v1.1 后，最终复审确认无 Critical/High，10 个 Phase 2 Check Items 和 3 个 Exit Gate 均有目标设计证据。项目所有者于 2026-08-31 接受 Phase 2 提案及 Connection 所有权修订。该接受只完成文档设计，不表示生产实现、AF-05 实验或 Provider 兼容性验证已完成。
+独立复审首轮发现 3 个 High 和 3 个 Medium 文档问题，已修正 Provider Connection 单一语义所有权、Parent 有效 Model Reference 权威传递路径、AF-05 实验覆盖、Mermaid/ASCII 等价性和 Subagent 结果归一化责任。跟进复审发现 Domain Glossary 仍存在共同所有权冲突；项目所有者批准将其修订为 Accepted v1.1 后，最终复审确认无 Critical/High，10 个 Phase 2 Check Items 和 3 个 Exit Gate 均有目标设计证据。项目所有者于 2026-08-31 接受 Phase 2 提案及 Connection 所有权修订，并于 2026-09-01 接受 v1.2 的 Provider-owned Model Facts refinement：Provider 返回带来源的有效上下文上限，允许 Provider fallback，并负责 overflow correction；Runner 保持 Compaction 和有界重试所有权。该接受只完成文档设计，不表示生产实现、AF-05 实验或 Provider 兼容性验证已完成。
 
 ## 6. Extension、Module、Contribution and Registry
 
@@ -1161,12 +1171,12 @@ Tool Call 固定使用以下顺序：
 2. `before_tool_call` Hook 按确定顺序 awaited，允许按 Contract 变换输入或拒绝；异常 fail closed；
 3. 对 effective input 执行 canonical schema validation；
 4. Application Tool Policy 对 effective call 返回 `deny`、`allow` 或 `requiresApproval`：显式 deny 优先；allowlist 命中则允许；其他匹配规则和输入由后续 Spec 冻结；
-5. Runner 对 `requiresApproval` 决策执行审批 I/O：当前调用上下文缺少 approval Channel Capability 时 fail closed；否则 approval wait 必须观察 Turn Abort 和 Shutdown，并返回 approved、denied、aborted、unavailable 或 failed 等可分类结果；Channel 只承载交互，不拥有 Policy；
+5. Runner 对 `requiresApproval` 决策执行审批 I/O：当前调用上下文缺少 approval Channel Capability 时 fail closed；否则 approval wait 默认采用 response-or-abort，不设置固定 elapsed-time deadline；等待必须观察 Turn Abort、Shutdown 和当前调用 capability 的可用性，并返回 approved、denied、aborted、unavailable 或 failed 等可分类结果；Channel 只承载交互，不拥有 Policy；
 6. 允许时由 Tool Execution 调用 Tool implementation；拒绝、校验失败、Tool exception 和 Abort 都归一化为与原 call identity 配对的 Tool Result/terminal outcome；
 7. Runner 产生配对的 Tool Call/Result 语义事件并写入后续模型上下文；事件不得把 transformed effective input 错报为实际未执行的输入，具体字段由后续 Spec 决定；
 8. `after_tool_call` Hook 可以并行且失败隔离，但必须由 Runner `allSettled` 后才继续下一次 Model invocation 或结束 Turn；Hook 不得 detached 越过 Turn completion 或 Snapshot pin。
 
-**Target Decision：** allowlist 是 Application Tool Policy 的显式部署/Agent Policy 输入，不是 Channel Capability，也不由 Hook 注册历史决定。Runner 对 `requiresApproval` 决策执行审批 I/O；无审批能力只改变本次决策的最终结果，不修改 Snapshot、Tool 可用集合或后续调用；deny 规则始终高于 allowlist。具体 pattern 语法、配置来源合并和审批结果类型由后续 Application Tool Policy Spec 冻结。
+**Target Decision：** allowlist 是 Application Tool Policy 的显式部署/Agent Policy 输入，不是 Channel Capability，也不由 Hook 注册历史决定。Runner 对 `requiresApproval` 决策执行审批 I/O；无审批能力只改变本次决策的最终结果，不修改 Snapshot、Tool 可用集合或后续调用；deny 规则始终高于 allowlist。人工 approval 默认保持 pending，直到用户明确决策、Turn/Shutdown Abort 或当前调用 capability 失效；不得以内置固定时长静默转换为 deny。未来 `Allow all`、`Always allow` 或其他持久/会话级授权机制不属于本决策，由独立 Policy 设计和批准处理。具体 pattern 语法、配置来源合并和审批结果类型由后续 Application Tool Policy Spec 冻结。
 
 ```mermaid
 sequenceDiagram
@@ -1556,7 +1566,7 @@ library/embedded Host receives report and decides; Runtime library never exits p
 | `RunTurnParams.maxTokens` 等单 Turn 执行限制 | Request Override | Turn 输入提供者声明；Model Resolution 校验 | Compatibility 只映射允许覆盖的字段，不能产生跨 Turn 状态或切换未授权 Provider |
 | `RuntimeApp.requireModel()` 及其 model/context/max-token 参数拼装 | Resolved Model | Model Resolution 生成；Turn Execution 消费 | RuntimeApp 只触发 resolution，不再从 raw Config fallback 或拼装模型执行事实 |
 | `SubagentProfile.model`、`SubagentHostBindings.llmDefaults.model` | Child Model Reference | Model Resolution；由 Subagent Profile/Parent effective reference 提供 | `inherit` 迁移为 Parent effective Model Reference，不是进程全局 LLM default |
-| `SubagentHostBindings.llmDefaults.contextWindowTokens` | Model Descriptor fact | Model Catalog / Model Resolution | Child 不从 host default 复制模型事实；Resolver 从受信 Catalog 取得并保留来源 |
+| `SubagentHostBindings.llmDefaults.contextWindowTokens` | Model Descriptor fact 的 Legacy 输入 | Provider Integration / Model Resolution | Child 不从 host default 复制模型事实；Compatibility 只把旧值交给选定 Provider 解释为部署覆盖，Resolver 取得 Provider 返回且带来源的有效上限 |
 | `SubagentHostBindings.llmDefaults.maxTokens` | Model Policy output limit | Application Policy | Compatibility 把当前全局默认映射为 Policy 输入；未来显式 Child override 走独立 Request Override 契约，二者都不能成为 Model Descriptor fact |
 | `getDefaultBuiltinTools()`、`assembleRuntimeTools()` 的工具列表 | Tool Contribution | 提供该工具的 Runtime Module/External Extension | Builtin/External 经同一 core-owned Tool Contract 注册，不保留中央 Builtin 特例列表 |
 | `RuntimeToolBundle` 的中央 mutable 工具集合 | Registry Snapshot Tool projection | Registry | Runner/Provider/Prompt 消费各自窄只读投影，不以 mutable bundle 为权威源 |
@@ -1775,7 +1785,7 @@ Reviewer 为独立只读 architecture review agent，日期均为 2026-08-31。`
 | ID | Question | 影响 | 解决阶段 |
 |---|---|---|---|
 | OQ-01 | 哪些 Current 文档可在 AF-04 后升级为 Current Architecture 权威入口？ | 迁移起点和 Legacy 清单 | AF-04 / Slice 6 |
-| OQ-02 | Model Catalog 事实来源的合并优先级和缺失事实 fallback 是什么？ | Resolved Model 正确性 | Phase 2 -> AF-05 |
+| OQ-02 | Provider 内部模型事实来源的合并优先级、fallback 和 overflow 观测修正规则是什么？ | Resolved Model 正确性 | Phase 2 -> AF-05 |
 | OQ-03 | Parent/Subagent 不同 Model 的最小共享边界是什么？ | Client 状态和 Usage/Abort/Event | Phase 2 -> AF-05 |
 | OQ-04 | Extension-owned Schema 的发现时机、版本迁移和两阶段加载接口是什么？ | 配置校验和 External Extension 隔离 | AF-06 |
 | OQ-05 | Extension Capability 和受限运行上下文的最小 TypeScript 接口是什么？ | 权限和平台专有 Tool | AF-06 |
@@ -1822,14 +1832,14 @@ AF-04 先固定迁移前的可观察行为和已知差异，再实现防止目�
 | CH-01 | 同一 Session 的 Root request 串行、不同 Session 可并行；queued request 尚未开始时不执行 Runner | `Verified Current Fact`：§8.1 的 queue/Abort source；目标边界见 §7.2/§8.3 | Preserve concurrency；新增 Accepted Request/Snapshot capture 语义由后续 Contract 覆盖 | P0 | Runtime integration + barrier |
 | CH-02 | `user_message`、execution event、terminal result 的 correlation 和每 Turn 有序性 | `Historically Verified`/Current docs candidate；目标 identity 见 §8.3 | Preserve 用户消息 Fanout；补测 `requestId` 与 started `turnId` 的目标迁移 | P0 | Runtime/Channel integration |
 | CH-03 | Provider Tool Call 与 canonical Tool Result 成对；deny、invalid、Tool failure 和 Abort 不留下孤立 Tool Call | Current docs/test candidate；目标顺序见 §8.4 | Preserve 配对和上下文顺序；目标 Policy/Hook ownership 在 Slice 3 替换 | P0 | Runner contract |
-| CH-04 | before Hook 顺序 awaited；after Tool/compaction Hook 当前 detached | `Verified Current Fact`：§8.8 hook source | Characterize then replace：Slice 3 改为 after Hook `allSettled` 于 Turn/pin 内收敛 | P0 | Runner unit + deferred-promise barrier |
+| CH-04 | before Hook 顺序 awaited；after Tool/compaction Hook 当前 detached | Batch 2 测试已通过，Owner disposition Pending：§8.8 hook source | Characterize then replace：Compaction observer 按 [ADR-002](adr-002-context-budgeting-and-compaction-recovery.md) 在对应生命周期边界内 failure-isolated settlement；after Tool transformation/ordering 由独立 Tool Hook Contract 冻结 | P0 | Runner unit + deferred-promise barrier |
 | CH-05 | Channel send failure 当前隔离，observer throw 当前未同等隔离；其他 target 是否继续 | `Verified Current Fact`：§8.1/§8.8 fanout source | Characterize then replace：目标为每 target 隔离且不改变 Turn result | P0 | Multi-target integration |
-| CH-06 | allowlist/deny/approval 三档结果；无 origin approval capability 时 unmatched Tool fail closed | `Verified Current Fact`：§8.8 approval sources | Preserve deny/allowlist fallback；replace `startChannels()` history dependency with current-call capability | P0 | Application Tool Policy + Channel Capability contract |
+| CH-06 | allowlist/deny/approval 三档结果；无 origin approval capability 时 unmatched Tool fail closed；capable origin 的 pending approval 当前由隐藏固定 120 秒 timer 转为 timeout-deny | `Verified Current Fact`：§8.8 approval sources；AF-04 Batch 2 tests | Preserve deny/allowlist fallback；replace `startChannels()` history dependency with current-call capability；移除默认 120 秒 timeout-deny，改为 response-or-abort | P0 | Application Tool Policy + Channel Capability contract |
 | CH-07 | Channel `start()` 成功/失败、部分成功、重复 start/stop 和当前 retry 行为 | `Verified Current Fact`：§8.8 Channel startup source | Characterize then replace：Slice 4 增加 creator rollback、atomic handoff 和 close-once | P0 | Runtime startup failure injection |
 | CH-08 | Runtime shutdown 对 active Turn、queued request、approval wait、Channel stop 和 close failure 的当前顺序/等待 | `Verified Current Fact`：§8.1/§8.8 `RuntimeApp.close()` | Characterize then replace：目标为 §8.7 completion gate 与 two-stage bounded Shutdown | P0 | Runtime shutdown integration + nonresponsive fake |
 | CH-09 | Abort active Root、丢弃同 Session queue、事件/返回值和跨 Session 隔离 | `Historically Verified`/Current docs candidate；§8.1 source | Preserve 用户可见 Abort/queue semantics；扩展到 exactly-once completion | P0 | Runtime integration |
 | CH-10 | Subagent Profile 选择、blocking Parent wait、Child Usage/Event/Abort result 和 route/session cleanup | `Verified Current Fact`：§8.1/§8.8 Subagent sources | Preserve blocking baseline/result shape where public；replace untracked library path and asymmetric setup cleanup via §8.6 | P0 | Tool + library Subagent contract |
-| CH-11 | Session history、compaction trigger/result、孤立 Tool Use 修复和 Abort 后持久状态 | `Current Fact Candidate`：current Runner/Session docs and tests | Preserve only after AF-04 code/test verification；目标架构不重写 Session/compaction semantics | P1 | Runner/Session integration |
+| CH-11 | Session history、compaction trigger/result、孤立 Tool Use 修复和 Abort 后持久状态 | `Current Fact Candidate`：current Runner/Session docs and tests | Characterize current behavior；Tool closure 目标由 [ADR-001](adr-001-tool-result-closure-and-recovery.md) 约束，Context Budgeting/Compaction Recovery 目标由 [ADR-002](adr-002-context-budgeting-and-compaction-recovery.md) 约束 | P1 | Runner/Session integration |
 | CH-12 | Runtime startup success/failure event、optional memory degradation、已创建资源 cleanup | `Current Fact Candidate` + `Verified Current Fact` bootstrap rollback gap in §8.1 | Baseline success/degradation；Characterize then replace incomplete rollback via Builder lifecycle | P1 | Bootstrap integration + failure injection |
 | CH-13 | Model missing/invalid、Provider failure、Usage/stream error 的 caller-facing分类与 Provider call count | `Current Fact Candidate`；目标 Resolution Failure 见 §5/§8.3 | Baseline current mapping；AF-05/Slice 1 明确改变 resolution ownership，失败必须保持 pre-call/fail-closed | P1 | Runtime/Provider fake contract |
 | CH-14 | 完整 Prompt Tool definitions 当前被派生/传递但不渲染；memory 条件只依赖 tool name | `Verified Current Fact`：§9 evidence anchor | Baseline mechanical path；Slice 3 删除完整重复转换并以窄 projection 保持 memory 行为 | P1 | Prompt unit + Tool projection contract |

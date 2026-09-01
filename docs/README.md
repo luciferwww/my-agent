@@ -53,6 +53,7 @@ Current implementation facts, accepted architecture constraints, design baseline
 - [Domain Glossary](architecture/domain-glossary.md)
 - [Target Architecture](architecture/target-architecture.md) — accepted target boundaries, ownership, runtime flows, lifecycle, and migration constraints; not current implementation status
 - [ADR-001 Tool Result Closure and Recovery](architecture/adr-001-tool-result-closure-and-recovery.md) — accepted controlled-Abort closure and crash-repair boundary; production migration remains pending
+- [ADR-002 Context Budgeting and Compaction Recovery](architecture/adr-002-context-budgeting-and-compaction-recovery.md) — accepted Provider-owned model-limit, budgeting, Compaction acceptance, and overflow-recovery boundary; production migration remains pending
 - [Agent Runner Design](architecture/core-runner-design.md)
 - [Runtime / App Assembly Design](architecture/runtime-design.md)
 - [Config Design](architecture/platform-config-design.md)

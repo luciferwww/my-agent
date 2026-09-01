@@ -867,12 +867,13 @@ private recordError(scope: RuntimeErrorScope, error: Error): void;
 
 ```
 1. 阻止新 runTurn 进入（phase = closing 后 assertCanRunForSession 直接拒绝）
-2. 等待当前 runTurn 收尾
-3. 调 stopChannels()——依次关闭所有已注册 channel（释放 readline / WS 等 I/O 资源）
-4. 调 turnInteractionManager.close()——拒绝所有 pending 交互；当前 approval 统一按 timeout-deny 收口
-5. 关闭 MemoryManager 等其他 disposable
-6. 清理 Runtime 层缓存引用
-7. 标记 closed
+2. Abort 所有 active Turn，使 pending approval 以 `aborted/shutdown` 收口
+3. 等待当前 runTurn convergence
+4. 调 stopChannels()——依次关闭所有已注册 channel（释放 readline / WS 等 I/O 资源）
+5. 调 turnInteractionManager.close()——以 `aborted/shutdown` 做幂等兜底
+6. 关闭 MemoryManager 等其他 disposable
+7. 清理 Runtime 层缓存引用
+8. 标记 closed
 ```
 
 建议定义最小的可释放资源接口：

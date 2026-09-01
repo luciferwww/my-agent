@@ -354,7 +354,7 @@ flowchart TD
     F -- 否 --> H{在 allow 列表?}
     H -- 是 --> D
     H -- 否 --> I[prompt: TurnInteractionManager.request]
-    I --> J[等待用户决策或超时]
+    I --> J[等待用户决策或生命周期终结]
     J --> D
     J --> G
 ```
@@ -388,17 +388,17 @@ flowchart TD
 ```
 wireApprovalRouting() 在第一次 startChannels() 时调用，始终注册 before_tool_call hook：
 
-agentRunner.on('before_tool_call', async ({ toolName, input, turnId }) => {
+agentRunner.on('before_tool_call', async ({ toolName, input, turnId, signal }) => {
   originChannel = routeContextByTurn[turnId]?.originChannel
   action = resolveToolApprovalAction(toolName, config, hasApprovalCapability)
   if action == 'prompt':
-    result = await turnInteractionManager.request(...)
+    result = await turnInteractionManager.request({ request, signal })
     // TurnInteractionManager 通过 onRequest 回调把请求转发给 originChannel
-    // 回应到达后通过 channel.approval.onApprovalDecision 或 channel.interaction.onInteractionResponse 解决 promise
+    // 用户回应、Abort、Shutdown 或 origin unavailable 竞争完成 classified settlement
 })
 ```
 
-`interaction` 优先于 `approval`（向后兼容设计）；起源不可达时，`TurnInteractionManager` 自身的超时机制兜底。
+`interaction` 优先于 `approval`（向后兼容设计）；初始 delivery failure 或后续 origin disconnect 分类为 unavailable。没有 elapsed-time expiry。
 
 ---
 
@@ -428,7 +428,7 @@ stateDiagram-v2
 2. abort 所有 active turn                         // Abort-then-wait
 3. await Promise.allSettled([...inFlightRuns])    // 等待当前 turn 收尾
 4. stopChannels()                                 // 释放 readline / WebSocket I/O
-5. turnInteractionManager.close()                // 拒绝 pending 交互
+5. turnInteractionManager.close()                // aborted/shutdown 幂等兜底
 6. 遍历 collectDisposables()，逐个 close()       // MemoryManager 等
 7. resources.contextFiles = []
 8. setPhase('closed')

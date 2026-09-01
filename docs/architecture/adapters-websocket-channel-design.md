@@ -13,7 +13,7 @@
 - WebSocket server 的生命周期如何与 `RuntimeApp` 对齐
 - 连接、session、approval 三种路由状态如何维护
 - WS 协议的消息格式、错误语义、广播语义如何落地
-- 断线、超时、重复提交、非法消息等边界条件如何处理
+- 断线、Abort、重复提交、非法消息等边界条件如何处理
 
 本文档**不重复**定义 Channel 抽象、TurnInteractionManager 设计、`turnId` / `sessionKey` / `originClientId` 的整体数据流；这些内容仍以 [adapters-channel-design.md](./adapters-channel-design.md) 为准。
 
@@ -99,9 +99,9 @@ class WebSocketChannel implements Channel {
 
 关闭流程保持和总设计一致：
 
-1. `RuntimeApp.stopChannels()` 先关闭 channel
-2. `RuntimeApp.close()` 再调用 `turnInteractionManager.close()`
-3. 所有 pending interaction 统一由上层 manager 收口；当前 approval 仍按 timeout-deny 处理
+1. `RuntimeApp.close()` 先 Abort 所有 in-flight Turn
+2. pending interaction 随 Turn signal 以 `aborted/shutdown` 收口
+3. RuntimeApp 等待 in-flight Turn convergence 后停止 channel，并由 manager 做幂等兜底清理
 
 这样可以避免 transport 层和审批决策层双重收口。
 
@@ -302,11 +302,12 @@ type ServerMessage =
       id: string;
       toolName: string;
       input: Record<string, unknown>;
-      timeoutMs?: number;
     }
   | {
-      type: 'approval_expired';
+      type: 'approval_closed';
       id: string;
+      outcome: 'aborted' | 'unavailable' | 'failed';
+      reason: string;
     }
   | {
       type: 'channel_error';
@@ -360,18 +361,18 @@ type ServerMessage =
 | `id` | `string` | 是 | 审批请求 id |
 | `toolName` | `string` | 是 | 触发审批的工具名 |
 | `input` | `Record<string, unknown>` | 是 | 工具输入 |
-| `timeoutMs` | `number` | 否 | 剩余可交互时间窗口 |
-
 该消息只发送给 `originClientId` 对应的逻辑客户端当前活跃连接。
 
-### 5.3.4 `approval_expired` schema
+### 5.3.4 `approval_closed` schema
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `type` | `'approval_expired'` | 是 | 固定字面量 |
-| `id` | `string` | 是 | 已过期的审批请求 id |
+| `type` | `'approval_closed'` | 是 | 固定字面量 |
+| `id` | `string` | 是 | 已结束的审批请求 id |
+| `outcome` | `'aborted' \| 'unavailable' \| 'failed'` | 是 | 非人工终态分类 |
+| `reason` | `string` | 是 | 稳定原因；failed 固定为 `failed`，诊断详情只进入日志/错误边界 |
 
-客户端收到后应关闭对应审批 UI，不再允许继续提交决策。
+客户端收到后应关闭对应审批 UI，不再允许继续提交决策；该消息不表示用户 deny。
 
 ### 5.3.5 `channel_error` schema
 
@@ -569,22 +570,23 @@ Phase 1 广播以下事件：
 
 当 `RuntimeApp` 调用下列任一路径时：
 
-- `channel.interaction.sendInteractionRequest(request)` / `sendInteractionExpired(request)`
-- `channel.approval.sendApprovalRequest(request)` / `sendApprovalExpired(request)`
+- `channel.interaction.sendInteractionRequest(request)` / `sendInteractionClosed(request, result)`
+- `channel.approval.sendApprovalRequest(request)` / `sendApprovalClosed(request, result)`
 
 `WebSocketChannel` 的处理规则：
 
 1. 读取 `request.originClientId`
-2. 若为空，静默忽略
+2. 若为空，返回 `unavailable/origin_missing`
 3. 查 `clients.get(originClientId)`
-4. 若连接不存在或已关闭，静默忽略
-5. 发送对应 JSON
+4. 若连接不存在或已关闭，返回 `unavailable/delivery_failed`
+5. 发送成功则返回 `accepted`，并跟踪 pending approval 与 origin client
 
-之所以静默忽略，而不是反向触发 deny：
+delivery 与断线显式反馈给上层，但 transport 层不直接产生 deny：
 
 - transport 层不负责决策
-- 上层已有 TurnInteractionManager timeout 收口
-- 断线是正常网络条件，不是协议错误
+- 上层 TurnInteractionManager 负责 classified settlement
+- 当前 origin socket 真正断开时，通过 unavailable callback 报告 `origin_disconnected`
+- same-client replacement 的 stale close 不得误报 unavailable
 
 ---
 
@@ -734,13 +736,13 @@ sequenceDiagram
 - 普通 AgentEvent 仍会继续生成，但断线窗口内该 client 可能漏收部分事件
 - 同 session 的其他在线 client 仍可继续收到广播
 - 该 client 重新连接后，不会自动收到此前遗漏的普通事件
-- 若未来上层接入重投递钩子，仍未过期的 pending interactions 可在 `hello(clientId)` 成功后再次投递到新连接
+- 当前实现不自动重投递 pending interaction
 
-这符合当前总设计里的“起源 channel 不可达时走 timeout 收口”。
+当前 origin 连接断开会使对应 pending approval 立即以 `unavailable/origin_disconnected` 收口；同一 `clientId` 被新 socket 接管时，旧 socket 的 close 不影响新连接和 pending approval。
 
 ### 8.4.1 当前 approval 与未来交互的一致口径
 
-Phase 1 当前已经落到协议里的仍是 `approval_requested` / `approval_resolve` / `approval_expired`。但在职责分层上，应把它们视为更一般的 `pending interactions`：
+Phase 1 当前已经落到协议里的消息是 `approval_requested` / `approval_resolve` / `approval_closed`。但在职责分层上，应把它们视为更一般的 `pending interactions`：
 
 - approval 只是第一类落地的交互消息
 - 未来新增 `pending decision` 等交互时，不应再把状态机塞回 `WebSocketChannel`
@@ -820,7 +822,7 @@ Phase 1 不做更复杂的背压、排队、优先级策略。
 - client connected / disconnected
 - run_turn received
 - approval_resolve received
-- approval_requested / approval_expired dispatched
+- approval_requested / approval_closed dispatched
 - invalid JSON / invalid message / unsupported type
 - send failure / socket closed before send
 
@@ -850,6 +852,9 @@ Phase 1 不做更复杂的背压、排队、优先级策略。
 - 未先 `hello` 就发送业务消息是否返回 `channel_error`
 - `send(event)` 是否只广播到目标 session 的 client
 - `sendApprovalRequest` 是否只定向到 `originClientId`
+- 初始 origin 不可达是否返回 classified delivery failure
+- 当前 origin 断线是否报告 `origin_disconnected`
+- 非人工终态是否只向 origin 发送 `approval_closed`
 - 断线是否清理 `clients` / `sessions` / `clientSessions`
 - 同一 `clientId` 重连是否主动关闭旧连接
 - 旧连接在被接管后继续发送业务消息时是否被拒绝或忽略
@@ -862,8 +867,8 @@ Phase 1 不做更复杂的背压、排队、优先级策略。
 - 多 client 同 session：都收到同一 turn 的事件流
 - 多 client 不同 session：不会串流
 - approval 开启时：只有起源 client 收到 `approval_requested`
-- 起源 client 断线后重连并再次 `hello(clientId)` 时：当前实现不自动重投递；若后续补该钩子，应验证未过期 interaction 可重新投递
-- 起源 client 长时间不重连时：approval 最终 timeout deny
+- 起源 client 断线时：approval 立即以 unavailable 收口
+- 同一 `clientId` socket replacement 时：stale close 不得误判 origin 断线
 
 ### 11.3 联调 smoke case
 
@@ -883,7 +888,7 @@ Phase 1 不做更复杂的背压、排队、优先级策略。
 - 增加 `ws` 依赖，并在 `src/adapters/channel/index.ts` 导出 `WebSocketChannel`
 - 先落 `WebSocketChannelConfig`、`start()`、`stop()` 和内部路由表骨架
 - 实现 `hello`、`run_turn`、`approval_resolve` 三类入站消息解析与字段校验
-- 实现 `hello_ack`、`channel_error`、`approval_requested`、`approval_expired` 出站消息
+- 实现 `hello_ack`、`channel_error`、`approval_requested`、`approval_closed` 出站消息
 - 实现 `clientId -> WebSocket`、`sessionKey -> Set<clientId>`、`clientId -> Set<sessionKey>` 三张表
 - 落实“后连覆盖前连”和 stale close 忽略规则
 - 在 `send(event)` 中补齐 `AgentEvent` 的 websocket 序列化，尤其是 `error` 事件的字符串化
