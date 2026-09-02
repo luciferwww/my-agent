@@ -295,6 +295,91 @@ describe('RuntimeApp', () => {
     expect(app.getState().phase).toBe('closed');
   });
 
+  it('CH-10 runs a library subagent through RuntimeApp with correlated events, usage, and cleanup', async () => {
+    const callOrder: string[] = [];
+    const resolveSession = vi.fn(async () => {
+      callOrder.push('resolve');
+      return { entry: {}, isNew: true };
+    });
+    const deleteSession = vi.fn(async () => {
+      callOrder.push('delete');
+    });
+    const runnerRun = vi.fn(async (): Promise<RunResult> => {
+      callOrder.push('run');
+      return {
+        text: 'library child result',
+        content: [{ type: 'text', text: 'library child result' }],
+        stopReason: 'end_turn',
+        usage: { inputTokens: 8, outputTokens: 3 },
+        toolRounds: 0,
+      };
+    });
+    const agentEvents: Array<{ type: string; [key: string]: unknown }> = [];
+
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'test-model' },
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies({
+        createSessionManager: () => ({ resolveSession, deleteSession }) as never,
+        createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
+        createMemoryManager: async () => null,
+      }),
+      onAgentEvent: (event) => agentEvents.push(event),
+    });
+
+    const result = await app.runSubagentTurn({
+      subagentType: 'general-purpose',
+      description: 'inspect runtime wiring',
+      prompt: 'review the integration',
+      trigger: { source: 'library', callerLabel: 'integration-test' },
+      lifecycle: 'blocking',
+    });
+
+    expect(callOrder).toEqual(['resolve', 'run', 'delete']);
+    expect(resolveSession).toHaveBeenCalledWith(result.sessionKey, {
+      spawnedBy: 'integration-test',
+    });
+    expect(runnerRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: result.sessionKey,
+        turnId: result.turnId,
+        message: 'review the integration',
+      }),
+    );
+    expect(deleteSession).toHaveBeenCalledWith(result.sessionKey);
+    expect(result).toEqual(expect.objectContaining({
+      text: 'library child result',
+      outcome: 'ok',
+      usage: { inputTokens: 8, outputTokens: 3 },
+    }));
+
+    const subagentEvents = agentEvents.filter(
+      (event) => event.type === 'subagent_start' || event.type === 'subagent_end',
+    );
+    expect(subagentEvents).toHaveLength(2);
+    expect(subagentEvents[0]).toEqual(expect.objectContaining({
+      type: 'subagent_start',
+      runId: result.runId,
+      sessionKey: result.sessionKey,
+      turnId: result.turnId,
+      subagentType: 'general-purpose',
+      lifecycle: 'blocking',
+    }));
+    expect(subagentEvents[1]).toEqual(expect.objectContaining({
+      type: 'subagent_end',
+      runId: result.runId,
+      sessionKey: result.sessionKey,
+      turnId: result.turnId,
+      outcome: 'ok',
+      usage: result.usage,
+    }));
+
+    await app.close();
+  });
+
   it('CH-01 serializes a busy session while another session runs concurrently', async () => {
     const firstRun = createDeferred<RunResult>();
     const secondRun = createDeferred<RunResult>();
