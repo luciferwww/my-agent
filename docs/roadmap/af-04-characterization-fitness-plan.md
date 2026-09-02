@@ -260,7 +260,7 @@ VS Code Test Runner 曾以 Node ABI `115` 加载 ABI `127` 的 `better-sqlite3`�
 | CH-07 | `RuntimeApp.startChannels()` / `stopChannels()`；Batch 3 injected-failure test | Verified | 已验证当前 partial start 无 rollback、flag 使 retry no-op，随后 Shutdown 仍 stop 所有注册 Channel；fake channels + start/stop counters + injected rejection | Runtime startup integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-07"` | Characterize then replace：跨独立 Channel 允许部分成功并逐 Channel 隔离失败；成功 Channel 保持运行，失败 Channel 清理自身 partial resources，Runtime 报告 degraded diagnostics，已启动 Channel close-once；单个 Channel 内保持 atomic startup，per-Channel restart/stop/start 延后设计 |
 | CH-08 | `RuntimeApp.close()`；Batch 3 nonresponsive/queued 与 stop-failure tests | Verified | 已验证当前 Shutdown 立即 Abort active Turn、无界等待不响应 worker、queued work 不启动；Channel stop failure 被隔离但不进入 Shutdown Report；复用既有 approval-wait 与 close-idempotency coverage | Runtime shutdown integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-08"` | Characterize then replace：two-stage bounded Turn convergence；先终结 queued/interaction wait，并给其他已运行 Turn bounded graceful drain；到期后 Abort 并 bounded 等待收敛；仍未收敛则 caller-facing outcome 恰好一次结算、报告 residual/pin，Runtime/Builder 不强制关闭受保护资源；组件失败隔离、重复 close 共享同一过程、close-once、结构化 diagnostics；最终进程终止只由 Runtime host 决定 |
 | CH-09 | `RuntimeApp.abortTurn()` + Runner Abort；Batch 3 public-ingress/late-steering tests | Verified | 已通过 public Channel path 验证 active Abort + queued drop、单次 drop/Turn observation；已验证 unread steering 在 Abort 后随 Turn cleanup 清除，不计入 `messages_dropped` 且不迁移到下一 Root Turn；复用既有 cross-session/never-throw coverage | Runtime integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-09"` | Preserve active Root Abort、同 Session queue drop、cross-session isolation 与 never-throw；目标补 started Turn exactly-once completion；steering 只绑定入站时的 active Turn，admission 不承诺模型消费，未读取输入在 Turn 结束/Abort/失败/Shutdown 时清理且不转为 queued Root request；只需聚合 diagnostics，不增加逐条 consumed/dropped settlement、持久化或公共事件 |
-| CH-10 | Task Tool、library `runSubagentTurn()`、`SubagentRunner`；现有 outcome/event/Abort tests | Verified | 补 RuntimeApp library path、Usage/Event/route/session cleanup；fake child runner + cleanup counters | Tool + library Subagent contract；`npm test -- src/runtime/subagent-orchestration.test.ts -t "CH-10"` | Preserve blocking baseline；Slice 2 统一 tracked Child path |
+| CH-10 | Task Tool、library `runSubagentTurn()`、`SubagentRunner`；Batch 4 RuntimeApp library-entry integration | Verified | 已验证 public `RuntimeApp.runSubagentTurn()` 连接共享 Runner/SessionManager、blocking result、correlated start/end Event、Usage 与 child session cleanup；Task Tool、Abort、route lifecycle 和 outcome matrix 复用既有测试，不重复新增 | Runtime + Subagent integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-10"` | Preserve blocking baseline；Slice 2 统一 tracked Child path |
 | CH-11 | `SessionManager`/transcript + Runner compaction/orphan repair；现有 persistence tests | Verified | 将 history、compaction、orphan repair、Abort persistence 组合为可定位 baseline；temp directory + fake LLM | Runner/Session integration；`npm test -- src/core/runner/AgentRunner.test.ts -t "CH-11"` | Characterize current behavior；Tool closure 目标由 [ADR-001](../architecture/adr-001-tool-result-closure-and-recovery.md) 约束，Context Budgeting/Compaction Recovery 目标由 [ADR-002](../architecture/adr-002-context-budgeting-and-compaction-recovery.md) 约束 |
 | CH-12 | `bootstrapRuntime()` + Runtime close；现有 memory degradation test | Verified | 当前 later bootstrap failure 不 cleanup earlier resources；injected failure + close counters + temp directory | Bootstrap integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-12"` | Baseline success/degradation；replace incomplete rollback |
 | CH-13 | `RuntimeApp.requireModel()` + Runner stream failure/Usage | Candidate | missing model 可 pre-call fail；invalid model 当前无独立本地校验；provider call counter + fake stream error | Runtime/Provider fake contract；`npm test -- src/core/runner/AgentRunner.test.ts -t "CH-13"` | Baseline current mapping；Slice 1 保持 pre-call/fail-closed |
@@ -383,7 +383,7 @@ AF-04 完成时至少产生：
 | Phase | 状态 | 完成日期 | 证据/备注 |
 |---|---|---|---|
 | Phase 0：证据基线与执行映射 | Completed | 2026-08-31 | 项目所有者接受 evidence baseline、implementation batches 与 exception format；独立复审为 Critical/High/Medium/Low 0/0/0/0，blocking-overdesign 0；尚未授权 Phase 1、测试实现或生产代码变更 |
-| Phase 1：P0 Characterization | In Progress |  | 项目所有者于 2026-09-01 接受 Batch 1（CH-01、CH-02、CH-03）和 Batch 2（CH-04、CH-05、CH-06）；于 2026-09-02 接受 CH-07、CH-08、CH-09 migration dispositions，并随后授权和完成 Batch 3 Characterization Tests；尚未授权 CH-07..CH-09 生产迁移或 CH-04/CH-05 生产代码变更 |
+| Phase 1：P0 Characterization | In Progress |  | Batch 1、Batch 2 已接受；2026-09-02 接受 CH-07、CH-08、CH-09 migration dispositions，并完成 Batch 3；Batch 4 CH-10 最小 Characterization Test 已完成，等待 Phase 1 收口评审。尚未授权 CH-04/CH-05、CH-07..CH-10 目标生产迁移 |
 | Phase 2：P1 Characterization | Not Started |  |  |
 | Phase 3：Architecture Fitness Tests | Not Started |  |  |
 | Phase 4：Completion Record 与收口评审 | Not Started |  |  |
@@ -473,3 +473,14 @@ Accepted。项目所有者于 2026-09-02 接受修订后的 CH-09 Abort 与 late
 本次接受完成 Batch 3（CH-07、CH-08、CH-09）的 migration disposition review，但不授权 Phase 1 Batch 3 Characterization Tests、任何 CH-07..CH-09 生产代码变更或相关公共 Contract 扩展；这些工作仍需项目所有者单独批准。
 
 项目所有者随后于 2026-09-02 单独授权上述最小 Batch 3 Characterization Tests；实现与验证结果见本节 evidence。该后续授权不改变原 disposition 的生产边界：CH-07..CH-09 生产迁移、公共 Contract 扩展和 deadline/Host policy 仍需独立批准。
+
+### Phase 1 Batch 4 CH-10 evidence
+
+| Scope | Command | Result |
+|---|---|---|
+| CH-10 focused | VS Code Test Runner：`CH-10 runs a library subagent through RuntimeApp with correlated events, usage, and cleanup` | Pass；1 test |
+| Related regression | VS Code Test Runner：`RuntimeApp.test.ts`、`subagent-orchestration.test.ts`、`SubagentRunner.test.ts`、`task-tool.test.ts` | Pass；93 tests |
+| TypeScript baseline | `npx tsc --noEmit` | Pass；exit 0 |
+| Patch hygiene | `git diff --check` | Pass；exit 0 |
+
+Batch 4 只新增一个 public RuntimeApp library-entry integration test，用于闭合此前唯一缺失的 Runtime wiring 观察；Task Tool trigger/blocking、Subagent Event/Usage、Parent Abort cascade、route context release、child session cleanup 和 outcome matrix 直接复用既有确定性测试，不重复新增。该批次没有修改 production code、公共 Contract、Accepted Target Architecture、dependency 或 production test seam。CH-10 的 migration disposition 与 Phase 1 Exit Gate 仍待项目所有者收口评审；统一 tracked Child path 属于后续 Slice 2，不由本批授权。
