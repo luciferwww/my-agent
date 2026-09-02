@@ -1280,9 +1280,9 @@ Runner may now continue Model invocation or complete the Turn
 
 Channel Contribution 只描述由 Runtime Builder 构建 Channel binding 所需的 core-owned Contract；它不能在注册时启动 Transport、隐式创建 Session 或直接修改 RuntimeApp。Builtin CLI/WebSocket 与 External Channel 使用同一 staging、Snapshot projection、Capability 和 Lifecycle 路径。
 
-**Target Decision：** Runtime Builder 在 Snapshot publish/Runtime ingress 前，按依赖关系创建并启动 accepted Channel bindings。Creator 在 ownership handoff 前负责 rollback；handoff 后每个 binding 的 recorded Lifecycle Owner 负责幂等 stop。任一 required Channel/Builtin 启动失败时，本次启动失败并逆序清理所有已启动 candidate resources；可隔离 External Channel 必须按 §6 整组隔离，不能留下部分 Contribution 或 started Transport。独立 Channel 可以并行启动，但成功判定、失败聚合和 rollback 必须由同一 Builder phase 收口。
+**Target Decision：** Runtime Builder 在 Snapshot publish/Runtime ingress 前，按依赖关系创建并启动 accepted Channel bindings。Creator 在 ownership handoff 前负责 rollback；handoff 后每个 binding 的 recorded Lifecycle Owner 负责幂等 stop。不存在 required Channel：单个 Channel binding 启动失败时，创建方必须清理该 binding 的 partial resources，Builder 记录可定位 warning 与 degraded diagnostics，并继续收口其他独立 Channel；零 Channel 启动成功也不阻止核心 Agent Runtime 启动。External Extension 内的 Channel 失败按 §6 保持整组隔离，不能留下部分 Contribution 或 started Transport；核心 Runtime composition、内部一致 Snapshot 或其他非 Channel 的显式必需依赖失败仍按 §6.4 fail-fast。独立 Channel 可以并行启动，但成功判定、失败聚合、隔离和 cleanup 必须由同一 Builder phase 收口。
 
-**Target Decision：** RuntimeApp 只取得构建完成的 narrow Channel routing/capability bindings。Channel Capability 是当前 call/route 的显式事实，不是全局“当前 Channel”或进程曾启动过某 Channel 的历史。RuntimeApp 拥有 inbound correlation、Turn routing 和 semantic Fanout；Channel Adapter 拥有连接/client concurrency、本地 send 接受语义，并只把 Transport failure 映射为 Stable Core 的 canonical Error taxonomy。单个 outbound target 失败被 RuntimeApp 隔离并记录，不停止其他 target；required Channel 的持续不可用是否升级为 Runtime health failure，由后续 Channel Spec 决定。
+**Target Decision：** RuntimeApp 只取得构建完成的 narrow Channel routing/capability bindings。Channel Capability 是当前 call/route 的显式事实，不是全局“当前 Channel”或进程曾启动过某 Channel 的历史。RuntimeApp 拥有 inbound correlation、Turn routing 和 semantic Fanout；Channel Adapter 拥有连接/client concurrency、本地 send 接受语义，并只把 Transport failure 映射为 Stable Core 的 canonical Error taxonomy。单个 outbound target 失败被 RuntimeApp 隔离并记录，不停止其他 target；Channel 的持续不可用只改变对应 binding 的 health/degraded diagnostics，不升级为核心 Runtime 启动或存活失败。
 
 ```mermaid
 sequenceDiagram
@@ -1299,7 +1299,7 @@ sequenceDiagram
 	alt start fails before handoff
 		Creator-->>Builder: failure
 		Builder->>Creator: orchestrate creator-owned rollback
-		Builder-->>Source: isolate External or fail required startup
+		Builder-->>Source: isolate failed Channel unit and continue degraded
 	else start succeeds and ownership transfers
 		Creator-->>Builder: accepted binding + capabilities
 		Builder->>Owner: atomic ownership handoff
@@ -1321,7 +1321,7 @@ Runtime Builder -> Channel Binding Creator: create/start before Runtime ingress
 
 if start fails before ownership handoff:
 	Builder orchestrates creator-owned rollback
-	isolate External unit OR fail required startup
+	isolate failed Channel unit and continue degraded
 else:
 	Channel Binding Creator -> Runtime Builder: accepted binding + capabilities
 	Runtime Builder -> recorded Channel Lifecycle Owner: atomic ownership handoff
@@ -1431,7 +1431,7 @@ Subagent Orchestration -> Parent Runner:
 
 ### 8.7 Startup、two-stage Shutdown 与 Host boundary
 
-Startup 沿 §6 的 staging/ownership handoff 构建完整对象图：Runtime Builder 依赖正序创建、校验和启动 resources，成功后发布启动 Snapshot 并开放 Runtime ingress。失败时，未 handoff resource 由 creator rollback；已 handoff resource 由 recorded Lifecycle Owner 逆序关闭。外部可隔离单元与 required/Builtin fatal failure 遵循 §6.4，不因进入 Phase 5 改变。
+Startup 沿 §6 的 staging/ownership handoff 构建完整对象图：Runtime Builder 依赖正序创建、校验和启动 resources，成功后发布启动 Snapshot 并开放 Runtime ingress。失败时，未 handoff resource 由 creator rollback；已 handoff resource 由 recorded Lifecycle Owner 逆序关闭。External 单元隔离、Channel 失败后继续 degraded，以及核心 composition/Builtin fatal failure 遵循 §6.4 和 §8.5，不因进入 Phase 5 改变。
 
 **Target Decision：** RuntimeApp 为每个 accepted caller-facing request 维护一个原子的 public completion gate。正常完成、失败、Abort、queued shutdown 和 non-converged shutdown 竞争同一个 terminal transition；只有第一个 transition 可以同时结算 caller result 并产生一个 correlated terminal event，后续 worker completion/error 只能更新诊断，不能再次改变 public outcome 或产生语义 terminal event。
 
@@ -1524,7 +1524,7 @@ library/embedded Host receives report and decides; Runtime library never exits p
 | 当前事实（均核验于 2026-08-31） | Source location | 目标约束 | 进入 Slice 前的最小验证 |
 |---|---|---|---|
 | `RuntimeApp.close()` 无界等待 Root Turn/Channel stop，且先等 Turn 再关闭 interaction | [`RuntimeApp.close()`](../../src/runtime/RuntimeApp.ts#L940-L1003) | §8.7 先终结 waiters、两阶段有界 convergence | AF-04 覆盖 approval-wait、nonresponsive Tool/Channel、重复 Shutdown |
-| Channel 并行 start 失败后不 rollback，retry 变为 no-op | [`RuntimeApp.startChannels()`](../../src/runtime/RuntimeApp.ts#L380-L391) | Builder startup phase 必须原子收口并逆序 rollback | AF-04 记录现状；Slice 4 failure injection |
+| Channel 并行 start 失败后不 cleanup，retry 变为 no-op | [`RuntimeApp.startChannels()`](../../src/runtime/RuntimeApp.ts#L380-L391) | Builder startup phase 必须逐 binding 原子收口；失败 Channel 清理自身 partial resources，成功的独立 Channel 保持运行，零成功仍允许核心 Runtime 启动 | AF-04 记录现状；Slice 4 failure injection |
 | library Subagent 绕过 Runtime tracking；setup 在 terminal `try/finally` 前开始 | [`runSubagentTurn()`](../../src/runtime/subagent-orchestration.ts#L105)、[`SubagentRunner.run()` setup](../../src/core/subagent/SubagentRunner.ts#L43-L72)、[`try/finally` 与 cleanup](../../src/core/subagent/SubagentRunner.ts#L145-L210) | 所有 Child 进入 Turn tree，setup/terminal cleanup 对称 | AF-04 覆盖 library/tool 两入口；Slice 2 contract |
 | after Tool/compaction Hook detached | [`runObserverHooks()` / `runAfterToolCall()`](../../src/core/runner/hooks/runner.ts#L16-L74) | Hook 必须在 Turn/pin 内 settled | AF-04 固定当前事件顺序；Slice 3 验证 Abort/Shutdown |
 | Channel/observer Fanout failure 隔离不一致 | [`RuntimeApp.create()` fanout](../../src/runtime/RuntimeApp.ts#L142-L164) | 每个 target failure 隔离且不改变 Turn result | AF-04 多 target/observer failure characterization |
@@ -1835,7 +1835,7 @@ AF-04 先固定迁移前的可观察行为和已知差异，再实现防止目�
 | CH-04 | before Hook 顺序 awaited；after Tool/compaction Hook 当前 detached | Batch 2 测试已通过，Owner disposition Pending：§8.8 hook source | Characterize then replace：Compaction observer 按 [ADR-002](adr-002-context-budgeting-and-compaction-recovery.md) 在对应生命周期边界内 failure-isolated settlement；after Tool transformation/ordering 由独立 Tool Hook Contract 冻结 | P0 | Runner unit + deferred-promise barrier |
 | CH-05 | Channel send failure 当前隔离，observer throw 当前未同等隔离；其他 target 是否继续 | `Verified Current Fact`：§8.1/§8.8 fanout source | Characterize then replace：目标为每 target 隔离且不改变 Turn result | P0 | Multi-target integration |
 | CH-06 | allowlist/deny/approval 三档结果；无 origin approval capability 时 unmatched Tool fail closed；capable origin 的 pending approval 当前由隐藏固定 120 秒 timer 转为 timeout-deny | `Verified Current Fact`：§8.8 approval sources；AF-04 Batch 2 tests | Preserve deny/allowlist fallback；replace `startChannels()` history dependency with current-call capability；移除默认 120 秒 timeout-deny，改为 response-or-abort | P0 | Application Tool Policy + Channel Capability contract |
-| CH-07 | Channel `start()` 成功/失败、部分成功、重复 start/stop 和当前 retry 行为 | `Verified Current Fact`：§8.8 Channel startup source | Characterize then replace：Slice 4 增加 creator rollback、atomic handoff 和 close-once | P0 | Runtime startup failure injection |
+| CH-07 | Channel `start()` 成功/失败、部分成功、重复 start/stop 和当前 retry 行为 | `Verified Current Fact`：§8.8 Channel startup source | Characterize then replace：不存在 required Channel；逐 binding 增加 creator cleanup、atomic handoff 和 close-once，失败隔离且成功 Channel 保持运行，零成功仍允许核心 Runtime 启动 | P0 | Runtime startup failure injection |
 | CH-08 | Runtime shutdown 对 active Turn、queued request、approval wait、Channel stop 和 close failure 的当前顺序/等待 | `Verified Current Fact`：§8.1/§8.8 `RuntimeApp.close()` | Characterize then replace：目标为 §8.7 completion gate 与 two-stage bounded Shutdown | P0 | Runtime shutdown integration + nonresponsive fake |
 | CH-09 | Abort active Root、丢弃同 Session queue、事件/返回值和跨 Session 隔离 | `Historically Verified`/Current docs candidate；§8.1 source | Preserve 用户可见 Abort/queue semantics；扩展到 exactly-once completion | P0 | Runtime integration |
 | CH-10 | Subagent Profile 选择、blocking Parent wait、Child Usage/Event/Abort result 和 route/session cleanup | `Verified Current Fact`：§8.1/§8.8 Subagent sources | Preserve blocking baseline/result shape where public；replace untracked library path and asymmetric setup cleanup via §8.6 | P0 | Tool + library Subagent contract |
