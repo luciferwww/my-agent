@@ -215,6 +215,86 @@ describe('RuntimeApp', () => {
     );
   });
 
+  it('CH-07 characterizes partial Channel start failure without rollback or retry', async () => {
+    const startError = new Error('channel start failed');
+    const successfulChannel = createTestChannel('successful-channel');
+    const failingChannel = createTestChannel('failing-channel');
+    successfulChannel.channel.start = vi.fn(async () => {});
+    successfulChannel.channel.stop = vi.fn(async () => {});
+    failingChannel.channel.start = vi.fn(async () => {
+      throw startError;
+    });
+    failingChannel.channel.stop = vi.fn(async () => {});
+
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'test-model' },
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies({
+        createAgentRunner: () => ({
+          on: () => {},
+          run: vi.fn(),
+          setToolExecutor: () => {},
+        }) as never,
+        createMemoryManager: async () => null,
+      }),
+    });
+    app.registerChannel(successfulChannel.channel);
+    app.registerChannel(failingChannel.channel);
+
+    await expect(app.startChannels()).rejects.toBe(startError);
+    expect(successfulChannel.channel.start).toHaveBeenCalledTimes(1);
+    expect(failingChannel.channel.start).toHaveBeenCalledTimes(1);
+    expect(successfulChannel.channel.stop).not.toHaveBeenCalled();
+    expect(failingChannel.channel.stop).not.toHaveBeenCalled();
+
+    await expect(app.startChannels()).resolves.toBeUndefined();
+    expect(successfulChannel.channel.start).toHaveBeenCalledTimes(1);
+    expect(failingChannel.channel.start).toHaveBeenCalledTimes(1);
+
+    await app.close();
+    expect(successfulChannel.channel.stop).toHaveBeenCalledTimes(1);
+    expect(failingChannel.channel.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('CH-08 characterizes Channel stop failure as isolated and absent from the shutdown report', async () => {
+    const failingChannel = createTestChannel('failing-stop-channel');
+    const successfulChannel = createTestChannel('successful-stop-channel');
+    failingChannel.channel.stop = vi.fn(async () => {
+      throw new Error('channel stop failed');
+    });
+    successfulChannel.channel.stop = vi.fn(async () => {});
+
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'test-model' },
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies({
+        createAgentRunner: () => ({
+          on: () => {},
+          run: vi.fn(),
+          setToolExecutor: () => {},
+        }) as never,
+        createMemoryManager: async () => null,
+      }),
+    });
+    app.registerChannel(failingChannel.channel);
+    app.registerChannel(successfulChannel.channel);
+    await app.startChannels();
+
+    const report = await app.close();
+
+    expect(failingChannel.channel.stop).toHaveBeenCalledTimes(1);
+    expect(successfulChannel.channel.stop).toHaveBeenCalledTimes(1);
+    expect(report.completed).toContain('channels');
+    expect(report.failed).toEqual([]);
+    expect(app.getState().phase).toBe('closed');
+  });
+
   it('CH-01 serializes a busy session while another session runs concurrently', async () => {
     const firstRun = createDeferred<RunResult>();
     const secondRun = createDeferred<RunResult>();
@@ -795,8 +875,8 @@ describe('RuntimeApp', () => {
       await app.close();
     });
 
-    // ④ abortTurn 有 active turn + queue 有 N → 两者都清 + emit messages_dropped
-    it('abortTurn: 有 active turn + queue 有 N → aborts and drops both, emits', async () => {
+    // ④ public Channel 路径：active turn + queued message → 两者都清 + exactly-once observation
+    it('CH-09 aborts an active public Channel turn and drops its queued message exactly once', async () => {
       const events: RuntimeEvent[] = [];
       const releaseRun = createDeferred<void>();
       let capturedSignal: AbortSignal | undefined;
@@ -822,23 +902,122 @@ describe('RuntimeApp', () => {
         }),
         onEvent: (e) => events.push(e),
       });
+      const testChannel = createTestChannel('public-abort-test');
+      app.registerChannel(testChannel.channel);
 
-      const turnPromise = app.runTurn({ sessionKey: 'main', message: 'go', promptMode: 'full' });
+      const firstDispatch = testChannel.dispatch({
+        sessionKey: 'main',
+        message: 'active',
+        clientId: 'client-1',
+      });
       await vi.waitFor(() => expect(capturedSignal).toBeDefined());
 
-      // 塞 2 条 queue
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const queueMap = (app as any).messageQueueBySession as Map<string, unknown[]>;
-      queueMap.set('main', [{ dummy: 1 }, { dummy: 2 }]);
+      await testChannel.dispatch({
+        sessionKey: 'main',
+        message: 'queued',
+        clientId: 'client-2',
+      });
+      expect(runnerRun).toHaveBeenCalledTimes(1);
 
       const result = app.abortTurn('main');
-      expect(result).toEqual({ aborted: true, dropped: 2 });
+      expect(result).toEqual({ aborted: true, dropped: 1 });
       expect(capturedSignal!.aborted).toBe(true);
-      expect(queueMap.has('main')).toBe(false);
-      expect(events.find((e) => e.type === 'messages_dropped')).toMatchObject({ dropped: 2 });
+      expect(events.filter((e) => e.type === 'messages_dropped')).toEqual([
+        expect.objectContaining({ sessionKey: 'main', reason: 'abort', dropped: 1 }),
+      ]);
 
       releaseRun.resolve();
-      await turnPromise;
+      await firstDispatch;
+      expect(runnerRun).toHaveBeenCalledTimes(1);
+      expect(events.filter((e) => e.type === 'turn_start')).toHaveLength(1);
+      expect(events.filter((e) => e.type === 'turn_end')).toHaveLength(1);
+      await app.close();
+    });
+
+    it('CH-09 clears unread steering on abort without settling or carrying it into the next turn', async () => {
+      const events: RuntimeEvent[] = [];
+      const agentEvents: Array<{ type: string; content?: string; deliveryMode?: string }> = [];
+      const releaseRun = createDeferred<void>();
+      let capturedSignal: AbortSignal | undefined;
+      let nextTurnSteering: ChatMessage[] | undefined;
+
+      const runnerRun = vi.fn(async (params: {
+        message: string;
+        signal?: AbortSignal;
+        getSteeringMessages?: () => Promise<ChatMessage[]>;
+      }): Promise<RunResult> => {
+        if (params.message === 'active') {
+          capturedSignal = params.signal;
+          await releaseRun.promise;
+          return {
+            text: 'aborted',
+            content: [],
+            stopReason: 'aborted',
+            usage: { inputTokens: 0, outputTokens: 0 },
+            toolRounds: 0,
+          };
+        }
+
+        nextTurnSteering = await params.getSteeringMessages?.() ?? [];
+        return {
+          text: 'next',
+          content: [{ type: 'text', text: 'next' }],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 1, outputTokens: 1 },
+          toolRounds: 0,
+        };
+      });
+
+      const app = await RuntimeApp.create({
+        workspaceDir,
+        cliOverrides: {
+          llm: { apiKey: 'test-key', model: 'test-model' },
+          memory: { enabled: false },
+          runner: { inTurnMessageMode: 'steer' },
+        },
+        dependencies: createTestDependencies({
+          createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
+          createMemoryManager: async () => null,
+        }),
+        onEvent: (event) => events.push(event),
+        onAgentEvent: (event) => agentEvents.push(event),
+      });
+      const testChannel = createTestChannel('steering-abort-test');
+      app.registerChannel(testChannel.channel);
+
+      const firstDispatch = testChannel.dispatch({
+        sessionKey: 'main',
+        message: 'active',
+        clientId: 'client-1',
+      });
+      await vi.waitFor(() => expect(capturedSignal).toBeDefined());
+
+      await testChannel.dispatch({
+        sessionKey: 'main',
+        message: 'unread steering',
+        clientId: 'client-2',
+      });
+      expect(agentEvents).toContainEqual(
+        expect.objectContaining({
+          type: 'user_message',
+          content: 'unread steering',
+          deliveryMode: 'steering',
+        }),
+      );
+
+      expect(app.abortTurn('main')).toEqual({ aborted: true, dropped: 0 });
+      expect(events.filter((event) => event.type === 'messages_dropped')).toEqual([]);
+
+      releaseRun.resolve();
+      await firstDispatch;
+      await testChannel.dispatch({
+        sessionKey: 'main',
+        message: 'next root',
+        clientId: 'client-3',
+      });
+
+      expect(runnerRun).toHaveBeenCalledTimes(2);
+      expect(nextTurnSteering).toEqual([]);
       await app.close();
     });
 
@@ -924,8 +1103,8 @@ describe('RuntimeApp', () => {
       await app.close();
     });
 
-    // ⑧ shutdown：先 abort 所有 active turn 再 allSettled 等回收
-    it('shutdown: aborts all active turns before waiting', async () => {
+    // ⑧ CH-08：先 abort active turn，再等待回收；queued request 不启动
+    it('CH-08 shutdown aborts the active turn, waits for it, and does not start queued work', async () => {
       const releaseRun = createDeferred<void>();
       let capturedSignal: AbortSignal | undefined;
 
@@ -957,18 +1136,36 @@ describe('RuntimeApp', () => {
           createMemoryManager: async () => null,
         }),
       });
+      const testChannel = createTestChannel('shutdown-queue-test');
+      app.registerChannel(testChannel.channel);
 
-      const turnPromise = app.runTurn({ sessionKey: 'main', message: 'go', promptMode: 'full' });
+      const firstDispatch = testChannel.dispatch({
+        sessionKey: 'main',
+        message: 'active',
+        clientId: 'client-1',
+      });
       await vi.waitFor(() => expect(capturedSignal).toBeDefined());
+      await testChannel.dispatch({
+        sessionKey: 'main',
+        message: 'queued',
+        clientId: 'client-2',
+      });
+      expect(runnerRun).toHaveBeenCalledTimes(1);
 
       const closePromise = app.close();
+      let closeSettled = false;
+      void closePromise.then(() => {
+        closeSettled = true;
+      });
 
       // close 应立即调 abort（signal 同步 flip）
       await vi.waitFor(() => expect(capturedSignal!.aborted).toBe(true));
+      await Promise.resolve();
+      expect(closeSettled).toBe(false);
 
       releaseRun.resolve();
-      await turnPromise;
-      await closePromise;
+      await Promise.all([firstDispatch, closePromise]);
+      expect(runnerRun).toHaveBeenCalledTimes(1);
     });
 
     // ⑨ shutdown timing：响应 signal 的 mock 应在合理时间内 abort 完成
