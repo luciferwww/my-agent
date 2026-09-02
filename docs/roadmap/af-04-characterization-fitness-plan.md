@@ -258,8 +258,8 @@ VS Code Test Runner 曾以 Node ABI `115` 加载 ABI `127` 的 `better-sqlite3`�
 | CH-05 | `RuntimeApp.create()` AgentEvent Fanout；Batch 2 multi-target failure tests | Verified | 已分别验证单个 `channel.send` 失败不影响其他 target 或 Turn，而 `onAgentEvent` 抛错会传播并阻止 Runner 启动 | Multi-target Runtime integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-05"` | Characterize then replace：目标每 target 隔离且不改变 Turn result |
 | CH-06 | `resolveToolPolicy()` + `wireApprovalRouting()`；Batch 2 policy/runtime tests | Verified | 已验证 deny/allow/prompt matrix、无 capability fail-closed、capable origin 的隐藏固定 120 秒 timeout-deny routing，以及 approval Hook 仅在 `startChannels()` 后安装的 startup-history dependency | Policy unit + Runtime integration；`npm test -- src/runtime/tool-approval-policy.test.ts src/runtime/RuntimeApp.test.ts -t "CH-06"` | Preserve deny/allowlist fallback；改为 current-call capability；移除默认 120 秒 timeout-deny，目标 approval wait 为 response-or-abort |
 | CH-07 | `RuntimeApp.startChannels()` / `stopChannels()` | Verified | 当前 partial start 无 rollback、flag 使 retry no-op；fake channels + start/stop counters + injected rejection | Runtime startup integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-07"` | Characterize then replace：跨独立 Channel 允许部分成功并逐 Channel 隔离失败；成功 Channel 保持运行，失败 Channel 清理自身 partial resources，Runtime 报告 degraded diagnostics，已启动 Channel close-once；单个 Channel 内保持 atomic startup，per-Channel restart/stop/start 延后设计 |
-| CH-08 | `RuntimeApp.close()`；现有 abort-before-wait/idempotent tests | Verified | 补 queued/approval wait、nonresponsive in-flight、Channel stop failure；deferred promises + test-side bounded race | Runtime shutdown integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-08"` | Characterize then replace：two-stage bounded Shutdown |
-| CH-09 | `RuntimeApp.abortTurn()` + Runner Abort；现有 active/queue/cross-session tests | Verified | 通过 public Channel queue 补 active+queued、late steering 在 Turn 结束时的丢弃现状与 exactly-once observation；barrier + event recorder | Runtime integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-09"` | Preserve public Abort/queue semantics；目标补 exactly-once completion；late-steering disposition 待该批次确认 |
+| CH-08 | `RuntimeApp.close()`；现有 abort-before-wait/idempotent tests | Verified | 补 queued/approval wait、nonresponsive in-flight、Channel stop failure；deferred promises + test-side bounded race | Runtime shutdown integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-08"` | Characterize then replace：two-stage bounded Shutdown；Stage 1 停止新请求、发出 Abort 并在 graceful deadline 内等待协作式 settlement/cleanup，Stage 2 强制关闭所拥有资源并在 force deadline 后停止阻塞；组件失败隔离、重复 close 共享同一过程、close-once、结构化 diagnostics；进程退出由 Runtime host 决定 |
+| CH-09 | `RuntimeApp.abortTurn()` + Runner Abort；现有 active/queue/cross-session tests | Verified | 通过 public Channel queue 补 active+queued、late steering 在 Turn 结束时的丢弃现状与 exactly-once observation；barrier + event recorder | Runtime integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-09"` | Preserve active Root Abort、同 Session queue drop、cross-session isolation 与 never-throw；目标补 started Turn exactly-once completion，以及每条 accepted steering message 的 consumed-or-dropped exactly-once settlement；late steering 绑定原 active Turn，未注入时显式 dropped 且不自动转为 queued Root request；具体事件/API 形状留给后续 Contract/Module Spec |
 | CH-10 | Task Tool、library `runSubagentTurn()`、`SubagentRunner`；现有 outcome/event/Abort tests | Verified | 补 RuntimeApp library path、Usage/Event/route/session cleanup；fake child runner + cleanup counters | Tool + library Subagent contract；`npm test -- src/runtime/subagent-orchestration.test.ts -t "CH-10"` | Preserve blocking baseline；Slice 2 统一 tracked Child path |
 | CH-11 | `SessionManager`/transcript + Runner compaction/orphan repair；现有 persistence tests | Verified | 将 history、compaction、orphan repair、Abort persistence 组合为可定位 baseline；temp directory + fake LLM | Runner/Session integration；`npm test -- src/core/runner/AgentRunner.test.ts -t "CH-11"` | Characterize current behavior；Tool closure 目标由 [ADR-001](../architecture/adr-001-tool-result-closure-and-recovery.md) 约束，Context Budgeting/Compaction Recovery 目标由 [ADR-002](../architecture/adr-002-context-budgeting-and-compaction-recovery.md) 约束 |
 | CH-12 | `bootstrapRuntime()` + Runtime close；现有 memory degradation test | Verified | 当前 later bootstrap failure 不 cleanup earlier resources；injected failure + close counters + temp directory | Bootstrap integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-12"` | Baseline success/degradation；replace incomplete rollback |
@@ -383,7 +383,7 @@ AF-04 完成时至少产生：
 | Phase | 状态 | 完成日期 | 证据/备注 |
 |---|---|---|---|
 | Phase 0：证据基线与执行映射 | Completed | 2026-08-31 | 项目所有者接受 evidence baseline、implementation batches 与 exception format；独立复审为 Critical/High/Medium/Low 0/0/0/0，blocking-overdesign 0；尚未授权 Phase 1、测试实现或生产代码变更 |
-| Phase 1：P0 Characterization | In Progress |  | 项目所有者于 2026-09-01 接受 Batch 1（CH-01、CH-02、CH-03）和 Batch 2（CH-04、CH-05、CH-06）；于 2026-09-02 接受修订后的 CH-07 migration disposition；尚未授权 Batch 3 测试实现、CH-07 生产迁移或 CH-04/CH-05 生产代码变更 |
+| Phase 1：P0 Characterization | In Progress |  | 项目所有者于 2026-09-01 接受 Batch 1（CH-01、CH-02、CH-03）和 Batch 2（CH-04、CH-05、CH-06）；于 2026-09-02 接受 CH-07、CH-08、CH-09 migration dispositions；尚未授权 Batch 3 测试实现、CH-07..CH-09 生产迁移或 CH-04/CH-05 生产代码变更 |
 | Phase 2：P1 Characterization | Not Started |  |  |
 | Phase 3：Architecture Fitness Tests | Not Started |  |  |
 | Phase 4：Completion Record 与收口评审 | Not Started |  |  |
@@ -443,4 +443,18 @@ Batch 2（CH-04、CH-05、CH-06）的 Characterization 与 migration disposition
 
 Accepted。项目所有者于 2026-09-02 接受修订后的 CH-07 migration disposition：独立 Channel 跨实例启动允许部分成功；单个 Channel 启动失败只产生可定位 warning 与 degraded diagnostics，不阻止其他已成功 Channel 或核心 Agent 继续运行。失败 Channel 必须清理本次启动创建的 partial resources，单个 Channel 内保持 atomic startup；Shutdown 只停止实际启动的 Channel，并保持 close-once。核心 Runtime 必需依赖仍 fail-fast。将同一原则扩展到其他 Extension Registry，以及增加 per-Channel restart/stop/start 控制，均留待后续独立设计。
 
-本次接受只确认 CH-07 的 Characterization 与 migration direction，不授权 Phase 1 Batch 3 测试实现、CH-07 生产代码变更或通用 Extension lifecycle API。CH-08 与 CH-09 disposition 仍待项目所有者分别确认。
+本次接受只确认 CH-07 的 Characterization 与 migration direction，不授权 Phase 1 Batch 3 测试实现、CH-07 生产代码变更或通用 Extension lifecycle API。
+
+### Phase 1 Batch 3 CH-08 Owner disposition
+
+Accepted。项目所有者于 2026-09-02 接受 CH-08 two-stage bounded Shutdown migration disposition：Stage 1 立即停止接收新 Root request、进入 draining、向 queued/approval wait 与 in-flight work 传播 Abort，并在独立 graceful deadline 内等待协作式 settlement、必要状态落盘及有序 cleanup；Stage 2 对仍未结束的工作执行资源级强制关闭，并在独立 force deadline 到期后停止阻塞 `RuntimeApp.close()`。单个组件的 `stop()` 失败不得阻止其他组件清理；重复 `close()` 必须共享同一 Shutdown 过程，owned resources 保持 close-once；最终结果记录 graceful、forced、failed 与 timed-out diagnostics。`RuntimeApp` 不直接调用 `process.exit()`，是否退出进程由 Runtime host 根据 Shutdown 结果决定。
+
+本次接受只确认 CH-08 的 Characterization 与 migration direction，不授权 Phase 1 Batch 3 测试实现或 CH-08 生产代码变更。具体 deadline 数值、配置入口和 host 退出策略留给后续 Accepted Module Spec 或独立 Architecture Slice。
+
+### Phase 1 Batch 3 CH-09 Owner disposition
+
+Accepted。项目所有者于 2026-09-02 接受 CH-09 Abort 与 late-steering migration disposition：保留 active Root Turn Abort、同 Session queued/followup messages 清空、cross-session isolation、Child Turn signal cascade 与 `abortTurn()` never-throw 语义；每个已启动 Turn 必须恰好产生一次 completion，重复 Abort 不得产生第二次 completion。
+
+每条已接受并广播的 steering message 必须恰好结算为 `consumed` 或 `dropped`。Steering 只绑定入站时的 active Turn；只有 Runner 已将其纳入 conversation 并使后续执行可观察时才算 `consumed`。因 Turn Abort、正常结束、失败或 Shutdown 而未注入时必须产生带可分类原因的 `dropped` settlement，不得只写 log，也不得自动转成下一条 queued Root request。具体事件名称、payload、持久化边界和 API 形状留给后续 Accepted Contract/Module Spec。
+
+本次接受完成 Batch 3（CH-07、CH-08、CH-09）的 migration disposition review，但不授权 Phase 1 Batch 3 Characterization Tests、任何 CH-07..CH-09 生产代码变更或相关公共 Contract 扩展；这些工作仍需项目所有者单独批准。
