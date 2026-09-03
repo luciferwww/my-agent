@@ -84,8 +84,8 @@ describe('optimizeImage', () => {
   });
 
   it('returns cannot_fit_budget when even q=45 exceeds target', async () => {
-    const input = await makeNoisePng(2000, 2000);
-    const r = await optimizeImage(input, 1024); // 1 KB — impossible for 2000² noise
+    const input = await makeNoisePng(1000, 1000);
+    const r = await optimizeImage(input, 1024); // 1 KB — impossible for 1000² noise
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe('cannot_fit_budget');
   });

@@ -1,0 +1,17 @@
+[
+  { "contract": "AgentEvent", "source": "src/core/runner/types.ts", "kind": "event" },
+  { "contract": "RuntimeEvent", "source": "src/runtime/types.ts", "kind": "event" },
+  { "contract": "RuntimeErrorInfo", "source": "src/runtime/types.ts", "kind": "error" },
+  { "contract": "RuntimeShutdownReport", "source": "src/runtime/types.ts", "kind": "lifecycle" },
+  { "contract": "RuntimeLifecycleState", "source": "src/runtime/types.ts", "kind": "lifecycle" },
+  { "contract": "Channel", "source": "src/adapters/channel/types.ts", "kind": "port-lifecycle" },
+  { "contract": "AbortHookBindings", "source": "src/adapters/channel/types.ts", "kind": "abort-port" },
+  { "contract": "ChannelInteractionAdapter", "source": "src/adapters/channel/types.ts", "kind": "interaction-port" },
+  { "contract": "ChannelApprovalAdapter", "source": "src/adapters/channel/types.ts", "kind": "interaction-port" },
+  { "contract": "LLMClient", "source": "src/adapters/llm/types.ts", "kind": "provider-port" },
+  { "contract": "StreamEvent", "source": "src/adapters/llm/types.ts", "kind": "event" },
+  { "contract": "ToolExecutor", "source": "src/core/tools/types.ts", "kind": "tool-port" },
+  { "contract": "ToolContext", "source": "src/core/tools/types.ts", "kind": "abort-context" },
+  { "contract": "MemoryStore", "source": "src/core/memory/types.ts", "kind": "store-port-lifecycle" },
+  { "contract": "LogAdapter", "source": "src/platform/logger/types.ts", "kind": "adapter-port-lifecycle" }
+]

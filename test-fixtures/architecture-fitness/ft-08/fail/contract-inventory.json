@@ -1,0 +1,16 @@
+[
+  {
+    "contract": "UncoveredPort",
+    "source": "src/contracts.ts",
+    "kind": "port",
+    "positive": ["src/contracts.positive.test.ts"],
+    "negative": []
+  },
+  {
+    "contract": "PayloadConfig",
+    "source": "src/contracts.ts",
+    "kind": "config",
+    "positive": ["src/contracts.positive.test.ts"],
+    "negative": ["src/contracts.negative.test.ts"]
+  }
+]

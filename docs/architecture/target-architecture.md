@@ -3,8 +3,8 @@
 ## 1. 文档状态与证据规则
 
 - **状态：** Accepted
-- **版本：** 1.3
-- **日期：** 2026-09-01
+- **版本：** 1.4
+- **日期：** 2026-09-03
 - **所有者：** 项目所有者
 - **执行计划：** [AF-03 Target Architecture Execution Plan](../roadmap/af-03-target-architecture-plan.md)
 - **父计划：** [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) AF-03
@@ -12,7 +12,7 @@
 - **规范词汇：** [Domain Glossary](domain-glossary.md)
 - **架构约束：** [Architecture Principles](architecture-principles.md)
 
-本文档是已接受的目标架构，不描述当前实现已经完成的结构，也不授权生产迁移。AF-05/AF-06 尚未执行的内容必须保持为 Hypothesis 或 Open Question；只有对应 Spike Results 可以将其升级为有执行证据的结论。
+本文档是已接受的目标架构，不描述当前实现已经完成的结构，也不授权生产迁移。AF-05 `Provisional Pass` Spike Results 已获项目所有者接受并完成 disposable cleanup，`P2-H01..P2-H03` 因此具有 Spike evidence；AF-06 尚未执行。该证据不表示生产实现完成，也不使 Foundation Gate 整体通过。
 
 ### 1.1 证据分类
 
@@ -30,10 +30,10 @@
 
 | 文档 | 状态 | AF-03 中的用途 |
 |---|---|---|
-| [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) | Accepted v1.0 | AF-03 范围、验收、Foundation Gate 和 Slice 顺序 |
+| [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) | Accepted v1.2 | AF-03 范围、验收、Foundation Gate 和 Slice 顺序 |
 | [AF-03 Execution Plan](../roadmap/af-03-target-architecture-plan.md) | Accepted v1.4 | Phase、Check Items、Exit Gates 和停止条件 |
-| [Architecture Principles](architecture-principles.md) | Accepted v1.0 | AP-01 至 AP-13 的稳定约束和验证候选 |
-| [Domain Glossary](domain-glossary.md) | Accepted v1.4 | 规范术语、逻辑所有者和非含义 |
+| [Architecture Principles](architecture-principles.md) | Accepted v1.1 | AP-01 至 AP-13 的稳定约束和验证候选 |
+| [Domain Glossary](domain-glossary.md) | Accepted v1.5 | 规范术语、逻辑所有者和非含义 |
 | [Development Workflow](../development-workflow.md) | Accepted v1.0 | 状态、评审、证据、DoR/DoD 和文档治理 |
 
 发生冲突时遵循 Architecture Foundation Plan 的权威优先级。本节其他证据不得覆盖上述 `Accepted Constraint`。
@@ -232,7 +232,7 @@ Infrastructure -X-> Composition / RuntimeApp private state
 | 所有者 | 唯一职责 | 不负责 |
 |---|---|---|
 | Composition Root | 进程入口处选择 Config source、Builtin Runtime Module、External Extension 和具体 Adapter；调用 Runtime Builder | 队列、Turn、Model Resolution、Runner 循环、Channel 路由 |
-| Runtime Builder | 验证构建输入，发现并创建组件，收集 Contribution，建立 Registry/资源图，按依赖顺序启动，并清理部分启动失败 | 处理用户消息、调度 Turn、执行 Tool Use Loop、成为全局服务容器 |
+| Runtime Builder | 验证构建输入，发现并创建组件，收集 Contribution，建立 Registry/instance 启动依赖，按依赖顺序启动，并请求失败 instance 自行清理 | 处理用户消息、调度 Turn、执行 Tool Use Loop、管理 Extension 内部对象、成为全局服务容器 |
 | RuntimeApp | 接收入站请求，维护 per-session 队列，创建和调度 Turn，捕获 Turn 所需 Snapshot，维护路由/Fanout/取消，并编排 Shutdown 请求 | 加载 Config、发现 Module/Extension、解析 Model Facts、构造具体 Adapter、执行 LLM/Tool 循环 |
 | Runner | 在一个 Turn 内执行 LLM/Tool 循环、上下文预算/压缩、Tool 前后 Hook、执行事件和结果 | 加载 Config、创建 Session/Provider/Channel、发现 Module、管理进程级资源、调度其他 Session |
 
@@ -347,7 +347,7 @@ Phase 1 的构造原则足以表达当前目标对象图：
 
 **Target Decision：** Provider Integration 是 Provider Connection 语义及使用方式的唯一所有者。Configuration 只加载并做格式/Schema 校验，Composition 只提供选定 binding，Model Resolver 只通过 core-owned Contract 校验该连接对当前 Provider/Model 是否可用和兼容；这些协作者都不重新定义 Connection 语义。Configuration 不能把 Connection、Descriptor、Policy 和 Request Override 合并成同一个 `LLMConfig` 语义。每个最终值必须保留逻辑来源；具体 provenance 字段形状由 AF-05 后的 Slice 决定。
 
-**Target Decision：** Provider Integration 是模型参数来源解释和有效上限计算的唯一权威 producer；Model Catalog / Model Resolution 保持 Model Descriptor 的逻辑所有权、来源校验和 Turn 绑定责任。成功生成 Resolved Model 需要 Provider Contract 返回正整数 `effective context limit` 及其来源；Provider 可以在内部组合部署覆盖、Provider 元数据、静态目录、受信发现、既有观测和保守默认值，但这些来源的可行性和优先级仍是 P2-H01/P2-H02。Provider 若为已接受但缺少专属 metadata 的模型选择 fallback，必须标注为 `provider-default`；`200,000` 仅是待 AF-05 验证的 bundled Anthropic Provider compatibility candidate，不是 Stable Core、Model Resolver 或全局 Catalog 的默认事实。Core 不按 Provider 品牌或 Model 字符串猜测上限，也不解释 Provider 内部来源优先级。
+**Target Decision：** Provider Integration 是模型参数来源解释和有效上限计算的唯一权威 producer；Model Catalog / Model Resolution 保持 Model Descriptor 的逻辑所有权、来源校验和 Turn 绑定责任。成功生成 Resolved Model 需要 Provider Contract 返回正整数 `effective context limit` 及其来源；Provider 可以在内部组合部署覆盖、Provider 元数据、静态目录、受信发现、既有观测和保守默认值。项目所有者已接受的 AF-05 disposable evidence 支持这些来源对 `effectiveContextLimit` 的可行性、确定性优先级、fallback 只补缺和 observation 只收紧；它不验证其他 Facts 的最终 precedence。Provider 若为已接受但缺少专属 metadata 的模型选择 fallback，必须标注为 `provider-default`；`200,000` 只在 fake evidence 中分别作为受信事实和 `provider-default` 场景值，不是已验证的 bundled Anthropic Provider compatibility，也不是 Stable Core、Model Resolver 或全局 Catalog 的默认事实。Core 不按 Provider 品牌或 Model 字符串猜测上限，也不解释 Provider 内部来源优先级。
 
 上述模型上限来源、预算权威和 Provider fallback 的理由与迁移约束由 [ADR-002](adr-002-context-budgeting-and-compaction-recovery.md) 记录。
 
@@ -395,7 +395,7 @@ Resolved Model 不包含明文凭据、Provider SDK Client、Config loader、可
 
 **Target Decision：** Provider Adapter 必须负责把可识别的上下文超限响应归一化为 core-owned `ContextOverflowError`。Provider 可以根据明确返回的真实上限或仅能证明的保守上界，附带 Provider 解释后的 limit correction，并可以更新其按 Provider、Endpoint/Deployment 和 Model 隔离的内部观测；Runner 不解析 Provider 原始错误，也不自行反推模型上限。同一 Turn 的 Resolved Model 仍保持不可变，correction 只允许作为 Turn-local 收紧预算用于后续 Compaction retry，不得放宽原上限；后续新 Turn 通过重新解析取得 Provider 更新后的事实。Runner 负责 Compaction 决策、内容选择、调用 Session-owned Contract 请求记录持久化以及有界重试；Session 继续拥有历史和持久化机制。Provider 不执行会话压缩或写入 Session。
 
-Compaction candidate 验收、Tool Call/Result-safe 边界、Abort/deadline、有界 no-progress recovery 和 Compaction observer 生命周期以 [ADR-002](adr-002-context-budgeting-and-compaction-recovery.md) 为权威；具体接口和参数仍需 AF-05 Results 与 Accepted Module Spec。
+Compaction candidate 验收、Tool Call/Result-safe 边界、Abort/deadline、有界 no-progress recovery 和 Compaction observer 生命周期以 [ADR-002](adr-002-context-budgeting-and-compaction-recovery.md) 为权威；AF-05 已为 correction/Compaction/retry 责任分配提供 disposable evidence，具体接口和参数仍需 Accepted Module Spec。
 
 ### 5.5 解析阶段、失败和保守 fallback
 
@@ -416,9 +416,9 @@ Model Resolver 的目标阶段顺序是：
 
 **Target Decision：** fallback 只能由显式 Model Policy 授权。每个 fallback 候选、采用原因和拒绝原因必须可追踪；如果没有满足 Connection、Facts、Policy 和 Capability 的候选，则解析失败。
 
-**Hypothesis P2-H01：** 每个 Provider 可以在自身边界内以确定性优先级合并部署覆盖、Provider 元数据、静态 Catalog、观测修正和 Provider fallback，同时保留字段级 provenance 和冲突诊断；Core 无需拥有跨 Provider 模型目录或来源合并算法。无论 Provider 选择何种正常来源优先级，fallback 只能补全缺失事实，不能覆盖适用的非 fallback 事实；overflow 观测只能保守收紧既有有效上限，不能将其放宽。具体 Provider Contract、正常来源等级和冲突规则必须由 AF-05 验证。
+**Hypothesis P2-H01：** 每个 Provider 可以在自身边界内以确定性优先级合并部署覆盖、Provider 元数据、静态 Catalog、观测修正和 Provider fallback，同时保留字段级 provenance 和冲突诊断；Core 无需拥有跨 Provider 模型目录或来源合并算法。无论 Provider 选择何种正常来源优先级，fallback 只能补全缺失事实，不能覆盖适用的非 fallback 事实；overflow 观测只能保守收紧既有有效上限，不能将其放宽。AF-05 accepted disposable evidence 已支持 `effectiveContextLimit` 的这些判断；具体 production Provider Contract 和其他 Facts 的来源等级仍由后续 Accepted Module Spec 决定。
 
-**Hypothesis P2-H02：** Provider 可以为未知模型解析出带 `provider-default` provenance 的有效上下文上限，而不要求 Core 引入 `unknown` 预算分支；无法由 Provider 解析且影响请求编码或执行安全的其他关键事实仍必须阻止该候选。事实最小集、Provider fallback 和不可 fallback 的反例必须由 AF-05 验证。
+**Hypothesis P2-H02：** Provider 可以为未知模型解析出带 `provider-default` provenance 的有效上下文上限，而不要求 Core 引入 `unknown` 预算分支；无法由 Provider 解析且影响请求编码或执行安全的其他关键事实仍必须阻止该候选。AF-05 accepted disposable evidence 已支持该 fallback 与缺失 Tool Use Fact fail-closed 反例；production Facts 最小集和 Contract shape 仍由后续 Accepted Module Spec 决定。
 
 ### 5.6 Parent Turn Model Resolution 调用流
 
@@ -541,7 +541,7 @@ Parent/Child 可以解析为不同 Provider/Model，但不得共享 per-turn 可
 
 Subagent Orchestration 负责成功与失败结果的对称归一化并返回 Parent；Phase 2 不改变既有 Usage/Event/Abort 契约的具体形状，其完整调用流仍由 Phase 5 定义。
 
-**Hypothesis P2-H03：** Parent/Child 可以共享只读 Provider Integration 资源或由唯一 Lifecycle Owner 管理的受控连接池，同时不共享 Resolved Model、请求构建器、流状态或其他 per-turn 可变 Client 状态。允许共享的最小资源边界、唯一 Lifecycle Owner、借用/释放和 Shutdown 行为必须由 AF-05 验证。
+**Hypothesis P2-H03：** Parent/Child 可以共享只读 Provider Integration 资源或由唯一 Lifecycle Owner 管理的受控连接池，同时不共享 Resolved Model、请求构建器、流状态或其他 per-turn 可变 Client 状态。AF-05 accepted disposable evidence 已支持 read-only owner、lease/release、single close 和 per-Turn 隔离；真实连接池、backpressure 与 process Shutdown 行为仍由后续 Accepted Module Spec 和生产验证决定。
 
 ### 5.8 Current 到 Target 的迁移输入
 
@@ -623,9 +623,9 @@ AF-05 不以接入 OpenAI 或其他生产 Provider 为成功条件；独立 Fake
 
 ### 6.4 External Extension 隔离与启动结果
 
-**Target Decision：** External Extension 的 Descriptor 无效、入口缺失、加载失败、注册抛错或任一 Contribution 无效时，Runtime Builder 丢弃该 Extension 的整个 staging unit，编排失败阶段的资源清理，记录结构化、可关联的启动诊断，然后继续处理其他候选。失败 Extension 的任何部分 Contribution 都不得进入 Snapshot。
+**Target Decision：** External Extension 的 Descriptor 无效、入口缺失、加载失败、注册抛错或任一 Contribution 无效时，Runtime Builder 丢弃该 Extension 的整个 staging unit，调用该单元提供的失败清理，记录结构化、可关联的启动诊断，然后继续处理其他候选。失败 Extension 的任何部分 Contribution 都不得进入 Snapshot。
 
-**Target Decision：** 在一个 Extension/Module 的 staging unit 成功原子交接给 Runtime Builder 前，创建资源的一方始终保留 rollback ownership，并必须提供可由 Builder 编排的失败清理行为；Builder 不因编排清理而成为该私有资源的语义所有者。原子交接后，已接受单元的唯一 Lifecycle Owner 按 Resource Ownership 记录负责后续关闭。具体 handoff 和 cleanup 接口由 AF-06 验证。
+**Target Decision：** 在一个 Extension/Module 的 staging unit 成功原子交接给 Runtime Builder 前，该单元始终保留 rollback ownership，并必须提供可由 Builder 调用的失败清理行为；原子交接后，已接受 Extension/Module instance 仍是其内部长期对象的唯一 Lifecycle Owner。Builder 只编排 instance-level `start()`/`stop()`，不读取、共享、计数或关闭该 instance 内部连接、缓存、SDK client、认证状态或限流器。具体 handoff 和 cleanup 接口由 AF-06 验证。
 
 冲突结果必须与枚举顺序无关且可解释：
 
@@ -664,7 +664,7 @@ Extension 可以在自身边界内创建并让多类 Contribution 共享私有�
 - 共享者和关闭权不越过该 Extension 边界；
 - 私有资源不以任意 token 注册到 Registry 或全局服务集合；
 - Contribution 消费者持有实现 Contract 不等于获得资源关闭权；
-- 资源创建、部分失败清理、启动和逆序关闭有唯一 Lifecycle Owner；
+- 私有资源如何共享、引用、启动和关闭由该 Extension 自己负责；Framework 只观察 Extension instance 的 Lifecycle；
 - 具体 factory、Capability 和 Lifecycle 接口形状由 AF-06 验证。
 
 平台专有消息或交互能力必须由 Channel Contract、Channel Capability 或受限消息上下文表达。Tool/Hook 不得通过识别具体 Channel 类型、Transport payload 或全局当前客户端来访问审批、结构化选择、附件等能力；能力缺失时按显式 Contract 拒绝或降级。
@@ -751,14 +751,14 @@ Builtin Runtime Modules ------------------------------------------------------->
 			`-- Provider projection
 ```
 
-一个 AF-06 测试 Extension 必须通过同一 Extension API 同时贡献 Channel、Tool 和 Hook，并在 Extension 边界内共享一个 instrumented 私有资源。该实验用于证明三类消费者不识别 Extension 来源、不访问私有资源，并能在失败时观察整组隔离；它不授权生产运行中 reload。
+一个 AF-06 测试 Extension 必须通过同一 Extension API 同时贡献 Channel、Tool 和 Hook，并自行管理一个内部长期对象 sentinel。该实验只用于证明三类消费者不识别 Extension 来源、不访问或关闭内部对象，并能在失败时观察整组隔离；它不让 Framework 管理 Extension 内部资源，也不授权生产运行中 reload。
 
 ### 6.8 AF-06 Hypotheses and experiment inputs
 
 | ID | Hypothesis | 最小实验 | 成功条件 | 停止条件 |
 |---|---|---|---|---|
 | P3-H01 | Descriptor 静态校验、直接子目录发现和目录名排序足以在执行代码前拒绝无效安装并确定冲突优先级 | 构造有效、缺字段、越界入口、重复 External ID、External/External 与 Builtin/External Contribution 冲突、无效 Builtin、重复 Builtin ID、Builtin/Builtin Contribution 冲突、散落脚本、嵌套目录和不同文件系统枚举/来源获取顺序样例 | 只加载有效直接子目录候选；Builtin 始终胜出；规范化目录顺序和 External first-wins 结果可重复；后续冲突 External 单元整组隔离且每个冲突产生一条包含赢家、被隔离方、冲突 identity 和排序依据的 warning；无效/冲突 Builtin 导致清理后启动失败且不发布 Snapshot；无效 Descriptor 代码执行计数为零 | 必须执行入口才能确定最小身份/入口安全、路径可逃逸安装目录，或跨平台目录顺序无法稳定定义 |
-| P3-H02 | per-unit staging 和原子 ownership handoff 可在继续启动时保证失败 External Extension 零部分发布和零资源残留 | 在 `runtime/` 外建立一个集成 External chat Extension fixture，经同一 API 注册 proprietary WebSocket Channel、平台 Tool、Hook、Config，并让三类运行贡献共享一个 instrumented 私有连接/限流资源；在加载、各注册点、最终校验、交接前后注入失败并记录 creator cleanup、ownership 和 Builder 编排 | 交接前创建方保持 rollback ownership 且 cleanup 恰好一次；交接后唯一 Lifecycle Owner 可定位；每次失败均无部分 Contribution/资源残留；其他有效 Extension 的 Snapshot 相同且诊断可关联；共享资源不泄漏给消费者 | 任一失败污染 Snapshot、改变无关 Extension 结果、交接时出现无 Owner/多 Owner、重复清理/泄漏资源，或 fixture 必须进入 `runtime/`/访问 RuntimeApp 私有状态才能工作 |
+| P3-H02 | per-unit staging 和原子 ownership handoff 可在继续启动时保证失败 External Extension 零部分发布和零实例残留 | 在 `runtime/` 外建立一个集成 External chat Extension fixture，经同一 API 注册 proprietary WebSocket Channel、平台 Tool、Hook、Config，并由该 Extension 自行管理一个内部长期对象 sentinel；在加载、各注册点、最终校验、交接前后注入失败并记录 instance cleanup、ownership 和 Builder 编排 | 交接前 Extension instance 保持 rollback ownership 且 cleanup 恰好一次；交接后唯一 instance Lifecycle Owner 可定位；每次失败均无部分 Contribution/实例残留；其他有效 Extension 的 Snapshot 相同且诊断可关联；内部对象不泄漏给 Framework 或消费者 | 任一失败污染 Snapshot、改变无关 Extension 结果、交接时出现无 Owner/多 Owner、重复清理/实例泄漏、Framework 开始管理内部对象，或 fixture 必须进入 `runtime/`/访问 RuntimeApp 私有状态才能工作 |
 | P3-H03 | 一个 Extension API 加 typed projections 足以支持首批四类 Contribution 而不成为 Service Locator | Builtin 与 External Contract Test 分别通过同一 API 注册 Tool、Hook、Channel、Provider 四类 Contribution；每个消费者只取得并执行/解析其 typed projection，Provider fixture 也不增加 Runner source branch | 四类都能注册/消费且消费者不按来源分支；不能取得 Registry mutation、无关 projection、RuntimeApp 私有状态或 arbitrary service token | 任一 Contribution Kind 需要独立注册系统、`get(any token)`、RuntimeApp 私有状态、中央 Extension 类型联合或 Runner Provider 分支 |
 | P3-H04 | Namespace 隔离、Extension-owned versioned Schema 和两阶段 discovery/load 可在执行 Extension 代码前确定最小配置校验边界，且不泄漏全局 Config | 使用两个字段重名 Extension 和同一 Extension 的 supported/obsolete/future Schema 版本 fixture；第一阶段只读取静态 Descriptor/Schema identity 并记录 Extension 代码执行计数，第二阶段仅对已接受版本加载/注册；分别测试无需迁移、显式迁移成功、无迁移路径拒绝和 Schema 内容失败 | 字段不冲突；静态拒绝时 Extension 代码执行计数为 0；支持版本或显式迁移产生同一已校验 namespace input；obsolete/future/失败迁移整组隔离并可诊断；Extension 只见自身已校验配置 | 必须先执行任意 Extension 入口才能发现 Schema/版本，版本结果依赖加载副作用，必须集中复制第三方字段/泄漏全局 Config，或无法对无迁移路径版本 fail closed |
 | P3-H05 | 启动期 Extension Capability 和调用期 Channel Capability 可以在不改变 Snapshot 的情况下支持 typed platform identity 与显式降级 | 使用 P3-H02 的同一 chat Extension：Channel 产生受限 typed platform message identity，平台 Tool 经可选 current-call capability 执行 proprietary action；分别注入 required/optional 启动能力和调用期 capability 存在/缺失，验证 Hook/Tool 消费者不能 downcast proprietary Transport payload | required 缺失整组隔离；optional 缺失只产生预定义降级单元；调用期缺失只影响本次调用；identity/capability 足以完成平台 action；无具体 Channel/Transport 类型依赖或 Snapshot mutation | 出现校验失败后的偶然部分发布，或平台 Tool 需要全局当前 Channel、具体 Adapter/payload downcast、Snapshot mutation、通用 Runtime 服务访问，或缺失 capability 仍执行 proprietary action |
@@ -780,7 +780,7 @@ Builtin Runtime Modules ------------------------------------------------------->
 
 ### 7.1 设计状态与最小动态范围
 
-本节定义已安装且已加载 Extension 的进程内 enable、disable 和 Contribution replacement，以及版本化 Registry Snapshot 的发布、Turn 固定、Generation Retirement、失败回滚和 Shutdown 边界。它不重新扫描 `<agent-home>/extensions`，不重新执行 Extension 入口，不替换代码模块，也不授权文件 watcher、任意代码热加载或原地代码热升级。
+本节定义已安装且已加载 Extension 的进程内 enable/disable，以及版本化 Registry Snapshot 的发布、Turn 固定、Generation Retirement、失败回滚和 Shutdown 边界。同一 Extension identity 同时只启动一个 instance；重复候选记录 warning 后忽略。运行中版本替换、多 instance 并存和内部长期对象管理不属于 AF-06 最小机制。它不重新扫描 `<agent-home>/extensions`，不重新执行 Extension 入口，不替换代码模块，也不授权文件 watcher、任意代码热加载或原地代码热升级。
 
 **Target Decision：** Phase 4 使用最小单代 retirement 模型。任一时刻最多存在一个 current generation、一个 retiring generation、一个 pre-publish candidate 和一个 pending latest request；candidate 与 pending request 不持有可见 Snapshot，且不会形成额外 retiring generation。不引入多代并行 retirement、通用任务调度器、通用事务框架或分布式协调。
 
@@ -792,11 +792,11 @@ Builtin Runtime Modules ------------------------------------------------------->
 
 **Target Decision：** RuntimeApp 接受输入时只创建带稳定 `requestId` 的 Accepted Request；queued Accepted Request 不是 Turn，不捕获 Snapshot，也不持有 generation pin。该请求从 Session queue 开始执行时，RuntimeApp 才原子创建带稳定 `turnId` 的 Root Turn并捕获 current Snapshot/pin，同时保留 `requestId -> turnId` correlation；此后等待下游、运行中或正在收敛的 Root Turn 始终固定该 generation。Child Turn 继承 Parent Turn 的 Snapshot generation，即使 Child 在新 generation 发布后才创建，也不能改用 current generation。一个已创建的 Parent/Child Turn tree 因此只观察一个内部一致的 Contribution 集合。
 
-Turn tree 的 pin 在最后一个相关 Turn 完成、失败或 Abort 后释放。Snapshot pin 只保护该 generation 的 Contribution 和资源可用性，不赋予 Turn 关闭资源、修改 Registry 或延长进程 Shutdown deadline 的权力。
+Turn tree 的 pin 在最后一个相关 Turn 完成、失败或 Abort 后释放。Snapshot pin 只保护该 generation 的 Contribution 和对应 Extension/Module instance 可用性，不赋予 Turn 停止 instance、修改 Registry 或延长进程 Shutdown deadline 的权力。
 
 ### 7.3 Reload Transaction 与原子 publish
 
-`Reload Transaction` 表示一次已加载 Extension 状态变更从候选准备到原子 publish 的过程。它结束于 publish 成功，**不包含**旧 generation 的排空和资源释放。
+`Reload Transaction` 表示一次已加载 Extension 状态变更从候选准备到原子 publish 的过程。它结束于 publish 成功，**不包含**旧 generation 的排空和 Extension instance stop。
 
 ```mermaid
 flowchart LR
@@ -818,18 +818,18 @@ requested -> preparing -> validating -> ready -> publishing -> published
 
 目标步骤固定为：
 
-1. 从 current Snapshot 和请求的 enable/disable/replacement 计算 candidate contribution set；
-2. 私下创建或复用候选所需资源，并由创建方保留 rollback ownership；
-3. 校验 Extension 身份、Contribution identity、Config、Capability、Lifecycle 和冲突结果；
-4. 让新增候选单元达到 quiescent readiness，即资源已准备但尚未接收 Runtime ingress；
-5. 构建完整、不可变的 candidate Snapshot；
-6. 若 candidate 与 current 的已接受 Contribution identity/config/ownership 和 resource membership 等价，则在同一 bounded candidate-cleanup deadline 内清理 candidate 临时资源；只有清理成功才能返回 no-op，且不发布新 generation；清理失败或不收敛时执行下述统一 containment；
-7. 否则在不可中断的短原子区间把 current 指针从 generation N 切换到 N+1；
+1. 从 current Snapshot 和请求的 enable/disable 计算 candidate contribution set；
+2. 若 enable 请求的 Extension identity 已处于 active 状态，则在启动 candidate 前记录 warning/no-op，不创建 instance，也不发布新 generation；
+3. 否则，enable 时私下启动唯一 candidate Extension instance，并由该 instance 保留内部对象的 ownership；disable 不创建第二个 instance；
+4. 校验 Extension 身份、Contribution identity、Config、Capability、Lifecycle 和冲突结果；
+5. 让新增候选单元达到 quiescent readiness，即 instance 已准备但尚未接收 Runtime ingress；
+6. 构建完整、不可变的 candidate Snapshot；
+7. 在不可中断的短原子区间把 current 指针从 generation N 切换到 N+1；
 8. publish 返回成功，本次 Reload Transaction 完成；新 Root Turn 才能捕获 N+1。
 
-**Target Decision：** publish 前的 prepare/validate/readiness/snapshot-build 失败或 Abort 必须在 bounded candidate-cleanup deadline 内清理 candidate 独有资源，并保持 current Snapshot 和 ingress 不变。若 Abort 或清理未在 deadline 内收敛，Builder 保留 current，记录可关联的 candidate/Owner/资源失败，向当前、latest 和 pending 请求返回终态 rejected/blocked，清空这些 slot，并在本进程内拒绝后续动态 reload；不得在残留 candidate 之外启动替代 candidate。Shutdown 只对该残留做有界重试。原 current generation 不需要“恢复”，因为它从未被替换。publish 是提交点；成功后不因旧 generation 的排空或清理失败回滚 N+1。
+**Target Decision：** publish 前的 prepare/validate/readiness/snapshot-build 失败或 Abort 必须在 bounded candidate-cleanup deadline 内调用 candidate Extension instance 的清理，并保持 current Snapshot 和 ingress 不变。自身 candidate 失败的 request 返回 `rejected`。若 Abort 或清理未在 deadline 内收敛，Builder 保留 current，记录可关联的 candidate/Extension ID/Owner/stop failure；已被覆盖的 request 保持 `superseded`，未开始的 latest/pending request 返回 `blocked`，相关 slot 清空，后续动态 reload 返回 `blocked`；不得在残留 candidate 之外启动替代 candidate。Shutdown 只对该 instance 做有界重试。Framework 不检查或管理其内部对象。原 current generation 不需要“恢复”，因为它从未被替换。publish 是提交点；成功后不因旧 generation 的排空或实例停止失败回滚 N+1。
 
-**Target Decision：** 动态冲突使用 Phase 3 的相同确定规则：Builtin 胜过 External；External 按规范化安装目录名 first-wins。一个 enable/replacement 请求可以让排序更靠前的 External 成为赢家，并使原赢家的整个单元退出 candidate Snapshot。Reload 结果必须明确列出请求变更、连带进入 retirement 的单元和结构化冲突 warning，不能把隐式替换报告为单纯 enable 成功。
+**Target Decision：** 动态冲突使用 Phase 3 的相同确定规则：Builtin 胜过 External；External 按规范化安装目录名 first-wins。一个 enable 请求可以让排序更靠前、但 identity 不同的 External 成为赢家，并使原赢家的整个单元退出 candidate Snapshot。Reload 结果必须明确列出请求变更、连带进入 retirement 的单元和结构化冲突 warning，不能把隐式挤出报告为单纯 enable 成功；同 identity 的重复候选不启动第二个 instance。
 
 ### 7.4 Reload coordination 与 latest-wins
 
@@ -837,9 +837,11 @@ requested -> preparing -> validating -> ready -> publishing -> published
 
 - current transaction 尚未进入 publish 时，新请求替换为 latest request；Builder 只有在当前 candidate 的 Abort 和清理于 bounded candidate-cleanup deadline 内成功后，才从仍然有效的 current Snapshot 准备最新请求；清理不收敛时按 §7.3 返回终态失败并阻断 reload；
 - publish 原子区间不可中断；publish 返回后该 reload 已完成，新到请求属于下一次 reload，不是对已完成 reload 的 interrupt；
-- retiring generation 存在时，不启动下一次 reload；期间到达的请求只覆盖一个 pending latest slot，retirement 成功后立即以当时的 current Snapshot 执行最后一个请求；retirement 失败时，该 pending request 获得终态 rejected/blocked 结果并清空 slot，后续 reload 在本进程内以同一可定位 failure 明确拒绝。
+- retiring generation 存在时，不启动下一次 reload；期间到达的请求只覆盖一个 pending latest slot，retirement 成功后立即以当时的 current Snapshot 执行最后一个请求；retirement 失败时，该 pending request 获得终态 `blocked` 并清空 slot，后续 reload 在本进程内以同一可定位 failure 返回 `blocked`。
 
 多个被覆盖请求必须获得明确的 superseded 结果，不能永久等待或被错误报告为成功。latest-wins 只合并尚未发布的操作意图，不撤销已发布 Snapshot，也不合并当前正在执行的 Turn。
+
+Request terminal result 按角色固定：自身 candidate 在 publish 前失败且 cleanup 收敛为 `rejected`；被较新请求覆盖为 `superseded`，后续 cleanup failure 不改写；因 candidate cleanup 或 retirement 不收敛而未开始的 latest/pending/future request 为 `blocked`；Shutdown 取消尚未 publish 的 reload request 为 `shutdown/cancelled`。已 publish request 的 success 不因 retirement failure 改写；同 identity duplicate enable 返回带 warning 的 `no-op`。
 
 该串行化保证正常路径最多为：
 
@@ -851,7 +853,7 @@ current N+1 + retiring N + pending latest
 
 ### 7.5 Generation Retirement、drain 与 Abort
 
-只有非等价 candidate 才 publish N+1；publish 后 N 成为 retiring generation，Runtime Builder 创建独立的 Generation Retirement job。它不改变 reload 成功结果，也不阻止 N+1 接收新 Root Turn；但它作为 Retirement Gate 阻止下一次 reload 开始。等价 candidate 按 §7.3 返回 no-op，不产生新 generation 或 retirement。
+只有实际改变已接受 Extension 集合的请求才 publish N+1；publish 后 N 成为 retiring generation，Runtime Builder 创建独立的 Generation Retirement job。它不改变 reload 成功结果，也不阻止 N+1 接收新 Root Turn；但它作为 Retirement Gate 阻止下一次 reload 开始。同 identity 的重复 enable 请求按 §7.3 在 candidate start 前返回 warning/no-op，不创建 instance、generation 或 retirement。
 
 Retirement 顺序是：
 
@@ -859,27 +861,27 @@ Retirement 顺序是：
 2. 等待 N 的全部 Snapshot pin 在配置的 bounded drain deadline 内释放；
 3. deadline 到达时，沿现有 Abort 链取消仍固定 N 的 Root/Child Turn tree；
 4. 在独立的 bounded Abort-convergence deadline 内等待 Abort 收敛和 pin 释放；
-5. 若 N 的全部 pin 归零，由各资源的唯一 Lifecycle Owner 按依赖逆序停止并释放只属于 N 的资源；聚合单个 close 失败，但继续关闭其他依赖上独立且已具备关闭资格的资源；
-6. 若 Abort-convergence deadline 后仍有任一 N pin，保留 N Snapshot 可达的全部资源并进入可观测 retirement failure；generation-wide pin 不提供 resource-level 提前关闭证明，不得强制关闭或部分释放 N 的 generation resources；
+5. 若 N 的全部 pin 归零，Builder 按 instance 启动依赖逆序调用只属于 N 的 Extension/Module instance `stop()`；聚合单个 stop failure，但继续停止其他依赖上独立且已具备停止资格的 instance；每个 Extension 自行清理其内部对象；
+6. 若 Abort-convergence deadline 后仍有任一 N pin，保留 N Snapshot 所需的 Extension/Module instances 并进入可观测 retirement failure；不得强制停止这些 instances；
 7. 只有 N 成功 retired 后，才允许 pending latest reload 开始。
 
-当前与旧 generation 共享且身份、配置和所有权均未变化的资源不得仅因 generation 变化而重复启动或关闭。是否可安全复用必须由 Contribution/Lifecycle Contract 明确证明；无法证明时使用新资源并在旧 generation 排空后释放旧资源。
+identity、配置和 Contributions 均未变化的 Extension/Module instance 不因 generation 变化重复启动或停止。同一 Extension identity 不启动第二个 instance；其内部长期对象是否共享以及如何清理由该 Extension 自己负责，Framework 不建立内部 resource membership 或引用计数。
 
-**Target Decision：** Retirement cleanup 或 Abort convergence 失败不能回滚已发布 generation。Builder 记录可关联的 retirement failure 和未释放资源所有者，保持 current Snapshot 可用，向 pending request 返回终态 rejected/blocked 并清空 slot，随后在本进程内拒绝新的动态 reload，以免积累第二个 retiring generation；进程 Shutdown 对未完成清理做有界重试。除重启/Shutdown 外的恢复或人工处置接口属于后续需求，不在本阶段预建管理框架。
+**Target Decision：** Extension instance stop 或 Abort convergence 失败不能回滚已发布 generation，也不能改写已 publish request 的 success。Builder 记录可关联的 retirement failure、Extension ID 和 instance Owner，保持 current Snapshot 可用，向尚未开始的 pending request 返回终态 `blocked` 并清空 slot，随后在本进程内以 `blocked` 拒绝新的动态 reload，以免积累第二个 retiring generation；进程 Shutdown 对未完成的 instance stop 做有界重试。除重启/Shutdown 外的恢复或人工处置接口属于后续需求，不在本阶段预建管理框架。
 
-### 7.6 Lifecycle 与 Resource Ownership
+### 7.6 Lifecycle 与 Extension Instance Ownership
 
-| 对象/资源 | 创建或取得 | pre-publish Owner | publish 后 Owner | 失败/关闭责任 |
+| 对象 | 创建或取得 | pre-publish Owner | publish 后 Owner | 失败/关闭责任 |
 |---|---|---|---|---|
-| candidate Snapshot | Runtime Builder | Runtime Builder | publish 后成为 current Registry Snapshot | pre-publish 丢弃；无资源关闭权 |
-| Extension/Module 私有资源 | 对应单元 | 创建方保留 rollback ownership | Resource Ownership 记录中的唯一 Lifecycle Owner | Builder 编排，Owner 执行幂等清理 |
+| candidate Snapshot | Runtime Builder | Runtime Builder | publish 后成为 current Registry Snapshot | pre-publish 丢弃；不管理 Extension 内部对象 |
+| Extension/Module instance | 对应单元 | instance 保留 rollback ownership | 同一 instance 的唯一 Lifecycle Owner | Builder 编排 instance-level stop；instance 自行幂等清理内部对象 |
 | Snapshot pin | RuntimeApp / Turn orchestration | 对应 Turn tree | 对应 Turn tree | tree 终止时恰好释放一次 |
-| Retirement job | Runtime Builder | 不适用 | Runtime Builder 编排 | drain、Abort、逆序清理并报告失败 |
+| Retirement job | Runtime Builder | 不适用 | Runtime Builder 编排 | drain、Abort、逆序停止 eligible instances 并报告失败 |
 | pending latest request | Reload coordinator | Reload coordinator | 不发布为 Snapshot | 覆盖旧 pending 并返回 superseded 结果 |
 
-Lifecycle Owner 必须支持部分启动失败清理和幂等 close；消费者持有 Contribution binding 不获得关闭权。Builder 只拥有编排顺序和状态转换，不成为 Extension 私有连接、认证状态、限流器或 Transport 的语义所有者。
+Lifecycle Owner 必须支持部分启动失败清理和幂等 `stop()`；消费者持有 Contribution binding 不获得关闭权。Builder 只拥有 instance-level 编排顺序和状态转换，不成为 Extension 私有连接、认证状态、限流器或 Transport 的语义所有者。
 
-每个已接受资源记录必须具有唯一 Lifecycle Owner、generation membership 和关闭状态。Retirement 仅能关闭同时满足以下条件的资源：不属于 current generation、其所属的全部 Snapshot generation 均无 pin、没有其他已声明使用者，且尚未成功关闭。一个 generation 仍有任一 pin 时，其 Snapshot 可达资源作为整体保持可用，不引入 resource-level pinning。current 与 retiring generation 共享的同一资源保持原 Owner，不因 generation 切换重复启动；它只在最后一个 membership/使用者退出后的 retirement 或 Shutdown 中关闭一次。`Retirement job`、`Retirement Gate` 和 `Reload coordinator` 只描述上述状态与责任，不要求实现为独立服务、通用调度器或框架。
+每个已接受 Extension/Module instance 必须具有唯一 Lifecycle Owner 和启动/停止状态。Retirement 只有在该 instance 已不属于 current Snapshot、所有仍引用其 Contributions 的旧 generation 均无 pin、且尚未成功停止时，才能调用其 `stop()`。Framework 不跟踪 instance 内部对象的使用者、membership 或关闭状态。`Retirement job`、`Retirement Gate` 和 `Reload coordinator` 只描述上述状态与责任，不要求实现为独立服务、通用调度器或框架。
 
 ### 7.7 Enable、disable、rollback 与 retirement 调用流
 
@@ -887,31 +889,25 @@ Lifecycle Owner 必须支持部分启动失败清理和幂等 close；消费者�
 sequenceDiagram
 	participant Requester
 	participant Builder as Runtime Builder
-	participant Candidate as Candidate Unit/Resources
+	participant Candidate as Candidate Extension Instance
 	participant Registry
 	participant Runtime as RuntimeApp
 	participant Old as Old Generation Owners
 
-	Requester->>Builder: enable / disable / replace loaded Extension
-	Builder->>Candidate: prepare, validate, reach quiescent readiness
+	Requester->>Builder: enable / disable loaded Extension
+	alt same-identity Extension already active
+		Builder-->>Requester: warning/no-op; do not start a duplicate instance
+	else state change required
+		Builder->>Candidate: prepare, validate, reach quiescent readiness
 	alt pre-publish failure or newer request
 		Builder->>Candidate: bounded abort and creator-owned cleanup
 		alt cleanup converges
-			Builder-->>Requester: failed or superseded; current unchanged
+			Builder-->>Requester: rejected or superseded; current unchanged
 		else cleanup does not converge
-			Candidate-->>Builder: attributable candidate/Owner/resource residue
-			Builder-->>Requester: affected requests rejected and cleared; future reload rejected
+			Candidate-->>Builder: attributable candidate/Extension/Owner residue
+			Builder-->>Requester: settle by role: rejected/superseded/blocked; future reload blocked
 		end
 	else candidate ready
-		alt candidate is equivalent to current
-			Builder->>Candidate: bounded cleanup of temporary resources
-			alt cleanup converges
-				Builder-->>Requester: no-op; generation unchanged
-			else cleanup does not converge
-				Candidate-->>Builder: attributable candidate/Owner/resource residue
-				Builder-->>Requester: affected requests rejected and cleared; future reload rejected
-			end
-		else candidate is non-equivalent
 			Builder->>Registry: atomically publish generation N+1
 			Registry-->>Runtime: current = N+1
 			Builder-->>Requester: reload published
@@ -924,48 +920,46 @@ sequenceDiagram
 				Old->>Runtime: wait until bounded Abort-convergence deadline
 			end
 			alt all N pins released
-				Old->>Old: close eligible resources; aggregate failures and continue independent closes
+				Old->>Old: stop eligible instances; aggregate failures and continue independent stops
 			else any N pin remains
-				Old-->>Builder: retain all N resources; report generation/Owner/resource/blocking Turn
+				Old-->>Builder: retain required N instances; report generation/Extension/Owner/blocking Turn
 			end
 			alt retirement succeeds
 				Old-->>Builder: N retired
 				Builder->>Candidate: begin pending latest, if present
 			else retirement fails
 				Old-->>Builder: observable failure; N+1 remains current
-				Builder-->>Requester: pending rejected and cleared; future reload rejected
+				Builder-->>Requester: pending blocked and cleared; future reload blocked
 			end
-		end
+	end
 	end
 ```
 
 ```text
-Requester -> Runtime Builder: enable / disable / replace loaded Extension
-Runtime Builder -> Candidate: prepare + validate + quiescent readiness
+Requester -> Runtime Builder: enable / disable loaded Extension
+if same-identity Extension is already active:
+	warning/no-op; do not start a duplicate instance or publish a generation
+else state change required:
+	Runtime Builder -> Candidate: prepare + validate + quiescent readiness
 
 Pre-publish failure or newer request:
 	Builder -> Candidate: bounded Abort + creator-owned cleanup
-	if cleanup converges: failed or superseded; current Snapshot unchanged
-	else: report candidate/Owner/resource residue; reject and clear affected requests; reject future reload
+	if cleanup converges: rejected or superseded; current Snapshot unchanged
+	else: report candidate/Extension/Owner residue; settle by role as rejected/superseded/blocked; future blocked
 
 Candidate ready:
-	if candidate is equivalent to current:
-		Builder -> Candidate: bounded cleanup of temporary resources
-		if cleanup converges: no-op; generation unchanged
-		else: report candidate/Owner/resource residue; reject and clear affected requests; reject future reload
-	else candidate is non-equivalent:
-		Builder -> Registry: atomic publish N+1
-		Registry -> RuntimeApp: current = N+1
-		Builder -> Requester: reload published
-		Builder -> old generation owners: retire N independently
-		Requester -> Builder during retirement: newer reload
-		Builder -> Requester: store/replace the sole pending latest; do not start it
-		old owners -> RuntimeApp: wait for N pins until bounded deadline
-		if pins remain: Abort N Turn trees; wait until bounded Abort-convergence deadline
-		if all N pins released: close eligible N-only resources; aggregate failures and continue independent closes
-		else: retain all N resources; report generation/Owner/resource/blocking Turn; fail retirement
-		if retirement succeeds: mark N retired; begin pending latest, if present
-		if retirement fails: N+1 remains current; reject and clear pending; reject future reload
+	Builder -> Registry: atomic publish N+1
+	Registry -> RuntimeApp: current = N+1
+	Builder -> Requester: reload published
+	Builder -> old generation owners: retire N independently
+	Requester -> Builder during retirement: newer reload
+	Builder -> Requester: store/replace the sole pending latest; do not start it
+	old owners -> RuntimeApp: wait for N pins until bounded deadline
+	if pins remain: Abort N Turn trees; wait until bounded Abort-convergence deadline
+	if all N pins released: stop eligible N-only instances; aggregate failures and continue independent stops
+	else: retain required N instances; report generation/Extension/Owner/blocking Turn; fail retirement
+	if retirement succeeds: mark N retired; begin pending latest, if present
+	if retirement fails: N+1 remains current; block and clear pending; future reload blocked
 ```
 
 ### 7.8 Shutdown 与动态状态的交互
@@ -973,18 +967,18 @@ Candidate ready:
 Shutdown 获得高于 reload 请求的优先级：
 
 1. 停止接受新的 reload 和 Root Turn，清空 pending latest 并返回 shutdown/cancelled 结果；
-2. 若 publish 正处于原子区间，先让该短区间完成，再把发布结果纳入关闭对象图；否则由 candidate 资源的创建方/Owner 在 Shutdown bound 内 Abort 并清理未 publish 或先前未收敛的 candidate，失败时记录 candidate、Owner 和资源残留；
+2. 若 publish 正处于原子区间，先让该短区间完成，再把发布结果纳入关闭对象图；否则由 candidate Extension instance Owner 在 Shutdown bound 内 Abort 并清理未 publish 或先前未收敛的 candidate，失败时记录 candidate、Extension ID、Owner 和实例残留；
 3. 按 Runtime Shutdown Policy 对 current 和 retiring generation 的 Turn tree 有界排空，必要时 Abort，并在独立的 bounded Shutdown Abort-convergence deadline 内等待 pin 释放；
-4. 对 current、retiring 和已记录 retirement-failed 中已无所属 generation pin/其他使用者的资源，按依赖逆序执行幂等 close，同一共享资源只由唯一 Owner 关闭一次；
-5. 对 deadline 后仍受 pin 保护的 Snapshot 可达资源不强制关闭，记录 generation、Owner、资源和未收敛 Turn tree；聚合并报告这些残留与关闭错误，不因一个失败跳过其余可安全关闭的独立资源。
+4. 对 current、retiring 和已记录 retirement-failed 中已无 generation pin 的 Extension/Module instances，按启动依赖逆序执行幂等 `stop()`；每个 instance 自行清理内部对象；
+5. 对 deadline 后仍受 pin 保护的 instances 不强制停止，记录 generation、Extension ID、Owner 和未收敛 Turn tree；聚合并报告这些残留与 stop errors，不因一个失败跳过其余可安全停止的独立 instance。
 
-具体 deadline 数值、信号优先级实现和错误联合类型由后续 Spec/AF-06 验证；本节只要求关闭结果确定、资源 Owner 唯一且不会在 Shutdown 中启动新的 candidate。
+具体 deadline 数值、信号优先级实现和错误联合类型由后续 Spec/AF-06 验证；本节只要求关闭结果确定、instance Owner 唯一且不会在 Shutdown 中启动新的 candidate。
 
 ```mermaid
 sequenceDiagram
 	participant Signal as Shutdown Signal
 	participant Builder as Runtime Builder
-	participant Candidate as Candidate Resource Owners
+	participant Candidate as Candidate Instance Owner
 	participant Runtime as RuntimeApp
 	participant Owners as Lifecycle Owners
 
@@ -1001,8 +995,8 @@ sequenceDiagram
 	opt work remains
 		Builder->>Runtime: Abort; wait until bounded convergence deadline
 	end
-	Builder->>Owners: close only unpinned/unused eligible resources once
-	Owners-->>Builder: successes; protected residuals; aggregated failures
+	Builder->>Owners: stop only unpinned eligible instances once
+	Owners-->>Builder: successes; protected instances; aggregated failures
 ```
 
 ```text
@@ -1010,12 +1004,12 @@ Shutdown Signal -> Runtime Builder
 Runtime Builder -> RuntimeApp: stop reload and Root Turn ingress
 Runtime Builder: reject pending
 if atomic publish already entered: complete publish + include result in closing graph
-else: Candidate resource Owners perform bounded Abort/cleanup retry
-Candidate resource Owners -> Runtime Builder: cleaned or candidate/Owner/resource residuals
+else: Candidate instance Owner performs bounded Abort/cleanup retry
+Candidate instance Owner -> Runtime Builder: cleaned or candidate/Extension/Owner residuals
 Runtime Builder -> RuntimeApp: bounded drain current and retiring Turn trees
 if work remains: Abort + wait until bounded Shutdown convergence deadline
-Runtime Builder -> Lifecycle Owners: close only unpinned/unused eligible resources once
-Lifecycle Owners -> Runtime Builder: successes + protected residuals + aggregated failures
+Runtime Builder -> Lifecycle Owners: stop only unpinned eligible instances once
+Lifecycle Owners -> Runtime Builder: successes + protected instances + aggregated failures
 ```
 
 ### 7.9 AF-06 Hypotheses and experiment inputs
@@ -1023,24 +1017,24 @@ Lifecycle Owners -> Runtime Builder: successes + protected residuals + aggregate
 | ID | Hypothesis | 最小实验 | 成功条件 | 停止条件 |
 |---|---|---|---|---|
 | P4-H01 | Root capture + Child inherit 可让一个 Turn tree 固定单一 generation | 用 barrier 强制 Root 创建与 publish commit 交错；N Root 运行时 publish N+1，并在 publish 后从 N Root 创建 Child，同时创建新 Root | Root capture 与 publish 只有一个线性化先后；N tree 全部使用 N；新 Root 使用对应 commit 结果；任何 projection 不混代 | Root 无确定 generation、Child 使用 current N+1、同一 Turn 观察混合 Contribution 或 pin 提前释放 |
-| P4-H02 | quiescent candidate 与有界清理可隔离所有 pre-publish 失败 | 在 prepare、Config/Capability 校验、start、readiness、Snapshot build 和 publish 前注入失败，并让 candidate Abort/close 分别成功、失败和不收敛 | current/ingress 不变；正常失败清理恰好一次；不收敛时记录 candidate/Owner/资源，current/latest/pending 全部获得终态并清空 slot；后到 reload 明确拒绝；Shutdown 只做一次有界重试且不启动 candidate | candidate 提前接收工作、current 被污染、slot/请求永久等待、残留不可归属、后到 reload 未拒绝，或在残留 candidate 外启动另一 candidate |
-| P4-H03 | pre-publish latest-wins、等价 no-op 和单一 pending latest 足以串行连续变更 | 在 prepare/validate 和 ready/commit barrier 连续提交 A/B/C，注入 superseded cleanup 不收敛；重复提交携带不同临时资源但与 current 等价的 candidate，并让其中一次 no-op cleanup 不收敛；在 N retirement 成功边界提交 D/E/F | supersede 与 commit 只有一个线性化结果；两类 cleanup 不收敛均保持 current、记录 candidate/Owner/resource、终结并清空 current/latest/pending、拒绝后到 reload且不启动 candidate，Shutdown 只做一次有界重试；成功 no-op 的资源恰好关闭一次、live count 回到 baseline、slot 为空且不产生 generation/retirement | 请求/slot 永久等待或误报成功、清理残留不可归属、失败后接受 reload/启动 candidate、已 publish 结果被撤销、成功 no-op 泄漏/积累资源或产生 generation/retirement、pending 与 retirement 同时启动或出现多代 retirement |
-| P4-H04 | bounded drain + bounded Abort convergence 可终止或明确失败旧 generation 且不影响 current | N Snapshot 放入两个可达资源，只通过其中一个 Contribution 留下不响应 Abort 的 Turn-tree pin；另测短 Turn 和可中止 tree；publish N+1 后推进两个 deadline | 短 Turn和可中止 tree 释放 pin；任一 N pin 不收敛时两个 N 可达资源均不关闭并产生 retirement failure，残留逐项记录 generation/Owner/resource/blocking Turn tree；N+1 不被 Abort | 新 Turn 被错误拒绝/取消、任一 N 可达资源被部分关闭、无限等待、pin/资源丢失或残留不可归属 |
-| P4-H05 | publish 后 cleanup/convergence failure 可独立报告且不破坏已提交 Snapshot | N Snapshot 放入两个可达资源并仅使用其中一个留下不收敛 pin；另在 pins 全部释放的分支放入两个依赖独立资源并让一个 close 失败；在 retirement success/failure barrier 提交 pending reload | N+1 保持 current；任一 N pin 存在时两个资源均保持开放并逐项记录 generation/Owner/resource/blocking Turn/error；pins 归零后一个 close 失败不跳过另一个独立 eligible close；pending 终态并清空，后续 reload 拒绝；Shutdown 有界重试且不重复关闭已成功资源 | 回滚 N+1、部分关闭被 pin 保护的 N 资源、一个 close 失败跳过独立 eligible 资源、pending 永久等待、静默丢失归属、启动第二个 retiring generation或资源出现多 Owner |
-| P4-H06 | 确定冲突规则可安全表达动态连带替换 | 启用排序更靠前且与 current External 冲突的单元，并注入 Builtin/External 冲突 | candidate 明确列出赢家、连带 retirement 和 warning；Builtin 始终胜出；publish 前结果可审计 | 隐式挤出不在结果中、使用请求到达顺序裁决或出现部分 Extension 发布 |
-| P4-H07 | Shutdown 可有界处理 candidate/current/retiring/failed-retirement 状态 | 在每个状态和 publish commit barrier 触发 Shutdown；一个 generation 放入两个可达资源并仅使用其中一个留下不响应 Abort 的 Turn-tree pin；另注入 candidate/资源 close 失败 | Shutdown 与 publish 只有一个线性化先后；candidate Owner 仅做有界重试；任一 generation pin 存在时其两个可达资源均保持开放并逐项报告 generation/Owner/resource/blocking Turn tree；每个资源至多成功关闭一次；其他无 pin 安全资源继续关闭 | deadlock、无限等待、部分关闭被 generation pin 保护的资源、重复关闭、孤立 published generation、跳过安全独立资源或错误被覆盖 |
+| P4-H02 | quiescent candidate 与有界清理可隔离所有 pre-publish 失败 | 在 prepare、Config/Capability 校验、instance start、readiness、Snapshot build 和 publish 前注入失败，并让 candidate Abort/stop 分别成功、失败和不收敛 | current/ingress 不变；正常失败只调用一次 candidate `stop()`；自身失败 request 返回 `rejected`；不收敛时记录 candidate/Extension ID/Owner/stop error，未开始的 latest/pending 返回 `blocked` 并清空 slot；后到 reload 返回 `blocked`；Shutdown 只做一次有界重试且不启动 candidate | candidate 提前接收工作、current 被污染、slot/请求返回错误类别或永久等待、实例残留不可归属、后到 reload 未拒绝，或在残留 candidate 外启动另一 candidate |
+| P4-H03 | pre-publish latest-wins、duplicate/no-op 和单一 pending latest 足以串行连续变更 | 在 prepare/validate 和 ready/commit barrier 连续提交 A/B/C，注入 superseded candidate stop 不收敛；重复提交与 current 同 identity 的 enable request，并提交已满足的 disable request；在 N retirement 成功边界提交 D/E/F | supersede 与 commit 只有一个线性化结果；被覆盖 request 返回 `superseded`；cleanup 不收敛保持 current、记录 candidate/Extension ID/Owner、终结并清空 current/latest/pending、拒绝后到 reload且不启动 candidate；duplicate/no-op request 不启动第二个同 identity instance、不产生 generation/retirement；retirement 期间只有一个 pending latest | 请求/slot 永久等待或返回错误类别、实例残留不可归属、失败后接受 reload/启动 candidate、已 publish 结果被撤销、no-op 启动第二 instance 或产生 generation/retirement、pending 与 retirement 同时启动或出现多代 retirement |
+| P4-H04 | bounded drain + bounded Abort convergence 可终止或明确失败旧 generation 且不影响 current | disable N 中一个已启动 External Extension instance；分别留下 short、Abort-responsive 和 nonresponsive Turn-tree pin；publish N+1 后推进两个 deadline | short 和可中止 tree 释放 pin；任一 N pin 不收敛时 Extension instance 不被强制停止，残留记录 generation/Extension ID/Owner/blocking Turn tree；N+1 新 Turn 仍被接受并完成 | 新 Turn被错误拒绝/取消、旧 instance 在 pin 存在时被停止、无限等待、pin/instance 丢失或残留不可归属 |
+| P4-H05 | publish 后 stop/convergence failure 可独立报告且不破坏已提交 Snapshot | disable N 中的 Extension；另在 pins 全部释放后让 instance `stop()` 失败；在 retirement success/failure barrier 提交 pending reload | N+1 保持 current且已 publish request 保持 success；任一 N pin 存在时 instance 保持启动；stop failure 记录 generation/Extension ID/Owner/error；尚未开始的 pending 返回 `blocked` 并清空，后续 reload 返回 `blocked`；Shutdown 有界重试且不重复成功 stop | 回滚 N+1、改写已 publish request、pin 存在时停止旧 instance、pending 返回错误类别或永久等待、静默丢失归属、启动第二个 retiring generation或出现多 Owner |
+| P4-H06 | 确定冲突规则可安全表达动态赢家变化 | 启用排序更靠前且与 current External 冲突、但 identity 不同的单元，并注入 Builtin/External 冲突 | candidate 明确列出赢家、连带 retirement 和 warning；Builtin 始终胜出；publish 前结果可审计 | 隐式挤出不在结果中、使用请求到达顺序裁决或出现部分 Extension 发布 |
+| P4-H07 | Shutdown 可有界处理 candidate/current/retiring/failed-retirement 状态 | 在每个状态和 publish commit barrier 触发 Shutdown；为一个 Extension instance 留下不响应 Abort 的 Turn-tree pin；另注入 candidate/instance stop failure | Shutdown 与 publish 只有一个线性化先后；pending 返回 `shutdown/cancelled`；candidate Owner 仅做有界重试；有 generation pin 的 instance 不被强制停止并报告 generation/Extension ID/Owner/blocking Turn tree；每个 instance 至多成功停止一次；其他无 pin 的独立 instance 继续按启动依赖逆序停止 | deadlock、无限等待、强制停止受 pin 保护的 instance、重复 stop、孤立 published generation、跳过安全独立 instance、返回错误类别或错误被覆盖 |
 
 ### 7.10 Phase 4 完成条件
 
 - [x] 一个 Root/Child Turn tree 不观察混合版本 Contribution；
 - [x] Reload Transaction 在 publish 完成，Generation Retirement 独立且不回滚已发布 Snapshot；
-- [x] pre-publish latest-wins、等价 no-op 与单一 pending latest 不产生多代并行 retirement；
-- [x] 失败不产生部分 Contribution 可见性；无法有界收敛的资源残留可归属且阻断不安全的后续 reload；
-- [x] candidate cleanup、drain、Abort convergence、资源释放和 Shutdown 均有明确且唯一的 Owner；
-- [x] AF-06 可直接提取并发、失败注入、资源和停止条件；
+- [x] pre-publish latest-wins、duplicate/no-op 与单一 pending latest 不产生多代并行 retirement；
+- [x] 失败不产生部分 Contribution 可见性；无法有界收敛的 Extension instance 残留可归属且阻断不安全的后续 reload；
+- [x] candidate cleanup、drain、Abort convergence、instance stop 和 Shutdown 均有明确且唯一的 Owner；
+- [x] AF-06 可直接提取并发、失败注入、实例生命周期和停止条件；
 - [x] 未经 Spike 验证的算法和接口仍标记为 Hypothesis，Slice 5 前不开放生产动态变更。
 
-**Review Disposition：** Phase 4 已完成独立架构复审。最终门禁无未解决 Critical、High、Medium 或 blocking overdesign；此前发现的 candidate cleanup liveness、generation-wide pin、等价 no-op、retirement 独立关闭进度及 Mermaid/ASCII 一致性问题均已关闭。该结论只接受 §7 的目标契约和 AF-06 实验输入，不表示 AF-06 已执行或生产动态变更已获授权。
+**Review Disposition：** Phase 4 已完成独立架构复审。最终门禁无未解决 Critical、High、Medium 或 blocking overdesign；此前发现的 candidate cleanup liveness、generation-wide pin、duplicate/no-op、retirement 独立停止进度及 Mermaid/ASCII 一致性问题均已关闭。该结论只接受 §7 的目标契约和 AF-06 实验输入，不表示 AF-06 已执行、Target `after_tool_call` awaited `allSettled` 已验证，或生产动态变更已获授权。
 
 ## 8. Runtime Call Flows and Ownership
 
@@ -1066,7 +1060,7 @@ Lifecycle Owners -> Runtime Builder: successes + protected residuals + aggregate
 
 **Target Decision：** RuntimeApp 是 Turn concurrency、Root/Child Turn tree、queue、Snapshot pin 和 Abort 的唯一 Application Owner。Runner 只执行一个 Turn 内的 LLM/Tool 顺序；Subagent Orchestration 只编排 Child Turn 生命周期；Runtime Builder 不调度 Turn。所有入口，包括 Channel、library 和 Subagent，必须进入同一 Turn/Turn-tree tracking，不能绕过 Shutdown、Abort 或 generation pin。
 
-**Target Decision：** Runtime Builder 是进程 Lifecycle coordinator：它发起启动/Shutdown 阶段、维护资源依赖和 Ownership 记录，并编排 creator/Lifecycle Owner 清理；RuntimeApp 只负责 Turn ingress、drain、Abort convergence 和报告，不直接关闭 Provider、Extension 私有资源或 Channel Transport 内部资源。
+**Target Decision：** Runtime Builder 是进程 Lifecycle coordinator：它发起启动/Shutdown 阶段、维护 Extension/Module instance 的启动依赖和 Ownership 记录，并编排 creator/Lifecycle Owner 的 instance-level cleanup；RuntimeApp 只负责 Turn ingress、drain、Abort convergence 和报告。Provider、Extension 或 Channel instance 自行管理内部资源，Builder 与 RuntimeApp 都不直接关闭内部连接、缓存或 Transport 对象。
 
 ### 8.2 Cross-flow ownership
 
@@ -1076,11 +1070,11 @@ Lifecycle Owners -> Runtime Builder: successes + protected residuals + aggregate
 | Event correlation 与有序 Fanout | RuntimeApp | 接受请求时分配关联身份；聚合各语义 producer 的事件 | Channel/observer target；caller-facing terminal boundary | Runner/Channel 重写 correlation；单 target failure 改变 Turn result |
 | Error taxonomy | Stable Core / Application Contract | Resolver、Provider/Channel Adapter、Tool Execution、Subagent Orchestration 和 Lifecycle Owner 把本地失败映射为 canonical category | RuntimeApp/Builder 只消费 canonical failure | Adapter 错误泄漏 SDK/Transport 类型；每个边界定义第二套 taxonomy |
 | caller-facing Turn outcome | RuntimeApp | public completion gate 把 canonical Turn failure/Abort/Shutdown 映射为恰好一个 outcome | Caller 与 correlated terminal Event | 日志代替终态；late worker 改写 public outcome |
-| aggregated Lifecycle/Shutdown Report | Runtime Builder | 聚合 RuntimeApp convergence report 与 Lifecycle Owner close result | Host / embedded caller | Builder 改写 Turn outcome；单个 close failure 阻止独立 close |
+| aggregated Lifecycle/Shutdown Report | Runtime Builder | 聚合 RuntimeApp convergence report 与 Lifecycle Owner stop result | Host / embedded caller | Builder 改写 Turn outcome；单个 stop failure 阻止独立 instance stop |
 | Abort | RuntimeApp / Turn orchestration | Root 创建 controller；Child 继承 tree signal；Tool/Provider/interaction 协作响应 | Runner、Tool、Provider Port、Subagent、approval wait | Channel/Tool 私自取消其他 Turn；library 路径绕过 tracking |
 | Turn concurrency | RuntimeApp | per-session queue、跨 Session 调度、Turn tree/pin accounting | Runner 接收一个已固定 Turn；Subagent Orchestration 请求 Child Turn | Runner/Builder 建立第二个跨 Turn scheduler |
 | Tool loop ordering | Runner / Turn Execution | Model call、before Hook、Policy、Tool、after Hook、Tool Result | pinned Tool/Hook projection 和 Resolved Model | RuntimeApp 重建 executor；detached Hook 越过 Turn/pin |
-| Resource Lifecycle | creator（handoff 前）/ recorded Lifecycle Owner（handoff 后） | Runtime Builder 编排依赖顺序；Owner 执行 start/close | RuntimeApp 提供 Turn/pin convergence report | 消费者因持有引用获得 close 权；失败被吞掉 |
+| Instance Lifecycle | creator（handoff 前）/ recorded Lifecycle Owner（handoff 后） | Runtime Builder 编排 instance 依赖顺序；Owner 执行 start/stop 并自行管理内部对象 | RuntimeApp 提供 Turn/pin convergence report | Framework 管理 Extension 内部对象；消费者因持有引用获得 stop 权；失败被吞掉 |
 
 ### 8.3 Channel/library ingress 到 Turn result Fanout
 
@@ -1431,7 +1425,7 @@ Subagent Orchestration -> Parent Runner:
 
 ### 8.7 Startup、two-stage Shutdown 与 Host boundary
 
-Startup 沿 §6 的 staging/ownership handoff 构建完整对象图：Runtime Builder 依赖正序创建、校验和启动 resources，成功后发布启动 Snapshot 并开放 Runtime ingress。失败时，未 handoff resource 由 creator rollback；已 handoff resource 由 recorded Lifecycle Owner 逆序关闭。External 单元隔离、Channel 失败后继续 degraded，以及核心 composition/Builtin fatal failure 遵循 §6.4 和 §8.5，不因进入 Phase 5 改变。
+Startup 沿 §6 的 staging/ownership handoff 构建完整对象图：Runtime Builder 依赖正序创建、校验和启动 Extension/Module/Adapter instances，成功后发布启动 Snapshot 并开放 Runtime ingress。失败时，未 handoff instance 由 creator 请求其自行 rollback；已 handoff instance 由 recorded Lifecycle Owner 逆序停止。每个 instance 自行管理内部对象。External 单元隔离、Channel 失败后继续 degraded，以及核心 composition/Builtin fatal failure 遵循 §6.4 和 §8.5，不因进入 Phase 5 改变。
 
 **Target Decision：** RuntimeApp 为每个 accepted caller-facing request 维护一个原子的 public completion gate。正常完成、失败、Abort、queued shutdown 和 non-converged shutdown 竞争同一个 terminal transition；只有第一个 transition 可以同时结算 caller result 并产生一个 correlated terminal event，后续 worker completion/error 只能更新诊断，不能再次改变 public outcome 或产生语义 terminal event。
 
@@ -1442,11 +1436,11 @@ Startup 沿 §6 的 staging/ownership handoff 构建完整对象图：Runtime Bu
 3. 保持 Channel outbound/Fanout 暂时可用，对其余已运行且不等待交互的 Turn tree 执行 bounded graceful drain；
 4. drain deadline 到达后，RuntimeApp Abort 全部剩余 Turn tree，并在独立的 bounded Abort-convergence deadline 内等待 Hook、Tool、Provider、Child Turn 和 Snapshot pin 收敛；
 5. Abort-convergence deadline 到达时，RuntimeApp 对每个仍未收敛的 caller-facing Turn request 恰好一次结算为 classified `shutdown/non-converged` outcome，并在 Channel/Fanout 仍可用时产生对应 terminal event；此后迟到 worker completion/error 不得改变 caller result 或再次产生语义 terminal event，只能更新内部诊断，并在真实收敛时释放自己的 generation pin；
-6. RuntimeApp 向 Builder 返回 completed/aborted/non-converged Turn、仍持有的 pin 和 failure report；对外 request 已结算不表示内部 worker 已收敛，Builder 不得因此强制关闭其 generation-protected resources；
-7. Builder 按依赖逆序要求每个 Lifecycle Owner 幂等关闭无 pin/使用者的资源；Channel/Transport 在所有 caller-facing terminal event 已发送后关闭；一个 close 失败不跳过其他独立 eligible resource；
-8. Builder 聚合 queued/interaction/Turn/pin/Owner/resource failure，返回唯一 Shutdown Report；重复 Shutdown 共享或返回同一终态，不启动第二次关闭流程。
+6. RuntimeApp 向 Builder 返回 completed/aborted/non-converged Turn、仍持有的 pin 和 failure report；对外 request 已结算不表示内部 worker 已收敛，Builder 不得因此强制停止其 generation-protected Extension/Module instances；
+7. Builder 按启动依赖逆序要求每个 Lifecycle Owner 幂等停止无 pin 的 instance；Channel instance 在所有 caller-facing terminal event 已发送后停止；一个 stop failure 不跳过其他独立 eligible instance；每个 Owner 自行清理内部对象；
+8. Builder 聚合 queued/interaction/Turn/pin/Owner/instance-stop failure，返回唯一 Shutdown Report；重复 Shutdown 共享或返回同一终态，不启动第二次关闭流程。
 
-**Target Decision：** 正常进程 Host 的 overall shutdown deadline 必须覆盖 graceful drain、Abort convergence、caller terminal Fanout 和 report allowance；在该 cooperative window 内适用上述恰好一次结算保证。第二次 forceable signal 是显式运维强制例外，可以中断尚未完成的 settlement/report；Host 必须尽力记录 interrupted requests/protected residuals，但进程终止不伪装为这些 request 已结算。overall deadline 到达后 Host 也可以停止继续等待并强制退出；该 Host policy 不授权 Builder 关闭受 pin 保护的资源。library/embedded caller 不得由 Runtime library 自行 `process.exit()`，只接收结构化 Shutdown Report 并由宿主决定后续，因而仍受正常有界结算契约保护。具体 deadline 数值、signal 映射和 exit code 由 AF-06/Host Spec 决定。
+**Target Decision：** 正常进程 Host 的 overall shutdown deadline 必须覆盖 graceful drain、Abort convergence、caller terminal Fanout 和 report allowance；在该 cooperative window 内适用上述恰好一次结算保证。第二次 forceable signal 是显式运维强制例外，可以中断尚未完成的 settlement/report；Host 必须尽力记录 interrupted requests/protected instances，但进程终止不伪装为这些 request 已结算。overall deadline 到达后 Host 也可以停止继续等待并强制退出；该 Host policy 不授权 Builder 停止受 pin 保护的 instance。library/embedded caller 不得由 Runtime library 自行 `process.exit()`，只接收结构化 Shutdown Report 并由宿主决定后续，因而仍受正常有界结算契约保护。具体 deadline 数值、signal 映射和 exit code 由 AF-06/Host Spec 决定。
 
 ```mermaid
 sequenceDiagram
@@ -1476,11 +1470,11 @@ sequenceDiagram
 	end
 	Runtime->>Channels: deliver all remaining caller-facing terminal events
 	Runtime-->>Builder: Turn/pin/failure convergence report
-	Builder->>Owners: after all terminal events, close eligible resources in reverse order
-	Owners-->>Builder: successes + protected residuals + failures
+	Builder->>Owners: after all terminal events, stop eligible instances in reverse order
+	Owners-->>Builder: successes + protected instances + failures
 	Builder-->>Host: aggregated Shutdown Report
 	opt process Host deadline or second forceable signal
-		Host->>Host: force exit without unsafe resource close
+		Host->>Host: force exit without unsafe instance stop
 	end
 ```
 
@@ -1506,14 +1500,14 @@ else if a worker remains non-converged:
 RuntimeApp -> Channel/Fanout: deliver all remaining caller-facing terminal events
 RuntimeApp -> Runtime Builder: Turn/pin/failure convergence report
 Runtime Builder -> Lifecycle Owners:
-	after all caller-facing terminal events, close eligible resources once in reverse dependency order
+	after all caller-facing terminal events, stop eligible instances once in reverse startup-dependency order
 Lifecycle Owners -> Runtime Builder:
-	successes + generation-protected residuals + close failures
+	successes + generation-protected instances + stop failures
 Runtime Builder -> Host: aggregated Shutdown Report
 if process Host overall deadline/second forceable signal occurs:
 	overall deadline normally envelopes both stages + Fanout/report allowance
 	second forceable signal may preempt settlement as an explicit operator override
-	Host force exits without pretending interrupted requests settled or protected resources closed
+	Host force exits without pretending interrupted requests settled or protected instances stopped
 library/embedded Host receives report and decides; Runtime library never exits process
 ```
 
@@ -1576,7 +1570,7 @@ library/embedded Host receives report and decides; Runtime library never exits p
 | `wireApprovalRouting()` 查询 `originChannel` | current-call Approval Capability | Channel Contract | Channel Adapter 声明支持，RuntimeApp 只从当前 route 的 narrow Channel binding 传递能力事实，不使用进程全局 Channel 历史 |
 | 脚本直接构造 CLI/WebSocket Channel | Channel Contribution | 提供该 Channel 的 Runtime Module/External Extension | CLI/WebSocket 变为 Builtin Module；Builtin/External 经同一 Contribution Contract |
 | `RuntimeApp.registerChannel()` / `startChannels()` | Channel binding lifecycle | Runtime Builder；handoff 后为 recorded Lifecycle Owner | Builder 负责 staging/start/rollback/handoff；RuntimeApp 不启动 Transport |
-| `RuntimeApp.create()` + `bootstrapRuntime()` + `RuntimeResourceSet` 的对象图装配 | Runtime Builder | Composition | Builder 成为唯一对象图/资源图协调者并交付显式依赖；RuntimeApp 不再做 post-bootstrap composition |
+| `RuntimeApp.create()` + `bootstrapRuntime()` + `RuntimeResourceSet` 的对象图装配 | Runtime Builder | Composition | Builder 成为唯一对象图/instance 启动依赖协调者并交付显式依赖；RuntimeApp 不再做 post-bootstrap composition；各 instance 自行管理内部对象 |
 | session queues | Root Turn concurrency | RuntimeApp | 保持同 Session 串行、跨 Session 可并发，不引入第二 scheduler |
 | `routeContextByTurn` | Turn routing/correlation | RuntimeApp | Child/Root route 由同一 Turn tree ownership 管理，不暴露私有 map 给 Adapter |
 | 直接 callback fanout | ordered target-isolated Fanout | RuntimeApp | 保留直接调用，不引入 Event Bus；单 target failure 不改变 Turn result |
@@ -1622,7 +1616,7 @@ Forbidden:
 | 2 Subagent Model Resolution | `SubagentRunner` 从 Profile string 或 `SubagentHostBindings.llmDefaults` 选择 model/max/context；library entry 绕过 Runtime Turn tracking | Parent Tool/Library use case -> Subagent Orchestration -> RuntimeApp tracked Child -> Child Model Resolver -> Child Resolved Model -> Runner | 旧 Profile model string 映射为 Model Reference；`inherit` 映射 Parent effective Model Reference；旧 library result/error 仅在边界归一化 | 删除 `llmDefaults` 复制和 Child 对全局默认的 fallback；不存在直接启动未登记 Child Runner 的生产入口；setup/terminal cleanup、Usage、Event 和 Abort 都经 §8.6 路径 |
 | 3 Tool 与 Hook Module | `getDefaultBuiltinTools()` + `assembleRuntimeTools()` 构造中央 mutable bundle；`RuntimeApp.create()` 追加 Task Tool、重建派生值并 `setToolExecutor()`；`startChannels()` 安装 approval Hook | Builtin/External Tool/Hook Contributions -> Registry Snapshot Tool/Hook projections -> Runner canonical Tool pipeline | 若保留 `AgentRunner.on(...)` Public API，只将旧注册调用适配成 Hook Contribution；旧 allow/deny config 映射为 Application Tool Policy input | 删除中央 Builtin Tool 特例列表、Task Tool 后装配和 executor setter；approval 不依赖 Channel startup 历史；detached Hook 不跨 Turn/pin；不再为已禁用的 tool-definition prompt slot 派生完整 `PromptToolDefinition`，当前已核验的 memory 条件改读窄 tool-name/capability projection，除非新 Spec 验证完整渲染需求 |
 | 4 Channel Module | `scripts/cli.ts`、`scripts/server.ts`、`scripts/websocket.ts` 直接构造 concrete Channel 后调用 `registerChannel()`/`startChannels()` | CLI/WebSocket Builtin Modules + External Channel Contributions -> Builder-created bindings -> RuntimeApp narrow routing/capability view | 旧 `registerChannel/startChannels` Public API 如需过渡，只适配为 startup-only Contribution input；不能绕过 Builder lifecycle | 生产脚本不再构造/注册具体 Channel；RuntimeApp 不识别具体 Channel 类型或启动 Transport；Builtin/External 同 staging、rollback、handoff、stop；approval capability 为 current-call/route 事实 |
-| 5 Runtime Composition | `bootstrapRuntime()` 构造主要资源；`RuntimeApp.create()` 再发现 Subagent Profile、创建 Subagent Runner、追加 Task Tool；`RuntimeResourceSet` 可变；shutdown/rollback 分散 | Composition Root -> Runtime Builder -> immutable Registry Snapshot/explicit dependencies -> RuntimeApp；Builder/unique Owners 负责 startup/reload/retirement/shutdown resource graph | `RuntimeApp.create(options)` 如仍是 Public API，只成为调用 Builder 的薄适配入口；旧 dependency overrides 映射为明确 Module/Fake Contributions | 删除 RuntimeApp post-bootstrap composition、mutable `toolBundle`/`setToolExecutor()`、重复 lifecycle ownership 和不完整 startup rollback；RuntimeApp 只保留 §4.3/§8 的队列、Turn tree、routing、Fanout、Abort 与 Shutdown 编排；生产动态变更仅在 AF-06 结果支持后开放 |
+| 5 Runtime Composition | `bootstrapRuntime()` 构造主要资源；`RuntimeApp.create()` 再发现 Subagent Profile、创建 Subagent Runner、追加 Task Tool；`RuntimeResourceSet` 可变；shutdown/rollback 分散 | Composition Root -> Runtime Builder -> immutable Registry Snapshot/explicit dependencies -> RuntimeApp；Builder/unique Owners 负责 startup/reload/retirement/shutdown 的 instance lifecycle coordination，各 instance 自行管理内部对象 | `RuntimeApp.create(options)` 如仍是 Public API，只成为调用 Builder 的薄适配入口；旧 dependency overrides 映射为明确 Module/Fake Contributions | 删除 RuntimeApp post-bootstrap composition、mutable `toolBundle`/`setToolExecutor()`、重复 lifecycle ownership 和不完整 startup rollback；RuntimeApp 只保留 §4.3/§8 的队列、Turn tree、routing、Fanout、Abort 与 Shutdown 编排；生产动态变更仅在 AF-06 结果支持后开放 |
 | 6 Documentation/Legacy | `Current Fact Candidate`：`docs/architecture/current/`、Proposal/Implementation、Root README；由 Slice 6 文档 inventory 和 active-link audit 核验，不声称为 production caller | 唯一 Current Architecture + Accepted ADR/Spec + Results/Plan 分责；Capability Inventory 和活跃链接指向后继入口 | Legacy 文档只保留状态、后继链接和必要历史定位，不继续同步目标/当前事实 | 每个当前事实只有一个权威入口；长期决策/未完成事项/执行证据已分别迁入 ADR/Plan/Results；入站链接更新；无独有价值文档经 Review 删除，Git History 保存历史；新实现不引用 Legacy |
 
 **Target Decision：** 上表给出 Slice 的架构退出条件，不替代各 Slice 的 DoR/DoD、Characterization、Contract、Fitness 和 failure-injection 验证。若 Spike/实现证据否定某条路径，先更新 Accepted Architecture/ADR 和本表，不能通过保留第二套权威路径规避删除条件。
@@ -1660,7 +1654,7 @@ Forbidden:
 
 **Phase：** 6
 
-本节汇总 AF-03 覆盖、原则、证据和独立评审结果。`Applicable` 只表示该 Architecture Principle 适用于本 Target；`Target Evidence Complete` 只表示 AF-03 目标设计已有可定位证据；`Spike Input Complete` 表示 Hypothesis/实验/成功/停止条件已定义。这些标记都不表示生产实现、AF-04 测试或 AF-05/AF-06 Spike 已执行。
+本节汇总 AF-03 覆盖、原则、证据和独立评审结果。`Applicable` 只表示该 Architecture Principle 适用于本 Target；`Target Evidence Complete` 只表示 AF-03 目标设计已有可定位证据；`Spike Input Complete` 表示 Hypothesis/实验/成功/停止条件已定义。这些标记都不表示生产实现或 AF-06 Spike 已执行；AF-05 `Provisional Pass` Results 已获项目所有者接受并完成 cleanup，只为 `P2-H01..P2-H03` 提供限定范围内的 Spike evidence。
 
 ### 10.1 Foundation AF-03 追踪矩阵
 
@@ -1669,7 +1663,7 @@ Forbidden:
 | 类型 | Foundation AF-03 要求 | 主责章节 | 支持章节 | 当前状态 | 预期证据 |
 |---|---|---:|---:|---|---|
 | 必须覆盖 | 模块职责与依赖方向 | 4 | 8、10 | Target Evidence Complete | 边界表、依赖图、允许/禁止边；AF-04 以 FT-01/02/03/05/06 验证 |
-| 必须覆盖 | Provider/Model Resolution | 5 | 8、Appendix B | Target Evidence Complete / Spike Input Complete | 责任表、Parent/Subagent 调用流和 AF-05 输入已复审；执行证据仍待 AF-05 |
+| 必须覆盖 | Provider/Model Resolution | 5 | 8、Appendix B | Target Evidence Complete / Spike Evidence Complete | 责任表、Parent/Subagent 调用流和 AF-05 输入已复审；AF-05 `Provisional Pass` Results 已获项目所有者接受并完成 disposable cleanup，不表示生产实现 |
 | 必须覆盖 | Extension/Module/Contribution/Registry | 6 | 7、Appendix C | Target Evidence Complete / Spike Input Complete | 静态组合图、注册/配置边界；动态可行性仍待 AF-06 |
 | 必须覆盖 | Snapshot/事务/原子切换/排空/回滚 | 7 | 8、Appendix C | Target Evidence Complete / Spike Input Complete | 不变量、动态流、AF-06 失败注入输入；未授权生产动态变更 |
 | 必须覆盖 | Runtime Builder 与 RuntimeApp | 4 | 8 | Target Evidence Complete | 职责表、启动/Turn/Shutdown 流；AF-04 以 FT-03/05/06 和 Contract 验证 |
@@ -1717,7 +1711,7 @@ Phase 6 逐图检查 participant、允许/禁止 edge、唯一 Owner、失败/Ab
 | §6.7 startup static composition | flowchart | staged startup tree | Equivalent；Builder 协调 creator/Owner cleanup，不取得资源 ownership |
 | §7.3 Reload Transaction states | flowchart | linear state flow | Equivalent；failure/Abort 只发生在 atomic publishing 前 |
 | §7.7 reload and Generation Retirement | sequence | transaction/retirement flow | Equivalent；publish 完成 reload，retirement 独立且不回滚 |
-| §7.8 dynamic lifecycle Shutdown | sequence | shutdown flow | Equivalent；pin-protected resources 不被强制关闭 |
+| §7.8 dynamic lifecycle Shutdown | sequence | shutdown flow | Equivalent；pin-protected instances 不被强制停止 |
 | §8.3 ingress to Turn result Fanout | sequence | request/Turn flow | Equivalent；`requestId`/`turnId` capture 和 completion 顺序一致 |
 | §8.4 Tool/Hook/Policy | sequence | decision/execution flow | Equivalent；current-call approval、Tool Result pairing 和 awaited Hook 一致 |
 | §8.5 Channel lifecycle | sequence | startup/ingress/close flow | Equivalent；creator/Owner handoff 与 terminal Fanout 顺序一致 |
@@ -1767,7 +1761,7 @@ Reviewer 为独立只读 architecture review agent，日期均为 2026-08-31。`
 | P6-R11 | AF-06 未把 proprietary Channel/typed identity/platform Tool/Hook/Config/private resource 合为一个外部 fixture | High | Accepted after change；父计划要求验证跨 Contribution 组合 | §6.8 P3-H02/P3-H05 共用 external chat Extension fixture | Closed |
 | P6-R12 | P3-H03 声称四类 Contribution，但实验未明确逐类注册/消费 | Medium | Accepted after change；Provider 可被遗漏而实验仍误通过 | §6.8 P3-H03 明确 Tool/Hook/Channel/Provider 与 typed projections | Closed |
 
-截至本 register 更新，P6-R01..P6-R12 均已关闭；Phase 6 最终独立复审无未解决 Critical、High、Medium、Low 或 blocking overdesign。项目所有者于 2026-08-31 确认剩余风险和 Deferred 项，并接受整体 Target Architecture v1.0。该接受不表示 AF-04/AF-05/AF-06 已执行，不表示 Foundation Gate 已通过，也不授权任何生产 Architecture Slice。
+截至本 register 更新，P6-R01..P6-R12 均已关闭；Phase 6 最终独立复审无未解决 Critical、High、Medium、Low 或 blocking overdesign。项目所有者于 2026-08-31 确认剩余风险和 Deferred 项，并接受整体 Target Architecture v1.0；2026-09-03 又接受 instance-level lifecycle ownership、same-identity duplicate warning/ignore 和 AF-06 非目标澄清，形成当前 v1.4。该接受不表示 AF-04/AF-05/AF-06 已执行，不表示 Foundation Gate 已通过，也不授权任何生产 Architecture Slice。
 
 ## 11. Assumptions、Open Questions and Deferred
 
@@ -1872,7 +1866,7 @@ AF-04 的 Results 至少记录：实际测试/工具、被核验的 source scope
 
 ## Appendix C. AF-06 Extension Framework Spike Input
 
-本 Appendix 只是 Spike 输入索引，不是执行证据、Spike Results、生产动态变更或第三方平台支持授权。Phase 3 的静态骨架 Hypothesis、最小实验、成功条件和停止条件见 §6.6/§6.8；Phase 4 的动态事务和 Lifecycle 实验见 §7.9。AF-06 必须先用 P3-H02/H05 的同一外部 chat Extension fixture 验证 proprietary Channel、typed platform identity/Tool、Hook、Config、共享私有资源和 optional capability，再验证规范目录发现、Descriptor/Schema 两阶段静态校验与版本处理、External Extension 整组隔离、一个 Extension API、四类 typed projections、受限 Extension Capability 和不可变 Snapshot；随后验证原子切换、Turn tree generation 固定、pre-publish latest-wins、单代 retirement、有界排空、Abort、资源释放和失败回滚。文件系统 watcher、Extension 代码 reload 和多代并行 retirement 不属于该最小机制。
+本 Appendix 只是 Spike 输入索引，不是执行证据、Spike Results、生产动态变更或第三方平台支持授权。Phase 3 的静态骨架 Hypothesis、最小实验、成功条件和停止条件见 §6.6/§6.8；Phase 4 的动态事务和 Lifecycle 实验见 §7.9。AF-06 必须先用 P3-H02/H05 的同一外部 chat Extension fixture 验证 proprietary Channel、typed platform identity/Tool、Hook、Config、optional capability，以及 Extension 内部对象不泄漏给 Framework/消费者；再验证规范目录发现、Descriptor/Schema 两阶段静态校验与版本处理、External Extension 整组隔离、一个 Extension API、四类 typed projections、受限 Extension Capability 和不可变 Snapshot；随后验证原子切换、Turn tree generation 固定、pre-publish latest-wins、单代 retirement、有界排空、Abort、instance stop 和失败回滚。同一 Extension 的运行中版本替换、多 instance 并存、Framework 管理内部对象、文件系统 watcher、Extension code reload 和多代并行 retirement 不属于该最小机制。
 
 ## Appendix D. Evidence Inventory Maintenance
 

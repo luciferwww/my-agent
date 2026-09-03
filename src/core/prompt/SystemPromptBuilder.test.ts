@@ -146,11 +146,24 @@ describe('SystemPromptBuilder', () => {
       expect(prompt).toContain('# Memory Recall');
     });
 
-    it('skips when no memory tools', () => {
+    it('CH-14 ignores descriptions and schemas when detecting memory tools and rendering definitions', () => {
       const prompt = new SystemPromptBuilder().build({
-        tools: [{ name: 'read_file', description: 'read' }],
+        mode: 'full',
+        tools: [{
+          name: 'read_file',
+          description: 'MEMORY_DESCRIPTION_MARKER memory_search',
+          parameters: {
+            type: 'object',
+            properties: {
+              memory_get: { type: 'string', description: 'MEMORY_SCHEMA_MARKER' },
+            },
+          },
+        }],
       });
       expect(prompt).not.toContain('# Memory Recall');
+      expect(prompt).not.toContain('# Available Tools');
+      expect(prompt).not.toContain('MEMORY_DESCRIPTION_MARKER');
+      expect(prompt).not.toContain('MEMORY_SCHEMA_MARKER');
     });
 
     it('skips when no tools at all', () => {

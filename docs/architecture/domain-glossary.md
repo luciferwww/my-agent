@@ -3,12 +3,14 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 1.4
-- **日期：** 2026-08-31
+- **版本：** 1.5
+- **日期：** 2026-09-03
 - **所有者：** 项目所有者
 - **关联计划：** [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) AF-02
 
 本文档定义 my-agent 目标架构使用的规范词义。定义表达目标语义，不表示当前实现已经完成对应边界；当前实现事实仍按各文档自身状态判断。
+
+**v1.5 修订：** 项目所有者确认 Reload Transaction 的 AF-06 最小范围仅含 enable/disable，Runtime Builder 只编排 instance lifecycle，Extension 自行管理内部对象。
 
 本文所称“所有者”是对概念语义和不变量负责的逻辑责任域，不预先决定 AF-03 的目录、文件、类或接口名称。中英文名称均出现时，英文名称是代码和架构文档中的规范术语。
 
@@ -325,16 +327,16 @@ Agent ─executes─> Turn <─contained by─ Session
 
 ### Reload Transaction
 
-- **定义：** 对已加载 Extension 的 enable、disable 或 Contribution replacement 从候选准备到 Registry Snapshot 原子发布的进程内状态变更过程。
+- **定义：** 对已加载 Extension 的 enable 或 disable 从候选准备到 Registry Snapshot 原子发布的进程内状态变更过程。
 - **职责：** 在 publish 前隔离并校验 candidate，在失败或 superseded 时清理候选，并以一次原子 publish 作为成功完成点。
 - **所有者：** Runtime Composition / Runtime Builder。
-- **不表示：** 重新扫描或加载 Extension 代码、Generation Retirement、文件 watcher、分布式事务，或包含旧资源排空的长事务。
+- **不表示：** 同一 Extension 的运行中版本替换或多 instance 并存、重新扫描或加载 Extension 代码、Generation Retirement、文件 watcher、分布式事务，或包含旧 instance 排空的长事务。
 
 ### Generation Retirement
 
-- **定义：** 新 Registry Snapshot 发布后，对旧 generation 独立执行 ingress 关闭、Turn tree 排空、必要 Abort 和旧资源释放的生命周期过程。
-- **职责：** 在不回滚已发布 Snapshot 的前提下，让旧 generation 安全退出并释放其独有资源。
-- **所有者：** Runtime Builder 编排；各资源 Lifecycle Owner 执行清理。
+- **定义：** 新 Registry Snapshot 发布后，对旧 generation 独立执行 ingress 关闭、Turn tree 排空、必要 Abort 和 eligible Extension/Module instance stop 的生命周期过程。
+- **职责：** 在不回滚已发布 Snapshot 的前提下，让旧 generation 安全退出，并停止不再受 generation pin 保护的 instances。
+- **所有者：** Runtime Builder 编排；各 instance Lifecycle Owner 执行 `stop()` 并自行清理内部对象。
 - **不表示：** Reload Transaction 的未完成阶段、已发布 Snapshot 的回滚、Extension 代码卸载，或允许多代并行排空的通用任务系统。
 
 ### Extension Framework 关系
@@ -435,24 +437,24 @@ Extension Capability ─grants bounded access─> Extension
 
 ### Runtime Builder
 
-- **定义：** 根据已验证配置和已加载 Module/Extension 构建 Runtime 依赖、Registry 和资源图的 Composition 服务。
-- **职责：** 创建、连接和启动组件，并在失败时按所有权规则清理部分资源。
+- **定义：** 根据已验证配置和已加载 Module/Extension 构建 Runtime 依赖、Registry 和 instance 启动依赖的 Composition 服务。
+- **职责：** 创建、连接和启动 lifecycle units，并在失败时按所有权规则请求对应 instance 自行清理。
 - **所有者：** Runtime Composition。
-- **不表示：** Runtime 执行循环、配置加载器、Extension Marketplace，或可从任意位置访问的容器。
+- **不表示：** Extension 内部对象管理器、Runtime 执行循环、配置加载器、Extension Marketplace，或可从任意位置访问的容器。
 
 ### Lifecycle
 
 - **定义：** 一个 Module、Extension、Adapter 或 Runtime 从创建、校验、启动、可用、排空到停止和释放的状态与顺序契约。
-- **职责：** 明确每个资源的创建者、使用者、关闭责任、失败清理和幂等要求。
-- **所有者：** Stable Core 定义公共 Lifecycle Contract；资源拥有者实现具体行为；Runtime Composition 编排顺序。
+- **职责：** 明确 lifecycle unit 的创建者、使用者、停止责任、失败清理和幂等要求；Extension 内部对象由 Extension 自行管理。
+- **所有者：** Stable Core 定义公共 Lifecycle Contract；instance Owner 实现具体行为；Runtime Composition 只编排 unit 顺序。
 - **不表示：** 只有 `start()`/`stop()` 两个方法、垃圾回收、进程信号处理本身，或隐式注册副作用。
 
 ### Resource Ownership
 
 - **定义：** 对资源创建、共享范围、使用计数、排空、释放和失败清理承担唯一责任的规则。
 - **职责：** 防止重复关闭、资源泄漏和关闭顺序不确定。
-- **所有者：** 创建资源的 Module、Extension 或 Runtime Builder，具体归属由 Spec 明确。
-- **不表示：** JavaScript 对象引用、任意消费者都能关闭资源，或仅靠 Garbage Collection。
+- **所有者：** 创建资源的 Module、Extension 或 Adapter；Runtime Builder 只拥有明确由其直接创建的 Composition 资源，不取得 Extension 内部对象所有权。
+- **不表示：** Framework 跟踪 Extension 内部对象 membership/引用计数、JavaScript 对象引用、任意消费者都能关闭资源，或仅靠 Garbage Collection。
 
 ## 8. Governance and Documentation
 

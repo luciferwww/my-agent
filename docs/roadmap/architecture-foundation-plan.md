@@ -3,13 +3,14 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 1.1
-- **日期：** 2026-09-01
+- **版本：** 1.2
+- **日期：** 2026-09-03
 - **范围：** my-agent 目标架构定义、关键边界验证、渐进迁移和 Legacy 退出
 - **执行方式：** Architecture Foundation 以两周为目标、四周为硬上限，随后采用一周 Architecture Slice 迭代
 - **范围冻结：** Foundation Gate 通过前，暂停会穿透待定架构边界的大型生产功能；缺陷、小型局部变更、文档、测试、Spec 和 Spike 可继续
 - **批准：** 本计划已由项目所有者确认并晋升为 `Accepted`
 - **v1.1 修订：** 项目所有者于 2026-09-01 确认 §7.4 文档语言与术语约定；该确认时点是规则的生效边界
+- **v1.2 修订：** 项目所有者于 2026-09-03 确认 AF-06 仅编排 Extension/Module instance 生命周期；同 identity duplicate warning/ignore，内部对象管理与运行中版本替换不在最小范围
 
 本 Plan 使用 `Proposed -> Accepted -> Superseded | Cancelled` 状态流。`Accepted` 表示项目所有者批准执行 Architecture Foundation，不表示 Foundation Gate 已通过，也不授权提前进入生产迁移。
 
@@ -326,7 +327,7 @@ Legacy 只提供历史证据，不自动成为目标设计。
 
 ### AF-04：Characterization 与 Fitness Tests
 
-**状态：** In Progress（2026-08-31）
+**状态：** Completed（2026-09-03）
 
 **执行计划：** [AF-04 Characterization and Fitness Execution Plan](af-04-characterization-fitness-plan.md)（`Accepted`）
 
@@ -357,6 +358,10 @@ Legacy 只提供历史证据，不自动成为目标设计。
 
 ### AF-05：Provider/Model Resolution Spike
 
+**Spike Spec：** [AF-05 Provider/Model Resolution Spike Spec](../architecture/af-05-provider-model-resolution-spike-spec.md)（`Accepted`，2026-09-03）
+
+**Spike Results：** [AF-05 Provider/Model Resolution Spike Results](../architecture/af-05-provider-model-resolution-spike-results.md)（`Completed`；`Provisional Pass` 于 2026-09-03 获项目所有者接受，disposable cleanup 已完成）
+
 **文档约束：** 创建或实质修改本工作包的 Spike Spec、Results、ADR 或后续 Spec 前，必须读取并引用本 Plan §7.4。
 
 **Hypothesis：** 现有 Runner 可保留；在其上游增加 Model Resolver，即可根据 Model Reference 动态选择 Provider Client，并立即应用 Model Facts。
@@ -386,21 +391,23 @@ Legacy 只提供历史证据，不自动成为目标设计。
 
 ### AF-06：Extension Framework Spike
 
+**Spike Spec：** [AF-06 Extension Framework Spike Spec](../architecture/af-06-extension-framework-spike-spec.md)（`Draft`，尚未授权执行）
+
 **文档约束：** 创建或实质修改本工作包的 Spike Spec、Results、ADR 或后续 Spec 前，必须读取并引用本 Plan §7.4。
 
-**Hypothesis：** 统一 Extension/Module/Registry 可以让一个外部 Extension 组合 Channel、Tool、Hook、配置和平台能力，共享自身资源，并通过版本化不可变 Snapshot 在运行中受控启停，而不修改 Runtime 核心或获得对其内部状态的通用访问权。
+**Hypothesis：** 统一 Extension/Module/Registry 可以让一个外部 Extension 组合 Channel、Tool、Hook、配置和平台能力，并通过版本化不可变 Snapshot 在运行中受控启停，而不修改 Runtime 核心或获得对其内部状态的通用访问权。Framework 只编排 Extension/Module instance 生命周期；Extension 自行管理内部长期对象。
 
 **最小实验：**
 
 - 一个位于 `runtime/` 外的测试聊天软件 Extension；
 - 一个使用专有协议的 WebSocket Channel Contribution；
 - 至少一个依赖当前平台消息上下文的专有 Tool 和一个 Hook Contribution；
-- Channel、Tool 和 Hook 共享 Extension 私有的连接、认证状态或限流资源；
+- Extension 自行管理一个供 Channel、Tool 和 Hook 使用的内部长期对象；Framework 和消费者不可取得或关闭该对象；
 - 类型化的平台消息标识与至少一个可选平台能力；
 - 独立配置 Namespace、校验以及 Extension start/stop；
-- 运行中启用一个已加载 Extension，从 Registry Snapshot `v1` 原子切换到 `v2`；
+- 运行中启用一个尚未 active 的已加载 Extension，从 Registry Snapshot `v1` 原子切换到 `v2`；同 identity 已 active 时 warning 并忽略，不启动第二个 instance；
 - 一个进行中 Turn 继续使用 `v1`，一个新 Turn 使用 `v2`；
-- 运行中停用 Extension，验证旧工作排空和资源释放；
+- 运行中停用 Extension，验证旧工作排空后对该 Extension instance 只调用一次 `stop()`；
 - 模拟启用失败，验证继续使用原 Snapshot 且无部分注册残留。
 
 **成功条件：**
@@ -408,19 +415,19 @@ Legacy 只提供历史证据，不自动成为目标设计。
 - 外部 Extension 不修改 `RuntimeApp.ts`、`AgentRunner`、`bootstrap.ts` 或中央联合类型；
 - Builtin Module 和 External Extension 使用相同 Contribution/Registry API；
 - 一个 Extension 可以同时贡献 Channel、Tool、Hook 和配置；
-- Extension 内部贡献可共享私有资源，但不能访问未授予的 Runtime 能力；
+- Extension 内部对象由 Extension 自行管理；Framework 和消费者不可取得或关闭，Extension 也不能访问未授予的 Runtime 能力；
 - 专有 Tool 可通过受限、类型化的消息上下文执行平台动作；
 - Registry 发布版本化不可变 Snapshot，Extension 变更只通过受控事务原子切换；
 - 进行中 Turn 的 Snapshot 保持不变，新 Turn 只使用切换完成后的 Snapshot；
-- 停用能够排空或按策略取消旧工作，并在无使用者后释放 Extension 资源；
+- 停用能够排空或按策略取消旧工作，并在 generation pin 归零后停止 Extension instance；
 - pre-publish prepare、校验或 readiness 失败保持 current Snapshot 不变并有界清理 candidate；清理不收敛时报告可归属残留并阻断后续 reload；post-publish retirement 失败保持新 Snapshot，报告可归属残留，拒绝 pending/后续 reload，并只在有界 Shutdown 中重试；
-- Extension 失败可定位，Shutdown 按逆序释放已启动资源；
+- Extension 失败可定位，Shutdown 按启动依赖逆序停止已启动 instances；每个 instance 自行清理内部对象；
 - Hook 不需要替换整个 AgentRunner Factory。
 
 **失败/停止条件：**
 
 - Extension 需要 Service Locator 访问任意 Runtime 私有资源；
-- 生命周期无法确定资源所有者；
+- 生命周期无法确定 Extension/Module instance 的唯一 Owner，或 Framework 必须跟踪 Extension 内部对象才能停止 instance；
 - Config 必须为每个 Extension 修改中央 Type Union；
 - 平台专有能力只能通过污染通用 Message 或 Channel 类型表达；
 - Registry 原地修改导致一个 Turn 观察到混合版本的 Contribution；
@@ -445,15 +452,15 @@ Foundation 只有在以下条件全部满足时才可进入生产迁移：
 - [x] Development Workflow 已 `Accepted`；
 - [x] Architecture Principles 和 Domain Glossary 已确认；
 - [x] Target Architecture 已 `Accepted`；
-- [ ] Provider/Model Spike 有 Results，关键 Hypothesis 通过；
+- [x] Provider/Model Spike 有 Results，关键 Hypothesis 通过；
 - [ ] Extension Framework Spike 有 Results，关键 Hypothesis 通过；
 - [ ] AF-06 已通过 Spike 证据验证已加载 Extension 的运行时启停、Snapshot 一致性、排空和回滚；
 - [ ] 必要 ADR 已 `Accepted`；
-- [ ] Characterization Tests 覆盖核心现有行为；
-- [ ] Fitness Tests 能阻止已知依赖倒退；
+- [x] Characterization Tests 覆盖核心现有行为；
+- [x] Fitness Tests 能阻止已知依赖倒退；
 - [ ] Slice 1–6 Charter、依赖和删除条件已定义，下一执行 Slice 的验收与验证范围已补齐并满足 Definition of Ready；
 - [ ] Legacy 文档迁移表已建立；
-- [ ] 没有要求推倒 Runner/Session/Channel 基线的未解释证据。
+- [x] 没有要求推倒 Runner/Session/Channel 基线的未解释证据。
 
 若 Gate 未通过，必须调整 Target Architecture 或明确扩大重构范围，不得通过在旧 Composition Root 上继续堆特例绕过。
 
@@ -465,7 +472,7 @@ Foundation 只有在以下条件全部满足时才可进入生产迁移：
 
 Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accepted` Spike Results、`Accepted` ADR 或已完成 Slice 的实现证据证明依赖关系变化时，才允许调整顺序；调整前必须先更新本 Plan、依赖、验收、验证和删除条件。文档在每个 Slice 中同步，Slice 6 负责最终 Current Architecture 合并与 Legacy 收口。
 
-动态 Registry 分三阶段推进：AF-06 使用可丢弃 Spike 验证完整机制；Slice 3/4 将 Registry 和启动期只读 Snapshot 接入生产 Tool、Hook、Channel 与长生命周期资源，但不开放生产运行时 Contribution 变更；Slice 5 完成统一变更事务、原子切换、排空、资源释放和失败回滚后，才开放已加载 Extension 的生产运行时启停与 Contribution 更新。
+动态 Registry 分三阶段推进：AF-06 使用可丢弃 Spike 验证完整机制；Slice 3/4 将 Registry 和启动期只读 Snapshot 接入生产 Tool、Hook、Channel 与 Extension/Module instance 生命周期，但不开放生产运行时 Contribution 变更；Slice 5 完成统一变更事务、原子切换、排空、instance stop 和失败回滚后，才开放已加载 Extension 的生产运行时启停与 Contribution 更新。同一 Extension 的运行中版本替换、多 instance 并存和 Framework 管理 Extension 内部对象不在 AF-06 最小范围内。
 
 ### Slice 1：Model Resolution
 
@@ -533,7 +540,7 @@ Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accept
 
 - Runtime Builder；
 - Registry Snapshot 生成、版本管理和原子切换；
-- Extension 变更事务、旧工作排空、资源释放和失败回滚；
+- Extension 变更事务、旧工作排空、instance stop 和失败回滚；
 - Extension/Module 依赖和生命周期顺序；
 - Runtime Resource Ownership；
 - Subagent Task Module 的最终装配。
@@ -759,7 +766,7 @@ Foundation（M0–M3）以 **两周完成为目标、四周为硬上限**。第�
 1. Foundation Gate 通过前采用范围冻结，暂停会穿透待定架构边界的大型生产功能，但允许缺陷、小型局部变更、文档、测试、Spec 和 Spike；
 2. Foundation 采用两周目标、四周硬上限，第二周末执行 Gate Gap Review，第四周末未通过时强制 Architecture Review；
 3. Target Architecture 采用 Domain/Application/Infrastructure/Composition 四个逻辑边界，按职责渐进迁移，不要求 Foundation 全量重排目录；
-4. Extension Registry 支持已安装且已加载 Extension 的受控动态注册，使用版本化不可变 Snapshot、per-turn 捕获、原子切换、排空、资源释放和失败回滚；不包含远程下载、任意代码热加载或原地代码热升级；
+4. Extension Registry 支持已安装且已加载 Extension 的受控动态 enable/disable，使用版本化不可变 Snapshot、per-turn 捕获、原子切换、排空、instance stop 和失败回滚；同一 Extension identity 同时只启动一个 instance，重复候选 warning 后忽略；不包含同一 Extension 的运行中版本替换、多 instance 并存、Framework 管理其内部对象、远程下载、任意代码热加载或原地代码热升级；
 5. 第一批生产迁移默认按 Slice 1–6 顺序执行，Slice 1–5 不并行；只有 `Accepted` Spike Results、`Accepted` ADR 或已完成 Slice 的实现证据证明依赖变化时，才可先更新 Plan 后调整。动态 Registry 在 Slice 3/4 接入启动期只读 Snapshot，在 Slice 5 完成事务闭环后开放生产运行时变更。
 
 ### 21.2 由 Target Architecture 与 Spike 决定
@@ -778,8 +785,8 @@ Foundation（M0–M3）以 **两周完成为目标、四周为硬上限**。第�
 
 按以下顺序推进：
 
-1. 执行 AF-04，建立 Characterization/Fitness 保护线，并根据已 `Accepted` Target Architecture 的输入为 AF-05、AF-06 编写和接受 Spike Spec；
-2. 对应 Spike Spec `Accepted` 后，依次执行 AF-05 和 AF-06，并记录可复现的 Spike Results；
-3. 根据 Spike Results 执行 AF-07、重新评估 Foundation Gate；Gate 通过前不启动生产 Architecture Slice。
+1. AF-05 已完成：`Provisional Pass` Results 获项目所有者接受，disposable fixture cleanup、状态同步和 AF-05 evidence item 均已完成；
+2. 下一工作包仅从根据已 `Accepted` Target Architecture 输入起草 AF-06 Spike Spec 开始；接受 Spec 后才可执行并记录可复现的 Spike Results；
+3. AF-05 与 AF-06 Results 均完成后执行 AF-07、重新评估 Foundation Gate；Gate 通过前不启动生产 Architecture Slice。
 
 在 AF-05 Results 完成前，不进入生产 Model Registry 实现；在 AF-06 Results 完成前，不冻结生产 Extension API。

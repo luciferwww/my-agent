@@ -3,13 +3,15 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 1.0
-- **日期：** 2026-08-28
+- **版本：** 1.1
+- **日期：** 2026-09-03
 - **所有者：** 项目所有者
 - **关联计划：** [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) AF-02
 - **规范词汇：** [Domain Glossary](domain-glossary.md)
 
 本文档定义 Target Architecture、ADR、Spec 和 Architecture Slice 必须遵守的稳定约束。原则描述依赖方向、所有权和可验证结果，不预先决定 AF-03 的目录、类或接口形状。
+
+**v1.1 修订：** 项目所有者确认 AP-10 在 Extension Framework 中以 Extension/Module/Adapter instance 为编排单元；Extension 内部对象仍由 Extension 自行管理。
 
 ## 2. 适用与变更规则
 
@@ -167,16 +169,16 @@ Domain/Application MUST NOT depend on Infrastructure or Composition.
 
 ### AP-10：资源必须有唯一 Lifecycle Owner
 
-**原则：** 每个长生命周期资源必须有唯一创建和释放责任，Runtime Composition 按依赖顺序启动、按逆序关闭，并清理部分启动失败。
+**原则：** 每个长生命周期资源必须有唯一创建和释放责任。Runtime Composition 只按依赖顺序启动、按逆序停止 Extension/Module/Adapter lifecycle unit；每个 unit 自行管理和清理其内部对象。
 
 **含义：**
 
-- Spec 必须说明资源作用域、共享者、排空策略和幂等关闭；
+- Spec 必须说明 lifecycle unit 的作用域、排空策略和幂等停止；Extension 内部对象的共享与清理由 Extension 自己负责；
 - 消费者不能因为持有引用就获得关闭资源的权力；
 - Extension 停用必须等待无使用者或按已定义策略取消旧工作；
-- Shutdown 尽量释放所有已启动资源，但不能隐藏失败。
+- Shutdown 尽量停止所有可安全停止的已启动 lifecycle unit，但不能隐藏失败或检查其内部对象。
 
-**验证：** Lifecycle Contract Tests、部分启动失败注入、重复 close、并发 drain/abort 和资源释放顺序测试。
+**验证：** Lifecycle Contract Tests、部分启动失败注入、重复 stop、并发 drain/abort 和 lifecycle unit 停止顺序测试。
 
 ### AP-11：Runtime 编排执行，Composition 构建系统
 

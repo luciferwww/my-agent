@@ -49,7 +49,7 @@ src/platform/config/
       },
       "tools": {
         "approval": {
-          "allow": ["group:fs", "group:search"],
+          "allow": ["read_*", "file_search"],
           "deny": ["exec"]
         }
       }
@@ -195,23 +195,14 @@ LoggerModuleConfig {
 
 ### 5.4 工具审批策略
 
-`ToolApprovalConfig.allow` / `deny` 条目支持三种语法：
+`ToolApprovalConfig.allow` / `deny` 条目支持两种语法：
 
 | 语法 | 示例 |
 |---|---|
 | 精确名称（大小写敏感） | `"exec"` |
 | Glob | `"memory_*"` |
-| 工具组 | `"group:fs"` |
 
-预定义工具组（实际代码 snake_case）：
-
-| 组名 | 包含工具 |
-|---|---|
-| `group:fs` | `read_file`, `write_file`, `edit_file`, `apply_patch`, `list_dir` |
-| `group:exec` | `exec`, `process` |
-| `group:search` | `grep_search`, `file_search` |
-| `group:web` | `web_fetch` |
-| `group:memory` | `memory_search`, `memory_get`, `memory_write` |
+Glob 只解释 `*` 和 `?`。v1 不展开 `group:*`；例如 `group:fs` 只是字面 pattern，只会匹配同名工具，不会匹配 `read_file`。
 
 策略优先级（有 approval channel 时）：**deny 命中 > allow 命中 > 触发 prompt**。  
 无 approval channel 时：仅 allow 命中的工具可执行（fail-closed）。
@@ -310,12 +301,12 @@ ConfigFile  { ..., logger?: LoggerModuleConfig }
 
 > 建议：在 `ToolsConfig` 类型文档中补充 `fs` 子配置，说明 `workspaceOnly` 的作用和默认值。
 
-### 差异 3：工具组工具名用 PascalCase 而非 snake_case
+### 差异 3：v1.0 工具组语法已移除
 
-**v1.0 文档** `ToolApprovalConfig` 注释中的 `group:fs` 列举为 `Read, Write, Edit`（PascalCase）。  
-**实际代码**（`types.ts` 注释 + `tool-approval-policy.ts`）使用 `read_file, write_file, edit_file, apply_patch, list_dir`（snake_case，且多了 `apply_patch` 和 `list_dir`）。
+**v1.0 文档** `ToolApprovalConfig` 注释描述 `group:fs` 等工具组。
+**实际代码**（`tool-approval-policy.ts`）不再展开 `group:*`，只支持精确名称和 `*`/`?` Glob。
 
-> 建议：统一使用 snake_case 工具名，`group:fs` 应包含全部 5 个文件系统工具。
+> 当前配置应直接列出工具名或使用 Glob，不应依赖 `group:*` 展开。
 
 ---
 

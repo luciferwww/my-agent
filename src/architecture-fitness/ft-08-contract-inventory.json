@@ -1,0 +1,107 @@
+[
+  {
+    "contract": "AgentEvent",
+    "source": "src/core/runner/types.ts",
+    "kind": "event",
+    "positive": ["src/core/runner/AgentRunner.test.ts"],
+    "negative": ["src/core/runner/AgentRunner.test.ts"]
+  },
+  {
+    "contract": "RuntimeEvent",
+    "source": "src/runtime/types.ts",
+    "kind": "event",
+    "positive": ["src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "RuntimeErrorInfo",
+    "source": "src/runtime/types.ts",
+    "kind": "error",
+    "positive": ["src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "RuntimeShutdownReport",
+    "source": "src/runtime/types.ts",
+    "kind": "lifecycle",
+    "positive": ["src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "RuntimeLifecycleState",
+    "source": "src/runtime/types.ts",
+    "kind": "lifecycle",
+    "positive": ["src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "Channel",
+    "source": "src/adapters/channel/types.ts",
+    "kind": "port-lifecycle",
+    "positive": ["src/adapters/channel/WebSocketChannel.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "AbortHookBindings",
+    "source": "src/adapters/channel/types.ts",
+    "kind": "abort-port",
+    "positive": ["src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "ChannelInteractionAdapter",
+    "source": "src/adapters/channel/types.ts",
+    "kind": "interaction-port",
+    "positive": ["src/adapters/channel/WebSocketChannel.test.ts"],
+    "negative": ["src/adapters/channel/TurnInteractionManager.test.ts"]
+  },
+  {
+    "contract": "ChannelApprovalAdapter",
+    "source": "src/adapters/channel/types.ts",
+    "kind": "interaction-port",
+    "positive": ["src/adapters/channel/WebSocketChannel.test.ts"],
+    "negative": ["src/adapters/channel/TurnInteractionManager.test.ts"]
+  },
+  {
+    "contract": "LLMClient",
+    "source": "src/adapters/llm/types.ts",
+    "kind": "provider-port",
+    "positive": ["src/adapters/llm/AnthropicClient.test.ts"],
+    "negative": ["src/core/runner/AgentRunner.test.ts"]
+  },
+  {
+    "contract": "StreamEvent",
+    "source": "src/adapters/llm/types.ts",
+    "kind": "event",
+    "positive": ["src/adapters/llm/AnthropicClient.test.ts"],
+    "negative": ["src/adapters/llm/AnthropicClient.test.ts"]
+  },
+  {
+    "contract": "ToolExecutor",
+    "source": "src/core/tools/types.ts",
+    "kind": "tool-port",
+    "positive": ["src/core/tools/executor.test.ts"],
+    "negative": ["src/core/runner/AgentRunner.test.ts"]
+  },
+  {
+    "contract": "ToolContext",
+    "source": "src/core/tools/types.ts",
+    "kind": "abort-context",
+    "positive": ["src/core/runner/AgentRunner.test.ts"],
+    "negative": ["src/core/runner/AgentRunner.test.ts"]
+  },
+  {
+    "contract": "MemoryStore",
+    "source": "src/core/memory/types.ts",
+    "kind": "store-port-lifecycle",
+    "positive": ["src/core/memory/MemoryManager.test.ts"],
+    "negative": []
+  },
+  {
+    "contract": "LogAdapter",
+    "source": "src/platform/logger/types.ts",
+    "kind": "adapter-port-lifecycle",
+    "positive": ["src/platform/logger/Logger.test.ts"],
+    "negative": []
+  }
+]

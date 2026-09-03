@@ -341,7 +341,7 @@ describe('AgentRunner', () => {
       expect(result.text).toBe('The tool failed.');
     });
 
-    it('returns early on error stopReason', async () => {
+    it('CH-13 returns Provider error stopReason with reported usage after one call', async () => {
       const llmClient = createMockLLMClient([
         [
           { type: 'message_start' },
@@ -349,6 +349,7 @@ describe('AgentRunner', () => {
           { type: 'message_end', stopReason: 'error', usage: { inputTokens: 5, outputTokens: 3 } },
         ],
       ]);
+      const chatStream = vi.spyOn(llmClient, 'chatStream');
 
       const runner = new AgentRunner({ llmClient, sessionManager });
       const result = await runner.run({
@@ -361,6 +362,8 @@ describe('AgentRunner', () => {
 
       expect(result.stopReason).toBe('error');
       expect(result.text).toBe('Error occurred');
+      expect(result.usage).toEqual({ inputTokens: 5, outputTokens: 3 });
+      expect(chatStream).toHaveBeenCalledTimes(1);
     });
 
     it('injects steering messages between tool iterations', async () => {
@@ -863,13 +866,14 @@ describe('AgentRunner', () => {
   // ── 错误处理 ────────────────────────────────────────
 
   describe('error handling', () => {
-    it('emits error event and throws on LLM stream error', async () => {
+    it('CH-13 emits error event and throws after one Provider stream call', async () => {
       const llmClient = createMockLLMClient([
         [
           { type: 'message_start' },
           { type: 'error', error: new Error('API error') },
         ],
       ]);
+      const chatStream = vi.spyOn(llmClient, 'chatStream');
 
       const events: AgentEvent[] = [];
       const runner = new AgentRunner({
@@ -883,6 +887,7 @@ describe('AgentRunner', () => {
       ).rejects.toThrow('API error');
 
       expect(events.some((e) => e.type === 'error')).toBe(true);
+      expect(chatStream).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -1179,6 +1184,107 @@ describe('AgentRunner', () => {
       // keepRecentTurns:1 保留最近 1 个 user turn (recent question + recent answer = 2 条)，
       // 丢弃前 2 条。这是"压缩输入不被当前 user 污染"的预期表现。
       expect(afterPayloads[0]?.droppedMessages).toBe(2);
+    });
+
+    it('CH-11 uses persisted compaction history on the next turn', async () => {
+      await sessionManager.appendMessage('main', {
+        role: 'user',
+        content: `OLD_QUESTION_${'A'.repeat(800)}`,
+      });
+      await sessionManager.appendMessage('main', {
+        role: 'assistant',
+        content: `OLD_ANSWER_${'B'.repeat(800)}`,
+      });
+      await sessionManager.appendMessage('main', { role: 'user', content: 'recent question' });
+      await sessionManager.appendMessage('main', { role: 'assistant', content: 'recent answer' });
+
+      const compactingClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'Persisted summary.' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 20, outputTokens: 5 } },
+        ],
+        [
+          { type: 'message_start' },
+          { type: 'text_delta', text: 'First result.' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 10, outputTokens: 4 } },
+        ],
+      ]);
+      const compactingRunner = new AgentRunner({
+        llmClient: compactingClient,
+        sessionManager,
+      });
+
+      const firstResult = await compactingRunner.run({
+        sessionKey: 'main',
+        message: 'first current question',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'first-turn',
+        contextWindowTokens: 120,
+        compaction: {
+          enabled: true,
+          reserveTokens: 0,
+          keepRecentTurns: 1,
+          toolResultContextShare: 0.5,
+          toolResultHeadChars: 100,
+          toolResultTailChars: 100,
+          timeoutSeconds: 30,
+        },
+      });
+      expect(firstResult.compacted).toBe(true);
+
+      let nextTurnMessages: ChatParams['messages'] = [];
+      const reloadedSessionManager = new SessionManager(workspaceDir);
+      const nextTurnClient: LLMClient = {
+        async *chatStream(params: ChatParams) {
+          nextTurnMessages = params.messages.map((message) => ({ ...message }));
+          yield { type: 'message_start' } as StreamEvent;
+          yield { type: 'text_delta', text: 'Second result.' } as StreamEvent;
+          yield {
+            type: 'message_end',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 8, outputTokens: 3 },
+          } as StreamEvent;
+        },
+        async chat() {
+          throw new Error('Not used');
+        },
+      };
+      const nextRunner = new AgentRunner({
+        llmClient: nextTurnClient,
+        sessionManager: reloadedSessionManager,
+      });
+
+      await nextRunner.run({
+        sessionKey: 'main',
+        message: 'second current question',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'second-turn',
+        compaction: {
+          enabled: false,
+          reserveTokens: 0,
+          keepRecentTurns: 1,
+          toolResultContextShare: 0.5,
+          toolResultHeadChars: 100,
+          toolResultTailChars: 100,
+          timeoutSeconds: 30,
+        },
+      });
+
+      const contents = nextTurnMessages.map((message) => message.content);
+      expect(String(contents[0])).toContain('Persisted summary.');
+      expect(contents.map(String).join('\n')).not.toContain('OLD_QUESTION_');
+      expect(contents.map(String).join('\n')).not.toContain('OLD_ANSWER_');
+      expect(contents).toContain('recent question');
+      expect(contents).toContain('recent answer');
+      expect(contents).toContain('first current question');
+      expect(nextTurnMessages.some(
+        (message) => message.role === 'assistant' &&
+          JSON.stringify(message.content).includes('First result.'),
+      )).toBe(true);
+      expect(contents.filter((content) => content === 'second current question')).toHaveLength(1);
     });
 
     it('priority: higher priority hook runs first', async () => {

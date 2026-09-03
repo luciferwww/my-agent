@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 
-- **状态：** Accepted
+- **状态：** Completed
 - **版本：** 1.0
 - **日期：** 2026-08-31
 - **所有者：** 项目所有者
@@ -23,15 +23,15 @@
 
 ### 2.2 总体退出条件
 
-- [ ] CH-01..CH-14 均有定位到代码/现有测试/运行观察的当前证据和最终 disposition；
-- [ ] P0 Characterization Tests 覆盖 CH-01..CH-10；
-- [ ] P1 Characterization Tests 覆盖 CH-11..CH-14；
-- [ ] FT-01..FT-09 均有可执行规则、最小 expected-failure fixture 和可定位诊断；
-- [ ] 每项当前 FT 违规均以失败基线或临时例外显式呈现；任何生产修复必须作为单独批准的 Defect 或 Architecture Slice 执行；
-- [ ] 测试中的并发、时间、I/O 和失败注入具有确定性控制，不依赖扩大超时碰运气；
-- [ ] AF-04 Completion Record 包含命令、环境、覆盖映射、通过/预期失败、例外和残余风险；
-- [ ] 独立评审无未解决 Critical/High finding；
-- [ ] 项目所有者确认结果，并只按真实证据同步 Foundation Gate。
+- [x] CH-01..CH-14 均有定位到代码/现有测试/运行观察的当前证据和最终 disposition；
+- [x] P0 Characterization Tests 覆盖 CH-01..CH-10；
+- [x] P1 Characterization Tests 覆盖 CH-11..CH-14；
+- [x] FT-01..FT-09 均有可执行规则、最小 expected-failure fixture 和可定位诊断；
+- [x] 每项当前 FT 违规均以失败基线或临时例外显式呈现；任何生产修复必须作为单独批准的 Defect 或 Architecture Slice 执行；
+- [x] 测试中的并发、时间、I/O 和失败注入具有确定性控制，不依赖扩大超时碰运气；
+- [x] AF-04 Completion Record 包含命令、环境、覆盖映射、通过/预期失败、例外和残余风险；
+- [x] 独立评审无未解决 Critical/High finding；
+- [x] 项目所有者确认结果，并只按真实证据同步 Foundation Gate。
 
 ## 3. 权威输入与证据边界
 
@@ -126,19 +126,19 @@
 
 ### Check Items
 
-- [ ] 每项测试断言都链接 Phase 0 的当前证据和 Target disposition；
-- [ ] queue、并发、Hook settlement、Fanout、approval wait、Abort 和 Shutdown 使用 barrier/fake 明确控制时序；
-- [ ] Tool Call/Result、Event、Usage、caller result 和 cleanup 分别断言，不用单一 golden output 隐藏差异；
-- [ ] `Characterize then replace` 的已知缺陷使用明确测试名称/注释标识迁移目标，不伪装为推荐契约；
-- [ ] library/tool 两个 Subagent 入口均有可定位基线；
-- [ ] 每个批次通过聚焦测试，并记录必要的相关回归命令。
+- [x] 每项测试断言都链接 Phase 0 的当前证据和 Target disposition；
+- [x] queue、并发、Hook settlement、Fanout、approval wait、Abort 和 Shutdown 使用 barrier/fake 明确控制时序；
+- [x] Tool Call/Result、Event、Usage、caller result 和 cleanup 分别断言，不用单一 golden output 隐藏差异；
+- [x] `Characterize then replace` 的已知缺陷使用明确测试名称/注释标识迁移目标，不伪装为推荐契约；
+- [x] library/tool 两个 Subagent 入口均有可定位基线；
+- [x] 每个批次通过聚焦测试，并记录必要的相关回归命令。
 
 ### Exit Gate
 
-- [ ] CH-01..CH-10 均有可重复自动化证据，或存在阻断 Phase 完成的明确 Missing Evidence；
-- [ ] 测试没有改变生产行为、公共契约或已接受 Target Architecture；
-- [ ] 独立复审无未解决 Critical/High；
-- [ ] 项目所有者确认 P0 保护线和已知差异。
+- [x] CH-01..CH-10 均有可重复自动化证据，或存在阻断 Phase 完成的明确 Missing Evidence；
+- [x] 测试没有改变生产行为、公共契约或已接受 Target Architecture；
+- [x] 独立复审无未解决 Critical/High；
+- [x] 项目所有者确认 P0 保护线和已知差异。
 
 ## 8. Phase 2：P1 Characterization
 
@@ -146,19 +146,19 @@
 
 ### Check Items
 
-- [ ] CH-11 覆盖 Session history、compaction、孤立 Tool Use 修复和 Abort 后持久状态；
-- [ ] CH-12 覆盖 startup success/failure、optional memory degradation 和已创建资源 cleanup；
-- [ ] CH-13 覆盖 model missing/invalid、Provider failure、Usage/stream error 和 Provider call count；
-- [ ] CH-14 覆盖 Prompt Tool definitions 派生现状与 memory 只依赖 tool name 的事实；
-- [ ] Candidate 证据经代码/测试核验后才升级，冲突事实返回 Target/Architecture Review；
-- [ ] P1 测试与 P0 保护线共同运行，未引入非确定性回归。
+- [x] CH-11 覆盖 Session history、compaction、孤立 Tool Use 修复和 Abort 后持久状态；
+- [x] CH-12 覆盖 startup success/failure、optional memory degradation 和已创建资源 cleanup；
+- [x] CH-13 覆盖 model missing/invalid、Provider failure、Usage/stream error 和 Provider call count；
+- [x] CH-14 覆盖 Prompt Tool definitions 派生现状与 memory 只依赖 tool name 的事实；
+- [x] Candidate 证据经代码/测试核验后才升级，冲突事实返回 Target/Architecture Review；
+- [x] P1 测试与 P0 保护线共同运行，未引入非确定性回归。
 
 ### Exit Gate
 
-- [ ] CH-11..CH-14 均有可重复自动化证据和最终 disposition；
-- [ ] 没有把偶然内部结构升级为公共承诺；
-- [ ] 独立复审无未解决 Critical/High；
-- [ ] 项目所有者确认完整 Characterization baseline。
+- [x] CH-11..CH-14 均有可重复自动化证据和最终 disposition；
+- [x] 没有把偶然内部结构升级为公共承诺；
+- [x] 独立复审无未解决 Critical/High；
+- [x] 项目所有者确认完整 Characterization baseline。
 
 ## 9. Phase 3：Architecture Fitness Tests
 
@@ -172,22 +172,22 @@
 
 ### Check Items
 
-- [ ] 每条规则使用 Target Appendix A.2 的 canonical pass/fail 语义；
-- [ ] 每条规则至少有一个隔离的 expected-failure fixture，并断言可定位诊断；
-- [ ] production graph、test fixture graph、scripts 和 generated/third-party path 明确区分；
-- [ ] 当前生产违规不会通过扩大永久 allowlist 隐藏；临时例外字段完整且可审计；
-- [ ] FT-06 验证 change locality，不要求实现生产第二 Provider 或完整 External Extension；
-- [ ] FT-08 的 Contract inventory 同时要求 success 与 failure/Abort/close 中至少一个适用负向场景；
-- [ ] FT-09 只治理活跃文档和生产权威链接，不把历史记录误判为新实现依赖；
-- [ ] 聚焦规则、完整 Fitness suite、lint 和 build 的命令及结果均被记录。
+- [x] 每条规则使用 Target Appendix A.2 的 canonical pass/fail 语义；
+- [x] 每条规则至少有一个隔离的 expected-failure fixture，并断言可定位诊断；
+- [x] production graph、test fixture graph、scripts 和 generated/third-party path 明确区分；
+- [x] 当前生产违规不会通过扩大永久 allowlist 隐藏；临时例外字段完整且可审计；
+- [x] FT-06 验证 change locality，不要求实现生产第二 Provider 或完整 External Extension；
+- [x] FT-08 的 Contract inventory 同时要求 success 与 failure/Abort/close 中至少一个适用负向场景；
+- [x] FT-09 只治理活跃文档和生产权威链接，不把历史记录误判为新实现依赖；
+- [x] 聚焦规则、完整 Fitness suite、lint 和 build 的命令及结果均被记录。
 
 ### Exit Gate
 
-- [ ] FT-01..FT-09 均能对最小违规稳定失败，并对合法 fixture 稳定通过；
-- [ ] 当前违规已通过测试失败或临时例外显式呈现；
-- [ ] 没有新增通用 Service Locator、中央类型联合或测试专用生产架构；
-- [ ] 独立复审无未解决 Critical/High；
-- [ ] 项目所有者确认 Fitness 保护线和剩余例外。
+- [x] FT-01..FT-09 均能对最小违规稳定失败，并对合法 fixture 稳定通过；
+- [x] 当前违规已通过测试失败或临时例外显式呈现；
+- [x] 没有新增通用 Service Locator、中央类型联合或测试专用生产架构；
+- [x] 独立复审无未解决 Critical/High；
+- [x] 项目所有者确认 Fitness 保护线和剩余例外。
 
 ## 10. Phase 4：Completion Record 与收口评审
 
@@ -195,22 +195,22 @@
 
 ### Check Items
 
-- [ ] 在本计划状态记录中列出实际命令、环境版本、测试/规则文件和结果；
-- [ ] 完成 CH-01..CH-14、FT-01..FT-09 到测试、证据和 disposition 的最终矩阵；
-- [ ] 记录通过、expected failure、当前违规、临时例外、非确定性控制和未覆盖风险；
-- [ ] 只将经证据确认的事实同步到对应 Current Architecture 文档；
-- [ ] 检查 AF-05/AF-06 输入是否因当前证据需要回到 Owner decision，不直接修改 Accepted Target；
-- [ ] 执行聚焦测试、完整 Characterization/Fitness suite、lint、test 和 build；
-- [ ] 执行独立架构/测试评审并逐项 triage finding；
-- [ ] 项目所有者确认 Results、剩余风险和例外；
-- [ ] 更新父计划、文档索引和本计划状态。
+- [x] 在本计划状态记录中列出实际命令、环境版本、测试/规则文件和结果；
+- [x] 完成 CH-01..CH-14、FT-01..FT-09 到测试、证据和 disposition 的最终矩阵；
+- [x] 记录通过、expected failure、当前违规、临时例外、非确定性控制和未覆盖风险；
+- [x] 只将经证据确认的事实同步到对应 Current Architecture 文档；
+- [x] 检查 AF-05/AF-06 输入是否因当前证据需要回到 Owner decision，不直接修改 Accepted Target；
+- [x] 执行聚焦测试、完整 Characterization/Fitness suite、lint、test 和 build；
+- [x] 执行独立架构/测试评审并逐项 triage finding；
+- [x] 项目所有者确认 Results、剩余风险和例外；
+- [x] 更新父计划、文档索引和本计划状态。
 
 ### Exit Gate
 
-- [ ] 满足 §2.2 全部总体退出条件；
-- [ ] Foundation Gate 只关闭已有执行证据支持的 Characterization/Fitness 条目；
-- [ ] AF-05/AF-06 仍需 Accepted Spike Spec 和独立执行；
-- [ ] 未授权任何生产 Architecture Slice 提前进入 Delivery。
+- [x] 满足 §2.2 全部总体退出条件；
+- [x] Foundation Gate 只关闭已有执行证据支持的 Characterization/Fitness 条目；
+- [x] AF-05/AF-06 仍需 Accepted Spike Spec 和独立执行；
+- [x] 未授权任何生产 Architecture Slice 提前进入 Delivery。
 
 ## 11. 追踪框架
 
@@ -261,16 +261,16 @@ VS Code Test Runner 曾以 Node ABI `115` 加载 ABI `127` 的 `better-sqlite3`�
 | CH-08 | `RuntimeApp.close()`；Batch 3 nonresponsive/queued 与 stop-failure tests | Verified | 已验证当前 Shutdown 立即 Abort active Turn、无界等待不响应 worker、queued work 不启动；Channel stop failure 被隔离但不进入 Shutdown Report；复用既有 approval-wait 与 close-idempotency coverage | Runtime shutdown integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-08"` | Characterize then replace：two-stage bounded Turn convergence；先终结 queued/interaction wait，并给其他已运行 Turn bounded graceful drain；到期后 Abort 并 bounded 等待收敛；仍未收敛则 caller-facing outcome 恰好一次结算、报告 residual/pin，Runtime/Builder 不强制关闭受保护资源；组件失败隔离、重复 close 共享同一过程、close-once、结构化 diagnostics；最终进程终止只由 Runtime host 决定 |
 | CH-09 | `RuntimeApp.abortTurn()` + Runner Abort；Batch 3 public-ingress/late-steering tests | Verified | 已通过 public Channel path 验证 active Abort + queued drop、单次 drop/Turn observation；已验证 unread steering 在 Abort 后随 Turn cleanup 清除，不计入 `messages_dropped` 且不迁移到下一 Root Turn；复用既有 cross-session/never-throw coverage | Runtime integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-09"` | Preserve active Root Abort、同 Session queue drop、cross-session isolation 与 never-throw；目标补 started Turn exactly-once completion；steering 只绑定入站时的 active Turn，admission 不承诺模型消费，未读取输入在 Turn 结束/Abort/失败/Shutdown 时清理且不转为 queued Root request；只需聚合 diagnostics，不增加逐条 consumed/dropped settlement、持久化或公共事件 |
 | CH-10 | Task Tool、library `runSubagentTurn()`、`SubagentRunner`；Batch 4 RuntimeApp library-entry integration | Verified | 已验证 public `RuntimeApp.runSubagentTurn()` 连接共享 Runner/SessionManager、blocking result、correlated start/end Event、Usage 与 child session cleanup；Task Tool、Abort、route lifecycle 和 outcome matrix 复用既有测试，不重复新增 | Runtime + Subagent integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-10"` | Preserve blocking baseline；Slice 2 统一 tracked Child path |
-| CH-11 | `SessionManager`/transcript + Runner compaction/orphan repair；现有 persistence tests | Verified | 将 history、compaction、orphan repair、Abort persistence 组合为可定位 baseline；temp directory + fake LLM | Runner/Session integration；`npm test -- src/core/runner/AgentRunner.test.ts -t "CH-11"` | Characterize current behavior；Tool closure 目标由 [ADR-001](../architecture/adr-001-tool-result-closure-and-recovery.md) 约束，Context Budgeting/Compaction Recovery 目标由 [ADR-002](../architecture/adr-002-context-budgeting-and-compaction-recovery.md) 约束 |
-| CH-12 | `bootstrapRuntime()` + Runtime close；现有 memory degradation test | Verified | 当前 later bootstrap failure 不 cleanup earlier resources；injected failure + close counters + temp directory | Bootstrap integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-12"` | Baseline success/degradation；replace incomplete rollback |
-| CH-13 | `RuntimeApp.requireModel()` + Runner stream failure/Usage | Candidate | missing model 可 pre-call fail；invalid model 当前无独立本地校验；provider call counter + fake stream error | Runtime/Provider fake contract；`npm test -- src/core/runner/AgentRunner.test.ts -t "CH-13"` | Baseline current mapping；Slice 1 保持 pre-call/fail-closed |
-| CH-14 | `tool-registry` -> `prompt-factory` -> `SystemPromptBuilder` | Verified | 补 full-mode complete definitions 不渲染；确认 memory 只看 tool name | Prompt unit + Tool projection contract；`npm test -- src/core/prompt/SystemPromptBuilder.test.ts -t "CH-14"` | Baseline mechanical path；Slice 3 删除重复转换并保持 memory 行为 |
+| CH-11 | `SessionManager`/transcript + Runner compaction/orphan repair；Phase 2 persisted-history integration | Verified | 已验证 fresh SessionManager 在下一 Turn 从持久 compaction record 注入 summary、截断旧历史、保留 retained/current history 且当前 user 只追加一次；orphan repair 与 Abort metadata 复用既有 persistence tests | Runner/Session integration；`npm test -- src/core/runner/AgentRunner.test.ts -t "CH-11"` | Characterize observable persisted-history transition；不冻结 placeholder 文本、wrapper、retry 次数或内部拼接；Tool closure 由 [ADR-001](../architecture/adr-001-tool-result-closure-and-recovery.md) 约束，Compaction Recovery 由 [ADR-002](../architecture/adr-002-context-budgeting-and-compaction-recovery.md) 约束 |
+| CH-12 | `bootstrapRuntime()` + Runtime close；Phase 2 injected later-failure test | Verified | 已验证 startup fatal failure 产生 `app_start`/`error`、不产生 `app_ready`，且当前 later bootstrap failure 不 cleanup 已创建 memory resource；success、optional memory degradation 和正常 close-once 复用既有测试 | Bootstrap integration；`npm test -- src/runtime/RuntimeApp.test.ts -t "CH-12"` | Characterize then replace incomplete rollback；Phase 2 不修复 cleanup |
+| CH-13 | `RuntimeApp.requireModel()` + Runner stream failure/Usage；Phase 2 call-count tests | Verified | 已验证 missing model 在 Runner 前 `MODEL_MISSING` fail-closed；非空 model 不做本地 validation 而原样透传；Provider error stop/stream error 的 Usage、Event 与单次 call 均有观察 | Runtime/Provider fake contract；`npm test -- src/runtime/RuntimeApp.test.ts src/core/runner/AgentRunner.test.ts -t "CH-13"` | Baseline current mapping：invalid model 由 Provider 暴露失败，不发明本地 `MODEL_INVALID`；Slice 1 保持 pre-call/fail-closed 并处理目标 resolution |
+| CH-14 | `tool-registry` -> `prompt-factory` -> `SystemPromptBuilder`；Phase 2 exact-name test | Verified | 已验证 full mode 不重复渲染完整 Tool definitions，Memory Recall 只由精确 memory Tool name 触发，不读取 description/schema；derivation/threading 复用既有 tool-registry/prompt-factory tests | Prompt unit + Tool projection contract；`npm test -- src/core/prompt/SystemPromptBuilder.test.ts -t "CH-14"` | Baseline mechanical path；legacy `search_memory` 只作为当前 compatibility，不升级为永久目标；Slice 3 删除重复转换并保持目标 memory 行为 |
 
 CH-05、CH-07、CH-12 和 CH-13 的现状是 Characterization 输入，不是待 AF-04 内修复的 Defect：observer throw 可传播、partial Channel start 无 rollback 且阻断 retry、bootstrap partial failure 无 cleanup、invalid model 没有独立本地 classification。实现测试时必须用明确名称记录这些差异；生产修复需另行分类和批准。
 
 ### 11.4 FT-01 directory boundary policy
 
-FT-01 扫描 production `src/**/*.ts`，排除 `*.test.ts`、`src/test-setup.ts`、`test-fixtures/**`、`dist/**`、`node_modules/**` 和生成物。排除只描述非 production graph，不能用于隐藏生产违规。
+FT-01 扫描 production `src/**/*.ts`，排除 `*.test.ts`、`src/test-setup.ts`、test-only `src/architecture-fitness/**` scanner/rule infrastructure、`test-fixtures/**`、`dist/**`、`node_modules/**` 和生成物。`src/architecture-fitness/**` 虽由 root TypeScript project type-check，但不被 production runtime import/export，且只实现 AF-04 executable rules；排除只描述非 production graph，不能用于隐藏生产违规。
 
 | Configured path | Boundary | Notes |
 |---|---|---|
@@ -318,21 +318,22 @@ FT-01 扫描 production `src/**/*.ts`，排除 `*.test.ts`、`src/test-setup.ts`
 | FT-05 | future Extension/Runtime Module roots | Not applicable；当前无 Extension Framework，未发现 generic Service Locator | AST import/call scan；pass typed capability；fail Extension -> RuntimeApp / `services.get()` | rule/source/symbol/capability；`npm test -- src/architecture-fitness/ft-05-extension-capability.test.ts` |
 | FT-06 | synthetic second Provider/cross-contribution Extension change locality | Not applicable to production；中央 assembly 是 migration input | fixture manifest + forbidden identity/branch scan；pass only fixture Contract；fail core branch on fixture ID | rule/fixture ID/core file/matched branch；`npm test -- src/architecture-fitness/ft-06-change-locality.test.ts` |
 | FT-07 | future Registry Snapshot consumer boundary | Not applicable to Target API；current mutable `RuntimeToolBundle` 是 migration input | isolated TS compile；pass readonly projection rejects mutation；fail mutable Registry/Builder consumer | rule/source/type/mutable member；`npm test -- src/architecture-fitness/ft-07-registry-snapshot.test.ts` |
-| FT-08 | explicitly inventoried exported Event/Error/Port/Lifecycle Contracts | Unknown/incomplete inventory；已有部分 success/failure/Abort/close tests | small TS/JSON inventory + export/test reference check；fail exported Lifecycle Contract without negative case | rule/export/source/missing positive-or-negative test；`npm test -- src/architecture-fitness/ft-08-contract-inventory.test.ts` |
-| FT-09 | active architecture/ADR/spec/plan metadata and normative Legacy links | Current violation candidates；`v1.0/**` 为 Historical/Legacy Candidate | structured Markdown status/link parser；pass active status + no Legacy authority；fail missing status/normative Legacy link | rule/doc/category/field-or-link；`npm test -- src/architecture-fitness/ft-09-doc-governance.test.ts` |
+| FT-08 | explicitly inventoried exported Event/Error/Port/Lifecycle Contracts | 15 个 reviewed public Contracts；`MemoryStore`、`LogAdapter` 缺适用 negative lifecycle evidence | explicit surface + TS/JSON inventory + export/coverage polarity/test-file check；fail missing inventory、negative coverage 或 surface 外 entry | rule/contract/source/kind/test/violation；`npm test -- src/architecture-fitness/ft-08-contract-inventory.test.ts` |
+| FT-09 | narrow active architecture/ADR/spec/plan manifest + normative Legacy links | 10 个 active docs 状态有效；5 个 production Legacy authority references + 1 个 referenced Legacy missing successor | structured Markdown status/all-authority-links/successor parser + normative source reference scan；pass historical note；fail missing status/Legacy authority/missing successor | rule/doc/category/field/target 或 source/target；`npm test -- src/architecture-fitness/ft-09-doc-governance.test.ts` |
 
 ### 11.6 Current violation inventory baseline
 
-此表只记录 Phase 0 已确认候选；Phase 3 的 executable diagnostics 是增删条目的权威证据。`Suggested owner/slice` 不是 ADR 例外、实施授权或最终文件移动方案。
+此表从 Phase 0 候选开始，并由 Phase 3 executable diagnostics 补齐真实条目；测试中的 exact diagnostic baseline 是增删条目的权威证据。`Suggested owner/slice` 不是 ADR 例外、实施授权或最终文件移动方案。
 
 | Rule | Actual edge / fact | Evidence | Suggested semantic owner / expiry work |
 |---|---|---|---|
 | FT-01 / FT-03 | Runner imports adapter LLM types and platform config/logger types | `src/core/runner/AgentRunner.ts`、`src/core/runner/types.ts`、context helpers | Turn Execution / Model Resolution；Slice 1/2 Contract migration |
+| FT-01 | Stable Application Subagent imports adapter LLM types、platform config types 和 concrete logger；Memory Application owner imports internal infrastructure/concrete logger；Domain/Application Tool barrel re-exports builtin infrastructure | `src/core/subagent/**`、`src/core/memory/MemoryManager.ts`、`src/core/memory/index.ts`、`src/core/tools/index.ts`；Batch 1 exact diagnostics | 对应 Subagent/Memory/Tool semantic owner；相关 Slice 建立 Port/assembly 边界时删除 exact diagnostics |
 | FT-01 / FT-03 | RuntimeApp imports bootstrap and concrete adapter-owned types，且向 Runner 传递 raw model/config-derived values | `src/runtime/RuntimeApp.ts` | Runtime Application / Runtime Composition；Slice 1/5 |
 | FT-01 | §11.4.1 的 `runtime`、`core/session`、`core/workspace`、`core/media`、`platform/logger` 是 exact mixed paths | Target §4.5 + Phase 0 source layout | 对应 Target semantic owners；相关 Slice 建立真实边界时删除 exact inventory |
 | FT-07 | mutable `RuntimeToolBundle` 被 `RuntimeResourceSet` 保存并在 RuntimeApp post-bootstrap replacement | `src/runtime/types.ts`、`src/runtime/RuntimeApp.ts` | Registry / Runtime Builder；Slice 3/5 |
-| FT-08 | exported Contract inventory 尚未建立，不能证明全部 success + negative coverage | current barrels/types and existing tests | Contract owners；AF-04 Phase 3 建立 inventory |
-| FT-09 | active-looking architecture docs 缺统一状态；production comments 把 `docs/architecture/v1.0/**` 当规范来源 | `docs/architecture/*.md`、config wizard source comments | Documentation Governance；AF-04 FT-09 + Slice 6 |
+| FT-08 | reviewed public Contract inventory 中 `MemoryStore`、`LogAdapter` 尚无明确 failure/Abort/close evidence | `src/architecture-fitness/ft-08-contract-surface.json`、`ft-08-contract-inventory.json` 与 exact diagnostics | 对应 Memory/Observability Contract owners；后续独立 Contract 工作补齐 evidence 后删除 diagnostics |
+| FT-09 | 5 个 Config Wizard production comments 以“详见/字段清单”引用同一 `v1.0` 文档，且该 referenced Legacy doc 缺 successor | `src/platform/config/wizard/{diff,display,fields,prompts,run-wizard}.ts`、`docs/architecture/v1.0/platform-config-wizard-design.md` | Documentation Governance / Slice 6；更新权威入口后删除 6 条 exact diagnostics |
 
 Phase 0 不为上述违规申请 ADR 例外。Phase 3 production scan 必须输出 exact diagnostics，并将其与 baseline inventory 比较；只有新增、消失或内容变化触发失败/Review，已知集合本身以显式 baseline 通过，直到单独批准的工作删除对应违规。
 
@@ -383,10 +384,10 @@ AF-04 完成时至少产生：
 | Phase | 状态 | 完成日期 | 证据/备注 |
 |---|---|---|---|
 | Phase 0：证据基线与执行映射 | Completed | 2026-08-31 | 项目所有者接受 evidence baseline、implementation batches 与 exception format；独立复审为 Critical/High/Medium/Low 0/0/0/0，blocking-overdesign 0；尚未授权 Phase 1、测试实现或生产代码变更 |
-| Phase 1：P0 Characterization | In Progress |  | Batch 1、Batch 2 已接受；2026-09-02 接受 CH-07、CH-08、CH-09 migration dispositions，并完成 Batch 3；Batch 4 CH-10 最小 Characterization Test 已完成，等待 Phase 1 收口评审。尚未授权 CH-04/CH-05、CH-07..CH-10 目标生产迁移 |
-| Phase 2：P1 Characterization | Not Started |  |  |
-| Phase 3：Architecture Fitness Tests | Not Started |  |  |
-| Phase 4：Completion Record 与收口评审 | Not Started |  |  |
+| Phase 1：P0 Characterization | Completed | 2026-09-02 | Batch 1..4 的 CH-01..CH-10 Characterization 与 migration dispositions 已接受；自动化证据、相关回归和独立复审均通过，无未解决 Critical/High。尚未授权 CH-04/CH-05、CH-07..CH-10 目标生产迁移，也未授权 Phase 2 实现 |
+| Phase 2：P1 Characterization | Completed | 2026-09-02 | CH-11..CH-14 当前 baseline 与 dispositions 已接受；聚焦/相关回归、P0+P1 protection line、TypeScript、patch hygiene 和独立复审均通过。完整 CH-01..CH-14 Characterization baseline 已确认；未授权任何生产迁移或 Phase 3 实现 |
+| Phase 3：Architecture Fitness Tests | Completed | 2026-09-03 | Batch 1 FT-01..FT-04、Batch 2 FT-05..FT-07、Batch 3 FT-08..FT-09 与完整 Fitness protection line 已接受；9 files / 18 tests、TypeScript、build、patch hygiene 和独立复审通过；current violations 保持 exact baselines，不表示目标架构已实现 |
+| Phase 4：Completion Record 与收口评审 | Completed | 2026-09-03 | Completion Record、23 项 ledger、Current fact corrections、最终验证、独立收口评审与 triage 均完成并获项目所有者接受；父计划只同步三项有证据支持的 Gate，不授权 AF-05/AF-06、生产迁移、提交或推送 |
 
 ### Phase 1 Batch 1 evidence
 
@@ -483,4 +484,162 @@ Accepted。项目所有者于 2026-09-02 接受修订后的 CH-09 Abort 与 late
 | TypeScript baseline | `npx tsc --noEmit` | Pass；exit 0 |
 | Patch hygiene | `git diff --check` | Pass；exit 0 |
 
-Batch 4 只新增一个 public RuntimeApp library-entry integration test，用于闭合此前唯一缺失的 Runtime wiring 观察；Task Tool trigger/blocking、Subagent Event/Usage、Parent Abort cascade、route context release、child session cleanup 和 outcome matrix 直接复用既有确定性测试，不重复新增。该批次没有修改 production code、公共 Contract、Accepted Target Architecture、dependency 或 production test seam。CH-10 的 migration disposition 与 Phase 1 Exit Gate 仍待项目所有者收口评审；统一 tracked Child path 属于后续 Slice 2，不由本批授权。
+Batch 4 只新增一个 public RuntimeApp library-entry integration test，用于闭合此前唯一缺失的 Runtime wiring 观察；Task Tool trigger/blocking、Subagent Event/Usage、Parent Abort cascade、route context release、child session cleanup 和 outcome matrix 直接复用既有确定性测试，不重复新增。该批次没有修改 production code、公共 Contract、Accepted Target Architecture、dependency 或 production test seam。统一 tracked Child path 属于后续 Slice 2，不由本批授权。
+
+项目所有者于 2026-09-02 接受 CH-10 当前 blocking Subagent baseline，并确认 CH-01..CH-10 的 P0 保护线、已知差异和 Phase 1 Exit Gate 全部闭合。Phase 1 状态更新为 Completed；该接受不授权统一 tracked Child path、其他目标生产迁移或 Phase 2 Characterization 实现。
+
+### Phase 2 CH-11..CH-14 evidence
+
+| Scope | Command | Result |
+|---|---|---|
+| CH-11 | VS Code Test Runner：`CH-11` | Pass；1 new Runner/Session persisted-compaction integration test |
+| CH-12 | VS Code Test Runner：`CH-12` | Pass；1 new bootstrap later-failure/cleanup-gap test |
+| CH-13 | VS Code Test Runner：`CH-13` | Pass；1 new Runtime missing/invalid-model test + 2 strengthened existing Provider error tests |
+| CH-14 | VS Code Test Runner：`CH-14` | Pass；1 strengthened existing prompt test；无重复新增场景 |
+| Focused Phase 2 regression | VS Code Test Runner：`RuntimeApp.test.ts`、`AgentRunner.test.ts`、`SystemPromptBuilder.test.ts` | Pass；107 tests |
+| P0 + P1 protection line | VS Code Test Runner：Phase 1/2 相关 11 个 test files | Pass；251 tests |
+| TypeScript baseline | `npx tsc --noEmit` | Pass；exit 0 |
+| Patch hygiene | `git diff --check` | Pass；exit 0 |
+
+项目所有者于 2026-09-02 接受 Phase 2 最小范围与 disposition，并要求不扩大问题、不增加重复或不必要测试。实现严格限定为 3 个新增测试和 3 个既有测试强化：CH-11 不冻结 compaction 偶然内部格式；CH-12 只记录 incomplete rollback；CH-13 不发明本地 `MODEL_INVALID`；CH-14 将 legacy `search_memory` 限定为当前 compatibility。没有修改 production code、公共 Contract、Accepted Target Architecture、dependency 或 production test seam。独立复审无 Critical/High，未发现不准确 characterization、偶然断言或重复测试。
+
+项目所有者随后于 2026-09-02 接受 CH-11..CH-14 当前 baseline 与上述 dispositions，并确认完整 CH-01..CH-14 Characterization baseline。Phase 2 状态更新为 Completed；该接受只关闭 Characterization，不授权任何生产迁移、公共 Contract 修改或 Phase 3 Architecture Fitness Tests 实现。
+
+### Phase 3 Batch 1 FT-01..FT-04 evidence
+
+| Scope | Command | Result |
+|---|---|---|
+| FT-01..FT-04 focused | `npm test -- src/architecture-fitness/ft-01-boundaries.test.ts src/architecture-fitness/ft-02-sdk-allowlist.test.ts src/architecture-fitness/ft-03-runner-boundary.test.ts src/architecture-fitness/ft-04-legacy-direction.test.ts` | Pass；4 files / 8 tests |
+| TypeScript baseline | `npm run lint` | Pass；exit 0 |
+| Build | `npm run build` | Pass；exit 0 |
+| Patch hygiene | `git diff --check` | Pass；exit 0 |
+
+项目所有者于 2026-09-02 授权 Phase 3 Batch 1 最小实现，并在首个 production scan 暴露 Phase 0 简表未枚举的 Stable Application 越界 imports 后，选择将全部真实 diagnostics 纳入 exact baseline，不修复生产代码。FT-01 现锁定 29 条 source/import/target/boundary diagnostics、完整 production path classification 和 mixed-path inventory 删除漂移；FT-02 当前 production baseline 为零违规；FT-03 锁定 13 条 Runner adapter/config/logger coupling diagnostics，并检查 constructor、public `run()`、exported function/type inputs 的 mutable Registry；FT-04 在 production roots 尚不存在时保持 Not applicable，但配置会在 future New Core 指向 Compat/Legacy 时自动失败。每条规则均有隔离 pass 和 expected-failure fixture，diagnostic 可定位 source、target/package/symbol 和 violation kind。
+
+Batch 1 新增一个小型 TypeScript AST/path rule module、4 个聚焦 test files 和 4 组只读 fixtures；没有新增 dependency、修改 production behavior/public Contract、修复 current violation、引入通用 dependency-analysis platform 或执行 FT-05..FT-09。为避免重复测试，每条规则只保留一个 fixture pass/fail test 和一个 production baseline test。
+
+独立复审初次发现 2 个 High、2 个 Medium、1 个 Low，blocking-overdesign 为 0。已修复 exported run-input 漏检、mixed inventory 删除漂移、仅按 Registry 名称判断可变性、alias loader specificity，并在本节明确 test-only scanner exclusion。复审建议再增加 dynamic loader fixture；该建议不采纳，因为 collector 已按 resolved loader target 覆盖 dynamic `import()`/`require()` 并输出 module locator，canonical expected-failure 只要求 `loadConfig()` 或 mutable Registry，现有同一 fail fixture 已同时证明 alias `loadConfig()` 与结构性 mutable Registry；再增加语法变体不会改变规则语义，违反本阶段最小且不重复的测试约束。复审最终无 Critical/High regression。
+
+项目所有者于 2026-09-02 接受 Batch 1 FT-01..FT-04 结果并授权继续 Phase 3 Batch 2 FT-05..FT-07。该接受不将 current violation baseline 表述为架构合规，不授权任何生产迁移、FT-08..FT-09、Phase 4 或提交。
+
+### Phase 3 Batch 2 FT-05..FT-07 evidence
+
+| Scope | Command | Result |
+|---|---|---|
+| FT-01..FT-07 protection line | `npm test -- src/architecture-fitness/ft-01-boundaries.test.ts src/architecture-fitness/ft-02-sdk-allowlist.test.ts src/architecture-fitness/ft-03-runner-boundary.test.ts src/architecture-fitness/ft-04-legacy-direction.test.ts src/architecture-fitness/ft-05-extension-capability.test.ts src/architecture-fitness/ft-06-change-locality.test.ts src/architecture-fitness/ft-07-registry-snapshot.test.ts` | Pass；7 files / 14 tests |
+| TypeScript baseline | `npm run lint` | Pass；exit 0 |
+| Build | `npm run build` | Pass；exit 0 |
+| Patch hygiene | `git diff --check` | Pass；exit 0 |
+
+项目所有者于 2026-09-02 接受以下 Batch 2 实现边界：FT-05 的 `src/extensions/**`、`src/runtime-modules/**` 只作为 fixture roots，不冻结 production layout；Service Locator 只识别 `services`、`serviceLocator`、`container` receiver 的 generic `get()`，避免误报合法 `Map.get()`；FT-07 current baseline 只锁定 `RuntimeToolBundle.tools`、`llmDefinitions`、`promptDefinitions` 三个直接 mutable members，不重复报告 `RuntimeResourceSet.toolBundle` 持有关系。
+
+FT-05 使用声明式 Capability pass fixture，并证明 Extension 经 runtime barrel namespace 访问 `RuntimeApp` 或调用已配置 Service Locator 时产生 source/symbol/capability/violation diagnostic；production 当前没有 Extension/Runtime Module roots，状态保持 Not applicable。FT-06 使用一个 synthetic manifest 和一组 pass/fail fixture，同时证明新增 Provider 只改 Contract/registration 可以通过，而 Runner identity branch 与 RuntimeApp cross-contribution central union 会失败；没有实现生产第二 Provider 或 External Extension。FT-07 使用 strict NodeNext isolated TypeScript compile 证明 readonly Snapshot 可消费、`ReadonlyMap` mutation 与 Snapshot-to-Builder injection 被拒绝，并以 structured diagnostic 锁定三个 current mutable members。fixture 形状不升级为 production Target API。
+
+Batch 2 只修改 test-only AST/path rule、增加 3 个聚焦 test files 和 3 组隔离 fixtures；没有修改 production behavior/public Contract、增加 dependency、修复 current migration input、建立 Extension Framework 或执行 FT-08..FT-09。独立复审初次发现 2 个 High 与 1 个 Medium：RuntimeApp barrel 漏检、FT-06 未覆盖 cross-contribution central union、FT-07 compiler diagnostic 未锁定文件；全部修复。后续 Medium namespace access gap 通过仅在实际引用 `runtime.RuntimeApp` 时跟踪 namespace 关闭；static named alias 已由 imported symbol 跟踪覆盖。最终独立复审为 Critical/High/Medium/Low `0/0/0/0`，blocking-overdesign `0`。
+
+项目所有者于 2026-09-02 接受 Batch 2 FT-05..FT-07 结果并授权继续 Phase 3 Batch 3 FT-08..FT-09。该接受不将 Not applicable fixture proof 或 current FT-07 baseline 表述为目标架构已实现，不授权生产迁移、Phase 4 或提交。
+
+### Phase 3 Batch 3 FT-08..FT-09 evidence
+
+| Scope | Command | Result |
+|---|---|---|
+| FT-08..FT-09 focused | VS Code Test Runner：`ft-08-contract-inventory.test.ts`、`ft-09-doc-governance.test.ts` | Pass；2 files / 4 tests |
+| FT-01..FT-09 protection line | `npm test -- src/architecture-fitness/ft-01-boundaries.test.ts src/architecture-fitness/ft-02-sdk-allowlist.test.ts src/architecture-fitness/ft-03-runner-boundary.test.ts src/architecture-fitness/ft-04-legacy-direction.test.ts src/architecture-fitness/ft-05-extension-capability.test.ts src/architecture-fitness/ft-06-change-locality.test.ts src/architecture-fitness/ft-07-registry-snapshot.test.ts src/architecture-fitness/ft-08-contract-inventory.test.ts src/architecture-fitness/ft-09-doc-governance.test.ts` | Pass；9 files / 18 tests；2.22s |
+| TypeScript baseline | `npm run lint` | Pass；exit 0 |
+| Build | `npm run build` | Pass；exit 0 |
+| Patch hygiene | `git diff --check` | Pass；exit 0 |
+
+项目所有者于 2026-09-03 接受 Batch 3 的四项实现边界：FT-08 使用 reviewed explicit public Contract surface，每个 Contract 单独登记，普通 DTO/Config 不因 export 自动进入 inventory；`MemoryStore` 与 `LogAdapter` 保留为 exact missing-negative baseline，不为制造绿色结果临时增加 Contract tests；FT-09 只治理 Development Workflow、3 个 governance docs、2 个 ADR、approval lifecycle spec 和 3 个 roadmap plans，不推断旧 design/current/impl docs 为 active；5 个 Config Wizard production Legacy references 与 1 个 referenced Legacy missing-successor 锁定为 6 条 current diagnostics。
+
+FT-08 fixture 证明完整 inventory 通过，并定位 missing inventory、missing negative coverage 和 surface 外 stale DTO entry；production inventory 共 15 个 Contract，机械核验 declaration export、entry 唯一性、coverage polarity 和 test file 存在。测试文件与行为场景的关联由 Owner-reviewed semantic mapping 提供，不增加脆弱的 symbol/prose grep；单纯 symbol 出现不能证明测试执行该 Contract，反而会产生虚假置信。FT-09 fixture 同时证明中英文 metadata、同一 authority field 的全部 links、active missing status、Legacy authority、Legacy successor，以及规范性 Windows/Unicode source path；明确的 historical non-authoritative note 不误报。
+
+独立复审初次提出 3 个 High、3 个 Medium、1 个 Low。经证据 triage，采纳并修复 authority label/all-links、Windows/Unicode path、normative-vs-historical source reference、surface 外 stale inventory、successor target validation 和 missing-document structured handling；declaration source 是 explicit surface 的既定含义，因此不增加 barrel resolution。拒绝要求扫描 test source 中 Contract symbol 的建议，因为它既不能证明行为断言，也会对 type-only mention、alias、helper 或 implementation-driven tests产生误导。最终复审为 Critical/High/Medium/Low `0/0/0/0`，blocking-overdesign `0`。
+
+首次完整 Fitness suite 中 FT-07 isolated compiler 两次加载仓库 ambient types，触发 5 秒 test timeout；没有扩大 timeout。compiler options 改为只加载 fixture 所需 `lib.es2022.d.ts` 且 `types: []` 后，同一 strict NodeNext semantics 下完整 9-file suite 在 2.22 秒通过。Batch 3 没有修改 production behavior/public Contract、增加 dependency、清理 current violations 或执行 Phase 4；等待项目所有者结果确认，不授权提交。
+
+项目所有者于 2026-09-03 接受 Batch 3 FT-08..FT-09、完整 FT-01..FT-09 Fitness protection line 和剩余 exact violation baselines，Phase 3 状态更新为 Completed；同时授权执行 Phase 4 Completion Record 与 AF-04 收口评审。该接受不表示生产代码已满足 Target Architecture，不授权修复 current violations、执行 AF-05/AF-06、任何生产 Architecture Slice、提交或推送。
+
+### Phase 4 Completion Record
+
+#### 最终环境、范围与命令结果
+
+最终验证于 2026-09-03 在 Windows、Node.js `v22.22.2`、npm `10.9.7`、Vitest `v3.2.4` 环境执行。当前未提交的 AF-04 Characterization edits 只涉及 `SystemPromptBuilder.test.ts`、`AgentRunner.test.ts` 和 `RuntimeApp.test.ts`；11-file protection line 的其余 8 个文件是未修改的相关保护依赖。Fitness 保护线位于 `src/architecture-fitness/**`，隔离 pass/expected-failure fixtures 位于 `test-fixtures/architecture-fitness/**`。没有修改 production code、公共 Contract、dependency 或 production test seam。
+
+可重复命令为：
+
+- Characterization：`npm test -- src/runtime/RuntimeApp.test.ts src/runtime/RuntimeApp.intake.test.ts src/core/runner/AgentRunner.test.ts src/runtime/tool-approval-policy.test.ts src/runtime/subagent-orchestration.test.ts src/core/subagent/SubagentRunner.test.ts src/core/tools/builtin/task/task-tool.test.ts src/core/session/SessionManager.test.ts src/core/prompt/SystemPromptBuilder.test.ts src/runtime/tool-registry.test.ts src/runtime/prompt-factory.test.ts`
+- Fitness：`npm test -- src/architecture-fitness/ft-01-boundaries.test.ts src/architecture-fitness/ft-02-sdk-allowlist.test.ts src/architecture-fitness/ft-03-runner-boundary.test.ts src/architecture-fitness/ft-04-legacy-direction.test.ts src/architecture-fitness/ft-05-extension-capability.test.ts src/architecture-fitness/ft-06-change-locality.test.ts src/architecture-fitness/ft-07-registry-snapshot.test.ts src/architecture-fitness/ft-08-contract-inventory.test.ts src/architecture-fitness/ft-09-doc-governance.test.ts`
+- Full regression：`npm test`
+- Load-sensitive focused check：`npm test -- src/core/media/image-optimize.test.ts src/core/tools/builtin/exec/process.test.ts`
+- Static/build/hygiene：`npm run lint`、`npm run build`、`git diff --check`
+
+| Validation | Result | Closure interpretation |
+|---|---|---|
+| 11-file Characterization protection line | Pass；11 files / 251 tests；10.43s | CH-01..CH-14 相关既有与新增保护共同通过 |
+| FT-01..FT-09 protection line | Pass；9 files / 18 tests；2.38s | 每条规则的合法 fixture、expected-failure fixture 与 production exact baseline 共同通过 |
+| `npm run lint` | Pass；exit 0 | TypeScript no-emit validation 通过 |
+| `npm run build` | Pass；exit 0 | TypeScript build 通过 |
+| `git diff --check` | Pass；exit 0 | 两处 Current Architecture 尾随空白在最终检查前移除 |
+| FT-09 post-review correction | Pass；focused 2/2；full Fitness 18/18；lint/build/diff exit 0 | 同一 fixture 覆盖 current `v1.0` 与 canonical future `docs/legacy` roots；未新增重复 test |
+| Load diagnosis：`npm test -- --maxWorkers=50%` | 71/72 files、694/695 tests pass；exit 1；8.75s | process kill 1.771s 并通过；原 $2000 \times 2000$ image fixture 5.021s timeout，确认主要阻断是单一 synthetic image workload |
+| Image fixture focused validation | Pass；6/6 tests | 只将 high-entropy fixture 从 $2000 \times 2000$ 降为 $1000 \times 1000$；1 KB target、五档 quality ladder 与 `cannot_fit_budget` 断言不变 |
+| Final default `npm test` | Pass；72/72 files、695/695 tests；exit 0；8.18s | 修正场景 1.805s；未修改的 process kill 2.239s；完整稳定命令恢复绿色 |
+
+`npm test` 初次最终运行只出现 image optimization timeout；后续默认并行运行曾使 image optimization 与 background-process kill 各超过一次 5 秒。两个文件组合聚焦 10/10 通过后，50% worker 诊断仍只在原 $2000 \times 2000$ image fixture 重现 5.021 秒 timeout，而 process kill 通过，说明 image synthetic workload 本身缺少足够余量。Owner 随后授权窄 Test Infrastructure Defect：只将该 fixture 降为 $1000 \times 1000$；由于尺寸仍等于或低于 production resize threshold，原测试本来也不覆盖 resize，resize 继续由独立 $2400 \times 1800$ 场景覆盖。修正没有扩大 timeout、增加重试、弱化断言或修改 production。最终默认完整 suite 72/72 files、695/695 tests 通过。
+
+#### 最终 23 项 closure ledger
+
+本表只给出收口状态并引用 §11.3/§11.5 的完整 evidence/disposition，避免复制行为定义和 exact diagnostics。
+
+| ID | Protection / evidence | Closure status | Residual / disposition pointer |
+|---|---|---|---|
+| CH-01 | `RuntimeApp.test.ts` + 11-file line | Verified / Pass | Preserve；§11.3 |
+| CH-02 | `RuntimeApp.intake.test.ts`、`AgentRunner.test.ts` + 11-file line | Verified / Pass | Preserve；§11.3 |
+| CH-03 | `AgentRunner.test.ts` + 11-file line | Verified / Pass | Characterize then replace；§11.3、ADR-001 |
+| CH-04 | `AgentRunner.test.ts` + 11-file line | Verified / Pass | Characterize then replace；§11.3、ADR-002 |
+| CH-05 | `RuntimeApp.test.ts` + 11-file line | Verified / Pass | Characterize then replace observer propagation；§11.3 |
+| CH-06 | `tool-approval-policy.test.ts`、`RuntimeApp.test.ts` + 11-file line | Verified / Pass | Preserve then replace hidden timeout/startup dependency；§11.3 |
+| CH-07 | `RuntimeApp.test.ts` + 11-file line | Verified / Pass | Characterize then replace partial-start gap；§11.3 |
+| CH-08 | `RuntimeApp.test.ts` + 11-file line | Verified / Pass | Characterize then replace unbounded Shutdown；§11.3 |
+| CH-09 | `RuntimeApp.test.ts` + 11-file line | Verified / Pass | Preserve Abort；late steering cleanup 按 accepted disposition；§11.3 |
+| CH-10 | Runtime/Subagent/Task tests + 11-file line | Verified / Pass | Preserve blocking baseline；§11.3 |
+| CH-11 | Runner/Session tests + 11-file line | Verified / Pass | Characterize persisted-history transition；§11.3、ADR-001/002 |
+| CH-12 | `RuntimeApp.test.ts` + 11-file line | Verified / Pass | Characterize then replace incomplete rollback；§11.3 |
+| CH-13 | Runtime/Runner tests + 11-file line | Verified / Pass | Baseline Provider-exposed invalid model；§11.3 |
+| CH-14 | Prompt/registry tests + 11-file line | Verified / Pass | Baseline mechanical projection；§11.3 |
+| FT-01 | AST boundary rule + fixtures + 9-file line | Pass with exact current violations | §11.4、§11.6；不是合规声明 |
+| FT-02 | SDK allowlist rule + fixtures + 9-file line | Compliant / Pass | §11.5 |
+| FT-03 | Runner boundary rule + fixtures + 9-file line | Pass with exact current violations | §11.6；Target inputs 尚未实现 |
+| FT-04 | Legacy direction rule + fixtures + 9-file line | Not applicable / protected | Future roots 出现时生效；§11.5 |
+| FT-05 | Extension capability rule + fixtures + 9-file line | Not applicable / protected | Production Extension roots 尚不存在；§11.5 |
+| FT-06 | Change-locality manifest + fixtures + 9-file line | Fixture proof / protected | 不表示第二 Provider/Extension 已实现；§11.5 |
+| FT-07 | Isolated compile + production scan + 9-file line | Pass with exact migration input | mutable `RuntimeToolBundle`；§11.6 |
+| FT-08 | 15-Contract surface/inventory + fixtures + 9-file line | Pass with 2 exact evidence gaps | `MemoryStore`、`LogAdapter` negative evidence；§11.6 |
+| FT-09 | Structured document/source scan + fixtures + 9-file line | Pass with 6 exact diagnostics | 5 Legacy authority references + 1 missing successor；§11.6 |
+
+#### Exceptions、Current facts、后续输入与 Gate 影响
+
+- expected-failure fixtures 全部由对应 Fitness test 捕获并断言可定位 diagnostics；它们不进入 production graph，也不是完整测试运行中的预期红灯。
+- 当前违规全部保留为 exact diagnostic baselines；本计划没有申请或创建 Architecture Principle 临时例外 ADR，因此临时例外数量为 0。
+- 经 Owner 授权，只对 ADR-002 的 current compaction control-flow 描述和 `current/adapter_channel.md`、`current/runtime.md`、`current/platform_config.md` 的窄事实不一致进行修正；没有把 14 项 Characterization 复制进 Current Architecture，也没有改写 Accepted Target。
+- AF-05/AF-06 输入未被 AF-04 证据否定，不需要新增 Owner decision；它们仍是独立工作，必须分别具备 Accepted Spike Spec 后才能执行。
+- 可由 AF-04 证据支持的 Foundation Gate 仅限：Characterization baseline、Fitness Tests 与 current violation inventory 已建立。它不支持关闭 AF-05/AF-06、Module Spec、production migration、Legacy 删除或总体 Foundation 完成项。
+- 文档索引已存在指向本 Accepted AF-04 计划的入口，无需新增 Results artifact 或重复索引项。父计划状态与三项 Gate 勾选必须等待本 Completion Record 的独立收口评审和 Owner 最终接受后同步。
+- 未覆盖风险仍包括 §11.7 的 host ABI、filesystem、wall-clock 和 exact-baseline maintenance 风险。此次 load diagnosis 说明 CPU/OS-heavy fixtures 对并行负载敏感；已通过缩小不必要的 synthetic workload 恢复默认完整 suite，而不是扩大 timeout、重试或弱化断言。
+
+#### 独立收口评审与 triage
+
+2026-09-03 独立评审初次报告 Critical/High/Medium/Low `0/3/2/0`。逐项 disposition 如下；R2b 与 R3 修正后的聚焦复审未发现新的 Critical/High/Medium/Low，所有接受的阻断项均已关闭。
+
+| Finding | Disposition | Triage / smallest next step |
+|---|---|---|
+| R1：FT-08 未从所有 exports 自动发现 surface 外的新 Contract | Reject as closure blocker；保留 residual | Phase 3 已由 Owner 明确接受 reviewed explicit 15-Contract surface。`Event/Error/Port/Lifecycle Contract` 是语义分类，不能从所有 exported TypeScript declarations 安全推断；surface 是人工评审边界，规则已保证 surface entry 必须 export/进入 inventory，并拒绝 inventory 的 stale surface 外 entry。改为推断扫描或 exclusion list 会重开已接受机制并扩大问题。残余风险是新增 Contract 必须在 Contract review 中同步 surface 与 inventory，已由 explicit manifest 和 review process 承担；不增加无法证明语义的 symbol/prose grep。 |
+| R2a：FT-09 应自动发现所有新 ADR/spec/plan | Reject as closure blocker；保留 explicit scope | Owner 已接受 narrow active-document manifest，原因是旧 design/current/implementation 文档状态混合，目录级推断会误把历史材料升级为 active。新增 active doc 必须经 Documentation Governance review 加入 manifest；本阶段不建立通用文档发现平台。 |
+| R2b：FT-09 未把 canonical future `docs/legacy/**` 与当前 `docs/architecture/v1.0/**` 同时识别为 Legacy | Accept / fixed | Owner 授权最小 test-only 修正。matcher 现同时识别两个 Legacy roots，并强化原有单一 fixture 覆盖 authority link、normative source reference 与 historical non-authoritative note；没有增加 test case、active-doc discovery 或 production 变更。focused FT-09 2/2、完整 Fitness 18/18、lint/build/diff 均通过。两个 roots 的 successor 判断共享同一 predicate；未为同一分支再增加重复 fixture。 |
+| R3：最终稳定命令 `npm test` 为红 | Accept / fixed | 50% worker 诊断将阻断定位到原 $2000 \times 2000$ high-entropy image fixture；process test 同次通过。Owner 授权后只把 synthetic fixture 降至 $1000 \times 1000$，保留 1 KB target、完整 quality ladder 和 exact failure assertion。focused 6/6、最终默认 suite 72/72 files / 695/695 tests、lint/build/diff 均通过；无 timeout、retry、production 或 assertion 变更。 |
+| R4：Characterization 修改文件不止 Completion Record 所列 3 个 | Reject | `git status` 显示当前未提交 Characterization edits 恰为所列 3 个；其余文件是 protection line 中复用的既有测试，不是本次修改。已将措辞改为“当前未提交 edits”，避免把执行范围与修改范围混淆。 |
+| R5：最终 Characterization 与 timeout 复跑缺可重复命令 | Accept / fixed | 本节已补充完整 11-file、9-file、full regression、两 timeout 文件组合聚焦，以及 lint/build/hygiene 命令；组合聚焦结果为 2 files / 10 tests pass。 |
+
+最终聚焦复审确认 R2b、R3 均已解决且无未解决 Critical/High。23 个 canonical IDs 无重复、exact current diagnostics 未伪装为 compliance、临时 Architecture Principle 例外为 0、Gate impact 未越权、fixtures 不进入 production graph、四处 Current fact 修正准确、且不需要独立 Results artifact 或重复索引项。AF-04 技术证据据此进入最终 Owner acceptance。
+
+项目所有者于 2026-09-03 接受 AF-04 Phase 4 Completion Record、最终风险与独立评审结论。AF-04 与 Phase 4 状态更新为 `Completed`；父计划只关闭 Characterization、Fitness 和“没有要求推倒 Runner/Session/Channel 基线的未解释证据”三项 Gate。该接受不表示 Foundation Gate 整体通过，不授权 AF-05/AF-06、任何 production Architecture Slice、current violation 修复、提交或推送。

@@ -1,0 +1,1 @@
+export type ContributionId = 'builtin' | 'fixture-external-chat';

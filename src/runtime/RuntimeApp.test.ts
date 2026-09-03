@@ -185,6 +185,73 @@ describe('RuntimeApp', () => {
     expect(events.some((event) => event.type === 'app_ready')).toBe(true);
   });
 
+  it('CH-12 characterizes missing cleanup after a later bootstrap failure', async () => {
+    const events: RuntimeEvent[] = [];
+    const memoryClose = vi.fn();
+    const startupError = new Error('tool assembly failed');
+
+    await expect(RuntimeApp.create({
+      workspaceDir,
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'test-model' },
+        memory: { enabled: true },
+      },
+      dependencies: createTestDependencies({
+        createMemoryManager: async () => ({ close: memoryClose }) as never,
+        getBuiltinTools: () => {
+          throw startupError;
+        },
+      }),
+      onEvent: (event) => events.push(event),
+    })).rejects.toBe(startupError);
+
+    expect(events.map((event) => event.type)).toContain('app_start');
+    expect(events.map((event) => event.type)).toContain('error');
+    expect(events.map((event) => event.type)).not.toContain('app_ready');
+    expect(memoryClose).not.toHaveBeenCalled();
+  });
+
+  it('CH-13 fails a missing model before Runner and passes an unvalidated model through', async () => {
+    const runnerRun = vi.fn(async (): Promise<RunResult> => ({
+      text: 'provider accepted model',
+      content: [{ type: 'text', text: 'provider accepted model' }],
+      stopReason: 'end_turn',
+      usage: { inputTokens: 2, outputTokens: 1 },
+      toolRounds: 0,
+    }));
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      cliOverrides: {
+        llm: { apiKey: 'test-key' },
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies({
+        createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
+        createMemoryManager: async () => null,
+      }),
+    });
+
+    await expect(app.runTurn({
+      sessionKey: 'main',
+      message: 'missing model',
+      promptMode: 'full',
+    })).rejects.toMatchObject({ info: { code: 'MODEL_MISSING' } });
+    expect(runnerRun).not.toHaveBeenCalled();
+
+    await expect(app.runTurn({
+      sessionKey: 'main',
+      message: 'explicit model',
+      promptMode: 'full',
+      model: 'not-locally-validated',
+    })).resolves.toEqual(expect.objectContaining({ text: 'provider accepted model' }));
+    expect(runnerRun).toHaveBeenCalledTimes(1);
+    expect(runnerRun).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'not-locally-validated' }),
+    );
+
+    await app.close();
+  });
+
   it('reloads context files, closes idempotently, and rejects future runs after close', async () => {
     await writeFile(join(workspaceDir, '.agent', 'IDENTITY.md'), '# Identity', 'utf-8').catch(() => undefined);
 

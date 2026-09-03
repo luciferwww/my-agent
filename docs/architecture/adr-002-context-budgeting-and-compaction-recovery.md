@@ -16,7 +16,7 @@
 
 上下文预算仍有价值：它可以避免可预见的无效付费请求、控制 Tool Result 增长，并在触及 Provider 硬限制前执行 Compaction。但本地估算和 Catalog 不是最终权威，因为 Provider metadata 可能过期，代理可能施加更小的部署上限，token 估算也可能与 Provider 计数不同。Provider 返回的 context overflow 是最终纠正信号。
 
-AF-04 Batch 2 已获得通过的 CH-04 测试证据：当前 `before_compaction` 和 `after_compaction` observer Hook 不阻塞 Compaction 或 Turn settlement；该 Batch 的 Owner disposition 仍为 Pending，本 ADR 不把它升级为已接受 Characterization。针对当前代码的局部读取表明 Compaction 主流程会等待摘要和记录写入，但 CH-11 尚未执行，因此包括该等待关系、summary fallback、固定阈值、重试次数、拆分算法和持久化布局在内的现有 Compaction 细节都只属于待 CH-11 确认的 `Current Fact Candidate`。
+AF-04 CH-04 与 CH-11 Characterization 和 dispositions 已于 2026-09-02 获项目所有者接受：当前 `before_compaction` 和 `after_compaction` observer Hook 不阻塞 Compaction 或 Turn settlement；fresh SessionManager 的下一 Turn 会从持久 Compaction record 注入 summary、截断旧历史并保留 retained/current history。该接受只固定迁移前 current baseline，不把 summary fallback、固定阈值、重试次数、拆分算法、持久化布局或 detached observer 行为升级为目标 Contract。
 
 OpenClaw、Codex、Gemini CLI 和 Cline 的对比提供了设计输入：Compaction recovery 需要保护 Tool Call/Result group、拒绝无效压缩、传播 Abort、限制恢复次数，并保持 Provider facts 与 Runner conversation semantics 的所有权分离。外部实现不是本仓库的执行证据。
 
@@ -166,8 +166,8 @@ Session commit 成功后 candidate 才成为已安装的 Compaction；失败或 
 
 ## 验证
 
-- AF-04 CH-04 的 Batch 2 测试已提供当前 detached Compaction observer 证据，但 Owner disposition 仍为 Pending；目标测试必须证明 lifecycle-bound bounded settlement，且 observer failure 不成为 transformer；
-- AF-04 CH-11 必须在生产替换前 characterization 当前 trigger、fallback、persistence、Tool pairing、Abort 和 post-Compaction state；
+- AF-04 CH-04 已提供并接受当前 detached Compaction observer 证据；目标测试仍必须证明 lifecycle-bound bounded settlement，且 observer failure 不成为 transformer；
+- AF-04 CH-11 已在生产替换前完成并接受 persisted-history transition Characterization；当前 baseline 不冻结 trigger、fallback、内部拼接或 persistence layout 为目标 Contract；
 - AF-05 P2-E02 验证原子模型切换；P2-E03/P2-E04 验证 Provider source precedence、fallback 可行性和 provenance；P2-E08 验证 overflow correction、Turn pinning、观测隔离和 Runner/Session ownership；
 - Contract tests 必须覆盖 known limit、Provider fallback、明确 correction、保守上界、无详情 overflow、同 key/跨 key 观测、Abort、Hook timeout/late completion、无效 candidate、有界 retry 和原子 Tool exchange boundary；
 - Module Spec 必须在实现前冻结 summary failure、retry taxonomy、observer deadline、Session commit precondition 和 persistence failure outcome。
@@ -177,7 +177,7 @@ Session commit 成功后 candidate 才成为已安装的 Compaction；失败或 
 ## 迁移与回滚
 
 1. 保留 AF-04 对当前 budgeting、detached Hooks、fallback、persistence 和 retry 的 Characterization tests；
-2. 完成 AF-04 CH-11 disposition；
+2. 保留已接受的 AF-04 CH-11 Characterization 与 disposition 作为迁移保护线；
 3. 完成 AF-05 Provider/Model 实验并发布 Spike Results；若 P2-E03/P2-E04/P2-E08 失败，先修订本 ADR；
 4. 接受 context budgeting 与 Compaction recovery Module Spec；
 5. 通过 Compatibility 将旧 `llm.contextWindowTokens` 交给 bundled Provider 解释为 deployment override，不再直接作为 Runner/global Model Fact；
@@ -191,8 +191,8 @@ Session commit 成功后 candidate 才成为已安装的 Compaction；失败或 
 ## 后续事项
 
 - [x] 项目所有者于 2026-09-01 接受本 ADR；
-- [ ] 确认 AF-04 Batch 2 Owner disposition；
-- [ ] 完成 AF-04 CH-11 Characterization 和 disposition；
+- [x] 项目所有者于 2026-09-02 接受 AF-04 CH-04 Characterization 和 disposition；
+- [x] 项目所有者于 2026-09-02 接受 AF-04 CH-11 Characterization 和 disposition；
 - [ ] 完成 AF-05 P2-E02/P2-E03/P2-E04/P2-E08 并发布 Spike Results；
 - [ ] 编写并接受所需 Module Spec；
 - [ ] 生产变更前链接独立批准的 Architecture Slice；

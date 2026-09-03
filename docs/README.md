@@ -54,6 +54,9 @@ Current implementation facts, accepted architecture constraints, design baseline
 - [Target Architecture](architecture/target-architecture.md) — accepted target boundaries, ownership, runtime flows, lifecycle, and migration constraints; not current implementation status
 - [ADR-001 Tool Result Closure and Recovery](architecture/adr-001-tool-result-closure-and-recovery.md) — accepted controlled-Abort closure and crash-repair boundary; production migration remains pending
 - [ADR-002 Context Budgeting and Compaction Recovery](architecture/adr-002-context-budgeting-and-compaction-recovery.md) — accepted Provider-owned model-limit, budgeting, Compaction acceptance, and overflow-recovery boundary; production migration remains pending
+- [AF-05 Provider/Model Resolution Spike Spec](architecture/af-05-provider-model-resolution-spike-spec.md) — accepted disposable experiment boundary and evidence matrix; production migration remains pending
+- [AF-05 Provider/Model Resolution Spike Results](architecture/af-05-provider-model-resolution-spike-results.md) — completed disposable Spike record; Owner-accepted `Provisional Pass` supports the scoped Provider/Model hypotheses, while production migration remains pending
+- [AF-06 Extension Framework Spike Spec](architecture/af-06-extension-framework-spike-spec.md) — draft disposable experiment boundary for Extension composition, immutable Snapshot, dynamic lifecycle, and failure containment; execution is not authorized
 - [Agent Runner Design](architecture/core-runner-design.md)
 - [Runtime / App Assembly Design](architecture/runtime-design.md)
 - [Config Design](architecture/platform-config-design.md)
@@ -75,7 +78,7 @@ Planned evolution documents, adoption sequencing, and regression checklists for 
 
 - [Architecture Foundation Plan](roadmap/architecture-foundation-plan.md) — accepted target-architecture, spike, migration, and legacy-exit plan
 - [AF-03 Target Architecture Execution Plan](roadmap/af-03-target-architecture-plan.md) — completed phase record and acceptance evidence for the Target Architecture
-- [AF-04 Characterization and Fitness Execution Plan](roadmap/af-04-characterization-fitness-plan.md) — accepted evidence, test-protection, and architecture-fitness execution plan
+- [AF-04 Characterization and Fitness Execution Plan](roadmap/af-04-characterization-fitness-plan.md) — completed Characterization, Fitness, and closure evidence record
 
 ## Analysis
 

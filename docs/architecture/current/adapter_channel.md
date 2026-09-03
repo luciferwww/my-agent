@@ -347,7 +347,7 @@ app.stopChannels()             // 幂等；close() 内部自动调用
 
 `runTurn()` 仍可直接调用（库模式）。直接调用时：
 - 不经过入站队列调度（`runTurn()` 是同步入口）
-- 没有 `routeContext`，approval 路由起源不可达 → 超时兜底
+- 没有 `routeContext`，因此没有 origin approval capability；allowlist 命中时直接 allow，未命中时 fail-closed deny，不创建 approval wait
 - 需自己处理 per-session 并发（重入抛 `RUN_REJECTED`）
 
 ---

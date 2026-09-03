@@ -365,23 +365,14 @@ flowchart TD
 
 ### 9.2 模式匹配语法
 
-每个 allow / deny 条目支持三种形式：
+每个 allow / deny 条目支持两种形式：
 
 | 形式 | 示例 |
 |---|---|
 | 精确名称 | `"exec"` |
 | Glob | `"read_*"` |
-| 工具组 | `"group:fs"` |
 
-**工具组定义（实际代码）：**
-
-| 组名 | 包含工具 |
-|---|---|
-| `group:fs` | `read_file`, `write_file`, `edit_file`, `apply_patch`, `list_dir` |
-| `group:exec` | `exec`, `process` |
-| `group:search` | `grep_search`, `file_search` |
-| `group:web` | `web_fetch` |
-| `group:memory` | `memory_search`, `memory_get`, `memory_write` |
+Glob 只解释 `*` 和 `?`。v1 不展开 `group:*`；例如 `group:fs` 只是字面 pattern，只会匹配同名工具，不会匹配 `read_file`。
 
 ### 9.3 路由实现
 
@@ -497,12 +488,12 @@ stateDiagram-v2
 **v1.0 文档**示例中仍用 `listDirTool`（单例）；  
 **实际代码**改为 `createListDirTool(workspaceDir, fsWorkspaceOnly)`（工厂函数），与 v1.0 fs tools 设计文档一致，但 runtime-design.md 未同步更新。
 
-### 差异 3：工具组名称（tool group tool names）
+### 差异 3：v1.0 工具组语法已移除
 
-**v1.0 文档** `§13.2` 中 `group:fs` 列举的是 `['Read', 'Write', 'Edit']`（PascalCase）；  
-**实际代码**（`tool-approval-policy.ts`）使用 `['read_file', 'write_file', 'edit_file', 'apply_patch', 'list_dir']`（snake_case，且比文档多了 `apply_patch` 和 `list_dir`）。
+**v1.0 文档** `§13.2` 描述 `group:fs` 等工具组；
+**实际代码**（`tool-approval-policy.ts`）不再展开 `group:*`，只支持精确名称和 `*`/`?` Glob。
 
-> 建议：统一使用 snake_case 工具名，`group:fs` 应包含全部五个文件系统工具。
+> 当前配置应直接列出工具名或使用 Glob，不应依赖 `group:*` 展开。
 
 ---
 
