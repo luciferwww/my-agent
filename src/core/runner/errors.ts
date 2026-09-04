@@ -15,6 +15,19 @@
  */
 export { ContextOverflowError } from '../model-invocation/index.js';
 
+import type { TokenUsage } from '../model-invocation/index.js';
+
+export class AgentExecutionFailure extends Error {
+	readonly kind = 'agent_execution_failure' as const;
+	readonly usage: TokenUsage;
+
+	constructor(message: string, usage: TokenUsage, options?: ErrorOptions) {
+		super(message, options);
+		this.name = 'AgentExecutionFailure';
+		this.usage = { ...usage };
+	}
+}
+
 /**
  * 判断一个 Error 是否来自 LLM API 的上下文溢出响应。
  *

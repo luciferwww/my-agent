@@ -234,7 +234,7 @@ SubagentRunner 现在调 `this.deps.agentRunner.run(runParams)`。重构后 `run
 | [src/core/runner/types.ts](../../src/core/runner/types.ts) | 新增 `TurnContext` interface | +5 |
 | [src/core/runner/AgentRunner.ts](../../src/core/runner/AgentRunner.ts) | 删字段 / 改 emit 签名 / 4 个内部方法加参数 / 12 处 emit call site | ~50 改动行（净增减接近 0） |
 | [src/core/runner/AgentRunner.test.ts](../../src/core/runner/AgentRunner.test.ts) | 新增 2-3 个直接测 emit context 的 case | +60 |
-| [src/core/subagent/SubagentRunner.ts](../../src/core/subagent/SubagentRunner.ts) | 0（受益方） | 0 |
+| Former `src/core/subagent/SubagentRunner.ts`（Slice 2 deleted） | 0（受益方） | 0 |
 | [src/core/subagent/SubagentRunner.test.ts](../../src/core/subagent/SubagentRunner.test.ts) | 0（现有回归 case 继续保护） | 0 |
 
 总体：**单文件主战场 + 一个小 type 新增 + 测试加固**。

@@ -16,11 +16,6 @@ export interface ParsedSubagentKey {
   rootLabel: string;
   runId: string;
   depth: number;
-  /**
-   * `true` when `rootLabel` does not point to a real persisted session
-   * (typical for the `library` entry point — see spec §10).
-   */
-  isSynthetic: boolean;
 }
 
 const SEPARATOR = ':subagent:';
@@ -62,6 +57,5 @@ export function parseSubagentSessionKey(key: string): ParsedSubagentKey {
   const colonIdx = lastSegment.lastIndexOf(':');
   const runId = colonIdx >= 0 ? lastSegment.slice(0, colonIdx) : lastSegment;
   const depth = colonIdx >= 0 ? Number.parseInt(lastSegment.slice(colonIdx + 1), 10) : Number.NaN;
-  const isSynthetic = rootLabel === 'library' || rootLabel.startsWith('library:');
-  return { rootLabel, runId, depth, isSynthetic };
+  return { rootLabel, runId, depth };
 }

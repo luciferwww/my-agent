@@ -1,11 +1,10 @@
 import { Logger } from '../../../../platform/logger/index.js';
-import { ContextOverflowError } from '../../../runner/errors.js';
 import type { Tool, ToolContext, ToolResult } from '../../types.js';
-import type { SubagentRunner } from '../../../subagent/SubagentRunner.js';
 import type {
+  SubagentDelegationPort,
   SubagentProfile,
   SubagentCapabilities,
-  SubagentRunResult,
+  SubagentTerminalResult,
 } from '../../../subagent/types.js';
 
 const log = Logger.get('task');
@@ -16,12 +15,12 @@ const GENERAL_PURPOSE_ID = 'general-purpose';
  * Dependencies for {@link createTaskTool}.
  *
  * Deliberately small: every runtime concern that used to bloat this list
- * (model defaults, main-agent allow/deny, workspaceDir, ...) now lives in
- * `SubagentHostBindings` and is consumed by the SubagentRunner. The task
- * tool only needs to look up a profile, check depth, and delegate.
+ * (model selection, Parent validation, lifecycle, cleanup, ...) stays behind
+ * the Runtime-owned delegation Port. The task tool only needs to look up a
+ * profile, check depth, and delegate.
  */
 export interface TaskToolDeps {
-  subagentRunner: SubagentRunner;
+  delegationPort: SubagentDelegationPort;
   /** All registered profiles, keyed by id. Must include `'general-purpose'`. */
   profileRegistry: ReadonlyMap<string, SubagentProfile>;
   /** Computes role/depth/canSpawn from a sessionKey (typically wraps `resolveSubagentCapabilities`). */
@@ -64,14 +63,10 @@ interface TaskInput {
  *     `'general-purpose'` with a warn log (spec §6 decision 10 LLM path).
  *  2. Belt-and-suspenders depth check via `getCapabilities(ctx.sessionKey)`.
  *     If `!canSpawn`, return a `ToolResult` with `isError: true` and do
- *     NOT invoke the SubagentRunner.
- *  3. Delegate to `subagentRunner.run(...)` with `parentSessionKey` /
- *     `parentTurnId` / `parentToolUseId` lifted from `ctx`.
- *  4. Map the returned `SubagentRunResult.outcome` to a `ToolResult` per
- *     spec §13.2 failure matrix.
- *  5. If a `ContextOverflowError` escapes the SubagentRunner (it shouldn't,
- *     but defensive), translate it to a user-facing error string. Other
- *     unexpected errors propagate to `createToolExecutor`'s isError wrap.
+ *     NOT invoke the delegation Port.
+ *  3. Require the active Parent tree signal from `ctx`.
+ *  4. Delegate with Parent session/turn/tool-use correlation lifted from `ctx`.
+ *  5. Map the returned terminal outcome to a `ToolResult`.
  */
 export function createTaskTool(deps: TaskToolDeps): Tool {
   return {
@@ -85,7 +80,7 @@ export function createTaskTool(deps: TaskToolDeps): Tool {
     async execute(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
       // Abort cascade: `ctx.signal` (populated by the parent turn's
       // AbortController per core-abort-spec.md §8.1) flows through
-      // SubagentRunRequest.signal → child RunParams.signal, so an abort on
+      // delegation request signal → child RunParams.signal, so an abort on
       // the parent turn stops this subagent too. Its outcome then maps to
       // `'aborted'` in `formatSubagentResult` below.
 
@@ -120,45 +115,39 @@ export function createTaskTool(deps: TaskToolDeps): Tool {
         };
       }
 
+      if (!ctx.signal) {
+        return {
+          content: 'Cannot delegate subagent without the active Parent Turn signal.',
+          isError: true,
+        };
+      }
+
       try {
-        const result = await deps.subagentRunner.run({
+        const result = await deps.delegationPort.delegate({
           profile,
           description: params.description,
           prompt: params.prompt,
-          trigger: {
-            source: 'llm-tool',
-            parentSessionKey: ctx.sessionKey,
-            parentTurnId: ctx.turnId,
-            parentToolUseId: ctx.toolUseId,
+          parent: {
+            sessionKey: ctx.sessionKey,
+            turnId: ctx.turnId,
+            toolUseId: ctx.toolUseId,
           },
-          lifecycle: 'blocking',
           signal: ctx.signal,
-          parentSessionKey: ctx.sessionKey,
-          parentTurnId: ctx.turnId,
         });
 
         return formatSubagentResult(result);
       } catch (err) {
-        if (err instanceof ContextOverflowError) {
-          return {
-            content:
-              "Subagent context overflow: the task was too large for the subagent's context window " +
-              'even after compaction. Consider breaking the task into smaller pieces, simplifying ' +
-              'the prompt, or providing less background.',
-            isError: true,
-          };
-        }
-        // SubagentRunner's own catch maps errors to outcome='error' and
-        // never rethrows, so we should not normally reach here. If we do,
-        // let createToolExecutor's generic isError wrap handle it.
-        throw err;
+        return {
+          content: err instanceof Error ? err.message : 'Subagent delegation failed.',
+          isError: true,
+        };
       }
     },
   };
 }
 
 /**
- * Map `SubagentRunResult.outcome` to a `ToolResult` per spec §13.2 failure matrix.
+ * Map `SubagentTerminalResult.outcome` to a `ToolResult`.
  *
  * - `'ok'`             → plain text, no isError
  * - `'max_llm_calls'`  → isError + partial-text hint
@@ -169,7 +158,7 @@ export function createTaskTool(deps: TaskToolDeps): Tool {
  *                        message is mostly for the transcript log.
  * - `'error'`          → isError + the failure reason
  */
-function formatSubagentResult(result: SubagentRunResult): ToolResult {
+function formatSubagentResult(result: SubagentTerminalResult): ToolResult {
   switch (result.outcome) {
     case 'ok':
       return { content: result.text };
@@ -184,7 +173,7 @@ function formatSubagentResult(result: SubagentRunResult): ToolResult {
       return { content: 'Subagent was aborted before completing.', isError: true };
     case 'error':
       return {
-        content: `Subagent failed: ${result.reason ?? 'unknown error'}`,
+        content: `Subagent failed: ${result.failure?.message ?? 'unknown error'}`,
         isError: true,
       };
   }

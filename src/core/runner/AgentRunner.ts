@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatContentBlock, TokenUsage } from '../model-invocation/index.js';
+import { AgentExecutionFailure } from './errors.js';
 import type { ResolvedModel } from '../model-resolution/index.js';
 import type { SessionManager } from '../session/SessionManager.js';
 import type { ContentBlock, MessageRecord } from '../session/types.js';
@@ -84,7 +85,7 @@ export class AgentRunner {
 
   /**
    * 替换 toolExecutor。供 RuntimeApp.create() 在 bootstrap 之后追加 `task` 工具时调用：
-   * task 工具依赖 SubagentRunner，SubagentRunner 又依赖 RuntimeApp 实例字段，
+  * task 工具依赖 Runtime-owned delegation Port，而该 Port 依赖 RuntimeApp 实例字段，
    * 因此 toolBundle 只能在 RuntimeApp.create 内部完工，AgentRunner 必须支持后置替换。
    *
    * 仅在 RuntimeApp.create 内部、`run()` 启动之前调用；运行中调用结果未定义。
@@ -342,7 +343,7 @@ export class AgentRunner {
     const compaction = params.compaction ?? DEFAULT_COMPACTION_CONFIG;
 
     // emit 上下文沿调用链显式透传：消除"实例字段保存当前 run"的隐式状态，
-    // SubagentRunner 嵌套 run() / 任何并发 run() 都不会互相串号事件。
+    // Child executor 嵌套 run() / 任何并发 run() 都不会互相串号事件。
     const turnCtx: TurnContext = {
       sessionKey: params.sessionKey,
       turnId: params.turnId,
@@ -751,7 +752,11 @@ export class AgentRunner {
           toolRounds: totalToolRounds,
         });
       }
-      throw err; // 非 abort（如 ContextOverflowError）控制权还给 run() 外层 retry
+      if (err instanceof ContextOverflowError || err instanceof AgentExecutionFailure) {
+        throw err;
+      }
+      const error = err instanceof Error ? err : new Error(String(err));
+      throw new AgentExecutionFailure(error.message, totalUsage, { cause: error });
     }
   }
 

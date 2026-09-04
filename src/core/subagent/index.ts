@@ -8,13 +8,10 @@ export type {
   SubagentProfile,
   SubagentRole,
   SubagentCapabilities,
-  RunTrigger,
-  RunLifecycle,
-  SubagentRunInput,
-  SubagentRunResult,
-  SubagentHostBindings,
-  SubagentRunnerDeps,
-  SubagentRunRequest,
+  SubagentDelegationRequest,
+  SubagentDelegationPort,
+  SubagentTerminalFailure,
+  SubagentTerminalResult,
 } from './types.js';
 
 export {
@@ -31,8 +28,6 @@ export { loadSubagentProfiles, buildGeneralPurposeProfile } from './config-loade
 
 export { resolveSubagentTools } from './profile-tools.js';
 export type { ResolvedSubagentTools } from './profile-tools.js';
-
-export { SubagentRunner } from './SubagentRunner.js';
 
 export { buildSubagentBehavioralAddendum } from './behavioral-addendum.js';
 export type { BehavioralAddendumOpts } from './behavioral-addendum.js';

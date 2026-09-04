@@ -1,12 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createTaskTool, type TaskToolDeps } from './task-tool.js';
-import { ContextOverflowError } from '../../../runner/errors.js';
 import type { ToolContext, ToolResult } from '../../types.js';
 import type {
   SubagentCapabilities,
+  SubagentDelegationRequest,
   SubagentProfile,
-  SubagentRunRequest,
-  SubagentRunResult,
+  SubagentTerminalResult,
 } from '../../../subagent/types.js';
 
 // ── Fixtures ────────────────────────────────────────────────
@@ -16,6 +15,7 @@ function profile(id: string, overrides: Partial<SubagentProfile> = {}): Subagent
     id,
     description: `${id} subagent`,
     agentDir: `/ws/.agent/subagents/${id}`,
+    model: 'inherit',
     ...overrides,
   };
 }
@@ -25,6 +25,7 @@ function makeCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     sessionKey: 'main',
     turnId: 'turn-1',
     toolUseId: 'tu-42',
+    signal: new AbortController().signal,
     ...overrides,
   };
 }
@@ -33,7 +34,7 @@ function caps(canSpawn: boolean, depth = 0): SubagentCapabilities {
   return { depth, role: canSpawn ? 'main' : 'leaf', canSpawn };
 }
 
-function okResult(overrides: Partial<SubagentRunResult> = {}): SubagentRunResult {
+function okResult(overrides: Partial<SubagentTerminalResult> = {}): SubagentTerminalResult {
   return {
     runId: 'run-1',
     sessionKey: 'main:subagent:run-1:1',
@@ -50,7 +51,7 @@ interface BuildDepsOpts {
   registry?: Map<string, SubagentProfile>;
   capabilities?: SubagentCapabilities;
   maxDepth?: number;
-  runResult?: SubagentRunResult | (() => Promise<SubagentRunResult>);
+  runResult?: SubagentTerminalResult | (() => Promise<SubagentTerminalResult>);
   runThrows?: unknown;
 }
 
@@ -63,8 +64,8 @@ function makeDeps(opts: BuildDepsOpts = {}) {
     ]);
   const capabilities = opts.capabilities ?? caps(true);
 
-  const subagentRunnerRun = vi.fn(
-    async (_req: SubagentRunRequest): Promise<SubagentRunResult> => {
+  const delegate = vi.fn(
+    async (_req: SubagentDelegationRequest): Promise<SubagentTerminalResult> => {
       if (opts.runThrows !== undefined) {
         throw opts.runThrows;
       }
@@ -77,13 +78,13 @@ function makeDeps(opts: BuildDepsOpts = {}) {
   const getCapabilities = vi.fn((_sessionKey: string) => capabilities);
 
   const deps: TaskToolDeps = {
-    subagentRunner: { run: subagentRunnerRun } as unknown as TaskToolDeps['subagentRunner'],
+    delegationPort: { delegate },
     profileRegistry: registry,
     getCapabilities,
     maxDepth: opts.maxDepth ?? 2,
   };
 
-  return { deps, subagentRunnerRun, getCapabilities, registry };
+  return { deps, delegate, getCapabilities, registry };
 }
 
 // Strongly typed exec helper.
@@ -112,9 +113,9 @@ describe('createTaskTool — Tool shape', () => {
 
 // ── (a) ctx.toolUseId is forwarded as parentToolUseId ─────
 
-describe('(a) ctx → trigger forwarding', () => {
-  it('passes ctx.sessionKey / turnId / toolUseId into the SubagentRunner trigger', async () => {
-    const { deps, subagentRunnerRun } = makeDeps();
+describe('(a) Parent correlation forwarding', () => {
+  it('passes ctx.sessionKey / turnId / toolUseId into the delegation request', async () => {
+    const { deps, delegate } = makeDeps();
     const tool = createTaskTool(deps);
 
     await exec(
@@ -123,28 +124,24 @@ describe('(a) ctx → trigger forwarding', () => {
       makeCtx({ sessionKey: 'main', turnId: 'turn-7', toolUseId: 'tu-999' }),
     );
 
-    expect(subagentRunnerRun).toHaveBeenCalledTimes(1);
-    const req = subagentRunnerRun.mock.calls[0]![0];
-    expect(req.trigger).toEqual({
-      source: 'llm-tool',
-      parentSessionKey: 'main',
-      parentTurnId: 'turn-7',
-      parentToolUseId: 'tu-999',
+    expect(delegate).toHaveBeenCalledTimes(1);
+    const req = delegate.mock.calls[0]![0];
+    expect(req.parent).toEqual({
+      sessionKey: 'main',
+      turnId: 'turn-7',
+      toolUseId: 'tu-999',
     });
-    expect(req.parentSessionKey).toBe('main');
-    expect(req.parentTurnId).toBe('turn-7');
-    expect(req.lifecycle).toBe('blocking');
   });
 
   it('forwards description and prompt verbatim', async () => {
-    const { deps, subagentRunnerRun } = makeDeps();
+    const { deps, delegate } = makeDeps();
     const tool = createTaskTool(deps);
     await exec(
       tool,
       { description: 'audit it', prompt: 'audit the PR' },
       makeCtx(),
     );
-    const req = subagentRunnerRun.mock.calls[0]![0];
+    const req = delegate.mock.calls[0]![0];
     expect(req.description).toBe('audit it');
     expect(req.prompt).toBe('audit the PR');
   });
@@ -154,38 +151,38 @@ describe('(a) ctx → trigger forwarding', () => {
 
 describe('(b) unknown subagent_type fallback', () => {
   it('falls back to general-purpose when subagent_type is not registered', async () => {
-    const { deps, subagentRunnerRun } = makeDeps();
+    const { deps, delegate } = makeDeps();
     const tool = createTaskTool(deps);
     await exec(
       tool,
       { description: 'x', prompt: 'y', subagent_type: 'nonexistent' },
       makeCtx(),
     );
-    expect(subagentRunnerRun).toHaveBeenCalledTimes(1);
-    expect(subagentRunnerRun.mock.calls[0]![0].profile.id).toBe('general-purpose');
+    expect(delegate).toHaveBeenCalledTimes(1);
+    expect(delegate.mock.calls[0]![0].profile.id).toBe('general-purpose');
   });
 
   it('uses general-purpose when subagent_type is omitted entirely', async () => {
-    const { deps, subagentRunnerRun } = makeDeps();
+    const { deps, delegate } = makeDeps();
     const tool = createTaskTool(deps);
     await exec(tool, { description: 'x', prompt: 'y' }, makeCtx());
-    expect(subagentRunnerRun.mock.calls[0]![0].profile.id).toBe('general-purpose');
+    expect(delegate.mock.calls[0]![0].profile.id).toBe('general-purpose');
   });
 
   it('uses the named profile when subagent_type matches a registered id', async () => {
-    const { deps, subagentRunnerRun } = makeDeps();
+    const { deps, delegate } = makeDeps();
     const tool = createTaskTool(deps);
     await exec(
       tool,
       { description: 'x', prompt: 'y', subagent_type: 'reviewer' },
       makeCtx(),
     );
-    expect(subagentRunnerRun.mock.calls[0]![0].profile.id).toBe('reviewer');
+    expect(delegate.mock.calls[0]![0].profile.id).toBe('reviewer');
   });
 
   it('returns isError when even general-purpose is missing (programming-error guard)', async () => {
     const registry = new Map<string, SubagentProfile>([['reviewer', profile('reviewer')]]);
-    const { deps, subagentRunnerRun } = makeDeps({ registry });
+    const { deps, delegate } = makeDeps({ registry });
     const tool = createTaskTool(deps);
     const res = await exec(
       tool,
@@ -194,15 +191,15 @@ describe('(b) unknown subagent_type fallback', () => {
     );
     expect(res.isError).toBe(true);
     expect(res.content).toMatch(/general-purpose/i);
-    expect(subagentRunnerRun).not.toHaveBeenCalled();
+    expect(delegate).not.toHaveBeenCalled();
   });
 });
 
 // ── (c) depth check ───────────────────────────────────────
 
 describe('(c) depth check', () => {
-  it('returns isError and does NOT call SubagentRunner when canSpawn=false', async () => {
-    const { deps, subagentRunnerRun } = makeDeps({
+  it('returns isError and does NOT delegate when canSpawn=false', async () => {
+    const { deps, delegate } = makeDeps({
       capabilities: caps(false, 2),
       maxDepth: 2,
     });
@@ -211,14 +208,14 @@ describe('(c) depth check', () => {
     expect(res.isError).toBe(true);
     expect(res.content).toMatch(/depth limit/i);
     expect(res.content).toMatch(/maxDepth=2/);
-    expect(subagentRunnerRun).not.toHaveBeenCalled();
+    expect(delegate).not.toHaveBeenCalled();
   });
 
-  it('calls SubagentRunner when canSpawn=true', async () => {
-    const { deps, subagentRunnerRun } = makeDeps({ capabilities: caps(true, 0) });
+  it('delegates when canSpawn=true', async () => {
+    const { deps, delegate } = makeDeps({ capabilities: caps(true, 0) });
     const tool = createTaskTool(deps);
     await exec(tool, { description: 'x', prompt: 'y' }, makeCtx());
-    expect(subagentRunnerRun).toHaveBeenCalledTimes(1);
+    expect(delegate).toHaveBeenCalledTimes(1);
   });
 
   it('queries capabilities with ctx.sessionKey', async () => {
@@ -253,7 +250,11 @@ describe('(d) outcome → ToolResult mapping (spec §13.2 failure matrix)', () =
 
   it('outcome=error → isError + content contains reason', async () => {
     const { deps } = makeDeps({
-      runResult: okResult({ outcome: 'error', text: '', reason: 'LLM exploded' }),
+      runResult: okResult({
+        outcome: 'error',
+        text: '',
+        failure: { phase: 'execution', message: 'LLM exploded' },
+      }),
     });
     const tool = createTaskTool(deps);
     const res = await exec(tool, { description: 'x', prompt: 'y' }, makeCtx());
@@ -280,23 +281,37 @@ describe('(d) outcome → ToolResult mapping (spec §13.2 failure matrix)', () =
 
 // ── ContextOverflowError path ─────────────────────────────
 
-describe('ContextOverflowError handling', () => {
-  it('translates a ContextOverflowError thrown out of SubagentRunner into a user-facing isError', async () => {
+describe('delegation rejection handling', () => {
+  it('rejects a missing Parent signal before calling the delegation port', async () => {
+    const { deps, delegate } = makeDeps();
+    const tool = createTaskTool(deps);
+    const result = await exec(
+      tool,
+      { description: 'x', prompt: 'y' },
+      makeCtx({ signal: undefined }),
+    );
+
+    expect(result).toEqual({
+      content: 'Cannot delegate subagent without the active Parent Turn signal.',
+      isError: true,
+    });
+    expect(delegate).not.toHaveBeenCalled();
+  });
+
+  it('translates a delegation rejection into a user-facing isError', async () => {
     const { deps } = makeDeps({
-      runThrows: new ContextOverflowError('LLM API context overflow: too big'),
+      runThrows: new Error('Subagent requires an active matching Parent Turn.'),
     });
     const tool = createTaskTool(deps);
     const res = await exec(tool, { description: 'x', prompt: 'y' }, makeCtx());
     expect(res.isError).toBe(true);
-    expect(res.content).toMatch(/context overflow/i);
-    expect(res.content).toMatch(/smaller pieces/i);
+    expect(res.content).toMatch(/active matching Parent Turn/i);
   });
 
-  it('does NOT catch other errors (lets createToolExecutor handle them)', async () => {
+  it('normalizes unexpected delegation errors', async () => {
     const { deps } = makeDeps({ runThrows: new Error('unexpected') });
     const tool = createTaskTool(deps);
-    await expect(
-      exec(tool, { description: 'x', prompt: 'y' }, makeCtx()),
-    ).rejects.toThrow('unexpected');
+    const result = await exec(tool, { description: 'x', prompt: 'y' }, makeCtx());
+    expect(result).toEqual({ content: 'unexpected', isError: true });
   });
 });

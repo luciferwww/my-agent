@@ -17,7 +17,7 @@ export interface ToolContext {
   turnId: string;
   /**
    * The id of the LLM `tool_use` block that triggered this invocation.
-   * The `task` tool reads this to populate `SubagentRunInput.trigger.parentToolUseId`.
+  * The `task` tool reads this to populate Parent correlation on delegation.
    */
   toolUseId: string;
   /**

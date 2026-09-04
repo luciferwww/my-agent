@@ -1,7 +1,7 @@
 /**
  * Options for {@link buildSubagentBehavioralAddendum}.
  *
- * - `taskDescription` comes from `SubagentRunRequest.description` (i.e. the
+ * - `taskDescription` comes from the delegation request description (i.e. the
  *   `description` argument of the `task` tool call). Not the user `prompt`,
  *   which already lives in the first user message and need not be repeated.
  * - `depth` is the subagent's nesting depth (matches the trailing `:depth`

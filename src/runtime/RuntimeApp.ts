@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentEvent } from '../core/runner/index.js';
 import type { ChatContentBlock, ChatMessage } from '../core/model-invocation/index.js';
+import type { ModelReference } from '../core/model-resolution/index.js';
 import { ModelResolutionError } from '../core/model-resolution/index.js';
-import { createLegacyChildModelResolver } from '../compat/model-resolution/legacy-child.js';
 import { TurnInteractionManager } from '../adapters/channel/TurnInteractionManager.js';
 import type {
   ApprovalInteractionRequest,
@@ -30,11 +30,9 @@ import {
   toPromptToolDefinitions,
 } from './tool-registry.js';
 import { createToolExecutor } from '../core/tools/index.js';
-import {
-  createSubagentHostBindings,
-  runSubagentTurn as runSubagentTurnImpl,
-} from './subagent-orchestration.js';
-import { SubagentRunner } from '../core/subagent/SubagentRunner.js';
+import { createSubagentDelegationPort } from './subagent-orchestration.js';
+import type { ActiveParentTurn } from './subagent-orchestration.js';
+import { SubagentExecutor } from '../core/subagent/SubagentExecutor.js';
 import {
   buildGeneralPurposeProfile,
   loadSubagentProfiles,
@@ -43,8 +41,6 @@ import {
 } from '../core/subagent/index.js';
 import type {
   SubagentProfile,
-  SubagentRunInput,
-  SubagentRunResult,
 } from '../core/subagent/types.js';
 import type { AvailableSubagentEntry } from '../core/subagent/index.js';
 import type {
@@ -92,6 +88,8 @@ export class RuntimeApp {
    * 详见 core-abort-spec.md §8.1。
    */
   private readonly activeAborts = new Map<string, AbortController>();
+  /** Active resolved Parent Turns eligible to delegate a tracked Child. */
+  private readonly activeParentTurns = new Map<string, ActiveParentTurn>();
 
   // ── Channel 层 ──────────────────────────────────────────────────
   /** 与 bootstrap fanout 闭包共享引用：registerChannel 后注册的新 channel 实时可见 */
@@ -118,16 +116,9 @@ export class RuntimeApp {
    * Profile registry including the built-in `general-purpose` entry. Filled
    * by `create()` after `bootstrapRuntime()` returns; not part of
    * RuntimeResourceSet because it is consumed only by RuntimeApp itself
-   * (the public surface is `runSubagentTurn()`).
+  * (the public surface is the available-profile projection).
    */
   private subagentProfiles!: ReadonlyMap<string, SubagentProfile>;
-  /**
-   * SubagentRunner instance. Depends on `routeContextByTurn` (RuntimeApp
-   * instance field) via the host bindings, so it can only be constructed
-   * after `new RuntimeApp(...)` returns. Definite-assignment (`!`) is
-   * scoped to the two lines in `create()` that fill it.
-   */
-  private subagentRunner!: SubagentRunner;
 
   private constructor(
     private readonly resources: RuntimeResourceSet,
@@ -171,7 +162,7 @@ export class RuntimeApp {
 
     // ── Subagent post-bootstrap wiring ───────────────────────────────
     //
-    // SubagentRunner + task tool need RuntimeApp instance state
+    // Runtime-owned delegation + task tool need RuntimeApp instance state
     // (routeContextByTurn) and a live getter over resources.contextFiles,
     // so they cannot be built inside bootstrapRuntime. They are assembled
     // here, then the agentRunner's toolExecutor is swapped to include the
@@ -194,37 +185,31 @@ export class RuntimeApp {
     }
     const subagentProfiles: ReadonlyMap<string, SubagentProfile> = subagentProfilesMap;
 
-    // 2. Host bindings — share app.routeContextByTurn map by reference.
-    //    Dot access to a private field is legal from a static method on
-    //    the same class (TS class-private is class-level, not instance-level).
-    const resolveLegacyChildModel = createLegacyChildModelResolver({
-      resolver: resources.modelResolver,
-      defaultProviderId: resources.defaultProviderId,
-      defaultModel: resources.resolvedConfig.llm.model,
-      defaultMaxTokens: resources.resolvedConfig.llm.maxTokens,
-    });
-    const host = createSubagentHostBindings({
-      getParentContextFiles: () => resources.contextFiles,
-      routeContextByTurn: app.routeContextByTurn,
-      resolvedConfig: resources.resolvedConfig,
-      resolveLegacyChildModel,
-      workspaceDir: options.workspaceDir,
-    });
-
-    // 3. SubagentRunner — reuses the SAME AgentRunner instance used by the
-    //    parent. Per-call isolation is provided by RunParams.sessionKey /
-    //    turnId, not by separate runner instances (spec §10).
-    const subagentRunner = new SubagentRunner({
+    // 2. Internal Child executor reuses the same stateless AgentRunner.
+    const subagentExecutor = new SubagentExecutor({
       agentRunner: resources.agentRunner,
-      sessionManager: resources.sessionManager,
       systemPromptBuilder: resources.systemPromptBuilder,
-      onEvent: fanout,
-      host,
       loadContextFilesFromDir: (absDir) =>
         loadContextFilesFromDir(absDir, {
           maxFileChars: resources.resolvedConfig.workspace.maxFileChars,
           maxTotalChars: resources.resolvedConfig.workspace.maxTotalChars,
         }),
+      workspaceDir: options.workspaceDir,
+      promptSafetyLevel: resources.resolvedConfig.prompt?.safetyLevel ?? 'normal',
+    });
+
+    // 3. Runtime-owned delegation validates a real active Parent, resolves a
+    // fresh Child model, and owns Child identity/lifecycle/cleanup.
+    const delegationPort = createSubagentDelegationPort({
+      activeParents: app.activeParentTurns,
+      routeContextByTurn: app.routeContextByTurn,
+      sessionManager: resources.sessionManager,
+      modelResolver: resources.modelResolver,
+      defaultProviderId: resources.defaultProviderId,
+      defaultMaxTokens: resources.resolvedConfig.llm.maxTokens,
+      maxDepth: resources.resolvedConfig.subagents?.maxDepth ?? 1,
+      executor: subagentExecutor,
+      onEvent: fanout,
     });
 
     // 4. Task tool: append to toolBundle when enabled, then rebuild the
@@ -233,11 +218,14 @@ export class RuntimeApp {
     //    'task' in deny still drops it (defensive).
     const taskTool = buildTaskToolIfEnabled({
       enabled: resources.resolvedConfig.subagents?.enabled !== false,
-      subagentRunner,
+      delegationPort,
       profileRegistry: subagentProfiles,
       getCapabilities: (sessionKey) =>
-        resolveSubagentCapabilities(sessionKey, host.maxDepth),
-      maxDepth: host.maxDepth,
+        resolveSubagentCapabilities(
+          sessionKey,
+          resources.resolvedConfig.subagents?.maxDepth ?? 1,
+        ),
+      maxDepth: resources.resolvedConfig.subagents?.maxDepth ?? 1,
     });
 
     if (taskTool) {
@@ -255,9 +243,8 @@ export class RuntimeApp {
       resources.agentRunner.setToolExecutor(newExecutor);
     }
 
-    // 5. Fill in the definite-assignment private fields.
+    // 5. Retain the profile projection for prompt rendering.
     app.subagentProfiles = subagentProfiles;
-    app.subagentRunner = subagentRunner;
 
     return app;
   }
@@ -948,23 +935,6 @@ export class RuntimeApp {
   }
 
   /**
-   * Library entry point: spawn a subagent run outside any LLM tool call.
-   *
-   * Resolves `input.subagentType` against the registered profiles
-   * (fail-fast on unknown ids — unlike the LLM `task` tool which falls
-   * back to general-purpose), then delegates to the SubagentRunner.
-   *
-   * The returned `SubagentRunResult` always exists — the runner never
-   * rethrows; failures surface as `outcome: 'error'`.
-   */
-  async runSubagentTurn(input: SubagentRunInput): Promise<SubagentRunResult> {
-    return runSubagentTurnImpl(input, {
-      subagentRunner: this.subagentRunner,
-      profileRegistry: this.subagentProfiles,
-    });
-  }
-
-  /**
    * Snapshot the projection of `subagentProfiles` used for the
    * `<available-subagents>` system prompt section. Caller (typically
    * the prompt-factory layer) decides whether to inject it based on
@@ -1115,6 +1085,7 @@ export class RuntimeApp {
     // 注册本 turn 的 controller —— abortTurn / shutdown 拿它来 abort。
     const controller = new AbortController();
     this.activeAborts.set(params.sessionKey, controller);
+    let parentRecord: ActiveParentTurn | undefined;
 
     try {
       await this.resources.sessionManager.resolveSession(params.sessionKey);
@@ -1172,6 +1143,19 @@ export class RuntimeApp {
           : [{ type: 'text', text: prepended }, ...params.message];
       }
 
+      const effectiveReference: ModelReference = Object.freeze({
+        providerId: resolvedModel.identity.providerId,
+        modelId: resolvedModel.identity.modelId,
+      });
+      parentRecord = Object.freeze({
+        sessionKey: params.sessionKey,
+        turnId: params.turnId,
+        signal: controller.signal,
+        effectiveReference,
+        contextFiles: Object.freeze([...this.resources.contextFiles]),
+      });
+      this.activeParentTurns.set(params.turnId, parentRecord);
+
       const result = await this.resources.agentRunner.run({
         sessionKey: params.sessionKey,
         message: runnerMessage,
@@ -1196,6 +1180,9 @@ export class RuntimeApp {
         toolRounds: result.toolRounds,
       };
     } finally {
+      if (parentRecord && this.activeParentTurns.get(params.turnId) === parentRecord) {
+        this.activeParentTurns.delete(params.turnId);
+      }
       // 只清自己注册的那一个（防止"另一个 turn 已重置 map"误清）
       if (this.activeAborts.get(params.sessionKey) === controller) {
         this.activeAborts.delete(params.sessionKey);

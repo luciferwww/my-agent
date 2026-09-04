@@ -117,16 +117,14 @@
 
 ## 9. Subagent
 
-**状态：v1 已实现（文档确认）。**
+**状态：Slice 2 implementation validated and confirmed complete（2026-09-04）。**
 
-- 父 Agent 可以通过 `task` 工具委派独立任务。
-- 同时提供 `RuntimeApp.runSubagentTurn(...)` 库调用入口。
+- 真实活动 Parent Agent 可以通过 `task` 工具委派独立任务；不存在无 Parent 的 Subagent library 入口。
 - 支持内置 `general-purpose` 和用户配置的具名 Subagent Profile。
-- 子 Agent 拥有独立 Session、System Prompt、工具集和 LLM 调用预算。
+- Profile 必须显式选择 `inherit` 或 native Provider/Model Reference；Child 每次独立解析新的 Model binding。
+- 子 Agent 拥有独立 Session、System Prompt 和 LLM 调用预算。
 - 子 Agent 只把最终文本作为 Tool Result 返回父 Agent，避免中间上下文污染父会话。
 - 可在 `.agent/subagents/<id>/` 中配置 `IDENTITY.md`、`SOUL.md` 等角色文件。
-- 子 Agent 的 Deny 规则叠加主 Agent 限制，Allow 规则可独立收窄免审批范围。
-- 子 Agent 的敏感工具请求复用父 Turn 的 Channel 审批通路。
 - 通过 Session Key 编码深度；默认最大深度为 1，子 Agent 默认不能继续创建子 Agent。
 - 提供 `subagent_start`、`subagent_end` 以及子 Agent 内部完整事件流。
 - 子 Agent 完成后清理其临时 Session。
@@ -135,10 +133,11 @@
 
 - 同一轮多个 Subagent 的并发执行属于 v2 Spec；该文档尚未明确标记实现完成。
 - 不支持 Detached/后台 Subagent。
+- Child Tools 与 Profile `tools.allow/deny` execution 尚未接入，归 Slice 3。
 - 不支持 Fork 父会话历史、Worktree/远程隔离或跨 Agent 通信。
 - v1 子 Agent Prompt 不携带图片附件。
 
-参考：[Subagent v1](architecture/core-subagent-spec.md)、[Subagent 实施](architecture/core-subagent-impl.md)、[Subagent v2](architecture/core-subagent-v2-spec.md)
+参考：[Slice 2 Subagent Model Resolution](architecture/subagent-model-resolution-module-spec.md)、[historical v1 Subagent design](architecture/core-subagent-spec.md)、[historical implementation plan](architecture/core-subagent-impl.md)、[future v2](architecture/core-subagent-v2-spec.md)
 
 ## 10. 图片附件
 

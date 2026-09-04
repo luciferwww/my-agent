@@ -1,5 +1,7 @@
 # Subagent 支持设计 Spec
 
+> **状态：Partially Superseded（2026-09-04）。** 本文仅保留未被替代的 v1 behavior/history。Model selection、真实 Parent requirement、Runtime-owned delegation、terminal failure/Usage、Event correlation 和 cleanup 以 [Subagent Model Resolution Module Spec](subagent-model-resolution-module-spec.md) 为准。无 Parent library API、synthetic session/trigger、concrete `SubagentRunner` 和旧 host/request Contract 已删除，不再是 current capability。
+
 > 文档日期：2026-06-18
 > 分支：`feature/subagents`
 > 关联文档：`current/core_runner.md` · `current/core_session.md` · `current/core_tools.md` · `current/runtime.md` · `current/core_prompt.md` · `v1.0/runtime-design.md`
@@ -34,7 +36,7 @@ my-agent 走"取其形、不取其规模"路线：吸收 Claude Code 的**对外
 - 子 Agent 工具调用经父 channel 弹审批；无父 channel 时走 fail-closed allowlist（库 API 场景）。
 - 子 Agent 的 `AgentEvent` 通过现有 fanout 链路转发到父 channel，UI/CLI 能区分父子。
 - 实现"嵌套深度限制"：默认子 Agent 自己**没有** `task` 工具（不可再 spawn），通过 depth 阈值兜底。
-- 库 API（`RuntimeApp.runSubagentTurn(...)`）和 LLM 工具调用两种入口共用同一份 `SubagentRunner` 实现。
+- 只有真实活动 Parent 的 LLM `task` 工具可以创建 Child；Runtime-owned delegation Port 是唯一 current path。
 
 ---
 

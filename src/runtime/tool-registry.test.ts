@@ -8,8 +8,11 @@ import {
   toLlmToolDefinitions,
   toPromptToolDefinitions,
 } from './tool-registry.js';
-import type { SubagentCapabilities, SubagentProfile } from '../core/subagent/types.js';
-import type { SubagentRunner } from '../core/subagent/SubagentRunner.js';
+import type {
+  SubagentCapabilities,
+  SubagentDelegationPort,
+  SubagentProfile,
+} from '../core/subagent/types.js';
 
 describe('runtime tool registry', () => {
   it('converts tools into llm and prompt definitions from the same source list', () => {
@@ -102,6 +105,7 @@ describe('buildTaskToolIfEnabled', () => {
     id: 'general-purpose',
     description: 'fallback',
     agentDir: '/ws/.agent/subagents/general-purpose',
+    model: 'inherit',
   };
   const dummyRegistry = new Map<string, SubagentProfile>([['general-purpose', dummyProfile]]);
   const stubCapabilities = (): SubagentCapabilities => ({
@@ -109,17 +113,16 @@ describe('buildTaskToolIfEnabled', () => {
     role: 'main',
     canSpawn: true,
   });
-  // SubagentRunner.run is never invoked in this test; stub the field shape.
-  const stubSubagentRunner = {
-    run: async () => {
+  const stubDelegationPort: SubagentDelegationPort = {
+    delegate: async () => {
       throw new Error('should not be called by buildTaskToolIfEnabled tests');
     },
-  } as unknown as SubagentRunner;
+  };
 
   it('returns null when enabled=false', () => {
     const tool = buildTaskToolIfEnabled({
       enabled: false,
-      subagentRunner: stubSubagentRunner,
+      delegationPort: stubDelegationPort,
       profileRegistry: dummyRegistry,
       getCapabilities: stubCapabilities,
       maxDepth: 1,
@@ -130,7 +133,7 @@ describe('buildTaskToolIfEnabled', () => {
   it('returns a Tool with name="task" when enabled=true', () => {
     const tool = buildTaskToolIfEnabled({
       enabled: true,
-      subagentRunner: stubSubagentRunner,
+      delegationPort: stubDelegationPort,
       profileRegistry: dummyRegistry,
       getCapabilities: stubCapabilities,
       maxDepth: 1,
@@ -143,7 +146,7 @@ describe('buildTaskToolIfEnabled', () => {
   it('does NOT leak the "enabled" flag into the resulting Tool', () => {
     const tool = buildTaskToolIfEnabled({
       enabled: true,
-      subagentRunner: stubSubagentRunner,
+      delegationPort: stubDelegationPort,
       profileRegistry: dummyRegistry,
       getCapabilities: stubCapabilities,
       maxDepth: 1,

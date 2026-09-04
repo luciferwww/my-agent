@@ -18,7 +18,7 @@ export type PendingMessageReader = () => ChatMessage[] | Promise<ChatMessage[]>;
  * RunParams 整体挂在实例字段（this.currentParams）上的做法。这样：
  *  - emit 不再依赖隐式实例状态，类对事件标签无副作用、可重入、可并发；
  *  - 编译期强制每个 emit 调用提供 ctx；
- *  - SubagentRunner 嵌套 AgentRunner.run() 不再有任何状态串号风险。
+ *  - Child executor 嵌套 AgentRunner.run() 不再有任何状态串号风险。
  *
  * 仅 sessionKey/turnId 两字段，故不复用 RunParams（后者太重，包含 message
  * / tools / model 等不适合作为事件 tag 到处传的内容）。
@@ -217,21 +217,6 @@ export type AgentEvent =
       count: number;
       source: 'abort' | 'recovered';
     }
-  // FIXME(arch-debt, v2): 下面两个 subagent_* 变体让 `core/runner/types.ts` 反向
-  // import `core/subagent/types.js` 拿 `RunTrigger`，违反 spec §6.4 "core/runner/ 不依赖
-  // core/subagent/" 的依赖方向约束。
-  //
-  // 为什么 v1 暂时接受：把 subagent_start/end 拆成独立的 `SubagentEvent` union 需要
-  // 同步改 RuntimeApp.fanout / Channel.send / 所有 channel adapters 的事件类型从
-  // `AgentEvent` 改成 `AgentEvent | SubagentEvent`，ripple 较大。v1 选择保留违规以缩
-  // 单 PR 体积，AgentRunner 也确实不会 emit 这两个变体（仅由 runtime 编排层发出）。
-  //
-  // v2 修复方向（任选其一）：
-  //   (a) 把 subagent_start/end 拆到 `core/subagent/types.ts` 的 SubagentEvent union；
-  //       fanout / channel 改吃 `AgentEvent | SubagentEvent`；
-  //   (b) 把 RunTrigger 类型上提到 `core/runner/types.ts`，subagent 模块 re-export；
-  //       本文件不 import subagent。
-  // 倾向 (a)（架构最干净），但需评估 channel adapters 现有代码影响。
   | {
       type: 'subagent_start';
       /** 单次 subagent 运行的 runId（由 orchestrator 生成） */
@@ -245,7 +230,9 @@ export type AgentEvent =
       /** 'general-purpose' 或具名 profile.id（caller 原始输入） */
       subagentType: string;
       lifecycle: 'blocking';
-      trigger: import('../subagent/types.js').RunTrigger;
+      parentSessionKey: string;
+      parentTurnId: string;
+      parentToolUseId: string;
     }
   | {
       type: 'subagent_end';
@@ -255,10 +242,19 @@ export type AgentEvent =
       depth: number;
       subagentType: string;
       lifecycle: 'blocking';
-      trigger: import('../subagent/types.js').RunTrigger;
-      /** `'aborted'` 在 v1 永远不会出现（spec §6.1 决策 1） */
+      parentSessionKey: string;
+      parentTurnId: string;
+      parentToolUseId: string;
+      /** Parent tree signal interrupted Child execution. */
       outcome: 'ok' | 'error' | 'aborted' | 'max_llm_calls';
-      reason?: string;
+      failure?:
+        | { readonly phase: 'setup'; readonly message: string }
+        | {
+            readonly phase: 'resolution';
+            readonly category: import('../model-resolution/index.js').ResolutionFailureCategory;
+            readonly message: string;
+          }
+        | { readonly phase: 'execution'; readonly message: string };
       /** 子自身 + 所有子孙累计（spec §6.1 决策 6） */
       usage: TokenUsage;
       durationMs: number;

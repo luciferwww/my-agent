@@ -314,12 +314,9 @@ describe('WebSocketChannel', () => {
         depth: 1,
         subagentType: 'general-purpose',
         lifecycle: 'blocking',
-        trigger: {
-          source: 'llm-tool',
-          parentSessionKey: 'main',
-          parentTurnId: 'parent-turn-1',
-          parentToolUseId: 'tu-1',
-        },
+        parentSessionKey: 'main',
+        parentTurnId: 'parent-turn-1',
+        parentToolUseId: 'tu-1',
       });
 
       await expectMessage(client, {
@@ -330,12 +327,9 @@ describe('WebSocketChannel', () => {
         depth: 1,
         subagentType: 'general-purpose',
         lifecycle: 'blocking',
-        trigger: {
-          source: 'llm-tool',
-          parentSessionKey: 'main',
-          parentTurnId: 'parent-turn-1',
-          parentToolUseId: 'tu-1',
-        },
+        parentSessionKey: 'main',
+        parentTurnId: 'parent-turn-1',
+        parentToolUseId: 'tu-1',
       });
     });
 
@@ -409,12 +403,9 @@ describe('WebSocketChannel', () => {
         depth: 1,
         subagentType: 'general-purpose',
         lifecycle: 'blocking',
-        trigger: {
-          source: 'llm-tool',
-          parentSessionKey: 'main',
-          parentTurnId: 'parent-turn-1',
-          parentToolUseId: 'tu-1',
-        },
+        parentSessionKey: 'main',
+        parentTurnId: 'parent-turn-1',
+        parentToolUseId: 'tu-1',
         outcome: 'ok',
         usage: { inputTokens: 10, outputTokens: 5 },
         durationMs: 123,
@@ -428,12 +419,9 @@ describe('WebSocketChannel', () => {
         depth: 1,
         subagentType: 'general-purpose',
         lifecycle: 'blocking',
-        trigger: {
-          source: 'llm-tool',
-          parentSessionKey: 'main',
-          parentTurnId: 'parent-turn-1',
-          parentToolUseId: 'tu-1',
-        },
+        parentSessionKey: 'main',
+        parentTurnId: 'parent-turn-1',
+        parentToolUseId: 'tu-1',
         outcome: 'ok',
         usage: { inputTokens: 10, outputTokens: 5 },
         durationMs: 123,

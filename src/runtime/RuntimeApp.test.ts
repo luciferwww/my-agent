@@ -11,8 +11,10 @@ import type {
   ChannelRunRequest,
 } from '../adapters/channel/types.js';
 import type { AgentEvent, BeforeToolCallHook } from '../core/runner/index.js';
-import type { RunResult } from '../core/runner/types.js';
-import type { Tool } from '../core/tools/types.js';
+import type { RunParams, RunResult } from '../core/runner/types.js';
+import type { Tool, ToolExecutor } from '../core/tools/types.js';
+import type { ResolvedModel } from '../core/model-resolution/index.js';
+import type { SubagentModelSelection } from '../platform/config/types.js';
 import { RuntimeApp } from './RuntimeApp.js';
 import type { RuntimeDependencies, RuntimeEvent } from './types.js';
 
@@ -76,6 +78,126 @@ describe('RuntimeApp', () => {
     expect(result.sessionKey).toBe('main');
     expect(result.text).toBe('hello');
     expect(app.getState().phase).toBe('ready');
+  });
+
+  it.each([
+    {
+      label: 'inherited',
+      selection: 'inherit' as const,
+      expectedIdentity: { providerId: 'test', modelId: 'parent-model' },
+    },
+    {
+      label: 'concrete',
+      selection: { providerId: 'child', modelId: 'child-model' },
+      expectedIdentity: { providerId: 'child', modelId: 'child-model' },
+    },
+  ])('delegates a real Parent task through fresh $label Child resolution', async ({
+    selection,
+    expectedIdentity,
+  }: {
+    selection: SubagentModelSelection;
+    expectedIdentity: { providerId: string; modelId: string };
+  }) => {
+    let toolExecutor: ToolExecutor | undefined;
+    let parentModel: ResolvedModel | undefined;
+    let childModel: ResolvedModel | undefined;
+    const deleteSession = vi.fn(async () => {});
+    const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      if (params.sessionKey === 'main') {
+        parentModel = params.resolvedModel;
+        if (!toolExecutor || !params.signal) throw new Error('Parent task wiring is incomplete.');
+        const taskResult = await toolExecutor('task', {
+          subagent_type: 'reviewer',
+          description: 'review',
+          prompt: 'inspect the patch',
+        }, {
+          sessionKey: params.sessionKey,
+          turnId: params.turnId,
+          toolUseId: 'task-use-1',
+          signal: params.signal,
+        });
+        return {
+          text: taskResult.content,
+          content: [{ type: 'text', text: taskResult.content }],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 5, outputTokens: 2 },
+          toolRounds: 1,
+        };
+      }
+      childModel = params.resolvedModel;
+      return {
+        text: 'child result',
+        content: [{ type: 'text', text: 'child result' }],
+        stopReason: 'end_turn',
+        usage: { inputTokens: 3, outputTokens: 1 },
+        toolRounds: 0,
+      };
+    });
+    const makeProvider = (id: string) => ({
+      id,
+      protocol: 'test',
+      invocationPort: {} as never,
+      resolveConnection: () => ({ ok: true as const, connection: { endpointId: `${id}-endpoint` } }),
+      resolveModel: (modelId: string, connection: { endpointId: string }) => ({
+        ok: true as const,
+        descriptor: {
+          identity: { providerId: id, modelId },
+          protocol: 'test',
+          connection,
+          facts: {
+            effectiveContextLimit: { value: 200_000, source: 'deployment-config' as const },
+            maximumOutputTokens: { value: 8192, source: 'deployment-config' as const },
+            toolUse: { value: true, source: 'deployment-config' as const },
+          },
+        },
+      }),
+    });
+    const events: AgentEvent[] = [];
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'parent-model' },
+        memory: { enabled: false },
+        subagents: {
+          enabled: true,
+          maxDepth: 1,
+          list: [{
+            id: 'reviewer',
+            description: 'reviews code',
+            model: selection,
+          }],
+        },
+      },
+      dependencies: createTestDependencies({
+        createProviderProjection: () => [makeProvider('test'), makeProvider('child')],
+        createSessionManager: () => ({
+          resolveSession: vi.fn(async () => ({ entry: {}, isNew: true })),
+          deleteSession,
+        }) as never,
+        createAgentRunner: () => ({
+          run: runnerRun,
+          setToolExecutor: (executor: ToolExecutor) => { toolExecutor = executor; },
+        }) as never,
+        createMemoryManager: async () => null,
+      }),
+      onAgentEvent: (event) => events.push(event),
+    });
+
+    const result = await app.runTurn({
+      sessionKey: 'main',
+      message: 'delegate',
+      promptMode: 'full',
+    });
+
+    expect(result.text).toBe('child result');
+    expect(parentModel?.identity).toEqual({ providerId: 'test', modelId: 'parent-model' });
+    expect(childModel?.identity).toEqual(expectedIdentity);
+    expect(childModel).not.toBe(parentModel);
+    expect(events.filter((event) => event.type === 'subagent_start')).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'subagent_end')).toHaveLength(1);
+    expect(deleteSession).toHaveBeenCalledTimes(1);
+
+    await app.close();
   });
 
   it('CH-05 isolates channel.send failures without changing Turn execution', async () => {
@@ -395,91 +517,6 @@ describe('RuntimeApp', () => {
     expect(report.completed).toContain('channels');
     expect(report.failed).toEqual([]);
     expect(app.getState().phase).toBe('closed');
-  });
-
-  it('CH-10 runs a library subagent through RuntimeApp with correlated events, usage, and cleanup', async () => {
-    const callOrder: string[] = [];
-    const resolveSession = vi.fn(async () => {
-      callOrder.push('resolve');
-      return { entry: {}, isNew: true };
-    });
-    const deleteSession = vi.fn(async () => {
-      callOrder.push('delete');
-    });
-    const runnerRun = vi.fn(async (): Promise<RunResult> => {
-      callOrder.push('run');
-      return {
-        text: 'library child result',
-        content: [{ type: 'text', text: 'library child result' }],
-        stopReason: 'end_turn',
-        usage: { inputTokens: 8, outputTokens: 3 },
-        toolRounds: 0,
-      };
-    });
-    const agentEvents: Array<{ type: string; [key: string]: unknown }> = [];
-
-    const app = await RuntimeApp.create({
-      workspaceDir,
-      cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
-        memory: { enabled: false },
-      },
-      dependencies: createTestDependencies({
-        createSessionManager: () => ({ resolveSession, deleteSession }) as never,
-        createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
-        createMemoryManager: async () => null,
-      }),
-      onAgentEvent: (event) => agentEvents.push(event),
-    });
-
-    const result = await app.runSubagentTurn({
-      subagentType: 'general-purpose',
-      description: 'inspect runtime wiring',
-      prompt: 'review the integration',
-      trigger: { source: 'library', callerLabel: 'integration-test' },
-      lifecycle: 'blocking',
-    });
-
-    expect(callOrder).toEqual(['resolve', 'run', 'delete']);
-    expect(resolveSession).toHaveBeenCalledWith(result.sessionKey, {
-      spawnedBy: 'integration-test',
-    });
-    expect(runnerRun).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionKey: result.sessionKey,
-        turnId: result.turnId,
-        message: 'review the integration',
-      }),
-    );
-    expect(deleteSession).toHaveBeenCalledWith(result.sessionKey);
-    expect(result).toEqual(expect.objectContaining({
-      text: 'library child result',
-      outcome: 'ok',
-      usage: { inputTokens: 8, outputTokens: 3 },
-    }));
-
-    const subagentEvents = agentEvents.filter(
-      (event) => event.type === 'subagent_start' || event.type === 'subagent_end',
-    );
-    expect(subagentEvents).toHaveLength(2);
-    expect(subagentEvents[0]).toEqual(expect.objectContaining({
-      type: 'subagent_start',
-      runId: result.runId,
-      sessionKey: result.sessionKey,
-      turnId: result.turnId,
-      subagentType: 'general-purpose',
-      lifecycle: 'blocking',
-    }));
-    expect(subagentEvents[1]).toEqual(expect.objectContaining({
-      type: 'subagent_end',
-      runId: result.runId,
-      sessionKey: result.sessionKey,
-      turnId: result.turnId,
-      outcome: 'ok',
-      usage: result.usage,
-    }));
-
-    await app.close();
   });
 
   it('CH-01 serializes a busy session while another session runs concurrently', async () => {

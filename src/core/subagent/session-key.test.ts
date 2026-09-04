@@ -70,7 +70,6 @@ describe('parseSubagentSessionKey', () => {
     expect(parsed.rootLabel).toBe('main');
     expect(parsed.runId).toBe('abc');
     expect(parsed.depth).toBe(1);
-    expect(parsed.isSynthetic).toBe(false);
   });
 
   it('reports rootLabel as everything before the FIRST :subagent: separator', () => {
@@ -84,20 +83,6 @@ describe('parseSubagentSessionKey', () => {
     const parsed = parseSubagentSessionKey(key);
     expect(parsed.runId).toBe('def');
     expect(parsed.depth).toBe(2);
-  });
-
-  it('marks rootLabel === "library" as synthetic', () => {
-    const key = formatSubagentSessionKey({ rootLabel: 'library', runId: 'r1', depth: 1 });
-    expect(parseSubagentSessionKey(key).isSynthetic).toBe(true);
-  });
-
-  it('marks rootLabel starting with "library:" as synthetic', () => {
-    const key = formatSubagentSessionKey({
-      rootLabel: 'library:test-caller',
-      runId: 'r1',
-      depth: 1,
-    });
-    expect(parseSubagentSessionKey(key).isSynthetic).toBe(true);
   });
 
   it('returns NaN depth for a non-subagent key (caller must guard with isSubagentSessionKey)', () => {

@@ -98,6 +98,27 @@
     "negative": ["src/runtime/RuntimeApp.test.ts"]
   },
   {
+    "contract": "AgentExecutionFailure",
+    "source": "src/core/runner/errors.ts",
+    "kind": "error",
+    "positive": ["src/core/runner/AgentRunner.test.ts"],
+    "negative": ["src/core/runner/AgentRunner.test.ts"]
+  },
+  {
+    "contract": "SubagentDelegationPort",
+    "source": "src/core/subagent/types.ts",
+    "kind": "delegation-port",
+    "positive": ["src/runtime/subagent-orchestration.test.ts"],
+    "negative": ["src/runtime/subagent-orchestration.test.ts"]
+  },
+  {
+    "contract": "SubagentTerminalResult",
+    "source": "src/core/subagent/types.ts",
+    "kind": "lifecycle",
+    "positive": ["src/runtime/subagent-orchestration.test.ts"],
+    "negative": ["src/runtime/subagent-orchestration.test.ts"]
+  },
+  {
     "contract": "ToolExecutor",
     "source": "src/core/tools/types.ts",
     "kind": "tool-port",

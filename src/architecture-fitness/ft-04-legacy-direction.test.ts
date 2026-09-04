@@ -12,6 +12,8 @@ const FIXTURE_NEW_CORE_ROOTS = ['src/new-core/'];
 const NEW_CORE_ROOTS = [
   'src/core/model-invocation/',
   'src/core/model-resolution/',
+  'src/core/subagent/',
+  'src/runtime/subagent-orchestration.ts',
   'src/adapters/llm/AnthropicProvider.ts',
 ];
 const FORBIDDEN_ROOTS = ['src/compat/', 'src/legacy/'];
@@ -31,5 +33,31 @@ describe('FT-04 Legacy dependency direction', () => {
     const productionSources = await loadProductionSources(REPOSITORY_ROOT);
 
     expect(findFt04LegacyDirectionViolations(productionSources, NEW_CORE_ROOTS, FORBIDDEN_ROOTS)).toEqual([]);
+  });
+
+  it('locks CODE-M09 deleted contracts out of production and scripts', async () => {
+    const productionSources = await loadProductionSources(REPOSITORY_ROOT);
+    const scriptSources = await loadTypeScriptSources(`${REPOSITORY_ROOT}/scripts`, [], 'scripts');
+    const deletedSymbols = [
+      'runSubagentTurn',
+      'resolveLegacyChildModel',
+      'createLegacyChildModelResolver',
+      'SubagentHostBindings',
+      'SubagentRunner',
+      'SubagentRunnerDeps',
+      'SubagentRunRequest',
+      'SubagentRunInput',
+      'RunTrigger',
+      'subagentRunner',
+      'isSynthetic',
+      'legacy-child',
+    ];
+    const violations = [...productionSources, ...scriptSources].flatMap((source) =>
+      deletedSymbols
+        .filter((symbol) => source.content.includes(symbol))
+        .map((symbol) => `FT-04 source=${source.path} deletedContract=${symbol}`),
+    );
+
+    expect(violations).toEqual([]);
   });
 });

@@ -33,8 +33,7 @@ export interface ModelReference {
 export type ModelReferenceSource =
   | 'native'
   | 'turn-explicit'
-  | 'config-default'
-  | 'legacy-child';
+  | 'config-default';
 
 export interface ModelRequestRequirements {
   readonly tools: boolean;

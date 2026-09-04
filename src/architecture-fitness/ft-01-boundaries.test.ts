@@ -49,7 +49,6 @@ describe('FT-01 stable core boundaries', () => {
       'FT-01 source=src/core/runner/context/tool-result-pruning.ts boundary=Application import=../../../platform/config/types.js target=src/platform/config/types.ts targetBoundary=Composition',
       'FT-01 source=src/core/runner/hooks/runner.ts boundary=Application import=../../../platform/logger/index.js target=src/platform/logger/index.ts targetBoundary=Infrastructure',
       'FT-01 source=src/core/runner/types.ts boundary=Application import=../../platform/config/types.js target=src/platform/config/types.ts targetBoundary=Composition',
-      'FT-01 source=src/core/subagent/SubagentRunner.ts boundary=Application import=../../platform/logger/index.js target=src/platform/logger/index.ts targetBoundary=Infrastructure',
       'FT-01 source=src/core/subagent/config-loader.ts boundary=Application import=../../platform/config/types.js target=src/platform/config/types.ts targetBoundary=Composition',
       'FT-01 source=src/core/tools/index.ts boundary=Domain/Application import=./builtin/common/path-policy.js target=src/core/tools/builtin/common/path-policy.ts targetBoundary=Infrastructure',
       'FT-01 source=src/core/tools/index.ts boundary=Domain/Application import=./builtin/index.js target=src/core/tools/builtin/index.ts targetBoundary=Infrastructure',

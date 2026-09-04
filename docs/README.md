@@ -63,8 +63,9 @@ Current implementation facts, accepted architecture constraints, design baseline
 - [ADR-004 Provider/Model Identity and Facts Ownership](architecture/adr-004-provider-model-identity-and-facts-ownership.md) — accepted ownership boundary for Provider/Model identity, facts, policy, and per-Turn resolution
 - [ADR-005 Extension Registry and Runtime Composition](architecture/adr-005-extension-registry-runtime-composition.md) — accepted unified Extension/Module staging, immutable Snapshot, Runtime Composition, and instance lifecycle boundary
 - [ADR-006 Legacy and Compatibility Exit](architecture/adr-006-legacy-and-compatibility-exit.md) — accepted authority-based Legacy classification and time-bounded one-way Compatibility policy
-- [Legacy Migration Inventory](architecture/legacy-migration-inventory.md) — accepted Foundation Gate inventory of retained authorities, migration candidates, owners, target Slices, exit conditions, and validation; no migration or deletion is authorized
-- [Model Resolution Module Spec](architecture/model-resolution-module-spec.md) — accepted Slice 1 Parent Turn resolution contract, compatibility boundary, acceptance scenarios, and Definition of Ready; Delivery is not authorized
+- [Legacy Migration Inventory](architecture/legacy-migration-inventory.md) — accepted inventory with completed Slice 1 dispositions and active remaining migration candidates
+- [Model Resolution Module Spec](architecture/model-resolution-module-spec.md) — validated Slice 1 Parent Turn resolution contract and delivery evidence
+- [Subagent Model Resolution Module Spec](architecture/subagent-model-resolution-module-spec.md) — validated Slice 2 native Child resolution, real-Parent, failure, and Legacy-exit contract
 - [Agent Runner Design](architecture/core-runner-design.md)
 - [Runtime / App Assembly Design](architecture/runtime-design.md)
 - [Config Design](architecture/platform-config-design.md)

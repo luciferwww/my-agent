@@ -198,13 +198,20 @@ export interface SubagentToolsConfig {
 }
 
 /** 单个 subagent 的配置条目 */
+export type SubagentModelSelection =
+  | 'inherit'
+  | {
+      readonly providerId?: string;
+      readonly modelId: string;
+    };
+
 export interface SubagentConfigEntry {
   /** 唯一标识符 */
   id: string;
   /** 给父 LLM 看的「何时使用」 */
   description: string;
-  /** 'inherit'（默认）或具体 model id */
-  model?: string;
+  /** 显式继承 Parent effective reference，或提供 native Model Reference。 */
+  model: SubagentModelSelection;
   /** 子 Agent 的 LLM 调用上限；不写沿用父 maxLlmCalls。对齐 RunParams.maxLlmCalls。 */
   maxLlmCalls?: number;
   /** 工具策略 */

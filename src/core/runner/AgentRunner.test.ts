@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { AgentRunner as ProductionAgentRunner } from './AgentRunner.js';
+import { AgentExecutionFailure } from './errors.js';
 import { SessionManager } from '../session/SessionManager.js';
 import type {
   ChatContentBlock,
@@ -634,7 +635,7 @@ describe('AgentRunner', () => {
         sessionManager,
         onEvent: (e) => events.push(e),
         toolExecutor: async () => {
-          // Re-enter run() with a different sessionKey, mirroring SubagentRunner.
+          // Re-enter run() with a different sessionKey, mirroring Child execution.
           await sessionManager.createSession('child').catch(() => undefined);
           await runner.run({
             sessionKey: 'child',
@@ -941,6 +942,40 @@ describe('AgentRunner', () => {
 
       expect(events.some((e) => e.type === 'error')).toBe(true);
       expect(chatStream).toHaveBeenCalledTimes(1);
+    });
+
+    it('carries accumulated usage when execution fails after a successful call', async () => {
+      const llmClient = createMockLLMClient([
+        [
+          { type: 'message_start' },
+          { type: 'tool_use', id: 'tool-1', name: 'search', input: {} },
+          { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 11, outputTokens: 7 } },
+        ],
+        [
+          { type: 'message_start' },
+          { type: 'error', error: new Error('second call failed') },
+        ],
+      ]);
+      const runner = new AgentRunner({
+        llmClient,
+        sessionManager,
+        toolExecutor: vi.fn(async () => ({ content: 'result' })),
+      });
+
+      const failure = await runner.run({
+        sessionKey: 'main',
+        message: 'Hi',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'test-turn',
+      }).catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(AgentExecutionFailure);
+      expect(failure).toEqual(expect.objectContaining({
+        kind: 'agent_execution_failure',
+        message: 'second call failed',
+        usage: { inputTokens: 11, outputTokens: 7 },
+      }));
     });
   });
 

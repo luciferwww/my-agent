@@ -4,11 +4,9 @@
  * Exercises the v1 subagent stack from PR-(-1) through PR-6 against a
  * mock LLM client so it runs offline with no API key required.
  *
- * Scenarios
- *   1. Library API path: `app.runSubagentTurn(...)` directly.
- *   2. LLM tool path: main agent emits a `task` tool_use, subagent runs,
+ * Scenario
+ *   LLM tool path: main agent emits a `task` tool_use, subagent runs,
  *      main agent gets the tool_result and produces a final answer.
- *   3. Depth guard: maxDepth=1 + a deny-blocked second hop returns isError.
  *
  * Usage:
  *   npx tsx scripts/test-subagent-e2e.ts
@@ -126,74 +124,7 @@ async function writeAgentDir(workspaceDir: string, configJson: object): Promise<
   await writeFile(join(agentDir, 'IDENTITY.md'), '# Identity\nDemo agent.', 'utf-8');
 }
 
-// ── Scenario 1: library API ────────────────────────────────
-
-async function scenarioLibraryApi(): Promise<void> {
-  await withWorkspace(async (workspaceDir) => {
-    await writeAgentDir(workspaceDir, {
-      agents: { defaults: { llm: { apiKey: 'x', model: 'mock-model' }, memory: { enabled: false } } },
-    });
-
-    const subagentReply = 'Hello from the subagent.';
-
-    const { client } = createScriptedLLM([
-      {
-        // The only LLM call in this scenario is the subagent's own turn.
-        match: () => true,
-        events: textReply(subagentReply, { inputTokens: 50, outputTokens: 12 }),
-      },
-    ]);
-
-    const events: AgentEvent[] = [];
-
-    const app = await RuntimeApp.create({
-      workspaceDir,
-      onAgentEvent: (e) => {
-        events.push(e);
-        if (e.type === 'error') {
-          console.error('  [agent error]', e.error?.message);
-          console.error('  [agent stack]', e.error?.stack);
-        }
-      },
-      dependencies: { createLLMClient: () => client },
-    });
-
-    try {
-      const result = await app.runSubagentTurn({
-        subagentType: 'general-purpose',
-        description: 'just say hi',
-        prompt: 'please greet the user',
-        trigger: { source: 'library', callerLabel: 'demo-runner' },
-        lifecycle: 'blocking',
-      });
-
-      console.log('  result.outcome  =', result.outcome);
-      console.log('  result.text     =', JSON.stringify(result.text));
-      console.log('  result.sessionKey =', result.sessionKey);
-      console.log('  result.usage    =', result.usage);
-      console.log('  events          =', events.map((e) => e.type).join(' → '));
-
-      assert.equal(result.outcome, 'ok', 'library subagent should succeed');
-      assert.equal(result.text, subagentReply, 'subagent text should be the mock reply');
-      assert.match(
-        result.sessionKey,
-        /^demo-runner:subagent:[0-9a-f-]+:1$/,
-        'sessionKey should follow the rootLabel:subagent:runId:depth format',
-      );
-
-      const start = events.find((e) => e.type === 'subagent_start');
-      const end = events.find((e) => e.type === 'subagent_end');
-      assert.ok(start, 'subagent_start should be emitted');
-      assert.ok(end, 'subagent_end should be emitted');
-      assert.equal(start!.runId, end!.runId, 'start and end should share a runId');
-      assert.equal((end as Extract<AgentEvent, { type: 'subagent_end' }>).outcome, 'ok');
-    } finally {
-      await app.close('demo done').catch(() => undefined);
-    }
-  });
-}
-
-// ── Scenario 2: LLM tool path ──────────────────────────────
+// ── Real Parent task path ──────────────────────────────────
 
 async function scenarioTaskToolPath(): Promise<void> {
   await withWorkspace(async (workspaceDir) => {
@@ -293,60 +224,10 @@ async function scenarioTaskToolPath(): Promise<void> {
   });
 }
 
-// ── Scenario 3: depth guard ────────────────────────────────
-
-async function scenarioDepthGuard(): Promise<void> {
-  await withWorkspace(async (workspaceDir) => {
-    // maxDepth=1 means depth-1 children cannot spawn further; subagent's
-    // capability is 'leaf' / canSpawn=false. The subagent does not get a
-    // `task` tool at all (PR-3 § minimal mode). Here we instead verify
-    // the LIBRARY API rejects an unknown subagent_type fail-fast — proves
-    // the wiring distinguishes the two entry points (spec §6 decision 10).
-    await writeAgentDir(workspaceDir, {
-      agents: { defaults: { llm: { apiKey: 'x', model: 'mock-model' }, memory: { enabled: false } } },
-    });
-
-    const { client } = createScriptedLLM([
-      { match: () => true, events: textReply('unused') },
-    ]);
-
-    const app = await RuntimeApp.create({
-      workspaceDir,
-      dependencies: { createLLMClient: () => client },
-    });
-
-    try {
-      let threw: unknown;
-      try {
-        await app.runSubagentTurn({
-          subagentType: 'nonexistent-subagent',
-          description: 'x',
-          prompt: 'x',
-          trigger: { source: 'library', callerLabel: 'demo' },
-          lifecycle: 'blocking',
-        });
-      } catch (err) {
-        threw = err;
-      }
-      console.log('  library-API unknown-type rejection =', (threw as Error | undefined)?.message);
-      assert.ok(threw instanceof Error, 'library API should fail-fast on unknown subagent_type');
-      assert.match(
-        (threw as Error).message,
-        /Unknown subagent type/,
-        'error message should mention unknown subagent type',
-      );
-    } finally {
-      await app.close('demo done').catch(() => undefined);
-    }
-  });
-}
-
 // ── Main ────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  await runStep('1. library API: app.runSubagentTurn end-to-end', scenarioLibraryApi);
-  await runStep('2. LLM tool path: parent → task → subagent → final answer', scenarioTaskToolPath);
-  await runStep('3. library API fail-fast on unknown subagent_type', scenarioDepthGuard);
+  await runStep('real Parent task path: parent → task → subagent → final answer', scenarioTaskToolPath);
 
   console.log(`\n${'='.repeat(72)}`);
   console.log(`SUMMARY: ${passed} passed, ${failed} failed`);

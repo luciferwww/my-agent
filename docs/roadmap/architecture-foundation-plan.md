@@ -513,16 +513,31 @@ Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accept
 
 ### Slice 2：Subagent Model Resolution
 
+**Plan Item 状态：** Completed（2026-09-04）
+
+**Module Spec：** [Subagent Model Resolution Module Spec](../architecture/subagent-model-resolution-module-spec.md)（`Validated`，2026-09-04）
+
 **范围：**
 
 - Subagent Profile 使用 Model Reference；
 - Parent/Subagent 可选择不同 Provider/Model；
-- Usage、Abort 和 Event 行为保持不变。
+- 真实 Parent Turn 通过 Runtime-owned delegation Port 创建 blocking Child；
+- Child setup/resolution failure 归一化为 typed terminal result；
+- AgentRunner escaping execution failure 通过最小 typed payload 保留已累计 Usage；
+- normal/aborted execution 的 Usage、Abort 和 Event correlation 行为保持不变。
 
 **删除条件：**
 
 - 删除 Subagent Host 对静态 LLM 默认值的复制；
 - 删除 Subagent 直接继承可变 Client 假设。
+- 删除无 Parent 的 public `RuntimeApp.runSubagentTurn()`、synthetic Parent semantics 和 `library` trigger；
+- 删除 legacy Child resolver、旧 Subagent host/request public exports 和 Task Tool 对 concrete SubagentRunner 的依赖；
+- CODE-M09 完整退出且新 Child path 不依赖 Compatibility。
+- Child terminal failure 使用 phase-discriminated Contract；execution failure 不丢失已累计 Usage。
+
+**Delivery authorization（2026-09-04）：** 项目所有者已单独批准严格按 Accepted Spec 实施 Slice 2。Subagent 必须有真实 Parent Turn；删除无 Parent 的 public `RuntimeApp.runSubagentTurn()`，不保留 Compatibility。Profile 必须显式选择 native Model Reference 或 `inherit`；Child capability requirements 从 actual request 派生。不授权提交、推送或 Slice 3–6。
+
+**Delivery evidence（2026-09-04）：** Runtime-owned delegation Port now validates a real active Parent and resolves a fresh inherited or concrete Child binding from actual request requirements. Parentless/synthetic and legacy Child paths are deleted；typed terminal failure preserves accumulated execution Usage and acquired-resource cleanup. Focused Unit/Contract/Runtime integration, FT-01/03/04/08/09, deterministic CODE-M09 audit, lint, full Vitest (76 files, 675 tests), build, and diff hygiene passed. Independent implementation review has no remaining Critical/High/Medium implementation blocker after inventory closeout. 项目所有者接受验证结果并确认 Slice 2 完成；commit、push 和 Slice 3–6 仍未授权。
 
 ### Slice 3：Tool 与 Hook Module
 
@@ -808,4 +823,5 @@ Foundation（M0–M3）以 **两周完成为目标、四周为硬上限**。第�
 
 1. AF-05 已完成：`Provisional Pass` Results 获项目所有者接受，disposable fixture cleanup、状态同步和 AF-05 evidence item 均已完成；
 2. AF-06 已完成：`Provisional Pass` Results 获项目所有者接受，disposable fixture cleanup、cleanup validation、状态同步和 AF-06 evidence items 均已完成；
-3. AF-07、独立 Legacy migration inventory 与 Slice 1 Definition of Ready 均已于 2026-09-04 完成并获项目所有者接受，Foundation Gate 已通过；项目所有者已于同日单独批准 Slice 1 进入 Delivery。当前只执行 Slice 1，不授权 Slice 2–6、提交或推送。
+3. AF-07、独立 Legacy migration inventory 与 Foundation Gate 已于 2026-09-04 完成；Slice 1 已完成 Delivery、验证和项目所有者确认；
+4. Slice 2 Module Spec、Delivery、验证和项目所有者确认已于 2026-09-04 完成；提交、推送和 Slice 3–6 均未授权。下一步是在获得单独授权后提交 Slice 2 checkpoint，或另行启动 Slice 3 Spec planning。

@@ -6,6 +6,8 @@ Status: **IMPLEMENTED** — verified against runtime, runner, LLM, channel, suba
 
 > **Authority note (2026-09-01):** 本文继续描述已实现的当前 Abort 基线。[Accepted ADR-001](adr-001-tool-result-closure-and-recovery.md) 已替代 §7.2 中“受控 Abort 故意不闭合完整 Tool Use”及 §7.3 将其纳入通用未知来源 repair 的目标决定；D6 与 crash/未知故障的 §7.3 repair 保留。独立 Module Spec 和生产 Slice 完成前，不得把新的 closure 语义写成 Current Fact，也不得据此跳过现有 repair。
 
+> **Slice 2 supersession note (2026-09-04):** 本文的 Root Abort、Runner、Channel 和 tree-signal semantics 继续有效；无 Parent library Subagent API、synthetic trigger/session、concrete Child Runner 和旧 request/result Contract 已由 [Subagent Model Resolution Module Spec](subagent-model-resolution-module-spec.md) 替代并删除。§8.4、§9、§10、§14 和 §16 的 Child 路径按该 current Contract 修正；其他历史实现细节不重新解释为 current Subagent API。
+
 ## 0. What happens when I press Ctrl+C
 
 在长任务跑到一半（大量 tool 调用 / 卡 LLM 请求 / subagent 嵌套）时按下 Ctrl+C，会发生：
@@ -71,7 +73,7 @@ WebSocket 客户端与 library 调用方走的是相同链路，只是触发源�
 - CLI: `Ctrl+C` → abort 当前 turn
 - WebSocket: 客户端发 `abort_turn` 消息
 - Library: `app.abortTurn(sessionKey)` 公共 API
-- 不影响：session 队列里其他消息、其他 session 的并行 turn、`runSubagentTurn` 库 API（也能 abort）
+- 不影响：session 队列里其他消息和其他 session 的并行 turn；活动 Parent 的 tree signal 会级联到 blocking Child
 
 ## 2. Non-Goals (v1)
 
@@ -88,8 +90,8 @@ WebSocket 客户端与 library 调用方走的是相同链路，只是触发源�
 ## 4. Goals
 
 - 用户 Ctrl+C 后 abort 信号**同步** flip 到 `params.signal`（微秒级，纯内存操作）；LLM streaming 与正在跑的 exec 进程随后被打断——**实际停止延迟取决于外部组件**：SDK 内部读循环响应 signal 的粒度、Node event loop 拥塞、`child_process.kill` 的 OS 语义、第三方工具是否合作。**v1 不承诺硬性墙钟 SLA**；正常网络与轻负载下经验值 <1s，但不做保证。
-- abort 永远不抛错给调用方：`runTurn` 返回 `RunTurnResult.stopReason='aborted'`，`runSubagentTurn` 返回 `SubagentRunResult.outcome='aborted'`
-- abort 自动级联到当前 turn 直系子 subagent，**无需 SubagentRunner 写显式 cascade 代码**（靠 AbortSignal 透传实现）
+- abort 永远不抛错给 Root caller：`runTurn` 返回 `RunTurnResult.stopReason='aborted'`；Child terminal result 使用 `outcome='aborted'`
+- abort 自动级联到当前 turn 的 blocking Child，**无需显式 child traversal**（靠同一 Parent tree `AbortSignal` 透传实现）
 - abort 后 session 状态干净：可以立即起新 turn，不会因孤儿 tool_use / stale controller 等问题崩
 - 与现有 ContextOverflowError / max_llm_calls 路径正交：互不干扰
 
@@ -119,8 +121,8 @@ WebSocket 客户端与 library 调用方走的是相同链路，只是触发源�
    → emit run_end
         │
         ▼
-  cascade: ctx.signal → task tool → SubagentRunner.run(req.signal)
-                                  → child AgentRunner.run({signal: req.signal})
+  cascade: ctx.signal → task tool → Runtime-owned delegation Port
+                                  → Child executor → AgentRunner.run({signal})
    子 chatStream / 子 ToolContext 同样响应 → 子 outcome='aborted'
    子 task ToolResult: 'Subagent was aborted before completing.'
    父继续 catch AbortError 流程（已在 abort 路径，不会再被消费）
@@ -134,7 +136,7 @@ cascade 完全靠 signal 引用透传实现，**任何中间层都不需要"我�
 RuntimeApp.activeAborts.get(sk).signal
   → RunParams.signal (parent)
     → ToolContext.signal (parent task tool 调用时)
-      → SubagentRunRequest.signal
+      → SubagentDelegationRequest.signal
         → RunParams.signal (child)
           → ToolContext.signal (child 内部工具调用)
 ```
@@ -206,7 +208,7 @@ export interface ChatParams {
 
 ### 6.4 `core/subagent/types.ts`
 
-`SubagentRunInput.signal?` 与 `SubagentRunRequest.signal?` 均已存在（前者为库 API / task tool 入口，后者为 `SubagentRunner.run(...)` 内部请求）——删除两处的 “v1 未消费 / Reserved” 注释，注明语义。
+`SubagentDelegationRequest.signal` 是 required internal tree signal；Task Tool 从当前 `ToolContext.signal` 提供，Runtime 与活动 Parent record 原子核对后交给 Child execution。
 
 ### 6.5 `core/session/types.ts` + `SessionManager`
 
@@ -867,24 +869,9 @@ private safeEmit(event: RuntimeEvent): void {
 > 可省略不 emit（无 audit 价值）。pending steering 丢弃信息在 log
 > 里可 grep，不进该 event。
 
-### 8.4 `runSubagentTurn` signal
+### 8.4 Child tree signal
 
-库 API 不需要加 options 参数——`SubagentRunInput.signal?` 已存在（§6.4）。
-caller 直接通过 input 传：
-
-```typescript
-await app.runSubagentTurn({
-  subagentType: 'general-purpose',
-  description: 'demo',
-  prompt: 'hello',
-  trigger: { source: 'library', callerLabel: 'demo' },
-  lifecycle: 'blocking',
-  signal: myController.signal,   // ← 直接放这里
-});
-```
-
-`RuntimeApp.runSubagentTurn(input)` 签名保持单参数不变。`runSubagentTurnImpl` 透传
-`input.signal` 给 `SubagentRunner.run(req.signal=input.signal)`，再透给子 `RunParams.signal`（§9）。
+Child 只能由真实活动 Parent 的 `task` Tool 创建。Task Tool 必须把当前 `ToolContext.signal` 放入 required `SubagentDelegationRequest.signal`；Runtime 验证它与 active Parent record 持有的是同一 signal 后，交给 Child executor 和 Child `RunParams.signal`。不存在无 Parent 的 Child Abort controller 或 library Subagent signal input。
 
 ### 8.5 shutdown 路径（D4 决策）
 
@@ -963,35 +950,13 @@ telemetry 场景应订阅 event 而非依赖 Report；(c) 保持 Report 结构�
 过早定型。若未来 (turn timeout 上线、批量 shutdown audit 需求出现) 需要精细区分，
 再按需扩字段——届时不构成破坏性变更。
 
-## 9. SubagentRunner 改造
+## 9. Runtime-owned Child delegation
 
-`SubagentRunRequest.signal` 已有。SubagentRunner.run 把它当作 `RunParams.signal` 透给子 AgentRunner.run 即可（一行）：
-
-```typescript
-const runParams: RunParams = {
-  sessionKey: childSessionKey,
-  // ...existing...
-  signal: req.signal,  // ← 新增
-};
-```
-
-AbortError 不会从子 AgentRunner.run 抛出 —— 它走的是 §7.1 的 catch → 返回 `RunResult.stopReason='aborted'`。所以 SubagentRunner.run 现有 try-catch **不变**，只要改 outcome mapping：
-
-```typescript
-// 现有：
-const outcome: SubagentRunResult['outcome'] =
-  runResult.stopReason === 'max_llm_calls' ? 'max_llm_calls' : 'ok';
-// 改为：
-const outcome: SubagentRunResult['outcome'] =
-  runResult.stopReason === 'aborted' ? 'aborted' :
-  runResult.stopReason === 'max_llm_calls' ? 'max_llm_calls' : 'ok';
-```
-
-原有 catch 块（捕获未预期 err 转 'error' outcome）逻辑保持，不需要为 abort 单独加分支 — abort 走的是 happy path 的 result mapping。
+Runtime-owned delegation validates the active Parent before allocating Child identity. Accepted Child setup、resolution and execution all observe the Parent tree signal. AgentRunner returns `stopReason='aborted'`; orchestration maps it to the single Child terminal result/event with `outcome='aborted'`, then releases only acquired route/session resources. Abort before Parent validation creates no Child start/end events。
 
 ## 10. task tool 改造
 
-只一行：`ctx.signal` 透给 SubagentRunner — 已经在 [task-tool.ts](my-agent/src/core/tools/builtin/task/task-tool.ts) 里写了：
+Task Tool requires `ctx.signal` and forwards it to the Runtime-owned delegation Port；see [task-tool.ts](../../src/core/tools/builtin/task/task-tool.ts)：
 
 ```typescript
 signal: ctx.signal,  // 已存在；之前 ctx.signal === undefined
@@ -1230,8 +1195,8 @@ WebSocketChannel 实现 `bindAbortHooks?` — 与 CliChannel 共用 §12 的 `Ab
   - **【usage 累计】** abort 前跑过 3 轮 tool call，每轮 mock usage `{in:100,out:50}`；abort 命中 partial stream 分支 → 返回 `RunResult.usage = {in:300,out:150}` + `toolRounds:3`（非 0/0）
   - **【partial tool_use 完整性】** stream 到 tool_use.input 半截时 abort → session 里 assistant 消息**不含**残缺 tool_use block（只含完整的 text + 完整的 tool_use）
   - **【isAbortError fallback + 诊断 log】** SDK 抛 `Error` 名字为 `"NetworkError"` 但 `params.signal.aborted === true` → runAttempt 走 abort 分支 **且** `log.warn('non-abort error swallowed by abort fallback', ...)` 被调用（断言 errName === 'NetworkError'）；对照组：`err.name === 'AbortError'` 时不应调用该 warn log
-- SubagentRunner.test.ts:
-  - parent signal abort → child outcome='aborted'，runner 不抛
+- subagent-orchestration.test.ts:
+  - Parent signal abort before acceptance → no Child lifecycle；accepted Child setup abort → one aborted terminal event + acquired-resource cleanup
 - RuntimeApp.test.ts:
   - `abortTurn(sk)` 返回 `{ aborted, dropped }` 4 组组合语义（见下面各 case）
   - **stale controller 防御**：手动 pre-set stale entry 到 activeAborts → 启新 turn → 旧 entry 被清 + emit warn log。（正常流 finally 保证 cleanup，本测试仅验证防御代码行为，未来若删除防御代码本测试也可一并删除。）
@@ -1280,11 +1245,11 @@ WebSocketChannel 实现 `bindAbortHooks?` — 与 CliChannel 共用 §12 的 `Ab
 | PR | 触碰文件 | 测试增加 | 依赖 |
 |---|---|---|---|
 | **abort-session-types** | `core/session/types.ts`（MessageRecord.message + abortMeta）<br>`core/session/SessionManager.ts`（appendMessage 签名） | `SessionManager.test.ts`（+2 cases：写 / 读 abortMeta round-trip） | 无 |
-| **abort-types** | `core/runner/types.ts`（RunParams.signal）<br>`core/tools/types.ts`（ToolContext.signal 注释）<br>`core/subagent/types.ts`（SubagentRunRequest.signal 注释）<br>`adapters/llm/types.ts`（ChatParams.signal） | 无（纯类型） | abort-session-types |
+| **abort-types** | `core/runner/types.ts`（RunParams.signal）<br>`core/tools/types.ts`（ToolContext.signal 注释）<br>`core/subagent/types.ts`（required delegation signal）<br>`adapters/llm/types.ts`（ChatParams.signal） | 无（纯类型） | abort-session-types |
 | **abort-runner** | `core/runner/AgentRunner.ts`（`isAbortError` / `isAbortByName` / `logIfSwallowedByAbortFallback` / `buildAbortedResult` / `repairOrphanToolUses`（turn 起点，与 `sanitizeSessionTail` 平级）/ 循环间 abort check / ToolContext.signal 注入 / runAttempt 内层 try-catch 处理 abort / partial assistant 写入 session 携 abortMeta）<br>`core/runner/types.ts`（RunEvent 加 `orphan_tool_results_repaired`） | `AgentRunner.test.ts`（+11 cases 见 §14.1）| abort-types 且 abort-session-types |
 | **abort-llm** | `adapters/llm/AnthropicClient.ts`（chatStream signal 透传，无错误处理改动）| `AnthropicClient.test.ts`（+1 case：signal 已 abort 立即抛 AbortError）| abort-types |
 | **abort-runtime** | `runtime/RuntimeApp.ts`（activeAborts + abortTurn + runTurnInternal 注入 + shutdown abort-then-wait + registerChannel 加 bindAbortHooks 调用）<br>`runtime/types.ts`（RuntimeEvent 加 messages_dropped） | `RuntimeApp.test.ts`（+10 cases 见 §14.1）| abort-runner |
-| **abort-subagent** | `core/subagent/SubagentRunner.ts`（RunParams.signal 透传 + outcome mapping 加 'aborted'）<br>`core/tools/builtin/task/task-tool.ts`（无改动，`signal: ctx.signal` 已存在）| `SubagentRunner.test.ts`（+1 case：parent signal abort → child outcome='aborted'） | abort-runner |
+| **abort-subagent** | `runtime/subagent-orchestration.ts`（active Parent signal validation、Child RunParams signal、aborted terminal mapping）<br>`core/tools/builtin/task/task-tool.ts`（required Parent signal forwarding） | `runtime/subagent-orchestration.test.ts`（pre-acceptance and accepted-Child abort cases） | abort-runner |
 | **abort-cli** | `adapters/channel/CliChannel.ts`（SIGINT handler + removeAllListeners + double Ctrl+C + `stop()` 里 removeListener + AbortHookBindings + bindAbortHooks）<br>`adapters/channel/types.ts`（Channel 接口加 optional bindAbortHooks + AbortHookBindings 类型） | `CliChannel.test.ts` **新建**（+4 cases 见 §14.1） | abort-runtime |
 | **abort-ws** | `adapters/channel/WebSocketChannel.ts`（inbound `abort_turn` case + bindAbortHooks 复用 §12 接口）<br>**`clients/html/chat.html`**（Stop 按钮 + `abort_turn` 发送 + `run_end{aborted}` 特化渲染，§13.1） | `WebSocketChannel.test.ts`（+2 cases：inbound abort_turn 触发 abortHooks.abortTurn / stopReason='aborted' event 被 fanout 至 WS subscriber）| abort-runtime |
 | **abort-e2e** | `scripts/test-abort-e2e.ts` **新建**（mock LLM 模拟长 turn + 触发 abort，断言 stopReason / usage / session partial write / orphan 补齐 4 组场景）<br>`scripts/test-abort-live.ts` **新建**（真 LLM，模拟按 Ctrl+C 1s 后看到 aborted） | E2E script 自带断言 | 全部之后 |

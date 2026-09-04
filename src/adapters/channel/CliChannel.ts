@@ -211,10 +211,10 @@ export class CliChannel implements Channel {
       case 'subagent_end': {
         this.breakStream();
         const colorize = event.outcome === 'ok' ? cyan : red;
-        const reasonSuffix = event.reason ? ` reason="${event.reason}"` : '';
+        const failureSuffix = event.failure ? ` reason="${event.failure.message}"` : '';
         this.output.write(
           colorize(
-            `[◀ subagent: ${event.subagentType} outcome=${event.outcome} ${event.durationMs}ms${reasonSuffix}]\n`,
+            `[◀ subagent: ${event.subagentType} outcome=${event.outcome} ${event.durationMs}ms${failureSuffix}]\n`,
           ),
         );
         break;

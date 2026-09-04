@@ -10,6 +10,7 @@ function entry(overrides: Partial<SubagentConfigEntry>): SubagentConfigEntry {
   return {
     id: 'reviewer',
     description: 'reviews code',
+    model: 'inherit',
     ...overrides,
   };
 }
@@ -172,7 +173,7 @@ describe('loadSubagentProfiles — projection', () => {
       [
         entry({
           id: 'reviewer',
-          model: 'gpt-5',
+          model: { providerId: 'openai', modelId: 'gpt-5' },
           maxLlmCalls: 8,
           tools: { allow: ['read_file'], deny: ['exec'] },
         }),
@@ -180,7 +181,7 @@ describe('loadSubagentProfiles — projection', () => {
       WS,
       REGISTERED,
     );
-    expect(profiles[0]!.model).toBe('gpt-5');
+    expect(profiles[0]!.model).toEqual({ providerId: 'openai', modelId: 'gpt-5' });
     expect(profiles[0]!.maxLlmCalls).toBe(8);
     expect(profiles[0]!.tools).toEqual({ allow: ['read_file'], deny: ['exec'] });
   });
@@ -207,9 +208,9 @@ describe('buildGeneralPurposeProfile', () => {
     expect(profile.id).toBe('general-purpose');
   });
 
-  it('leaves model / tools / maxLlmCalls unset for full parent inheritance', () => {
+  it('explicitly inherits the Parent model while leaving other settings unset', () => {
     const profile = buildGeneralPurposeProfile('/work/space');
-    expect(profile.model).toBeUndefined();
+    expect(profile.model).toBe('inherit');
     expect(profile.tools).toBeUndefined();
     expect(profile.maxLlmCalls).toBeUndefined();
   });
@@ -224,5 +225,33 @@ describe('buildGeneralPurposeProfile', () => {
   it('has a non-empty description', () => {
     const profile = buildGeneralPurposeProfile('/work/space');
     expect(profile.description.length).toBeGreaterThan(0);
+  });
+});
+
+describe('loadSubagentProfiles — model selection', () => {
+  it('rejects omitted and legacy raw-string model values', () => {
+    expect(() => loadSubagentProfiles([
+      { id: 'missing', description: 'missing model' } as SubagentConfigEntry,
+    ], WS, REGISTERED)).toThrow(/model must/i);
+    expect(() => loadSubagentProfiles([
+      { id: 'legacy', description: 'legacy model', model: 'gpt-5' } as unknown as SubagentConfigEntry,
+    ], WS, REGISTERED)).toThrow(/model must/i);
+  });
+
+  it('accepts inherit and trims a native Model Reference', () => {
+    expect(loadSubagentProfiles([entry({ model: 'inherit' })], WS, REGISTERED)[0]!.model)
+      .toBe('inherit');
+    expect(loadSubagentProfiles([entry({
+      model: { providerId: ' provider ', modelId: ' model ' },
+    })], WS, REGISTERED)[0]!.model).toEqual({ providerId: 'provider', modelId: 'model' });
+  });
+
+  it('rejects blank and unknown native Model Reference fields', () => {
+    expect(() => loadSubagentProfiles([entry({
+      model: { modelId: ' ' },
+    })], WS, REGISTERED)).toThrow(/modelId must be nonblank/i);
+    expect(() => loadSubagentProfiles([entry({
+      model: { modelId: 'model', extra: true } as never,
+    })], WS, REGISTERED)).toThrow(/unknown field/i);
   });
 });

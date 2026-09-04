@@ -1,12 +1,9 @@
 /**
  * Live subagent demo against a real LLM proxy (Claude via http://localhost:5000).
  *
- * Unlike scripts/test-subagent-e2e.ts (which uses a mock LLM and runs in CI),
- * this script talks to a real model. It does two things:
- *
- *   1. Library API: spawn a subagent via `app.runSubagentTurn(...)` with a
- *      tiny prompt and print the answer plus subagent_* event timing.
- *   2. LLM tool path: send a user message asking the parent to delegate to
+ * Unlike scripts/test-subagent-e2e.ts (which uses a mock LLM), this script
+ * talks to a real model through the real Parent task path: send a user message
+ * asking the parent to delegate to
  *      the `task` tool; the parent's LLM picks `general-purpose`, the
  *      subagent answers, the parent wraps the response.
  *
@@ -98,7 +95,7 @@ function trackerFor(): { onEvent: (e: AgentEvent) => void; events: AgentEvent[] 
         case 'subagent_end':
           console.log(
             cyan(
-              `  [◀ subagent end]   outcome=${e.outcome} usage=${JSON.stringify(e.usage)} duration=${e.durationMs}ms${e.reason ? ` reason="${e.reason}"` : ''}`,
+              `  [◀ subagent end]   outcome=${e.outcome} usage=${JSON.stringify(e.usage)} duration=${e.durationMs}ms${e.failure ? ` failure="${e.failure.message}"` : ''}`,
             ),
           );
           break;
@@ -120,46 +117,11 @@ function trackerFor(): { onEvent: (e: AgentEvent) => void; events: AgentEvent[] 
   };
 }
 
-// ── Scenario 1: library API ────────────────────────────────
-
-async function scenarioLibrary(): Promise<void> {
-  console.log(`\n${'-'.repeat(72)}`);
-  console.log(bold('Scenario 1: library API — app.runSubagentTurn(...)'));
-  console.log('-'.repeat(72));
-
-  await withWorkspace(async (workspaceDir) => {
-    await setupWorkspace(workspaceDir);
-    const { onEvent, events } = trackerFor();
-    const app = await RuntimeApp.create({ workspaceDir, onAgentEvent: onEvent });
-
-    try {
-      const t0 = Date.now();
-      const result = await app.runSubagentTurn({
-        subagentType: 'general-purpose',
-        description: 'greeting demo',
-        prompt: 'Please respond with exactly one short sentence: hello from a subagent.',
-        trigger: { source: 'library', callerLabel: 'live-demo' },
-        lifecycle: 'blocking',
-      });
-      const wallMs = Date.now() - t0;
-
-      console.log(`\n  ${bold('result.outcome   ')} ${result.outcome}`);
-      console.log(`  ${bold('result.text      ')} ${JSON.stringify(result.text)}`);
-      console.log(`  ${bold('result.sessionKey')} ${result.sessionKey}`);
-      console.log(`  ${bold('result.usage     ')} ${JSON.stringify(result.usage)}`);
-      console.log(`  ${bold('wall time        ')} ${wallMs}ms (durationMs=${result.durationMs}ms)`);
-      console.log(`  ${bold('event types      ')} ${events.map((e) => e.type).join(' → ')}`);
-    } finally {
-      await app.close('demo done').catch(() => undefined);
-    }
-  });
-}
-
-// ── Scenario 2: LLM tool path ──────────────────────────────
+// ── Real Parent task path ──────────────────────────────────
 
 async function scenarioTaskTool(): Promise<void> {
   console.log(`\n${'-'.repeat(72)}`);
-  console.log(bold('Scenario 2: LLM tool path — parent → task → subagent → final answer'));
+  console.log(bold('Parent task path — parent → task → subagent → final answer'));
   console.log('-'.repeat(72));
 
   await withWorkspace(async (workspaceDir) => {
@@ -217,7 +179,6 @@ async function main(): Promise<void> {
   console.log(`  model     = ${MODEL}`);
 
   try {
-    await scenarioLibrary();
     await scenarioTaskTool();
   } catch (err) {
     console.error('\nunhandled error:', err);
