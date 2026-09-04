@@ -25,18 +25,12 @@ describe('FT-03 Runner input boundary', () => {
     const productionSources = await loadProductionSources(REPOSITORY_ROOT);
 
     expect(findFt03RunnerBoundaryViolations(productionSources)).toEqual([
-      'FT-03 source=src/core/runner/AgentRunner.ts symbol=ChatContentBlock,ChatMessage,LLMClient,TokenUsage violation=provider-adapter-import',
       'FT-03 source=src/core/runner/AgentRunner.ts symbol=CompactionConfig violation=config-import',
       'FT-03 source=src/core/runner/AgentRunner.ts symbol=Logger violation=global-service-import',
-      'FT-03 source=src/core/runner/context/compaction.ts symbol=ChatMessage,LLMClient violation=provider-adapter-import',
       'FT-03 source=src/core/runner/context/compaction.ts symbol=CompactionConfig violation=config-import',
-      'FT-03 source=src/core/runner/context/context-budget.ts symbol=ChatContentBlock,ChatMessage violation=provider-adapter-import',
       'FT-03 source=src/core/runner/context/context-budget.ts symbol=CompactionConfig violation=config-import',
-      'FT-03 source=src/core/runner/context/token-estimation.ts symbol=ChatContentBlock,ChatMessage violation=provider-adapter-import',
-      'FT-03 source=src/core/runner/context/tool-result-pruning.ts symbol=ChatContentBlock,ChatMessage violation=provider-adapter-import',
       'FT-03 source=src/core/runner/context/tool-result-pruning.ts symbol=CompactionConfig violation=config-import',
       'FT-03 source=src/core/runner/hooks/runner.ts symbol=Logger violation=global-service-import',
-      'FT-03 source=src/core/runner/types.ts symbol=ChatContentBlock,ChatMessage,LLMClient,TokenUsage violation=provider-adapter-import',
       'FT-03 source=src/core/runner/types.ts symbol=CompactionConfig violation=config-import',
     ]);
   });

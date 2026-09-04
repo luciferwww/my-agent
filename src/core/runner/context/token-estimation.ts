@@ -7,7 +7,7 @@
  * 参考 OpenClaw compaction.ts 中的 estimateTokens / SAFETY_MARGIN 设计。
  */
 
-import type { ChatMessage, ChatContentBlock } from '../../../adapters/llm/types.js';
+import type { ChatMessage, ChatContentBlock } from '../../model-invocation/index.js';
 
 // ── 常量 ────────────────────────────────────────────────────
 

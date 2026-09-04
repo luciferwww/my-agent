@@ -1,4 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
+import {
+  ContextOverflowError,
+  ModelInvocationError,
+} from '../../core/model-invocation/index.js';
 import type {
   LLMClient,
   ChatParams,
@@ -126,7 +130,11 @@ export class AnthropicClient implements LLMClient {
         },
       };
     } catch (err) {
-      yield { type: 'error', error: err instanceof Error ? err : new Error(String(err)) };
+      const error = err instanceof Error ? err : new Error(String(err));
+      yield {
+        type: 'error',
+        error: normalizeProviderError(error),
+      };
     }
   }
 
@@ -180,6 +188,42 @@ export class AnthropicClient implements LLMClient {
 
     return { content: contentBlocks, stopReason, usage };
   }
+}
+
+function normalizeProviderError(error: Error): Error {
+  if (error.name === 'AbortError') {
+    return error;
+  }
+  if (isProviderContextOverflow(error)) {
+    return new ContextOverflowError('Provider reported a context overflow.');
+  }
+
+  const status = 'status' in error && typeof error.status === 'number'
+    ? error.status
+    : undefined;
+  if (status === 401 || status === 403) {
+    return new ModelInvocationError('authentication');
+  }
+  if (status === 429) {
+    return new ModelInvocationError('rate_limit');
+  }
+  if (status === 400 || status === 404 || status === 409 || status === 422) {
+    return new ModelInvocationError('invalid_request');
+  }
+  if (status !== undefined && status >= 500) {
+    return new ModelInvocationError('unavailable');
+  }
+  return new ModelInvocationError(status === undefined ? 'transport' : 'provider_failure');
+}
+
+function isProviderContextOverflow(error: Error): boolean {
+  const message = error.message.toLowerCase();
+  return (
+    message.includes('request_too_large')
+    || message.includes('context_length_exceeded')
+    || message.includes('prompt is too long')
+    || message.includes('maximum context length')
+  );
 }
 
 // ── 内部转换函数 ────────────────────────────────────────────

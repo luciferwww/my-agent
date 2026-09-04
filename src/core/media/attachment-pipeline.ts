@@ -9,7 +9,7 @@
  * 决策 8：失败即丢弃 + 由调用方装配文本占位。
  */
 
-import type { ChatContentBlock } from '../../adapters/llm/types.js';
+import type { ChatContentBlock } from '../model-invocation/index.js';
 import type { InboundContentBlock } from '../../adapters/channel/types.js';
 import {
   SUPPORTED_IMAGE_MIME,

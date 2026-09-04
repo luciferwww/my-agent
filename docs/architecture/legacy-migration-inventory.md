@@ -9,7 +9,7 @@
 - **关联计划 / ADR：** [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) Foundation Gate、[ADR-003](adr-003-progressive-architecture-migration.md)、[ADR-006](adr-006-legacy-and-compatibility-exit.md)
 - **权威输入：** [Development Workflow](../development-workflow.md)、[Target Architecture](target-architecture.md)、[Domain Glossary](domain-glossary.md)
 
-本 Inventory 遵循 [Architecture Foundation Plan §7.4](../roadmap/architecture-foundation-plan.md#74-当前架构重构文档的语言与术语约定)。项目所有者于 2026-09-04 接受本 Inventory 的范围、分类、Owner、目标 Slice、退出条件和验证责任；该接受不授权 production 修改、批量移动或删除文档、Compatibility 实施或 Architecture Slice Delivery。
+本 Inventory 遵循 [Architecture Foundation Plan §7.4](../roadmap/architecture-foundation-plan.md#74-当前架构重构文档的语言与术语约定)。项目所有者于 2026-09-04 接受本 Inventory 的范围、分类、Owner、目标 Slice、退出条件和验证责任；该次 Inventory 接受本身不授权 production 修改、批量移动或删除文档、Compatibility 实施或 Architecture Slice Delivery。项目所有者随后另行批准 Slice 1 进入 Delivery。
 
 ## 1. 目的与接受边界
 
@@ -178,6 +178,24 @@ DOC-V01–V12 的 Owner 为项目所有者至 Slice 6 Owner 接手，target Revi
 |---|---|---|
 | FLAG-001 | `No Entry at Baseline`：在 `src/**`、`scripts/**`、`clients/**` 未发现用于 architecture old/new path 路由的 migration Feature Flag；`subagents.enabled` 和 Tool helper `enabled` 是产品配置，不是迁移双路径开关 | 每个 Slice 开始时重新审计。若新增，必须先登记 Owner、默认值、观测信号、rollback trigger、目标删除 Slice、caller、tests；不得在一个 Turn 混合新旧事实 |
 
+### 6.2 Slice 1 Delivery disposition（2026-09-04）
+
+| Entry | Delivery disposition | Evidence / remaining exit |
+|---|---|---|
+| CODE-M01–M03 | Parent semantics `Migrated`；Config input Compatibility active | legacy fields 只经单向 Parent mapping 进入 Resolver；不再拥有 Resolved Model/Facts。`llmDefaults`/Child 部分移交 Slice 2；loader precedence 保留 |
+| CODE-M04 | `Migrated` | `createLLMClient()` 和 bootstrap direct `AnthropicClient` construction 已删除；bundled Provider entry + readonly projection 成为 Composition path |
+| CODE-M05 | `Migrated` | startup/resource `llmClient` authoritative slot 已删除；resource set 只持 Provider projection、Resolver 和 Parent resolver mapping |
+| CODE-M06 | `Migrated` | `RuntimeApp.requireModel()` 与 static fact assembly 已删除；direct/queued Parent caller 在 `runTurnInternal()` 使用同一 Resolver |
+| API-M01 | `Compatibility Candidate`，保留 | public/runtime `model`、`maxTokens` 继续单向映射；Owner/到期仍为 Slice 2 Review |
+| API-M02 | `Compatibility Candidate`，保留 | WebSocket optional fields 保持 wire compatibility；Owner/到期仍为 Slice 4 Review |
+| API-M03 | `Migrated` | Runner legacy client/raw fact input 已删除；`AgentRunnerConfig` 不持 client，`RunParams` 只接收 `ResolvedModel` |
+| CODE-M07 | `Migrated` | Runner-owned model/context/output facts defaults 已删除；执行限制来自 `ResolvedModel` |
+| API-M04 | Authority `Migrated`；deprecated facade 保留 | authoritative Port/error/event contracts 已迁入 Stable Core；adapter `types.ts` 仅 deprecated re-export，Slice 2 Review 前禁止新增 caller |
+| CODE-M08 | `Migrated` | Provider Adapter 归一化 overflow 和其他 Provider errors；Runner 不再解析 raw Provider error string |
+| CODE-M09 | `Compatibility Candidate`，active | 具名 one-way Child adapter 只映射 inputs 并调用同一 Resolver，不生成 Facts/binding；Owner 已移交 Slice 2，届时删除 |
+
+Slice 1 起始计数为 13 个受影响 entries（CODE-M01–M09、API-M01–M04）；Delivery 后 6 个 entry 完成迁移，7 个 partial/Compatibility entry 仍具有明确 Owner 与期限，因此 `Legacy_end = 7 < Legacy_start = 13`。未引入 architecture migration Feature Flag。验证证据为相关 Unit/Contract/Integration/Fitness、standalone Compaction 9/9、reload 5/5、`npm run lint`、`npm test`（75 files、708 tests）和 `npm run build` 全部通过；独立 implementation review 结论为 `Ready`，无 Critical/High/Medium blocker。
+
 ## 7. Slice 视图与净减少口径
 
 | Slice | 本 Inventory 的主要 entries | 最小退出结果 |
@@ -204,6 +222,7 @@ $$
 - [x] **INV-03 Slice 1 Compatibility：** API-M01–M04 与 CODE-M09 的 mapping、bounded repository caller、Owner、期限和删除条件已与 Accepted Slice 1 Module Spec 对齐；任何延期必须记录理由和新 Review date。
 - [x] 已完成独立 completeness/consistency review，Critical/High/Medium findings 已解决（2026-09-04）。
 - [x] 项目所有者确认本 Inventory 的范围、分类、Owner、目标 Slice、退出条件和验证责任，并将状态改为 `Accepted`（2026-09-04）。
+- [x] Slice 1 disposition、Legacy 净减少与验证证据已同步；项目所有者确认 Slice 1 完成（2026-09-04）。
 
 ## 9. 后续维护
 

@@ -2,15 +2,15 @@
 
 ## 状态
 
-- **状态：** Accepted
-- **版本：** 0.1
+- **状态：** Validated
+- **版本：** 0.2
 - **日期：** 2026-09-04
 - **所有者：** 项目所有者
 - **Plan Item：** [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) Slice 1
 - **关联 ADR：** [ADR-002](adr-002-context-budgeting-and-compaction-recovery.md)、[ADR-003](adr-003-progressive-architecture-migration.md)、[ADR-004](adr-004-provider-model-identity-and-facts-ownership.md)、[ADR-005](adr-005-extension-registry-runtime-composition.md)、[ADR-006](adr-006-legacy-and-compatibility-exit.md)
 - **证据输入：** [Target Architecture §5](target-architecture.md#5-provider-and-model-resolution)、[AF-05 Results](af-05-provider-model-resolution-spike-results.md)、[Legacy Migration Inventory](legacy-migration-inventory.md)
 
-本 Spec 遵循 [Development Workflow](../development-workflow.md) 和 [Architecture Foundation Plan §7.4](../roadmap/architecture-foundation-plan.md#74-当前架构重构文档的语言与术语约定)。项目所有者于 2026-09-04 接受本 Spec，并确认 MR-OD-01 的 Provider-owned deployment facts policy 与 MR-OD-02 的单向 Child Compatibility adapter；该接受不授权 production 修改或 Slice 1 Delivery。
+本 Spec 遵循 [Development Workflow](../development-workflow.md) 和 [Architecture Foundation Plan §7.4](../roadmap/architecture-foundation-plan.md#74-当前架构重构文档的语言与术语约定)。项目所有者于 2026-09-04 接受本 Spec，并确认 MR-OD-01 的 Provider-owned deployment facts policy 与 MR-OD-02 的单向 Child Compatibility adapter；该次 Spec 接受本身不授权 production 修改。项目所有者随后于同日单独批准 Slice 1 进入 Delivery。
 
 ## 1. 目的与用户可观察结果
 
@@ -47,15 +47,19 @@ Slice 1 不包含：
 - 冻结目录布局、最终 TypeScript public shape、Error/Event payload shape 或锁/队列 primitive；
 - 批量移动/删除 Legacy 文档或执行完整 Legacy closeout。
 
-## 4. Current baseline 与真实 caller
+## 4. Baseline、当前路径与真实 caller
 
-### 4.1 当前路径
+### 4.1 迁移前 baseline
 
-queued production path：
+Slice 1 Delivery 前的 queued production path：
 
 `WebSocketChannel.parseMessage()` → `handleRunTurn()` → `RuntimeApp.handleInboundChannelMessage()` → queue scheduler → `startQueuedTurn()` → `runTurn()` → `runTurnInternal()` → `requireModel()` / static fact assembly → `AgentRunner.run()` → startup-held `LLMClient` → `AnthropicClient.chatStream()`。
 
 direct library path 从 public `RuntimeApp.runTurn()` 进入，并在 `runTurnInternal()` 汇合。
+
+### 4.2 Slice 1 当前路径
+
+direct 与 queued Parent Turn 仍在 `RuntimeApp.runTurnInternal()` 汇合，但现在在进入 Runner 前只调用同一个 Parent Compatibility mapping 和 `ModelResolver.resolve()`。成功结果是 per-Turn immutable `ResolvedModel`；`AgentRunner.run()` 的 normal、Tool loop 与 Compaction retry 都只消费该对象及其 core-owned Invocation Port binding。startup 只提供 frozen Provider projection；`RuntimeApp.requireModel()`、startup `llmClient` slot、Runner raw static facts/defaults 和 Runner raw Provider error parsing 已删除。
 
 对应实现入口：
 
@@ -65,13 +69,13 @@ direct library path 从 public `RuntimeApp.runTurn()` 进入，并在 `runTurnIn
 - [Runner](../../src/core/runner/AgentRunner.ts)；
 - [AnthropicClient](../../src/adapters/llm/AnthropicClient.ts)。
 
-### 4.2 第一个真实迁移控制点
+### 4.3 第一个真实迁移控制点
 
 第一个真实 Parent Turn caller 是 `RuntimeApp.runTurnInternal()`。Model Resolution 在该控制点进入 Runner 前完成，因此 direct 与 queued caller 共用同一路径；不得在 CLI、WebSocket 或 script 中分别增加 Provider/Model 分支。
 
 识别 caller 和冻结迁移方式属于 Definition of Ready；实际迁移、验证和旧路径删除属于 Slice 1 Delivery/Definition of Done。
 
-### 4.3 迁移前保护线
+### 4.4 迁移前保护线
 
 当前行为由以下 evidence 保护：
 
@@ -426,4 +430,14 @@ DoR 达成只使 Slice 1 可以进入 Foundation Gate 复评；不自动授权 D
 
 ## 17. 后续状态
 
-本 Spec 与 Legacy Inventory 已完成独立 review、blocking finding 修正和项目所有者接受；Foundation Gate 已通过。下一步仍须项目所有者单独批准 Slice 1 进入 Delivery，当前不授权 production 修改。
+本 Spec 与 Legacy Inventory 已完成独立 design review、blocking finding 修正和项目所有者接受；Foundation Gate 已通过。项目所有者于 2026-09-04 单独批准 Slice 1 进入 Delivery，授权严格按本 Spec 修改 production、tests 与对应 architecture records；不授权 Slice 2 独立 Child resolution、其他 Architecture Slice、提交或推送。
+
+Slice 1 production、tests 和 architecture fitness 已实现，§11.5 删除条件均已满足或按 Inventory 降级为具名到期 Compatibility。最终 implementation review 结论为 `Ready`，无 Critical/High/Medium blocker；项目所有者于 2026-09-04 接受验证结果，本 Spec 状态进入 `Validated`。
+
+验证证据：
+
+- Model Resolution、Provider、Compatibility、Runner、Runtime direct/queued、WebSocket failure mapping 和 FT-01/03/04/08 的聚焦/契约/集成检查通过；
+- standalone Compaction integration 为 9/9，通过；Compaction reload integration 为 5/5，通过；
+- `npm run lint`、`npm test`（75 files、708 tests）和 `npm run build` 通过；
+- 未引入 migration Feature Flag；Slice 2 one-way Child Compatibility 仍按期移交 Slice 2；
+- 当前授权仍不包含 Slice 2–6、提交或推送。

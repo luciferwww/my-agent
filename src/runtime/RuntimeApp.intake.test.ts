@@ -630,8 +630,9 @@ async function buildApp(
   };
 
   const deps: Partial<RuntimeDependencies> = {
-    createLLMClient: () => options.useRealRunner
-      ? ({
+    createProviderProjection: () => {
+      const invocationPort = options.useRealRunner
+        ? ({
           async *chatStream() {
             yield { type: 'message_start' };
             yield { type: 'text_delta', text: 'ok' };
@@ -643,7 +644,28 @@ async function buildApp(
           },
           async chat() { throw new Error('Not used in tests'); },
         }) as never
-      : ({}) as never,
+        : ({}) as never;
+      return [{
+        id: 'test',
+        protocol: 'test',
+        invocationPort,
+        resolveConnection: () => ({ ok: true, connection: { endpointId: 'test' } }),
+        resolveModel: (modelId, connection) => ({
+          ok: true,
+          descriptor: {
+            identity: { providerId: 'test', modelId },
+            protocol: 'test',
+            connection,
+            facts: {
+              effectiveContextLimit: { value: 200_000, source: 'deployment-config' },
+              maximumOutputTokens: { value: 8192, source: 'deployment-config' },
+              toolUse: { value: true, source: 'deployment-config' },
+              mediaKinds: { value: ['image'], source: 'deployment-config' },
+            },
+          },
+        }),
+      }];
+    },
     ...(options.useRealRunner
       ? {}
       : {

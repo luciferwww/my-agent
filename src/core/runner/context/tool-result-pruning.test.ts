@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { ChatMessage } from '../../../adapters/llm/types.js';
+import type { ChatMessage } from '../../model-invocation/index.js';
 import { pruneToolResults, type PruneInfo } from './tool-result-pruning.js';
 
 /** 创建包含 tool_result 的 user 消息（Anthropic API 格式） */

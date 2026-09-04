@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { AnthropicClient } from './AnthropicClient.js';
 import type { ChatParams, StreamEvent, ChatContentBlock } from './types.js';
+import {
+  ContextOverflowError,
+  ModelInvocationError,
+} from '../../core/model-invocation/index.js';
 
 // 注意：这些测试使用 mock，不需要真实 API Key
 
@@ -276,6 +280,53 @@ describe('AnthropicClient', () => {
       expect(errorEvent).toBeDefined();
       const err = (errorEvent as Extract<StreamEvent, { type: 'error' }>).error;
       expect(err.name).toBe('AbortError');
+    });
+
+    it('normalizes Provider context overflow to the Core error type', async () => {
+      const client = new AnthropicClient({ apiKey: 'test-key' });
+      const sdkClient = (client as unknown as {
+        client: { messages: { stream: (...args: unknown[]) => unknown } };
+      }).client;
+      vi.spyOn(sdkClient.messages, 'stream').mockImplementation(() => {
+        throw new Error('request_too_large: prompt exceeds limit');
+      });
+
+      const events: StreamEvent[] = [];
+      for await (const event of client.chatStream({
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) {
+        events.push(event);
+      }
+
+      const errorEvent = events.find((event) => event.type === 'error');
+      expect(errorEvent?.type === 'error' ? errorEvent.error : undefined)
+        .toBeInstanceOf(ContextOverflowError);
+    });
+
+    it('normalizes other Provider SDK failures without exposing the raw error', async () => {
+      const client = new AnthropicClient({ apiKey: 'test-key' });
+      const sdkClient = (client as unknown as {
+        client: { messages: { stream: (...args: unknown[]) => unknown } };
+      }).client;
+      const providerError = Object.assign(new Error('secret provider response'), { status: 429 });
+      vi.spyOn(sdkClient.messages, 'stream').mockImplementation(() => {
+        throw providerError;
+      });
+
+      const events: StreamEvent[] = [];
+      for await (const event of client.chatStream({
+        model: 'claude-sonnet-5',
+        messages: [{ role: 'user', content: 'Hi' }],
+      })) {
+        events.push(event);
+      }
+
+      const errorEvent = events.find((event) => event.type === 'error');
+      const error = errorEvent?.type === 'error' ? errorEvent.error : undefined;
+      expect(error).toBeInstanceOf(ModelInvocationError);
+      expect((error as ModelInvocationError).category).toBe('rate_limit');
+      expect(error?.message).not.toContain('secret provider response');
     });
   });
 });

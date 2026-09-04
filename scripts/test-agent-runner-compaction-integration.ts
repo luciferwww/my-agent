@@ -27,6 +27,8 @@ import process from 'node:process';
 
 import { AgentRunner } from '../src/core/runner/index.js';
 import { ContextOverflowError } from '../src/core/runner/errors.js';
+import type { ModelInvocationPort } from '../src/core/model-invocation/index.js';
+import type { ResolvedModel } from '../src/core/model-resolution/index.js';
 import { SessionManager } from '../src/core/session/index.js';
 import type { StreamEvent } from '../src/adapters/llm/types.js';
 import type { CompactionConfig } from '../src/platform/config/types.js';
@@ -91,9 +93,30 @@ function summaryResponse(summary: string): StreamEvent[] {
   ];
 }
 
-/** 触发 isContextOverflowError 匹配的 API 错误 */
+/** 模拟 Provider Adapter 已归一化的 API overflow。 */
 function contextOverflowError(): Error {
-  return new Error('request_too_large: prompt exceeds context limit');
+  return new ContextOverflowError('Provider context overflow: prompt exceeds context limit');
+}
+
+function resolvedModel(
+  invocationPort: ModelInvocationPort,
+  contextWindowTokens = 200_000,
+): ResolvedModel {
+  return {
+    identity: { providerId: 'test', modelId: 'test' },
+    referenceSource: 'native',
+    protocol: 'test',
+    endpointId: 'test',
+    invocationPort,
+    facts: {
+      effectiveContextLimit: {
+        value: contextWindowTokens,
+        source: 'deployment-config',
+      },
+      maximumOutputTokens: { value: 4096, source: 'deployment-config' },
+    },
+    limits: { maxTokens: 4096, maxTokensSource: 'policy-default' },
+  };
 }
 
 // ── 测试辅助 ─────────────────────────────────────────────────────
@@ -111,7 +134,7 @@ const BASE_COMPACTION: CompactionConfig = {
 
 /** 触发 preemptive compact 的参数（极小上下文窗口 + 大量历史消息） */
 const PREEMPTIVE_COMPACTION: CompactionConfig = { ...BASE_COMPACTION, reserveTokens: 200 };
-const SMALL_CONTEXT_WINDOW = 300; // available = 300 - 200 = 100 tokens
+const SMALL_CONTEXT_WINDOW = 500; // available = 500 - 200 = 300 tokens
 
 /** 向 session 预填 N 轮 user/assistant 消息 */
 async function prefillHistory(manager: SessionManager, turns: number): Promise<void> {
@@ -170,12 +193,12 @@ try {
       textResponse('Retry succeeded after compaction.'),
     ]);
 
-    const runner = new AgentRunner({ llmClient, sessionManager: manager });
+    const runner = new AgentRunner({ sessionManager: manager });
     const result = await runner.run({
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'New question',
-      model: 'test',
+      resolvedModel: resolvedModel(llmClient),
       systemPrompt: '',
       compaction: BASE_COMPACTION,
     });
@@ -188,7 +211,8 @@ try {
   await runStep('Path 1b: CompactionRecord persisted with correct fields', async () => {
     const manager = new SessionManager(workspaceDir + '/p1b');
     await manager.createSession('main');
-    await prefillHistory(manager, 2);
+    // Use enough short history for the generated summary to be measurably smaller.
+    await prefillHistory(manager, 10);
 
     const llmClient = createSequentialMockLLM([
       contextOverflowError(),
@@ -196,12 +220,12 @@ try {
       textResponse('Done.'),
     ]);
 
-    const runner = new AgentRunner({ llmClient, sessionManager: manager });
+    const runner = new AgentRunner({ sessionManager: manager });
     await runner.run({
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Hello',
-      model: 'test',
+      resolvedModel: resolvedModel(llmClient),
       systemPrompt: '',
       compaction: BASE_COMPACTION,
     });
@@ -230,7 +254,6 @@ try {
 
     const eventTypes: string[] = [];
     const runner = new AgentRunner({
-      llmClient,
       sessionManager: manager,
       onEvent: (e) => {
         eventTypes.push(e.type);
@@ -247,7 +270,7 @@ try {
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Hello',
-      model: 'test',
+      resolvedModel: resolvedModel(llmClient),
       systemPrompt: '',
       compaction: BASE_COMPACTION,
     });
@@ -267,12 +290,12 @@ try {
       textResponse('Done.'),
     ]);
 
-    const runner = new AgentRunner({ llmClient, sessionManager: manager });
+    const runner = new AgentRunner({ sessionManager: manager });
     const result = await runner.run({
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Hello',
-      model: 'test',
+      resolvedModel: resolvedModel(llmClient),
       systemPrompt: '',
       compaction: BASE_COMPACTION,
     });
@@ -301,15 +324,14 @@ try {
       textResponse('Response after preemptive compaction.'),
     ]);
 
-    const runner = new AgentRunner({ llmClient, sessionManager: manager });
+    const runner = new AgentRunner({ sessionManager: manager });
     const result = await runner.run({
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Short question',
-      model: 'test',
+      resolvedModel: resolvedModel(llmClient, SMALL_CONTEXT_WINDOW),
       systemPrompt: '',
       compaction: PREEMPTIVE_COMPACTION,
-      contextWindowTokens: SMALL_CONTEXT_WINDOW,
     });
 
     assert.ok(result.compacted === true, `expected compacted=true, got ${result.compacted}`);
@@ -332,7 +354,6 @@ try {
 
     const eventOrder: string[] = [];
     const runner = new AgentRunner({
-      llmClient,
       sessionManager: manager,
       onEvent: (e) => {
         if (e.type === 'compaction_start' || e.type === 'text_delta') {
@@ -345,10 +366,9 @@ try {
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Hi',
-      model: 'test',
+      resolvedModel: resolvedModel(llmClient, SMALL_CONTEXT_WINDOW),
       systemPrompt: '',
       compaction: PREEMPTIVE_COMPACTION,
-      contextWindowTokens: SMALL_CONTEXT_WINDOW,
     });
 
     const startIdx = eventOrder.indexOf('compaction_start');
@@ -370,7 +390,7 @@ try {
     const alwaysOverflow = Array.from({ length: 7 }, () => contextOverflowError());
     const llmClient = createSequentialMockLLM(alwaysOverflow);
 
-    const runner = new AgentRunner({ llmClient, sessionManager: manager });
+    const runner = new AgentRunner({ sessionManager: manager });
 
     let thrown: unknown;
     try {
@@ -378,7 +398,7 @@ try {
         sessionKey: 'main',
         turnId: randomUUID(),
         message: 'Test',
-        model: 'test',
+        resolvedModel: resolvedModel(llmClient),
         systemPrompt: '',
         compaction: BASE_COMPACTION,
       });
@@ -399,14 +419,14 @@ try {
     const alwaysOverflow = Array.from({ length: 7 }, () => contextOverflowError());
     const llmClient = createSequentialMockLLM(alwaysOverflow);
 
-    const runner = new AgentRunner({ llmClient, sessionManager: manager });
+    const runner = new AgentRunner({ sessionManager: manager });
 
     try {
       await runner.run({
         sessionKey: 'main',
         turnId: randomUUID(),
         message: 'Test',
-        model: 'test',
+        resolvedModel: resolvedModel(llmClient),
         systemPrompt: '',
         compaction: BASE_COMPACTION,
       });
@@ -430,7 +450,6 @@ try {
     let startCount = 0;
     let endCount = 0;
     const runner = new AgentRunner({
-      llmClient,
       sessionManager: manager,
       onEvent: (e) => {
         if (e.type === 'compaction_start') startCount++;
@@ -443,7 +462,7 @@ try {
         sessionKey: 'main',
         turnId: randomUUID(),
         message: 'Test',
-        model: 'test',
+        resolvedModel: resolvedModel(llmClient),
         systemPrompt: '',
         compaction: BASE_COMPACTION,
       });

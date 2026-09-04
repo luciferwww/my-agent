@@ -1,7 +1,9 @@
 import { join } from 'node:path';
 import { AgentRunner } from '../core/runner/index.js';
+import { ModelResolver } from '../core/model-resolution/index.js';
 import { loadConfig, resolveAgentConfig } from '../platform/config/index.js';
-import { AnthropicClient } from '../adapters/llm/index.js';
+import { AnthropicProvider } from '../adapters/llm/index.js';
+import { createLegacyStaticModelResolver } from '../compat/model-resolution/legacy-static-config.js';
 import { ConsoleAdapter, FileAdapter, Logger } from '../platform/logger/index.js';
 import type { LogAdapter } from '../platform/logger/index.js';
 import { MemoryManager } from '../core/memory/index.js';
@@ -18,15 +20,15 @@ export function createDefaultRuntimeDependencies(
   overrides?: Partial<RuntimeDependencies>,
 ): RuntimeDependencies {
   const defaults: RuntimeDependencies = {
-    createLLMClient(options) {
-      if (!options.apiKey) {
-        throw new Error('LLM API key is required to create the runtime client.');
-      }
-
-      return new AnthropicClient({
+    createProviderProjection(options) {
+      const provider = new AnthropicProvider({
         apiKey: options.apiKey,
         baseURL: options.baseURL,
+        defaultModel: options.defaultModel,
+        legacyContextWindowTokens: options.legacyContextWindowTokens,
+        deploymentFacts: options.deploymentFacts,
       });
+      return Object.freeze([provider.entry]);
     },
 
     createSessionManager(workspaceDir, options) {
@@ -123,11 +125,23 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
       toolResultHeadChars: resolvedConfig.compaction.toolResultHeadChars,
       toolResultTailChars: resolvedConfig.compaction.toolResultTailChars,
     });
-    const llmClient = deps.createLLMClient({
+    const providerProjection = Object.freeze([...deps.createProviderProjection({
       apiKey: resolvedConfig.llm.apiKey,
       baseURL: resolvedConfig.llm.baseURL,
       defaultModel: resolvedConfig.llm.model,
-      maxTokens: resolvedConfig.llm.maxTokens,
+      legacyContextWindowTokens: resolvedConfig.llm.contextWindowTokens,
+      deploymentFacts: resolvedConfig.llm.deploymentFacts,
+    })]);
+    const defaultProviderId = providerProjection[0]?.id;
+    if (!defaultProviderId) {
+      throw new Error('Provider projection must contain at least one accepted Provider entry.');
+    }
+    const modelResolver = new ModelResolver(providerProjection);
+    const resolveParentModel = createLegacyStaticModelResolver({
+      resolver: modelResolver,
+      defaultProviderId,
+      defaultModel: resolvedConfig.llm.model,
+      defaultMaxTokens: resolvedConfig.llm.maxTokens,
     });
     const systemPromptBuilder = deps.createSystemPromptBuilder();
     const userPromptBuilder = new UserPromptBuilder();
@@ -169,7 +183,6 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
     });
 
     const agentRunner = deps.createAgentRunner({
-      llmClient,
       sessionManager,
       toolExecutor: toolBundle.executor,
       onEvent: options.onAgentEvent,
@@ -203,7 +216,10 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
         resolvedConfig,
         workspaceDir: options.workspaceDir,
         sessionManager,
-        llmClient,
+        providerProjection,
+        modelResolver,
+        defaultProviderId,
+        resolveParentModel,
         memoryManager,
         systemPromptBuilder,
         userPromptBuilder,

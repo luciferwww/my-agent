@@ -82,6 +82,9 @@ describe('createSubagentHostBindings', () => {
       getParentContextFiles: () => [],
       routeContextByTurn: new Map(),
       resolvedConfig: makeConfig(),
+      resolveLegacyChildModel: vi.fn(() => {
+        throw new Error('Not used by host projection tests.');
+      }),
       workspaceDir: '/work/space',
       ...overrides,
     };
@@ -103,13 +106,12 @@ describe('createSubagentHostBindings', () => {
     expect(host.mainAgentTools.deny).toEqual([]);
   });
 
-  it('projects llmDefaults from resolvedConfig.llm', () => {
-    const host = createSubagentHostBindings(buildParams());
-    expect(host.llmDefaults).toEqual({
-      model: 'claude-default',
-      maxTokens: 4096,
-      contextWindowTokens: 200_000,
+  it('forwards the one-way legacy Child resolver', () => {
+    const resolveLegacyChildModel = vi.fn(() => {
+      throw new Error('Not invoked by this test.');
     });
+    const host = createSubagentHostBindings(buildParams({ resolveLegacyChildModel }));
+    expect(host.resolveLegacyChildModel).toBe(resolveLegacyChildModel);
   });
 
   it('uses workspaceDir verbatim', () => {

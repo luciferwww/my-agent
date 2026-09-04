@@ -2,12 +2,65 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { AgentRunner } from './AgentRunner.js';
+import { AgentRunner as ProductionAgentRunner } from './AgentRunner.js';
 import { SessionManager } from '../session/SessionManager.js';
-import type { ChatContentBlock, LLMClient, ChatParams, ChatResponse, StreamEvent } from '../../adapters/llm/types.js';
+import type {
+  ChatContentBlock,
+  LLMClient,
+  ChatParams,
+  ChatResponse,
+  StreamEvent,
+} from '../model-invocation/index.js';
 import { createToolExecutor } from '../tools/executor.js';
 import type { ToolExecutor } from '../tools/types.js';
-import type { AgentEvent } from './types.js';
+import type { AgentEvent, AgentRunnerConfig, RunParams, RunResult } from './types.js';
+
+type LegacyTestRunParams = Omit<RunParams, 'resolvedModel'> & {
+  model: string;
+  maxTokens?: number;
+  contextWindowTokens?: number;
+};
+
+/** Test-only fixture adapter; production Runner has no legacy input path. */
+class AgentRunner extends ProductionAgentRunner {
+  private readonly testInvocationPort: LLMClient;
+
+  constructor(config: AgentRunnerConfig & { llmClient: LLMClient }) {
+    const { llmClient, ...runnerConfig } = config;
+    super(runnerConfig);
+    this.testInvocationPort = llmClient;
+  }
+
+  override run(params: RunParams | LegacyTestRunParams): Promise<RunResult> {
+    if ('resolvedModel' in params) {
+      return super.run(params);
+    }
+    const { model, maxTokens, contextWindowTokens, ...rest } = params;
+    return super.run({
+      ...rest,
+      resolvedModel: {
+        identity: { providerId: 'test', modelId: model },
+        referenceSource: 'native',
+        protocol: 'test',
+        endpointId: 'test',
+        invocationPort: this.testInvocationPort,
+        facts: {
+          effectiveContextLimit: {
+            value: contextWindowTokens ?? 200_000,
+            source: 'deployment-config',
+          },
+          maximumOutputTokens: { value: 1_000_000, source: 'deployment-config' },
+          toolUse: { value: true, source: 'deployment-config' },
+          mediaKinds: { value: ['image'], source: 'deployment-config' },
+        },
+        limits: {
+          maxTokens: maxTokens ?? 4096,
+          maxTokensSource: maxTokens === undefined ? 'policy-default' : 'request-override',
+        },
+      },
+    });
+  }
+}
 
 // ── Mock LLMClient ──────────────────────────────────────
 

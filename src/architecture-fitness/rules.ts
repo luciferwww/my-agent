@@ -619,11 +619,16 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
   if (sourcePath.startsWith('src/platform/config/') || sourcePath === 'src/runtime/bootstrap.ts') {
     return 'Composition';
   }
+  if (sourcePath.startsWith('src/compat/')) {
+    return 'Composition';
+  }
   if (MIXED_PRODUCTION_PATHS.has(sourcePath)) {
     return 'Mixed';
   }
   if (
     sourcePath.startsWith('src/core/runner/')
+    || sourcePath.startsWith('src/core/model-invocation/')
+    || sourcePath.startsWith('src/core/model-resolution/')
     || sourcePath.startsWith('src/core/prompt/')
     || sourcePath.startsWith('src/core/subagent/')
     || sourcePath.startsWith('src/core/memory/')

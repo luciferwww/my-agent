@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { ChatMessage } from '../../../adapters/llm/types.js';
+import type { ChatMessage } from '../../model-invocation/index.js';
 import {
   estimateMessageTokens,
   estimatePromptTokens,

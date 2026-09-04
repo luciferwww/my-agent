@@ -1,4 +1,5 @@
 import type { RuntimeErrorCode, RuntimeErrorInfo, RuntimeErrorScope, RuntimeErrorSeverity } from './types.js';
+import { ModelResolutionError } from '../core/model-resolution/index.js';
 
 export class RuntimeAppError extends Error {
   readonly info: RuntimeErrorInfo;
@@ -21,6 +22,17 @@ export function classifyRuntimeError(scope: RuntimeErrorScope, error: unknown): 
 
   const cause = error instanceof Error ? error : new Error(String(error));
   const message = cause.message;
+
+  if (scope === 'run' && cause instanceof ModelResolutionError) {
+    return {
+      scope,
+      severity: 'recoverable',
+      code: cause.category === 'reference_invalid' ? 'MODEL_MISSING' : 'RUN_FAILED',
+      message,
+      resolutionCategory: cause.category,
+      cause,
+    };
+  }
 
   const mapping = getDefaultMapping(scope, message);
   return {

@@ -1,5 +1,14 @@
 import type { AppConfig, AgentDefaults, DeepPartial } from '../platform/config/types.js';
-import type { ChatContentBlock, ChatToolDefinition, LLMClient, TokenUsage } from '../adapters/llm/types.js';
+import type {
+  ChatContentBlock,
+  ChatToolDefinition,
+  TokenUsage,
+} from '../core/model-invocation/index.js';
+import type {
+  ModelResolver,
+  ProviderProjectionEntry,
+  ResolvedModel,
+} from '../core/model-resolution/index.js';
 import type { MemoryManager } from '../core/memory/MemoryManager.js';
 import type { SystemPromptBuilder } from '../core/prompt/SystemPromptBuilder.js';
 import type { ToolDefinition as PromptToolDefinition } from '../core/prompt/types.js';
@@ -22,7 +31,15 @@ export interface RuntimeResourceSet {
   resolvedConfig: AgentDefaults;
   workspaceDir: string;
   sessionManager: SessionManager;
-  llmClient: LLMClient;
+  providerProjection: readonly ProviderProjectionEntry[];
+  modelResolver: ModelResolver;
+  defaultProviderId: string;
+  resolveParentModel(input: {
+    model?: string;
+    maxTokens?: number;
+    tools: boolean;
+    mediaKinds: readonly string[];
+  }): ResolvedModel;
   memoryManager: MemoryManager | null;
   systemPromptBuilder: SystemPromptBuilder;
   userPromptBuilder: UserPromptBuilder;
@@ -31,11 +48,12 @@ export interface RuntimeResourceSet {
   agentRunner: AgentRunner;
 }
 
-export interface RuntimeLLMClientOptions {
+export interface RuntimeProviderOptions {
   apiKey?: string;
   baseURL?: string;
   defaultModel?: string;
-  maxTokens?: number;
+  legacyContextWindowTokens: number;
+  deploymentFacts?: AgentDefaults['llm']['deploymentFacts'];
 }
 
 export interface RuntimeMemoryOptions {
@@ -54,7 +72,7 @@ export interface RuntimeBuiltinToolOptions {
 }
 
 export interface RuntimeDependencies {
-  createLLMClient(options: RuntimeLLMClientOptions): LLMClient;
+  createProviderProjection(options: RuntimeProviderOptions): readonly ProviderProjectionEntry[];
   createSessionManager(workspaceDir: string, options?: SessionManagerOptions): SessionManager;
   createMemoryManager(options: RuntimeMemoryOptions): Promise<MemoryManager | null>;
   createSystemPromptBuilder(): SystemPromptBuilder;
@@ -148,6 +166,7 @@ export interface RuntimeErrorInfo {
   severity: RuntimeErrorSeverity;
   code: RuntimeErrorCode;
   message: string;
+  resolutionCategory?: import('../core/model-resolution/index.js').ResolutionFailureCategory;
   cause?: Error;
 }
 

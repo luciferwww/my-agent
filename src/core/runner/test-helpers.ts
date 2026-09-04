@@ -1,5 +1,15 @@
 import { randomUUID } from 'node:crypto';
+import type { ModelInvocationPort } from '../model-invocation/index.js';
 import type { RunParams } from './types.js';
+
+const unusedInvocationPort: ModelInvocationPort = {
+  async *chatStream() {
+    throw new Error('No invocation response configured for this test fixture.');
+  },
+  async chat() {
+    throw new Error('No invocation response configured for this test fixture.');
+  },
+};
 
 /**
  * 构造 RunParams 的测试 helper。
@@ -11,7 +21,18 @@ export function makeRunParams(overrides: Partial<RunParams> = {}): RunParams {
   return {
     sessionKey: 'main',
     message: '',
-    model: 'test',
+    resolvedModel: {
+      identity: { providerId: 'test', modelId: 'test' },
+      referenceSource: 'native',
+      protocol: 'test',
+      endpointId: 'test',
+      invocationPort: unusedInvocationPort,
+      facts: {
+        effectiveContextLimit: { value: 200_000, source: 'deployment-config' },
+        maximumOutputTokens: { value: 4096, source: 'deployment-config' },
+      },
+      limits: { maxTokens: 4096, maxTokensSource: 'policy-default' },
+    },
     systemPrompt: '',
     turnId: randomUUID(),
     ...overrides,

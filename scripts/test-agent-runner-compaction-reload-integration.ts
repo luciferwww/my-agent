@@ -26,6 +26,8 @@ import { randomUUID } from 'node:crypto';
 import process from 'node:process';
 
 import { AgentRunner } from '../src/core/runner/index.js';
+import type { ModelInvocationPort } from '../src/core/model-invocation/index.js';
+import type { ResolvedModel } from '../src/core/model-resolution/index.js';
 import { SessionManager } from '../src/core/session/index.js';
 import type { StreamEvent, ChatParams } from '../src/adapters/llm/types.js';
 
@@ -66,6 +68,21 @@ function createTrackingLLM(captured: { messages: ChatParams['messages'] }) {
     async chat(): Promise<never> {
       throw new Error('Not used');
     },
+  };
+}
+
+function resolvedModel(invocationPort: ModelInvocationPort): ResolvedModel {
+  return {
+    identity: { providerId: 'test', modelId: 'test' },
+    referenceSource: 'native',
+    protocol: 'test',
+    endpointId: 'test',
+    invocationPort,
+    facts: {
+      effectiveContextLimit: { value: 200_000, source: 'deployment-config' },
+      maximumOutputTokens: { value: 4096, source: 'deployment-config' },
+    },
+    limits: { maxTokens: 4096, maxTokensSource: 'policy-default' },
   };
 }
 
@@ -139,16 +156,14 @@ try {
 
     // 运行 agent，追踪 LLM 收到的 messages
     const captured: { messages: ChatParams['messages'] } = { messages: [] };
-    const runner = new AgentRunner({
-      llmClient: createTrackingLLM(captured),
-      sessionManager: manager,
-    });
+    const llmClient = createTrackingLLM(captured);
+    const runner = new AgentRunner({ sessionManager: manager });
 
     await runner.run({
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Current question',
-      model: 'test',
+      resolvedModel: resolvedModel(llmClient),
       systemPrompt: '',
     });
 
@@ -178,16 +193,14 @@ try {
     await manager.appendCompactionRecord('main', makeCompactionInput('Summary.'), turn2Id);
 
     const captured: { messages: ChatParams['messages'] } = { messages: [] };
-    const runner = new AgentRunner({
-      llmClient: createTrackingLLM(captured),
-      sessionManager: manager,
-    });
+    const llmClient = createTrackingLLM(captured);
+    const runner = new AgentRunner({ sessionManager: manager });
 
     await runner.run({
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Current question',
-      model: 'test',
+      resolvedModel: resolvedModel(llmClient),
       systemPrompt: '',
     });
 
@@ -239,16 +252,14 @@ try {
     const managerB = new SessionManager(subDir);
 
     const captured: { messages: ChatParams['messages'] } = { messages: [] };
-    const runner = new AgentRunner({
-      llmClient: createTrackingLLM(captured),
-      sessionManager: managerB,
-    });
+    const llmClient = createTrackingLLM(captured);
+    const runner = new AgentRunner({ sessionManager: managerB });
 
     await runner.run({
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Post-restart question',
-      model: 'test',
+      resolvedModel: resolvedModel(llmClient),
       systemPrompt: '',
     });
 
@@ -300,16 +311,14 @@ try {
     );
 
     const captured: { messages: ChatParams['messages'] } = { messages: [] };
-    const runner = new AgentRunner({
-      llmClient: createTrackingLLM(captured),
-      sessionManager: manager,
-    });
+    const llmClient = createTrackingLLM(captured);
+    const runner = new AgentRunner({ sessionManager: manager });
 
     await runner.run({
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Current',
-      model: 'test',
+      resolvedModel: resolvedModel(llmClient),
       systemPrompt: '',
     });
 
@@ -343,16 +352,14 @@ try {
     await appendTurns(manager, 2);
 
     const captured: { messages: ChatParams['messages'] } = { messages: [] };
-    const runner = new AgentRunner({
-      llmClient: createTrackingLLM(captured),
-      sessionManager: manager,
-    });
+    const llmClient = createTrackingLLM(captured);
+    const runner = new AgentRunner({ sessionManager: manager });
 
     await runner.run({
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Current',
-      model: 'test',
+      resolvedModel: resolvedModel(llmClient),
       systemPrompt: '',
     });
 

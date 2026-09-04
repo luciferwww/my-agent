@@ -63,18 +63,39 @@
     "negative": ["src/adapters/channel/TurnInteractionManager.test.ts"]
   },
   {
-    "contract": "LLMClient",
-    "source": "src/adapters/llm/types.ts",
+    "contract": "ModelInvocationPort",
+    "source": "src/core/model-invocation/types.ts",
     "kind": "provider-port",
     "positive": ["src/adapters/llm/AnthropicClient.test.ts"],
     "negative": ["src/core/runner/AgentRunner.test.ts"]
   },
   {
-    "contract": "StreamEvent",
-    "source": "src/adapters/llm/types.ts",
+    "contract": "ModelStreamEvent",
+    "source": "src/core/model-invocation/types.ts",
     "kind": "event",
     "positive": ["src/adapters/llm/AnthropicClient.test.ts"],
     "negative": ["src/adapters/llm/AnthropicClient.test.ts"]
+  },
+  {
+    "contract": "ModelInvocationError",
+    "source": "src/core/model-invocation/errors.ts",
+    "kind": "error",
+    "positive": ["src/adapters/llm/AnthropicClient.test.ts"],
+    "negative": ["src/adapters/llm/AnthropicClient.test.ts"]
+  },
+  {
+    "contract": "ResolvedModel",
+    "source": "src/core/model-resolution/types.ts",
+    "kind": "provider-model-binding",
+    "positive": ["src/core/model-resolution/ModelResolver.test.ts"],
+    "negative": ["src/core/model-resolution/ModelResolver.test.ts"]
+  },
+  {
+    "contract": "ModelResolutionError",
+    "source": "src/core/model-resolution/ModelResolver.ts",
+    "kind": "error",
+    "positive": ["src/core/model-resolution/ModelResolver.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
   },
   {
     "contract": "ToolExecutor",

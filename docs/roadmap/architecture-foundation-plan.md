@@ -475,9 +475,9 @@ Foundation 只有在以下条件全部满足时才可进入生产迁移：
 - [x] 独立 Legacy migration inventory 已建立并接受，覆盖文档、production path、API、Config 和 Feature Flag；
 - [x] 没有要求推倒 Runner/Session/Channel 基线的未解释证据。
 
-2026-09-04 最终复评结论：必要 ADR、Slice 1 Definition of Ready 与独立 Legacy migration inventory 均已满足，Foundation Gate 已通过。Gate 通过只解除进入 production migration 前的 Foundation 阻塞；Slice 1 仍须项目所有者单独批准进入 Delivery，当前未授权 production 修改、迁移/删除或 Compatibility 实施。
+2026-09-04 最终复评结论：必要 ADR、Slice 1 Definition of Ready 与独立 Legacy migration inventory 均已满足，Foundation Gate 已通过。在该复评时点，Gate 通过只解除进入 production migration 前的 Foundation 阻塞，尚未授权 production 修改、迁移/删除或 Compatibility 实施。
 
-项目所有者于 2026-09-04 接受 [Legacy Migration Inventory](../architecture/legacy-migration-inventory.md) 与 [Model Resolution Module Spec](../architecture/model-resolution-module-spec.md)，并确认 MR-OD-01 Provider Facts policy 和 MR-OD-02 Child Compatibility policy。两份工件均为 `Accepted`；该接受不包含 production 修改、批量移动/删除或 Slice 1 Delivery。
+项目所有者随后于 2026-09-04 接受 [Legacy Migration Inventory](../architecture/legacy-migration-inventory.md) 与 [Model Resolution Module Spec](../architecture/model-resolution-module-spec.md)，并确认 MR-OD-01 Provider Facts policy 和 MR-OD-02 Child Compatibility policy。该次工件接受本身不包含 production 修改、批量移动/删除或 Slice 1 Delivery；项目所有者之后另行批准 Slice 1 进入 Delivery。
 
 若 Gate 因未解释的架构证据冲突而无法通过，必须调整 Target Architecture 或另行批准范围变化；普通工件或 Definition of Ready 缺口只补齐对应 Gate item。任何情况下都不得通过在旧 Composition Root 上继续堆特例绕过 Gate。
 
@@ -493,6 +493,8 @@ Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accept
 
 ### Slice 1：Model Resolution
 
+**Plan Item 状态：** Completed（2026-09-04）
+
 **范围：**
 
 - `ModelReference`、`ModelDescriptor`、`ModelPolicy`、`ResolvedModel`；
@@ -506,6 +508,8 @@ Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accept
 - 删除 Runtime 直接构造 Anthropic Client 的生产路径；
 - Runner 不再组合静态 model/context/max-token 默认事实；
 - 旧配置只负责用户输入兼容，不拥有 Model Facts。
+
+**Delivery evidence（2026-09-04）：** Parent direct/queued real caller 已统一在 `RuntimeApp.runTurnInternal()` resolution；Runner 只消费 per-Turn `ResolvedModel`；bundled Anthropic-compatible Provider、readonly startup projection、core-owned Invocation Port、typed failure mapping 与 Slice 2 到期的 one-way Child Compatibility 已实现。被替代的 direct Client construction、authoritative startup client slot、`requireModel()`、Runner facts defaults/raw Provider error parsing 已删除。聚焦/契约/集成/Fitness 检查、standalone Compaction 9/9、reload 5/5、lint、完整 Vitest 75 files/708 tests 和 build 均通过；独立 implementation review 为 `Ready` 且无 Critical/High/Medium blocker。项目所有者于 2026-09-04 接受验证结果并确认 Slice 1 完成；当前不授权 Slice 2–6、提交或推送。
 
 ### Slice 2：Subagent Model Resolution
 
@@ -804,4 +808,4 @@ Foundation（M0–M3）以 **两周完成为目标、四周为硬上限**。第�
 
 1. AF-05 已完成：`Provisional Pass` Results 获项目所有者接受，disposable fixture cleanup、状态同步和 AF-05 evidence item 均已完成；
 2. AF-06 已完成：`Provisional Pass` Results 获项目所有者接受，disposable fixture cleanup、cleanup validation、状态同步和 AF-06 evidence items 均已完成；
-3. AF-07、独立 Legacy migration inventory 与 Slice 1 Definition of Ready 均已于 2026-09-04 完成并获项目所有者接受，Foundation Gate 已通过；下一步是由项目所有者单独决定是否批准 Slice 1 进入 Delivery，当前不启动 production Architecture Slice。
+3. AF-07、独立 Legacy migration inventory 与 Slice 1 Definition of Ready 均已于 2026-09-04 完成并获项目所有者接受，Foundation Gate 已通过；项目所有者已于同日单独批准 Slice 1 进入 Delivery。当前只执行 Slice 1，不授权 Slice 2–6、提交或推送。

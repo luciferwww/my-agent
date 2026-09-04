@@ -13,6 +13,7 @@ import type {
 } from './types.js';
 import type { ContextFile } from '../workspace/types.js';
 import type { AgentEvent, RunParams, RunResult } from '../runner/types.js';
+import type { ModelInvocationPort } from '../model-invocation/index.js';
 
 // ── Fixtures ────────────────────────────────────────────────
 
@@ -38,6 +39,11 @@ const LLM_DEFAULTS = {
   model: 'host-default-model',
   maxTokens: 4096,
   contextWindowTokens: 200_000,
+};
+
+const unusedInvocationPort: ModelInvocationPort = {
+  async *chatStream() { throw new Error('Not used in SubagentRunner tests.'); },
+  async chat() { throw new Error('Not used in SubagentRunner tests.'); },
 };
 
 function makeProfile(overrides: Partial<SubagentProfile> = {}): SubagentProfile {
@@ -73,12 +79,30 @@ function makeHost(opts: BuildHostOpts = {}) {
   const register = vi.fn();
   const release = vi.fn();
   const getParent = vi.fn(() => opts.parentContextFiles ?? PARENT_FILES);
+  const resolveLegacyChildModel = vi.fn((input: { model?: string }) => ({
+    identity: {
+      providerId: 'test',
+      modelId: input.model && input.model !== 'inherit' ? input.model : LLM_DEFAULTS.model,
+    },
+    referenceSource: 'legacy-child' as const,
+    protocol: 'test',
+    endpointId: 'test',
+    invocationPort: unusedInvocationPort,
+    facts: {
+      effectiveContextLimit: {
+        value: LLM_DEFAULTS.contextWindowTokens,
+        source: 'legacy-config' as const,
+      },
+      maximumOutputTokens: { value: 8192, source: 'deployment-config' as const },
+    },
+    limits: { maxTokens: LLM_DEFAULTS.maxTokens, maxTokensSource: 'policy-default' as const },
+  }));
   const host: SubagentHostBindings = {
     registerTurnContext: register,
     releaseTurnContext: release,
     getParentContextFiles: getParent,
     mainAgentTools: { allow: [], deny: [] },
-    llmDefaults: LLM_DEFAULTS,
+    resolveLegacyChildModel,
     maxDepth: opts.maxDepth ?? 2,
     workspaceDir: opts.workspaceDir ?? '/ws',
     promptSafetyLevel: opts.promptSafetyLevel ?? 'normal',
@@ -371,21 +395,24 @@ describe('SubagentRunner.run', () => {
       const { deps, agentRunnerRun } = makeDeps();
       const runner = new SubagentRunner(deps);
       await runner.run(makeRequest({ profile: makeProfile({ model: undefined }) }));
-      expect((agentRunnerRun.mock.calls[0]![0] as RunParams).model).toBe('host-default-model');
+      expect((agentRunnerRun.mock.calls[0]![0] as RunParams).resolvedModel.identity.modelId)
+        .toBe('host-default-model');
     });
 
     it('uses host.llmDefaults.model when profile.model === "inherit"', async () => {
       const { deps, agentRunnerRun } = makeDeps();
       const runner = new SubagentRunner(deps);
       await runner.run(makeRequest({ profile: makeProfile({ model: 'inherit' }) }));
-      expect((agentRunnerRun.mock.calls[0]![0] as RunParams).model).toBe('host-default-model');
+      expect((agentRunnerRun.mock.calls[0]![0] as RunParams).resolvedModel.identity.modelId)
+        .toBe('host-default-model');
     });
 
     it('uses profile.model directly when it is a concrete id', async () => {
       const { deps, agentRunnerRun } = makeDeps();
       const runner = new SubagentRunner(deps);
       await runner.run(makeRequest({ profile: makeProfile({ model: 'gpt-5' }) }));
-      expect((agentRunnerRun.mock.calls[0]![0] as RunParams).model).toBe('gpt-5');
+      expect((agentRunnerRun.mock.calls[0]![0] as RunParams).resolvedModel.identity.modelId)
+        .toBe('gpt-5');
     });
   });
 

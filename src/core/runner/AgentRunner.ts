@@ -1,4 +1,5 @@
-import type { LLMClient, ChatMessage, ChatContentBlock, TokenUsage } from '../../adapters/llm/types.js';
+import type { ChatMessage, ChatContentBlock, TokenUsage } from '../model-invocation/index.js';
+import type { ResolvedModel } from '../model-resolution/index.js';
 import type { SessionManager } from '../session/SessionManager.js';
 import type { ContentBlock, MessageRecord } from '../session/types.js';
 import type {
@@ -18,7 +19,7 @@ import { runBeforeToolCall, runAfterToolCall, runBeforeCompaction, runAfterCompa
 import { pruneToolResults, pruneToolResultsAggregate } from './context/tool-result-pruning.js';
 import { checkContextBudget } from './context/context-budget.js';
 import { estimatePromptTokens } from './context/token-estimation.js';
-import { ContextOverflowError, isContextOverflowError } from './errors.js';
+import { ContextOverflowError } from './errors.js';
 import { compactMessages } from './context/compaction.js';
 import { Logger } from '../../platform/logger/index.js';
 
@@ -26,9 +27,7 @@ const logger = Logger.get('AgentRunner');
 
 // ── 常量 ────────────────────────────────────────────────────
 
-const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_MAX_LLM_CALLS = 12;
-const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000;
 
 /**
  * 外层压缩重试上限。
@@ -72,14 +71,12 @@ const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
  *   3. LLM API 被动兜底：callLLMStream 捕获 context overflow 类型 API 错误
  */
 export class AgentRunner {
-  private llmClient: LLMClient;
   private sessionManager: SessionManager;
   private toolExecutor?: ToolExecutor;
   private onEvent?: (event: AgentEvent) => void;
   private hookRegistrations: HookRegistration[] = [];
 
   constructor(config: AgentRunnerConfig) {
-    this.llmClient = config.llmClient;
     this.sessionManager = config.sessionManager;
     this.toolExecutor = config.toolExecutor;
     this.onEvent = config.onEvent;
@@ -341,7 +338,7 @@ export class AgentRunner {
   // ── 公共入口 ─────────────────────────────────────────────
 
   async run(params: RunParams): Promise<RunResult> {
-    const contextWindowTokens = params.contextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
+    const contextWindowTokens = params.resolvedModel.facts.effectiveContextLimit.value;
     const compaction = params.compaction ?? DEFAULT_COMPACTION_CONFIG;
 
     // emit 上下文沿调用链显式透传：消除"实例字段保存当前 run"的隐式状态，
@@ -459,7 +456,6 @@ export class AgentRunner {
     compaction: CompactionConfig,
   ): Promise<Omit<RunResult, 'compacted'>> {
     const maxLlmCalls = params.maxLlmCalls ?? DEFAULT_MAX_LLM_CALLS;
-    const maxTokens = params.maxTokens ?? DEFAULT_MAX_TOKENS;
 
     // 0. 净化会话末尾的孤立 trailing user（来自上一次失败/中断的遗留）
     this.sanitizeSessionTail(turnCtx);
@@ -578,12 +574,10 @@ export class AgentRunner {
 
         // 流式调用 LLM（内部捕获 API 级别的 context overflow 错误 + abort）
         const llmResult = await this.callLLMStream(turnCtx, {
-          model: params.model,
           system: params.systemPrompt,
           messages,
           tools: params.tools,
-          maxTokens,
-        }, params.signal);
+        }, params.resolvedModel, params.signal);
 
         totalUsage = {
           inputTokens: totalUsage.inputTokens + llmResult.usage.inputTokens,
@@ -809,8 +803,8 @@ export class AgentRunner {
     const compactResult = await compactMessages({
       messages,
       config: compaction,
-      llmClient: this.llmClient,
-      model: params.model,
+      llmClient: params.resolvedModel.invocationPort,
+      model: params.resolvedModel.identity.modelId,
       trigger,
     });
 
@@ -931,12 +925,11 @@ export class AgentRunner {
   private async callLLMStream(
     turnCtx: TurnContext,
     params: {
-      model: string;
       system?: string;
       messages: ChatMessage[];
       tools?: RunParams['tools'];
-      maxTokens: number;
     },
+    resolvedModel: ResolvedModel,
     signal?: AbortSignal,
   ): Promise<{ content: ChatContentBlock[]; stopReason: string; usage: TokenUsage }> {
     const contentBlocks: ChatContentBlock[] = [];
@@ -945,12 +938,12 @@ export class AgentRunner {
     let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
 
     try {
-      for await (const event of this.llmClient.chatStream({
-        model: params.model,
+      for await (const event of resolvedModel.invocationPort.chatStream({
+        model: resolvedModel.identity.modelId,
         system: params.system,
         messages: params.messages,
         tools: params.tools,
-        maxTokens: params.maxTokens,
+        maxTokens: resolvedModel.limits.maxTokens,
         signal,
       })) {
         switch (event.type) {
@@ -996,16 +989,6 @@ export class AgentRunner {
           stopReason: 'aborted',
           usage, // 中断发生在 message_end 之前 → {0,0}（best-effort，Anthropic API 已计费但 SDK 未返回）
         };
-      }
-      // 将 LLM API 的 context overflow 错误统一包装为 ContextOverflowError
-      if (err instanceof Error && isContextOverflowError(err)) {
-        logger.warn('LLM API returned context overflow', {
-          sessionKey: turnCtx.sessionKey,
-          turnId: turnCtx.turnId,
-          model: params.model,
-          originalMessage: err.message,
-        });
-        throw new ContextOverflowError(`LLM API context overflow: ${err.message}`);
       }
       throw err;
     }

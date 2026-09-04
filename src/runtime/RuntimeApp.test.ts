@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatMessage } from '../adapters/llm/types.js';
+import type { ChatMessage } from '../core/model-invocation/index.js';
 import type {
   ApprovalClosedResult,
   ApprovalDecision,
@@ -10,7 +10,7 @@ import type {
   Channel,
   ChannelRunRequest,
 } from '../adapters/channel/types.js';
-import type { BeforeToolCallHook } from '../core/runner/index.js';
+import type { AgentEvent, BeforeToolCallHook } from '../core/runner/index.js';
 import type { RunResult } from '../core/runner/types.js';
 import type { Tool } from '../core/tools/types.js';
 import { RuntimeApp } from './RuntimeApp.js';
@@ -66,7 +66,10 @@ describe('RuntimeApp', () => {
       expect.objectContaining({
         sessionKey: 'main',
         message: 'Hello runtime',
-        model: 'test-model',
+        resolvedModel: expect.objectContaining({
+          identity: { providerId: 'test', modelId: 'test-model' },
+          referenceSource: 'config-default',
+        }),
         systemPrompt: 'SYSTEM_PROMPT',
       }),
     );
@@ -211,7 +214,8 @@ describe('RuntimeApp', () => {
     expect(memoryClose).not.toHaveBeenCalled();
   });
 
-  it('CH-13 fails a missing model before Runner and passes an unvalidated model through', async () => {
+  it('fails a missing model before Runner and resolves an explicit model through the Provider', async () => {
+    const agentEvents: AgentEvent[] = [];
     const runnerRun = vi.fn(async (): Promise<RunResult> => ({
       text: 'provider accepted model',
       content: [{ type: 'text', text: 'provider accepted model' }],
@@ -229,13 +233,39 @@ describe('RuntimeApp', () => {
         createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
         createMemoryManager: async () => null,
       }),
+      onAgentEvent: (event) => agentEvents.push(event),
     });
 
     await expect(app.runTurn({
       sessionKey: 'main',
       message: 'missing model',
       promptMode: 'full',
+    })).rejects.toMatchObject({
+      info: {
+        code: 'MODEL_MISSING',
+        resolutionCategory: 'reference_invalid',
+        cause: { category: 'reference_invalid' },
+      },
+    });
+    expect(runnerRun).not.toHaveBeenCalled();
+    expect(agentEvents.filter((event) => event.type === 'error')).toEqual([]);
+
+    await expect(app.runTurn({
+      sessionKey: 'main',
+      message: 'queued missing model',
+      promptMode: 'full',
+      turnId: 'queued-resolution-turn',
+      originMessageId: 'queued-message',
     })).rejects.toMatchObject({ info: { code: 'MODEL_MISSING' } });
+    expect(agentEvents.filter((event) => event.type === 'error')).toEqual([
+      expect.objectContaining({
+        type: 'error',
+        sessionKey: 'main',
+        turnId: 'queued-resolution-turn',
+        category: 'reference_invalid',
+        originMessageId: 'queued-message',
+      }),
+    ]);
     expect(runnerRun).not.toHaveBeenCalled();
 
     await expect(app.runTurn({
@@ -246,7 +276,12 @@ describe('RuntimeApp', () => {
     })).resolves.toEqual(expect.objectContaining({ text: 'provider accepted model' }));
     expect(runnerRun).toHaveBeenCalledTimes(1);
     expect(runnerRun).toHaveBeenCalledWith(
-      expect.objectContaining({ model: 'not-locally-validated' }),
+      expect.objectContaining({
+        resolvedModel: expect.objectContaining({
+          identity: { providerId: 'test', modelId: 'not-locally-validated' },
+          referenceSource: 'turn-explicit',
+        }),
+      }),
     );
 
     await app.close();
@@ -1515,7 +1550,26 @@ function createTestDependencies(
   };
 
   return {
-    createLLMClient: () => ({}) as never,
+    createProviderProjection: () => [{
+      id: 'test',
+      protocol: 'test',
+      invocationPort: {} as never,
+      resolveConnection: () => ({ ok: true, connection: { endpointId: 'test' } }),
+      resolveModel: (modelId, connection) => ({
+        ok: true,
+        descriptor: {
+          identity: { providerId: 'test', modelId },
+          protocol: 'test',
+          connection,
+          facts: {
+            effectiveContextLimit: { value: 200_000, source: 'deployment-config' },
+            maximumOutputTokens: { value: 8192, source: 'deployment-config' },
+            toolUse: { value: true, source: 'deployment-config' },
+            mediaKinds: { value: ['image'], source: 'deployment-config' },
+          },
+        },
+      }),
+    }],
     createSessionManager: () => ({ resolveSession: vi.fn(async () => ({ entry: {}, isNew: true })) }) as never,
     createMemoryManager: async () => null,
     createSystemPromptBuilder: () => ({ build: () => 'SYSTEM_PROMPT' }) as never,

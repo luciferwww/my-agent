@@ -1,6 +1,6 @@
 import type { AgentDefaults } from '../platform/config/types.js';
 import type { ContextFile } from '../core/workspace/types.js';
-import type { TokenUsage } from '../adapters/llm/types.js';
+import type { TokenUsage } from '../core/model-invocation/index.js';
 import type { SubagentRunner } from '../core/subagent/SubagentRunner.js';
 import type {
   SubagentProfile,
@@ -32,6 +32,7 @@ export interface CreateSubagentHostBindingsParams {
    * 实例（§spec §8.5）。
    */
   resolvedConfig: AgentDefaults;
+  resolveLegacyChildModel: SubagentHostBindings['resolveLegacyChildModel'];
   /** 工作区绝对路径，来源 RuntimeAppOptions.workspaceDir */
   workspaceDir: string;
 }
@@ -48,7 +49,6 @@ export function createSubagentHostBindings(
   params: CreateSubagentHostBindingsParams,
 ): SubagentHostBindings {
   const tools = params.resolvedConfig.tools;
-  const llm = params.resolvedConfig.llm;
   const subagents = params.resolvedConfig.subagents;
   const prompt = params.resolvedConfig.prompt;
 
@@ -69,11 +69,7 @@ export function createSubagentHostBindings(
       allow: tools?.allow ?? [],
       deny: tools?.deny ?? [],
     },
-    llmDefaults: {
-      model: llm.model ?? '',
-      maxTokens: llm.maxTokens ?? 4096,
-      contextWindowTokens: llm.contextWindowTokens ?? 200_000,
-    },
+    resolveLegacyChildModel: params.resolveLegacyChildModel,
     maxDepth: subagents?.maxDepth ?? 1,
     workspaceDir: params.workspaceDir,
     promptSafetyLevel: prompt?.safetyLevel ?? 'normal',

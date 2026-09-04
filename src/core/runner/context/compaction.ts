@@ -9,8 +9,7 @@
  */
 
 import { randomUUID } from 'crypto';
-import type { ChatMessage } from '../../../adapters/llm/types.js';
-import type { LLMClient } from '../../../adapters/llm/types.js';
+import type { ChatMessage, ModelInvocationPort } from '../../model-invocation/index.js';
 import type { CompactionConfig } from '../../../platform/config/types.js';
 import type { CompactionRecord } from '../../session/types.js';
 import { estimatePromptTokens, ANTHROPIC_PATCH_SIZE } from './token-estimation.js';
@@ -162,7 +161,7 @@ function serializeMessagesForSummary(messages: ChatMessage[]): string {
  */
 async function generateSummary(params: {
   messages: ChatMessage[];
-  llmClient: LLMClient;
+  llmClient: ModelInvocationPort;
   model: string;
   customInstructions?: string;
 }): Promise<string> {
@@ -233,7 +232,7 @@ function buildFallbackSummary(messageCount: number): string {
 export async function compactMessages(params: {
   messages: ChatMessage[];
   config: CompactionConfig;
-  llmClient: LLMClient;
+  llmClient: ModelInvocationPort;
   model: string;
   trigger: 'preemptive' | 'overflow' | 'manual';
 }): Promise<CompactionResult> {

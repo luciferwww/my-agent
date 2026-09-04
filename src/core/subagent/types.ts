@@ -1,4 +1,5 @@
-import type { TokenUsage } from '../../adapters/llm/types.js';
+import type { TokenUsage } from '../model-invocation/index.js';
+import type { ResolvedModel } from '../model-resolution/index.js';
 import type { ContextFile } from '../workspace/types.js';
 import type { AgentRunner } from '../runner/index.js';
 import type { SessionManager } from '../session/SessionManager.js';
@@ -110,7 +111,7 @@ export interface SubagentHostBindings {
   /** Snapshot of the parent agent's loaded contextFiles, for fallback inheritance. */
   getParentContextFiles(): ContextFile[];
   readonly mainAgentTools: { allow: readonly string[]; deny: readonly string[] };
-  readonly llmDefaults: { model: string; maxTokens: number; contextWindowTokens: number };
+  resolveLegacyChildModel(input: { model?: string }): ResolvedModel;
   readonly maxDepth: number;
   /** Workspace root, used by SystemPromptBuilder's `# Workspace` section. */
   readonly workspaceDir: string;

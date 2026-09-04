@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentEvent } from '../core/runner/index.js';
-import type { ChatContentBlock, ChatMessage } from '../adapters/llm/types.js';
+import type { ChatContentBlock, ChatMessage } from '../core/model-invocation/index.js';
+import { ModelResolutionError } from '../core/model-resolution/index.js';
+import { createLegacyChildModelResolver } from '../compat/model-resolution/legacy-child.js';
 import { TurnInteractionManager } from '../adapters/channel/TurnInteractionManager.js';
 import type {
   ApprovalInteractionRequest,
@@ -195,10 +197,17 @@ export class RuntimeApp {
     // 2. Host bindings — share app.routeContextByTurn map by reference.
     //    Dot access to a private field is legal from a static method on
     //    the same class (TS class-private is class-level, not instance-level).
+    const resolveLegacyChildModel = createLegacyChildModelResolver({
+      resolver: resources.modelResolver,
+      defaultProviderId: resources.defaultProviderId,
+      defaultModel: resources.resolvedConfig.llm.model,
+      defaultMaxTokens: resources.resolvedConfig.llm.maxTokens,
+    });
     const host = createSubagentHostBindings({
       getParentContextFiles: () => resources.contextFiles,
       routeContextByTurn: app.routeContextByTurn,
       resolvedConfig: resources.resolvedConfig,
+      resolveLegacyChildModel,
       workspaceDir: options.workspaceDir,
     });
 
@@ -895,6 +904,16 @@ export class RuntimeApp {
       return result;
     } catch (error) {
       const info = classifyRuntimeError('run', error);
+      if (params.originMessageId && error instanceof ModelResolutionError) {
+        this.fanoutAgentEvent({
+          type: 'error',
+          sessionKey: params.sessionKey,
+          turnId,
+          error,
+          category: error.category,
+          originMessageId: params.originMessageId,
+        });
+      }
       log.error('turn failed', {
         sessionKey: params.sessionKey,
         turnId,
@@ -1104,6 +1123,15 @@ export class RuntimeApp {
         await this.reloadContextFiles();
       }
 
+      const resolvedModel = this.resources.resolveParentModel({
+        model: params.model,
+        maxTokens: params.maxTokens,
+        tools: this.resources.toolBundle.llmDefinitions.length > 0,
+        mediaKinds: Array.isArray(params.message) && params.message.some((block) => block.type === 'image')
+          ? ['image']
+          : [],
+      });
+
       const systemPrompt = this.resources.systemPromptBuilder.build(
         buildSystemPromptParams({
           config: this.resources.resolvedConfig,
@@ -1147,16 +1175,14 @@ export class RuntimeApp {
       const result = await this.resources.agentRunner.run({
         sessionKey: params.sessionKey,
         message: runnerMessage,
-        model: this.requireModel(params.model),
+        resolvedModel,
         systemPrompt,
         turnId: params.turnId,
         tools: this.resources.toolBundle.llmDefinitions,
-        maxTokens: params.maxTokens ?? this.resources.resolvedConfig.llm.maxTokens,
         maxLlmCalls: params.maxLlmCalls ?? this.resources.resolvedConfig.runner.maxLlmCalls,
         // runtime 只提供"读取并清空当前 steering inbox"的能力，具体消费时机仍由 runner 控制。
         getSteeringMessages: async () => this.drainSteeringMessages(params.sessionKey),
         compaction: this.resources.resolvedConfig.compaction,
-        contextWindowTokens: this.resources.resolvedConfig.llm.contextWindowTokens,
         originMessageId: params.originMessageId,
         signal: controller.signal, // core-abort-spec.md §8.2
       });
@@ -1209,19 +1235,6 @@ export class RuntimeApp {
       const resource = candidate[1] as Partial<RuntimeDisposable> | null;
       return typeof resource?.close === 'function';
     });
-  }
-
-  private requireModel(explicitModel?: string): string {
-    const model = explicitModel ?? this.resources.resolvedConfig.llm.model;
-    if (!model) {
-      throw createRuntimeError({
-        scope: 'run',
-        severity: 'recoverable',
-        code: 'MODEL_MISSING',
-        message: 'No model was provided for this turn and no default model is configured.',
-      });
-    }
-    return model;
   }
 
   /**

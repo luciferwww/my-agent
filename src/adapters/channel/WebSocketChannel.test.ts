@@ -258,6 +258,37 @@ describe('WebSocketChannel', () => {
     });
   });
 
+  it('serializes resolution failure category and queued correlation', async () => {
+    const handler = vi.fn(async () => undefined);
+    channel = new WebSocketChannel({ port: 0 });
+    channel.onMessage(handler);
+    await channel.start();
+
+    const client = await connectClient(channel);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'client-resolution' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'client-resolution' });
+    client.send(JSON.stringify({ type: 'run_turn', sessionKey: 'main', message: 'hi' }));
+    await vi.waitFor(() => expect(handler).toHaveBeenCalled());
+
+    channel.send({
+      type: 'error',
+      sessionKey: 'main',
+      turnId: 'resolution-turn',
+      error: new Error('Provider is not registered.'),
+      category: 'provider_unregistered',
+      originMessageId: 'queued-message',
+    });
+
+    await expectMessage(client, {
+      type: 'error',
+      sessionKey: 'main',
+      turnId: 'resolution-turn',
+      error: 'Provider is not registered.',
+      category: 'provider_unregistered',
+      originMessageId: 'queued-message',
+    });
+  });
+
   // PR-7: subagent_* events carry the child sessionKey; WebSocketChannel must
   // route them to the parent's audience so subscribers actually see them.
   describe('subagent event audience routing', () => {

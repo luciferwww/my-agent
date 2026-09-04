@@ -101,12 +101,9 @@ export class SubagentRunner {
       ? `${basePrompt}\n\n${addendum}`
       : addendum;
 
-    // 5) Model resolution: profile may be `undefined`, `'inherit'`, or a
-    // concrete id. The first two fall back to host defaults.
-    const model =
-      profile.model && profile.model !== 'inherit'
-        ? profile.model
-        : this.deps.host.llmDefaults.model;
+    // 5) Slice 1 compatibility maps the current Child profile input into the
+    // same authoritative Resolver used by Parent turns.
+    const resolvedModel = this.deps.host.resolveLegacyChildModel({ model: profile.model });
 
     // 6) Assemble RunParams. `tools` is intentionally omitted in PR-3 — the
     // per-subagent tool bundle is computed by the runtime layer in PR-5 / PR-6
@@ -120,12 +117,10 @@ export class SubagentRunner {
     const runParams: RunParams = {
       sessionKey: childSessionKey,
       message: prompt,
-      model,
+      resolvedModel,
       systemPrompt,
       turnId: childTurnId,
-      maxTokens: this.deps.host.llmDefaults.maxTokens,
       maxLlmCalls: profile.maxLlmCalls, // undefined → AgentRunner default
-      contextWindowTokens: this.deps.host.llmDefaults.contextWindowTokens,
       signal: req.signal,
     };
 

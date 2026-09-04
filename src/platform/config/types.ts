@@ -16,6 +16,21 @@ export type SafetyLevel = 'strict' | 'normal' | 'relaxed';
 // ── Module Configs ───────────────────────────────────────
 
 /** LLM 配置 */
+export interface LLMDeploymentFactsEntry {
+  /** Exact Provider scope. */
+  providerId: string;
+  /** Exact normalized Endpoint scope. */
+  endpointId: string;
+  /** Exact canonical Model scope. */
+  modelId: string;
+  deploymentId?: string;
+  protocol: string;
+  effectiveContextLimit?: number;
+  maximumOutputTokens?: number;
+  toolUse?: boolean;
+  mediaKinds?: string[];
+}
+
 export interface LLMConfig {
   /** Anthropic API Key（env ANTHROPIC_API_KEY 优先） */
   apiKey?: string;
@@ -31,6 +46,8 @@ export interface LLMConfig {
    * 压缩逻辑从此字段读取窗口大小，用于动态计算裁剪阈值和预算。
    */
   contextWindowTokens: number;
+  /** Provider-owned deployment facts input; semantic validation is performed by Provider Integration. */
+  deploymentFacts?: LLMDeploymentFactsEntry[];
 }
 
 /** 对话压缩配置 */

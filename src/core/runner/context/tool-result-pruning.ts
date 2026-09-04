@@ -6,7 +6,7 @@
  * 纯字符串操作，不调用 LLM，不修改持久化数据，仅影响发给 LLM 的 messages。
  */
 
-import type { ChatMessage, ChatContentBlock } from '../../../adapters/llm/types.js';
+import type { ChatMessage, ChatContentBlock } from '../../model-invocation/index.js';
 import type { CompactionConfig } from '../../../platform/config/types.js';
 
 // ── 常量 ────────────────────────────────────────────────────

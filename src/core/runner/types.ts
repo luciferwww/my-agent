@@ -1,4 +1,9 @@
-import type { ChatContentBlock, ChatMessage, TokenUsage } from '../../adapters/llm/types.js';
+import type {
+  ChatContentBlock,
+  ChatMessage,
+  TokenUsage,
+} from '../model-invocation/index.js';
+import type { ResolvedModel } from '../model-resolution/index.js';
 import type { ToolDefinition, ToolResult, ToolExecutor } from '../tools/types.js';
 import type { CompactionConfig } from '../../platform/config/types.js';
 
@@ -25,8 +30,6 @@ export interface TurnContext {
 
 /** AgentRunner 构造参数 */
 export interface AgentRunnerConfig {
-  /** LLM 客户端 */
-  llmClient: import('../../adapters/llm/types.js').LLMClient;
   /** Session 管理器 */
   sessionManager: import('../session/SessionManager.js').SessionManager;
   /** 工具执行回调，不提供则 tool_use 时返回错误 */
@@ -41,24 +44,20 @@ export interface RunParams {
   sessionKey: string;
   /** 用户消息文本或多模态 content blocks */
   message: string | ChatContentBlock[];
-  /** 模型名称 */
-  model: string;
+  /** 当前 Turn 已解析并固定的模型、调用端口、Facts 与执行限制 */
+  resolvedModel: ResolvedModel;
   /** System prompt（由调用方通过 prompt-builder 构建） */
   systemPrompt: string;
   /** 本次 turn 的唯一 id；由 RuntimeApp 生成并传入 */
   turnId: string;
   /** 工具定义（传给 LLM） */
   tools?: ToolDefinition[];
-  /** 最大 token 数，默认 4096 */
-  maxTokens?: number;
   /** 单次 run 允许的最大 LLM 调用次数，默认 12 */
   maxLlmCalls?: number;
   /** steering 专用消息读取回调（总在 steering 注入点消费） */
   getSteeringMessages?: PendingMessageReader;
   /** 压缩配置（由 RuntimeApp 传入） */
   compaction?: CompactionConfig;
-  /** 模型上下文窗口大小（由 RuntimeApp 从 config.llm.contextWindowTokens 传入），默认 200,000 */
-  contextWindowTokens?: number;
   /**
    * 触发本 turn 的 `user_message.messageId`。由 RuntimeApp 从 queued 路径透传；
    * 传入即在 run_start 上回写为 originMessageId，供客户端反向关联。
@@ -157,7 +156,14 @@ export type AgentEvent =
     }
   | { type: 'llm_call'; sessionKey: string; turnId: string; round: number }
   | { type: 'run_end'; sessionKey: string; turnId: string; result: RunResult }
-  | { type: 'error'; sessionKey: string; turnId: string; error: Error }
+  | {
+      type: 'error';
+      sessionKey: string;
+      turnId: string;
+      error: Error;
+      category?: import('../model-resolution/index.js').ResolutionFailureCategory;
+      originMessageId?: string;
+    }
   /** tool result 被 per-result 裁剪（Layer 1）时触发 */
   | {
       type: 'tool_result_pruned';

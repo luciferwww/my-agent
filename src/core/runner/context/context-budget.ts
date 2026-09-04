@@ -7,7 +7,7 @@
  * - compact:                   需要触发 LLM 摘要压缩（Layer 3）
  */
 
-import type { ChatMessage, ChatContentBlock } from '../../../adapters/llm/types.js';
+import type { ChatMessage, ChatContentBlock } from '../../model-invocation/index.js';
 import type { CompactionConfig } from '../../../platform/config/types.js';
 import { estimatePromptTokens } from './token-estimation.js';
 import { AGGREGATE_TOOL_RESULT_CONTEXT_SHARE } from './tool-result-pruning.js';

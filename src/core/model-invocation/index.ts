@@ -1,7 +1,3 @@
-/**
- * @deprecated Import model invocation contracts from `core/model-invocation`.
- * This facade remains temporarily for compatibility while callers migrate.
- */
 export type {
   ChatContentBlock,
   ChatMessage,
@@ -16,4 +12,9 @@ export type {
   ModelStreamEvent,
   StreamEvent,
   TokenUsage,
-} from '../../core/model-invocation/index.js';
+} from './types.js';
+export { ContextOverflowError, ModelInvocationError } from './errors.js';
+export type {
+  ContextLimitCorrection,
+  ModelInvocationFailureCategory,
+} from './errors.js';

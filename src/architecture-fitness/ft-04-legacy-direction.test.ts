@@ -8,7 +8,12 @@ import {
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const FIXTURE_ROOT = fileURLToPath(new URL('../../test-fixtures/architecture-fitness/ft-04', import.meta.url));
-const NEW_CORE_ROOTS = ['src/new-core/'];
+const FIXTURE_NEW_CORE_ROOTS = ['src/new-core/'];
+const NEW_CORE_ROOTS = [
+  'src/core/model-invocation/',
+  'src/core/model-resolution/',
+  'src/adapters/llm/AnthropicProvider.ts',
+];
 const FORBIDDEN_ROOTS = ['src/compat/', 'src/legacy/'];
 
 describe('FT-04 Legacy dependency direction', () => {
@@ -16,13 +21,13 @@ describe('FT-04 Legacy dependency direction', () => {
     const passSources = await loadTypeScriptSources(`${FIXTURE_ROOT}/pass`);
     const failSources = await loadTypeScriptSources(`${FIXTURE_ROOT}/fail`);
 
-    expect(findFt04LegacyDirectionViolations(passSources, NEW_CORE_ROOTS, FORBIDDEN_ROOTS)).toEqual([]);
-    expect(findFt04LegacyDirectionViolations(failSources, NEW_CORE_ROOTS, FORBIDDEN_ROOTS)).toEqual([
+    expect(findFt04LegacyDirectionViolations(passSources, FIXTURE_NEW_CORE_ROOTS, FORBIDDEN_ROOTS)).toEqual([]);
+    expect(findFt04LegacyDirectionViolations(failSources, FIXTURE_NEW_CORE_ROOTS, FORBIDDEN_ROOTS)).toEqual([
       'FT-04 source=src/new-core/ModelResolver.ts forbiddenTarget=src/legacy/llm-config-adapter.ts',
     ]);
   });
 
-  it('has no production rule scope before New Core and Legacy roots exist', async () => {
+  it('prevents the Model Core and Provider module from depending on Compatibility', async () => {
     const productionSources = await loadProductionSources(REPOSITORY_ROOT);
 
     expect(findFt04LegacyDirectionViolations(productionSources, NEW_CORE_ROOTS, FORBIDDEN_ROOTS)).toEqual([]);
