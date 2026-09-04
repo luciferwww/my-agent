@@ -2,7 +2,7 @@
 
 ## 1. 状态
 
-- **状态：** Draft
+- **状态：** Accepted
 - **版本：** 0.1
 - **日期：** 2026-09-03
 - **所有者：** 项目所有者
@@ -14,7 +14,7 @@
 - **相关约束：** [Architecture Principles](architecture-principles.md)、[Domain Glossary](domain-glossary.md)
 - **工作流：** [Development Workflow](../development-workflow.md)
 
-本 Draft 只提出 disposable AF-06 Spike 的实验边界，尚未获得执行授权。它不授权 production Extension Framework、Runtime Builder、Registry、动态 reload、文件 watcher、AF-07、Architecture Slice、公共 Contract 或生产目录迁移。
+项目所有者于 2026-09-03 接受本 Spec v0.1 及 §16 的实验边界、证据矩阵、时间盒和停止条件，并授权执行 disposable AF-06 Spike。该接受不授权 production Extension Framework、Runtime Builder、Registry、动态 reload、文件 watcher、AF-07、Architecture Slice、公共 Contract 或生产目录迁移。
 
 ## 2. 单一问题
 
@@ -356,17 +356,17 @@ Results 不得把 fake chat Extension、in-memory protocol、Windows execution �
 
 本 Spec 晋升为 `Accepted` 前，项目所有者需确认：
 
-- [ ] `AF06-Q01` 与 `AF06-H01` 是单一、可证伪且足以回答 AF-06 的实验边界；
-- [ ] `P3-E01..P3-E05` 与 `P4-E01..P4-E07` 完整对应 Target Hypothesis，全部通过才可建议 aggregate `Provisional Pass`；
-- [ ] `P3-E02`/`P3-E05` 使用同一个 External chat fixture，且证据合并纪律不会制造重复、不可区分测试；
-- [ ] 接受 disposable target-shaped Registry/Lifecycle/Turn-tree harness，不把 current `RuntimeApp` 包装成 Target implementation，也不复制 Runtime/Runner loop；
-- [ ] 接受 current `AgentRunner` 仅由静态 generic Tool/Hook dispatcher验证 no central/source branch，不声称 current Runner 已支持 Snapshot；
-- [ ] 接受规范目录键只作为纯规则/排列候选，单一 Windows run 不构成真实跨平台 filesystem 证明；
-- [ ] 建议 Timebox 为 3 个工作日、5 个工作日硬停止；
-- [ ] production、public Contract、dependency、lockfile 和 production test seam 均不可修改；
-- [ ] Results review 前保留 disposable fixture，Results 接受后默认删除；
-- [ ] 接受本 Spec 只授权 disposable AF-06 Spike，不授权 AF-07、Architecture Slice、production dynamic reload 或 Foundation Gate 整体通过。
+- [x] `AF06-Q01` 与 `AF06-H01` 是单一、可证伪且足以回答 AF-06 的实验边界；
+- [x] `P3-E01..P3-E05` 与 `P4-E01..P4-E07` 完整对应 Target Hypothesis，全部通过才可建议 aggregate `Provisional Pass`；
+- [x] `P3-E02`/`P3-E05` 使用同一个 External chat fixture，且证据合并纪律不会制造重复、不可区分测试；
+- [x] 接受 disposable target-shaped Registry/Lifecycle/Turn-tree harness，不把 current `RuntimeApp` 包装成 Target implementation，也不复制 Runtime/Runner loop；
+- [x] 接受 current `AgentRunner` 仅由静态 generic Tool/Hook dispatcher验证 no central/source branch，不声称 current Runner 已支持 Snapshot；
+- [x] 接受规范目录键只作为纯规则/排列候选，单一 Windows run 不构成真实跨平台 filesystem 证明；
+- [x] 建议 Timebox 为 3 个工作日、5 个工作日硬停止；
+- [x] production、public Contract、dependency、lockfile 和 production test seam 均不可修改；
+- [x] Results review 前保留 disposable fixture，Results 接受后默认删除；
+- [x] 接受本 Spec 只授权 disposable AF-06 Spike，不授权 AF-07、Architecture Slice、production dynamic reload 或 Foundation Gate 整体通过。
 
 ## 17. 当前状态
 
-AF-05 已完成并为 Provider/Model Hypothesis 提供 Owner-accepted disposable evidence。AF-06 仅完成本 Spike Spec Draft；尚未执行实验、创建 fixture 或改变 Foundation Gate。下一步是独立复审本 Draft，并由项目所有者接受或要求修订；只有 `Accepted` 后才能执行 disposable Spike。
+AF-05 已完成并为 Provider/Model Hypothesis 提供 Owner-accepted disposable evidence。AF-06 Spec 已于 2026-09-03 获项目所有者接受；[AF-06 Extension Framework Spike Results](af-06-extension-framework-spike-results.md) 的 `Provisional Pass` 也于 2026-09-03 获项目所有者接受。mandatory disposable cleanup 和 cleanup validation 已完成，AF-06 已晋升为 `Completed`。该完成只更新 AF-06 evidence，不表示 Foundation Gate 整体通过，也不自动授权 AF-07 或 production work。

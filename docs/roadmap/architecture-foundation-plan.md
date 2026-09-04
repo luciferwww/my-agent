@@ -391,7 +391,9 @@ Legacy 只提供历史证据，不自动成为目标设计。
 
 ### AF-06：Extension Framework Spike
 
-**Spike Spec：** [AF-06 Extension Framework Spike Spec](../architecture/af-06-extension-framework-spike-spec.md)（`Draft`，尚未授权执行）
+**Spike Spec：** [AF-06 Extension Framework Spike Spec](../architecture/af-06-extension-framework-spike-spec.md)（`Accepted`，2026-09-03；已授权 disposable Spike execution）
+
+**Spike Results：** [AF-06 Extension Framework Spike Results](../architecture/af-06-extension-framework-spike-results.md)（`Completed`；`Provisional Pass` 于 2026-09-03 获项目所有者接受，disposable cleanup 与 cleanup validation 已完成）
 
 **文档约束：** 创建或实质修改本工作包的 Spike Spec、Results、ADR 或后续 Spec 前，必须读取并引用本 Plan §7.4。
 
@@ -436,6 +438,17 @@ Legacy 只提供历史证据，不自动成为目标设计。
 
 ### AF-07：Architecture Decision
 
+**Decision Spec：** [AF-07 Architecture Decision Spec](../architecture/af-07-architecture-decision-spec.md)（`Accepted`，2026-09-04；四份必要 ADR 已接受）
+
+**Plan Item 状态：** Completed
+
+**Decisions：**
+
+- [ADR-003 Progressive Architecture Migration](../architecture/adr-003-progressive-architecture-migration.md)（`Accepted`，2026-09-04）；
+- [ADR-004 Provider/Model Identity and Facts Ownership](../architecture/adr-004-provider-model-identity-and-facts-ownership.md)（`Accepted`，2026-09-04）；
+- [ADR-005 Extension Registry and Runtime Composition](../architecture/adr-005-extension-registry-runtime-composition.md)（`Accepted`，2026-09-04）；
+- [ADR-006 Legacy and Compatibility Exit](../architecture/adr-006-legacy-and-compatibility-exit.md)（`Accepted`，2026-09-04）。
+
 根据 AF-05 和 AF-06 的 Results，至少形成：
 
 - ADR：渐进重构而非重写；
@@ -453,16 +466,20 @@ Foundation 只有在以下条件全部满足时才可进入生产迁移：
 - [x] Architecture Principles 和 Domain Glossary 已确认；
 - [x] Target Architecture 已 `Accepted`；
 - [x] Provider/Model Spike 有 Results，关键 Hypothesis 通过；
-- [ ] Extension Framework Spike 有 Results，关键 Hypothesis 通过；
-- [ ] AF-06 已通过 Spike 证据验证已加载 Extension 的运行时启停、Snapshot 一致性、排空和回滚；
-- [ ] 必要 ADR 已 `Accepted`；
+- [x] Extension Framework Spike 有 Results，关键 Hypothesis 通过；
+- [x] AF-06 已通过 Spike 证据验证已加载 Extension 的运行时启停、Snapshot 一致性、排空和回滚；
+- [x] 必要 ADR 已 `Accepted`；
 - [x] Characterization Tests 覆盖核心现有行为；
 - [x] Fitness Tests 能阻止已知依赖倒退；
-- [ ] Slice 1–6 Charter、依赖和删除条件已定义，下一执行 Slice 的验收与验证范围已补齐并满足 Definition of Ready；
-- [ ] Legacy 文档迁移表已建立；
+- [x] Slice 1–6 Charter、依赖和删除条件已定义，下一执行 Slice（Slice 1）的验收与验证范围已补齐并满足 Definition of Ready；
+- [x] 独立 Legacy migration inventory 已建立并接受，覆盖文档、production path、API、Config 和 Feature Flag；
 - [x] 没有要求推倒 Runner/Session/Channel 基线的未解释证据。
 
-若 Gate 未通过，必须调整 Target Architecture 或明确扩大重构范围，不得通过在旧 Composition Root 上继续堆特例绕过。
+2026-09-04 最终复评结论：必要 ADR、Slice 1 Definition of Ready 与独立 Legacy migration inventory 均已满足，Foundation Gate 已通过。Gate 通过只解除进入 production migration 前的 Foundation 阻塞；Slice 1 仍须项目所有者单独批准进入 Delivery，当前未授权 production 修改、迁移/删除或 Compatibility 实施。
+
+项目所有者于 2026-09-04 接受 [Legacy Migration Inventory](../architecture/legacy-migration-inventory.md) 与 [Model Resolution Module Spec](../architecture/model-resolution-module-spec.md)，并确认 MR-OD-01 Provider Facts policy 和 MR-OD-02 Child Compatibility policy。两份工件均为 `Accepted`；该接受不包含 production 修改、批量移动/删除或 Slice 1 Delivery。
+
+若 Gate 因未解释的架构证据冲突而无法通过，必须调整 Target Architecture 或另行批准范围变化；普通工件或 Definition of Ready 缺口只补齐对应 Gate item。任何情况下都不得通过在旧 Composition Root 上继续堆特例绕过 Gate。
 
 ## 11. 生产迁移路线
 
@@ -472,7 +489,7 @@ Foundation 只有在以下条件全部满足时才可进入生产迁移：
 
 Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accepted` Spike Results、`Accepted` ADR 或已完成 Slice 的实现证据证明依赖关系变化时，才允许调整顺序；调整前必须先更新本 Plan、依赖、验收、验证和删除条件。文档在每个 Slice 中同步，Slice 6 负责最终 Current Architecture 合并与 Legacy 收口。
 
-动态 Registry 分三阶段推进：AF-06 使用可丢弃 Spike 验证完整机制；Slice 3/4 将 Registry 和启动期只读 Snapshot 接入生产 Tool、Hook、Channel 与 Extension/Module instance 生命周期，但不开放生产运行时 Contribution 变更；Slice 5 完成统一变更事务、原子切换、排空、instance stop 和失败回滚后，才开放已加载 Extension 的生产运行时启停与 Contribution 更新。同一 Extension 的运行中版本替换、多 instance 并存和 Framework 管理 Extension 内部对象不在 AF-06 最小范围内。
+动态 Registry 分阶段推进：AF-06 使用可丢弃 Spike 验证完整机制；Slice 1 将启动期只读 Provider projection 接入 Model Resolution；Slice 3/4 将同一 Snapshot 的 Tool、Hook、Channel projections 与 Extension/Module instance 生命周期接入生产，但不开放生产运行时 Contribution 变更；Slice 5 完成统一变更事务、原子切换、排空、instance stop 和失败回滚后，才开放已加载 Extension 的生产运行时启停与 Contribution 更新。同一 Extension 的运行中版本替换、多 instance 并存和 Framework 管理 Extension 内部对象不在 AF-06 最小范围内。
 
 ### Slice 1：Model Resolution
 
@@ -557,7 +574,7 @@ Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accept
 
 - 形成唯一 Current Architecture；
 - 更新 Capability Inventory；
-- 移动已替代旧文档到 `docs/legacy/`；
+- 按 accepted Inventory 逐项 Review 已替代文档；必要时暂存到 `docs/legacy/` 并冻结；
 - 更新所有活跃链接；
 - 删除已迁移且无独有价值的 Legacy 文档。
 
@@ -569,7 +586,7 @@ Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accept
 
 ## 12. Legacy 文档策略
 
-新文档体系建立后，旧文档先进入 `docs/legacy/`，而不是立即删除。
+新文档体系建立后，旧文档先按 accepted Inventory 完成 authority 与 unique-value Review，而不是立即删除；需要暂存时才进入 `docs/legacy/` 并冻结。
 
 Legacy 文档：
 
@@ -753,7 +770,7 @@ Foundation（M0–M3）以 **两周完成为目标、四周为硬上限**。第�
 | 为未来场景过度抽象 | 每个 Port/Registry 至少有两个实现或一个 Fake + 一个真实实现 |
 | 新旧路径长期共存 | Slice DoD 强制迁移真实调用方和删除旧路径 |
 | 重构破坏已实现行为 | Characterization + Contract + Regression 分层验证 |
-| Provider Metadata 不完整 | Live Discovery + Bundled Catalog + Explicit Override + Conservative Fallback |
+| Provider Metadata 不完整 | Provider-owned deployment facts + Bundled static Catalog + limited context fallback；其他 execution-critical Facts 缺失时 fail closed；live discovery/paid probing 需新 Accepted Spike |
 | Extension 获得过多权限 | Extension Capability、受限上下文、配置 Namespace、生命周期和信任策略显式化 |
 | 动态 Registry 产生混合版本或资源泄漏 | 不可变版本 Snapshot、per-turn 捕获、原子切换、排空、资源作用域和失败回滚 |
 | 文档体系再次膨胀 | 每种工件单一职责；完成后迁移、合并或删除过程文档 |
@@ -769,24 +786,22 @@ Foundation（M0–M3）以 **两周完成为目标、四周为硬上限**。第�
 4. Extension Registry 支持已安装且已加载 Extension 的受控动态 enable/disable，使用版本化不可变 Snapshot、per-turn 捕获、原子切换、排空、instance stop 和失败回滚；同一 Extension identity 同时只启动一个 instance，重复候选 warning 后忽略；不包含同一 Extension 的运行中版本替换、多 instance 并存、Framework 管理其内部对象、远程下载、任意代码热加载或原地代码热升级；
 5. 第一批生产迁移默认按 Slice 1–6 顺序执行，Slice 1–5 不并行；只有 `Accepted` Spike Results、`Accepted` ADR 或已完成 Slice 的实现证据证明依赖变化时，才可先更新 Plan 后调整。动态 Registry 在 Slice 3/4 接入启动期只读 Snapshot，在 Slice 5 完成事务闭环后开放生产运行时变更。
 
-### 21.2 由 Target Architecture 与 Spike 决定
+### 21.2 由 Accepted Spec 或后续 Module Spec 决定
 
-1. Model Catalog 的事实合并优先级；
+1. `effectiveContextLimit` precedence、deployment facts、Capability fail-closed 和 provenance 已由 [Model Resolution Module Spec](../architecture/model-resolution-module-spec.md) 决定；后续 Provider Module Spec 只逐字段细化未冻结的 Provider-private source handling，不得改变既有 ownership；
 2. Extension Config 使用原始命名空间加 Extension 自校验，还是中央 Schema 注册；
 3. Extension Capability、受限上下文和生命周期接口的具体形状。
 
-### 21.3 由 AF-01 治理基线决定
+### 21.3 由治理基线与 Accepted policy 决定
 
 1. 首批 Fitness Tests 使用 Vitest 依赖扫描还是额外静态工具；
-2. Legacy 文档保留几个 Iteration 后进入删除 Review；
-3. Compatibility Feature Flag 的最长寿命。
+2. Legacy 文档按 [ADR-006](../architecture/adr-006-legacy-and-compatibility-exit.md) 和 [Legacy Migration Inventory](../architecture/legacy-migration-inventory.md) 的 per-entry target Slice/review date 与 deletion conditions 进入 Review，不设统一保留 Iteration；
+3. Compatibility Feature Flag 按 per-entry Owner、目标删除 Slice/review date 和 deletion conditions 管理，不设脱离具体迁移项的统一最长寿命。
 
 ## 22. 立即下一步
 
 按以下顺序推进：
 
 1. AF-05 已完成：`Provisional Pass` Results 获项目所有者接受，disposable fixture cleanup、状态同步和 AF-05 evidence item 均已完成；
-2. 下一工作包仅从根据已 `Accepted` Target Architecture 输入起草 AF-06 Spike Spec 开始；接受 Spec 后才可执行并记录可复现的 Spike Results；
-3. AF-05 与 AF-06 Results 均完成后执行 AF-07、重新评估 Foundation Gate；Gate 通过前不启动生产 Architecture Slice。
-
-在 AF-05 Results 完成前，不进入生产 Model Registry 实现；在 AF-06 Results 完成前，不冻结生产 Extension API。
+2. AF-06 已完成：`Provisional Pass` Results 获项目所有者接受，disposable fixture cleanup、cleanup validation、状态同步和 AF-06 evidence items 均已完成；
+3. AF-07、独立 Legacy migration inventory 与 Slice 1 Definition of Ready 均已于 2026-09-04 完成并获项目所有者接受，Foundation Gate 已通过；下一步是由项目所有者单独决定是否批准 Slice 1 进入 Delivery，当前不启动 production Architecture Slice。

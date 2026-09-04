@@ -12,7 +12,7 @@
 - **规范词汇：** [Domain Glossary](domain-glossary.md)
 - **架构约束：** [Architecture Principles](architecture-principles.md)
 
-本文档是已接受的目标架构，不描述当前实现已经完成的结构，也不授权生产迁移。AF-05 `Provisional Pass` Spike Results 已获项目所有者接受并完成 disposable cleanup，`P2-H01..P2-H03` 因此具有 Spike evidence；AF-06 尚未执行。该证据不表示生产实现完成，也不使 Foundation Gate 整体通过。
+本文档是已接受的目标架构，不描述当前实现已经完成的结构，也不授权生产迁移。AF-05 与 AF-06 的 `Provisional Pass` Spike Results 均已获项目所有者接受并完成 disposable cleanup；`P2-H01..P2-H03`、`P3-H01..P3-H05` 与 `P4-H01..P4-H07` 因此具有各自 Results 限定范围内的 Spike evidence。该证据不表示 production implementation 完成，也不使 Foundation Gate 整体通过。
 
 ### 1.1 证据分类
 
@@ -1866,7 +1866,7 @@ AF-04 的 Results 至少记录：实际测试/工具、被核验的 source scope
 
 ## Appendix C. AF-06 Extension Framework Spike Input
 
-本 Appendix 只是 Spike 输入索引，不是执行证据、Spike Results、生产动态变更或第三方平台支持授权。Phase 3 的静态骨架 Hypothesis、最小实验、成功条件和停止条件见 §6.6/§6.8；Phase 4 的动态事务和 Lifecycle 实验见 §7.9。AF-06 必须先用 P3-H02/H05 的同一外部 chat Extension fixture 验证 proprietary Channel、typed platform identity/Tool、Hook、Config、optional capability，以及 Extension 内部对象不泄漏给 Framework/消费者；再验证规范目录发现、Descriptor/Schema 两阶段静态校验与版本处理、External Extension 整组隔离、一个 Extension API、四类 typed projections、受限 Extension Capability 和不可变 Snapshot；随后验证原子切换、Turn tree generation 固定、pre-publish latest-wins、单代 retirement、有界排空、Abort、instance stop 和失败回滚。同一 Extension 的运行中版本替换、多 instance 并存、Framework 管理内部对象、文件系统 watcher、Extension code reload 和多代并行 retirement 不属于该最小机制。
+本 Appendix 只是 Spike 输入索引，不是生产动态变更或第三方平台支持授权；实际执行证据与限制见 [AF-06 Extension Framework Spike Results](af-06-extension-framework-spike-results.md)。Phase 3 的静态骨架 Hypothesis、最小实验、成功条件和停止条件见 §6.6/§6.8；Phase 4 的动态事务和 Lifecycle 实验见 §7.9。AF-06 使用 P3-H02/H05 的同一外部 chat Extension fixture 验证 proprietary Channel、typed platform identity/Tool、Hook、Config、optional capability，以及 Extension 内部对象不泄漏给 Framework/消费者；并验证规范目录发现、Descriptor/Schema 两阶段静态校验与版本处理、External Extension 整组隔离、一个 Extension API、四类 typed projections、受限 Extension Capability、不可变 Snapshot、原子切换、Turn tree generation 固定、pre-publish latest-wins、单代 retirement、有界排空、Abort、instance stop 和失败回滚。同一 Extension 的运行中版本替换、多 instance 并存、Framework 管理内部对象、文件系统 watcher、Extension code reload 和多代并行 retirement 仍不属于该最小机制。
 
 ## Appendix D. Evidence Inventory Maintenance
 
