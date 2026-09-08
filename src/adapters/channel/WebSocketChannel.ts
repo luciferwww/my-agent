@@ -108,6 +108,7 @@ export class WebSocketChannel implements Channel {
   private stopRequested = false;
   private settleCompletion!: (result: ChannelCompletion) => void;
   private completionSettled = false;
+  private readonly sessionByOriginMessageId = new Map<string, string>();
 
   constructor(private readonly config: WebSocketChannelConfig) {
     this.host = config.host ?? DEFAULT_HOST;
@@ -127,14 +128,27 @@ export class WebSocketChannel implements Channel {
   }
 
   send(event: AgentEvent): void {
+    if (event.type === 'user_message') {
+      this.sessionByOriginMessageId.set(event.messageId, event.sessionKey);
+    } else if (event.type === 'run_start' && event.originMessageId) {
+      this.sessionByOriginMessageId.delete(event.originMessageId);
+    }
     // Subagent events carry the CHILD sessionKey (e.g. "main:subagent:abc:1"),
     // but WebSocket clients subscribe to the parent's sessionKey. Re-derive
     // the root label so events reach the right audience.
+    const requestAudience = event.type === 'request_end' && event.originMessageId
+      ? this.sessionByOriginMessageId.get(event.originMessageId)
+      : undefined;
+    if (event.type === 'request_end' && event.originMessageId) {
+      this.sessionByOriginMessageId.delete(event.originMessageId);
+    }
+    const eventSessionKey = 'sessionKey' in event ? event.sessionKey : requestAudience;
+    if (!eventSessionKey) return;
     const audienceKey =
       (event.type === 'subagent_start' || event.type === 'subagent_end') &&
-      isSubagentSessionKey(event.sessionKey)
-        ? parseSubagentSessionKey(event.sessionKey).rootLabel
-        : event.sessionKey;
+      isSubagentSessionKey(eventSessionKey)
+        ? parseSubagentSessionKey(eventSessionKey).rootLabel
+        : eventSessionKey;
     const sessionAudience = this.sessions.get(audienceKey);
     if (!sessionAudience || sessionAudience.size === 0) return;
 
@@ -142,7 +156,7 @@ export class WebSocketChannel implements Channel {
       log.debug('broadcasting event to session audience', {
         channelId: this.id,
         eventType: event.type,
-        sessionKey: event.sessionKey,
+        sessionKey: eventSessionKey,
         audienceKey,
         audienceSize: sessionAudience.size,
       });
@@ -696,6 +710,15 @@ export class WebSocketChannel implements Channel {
   }
 
   private serializeEvent(event: AgentEvent): Record<string, unknown> {
+    if (event.type === 'request_end') {
+      return {
+        type: event.type,
+        request_id: event.requestId,
+        ...(event.originMessageId ? { origin_message_id: event.originMessageId } : {}),
+        outcome: event.outcome,
+        reason: event.reason,
+      };
+    }
     if (event.type === 'error') {
       // Error 对象直接 JSON.stringify 会退化成空对象，这里显式降成 message 以匹配协议文档。
       return {

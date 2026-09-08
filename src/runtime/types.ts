@@ -11,26 +11,19 @@ import type {
 import type { MemoryManager } from '../core/memory/MemoryManager.js';
 import type { SystemPromptBuilder } from '../core/prompt/SystemPromptBuilder.js';
 import type { SessionManager, SessionManagerOptions } from '../core/session/SessionManager.js';
-import type { RuntimeContributionUnit, RegistrySnapshot } from '../core/registry/index.js';
+import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import type { ApplicationToolPolicy } from '../core/tools/types.js';
 import type { ContextFile } from '../core/workspace/types.js';
 import type { AgentEvent, AgentRunner, AgentRunnerConfig } from '../core/runner/index.js';
-import type { SubagentProfile } from '../core/subagent/types.js';
-import type { ActiveParentTurn } from './subagent-orchestration.js';
-import type { MessageRouteContext } from './queue-types.js';
-import type {
-  ChannelCompletionObserver,
-  ChannelShutdownHandoff,
-} from '../core/channel/index.js';
-
 import type { UserPromptBuilder } from '../core/prompt/UserPromptBuilder.js';
+import type { LoadedRuntimeUnit } from './runtime-unit.js';
+import type { RuntimeDeadlineDriver, RuntimeDeadlinePolicy } from './runtime-deadline.js';
 
 export interface RuntimeResourceSet {
   readonly appConfig: AppConfig;
   readonly resolvedConfig: AgentDefaults;
   readonly workspaceDir: string;
   readonly sessionManager: SessionManager;
-  readonly registrySnapshot: RegistrySnapshot;
   readonly toolPolicy: ApplicationToolPolicy;
   readonly defaultProviderId: string;
   readonly memoryManager: MemoryManager | null;
@@ -77,7 +70,9 @@ export interface RuntimeDependencies {
 
 export interface RuntimeAppOptions {
   workspaceDir: string;
-  readonly contributionUnits?: readonly RuntimeContributionUnit[];
+  readonly loadedUnits?: readonly LoadedRuntimeUnit[];
+  readonly deadlinePolicy?: Partial<RuntimeDeadlinePolicy>;
+  readonly deadlineDriver?: RuntimeDeadlineDriver;
   agentId?: string;
   envOverrides?: DeepPartial<AgentDefaults>;
   cliOverrides?: DeepPartial<AgentDefaults>;
@@ -87,10 +82,12 @@ export interface RuntimeAppOptions {
    * 可选的 AgentEvent 观察者（telemetry/调试日志用）。
    * RuntimeApp 在 fanout 闭包末尾调用此回调，与 channel.send 并行触发。
    */
-  onAgentEvent?: (event: AgentEvent) => void;
+  onAgentEvent?: (event: AgentEvent) => unknown;
 }
 
 export interface RunTurnParams {
+  /** Stable caller-facing Root request identity; generated at intake when omitted. */
+  requestId?: string;
   sessionKey: string;
   message: string | ChatContentBlock[];
   modelReference?: ModelReference;
@@ -172,12 +169,43 @@ export interface RuntimeErrorInfo {
   cause?: Error;
 }
 
+export interface RuntimeShutdownResidual {
+  readonly owner: 'runtime' | 'reload' | 'retirement' | 'instance' | 'resource' | 'fanout';
+  readonly phase: string;
+  readonly message: string;
+  readonly generation?: number;
+  readonly requestId?: string;
+  readonly turnId?: string;
+  readonly unitId?: string;
+  readonly instanceId?: string;
+  readonly blockingTurnIds?: readonly string[];
+}
+
+export interface RuntimeTurnConvergenceReport {
+  readonly completedRequestIds: readonly string[];
+  readonly abortedRequestIds: readonly string[];
+  readonly nonconvergedRequestIds: readonly string[];
+  readonly queuedCancelledRequestIds: readonly string[];
+  readonly protectedGenerations: readonly number[];
+}
+
+export interface RuntimeInstanceStopReport {
+  readonly completedInstanceIds: readonly string[];
+  readonly failedInstanceIds: readonly string[];
+  readonly pendingInstanceIds: readonly string[];
+  readonly skippedProtectedInstanceIds: readonly string[];
+}
+
 export interface RuntimeShutdownReport {
-  reason?: string;
-  startedAt: number;
-  finishedAt: number;
-  completed: string[];
-  failed: Array<{ resource: string; message: string }>;
+  readonly outcome: 'completed' | 'deadline-exhausted';
+  readonly reason?: string;
+  readonly startedAt: number;
+  readonly finishedAt: number;
+  readonly completed: readonly string[];
+  readonly failed: readonly { readonly resource: string; readonly message: string }[];
+  readonly turns: RuntimeTurnConvergenceReport;
+  readonly instanceStops: RuntimeInstanceStopReport;
+  readonly residuals: readonly RuntimeShutdownResidual[];
 }
 
 export type RuntimeEvent =
@@ -195,13 +223,28 @@ export type RuntimeEvent =
     }
   | {
       type: 'turn_start';
+      requestId: string;
+      originMessageId?: string;
+      turnId: string;
       sessionKey: string;
       contextVersion: number;
     }
   | {
       type: 'turn_end';
+      requestId: string;
+      originMessageId?: string;
+      turnId: string;
       sessionKey: string;
-      result: RunTurnResult;
+      outcome: 'completed' | 'failed' | 'aborted' | 'shutdown_nonconverged';
+      result?: RunTurnResult;
+      failure?: { readonly code: string; readonly message: string };
+    }
+  | {
+      type: 'request_end';
+      requestId: string;
+      originMessageId?: string;
+      outcome: 'cancelled';
+      reason: 'abort_queue_drop' | 'shutdown';
     }
   | {
       type: 'context_reload';
@@ -249,11 +292,7 @@ export interface RuntimeDisposable {
 }
 
 export interface RuntimeBootstrapResult {
-  readonly resources: RuntimeResourceSet;
+  readonly resources: Omit<RuntimeResourceSet, 'defaultProviderId'>;
   readonly state: RuntimeLifecycleState;
-  readonly subagentProfiles: ReadonlyMap<string, SubagentProfile>;
-  readonly activeParentTurns: Map<string, ActiveParentTurn>;
-  readonly routeContextByTurn: Map<string, MessageRouteContext>;
-  readonly channelCompletionObserver: ChannelCompletionObserver;
-  readonly channelShutdownHandoff: ChannelShutdownHandoff;
+  readonly dependencies: RuntimeDependencies;
 }

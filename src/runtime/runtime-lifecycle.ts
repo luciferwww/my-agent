@@ -1,4 +1,5 @@
 import type { ContributionSource } from '../core/registry/index.js';
+import type { RuntimeDeadlineBudget } from './runtime-deadline.js';
 
 export type RuntimeInstanceState =
   | 'created'
@@ -35,6 +36,13 @@ export interface RuntimeInstanceView {
 export interface RuntimeLifecycleStopReport {
   readonly completed: readonly string[];
   readonly failed: readonly { readonly instanceId: string; readonly message: string }[];
+  readonly pending: readonly string[];
+  readonly skippedProtected: readonly string[];
+}
+
+export interface RuntimeLifecycleStopOptions {
+  readonly retryFailed?: boolean;
+  readonly budget?: RuntimeDeadlineBudget;
 }
 
 interface RuntimeInstanceRecord {
@@ -95,6 +103,17 @@ export class RuntimeLifecycleLedger {
     this.require(instanceId).generationMemberships.delete(generation);
   }
 
+  addGenerationMemberships(instanceIds: readonly string[], generation: number): void {
+    if (!this.canPublish(instanceIds)) {
+      throw new Error('All Runtime instances must be handed off before publication.');
+    }
+    for (const instanceId of instanceIds) this.addGenerationMembership(instanceId, generation);
+  }
+
+  removeGenerationMemberships(instanceIds: readonly string[], generation: number): void {
+    for (const instanceId of instanceIds) this.removeGenerationMembership(instanceId, generation);
+  }
+
   canPublish(instanceIds: readonly string[]): boolean {
     return instanceIds.every((instanceId) => this.require(instanceId).state === 'handed-off');
   }
@@ -113,36 +132,75 @@ export class RuntimeLifecycleLedger {
     });
   }
 
-  async stopEligible(instanceIds: readonly string[]): Promise<RuntimeLifecycleStopReport> {
+  async stopEligible(
+    instanceIds: readonly string[],
+    options: RuntimeLifecycleStopOptions = {},
+  ): Promise<RuntimeLifecycleStopReport> {
     const ordered = this.reverseDependencyOrder(instanceIds);
     const completed: string[] = [];
     const failed: Array<{ instanceId: string; message: string }> = [];
+    const pending: string[] = [];
+    const skippedProtected: string[] = [];
 
     for (const instanceId of ordered) {
       const record = this.require(instanceId);
-      if (record.generationMemberships.size > 0 || record.state === 'stopped') continue;
-      if (record.state === 'stop-failed' && record.stopAttempts >= 2) continue;
+      if (record.generationMemberships.size > 0) {
+        skippedProtected.push(instanceId);
+        continue;
+      }
+      if (record.state === 'stopped') continue;
+      if (record.state === 'stop-pending') {
+        pending.push(instanceId);
+        continue;
+      }
+      if (record.state === 'stop-failed' && (!options.retryFailed || record.stopAttempts >= 2)) {
+        continue;
+      }
       if (record.state !== 'handed-off' && record.state !== 'stop-failed') {
         throw new Error(`Runtime instance "${instanceId}" is not eligible to stop from state "${record.state}".`);
       }
+      if (options.budget && options.budget.remaining() <= 0) {
+        pending.push(instanceId);
+        continue;
+      }
       record.state = 'stop-pending';
       record.stopAttempts += 1;
-      try {
-        await record.owner?.stop();
+      const stop = Promise.resolve().then(() => record.owner?.stop());
+      const settled = options.budget
+        ? await options.budget.raceRemaining(stop)
+        : await stop.then(
+            () => ({ outcome: 'completed' as const, value: undefined }),
+            (error: unknown) => ({ outcome: 'failed' as const, message: messageOf(error) }),
+          );
+      if (settled.outcome === 'completed') {
         record.state = 'stopped';
         record.stopError = undefined;
         completed.push(instanceId);
-      } catch (error) {
-        const message = messageOf(error);
+      } else if (settled.outcome === 'failed') {
+        const message = settled.message;
         record.state = 'stop-failed';
         record.stopError = message;
         failed.push({ instanceId, message });
+      } else {
+        pending.push(instanceId);
+        void stop.then(
+          () => {
+            record.state = 'stopped';
+            record.stopError = undefined;
+          },
+          (error: unknown) => {
+            record.state = 'stop-failed';
+            record.stopError = messageOf(error);
+          },
+        );
       }
     }
 
     return Object.freeze({
       completed: Object.freeze(completed),
       failed: Object.freeze(failed.map((entry) => Object.freeze(entry))),
+      pending: Object.freeze(pending),
+      skippedProtected: Object.freeze(skippedProtected),
     });
   }
 

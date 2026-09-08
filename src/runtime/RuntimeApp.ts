@@ -21,7 +21,11 @@ import {
 } from '../core/media/attachment-pipeline.js';
 import { ATTACHMENT_DROP_NOTICE_DEFAULT } from '../core/media/constants.js';
 import { classifyRuntimeError, createRuntimeError } from './errors.js';
-import { buildRuntimeHandle } from './runtime-builder.js';
+import {
+  buildRuntimeHandle,
+  type RuntimeApplicationKernel,
+  type RuntimeApplicationKernelInput,
+} from './runtime-builder.js';
 import type { RuntimeHandle } from './runtime-composition.js';
 import type {
   RuntimeGenerationPin,
@@ -29,6 +33,15 @@ import type {
 } from './composition-coordinator.js';
 import { buildSystemPromptParams } from './prompt-factory.js';
 import { summarizeAssembled } from './summarize-assembled.js';
+import {
+  RequestCompletionGate,
+  type RequestTerminal,
+} from './request-completion-gate.js';
+import {
+  RuntimeDeadlineBudget,
+  createSystemRuntimeDeadlineDriver,
+  resolveRuntimeDeadlinePolicy,
+} from './runtime-deadline.js';
 import type { CurrentCallApprovalCapability } from '../core/approval/index.js';
 import type { ActiveParentTurn } from './subagent-orchestration.js';
 import {
@@ -59,6 +72,16 @@ import type {
 
 const log = Logger.get('RuntimeApp');
 
+interface ActiveRootTree {
+  readonly requestId: string;
+  readonly generation: number;
+  readonly sessionKey: string;
+  readonly channels: readonly ChannelRuntimeBinding[];
+  readonly pin: RuntimeGenerationPin;
+  members: number;
+  released: boolean;
+}
+
 export class RuntimeApp {
   private readonly onEvent?: RuntimeAppOptions['onEvent'];
   private readonly inFlightRuns = new Set<Promise<unknown>>();
@@ -82,6 +105,8 @@ export class RuntimeApp {
    * 详见 core-abort-spec.md §8.1。
    */
   private readonly activeAborts = new Map<string, AbortController>();
+  private readonly activeRootGenerations = new Map<string, ActiveRootTree>();
+  private readonly requestGates = new Map<string, RequestCompletionGate<RunTurnResult>>();
   /** Active resolved Parent Turns eligible to delegate a tracked Child. */
   private readonly activeParentTurns: Map<string, ActiveParentTurn>;
 
@@ -95,17 +120,17 @@ export class RuntimeApp {
   private shutdownReport?: RuntimeShutdownReport;
 
   /**
-   * Fanout entry for AgentEvent broadcasts. Set inside `create()` after the
-   * bootstrap closure builds it; instance methods (notably
+    * Fanout entry for AgentEvent broadcasts. Injected by the Runtime Builder
+    * when it constructs the application kernel; instance methods (notably
    * `handleInboundChannelMessage`) call this to emit `user_message` events
    * without needing to import the fanout closure.
    * 见 channel-multi-client-user-message-spec §5.3。
    */
-  private fanoutAgentEvent!: (event: AgentEvent) => void;
+  private fanoutAgentEvent!: (event: AgentEvent) => void | Promise<void>;
 
   /**
-   * Profile registry including the built-in `general-purpose` entry. Filled
-   * by `create()` after `bootstrapRuntime()` returns; not part of
+    * Profile registry including the built-in `general-purpose` entry. Built
+    * by the Runtime Builder before kernel construction; not part of
    * RuntimeResourceSet because it is consumed only by RuntimeApp itself
   * (the public surface is the available-profile projection).
    */
@@ -129,50 +154,45 @@ export class RuntimeApp {
   }
 
   static async create(options: RuntimeAppOptions): Promise<RuntimeHandle> {
-    const handle = await buildRuntimeHandle(options, (input) => {
-      const app = new RuntimeApp(
-        input.resources,
-        input.state,
-        input.channelCompletionObserver,
-        input.snapshotAccess,
-        input.subagentProfiles,
-        input.activeParentTurns,
-        input.routeContextByTurn,
-        options.onEvent,
-      );
-      app.fanoutAgentEvent = input.fanoutAgentEvent;
-      app.wireApprovalRouting();
+    return buildRuntimeHandle(options, RuntimeApp.createKernel);
+  }
 
-      options.onEvent?.({
-        type: 'app_ready',
-        workspaceDir: options.workspaceDir,
-        contextVersion: input.state.contextVersion,
-        toolNames: input.resources.registrySnapshot.tools.definitions.map((tool) => tool.name),
-        channelIds: input.resources.registrySnapshot.channels.bindings.map((channel) => channel.id),
-        memoryEnabled: input.resources.memoryManager !== null,
-      });
+  private static createKernel(input: RuntimeApplicationKernelInput): RuntimeApplicationKernel {
+    const app = new RuntimeApp(
+      input.resources,
+      input.state,
+      input.channelCompletionObserver,
+      input.snapshotAccess,
+      input.subagentProfiles,
+      input.activeParentTurns,
+      input.routeContextByTurn,
+      input.onEvent,
+    );
+    app.fanoutAgentEvent = input.fanoutAgentEvent;
+    app.wireApprovalRouting();
 
-      return {
-        application: app,
-        onChannelMessage: (binding, request) =>
-          app.handleInboundChannelMessage(binding, request),
-        onInteractionResponse: (response) => app.handleInteractionResponse(response),
-        onInteractionUnavailable: (id, reason) => {
-          app.turnInteractionManager.settle(id, { outcome: 'unavailable', reason });
-        },
-        querySessionsNeedingAbort: () => {
-          const sessions = new Set<string>(app.activeAborts.keys());
-          for (const [sessionKey, queue] of app.messageQueueBySession) {
-            if (queue.length > 0) sessions.add(sessionKey);
-          }
-          return [...sessions];
-        },
-        abortTurn: (sessionKey) => app.abortTurn(sessionKey),
-        close: (reason) => app.close(reason),
-      };
-    });
-
-    return handle;
+    return {
+      application: app,
+      onChannelMessage: (binding, request) =>
+        app.handleInboundChannelMessage(binding, request),
+      onInteractionResponse: (response) => app.handleInteractionResponse(response),
+      onInteractionUnavailable: (id, reason) => {
+        app.turnInteractionManager.settle(id, { outcome: 'unavailable', reason });
+      },
+      querySessionsNeedingAbort: () => {
+        const sessions = new Set<string>(app.activeAborts.keys());
+        for (const [sessionKey, queue] of app.messageQueueBySession) {
+          if (queue.length > 0) sessions.add(sessionKey);
+        }
+        return [...sessions];
+      },
+      abortTurn: (sessionKey) => app.abortTurn(sessionKey),
+      blockingTurnIds: (generation) => app.blockingTurnIds(generation),
+      abortGeneration: (generation) => app.abortGeneration(generation),
+      channelBindingsForTurn: (turnId) => app.channelBindingsForTurn(turnId),
+      shouldDeliverAgentEvent: (event) => app.shouldDeliverAgentEvent(event),
+      close: (reason, budget) => app.close(reason, budget),
+    };
   }
 
   // ── 状态查询 ──────────────────────────────────────────────────────
@@ -194,6 +214,62 @@ export class RuntimeApp {
 
   waitForChannelCompletion(id: string): Promise<ChannelCompletion> {
     return this.channelCompletionObserver.waitForChannelCompletion(id);
+  }
+
+  private blockingTurnIds(generation: number): readonly string[] {
+    return Object.freeze([...this.activeRootGenerations]
+      .filter(([, root]) => root.generation === generation)
+      .map(([turnId]) => turnId)
+      .sort());
+  }
+
+  private abortGeneration(generation: number): readonly string[] {
+    const aborted: string[] = [];
+    for (const [turnId, root] of this.activeRootGenerations) {
+      if (root.generation !== generation) continue;
+      this.activeAborts.get(root.sessionKey)?.abort('generation-retirement');
+      aborted.push(turnId);
+    }
+    return Object.freeze(aborted.sort());
+  }
+
+  private channelBindingsForTurn(
+    turnId: string,
+  ): readonly ChannelRuntimeBinding[] | undefined {
+    return this.activeRootGenerations.get(turnId)?.channels;
+  }
+
+  private shouldDeliverAgentEvent(event: AgentEvent): boolean {
+    if (event.type !== 'run_end' && event.type !== 'error') return true;
+    const outcome = this.requestGates.get(event.requestId)?.terminalOutcome;
+    return outcome !== 'shutdown_nonconverged';
+  }
+
+  private registerChild(turnId: string, tree: ActiveRootTree): () => void {
+    if (tree.released || this.activeRootGenerations.get(turnId) !== tree) {
+      throw new Error(`Root tree "${turnId}" no longer accepts Child members.`);
+    }
+    tree.members += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.releaseTreeMember(turnId, tree);
+    };
+  }
+
+  private releaseTreeMember(turnId: string, tree: ActiveRootTree): void {
+    if (tree.released) return;
+    tree.members -= 1;
+    if (tree.members > 0) return;
+    if (tree.members < 0) {
+      throw new Error(`Root tree "${turnId}" member accounting underflow.`);
+    }
+    tree.released = true;
+    tree.pin.release();
+    if (this.activeRootGenerations.get(turnId) === tree) {
+      this.activeRootGenerations.delete(turnId);
+    }
   }
 
   /**
@@ -230,6 +306,9 @@ export class RuntimeApp {
     if (controller) controller.abort();
     if (dropped > 0) {
       this.messageQueueBySession.delete(sessionKey);
+      for (const item of queue ?? []) {
+        void this.settleQueuedRequest(item, 'abort_queue_drop');
+      }
       this.safeEmit({
         type: 'messages_dropped',
         sessionKey,
@@ -462,12 +541,17 @@ export class RuntimeApp {
 
     // ⑤ 普通队列
     const queuedTurn: QueuedChannelTurn = {
+      requestId: randomUUID(),
       sessionKey: req.sessionKey,
       message: assembled,
       launchContext: this.buildTurnLaunchContext(req),
       routeContext: this.buildMessageRouteContext(channel, req),
       originMessageId: messageId,
     };
+    this.requestGates.set(
+      queuedTurn.requestId,
+      new RequestCompletionGate(queuedTurn.requestId, queuedTurn.originMessageId),
+    );
 
     this.enqueueQueuedTurn(queuedTurn);
     log.info('channel message enqueued', {
@@ -569,6 +653,30 @@ export class RuntimeApp {
     this.messageQueueBySession.set(item.sessionKey, queue);
   }
 
+  private settleQueuedRequest(
+    item: QueuedChannelTurn,
+    reason: 'abort_queue_drop' | 'shutdown',
+  ): Promise<void> | undefined {
+    const gate = this.requestGates.get(item.requestId);
+    if (!gate?.seal({ outcome: 'cancelled', reason })) return undefined;
+    const event = Object.freeze({
+      type: 'request_end' as const,
+      requestId: item.requestId,
+      ...(item.originMessageId ? { originMessageId: item.originMessageId } : {}),
+      outcome: 'cancelled' as const,
+      reason,
+    });
+    this.safeEmit(event);
+    const fanout = Promise.resolve(this.fanoutAgentEvent(event)).catch((error) => {
+      log.warn('request_end Fanout failed', {
+        requestId: item.requestId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    this.requestGates.delete(item.requestId);
+    return fanout;
+  }
+
   /**
    * 活动 turn 的 steering inbox 采用追加写入；
    * 当前 runner 只消费文本，但这里仍保留 routeContext 以对齐统一消息模型，便于后续审计或扩展站内交互路由。
@@ -621,6 +729,7 @@ export class RuntimeApp {
 
     try {
       return await this.runTurn({
+        requestId: item.requestId,
         sessionKey: item.sessionKey,
         message: item.message,
         promptMode: 'full',
@@ -641,84 +750,164 @@ export class RuntimeApp {
 
   // ── runTurn ───────────────────────────────────────────────────────
 
-  async runTurn(params: RunTurnParams): Promise<RunTurnResult> {
-    this.assertCanRunForSession(params.sessionKey);
-    const generationPin = this.snapshotAccess.captureRootGeneration();
+  runTurn(params: RunTurnParams): Promise<RunTurnResult> {
+    try {
+      this.assertCanRunForSession(params.sessionKey);
+    } catch (error) {
+      return Promise.reject(error);
+    }
 
+    const requestId = params.requestId ?? randomUUID();
+    const existingGate = this.requestGates.get(requestId);
+    const gate = existingGate ?? new RequestCompletionGate<RunTurnResult>(
+      requestId,
+      params.originMessageId,
+    );
+    if (!existingGate) this.requestGates.set(requestId, gate);
+
+    const turnId = params.turnId ?? randomUUID();
+    if (!gate.start(turnId)) {
+      return Promise.reject(new Error(`Runtime request "${requestId}" is already started or terminal.`));
+    }
+
+    const worker = this.executeRootRequest(
+      { ...params, requestId, turnId },
+      gate,
+    );
+    this.inFlightRuns.add(worker);
+    void worker.then(
+      () => this.inFlightRuns.delete(worker),
+      (error: unknown) => {
+        this.inFlightRuns.delete(worker);
+        const runtimeError = error instanceof Error ? error : new Error(String(error));
+        gate.seal({ outcome: 'failed', error: runtimeError });
+        this.requestGates.delete(requestId);
+      },
+    );
+
+    return gate.terminal.then((terminal) => this.callerResult(terminal));
+  }
+
+  private async executeRootRequest(
+    params: RunTurnParams & { requestId: string; turnId: string },
+    gate: RequestCompletionGate<RunTurnResult>,
+  ): Promise<void> {
+    const generationPin = this.snapshotAccess.captureRootGeneration();
+    const tree: ActiveRootTree = {
+      requestId: params.requestId,
+      generation: generationPin.generation,
+      sessionKey: params.sessionKey,
+      channels: generationPin.snapshot.channels.bindings,
+      pin: generationPin,
+      members: 1,
+      released: false,
+    };
+    this.activeRootGenerations.set(params.turnId, tree);
     this.inFlightSessions.add(params.sessionKey);
     this.state.activeRunCount += 1;
     this.state.lastRunStartedAt = Date.now();
-    this.emit({
+    this.safeEmit({
       type: 'turn_start',
+      requestId: params.requestId,
+      ...(params.originMessageId ? { originMessageId: params.originMessageId } : {}),
+      turnId: params.turnId,
       sessionKey: params.sessionKey,
       contextVersion: this.state.contextVersion,
     });
 
-    const turnId = params.turnId ?? randomUUID();
     const turnStartedAt = Date.now();
-    this.activeTurnIdBySession.set(params.sessionKey, turnId);
+    this.activeTurnIdBySession.set(params.sessionKey, params.turnId);
     log.debug('turn start', {
+      requestId: params.requestId,
       sessionKey: params.sessionKey,
-      turnId,
+      turnId: params.turnId,
+      generation: generationPin.generation,
       messageChars: typeof params.message === 'string' ? params.message.length : undefined,
       attachmentCount: Array.isArray(params.message) ? params.message.length : 0,
       activeRuns: this.state.activeRunCount,
     });
 
-    const runPromise = this.runTurnInternal({ ...params, turnId }, generationPin);
-    this.inFlightRuns.add(runPromise);
-
     try {
-      const result = await runPromise;
-      this.emit({
-        type: 'turn_end',
-        sessionKey: params.sessionKey,
-        result,
-      });
+      const result = await this.runTurnInternal(params, generationPin, tree);
+      const outcome = result.stopReason === 'aborted' ? 'aborted' : 'completed';
+      if (gate.seal({ outcome, value: result })) {
+        this.safeEmit({
+          type: 'turn_end',
+          requestId: params.requestId,
+          ...(params.originMessageId ? { originMessageId: params.originMessageId } : {}),
+          turnId: params.turnId,
+          sessionKey: params.sessionKey,
+          outcome,
+          result,
+        });
+      } else {
+        log.info('late Root completion ignored by public gate', {
+          requestId: params.requestId,
+          turnId: params.turnId,
+          outcome,
+        });
+      }
       log.info('turn end', {
+        requestId: params.requestId,
         sessionKey: params.sessionKey,
-        turnId,
+        turnId: params.turnId,
         durationMs: Date.now() - turnStartedAt,
         toolRounds: result.toolRounds,
         stopReason: result.stopReason,
         inputTokens: result.usage.inputTokens,
         outputTokens: result.usage.outputTokens,
       });
-      return result;
     } catch (error) {
       const info = classifyRuntimeError('run', error);
-      if (params.originMessageId && error instanceof ModelResolutionError) {
-        this.fanoutAgentEvent({
-          type: 'error',
+      const runtimeError = createRuntimeError(info);
+      if (gate.seal({ outcome: 'failed', error: runtimeError })) {
+        this.safeEmit({
+          type: 'turn_end',
+          requestId: params.requestId,
+          ...(params.originMessageId ? { originMessageId: params.originMessageId } : {}),
+          turnId: params.turnId,
           sessionKey: params.sessionKey,
-          turnId,
+          outcome: 'failed',
+          failure: Object.freeze({ code: info.code, message: info.message }),
+        });
+      } else {
+        log.info('late Root failure ignored by public gate', {
+          requestId: params.requestId,
+          turnId: params.turnId,
+          code: info.code,
+        });
+      }
+      if (params.originMessageId && error instanceof ModelResolutionError) {
+        void Promise.resolve(this.fanoutAgentEvent({
+          type: 'error',
+          requestId: params.requestId,
+          sessionKey: params.sessionKey,
+          turnId: params.turnId,
           error,
           category: error.category,
           originMessageId: params.originMessageId,
-        });
+        })).catch(() => undefined);
       }
       log.error('turn failed', {
+        requestId: params.requestId,
         sessionKey: params.sessionKey,
-        turnId,
+        turnId: params.turnId,
         durationMs: Date.now() - turnStartedAt,
         code: info.code,
         message: info.message,
       });
       this.recordError('run', info);
-      throw createRuntimeError(info);
     } finally {
-      this.inFlightRuns.delete(runPromise);
       this.inFlightSessions.delete(params.sessionKey);
-      if (this.activeTurnIdBySession.get(params.sessionKey) === turnId) {
+      if (this.activeTurnIdBySession.get(params.sessionKey) === params.turnId) {
         this.activeTurnIdBySession.delete(params.sessionKey);
       }
-      // steering 只服务当前这一轮活动 turn；turn 结束后整包丢弃，避免泄漏到下一轮。
       this.steeringInboxBySession.delete(params.sessionKey);
       this.state.activeRunCount = Math.max(0, this.state.activeRunCount - 1);
       this.state.lastRunEndedAt = Date.now();
-      generationPin.release();
+      this.releaseTreeMember(params.turnId, tree);
+      this.requestGates.delete(params.requestId);
 
-      // 当前 turn 释放后，再尝试推进同 session 队头下一条消息，保持 session 内串行执行。
       const next = this.scheduleNextQueuedTurn(params.sessionKey);
       if (next) {
         void next.catch((error) => {
@@ -729,6 +918,14 @@ export class RuntimeApp {
         });
       }
     }
+  }
+
+  private callerResult(terminal: RequestTerminal<RunTurnResult>): RunTurnResult {
+    if (terminal.outcome === 'completed' || terminal.outcome === 'aborted') return terminal.value;
+    if (terminal.outcome === 'cancelled') {
+      throw new Error(`Runtime request cancelled: ${terminal.reason}`);
+    }
+    throw terminal.error;
   }
 
   /**
@@ -766,7 +963,10 @@ export class RuntimeApp {
     }
   }
 
-  async close(reason?: string): Promise<RuntimeShutdownReport> {
+  async close(
+    reason?: string,
+    sharedBudget?: RuntimeDeadlineBudget,
+  ): Promise<RuntimeShutdownReport> {
     if (this.shutdownReport) {
       return this.shutdownReport;
     }
@@ -785,41 +985,150 @@ export class RuntimeApp {
 
     this.closePromise = (async () => {
       const startedAt = Date.now();
+      const budget = sharedBudget ?? new RuntimeDeadlineBudget(
+        createSystemRuntimeDeadlineDriver(),
+        resolveRuntimeDeadlinePolicy(undefined),
+      );
       const completed: string[] = [];
       const failed: Array<{ resource: string; message: string }> = [];
+      const residuals: import('./types.js').RuntimeShutdownResidual[] = [];
+      const queuedCancelledRequestIds: string[] = [];
+      const terminalFanout: Promise<void>[] = [];
+      const activeAtAdmission = [...this.activeRootGenerations.entries()]
+        .sort(([left], [right]) => left.localeCompare(right));
+      const terminals = new Map(activeAtAdmission.map(([, tree]) => [
+        tree.requestId,
+        this.requestGates.get(tree.requestId)?.terminal,
+      ]));
 
       try {
-        // Abort-then-wait（D4）：先 abort 所有 active turn，避免 shutdown 被响应
-        // signal 的慢 turn 卡住；再 allSettled 等 in-flight Promise 收完。
-        //
-        // 遍历安全：controller.abort() 只是同步 flip signal + queue microtask，
-        // 不会同步触发 runTurnInternal 的 finally（后者要等 await 链解开）；所以
-        // for-of 期间 map 不会被并发 mutate。impl 未来如把 abort 改成同步等 cleanup
-        // 完成，必须先 snapshot entries 再遍历。详见 core-abort-spec.md §8.5。
-        for (const [sessionKey, controller] of this.activeAborts) {
-          log.info('aborting in-flight turn on shutdown', { sessionKey });
-          controller.abort('shutdown');
+        for (const [sessionKey, queue] of [...this.messageQueueBySession]
+          .sort(([left], [right]) => left.localeCompare(right))) {
+          this.messageQueueBySession.delete(sessionKey);
+          for (const item of queue) {
+            queuedCancelledRequestIds.push(item.requestId);
+            const delivery = this.settleQueuedRequest(item, 'shutdown');
+            if (delivery) terminalFanout.push(delivery);
+          }
         }
-        // activeAborts 不主动清；各 runTurnInternal finally 自己清。
-
-        // 老实等所有 in-flight Promise 收完——多久都等（不响应 signal 的 tool 会
-        // 使 close 挂到 tool 自然完成为止；runtime 不设内建 timeout，见 §8.5 shutdown 时长界限）。
-        await Promise.allSettled([...this.inFlightRuns]);
-
         this.turnInteractionManager.close();
         completed.push('turnInteractionManager');
+
+        const convergence = () => Promise.allSettled([...this.inFlightRuns]);
+        const graceful = await budget.race(
+          convergence(),
+          budget.policy.shutdownGracefulDrainMs,
+        );
+        if (graceful.outcome === 'failed') {
+          failed.push({ resource: 'turns', message: graceful.message });
+        }
+
+        if (graceful.outcome === 'deadline-exhausted') {
+          for (const [turnId, tree] of activeAtAdmission) {
+            if (this.activeRootGenerations.get(turnId) !== tree) continue;
+            this.activeAborts.get(tree.sessionKey)?.abort('shutdown');
+          }
+        }
+
+        const abortConvergence = graceful.outcome === 'deadline-exhausted'
+          ? await budget.race(convergence(), budget.policy.shutdownAbortConvergenceMs)
+          : graceful;
+        if (abortConvergence.outcome === 'failed') {
+          failed.push({ resource: 'turns', message: abortConvergence.message });
+        }
+
+        const nonconvergedRequestIds: string[] = [];
+        if (abortConvergence.outcome === 'deadline-exhausted') {
+          for (const [turnId, tree] of [...this.activeRootGenerations.entries()]
+            .sort(([left], [right]) => left.localeCompare(right))) {
+            const gate = this.requestGates.get(tree.requestId);
+            const error = new Error(`Runtime request "${tree.requestId}" did not converge during shutdown.`);
+            if (gate?.seal({ outcome: 'shutdown_nonconverged', error })) {
+              nonconvergedRequestIds.push(tree.requestId);
+              this.safeEmit({
+                type: 'turn_end',
+                requestId: tree.requestId,
+                ...(gate.originMessageId ? { originMessageId: gate.originMessageId } : {}),
+                turnId,
+                sessionKey: tree.sessionKey,
+                outcome: 'shutdown_nonconverged',
+                failure: Object.freeze({
+                  code: 'SHUTDOWN_NONCONVERGED',
+                  message: error.message,
+                }),
+              });
+            }
+            residuals.push({
+              owner: 'runtime',
+              phase: 'shutdown-abort-convergence',
+              generation: tree.generation,
+              requestId: tree.requestId,
+              turnId,
+              blockingTurnIds: Object.freeze([turnId]),
+              message: error.message,
+            });
+          }
+        }
+
+        if (terminalFanout.length > 0) {
+          const fanout = await budget.raceRemaining(Promise.allSettled(terminalFanout));
+          if (fanout.outcome === 'deadline-exhausted') {
+            residuals.push({
+              owner: 'fanout',
+              phase: 'terminal-fanout',
+              message: 'Terminal Fanout did not converge before the shutdown deadline.',
+            });
+          } else if (fanout.outcome === 'failed') {
+            failed.push({ resource: 'terminalFanout', message: fanout.message });
+          }
+        }
+
+        const terminalOutcomes = await Promise.all([...terminals.entries()].map(async ([requestId, terminal]) => [
+          requestId,
+          terminal ? await terminal : undefined,
+        ] as const));
+        const completedRequestIds = terminalOutcomes
+          .filter(([, terminal]) => terminal?.outcome === 'completed')
+          .map(([requestId]) => requestId)
+          .sort();
+        const actualAbortedRequestIds = terminalOutcomes
+          .filter(([, terminal]) => terminal?.outcome === 'aborted')
+          .map(([requestId]) => requestId);
+        actualAbortedRequestIds.sort();
+        nonconvergedRequestIds.sort();
+        queuedCancelledRequestIds.sort();
+        const protectedGenerations = [...new Set(
+          [...this.activeRootGenerations.values()].map((tree) => tree.generation),
+        )].sort((left, right) => left - right);
 
         this.resources.contextFiles = [];
         this.state.closedAt = Date.now();
         this.setPhase('closed');
 
-        const report = {
+        const report = freezeShutdownReport({
+          outcome: residuals.length > 0 || budget.remaining() <= 0
+            ? 'deadline-exhausted'
+            : 'completed',
           reason,
           startedAt,
           finishedAt: Date.now(),
           completed,
           failed,
-        } satisfies RuntimeShutdownReport;
+          turns: {
+            completedRequestIds,
+            abortedRequestIds: actualAbortedRequestIds,
+            nonconvergedRequestIds,
+            queuedCancelledRequestIds,
+            protectedGenerations,
+          },
+          instanceStops: {
+            completedInstanceIds: [],
+            failedInstanceIds: [],
+            pendingInstanceIds: [],
+            skippedProtectedInstanceIds: [],
+          },
+          residuals,
+        });
 
         this.shutdownReport = report;
         log.info('shutdown complete', {
@@ -848,8 +1157,9 @@ export class RuntimeApp {
    * resolve session、按需 reload context、构建 prompts，然后把一次完整 turn 委托给 agentRunner。
    */
   private async runTurnInternal(
-    params: RunTurnParams & { turnId: string },
+    params: RunTurnParams & { requestId: string; turnId: string },
     generationPin: RuntimeGenerationPin,
+    tree: ActiveRootTree,
   ): Promise<RunTurnResult> {
     // 防御性 stale 清理（core-abort-spec.md §8.2）：正常流由下面 finally 保证 cleanup，
     // 不会遗留 stale entry。仅为防未来意外路径（finally 本身 throw / 某次重构意外
@@ -937,16 +1247,19 @@ export class RuntimeApp {
         modelId: resolvedModel.identity.modelId,
       });
       parentRecord = Object.freeze({
+        requestId: params.requestId,
         sessionKey: params.sessionKey,
         turnId: params.turnId,
         signal: controller.signal,
         effectiveReference,
         contextFiles: Object.freeze([...this.resources.contextFiles]),
         registrySnapshot: snapshot,
+        registerChild: () => this.registerChild(params.turnId, tree),
       });
       this.activeParentTurns.set(params.turnId, parentRecord);
 
       const result = await this.resources.agentRunner.run({
+        requestId: params.requestId,
         sessionKey: params.sessionKey,
         message: runnerMessage,
         resolvedModel,
@@ -1080,4 +1393,35 @@ export class RuntimeApp {
   private emit(event: RuntimeEvent): void {
     this.onEvent?.(event);
   }
+}
+
+function freezeShutdownReport(report: RuntimeShutdownReport): RuntimeShutdownReport {
+  const turns = Object.freeze({
+    completedRequestIds: Object.freeze([...report.turns.completedRequestIds]),
+    abortedRequestIds: Object.freeze([...report.turns.abortedRequestIds]),
+    nonconvergedRequestIds: Object.freeze([...report.turns.nonconvergedRequestIds]),
+    queuedCancelledRequestIds: Object.freeze([...report.turns.queuedCancelledRequestIds]),
+    protectedGenerations: Object.freeze([...report.turns.protectedGenerations]),
+  });
+  const instanceStops = Object.freeze({
+    completedInstanceIds: Object.freeze([...report.instanceStops.completedInstanceIds]),
+    failedInstanceIds: Object.freeze([...report.instanceStops.failedInstanceIds]),
+    pendingInstanceIds: Object.freeze([...report.instanceStops.pendingInstanceIds]),
+    skippedProtectedInstanceIds: Object.freeze([
+      ...report.instanceStops.skippedProtectedInstanceIds,
+    ]),
+  });
+  return Object.freeze({
+    ...report,
+    completed: Object.freeze([...report.completed]),
+    failed: Object.freeze(report.failed.map((entry) => Object.freeze({ ...entry }))),
+    turns,
+    instanceStops,
+    residuals: Object.freeze(report.residuals.map((entry) => Object.freeze({
+      ...entry,
+      ...(entry.blockingTurnIds
+        ? { blockingTurnIds: Object.freeze([...entry.blockingTurnIds]) }
+        : {}),
+    }))),
+  });
 }

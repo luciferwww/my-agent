@@ -41,7 +41,7 @@ import type {
   ChannelCompletion,
   ChannelRunRequest,
 } from '../src/adapters/channel/types.js';
-import type { RuntimeContributionUnit } from '../src/core/registry/index.js';
+import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from '../src/runtime/runtime-unit.js';
 import type { AgentEvent } from '../src/core/runner/index.js';
 import type { RunParams, RunResult } from '../src/core/runner/types.js';
 
@@ -169,7 +169,7 @@ async function expectNoMessage(client: WebSocket, timeoutMs: number): Promise<vo
 
 type RecordingChannel = {
   channel: Channel;
-  unit: RuntimeContributionUnit;
+  unit: LoadedRuntimeUnit;
   sentEvents: AgentEvent[];
 };
 
@@ -190,13 +190,13 @@ function createRecordingChannel(id: string): RecordingChannel {
   };
   return {
     channel,
-    unit: {
+    unit: createLoadedRuntimeUnit({ registration: {
       id: `builtin-test-channel-${id}`,
       source: 'builtin',
       register(api) {
         api.registerChannel({ id, create: () => channel });
       },
-    },
+    }, required: false }),
     sentEvents,
   };
 }
@@ -248,7 +248,7 @@ async function testQueuedWebSocketApprovalRoutesToQueuedOrigin(): Promise<void> 
 
       app = await RuntimeApp.create({
         workspaceDir,
-        contributionUnits: [channelUnit],
+        loadedUnits: [channelUnit],
         cliOverrides: {
           llm: { apiKey: 'test-key', model: 'claude-sonnet-5' },
           memory: { enabled: false },
@@ -368,7 +368,7 @@ async function testQueuedWebSocketApprovalAbortRoutesToQueuedOrigin(): Promise<v
 
       app = await RuntimeApp.create({
         workspaceDir,
-        contributionUnits: [channelUnit],
+        loadedUnits: [channelUnit],
         cliOverrides: {
           llm: { apiKey: 'test-key', model: 'claude-sonnet-5' },
           memory: { enabled: false },
@@ -443,7 +443,7 @@ async function testFanoutForwardsAgentEventsToAllChannelsAndObserver(): Promise<
     // runner stub：通过 bootstrap 传入的 onEvent（其实是 RuntimeApp 的 fanout）emit 两条事件
     const app = await RuntimeApp.create({
       workspaceDir,
-      contributionUnits: [a.unit, b.unit],
+      loadedUnits: [a.unit, b.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'claude-sonnet-5' },
         memory: { enabled: false },

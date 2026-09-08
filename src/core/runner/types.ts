@@ -28,6 +28,7 @@ export type PendingMessageReader = () => ChatMessage[] | Promise<ChatMessage[]>;
 export interface TurnContext {
   readonly sessionKey: string;
   readonly turnId: string;
+  readonly requestId: string;
 }
 
 /** AgentRunner 构造参数 */
@@ -50,6 +51,8 @@ export interface RunParams {
   systemPrompt: string;
   /** 本次 turn 的唯一 id；由 RuntimeApp 生成并传入 */
   turnId: string;
+  /** Root request identity shared by every node in the execution tree. */
+  requestId?: string;
   /** 当前 Turn 固定的 Tool/Hook projections 与 Application policy。 */
   toolProjection: ToolProjection;
   hookProjection: HookProjection;
@@ -114,6 +117,7 @@ export type AgentEvent =
       type: 'run_start';
       sessionKey: string;
       turnId: string;
+      requestId: string;
       /**
        * 反向关联到触发本 turn 的 `user_message.messageId`。
        * 仅 queued 路径有值；直接调用 runTurn / steering 无此字段。
@@ -159,14 +163,24 @@ export type AgentEvent =
       result: ToolResult;
     }
   | { type: 'llm_call'; sessionKey: string; turnId: string; round: number }
-  | { type: 'run_end'; sessionKey: string; turnId: string; result: RunResult }
+    | { type: 'run_end'; sessionKey: string; turnId: string; requestId: string; result: RunResult }
   | {
       type: 'error';
       sessionKey: string;
       turnId: string;
+      requestId: string;
       error: Error;
       category?: import('../model-resolution/index.js').ResolutionFailureCategory;
       originMessageId?: string;
+    }
+  | {
+      type: 'request_end';
+      requestId: string;
+      sessionKey?: never;
+      turnId?: never;
+      originMessageId?: string;
+      outcome: 'cancelled';
+      reason: 'abort_queue_drop' | 'shutdown';
     }
   /** tool result 被 per-result 裁剪（Layer 1）时触发 */
   | {
@@ -223,6 +237,7 @@ export type AgentEvent =
     }
   | {
       type: 'subagent_start';
+      requestId: string;
       /** 单次 subagent 运行的 runId（由 orchestrator 生成） */
       runId: string;
       /** 子 agent 的 sessionKey（含 :subagent: 后缀） */
@@ -240,6 +255,7 @@ export type AgentEvent =
     }
   | {
       type: 'subagent_end';
+      requestId: string;
       runId: string;
       sessionKey: string;
       turnId: string;

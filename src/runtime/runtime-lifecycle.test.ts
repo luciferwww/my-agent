@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
+import { RuntimeDeadlineBudget, resolveRuntimeDeadlinePolicy } from './runtime-deadline.js';
 
 describe('RuntimeLifecycleLedger', () => {
   it('requires ownership handoff before generation publication', () => {
@@ -45,11 +46,13 @@ describe('RuntimeLifecycleLedger', () => {
     expect(report).toEqual({
       completed: ['channel-1', 'tools-1', 'core-1'],
       failed: [],
+      pending: [],
+      skippedProtected: [],
     });
     expect(order).toEqual(['channel', 'tools', 'core']);
 
     const repeated = await ledger.stopEligible(['core-1', 'tools-1', 'channel-1']);
-    expect(repeated).toEqual({ completed: [], failed: [] });
+    expect(repeated).toEqual({ completed: [], failed: [], pending: [], skippedProtected: [] });
     expect(order).toEqual(['channel', 'tools', 'core']);
   });
 
@@ -69,13 +72,20 @@ describe('RuntimeLifecycleLedger', () => {
     ledger.handoff('external-1');
     ledger.addGenerationMembership('external-1', 1);
 
-    expect(await ledger.stopEligible(['external-1'])).toEqual({ completed: [], failed: [] });
+    expect(await ledger.stopEligible(['external-1'])).toEqual({
+      completed: [],
+      failed: [],
+      pending: [],
+      skippedProtected: ['external-1'],
+    });
     expect(stop).not.toHaveBeenCalled();
 
     ledger.removeGenerationMembership('external-1', 1);
     expect(await ledger.stopEligible(['external-1'])).toEqual({
       completed: [],
       failed: [{ instanceId: 'external-1', message: 'first stop failed' }],
+      pending: [],
+      skippedProtected: [],
     });
     expect(ledger.view('external-1')).toMatchObject({
       state: 'stop-failed',
@@ -83,9 +93,11 @@ describe('RuntimeLifecycleLedger', () => {
       stopError: 'first stop failed',
     });
 
-    expect(await ledger.stopEligible(['external-1'])).toEqual({
+    expect(await ledger.stopEligible(['external-1'], { retryFailed: true })).toEqual({
       completed: ['external-1'],
       failed: [],
+      pending: [],
+      skippedProtected: [],
     });
     expect(ledger.view('external-1')).toMatchObject({ state: 'stopped', stopAttempts: 2 });
   });
@@ -104,7 +116,7 @@ describe('RuntimeLifecycleLedger', () => {
     ledger.handoff('failed-1');
 
     await ledger.stopEligible(['failed-1']);
-    await ledger.stopEligible(['failed-1']);
+    await ledger.stopEligible(['failed-1'], { retryFailed: true });
     await ledger.stopEligible(['failed-1']);
 
     expect(stop).toHaveBeenCalledTimes(2);
@@ -113,6 +125,37 @@ describe('RuntimeLifecycleLedger', () => {
       stopAttempts: 2,
       stopError: 'persistent failure',
     });
+  });
+
+  it('reports a nonresponsive stop as pending and never starts a concurrent retry', async () => {
+    const stop = vi.fn(() => new Promise<void>(() => undefined));
+    const ledger = new RuntimeLifecycleLedger();
+    ledger.create({
+      instanceId: 'pending-1',
+      unitId: 'pending',
+      source: 'external',
+      owner: { stop },
+    });
+    ledger.markStarting('pending-1');
+    ledger.markReady('pending-1');
+    ledger.handoff('pending-1');
+    const budget = new RuntimeDeadlineBudget({
+      now: () => 0,
+      race: async () => ({ outcome: 'deadline-exhausted' }),
+    }, resolveRuntimeDeadlinePolicy(undefined));
+
+    const first = await ledger.stopEligible(['pending-1'], { budget });
+    expect(first).toEqual({
+      completed: [],
+      failed: [],
+      pending: ['pending-1'],
+      skippedProtected: [],
+    });
+    expect(ledger.view('pending-1')).toMatchObject({ state: 'stop-pending', stopAttempts: 1 });
+
+    const repeated = await ledger.stopEligible(['pending-1'], { budget, retryFailed: true });
+    expect(repeated.pending).toEqual(['pending-1']);
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 
   it('continues stopping independent instances after one failure', async () => {

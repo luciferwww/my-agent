@@ -1731,6 +1731,18 @@
                 }
                 return;
 
+              case 'request_end':
+                this.isWaitingForReply = false;
+                this.appendChatItem({
+                  kind: 'system',
+                  label: 'Cancelled',
+                  text: event.reason === 'shutdown'
+                    ? 'Queued request cancelled during shutdown'
+                    : 'Queued request cancelled',
+                });
+                this.pushEvent('request_end', `Request ${event.request_id} cancelled`);
+                return;
+
               case 'error':
                 this.isWaitingForReply = false;
                 this.appendChatItem({ kind: 'error', label: 'Runtime', turnId: event.turnId, text: event.error || 'Unknown runtime error' });

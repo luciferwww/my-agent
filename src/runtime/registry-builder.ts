@@ -7,6 +7,7 @@ import type {
   HookProjection,
   RegistrySnapshot,
   RegistryStartupDiagnostic,
+  RegistryUnitProvenance,
   ResolvedTool,
   RuntimeContributionUnit,
   ToolProjection,
@@ -19,11 +20,6 @@ const CONTRIBUTION_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 export class RegistryBuildError extends Error {
   readonly kind = 'registry_build_error' as const;
-}
-
-export interface BuildRegistrySnapshotParams {
-  readonly providers: readonly ProviderProjectionEntry[];
-  readonly units: readonly RuntimeContributionUnit[];
 }
 
 export interface StagedRegistryUnit {
@@ -40,8 +36,14 @@ export interface RegistryCandidate {
   readonly diagnostics: readonly RegistryStartupDiagnostic[];
 }
 
-export function stageRegistryCandidate(
-  params: BuildRegistrySnapshotParams,
+export interface ResolveStagedRegistryCandidateParams {
+  readonly providers: readonly ProviderProjectionEntry[];
+  readonly units: readonly StagedRegistryUnit[];
+  readonly diagnostics?: readonly RegistryStartupDiagnostic[];
+}
+
+export function resolveStagedRegistryCandidate(
+  params: ResolveStagedRegistryCandidateParams,
 ): RegistryCandidate {
   const acceptedUnitIds = new Set<string>();
   const acceptedProviderIds = new Set<string>();
@@ -49,11 +51,11 @@ export function stageRegistryCandidate(
   const acceptedHookIds = new Set<string>();
   const acceptedChannelIds = new Set<string>();
   const units: StagedRegistryUnit[] = [];
-  const diagnostics: RegistryStartupDiagnostic[] = [];
+  const diagnostics: RegistryStartupDiagnostic[] = [...(params.diagnostics ?? [])];
 
-  for (const unit of sortUnits(params.units)) {
+  for (const staged of sortStagedUnits(params.units)) {
+    const unit = staged.unit;
     try {
-      const staged = stageUnit(unit);
       assertNoAcceptedConflicts(
         staged,
         acceptedUnitIds,
@@ -80,7 +82,7 @@ export function stageRegistryCandidate(
       diagnostics.push(Object.freeze({
         unitId: unit.id,
         source: unit.source,
-        code: isConflictError(error) ? 'UNIT_CONFLICT' : 'UNIT_INVALID',
+        code: 'UNIT_CONFLICT',
         message: messageOf(error),
       }));
     }
@@ -99,6 +101,7 @@ export function finalizeRegistrySnapshot(params: {
   readonly channelBindings: readonly ChannelRuntimeBinding[];
   readonly generation: number;
   readonly diagnostics?: readonly RegistryStartupDiagnostic[];
+  readonly provenance?: readonly RegistryUnitProvenance[];
 }): RegistrySnapshot {
   const resolvedTools: ResolvedTool[] = [];
   const hookBindings: HookBinding[] = [];
@@ -136,9 +139,26 @@ export function finalizeRegistrySnapshot(params: {
       `Registry generation must be a positive safe integer. Received: ${params.generation}`,
     );
   }
+  const provenance = params.provenance ?? params.acceptedUnits.map((staged) => ({
+    unitId: staged.unit.id,
+    instanceId: staged.unit.id,
+    source: staged.unit.source,
+    orderKey: staged.unit.orderKey ?? staged.unit.id,
+    dependencies: Object.freeze([]),
+  }));
+  const acceptedUnitIds = params.acceptedUnits.map((staged) => staged.unit.id).sort(compareOrdinal);
+  const provenanceUnitIds = provenance.map((entry) => entry.unitId).sort(compareOrdinal);
+  if (acceptedUnitIds.length !== provenanceUnitIds.length
+    || acceptedUnitIds.some((unitId, index) => unitId !== provenanceUnitIds[index])) {
+    throw new RegistryBuildError('Registry provenance must match the accepted Unit set.');
+  }
 
   return Object.freeze({
     generation: params.generation,
+    units: Object.freeze(provenance.map((entry) => Object.freeze({
+        ...entry,
+        dependencies: Object.freeze([...entry.dependencies]),
+      }))),
     providers: Object.freeze(providers),
     tools: createToolProjection(resolvedTools),
     hooks: createHookProjection(hookBindings),
@@ -150,26 +170,7 @@ export function finalizeRegistrySnapshot(params: {
   });
 }
 
-/**
- * Compatibility wrapper for Registry tests and non-Channel composition.
- * Channel-bearing candidates must use the async activation path.
- */
-export function buildRegistrySnapshot(
-  params: BuildRegistrySnapshotParams,
-): RegistrySnapshot {
-  const candidate = stageRegistryCandidate(params);
-  if (candidate.units.some((unit) => unit.channels.length > 0)) {
-    throw new RegistryBuildError('Channel contributions require startup activation before Snapshot finalization.');
-  }
-  return finalizeRegistrySnapshot({
-    candidate,
-    acceptedUnits: candidate.units,
-    channelBindings: [],
-    generation: 1,
-  });
-}
-
-function stageUnit(unit: RuntimeContributionUnit): StagedRegistryUnit {
+export function stageRegistryUnit(unit: RuntimeContributionUnit): StagedRegistryUnit {
   assertIdentity(unit.id, 'unit');
   const tools: Tool[] = [];
   const hooks: HookContribution[] = [];
@@ -359,11 +360,15 @@ function compareHooks(left: HookBinding, right: HookBinding): number {
     || compareOrdinal(left.contributionId, right.contributionId);
 }
 
-function sortUnits(units: readonly RuntimeContributionUnit[]): RuntimeContributionUnit[] {
+function sortStagedUnits(units: readonly StagedRegistryUnit[]): StagedRegistryUnit[] {
   return [...units].sort((left, right) => {
-    if (left.source !== right.source) return left.source === 'builtin' ? -1 : 1;
-    return compareOrdinal(left.orderKey ?? left.id, right.orderKey ?? right.id)
-      || compareOrdinal(left.id, right.id);
+    if (left.unit.source !== right.unit.source) {
+      return left.unit.source === 'builtin' ? -1 : 1;
+    }
+    return compareOrdinal(
+      left.unit.orderKey ?? left.unit.id,
+      right.unit.orderKey ?? right.unit.id,
+    ) || compareOrdinal(left.unit.id, right.unit.id);
   });
 }
 
@@ -392,10 +397,6 @@ function conflict(message: string): RegistryBuildError {
   const error = new RegistryBuildError(message);
   Object.defineProperty(error, 'conflict', { value: true });
   return error;
-}
-
-function isConflictError(error: unknown): boolean {
-  return error instanceof RegistryBuildError && 'conflict' in error;
 }
 
 function messageOf(error: unknown): string {

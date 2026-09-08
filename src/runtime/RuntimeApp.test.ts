@@ -15,11 +15,60 @@ import type { AgentEvent, BeforeToolCallHook } from '../core/runner/index.js';
 import type { RunParams, RunResult } from '../core/runner/types.js';
 import type { Tool } from '../core/tools/types.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
+import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
 import type { ResolvedModel } from '../core/model-resolution/index.js';
 import type { SubagentModelSelection } from '../platform/config/types.js';
 import { RuntimeApp } from './RuntimeApp.js';
 import type { RuntimeHandle } from './runtime-composition.js';
 import type { RuntimeDependencies, RuntimeEvent } from './types.js';
+import type { RuntimeDeadlineDriver, RuntimeDeadlineRaceResult } from './runtime-deadline.js';
+
+class ManualDeadlineDriver implements RuntimeDeadlineDriver {
+  private nowMs = 0;
+  private readonly deadlines = new Set<{
+    deadline: number;
+    resolve: (result: RuntimeDeadlineRaceResult<unknown>) => void;
+  }>();
+
+  now(): number {
+    return this.nowMs;
+  }
+
+  get pendingCount(): number {
+    return this.deadlines.size;
+  }
+
+  race<T>(operation: Promise<T>, absoluteDeadline: number): Promise<RuntimeDeadlineRaceResult<T>> {
+    return new Promise((resolve) => {
+      let settled = false;
+      const waiter = {
+        deadline: absoluteDeadline,
+        resolve: (result: RuntimeDeadlineRaceResult<unknown>) => {
+          if (settled) return;
+          settled = true;
+          this.deadlines.delete(waiter);
+          resolve(result as RuntimeDeadlineRaceResult<T>);
+        },
+      };
+      this.deadlines.add(waiter);
+      void operation.then(
+        (value) => waiter.resolve({ outcome: 'completed', value }),
+        (error: unknown) => waiter.resolve({
+          outcome: 'failed',
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      if (absoluteDeadline <= this.nowMs) waiter.resolve({ outcome: 'deadline-exhausted' });
+    });
+  }
+
+  advanceBy(milliseconds: number): void {
+    this.nowMs += milliseconds;
+    for (const waiter of [...this.deadlines]) {
+      if (waiter.deadline <= this.nowMs) waiter.resolve({ outcome: 'deadline-exhausted' });
+    }
+  }
+}
 
 describe('RuntimeApp', () => {
   let workspaceDir: string;
@@ -202,6 +251,209 @@ describe('RuntimeApp', () => {
     await app.close();
   });
 
+  it('pins Parent and Child resolution to N while a new Root uses N+1', async () => {
+    const parentEntered = createDeferred<void>();
+    const continueParent = createDeferred<void>();
+    let childRuns = 0;
+    let taskOutcome: string | undefined;
+    let newRootProviderId: string | undefined;
+    let childProviderId: string | undefined;
+    let childHasGenerationOneTool = false;
+    let childHasGenerationOneHook = false;
+    const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      if (params.sessionKey === 'parent') {
+        parentEntered.resolve();
+        await continueParent.promise;
+        const task = params.toolProjection.resolve('task');
+        if (!task || !params.signal) throw new Error('Parent task wiring is incomplete.');
+        const result = await task.execute({
+          subagent_type: 'next-generation',
+          description: 'generation check',
+          prompt: 'must stay pinned',
+        }, {
+          sessionKey: params.sessionKey,
+          turnId: params.turnId,
+          callId: 'generation-task',
+          signal: params.signal,
+        });
+        taskOutcome = result.outcome;
+      } else if (params.sessionKey === 'new-root') {
+        newRootProviderId = params.resolvedModel.identity.providerId;
+      } else {
+        childRuns += 1;
+        childProviderId = params.resolvedModel.identity.providerId;
+        childHasGenerationOneTool = params.toolProjection.resolve('generation-one-tool') !== undefined;
+        childHasGenerationOneHook = params.hookProjection.beforeToolCall.some(
+          (hook) => hook.contributionId === 'generation-one-hook',
+        );
+      }
+      return {
+        text: 'done',
+        content: [{ type: 'text', text: 'done' }],
+        stopReason: 'end_turn',
+        usage: { inputTokens: 1, outputTokens: 1 },
+        toolRounds: 0,
+      };
+    });
+    const nextProvider = {
+      id: 'next-provider',
+      protocol: 'test',
+      invocationPort: {} as never,
+      resolveConnection: () => ({ ok: true as const, connection: { endpointId: 'next' } }),
+      resolveModel: (modelId: string, connection: { endpointId: string }) => ({
+        ok: true as const,
+        descriptor: {
+          identity: { providerId: 'next-provider', modelId },
+          protocol: 'test',
+          connection,
+          facts: {
+            effectiveContextLimit: { value: 200_000, source: 'deployment-config' as const },
+            maximumOutputTokens: { value: 8192, source: 'deployment-config' as const },
+            toolUse: { value: true, source: 'deployment-config' as const },
+          },
+        },
+      }),
+    };
+    const nextProviderUnit = createLoadedRuntimeUnit({
+      registration: {
+        id: 'next-provider-unit',
+        source: 'external',
+        register(api) { api.registerProvider(nextProvider); },
+      },
+      required: false,
+      initiallyEnabled: false,
+    });
+    const generationOneUnit = createLoadedRuntimeUnit({
+      registration: {
+        id: 'generation-one-unit',
+        source: 'external',
+        register(api) {
+          api.registerTool({
+            name: 'generation-one-tool',
+            description: 'marks generation one',
+            inputSchema: { type: 'object', properties: {} },
+            execute: async () => ({ outcome: 'success', content: 'generation one' }),
+          });
+          api.registerHook({
+            id: 'generation-one-hook',
+            hookName: 'before_tool_call',
+            handler: () => ({ action: 'allow' as const }),
+          });
+        },
+      },
+      required: false,
+      initiallyEnabled: true,
+    });
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      loadedUnits: [generationOneUnit, nextProviderUnit],
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'parent-model' },
+        memory: { enabled: false },
+        subagents: {
+          enabled: true,
+          maxDepth: 1,
+          list: [{
+            id: 'next-generation',
+            description: 'inherits the Parent Provider',
+            model: 'inherit',
+          }],
+        },
+      },
+      dependencies: createTestDependencies({
+        createAgentRunner: () => ({ run: runnerRun }) as never,
+        createSessionManager: () => ({
+          resolveSession: vi.fn(async () => ({ entry: {}, isNew: true })),
+          deleteSession: vi.fn(async () => {}),
+        }) as never,
+        createMemoryManager: async () => null,
+      }),
+    });
+
+    const parent = app.application.runTurn({
+      sessionKey: 'parent',
+      message: 'hold generation one',
+      promptMode: 'full',
+    });
+    await parentEntered.promise;
+    await expect(app.composition.enableUnit('next-provider-unit')).resolves.toEqual(
+      expect.objectContaining({ outcome: 'published', generation: 2 }),
+    );
+    continueParent.resolve();
+    await parent;
+
+    expect(taskOutcome).toBe('success');
+    expect(childRuns).toBe(1);
+    expect(childProviderId).toBe('test');
+    expect(childHasGenerationOneTool).toBe(true);
+    expect(childHasGenerationOneHook).toBe(true);
+    await app.application.runTurn({
+      sessionKey: 'new-root',
+      message: 'use generation two',
+      modelReference: { providerId: 'next-provider', modelId: 'root-model' },
+      promptMode: 'full',
+    });
+    expect(newRootProviderId).toBe('next-provider');
+
+    await app.close();
+  });
+
+  it('seals a direct model-resolution failure with one failed turn_end', async () => {
+    const events: RuntimeEvent[] = [];
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      onEvent: (event) => events.push(event),
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'test-model' },
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies({ createMemoryManager: async () => null }),
+    });
+
+    await expect(app.application.runTurn({
+      requestId: 'request-resolution-failure',
+      sessionKey: 'main',
+      message: 'fail resolution',
+      modelReference: { providerId: 'missing-provider', modelId: 'missing-model' },
+      promptMode: 'full',
+    })).rejects.toThrow();
+
+    const terminal = events.filter((event) =>
+      event.type === 'turn_end' && event.requestId === 'request-resolution-failure');
+    expect(terminal).toHaveLength(1);
+    expect(terminal[0]).toMatchObject({ outcome: 'failed', turnId: expect.any(String) });
+    await app.close();
+  });
+
+  it('seals a direct Runner failure with one caller rejection and one failed turn_end', async () => {
+    const events: RuntimeEvent[] = [];
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      onEvent: (event) => events.push(event),
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'test-model' },
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies({
+        createAgentRunner: () => ({ run: async () => { throw new Error('runner failed'); } }) as never,
+        createMemoryManager: async () => null,
+      }),
+    });
+
+    const caller = app.application.runTurn({
+      requestId: 'request-runner-failure',
+      sessionKey: 'main',
+      message: 'fail execution',
+      promptMode: 'full',
+    });
+    await expect(caller).rejects.toThrow('runner failed');
+    expect(events.filter((event) =>
+      event.type === 'turn_end' && event.requestId === 'request-runner-failure')).toEqual([
+      expect.objectContaining({ outcome: 'failed', failure: expect.any(Object) }),
+    ]);
+    await app.close();
+  });
+
   it('CH-05 isolates channel.send failures without changing Turn execution', async () => {
     const runnerRun = vi.fn(async (): Promise<RunResult> => ({
       text: 'done',
@@ -224,7 +476,7 @@ describe('RuntimeApp', () => {
     receivingChannel.channel.send = receivedEvents;
     const app = await RuntimeApp.create({
       workspaceDir,
-      contributionUnits: [failingChannel.unit, receivingChannel.unit],
+      loadedUnits: [failingChannel.unit, receivingChannel.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'test-model' },
         memory: { enabled: false },
@@ -268,7 +520,7 @@ describe('RuntimeApp', () => {
     const testChannel = createTestChannel('observer-failure-channel');
     const app = await RuntimeApp.create({
       workspaceDir,
-      contributionUnits: [testChannel.unit],
+      loadedUnits: [testChannel.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'test-model' },
         memory: { enabled: false },
@@ -344,7 +596,7 @@ describe('RuntimeApp', () => {
 
     const creation = RuntimeApp.create({
       workspaceDir,
-      contributionUnits: [testChannel.unit],
+      loadedUnits: [testChannel.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'test-model' },
         memory: { enabled: false },
@@ -371,7 +623,7 @@ describe('RuntimeApp', () => {
 
     await expect(RuntimeApp.create({
       workspaceDir,
-      contributionUnits: [testChannel.unit],
+      loadedUnits: [testChannel.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'test-model' },
         memory: { enabled: false },
@@ -389,7 +641,7 @@ describe('RuntimeApp', () => {
     });
   });
 
-  it('CH-12 characterizes missing cleanup after a later bootstrap failure', async () => {
+  it('cleans Memory exactly once after Builder-side Unit assembly failure', async () => {
     const events: RuntimeEvent[] = [];
     const memoryClose = vi.fn();
     const startupError = new Error('tool assembly failed');
@@ -412,7 +664,31 @@ describe('RuntimeApp', () => {
     expect(events.map((event) => event.type)).toContain('app_start');
     expect(events.map((event) => event.type)).toContain('error');
     expect(events.map((event) => event.type)).not.toContain('app_ready');
-    expect(memoryClose).not.toHaveBeenCalled();
+    expect(memoryClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds nonresponsive Memory cleanup after a bootstrap failure', async () => {
+    const deadlineDriver = new ManualDeadlineDriver();
+    const memoryClose = vi.fn(() => new Promise<void>(() => undefined));
+    const startupError = new Error('runner creation failed');
+    const creation = RuntimeApp.create({
+      workspaceDir,
+      deadlineDriver,
+      deadlinePolicy: { candidateCleanupMs: 5_000 },
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'test-model' },
+        memory: { enabled: true },
+      },
+      dependencies: createTestDependencies({
+        createMemoryManager: async () => ({ close: memoryClose }) as never,
+        createAgentRunner: () => { throw startupError; },
+      }),
+    });
+
+    await vi.waitFor(() => expect(memoryClose).toHaveBeenCalledTimes(1));
+    deadlineDriver.advanceBy(5_000);
+
+    await expect(creation).rejects.toBe(startupError);
   });
 
   it('fails a missing model before Runner and resolves an explicit model through the Provider', async () => {
@@ -534,7 +810,7 @@ describe('RuntimeApp', () => {
 
     const app = await RuntimeApp.create({
       workspaceDir,
-      contributionUnits: [successfulChannel.unit, failingChannel.unit],
+      loadedUnits: [successfulChannel.unit, failingChannel.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'test-model' },
         memory: { enabled: false },
@@ -580,7 +856,7 @@ describe('RuntimeApp', () => {
 
     const app = await RuntimeApp.create({
       workspaceDir,
-      contributionUnits: [failingChannel.unit, successfulChannel.unit],
+      loadedUnits: [failingChannel.unit, successfulChannel.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'test-model' },
         memory: { enabled: false },
@@ -597,9 +873,13 @@ describe('RuntimeApp', () => {
 
     expect(failingChannel.channel.stop).toHaveBeenCalledTimes(1);
     expect(successfulChannel.channel.stop).toHaveBeenCalledTimes(1);
-    expect(report.completed).toContain('channel:successful-stop-channel');
+    expect(report.completed.some((resource) =>
+      resource.endsWith(':channel:successful-stop-channel'))).toBe(true);
     expect(report.failed).toEqual([
-      { resource: 'channel:failing-stop-channel', message: 'channel stop failed' },
+      {
+        resource: expect.stringMatching(/:channel:failing-stop-channel$/),
+        message: 'channel stop failed',
+      },
     ]);
     expect(app.application.getState().phase).toBe('closed');
   });
@@ -633,7 +913,7 @@ describe('RuntimeApp', () => {
     const testChannel = createTestChannel('queue-test');
     const app = await RuntimeApp.create({
       workspaceDir,
-      contributionUnits: [testChannel.unit],
+      loadedUnits: [testChannel.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'test-model' },
         memory: { enabled: false },
@@ -722,7 +1002,7 @@ describe('RuntimeApp', () => {
     const testChannel = createTestChannel('steer-test');
     const app = await RuntimeApp.create({
       workspaceDir,
-      contributionUnits: [testChannel.unit],
+      loadedUnits: [testChannel.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'test-model' },
         memory: { enabled: false },
@@ -822,7 +1102,7 @@ describe('RuntimeApp', () => {
       });
       const app = await RuntimeApp.create({
         workspaceDir,
-        contributionUnits: [testChannel.unit],
+        loadedUnits: [testChannel.unit],
         cliOverrides: {
           llm: { apiKey: 'test-key', model: 'test-model' },
           memory: { enabled: false },
@@ -924,7 +1204,7 @@ describe('RuntimeApp', () => {
     const testChannel = createTestChannel('no-approval-channel');
     const app = await RuntimeApp.create({
       workspaceDir,
-      contributionUnits: [testChannel.unit],
+      loadedUnits: [testChannel.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'test-model' },
         memory: { enabled: false },
@@ -981,7 +1261,7 @@ describe('RuntimeApp', () => {
     });
     const app = await RuntimeApp.create({
       workspaceDir,
-      contributionUnits: [testChannel.unit],
+      loadedUnits: [testChannel.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'test-model' },
         memory: { enabled: false },
@@ -1158,7 +1438,7 @@ describe('RuntimeApp', () => {
       const testChannel = createTestChannel('public-abort-test');
       const app = await RuntimeApp.create({
         workspaceDir,
-        contributionUnits: [testChannel.unit],
+        loadedUnits: [testChannel.unit],
         cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
@@ -1232,7 +1512,7 @@ describe('RuntimeApp', () => {
       const testChannel = createTestChannel('steering-abort-test');
       const app = await RuntimeApp.create({
         workspaceDir,
-        contributionUnits: [testChannel.unit],
+        loadedUnits: [testChannel.unit],
         cliOverrides: {
           llm: { apiKey: 'test-key', model: 'test-model' },
           memory: { enabled: false },
@@ -1366,6 +1646,7 @@ describe('RuntimeApp', () => {
     // ⑧ CH-08：先 abort active turn，再等待回收；queued request 不启动
     it('CH-08 shutdown aborts the active turn, waits for it, and does not start queued work', async () => {
       const releaseRun = createDeferred<void>();
+      const deadlineDriver = new ManualDeadlineDriver();
       let capturedSignal: AbortSignal | undefined;
 
       const runnerRun = vi.fn(async (params: { signal?: AbortSignal }): Promise<RunResult> => {
@@ -1391,7 +1672,8 @@ describe('RuntimeApp', () => {
       const testChannel = createTestChannel('shutdown-queue-test');
       const app = await RuntimeApp.create({
         workspaceDir,
-        contributionUnits: [testChannel.unit],
+        deadlineDriver,
+        loadedUnits: [testChannel.unit],
         cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
@@ -1417,7 +1699,10 @@ describe('RuntimeApp', () => {
         closeSettled = true;
       });
 
-      // close 应立即调 abort（signal 同步 flip）
+      // graceful 阶段不提前 Abort；deadline 后进入独立 Abort convergence。
+      await Promise.resolve();
+      expect(capturedSignal!.aborted).toBe(false);
+      deadlineDriver.advanceBy(30_000);
       await vi.waitFor(() => expect(capturedSignal!.aborted).toBe(true));
       await Promise.resolve();
       expect(closeSettled).toBe(false);
@@ -1427,15 +1712,15 @@ describe('RuntimeApp', () => {
       expect(runnerRun).toHaveBeenCalledTimes(1);
     });
 
-    // ⑨ shutdown timing：响应 signal 的 mock 应在合理时间内 abort 完成
-    it('shutdown timing: responsive signal path completes within 300ms', async () => {
+    // ⑨ shutdown timing：完全由 monotonic manual deadline 驱动，不依赖 wall-clock sleep
+    it('shutdown deadline: responsive signal path aborts after graceful drain and converges', async () => {
       let capturedSignal: AbortSignal | undefined;
+      const deadlineDriver = new ManualDeadlineDriver();
       const runnerRun = vi.fn(async (params: { signal?: AbortSignal }): Promise<RunResult> => {
         capturedSignal = params.signal;
-        // 200ms 后自然回收——响应 signal 场景
         await new Promise<void>((resolve) => {
           if (params.signal?.aborted) return resolve();
-          params.signal?.addEventListener('abort', () => setTimeout(resolve, 200));
+          params.signal?.addEventListener('abort', () => resolve());
         });
         return {
           text: 'aborted',
@@ -1448,6 +1733,7 @@ describe('RuntimeApp', () => {
 
       const app = await RuntimeApp.create({
         workspaceDir,
+        deadlineDriver,
         cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
@@ -1458,12 +1744,175 @@ describe('RuntimeApp', () => {
       const turnPromise = app.application.runTurn({ sessionKey: 'main', message: 'go', promptMode: 'full' });
       await vi.waitFor(() => expect(capturedSignal).toBeDefined());
 
-      const closeStart = Date.now();
-      await Promise.all([app.close(), turnPromise]);
-      const closeDurationMs = Date.now() - closeStart;
+      const closePromise = app.close();
+      await Promise.resolve();
+      expect(capturedSignal!.aborted).toBe(false);
+      deadlineDriver.advanceBy(30_000);
+      await vi.waitFor(() => expect(capturedSignal!.aborted).toBe(true));
+      const [, report] = await Promise.all([turnPromise, closePromise]);
+      expect(report.outcome).toBe('completed');
+    });
 
-      // 200ms mock + 些许调度余量 → 期望 < 500ms（宽松阈值避免 CI flake）
-      expect(closeDurationMs).toBeLessThan(500);
+    it('queued abort seals one request_end without a turnId', async () => {
+      const releaseRun = createDeferred<void>();
+      const agentEvents: AgentEvent[] = [];
+      const runtimeEvents: RuntimeEvent[] = [];
+      const testChannel = createTestChannel('queued-abort-terminal');
+      testChannel.channel.send = (event) => { agentEvents.push(event); };
+      const runnerRun = vi.fn(async (): Promise<RunResult> => {
+        await releaseRun.promise;
+        return {
+          text: 'done',
+          content: [],
+          stopReason: 'aborted',
+          usage: { inputTokens: 0, outputTokens: 0 },
+          toolRounds: 0,
+        };
+      });
+      const app = await RuntimeApp.create({
+        workspaceDir,
+        loadedUnits: [testChannel.unit],
+        onEvent: (event) => runtimeEvents.push(event),
+        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        dependencies: createTestDependencies({
+          createAgentRunner: () => ({ run: runnerRun }) as never,
+          createMemoryManager: async () => null,
+        }),
+      });
+
+      const active = testChannel.dispatch({ sessionKey: 'main', message: 'active' });
+      await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(1));
+      await testChannel.dispatch({ sessionKey: 'main', message: 'queued' });
+
+      expect(app.application.abortTurn('main')).toEqual({ aborted: true, dropped: 1 });
+      await vi.waitFor(() => expect(agentEvents.filter((event) => event.type === 'request_end')).toHaveLength(1));
+      const agentTerminal = agentEvents.find((event) => event.type === 'request_end');
+      expect(agentTerminal).toMatchObject({
+        outcome: 'cancelled',
+        reason: 'abort_queue_drop',
+      });
+      expect('turnId' in agentTerminal!).toBe(false);
+      expect(runtimeEvents.filter((event) => event.type === 'request_end')).toHaveLength(1);
+
+      releaseRun.resolve();
+      await active;
+      await app.close();
+    });
+
+    it('nonresponsive Root seals once, preserves its pin, and ignores late success', async () => {
+      const deadlineDriver = new ManualDeadlineDriver();
+      const releaseRun = createDeferred<void>();
+      const runtimeEvents: RuntimeEvent[] = [];
+      const testChannel = createTestChannel('nonconverged-root');
+      const stop = vi.spyOn(testChannel.channel, 'stop');
+      const runnerRun = vi.fn(async (): Promise<RunResult> => {
+        await releaseRun.promise;
+        return {
+          text: 'late',
+          content: [],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 0, outputTokens: 0 },
+          toolRounds: 0,
+        };
+      });
+      const app = await RuntimeApp.create({
+        workspaceDir,
+        loadedUnits: [testChannel.unit],
+        deadlineDriver,
+        onEvent: (event) => runtimeEvents.push(event),
+        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        dependencies: createTestDependencies({
+          createAgentRunner: () => ({ run: runnerRun }) as never,
+          createMemoryManager: async () => null,
+        }),
+      });
+      const caller = app.application.runTurn({
+        requestId: 'request-nonconverged',
+        turnId: 'turn-nonconverged',
+        sessionKey: 'main',
+        message: 'hang',
+        promptMode: 'full',
+      });
+      const callerSettlement = caller.then(
+        () => 'resolved',
+        (error: unknown) => error instanceof Error ? error.message : String(error),
+      );
+      await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(1));
+
+      const close = app.close('test shutdown');
+      await vi.waitFor(() => expect(deadlineDriver.pendingCount).toBeGreaterThan(0));
+      deadlineDriver.advanceBy(30_000);
+      await vi.waitFor(() => expect(deadlineDriver.pendingCount).toBeGreaterThan(0));
+      deadlineDriver.advanceBy(10_000);
+      const report = await close;
+
+      expect(await callerSettlement).toContain('did not converge during shutdown');
+      expect(report.outcome).toBe('deadline-exhausted');
+      expect(report.turns.nonconvergedRequestIds).toEqual(['request-nonconverged']);
+      expect(report.turns.protectedGenerations).toEqual([1]);
+      expect(report.instanceStops.skippedProtectedInstanceIds.length).toBeGreaterThan(0);
+      expect(stop).not.toHaveBeenCalled();
+      expect(Object.isFrozen(report)).toBe(true);
+      expect(Object.isFrozen(report.residuals)).toBe(true);
+      const sealedResidualCount = report.residuals.length;
+
+      releaseRun.resolve();
+      await vi.waitFor(() => expect(app.application.getState().activeRunCount).toBe(0));
+      expect(runtimeEvents.filter((event) =>
+        event.type === 'turn_end' && event.requestId === 'request-nonconverged')).toHaveLength(1);
+      expect(report.residuals).toHaveLength(sealedResidualCount);
+      expect(stop).not.toHaveBeenCalled();
+    });
+
+    it('nonresponsive terminal Fanout exhausts the shared budget and returns a frozen report', async () => {
+      const deadlineDriver = new ManualDeadlineDriver();
+      const never = new Promise<void>(() => undefined);
+      const testChannel = createTestChannel('nonresponsive-fanout');
+      testChannel.channel.send = (event) => event.type === 'run_end' ? never : undefined;
+      const runResult: RunResult = {
+        text: 'done',
+        content: [],
+        stopReason: 'end_turn',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        toolRounds: 0,
+      };
+      const app = await RuntimeApp.create({
+        workspaceDir,
+        loadedUnits: [testChannel.unit],
+        deadlineDriver,
+        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        dependencies: createTestDependencies({
+          createAgentRunner: (config) => ({
+            run: async (params: RunParams) => {
+              config.onEvent?.({
+                type: 'run_end',
+                requestId: params.requestId ?? params.turnId,
+                sessionKey: params.sessionKey,
+                turnId: params.turnId,
+                result: runResult,
+              });
+              return runResult;
+            },
+          }) as never,
+          createMemoryManager: async () => null,
+        }),
+      });
+      await app.application.runTurn({
+        requestId: 'request-fanout',
+        sessionKey: 'main',
+        message: 'done',
+        promptMode: 'full',
+      });
+
+      const close = app.close();
+      await vi.waitFor(() => expect(deadlineDriver.pendingCount).toBeGreaterThan(0));
+      deadlineDriver.advanceBy(60_000);
+      const report = await close;
+
+      expect(report.outcome).toBe('deadline-exhausted');
+      expect(report.residuals.some((entry) => entry.owner === 'fanout')).toBe(true);
+      expect(Object.isFrozen(report)).toBe(true);
+      expect(Object.isFrozen(report.instanceStops.pendingInstanceIds)).toBe(true);
     });
 
     // ⑩ bindAbortHooks wiring：Channel activation 时同步注入 hooks，可查询 & 触发
@@ -1476,7 +1925,7 @@ describe('RuntimeApp', () => {
 
       const app = await RuntimeApp.create({
         workspaceDir,
-        contributionUnits: [testChannel.unit],
+        loadedUnits: [testChannel.unit],
         cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
       });
@@ -1518,7 +1967,7 @@ function createDeferred<T>(): {
 
 function createTestChannel(id: string): {
   channel: Channel;
-  unit: RuntimeContributionUnit;
+  unit: LoadedRuntimeUnit;
   dispatch(req: ChannelRunRequest): Promise<void>;
 } {
   let handler: ((req: ChannelRunRequest) => Promise<void>) | undefined;
@@ -1564,7 +2013,7 @@ function createApprovalTestChannel(
   },
 ): {
   channel: Channel;
-  unit: RuntimeContributionUnit;
+  unit: LoadedRuntimeUnit;
   dispatch(req: ChannelRunRequest): Promise<void>;
 } {
   let handler: ((req: ChannelRunRequest) => Promise<void>) | undefined;
@@ -1627,14 +2076,17 @@ function createApprovalTestChannel(
   };
 }
 
-function channelUnit(channel: Channel): RuntimeContributionUnit {
-  return {
+function channelUnit(channel: Channel): LoadedRuntimeUnit {
+  return createLoadedRuntimeUnit({
+    registration: {
     id: `builtin-test-channel-${channel.id}`,
     source: 'builtin',
     register(api) {
       api.registerChannel({ id: channel.id, create: () => channel });
     },
-  };
+    },
+    required: false,
+  });
 }
 
 function createTestDependencies(

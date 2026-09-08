@@ -3,8 +3,8 @@
     "contract": "AgentEvent",
     "source": "src/core/runner/types.ts",
     "kind": "event",
-    "positive": ["src/core/runner/AgentRunner.test.ts"],
-    "negative": ["src/core/runner/AgentRunner.test.ts"]
+    "positive": ["src/core/runner/AgentRunner.test.ts", "src/runtime/RuntimeApp.test.ts", "src/adapters/channel/WebSocketChannel.test.ts"],
+    "negative": ["src/core/runner/AgentRunner.test.ts", "src/runtime/RuntimeApp.test.ts"]
   },
   {
     "contract": "RuntimeEvent",
@@ -28,11 +28,102 @@
     "negative": ["src/runtime/RuntimeApp.test.ts"]
   },
   {
+    "contract": "RuntimeDeadlinePolicy",
+    "source": "src/runtime/runtime-deadline.ts",
+    "kind": "config",
+    "positive": ["src/runtime/runtime-deadline.test.ts"],
+    "negative": ["src/runtime/runtime-deadline.test.ts"]
+  },
+  {
+    "contract": "RuntimeDeadlineDriver",
+    "source": "src/runtime/runtime-deadline.ts",
+    "kind": "deadline-port",
+    "positive": ["src/runtime/runtime-deadline.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/runtime-deadline.test.ts"]
+  },
+  {
+    "contract": "RuntimeDeadlineBudget",
+    "source": "src/runtime/runtime-deadline.ts",
+    "kind": "deadline-budget",
+    "positive": ["src/runtime/runtime-deadline.test.ts", "src/runtime/runtime-builder.test.ts"],
+    "negative": ["src/runtime/runtime-deadline.test.ts"]
+  },
+  {
     "contract": "RuntimeLifecycleState",
     "source": "src/runtime/types.ts",
     "kind": "lifecycle",
     "positive": ["src/runtime/RuntimeApp.test.ts"],
     "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "RunTurnParams",
+    "source": "src/runtime/types.ts",
+    "kind": "request",
+    "positive": ["src/runtime/RuntimeApp.test.ts", "src/runtime/RuntimeApp.intake.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.intake.test.ts"]
+  },
+  {
+    "contract": "RuntimeApplication",
+    "source": "src/runtime/runtime-composition.ts",
+    "kind": "application-port",
+    "positive": ["src/runtime/runtime-builder.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/runtime-builder.test.ts"]
+  },
+  {
+    "contract": "RuntimeCompositionControl",
+    "source": "src/runtime/runtime-composition.ts",
+    "kind": "composition-port",
+    "positive": ["src/runtime/runtime-builder.test.ts", "src/runtime/runtime-composition-manager.test.ts"],
+    "negative": ["src/runtime/runtime-composition-manager.test.ts"]
+  },
+  {
+    "contract": "RuntimeCompositionResidual",
+    "source": "src/runtime/runtime-composition.ts",
+    "kind": "lifecycle-residual",
+    "positive": ["src/runtime/reload-coordinator.test.ts", "src/runtime/runtime-composition-manager.test.ts"],
+    "negative": ["src/runtime/reload-coordinator.test.ts"]
+  },
+  {
+    "contract": "RuntimeHandle",
+    "source": "src/runtime/runtime-composition.ts",
+    "kind": "lifecycle-handle",
+    "positive": ["src/runtime/runtime-builder.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/runtime-builder.test.ts"]
+  },
+  {
+    "contract": "RuntimeReloadChange",
+    "source": "src/runtime/runtime-composition.ts",
+    "kind": "reload-request",
+    "positive": ["src/runtime/reload-coordinator.test.ts", "src/runtime/runtime-composition-manager.test.ts"],
+    "negative": ["src/runtime/runtime-composition-manager.test.ts"]
+  },
+  {
+    "contract": "RuntimeReloadResult",
+    "source": "src/runtime/runtime-composition.ts",
+    "kind": "reload-result",
+    "positive": ["src/runtime/reload-coordinator.test.ts", "src/runtime/runtime-composition-manager.test.ts"],
+    "negative": ["src/runtime/reload-coordinator.test.ts"]
+  },
+  {
+    "contract": "LoadedRuntimeUnit",
+    "source": "src/runtime/runtime-unit.ts",
+    "kind": "unit-factory",
+    "positive": ["src/runtime/runtime-unit.test.ts", "src/runtime/runtime-composition-manager.test.ts"],
+    "negative": ["src/runtime/runtime-unit.test.ts"]
+  },
+  {
+    "contract": "RuntimeUnitInstance",
+    "source": "src/runtime/runtime-unit.ts",
+    "kind": "unit-lifecycle",
+    "positive": ["src/runtime/runtime-unit.test.ts", "src/runtime/runtime-lifecycle.test.ts"],
+    "negative": ["src/runtime/runtime-unit.test.ts"]
+  },
+  {
+    "contract": "RegistrySnapshot",
+    "source": "src/core/registry/types.ts",
+    "kind": "registry-snapshot",
+    "positive": ["src/runtime/registry-builder.test.ts", "src/runtime/composition-coordinator.test.ts"],
+    "negative": ["src/runtime/composition-coordinator.test.ts"]
   },
   {
     "contract": "Channel",
@@ -52,8 +143,15 @@
     "contract": "ChannelCompletion",
     "source": "src/core/channel/types.ts",
     "kind": "lifecycle",
-    "positive": ["src/runtime/channel-lifecycle.test.ts"],
+    "positive": ["src/runtime/channel-lifecycle.test.ts", "src/runtime/RuntimeApp.test.ts"],
     "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "ChannelRunRequest",
+    "source": "src/core/channel/types.ts",
+    "kind": "request",
+    "positive": ["src/adapters/channel/WebSocketChannel.test.ts", "src/runtime/RuntimeApp.intake.test.ts"],
+    "negative": ["src/adapters/channel/WebSocketChannel.test.ts"]
   },
   {
     "contract": "AbortHookBindings",
@@ -87,7 +185,7 @@
     "contract": "ChannelRuntimeBinding",
     "source": "src/core/channel/types.ts",
     "kind": "runtime-binding",
-    "positive": ["src/runtime/channel-lifecycle.test.ts"],
+    "positive": ["src/runtime/channel-lifecycle.test.ts", "src/runtime/RuntimeApp.test.ts"],
     "negative": ["src/runtime/RuntimeApp.test.ts"]
   },
   {
@@ -96,20 +194,6 @@
     "kind": "registry-projection",
     "positive": ["src/runtime/channel-lifecycle.test.ts"],
     "negative": ["src/runtime/channel-lifecycle.test.ts"]
-  },
-  {
-    "contract": "ChannelLifecycleReport",
-    "source": "src/core/channel/types.ts",
-    "kind": "lifecycle",
-    "positive": ["src/runtime/channel-lifecycle.test.ts"],
-    "negative": ["src/runtime/channel-lifecycle.test.ts"]
-  },
-  {
-    "contract": "ChannelShutdownHandoff",
-    "source": "src/core/channel/types.ts",
-    "kind": "lifecycle-port",
-    "positive": ["src/runtime/channel-lifecycle.test.ts"],
-    "negative": ["src/runtime/RuntimeApp.test.ts"]
   },
   {
     "contract": "ChannelCompletionObserver",

@@ -320,7 +320,7 @@ async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
 
   const app = await RuntimeApp.create({
     workspaceDir,
-    contributionUnits: [createWebSocketChannelModule({ port, host: '127.0.0.1', path: '/ws' })],
+    loadedUnits: [createWebSocketChannelModule({ port, host: '127.0.0.1', path: '/ws' })],
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     cliOverrides: cliOverrides as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { MemoryManager } from '../core/memory/index.js';
-import { buildRegistrySnapshot } from '../runtime/registry-builder.js';
+import {
+  finalizeRegistrySnapshot,
+  resolveStagedRegistryCandidate,
+  stageRegistryUnit,
+} from '../runtime/registry-builder.js';
 import {
   createMemoryToolModule,
   createTaskToolModule,
@@ -17,7 +21,7 @@ describe('Builtin Tool Runtime Modules', () => {
         model: 'inherit' as const,
       }],
     ]);
-    const snapshot = buildRegistrySnapshot({
+    const candidate = resolveStagedRegistryCandidate({
       providers: [],
       units: [
         createWorkspaceToolModule({
@@ -34,7 +38,13 @@ describe('Builtin Tool Runtime Modules', () => {
           getCapabilities: () => ({ depth: 0, role: 'main', canSpawn: true }),
           maxDepth: 1,
         }),
-      ],
+      ].map(stageRegistryUnit),
+    });
+    const snapshot = finalizeRegistrySnapshot({
+      candidate,
+      acceptedUnits: candidate.units,
+      channelBindings: [],
+      generation: 1,
     });
 
     expect(snapshot.diagnostics).toEqual([]);

@@ -17,6 +17,7 @@ export type MessageRouteContext = {
  * 这里只保存后续真正启动 turn 时还原 RunTurnParams 与交互路由所需的信息。
  */
 export type QueuedChannelTurn = {
+  requestId: string;
   sessionKey: string;
   message: string | ChatContentBlock[];
   launchContext?: TurnLaunchContext;

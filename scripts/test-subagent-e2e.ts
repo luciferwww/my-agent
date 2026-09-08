@@ -90,6 +90,28 @@ function createScriptedLLM(replies: ScriptedReply[]): { client: LLMClient; calls
   return { client, calls };
 }
 
+function createTestProvider(client: LLMClient) {
+  return [{
+    id: 'test',
+    protocol: 'test',
+    invocationPort: client,
+    resolveConnection: () => ({ ok: true as const, connection: { endpointId: 'test' } }),
+    resolveModel: (modelId: string, connection: { endpointId: string }) => ({
+      ok: true as const,
+      descriptor: {
+        identity: { providerId: 'test', modelId },
+        protocol: 'test',
+        connection,
+        facts: {
+          effectiveContextLimit: { value: 200_000, source: 'deployment-config' as const },
+          maximumOutputTokens: { value: 8192, source: 'deployment-config' as const },
+          toolUse: { value: true, source: 'deployment-config' as const },
+        },
+      },
+    }),
+  }];
+}
+
 function textReply(text: string, usage = { inputTokens: 10, outputTokens: 5 }): StreamEvent[] {
   return [
     { type: 'message_start' },
@@ -106,7 +128,14 @@ function toolUseReply(opts: {
 }): StreamEvent[] {
   return [
     { type: 'message_start' },
-    { type: 'tool_use', id: opts.id, name: opts.name, input: opts.input },
+    {
+      type: 'tool_call',
+      call: {
+        callId: opts.id,
+        name: opts.name,
+        input: { state: 'ready', value: opts.input },
+      },
+    },
     {
       type: 'message_end',
       stopReason: 'tool_use',
@@ -129,7 +158,13 @@ async function writeAgentDir(workspaceDir: string, configJson: object): Promise<
 async function scenarioTaskToolPath(): Promise<void> {
   await withWorkspace(async (workspaceDir) => {
     await writeAgentDir(workspaceDir, {
-      agents: { defaults: { llm: { apiKey: 'x', model: 'mock-model' }, memory: { enabled: false } } },
+      agents: {
+        defaults: {
+          llm: { apiKey: 'x', model: 'mock-model' },
+          memory: { enabled: false },
+          subagents: { enabled: true, maxDepth: 1, list: [] },
+        },
+      },
     });
 
     // Match logic: distinguish parent vs subagent by system prompt content.
@@ -172,8 +207,12 @@ async function scenarioTaskToolPath(): Promise<void> {
 
     const app = await RuntimeApp.create({
       workspaceDir,
+      cliOverrides: {
+        subagents: { enabled: true, maxDepth: 1, list: [] },
+        tools: { allow: ['task'] },
+      },
       onAgentEvent: (e) => events.push(e),
-      dependencies: { createLLMClient: () => client },
+      dependencies: { createProviderProjection: () => createTestProvider(client) },
     });
 
     try {

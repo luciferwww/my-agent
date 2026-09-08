@@ -78,6 +78,28 @@ function createSingleResponseLLM(opts: {
   };
 }
 
+function createTestProvider(client: LLMClient) {
+  return [{
+    id: 'test',
+    protocol: 'test',
+    invocationPort: client,
+    resolveConnection: () => ({ ok: true as const, connection: { endpointId: 'test' } }),
+    resolveModel: (modelId: string, connection: { endpointId: string }) => ({
+      ok: true as const,
+      descriptor: {
+        identity: { providerId: 'test', modelId },
+        protocol: 'test',
+        connection,
+        facts: {
+          effectiveContextLimit: { value: 200_000, source: 'deployment-config' as const },
+          maximumOutputTokens: { value: 8192, source: 'deployment-config' as const },
+          toolUse: { value: true, source: 'deployment-config' as const },
+        },
+      },
+    }),
+  }];
+}
+
 // ── 工作区生命周期 ──────────────────────────────────────────────
 
 async function withWorkspace<T>(fn: (dir: string) => Promise<T>): Promise<T> {
@@ -103,12 +125,12 @@ async function testBootsAndRunsTurn(): Promise<void> {
         memory: { enabled: false },
       },
       dependencies: {
-        createLLMClient: () => createSingleResponseLLM({
+        createProviderProjection: () => createTestProvider(createSingleResponseLLM({
           text: 'Integration hello',
           inputTokens: 12,
           outputTokens: 8,
           onCall: (p) => { capturedParams = p; },
-        }),
+        })),
         createSessionManager: (dir) => {
           sessionManager = new SessionManager(dir);
           return sessionManager;
@@ -165,12 +187,12 @@ async function testMemoryToolsInjection(): Promise<void> {
     const app = await RuntimeApp.create({
       workspaceDir,
       dependencies: {
-        createLLMClient: () => createSingleResponseLLM({
+        createProviderProjection: () => createTestProvider(createSingleResponseLLM({
           text: 'Memory integration',
           inputTokens: 16,
           outputTokens: 9,
           onCall: (p) => { capturedParams = p; },
-        }),
+        })),
         // 用最小 stub 替代真实 MemoryManager，避免引入 sqlite 依赖
         createMemoryManager: async () => ({
           search: async () => [],
@@ -220,12 +242,12 @@ async function testReloadContextFiles(): Promise<void> {
         memory: { enabled: false },
       },
       dependencies: {
-        createLLMClient: () => createSingleResponseLLM({
+        createProviderProjection: () => createTestProvider(createSingleResponseLLM({
           text: 'Reload integration',
           inputTokens: 10,
           outputTokens: 7,
           onCall: (p) => { capturedSystems.push(p.system ?? ''); },
-        }),
+        })),
       },
     });
 

@@ -53,6 +53,7 @@ describe('SubagentExecutor', () => {
     const signal = new AbortController().signal;
 
     const prepared = await executor.prepare({
+      requestId: 'request-1',
       profile: {
         id: 'reviewer',
         description: 'review',

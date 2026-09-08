@@ -30,6 +30,9 @@ import process from 'node:process';
 
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
 import type { RuntimeApplication } from '../src/runtime/runtime-composition.js';
+import { SessionManager } from '../src/core/session/index.js';
+import type { Channel, ChannelCompletion, ChannelRunRequest } from '../src/adapters/channel/types.js';
+import { createLoadedRuntimeUnit } from '../src/runtime/runtime-unit.js';
 import type {
   ChatParams,
   ChatResponse,
@@ -139,6 +142,56 @@ function createSignalAwareLLM(perCallEvents: StreamEvent[][], delayMs = 25): {
   return { client, callCount: () => call };
 }
 
+function createTestProvider(client: LLMClient) {
+  return [{
+    id: 'test',
+    protocol: 'test',
+    invocationPort: client,
+    resolveConnection: () => ({ ok: true as const, connection: { endpointId: 'test' } }),
+    resolveModel: (modelId: string, connection: { endpointId: string }) => ({
+      ok: true as const,
+      descriptor: {
+        identity: { providerId: 'test', modelId },
+        protocol: 'test',
+        connection,
+        facts: {
+          effectiveContextLimit: { value: 200_000, source: 'deployment-config' as const },
+          maximumOutputTokens: { value: 8192, source: 'deployment-config' as const },
+          toolUse: { value: true, source: 'deployment-config' as const },
+        },
+      },
+    }),
+  }];
+}
+
+function createTestChannel(id: string) {
+  let handler: ((request: ChannelRunRequest) => Promise<void>) | undefined;
+  let complete!: (completion: ChannelCompletion) => void;
+  const completion = new Promise<ChannelCompletion>((resolve) => { complete = resolve; });
+  const channel: Channel = {
+    id,
+    completion,
+    send() {},
+    onMessage(next) { handler = next; },
+    async start() {},
+    async stop() { complete({ outcome: 'closed', reason: 'stopped' }); },
+  };
+  return {
+    unit: createLoadedRuntimeUnit({
+      registration: {
+        id: `abort-test-${id}`,
+        source: 'builtin',
+        register(api) { api.registerChannel({ id, create: () => channel }); },
+      },
+      required: false,
+    }),
+    dispatch(request: ChannelRunRequest) {
+      if (!handler) throw new Error('Channel ingress is not ready.');
+      return handler(request);
+    },
+  };
+}
+
 // ── Scenario 1: abort mid-stream ────────────────────────────
 
 async function scenarioAbortMidStream(): Promise<void> {
@@ -169,6 +222,7 @@ async function scenarioAbortMidStream(): Promise<void> {
     // event must have been emitted before abort takes effect.
     let firedAbort = false;
     let appRef: RuntimeApplication | undefined;
+    let sessionManager!: SessionManager;
     const observer = (e: AgentEvent) => {
       agentEvents.push(e);
       if (!firedAbort && e.type === 'text_delta') {
@@ -180,7 +234,13 @@ async function scenarioAbortMidStream(): Promise<void> {
     const app = await RuntimeApp.create({
       workspaceDir,
       onAgentEvent: observer,
-      dependencies: { createLLMClient: () => client },
+      dependencies: {
+        createProviderProjection: () => createTestProvider(client),
+        createSessionManager: (dir, options) => {
+          sessionManager = new SessionManager(dir, options);
+          return sessionManager;
+        },
+      },
     });
     appRef = app.application;
 
@@ -214,11 +274,7 @@ async function scenarioAbortMidStream(): Promise<void> {
       assert.equal(result.usage.outputTokens, 0, 'usage.outputTokens accumulated is 0 (message_end never fired)');
 
       // Assert session state: last assistant record must carry abortMeta.
-      const records = (app as unknown as {
-        resources: { sessionManager: { getMessages(k: string): Array<{
-          message: { role: string; abortMeta?: { partial: boolean; stopReason: 'aborted' } };
-        }> } };
-      }).resources.sessionManager.getMessages(sk);
+      const records = sessionManager.getMessages(sk);
       const lastAssistant = [...records].reverse().find((r) => r.message.role === 'assistant');
       assert.ok(lastAssistant, 'a partial assistant record must be written');
       assert.deepEqual(
@@ -247,11 +303,18 @@ async function scenarioOrphanRepair(): Promise<void> {
     ]]);
 
     const agentEvents: AgentEvent[] = [];
+    let sessionManager!: SessionManager;
 
     const app = await RuntimeApp.create({
       workspaceDir,
       onAgentEvent: (e) => agentEvents.push(e),
-      dependencies: { createLLMClient: () => client },
+      dependencies: {
+        createProviderProjection: () => createTestProvider(client),
+        createSessionManager: (dir, options) => {
+          sessionManager = new SessionManager(dir, options);
+          return sessionManager;
+        },
+      },
     });
 
     const sk = 'main';
@@ -260,25 +323,6 @@ async function scenarioOrphanRepair(): Promise<void> {
     // the shape AgentRunner leaves on disk after an abort during tool
     // execution (spec §7.2). We reach into resources.sessionManager for
     // direct write access; this is a script boundary, not a public API.
-    const sessionManager = (app as unknown as {
-      resources: {
-        sessionManager: {
-          resolveSession(k: string): Promise<unknown>;
-          appendMessage(
-            k: string,
-            m: {
-              role: 'assistant';
-              content: Array<{ type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }>;
-              abortMeta?: { partial: boolean; stopReason: 'aborted' };
-            },
-          ): Promise<string>;
-          getMessages(k: string): Array<{
-            message: { role: string; content: unknown };
-          }>;
-        };
-      };
-    }).resources.sessionManager;
-
     await sessionManager.resolveSession(sk);
     await sessionManager.appendMessage(sk, {
       role: 'assistant',
@@ -350,24 +394,24 @@ async function scenarioMessagesDropped(): Promise<void> {
     );
 
     const runtimeEvents: RuntimeEvent[] = [];
+    const testChannel = createTestChannel('abort-queue');
 
     const app = await RuntimeApp.create({
       workspaceDir,
+      loadedUnits: [testChannel.unit],
       onEvent: (e) => runtimeEvents.push(e),
-      dependencies: { createLLMClient: () => client },
+      dependencies: { createProviderProjection: () => createTestProvider(client) },
     });
 
     const sk = 'main';
 
     try {
-      // Kick off the first turn. Do NOT await it — it will abort.
-      const turnPromise = app
-        .runTurn({ sessionKey: sk, message: 'first', promptMode: 'full' })
-        .catch((err) => {
-          // Aborted top-level runTurn returns normally with stopReason=aborted;
-          // it should NOT reject. If it does, surface.
-          throw err;
-        });
+      // Kick off the first turn through Channel ingress. Do NOT await it.
+      const firstDispatch = testChannel.dispatch({
+        sessionKey: sk,
+        message: 'first',
+        clientId: 'abort-client',
+      });
 
       // Wait until the turn is definitely in-flight (activeAborts registered).
       // We probe via the RuntimeApp private map by querying our own
@@ -375,13 +419,12 @@ async function scenarioMessagesDropped(): Promise<void> {
       // for the script a short sleep is fine.
       await new Promise((r) => setTimeout(r, 40));
 
-      // Directly poke messageQueueBySession — script boundary. In real
-      // channel flow this happens via handleInboundChannelMessage but we
-      // don't want to spin up a full CliChannel for a queue test.
-      const queue = (app as unknown as {
-        messageQueueBySession: Map<string, unknown[]>;
-      }).messageQueueBySession;
-      queue.set(sk, [{ dummy: 1 }, { dummy: 2 }, { dummy: 3 }] as unknown[]);
+      const queued = [2, 3, 4].map((index) => testChannel.dispatch({
+        sessionKey: sk,
+        message: `queued-${index}`,
+        clientId: 'abort-client',
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       // Now abort. Should return { aborted: true, dropped: 3 } and emit
       // the messages_dropped runtime event.
@@ -390,9 +433,8 @@ async function scenarioMessagesDropped(): Promise<void> {
       assert.equal(abortResult.aborted, true, 'active turn must be aborted');
       assert.equal(abortResult.dropped, 3, 'all queued messages must be counted');
 
-      // Let the aborted turn unwind so we don't leak an in-flight promise.
-      const result = await turnPromise;
-      assert.equal(result.stopReason, 'aborted', 'in-flight turn should end with aborted');
+      await firstDispatch;
+      await Promise.allSettled(queued);
 
       const dropEvt = runtimeEvents.find((e) => e.type === 'messages_dropped');
       console.log('  messages_dropped   =', dropEvt);
@@ -423,7 +465,12 @@ async function scenarioShutdownAborts(): Promise<void> {
 
     const app = await RuntimeApp.create({
       workspaceDir,
-      dependencies: { createLLMClient: () => client },
+      deadlinePolicy: {
+        shutdownGracefulDrainMs: 20,
+        shutdownAbortConvergenceMs: 500,
+        shutdownOverallMs: 1_000,
+      },
+      dependencies: { createProviderProjection: () => createTestProvider(client) },
     });
 
     try {

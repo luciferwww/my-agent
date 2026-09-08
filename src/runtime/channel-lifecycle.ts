@@ -2,28 +2,21 @@ import type {
   ApprovalClosedResult,
   ChannelCompletion,
   ChannelInstance,
-  ChannelLifecycleReport,
   ChannelRuntimeBinding,
   ChannelRuntimeHost,
   ChannelRuntimeInteraction,
-  ChannelShutdownHandoff,
-  ChannelCompletionObserver,
   TurnInteractionRequest,
 } from '../core/channel/index.js';
 import type { AgentEvent } from '../core/runner/index.js';
 import type {
   ContributionSource,
-  RegistrySnapshot,
   RegistryStartupDiagnostic,
 } from '../core/registry/index.js';
 import {
-  finalizeRegistrySnapshot,
-  type RegistryCandidate,
   type StagedRegistryUnit,
 } from './registry-builder.js';
-import { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
 
-interface ActiveChannelRecord {
+export interface PreparedChannelRecord {
   readonly id: string;
   readonly instanceId: string;
   readonly unitId: string;
@@ -33,168 +26,52 @@ interface ActiveChannelRecord {
   stopStarted: boolean;
 }
 
-interface ActivationResult {
+export interface PreparedUnitChannels {
   readonly unit: StagedRegistryUnit;
   readonly accepted: boolean;
   readonly bindings: readonly ChannelRuntimeBinding[];
-  readonly records: readonly ActiveChannelRecord[];
+  readonly records: readonly PreparedChannelRecord[];
   readonly diagnostics: readonly RegistryStartupDiagnostic[];
+  readonly completions: ReadonlyMap<string, Promise<ChannelCompletion>>;
+  activateIngress(): void;
+  deactivateIngress(): void;
 }
 
-export interface ActivatedRegistry {
-  readonly snapshot: RegistrySnapshot;
-  readonly lifecycle: ChannelLifecycleSet;
-}
+type ActivationResult = PreparedUnitChannels;
 
-export class ChannelLifecycleSet
-implements ChannelCompletionObserver, ChannelShutdownHandoff {
-  private shutdownPromise?: Promise<ChannelLifecycleReport>;
-
-  constructor(
-    private readonly completionById: ReadonlyMap<string, Promise<ChannelCompletion>>,
-    private readonly activeRecords: readonly ActiveChannelRecord[],
-    private readonly lifecycleLedger: RuntimeLifecycleLedger,
-    private readonly generation: number,
-  ) {}
-
-  waitForChannelCompletion(id: string): Promise<ChannelCompletion> {
-    const completion = this.completionById.get(id);
-    if (!completion) {
-      return Promise.reject(new Error(`CHANNEL_NOT_FOUND: ${id}`));
-    }
-    return completion;
-  }
-
-  runtimeConverged(): Promise<ChannelLifecycleReport> {
-    this.shutdownPromise ??= this.stopActive();
-    return this.shutdownPromise;
-  }
-
-  private async stopActive(): Promise<ChannelLifecycleReport> {
-    const channelByInstanceId = new Map(
-      this.activeRecords.map((record) => [record.instanceId, record.id]),
-    );
-    for (const record of this.activeRecords) {
-      this.lifecycleLedger.removeGenerationMembership(record.instanceId, this.generation);
-    }
-    const report = await this.lifecycleLedger.stopEligible(
-      this.activeRecords.map((record) => record.instanceId),
-    );
-    const completed = report.completed.map((instanceId) => channelByInstanceId.get(instanceId)!);
-    const failed = report.failed.map((failure) => ({
-      channelId: channelByInstanceId.get(failure.instanceId)!,
-      message: failure.message,
-    }));
-
-    return Object.freeze({
-      completed: Object.freeze(completed),
-      failed: Object.freeze(failed.map((entry) => Object.freeze(entry))),
-    });
-  }
-}
-
-export async function activateRegistryChannels(params: {
-  readonly candidate: RegistryCandidate;
+export async function prepareStagedUnitChannels(params: {
+  readonly unit: StagedRegistryUnit;
   readonly host: ChannelRuntimeHost;
-  readonly lifecycleLedger?: RuntimeLifecycleLedger;
-}): Promise<ActivatedRegistry> {
-  const lifecycleLedger = params.lifecycleLedger ?? new RuntimeLifecycleLedger();
-  const completionById = new Map<string, Promise<ChannelCompletion>>();
-  let results = await Promise.all(params.candidate.units.map(
-    (unit) => activateUnit(unit, params.host, completionById),
-  ));
+  readonly instanceIdPrefix?: string;
+}): Promise<PreparedUnitChannels> {
+  return activateUnit(params.unit, params.host, new Map(), params.instanceIdPrefix);
+}
 
-  while (true) {
-    const checks = results.flatMap((result) => result.accepted
-      ? result.records.map((record) => ({ result, record }))
-      : []);
-    const completions = await Promise.all(
-      checks.map(({ record }) => settledValue(record.completion)),
+export async function recheckPreparedUnitChannels(
+  prepared: PreparedUnitChannels,
+): Promise<PreparedUnitChannels> {
+  if (!prepared.accepted) return prepared;
+  for (const record of prepared.records) {
+    const completion = await settledValue(record.completion);
+    if (!completion) continue;
+    return rollbackCompletedBeforeHandoff(
+      prepared,
+      { record, completion },
+      new Map(prepared.completions),
     );
-    const failedResults = new Map<ActivationResult, {
-      readonly record: ActiveChannelRecord;
-      readonly completion: ChannelCompletion;
-    }>();
-    for (const [index, completion] of completions.entries()) {
-      const check = checks[index];
-      if (completion && check && !failedResults.has(check.result)) {
-        failedResults.set(check.result, { record: check.record, completion });
-      }
-    }
-    if (failedResults.size === 0) break;
-
-    results = await Promise.all(results.map((result) => {
-      const failure = failedResults.get(result);
-      return failure
-        ? rollbackCompletedBeforeHandoff(result, failure, completionById)
-        : Promise.resolve(result);
-    }));
   }
-
-  const acceptedUnits = results.filter((result) => result.accepted).map((result) => result.unit);
-  const bindings = results.flatMap((result) => result.accepted ? [...result.bindings] : []);
-  const diagnostics = results.flatMap((result) => [...result.diagnostics]);
-  const activeRecords = results.flatMap((result) => result.accepted ? [...result.records] : []);
-  const ledgerOwnedInstanceIds: string[] = [];
-  try {
-    for (const record of activeRecords) {
-      lifecycleLedger.create({
-        instanceId: record.instanceId,
-        unitId: record.unitId,
-        source: record.source,
-        owner: {
-          async stop() {
-            if (record.stopStarted) return;
-            record.stopStarted = true;
-            await record.instance.stop();
-          },
-        },
-      });
-      lifecycleLedger.markStarting(record.instanceId);
-      lifecycleLedger.markReady(record.instanceId);
-      lifecycleLedger.handoff(record.instanceId);
-      ledgerOwnedInstanceIds.push(record.instanceId);
-      lifecycleLedger.addGenerationMembership(record.instanceId, 1);
-    }
-    const lifecycle = new ChannelLifecycleSet(
-      completionById,
-      Object.freeze(activeRecords),
-      lifecycleLedger,
-      1,
-    );
-    const snapshot = finalizeRegistrySnapshot({
-      candidate: params.candidate,
-      acceptedUnits,
-      channelBindings: bindings,
-      generation: 1,
-      diagnostics,
-    });
-
-    return Object.freeze({ snapshot, lifecycle });
-  } catch (error) {
-    for (const instanceId of ledgerOwnedInstanceIds) {
-      lifecycleLedger.removeGenerationMembership(instanceId, 1);
-    }
-    await lifecycleLedger.stopEligible(ledgerOwnedInstanceIds);
-    const ledgerOwned = new Set(ledgerOwnedInstanceIds);
-    await Promise.all(activeRecords.map(async (record) => {
-      if (ledgerOwned.has(record.instanceId) || record.stopStarted) return;
-      record.stopStarted = true;
-      try {
-        await record.instance.stop();
-      } catch {
-        // Preserve the handoff/finalization failure as the startup cause.
-      }
-    }));
-    throw error;
-  }
+  return prepared;
 }
 
 async function activateUnit(
   unit: StagedRegistryUnit,
   host: ChannelRuntimeHost,
   completionById: Map<string, Promise<ChannelCompletion>>,
+  instanceIdPrefix?: string,
 ): Promise<ActivationResult> {
+  const ingressGate = { active: false };
+  const activateIngress = (): void => { ingressGate.active = true; };
+  const deactivateIngress = (): void => { ingressGate.active = false; };
   if (unit.channels.length === 0) {
     return {
       unit,
@@ -202,10 +79,13 @@ async function activateUnit(
       bindings: [],
       records: [],
       diagnostics: [],
+      completions: completionById,
+      activateIngress,
+      deactivateIngress,
     };
   }
 
-  const records: ActiveChannelRecord[] = [];
+  const records: PreparedChannelRecord[] = [];
   const bindings: ChannelRuntimeBinding[] = [];
   const diagnostics: RegistryStartupDiagnostic[] = [];
   let failedContributionId: string | undefined;
@@ -222,9 +102,11 @@ async function activateUnit(
           `Channel factory identity "${instance.id}" does not match contribution "${contribution.id}".`,
         );
       }
-      const record: ActiveChannelRecord = {
+      const record: PreparedChannelRecord = {
         id: contribution.id,
-        instanceId: `channel:${contribution.id}`,
+        instanceId: instanceIdPrefix
+          ? `${instanceIdPrefix}:channel:${contribution.id}`
+          : `channel:${contribution.id}`,
         unitId: unit.unit.id,
         source: unit.unit.source,
         instance,
@@ -233,7 +115,7 @@ async function activateUnit(
       };
       records.push(record);
       completionById.set(contribution.id, instance.completion);
-      const binding = bindInstance(instance, host);
+      const binding = bindInstance(instance, host, ingressGate);
       bindings.push(binding);
     } catch (error) {
       startupError = error;
@@ -257,6 +139,9 @@ async function activateUnit(
       bindings: Object.freeze(bindings),
       records: Object.freeze(records),
       diagnostics: [],
+      completions: completionById,
+      activateIngress,
+      deactivateIngress,
     };
   }
 
@@ -303,13 +188,16 @@ async function activateUnit(
     bindings: [],
     records: [],
     diagnostics: Object.freeze(diagnostics),
+    completions: completionById,
+    activateIngress,
+    deactivateIngress,
   };
 }
 
 async function rollbackCompletedBeforeHandoff(
   result: ActivationResult,
   failure: {
-    readonly record: ActiveChannelRecord;
+    readonly record: PreparedChannelRecord;
     readonly completion: ChannelCompletion;
   },
   completionById: Map<string, Promise<ChannelCompletion>>,
@@ -360,11 +248,14 @@ async function rollbackCompletedBeforeHandoff(
     bindings: [],
     records: [],
     diagnostics: Object.freeze(diagnostics),
+    completions: completionById,
+    activateIngress: result.activateIngress,
+    deactivateIngress: result.deactivateIngress,
   };
 }
 
 function waitForReadinessOrFirstFailure(
-  records: readonly ActiveChannelRecord[],
+  records: readonly PreparedChannelRecord[],
 ): Promise<{ readonly channelId: string; readonly error: unknown } | undefined> {
   return new Promise((resolve) => {
     let pending = records.length;
@@ -394,6 +285,7 @@ function waitForReadinessOrFirstFailure(
 function bindInstance(
   instance: ChannelInstance,
   host: ChannelRuntimeHost,
+  ingressGate: { readonly active: boolean },
 ): ChannelRuntimeBinding {
   const interaction = normalizeInteraction(instance);
   const binding: ChannelRuntimeBinding = Object.freeze({
@@ -402,11 +294,15 @@ function bindInstance(
     ...(interaction ? { interaction } : {}),
   });
 
-  instance.onMessage((request) => host.onMessage(binding, request));
+  instance.onMessage((request) => ingressGate.active
+    ? host.onMessage(binding, request)
+    : Promise.reject(new Error(`Channel "${instance.id}" ingress is not published.`)));
   if (instance.interaction) {
-    instance.interaction.onInteractionResponse((response) => host.onInteractionResponse(response));
+    instance.interaction.onInteractionResponse((response) => {
+      if (ingressGate.active) host.onInteractionResponse(response);
+    });
     instance.interaction.onInteractionUnavailable((id, reason) => {
-      host.onInteractionUnavailable(id, reason);
+      if (ingressGate.active) host.onInteractionUnavailable(id, reason);
     });
   }
   instance.bindAbortHooks?.(host.abortHooks);

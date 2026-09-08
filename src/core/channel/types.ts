@@ -137,7 +137,7 @@ export type ChannelCompletion =
 export interface ChannelInstance {
   readonly id: string;
   readonly completion: Promise<ChannelCompletion>;
-  send(event: AgentEvent): void;
+  send(event: AgentEvent): void | Promise<void>;
   onMessage(handler: (request: ChannelRunRequest) => Promise<void>): void;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -161,22 +161,13 @@ export interface ChannelRuntimeInteraction {
 
 export interface ChannelRuntimeBinding {
   readonly id: string;
-  send(event: AgentEvent): void;
+  send(event: AgentEvent): void | Promise<void>;
   readonly interaction?: ChannelRuntimeInteraction;
 }
 
 export interface ChannelProjection {
   readonly bindings: readonly ChannelRuntimeBinding[];
   resolve(id: string): ChannelRuntimeBinding | undefined;
-}
-
-export interface ChannelLifecycleReport {
-  readonly completed: readonly string[];
-  readonly failed: readonly { readonly channelId: string; readonly message: string }[];
-}
-
-export interface ChannelShutdownHandoff {
-  runtimeConverged(): Promise<ChannelLifecycleReport>;
 }
 
 export interface ChannelCompletionObserver {

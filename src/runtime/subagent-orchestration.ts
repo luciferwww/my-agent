@@ -21,12 +21,14 @@ import type { MessageRouteContext } from './queue-types.js';
 const log = Logger.get('SubagentOrchestration');
 
 export interface ActiveParentTurn {
+  readonly requestId: string;
   readonly sessionKey: string;
   readonly turnId: string;
   readonly signal: AbortSignal;
   readonly effectiveReference: ModelReference;
   readonly contextFiles: readonly ContextFile[];
   readonly registrySnapshot: RegistrySnapshot;
+  registerChild(): () => void;
 }
 
 export interface CreateSubagentDelegationPortParams {
@@ -60,6 +62,7 @@ export function createSubagentDelegationPort(
       }
 
       const startedAt = Date.now();
+      const releaseChild = parent.registerChild();
       const runId = randomUUID();
       const childTurnId = randomUUID();
       const childDepth = getSubagentDepth(parent.sessionKey) + 1;
@@ -69,6 +72,7 @@ export function createSubagentDelegationPort(
         depth: childDepth,
       });
       const eventIdentity = {
+        requestId: parent.requestId,
         runId,
         sessionKey: childSessionKey,
         turnId: childTurnId,
@@ -104,6 +108,7 @@ export function createSubagentDelegationPort(
 
         const capabilities = resolveSubagentCapabilities(childSessionKey, params.maxDepth);
         const prepared = await params.executor.prepare({
+          requestId: parent.requestId,
           profile: request.profile,
           description: request.description,
           prompt: request.prompt,
@@ -211,6 +216,7 @@ export function createSubagentDelegationPort(
             });
           }
         }
+        releaseChild();
       }
 
       return result;

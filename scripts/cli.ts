@@ -2,8 +2,8 @@
  * Interactive CLI entry point built on the Channel layer.
  *
  * Replaces the legacy scripts/chat.ts. Uses RuntimeApp + CliChannel:
- *   - RuntimeApp.create() boots the runtime with a fanout closure that delivers
- *     AgentEvents to all registered channels.
+ *   - RuntimeApp.create() delegates composition to the authoritative Runtime
+ *     Builder and returns a RuntimeHandle.
  *   - CliChannel reads stdin via readline and writes streaming output to stdout.
  *
  * Usage:
@@ -20,6 +20,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
 import { createCliChannelModule } from '../src/runtime-modules/index.js';
+import { createRuntimeHost } from './runtime-host.js';
 
 const WORKSPACE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'test-workspace');
 
@@ -46,7 +47,7 @@ async function main(): Promise<void> {
 
   const app = await RuntimeApp.create({
     workspaceDir: WORKSPACE_DIR,
-    contributionUnits: [createCliChannelModule({
+    loadedUnits: [createCliChannelModule({
       approval: true,
       sessionKey,
       prompt: '\n> ',
@@ -56,15 +57,16 @@ async function main(): Promise<void> {
       memory: { enabled: false },
     },
   });
+  const host = createRuntimeHost(app);
 
   const completion = await app.application.waitForChannelCompletion('cli');
 
-  await app.close(completion.outcome === 'failed' ? 'cli channel failed' : 'cli exit');
+  await host.shutdown(completion.outcome === 'failed' ? 'cli channel failed' : 'cli exit');
   if (completion.outcome === 'failed') throw completion.error;
 }
 
 main().catch((err) => {
   const message = err instanceof Error ? err.message : String(err);
   process.stderr.write(`\x1b[31mFatal: ${message}\x1b[0m\n`);
-  process.exit(1);
+  process.exitCode = 1;
 });

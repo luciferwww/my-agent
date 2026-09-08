@@ -12,7 +12,11 @@ import type {
   ToolCall,
   ToolExecutionOutput,
 } from '../tools/index.js';
-import { buildRegistrySnapshot } from '../../runtime/registry-builder.js';
+import {
+  finalizeRegistrySnapshot,
+  resolveStagedRegistryCandidate,
+  stageRegistryUnit,
+} from '../../runtime/registry-builder.js';
 import { AgentRunner } from './AgentRunner.js';
 
 function invocationPort(call: ToolCall, requests: ModelInvocationRequest[]): ModelInvocationPort {
@@ -360,5 +364,14 @@ function snapshotWithTool(options: {
       });
     },
   };
-  return buildRegistrySnapshot({ providers: [], units: [unit] });
+  const candidate = resolveStagedRegistryCandidate({
+    providers: [],
+    units: [stageRegistryUnit(unit)],
+  });
+  return finalizeRegistrySnapshot({
+    candidate,
+    acceptedUnits: candidate.units,
+    channelBindings: [],
+    generation: 1,
+  });
 }

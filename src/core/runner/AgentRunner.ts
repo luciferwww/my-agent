@@ -316,6 +316,7 @@ export class AgentRunner {
     const turnCtx: TurnContext = {
       sessionKey: params.sessionKey,
       turnId: params.turnId,
+      requestId: params.requestId ?? params.turnId,
     };
 
     this.emit(turnCtx, { type: 'run_start', originMessageId: params.originMessageId });
@@ -1235,10 +1236,14 @@ export class AgentRunner {
    */
   private emit(turnCtx: TurnContext, event: AgentEventInput): void {
     if (!this.onEvent) return;
+    const correlated = event.type === 'run_start'
+      || event.type === 'run_end'
+      || event.type === 'error';
     this.onEvent({
       ...event,
       sessionKey: turnCtx.sessionKey,
       turnId: turnCtx.turnId,
+      ...(correlated ? { requestId: turnCtx.requestId } : {}),
     } as AgentEvent);
   }
 }
@@ -1250,6 +1255,6 @@ export class AgentRunner {
  */
 type AgentEventInput = AgentEvent extends infer E
   ? E extends AgentEvent
-    ? Omit<E, 'sessionKey' | 'turnId'>
+    ? Omit<E, 'sessionKey' | 'turnId' | 'requestId'>
     : never
   : never;

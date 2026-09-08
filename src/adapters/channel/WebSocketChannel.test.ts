@@ -329,6 +329,7 @@ describe('WebSocketChannel', () => {
 
     channel.send({
       type: 'error',
+      requestId: 'request-resolution',
       sessionKey: 'main',
       turnId: 'resolution-turn',
       error: new Error('Provider is not registered.'),
@@ -338,11 +339,59 @@ describe('WebSocketChannel', () => {
 
     await expectMessage(client, {
       type: 'error',
+      requestId: 'request-resolution',
       sessionKey: 'main',
       turnId: 'resolution-turn',
       error: 'Provider is not registered.',
       category: 'provider_unregistered',
       originMessageId: 'queued-message',
+    });
+  });
+
+  it('routes queued request_end by origin message and serializes request ids as snake_case', async () => {
+    const handler = vi.fn(async () => undefined);
+    channel = new WebSocketChannel({ port: 0 });
+    channel.onMessage(handler);
+    await channel.start();
+
+    const client = await connectClient(channel);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'client-request-end' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'client-request-end' });
+    client.send(JSON.stringify({ type: 'run_turn', sessionKey: 'main', message: 'hi' }));
+    await vi.waitFor(() => expect(handler).toHaveBeenCalled());
+
+    channel.send({
+      type: 'user_message',
+      sessionKey: 'main',
+      messageId: 'origin-queued',
+      content: 'queued',
+      originClientId: 'client-request-end',
+      deliveryMode: 'queued',
+      timestamp: 1,
+    });
+    await expectMessage(client, {
+      type: 'user_message',
+      sessionKey: 'main',
+      messageId: 'origin-queued',
+      content: 'queued',
+      originClientId: 'client-request-end',
+      deliveryMode: 'queued',
+      timestamp: 1,
+    });
+    channel.send({
+      type: 'request_end',
+      requestId: 'request-queued',
+      originMessageId: 'origin-queued',
+      outcome: 'cancelled',
+      reason: 'shutdown',
+    });
+
+    await expectMessage(client, {
+      type: 'request_end',
+      request_id: 'request-queued',
+      origin_message_id: 'origin-queued',
+      outcome: 'cancelled',
+      reason: 'shutdown',
     });
   });
 
@@ -365,6 +414,7 @@ describe('WebSocketChannel', () => {
 
       channel.send({
         type: 'subagent_start',
+        requestId: 'request-1',
         runId: 'run-1',
         sessionKey: 'main:subagent:run-1:1',
         turnId: 'child-turn-1',
@@ -378,6 +428,7 @@ describe('WebSocketChannel', () => {
 
       await expectMessage(client, {
         type: 'subagent_start',
+        requestId: 'request-1',
         runId: 'run-1',
         sessionKey: 'main:subagent:run-1:1',
         turnId: 'child-turn-1',
@@ -454,6 +505,7 @@ describe('WebSocketChannel', () => {
 
       channel.send({
         type: 'subagent_end',
+        requestId: 'request-1',
         runId: 'run-1',
         sessionKey: 'main:subagent:run-1:1',
         turnId: 'child-turn-1',
@@ -470,6 +522,7 @@ describe('WebSocketChannel', () => {
 
       await expectMessage(client, {
         type: 'subagent_end',
+        requestId: 'request-1',
         runId: 'run-1',
         sessionKey: 'main:subagent:run-1:1',
         turnId: 'child-turn-1',
@@ -533,6 +586,7 @@ describe('WebSocketChannel', () => {
 
       channel.send({
         type: 'run_end',
+        requestId: 'request-aborted-1',
         sessionKey: 'main',
         turnId: 'turn-aborted-1',
         result: {
@@ -546,6 +600,7 @@ describe('WebSocketChannel', () => {
 
       await expectMessage(client, {
         type: 'run_end',
+        requestId: 'request-aborted-1',
         sessionKey: 'main',
         turnId: 'turn-aborted-1',
         result: {

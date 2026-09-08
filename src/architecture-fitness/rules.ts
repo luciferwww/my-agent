@@ -54,6 +54,7 @@ const MIXED_PRODUCTION_PATHS = new Set([
   'src/runtime/index.ts',
   'src/runtime/prompt-factory.ts',
   'src/runtime/queue-types.ts',
+  'src/runtime/request-completion-gate.ts',
   'src/runtime/RuntimeApp.ts',
   'src/runtime/subagent-orchestration.ts',
   'src/runtime/summarize-assembled.ts',
@@ -623,9 +624,13 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
     || sourcePath === 'src/runtime/registry-builder.ts'
     || sourcePath === 'src/runtime/channel-lifecycle.ts'
     || sourcePath === 'src/runtime/composition-coordinator.ts'
+    || sourcePath === 'src/runtime/reload-coordinator.ts'
+    || sourcePath === 'src/runtime/runtime-deadline.ts'
     || sourcePath === 'src/runtime/runtime-builder.ts'
+    || sourcePath === 'src/runtime/runtime-composition-manager.ts'
     || sourcePath === 'src/runtime/runtime-composition.ts'
     || sourcePath === 'src/runtime/runtime-lifecycle.ts'
+    || sourcePath === 'src/runtime/runtime-unit.ts'
   ) {
     return 'Composition';
   }

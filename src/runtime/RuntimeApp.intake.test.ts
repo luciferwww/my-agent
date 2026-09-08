@@ -11,6 +11,7 @@ import type {
 import type { ChatContentBlock, ChatMessage } from '../adapters/llm/types.js';
 import type { RunResult } from '../core/runner/types.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
+import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
 import type { Tool } from '../core/tools/types.js';
 import {
   AgentRunner,
@@ -585,7 +586,7 @@ function defaultRunResult(text: string): RunResult {
 
 function createTestChannel(id: string): {
   channel: Channel;
-  unit: RuntimeContributionUnit;
+  unit: LoadedRuntimeUnit;
   dispatch(req: ChannelRunRequest): Promise<void>;
 } {
   let handler: ((req: ChannelRunRequest) => Promise<void>) | undefined;
@@ -604,13 +605,16 @@ function createTestChannel(id: string): {
   };
   return {
     channel,
-    unit: {
+    unit: createLoadedRuntimeUnit({
+      registration: {
       id: `builtin-test-channel-${id}`,
       source: 'builtin',
       register(api) {
         api.registerChannel({ id, create: () => channel });
       },
-    },
+      },
+      required: false,
+    }),
     async dispatch(req) {
       if (!handler) throw new Error('handler not registered');
       await handler(req);
@@ -705,7 +709,7 @@ async function buildApp(
 
   const app = await RuntimeApp.create({
     workspaceDir,
-    contributionUnits: [testChannel.unit],
+    loadedUnits: [testChannel.unit],
     cliOverrides: {
       llm: { apiKey: 'test-key', model: 'test-model' },
       memory: { enabled: false },

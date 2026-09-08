@@ -257,26 +257,22 @@ describe('CliChannel Ctrl+C / abort handling', () => {
     expect(out).not.toContain('press Ctrl+C again');
   });
 
-  it('double Ctrl+C within 1s → calls process.exit(130)', () => {
-    const { channel } = makeChannel();
+  it('double Ctrl+C within 1s closes CLI input without owning process exit', () => {
+    const { channel, captured } = makeChannel();
     // Hooks bound but nothing to abort — makes the FIRST Ctrl+C fall into
     // the "press again to exit" branch (arms lastCtrlCAt) instead of the
     // abort path. Second Ctrl+C then trips the double-tap exit.
     channel.bindAbortHooks(makeHooks().hooks);
 
-    // process.exit throws to unwind the current call stack — matches the
-    // real-world "we never come back" semantic without actually killing
-    // vitest. Cast return type via `never`.
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-      throw new Error(`__test_exit__:${code ?? ''}`);
-    }) as never);
+    const exitSpy = vi.spyOn(process, 'exit');
 
     const internal = channel as unknown as CliChannelInternal;
     internal.handleSigInt(); // first — arms lastCtrlCAt
     expect(exitSpy).not.toHaveBeenCalled();
 
-    expect(() => internal.handleSigInt()).toThrow(/__test_exit__:130/);
-    expect(exitSpy).toHaveBeenCalledWith(130);
+    expect(() => internal.handleSigInt()).not.toThrow();
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(captured()).toContain('[exiting]');
   });
 
   it('hooks not bound (standalone CLI) → Ctrl+C renders exit hint and never crashes', () => {

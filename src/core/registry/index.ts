@@ -6,6 +6,7 @@ export type {
   HookProjection,
   RegistrySnapshot,
   RegistryStartupDiagnostic,
+  RegistryUnitProvenance,
   ResolvedTool,
   RuntimeContributionUnit,
   ToolProjection,

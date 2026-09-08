@@ -77,8 +77,17 @@ export interface RegistryStartupDiagnostic {
   readonly message: string;
 }
 
+export interface RegistryUnitProvenance {
+  readonly unitId: string;
+  readonly instanceId: string;
+  readonly source: ContributionSource;
+  readonly orderKey: string;
+  readonly dependencies: readonly string[];
+}
+
 export interface RegistrySnapshot {
   readonly generation: number;
+  readonly units: readonly RegistryUnitProvenance[];
   readonly providers: readonly ProviderProjectionEntry[];
   readonly tools: ToolProjection;
   readonly hooks: HookProjection;

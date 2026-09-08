@@ -5,37 +5,43 @@ import {
 } from '../adapters/channel/WebSocketChannel.js';
 import type {
   ExtensionRegistrationApi,
-  RuntimeContributionUnit,
 } from '../core/registry/index.js';
+import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from '../runtime/runtime-unit.js';
 
 export function createCliChannelModule(
   config: CliChannelConfig = {},
-): RuntimeContributionUnit {
-  return Object.freeze({
-    id: 'builtin-cli-channel',
-    source: 'builtin' as const,
-    register(api: ExtensionRegistrationApi) {
-      api.registerChannel(Object.freeze({
-        id: 'cli',
-        create: () => new CliChannel(config),
-      }));
-    },
+): LoadedRuntimeUnit {
+  return createLoadedRuntimeUnit({
+    registration: Object.freeze({
+      id: 'builtin-cli-channel',
+      source: 'builtin' as const,
+      register(api: ExtensionRegistrationApi) {
+        api.registerChannel(Object.freeze({
+          id: 'cli',
+          create: () => new CliChannel(config),
+        }));
+      },
+    }),
+    required: false,
   });
 }
 
 export function createWebSocketChannelModule(
   config: WebSocketChannelConfig,
-): RuntimeContributionUnit {
+): LoadedRuntimeUnit {
   assertWebSocketConfig(config);
-  return Object.freeze({
-    id: 'builtin-websocket-channel',
-    source: 'builtin' as const,
-    register(api: ExtensionRegistrationApi) {
-      api.registerChannel(Object.freeze({
-        id: 'websocket',
-        create: () => new WebSocketChannel(config),
-      }));
-    },
+  return createLoadedRuntimeUnit({
+    registration: Object.freeze({
+      id: 'builtin-websocket-channel',
+      source: 'builtin' as const,
+      register(api: ExtensionRegistrationApi) {
+        api.registerChannel(Object.freeze({
+          id: 'websocket',
+          create: () => new WebSocketChannel(config),
+        }));
+      },
+    }),
+    required: false,
   });
 }
 

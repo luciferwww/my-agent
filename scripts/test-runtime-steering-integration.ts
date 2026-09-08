@@ -28,7 +28,7 @@ import type {
   ChannelRunRequest,
 } from '../src/adapters/channel/types.js';
 import type { ChatMessage } from '../src/adapters/llm/types.js';
-import type { RuntimeContributionUnit } from '../src/core/registry/index.js';
+import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from '../src/runtime/runtime-unit.js';
 import type { RunParams, RunResult } from '../src/core/runner/types.js';
 
 // ── runStep 脚手架 ──────────────────────────────────────────────
@@ -71,7 +71,7 @@ function createDeferred<T>(): Deferred<T> {
 
 function createTestChannel(id: string): {
   channel: Channel;
-  unit: RuntimeContributionUnit;
+  unit: LoadedRuntimeUnit;
   dispatch(req: ChannelRunRequest): Promise<void>;
 } {
   let handler: ((req: ChannelRunRequest) => Promise<void>) | undefined;
@@ -91,13 +91,13 @@ function createTestChannel(id: string): {
 
   return {
     channel,
-    unit: {
+    unit: createLoadedRuntimeUnit({ registration: {
       id: `builtin-test-channel-${id}`,
       source: 'builtin',
       register(api) {
         api.registerChannel({ id, create: () => channel });
       },
-    },
+    }, required: false }),
     async dispatch(req: ChannelRunRequest) {
       if (!handler) throw new Error('message handler was not registered');
       await handler(req);
@@ -155,7 +155,7 @@ async function testBasicSteeringRoute(): Promise<void> {
     const test = createTestChannel('steer-basic-test');
     const app = await RuntimeApp.create({
       workspaceDir,
-      contributionUnits: [test.unit],
+      loadedUnits: [test.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'claude-sonnet-5' },
         memory: { enabled: false },
@@ -216,7 +216,7 @@ async function testMultipleSteeringMessagesFifo(): Promise<void> {
     const test = createTestChannel('steer-fifo-test');
     const app = await RuntimeApp.create({
       workspaceDir,
-      contributionUnits: [test.unit],
+      loadedUnits: [test.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'claude-sonnet-5' },
         memory: { enabled: false },
@@ -287,7 +287,7 @@ async function testSteeringClearedAcrossTurns(): Promise<void> {
     const test = createTestChannel('steer-cleanup-test');
     const app = await RuntimeApp.create({
       workspaceDir,
-      contributionUnits: [test.unit],
+      loadedUnits: [test.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'claude-sonnet-5' },
         memory: { enabled: false },

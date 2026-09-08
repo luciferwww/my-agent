@@ -19,6 +19,7 @@ export interface SubagentExecutorDeps {
 }
 
 export interface SubagentExecutionRequest {
+  readonly requestId: string;
   readonly profile: SubagentProfile;
   readonly description: string;
   readonly prompt: string;
@@ -33,6 +34,7 @@ export interface SubagentExecutionRequest {
 }
 
 export interface PreparedSubagentExecution {
+  readonly requestId: string;
   readonly sessionKey: string;
   readonly turnId: string;
   readonly message: string;
@@ -69,6 +71,7 @@ export class SubagentExecutor {
     });
 
     return {
+      requestId: request.requestId,
       sessionKey: request.childSessionKey,
       message: request.prompt,
       systemPrompt: basePrompt ? `${basePrompt}\n\n${addendum}` : addendum,

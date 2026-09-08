@@ -23,14 +23,11 @@ const PREVIEW_LINE_MAX_CHARS = 200;
 const MAX_TOOL_RESULT_PREVIEW = 200;
 
 /**
- * Ctrl+C 双击退出窗口。在此区间内连按两次 → process.exit(130)；超时
- * 则重置为单击。与 openclaw 对齐（core-abort-spec.md §12 D1）。
+ * Ctrl+C 双击关闭窗口。进程级 force policy 由 Host 独占。
  */
-const CTRL_C_EXIT_WINDOW_MS = 1000;
-
+const CTRL_C_EXIT_WINDOW_MS = 1_000;
 const log = Logger.get('CliChannel');
 
-// ── ANSI helpers ────────────────────────────────────────────────────
 const dim = (s: string) => `\x1b[90m${s}\x1b[0m`;
 const yellow = (s: string) => `\x1b[33m${s}\x1b[0m`;
 const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
@@ -114,13 +111,6 @@ export class CliChannel implements Channel {
   private lastCtrlCAt = 0;
   /** RuntimeApp 通过 `bindAbortHooks` 注入的回调；未注册 channel 时为 undefined。 */
   private abortHooks?: AbortHookBindings;
-  /**
-   * SIGINT handler 存为 bound instance field，`stop()` 时用同一引用
-   * `process.off(...)` 才能干净解绑。若每次现场用 arrow 装配则无法解绑，
-   * 反复 start/stop 会导致 handler 堆积。
-   */
-  private readonly boundSigIntHandler = () => this.handleSigInt();
-
   constructor(config: CliChannelConfig = {}) {
     this.input = config.input ?? process.stdin;
     this.output = config.output ?? process.stdout;
@@ -208,6 +198,10 @@ export class CliChannel implements Channel {
         this.breakStream();
         break;
 
+      case 'request_end':
+        // CLI currently has no per-request queued presentation to clear.
+        break;
+
       case 'subagent_start':
         // Open a visual nesting level for the subagent. We don't track
         // indentation state here; the depth tag is enough for a CLI.
@@ -280,24 +274,6 @@ export class CliChannel implements Channel {
     // 未挂时 readline 会调 `process.kill(process.pid, 'SIGINT')` 让 process-
     // level handler 兜底——但空 prompt 那条路径同时会关掉 rl，等价于直接退出。
     this.rl.on('SIGINT', () => this.handleSigInt());
-
-    // 接管进程级 SIGINT，覆盖外部 kill signal（`kill -INT pid`）等
-    // readline 触不到的场景。需先 removeAllListeners('SIGINT') 清除
-    // readline.Interface 构造时可能装的默认 process-level listener。
-    //
-    // 【假设：CliChannel 独占进程 SIGINT】`removeAllListeners('SIGINT')`
-    // 是刻意的粗暴：它会连带清除宿主进程中其他库（测试框架、外层 embed
-    // 场景的 host 等）注册的 listener。此假设对应 CliChannel 的典型用例：
-    // interactive CLI 独占前台进程。若未来出现 "CliChannel 被嵌入其他进程"
-    // 的场景，需重新设计——候选方案：
-    //   (a) 先 snapshot 现有 listener、在 CliChannel.stop() 里恢复；
-    //   (b) 不清除，只叠加自己的 handler，依赖 Node 会调用所有 listener
-    //       的行为——但 readline 默认 listener 的 close 逻辑会干扰双击
-    //       退出 UX，需要额外协调；
-    //   (c) 通过构造参数让 caller 显式选择接管策略。
-    // 详见 core-abort-spec.md §12。
-    process.removeAllListeners('SIGINT');
-    process.on('SIGINT', this.boundSigIntHandler);
 
     log.info('cli channel started', {
       channelId: this.id,
@@ -378,12 +354,6 @@ export class CliChannel implements Channel {
       channelId: this.id,
       sessionKey: this.sessionKey,
     });
-    // 卸载自己装的 SIGINT handler，避免：
-    //  (a) 宿主进程后续不再希望 CliChannel 拦截 Ctrl+C 时 handler 泄漏
-    //  (b) 将来 restart（同一进程内 stop() → start()）双绑
-    // 不负责恢复 start() 时被 `removeAllListeners('SIGINT')` 清掉的其他 listener
-    // ——与上述 “CliChannel 独占进程 SIGINT” 假设同源。
-    process.off('SIGINT', this.boundSigIntHandler);
     this.pendingPromptAbort?.abort(new Error('CliChannel stopped'));
     this.rl?.close();
     this.rl = undefined;
@@ -400,7 +370,7 @@ export class CliChannel implements Channel {
   /**
    * SIGINT 处理主干。精确语义见 core-abort-spec.md §12：
    *
-   *  1. 若上一次在窗口内→ process.exit(130)（约定俗成 signal-based exit code）。
+  *  1. 若上一次在窗口内→ 关闭 readline；进程退出策略属于 Host。
    *  2. 更新 lastCtrlCAt（为双击窗口计时）。
    *  3. 查 `querySessionsNeedingAbort()`：
    *     - 空（无 active turn + 无 queue）→ 仅提示 "press again to exit"，不调 abort。
@@ -414,12 +384,13 @@ export class CliChannel implements Channel {
     const now = Date.now();
     const sinceLast = now - this.lastCtrlCAt;
 
-    // 双击：窗口内连按两次 → exit
+    // 双击：窗口内连按两次 → 关闭本 Channel；Host 随后 cooperative shutdown。
     if (this.lastCtrlCAt > 0 && sinceLast <= CTRL_C_EXIT_WINDOW_MS) {
       this.breakStream();
       this.output.write(red('[exiting]\n'));
-      log.info('cli exiting on double Ctrl+C', { channelId: this.id });
-      process.exit(130);
+      log.info('cli input closing on double Ctrl+C', { channelId: this.id });
+      this.rl?.close();
+      return;
     }
 
     this.lastCtrlCAt = now;

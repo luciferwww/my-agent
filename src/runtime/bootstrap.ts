@@ -1,114 +1,25 @@
 import { join } from 'node:path';
-import { AgentRunner } from '../core/runner/index.js';
 import { loadConfig, resolveAgentConfig } from '../platform/config/index.js';
-import { AnthropicProvider } from '../adapters/llm/index.js';
 import { ConsoleAdapter, FileAdapter, Logger } from '../platform/logger/index.js';
 import type { LogAdapter } from '../platform/logger/index.js';
-import { MemoryManager } from '../core/memory/index.js';
-import { SystemPromptBuilder, UserPromptBuilder } from '../core/prompt/index.js';
-import { SessionManager } from '../core/session/index.js';
-import { ensureWorkspace, loadContextFiles, loadContextFilesFromDir } from '../core/workspace/index.js';
+import type { MemoryManager } from '../core/memory/index.js';
+import { UserPromptBuilder } from '../core/prompt/index.js';
+import { ensureWorkspace, loadContextFiles } from '../core/workspace/index.js';
 import { classifyRuntimeError } from './errors.js';
-import { stageRegistryCandidate } from './registry-builder.js';
-import {
-  activateRegistryChannels,
-  type ChannelLifecycleSet,
-} from './channel-lifecycle.js';
 import { createApplicationToolPolicy } from './tool-approval-policy.js';
-import {
-  createMemoryToolModule,
-  createTaskToolModule,
-  createWorkspaceToolModule,
-} from '../runtime-modules/index.js';
-import { SubagentExecutor } from '../core/subagent/SubagentExecutor.js';
-import {
-  buildGeneralPurposeProfile,
-  loadSubagentProfiles,
-  resolveSubagentCapabilities,
-  resolveSubagentTools,
-} from '../core/subagent/index.js';
-import type { SubagentProfile } from '../core/subagent/types.js';
-import { createSubagentDelegationPort } from './subagent-orchestration.js';
-import type { ActiveParentTurn } from './subagent-orchestration.js';
-import type { MessageRouteContext } from './queue-types.js';
-import type { ChannelRuntimeHost } from '../core/channel/index.js';
-import type { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
-import type {
-  ExtensionRegistrationApi,
-  RegistrySnapshot,
-  RuntimeContributionUnit,
-} from '../core/registry/index.js';
 import type { RuntimeAppOptions, RuntimeBootstrapResult, RuntimeDependencies, RuntimeEvent } from './types.js';
+import type { RuntimeDeadlineDriver } from './runtime-deadline.js';
 
 const log = Logger.get('RuntimeBootstrap');
 
-export function createDefaultRuntimeDependencies(
-  overrides?: Partial<RuntimeDependencies>,
-): RuntimeDependencies {
-  const defaults: RuntimeDependencies = {
-    createProviderProjection(options) {
-      const provider = new AnthropicProvider({
-        apiKey: options.apiKey,
-        baseURL: options.baseURL,
-        defaultModel: options.defaultModel,
-        legacyContextWindowTokens: options.legacyContextWindowTokens,
-        deploymentFacts: options.deploymentFacts,
-      });
-      return Object.freeze([provider.entry]);
-    },
-
-    createSessionManager(workspaceDir, options) {
-      return new SessionManager(workspaceDir, options);
-    },
-
-    async createMemoryManager(options) {
-      if (!options.enabled) {
-        return null;
-      }
-
-      return MemoryManager.create({
-        workspaceDir: options.workspaceDir,
-        embedding: options.embedding,
-        search: options.search,
-        enabled: options.enabled,
-      });
-    },
-
-    createSystemPromptBuilder() {
-      return new SystemPromptBuilder();
-    },
-
-    createAgentRunner(config) {
-      return new AgentRunner(config);
-    },
-
-    getBuiltinContributionUnits(options, memoryManager) {
-      return Object.freeze([
-        createWorkspaceToolModule({
-          workspaceDir: options.workspaceDir,
-          fsWorkspaceOnly: options.fsWorkspaceOnly ?? true,
-          webFetchEnabled: options.webFetchEnabled ?? true,
-          execEnabled: options.execEnabled ?? true,
-          processEnabled: options.processEnabled ?? true,
-        }),
-        ...(memoryManager ? [createMemoryToolModule(memoryManager)] : []),
-      ]);
-    },
-  };
-
-  return {
-    ...defaults,
-    ...overrides,
-  };
-}
-
 export async function bootstrapRuntime(
   options: RuntimeAppOptions,
-  channelHost: ChannelRuntimeHost,
-  lifecycleLedger: RuntimeLifecycleLedger,
+  deps: RuntimeDependencies,
+  cleanupDeadline: { readonly driver: RuntimeDeadlineDriver; readonly timeoutMs: number },
 ): Promise<RuntimeBootstrapResult> {
   const startedAt = Date.now();
-  let channelLifecycle: ChannelLifecycleSet | undefined;
+  let loggerConfigured = false;
+  let memoryManager: MemoryManager | null = null;
   log.info('bootstrap start', {
     workspaceDir: options.workspaceDir,
     agentId: options.agentId,
@@ -138,6 +49,7 @@ export async function bootstrapRuntime(
       adapters,
       minLevel: appConfig.logger.minLevel ?? 'info',
     });
+    loggerConfigured = true;
     log.debug('logger configured', {
       minLevel: appConfig.logger.minLevel ?? 'info',
       adapters: adapters.map((a) => a.constructor.name),
@@ -160,26 +72,13 @@ export async function bootstrapRuntime(
       fileCount: contextFiles.length,
     });
 
-    const deps = createDefaultRuntimeDependencies(options.dependencies);
     const sessionManager = deps.createSessionManager(options.workspaceDir, {
       toolResultHeadChars: resolvedConfig.compaction.toolResultHeadChars,
       toolResultTailChars: resolvedConfig.compaction.toolResultTailChars,
     });
-    const providerProjection = Object.freeze([...deps.createProviderProjection({
-      apiKey: resolvedConfig.llm.apiKey,
-      baseURL: resolvedConfig.llm.baseURL,
-      defaultModel: resolvedConfig.llm.model,
-      legacyContextWindowTokens: resolvedConfig.llm.contextWindowTokens,
-      deploymentFacts: resolvedConfig.llm.deploymentFacts,
-    })]);
-    const defaultProviderId = providerProjection[0]?.id;
-    if (!defaultProviderId) {
-      throw new Error('Provider projection must contain at least one accepted Provider entry.');
-    }
     const systemPromptBuilder = deps.createSystemPromptBuilder();
     const userPromptBuilder = new UserPromptBuilder();
 
-    let memoryManager = null;
     try {
       memoryManager = await deps.createMemoryManager({
         workspaceDir: options.workspaceDir,
@@ -203,101 +102,12 @@ export async function bootstrapRuntime(
       });
     }
 
-    const toolOptions = {
-      workspaceDir: options.workspaceDir,
-      fsWorkspaceOnly: resolvedConfig.tools.fs?.workspaceOnly ?? true,
-      webFetchEnabled: true,
-      execEnabled: true,
-      processEnabled: true,
-    };
-    const providerUnit: RuntimeContributionUnit = Object.freeze({
-      id: 'builtin-provider-bindings',
-      source: 'builtin',
-      register(api: ExtensionRegistrationApi) {
-        for (const provider of providerProjection) api.registerProvider(provider);
-      },
-    });
-    const runtimeContributionUnits = [
-      providerUnit,
-      ...deps.getBuiltinContributionUnits(toolOptions, memoryManager),
-      ...(options.contributionUnits ?? []),
-    ];
     const toolPolicy = createApplicationToolPolicy(resolvedConfig.tools);
 
     const agentRunner = deps.createAgentRunner({
       sessionManager,
       onEvent: options.onAgentEvent,
     });
-
-    const activeParentTurns = new Map<string, ActiveParentTurn>();
-    const routeContextByTurn = new Map<string, MessageRouteContext>();
-    const generalPurpose = buildGeneralPurposeProfile(options.workspaceDir);
-    const subagentProfiles = new Map<string, SubagentProfile>([
-      [generalPurpose.id, generalPurpose],
-    ]);
-    let registrySnapshot: RegistrySnapshot;
-
-    const subagentExecutor = new SubagentExecutor({
-      agentRunner,
-      systemPromptBuilder,
-      loadContextFilesFromDir: (absDir) =>
-        loadContextFilesFromDir(absDir, {
-          maxFileChars: resolvedConfig.workspace.maxFileChars,
-          maxTotalChars: resolvedConfig.workspace.maxTotalChars,
-        }),
-      workspaceDir: options.workspaceDir,
-      promptSafetyLevel: resolvedConfig.prompt?.safetyLevel ?? 'normal',
-      resolveToolPolicy: (profile) => createApplicationToolPolicy(resolveSubagentTools(
-        profile,
-        resolvedConfig.tools.allow ?? [],
-        resolvedConfig.tools.deny ?? [],
-      )),
-    });
-    const delegationPort = createSubagentDelegationPort({
-      activeParents: activeParentTurns,
-      routeContextByTurn,
-      sessionManager,
-      defaultProviderId,
-      defaultMaxTokens: resolvedConfig.llm.maxTokens,
-      maxDepth: resolvedConfig.subagents?.maxDepth ?? 1,
-      executor: subagentExecutor,
-      onEvent: options.onAgentEvent ?? (() => {}),
-    });
-
-    if (resolvedConfig.subagents?.enabled !== false) {
-      runtimeContributionUnits.push(createTaskToolModule({
-        delegationPort,
-        profileRegistry: subagentProfiles,
-        getCapabilities: (sessionKey) =>
-          resolveSubagentCapabilities(
-            sessionKey,
-            resolvedConfig.subagents?.maxDepth ?? 1,
-          ),
-        maxDepth: resolvedConfig.subagents?.maxDepth ?? 1,
-      }));
-    }
-
-    const candidate = stageRegistryCandidate({
-      providers: [],
-      units: runtimeContributionUnits,
-    });
-    const activated = await activateRegistryChannels({
-      candidate,
-      host: channelHost,
-      lifecycleLedger,
-    });
-    channelLifecycle = activated.lifecycle;
-    registrySnapshot = activated.snapshot;
-    const registeredToolNames = new Set(
-      registrySnapshot.tools.definitions.map((tool) => tool.name),
-    );
-    for (const profile of loadSubagentProfiles(
-      resolvedConfig.subagents?.list ?? [],
-      options.workspaceDir,
-      registeredToolNames,
-    )) {
-      subagentProfiles.set(profile.id, profile);
-    }
 
     const state = {
       phase: 'ready' as const,
@@ -309,32 +119,9 @@ export async function bootstrapRuntime(
 
     log.info('bootstrap complete', {
       durationMs: Date.now() - startedAt,
-      tools: registrySnapshot.tools.definitions.length,
-      channels: registrySnapshot.channels.bindings.map((channel) => channel.id),
       memoryEnabled: memoryManager !== null,
       contextFiles: contextFiles.length,
     });
-
-    for (const diagnostic of registrySnapshot.diagnostics) {
-      if (!diagnostic.code.startsWith('CHANNEL_')) continue;
-      const code = diagnostic.code === 'CHANNEL_CREATE_FAILED'
-        ? 'CHANNEL_CREATE_FAILED'
-        : diagnostic.code === 'CHANNEL_ROLLBACK_FAILED'
-          ? 'CHANNEL_ROLLBACK_FAILED'
-          : 'CHANNEL_START_FAILED';
-      emit(options.onEvent, {
-        type: 'warning',
-        info: {
-          scope: 'startup',
-          severity: 'warning',
-          code,
-          message: diagnostic.message,
-          unitId: diagnostic.unitId,
-          contributionId: diagnostic.contributionId,
-          phase: diagnostic.phase,
-        },
-      });
-    }
 
     return {
       resources: {
@@ -342,9 +129,7 @@ export async function bootstrapRuntime(
         resolvedConfig,
         workspaceDir: options.workspaceDir,
         sessionManager,
-        registrySnapshot,
         toolPolicy,
-        defaultProviderId,
         memoryManager,
         systemPromptBuilder,
         userPromptBuilder,
@@ -352,28 +137,34 @@ export async function bootstrapRuntime(
         agentRunner,
       },
       state,
-      subagentProfiles,
-      activeParentTurns,
-      routeContextByTurn,
-      channelCompletionObserver: activated.lifecycle,
-      channelShutdownHandoff: activated.lifecycle,
+      dependencies: deps,
     };
   } catch (error) {
-    if (channelLifecycle) {
-      const report = await channelLifecycle.runtimeConverged();
-      for (const failure of report.failed) {
-        log.warn('channel cleanup after bootstrap failure failed', {
-          channelId: failure.channelId,
-          error: failure.message,
-        });
-      }
-    }
     const info = classifyRuntimeError('startup', error);
     log.error('bootstrap failed', {
       code: info.code,
       message: info.message,
     });
     emit(options.onEvent, { type: 'error', info });
+    if (memoryManager) {
+      const cleanup = await cleanupDeadline.driver.race(
+        Promise.resolve().then(() => memoryManager!.close()),
+        cleanupDeadline.driver.now() + cleanupDeadline.timeoutMs,
+      );
+      if (cleanup.outcome === 'failed') {
+        log.warn('Memory cleanup after bootstrap failure failed', {
+          error: cleanup.message,
+        });
+      } else if (cleanup.outcome === 'deadline-exhausted') {
+        log.warn('Memory cleanup after bootstrap failure timed out');
+      }
+    }
+    if (loggerConfigured) {
+      await cleanupDeadline.driver.race(
+        Logger.close(),
+        cleanupDeadline.driver.now() + cleanupDeadline.timeoutMs,
+      );
+    }
     throw error;
   }
 }

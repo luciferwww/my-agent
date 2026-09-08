@@ -73,13 +73,17 @@ function setup(options: {
     acceptedUnits: [],
     channelBindings: [],
   });
+  const releaseChild = vi.fn();
+  const registerChild = vi.fn(() => releaseChild);
   const parent: ActiveParentTurn = {
+    requestId: 'request-parent',
     sessionKey: 'main',
     turnId: 'parent-turn',
     signal: controller.signal,
     effectiveReference: { providerId: 'parent', modelId: 'parent-model' },
     contextFiles: [],
     registrySnapshot,
+    registerChild,
   };
   const activeParents = new Map([[parent.turnId, parent]]);
   const routeContextByTurn = new Map([['parent-turn', { originClientId: 'client-1' }]]);
@@ -145,6 +149,8 @@ function setup(options: {
     controller,
     activeParents,
     routeContextByTurn,
+    registerChild,
+    releaseChild,
   };
 }
 
@@ -157,6 +163,8 @@ describe('Runtime Subagent delegation', () => {
       execute,
       deleteSession,
       routeContextByTurn,
+      registerChild,
+      releaseChild,
     } = setup();
     const result = await port.delegate(request);
 
@@ -172,6 +180,8 @@ describe('Runtime Subagent delegation', () => {
       parentToolUseId: 'tool-1',
     }));
     expect(deleteSession).toHaveBeenCalledTimes(1);
+    expect(registerChild).toHaveBeenCalledTimes(1);
+    expect(releaseChild).toHaveBeenCalledTimes(1);
     expect([...routeContextByTurn.keys()]).toEqual(['parent-turn']);
   });
 
