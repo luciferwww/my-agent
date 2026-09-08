@@ -1,6 +1,9 @@
 import { existsSync } from 'node:fs';
 import type { ResolvedModel } from '../model-resolution/index.js';
+import type { ChatToolDefinition } from '../model-invocation/index.js';
 import type { AgentRunner, RunResult } from '../runner/index.js';
+import type { HookProjection, ToolProjection } from '../registry/index.js';
+import type { ApplicationToolPolicy } from '../tools/index.js';
 import type { SystemPromptBuilder } from '../prompt/SystemPromptBuilder.js';
 import type { ContextFile } from '../workspace/types.js';
 import { buildSubagentBehavioralAddendum } from './behavioral-addendum.js';
@@ -12,6 +15,9 @@ export interface SubagentExecutorDeps {
   readonly loadContextFilesFromDir: (absDir: string) => Promise<ContextFile[]>;
   readonly workspaceDir: string;
   readonly promptSafetyLevel: 'relaxed' | 'normal' | 'strict';
+  readonly getToolProjection: () => ToolProjection;
+  readonly getHookProjection: () => HookProjection;
+  readonly resolveToolPolicy: (profile: SubagentProfile) => ApplicationToolPolicy;
 }
 
 export interface SubagentExecutionRequest {
@@ -33,6 +39,9 @@ export interface PreparedSubagentExecution {
   readonly systemPrompt: string;
   readonly maxLlmCalls?: number;
   readonly signal: AbortSignal;
+  readonly profile: SubagentProfile;
+  readonly tools: readonly ChatToolDefinition[];
+  readonly toolPolicy: ApplicationToolPolicy;
 }
 
 /** Internal executor for an already tracked and resolved Child Turn. */
@@ -47,9 +56,12 @@ export class SubagentExecutor {
       depth: request.childDepth,
       canSpawn: request.canSpawn,
     });
+    const toolPolicy = this.deps.resolveToolPolicy(request.profile);
+    const tools = this.deps.getToolProjection().visibleDefinitions(toolPolicy);
     const basePrompt = this.deps.systemPromptBuilder.build({
       mode: 'minimal',
       contextFiles: mergedFiles,
+      toolNames: tools.map(({ name }) => name),
       workspaceDir: this.deps.workspaceDir,
       safetyLevel: this.deps.promptSafetyLevel,
     });
@@ -61,11 +73,21 @@ export class SubagentExecutor {
       turnId: request.childTurnId,
       maxLlmCalls: request.profile.maxLlmCalls,
       signal: request.signal,
+      profile: request.profile,
+      tools,
+      toolPolicy,
     };
   }
 
   execute(request: PreparedSubagentExecution, resolvedModel: ResolvedModel): Promise<RunResult> {
-    return this.deps.agentRunner.run({ ...request, resolvedModel });
+    const { profile: _profile, tools: _tools, toolPolicy, ...runRequest } = request;
+    return this.deps.agentRunner.run({
+      ...runRequest,
+      resolvedModel,
+      toolProjection: this.deps.getToolProjection(),
+      hookProjection: this.deps.getHookProjection(),
+      toolPolicy,
+    });
   }
 
   private async loadChildContextFiles(profile: SubagentProfile): Promise<ContextFile[]> {

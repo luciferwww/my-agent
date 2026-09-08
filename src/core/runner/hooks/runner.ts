@@ -13,50 +13,138 @@ import type {
 
 const logger = Logger.get('HookRunner');
 
-type NamedHandler<T> = { handler: T; name?: string };
+export const OBSERVER_HOOK_DEADLINE_MS = 5_000;
 
-type ObserverHook<TPayload> = (payload: TPayload) => void | Promise<void>;
+export type HookSettlementOutcome = 'fulfilled' | 'rejected' | 'aborted' | 'timed_out';
 
-function runObserverHooks<TPayload>(
-  hooks: NamedHandler<ObserverHook<TPayload>>[],
-  payload: TPayload,
-  hookName: string,
-): void {
-  for (const { handler, name } of hooks) {
-    Promise.resolve(handler(payload)).catch((err) => {
-      const tag = name ? `:${name}` : '';
-      logger.warn(`[hook${tag}] ${hookName} failed`, { error: err instanceof Error ? err.message : String(err) });
-    });
-  }
+export interface HookSettlement {
+  readonly unitId: string;
+  readonly contributionId: string;
+  readonly outcome: HookSettlementOutcome;
 }
 
-/**
- * 顺序执行所有 before_tool_call hooks。
- *
- * - deny → 立即返回，后续 hook 不再执行
- * - allow + input → 更新 input，继续执行后续 hook
- * - 全部通过 → 返回最终 { action: 'allow', input }
- */
+interface HookBinding<T> {
+  readonly unitId: string;
+  readonly contributionId: string;
+  readonly handler: T;
+}
+
+type ObserverPayload = { readonly signal: AbortSignal };
+type ObserverHook<TPayload extends ObserverPayload> = (payload: TPayload) => void | Promise<void>;
+
+async function runObserverHooks<TPayload extends ObserverPayload>(
+  hooks: readonly HookBinding<ObserverHook<TPayload>>[],
+  payload: Omit<TPayload, 'signal'>,
+  turnSignal: AbortSignal,
+  hookName: string,
+  deadlineMs: number,
+): Promise<readonly HookSettlement[]> {
+  return Promise.all(hooks.map((binding) => settleObserver(
+    binding,
+    payload,
+    turnSignal,
+    hookName,
+    deadlineMs,
+  )));
+}
+
+async function settleObserver<TPayload extends ObserverPayload>(
+  binding: HookBinding<ObserverHook<TPayload>>,
+  payload: Omit<TPayload, 'signal'>,
+  turnSignal: AbortSignal,
+  hookName: string,
+  deadlineMs: number,
+): Promise<HookSettlement> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let removeTurnAbort = () => {};
+
+  const handlerPromise = Promise.resolve().then(() => binding.handler({
+    ...payload,
+    signal: controller.signal,
+  } as TPayload));
+
+  const completion = handlerPromise.then(
+    () => 'fulfilled' as const,
+    (error: unknown) => {
+      logger.warn('[hook observer] handler failed', {
+        hookName,
+        unitId: binding.unitId,
+        contributionId: binding.contributionId,
+        ...observerCorrelation(payload),
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return 'rejected' as const;
+    },
+  );
+
+  const aborted = new Promise<'aborted'>((resolve) => {
+    const onAbort = () => {
+      controller.abort(turnSignal.reason);
+      resolve('aborted');
+    };
+    if (turnSignal.aborted) {
+      onAbort();
+      return;
+    }
+    turnSignal.addEventListener('abort', onAbort, { once: true });
+    removeTurnAbort = () => turnSignal.removeEventListener('abort', onAbort);
+  });
+
+  const timedOut = new Promise<'timed_out'>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort(new DOMException('Hook observer deadline exceeded', 'TimeoutError'));
+      resolve('timed_out');
+    }, deadlineMs);
+  });
+
+  const outcome = await Promise.race([completion, aborted, timedOut]);
+  if (timer) clearTimeout(timer);
+  removeTurnAbort();
+
+  if (outcome === 'timed_out') {
+    logger.warn('[hook observer] handler timed out', {
+      hookName,
+      unitId: binding.unitId,
+      contributionId: binding.contributionId,
+      ...observerCorrelation(payload),
+      deadlineMs,
+    });
+  }
+
+  // Observe a late rejection without allowing it to change logical settlement.
+  void handlerPromise.catch(() => {});
+  return Object.freeze({
+    unitId: binding.unitId,
+    contributionId: binding.contributionId,
+    outcome,
+  });
+}
+
+/** Execute before_tool_call interceptors sequentially in Snapshot order. */
 export async function runBeforeToolCall(
-  hooks: NamedHandler<BeforeToolCallHook>[],
+  hooks: readonly HookBinding<BeforeToolCallHook>[],
   payload: BeforeToolCallPayload,
 ): Promise<BeforeToolCallResult & { input: Record<string, unknown> }> {
   let currentInput = payload.input;
 
-  for (const { handler, name } of hooks) {
-    const result = await handler({
-      toolName: payload.toolName,
-      input: currentInput,
-      turnId: payload.turnId,
-      sessionKey: payload.sessionKey,
-      signal: payload.signal,
-    });
+  for (const { handler, unitId, contributionId } of hooks) {
+    const result = await handler({ ...payload, input: currentInput });
     if (result.action === 'deny') {
-      const tag = name ? `:${name}` : '';
-      logger.warn(`[hook${tag}] before_tool_call denied`, { tool: payload.toolName, reason: result.reason });
+      logger.warn('[hook interceptor] before_tool_call denied', {
+        unitId,
+        contributionId,
+        tool: payload.toolName,
+        reason: result.reason,
+      });
       return { action: 'deny', reason: result.reason, input: currentInput };
     }
     if ('input' in result) {
+      if (!isPlainJsonObject(result.input)) {
+        throw new TypeError(
+          `before_tool_call ${unitId}/${contributionId} returned a non-JSON object input.`,
+        );
+      }
       currentInput = result.input;
     }
   }
@@ -64,27 +152,68 @@ export async function runBeforeToolCall(
   return { action: 'allow', input: currentInput };
 }
 
-/**
- * 并发执行所有 after_tool_call hooks（fire-and-forget）。
- * 任意 hook 抛出的错误只记录 warn log，不影响主流程。
- */
+function observerCorrelation(payload: object): Record<string, string> {
+  const correlated = payload as {
+    readonly sessionKey?: unknown;
+    readonly turnId?: unknown;
+    readonly result?: { readonly callId?: unknown };
+  };
+  return {
+    ...(typeof correlated.sessionKey === 'string' ? { sessionKey: correlated.sessionKey } : {}),
+    ...(typeof correlated.turnId === 'string' ? { turnId: correlated.turnId } : {}),
+    ...(typeof correlated.result?.callId === 'string'
+      ? { callId: correlated.result.callId }
+      : {}),
+  };
+}
+
+function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  return Object.values(value).every(isJsonValue);
+}
+
+function isJsonValue(value: unknown): boolean {
+  if (value === null) return true;
+  switch (typeof value) {
+    case 'string':
+    case 'boolean':
+      return true;
+    case 'number':
+      return Number.isFinite(value);
+    case 'object':
+      return Array.isArray(value)
+        ? value.every(isJsonValue)
+        : isPlainJsonObject(value);
+    default:
+      return false;
+  }
+}
+
 export function runAfterToolCall(
-  hooks: NamedHandler<AfterToolCallHook>[],
-  payload: AfterToolCallPayload,
-): void {
-  runObserverHooks(hooks, payload, 'after_tool_call');
+  hooks: readonly HookBinding<AfterToolCallHook>[],
+  payload: Omit<AfterToolCallPayload, 'signal'>,
+  turnSignal: AbortSignal,
+  deadlineMs = OBSERVER_HOOK_DEADLINE_MS,
+): Promise<readonly HookSettlement[]> {
+  return runObserverHooks(hooks, payload, turnSignal, 'after_tool_call', deadlineMs);
 }
 
 export function runBeforeCompaction(
-  hooks: NamedHandler<BeforeCompactionHook>[],
-  payload: BeforeCompactionPayload,
-): void {
-  runObserverHooks(hooks, payload, 'before_compaction');
+  hooks: readonly HookBinding<BeforeCompactionHook>[],
+  payload: Omit<BeforeCompactionPayload, 'signal'>,
+  turnSignal: AbortSignal,
+  deadlineMs = OBSERVER_HOOK_DEADLINE_MS,
+): Promise<readonly HookSettlement[]> {
+  return runObserverHooks(hooks, payload, turnSignal, 'before_compaction', deadlineMs);
 }
 
 export function runAfterCompaction(
-  hooks: NamedHandler<AfterCompactionHook>[],
-  payload: AfterCompactionPayload,
-): void {
-  runObserverHooks(hooks, payload, 'after_compaction');
+  hooks: readonly HookBinding<AfterCompactionHook>[],
+  payload: Omit<AfterCompactionPayload, 'signal'>,
+  turnSignal: AbortSignal,
+  deadlineMs = OBSERVER_HOOK_DEADLINE_MS,
+): Promise<readonly HookSettlement[]> {
+  return runObserverHooks(hooks, payload, turnSignal, 'after_compaction', deadlineMs);
 }

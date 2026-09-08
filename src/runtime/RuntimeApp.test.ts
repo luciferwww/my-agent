@@ -12,7 +12,8 @@ import type {
 } from '../adapters/channel/types.js';
 import type { AgentEvent, BeforeToolCallHook } from '../core/runner/index.js';
 import type { RunParams, RunResult } from '../core/runner/types.js';
-import type { Tool, ToolExecutor } from '../core/tools/types.js';
+import type { Tool } from '../core/tools/types.js';
+import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import type { ResolvedModel } from '../core/model-resolution/index.js';
 import type { SubagentModelSelection } from '../platform/config/types.js';
 import { RuntimeApp } from './RuntimeApp.js';
@@ -43,7 +44,7 @@ describe('RuntimeApp', () => {
     const deps = createTestDependencies({
       createSessionManager: () => ({ resolveSession } as never),
       createSystemPromptBuilder: () => ({ build } as never),
-      createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} } as never),
+      createAgentRunner: () => ({ run: runnerRun } as never),
       createMemoryManager: async () => null,
     });
 
@@ -98,22 +99,22 @@ describe('RuntimeApp', () => {
     selection: SubagentModelSelection;
     expectedIdentity: { providerId: string; modelId: string };
   }) => {
-    let toolExecutor: ToolExecutor | undefined;
     let parentModel: ResolvedModel | undefined;
     let childModel: ResolvedModel | undefined;
     const deleteSession = vi.fn(async () => {});
     const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
       if (params.sessionKey === 'main') {
         parentModel = params.resolvedModel;
-        if (!toolExecutor || !params.signal) throw new Error('Parent task wiring is incomplete.');
-        const taskResult = await toolExecutor('task', {
+        const taskTool = params.toolProjection.resolve('task');
+        if (!taskTool || !params.signal) throw new Error('Parent task wiring is incomplete.');
+        const taskResult = await taskTool.execute({
           subagent_type: 'reviewer',
           description: 'review',
           prompt: 'inspect the patch',
         }, {
           sessionKey: params.sessionKey,
           turnId: params.turnId,
-          toolUseId: 'task-use-1',
+          callId: 'task-use-1',
           signal: params.signal,
         });
         return {
@@ -176,7 +177,6 @@ describe('RuntimeApp', () => {
         }) as never,
         createAgentRunner: () => ({
           run: runnerRun,
-          setToolExecutor: (executor: ToolExecutor) => { toolExecutor = executor; },
         }) as never,
         createMemoryManager: async () => null,
       }),
@@ -210,7 +210,7 @@ describe('RuntimeApp', () => {
     }));
     const observedEvents = vi.fn();
     const deps = createTestDependencies({
-      createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} } as never),
+      createAgentRunner: () => ({ run: runnerRun } as never),
       createMemoryManager: async () => null,
     });
     const app = await RuntimeApp.create({
@@ -262,7 +262,7 @@ describe('RuntimeApp', () => {
     }));
     const observerError = new Error('observer failed');
     const deps = createTestDependencies({
-      createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} } as never),
+      createAgentRunner: () => ({ run: runnerRun } as never),
       createMemoryManager: async () => null,
     });
     const app = await RuntimeApp.create({
@@ -310,6 +310,33 @@ describe('RuntimeApp', () => {
     expect(events.some((event) => event.type === 'app_ready')).toBe(true);
   });
 
+  it.each([
+    { subagentsEnabled: true, taskExpected: true },
+    { subagentsEnabled: false, taskExpected: false },
+  ])('publishes one final Snapshot before app_ready when subagents enabled=$subagentsEnabled', async ({
+    subagentsEnabled,
+    taskExpected,
+  }) => {
+    const events: RuntimeEvent[] = [];
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'test-model' },
+        memory: { enabled: false },
+        subagents: { enabled: subagentsEnabled, maxDepth: 1 },
+      },
+      dependencies: createTestDependencies(),
+      onEvent: (event) => events.push(event),
+    });
+
+    const readyEvents = events.filter((event) => event.type === 'app_ready');
+    expect(readyEvents).toHaveLength(1);
+    expect(readyEvents[0]?.toolNames).toEqual(app.getToolNames());
+    expect(readyEvents[0]?.toolNames.includes('task')).toBe(taskExpected);
+
+    await app.close();
+  });
+
   it('CH-12 characterizes missing cleanup after a later bootstrap failure', async () => {
     const events: RuntimeEvent[] = [];
     const memoryClose = vi.fn();
@@ -323,7 +350,7 @@ describe('RuntimeApp', () => {
       },
       dependencies: createTestDependencies({
         createMemoryManager: async () => ({ close: memoryClose }) as never,
-        getBuiltinTools: () => {
+        getBuiltinContributionUnits: () => {
           throw startupError;
         },
       }),
@@ -352,7 +379,7 @@ describe('RuntimeApp', () => {
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({
-        createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
+        createAgentRunner: () => ({ run: runnerRun }) as never,
         createMemoryManager: async () => null,
       }),
       onAgentEvent: (event) => agentEvents.push(event),
@@ -460,7 +487,6 @@ describe('RuntimeApp', () => {
         createAgentRunner: () => ({
           on: () => {},
           run: vi.fn(),
-          setToolExecutor: () => {},
         }) as never,
         createMemoryManager: async () => null,
       }),
@@ -501,7 +527,6 @@ describe('RuntimeApp', () => {
         createAgentRunner: () => ({
           on: () => {},
           run: vi.fn(),
-          setToolExecutor: () => {},
         }) as never,
         createMemoryManager: async () => null,
       }),
@@ -541,7 +566,7 @@ describe('RuntimeApp', () => {
       });
 
     const deps = createTestDependencies({
-      createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} } as never),
+      createAgentRunner: () => ({ run: runnerRun } as never),
       createMemoryManager: async () => null,
     });
 
@@ -631,7 +656,7 @@ describe('RuntimeApp', () => {
     });
 
     const deps = createTestDependencies({
-      createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} } as never),
+      createAgentRunner: () => ({ run: runnerRun } as never),
       createMemoryManager: async () => null,
     });
 
@@ -688,29 +713,23 @@ describe('RuntimeApp', () => {
         request: ApprovalRequest;
         result: ApprovalClosedResult;
       }> = [];
-      let beforeToolCallHook: BeforeToolCallHook | undefined;
       let approvalDecision: unknown;
 
       const runnerRun = vi.fn()
         .mockImplementationOnce(async (): Promise<RunResult> => firstRun.promise)
-        .mockImplementationOnce(async (params: {
-          turnId: string;
-          sessionKey: string;
-          signal?: AbortSignal;
-        }): Promise<RunResult> => {
-          try {
-            approvalDecision = await beforeToolCallHook?.({
+        .mockImplementationOnce(async (params: RunParams): Promise<RunResult> => {
+          if (!params.approvalCapability || !params.signal) {
+            throw new Error('Approval capability is missing.');
+          }
+          const approval = await params.approvalCapability.request({
+              callId: 'demo-call',
               toolName: 'demo_tool',
               input: { approval: true },
               turnId: params.turnId,
               sessionKey: params.sessionKey,
-              signal: params.signal,
-            });
-          } catch (error) {
-            if (!(error instanceof DOMException) || error.name !== 'AbortError') {
-              throw error;
-            }
-            approvalDecision = 'aborted';
+            }, params.signal);
+          approvalDecision = approval.outcome;
+          if (approval.outcome === 'aborted') {
             return {
               text: '',
               content: [],
@@ -730,14 +749,7 @@ describe('RuntimeApp', () => {
         });
 
       const agentRunner = {
-        on: vi.fn((hookName: string, handler: BeforeToolCallHook) => {
-          if (hookName === 'before_tool_call') {
-            beforeToolCallHook = handler;
-          }
-          return agentRunner;
-        }),
         run: runnerRun,
-        setToolExecutor: vi.fn(),
       };
 
       const deps = createTestDependencies({
@@ -828,18 +840,16 @@ describe('RuntimeApp', () => {
     }
   });
 
-  it('CH-06 approval routing depends on startChannels and fails closed without origin capability', async () => {
-    let beforeToolCallHook: BeforeToolCallHook | undefined;
+  it('fails closed without an origin approval capability independently of startChannels', async () => {
     const decisions: unknown[] = [];
-    const runnerRun = vi.fn(async (params: { turnId: string; sessionKey: string }): Promise<RunResult> => {
-      if (beforeToolCallHook) {
-        decisions.push(await beforeToolCallHook({
-          toolName: 'unmatched_tool',
-          input: {},
-          turnId: params.turnId,
-          sessionKey: params.sessionKey,
-        }));
-      }
+    const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      decisions.push({
+        decision: params.toolPolicy.decide(
+          'unmatched_tool',
+          params.approvalCapability !== undefined,
+        ),
+        hasApprovalCapability: params.approvalCapability !== undefined,
+      });
       return {
         text: 'done',
         content: [{ type: 'text', text: 'done' }],
@@ -849,14 +859,7 @@ describe('RuntimeApp', () => {
       };
     });
     const agentRunner = {
-      on: vi.fn((hookName: string, handler: BeforeToolCallHook) => {
-        if (hookName === 'before_tool_call') {
-          beforeToolCallHook = handler;
-        }
-        return agentRunner;
-      }),
       run: runnerRun,
-      setToolExecutor: vi.fn(),
     };
     const deps = createTestDependencies({
       createAgentRunner: () => agentRunner as never,
@@ -875,18 +878,14 @@ describe('RuntimeApp', () => {
     app.registerChannel(testChannel.channel);
 
     await testChannel.dispatch({ sessionKey: 'main', message: 'before startup' });
-    expect(beforeToolCallHook).toBeUndefined();
-    expect(decisions).toEqual([]);
+    expect(decisions).toEqual([{ decision: 'deny', hasApprovalCapability: false }]);
 
     await app.startChannels();
-    expect(beforeToolCallHook).toBeDefined();
     await testChannel.dispatch({ sessionKey: 'main', message: 'after startup' });
 
     expect(decisions).toEqual([
-      {
-        action: 'deny',
-        reason: 'Tool not in allowlist (no approval channel)',
-      },
+      { decision: 'deny', hasApprovalCapability: false },
+      { decision: 'deny', hasApprovalCapability: false },
     ]);
   });
 
@@ -896,43 +895,30 @@ describe('RuntimeApp', () => {
       request: ApprovalRequest;
       result: ApprovalClosedResult;
     }> = [];
-    let beforeToolCallHook: BeforeToolCallHook | undefined;
 
     const agentRunner = {
-      on: vi.fn((hookName: string, handler: BeforeToolCallHook) => {
-        if (hookName === 'before_tool_call') {
-          beforeToolCallHook = handler;
+      run: vi.fn(async (params: RunParams): Promise<RunResult> => {
+        if (!params.approvalCapability || !params.signal) {
+          throw new Error('Approval capability is missing.');
         }
-        return agentRunner;
-      }),
-      run: vi.fn(async (params: {
-        turnId: string;
-        sessionKey: string;
-        signal?: AbortSignal;
-      }): Promise<RunResult> => {
-        try {
-          await beforeToolCallHook?.({
+        const approval = await params.approvalCapability.request({
+            callId: 'demo-call',
             toolName: 'demo_tool',
             input: {},
             turnId: params.turnId,
             sessionKey: params.sessionKey,
-            signal: params.signal,
-          });
+          }, params.signal);
+        if (approval.outcome !== 'aborted') {
           throw new Error('approval unexpectedly settled without shutdown');
-        } catch (error) {
-          if (!(error instanceof DOMException) || error.name !== 'AbortError') {
-            throw error;
-          }
-          return {
-            text: '',
-            content: [],
-            stopReason: 'aborted',
-            usage: { inputTokens: 0, outputTokens: 0 },
-            toolRounds: 0,
-          };
         }
+        return {
+          text: '',
+          content: [],
+          stopReason: 'aborted',
+          usage: { inputTokens: 0, outputTokens: 0 },
+          toolRounds: 0,
+        };
       }),
-      setToolExecutor: vi.fn(),
     };
     const app = await RuntimeApp.create({
       workspaceDir,
@@ -983,7 +969,7 @@ describe('RuntimeApp', () => {
     // helper：跑一个 turn 并给它一个可 abort 的 hook；runnerRun 内部可自定义
     async function makeAppWithRunner(runnerRun: (params: unknown) => Promise<RunResult>): Promise<RuntimeApp> {
       const deps = createTestDependencies({
-        createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
+        createAgentRunner: () => ({ run: runnerRun }) as never,
         createMemoryManager: async () => null,
       });
       return RuntimeApp.create({
@@ -1043,7 +1029,7 @@ describe('RuntimeApp', () => {
         workspaceDir,
         cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
-          createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
+          createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
         }),
         onEvent: (e) => events.push(e),
@@ -1121,7 +1107,7 @@ describe('RuntimeApp', () => {
         workspaceDir,
         cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
-          createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
+          createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
         }),
         onEvent: (e) => events.push(e),
@@ -1200,7 +1186,7 @@ describe('RuntimeApp', () => {
           runner: { inTurnMessageMode: 'steer' },
         },
         dependencies: createTestDependencies({
-          createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
+          createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
         }),
         onEvent: (event) => events.push(event),
@@ -1280,7 +1266,7 @@ describe('RuntimeApp', () => {
         workspaceDir,
         cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
-          createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
+          createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
         }),
       });
@@ -1356,7 +1342,7 @@ describe('RuntimeApp', () => {
         workspaceDir,
         cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
-          createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
+          createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
         }),
       });
@@ -1415,7 +1401,7 @@ describe('RuntimeApp', () => {
         workspaceDir,
         cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
-          createAgentRunner: () => ({ run: runnerRun, setToolExecutor: () => {} }) as never,
+          createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
         }),
       });
@@ -1582,7 +1568,7 @@ function createTestDependencies(
     description: 'Demo tool',
     inputSchema: { type: 'object', properties: {} },
     async execute() {
-      return { content: 'ok' };
+      return { outcome: 'success', content: 'ok' };
     },
   };
 
@@ -1618,9 +1604,18 @@ function createTestDependencies(
         usage: { inputTokens: 1, outputTokens: 1 },
         toolRounds: 0,
       }),
-      setToolExecutor: () => {},
     }) as never,
-    getBuiltinTools: () => [builtinTool],
+    getBuiltinContributionUnits: () => [builtinUnit(builtinTool)],
     ...overrides,
+  };
+}
+
+function builtinUnit(tool: Tool): RuntimeContributionUnit {
+  return {
+    id: `builtin-test-${tool.name}`,
+    source: 'builtin',
+    register(api) {
+      api.registerTool(tool);
+    },
   };
 }

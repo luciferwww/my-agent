@@ -26,7 +26,7 @@ describe('writeFileTool', () => {
   it('creates a new file', async () => {
     const result = await writeFileTool.execute({ path: 'notes/new.txt', content: 'hello\n' }, TEST_TOOL_CONTEXT);
 
-    expect(result.isError).toBeUndefined();
+    expect(result.outcome).toBe('success');
     expect(result.content).toContain('created: true');
     expect(await readFile(join(workspaceDir, 'notes', 'new.txt'), 'utf8')).toBe('hello\n');
   });
@@ -35,7 +35,7 @@ describe('writeFileTool', () => {
     await writeFileTool.execute({ path: 'notes.txt', content: 'old\n' }, TEST_TOOL_CONTEXT);
     const result = await writeFileTool.execute({ path: 'notes.txt', content: 'new\n' }, TEST_TOOL_CONTEXT);
 
-    expect(result.isError).toBeUndefined();
+    expect(result.outcome).toBe('success');
     expect(result.content).toContain('created: false');
     expect(await readFile(join(workspaceDir, 'notes.txt'), 'utf8')).toBe('new\n');
   });

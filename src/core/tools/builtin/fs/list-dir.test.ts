@@ -28,7 +28,7 @@ describe('listDirTool', () => {
     await writeFile(join(workspaceDir, 'README.md'), '# hello\n');
 
     const result = await listDirTool.execute({ path: '.' }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBeUndefined();
+    expect(result.outcome).toBe('success');
     expect(result.content).toContain('path: .');
     expect(result.content).toContain('README.md');
     expect(result.content).toContain('src/');
@@ -38,13 +38,13 @@ describe('listDirTool', () => {
     await writeFile(join(workspaceDir, 'note.txt'), 'hello');
 
     const result = await listDirTool.execute({ path: 'note.txt' }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBe(true);
+    expect(result.outcome).toBe('failed');
     expect(result.content).toContain('path is not a directory');
   });
 
   it('rejects paths outside the workspace', async () => {
     const result = await listDirTool.execute({ path: '..' }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBe(true);
+    expect(result.outcome).toBe('failed');
     expect(result.content).toContain('outside the workspace');
   });
 });

@@ -61,7 +61,14 @@ describe('AnthropicClient', () => {
       const mockEvents: StreamEvent[] = [
         { type: 'message_start' },
         { type: 'text_delta', text: 'Let me search.' },
-        { type: 'tool_use', id: 'tool_01', name: 'search', input: { query: 'weather' } },
+        {
+          type: 'tool_call',
+          call: {
+            callId: 'tool_01',
+            name: 'search',
+            input: { state: 'ready', value: { query: 'weather' } },
+          },
+        },
         { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 20, outputTokens: 15 } },
       ];
 
@@ -136,7 +143,14 @@ describe('AnthropicClient', () => {
       const mockEvents: StreamEvent[] = [
         { type: 'message_start' },
         { type: 'text_delta', text: 'Before tool. ' },
-        { type: 'tool_use', id: 'tool_01', name: 'read_file', input: { path: '/tmp/test' } },
+        {
+          type: 'tool_call',
+          call: {
+            callId: 'tool_01',
+            name: 'read_file',
+            input: { state: 'ready', value: { path: '/tmp/test' } },
+          },
+        },
         { type: 'text_delta', text: 'After tool.' },
         { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 30, outputTokens: 20 } },
       ];
@@ -159,9 +173,86 @@ describe('AnthropicClient', () => {
       expect(response.content[2]!.type).toBe('text');
       expect((response.content[2] as Extract<ChatContentBlock, { type: 'text' }>).text).toBe('After tool.');
     });
+
+    it('preserves invalid Tool input in chat() canonical calls without creating an empty input block', async () => {
+      const client = new AnthropicClient({ apiKey: 'test-key' });
+      vi.spyOn(client, 'chatStream').mockImplementation(async function* () {
+        yield { type: 'message_start' } as const;
+        yield {
+          type: 'tool_call',
+          call: {
+            callId: 'call-bad',
+            name: 'search',
+            input: { state: 'invalid', reason: 'malformed_json' },
+          },
+        } as const;
+        yield {
+          type: 'message_end',
+          stopReason: 'tool_use',
+          usage: { inputTokens: 1, outputTokens: 1 },
+        } as const;
+      });
+
+      const response = await client.chat({
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'Search' }],
+      });
+
+      expect(response.content).toEqual([]);
+      expect(response.toolCalls).toEqual([{
+        callId: 'call-bad',
+        name: 'search',
+        input: { state: 'invalid', reason: 'malformed_json' },
+      }]);
+    });
   });
 
   describe('outbound conversion', () => {
+    it('normalizes malformed streamed Tool input without replacing it with an empty object', async () => {
+      const client = new AnthropicClient({ apiKey: 'test-key' });
+      const sdkEvents = [
+        {
+          type: 'content_block_start',
+          content_block: { type: 'tool_use', id: 'call-bad', name: 'search', input: {} },
+        },
+        {
+          type: 'content_block_delta',
+          delta: { type: 'input_json_delta', partial_json: '{"query":' },
+        },
+        { type: 'content_block_stop' },
+      ];
+      const fakeStream = {
+        async *[Symbol.asyncIterator]() {
+          for (const event of sdkEvents) yield event;
+        },
+        finalMessage: async () => ({
+          stop_reason: 'tool_use',
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }),
+      };
+      const streamMock = vi.fn().mockReturnValue(fakeStream);
+      (client as unknown as { client: { messages: { stream: typeof streamMock } } }).client = {
+        messages: { stream: streamMock },
+      };
+
+      const events: StreamEvent[] = [];
+      for await (const event of client.chatStream({
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'Search' }],
+      })) {
+        events.push(event);
+      }
+
+      expect(events).toContainEqual({
+        type: 'tool_call',
+        call: {
+          callId: 'call-bad',
+          name: 'search',
+          input: { state: 'invalid', reason: 'malformed_json' },
+        },
+      });
+    });
+
     it('strips dimensions from image blocks when calling the SDK', async () => {
       const client = new AnthropicClient({ apiKey: 'test-key' });
 

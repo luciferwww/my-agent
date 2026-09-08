@@ -11,7 +11,7 @@ import type {
   TurnInteractionResponse,
 } from '../adapters/channel/types.js';
 import { Logger } from '../platform/logger/index.js';
-import { loadContextFiles, loadContextFilesFromDir } from '../core/workspace/index.js';
+import { loadContextFiles } from '../core/workspace/index.js';
 import type { ContextFile } from '../core/workspace/types.js';
 import {
   processInboundMessage,
@@ -22,21 +22,9 @@ import { bootstrapRuntime } from './bootstrap.js';
 import { classifyRuntimeError, createRuntimeError } from './errors.js';
 import { buildSystemPromptParams } from './prompt-factory.js';
 import { summarizeAssembled } from './summarize-assembled.js';
-import { resolveToolPolicy } from './tool-approval-policy.js';
-import {
-  applyDenyFilter,
-  buildTaskToolIfEnabled,
-  toLlmToolDefinitions,
-  toPromptToolDefinitions,
-} from './tool-registry.js';
-import { createToolExecutor } from '../core/tools/index.js';
-import { createSubagentDelegationPort } from './subagent-orchestration.js';
+import type { CurrentCallApprovalCapability } from '../core/approval/index.js';
 import type { ActiveParentTurn } from './subagent-orchestration.js';
-import { SubagentExecutor } from '../core/subagent/SubagentExecutor.js';
 import {
-  buildGeneralPurposeProfile,
-  loadSubagentProfiles,
-  resolveSubagentCapabilities,
   collectAvailableSubagents,
 } from '../core/subagent/index.js';
 import type {
@@ -89,14 +77,14 @@ export class RuntimeApp {
    */
   private readonly activeAborts = new Map<string, AbortController>();
   /** Active resolved Parent Turns eligible to delegate a tracked Child. */
-  private readonly activeParentTurns = new Map<string, ActiveParentTurn>();
+  private readonly activeParentTurns: Map<string, ActiveParentTurn>;
 
   // ── Channel 层 ──────────────────────────────────────────────────
   /** 与 bootstrap fanout 闭包共享引用：registerChannel 后注册的新 channel 实时可见 */
   private readonly channels: Channel[];
   private readonly turnInteractionManager: TurnInteractionManager;
   /** turnId → 交互路由上下文；当前最小实现仍用 channel 引用加 originClientId 做定向。 */
-  private readonly routeContextByTurn = new Map<string, MessageRouteContext>();
+  private readonly routeContextByTurn: Map<string, MessageRouteContext>;
   private approvalRoutingWired = false;
   private channelsStarted = false;
 
@@ -124,9 +112,15 @@ export class RuntimeApp {
     private readonly resources: RuntimeResourceSet,
     private state: RuntimeLifecycleState,
     channels: Channel[],
+    subagentProfiles: ReadonlyMap<string, SubagentProfile>,
+    activeParentTurns: Map<string, ActiveParentTurn>,
+    routeContextByTurn: Map<string, MessageRouteContext>,
     onEvent?: RuntimeAppOptions['onEvent'],
   ) {
     this.channels = channels;
+    this.subagentProfiles = subagentProfiles;
+    this.activeParentTurns = activeParentTurns;
+    this.routeContextByTurn = routeContextByTurn;
     this.onEvent = onEvent;
     this.turnInteractionManager = new TurnInteractionManager();
   }
@@ -152,99 +146,28 @@ export class RuntimeApp {
       userObserver?.(event);
     };
 
-    const { resources, state } = await bootstrapRuntime({
+    const {
+      resources,
+      state,
+      subagentProfiles,
+      activeParentTurns,
+      routeContextByTurn,
+    } = await bootstrapRuntime({
       ...options,
       onAgentEvent: fanout,
     });
 
-    const app = new RuntimeApp(resources, state, channels, options.onEvent);
-    app.fanoutAgentEvent = fanout;
-
-    // ── Subagent post-bootstrap wiring ───────────────────────────────
-    //
-    // Runtime-owned delegation + task tool need RuntimeApp instance state
-    // (routeContextByTurn) and a live getter over resources.contextFiles,
-    // so they cannot be built inside bootstrapRuntime. They are assembled
-    // here, then the agentRunner's toolExecutor is swapped to include the
-    // task tool.
-
-    // 1. Profile registry: built-in general-purpose first (Map insertion
-    //    order drives <available-subagents> ordering downstream), then
-    //    user-defined entries from config.
-    const registeredToolNames = new Set(resources.toolBundle.tools.map((t) => t.name));
-    const userProfiles = loadSubagentProfiles(
-      resources.resolvedConfig.subagents?.list ?? [],
-      options.workspaceDir,
-      registeredToolNames,
+    const app = new RuntimeApp(
+      resources,
+      state,
+      channels,
+      subagentProfiles,
+      activeParentTurns,
+      routeContextByTurn,
+      options.onEvent,
     );
-    const generalPurpose = buildGeneralPurposeProfile(options.workspaceDir);
-    const subagentProfilesMap = new Map<string, SubagentProfile>();
-    subagentProfilesMap.set(generalPurpose.id, generalPurpose);
-    for (const p of userProfiles) {
-      subagentProfilesMap.set(p.id, p);
-    }
-    const subagentProfiles: ReadonlyMap<string, SubagentProfile> = subagentProfilesMap;
-
-    // 2. Internal Child executor reuses the same stateless AgentRunner.
-    const subagentExecutor = new SubagentExecutor({
-      agentRunner: resources.agentRunner,
-      systemPromptBuilder: resources.systemPromptBuilder,
-      loadContextFilesFromDir: (absDir) =>
-        loadContextFilesFromDir(absDir, {
-          maxFileChars: resources.resolvedConfig.workspace.maxFileChars,
-          maxTotalChars: resources.resolvedConfig.workspace.maxTotalChars,
-        }),
-      workspaceDir: options.workspaceDir,
-      promptSafetyLevel: resources.resolvedConfig.prompt?.safetyLevel ?? 'normal',
-    });
-
-    // 3. Runtime-owned delegation validates a real active Parent, resolves a
-    // fresh Child model, and owns Child identity/lifecycle/cleanup.
-    const delegationPort = createSubagentDelegationPort({
-      activeParents: app.activeParentTurns,
-      routeContextByTurn: app.routeContextByTurn,
-      sessionManager: resources.sessionManager,
-      modelResolver: resources.modelResolver,
-      defaultProviderId: resources.defaultProviderId,
-      defaultMaxTokens: resources.resolvedConfig.llm.maxTokens,
-      maxDepth: resources.resolvedConfig.subagents?.maxDepth ?? 1,
-      executor: subagentExecutor,
-      onEvent: fanout,
-    });
-
-    // 4. Task tool: append to toolBundle when enabled, then rebuild the
-    //    derived executor / definitions and swap them onto the
-    //    AgentRunner. Re-applies the deny filter so a config that listed
-    //    'task' in deny still drops it (defensive).
-    const taskTool = buildTaskToolIfEnabled({
-      enabled: resources.resolvedConfig.subagents?.enabled !== false,
-      delegationPort,
-      profileRegistry: subagentProfiles,
-      getCapabilities: (sessionKey) =>
-        resolveSubagentCapabilities(
-          sessionKey,
-          resources.resolvedConfig.subagents?.maxDepth ?? 1,
-        ),
-      maxDepth: resources.resolvedConfig.subagents?.maxDepth ?? 1,
-    });
-
-    if (taskTool) {
-      const merged = applyDenyFilter(
-        [...resources.toolBundle.tools, taskTool],
-        resources.resolvedConfig.tools?.deny ?? [],
-      );
-      const newExecutor = createToolExecutor(merged);
-      resources.toolBundle = {
-        tools: merged,
-        executor: newExecutor,
-        llmDefinitions: toLlmToolDefinitions(merged),
-        promptDefinitions: toPromptToolDefinitions(merged),
-      };
-      resources.agentRunner.setToolExecutor(newExecutor);
-    }
-
-    // 5. Retain the profile projection for prompt rendering.
-    app.subagentProfiles = subagentProfiles;
+    app.fanoutAgentEvent = fanout;
+    app.wireApprovalRouting();
 
     return app;
   }
@@ -263,7 +186,7 @@ export class RuntimeApp {
   }
 
   getToolNames(): string[] {
-    return this.resources.toolBundle.tools.map((tool) => tool.name);
+    return this.resources.registrySnapshot.tools.definitions.map((tool) => tool.name);
   }
 
   // ── Channel 注册与生命周期 ────────────────────────────────────────
@@ -373,8 +296,8 @@ export class RuntimeApp {
   }
 
   /**
-   * 依次启动所有已注册 channel。先调 wireApprovalRouting() 把 hook 装上，
-   * 再依次调 channel.start()。
+    * 依次启动所有已注册 channel。Approval transport 已在 create() 配置；
+    * 这里的幂等调用不会安装 Hook 或改变 Tool authorization policy。
    *
    * 注意：CliChannel.start() 是阻塞的（readline 循环），多 channel 启动应并行；
    * 这里使用 Promise.all 让阻塞 channel 不阻塞其他 channel 的启动。
@@ -409,75 +332,12 @@ export class RuntimeApp {
 
   // ── Approval 路由（详见 channel-design.md §4.3）────────────────────
 
-  /**
-   * 启动时调用一次。始终注册 before_tool_call hook，通过配置和 origin channel 能力执行三档审批策略。
-   */
+  /** Configure interaction transport once; Tool authorization stays in Runner policy flow. */
   private wireApprovalRouting(): void {
     if (this.approvalRoutingWired) return;
     this.approvalRoutingWired = true;
 
-    // ① hook → 三档审批策略
-    this.resources.agentRunner.on(
-      'before_tool_call',
-      async ({ toolName, input, turnId, sessionKey, signal }) => {
-        const originChannel = this.routeContextByTurn.get(turnId)?.originChannel;
-        const hasApprovalCapability = !!(originChannel?.interaction || originChannel?.approval);
-        const toolsConfig = this.resources.resolvedConfig.tools;
-
-        const action = resolveToolPolicy(toolName, toolsConfig, hasApprovalCapability);
-
-        if (action === 'allow') return { action: 'allow' as const };
-        if (action === 'deny') {
-          return {
-            action: 'deny' as const,
-            reason: hasApprovalCapability ? 'Tool denied by policy' : 'Tool not in allowlist (no approval channel)',
-          };
-        }
-
-        // action === 'prompt': 交给 TurnInteractionManager 等待用户决策
-        if (!signal) {
-          return {
-            action: 'deny' as const,
-            reason: 'Approval unavailable: missing Turn signal',
-          };
-        }
-
-        const result = await this.turnInteractionManager.request({
-          request: {
-            toolName,
-            input,
-            sessionKey,
-            turnId,
-            originClientId: this.routeContextByTurn.get(turnId)?.originClientId,
-          },
-          signal,
-        });
-        if (result.outcome === 'approved') {
-          return { action: 'allow' as const };
-        }
-        if (result.outcome === 'denied') {
-          return {
-            action: 'deny' as const,
-            reason: result.reason === 'user_cancelled' ? 'Approval cancelled by user' : 'Denied by user',
-          };
-        }
-        if (result.outcome === 'aborted') {
-          throw new DOMException('Approval wait aborted', 'AbortError');
-        }
-        if (result.outcome === 'unavailable') {
-          return {
-            action: 'deny' as const,
-            reason: `Approval unavailable: ${result.reason}`,
-          };
-        }
-        return {
-          action: 'deny' as const,
-          reason: `Approval failed: ${result.message}`,
-        };
-      },
-    );
-
-    // ② TurnInteractionManager → 起源 channel
+    // TurnInteractionManager → origin channel
     this.turnInteractionManager.onRequest((request) => {
       const originChannel = this.routeContextByTurn.get(request.turnId)?.originChannel;
       if (!originChannel) {
@@ -500,7 +360,6 @@ export class RuntimeApp {
         channelId: originChannel.id,
         route: originChannel.interaction ? 'interaction' : 'approval',
       });
-
       if (originChannel.interaction) {
         const interactionRequest: ApprovalInteractionRequest = {
           ...request,
@@ -547,6 +406,26 @@ export class RuntimeApp {
 
       originChannel?.approval?.sendApprovalClosed(request, result);
     });
+  }
+
+  private getApprovalCapability(turnId: string): CurrentCallApprovalCapability | undefined {
+    const route = this.routeContextByTurn.get(turnId);
+    const originChannel = route?.originChannel;
+    if (!(originChannel?.interaction || originChannel?.approval)) return undefined;
+
+    const capability: CurrentCallApprovalCapability = {
+      request: async (request, signal) => this.turnInteractionManager.request({
+        request: {
+          toolName: request.toolName,
+          input: { ...request.input },
+          sessionKey: request.sessionKey,
+          turnId: request.turnId,
+          originClientId: this.routeContextByTurn.get(request.turnId)?.originClientId,
+        },
+        signal,
+      }),
+    };
+    return Object.freeze(capability);
   }
 
   private handleInteractionResponse(response: TurnInteractionResponse): void {
@@ -1094,10 +973,14 @@ export class RuntimeApp {
         await this.reloadContextFiles();
       }
 
+      const visibleToolDefinitions = this.resources.registrySnapshot.tools.visibleDefinitions(
+        this.resources.toolPolicy,
+      );
+
       const resolvedModel = this.resources.resolveParentModel({
         model: params.model,
         maxTokens: params.maxTokens,
-        tools: this.resources.toolBundle.llmDefinitions.length > 0,
+        tools: visibleToolDefinitions.length > 0,
         mediaKinds: Array.isArray(params.message) && params.message.some((block) => block.type === 'image')
           ? ['image']
           : [],
@@ -1107,7 +990,7 @@ export class RuntimeApp {
         buildSystemPromptParams({
           config: this.resources.resolvedConfig,
           contextFiles: this.resources.contextFiles,
-          promptDefinitions: this.resources.toolBundle.promptDefinitions,
+          toolNames: visibleToolDefinitions.map(({ name }) => name),
           overrides: params,
           workspaceDir: this.resources.workspaceDir,
           // Only inject the <available-subagents> section when the feature is
@@ -1162,7 +1045,10 @@ export class RuntimeApp {
         resolvedModel,
         systemPrompt,
         turnId: params.turnId,
-        tools: this.resources.toolBundle.llmDefinitions,
+        toolProjection: this.resources.registrySnapshot.tools,
+        hookProjection: this.resources.registrySnapshot.hooks,
+        toolPolicy: this.resources.toolPolicy,
+        approvalCapability: this.getApprovalCapability(params.turnId),
         maxLlmCalls: params.maxLlmCalls ?? this.resources.resolvedConfig.runner.maxLlmCalls,
         // runtime 只提供"读取并清空当前 steering inbox"的能力，具体消费时机仍由 runner 控制。
         getSteeringMessages: async () => this.drainSteeringMessages(params.sessionKey),

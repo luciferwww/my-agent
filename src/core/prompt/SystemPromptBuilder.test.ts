@@ -24,7 +24,7 @@ describe('SystemPromptBuilder', () => {
     it('minimal mode skips memory-instructions', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
-        tools: [{ name: 'memory_search', description: 'search' }],
+        toolNames: ['memory_search'],
       });
       expect(prompt).not.toContain('# Memory Recall');
     });
@@ -32,7 +32,7 @@ describe('SystemPromptBuilder', () => {
     it('minimal mode skips identity / behavior-rules / memory / available-subagents (spec §11)', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
-        tools: [{ name: 'memory_search', description: 'search' }],
+        toolNames: ['memory_search'],
         contextFiles: [{ path: 'IDENTITY.md', content: '# test' }],
         availableSubagents: [{ id: 'a', description: 'desc' }],
       });
@@ -127,43 +127,31 @@ describe('SystemPromptBuilder', () => {
   describe('memory-instructions', () => {
     it('shows when tools contain memory_search', () => {
       const prompt = new SystemPromptBuilder().build({
-        tools: [{ name: 'memory_search', description: 'search' }],
+        toolNames: ['memory_search'],
       });
       expect(prompt).toContain('# Memory Recall');
     });
 
     it('keeps legacy compatibility for search_memory', () => {
       const prompt = new SystemPromptBuilder().build({
-        tools: [{ name: 'search_memory', description: 'search' }],
+        toolNames: ['search_memory'],
       });
       expect(prompt).toContain('# Memory Recall');
     });
 
     it('shows when tools contain memory_get', () => {
       const prompt = new SystemPromptBuilder().build({
-        tools: [{ name: 'memory_get', description: 'get' }],
+        toolNames: ['memory_get'],
       });
       expect(prompt).toContain('# Memory Recall');
     });
 
-    it('CH-14 ignores descriptions and schemas when detecting memory tools and rendering definitions', () => {
+    it('uses exact Tool names rather than matching nearby capability text', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'full',
-        tools: [{
-          name: 'read_file',
-          description: 'MEMORY_DESCRIPTION_MARKER memory_search',
-          parameters: {
-            type: 'object',
-            properties: {
-              memory_get: { type: 'string', description: 'MEMORY_SCHEMA_MARKER' },
-            },
-          },
-        }],
+        toolNames: ['read_file', 'memory_search_extended'],
       });
       expect(prompt).not.toContain('# Memory Recall');
-      expect(prompt).not.toContain('# Available Tools');
-      expect(prompt).not.toContain('MEMORY_DESCRIPTION_MARKER');
-      expect(prompt).not.toContain('MEMORY_SCHEMA_MARKER');
     });
 
     it('skips when no tools at all', () => {
@@ -174,7 +162,7 @@ describe('SystemPromptBuilder', () => {
     it('skips in minimal mode even with memory tools', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
-        tools: [{ name: 'memory_search', description: 'search' }],
+        toolNames: ['memory_search'],
       });
       expect(prompt).not.toContain('# Memory Recall');
     });

@@ -80,7 +80,7 @@ function mapForegroundStatusToToolResult(
   errorMessage?: string,
 ) {
   if (status === 'completed') {
-    return { content: output };
+    return { outcome: 'success' as const, content: output };
   }
 
   const suffix =
@@ -94,7 +94,7 @@ function mapForegroundStatusToToolResult(
 
   return {
     content: `${output}\n\n${suffix}`.trim(),
-    isError: true,
+    outcome: 'failed' as const,
   };
 }
 
@@ -223,7 +223,7 @@ export const execTool: Tool = {
     if ('error' in normalized) {
       return {
         content: normalized.error,
-        isError: true,
+        outcome: 'failed',
       };
     }
 
@@ -236,7 +236,7 @@ export const execTool: Tool = {
         cwd: request.cwd,
         env: request.env,
         timeoutMs: request.timeoutMs,
-        signal: context?.signal,
+        signal: context.signal,
       });
       const outcome = await running.completion;
       return mapForegroundStatusToToolResult(
@@ -250,7 +250,7 @@ export const execTool: Tool = {
 
     const runId = createRunId();
     const visibility = request.mode === 'background' ? 'background' : 'internal';
-    const running = startManagedCommand(request, runId, visibility, context?.signal);
+    const running = startManagedCommand(request, runId, visibility, context.signal);
 
     try {
       await running.started;
@@ -258,12 +258,13 @@ export const execTool: Tool = {
       processRegistry.delete(runId);
       return {
         content: `Error executing command: ${error instanceof Error ? error.message : String(error)}`,
-        isError: true,
+        outcome: 'failed',
       };
     }
 
     if (request.mode === 'background') {
       return {
+        outcome: 'success',
         content: formatBackgroundStarted(runId, false),
       };
     }
@@ -308,6 +309,7 @@ export const execTool: Tool = {
     });
 
     return {
+      outcome: 'success',
       content: formatBackgroundStarted(runId, true),
     };
   },

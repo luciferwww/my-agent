@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ModelInvocationPort } from '../model-invocation/index.js';
+import type { HookProjection, ToolProjection } from '../registry/index.js';
+import type { ApplicationToolPolicy } from '../tools/index.js';
 import type { RunParams } from './types.js';
 
 const unusedInvocationPort: ModelInvocationPort = {
@@ -10,6 +12,24 @@ const unusedInvocationPort: ModelInvocationPort = {
     throw new Error('No invocation response configured for this test fixture.');
   },
 };
+
+const emptyToolProjection: ToolProjection = Object.freeze({
+  definitions: Object.freeze([]),
+  resolve: () => undefined,
+  visibleDefinitions: () => Object.freeze([]),
+});
+
+const emptyHookProjection: HookProjection = Object.freeze({
+  beforeToolCall: Object.freeze([]),
+  afterToolCall: Object.freeze([]),
+  beforeCompaction: Object.freeze([]),
+  afterCompaction: Object.freeze([]),
+});
+
+const denyAllTools: ApplicationToolPolicy = Object.freeze({
+  isDenied: () => true,
+  decide: () => 'deny' as const,
+});
 
 /**
  * 构造 RunParams 的测试 helper。
@@ -35,6 +55,9 @@ export function makeRunParams(overrides: Partial<RunParams> = {}): RunParams {
     },
     systemPrompt: '',
     turnId: randomUUID(),
+    toolProjection: emptyToolProjection,
+    hookProjection: emptyHookProjection,
+    toolPolicy: denyAllTools,
     ...overrides,
   };
 }

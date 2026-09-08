@@ -47,20 +47,20 @@ afterEach(async () => {
 describe('webFetchTool', () => {
   it('extracts readable content from html', async () => {
     const result = await webFetchTool.execute({ url: `${baseUrl}/html`, extractMode: 'text' }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBeUndefined();
+    expect(result.outcome).toBe('success');
     expect(result.content).toContain('Hello');
     expect(result.content).toContain('World');
   });
 
   it('returns text responses as-is', async () => {
     const result = await webFetchTool.execute({ url: `${baseUrl}/text` }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBeUndefined();
+    expect(result.outcome).toBe('success');
     expect(result.content).toContain('plain text body');
   });
 
   it('rejects unsupported protocols', async () => {
     const result = await webFetchTool.execute({ url: 'file:///tmp/example.txt' }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBe(true);
+    expect(result.outcome).toBe('failed');
     expect(result.content).toContain('only http and https');
   });
 });

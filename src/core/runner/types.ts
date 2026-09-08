@@ -4,10 +4,12 @@ import type {
   TokenUsage,
 } from '../model-invocation/index.js';
 import type { ResolvedModel } from '../model-resolution/index.js';
-import type { ToolDefinition, ToolResult, ToolExecutor } from '../tools/types.js';
+import type { CurrentCallApprovalCapability } from '../approval/index.js';
+import type { HookProjection, ToolProjection } from '../registry/index.js';
+import type { ApplicationToolPolicy, ToolResult } from '../tools/types.js';
 import type { CompactionConfig } from '../../platform/config/types.js';
 
-export type { ToolDefinition, ToolResult, ToolExecutor };
+export type { ToolResult };
 
 export type PendingMessageReader = () => ChatMessage[] | Promise<ChatMessage[]>;
 
@@ -32,8 +34,6 @@ export interface TurnContext {
 export interface AgentRunnerConfig {
   /** Session 管理器 */
   sessionManager: import('../session/SessionManager.js').SessionManager;
-  /** 工具执行回调，不提供则 tool_use 时返回错误 */
-  toolExecutor?: ToolExecutor;
   /** 运行时事件回调 */
   onEvent?: (event: AgentEvent) => void;
 }
@@ -50,8 +50,12 @@ export interface RunParams {
   systemPrompt: string;
   /** 本次 turn 的唯一 id；由 RuntimeApp 生成并传入 */
   turnId: string;
-  /** 工具定义（传给 LLM） */
-  tools?: ToolDefinition[];
+  /** 当前 Turn 固定的 Tool/Hook projections 与 Application policy。 */
+  toolProjection: ToolProjection;
+  hookProjection: HookProjection;
+  toolPolicy: ApplicationToolPolicy;
+  /** 当前调用来源可提供的审批能力；缺失时 requires-approval fail closed。 */
+  approvalCapability?: CurrentCallApprovalCapability;
   /** 单次 run 允许的最大 LLM 调用次数，默认 12 */
   maxLlmCalls?: number;
   /** steering 专用消息读取回调（总在 steering 注入点消费） */
@@ -66,7 +70,7 @@ export interface RunParams {
   originMessageId?: string;
   /**
    * 用户中断 / turn timeout / shutdown 等都通过此 signal 传递。
-   * AgentRunner 在 chatStream 调用 + ToolContext 构造时透传；
+  * AgentRunner 在 chatStream 调用 + ToolExecutionContext 构造时透传；
    * catch AbortError 后返回 RunResult.stopReason='aborted'，不抛。
    * 见 core-abort-spec.md §6.1。
    */

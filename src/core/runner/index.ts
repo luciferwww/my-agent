@@ -6,9 +6,7 @@ export type {
   RunResult,
   AgentEvent,
   AttachmentSummary,
-  ToolDefinition,
   ToolResult,
-  ToolExecutor,
 } from './types.js';
 export type {
   HookName,

@@ -16,8 +16,7 @@
   { "contract": "AgentExecutionFailure", "source": "src/core/runner/errors.ts", "kind": "error" },
   { "contract": "SubagentDelegationPort", "source": "src/core/subagent/types.ts", "kind": "delegation-port" },
   { "contract": "SubagentTerminalResult", "source": "src/core/subagent/types.ts", "kind": "lifecycle" },
-  { "contract": "ToolExecutor", "source": "src/core/tools/types.ts", "kind": "tool-port" },
-  { "contract": "ToolContext", "source": "src/core/tools/types.ts", "kind": "abort-context" },
+  { "contract": "ToolExecutionContext", "source": "src/core/tools/types.ts", "kind": "abort-context" },
   { "contract": "MemoryStore", "source": "src/core/memory/types.ts", "kind": "store-port-lifecycle" },
   { "contract": "LogAdapter", "source": "src/platform/logger/types.ts", "kind": "adapter-port-lifecycle" }
 ]

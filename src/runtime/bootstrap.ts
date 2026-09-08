@@ -9,9 +9,27 @@ import type { LogAdapter } from '../platform/logger/index.js';
 import { MemoryManager } from '../core/memory/index.js';
 import { SystemPromptBuilder, UserPromptBuilder } from '../core/prompt/index.js';
 import { SessionManager } from '../core/session/index.js';
-import { ensureWorkspace, loadContextFiles } from '../core/workspace/index.js';
+import { ensureWorkspace, loadContextFiles, loadContextFilesFromDir } from '../core/workspace/index.js';
 import { classifyRuntimeError } from './errors.js';
-import { assembleRuntimeTools, getDefaultBuiltinTools } from './tool-registry.js';
+import { buildRegistrySnapshot } from './registry-builder.js';
+import { createApplicationToolPolicy } from './tool-approval-policy.js';
+import {
+  createMemoryToolModule,
+  createTaskToolModule,
+  createWorkspaceToolModule,
+} from '../runtime-modules/index.js';
+import { SubagentExecutor } from '../core/subagent/SubagentExecutor.js';
+import {
+  buildGeneralPurposeProfile,
+  loadSubagentProfiles,
+  resolveSubagentCapabilities,
+  resolveSubagentTools,
+} from '../core/subagent/index.js';
+import type { SubagentProfile } from '../core/subagent/types.js';
+import { createSubagentDelegationPort } from './subagent-orchestration.js';
+import type { ActiveParentTurn } from './subagent-orchestration.js';
+import type { MessageRouteContext } from './queue-types.js';
+import type { RegistrySnapshot } from '../core/registry/index.js';
 import type { RuntimeAppOptions, RuntimeBootstrapResult, RuntimeDependencies, RuntimeEvent } from './types.js';
 
 const log = Logger.get('RuntimeBootstrap');
@@ -56,8 +74,17 @@ export function createDefaultRuntimeDependencies(
       return new AgentRunner(config);
     },
 
-    getBuiltinTools(options) {
-      return getDefaultBuiltinTools(options);
+    getBuiltinContributionUnits(options, memoryManager) {
+      return Object.freeze([
+        createWorkspaceToolModule({
+          workspaceDir: options.workspaceDir,
+          fsWorkspaceOnly: options.fsWorkspaceOnly ?? true,
+          webFetchEnabled: options.webFetchEnabled ?? true,
+          execEnabled: options.execEnabled ?? true,
+          processEnabled: options.processEnabled ?? true,
+        }),
+        ...(memoryManager ? [createMemoryToolModule(memoryManager)] : []),
+      ]);
     },
   };
 
@@ -170,23 +197,88 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
       });
     }
 
-    const toolBundle = assembleRuntimeTools({
-      builtinTools: deps.getBuiltinTools({
-        workspaceDir: options.workspaceDir,
-        fsWorkspaceOnly: resolvedConfig.tools.fs?.workspaceOnly ?? true,
-        webFetchEnabled: true,
-        execEnabled: true,
-        processEnabled: true,
-      }),
-      memoryManager,
-      deny: resolvedConfig.tools.deny ?? [],
-    });
+    const toolOptions = {
+      workspaceDir: options.workspaceDir,
+      fsWorkspaceOnly: resolvedConfig.tools.fs?.workspaceOnly ?? true,
+      webFetchEnabled: true,
+      execEnabled: true,
+      processEnabled: true,
+    };
+    const runtimeContributionUnits = [
+      ...deps.getBuiltinContributionUnits(toolOptions, memoryManager),
+    ];
+    const toolPolicy = createApplicationToolPolicy(resolvedConfig.tools);
 
     const agentRunner = deps.createAgentRunner({
       sessionManager,
-      toolExecutor: toolBundle.executor,
       onEvent: options.onAgentEvent,
     });
+
+    const activeParentTurns = new Map<string, ActiveParentTurn>();
+    const routeContextByTurn = new Map<string, MessageRouteContext>();
+    const generalPurpose = buildGeneralPurposeProfile(options.workspaceDir);
+    const subagentProfiles = new Map<string, SubagentProfile>([
+      [generalPurpose.id, generalPurpose],
+    ]);
+    let registrySnapshot: RegistrySnapshot;
+
+    const subagentExecutor = new SubagentExecutor({
+      agentRunner,
+      systemPromptBuilder,
+      loadContextFilesFromDir: (absDir) =>
+        loadContextFilesFromDir(absDir, {
+          maxFileChars: resolvedConfig.workspace.maxFileChars,
+          maxTotalChars: resolvedConfig.workspace.maxTotalChars,
+        }),
+      workspaceDir: options.workspaceDir,
+      promptSafetyLevel: resolvedConfig.prompt?.safetyLevel ?? 'normal',
+      getToolProjection: () => registrySnapshot.tools,
+      getHookProjection: () => registrySnapshot.hooks,
+      resolveToolPolicy: (profile) => createApplicationToolPolicy(resolveSubagentTools(
+        profile,
+        resolvedConfig.tools.allow ?? [],
+        resolvedConfig.tools.deny ?? [],
+      )),
+    });
+    const delegationPort = createSubagentDelegationPort({
+      activeParents: activeParentTurns,
+      routeContextByTurn,
+      sessionManager,
+      modelResolver,
+      defaultProviderId,
+      defaultMaxTokens: resolvedConfig.llm.maxTokens,
+      maxDepth: resolvedConfig.subagents?.maxDepth ?? 1,
+      executor: subagentExecutor,
+      onEvent: options.onAgentEvent ?? (() => {}),
+    });
+
+    if (resolvedConfig.subagents?.enabled !== false) {
+      runtimeContributionUnits.push(createTaskToolModule({
+        delegationPort,
+        profileRegistry: subagentProfiles,
+        getCapabilities: (sessionKey) =>
+          resolveSubagentCapabilities(
+            sessionKey,
+            resolvedConfig.subagents?.maxDepth ?? 1,
+          ),
+        maxDepth: resolvedConfig.subagents?.maxDepth ?? 1,
+      }));
+    }
+
+    registrySnapshot = buildRegistrySnapshot({
+      providers: providerProjection,
+      units: runtimeContributionUnits,
+    });
+    const registeredToolNames = new Set(
+      registrySnapshot.tools.definitions.map((tool) => tool.name),
+    );
+    for (const profile of loadSubagentProfiles(
+      resolvedConfig.subagents?.list ?? [],
+      options.workspaceDir,
+      registeredToolNames,
+    )) {
+      subagentProfiles.set(profile.id, profile);
+    }
 
     const state = {
       phase: 'ready' as const,
@@ -198,7 +290,7 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
 
     log.info('bootstrap complete', {
       durationMs: Date.now() - startedAt,
-      tools: toolBundle.tools.length,
+      tools: registrySnapshot.tools.definitions.length,
       memoryEnabled: memoryManager !== null,
       contextFiles: contextFiles.length,
     });
@@ -206,7 +298,7 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
       type: 'app_ready',
       workspaceDir: options.workspaceDir,
       contextVersion: state.contextVersion,
-      toolNames: toolBundle.tools.map((tool) => tool.name),
+      toolNames: registrySnapshot.tools.definitions.map((tool) => tool.name),
       memoryEnabled: memoryManager !== null,
     });
 
@@ -216,18 +308,22 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
         resolvedConfig,
         workspaceDir: options.workspaceDir,
         sessionManager,
-        providerProjection,
+        registrySnapshot,
+        runtimeContributionUnits: Object.freeze(runtimeContributionUnits),
+        toolPolicy,
         modelResolver,
         defaultProviderId,
         resolveParentModel,
         memoryManager,
         systemPromptBuilder,
         userPromptBuilder,
-        toolBundle,
         contextFiles,
         agentRunner,
       },
       state,
+      subagentProfiles,
+      activeParentTurns,
+      routeContextByTurn,
     };
   } catch (error) {
     const info = classifyRuntimeError('startup', error);

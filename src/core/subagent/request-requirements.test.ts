@@ -24,7 +24,7 @@ describe('deriveSubagentRequestRequirements', () => {
           dimensions: { width: 1, height: 1 },
         },
       ],
-      tools: [{ name: 'read', description: 'Read', input_schema: {} }],
+      tools: [{ name: 'read', description: 'Read', inputSchema: {} }],
     })).toEqual({ tools: true, mediaKinds: ['image'] });
   });
 });

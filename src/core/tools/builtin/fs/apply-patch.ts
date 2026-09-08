@@ -244,7 +244,7 @@ export function createApplyPatchTool(workspaceDir: string, workspaceOnly = true)
         if (!input.trim()) {
           return {
             content: 'Invalid input for tool "apply_patch": "input" must be a non-empty string',
-            isError: true,
+            outcome: 'failed',
           };
         }
 
@@ -252,7 +252,7 @@ export function createApplyPatchTool(workspaceDir: string, workspaceOnly = true)
         if (hunks.length === 0) {
           return {
             content: 'Error executing tool "apply_patch": No files were modified.',
-            isError: true,
+            outcome: 'failed',
           };
         }
 
@@ -293,12 +293,13 @@ export function createApplyPatchTool(workspaceDir: string, workspaceOnly = true)
         }
 
         return {
+          outcome: 'success',
           content: formatSummary(summary),
         };
       } catch (error) {
         return {
           content: `Error executing tool "apply_patch": ${error instanceof Error ? error.message : String(error)}`,
-          isError: true,
+          outcome: 'failed',
         };
       }
     },

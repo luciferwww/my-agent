@@ -103,7 +103,7 @@ export const webFetchTool: Tool = {
       if (typeof params.url !== 'string' || !params.url.trim()) {
         return {
           content: 'Invalid input for tool "web_fetch": "url" must be a non-empty string',
-          isError: true,
+          outcome: 'failed',
         };
       }
 
@@ -111,7 +111,7 @@ export const webFetchTool: Tool = {
       if (targetUrl.protocol !== 'http:' && targetUrl.protocol !== 'https:') {
         return {
           content: 'Invalid input for tool "web_fetch": only http and https URLs are supported',
-          isError: true,
+          outcome: 'failed',
         };
       }
 
@@ -134,7 +134,7 @@ export const webFetchTool: Tool = {
         if (!response.ok) {
           return {
             content: `Error executing tool "web_fetch": request failed with status ${response.status}`,
-            isError: true,
+            outcome: 'failed',
           };
         }
 
@@ -144,6 +144,7 @@ export const webFetchTool: Tool = {
         const truncated = extracted.length > maxChars;
 
         return {
+          outcome: 'success',
           content: formatWebFetchResult({
             url: targetUrl.toString(),
             finalUrl: response.url || targetUrl.toString(),
@@ -156,13 +157,13 @@ export const webFetchTool: Tool = {
         if (error instanceof Error && error.name === 'AbortError') {
           return {
             content: `Error executing tool "web_fetch": request timed out after ${DEFAULT_TIMEOUT_MS / 1000} seconds`,
-            isError: true,
+            outcome: 'failed',
           };
         }
 
         return {
           content: `Error executing tool "web_fetch": ${error instanceof Error ? error.message : String(error)}`,
-          isError: true,
+          outcome: 'failed',
         };
       } finally {
         clearTimeout(timeout);
@@ -170,7 +171,7 @@ export const webFetchTool: Tool = {
     } catch (error) {
       return {
         content: `Error executing tool "web_fetch": ${error instanceof Error ? error.message : String(error)}`,
-        isError: true,
+        outcome: 'failed',
       };
     }
   },

@@ -74,7 +74,7 @@ export function createReadFileTool(workspaceDir: string, workspaceOnly = true): 
         if (startLine !== undefined && endLine !== undefined && startLine > endLine) {
           return {
             content: 'Invalid input for tool "read_file": "startLine" must be less than or equal to "endLine"',
-            isError: true,
+            outcome: 'failed',
           };
         }
 
@@ -82,7 +82,7 @@ export function createReadFileTool(workspaceDir: string, workspaceOnly = true): 
         if (!targetStat.isFile()) {
           return {
             content: `Invalid input for tool "read_file": path is not a file: ${target.displayPath}`,
-            isError: true,
+            outcome: 'failed',
           };
         }
 
@@ -92,6 +92,7 @@ export function createReadFileTool(workspaceDir: string, workspaceOnly = true): 
 
         if (totalLines === 0) {
           return {
+            outcome: 'success',
             content: `path: ${target.displayPath}\nlines: 0\n\n[empty file]`,
           };
         }
@@ -103,12 +104,13 @@ export function createReadFileTool(workspaceDir: string, workspaceOnly = true): 
         if (effectiveStart > totalLines) {
           return {
             content: `Invalid input for tool "read_file": startLine ${effectiveStart} exceeds file length ${totalLines}`,
-            isError: true,
+            outcome: 'failed',
           };
         }
 
         const selectedLines = lines.slice(effectiveStart - 1, effectiveEnd);
         return {
+          outcome: 'success',
           content: formatReadResult({
             displayPath: target.displayPath,
             startLine: effectiveStart,
@@ -121,7 +123,7 @@ export function createReadFileTool(workspaceDir: string, workspaceOnly = true): 
       } catch (error) {
         return {
           content: `Error executing tool "read_file": ${error instanceof Error ? error.message : String(error)}`,
-          isError: true,
+          outcome: 'failed',
         };
       }
     },

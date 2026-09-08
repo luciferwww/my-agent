@@ -32,7 +32,7 @@ describe('editFileTool', () => {
       newText: 'beta-updated',
     }, TEST_TOOL_CONTEXT);
 
-    expect(result.isError).toBeUndefined();
+    expect(result.outcome).toBe('success');
     expect(result.content).toContain('replacements: 1');
     expect(await readFile(join(workspaceDir, 'sample.txt'), 'utf8')).toContain('beta-updated');
   });
@@ -46,7 +46,7 @@ describe('editFileTool', () => {
       newText: 'gamma',
     }, TEST_TOOL_CONTEXT);
 
-    expect(result.isError).toBe(true);
+    expect(result.outcome).toBe('failed');
     expect(result.content).toContain('oldText not found');
   });
 
@@ -59,7 +59,7 @@ describe('editFileTool', () => {
       newText: 'gamma',
     }, TEST_TOOL_CONTEXT);
 
-    expect(result.isError).toBe(true);
+    expect(result.outcome).toBe('failed');
     expect(result.content).toContain('matched 2 times');
   });
 });

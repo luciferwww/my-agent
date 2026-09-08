@@ -60,14 +60,6 @@ export interface ContextHookMetadata {
   [key: string]: unknown;
 }
 
-/** 工具定义 */
-export interface ToolDefinition {
-  name: string;
-  description: string;
-  /** JSON Schema 格式的参数定义（可选） */
-  parameters?: Record<string, unknown>;
-}
-
 /**
  * SystemPromptBuilder.build() 的参数。
  * 所有字段均为可选，未传入时各 Section 使用默认值或跳过。
@@ -75,8 +67,8 @@ export interface ToolDefinition {
 export interface SystemPromptBuildParams {
   /** 构建模式，默认 'full' */
   mode?: PromptMode;
-  /** 可用工具列表，不传或空数组则跳过工具相关 Section */
-  tools?: ToolDefinition[];
+  /** Narrow Tool-name projection used only for capability-conditional prompt sections. */
+  toolNames?: readonly string[];
   /** 安全约束级别，默认 'normal'，'relaxed' 跳过安全 Section */
   safetyLevel?: 'strict' | 'normal' | 'relaxed';
   /** 注入的上下文文件（IDENTITY.md、SOUL.md 等） */

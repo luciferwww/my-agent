@@ -44,7 +44,7 @@ export function createFileSearchTool(workspaceDir: string): Tool {
         if (typeof params.query !== 'string' || !params.query.trim()) {
           return {
             content: 'Invalid input for tool "file_search": "query" must be a non-empty string',
-            isError: true,
+            outcome: 'failed',
           };
         }
 
@@ -57,12 +57,13 @@ export function createFileSearchTool(workspaceDir: string): Tool {
           .slice(0, maxResults);
 
         return {
+          outcome: 'success',
           content: formatResults(params.query, matches),
         };
       } catch (error) {
         return {
           content: `Error executing tool "file_search": ${error instanceof Error ? error.message : String(error)}`,
-          isError: true,
+          outcome: 'failed',
         };
       }
     },

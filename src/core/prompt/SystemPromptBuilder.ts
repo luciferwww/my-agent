@@ -1,6 +1,5 @@
 import type {
   SystemPromptBuildParams,
-  ToolDefinition,
   ContextFile,
 } from './types.js';
 import { renderAvailableSubagentsSection } from '../subagent/available-subagents.js';
@@ -15,9 +14,6 @@ import { renderAvailableSubagentsSection } from '../subagent/available-subagents
  *  4. safety-constraints   — 安全约束                       [full + minimal, safetyLevel 控制]
  *  5. memory-instructions  — memory tool 使用说明            [full only, 有 memory 工具时]
  *  6. project-context      — contextFiles 注入              [full + minimal, 有 contextFiles 时]
- *
- * 保留 slot（当前未渲染、代码卷裹以便未来复活）：
- *  · tool-definitions     — 可用工具列表，见 build() 里被注释掉的调用
  *
  * 依存扩展（§task spec §11）：
  *  7. workspace            — working directory 锚点         [full + minimal]
@@ -39,21 +35,6 @@ export class SystemPromptBuilder {
 
     // 2. datetime — full + minimal
     this.buildDatetimeSection(lines);
-
-    // tool-definitions slot — 已停用。
-    //
-    // 原因：对于原生支持 tool_use 的模型（Claude 及所有兼容 Anthropic API 的模型），
-    // 工具定义通过 LLM API 的 `tools` 参数传递，模型直接从该结构化参数中获取工具信息，
-    // 在 system prompt 里重复列出只会造成冗余。
-    //
-    // 对于通过 LLM proxy（如 LiteLLM、One API）接入的不原生支持 tool_use 的模型
-    // （如 DeepSeek、GLM 等），成熟的 proxy 通常会自行将 `tools` 参数转换为 prompt
-    // 注入，无需 my-agent 侧额外处理。
-    //
-    // 如未来发现有 proxy 不做此转换、需要 my-agent 直接在 prompt 中提供工具定义，
-    // 可取消注释此行并在 System Prompt 中补充结构化的工具说明。
-    //
-    // this.buildToolDefinitionsSection(lines, params);
 
     // 3. behavior-rules — full only
     if (!isMinimal) this.buildBehaviorRulesSection(lines);
@@ -102,22 +83,6 @@ export class SystemPromptBuilder {
 
     lines.push('# Current Date & Time');
     lines.push(`${dateStr} ${timeStr}`);
-    lines.push('');
-  }
-
-  // ── Section 3: tool-definitions ────────────────────────────
-
-  private buildToolDefinitionsSection(
-    lines: string[],
-    params: SystemPromptBuildParams,
-  ): void {
-    const tools = params.tools;
-    if (!tools?.length) return;
-
-    lines.push('# Available Tools');
-    tools.forEach((t: ToolDefinition) => {
-      lines.push(`- **${t.name}**: ${t.description}`);
-    });
     lines.push('');
   }
 
@@ -189,12 +154,9 @@ export class SystemPromptBuilder {
     lines: string[],
     params: SystemPromptBuildParams,
   ): void {
-    const tools = params.tools ?? [];
-    const hasMemoryTool = tools.some(
-      (t: ToolDefinition) =>
-        t.name === 'search_memory' ||
-        t.name === 'memory_search' ||
-        t.name === 'memory_get',
+    const toolNames = params.toolNames ?? [];
+    const hasMemoryTool = toolNames.some(
+      (name) => name === 'search_memory' || name === 'memory_search' || name === 'memory_get',
     );
     if (!hasMemoryTool) return;
 

@@ -28,7 +28,7 @@ describe('grepSearchTool', () => {
     await writeFile(join(workspaceDir, 'src', 'alpha.ts'), 'const token = 123;\nconst other = 456;\n');
 
     const result = await grepSearchTool.execute({ query: 'token', isRegexp: false }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBeUndefined();
+    expect(result.outcome).toBe('success');
     expect(result.content).toContain('src/alpha.ts:1: const token = 123;');
   });
 
@@ -43,7 +43,7 @@ describe('grepSearchTool', () => {
       includePattern: 'src/*.ts',
     }, TEST_TOOL_CONTEXT);
 
-    expect(result.isError).toBeUndefined();
+    expect(result.outcome).toBe('success');
     expect(result.content).toContain('src/alpha.ts:1: const value = 123;');
     expect(result.content).not.toContain('notes.txt');
   });

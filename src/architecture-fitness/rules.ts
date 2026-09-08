@@ -58,7 +58,6 @@ const MIXED_PRODUCTION_PATHS = new Set([
   'src/runtime/subagent-orchestration.ts',
   'src/runtime/summarize-assembled.ts',
   'src/runtime/tool-approval-policy.ts',
-  'src/runtime/tool-registry.ts',
   'src/runtime/types.ts',
   'src/core/session/index.ts',
   'src/core/session/lock.ts',
@@ -619,6 +618,12 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
   if (sourcePath.startsWith('src/platform/config/') || sourcePath === 'src/runtime/bootstrap.ts') {
     return 'Composition';
   }
+  if (
+    sourcePath.startsWith('src/runtime-modules/')
+    || sourcePath === 'src/runtime/registry-builder.ts'
+  ) {
+    return 'Composition';
+  }
   if (sourcePath.startsWith('src/compat/')) {
     return 'Composition';
   }
@@ -631,11 +636,12 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
     || sourcePath.startsWith('src/core/model-resolution/')
     || sourcePath.startsWith('src/core/prompt/')
     || sourcePath.startsWith('src/core/subagent/')
+    || sourcePath.startsWith('src/core/approval/')
     || sourcePath.startsWith('src/core/memory/')
   ) {
     return 'Application';
   }
-  if (sourcePath.startsWith('src/core/tools/')) {
+  if (sourcePath.startsWith('src/core/tools/') || sourcePath.startsWith('src/core/registry/')) {
     return 'Domain/Application';
   }
   return undefined;

@@ -34,13 +34,13 @@ afterEach(() => {
 describe('execTool', () => {
   it('returns stdout for a simple command', async () => {
     const result = await execTool.execute({ command: 'node -e "console.log(\'hello\')"' }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBeUndefined();
+    expect(result.outcome).toBe('success');
     expect(result.content).toContain('hello');
   });
 
   it('returns an error when the process exits non-zero', async () => {
     const result = await execTool.execute({ command: 'node -e "process.exit(1)"' }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBe(true);
+    expect(result.outcome).toBe('failed');
     expect(result.content).toContain('Process exited with code 1');
   });
 
@@ -49,7 +49,7 @@ describe('execTool', () => {
       command: 'node -e "setTimeout(() => console.log(\'late\'), 2000)"',
       timeout: 1,
     }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBe(true);
+    expect(result.outcome).toBe('failed');
     expect(result.content).toContain('Process timed out after 1 seconds');
   });
 
@@ -58,7 +58,7 @@ describe('execTool', () => {
       command: 'node -e "console.log(process.cwd())"',
       cwd: process.cwd(),
     }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBeUndefined();
+    expect(result.outcome).toBe('success');
     expect(result.content).toContain(process.cwd());
   });
 
@@ -67,7 +67,7 @@ describe('execTool', () => {
       command: 'node -e "console.log(process.env.TEST_EXEC_VALUE)"',
       env: { TEST_EXEC_VALUE: 'from-test' },
     }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBeUndefined();
+    expect(result.outcome).toBe('success');
     expect(result.content).toContain('from-test');
   });
 
@@ -75,7 +75,7 @@ describe('execTool', () => {
     const result = await execTool.execute({
       command: 'node -e "console.log(\'out\'); console.error(\'err\')"',
     }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBeUndefined();
+    expect(result.outcome).toBe('success');
     expect(result.content).toContain('out');
     expect(result.content).toContain('err');
   });
@@ -86,7 +86,7 @@ describe('execTool', () => {
       background: true,
     }, TEST_TOOL_CONTEXT);
 
-    expect(result.isError).toBeUndefined();
+    expect(result.outcome).toBe('success');
     const runId = extractRunId(result.content);
     const status = await processTool.execute({ action: 'status', runId }, TEST_TOOL_CONTEXT);
     expect(status.content).toContain(`runId: ${runId}`);

@@ -9,14 +9,9 @@ import type { SubagentProfile } from './types.js';
  * - `deny`: when the child sets `tools.deny`, entries are APPENDED to the
  *   parent's `deny`. When unset, the parent's `deny` is inherited.
  *
- * Note: this function deliberately does NOT cross-filter `allow` against
- * `deny` (i.e. it does NOT strip names that appear in both). Per spec
- * decision 5, tools listed in `deny` are filtered at tool-registration
- * time via `applyDenyFilter` and again at the run-time allow hook via
- * `resolveToolPolicy` (deny-wins is already enforced in
- * `tool-approval-policy.ts:25`). Duplicating that logic here would be
- * both redundant and would shift the deny-precedence invariant into
- * this module.
+ * This function deliberately does NOT cross-filter `allow` against `deny`.
+ * The Application Tool Policy owns deny precedence and Provider-definition
+ * visibility from the immutable Tool projection.
  */
 export interface ResolvedSubagentTools {
   allow: string[];

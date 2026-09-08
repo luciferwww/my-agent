@@ -13,6 +13,8 @@ import type {
   ChatMessage,
   ChatToolDefinition,
 } from './types.js';
+import { encodeAnthropicToolDefinition } from './tool-contract-codecs.js';
+import type { ToolCall } from '../../core/tools/index.js';
 
 const DEFAULT_MAX_TOKENS = 4096;
 
@@ -68,6 +70,7 @@ export class AnthropicClient implements LLMClient {
         name: string;
         inputJson: string;
       } | null = null;
+      const seenToolCallIds = new Set<string>();
 
       for await (const event of stream) {
         switch (event.type) {
@@ -95,17 +98,31 @@ export class AnthropicClient implements LLMClient {
 
           case 'content_block_stop': {
             if (currentToolUse) {
-              let input: Record<string, unknown> = {};
+              if (currentToolUse.id.trim() === '' || currentToolUse.name.trim() === '') {
+                throw new Error('Anthropic Tool Call id and name must be non-empty.');
+              }
+              if (seenToolCallIds.has(currentToolUse.id)) {
+                throw new Error(`Duplicate Anthropic Tool Call id "${currentToolUse.id}".`);
+              }
+              seenToolCallIds.add(currentToolUse.id);
+              let input:
+                | { readonly state: 'ready'; readonly value: Readonly<Record<string, unknown>> }
+                | { readonly state: 'invalid'; readonly reason: 'malformed_json' | 'not_an_object' };
               try {
-                input = JSON.parse(currentToolUse.inputJson || '{}');
+                const decoded: unknown = JSON.parse(currentToolUse.inputJson || '{}');
+                input = isPlainObject(decoded)
+                  ? { state: 'ready', value: decoded }
+                  : { state: 'invalid', reason: 'not_an_object' };
               } catch {
-                // 解析失败使用空对象
+                input = { state: 'invalid', reason: 'malformed_json' };
               }
               yield {
-                type: 'tool_use',
-                id: currentToolUse.id,
-                name: currentToolUse.name,
-                input,
+                type: 'tool_call',
+                call: Object.freeze({
+                  callId: currentToolUse.id,
+                  name: currentToolUse.name,
+                  input: Object.freeze(input),
+                }),
               };
               currentToolUse = null;
             }
@@ -147,6 +164,7 @@ export class AnthropicClient implements LLMClient {
    */
   async chat(params: ChatParams): Promise<ChatResponse> {
     const contentBlocks: ChatContentBlock[] = [];
+    const toolCalls: ToolCall[] = [];
     let currentText = '';
     let stopReason = 'end_turn';
     let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
@@ -157,18 +175,21 @@ export class AnthropicClient implements LLMClient {
           currentText += event.text;
           break;
 
-        case 'tool_use':
+        case 'tool_call':
+          toolCalls.push(event.call);
           // 先把累积的文本作为一个 text block
           if (currentText) {
             contentBlocks.push({ type: 'text', text: currentText });
             currentText = '';
           }
-          contentBlocks.push({
-            type: 'tool_use',
-            id: event.id,
-            name: event.name,
-            input: event.input,
-          });
+          if (event.call.input.state === 'ready') {
+            contentBlocks.push({
+              type: 'tool_use',
+              id: event.call.callId,
+              name: event.call.name,
+              input: { ...event.call.input.value },
+            });
+          }
           break;
 
         case 'message_end':
@@ -186,7 +207,12 @@ export class AnthropicClient implements LLMClient {
       contentBlocks.push({ type: 'text', text: currentText });
     }
 
-    return { content: contentBlocks, stopReason, usage };
+    return {
+      content: contentBlocks,
+      toolCalls: Object.freeze(toolCalls),
+      stopReason,
+      usage,
+    };
   }
 }
 
@@ -261,9 +287,17 @@ function convertMessages(
 function convertTools(
   tools: ChatToolDefinition[],
 ): Anthropic.Tool[] {
-  return tools.map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    input_schema: tool.input_schema as Anthropic.Tool.InputSchema,
-  }));
+  return tools.map((tool) => {
+    const wire = encodeAnthropicToolDefinition(tool);
+    return {
+      ...wire,
+      input_schema: wire.input_schema as Anthropic.Tool.InputSchema,
+    };
+  });
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  return prototype === Object.prototype || prototype === null;
 }

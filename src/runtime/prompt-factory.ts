@@ -1,5 +1,5 @@
 import type { AgentDefaults } from '../platform/config/types.js';
-import type { ToolDefinition as PromptToolDefinition, SystemPromptBuildParams } from '../core/prompt/types.js';
+import type { SystemPromptBuildParams } from '../core/prompt/types.js';
 import type { ContextFile } from '../core/workspace/types.js';
 import type { AvailableSubagentEntry } from '../core/subagent/available-subagents.js';
 import type { RunTurnParams } from './types.js';
@@ -7,7 +7,7 @@ import type { RunTurnParams } from './types.js';
 export interface BuildSystemPromptParamsInput {
   config: AgentDefaults;
   contextFiles: ContextFile[];
-  promptDefinitions: PromptToolDefinition[];
+  toolNames: readonly string[];
   overrides: Pick<RunTurnParams, 'promptMode' | 'safetyLevel'>;
   /**
    * 工作目录绝对路径。由 RuntimeApp 在装配 prompt 时注入；驱动
@@ -28,7 +28,7 @@ export function buildSystemPromptParams(
     mode: input.overrides.promptMode,
     safetyLevel: input.overrides.safetyLevel ?? input.config.prompt.safetyLevel,
     contextFiles: input.contextFiles,
-    tools: input.promptDefinitions,
+    toolNames: input.toolNames,
     workspaceDir: input.workspaceDir,
     availableSubagents: input.availableSubagents,
   };

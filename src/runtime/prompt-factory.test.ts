@@ -30,7 +30,7 @@ describe('runtime prompt factory', () => {
     const params = buildSystemPromptParams({
       config: baseConfig,
       contextFiles: [{ path: 'IDENTITY.md', content: 'identity' }],
-      promptDefinitions: [{ name: 'demo_tool', description: 'Demo', parameters: { type: 'object' } }],
+      toolNames: ['demo_tool'],
       overrides: {
         promptMode: 'minimal',
         safetyLevel: 'strict',
@@ -40,14 +40,14 @@ describe('runtime prompt factory', () => {
     expect(params.mode).toBe('minimal');
     expect(params.safetyLevel).toBe('strict');
     expect(params.contextFiles).toHaveLength(1);
-    expect(params.tools).toHaveLength(1);
+    expect(params.toolNames).toEqual(['demo_tool']);
   });
 
   it('threads workspaceDir into the SystemPromptBuildParams', () => {
     const params = buildSystemPromptParams({
       config: baseConfig,
       contextFiles: [],
-      promptDefinitions: [],
+      toolNames: [],
       overrides: { promptMode: 'full' },
       workspaceDir: '/work/space',
     });
@@ -58,7 +58,7 @@ describe('runtime prompt factory', () => {
     const params = buildSystemPromptParams({
       config: baseConfig,
       contextFiles: [],
-      promptDefinitions: [],
+      toolNames: [],
       overrides: { promptMode: 'full' },
       availableSubagents: [
         { id: 'general-purpose', description: 'fallback' },
@@ -75,7 +75,7 @@ describe('runtime prompt factory', () => {
     const params = buildSystemPromptParams({
       config: baseConfig,
       contextFiles: [],
-      promptDefinitions: [],
+      toolNames: [],
       overrides: { promptMode: 'full' },
     });
     expect(params.workspaceDir).toBeUndefined();

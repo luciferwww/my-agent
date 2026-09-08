@@ -9,13 +9,17 @@ import type {
   RunResult,
   AgentEvent,
   ToolResult,
-  ToolExecutor,
   PendingMessageReader,
   TurnContext,
 } from './types.js';
-import type { ToolContext } from '../tools/types.js';
+import type {
+  CanonicalToolResult,
+  ToolExecutionContext,
+  ToolCall,
+  ToolDefinition,
+  ToolResultOutcome,
+} from '../tools/types.js';
 import type { CompactionConfig } from '../../platform/config/types.js';
-import type { HookName, HookHandlerMap, HookRegistration } from './hooks/index.js';
 import { runBeforeToolCall, runAfterToolCall, runBeforeCompaction, runAfterCompaction } from './hooks/index.js';
 import { pruneToolResults, pruneToolResultsAggregate } from './context/tool-result-pruning.js';
 import { checkContextBudget } from './context/context-budget.js';
@@ -73,46 +77,11 @@ const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
  */
 export class AgentRunner {
   private sessionManager: SessionManager;
-  private toolExecutor?: ToolExecutor;
   private onEvent?: (event: AgentEvent) => void;
-  private hookRegistrations: HookRegistration[] = [];
 
   constructor(config: AgentRunnerConfig) {
     this.sessionManager = config.sessionManager;
-    this.toolExecutor = config.toolExecutor;
     this.onEvent = config.onEvent;
-  }
-
-  /**
-   * 替换 toolExecutor。供 RuntimeApp.create() 在 bootstrap 之后追加 `task` 工具时调用：
-  * task 工具依赖 Runtime-owned delegation Port，而该 Port 依赖 RuntimeApp 实例字段，
-   * 因此 toolBundle 只能在 RuntimeApp.create 内部完工，AgentRunner 必须支持后置替换。
-   *
-   * 仅在 RuntimeApp.create 内部、`run()` 启动之前调用；运行中调用结果未定义。
-   */
-  setToolExecutor(executor: ToolExecutor): void {
-    this.toolExecutor = executor;
-  }
-
-  on<K extends HookName>(
-    hookName: K,
-    handler: HookHandlerMap[K],
-    options?: { priority?: number; name?: string },
-  ): this {
-    this.hookRegistrations.push({
-      hookName,
-      handler,
-      priority: options?.priority ?? 0,
-      name: options?.name,
-    } as HookRegistration);
-    return this;
-  }
-
-  private getHooks<K extends HookName>(hookName: K): Array<{ handler: HookHandlerMap[K]; name?: string }> {
-    return this.hookRegistrations
-      .filter((r): r is HookRegistration<K> => r.hookName === hookName)
-      .sort((a, b) => b.priority - a.priority)
-      .map((r) => ({ handler: r.handler as HookHandlerMap[K], name: r.name }));
   }
 
   /**
@@ -457,6 +426,7 @@ export class AgentRunner {
     compaction: CompactionConfig,
   ): Promise<Omit<RunResult, 'compacted'>> {
     const maxLlmCalls = params.maxLlmCalls ?? DEFAULT_MAX_LLM_CALLS;
+    const turnSignal = params.signal ?? new AbortController().signal;
 
     // 0. 净化会话末尾的孤立 trailing user（来自上一次失败/中断的遗留）
     this.sanitizeSessionTail(turnCtx);
@@ -577,7 +547,7 @@ export class AgentRunner {
         const llmResult = await this.callLLMStream(turnCtx, {
           system: params.systemPrompt,
           messages,
-          tools: params.tools,
+          tools: [...params.toolProjection.visibleDefinitions(params.toolPolicy)],
         }, params.resolvedModel, params.signal);
 
         totalUsage = {
@@ -628,9 +598,7 @@ export class AgentRunner {
           return { text, content: lastContent, stopReason: lastStopReason, usage: totalUsage, toolRounds: totalToolRounds };
         }
 
-        const toolUseBlocks = llmResult.content.filter(
-          (b): b is Extract<ChatContentBlock, { type: 'tool_use' }> => b.type === 'tool_use',
-        );
+        const toolUseBlocks = llmResult.toolCalls;
 
         if (toolUseBlocks.length === 0) {
           // 没有 tool calls → 退出循环
@@ -638,75 +606,70 @@ export class AgentRunner {
         } else {
           // 执行工具
           const toolResultBlocks: ChatContentBlock[] = [];
+          const afterToolCallSettlements: Promise<unknown>[] = [];
           for (const toolUse of toolUseBlocks) {
-            // ② 工具循环 abort check：下一 tool 启动前检查
-            // R6' / D6：正在跑的 tool 不打断（跑完才退），检查只在 tool 之间。
-            if (params.signal?.aborted) {
-              throw new DOMException('Aborted', 'AbortError');
-            }
+            // Event schema migration is outside Slice 3; retain the existing event shape.
+            const eventInput = toolUse.input.state === 'ready' ? toolUse.input.value : {};
+            this.emit(turnCtx, { type: 'tool_use', name: toolUse.name, input: eventInput });
 
-            // tool_use 事件发原始 input（hook 运行之前）
-            this.emit(turnCtx, { type: 'tool_use', name: toolUse.name, input: toolUse.input });
+            const execution = turnSignal.aborted
+              ? {
+                  result: this.canonicalToolResult(
+                    toolUse.callId,
+                    'not_executed',
+                    `Tool "${toolUse.name}" was not executed because the Turn was aborted.`,
+                  ),
+                  effectiveInput: eventInput,
+                  implementationStarted: false,
+                }
+              : await this.executeCanonicalToolCall(toolUse, params, turnSignal);
 
-            // before_tool_call hooks（sequential，priority 降序）
-            let effectiveInput = toolUse.input;
-            const beforeHooks = this.getHooks('before_tool_call');
-            if (beforeHooks.length > 0) {
-              const beforeResult = await runBeforeToolCall(beforeHooks, {
-                toolName: toolUse.name,
-                input: toolUse.input,
-                turnId: params.turnId,
-                sessionKey: params.sessionKey,
-                signal: params.signal,
-              });
-              if (beforeResult.action === 'deny') {
-                const blocked: ToolResult = { content: `Tool blocked: ${beforeResult.reason}`, isError: true };
-                this.emit(turnCtx, { type: 'tool_result', name: toolUse.name, result: blocked });
-                toolResultBlocks.push({ type: 'tool_result', tool_use_id: toolUse.id, content: blocked.content });
-                continue;
-              }
-              effectiveInput = beforeResult.input;
-            }
-
-            // 执行工具
-            const startTime = Date.now();
-            const toolCtx: ToolContext = {
-              sessionKey: params.sessionKey,
-              turnId: params.turnId,
-              toolUseId: toolUse.id,
-              signal: params.signal, // core-abort-spec.md §7.5：透传给 tool；tool 自行决定是否响应
-            };
-            const result = await this.executeTool(toolUse.name, effectiveInput, toolCtx);
-            const durationMs = Date.now() - startTime;
-
-            this.emit(turnCtx, { type: 'tool_result', name: toolUse.name, result });
+            const legacyResult = this.toLegacyToolResult(execution.result);
+            this.emit(turnCtx, { type: 'tool_result', name: toolUse.name, result: legacyResult });
             toolResultBlocks.push({
               type: 'tool_result',
-              tool_use_id: toolUse.id,
-              content: result.content,
+              tool_use_id: toolUse.callId,
+              content: execution.result.content,
             });
 
-            // after_tool_call hooks（fire-and-forget，使用修改后的 input）
-            const afterHooks = this.getHooks('after_tool_call');
-            if (afterHooks.length > 0) {
-              runAfterToolCall(afterHooks, {
+            if (params.hookProjection.afterToolCall.length > 0) {
+              afterToolCallSettlements.push(runAfterToolCall(params.hookProjection.afterToolCall, {
                 toolName: toolUse.name,
-                input: effectiveInput,
-                result,
-                durationMs,
+                input: execution.effectiveInput,
+                result: execution.result,
+                durationMs: execution.durationMs,
+                implementationStarted: execution.implementationStarted,
                 turnId: params.turnId,
                 sessionKey: params.sessionKey,
-              });
+              }, turnSignal));
             }
           }
 
           // toolResult push 到 messages（Anthropic API 格式：role=user）
           messages.push({ role: 'user', content: toolResultBlocks });
 
-          await this.sessionManager.appendMessage(params.sessionKey, {
-            role: 'toolResult',
-            content: toolResultBlocks,
-          });
+          try {
+            await this.sessionManager.appendMessage(params.sessionKey, {
+              role: 'toolResult',
+              content: toolResultBlocks,
+            });
+          } finally {
+            await Promise.all(afterToolCallSettlements);
+          }
+
+          if (turnSignal.aborted) {
+            pendingSteeringMessages = await this.readPendingMessages(params.getSteeringMessages);
+            if (pendingSteeringMessages.length > 0) {
+              logger.info('dropped pending steering on abort', {
+                sessionKey: params.sessionKey,
+                count: pendingSteeringMessages.length,
+              });
+            }
+            return this.buildAbortedResult(lastContent, {
+              usage: totalUsage,
+              toolRounds: totalToolRounds,
+            });
+          }
 
           // Layer 1: 新 tool result 追加后做 per-result 裁剪
           if (compaction.enabled) {
@@ -791,15 +754,18 @@ export class AgentRunner {
     // 加载当前历史消息（用于压缩，不含当前用户消息）
     const messages = this.loadHistory(params.sessionKey);
     const estimatedTokens = estimatePromptTokens({ messages });
+    const turnSignal = params.signal ?? new AbortController().signal;
 
-    const beforeCompactionHooks = this.getHooks('before_compaction');
-    if (beforeCompactionHooks.length > 0) {
-      runBeforeCompaction(beforeCompactionHooks, {
+    if (params.hookProjection.beforeCompaction.length > 0) {
+      await runBeforeCompaction(params.hookProjection.beforeCompaction, {
         trigger,
         estimatedTokens,
         turnId: params.turnId,
         sessionKey: params.sessionKey,
-      });
+      }, turnSignal);
+      if (turnSignal.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
     }
 
     this.emit(turnCtx, { type: 'compaction_start', trigger, estimatedTokens });
@@ -838,16 +804,15 @@ export class AgentRunner {
       droppedMessages: compactResult.stats.droppedMessages,
     });
 
-    const afterCompactionHooks = this.getHooks('after_compaction');
-    if (afterCompactionHooks.length > 0) {
-      runAfterCompaction(afterCompactionHooks, {
+    if (params.hookProjection.afterCompaction.length > 0) {
+      await runAfterCompaction(params.hookProjection.afterCompaction, {
         trigger,
         tokensBefore: compactResult.stats.tokensBefore,
         tokensAfter: compactResult.stats.tokensAfter,
         droppedMessages: compactResult.stats.droppedMessages,
         turnId: params.turnId,
         sessionKey: params.sessionKey,
-      });
+      }, turnSignal);
     }
 
     this.emit(turnCtx, {
@@ -932,12 +897,19 @@ export class AgentRunner {
     params: {
       system?: string;
       messages: ChatMessage[];
-      tools?: RunParams['tools'];
+      tools?: ToolDefinition[];
     },
     resolvedModel: ResolvedModel,
     signal?: AbortSignal,
-  ): Promise<{ content: ChatContentBlock[]; stopReason: string; usage: TokenUsage }> {
+  ): Promise<{
+    content: ChatContentBlock[];
+    toolCalls: ToolCall[];
+    stopReason: string;
+    usage: TokenUsage;
+  }> {
     const contentBlocks: ChatContentBlock[] = [];
+    const toolCalls: ToolCall[] = [];
+    const toolCallIds = new Set<string>();
     let currentText = '';
     let stopReason = 'end_turn';
     let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
@@ -957,16 +929,24 @@ export class AgentRunner {
             this.emit(turnCtx, { type: 'text_delta', text: event.text });
             break;
 
-          case 'tool_use':
+          case 'tool_call':
+            if (event.call.callId.trim() === '' || event.call.name.trim() === '') {
+              throw new Error('Canonical Tool Call id and name must be non-empty.');
+            }
+            if (toolCallIds.has(event.call.callId)) {
+              throw new Error(`Duplicate canonical Tool Call id "${event.call.callId}".`);
+            }
+            toolCallIds.add(event.call.callId);
             if (currentText) {
               contentBlocks.push({ type: 'text', text: currentText });
               currentText = '';
             }
+            toolCalls.push(event.call);
             contentBlocks.push({
               type: 'tool_use',
-              id: event.id,
-              name: event.name,
-              input: event.input,
+              id: event.call.callId,
+              name: event.call.name,
+              input: event.call.input.state === 'ready' ? { ...event.call.input.value } : {},
             });
             break;
 
@@ -991,6 +971,7 @@ export class AgentRunner {
         }
         return {
           content: contentBlocks,
+          toolCalls,
           stopReason: 'aborted',
           usage, // 中断发生在 message_end 之前 → {0,0}（best-effort，Anthropic API 已计费但 SDK 未返回）
         };
@@ -1002,32 +983,207 @@ export class AgentRunner {
       contentBlocks.push({ type: 'text', text: currentText });
     }
 
-    return { content: contentBlocks, stopReason, usage };
+    return { content: contentBlocks, toolCalls, stopReason, usage };
   }
 
-  /**
-   * 执行工具。如果没有 toolExecutor，返回错误消息。
-   */
-  private async executeTool(
-    toolName: string,
-    input: Record<string, unknown>,
-    ctx: ToolContext,
-  ): Promise<ToolResult> {
-    if (!this.toolExecutor) {
+  private async executeCanonicalToolCall(
+    toolUse: ToolCall,
+    params: RunParams,
+    turnSignal: AbortSignal,
+  ): Promise<{
+    result: CanonicalToolResult;
+    effectiveInput: Record<string, unknown>;
+    implementationStarted: boolean;
+    durationMs?: number;
+  }> {
+    if (toolUse.input.state === 'invalid') {
       return {
-        content: `Error: No tool executor configured. Cannot execute tool "${toolName}".`,
-        isError: true,
+        result: this.canonicalToolResult(
+          toolUse.callId,
+          'invalid_input',
+          `Invalid input for tool "${toolUse.name}": ${toolUse.input.reason}.`,
+        ),
+        effectiveInput: {},
+        implementationStarted: false,
       };
     }
 
-    try {
-      return await this.toolExecutor(toolName, input, ctx);
-    } catch (err) {
+    const resolvedTool = params.toolProjection.resolve(toolUse.name);
+    if (!resolvedTool) {
       return {
-        content: `Error executing tool "${toolName}": ${err instanceof Error ? err.message : String(err)}`,
-        isError: true,
+        result: this.canonicalToolResult(
+          toolUse.callId,
+          'unknown_tool',
+          `Unknown tool: "${toolUse.name}".`,
+        ),
+        effectiveInput: { ...toolUse.input.value },
+        implementationStarted: false,
       };
     }
+
+    let effectiveInput = { ...toolUse.input.value };
+    try {
+      const beforeResult = await runBeforeToolCall(params.hookProjection.beforeToolCall, {
+        toolName: toolUse.name,
+        input: effectiveInput,
+        turnId: params.turnId,
+        sessionKey: params.sessionKey,
+        signal: turnSignal,
+      });
+      effectiveInput = beforeResult.input;
+      if (beforeResult.action === 'deny') {
+        return {
+          result: this.canonicalToolResult(
+            toolUse.callId,
+            'denied',
+            `Tool blocked: ${beforeResult.reason}`,
+          ),
+          effectiveInput,
+          implementationStarted: false,
+        };
+      }
+    } catch (error) {
+      const outcome: ToolResultOutcome = this.isAbortError(error, turnSignal)
+        ? 'aborted'
+        : 'failed';
+      return {
+        result: this.canonicalToolResult(
+          toolUse.callId,
+          outcome,
+          `Tool interceptor failed: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+        effectiveInput,
+        implementationStarted: false,
+      };
+    }
+
+    const validation = resolvedTool.validator.validate(effectiveInput);
+    if (!validation.valid) {
+      const details = validation.errors
+        .map((error) => `${error.instancePath || '/'} ${error.message}`)
+        .join('; ');
+      return {
+        result: this.canonicalToolResult(
+          toolUse.callId,
+          'invalid_input',
+          `Invalid input for tool "${toolUse.name}": ${details}`,
+        ),
+        effectiveInput,
+        implementationStarted: false,
+      };
+    }
+
+    const policyDecision = params.toolPolicy.decide(
+      toolUse.name,
+      params.approvalCapability !== undefined,
+    );
+    if (policyDecision === 'deny') {
+      return {
+        result: this.canonicalToolResult(
+          toolUse.callId,
+          'denied',
+          `Tool "${toolUse.name}" is denied by Application policy.`,
+        ),
+        effectiveInput,
+        implementationStarted: false,
+      };
+    }
+
+    if (policyDecision === 'requires_approval') {
+      try {
+        const approval = await params.approvalCapability!.request({
+          callId: toolUse.callId,
+          toolName: toolUse.name,
+          input: effectiveInput,
+          sessionKey: params.sessionKey,
+          turnId: params.turnId,
+        }, turnSignal);
+        if (approval.outcome !== 'approved') {
+          const outcome: ToolResultOutcome = approval.outcome === 'aborted'
+            ? 'aborted'
+            : approval.outcome === 'unavailable'
+              ? 'unavailable'
+              : approval.outcome === 'failed'
+                ? 'failed'
+                : 'denied';
+          const reason = approval.outcome === 'failed'
+            ? approval.message
+            : approval.reason;
+          return {
+            result: this.canonicalToolResult(
+              toolUse.callId,
+              outcome,
+              `Tool approval ${approval.outcome}: ${reason}.`,
+            ),
+            effectiveInput,
+            implementationStarted: false,
+          };
+        }
+      } catch (error) {
+        const outcome: ToolResultOutcome = this.isAbortError(error, turnSignal)
+          ? 'aborted'
+          : 'failed';
+        return {
+          result: this.canonicalToolResult(
+            toolUse.callId,
+            outcome,
+            `Tool approval failed: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+          effectiveInput,
+          implementationStarted: false,
+        };
+      }
+    }
+
+    const startTime = Date.now();
+    const toolContext: ToolExecutionContext = {
+      sessionKey: params.sessionKey,
+      turnId: params.turnId,
+      callId: toolUse.callId,
+      signal: turnSignal,
+    };
+    try {
+      const result = await resolvedTool.execute(effectiveInput, toolContext);
+      return {
+        result: this.canonicalToolResult(
+          toolUse.callId,
+          result.outcome,
+          result.content,
+        ),
+        effectiveInput,
+        implementationStarted: true,
+        durationMs: Date.now() - startTime,
+      };
+    } catch (error) {
+      const outcome: ToolResultOutcome = this.isAbortError(error, turnSignal)
+        ? 'aborted'
+        : 'failed';
+      return {
+        result: this.canonicalToolResult(
+          toolUse.callId,
+          outcome,
+          `Error executing tool "${toolUse.name}": ${error instanceof Error ? error.message : String(error)}`,
+        ),
+        effectiveInput,
+        implementationStarted: true,
+        durationMs: Date.now() - startTime,
+      };
+    }
+  }
+
+  private canonicalToolResult(
+    callId: string,
+    outcome: ToolResultOutcome,
+    content: string,
+  ): CanonicalToolResult {
+    return Object.freeze({ callId, outcome, content });
+  }
+
+  private toLegacyToolResult(result: CanonicalToolResult): ToolResult {
+    return {
+      content: result.content,
+      isError: result.outcome !== 'success',
+    };
   }
 
   /** 从 content blocks 中提取纯文本 */

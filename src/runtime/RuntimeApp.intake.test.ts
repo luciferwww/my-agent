@@ -9,6 +9,7 @@ import type {
 } from '../adapters/channel/types.js';
 import type { ChatContentBlock, ChatMessage } from '../adapters/llm/types.js';
 import type { RunResult } from '../core/runner/types.js';
+import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import type { Tool } from '../core/tools/types.js';
 import {
   AgentRunner,
@@ -625,7 +626,7 @@ async function buildApp(
     description: 'Demo tool',
     inputSchema: { type: 'object', properties: {} },
     async execute() {
-      return { content: 'ok' };
+      return { outcome: 'success', content: 'ok' };
     },
   };
 
@@ -679,9 +680,8 @@ async function buildApp(
       : ({
           run: runnerRun,
           on: vi.fn(),
-          setToolExecutor: vi.fn(),
         }) as unknown as AgentRunner,
-    getBuiltinTools: () => [builtinTool],
+    getBuiltinContributionUnits: () => [builtinUnit(builtinTool)],
   };
 
   const runtimeEvents: RuntimeEvent[] = [];
@@ -705,6 +705,16 @@ async function buildApp(
   app.registerChannel(testChannel.channel);
 
   return { app, runnerRun, testChannel, runtimeEvents, agentEvents };
+}
+
+function builtinUnit(tool: Tool): RuntimeContributionUnit {
+  return {
+    id: `builtin-test-${tool.name}`,
+    source: 'builtin',
+    register(api) {
+      api.registerTool(tool);
+    },
+  };
 }
 
 function assertNoAttachmentEvents(

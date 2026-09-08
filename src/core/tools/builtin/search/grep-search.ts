@@ -73,14 +73,14 @@ export function createGrepSearchTool(workspaceDir: string): Tool {
         if (typeof params.query !== 'string' || !params.query.trim()) {
           return {
             content: 'Invalid input for tool "grep_search": "query" must be a non-empty string',
-            isError: true,
+            outcome: 'failed',
           };
         }
 
         if (typeof params.isRegexp !== 'boolean') {
           return {
             content: 'Invalid input for tool "grep_search": "isRegexp" must be a boolean',
-            isError: true,
+            outcome: 'failed',
           };
         }
 
@@ -123,6 +123,7 @@ export function createGrepSearchTool(workspaceDir: string): Tool {
 
             if (maxResults && matches.length >= maxResults) {
               return {
+                outcome: 'success',
                 content: formatResults(params.query, params.isRegexp, matches),
               };
             }
@@ -130,12 +131,13 @@ export function createGrepSearchTool(workspaceDir: string): Tool {
         }
 
         return {
+          outcome: 'success',
           content: formatResults(params.query, params.isRegexp, matches),
         };
       } catch (error) {
         return {
           content: `Error executing tool "grep_search": ${error instanceof Error ? error.message : String(error)}`,
-          isError: true,
+          outcome: 'failed',
         };
       }
     },

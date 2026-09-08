@@ -1,7 +1,6 @@
 import type { AppConfig, AgentDefaults, DeepPartial } from '../platform/config/types.js';
 import type {
   ChatContentBlock,
-  ChatToolDefinition,
   TokenUsage,
 } from '../core/model-invocation/index.js';
 import type {
@@ -11,41 +10,38 @@ import type {
 } from '../core/model-resolution/index.js';
 import type { MemoryManager } from '../core/memory/MemoryManager.js';
 import type { SystemPromptBuilder } from '../core/prompt/SystemPromptBuilder.js';
-import type { ToolDefinition as PromptToolDefinition } from '../core/prompt/types.js';
 import type { SessionManager, SessionManagerOptions } from '../core/session/SessionManager.js';
-import type { Tool, ToolExecutor } from '../core/tools/types.js';
+import type { RuntimeContributionUnit, RegistrySnapshot } from '../core/registry/index.js';
+import type { ApplicationToolPolicy } from '../core/tools/types.js';
 import type { ContextFile } from '../core/workspace/types.js';
 import type { AgentEvent, AgentRunner, AgentRunnerConfig } from '../core/runner/index.js';
-
-export interface RuntimeToolBundle {
-  tools: Tool[];
-  executor: ToolExecutor;
-  llmDefinitions: ChatToolDefinition[];
-  promptDefinitions: PromptToolDefinition[];
-}
+import type { SubagentProfile } from '../core/subagent/types.js';
+import type { ActiveParentTurn } from './subagent-orchestration.js';
+import type { MessageRouteContext } from './queue-types.js';
 
 import type { UserPromptBuilder } from '../core/prompt/UserPromptBuilder.js';
 
 export interface RuntimeResourceSet {
-  appConfig: AppConfig;
-  resolvedConfig: AgentDefaults;
-  workspaceDir: string;
-  sessionManager: SessionManager;
-  providerProjection: readonly ProviderProjectionEntry[];
-  modelResolver: ModelResolver;
-  defaultProviderId: string;
-  resolveParentModel(input: {
+  readonly appConfig: AppConfig;
+  readonly resolvedConfig: AgentDefaults;
+  readonly workspaceDir: string;
+  readonly sessionManager: SessionManager;
+  readonly registrySnapshot: RegistrySnapshot;
+  readonly runtimeContributionUnits: readonly RuntimeContributionUnit[];
+  readonly toolPolicy: ApplicationToolPolicy;
+  readonly modelResolver: ModelResolver;
+  readonly defaultProviderId: string;
+  readonly resolveParentModel: (input: {
     model?: string;
     maxTokens?: number;
     tools: boolean;
     mediaKinds: readonly string[];
-  }): ResolvedModel;
-  memoryManager: MemoryManager | null;
-  systemPromptBuilder: SystemPromptBuilder;
-  userPromptBuilder: UserPromptBuilder;
-  toolBundle: RuntimeToolBundle;
+  }) => ResolvedModel;
+  readonly memoryManager: MemoryManager | null;
+  readonly systemPromptBuilder: SystemPromptBuilder;
+  readonly userPromptBuilder: UserPromptBuilder;
   contextFiles: ContextFile[];
-  agentRunner: AgentRunner;
+  readonly agentRunner: AgentRunner;
 }
 
 export interface RuntimeProviderOptions {
@@ -77,7 +73,10 @@ export interface RuntimeDependencies {
   createMemoryManager(options: RuntimeMemoryOptions): Promise<MemoryManager | null>;
   createSystemPromptBuilder(): SystemPromptBuilder;
   createAgentRunner(config: AgentRunnerConfig): AgentRunner;
-  getBuiltinTools(options: RuntimeBuiltinToolOptions): Tool[];
+  getBuiltinContributionUnits(
+    options: RuntimeBuiltinToolOptions,
+    memoryManager: MemoryManager | null,
+  ): readonly RuntimeContributionUnit[];
 }
 
 export interface RuntimeAppOptions {
@@ -246,6 +245,9 @@ export interface RuntimeDisposable {
 }
 
 export interface RuntimeBootstrapResult {
-  resources: RuntimeResourceSet;
-  state: RuntimeLifecycleState;
+  readonly resources: RuntimeResourceSet;
+  readonly state: RuntimeLifecycleState;
+  readonly subagentProfiles: ReadonlyMap<string, SubagentProfile>;
+  readonly activeParentTurns: Map<string, ActiveParentTurn>;
+  readonly routeContextByTurn: Map<string, MessageRouteContext>;
 }

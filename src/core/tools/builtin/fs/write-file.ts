@@ -35,7 +35,7 @@ export function createWriteFileTool(workspaceDir: string, workspaceOnly = true):
         if (typeof params.content !== 'string') {
           return {
             content: 'Invalid input for tool "write_file": "content" must be a string',
-            isError: true,
+            outcome: 'failed',
           };
         }
 
@@ -52,6 +52,7 @@ export function createWriteFileTool(workspaceDir: string, workspaceOnly = true):
         await writeFile(target.resolvedPath, params.content, 'utf8');
 
         return {
+          outcome: 'success',
           content: formatWriteResult({
             path: target.displayPath,
             created,
@@ -61,7 +62,7 @@ export function createWriteFileTool(workspaceDir: string, workspaceOnly = true):
       } catch (error) {
         return {
           content: `Error executing tool "write_file": ${error instanceof Error ? error.message : String(error)}`,
-          isError: true,
+          outcome: 'failed',
         };
       }
     },

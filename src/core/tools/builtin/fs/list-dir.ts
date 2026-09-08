@@ -36,7 +36,7 @@ export function createListDirTool(workspaceDir: string, workspaceOnly = true): T
         if (!targetStat.isDirectory()) {
           return {
             content: `Invalid input for tool "list_dir": path is not a directory: ${target.displayPath}`,
-            isError: true,
+            outcome: 'failed',
           };
         }
 
@@ -49,12 +49,13 @@ export function createListDirTool(workspaceDir: string, workspaceOnly = true): T
           .sort((left, right) => left.name.localeCompare(right.name));
 
         return {
+          outcome: 'success',
           content: formatDirectoryListing(target.displayPath, normalizedEntries),
         };
       } catch (error) {
         return {
           content: `Error executing tool "list_dir": ${error instanceof Error ? error.message : String(error)}`,
-          isError: true,
+          outcome: 'failed',
         };
       }
     },

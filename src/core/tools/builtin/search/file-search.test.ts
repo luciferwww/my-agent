@@ -29,7 +29,7 @@ describe('fileSearchTool', () => {
     await writeFile(join(workspaceDir, 'src', 'beta.ts'), 'export const beta = 1;\n');
 
     const result = await fileSearchTool.execute({ query: 'alpha' }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBeUndefined();
+    expect(result.outcome).toBe('success');
     expect(result.content).toContain('src/alpha.ts');
     expect(result.content).not.toContain('src/beta.ts');
   });
@@ -40,7 +40,7 @@ describe('fileSearchTool', () => {
     await writeFile(join(workspaceDir, 'docs', 'two.txt'), 'two\n');
 
     const result = await fileSearchTool.execute({ query: 'docs/*.md' }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBeUndefined();
+    expect(result.outcome).toBe('success');
     expect(result.content).toContain('docs/one.md');
     expect(result.content).not.toContain('docs/two.txt');
   });

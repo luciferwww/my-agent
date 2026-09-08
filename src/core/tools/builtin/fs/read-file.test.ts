@@ -27,7 +27,7 @@ describe('readFileTool', () => {
     await writeFile(join(workspaceDir, 'note.txt'), 'line 1\nline 2\nline 3\n');
 
     const result = await readFileTool.execute({ path: 'note.txt' }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBeUndefined();
+    expect(result.outcome).toBe('success');
     expect(result.content).toContain('path: note.txt');
     expect(result.content).toContain('lines: 1-3 of 3');
     expect(result.content).toContain('line 1');
@@ -38,7 +38,7 @@ describe('readFileTool', () => {
     await writeFile(join(workspaceDir, 'note.txt'), 'a\nb\nc\nd\n');
 
     const result = await readFileTool.execute({ path: 'note.txt', startLine: 2, endLine: 3 }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBeUndefined();
+    expect(result.outcome).toBe('success');
     expect(result.content).toContain('lines: 2-3 of 4');
     expect(result.content).toContain('\nb\nc');
     expect(result.content).not.toContain('\na\n');
@@ -48,13 +48,13 @@ describe('readFileTool', () => {
     await writeFile(join(workspaceDir, 'note.txt'), 'a\nb\n');
 
     const result = await readFileTool.execute({ path: 'note.txt', startLine: 3, endLine: 2 }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBe(true);
+    expect(result.outcome).toBe('failed');
     expect(result.content).toContain('startLine');
   });
 
   it('rejects paths outside the workspace', async () => {
     const result = await readFileTool.execute({ path: '..\\outside.txt' }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBe(true);
+    expect(result.outcome).toBe('failed');
     expect(result.content).toContain('outside the workspace');
   });
 });

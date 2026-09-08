@@ -117,7 +117,7 @@ export function createSubagentDelegationPort(
 
         const requirements = deriveSubagentRequestRequirements({
           message: prepared.message,
-          tools: undefined,
+          tools: prepared.tools,
         });
         const reference = request.profile.model === 'inherit'
           ? parent.effectiveReference

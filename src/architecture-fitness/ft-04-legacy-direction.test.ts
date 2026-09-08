@@ -1,10 +1,11 @@
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import {
   findFt04LegacyDirectionViolations,
   loadProductionSources,
   loadTypeScriptSources,
 } from './rules.js';
+import type { SourceInput } from './rules.js';
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const FIXTURE_ROOT = fileURLToPath(new URL('../../test-fixtures/architecture-fitness/ft-04', import.meta.url));
@@ -17,8 +18,13 @@ const NEW_CORE_ROOTS = [
   'src/adapters/llm/AnthropicProvider.ts',
 ];
 const FORBIDDEN_ROOTS = ['src/compat/', 'src/legacy/'];
+let productionSources: SourceInput[];
 
 describe('FT-04 Legacy dependency direction', () => {
+  beforeAll(async () => {
+    productionSources = await loadProductionSources(REPOSITORY_ROOT);
+  });
+
   it('accepts Compat to New Core and diagnoses New Core to Legacy', async () => {
     const passSources = await loadTypeScriptSources(`${FIXTURE_ROOT}/pass`);
     const failSources = await loadTypeScriptSources(`${FIXTURE_ROOT}/fail`);
@@ -30,13 +36,10 @@ describe('FT-04 Legacy dependency direction', () => {
   });
 
   it('prevents the Model Core and Provider module from depending on Compatibility', async () => {
-    const productionSources = await loadProductionSources(REPOSITORY_ROOT);
-
     expect(findFt04LegacyDirectionViolations(productionSources, NEW_CORE_ROOTS, FORBIDDEN_ROOTS)).toEqual([]);
   });
 
   it('locks CODE-M09 deleted contracts out of production and scripts', async () => {
-    const productionSources = await loadProductionSources(REPOSITORY_ROOT);
     const scriptSources = await loadTypeScriptSources(`${REPOSITORY_ROOT}/scripts`, [], 'scripts');
     const deletedSymbols = [
       'runSubagentTurn',

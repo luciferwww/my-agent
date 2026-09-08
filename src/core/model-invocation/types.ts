@@ -1,5 +1,7 @@
 // Core-owned model invocation contract. Provider adapters implement this port.
 
+import type { ToolCall } from '../tools/types.js';
+
 export type ChatRole = 'user' | 'assistant';
 
 export type ChatContentBlock =
@@ -21,7 +23,7 @@ export interface ChatMessage {
 export interface ChatToolDefinition {
   name: string;
   description: string;
-  input_schema: Record<string, unknown>;
+  inputSchema: Readonly<Record<string, unknown>>;
 }
 
 export interface ModelInvocationRequest {
@@ -44,7 +46,7 @@ export interface TokenUsage {
 export type ModelStreamEvent =
   | { type: 'message_start' }
   | { type: 'text_delta'; text: string }
-  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+  | { type: 'tool_call'; call: ToolCall }
   | { type: 'message_end'; stopReason: string; usage: TokenUsage }
   | { type: 'error'; error: Error };
 
@@ -53,6 +55,8 @@ export type StreamEvent = ModelStreamEvent;
 
 export interface ModelInvocationResponse {
   content: ChatContentBlock[];
+  /** Complete canonical calls; preserves malformed/non-object input state. */
+  toolCalls: readonly ToolCall[];
   stopReason: string;
   usage: TokenUsage;
 }

@@ -92,13 +92,13 @@ export const processTool: Tool = {
     const action = params.action;
     if (action === 'list') {
       // List only exposes records that have actually entered the background-management path.
-      return { content: formatList(processRegistry.listVisible()) };
+      return { outcome: 'success', content: formatList(processRegistry.listVisible()) };
     }
 
     if ((action === 'status' || action === 'log' || action === 'kill') && !isNonEmptyString(params.runId)) {
       return {
         content: 'Invalid input for tool "process": "runId" must be a non-empty string',
-        isError: true,
+        outcome: 'failed',
       };
     }
 
@@ -107,11 +107,11 @@ export const processTool: Tool = {
       if (!record || record.visibility !== 'background') {
         return {
           content: `runId not found: ${(params as Extract<ProcessToolInput, { action: 'status' }>).runId}`,
-          isError: true,
+          outcome: 'failed',
         };
       }
 
-      return { content: formatRecordSummary(record) };
+      return { outcome: 'success', content: formatRecordSummary(record) };
     }
 
     if (action === 'log') {
@@ -120,12 +120,13 @@ export const processTool: Tool = {
       if (!record || record.visibility !== 'background') {
         return {
           content: `runId not found: ${input.runId}`,
-          isError: true,
+          outcome: 'failed',
         };
       }
 
       const output = applyTailLines(record.output, parseTailLines(input.tailLines));
       return {
+        outcome: 'success',
         content: output || 'No output has been produced yet.',
       };
     }
@@ -136,13 +137,14 @@ export const processTool: Tool = {
       if (!record || record.visibility !== 'background') {
         return {
           content: `runId not found: ${input.runId}`,
-          isError: true,
+          outcome: 'failed',
         };
       }
 
       if (record.status !== 'starting' && record.status !== 'running') {
         // kill stays idempotent for completed tasks by returning the current terminal summary.
         return {
+          outcome: 'success',
           content: formatRecordSummary(record),
         };
       }
@@ -157,6 +159,7 @@ export const processTool: Tool = {
         // Keep kill idempotent even if the process has already disappeared between lookup and termination.
         const current = processRegistry.get(record.runId);
         return {
+          outcome: 'success',
           content: formatRecordSummary(current ?? record),
         };
       }
@@ -170,13 +173,14 @@ export const processTool: Tool = {
 
       const updated = processRegistry.get(record.runId);
       return {
+        outcome: 'success',
         content: updated ? formatRecordSummary(updated) : `runId: ${record.runId}\nstatus: aborted`,
       };
     }
 
     return {
       content: `Invalid input for tool "process": unsupported action ${String(action)}`,
-      isError: true,
+      outcome: 'failed',
     };
   },
 };

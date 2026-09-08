@@ -12,33 +12,86 @@ import type {
   ChatResponse,
   StreamEvent,
 } from '../model-invocation/index.js';
-import { createToolExecutor } from '../tools/executor.js';
-import type { ToolExecutor } from '../tools/types.js';
+import { compilePortableToolSchema } from '../tools/portable-schema.js';
+import type {
+  ApplicationToolPolicy,
+  ToolExecutionContext,
+  ToolDefinition,
+  ToolResult,
+} from '../tools/types.js';
+import type { HookName, HookHandlerMap, HookRegistration } from './hooks/index.js';
+import type { HookProjection, ToolProjection } from '../registry/index.js';
 import type { AgentEvent, AgentRunnerConfig, RunParams, RunResult } from './types.js';
 
-type LegacyTestRunParams = Omit<RunParams, 'resolvedModel'> & {
+type LegacyTestRunParams = Omit<
+  RunParams,
+  'resolvedModel' | 'toolProjection' | 'hookProjection' | 'toolPolicy'
+> & {
   model: string;
   maxTokens?: number;
   contextWindowTokens?: number;
+  tools?: ToolDefinition[];
 };
+
+type LegacyTestRunnerConfig = AgentRunnerConfig & {
+  llmClient: LLMClient;
+  toolExecutor?: ToolExecutor;
+};
+
+type ToolExecutor = (
+  toolName: string,
+  input: Record<string, unknown>,
+  context: ToolExecutionContext,
+) => Promise<ToolResult>;
+
+const allowAllTools: ApplicationToolPolicy = Object.freeze({
+  isDenied: () => false,
+  decide: () => 'allow' as const,
+});
+
+const permissiveValidator = compilePortableToolSchema({
+  type: 'object',
+  additionalProperties: true,
+});
 
 /** Test-only fixture adapter; production Runner has no legacy input path. */
 class AgentRunner extends ProductionAgentRunner {
   private readonly testInvocationPort: LLMClient;
+  private readonly testToolExecutor?: ToolExecutor;
+  private readonly testHooks: HookRegistration[] = [];
 
-  constructor(config: AgentRunnerConfig & { llmClient: LLMClient }) {
-    const { llmClient, ...runnerConfig } = config;
+  constructor(config: LegacyTestRunnerConfig) {
+    const { llmClient, toolExecutor, ...runnerConfig } = config;
     super(runnerConfig);
     this.testInvocationPort = llmClient;
+    this.testToolExecutor = toolExecutor;
+  }
+
+  on<K extends HookName>(
+    hookName: K,
+    handler: HookHandlerMap[K],
+    options?: { priority?: number; name?: string },
+  ): this {
+    this.testHooks.push({
+      hookName,
+      handler,
+      priority: options?.priority ?? 0,
+      name: options?.name,
+    } as HookRegistration);
+    return this;
   }
 
   override run(params: RunParams | LegacyTestRunParams): Promise<RunResult> {
     if ('resolvedModel' in params) {
       return super.run(params);
     }
-    const { model, maxTokens, contextWindowTokens, ...rest } = params;
+    const { model, maxTokens, contextWindowTokens, tools = [], ...rest } = params;
+    const toolProjection = this.makeToolProjection(tools);
     return super.run({
       ...rest,
+      toolProjection,
+      hookProjection: this.makeHookProjection(),
+      toolPolicy: allowAllTools,
       resolvedModel: {
         identity: { providerId: 'test', modelId: model },
         referenceSource: 'native',
@@ -61,17 +114,82 @@ class AgentRunner extends ProductionAgentRunner {
       },
     });
   }
+
+  private makeToolProjection(definitions: readonly ToolDefinition[]): ToolProjection {
+    const executor = this.testToolExecutor;
+    return Object.freeze({
+      definitions,
+      resolve(name: string) {
+        if (!executor) return undefined;
+        const definition = definitions.find((candidate) => candidate.name === name) ?? {
+          name,
+          description: '',
+          inputSchema: permissiveValidator.schema,
+        };
+        return Object.freeze({
+          unitId: 'test-tools',
+          definition,
+          validator: permissiveValidator,
+          execute: async (input: Record<string, unknown>, context: ToolExecutionContext) => {
+            const result = await executor(name, input, context);
+            return {
+              outcome: result.isError ? 'failed' as const : 'success' as const,
+              content: result.content,
+            };
+          },
+        });
+      },
+      visibleDefinitions() {
+        return definitions;
+      },
+    });
+  }
+
+  private makeHookProjection(): HookProjection {
+    const bindings = <K extends HookName>(hookName: K) => this.testHooks
+      .filter((registration) => registration.hookName === hookName)
+      .sort((left, right) => right.priority - left.priority)
+      .map((registration, index) => ({
+        unitId: 'test-hooks',
+        contributionId: registration.name ?? `${hookName}-${index}`,
+        hookName,
+        priority: registration.priority,
+        handler: registration.handler as HookHandlerMap[K],
+      }));
+    return Object.freeze({
+      beforeToolCall: Object.freeze(bindings('before_tool_call')),
+      afterToolCall: Object.freeze(bindings('after_tool_call')),
+      beforeCompaction: Object.freeze(bindings('before_compaction')),
+      afterCompaction: Object.freeze(bindings('after_compaction')),
+    });
+  }
 }
 
 // ── Mock LLMClient ──────────────────────────────────────
 
-function createMockLLMClient(responses: StreamEvent[][]): LLMClient {
+type LegacyTestStreamEvent = StreamEvent | {
+  type: 'tool_use';
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+};
+
+function createMockLLMClient(responses: LegacyTestStreamEvent[][]): LLMClient {
   let callIndex = 0;
   return {
     async *chatStream(): AsyncIterable<StreamEvent> {
       const events = responses[callIndex++] ?? [];
       for (const event of events) {
-        yield event;
+        yield event.type === 'tool_use'
+          ? {
+              type: 'tool_call',
+              call: {
+                callId: event.id,
+                name: event.name,
+                input: { state: 'ready', value: event.input },
+              },
+            }
+          : event;
       }
     },
     async chat(): Promise<ChatResponse> {
@@ -217,7 +335,7 @@ describe('AgentRunner', () => {
         model: 'test',
         systemPrompt: '',
         turnId: 'test-turn',
-        tools: [{ name: 'get_weather', description: 'Get weather', input_schema: {} }],
+        tools: [{ name: 'get_weather', description: 'Get weather', inputSchema: {} }],
       });
 
       expect(result.text).toBe('The weather in Tokyo is sunny.');
@@ -263,7 +381,7 @@ describe('AgentRunner', () => {
       expect(result.toolRounds).toBe(2);
     });
 
-    it('passes ToolContext (sessionKey/turnId/toolUseId) to toolExecutor', async () => {
+    it('passes ToolExecutionContext (sessionKey/turnId/callId) to the test executor', async () => {
       const llmClient = createMockLLMClient([
         [
           { type: 'message_start' },
@@ -300,8 +418,8 @@ describe('AgentRunner', () => {
       expect(seen[0]!.ctx).toEqual({
         sessionKey: 'main',
         turnId: 'turn-ctx-99',
-        toolUseId: 'tool_ctx_42',
-        signal: undefined,
+        callId: 'tool_ctx_42',
+        signal: expect.any(AbortSignal),
       });
     });
 
@@ -432,7 +550,14 @@ describe('AgentRunner', () => {
           if (callIndex === 0) {
             callIndex++;
             yield { type: 'message_start' } as StreamEvent;
-            yield { type: 'tool_use', id: 'tool_01', name: 'search', input: {} } as StreamEvent;
+            yield {
+              type: 'tool_call',
+              call: {
+                callId: 'tool_01',
+                name: 'search',
+                input: { state: 'ready', value: {} },
+              },
+            } as StreamEvent;
             yield {
               type: 'message_end',
               stopReason: 'tool_use',
@@ -844,7 +969,10 @@ describe('AgentRunner', () => {
       {
         label: 'unknown tool',
         toolName: 'missing',
-        executor: createToolExecutor([]),
+        executor: async (toolName) => ({
+          content: `Tool "${toolName}" not found`,
+          isError: true,
+        }),
         expectedError: 'not found',
       },
       {
@@ -1146,7 +1274,7 @@ describe('AgentRunner', () => {
       expect(capturedInputs[0]?.q).toBe('modified');
     });
 
-    it('CH-04 detaches after_tool_call from Turn settlement', async () => {
+    it('awaits after_tool_call settlement before continuing the Turn', async () => {
       const llmClient = createMockLLMClient([
         [
           { type: 'message_start' },
@@ -1163,7 +1291,7 @@ describe('AgentRunner', () => {
       const hookEntered = createDeferred();
       const releaseHook = createDeferred();
       const hookCompleted = createDeferred();
-      const afterPayloads: { toolName: string; durationMs: number }[] = [];
+      const afterPayloads: { toolName: string; durationMs?: number }[] = [];
       const runner = new AgentRunner({
         llmClient,
         sessionManager,
@@ -1185,8 +1313,8 @@ describe('AgentRunner', () => {
       });
 
       await hookEntered.promise;
-      const result = await runPromise;
       releaseHook.resolve();
+      const result = await runPromise;
       await hookCompleted.promise;
 
       expect(result.stopReason).toBe('end_turn');
@@ -1195,7 +1323,7 @@ describe('AgentRunner', () => {
       expect(afterPayloads[0]?.durationMs).toBeGreaterThanOrEqual(0);
     });
 
-    it('CH-04 detaches compaction observer Hooks from compaction and Turn settlement', async () => {
+    it('awaits bounded compaction observers before summary and after commit', async () => {
       await sessionManager.appendMessage('main', { role: 'user', content: 'A'.repeat(800) });
       await sessionManager.appendMessage('main', { role: 'assistant', content: 'B'.repeat(800) });
       await sessionManager.appendMessage('main', { role: 'user', content: 'recent question' });
@@ -1254,10 +1382,12 @@ describe('AgentRunner', () => {
         },
       });
 
-      await Promise.all([beforeHookEntered.promise, afterHookEntered.promise]);
-      const result = await runPromise;
+      await beforeHookEntered.promise;
       releaseBeforeHook.resolve();
+      await beforeHookCompleted.promise;
+      await afterHookEntered.promise;
       releaseAfterHook.resolve();
+      const result = await runPromise;
       await Promise.all([beforeHookCompleted.promise, afterHookCompleted.promise]);
 
       expect(result.compacted).toBe(true);
@@ -1608,8 +1738,8 @@ describe('AgentRunner', () => {
       expect(last.message.abortMeta).toEqual({ partial: true, stopReason: 'aborted' });
     });
 
-    // ③ abort during tool loop → 当前工具跑完，下一工具不启动
-    it('CH-03 characterizes deferred orphan repair after abort between tool calls', async () => {
+    // ③ abort during tool loop → current Turn closes every emitted Tool Call pair
+    it('closes remaining Tool Calls as not_executed after abort between calls', async () => {
       const controller = new AbortController();
 
       // LLM 返回两个 tool_use 块
@@ -1649,7 +1779,7 @@ describe('AgentRunner', () => {
       // 第一个 tool 跑完，第二个不启动
       expect(toolCallCount).toBe(1);
       const records = sessionManager.getMessages('main');
-      expect(records.map(({ message }) => message.role)).toEqual(['user', 'assistant']);
+      expect(records.map(({ message }) => message.role)).toEqual(['user', 'assistant', 'toolResult']);
       const assistantBlocks = records[1]!.message.content as ChatContentBlock[];
       expect(assistantBlocks.filter((block) => block.type === 'tool_use').map((block) => block.id)).toEqual([
         'tu-1',
@@ -1674,32 +1804,28 @@ describe('AgentRunner', () => {
         turnId: 't-after-tool-loop-abort',
       });
 
-      const repairedRecords = sessionManager.getMessages('main');
-      expect(repairedRecords.map(({ message }) => message.role)).toEqual([
+      const recoveredRecords = sessionManager.getMessages('main');
+      expect(recoveredRecords.map(({ message }) => message.role)).toEqual([
         'user',
         'assistant',
         'toolResult',
         'user',
         'assistant',
       ]);
-      expect(repairedRecords[2]!.message.content).toEqual([
+      expect(recoveredRecords[2]!.message.content).toEqual([
         {
           type: 'tool_result',
           tool_use_id: 'tu-1',
-          content: '[tool call interrupted; session recovered]',
+          content: 'echoed a',
         },
         {
           type: 'tool_result',
           tool_use_id: 'tu-2',
-          content: '[tool call interrupted; session recovered]',
+          content: 'Tool "echo" was not executed because the Turn was aborted.',
         },
       ]);
-      expect(repairEvents).toContainEqual(
-        expect.objectContaining({
-          type: 'orphan_tool_results_repaired',
-          count: 2,
-          source: 'recovered',
-        }),
+      expect(repairEvents).not.toContainEqual(
+        expect.objectContaining({ type: 'orphan_tool_results_repaired' }),
       );
     });
 
@@ -1939,7 +2065,14 @@ describe('AgentRunner', () => {
           yield { type: 'message_start' };
           if (round < 4) {
             // 前 3 轮：返回 tool_use 触发下一轮
-            yield { type: 'tool_use', id: `tu-${round}`, name: 'echo', input: {} };
+            yield {
+              type: 'tool_call',
+              call: {
+                callId: `tu-${round}`,
+                name: 'echo',
+                input: { state: 'ready', value: {} },
+              },
+            };
             yield { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 100, outputTokens: 50 } };
           } else {
             // 第 4 轮：LLM stream abort（partial stream 分支）

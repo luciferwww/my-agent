@@ -51,14 +51,14 @@ export function createEditFileTool(workspaceDir: string, workspaceOnly = true): 
         if (typeof params.oldText !== 'string' || params.oldText.length === 0) {
           return {
             content: 'Invalid input for tool "edit_file": "oldText" must be a non-empty string',
-            isError: true,
+            outcome: 'failed',
           };
         }
 
         if (typeof params.newText !== 'string') {
           return {
             content: 'Invalid input for tool "edit_file": "newText" must be a string',
-            isError: true,
+            outcome: 'failed',
           };
         }
 
@@ -69,14 +69,14 @@ export function createEditFileTool(workspaceDir: string, workspaceOnly = true): 
         if (occurrences === 0) {
           return {
             content: `Error executing tool "edit_file": oldText not found in ${target.displayPath}`,
-            isError: true,
+            outcome: 'failed',
           };
         }
 
         if (occurrences > 1) {
           return {
             content: `Error executing tool "edit_file": oldText matched ${occurrences} times in ${target.displayPath}`,
-            isError: true,
+            outcome: 'failed',
           };
         }
 
@@ -84,12 +84,13 @@ export function createEditFileTool(workspaceDir: string, workspaceOnly = true): 
         await writeFile(target.resolvedPath, updated, 'utf8');
 
         return {
+          outcome: 'success',
           content: formatEditResult(target.displayPath, 1),
         };
       } catch (error) {
         return {
           content: `Error executing tool "edit_file": ${error instanceof Error ? error.message : String(error)}`,
-          isError: true,
+          outcome: 'failed',
         };
       }
     },

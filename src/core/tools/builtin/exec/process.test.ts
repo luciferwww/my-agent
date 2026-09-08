@@ -75,7 +75,7 @@ describe('processTool', () => {
 
   it('returns not found for unknown runId', async () => {
     const result = await processTool.execute({ action: 'status', runId: 'missing' }, TEST_TOOL_CONTEXT);
-    expect(result.isError).toBe(true);
+    expect(result.outcome).toBe('failed');
     expect(result.content).toContain('runId not found');
   });
 });

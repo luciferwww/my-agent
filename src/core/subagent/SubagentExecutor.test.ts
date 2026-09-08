@@ -32,6 +32,21 @@ describe('SubagentExecutor', () => {
       loadContextFilesFromDir,
       workspaceDir: '/workspace',
       promptSafetyLevel: 'normal',
+      getToolProjection: () => ({
+        definitions: [],
+        resolve: () => undefined,
+        visibleDefinitions: () => [],
+      }),
+      getHookProjection: () => ({
+        beforeToolCall: [],
+        afterToolCall: [],
+        beforeCompaction: [],
+        afterCompaction: [],
+      }),
+      resolveToolPolicy: () => ({
+        isDenied: () => true,
+        decide: () => 'deny',
+      }),
     });
     const signal = new AbortController().signal;
 
@@ -67,10 +82,22 @@ describe('SubagentExecutor', () => {
     expect(build).toHaveBeenCalledWith({
       mode: 'minimal',
       contextFiles: [],
+      toolNames: [],
       workspaceDir: '/workspace',
       safetyLevel: 'normal',
     });
-    expect(run).toHaveBeenCalledWith({ ...prepared, resolvedModel });
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+      sessionKey: prepared.sessionKey,
+      turnId: prepared.turnId,
+      message: prepared.message,
+      systemPrompt: prepared.systemPrompt,
+      maxLlmCalls: prepared.maxLlmCalls,
+      signal,
+      resolvedModel,
+      toolProjection: expect.any(Object),
+      hookProjection: expect.any(Object),
+      toolPolicy: expect.any(Object),
+    }));
   });
 
   it('prefers Child context files by path and preserves Parent ordering', () => {

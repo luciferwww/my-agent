@@ -1,4 +1,6 @@
 import type { AgentEvent } from '../../core/runner/types.js';
+import type { ApprovalResult } from '../../core/approval/index.js';
+export type { ApprovalResult } from '../../core/approval/index.js';
 
 // ── 入站消息 ──────────────────────────────────────────────────
 
@@ -118,16 +120,6 @@ export interface ApprovalRequest {
 }
 
 export type ApprovalDecision = 'allow' | 'deny';
-
-export type ApprovalResult =
-  | { outcome: 'approved' }
-  | { outcome: 'denied'; reason: 'user' | 'user_cancelled' }
-  | { outcome: 'aborted'; reason: 'turn' | 'shutdown' }
-  | {
-      outcome: 'unavailable';
-      reason: 'origin_missing' | 'delivery_failed' | 'origin_disconnected';
-    }
-  | { outcome: 'failed'; message: string };
 
 export interface ApprovalRequestOptions {
   request: Omit<ApprovalRequest, 'id'>;

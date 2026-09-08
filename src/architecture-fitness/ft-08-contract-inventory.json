@@ -119,14 +119,7 @@
     "negative": ["src/runtime/subagent-orchestration.test.ts"]
   },
   {
-    "contract": "ToolExecutor",
-    "source": "src/core/tools/types.ts",
-    "kind": "tool-port",
-    "positive": ["src/core/tools/executor.test.ts"],
-    "negative": ["src/core/runner/AgentRunner.test.ts"]
-  },
-  {
-    "contract": "ToolContext",
+    "contract": "ToolExecutionContext",
     "source": "src/core/tools/types.ts",
     "kind": "abort-context",
     "positive": ["src/core/runner/AgentRunner.test.ts"],
