@@ -584,7 +584,7 @@ Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accept
 
 ### Slice 5：Runtime Composition 收敛
 
-**Plan Item 状态：** In Progress（Spec Accepted；等待单独的 production Delivery 授权；2026-09-08）
+**Plan Item 状态：** Completed（production Delivery与验证获项目所有者接受；2026-09-08）
 
 **Module Spec：** [Runtime Composition Module Spec](../architecture/runtime-composition-module-spec.md)（`Accepted`，2026-09-08）
 
@@ -602,6 +602,8 @@ Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accept
 - `RuntimeApp.create()` 不再承担 Module 发现和后装配；
 - 移除不必要的 `setToolExecutor()` 或等价 Setter；
 - RuntimeApp 只保留队列、Turn、路由、Fanout 和 Shutdown 编排。
+
+**Delivery status（2026-09-08）：** S5-D1..D5 production实现、caller迁移与最终验证已完成。`git diff --check`、lint、build、92 files / 810 tests、25个production integration scenarios、134个active-doc relative link targets全部通过；independent final review无Critical/High/Medium blocker。项目所有者已接受验证结果并确认Slice 5完成，授权checkpoint commit与push；后续继续Slice 6 planning，不自动授权Slice 6 production Delivery。
 
 ### Slice 6：文档与 Legacy 收口
 
@@ -840,4 +842,4 @@ Foundation（M0–M3）以 **两周完成为目标、四周为硬上限**。第�
 1. AF-05 已完成：`Provisional Pass` Results 获项目所有者接受，disposable fixture cleanup、状态同步和 AF-05 evidence item 均已完成；
 2. AF-06 已完成：`Provisional Pass` Results 获项目所有者接受，disposable fixture cleanup、cleanup validation、状态同步和 AF-06 evidence items 均已完成；
 3. AF-07、独立 Legacy migration inventory 与 Foundation Gate 已于 2026-09-04 完成；Slice 1 已完成 Delivery、验证和项目所有者确认；
-4. Slice 2、Slice 3 已完成并建立 Slice 3 checkpoint；Slice 4 Channel Module Delivery 已完成、获项目所有者接受并建立 checkpoint；Slice 5 Runtime Composition Spec 已完成三轮独立review、获项目所有者确认RC-OD-01..07并接受，等待单独的production Delivery授权。未授权 Slice 5 production Delivery、commit、push 或 Slice 6；历史/Legacy 文档清理保留到重构完成后的独立 Slice 6 工作，不与当前 planning 混合。
+4. Slice 2、Slice 3 已完成并建立 Slice 3 checkpoint；Slice 4 Channel Module Delivery 已完成、获项目所有者接受并建立 checkpoint；Slice 5 Runtime Composition Delivery与验证已完成并获项目所有者接受，checkpoint commit与push已授权；下一步进入Slice 6 planning，production Delivery仍需基于Accepted Spec另行授权。历史/Legacy文档清理保留到独立Slice 6工作，不与Slice 5 Delivery混合。

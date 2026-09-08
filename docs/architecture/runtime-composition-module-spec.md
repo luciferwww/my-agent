@@ -10,7 +10,7 @@
 - **关联 ADR / Spec：** [ADR-003](adr-003-progressive-architecture-migration.md)、[ADR-005](adr-005-extension-registry-runtime-composition.md)、[ADR-006](adr-006-legacy-and-compatibility-exit.md)、[Model Resolution Module Spec](model-resolution-module-spec.md)、[Subagent Model Resolution Module Spec](subagent-model-resolution-module-spec.md)、[Tool 与 Hook Module Spec](tool-hook-module-spec.md)、[Channel Module Spec](channel-module-spec.md)
 - **证据输入：** [Target Architecture §7](target-architecture.md#7-registry-snapshot-and-lifecycle-transactions)、[Target Architecture §8](target-architecture.md#8-runtime-call-flows-and-ownership)、[AF-06 Extension Framework Spike Results](af-06-extension-framework-spike-results.md)、[Legacy Migration Inventory](legacy-migration-inventory.md)
 
-本 Spec 遵循 [Development Workflow](../development-workflow.md)。项目所有者于 2026-09-08 授权在 Slice 4 checkpoint 后继续 Slice 5 planning，随后确认 RC-OD-01..07 的全部推荐方案并接受完整 Spec。该接受不包含 production Delivery、dependency 安装、commit、push 或 Slice 6；进入 production Delivery 仍需另行明确授权。
+本 Spec 遵循 [Development Workflow](../development-workflow.md)。项目所有者于 2026-09-08 授权在 Slice 4 checkpoint 后继续 Slice 5 planning，随后确认 RC-OD-01..07 的全部推荐方案并接受完整 Spec；之后另行明确授权 Slice 5 production Delivery，并在S5-D4验证完成后确认进入S5-D5。未授权dependency安装、commit、push或Slice 6。
 
 ## 1. 目的与用户可观察结果
 
@@ -531,6 +531,22 @@ deletion evidence必须包含production AST/text fitness和real caller integrati
 
 不在本Slice删除API-M04 deprecated LLM facade或历史文档；它们按accepted Inventory保留到Slice 6 Review。
 
+### 16.4 Delivery migration matrix（2026-09-08）
+
+| 到期路径/Contract | Delivery前production/test/script/client caller | 唯一successor | 删除/迁移证据 |
+|---|---|---|---|
+| `RuntimeApp.create()` post-bootstrap composition | RuntimeApp、CLI/server/WebSocket、Runtime integration scripts/tests | delegation-only `RuntimeApp.create()` → authoritative Runtime Builder → `RuntimeHandle` | FT-10锁定entry body；Builder/RuntimeApp/integration tests |
+| bootstrap Provider/Task assembly | bootstrap Provider projection、Task delegation/module assembly | Builder-owned common loaded Unit catalog；Provider/Task与External Units同一Composition Manager | bootstrap exact residual scan；Provider/Task/Builder tests |
+| `buildRegistrySnapshot()` / `stageRegistryCandidate()` startup wrapper | Registry、Runner Tool pipeline、Builtin Tool tests及旧Channel activation tests | `stageRegistryUnit()` + `resolveStagedRegistryCandidate()` + explicit-generation `finalizeRegistrySnapshot()`；production只由Composition Manager调用 | definitions/callers零；FT-07/10与Registry/Composition tests |
+| `ChannelLifecycleSet` / `activateRegistryChannels()` | Channel lifecycle与External Test Channel tests；standalone ledger stop Owner | `prepareStagedUnitChannels()`仅负责candidate readiness；handoff/membership/stop只由Composition Manager + Builder ledger负责 | contracts/exports/callers零；External Channel通过real manager；FT-08/10 |
+| `RuntimeResourceSet.registrySnapshot` | RuntimeApp `app_ready` startup projection | Builder在generation 1 publish后emit `app_ready`；RuntimeApp执行只使用`RuntimeSnapshotAccess` capture/pin | property零；delegation/ready-order tests；FT-10 |
+| bootstrap shared Resolver / Child late-bound current Snapshot closure | bootstrap、RuntimeApp Parent/Child Model Resolution、Subagent execution tests | Root捕获immutable Snapshot；Child只消费Parent record中的Provider/Tool/Hook projections | bootstrap `ModelResolver` residual零；Subagent source锁定`parent.registrySnapshot`；real Parent N / Child N / Root N+1 integration；FT-10 |
+| `RunTurnParams.model/maxTokens` 与queue equivalents | runtime public types、RuntimeApp direct/queued callers、abort/runtime/subagent scripts/tests | `modelReference` + `requestOverride.maxOutputTokens`，start transition通过pinned Provider projection resolve | definitions/callers/aliases零；intake/queue/Runner/integration + FT-10 |
+| WebSocket `run_turn.model/maxTokens` | WebSocket parser/tests、HTML client、attachments/multichannel/queue integration producers | `model_reference` + `request_override.max_output_tokens`；legacy fields拒绝 | protocol/client/scripts同批迁移；WebSocket negative tests + FT-08/10 |
+| RuntimeApp direct resource/Channel close loop | RuntimeApp close与旧Channel lifecycle authority | RuntimeApp只收敛Root/Child tree；Builder按shared budget关闭Units、Memory、Logger与terminal Fanout | direct close residual零；bounded shutdown matrix + FT-10 |
+| Channel-owned/process-owned signal exit | CLI embedded signal listeners与各production entry shutdown wait | readline Ctrl+C abort-first；SIGINT/SIGTERM、second signal与overall force只在Runtime Host | CLI ownership、Host signal/deadline tests；FT-10 |
+| unbounded first-signal wait | CLI/server/WebSocket process entries | shared Runtime Host 60s overall deadline；first signal cooperative、second signal immediate force | process entries仅调用Host；Host timer/first-second-signal tests；FT-10 |
+
 ## 17. Acceptance Criteria
 
 - **AC-RC-01 Common startup：** Builtin/External units经同一Builder路径形成generation 1；无post-publish追加。
@@ -605,22 +621,22 @@ deletion evidence必须包含production AST/text fitness和real caller integrati
 - [x] 项目所有者确认§21 RC-OD-01..07 Proposed Decisions（全部按推荐方案接受，2026-09-08）；
 - [x] independent Spec review无未解决Critical/High/Medium blocker（第三轮：`Ready with minor corrections`；minor corrections已应用，2026-09-08）；
 - [x] 项目所有者接受完整Spec并将状态改为`Accepted`（2026-09-08）；
-- [ ] 项目所有者在Spec checkpoint后另行批准production Delivery。
+- [x] 项目所有者在Spec checkpoint后另行批准production Delivery（2026-09-08）。
 
 DoR完成前不得修改production code、public Contract、dependency、lockfile或legacy entry points。
 
 ## 20. Definition of Done
 
-- [ ] AC-RC-01..19（含02a/08a）均有自动化证据；
-- [ ] P4-E01..P4-E07的production equivalents通过；
-- [ ] Provider/Tool/Hook/Channel共享一个generation Snapshot和publish point；
-- [ ] Root/Child pin、reload、retirement与Shutdown failure matrices通过；
-- [ ] canonical intake的library/queue/WebSocket real callers已迁移；
-- [ ] §16.3 deletion residual为零；
-- [ ] focused/contract/integration/regression/Fitness/lint/build/docs/diff checks通过；
-- [ ] active Spec、Plan与Inventory状态同步，不批量同步历史/Legacy文档；
-- [ ] independent implementation review无未解决blocker；
-- [ ] 项目所有者接受验证结果并确认Slice 5完成。
+- [x] AC-RC-01..19（含02a/08a）均有自动化证据；
+- [x] P4-E01..P4-E07的production equivalents通过；
+- [x] Provider/Tool/Hook/Channel共享一个generation Snapshot和publish point；
+- [x] Root/Child pin、reload、retirement与Shutdown failure matrices通过；
+- [x] canonical intake的library/queue/WebSocket real callers已迁移；
+- [x] §16.3 deletion residual为零；
+- [x] focused/contract/integration/regression/Fitness/lint/build/docs/diff checks通过；
+- [x] active Spec、Plan与Inventory状态同步，不批量同步历史/Legacy文档；
+- [x] independent implementation review无未解决blocker；
+- [x] 项目所有者接受验证结果并确认Slice 5完成（2026-09-08）。
 
 ## 21. Proposed Decisions
 
@@ -701,3 +717,9 @@ DoR完成前不得修改production code、public Contract、dependency、lockfil
 2026-09-08第三轮independent Spec review结论为`Ready with minor corrections`，无Critical/High/Medium blocker。三个minor findings均已接受并修正：冻结queued `request_end` Core/Runtime/WebSocket/CLI mapping与migration surface；区分failed-residual中的diagnostic/protection membership和remaining stop obligation；删除重复文案。Spec进入`In Review`，等待项目所有者确认§21 Proposed Decisions；该结论不授权production Delivery、commit或push。
 
 项目所有者于2026-09-08确认RC-OD-01..07的全部推荐方案并接受完整Spec；状态晋升为`Accepted`。Spec已满足设计侧Definition of Ready，但production Delivery、dependency安装、commit、push和Slice 6仍未授权。
+
+同日后续授权记录：项目所有者另行批准Slice 5 production Delivery，并在S5-D4验证完成后确认继续S5-D5；该授权仍不包含dependency安装、commit、push、Slice 6或最终Slice 5完成确认。
+
+S5-D5最终自动化验证完成：`git diff --check`、`npm run lint`、`npm run build`均通过；完整Vitest为92 files / 810 tests；wiring、steering、shutdown、queue、multichannel、attachments、Subagent与Abort共25个production integration scenarios通过；active Spec/Plan/Inventory共134个relative link targets通过。最终independent implementation review确认无Critical/High/Medium blocker。项目所有者接受、Slice 5 checkpoint commit、push与Slice 6仍未授权。
+
+项目所有者于2026-09-08接受上述最终验证结果并确认Slice 5完成，授权建立并push Slice 5 checkpoint，随后继续下一阶段planning；该授权不自动授权Slice 6 production Delivery。

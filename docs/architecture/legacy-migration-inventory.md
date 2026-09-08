@@ -160,8 +160,8 @@ DOC-V01–V12 的 Owner 为项目所有者至 Slice 6 Owner 接手，target Revi
 | CODE-M04 | `createDefaultRuntimeDependencies().createLLMClient()` 和 direct `new AnthropicClient()`：[bootstrap](../../src/runtime/bootstrap.ts)；Active Composition path | bundled Anthropic Provider Module + startup Provider projection + Resolver；caller：`bootstrapRuntime()` | Slice 1；真实 Parent caller 迁移后删除 direct import/construction；Provider Contract/Integration + FT-02/06 |
 | CODE-M05 | startup `llmClient` 和 `RuntimeResourceSet.llmClient`：[runtime types](../../src/runtime/types.ts)；Active singleton slot | Provider binding/projection 和 per-Turn Resolved Model Port binding | Slice 1；删除 authoritative client slot；startup/resource ownership/integration tests |
 | CODE-M06 | `RuntimeApp.requireModel()` 与 `runTurnInternal()` static fact assembly：[RuntimeApp](../../src/runtime/RuntimeApp.ts)；Active Parent path | `runTurnInternal()` 调 Resolver并传 immutable Resolved Model；覆盖 direct 与 queued callers | Slice 1；删除 `requireModel()` 和 execution 对 `resolvedConfig.llm` 的 facts 读取；CH-13 replacement + integration |
-| API-M01 | `RunTurnParams.model/maxTokens`、queue projection：[runtime types](../../src/runtime/types.ts)、[queue types](../../src/runtime/queue-types.ts)；public/runtime Compatibility Candidate | mapping：`model` → Model Reference，`maxTokens` → allowlisted Request Override，queued input 到 start transition 才 resolve。Repository consumers/export surfaces：`runtime/index.ts`、`RuntimeApp.runTurn()`/`runTurnInternal()`、`queue-types.ts`、`prompt-factory.ts`；direct scripts `test-abort-e2e.ts`、`test-abort-live.ts`、`test-runtime-multichannel-integration.ts`、`test-runtime-shutdown-integration.ts`、`test-runtime-wiring-integration.ts`、`test-subagent-e2e.ts`、`test-subagent-live.ts`；`RuntimeApp.test.ts` | Slice 1 Owner；Slice 2 Review 确认 Parent public input successor 不在 Slice 2 范围，延期到 Slice 5 Runtime Composition Review；禁止新增 production caller。删除需 repository callers 迁移、external consumer notice/decision 和 contract/intake/queue tests |
-| API-M02 | WebSocket `run_turn.model/maxTokens`：[WebSocketChannel](../../src/adapters/channel/WebSocketChannel.ts)；public wire Compatibility Candidate | mapping 同 API-M01。Repository protocol producers：[HTML client](../../clients/html/chat.html)、`scripts/test-runtime-attachments-integration.ts`、`scripts/test-runtime-multichannel-integration.ts`（当前均不发送这两个 optional fields）；validation consumers：`WebSocketChannel.test.ts`、Runtime intake/queue tests；repository 外 protocol clients 未知 | Slice 1 Owner；至少保留到 Slice 4 Review，除非另行接受 protocol breaking change；删除需 protocol version/deprecation decision、external client notice 和 WebSocket→Runtime queued integration |
+| API-M01 | Former `RunTurnParams.model/maxTokens` 与 queue projection；`Migrated` in Slice 5 | `modelReference` 与 `requestOverride.maxOutputTokens` 是唯一 library/queue request vocabulary；queued request 仍在 start transition 才 resolve | RC-OD-02 已接受；definitions、repository callers与deprecated aliases为零；Runtime intake/queue/Runner/integration + FT-10 |
+| API-M02 | Former WebSocket `run_turn.model/maxTokens`；`Migrated` in Slice 5 | `model_reference` 与 `request_override.max_output_tokens` 是唯一 wire vocabulary；HTML、scripts与tests同批迁移，legacy fields明确拒绝 | RC-OD-02 已接受；repository producer/consumer迁移完成，外部 consumer以breaking release notice处理；WebSocket→Runtime queue + FT-08/10 |
 | API-M03 | former `AgentRunnerConfig.llmClient`、`RunParams.model/maxTokens/contextWindowTokens`：[Runner types](../../src/core/runner/types.ts)；`Migrated` in Slice 1 | Runner Contract 只消费 `ResolvedModel`/core-owned Port；Parent 与 temporary Child Compatibility 均已迁移到该 Contract | Slice 1 validation、Runner Contract/build/FT-03/08 已通过；不再作为 Slice 2 Compatibility entry |
 | CODE-M07 | Runner-owned `4096`/`200000` fallback：[AgentRunner](../../src/core/runner/AgentRunner.ts)；Legacy Model Fact ownership | facts/request limit 只来自 Resolved Model/Policy | Slice 1；删除 Runner model defaults；Resolver/Runner/budgeting regression |
 | API-M04 | deprecated `LLMClient`、`ChatParams`、`StreamEvent` adapter facade：[LLM types](../../src/adapters/llm/types.ts)；Compatibility Candidate，authority 已迁入 Stable Core | Stable Core 拥有 Invocation Port/normalized contract；Anthropic Adapter implements。Repository production callers 已迁移；adapter facade 仅为可能的 external consumers 保留 | Slice 2 Review 确认该 facade 与 Child migration 无关；因 external consumer decision/legacy barrel closeout 未完成，延期到 Slice 6 Review；禁止新增 production caller。删除需 external consumer decision、zero internal caller、adapter Contract、FT-03/08 和 build |
@@ -169,8 +169,8 @@ DOC-V01–V12 的 Owner 为项目所有者至 Slice 6 Owner 接手，target Revi
 | CODE-M09 | Former Subagent `llmDefaults`、optional/raw-string `model`、legacy Child resolver/host/request、parentless library trigger；`Migrated` in Slice 2 | Required native Profile Model Selection + Parent effective Model Reference + Runtime-owned delegation Port + independent Child resolution are the only production path | Old resolver/Runner/API/trigger/synthetic-session contracts and scenarios deleted；native Profile、real Parent、different Provider/Model、typed failure/Usage/Abort/Event/Session/cleanup、FT-04/08 and deterministic zero-reference validation passed |
 | CODE-E01 | Former central Tool bundle/list/executor setter/Task post-assembly；`Migrated` in Slice 3 | One startup `RegistrySnapshot` with canonical Tool projection and Builtin Modules | Central list/bundle/executor factory/setter deleted；Task staged before publication；Tool/Registry/Runtime tests + FT-07 |
 | CODE-E02 | Former `AgentRunner.on()` production API and startup approval Hook wiring；`Migrated` in Slice 3 | Immutable Hook Contribution/projection plus explicit Policy/current-call Approval Capability | Production mutable registration/startup authorization history deleted；Hook/approval/Runner contracts + FT-07 |
-| API-E01 | `registerChannel/startChannels/stopChannels` 和 concrete script construction：[RuntimeApp](../../src/runtime/RuntimeApp.ts)、[CLI](../../scripts/cli.ts)、[server](../../scripts/server.ts)、[websocket](../../scripts/websocket.ts)；Active public composition API | Builtin Channel Modules 和 Builder-created bindings | Slice 4；scripts 不再 concrete register；Channel lifecycle/CH-07/08 |
-| CODE-E03 | `RuntimeApp.create()` post-bootstrap composition 与 mutable resources：[RuntimeApp](../../src/runtime/RuntimeApp.ts)；Active mixed responsibility | Runtime Builder + immutable explicit dependencies | Slice 5；删除 discovery/mutation/duplicate ownership；startup/rollback/shutdown + FT-01/05/07 |
+| API-E01 | Former `registerChannel/startChannels/stopChannels` 与 concrete script construction；`Migrated` in Slice 4 | Builtin/External Channel Modules、Registry projection与Builder-owned lifecycle | definitions/exports/callers为零；Channel lifecycle、scripts、CH-07/08、FT-05/08 |
+| CODE-E03 | Former `RuntimeApp.create()` post-bootstrap composition、startup wrapper与duplicate close ownership；`Migrated` in Slice 5 | delegation-only `RuntimeApp.create()`、authoritative Runtime Builder、generation-aware Composition Manager与single lifecycle ledger | §16.3 residual为零；startup/rollback/reload/shutdown + FT-01/05/07/08/10 |
 
 ### 6.1 Feature Flag 基线
 
@@ -213,6 +213,24 @@ Slice 2 frozen scope contained one Legacy entry, CODE-M09. Delivery therefore re
 
 Slice 3 frozen scope contained CODE-E01 and CODE-E02 and reached $Legacy_{end}=0<Legacy_{start}=2$. `npm run lint`、full Vitest (80 files, 705 tests)、`npm run build`、FT-09 document governance and `git diff --check` passed. Independent implementation review found no remaining Critical/High/Medium blocker. No migration Feature Flag、second executor、Task post-assembly or startup approval Hook remains. 项目所有者于 2026-09-08 接受验证结果并确认 Slice 3 完成；已授权 Slice 3 checkpoint commit，未授权 push 或 Slice 4 production Delivery。
 
+### 6.5 Slice 4 Delivery disposition（2026-09-08）
+
+| Entry | Delivery disposition | Evidence / remaining exit |
+|---|---|---|
+| API-E01 | `Migrated` | RuntimeApp legacy Channel lifecycle APIs与script-side concrete registration删除；Builtin/External Channel均经Module staging、Registry projection和Builder handoff |
+
+Slice 4 frozen scope contained API-E01 and reached $Legacy_{end}=0<Legacy_{start}=1$. Channel Contract、startup readiness/rollback、Fanout、scripts与real integration、Fitness、lint/build/full test均通过；独立review无Critical/High/Medium blocker。项目所有者已接受验证结果、确认Slice 4完成并授权checkpoint commit；未授权push或Slice 5 production Delivery。
+
+### 6.6 Slice 5 Delivery disposition（2026-09-08）
+
+| Entry | Delivery disposition | Evidence / remaining exit |
+|---|---|---|
+| API-M01 | `Migrated` | library/queue definitions与repository callers只使用`modelReference/requestOverride`；无alias/dual-read |
+| API-M02 | `Migrated` | WebSocket与HTML/scripts只使用snake_case canonical fields；legacy wire fields明确拒绝 |
+| CODE-E03 | `Migrated` | RuntimeApp entry delegation-only；Provider/Task/Channel进入Builder-owned common Unit catalog；startup wrapper与duplicate lifecycle/close Owner删除 |
+
+Slice 5 frozen scope contains API-M01、API-M02 and CODE-E03 and reaches $Legacy_{end}=0<Legacy_{start}=3$. No migration Feature Flag、dual production path、startup-only Snapshot wrapper、standalone Channel stop authority or late-bound current-Snapshot Child resolution remains. Final static/build/test/integration/docs validation and independent implementation review passed；项目所有者于2026-09-08接受验证结果并确认Slice 5完成。
+
 ## 7. Slice 视图与净减少口径
 
 | Slice | 本 Inventory 的主要 entries | 最小退出结果 |
@@ -221,7 +239,7 @@ Slice 3 frozen scope contained CODE-E01 and CODE-E02 and reached $Legacy_{end}=0
 | Slice 2 | CODE-M09；API-M03 Runner Contract 已在 Slice 1 迁移完成 | Parent/Child 独立 resolution；删除 parentless library path、copied `llmDefaults` 与 legacy Child execution boundary |
 | Slice 3 | CODE-E01、CODE-E02 | Tool/Hook caller 迁移，central list/setter/registration special cases 净减少 |
 | Slice 4 | API-E01 | Channel caller 迁移，concrete script registration 和 duplicate lifecycle path 删除 |
-| Slice 5 | CODE-E03 | Runtime Builder 继续收敛非 Tool/Hook composition 与 lifecycle ownership；Slice 3 Snapshot authority 不回退 |
+| Slice 5 | API-M01、API-M02、CODE-E03 | canonical intake与wire callers迁移；Runtime Builder收敛composition/lifecycle ownership；删除到期Compatibility与duplicate paths |
 | Slice 6 | DOC-C01–C13、DOC-A01–A27、DOC-V01–V12 | 唯一 Current Architecture、active links 收口；逐文件完成 `Migrated -> Reviewed -> Deleted` 或明确 `Retained Authority` |
 
 每个 Slice 的 accepted Slice inventory 必须冻结该 Slice 的起始计数口径，并满足：
