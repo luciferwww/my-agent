@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { AgentExecutionFailure } from '../core/runner/index.js';
 import type { AgentEvent } from '../core/runner/index.js';
 import type { ModelInvocationPort } from '../core/model-invocation/index.js';
-import { ModelResolver } from '../core/model-resolution/index.js';
 import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
+import { finalizeRegistrySnapshot } from './registry-builder.js';
 import type { SubagentProfile } from '../core/subagent/types.js';
 import {
   createSubagentDelegationPort,
@@ -63,12 +63,23 @@ function setup(options: {
   abortDuringPrepare?: boolean;
 } = {}) {
   const controller = new AbortController();
+  const registrySnapshot = finalizeRegistrySnapshot({
+    generation: 1,
+    candidate: {
+      providers: [provider('parent'), provider('child')],
+      units: [],
+      diagnostics: [],
+    },
+    acceptedUnits: [],
+    channelBindings: [],
+  });
   const parent: ActiveParentTurn = {
     sessionKey: 'main',
     turnId: 'parent-turn',
     signal: controller.signal,
     effectiveReference: { providerId: 'parent', modelId: 'parent-model' },
     contextFiles: [],
+    registrySnapshot,
   };
   const activeParents = new Map([[parent.turnId, parent]]);
   const routeContextByTurn = new Map([['parent-turn', { originClientId: 'client-1' }]]);
@@ -105,8 +116,6 @@ function setup(options: {
       toolRounds: 0,
     };
   });
-  const modelResolver = new ModelResolver([provider('parent'), provider('child')]);
-  const resolveModel = vi.spyOn(modelResolver, 'resolve');
   const port = createSubagentDelegationPort({
     activeParents,
     routeContextByTurn,
@@ -114,7 +123,6 @@ function setup(options: {
       resolveSession: vi.fn(async () => ({ entry: {}, isNew: true })),
       deleteSession,
     } as never,
-    modelResolver,
     defaultProviderId: 'parent',
     defaultMaxTokens: 50,
     maxDepth: 1,
@@ -137,7 +145,6 @@ function setup(options: {
     controller,
     activeParents,
     routeContextByTurn,
-    resolveModel,
   };
 }
 
@@ -150,7 +157,6 @@ describe('Runtime Subagent delegation', () => {
       execute,
       deleteSession,
       routeContextByTurn,
-      resolveModel,
     } = setup();
     const result = await port.delegate(request);
 
@@ -167,9 +173,6 @@ describe('Runtime Subagent delegation', () => {
     }));
     expect(deleteSession).toHaveBeenCalledTimes(1);
     expect([...routeContextByTurn.keys()]).toEqual(['parent-turn']);
-    expect(resolveModel).toHaveBeenCalledWith(expect.objectContaining({
-      request: { tools: false, mediaKinds: [] },
-    }));
   });
 
   it('uses a concrete Child Provider/Model independently of Parent selection', async () => {

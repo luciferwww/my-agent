@@ -1,9 +1,7 @@
 import { join } from 'node:path';
 import { AgentRunner } from '../core/runner/index.js';
-import { ModelResolver } from '../core/model-resolution/index.js';
 import { loadConfig, resolveAgentConfig } from '../platform/config/index.js';
 import { AnthropicProvider } from '../adapters/llm/index.js';
-import { createLegacyStaticModelResolver } from '../compat/model-resolution/legacy-static-config.js';
 import { ConsoleAdapter, FileAdapter, Logger } from '../platform/logger/index.js';
 import type { LogAdapter } from '../platform/logger/index.js';
 import { MemoryManager } from '../core/memory/index.js';
@@ -34,7 +32,12 @@ import { createSubagentDelegationPort } from './subagent-orchestration.js';
 import type { ActiveParentTurn } from './subagent-orchestration.js';
 import type { MessageRouteContext } from './queue-types.js';
 import type { ChannelRuntimeHost } from '../core/channel/index.js';
-import type { RegistrySnapshot } from '../core/registry/index.js';
+import type { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
+import type {
+  ExtensionRegistrationApi,
+  RegistrySnapshot,
+  RuntimeContributionUnit,
+} from '../core/registry/index.js';
 import type { RuntimeAppOptions, RuntimeBootstrapResult, RuntimeDependencies, RuntimeEvent } from './types.js';
 
 const log = Logger.get('RuntimeBootstrap');
@@ -102,6 +105,7 @@ export function createDefaultRuntimeDependencies(
 export async function bootstrapRuntime(
   options: RuntimeAppOptions,
   channelHost: ChannelRuntimeHost,
+  lifecycleLedger: RuntimeLifecycleLedger,
 ): Promise<RuntimeBootstrapResult> {
   const startedAt = Date.now();
   let channelLifecycle: ChannelLifecycleSet | undefined;
@@ -172,13 +176,6 @@ export async function bootstrapRuntime(
     if (!defaultProviderId) {
       throw new Error('Provider projection must contain at least one accepted Provider entry.');
     }
-    const modelResolver = new ModelResolver(providerProjection);
-    const resolveParentModel = createLegacyStaticModelResolver({
-      resolver: modelResolver,
-      defaultProviderId,
-      defaultModel: resolvedConfig.llm.model,
-      defaultMaxTokens: resolvedConfig.llm.maxTokens,
-    });
     const systemPromptBuilder = deps.createSystemPromptBuilder();
     const userPromptBuilder = new UserPromptBuilder();
 
@@ -213,7 +210,15 @@ export async function bootstrapRuntime(
       execEnabled: true,
       processEnabled: true,
     };
+    const providerUnit: RuntimeContributionUnit = Object.freeze({
+      id: 'builtin-provider-bindings',
+      source: 'builtin',
+      register(api: ExtensionRegistrationApi) {
+        for (const provider of providerProjection) api.registerProvider(provider);
+      },
+    });
     const runtimeContributionUnits = [
+      providerUnit,
       ...deps.getBuiltinContributionUnits(toolOptions, memoryManager),
       ...(options.contributionUnits ?? []),
     ];
@@ -242,8 +247,6 @@ export async function bootstrapRuntime(
         }),
       workspaceDir: options.workspaceDir,
       promptSafetyLevel: resolvedConfig.prompt?.safetyLevel ?? 'normal',
-      getToolProjection: () => registrySnapshot.tools,
-      getHookProjection: () => registrySnapshot.hooks,
       resolveToolPolicy: (profile) => createApplicationToolPolicy(resolveSubagentTools(
         profile,
         resolvedConfig.tools.allow ?? [],
@@ -254,7 +257,6 @@ export async function bootstrapRuntime(
       activeParents: activeParentTurns,
       routeContextByTurn,
       sessionManager,
-      modelResolver,
       defaultProviderId,
       defaultMaxTokens: resolvedConfig.llm.maxTokens,
       maxDepth: resolvedConfig.subagents?.maxDepth ?? 1,
@@ -276,10 +278,14 @@ export async function bootstrapRuntime(
     }
 
     const candidate = stageRegistryCandidate({
-      providers: providerProjection,
+      providers: [],
       units: runtimeContributionUnits,
     });
-    const activated = await activateRegistryChannels({ candidate, host: channelHost });
+    const activated = await activateRegistryChannels({
+      candidate,
+      host: channelHost,
+      lifecycleLedger,
+    });
     channelLifecycle = activated.lifecycle;
     registrySnapshot = activated.snapshot;
     const registeredToolNames = new Set(
@@ -338,9 +344,7 @@ export async function bootstrapRuntime(
         sessionManager,
         registrySnapshot,
         toolPolicy,
-        modelResolver,
         defaultProviderId,
-        resolveParentModel,
         memoryManager,
         systemPromptBuilder,
         userPromptBuilder,

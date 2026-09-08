@@ -15,8 +15,6 @@ export interface SubagentExecutorDeps {
   readonly loadContextFilesFromDir: (absDir: string) => Promise<ContextFile[]>;
   readonly workspaceDir: string;
   readonly promptSafetyLevel: 'relaxed' | 'normal' | 'strict';
-  readonly getToolProjection: () => ToolProjection;
-  readonly getHookProjection: () => HookProjection;
   readonly resolveToolPolicy: (profile: SubagentProfile) => ApplicationToolPolicy;
 }
 
@@ -30,6 +28,8 @@ export interface SubagentExecutionRequest {
   readonly childSessionKey: string;
   readonly childTurnId: string;
   readonly signal: AbortSignal;
+  readonly toolProjection: ToolProjection;
+  readonly hookProjection: HookProjection;
 }
 
 export interface PreparedSubagentExecution {
@@ -42,6 +42,8 @@ export interface PreparedSubagentExecution {
   readonly profile: SubagentProfile;
   readonly tools: readonly ChatToolDefinition[];
   readonly toolPolicy: ApplicationToolPolicy;
+  readonly toolProjection: ToolProjection;
+  readonly hookProjection: HookProjection;
 }
 
 /** Internal executor for an already tracked and resolved Child Turn. */
@@ -57,7 +59,7 @@ export class SubagentExecutor {
       canSpawn: request.canSpawn,
     });
     const toolPolicy = this.deps.resolveToolPolicy(request.profile);
-    const tools = this.deps.getToolProjection().visibleDefinitions(toolPolicy);
+    const tools = request.toolProjection.visibleDefinitions(toolPolicy);
     const basePrompt = this.deps.systemPromptBuilder.build({
       mode: 'minimal',
       contextFiles: mergedFiles,
@@ -76,16 +78,25 @@ export class SubagentExecutor {
       profile: request.profile,
       tools,
       toolPolicy,
+      toolProjection: request.toolProjection,
+      hookProjection: request.hookProjection,
     };
   }
 
   execute(request: PreparedSubagentExecution, resolvedModel: ResolvedModel): Promise<RunResult> {
-    const { profile: _profile, tools: _tools, toolPolicy, ...runRequest } = request;
+    const {
+      profile: _profile,
+      tools: _tools,
+      toolPolicy,
+      toolProjection,
+      hookProjection,
+      ...runRequest
+    } = request;
     return this.deps.agentRunner.run({
       ...runRequest,
       resolvedModel,
-      toolProjection: this.deps.getToolProjection(),
-      hookProjection: this.deps.getHookProjection(),
+      toolProjection,
+      hookProjection,
       toolPolicy,
     });
   }

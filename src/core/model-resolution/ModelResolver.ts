@@ -202,7 +202,7 @@ export class ModelResolver {
     ) {
       throw new ModelResolutionError('policy_denied', 'Model policy default exceeds its output limit.');
     }
-    const override = input.requestOverride?.maxTokens;
+    const override = input.requestOverride?.maxOutputTokens;
     if (override === undefined) {
       return { value: input.policy.defaultMaxTokens, source: 'policy-default' };
     }

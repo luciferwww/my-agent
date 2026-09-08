@@ -123,14 +123,14 @@ async function main(): Promise<void> {
       "Take your time and be thorough. Do NOT summarize or truncate.";
 
     const abortTimer = setTimeout(() => {
-      const r = app.abortTurn(sk);
+      const r = app.application.abortTurn(sk);
       console.log(
         `\n${red('[⚠ abort fired]')} after ${Date.now() - t0}ms — ${JSON.stringify(r)}`,
       );
     }, ABORT_AFTER_MS);
 
     try {
-      const result = await app.runTurn({
+      const result = await app.application.runTurn({
         sessionKey: sk,
         message: prompt,
         promptMode: 'full',

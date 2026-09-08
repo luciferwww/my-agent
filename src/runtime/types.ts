@@ -4,9 +4,9 @@ import type {
   TokenUsage,
 } from '../core/model-invocation/index.js';
 import type {
-  ModelResolver,
+  ModelReference,
+  ModelRequestOverride,
   ProviderProjectionEntry,
-  ResolvedModel,
 } from '../core/model-resolution/index.js';
 import type { MemoryManager } from '../core/memory/MemoryManager.js';
 import type { SystemPromptBuilder } from '../core/prompt/SystemPromptBuilder.js';
@@ -32,14 +32,7 @@ export interface RuntimeResourceSet {
   readonly sessionManager: SessionManager;
   readonly registrySnapshot: RegistrySnapshot;
   readonly toolPolicy: ApplicationToolPolicy;
-  readonly modelResolver: ModelResolver;
   readonly defaultProviderId: string;
-  readonly resolveParentModel: (input: {
-    model?: string;
-    maxTokens?: number;
-    tools: boolean;
-    mediaKinds: readonly string[];
-  }) => ResolvedModel;
   readonly memoryManager: MemoryManager | null;
   readonly systemPromptBuilder: SystemPromptBuilder;
   readonly userPromptBuilder: UserPromptBuilder;
@@ -100,8 +93,8 @@ export interface RuntimeAppOptions {
 export interface RunTurnParams {
   sessionKey: string;
   message: string | ChatContentBlock[];
-  model?: string;
-  maxTokens?: number;
+  modelReference?: ModelReference;
+  requestOverride?: ModelRequestOverride;
   maxLlmCalls?: number;
   /** v1.0 必填；调用方明确传入，不再回退 config。交互式场景传 'full'，sub-agent / 定时任务传 'minimal' 或 'none' */
   promptMode: 'full' | 'minimal' | 'none';

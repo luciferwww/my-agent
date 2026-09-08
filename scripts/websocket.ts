@@ -101,7 +101,7 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void shutdown('user exit'));
   process.on('SIGTERM', () => void shutdown('process terminated'));
 
-  const completion = await app.waitForChannelCompletion('websocket');
+  const completion = await app.application.waitForChannelCompletion('websocket');
   await app.close(completion.outcome === 'failed' ? 'websocket channel failed' : 'websocket closed');
   if (completion.outcome === 'failed') throw completion.error;
 }

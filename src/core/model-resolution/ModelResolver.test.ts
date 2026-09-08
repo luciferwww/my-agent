@@ -58,7 +58,7 @@ function expectCategory(action: () => unknown, category: ModelResolutionError['c
 describe('ModelResolver', () => {
   it('atomically resolves an immutable identity, Port, Facts, provenance, and limits binding', () => {
     const resolver = new ModelResolver([provider()]);
-    const resolved = resolver.resolve(input({ requestOverride: { maxTokens: 2048 } }));
+    const resolved = resolver.resolve(input({ requestOverride: { maxOutputTokens: 2048 } }));
 
     expect(resolved.identity).toEqual({ providerId: 'anthropic-compatible', modelId: 'test-model' });
     expect(resolved.referenceSource).toBe('native');
@@ -80,7 +80,7 @@ describe('ModelResolver', () => {
     ['model_ambiguous', () => new ModelResolver([provider({ resolveModel: () => ({ ok: false, category: 'model_ambiguous', message: 'ambiguous' }) })]).resolve(input())],
     ['facts_insufficient', () => new ModelResolver([provider({ resolveModel: (modelId, connection) => ({ ok: true, descriptor: { identity: { providerId: 'anthropic-compatible', modelId }, protocol: 'anthropic-messages', connection, facts: {} } }) })]).resolve(input())],
     ['policy_denied', () => new ModelResolver([provider()]).resolve(input({ policy: { defaultMaxTokens: 4096, allowModel: () => false } }))],
-    ['override_unauthorized', () => new ModelResolver([provider()]).resolve(input({ requestOverride: { maxTokens: 9000 } }))],
+    ['override_unauthorized', () => new ModelResolver([provider()]).resolve(input({ requestOverride: { maxOutputTokens: 9000 } }))],
     ['protocol_incompatible', () => new ModelResolver([provider({ protocol: 'other' })]).resolve(input())],
     ['capability_unsupported', () => new ModelResolver([provider()]).resolve(input({ request: { tools: false, mediaKinds: ['audio'] } }))],
   ] as const)('fails closed with %s before invoking the Port', (category, action) => {

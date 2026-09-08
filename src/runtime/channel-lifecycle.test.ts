@@ -8,6 +8,7 @@ import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import type { Tool } from '../core/tools/types.js';
 import { activateRegistryChannels } from './channel-lifecycle.js';
 import { stageRegistryCandidate } from './registry-builder.js';
+import { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
 
 function createDeferred<T>(): {
   promise: Promise<T>;
@@ -119,6 +120,64 @@ describe('activateRegistryChannels', () => {
     expect(first).toBe(second);
     await expect(first).resolves.toEqual({ completed: ['external-test'], failed: [] });
     expect(fixture.channel.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands accepted Channels to the injected generation lifecycle ledger before publication', async () => {
+    const fixture = createChannel('ledger-channel');
+    const lifecycleLedger = new RuntimeLifecycleLedger();
+    const candidate = stageRegistryCandidate({
+      providers: [],
+      units: [channelUnit('ledger-channel', 'external', () => fixture.channel)],
+    });
+
+    const activated = await activateRegistryChannels({
+      candidate,
+      host: createHost(),
+      lifecycleLedger,
+    });
+
+    expect(lifecycleLedger.view('channel:ledger-channel')).toMatchObject({
+      unitId: 'external-ledger-channel',
+      source: 'external',
+      state: 'handed-off',
+      generationMemberships: [1],
+    });
+
+    await activated.lifecycle.runtimeConverged();
+    expect(lifecycleLedger.view('channel:ledger-channel')).toMatchObject({
+      state: 'stopped',
+      generationMemberships: [],
+      stopAttempts: 1,
+    });
+  });
+
+  it('does not publish and cleans every Channel once when ownership handoff fails', async () => {
+    const first = createChannel('handoff-first');
+    const second = createChannel('handoff-second');
+    class FailingHandoffLedger extends RuntimeLifecycleLedger {
+      override handoff(instanceId: string): void {
+        if (instanceId === 'channel:handoff-second') {
+          throw new Error('handoff failed');
+        }
+        super.handoff(instanceId);
+      }
+    }
+    const candidate = stageRegistryCandidate({
+      providers: [],
+      units: [
+        channelUnit('handoff-first', 'external', () => first.channel),
+        channelUnit('handoff-second', 'external', () => second.channel),
+      ],
+    });
+
+    await expect(activateRegistryChannels({
+      candidate,
+      host: createHost(),
+      lifecycleLedger: new FailingHandoffLedger(),
+    })).rejects.toThrow('handoff failed');
+
+    expect(first.channel.stop).toHaveBeenCalledTimes(1);
+    expect(second.channel.stop).toHaveBeenCalledTimes(1);
   });
 
   it('waits for Channel readiness before publishing the final Snapshot', async () => {

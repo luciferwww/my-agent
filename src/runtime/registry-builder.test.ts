@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import type { ApplicationToolPolicy, Tool } from '../core/tools/types.js';
 import {
@@ -18,6 +19,24 @@ function tool(name: string): Tool {
   };
 }
 
+function provider(id: string): ProviderProjectionEntry {
+  return {
+    id,
+    protocol: 'test',
+    invocationPort: {} as never,
+    resolveConnection: () => ({
+      ok: false,
+      category: 'connection_missing',
+      message: 'not used',
+    }),
+    resolveModel: () => ({
+      ok: false,
+      category: 'model_rejected',
+      message: 'not used',
+    }),
+  };
+}
+
 function unit(
   id: string,
   source: 'builtin' | 'external',
@@ -33,6 +52,39 @@ const allowAll: ApplicationToolPolicy = {
 };
 
 describe('buildRegistrySnapshot', () => {
+  it('publishes Provider contributions through the common Unit path', () => {
+    const snapshot = buildRegistrySnapshot({
+      providers: [],
+      units: [unit('provider-unit', 'builtin', (api) => {
+        api.registerProvider(provider('primary'));
+      })],
+    });
+
+    expect(snapshot.providers.map((entry) => entry.id)).toEqual(['primary']);
+    expect(Object.isFrozen(snapshot.providers)).toBe(true);
+  });
+
+  it('isolates an external Unit with a conflicting Provider identity atomically', () => {
+    const snapshot = buildRegistrySnapshot({
+      providers: [],
+      units: [
+        unit('builtin-provider', 'builtin', (api) => {
+          api.registerProvider(provider('shared'));
+        }),
+        unit('external-provider', 'external', (api) => {
+          api.registerProvider(provider('shared'));
+          api.registerTool(tool('must_remain_hidden'));
+        }),
+      ],
+    });
+
+    expect(snapshot.providers.map((entry) => entry.id)).toEqual(['shared']);
+    expect(snapshot.tools.resolve('must_remain_hidden')).toBeUndefined();
+    expect(snapshot.diagnostics).toEqual([
+      expect.objectContaining({ unitId: 'external-provider', code: 'UNIT_CONFLICT' }),
+    ]);
+  });
+
   it('publishes immutable Tool/Hook projections with deterministic Hook ordering', () => {
     const snapshot = buildRegistrySnapshot({
       providers: [],

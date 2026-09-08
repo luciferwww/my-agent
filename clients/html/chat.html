@@ -1465,7 +1465,9 @@
               type: 'run_turn',
               sessionKey: this.form.sessionKey,
               message: wireMessage,
-              ...(this.form.model ? { model: this.form.model } : {}),
+              ...(this.form.model
+                ? { model_reference: { model_id: this.form.model } }
+                : {}),
             });
             this.pushEvent(
               isSteer ? 'steer' : 'run_turn',

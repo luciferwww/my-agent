@@ -75,11 +75,6 @@ async function setupWorkspace(dir: string): Promise<void> {
   );
 }
 
-interface EventTracker {
-  events: AgentEvent[];
-  install: (app: RuntimeApp, addOptions?: never) => void;
-}
-
 function trackerFor(): { onEvent: (e: AgentEvent) => void; events: AgentEvent[] } {
   const events: AgentEvent[] = [];
   return {
@@ -131,7 +126,7 @@ async function scenarioTaskTool(): Promise<void> {
 
     try {
       const t0 = Date.now();
-      const result = await app.runTurn({
+      const result = await app.application.runTurn({
         sessionKey: 'main',
         // Heavy hint so even small models reach for the task tool.
         message:

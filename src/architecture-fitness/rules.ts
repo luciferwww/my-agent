@@ -622,6 +622,10 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
     sourcePath.startsWith('src/runtime-modules/')
     || sourcePath === 'src/runtime/registry-builder.ts'
     || sourcePath === 'src/runtime/channel-lifecycle.ts'
+    || sourcePath === 'src/runtime/composition-coordinator.ts'
+    || sourcePath === 'src/runtime/runtime-builder.ts'
+    || sourcePath === 'src/runtime/runtime-composition.ts'
+    || sourcePath === 'src/runtime/runtime-lifecycle.ts'
   ) {
     return 'Composition';
   }

@@ -29,6 +29,7 @@ import { join } from 'node:path';
 import process from 'node:process';
 
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
+import type { RuntimeApplication } from '../src/runtime/runtime-composition.js';
 import type {
   ChatParams,
   ChatResponse,
@@ -167,7 +168,7 @@ async function scenarioAbortMidStream(): Promise<void> {
     // but the signal check happens BEFORE each yield so at least one
     // event must have been emitted before abort takes effect.
     let firedAbort = false;
-    let appRef: RuntimeApp | undefined;
+    let appRef: RuntimeApplication | undefined;
     const observer = (e: AgentEvent) => {
       agentEvents.push(e);
       if (!firedAbort && e.type === 'text_delta') {
@@ -181,10 +182,10 @@ async function scenarioAbortMidStream(): Promise<void> {
       onAgentEvent: observer,
       dependencies: { createLLMClient: () => client },
     });
-    appRef = app;
+    appRef = app.application;
 
     try {
-      const result = await app.runTurn({
+      const result = await app.application.runTurn({
         sessionKey: sk,
         message: 'please respond',
         promptMode: 'full',
@@ -286,7 +287,7 @@ async function scenarioOrphanRepair(): Promise<void> {
     });
 
     try {
-      const result = await app.runTurn({
+      const result = await app.application.runTurn({
         sessionKey: sk,
         message: 'continue please',
         promptMode: 'full',
@@ -384,7 +385,7 @@ async function scenarioMessagesDropped(): Promise<void> {
 
       // Now abort. Should return { aborted: true, dropped: 3 } and emit
       // the messages_dropped runtime event.
-      const abortResult = app.abortTurn(sk);
+      const abortResult = app.application.abortTurn(sk);
       console.log('  abortTurn returned =', abortResult);
       assert.equal(abortResult.aborted, true, 'active turn must be aborted');
       assert.equal(abortResult.dropped, 3, 'all queued messages must be counted');
@@ -426,7 +427,7 @@ async function scenarioShutdownAborts(): Promise<void> {
     });
 
     try {
-      const turnPromise = app.runTurn({
+      const turnPromise = app.application.runTurn({
         sessionKey: 'main',
         message: 'go',
         promptMode: 'full',

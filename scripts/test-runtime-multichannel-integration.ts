@@ -34,6 +34,7 @@ import process from 'node:process';
 import { WebSocket } from 'ws';
 
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
+import type { RuntimeHandle } from '../src/runtime/runtime-composition.js';
 import { createWebSocketChannelModule } from '../src/runtime-modules/index.js';
 import type {
   Channel,
@@ -205,7 +206,7 @@ function createRecordingChannel(id: string): RecordingChannel {
 async function testQueuedWebSocketApprovalRoutesToQueuedOrigin(): Promise<void> {
   await withWorkspace(async (workspaceDir) => {
     const clients: WebSocket[] = [];
-    let app: RuntimeApp | undefined;
+    let app: RuntimeHandle | undefined;
     const port = await pickFreePort();
 
     try {
@@ -313,7 +314,7 @@ async function testQueuedWebSocketApprovalRoutesToQueuedOrigin(): Promise<void> 
 async function testQueuedWebSocketApprovalAbortRoutesToQueuedOrigin(): Promise<void> {
   await withWorkspace(async (workspaceDir) => {
     const clients: WebSocket[] = [];
-    let app: RuntimeApp | undefined;
+    let app: RuntimeHandle | undefined;
     const port = await pickFreePort();
 
     try {
@@ -413,7 +414,7 @@ async function testQueuedWebSocketApprovalAbortRoutesToQueuedOrigin(): Promise<v
       await expectNoMessage(client2, 200);
       assert.equal(secondDecision, undefined, 'approval must remain pending without a response');
 
-      assert.deepEqual(app.abortTurn('main'), { aborted: true, dropped: 0 });
+      assert.deepEqual(app.application.abortTurn('main'), { aborted: true, dropped: 0 });
       const closed = await readMessage(client2);
       assert.deepEqual(closed, {
         type: 'approval_closed',
@@ -474,7 +475,7 @@ async function testFanoutForwardsAgentEventsToAllChannelsAndObserver(): Promise<
     });
 
     try {
-      await app.runTurn({ sessionKey: 'main', message: 'trigger fanout', promptMode: 'full' });
+      await app.application.runTurn({ sessionKey: 'main', message: 'trigger fanout', promptMode: 'full' });
 
       const aTypes = a.sentEvents.map((e) => e.type);
       const bTypes = b.sentEvents.map((e) => e.type);

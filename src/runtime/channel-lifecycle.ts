@@ -12,6 +12,7 @@ import type {
 } from '../core/channel/index.js';
 import type { AgentEvent } from '../core/runner/index.js';
 import type {
+  ContributionSource,
   RegistrySnapshot,
   RegistryStartupDiagnostic,
 } from '../core/registry/index.js';
@@ -20,9 +21,13 @@ import {
   type RegistryCandidate,
   type StagedRegistryUnit,
 } from './registry-builder.js';
+import { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
 
 interface ActiveChannelRecord {
   readonly id: string;
+  readonly instanceId: string;
+  readonly unitId: string;
+  readonly source: ContributionSource;
   readonly instance: ChannelInstance;
   readonly completion: Promise<ChannelCompletion>;
   stopStarted: boolean;
@@ -48,6 +53,8 @@ implements ChannelCompletionObserver, ChannelShutdownHandoff {
   constructor(
     private readonly completionById: ReadonlyMap<string, Promise<ChannelCompletion>>,
     private readonly activeRecords: readonly ActiveChannelRecord[],
+    private readonly lifecycleLedger: RuntimeLifecycleLedger,
+    private readonly generation: number,
   ) {}
 
   waitForChannelCompletion(id: string): Promise<ChannelCompletion> {
@@ -64,28 +71,20 @@ implements ChannelCompletionObserver, ChannelShutdownHandoff {
   }
 
   private async stopActive(): Promise<ChannelLifecycleReport> {
-    const results = await Promise.all(this.activeRecords.map(async (record) => {
-      if (record.stopStarted) return undefined;
-      record.stopStarted = true;
-      try {
-        await record.instance.stop();
-        return { outcome: 'completed' as const, channelId: record.id };
-      } catch (error) {
-        return {
-          outcome: 'failed' as const,
-          channelId: record.id,
-          message: messageOf(error),
-        };
-      }
+    const channelByInstanceId = new Map(
+      this.activeRecords.map((record) => [record.instanceId, record.id]),
+    );
+    for (const record of this.activeRecords) {
+      this.lifecycleLedger.removeGenerationMembership(record.instanceId, this.generation);
+    }
+    const report = await this.lifecycleLedger.stopEligible(
+      this.activeRecords.map((record) => record.instanceId),
+    );
+    const completed = report.completed.map((instanceId) => channelByInstanceId.get(instanceId)!);
+    const failed = report.failed.map((failure) => ({
+      channelId: channelByInstanceId.get(failure.instanceId)!,
+      message: failure.message,
     }));
-    const completed = results.flatMap((result) =>
-      result?.outcome === 'completed' ? [result.channelId] : [],
-    );
-    const failed = results.flatMap((result) =>
-      result?.outcome === 'failed'
-        ? [{ channelId: result.channelId, message: result.message }]
-        : [],
-    );
 
     return Object.freeze({
       completed: Object.freeze(completed),
@@ -97,7 +96,9 @@ implements ChannelCompletionObserver, ChannelShutdownHandoff {
 export async function activateRegistryChannels(params: {
   readonly candidate: RegistryCandidate;
   readonly host: ChannelRuntimeHost;
+  readonly lifecycleLedger?: RuntimeLifecycleLedger;
 }): Promise<ActivatedRegistry> {
+  const lifecycleLedger = params.lifecycleLedger ?? new RuntimeLifecycleLedger();
   const completionById = new Map<string, Promise<ChannelCompletion>>();
   let results = await Promise.all(params.candidate.units.map(
     (unit) => activateUnit(unit, params.host, completionById),
@@ -134,17 +135,59 @@ export async function activateRegistryChannels(params: {
   const bindings = results.flatMap((result) => result.accepted ? [...result.bindings] : []);
   const diagnostics = results.flatMap((result) => [...result.diagnostics]);
   const activeRecords = results.flatMap((result) => result.accepted ? [...result.records] : []);
-  const lifecycle = new ChannelLifecycleSet(completionById, Object.freeze(activeRecords));
-
-  return Object.freeze({
-    snapshot: finalizeRegistrySnapshot({
+  const ledgerOwnedInstanceIds: string[] = [];
+  try {
+    for (const record of activeRecords) {
+      lifecycleLedger.create({
+        instanceId: record.instanceId,
+        unitId: record.unitId,
+        source: record.source,
+        owner: {
+          async stop() {
+            if (record.stopStarted) return;
+            record.stopStarted = true;
+            await record.instance.stop();
+          },
+        },
+      });
+      lifecycleLedger.markStarting(record.instanceId);
+      lifecycleLedger.markReady(record.instanceId);
+      lifecycleLedger.handoff(record.instanceId);
+      ledgerOwnedInstanceIds.push(record.instanceId);
+      lifecycleLedger.addGenerationMembership(record.instanceId, 1);
+    }
+    const lifecycle = new ChannelLifecycleSet(
+      completionById,
+      Object.freeze(activeRecords),
+      lifecycleLedger,
+      1,
+    );
+    const snapshot = finalizeRegistrySnapshot({
       candidate: params.candidate,
       acceptedUnits,
       channelBindings: bindings,
+      generation: 1,
       diagnostics,
-    }),
-    lifecycle,
-  });
+    });
+
+    return Object.freeze({ snapshot, lifecycle });
+  } catch (error) {
+    for (const instanceId of ledgerOwnedInstanceIds) {
+      lifecycleLedger.removeGenerationMembership(instanceId, 1);
+    }
+    await lifecycleLedger.stopEligible(ledgerOwnedInstanceIds);
+    const ledgerOwned = new Set(ledgerOwnedInstanceIds);
+    await Promise.all(activeRecords.map(async (record) => {
+      if (ledgerOwned.has(record.instanceId) || record.stopStarted) return;
+      record.stopStarted = true;
+      try {
+        await record.instance.stop();
+      } catch {
+        // Preserve the handoff/finalization failure as the startup cause.
+      }
+    }));
+    throw error;
+  }
 }
 
 async function activateUnit(
@@ -181,6 +224,9 @@ async function activateUnit(
       }
       const record: ActiveChannelRecord = {
         id: contribution.id,
+        instanceId: `channel:${contribution.id}`,
+        unitId: unit.unit.id,
+        source: unit.unit.source,
         instance,
         completion: instance.completion,
         stopStarted: false,

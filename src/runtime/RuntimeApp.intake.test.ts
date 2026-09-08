@@ -22,6 +22,7 @@ import type {
   ProcessInboundResult,
 } from '../core/media/attachment-pipeline.js';
 import { RuntimeApp } from './RuntimeApp.js';
+import type { RuntimeHandle } from './runtime-composition.js';
 import type { RuntimeDependencies, RuntimeEvent } from './types.js';
 
 // 单元测试用 mock：跳过真实 sharp 解码，直接受控注入 normalized + dropped
@@ -625,7 +626,7 @@ async function buildApp(
     useRealRunner?: boolean;
   } = {},
 ): Promise<{
-  app: RuntimeApp;
+  app: RuntimeHandle;
   runnerRun: ReturnType<typeof vi.fn>;
   testChannel: ReturnType<typeof createTestChannel>;
   runtimeEvents: RuntimeEvent[];

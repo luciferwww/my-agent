@@ -28,6 +28,7 @@ export interface BuildRegistrySnapshotParams {
 
 export interface StagedRegistryUnit {
   readonly unit: RuntimeContributionUnit;
+  readonly providers: readonly ProviderProjectionEntry[];
   readonly tools: readonly Tool[];
   readonly hooks: readonly HookContribution[];
   readonly channels: readonly ChannelContribution[];
@@ -43,6 +44,7 @@ export function stageRegistryCandidate(
   params: BuildRegistrySnapshotParams,
 ): RegistryCandidate {
   const acceptedUnitIds = new Set<string>();
+  const acceptedProviderIds = new Set<string>();
   const acceptedToolIds = new Set<string>();
   const acceptedHookIds = new Set<string>();
   const acceptedChannelIds = new Set<string>();
@@ -55,11 +57,13 @@ export function stageRegistryCandidate(
       assertNoAcceptedConflicts(
         staged,
         acceptedUnitIds,
+        acceptedProviderIds,
         acceptedToolIds,
         acceptedHookIds,
         acceptedChannelIds,
       );
       acceptedUnitIds.add(unit.id);
+      for (const provider of staged.providers) acceptedProviderIds.add(provider.id);
       for (const tool of staged.tools) acceptedToolIds.add(tool.name);
       for (const hook of staged.hooks) {
         acceptedHookIds.add(hookIdentity(hook.hookName, hook.id));
@@ -93,12 +97,15 @@ export function finalizeRegistrySnapshot(params: {
   readonly candidate: RegistryCandidate;
   readonly acceptedUnits: readonly StagedRegistryUnit[];
   readonly channelBindings: readonly ChannelRuntimeBinding[];
+  readonly generation: number;
   readonly diagnostics?: readonly RegistryStartupDiagnostic[];
 }): RegistrySnapshot {
   const resolvedTools: ResolvedTool[] = [];
   const hookBindings: HookBinding[] = [];
+  const providers = [...params.candidate.providers];
 
   for (const staged of params.acceptedUnits) {
+    providers.push(...staged.providers);
     for (const tool of staged.tools) {
       const validator = compilePortableToolSchema(tool.inputSchema);
       const definition: ToolDefinition = Object.freeze({
@@ -124,9 +131,15 @@ export function finalizeRegistrySnapshot(params: {
     }
   }
 
+  if (!Number.isSafeInteger(params.generation) || params.generation < 1) {
+    throw new RegistryBuildError(
+      `Registry generation must be a positive safe integer. Received: ${params.generation}`,
+    );
+  }
+
   return Object.freeze({
-    id: 'startup:1',
-    providers: params.candidate.providers,
+    generation: params.generation,
+    providers: Object.freeze(providers),
     tools: createToolProjection(resolvedTools),
     hooks: createHookProjection(hookBindings),
     channels: createChannelProjection(params.channelBindings),
@@ -152,6 +165,7 @@ export function buildRegistrySnapshot(
     candidate,
     acceptedUnits: candidate.units,
     channelBindings: [],
+    generation: 1,
   });
 }
 
@@ -160,11 +174,23 @@ function stageUnit(unit: RuntimeContributionUnit): StagedRegistryUnit {
   const tools: Tool[] = [];
   const hooks: HookContribution[] = [];
   const channels: ChannelContribution[] = [];
+  const providers: ProviderProjectionEntry[] = [];
+  const localProviderIds = new Set<string>();
   const localToolIds = new Set<string>();
   const localHookIds = new Set<string>();
   const localChannelIds = new Set<string>();
 
   const api: ExtensionRegistrationApi = Object.freeze({
+    registerProvider(provider: ProviderProjectionEntry): void {
+      assertProvider(provider);
+      if (localProviderIds.has(provider.id)) {
+        throw new RegistryBuildError(
+          `Duplicate Provider contribution "${provider.id}" in unit "${unit.id}".`,
+        );
+      }
+      localProviderIds.add(provider.id);
+      providers.push(Object.freeze(provider));
+    },
     registerTool(tool: Tool): void {
       assertTool(tool);
       if (localToolIds.has(tool.name)) {
@@ -195,10 +221,24 @@ function stageUnit(unit: RuntimeContributionUnit): StagedRegistryUnit {
   unit.register(api);
   return Object.freeze({
     unit,
+    providers: Object.freeze(providers),
     tools: Object.freeze(tools),
     hooks: Object.freeze(hooks),
     channels: Object.freeze(channels),
   });
+}
+
+function assertProvider(provider: ProviderProjectionEntry): void {
+  assertIdentity(provider.id, 'Provider');
+  if (typeof provider.protocol !== 'string' || provider.protocol.trim() === '') {
+    throw new RegistryBuildError(`Provider "${provider.id}" must have a non-empty protocol.`);
+  }
+  if (typeof provider.resolveConnection !== 'function') {
+    throw new RegistryBuildError(`Provider "${provider.id}" must provide resolveConnection().`);
+  }
+  if (typeof provider.resolveModel !== 'function') {
+    throw new RegistryBuildError(`Provider "${provider.id}" must provide resolveModel().`);
+  }
 }
 
 function assertTool(tool: Tool): void {
@@ -236,12 +276,18 @@ function assertChannel(contribution: ChannelContribution): void {
 function assertNoAcceptedConflicts(
   staged: StagedRegistryUnit,
   unitIds: ReadonlySet<string>,
+  providerIds: ReadonlySet<string>,
   toolIds: ReadonlySet<string>,
   hookIds: ReadonlySet<string>,
   channelIds: ReadonlySet<string>,
 ): void {
   if (unitIds.has(staged.unit.id)) {
     throw conflict(`Duplicate unit identity "${staged.unit.id}".`);
+  }
+  for (const provider of staged.providers) {
+    if (providerIds.has(provider.id)) {
+      throw conflict(`Provider contribution "${provider.id}" conflicts with an accepted unit.`);
+    }
   }
   for (const tool of staged.tools) {
     if (toolIds.has(tool.name)) {

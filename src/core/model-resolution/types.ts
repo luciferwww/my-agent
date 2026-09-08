@@ -41,7 +41,7 @@ export interface ModelRequestRequirements {
 }
 
 export interface ModelRequestOverride {
-  readonly maxTokens?: number;
+  readonly maxOutputTokens?: number;
 }
 
 export interface ModelPolicy {

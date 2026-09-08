@@ -21,6 +21,7 @@ export interface HookContribution<K extends HookName = HookName> {
 }
 
 export interface ExtensionRegistrationApi {
+  registerProvider(provider: ProviderProjectionEntry): void;
   registerTool(tool: Tool): void;
   registerHook<K extends HookName>(contribution: HookContribution<K>): void;
   registerChannel(contribution: ChannelContribution): void;
@@ -77,7 +78,7 @@ export interface RegistryStartupDiagnostic {
 }
 
 export interface RegistrySnapshot {
-  readonly id: string;
+  readonly generation: number;
   readonly providers: readonly ProviderProjectionEntry[];
   readonly tools: ToolProjection;
   readonly hooks: HookProjection;

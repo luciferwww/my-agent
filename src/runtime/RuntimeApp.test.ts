@@ -18,6 +18,7 @@ import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import type { ResolvedModel } from '../core/model-resolution/index.js';
 import type { SubagentModelSelection } from '../platform/config/types.js';
 import { RuntimeApp } from './RuntimeApp.js';
+import type { RuntimeHandle } from './runtime-composition.js';
 import type { RuntimeDependencies, RuntimeEvent } from './types.js';
 
 describe('RuntimeApp', () => {
@@ -58,7 +59,7 @@ describe('RuntimeApp', () => {
       dependencies: deps,
     });
 
-    const result = await app.runTurn({
+    const result = await app.application.runTurn({
       sessionKey: 'main',
       message: 'Hello runtime',
       promptMode: 'full',
@@ -79,7 +80,7 @@ describe('RuntimeApp', () => {
     );
     expect(result.sessionKey).toBe('main');
     expect(result.text).toBe('hello');
-    expect(app.getState().phase).toBe('ready');
+    expect(app.application.getState().phase).toBe('ready');
   });
 
   it.each([
@@ -184,7 +185,7 @@ describe('RuntimeApp', () => {
       onAgentEvent: (event) => events.push(event),
     });
 
-    const result = await app.runTurn({
+    const result = await app.application.runTurn({
       sessionKey: 'main',
       message: 'delegate',
       promptMode: 'full',
@@ -303,7 +304,7 @@ describe('RuntimeApp', () => {
       onEvent: (event) => events.push(event),
     });
 
-    expect(app.getToolNames()).not.toContain('memory_search');
+    expect(app.application.getToolNames()).not.toContain('memory_search');
     expect(events.some((event) => event.type === 'warning')).toBe(true);
     expect(events.some((event) => event.type === 'app_ready')).toBe(true);
   });
@@ -329,7 +330,7 @@ describe('RuntimeApp', () => {
 
     const readyEvents = events.filter((event) => event.type === 'app_ready');
     expect(readyEvents).toHaveLength(1);
-    expect(readyEvents[0]?.toolNames).toEqual(app.getToolNames());
+    expect(readyEvents[0]?.toolNames).toEqual(app.application.getToolNames());
     expect(readyEvents[0]?.toolNames.includes('task')).toBe(taskExpected);
 
     await app.close();
@@ -436,7 +437,7 @@ describe('RuntimeApp', () => {
       onAgentEvent: (event) => agentEvents.push(event),
     });
 
-    await expect(app.runTurn({
+    await expect(app.application.runTurn({
       sessionKey: 'main',
       message: 'missing model',
       promptMode: 'full',
@@ -450,7 +451,7 @@ describe('RuntimeApp', () => {
     expect(runnerRun).not.toHaveBeenCalled();
     expect(agentEvents.filter((event) => event.type === 'error')).toEqual([]);
 
-    await expect(app.runTurn({
+    await expect(app.application.runTurn({
       sessionKey: 'main',
       message: 'queued missing model',
       promptMode: 'full',
@@ -468,11 +469,12 @@ describe('RuntimeApp', () => {
     ]);
     expect(runnerRun).not.toHaveBeenCalled();
 
-    await expect(app.runTurn({
+    await expect(app.application.runTurn({
       sessionKey: 'main',
       message: 'explicit model',
       promptMode: 'full',
-      model: 'not-locally-validated',
+      modelReference: { modelId: 'not-locally-validated' },
+      requestOverride: { maxOutputTokens: 2048 },
     })).resolves.toEqual(expect.objectContaining({ text: 'provider accepted model' }));
     expect(runnerRun).toHaveBeenCalledTimes(1);
     expect(runnerRun).toHaveBeenCalledWith(
@@ -480,6 +482,7 @@ describe('RuntimeApp', () => {
         resolvedModel: expect.objectContaining({
           identity: { providerId: 'test', modelId: 'not-locally-validated' },
           referenceSource: 'turn-explicit',
+          limits: { maxTokens: 2048, maxTokensSource: 'request-override' },
         }),
       }),
     );
@@ -504,15 +507,15 @@ describe('RuntimeApp', () => {
       dependencies: deps,
     });
 
-    const previousVersion = app.getState().contextVersion;
-    await app.reloadContextFiles();
-    expect(app.getState().contextVersion).toBe(previousVersion + 1);
+    const previousVersion = app.application.getState().contextVersion;
+    await app.application.reloadContextFiles();
+    expect(app.application.getState().contextVersion).toBe(previousVersion + 1);
 
     await app.close('test shutdown');
     await app.close('test shutdown');
 
     expect(memoryClose).toHaveBeenCalledTimes(1);
-    await expect(app.runTurn({ sessionKey: 'main', message: 'after close', promptMode: 'full' })).rejects.toThrow(
+    await expect(app.application.runTurn({ sessionKey: 'main', message: 'after close', promptMode: 'full' })).rejects.toThrow(
       'Cannot run when runtime phase is closed.',
     );
   });
@@ -549,7 +552,7 @@ describe('RuntimeApp', () => {
     expect(failingChannel.channel.start).toHaveBeenCalledTimes(1);
     expect(successfulChannel.channel.stop).not.toHaveBeenCalled();
     expect(failingChannel.channel.stop).toHaveBeenCalledTimes(1);
-    await expect(app.waitForChannelCompletion('failing-channel')).resolves.toEqual(
+    await expect(app.application.waitForChannelCompletion('failing-channel')).resolves.toEqual(
       expect.objectContaining({ outcome: 'failed', phase: 'startup', error: startError }),
     );
     expect(events).toContainEqual({
@@ -598,7 +601,7 @@ describe('RuntimeApp', () => {
     expect(report.failed).toEqual([
       { resource: 'channel:failing-stop-channel', message: 'channel stop failed' },
     ]);
-    expect(app.getState().phase).toBe('closed');
+    expect(app.application.getState().phase).toBe('closed');
   });
 
   it('CH-01 serializes a busy session while another session runs concurrently', async () => {
@@ -690,7 +693,7 @@ describe('RuntimeApp', () => {
     otherRun.resolve(result('parallel'));
     await otherDispatch;
     await vi.waitFor(() => {
-      expect(app.getState().activeRunCount).toBe(0);
+      expect(app.application.getState().activeRunCount).toBe(0);
     });
   });
 
@@ -863,7 +866,7 @@ describe('RuntimeApp', () => {
       expect(approvalClosures).toHaveLength(0);
       expect(approvalDecision).toBeUndefined();
 
-      expect(app.abortTurn('main')).toEqual({ aborted: true, dropped: 0 });
+      expect(app.application.abortTurn('main')).toEqual({ aborted: true, dropped: 0 });
       await vi.waitFor(() => {
         expect(approvalClosures).toHaveLength(1);
       });
@@ -1016,7 +1019,7 @@ describe('RuntimeApp', () => {
 
   describe('abort', () => {
     // helper：跑一个 turn 并给它一个可 abort 的 hook；runnerRun 内部可自定义
-    async function makeAppWithRunner(runnerRun: (params: unknown) => Promise<RunResult>): Promise<RuntimeApp> {
+    async function makeAppWithRunner(runnerRun: (params: unknown) => Promise<RunResult>): Promise<RuntimeHandle> {
       const deps = createTestDependencies({
         createAgentRunner: () => ({ run: runnerRun }) as never,
         createMemoryManager: async () => null,
@@ -1049,7 +1052,7 @@ describe('RuntimeApp', () => {
         onEvent: (e) => events.push(e),
       });
 
-      const result = app2.abortTurn('no-such-session');
+      const result = app2.application.abortTurn('no-such-session');
       expect(result).toEqual({ aborted: false, dropped: 0 });
       expect(events.find((e) => e.type === 'messages_dropped')).toBeUndefined();
       await app.close();
@@ -1084,12 +1087,12 @@ describe('RuntimeApp', () => {
         onEvent: (e) => events.push(e),
       });
 
-      const turnPromise = app.runTurn({ sessionKey: 'main', message: 'go', promptMode: 'full' });
+      const turnPromise = app.application.runTurn({ sessionKey: 'main', message: 'go', promptMode: 'full' });
 
       // 等 runner 收到 signal
       await vi.waitFor(() => expect(capturedSignal).toBeDefined());
 
-      const abortResult = app.abortTurn('main');
+      const abortResult = app.application.abortTurn('main');
       expect(abortResult).toEqual({ aborted: true, dropped: 0 });
       expect(capturedSignal!.aborted).toBe(true);
       expect(events.find((e) => e.type === 'messages_dropped')).toBeUndefined();
@@ -1112,10 +1115,10 @@ describe('RuntimeApp', () => {
 
       // 手工向 messageQueueBySession 塞 3 条（模拟 queued 消息）
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const queueMap = (app as any).messageQueueBySession as Map<string, unknown[]>;
+      const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
       queueMap.set('main', [{ dummy: 1 }, { dummy: 2 }, { dummy: 3 }]);
 
-      const result = app.abortTurn('main');
+      const result = app.application.abortTurn('main');
       expect(result).toEqual({ aborted: false, dropped: 3 });
 
       // queue 已清
@@ -1177,7 +1180,7 @@ describe('RuntimeApp', () => {
       });
       expect(runnerRun).toHaveBeenCalledTimes(1);
 
-      const result = app.abortTurn('main');
+      const result = app.application.abortTurn('main');
       expect(result).toEqual({ aborted: true, dropped: 1 });
       expect(capturedSignal!.aborted).toBe(true);
       expect(events.filter((e) => e.type === 'messages_dropped')).toEqual([
@@ -1262,7 +1265,7 @@ describe('RuntimeApp', () => {
         }),
       );
 
-      expect(app.abortTurn('main')).toEqual({ aborted: true, dropped: 0 });
+      expect(app.application.abortTurn('main')).toEqual({ aborted: true, dropped: 0 });
       expect(events.filter((event) => event.type === 'messages_dropped')).toEqual([]);
 
       releaseRun.resolve();
@@ -1287,11 +1290,11 @@ describe('RuntimeApp', () => {
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const queueMap = (app as any).messageQueueBySession as Map<string, unknown[]>;
+      const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
       queueMap.set('sk1', [{ x: 1 }]);
       queueMap.set('sk2', [{ y: 1 }, { y: 2 }]);
 
-      const result = app.abortTurn('sk1');
+      const result = app.application.abortTurn('sk1');
       expect(result).toEqual({ aborted: false, dropped: 1 });
       expect(queueMap.has('sk1')).toBe(false);
       expect(queueMap.get('sk2')?.length).toBe(2);
@@ -1319,11 +1322,11 @@ describe('RuntimeApp', () => {
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const activeAborts = (app as any).activeAborts as Map<string, AbortController>;
+      const activeAborts = (app.application as any).activeAborts as Map<string, AbortController>;
       const staleController = new AbortController();
       activeAborts.set('main', staleController);
 
-      await app.runTurn({ sessionKey: 'main', message: 'hi', promptMode: 'full' });
+      await app.application.runTurn({ sessionKey: 'main', message: 'hi', promptMode: 'full' });
 
       // 新 turn 后：stale 已被清、finally 也清了新的 controller → map 里不该有 'main'
       expect(activeAborts.has('main')).toBe(false);
@@ -1349,11 +1352,11 @@ describe('RuntimeApp', () => {
       armed = true;
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const queueMap = (app as any).messageQueueBySession as Map<string, unknown[]>;
+      const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
       queueMap.set('main', [{ dummy: 1 }]);
 
       // API 不该抛，返回值反映真实状态
-      const result = app.abortTurn('main');
+      const result = app.application.abortTurn('main');
       expect(result).toEqual({ aborted: false, dropped: 1 });
       expect(queueMap.has('main')).toBe(false);
 
@@ -1452,7 +1455,7 @@ describe('RuntimeApp', () => {
         }),
       });
 
-      const turnPromise = app.runTurn({ sessionKey: 'main', message: 'go', promptMode: 'full' });
+      const turnPromise = app.application.runTurn({ sessionKey: 'main', message: 'go', promptMode: 'full' });
       await vi.waitFor(() => expect(capturedSignal).toBeDefined());
 
       const closeStart = Date.now();
@@ -1482,7 +1485,7 @@ describe('RuntimeApp', () => {
 
       // 塞 queued 消息到某 session
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const queueMap = (app as any).messageQueueBySession as Map<string, unknown[]>;
+      const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
       queueMap.set('sk-with-queue', [{ x: 1 }, { x: 2 }]);
 
       // querySessionsNeedingAbort 应包含 'sk-with-queue'

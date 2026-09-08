@@ -177,7 +177,7 @@ async function scenarioTaskToolPath(): Promise<void> {
     });
 
     try {
-      const result = await app.runTurn({
+      const result = await app.application.runTurn({
         sessionKey: 'main',
         message: 'please use the task tool to fetch SUBAGENT-OUTPUT',
         promptMode: 'full',

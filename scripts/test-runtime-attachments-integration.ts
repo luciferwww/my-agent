@@ -31,6 +31,7 @@ import sharp from 'sharp';
 import { WebSocket } from 'ws';
 
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
+import type { RuntimeHandle } from '../src/runtime/runtime-composition.js';
 import { createWebSocketChannelModule } from '../src/runtime-modules/builtin-channels.js';
 import {
   ATTACHMENT_INLINE_THRESHOLD_BYTES,
@@ -235,7 +236,7 @@ async function connectClient(port: number, clientId: string): Promise<TestClient
 // ── RuntimeApp + ws lifecycle ───────────────────────────────────
 
 interface Harness {
-  app: RuntimeApp;
+  app: RuntimeHandle;
   port: number;
   llm: MockLLMHandle;
   runtimeEvents: RuntimeEvent[];

@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { AgentExecutionFailure } from '../core/runner/index.js';
 import type { AgentEvent } from '../core/runner/index.js';
 import { ModelResolutionError } from '../core/model-resolution/index.js';
-import type { ModelReference, ModelResolver } from '../core/model-resolution/index.js';
+import { ModelResolver, type ModelReference } from '../core/model-resolution/index.js';
+import type { RegistrySnapshot } from '../core/registry/index.js';
 import type { SessionManager } from '../core/session/SessionManager.js';
 import { resolveSubagentCapabilities } from '../core/subagent/capabilities.js';
 import { deriveSubagentRequestRequirements } from '../core/subagent/request-requirements.js';
@@ -25,13 +26,13 @@ export interface ActiveParentTurn {
   readonly signal: AbortSignal;
   readonly effectiveReference: ModelReference;
   readonly contextFiles: readonly ContextFile[];
+  readonly registrySnapshot: RegistrySnapshot;
 }
 
 export interface CreateSubagentDelegationPortParams {
   readonly activeParents: ReadonlyMap<string, ActiveParentTurn>;
   readonly routeContextByTurn: Map<string, MessageRouteContext>;
   readonly sessionManager: SessionManager;
-  readonly modelResolver: ModelResolver;
   readonly defaultProviderId: string;
   readonly defaultMaxTokens: number;
   readonly maxDepth: number;
@@ -112,6 +113,8 @@ export function createSubagentDelegationPort(
           childSessionKey,
           childTurnId,
           signal: parent.signal,
+          toolProjection: parent.registrySnapshot.tools,
+          hookProjection: parent.registrySnapshot.hooks,
         });
         throwIfAborted(parent.signal);
 
@@ -122,7 +125,7 @@ export function createSubagentDelegationPort(
         const reference = request.profile.model === 'inherit'
           ? parent.effectiveReference
           : request.profile.model;
-        const resolvedModel = params.modelResolver.resolve({
+        const resolvedModel = new ModelResolver(parent.registrySnapshot.providers).resolve({
           reference,
           referenceSource: 'native',
           defaultProviderId: params.defaultProviderId,

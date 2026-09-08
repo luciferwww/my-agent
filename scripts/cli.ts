@@ -57,7 +57,7 @@ async function main(): Promise<void> {
     },
   });
 
-  const completion = await app.waitForChannelCompletion('cli');
+  const completion = await app.application.waitForChannelCompletion('cli');
 
   await app.close(completion.outcome === 'failed' ? 'cli channel failed' : 'cli exit');
   if (completion.outcome === 'failed') throw completion.error;

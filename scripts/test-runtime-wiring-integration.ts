@@ -117,7 +117,7 @@ async function testBootsAndRunsTurn(): Promise<void> {
     });
 
     try {
-      const result = await app.runTurn({
+      const result = await app.application.runTurn({
         sessionKey: 'main',
         message: 'Hello integration runtime',
         promptMode: 'full',
@@ -183,7 +183,7 @@ async function testMemoryToolsInjection(): Promise<void> {
     });
 
     try {
-      const result = await app.runTurn({
+      const result = await app.application.runTurn({
         sessionKey: 'memory-main',
         message: 'Hello memory runtime',
         promptMode: 'full',
@@ -191,8 +191,8 @@ async function testMemoryToolsInjection(): Promise<void> {
 
       assert.equal(result.text, 'Memory integration', 'result.text should be "Memory integration"');
       assert.ok(
-        app.getToolNames().includes('memory_search'),
-        `getToolNames() should include "memory_search", got: ${app.getToolNames().join(', ')}`,
+        app.application.getToolNames().includes('memory_search'),
+        `getToolNames() should include "memory_search", got: ${app.application.getToolNames().join(', ')}`,
       );
       assert.equal(capturedParams?.model, 'config-model', 'LLM should receive config model');
       assert.ok(
@@ -230,7 +230,7 @@ async function testReloadContextFiles(): Promise<void> {
     });
 
     try {
-      await app.runTurn({ sessionKey: 'reload-main', message: 'First turn', promptMode: 'full' });
+      await app.application.runTurn({ sessionKey: 'reload-main', message: 'First turn', promptMode: 'full' });
 
       await writeFile(
         join(workspaceDir, '.agent', 'IDENTITY.md'),
@@ -238,8 +238,8 @@ async function testReloadContextFiles(): Promise<void> {
         'utf-8',
       );
 
-      const previousVersion = app.getState().contextVersion;
-      await app.runTurn({
+      const previousVersion = app.application.getState().contextVersion;
+      await app.application.runTurn({
         sessionKey: 'reload-main',
         message: 'Second turn',
         promptMode: 'full',
@@ -247,9 +247,9 @@ async function testReloadContextFiles(): Promise<void> {
       });
 
       assert.equal(
-        app.getState().contextVersion,
+        app.application.getState().contextVersion,
         previousVersion + 1,
-        `contextVersion should increment by 1: before=${previousVersion}, after=${app.getState().contextVersion}`,
+        `contextVersion should increment by 1: before=${previousVersion}, after=${app.application.getState().contextVersion}`,
       );
       assert.ok(
         capturedSystems.at(-1)?.includes('Reloaded context marker'),

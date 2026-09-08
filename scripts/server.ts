@@ -63,7 +63,7 @@ async function main(): Promise<void> {
     },
   });
 
-  console.log(`Tools     : ${app.getToolNames().join(', ')}`);
+  console.log(`Tools     : ${app.application.getToolNames().join(', ')}`);
 
   // Graceful shutdown on Ctrl+C
   let shuttingDown = false;
@@ -76,7 +76,7 @@ async function main(): Promise<void> {
   };
   process.on('SIGINT', () => void shutdown());
 
-  const completion = await app.waitForChannelCompletion('websocket');
+  const completion = await app.application.waitForChannelCompletion('websocket');
   await app.close(completion.outcome === 'failed' ? 'websocket channel failed' : 'websocket closed');
   if (completion.outcome === 'failed') throw completion.error;
 }

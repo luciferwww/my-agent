@@ -1,4 +1,5 @@
 import type { ApprovalResult } from '../approval/index.js';
+import type { ModelReference, ModelRequestOverride } from '../model-resolution/index.js';
 import type { AgentEvent } from '../runner/types.js';
 
 export type { ApprovalResult } from '../approval/index.js';
@@ -17,8 +18,8 @@ export type InboundContentBlock =
 export interface ChannelRunRequest {
   sessionKey: string;
   message: string | InboundContentBlock[];
-  model?: string;
-  maxTokens?: number;
+  modelReference?: ModelReference;
+  requestOverride?: ModelRequestOverride;
   maxLlmCalls?: number;
   clientId?: string;
 }

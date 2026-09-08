@@ -38,8 +38,8 @@ type ClientMessage =
       type: 'run_turn';
       sessionKey: string;
       message: string | InboundContentBlock[];
-      model?: string;
-      maxTokens?: number;
+      modelReference?: ChannelRunRequest['modelReference'];
+      requestOverride?: ChannelRunRequest['requestOverride'];
       maxLlmCalls?: number;
     }
   | {
@@ -329,12 +329,18 @@ export class WebSocketChannel implements Channel {
           clientId: readNonEmptyString(parsed.clientId, 'clientId'),
         };
       case 'run_turn':
+        if ('model' in parsed || 'maxTokens' in parsed) {
+          throw new ProtocolError(
+            'INVALID_MESSAGE',
+            'Legacy model/maxTokens fields are not supported; use model_reference/request_override.',
+          );
+        }
         return {
           type,
           sessionKey: readNonEmptyString(parsed.sessionKey, 'sessionKey'),
           message: readRunTurnMessage(parsed.message),
-          model: readOptionalString(parsed.model, 'model'),
-          maxTokens: readOptionalPositiveInteger(parsed.maxTokens, 'maxTokens'),
+          modelReference: readOptionalModelReference(parsed.model_reference),
+          requestOverride: readOptionalRequestOverride(parsed.request_override),
           maxLlmCalls: readOptionalPositiveInteger(parsed.maxLlmCalls, 'maxLlmCalls'),
         };
       case 'approval_resolve': {
@@ -404,8 +410,8 @@ export class WebSocketChannel implements Channel {
       channelId: this.id,
       clientId,
       sessionKey: message.sessionKey,
-      hasModelOverride: Boolean(message.model),
-      hasMaxTokens: message.maxTokens !== undefined,
+      hasModelOverride: message.modelReference !== undefined,
+      hasMaxOutputTokens: message.requestOverride?.maxOutputTokens !== undefined,
       hasMaxLlmCalls: message.maxLlmCalls !== undefined,
       messageLength: typeof message.message === 'string' ? message.message.length : undefined,
       blockCount: Array.isArray(message.message) ? message.message.length : undefined,
@@ -414,8 +420,8 @@ export class WebSocketChannel implements Channel {
       clientId,
       sessionKey: message.sessionKey,
       message: message.message,
-      model: message.model,
-      maxTokens: message.maxTokens,
+      modelReference: message.modelReference,
+      requestOverride: message.requestOverride,
       maxLlmCalls: message.maxLlmCalls,
     });
   }
@@ -719,12 +725,49 @@ function readNonEmptyString(value: unknown, field: string): string {
   return value;
 }
 
-function readOptionalString(value: unknown, field: string): string | undefined {
+function readOptionalModelReference(
+  value: unknown,
+): ChannelRunRequest['modelReference'] | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== 'string') {
-    throw new ProtocolError('INVALID_MESSAGE', `${field} must be a string.`);
+  if (!isRecord(value)) {
+    throw new ProtocolError('INVALID_MESSAGE', 'model_reference must be an object.');
   }
-  return value;
+  assertOnlyKeys(value, ['provider_id', 'model_id'], 'model_reference');
+  const providerId = value.provider_id === undefined
+    ? undefined
+    : readNonEmptyString(value.provider_id, 'model_reference.provider_id');
+  return {
+    ...(providerId === undefined ? {} : { providerId }),
+    modelId: readNonEmptyString(value.model_id, 'model_reference.model_id'),
+  };
+}
+
+function readOptionalRequestOverride(
+  value: unknown,
+): ChannelRunRequest['requestOverride'] | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) {
+    throw new ProtocolError('INVALID_MESSAGE', 'request_override must be an object.');
+  }
+  assertOnlyKeys(value, ['max_output_tokens'], 'request_override');
+  return {
+    maxOutputTokens: readOptionalPositiveInteger(
+      value.max_output_tokens,
+      'request_override.max_output_tokens',
+    ),
+  };
+}
+
+function assertOnlyKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  field: string,
+): void {
+  const allowedKeys = new Set(allowed);
+  const unknown = Object.keys(value).find((key) => !allowedKeys.has(key));
+  if (unknown) {
+    throw new ProtocolError('INVALID_MESSAGE', `${field}.${unknown} is not supported.`);
+  }
 }
 
 function readOptionalPositiveInteger(value: unknown, field: string): number | undefined {

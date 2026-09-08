@@ -65,6 +65,8 @@ describe('WebSocketChannel', () => {
       type: 'run_turn',
       sessionKey: 'main',
       message: 'hello ws',
+      model_reference: { provider_id: 'test', model_id: 'test-model' },
+      request_override: { max_output_tokens: 2048 },
       maxLlmCalls: 7,
     }));
 
@@ -73,11 +75,38 @@ describe('WebSocketChannel', () => {
         clientId: 'client-1',
         sessionKey: 'main',
         message: 'hello ws',
-        model: undefined,
-        maxTokens: undefined,
+        modelReference: { providerId: 'test', modelId: 'test-model' },
+        requestOverride: { maxOutputTokens: 2048 },
         maxLlmCalls: 7,
       });
     });
+  });
+
+  it.each([
+    { model: 'legacy-model' },
+    { maxTokens: 2048 },
+  ])('rejects removed legacy run_turn fields: %j', async (legacyField) => {
+    const handler = vi.fn(async () => undefined);
+    channel = new WebSocketChannel({ port: 0 });
+    channel.onMessage(handler);
+    await channel.start();
+
+    const client = await connectClient(channel);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'client-1' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'client-1' });
+    client.send(JSON.stringify({
+      type: 'run_turn',
+      sessionKey: 'main',
+      message: 'legacy',
+      ...legacyField,
+    }));
+
+    await expectMessage(client, {
+      type: 'channel_error',
+      code: 'INVALID_MESSAGE',
+      message: 'Legacy model/maxTokens fields are not supported; use model_reference/request_override.',
+    });
+    expect(handler).not.toHaveBeenCalled();
   });
 
   it('routes approval interactions to the origin client and forwards interaction responses', async () => {

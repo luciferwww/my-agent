@@ -15,6 +15,19 @@ const resolvedModel = {
   limits: { maxTokens: 100, maxTokensSource: 'policy-default' },
 } as ResolvedModel;
 
+const toolProjection = {
+  definitions: [],
+  resolve: () => undefined,
+  visibleDefinitions: () => [],
+};
+
+const hookProjection = {
+  beforeToolCall: [],
+  afterToolCall: [],
+  beforeCompaction: [],
+  afterCompaction: [],
+};
+
 describe('SubagentExecutor', () => {
   it('prepares the isolated Child request and executes only with the supplied ResolvedModel', async () => {
     const run = vi.fn(async () => ({
@@ -32,17 +45,6 @@ describe('SubagentExecutor', () => {
       loadContextFilesFromDir,
       workspaceDir: '/workspace',
       promptSafetyLevel: 'normal',
-      getToolProjection: () => ({
-        definitions: [],
-        resolve: () => undefined,
-        visibleDefinitions: () => [],
-      }),
-      getHookProjection: () => ({
-        beforeToolCall: [],
-        afterToolCall: [],
-        beforeCompaction: [],
-        afterCompaction: [],
-      }),
       resolveToolPolicy: () => ({
         isDenied: () => true,
         decide: () => 'deny',
@@ -66,6 +68,8 @@ describe('SubagentExecutor', () => {
       childSessionKey: 'main:subagent:run:1',
       childTurnId: 'child-turn',
       signal,
+      toolProjection,
+      hookProjection,
     });
     await executor.execute(prepared, resolvedModel);
 

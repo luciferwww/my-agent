@@ -28,7 +28,7 @@ export function createLegacyStaticModelResolver(
     },
     policy: { defaultMaxTokens: options.defaultMaxTokens },
     ...(input.maxTokens !== undefined
-      ? { requestOverride: { maxTokens: input.maxTokens } }
+      ? { requestOverride: { maxOutputTokens: input.maxTokens } }
       : {}),
   });
 }

@@ -157,9 +157,9 @@ async function testCloseWaitsForInFlight(): Promise<void> {
       },
     });
 
-    const turnPromise = app.runTurn({ sessionKey: 'main', message: 'long running', promptMode: 'full' });
+    const turnPromise = app.application.runTurn({ sessionKey: 'main', message: 'long running', promptMode: 'full' });
     // 等 runner 真正进入等待
-    await waitFor(() => app.getState().activeRunCount === 1, {
+    await waitFor(() => app.application.getState().activeRunCount === 1, {
       label: 'runner active',
     });
 
@@ -193,7 +193,7 @@ async function testCloseWaitsForInFlight(): Promise<void> {
     await closePromise;
 
     assert.equal(runFinished, true, 'turn should have finished');
-    assert.equal(app.getState().phase, 'closed', 'phase should be "closed"');
+    assert.equal(app.application.getState().phase, 'closed', 'phase should be "closed"');
   });
 }
 
@@ -277,7 +277,7 @@ async function testRunTurnRejectedAfterClose(): Promise<void> {
 
     let err: unknown;
     try {
-      await app.runTurn({ sessionKey: 'main', message: 'after close', promptMode: 'full' });
+      await app.application.runTurn({ sessionKey: 'main', message: 'after close', promptMode: 'full' });
     } catch (e) {
       err = e;
     }

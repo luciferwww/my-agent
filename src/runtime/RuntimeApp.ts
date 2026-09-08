@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgentEvent } from '../core/runner/index.js';
 import type { ChatContentBlock, ChatMessage } from '../core/model-invocation/index.js';
 import type { ModelReference } from '../core/model-resolution/index.js';
-import { ModelResolutionError } from '../core/model-resolution/index.js';
+import { ModelResolutionError, ModelResolver } from '../core/model-resolution/index.js';
 import { TurnInteractionManager } from '../adapters/channel/TurnInteractionManager.js';
 import type {
   ApprovalInteractionRequest,
@@ -10,8 +10,6 @@ import type {
   ChannelCompletion,
   ChannelCompletionObserver,
   ChannelRuntimeBinding,
-  ChannelRuntimeHost,
-  ChannelShutdownHandoff,
   TurnInteractionResponse,
 } from '../core/channel/index.js';
 import { Logger } from '../platform/logger/index.js';
@@ -22,8 +20,13 @@ import {
   type DroppedAttachment,
 } from '../core/media/attachment-pipeline.js';
 import { ATTACHMENT_DROP_NOTICE_DEFAULT } from '../core/media/constants.js';
-import { bootstrapRuntime } from './bootstrap.js';
 import { classifyRuntimeError, createRuntimeError } from './errors.js';
+import { buildRuntimeHandle } from './runtime-builder.js';
+import type { RuntimeHandle } from './runtime-composition.js';
+import type {
+  RuntimeGenerationPin,
+  RuntimeSnapshotAccess,
+} from './composition-coordinator.js';
 import { buildSystemPromptParams } from './prompt-factory.js';
 import { summarizeAssembled } from './summarize-assembled.js';
 import type { CurrentCallApprovalCapability } from '../core/approval/index.js';
@@ -45,7 +48,6 @@ import type {
   RunTurnParams,
   RunTurnResult,
   RuntimeAppOptions,
-  RuntimeDisposable,
   RuntimeErrorInfo,
   RuntimeErrorScope,
   RuntimeEvent,
@@ -113,7 +115,7 @@ export class RuntimeApp {
     private readonly resources: RuntimeResourceSet,
     private state: RuntimeLifecycleState,
     private readonly channelCompletionObserver: ChannelCompletionObserver,
-    private readonly channelShutdownHandoff: ChannelShutdownHandoff,
+    private readonly snapshotAccess: RuntimeSnapshotAccess,
     subagentProfiles: ReadonlyMap<string, SubagentProfile>,
     activeParentTurns: Map<string, ActiveParentTurn>,
     routeContextByTurn: Map<string, MessageRouteContext>,
@@ -126,111 +128,51 @@ export class RuntimeApp {
     this.turnInteractionManager = new TurnInteractionManager();
   }
 
-  static async create(options: RuntimeAppOptions): Promise<RuntimeApp> {
-    let app: RuntimeApp | undefined;
-    let channelBindings: readonly ChannelRuntimeBinding[] = [];
-    const userObserver = options.onAgentEvent;
+  static async create(options: RuntimeAppOptions): Promise<RuntimeHandle> {
+    const handle = await buildRuntimeHandle(options, (input) => {
+      const app = new RuntimeApp(
+        input.resources,
+        input.state,
+        input.channelCompletionObserver,
+        input.snapshotAccess,
+        input.subagentProfiles,
+        input.activeParentTurns,
+        input.routeContextByTurn,
+        options.onEvent,
+      );
+      app.fanoutAgentEvent = input.fanoutAgentEvent;
+      app.wireApprovalRouting();
 
-    const fanout = (event: AgentEvent) => {
-      for (const channel of channelBindings) {
-        try {
-          channel.send(event);
-        } catch (err) {
-          // channel.send 抛错不应中断事件分发
-          log.warn('channel.send failed', {
-            channelId: channel.id,
-            eventType: event.type,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-      try {
-        userObserver?.(event);
-      } catch (error) {
-        log.warn('onAgentEvent observer failed', {
-          eventType: event.type,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    };
+      options.onEvent?.({
+        type: 'app_ready',
+        workspaceDir: options.workspaceDir,
+        contextVersion: input.state.contextVersion,
+        toolNames: input.resources.registrySnapshot.tools.definitions.map((tool) => tool.name),
+        channelIds: input.resources.registrySnapshot.channels.bindings.map((channel) => channel.id),
+        memoryEnabled: input.resources.memoryManager !== null,
+      });
 
-    const channelHost: ChannelRuntimeHost = Object.freeze({
-      onMessage(binding: ChannelRuntimeBinding, request: ChannelRunRequest) {
-        if (!app) {
-          return Promise.reject(new Error('Runtime Channel ingress is not ready.'));
-        }
-        return app.handleInboundChannelMessage(binding, request);
-      },
-      onInteractionResponse(response: TurnInteractionResponse) {
-        app?.handleInteractionResponse(response);
-      },
-      onInteractionUnavailable(id: string, reason: 'origin_disconnected') {
-        app?.turnInteractionManager.settle(id, { outcome: 'unavailable', reason });
-      },
-      abortHooks: Object.freeze({
-        querySessionsNeedingAbort(): string[] {
-          if (!app) return [];
+      return {
+        application: app,
+        onChannelMessage: (binding, request) =>
+          app.handleInboundChannelMessage(binding, request),
+        onInteractionResponse: (response) => app.handleInteractionResponse(response),
+        onInteractionUnavailable: (id, reason) => {
+          app.turnInteractionManager.settle(id, { outcome: 'unavailable', reason });
+        },
+        querySessionsNeedingAbort: () => {
           const sessions = new Set<string>(app.activeAborts.keys());
           for (const [sessionKey, queue] of app.messageQueueBySession) {
             if (queue.length > 0) sessions.add(sessionKey);
           }
           return [...sessions];
         },
-        abortTurn(sessionKey: string) {
-          return app?.abortTurn(sessionKey) ?? { aborted: false, dropped: 0 };
-        },
-      }),
+        abortTurn: (sessionKey) => app.abortTurn(sessionKey),
+        close: (reason) => app.close(reason),
+      };
     });
 
-    const {
-      resources,
-      state,
-      subagentProfiles,
-      activeParentTurns,
-      routeContextByTurn,
-      channelCompletionObserver,
-      channelShutdownHandoff,
-    } = await bootstrapRuntime({
-      ...options,
-      onAgentEvent: fanout,
-    }, channelHost);
-
-    try {
-      channelBindings = resources.registrySnapshot.channels.bindings;
-
-      app = new RuntimeApp(
-        resources,
-        state,
-        channelCompletionObserver,
-        channelShutdownHandoff,
-        subagentProfiles,
-        activeParentTurns,
-        routeContextByTurn,
-        options.onEvent,
-      );
-      app.fanoutAgentEvent = fanout;
-      app.wireApprovalRouting();
-
-      options.onEvent?.({
-        type: 'app_ready',
-        workspaceDir: options.workspaceDir,
-        contextVersion: state.contextVersion,
-        toolNames: resources.registrySnapshot.tools.definitions.map((tool) => tool.name),
-        channelIds: channelBindings.map((channel) => channel.id),
-        memoryEnabled: resources.memoryManager !== null,
-      });
-
-      return app;
-    } catch (error) {
-      const report = await channelShutdownHandoff.runtimeConverged();
-      for (const failure of report.failed) {
-        log.warn('channel cleanup after RuntimeApp creation failure failed', {
-          channelId: failure.channelId,
-          error: failure.message,
-        });
-      }
-      throw error;
-    }
+    return handle;
   }
 
   // ── 状态查询 ──────────────────────────────────────────────────────
@@ -247,7 +189,7 @@ export class RuntimeApp {
   }
 
   getToolNames(): string[] {
-    return this.resources.registrySnapshot.tools.definitions.map((tool) => tool.name);
+    return this.snapshotAccess.currentSnapshot().tools.definitions.map((tool) => tool.name);
   }
 
   waitForChannelCompletion(id: string): Promise<ChannelCompletion> {
@@ -458,8 +400,8 @@ export class RuntimeApp {
       channelId: channel.id,
       clientId: req.clientId,
       sessionKey: req.sessionKey,
-      hasModelOverride: req.model !== undefined,
-      hasMaxTokens: req.maxTokens !== undefined,
+      hasModelOverride: req.modelReference !== undefined,
+      hasMaxOutputTokens: req.requestOverride?.maxOutputTokens !== undefined,
       hasMaxLlmCalls: req.maxLlmCalls !== undefined,
       messageChars: typeof req.message === 'string' ? req.message.length : undefined,
       attachmentCount: Array.isArray(req.message) ? req.message.length : 0,
@@ -596,16 +538,16 @@ export class RuntimeApp {
 
   private buildTurnLaunchContext(req: ChannelRunRequest): TurnLaunchContext | undefined {
     if (
-      req.model === undefined
-      && req.maxTokens === undefined
+      req.modelReference === undefined
+      && req.requestOverride === undefined
       && req.maxLlmCalls === undefined
     ) {
       return undefined;
     }
 
     return {
-      model: req.model,
-      maxTokens: req.maxTokens,
+      modelReference: req.modelReference,
+      requestOverride: req.requestOverride,
       maxLlmCalls: req.maxLlmCalls,
     };
   }
@@ -682,8 +624,8 @@ export class RuntimeApp {
         sessionKey: item.sessionKey,
         message: item.message,
         promptMode: 'full',
-        model: item.launchContext?.model,
-        maxTokens: item.launchContext?.maxTokens,
+        modelReference: item.launchContext?.modelReference,
+        requestOverride: item.launchContext?.requestOverride,
         maxLlmCalls: item.launchContext?.maxLlmCalls,
         turnId,
         originMessageId: item.originMessageId,
@@ -701,6 +643,7 @@ export class RuntimeApp {
 
   async runTurn(params: RunTurnParams): Promise<RunTurnResult> {
     this.assertCanRunForSession(params.sessionKey);
+    const generationPin = this.snapshotAccess.captureRootGeneration();
 
     this.inFlightSessions.add(params.sessionKey);
     this.state.activeRunCount += 1;
@@ -722,7 +665,7 @@ export class RuntimeApp {
       activeRuns: this.state.activeRunCount,
     });
 
-    const runPromise = this.runTurnInternal({ ...params, turnId });
+    const runPromise = this.runTurnInternal({ ...params, turnId }, generationPin);
     this.inFlightRuns.add(runPromise);
 
     try {
@@ -773,6 +716,7 @@ export class RuntimeApp {
       this.steeringInboxBySession.delete(params.sessionKey);
       this.state.activeRunCount = Math.max(0, this.state.activeRunCount - 1);
       this.state.lastRunEndedAt = Date.now();
+      generationPin.release();
 
       // 当前 turn 释放后，再尝试推进同 session 队头下一条消息，保持 session 内串行执行。
       const next = this.scheduleNextQueuedTurn(params.sessionKey);
@@ -834,7 +778,7 @@ export class RuntimeApp {
     log.info('shutdown start', {
       reason,
       inFlightTurns: this.inFlightRuns.size,
-      channels: this.resources.registrySnapshot.channels.bindings.length,
+      channels: this.snapshotAccess.currentSnapshot().channels.bindings.length,
     });
     this.emit({ type: 'shutdown_start', reason });
     this.setPhase('closing');
@@ -864,37 +808,6 @@ export class RuntimeApp {
 
         this.turnInteractionManager.close();
         completed.push('turnInteractionManager');
-
-        const channelReport = await this.channelShutdownHandoff.runtimeConverged();
-        completed.push(...channelReport.completed.map((id) => `channel:${id}`));
-        for (const channelFailure of channelReport.failed) {
-          failed.push({
-            resource: `channel:${channelFailure.channelId}`,
-            message: channelFailure.message,
-          });
-          log.warn('channel stop failed', {
-            channelId: channelFailure.channelId,
-            error: channelFailure.message,
-          });
-        }
-
-        for (const [name, disposable] of this.collectDisposables()) {
-          try {
-            await Promise.resolve(disposable.close());
-            completed.push(name);
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            failed.push({ resource: name, message });
-            log.warn('disposable close failed', { resource: name, error: message });
-            this.recordError('shutdown', {
-              scope: 'shutdown',
-              severity: 'warning',
-              code: 'SHUTDOWN_FAILED',
-              message,
-              cause: error instanceof Error ? error : new Error(String(error)),
-            }, 'warning');
-          }
-        }
 
         this.resources.contextFiles = [];
         this.state.closedAt = Date.now();
@@ -934,7 +847,10 @@ export class RuntimeApp {
    * turn 一旦真正开始执行后，就进入既有的 turn body bridge：
    * resolve session、按需 reload context、构建 prompts，然后把一次完整 turn 委托给 agentRunner。
    */
-  private async runTurnInternal(params: RunTurnParams & { turnId: string }): Promise<RunTurnResult> {
+  private async runTurnInternal(
+    params: RunTurnParams & { turnId: string },
+    generationPin: RuntimeGenerationPin,
+  ): Promise<RunTurnResult> {
     // 防御性 stale 清理（core-abort-spec.md §8.2）：正常流由下面 finally 保证 cleanup，
     // 不会遗留 stale entry。仅为防未来意外路径（finally 本身 throw / 某次重构意外
     // 提前 return）留一层兜底。命中即 log warn。
@@ -956,17 +872,24 @@ export class RuntimeApp {
         await this.reloadContextFiles();
       }
 
-      const visibleToolDefinitions = this.resources.registrySnapshot.tools.visibleDefinitions(
+      const snapshot = generationPin.snapshot;
+      const visibleToolDefinitions = snapshot.tools.visibleDefinitions(
         this.resources.toolPolicy,
       );
 
-      const resolvedModel = this.resources.resolveParentModel({
-        model: params.model,
-        maxTokens: params.maxTokens,
-        tools: visibleToolDefinitions.length > 0,
-        mediaKinds: Array.isArray(params.message) && params.message.some((block) => block.type === 'image')
-          ? ['image']
-          : [],
+      const resolvedModel = new ModelResolver(snapshot.providers).resolve({
+        reference: params.modelReference ?? this.resources.resolvedConfig.llm.model,
+        referenceSource: params.modelReference === undefined ? 'config-default' : 'turn-explicit',
+        defaultProviderId: this.resources.defaultProviderId,
+        request: {
+          tools: visibleToolDefinitions.length > 0,
+          mediaKinds: Array.isArray(params.message)
+            && params.message.some((block) => block.type === 'image')
+            ? ['image']
+            : [],
+        },
+        requestOverride: params.requestOverride,
+        policy: { defaultMaxTokens: this.resources.resolvedConfig.llm.maxTokens },
       });
 
       const systemPrompt = this.resources.systemPromptBuilder.build(
@@ -1019,6 +942,7 @@ export class RuntimeApp {
         signal: controller.signal,
         effectiveReference,
         contextFiles: Object.freeze([...this.resources.contextFiles]),
+        registrySnapshot: snapshot,
       });
       this.activeParentTurns.set(params.turnId, parentRecord);
 
@@ -1028,8 +952,8 @@ export class RuntimeApp {
         resolvedModel,
         systemPrompt,
         turnId: params.turnId,
-        toolProjection: this.resources.registrySnapshot.tools,
-        hookProjection: this.resources.registrySnapshot.hooks,
+        toolProjection: snapshot.tools,
+        hookProjection: snapshot.hooks,
         toolPolicy: this.resources.toolPolicy,
         approvalCapability: this.getApprovalCapability(params.turnId),
         maxLlmCalls: params.maxLlmCalls ?? this.resources.resolvedConfig.runner.maxLlmCalls,
@@ -1080,17 +1004,6 @@ export class RuntimeApp {
     }));
 
     return messages;
-  }
-
-  private collectDisposables(): Array<[string, RuntimeDisposable]> {
-    const candidates: Array<[string, unknown]> = [
-      ['memoryManager', this.resources.memoryManager],
-    ];
-
-    return candidates.filter((candidate): candidate is [string, RuntimeDisposable] => {
-      const resource = candidate[1] as Partial<RuntimeDisposable> | null;
-      return typeof resource?.close === 'function';
-    });
   }
 
   /**
