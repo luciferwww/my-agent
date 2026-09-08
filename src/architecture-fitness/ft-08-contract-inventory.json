@@ -36,31 +36,87 @@
   },
   {
     "contract": "Channel",
-    "source": "src/adapters/channel/types.ts",
+    "source": "src/core/channel/types.ts",
     "kind": "port-lifecycle",
     "positive": ["src/adapters/channel/WebSocketChannel.test.ts"],
     "negative": ["src/runtime/RuntimeApp.test.ts"]
   },
   {
+    "contract": "ChannelInstance",
+    "source": "src/core/channel/types.ts",
+    "kind": "port-lifecycle",
+    "positive": ["src/runtime/channel-lifecycle.test.ts"],
+    "negative": ["src/runtime/channel-lifecycle.test.ts"]
+  },
+  {
+    "contract": "ChannelCompletion",
+    "source": "src/core/channel/types.ts",
+    "kind": "lifecycle",
+    "positive": ["src/runtime/channel-lifecycle.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
     "contract": "AbortHookBindings",
-    "source": "src/adapters/channel/types.ts",
+    "source": "src/core/channel/types.ts",
     "kind": "abort-port",
     "positive": ["src/runtime/RuntimeApp.test.ts"],
     "negative": ["src/runtime/RuntimeApp.test.ts"]
   },
   {
     "contract": "ChannelInteractionAdapter",
-    "source": "src/adapters/channel/types.ts",
+    "source": "src/core/channel/types.ts",
     "kind": "interaction-port",
     "positive": ["src/adapters/channel/WebSocketChannel.test.ts"],
     "negative": ["src/adapters/channel/TurnInteractionManager.test.ts"]
   },
   {
-    "contract": "ChannelApprovalAdapter",
-    "source": "src/adapters/channel/types.ts",
+    "contract": "ChannelInteractionTransport",
+    "source": "src/core/channel/types.ts",
     "kind": "interaction-port",
     "positive": ["src/adapters/channel/WebSocketChannel.test.ts"],
     "negative": ["src/adapters/channel/TurnInteractionManager.test.ts"]
+  },
+  {
+    "contract": "ChannelContribution",
+    "source": "src/core/channel/types.ts",
+    "kind": "extension-contribution",
+    "positive": ["src/runtime/channel-lifecycle.test.ts"],
+    "negative": ["src/runtime/registry-builder.test.ts"]
+  },
+  {
+    "contract": "ChannelRuntimeBinding",
+    "source": "src/core/channel/types.ts",
+    "kind": "runtime-binding",
+    "positive": ["src/runtime/channel-lifecycle.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "ChannelProjection",
+    "source": "src/core/channel/types.ts",
+    "kind": "registry-projection",
+    "positive": ["src/runtime/channel-lifecycle.test.ts"],
+    "negative": ["src/runtime/channel-lifecycle.test.ts"]
+  },
+  {
+    "contract": "ChannelLifecycleReport",
+    "source": "src/core/channel/types.ts",
+    "kind": "lifecycle",
+    "positive": ["src/runtime/channel-lifecycle.test.ts"],
+    "negative": ["src/runtime/channel-lifecycle.test.ts"]
+  },
+  {
+    "contract": "ChannelShutdownHandoff",
+    "source": "src/core/channel/types.ts",
+    "kind": "lifecycle-port",
+    "positive": ["src/runtime/channel-lifecycle.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "ChannelCompletionObserver",
+    "source": "src/core/channel/types.ts",
+    "kind": "lifecycle-port",
+    "positive": ["src/runtime/channel-lifecycle.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
   },
   {
     "contract": "ModelInvocationPort",

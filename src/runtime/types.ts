@@ -18,6 +18,10 @@ import type { AgentEvent, AgentRunner, AgentRunnerConfig } from '../core/runner/
 import type { SubagentProfile } from '../core/subagent/types.js';
 import type { ActiveParentTurn } from './subagent-orchestration.js';
 import type { MessageRouteContext } from './queue-types.js';
+import type {
+  ChannelCompletionObserver,
+  ChannelShutdownHandoff,
+} from '../core/channel/index.js';
 
 import type { UserPromptBuilder } from '../core/prompt/UserPromptBuilder.js';
 
@@ -27,7 +31,6 @@ export interface RuntimeResourceSet {
   readonly workspaceDir: string;
   readonly sessionManager: SessionManager;
   readonly registrySnapshot: RegistrySnapshot;
-  readonly runtimeContributionUnits: readonly RuntimeContributionUnit[];
   readonly toolPolicy: ApplicationToolPolicy;
   readonly modelResolver: ModelResolver;
   readonly defaultProviderId: string;
@@ -81,6 +84,7 @@ export interface RuntimeDependencies {
 
 export interface RuntimeAppOptions {
   workspaceDir: string;
+  readonly contributionUnits?: readonly RuntimeContributionUnit[];
   agentId?: string;
   envOverrides?: DeepPartial<AgentDefaults>;
   cliOverrides?: DeepPartial<AgentDefaults>;
@@ -156,6 +160,9 @@ export type RuntimeErrorCode =
   | 'CONTEXT_LOAD_FAILED'
   | 'MEMORY_INIT_FAILED'
   | 'TOOL_ASSEMBLY_FAILED'
+  | 'CHANNEL_CREATE_FAILED'
+  | 'CHANNEL_START_FAILED'
+  | 'CHANNEL_ROLLBACK_FAILED'
   | 'RUN_REJECTED'
   | 'RUN_FAILED'
   | 'SHUTDOWN_FAILED';
@@ -165,6 +172,9 @@ export interface RuntimeErrorInfo {
   severity: RuntimeErrorSeverity;
   code: RuntimeErrorCode;
   message: string;
+  unitId?: string;
+  contributionId?: string;
+  phase?: 'create' | 'start' | 'rollback';
   resolutionCategory?: import('../core/model-resolution/index.js').ResolutionFailureCategory;
   cause?: Error;
 }
@@ -187,6 +197,7 @@ export type RuntimeEvent =
       workspaceDir: string;
       contextVersion: number;
       toolNames: string[];
+      channelIds: string[];
       memoryEnabled: boolean;
     }
   | {
@@ -250,4 +261,6 @@ export interface RuntimeBootstrapResult {
   readonly subagentProfiles: ReadonlyMap<string, SubagentProfile>;
   readonly activeParentTurns: Map<string, ActiveParentTurn>;
   readonly routeContextByTurn: Map<string, MessageRouteContext>;
+  readonly channelCompletionObserver: ChannelCompletionObserver;
+  readonly channelShutdownHandoff: ChannelShutdownHandoff;
 }

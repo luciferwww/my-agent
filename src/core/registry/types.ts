@@ -1,4 +1,5 @@
 import type { ProviderProjectionEntry } from '../model-resolution/index.js';
+import type { ChannelContribution, ChannelProjection } from '../channel/index.js';
 import type {
   ApplicationToolPolicy,
   Tool,
@@ -22,6 +23,7 @@ export interface HookContribution<K extends HookName = HookName> {
 export interface ExtensionRegistrationApi {
   registerTool(tool: Tool): void;
   registerHook<K extends HookName>(contribution: HookContribution<K>): void;
+  registerChannel(contribution: ChannelContribution): void;
 }
 
 export interface RuntimeContributionUnit {
@@ -63,7 +65,14 @@ export interface HookProjection {
 export interface RegistryStartupDiagnostic {
   readonly unitId: string;
   readonly source: ContributionSource;
-  readonly code: 'UNIT_INVALID' | 'UNIT_CONFLICT';
+  readonly code:
+    | 'UNIT_INVALID'
+    | 'UNIT_CONFLICT'
+    | 'CHANNEL_CREATE_FAILED'
+    | 'CHANNEL_START_FAILED'
+    | 'CHANNEL_ROLLBACK_FAILED';
+  readonly contributionId?: string;
+  readonly phase?: 'create' | 'start' | 'rollback';
   readonly message: string;
 }
 
@@ -72,5 +81,6 @@ export interface RegistrySnapshot {
   readonly providers: readonly ProviderProjectionEntry[];
   readonly tools: ToolProjection;
   readonly hooks: HookProjection;
+  readonly channels: ChannelProjection;
   readonly diagnostics: readonly RegistryStartupDiagnostic[];
 }

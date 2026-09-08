@@ -18,9 +18,37 @@ describe('WebSocketChannel', () => {
 
   it('requires an onMessage handler before start', async () => {
     channel = new WebSocketChannel({ port: 0 });
-    await expect(channel.start()).rejects.toThrow(
-      'WebSocketChannel.start: no message handler registered (call registerChannel first)',
+    await expect(channel.start()).rejects.toThrow('WebSocketChannel.start: no message handler registered');
+    await expect(channel.completion).resolves.toEqual(
+      expect.objectContaining({ outcome: 'failed', phase: 'startup' }),
     );
+  });
+
+  it('reports listening readiness separately from terminal stop completion', async () => {
+    channel = new WebSocketChannel({ port: 0 });
+    channel.onMessage(async () => undefined);
+    let completed = false;
+    void channel.completion.then(() => {
+      completed = true;
+    });
+
+    await channel.start();
+    await Promise.resolve();
+    expect(completed).toBe(false);
+
+    await channel.stop();
+    await expect(channel.completion).resolves.toEqual({ outcome: 'closed', reason: 'stopped' });
+  });
+
+  it('stops safely while start is still waiting for listening readiness', async () => {
+    channel = new WebSocketChannel({ port: 0 });
+    channel.onMessage(async () => undefined);
+
+    const start = channel.start();
+    await channel.stop();
+
+    await expect(start).rejects.toThrow('server closed before readiness');
+    await expect(channel.completion).resolves.toEqual({ outcome: 'closed', reason: 'stopped' });
   });
 
   it('binds hello and forwards run_turn with clientId', async () => {

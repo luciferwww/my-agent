@@ -18,8 +18,8 @@
 
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CliChannel } from '../src/adapters/channel/index.js';
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
+import { createCliChannelModule } from '../src/runtime-modules/index.js';
 
 const WORKSPACE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'test-workspace');
 
@@ -46,29 +46,21 @@ async function main(): Promise<void> {
 
   const app = await RuntimeApp.create({
     workspaceDir: WORKSPACE_DIR,
+    contributionUnits: [createCliChannelModule({
+      approval: true,
+      sessionKey,
+      prompt: '\n> ',
+    })],
     envOverrides: {
       llm: { apiKey, baseURL, model },
       memory: { enabled: false },
     },
   });
 
-  const cli = new CliChannel({
-    approval: true,
-    sessionKey,
-    prompt: '\n> ',
-  });
+  const completion = await app.waitForChannelCompletion('cli');
 
-  app.registerChannel(cli);
-
-  // NOTE: 不再自己 register SIGINT handler——CliChannel.start() 会
-  // `process.removeAllListeners('SIGINT')` 后转交给自己的双击-退出 UX（
-  // core-abort-spec.md §12）。下面 startChannels 发回后（readline 自然 close
-  // 或 CliChannel 内部 exit）才走 app.close() 做优雅 shutdown。
-  await app.startChannels();
-
-  // 正常回新到这里意味着 readline close（Ctrl+D / EOF）。走一遍 graceful
-  // close；双-Ctrl+C 路径已在 handleSigInt 里 process.exit(130)，不到这里。
-  await app.close('cli exit');
+  await app.close(completion.outcome === 'failed' ? 'cli channel failed' : 'cli exit');
+  if (completion.outcome === 'failed') throw completion.error;
 }
 
 main().catch((err) => {

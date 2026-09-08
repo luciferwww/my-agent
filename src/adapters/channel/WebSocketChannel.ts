@@ -8,7 +8,7 @@ import type {
   ApprovalDecision,
   ApprovalRequest,
   Channel,
-  ChannelApprovalAdapter,
+  ChannelCompletion,
   ChannelInteractionAdapter,
   ChannelRunRequest,
   InboundContentBlock,
@@ -79,8 +79,8 @@ class ProtocolError extends Error {
 
 export class WebSocketChannel implements Channel {
   readonly id = 'websocket';
+  readonly completion: Promise<ChannelCompletion>;
   readonly interaction?: ChannelInteractionAdapter;
-  readonly approval?: ChannelApprovalAdapter;
 
   private readonly host: string;
   private readonly path: string;
@@ -88,9 +88,7 @@ export class WebSocketChannel implements Channel {
 
   private server?: WebSocketServer;
   private messageHandler?: (req: ChannelRunRequest) => Promise<void>;
-  private approvalDecisionHandler?: (id: string, decision: ApprovalDecision) => void;
   private interactionResponseHandler?: (response: TurnInteractionResponse) => void;
-  private approvalUnavailableHandler?: (id: string, reason: 'origin_disconnected') => void;
   private interactionUnavailableHandler?: (id: string, reason: 'origin_disconnected') => void;
 
   private readonly clients = new Map<string, WebSocket>();
@@ -100,22 +98,31 @@ export class WebSocketChannel implements Channel {
   private readonly pendingApprovalClientIds = new Map<string, string>();
 
   /**
-   * `RuntimeApp.registerChannel` 同步注入（core-abort-spec.md §12 时序保证）：
-   * bindAbortHooks 先于 start()。inbound `abort_turn` 到达时必已绑定，
+    * Channel activation 同步注入（core-abort-spec.md §12 时序保证）：
+    * bindAbortHooks 先于 start()。inbound `abort_turn` 到达时必已绑定，
    * 未绑定时静默丢弃（单玩 channel 不接 Runtime 的开发可能性）。
    */
   private abortHooks?: AbortHookBindings;
 
   private started = false;
+  private stopRequested = false;
+  private settleCompletion!: (result: ChannelCompletion) => void;
+  private completionSettled = false;
 
   constructor(private readonly config: WebSocketChannelConfig) {
     this.host = config.host ?? DEFAULT_HOST;
     this.path = config.path ?? DEFAULT_PATH;
     this.maxClients = config.maxClients;
+    this.completion = new Promise<ChannelCompletion>((resolve) => {
+      this.settleCompletion = (result) => {
+        if (this.completionSettled) return;
+        this.completionSettled = true;
+        resolve(Object.freeze(result));
+      };
+    });
 
     if (config.approval) {
       this.interaction = this.makeInteractionAdapter();
-      this.approval = this.makeApprovalAdapter();
     }
   }
 
@@ -156,17 +163,22 @@ export class WebSocketChannel implements Channel {
   async start(): Promise<void> {
     if (this.started) return;
     if (!this.messageHandler) {
-      throw new Error('WebSocketChannel.start: no message handler registered (call registerChannel first)');
+      const error = new Error('WebSocketChannel.start: no message handler registered');
+      this.settleCompletion({ outcome: 'failed', phase: 'startup', error });
+      throw error;
     }
 
-    this.server = new WebSocketServer({
+    this.stopRequested = false;
+
+    const server = new WebSocketServer({
       host: this.host,
       path: this.path,
       port: this.config.port,
       maxPayload: WS_MAX_PAYLOAD_BYTES,
     });
+    this.server = server;
 
-    this.server.on('connection', (socket, request) => {
+    server.on('connection', (socket, request) => {
       if (this.maxClients !== undefined && this.server && this.server.clients.size > this.maxClients) {
         socket.close(CLOSE_CODE_MAX_CLIENTS, 'max clients reached');
         return;
@@ -191,15 +203,31 @@ export class WebSocketChannel implements Channel {
         });
       });
     });
-
-    await new Promise<void>((resolve, reject) => {
-      if (!this.server) {
-        reject(new Error('WebSocket server not initialized'));
-        return;
-      }
-      this.server.once('listening', resolve);
-      this.server.once('error', reject);
+    server.once('close', () => {
+      this.settleCompletion({
+        outcome: 'closed',
+        reason: this.stopRequested ? 'stopped' : 'transport_closed',
+      });
     });
+    server.on('error', (error) => {
+      if (this.started) {
+        this.settleCompletion({ outcome: 'failed', phase: 'runtime', error });
+      }
+    });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('listening', resolve);
+        server.once('error', reject);
+        server.once('close', () => {
+          reject(new Error('WebSocketChannel.start: server closed before readiness'));
+        });
+      });
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      this.settleCompletion({ outcome: 'failed', phase: 'startup', error: failure });
+      throw failure;
+    }
 
     this.started = true;
     log.info('websocket channel started', {
@@ -211,7 +239,12 @@ export class WebSocketChannel implements Channel {
   }
 
   async stop(): Promise<void> {
-    if (!this.server) return;
+    if (this.stopRequested) return;
+    this.stopRequested = true;
+    if (!this.server) {
+      this.settleCompletion({ outcome: 'closed', reason: 'stopped' });
+      return;
+    }
 
     const server = this.server;
     this.server = undefined;
@@ -221,15 +254,22 @@ export class WebSocketChannel implements Channel {
       socket.close(1001, 'server stopping');
     }
 
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
       });
-    });
+      this.settleCompletion({ outcome: 'closed', reason: 'stopped' });
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      this.settleCompletion({ outcome: 'failed', phase: 'shutdown', error: failure });
+      throw failure;
+    }
 
     this.clients.clear();
     this.sessions.clear();
@@ -512,23 +552,6 @@ export class WebSocketChannel implements Channel {
     });
   }
 
-  private makeApprovalAdapter(): ChannelApprovalAdapter {
-    return {
-      sendApprovalRequest: (request) => {
-        return this.sendApprovalRequestMessage(request);
-      },
-      sendApprovalClosed: (request, result) => {
-        this.sendApprovalClosedMessage(request.id, request.originClientId, result);
-      },
-      onApprovalDecision: (handler) => {
-        this.approvalDecisionHandler = handler;
-      },
-      onApprovalUnavailable: (handler) => {
-        this.approvalUnavailableHandler = handler;
-      },
-    };
-  }
-
   private makeInteractionAdapter(): ChannelInteractionAdapter {
     return {
       sendInteractionRequest: (request) => {
@@ -569,16 +592,6 @@ export class WebSocketChannel implements Channel {
       return;
     }
 
-    if (this.approvalDecisionHandler) {
-      log.debug('routing approval submission through approval adapter', {
-        channelId: this.id,
-        approvalId: id,
-        decision,
-      });
-      this.approvalDecisionHandler(id, decision);
-      return;
-    }
-
     throw new ProtocolError('UNSUPPORTED_MESSAGE', 'Approval is not enabled for this channel.');
   }
 
@@ -588,9 +601,7 @@ export class WebSocketChannel implements Channel {
   ): void {
     if (this.interactionUnavailableHandler) {
       this.interactionUnavailableHandler(id, reason);
-      return;
     }
-    this.approvalUnavailableHandler?.(id, reason);
   }
 
   private sendApprovalRequestMessage(

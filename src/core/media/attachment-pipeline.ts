@@ -10,7 +10,7 @@
  */
 
 import type { ChatContentBlock } from '../model-invocation/index.js';
-import type { InboundContentBlock } from '../../adapters/channel/types.js';
+import type { InboundContentBlock } from '../channel/index.js';
 import {
   SUPPORTED_IMAGE_MIME,
   ATTACHMENT_INLINE_THRESHOLD_BYTES,

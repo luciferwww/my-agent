@@ -8,6 +8,7 @@ import type {
   ApprovalDecision,
   ApprovalRequest,
   Channel,
+  ChannelCompletion,
   ChannelRunRequest,
 } from '../adapters/channel/types.js';
 import type { AgentEvent, BeforeToolCallHook } from '../core/runner/index.js';
@@ -213,16 +214,6 @@ describe('RuntimeApp', () => {
       createAgentRunner: () => ({ run: runnerRun } as never),
       createMemoryManager: async () => null,
     });
-    const app = await RuntimeApp.create({
-      workspaceDir,
-      cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
-        memory: { enabled: false },
-      },
-      dependencies: deps,
-      onAgentEvent: observedEvents,
-    });
-
     const failingChannel = createTestChannel('failing-channel');
     failingChannel.channel.send = vi.fn(() => {
       throw new Error('channel failed');
@@ -230,8 +221,16 @@ describe('RuntimeApp', () => {
     const receivingChannel = createTestChannel('receiving-channel');
     const receivedEvents = vi.fn();
     receivingChannel.channel.send = receivedEvents;
-    app.registerChannel(failingChannel.channel);
-    app.registerChannel(receivingChannel.channel);
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      contributionUnits: [failingChannel.unit, receivingChannel.unit],
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'test-model' },
+        memory: { enabled: false },
+      },
+      dependencies: deps,
+      onAgentEvent: observedEvents,
+    });
 
     await failingChannel.dispatch({
       sessionKey: 'main',
@@ -252,7 +251,7 @@ describe('RuntimeApp', () => {
     expect(runnerRun).toHaveBeenCalledTimes(1);
   });
 
-  it('CH-05 propagates an onAgentEvent observer failure before Runner execution', async () => {
+  it('CH-05 isolates an onAgentEvent observer failure from Runner execution', async () => {
     const runnerRun = vi.fn(async (): Promise<RunResult> => ({
       text: 'unreachable',
       content: [{ type: 'text', text: 'unreachable' }],
@@ -265,8 +264,10 @@ describe('RuntimeApp', () => {
       createAgentRunner: () => ({ run: runnerRun } as never),
       createMemoryManager: async () => null,
     });
+    const testChannel = createTestChannel('observer-failure-channel');
     const app = await RuntimeApp.create({
       workspaceDir,
+      contributionUnits: [testChannel.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'test-model' },
         memory: { enabled: false },
@@ -276,16 +277,13 @@ describe('RuntimeApp', () => {
         if (event.type === 'user_message') throw observerError;
       },
     });
-    const testChannel = createTestChannel('observer-failure-channel');
-    app.registerChannel(testChannel.channel);
-
     await expect(testChannel.dispatch({
       sessionKey: 'main',
       message: 'observe',
       clientId: 'client-1',
-    })).rejects.toBe(observerError);
+    })).resolves.toBeUndefined();
 
-    expect(runnerRun).not.toHaveBeenCalled();
+    expect(runnerRun).toHaveBeenCalledTimes(1);
   });
 
   it('degrades to warning when memory initialization fails', async () => {
@@ -335,6 +333,59 @@ describe('RuntimeApp', () => {
     expect(readyEvents[0]?.toolNames.includes('task')).toBe(taskExpected);
 
     await app.close();
+  });
+
+  it('emits app_ready only after Channel readiness with final channelIds', async () => {
+    const events: RuntimeEvent[] = [];
+    const ready = createDeferred<void>();
+    const testChannel = createTestChannel('deferred-ready-channel');
+    testChannel.channel.start = vi.fn(async () => ready.promise);
+
+    const creation = RuntimeApp.create({
+      workspaceDir,
+      contributionUnits: [testChannel.unit],
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'test-model' },
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies(),
+      onEvent: (event) => events.push(event),
+    });
+
+    await vi.waitFor(() => expect(testChannel.channel.start).toHaveBeenCalledTimes(1));
+    expect(events.map((event) => event.type)).not.toContain('app_ready');
+
+    ready.resolve();
+    const app = await creation;
+    expect(events.filter((event) => event.type === 'app_ready')).toEqual([
+      expect.objectContaining({ channelIds: ['deferred-ready-channel'] }),
+    ]);
+    await app.close();
+  });
+
+  it('stops activated Channels when app_ready delivery rejects RuntimeApp creation', async () => {
+    const observerError = new Error('app_ready observer failed');
+    const testChannel = createTestChannel('ready-observer-failure');
+    const stop = vi.spyOn(testChannel.channel, 'stop');
+
+    await expect(RuntimeApp.create({
+      workspaceDir,
+      contributionUnits: [testChannel.unit],
+      cliOverrides: {
+        llm: { apiKey: 'test-key', model: 'test-model' },
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies(),
+      onEvent: (event) => {
+        if (event.type === 'app_ready') throw observerError;
+      },
+    })).rejects.toBe(observerError);
+
+    expect(stop).toHaveBeenCalledTimes(1);
+    await expect(testChannel.channel.completion).resolves.toEqual({
+      outcome: 'closed',
+      reason: 'stopped',
+    });
   });
 
   it('CH-12 characterizes missing cleanup after a later bootstrap failure', async () => {
@@ -466,8 +517,9 @@ describe('RuntimeApp', () => {
     );
   });
 
-  it('CH-07 characterizes partial Channel start failure without rollback or retry', async () => {
+  it('CH-07 rolls back a failed Channel while preserving an independent successful Channel', async () => {
     const startError = new Error('channel start failed');
+    const events: RuntimeEvent[] = [];
     const successfulChannel = createTestChannel('successful-channel');
     const failingChannel = createTestChannel('failing-channel');
     successfulChannel.channel.start = vi.fn(async () => {});
@@ -479,6 +531,7 @@ describe('RuntimeApp', () => {
 
     const app = await RuntimeApp.create({
       workspaceDir,
+      contributionUnits: [successfulChannel.unit, failingChannel.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'test-model' },
         memory: { enabled: false },
@@ -490,26 +543,31 @@ describe('RuntimeApp', () => {
         }) as never,
         createMemoryManager: async () => null,
       }),
+      onEvent: (event) => events.push(event),
     });
-    app.registerChannel(successfulChannel.channel);
-    app.registerChannel(failingChannel.channel);
-
-    await expect(app.startChannels()).rejects.toBe(startError);
     expect(successfulChannel.channel.start).toHaveBeenCalledTimes(1);
     expect(failingChannel.channel.start).toHaveBeenCalledTimes(1);
     expect(successfulChannel.channel.stop).not.toHaveBeenCalled();
-    expect(failingChannel.channel.stop).not.toHaveBeenCalled();
-
-    await expect(app.startChannels()).resolves.toBeUndefined();
-    expect(successfulChannel.channel.start).toHaveBeenCalledTimes(1);
-    expect(failingChannel.channel.start).toHaveBeenCalledTimes(1);
+    expect(failingChannel.channel.stop).toHaveBeenCalledTimes(1);
+    await expect(app.waitForChannelCompletion('failing-channel')).resolves.toEqual(
+      expect.objectContaining({ outcome: 'failed', phase: 'startup', error: startError }),
+    );
+    expect(events).toContainEqual({
+      type: 'warning',
+      info: expect.objectContaining({
+        code: 'CHANNEL_START_FAILED',
+        unitId: 'builtin-test-channel-failing-channel',
+        contributionId: 'failing-channel',
+        phase: 'start',
+      }),
+    });
 
     await app.close();
     expect(successfulChannel.channel.stop).toHaveBeenCalledTimes(1);
     expect(failingChannel.channel.stop).toHaveBeenCalledTimes(1);
   });
 
-  it('CH-08 characterizes Channel stop failure as isolated and absent from the shutdown report', async () => {
+  it('CH-08 isolates and reports a Channel stop failure', async () => {
     const failingChannel = createTestChannel('failing-stop-channel');
     const successfulChannel = createTestChannel('successful-stop-channel');
     failingChannel.channel.stop = vi.fn(async () => {
@@ -519,6 +577,7 @@ describe('RuntimeApp', () => {
 
     const app = await RuntimeApp.create({
       workspaceDir,
+      contributionUnits: [failingChannel.unit, successfulChannel.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'test-model' },
         memory: { enabled: false },
@@ -531,16 +590,14 @@ describe('RuntimeApp', () => {
         createMemoryManager: async () => null,
       }),
     });
-    app.registerChannel(failingChannel.channel);
-    app.registerChannel(successfulChannel.channel);
-    await app.startChannels();
-
     const report = await app.close();
 
     expect(failingChannel.channel.stop).toHaveBeenCalledTimes(1);
     expect(successfulChannel.channel.stop).toHaveBeenCalledTimes(1);
-    expect(report.completed).toContain('channels');
-    expect(report.failed).toEqual([]);
+    expect(report.completed).toContain('channel:successful-stop-channel');
+    expect(report.failed).toEqual([
+      { resource: 'channel:failing-stop-channel', message: 'channel stop failed' },
+    ]);
     expect(app.getState().phase).toBe('closed');
   });
 
@@ -570,17 +627,16 @@ describe('RuntimeApp', () => {
       createMemoryManager: async () => null,
     });
 
+    const testChannel = createTestChannel('queue-test');
     const app = await RuntimeApp.create({
       workspaceDir,
+      contributionUnits: [testChannel.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'test-model' },
         memory: { enabled: false },
       },
       dependencies: deps,
     });
-
-    const testChannel = createTestChannel('queue-test');
-    app.registerChannel(testChannel.channel);
 
     const firstDispatch = testChannel.dispatch({
       sessionKey: 'main',
@@ -660,8 +716,10 @@ describe('RuntimeApp', () => {
       createMemoryManager: async () => null,
     });
 
+    const testChannel = createTestChannel('steer-test');
     const app = await RuntimeApp.create({
       workspaceDir,
+      contributionUnits: [testChannel.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'test-model' },
         memory: { enabled: false },
@@ -669,9 +727,6 @@ describe('RuntimeApp', () => {
       },
       dependencies: deps,
     });
-
-    const testChannel = createTestChannel('steer-test');
-    app.registerChannel(testChannel.channel);
 
     const firstDispatch = testChannel.dispatch({
       sessionKey: 'main',
@@ -757,22 +812,20 @@ describe('RuntimeApp', () => {
         createMemoryManager: async () => null,
       });
 
+      const testChannel = createApprovalTestChannel('approval-expiry-queue-test', {
+        approvalRequests,
+        approvalClosures,
+        autoDecision: null,
+      });
       const app = await RuntimeApp.create({
         workspaceDir,
+        contributionUnits: [testChannel.unit],
         cliOverrides: {
           llm: { apiKey: 'test-key', model: 'test-model' },
           memory: { enabled: false },
         },
         dependencies: deps,
       });
-
-      const testChannel = createApprovalTestChannel('approval-expiry-queue-test', {
-        approvalRequests,
-        approvalClosures,
-        autoDecision: null,
-      });
-      app.registerChannel(testChannel.channel);
-      await app.startChannels();
 
       const firstDispatch = testChannel.dispatch({
         sessionKey: 'main',
@@ -840,7 +893,7 @@ describe('RuntimeApp', () => {
     }
   });
 
-  it('fails closed without an origin approval capability independently of startChannels', async () => {
+  it('fails closed without an origin approval capability independently of Channel startup history', async () => {
     const decisions: unknown[] = [];
     const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
       decisions.push({
@@ -865,8 +918,10 @@ describe('RuntimeApp', () => {
       createAgentRunner: () => agentRunner as never,
       createMemoryManager: async () => null,
     });
+    const testChannel = createTestChannel('no-approval-channel');
     const app = await RuntimeApp.create({
       workspaceDir,
+      contributionUnits: [testChannel.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'test-model' },
         memory: { enabled: false },
@@ -874,14 +929,10 @@ describe('RuntimeApp', () => {
       },
       dependencies: deps,
     });
-    const testChannel = createTestChannel('no-approval-channel');
-    app.registerChannel(testChannel.channel);
-
-    await testChannel.dispatch({ sessionKey: 'main', message: 'before startup' });
+    await testChannel.dispatch({ sessionKey: 'main', message: 'first request' });
     expect(decisions).toEqual([{ decision: 'deny', hasApprovalCapability: false }]);
 
-    await app.startChannels();
-    await testChannel.dispatch({ sessionKey: 'main', message: 'after startup' });
+    await testChannel.dispatch({ sessionKey: 'main', message: 'second request' });
 
     expect(decisions).toEqual([
       { decision: 'deny', hasApprovalCapability: false },
@@ -920,8 +971,14 @@ describe('RuntimeApp', () => {
         };
       }),
     };
+    const testChannel = createApprovalTestChannel('approval-shutdown-test', {
+      approvalRequests,
+      approvalClosures,
+      autoDecision: null,
+    });
     const app = await RuntimeApp.create({
       workspaceDir,
+      contributionUnits: [testChannel.unit],
       cliOverrides: {
         llm: { apiKey: 'test-key', model: 'test-model' },
         memory: { enabled: false },
@@ -931,14 +988,6 @@ describe('RuntimeApp', () => {
         createMemoryManager: async () => null,
       }),
     });
-    const testChannel = createApprovalTestChannel('approval-shutdown-test', {
-      approvalRequests,
-      approvalClosures,
-      autoDecision: null,
-    });
-    app.registerChannel(testChannel.channel);
-    await app.startChannels();
-
     const dispatch = testChannel.dispatch({
       sessionKey: 'main',
       message: 'wait for approval',
@@ -1103,8 +1152,10 @@ describe('RuntimeApp', () => {
         };
       });
 
+      const testChannel = createTestChannel('public-abort-test');
       const app = await RuntimeApp.create({
         workspaceDir,
+        contributionUnits: [testChannel.unit],
         cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
@@ -1112,9 +1163,6 @@ describe('RuntimeApp', () => {
         }),
         onEvent: (e) => events.push(e),
       });
-      const testChannel = createTestChannel('public-abort-test');
-      app.registerChannel(testChannel.channel);
-
       const firstDispatch = testChannel.dispatch({
         sessionKey: 'main',
         message: 'active',
@@ -1178,8 +1226,10 @@ describe('RuntimeApp', () => {
         };
       });
 
+      const testChannel = createTestChannel('steering-abort-test');
       const app = await RuntimeApp.create({
         workspaceDir,
+        contributionUnits: [testChannel.unit],
         cliOverrides: {
           llm: { apiKey: 'test-key', model: 'test-model' },
           memory: { enabled: false },
@@ -1192,9 +1242,6 @@ describe('RuntimeApp', () => {
         onEvent: (event) => events.push(event),
         onAgentEvent: (event) => agentEvents.push(event),
       });
-      const testChannel = createTestChannel('steering-abort-test');
-      app.registerChannel(testChannel.channel);
-
       const firstDispatch = testChannel.dispatch({
         sessionKey: 'main',
         message: 'active',
@@ -1338,17 +1385,16 @@ describe('RuntimeApp', () => {
         };
       });
 
+      const testChannel = createTestChannel('shutdown-queue-test');
       const app = await RuntimeApp.create({
         workspaceDir,
+        contributionUnits: [testChannel.unit],
         cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
         }),
       });
-      const testChannel = createTestChannel('shutdown-queue-test');
-      app.registerChannel(testChannel.channel);
-
       const firstDispatch = testChannel.dispatch({
         sessionKey: 'main',
         message: 'active',
@@ -1417,22 +1463,21 @@ describe('RuntimeApp', () => {
       expect(closeDurationMs).toBeLessThan(500);
     });
 
-    // ⑩ bindAbortHooks wiring：registerChannel 时同步注入 hooks，可查询 & 触发
-    it('bindAbortHooks: registerChannel injects querySessionsNeedingAbort + abortTurn', async () => {
-      const app = await RuntimeApp.create({
-        workspaceDir,
-        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
-        dependencies: createTestDependencies({ createMemoryManager: async () => null }),
-      });
-
+    // ⑩ bindAbortHooks wiring：Channel activation 时同步注入 hooks，可查询 & 触发
+    it('bindAbortHooks: Channel activation injects querySessionsNeedingAbort + abortTurn', async () => {
       let capturedHooks: { querySessionsNeedingAbort: () => string[]; abortTurn: (sk: string) => { aborted: boolean; dropped: number } } | undefined;
       const testChannel = createTestChannel('abort-hooks-test');
-      // 手工插入 bindAbortHooks 到测试 channel
       (testChannel.channel as Channel).bindAbortHooks = (hooks) => {
         capturedHooks = hooks;
       };
 
-      app.registerChannel(testChannel.channel);
+      const app = await RuntimeApp.create({
+        workspaceDir,
+        contributionUnits: [testChannel.unit],
+        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        dependencies: createTestDependencies({ createMemoryManager: async () => null }),
+      });
+
       expect(capturedHooks).toBeDefined();
 
       // 塞 queued 消息到某 session
@@ -1470,26 +1515,31 @@ function createDeferred<T>(): {
 
 function createTestChannel(id: string): {
   channel: Channel;
+  unit: RuntimeContributionUnit;
   dispatch(req: ChannelRunRequest): Promise<void>;
 } {
   let handler: ((req: ChannelRunRequest) => Promise<void>) | undefined;
+  const completion = createDeferred<ChannelCompletion>();
+  const channel: Channel = {
+    id,
+    completion: completion.promise,
+    send() {
+      // no-op for tests
+    },
+    onMessage(nextHandler) {
+      handler = nextHandler;
+    },
+    async start() {
+      // no-op for tests
+    },
+    async stop() {
+      completion.resolve({ outcome: 'closed', reason: 'stopped' });
+    },
+  };
 
   return {
-    channel: {
-      id,
-      send() {
-        // no-op for tests
-      },
-      onMessage(nextHandler) {
-        handler = nextHandler;
-      },
-      async start() {
-        // no-op for tests
-      },
-      async stop() {
-        // no-op for tests
-      },
-    },
+    channel,
+    unit: channelUnit(channel),
     async dispatch(req: ChannelRunRequest) {
       if (!handler) {
         throw new Error('message handler was not registered');
@@ -1511,51 +1561,75 @@ function createApprovalTestChannel(
   },
 ): {
   channel: Channel;
+  unit: RuntimeContributionUnit;
   dispatch(req: ChannelRunRequest): Promise<void>;
 } {
   let handler: ((req: ChannelRunRequest) => Promise<void>) | undefined;
-  let approvalDecisionHandler: ((id: string, decision: ApprovalDecision) => void) | undefined;
+  let interactionResponseHandler: Parameters<NonNullable<Channel['interaction']>['onInteractionResponse']>[0] | undefined;
   const autoDecision = options.autoDecision === undefined ? 'allow' : options.autoDecision;
-
-  return {
-    channel: {
-      id,
-      send() {
-        // no-op for tests
+  const completion = createDeferred<ChannelCompletion>();
+  const channel: Channel = {
+    id,
+    completion: completion.promise,
+    send() {
+      // no-op for tests
+    },
+    onMessage(nextHandler) {
+      handler = nextHandler;
+    },
+    async start() {
+      // no-op for tests
+    },
+    async stop() {
+      completion.resolve({ outcome: 'closed', reason: 'stopped' });
+    },
+    interaction: {
+      sendInteractionRequest(request) {
+        if (request.kind !== 'approval') {
+          return { status: 'unavailable', reason: 'delivery_failed' };
+        }
+        options.approvalRequests.push(request);
+        if (autoDecision) {
+          interactionResponseHandler?.({
+            id: request.id,
+            kind: 'approval',
+            outcome: 'submitted',
+            decision: autoDecision,
+          });
+        }
+        return { status: 'accepted' };
       },
-      onMessage(nextHandler) {
-        handler = nextHandler;
+      sendInteractionClosed(request, result) {
+        if (request.kind !== 'approval') return;
+        options.approvalClosures?.push({ request, result });
       },
-      async start() {
-        // no-op for tests
+      onInteractionResponse(nextHandler) {
+        interactionResponseHandler = nextHandler;
       },
-      async stop() {
-        // no-op for tests
-      },
-      approval: {
-        sendApprovalRequest(request) {
-          options.approvalRequests.push(request);
-          if (autoDecision) {
-            approvalDecisionHandler?.(request.id, autoDecision);
-          }
-          return { status: 'accepted' };
-        },
-        sendApprovalClosed(request, result) {
-          options.approvalClosures?.push({ request, result });
-        },
-        onApprovalDecision(handler) {
-          approvalDecisionHandler = handler;
-        },
-        onApprovalUnavailable() {
-          // This test channel remains available for its full lifetime.
-        },
+      onInteractionUnavailable() {
+        // This test channel remains available for its full lifetime.
       },
     },
+  };
+
+  return {
+    channel,
+    unit: channelUnit(channel),
     async dispatch(req: ChannelRunRequest) {
       if (!handler) {
         throw new Error('message handler was not registered');
       }
       await handler(req);
+    },
+  };
+}
+
+function channelUnit(channel: Channel): RuntimeContributionUnit {
+  return {
+    id: `builtin-test-channel-${channel.id}`,
+    source: 'builtin',
+    register(api) {
+      api.registerChannel({ id: channel.id, create: () => channel });
     },
   };
 }

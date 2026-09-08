@@ -1,3 +1,4 @@
+import type { ChannelContribution, ChannelRuntimeBinding } from '../core/channel/index.js';
 import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
 import type {
   ExtensionRegistrationApi,
@@ -25,53 +26,46 @@ export interface BuildRegistrySnapshotParams {
   readonly units: readonly RuntimeContributionUnit[];
 }
 
-interface StagedUnit {
+export interface StagedRegistryUnit {
   readonly unit: RuntimeContributionUnit;
-  readonly tools: Tool[];
-  readonly hooks: HookContribution[];
+  readonly tools: readonly Tool[];
+  readonly hooks: readonly HookContribution[];
+  readonly channels: readonly ChannelContribution[];
 }
 
-export function buildRegistrySnapshot(
+export interface RegistryCandidate {
+  readonly providers: readonly ProviderProjectionEntry[];
+  readonly units: readonly StagedRegistryUnit[];
+  readonly diagnostics: readonly RegistryStartupDiagnostic[];
+}
+
+export function stageRegistryCandidate(
   params: BuildRegistrySnapshotParams,
-): RegistrySnapshot {
+): RegistryCandidate {
   const acceptedUnitIds = new Set<string>();
   const acceptedToolIds = new Set<string>();
   const acceptedHookIds = new Set<string>();
-  const resolvedTools: ResolvedTool[] = [];
-  const hookBindings: HookBinding[] = [];
+  const acceptedChannelIds = new Set<string>();
+  const units: StagedRegistryUnit[] = [];
   const diagnostics: RegistryStartupDiagnostic[] = [];
 
   for (const unit of sortUnits(params.units)) {
     try {
       const staged = stageUnit(unit);
-      assertNoAcceptedConflicts(staged, acceptedUnitIds, acceptedToolIds, acceptedHookIds);
-
+      assertNoAcceptedConflicts(
+        staged,
+        acceptedUnitIds,
+        acceptedToolIds,
+        acceptedHookIds,
+        acceptedChannelIds,
+      );
       acceptedUnitIds.add(unit.id);
-      for (const tool of staged.tools) {
-        const validator = compilePortableToolSchema(tool.inputSchema);
-        const definition: ToolDefinition = Object.freeze({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: validator.schema,
-        });
-        resolvedTools.push(Object.freeze({
-          unitId: unit.id,
-          definition,
-          validator,
-          execute: tool.execute,
-        }));
-        acceptedToolIds.add(tool.name);
+      for (const tool of staged.tools) acceptedToolIds.add(tool.name);
+      for (const hook of staged.hooks) {
+        acceptedHookIds.add(hookIdentity(hook.hookName, hook.id));
       }
-      for (const contribution of staged.hooks) {
-        hookBindings.push(Object.freeze({
-          unitId: unit.id,
-          contributionId: contribution.id,
-          hookName: contribution.hookName,
-          priority: contribution.priority ?? 0,
-          handler: contribution.handler,
-        }) as HookBinding);
-        acceptedHookIds.add(hookIdentity(contribution.hookName, contribution.id));
-      }
+      for (const channel of staged.channels) acceptedChannelIds.add(channel.id);
+      units.push(staged);
     } catch (error) {
       if (unit.source === 'builtin') {
         throw new RegistryBuildError(
@@ -88,23 +82,87 @@ export function buildRegistrySnapshot(
     }
   }
 
-  const tools = createToolProjection(resolvedTools);
-  const hooks = createHookProjection(hookBindings);
   return Object.freeze({
-    id: 'startup:1',
     providers: Object.freeze([...params.providers]),
-    tools,
-    hooks,
+    units: Object.freeze(units),
     diagnostics: Object.freeze(diagnostics),
   });
 }
 
-function stageUnit(unit: RuntimeContributionUnit): StagedUnit {
+export function finalizeRegistrySnapshot(params: {
+  readonly candidate: RegistryCandidate;
+  readonly acceptedUnits: readonly StagedRegistryUnit[];
+  readonly channelBindings: readonly ChannelRuntimeBinding[];
+  readonly diagnostics?: readonly RegistryStartupDiagnostic[];
+}): RegistrySnapshot {
+  const resolvedTools: ResolvedTool[] = [];
+  const hookBindings: HookBinding[] = [];
+
+  for (const staged of params.acceptedUnits) {
+    for (const tool of staged.tools) {
+      const validator = compilePortableToolSchema(tool.inputSchema);
+      const definition: ToolDefinition = Object.freeze({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: validator.schema,
+      });
+      resolvedTools.push(Object.freeze({
+        unitId: staged.unit.id,
+        definition,
+        validator,
+        execute: tool.execute,
+      }));
+    }
+    for (const contribution of staged.hooks) {
+      hookBindings.push(Object.freeze({
+        unitId: staged.unit.id,
+        contributionId: contribution.id,
+        hookName: contribution.hookName,
+        priority: contribution.priority ?? 0,
+        handler: contribution.handler,
+      }) as HookBinding);
+    }
+  }
+
+  return Object.freeze({
+    id: 'startup:1',
+    providers: params.candidate.providers,
+    tools: createToolProjection(resolvedTools),
+    hooks: createHookProjection(hookBindings),
+    channels: createChannelProjection(params.channelBindings),
+    diagnostics: Object.freeze([
+      ...params.candidate.diagnostics,
+      ...(params.diagnostics ?? []),
+    ]),
+  });
+}
+
+/**
+ * Compatibility wrapper for Registry tests and non-Channel composition.
+ * Channel-bearing candidates must use the async activation path.
+ */
+export function buildRegistrySnapshot(
+  params: BuildRegistrySnapshotParams,
+): RegistrySnapshot {
+  const candidate = stageRegistryCandidate(params);
+  if (candidate.units.some((unit) => unit.channels.length > 0)) {
+    throw new RegistryBuildError('Channel contributions require startup activation before Snapshot finalization.');
+  }
+  return finalizeRegistrySnapshot({
+    candidate,
+    acceptedUnits: candidate.units,
+    channelBindings: [],
+  });
+}
+
+function stageUnit(unit: RuntimeContributionUnit): StagedRegistryUnit {
   assertIdentity(unit.id, 'unit');
   const tools: Tool[] = [];
   const hooks: HookContribution[] = [];
+  const channels: ChannelContribution[] = [];
   const localToolIds = new Set<string>();
   const localHookIds = new Set<string>();
+  const localChannelIds = new Set<string>();
 
   const api: ExtensionRegistrationApi = Object.freeze({
     registerTool(tool: Tool): void {
@@ -124,10 +182,23 @@ function stageUnit(unit: RuntimeContributionUnit): StagedUnit {
       localHookIds.add(identity);
       hooks.push(contribution as HookContribution);
     },
+    registerChannel(contribution: ChannelContribution): void {
+      assertChannel(contribution);
+      if (localChannelIds.has(contribution.id)) {
+        throw new RegistryBuildError(`Duplicate Channel contribution "${contribution.id}" in unit "${unit.id}".`);
+      }
+      localChannelIds.add(contribution.id);
+      channels.push(Object.freeze(contribution));
+    },
   });
 
   unit.register(api);
-  return { unit, tools, hooks };
+  return Object.freeze({
+    unit,
+    tools: Object.freeze(tools),
+    hooks: Object.freeze(hooks),
+    channels: Object.freeze(channels),
+  });
 }
 
 function assertTool(tool: Tool): void {
@@ -138,7 +209,6 @@ function assertTool(tool: Tool): void {
   if (typeof tool.execute !== 'function') {
     throw new RegistryBuildError(`Tool "${tool.name}" must provide execute().`);
   }
-  // Compile during staging so a unit cannot partially publish valid Tools.
   compilePortableToolSchema(tool.inputSchema);
 }
 
@@ -156,11 +226,19 @@ function assertHook(contribution: HookContribution): void {
   }
 }
 
+function assertChannel(contribution: ChannelContribution): void {
+  assertIdentity(contribution.id, 'Channel');
+  if (typeof contribution.create !== 'function') {
+    throw new RegistryBuildError(`Channel "${contribution.id}" must provide create().`);
+  }
+}
+
 function assertNoAcceptedConflicts(
-  staged: StagedUnit,
+  staged: StagedRegistryUnit,
   unitIds: ReadonlySet<string>,
   toolIds: ReadonlySet<string>,
   hookIds: ReadonlySet<string>,
+  channelIds: ReadonlySet<string>,
 ): void {
   if (unitIds.has(staged.unit.id)) {
     throw conflict(`Duplicate unit identity "${staged.unit.id}".`);
@@ -174,6 +252,11 @@ function assertNoAcceptedConflicts(
     const identity = hookIdentity(hook.hookName, hook.id);
     if (hookIds.has(identity)) {
       throw conflict(`Hook contribution "${identity}" conflicts with an accepted unit.`);
+    }
+  }
+  for (const channel of staged.channels) {
+    if (channelIds.has(channel.id)) {
+      throw conflict(`Channel contribution "${channel.id}" conflicts with an accepted unit.`);
     }
   }
 }
@@ -199,6 +282,19 @@ function createHookProjection(bindings: readonly HookBinding[]): HookProjection 
     afterToolCall: byKind(sorted, 'after_tool_call'),
     beforeCompaction: byKind(sorted, 'before_compaction'),
     afterCompaction: byKind(sorted, 'after_compaction'),
+  });
+}
+
+function createChannelProjection(
+  bindings: readonly ChannelRuntimeBinding[],
+) {
+  const frozen = Object.freeze([...bindings]);
+  const byId = new Map(frozen.map((binding) => [binding.id, binding]));
+  return Object.freeze({
+    bindings: frozen,
+    resolve(id: string): ChannelRuntimeBinding | undefined {
+      return byId.get(id);
+    },
   });
 }
 

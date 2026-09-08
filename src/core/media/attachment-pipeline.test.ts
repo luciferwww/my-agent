@@ -5,7 +5,7 @@ import {
   processImageAttachment,
   processInboundMessage,
 } from './attachment-pipeline.js';
-import type { InboundContentBlock } from '../../adapters/channel/types.js';
+import type { InboundContentBlock } from '../channel/index.js';
 import type { ChatContentBlock } from '../model-invocation/index.js';
 
 // ── Builders ────────────────────────────────────────────────────────────────

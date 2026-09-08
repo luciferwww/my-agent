@@ -2,15 +2,15 @@
 
 ## 状态
 
-- **状态：** Accepted
-- **版本：** 0.2
+- **状态：** Complete
+- **版本：** 0.3
 - **日期：** 2026-09-08
 - **所有者：** 项目所有者
 - **Plan Item：** [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) Slice 4
 - **关联 ADR / Spec：** [ADR-003](adr-003-progressive-architecture-migration.md)、[ADR-005](adr-005-extension-registry-runtime-composition.md)、[ADR-006](adr-006-legacy-and-compatibility-exit.md)、[Approval Lifecycle Spec](approval-lifecycle-spec.md)、[Tool 与 Hook Module Spec](tool-hook-module-spec.md)
 - **证据输入：** [Target Architecture §8.5](target-architecture.md#85-channel-contributioncapability-与-lifecycle)、[Target Architecture §9.3](target-architecture.md#93-slice-16-迁移与删除边界)、[AF-04 Characterization / Fitness Plan](../roadmap/af-04-characterization-fitness-plan.md)、[Legacy Migration Inventory](legacy-migration-inventory.md)
 
-本 Spec 遵循 [Development Workflow](../development-workflow.md)。它只为 Slice 4 建立新的 Channel Module 权威文档，不要求同步历史 Channel design、v1.0 文档或 Current Architecture 候选；这些文档的 authority/link 清理仍属于 Slice 6。项目所有者于 2026-09-08 接受 CM-OD-01..05 的全部推荐方案并接受完整 Spec。该接受不包含 production 修改、dependency 安装、commit、push 或 Slice 4 Delivery；进入 production Delivery 仍需单独明确授权。
+本 Spec 遵循 [Development Workflow](../development-workflow.md)。它只为 Slice 4 建立新的 Channel Module 权威文档，不要求同步历史 Channel design、v1.0 文档或 Current Architecture 候选；这些文档的 authority/link 清理仍属于 Slice 6。项目所有者于 2026-09-08 接受 CM-OD-01..05 的全部推荐方案并接受完整 Spec，随后在 Spec checkpoint commit 后明确授权继续 Slice 4 production Delivery。该授权不包含 push 或后续 Slice。
 
 ## 1. 目的与用户可观察结果
 
@@ -620,22 +620,24 @@ Tests use deferred barriers/fakes，不使用 real external service、paid Provi
 - [x] 项目所有者确认 §18 的五项 Proposed Decisions（全部按推荐方案接受，2026-09-08）；
 - [x] independent Spec review 无未解决 Critical/High/Medium blocker（2026-09-08）；
 - [x] 项目所有者接受完整 Spec 并将状态改为 `Accepted`（2026-09-08）；
-- [ ] 项目所有者在接受 Spec 后另行批准 Slice 4 production Delivery。
+- [x] 项目所有者在接受 Spec checkpoint 后另行批准 Slice 4 production Delivery（2026-09-08）。
 
 DoR 完成前不得修改 production code、公共 Contract、dependency 或 legacy entry points。
 
 ## 17. Definition of Done
 
-- [ ] AC-CM-01..15 均有自动化证据；
-- [ ] CLI、WebSocket Builtin 与 External Test Channel contract suites 通过；
-- [ ] final startup Snapshot/`app_ready` 只反映 successful Channel bindings；
-- [ ] CH-05 observer isolation 与 CH-07 startup rollback 通过；
-- [ ] routing、queue、approval、Abort、WebSocket protocol、CLI regressions 通过；
-- [ ] API-E01 residual 为零；
-- [ ] focused/contract/integration/regression/Fitness/lint/full tests/build/docs/diff checks 通过；
-- [ ] 本 Spec 与必要的 active Plan status 同步；不批量同步历史/Legacy 文档；
-- [ ] independent implementation review 无未解决 blocker；
-- [ ] 项目所有者接受验证结果并确认 Slice 4 完成。
+- [x] AC-CM-01..15 均有自动化证据；
+- [x] CLI、WebSocket Builtin 与 External Test Channel contract suites 通过；
+- [x] final startup Snapshot/`app_ready` 只反映 successful Channel bindings；
+- [x] CH-05 observer isolation 与 CH-07 startup rollback 通过；
+- [x] routing、queue、approval、Abort、WebSocket protocol、CLI regressions 通过；
+- [x] API-E01 residual 为零；
+- [x] focused/contract/integration/regression/Fitness/lint/full tests/build/docs/diff checks 通过；
+- [x] 本 Spec 与必要的 active Plan status 同步；不批量同步历史/Legacy 文档；
+- [x] independent implementation review 无未解决 blocker；
+- [x] 项目所有者接受验证结果并确认 Slice 4 完成（2026-09-08）。
+
+**Delivery evidence（2026-09-08）：** Core-owned Channel contracts、Channel contribution staging、per-unit create/start/rollback、final immutable Channel projection、readiness/completion separation、startup-only lifecycle owner、narrow route interaction、Builtin CLI/WebSocket Modules 和 deterministic External Test Channel 已交付。旧 `RuntimeApp.registerChannel()` / `startChannels()` / `stopChannels()` definitions、exports 与 callers 为零；production concrete construction 仅保留在 Builtin Module factory。CLI/WebSocket partial-start、completion-before-readiness、pending sibling、cross-kind rollback、observer isolation、`app_ready` ordering、close-once 与 shutdown failure reporting 均有自动化覆盖。`npm run lint`、`npm run build`、full Vitest（82 files，725 tests）、17 项 Runtime integration steps、FT-01/02/05/06/07/08/09、`git diff --check` 全部通过；independent final review 无 Critical/High/Medium blocker。项目所有者于 2026-09-08 接受验证结果、确认 Slice 4 完成并授权 Slice 4 checkpoint commit；未授权 push 或 Slice 5。
 
 ## 18. Accepted Decisions
 

@@ -1,13 +1,8 @@
-export {
-  TurnInteractionManager,
-  TurnInteractionManager as ApprovalManager,
-} from './TurnInteractionManager.js';
-export { CliChannel, type CliChannelConfig } from './CliChannel.js';
-export { WebSocketChannel, type WebSocketChannelConfig } from './WebSocketChannel.js';
 export type {
+  AbortHookBindings,
+  ApprovalClosedResult,
   ApprovalDecision,
   ApprovalDeliveryResult,
-  ApprovalClosedResult,
   ApprovalInteractionRequest,
   ApprovalInteractionResponse,
   ApprovalRequest,
@@ -15,9 +10,19 @@ export type {
   ApprovalResult,
   Channel,
   ChannelCompletion,
+  ChannelCompletionObserver,
+  ChannelContribution,
   ChannelInstance,
   ChannelInteractionAdapter,
+  ChannelInteractionTransport,
+  ChannelLifecycleReport,
+  ChannelProjection,
   ChannelRunRequest,
+  ChannelRuntimeBinding,
+  ChannelRuntimeHost,
+  ChannelRuntimeInteraction,
+  ChannelShutdownHandoff,
+  InboundContentBlock,
   SelectInteractionRequest,
   SelectInteractionResponse,
   TurnInteractionKind,

@@ -7,7 +7,7 @@ import type {
   ApprovalDecision,
   ApprovalRequest,
   Channel,
-  ChannelApprovalAdapter,
+  ChannelCompletion,
   ChannelInteractionAdapter,
   ChannelRunRequest,
   TurnInteractionResponse,
@@ -88,8 +88,8 @@ export interface CliChannelConfig {
 
 export class CliChannel implements Channel {
   readonly id = 'cli';
+  readonly completion: Promise<ChannelCompletion>;
   readonly interaction?: ChannelInteractionAdapter;
-  readonly approval?: ChannelApprovalAdapter;
 
   private readonly input: NodeJS.ReadableStream;
   private readonly output: NodeJS.WritableStream;
@@ -98,12 +98,15 @@ export class CliChannel implements Channel {
   private rl?: readline.Interface;
 
   private messageHandler?: (req: ChannelRunRequest) => Promise<void>;
-  private approvalDecisionHandler?: (id: string, decision: ApprovalDecision) => void;
   private interactionResponseHandler?: (response: TurnInteractionResponse) => void;
 
   /** 流式输出过程中插入 tool/error 行前需要先换行；run_end / 显式插入会重置 */
   private inStream = false;
   private stopped = false;
+  private started = false;
+  private stopRequested = false;
+  private settleCompletion!: (result: ChannelCompletion) => void;
+  private completionSettled = false;
   /** 当前 readline.question 的 AbortController，用于 closure/stop 时取消底层读操作 */
   private pendingPromptAbort?: AbortController;
   // ── Abort / Ctrl+C 状态（core-abort-spec.md §12）─────────────
@@ -123,10 +126,16 @@ export class CliChannel implements Channel {
     this.output = config.output ?? process.stdout;
     this.promptText = config.prompt ?? '> ';
     this.sessionKey = config.sessionKey ?? 'main';
+    this.completion = new Promise<ChannelCompletion>((resolve) => {
+      this.settleCompletion = (result) => {
+        if (this.completionSettled) return;
+        this.completionSettled = true;
+        resolve(Object.freeze(result));
+      };
+    });
 
     if (config.approval) {
       this.interaction = this.makeInteractionAdapter();
-      this.approval = this.makeApprovalAdapter();
     }
   }
 
@@ -235,11 +244,16 @@ export class CliChannel implements Channel {
   // ── 生命周期 ───────────────────────────────────────────────────────
 
   async start(): Promise<void> {
+    if (this.started) return;
     if (!this.messageHandler) {
-      throw new Error('CliChannel.start: no message handler registered (call registerChannel first)');
+      const error = new Error('CliChannel.start: no message handler registered');
+      this.settleCompletion({ outcome: 'failed', phase: 'startup', error });
+      throw error;
     }
 
+    this.started = true;
     this.stopped = false;
+    this.stopRequested = false;
 
     this.rl = readline.createInterface({
       input: this.input,
@@ -250,6 +264,10 @@ export class CliChannel implements Channel {
     // readline 关闭时也视作 stop
     this.rl.on('close', () => {
       this.stopped = true;
+      this.settleCompletion({
+        outcome: 'closed',
+        reason: this.stopRequested ? 'stopped' : 'input_closed',
+      });
       log.info('cli channel readline closed', {
         channelId: this.id,
         sessionKey: this.sessionKey,
@@ -287,55 +305,74 @@ export class CliChannel implements Channel {
       approvalEnabled: !!this.interaction,
     });
 
-    while (!this.stopped) {
-      let line: string;
-      try {
-        line = await this.question(this.promptText);
-      } catch {
-        // rl.close() 引发 question reject → 退出循环
-        break;
+    void this.runInputLoop();
+  }
+
+  private async runInputLoop(): Promise<void> {
+    const messageHandler = this.messageHandler;
+    if (!messageHandler) return;
+    try {
+      while (!this.stopped) {
+        let line: string;
+        try {
+          line = await this.question(this.promptText);
+        } catch {
+          // rl.close() 引发 question reject → 退出循环
+          break;
+        }
+
+        if (this.stopped) break;
+
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        log.info('cli input received', {
+          channelId: this.id,
+          sessionKey: this.sessionKey,
+          length: trimmed.length,
+        });
+
+        try {
+          await messageHandler({
+            sessionKey: this.sessionKey,
+            message: trimmed,
+          });
+          log.debug('cli input dispatched', {
+            channelId: this.id,
+            sessionKey: this.sessionKey,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.breakStream();
+          this.output.write(red(`[error] ${message}\n`));
+          log.error('cli message handling failed', {
+            channelId: this.id,
+            sessionKey: this.sessionKey,
+            error: message,
+          });
+        }
       }
 
-      if (this.stopped) break;
-
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-
-      log.info('cli input received', {
+      this.settleCompletion({
+        outcome: 'closed',
+        reason: this.stopRequested ? 'stopped' : 'input_closed',
+      });
+      log.info('cli channel stopped', {
         channelId: this.id,
         sessionKey: this.sessionKey,
-        length: trimmed.length,
       });
-
-      try {
-        await this.messageHandler({
-          sessionKey: this.sessionKey,
-          message: trimmed,
-        });
-        log.debug('cli input dispatched', {
-          channelId: this.id,
-          sessionKey: this.sessionKey,
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        this.breakStream();
-        this.output.write(red(`[error] ${message}\n`));
-        log.error('cli message handling failed', {
-          channelId: this.id,
-          sessionKey: this.sessionKey,
-          error: message,
-        });
-      }
+    } catch (error) {
+      this.settleCompletion({
+        outcome: 'failed',
+        phase: 'runtime',
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
     }
-
-    log.info('cli channel stopped', {
-      channelId: this.id,
-      sessionKey: this.sessionKey,
-    });
   }
 
   async stop(): Promise<void> {
-    if (this.stopped) return;
+    if (this.stopRequested) return;
+    this.stopRequested = true;
     this.stopped = true;
     log.info('cli channel stopping', {
       channelId: this.id,
@@ -350,6 +387,7 @@ export class CliChannel implements Channel {
     this.pendingPromptAbort?.abort(new Error('CliChannel stopped'));
     this.rl?.close();
     this.rl = undefined;
+    this.settleCompletion({ outcome: 'closed', reason: 'stopped' });
   }
 
   // ── Abort / Ctrl+C 处理（core-abort-spec.md §12）────────────────
@@ -457,32 +495,6 @@ export class CliChannel implements Channel {
     });
   }
 
-  private makeApprovalAdapter(): ChannelApprovalAdapter {
-    return {
-      sendApprovalRequest: (request: ApprovalRequest) => {
-        log.info('approval request received for cli', {
-          channelId: this.id,
-          approvalId: request.id,
-          toolName: request.toolName,
-          sessionKey: request.sessionKey,
-          turnId: request.turnId,
-        });
-        return this.promptApproval(request, (decision) => {
-          this.dispatchApprovalSubmission(request.id, decision);
-        });
-      },
-      sendApprovalClosed: (request: ApprovalRequest, result: ApprovalClosedResult) => {
-        this.closeApproval(request.id, result);
-      },
-      onApprovalDecision: (handler) => {
-        this.approvalDecisionHandler = handler;
-      },
-      onApprovalUnavailable: () => {
-        // CLI approval origin shares the channel process lifecycle.
-      },
-    };
-  }
-
   private makeInteractionAdapter(): ChannelInteractionAdapter {
     return {
       sendInteractionRequest: (request) => {
@@ -513,7 +525,7 @@ export class CliChannel implements Channel {
       channelId: this.id,
       approvalId: id,
       decision,
-      routedAs: this.interactionResponseHandler ? 'interaction' : 'approval',
+      routedAs: 'interaction',
     });
 
     if (this.interactionResponseHandler) {
@@ -523,10 +535,7 @@ export class CliChannel implements Channel {
         outcome: 'submitted',
         decision,
       });
-      return;
     }
-
-    this.approvalDecisionHandler?.(id, decision);
   }
 
   private promptApproval(

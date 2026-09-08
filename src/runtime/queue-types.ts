@@ -1,4 +1,4 @@
-import type { Channel } from '../adapters/channel/types.js';
+import type { ChannelRuntimeBinding } from '../core/channel/index.js';
 import type { ChatContentBlock } from '../adapters/llm/types.js';
 import type { RunTurnParams } from './types.js';
 
@@ -8,7 +8,7 @@ export type TurnLaunchContext = Pick<
 >;
 
 export type MessageRouteContext = {
-  originChannel?: Channel;
+  originChannel?: ChannelRuntimeBinding;
   originClientId?: string;
 };
 

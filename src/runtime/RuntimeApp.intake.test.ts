@@ -4,6 +4,7 @@ import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   Channel,
+  ChannelCompletion,
   ChannelRunRequest,
   InboundContentBlock,
 } from '../adapters/channel/types.js';
@@ -583,18 +584,31 @@ function defaultRunResult(text: string): RunResult {
 
 function createTestChannel(id: string): {
   channel: Channel;
+  unit: RuntimeContributionUnit;
   dispatch(req: ChannelRunRequest): Promise<void>;
 } {
   let handler: ((req: ChannelRunRequest) => Promise<void>) | undefined;
+  const completion = createDeferred<ChannelCompletion>();
+  const channel: Channel = {
+    id,
+    completion: completion.promise,
+    send() {},
+    onMessage(next) {
+      handler = next;
+    },
+    async start() {},
+    async stop() {
+      completion.resolve({ outcome: 'closed', reason: 'stopped' });
+    },
+  };
   return {
-    channel: {
-      id,
-      send() {},
-      onMessage(next) {
-        handler = next;
+    channel,
+    unit: {
+      id: `builtin-test-channel-${id}`,
+      source: 'builtin',
+      register(api) {
+        api.registerChannel({ id, create: () => channel });
       },
-      async start() {},
-      async stop() {},
     },
     async dispatch(req) {
       if (!handler) throw new Error('handler not registered');
@@ -686,9 +700,11 @@ async function buildApp(
 
   const runtimeEvents: RuntimeEvent[] = [];
   const agentEvents: AgentEvent[] = [];
+  const testChannel = createTestChannel('intake-test');
 
   const app = await RuntimeApp.create({
     workspaceDir,
+    contributionUnits: [testChannel.unit],
     cliOverrides: {
       llm: { apiKey: 'test-key', model: 'test-model' },
       memory: { enabled: false },
@@ -700,9 +716,6 @@ async function buildApp(
     onEvent: (e) => runtimeEvents.push(e),
     onAgentEvent: (e) => agentEvents.push(e),
   });
-
-  const testChannel = createTestChannel('intake-test');
-  app.registerChannel(testChannel.channel);
 
   return { app, runnerRun, testChannel, runtimeEvents, agentEvents };
 }

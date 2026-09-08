@@ -21,8 +21,10 @@ import process from 'node:process';
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
 import type {
   Channel,
+  ChannelCompletion,
   ChannelRunRequest,
 } from '../src/adapters/channel/types.js';
+import type { RuntimeContributionUnit } from '../src/core/registry/index.js';
 import type { RunParams, RunResult } from '../src/core/runner/types.js';
 
 // ── runStep 脚手架 ──────────────────────────────────────────────
@@ -65,18 +67,31 @@ function createDeferred<T>(): Deferred<T> {
 
 function createTestChannel(id: string): {
   channel: Channel;
+  unit: RuntimeContributionUnit;
   dispatch(req: ChannelRunRequest): Promise<void>;
 } {
   let handler: ((req: ChannelRunRequest) => Promise<void>) | undefined;
+  const completion = createDeferred<ChannelCompletion>();
+  const channel: Channel = {
+    id,
+    completion: completion.promise,
+    send() {},
+    onMessage(nextHandler) {
+      handler = nextHandler;
+    },
+    async start() {},
+    async stop() {
+      completion.resolve({ outcome: 'closed', reason: 'stopped' });
+    },
+  };
   return {
-    channel: {
-      id,
-      send() {},
-      onMessage(nextHandler) {
-        handler = nextHandler;
+    channel,
+    unit: {
+      id: `builtin-test-channel-${id}`,
+      source: 'builtin',
+      register(api) {
+        api.registerChannel({ id, create: () => channel });
       },
-      async start() {},
-      async stop() {},
     },
     async dispatch(req: ChannelRunRequest) {
       if (!handler) throw new Error('message handler was not registered');
@@ -133,7 +148,7 @@ async function testCloseWaitsForInFlight(): Promise<void> {
     const app = await RuntimeApp.create({
       workspaceDir,
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        llm: { apiKey: 'test-key', model: 'claude-sonnet-5' },
         memory: { enabled: false },
       },
       dependencies: {
@@ -188,15 +203,19 @@ async function testQueuedMessagesDoNotStartAfterClose(): Promise<void> {
     const runCalls: string[] = [];
 
     const runnerRun = async (params: RunParams): Promise<RunResult> => {
+      assert.equal(typeof params.message, 'string');
+      if (typeof params.message !== 'string') throw new Error('expected text message');
       runCalls.push(params.message);
       if (runCalls.length === 1) await release.promise;
       return okResult;
     };
 
+    const test = createTestChannel('shutdown-queue-test');
     const app = await RuntimeApp.create({
       workspaceDir,
+      contributionUnits: [test.unit],
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        llm: { apiKey: 'test-key', model: 'claude-sonnet-5' },
         memory: { enabled: false },
       },
       dependencies: {
@@ -204,9 +223,6 @@ async function testQueuedMessagesDoNotStartAfterClose(): Promise<void> {
         createMemoryManager: async () => null,
       },
     });
-
-    const test = createTestChannel('shutdown-queue-test');
-    app.registerChannel(test.channel);
 
     // 第一条消息：进入 in-flight，等 release
     const firstDispatch = test.dispatch({
@@ -246,7 +262,7 @@ async function testRunTurnRejectedAfterClose(): Promise<void> {
     const app = await RuntimeApp.create({
       workspaceDir,
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        llm: { apiKey: 'test-key', model: 'claude-sonnet-5' },
         memory: { enabled: false },
       },
       dependencies: {

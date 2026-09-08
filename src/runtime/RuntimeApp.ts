@@ -6,10 +6,14 @@ import { ModelResolutionError } from '../core/model-resolution/index.js';
 import { TurnInteractionManager } from '../adapters/channel/TurnInteractionManager.js';
 import type {
   ApprovalInteractionRequest,
-  Channel,
   ChannelRunRequest,
+  ChannelCompletion,
+  ChannelCompletionObserver,
+  ChannelRuntimeBinding,
+  ChannelRuntimeHost,
+  ChannelShutdownHandoff,
   TurnInteractionResponse,
-} from '../adapters/channel/types.js';
+} from '../core/channel/index.js';
 import { Logger } from '../platform/logger/index.js';
 import { loadContextFiles } from '../core/workspace/index.js';
 import type { ContextFile } from '../core/workspace/types.js';
@@ -80,13 +84,10 @@ export class RuntimeApp {
   private readonly activeParentTurns: Map<string, ActiveParentTurn>;
 
   // ── Channel 层 ──────────────────────────────────────────────────
-  /** 与 bootstrap fanout 闭包共享引用：registerChannel 后注册的新 channel 实时可见 */
-  private readonly channels: Channel[];
   private readonly turnInteractionManager: TurnInteractionManager;
   /** turnId → 交互路由上下文；当前最小实现仍用 channel 引用加 originClientId 做定向。 */
   private readonly routeContextByTurn: Map<string, MessageRouteContext>;
   private approvalRoutingWired = false;
-  private channelsStarted = false;
 
   private closePromise?: Promise<RuntimeShutdownReport>;
   private shutdownReport?: RuntimeShutdownReport;
@@ -111,13 +112,13 @@ export class RuntimeApp {
   private constructor(
     private readonly resources: RuntimeResourceSet,
     private state: RuntimeLifecycleState,
-    channels: Channel[],
+    private readonly channelCompletionObserver: ChannelCompletionObserver,
+    private readonly channelShutdownHandoff: ChannelShutdownHandoff,
     subagentProfiles: ReadonlyMap<string, SubagentProfile>,
     activeParentTurns: Map<string, ActiveParentTurn>,
     routeContextByTurn: Map<string, MessageRouteContext>,
     onEvent?: RuntimeAppOptions['onEvent'],
   ) {
-    this.channels = channels;
     this.subagentProfiles = subagentProfiles;
     this.activeParentTurns = activeParentTurns;
     this.routeContextByTurn = routeContextByTurn;
@@ -126,12 +127,12 @@ export class RuntimeApp {
   }
 
   static async create(options: RuntimeAppOptions): Promise<RuntimeApp> {
-    // 与未来 RuntimeApp 实例共享的可变数组：registerChannel 后填充，fanout 实时读取
-    const channels: Channel[] = [];
+    let app: RuntimeApp | undefined;
+    let channelBindings: readonly ChannelRuntimeBinding[] = [];
     const userObserver = options.onAgentEvent;
 
     const fanout = (event: AgentEvent) => {
-      for (const channel of channels) {
+      for (const channel of channelBindings) {
         try {
           channel.send(event);
         } catch (err) {
@@ -143,8 +144,43 @@ export class RuntimeApp {
           });
         }
       }
-      userObserver?.(event);
+      try {
+        userObserver?.(event);
+      } catch (error) {
+        log.warn('onAgentEvent observer failed', {
+          eventType: event.type,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     };
+
+    const channelHost: ChannelRuntimeHost = Object.freeze({
+      onMessage(binding: ChannelRuntimeBinding, request: ChannelRunRequest) {
+        if (!app) {
+          return Promise.reject(new Error('Runtime Channel ingress is not ready.'));
+        }
+        return app.handleInboundChannelMessage(binding, request);
+      },
+      onInteractionResponse(response: TurnInteractionResponse) {
+        app?.handleInteractionResponse(response);
+      },
+      onInteractionUnavailable(id: string, reason: 'origin_disconnected') {
+        app?.turnInteractionManager.settle(id, { outcome: 'unavailable', reason });
+      },
+      abortHooks: Object.freeze({
+        querySessionsNeedingAbort(): string[] {
+          if (!app) return [];
+          const sessions = new Set<string>(app.activeAborts.keys());
+          for (const [sessionKey, queue] of app.messageQueueBySession) {
+            if (queue.length > 0) sessions.add(sessionKey);
+          }
+          return [...sessions];
+        },
+        abortTurn(sessionKey: string) {
+          return app?.abortTurn(sessionKey) ?? { aborted: false, dropped: 0 };
+        },
+      }),
+    });
 
     const {
       resources,
@@ -152,24 +188,49 @@ export class RuntimeApp {
       subagentProfiles,
       activeParentTurns,
       routeContextByTurn,
+      channelCompletionObserver,
+      channelShutdownHandoff,
     } = await bootstrapRuntime({
       ...options,
       onAgentEvent: fanout,
-    });
+    }, channelHost);
 
-    const app = new RuntimeApp(
-      resources,
-      state,
-      channels,
-      subagentProfiles,
-      activeParentTurns,
-      routeContextByTurn,
-      options.onEvent,
-    );
-    app.fanoutAgentEvent = fanout;
-    app.wireApprovalRouting();
+    try {
+      channelBindings = resources.registrySnapshot.channels.bindings;
 
-    return app;
+      app = new RuntimeApp(
+        resources,
+        state,
+        channelCompletionObserver,
+        channelShutdownHandoff,
+        subagentProfiles,
+        activeParentTurns,
+        routeContextByTurn,
+        options.onEvent,
+      );
+      app.fanoutAgentEvent = fanout;
+      app.wireApprovalRouting();
+
+      options.onEvent?.({
+        type: 'app_ready',
+        workspaceDir: options.workspaceDir,
+        contextVersion: state.contextVersion,
+        toolNames: resources.registrySnapshot.tools.definitions.map((tool) => tool.name),
+        channelIds: channelBindings.map((channel) => channel.id),
+        memoryEnabled: resources.memoryManager !== null,
+      });
+
+      return app;
+    } catch (error) {
+      const report = await channelShutdownHandoff.runtimeConverged();
+      for (const failure of report.failed) {
+        log.warn('channel cleanup after RuntimeApp creation failure failed', {
+          channelId: failure.channelId,
+          error: failure.message,
+        });
+      }
+      throw error;
+    }
   }
 
   // ── 状态查询 ──────────────────────────────────────────────────────
@@ -189,50 +250,8 @@ export class RuntimeApp {
     return this.resources.registrySnapshot.tools.definitions.map((tool) => tool.name);
   }
 
-  // ── Channel 注册与生命周期 ────────────────────────────────────────
-
-  /**
-   * 注册 channel，绑定 onMessage 与（如有）interaction / approval 响应处理器。
-   * 须在 startChannels() 前调用；多次调用支持注册多个 channel。
-   */
-  registerChannel(channel: Channel): void {
-    this.assertNotClosed();
-    this.channels.push(channel);
-    channel.onMessage(this.makeMessageHandler(channel));
-    channel.interaction?.onInteractionResponse((response) => {
-      this.handleInteractionResponse(response);
-    });
-    channel.interaction?.onInteractionUnavailable((id, reason) => {
-      this.turnInteractionManager.settle(id, { outcome: 'unavailable', reason });
-    });
-    channel.approval?.onApprovalDecision((id, decision) => {
-      this.turnInteractionManager.resolve(id, decision);
-    });
-    channel.approval?.onApprovalUnavailable((id, reason) => {
-      this.turnInteractionManager.settle(id, { outcome: 'unavailable', reason });
-    });
-
-    // 注入 abort hooks（core-abort-spec.md §12）——同步调用，channel.start() 里
-    // 装 SIGINT handler 之前必然已 bound，无 race。
-    channel.bindAbortHooks?.({
-      querySessionsNeedingAbort: () => {
-        const set = new Set<string>(this.activeAborts.keys());
-        for (const [sk, queue] of this.messageQueueBySession) {
-          if (queue.length > 0) set.add(sk);
-        }
-        return [...set];
-      },
-      // 直接透传——RuntimeApp.abortTurn 返回值形状与 AbortHookBindings.abortTurn 契约一致（§8.3）
-      abortTurn: (sk) => this.abortTurn(sk),
-    });
-
-    log.info('channel registered', {
-      channelId: channel.id,
-      hasInteraction: !!channel.interaction,
-      hasApproval: !!channel.approval,
-      hasAbortHooks: !!channel.bindAbortHooks,
-      total: this.channels.length,
-    });
+  waitForChannelCompletion(id: string): Promise<ChannelCompletion> {
+    return this.channelCompletionObserver.waitForChannelCompletion(id);
   }
 
   /**
@@ -295,41 +314,6 @@ export class RuntimeApp {
     }
   }
 
-  /**
-    * 依次启动所有已注册 channel。Approval transport 已在 create() 配置；
-    * 这里的幂等调用不会安装 Hook 或改变 Tool authorization policy。
-   *
-   * 注意：CliChannel.start() 是阻塞的（readline 循环），多 channel 启动应并行；
-   * 这里使用 Promise.all 让阻塞 channel 不阻塞其他 channel 的启动。
-   */
-  async startChannels(): Promise<void> {
-    if (this.channelsStarted) return;
-    this.channelsStarted = true;
-    this.wireApprovalRouting();
-    log.info('starting channels', {
-      count: this.channels.length,
-      approvalWired: this.approvalRoutingWired,
-      channelIds: this.channels.map((channel) => channel.id),
-    });
-    await Promise.all(this.channels.map((c) => c.start()));
-  }
-
-  /** 依次调用所有已注册 channel 的 stop()；幂等 */
-  async stopChannels(): Promise<void> {
-    log.info('stopping channels', {
-      count: this.channels.length,
-      channelIds: this.channels.map((channel) => channel.id),
-    });
-
-    const results = await Promise.allSettled(this.channels.map((c) => c.stop()));
-    const failed = results.filter((result) => result.status === 'rejected').length;
-
-    log.info('channels stopped', {
-      count: this.channels.length,
-      failed,
-    });
-  }
-
   // ── Approval 路由（详见 channel-design.md §4.3）────────────────────
 
   /** Configure interaction transport once; Tool authorization stays in Runner policy flow. */
@@ -358,18 +342,16 @@ export class RuntimeApp {
         sessionKey: request.sessionKey,
         originClientId: request.originClientId,
         channelId: originChannel.id,
-        route: originChannel.interaction ? 'interaction' : 'approval',
+        route: 'interaction',
       });
-      if (originChannel.interaction) {
-        const interactionRequest: ApprovalInteractionRequest = {
-          ...request,
-          kind: 'approval',
-        };
-        return originChannel.interaction.sendInteractionRequest(interactionRequest);
+      if (!originChannel.interaction) {
+        return { status: 'unavailable', reason: 'origin_missing' };
       }
-
-      return originChannel.approval?.sendApprovalRequest(request)
-        ?? { status: 'unavailable', reason: 'origin_missing' };
+      const interactionRequest: ApprovalInteractionRequest = {
+        ...request,
+        kind: 'approval',
+      };
+      return originChannel.interaction.sendInteractionRequest(interactionRequest);
     });
 
     this.turnInteractionManager.onClose((request, result) => {
@@ -392,26 +374,23 @@ export class RuntimeApp {
         sessionKey: request.sessionKey,
         originClientId: request.originClientId,
         channelId: originChannel.id,
-        route: originChannel.interaction ? 'interaction' : 'approval',
+        route: 'interaction',
       });
 
-      if (originChannel?.interaction) {
+      if (originChannel.interaction) {
         const interactionRequest: ApprovalInteractionRequest = {
           ...request,
           kind: 'approval',
         };
         originChannel.interaction.sendInteractionClosed(interactionRequest, result);
-        return;
       }
-
-      originChannel?.approval?.sendApprovalClosed(request, result);
     });
   }
 
   private getApprovalCapability(turnId: string): CurrentCallApprovalCapability | undefined {
     const route = this.routeContextByTurn.get(turnId);
     const originChannel = route?.originChannel;
-    if (!(originChannel?.interaction || originChannel?.approval)) return undefined;
+    if (!originChannel?.interaction) return undefined;
 
     const capability: CurrentCallApprovalCapability = {
       request: async (request, signal) => this.turnInteractionManager.request({
@@ -464,24 +443,6 @@ export class RuntimeApp {
     });
   }
 
-  /** 每个 channel 一份消息处理器，闭包绑定 channel 自身用于路由表登记 */
-  private makeMessageHandler(channel: Channel) {
-    return async (req: ChannelRunRequest) => {
-      log.info('channel message received', {
-        channelId: channel.id,
-        clientId: req.clientId,
-        sessionKey: req.sessionKey,
-        hasModelOverride: req.model !== undefined,
-        hasMaxTokens: req.maxTokens !== undefined,
-        hasMaxLlmCalls: req.maxLlmCalls !== undefined,
-        messageChars: typeof req.message === 'string' ? req.message.length : undefined,
-        attachmentCount: Array.isArray(req.message) ? req.message.length : 0,
-      });
-
-      await this.handleInboundChannelMessage(channel, req);
-    };
-  }
-
   /**
    * Channel 入站统一先过 runtime intake。
    * 顺序：media 处理 → 占位装配 → user_message 广播 → steering 剥离 → 普通队列。
@@ -490,9 +451,19 @@ export class RuntimeApp {
    * （assemble 后、route 分歧前，覆盖 queued+steering 两条路径）。
    */
   private async handleInboundChannelMessage(
-    channel: Channel,
+    channel: ChannelRuntimeBinding,
     req: ChannelRunRequest,
   ): Promise<void> {
+    log.info('channel message received', {
+      channelId: channel.id,
+      clientId: req.clientId,
+      sessionKey: req.sessionKey,
+      hasModelOverride: req.model !== undefined,
+      hasMaxTokens: req.maxTokens !== undefined,
+      hasMaxLlmCalls: req.maxLlmCalls !== undefined,
+      messageChars: typeof req.message === 'string' ? req.message.length : undefined,
+      attachmentCount: Array.isArray(req.message) ? req.message.length : 0,
+    });
     // ① Media 处理：永不整体失败，失败 / 超限的附件已进 dropped[]
     const { normalized, dropped } = await processInboundMessage(req.message);
 
@@ -639,7 +610,10 @@ export class RuntimeApp {
     };
   }
 
-  private buildMessageRouteContext(channel: Channel, req: ChannelRunRequest): MessageRouteContext {
+  private buildMessageRouteContext(
+    channel: ChannelRuntimeBinding,
+    req: ChannelRunRequest,
+  ): MessageRouteContext {
     return {
       originChannel: channel,
       originClientId: req.clientId,
@@ -860,7 +834,7 @@ export class RuntimeApp {
     log.info('shutdown start', {
       reason,
       inFlightTurns: this.inFlightRuns.size,
-      channels: this.channels.length,
+      channels: this.resources.registrySnapshot.channels.bindings.length,
     });
     this.emit({ type: 'shutdown_start', reason });
     this.setPhase('closing');
@@ -888,12 +862,21 @@ export class RuntimeApp {
         // 使 close 挂到 tool 自然完成为止；runtime 不设内建 timeout，见 §8.5 shutdown 时长界限）。
         await Promise.allSettled([...this.inFlightRuns]);
 
-        // 先停 channel（阻塞循环退出），再关 turnInteractionManager 和其他 disposable
-        await this.stopChannels();
-        completed.push('channels');
-
         this.turnInteractionManager.close();
         completed.push('turnInteractionManager');
+
+        const channelReport = await this.channelShutdownHandoff.runtimeConverged();
+        completed.push(...channelReport.completed.map((id) => `channel:${id}`));
+        for (const channelFailure of channelReport.failed) {
+          failed.push({
+            resource: `channel:${channelFailure.channelId}`,
+            message: channelFailure.message,
+          });
+          log.warn('channel stop failed', {
+            channelId: channelFailure.channelId,
+            error: channelFailure.message,
+          });
+        }
 
         for (const [name, disposable] of this.collectDisposables()) {
           try {

@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import type { ApplicationToolPolicy, Tool } from '../core/tools/types.js';
-import { buildRegistrySnapshot, RegistryBuildError } from './registry-builder.js';
+import {
+  buildRegistrySnapshot,
+  RegistryBuildError,
+  stageRegistryCandidate,
+} from './registry-builder.js';
 
 function tool(name: string): Tool {
   return {
@@ -175,6 +179,45 @@ describe('buildRegistrySnapshot', () => {
     expect(snapshot.tools.resolve('shared')?.unitId).toBe('external-a');
     expect(snapshot.diagnostics).toEqual([
       expect.objectContaining({ unitId: 'external-z', code: 'UNIT_CONFLICT' }),
+    ]);
+  });
+
+  it('stages Channel factories without creating concrete instances', () => {
+    const create = vi.fn();
+    const candidate = stageRegistryCandidate({
+      providers: [],
+      units: [unit('channel-unit', 'builtin', (api) => {
+        api.registerChannel({ id: 'cli', create });
+      })],
+    });
+
+    expect(create).not.toHaveBeenCalled();
+    expect(candidate.units[0]?.channels.map((channel) => channel.id)).toEqual(['cli']);
+    expect(() => buildRegistrySnapshot({
+      providers: [],
+      units: [unit('channel-unit', 'builtin', (api) => {
+        api.registerChannel({ id: 'cli', create });
+      })],
+    })).toThrow('Channel contributions require startup activation');
+  });
+
+  it('isolates an external unit with a conflicting Channel identity atomically', () => {
+    const candidate = stageRegistryCandidate({
+      providers: [],
+      units: [
+        unit('builtin-channel', 'builtin', (api) => {
+          api.registerChannel({ id: 'shared', create: vi.fn() });
+        }),
+        unit('external-channel', 'external', (api) => {
+          api.registerTool(tool('must_remain_hidden'));
+          api.registerChannel({ id: 'shared', create: vi.fn() });
+        }),
+      ],
+    });
+
+    expect(candidate.units.map((staged) => staged.unit.id)).toEqual(['builtin-channel']);
+    expect(candidate.diagnostics).toEqual([
+      expect.objectContaining({ unitId: 'external-channel', code: 'UNIT_CONFLICT' }),
     ]);
   });
 });

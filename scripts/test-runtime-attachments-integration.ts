@@ -31,7 +31,7 @@ import sharp from 'sharp';
 import { WebSocket } from 'ws';
 
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
-import { WebSocketChannel } from '../src/adapters/channel/WebSocketChannel.js';
+import { createWebSocketChannelModule } from '../src/runtime-modules/builtin-channels.js';
 import {
   ATTACHMENT_INLINE_THRESHOLD_BYTES,
   ATTACHMENT_RAW_MAX_BYTES,
@@ -285,7 +285,32 @@ async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
   }
 
   const dependencies: Record<string, unknown> = {
-    createLLMClient: () => llm.client,
+    createProviderProjection: () => [{
+      id: 'test',
+      protocol: 'test',
+      invocationPort: llm.client,
+      resolveConnection: () => ({
+        ok: true,
+        connection: { endpointId: 'test' },
+      }),
+      resolveModel: (modelId: string, connection: { endpointId: string }) => ({
+        ok: true,
+        descriptor: {
+          identity: { providerId: 'test', modelId },
+          protocol: 'test',
+          connection,
+          facts: {
+            effectiveContextLimit: {
+              value: options.contextWindowTokens ?? 200_000,
+              source: 'deployment-config',
+            },
+            maximumOutputTokens: { value: 8192, source: 'deployment-config' },
+            toolUse: { value: true, source: 'deployment-config' },
+            mediaKinds: { value: ['image'], source: 'deployment-config' },
+          },
+        },
+      }),
+    }],
   };
   if (options.mockSystemPrompt !== undefined) {
     const sys = options.mockSystemPrompt;
@@ -294,6 +319,7 @@ async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
 
   const app = await RuntimeApp.create({
     workspaceDir,
+    contributionUnits: [createWebSocketChannelModule({ port, host: '127.0.0.1', path: '/ws' })],
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     cliOverrides: cliOverrides as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -301,10 +327,6 @@ async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
     onEvent: (e) => runtimeEvents.push(e),
     onAgentEvent: (e) => agentEvents.push(e),
   });
-
-  const channel = new WebSocketChannel({ port, host: '127.0.0.1', path: '/ws' });
-  app.registerChannel(channel);
-  await channel.start();
 
   return {
     app,
@@ -314,7 +336,6 @@ async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
     agentEvents,
     workspaceDir,
     async close() {
-      await channel.stop().catch(() => undefined);
       await app.close('itest done').catch(() => undefined);
       await rm(workspaceDir, { recursive: true, force: true }).catch(() => undefined);
     },

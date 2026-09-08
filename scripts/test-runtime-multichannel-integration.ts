@@ -27,18 +27,21 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createServer, type AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import process from 'node:process';
 
 import { WebSocket } from 'ws';
 
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
-import { WebSocketChannel } from '../src/adapters/channel/WebSocketChannel.js';
+import { createWebSocketChannelModule } from '../src/runtime-modules/index.js';
 import type {
   Channel,
+  ChannelCompletion,
   ChannelRunRequest,
 } from '../src/adapters/channel/types.js';
-import type { AgentEvent, BeforeToolCallHook } from '../src/core/runner/index.js';
+import type { RuntimeContributionUnit } from '../src/core/registry/index.js';
+import type { AgentEvent } from '../src/core/runner/index.js';
 import type { RunParams, RunResult } from '../src/core/runner/types.js';
 
 // ── runStep 脚手架 ──────────────────────────────────────────────
@@ -114,17 +117,25 @@ const okResult: RunResult = {
 // ── WebSocket helpers (parity with old RuntimeApp.integration.test.ts) ─────
 
 async function connectClient(
-  channel: WebSocketChannel,
+  port: number,
   clients: WebSocket[],
 ): Promise<WebSocket> {
-  const address = (channel as unknown as { server?: { address(): unknown } }).server?.address();
-  if (!address || typeof address !== 'object' || !('port' in address)) {
-    throw new Error('WebSocketChannel server address is not available');
-  }
-  const client = new WebSocket(`ws://127.0.0.1:${(address as { port: number }).port}/ws`);
+  const client = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   clients.push(client);
   await once(client, 'open');
   return client;
+}
+
+async function pickFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.unref();
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const port = (server.address() as AddressInfo).port;
+      server.close(() => resolve(port));
+    });
+  });
 }
 
 async function readMessage(client: WebSocket): Promise<Record<string, unknown>> {
@@ -157,21 +168,36 @@ async function expectNoMessage(client: WebSocket, timeoutMs: number): Promise<vo
 
 type RecordingChannel = {
   channel: Channel;
+  unit: RuntimeContributionUnit;
   sentEvents: AgentEvent[];
 };
 
 function createRecordingChannel(id: string): RecordingChannel {
   const sentEvents: AgentEvent[] = [];
+  const completion = createDeferred<ChannelCompletion>();
   const channel: Channel = {
     id,
+    completion: completion.promise,
     send(event) {
       sentEvents.push(event);
     },
     onMessage() {},
     async start() {},
-    async stop() {},
+    async stop() {
+      completion.resolve({ outcome: 'closed', reason: 'stopped' });
+    },
   };
-  return { channel, sentEvents };
+  return {
+    channel,
+    unit: {
+      id: `builtin-test-channel-${id}`,
+      source: 'builtin',
+      register(api) {
+        api.registerChannel({ id, create: () => channel });
+      },
+    },
+    sentEvents,
+  };
 }
 
 // ── 测试用例 ────────────────────────────────────────────────────
@@ -180,26 +206,27 @@ async function testQueuedWebSocketApprovalRoutesToQueuedOrigin(): Promise<void> 
   await withWorkspace(async (workspaceDir) => {
     const clients: WebSocket[] = [];
     let app: RuntimeApp | undefined;
-    let channel: WebSocketChannel | undefined;
+    const port = await pickFreePort();
 
     try {
       const firstRun = createDeferred<RunResult>();
       const secondRunFinished = createDeferred<void>();
-      let beforeToolCallHook: BeforeToolCallHook | undefined;
       let runCount = 0;
       let secondDecision: unknown;
 
       const runnerRun = async (params: RunParams): Promise<RunResult> => {
         runCount++;
         if (runCount === 1) return firstRun.promise;
+        assert.ok(params.signal, 'queued approval turn should receive an AbortSignal');
+        assert.ok(params.approvalCapability, 'queued approval turn should receive its origin capability');
         try {
-          secondDecision = await beforeToolCallHook?.({
+          secondDecision = await params.approvalCapability.request({
+            callId: 'demo-call',
             toolName: 'demo_tool',
             input: { approval: true },
             turnId: params.turnId,
             sessionKey: params.sessionKey,
-            signal: params.signal,
-          });
+          }, params.signal);
           return {
             text: 'second',
             content: [{ type: 'text', text: 'second' }],
@@ -213,18 +240,16 @@ async function testQueuedWebSocketApprovalRoutesToQueuedOrigin(): Promise<void> 
       };
 
       const agentRunner = {
-        setToolExecutor() {},
-        on(hookName: string, handler: BeforeToolCallHook) {
-          if (hookName === 'before_tool_call') beforeToolCallHook = handler;
-          return agentRunner;
-        },
         run: runnerRun,
       };
 
+      const channelUnit = createWebSocketChannelModule({ port, approval: true });
+
       app = await RuntimeApp.create({
         workspaceDir,
+        contributionUnits: [channelUnit],
         cliOverrides: {
-          llm: { apiKey: 'test-key', model: 'test-model' },
+          llm: { apiKey: 'test-key', model: 'claude-sonnet-5' },
           memory: { enabled: false },
         },
         dependencies: {
@@ -233,18 +258,14 @@ async function testQueuedWebSocketApprovalRoutesToQueuedOrigin(): Promise<void> 
         },
       });
 
-      channel = new WebSocketChannel({ port: 0, approval: true });
-      app.registerChannel(channel);
-      await app.startChannels();
-
-      const client1 = await connectClient(channel, clients);
+      const client1 = await connectClient(port, clients);
       client1.send(JSON.stringify({ type: 'hello', clientId: 'client-1' }));
       await expectMessage(client1, (msg) => {
         assert.equal(msg.type, 'hello_ack');
         assert.equal(msg.clientId, 'client-1');
       });
 
-      const client2 = await connectClient(channel, clients);
+      const client2 = await connectClient(port, clients);
       client2.send(JSON.stringify({ type: 'hello', clientId: 'client-2' }));
       await expectMessage(client2, (msg) => {
         assert.equal(msg.type, 'hello_ack');
@@ -281,11 +302,10 @@ async function testQueuedWebSocketApprovalRoutesToQueuedOrigin(): Promise<void> 
 
       await secondRunFinished.promise;
       assert.equal(runCount, 2, `expected exactly 2 runs, got ${runCount}`);
-      assert.deepEqual(secondDecision, { action: 'allow' }, `expected allow decision; got: ${JSON.stringify(secondDecision)}`);
+      assert.deepEqual(secondDecision, { outcome: 'approved' }, `expected approved decision; got: ${JSON.stringify(secondDecision)}`);
     } finally {
       for (const c of clients.splice(0)) c.close();
       await app?.close('test complete').catch(() => undefined);
-      await channel?.stop().catch(() => undefined);
     }
   });
 }
@@ -294,41 +314,32 @@ async function testQueuedWebSocketApprovalAbortRoutesToQueuedOrigin(): Promise<v
   await withWorkspace(async (workspaceDir) => {
     const clients: WebSocket[] = [];
     let app: RuntimeApp | undefined;
-    let channel: WebSocketChannel | undefined;
+    const port = await pickFreePort();
 
     try {
       const firstRun = createDeferred<RunResult>();
       const secondRunFinished = createDeferred<void>();
-      let beforeToolCallHook: BeforeToolCallHook | undefined;
       let runCount = 0;
       let secondDecision: unknown;
 
       const runnerRun = async (params: RunParams): Promise<RunResult> => {
         runCount++;
         if (runCount === 1) return firstRun.promise;
+        assert.ok(params.signal, 'queued approval turn should receive an AbortSignal');
+        assert.ok(params.approvalCapability, 'queued approval turn should receive its origin capability');
         try {
-          secondDecision = await beforeToolCallHook?.({
+          secondDecision = await params.approvalCapability.request({
+            callId: 'demo-call',
             toolName: 'demo_tool',
             input: { approval: true },
             turnId: params.turnId,
             sessionKey: params.sessionKey,
-            signal: params.signal,
-          });
+          }, params.signal);
           return {
             text: 'approved',
             content: [{ type: 'text', text: 'approved' }],
             stopReason: 'end_turn',
             usage: { inputTokens: 1, outputTokens: 1 },
-            toolRounds: 0,
-          };
-        } catch (error) {
-          if (!(error instanceof DOMException) || error.name !== 'AbortError') throw error;
-          secondDecision = 'aborted';
-          return {
-            text: '',
-            content: [],
-            stopReason: 'aborted',
-            usage: { inputTokens: 0, outputTokens: 0 },
             toolRounds: 0,
           };
         } finally {
@@ -337,18 +348,28 @@ async function testQueuedWebSocketApprovalAbortRoutesToQueuedOrigin(): Promise<v
       };
 
       const agentRunner = {
-        setToolExecutor() {},
-        on(hookName: string, handler: BeforeToolCallHook) {
-          if (hookName === 'before_tool_call') beforeToolCallHook = handler;
-          return agentRunner;
+        run: async (params: RunParams): Promise<RunResult> => {
+          const result = await runnerRun(params);
+          if ((secondDecision as { outcome?: string } | undefined)?.outcome === 'aborted') {
+            return {
+              text: '',
+              content: [],
+              stopReason: 'aborted',
+              usage: { inputTokens: 0, outputTokens: 0 },
+              toolRounds: 0,
+            };
+          }
+          return result;
         },
-        run: runnerRun,
       };
+
+      const channelUnit = createWebSocketChannelModule({ port, approval: true });
 
       app = await RuntimeApp.create({
         workspaceDir,
+        contributionUnits: [channelUnit],
         cliOverrides: {
-          llm: { apiKey: 'test-key', model: 'test-model' },
+          llm: { apiKey: 'test-key', model: 'claude-sonnet-5' },
           memory: { enabled: false },
         },
         dependencies: {
@@ -357,18 +378,14 @@ async function testQueuedWebSocketApprovalAbortRoutesToQueuedOrigin(): Promise<v
         },
       });
 
-      channel = new WebSocketChannel({ port: 0, approval: true });
-      app.registerChannel(channel);
-      await app.startChannels();
-
-      const client1 = await connectClient(channel, clients);
+      const client1 = await connectClient(port, clients);
       client1.send(JSON.stringify({ type: 'hello', clientId: 'client-1' }));
       await expectMessage(client1, (msg) => {
         assert.equal(msg.type, 'hello_ack');
         assert.equal(msg.clientId, 'client-1');
       });
 
-      const client2 = await connectClient(channel, clients);
+      const client2 = await connectClient(port, clients);
       client2.send(JSON.stringify({ type: 'hello', clientId: 'client-2' }));
       await expectMessage(client2, (msg) => {
         assert.equal(msg.type, 'hello_ack');
@@ -407,11 +424,10 @@ async function testQueuedWebSocketApprovalAbortRoutesToQueuedOrigin(): Promise<v
 
       await expectNoMessage(client1, 50);
       await secondRunFinished.promise;
-      assert.equal(secondDecision, 'aborted');
+      assert.deepEqual(secondDecision, { outcome: 'aborted', reason: 'turn' });
     } finally {
       for (const c of clients.splice(0)) c.close();
       await app?.close('test complete').catch(() => undefined);
-      await channel?.stop().catch(() => undefined);
     }
   });
 }
@@ -420,12 +436,15 @@ async function testFanoutForwardsAgentEventsToAllChannelsAndObserver(): Promise<
   await withWorkspace(async (workspaceDir) => {
     const observerEvents: AgentEvent[] = [];
     let runnerEmit: ((e: AgentEvent) => void) | undefined;
+    const a = createRecordingChannel('fanout-a');
+    const b = createRecordingChannel('fanout-b');
 
     // runner stub：通过 bootstrap 传入的 onEvent（其实是 RuntimeApp 的 fanout）emit 两条事件
     const app = await RuntimeApp.create({
       workspaceDir,
+      contributionUnits: [a.unit, b.unit],
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        llm: { apiKey: 'test-key', model: 'claude-sonnet-5' },
         memory: { enabled: false },
       },
       dependencies: {
@@ -455,11 +474,6 @@ async function testFanoutForwardsAgentEventsToAllChannelsAndObserver(): Promise<
     });
 
     try {
-      const a = createRecordingChannel('fanout-a');
-      const b = createRecordingChannel('fanout-b');
-      app.registerChannel(a.channel);
-      app.registerChannel(b.channel);
-
       await app.runTurn({ sessionKey: 'main', message: 'trigger fanout', promptMode: 'full' });
 
       const aTypes = a.sentEvents.map((e) => e.type);

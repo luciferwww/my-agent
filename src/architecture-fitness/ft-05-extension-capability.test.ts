@@ -22,9 +22,22 @@ describe('FT-05 Extension capability boundary', () => {
     ]);
   });
 
-  it('is not applicable before production Extension and Runtime Module roots exist', async () => {
+  it('keeps production Runtime Modules inside declared capability boundaries', async () => {
     const productionSources = await loadProductionSources(REPOSITORY_ROOT);
 
     expect(findFt05ExtensionCapabilityViolations(productionSources, EXTENSION_ROOTS)).toEqual([]);
+  });
+
+  it('keeps builtin concrete Channel construction out of RuntimeApp and removes legacy lifecycle APIs', async () => {
+    const productionSources = await loadProductionSources(REPOSITORY_ROOT);
+    const concreteConstructionPaths = productionSources
+      .filter((source) => /\bnew\s+(?:CliChannel|WebSocketChannel)\s*\(/.test(source.content))
+      .map((source) => source.path)
+      .sort();
+    const runtimeApp = productionSources.find((source) => source.path === 'src/runtime/RuntimeApp.ts');
+
+    expect(concreteConstructionPaths).toEqual(['src/runtime-modules/builtin-channels.ts']);
+    expect(runtimeApp).toBeDefined();
+    expect(runtimeApp?.content).not.toMatch(/\b(?:registerChannel|startChannels|stopChannels)\s*\(/);
   });
 });

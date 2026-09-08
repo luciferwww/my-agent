@@ -132,6 +132,40 @@ describe('CliChannel user_message rendering', () => {
   });
 });
 
+describe('CliChannel lifecycle', () => {
+  it('reports readiness before natural input closure settles completion', async () => {
+    const existingSigIntListeners = process.listeners('SIGINT');
+    const input = new PassThrough();
+    const channel = new CliChannel({
+      input,
+      output: new PassThrough(),
+    });
+    channel.onMessage(async () => undefined);
+    let completed = false;
+    void channel.completion.then(() => {
+      completed = true;
+    });
+
+    try {
+      await channel.start();
+      await Promise.resolve();
+      expect(completed).toBe(false);
+
+      input.end();
+      await expect(channel.completion).resolves.toEqual({
+        outcome: 'closed',
+        reason: 'input_closed',
+      });
+    } finally {
+      await channel.stop();
+      process.removeAllListeners('SIGINT');
+      for (const listener of existingSigIntListeners) {
+        process.on('SIGINT', listener);
+      }
+    }
+  });
+});
+
 describe('CliChannel approval lifecycle', () => {
   it('cancels the underlying readline question when approval closes', async () => {
     const { channel } = makeChannel(true);

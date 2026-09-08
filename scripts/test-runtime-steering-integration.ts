@@ -24,9 +24,11 @@ import process from 'node:process';
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
 import type {
   Channel,
+  ChannelCompletion,
   ChannelRunRequest,
 } from '../src/adapters/channel/types.js';
 import type { ChatMessage } from '../src/adapters/llm/types.js';
+import type { RuntimeContributionUnit } from '../src/core/registry/index.js';
 import type { RunParams, RunResult } from '../src/core/runner/types.js';
 
 // ── runStep 脚手架 ──────────────────────────────────────────────
@@ -69,19 +71,32 @@ function createDeferred<T>(): Deferred<T> {
 
 function createTestChannel(id: string): {
   channel: Channel;
+  unit: RuntimeContributionUnit;
   dispatch(req: ChannelRunRequest): Promise<void>;
 } {
   let handler: ((req: ChannelRunRequest) => Promise<void>) | undefined;
+  const completion = createDeferred<ChannelCompletion>();
+  const channel: Channel = {
+    id,
+    completion: completion.promise,
+    send() {},
+    onMessage(nextHandler) {
+      handler = nextHandler;
+    },
+    async start() {},
+    async stop() {
+      completion.resolve({ outcome: 'closed', reason: 'stopped' });
+    },
+  };
 
   return {
-    channel: {
-      id,
-      send() {},
-      onMessage(nextHandler) {
-        handler = nextHandler;
+    channel,
+    unit: {
+      id: `builtin-test-channel-${id}`,
+      source: 'builtin',
+      register(api) {
+        api.registerChannel({ id, create: () => channel });
       },
-      async start() {},
-      async stop() {},
     },
     async dispatch(req: ChannelRunRequest) {
       if (!handler) throw new Error('message handler was not registered');
@@ -137,10 +152,12 @@ async function testBasicSteeringRoute(): Promise<void> {
       return okResult;
     };
 
+    const test = createTestChannel('steer-basic-test');
     const app = await RuntimeApp.create({
       workspaceDir,
+      contributionUnits: [test.unit],
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        llm: { apiKey: 'test-key', model: 'claude-sonnet-5' },
         memory: { enabled: false },
         runner: { inTurnMessageMode: 'steer' },
       },
@@ -151,9 +168,6 @@ async function testBasicSteeringRoute(): Promise<void> {
     });
 
     try {
-      const test = createTestChannel('steer-basic-test');
-      app.registerChannel(test.channel);
-
       const firstDispatch = test.dispatch({
         sessionKey: 'main',
         message: 'first',
@@ -199,10 +213,12 @@ async function testMultipleSteeringMessagesFifo(): Promise<void> {
       return okResult;
     };
 
+    const test = createTestChannel('steer-fifo-test');
     const app = await RuntimeApp.create({
       workspaceDir,
+      contributionUnits: [test.unit],
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        llm: { apiKey: 'test-key', model: 'claude-sonnet-5' },
         memory: { enabled: false },
         runner: { inTurnMessageMode: 'steer' },
       },
@@ -213,9 +229,6 @@ async function testMultipleSteeringMessagesFifo(): Promise<void> {
     });
 
     try {
-      const test = createTestChannel('steer-fifo-test');
-      app.registerChannel(test.channel);
-
       const firstDispatch = test.dispatch({
         sessionKey: 'main',
         message: 'first',
@@ -271,10 +284,12 @@ async function testSteeringClearedAcrossTurns(): Promise<void> {
       return okResult;
     };
 
+    const test = createTestChannel('steer-cleanup-test');
     const app = await RuntimeApp.create({
       workspaceDir,
+      contributionUnits: [test.unit],
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        llm: { apiKey: 'test-key', model: 'claude-sonnet-5' },
         memory: { enabled: false },
         runner: { inTurnMessageMode: 'steer' },
       },
@@ -285,9 +300,6 @@ async function testSteeringClearedAcrossTurns(): Promise<void> {
     });
 
     try {
-      const test = createTestChannel('steer-cleanup-test');
-      app.registerChannel(test.channel);
-
       // 启动第一个 turn 并灌入一条未消费的 steering
       const firstDispatch = test.dispatch({
         sessionKey: 'main',

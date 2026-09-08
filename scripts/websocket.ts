@@ -18,8 +18,8 @@
 
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { WebSocketChannel } from '../src/adapters/channel/index.js';
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
+import { createWebSocketChannelModule } from '../src/runtime-modules/index.js';
 
 const WORKSPACE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'test-workspace');
 const DEFAULT_PORT = 3001;
@@ -76,21 +76,18 @@ async function main(): Promise<void> {
 
   const app = await RuntimeApp.create({
     workspaceDir: WORKSPACE_DIR,
+    contributionUnits: [createWebSocketChannelModule({
+      port,
+      host,
+      path,
+      maxClients,
+      approval: true,
+    })],
     envOverrides: {
       llm: { apiKey, baseURL, model },
       memory: { enabled: false },
     },
   });
-
-  const channel = new WebSocketChannel({
-    port,
-    host,
-    path,
-    maxClients,
-    approval: true,
-  });
-
-  app.registerChannel(channel);
 
   let shuttingDown = false;
   const shutdown = async (reason: string) => {
@@ -104,7 +101,9 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void shutdown('user exit'));
   process.on('SIGTERM', () => void shutdown('process terminated'));
 
-  await app.startChannels();
+  const completion = await app.waitForChannelCompletion('websocket');
+  await app.close(completion.outcome === 'failed' ? 'websocket channel failed' : 'websocket closed');
+  if (completion.outcome === 'failed') throw completion.error;
 }
 
 main().catch((err) => {

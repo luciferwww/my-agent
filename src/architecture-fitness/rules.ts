@@ -621,6 +621,7 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
   if (
     sourcePath.startsWith('src/runtime-modules/')
     || sourcePath === 'src/runtime/registry-builder.ts'
+    || sourcePath === 'src/runtime/channel-lifecycle.ts'
   ) {
     return 'Composition';
   }
@@ -637,6 +638,7 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
     || sourcePath.startsWith('src/core/prompt/')
     || sourcePath.startsWith('src/core/subagent/')
     || sourcePath.startsWith('src/core/approval/')
+    || sourcePath.startsWith('src/core/channel/')
     || sourcePath.startsWith('src/core/memory/')
   ) {
     return 'Application';

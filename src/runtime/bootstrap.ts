@@ -11,7 +11,11 @@ import { SystemPromptBuilder, UserPromptBuilder } from '../core/prompt/index.js'
 import { SessionManager } from '../core/session/index.js';
 import { ensureWorkspace, loadContextFiles, loadContextFilesFromDir } from '../core/workspace/index.js';
 import { classifyRuntimeError } from './errors.js';
-import { buildRegistrySnapshot } from './registry-builder.js';
+import { stageRegistryCandidate } from './registry-builder.js';
+import {
+  activateRegistryChannels,
+  type ChannelLifecycleSet,
+} from './channel-lifecycle.js';
 import { createApplicationToolPolicy } from './tool-approval-policy.js';
 import {
   createMemoryToolModule,
@@ -29,6 +33,7 @@ import type { SubagentProfile } from '../core/subagent/types.js';
 import { createSubagentDelegationPort } from './subagent-orchestration.js';
 import type { ActiveParentTurn } from './subagent-orchestration.js';
 import type { MessageRouteContext } from './queue-types.js';
+import type { ChannelRuntimeHost } from '../core/channel/index.js';
 import type { RegistrySnapshot } from '../core/registry/index.js';
 import type { RuntimeAppOptions, RuntimeBootstrapResult, RuntimeDependencies, RuntimeEvent } from './types.js';
 
@@ -94,8 +99,12 @@ export function createDefaultRuntimeDependencies(
   };
 }
 
-export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<RuntimeBootstrapResult> {
+export async function bootstrapRuntime(
+  options: RuntimeAppOptions,
+  channelHost: ChannelRuntimeHost,
+): Promise<RuntimeBootstrapResult> {
   const startedAt = Date.now();
+  let channelLifecycle: ChannelLifecycleSet | undefined;
   log.info('bootstrap start', {
     workspaceDir: options.workspaceDir,
     agentId: options.agentId,
@@ -206,6 +215,7 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
     };
     const runtimeContributionUnits = [
       ...deps.getBuiltinContributionUnits(toolOptions, memoryManager),
+      ...(options.contributionUnits ?? []),
     ];
     const toolPolicy = createApplicationToolPolicy(resolvedConfig.tools);
 
@@ -265,10 +275,13 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
       }));
     }
 
-    registrySnapshot = buildRegistrySnapshot({
+    const candidate = stageRegistryCandidate({
       providers: providerProjection,
       units: runtimeContributionUnits,
     });
+    const activated = await activateRegistryChannels({ candidate, host: channelHost });
+    channelLifecycle = activated.lifecycle;
+    registrySnapshot = activated.snapshot;
     const registeredToolNames = new Set(
       registrySnapshot.tools.definitions.map((tool) => tool.name),
     );
@@ -291,16 +304,31 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
     log.info('bootstrap complete', {
       durationMs: Date.now() - startedAt,
       tools: registrySnapshot.tools.definitions.length,
+      channels: registrySnapshot.channels.bindings.map((channel) => channel.id),
       memoryEnabled: memoryManager !== null,
       contextFiles: contextFiles.length,
     });
-    emit(options.onEvent, {
-      type: 'app_ready',
-      workspaceDir: options.workspaceDir,
-      contextVersion: state.contextVersion,
-      toolNames: registrySnapshot.tools.definitions.map((tool) => tool.name),
-      memoryEnabled: memoryManager !== null,
-    });
+
+    for (const diagnostic of registrySnapshot.diagnostics) {
+      if (!diagnostic.code.startsWith('CHANNEL_')) continue;
+      const code = diagnostic.code === 'CHANNEL_CREATE_FAILED'
+        ? 'CHANNEL_CREATE_FAILED'
+        : diagnostic.code === 'CHANNEL_ROLLBACK_FAILED'
+          ? 'CHANNEL_ROLLBACK_FAILED'
+          : 'CHANNEL_START_FAILED';
+      emit(options.onEvent, {
+        type: 'warning',
+        info: {
+          scope: 'startup',
+          severity: 'warning',
+          code,
+          message: diagnostic.message,
+          unitId: diagnostic.unitId,
+          contributionId: diagnostic.contributionId,
+          phase: diagnostic.phase,
+        },
+      });
+    }
 
     return {
       resources: {
@@ -309,7 +337,6 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
         workspaceDir: options.workspaceDir,
         sessionManager,
         registrySnapshot,
-        runtimeContributionUnits: Object.freeze(runtimeContributionUnits),
         toolPolicy,
         modelResolver,
         defaultProviderId,
@@ -324,8 +351,19 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
       subagentProfiles,
       activeParentTurns,
       routeContextByTurn,
+      channelCompletionObserver: activated.lifecycle,
+      channelShutdownHandoff: activated.lifecycle,
     };
   } catch (error) {
+    if (channelLifecycle) {
+      const report = await channelLifecycle.runtimeConverged();
+      for (const failure of report.failed) {
+        log.warn('channel cleanup after bootstrap failure failed', {
+          channelId: failure.channelId,
+          error: failure.message,
+        });
+      }
+    }
     const info = classifyRuntimeError('startup', error);
     log.error('bootstrap failed', {
       code: info.code,

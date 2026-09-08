@@ -4,3 +4,7 @@ export {
   createWorkspaceToolModule,
 } from './builtin-tools.js';
 export type { WorkspaceToolModuleOptions } from './builtin-tools.js';
+export {
+  createCliChannelModule,
+  createWebSocketChannelModule,
+} from './builtin-channels.js';
