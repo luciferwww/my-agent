@@ -18,7 +18,7 @@ src/
 ├── runtime/                ← 装配根（Composition Root）
 │   ├── RuntimeApp.ts
 │   ├── bootstrap.ts
-│   ├── tool-registry.ts
+│   ├── registry-builder.ts
 │   ├── prompt-factory.ts
 │   └── tool-approval-policy.ts
 │
@@ -28,11 +28,12 @@ src/
 │   ├── prompt/             ← System / User prompt 构建
 │   ├── memory/             ← 语义记忆（向量搜索 + BM25）
 │   ├── workspace/          ← 工作区初始化 + 上下文文件加载
-│   └── tools/              ← Tool 接口框架 + 内置工具
+│   ├── registry/           ← Contribution + immutable Snapshot projections
+│   └── tools/              ← canonical Tool Contract + portable Schema + 内置工具
 │       └── builtin/        ← fs / search / web / exec
 │
 ├── adapters/
-│   ├── llm/                ← LLMClient 接口 + AnthropicClient 实现
+│   ├── llm/                ← Anthropic Provider Adapter + explicit Tool codecs
 │   └── channel/            ← Channel 接口 + CliChannel + WebSocketChannel
 │
 └── platform/
@@ -99,10 +100,11 @@ AgentRunner.run(RunParams)
       pruneToolResults (Layer 1)
       checkContextBudget (Layer 2)
       LLM 调用循环:
-        callLLMStream                    ← LLMClient
-        before_tool_call hook            ← TurnInteractionManager
-        executeTool                      ← ToolExecutor
-        after_tool_call hook
+        callLLMStream                    ← ResolvedModel invocation Port
+        resolve/validate                 ← immutable ToolProjection
+        before/after hooks               ← immutable HookProjection
+        policy + current-call approval   ← explicit Application capabilities
+        canonical Tool execute/result
         getSteeringMessages              ← drainSteeringMessages
   ↓
 AgentEvent fanout
@@ -122,7 +124,7 @@ AgentEvent fanout
 ContextOverflowError（3 条路径中任一）
   ↓
 AgentRunner.compactHistory
-  → compactMessages（LLM 摘要）         ← LLMClient
+  → compactMessages（LLM 摘要）         ← ResolvedModel invocation Port
   → appendCompactionRecord              ← SessionManager
   → retry runAttempt（loadHistory 自动感知 compactionRecord）
 ```
@@ -137,9 +139,9 @@ AgentRunner.compactHistory
 | [core_runner.md](./core_runner.md) | 执行循环、4 层上下文管理、hook 系统 | ✅ |
 | [adapter_channel.md](./adapter_channel.md) | Channel 接口、CliChannel、WebSocketChannel、TurnInteractionManager | ✅ |
 | [platform_config.md](./platform_config.md) | 类型体系、4 层优先级合并、工具审批策略 | ✅ |
-| [adapter_llm.md](./adapter_llm.md) | LLMClient 接口、AnthropicClient、流式 tool_use 组装 | — |
+| [adapter_llm.md](./adapter_llm.md) | Model Invocation Adapter、Anthropic conversion、portable Tool codecs | — |
 | [platform_logger.md](./platform_logger.md) | Logger 静态类、启动期 buffer、ConsoleAdapter / FileAdapter | — |
-| [core_tools.md](./core_tools.md) | Tool 接口框架、ToolExecutor、定义格式转换 | — |
+| [core_tools.md](./core_tools.md) | Canonical Tool Contract、portable Schema、Contribution/Registry Snapshot、Provider codecs | — |
 | [core_tools_builtin.md](./core_tools_builtin.md) | fs / search / web / exec 工具、工厂函数、路径策略、ProcessRegistry | — |
 | [core_session.md](./core_session.md) | JSONL 存储、消息树、SessionManager API | — |
 | [core_prompt.md](./core_prompt.md) | SystemPromptBuilder 7 sections、UserPromptBuilder hooks | — |
@@ -153,8 +155,8 @@ AgentRunner.compactHistory
 | 原则 | 体现 |
 |---|---|
 | **Composition Root 唯一** | 只有 `runtime/` 调用 `loadConfig()`；底层模块只接收最小参数子集 |
-| **接口与实现分离** | `LLMClient`、`MemoryStore`、`Channel`、`LogAdapter` 均为接口，实现可替换 |
-| **可选能力降级** | Memory 初始化失败不阻塞启动；无 approval channel 时直接不注册 hook |
+| **接口与实现分离** | `ModelInvocationPort`、`MemoryStore`、`Channel`、`LogAdapter` 均为接口，实现可替换 |
+| **可选能力降级** | Memory 初始化失败不阻塞启动；无 approval transport 时 current-call capability fail closed |
 | **事件自描述** | `AgentEvent` 自带 `sessionKey`；turn 内事件带 `turnId`，`user_message` 用 `messageId` 并由 `run_start.originMessageId` 关联 |
 | **持久化立即写入** | 消息产生即写 JSONL，不批量——崩溃后可从磁盘恢复历史 |
 | **配置边界清晰** | 每层只传下游需要的字段，不透传完整 `AgentDefaults` |

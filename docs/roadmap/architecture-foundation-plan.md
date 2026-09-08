@@ -541,6 +541,10 @@ Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accept
 
 ### Slice 3：Tool 与 Hook Module
 
+**Plan Item 状态：** Completed（项目所有者已接受验证结果；2026-09-08）
+
+**Module Spec：** [Tool 与 Hook Module Spec](../architecture/tool-hook-module-spec.md)（`Accepted`，2026-09-08）
+
 **范围：**
 
 - Tool Registry；
@@ -554,6 +558,8 @@ Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accept
 - 删除中央 Builtin Tool 特例列表；
 - 删除通过替换 Runner Factory 注册 Hook 的需求；
 - 删除重复的 Tool Executor 后装配路径。
+
+**Delivery evidence（2026-09-08）：** Canonical Tool/schema/call/result contracts、Anthropic/OpenAI-compatible codecs、Builtin/External common staging、one Task-inclusive immutable startup Snapshot、ordered Hook projections、bounded Tool/Compaction observers、explicit Policy/current-call Approval capability、controlled-Abort closure and prompt narrowing are delivered. Central Tool list/bundle/executor factory/setter、Runtime Task post-assembly、production mutable Hook registration and startup approval Hook paths are deleted；CODE-E01/CODE-E02 reach zero residual. `npm run lint`、full Vitest (80 files, 705 tests)、`npm run build`、document governance and `git diff --check` passed. Independent implementation review found no Critical/High/Medium blocker. 项目所有者于 2026-09-08 接受验证结果并确认 Slice 3 完成；已授权 Slice 3 checkpoint commit 和 Slice 4 Spec planning，未授权 push 或 Slice 4 production Delivery。
 
 ### Slice 4：Channel Module
 
@@ -824,4 +830,4 @@ Foundation（M0–M3）以 **两周完成为目标、四周为硬上限**。第�
 1. AF-05 已完成：`Provisional Pass` Results 获项目所有者接受，disposable fixture cleanup、状态同步和 AF-05 evidence item 均已完成；
 2. AF-06 已完成：`Provisional Pass` Results 获项目所有者接受，disposable fixture cleanup、cleanup validation、状态同步和 AF-06 evidence items 均已完成；
 3. AF-07、独立 Legacy migration inventory 与 Foundation Gate 已于 2026-09-04 完成；Slice 1 已完成 Delivery、验证和项目所有者确认；
-4. Slice 2 Module Spec、Delivery、验证和项目所有者确认已于 2026-09-04 完成；提交、推送和 Slice 3–6 均未授权。下一步是在获得单独授权后提交 Slice 2 checkpoint，或另行启动 Slice 3 Spec planning。
+4. Slice 2、Slice 3 已完成；下一步建立已授权的 Slice 3 checkpoint commit，并起草 Slice 4 Channel Module Spec。未授权 push、Slice 4 production Delivery 或 Slice 5–6。

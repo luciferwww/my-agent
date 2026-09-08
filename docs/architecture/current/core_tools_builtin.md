@@ -116,7 +116,7 @@ execute({ path, ... }):
   // 错误消息中用 displayPath（相对路径，可读性好）
 ```
 
-工具不捕获 `WorkspacePathError`——由 `createToolExecutor` 捕获并转为 `isError: true` 的 ToolResult。
+工具在自身 execution boundary 捕获路径/I/O 错误并返回 `outcome: 'failed'`；Runner 将 canonical execution output 映射为 paired Tool Result。Registry 中不存在第二个通用 executor。
 
 ---
 

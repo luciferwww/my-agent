@@ -2,7 +2,7 @@
 
 > 基准版本：v1.0
 > 文档日期：2026-05-27
-> 状态同步：2026-08-27（用户消息广播、用户主动中止）
+> 状态同步：2026-09-04（Slice 3 immutable Tool/Hook Registry Snapshot）
 > 关联文档：`adapter_channel.md` · `core_runner.md` · `platform_config.md`
 
 ---
@@ -117,12 +117,12 @@ RuntimeAppOptions {
 
 ```
 RuntimeDependencies {
-  createLLMClient(options: { apiKey?, baseURL?, defaultModel?, maxTokens? }): LLMClient
+  createProviderProjection(options): readonly ProviderProjectionEntry[]
   createSessionManager(workspaceDir, options?): SessionManager
   createMemoryManager(options: { workspaceDir, enabled, dbPath?, ... }): Promise<MemoryManager | null>
   createSystemPromptBuilder(): SystemPromptBuilder
   createAgentRunner(config): AgentRunner
-  getBuiltinTools(options: RuntimeBuiltinToolOptions): Tool[]
+  getBuiltinContributionUnits(options, memoryManager): readonly RuntimeContributionUnit[]
 }
 ```
 
@@ -182,12 +182,12 @@ flowchart TD
     G --> H[loadContextFiles → contextFiles 缓存]
     H --> I[createDefaultRuntimeDependencies]
     I --> J[createSessionManager]
-    I --> K[createLLMClient]
+    I --> K[create Provider projection + ModelResolver]
     I --> L[createSystemPromptBuilder + UserPromptBuilder]
     I --> M[createMemoryManager\ntry/catch → 失败则降级为 null]
-    M --> N[assembleRuntimeTools\nbuiltin + memory tools]
-    J & K & N --> O[createAgentRunner]
-    O --> P[emit app_ready]
+    M --> N[collect Workspace + Memory + Task contribution units]
+    J & K & N --> O[build one immutable RegistrySnapshot]
+    O --> P[create AgentRunner + emit app_ready from final Snapshot]
     P --> Q[new RuntimeApp\nresources + state + channels + onEvent]
 ```
 
@@ -196,7 +196,7 @@ flowchart TD
 ### 5.1 启动时创建一次的资源
 
 以下资源贯穿整个 app 生命周期，不在每轮重建：
-SessionManager · LLMClient · MemoryManager（可为 null）· SystemPromptBuilder · UserPromptBuilder · AgentRunner · toolBundle
+SessionManager · Provider projection · ModelResolver · MemoryManager（可为 null）· SystemPromptBuilder · UserPromptBuilder · AgentRunner · RegistrySnapshot
 
 ### 5.2 Memory 降级策略
 
@@ -301,36 +301,29 @@ sequenceDiagram
 
 ## 8. 工具装配
 
-所有工具必须从同一个入口装配，由 `assembleRuntimeTools()` 收口：
+所有 Provider、Tool 和 Hook contributions 在 `bootstrapRuntime()` 中一次 staging。Builtin Workspace、可选 Memory、可选 Task modules 都在 `app_ready` 前加入同一 unit list：
 
 ```
-assembleRuntimeTools(builtinTools, memoryManager):
-  tools = [...builtinTools]
-  if memoryManager: tools.push(...createMemoryTools(memoryManager))
-  return {
-    tools,
-    executor    = createToolExecutor(tools),
-    llmDefinitions   = toLlmToolDefinitions(tools),   // 字段名: input_schema
-    promptDefinitions = toPromptToolDefinitions(tools) // 字段名: parameters
-  }
+units = getBuiltinContributionUnits(...)
+if subagents.enabled:
+  units.push(createTaskToolModule(...))
+
+registrySnapshot = buildRegistrySnapshot({ providers, units })
+emit app_ready(toolNames = registrySnapshot.tools.definitions.map(name))
 ```
 
-`executor`、`llmDefinitions`、`promptDefinitions` 永远对应同一份 `tools[]`——工具面的一致性由此保证。
+`RegistrySnapshot`、`ToolProjection` 和 `HookProjection` 在发布后只读。RuntimeApp 不追加 Task、不重建 Snapshot、不替换 executor。Parent 与 Child Turn 消费同一个 startup Snapshot identity；Provider-visible definitions 从 canonical projection 显式转换。
 
 ### 8.1 fs tools 的工厂函数模式
 
 fs 类工具（read_file / write_file / edit_file 等）通过工厂函数创建，显式绑定 `workspaceDir` 和 `fsWorkspaceOnly`（默认 `true`）。这是 v1.0 fs 路径策略的核心变更（详见 `core_tools_builtin.md`）：
 
 ```
-getDefaultBuiltinTools({ workspaceDir, fsWorkspaceOnly = true, ... }):
-  [
-    createReadFileTool(workspaceDir, fsWorkspaceOnly),
-    createWriteFileTool(workspaceDir, fsWorkspaceOnly),
-    ...
-    webFetchTool,     // 非 fs 工具仍是单例
-    execTool,
-    processTool,
-  ]
+createWorkspaceToolModule({ workspaceDir, fsWorkspaceOnly, ... })
+  → api.registerTool(createReadFileTool(...))
+  → api.registerTool(createWriteFileTool(...))
+  → ...
+  → api.registerTool(webFetchTool / execTool / processTool)
 ```
 
 ### 8.2 工具定义格式差异
@@ -476,19 +469,7 @@ stateDiagram-v2
 
 以下差异在 v1.0 `runtime-design.md` 中未反映，实际代码已按此实现：
 
-### 差异 1：`RuntimeBuiltinToolOptions` 缺少 `fsWorkspaceOnly`
-
-**v1.0 文档**定义 `RuntimeBuiltinToolOptions` 时只有 `webFetchEnabled / execEnabled / processEnabled`。  
-**实际代码**（`tool-registry.ts`）增加了 `fsWorkspaceOnly?: boolean`（默认 `true`），并在 bootstrap 中从 `resolvedConfig.tools.fs.workspaceOnly` 读取后传入。
-
-> 建议：更新 `RuntimeBuiltinToolOptions` 的类型文档，补充 `fsWorkspaceOnly` 字段说明。
-
-### 差异 2：`getDefaultBuiltinTools` 使用工厂函数而非单例
-
-**v1.0 文档**示例中仍用 `listDirTool`（单例）；  
-**实际代码**改为 `createListDirTool(workspaceDir, fsWorkspaceOnly)`（工厂函数），与 v1.0 fs tools 设计文档一致，但 runtime-design.md 未同步更新。
-
-### 差异 3：v1.0 工具组语法已移除
+### 差异 1：v1.0 工具组语法已移除
 
 **v1.0 文档** `§13.2` 描述 `group:fs` 等工具组；
 **实际代码**（`tool-approval-policy.ts`）不再展开 `group:*`，只支持精确名称和 `*`/`?` Glob。

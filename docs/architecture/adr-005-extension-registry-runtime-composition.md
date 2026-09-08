@@ -163,6 +163,6 @@ AF-06 只用静态 Tool dispatcher 和 awaited `before_tool_call` 提供 Runner 
 ## 后续事项
 
 - [x] 项目所有者接受本 ADR（Owner：项目所有者；Plan Item：AF-07；2026-09-04）。
-- [ ] 起草并接受 Slice 3 Tool/Hook Module Spec（Owner：项目所有者；Plan Item：Slice 3）。
+- [x] 起草并接受 Slice 3 Tool/Hook Module Spec（Owner：项目所有者；Plan Item：Slice 3；2026-09-08）。
 - [ ] 起草并接受 Slice 4 Channel Module Spec（Owner：项目所有者；Plan Item：Slice 4）。
 - [ ] 起草并接受 Slice 5 Runtime Composition Module Spec（Owner：项目所有者；Plan Item：Slice 5）。

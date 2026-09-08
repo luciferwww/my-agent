@@ -1,134 +1,81 @@
-# Adapter LLM 设计文档
+# Model Invocation 与 Anthropic Adapter
 
-> 文档日期：2026-05-29
-> 状态同步：2026-08-27（AbortSignal）
-> 关联文档：`core_runner.md` · `runtime.md`
-
----
-
-## 1. 概述
-
-`src/adapters/llm/` 定义 `LLMClient` 抽象接口和 `AnthropicClient` 实现。AgentRunner 依赖接口，不依赖具体实现——方便测试替换和未来接入其他 LLM 提供商。
+> 状态同步：2026-09-04（Provider-neutral Core invocation + Slice 3 Tool conversion）
+> 关联文档：`core_runner.md` · `core_tools.md` · `runtime.md`
 
 ---
+
+## 1. 边界
+
+Provider-neutral invocation contracts 由 `src/core/model-invocation/` 拥有。`AgentRunner` 只消费 Turn-bound `ResolvedModel.invocationPort`，不导入 Anthropic SDK 或 Provider wire types。
+
+`src/adapters/llm/AnthropicClient.ts` 实现 Core Port，并负责所有 Anthropic conversion：
+
+- canonical Tool definition → Anthropic `input_schema`；
+- Anthropic streamed Tool blocks → complete canonical `tool_call`；
+- malformed/non-object input → explicit canonical invalid state；
+- canonical result history → Anthropic correlated `tool_result`；
+- SDK errors → core-owned normalized invocation errors。
 
 ## 2. 目录结构
 
-```
+```text
+src/core/model-invocation/
+├── types.ts                    # ModelInvocationPort/request/event/message
+├── errors.ts                   # normalized invocation errors
+└── index.ts
+
 src/adapters/llm/
-├── types.ts          # LLMClient / ChatMessage / ChatParams / StreamEvent / TokenUsage
-├── AnthropicClient.ts
+├── AnthropicClient.ts          # production Anthropic adapter
+├── tool-contract-codecs.ts     # Anthropic/OpenAI-compatible pure reference codecs
+├── types.ts                    # deprecated compatibility re-export only
 └── index.ts
 ```
 
----
+## 3. Core invocation shape
 
-## 3. 类型定义
-
-### 3.1 LLMClient 接口
-
-```
-LLMClient {
-  chatStream(params: ChatParams): AsyncIterable<StreamEvent>   // 流式
-  chat(params: ChatParams): Promise<ChatResponse>              // 非流式（收集完整响应）
+```text
+ModelInvocationPort {
+  chatStream(request): AsyncIterable<ModelStreamEvent>
+  chat(request): Promise<ModelInvocationResponse>
 }
-```
 
-### 3.2 ChatParams
-
-```
-ChatParams {
+ModelInvocationRequest {
   model: string
   system?: string
-  messages: ChatMessage[]
-  tools?: ChatToolDefinition[]
-  maxTokens?: number
-  signal?: AbortSignal          // 透传给 SDK，用于取消流式请求
+  messages: canonical ChatMessage[]
+  tools?: canonical ToolDefinition[]
+  maxTokens: number
+  signal?: AbortSignal
 }
+
+ModelStreamEvent =
+  | message_start
+  | text_delta
+  | { type: 'tool_call'; call: CanonicalToolCall }
+  | message_end
 ```
 
-### 3.3 StreamEvent（流式事件流）
+Fragments、Provider indexes、SDK objects、`input_schema` 和 `function.parameters` 不越过 Adapter boundary。
 
-```
-StreamEvent =
-  | { type: 'message_start' }
-  | { type: 'text_delta'; text: string }
-  | { type: 'tool_use'; id; name; input: Record<string, unknown> }
-  | { type: 'message_end'; stopReason: string; usage: TokenUsage }
-  | { type: 'error'; error: Error }
-```
+## 4. Anthropic streamed calls
 
-AgentRunner 只消费 `text_delta`、`tool_use`、`message_end`、`error`；`message_start` 是协议边界标记，AgentRunner 忽略。
+Anthropic SDK 将 Tool block 分成 `content_block_start`、多个 `input_json_delta` 和 `content_block_stop`。Adapter 按 block identity/index 隔离累积，只在 block 完整时解析并输出 canonical call。
 
-### 3.4 工具定义
+- id/name 缺失或空值：normalized Provider response failure；
+- response 内 duplicate call ID：failure，任何 Tool 都不执行；
+- JSON malformed：保留 id/name，`input.state = invalid/malformed_json`；
+- decoded value 非 plain object：`input.state = invalid/not_an_object`；
+- AbortSignal 透传 SDK，Runner 负责 Turn-level abort closure。
 
-```
-ChatToolDefinition {
-  name: string
-  description: string
-  input_schema: Record<string, unknown>   // Anthropic API 要求的字段名
-}
-```
+## 5. Portable conversion proof
 
----
+`tool-contract-codecs.ts` 不依赖 OpenAI SDK。Contract tests 证明 canonical shared semantics 可转换为 Anthropic 和 OpenAI-compatible function tools：
 
-## 4. AnthropicClient
+- definition name/description/portable Schema；
+- complete、streamed、multiple and interleaved calls；
+- call order、identity、name、decoded object input；
+- malformed/non-object input 和 duplicate identity fail-closed；
+- result correlation/content。
 
-### 4.1 配置
-
-```
-AnthropicClientOptions {
-  apiKey: string
-  baseURL?: string    // 支持 LiteLLM Proxy / MAI-LLMProxy 等代理
-}
-```
-
-### 4.2 流式实现要点
-
-Anthropic SDK 把 tool_use block 分拆为多个流式事件推送：
-
-```
-content_block_start  { type: 'tool_use', id, name }
-input_json_delta     { partial_json: '...' }
-input_json_delta     { partial_json: '...' }
-content_block_stop
-```
-
-`chatStream` 内部累积 `inputJson` 字符串，在 `content_block_stop` 时解析 JSON 后一次性 yield `{ type: 'tool_use', id, name, input }`——对 AgentRunner 屏蔽了分片细节。
-
-```mermaid
-sequenceDiagram
-    participant AR as AgentRunner
-    participant AC as AnthropicClient
-    participant SDK as Anthropic SDK
-
-    AR->>AC: chatStream(params)
-    AC->>SDK: messages.stream(...)
-    loop 流式事件
-        SDK-->>AC: content_block_start(tool_use)
-        SDK-->>AC: input_json_delta × N
-        SDK-->>AC: content_block_stop
-        AC-->>AR: yield { type:'tool_use', id, name, input }
-    end
-    SDK-->>AC: message_delta(stop_reason, usage)
-    AC-->>AR: yield { type:'message_end', ... }
-```
-
-### 4.3 context overflow 包装
-
-Anthropic API 抛出 context length 错误时，`chatStream` 捕获并重新抛出为框架内部的 `ContextOverflowError`，让 AgentRunner 的外层 retry 循环统一处理。
-
-### 4.4 代理支持
-
-`baseURL` 透传给 Anthropic SDK 的 `baseURL` 选项。部分代理（如 LLMProxy）可能返回不完整的 usage 信息（如 `inputTokens: 0`），这是代理行为，不影响功能。
-
----
-
-## 5. 关键设计决策
-
-| 决策 | 说明 |
-|---|---|
-| `LLMClient` 接口与实现分离 | AgentRunner 依赖接口，测试可注入 mock，不依赖网络 |
-| tool_use 分片组装在 adapter 层 | AgentRunner 收到的始终是完整的 `tool_use` 事件，不感知 Anthropic 流式分片协议 |
-| `chat()` 便捷方法 | 内部调用 `chatStream` 收集完整响应——不引入第二套代码路径 |
-| `signal` 透传 | `chatStream` 把 AbortSignal 传给 Anthropic SDK；Runner 将中止归一化为 `stopReason='aborted'` |
+Core-only `ToolResultOutcome` 不要求从 OpenAI-compatible role=`tool` message 反向恢复。Anthropic `is_error` 只是有损 projection hint，不扩大 portable shared contract。

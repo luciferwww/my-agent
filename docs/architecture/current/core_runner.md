@@ -2,7 +2,7 @@
 
 > 基准版本：v1.0
 > 文档日期：2026-05-29
-> 状态同步：2026-08-27（用户主动中止）
+> 状态同步：2026-09-04（Slice 3 canonical Tool/Hook pipeline）
 > 关联文档：`runtime.md` · `adapter_channel.md` · `platform_config.md`
 
 ---
@@ -19,18 +19,18 @@
 | 上下文管理 | 4 层渐进策略：per-result 裁剪 → 聚合裁剪 → 预判路由 → LLM 摘要 |
 | 压缩编排 | 外层重试：捕获 `ContextOverflowError` → `compactHistory` → retry |
 | 消息持久化 | 用户消息、助手回复、tool result 在产生时立即写入 session |
-| Hook 与 Event | `before/after_tool_call`、`before/after_compaction`；统一 `onEvent` 出口 |
+| Hook 与 Event | 消费 immutable Hook projection；interceptor awaited，observer bounded settlement；统一 `onEvent` 出口 |
 | Steering 注入 | 每轮 tool 执行后通过 `getSteeringMessages` reader 拉取消息并注入对话流 |
 
 ### 1.2 容易混淆的边界
 
-**配置加载**不在 runner 内——runner 不调 `loadConfig()`，只接收 runtime 层提炼的最小参数子集（`model` / `systemPrompt` / `tools` 等），保持为纯执行引擎。
+**配置加载与注册**不在 runner 内——runner 不调 `loadConfig()`，不持有 Registry Builder，也不提供 mutable registration/setter API。每个 Turn 显式接收 `ResolvedModel`、Tool/Hook projections、Application Policy 和可选 current-call Approval Capability。
 
 ### 1.3 配置边界
 
 Runner 只接收 runtime 层提炼的最小子集，不调用 `loadConfig()` / `resolveAgentConfig()`，不读 `process.env`：
 
-`model` · `systemPrompt` · `tools` · `maxTokens` · `maxLlmCalls` · `compaction` · `contextWindowTokens`
+`resolvedModel` · `systemPrompt` · `toolProjection` · `hookProjection` · `toolPolicy` · `approvalCapability?` · `maxLlmCalls` · `compaction`
 
 ### 1.4 与其他模块的关系
 
@@ -40,8 +40,10 @@ RuntimeApp
   ▼
 AgentRunner.run()
   ├─ SessionManager     ← 读写消息历史、compaction record
-  ├─ LLMClient          ← 流式调用
-  ├─ ToolExecutor       ← 工具执行（注入自 runtime）
+  ├─ ResolvedModel      ← Turn-bound Provider-neutral invocation Port/Facts/Limits
+  ├─ ToolProjection     ← canonical definition/validator/implementation
+  ├─ HookProjection     ← ordered immutable bindings
+  ├─ ApplicationToolPolicy + Approval Capability
   ├─ context/*          ← pruneToolResults / checkContextBudget / compactMessages / estimatePromptTokens
   └─ hooks/*            ← runBefore/AfterToolCall / Compaction
 ```
@@ -76,9 +78,7 @@ src/core/runner/
 
 ```
 AgentRunnerConfig {
-  llmClient: LLMClient
   sessionManager: SessionManager
-  toolExecutor?: ToolExecutor          // 未提供时 tool_use 返回错误占位
   onEvent?: (event: AgentEvent) => void  // 统一 event 出口；RuntimeApp 注入 fanout 闭包
 }
 ```
@@ -89,15 +89,16 @@ AgentRunnerConfig {
 RunParams {
   sessionKey: string
   message: string | ChatContentBlock[]
-  model: string
   systemPrompt: string
   turnId: string                        // 必填；emit / hook payload 依赖
-  tools?: ToolDefinition[]
-  maxTokens?: number                    // 默认 4096
+  resolvedModel: ResolvedModel
+  toolProjection: ToolProjection
+  hookProjection: HookProjection
+  toolPolicy: ApplicationToolPolicy
+  approvalCapability?: CurrentCallApprovalCapability
   maxLlmCalls?: number                  // 默认 12
   getSteeringMessages?: PendingMessageReader  // 每轮 tool 后 runner 拉取
   compaction?: CompactionConfig
-  contextWindowTokens?: number          // 默认 200,000
   originMessageId?: string              // queued user_message 的关联 id
   signal?: AbortSignal                  // 用户中止 / shutdown 信号
 }
@@ -178,8 +179,8 @@ flowchart TD
 sequenceDiagram
     participant RA as runAttempt
     participant CTX as context/*
-    participant LLM as LLMClient
-    participant TOOL as ToolExecutor
+    participant LLM as ModelInvocationPort
+    participant TOOL as ToolProjection
     participant SESS as SessionManager
 
     RA->>SESS: sanitizeSessionTail(清掉孤立 trailing user)
@@ -193,8 +194,9 @@ sequenceDiagram
         RA->>LLM: callLLMStream
         LLM-->>RA: text_delta / tool_use / message_end
         RA->>SESS: appendMessage assistant
-        RA->>TOOL: executeTool(每个 tool_use block)
-        RA->>SESS: appendMessage toolResult
+        RA->>TOOL: resolve → before hooks → validate → policy/approval → execute
+        RA->>SESS: appendMessage complete toolResult batch
+        RA->>RA: await bounded after_tool_call settlement
         RA->>CTX: Layer 1 pruneToolResults(新 tool result)
         RA->>CTX: 90% 阈值检查
         RA->>RA: getSteeringMessages reader
@@ -221,9 +223,9 @@ while (hasMoreToolCalls):
   if signal.aborted: return stopReason='aborted'
 
   llmResult = callLLMStream(..., signal)
-    for await event of llmClient.chatStream:
+    for await event of resolvedModel.invocationPort.chatStream:
       text_delta  → emit + 收集
-      tool_use    → 收集 content block
+      tool_call   → 收集 canonical call
       message_end → 记录 stopReason + usage
       error       → throw
     catch isContextOverflowError → throw ContextOverflowError
@@ -239,17 +241,17 @@ while (hasMoreToolCalls):
     for each toolUse:
       emit { type: 'tool_use', name, input（原始） }
 
-      before_tool_call hooks（sequential, priority 降序）:
-        deny  → blocked ToolResult 占位 + emit tool_result + continue
-        allow → effectiveInput = result.input
-
-      result = executeTool(name, effectiveInput, { sessionKey, turnId, toolUseId, signal })
+      resolve canonical Tool；malformed/unknown 直接配对 result
+      before_tool_call hooks（Snapshot 稳定顺序，可替换 input / deny）
+      validate effective input
+      apply Tool Policy + optional current-call Approval Capability
+      result = tool.execute(effectiveInput, { sessionKey, turnId, callId, signal })
       emit { type: 'tool_result', name, result }
-
-      after_tool_call hooks（parallel, fire-and-forget）
+      start after_tool_call observers（parallel、per-handler bounded）
 
     messages.push({ role: 'user', content: toolResultBlocks })
     session.appendMessage('toolResult', toolResultBlocks)
+    await all after_tool_call logical settlements
 
     Layer 1: pruneToolResults（新 tool result，无 emit 回调）
     90% 阈值检查 → throw ContextOverflowError
@@ -276,7 +278,7 @@ return { text, content, stopReason, usage, toolRounds }
 | LLM 调用前 | `llm_call` | — |
 | 流式收到 text | `text_delta` | — |
 | tool use 检测后、执行前 | `tool_use`（原始 input） | `before_tool_call`（sequential, priority 降序，可改 input / deny） |
-| tool 执行后 | `tool_result` | `after_tool_call`（parallel, fire-and-forget） |
+| tool terminal result | `tool_result` | `after_tool_call`（parallel、5 秒 per-handler bounded settlement） |
 | tool result 裁剪触发（仅初始历史） | `tool_result_pruned` | — |
 | 压缩开始 | `compaction_start` | `before_compaction`（observer） |
 | 压缩完成 | `compaction_end` | `after_compaction`（observer） |
@@ -316,7 +318,7 @@ compactHistory(params, compaction, trigger):
   runBeforeCompaction hooks（observer）
   emit { type: 'compaction_start', trigger, estimatedTokens }
 
-  compactResult = compactMessages({ messages, config, llmClient, model, trigger })
+  compactResult = compactMessages({ messages, config, resolvedModel, trigger })
     // LLM 生成摘要；失败时降级为兜底文本
 
   keptCount = compactResult.messages.length - 1   // 减去摘要消息
@@ -432,23 +434,24 @@ Runner 没有 followup / steer 模式概念——`inTurnMessageMode` 只在 Runt
 | Hook | 时机 | 执行模型 | 能否修改/否决 |
 |---|---|---|---|
 | `before_tool_call` | tool 执行前 | sequential, priority 降序 | ✅ 可改 input / deny |
-| `after_tool_call` | tool 执行后 | parallel, fire-and-forget | ❌ |
-| `before_compaction` | 压缩开始前 | parallel, fire-and-forget | ❌（observer-only） |
-| `after_compaction` | 压缩完成后 | parallel, fire-and-forget | ❌（observer-only） |
+| `after_tool_call` | terminal result 后 | parallel, bounded settlement | ❌ |
+| `before_compaction` | 压缩开始前 | parallel, bounded settlement | ❌（observer-only） |
+| `after_compaction` | commit 后 | parallel, bounded settlement | ❌（observer-only） |
 
-### 9.2 注册 API
+### 9.2 启动期 Contribution
 
 ```
-runner.on(hookName, handler, { priority?, name? })
-
-// 示例：拒绝 exec 工具
-runner.on('before_tool_call', async ({ toolName }) => {
-  if (toolName === 'exec') return { action: 'deny', reason: 'blocked' }
-  return { action: 'allow' }
-}, { priority: 100 })
+unit.register(api) {
+  api.registerHook({
+    id: 'audit-tools',
+    hookName: 'after_tool_call',
+    priority: 100,
+    handler: observeToolResult,
+  })
+}
 ```
 
-priority 越大越先执行；`before_tool_call` 是 Interceptor（可否决），其余是 Observer（仅观察）。
+Runner 不提供 `on()` mutable registration。Registry Builder 在 startup staging 后按 priority 降序、unit ID 和 contribution ID 升序冻结 projection；`before_tool_call` 是 Interceptor（可否决），其余是 Observer（仅观察）。Approval authorization 是显式 capability，不是 Hook。
 
 ---
 

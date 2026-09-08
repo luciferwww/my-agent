@@ -56,7 +56,7 @@ src/core/prompt/
 ```
 SystemPromptBuildParams {
   mode?: PromptMode           // 默认 'full'
-  tools?: ToolDefinition[]    // 工具定义（parameters 字段，非 input_schema）
+  toolNames?: readonly string[] // 仅用于 capability 条件，不含 Schema
   safetyLevel?: 'strict' | 'normal' | 'relaxed'   // 默认 'normal'
   contextFiles?: ContextFile[]
 }
@@ -64,7 +64,7 @@ SystemPromptBuildParams {
 builder.build(params?): string
 ```
 
-Runtime 的 `prompt-factory.ts` 负责从 `resolvedConfig` 和 `toolBundle.promptDefinitions` 中提取参数传入。
+Runtime 的 `prompt-factory.ts` 负责从 `resolvedConfig` 和 `RegistrySnapshot.tools` 的窄名称投影中提取参数传入。
 
 ---
 
@@ -114,19 +114,15 @@ FileAttachment  { type:'file';  filename; content; mimeType; caption? }
 
 ---
 
-## 5. ToolDefinition 格式差异
+## 5. Tool name projection
 
-`core/prompt` 使用 `parameters` 字段名（而非 LLM API 的 `input_schema`）：
+`core/prompt` 不持有第二份 Tool Schema 或 Provider-shaped definition。Runtime 只投影 Snapshot 中的精确 Tool names，用于 Memory 等窄 capability 条件：
 
 ```
-ToolDefinition（prompt 模块）:
-  name, description, parameters?
-
-ToolDefinition（adapters/llm）:
-  name, description, input_schema
+toolNames = registrySnapshot.tools.definitions.map(tool => tool.name)
 ```
 
-转换由 `runtime/tool-registry.ts` 统一完成（`toPromptToolDefinitions` / `toLlmToolDefinitions`）。
+完整 canonical definitions 只由 Registry Snapshot 拥有；Anthropic/OpenAI-compatible wire mapping 只在 Provider Adapter/reference codec boundary 发生。
 
 ---
 

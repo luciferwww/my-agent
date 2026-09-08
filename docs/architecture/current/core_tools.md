@@ -1,114 +1,92 @@
-# Core Tools 框架设计文档
+# Core Tools 与 Hook Registry
 
-> 文档日期：2026-05-29
-> 状态同步：2026-08-27（ToolContext / AbortSignal）
-> 关联文档：`runtime.md` · `core_tools_builtin.md`
+> 状态同步：2026-09-04（Slice 3 Tool/Hook Module Delivery）
+> 关联文档：`runtime.md` · `core_runner.md` · `core_tools_builtin.md` · `../tool-hook-module-spec.md`
 
 ---
 
 ## 1. 概述
 
-`src/core/tools/` 定义**工具框架**：统一的 `Tool` 接口、执行器工厂、以及 LLM 工具定义格式。所有内置工具和 memory 工具都实现这个接口；工具注册与组装由 `runtime/tool-registry.ts` 完成。
+`src/core/tools/` 拥有 Provider-neutral Tool Contract 和 portable Schema validation；`src/core/registry/` 拥有 Contribution、immutable projection 与 Snapshot Contract。Builtin、Memory 和 Task Tool 都通过 `RuntimeContributionUnit` 注册，启动期由 `runtime/registry-builder.ts` 原子 staging。
 
----
+Core 不使用 Anthropic `input_schema` 或 OpenAI-compatible `function.parameters`。Provider Adapter 从 canonical definition 显式转换 wire shape。
 
 ## 2. 目录结构
 
-```
+```text
 src/core/tools/
-├── types.ts             # Tool / ToolExecutor / ToolResult / ToolDefinition / ToolContext
-├── executor.ts          # createToolExecutor / getToolDefinitions
-├── index.ts             # 公共导出
-└── builtin/             # 内置工具实现（见 core_tools_builtin.md）
+├── types.ts             # canonical definition/call/result/execution contracts
+├── portable-schema.ts   # Draft-07 portable subset + Ajv compile/validation
+├── index.ts             # public exports
+└── builtin/             # builtin implementations
+
+src/core/registry/
+├── types.ts             # Contribution / ToolProjection / HookProjection / Snapshot
+└── index.ts
+
+src/runtime/
+└── registry-builder.ts  # atomic staging and one immutable startup Snapshot
 ```
 
----
+## 3. Canonical Tool Contract
 
-## 3. 类型定义
-
-```
+```text
 Tool {
-  name: string                  // LLM 看到的唯一标识符
-  description: string           // 帮助 LLM 决定何时调用
-  inputSchema: Record<string, unknown>   // JSON Schema（字段名 inputSchema）
-  execute(params, context): Promise<ToolResult>
+  readonly name: string
+  readonly description: string
+  readonly inputSchema: PortableToolSchema
+  execute(input, context): Promise<ToolExecutionOutput>
 }
 
-ToolResult {
-  content: string
-  isError?: boolean
+ToolExecutionContext {
+  readonly sessionKey: string
+  readonly turnId: string
+  readonly callId: string
+  readonly signal: AbortSignal
 }
 
-ToolContext {
-  sessionKey: string
-  turnId: string
-  toolUseId: string
-  signal?: AbortSignal          // 用户中止 / shutdown 信号；工具自行决定是否响应
+ToolExecutionOutput {
+  readonly outcome: 'success' | 'failed'
+  readonly content: string
 }
-
-// 发送给 LLM API 的定义格式（字段名改为 input_schema）
-ToolDefinition {
-  name: string
-  description: string
-  input_schema: Record<string, unknown>   // 注意：Anthropic API 要求此字段名
-}
-
-// AgentRunner 构造依赖
-ToolExecutor = (toolName: string, input: Record<string, unknown>, context: ToolContext) => Promise<ToolResult>
 ```
 
-**`inputSchema` vs `input_schema` 区别**：
-- `Tool.inputSchema`：框架内部字段名，驼峰
-- `ToolDefinition.input_schema`：LLM API 要求的字段名，下划线
-- 转换由 `runtime/tool-registry.ts` 的 `toLlmToolDefinitions` / `toPromptToolDefinitions` 统一完成，其他地方不做重复转换
+Tool implementation 只能报告真实 execution success/failure。Policy deny、approval unavailable、Abort、not-executed 和 recovery outcome 由 Runner 选择 canonical `ToolResultOutcome`。现有 `AgentEvent.tool_result.result` 仍使用 presentation-compatible `{ content, isError? }`，但该 shape 不再是 Tool implementation boundary。
 
----
+Canonical Tool Call 保留 Provider opaque `callId`，并明确区分 decoded object、malformed JSON 和 non-object input。Canonical Tool Result 保存 `callId + outcome + content`；Provider wire 只要求 correlation/content 可移植。
 
-## 4. 核心函数
+## 4. Portable Schema 与 validation
 
-### 4.1 createToolExecutor
+`compilePortableToolSchema()` 在 staging 时执行：
 
-```
-createToolExecutor(tools: Tool[]): ToolExecutor
+- root 必须是 object Schema；
+- 仅允许 accepted v1 Draft-07 subset；
+- unknown/provider-specific keyword、非法 `required`、非有限数值等立即拒绝 unit；
+- Ajv 禁用 coercion、defaults 和 property removal；
+- Snapshot 保存 deep-frozen Schema 与 compiled validator；
+- Runner 只校验 `before_tool_call` 完成后的 effective input。
 
-// 行为：
-按 toolName 在 tools[] 中查找
-  找不到 → ToolResult { isError: true, content: 'Tool "X" not found' }
-  找到   → tool.execute(input, context)
-  执行抛错 → catch → ToolResult { isError: true, content: '...' }
-```
+## 5. Contribution 与 Snapshot
 
-异常被转为 `isError: true` 的 `ToolResult`，不向外抛出。这让 AgentRunner 能把工具错误作为正常 tool_result 送给 LLM，让 LLM 自行决定如何应对。
+```text
+RuntimeContributionUnit.register(api)
+  ├─ api.registerTool(tool)
+  └─ api.registerHook(contribution)
 
-`ToolContext.signal` 已接通用户主动中止。框架保证 signal 会传给工具，但工具是否立即响应由实现决定；当前 `exec` 会终止子进程树，其他短时内置工具可能运行到自然结束。中止后 Runner 不会启动下一个工具。
-
-### 4.2 getToolDefinitions
-
-```
-getToolDefinitions(tools: Tool[]): ToolDefinition[]
-
-// 行为：
-tools.map(t => ({ name, description, input_schema: t.inputSchema }))
+buildRegistrySnapshot({ providers, units })
+  ├─ 每个 unit 独立 staging
+  ├─ Builtin invalid → startup failure
+  ├─ External invalid → 整个 unit 隔离并记录 diagnostic
+  └─ 发布 frozen RegistrySnapshot
+       ├─ providers
+       ├─ tools: ToolProjection
+       └─ hooks: HookProjection
 ```
 
-从 `Tool[]` 提取 LLM API 所需的定义格式，丢弃 `execute` 函数。
+`ToolProjection.resolve()` 返回 canonical implementation 与 validator；`visibleDefinitions(policy)` 是 pure deny-filtered view，不修改 Snapshot。Hook projection 按 priority、unit ID、contribution ID 稳定排序。
 
----
+启动期只构造一个完整 Snapshot。Workspace、Memory 和可选 Task units 都在 publication 和 `app_ready` 前完成 staging；RuntimeApp 不追加 Task、不替换 executor，也不重建 Snapshot。
 
-## 5. 工具注册流程
+## 6. Provider conversion
 
-工具框架本身不管理注册——注册和组装在 `runtime/tool-registry.ts` 完成：
-
-```
-assembleRuntimeTools(builtinTools, memoryManager):
-  tools = [...builtinTools]
-  if memoryManager: tools.push(...createMemoryTools(memoryManager))
-  return {
-    tools,
-    executor: createToolExecutor(tools),
-    llmDefinitions: toLlmToolDefinitions(tools),    // input_schema
-    promptDefinitions: toPromptToolDefinitions(tools) // parameters
-  }
-```
-
-`executor`、`llmDefinitions`、`promptDefinitions` 永远对应同一份 `tools[]`，一致性由此保证。
+Anthropic Adapter 显式映射 canonical definitions/calls/results。`tool-contract-codecs.ts` 提供 Anthropic 与 OpenAI-compatible pure reference codecs，覆盖 definition round-trip、complete/streamed/multiple calls、interleaved fragments、malformed/non-object input、duplicate identity 和 correlated results。OpenAI codec 是 portability proof，不代表 production OpenAI client。

@@ -167,8 +167,8 @@ DOC-V01–V12 的 Owner 为项目所有者至 Slice 6 Owner 接手，target Revi
 | API-M04 | deprecated `LLMClient`、`ChatParams`、`StreamEvent` adapter facade：[LLM types](../../src/adapters/llm/types.ts)；Compatibility Candidate，authority 已迁入 Stable Core | Stable Core 拥有 Invocation Port/normalized contract；Anthropic Adapter implements。Repository production callers 已迁移；adapter facade 仅为可能的 external consumers 保留 | Slice 2 Review 确认该 facade 与 Child migration 无关；因 external consumer decision/legacy barrel closeout 未完成，延期到 Slice 6 Review；禁止新增 production caller。删除需 external consumer decision、zero internal caller、adapter Contract、FT-03/08 和 build |
 | CODE-M08 | Runner raw Provider error string parsing：[AgentRunner](../../src/core/runner/AgentRunner.ts)、[runner errors](../../src/core/runner/errors.ts)；Active Legacy responsibility | Provider Adapter 归一化 overflow/canonical errors；Runner 只消费 core-owned errors | Slice 1，受 ADR-002 约束；删除 raw-string classification；overflow/compaction/error regressions |
 | CODE-M09 | Former Subagent `llmDefaults`、optional/raw-string `model`、legacy Child resolver/host/request、parentless library trigger；`Migrated` in Slice 2 | Required native Profile Model Selection + Parent effective Model Reference + Runtime-owned delegation Port + independent Child resolution are the only production path | Old resolver/Runner/API/trigger/synthetic-session contracts and scenarios deleted；native Profile、real Parent、different Provider/Model、typed failure/Usage/Abort/Event/Session/cleanup、FT-04/08 and deterministic zero-reference validation passed |
-| CODE-E01 | central Tool bundle/list/setter：[tool registry](../../src/runtime/tool-registry.ts)、[RuntimeApp](../../src/runtime/RuntimeApp.ts)；Active | Registry Snapshot Tool projection/Modules | Slice 3/5；删除 central list、mutable bundle、setter/post-bootstrap assembly；Tool tests + FT-07 |
-| CODE-E02 | `AgentRunner.on()` 与 startup approval wiring：[AgentRunner](../../src/core/runner/AgentRunner.ts)、[RuntimeApp](../../src/runtime/RuntimeApp.ts)；Active | Hook Contribution/projection 和 explicit policy/capability | Slice 3；删除 startup-history dependency；CH-04/06 + Hook contracts |
+| CODE-E01 | Former central Tool bundle/list/executor setter/Task post-assembly；`Migrated` in Slice 3 | One startup `RegistrySnapshot` with canonical Tool projection and Builtin Modules | Central list/bundle/executor factory/setter deleted；Task staged before publication；Tool/Registry/Runtime tests + FT-07 |
+| CODE-E02 | Former `AgentRunner.on()` production API and startup approval Hook wiring；`Migrated` in Slice 3 | Immutable Hook Contribution/projection plus explicit Policy/current-call Approval Capability | Production mutable registration/startup authorization history deleted；Hook/approval/Runner contracts + FT-07 |
 | API-E01 | `registerChannel/startChannels/stopChannels` 和 concrete script construction：[RuntimeApp](../../src/runtime/RuntimeApp.ts)、[CLI](../../scripts/cli.ts)、[server](../../scripts/server.ts)、[websocket](../../scripts/websocket.ts)；Active public composition API | Builtin Channel Modules 和 Builder-created bindings | Slice 4；scripts 不再 concrete register；Channel lifecycle/CH-07/08 |
 | CODE-E03 | `RuntimeApp.create()` post-bootstrap composition 与 mutable resources：[RuntimeApp](../../src/runtime/RuntimeApp.ts)；Active mixed responsibility | Runtime Builder + immutable explicit dependencies | Slice 5；删除 discovery/mutation/duplicate ownership；startup/rollback/shutdown + FT-01/05/07 |
 
@@ -204,6 +204,15 @@ Slice 1 起始计数为 13 个受影响 entries（CODE-M01–M09、API-M01–M04
 
 Slice 2 frozen scope contained one Legacy entry, CODE-M09. Delivery therefore reached $Legacy_{end}=0<Legacy_{start}=1$. Validation passed for focused Unit/Contract/Runtime integration, FT-01/03/04/08/09, deterministic deleted-contract audit, `npm run lint`, full Vitest (76 files, 675 tests), `npm run build`, and `git diff --check`. One unrelated background-process test timed out once and passed both in isolation and on the final full-suite rerun. Independent implementation review found no remaining Critical/High/Medium implementation blocker after the documented inventory disposition was corrected. No migration Feature Flag or second Child authority was introduced. 项目所有者于 2026-09-04 接受验证结果并确认 Slice 2 完成。
 
+### 6.4 Slice 3 Delivery disposition（2026-09-08）
+
+| Entry | Delivery disposition | Evidence / remaining exit |
+|---|---|---|
+| CODE-E01 | `Migrated` | One Task-inclusive startup `RegistrySnapshot`、canonical Tool execution/Schema/provider conversion、central list/bundle/executor factory/setter and post-assembly deletion；Registry/Runtime/Provider contracts + FT-07 |
+| CODE-E02 | `Migrated` | Immutable Hook Contributions/projections、bounded observers、explicit Policy/current-call Approval Capability；production mutable registration and startup authorization history deleted |
+
+Slice 3 frozen scope contained CODE-E01 and CODE-E02 and reached $Legacy_{end}=0<Legacy_{start}=2$. `npm run lint`、full Vitest (80 files, 705 tests)、`npm run build`、FT-09 document governance and `git diff --check` passed. Independent implementation review found no remaining Critical/High/Medium blocker. No migration Feature Flag、second executor、Task post-assembly or startup approval Hook remains. 项目所有者于 2026-09-08 接受验证结果并确认 Slice 3 完成；已授权 Slice 3 checkpoint commit，未授权 push 或 Slice 4 production Delivery。
+
 ## 7. Slice 视图与净减少口径
 
 | Slice | 本 Inventory 的主要 entries | 最小退出结果 |
@@ -212,7 +221,7 @@ Slice 2 frozen scope contained one Legacy entry, CODE-M09. Delivery therefore re
 | Slice 2 | CODE-M09；API-M03 Runner Contract 已在 Slice 1 迁移完成 | Parent/Child 独立 resolution；删除 parentless library path、copied `llmDefaults` 与 legacy Child execution boundary |
 | Slice 3 | CODE-E01、CODE-E02 | Tool/Hook caller 迁移，central list/setter/registration special cases 净减少 |
 | Slice 4 | API-E01 | Channel caller 迁移，concrete script registration 和 duplicate lifecycle path 删除 |
-| Slice 5 | CODE-E01、CODE-E03 | Runtime Builder/Snapshot 成为唯一 composition path，duplicate ownership 删除 |
+| Slice 5 | CODE-E03 | Runtime Builder 继续收敛非 Tool/Hook composition 与 lifecycle ownership；Slice 3 Snapshot authority 不回退 |
 | Slice 6 | DOC-C01–C13、DOC-A01–A27、DOC-V01–V12 | 唯一 Current Architecture、active links 收口；逐文件完成 `Migrated -> Reviewed -> Deleted` 或明确 `Retained Authority` |
 
 每个 Slice 的 accepted Slice inventory 必须冻结该 Slice 的起始计数口径，并满足：
