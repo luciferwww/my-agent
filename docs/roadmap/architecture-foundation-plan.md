@@ -563,6 +563,10 @@ Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accept
 
 ### Slice 4：Channel Module
 
+**Plan Item 状态：** Spec Accepted（等待单独的 production Delivery 授权；2026-09-08）
+
+**Module Spec：** [Channel Module Spec](../architecture/channel-module-spec.md)（`Accepted`，2026-09-08）
+
 **范围：**
 
 - Channel Factory Registry；
@@ -830,4 +834,4 @@ Foundation（M0–M3）以 **两周完成为目标、四周为硬上限**。第�
 1. AF-05 已完成：`Provisional Pass` Results 获项目所有者接受，disposable fixture cleanup、状态同步和 AF-05 evidence item 均已完成；
 2. AF-06 已完成：`Provisional Pass` Results 获项目所有者接受，disposable fixture cleanup、cleanup validation、状态同步和 AF-06 evidence items 均已完成；
 3. AF-07、独立 Legacy migration inventory 与 Foundation Gate 已于 2026-09-04 完成；Slice 1 已完成 Delivery、验证和项目所有者确认；
-4. Slice 2、Slice 3 已完成；下一步建立已授权的 Slice 3 checkpoint commit，并起草 Slice 4 Channel Module Spec。未授权 push、Slice 4 production Delivery 或 Slice 5–6。
+4. Slice 2、Slice 3 已完成并建立 Slice 3 checkpoint；Slice 4 Channel Module Spec 已接受，等待单独的 production Delivery 授权。未授权 push、Slice 4 production Delivery 或 Slice 5–6；历史/Legacy 文档清理保留到重构完成后的独立 Slice 6 工作，不与当前 Delivery 混合。
