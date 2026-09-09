@@ -131,6 +131,20 @@ export interface Ft11DispositionManifest {
     rationaleForRetainedAuthority: string;
   }>;
   s6D4IndependentReviewStatus?: string;
+  s6D5IndependentReviewStatus?: string;
+  s6D5DecisionById?: Record<string, {
+    stateHistory: string[];
+    verifiedCurrentFact: string;
+    durableDecision: string;
+    unfinishedApprovedWork: string;
+    executedEvidence: string;
+    stableHistoricalLocator: string;
+    rationaleForRetainedAuthority: string;
+    owner?: string;
+    foundationFreeze?: string;
+    nonAuthorizing?: boolean;
+    successor?: string;
+  }>;
   referenceAudit: {
     governanceLedgers: string[];
     excludedRoots: string[];
@@ -644,6 +658,8 @@ const FT11_S6_D4_IDS = new Set([
   'DOC-A17', 'DOC-A18', 'DOC-A19', 'DOC-A20', 'DOC-A21', 'DOC-A22', 'DOC-A23',
   'DOC-A24', 'DOC-A25', 'DOC-A26', 'DOC-A27',
 ]);
+const FT11_S6_D5_DEFERRED_IDS = new Set(['DOC-A04', 'DOC-A05']);
+const FT11_S6_D5_DELETED_IDS = new Set(['DOC-A06']);
 
 export function collectFt11DocumentReferenceAudit(
   sources: Ft11ReferenceSource[],
@@ -798,9 +814,15 @@ export function findFt11DocumentDispositionViolations(
       'in-review-awaiting-owner-acceptance',
       'completed-owner-accepted',
     ].includes(manifest.status);
+  const isS6D5 = manifest.slice === 'S6-D5'
+    && [
+      'deferred-decisions-completed',
+      'in-review-awaiting-owner-acceptance',
+      'completed-owner-accepted',
+    ].includes(manifest.status);
 
   if (manifest.schemaVersion !== 1) diagnostics.push('FT-11 manifest field=schemaVersion violation=invalid-value');
-  if (!isS6D1 && !isS6D2 && !isS6D3 && !isS6D4) diagnostics.push('FT-11 manifest field=slice/status violation=invalid-phase');
+  if (!isS6D1 && !isS6D2 && !isS6D3 && !isS6D4 && !isS6D5) diagnostics.push('FT-11 manifest field=slice/status violation=invalid-phase');
   if (manifest.candidates.length !== expectedDocuments.length) {
     diagnostics.push(`FT-11 manifest field=candidates expected=${expectedDocuments.length} actual=${manifest.candidates.length} violation=count-mismatch`);
   }
@@ -825,12 +847,14 @@ export function findFt11DocumentDispositionViolations(
   validateFt11EntryStates(
     manifest,
     expectedDocuments,
-    isS6D2 || isS6D3 || isS6D4,
-    isS6D3 || isS6D4,
-    isS6D4,
+    isS6D2 || isS6D3 || isS6D4 || isS6D5,
+    isS6D3 || isS6D4 || isS6D5,
+    isS6D4 || isS6D5,
+    isS6D5,
     diagnostics,
   );
-  validateFt11S6D4DeletionReviews(manifest, isS6D4, diagnostics);
+  validateFt11S6D4DeletionReviews(manifest, isS6D4 || isS6D5, diagnostics);
+  validateFt11S6D5Decisions(manifest, isS6D5, diagnostics);
 
   for (const expected of expectedDocuments) {
     if (!ids.includes(expected.id)) {
@@ -850,7 +874,8 @@ export function findFt11DocumentDispositionViolations(
     if (entry.category !== expected.category) {
       diagnostics.push(`FT-11 entry=${entry.id} field=category expected=${expected.category} actual=${entry.category} violation=mismatch`);
     }
-    const isDeleted = isS6D4 && FT11_S6_D4_IDS.has(entry.id);
+    const isDeleted = (isS6D4 || isS6D5) && FT11_S6_D4_IDS.has(entry.id)
+      || isS6D5 && FT11_S6_D5_DELETED_IDS.has(entry.id);
     if (!isDeleted && !availablePaths.has(entry.path)) {
       diagnostics.push(`FT-11 entry=${entry.id} path=${entry.path} violation=missing-document`);
     }
@@ -965,6 +990,7 @@ function validateFt11EntryStates(
   hasMigratedCurrentAuthority: boolean,
   hasMigratedActiveNavigation: boolean,
   hasDeletedRootCandidates: boolean,
+  hasS6D5Decisions: boolean,
   diagnostics: string[],
 ): void {
   const expectedIds = expectedDocuments.map((document) => document.id);
@@ -1003,11 +1029,122 @@ function validateFt11EntryStates(
       if (state.reviewerResult !== 'validated-awaiting-owner-review') diagnostics.push(`FT-11 entry=${id} field=reviewerResult violation=invalid-root-candidate-review-state`);
       continue;
     }
+    if (hasS6D5Decisions && FT11_S6_D5_DEFERRED_IDS.has(id)) {
+      if (state.transitionState !== 'Reviewed') diagnostics.push(`FT-11 entry=${id} field=transitionState violation=deferred-input-not-reviewed`);
+      if (state.uniqueValueConclusion !== 'retained-deferred-input') diagnostics.push(`FT-11 entry=${id} field=uniqueValueConclusion violation=deferred-input-not-retained`);
+      if (state.finalDisposition !== 'Retain Deferred Input') diagnostics.push(`FT-11 entry=${id} field=finalDisposition violation=deferred-input-not-disposed`);
+      if (state.validationStatus !== 'passed') diagnostics.push(`FT-11 entry=${id} field=validationStatus violation=deferred-input-not-validated`);
+      if (state.reviewerResult !== 'validated-awaiting-owner-review') diagnostics.push(`FT-11 entry=${id} field=reviewerResult violation=invalid-deferred-input-review-state`);
+      continue;
+    }
+    if (hasS6D5Decisions && FT11_S6_D5_DELETED_IDS.has(id)) {
+      if (state.transitionState !== 'Deleted') diagnostics.push(`FT-11 entry=${id} field=transitionState violation=closed-candidate-not-deleted`);
+      if (state.uniqueValueConclusion !== 'no-unique-value-after-migration') diagnostics.push(`FT-11 entry=${id} field=uniqueValueConclusion violation=closed-candidate-unique-value-unresolved`);
+      if (state.finalDisposition !== 'Delete After Migration') diagnostics.push(`FT-11 entry=${id} field=finalDisposition violation=closed-candidate-not-disposed`);
+      if (state.validationStatus !== 'passed') diagnostics.push(`FT-11 entry=${id} field=validationStatus violation=closed-candidate-not-validated`);
+      if (state.reviewerResult !== 'validated-awaiting-owner-review') diagnostics.push(`FT-11 entry=${id} field=reviewerResult violation=invalid-closed-candidate-review-state`);
+      continue;
+    }
     if (state.transitionState !== 'Pending') diagnostics.push(`FT-11 entry=${id} field=transitionState violation=premature-transition`);
     if (state.uniqueValueConclusion !== 'not-reviewed') diagnostics.push(`FT-11 entry=${id} field=uniqueValueConclusion violation=premature-review`);
     if (state.finalDisposition !== null) diagnostics.push(`FT-11 entry=${id} field=finalDisposition violation=premature-review`);
     if (state.validationStatus !== 'baseline-pending') diagnostics.push(`FT-11 entry=${id} field=validationStatus violation=premature-review`);
     if (state.reviewerResult !== 'not-reviewed') diagnostics.push(`FT-11 entry=${id} field=reviewerResult violation=premature-review`);
+  }
+}
+
+function validateFt11S6D5Decisions(
+  manifest: Ft11DispositionManifest,
+  isS6D5: boolean,
+  diagnostics: string[],
+): void {
+  if (!isS6D5) return;
+  if (!['review-pending', 'ready-awaiting-owner-acceptance', 'ready-owner-accepted']
+    .includes(manifest.s6D5IndependentReviewStatus ?? '')) {
+    diagnostics.push('FT-11 manifest field=s6D5IndependentReviewStatus violation=invalid-review-state');
+  }
+  const decisions = manifest.s6D5DecisionById;
+  const expectedIds = ['DOC-A04', 'DOC-A05', 'DOC-A06'];
+  if (!decisions) {
+    diagnostics.push('FT-11 manifest field=s6D5DecisionById violation=missing-decision-ledger');
+    return;
+  }
+  if (!sameStringSet(Object.keys(decisions), expectedIds)) {
+    diagnostics.push('FT-11 manifest field=s6D5DecisionById violation=identity-drift');
+  }
+  const expectedSuccessors: Record<string, Pick<Ft11DispositionEntry,
+    'currentFactSuccessor' | 'durableDecisionAuthority' | 'unfinishedWorkSuccessor' | 'evidenceSuccessor'>> = {
+    'DOC-A04': {
+      currentFactSuccessor: [],
+      durableDecisionAuthority: ['docs/architecture/subagent-model-resolution-module-spec.md'],
+      unfinishedWorkSuccessor: ['docs/roadmap/architecture-foundation-plan.md#post-foundation-subagent-concurrency-deferred-tracker'],
+      evidenceSuccessor: ['deferred design alternatives only; no executed evidence'],
+    },
+    'DOC-A05': {
+      currentFactSuccessor: [],
+      durableDecisionAuthority: ['docs/architecture/subagent-model-resolution-module-spec.md'],
+      unfinishedWorkSuccessor: ['docs/roadmap/architecture-foundation-plan.md#post-foundation-subagent-concurrency-deferred-tracker'],
+      evidenceSuccessor: ['deferred concurrency design only; no executed evidence'],
+    },
+    'DOC-A06': {
+      currentFactSuccessor: ['docs/architecture/current/core_runner.md'],
+      durableDecisionAuthority: [],
+      unfinishedWorkSuccessor: ['closed by Owner in S6-D5: explicit TurnContext implementation is complete'],
+      evidenceSuccessor: [
+        'docs/architecture/current/core_runner.md#10-event-emit-机制',
+        'src/core/runner/AgentRunner.ts',
+        'src/core/runner/AgentRunner.test.ts',
+        'Git history',
+      ],
+    },
+  };
+  for (const id of expectedIds) {
+    const entry = manifest.candidates.find((candidate) => candidate.id === id);
+    if (!entry) continue;
+    for (const field of [
+      'currentFactSuccessor',
+      'durableDecisionAuthority',
+      'unfinishedWorkSuccessor',
+      'evidenceSuccessor',
+    ] as const) {
+      if (!sameStringSet(entry[field], expectedSuccessors[id]?.[field] ?? [])) {
+        diagnostics.push(`FT-11 entry=${id} field=${field} violation=s6-d5-successor-drift`);
+      }
+    }
+  }
+  for (const id of FT11_S6_D5_DEFERRED_IDS) {
+    const decision = decisions[id];
+    if (!decision) continue;
+    if (decision.stateHistory.join('>') !== 'Pending>Migrating>Migrated>Reviewed') {
+      diagnostics.push(`FT-11 entry=${id} field=stateHistory violation=invalid-deferred-transition`);
+    }
+    if (decision.verifiedCurrentFact !== 'no-not-current-authority'
+      || decision.durableDecision !== 'no-future-input-only'
+      || decision.unfinishedApprovedWork !== 'no-approved-work-separate-authorization-required'
+      || decision.executedEvidence !== 'no'
+      || decision.stableHistoricalLocator !== 'yes-deferred-design-input'
+      || decision.rationaleForRetainedAuthority !== 'yes-future-options-and-constraints') {
+      diagnostics.push(`FT-11 entry=${id} field=uniqueValueReview violation=unresolved`);
+    }
+    if (decision.owner !== 'Project Owner'
+      || decision.foundationFreeze !== 'active-until-separate-post-foundation-authorization'
+      || decision.nonAuthorizing !== true
+      || decision.successor !== 'docs/roadmap/architecture-foundation-plan.md#post-foundation-subagent-concurrency-deferred-tracker') {
+      diagnostics.push(`FT-11 entry=${id} field=deferredMetadata violation=incomplete`);
+    }
+  }
+  const deleted = decisions['DOC-A06'];
+  if (!deleted) return;
+  if (deleted.stateHistory.join('>') !== 'Pending>Migrating>Migrated>Reviewed>Deleted') {
+    diagnostics.push('FT-11 entry=DOC-A06 field=stateHistory violation=missing-reviewed-delete-transition');
+  }
+  if (deleted.verifiedCurrentFact !== 'no-already-in-current'
+    || deleted.durableDecision !== 'no-implementation-complete'
+    || deleted.unfinishedApprovedWork !== 'no-owner-confirmed-closed'
+    || deleted.executedEvidence !== 'no-preserved-in-source-tests-git'
+    || deleted.stableHistoricalLocator !== 'no'
+    || deleted.rationaleForRetainedAuthority !== 'no') {
+    diagnostics.push('FT-11 entry=DOC-A06 field=uniqueValueReview violation=unresolved');
   }
 }
 

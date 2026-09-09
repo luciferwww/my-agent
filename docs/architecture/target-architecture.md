@@ -118,9 +118,9 @@ Phase 1–6 填写目标章节时，每个重要结论必须使用以下前缀�
 | [Current Config](current/platform_config.md) | 工具命名、logger、fs 等与 v1.0 描述存在差异 | Config 目标边界受 AP-02 和 AF-05/06 约束；旧字段不自动成为目标 |
 | [Platform Config Restructure Spec](platform-config-restructure-spec.md) | Accepted Spec | 保留 durable Config contract；当前行为以 Current Config 与 source/tests 为准 |
 | [Channel Module Spec](channel-module-spec.md) | Accepted Spec | 保留 Channel contract；当前 transport 与 routing 以 Current Channel 为准 |
-| [Subagent Evolution Proposal](core-subagent-evolution-proposal.md) | Proposal，未进入 Accepted Spec | 作为 Deferred/后续方向，不解除 Foundation 冻结 |
-| [Subagent v2 Spec](core-subagent-v2-spec.md) | 并发设计与当前 Foundation 范围冻结并存 | 作为历史或未来输入，不写入 AF-03 当前交付范围 |
-| [Runner Emit Context Refactor](core-runner-emit-context-refactor.md) | 明确未实施 | 作为架构债候选，不作为 Current Fact |
+| [Subagent Evolution Proposal](core-subagent-evolution-proposal.md) | Deferred Input，Project Owner 持有，non-authorizing | 由 Architecture Foundation Plan 的 post-Foundation tracker 持有未来 successor，不解除 Foundation freeze |
+| [Subagent v2 Spec](core-subagent-v2-spec.md) | Deferred Input；文件名不表示 Accepted | 仅保留 concurrency alternatives/constraints，由未来 Accepted Plan/Spec supersede |
+| Runner Emit Context Refactor — `core-runner-emit-context-refactor.md`（Deleted S6-D5） | 显式 `TurnContext` 已实现并由 Owner 确认关闭 | Current fact 见 [Current Runner §10](current/core_runner.md#10-event-emit-机制)，执行证据见 source/tests/Git |
 | [Current Builtin Tools](current/core_tools_builtin.md) | Current Authority | Exec/Process 当前事实由 source/tests 证明；目标 contract 服从 Accepted Tool/Hook Spec |
 
 `docs/analysis/` 当前包含有效的比较分析入口，但它们只作为设计参考，不是 my-agent Current Fact 或 Target Constraint。
@@ -1636,8 +1636,8 @@ Forbidden:
 | [Current Architecture](current/overview.md) | Current Authority | 已按 source/tests 核验并成为唯一 Current Architecture；不参与 Legacy 删除状态机 |
 | Platform Config 历史 Implementation | S6-D4 删除候选 | 当前事实由 [Current Config](current/platform_config.md) 接管；长期决定由 ADR-004/Accepted Specs 接管；过程由 Git History 保存 |
 | Channel/WebSocket 历史设计 | S6-D4 删除候选 | 当前事实由 [Current Channel](current/adapter_channel.md) 接管；目标约束由本文件与 [Channel Module Spec](channel-module-spec.md) 接管 |
-| `core-subagent-evolution-proposal.md`、`core-subagent-v2-spec.md` | Foundation Deferred/Future | 保留后继链接或移入 Legacy；不得作为 Batch/Background/Team 的活跃实现授权 |
-| `core-runner-emit-context-refactor.md` | 未实施 Proposal | 未完成事项若仍有效进入 Plan，否则 Review 后删除 |
+| `core-subagent-evolution-proposal.md`、`core-subagent-v2-spec.md` | Foundation Deferred Input | Project Owner + freeze + post-Foundation tracker 已明确；不得作为 Batch/Background/Team 的活跃实现授权 |
+| `core-runner-emit-context-refactor.md`（Deleted S6-D5） | 已实现并关闭的 Proposal | Current/source/tests 已承接事实和证据；无剩余批准工作，不保留平行 authority |
 | Exec Flow 历史设计 | S6-D4 删除候选 | 当前事实由 [Current Builtin Tools](current/core_tools_builtin.md) 接管；无独立 unique value，Review 后删除 |
 | Root `README.md` 的 Project Structure | 产品入口中的过时结构说明 | Slice 6 更新为唯一 Current Architecture 的简短链接/准确结构，不复制模块权威说明 |
 

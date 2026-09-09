@@ -796,9 +796,8 @@ describe('AgentRunner', () => {
       }
     });
 
-    // Two follow-up regression tests added by the v2 emit-context refactor
-    // (docs/architecture/core-runner-emit-context-refactor.md §4.3). They
-    // pin down the post-refactor invariant: turnCtx is sourced from the
+    // These regression tests pin down the Current Runner invariant:
+    // turnCtx is sourced from the
     // current run()'s call frame, not any instance state — so neither
     // sequential runs nor concurrent runs can pollute each other's events.
 

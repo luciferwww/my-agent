@@ -1,16 +1,21 @@
 # Subagent v2：同 turn 内并发执行 Spec
 
 > 文档日期：2026-07-23
-> 分支：`feature/core-subagent-v2`
-> 基线：`core-subagent-spec.md`（v1 已实现）
-> 关联文档：`core-subagent-spec.md` · `current/core_runner.md` · `core-abort-spec.md` · `current/core_tools.md`
+> Authority role：**Deferred Input — Non-authorizing**（文件名中的 `Spec` 不表示 Accepted）
+> Owner：**Project Owner**
+> Freeze：Architecture Foundation closeout 完成前保持冻结；完成 closeout 也不会自动授权实施
+> Successor：[Post-Foundation Subagent Concurrency Deferred Tracker](../roadmap/architecture-foundation-plan.md#post-foundation-subagent-concurrency-deferred-tracker)
+> Supersession：未来只有经 Project Owner 接受的新 Plan/Spec 可以 supersede 本输入
+> Current facts：以 [Current Runtime](current/runtime.md)、[Current Runner](current/core_runner.md) 与 [Current Tools](current/core_tools.md) 为准；本文的现状盘点只代表 2026-07-23 快照
+> 原分支：`feature/core-subagent-v2`
+> 状态：S6-D5 Review 后仅保留 concurrency alternatives/constraints，不得直接驱动 production implementation
 > 参考实现：Claude Code 的 `parallel_tool_calls` + `Task` 工具；openclaw 的 `maxConcurrent` / `maxChildrenPerAgent` 双闸设计（[openclaw/docs/architecture/subagent-analysis.md §5](../../../openclaw/docs/architecture/subagent-analysis.md)）
 
 ---
 
 ## 0. 阅读顺序
 
-本文档是 v1 的**增量 spec**：v1 的所有决策、类型、接口、事件在 v2 **全部保留**，本文档只描述**新增或修改**的部分。阅读时请先熟悉 v1 spec §1–§10（尤其 §7 决策 1「阻塞调用」与 §14 v2+ 路标 A「同轮并行多 task」），再回来看本文。
+本文档是旧 v1 基线上的增量设计输入，不是当前增量 Spec。其决策、签名与行号均须由未来 successor 按当前架构重新核验；与 Current/Accepted Authority 冲突时以后者为准。
 
 ---
 

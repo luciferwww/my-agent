@@ -35,7 +35,9 @@ const GOVERNANCE_LEDGERS = new Set([
 ]);
 const AUDIT_METADATA = new Set([
   'docs/architecture/slice-6-document-disposition-manifest.json',
+  'src/architecture-fitness/ft-11-document-disposition.test.ts',
   'src/architecture-fitness/ft-11-document-surface.json',
+  'src/architecture-fitness/rules.ts',
   'src/architecture-fitness/ft-12-current-architecture-surface.json',
 ]);
 const ACTIVE_NAVIGATION_DOCUMENTS = new Set([
@@ -53,6 +55,7 @@ const S6_D4_DELETED_IDS = new Set([
   'DOC-A17', 'DOC-A18', 'DOC-A19', 'DOC-A20', 'DOC-A21', 'DOC-A22', 'DOC-A23',
   'DOC-A24', 'DOC-A25', 'DOC-A26', 'DOC-A27',
 ]);
+const S6_D5_DEFERRED_IDS = new Set(['DOC-A04', 'DOC-A05']);
 let manifest: Ft11DispositionManifest;
 let expectedDocuments: Ft11FrozenDocument[];
 let inventoryDocuments: Ft11ExpectedDocument[];
@@ -136,7 +139,7 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
   });
   // FT11_FIXTURE_REFERENCES_END
 
-  it('locks 52 entries, exact inbound references, and the S6-D4 deletion boundary', () => {
+  it('locks 52 entries, exact inbound references, and the S6-D5 disposition boundary', () => {
     expect(findFt11DocumentDispositionViolations(
       manifest,
       expectedDocuments,
@@ -160,6 +163,8 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
       .filter(([id]) => !id.startsWith('DOC-C')
         && id !== 'DOC-A08'
         && id !== 'DOC-A09'
+        && !S6_D5_DEFERRED_IDS.has(id)
+        && id !== 'DOC-A06'
         && !S6_D4_DELETED_IDS.has(id))
       .every(([, state]) => state.transitionState === 'Pending'
         && state.finalDisposition === null)).toBe(true);
@@ -186,6 +191,31 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
         && Object.values(entry.inbound).every((references) => references.length === 0)
         && !availablePaths.has(entry.path);
     })).toBe(true);
+    expect([...S6_D5_DEFERRED_IDS].every((id) => {
+      const state = manifest.entryStateById[id];
+      const decision = manifest.s6D5DecisionById?.[id];
+      const entry = manifest.candidates.find((candidate) => candidate.id === id);
+      return state?.transitionState === 'Reviewed'
+        && state.finalDisposition === 'Retain Deferred Input'
+        && decision?.stateHistory.join('>') === 'Pending>Migrating>Migrated>Reviewed'
+        && decision.owner === 'Project Owner'
+        && decision.foundationFreeze === 'active-until-separate-post-foundation-authorization'
+        && decision.nonAuthorizing === true
+        && decision.successor === 'docs/roadmap/architecture-foundation-plan.md#post-foundation-subagent-concurrency-deferred-tracker'
+        && entry?.inbound.activeDocs.every((path) => !path.startsWith('docs/architecture/current/'))
+        && availablePaths.has(entry.path);
+    })).toBe(true);
+    const closedState = manifest.entryStateById['DOC-A06'];
+    const closedDecision = manifest.s6D5DecisionById?.['DOC-A06'];
+    const closedEntry = manifest.candidates.find((candidate) => candidate.id === 'DOC-A06');
+    expect(closedState).toMatchObject({
+      transitionState: 'Deleted',
+      uniqueValueConclusion: 'no-unique-value-after-migration',
+      finalDisposition: 'Delete After Migration',
+    });
+    expect(closedDecision?.stateHistory.join('>')).toBe('Pending>Migrating>Migrated>Reviewed>Deleted');
+    expect(Object.values(closedEntry?.inbound ?? {}).every((references) => references.length === 0)).toBe(true);
+    expect(closedEntry && availablePaths.has(closedEntry.path)).toBe(false);
     expect(manifest.candidates.find((entry) => entry.id === 'DOC-V10')?.inbound).toMatchObject({
       productionSource: [
         'src/platform/config/wizard/diff.ts',
@@ -266,6 +296,8 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
     const pendingExpectedId = expectedDocuments.find((entry) => entry.category !== 'current-fact'
       && entry.id !== 'DOC-A08'
       && entry.id !== 'DOC-A09'
+      && !S6_D5_DEFERRED_IDS.has(entry.id)
+      && entry.id !== 'DOC-A06'
       && !S6_D4_DELETED_IDS.has(entry.id))?.id;
     if (!pendingExpectedId) throw new Error('FT-11 surface must include a pending non-Current entry');
     const state = invalid.entryStateById[pendingExpectedId];
@@ -276,6 +308,23 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
     if (!deletionReview) throw new Error('Missing S6-D4 deletion review fixture');
     deletionReview.stateHistory.splice(3, 1);
     deletionReview.verifiedCurrentFact = 'yes-unmigrated';
+    invalid.s6D5IndependentReviewStatus = 'accepted-without-review';
+    const deferredDecision = invalid.s6D5DecisionById?.['DOC-A04'];
+    const closedDecision = invalid.s6D5DecisionById?.['DOC-A06'];
+    if (!deferredDecision || !closedDecision) throw new Error('Missing S6-D5 decision fixtures');
+    deferredDecision.owner = 'Unowned';
+    deferredDecision.nonAuthorizing = false;
+    closedDecision.stateHistory.splice(3, 1);
+    closedDecision.unfinishedApprovedWork = 'yes-untracked';
+    const deferredEntry = invalid.candidates.find((entry) => entry.id === 'DOC-A04');
+    const deferredSpecEntry = invalid.candidates.find((entry) => entry.id === 'DOC-A05');
+    const closedEntry = invalid.candidates.find((entry) => entry.id === 'DOC-A06');
+    if (!deferredEntry || !deferredSpecEntry || !closedEntry) {
+      throw new Error('Missing S6-D5 candidate fixtures');
+    }
+    deferredEntry.currentFactSuccessor.push('docs/architecture/current/runtime.md');
+    deferredSpecEntry.unfinishedWorkSuccessor = ['future accepted Subagent Plan/Spec'];
+    closedEntry.evidenceSuccessor.pop();
     invalid.referenceAudit.governanceLedgers.pop();
     invalid.apiM04Baseline.facadePathImports.productionSource.pop();
     const docV10 = invalid.candidates.find((entry) => entry.id === 'DOC-V10');
@@ -308,6 +357,13 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
     expect(diagnostics).toContain('FT-11 manifest field=s6D4IndependentReviewStatus violation=invalid-review-state');
     expect(diagnostics).toContain('FT-11 entry=DOC-A01 field=stateHistory violation=missing-reviewed-delete-transition');
     expect(diagnostics).toContain('FT-11 entry=DOC-A01 field=uniqueValueReview.verifiedCurrentFact violation=unresolved');
+    expect(diagnostics).toContain('FT-11 manifest field=s6D5IndependentReviewStatus violation=invalid-review-state');
+    expect(diagnostics).toContain('FT-11 entry=DOC-A04 field=deferredMetadata violation=incomplete');
+    expect(diagnostics).toContain('FT-11 entry=DOC-A06 field=stateHistory violation=missing-reviewed-delete-transition');
+    expect(diagnostics).toContain('FT-11 entry=DOC-A06 field=uniqueValueReview violation=unresolved');
+    expect(diagnostics).toContain('FT-11 entry=DOC-A04 field=currentFactSuccessor violation=s6-d5-successor-drift');
+    expect(diagnostics).toContain('FT-11 entry=DOC-A05 field=unfinishedWorkSuccessor violation=s6-d5-successor-drift');
+    expect(diagnostics).toContain('FT-11 entry=DOC-A06 field=evidenceSuccessor violation=s6-d5-successor-drift');
     expect(diagnostics).toContain('FT-11 manifest field=referenceAudit.governanceLedgers violation=reference-drift');
     expect(diagnostics).toContain('FT-11 ledger=docs/architecture/legacy-migration-inventory.md violation=incomplete-candidate-coverage');
     expect(diagnostics).toContain('FT-11 manifest field=apiM04Baseline violation=reference-drift');

@@ -3,7 +3,7 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 1.2
+- **版本：** 1.3
 - **日期：** 2026-09-03
 - **范围：** my-agent 目标架构定义、关键边界验证、渐进迁移和 Legacy 退出
 - **执行方式：** Architecture Foundation 以两周为目标、四周为硬上限，随后采用一周 Architecture Slice 迭代
@@ -11,6 +11,7 @@
 - **批准：** 本计划已由项目所有者确认并晋升为 `Accepted`
 - **v1.1 修订：** 项目所有者于 2026-09-01 确认 §7.4 文档语言与术语约定；该确认时点是规则的生效边界
 - **v1.2 修订：** 项目所有者于 2026-09-03 确认 AF-06 仅编排 Extension/Module instance 生命周期；同 identity duplicate warning/ignore，内部对象管理与运行中版本替换不在最小范围
+- **v1.3 修订：** 项目所有者于 2026-09-09 将 Subagent Evolution Proposal 与 v2 Concurrency Spec 保留为严格 Deferred Input；它们不授权实现，由本 Plan 的 post-Foundation tracker 持有唯一未来 successor
 
 本 Plan 使用 `Proposed -> Accepted -> Superseded | Cancelled` 状态流。`Accepted` 表示项目所有者批准执行 Architecture Foundation，不表示 Foundation Gate 已通过，也不授权提前进入生产迁移。
 
@@ -620,6 +621,20 @@ Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accept
 - 活跃文档不存在同一事实的多份权威说明；
 - Legacy 文档不再被新实现引用；
 - Git History 成为旧实现和已删除过程文档的历史来源。
+
+### Post-Foundation Subagent Concurrency Deferred Tracker
+
+**Plan Item 状态：** Deferred
+
+**Owner：** Project Owner
+
+**输入：** [Subagent Evolution Proposal](../architecture/core-subagent-evolution-proposal.md) 与 [Subagent v2 Concurrency Spec](../architecture/core-subagent-v2-spec.md) 只作为未来选项、风险和约束输入；二者都不是 Accepted Spec，也不代表 Current Architecture。
+
+**Freeze：** Architecture Foundation closeout 完成前，不实施 Subagent Batch、同 turn 并发、Background、Detached、Handoff 或 Agent Team。完成 Foundation 不会自动解除冻结。
+
+**激活条件：** Project Owner 另行启动 post-Foundation discovery，重新核验 Workspace 隔离、事件顺序、生命周期、并发预算和审批语义，并接受一份 supersede 两个 Deferred Inputs 的新 Plan/Spec。未满足这些条件时，本项保持 `Deferred`，不得据此修改 production code。
+
+**范围约束：** 未来工作必须按当前 Runtime/Runner/Registry 边界重新设计；不得为了复用旧 proposal/spec 而恢复已删除架构或建立平行 Current authority。
 
 ## 12. Legacy 文档策略
 

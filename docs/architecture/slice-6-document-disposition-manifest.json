@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "slice": "S6-D4",
+  "slice": "S6-D5",
   "status": "completed-owner-accepted",
   "capturedAt": "2026-09-09",
   "entryDefaults": {
@@ -45,9 +45,9 @@
     "DOC-A01":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
     "DOC-A02":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
     "DOC-A03":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
-    "DOC-A04":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A05":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A06":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
+    "DOC-A04":{"initialState":"Pending","transitionState":"Reviewed","uniqueValueConclusion":"retained-deferred-input","finalDisposition":"Retain Deferred Input","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A05":{"initialState":"Pending","transitionState":"Reviewed","uniqueValueConclusion":"retained-deferred-input","finalDisposition":"Retain Deferred Input","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A06":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
     "DOC-A07":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
     "DOC-A08":{"initialState":"Pending","transitionState":"Migrated","uniqueValueConclusion":"retained-active-navigation","finalDisposition":"Retain Active Navigation","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
     "DOC-A09":{"initialState":"Pending","transitionState":"Migrated","uniqueValueConclusion":"retained-active-navigation","finalDisposition":"Retain Active Navigation","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
@@ -106,6 +106,12 @@
     "DOC-A25":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
     "DOC-A26":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
     "DOC-A27":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"}
+  },
+  "s6D5IndependentReviewStatus": "ready-owner-accepted",
+  "s6D5DecisionById": {
+    "DOC-A04":{"stateHistory":["Pending","Migrating","Migrated","Reviewed"],"verifiedCurrentFact":"no-not-current-authority","durableDecision":"no-future-input-only","unfinishedApprovedWork":"no-approved-work-separate-authorization-required","executedEvidence":"no","stableHistoricalLocator":"yes-deferred-design-input","rationaleForRetainedAuthority":"yes-future-options-and-constraints","owner":"Project Owner","foundationFreeze":"active-until-separate-post-foundation-authorization","nonAuthorizing":true,"successor":"docs/roadmap/architecture-foundation-plan.md#post-foundation-subagent-concurrency-deferred-tracker"},
+    "DOC-A05":{"stateHistory":["Pending","Migrating","Migrated","Reviewed"],"verifiedCurrentFact":"no-not-current-authority","durableDecision":"no-future-input-only","unfinishedApprovedWork":"no-approved-work-separate-authorization-required","executedEvidence":"no","stableHistoricalLocator":"yes-deferred-design-input","rationaleForRetainedAuthority":"yes-future-options-and-constraints","owner":"Project Owner","foundationFreeze":"active-until-separate-post-foundation-authorization","nonAuthorizing":true,"successor":"docs/roadmap/architecture-foundation-plan.md#post-foundation-subagent-concurrency-deferred-tracker"},
+    "DOC-A06":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-already-in-current","durableDecision":"no-implementation-complete","unfinishedApprovedWork":"no-owner-confirmed-closed","executedEvidence":"no-preserved-in-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"}
   },
   "referenceAudit": {
     "governanceLedgers": [
@@ -177,7 +183,7 @@
       "durableDecisionAuthority": ["docs/architecture/runtime-composition-module-spec.md", "docs/architecture/adr-005-extension-registry-runtime-composition.md"],
       "unfinishedWorkSuccessor": [],
       "evidenceSuccessor": ["src/runtime/", "src/architecture-fitness/ft-10-runtime-composition-deletion.test.ts"],
-      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/current/core_model_resolution.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/core-subagent-v2-spec.md","docs/architecture/current/core_runner.md","docs/architecture/current/core_tools.md","docs/architecture/current/core_tools_builtin.md","docs/architecture/current/overview.md","docs/architecture/v1.0/runtime-changes.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/current/core_model_resolution.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/core-subagent-evolution-proposal.md","docs/architecture/core-subagent-v2-spec.md","docs/architecture/current/core_runner.md","docs/architecture/current/core_tools.md","docs/architecture/current/core_tools_builtin.md","docs/architecture/current/overview.md","docs/architecture/v1.0/runtime-changes.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Retain Current Authority",
       "validationEvidence": ["Runtime unit/contract/integration tests", "CH-01/02/05-10/12", "FT-01/05/07/08/10"]
     },
@@ -189,7 +195,7 @@
       "durableDecisionAuthority": ["docs/architecture/adr-001-tool-result-closure-and-recovery.md", "docs/architecture/adr-002-context-budgeting-and-compaction-recovery.md"],
       "unfinishedWorkSuccessor": [],
       "evidenceSuccessor": ["src/core/runner/", "src/core/runner/AgentRunner.test.ts"],
-      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/adr-002-context-budgeting-and-compaction-recovery.md","docs/architecture/core-subagent-spec.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/core-subagent-v2-spec.md","docs/architecture/current/overview.md","docs/architecture/current/runtime.md","docs/architecture/v1.0/adapters-channel-design.md","docs/architecture/v1.0/core-runner-changes.md","docs/architecture/v1.0/core-runner-design.md","docs/architecture/v1.0/runtime-changes.md","docs/architecture/v1.0/runtime-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/adr-002-context-budgeting-and-compaction-recovery.md","docs/architecture/core-subagent-spec.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/core-subagent-evolution-proposal.md","docs/architecture/core-subagent-v2-spec.md","docs/architecture/current/overview.md","docs/architecture/current/runtime.md","docs/architecture/v1.0/adapters-channel-design.md","docs/architecture/v1.0/core-runner-changes.md","docs/architecture/v1.0/core-runner-design.md","docs/architecture/v1.0/runtime-changes.md","docs/architecture/v1.0/runtime-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Retain Current Authority",
       "validationEvidence": ["Runner unit/contract tests", "CH-02-04/11/13", "FT-03/08"]
     },
@@ -355,11 +361,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": [],
       "durableDecisionAuthority": ["docs/architecture/subagent-model-resolution-module-spec.md"],
-      "unfinishedWorkSuccessor": ["docs/roadmap/architecture-foundation-plan.md", "future accepted Subagent Plan/Spec"],
-      "evidenceSuccessor": ["Slice 2 Results/test mapping"],
-      "inbound": {"activeDocs":["docs/architecture/target-architecture.md"],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "unfinishedWorkSuccessor": ["docs/roadmap/architecture-foundation-plan.md#post-foundation-subagent-concurrency-deferred-tracker"],
+      "evidenceSuccessor": ["deferred design alternatives only; no executed evidence"],
+      "inbound": {"activeDocs":["docs/architecture/target-architecture.md","docs/roadmap/architecture-foundation-plan.md"],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Retain Deferred Input",
-      "validationEvidence": ["Owner future-work decision", "Foundation freeze audit"]
+      "validationEvidence": ["2026-09-09 Owner retain-deferred decision", "explicit non-authorizing metadata", "Foundation freeze and successor audit"]
     },
     {
       "id": "DOC-A05",
@@ -367,11 +373,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": [],
       "durableDecisionAuthority": ["docs/architecture/subagent-model-resolution-module-spec.md"],
-      "unfinishedWorkSuccessor": ["future accepted Subagent Plan/Spec"],
-      "evidenceSuccessor": ["Slice 2 Results/test mapping"],
-      "inbound": {"activeDocs":["docs/architecture/target-architecture.md"],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "unfinishedWorkSuccessor": ["docs/roadmap/architecture-foundation-plan.md#post-foundation-subagent-concurrency-deferred-tracker"],
+      "evidenceSuccessor": ["deferred concurrency design only; no executed evidence"],
+      "inbound": {"activeDocs":["docs/architecture/target-architecture.md","docs/roadmap/architecture-foundation-plan.md"],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Retain Deferred Input",
-      "validationEvidence": ["Owner future-work decision", "non-authorizing status audit"]
+      "validationEvidence": ["2026-09-09 Owner retain-deferred decision", "explicit non-authorizing metadata", "Foundation freeze and successor audit"]
     },
     {
       "id": "DOC-A06",
@@ -379,11 +385,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/core_runner.md"],
       "durableDecisionAuthority": [],
-      "unfinishedWorkSuccessor": ["owner Plan-or-reject decision in S6-D5"],
-      "evidenceSuccessor": ["src/core/runner/AgentRunner.test.ts", "Git history"],
-      "inbound": {"activeDocs":["docs/architecture/target-architecture.md"],"candidateDocs":[],"productionSource":[],"tests":["src/core/runner/AgentRunner.test.ts"],"scripts":[],"clients":[]},
+      "unfinishedWorkSuccessor": ["closed by Owner in S6-D5: explicit TurnContext implementation is complete"],
+      "evidenceSuccessor": ["docs/architecture/current/core_runner.md#10-event-emit-机制", "src/core/runner/AgentRunner.ts", "src/core/runner/AgentRunner.test.ts", "Git history"],
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Runner source/test audit", "Owner unfinished-work decision"]
+      "validationEvidence": ["2026-09-09 Owner implementation-closed decision", "Runner source/test audit", "inbound-link audit", "S6-D5 six-question unique-value review"]
     },
     {
       "id": "DOC-A07",
@@ -417,7 +423,7 @@
       "durableDecisionAuthority": [],
       "unfinishedWorkSuccessor": [],
       "evidenceSuccessor": ["production capability source/tests", "Slice 1-5 validation records"],
-      "inbound": {"activeDocs":["README.md","docs/README.md","docs/architecture/target-architecture.md"],"candidateDocs":[],"productionSource":[],"tests":["src/architecture-fitness/ft-11-document-disposition.test.ts"],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":["README.md","docs/README.md","docs/architecture/target-architecture.md"],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Retain Active Navigation",
       "validationEvidence": ["capability source/test audit", "dated-summary link audit"]
     },

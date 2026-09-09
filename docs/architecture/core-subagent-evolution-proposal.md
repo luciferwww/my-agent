@@ -1,9 +1,13 @@
 # Subagent 演进建议
 
 > 文档日期：2026-08-28
-> 状态：**PROPOSAL**（建议稿，尚未批准为实施 Spec）
-> 适用基线：Subagent v1 已实现，用户主动 Abort 已实现，Subagent v2 并发 Spec 尚未实现
-> 关联文档：`core-subagent-spec.md` · `current/runtime.md` · `core-subagent-v2-spec.md` · `core-abort-spec.md`
+> Authority role：**Deferred Input — Non-authorizing**
+> Owner：**Project Owner**
+> Freeze：Architecture Foundation closeout 完成前保持冻结；完成 closeout 也不会自动授权实施
+> Successor：[Post-Foundation Subagent Concurrency Deferred Tracker](../roadmap/architecture-foundation-plan.md#post-foundation-subagent-concurrency-deferred-tracker)
+> Supersession：未来只有经 Project Owner 接受的新 Plan/Spec 可以 supersede 本输入
+> Current facts：以 [Current Runtime](current/runtime.md) 与 [Current Runner](current/core_runner.md) 为准；本文的基线描述只代表 2026-08-28 快照
+> 状态：原 `PROPOSAL` 经 S6-D5 Review 后保留为 Deferred Input，不是 Accepted Spec、Active Plan 或 production implementation authorization
 
 ---
 
@@ -18,7 +22,7 @@
 5. Background、Fork、Handoff 和 Agent Team 应如何取舍；
 6. 各阶段的预估实现成本和风险。
 
-本文不修改现有实现契约。若接受本文路线，应先修订 `core-subagent-v2-spec.md`，再进入代码实施。
+本文不修改现有实现契约。任何未来路线必须进入上述 successor，重新按当前架构形成并接受新 Plan/Spec；不得直接据本文或旧 v2 Spec 实施。
 
 ---
 
