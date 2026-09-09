@@ -10,7 +10,7 @@
 - **关联 ADR / Spec：** [ADR-003](adr-003-progressive-architecture-migration.md)、[ADR-006](adr-006-legacy-and-compatibility-exit.md)、[Target Architecture](target-architecture.md)、[Legacy Migration Inventory](legacy-migration-inventory.md)
 - **证据输入：** [Development Workflow](../development-workflow.md)、[Capability Inventory](../agent-capabilities.md)、[FT-09 Documentation Governance](../../src/architecture-fitness/ft-09-doc-governance.test.ts)、Slice 1–5 已完成 Specs、production source、tests 与 Git history
 
-本 Spec 遵循 [Development Workflow](../development-workflow.md)。项目所有者于 2026-09-09 接受完整 Spec v0.3，随后分别授权 non-deleting S6-D1 与 S6-D2 Current Architecture Delivery。S6-D2 实施审查发现原固定 13-page 结构遗漏当前 `core/model-resolution` 与 `core/media` ownership；项目所有者明确要求新结构以当前架构边界和读者需求为准，不迁就旧文档，并批准 v0.4 结构修订。S6-D3–D8、API-M04、其他 production code 修改、dependency 安装、commit 和 push 仍分别需要明确授权。
+本 Spec 遵循 [Development Workflow](../development-workflow.md)。项目所有者于 2026-09-09 接受完整 Spec v0.3，随后分别授权 non-deleting S6-D1、S6-D2 Current Architecture 与 S6-D3 Active Navigation Delivery。S6-D2 实施审查发现原固定 13-page 结构遗漏当前 `core/model-resolution` 与 `core/media` ownership；项目所有者明确要求新结构以当前架构边界和读者需求为准，不迁就旧文档，并批准 v0.4 结构修订。S6-D4–D8、API-M04、其他 production code 修改、dependency 安装、commit 和 push 仍分别需要明确授权。
 
 ## 1. 目的与用户可观察结果
 
@@ -456,6 +456,8 @@ S6-D1 is the first separately authorized Document Delivery batch, not a pre-acce
 
 **Exit:** DOC-A08/A09 are active navigation only; no active index recommends candidate design as Current.
 
+**Delivery status（2026-09-09）：** `Completed — Owner Accepted`。Root README、Documentation Index 与 dated non-authoritative Capability Summary 已围绕 canonical Current Architecture 和 authority roles 重写；旧 design-first active navigation 已移除。Manifest 仅推进 DOC-A08/A09 为 `Migrated` / `Retain Active Navigation`，保留 DOC-C01–C13 的既有状态；其余 37 个 candidates 仍为 `Pending`，API-M04 仍为 separate unauthorized gate。FT-11 现接受 S6-D3 phase、锁定该 state boundary，并通过 canonical multi-syntax reference audit 阻止三个 active-navigation pages 链接 pending candidates。Focused FT-11/FT-12 8/8、FT-01–FT-12 34/34、editor diagnostics、lint、build、JSON、link、scope 和 `git diff --check` validation 全部通过；independent review 的一项 Medium parser-coverage finding 已修正，最终 re-review 为 `Ready`，无 unresolved Critical/High/Medium blocker。项目所有者于 2026-09-09 接受 S6-D3；该验收不授权 checkpoint commit/push、S6-D4 或 API-M04 Delivery。
+
 ### S6-D4 Root candidate extraction
 
 - process DOC-A01–A03 and A07, A10–A27;
@@ -564,7 +566,8 @@ Validation is incremental. The first substantive change in each batch receives t
 - [x] project owner accepts the complete Spec v0.3（2026-09-09）;
 - [x] project owner separately authorizes non-deleting S6-D1 Document Delivery（2026-09-09）;
 - [x] project owner separately authorizes S6-D2 Current Architecture Delivery（2026-09-09）;
-- [ ] project owner separately authorizes S6-D3 or later candidate-document Delivery;
+- [x] project owner separately authorizes S6-D3 Active Navigation Delivery（2026-09-09）;
+- [ ] project owner separately authorizes S6-D4 or later candidate-document Delivery;
 - [ ] API-M04 public-contract Delivery receives separate authorization if included.
 
 ## 17. Definition of Done
@@ -596,4 +599,7 @@ Validation is incremental. The first substantive change in each batch receives t
 - **2026-09-09 — S6-D2 v0.4 validation and review:** completed the 15-page Current surface and dynamic module-coverage Fitness. Corrected review findings in Model Resolution, Media, Tool conversion, Runtime approval, Runner events/Abort ordering, Prompt evidence, and Channel correlation/async delivery. Focused/full Architecture Fitness, diagnostics, lint, build, JSON, links/anchors, candidate/API isolation and diff checks passed; final independent acceptance check found no unresolved Critical/High/Medium blocker.
 - **2026-09-09 — S6-D2 v0.4 owner acceptance:** project owner accepted the current-boundary documentation structure and S6-D2 validation evidence. S6-D2 is complete. This acceptance does not authorize commit, push, S6-D3 or API-M04 Delivery.
 - **2026-09-09 — S6-D2 checkpoint / S6-D3 authorization:** project owner separately authorized committing and pushing the accepted S6-D2 checkpoint, then starting S6-D3 Active Navigation. API-M04 Delivery remains unauthorized.
-- **Next:** create and push the S6-D2 checkpoint, then deliver S6-D3. Do not start API-M04 or later candidate closeout without separate authorization.
+- **2026-09-09 — S6-D3 delivery and review:** rewrote Root README, Documentation Index and Capability Summary around canonical Current Architecture and authority roles; advanced only DOC-A08/A09; added S6-D3 state-boundary and active-navigation Fitness. Focused/full Architecture Fitness, diagnostics, lint, build, JSON, links, scope and diff checks passed. The independent review's Medium link-parser finding was corrected by reusing the canonical FT-11 reference audit; final re-review found no unresolved Critical/High/Medium blocker. S6-D3 remains `In Review — Awaiting Owner Acceptance`.
+- **2026-09-09 — S6-D3 owner acceptance:** project owner accepted the active-navigation structure and S6-D3 validation evidence. S6-D3 is complete. This acceptance does not authorize commit, push, S6-D4 or API-M04 Delivery.
+- **2026-09-09 — Remaining delivery authorization:** project owner separately authorized the S6-D3 checkpoint commit/push, sequential S6-D4–D8 Delivery, and API-M04 Delivery. Each batch still requires its own validation, independent review and owner acceptance before its checkpoint; authorization does not permit combining unrelated document and API changes in one checkpoint.
+- **Next:** create and push the S6-D3 checkpoint, then begin S6-D4 Root Candidate Extraction. Process S6-D5–D8 and API-M04 only in their planned sequence and isolated scopes.

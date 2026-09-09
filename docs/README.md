@@ -1,114 +1,101 @@
 # Documentation
 
-This directory is grouped by document purpose rather than by module.
+Documentation is organized by authority role. For implemented architecture, always begin with [Current Architecture](architecture/current/overview.md); topic pages linked from that overview own the detailed current facts.
 
-## Conventions
+## Governance
 
-- Manual integration and smoke scripts live under `scripts/`.
-- These scripts are intended to be run directly via `npx tsx scripts/<name>.ts` when needed.
-- They are not exposed as `package.json` scripts unless they become stable, frequently used project workflows.
+- [Development Workflow](development-workflow.md) — authoritative work classification, approval, validation, review, and completion process
+- [Contributing](../CONTRIBUTING.md) — setup and contributor entry point
+- [Architecture Principles](architecture/architecture-principles.md)
+- [Domain Glossary](architecture/domain-glossary.md)
+- [Coding Standards](architecture/coding-standards.md)
+- [Target Architecture](architecture/target-architecture.md) — accepted target direction, not current implementation status
+- [Legacy Migration Inventory](architecture/legacy-migration-inventory.md) — cross-Slice migration ledger
+- [Slice 6 Documentation and Legacy Closeout Spec](architecture/slice-6-documentation-legacy-closeout-spec.md)
 
-## Development Governance
+## Current Architecture
 
-- [Development Workflow](development-workflow.md) — authoritative work classification, approval, readiness, validation, review, and completion rules
-- [Contributing](../CONTRIBUTING.md) — concise setup and contribution entry point
+[Current Architecture Overview](architecture/current/overview.md) is the sole current entry point. Its topic set follows live module boundaries rather than older document structure:
+
+- [Runtime](architecture/current/runtime.md)
+- [Runner](architecture/current/core_runner.md)
+- [Model Resolution](architecture/current/core_model_resolution.md)
+- [Channel](architecture/current/adapter_channel.md)
+- [Media](architecture/current/core_media.md)
+- [Configuration](architecture/current/platform_config.md)
+- [Model Invocation and Provider Adapter](architecture/current/adapter_llm.md)
+- [Tools](architecture/current/core_tools.md)
+- [Builtin Tools](architecture/current/core_tools_builtin.md)
+- [Session](architecture/current/core_session.md)
+- [Prompt](architecture/current/core_prompt.md)
+- [Memory](architecture/current/core_memory.md)
+- [Workspace](architecture/current/core_workspace.md)
+- [Observability](architecture/current/platform_logger.md)
+
+The [Capability Summary](agent-capabilities.md) is a dated reader-facing summary, not architecture authority.
+
+## Architecture Decisions
+
+- [ADR-001 Tool Result Closure and Recovery](architecture/adr-001-tool-result-closure-and-recovery.md)
+- [ADR-002 Context Budgeting and Compaction Recovery](architecture/adr-002-context-budgeting-and-compaction-recovery.md)
+- [ADR-003 Progressive Architecture Migration](architecture/adr-003-progressive-architecture-migration.md)
+- [ADR-004 Provider/Model Identity and Facts Ownership](architecture/adr-004-provider-model-identity-and-facts-ownership.md)
+- [ADR-005 Extension Registry and Runtime Composition](architecture/adr-005-extension-registry-runtime-composition.md)
+- [ADR-006 Legacy and Compatibility Exit](architecture/adr-006-legacy-and-compatibility-exit.md)
+
+## Contracts and Specs
+
+Each document's own status controls whether it is accepted, validated, implemented, or still an input.
+
+- [Model Resolution Module Spec](architecture/model-resolution-module-spec.md)
+- [Subagent Model Resolution Module Spec](architecture/subagent-model-resolution-module-spec.md)
+- [Runtime Composition Module Spec](architecture/runtime-composition-module-spec.md)
+- [Tool/Hook Module Spec](architecture/tool-hook-module-spec.md)
+- [Core Subagent Spec](architecture/core-subagent-spec.md)
+- [Core Runner Turn Flow Spec](architecture/core-runner-turn-flow-spec.md)
+- [Core Abort Spec](architecture/core-abort-spec.md)
+- [Channel Module Spec](architecture/channel-module-spec.md)
+- [Approval Lifecycle Spec](architecture/approval-lifecycle-spec.md)
+- [Multi-client User Message Spec](architecture/channel-multi-client-user-message-spec.md)
+- [Attachments Support Spec](architecture/attachments-support-spec.md)
+- [Platform Config Restructure Spec](architecture/platform-config-restructure-spec.md)
+
+## Plans and Roadmap
+
+- [Architecture Foundation Plan](roadmap/architecture-foundation-plan.md)
+- [AF-03 Target Architecture Plan](roadmap/af-03-target-architecture-plan.md)
+- [AF-04 Characterization and Fitness Plan](roadmap/af-04-characterization-fitness-plan.md)
+
+Plans own unfinished work and sequencing. They do not override verified Current Architecture.
+
+## Results and Execution Evidence
+
+- [AF-05 Provider/Model Resolution Spike Results](architecture/af-05-provider-model-resolution-spike-results.md)
+- [AF-06 Extension Framework Spike Results](architecture/af-06-extension-framework-spike-results.md)
+- [AF-05 Spike Spec](architecture/af-05-provider-model-resolution-spike-spec.md)
+- [AF-06 Spike Spec](architecture/af-06-extension-framework-spike-spec.md)
+- [AF-07 Architecture Decision Spec](architecture/af-07-architecture-decision-spec.md)
+
+Executed Results and tests are evidence; they are not a second Current Architecture.
+
+## Historical and Deferred Material
+
+Historical and deferred artifacts remain non-current. Their retained locators and final dispositions are governed by the [Legacy Migration Inventory](architecture/legacy-migration-inventory.md) and [Slice 6 Spec](architecture/slice-6-documentation-legacy-closeout-spec.md). Candidate design or implementation records must not be used as current implementation guidance.
+
+## Analysis
+
+External comparisons and research inputs are non-authoritative for this repository:
+
+- [Claude Code Subagent Analysis](analysis/claude-code-subagent-analysis.md)
+- [Subagent Systems Overview](analysis/subagent-systems-overview.md)
+
+## Templates
+
 - [ADR Template](templates/adr-template.md)
 - [Module Spec Template](templates/module-spec-template.md)
 - [Spike Spec Template](templates/spike-spec-template.md)
 - [Spike Results Template](templates/spike-results-template.md)
 
-## Recommended Reading Order
+## Manual scripts
 
-For a high-level understanding of the existing design documentation, start with the runtime assembly view and then drill down into the main runtime modules. Check each document's own status before treating it as verified current fact.
-
-1. [Runtime / App Assembly Design](architecture/runtime-design.md)
-2. [Agent Runner Design](architecture/core-runner-design.md)
-3. [Prompt Builder Design](architecture/core-prompt-design.md)
-4. [Workspace Design](architecture/core-workspace-design.md)
-5. [Tools Design](architecture/core-tools-design.md)
-6. [Session Design](architecture/core-session-design.md)
-
-Examples:
-
-```bash
-npx tsx scripts/test-exec-platform-shell.ts
-npx tsx scripts/test-exec-background.ts
-npx tsx scripts/test-exec-yield.ts
-npx tsx scripts/test-exec-timeout-tree.ts
-npx tsx scripts/test-exec-abort-tree.ts
-npx tsx scripts/test-process-kill.ts
-npx tsx scripts/test-process-kill-no-output.ts
-npx tsx scripts/test-process-kill-after-exit.ts
-npx tsx scripts/test-process-kill-race.ts
-npx tsx scripts/test-process-kill-tree.ts
-npx tsx scripts/test-process-kill-yield-tree.ts
-npx tsx scripts/test-process-list-lifecycle.ts
-```
-
-## Architecture
-
-Current implementation facts, accepted architecture constraints, design baselines, Specs, and related implementation records. A document's own status determines its authority; this directory is not yet a single verified Current Architecture.
-
-- [Architecture Principles](architecture/architecture-principles.md)
-- [Domain Glossary](architecture/domain-glossary.md)
-- [Target Architecture](architecture/target-architecture.md) — accepted target boundaries, ownership, runtime flows, lifecycle, and migration constraints; not current implementation status
-- [ADR-001 Tool Result Closure and Recovery](architecture/adr-001-tool-result-closure-and-recovery.md) — accepted controlled-Abort closure and crash-repair boundary; production migration remains pending
-- [ADR-002 Context Budgeting and Compaction Recovery](architecture/adr-002-context-budgeting-and-compaction-recovery.md) — accepted Provider-owned model-limit, budgeting, Compaction acceptance, and overflow-recovery boundary; production migration remains pending
-- [AF-05 Provider/Model Resolution Spike Spec](architecture/af-05-provider-model-resolution-spike-spec.md) — accepted disposable experiment boundary and evidence matrix; production migration remains pending
-- [AF-05 Provider/Model Resolution Spike Results](architecture/af-05-provider-model-resolution-spike-results.md) — completed disposable Spike record; Owner-accepted `Provisional Pass` supports the scoped Provider/Model hypotheses, while production migration remains pending
-- [AF-06 Extension Framework Spike Spec](architecture/af-06-extension-framework-spike-spec.md) — accepted disposable experiment boundary for Extension composition, immutable Snapshot, dynamic lifecycle, and failure containment; disposable execution authorized on 2026-09-03
-- [AF-06 Extension Framework Spike Results](architecture/af-06-extension-framework-spike-results.md) — completed disposable Spike record; Owner-accepted `Provisional Pass` supports the scoped Extension Framework hypotheses, while production migration remains pending
-- [AF-07 Architecture Decision Spec](architecture/af-07-architecture-decision-spec.md) — completed boundary and acceptance record for the four evidence-backed Architecture Foundation ADRs; production work remains pending
-- [ADR-003 Progressive Architecture Migration](architecture/adr-003-progressive-architecture-migration.md) — accepted decision to migrate through bounded Slices instead of maintaining a rewrite or permanent dual authority
-- [ADR-004 Provider/Model Identity and Facts Ownership](architecture/adr-004-provider-model-identity-and-facts-ownership.md) — accepted ownership boundary for Provider/Model identity, facts, policy, and per-Turn resolution
-- [ADR-005 Extension Registry and Runtime Composition](architecture/adr-005-extension-registry-runtime-composition.md) — accepted unified Extension/Module staging, immutable Snapshot, Runtime Composition, and instance lifecycle boundary
-- [ADR-006 Legacy and Compatibility Exit](architecture/adr-006-legacy-and-compatibility-exit.md) — accepted authority-based Legacy classification and time-bounded one-way Compatibility policy
-- [Legacy Migration Inventory](architecture/legacy-migration-inventory.md) — accepted inventory with completed Slice 1 dispositions and active remaining migration candidates
-- [Model Resolution Module Spec](architecture/model-resolution-module-spec.md) — validated Slice 1 Parent Turn resolution contract and delivery evidence
-- [Subagent Model Resolution Module Spec](architecture/subagent-model-resolution-module-spec.md) — validated Slice 2 native Child resolution, real-Parent, failure, and Legacy-exit contract
-- [Agent Runner Design](architecture/core-runner-design.md)
-- [Runtime / App Assembly Design](architecture/runtime-design.md)
-- [Config Design](architecture/platform-config-design.md)
-- [LLM Client Design](architecture/adapters-llm-design.md)
-- [Prompt Builder Design](architecture/core-prompt-design.md)
-- [Session Design](architecture/core-session-design.md)
-- [Compaction Design](architecture/core-runner-context-design.md)
-- [Memory Design](architecture/core-memory-design.md)
-- [Tools Design](architecture/core-tools-design.md)
-- [Builtin Tools Design](architecture/core-tools-builtin-design.md)
-- [Workspace Design](architecture/core-workspace-design.md)
-- [Exec / Process Flow Design](architecture/core-tools-builtin-exec-flow-design.md)
-- [Exec / Process Platform Runtime Design](architecture/core-tools-builtin-exec-runtime-design.md)
-- [Coding Standards](architecture/coding-standards.md)
-
-## Roadmap
-
-Planned evolution documents, adoption sequencing, and regression checklists for larger refactors.
-
-- [Architecture Foundation Plan](roadmap/architecture-foundation-plan.md) — accepted target-architecture, spike, migration, and legacy-exit plan
-- [AF-03 Target Architecture Execution Plan](roadmap/af-03-target-architecture-plan.md) — completed phase record and acceptance evidence for the Target Architecture
-- [AF-04 Characterization and Fitness Execution Plan](roadmap/af-04-characterization-fitness-plan.md) — completed Characterization, Fitness, and closure evidence record
-
-## Analysis
-
-Reference comparisons and design input; these docs are not the source of truth for this repository's implementation.
-
-- [Claude Code Subagent Analysis](analysis/claude-code-subagent-analysis.md)
-- [Subagent Systems Overview](analysis/subagent-systems-overview.md)
-
-
-## Local Collaboration Notes (Non-authoritative)
-
-These personal collaboration preferences do not define repository governance. The [Development Workflow](development-workflow.md) is authoritative when they differ.
-
-- Spec-driven development — write and confirm design docs before writing code.
-- Confirm before changes — discuss any modification first and only proceed after approval.
-- Coding standards — follow `coding-standards.md` when it exists in the current workspace.
-- Collaboration style — when you disagree, state your reasoning explicitly instead of agreeing just to accommodate.
-- Reviewer feedback — treat as suggestions, not directives. Verify facts, triage each item (accept/reject/modify) with reasoning, then apply only accepted changes. Do not blindly accept.
-- Commit messages — English only, no Chinese in commit subject or body. Applies to all repos.
-
-NOTE: These can be added to the user-level memory file, for example at:
-```
-%HOMEPATH%\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\memory-tool\memories\collaboration-preferences.md
-```
+Stable workflows are exposed through package scripts. Other smoke and integration scripts under `scripts/` run directly as `npx tsx scripts/<name>.ts`; consult the script header for its current contract.

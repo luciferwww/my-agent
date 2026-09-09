@@ -1,43 +1,50 @@
 # my-agent
 
-Personal AI Agent for learning purposes — exploring prompt building, workspace management, and agent architecture patterns.
+A single-process TypeScript AI Agent runtime for learning and architecture experimentation. It composes Provider, Tool, Prompt, Session, Memory, Channel, and lifecycle modules into generation-bound Agent Turns.
 
-## Project Structure
+## Requirements
 
-```
-src/
-├── workspace/              # Workspace initialization & context file loading
-├── prompt-builder/         # System & User prompt construction
-├── session/                # Session management (tree-shaped JSONL)
-├── llm-client/             # LLM API client (Anthropic SDK)
-├── tools/                  # Tool definitions, executor, builtin tools
-└── agent-runner/           # Agent execution engine (tool use loop)
-```
+- Node.js 22.x
+- npm
+- An Anthropic-compatible endpoint for the included local CLI/WebSocket entry points
 
-## Getting Started
-
-This project is pinned to Node 22, and npm will reject installs on other Node major versions.
+## Setup and validation
 
 ```bash
-nvm use
 npm install
+npm run lint
 npm run build
 npm test
 ```
 
+## Run local entry points
+
+Interactive CLI against `test-workspace/`:
+
+```bash
+npx tsx scripts/cli.ts --session=main
+```
+
+WebSocket channel on `ws://127.0.0.1:3001/ws` by default:
+
+```bash
+npm run agent:websocket
+```
+
+The browser client is [clients/html/chat.html](clients/html/chat.html). Generate or update configuration with:
+
+```bash
+npx tsx scripts/config.ts --path test-workspace/.agent/config.json
+```
+
+The executable scripts are verified repository entry points. A stable package-root library import is not currently documented as a public consumer contract.
+
 ## Documentation
 
-Design documents are grouped by purpose under the `docs/` directory. Start with [Documentation Index](docs/README.md).
+- [Current Architecture](docs/architecture/current/overview.md) — sole entry for verified current boundaries and flows
+- [Capability Summary](docs/agent-capabilities.md) — dated, non-authoritative product capability overview
+- [Documentation Index](docs/README.md) — governance, decisions, Specs, Plans, Results, and analysis by authority role
+- [Development Workflow](docs/development-workflow.md) — authoritative contribution and delivery process
+- [Contributing](CONTRIBUTING.md) — concise contributor entry point
 
-- [Development Workflow](docs/development-workflow.md)
-- [Contributing](CONTRIBUTING.md)
-- [Agent Runner Design](docs/architecture/core-runner-design.md)
-- [Runtime / App Assembly Design](docs/architecture/runtime-design.md)
-- [LLM Client Design](docs/architecture/adapters-llm-design.md)
-- [Prompt Builder Design](docs/architecture/core-prompt-design.md)
-- [Session Design](docs/architecture/core-session-design.md)
-- [Tools Design](docs/architecture/core-tools-design.md)
-- [Workspace Design](docs/architecture/core-workspace-design.md)
-- [OpenClaw Analysis](docs/analysis/openclaw/openclaw-analysis.md)
-- [OpenClaw Prompt System Deep Dive](docs/analysis/openclaw/openclaw-prompt-system-deep-dive.md)
-- [OpenClaw Context Files Flow](docs/analysis/openclaw/openclaw-contextfiles-flow.md)
+Current implementation facts belong to Current Architecture and source/tests. Older design, implementation, historical, and deferred documents are not alternative current authority.

@@ -117,7 +117,7 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
   });
   // FT11_FIXTURE_REFERENCES_END
 
-  it('locks 52 entries, exact inbound references, and the S6-D2-only Current migration', () => {
+  it('locks 52 entries, exact inbound references, and the S6-D3 migration boundary', () => {
     expect(findFt11DocumentDispositionViolations(
       manifest,
       expectedDocuments,
@@ -138,9 +138,14 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
       .every(([, state]) => state.transitionState === 'Migrated'
         && state.finalDisposition === 'Retain Current Authority')).toBe(true);
     expect(Object.entries(manifest.entryStateById)
-      .filter(([id]) => !id.startsWith('DOC-C'))
+      .filter(([id]) => !id.startsWith('DOC-C') && id !== 'DOC-A08' && id !== 'DOC-A09')
       .every(([, state]) => state.transitionState === 'Pending'
         && state.finalDisposition === null)).toBe(true);
+    expect(['DOC-A08', 'DOC-A09'].every((id) => {
+      const state = manifest.entryStateById[id];
+      return state?.transitionState === 'Migrated'
+        && state.finalDisposition === 'Retain Active Navigation';
+    })).toBe(true);
     expect(manifest.candidates.find((entry) => entry.id === 'DOC-V10')?.inbound).toMatchObject({
       productionSource: [
         'src/platform/config/wizard/diff.ts',
@@ -151,6 +156,25 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
       ],
       tests: ['src/architecture-fitness/ft-09-doc-governance.test.ts'],
     });
+  });
+
+  it('routes active navigation to Current Architecture without pending candidate links', () => {
+    const activeNavigation = ['README.md', 'docs/README.md', 'docs/agent-capabilities.md'];
+
+    for (const sourcePath of activeNavigation) {
+      const source = referenceSources.find((entry) => entry.path === sourcePath);
+      expect(source, `missing active navigation ${sourcePath}`).toBeDefined();
+    }
+    expect(actualReferences.candidates['DOC-C01']?.activeDocs).toEqual(
+      expect.arrayContaining(activeNavigation),
+    );
+
+    const pendingCandidateLinks = expectedDocuments
+      .filter((entry) => !entry.id.startsWith('DOC-C') && entry.id !== 'DOC-A08' && entry.id !== 'DOC-A09')
+      .flatMap((entry) => (actualReferences.candidates[entry.id]?.activeDocs ?? [])
+        .filter((sourcePath) => activeNavigation.includes(sourcePath))
+        .map((sourcePath) => `${sourcePath} -> ${entry.path}`));
+    expect(pendingCandidateLinks).toEqual([]);
   });
 
   it('requires local Markdown successor paths and fragments to resolve', () => {
