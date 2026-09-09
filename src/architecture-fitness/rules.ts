@@ -45,6 +45,126 @@ export interface GovernedDocument {
   category: string;
 }
 
+export type Ft11DocumentCategory = 'current-fact' | 'root-candidate' | 'v1.0-candidate';
+export type Ft11ProposedDisposition =
+  | 'Retain Current Authority'
+  | 'Retain Active Navigation'
+  | 'Retain Historical Authority'
+  | 'Retain Deferred Input'
+  | 'Delete After Migration';
+export type Ft11ReferenceCategory =
+  | 'activeDocs'
+  | 'candidateDocs'
+  | 'productionSource'
+  | 'tests'
+  | 'scripts'
+  | 'clients'
+  | 'governanceLedger';
+
+export interface Ft11InboundReferences {
+  activeDocs: string[];
+  candidateDocs: string[];
+  productionSource: string[];
+  tests: string[];
+  scripts: string[];
+  clients: string[];
+}
+
+export interface Ft11DispositionEntry {
+  id: string;
+  path: string;
+  category: Ft11DocumentCategory;
+  currentFactSuccessor: string[];
+  durableDecisionAuthority: string[];
+  unfinishedWorkSuccessor: string[];
+  evidenceSuccessor: string[];
+  inbound: Ft11InboundReferences;
+  proposedDisposition: Ft11ProposedDisposition;
+  validationEvidence: string[];
+}
+
+export interface Ft11DispositionManifest {
+  schemaVersion: number;
+  slice: string;
+  status: string;
+  capturedAt: string;
+  entryDefaults: {
+    initialState: string;
+    transitionState: string;
+    uniqueValue: {
+      verifiedCurrentFact: string;
+      durableDecision: string;
+      unfinishedApprovedWork: string;
+      executedEvidence: string;
+      stableHistoricalLocator: string;
+      rationaleForRetainedAuthority: string;
+      conclusion: string;
+    };
+    finalDisposition: null;
+    validation: {
+      status: string;
+      linkAudit: string;
+      fitness: string;
+      reviewerResult: string;
+    };
+    reviewer: {
+      name: null;
+      reviewedAt: null;
+      result: string;
+    };
+  };
+  entryStateById: Record<string, {
+    initialState: string;
+    transitionState: string;
+    uniqueValueConclusion: string;
+    finalDisposition: null;
+    validationStatus: string;
+    reviewerResult: string;
+  }>;
+  referenceAudit: {
+    governanceLedgers: string[];
+    excludedRoots: string[];
+    notes: string;
+  };
+  apiM04Baseline: Ft11ApiM04Baseline & {
+    externalConsumerDecision: string;
+    deliveryAuthorized: boolean;
+  };
+  candidates: Ft11DispositionEntry[];
+}
+
+export interface Ft11ExpectedDocument {
+  id: string;
+  path: string;
+  category: Ft11DocumentCategory;
+}
+
+export interface Ft11FrozenDocument extends Ft11ExpectedDocument {
+  proposedDisposition: Ft11ProposedDisposition;
+}
+
+export interface Ft11ReferenceSource extends SourceInput {
+  category: Ft11ReferenceCategory;
+}
+
+export interface Ft11DocumentReferenceAudit {
+  candidates: Record<string, Ft11InboundReferences>;
+  governanceLedgers: Record<string, string[]>;
+}
+
+export interface Ft11ApiM04ReferenceGroups {
+  productionSource: string[];
+  tests: string[];
+  scripts: string[];
+  barrelExports: string[];
+}
+
+export interface Ft11ApiM04Baseline {
+  status: string;
+  facadePathImports: Ft11ApiM04ReferenceGroups;
+  deprecatedAliasImports: Ft11ApiM04ReferenceGroups;
+}
+
 type Boundary = 'Application' | 'Domain/Application' | 'Infrastructure' | 'Composition' | 'Mixed';
 
 const MIXED_PRODUCTION_PATHS = new Set([
@@ -489,6 +609,345 @@ export function findFt08ContractInventoryViolations(
   }
 
   return diagnostics.sort();
+}
+
+const FT11_INBOUND_CATEGORIES = [
+  'activeDocs',
+  'candidateDocs',
+  'productionSource',
+  'tests',
+  'scripts',
+  'clients',
+] as const;
+
+const FT11_PROPOSED_DISPOSITIONS = new Set<Ft11ProposedDisposition>([
+  'Retain Current Authority',
+  'Retain Active Navigation',
+  'Retain Historical Authority',
+  'Retain Deferred Input',
+  'Delete After Migration',
+]);
+
+export function collectFt11DocumentReferenceAudit(
+  sources: Ft11ReferenceSource[],
+  candidates: Ft11ExpectedDocument[],
+): Ft11DocumentReferenceAudit {
+  const candidateByPath = new Map(candidates.map((candidate) => [candidate.path, candidate.id]));
+  const inbound = Object.fromEntries(candidates.map((candidate) => [
+    candidate.id,
+    Object.fromEntries(
+      FT11_INBOUND_CATEGORIES.map((category) => [category, []]),
+    ) as unknown as Ft11InboundReferences,
+  ]));
+  const governanceLedgers: Record<string, string[]> = {};
+
+  const record = (source: Ft11ReferenceSource, target: string): void => {
+    const id = candidateByPath.get(normalizePath(target));
+    if (!id) return;
+    if (source.category === 'governanceLedger') {
+      (governanceLedgers[source.path] ??= []).push(id);
+      return;
+    }
+    inbound[id]?.[source.category].push(source.path);
+  };
+
+  for (const source of sources) {
+    if (source.path.endsWith('.md')) {
+      const withoutCodeFences = source.content.replace(/^\s*```[\s\S]*?^\s*```\s*$/gm, '');
+      for (const match of withoutCodeFences.matchAll(/(?<!!)\[[^\]]*\]\(([^)]+)\)/g)) {
+        let destination = match[1]?.trim() ?? '';
+        if (destination.startsWith('<') && destination.includes('>')) {
+          destination = destination.slice(1, destination.indexOf('>'));
+        }
+        destination = destination.split(/\s+/)[0] ?? '';
+        if (
+          destination.length === 0
+          || /^(?:https?|ftp):/i.test(destination)
+          || destination.startsWith('//')
+          || /^(?:mailto|tel):/i.test(destination)
+        ) {
+          continue;
+        }
+        const linkedPath = destination.split('#')[0];
+        if (!linkedPath) continue;
+        record(source, posix.normalize(posix.join(posix.dirname(source.path), linkedPath)));
+      }
+      const referenceDefinitions = new Map<string, string>();
+      for (const match of withoutCodeFences.matchAll(/^\s*\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))/gm)) {
+        const label = match[1]?.trim().toLowerCase();
+        const destination = match[2] ?? match[3];
+        if (label && destination) referenceDefinitions.set(label, destination);
+      }
+      for (const match of withoutCodeFences.matchAll(/(?<!!)\[([^\]]+)\]\[([^\]]*)\]/g)) {
+        const label = (match[2] || match[1])?.trim().toLowerCase();
+        const destination = label ? referenceDefinitions.get(label) : undefined;
+        const linkedPath = destination?.split('#')[0];
+        if (linkedPath) {
+          record(source, posix.normalize(posix.join(posix.dirname(source.path), linkedPath)));
+        }
+      }
+      for (const match of withoutCodeFences.matchAll(/<a\s+[^>]*href=["']([^"']+)["'][^>]*>/gi)) {
+        const linkedPath = match[1]?.split('#')[0];
+        if (linkedPath && !/^(?:https?|ftp):/i.test(linkedPath)) {
+          record(source, posix.normalize(posix.join(posix.dirname(source.path), linkedPath)));
+        }
+      }
+      continue;
+    }
+
+    const normalizedContent = source.content.replaceAll('\\', '/');
+    const documentReference = /(?:\.\.\/|\.\/)*(docs\/(?:architecture\/)?[^\s"'`\])}]+\.md)/g;
+    for (const match of normalizedContent.matchAll(documentReference)) {
+      if (match[1]) record(source, posix.normalize(match[1]));
+    }
+  }
+
+  for (const references of Object.values(inbound)) {
+    for (const category of FT11_INBOUND_CATEGORIES) {
+      references[category] = [...new Set(references[category])].sort();
+    }
+  }
+  for (const [source, ids] of Object.entries(governanceLedgers)) {
+    governanceLedgers[source] = [...new Set(ids)].sort();
+  }
+
+  return { candidates: inbound, governanceLedgers };
+}
+
+export function collectFt11ApiM04Baseline(sources: SourceInput[]): Ft11ApiM04Baseline {
+  const deprecatedAliases = new Set(['ChatParams', 'LLMClient', 'StreamEvent']);
+  const baseline: Ft11ApiM04Baseline = {
+    status: 'separate-gate-not-authorized',
+    facadePathImports: emptyFt11ApiM04Groups(),
+    deprecatedAliasImports: emptyFt11ApiM04Groups(),
+  };
+
+  for (const source of sources) {
+    for (const reference of collectModuleReferences(source)) {
+      if (resolveRelativeModule(source.path, reference.specifier) !== 'src/adapters/llm/types.ts') {
+        continue;
+      }
+      const category = source.path === 'src/adapters/llm/index.ts'
+        ? 'barrelExports'
+        : source.path.startsWith('scripts/')
+          ? 'scripts'
+          : source.path.endsWith('.test.ts')
+            ? 'tests'
+            : 'productionSource';
+      baseline.facadePathImports[category].push(source.path);
+      if (reference.symbols.some((symbol) => deprecatedAliases.has(symbol))) {
+        baseline.deprecatedAliasImports[category].push(source.path);
+      }
+    }
+  }
+
+  for (const groups of [baseline.facadePathImports, baseline.deprecatedAliasImports]) {
+    for (const category of ['productionSource', 'tests', 'scripts', 'barrelExports'] as const) {
+      groups[category] = [...new Set(groups[category])].sort();
+    }
+  }
+  return baseline;
+}
+
+export function findFt11DocumentDispositionViolations(
+  manifest: Ft11DispositionManifest,
+  expectedDocuments: Ft11FrozenDocument[],
+  availablePaths: Set<string>,
+  actualReferences: Ft11DocumentReferenceAudit,
+  actualApiM04Baseline: Ft11ApiM04Baseline,
+): string[] {
+  const diagnostics: string[] = [];
+  const expectedById = new Map(expectedDocuments.map((document) => [document.id, document]));
+  const ids = manifest.candidates.map((entry) => entry.id);
+  const paths = manifest.candidates.map((entry) => entry.path);
+
+  if (manifest.schemaVersion !== 1) diagnostics.push('FT-11 manifest field=schemaVersion violation=invalid-value');
+  if (manifest.slice !== 'S6-D1') diagnostics.push('FT-11 manifest field=slice violation=invalid-value');
+  if (manifest.status !== 'baseline') diagnostics.push('FT-11 manifest field=status violation=invalid-value');
+  if (manifest.candidates.length !== expectedDocuments.length) {
+    diagnostics.push(`FT-11 manifest field=candidates expected=${expectedDocuments.length} actual=${manifest.candidates.length} violation=count-mismatch`);
+  }
+  if (new Set(ids).size !== ids.length) diagnostics.push('FT-11 manifest field=id violation=duplicate-entry');
+  if (new Set(paths).size !== paths.length) diagnostics.push('FT-11 manifest field=path violation=duplicate-entry');
+
+  const categoryCounts = manifest.candidates.reduce<Record<Ft11DocumentCategory, number>>(
+    (counts, entry) => ({ ...counts, [entry.category]: counts[entry.category] + 1 }),
+    { 'current-fact': 0, 'root-candidate': 0, 'v1.0-candidate': 0 },
+  );
+  for (const [category, expectedCount] of [
+    ['current-fact', 13],
+    ['root-candidate', 27],
+    ['v1.0-candidate', 12],
+  ] as const) {
+    if (categoryCounts[category] !== expectedCount) {
+      diagnostics.push(`FT-11 manifest field=category.${category} expected=${expectedCount} actual=${categoryCounts[category]} violation=count-mismatch`);
+    }
+  }
+
+  validateFt11Defaults(manifest, diagnostics);
+  validateFt11EntryStates(manifest, expectedDocuments, diagnostics);
+
+  for (const expected of expectedDocuments) {
+    if (!ids.includes(expected.id)) {
+      diagnostics.push(`FT-11 entry=${expected.id} violation=missing-entry`);
+    }
+  }
+
+  for (const entry of manifest.candidates) {
+    const expected = expectedById.get(entry.id);
+    if (!expected) {
+      diagnostics.push(`FT-11 entry=${entry.id} violation=unknown-entry`);
+      continue;
+    }
+    if (entry.path !== expected.path) {
+      diagnostics.push(`FT-11 entry=${entry.id} field=path expected=${expected.path} actual=${entry.path} violation=mismatch`);
+    }
+    if (entry.category !== expected.category) {
+      diagnostics.push(`FT-11 entry=${entry.id} field=category expected=${expected.category} actual=${entry.category} violation=mismatch`);
+    }
+    if (!availablePaths.has(entry.path)) {
+      diagnostics.push(`FT-11 entry=${entry.id} path=${entry.path} violation=missing-document`);
+    }
+    for (const field of [
+      'currentFactSuccessor',
+      'durableDecisionAuthority',
+      'unfinishedWorkSuccessor',
+      'evidenceSuccessor',
+      'validationEvidence',
+    ] as const) {
+      if (!Array.isArray(entry[field])) {
+        diagnostics.push(`FT-11 entry=${entry.id} field=${field} violation=missing-baseline-field`);
+      }
+    }
+    if (!Array.isArray(entry.validationEvidence) || entry.validationEvidence.length === 0) {
+      diagnostics.push(`FT-11 entry=${entry.id} field=validationEvidence violation=missing-evidence`);
+    }
+    if (!FT11_PROPOSED_DISPOSITIONS.has(entry.proposedDisposition)) {
+      diagnostics.push(`FT-11 entry=${entry.id} field=proposedDisposition violation=invalid-value`);
+    } else if (entry.proposedDisposition !== expected.proposedDisposition) {
+      diagnostics.push(`FT-11 entry=${entry.id} field=proposedDisposition expected=${expected.proposedDisposition} actual=${entry.proposedDisposition} violation=mismatch`);
+    }
+
+    const actualInbound = actualReferences.candidates[entry.id];
+    for (const category of FT11_INBOUND_CATEGORIES) {
+      if (!Array.isArray(entry.inbound?.[category])) {
+        diagnostics.push(`FT-11 entry=${entry.id} field=inbound.${category} violation=missing-baseline-field`);
+        continue;
+      }
+      const expectedReferences = actualInbound?.[category] ?? [];
+      if (!sameStringSet(entry.inbound[category], expectedReferences)) {
+        diagnostics.push(`FT-11 entry=${entry.id} field=inbound.${category} violation=reference-drift`);
+      }
+    }
+  }
+
+  const expectedIds = [...expectedById.keys()].sort();
+  if (!sameStringSet(manifest.referenceAudit.governanceLedgers, Object.keys(actualReferences.governanceLedgers))) {
+    diagnostics.push('FT-11 manifest field=referenceAudit.governanceLedgers violation=reference-drift');
+  }
+  for (const ledger of manifest.referenceAudit.governanceLedgers) {
+    if (!sameStringSet(actualReferences.governanceLedgers[ledger] ?? [], expectedIds)) {
+      diagnostics.push(`FT-11 ledger=${ledger} violation=incomplete-candidate-coverage`);
+    }
+  }
+  if (!sameFt11ApiM04Baseline(manifest.apiM04Baseline, actualApiM04Baseline)) {
+    diagnostics.push('FT-11 manifest field=apiM04Baseline violation=reference-drift');
+  }
+  if (
+    manifest.apiM04Baseline.externalConsumerDecision !== 'unresolved'
+    || manifest.apiM04Baseline.deliveryAuthorized !== false
+  ) {
+    diagnostics.push('FT-11 manifest field=apiM04Baseline violation=unauthorized-transition');
+  }
+
+  return diagnostics.sort();
+}
+
+function validateFt11Defaults(
+  manifest: Ft11DispositionManifest,
+  diagnostics: string[],
+): void {
+  const defaults = manifest.entryDefaults;
+  if (defaults.initialState !== 'Pending') diagnostics.push('FT-11 defaults field=initialState violation=invalid-value');
+  if (defaults.transitionState !== 'Pending') diagnostics.push('FT-11 defaults field=transitionState violation=premature-transition');
+  if (defaults.finalDisposition !== null) diagnostics.push('FT-11 defaults field=finalDisposition violation=premature-review');
+  for (const field of [
+    'verifiedCurrentFact',
+    'durableDecision',
+    'unfinishedApprovedWork',
+    'executedEvidence',
+    'stableHistoricalLocator',
+    'rationaleForRetainedAuthority',
+  ] as const) {
+    if (defaults.uniqueValue[field] !== 'unreviewed') {
+      diagnostics.push(`FT-11 defaults field=uniqueValue.${field} violation=premature-review`);
+    }
+  }
+  if (defaults.uniqueValue.conclusion !== 'not-reviewed') {
+    diagnostics.push('FT-11 defaults field=uniqueValue.conclusion violation=premature-review');
+  }
+  if (defaults.validation.reviewerResult !== 'not-reviewed') {
+    diagnostics.push('FT-11 defaults field=validation.reviewerResult violation=premature-review');
+  }
+  if (defaults.validation.status !== 'baseline-pending') {
+    diagnostics.push('FT-11 defaults field=validation.status violation=premature-review');
+  }
+  if (defaults.validation.linkAudit !== 'captured-not-migrated') {
+    diagnostics.push('FT-11 defaults field=validation.linkAudit violation=invalid-value');
+  }
+  if (defaults.validation.fitness !== 'required') {
+    diagnostics.push('FT-11 defaults field=validation.fitness violation=invalid-value');
+  }
+  if (
+    defaults.reviewer.name !== null
+    || defaults.reviewer.reviewedAt !== null
+    || defaults.reviewer.result !== 'not-reviewed'
+  ) {
+    diagnostics.push('FT-11 defaults field=reviewer violation=premature-review');
+  }
+}
+
+function validateFt11EntryStates(
+  manifest: Ft11DispositionManifest,
+  expectedDocuments: Ft11ExpectedDocument[],
+  diagnostics: string[],
+): void {
+  const expectedIds = expectedDocuments.map((document) => document.id);
+  if (!sameStringSet(Object.keys(manifest.entryStateById), expectedIds)) {
+    diagnostics.push('FT-11 manifest field=entryStateById violation=identity-drift');
+  }
+  for (const id of expectedIds) {
+    const state = manifest.entryStateById[id];
+    if (!state) continue;
+    if (state.initialState !== 'Pending') diagnostics.push(`FT-11 entry=${id} field=initialState violation=invalid-value`);
+    if (state.transitionState !== 'Pending') diagnostics.push(`FT-11 entry=${id} field=transitionState violation=premature-transition`);
+    if (state.uniqueValueConclusion !== 'not-reviewed') diagnostics.push(`FT-11 entry=${id} field=uniqueValueConclusion violation=premature-review`);
+    if (state.finalDisposition !== null) diagnostics.push(`FT-11 entry=${id} field=finalDisposition violation=premature-review`);
+    if (state.validationStatus !== 'baseline-pending') diagnostics.push(`FT-11 entry=${id} field=validationStatus violation=premature-review`);
+    if (state.reviewerResult !== 'not-reviewed') diagnostics.push(`FT-11 entry=${id} field=reviewerResult violation=premature-review`);
+  }
+}
+
+function emptyFt11ApiM04Groups(): Ft11ApiM04ReferenceGroups {
+  return { productionSource: [], tests: [], scripts: [], barrelExports: [] };
+}
+
+function sameFt11ApiM04Baseline(
+  recorded: Ft11ApiM04Baseline,
+  actual: Ft11ApiM04Baseline,
+): boolean {
+  if (recorded.status !== actual.status) return false;
+  for (const field of ['facadePathImports', 'deprecatedAliasImports'] as const) {
+    for (const category of ['productionSource', 'tests', 'scripts', 'barrelExports'] as const) {
+      if (!sameStringSet(recorded[field][category], actual[field][category])) return false;
+    }
+  }
+  return true;
+}
+
+function sameStringSet(left: string[], right: string[]): boolean {
+  return left.length === right.length
+    && [...left].sort().every((value, index) => value === [...right].sort()[index]);
 }
 
 export function findFt09DocumentGovernanceViolations(
