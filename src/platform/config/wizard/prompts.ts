@@ -3,7 +3,7 @@
 // 提供 Prompt<T> 类型、ask() 函数（含回车保留 / 重试循环）、
 // 通用 parser（string / number / boolean / enum / optional 字段清空）。
 //
-// 详见 docs/architecture/v1.0/platform-config-wizard-design.md §5。
+// Current contract: docs/architecture/current/platform_config.md#config-wizard
 
 import { createInterface, type Interface } from 'node:readline';
 

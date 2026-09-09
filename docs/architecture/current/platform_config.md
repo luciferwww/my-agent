@@ -80,15 +80,18 @@ deepMerge(target, source): merged copy
 The Wizard implementation is `src/platform/config/wizard/`; `scripts/config.ts` is a thin error/exit-code shell.
 
 ```text
-npx tsx scripts/config.ts [--path <file>] [--help|-h]
+npx tsx scripts/config.ts [--path <file>|--path=<file>] [--help|-h]
 ```
 
 - Default output is `<cwd>/config.json`; use `--path <workspace>/.agent/config.json` to target the Runtime configuration file.
+- `--help`/`-h` prints usage and returns normally. Unknown arguments, missing `--path` values, and empty `--path=` values throw `WizardArgError` with exit code 2; other runtime failures remain ordinary errors for the shell to report.
 - Existing JSON is loaded as prompt defaults. A missing file starts empty; invalid/non-object JSON is reported and treated as empty.
-- Core questions are followed by optional advanced questions.
-- `buildNextConfig()` schema-filters `agents.defaults` and `logger`, records discarded leaf paths, overlays collected values, and removes values equal to `DEFAULT_*`.
+- Core questions cover LLM connection/limits, Memory enablement, global Logger level, and File Logger enablement. Optional advanced groups cover Runner, Memory provider/model/chunk/search, Prompt safety, filesystem policy, Workspace limits, Compaction, and Console/File Logger levels. Conditions skip Memory, Compaction, or File Logger details when their controlling feature is disabled.
+- Enter preserves the displayed value. `--` clears a currently set optional field. Parser or validator failure prints an error and retries the same question.
+- Removed implementation-owned fields—embedding dimensions and File Logger directory/prefix/queue size—are not prompted or written.
+- `buildNextConfig()` schema-filters existing `agents.defaults` and `logger`, records discarded leaf paths, overlays collected values, removes values equal to `DEFAULT_*`, and removes empty objects.
 - Existing top-level content, including `agents.list`, is preserved unless the governed branch is rewritten.
-- A dry-run summary precedes the save prompt. Cancellation writes nothing.
+- The dry-run reports schema-discarded paths and prints the complete prospective JSON before asking to save. Cancellation writes nothing.
 - Saving an existing file first attempts `<path>.bak`; backup failure is reported but does not block the main write.
 - `runWizard()` never calls `process.exit`; argument errors use `WizardArgError`, and the shell selects the exit code.
 - The Wizard does not read environment variables, call Runtime loaders, or prove final Runtime assembly.
@@ -98,5 +101,5 @@ npx tsx scripts/config.ts [--path <file>] [--help|-h]
 | Kind | Evidence |
 |---|---|
 | Source | [types.ts](../../../src/platform/config/types.ts), [defaults.ts](../../../src/platform/config/defaults.ts), [loader.ts](../../../src/platform/config/loader.ts), [wizard/run-wizard.ts](../../../src/platform/config/wizard/run-wizard.ts), [wizard/diff.ts](../../../src/platform/config/wizard/diff.ts), [scripts/config.ts](../../../scripts/config.ts) |
-| Tests | [loader.test.ts](../../../src/platform/config/loader.test.ts), [wizard/diff.test.ts](../../../src/platform/config/wizard/diff.test.ts) |
+| Tests | [loader.test.ts](../../../src/platform/config/loader.test.ts), [wizard/fields.test.ts](../../../src/platform/config/wizard/fields.test.ts), [wizard/diff.test.ts](../../../src/platform/config/wizard/diff.test.ts) |
 | Controlling authority | [ADR-004](../adr-004-provider-model-identity-and-facts-ownership.md), [Model Resolution Module Spec](../model-resolution-module-spec.md), [Platform Config Restructure Spec](../platform-config-restructure-spec.md) |

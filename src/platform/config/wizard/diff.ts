@@ -5,7 +5,7 @@
 //   - diffAgainstDefaults  递归对比并 omit 等于 default 的字段
 //   - buildNextConfig  组合三步 + 顶层段保留 + {} 清理，产出最终 ConfigFile
 //
-// 详见 docs/architecture/v1.0/platform-config-wizard-design.md §8。
+// Current contract: docs/architecture/current/platform_config.md#config-wizard
 
 import { deepMerge } from '../loader.js';
 import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from '../defaults.js';

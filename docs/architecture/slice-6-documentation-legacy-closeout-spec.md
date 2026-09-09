@@ -311,20 +311,20 @@ The manifest is the review ledger, not a new architecture authority.
 
 | ID | Artifact | Successor / unique-value disposition | Proposed terminal disposition |
 |---|---|---|---|
-| DOC-V01 | [Channel Changes](v1.0/adapters-channel-changes.md) | facts → DOC-C04; retain only migration delta not reconstructible from Git/Results/tests | Retain Historical Authority, conditional on unique-value Gate |
-| DOC-V02 | [Channel Design](v1.0/adapters-channel-design.md) | facts → DOC-C04; contract → Channel Module Spec | Delete After Migration |
-| DOC-V03 | [Runner Changes](v1.0/core-runner-changes.md) | facts → DOC-C03; retain only non-reconstructible acceptance/delta evidence | Retain Historical Authority, conditional on unique-value Gate |
-| DOC-V04 | [Runner Design](v1.0/core-runner-design.md) | facts → DOC-C03; decisions → ADR-001/002 | Delete After Migration |
-| DOC-V05 | [Runner Message Flow](v1.0/core-runner-message-flow.md) | verified flow → DOC-C02/C03; evidence → steering/intake tests | Delete After Migration |
-| DOC-V06 | [FS Changes](v1.0/core-tools-fs-changes.md) | facts → DOC-C07/C08; retain only non-reconstructible migration evidence | Retain Historical Authority, conditional on unique-value Gate |
-| DOC-V07 | [FS Design](v1.0/core-tools-fs-design.md) | verified workspace-path contract → DOC-C07 and accepted Tool contract | Delete After Migration |
-| DOC-V08 | [Config Changes](v1.0/platform-config-changes.md) | facts → DOC-C05; retain only non-reconstructible migration evidence | Retain Historical Authority, conditional on unique-value Gate |
-| DOC-V09 | [Config Design](v1.0/platform-config-design.md) | source/precedence facts → DOC-C05; Model Facts → ADR-004 | Delete After Migration |
-| DOC-V10 | [Config Wizard Design](v1.0/platform-config-wizard-design.md) | verified Wizard section → DOC-C05; replace five production references; FT-09 zero | Delete After Migration |
-| DOC-V11 | [Runtime Changes](v1.0/runtime-changes.md) | facts → DOC-C02; retain only non-reconstructible queue/routing delta evidence | Retain Historical Authority, conditional on unique-value Gate |
-| DOC-V12 | [Runtime Design](v1.0/runtime-design.md) | facts → DOC-C02; contract → accepted Runtime Specs | Delete After Migration |
+| DOC-V01 | Channel Changes — `v1.0/adapters-channel-changes.md`（Deleted S6-D6） | facts → DOC-C04; Git commits 4afe30d/e62715a + tests reconstruct delta | Delete After Migration |
+| DOC-V02 | Channel Design — `v1.0/adapters-channel-design.md`（Deleted S6-D6） | facts → DOC-C04; contract → Channel Module Spec | Delete After Migration |
+| DOC-V03 | Runner Changes — `v1.0/core-runner-changes.md`（Deleted S6-D6） | facts → DOC-C03; decisions → ADR-001/002; Git commits 4afe30d/d1ae00c/e62715a reconstruct delta | Delete After Migration |
+| DOC-V04 | Runner Design — `v1.0/core-runner-design.md`（Deleted S6-D6） | facts → DOC-C03; decisions → ADR-001/002 | Delete After Migration |
+| DOC-V05 | Runner Message Flow — `v1.0/core-runner-message-flow.md`（Deleted S6-D6） | verified flow → DOC-C02/C03; evidence → steering/intake tests | Delete After Migration |
+| DOC-V06 | FS Changes — `v1.0/core-tools-fs-changes.md`（Deleted S6-D6） | facts → DOC-C07/C08; Git commit b22a19a/e62715a + tests reconstruct delta | Delete After Migration |
+| DOC-V07 | FS Design — `v1.0/core-tools-fs-design.md`（Deleted S6-D6） | verified workspace-path contract → DOC-C07/C08 and accepted Tool contract | Delete After Migration |
+| DOC-V08 | Config Changes — `v1.0/platform-config-changes.md`（Deleted S6-D6） | facts → DOC-C05; Git commits 0f32b18/8b19aa3/e62715a + tests reconstruct delta | Delete After Migration |
+| DOC-V09 | Config Design — `v1.0/platform-config-design.md`（Deleted S6-D6） | source/precedence facts → DOC-C05; Model Facts → ADR-004 | Delete After Migration |
+| DOC-V10 | Config Wizard Design — `v1.0/platform-config-wizard-design.md`（Deleted S6-D6） | verified Wizard contract → DOC-C05 `#config-wizard`; five production references and six FT-09 diagnostics removed | Delete After Migration |
+| DOC-V11 | Runtime Changes — `v1.0/runtime-changes.md`（Deleted S6-D6） | facts → DOC-C02; Git commits 4afe30d/d1ae00c/0f32b18/8b19aa3/e62715a + tests reconstruct delta | Delete After Migration |
+| DOC-V12 | Runtime Design — `v1.0/runtime-design.md`（Deleted S6-D6） | facts → DOC-C02; contract → accepted Runtime Specs | Delete After Migration |
 
-The five conditional Historical dispositions are not blanket retention. During Review each must prove specific evidence unavailable from Git history, Results or test mapping; failure to prove it changes the terminal disposition to `Delete After Migration` without changing this policy.
+The five conditional Historical dispositions were not blanket retention. S6-D6 evaluated each separately; none proved evidence unavailable from Git history, source or test mapping, so each terminal disposition became `Delete After Migration` without changing the original policy.
 
 ## 9. Inbound-link and Unique-value Gate
 
@@ -492,6 +492,10 @@ S6-D1 is the first separately authorized Document Delivery batch, not a pre-acce
 
 **Exit:** all 12 DOC-V entries reach reviewed terminal disposition; the DOC-V10 missing-successor diagnostic and all five Legacy-source-reference diagnostics are zero.
 
+**Owner disposition（2026-09-09）：** 项目所有者确认 DOC-V01–V12 全部删除；五个 conditional `*-changes.md` 均未证明 Git/source/tests 之外的独有 Historical value。DOC-V10 必须先把 verified Wizard contract 迁入 Current Config，并在本批修正审计发现的 obsolete schema prompts，再删除旧文档；该内容决策不等于 Delivery acceptance、checkpoint commit 或 push 授权。
+
+**Delivery status（2026-09-09）：** `Completed — Owner Accepted`。DOC-V01–V12 已分别完成 six-question Review 并达到 `Deleted`，五个 conditional change records 的 delta 均有明确 Git/source/test reconstructibility evidence；DOC-V10 successor-first sequence 已完成，五个 production comments 已改指 Current Config，obsolete Wizard prompts 已删除并由 regression test 锁定，FT-09 当前 Legacy diagnostics 为零。FT-09/11/12 + Wizard focused tests 33/33、FT-01–FT-12 34/34、full Vitest 819/819、editor diagnostics、lint、build、JSON、3 个新增相对链接、scope、API-M04 isolation、physical absence 和 `git diff --check` 全部通过。Independent review 接受并修正两类 governance weakness（FT-09 governed-text/bare-reference coverage 与 FT-11 frozen exact-successor baseline）及其 comment/string boundary follow-ups；最终 re-review 为 `Ready`，无 unresolved Critical/High/Medium/Low finding。项目所有者于 2026-09-09 接受 S6-D6；该验收不授权 checkpoint commit/push，也不授权或启动 API-M04 implementation。
+
 ### S6-D7 API-M04 removal — optional, separately authorized
 
 - execute §11 only after explicit authorization;
@@ -581,7 +585,7 @@ Validation is incremental. The first substantive change in each batch receives t
 - [ ] AC-DC-01..16 have evidence;
 - [ ] 52/52 candidates reach reviewed terminal disposition;
 - [ ] Current Architecture, active navigation and Capability Inventory are synchronized;
-- [ ] DOC-V10 known diagnostics reach zero;
+- [x] DOC-V10 known diagnostics reach zero（S6-D6）;
 - [ ] API-M04 is either removed under separate authorization or remains a fully governed Compatibility entry;
 - [ ] no active link treats a Legacy artifact as Current authority, no production source depends on a Legacy document for implementation behavior, and retained Historical/Deferred links are explicitly contextual with status/successor metadata;
 - [ ] document diagnostics, link/anchor audit, Fitness and `git diff --check` pass;
@@ -614,4 +618,8 @@ Validation is incremental. The first substantive change in each batch receives t
 - **2026-09-09 — S6-D5 owner disposition:** project owner retained DOC-A04/A05 as strict Deferred Inputs and confirmed DOC-A06's explicit `TurnContext` implementation closed the proposal. No new Plan was created for completed work; the existing Foundation Plan owns the only post-Foundation concurrency successor.
 - **2026-09-09 — S6-D5 delivery and review:** recorded Deferred metadata, removed DOC-A06 inbound authority and deleted it, then extended FT-11 to lock exact states, successor arrays and negative drift cases. Focused/full Fitness, Runner regression, diagnostics, lint, build, JSON, added-link, scope, API-isolation and diff checks passed. The initial Medium enforcement finding was fixed; final independent re-review was `Ready` with no finding. S6-D5 remains `In Review — Awaiting Owner Acceptance`.
 - **2026-09-09 — S6-D5 owner acceptance:** project owner accepted the strict Deferred boundary for DOC-A04/A05, the DOC-A06 implementation-closure/deletion evidence, and the validation results. S6-D5 is complete. This acceptance does not authorize checkpoint commit/push and does not combine S6-D6 or API-M04 implementation into this batch.
-- **Next:** obtain explicit authorization for the isolated S6-D5 checkpoint commit/push, then begin S6-D6 v1.0 and DOC-V10 Closeout under its existing sequential Delivery authorization.
+- **2026-09-09 — S6-D5 checkpoint / S6-D6 start:** commit `267acc2` (`docs: complete deferred input decisions`) was pushed to `origin/feature/refactoring`; the worktree was clean and synchronized. Project owner then approved starting S6-D6 under the existing sequential Delivery authorization, confirmed deletion of DOC-V01–V12, and approved correcting the DOC-V10 Wizard schema drift in this isolated batch.
+- **2026-09-09 — S6-D6 delivery and validation:** established the verified Current Config Wizard successor, removed obsolete schema prompts and Legacy source references, recorded per-entry six-question/Git reconstructibility outcomes, and deleted all twelve v1.0 candidates. Focused/full Fitness, full Vitest, diagnostics, lint, build, JSON, added-link, scope, API-isolation, physical-absence and diff checks passed. Independent review remains pending; S6-D6 is not yet presented for Owner acceptance.
+- **2026-09-09 — S6-D6 independent review:** accepted and fixed two Medium governance gaps in FT-09 scan coverage and FT-11 exact-successor independence, then hardened the historical-note exception across mixed code/comments, strings, escaped quotes, multiline block comments and templates. Each correction passed focused/full validation. The final independent re-review found no unresolved Critical/High/Medium/Low finding and returned `Ready`; S6-D6 is `In Review — Awaiting Owner Acceptance`.
+- **2026-09-09 — S6-D6 owner acceptance:** project owner accepted the twelve DOC-V deletion dispositions, DOC-V10 successor-first closeout, Wizard schema correction, governance strengthening and validation evidence. S6-D6 is complete. This acceptance does not authorize checkpoint commit/push and does not authorize or start API-M04 implementation.
+- **Next:** obtain explicit authorization for the isolated S6-D6 checkpoint commit/push. Only after that checkpoint is clean and synchronized may the next separately authorized batch be announced; do not combine API-M04 with this document checkpoint.

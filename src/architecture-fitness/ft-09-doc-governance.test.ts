@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   findFt09DocumentGovernanceViolations,
   findFt09LegacySourceReferences,
-  loadProductionSources,
+  loadFt09GovernedSources,
 } from './rules.js';
 import type { GovernedDocument, SourceInput } from './rules.js';
 
@@ -27,9 +27,7 @@ const ACTIVE_DOCUMENTS: GovernedDocument[] = [
   { path: 'docs/roadmap/af-03-target-architecture-plan.md', category: 'plan' },
   { path: 'docs/roadmap/af-04-characterization-fitness-plan.md', category: 'plan' },
 ];
-const LEGACY_DOCUMENTS: GovernedDocument[] = [
-  { path: 'docs/architecture/v1.0/platform-config-wizard-design.md', category: 'legacy' },
-];
+const LEGACY_DOCUMENTS: GovernedDocument[] = [];
 
 async function loadDocuments(root: string, governed: GovernedDocument[]): Promise<SourceInput[]> {
   const documents = await Promise.all(governed.map(async ({ path }) => {
@@ -63,25 +61,36 @@ describe('FT-09 documentation governance', () => {
       'FT-09 source=src/module.ts target=docs/architecture/v1.0/旧规范.md violation=legacy-source-reference',
       'FT-09 source=src/module.ts target=docs/legacy/旧规范.md violation=legacy-source-reference',
     ]);
+    expect(findFt09LegacySourceReferences([
+      { path: 'src/bare-reference.js', content: 'const guide = "docs/legacy/bare.md";' },
+      { path: 'clients/history.html', content: '<!-- Historical migration note: docs/legacy/old.md is not authoritative. -->' },
+      { path: 'scripts/mixed.js', content: 'const guide = "docs/legacy/live.md"; // Historical migration note: docs/legacy/old.md is not authoritative.' },
+      { path: 'src/comment-marker-string.ts', content: 'const value = "prefix // Historical migration note: docs/legacy/string-live.md is not authoritative.";' },
+      { path: 'src/closed-comment.ts', content: '/* Historical migration note: docs/legacy/old.md is not authoritative. */ const guide = "docs/legacy/block-live.md";' },
+      { path: 'src/comment-continuation.ts', content: '/*\n * Historical migration note: docs/legacy/old.md is not authoritative. */ const guide = "docs/legacy/continuation-live.md";' },
+      { path: 'src/multiline-template.ts', content: 'const value = `\n// Historical migration note: docs/legacy/template-live.md is not authoritative.\n`;' },
+      { path: 'src/escaped-quote.ts', content: 'const value = "prefix \\" // Historical migration note: docs/legacy/old.md is not authoritative.";\nconst guide = "docs/legacy/escaped-live.md";' },
+    ])).toEqual([
+      'FT-09 source=scripts/mixed.js target=docs/legacy/live.md violation=legacy-source-reference',
+      'FT-09 source=src/bare-reference.js target=docs/legacy/bare.md violation=legacy-source-reference',
+      'FT-09 source=src/closed-comment.ts target=docs/legacy/block-live.md violation=legacy-source-reference',
+      'FT-09 source=src/comment-continuation.ts target=docs/legacy/continuation-live.md violation=legacy-source-reference',
+      'FT-09 source=src/comment-marker-string.ts target=docs/legacy/string-live.md violation=legacy-source-reference',
+      'FT-09 source=src/escaped-quote.ts target=docs/legacy/escaped-live.md violation=legacy-source-reference',
+      'FT-09 source=src/escaped-quote.ts target=docs/legacy/old.md violation=legacy-source-reference',
+      'FT-09 source=src/multiline-template.ts target=docs/legacy/template-live.md violation=legacy-source-reference',
+    ]);
   });
 
-  it('locks the narrow active-document manifest and six current Legacy diagnostics', async () => {
+  it('locks the narrow active-document manifest with zero current Legacy diagnostics', async () => {
     const documents = await loadDocuments(REPOSITORY_ROOT, [...ACTIVE_DOCUMENTS, ...LEGACY_DOCUMENTS]);
-    const productionSources = await loadProductionSources(REPOSITORY_ROOT);
+    const governedSources = await loadFt09GovernedSources(REPOSITORY_ROOT);
 
     expect(findFt09DocumentGovernanceViolations(
       documents,
       ACTIVE_DOCUMENTS,
       LEGACY_DOCUMENTS,
-    )).toEqual([
-      'FT-09 doc=docs/architecture/v1.0/platform-config-wizard-design.md category=legacy field=successor violation=missing-successor-link',
-    ]);
-    expect(findFt09LegacySourceReferences(productionSources)).toEqual([
-      'FT-09 source=src/platform/config/wizard/diff.ts target=docs/architecture/v1.0/platform-config-wizard-design.md violation=legacy-source-reference',
-      'FT-09 source=src/platform/config/wizard/display.ts target=docs/architecture/v1.0/platform-config-wizard-design.md violation=legacy-source-reference',
-      'FT-09 source=src/platform/config/wizard/fields.ts target=docs/architecture/v1.0/platform-config-wizard-design.md violation=legacy-source-reference',
-      'FT-09 source=src/platform/config/wizard/prompts.ts target=docs/architecture/v1.0/platform-config-wizard-design.md violation=legacy-source-reference',
-      'FT-09 source=src/platform/config/wizard/run-wizard.ts target=docs/architecture/v1.0/platform-config-wizard-design.md violation=legacy-source-reference',
-    ]);
+    )).toEqual([]);
+    expect(findFt09LegacySourceReferences(governedSources)).toEqual([]);
   });
 });

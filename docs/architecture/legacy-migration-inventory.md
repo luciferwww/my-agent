@@ -131,24 +131,24 @@
 
 ### 5.2 `v1.0` 文档
 
-`docs/architecture/v1.0/` 是历史版本目录，但目录名不自动决定删除。以下文件分别进入 `Pending` Review：
+`docs/architecture/v1.0/` 曾是历史版本目录；目录名本身没有决定 disposition。S6-D6 分别完成 Review 后，以下全部候选均因没有独有价值而删除：
 
 | ID | Artifact / disposition target | Unique value / inbound and validation |
 |---|---|---|
-| DOC-V01 | [Channel Changes](v1.0/adapters-channel-changes.md) → Current Channel / historical Results | 保留已实现 delta evidence；Channel source/tests 与 links 核验 |
-| DOC-V02 | [Channel Design](v1.0/adapters-channel-design.md) → Current Channel / Accepted Channel Spec | 迁移 verified contract；与 root Channel design 分别 Review |
-| DOC-V03 | [Runner Changes](v1.0/core-runner-changes.md) → Current Runner / historical Results | 保留已实现 delta evidence；Runner tests 核验 |
-| DOC-V04 | [Runner Design](v1.0/core-runner-design.md) → Current Runner / Accepted Runner Specs | 迁移 verified execution facts；ADR-001/002 优先 |
-| DOC-V05 | [Runner Message Flow](v1.0/core-runner-message-flow.md) → Current Runtime/Runner | 迁移 verified in-turn flow；Runtime intake/steering tests 核验 |
-| DOC-V06 | [FS Changes](v1.0/core-tools-fs-changes.md) → Current Tools / historical Results | 保留已实现 delta evidence；filesystem Tool tests 核验 |
-| DOC-V07 | [FS Design](v1.0/core-tools-fs-design.md) → Current Tools / Accepted Tool Spec | 迁移 verified workspace-path contract；source/tests 核验 |
-| DOC-V08 | [Config Changes](v1.0/platform-config-changes.md) → Current Configuration / historical Results | 保留已实现 delta evidence；loader/defaults tests 核验 |
-| DOC-V09 | [Config Design](v1.0/platform-config-design.md) → Current Configuration / Accepted Config Spec | 迁移 verified source/precedence facts；Model Facts 服从 ADR-004 |
-| DOC-V10 | [Config Wizard Design](v1.0/platform-config-wizard-design.md) → verified Current Config Wizard section | 已确认 Legacy entry；production comments 是 inbound links，successor 建立并替换 links 后才能删除 |
-| DOC-V11 | [Runtime Changes](v1.0/runtime-changes.md) → Current Runtime / historical Results | 保留已实现 queue/routing delta evidence；Runtime tests 核验 |
-| DOC-V12 | [Runtime Design](v1.0/runtime-design.md) → Current Runtime / Accepted Runtime Specs | 迁移 verified runtime facts；Target/ADR 优先 |
+| DOC-V01 | Channel Changes — `v1.0/adapters-channel-changes.md`（Deleted S6-D6）→ Current Channel | Git commits 4afe30d/e62715a 与 Channel tests 可重建 delta；zero inbound |
+| DOC-V02 | Channel Design — `v1.0/adapters-channel-design.md`（Deleted S6-D6）→ Current Channel / Accepted Channel Spec | verified contract 已迁移；zero inbound |
+| DOC-V03 | Runner Changes — `v1.0/core-runner-changes.md`（Deleted S6-D6）→ Current Runner / ADR-001/002 | Git commits 4afe30d/d1ae00c/e62715a 与 Runner tests 可重建 delta；zero inbound |
+| DOC-V04 | Runner Design — `v1.0/core-runner-design.md`（Deleted S6-D6）→ Current Runner / ADR-001/002 | verified execution facts 已迁移；zero inbound |
+| DOC-V05 | Runner Message Flow — `v1.0/core-runner-message-flow.md`（Deleted S6-D6）→ Current Runtime/Runner | verified in-turn flow 已迁移；intake/steering tests 保留 evidence；zero inbound |
+| DOC-V06 | FS Changes — `v1.0/core-tools-fs-changes.md`（Deleted S6-D6）→ Current Tools/Builtin | Git commit b22a19a/e62715a 与 filesystem tests 可重建 delta；zero inbound |
+| DOC-V07 | FS Design — `v1.0/core-tools-fs-design.md`（Deleted S6-D6）→ Current Tools/Builtin / Accepted Tool Spec | verified workspace-path contract 已迁移；zero inbound |
+| DOC-V08 | Config Changes — `v1.0/platform-config-changes.md`（Deleted S6-D6）→ Current Configuration / ADR-004 | Git commits 0f32b18/8b19aa3/e62715a 与 config tests 可重建 delta；zero inbound |
+| DOC-V09 | Config Design — `v1.0/platform-config-design.md`（Deleted S6-D6）→ Current Configuration / ADR-004 | verified source/precedence facts 已迁移；obsolete fields rejected；zero inbound |
+| DOC-V10 | Config Wizard Design — `v1.0/platform-config-wizard-design.md`（Deleted S6-D6）→ Current Config `#config-wizard` | verified operational contract 已迁移；five source references removed；Wizard tests passed；zero inbound |
+| DOC-V11 | Runtime Changes — `v1.0/runtime-changes.md`（Deleted S6-D6）→ Current Runtime / Runtime Composition Spec | Git commits 4afe30d/d1ae00c/0f32b18/8b19aa3/e62715a 与 Runtime tests 可重建 delta；zero inbound |
+| DOC-V12 | Runtime Design — `v1.0/runtime-design.md`（Deleted S6-D6）→ Current Runtime / Accepted Runtime Specs | verified runtime facts 已迁移；zero inbound |
 
-DOC-V01–V12 的 Owner 为项目所有者至 Slice 6 Owner 接手，target Review 为 Slice 6；验证和删除适用 §2.3。`*-changes.md` 若仍承担无法由 Git history/Results 替代的 execution evidence，可在 Review 后保留为 Historical Authority，而不是强制删除。
+DOC-V01–V12 的 frozen identity 保留在本 Inventory；实体文件已在 S6-D6 删除。五个 `*-changes.md` 均未证明 Git history、source 和 tests 之外的独有 execution evidence，因此没有建立新的 Historical Authority。
 
 ## 6. Production、API、Config 与 Compatibility inventory
 
@@ -253,7 +253,7 @@ $$
 ## 8. 已知不确定性与接受记录
 
 - [x] **INV-01 外部消费者：** repository search 无法证明导出的 Runtime/Runner/LLM/Config API 没有外部 caller。API-M01–M04 已按 entry 设置保留期；未知外部 caller 不阻止本 Inventory 或 Slice 1 Spec 接受，但在完成 per-entry deprecation/breaking decision 前阻止删除。
-- [ ] **INV-02 Config Wizard successor：** DOC-V10 删除前必须建立并链接 verified successor，并替换 production comments。
+- [x] **INV-02 Config Wizard successor：** DOC-V10 删除前已建立并链接 verified Current Config successor，production comments 已替换，FT-09 当前 diagnostics 为零（S6-D6，2026-09-09）。
 - [x] **INV-03 Slice 1 Compatibility：** API-M01–M04 与 CODE-M09 的 mapping、bounded repository caller、Owner、期限和删除条件已与 Accepted Slice 1 Module Spec 对齐；任何延期必须记录理由和新 Review date。
 - [x] 已完成独立 completeness/consistency review，Critical/High/Medium findings 已解决（2026-09-04）。
 - [x] 项目所有者确认本 Inventory 的范围、分类、Owner、目标 Slice、退出条件和验证责任，并将状态改为 `Accepted`（2026-09-04）。

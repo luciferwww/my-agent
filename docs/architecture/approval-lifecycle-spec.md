@@ -149,7 +149,7 @@ Channel stop、Runtime close 和初始化失败不得遗留 pending Promise、re
 5. 更新 `clients/html/chat.html`，删除 timeout 展示并处理新的 closure outcome；
 6. 将 `scripts/test-runtime-multichannel-integration.ts` 的 timeout-success 场景改为“120 秒后仍 pending，随后 Abort/Shutdown 收口”；
 7. 更新 CH-06 测试：旧 fake-timer timeout-deny 断言替换为 pending + explicit Abort；
-8. 同步活跃 Channel/Current Architecture 文档；`docs/architecture/v1.0/**` 保持历史记录；
+8. 同步活跃 Channel/Current Architecture 文档；旧 `docs/architecture/v1.0/**` 仅作为 Slice 6 disposition 候选，不保留为 Current authority，并在逐项 unique-value Review 后按最终 disposition 处理；
 9. build 重新生成 `dist/` 时验证输出，但不手工编辑生成文件。
 
 本 Slice 不保留 `defaultTimeoutMs`、approval `timeoutMs`、`reason: 'timeout'`、`Denied by timeout` 或 expiry-only adapter API。若发现外部未迁移消费者，必须在 Delivery 中停下并由 Owner 决定版本化兼容；不得静默长期双轨。

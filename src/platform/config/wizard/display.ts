@@ -4,7 +4,7 @@
 //   - printHelp           --help / -h 输出
 //   - printDryRunSummary  save? 前的字段变更摘要 / 被丢弃字段 / 完整 JSON 预览
 //
-// 详见 docs/architecture/v1.0/platform-config-wizard-design.md §3.1 / §9。
+// Current contract: docs/architecture/current/platform_config.md#config-wizard
 
 import type { ConfigFile } from '../types.js';
 

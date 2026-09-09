@@ -145,6 +145,16 @@ export interface Ft11DispositionManifest {
     nonAuthorizing?: boolean;
     successor?: string;
   }>;
+  s6D6IndependentReviewStatus?: string;
+  s6D6DeletionReviewById?: Record<string, {
+    stateHistory: string[];
+    verifiedCurrentFact: string;
+    durableDecision: string;
+    unfinishedApprovedWork: string;
+    executedEvidence: string;
+    stableHistoricalLocator: string;
+    rationaleForRetainedAuthority: string;
+  }>;
   referenceAudit: {
     governanceLedgers: string[];
     excludedRoots: string[];
@@ -165,6 +175,8 @@ export interface Ft11ExpectedDocument {
 
 export interface Ft11FrozenDocument extends Ft11ExpectedDocument {
   proposedDisposition: Ft11ProposedDisposition;
+  s6D6Successors?: Pick<Ft11DispositionEntry,
+    'currentFactSuccessor' | 'durableDecisionAuthority'>;
 }
 
 export interface Ft11ReferenceSource extends SourceInput {
@@ -271,6 +283,38 @@ export async function loadProductionSources(repositoryRoot: string): Promise<Sou
     'src',
   );
   return sources.filter((source) => !source.path.endsWith('.test.ts'));
+}
+
+export async function loadFt09GovernedSources(repositoryRoot: string): Promise<SourceInput[]> {
+  const sources: SourceInput[] = [];
+  const roots = [
+    { directory: join(repositoryRoot, 'src'), pathPrefix: 'src' },
+    { directory: join(repositoryRoot, 'scripts'), pathPrefix: 'scripts' },
+    { directory: join(repositoryRoot, 'clients'), pathPrefix: 'clients' },
+  ];
+  const textExtension = /\.(?:cjs|css|html|js|json|jsonc|mjs|ts|tsx)$/iu;
+
+  async function walk(directory: string, rootDir: string, pathPrefix: string): Promise<void> {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const absolutePath = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await walk(absolutePath, rootDir, pathPrefix);
+        continue;
+      }
+      if (!entry.isFile() || !textExtension.test(entry.name)) continue;
+      const sourcePath = posix.join(pathPrefix, normalizePath(relative(rootDir, absolutePath)));
+      if (sourcePath.startsWith('src/architecture-fitness/')
+        || sourcePath === 'src/test-setup.ts'
+        || /\.(?:test|spec)\.[cm]?[jt]sx?$/iu.test(sourcePath)) {
+        continue;
+      }
+      sources.push({ path: sourcePath, content: await readFile(absolutePath, 'utf8') });
+    }
+  }
+
+  for (const root of roots) await walk(root.directory, root.directory, root.pathPrefix);
+  return sources.sort((left, right) => left.path.localeCompare(right.path));
 }
 
 export function findFt01BoundaryViolations(sources: SourceInput[]): string[] {
@@ -660,6 +704,12 @@ const FT11_S6_D4_IDS = new Set([
 ]);
 const FT11_S6_D5_DEFERRED_IDS = new Set(['DOC-A04', 'DOC-A05']);
 const FT11_S6_D5_DELETED_IDS = new Set(['DOC-A06']);
+const FT11_S6_D6_IDS = new Set(Array.from({ length: 12 }, (_, index) => (
+  `DOC-V${String(index + 1).padStart(2, '0')}`
+)));
+const FT11_S6_D6_CHANGE_RECORD_IDS = new Set([
+  'DOC-V01', 'DOC-V03', 'DOC-V06', 'DOC-V08', 'DOC-V11',
+]);
 
 export function collectFt11DocumentReferenceAudit(
   sources: Ft11ReferenceSource[],
@@ -820,9 +870,15 @@ export function findFt11DocumentDispositionViolations(
       'in-review-awaiting-owner-acceptance',
       'completed-owner-accepted',
     ].includes(manifest.status);
+  const isS6D6 = manifest.slice === 'S6-D6'
+    && [
+      'v1-candidates-deleted',
+      'in-review-awaiting-owner-acceptance',
+      'completed-owner-accepted',
+    ].includes(manifest.status);
 
   if (manifest.schemaVersion !== 1) diagnostics.push('FT-11 manifest field=schemaVersion violation=invalid-value');
-  if (!isS6D1 && !isS6D2 && !isS6D3 && !isS6D4 && !isS6D5) diagnostics.push('FT-11 manifest field=slice/status violation=invalid-phase');
+  if (!isS6D1 && !isS6D2 && !isS6D3 && !isS6D4 && !isS6D5 && !isS6D6) diagnostics.push('FT-11 manifest field=slice/status violation=invalid-phase');
   if (manifest.candidates.length !== expectedDocuments.length) {
     diagnostics.push(`FT-11 manifest field=candidates expected=${expectedDocuments.length} actual=${manifest.candidates.length} violation=count-mismatch`);
   }
@@ -847,14 +903,16 @@ export function findFt11DocumentDispositionViolations(
   validateFt11EntryStates(
     manifest,
     expectedDocuments,
-    isS6D2 || isS6D3 || isS6D4 || isS6D5,
-    isS6D3 || isS6D4 || isS6D5,
-    isS6D4 || isS6D5,
-    isS6D5,
+    isS6D2 || isS6D3 || isS6D4 || isS6D5 || isS6D6,
+    isS6D3 || isS6D4 || isS6D5 || isS6D6,
+    isS6D4 || isS6D5 || isS6D6,
+    isS6D5 || isS6D6,
+    isS6D6,
     diagnostics,
   );
-  validateFt11S6D4DeletionReviews(manifest, isS6D4 || isS6D5, diagnostics);
-  validateFt11S6D5Decisions(manifest, isS6D5, diagnostics);
+  validateFt11S6D4DeletionReviews(manifest, isS6D4 || isS6D5 || isS6D6, diagnostics);
+  validateFt11S6D5Decisions(manifest, isS6D5 || isS6D6, diagnostics);
+  validateFt11S6D6DeletionReviews(manifest, expectedDocuments, isS6D6, diagnostics);
 
   for (const expected of expectedDocuments) {
     if (!ids.includes(expected.id)) {
@@ -874,8 +932,9 @@ export function findFt11DocumentDispositionViolations(
     if (entry.category !== expected.category) {
       diagnostics.push(`FT-11 entry=${entry.id} field=category expected=${expected.category} actual=${entry.category} violation=mismatch`);
     }
-    const isDeleted = (isS6D4 || isS6D5) && FT11_S6_D4_IDS.has(entry.id)
-      || isS6D5 && FT11_S6_D5_DELETED_IDS.has(entry.id);
+    const isDeleted = (isS6D4 || isS6D5 || isS6D6) && FT11_S6_D4_IDS.has(entry.id)
+      || (isS6D5 || isS6D6) && FT11_S6_D5_DELETED_IDS.has(entry.id)
+      || isS6D6 && FT11_S6_D6_IDS.has(entry.id);
     if (!isDeleted && !availablePaths.has(entry.path)) {
       diagnostics.push(`FT-11 entry=${entry.id} path=${entry.path} violation=missing-document`);
     }
@@ -991,6 +1050,7 @@ function validateFt11EntryStates(
   hasMigratedActiveNavigation: boolean,
   hasDeletedRootCandidates: boolean,
   hasS6D5Decisions: boolean,
+  hasS6D6Decisions: boolean,
   diagnostics: string[],
 ): void {
   const expectedIds = expectedDocuments.map((document) => document.id);
@@ -1045,11 +1105,83 @@ function validateFt11EntryStates(
       if (state.reviewerResult !== 'validated-awaiting-owner-review') diagnostics.push(`FT-11 entry=${id} field=reviewerResult violation=invalid-closed-candidate-review-state`);
       continue;
     }
+    if (hasS6D6Decisions && FT11_S6_D6_IDS.has(id)) {
+      if (state.transitionState !== 'Deleted') diagnostics.push(`FT-11 entry=${id} field=transitionState violation=v1-candidate-not-deleted`);
+      if (state.uniqueValueConclusion !== 'no-unique-value-after-migration') diagnostics.push(`FT-11 entry=${id} field=uniqueValueConclusion violation=v1-candidate-unique-value-unresolved`);
+      if (state.finalDisposition !== 'Delete After Migration') diagnostics.push(`FT-11 entry=${id} field=finalDisposition violation=v1-candidate-not-disposed`);
+      if (state.validationStatus !== 'passed') diagnostics.push(`FT-11 entry=${id} field=validationStatus violation=v1-candidate-not-validated`);
+      if (state.reviewerResult !== 'validated-awaiting-owner-review') diagnostics.push(`FT-11 entry=${id} field=reviewerResult violation=invalid-v1-candidate-review-state`);
+      continue;
+    }
     if (state.transitionState !== 'Pending') diagnostics.push(`FT-11 entry=${id} field=transitionState violation=premature-transition`);
     if (state.uniqueValueConclusion !== 'not-reviewed') diagnostics.push(`FT-11 entry=${id} field=uniqueValueConclusion violation=premature-review`);
     if (state.finalDisposition !== null) diagnostics.push(`FT-11 entry=${id} field=finalDisposition violation=premature-review`);
     if (state.validationStatus !== 'baseline-pending') diagnostics.push(`FT-11 entry=${id} field=validationStatus violation=premature-review`);
     if (state.reviewerResult !== 'not-reviewed') diagnostics.push(`FT-11 entry=${id} field=reviewerResult violation=premature-review`);
+  }
+}
+
+function validateFt11S6D6DeletionReviews(
+  manifest: Ft11DispositionManifest,
+  expectedDocuments: Ft11FrozenDocument[],
+  isS6D6: boolean,
+  diagnostics: string[],
+): void {
+  if (!isS6D6) return;
+  if (!['review-pending', 'ready-awaiting-owner-acceptance', 'ready-owner-accepted']
+    .includes(manifest.s6D6IndependentReviewStatus ?? '')) {
+    diagnostics.push('FT-11 manifest field=s6D6IndependentReviewStatus violation=invalid-review-state');
+  }
+  const reviews = manifest.s6D6DeletionReviewById;
+  if (!reviews) {
+    diagnostics.push('FT-11 manifest field=s6D6DeletionReviewById violation=missing-review-ledger');
+    return;
+  }
+  if (!sameStringSet(Object.keys(reviews), [...FT11_S6_D6_IDS])) {
+    diagnostics.push('FT-11 manifest field=s6D6DeletionReviewById violation=identity-drift');
+  }
+  for (const id of FT11_S6_D6_IDS) {
+    const review = reviews[id];
+    if (!review) continue;
+    if (review.stateHistory.join('>') !== 'Pending>Migrating>Migrated>Reviewed>Deleted') {
+      diagnostics.push(`FT-11 entry=${id} field=stateHistory violation=missing-reviewed-delete-transition`);
+    }
+    const expectedHistoricalLocator = FT11_S6_D6_CHANGE_RECORD_IDS.has(id)
+      ? 'no-git-history-preserves-delta'
+      : 'no';
+    if (review.verifiedCurrentFact !== 'no-migrated-to-current'
+      || review.durableDecision !== 'no-migrated-to-accepted-authority'
+      || review.unfinishedApprovedWork !== 'no-explicitly-rejected'
+      || review.executedEvidence !== 'no-reconstructible-from-source-tests-git'
+      || review.stableHistoricalLocator !== expectedHistoricalLocator
+      || review.rationaleForRetainedAuthority !== 'no') {
+      diagnostics.push(`FT-11 entry=${id} field=uniqueValueReview violation=unresolved`);
+    }
+    const entry = manifest.candidates.find((candidate) => candidate.id === id);
+    if (!entry) continue;
+    const expectedSuccessors = expectedDocuments.find((document) => document.id === id)?.s6D6Successors;
+    if (!expectedSuccessors) {
+      diagnostics.push(`FT-11 entry=${id} field=s6D6Successors violation=missing-frozen-baseline`);
+    } else {
+      for (const field of ['currentFactSuccessor', 'durableDecisionAuthority'] as const) {
+        if (!sameStringSet(entry[field], expectedSuccessors[field])) {
+          diagnostics.push(`FT-11 entry=${id} field=${field} violation=s6-d6-successor-drift`);
+        }
+      }
+    }
+    if (entry.unfinishedWorkSuccessor.length !== 1
+      || entry.unfinishedWorkSuccessor[0] !== 'rejected in S6-D6: no owner-approved unfinished work remains') {
+      diagnostics.push(`FT-11 entry=${id} field=unfinishedWorkSuccessor violation=s6-d6-work-unresolved`);
+    }
+    if (entry.evidenceSuccessor.length === 0) {
+      diagnostics.push(`FT-11 entry=${id} field=evidenceSuccessor violation=missing-s6-d6-evidence`);
+    }
+  }
+  const wizard = manifest.candidates.find((candidate) => candidate.id === 'DOC-V10');
+  if (wizard && (!sameStringSet(wizard.currentFactSuccessor, [
+    'docs/architecture/current/platform_config.md#config-wizard',
+  ]) || wizard.inbound.productionSource.length > 0 || wizard.inbound.tests.length > 0)) {
+    diagnostics.push('FT-11 entry=DOC-V10 field=successor/inbound violation=wizard-closeout-incomplete');
   }
 }
 
@@ -1299,21 +1431,76 @@ export function findFt09LegacySourceReferences(
   const diagnostics: string[] = [];
 
   for (const source of sources) {
-    for (const line of source.content.split(/\r?\n/)) {
-      if (!/(?:详见|字段清单|依据|according\s+to|see\s+)/i.test(line)) {
+    const commentRanges = collectCommentRanges(source.content);
+    const legacyReference = /docs[\\/](?:architecture[\\/]v1\.0|legacy)[\\/][^\s"'`)\]]+\.md/g;
+    for (const match of source.content.matchAll(legacyReference)) {
+      const target = match[0].replaceAll('\\', '/');
+      const commentRange = commentRanges.find((range) => (
+        match.index >= range.start && match.index < range.end
+      ));
+      if (commentRange && isExplicitNonAuthoritativeHistoryComment(
+        source.content.slice(commentRange.start, commentRange.end),
+      )) {
         continue;
       }
-      const normalizedLine = line.replaceAll('\\', '/');
-      const legacyReference = /docs\/(?:architecture\/v1\.0|legacy)\/[^\s"'`)\]]+\.md/g;
-      for (const target of normalizedLine.match(legacyReference) ?? []) {
-        if (legacyRoots.some((root) => target.startsWith(root))) {
-          diagnostics.push(`FT-09 source=${source.path} target=${target} violation=legacy-source-reference`);
-        }
+      if (legacyRoots.some((root) => target.startsWith(root))) {
+        diagnostics.push(`FT-09 source=${source.path} target=${target} violation=legacy-source-reference`);
       }
     }
   }
 
   return [...new Set(diagnostics)].sort();
+}
+
+function isExplicitNonAuthoritativeHistoryComment(rawComment: string): boolean {
+  const comment = rawComment
+    .replace(/^(?:\/\/|\/\*+|<!--)\s*/u, '')
+    .replace(/(?:\*\/|-->)\s*$/u, '')
+    .split(/\r?\n/u)
+    .map((line) => line.replace(/^\s*\*?\s?/u, ''))
+    .join(' ')
+    .trim();
+  return /^(?:historical|history|migration\s+note|历史|迁移记录)/iu.test(comment)
+    && /(?:not\s+authoritative|non-authoritative|不是?权威|非权威|不作为.*权威)/iu.test(comment);
+}
+
+function collectCommentRanges(content: string): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  let quote: '"' | "'" | '`' | undefined;
+  let escaped = false;
+  for (let index = 0; index < content.length; index += 1) {
+    const character = content[index];
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+    if (character === '"' || character === "'" || character === '`') {
+      quote = character;
+      continue;
+    }
+    if (content.startsWith('//', index)) {
+      const newlineIndex = content.indexOf('\n', index + 2);
+      const end = newlineIndex < 0 ? content.length : newlineIndex;
+      ranges.push({ start: index, end });
+      index = end - 1;
+      continue;
+    }
+    for (const [opening, closing] of [['/*', '*/'], ['<!--', '-->']] as const) {
+      if (!content.startsWith(opening, index)) continue;
+      const closingIndex = content.indexOf(closing, index + opening.length);
+      const end = closingIndex < 0 ? content.length : closingIndex + closing.length;
+      ranges.push({ start: index, end });
+      index = end - 1;
+      break;
+    }
+  }
+  return ranges;
 }
 
 function isLegacyDocumentPath(path: string): boolean {

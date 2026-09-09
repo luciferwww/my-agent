@@ -1,7 +1,7 @@
 // ── Config Wizard 字段定义 ────────────────────────────────
 //
-// 把 docs/architecture/v1.0/platform-config-wizard-design.md §6 / §7 的字段清单
-// 翻译成可执行的 Prompt<T> 工厂 + 分段组织。
+// Current contract: docs/architecture/current/platform_config.md#config-wizard
+// 将当前可配置 schema 翻译成 Prompt<T> 工厂 + 分段组织。
 //
 // 每个段是一个函数 askXxx(session, current): Promise<{ kept }>，
 // 负责按设计文档的顺序问完该段所有字段，应用条件跳过规则，
@@ -251,12 +251,6 @@ export async function askAdvancedFields(
       path: 'memory.embedding.model', label: 'Embedding model id',
       parse: parseString,
     });
-    await askField({
-      session, collected: a, existing: existing.agentsDefaults, defaults: DEFAULT_AGENT_CONFIG,
-      path: 'memory.embedding.dimensions', label: 'Embedding vector dimensions',
-      parse: parseInteger,
-    });
-
     process.stdout.write('\n── memory.chunking ──\n');
     await askField({
       session, collected: a, existing: existing.agentsDefaults, defaults: DEFAULT_AGENT_CONFIG,
@@ -365,20 +359,8 @@ export async function askAdvancedFields(
     process.stdout.write('\n── logger.file ──\n');
     await askField({
       session, collected: l, existing: existing.logger, defaults: DEFAULT_LOGGER_CONFIG,
-      path: 'file.dir', label: 'File adapter dir (rel workspaceDir)', parse: parseString,
-    });
-    await askField({
-      session, collected: l, existing: existing.logger, defaults: DEFAULT_LOGGER_CONFIG,
-      path: 'file.prefix', label: 'File adapter filename prefix', parse: parseString,
-    });
-    await askField({
-      session, collected: l, existing: existing.logger, defaults: DEFAULT_LOGGER_CONFIG,
       path: 'file.minLevel', label: 'File adapter min level',
       parse: parseEnum<LoggerLevel>(['debug', 'info', 'warn', 'error']),
-    });
-    await askField({
-      session, collected: l, existing: existing.logger, defaults: DEFAULT_LOGGER_CONFIG,
-      path: 'file.maxQueueSize', label: 'File adapter max queue size', parse: parseInteger,
     });
   }
 
