@@ -6,8 +6,8 @@
 > - [runtime-design.md](./runtime-design.md)
 > - [core-runner-design.md](./core-runner-design.md)
 > - [core-runner-message-flow.md](./core-runner-message-flow.md)
-> - [../adapters-websocket-channel-design.md](../adapters-websocket-channel-design.md)（WebSocket transport 细节）
-> - [../core-runner-hooks-design.md](../core-runner-hooks-design.md)
+> - [Current Channel](../current/adapter_channel.md)（WebSocket transport 细节）
+> - [Current Runner](../current/core_runner.md)
 
 ---
 
@@ -621,7 +621,7 @@ readline 逐行读取。`/exit`、`/clear` 等命令由调用方在 handler 外�
 
 ## 7. WebSocketChannel
 
-位置：`src/adapters/channel/WebSocketChannel.ts`。本节只列协议总览与 channel 内部关键结构；transport 层细节（连接建立 / 重连 / 多 client 时序图）见 [adapters-websocket-channel-design.md](../adapters-websocket-channel-design.md)。
+位置：`src/adapters/channel/WebSocketChannel.ts`。本节只列协议总览与 channel 内部关键结构；当前 transport、连接与多 client 行为见 [Current Channel](../current/adapter_channel.md)。
 
 ### 7.1 WS 消息协议
 
@@ -723,7 +723,7 @@ WebSocketChannel 不引入独立的 `connectionId` 设计概念；当前活跃�
 
 **断线清理**：连接断开时，WebSocketChannel 会立即清理自身维护的 transport 路由状态。若未来上层补上按 `clientId` 管理的 pending interactions 重投递钩子，可在新的 `hello(clientId)` 成功后再次下发交互；这属于上层交互管理，不属于 websocket transport 恢复。
 
-关键时序图见 [adapters-websocket-channel-design.md](../adapters-websocket-channel-design.md)。
+当前关键时序见 [Current Channel](../current/adapter_channel.md)。
 
 ---
 

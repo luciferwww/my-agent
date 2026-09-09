@@ -3,8 +3,8 @@
 > 版本：v1.0
 > 创建日期：2026-05-20
 > 关联：
-> - [../platform-config-design.md](../platform-config-design.md)
-> - [../platform-logger-design.md](../platform-logger-design.md)
+> - [Current Config](../current/platform_config.md)
+> - [Current Observability](../current/platform_logger.md)
 > - [../coding-standards.md](../coding-standards.md)
 
 ---
@@ -43,7 +43,7 @@
 | 当前值作默认 | 每个 prompt 显示 `[current: xxx]`，回车即保留；用户只为想改的字段输入新值 |
 | 无第三方依赖 | 仅用 `node:readline`，与项目其它脚本（[chat.ts](../../../scripts/chat.ts) 等）一致，遵循 [coding-standards.md §10](../coding-standards.md) |
 | 单向流程 | 顺序问下去，不提供"返回上一步"；流程末尾给出 dry-run 摘要 + `save? y/N` 一次确认 |
-| 配置访问边界 | wizard 属于 [platform-config-design.md §2.1](../platform-config-design.md) 允许直接访问 config loader 的"配置编辑工具"类，可 import `DEFAULT_AGENT_CONFIG` / `DEFAULT_LOGGER_CONFIG` / `deepMerge` |
+| 配置访问边界 | wizard 属于 [Current Config](../current/platform_config.md) 允许直接访问 config loader 的配置编辑入口，可 import `DEFAULT_AGENT_CONFIG` / `DEFAULT_LOGGER_CONFIG` / `deepMerge` |
 
 ---
 
@@ -605,12 +605,12 @@ runWizard(process.argv.slice(2)).catch((err) => {
 | 问题 | 决策 | 依据 |
 |---|---|---|
 | 默认路径用 `<cwd>/config.json` 还是 `<cwd>/.agent/config.json`？ | 前者 | 用户明确要求；wizard 不假定路径用途，纯粹是 JSON 文件编辑器。代价：使用者需自行把生成文件 copy 到 loadConfig 实际查找的位置，或运行时传 `--path <workspaceDir>/.agent/config.json` |
-| 主体放在 `src/platform/config/wizard/` 还是 `scripts/config.ts` 单文件？ | 前者 | [platform-config-design.md §2.1](../platform-config-design.md) 已为"配置编辑/校验/迁移这类以 config 为主职责的工具模块"留位；与 schema/默认值物理相邻、改 config 时同目录改 prompt 成本最低；纯函数（diff / parser）可独立测试；未来 IDE/WebUI wrapper 可绕开 argv 直调 runWizard。scripts/config.ts 退化为薄壳 |
+| 主体放在 `src/platform/config/wizard/` 还是 `scripts/config.ts` 单文件？ | 前者 | [Current Config](../current/platform_config.md) 将 Wizard 作为 Config boundary 的编辑入口；与 schema/默认值物理相邻、改 config 时同目录改 prompt 成本最低；纯函数（diff / parser）可独立测试；未来 IDE/WebUI wrapper 可绕开 argv 直调 runWizard。scripts/config.ts 退化为薄壳 |
 | 子模块叫 `editor` 还是 `wizard`？ | `wizard` | "editor" 暗示 vscode 式的"打开文件直接改"，与本模块"问答式逐步引导"的交互形式错配；"wizard" 是英语圈 setup/config wizard 的标准说法，中文"配置向导"一秒理解；项目里 `prompt` / `builder` 后缀已被 LLM prompt 模块占用，撞名风险高 |
 | 是否引第三方 prompt 库（inquirer / prompts）？ | 否 | 遵循 [coding-standards.md §10](../coding-standards.md)；`node:readline` 足够支撑本模块的所有交互形态 |
 | 是否做 apiKey echo 屏蔽 / 显示脱敏？ | v1 都不做 | (1) `node:readline` 无原生 echo 屏蔽，需进 raw mode 自行处理输入流，与项目其它脚本（chat.ts 同明文）保持一致；(2) 显示脱敏需要 redactor 函数 + 多处差异化显示，v1 选择**全程 raw**——把 apiKey 视为普通字段，屏幕泄露场景由使用者负责（终端历史 / 录屏 / 屏幕共享）。v2+ 可加 `sensitive` 标记统一脱敏 |
 | 是否支持"返回上一步"？ | 否 | readline 单向流程实现简单；末尾的 dry-run + `save? y/N` 提供整体撤销能力；改不对再跑一次 wizard 即可 |
-| 输出只写 diff 还是写完整配置？ | 只写 diff | 与 [platform-config-design.md](../platform-config-design.md) 的"部分配置 + 默认值兜底"模型一致；避免 default 调整时与文件值漂移 |
+| 输出只写 diff 还是写完整配置？ | 只写 diff | 与 [Current Config](../current/platform_config.md) 的分层合并模型一致；避免 default 调整时与文件值漂移 |
 | 既有文件未触及字段是否保留？ | 顶层保留 + 段内按 schema 白名单保留 | 顶层 wizard 未触及的段（`agents.list[]`、未来新增段）原样保留；`agents.defaults` 和 `logger` 段内只保留 `DEFAULT_*` 中定义的字段，schema 外字段（用户手写的实验字段、过时字段）丢弃 |
 | 段内字段保留为什么按"`DEFAULT_*` schema 白名单"而非"wizard 问过的字段清单"？ | `DEFAULT_*` 白名单 | (1) `DEFAULT_AGENT_CONFIG` / `DEFAULT_LOGGER_CONFIG` 本身就是 schema 的运行时具体化，每个 schema 字段都有默认值，天然可作白名单，不需要额外维护"问过的 path 清单"；(2) 借力项目已有的"改 schema 必须同步 DEFAULT_*"约束，wizard 不需要再加新约束；(3) 未来 schema 加字段但 wizard 还没问到时，既有文件的该字段也能保留——比 wizard schema 演化更友好；(4) corner case（用户主动改回 default）通过"collected 完整覆盖 + deepMerge + diff"三步流程自然解决，不需要单独逻辑 |
 | 是否在写入主文件前备份既有文件到 `.bak`？ | 是，总是备份 | 兜底两类场景：(1) `pickSchemaKeys` 丢弃 schema 外字段后用户事后想找回；(2) 用户在 wizard 里手误改错值。备份是 best-effort——失败仅 warn 不阻塞主流程。命名固定 `<path>.bak` 覆盖前一份，v1 不做 rotation（列入 §13 v2+） |

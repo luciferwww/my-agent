@@ -3,7 +3,7 @@
 > 文档日期：2026-07-23
 > 分支：`feature/core-subagent-v2`
 > 基线：`core-subagent-spec.md`（v1 已实现）
-> 关联文档：`core-subagent-spec.md` · `core-runner-design.md` · `core-abort-spec.md` · `core-tools-design.md`
+> 关联文档：`core-subagent-spec.md` · `current/core_runner.md` · `core-abort-spec.md` · `current/core_tools.md`
 > 参考实现：Claude Code 的 `parallel_tool_calls` + `Task` 工具；openclaw 的 `maxConcurrent` / `maxChildrenPerAgent` 双闸设计（[openclaw/docs/architecture/subagent-analysis.md §5](../../../openclaw/docs/architecture/subagent-analysis.md)）
 
 ---
@@ -517,10 +517,10 @@ subagents:
 ## 13. 相关文档
 
 - v1 基线：[core-subagent-spec.md](./core-subagent-spec.md)
-- v1 实施笔记：[core-subagent-impl.md](./core-subagent-impl.md)
-- Runner 现状：[core-runner-design.md](./core-runner-design.md) + [core-runner-turn-flow-spec.md](./core-runner-turn-flow-spec.md)
+- v1 当前编排：[Current Runtime](./current/runtime.md)
+- Runner 现状：[Current Runner](./current/core_runner.md) + [core-runner-turn-flow-spec.md](./core-runner-turn-flow-spec.md)
 - Abort 契约：[core-abort-spec.md](./core-abort-spec.md)
-- Tool 框架：[core-tools-design.md](./core-tools-design.md)
+- Tool 框架：[Current Tools](./current/core_tools.md) + [Tool/Hook Module Spec](./tool-hook-module-spec.md)
 - 参考实现调研：[openclaw subagent-analysis.md §5](../../../openclaw/docs/architecture/subagent-analysis.md)
 - Config 结构：[platform-config-restructure-spec.md](./platform-config-restructure-spec.md)
 

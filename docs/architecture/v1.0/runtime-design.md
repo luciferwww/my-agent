@@ -6,9 +6,9 @@
 > - [adapters-channel-design.md](./adapters-channel-design.md)
 > - [core-runner-design.md](./core-runner-design.md)
 > - [core-runner-message-flow.md](./core-runner-message-flow.md)
-> - [../core-runner-context-design.md](../core-runner-context-design.md)
-> - [../core-runner-hooks-design.md](../core-runner-hooks-design.md)
-> - [../platform-config-design.md](../platform-config-design.md)
+> - [Current Runner](../current/core_runner.md)
+> - [Tool/Hook Module Spec](../tool-hook-module-spec.md)
+> - [Current Config](../current/platform_config.md)
 
 ---
 
@@ -1335,7 +1335,7 @@ export function classifyRuntimeError(scope: RuntimeErrorScope, error: unknown): 
 
 ### 15.3 结构化日志
 
-Runtime 内所有关键路径都通过 `Logger.get('RuntimeApp')` 输出结构化日志（channel 注册 / 启动停止、入站消息、approval 路由、turn 起止、shutdown 进度）。日志 adapter 与 minLevel 由 config 驱动（`platform/config` + `platform/logger`），具体配置见 [platform-logger-design.md](../platform-logger-design.md)。
+Runtime 内所有关键路径都通过 `Logger.get('RuntimeApp')` 输出结构化日志（channel 注册 / 启动停止、入站消息、approval 路由、turn 起止、shutdown 进度）。日志 adapter 与 minLevel 由 config 驱动（`platform/config` + `platform/logger`），当前边界见 [Current Observability](../current/platform_logger.md)。
 
 ---
 

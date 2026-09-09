@@ -5,7 +5,7 @@
 - **状态：** Accepted
 - **日期：** 2026-09-01
 - **所有者：** 项目所有者
-- **关联计划 / Spec：** [AF-04 Characterization and Fitness Execution Plan](../roadmap/af-04-characterization-fitness-plan.md)、[Target Architecture](target-architecture.md)、[Current Compaction Design](core-runner-context-design.md)
+- **关联计划 / Spec：** [AF-04 Characterization and Fitness Execution Plan](../roadmap/af-04-characterization-fitness-plan.md)、[Target Architecture](target-architecture.md)、[Current Runner](current/core_runner.md)
 - **替代范围：** 替代“全局 `llm.contextWindowTokens` 是所有模型的 Model Fact”“Core 应自行推断未知模型上限”以及“Compaction observer Hook 可以 detached 越过生命周期边界”的目标假设；不改写当前已实现行为。
 
 项目所有者于 2026-09-01 接受本 ADR。后续工作遵循 [Development Workflow](../development-workflow.md) 的批准和状态规则。在所需 Spike Results、Module Spec 与独立批准的 Architecture Slice 完成前，生产行为保持不变。

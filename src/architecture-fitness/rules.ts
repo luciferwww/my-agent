@@ -121,6 +121,16 @@ export interface Ft11DispositionManifest {
     validationStatus: string;
     reviewerResult: string;
   }>;
+  s6D4DeletionReviewById?: Record<string, {
+    stateHistory: string[];
+    verifiedCurrentFact: string;
+    durableDecision: string;
+    unfinishedApprovedWork: string;
+    executedEvidence: string;
+    stableHistoricalLocator: string;
+    rationaleForRetainedAuthority: string;
+  }>;
+  s6D4IndependentReviewStatus?: string;
   referenceAudit: {
     governanceLedgers: string[];
     excludedRoots: string[];
@@ -628,6 +638,13 @@ const FT11_PROPOSED_DISPOSITIONS = new Set<Ft11ProposedDisposition>([
   'Delete After Migration',
 ]);
 
+const FT11_S6_D4_IDS = new Set([
+  'DOC-A01', 'DOC-A02', 'DOC-A03', 'DOC-A07',
+  'DOC-A10', 'DOC-A11', 'DOC-A12', 'DOC-A13', 'DOC-A14', 'DOC-A15', 'DOC-A16',
+  'DOC-A17', 'DOC-A18', 'DOC-A19', 'DOC-A20', 'DOC-A21', 'DOC-A22', 'DOC-A23',
+  'DOC-A24', 'DOC-A25', 'DOC-A26', 'DOC-A27',
+]);
+
 export function collectFt11DocumentReferenceAudit(
   sources: Ft11ReferenceSource[],
   candidates: Ft11ExpectedDocument[],
@@ -692,6 +709,18 @@ export function collectFt11DocumentReferenceAudit(
           record(source, posix.normalize(posix.join(posix.dirname(source.path), linkedPath)));
         }
       }
+      if (source.category === 'governanceLedger') {
+        for (const match of withoutCodeFences.matchAll(/`([^`]+\.md)`/g)) {
+          const ledgerPath = match[1];
+          if (!ledgerPath) continue;
+          record(
+            source,
+            ledgerPath.startsWith('docs/')
+              ? posix.normalize(ledgerPath)
+              : posix.normalize(posix.join(posix.dirname(source.path), ledgerPath)),
+          );
+        }
+      }
       continue;
     }
 
@@ -717,7 +746,7 @@ export function collectFt11DocumentReferenceAudit(
 export function collectFt11ApiM04Baseline(sources: SourceInput[]): Ft11ApiM04Baseline {
   const deprecatedAliases = new Set(['ChatParams', 'LLMClient', 'StreamEvent']);
   const baseline: Ft11ApiM04Baseline = {
-    status: 'separate-gate-not-authorized',
+    status: 'separate-gate-authorized-not-started',
     facadePathImports: emptyFt11ApiM04Groups(),
     deprecatedAliasImports: emptyFt11ApiM04Groups(),
   };
@@ -763,9 +792,15 @@ export function findFt11DocumentDispositionViolations(
   const isS6D1 = manifest.slice === 'S6-D1' && manifest.status === 'baseline';
   const isS6D2 = manifest.slice === 'S6-D2' && manifest.status === 'current-architecture-migrated';
   const isS6D3 = manifest.slice === 'S6-D3' && manifest.status === 'active-navigation-migrated';
+  const isS6D4 = manifest.slice === 'S6-D4'
+    && [
+      'root-candidates-deleted',
+      'in-review-awaiting-owner-acceptance',
+      'completed-owner-accepted',
+    ].includes(manifest.status);
 
   if (manifest.schemaVersion !== 1) diagnostics.push('FT-11 manifest field=schemaVersion violation=invalid-value');
-  if (!isS6D1 && !isS6D2 && !isS6D3) diagnostics.push('FT-11 manifest field=slice/status violation=invalid-phase');
+  if (!isS6D1 && !isS6D2 && !isS6D3 && !isS6D4) diagnostics.push('FT-11 manifest field=slice/status violation=invalid-phase');
   if (manifest.candidates.length !== expectedDocuments.length) {
     diagnostics.push(`FT-11 manifest field=candidates expected=${expectedDocuments.length} actual=${manifest.candidates.length} violation=count-mismatch`);
   }
@@ -787,7 +822,15 @@ export function findFt11DocumentDispositionViolations(
   }
 
   validateFt11Defaults(manifest, diagnostics);
-  validateFt11EntryStates(manifest, expectedDocuments, isS6D2 || isS6D3, isS6D3, diagnostics);
+  validateFt11EntryStates(
+    manifest,
+    expectedDocuments,
+    isS6D2 || isS6D3 || isS6D4,
+    isS6D3 || isS6D4,
+    isS6D4,
+    diagnostics,
+  );
+  validateFt11S6D4DeletionReviews(manifest, isS6D4, diagnostics);
 
   for (const expected of expectedDocuments) {
     if (!ids.includes(expected.id)) {
@@ -807,8 +850,12 @@ export function findFt11DocumentDispositionViolations(
     if (entry.category !== expected.category) {
       diagnostics.push(`FT-11 entry=${entry.id} field=category expected=${expected.category} actual=${entry.category} violation=mismatch`);
     }
-    if (!availablePaths.has(entry.path)) {
+    const isDeleted = isS6D4 && FT11_S6_D4_IDS.has(entry.id);
+    if (!isDeleted && !availablePaths.has(entry.path)) {
       diagnostics.push(`FT-11 entry=${entry.id} path=${entry.path} violation=missing-document`);
+    }
+    if (isDeleted && availablePaths.has(entry.path)) {
+      diagnostics.push(`FT-11 entry=${entry.id} path=${entry.path} violation=deleted-document-still-present`);
     }
     for (const field of [
       'currentFactSuccessor',
@@ -840,6 +887,9 @@ export function findFt11DocumentDispositionViolations(
       if (!sameStringSet(entry.inbound[category], expectedReferences)) {
         diagnostics.push(`FT-11 entry=${entry.id} field=inbound.${category} violation=reference-drift`);
       }
+      if (isDeleted && expectedReferences.length > 0) {
+        diagnostics.push(`FT-11 entry=${entry.id} field=inbound.${category} violation=deleted-document-referenced`);
+      }
     }
   }
 
@@ -857,9 +907,9 @@ export function findFt11DocumentDispositionViolations(
   }
   if (
     manifest.apiM04Baseline.externalConsumerDecision !== 'unresolved'
-    || manifest.apiM04Baseline.deliveryAuthorized !== false
+    || manifest.apiM04Baseline.deliveryAuthorized !== true
   ) {
-    diagnostics.push('FT-11 manifest field=apiM04Baseline violation=unauthorized-transition');
+    diagnostics.push('FT-11 manifest field=apiM04Baseline violation=invalid-authorization-state');
   }
 
   return diagnostics.sort();
@@ -914,6 +964,7 @@ function validateFt11EntryStates(
   expectedDocuments: Ft11ExpectedDocument[],
   hasMigratedCurrentAuthority: boolean,
   hasMigratedActiveNavigation: boolean,
+  hasDeletedRootCandidates: boolean,
   diagnostics: string[],
 ): void {
   const expectedIds = expectedDocuments.map((document) => document.id);
@@ -943,11 +994,62 @@ function validateFt11EntryStates(
       if (state.reviewerResult !== 'validated-awaiting-owner-review') diagnostics.push(`FT-11 entry=${id} field=reviewerResult violation=invalid-active-navigation-review-state`);
       continue;
     }
+    const isDeletedRootCandidate = hasDeletedRootCandidates && FT11_S6_D4_IDS.has(id);
+    if (isDeletedRootCandidate) {
+      if (state.transitionState !== 'Deleted') diagnostics.push(`FT-11 entry=${id} field=transitionState violation=root-candidate-not-deleted`);
+      if (state.uniqueValueConclusion !== 'no-unique-value-after-migration') diagnostics.push(`FT-11 entry=${id} field=uniqueValueConclusion violation=root-candidate-unique-value-unresolved`);
+      if (state.finalDisposition !== 'Delete After Migration') diagnostics.push(`FT-11 entry=${id} field=finalDisposition violation=root-candidate-not-disposed`);
+      if (state.validationStatus !== 'passed') diagnostics.push(`FT-11 entry=${id} field=validationStatus violation=root-candidate-not-validated`);
+      if (state.reviewerResult !== 'validated-awaiting-owner-review') diagnostics.push(`FT-11 entry=${id} field=reviewerResult violation=invalid-root-candidate-review-state`);
+      continue;
+    }
     if (state.transitionState !== 'Pending') diagnostics.push(`FT-11 entry=${id} field=transitionState violation=premature-transition`);
     if (state.uniqueValueConclusion !== 'not-reviewed') diagnostics.push(`FT-11 entry=${id} field=uniqueValueConclusion violation=premature-review`);
     if (state.finalDisposition !== null) diagnostics.push(`FT-11 entry=${id} field=finalDisposition violation=premature-review`);
     if (state.validationStatus !== 'baseline-pending') diagnostics.push(`FT-11 entry=${id} field=validationStatus violation=premature-review`);
     if (state.reviewerResult !== 'not-reviewed') diagnostics.push(`FT-11 entry=${id} field=reviewerResult violation=premature-review`);
+  }
+}
+
+function validateFt11S6D4DeletionReviews(
+  manifest: Ft11DispositionManifest,
+  isS6D4: boolean,
+  diagnostics: string[],
+): void {
+  if (!isS6D4) return;
+  if (!['ready-awaiting-owner-acceptance', 'ready-owner-accepted']
+    .includes(manifest.s6D4IndependentReviewStatus ?? '')) {
+    diagnostics.push('FT-11 manifest field=s6D4IndependentReviewStatus violation=invalid-review-state');
+  }
+  const reviews = manifest.s6D4DeletionReviewById;
+  if (!reviews) {
+    diagnostics.push('FT-11 manifest field=s6D4DeletionReviewById violation=missing-review-ledger');
+    return;
+  }
+  if (!sameStringSet(Object.keys(reviews), [...FT11_S6_D4_IDS])) {
+    diagnostics.push('FT-11 manifest field=s6D4DeletionReviewById violation=identity-drift');
+  }
+  const expectedHistory = ['Pending', 'Migrating', 'Migrated', 'Reviewed', 'Deleted'];
+  const expectedAnswers = {
+    verifiedCurrentFact: 'no-migrated-to-current',
+    durableDecision: 'no-migrated-to-accepted-authority',
+    unfinishedApprovedWork: 'no-explicitly-rejected',
+    executedEvidence: 'no-reconstructible-from-source-tests-git',
+    stableHistoricalLocator: 'no',
+    rationaleForRetainedAuthority: 'no',
+  } as const;
+  for (const id of FT11_S6_D4_IDS) {
+    const review = reviews[id];
+    if (!review) continue;
+    if (review.stateHistory.length !== expectedHistory.length
+      || review.stateHistory.some((state, index) => state !== expectedHistory[index])) {
+      diagnostics.push(`FT-11 entry=${id} field=stateHistory violation=missing-reviewed-delete-transition`);
+    }
+    for (const [field, expected] of Object.entries(expectedAnswers)) {
+      if (review[field as keyof typeof expectedAnswers] !== expected) {
+        diagnostics.push(`FT-11 entry=${id} field=uniqueValueReview.${field} violation=unresolved`);
+      }
+    }
   }
 }
 

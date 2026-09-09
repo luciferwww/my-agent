@@ -3,7 +3,7 @@
 > 版本：v1.0
 > 创建日期：2026-05-18
 > 标准设计文档：[core-runner-design.md](./core-runner-design.md)
-> v0.9 文档：[../core-runner-design.md](../core-runner-design.md)
+> 当前事实：[Current Runner](../current/core_runner.md)
 
 本文档描述 Agent Runner 从 v0.9 升级到 v1.0 的所有变更。仅作为升级参考；canonical 设计请看同目录 [core-runner-design.md](./core-runner-design.md)。
 
@@ -352,7 +352,7 @@ const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
 
 ### 4.3 hook 系统扩展
 
-新增两个 hook 类型（详见 [hooks-design.md](../core-runner-hooks-design.md)）：
+新增两个 hook 类型；当前 Hook 边界见 [Current Runner](../current/core_runner.md)，durable contract 见 [Tool/Hook Module Spec](../tool-hook-module-spec.md)：
 
 ```typescript
 export interface BeforeCompactionPayload {

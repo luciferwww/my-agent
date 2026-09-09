@@ -6,7 +6,7 @@
 > - [runtime-design.md](./runtime-design.md)
 > - [core-runner-design.md](./core-runner-design.md)
 > - [adapters-channel-design.md](./adapters-channel-design.md)
-> - [../platform-config-design.md](../platform-config-design.md)
+> - [Current Config](../current/platform_config.md)
 
 ---
 

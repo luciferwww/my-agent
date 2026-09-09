@@ -3,7 +3,7 @@
 > 文档日期：2026-08-28
 > 状态：**PROPOSAL**（建议稿，尚未批准为实施 Spec）
 > 适用基线：Subagent v1 已实现，用户主动 Abort 已实现，Subagent v2 并发 Spec 尚未实现
-> 关联文档：`core-subagent-spec.md` · `core-subagent-impl.md` · `core-subagent-v2-spec.md` · `core-abort-spec.md`
+> 关联文档：`core-subagent-spec.md` · `current/runtime.md` · `core-subagent-v2-spec.md` · `core-abort-spec.md`
 
 ---
 

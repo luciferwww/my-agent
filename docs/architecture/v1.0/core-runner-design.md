@@ -6,9 +6,9 @@
 > - [runtime-design.md](./runtime-design.md)
 > - [adapters-channel-design.md](./adapters-channel-design.md)
 > - [core-runner-message-flow.md](./core-runner-message-flow.md)
-> - [../core-runner-context-design.md](../core-runner-context-design.md)
-> - [../core-runner-hooks-design.md](../core-runner-hooks-design.md)
-> - [../adapters-llm-design.md](../adapters-llm-design.md)
+> - [Current Runner](../current/core_runner.md)
+> - [Tool/Hook Module Spec](../tool-hook-module-spec.md)
+> - [Current Provider Adapter](../current/adapter_llm.md)
 
 ---
 
@@ -113,7 +113,7 @@ src/core/runner/
     └── compaction.ts              # compactMessages (Layer 3)
 ```
 
-`hooks/` 与 `context/` 是 Agent Runner 的子模块；详细设计分别见 [hooks-design.md](../core-runner-hooks-design.md) 与 [context-design.md](../core-runner-context-design.md)，本文只描述 AgentRunner 主类如何编排它们。
+`hooks/` 与 `context/` 是 Agent Runner 的子模块；当前行为见 [Current Runner](../current/core_runner.md)，Hook contract 见 [Tool/Hook Module Spec](../tool-hook-module-spec.md)，本文只描述 AgentRunner 主类如何编排它们。
 
 ---
 
@@ -389,7 +389,7 @@ private async runAttempt(
 - **入口先清洗**：`sanitizeSessionTail` 把上一次失败/中断遗留的孤立 trailing user 从当前分支剥离（branch 回 parentId，仅改内存 `leafId`），保证后续 append 不会产生连续 user 或重复内容；
 - **append 在 preflight 之后**：预判检查所用的 `messages` 不含当前用户消息，`currentPrompt` 由 `checkContextBudget` 单独计入；preflight 抛 `ContextOverflowError('preemptive')` 时 user 尚未落盘，下一轮压缩重试的输入干净；
 - **Layer 1 / Layer 1.5 / Layer 2** 都在循环之前完成；Layer 3（LLM 摘要）由外层捕获 `ContextOverflowError` 后驱动；
-- 详细的层级语义见 [context-design](../core-runner-context-design.md)，落盘点下沉的设计动机见 [core-runner-turn-flow-spec](../core-runner-turn-flow-spec.md)。
+- 当前层级语义见 [Current Runner](../current/core_runner.md)，落盘点下沉的设计动机见 [core-runner-turn-flow-spec](../core-runner-turn-flow-spec.md)。
 
 ---
 
@@ -467,7 +467,7 @@ runAttempt 主体
 | run 成功结束 | `run_end` | — |
 | run 失败 | `error`（同时 throw） | — |
 
-详细的 hook 语义、注册 API 与执行模型见 [hooks-design.md](../core-runner-hooks-design.md)。
+当前 Hook 行为见 [Current Runner](../current/core_runner.md)，durable contract 见 [Tool/Hook Module Spec](../tool-hook-module-spec.md)。
 
 ### 5.3 stopReason 取值
 
@@ -658,7 +658,7 @@ on<K extends HookName>(
 
 priority 数字越大越先执行；`name` 用于诊断日志。
 
-完整的 payload 形状、Interceptor / Observer 区分、hook 错误处理策略见 [hooks-design.md](../core-runner-hooks-design.md)。
+完整的 Interceptor / Observer contract 与错误策略见 [Tool/Hook Module Spec](../tool-hook-module-spec.md)；当前接入见 [Current Runner](../current/core_runner.md)。
 
 ---
 

@@ -114,15 +114,14 @@ Phase 1–6 填写目标章节时，每个重要结论必须使用以下前缀�
 | 文档或区域 | 风险 | AF-03 使用规则 |
 |---|---|---|
 | [Root README](../../README.md) | Project Structure 仍是旧顶层目录形态 | 仅作为产品入口，不作为模块映射权威 |
-| `docs/architecture/current/` | 2026-05 快照，部分文档自列差异或规划项 | 逐文件作为 Current Fact Candidate，不整体升级为 Current Architecture |
+| [Current Architecture](current/overview.md) | Current Authority | 作为已实现边界与流程的唯一入口；Target 只定义目标方向 |
 | [Current Config](current/platform_config.md) | 工具命名、logger、fs 等与 v1.0 描述存在差异 | Config 目标边界受 AP-02 和 AF-05/06 约束；旧字段不自动成为目标 |
-| [Platform Config Restructure Implementation](platform-config-restructure-impl.md) | Implementation 记录无 Accepted/Validated 状态 | 作为迁移历史和候选调用方，不固定目标 API |
-| [Channel Design](adapters-channel-design.md) | 状态为设计中、待确认 | 作为历史设计输入，不覆盖 Accepted Principles |
-| [WebSocket Channel Design](adapters-websocket-channel-design.md) | 状态为设计中、待确认 | 只提取传输约束候选 |
+| [Platform Config Restructure Spec](platform-config-restructure-spec.md) | Accepted Spec | 保留 durable Config contract；当前行为以 Current Config 与 source/tests 为准 |
+| [Channel Module Spec](channel-module-spec.md) | Accepted Spec | 保留 Channel contract；当前 transport 与 routing 以 Current Channel 为准 |
 | [Subagent Evolution Proposal](core-subagent-evolution-proposal.md) | Proposal，未进入 Accepted Spec | 作为 Deferred/后续方向，不解除 Foundation 冻结 |
 | [Subagent v2 Spec](core-subagent-v2-spec.md) | 并发设计与当前 Foundation 范围冻结并存 | 作为历史或未来输入，不写入 AF-03 当前交付范围 |
 | [Runner Emit Context Refactor](core-runner-emit-context-refactor.md) | 明确未实施 | 作为架构债候选，不作为 Current Fact |
-| [Exec Flow Design](core-tools-builtin-exec-flow-design.md) | 引用已不存在的回归清单 | AF-04 需重建验证输入，不依赖失效链接 |
+| [Current Builtin Tools](current/core_tools_builtin.md) | Current Authority | Exec/Process 当前事实由 source/tests 证明；目标 contract 服从 Accepted Tool/Hook Spec |
 
 `docs/analysis/` 当前包含有效的比较分析入口，但它们只作为设计参考，不是 my-agent Current Fact 或 Target Constraint。
 
@@ -1634,12 +1633,12 @@ Forbidden:
 
 | 候选 | Phase 5 状态 | 后继/处置 |
 |---|---|---|
-| `docs/architecture/current/*.md` | Current Fact Candidate，不整体升级 | AF-04 按代码/测试核验后合并为唯一 Current Architecture；随后逐份 `Pending -> Migrating -> Migrated -> Reviewed -> Deleted` |
-| `platform-config-restructure-impl.md` | 历史 Implementation | 有效当前事实进入 Current Architecture；长期决定进入 ADR；其余由 Git History 保存 |
-| `adapters-channel-design.md`、`adapters-websocket-channel-design.md` | 未 Accepted 的历史设计 | Channel 当前事实进入 Current Architecture，目标约束由本文件/后续 Accepted Spec 接管 |
+| [Current Architecture](current/overview.md) | Current Authority | 已按 source/tests 核验并成为唯一 Current Architecture；不参与 Legacy 删除状态机 |
+| Platform Config 历史 Implementation | S6-D4 删除候选 | 当前事实由 [Current Config](current/platform_config.md) 接管；长期决定由 ADR-004/Accepted Specs 接管；过程由 Git History 保存 |
+| Channel/WebSocket 历史设计 | S6-D4 删除候选 | 当前事实由 [Current Channel](current/adapter_channel.md) 接管；目标约束由本文件与 [Channel Module Spec](channel-module-spec.md) 接管 |
 | `core-subagent-evolution-proposal.md`、`core-subagent-v2-spec.md` | Foundation Deferred/Future | 保留后继链接或移入 Legacy；不得作为 Batch/Background/Team 的活跃实现授权 |
 | `core-runner-emit-context-refactor.md` | 未实施 Proposal | 未完成事项若仍有效进入 Plan，否则 Review 后删除 |
-| `core-tools-builtin-exec-flow-design.md` | 验证链接失效 | AF-04 重建 Characterization 输入后，迁移独有内容并 Review 删除 |
+| Exec Flow 历史设计 | S6-D4 删除候选 | 当前事实由 [Current Builtin Tools](current/core_tools_builtin.md) 接管；无独立 unique value，Review 后删除 |
 | Root `README.md` 的 Project Structure | 产品入口中的过时结构说明 | Slice 6 更新为唯一 Current Architecture 的简短链接/准确结构，不复制模块权威说明 |
 
 ### 9.6 Phase 5 完成条件

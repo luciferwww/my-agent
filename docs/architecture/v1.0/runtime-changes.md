@@ -1,15 +1,15 @@
 # Runtime / App Assembly 模块设计文档（v1.0）
 
 > 版本：v1.0
-> 取代：[../runtime-design.md](../runtime-design.md)
+> 当前事实：[Current Runtime](../current/runtime.md)
 > 创建日期：2026-05-18
 > 关联：
 > - [adapters-channel-design.md（v1.0）](./adapters-channel-design.md)
 > - [core-runner-design.md（v1.0）](./core-runner-design.md)
 > - [core-runner-message-flow.md（v1.0）](./core-runner-message-flow.md)
 > - 未变更或仅小幅修订的旁路文档继续以 v0.9 路径为准：
->   - [../core-runner-context-design.md](../core-runner-context-design.md)
->   - [../core-runner-hooks-design.md](../core-runner-hooks-design.md)
+>   - [Current Runner](../current/core_runner.md)
+>   - [Tool/Hook Module Spec](../tool-hook-module-spec.md)
 >   - [platform-config-design.md（v1.0）](./platform-config-design.md)
 
 ---

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "slice": "S6-D3",
-  "status": "active-navigation-migrated",
+  "slice": "S6-D4",
+  "status": "completed-owner-accepted",
   "capturedAt": "2026-09-09",
   "entryDefaults": {
     "initialState": "Pending",
@@ -42,33 +42,33 @@
     "DOC-C11":{"initialState":"Pending","transitionState":"Migrated","uniqueValueConclusion":"retained-current-authority","finalDisposition":"Retain Current Authority","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
     "DOC-C12":{"initialState":"Pending","transitionState":"Migrated","uniqueValueConclusion":"retained-current-authority","finalDisposition":"Retain Current Authority","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
     "DOC-C13":{"initialState":"Pending","transitionState":"Migrated","uniqueValueConclusion":"retained-current-authority","finalDisposition":"Retain Current Authority","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
-    "DOC-A01":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A02":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A03":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
+    "DOC-A01":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A02":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A03":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
     "DOC-A04":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
     "DOC-A05":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
     "DOC-A06":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A07":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
+    "DOC-A07":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
     "DOC-A08":{"initialState":"Pending","transitionState":"Migrated","uniqueValueConclusion":"retained-active-navigation","finalDisposition":"Retain Active Navigation","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
     "DOC-A09":{"initialState":"Pending","transitionState":"Migrated","uniqueValueConclusion":"retained-active-navigation","finalDisposition":"Retain Active Navigation","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
-    "DOC-A10":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A11":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A12":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A13":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A14":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A15":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A16":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A17":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A18":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A19":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A20":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A21":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A22":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A23":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A24":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A25":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A26":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
-    "DOC-A27":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
+    "DOC-A10":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A11":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A12":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A13":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A14":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A15":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A16":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A17":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A18":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A19":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A20":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A21":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A22":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A23":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A24":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A25":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A26":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
+    "DOC-A27":{"initialState":"Pending","transitionState":"Deleted","uniqueValueConclusion":"no-unique-value-after-migration","finalDisposition":"Delete After Migration","validationStatus":"passed","reviewerResult":"validated-awaiting-owner-review"},
     "DOC-V01":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
     "DOC-V02":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
     "DOC-V03":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
@@ -82,6 +82,31 @@
     "DOC-V11":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"},
     "DOC-V12":{"initialState":"Pending","transitionState":"Pending","uniqueValueConclusion":"not-reviewed","finalDisposition":null,"validationStatus":"baseline-pending","reviewerResult":"not-reviewed"}
   },
+  "s6D4IndependentReviewStatus": "ready-owner-accepted",
+  "s6D4DeletionReviewById": {
+    "DOC-A01":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A02":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A03":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A07":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A10":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A11":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A12":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A13":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A14":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A15":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A16":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A17":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A18":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A19":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A20":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A21":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A22":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A23":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A24":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A25":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A26":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"},
+    "DOC-A27":{"stateHistory":["Pending","Migrating","Migrated","Reviewed","Deleted"],"verifiedCurrentFact":"no-migrated-to-current","durableDecision":"no-migrated-to-accepted-authority","unfinishedApprovedWork":"no-explicitly-rejected","executedEvidence":"no-reconstructible-from-source-tests-git","stableHistoricalLocator":"no","rationaleForRetainedAuthority":"no"}
+  },
   "referenceAudit": {
     "governanceLedgers": [
       "docs/architecture/legacy-migration-inventory.md",
@@ -91,7 +116,7 @@
     "notes": "Governance-ledger references are verified separately from migration-target inbound references. Generated output is excluded."
   },
   "apiM04Baseline": {
-    "status": "separate-gate-not-authorized",
+    "status": "separate-gate-authorized-not-started",
     "facadePathImports": {
       "productionSource": [
         "src/adapters/llm/AnthropicClient.ts",
@@ -129,7 +154,7 @@
       "barrelExports": ["src/adapters/llm/index.ts"]
     },
     "externalConsumerDecision": "unresolved",
-    "deliveryAuthorized": false
+    "deliveryAuthorized": true
   },
   "candidates": [
     {
@@ -152,7 +177,7 @@
       "durableDecisionAuthority": ["docs/architecture/runtime-composition-module-spec.md", "docs/architecture/adr-005-extension-registry-runtime-composition.md"],
       "unfinishedWorkSuccessor": [],
       "evidenceSuccessor": ["src/runtime/", "src/architecture-fitness/ft-10-runtime-composition-deletion.test.ts"],
-      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/current/core_model_resolution.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/current/core_runner.md","docs/architecture/current/core_tools.md","docs/architecture/current/core_tools_builtin.md","docs/architecture/current/overview.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/current/core_model_resolution.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/core-subagent-v2-spec.md","docs/architecture/current/core_runner.md","docs/architecture/current/core_tools.md","docs/architecture/current/core_tools_builtin.md","docs/architecture/current/overview.md","docs/architecture/v1.0/runtime-changes.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Retain Current Authority",
       "validationEvidence": ["Runtime unit/contract/integration tests", "CH-01/02/05-10/12", "FT-01/05/07/08/10"]
     },
@@ -164,7 +189,7 @@
       "durableDecisionAuthority": ["docs/architecture/adr-001-tool-result-closure-and-recovery.md", "docs/architecture/adr-002-context-budgeting-and-compaction-recovery.md"],
       "unfinishedWorkSuccessor": [],
       "evidenceSuccessor": ["src/core/runner/", "src/core/runner/AgentRunner.test.ts"],
-      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/core-subagent-spec.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/current/overview.md","docs/architecture/current/runtime.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/adr-002-context-budgeting-and-compaction-recovery.md","docs/architecture/core-subagent-spec.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/core-subagent-v2-spec.md","docs/architecture/current/overview.md","docs/architecture/current/runtime.md","docs/architecture/v1.0/adapters-channel-design.md","docs/architecture/v1.0/core-runner-changes.md","docs/architecture/v1.0/core-runner-design.md","docs/architecture/v1.0/runtime-changes.md","docs/architecture/v1.0/runtime-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Retain Current Authority",
       "validationEvidence": ["Runner unit/contract tests", "CH-02-04/11/13", "FT-03/08"]
     },
@@ -176,7 +201,7 @@
       "durableDecisionAuthority": ["docs/architecture/channel-module-spec.md", "docs/architecture/approval-lifecycle-spec.md"],
       "unfinishedWorkSuccessor": [],
       "evidenceSuccessor": ["src/core/channel/", "src/adapters/channel/", "src/runtime/RuntimeApp.test.ts"],
-      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/current/core_media.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/current/core_prompt.md","docs/architecture/current/core_tools.md","docs/architecture/current/overview.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/current/core_media.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/current/core_prompt.md","docs/architecture/current/core_tools.md","docs/architecture/current/overview.md","docs/architecture/v1.0/adapters-channel-changes.md","docs/architecture/v1.0/adapters-channel-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Retain Current Authority",
       "validationEvidence": ["Channel contract/lifecycle tests", "Runtime routing/Fanout tests", "FT-05/08"]
     },
@@ -188,7 +213,7 @@
       "durableDecisionAuthority": ["docs/architecture/adr-004-provider-model-identity-and-facts-ownership.md", "docs/architecture/platform-config-restructure-spec.md"],
       "unfinishedWorkSuccessor": [],
       "evidenceSuccessor": ["src/platform/config/", "src/platform/config/loader.test.ts"],
-      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/current/core_model_resolution.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/current/overview.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/current/core_model_resolution.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/current/overview.md","docs/architecture/v1.0/core-runner-message-flow.md","docs/architecture/v1.0/platform-config-changes.md","docs/architecture/v1.0/platform-config-design.md","docs/architecture/v1.0/platform-config-wizard-design.md","docs/architecture/v1.0/runtime-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Retain Current Authority",
       "validationEvidence": ["Config schema/loader/defaults tests", "Config Wizard tests", "ADR-004 ownership audit"]
     },
@@ -200,7 +225,7 @@
       "durableDecisionAuthority": ["docs/architecture/adr-004-provider-model-identity-and-facts-ownership.md", "docs/architecture/model-resolution-module-spec.md"],
       "unfinishedWorkSuccessor": [],
       "evidenceSuccessor": ["src/adapters/llm/", "src/core/model-invocation/"],
-      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/current/core_model_resolution.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/current/core_prompt.md","docs/architecture/current/overview.md","docs/architecture/current/runtime.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/current/core_model_resolution.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/current/core_prompt.md","docs/architecture/current/overview.md","docs/architecture/current/runtime.md","docs/architecture/v1.0/core-runner-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Retain Current Authority",
       "validationEvidence": ["Anthropic Adapter tests", "Provider contract tests", "FT-03/08"]
     },
@@ -212,7 +237,7 @@
       "durableDecisionAuthority": ["docs/architecture/tool-hook-module-spec.md", "docs/architecture/adr-001-tool-result-closure-and-recovery.md"],
       "unfinishedWorkSuccessor": [],
       "evidenceSuccessor": ["src/core/tools/", "src/core/runner/AgentRunner.test.ts"],
-      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/current/core_memory.md","docs/architecture/current/core_tools_builtin.md","docs/architecture/current/overview.md","docs/architecture/current/runtime.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/core-subagent-v2-spec.md","docs/architecture/current/core_memory.md","docs/architecture/current/core_tools_builtin.md","docs/architecture/current/overview.md","docs/architecture/current/runtime.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Retain Current Authority",
       "validationEvidence": ["Tool contract/execution tests", "CH-03/04/14", "FT-07/08"]
     },
@@ -224,7 +249,7 @@
       "durableDecisionAuthority": ["docs/architecture/tool-hook-module-spec.md"],
       "unfinishedWorkSuccessor": [],
       "evidenceSuccessor": ["src/core/tools/builtin/", "src/runtime-modules/builtin-tools.ts"],
-      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/current/core_tools.md","docs/architecture/current/overview.md","docs/architecture/current/runtime.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/current/core_tools.md","docs/architecture/current/overview.md","docs/architecture/current/runtime.md","docs/architecture/v1.0/core-tools-fs-changes.md","docs/architecture/v1.0/core-tools-fs-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Retain Current Authority",
       "validationEvidence": ["builtin Tool unit/integration tests", "production registration audit", "Exec/Process platform tests"]
     },
@@ -284,7 +309,7 @@
       "durableDecisionAuthority": ["docs/architecture/runtime-composition-module-spec.md"],
       "unfinishedWorkSuccessor": [],
       "evidenceSuccessor": ["src/platform/logger/", "src/runtime/runtime-builder.test.ts"],
-      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/current/overview.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/current/overview.md","docs/architecture/v1.0/platform-config-wizard-design.md","docs/architecture/v1.0/runtime-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Retain Current Authority",
       "validationEvidence": ["Logger adapter/buffering tests", "Shutdown resource tests", "FT-01"]
     },
@@ -294,11 +319,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/platform_config.md"],
       "durableDecisionAuthority": ["docs/architecture/adr-004-provider-model-identity-and-facts-ownership.md", "docs/architecture/platform-config-restructure-spec.md"],
-      "unfinishedWorkSuccessor": ["docs/roadmap/architecture-foundation-plan.md"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["Git history", "src/platform/config/ tests"],
-      "inbound": {"activeDocs":["docs/architecture/target-architecture.md"],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Config source/tests", "active-link audit"]
+      "validationEvidence": ["Config source/tests", "active-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A02",
@@ -306,11 +331,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/adapter_channel.md"],
       "durableDecisionAuthority": ["docs/architecture/channel-module-spec.md"],
-      "unfinishedWorkSuccessor": ["explicit review required"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["Channel source/tests"],
-      "inbound": {"activeDocs":["docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/adapters-websocket-channel-design.md","docs/architecture/runtime-design.md","docs/architecture/v1.0/adapters-channel-changes.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Channel contract/lifecycle tests", "inbound-link audit"]
+      "validationEvidence": ["Channel contract/lifecycle tests", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A03",
@@ -318,11 +343,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/adapter_channel.md"],
       "durableDecisionAuthority": ["docs/architecture/channel-module-spec.md"],
-      "unfinishedWorkSuccessor": ["explicit review required"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["src/adapters/channel/WebSocketChannel.test.ts"],
-      "inbound": {"activeDocs":["docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/adapters-channel-design.md","docs/architecture/v1.0/adapters-channel-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["WebSocket protocol tests", "inbound-link audit"]
+      "validationEvidence": ["WebSocket protocol tests", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A04",
@@ -366,11 +391,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/core_tools.md", "docs/architecture/current/core_tools_builtin.md"],
       "durableDecisionAuthority": ["docs/architecture/tool-hook-module-spec.md"],
-      "unfinishedWorkSuccessor": ["docs/roadmap/architecture-foundation-plan.md or explicit rejection"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["src/core/tools/builtin/exec/ tests"],
-      "inbound": {"activeDocs":["docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/core-tools-builtin-design.md","docs/architecture/core-tools-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Exec/Process unit/integration/platform tests", "inbound-link audit"]
+      "validationEvidence": ["Exec/Process unit/integration/platform tests", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A08",
@@ -402,11 +427,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/runtime.md"],
       "durableDecisionAuthority": ["docs/architecture/runtime-composition-module-spec.md"],
-      "unfinishedWorkSuccessor": ["explicit review required"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["Runtime source/tests", "Slice 5 validation record"],
-      "inbound": {"activeDocs":[],"candidateDocs":["docs/architecture/v1.0/runtime-changes.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Runtime source/tests", "CH-01/02/05-10/12", "inbound-link audit"]
+      "validationEvidence": ["Runtime source/tests", "CH-01/02/05-10/12", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A11",
@@ -414,11 +439,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/core_runner.md"],
       "durableDecisionAuthority": ["docs/architecture/adr-001-tool-result-closure-and-recovery.md", "docs/architecture/adr-002-context-budgeting-and-compaction-recovery.md"],
-      "unfinishedWorkSuccessor": ["explicit review required"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["Runner source/tests"],
-      "inbound": {"activeDocs":[],"candidateDocs":["docs/architecture/core-runner-context-design.md","docs/architecture/core-subagent-v2-spec.md","docs/architecture/runtime-design.md","docs/architecture/v1.0/core-runner-changes.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Runner tests", "CH-02-04/11/13", "inbound-link audit"]
+      "validationEvidence": ["Runner tests", "CH-02-04/11/13", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A12",
@@ -426,11 +451,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/core_runner.md"],
       "durableDecisionAuthority": ["docs/architecture/adr-002-context-budgeting-and-compaction-recovery.md"],
-      "unfinishedWorkSuccessor": ["explicit review required"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["Runner context/Compaction tests"],
-      "inbound": {"activeDocs":["docs/architecture/adr-002-context-budgeting-and-compaction-recovery.md"],"candidateDocs":["docs/architecture/core-runner-design.md","docs/architecture/v1.0/core-runner-design.md","docs/architecture/v1.0/runtime-changes.md","docs/architecture/v1.0/runtime-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Compaction/context tests", "CH-04/11", "inbound-link audit"]
+      "validationEvidence": ["Compaction/context tests", "CH-04/11", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A13",
@@ -438,11 +463,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/core_runner.md"],
       "durableDecisionAuthority": ["docs/architecture/tool-hook-module-spec.md", "docs/architecture/adr-002-context-budgeting-and-compaction-recovery.md"],
-      "unfinishedWorkSuccessor": ["explicit review required"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["Hook/Runner tests"],
-      "inbound": {"activeDocs":[],"candidateDocs":["docs/architecture/v1.0/adapters-channel-design.md","docs/architecture/v1.0/core-runner-changes.md","docs/architecture/v1.0/core-runner-design.md","docs/architecture/v1.0/runtime-changes.md","docs/architecture/v1.0/runtime-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Hook/Runner tests", "CH-04/06", "inbound-link audit"]
+      "validationEvidence": ["Hook/Runner tests", "CH-04/06", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A14",
@@ -450,11 +475,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/platform_config.md"],
       "durableDecisionAuthority": ["docs/architecture/adr-004-provider-model-identity-and-facts-ownership.md", "docs/architecture/model-resolution-module-spec.md"],
-      "unfinishedWorkSuccessor": ["explicit review required"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["Config source/tests"],
-      "inbound": {"activeDocs":[],"candidateDocs":["docs/architecture/runtime-design.md","docs/architecture/v1.0/core-runner-message-flow.md","docs/architecture/v1.0/platform-config-changes.md","docs/architecture/v1.0/platform-config-design.md","docs/architecture/v1.0/platform-config-wizard-design.md","docs/architecture/v1.0/runtime-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Config loader/defaults/wizard tests", "inbound-link audit"]
+      "validationEvidence": ["Config loader/defaults/wizard tests", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A15",
@@ -462,11 +487,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/platform_logger.md"],
       "durableDecisionAuthority": ["docs/architecture/runtime-composition-module-spec.md"],
-      "unfinishedWorkSuccessor": ["future Logger Spec or explicit rejection"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["Logger source/tests"],
-      "inbound": {"activeDocs":[],"candidateDocs":["docs/architecture/v1.0/platform-config-wizard-design.md","docs/architecture/v1.0/runtime-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Logger tests", "FT-01", "inbound-link audit"]
+      "validationEvidence": ["Logger tests", "FT-01", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A16",
@@ -474,11 +499,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/platform_logger.md"],
       "durableDecisionAuthority": [],
-      "unfinishedWorkSuccessor": ["future Logger Spec or explicit rejection"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["Logger source/tests"],
       "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Logger source/tests", "Owner conflict disposition"]
+      "validationEvidence": ["Logger source/tests", "Owner conflict disposition", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A17",
@@ -486,11 +511,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/adapter_llm.md"],
       "durableDecisionAuthority": ["docs/architecture/adr-004-provider-model-identity-and-facts-ownership.md", "docs/architecture/model-resolution-module-spec.md"],
-      "unfinishedWorkSuccessor": ["explicit review required"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["Anthropic Adapter tests", "Provider contract tests"],
-      "inbound": {"activeDocs":[],"candidateDocs":["docs/architecture/v1.0/core-runner-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Anthropic Adapter tests", "FT-03/08", "inbound-link audit"]
+      "validationEvidence": ["Anthropic Adapter tests", "FT-03/08", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A18",
@@ -498,11 +523,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/core_prompt.md"],
       "durableDecisionAuthority": ["docs/architecture/attachments-support-spec.md"],
-      "unfinishedWorkSuccessor": ["future Prompt Spec or explicit rejection"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["Prompt source/tests"],
       "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Prompt tests", "CH-14", "inbound-link audit"]
+      "validationEvidence": ["Prompt tests", "CH-14", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A19",
@@ -510,11 +535,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/core_session.md"],
       "durableDecisionAuthority": ["docs/architecture/core-runner-turn-flow-spec.md", "docs/architecture/adr-002-context-budgeting-and-compaction-recovery.md"],
-      "unfinishedWorkSuccessor": ["future Session Spec or explicit rejection"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["Session source/tests"],
-      "inbound": {"activeDocs":[],"candidateDocs":["docs/architecture/core-runner-context-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Session tests", "CH-03/11", "inbound-link audit"]
+      "validationEvidence": ["Session tests", "CH-03/11", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A20",
@@ -522,11 +547,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/core_memory.md"],
       "durableDecisionAuthority": ["docs/architecture/runtime-composition-module-spec.md"],
-      "unfinishedWorkSuccessor": ["future Memory Plan/Spec or explicit rejection"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["Memory source/tests"],
-      "inbound": {"activeDocs":[],"candidateDocs":["docs/architecture/runtime-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Memory tests", "resource audit", "inbound-link audit"]
+      "validationEvidence": ["Memory tests", "resource audit", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A21",
@@ -534,11 +559,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/core_tools.md"],
       "durableDecisionAuthority": ["docs/architecture/tool-hook-module-spec.md"],
-      "unfinishedWorkSuccessor": ["explicit review required"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["Tool source/tests"],
-      "inbound": {"activeDocs":[],"candidateDocs":["docs/architecture/core-subagent-v2-spec.md","docs/architecture/core-tools-builtin-design.md","docs/architecture/runtime-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Tool tests", "CH-03/04/14", "FT-07/08"]
+      "validationEvidence": ["Tool tests", "CH-03/04/14", "FT-07/08", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A22",
@@ -546,11 +571,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/core_tools_builtin.md"],
       "durableDecisionAuthority": ["docs/architecture/tool-hook-module-spec.md"],
-      "unfinishedWorkSuccessor": ["Memory Tool Plan or explicit rejection"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["builtin Tool source/tests"],
-      "inbound": {"activeDocs":[],"candidateDocs":["docs/architecture/core-tools-design.md","docs/architecture/v1.0/core-tools-fs-changes.md","docs/architecture/v1.0/core-tools-fs-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["builtin Tool tests", "production registration audit", "inbound-link audit"]
+      "validationEvidence": ["builtin Tool tests", "production registration audit", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A23",
@@ -558,11 +583,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/core_workspace.md"],
       "durableDecisionAuthority": [],
-      "unfinishedWorkSuccessor": ["future Workspace Spec or explicit rejection"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["Workspace source/tests"],
-      "inbound": {"activeDocs":[],"candidateDocs":["docs/architecture/core-prompt-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Workspace tests", "Prompt context tests", "inbound-link audit"]
+      "validationEvidence": ["Workspace tests", "Prompt context tests", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A24",
@@ -570,11 +595,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/core_tools_builtin.md"],
       "durableDecisionAuthority": [],
-      "unfinishedWorkSuccessor": ["active Plan or explicit rejection"],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["Exec/Process source/tests"],
-      "inbound": {"activeDocs":[],"candidateDocs":["docs/architecture/core-tools-builtin-design.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Exec/Process unit/integration/platform tests", "inbound-link audit"]
+      "validationEvidence": ["Exec/Process unit/integration/platform tests", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A25",
@@ -582,11 +607,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/adapter_channel.md", "docs/architecture/current/core_prompt.md"],
       "durableDecisionAuthority": ["docs/architecture/attachments-support-spec.md"],
-      "unfinishedWorkSuccessor": [],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["attachment pipeline/Runtime/WebSocket tests", "Git history"],
-      "inbound": {"activeDocs":[],"candidateDocs":["docs/architecture/attachments-client-implementation.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["attachment pipeline/Runtime/WebSocket tests", "inbound-link audit"]
+      "validationEvidence": ["attachment pipeline/Runtime/WebSocket tests", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A26",
@@ -594,11 +619,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/adapter_channel.md", "docs/agent-capabilities.md"],
       "durableDecisionAuthority": ["docs/architecture/attachments-support-spec.md"],
-      "unfinishedWorkSuccessor": [],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["client/manual protocol evidence", "Git history"],
       "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["client protocol evidence", "inbound-link audit"]
+      "validationEvidence": ["client protocol evidence", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-A27",
@@ -606,11 +631,11 @@
       "category": "root-candidate",
       "currentFactSuccessor": ["docs/architecture/current/runtime.md", "docs/architecture/current/core_runner.md"],
       "durableDecisionAuthority": ["docs/architecture/core-subagent-spec.md", "docs/architecture/subagent-model-resolution-module-spec.md"],
-      "unfinishedWorkSuccessor": [],
+      "unfinishedWorkSuccessor": ["rejected in S6-D4: no owner-approved unfinished work remains"],
       "evidenceSuccessor": ["Slice 2 validation record", "Subagent unit/integration tests"],
-      "inbound": {"activeDocs":[],"candidateDocs":["docs/architecture/core-subagent-v2-spec.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":[],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Delete After Migration",
-      "validationEvidence": ["Subagent unit/e2e tests", "Abort/Usage/Event/Session evidence", "inbound-link audit"]
+      "validationEvidence": ["Subagent unit/e2e tests", "Abort/Usage/Event/Session evidence", "inbound-link audit", "S6-D4 six-question unique-value review"]
     },
     {
       "id": "DOC-V01",

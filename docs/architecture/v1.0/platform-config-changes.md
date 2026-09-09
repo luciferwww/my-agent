@@ -3,7 +3,7 @@
 > 版本：v1.0
 > 创建日期：2026-05-26
 > 标准设计文档：[platform-config-design.md](./platform-config-design.md)
-> v0.9 文档：[../platform-config-design.md](../platform-config-design.md)
+> 当前事实：[Current Config](../current/platform_config.md)
 
 本文档描述 Config 模块从 v0.9 升级到 v1.0 的所有变更。仅作为升级参考；canonical 设计请看同目录 [platform-config-design.md](./platform-config-design.md)。
 

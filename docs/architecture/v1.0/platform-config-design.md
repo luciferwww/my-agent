@@ -1,7 +1,7 @@
 # Config 模块设计文档（v1.0）
 
 > 版本：v1.0
-> 取代：[../platform-config-design.md](../platform-config-design.md)
+> 当前事实：[Current Config](../current/platform_config.md)
 > 创建日期：2026-05-26
 > 关联：
 > - [runtime-design.md（v1.0）](./runtime-design.md)

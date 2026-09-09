@@ -3,7 +3,7 @@
 > 版本：v1.0
 > 创建日期：2026-05-26
 > 变更说明：[core-tools-fs-changes.md](./core-tools-fs-changes.md)
-> 旧文档：[../core-tools-builtin-design.md](../core-tools-builtin-design.md)
+> 当前事实：[Current Builtin Tools](../current/core_tools_builtin.md)
 
 ---
 

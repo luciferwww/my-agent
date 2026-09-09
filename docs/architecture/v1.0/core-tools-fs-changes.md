@@ -3,7 +3,7 @@
 > 版本：v1.0
 > 创建日期：2026-05-26
 > 标准设计文档：[core-tools-fs-design.md](./core-tools-fs-design.md)
-> 旧文档：[../core-tools-builtin-design.md](../core-tools-builtin-design.md)
+> 当前事实：[Current Builtin Tools](../current/core_tools_builtin.md)
 
 本文档描述内置 fs / search 工具路径策略从当前状态升级到 v1.0 的所有变更。
 仅作升级参考；canonical 设计见同目录 [core-tools-fs-design.md](./core-tools-fs-design.md)。

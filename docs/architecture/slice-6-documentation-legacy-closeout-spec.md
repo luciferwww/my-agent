@@ -279,33 +279,33 @@ The manifest is the review ledger, not a new architecture authority.
 
 | ID | Artifact | Successor / unique-value disposition | Proposed terminal disposition |
 |---|---|---|---|
-| DOC-A01 | [Platform Config Restructure Implementation](platform-config-restructure-impl.md) | facts → DOC-C05; decision → ADR-004/Specs; unfinished work → Plan; narration → Git | Delete After Migration |
-| DOC-A02 | [Channel Design](adapters-channel-design.md) | verified facts → DOC-C04; contract → Channel Module Spec | Delete After Migration |
-| DOC-A03 | [WebSocket Channel Design](adapters-websocket-channel-design.md) | verified protocol facts → DOC-C04; unaccepted ideas → Plan or reject | Delete After Migration |
+| DOC-A01 | Platform Config Restructure Implementation — `platform-config-restructure-impl.md`（Deleted S6-D4） | facts → DOC-C05; decision → ADR-004/Specs; unfinished work rejected; narration → Git | Delete After Migration |
+| DOC-A02 | Channel Design — `adapters-channel-design.md`（Deleted S6-D4） | verified facts → DOC-C04; contract → Channel Module Spec; unaccepted ideas rejected | Delete After Migration |
+| DOC-A03 | WebSocket Channel Design — `adapters-websocket-channel-design.md`（Deleted S6-D4） | verified protocol facts → DOC-C04; unaccepted ideas rejected | Delete After Migration |
 | DOC-A04 | [Subagent Evolution Proposal](core-subagent-evolution-proposal.md) | retain only as non-authorizing future direction; Foundation freeze remains | Retain Deferred Input |
 | DOC-A05 | [Subagent v2 Spec](core-subagent-v2-spec.md) | future concurrency input; future Accepted Spec must supersede it | Retain Deferred Input |
 | DOC-A06 | [Runner Emit Context Refactor](core-runner-emit-context-refactor.md) | approved work → Plan; otherwise explicit rejection and Git history | Delete After Migration |
-| DOC-A07 | [Exec Flow Design](core-tools-builtin-exec-flow-design.md) | verified Exec/Process facts → DOC-C08 Exec/Process subsection; generic Tool contract → DOC-C07; future work → Plan | Delete After Migration |
+| DOC-A07 | Exec Flow Design — `core-tools-builtin-exec-flow-design.md`（Deleted S6-D4） | verified Exec/Process facts → DOC-C08 Exec/Process subsection; generic Tool contract → DOC-C07; unapproved future work rejected | Delete After Migration |
 | DOC-A08 | [Root README](../../README.md) | same file becomes concise product/navigation entry | Retain Active Navigation; rewrite in place |
 | DOC-A09 | [Capability Inventory](../agent-capabilities.md) | same file becomes dated summary linked to Current Architecture | Retain Active Navigation; rewrite in place |
-| DOC-A10 | [Runtime Design](runtime-design.md) | verified facts → DOC-C02; decisions/contracts → accepted Runtime Specs | Delete After Migration |
-| DOC-A11 | [Core Runner Design](core-runner-design.md) | facts → DOC-C03; closure/Compaction decisions → ADR-001/002 | Delete After Migration |
-| DOC-A12 | [Core Runner Context Design](core-runner-context-design.md) | current budgeting/Compaction → DOC-C03; decisions → ADR-002 | Delete After Migration |
-| DOC-A13 | [Core Runner Hooks Design](core-runner-hooks-design.md) | current Hook facts → DOC-C03; contract → Tool/Hook Module Spec | Delete After Migration |
-| DOC-A14 | [Platform Config Design](platform-config-design.md) | config facts → DOC-C05; Model ownership → ADR-004/Model Resolution Spec | Delete After Migration |
-| DOC-A15 | [Platform Logger Design](platform-logger-design.md) | verified facts → DOC-C13; future decisions → future Spec or reject | Delete After Migration |
-| DOC-A16 | [Logging Design](logging-design.md) | merge verified facts into DOC-C13; conflicting suggestions → Plan/Spec or reject | Delete After Migration |
-| DOC-A17 | [LLM Adapter Design](adapters-llm-design.md) | facts → DOC-C06; identity/Facts/Port decisions → ADR-004 and accepted Specs | Delete After Migration |
-| DOC-A18 | [Core Prompt Design](core-prompt-design.md) | facts → DOC-C10; future decisions → future Prompt Spec | Delete After Migration |
-| DOC-A19 | [Core Session Design](core-session-design.md) | facts → DOC-C09; future transaction decisions → future Session Spec | Delete After Migration |
-| DOC-A20 | [Core Memory Design](core-memory-design.md) | facts → DOC-C11; future work → Plan/Spec | Delete After Migration |
-| DOC-A21 | [Core Tools Design](core-tools-design.md) | facts → DOC-C07; Registry/Hook contract → Slice 3 Spec | Delete After Migration |
-| DOC-A22 | [Builtin Tools Design](core-tools-builtin-design.md) | inventory → DOC-C08; future Memory Tool work → Plan or reject | Delete After Migration |
-| DOC-A23 | [Workspace Design](core-workspace-design.md) | facts → DOC-C12; future decisions → future Workspace Spec | Delete After Migration |
-| DOC-A24 | [Exec Runtime Design](core-tools-builtin-exec-runtime-design.md) | platform and process facts → DOC-C08 Exec/Process subsection; unfinished work → Plan or reject | Delete After Migration |
-| DOC-A25 | [Attachments Server Implementation](attachments-server-implementation.md) | contract → Attachments Support Spec; wire ingress/delivery → DOC-C04; media validation/normalization → `current/core_media.md`; prompt placement → DOC-C10 | Delete After Migration |
-| DOC-A26 | [Attachments Client Implementation](attachments-client-implementation.md) | contract → Attachments Support Spec; wire/client delivery → DOC-C04; media limits/normalization → `current/core_media.md`; capability presence → dated Capability Inventory | Delete After Migration |
-| DOC-A27 | [Core Subagent Implementation](core-subagent-impl.md) | contract → Core Subagent Spec; orchestration/delegation facts → DOC-C02 Subagent subsection; generic Runner interaction → DOC-C03; evidence → Slice 2 record | Delete After Migration |
+| DOC-A10 | Runtime Design — `runtime-design.md`（Deleted S6-D4） | verified facts → DOC-C02; decisions/contracts → accepted Runtime Specs; unapproved future work rejected | Delete After Migration |
+| DOC-A11 | Core Runner Design — `core-runner-design.md`（Deleted S6-D4） | facts → DOC-C03; closure/Compaction decisions → ADR-001/002; unapproved future work rejected | Delete After Migration |
+| DOC-A12 | Core Runner Context Design — `core-runner-context-design.md`（Deleted S6-D4） | current budgeting/Compaction → DOC-C03; decisions → ADR-002; unapproved future work rejected | Delete After Migration |
+| DOC-A13 | Core Runner Hooks Design — `core-runner-hooks-design.md`（Deleted S6-D4） | current Hook facts → DOC-C03; contract → Tool/Hook Module Spec; unapproved future work rejected | Delete After Migration |
+| DOC-A14 | Platform Config Design — `platform-config-design.md`（Deleted S6-D4） | config facts → DOC-C05; Model ownership → ADR-004/Model Resolution Spec; unapproved future work rejected | Delete After Migration |
+| DOC-A15 | Platform Logger Design — `platform-logger-design.md`（Deleted S6-D4） | verified facts → DOC-C13; unaccepted future decisions rejected | Delete After Migration |
+| DOC-A16 | Logging Design — `logging-design.md`（Deleted S6-D4） | verified facts → DOC-C13; conflicting suggestions rejected | Delete After Migration |
+| DOC-A17 | LLM Adapter Design — `adapters-llm-design.md`（Deleted S6-D4） | facts → DOC-C06; identity/Facts/Port decisions → ADR-004 and accepted Specs; unapproved future work rejected | Delete After Migration |
+| DOC-A18 | Core Prompt Design — `core-prompt-design.md`（Deleted S6-D4） | facts → DOC-C10; unapproved future decisions rejected | Delete After Migration |
+| DOC-A19 | Core Session Design — `core-session-design.md`（Deleted S6-D4） | facts → DOC-C09; unapproved future transaction decisions rejected | Delete After Migration |
+| DOC-A20 | Core Memory Design — `core-memory-design.md`（Deleted S6-D4） | facts → DOC-C11; unapproved future work rejected | Delete After Migration |
+| DOC-A21 | Core Tools Design — `core-tools-design.md`（Deleted S6-D4） | facts → DOC-C07; Registry/Hook contract → Slice 3 Spec; unapproved future work rejected | Delete After Migration |
+| DOC-A22 | Builtin Tools Design — `core-tools-builtin-design.md`（Deleted S6-D4） | inventory → DOC-C08; unapproved future Memory Tool work rejected | Delete After Migration |
+| DOC-A23 | Workspace Design — `core-workspace-design.md`（Deleted S6-D4） | facts → DOC-C12; unapproved future decisions rejected | Delete After Migration |
+| DOC-A24 | Exec Runtime Design — `core-tools-builtin-exec-runtime-design.md`（Deleted S6-D4） | platform and process facts → DOC-C08 Exec/Process subsection; unapproved unfinished work rejected | Delete After Migration |
+| DOC-A25 | Attachments Server Implementation — `attachments-server-implementation.md`（Deleted S6-D4） | contract → Attachments Support Spec; wire ingress/delivery → DOC-C04; media validation/normalization → `current/core_media.md`; prompt placement → DOC-C10 | Delete After Migration |
+| DOC-A26 | Attachments Client Implementation — `attachments-client-implementation.md`（Deleted S6-D4） | contract → Attachments Support Spec; wire/client delivery → DOC-C04; media limits/normalization → `current/core_media.md`; capability presence → dated Capability Inventory | Delete After Migration |
+| DOC-A27 | Core Subagent Implementation — `core-subagent-impl.md`（Deleted S6-D4） | contract → Core Subagent Spec; orchestration/delegation facts → DOC-C02 Subagent subsection; generic Runner interaction → DOC-C03; evidence → Slice 2 record | Delete After Migration |
 
 ### 8.3 v1.0 candidates
 
@@ -467,6 +467,8 @@ S6-D1 is the first separately authorized Document Delivery batch, not a pre-acce
 
 **Exit:** every processed DOC-A entry has final disposition and no candidate remains an accidental Current authority.
 
+**Delivery status（2026-09-09）：** `Completed — Owner Accepted`。已逐项处理并删除 DOC-A01–A03、A07、A10–A27；每项均记录完整 `Pending → Migrating → Migrated → Reviewed → Deleted` 历史与六个独立 unique-value answers，verified facts、durable decisions、approved work/evidence 已迁移到 Current/Accepted Authority 或确认可由 source/tests/Git 重建，未批准建议已明确拒绝。Surviving inbound links 已改指正式 authority，FT-11 扩展到受管 docs/src/scripts/clients 文本类型并隔离 audit metadata/governance ledgers。Focused FT-11/FT-12 8/8、FT-01–FT-12 34/34、editor diagnostics、lint、build、JSON、53 个新增相对链接、scope、API-M04 isolation 和 `git diff --check` validation 全部通过；independent re-review 为 `Ready`，无 Critical/High/Medium/Low finding。项目所有者于 2026-09-09 接受 S6-D4；该验收不授权 checkpoint commit/push，也不提前开始 S6-D5 或 API-M04 implementation。
+
 ### S6-D5 Deferred Subagent decisions
 
 - mark DOC-A04/A05 explicitly Deferred and non-authorizing;
@@ -567,8 +569,8 @@ Validation is incremental. The first substantive change in each batch receives t
 - [x] project owner separately authorizes non-deleting S6-D1 Document Delivery（2026-09-09）;
 - [x] project owner separately authorizes S6-D2 Current Architecture Delivery（2026-09-09）;
 - [x] project owner separately authorizes S6-D3 Active Navigation Delivery（2026-09-09）;
-- [ ] project owner separately authorizes S6-D4 or later candidate-document Delivery;
-- [ ] API-M04 public-contract Delivery receives separate authorization if included.
+- [x] project owner separately authorizes sequential S6-D4–D8 candidate-document Delivery（2026-09-09；各 batch 仍需独立验收）;
+- [x] API-M04 public-contract Delivery receives separate authorization（2026-09-09；必须作为独立 gate）.
 
 ## 17. Definition of Done
 
@@ -602,4 +604,6 @@ Validation is incremental. The first substantive change in each batch receives t
 - **2026-09-09 — S6-D3 delivery and review:** rewrote Root README, Documentation Index and Capability Summary around canonical Current Architecture and authority roles; advanced only DOC-A08/A09; added S6-D3 state-boundary and active-navigation Fitness. Focused/full Architecture Fitness, diagnostics, lint, build, JSON, links, scope and diff checks passed. The independent review's Medium link-parser finding was corrected by reusing the canonical FT-11 reference audit; final re-review found no unresolved Critical/High/Medium blocker. S6-D3 remains `In Review — Awaiting Owner Acceptance`.
 - **2026-09-09 — S6-D3 owner acceptance:** project owner accepted the active-navigation structure and S6-D3 validation evidence. S6-D3 is complete. This acceptance does not authorize commit, push, S6-D4 or API-M04 Delivery.
 - **2026-09-09 — Remaining delivery authorization:** project owner separately authorized the S6-D3 checkpoint commit/push, sequential S6-D4–D8 Delivery, and API-M04 Delivery. Each batch still requires its own validation, independent review and owner acceptance before its checkpoint; authorization does not permit combining unrelated document and API changes in one checkpoint.
-- **Next:** create and push the S6-D3 checkpoint, then begin S6-D4 Root Candidate Extraction. Process S6-D5–D8 and API-M04 only in their planned sequence and isolated scopes.
+- **2026-09-09 — S6-D4 delivery and review:** migrated surviving authority links and deleted exactly DOC-A01–A03, A07 and A10–A27 after per-entry six-question Review. FT-11 now locks the complete deletion transition history, independent answers, exact absent-path/inbound boundary, broader governed-text scanning and API-M04 isolation. Focused/full Architecture Fitness, diagnostics, lint, build, JSON, added-link, scope and diff checks passed. The initial independent review blockers were corrected; final re-review was `Ready` with no finding. S6-D4 remains `In Review — Awaiting Owner Acceptance`.
+- **2026-09-09 — S6-D4 owner acceptance:** project owner accepted the root-candidate extraction boundary, per-entry deletion evidence and validation results. S6-D4 is complete. This acceptance does not authorize checkpoint commit/push and does not combine S6-D5 or API-M04 implementation into this batch.
+- **Next:** obtain explicit authorization for the isolated S6-D4 checkpoint commit/push, then begin S6-D5 Deferred Subagent Decisions under its existing sequential Delivery authorization.

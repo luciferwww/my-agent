@@ -6,7 +6,6 @@ import {
   collectFt11ApiM04Baseline,
   collectFt11DocumentReferenceAudit,
   findFt11DocumentDispositionViolations,
-  loadTypeScriptSources,
 } from './rules.js';
 import type {
   Ft11DispositionManifest,
@@ -34,10 +33,25 @@ const GOVERNANCE_LEDGERS = new Set([
   'docs/architecture/legacy-migration-inventory.md',
   'docs/architecture/slice-6-documentation-legacy-closeout-spec.md',
 ]);
+const AUDIT_METADATA = new Set([
+  'docs/architecture/slice-6-document-disposition-manifest.json',
+  'src/architecture-fitness/ft-11-document-surface.json',
+  'src/architecture-fitness/ft-12-current-architecture-surface.json',
+]);
 const ACTIVE_NAVIGATION_DOCUMENTS = new Set([
   'README.md',
   posix.join('docs', 'README.md'),
   posix.join('docs', 'agent-capabilities.md'),
+]);
+const REFERENCE_TEXT_EXTENSIONS = [
+  '.cjs', '.css', '.html', '.js', '.json', '.jsonc', '.md', '.mjs', '.ps1', '.sh',
+  '.toml', '.ts', '.tsx', '.yaml', '.yml',
+];
+const S6_D4_DELETED_IDS = new Set([
+  'DOC-A01', 'DOC-A02', 'DOC-A03', 'DOC-A07',
+  'DOC-A10', 'DOC-A11', 'DOC-A12', 'DOC-A13', 'DOC-A14', 'DOC-A15', 'DOC-A16',
+  'DOC-A17', 'DOC-A18', 'DOC-A19', 'DOC-A20', 'DOC-A21', 'DOC-A22', 'DOC-A23',
+  'DOC-A24', 'DOC-A25', 'DOC-A26', 'DOC-A27',
 ]);
 let manifest: Ft11DispositionManifest;
 let expectedDocuments: Ft11FrozenDocument[];
@@ -89,6 +103,11 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
         content: '// See docs\\architecture\\v1.0\\platform-config-wizard-design.md',
         category: 'productionSource',
       },
+      {
+        path: 'scripts/manual.json',
+        content: '{"guide":"docs/architecture/v1.0/platform-config-wizard-design.md"}',
+        category: 'scripts',
+      },
     ];
 
     expect(collectFt11DocumentReferenceAudit(sources, documents)).toEqual({
@@ -106,7 +125,7 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
           candidateDocs: [],
           productionSource: ['src/config.ts'],
           tests: [],
-          scripts: [],
+          scripts: ['scripts/manual.json'],
           clients: [],
         },
       },
@@ -117,7 +136,7 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
   });
   // FT11_FIXTURE_REFERENCES_END
 
-  it('locks 52 entries, exact inbound references, and the S6-D3 migration boundary', () => {
+  it('locks 52 entries, exact inbound references, and the S6-D4 deletion boundary', () => {
     expect(findFt11DocumentDispositionViolations(
       manifest,
       expectedDocuments,
@@ -138,13 +157,34 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
       .every(([, state]) => state.transitionState === 'Migrated'
         && state.finalDisposition === 'Retain Current Authority')).toBe(true);
     expect(Object.entries(manifest.entryStateById)
-      .filter(([id]) => !id.startsWith('DOC-C') && id !== 'DOC-A08' && id !== 'DOC-A09')
+      .filter(([id]) => !id.startsWith('DOC-C')
+        && id !== 'DOC-A08'
+        && id !== 'DOC-A09'
+        && !S6_D4_DELETED_IDS.has(id))
       .every(([, state]) => state.transitionState === 'Pending'
         && state.finalDisposition === null)).toBe(true);
     expect(['DOC-A08', 'DOC-A09'].every((id) => {
       const state = manifest.entryStateById[id];
       return state?.transitionState === 'Migrated'
         && state.finalDisposition === 'Retain Active Navigation';
+    })).toBe(true);
+    expect([...S6_D4_DELETED_IDS].every((id) => {
+      const state = manifest.entryStateById[id];
+      const entry = manifest.candidates.find((candidate) => candidate.id === id);
+      const review = manifest.s6D4DeletionReviewById?.[id];
+      return state?.transitionState === 'Deleted'
+        && state.uniqueValueConclusion === 'no-unique-value-after-migration'
+        && state.finalDisposition === 'Delete After Migration'
+        && entry !== undefined
+        && review?.stateHistory.join('>') === 'Pending>Migrating>Migrated>Reviewed>Deleted'
+        && review.verifiedCurrentFact === 'no-migrated-to-current'
+        && review.durableDecision === 'no-migrated-to-accepted-authority'
+        && review.unfinishedApprovedWork === 'no-explicitly-rejected'
+        && review.executedEvidence === 'no-reconstructible-from-source-tests-git'
+        && review.stableHistoricalLocator === 'no'
+        && review.rationaleForRetainedAuthority === 'no'
+        && Object.values(entry.inbound).every((references) => references.length === 0)
+        && !availablePaths.has(entry.path);
     })).toBe(true);
     expect(manifest.candidates.find((entry) => entry.id === 'DOC-V10')?.inbound).toMatchObject({
       productionSource: [
@@ -223,11 +263,19 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
     invalid.entryDefaults.validation.status = 'completed';
     invalid.entryDefaults.validation.linkAudit = 'passed';
     invalid.entryDefaults.validation.fitness = 'passed';
-    const pendingExpectedId = expectedDocuments.find((entry) => entry.category !== 'current-fact')?.id;
+    const pendingExpectedId = expectedDocuments.find((entry) => entry.category !== 'current-fact'
+      && entry.id !== 'DOC-A08'
+      && entry.id !== 'DOC-A09'
+      && !S6_D4_DELETED_IDS.has(entry.id))?.id;
     if (!pendingExpectedId) throw new Error('FT-11 surface must include a pending non-Current entry');
     const state = invalid.entryStateById[pendingExpectedId];
     if (!state) throw new Error(`Missing FT-11 state: ${pendingExpectedId}`);
     state.transitionState = 'Reviewed';
+    invalid.s6D4IndependentReviewStatus = 'passed-before-re-review';
+    const deletionReview = invalid.s6D4DeletionReviewById?.['DOC-A01'];
+    if (!deletionReview) throw new Error('Missing S6-D4 deletion review fixture');
+    deletionReview.stateHistory.splice(3, 1);
+    deletionReview.verifiedCurrentFact = 'yes-unmigrated';
     invalid.referenceAudit.governanceLedgers.pop();
     invalid.apiM04Baseline.facadePathImports.productionSource.pop();
     const docV10 = invalid.candidates.find((entry) => entry.id === 'DOC-V10');
@@ -257,6 +305,9 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
     expect(diagnostics).toContain('FT-11 defaults field=validation.fitness violation=invalid-value');
     expect(diagnostics).toContain(`FT-11 entry=${second.id} field=inbound.clients violation=missing-baseline-field`);
     expect(diagnostics).toContain(`FT-11 entry=${pendingExpectedId} field=transitionState violation=premature-transition`);
+    expect(diagnostics).toContain('FT-11 manifest field=s6D4IndependentReviewStatus violation=invalid-review-state');
+    expect(diagnostics).toContain('FT-11 entry=DOC-A01 field=stateHistory violation=missing-reviewed-delete-transition');
+    expect(diagnostics).toContain('FT-11 entry=DOC-A01 field=uniqueValueReview.verifiedCurrentFact violation=unresolved');
     expect(diagnostics).toContain('FT-11 manifest field=referenceAudit.governanceLedgers violation=reference-drift');
     expect(diagnostics).toContain('FT-11 ledger=docs/architecture/legacy-migration-inventory.md violation=incomplete-candidate-coverage');
     expect(diagnostics).toContain('FT-11 manifest field=apiM04Baseline violation=reference-drift');
@@ -275,11 +326,12 @@ async function loadExpectedDocuments(): Promise<Ft11ExpectedDocument[]> {
 
   for (const line of inventory.split(/\r?\n/)) {
     const id = /^\| (DOC-[CAV]\d{2}) \|/.exec(line)?.[1];
-    const linkedPath = /\[[^\]]+\]\(([^)#]+)(?:#[^)]+)?\)/.exec(line)?.[1];
-    if (!id || !linkedPath || documents.some((document) => document.id === id)) continue;
+    const recordedPath = /\[[^\]]+\]\(([^)#]+)(?:#[^)]+)?\)/.exec(line)?.[1]
+      ?? /`([^`]+\.md)`/.exec(line)?.[1];
+    if (!id || !recordedPath || documents.some((document) => document.id === id)) continue;
     documents.push({
       id,
-      path: posix.normalize(posix.join('docs/architecture', linkedPath)),
+      path: posix.normalize(posix.join('docs/architecture', recordedPath)),
       category: categoryForId(id),
     });
   }
@@ -322,10 +374,10 @@ async function loadReferenceSources(
 ): Promise<Ft11ReferenceSource[]> {
   const candidatePaths = new Set(expectedDocuments.map((document) => document.path));
   const [documents, sourceFiles, scriptFiles, clientFiles] = await Promise.all([
-    loadTextSources(join(REPOSITORY_ROOT, 'docs'), ['.md'], 'docs'),
-    loadTypeScriptSources(join(REPOSITORY_ROOT, 'src'), [], 'src'),
-    loadTypeScriptSources(join(REPOSITORY_ROOT, 'scripts'), [], 'scripts'),
-    loadTextSources(join(REPOSITORY_ROOT, 'clients'), ['.html', '.js', '.md', '.ts'], 'clients'),
+    loadTextSources(join(REPOSITORY_ROOT, 'docs'), REFERENCE_TEXT_EXTENSIONS, 'docs'),
+    loadTextSources(join(REPOSITORY_ROOT, 'src'), REFERENCE_TEXT_EXTENSIONS, 'src'),
+    loadTextSources(join(REPOSITORY_ROOT, 'scripts'), REFERENCE_TEXT_EXTENSIONS, 'scripts'),
+    loadTextSources(join(REPOSITORY_ROOT, 'clients'), REFERENCE_TEXT_EXTENSIONS, 'clients'),
   ]);
   const rootReadme: SourceInput = {
     path: 'README.md',
@@ -361,13 +413,15 @@ function referenceCategory(
   sourcePath: string,
   candidatePaths: Set<string>,
 ): Ft11ReferenceCategory | undefined {
+  if (AUDIT_METADATA.has(sourcePath)) return undefined;
   if (GOVERNANCE_LEDGERS.has(sourcePath)) return 'governanceLedger';
   if (ACTIVE_NAVIGATION_DOCUMENTS.has(sourcePath)) return 'activeDocs';
   if (candidatePaths.has(sourcePath) && sourcePath.endsWith('.md')) return 'candidateDocs';
-  if (sourcePath.endsWith('.md')) return 'activeDocs';
+  if (sourcePath.startsWith('docs/')) return 'activeDocs';
   if (sourcePath.startsWith('scripts/')) return 'scripts';
   if (sourcePath.startsWith('clients/')) return 'clients';
-  if (sourcePath.endsWith('.test.ts') || sourcePath.startsWith('src/architecture-fitness/')) {
+  if (/\.(?:spec|test)\.[cm]?[jt]sx?$/u.test(sourcePath)
+    || sourcePath.startsWith('src/architecture-fitness/')) {
     return 'tests';
   }
   if (sourcePath.startsWith('src/')) return 'productionSource';
