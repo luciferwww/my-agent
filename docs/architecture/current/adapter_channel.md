@@ -1,9 +1,9 @@
-# Channel 层设计文档
+# Channel Current Architecture
 
-> 基准版本：v1.0
-> 文档日期：2026-05-29
-> 状态同步：2026-09-01（Approval response-or-Abort lifecycle）
-> 关联文档：`runtime.md` · `core_runner.md`
+> Status: Current Authority
+> Verified: 2026-09-09
+> Ownership: Channel contract, transport, interaction, CLI/WebSocket protocol, and attachment ingress/wire summary
+> Ownership key: channel-transport-and-ingress
 
 ---
 
@@ -65,23 +65,23 @@ RuntimeApp.handleInboundChannelMessage
 ### 3.2 出站（agent → client）
 
 ```
-AgentRunner 触发 AgentEvent（自带 sessionKey + turnId）
+Runtime fanout 接收 AgentEvent（按 variant 携带 request / session / turn correlation）
   ▼
-RuntimeApp bootstrap 时注入的 fanout 闭包:
-  ├─ for each channel: channel.send(event)   ← 遍历 channels[] 引用
+Runtime Builder 注入的 fanout 闭包:
+  ├─ for each captured/current Channel binding: await channel.send(event)
   └─ RuntimeAppOptions.onAgentEvent?.(event)
 
 channel.send 实现:
   ├─ CliChannel      → 渲染到 stdout（单 client，忽略 sessionKey）
-  └─ WebSocketChannel → 按 sessions[event.sessionKey] 广播给所有连接
+  └─ WebSocketChannel → 按事件 correlation 解析 audience 后发送
 ```
 
-- **事件自描述**：AgentEvent 自带 `sessionKey` / `turnId`，channel 直接读取自路由
-- **fanout 共享 `channels[]` 引用**：registerChannel 后新增的 channel 即时可见
-- **send 抛错被吞为 warning**：单个 channel 故障不中断分发
+- **事件按生命周期关联**：大多数 Turn/session events 直接使用 `sessionKey`；Subagent events 归一到 root session audience；queued `request_end` 没有 session/turn，WebSocket 通过 `originMessageId` 关联先前 `user_message`
+- **generation-aware fanout**：Turn events 使用捕获 generation 的 Channel bindings；无 turn correlation 的事件使用 current bindings
+- **同步/异步 send 均隔离**：`send()` 可返回 `void | Promise<void>`；throw/rejection 被记录为 warning，不让单个 channel 故障中断其他分发
 - **附件广播只含摘要**：`user_message.attachmentSummaries` 不携带原始 Base64
 
-### 3.4 Abort（channel → runtime）
+### 3.3 Abort（channel → runtime）
 
 ```
 CLI Ctrl+C / WS { type:'abort_turn', sessionKey }
@@ -93,7 +93,7 @@ CLI Ctrl+C / WS { type:'abort_turn', sessionKey }
 
 Channel 通过可选 `bindAbortHooks` 接收 Runtime 注入的中止能力，不反向依赖 RuntimeApp。WebSocket 的 `abort_turn` 无单独 Ack；客户端通过 `run_end` 感知中止完成。
 
-### 3.3 Approval / Interaction（hook ↔ channel）
+### 3.4 Approval / Interaction（hook ↔ channel）
 
 ```mermaid
 sequenceDiagram
@@ -122,6 +122,12 @@ sequenceDiagram
 - **起源不可达时 fail closed**：分类为 unavailable，不伪装成用户 deny
 - **当前调用无 capability 时 fail closed**：unmatched Tool 不依赖启动历史，不直接放行
 
+### 3.5 Attachments ingress and wire summary
+
+Channel owns the inbound and client-wire shape. `ChannelRunRequest.message` is either text or ordered text/image blocks; image blocks carry a MIME declaration and base64 payload. Runtime sends these blocks through [Media](./core_media.md) normalization before queue/steering classification; dropped items can add a visible notice.
+
+The `user_message` event broadcasts only attachment summaries (`type`, MIME, byte count and optional dimensions), never raw base64. Media owns validation and canonical normalization; [Prompt](./core_prompt.md) owns Context Hook placement without changing Channel wire ownership.
+
 ---
 
 ## 4. 类型定义
@@ -131,9 +137,9 @@ sequenceDiagram
 ```
 ChannelRunRequest {
   sessionKey: string
-  message: string
-  model?: string
-  maxTokens?: number
+  message: string | InboundContentBlock[]
+  modelReference?: ModelReference
+  requestOverride?: ModelRequestOverride
   maxLlmCalls?: number
   clientId?: string   // channel 层路由元数据，不进 RunTurnParams
 }
@@ -144,26 +150,20 @@ ChannelRunRequest {
 ```
 Channel {
   id: string
-  send(event: AgentEvent): void
+  completion: Promise<ChannelCompletion>
+  send(event: AgentEvent): void | Promise<void>
   onMessage(handler: (req: ChannelRunRequest) => Promise<void>): void
   start(): Promise<void>
   stop(): Promise<void>
-  interaction?: ChannelInteractionAdapter   // 可选，通用交互
-  approval?: ChannelApprovalAdapter         // 可选，审批兼容接口
+  interaction?: ChannelInteractionTransport
+  bindAbortHooks?(hooks: AbortHookBindings): void
 }
 
-ChannelInteractionAdapter {
+ChannelInteractionTransport {
   sendInteractionRequest(request: TurnInteractionRequest): ApprovalDeliveryResult
   sendInteractionClosed(request: TurnInteractionRequest, result: ApprovalClosedResult): void
   onInteractionResponse(handler: (response: TurnInteractionResponse) => void): void
   onInteractionUnavailable(handler: (id: string, reason: 'origin_disconnected') => void): void
-}
-
-ChannelApprovalAdapter {
-  sendApprovalRequest(request: ApprovalRequest): ApprovalDeliveryResult
-  sendApprovalClosed(request: ApprovalRequest, result: ApprovalClosedResult): void
-  onApprovalDecision(handler: (id: string, decision: ApprovalDecision) => void): void
-  onApprovalUnavailable(handler: (id: string, reason: 'origin_disconnected') => void): void
 }
 ```
 
@@ -275,11 +275,11 @@ CliChannelConfig {
 
 ### 6.4 Approval 处理
 
-开启 `approval: true` 时同时构造 `interaction` 和 `approval` 两个适配器：
-- `sendInteractionRequest`（kind=`'approval'`）和 `sendApprovalRequest` 最终都走同一个 `promptApproval()` → readline `y/n` prompt
+开启 `approval: true` 时构造 `interaction` adapter：
+- `sendInteractionRequest`（kind=`'approval'`）走 `promptApproval()` → readline `y/n` prompt
 - 非 approval 的 interaction kind → **throw**（CliChannel 不支持）
 - 非人工 closure 或 `stop()` 通过 AbortSignal 取消底层 readline question；Promise 已 reject 后的 late callback 不会提交决策
-- 响应优先走 `interactionResponseHandler`，未注册则回退 `approvalDecisionHandler`
+- 响应通过 `interactionResponseHandler` 回送 Runtime
 
 ---
 
@@ -306,7 +306,7 @@ WebSocketChannelConfig {
 | 消息 | 说明 |
 |---|---|
 | `{ type:'hello'; clientId }` | 建连后第一条，绑定逻辑 clientId |
-| `{ type:'run_turn'; sessionKey; message; model?; maxTokens?; maxLlmCalls? }` | 发起 turn |
+| `{ type:'run_turn'; sessionKey; message; modelReference?; requestOverride?; maxLlmCalls? }` | 发起 turn；message 支持 text/image blocks |
 | `{ type:'approval_resolve'; id; decision }` | 提交审批决策 |
 | `{ type:'abort_turn'; sessionKey }` | 中止该 session 的活动 turn 并清空普通队列 |
 
@@ -315,16 +315,19 @@ WebSocketChannelConfig {
 | 消息 | 路由 |
 |---|---|
 | `{ type:'hello_ack'; clientId }` | 单播，握手确认 |
-| AgentEvent 全部 variant | 广播给同 session 所有已连接 client |
+| 带 `sessionKey` 的普通 AgentEvent | 广播给同 session 所有已连接 client |
+| `subagent_start` / `subagent_end` | Child session 归一到 root session 后广播 |
+| `request_end` | 通过 `originMessageId` 找到 queued message 的 session 后广播；无关联则不发送 |
 | `{ type:'approval_requested'; id; toolName; input }` | 定向发给 originClientId |
 | `{ type:'approval_closed'; id; outcome; reason }` | 定向发给 originClientId；只承载 aborted/unavailable/failed |
 | `{ type:'channel_error'; code; message }` | 单播，协议错误通知 |
 
-### 7.3 内部状态（双表）
+### 7.3 内部状态
 
 ```
-sessions: Map<sessionKey, Set<clientId>>  // send() 按 sessionKey 广播
-clients:  Map<clientId, WebSocket>        // approval 定向发送
+sessions: Map<sessionKey, Set<clientId>>             // session audience
+clients:  Map<clientId, WebSocket>                   // interaction 定向发送
+sessionByOriginMessageId: Map<messageId, sessionKey> // queued request_end audience
 ```
 
 客户端完成 `hello(clientId)` 后绑定到当前连接。发送 `run_turn` 时，clientId 自动注册进 sessionKey 集合。
@@ -335,49 +338,16 @@ clients:  Map<clientId, WebSocket>        // approval 定向发送
 
 ---
 
-## 8. RuntimeApp 接入面
+## 8. Runtime integration
 
-```
-app.registerChannel(channel)  // 注册；可多次调用；必须在 startChannels() 前
-app.startChannels()            // 先 wireApprovalRouting，再并行 channel.start()
-app.stopChannels()             // 幂等；close() 内部自动调用
-```
+Channels enter a generation through `ChannelContribution` registration. Runtime creates and starts candidate Channel instances before publication, hands the host binding to them, and publishes their immutable `ChannelRuntimeBinding` projection with the generation. Root Turns retain their captured generation's Channel bindings for event Fanout; reload does not reroute an in-flight tree to newer instances. Completion is observable through `waitForChannelCompletion(id)`.
 
-`startChannels()` 用 `Promise.all` 并行启动——`CliChannel.start()` 是阻塞的 readline 循环，不能串行阻塞其他 channel。
+Direct library `runTurn()` bypasses Channel ingress and queue creation but still uses Runtime's per-session gate and generation capture. With no origin interaction capability, unmatched Tool approval fails closed.
 
-`runTurn()` 仍可直接调用（库模式）。直接调用时：
-- 不经过入站队列调度（`runTurn()` 是同步入口）
-- 没有 `routeContext`，因此没有 origin approval capability；allowlist 命中时直接 allow，未命中时 fail-closed deny，不创建 approval wait
-- 需自己处理 per-session 并发（重入抛 `RUN_REJECTED`）
+## 9. Evidence
 
----
-
-## 9. ⚠️ 代码与 v1.0 文档的已知差异
-
-### 差异 1：`CliChannelConfig` 多一个 `sessionKey` 字段
-
-**v1.0 文档**的 `CliChannelConfig` 只有 `input / output / prompt / approval`。  
-**实际代码**增加了 `sessionKey?: string`（默认 `'main'`），用于指定 CLI 输入归属的 session。
-
-> 建议：补充 `sessionKey` 字段说明，说明单 session 场景下的默认行为。
-
-### 差异 2：WebSocket 协议有未文档的 `channel_error` 消息类型
-
-**v1.0 文档** Server→Client 消息列表中没有 `channel_error`。  
-**实际代码**（`WebSocketChannel.ts`）定义并使用了 `{ type:'channel_error'; code; message }` 用于通知客户端协议错误（invalid JSON、unsupported message type 等）。
-
-> 建议：在 WS 协议出站消息表中补充 `channel_error`，并列出 `ChannelErrorCode` 取值（`INVALID_JSON` / `INVALID_MESSAGE` / `UNSUPPORTED_MESSAGE` / `SERVER_NOT_READY`）。
-
----
-
-## 10. 已知规划项
-
-| 项目 | 状态 |
+| Kind | Evidence |
 |---|---|
-| `HttpChannel`（REST + SSE） | 规划中 |
-| Channel 鉴权 / 多租户 | 规划中 |
-| `select` interaction 实现（CliChannel / WebSocketChannel） | 规划中 |
-| 迟到 client 中途订阅进行中 turn 的事件流 | 规划中 |
-| Pending interactions 重投递（client 重连后） | 规划中 |
-| 事件补发 / replay buffer（断线重连） | 规划中 |
-| 外部平台 Channel（Slack / Discord 等） | 规划中 |
+| Source | [core channel types](../../../src/core/channel/types.ts), [CliChannel.ts](../../../src/adapters/channel/CliChannel.ts), [WebSocketChannel.ts](../../../src/adapters/channel/WebSocketChannel.ts), [TurnInteractionManager.ts](../../../src/adapters/channel/TurnInteractionManager.ts), [channel-lifecycle.ts](../../../src/runtime/channel-lifecycle.ts) |
+| Tests | [CliChannel.test.ts](../../../src/adapters/channel/CliChannel.test.ts), [WebSocketChannel.test.ts](../../../src/adapters/channel/WebSocketChannel.test.ts), [TurnInteractionManager.test.ts](../../../src/adapters/channel/TurnInteractionManager.test.ts), [RuntimeApp.intake.test.ts](../../../src/runtime/RuntimeApp.intake.test.ts), [channel-lifecycle.test.ts](../../../src/runtime/channel-lifecycle.test.ts) |
+| Controlling authority | [Channel Module Spec](../channel-module-spec.md), [Approval Lifecycle Spec](../approval-lifecycle-spec.md), [Attachments Support Spec](../attachments-support-spec.md), [ADR-005](../adr-005-extension-registry-runtime-composition.md) |

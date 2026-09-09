@@ -100,7 +100,7 @@ export interface Ft11DispositionManifest {
       rationaleForRetainedAuthority: string;
       conclusion: string;
     };
-    finalDisposition: null;
+    finalDisposition: Ft11ProposedDisposition | null;
     validation: {
       status: string;
       linkAudit: string;
@@ -117,7 +117,7 @@ export interface Ft11DispositionManifest {
     initialState: string;
     transitionState: string;
     uniqueValueConclusion: string;
-    finalDisposition: null;
+    finalDisposition: Ft11ProposedDisposition | null;
     validationStatus: string;
     reviewerResult: string;
   }>;
@@ -760,10 +760,11 @@ export function findFt11DocumentDispositionViolations(
   const expectedById = new Map(expectedDocuments.map((document) => [document.id, document]));
   const ids = manifest.candidates.map((entry) => entry.id);
   const paths = manifest.candidates.map((entry) => entry.path);
+  const isS6D1 = manifest.slice === 'S6-D1' && manifest.status === 'baseline';
+  const isS6D2 = manifest.slice === 'S6-D2' && manifest.status === 'current-architecture-migrated';
 
   if (manifest.schemaVersion !== 1) diagnostics.push('FT-11 manifest field=schemaVersion violation=invalid-value');
-  if (manifest.slice !== 'S6-D1') diagnostics.push('FT-11 manifest field=slice violation=invalid-value');
-  if (manifest.status !== 'baseline') diagnostics.push('FT-11 manifest field=status violation=invalid-value');
+  if (!isS6D1 && !isS6D2) diagnostics.push('FT-11 manifest field=slice/status violation=invalid-phase');
   if (manifest.candidates.length !== expectedDocuments.length) {
     diagnostics.push(`FT-11 manifest field=candidates expected=${expectedDocuments.length} actual=${manifest.candidates.length} violation=count-mismatch`);
   }
@@ -785,7 +786,7 @@ export function findFt11DocumentDispositionViolations(
   }
 
   validateFt11Defaults(manifest, diagnostics);
-  validateFt11EntryStates(manifest, expectedDocuments, diagnostics);
+  validateFt11EntryStates(manifest, expectedDocuments, isS6D2, diagnostics);
 
   for (const expected of expectedDocuments) {
     if (!ids.includes(expected.id)) {
@@ -910,6 +911,7 @@ function validateFt11Defaults(
 function validateFt11EntryStates(
   manifest: Ft11DispositionManifest,
   expectedDocuments: Ft11ExpectedDocument[],
+  isS6D2: boolean,
   diagnostics: string[],
 ): void {
   const expectedIds = expectedDocuments.map((document) => document.id);
@@ -920,6 +922,15 @@ function validateFt11EntryStates(
     const state = manifest.entryStateById[id];
     if (!state) continue;
     if (state.initialState !== 'Pending') diagnostics.push(`FT-11 entry=${id} field=initialState violation=invalid-value`);
+    const isMigratedCurrentAuthority = isS6D2 && id.startsWith('DOC-C');
+    if (isMigratedCurrentAuthority) {
+      if (state.transitionState !== 'Migrated') diagnostics.push(`FT-11 entry=${id} field=transitionState violation=current-authority-not-migrated`);
+      if (state.uniqueValueConclusion !== 'retained-current-authority') diagnostics.push(`FT-11 entry=${id} field=uniqueValueConclusion violation=current-authority-not-retained`);
+      if (state.finalDisposition !== 'Retain Current Authority') diagnostics.push(`FT-11 entry=${id} field=finalDisposition violation=current-authority-not-retained`);
+      if (state.validationStatus !== 'passed') diagnostics.push(`FT-11 entry=${id} field=validationStatus violation=current-authority-not-validated`);
+      if (state.reviewerResult !== 'validated-awaiting-owner-review') diagnostics.push(`FT-11 entry=${id} field=reviewerResult violation=invalid-current-authority-review-state`);
+      continue;
+    }
     if (state.transitionState !== 'Pending') diagnostics.push(`FT-11 entry=${id} field=transitionState violation=premature-transition`);
     if (state.uniqueValueConclusion !== 'not-reviewed') diagnostics.push(`FT-11 entry=${id} field=uniqueValueConclusion violation=premature-review`);
     if (state.finalDisposition !== null) diagnostics.push(`FT-11 entry=${id} field=finalDisposition violation=premature-review`);

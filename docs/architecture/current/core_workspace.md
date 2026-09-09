@@ -1,7 +1,9 @@
-# Core Workspace 模块设计文档
+# Core Workspace Current Architecture
 
-> 文档日期：2026-05-29
-> 关联文档：`platform_config.md` · `core_prompt.md` · `runtime.md`
+> Status: Current Authority
+> Verified: 2026-09-09
+> Ownership: workspace initialization and context-file loading
+> Ownership key: workspace-initialization-and-context
 
 ---
 
@@ -10,7 +12,7 @@
 `src/core/workspace/` 负责两件事：
 
 1. **工作区初始化**（`ensureWorkspace`）：在 `workspaceDir/.agent/` 下创建必要的目录结构和模板文件
-2. **上下文文件加载**（`loadContextFiles`）：读取 `IDENTITY.md`、`SOUL.md` 等文件并注入 system prompt 的 `project-context` section
+2. **上下文文件加载**：`loadContextFiles` reads the workspace `.agent/` directory; `loadContextFilesFromDir` reads an explicit directory without appending `.agent/`
 
 ---
 
@@ -20,7 +22,7 @@
 src/core/workspace/
 ├── types.ts          # ContextFile { path, content }
 ├── init.ts           # ensureWorkspace()
-├── loader.ts         # loadContextFiles()
+├── loader.ts         # loadContextFiles() / loadContextFilesFromDir()
 ├── index.ts
 └── templates/        # 首次初始化时写入的默认文件
     ├── IDENTITY.md
@@ -72,7 +74,7 @@ ensureWorkspace(workspaceDir):
 ...(truncated {fileName}: kept {head}+{tail} chars of {original})...
 ```
 
-参考 OpenClaw 的 `trimBootstrapContent()`，头重尾轻的设计：上下文文件通常把最关键信息（项目概述、角色定义）放在开头，尾部保留用于捕获总结性内容。
+The current implementation keeps a 70% head and 20% tail and uses the remaining budget for the truncation marker.
 
 ### 4.3 总预算管理
 
@@ -111,6 +113,10 @@ ContextFile {
 
 `ContextFile[]` 由 runtime 在 bootstrap 时加载并缓存，在每轮 `runTurn` 时传入 `SystemPromptBuilder.build({ contextFiles })`。
 
+### 5.1 Explicit-directory loader
+
+`loadContextFilesFromDir(absDir, options)` uses the same allowlist, mode, ordering and budgets but reads `absDir` directly. It does not append `.agent/`. Runtime uses this form for explicitly located Subagent context directories.
+
 ---
 
 ## 6. 关键设计决策
@@ -121,3 +127,13 @@ ContextFile {
 | 上下文文件缓存在 runtime | bootstrap 阶段加载一次，`reloadContextFiles` 在特定事件后触发重新加载，不在每轮重读磁盘 |
 | 截断而非跳过超长文件 | 保证文件始终有部分内容进入 prompt，不会因为文件偶尔变大就突然消失 |
 | `minimal` 模式仅加载 IDENTITY + SOUL | 减少 token 消耗，适合机器调用或无需完整上下文的场景 |
+
+Runtime owns caching and reload timing. [Prompt](./core_prompt.md) owns how loaded Context files are rendered; Config owns the budget values. Workspace does not own either behavior.
+
+## 7. Evidence
+
+| Kind | Evidence |
+|---|---|
+| Source | [init.ts](../../../src/core/workspace/init.ts), [loader.ts](../../../src/core/workspace/loader.ts), [types.ts](../../../src/core/workspace/types.ts), [runtime-builder.ts](../../../src/runtime/runtime-builder.ts), [prompt-factory.ts](../../../src/runtime/prompt-factory.ts) |
+| Tests | [init.test.ts](../../../src/core/workspace/init.test.ts), [loader.test.ts](../../../src/core/workspace/loader.test.ts), [prompt-factory.test.ts](../../../src/runtime/prompt-factory.test.ts) |
+| Controlling authority | [Runtime Composition Module Spec](../runtime-composition-module-spec.md) |

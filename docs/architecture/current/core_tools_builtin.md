@@ -1,20 +1,24 @@
-# Core Tools 内置工具设计文档
+# Builtin Tools Current Architecture
 
-> 文档日期：2026-05-29
-> 关联文档：`core_tools.md` · `platform_config.md` · `runtime.md`
+> Status: Current Authority
+> Verified: 2026-09-09
+> Ownership: builtin inventory plus filesystem, search, web, Exec, and Process behavior
+> Ownership key: builtin-tool-capabilities
 
 ---
 
 ## 1. 概述
 
-`src/core/tools/builtin/` 是所有内置工具的实现。共四类：
+`src/core/tools/builtin/` contains builtin implementations; `src/runtime-modules/builtin-tools.ts` is the production registration authority.
 
-| 类别 | 工具 | 工厂/单例 |
+| Capability | Tools | Publication condition |
 |---|---|---|
-| **fs** | `list_dir` `read_file` `write_file` `edit_file` `apply_patch` | 工厂函数 |
-| **search** | `grep_search` `file_search` | 工厂函数 |
-| **web** | `web_fetch` | 单例 |
-| **exec** | `exec` `process` | 单例 |
+| Filesystem | `list_dir` `read_file` `write_file` `edit_file` `apply_patch` | workspace-bound factories |
+| Search | `grep_search` `file_search` | workspace-bound factories |
+| Web | `web_fetch` | enabled by the Runtime Unit option; enabled in the default builder |
+| Exec/Process | `exec` `process` | independently enabled by Runtime Unit options; enabled in the default builder |
+| Memory | `memory_search` `memory_get` `memory_write` | only when Memory initialized; details belong to [Memory](./core_memory.md) |
+| Subagent | `task` | only when Subagents are enabled; orchestration belongs to [Runtime](./runtime.md) |
 
 fs / search 工具使用**工厂函数**模式，在创建时显式绑定 `workspaceDir` 和 `workspaceOnly`，避免隐式依赖 `process.cwd()`。
 
@@ -135,9 +139,9 @@ execute({ path, ... }):
 
 | 工具 | 名称 | 关键输入 | 默认值来源 |
 |---|---|---|---|
-| web-fetch | `web_fetch` | `url`, `timeout?`, `maxChars?` | `config.tools.webFetchTimeout / webFetchMaxChars` |
+| web-fetch | `web_fetch` | `url`, `timeout?`, `maxChars?` | implementation constants |
 
-单例工具，不绑定 workspace。超时和截断上限由 runtime 在工具创建时注入（当前实现为模块级常量，与 config 值对应）。
+The singleton does not bind a workspace. Request values are normalized against implementation-owned timeout and response-size ceilings; these limits are not fields in the current Config schema.
 
 ---
 
@@ -160,7 +164,7 @@ exec 输入:
   command: string
   cwd?: string          // 相对 process.cwd() 解析
   env?: Record<string, string>   // 仅接受 string:string（安全约束）
-  timeout?: number      // 秒；0 或不传 = 使用默认（config.tools.execTimeout = 30s）
+  timeout?: number      // 秒；0 或不传 = 使用 implementation default
   yieldMs?: number      // yield 模式触发阈值（毫秒）
   background?: boolean  // true = 后台模式
 ```
@@ -230,8 +234,19 @@ flowchart TD
 | 决策 | 说明 |
 |---|---|
 | fs / search 工具工厂化 | 避免隐式依赖 `process.cwd()`；测试不需要 `process.chdir()` |
-| `workspaceOnly` 可配置 | 允许专用 agent 访问工作区外路径（默认关闭） |
+| `workspaceOnly` 可配置 | 允许专用 agent 访问工作区外路径；默认 `true`，即限制在工作区内 |
 | `WorkspacePathError` 结构化 | 调用方可用 `instanceof` 精确识别，不靠 message 字符串匹配 |
 | exec / process 单例 | 进程注册表必须全局唯一，两个工具共享同一张表 |
 | env 仅接受 string:string | 防止复杂对象污染 `process.env` |
 | foreground visibility=internal | LLM 用 `exec` 前台运行的进程不污染 `process list`，只有主动后台化的进程才出现 |
+
+Generic Tool validation, policy and approval semantics belong to [Core Tools](./core_tools.md). Runtime owns Unit publication and Subagent lifecycle; this page owns only concrete builtin capability behavior.
+
+## 10. Evidence
+
+| Kind | Evidence |
+|---|---|
+| Registration | [builtin-tools.ts](../../../src/runtime-modules/builtin-tools.ts) |
+| Source | [path-policy.ts](../../../src/core/tools/builtin/common/path-policy.ts), [web-fetch.ts](../../../src/core/tools/builtin/web/web-fetch.ts), [exec.ts](../../../src/core/tools/builtin/exec/exec.ts), [process.ts](../../../src/core/tools/builtin/exec/process.ts), [process-registry.ts](../../../src/core/tools/builtin/exec/process-registry.ts), [task-tool.ts](../../../src/core/tools/builtin/task/task-tool.ts) |
+| Tests | [read-file.test.ts](../../../src/core/tools/builtin/fs/read-file.test.ts), [file-search.test.ts](../../../src/core/tools/builtin/search/file-search.test.ts), [web-fetch.test.ts](../../../src/core/tools/builtin/web/web-fetch.test.ts), [exec.test.ts](../../../src/core/tools/builtin/exec/exec.test.ts), [process.test.ts](../../../src/core/tools/builtin/exec/process.test.ts), [process-registry.test.ts](../../../src/core/tools/builtin/exec/process-registry.test.ts), [task-tool.test.ts](../../../src/core/tools/builtin/task/task-tool.test.ts) |
+| Controlling authority | [Tool/Hook Module Spec](../tool-hook-module-spec.md), [Platform Config Restructure Spec](../platform-config-restructure-spec.md) |

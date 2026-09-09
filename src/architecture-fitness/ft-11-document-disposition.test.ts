@@ -117,7 +117,7 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
   });
   // FT11_FIXTURE_REFERENCES_END
 
-  it('locks all 52 baseline entries, exact inbound references, and pending review state', () => {
+  it('locks 52 entries, exact inbound references, and the S6-D2-only Current migration', () => {
     expect(findFt11DocumentDispositionViolations(
       manifest,
       expectedDocuments,
@@ -133,6 +133,14 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
       'root-candidate': 27,
       'v1.0-candidate': 12,
     });
+    expect(Object.entries(manifest.entryStateById)
+      .filter(([id]) => id.startsWith('DOC-C'))
+      .every(([, state]) => state.transitionState === 'Migrated'
+        && state.finalDisposition === 'Retain Current Authority')).toBe(true);
+    expect(Object.entries(manifest.entryStateById)
+      .filter(([id]) => !id.startsWith('DOC-C'))
+      .every(([, state]) => state.transitionState === 'Pending'
+        && state.finalDisposition === null)).toBe(true);
     expect(manifest.candidates.find((entry) => entry.id === 'DOC-V10')?.inbound).toMatchObject({
       productionSource: [
         'src/platform/config/wizard/diff.ts',
@@ -143,6 +151,35 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
       ],
       tests: ['src/architecture-fitness/ft-09-doc-governance.test.ts'],
     });
+  });
+
+  it('requires local Markdown successor paths and fragments to resolve', () => {
+    const markdownByPath = new Map(
+      referenceSources
+        .filter((source) => source.path.endsWith('.md'))
+        .map((source) => [source.path, source.content]),
+    );
+
+    for (const entry of manifest.candidates) {
+      for (const field of [
+        'currentFactSuccessor',
+        'durableDecisionAuthority',
+        'unfinishedWorkSuccessor',
+      ] as const) {
+        for (const destination of entry[field]) {
+          if (!destination.split('#')[0]?.endsWith('.md')) continue;
+          const [targetPath, fragment] = destination.split('#', 2);
+          const targetContent = targetPath ? markdownByPath.get(targetPath) : undefined;
+          expect(targetContent, `${entry.id} ${field} missing ${destination}`).toBeDefined();
+          if (targetContent && fragment) {
+            expect(
+              hasMarkdownAnchor(targetContent, fragment),
+              `${entry.id} ${field} missing fragment ${destination}`,
+            ).toBe(true);
+          }
+        }
+      }
+    }
   });
 
   it('rejects identity, path, category, field, ledger, disposition, state, and API drift', () => {
@@ -162,10 +199,10 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
     invalid.entryDefaults.validation.status = 'completed';
     invalid.entryDefaults.validation.linkAudit = 'passed';
     invalid.entryDefaults.validation.fitness = 'passed';
-    const firstExpectedId = expectedDocuments[0]?.id;
-    if (!firstExpectedId) throw new Error('FT-11 surface must not be empty');
-    const state = invalid.entryStateById[firstExpectedId];
-    if (!state) throw new Error(`Missing FT-11 state: ${firstExpectedId}`);
+    const pendingExpectedId = expectedDocuments.find((entry) => entry.category !== 'current-fact')?.id;
+    if (!pendingExpectedId) throw new Error('FT-11 surface must include a pending non-Current entry');
+    const state = invalid.entryStateById[pendingExpectedId];
+    if (!state) throw new Error(`Missing FT-11 state: ${pendingExpectedId}`);
     state.transitionState = 'Reviewed';
     invalid.referenceAudit.governanceLedgers.pop();
     invalid.apiM04Baseline.facadePathImports.productionSource.pop();
@@ -195,7 +232,7 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
     expect(diagnostics).toContain('FT-11 defaults field=validation.linkAudit violation=invalid-value');
     expect(diagnostics).toContain('FT-11 defaults field=validation.fitness violation=invalid-value');
     expect(diagnostics).toContain(`FT-11 entry=${second.id} field=inbound.clients violation=missing-baseline-field`);
-    expect(diagnostics).toContain(`FT-11 entry=${firstExpectedId} field=transitionState violation=premature-transition`);
+    expect(diagnostics).toContain(`FT-11 entry=${pendingExpectedId} field=transitionState violation=premature-transition`);
     expect(diagnostics).toContain('FT-11 manifest field=referenceAudit.governanceLedgers violation=reference-drift');
     expect(diagnostics).toContain('FT-11 ledger=docs/architecture/legacy-migration-inventory.md violation=incomplete-candidate-coverage');
     expect(diagnostics).toContain('FT-11 manifest field=apiM04Baseline violation=reference-drift');
@@ -230,6 +267,30 @@ function categoryForId(id: string): Ft11DocumentCategory {
   if (id.startsWith('DOC-C')) return 'current-fact';
   if (id.startsWith('DOC-A')) return 'root-candidate';
   return 'v1.0-candidate';
+}
+
+function hasMarkdownAnchor(content: string, encodedFragment: string): boolean {
+  let fragment: string;
+  try {
+    fragment = decodeURIComponent(encodedFragment).toLowerCase();
+  } catch {
+    return false;
+  }
+  const explicitAnchors = [...content.matchAll(/<a\s+[^>]*(?:id|name)=["']([^"']+)["'][^>]*>/giu)]
+    .map((match) => match[1]?.toLowerCase());
+  if (explicitAnchors.includes(fragment)) return true;
+
+  return [...content.matchAll(/^#{1,6}\s+(.+?)\s*#*\s*$/gmu)]
+    .some((match) => markdownHeadingAnchor(match[1] ?? '') === fragment);
+}
+
+function markdownHeadingAnchor(heading: string): string {
+  return heading
+    .replace(/<[^>]+>/gu, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+    .replace(/\s/gu, '-');
 }
 
 async function loadReferenceSources(

@@ -1,7 +1,9 @@
-# Core Session 模块设计文档
+# Core Session Current Architecture
 
-> 文档日期：2026-05-29
-> 关联文档：`core_runner.md` · `runtime.md`
+> Status: Current Authority
+> Verified: 2026-09-09
+> Ownership: Session, Transcript, JSONL, message tree, and persistence behavior
+> Ownership key: session-and-transcript-persistence
 
 ---
 
@@ -60,7 +62,7 @@ SessionEntry {
   status?: 'running' | 'done' | 'failed'
   totalTokens?: number
   compactionCount?: number
-  spawnedBy?: string      // 父 session key（预留）
+  spawnedBy?: string      // Subagent Child 的父 session key
 }
 ```
 
@@ -147,3 +149,13 @@ session(root)
 | JSONL append-only | 只追加，不重写——保证崩溃安全；compaction 也是追加一条记录，不删历史行 |
 | 文件写锁 | `withFileLock` 防止并发 append 产生乱序（同 session 串行由 runtime 保证，锁作为防御兜底） |
 | sessionKey 与 sessionId 分离 | `sessionKey` 是调用方的逻辑标识；`sessionId` 是内部 UUID，用于文件名和记录关联 |
+
+Runtime owns queueing and Parent/Child execution lifecycle; Session owns the persisted `spawnedBy` relationship and isolated Child transcript. Runner owns when messages and Compaction records are appended. Provider-facing projection of internal `toolResult` records does not change their persisted role.
+
+## 8. Evidence
+
+| Kind | Evidence |
+|---|---|
+| Source | [SessionManager.ts](../../../src/core/session/SessionManager.ts), [types.ts](../../../src/core/session/types.ts), [transcript.ts](../../../src/core/session/transcript.ts), [store.ts](../../../src/core/session/store.ts), [lock.ts](../../../src/core/session/lock.ts) |
+| Tests | [SessionManager.test.ts](../../../src/core/session/SessionManager.test.ts), [transcript.test.ts](../../../src/core/session/transcript.test.ts), [store.test.ts](../../../src/core/session/store.test.ts), [lock.test.ts](../../../src/core/session/lock.test.ts), [AgentRunner.test.ts](../../../src/core/runner/AgentRunner.test.ts) |
+| Controlling authority | [Core Runner Turn Flow Spec](../core-runner-turn-flow-spec.md), [ADR-002](../adr-002-context-budgeting-and-compaction-recovery.md), [Core Abort Spec](../core-abort-spec.md) |

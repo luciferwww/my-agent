@@ -3,14 +3,14 @@
 ## 状态
 
 - **状态：** Accepted
-- **版本：** 0.3
+- **版本：** 0.4
 - **日期：** 2026-09-09
 - **所有者：** 项目所有者
 - **Plan Item：** [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) Slice 6
 - **关联 ADR / Spec：** [ADR-003](adr-003-progressive-architecture-migration.md)、[ADR-006](adr-006-legacy-and-compatibility-exit.md)、[Target Architecture](target-architecture.md)、[Legacy Migration Inventory](legacy-migration-inventory.md)
 - **证据输入：** [Development Workflow](../development-workflow.md)、[Capability Inventory](../agent-capabilities.md)、[FT-09 Documentation Governance](../../src/architecture-fitness/ft-09-doc-governance.test.ts)、Slice 1–5 已完成 Specs、production source、tests 与 Git history
 
-本 Spec 遵循 [Development Workflow](../development-workflow.md)。项目所有者于 2026-09-09 确认 DC-OD-01..09 的推荐方向并授权起草、审计和评审，随后接受完整 Spec v0.3，并另行授权仅执行 non-deleting S6-D1 Document Delivery。该授权不包含 S6-D2–D8、候选文档修改/迁移/移动/删除、API-M04 或其他 production code 修改、dependency 安装、commit 或 push；后续 Delivery、API-M04 Delivery 和 checkpoint 仍分别需要明确授权。
+本 Spec 遵循 [Development Workflow](../development-workflow.md)。项目所有者于 2026-09-09 接受完整 Spec v0.3，随后分别授权 non-deleting S6-D1 与 S6-D2 Current Architecture Delivery。S6-D2 实施审查发现原固定 13-page 结构遗漏当前 `core/model-resolution` 与 `core/media` ownership；项目所有者明确要求新结构以当前架构边界和读者需求为准，不迁就旧文档，并批准 v0.4 结构修订。S6-D3–D8、API-M04、其他 production code 修改、dependency 安装、commit 和 push 仍分别需要明确授权。
 
 ## 1. 目的与用户可观察结果
 
@@ -30,7 +30,7 @@ Slice 6 按 authority 和 unique value 收敛文档，不按年龄或目录批�
 ## 2. 范围
 
 - 冻结 52 个 document candidates 的 path、successor、proposed disposition 和 validation；
-- 建立 Current Architecture overview 与 12 个 topic files 的唯一 fact ownership；
+- 建立一个 Current Architecture overview 与按当前模块边界扩展的 topic files；topic 数量不是兼容旧文档的固定条件；
 - 依据 production source、tests 和 Slice 1–5 accepted/validated evidence 重写 DOC-C01–C13；
 - 更新 Root README、Documentation Index 和 Capability Inventory；
 - 逐项 Review DOC-A01–A27 与 DOC-V01–V12；
@@ -79,6 +79,8 @@ Documentation Index ──────┼──> current/overview.md
 Capability Inventory ─────┘          |
                                       +--> runtime.md
                                       +--> core_runner.md
+                                      +--> core_model_resolution.md
+                                      +--> core_media.md
                                       +--> adapter_channel.md
                                       +--> platform_config.md
                                       +--> adapter_llm.md
@@ -111,10 +113,12 @@ Deferred Input <── non-authorizing future input with Owner/successor
 | Subagent orchestration、Parent/Child delegation、generation inheritance、Child lifecycle | `current/runtime.md` 的 Subagent subsection | Runner 只描述 generic Tool/Abort contract，不建立第二个 Subagent section |
 | Runner loop、context budgeting、Compaction、Tool/Hook invocation、events | `current/core_runner.md` | Runtime scheduling 只链接 DOC-C02 |
 | Channel contract、transport、interaction、WebSocket/CLI protocol | `current/adapter_channel.md` | Runtime route state 只链接 DOC-C02 |
-| attachment/media ingress、Channel delivery、client wire summary | `current/adapter_channel.md` 的 Attachments subsection | provider-ready prompt content 不在此重复 |
-| prompt composition、Context Hook、`MediaAttachment` 到 provider-ready content assembly | `current/core_prompt.md` | Channel protocol facts只链接 DOC-C04 |
+| attachment ingress、Channel delivery、client wire summary | `current/adapter_channel.md` 的 Attachments subsection | media validation/normalization 只链接 `core_media.md` |
+| media validation、limits、MIME sniffing、optimization、drop reasons、canonical block normalization | `current/core_media.md` | Channel wire、Prompt composition 与 Provider conversion 不在此重复 |
+| prompt composition、Context Hook、normalized media placement | `current/core_prompt.md` | media pipeline 与 Channel protocol facts只链接其 Owner |
 | Config source、precedence、schema、Wizard | `current/platform_config.md` | Model Facts ownership服从 ADR-004 |
 | Provider protocol、normalized event/error mapping、Anthropic Adapter | `current/adapter_llm.md` | Model resolution/composition分别链接 Runtime/ADR-004 |
+| Model Reference、Provider projection、canonical identity、Facts/limits、capability validation、resolution failures | `current/core_model_resolution.md` | Provider publishing 链接 Adapter；Turn capture/composition 链接 Runtime |
 | canonical Tool contract、policy/approval execution boundary | `current/core_tools.md` | builtin implementation detail只链接 DOC-C08 |
 | builtin inventory、filesystem/search/web、Exec/Process behavior | `current/core_tools_builtin.md`，Exec/Process 为具名 subsection | generic Tool contract只链接 DOC-C07 |
 | Session、Transcript、JSONL、persistence | `current/core_session.md` | Runtime queue不在此重复 |
@@ -150,6 +154,8 @@ Deferred Input <── non-authorizing future input with Owner/successor
 
 All 52 paths existed in the 2026-09-09 read-only audit. Their baseline identity is inherited from [Legacy Migration Inventory](legacy-migration-inventory.md); this Spec freezes Slice 6 disposition and validation without replacing the Inventory as the cross-Slice ledger.
 
+The 52-entry count is a migration ledger, not the Current Architecture schema. [Current Model Resolution](current/core_model_resolution.md) and [Current Media](current/core_media.md) were added from live module boundaries during the approved v0.4 amendment; neither receives a fabricated DOC-C ID or changes the frozen candidate total.
+
 ### 5.2 Known governance baseline
 
 The current hard-coded FT-09 test manifest contains and locks:
@@ -179,7 +185,7 @@ The project owner confirmed the following planning decisions on 2026-09-09. They
 
 ### DC-OD-01 Canonical Current Architecture
 
-Use [Current Architecture Overview](current/overview.md) plus its 12 topic files. Do not create another `current-architecture.md`; do not collapse all details into one giant file.
+Use [Current Architecture Overview](current/overview.md) plus topic files divided by current reader needs and live module boundaries. The topic count is not frozen to the 13 legacy-derived DOC-C candidates. Do not create another `current-architecture.md`; do not collapse all details into one giant file. New Current pages do not receive fabricated candidate IDs merely to preserve the old disposition shape.
 
 ### DC-OD-02 Topic ownership
 
@@ -297,8 +303,8 @@ The manifest is the review ledger, not a new architecture authority.
 | DOC-A22 | [Builtin Tools Design](core-tools-builtin-design.md) | inventory → DOC-C08; future Memory Tool work → Plan or reject | Delete After Migration |
 | DOC-A23 | [Workspace Design](core-workspace-design.md) | facts → DOC-C12; future decisions → future Workspace Spec | Delete After Migration |
 | DOC-A24 | [Exec Runtime Design](core-tools-builtin-exec-runtime-design.md) | platform and process facts → DOC-C08 Exec/Process subsection; unfinished work → Plan or reject | Delete After Migration |
-| DOC-A25 | [Attachments Server Implementation](attachments-server-implementation.md) | contract → Attachments Support Spec; ingress/delivery facts → DOC-C04 Attachments subsection; prompt assembly → DOC-C10 | Delete After Migration |
-| DOC-A26 | [Attachments Client Implementation](attachments-client-implementation.md) | contract → Attachments Support Spec; wire/client delivery facts → DOC-C04 Attachments subsection; capability presence → dated Capability Inventory | Delete After Migration |
+| DOC-A25 | [Attachments Server Implementation](attachments-server-implementation.md) | contract → Attachments Support Spec; wire ingress/delivery → DOC-C04; media validation/normalization → `current/core_media.md`; prompt placement → DOC-C10 | Delete After Migration |
+| DOC-A26 | [Attachments Client Implementation](attachments-client-implementation.md) | contract → Attachments Support Spec; wire/client delivery → DOC-C04; media limits/normalization → `current/core_media.md`; capability presence → dated Capability Inventory | Delete After Migration |
 | DOC-A27 | [Core Subagent Implementation](core-subagent-impl.md) | contract → Core Subagent Spec; orchestration/delegation facts → DOC-C02 Subagent subsection; generic Runner interaction → DOC-C03; evidence → Slice 2 record | Delete After Migration |
 
 ### 8.3 v1.0 candidates
@@ -428,7 +434,7 @@ If S6-D7 is not authorized, API-M04 remains a named Compatibility Candidate with
 
 S6-D1 is the first separately authorized Document Delivery batch, not a pre-acceptance planning artifact. It is deliberately non-deleting. S6-D2–D8 cannot start until the S6-D1 exit evidence includes the detailed inbound-link, unique-value, transition-state and named evidence fields required by §7.2.
 
-**Delivery status（2026-09-09）：** `In Review`。52-entry manifest、immutable surface 与 FT-11 已建立；52/52 ID/path/category/disposition、逐项 `Pending`/`not-reviewed` state、active/candidate/source/test/script/client inbound references、governance ledger、DOC-V10 五个 production references + FT-09 reference、separate API-M04 facade-path/alias baseline 均被锁定。未修改或删除任何候选文档。Focused FT-11 3/3、FT-01–FT-11 29/29、lint、build、`git diff --check`、JSON 与 Spec link/anchor validation 全部通过；independent review 为 `Ready`，无 unresolved Critical/High/Medium blocker。等待项目所有者确认 S6-D1 完成；该确认不自动授权 S6-D2。
+**Delivery status（2026-09-09）：** `Completed`。52-entry manifest、immutable surface 与 FT-11 已建立；52/52 ID/path/category/disposition、逐项 baseline state、active/candidate/source/test/script/client inbound references、governance ledger、DOC-V10 五个 production references + FT-09 reference、separate API-M04 facade-path/alias baseline 均被锁定。未修改或删除任何候选文档。Focused FT-11 3/3、FT-01–FT-11 29/29、lint、build、`git diff --check`、JSON 与 Spec link/anchor validation 全部通过；independent review 为 `Ready`，无 unresolved Critical/High/Medium blocker。项目所有者已于 2026-09-09 确认 S6-D1 完成并单独授权 S6-D2；该授权不包含 S6-D3、API-M04、commit 或 push。
 
 ### S6-D2 Current Architecture
 
@@ -438,6 +444,8 @@ S6-D1 is the first separately authorized Document Delivery batch, not a pre-acce
 - keep overview concise and avoid cross-topic duplication.
 
 **Exit:** Current fact audit passes; every current fact has one topic Owner; all 13 entries are `Migrated` and retained as Current Authority.
+
+**Delivery status（2026-09-09）：** `Completed — Owner Accepted`。Current Architecture 现为一个 overview + 14 个按 live module boundary 划分的 topics；新增 `core_model_resolution.md` 与 `core_media.md`，并从 Channel/Prompt/Provider/Config/Runtime 收窄重复或错置 ownership。FT-12 不再冻结 Legacy-derived DOC-C count/sequence，而是锁定唯一 overview、完整受管页面集合、唯一 ownership keys、动态 source-module coverage、evidence/links/anchors 与关键 current claims。原 52-entry manifest 仍只管理候选迁移：DOC-C01–C13 为 `Migrated` / `Retain Current Authority`，两个新增 Current topics 不伪造 candidate IDs；39 个 non-DOC-C candidates 与 API-M04 baseline paths 均未修改。Focused FT-11/FT-12 7/7、FT-01–FT-12 33/33、editor diagnostics、lint、build、15-page surface、52-candidate count、JSON parse、16-file Current/Spec link-anchor audit 和 `git diff --check` 全部通过；21 个 changed/untracked paths 全部属于已授权 S6-D2 scope。多轮 independent review 发现的结构/事实偏差已全部按 live source/tests 修正，最终 acceptance check 无 unresolved Critical/High/Medium blocker。项目所有者于 2026-09-09 接受 S6-D2 v0.4，随后单独授权 S6-D2 commit/push checkpoint 与 S6-D3 Active Navigation；API-M04 Delivery 仍未授权。
 
 ### S6-D3 Active navigation
 
@@ -498,7 +506,7 @@ S6-D1 is the first separately authorized Document Delivery batch, not a pre-acce
 | Area | Minimum evidence |
 |---|---|
 | Baseline completeness | 52/52 unique IDs and paths; API-M04 separate |
-| Authority structure | one overview; 12 topic owners; no duplicate current fact authority |
+| Authority structure | one overview; topic owners follow current module boundaries; complete module coverage; no duplicate current fact authority |
 | Current correctness | source + relevant Unit/Contract/Integration/Characterization evidence per topic |
 | Navigation | Root README, Documentation Index and Capability Inventory link canonical overview |
 | Link integrity | all active relative targets/anchors resolve; no active link to deleted authority |
@@ -518,7 +526,7 @@ Validation is incremental. The first substantive change in each batch receives t
 ## 14. Acceptance Criteria
 
 - **AC-DC-01 Canonical entry:** Root README, Documentation Index and Capability Inventory route current-fact readers to one overview.
-- **AC-DC-02 Topic ownership:** every current fact belongs to exactly one of the 12 topic files or the overview-level map/flow.
+- **AC-DC-02 Topic ownership:** every current fact belongs to exactly one current-boundary topic or the overview-level map/flow; topic count and IDs do not mirror Legacy candidates.
 - **AC-DC-03 Authority separation:** Current, Target, ADR, Spec, Plan, Results, Historical and Deferred roles are explicit and non-competing.
 - **AC-DC-04 Complete inventory:** all 52 document candidates have one manifest row and reviewed terminal disposition.
 - **AC-DC-05 Evidence:** every Current topic records controlling authority, source/test evidence and verified date.
@@ -555,7 +563,8 @@ Validation is incremental. The first substantive change in each batch receives t
 - [x] independent Spec review has no unresolved Critical/High/Medium blocker;
 - [x] project owner accepts the complete Spec v0.3（2026-09-09）;
 - [x] project owner separately authorizes non-deleting S6-D1 Document Delivery（2026-09-09）;
-- [ ] project owner separately authorizes S6-D2 or later candidate-document Delivery;
+- [x] project owner separately authorizes S6-D2 Current Architecture Delivery（2026-09-09）;
+- [ ] project owner separately authorizes S6-D3 or later candidate-document Delivery;
 - [ ] API-M04 public-contract Delivery receives separate authorization if included.
 
 ## 17. Definition of Done
@@ -581,4 +590,10 @@ Validation is incremental. The first substantive change in each batch receives t
 - **2026-09-09 — Final readiness review:** `Ready`; no unresolved Critical/High/Medium blocker or authorization ambiguity. Prior findings remain resolved.
 - **2026-09-09 — Owner acceptance:** project owner accepted the complete Spec v0.3. This acceptance does not authorize Document Delivery, API-M04 Delivery, commit or push.
 - **2026-09-09 — S6-D1 authorization and delivery:** project owner separately authorized only the non-deleting S6-D1. Delivery created the 52-entry disposition/inbound-link manifest, immutable FT-11 surface and Fitness checks; no candidate document or API-M04 path changed. Focused and full architecture Fitness, lint, build, diff, JSON and link validation passed; independent review found no unresolved Critical/High/Medium blocker.
-- **Next:** request project-owner confirmation that S6-D1 is complete. S6-D2, API-M04 Delivery, commit and push remain unauthorized.
+- **2026-09-09 — S6-D1 completion / S6-D2 authorization:** project owner requested the S6-D1 checkpoint be committed and pushed, confirmed continuation, and separately authorized S6-D2 Current Architecture Delivery. Commit `5189a9e` was pushed to `origin/feature/refactoring`. S6-D3, API-M04 Delivery, the S6-D2 checkpoint and push remain unauthorized.
+- **2026-09-09 — S6-D2 delivery and review:** rewrote the 13 Current Authority pages, advanced only DOC-C01–C13, and added FT-12 plus successor-anchor protection. Focused and full Architecture Fitness, diagnostics, lint, build, JSON, link/anchor, scope and diff validation passed. The initial independent review's High and Medium findings were corrected; re-review found no unresolved Critical/High/Medium blocker. S6-D2 remains `In Review — Awaiting Owner Acceptance`.
+- **2026-09-09 — S6-D2 structure amendment:** project owner required the refactored documentation structure to follow the new architecture rather than accommodate old documents, then approved one overview plus 14 current-boundary topics. The amendment adds Model Resolution and Media owners, generalizes FT-12 from fixed DOC-C count/sequence to semantic ownership and module coverage, and removes migration-process narration from Current Authority.
+- **2026-09-09 — S6-D2 v0.4 validation and review:** completed the 15-page Current surface and dynamic module-coverage Fitness. Corrected review findings in Model Resolution, Media, Tool conversion, Runtime approval, Runner events/Abort ordering, Prompt evidence, and Channel correlation/async delivery. Focused/full Architecture Fitness, diagnostics, lint, build, JSON, links/anchors, candidate/API isolation and diff checks passed; final independent acceptance check found no unresolved Critical/High/Medium blocker.
+- **2026-09-09 — S6-D2 v0.4 owner acceptance:** project owner accepted the current-boundary documentation structure and S6-D2 validation evidence. S6-D2 is complete. This acceptance does not authorize commit, push, S6-D3 or API-M04 Delivery.
+- **2026-09-09 — S6-D2 checkpoint / S6-D3 authorization:** project owner separately authorized committing and pushing the accepted S6-D2 checkpoint, then starting S6-D3 Active Navigation. API-M04 Delivery remains unauthorized.
+- **Next:** create and push the S6-D2 checkpoint, then deliver S6-D3. Do not start API-M04 or later candidate closeout without separate authorization.

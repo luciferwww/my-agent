@@ -1,136 +1,60 @@
-# Core Prompt 模块设计文档
+# Core Prompt Current Architecture
 
-> 文档日期：2026-05-29
-> 关联文档：`runtime.md` · `core_workspace.md`
+> Status: Current Authority
+> Verified: 2026-09-09
+> Ownership: prompt composition, Context Hooks, and normalized media placement
+> Ownership key: prompt-and-context-hooks
 
----
+## 1. Boundary
 
-## 1. 概述
+`src/core/prompt/` owns deterministic System/User prompt construction and Context Hook prepending. Runtime supplies current Context files, visible Tool names, workspace, Subagent summaries, safety settings, and already normalized media blocks. Prompt does not own Config precedence, canonical Tool schemas, Channel wire protocol, [Media](./core_media.md) validation, Model Resolution, or Provider SDK conversion.
 
-`src/core/prompt/` 提供两个 Builder：
+## 2. SystemPromptBuilder
 
-- **`SystemPromptBuilder`**：把 config + tools + contextFiles 组装为 system prompt 字符串
-- **`UserPromptBuilder`**：把用户输入 + 可选 hooks 前置块组装为最终发送给 LLM 的用户消息
+`SystemPromptBuilder.build()` emits sections in stable order when their conditions hold:
 
----
+| Order | Section | Full | Minimal |
+|---:|---|:---:|:---:|
+| 1 | Identity | yes | no |
+| 2 | Current Date & Time | yes | yes |
+| 3 | Behavior Rules | yes | no |
+| 4 | Safety | unless relaxed | unless relaxed |
+| 5 | Memory Recall | when a Memory Tool is visible | no |
+| 6 | Project Context | when Context files exist | when Context files exist |
+| 7 | Workspace | when `workspaceDir` exists | when `workspaceDir` exists |
+| 8 | Available Subagents | when supplied | no |
 
-## 2. 目录结构
+`mode='none'` returns an empty string. Tool names are a narrow capability projection used only for conditional prompt text; Prompt never stores or converts Tool schemas.
 
+## 3. UserPromptBuilder and Context Hooks
+
+```text
+UserPromptBuilder.build(input)
+  1. execute registered Context Hooks in registration order
+  2. omit null/empty hook results
+  3. prepend accepted chunks
+  4. append the original user text last
+  5. return text, pass-through attachments and optional debug data
 ```
-src/core/prompt/
-├── types.ts                # PromptMode / ToolDefinition / SystemPromptBuildParams
-│                           # UserPromptInput / BuiltUserPrompt / ContextHook / MediaAttachment
-├── SystemPromptBuilder.ts  # 7-section 组装
-├── UserPromptBuilder.ts    # hooks + 原始输入拼接
-├── ContextPrepender.ts     # hook 注册与执行
-├── token-counter.ts        # 简单 token 估算（供提示工程参考）
-└── index.ts
-```
 
----
+`ContextPrepender` owns registration/removal and sequential provider invocation. Hook failures are isolated according to its implementation contract. User attachments on the library Builder surface are returned unchanged; the Builder does not encode Provider wire objects.
 
-## 3. SystemPromptBuilder
+## 4. Normalized media placement
 
-### 3.1 7 个 Section（固定顺序）
+Runtime applies Context Hook text to the first text block while preserving every other normalized block position; if no text block exists, it inserts the prepended text before the media blocks. Prompt does not revalidate, optimize, reorder, or convert media.
 
-| # | Section | 触发条件 |
-|---|---|---|
-| 1 | `agent-identity` | 始终输出 |
-| 2 | `agent-datetime` | 始终输出 |
-| 3 | `tool-definitions` | tools 非空时 |
-| 4 | `behavior-rules` | 始终输出 |
-| 5 | `safety-constraints` | `safetyLevel !== 'relaxed'` 时 |
-| 6 | `memory-instructions` | `mode === 'full'` 且有 memory 工具时 |
-| 7 | `project-context` | contextFiles 非空时 |
+This placement is direct `RuntimeApp` source behavior. Prompt tests prove Context Hook output and Runtime intake tests prove normalized block forwarding/order separately; there is no dedicated integration test that combines a non-empty Context Hook with media blocks.
 
-### 3.2 构建模式（PromptMode）
+[Media](./core_media.md) owns inbound validation and canonical normalization. [Channel](./adapter_channel.md) owns wire delivery and summary broadcasting. [Model Resolution](./core_model_resolution.md) checks requested media capabilities, and [Provider Adapter](./adapter_llm.md) owns Anthropic wire conversion.
 
-| mode | 行为 |
+## 5. Runtime projection
+
+`runtime/prompt-factory.ts` maps only the current generation's visible Tool names and Runtime-owned inputs into `SystemPromptBuildParams`. Context files are cached/reloaded by Runtime and consumed here; their initialization/loading contract belongs to [Workspace](./core_workspace.md).
+
+## 6. Evidence
+
+| Kind | Evidence |
 |---|---|
-| `'full'` | 全部 7 个 section |
-| `'minimal'` | 跳过 Section 6（memory-instructions） |
-| `'none'` | 返回空字符串 |
-
-### 3.3 API
-
-```
-SystemPromptBuildParams {
-  mode?: PromptMode           // 默认 'full'
-  toolNames?: readonly string[] // 仅用于 capability 条件，不含 Schema
-  safetyLevel?: 'strict' | 'normal' | 'relaxed'   // 默认 'normal'
-  contextFiles?: ContextFile[]
-}
-
-builder.build(params?): string
-```
-
-Runtime 的 `prompt-factory.ts` 负责从 `resolvedConfig` 和 `RegistrySnapshot.tools` 的窄名称投影中提取参数传入。
-
----
-
-## 4. UserPromptBuilder
-
-### 4.1 拼接逻辑
-
-```
-build(input: UserPromptInput): Promise<BuiltUserPrompt>
-
-拼接顺序：
-  [hook 1 前置块]
-  [hook 2 前置块]
-  ...
-  [用户原始输入]   ← 始终在最后
-```
-
-hooks 按注册顺序执行，返回 `null` 则跳过。媒体附件（图片、文件）单独返回，不嵌入文本。
-
-### 4.2 API
-
-```
-UserPromptBuilder {
-  useContextHook(hook: ContextHook): this    // 注册 hook（链式）
-  removeContextHook(id: string): this        // 注销
-  build(input: UserPromptInput): Promise<BuiltUserPrompt>
-}
-
-ContextHook {
-  id: string
-  provider(rawInput, metadata): string | null | Promise<string | null>
-}
-
-BuiltUserPrompt {
-  text: string                   // 最终文本（hooks + 原始输入）
-  attachments: MediaAttachment[] // 图片/文件附件，单独传给 LLM API
-  _debug?: { rawInput; prependedChunks }
-}
-```
-
-### 4.3 MediaAttachment
-
-```
-ImageAttachment { type:'image'; data: string（base64）; mimeType; caption? }
-FileAttachment  { type:'file';  filename; content; mimeType; caption? }
-```
-
----
-
-## 5. Tool name projection
-
-`core/prompt` 不持有第二份 Tool Schema 或 Provider-shaped definition。Runtime 只投影 Snapshot 中的精确 Tool names，用于 Memory 等窄 capability 条件：
-
-```
-toolNames = registrySnapshot.tools.definitions.map(tool => tool.name)
-```
-
-完整 canonical definitions 只由 Registry Snapshot 拥有；Anthropic/OpenAI-compatible wire mapping 只在 Provider Adapter/reference codec boundary 发生。
-
----
-
-## 6. 关键设计决策
-
-| 决策 | 说明 |
-|---|---|
-| SystemPromptBuilder 无状态 | 每次 `build()` 重新组装，不缓存——runtime 缓存 contextFiles 并在合适时机重新调用 |
-| UserPromptBuilder hooks 链 | 允许 runtime 或库消费者注入前置上下文（如 memory 召回结果），不侵入 runner 逻辑 |
-| media attachments 单独返回 | LLM API 要求附件以独立 content block 传入，不能嵌入文本字符串 |
-| `mode: 'none'` 返回空字符串 | 允许库消费者完全自定义 system prompt，不依赖 Builder |
+| Source | [SystemPromptBuilder.ts](../../../src/core/prompt/SystemPromptBuilder.ts), [UserPromptBuilder.ts](../../../src/core/prompt/UserPromptBuilder.ts), [ContextPrepender.ts](../../../src/core/prompt/ContextPrepender.ts), [prompt types](../../../src/core/prompt/types.ts), [prompt-factory.ts](../../../src/runtime/prompt-factory.ts), [RuntimeApp.ts](../../../src/runtime/RuntimeApp.ts) |
+| Tests | [SystemPromptBuilder.test.ts](../../../src/core/prompt/SystemPromptBuilder.test.ts), [UserPromptBuilder.test.ts](../../../src/core/prompt/UserPromptBuilder.test.ts), [ContextPrepender.test.ts](../../../src/core/prompt/ContextPrepender.test.ts), [prompt-factory.test.ts](../../../src/runtime/prompt-factory.test.ts), [RuntimeApp.intake.test.ts](../../../src/runtime/RuntimeApp.intake.test.ts) |
+| Controlling authority | [Attachments Support Spec](../attachments-support-spec.md), [Tool/Hook Module Spec](../tool-hook-module-spec.md), [Core Runner Turn Flow Spec](../core-runner-turn-flow-spec.md) |

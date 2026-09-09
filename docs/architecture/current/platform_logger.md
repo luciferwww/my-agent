@@ -1,7 +1,9 @@
-# Platform Logger 设计文档
+# Platform Logger Current Architecture
 
-> 文档日期：2026-05-29
-> 关联文档：`platform_config.md` · `runtime.md`
+> Status: Current Authority
+> Verified: 2026-09-09
+> Ownership: Logger, startup buffering, diagnostics, adapter lifecycle, and adapter close
+> Ownership key: logging-and-adapter-lifecycle
 
 ---
 
@@ -9,7 +11,7 @@
 
 `src/platform/logger/` 提供全局日志系统。核心设计：
 
-- **静态类 `Logger`**：全局单例，所有模块通过 `Logger.get('ModuleName')` 获取命名实例
+- **静态类 `Logger`**：process-wide static state；所有模块通过 `Logger.get('ModuleName')` 获取 cached named instance
 - **Adapter 模式**：ConsoleAdapter 和 FileAdapter 各自独立，Logger 不耦合输出目标
 - **启动期 buffer**：在 `configure()` 调用前缓冲日志，首次 configure 后回放（drain），防止启动期日志丢失
 
@@ -143,3 +145,13 @@ FileAdapterConfig {
 | pre-configure 不按 minLevel 过滤 | configure 前不知道用户配的 minLevel，一律 buffer，drain 时再统一过滤 |
 | adapter.write() 同步 | 调用方不 await——adapter 内部按需实现异步队列（FileAdapter 有队列，ConsoleAdapter 同步写） |
 | adapter 级别独立于全局 | ConsoleAdapter / FileAdapter 各自可设 minLevel，支持"console 只看 warn+，文件记全量 debug"场景 |
+
+`Logger.close()` owns adapter drain/close only. Runtime Builder owns aggregate Shutdown ordering, shared deadline accounting, and how Logger failures or deadline residuals appear in `RuntimeShutdownReport`. Closing Logger does not itself close Turns, Channels, generations, Memory, or Runtime Units.
+
+## 8. Evidence
+
+| Kind | Evidence |
+|---|---|
+| Source | [Logger.ts](../../../src/platform/logger/Logger.ts), [types.ts](../../../src/platform/logger/types.ts), [ConsoleAdapter.ts](../../../src/platform/logger/ConsoleAdapter.ts), [FileAdapter.ts](../../../src/platform/logger/FileAdapter.ts), [runtime-builder.ts](../../../src/runtime/runtime-builder.ts) |
+| Tests | [Logger.test.ts](../../../src/platform/logger/Logger.test.ts), [ConsoleAdapter.test.ts](../../../src/platform/logger/ConsoleAdapter.test.ts), [FileAdapter.test.ts](../../../src/platform/logger/FileAdapter.test.ts), [runtime-builder.test.ts](../../../src/runtime/runtime-builder.test.ts), [ft-01-boundaries.test.ts](../../../src/architecture-fitness/ft-01-boundaries.test.ts) |
+| Controlling authority | [Runtime Composition Module Spec](../runtime-composition-module-spec.md), [Target Architecture](../target-architecture.md) |

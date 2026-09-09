@@ -1,9 +1,9 @@
-# Agent Runner 模块设计文档
+# Agent Runner Current Architecture
 
-> 基准版本：v1.0
-> 文档日期：2026-05-29
-> 状态同步：2026-09-04（Slice 3 canonical Tool/Hook pipeline）
-> 关联文档：`runtime.md` · `adapter_channel.md` · `platform_config.md`
+> Status: Current Authority
+> Verified: 2026-09-09
+> Ownership: Runner loop, context budgeting, Compaction, Tool/Hook invocation, and Runner events
+> Ownership key: runner-execution-and-context
 
 ---
 
@@ -91,6 +91,7 @@ RunParams {
   message: string | ChatContentBlock[]
   systemPrompt: string
   turnId: string                        // 必填；emit / hook payload 依赖
+  requestId?: string                    // root request identity；缺省时使用 turnId
   resolvedModel: ResolvedModel
   toolProjection: ToolProjection
   hookProjection: HookProjection
@@ -126,28 +127,37 @@ RunResult {
 
 ### 3.4 AgentEvent
 
-所有事件都带 `sessionKey`。Runner 产生的 turn 内事件带 `turnId`；Runtime 产生的 `user_message` 与 turn 解耦，使用 `messageId`：
+事件按生命周期携带不同关联键，而不是共享一套虚假的公共字段：
 
 ```
 AgentEvent =
-  | { type: 'run_start';  sessionKey; turnId; originMessageId? }
+  | { type: 'run_start';  requestId; sessionKey; turnId; originMessageId? }
+  | { type: 'run_end';    requestId; sessionKey; turnId; result }
+  | { type: 'error';      requestId; sessionKey; turnId; error; category?; originMessageId? }
+  | { type: 'request_end'; requestId; outcome: 'cancelled'; reason; originMessageId? }
   | { type: 'user_message'; sessionKey; messageId; content; attachmentSummaries?; originClientId; deliveryMode; timestamp }
   | { type: 'text_delta'; sessionKey; turnId; text }
   | { type: 'tool_use';   sessionKey; turnId; name; input }
   | { type: 'tool_result';sessionKey; turnId; name; result }
   | { type: 'llm_call';   sessionKey; turnId; round }
-  | { type: 'run_end';    sessionKey; turnId; result: RunResult }
-  | { type: 'error';      sessionKey; turnId; error }
   | { type: 'tool_result_pruned'; sessionKey; turnId; toolUseId; originalChars; prunedChars }
   | { type: 'compaction_start';   sessionKey; turnId; trigger; estimatedTokens }
   | { type: 'compaction_end';     sessionKey; turnId; tokensBefore; tokensAfter; droppedMessages }
   | { type: 'session_tail_sanitized'; sessionKey; turnId; discardedEntryId; discardedRole: 'user' }
+  | { type: 'orphan_tool_results_repaired'; sessionKey; turnId; count; source }
+  | { type: 'subagent_start'; requestId; runId; sessionKey; turnId; depth; subagentType; lifecycle; parentSessionKey; parentTurnId; parentToolUseId }
+  | { type: 'subagent_end'; requestId; runId; sessionKey; turnId; depth; subagentType; lifecycle; parentSessionKey; parentTurnId; parentToolUseId; outcome; failure? }
 ```
 
 设计要点:
+- `run_start` / `run_end` / `error` 同时携带 request、session 与 turn correlation；`requestId` 缺省时由 Runner 使用 `turnId`
+- `request_end` 关闭尚未启动的 queued request，因此只有 `requestId`，明确不带 `sessionKey` / `turnId`
+- `user_message` 与 Turn 解耦，使用 `messageId`；Subagent lifecycle 另有 tree/run/parent correlation
 - `compaction_start.estimatedTokens` 是估算值;准确的 `tokensBefore` 在 `compaction_end` 给出
 - `error` 既 emit 又 throw,让 channel 与库消费者自由选择呈现路径
 - `session_tail_sanitized` 由 runAttempt / compactHistory 入口的 `sanitizeSessionTail` 触发(见 §7.3)
+
+`src/core/runner/types.ts` 的 discriminated union 是字段级穷举 contract；上表按事件 family 摘要，不建立第二份类型定义。
 
 ---
 
@@ -214,13 +224,16 @@ sequenceDiagram
 
 while (hasMoreToolCalls):
 
+  if signal.aborted:
+    drop locally pending steering and return stopReason='aborted'
+
   if llmCallCount >= maxLlmCalls:
     return { stopReason: 'max_llm_calls', ... }
 
+  append pending steering after prior tool results
+
   emit { type: 'llm_call', round }
   llmCallCount++
-
-  if signal.aborted: return stopReason='aborted'
 
   llmResult = callLLMStream(..., signal)
     for await event of resolvedModel.invocationPort.chatStream:
@@ -263,6 +276,8 @@ while (hasMoreToolCalls):
 
 return { text, content, stopReason, usage, toolRounds }
 ```
+
+`signal.aborted` is checked before quota, steering injection, `llm_call`, and invocation. A pre-call Abort therefore does not consume quota or emit a call event.
 
 ### 5.1 `maxLlmCalls` 配额
 
@@ -356,7 +371,7 @@ return
 
 注入消息(steering)也走 `appendMessage`,同步追加到内存 `messages` 和 session。
 
-### 7.3 sanitizeSessionTail:清洗孤立 trailing user
+### 7.2 sanitizeSessionTail:清洗孤立 trailing user
 
 `runAttempt` 与 `compactHistory` 入口都会调用 `sanitizeSessionTail(sessionKey)`。它检查当前分支末尾,若 `role === 'user'`(上一次失败/中断遗留的孤立 user),则通过 `session.branch(parentId)` 把 leaf 指针回退到其父节点,并 emit `session_tail_sanitized`。
 
@@ -380,7 +395,7 @@ sanitizeSessionTail(sessionKey):
 - **仅修改内存 `leafId`**:被剥离的 entry 仍保留在 JSONL 中可审计,append-only 契约不破坏
 - **设计动机与边界场景**详见 [core-runner-turn-flow-spec](../core-runner-turn-flow-spec.md)
 
-### 7.2 loadHistory 与压缩感知
+### 7.3 loadHistory 与压缩感知
 
 ```
 loadHistory(sessionKey):
@@ -457,31 +472,34 @@ Runner 不提供 `on()` mutable registration。Registry Builder 在 startup stag
 
 ## 10. Event emit 机制
 
-### 10.1 currentParams 自动注入
+### 10.1 显式 TurnContext 注入
 
 ```
-private currentParams: RunParams | null = null
-
-// run() 入口设置，finally 清理
-this.currentParams = params
+run(params):
+  turnCtx = { sessionKey, turnId, requestId }
+  emit(turnCtx, { type: 'run_start', ... })
+  runAttempt(turnCtx, ...)
 ```
 
-内部 `emit` 方法从 `currentParams` 自动注入 `sessionKey` / `turnId`：
+`run()` 从参数构造轻量、只读 `TurnContext`，并沿内部调用链显式传递。`AgentRunner` 不保存“当前 run”实例状态，因此嵌套或并发 `run()` 不会串用事件标签。
+
+内部 `emit` 从显式 context 注入公共关联字段：
 
 ```
-emit(event: AgentEventInput):
-  if !onEvent || !currentParams: return
-  onEvent({ ...event, sessionKey: currentParams.sessionKey, turnId: currentParams.turnId })
+emit(turnCtx, event: AgentEventInput):
+  if !onEvent: return
+  onEvent({ ...event, sessionKey: turnCtx.sessionKey, turnId: turnCtx.turnId })
+  // run_start / run_end / error 同时注入 requestId
 ```
 
-调用方写法简化为 `this.emit({ type: 'text_delta', text })`，不手填公共字段。
+调用方写法为 `this.emit(turnCtx, { type: 'text_delta', text })`，不手填公共字段，但编译期必须提供所属 Turn。
 
 ### 10.2 AgentEventInput 私有类型
 
 ```typescript
-// 条件类型分发：为每个 AgentEvent variant 单独 Omit sessionKey/turnId
+// 条件类型分发：为每个 AgentEvent variant 单独 Omit 关联字段
 type AgentEventInput = AgentEvent extends infer E
-  ? E extends AgentEvent ? Omit<E, 'sessionKey' | 'turnId'> : never
+  ? E extends AgentEvent ? Omit<E, 'sessionKey' | 'turnId' | 'requestId'> : never
   : never;
 ```
 
@@ -511,53 +529,22 @@ ContextOverflowError → 外层 retry（最多 3 次）→ 仍失败 → 抛给�
 其他 Error → emit { type: 'error', error } + throw
 ```
 
-`run()` 的 `finally` 始终清理 `currentParams`，保证下次调用状态干净。
+事件关联不依赖清理共享字段；每次 `run()` 的 `turnCtx` 只存在于该调用链。
 
 ---
 
-## 12. ⚠️ 代码与 v1.0 文档的已知差异
+## 12. Current boundary notes
 
-### 差异 1：内层循环 `pruneToolResults` 不触发 `tool_result_pruned` 事件
+- `RunParams.signal` reaches the Model invocation Port and Tool execution context. Runner stops scheduling additional work after Abort and returns `stopReason='aborted'`; an in-flight third-party Tool still controls how quickly it observes the signal.
+- Partial Assistant output and orphan Tool Use repair follow the accepted Abort contract. Runner does not own root request-tree admission or generation release; those are Runtime responsibilities.
+- The Runner consumes a Turn-bound `ResolvedModel`. Provider selection, model identity and Model Facts are owned by Model Resolution and ADR-004, not by Runner or raw Config.
+- `tool_result_pruned` is emitted for the initial-history pruning path. Current-round pruning does not claim a second event contract.
+- Future proposals are tracked in active Plans or Specs and are intentionally absent from this Current Authority.
 
-**v1.0 文档**（§6.1）描述"每次裁剪触发 `tool_result_pruned` 事件"，且列出两个调用点：
-1. `runAttempt` 开头（历史消息中的 tool result）
-2. 内层循环 tool result 追加后（新增 tool result）
+## 13. Evidence
 
-**实际代码**（`AgentRunner.ts`）：
-- 调用点 1（`runAttempt` 开头）：传了 emit 回调 ✅
-- 调用点 2（内层循环）：未传 emit 回调 ❌
-
-```typescript
-// 调用点 2（实际代码，无 emit 回调）
-messages = pruneToolResults(messages, compaction, contextWindowTokens);
-```
-
-因此内层循环中新增 tool result 被裁剪时**不会**触发 `tool_result_pruned` 事件。
-
-> 建议：内层循环的 `pruneToolResults` 调用补充 emit 回调，与调用点 1 一致。
-
-### 差异 2：代码注释写"3 层"但实际有 4 层
-
-**实际代码**（`AgentRunner.ts` 类注释）写 `上下文管理（3 层）`，但实际列举了 Layer 1、1.5、2、3 共 4 层，与 v1.0 文档"4 层渐进策略"说法不一致。
-
-> 建议：将代码注释改为"4 层（Layer 1 / 1.5 / 2 / 3）"以与文档保持一致。
-
----
-
-## 13. 已知规划项
-
-| 项目 | 状态 |
+| Kind | Evidence |
 |---|---|
-| 模型 fallback（主模型失败切换备用） | 规划中 |
-| 硬 steering（AbortSignal + tool 取消协议） | 规划中 |
-| `before_compaction` 否决能力（`skip/continue`） | 规划中 |
-| `manual` trigger 对外暴露手动压缩入口 | 规划中 |
-| tool use 阶段前检查 steering（缩短长 tool 延迟） | 规划中 |
-| `RunResult.compactionStats` 字段 | 待讨论 |
-| 历史裁剪的轻量级窗口截断（除压缩之外） | 规划中 |
-
-### 13.1 已落地的用户主动中止
-
-`RunParams.signal` 已接通 Runtime、LLM、ToolContext 和 Subagent。Runner 在 LLM 调用前与工具调度间检查 signal；中止时返回 `stopReason='aborted'`。流式调用已经产生的 Partial Assistant 内容会携带 `abortMeta` 持久化；下一轮通过 `repairOrphanToolUses` 修复未配对的 Tool Use。
-
-工具是否立即停止取决于其是否响应 `ToolContext.signal`。框架保证中止后不再启动后续工具，不保证所有第三方 in-flight 工具瞬时终止。详见 [core-abort-spec](../core-abort-spec.md)。
+| Source | [AgentRunner.ts](../../../src/core/runner/AgentRunner.ts), [types.ts](../../../src/core/runner/types.ts), [context-budget.ts](../../../src/core/runner/context/context-budget.ts), [compaction.ts](../../../src/core/runner/context/compaction.ts), [hooks/runner.ts](../../../src/core/runner/hooks/runner.ts) |
+| Tests | [AgentRunner.test.ts](../../../src/core/runner/AgentRunner.test.ts), [AgentRunner.tool-pipeline.test.ts](../../../src/core/runner/AgentRunner.tool-pipeline.test.ts), [context-budget.test.ts](../../../src/core/runner/context/context-budget.test.ts), [compaction.test.ts](../../../src/core/runner/context/compaction.test.ts), [hooks/runner.test.ts](../../../src/core/runner/hooks/runner.test.ts) |
+| Controlling authority | [ADR-001](../adr-001-tool-result-closure-and-recovery.md), [ADR-002](../adr-002-context-budgeting-and-compaction-recovery.md), [ADR-004](../adr-004-provider-model-identity-and-facts-ownership.md), [Tool/Hook Module Spec](../tool-hook-module-spec.md), [Core Runner Turn Flow Spec](../core-runner-turn-flow-spec.md), [Core Abort Spec](../core-abort-spec.md) |

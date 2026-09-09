@@ -1,7 +1,9 @@
 # Model Invocation 与 Anthropic Adapter
 
-> 状态同步：2026-09-04（Provider-neutral Core invocation + Slice 3 Tool conversion）
-> 关联文档：`core_runner.md` · `core_tools.md` · `runtime.md`
+> Status: Current Authority
+> Verified: 2026-09-09
+> Ownership: Provider protocol, normalized invocation events/errors, and Anthropic Adapter behavior
+> Ownership key: provider-protocol-and-anthropic-adapter
 
 ---
 
@@ -9,7 +11,7 @@
 
 Provider-neutral invocation contracts 由 `src/core/model-invocation/` 拥有。`AgentRunner` 只消费 Turn-bound `ResolvedModel.invocationPort`，不导入 Anthropic SDK 或 Provider wire types。
 
-`src/adapters/llm/AnthropicClient.ts` 实现 Core Port，并负责所有 Anthropic conversion：
+`src/adapters/llm/AnthropicClient.ts` semantically implements the Core invocation contract and owns Anthropic conversion：
 
 - canonical Tool definition → Anthropic `input_schema`；
 - Anthropic streamed Tool blocks → complete canonical `tool_call`；
@@ -79,3 +81,17 @@ Anthropic SDK 将 Tool block 分成 `content_block_start`、多个 `input_json_d
 - result correlation/content。
 
 Core-only `ToolResultOutcome` 不要求从 OpenAI-compatible role=`tool` message 反向恢复。Anthropic `is_error` 只是有损 projection hint，不扩大 portable shared contract。
+
+## 6. Provider Facts and compatibility boundary
+
+`AnthropicProvider` publishes Provider identity, endpoint normalization, model canonicalization, deployment facts and invocation construction to [Model Resolution](./core_model_resolution.md). Runner consumes only the resulting Turn-bound `ResolvedModel`; this topic does not own resolution policy, Runtime composition, or Config precedence.
+
+The production client currently imports `LLMClient`, `ChatParams`, and `StreamEvent` through `src/adapters/llm/types.ts`. That file is a deprecated compatibility re-export of Core contracts, so current behavior remains Core-compatible while the import path and aliases are still an API-M04 residual. Tests, scripts and the barrel also retain recorded facade references. Alias/path removal remains separately gated and is not authorized by this Current description.
+
+## 7. Evidence
+
+| Kind | Evidence |
+|---|---|
+| Source | [AnthropicClient.ts](../../../src/adapters/llm/AnthropicClient.ts), [AnthropicProvider.ts](../../../src/adapters/llm/AnthropicProvider.ts), [tool-contract-codecs.ts](../../../src/adapters/llm/tool-contract-codecs.ts), [Core invocation types](../../../src/core/model-invocation/types.ts), [compatibility facade](../../../src/adapters/llm/types.ts) |
+| Tests | [AnthropicClient.test.ts](../../../src/adapters/llm/AnthropicClient.test.ts), [AnthropicProvider.test.ts](../../../src/adapters/llm/AnthropicProvider.test.ts), [tool-contract-codecs.test.ts](../../../src/adapters/llm/tool-contract-codecs.test.ts), [ft-03-runner-boundary.test.ts](../../../src/architecture-fitness/ft-03-runner-boundary.test.ts), [ft-08-contract-inventory.test.ts](../../../src/architecture-fitness/ft-08-contract-inventory.test.ts) |
+| Controlling authority | [ADR-002](../adr-002-context-budgeting-and-compaction-recovery.md), [ADR-004](../adr-004-provider-model-identity-and-facts-ownership.md), [Model Resolution Module Spec](../model-resolution-module-spec.md) |

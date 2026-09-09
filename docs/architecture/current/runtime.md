@@ -1,15 +1,15 @@
-# Runtime 模块设计文档
+# Runtime Current Architecture
 
-> 基准版本：v1.0
-> 文档日期：2026-05-27
-> 状态同步：2026-09-04（Slice 3 immutable Tool/Hook Registry Snapshot）
-> 关联文档：`adapter_channel.md` · `core_runner.md` · `platform_config.md`
+> Status: Current Authority
+> Verified: 2026-09-09
+> Ownership: Runtime composition, generation, queue, routing, Fanout, Abort, Shutdown, and Subagent Parent/Child lifecycle
+> Ownership key: runtime-composition-and-lifecycle
 
 ---
 
 ## 1. 概述
 
-`src/runtime/` 是整个应用的 **composition root**（装配根）。它不实现任何业务逻辑，只做一件事：把所有底层模块（config、workspace、session、memory、prompt、tools、llm、runner）组装成一个可启动、可调度、可关闭的 Agent 应用实例，并通过 channel 层接受外部消息。
+`src/runtime/` 是应用的 Composition 层。`runtime-builder.ts` 构建 Runtime Handle，`RuntimeCompositionManager` 管理可发布 generation，`CompositionCoordinator` 是 publication、capture、retirement 和 shutdown admission 的唯一线性化 Owner，`RuntimeApp` 则拥有 Turn orchestration、queue、route、Fanout 与 Abort 状态。
 
 没有这一层，各模块只是独立的"库"；有了这一层，才有了一个可以直接启动的 Agent。
 
@@ -39,17 +39,23 @@ Runtime 是**唯一**允许调用 `loadConfig()` / `resolveAgentConfig()` 的运
 
 ```
 src/runtime/
-├── index.ts           # 公共导出入口
-├── types.ts           # 顶层类型（RuntimeAppOptions / RunTurnParams / RuntimeEvent 等）
-├── queue-types.ts     # 入站调度专用类型（队列项 / steering 输入 / 路由上下文）
-├── RuntimeApp.ts      # 主类
-├── bootstrap.ts       # 启动阶段的资源装配
-├── tool-registry.ts   # builtin + memory tools 装配；工具定义格式转换
-├── prompt-factory.ts  # config + contextFiles + tools → SystemPromptBuilder 参数
-└── errors.ts          # RuntimeError 分类与创建
+├── RuntimeApp.ts                    # Turn orchestration kernel
+├── runtime-builder.ts               # Runtime Handle / application / composition assembly
+├── runtime-composition-manager.ts   # startup, reload, publication and retirement
+├── composition-coordinator.ts       # publication/capture/retirement linearization
+├── reload-coordinator.ts            # subordinate reload state reduction
+├── runtime-unit.ts                  # Runtime Unit lifecycle contract/catalog
+├── runtime-lifecycle.ts             # instance lifecycle ledger
+├── runtime-deadline.ts              # shared bounded-shutdown budget
+├── bootstrap.ts                     # config/workspace/resource bootstrap only
+├── registry-builder.ts              # immutable Registry Snapshot construction
+├── subagent-orchestration.ts        # tracked Parent/Child delegation
+├── channel-lifecycle.ts             # channel host bindings/completion
+├── prompt-factory.ts                # narrow prompt parameter projection
+└── types.ts                         # public Runtime options/events/reports
 ```
 
-公共 API 只导出 `RuntimeApp` 和必要的类型，不对外泄漏内部 manager。
+公共 barrel 导出 `RuntimeApp`、选择性的 composition/deadline/prompt/error helpers 与必要类型，但不对外泄漏内部 manager。
 
 ---
 
@@ -130,20 +136,21 @@ RuntimeDependencies {
 
 ```
 RunTurnParams {
+  requestId?: string          // stable root request identity; omitted → generated at intake
   sessionKey: string
   message: string | ChatContentBlock[]
-  promptMode: 'full' | 'minimal' | 'none'   // v1.0 必填，不再回退 config
-  model?: string              // 覆盖 config 默认模型
-  maxTokens?: number
+  promptMode: 'full' | 'minimal' | 'none'
+  modelReference?: ModelReference
+  requestOverride?: ModelRequestOverride
   maxLlmCalls?: number
   safetyLevel?: string
   reloadContextFiles?: boolean
-  turnId?: string             // 外部传入用于日志关联；不传则自动生成
+  turnId?: string
   originMessageId?: string    // channel queued 路径内部透传；关联 user_message
 }
 ```
 
-模型解析顺序：`runTurn.model` > `resolvedConfig.llm.model` > 抛出 `MODEL_MISSING`。
+Runtime 使用 [Model Resolution](./core_model_resolution.md) 在已捕获 generation 的 Provider projection 上解析 `modelReference` 与 `requestOverride`；Config 中的 model 字段只是默认 Model Reference 输入，不拥有 Model Facts。
 
 ### 4.4 队列与路由类型（queue-types.ts）
 
@@ -154,9 +161,10 @@ MessageRouteContext = {
 }
 
 QueuedChannelTurn = {
-  sessionKey, message
-  launchContext?   // 仅在 channel 显式覆盖 model / maxTokens / maxLlmCalls 时构造
+  requestId, sessionKey, message
+  launchContext?   // modelReference / requestOverride / maxLlmCalls
   routeContext?    // approval 反向路由
+  originMessageId? // user_message → run_start correlation
 }
 
 PendingSteeringInput = {
@@ -169,44 +177,24 @@ PendingSteeringInput = {
 
 ---
 
-## 5. 启动流程
+## 5. Startup and publication
 
 ```mermaid
 flowchart TD
-    A[RuntimeApp.create] --> B[构建 fanout 闭包 + 空 channels 数组]
-    B --> C[bootstrapRuntime]
-    C --> D[loadConfig]
-    D --> E[Logger.configure]
-    E --> F[resolveAgentConfig]
-    F --> G[ensureWorkspace]
-    G --> H[loadContextFiles → contextFiles 缓存]
-    H --> I[createDefaultRuntimeDependencies]
-    I --> J[createSessionManager]
-    I --> K[create Provider projection + ModelResolver]
-    I --> L[createSystemPromptBuilder + UserPromptBuilder]
-    I --> M[createMemoryManager\ntry/catch → 失败则降级为 null]
-    M --> N[collect Workspace + Memory + Task contribution units]
-    J & K & N --> O[build one immutable RegistrySnapshot]
-    O --> P[create AgentRunner + emit app_ready from final Snapshot]
-    P --> Q[new RuntimeApp\nresources + state + channels + onEvent]
+  A[RuntimeApp.create] --> B[buildRuntimeHandle]
+  B --> C[bootstrapRuntime: config, logger, workspace, shared resources]
+  C --> D[assemble Loaded Runtime Units]
+  D --> E[RuntimeCompositionManager.start]
+  E --> F[create/start/handoff unit instances]
+  F --> G[build complete immutable Registry Snapshot]
+  G --> H[CompositionCoordinator.commitPublish generation 1]
+  H --> I[create RuntimeApp kernel and convergence callbacks]
+  I --> J[emit app_ready and return frozen RuntimeHandle]
 ```
 
-`channels[]` 数组在 `create()` 阶段就创建好，fanout 闭包持有它的引用。后续 `registerChannel` push 进的 channel，闭包立即可见——这是让 fanout 不需要重建的关键。
+`RuntimeApp.create()` is delegation-only. `bootstrap.ts` prepares shared prerequisites but does not own Model Resolver, Task module, Registry assembly, publication, or reload. A Snapshot is visible only after every selected Unit has completed create/start/handoff and the full candidate has validated.
 
-### 5.1 启动时创建一次的资源
-
-以下资源贯穿整个 app 生命周期，不在每轮重建：
-SessionManager · Provider projection · ModelResolver · MemoryManager（可为 null）· SystemPromptBuilder · UserPromptBuilder · AgentRunner · RegistrySnapshot
-
-### 5.2 Memory 降级策略
-
-```
-memory.enabled = false       → 不创建，不注入 memory tools
-memory.enabled = true，成功   → 注入 memory_search / memory_get / memory_write
-memory.enabled = true，失败   → emit warning，继续启动，但不注入 memory tools
-```
-
-Memory 是可选能力，初始化失败不阻塞应用启动。
+Memory remains optional: disabled Memory contributes no tools; initialization failure emits a warning and continues with `memoryManager = null`; successful initialization participates through the Memory contribution Unit and is closed as a shared resource during bounded Shutdown.
 
 ---
 
@@ -299,24 +287,28 @@ sequenceDiagram
 
 ---
 
-## 8. 工具装配
+## 8. Generation-aware composition
 
-所有 Provider、Tool 和 Hook contributions 在 `bootstrapRuntime()` 中一次 staging。Builtin Workspace、可选 Memory、可选 Task modules 都在 `app_ready` 前加入同一 unit list：
+Each published `RegistrySnapshot` contains one generation's Provider, Tool, Hook, and Channel projections. `CompositionCoordinator` serializes publication, root capture, pin release, retirement completion/failure, and Shutdown admission.
 
-```
-units = getBuiltinContributionUnits(...)
-if subagents.enabled:
-  units.push(createTaskToolModule(...))
+- A root Turn captures one generation pin before execution and releases it only after its complete request tree converges.
+- Child Turns use the Parent's Snapshot and route context; they never recapture the latest generation.
+- Enable/disable requests are prepared off to the side. Only a complete candidate can publish atomically.
+- Reload is latest-wins before publication. Once publication commits, the previous generation retires rather than rolling back the new Current generation.
+- Retirement first waits for old-generation pins, then aborts blocking trees after the graceful deadline, and reports a failed residual if convergence still does not occur.
+- API consumers receive a frozen `RuntimeHandle` with separate `application`, `composition.enableUnit/disableUnit`, and idempotent `close()` surfaces.
 
-registrySnapshot = buildRegistrySnapshot({ providers, units })
-emit app_ready(toolNames = registrySnapshot.tools.definitions.map(name))
-```
+`RegistrySnapshot`, `ToolProjection`, and `HookProjection` are read-only after publication. RuntimeApp does not append Task tools, replace executors, or rebuild a partial Snapshot after capture.
 
-`RegistrySnapshot`、`ToolProjection` 和 `HookProjection` 在发布后只读。RuntimeApp 不追加 Task、不重建 Snapshot、不替换 executor。Parent 与 Child Turn 消费同一个 startup Snapshot identity；Provider-visible definitions 从 canonical projection 显式转换。
+### 8.1 Subagent Parent/Child lifecycle
 
-### 8.1 fs tools 的工厂函数模式
+The Task Tool delegates only while a matching Parent Turn remains active. Runtime validates Parent identity, session, signal, request and depth; registers a Child member before execution; inherits the Parent generation, Abort signal and route; creates an isolated spawned session; emits terminal events; and releases route/session/member state in `finally`. Root generation release waits for all registered Child members.
 
-fs 类工具（read_file / write_file / edit_file 等）通过工厂函数创建，显式绑定 `workspaceDir` 和 `fsWorkspaceOnly`（默认 `true`）。这是 v1.0 fs 路径策略的核心变更（详见 `core_tools_builtin.md`）：
+Generic Tool execution belongs to [Core Tools](./core_tools.md), and the Runner algorithm belongs to [Agent Runner](./core_runner.md).
+
+### 8.2 fs tools 的工厂函数模式
+
+fs 类工具（read_file / write_file / edit_file 等）通过工厂函数创建，显式绑定 `workspaceDir` 和 `fsWorkspaceOnly`（默认 `true`）。具体行为由 [Builtin Tools](./core_tools_builtin.md) 拥有：
 
 ```
 createWorkspaceToolModule({ workspaceDir, fsWorkspaceOnly, ... })
@@ -326,9 +318,9 @@ createWorkspaceToolModule({ workspaceDir, fsWorkspaceOnly, ... })
   → api.registerTool(webFetchTool / execTool / processTool)
 ```
 
-### 8.2 工具定义格式差异
+### 8.3 Tool definition projection
 
-`adapters/llm` 用 `input_schema`；`core/prompt` 用 `parameters`。Runtime 是唯一的转换点，不允许在其他地方做重复转换。
+Runtime obtains the visible canonical `ToolDefinition[]` from the captured generation and supplies Tool names to Prompt plus definitions to Runner. It does not convert Provider wire formats. The canonical `inputSchema` contract belongs to [Core Tools](./core_tools.md); Anthropic `input_schema` and OpenAI-compatible `function.parameters` conversion belongs to [Provider Adapter](./adapter_llm.md).
 
 ---
 
@@ -370,19 +362,22 @@ Glob 只解释 `*` 和 `?`。v1 不展开 `group:*`；例如 `group:fs` 只是�
 ### 9.3 路由实现
 
 ```
-wireApprovalRouting() 在第一次 startChannels() 时调用，始终注册 before_tool_call hook：
+wireApprovalRouting():
+  TurnInteractionManager.onRequest
+    → routeContextByTurn[turnId].originChannel.interaction
+  TurnInteractionManager.onClose
+    → notify the same origin interaction transport
 
-agentRunner.on('before_tool_call', async ({ toolName, input, turnId, signal }) => {
-  originChannel = routeContextByTurn[turnId]?.originChannel
-  action = resolveToolApprovalAction(toolName, config, hasApprovalCapability)
-  if action == 'prompt':
-    result = await turnInteractionManager.request({ request, signal })
-    // TurnInteractionManager 通过 onRequest 回调把请求转发给 originChannel
-    // 用户回应、Abort、Shutdown 或 origin unavailable 竞争完成 classified settlement
-})
+runTurn():
+  approvalCapability = getApprovalCapability(turnId) // only when origin supports interaction
+  agentRunner.run({ ..., approvalCapability })
+
+Runner Tool pipeline:
+  before_tool_call projection → canonical input validation → Application Tool policy
+  → approvalCapability.request(...) when policy requires approval
 ```
 
-`interaction` 优先于 `approval`（向后兼容设计）；初始 delivery failure 或后续 origin disconnect 分类为 unavailable。没有 elapsed-time expiry。
+`wireApprovalRouting()` 只连接 interaction transport，不向 Runner 注册 mutable Hook。`before_tool_call` 是 generation-bound Hook projection；人工授权则是本次调用显式 capability。初始 delivery failure 或后续 origin disconnect 分类为 unavailable，没有 elapsed-time expiry。
 
 ---
 
@@ -404,23 +399,11 @@ stateDiagram-v2
 
 `phase` 是 **应用级**标记，与 per-turn 并发无关。per-turn 并发由独立的 `inFlightSessions: Set<string>` 控制。
 
-### 10.2 关闭顺序
+### 10.2 Bounded Shutdown
 
-```
-1. emit shutdown_start，setPhase('closing')
-   → assertCanRunForSession 开始拒绝新 turn
-2. abort 所有 active turn                         // Abort-then-wait
-3. await Promise.allSettled([...inFlightRuns])    // 等待当前 turn 收尾
-4. stopChannels()                                 // 释放 readline / WebSocket I/O
-5. turnInteractionManager.close()                // aborted/shutdown 幂等兜底
-6. 遍历 collectDisposables()，逐个 close()       // MemoryManager 等
-7. resources.contextFiles = []
-8. setPhase('closed')
-9. emit shutdown_end，返回 RuntimeShutdownReport
-```
+`RuntimeHandle.close()` caches the first Promise and creates one shared `RuntimeDeadlineBudget`. Shutdown admission is linearized with publication/capture, rejects new work and reload, cancels queued requests, closes pending interactions, and drives active request trees toward terminal outcomes. Runtime then converges reload/retirement, stops eligible Unit instances, closes Memory and Logger, and waits for tracked terminal Fanout while budget remains.
 
-`close()` 幂等：第一次调用的 Promise 被缓存，重入直接返回同一个结果。  
-关闭使用 `Promise.allSettled`：确保一个资源 close 失败不会中断其他资源的释放。
+The immutable `RuntimeShutdownReport` records `completed` and `deadline-exhausted` outcomes, completed/aborted/nonconverged request IDs, protected generations, instance stop results, failed resources, and structured residuals. Deadline exhaustion never reopens admission and never hides protected work.
 
 ---
 
@@ -465,25 +448,10 @@ stateDiagram-v2
 
 ---
 
-## 13. ⚠️ 代码与 v1.0 文档的已知差异
+## 13. Evidence
 
-以下差异在 v1.0 `runtime-design.md` 中未反映，实际代码已按此实现：
-
-### 差异 1：v1.0 工具组语法已移除
-
-**v1.0 文档** `§13.2` 描述 `group:fs` 等工具组；
-**实际代码**（`tool-approval-policy.ts`）不再展开 `group:*`，只支持精确名称和 `*`/`?` Glob。
-
-> 当前配置应直接列出工具名或使用 Glob，不应依赖 `group:*` 展开。
-
----
-
-## 14. 已知规划项
-
-| 项目 | 状态 |
+| Kind | Evidence |
 |---|---|
-| 多 session 并发上限（`runtime.maxConcurrentSessions`） | 规划中 |
-| 消息队列容量上限与 per-session TTL | 规划中 |
-| 硬 steering（AbortSignal + tool 取消协议） | 规划中 |
-| Steering 未消费 inbox 回退到普通队列 | 规划中 |
-| `before_compaction` hook 返回 `skip/continue` | 规划中 |
+| Source | [runtime-builder.ts](../../../src/runtime/runtime-builder.ts), [RuntimeApp.ts](../../../src/runtime/RuntimeApp.ts), [runtime-composition-manager.ts](../../../src/runtime/runtime-composition-manager.ts), [composition-coordinator.ts](../../../src/runtime/composition-coordinator.ts), [subagent-orchestration.ts](../../../src/runtime/subagent-orchestration.ts) |
+| Tests | [runtime-builder.test.ts](../../../src/runtime/runtime-builder.test.ts), [RuntimeApp.intake.test.ts](../../../src/runtime/RuntimeApp.intake.test.ts), [runtime-composition-manager.test.ts](../../../src/runtime/runtime-composition-manager.test.ts), [composition-coordinator.test.ts](../../../src/runtime/composition-coordinator.test.ts), [subagent-orchestration.test.ts](../../../src/runtime/subagent-orchestration.test.ts), [ft-10-runtime-composition-deletion.test.ts](../../../src/architecture-fitness/ft-10-runtime-composition-deletion.test.ts) |
+| Controlling authority | [ADR-005](../adr-005-extension-registry-runtime-composition.md), [Runtime Composition Module Spec](../runtime-composition-module-spec.md), [Core Abort Spec](../core-abort-spec.md), [Subagent Model Resolution Module Spec](../subagent-model-resolution-module-spec.md) |

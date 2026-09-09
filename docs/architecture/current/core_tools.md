@@ -1,7 +1,9 @@
 # Core Tools 与 Hook Registry
 
-> 状态同步：2026-09-04（Slice 3 Tool/Hook Module Delivery）
-> 关联文档：`runtime.md` · `core_runner.md` · `core_tools_builtin.md` · `../tool-hook-module-spec.md`
+> Status: Current Authority
+> Verified: 2026-09-09
+> Ownership: canonical Tool contract, portable validation, and policy/approval execution boundary
+> Ownership key: canonical-tool-contract
 
 ---
 
@@ -25,7 +27,7 @@ src/core/registry/
 └── index.ts
 
 src/runtime/
-└── registry-builder.ts  # atomic staging and one immutable startup Snapshot
+└── registry-builder.ts  # atomic staging of one immutable generation Snapshot
 ```
 
 ## 3. Canonical Tool Contract
@@ -85,8 +87,29 @@ buildRegistrySnapshot({ providers, units })
 
 `ToolProjection.resolve()` 返回 canonical implementation 与 validator；`visibleDefinitions(policy)` 是 pure deny-filtered view，不修改 Snapshot。Hook projection 按 priority、unit ID、contribution ID 稳定排序。
 
-启动期只构造一个完整 Snapshot。Workspace、Memory 和可选 Task units 都在 publication 和 `app_ready` 前完成 staging；RuntimeApp 不追加 Task、不替换 executor，也不重建 Snapshot。
+每个 generation 只发布一个完整 Snapshot。Workspace、Memory 和可选 Task units 都在该 generation publication 前完成 staging；RuntimeApp 不追加 Task、不替换 executor，也不重建 partial Snapshot。Reload 可以发布下一完整 generation，但已开始的 root/child request tree 继续使用其捕获的 Snapshot identity。
 
 ## 6. Provider conversion
 
 Anthropic Adapter 显式映射 canonical definitions/calls/results。`tool-contract-codecs.ts` 提供 Anthropic 与 OpenAI-compatible pure reference codecs，覆盖 definition round-trip、complete/streamed/multiple calls、interleaved fragments、malformed/non-object input、duplicate identity 和 correlated results。OpenAI codec 是 portability proof，不代表 production OpenAI client。
+
+## 7. Policy and approval execution boundary
+
+Tool visibility and Tool execution are separate controls:
+
+1. Snapshot construction compiles and freezes the canonical Tool plus validator.
+2. Application deny policy filters the Model-visible definition projection.
+3. Runner resolves the returned call against the same immutable projection.
+4. `before_tool_call` interceptors may replace input or deny execution.
+5. Runner validates effective input, applies deny/allow policy, and invokes the optional current-call approval capability for an unmatched Tool.
+6. Only then does Runner call `Tool.execute()`.
+
+Every accepted Tool Use receives exactly one terminal canonical result, including malformed input, unknown Tool, denial, unavailable approval, Abort, execution failure and recovery paths. Approval is an explicit application capability, not a mutable Hook or Tool implementation property. Runtime routing and interaction settlement are owned by [Runtime](./runtime.md) and [Channel](./adapter_channel.md). Builtin behavior is owned by [Builtin Tools](./core_tools_builtin.md).
+
+## 8. Evidence
+
+| Kind | Evidence |
+|---|---|
+| Source | [Tool contracts](../../../src/core/tools/types.ts), [portable-schema.ts](../../../src/core/tools/portable-schema.ts), [Registry contracts](../../../src/core/registry/types.ts), [registry-builder.ts](../../../src/runtime/registry-builder.ts), [AgentRunner.ts](../../../src/core/runner/AgentRunner.ts) |
+| Tests | [portable-schema.test.ts](../../../src/core/tools/portable-schema.test.ts), [AgentRunner.tool-pipeline.test.ts](../../../src/core/runner/AgentRunner.tool-pipeline.test.ts), [registry-builder.test.ts](../../../src/runtime/registry-builder.test.ts), [ft-07-registry-snapshot.test.ts](../../../src/architecture-fitness/ft-07-registry-snapshot.test.ts), [ft-08-contract-inventory.test.ts](../../../src/architecture-fitness/ft-08-contract-inventory.test.ts) |
+| Controlling authority | [Tool/Hook Module Spec](../tool-hook-module-spec.md), [ADR-001](../adr-001-tool-result-closure-and-recovery.md), [ADR-005](../adr-005-extension-registry-runtime-composition.md) |
