@@ -226,21 +226,20 @@ describe('buildNextConfig', () => {
     expect(next.agents?.defaults).toBeUndefined();
   });
 
-  it('preserves future schema fields not asked by wizard', () => {
-    // 模拟"未来 schema 加了某字段(在 DEFAULT 里有 default 值),wizard 还没问"的场景
-    // 用 contextWindowTokens 模拟 — 既有文件里设了非 default 值,wizard 不问
+  it('discards the removed legacy context-window field', () => {
     const existing = {
       agents: {
         defaults: { llm: { contextWindowTokens: 32000 } } as unknown,
       },
     } as Parameters<typeof buildNextConfig>[0]['existing'];
 
-    const { next } = buildNextConfig({
+    const { next, discarded } = buildNextConfig({
       existing,
       collected: { agentsDefaults: {}, logger: {} },
     });
 
-    expect(next.agents?.defaults).toEqual({ llm: { contextWindowTokens: 32000 } });
+    expect(next.agents?.defaults).toBeUndefined();
+    expect(discarded).toContain('agents.defaults.llm.contextWindowTokens');
   });
 
   it('cleans up empty {} sections (agents.defaults, agents, logger)', () => {

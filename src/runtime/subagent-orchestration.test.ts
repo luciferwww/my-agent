@@ -26,6 +26,7 @@ function provider(id: string): ProviderProjectionEntry {
   return {
     id,
     protocol: `${id}-protocol`,
+    models: [{ modelId: `${id}-model` }],
     invocationPort: invocationPorts[id]!,
     resolveConnection: () => ({ ok: true, connection: { endpointId: `${id}-endpoint` } }),
     resolveModel: (modelId, connection) => ({
@@ -127,7 +128,6 @@ function setup(options: {
       resolveSession: vi.fn(async () => ({ entry: {}, isNew: true })),
       deleteSession,
     } as never,
-    getDefaultProviderId: () => 'parent',
     defaultMaxTokens: 50,
     maxDepth: 1,
     executor: { prepare, execute } as never,

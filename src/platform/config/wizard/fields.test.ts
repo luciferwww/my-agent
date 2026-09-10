@@ -1,10 +1,33 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from '../defaults.js';
-import { askAdvancedFields } from './fields.js';
+import { askAdvancedFields, askCoreFields } from './fields.js';
 import type { ReadlineSession } from './prompts.js';
 
 describe('Config Wizard fields', () => {
+  it('collects the default model as a structured Provider and Model pair', async () => {
+    const answers = ['', '', 'anthropic', 'claude-test', '', '', '', ''];
+    const questions: string[] = [];
+    const session: ReadlineSession = {
+      async question(prompt): Promise<string> {
+        questions.push(prompt);
+        return answers.shift() ?? '';
+      },
+      close: vi.fn(),
+    };
+
+    const result = await askCoreFields(session, {
+      agentsDefaults: DEFAULT_AGENT_CONFIG,
+      logger: DEFAULT_LOGGER_CONFIG,
+    });
+
+    expect(result.agentsDefaults.model).toEqual({
+      providerId: 'anthropic',
+      modelId: 'claude-test',
+    });
+    expect(questions.join('\n')).not.toMatch(/context window/u);
+  });
+
   it('does not prompt for implementation-owned fields removed from the config schema', async () => {
     const questions: string[] = [];
     let firstQuestion = true;

@@ -248,10 +248,13 @@ describe('loadSubagentProfiles — model selection', () => {
 
   it('rejects blank and unknown native Model Reference fields', () => {
     expect(() => loadSubagentProfiles([entry({
-      model: { modelId: ' ' },
+      model: { providerId: 'provider', modelId: ' ' },
     })], WS, REGISTERED)).toThrow(/modelId must be nonblank/i);
     expect(() => loadSubagentProfiles([entry({
-      model: { modelId: 'model', extra: true } as never,
+      model: { modelId: 'model' } as never,
+    })], WS, REGISTERED)).toThrow(/providerId must be nonblank/i);
+    expect(() => loadSubagentProfiles([entry({
+      model: { providerId: 'provider', modelId: 'model', extra: true } as never,
     })], WS, REGISTERED)).toThrow(/unknown field/i);
   });
 });

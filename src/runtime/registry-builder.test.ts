@@ -22,6 +22,7 @@ function tool(name: string): Tool {
 function provider(id: string): ProviderProjectionEntry {
   return {
     id,
+    models: [{ modelId: 'test-model' }],
     protocol: 'test',
     invocationPort: {} as never,
     resolveConnection: () => ({
@@ -87,6 +88,42 @@ describe('Registry staging and finalization', () => {
 
     expect(snapshot.providers.map((entry) => entry.id)).toEqual(['primary']);
     expect(Object.isFrozen(snapshot.providers)).toBe(true);
+  });
+
+  it('validates, defensively copies, and deeply freezes Provider model Catalogs', () => {
+    const sourceModel = { modelId: 'mutable-model', displayName: 'Mutable Model' };
+    const sourceModels = [sourceModel];
+    const sourceProvider = { ...provider('primary'), models: sourceModels };
+    const staged = stageRegistryUnit(unit('provider-unit', 'builtin', (api) => {
+      api.registerProvider(sourceProvider);
+    }));
+    const published = staged.providers[0]!;
+
+    sourceModel.displayName = 'Changed';
+    sourceModels.push({ modelId: 'late-model', displayName: 'Late' });
+
+    expect(published.models).toEqual([
+      { modelId: 'mutable-model', displayName: 'Mutable Model' },
+    ]);
+    expect(Object.isFrozen(published)).toBe(true);
+    expect(Object.isFrozen(published.models)).toBe(true);
+    expect(Object.isFrozen(published.models[0])).toBe(true);
+    expect(published.invocationPort).toBe(sourceProvider.invocationPort);
+  });
+
+  it('rejects missing, duplicate, and invalid Provider model Catalog entries', () => {
+    expect(() => stageRegistryUnit(unit('missing', 'builtin', (api) => {
+      api.registerProvider({ ...provider('missing-provider'), models: undefined as never });
+    }))).toThrow('must publish a model Catalog');
+    expect(() => stageRegistryUnit(unit('duplicate', 'builtin', (api) => {
+      api.registerProvider({
+        ...provider('duplicate-provider'),
+        models: [{ modelId: 'same' }, { modelId: 'same' }],
+      });
+    }))).toThrow('published duplicate model');
+    expect(() => stageRegistryUnit(unit('invalid', 'builtin', (api) => {
+      api.registerProvider({ ...provider('invalid-provider'), models: [{ modelId: 'bad/id' }] });
+    }))).toThrow('Model identity');
   });
 
   it('isolates an external Unit with a conflicting Provider identity atomically', () => {

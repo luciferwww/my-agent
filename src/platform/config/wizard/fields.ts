@@ -96,7 +96,7 @@ export interface CoreCollected {
 /**
  * 必问字段（§6 核心清单）。
  *
- * 顺序：apiKey / baseURL / model / maxTokens / contextWindowTokens
+ * 顺序：apiKey / baseURL / default Provider / default Model / maxTokens
  *   → memory.enabled
  *   → logger.minLevel / logger.file.enabled
  */
@@ -133,8 +133,8 @@ export async function askCoreFields(
     collected: agentsDefaults,
     existing: existing.agentsDefaults,
     defaults: DEFAULT_AGENT_CONFIG,
-    path: 'llm.model',
-    label: 'Default model id',
+    path: 'model.providerId',
+    label: 'Default Provider id',
     parse: parseString,
   });
   await askField({
@@ -142,18 +142,23 @@ export async function askCoreFields(
     collected: agentsDefaults,
     existing: existing.agentsDefaults,
     defaults: DEFAULT_AGENT_CONFIG,
-    path: 'llm.maxTokens',
-    label: 'LLM max tokens per response',
-    parse: parseInteger,
-    validate: (n) => { if (n <= 0) throw new Error('must be > 0'); },
+    path: 'model.modelId',
+    label: 'Default Model id',
+    parse: parseString,
   });
+  const providerId = getPath(agentsDefaults, 'model.providerId');
+  const modelId = getPath(agentsDefaults, 'model.modelId');
+  if ((providerId === undefined) !== (modelId === undefined)) {
+    throw new Error('Default Provider id and Model id must be provided or cleared together.');
+  }
+  if (providerId === undefined) delete agentsDefaults['model'];
   await askField({
     session,
     collected: agentsDefaults,
     existing: existing.agentsDefaults,
     defaults: DEFAULT_AGENT_CONFIG,
-    path: 'llm.contextWindowTokens',
-    label: 'Model context window (tokens)',
+    path: 'llm.maxTokens',
+    label: 'LLM max tokens per response',
     parse: parseInteger,
     validate: (n) => { if (n <= 0) throw new Error('must be > 0'); },
   });

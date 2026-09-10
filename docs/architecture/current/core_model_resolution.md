@@ -15,9 +15,8 @@ Providers publish connection and model facts through `ProviderProjectionEntry`; 
 
 ```text
 ModelResolutionInput
-├── reference                         ModelReference | string | undefined
+├── reference                         ModelReference | undefined
 ├── referenceSource                   native | turn-explicit | config-default
-├── defaultProviderId
 ├── request                           required Tool/media capabilities
 ├── requestOverride.maxOutputTokens
 └── policy                            default/maximum output limits + allowModel
@@ -36,22 +35,23 @@ ResolvedModel
 
 A root Turn resolves against the Provider projection captured from its published generation. A Child Turn resolves independently from the Parent generation's same immutable Provider projection; it does not sample the latest publication.
 
-Runtime supplies `defaultProviderId` from the first Provider in the successfully published immutable Registry Snapshot and freezes that ID in Runtime resources. Model Resolution consumes this value when normalizing an unqualified reference；it neither selects nor reprioritizes Providers, and it never inspects a pre-staging projection.
+Runtime supplies a complete structured reference from a per-Turn override or configured default. Model Resolution neither selects nor reprioritizes Providers, and it never inspects a pre-staging projection.
 
 ## 3. Reference and binding resolution
 
-A structured reference supplies `providerId` and `modelId`; a string model reference uses `defaultProviderId`. Identity parts are trimmed and empty values fail as `reference_invalid`.
+A reference always supplies both `providerId` and `modelId`. Identity parts are trimmed and empty values fail as `reference_invalid`; a missing configured/explicit reference also fails as `reference_invalid` rather than selecting the first Provider.
 
 Resolution then:
 
 1. finds one registered Provider projection;
-2. resolves and validates the Provider connection;
-3. asks that Provider to resolve the model descriptor;
-4. verifies Provider identity, protocol, endpoint, and descriptor consistency;
-5. applies model policy and required capabilities;
-6. freezes the resulting identity, facts, limits, and media-kind list.
+2. verifies exact membership in that Provider's closed model Catalog;
+3. resolves and validates the Provider connection;
+4. asks that Provider to resolve the model descriptor;
+5. verifies Provider identity, protocol, endpoint, and descriptor consistency;
+6. applies model policy and required capabilities;
+7. freezes the resulting identity, facts, limits, and media-kind list.
 
-Duplicate or invalid Provider identities are rejected when `ModelResolver` is constructed. No fallback silently changes Provider or model identity.
+Duplicate or invalid Provider identities are rejected when `ModelResolver` is constructed. An out-of-Catalog model is rejected before connection or model resolution. No fallback silently changes Provider or model identity.
 
 ## 4. Model Facts and limits
 

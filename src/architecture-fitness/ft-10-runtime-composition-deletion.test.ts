@@ -91,10 +91,8 @@ describe('FT-10 Runtime composition deletion', () => {
     expect(runtimeBuilder.content).not.toContain('new AnthropicProvider(');
     expect(runtimeBuilder.content).not.toContain('adapters/provider/anthropic');
     expect(runtimeBuilder.content).not.toContain('.registerProvider(');
-    expect(runtimeBuilder.content).toContain('defaultProviderId = registrySnapshot.providers[0]?.id;');
-    expect(runtimeBuilder.content.indexOf('registrySnapshot.providers[0]?.id')).toBeLessThan(
-      runtimeBuilder.content.indexOf('kernel = createApplication({'),
-    );
+    expect(runtimeBuilder.content).not.toContain('defaultProviderId');
+    expect(runtimeBuilder.content).not.toContain('registrySnapshot.providers[0]?.id');
     expect(runtimeBuilder.content.indexOf('kernel = createApplication({')).toBeLessThan(
       runtimeBuilder.content.indexOf("type: 'app_ready'"),
     );

@@ -3,7 +3,7 @@
 ## 1. 状态
 
 - **状态：** Accepted
-- **版本：** 0.8
+- **版本：** 0.9
 - **日期：** 2026-09-10
 - **所有者：** 项目所有者
 - **关联 Plan：** [Provider Model Catalog and Copilot Relay Plan](../roadmap/provider-model-catalog-and-copilot-relay-plan.md)
@@ -13,6 +13,10 @@
 - **工作流：** [Development Workflow](../development-workflow.md)
 
 项目所有者于 2026-09-10 接受本 Spec v0.8，冻结 closed Provider Model Catalog、Copilot Relay Provider Extension、Runtime Catalog Query 和 Channel Runtime Capability binding 的 target contract。该接受不授权 production 修改、dependency 安装、commit 或 push；C1/C2/C3/C4 Delivery 仍需单独授权并分别通过 Gate。
+
+项目所有者于 2026-09-10 授权 C1，并确认 `scripts/` 下现有脚本是待后续逐项处置的非权威 legacy utilities：当前不保证可运行，不参与 C1 contract、Gate 或 broad validation，也不为其保留 Compatibility。C1 不删除或迁移这些脚本；后续使用前必须按当时 active contract 单独评审、迁移或删除。
+
+项目所有者于 2026-09-10 接受 C1 Closed Provider Model Catalog Delivery Gate。C1 实现、Current Architecture 同步、focused/regression validation 与独立只读审计均已完成；该接受不授权 C2、C3、C4、commit 或 push。
 
 在本 Spec 完成对应 Delivery Gate 前，当前源码和既有 Accepted Architecture 仍是实现事实与架构权威；本文中的 interface 和行为描述是 target contract，不得倒推为 current behavior。
 
@@ -619,16 +623,18 @@ Server → Client：
 | Gate | Current production/test surfaces | 唯一 Target | 删除与完成条件 |
 |---|---|---|---|
 | C1 Provider Catalog | `core/model-resolution/types.ts`、`ModelResolver.ts`、`runtime/registry-builder.ts`、Builtin Anthropic Provider 及对应 Fake/tests | required、规范化、深度冻结的 closed `models`；Resolver 在 connection/invocation 前检查 exact membership；Anthropic 只发布 static Catalog 与 exact `deploymentFacts` 可证明的模型 | 所有 Provider/Fake 同批迁移；缺 Catalog、duplicate/invalid ID、mutable nested source 和目录外 invocation contract tests 通过；不存在接受任意 custom model 的 Provider/Resolver 分支 |
-| C1 default/config | `platform/config/types.ts`/`defaults.ts`/`loader.ts`/Wizard；`RuntimeResourceSet.defaultProviderId`；Runtime Builder first-provider assignment 与 `getDefaultProviderId()`；`RuntimeApp` 对 `resolvedConfig.llm.model` 的 fallback；`ModelResolver.normalizeReference(..., defaultProviderId)`；`subagent-orchestration.ts`；`compat/model-resolution/legacy-static-config.ts` 及 tests；`scripts/cli.ts`、`server.ts`、`websocket.ts`、`test-abort-live.ts`、`test-subagent-live.ts`、`test-config-integration.ts` | `AgentDefaults.model?: ModelReference` 是唯一 default authority；required structured `ModelReference` 直接进入 root/child resolution；Runtime config scripts 传完整 `model` reference 或 paired env override；Turn explicit reference 保持最高 invocation priority | 删除 `RuntimeResourceSet.defaultProviderId`、Builder first-provider/default getter、Resolver default-provider 参数、`createLegacyStaticModelResolver()`、string/partial reference 和 `llm.model` consumption；legacy field 只允许出现在 migration diagnostics/negative tests；列出的 Runtime scripts、Schema、Wizard、root/child callers、Fake/tests 原子迁移，不保留 dual read 或第一 Provider 补全；Provider-specific direct wire probes 可继续使用其私有 model ID，不得成为 Runtime default authority |
+| C1 default/config | `platform/config/types.ts`/`defaults.ts`/`loader.ts`/Wizard；`RuntimeResourceSet.defaultProviderId`；Runtime Builder first-provider assignment 与 `getDefaultProviderId()`；`RuntimeApp` 对 `resolvedConfig.llm.model` 的 fallback；`ModelResolver.normalizeReference(..., defaultProviderId)`；`subagent-orchestration.ts`；`compat/model-resolution/legacy-static-config.ts` 及 tests | `AgentDefaults.model?: ModelReference` 是唯一 default authority；required structured `ModelReference` 直接进入 root/child resolution；Turn explicit reference 保持最高 invocation priority | 删除 `RuntimeResourceSet.defaultProviderId`、Builder first-provider/default getter、Resolver default-provider 参数、`createLegacyStaticModelResolver()`、string/partial reference 和 `llm.model` consumption；legacy field 只允许出现在 migration diagnostics/negative tests；Schema、Wizard、root/child callers、Fake/tests 原子迁移，不保留 dual read 或第一 Provider 补全 |
 | C1 Runtime query | `runtime/runtime-composition.ts`、`composition-coordinator.ts`、`runtime-composition-manager.ts`、`RuntimeApp` 与 Runtime tests | Runtime-owned current-generation `getModelCatalog()` / `ModelCatalogQuery`，按 §7/§10/§11 投影 immutable transport DTO | startup、query-before/after-publish、long-lived Channel N→N+1、closing 和 mutation tests 通过；已开始 Turn 仍使用 pinned N |
 | C2 Relay | 当前无 Relay Provider；Host/Composition Root 只有通用 `loadedUnits` acquisition | in-repo optional external Relay Unit；raw `fetch` + private bounded SSE parser；`/v1/models` immutable private Map | §15.2 unit/parser/adapter tests 与真实 Relay smoke 通过；direct Relay factory import 只在 Composition Root；无 SDK dependency、package-specific Runtime path 或 disposable Spike artifact |
 | C3 Channel binding | `ChannelInstance.bindAbortHooks`、`CliChannel.bindAbortHooks()`、`WebSocketChannel.bindAbortHooks()`、`runtime/channel-lifecycle.ts` 注入点及对应 Fake/tests | 一次性 `ChannelInstance.bindRuntimeCapabilities({ modelCatalog, abort })`，CLI/WebSocket 实现同名 typed binding，并在 `start()` 前同步注入 | 所有 production/Fake/tests 同批迁移，`bindAbortHooks` residual 为零；未绑定、reload 后 query 和 Abort regressions 通过，不保留第二绑定入口 |
 | C3 selector/wire | CLI 无 Catalog commands；Web Client `form.model` 自由文本；WebSocket Channel/client/tests | CLI `/models`/`/model`；WebSocket `get_model_catalog`/`model_catalog`；Catalog-driven Provider/Model selector；`run_turn.model_reference` 保持结构化 | 自由文本 model input/producer 删除；hello gate、request correlation、unavailable default、stale selection、escaping 和 direct API fail-closed tests 通过；既有 mixed-case fields 不重命名 |
 | C4 convergence | active Current Architecture、Fitness、README/运行脚本中仍描述 current legacy behavior | active architecture、operator docs 与实现一致；historical evidence 保留历史状态 | §15.4 全部通过；exact residual scans 仅剩明确允许的 migration diagnostics/negative tests；不为 example-only 历史片段做机械同步 |
 
-迁移时同步更新全部 Fake/tests、Config Schema、Wizard、examples、Current Architecture 与 Fitness。不建立 feature flag、双 Resolver、双 default config、双 Channel binding 或自由输入 fallback；被替代路径及其 Compatibility tests 在对应 Gate 删除。
+迁移时同步更新全部 production Fake/tests、Config Schema、Wizard、active examples、Current Architecture 与 Fitness。不建立 feature flag、双 Resolver、双 default config、双 Channel binding 或自由输入 fallback；被替代路径及其 Compatibility tests 在对应 Gate 删除。
 
 现有 Session 不保存全局模型选择，因此不迁移 Session 文件。既有历史跨 Provider 可移植性不在本 Slice。
+
+`scripts/` 不是本轮 active example 或 supported process surface。其现有 model/env/runtime usage 可以继续暂存，但不得被 production `src/` 引用、不得进入 C1 typecheck/test evidence，也不得迫使 production contract 保留 `llm.model`、单独 `MY_AGENT_MODEL`、第一 Provider 推断或其他 legacy path。仓库级 residual scan 对 `scripts/` 单独报告而不以零结果作为 C1 Gate；后续脚本工作必须单向迁移到届时 active contract。
 
 Accepted Runtime Composition Spec §4 记录的是 Slice 4 历史迁移 baseline，并明确不是目标 Contract；其 §6.5 canonical intake target 已在 current Runtime/queue/WebSocket source 中交付为 `modelReference` 与 `requestOverride.maxOutputTokens`。旧 `RunTurnParams.model` / request-level `maxTokens` aliases 因此不属于本 Slice 的 current migration。C1/C3 必须保持该 current baseline 及其 negative tests，不得把 `ModelInvocationRequest.maxTokens`、resolved model limits 或 Provider wire `maxTokens` 等合法执行字段误判为 legacy request alias。
 
@@ -637,18 +643,19 @@ Accepted Runtime Composition Spec §4 记录的是 Slice 4 历史迁移 baseline
 - C1 focused：`npm test -- src/core/model-resolution/ModelResolver.test.ts src/compat/model-resolution/legacy-resolution.test.ts src/runtime/registry-builder.test.ts src/runtime/composition-coordinator.test.ts src/runtime/runtime-composition-manager.test.ts src/runtime/runtime-builder.test.ts src/runtime/RuntimeApp.test.ts src/runtime/RuntimeApp.intake.test.ts src/runtime/subagent-orchestration.test.ts src/platform/config/loader.test.ts src/platform/config/wizard/fields.test.ts src/platform/config/wizard/diff.test.ts`；
 - C2 pre-delivery evidence 是已接受的 R0 Results 与 disposable artifact absence；C2 实施创建目标目录和 smoke 后，Gate 命令为 `npm test -- src/extensions/copilot-relay-provider` 与 `npx tsx scripts/test-copilot-relay-live.ts`；smoke 默认只允许 loopback Relay，credential 不进入输出；
 - C3 focused：`npm test -- src/adapters/channel/CliChannel.test.ts src/adapters/channel/WebSocketChannel.test.ts src/runtime/channel-lifecycle.test.ts src/runtime/RuntimeApp.test.ts`，并以本地 Web Client browser smoke 验证 Catalog selector、escaping、unavailable default 和 structured submit；
-- C4/Fitness：`npm test -- src/architecture-fitness`；broad validation：`npm run lint`、`npm test`、`npm run build`、`git diff --check`；
-- deletion scans：`git grep -n "defaultProviderId" -- src clients scripts` 与 `git grep -n "bindAbortHooks" -- src clients scripts` 必须无结果；`git grep -n -E "llm\\.model|form\\.model" -- src clients scripts` 只允许已评审的 migration diagnostic/negative-test allowlist；`git grep -n -E "RunTurnParams.*model|maxTokens.*RunTurnParams" -- src` 必须无 legacy request alias，仅合法 Provider/Core limit vocabulary 可保留；`MY_AGENT_PROVIDER` / `MY_AGENT_MODEL` 必须只作为成对 config input 或显式 live-script pair 使用，不得再次推断第一 Provider。
+- C4/Fitness：`npm test -- src/architecture-fitness`；C1 broad validation：`npm run lint`、`npm test`、`npm run build`、`git diff --check`；现有 `scripts/` 不属于这些命令的 supported evidence surface；
+- C1 deletion scans：`git grep -n "defaultProviderId" -- src clients` 必须无结果；`git grep -n -E "llm\\.model|form\\.model" -- src clients` 只允许已评审的 migration diagnostic/negative-test allowlist；`git grep -n -E "RunTurnParams.*model|maxTokens.*RunTurnParams" -- src` 必须无 legacy request alias，仅合法 Provider/Core limit vocabulary 可保留；`MY_AGENT_PROVIDER` / `MY_AGENT_MODEL` 在 production `src/` 中必须只作为成对 config input，不得再次推断第一 Provider；
+- legacy script audit：`git grep -n -E "defaultProviderId|llm\\.model|MY_AGENT_MODEL" -- scripts` 只记录后续 cleanup inventory，不阻塞 C1，且不得据此宣称对应脚本可运行。
 
 ## 15. Acceptance and Validation
 
 ### 15.1 Core/Registry/Resolver
 
-- [ ] 所有 Provider entry 必须有深度冻结且无重复的 Catalog；
-- [ ] 目录外 Model Reference 在 Invocation 前失败；
-- [ ] Catalog member 的 identity/facts/invocation binding 原子一致；
-- [ ] Turn generation pin 保护旧/new Catalog 与 Provider binding 不混合；
-- [ ] unset default 可启动且无引用发送时明确失败；unavailable configured default degraded startup、可查询改选、无静默 fallback，并可在后续 generation 自动恢复。
+- [x] 所有 Provider entry 必须有深度冻结且无重复的 Catalog；
+- [x] 目录外 Model Reference 在 Invocation 前失败；
+- [x] Catalog member 的 identity/facts/invocation binding 原子一致；
+- [x] Turn generation pin 保护旧/new Catalog 与 Provider binding 不混合；
+- [x] unset default 可启动且无引用发送时明确失败；unavailable configured default degraded startup、可查询改选、无静默 fallback，并可在后续 generation 自动恢复。
 
 ### 15.2 Relay Extension
 

@@ -35,7 +35,6 @@ export interface CreateSubagentDelegationPortParams {
   readonly activeParents: ReadonlyMap<string, ActiveParentTurn>;
   readonly routeContextByTurn: Map<string, MessageRouteContext>;
   readonly sessionManager: SessionManager;
-  readonly getDefaultProviderId: () => string;
   readonly defaultMaxTokens: number;
   readonly maxDepth: number;
   readonly executor: SubagentExecutor;
@@ -133,7 +132,6 @@ export function createSubagentDelegationPort(
         const resolvedModel = new ModelResolver(parent.registrySnapshot.providers).resolve({
           reference,
           referenceSource: 'native',
-          defaultProviderId: params.getDefaultProviderId(),
           request: requirements,
           policy: { defaultMaxTokens: params.defaultMaxTokens },
         });

@@ -32,7 +32,6 @@ describe('Anthropic Provider Runtime Module', () => {
   it('encloses the Provider entry in the instance registration closure', async () => {
     const unit = createAnthropicProviderModule({
       apiKey: 'test-key',
-      defaultModel: 'claude-sonnet-5',
     });
     const instance = await unit.create(new AbortController().signal);
     const registerProvider = vi.fn();
@@ -46,6 +45,7 @@ describe('Anthropic Provider Runtime Module', () => {
     expect(registerProvider).toHaveBeenCalledTimes(1);
     expect(registerProvider).toHaveBeenCalledWith(expect.objectContaining({
       id: ANTHROPIC_COMPATIBLE_PROVIDER_ID,
+      models: expect.arrayContaining([expect.objectContaining({ modelId: expect.any(String) })]),
     }));
   });
 });

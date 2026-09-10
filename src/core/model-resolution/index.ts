@@ -10,6 +10,7 @@ export type {
   ModelResolutionInput,
   ProviderConnection,
   ProviderConnectionResult,
+  ProviderCatalogModel,
   ProviderModelDescriptor,
   ProviderModelFacts,
   ProviderModelResult,

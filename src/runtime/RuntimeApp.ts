@@ -26,7 +26,7 @@ import {
   type RuntimeApplicationKernel,
   type RuntimeApplicationKernelInput,
 } from './runtime-builder.js';
-import type { RuntimeHandle } from './runtime-composition.js';
+import type { ModelCatalogSnapshot, RuntimeHandle } from './runtime-composition.js';
 import type {
   RuntimeGenerationPin,
   RuntimeSnapshotAccess,
@@ -211,6 +211,41 @@ export class RuntimeApp {
 
   getToolNames(): string[] {
     return this.snapshotAccess.currentSnapshot().tools.definitions.map((tool) => tool.name);
+  }
+
+  getModelCatalog(): ModelCatalogSnapshot {
+    const snapshot = this.snapshotAccess.currentSnapshot();
+    const providers = Object.freeze(snapshot.providers.map((provider) => Object.freeze({
+      providerId: provider.id,
+      displayName: provider.displayName ?? provider.id,
+      models: Object.freeze(provider.models.map((model) => Object.freeze({
+        modelId: model.modelId,
+        displayName: model.displayName ?? model.modelId,
+      }))),
+    })));
+    const configured = this.resources.resolvedConfig.model;
+    let defaultSelection: ModelCatalogSnapshot['defaultSelection'];
+    if (!configured) {
+      defaultSelection = Object.freeze({ state: 'unset' });
+    } else {
+      const reference = Object.freeze({
+        providerId: configured.providerId,
+        modelId: configured.modelId,
+      });
+      const provider = snapshot.providers.find((entry) => entry.id === reference.providerId);
+      defaultSelection = provider?.models.some((model) => model.modelId === reference.modelId)
+        ? Object.freeze({ state: 'available', reference })
+        : Object.freeze({
+            state: 'unavailable',
+            reference,
+            reason: provider ? 'model_rejected' : 'provider_unregistered',
+          });
+    }
+    return Object.freeze({
+      generation: snapshot.generation,
+      defaultSelection,
+      providers,
+    });
   }
 
   waitForChannelCompletion(id: string): Promise<ChannelCompletion> {
@@ -1189,9 +1224,8 @@ export class RuntimeApp {
       );
 
       const resolvedModel = new ModelResolver(snapshot.providers).resolve({
-        reference: params.modelReference ?? this.resources.resolvedConfig.llm.model,
+        reference: params.modelReference ?? this.resources.resolvedConfig.model,
         referenceSource: params.modelReference === undefined ? 'config-default' : 'turn-explicit',
-        defaultProviderId: this.resources.defaultProviderId,
         request: {
           tools: visibleToolDefinitions.length > 0,
           mediaKinds: Array.isArray(params.message)

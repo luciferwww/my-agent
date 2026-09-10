@@ -3,7 +3,7 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 0.8
+- **版本：** 0.9
 - **日期：** 2026-09-10
 - **所有者：** 项目所有者
 - **类型：** Independent post-Foundation Architecture Slice
@@ -67,6 +67,8 @@
 
 ### C1 — Closed Provider Model Catalog Contract
 
+**Plan Item 状态：** Completed — Technical Gate 与 Delivery 已由项目所有者接受（2026-09-10）
+
 - Provider projection 发布不可变模型目录；
 - Registry staging 校验 Provider/Model identity 和重复项；
 - Model Resolver 在 Invocation 前拒绝目录外引用；
@@ -75,7 +77,11 @@
 - 将 `AgentDefaults.model?: ModelReference` 作为唯一结构化 default；删除 `llm.model` 和依赖第一 Provider 的 string default；
 - default model 为空和无效 default 的语义由 Spec 冻结并覆盖。
 
-**Gate C1：** Core/Registry/Resolver/Runtime contract tests、相关 regression、lint、build 全部通过。
+**Gate C1：** Passed — Core/Registry/Resolver/Runtime contract tests、相关 regression、lint、build 已通过，项目所有者已接受。
+
+Technical Gate evidence（2026-09-10）：C1 focused tests 通过；除本机 `better-sqlite3` Node ABI 不匹配项外的完整 regression 为 96 files / 850 tests 全部通过；`npm run lint` 与 `npm run build` 通过；独立只读审计结论为 Accept。原始全量测试仅被既有 native module ABI（module 127，当前进程要求 115）阻塞，不归因于 C1。项目所有者于同日接受 C1 Delivery Gate；该接受不授权 C2。
+
+项目所有者确认 `scripts/` 下现有脚本为非权威、当前不保证可运行的 legacy utilities；C1 不删除或迁移这些脚本，也不把它们作为 Gate evidence。其后续 disposition 另行逐项评审，且不得要求 production 保留 legacy model/config path。
 
 ### C2 — Copilot Relay Provider Extension
 

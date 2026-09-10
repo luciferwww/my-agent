@@ -3,7 +3,7 @@ import type { AgentDefaults } from '../platform/config/types.js';
 import { buildSystemPromptParams, resolveContextLoadMode } from './prompt-factory.js';
 
 const baseConfig: AgentDefaults = {
-  llm: { maxTokens: 4096, contextWindowTokens: 200_000 },
+  llm: { maxTokens: 4096 },
   runner: { maxLlmCalls: 12, inTurnMessageMode: 'followup' },
   memory: {
     enabled: false,

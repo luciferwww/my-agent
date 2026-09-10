@@ -7,9 +7,37 @@ import type {
   RuntimeLifecycleState,
   RuntimeShutdownReport,
 } from './types.js';
+import type { ModelReference } from '../core/model-resolution/index.js';
+
+export interface ModelCatalogEntry {
+  readonly modelId: string;
+  readonly displayName: string;
+}
+
+export interface ProviderCatalogEntry {
+  readonly providerId: string;
+  readonly displayName: string;
+  readonly models: readonly ModelCatalogEntry[];
+}
+
+export type DefaultModelSelection =
+  | Readonly<{ state: 'unset' }>
+  | Readonly<{ state: 'available'; reference: ModelReference }>
+  | Readonly<{
+      state: 'unavailable';
+      reference: ModelReference;
+      reason: 'provider_unregistered' | 'model_rejected';
+    }>;
+
+export interface ModelCatalogSnapshot {
+  readonly generation: number;
+  readonly defaultSelection: DefaultModelSelection;
+  readonly providers: readonly ProviderCatalogEntry[];
+}
 
 export interface RuntimeApplication {
   runTurn(params: RunTurnParams): Promise<RunTurnResult>;
+  getModelCatalog(): ModelCatalogSnapshot;
   abortTurn(sessionKey: string): { aborted: boolean; dropped: number };
   getState(): RuntimeLifecycleState;
   getToolNames(): string[];

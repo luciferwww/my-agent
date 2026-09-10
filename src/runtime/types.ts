@@ -24,7 +24,6 @@ export interface RuntimeResourceSet {
   readonly workspaceDir: string;
   readonly sessionManager: SessionManager;
   readonly toolPolicy: ApplicationToolPolicy;
-  readonly defaultProviderId: string;
   readonly memoryManager: MemoryManager | null;
   readonly systemPromptBuilder: SystemPromptBuilder;
   readonly userPromptBuilder: UserPromptBuilder;
@@ -35,8 +34,6 @@ export interface RuntimeResourceSet {
 export interface RuntimeProviderOptions {
   apiKey?: string;
   baseURL?: string;
-  defaultModel?: string;
-  legacyContextWindowTokens: number;
   deploymentFacts?: AgentDefaults['llm']['deploymentFacts'];
 }
 
@@ -291,7 +288,7 @@ export interface RuntimeDisposable {
 }
 
 export interface RuntimeBootstrapResult {
-  readonly resources: Omit<RuntimeResourceSet, 'defaultProviderId'>;
+  readonly resources: RuntimeResourceSet;
   readonly state: RuntimeLifecycleState;
   readonly dependencies: RuntimeDependencies;
 }

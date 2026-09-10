@@ -137,9 +137,9 @@ describe('FT-12 Current Architecture authority', () => {
     expect(runtime).toContain(
       'createBundledProviderUnit(options: RuntimeProviderOptions): LoadedRuntimeUnit',
     );
-    expect(runtime).toContain('registrySnapshot.providers[0].id');
-    expect(runtime).toMatch(/generation publication[^。]+不重选/u);
-    expect(runtime).toMatch(/Snapshot 的 Provider 列表为空[^。]+kernel construction[^。]+`app_ready`/u);
+    expect(runtime).toContain('Runtime 不从 Provider 顺序推断缺省 Provider');
+    expect(runtime).toContain('Provider 列表为空的 Snapshot 可以发布');
+    expect(runtime).toContain('Runtime 不为它发明 default Provider');
     expect(runtime).toMatch(/Unit identity[^。]+`phase=create`/u);
     expect(runtime).toMatch(/candidate cleanup[^。]+fail-closed/u);
 
@@ -172,9 +172,9 @@ describe('FT-12 Current Architecture authority', () => {
     expect(modelResolution).toContain('sole owner of canonical Model identity');
     expect(modelResolution).toContain('`ModelResolutionError.category`');
     expect(modelResolution).toContain(
-      'Runtime supplies `defaultProviderId` from the first Provider in the successfully published immutable Registry Snapshot',
+      'Runtime supplies a complete structured reference from a per-Turn override or configured default',
     );
-    expect(modelResolution).toContain('it neither selects nor reprioritizes Providers');
+    expect(modelResolution).toContain('Model Resolution neither selects nor reprioritizes Providers');
 
     const overview = requireDocument('overview').content;
     expect(overview).toContain('provider/');
@@ -203,12 +203,11 @@ describe('FT-12 Current Architecture authority', () => {
     expect(builder).not.toContain('.registerProvider(');
 
     const compositionStart = builder.indexOf('await compositionManager.start()');
-    const defaultSelection = builder.indexOf('registrySnapshot.providers[0]?.id');
     const kernelConstruction = builder.indexOf('kernel = createApplication({');
     const readyEvent = builder.indexOf("type: 'app_ready'");
     expect(compositionStart).toBeGreaterThan(-1);
-    expect(compositionStart).toBeLessThan(defaultSelection);
-    expect(defaultSelection).toBeLessThan(kernelConstruction);
+    expect(builder).not.toContain('defaultProviderId');
+    expect(compositionStart).toBeLessThan(kernelConstruction);
     expect(kernelConstruction).toBeLessThan(readyEvent);
 
     const unitCreate = anthropicModule.indexOf('create() {');
@@ -223,7 +222,7 @@ describe('FT-12 Current Architecture authority', () => {
     for (const evidence of [
       'runs the bundled Provider through factory, create, staging, start, and publication',
       'keeps a builtin Provider first when an external Provider starts in the same Snapshot',
-      'rejects an empty published Provider Snapshot before kernel creation or app_ready',
+      'publishes an empty Provider Snapshot without inventing a default Provider',
       'attributes required Provider Unit create failure and cleans earlier candidates',
       'fails closed when earlier candidate cleanup fails after Provider create failure',
     ]) {

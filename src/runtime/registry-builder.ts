@@ -183,14 +183,14 @@ export function stageRegistryUnit(unit: RuntimeContributionUnit): StagedRegistry
 
   const api: ExtensionRegistrationApi = Object.freeze({
     registerProvider(provider: ProviderProjectionEntry): void {
-      assertProvider(provider);
-      if (localProviderIds.has(provider.id)) {
+      const normalized = normalizeProvider(provider);
+      if (localProviderIds.has(normalized.id)) {
         throw new RegistryBuildError(
-          `Duplicate Provider contribution "${provider.id}" in unit "${unit.id}".`,
+          `Duplicate Provider contribution "${normalized.id}" in unit "${unit.id}".`,
         );
       }
-      localProviderIds.add(provider.id);
-      providers.push(Object.freeze(provider));
+      localProviderIds.add(normalized.id);
+      providers.push(normalized);
     },
     registerTool(tool: Tool): void {
       assertTool(tool);
@@ -229,7 +229,7 @@ export function stageRegistryUnit(unit: RuntimeContributionUnit): StagedRegistry
   });
 }
 
-function assertProvider(provider: ProviderProjectionEntry): void {
+function normalizeProvider(provider: ProviderProjectionEntry): ProviderProjectionEntry {
   assertIdentity(provider.id, 'Provider');
   if (typeof provider.protocol !== 'string' || provider.protocol.trim() === '') {
     throw new RegistryBuildError(`Provider "${provider.id}" must have a non-empty protocol.`);
@@ -240,6 +240,45 @@ function assertProvider(provider: ProviderProjectionEntry): void {
   if (typeof provider.resolveModel !== 'function') {
     throw new RegistryBuildError(`Provider "${provider.id}" must provide resolveModel().`);
   }
+  if (!Array.isArray(provider.models)) {
+    throw new RegistryBuildError(`Provider "${provider.id}" must publish a model Catalog.`);
+  }
+  const modelIds = new Set<string>();
+  const models = provider.models.map((model) => {
+    if (!model || typeof model !== 'object') {
+      throw new RegistryBuildError(`Provider "${provider.id}" published an invalid model entry.`);
+    }
+    assertIdentity(model.modelId, 'Model');
+    if (modelIds.has(model.modelId)) {
+      throw new RegistryBuildError(
+        `Provider "${provider.id}" published duplicate model "${model.modelId}".`,
+      );
+    }
+    modelIds.add(model.modelId);
+    if (model.displayName !== undefined
+      && (typeof model.displayName !== 'string' || model.displayName.trim() === '')) {
+      throw new RegistryBuildError(
+        `Provider "${provider.id}" model "${model.modelId}" has an invalid display name.`,
+      );
+    }
+    return Object.freeze({
+      modelId: model.modelId,
+      ...(model.displayName !== undefined ? { displayName: model.displayName } : {}),
+    });
+  });
+  if (provider.displayName !== undefined
+    && (typeof provider.displayName !== 'string' || provider.displayName.trim() === '')) {
+    throw new RegistryBuildError(`Provider "${provider.id}" has an invalid display name.`);
+  }
+  return Object.freeze({
+    id: provider.id,
+    ...(provider.displayName !== undefined ? { displayName: provider.displayName } : {}),
+    models: Object.freeze(models),
+    protocol: provider.protocol,
+    invocationPort: provider.invocationPort,
+    resolveConnection: provider.resolveConnection,
+    resolveModel: provider.resolveModel,
+  });
 }
 
 function assertTool(tool: Tool): void {

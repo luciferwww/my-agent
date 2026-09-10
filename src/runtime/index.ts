@@ -1,5 +1,9 @@
 export { RuntimeApp } from './RuntimeApp.js';
 export type {
+  DefaultModelSelection,
+  ModelCatalogEntry,
+  ModelCatalogSnapshot,
+  ProviderCatalogEntry,
   RuntimeApplication,
   RuntimeCompositionControl,
   RuntimeCompositionResidual,

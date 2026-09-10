@@ -756,11 +756,8 @@ function readOptionalModelReference(
     throw new ProtocolError('INVALID_MESSAGE', 'model_reference must be an object.');
   }
   assertOnlyKeys(value, ['provider_id', 'model_id'], 'model_reference');
-  const providerId = value.provider_id === undefined
-    ? undefined
-    : readNonEmptyString(value.provider_id, 'model_reference.provider_id');
   return {
-    ...(providerId === undefined ? {} : { providerId }),
+    providerId: readNonEmptyString(value.provider_id, 'model_reference.provider_id'),
     modelId: readNonEmptyString(value.model_id, 'model_reference.model_id'),
   };
 }

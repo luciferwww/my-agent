@@ -669,6 +669,7 @@ async function buildApp(
       return createTestProviderUnit({
         id: 'test',
         protocol: 'test',
+        models: [{ modelId: 'test-model' }],
         invocationPort,
         resolveConnection: () => ({ ok: true, connection: { endpointId: 'test' } }),
         resolveModel: (modelId, connection) => ({
@@ -712,7 +713,8 @@ async function buildApp(
     workspaceDir,
     loadedUnits: [testChannel.unit],
     cliOverrides: {
-      llm: { apiKey: 'test-key', model: 'test-model' },
+      model: { providerId: 'test', modelId: 'test-model' },
+      llm: { apiKey: 'test-key' },
       memory: { enabled: false },
       ...(options.steerMode
         ? { runner: { inTurnMessageMode: 'steer' as const } }

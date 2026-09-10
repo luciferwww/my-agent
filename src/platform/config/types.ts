@@ -1,3 +1,5 @@
+import type { ModelReference } from '../../core/model-resolution/index.js';
+
 // ── Utility Types ────────────────────────────────────────
 
 /** 深度 Partial：递归地将所有属性变为可选 */
@@ -36,16 +38,8 @@ export interface LLMConfig {
   apiKey?: string;
   /** API base URL（支持 LiteLLM Proxy、MAI-LLMProxy） */
   baseURL?: string;
-  /** 默认模型（预留，目前 AnthropicClient 不支持选模型） */
-  model?: string;
   /** 默认 max tokens */
   maxTokens: number;
-  /**
-   * 模型上下文窗口大小（tokens）。
-   * 默认 200,000，适用于 Claude 3.5 Sonnet / Claude 4 系列。
-   * 压缩逻辑从此字段读取窗口大小，用于动态计算裁剪阈值和预算。
-   */
-  contextWindowTokens: number;
   /** Provider-owned deployment facts input; semantic validation is performed by Provider Integration. */
   deploymentFacts?: LLMDeploymentFactsEntry[];
 }
@@ -200,10 +194,7 @@ export interface SubagentToolsConfig {
 /** 单个 subagent 的配置条目 */
 export type SubagentModelSelection =
   | 'inherit'
-  | {
-      readonly providerId?: string;
-      readonly modelId: string;
-    };
+  | ModelReference;
 
 export interface SubagentConfigEntry {
   /** 唯一标识符 */
@@ -233,6 +224,8 @@ export interface SubagentsConfig {
 
 /** 单个 agent 的完整配置集 */
 export interface AgentDefaults {
+  /** Optional structured Runtime default model. */
+  model?: ModelReference;
   llm: LLMConfig;
   runner: RunnerConfig;
   memory: MemoryModuleConfig;

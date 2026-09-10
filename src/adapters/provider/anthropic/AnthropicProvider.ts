@@ -24,8 +24,6 @@ export interface AnthropicDeploymentFactsInput {
 export interface AnthropicProviderOptions {
   apiKey?: string;
   baseURL?: string;
-  defaultModel?: string;
-  legacyContextWindowTokens?: number;
   deploymentFacts?: readonly AnthropicDeploymentFactsInput[];
 }
 
@@ -34,6 +32,12 @@ interface CatalogFacts {
   maximumOutputTokens: number;
   toolUse: boolean;
   mediaKinds: readonly string[];
+}
+
+interface CatalogModelBinding {
+  readonly modelId: string;
+  readonly deploymentId?: string;
+  readonly facts: ProviderModelFacts;
 }
 
 // Source reviewed 2026-09-04:
@@ -71,6 +75,7 @@ export class AnthropicProvider {
   constructor(options: AnthropicProviderOptions) {
     const endpointId = normalizeEndpoint(options.baseURL ?? DEFAULT_ENDPOINT);
     const deploymentFacts = validateDeploymentFacts(options.deploymentFacts ?? []);
+    const modelMap = buildModelMap(endpointId, deploymentFacts);
     const invocationPort = new AnthropicClient({
       apiKey: options.apiKey ?? '',
       ...(options.baseURL ? { baseURL: options.baseURL } : {}),
@@ -78,6 +83,10 @@ export class AnthropicProvider {
 
     this.entry = Object.freeze({
       id: ANTHROPIC_COMPATIBLE_PROVIDER_ID,
+      displayName: 'Anthropic Compatible',
+      models: Object.freeze([...modelMap.values()].map((model) => Object.freeze({
+        modelId: model.modelId,
+      }))),
       protocol: ANTHROPIC_MESSAGES_PROTOCOL,
       invocationPort,
       resolveConnection: () => {
@@ -95,37 +104,14 @@ export class AnthropicProvider {
       },
       resolveModel: (modelId: string, connection: ProviderConnection) => {
         const canonicalModelId = modelId.trim();
-        if (!canonicalModelId) {
+        const model = modelMap.get(canonicalModelId);
+        if (!model) {
           return {
             ok: false,
             category: 'model_rejected',
-            message: 'Anthropic-compatible Provider rejected an empty model identity.',
+            message: 'Anthropic-compatible Provider rejected a model outside its Catalog.',
           } as const;
         }
-        const exactDeploymentFacts = deploymentFacts.filter((entry) =>
-          entry.providerId === ANTHROPIC_COMPATIBLE_PROVIDER_ID
-          && entry.endpointId === connection.endpointId
-          && entry.modelId === canonicalModelId,
-        );
-        if (exactDeploymentFacts.length > 1) {
-          return {
-            ok: false,
-            category: 'model_ambiguous',
-            message: 'Multiple deployment-facts entries match the selected Provider, Endpoint, and Model.',
-          } as const;
-        }
-        const deployment = exactDeploymentFacts[0];
-        const catalog = endpointId === DEFAULT_ENDPOINT
-          ? STATIC_CATALOG.get(canonicalModelId)
-          : undefined;
-        const facts = resolveFacts({
-          deployment,
-          catalog,
-          useLegacyContext:
-            canonicalModelId === options.defaultModel?.trim()
-            && isPositiveInteger(options.legacyContextWindowTokens),
-          legacyContextWindowTokens: options.legacyContextWindowTokens,
-        });
         return {
           ok: true,
           descriptor: Object.freeze({
@@ -136,9 +122,9 @@ export class AnthropicProvider {
             protocol: ANTHROPIC_MESSAGES_PROTOCOL,
             connection: Object.freeze({
               ...connection,
-              ...(deployment?.deploymentId ? { deploymentId: deployment.deploymentId } : {}),
+              ...(model.deploymentId ? { deploymentId: model.deploymentId } : {}),
             }),
-            facts: Object.freeze(facts),
+            facts: model.facts,
           }),
         } as const;
       },
@@ -149,18 +135,14 @@ export class AnthropicProvider {
 function resolveFacts(input: {
   deployment?: AnthropicDeploymentFactsInput;
   catalog?: CatalogFacts;
-  useLegacyContext: boolean;
-  legacyContextWindowTokens?: number;
 }): ProviderModelFacts {
   const { deployment, catalog } = input;
   return {
     effectiveContextLimit: deployment?.effectiveContextLimit !== undefined
       ? { value: deployment.effectiveContextLimit, source: 'deployment-config' }
-      : input.useLegacyContext
-        ? { value: input.legacyContextWindowTokens!, source: 'legacy-config' }
-        : catalog
-          ? { value: catalog.effectiveContextLimit, source: 'static-provider-catalog' }
-          : { value: 200_000, source: 'provider-default' },
+      : catalog
+        ? { value: catalog.effectiveContextLimit, source: 'static-provider-catalog' }
+        : { value: 200_000, source: 'provider-default' },
     ...(deployment?.maximumOutputTokens !== undefined
       ? { maximumOutputTokens: { value: deployment.maximumOutputTokens, source: 'deployment-config' } }
       : catalog
@@ -189,9 +171,44 @@ function resolveFacts(input: {
   };
 }
 
+function buildModelMap(
+  endpointId: string,
+  deploymentFacts: readonly AnthropicDeploymentFactsInput[],
+): ReadonlyMap<string, CatalogModelBinding> {
+  const candidates = new Map<string, {
+    catalog?: CatalogFacts;
+    deployment?: AnthropicDeploymentFactsInput;
+  }>();
+  if (endpointId === DEFAULT_ENDPOINT) {
+    for (const [modelId, catalog] of STATIC_CATALOG) {
+      candidates.set(modelId, { catalog });
+    }
+  }
+  for (const deployment of deploymentFacts) {
+    if (deployment.endpointId !== endpointId) continue;
+    const candidate = candidates.get(deployment.modelId) ?? {};
+    candidates.set(deployment.modelId, { ...candidate, deployment });
+  }
+
+  const models = new Map<string, CatalogModelBinding>();
+  for (const [modelId, candidate] of candidates) {
+    const facts = resolveFacts(candidate);
+    if (!facts.maximumOutputTokens) continue;
+    models.set(modelId, Object.freeze({
+      modelId,
+      ...(candidate.deployment?.deploymentId
+        ? { deploymentId: candidate.deployment.deploymentId }
+        : {}),
+      facts: Object.freeze(facts),
+    }));
+  }
+  return models;
+}
+
 function validateDeploymentFacts(
   entries: readonly AnthropicDeploymentFactsInput[],
 ): readonly AnthropicDeploymentFactsInput[] {
+  const identities = new Set<string>();
   return Object.freeze(entries.map((entry) => {
     if (
       entry.providerId.trim() !== ANTHROPIC_COMPATIBLE_PROVIDER_ID
@@ -203,7 +220,7 @@ function validateDeploymentFacts(
     ) {
       throw new Error('Invalid Anthropic-compatible deployment-facts entry.');
     }
-    return Object.freeze({
+    const normalized = Object.freeze({
       ...entry,
       providerId: entry.providerId.trim(),
       protocol: entry.protocol.trim(),
@@ -212,6 +229,12 @@ function validateDeploymentFacts(
       ...(entry.deploymentId ? { deploymentId: entry.deploymentId.trim() } : {}),
       ...(entry.mediaKinds ? { mediaKinds: Object.freeze(entry.mediaKinds.map((kind) => kind.trim())) } : {}),
     });
+    const identity = `${normalized.providerId}\u0000${normalized.endpointId}\u0000${normalized.modelId}`;
+    if (identities.has(identity)) {
+      throw new Error('Duplicate Anthropic-compatible deployment-facts entry.');
+    }
+    identities.add(identity);
+    return normalized;
   }));
 }
 

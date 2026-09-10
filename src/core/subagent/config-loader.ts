@@ -52,15 +52,12 @@ function resolveModelSelection(
   if (typeof candidate.modelId !== 'string' || candidate.modelId.trim() === '') {
     throw new Error(`subagents.list["${profileId}"].model: modelId must be nonblank`);
   }
-  if (
-    candidate.providerId !== undefined
-    && (typeof candidate.providerId !== 'string' || candidate.providerId.trim() === '')
-  ) {
+  if (typeof candidate.providerId !== 'string' || candidate.providerId.trim() === '') {
     throw new Error(`subagents.list["${profileId}"].model: providerId must be nonblank`);
   }
 
   return Object.freeze({
-    ...(candidate.providerId === undefined ? {} : { providerId: candidate.providerId.trim() }),
+    providerId: candidate.providerId.trim(),
     modelId: candidate.modelId.trim(),
   });
 }

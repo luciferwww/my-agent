@@ -36,13 +36,14 @@ Lowest to highest precedence:
 | 4 | environment overrides | `resolveAgentConfig()` |
 | 5 | caller/CLI overrides | `resolveAgentConfig()` |
 
-`deepMerge()` recursively merges plain objects, ignores `undefined`, and replaces arrays/scalars rather than appending them. `getEnvOverrides()` maps `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, and `MY_AGENT_MODEL` into the LLM configuration branch.
+`deepMerge()` recursively merges plain objects, ignores `undefined`, and replaces arrays/scalars rather than appending them. `getEnvOverrides()` maps `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` into the LLM branch; `MY_AGENT_PROVIDER` and `MY_AGENT_MODEL` form one atomic structured default-model override and either both must be present or both absent.
 
 ## 4. Current schema and defaults
 
 | Section | Current fields and defaults |
 |---|---|
-| `llm` | API key/base URL/model optional; `maxTokens=4096`; legacy fallback `contextWindowTokens=200000`; optional Provider-owned `deploymentFacts[]` input |
+| `model` | Optional complete `{ providerId, modelId }` default reference; no implicit first-Provider completion |
+| `llm` | API key/base URL optional; `maxTokens=4096`; optional Provider-owned `deploymentFacts[]` input |
 | `runner` | `maxLlmCalls=12`; `inTurnMessageMode='followup'` |
 | `memory` | enabled; local `Xenova/all-MiniLM-L6-v2`; chunk `1600/320`; search `6`, `0.25`, weights `0.7/0.3` |
 | `prompt` | `safetyLevel='normal'` |
@@ -52,7 +53,7 @@ Lowest to highest precedence:
 | `subagents` | enabled; `maxDepth=1`; empty profile list |
 | `logger` | global `info`; console enabled; file disabled |
 
-Removed configuration concepts are not Current fields: Memory DB path, embedding dimensions, Session directory, Workspace agent directory, Tool implementation limits, nested `tools.approval`, and Logger file path/prefix/queue size are fixed or owned by their implementation boundaries.
+Removed configuration concepts are not Current fields: `llm.model`, `llm.contextWindowTokens`, Memory DB path, embedding dimensions, Session directory, Workspace agent directory, Tool implementation limits, nested `tools.approval`, and Logger file path/prefix/queue size are fixed or owned by their implementation boundaries.
 
 ### 4.1 Tool policy
 

@@ -17,8 +17,7 @@ export type ModelFactSource =
   | 'deployment-config'
   | 'provider-metadata'
   | 'static-provider-catalog'
-  | 'provider-default'
-  | 'legacy-config';
+  | 'provider-default';
 
 export interface SourcedFact<T> {
   readonly value: T;
@@ -26,7 +25,7 @@ export interface SourcedFact<T> {
 }
 
 export interface ModelReference {
-  readonly providerId?: string;
+  readonly providerId: string;
   readonly modelId: string;
 }
 
@@ -90,8 +89,15 @@ export type ProviderModelResult =
       readonly message: string;
     };
 
+export interface ProviderCatalogModel {
+  readonly modelId: string;
+  readonly displayName?: string;
+}
+
 export interface ProviderProjectionEntry {
   readonly id: string;
+  readonly displayName?: string;
+  readonly models: readonly ProviderCatalogModel[];
   readonly protocol: string;
   readonly invocationPort: ModelInvocationPort;
   resolveConnection(): ProviderConnectionResult;
@@ -99,9 +105,8 @@ export interface ProviderProjectionEntry {
 }
 
 export interface ModelResolutionInput {
-  readonly reference: ModelReference | string | undefined;
+  readonly reference: ModelReference | undefined;
   readonly referenceSource?: ModelReferenceSource;
-  readonly defaultProviderId?: string;
   readonly request: ModelRequestRequirements;
   readonly requestOverride?: ModelRequestOverride;
   readonly policy: ModelPolicy;

@@ -157,7 +157,9 @@ RunTurnParams {
 }
 ```
 
-Runtime 使用 [Model Resolution](./core_model_resolution.md) 在已捕获 generation 的 Provider projection 上解析 `modelReference` 与 `requestOverride`；Config 中的 model 字段只是默认 Model Reference 输入，不拥有 Model Facts。启动时 Runtime 从成功发布的 immutable Snapshot 按 `registrySnapshot.providers[0].id` 选择缺省 Provider，并把该 ID 固定在 `RuntimeResourceSet`；后续 generation publication 不重选该缺省值，显式 Model Reference 仍可选择其他 accepted Provider。
+Runtime 使用 [Model Resolution](./core_model_resolution.md) 在已捕获 generation 的 Provider projection 上解析完整结构化 `modelReference` 与 `requestOverride`；Config 中的 `model` 只是完整默认 Model Reference 输入，不拥有 Model Facts。Runtime 不从 Provider 顺序推断缺省 Provider；缺少引用或 configured default 不属于 captured Catalog 时，Turn 在 Provider invocation 前失败且不 fallback。
+
+`RuntimeApplication.getModelCatalog()` 同步读取唯一 current Snapshot pointer，返回深冻结、传输安全的 Provider/Model DTO、generation 和 configured default 的 `unset`/`available`/`unavailable` membership 状态。该查询不 capture generation pin、不调用 Provider code，也不触发 I/O；已开始 Turn 仍继续使用其 pinned generation。
 
 ### 4.4 队列与路由类型（queue-types.ts）
 
@@ -200,9 +202,9 @@ flowchart TD
   J --> K[emit app_ready and return frozen RuntimeHandle]
 ```
 
-`RuntimeApp.create()` is delegation-only. `bootstrap.ts` prepares shared prerequisites but does not own Model Resolver, Task module, Registry assembly, publication, or reload. A Snapshot is visible only after every selected Unit has completed create/start/handoff and the full candidate has validated. Provider ordering follows Registry deterministic ordering：Builtin 在 External 之前；当前 required Anthropic Unit 因此提供启动缺省 Provider，但 Runtime 不建立第二份 Provider priority metadata。
+`RuntimeApp.create()` is delegation-only. `bootstrap.ts` prepares shared prerequisites but does not own Model Resolver, Task module, Registry assembly, publication, or reload. A Snapshot is visible only after every selected Unit has completed create/start/handoff and the full candidate has validated. Provider ordering follows Registry deterministic ordering：Builtin 在 External 之前；该顺序只控制稳定投影，不建立 default Provider 或第二份 Provider priority metadata。
 
-Required Unit 的 `create()` 失败会终止整体启动，并携带 Unit identity 与 `phase=create`；已创建但未成功进入应用的 candidate 按 Composition ownership 清理。candidate cleanup 失败保持 fail-closed。即使 Composition 已成功发布，只要 Snapshot 的 Provider 列表为空，Builder 仍在 RuntimeApp kernel construction 与 `app_ready` 前判定 startup fatal，并关闭 Composition 与 bootstrap resources。这些失败路径不产生 partial Snapshot、kernel 或 ready event。
+Required Unit 的 `create()` 失败会终止整体启动，并携带 Unit identity 与 `phase=create`；已创建但未成功进入应用的 candidate 按 Composition ownership 清理。candidate cleanup 失败保持 fail-closed。完整但 Provider 列表为空的 Snapshot 可以发布，以支持 Catalog 查询和后续 Unit enable；Runtime 不为它发明 default Provider。这些失败路径不产生 partial Snapshot、kernel 或 ready event。
 
 Memory remains optional: disabled Memory contributes no tools; initialization failure emits a warning and continues with `memoryManager = null`; successful initialization participates through the Memory contribution Unit and is closed as a shared resource during bounded Shutdown.
 

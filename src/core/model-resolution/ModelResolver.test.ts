@@ -11,6 +11,7 @@ const port: ModelInvocationPort = {
 function provider(overrides: Partial<ProviderProjectionEntry> = {}): ProviderProjectionEntry {
   return {
     id: 'anthropic-compatible',
+    models: [{ modelId: 'test-model' }],
     protocol: 'anthropic-messages',
     invocationPort: port,
     resolveConnection: () => ({
@@ -24,7 +25,7 @@ function provider(overrides: Partial<ProviderProjectionEntry> = {}): ProviderPro
         protocol: 'anthropic-messages',
         connection,
         facts: {
-          effectiveContextLimit: { value: 200_000, source: 'legacy-config' },
+          effectiveContextLimit: { value: 200_000, source: 'static-provider-catalog' },
           maximumOutputTokens: { value: 8192, source: 'static-provider-catalog' },
           toolUse: { value: true, source: 'static-provider-catalog' },
           mediaKinds: { value: ['image'], source: 'static-provider-catalog' },
@@ -37,8 +38,7 @@ function provider(overrides: Partial<ProviderProjectionEntry> = {}): ProviderPro
 
 function input(overrides: Partial<ModelResolutionInput> = {}): ModelResolutionInput {
   return {
-    reference: 'test-model',
-    defaultProviderId: 'anthropic-compatible',
+    reference: { providerId: 'anthropic-compatible', modelId: 'test-model' },
     request: { tools: false, mediaKinds: [] },
     policy: { defaultMaxTokens: 4096, maximumMaxTokens: 8192 },
     ...overrides,
@@ -63,7 +63,8 @@ describe('ModelResolver', () => {
     expect(resolved.identity).toEqual({ providerId: 'anthropic-compatible', modelId: 'test-model' });
     expect(resolved.referenceSource).toBe('native');
     expect(resolved.invocationPort).toBe(port);
-    expect(resolved.facts.effectiveContextLimit).toEqual({ value: 200_000, source: 'legacy-config' });
+    expect(resolved.facts.effectiveContextLimit)
+      .toEqual({ value: 200_000, source: 'static-provider-catalog' });
     expect(resolved.limits).toEqual({ maxTokens: 2048, maxTokensSource: 'request-override' });
     expect(Object.isFrozen(resolved)).toBe(true);
     expect(Object.isFrozen(resolved.identity)).toBe(true);
@@ -72,7 +73,7 @@ describe('ModelResolver', () => {
   });
 
   it.each([
-    ['reference_invalid', () => new ModelResolver([provider()]).resolve(input({ reference: '  ' }))],
+    ['reference_invalid', () => new ModelResolver([provider()]).resolve(input({ reference: { providerId: ' ', modelId: 'test-model' } }))],
     ['provider_unregistered', () => new ModelResolver([]).resolve(input())],
     ['connection_missing', () => new ModelResolver([provider({ resolveConnection: () => ({ ok: false, category: 'connection_missing', message: 'missing' }) })]).resolve(input())],
     ['connection_invalid', () => new ModelResolver([provider({ resolveConnection: () => ({ ok: false, category: 'connection_invalid', message: 'invalid' }) })]).resolve(input())],
@@ -90,5 +91,17 @@ describe('ModelResolver', () => {
     expectCategory(action, category);
     expect(port.chatStream).not.toHaveBeenCalled();
     expect(port.chat).not.toHaveBeenCalled();
+  });
+
+  it('rejects a model outside the closed Catalog before resolving a connection or model', () => {
+    const resolveConnection = vi.fn(provider().resolveConnection);
+    const resolveModel = vi.fn(provider().resolveModel);
+    const resolver = new ModelResolver([provider({ resolveConnection, resolveModel })]);
+
+    expectCategory(() => resolver.resolve(input({
+      reference: { providerId: 'anthropic-compatible', modelId: 'not-published' },
+    })), 'model_rejected');
+    expect(resolveConnection).not.toHaveBeenCalled();
+    expect(resolveModel).not.toHaveBeenCalled();
   });
 });

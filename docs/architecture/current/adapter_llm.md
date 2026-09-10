@@ -107,6 +107,8 @@ The former Adapter compatibility facade and its `LLMClient`, `ChatParams`, and `
 
 Runtime Builder maps validated Config into module options and adds the singular Unit to the catalog. It does not construct the concrete Adapter, inspect a Provider entry before staging, or own a Provider registration loop. Runtime Composition owns generic Unit creation, staging, publication and cleanup; the module owns Anthropic construction and any resources acquired inside that boundary.
 
+`AnthropicProvider` publishes one closed, endpoint-scoped model Catalog. The official Anthropic endpoint seeds the static Catalog and exact matching `deploymentFacts` may supplement or override individual entries. A custom endpoint publishes only models proven by exact endpoint-scoped deployment facts; it does not inherit the official Catalog or a legacy context-window fallback. Registry staging validates, defensively copies, and freezes the public Catalog before publication.
+
 Construction or Provider-option validation failure is startup-fatal for this required Unit and is attributed to `builtin-anthropic-provider`, phase `create`. No RuntimeApp kernel or `app_ready` event exists on that path. Default Provider selection and Snapshot publication remain Runtime responsibilities, not Adapter responsibilities.
 
 ## 8. Evidence

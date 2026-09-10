@@ -102,7 +102,8 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       workspaceDir,
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: deps,
@@ -130,6 +131,115 @@ describe('RuntimeApp', () => {
     expect(result.sessionKey).toBe('main');
     expect(result.text).toBe('hello');
     expect(app.application.getState().phase).toBe('ready');
+  });
+
+  it('returns a deep-frozen transport-safe Catalog with an available default', async () => {
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      cliOverrides: {
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies({ createMemoryManager: async () => null }),
+    });
+
+    const catalog = app.application.getModelCatalog();
+    expect(catalog).toEqual({
+      generation: 1,
+      defaultSelection: {
+        state: 'available',
+        reference: { providerId: 'test', modelId: 'test-model' },
+      },
+      providers: [{
+        providerId: 'test',
+        displayName: 'test',
+        models: [
+          { modelId: 'test-model', displayName: 'Test Model' },
+          { modelId: 'parent-model', displayName: 'parent-model' },
+        ],
+      }],
+    });
+    expect(Object.isFrozen(catalog)).toBe(true);
+    expect(Object.isFrozen(catalog.defaultSelection)).toBe(true);
+    expect(Object.isFrozen(catalog.providers)).toBe(true);
+    expect(Object.isFrozen(catalog.providers[0]?.models)).toBe(true);
+    expect(Object.isFrozen(catalog.providers[0]?.models[0])).toBe(true);
+    expect(JSON.parse(JSON.stringify(catalog))).toEqual(catalog);
+    await app.close();
+  });
+
+  it.each([
+    {
+      label: 'unset',
+      model: undefined,
+      expected: { state: 'unset' },
+      expectedCategory: 'reference_invalid',
+    },
+    {
+      label: 'provider unavailable',
+      model: { providerId: 'missing', modelId: 'preferred' },
+      expected: {
+        state: 'unavailable',
+        reference: { providerId: 'missing', modelId: 'preferred' },
+        reason: 'provider_unregistered',
+      },
+      expectedCategory: 'provider_unregistered',
+    },
+    {
+      label: 'model unavailable',
+      model: { providerId: 'test', modelId: 'missing' },
+      expected: {
+        state: 'unavailable',
+        reference: { providerId: 'test', modelId: 'missing' },
+        reason: 'model_rejected',
+      },
+      expectedCategory: 'model_rejected',
+    },
+  ])('reports a $label configured default without startup fallback', async ({
+    model,
+    expected,
+    expectedCategory,
+  }) => {
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      cliOverrides: {
+        ...(model ? { model } : {}),
+        llm: { apiKey: 'test-key' },
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies({ createMemoryManager: async () => null }),
+    });
+
+    expect(app.application.getModelCatalog().defaultSelection).toEqual(expected);
+    await expect(app.application.runTurn({
+      sessionKey: `default-${expectedCategory}`,
+      message: 'must not fall back',
+      promptMode: 'full',
+    })).rejects.toMatchObject({
+      info: { resolutionCategory: expectedCategory },
+    });
+    await app.close();
+  });
+
+  it('keeps the last published Catalog readable while closing', async () => {
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      cliOverrides: {
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies({ createMemoryManager: async () => null }),
+    });
+
+    const closing = app.close();
+    expect(app.application.getModelCatalog()).toMatchObject({
+      generation: 1,
+      defaultSelection: { state: 'available' },
+      providers: [{ providerId: 'test' }],
+    });
+    await closing;
   });
 
   it.each([
@@ -188,6 +298,7 @@ describe('RuntimeApp', () => {
     const makeProvider = (id: string) => ({
       id,
       protocol: 'test',
+      models: [{ modelId: id === 'child' ? 'child-model' : 'parent-model' }],
       invocationPort: {} as never,
       resolveConnection: () => ({ ok: true as const, connection: { endpointId: `${id}-endpoint` } }),
       resolveModel: (modelId: string, connection: { endpointId: string }) => ({
@@ -208,7 +319,8 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       workspaceDir,
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'parent-model' },
+        model: { providerId: 'test', modelId: 'parent-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
         subagents: {
           enabled: true,
@@ -254,7 +366,7 @@ describe('RuntimeApp', () => {
     await app.close();
   });
 
-  it('pins Parent and Child resolution to N while a new Root uses N+1', async () => {
+  it('keeps a Parent tree on N while Catalog/default recover on N+1', async () => {
     const parentEntered = createDeferred<void>();
     const continueParent = createDeferred<void>();
     let childRuns = 0;
@@ -304,6 +416,7 @@ describe('RuntimeApp', () => {
     const nextProvider = {
       id: 'next-provider',
       protocol: 'test',
+      models: [{ modelId: 'root-model' }],
       invocationPort: {} as never,
       resolveConnection: () => ({ ok: true as const, connection: { endpointId: 'next' } }),
       resolveModel: (modelId: string, connection: { endpointId: string }) => ({
@@ -354,7 +467,8 @@ describe('RuntimeApp', () => {
       workspaceDir,
       loadedUnits: [generationOneUnit, nextProviderUnit],
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'parent-model' },
+        model: { providerId: 'next-provider', modelId: 'root-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
         subagents: {
           enabled: true,
@@ -376,15 +490,30 @@ describe('RuntimeApp', () => {
       }),
     });
 
+    expect(app.application.getModelCatalog()).toMatchObject({
+      generation: 1,
+      defaultSelection: {
+        state: 'unavailable',
+        reason: 'provider_unregistered',
+      },
+      providers: [{ providerId: 'test' }],
+    });
+
     const parent = app.application.runTurn({
       sessionKey: 'parent',
       message: 'hold generation one',
+      modelReference: { providerId: 'test', modelId: 'parent-model' },
       promptMode: 'full',
     });
     await parentEntered.promise;
     await expect(app.composition.enableUnit('next-provider-unit')).resolves.toEqual(
       expect.objectContaining({ outcome: 'published', generation: 2 }),
     );
+    expect(app.application.getModelCatalog()).toMatchObject({
+      generation: 2,
+      defaultSelection: { state: 'available' },
+      providers: [{ providerId: 'test' }, { providerId: 'next-provider' }],
+    });
     continueParent.resolve();
     await parent;
 
@@ -402,10 +531,10 @@ describe('RuntimeApp', () => {
     expect(newRootProviderId).toBe('next-provider');
     await app.application.runTurn({
       sessionKey: 'implicit-root',
-      message: 'keep the startup default in generation two',
+      message: 'use the recovered default in generation two',
       promptMode: 'full',
     });
-    expect(implicitRootProviderId).toBe('test');
+    expect(implicitRootProviderId).toBe('next-provider');
 
     await app.close();
   });
@@ -416,7 +545,8 @@ describe('RuntimeApp', () => {
       workspaceDir,
       onEvent: (event) => events.push(event),
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({ createMemoryManager: async () => null }),
@@ -443,7 +573,8 @@ describe('RuntimeApp', () => {
       workspaceDir,
       onEvent: (event) => events.push(event),
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({
@@ -490,7 +621,8 @@ describe('RuntimeApp', () => {
       workspaceDir,
       loadedUnits: [failingChannel.unit, receivingChannel.unit],
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: deps,
@@ -534,7 +666,8 @@ describe('RuntimeApp', () => {
       workspaceDir,
       loadedUnits: [testChannel.unit],
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: deps,
@@ -562,7 +695,8 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       workspaceDir,
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
       },
       dependencies: deps,
       onEvent: (event) => events.push(event),
@@ -584,7 +718,8 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       workspaceDir,
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
         subagents: { enabled: subagentsEnabled, maxDepth: 1 },
       },
@@ -610,7 +745,8 @@ describe('RuntimeApp', () => {
       workspaceDir,
       loadedUnits: [testChannel.unit],
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies(),
@@ -637,7 +773,8 @@ describe('RuntimeApp', () => {
       workspaceDir,
       loadedUnits: [testChannel.unit],
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies(),
@@ -661,7 +798,8 @@ describe('RuntimeApp', () => {
     await expect(RuntimeApp.create({
       workspaceDir,
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: true },
       },
       dependencies: createTestDependencies({
@@ -688,7 +826,8 @@ describe('RuntimeApp', () => {
       deadlineDriver,
       deadlinePolicy: { candidateCleanupMs: 5_000 },
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: true },
       },
       dependencies: createTestDependencies({
@@ -703,7 +842,7 @@ describe('RuntimeApp', () => {
     await expect(creation).rejects.toBe(startupError);
   });
 
-  it('fails a missing model before Runner and resolves an explicit model through the Provider', async () => {
+  it('fails a missing model before Runner and resolves an explicit Catalog model', async () => {
     const agentEvents: AgentEvent[] = [];
     const runnerRun = vi.fn(async (): Promise<RunResult> => ({
       text: 'provider accepted model',
@@ -761,14 +900,14 @@ describe('RuntimeApp', () => {
       sessionKey: 'main',
       message: 'explicit model',
       promptMode: 'full',
-      modelReference: { modelId: 'not-locally-validated' },
+      modelReference: { providerId: 'test', modelId: 'test-model' },
       requestOverride: { maxOutputTokens: 2048 },
     })).resolves.toEqual(expect.objectContaining({ text: 'provider accepted model' }));
     expect(runnerRun).toHaveBeenCalledTimes(1);
     expect(runnerRun).toHaveBeenCalledWith(
       expect.objectContaining({
         resolvedModel: expect.objectContaining({
-          identity: { providerId: 'test', modelId: 'not-locally-validated' },
+          identity: { providerId: 'test', modelId: 'test-model' },
           referenceSource: 'turn-explicit',
           limits: { maxTokens: 2048, maxTokensSource: 'request-override' },
         }),
@@ -789,7 +928,8 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       workspaceDir,
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: true },
       },
       dependencies: deps,
@@ -824,7 +964,8 @@ describe('RuntimeApp', () => {
       workspaceDir,
       loadedUnits: [successfulChannel.unit, failingChannel.unit],
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({
@@ -870,7 +1011,8 @@ describe('RuntimeApp', () => {
       workspaceDir,
       loadedUnits: [failingChannel.unit, successfulChannel.unit],
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({
@@ -927,7 +1069,8 @@ describe('RuntimeApp', () => {
       workspaceDir,
       loadedUnits: [testChannel.unit],
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: deps,
@@ -1016,7 +1159,8 @@ describe('RuntimeApp', () => {
       workspaceDir,
       loadedUnits: [testChannel.unit],
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
         runner: { inTurnMessageMode: 'steer' },
       },
@@ -1116,7 +1260,8 @@ describe('RuntimeApp', () => {
         workspaceDir,
         loadedUnits: [testChannel.unit],
         cliOverrides: {
-          llm: { apiKey: 'test-key', model: 'test-model' },
+          model: { providerId: 'test', modelId: 'test-model' },
+          llm: { apiKey: 'test-key' },
           memory: { enabled: false },
         },
         dependencies: deps,
@@ -1218,7 +1363,8 @@ describe('RuntimeApp', () => {
       workspaceDir,
       loadedUnits: [testChannel.unit],
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
         tools: { allow: [], deny: [] },
       },
@@ -1275,7 +1421,8 @@ describe('RuntimeApp', () => {
       workspaceDir,
       loadedUnits: [testChannel.unit],
       cliOverrides: {
-        llm: { apiKey: 'test-key', model: 'test-model' },
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({
@@ -1319,7 +1466,8 @@ describe('RuntimeApp', () => {
       return RuntimeApp.create({
         workspaceDir,
         cliOverrides: {
-          llm: { apiKey: 'test-key', model: 'test-model' },
+          model: { providerId: 'test', modelId: 'test-model' },
+          llm: { apiKey: 'test-key' },
           memory: { enabled: false },
         },
         dependencies: deps,
@@ -1339,7 +1487,7 @@ describe('RuntimeApp', () => {
       // 事后注入 event collector：override onEvent 通过创建时的方式（重建更简单）
       const app2 = await RuntimeApp.create({
         workspaceDir,
-        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
         onEvent: (e) => events.push(e),
       });
@@ -1371,7 +1519,7 @@ describe('RuntimeApp', () => {
 
       const app = await RuntimeApp.create({
         workspaceDir,
-        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -1400,7 +1548,7 @@ describe('RuntimeApp', () => {
       const events: RuntimeEvent[] = [];
       const app = await RuntimeApp.create({
         workspaceDir,
-        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
         onEvent: (e) => events.push(e),
       });
@@ -1451,7 +1599,7 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         workspaceDir,
         loadedUnits: [testChannel.unit],
-        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -1526,7 +1674,8 @@ describe('RuntimeApp', () => {
         workspaceDir,
         loadedUnits: [testChannel.unit],
         cliOverrides: {
-          llm: { apiKey: 'test-key', model: 'test-model' },
+          model: { providerId: 'test', modelId: 'test-model' },
+          llm: { apiKey: 'test-key' },
           memory: { enabled: false },
           runner: { inTurnMessageMode: 'steer' },
         },
@@ -1577,7 +1726,7 @@ describe('RuntimeApp', () => {
     it('abortTurn: cross-session isolation — sk1 abort does not touch sk2 queue', async () => {
       const app = await RuntimeApp.create({
         workspaceDir,
-        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
       });
 
@@ -1606,7 +1755,7 @@ describe('RuntimeApp', () => {
 
       const app = await RuntimeApp.create({
         workspaceDir,
-        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -1633,7 +1782,7 @@ describe('RuntimeApp', () => {
       let armed = false;
       const app = await RuntimeApp.create({
         workspaceDir,
-        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
         onEvent: (e) => {
           if (armed && e.type === 'messages_dropped') {
@@ -1686,7 +1835,7 @@ describe('RuntimeApp', () => {
         workspaceDir,
         deadlineDriver,
         loadedUnits: [testChannel.unit],
-        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -1746,7 +1895,7 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         workspaceDir,
         deadlineDriver,
-        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -1785,7 +1934,7 @@ describe('RuntimeApp', () => {
         workspaceDir,
         loadedUnits: [testChannel.unit],
         onEvent: (event) => runtimeEvents.push(event),
-        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -1832,7 +1981,7 @@ describe('RuntimeApp', () => {
         loadedUnits: [testChannel.unit],
         deadlineDriver,
         onEvent: (event) => runtimeEvents.push(event),
-        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -1892,7 +2041,7 @@ describe('RuntimeApp', () => {
         workspaceDir,
         loadedUnits: [testChannel.unit],
         deadlineDriver,
-        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: (config) => ({
             run: async (params: RunParams) => {
@@ -1938,7 +2087,7 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         workspaceDir,
         loadedUnits: [testChannel.unit],
-        cliOverrides: { llm: { apiKey: 'test-key', model: 'test-model' }, memory: { enabled: false } },
+        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
       });
 
@@ -2117,6 +2266,10 @@ function createTestDependencies(
     createBundledProviderUnit: () => createTestProviderUnit([{
       id: 'test',
       protocol: 'test',
+      models: [
+        { modelId: 'test-model', displayName: 'Test Model' },
+        { modelId: 'parent-model' },
+      ],
       invocationPort: {} as never,
       resolveConnection: () => ({ ok: true, connection: { endpointId: 'test' } }),
       resolveModel: (modelId, connection) => ({

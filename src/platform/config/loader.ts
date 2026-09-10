@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from './defaults.js';
 import type { AppConfig, AgentDefaults, AgentEntry, ConfigFile, DeepPartial, LoggerModuleConfig } from './types.js';
+import type { ModelReference } from '../../core/model-resolution/index.js';
 
 const CONFIG_FILE_NAME = 'config.json';
 const AGENT_DIR = '.agent';   // 与 workspace/init.ts 保持一致；spec §4.1 约定路径
@@ -60,13 +61,20 @@ export function getEnvOverrides(): DeepPartial<AgentDefaults> {
 
   const apiKey = process.env['ANTHROPIC_API_KEY'];
   const baseURL = process.env['ANTHROPIC_BASE_URL'];
+  const provider = process.env['MY_AGENT_PROVIDER'];
   const model = process.env['MY_AGENT_MODEL'];
 
-  if (apiKey || baseURL || model) {
+  if ((provider === undefined) !== (model === undefined)) {
+    throw new Error('MY_AGENT_PROVIDER and MY_AGENT_MODEL must be provided together.');
+  }
+  if (provider !== undefined && model !== undefined) {
+    overrides.model = validateModelReference({ providerId: provider, modelId: model }, 'environment');
+  }
+
+  if (apiKey || baseURL) {
     overrides.llm = {};
     if (apiKey) overrides.llm.apiKey = apiKey;
     if (baseURL) overrides.llm.baseURL = baseURL;
-    if (model) overrides.llm.model = model;
   }
 
   return overrides;
@@ -116,7 +124,11 @@ export function loadConfig(options: LoadConfigOptions): AppConfig {
   // 2. 合并配置文件中的 agents.defaults
   const file = readConfigFile(workspaceDir);
   if (file.agents?.defaults) {
+    validateAgentModelSource(file.agents.defaults, 'agents.defaults');
     defaults = deepMerge(defaults, file.agents.defaults);
+  }
+  for (const entry of file.agents?.list ?? []) {
+    validateAgentModelSource(entry, `agents.list[${entry.id}]`);
   }
 
   // 3. 合并 logger 配置（默认值 + 文件覆盖）
@@ -160,6 +172,8 @@ export function resolveAgentConfig(
   config: AppConfig,
   options?: ResolveOptions,
 ): AgentDefaults {
+  if (options?.envOverrides) validateAgentModelSource(options.envOverrides, 'environment overrides');
+  if (options?.cliOverrides) validateAgentModelSource(options.cliOverrides, 'CLI overrides');
   let resolved = { ...config.agents.defaults };
 
   // 1. per-agent 覆盖
@@ -182,5 +196,29 @@ export function resolveAgentConfig(
     resolved = deepMerge(resolved, options.cliOverrides);
   }
 
+  validateAgentModelSource(resolved, 'resolved agent config');
   return resolved;
+}
+
+function validateAgentModelSource(source: unknown, label: string): void {
+  if (!isPlainObject(source)) return;
+  const llm = source['llm'];
+  if (isPlainObject(llm) && Object.prototype.hasOwnProperty.call(llm, 'model')) {
+    throw new Error(`${label} uses legacy llm.model; use model.providerId and model.modelId.`);
+  }
+  if (Object.prototype.hasOwnProperty.call(source, 'model') && source['model'] !== undefined) {
+    validateModelReference(source['model'], label);
+  }
+}
+
+function validateModelReference(value: unknown, label: string): ModelReference {
+  if (!isPlainObject(value)) {
+    throw new Error(`${label} model must be a structured Provider and Model reference.`);
+  }
+  const providerId = typeof value['providerId'] === 'string' ? value['providerId'].trim() : '';
+  const modelId = typeof value['modelId'] === 'string' ? value['modelId'].trim() : '';
+  if (!providerId || !modelId) {
+    throw new Error(`${label} model requires non-empty providerId and modelId.`);
+  }
+  return Object.freeze({ providerId, modelId });
 }

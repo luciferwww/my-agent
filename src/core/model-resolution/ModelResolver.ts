@@ -34,12 +34,19 @@ export class ModelResolver {
   }
 
   resolve(input: ModelResolutionInput): ResolvedModel {
-    const reference = this.normalizeReference(input.reference, input.defaultProviderId);
+    const reference = this.normalizeReference(input.reference);
     const provider = this.providers.get(reference.providerId);
     if (!provider) {
       throw new ModelResolutionError(
         'provider_unregistered',
         `Provider is not registered: ${reference.providerId}`,
+      );
+    }
+
+    if (!provider.models.some((model) => model.modelId === reference.modelId)) {
+      throw new ModelResolutionError(
+        'model_rejected',
+        `Model is not in the Provider Catalog: ${reference.providerId}/${reference.modelId}`,
       );
     }
 
@@ -134,13 +141,9 @@ export class ModelResolver {
 
   private normalizeReference(
     reference: ModelResolutionInput['reference'],
-    defaultProviderId?: string,
   ): CanonicalModelIdentity {
-    const structured = typeof reference === 'string'
-      ? { providerId: defaultProviderId, modelId: reference }
-      : reference;
-    const providerId = normalizeIdentityPart(structured?.providerId ?? defaultProviderId);
-    const modelId = normalizeIdentityPart(structured?.modelId);
+    const providerId = normalizeIdentityPart(reference?.providerId);
+    const modelId = normalizeIdentityPart(reference?.modelId);
     if (!providerId || !modelId) {
       throw new ModelResolutionError('reference_invalid', 'A valid Provider and Model reference is required.');
     }
@@ -238,7 +241,6 @@ function isCapabilityLimitFact(
   return Boolean(
     isContextLimitFact(fact)
     && fact.source !== 'provider-default'
-    && fact.source !== 'legacy-config',
   );
 }
 
@@ -273,6 +275,5 @@ function isFactSource(source: SourcedFact<unknown>['source']): boolean {
   return (
     isCapabilitySource(source)
     || source === 'provider-default'
-    || source === 'legacy-config'
   );
 }

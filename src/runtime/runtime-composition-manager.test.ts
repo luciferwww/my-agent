@@ -197,6 +197,7 @@ describe('RuntimeCompositionManager', () => {
     const provider: ProviderProjectionEntry = {
       id: 'stable-provider',
       protocol: 'test',
+      models: [{ modelId: 'stable-model' }],
       invocationPort: {} as never,
       resolveConnection: () => ({
         ok: false,

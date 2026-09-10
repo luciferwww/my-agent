@@ -76,6 +76,7 @@ function testProvider(id: string): ProviderProjectionEntry {
   return {
     id,
     protocol: 'test',
+    models: [{ modelId: 'test-model' }],
     invocationPort: {} as never,
     resolveConnection: () => ({ ok: false, category: 'connection_missing', message: 'unused' }),
     resolveModel: () => ({ ok: false, category: 'model_rejected', message: 'unused' }),
@@ -115,7 +116,7 @@ function createHarness(options: {
     resources: {
       memoryManager: options.memoryClose ? { close: options.memoryClose } : null,
       resolvedConfig: {
-        llm: { contextWindowTokens: 1, maxTokens: 1 },
+        llm: { maxTokens: 1 },
         tools: {},
         workspace: { maxFileChars: 1, maxTotalChars: 1 },
         subagents: { enabled: false, list: [] },
@@ -158,6 +159,7 @@ function createHarness(options: {
   let input: RuntimeApplicationKernelInput | undefined;
   const application = Object.freeze({
     runTurn: vi.fn(),
+    getModelCatalog: vi.fn(),
     abortTurn: vi.fn(() => ({ aborted: false, dropped: 0 })),
     reloadContextFiles: vi.fn(),
     getState: vi.fn(),
@@ -210,7 +212,6 @@ describe('Runtime Builder', () => {
     expect(bootstrapRuntime).toHaveBeenCalledTimes(1);
     expect(harness.createApplication).toHaveBeenCalledTimes(1);
     expect(handle.application).toBe(harness.application);
-    expect(harness.getInput()?.resources.defaultProviderId).toBe('test-provider');
     const access = harness.getInput()?.snapshotAccess;
     expect(access?.currentSnapshot().generation).toBe(1);
     const pin = access?.captureRootGeneration();
@@ -261,7 +262,6 @@ describe('Runtime Builder', () => {
     const handle = await buildRuntimeHandle(harness.runtimeOptions, createApplication);
 
     expect(trace).toEqual(['factory', 'create', 'registration', 'start', 'kernel', 'ready']);
-    expect(harness.getInput()?.resources.defaultProviderId).toBe('traced-provider');
     await handle.close();
   });
 
@@ -278,21 +278,20 @@ describe('Runtime Builder', () => {
 
     const handle = await buildRuntimeHandle(harness.runtimeOptions, harness.createApplication);
 
-    expect(harness.getInput()?.resources.defaultProviderId).toBe('test-provider');
     expect(harness.getInput()?.snapshotAccess.currentSnapshot().providers.map(({ id }) => id))
       .toEqual(['test-provider', 'external-provider']);
     await handle.close();
   });
 
-  it('rejects an empty published Provider Snapshot before kernel creation or app_ready', async () => {
+  it('publishes an empty Provider Snapshot without inventing a default Provider', async () => {
     const harness = createHarness({ providerUnit: createProviderUnit([]) });
 
-    await expect(buildRuntimeHandle(harness.runtimeOptions, harness.createApplication))
-      .rejects.toThrow('Published Registry Snapshot must contain at least one Provider entry.');
+    const handle = await buildRuntimeHandle(harness.runtimeOptions, harness.createApplication);
 
-    expect(harness.createApplication).not.toHaveBeenCalled();
-    expect(harness.events.some((event) => event.type === 'app_ready')).toBe(false);
-    expect(harness.baseStop).toHaveBeenCalledTimes(1);
+    expect(harness.createApplication).toHaveBeenCalledTimes(1);
+    expect(harness.getInput()?.snapshotAccess.currentSnapshot().providers).toEqual([]);
+    expect(harness.events.some((event) => event.type === 'app_ready')).toBe(true);
+    await handle.close();
   });
 
   it('attributes required Provider Unit create failure and cleans earlier candidates', async () => {

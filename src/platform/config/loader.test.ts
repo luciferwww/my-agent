@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { loadConfig, resolveAgentConfig, deepMerge } from './loader.js';
+import { loadConfig, resolveAgentConfig, deepMerge, getEnvOverrides } from './loader.js';
 import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from './defaults.js';
 
 // ── deepMerge ────────────────────────────────────────────
@@ -67,7 +67,8 @@ describe('loadConfig', () => {
     await writeFile(join(tmpDir, '.agent', 'config.json'), JSON.stringify({
       agents: {
         defaults: {
-          llm: { maxTokens: 8192, model: 'claude-opus-4-20250514' },
+          llm: { maxTokens: 8192 },
+          model: { providerId: 'anthropic', modelId: 'claude-opus-4-20250514' },
           memory: { search: { maxResults: 10 } },
         },
       },
@@ -77,7 +78,10 @@ describe('loadConfig', () => {
 
     // Overridden values
     expect(config.agents.defaults.llm.maxTokens).toBe(8192);
-    expect(config.agents.defaults.llm.model).toBe('claude-opus-4-20250514');
+    expect(config.agents.defaults.model).toEqual({
+      providerId: 'anthropic',
+      modelId: 'claude-opus-4-20250514',
+    });
     expect(config.agents.defaults.memory.search.maxResults).toBe(10);
 
     // Non-overridden values stay default
@@ -117,8 +121,8 @@ describe('loadConfig', () => {
       agents: {
         defaults: { llm: { maxTokens: 8192 } },
         list: [
-          { id: 'coding', llm: { model: 'claude-opus-4-20250514' } },
-          { id: 'quick', llm: { model: 'claude-haiku-4-20250514' } },
+          { id: 'coding', model: { providerId: 'anthropic', modelId: 'claude-opus-4-20250514' } },
+          { id: 'quick', model: { providerId: 'anthropic', modelId: 'claude-haiku-4-20250514' } },
         ],
       },
     }));
@@ -160,6 +164,27 @@ describe('loadConfig', () => {
   it('tools.fs.workspaceOnly defaults to true', () => {
     const config = loadConfig({ workspaceDir: '/tmp' });
     expect(config.agents.defaults.tools.fs?.workspaceOnly).toBe(true);
+  });
+
+  it('rejects legacy llm.model in configuration files', async () => {
+    await mkdir(join(tmpDir, '.agent'), { recursive: true });
+    await writeFile(join(tmpDir, '.agent', 'config.json'), JSON.stringify({
+      agents: { defaults: { llm: { model: 'legacy-model' } } },
+    }));
+
+    expect(() => loadConfig({ workspaceDir: tmpDir })).toThrow('uses legacy llm.model');
+  });
+
+  it('rejects incomplete structured model references in per-agent entries', async () => {
+    await mkdir(join(tmpDir, '.agent'), { recursive: true });
+    await writeFile(join(tmpDir, '.agent', 'config.json'), JSON.stringify({
+      agents: {
+        list: [{ id: 'partial', model: { modelId: 'model-only' } }],
+      },
+    }));
+
+    expect(() => loadConfig({ workspaceDir: tmpDir }))
+      .toThrow('requires non-empty providerId and modelId');
   });
 
   it('merges tools.allow / deny arrays from config file', async () => {
@@ -207,7 +232,8 @@ describe('resolveAgentConfig', () => {
         list: [
           {
             id: 'coding',
-            llm: { model: 'claude-opus-4-20250514', maxTokens: 16384 },
+            model: { providerId: 'anthropic', modelId: 'claude-opus-4-20250514' },
+            llm: { maxTokens: 16384 },
             memory: { enabled: false },
           },
         ],
@@ -218,7 +244,10 @@ describe('resolveAgentConfig', () => {
     const resolved = resolveAgentConfig(config, { agentId: 'coding' });
 
     // Overridden by list entry
-    expect(resolved.llm.model).toBe('claude-opus-4-20250514');
+    expect(resolved.model).toEqual({
+      providerId: 'anthropic',
+      modelId: 'claude-opus-4-20250514',
+    });
     expect(resolved.llm.maxTokens).toBe(16384);
     expect(resolved.memory.enabled).toBe(false);
 
@@ -266,7 +295,10 @@ describe('resolveAgentConfig', () => {
     await mkdir(join(tmpDir, '.agent'), { recursive: true });
     await writeFile(join(tmpDir, '.agent', 'config.json'), JSON.stringify({
       agents: {
-        defaults: { llm: { apiKey: 'from-file', model: 'from-file' } },
+        defaults: {
+          llm: { apiKey: 'from-file' },
+          model: { providerId: 'file-provider', modelId: 'from-file' },
+        },
         list: [
           { id: 'main', default: true, llm: { apiKey: 'from-list' } },
         ],
@@ -283,10 +315,62 @@ describe('resolveAgentConfig', () => {
     // CLI wins
     expect(resolved.llm.apiKey).toBe('from-cli');
     // model: file set it, list didn't override, env didn't override, CLI didn't override
-    expect(resolved.llm.model).toBe('from-file');
+    expect(resolved.model).toEqual({ providerId: 'file-provider', modelId: 'from-file' });
     // maxTokens: nobody overrode → hardcoded default
     expect(resolved.llm.maxTokens).toBe(4096);
 
     await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('applies structured model precedence as whole valid references', async () => {
+    const tmpDir = await mkdtemp(join(tmpdir(), 'config-model-priority-'));
+    await mkdir(join(tmpDir, '.agent'), { recursive: true });
+    await writeFile(join(tmpDir, '.agent', 'config.json'), JSON.stringify({
+      agents: {
+        defaults: { model: { providerId: 'file', modelId: 'file-model' } },
+        list: [{
+          id: 'main',
+          model: { providerId: 'agent', modelId: 'agent-model' },
+        }],
+      },
+    }));
+
+    const config = loadConfig({ workspaceDir: tmpDir });
+    expect(resolveAgentConfig(config, { agentId: 'main' }).model).toEqual({
+      providerId: 'agent',
+      modelId: 'agent-model',
+    });
+    expect(resolveAgentConfig(config, {
+      agentId: 'main',
+      envOverrides: { model: { providerId: 'env', modelId: 'env-model' } },
+    }).model).toEqual({ providerId: 'env', modelId: 'env-model' });
+    expect(resolveAgentConfig(config, {
+      agentId: 'main',
+      envOverrides: { model: { providerId: 'env', modelId: 'env-model' } },
+      cliOverrides: { model: { providerId: 'cli', modelId: 'cli-model' } },
+    }).model).toEqual({ providerId: 'cli', modelId: 'cli-model' });
+
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('requires MY_AGENT_PROVIDER and MY_AGENT_MODEL as an atomic pair', () => {
+    const previousProvider = process.env['MY_AGENT_PROVIDER'];
+    const previousModel = process.env['MY_AGENT_MODEL'];
+    try {
+      process.env['MY_AGENT_PROVIDER'] = 'anthropic';
+      delete process.env['MY_AGENT_MODEL'];
+      expect(() => getEnvOverrides()).toThrow('must be provided together');
+
+      process.env['MY_AGENT_MODEL'] = 'claude-test';
+      expect(getEnvOverrides().model).toEqual({
+        providerId: 'anthropic',
+        modelId: 'claude-test',
+      });
+    } finally {
+      if (previousProvider === undefined) delete process.env['MY_AGENT_PROVIDER'];
+      else process.env['MY_AGENT_PROVIDER'] = previousProvider;
+      if (previousModel === undefined) delete process.env['MY_AGENT_MODEL'];
+      else process.env['MY_AGENT_MODEL'] = previousModel;
+    }
   });
 });

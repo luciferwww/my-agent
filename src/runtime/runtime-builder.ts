@@ -110,13 +110,6 @@ export async function buildRuntimeHandle(
   const fanoutFailures: Array<{ owner: string; eventType: string; message: string }> = [];
   let fanoutSequence = 0;
   const dependencies = createRuntimeDependencies(options.dependencies);
-  let defaultProviderId: string | undefined;
-  const getDefaultProviderId = (): string => {
-    if (!defaultProviderId) {
-      throw new Error('Default Provider is unavailable before Runtime composition startup.');
-    }
-    return defaultProviderId;
-  };
 
   const fanoutAgentEvent = (event: AgentEvent): Promise<void> => {
     if (kernel && !kernel.shouldDeliverAgentEvent(event)) {
@@ -217,7 +210,6 @@ export async function buildRuntimeHandle(
       routeContextByTurn,
       subagentProfiles,
       onAgentEvent: fanoutAgentEvent,
-      getDefaultProviderId,
     });
     compositionManager = new RuntimeCompositionManager(
       new RuntimeUnitCatalog(assembly),
@@ -231,10 +223,6 @@ export async function buildRuntimeHandle(
       },
     );
     const registrySnapshot = await compositionManager.start();
-    defaultProviderId = registrySnapshot.providers[0]?.id;
-    if (!defaultProviderId) {
-      throw new Error('Published Registry Snapshot must contain at least one Provider entry.');
-    }
     const registeredToolNames = new Set(
       registrySnapshot.tools.definitions.map((tool) => tool.name),
     );
@@ -246,7 +234,7 @@ export async function buildRuntimeHandle(
       subagentProfiles.set(profile.id, profile);
     }
     kernel = createApplication({
-      resources: { ...bootstrap.resources, defaultProviderId },
+      resources: bootstrap.resources,
       state: bootstrap.state,
       subagentProfiles,
       activeParentTurns,
@@ -421,20 +409,17 @@ export async function buildRuntimeHandle(
 
 function assembleLoadedRuntimeUnits(params: {
   readonly options: RuntimeAppOptions;
-  readonly resources: Omit<RuntimeResourceSet, 'defaultProviderId'>;
+  readonly resources: RuntimeResourceSet;
   readonly dependencies: RuntimeDependencies;
   readonly activeParentTurns: Map<string, ActiveParentTurn>;
   readonly routeContextByTurn: Map<string, MessageRouteContext>;
   readonly subagentProfiles: Map<string, SubagentProfile>;
   readonly onAgentEvent: (event: AgentEvent) => Promise<void>;
-  readonly getDefaultProviderId: () => string;
 }): readonly LoadedRuntimeUnit[] {
   const { options, resources, dependencies } = params;
   const providerUnit = dependencies.createBundledProviderUnit({
     apiKey: resources.resolvedConfig.llm.apiKey,
     baseURL: resources.resolvedConfig.llm.baseURL,
-    defaultModel: resources.resolvedConfig.llm.model,
-    legacyContextWindowTokens: resources.resolvedConfig.llm.contextWindowTokens,
     deploymentFacts: resources.resolvedConfig.llm.deploymentFacts,
   });
   const toolOptions = {
@@ -472,7 +457,6 @@ function assembleLoadedRuntimeUnits(params: {
       activeParents: params.activeParentTurns,
       routeContextByTurn: params.routeContextByTurn,
       sessionManager: resources.sessionManager,
-      getDefaultProviderId: params.getDefaultProviderId,
       defaultMaxTokens: resources.resolvedConfig.llm.maxTokens,
       maxDepth,
       executor,
