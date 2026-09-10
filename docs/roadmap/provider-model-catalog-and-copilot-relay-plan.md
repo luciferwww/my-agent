@@ -3,7 +3,7 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 0.5
+- **版本：** 0.8
 - **日期：** 2026-09-10
 - **所有者：** 项目所有者
 - **类型：** Independent post-Foundation Architecture Slice
@@ -13,6 +13,8 @@
 - **工作流：** [Development Workflow](../development-workflow.md)
 
 项目所有者于 2026-09-10 接受本 Plan。接受 Plan 不等于接受 Module Spec、批准 Spike 执行、授权 production Delivery、commit 或 push；这些控制点分别确认。
+
+项目所有者于 2026-09-10 另行接受 [Module Spec v0.8](../architecture/provider-model-catalog-and-copilot-relay-spec.md)。Production Delivery DoR 已完成，但 C1/C2/C3/C4 production 修改仍需单独授权并分别通过 Gate。
 
 在本 Plan 与关联 Spec 被接受并完成对应 Delivery Gate 前，当前源码和既有 Accepted Architecture 仍是实现事实与架构权威；Draft/Proposed 文档中的 target contract 不得被表述为 current behavior。
 
@@ -54,12 +56,14 @@
 
 ### R0 — Copilot Relay Responses Spike
 
+**Plan Item 状态：** Completed — 项目所有者已确认 [Provisional Pass Results](../architecture/copilot-relay-responses-spike-results.md)（2026-09-10）
+
 - 运行已接受的 Spike Spec；
 - 取证 `/v1/models` 和 `/v1/responses` 的 Text、SSE Streaming、Tool round-trip、Image、Usage、Abort 和错误行为；
 - 确定官方 OpenAI SDK 或原生 `fetch` 的最小 Adapter 选择；
 - 产出 Results，清理 disposable code。
 
-**Gate R0：** Results 由项目所有者确认；失败或协议差异回到 Spec，不进入 production Delivery。
+**Gate R0：** Passed — Results 已由项目所有者确认；该 Gate 不接受 Module Spec，也不授权 production Delivery。
 
 ### C1 — Closed Provider Model Catalog Contract
 
@@ -137,19 +141,19 @@
 
 ### 8.1 R0 Spike Ready
 
-- [ ] 本 Plan Accepted；
-- [ ] Spike Spec Accepted 并获单独执行授权；
-- [ ] Relay、credential 和最小调用预算已由项目所有者提供或确认；
-- [ ] 执行前记录工作树状态，确认 disposable artifacts 不覆盖或混入用户及既有 Defect 改动。
+- [x] 本 Plan Accepted；
+- [x] Spike Spec Accepted 并获单独执行授权；
+- [x] Relay、credential 和最小调用预算已由项目所有者提供或确认；
+- [x] 执行前记录工作树状态，确认 disposable artifacts 不覆盖或混入用户及既有 Defect 改动。
 
 ### 8.2 Production Delivery Ready
 
-- [ ] 本 Plan Accepted；
-- [ ] Module Spec Accepted；
-- [ ] Spike Spec Accepted，R0 Results 完成并确认；
-- [ ] 所有 Open Questions 已关闭；
-- [ ] 真实 caller、旧路径删除条件和验证命令明确；
-- [ ] 当前工作树中的用户改动和既有 Defect 改动已明确隔离。
+- [x] 本 Plan Accepted；
+- [x] Module Spec Accepted；
+- [x] Spike Spec Accepted，R0 Results 完成并确认；
+- [x] 所有 Open Questions 已关闭；
+- [x] 真实 caller、旧路径删除条件和验证命令已在 Module Spec §14 明确；
+- [x] 当前工作树边界已记录：本设计里程碑只修改四份关联文档；已有 production、test、script 和其他 untracked 改动不属于本里程碑，后续 Delivery 不得覆盖或混入其 staging。
 
 ## 9. Definition of Done
 

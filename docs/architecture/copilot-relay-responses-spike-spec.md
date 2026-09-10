@@ -2,18 +2,21 @@
 
 ## 1. 状态
 
-- **状态：** Accepted
-- **版本：** 0.3
+- **状态：** Completed
+- **版本：** 0.4
 - **日期：** 2026-09-10
 - **所有者：** 项目所有者
 - **Timebox：** 4 小时
 - **关联 Plan：** [Provider Model Catalog and Copilot Relay Plan](../roadmap/provider-model-catalog-and-copilot-relay-plan.md) R0
 - **关联 Module Spec：** [Provider Model Catalog and Copilot Relay Module Spec](provider-model-catalog-and-copilot-relay-spec.md)
+- **关联 Results：** [Copilot Relay Responses Protocol Spike Results](copilot-relay-responses-spike-results.md)
 - **工作流：** [Development Workflow](../development-workflow.md)
 
 项目所有者于 2026-09-10 接受本 Spike Spec。该接受冻结实验范围，但不等于批准执行 Spike，也不授权 production code、dependency 安装、commit 或 push；这些控制点分别确认。
 
-在本 Spike 被接受并完成 R0 Results Review 前，当前源码、既有 Accepted Architecture 和 Module Spec 中已接受的部分仍是权威；实验观察只能作为证据，不得直接转化为未评审的 production contract。
+项目所有者随后于 2026-09-10 单独授权执行 R0，并于同日确认 `Provisional Pass` Results。Disposable artifact 已清理且验证完成，因此本 Spike 状态为 `Completed`。该确认不表示 Module Spec 已接受或 production Delivery 已授权。
+
+R0 Results Review 已完成。当前源码、既有 Accepted Architecture 和 Module Spec 中已接受的部分仍是权威；实验观察只能作为证据，不得直接转化为未评审的 production contract。
 
 ## 2. Question
 

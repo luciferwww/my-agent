@@ -2,8 +2,8 @@
 
 ## 1. 状态
 
-- **状态：** Draft
-- **版本：** 0.6
+- **状态：** Accepted
+- **版本：** 0.8
 - **日期：** 2026-09-10
 - **所有者：** 项目所有者
 - **关联 Plan：** [Provider Model Catalog and Copilot Relay Plan](../roadmap/provider-model-catalog-and-copilot-relay-plan.md)
@@ -12,9 +12,9 @@
 - **关联既有 Contract：** [Model Resolution Module Spec](model-resolution-module-spec.md)、[Runtime Composition Module Spec](runtime-composition-module-spec.md)、[Channel Module Spec](channel-module-spec.md)
 - **工作流：** [Development Workflow](../development-workflow.md)
 
-本 Spec 冻结 closed Provider Model Catalog、Copilot Relay Provider Extension、Runtime Catalog Query 和 Channel Runtime Capability binding 的候选公共语义。Draft 不授权 production 修改、dependency 安装、commit 或 push。
+项目所有者于 2026-09-10 接受本 Spec v0.8，冻结 closed Provider Model Catalog、Copilot Relay Provider Extension、Runtime Catalog Query 和 Channel Runtime Capability binding 的 target contract。该接受不授权 production 修改、dependency 安装、commit 或 push；C1/C2/C3/C4 Delivery 仍需单独授权并分别通过 Gate。
 
-在本 Spec 被接受并完成对应 Delivery Gate 前，当前源码和既有 Accepted Architecture 仍是实现事实与架构权威；本文中的 interface 和行为描述是 target contract，不得倒推为 current behavior。
+在本 Spec 完成对应 Delivery Gate 前，当前源码和既有 Accepted Architecture 仍是实现事实与架构权威；本文中的 interface 和行为描述是 target contract，不得倒推为 current behavior。
 
 现有 ADR-004 已决定 Provider 是模型事实的权威 producer、Model Resolution 拥有 Catalog view 和 per-Turn binding；ADR-005 已决定 typed Capability、统一 Unit staging 和 immutable Snapshot。本 Slice 不改变这些长期决策，因此不新增 ADR；若 Review 要求 Core 拥有远端目录、Channel 直接访问 Provider 或引入 Service Locator，则必须先修订 ADR。
 
@@ -100,6 +100,8 @@ Registry staging 必须拒绝：
 - 缺失模型目录的旧 Provider entry。
 
 Registry staging 不信任外部 Unit 是否预先冻结 projection。它必须校验后 defensive copy 每个 model entry 和数组，并冻结规范化后的 nested entries、`models` 数组和 Provider projection，再允许进入 Candidate/Snapshot。不得只做浅层 `Object.freeze(provider)`，也不得因调用方传入 mutable source object 而把冻结责任外包给 Extension。
+
+Defensive copy/freeze 的边界是公开 model entries、`models` 数组和 Provider projection shell；`invocationPort` 与 `resolveConnection()` / `resolveModel()` function bindings 仍由发布它们的 Provider Unit instance 拥有，不递归冻结其私有对象图，也不转移 resource/lifecycle ownership。Catalog projection、Resolver binding 和 Invocation binding 必须来自同一个 staged Provider instance 及其同一不可变私有模型 Map。
 
 `displayName` 只用于显示；缺失时调用方回退到 ID。任何 lookup、policy 或 execution 不使用显示名。
 
@@ -220,6 +222,8 @@ Config JSON 使用：
 该 `model` 字段可省略；它不是 Relay 启用或连接所必需的配置，只为未携带 explicit Model Reference 的 Turn 提供 Runtime default。省略后 Runtime 仍可启动，但此类 Turn 按下述规则以 `reference_invalid` 失败。
 
 `agents.list[].model` 沿用现有 per-agent override merge。环境变量使用 `MY_AGENT_PROVIDER` 与 `MY_AGENT_MODEL` 这一对字段形成同一个结构化引用；只设置其中一个是配置错误，不从目录或第一 Provider 补齐另一半。
+
+配置 precedence 固定为 hardcoded baseline → file `agents.defaults` → matching `agents.list[]` override → environment override → CLI config override；per-Turn explicit `ModelReference` 不参与配置 merge，而是在 invocation 时优先于 merged default。`agents.list[].model` 省略时继承 defaults，提供时必须是完整结构化引用；第一版不以 `null`、空字符串或 partial object 表示 per-agent clear。`MY_AGENT_PROVIDER` / `MY_AGENT_MODEL` 在 config resolution 阶段作为一对原子校验，任一侧单独存在即失败。任何层出现 legacy `llm.model` 都先报告迁移错误，不与新 `model` 比较 precedence。
 
 公共语义如下：
 
@@ -347,7 +351,7 @@ Provider Facts 投影：
 
 ### 9.4 Responses Adapter
 
-Extension 内部使用 HTTP `/responses`；是否使用官方 OpenAI SDK 由 R0 Spike 根据 SSE、Abort、Tool 和 custom base URL 证据决定。
+R0 [Spike Results](copilot-relay-responses-spike-results.md) 在本地 Relay 与 `gpt-5.6-sol` 上支持 `Provisional Pass`。第一版选择原生 `fetch` + Extension 私有 bounded SSE parser，不增加 OpenAI SDK dependency。SDK custom base URL 路径因当前项目未安装 SDK 且 dependency 安装未获授权而 Deferred；这不阻塞 raw HTTP 方案。
 
 Adapter 必须把 Core contract 映射为 Responses protocol：
 
@@ -362,19 +366,109 @@ Adapter 必须把 Core contract 映射为 Responses protocol：
 
 Adapter 对 Runner 只实现 `ModelInvocationPort`。Endpoint、stream choice、response IDs、item IDs 和 SDK objects 不越过 Extension boundary。
 
-详细 wire mapping 只有在 R0 Results 确认后才能从 Draft 晋升 Accepted。
+#### 9.4.1 Request mapping
 
-R0 Results 必须把下列证据化 mapping 补入本节后，Module Spec 才能接受；字段名和事件名不得预先猜测：
+Adapter 向 `${baseURL}/v1/responses` 发送 JSON：
 
-| Core semantic | R0 后必须冻结的 Responses evidence |
+| Core semantic | Responses request mapping |
 |---|---|
-| Text delta | exact SSE event type、delta field path、ordering |
-| Tool call | item identity、name、arguments accumulation、completion event |
-| Tool result follow-up | exact correlation input shape 与 identity lifetime |
-| Terminal/stop | terminal event、status 与 Core stop-reason mapping |
-| Usage | authoritative event/response field 与单次 emission rule |
-| Abort | pre-content/mid-stream settlement、terminal suppression、resource cleanup |
-| Error | HTTP/status/type/request-id/message 的脱敏 extraction |
+| Model | `model` |
+| Output limit | `max_output_tokens` |
+| System instruction | `instructions` |
+| User text | ordered `input` message with `role: 'user'` and `content[].type: 'input_text'` |
+| Assistant text history | ordered `input` message with `role: 'assistant'` and `content[].type: 'output_text'` |
+| Image | user content `{ type: 'input_image', image_url: 'data:<media-type>;base64,...' }` |
+| Tool definition | `{ type: 'function', name, description, parameters: inputSchema }` in `tools` |
+| Historical Tool Call | stateless `{ type: 'function_call', call_id, name, arguments }` input item |
+| Tool Result | `{ type: 'function_call_output', call_id: tool_use_id, output: content }` |
+| Streaming | `stream: true`；non-stream `chat()` 可使用相同 mapping 后收集完整 response |
+
+第一版使用 stateless history replay，不依赖 Relay response storage 或 `previous_response_id`。R0 中单独使用 `previous_response_id` 回传 Tool output 被 Relay 以 HTTP 400 拒绝，而重放完整 `function_call` 并追加相同 `call_id` 的 `function_call_output` 成功。
+
+#### 9.4.2 SSE and Core event mapping
+
+Text path 的实测顺序为：
+
+```text
+response.created
+response.in_progress
+response.output_item.added (message)
+response.content_part.added
+response.output_text.delta × N
+response.output_text.done
+response.content_part.done
+response.output_item.done
+response.completed | response.incomplete
+```
+
+Adapter 投影：
+
+- 首个 `response.created` → 一个 Core `message_start`；
+- 每个 `response.output_text.delta.delta` → 一个 Core `text_delta.text`；
+- `response.completed` / `response.incomplete` 按 §9.4.4 产生一个 Core `message_end`；
+- `response.failed` 或 SSE `error` → normalized Core `error`，不产生成功 `message_end`；
+- 未知非 terminal event 第一版可忽略；未知 terminal event、缺失 terminal 或重复 terminal 必须 fail closed 为 normalized Provider error。
+
+#### 9.4.3 Tool Call and correlation
+
+Tool path 的实测顺序为：
+
+```text
+response.output_item.added (function_call)
+response.function_call_arguments.delta × N
+response.function_call_arguments.done
+response.output_item.done (function_call)
+response.completed
+```
+
+`response.output_item.done.item` 提供完整 `call_id`、`name` 和 JSON string `arguments`。Adapter 在该事件到达时解析 arguments 并只发出一个 complete Core `tool_call`：
+
+- Core `ToolCall.callId = item.call_id`；
+- `name = item.name`；
+- object JSON 映射为 ready input；malformed JSON 或非 object 沿用 Core 现有 invalid input state；
+- duplicate/blank `call_id` 或 blank name 按 Provider protocol error fail closed。
+
+R0 观察到 arguments deltas 拼接后等于 done arguments，但 Relay 的 `item.id` 和 arguments delta `item_id` 在同一次调用内不稳定，且各 delta 的 `item_id` 也可能不同。Adapter 不得用 `item_id` 关联、持久化或生成 Core Tool identity，并以每个 `response.output_item.done` 的完整 item 作为 Core emission authority。单 Tool sample 中 `output_index` 保持稳定，但 parallel Tool behavior 未取证且仍是第一版非目标，不据此冻结并行关联算法。
+
+Tool result follow-up 只使用 Relay 返回的 `call_id`。Core 历史 `tool_use.id` 保存该值，后续 `function_call` 和 `function_call_output` 使用相同 `call_id` stateless replay。
+
+#### 9.4.4 Terminal, stop reason and Usage
+
+| Responses terminal | Core projection |
+|---|---|
+| `response.completed`，未产生 Tool Call | `message_end { stopReason: 'end_turn' }` |
+| `response.completed`，已产生一个或多个 Tool Call | `message_end { stopReason: 'tool_use' }` |
+| `response.incomplete` 且 `response.incomplete_details.reason === 'max_output_tokens'` | `message_end { stopReason: 'max_tokens' }` |
+| `response.failed`、SSE `error`、未知 incomplete reason | normalized Core `error`；无成功 `message_end` |
+
+Streaming Usage 只从 terminal event 的 `event.response.usage.input_tokens` / `output_tokens` 读取并随唯一 `message_end` 发出一次。Non-stream Usage 从 top-level `response.usage` 读取。`total_tokens`、detail fields 和 Relay-specific `copilot_usage` 第一版不进入 Core contract。
+
+`response.completed` 或已识别的 max-token `response.incomplete` 若缺失有效非负整数 `input_tokens` / `output_tokens`，按 normalized Provider protocol error fail closed，不发送 `message_end`。
+
+#### 9.4.5 Abort and resource settlement
+
+同一个 Core `AbortSignal` 传给 `fetch` 并约束 response body consumption。R0 观察：
+
+- request 发起后、首个 content 前 Abort 在约 5 ms 内以 AbortError settled，successful terminal count 为 0；
+- 首个 `response.output_text.delta` 后 Abort 在约 2 ms 内以 AbortError settled，没有观察到 terminal event；
+- Adapter 捕获 AbortError 后沿用现有 Core error path，不转换为 Provider failure，不发送 `message_end`；
+- reader/body 必须释放，任何后续 SSE event 不再投影。
+
+上述时间是本次环境观察值，不构成通用 SLA；契约要求是有界 settlement 和无 success terminal。
+
+#### 9.4.6 Error extraction and known limits
+
+R0 的 invalid model、invalid max output 和 malformed Tool output 均返回 HTTP 400、`application/json`，body 为 `error.type = 'invalid_request_error'`、`error.message` 和可选 `error.code`。测试失败响应没有 request-id header 或 body field；成功响应包含 `x-request-id` 与 `x-github-request-id`。
+
+Adapter：
+
+- 按 HTTP 400 映射 `ModelInvocationError('invalid_request')`；其他状态沿用 Provider-neutral category mapping；
+- 从 bounded `error.type`、`error.message`、可选 `error.code` 以及已知 request-id headers/body field 提取脱敏 diagnostics；request ID 必须可选；
+- 不记录 raw response、prompt、base64、Tool input/result 或 schema content；
+- 以下是由 Core settlement contract 推导、尚未由 R0 live call 验证的 C2 要求：fixture tests 必须覆盖 malformed frame、partial UTF-8、`[DONE]`、重复/乱序 terminal 和 terminal 前 early close；
+- 多图、图片大小、parallel Tool Calls、structured output、reasoning policy、background response、response storage 和 WebSocket Responses 仍是第一版非目标。
+
+项目所有者已于 2026-09-10 确认 R0 Results，并随后单独接受本 evidence-based mapping。R0 确认与 Module Spec 接受是两个独立控制点，均不授权 production Delivery。
 
 ## 10. Channel Runtime Capability Binding
 
@@ -404,8 +498,11 @@ interface ChannelInstance {
 
 约束：
 
+- `ModelCatalogQuery` 由 Runtime Composition 基于唯一 current Registry Snapshot access 构造并交给 Runtime/Channel binding；Channel 不创建、不缓存 Registry 或 Provider projection；
 - Runtime 在 `ChannelInstance.start()` 前同步绑定；
 - capability object 与 nested Ports 冻结；
+- 每次 `getSnapshot()` 同步读取调用线性化点上的 current published generation，并返回由该 immutable Registry Snapshot 投影或缓存的深度冻结 DTO；不得返回 candidate、partial generation 或 mutable source reference；
+- query 不 acquire generation pin、不触发 Provider/Extension code 或 I/O，也不等待 retirement；同一长期 Channel binding 在 publish 后的下一次查询自动观察新 generation；
 - 不传 `RuntimeApplication`、Registry、Provider entries 或 arbitrary token lookup；
 - 一个绑定入口可以增加经过 Spec 接受的 typed Capability Port，但不是 Service Locator；
 - Query 与有副作用 Command 即使共用绑定入口，仍放在不同 nested Port；
@@ -477,10 +574,13 @@ Server → Client：
 
 - Provider Catalog 是 Registry Snapshot 的一部分，与 Provider Invocation binding 同 generation 发布；
 - Root Turn 在既有 dequeue/start transition 捕获 generation；Model resolution 和 execution 使用该 generation；
-- `getModelCatalog()` 返回查询时 current generation 的完整原子快照；
+- `getModelCatalog()` / `ModelCatalogQuery.getSnapshot()` 返回查询线性化点上 current generation 的完整原子 DTO；其线性化点是同步读取唯一 current Snapshot pointer；
+- `commitPublish()` 的同步 current-pointer switch 与同步 Catalog query 在 JavaScript event loop 中不能交错：query-before-publish 返回 N，publish-before-query 返回 N+1；不得观察 candidate 或混合 projection；
 - reload 发布新 generation 后，新查询返回新目录，旧 in-flight Turn 不切换；
 - Channel model selector 状态不是 Runtime global state；不同 CLI/Web clients 可以选择不同引用；
 - Catalog query 不阻塞或中止 Turn，不触发 Provider I/O；
+- startup publish 成功前不交付 `RuntimeApplication`，Channel 也不获得 capability；未绑定 Channel 使用 §10/§12 的 `SERVER_NOT_READY` 或本地不可用行为；
+- Runtime 进入 closing 后，已绑定 query 在 Channel stop 前仍可返回最后一次成功发布的 current Catalog DTO，不创建新 generation 或延长任何 pin；Channel stop 后继续调用该 Port 不属于受支持行为；
 - Relay discovery 只在 candidate Unit create 中发生，失败遵循 candidate cleanup 与 no-publication 规则。
 
 ## 12. Errors
@@ -493,7 +593,9 @@ Server → Client：
 | configured default 不在 current Catalog | degraded startup；Catalog 返回 unavailable 原引用/原因；无 explicit model 的 Turn 在 Invocation 前失败 |
 | Relay discovery transport/HTTP/JSON/Schema 失败 | startup 隔离 optional Unit 并发布其余 Catalog；reload candidate 失败时 current generation 不变 |
 | Relay model metadata 缺必要 facts | 不进入 Relay Catalog；记录 bounded startup diagnostic count，不记录原始 terms/content |
-| Responses invocation 失败 | `ModelInvocationError` + 脱敏 Provider diagnostics |
+| Responses HTTP 400 / invalid request | `ModelInvocationError('invalid_request')`；读取 bounded `error.type/message/code`，request ID 可选 |
+| Responses failed/error、未知 terminal、缺失或重复 terminal | normalized `ModelInvocationError`；无成功 `message_end` |
+| Responses AbortError | 沿用 AbortError Core error path；无 `message_end` |
 | Channel 未绑定 Catalog capability | `SERVER_NOT_READY` 或 CLI 本地不可用提示 |
 | stale Web/CLI selection | Channel 可提前提示；Resolver 必须最终返回 `model_rejected` |
 
@@ -512,20 +614,31 @@ Server → Client：
 
 ## 14. Compatibility and Migration
 
-| Current | Target | Gate |
-|---|---|---|
-| Provider entry 没有 required Catalog；`resolveModel()` 可接受未发布 ID | required、规范化、深度冻结的 closed `models`；Resolver 先检查成员资格 | C1 |
-| Builtin Anthropic 允许 string custom model 进入解析 | 只发布 static Catalog 与 exact `deploymentFacts` 可证明的模型 | C1 |
-| `llm.model?: string` + 第一 Provider 推断 default | `AgentDefaults.model?: ModelReference`；成对 env override；旧字段明确拒绝 | C1 |
-| Runtime 无 public Catalog query | `getModelCatalog()` 返回 generation-scoped transport DTO | C1 |
-| 无 Relay Provider | optional in-repo external Relay Unit，经 `loadedUnits` 组合 | C2 |
-| `bindAbortHooks()` | `bindRuntimeCapabilities({ modelCatalog, abort })` | C3 原子替换 |
-| CLI/Web 模型自由文本或无目录查询 | CLI commands 与 Web selector 只使用 current Catalog | C3 |
-| WebSocket 历史 mixed-case wire | 既有消息保持；新增 Catalog 消息使用 snake_case | C3 |
+### 14.1 Delivery migration matrix
+
+| Gate | Current production/test surfaces | 唯一 Target | 删除与完成条件 |
+|---|---|---|---|
+| C1 Provider Catalog | `core/model-resolution/types.ts`、`ModelResolver.ts`、`runtime/registry-builder.ts`、Builtin Anthropic Provider 及对应 Fake/tests | required、规范化、深度冻结的 closed `models`；Resolver 在 connection/invocation 前检查 exact membership；Anthropic 只发布 static Catalog 与 exact `deploymentFacts` 可证明的模型 | 所有 Provider/Fake 同批迁移；缺 Catalog、duplicate/invalid ID、mutable nested source 和目录外 invocation contract tests 通过；不存在接受任意 custom model 的 Provider/Resolver 分支 |
+| C1 default/config | `platform/config/types.ts`/`defaults.ts`/`loader.ts`/Wizard；`RuntimeResourceSet.defaultProviderId`；Runtime Builder first-provider assignment 与 `getDefaultProviderId()`；`RuntimeApp` 对 `resolvedConfig.llm.model` 的 fallback；`ModelResolver.normalizeReference(..., defaultProviderId)`；`subagent-orchestration.ts`；`compat/model-resolution/legacy-static-config.ts` 及 tests；`scripts/cli.ts`、`server.ts`、`websocket.ts`、`test-abort-live.ts`、`test-subagent-live.ts`、`test-config-integration.ts` | `AgentDefaults.model?: ModelReference` 是唯一 default authority；required structured `ModelReference` 直接进入 root/child resolution；Runtime config scripts 传完整 `model` reference 或 paired env override；Turn explicit reference 保持最高 invocation priority | 删除 `RuntimeResourceSet.defaultProviderId`、Builder first-provider/default getter、Resolver default-provider 参数、`createLegacyStaticModelResolver()`、string/partial reference 和 `llm.model` consumption；legacy field 只允许出现在 migration diagnostics/negative tests；列出的 Runtime scripts、Schema、Wizard、root/child callers、Fake/tests 原子迁移，不保留 dual read 或第一 Provider 补全；Provider-specific direct wire probes 可继续使用其私有 model ID，不得成为 Runtime default authority |
+| C1 Runtime query | `runtime/runtime-composition.ts`、`composition-coordinator.ts`、`runtime-composition-manager.ts`、`RuntimeApp` 与 Runtime tests | Runtime-owned current-generation `getModelCatalog()` / `ModelCatalogQuery`，按 §7/§10/§11 投影 immutable transport DTO | startup、query-before/after-publish、long-lived Channel N→N+1、closing 和 mutation tests 通过；已开始 Turn 仍使用 pinned N |
+| C2 Relay | 当前无 Relay Provider；Host/Composition Root 只有通用 `loadedUnits` acquisition | in-repo optional external Relay Unit；raw `fetch` + private bounded SSE parser；`/v1/models` immutable private Map | §15.2 unit/parser/adapter tests 与真实 Relay smoke 通过；direct Relay factory import 只在 Composition Root；无 SDK dependency、package-specific Runtime path 或 disposable Spike artifact |
+| C3 Channel binding | `ChannelInstance.bindAbortHooks`、`CliChannel.bindAbortHooks()`、`WebSocketChannel.bindAbortHooks()`、`runtime/channel-lifecycle.ts` 注入点及对应 Fake/tests | 一次性 `ChannelInstance.bindRuntimeCapabilities({ modelCatalog, abort })`，CLI/WebSocket 实现同名 typed binding，并在 `start()` 前同步注入 | 所有 production/Fake/tests 同批迁移，`bindAbortHooks` residual 为零；未绑定、reload 后 query 和 Abort regressions 通过，不保留第二绑定入口 |
+| C3 selector/wire | CLI 无 Catalog commands；Web Client `form.model` 自由文本；WebSocket Channel/client/tests | CLI `/models`/`/model`；WebSocket `get_model_catalog`/`model_catalog`；Catalog-driven Provider/Model selector；`run_turn.model_reference` 保持结构化 | 自由文本 model input/producer 删除；hello gate、request correlation、unavailable default、stale selection、escaping 和 direct API fail-closed tests 通过；既有 mixed-case fields 不重命名 |
+| C4 convergence | active Current Architecture、Fitness、README/运行脚本中仍描述 current legacy behavior | active architecture、operator docs 与实现一致；historical evidence 保留历史状态 | §15.4 全部通过；exact residual scans 仅剩明确允许的 migration diagnostics/negative tests；不为 example-only 历史片段做机械同步 |
 
 迁移时同步更新全部 Fake/tests、Config Schema、Wizard、examples、Current Architecture 与 Fitness。不建立 feature flag、双 Resolver、双 default config、双 Channel binding 或自由输入 fallback；被替代路径及其 Compatibility tests 在对应 Gate 删除。
 
 现有 Session 不保存全局模型选择，因此不迁移 Session 文件。既有历史跨 Provider 可移植性不在本 Slice。
+
+Accepted Runtime Composition Spec §4 记录的是 Slice 4 历史迁移 baseline，并明确不是目标 Contract；其 §6.5 canonical intake target 已在 current Runtime/queue/WebSocket source 中交付为 `modelReference` 与 `requestOverride.maxOutputTokens`。旧 `RunTurnParams.model` / request-level `maxTokens` aliases 因此不属于本 Slice 的 current migration。C1/C3 必须保持该 current baseline 及其 negative tests，不得把 `ModelInvocationRequest.maxTokens`、resolved model limits 或 Provider wire `maxTokens` 等合法执行字段误判为 legacy request alias。
+
+### 14.2 Gate validation commands and residual scans
+
+- C1 focused：`npm test -- src/core/model-resolution/ModelResolver.test.ts src/compat/model-resolution/legacy-resolution.test.ts src/runtime/registry-builder.test.ts src/runtime/composition-coordinator.test.ts src/runtime/runtime-composition-manager.test.ts src/runtime/runtime-builder.test.ts src/runtime/RuntimeApp.test.ts src/runtime/RuntimeApp.intake.test.ts src/runtime/subagent-orchestration.test.ts src/platform/config/loader.test.ts src/platform/config/wizard/fields.test.ts src/platform/config/wizard/diff.test.ts`；
+- C2 pre-delivery evidence 是已接受的 R0 Results 与 disposable artifact absence；C2 实施创建目标目录和 smoke 后，Gate 命令为 `npm test -- src/extensions/copilot-relay-provider` 与 `npx tsx scripts/test-copilot-relay-live.ts`；smoke 默认只允许 loopback Relay，credential 不进入输出；
+- C3 focused：`npm test -- src/adapters/channel/CliChannel.test.ts src/adapters/channel/WebSocketChannel.test.ts src/runtime/channel-lifecycle.test.ts src/runtime/RuntimeApp.test.ts`，并以本地 Web Client browser smoke 验证 Catalog selector、escaping、unavailable default 和 structured submit；
+- C4/Fitness：`npm test -- src/architecture-fitness`；broad validation：`npm run lint`、`npm test`、`npm run build`、`git diff --check`；
+- deletion scans：`git grep -n "defaultProviderId" -- src clients scripts` 与 `git grep -n "bindAbortHooks" -- src clients scripts` 必须无结果；`git grep -n -E "llm\\.model|form\\.model" -- src clients scripts` 只允许已评审的 migration diagnostic/negative-test allowlist；`git grep -n -E "RunTurnParams.*model|maxTokens.*RunTurnParams" -- src` 必须无 legacy request alias，仅合法 Provider/Core limit vocabulary 可保留；`MY_AGENT_PROVIDER` / `MY_AGENT_MODEL` 必须只作为成对 config input 或显式 live-script pair 使用，不得再次推断第一 Provider。
 
 ## 15. Acceptance and Validation
 
@@ -542,6 +655,8 @@ Server → Client：
 - [ ] `/v1/models` 只纳入 `/responses` entry 和具备必要 facts 的模型；
 - [ ] `gpt-5.6-sol` 映射为保守 context/prompt limit、128000 output、Tool/Image facts；
 - [ ] Text、Streaming projection、Tool round-trip、Image、Usage、Abort、error normalization 通过；
+- [ ] Responses parser fixtures 覆盖 partial UTF-8、malformed frame、`[DONE]`、Tool `item_id` 不稳定、重复/乱序 terminal 和 early close；
+- [ ] Tool output 使用 stateless `function_call` + `function_call_output` replay，不依赖 `previous_response_id`；
 - [ ] discovery failure 不发布 partial Provider，不污染 current generation；
 - [ ] Extension private Metadata/SDK types 不越过边界；
 - [ ] Relay-specific direct import 只存在于 Composition Root；源码路径不参与 Unit identity，且 Architecture Fitness 证明 Relay 不被 Core、RuntimeApp、Runner、Registry、Model Resolver 或 Channel 直接依赖；
@@ -567,8 +682,8 @@ Server → Client：
 
 ## 16. Open Questions
 
-以下问题在 Spec Accepted 前必须关闭：
+R0 已为 SSE event、Tool correlation、Abort 和 raw HTTP custom base URL 提供 evidence-based mapping；没有剩余技术 Open Question。OpenAI SDK 路径 Deferred，第一版已选择 raw `fetch`，不构成 Module Spec blocker。
 
-1. R0 对 Responses SSE event、Tool item correlation、Abort 和 official SDK custom base URL 的结论，以及据此补入 §9.4 的规范 mapping。
+[R0 Results](copilot-relay-responses-spike-results.md) 已由项目所有者于 2026-09-10 确认。项目所有者随后评审并于同日接受 §9.4 mapping 与完整 Spec v0.8；没有剩余技术 Open Question。该接受关闭设计 Gate，但不授权 C1/C2/C3/C4 production Delivery。
 
 Relay Unit options、Host/env 命名和 credential 来源已在 v0.4 关闭：Host 读取 `COPILOT_RELAY_BASE_URL` / `COPILOT_RELAY_API_KEY` 并通过 `loadedUnits` 显式组合；Extension 只接收 validated options，不读取环境或全局配置。
