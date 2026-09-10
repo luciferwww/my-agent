@@ -1,10 +1,11 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, posix, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
   collectFt11ApiM04Baseline,
   collectFt11DocumentReferenceAudit,
+  findApiM04CodeResiduals,
   findFt11DocumentDispositionViolations,
 } from './rules.js';
 import type {
@@ -38,6 +39,7 @@ const AUDIT_METADATA = new Set([
   'src/architecture-fitness/ft-11-document-disposition.test.ts',
   'src/architecture-fitness/ft-11-document-surface.json',
   'src/architecture-fitness/rules.ts',
+  'src/architecture-fitness/ft-12-current-architecture.test.ts',
   'src/architecture-fitness/ft-12-current-architecture-surface.json',
 ]);
 const ACTIVE_NAVIGATION_DOCUMENTS = new Set([
@@ -59,6 +61,23 @@ const S6_D5_DEFERRED_IDS = new Set(['DOC-A04', 'DOC-A05']);
 const S6_D6_DELETED_IDS = new Set(Array.from({ length: 12 }, (_, index) => (
   `DOC-V${String(index + 1).padStart(2, '0')}`
 )));
+const S6_D8_RETAINED_IDS = new Set([
+  ...Array.from({ length: 13 }, (_, index) => `DOC-C${String(index + 1).padStart(2, '0')}`),
+  'DOC-A08',
+  'DOC-A09',
+]);
+const S6_D8_FINAL_CHECKS = new Set([
+  'terminalStateAudit',
+  'referenceAndAnchorAudit',
+  'apiM04Audit',
+  'currentArchitectureAudit',
+  'architectureFitness',
+  'lint',
+  'cleanBuild',
+  'fullTests',
+  'integrationValidation',
+  'independentReview',
+]);
 let manifest: Ft11DispositionManifest;
 let expectedDocuments: Ft11FrozenDocument[];
 let inventoryDocuments: Ft11ExpectedDocument[];
@@ -96,7 +115,7 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
       },
       {
         path: 'docs/navigation.md',
-        content: '<a href="architecture/current/overview.md">Current</a>\n```md\n[ignored](architecture/v1.0/platform-config-wizard-design.md)\n```',
+        content: '<a href="architecture/current/overview.md">Current</a>\n```md\n[ignored](architecture/v1.0/platform-config-wizard-design.md)\n```\n~~~markdown\n[also ignored](architecture/v1.0/platform-config-wizard-design.md)\n~~~',
         category: 'activeDocs',
       },
       {
@@ -142,7 +161,50 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
   });
   // FT11_FIXTURE_REFERENCES_END
 
-  it('locks 52 entries, exact inbound references, and the S6-D6 disposition boundary', () => {
+  it('rejects every API-M04 facade path and deprecated alias in authored code', () => {
+    const fixtures: SourceInput[] = [
+      {
+        path: 'src/adapters/llm/types.ts',
+        content: 'export type { ModelInvocationPort as LLMClient } from "../../core/model-invocation/index.js";',
+      },
+      {
+        path: 'src/example.ts',
+        content: 'import type { ChatParams } from "./core/model-invocation/index.js"; type Event = StreamEvent;',
+      },
+      {
+        path: 'src/consumer.ts',
+        content: 'export type * from "./adapters/llm/types.js";',
+      },
+      {
+        path: 'src/string-reference.ts',
+        content: 'const facade = "./adapters/llm/types.ts";',
+      },
+      {
+        path: 'src/template-reference.ts',
+        content: 'const facade = `./adapters/llm/types`;',
+      },
+    ];
+
+    expect(findApiM04CodeResiduals(fixtures)).toEqual([
+      'API-M04 path=src/adapters/llm/types.ts symbol=LLMClient violation=deprecated-alias',
+      'API-M04 path=src/adapters/llm/types.ts violation=facade-file-present',
+      'API-M04 path=src/consumer.ts violation=facade-path-reference',
+      'API-M04 path=src/example.ts symbol=ChatParams violation=deprecated-alias',
+      'API-M04 path=src/example.ts symbol=StreamEvent violation=deprecated-alias',
+      'API-M04 path=src/string-reference.ts violation=facade-path-reference',
+      'API-M04 path=src/template-reference.ts violation=facade-path-reference',
+    ]);
+    expect(findApiM04CodeResiduals(referenceSources)).toEqual([]);
+  });
+
+  it('does not publish the removed API-M04 facade as a generated package artifact', async () => {
+    await expect(stat(join(REPOSITORY_ROOT, 'dist', 'adapters', 'llm', 'types.d.ts')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(join(REPOSITORY_ROOT, 'dist', 'adapters', 'llm', 'types.js')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('locks 52 entries, exact inbound references, and the S6-D8 terminal boundary', () => {
     expect(findFt11DocumentDispositionViolations(
       manifest,
       expectedDocuments,
@@ -160,8 +222,9 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
     });
     expect(Object.entries(manifest.entryStateById)
       .filter(([id]) => id.startsWith('DOC-C'))
-      .every(([, state]) => state.transitionState === 'Migrated'
-        && state.finalDisposition === 'Retain Current Authority')).toBe(true);
+      .every(([, state]) => state.transitionState === 'Reviewed'
+        && state.finalDisposition === 'Retain Current Authority'
+        && state.reviewerResult === 'validated-awaiting-owner-acceptance')).toBe(true);
     expect(Object.entries(manifest.entryStateById)
       .filter(([id]) => !id.startsWith('DOC-C')
         && id !== 'DOC-A08'
@@ -172,9 +235,30 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
         && !S6_D6_DELETED_IDS.has(id))).toEqual([]);
     expect(['DOC-A08', 'DOC-A09'].every((id) => {
       const state = manifest.entryStateById[id];
-      return state?.transitionState === 'Migrated'
-        && state.finalDisposition === 'Retain Active Navigation';
+      return state?.transitionState === 'Reviewed'
+        && state.finalDisposition === 'Retain Active Navigation'
+        && state.reviewerResult === 'validated-awaiting-owner-acceptance';
     })).toBe(true);
+    expect(new Set(Object.keys(manifest.s6D8RetainedReviewById ?? {}))).toEqual(S6_D8_RETAINED_IDS);
+    expect([...S6_D8_RETAINED_IDS].every((id) => {
+      const review = manifest.s6D8RetainedReviewById?.[id];
+      const isCurrentAuthority = id.startsWith('DOC-C');
+      return review?.stateHistory.join('>') === 'Pending>Migrating>Migrated>Reviewed'
+        && review.terminalDisposition === (isCurrentAuthority
+          ? 'Retain Current Authority'
+          : 'Retain Active Navigation')
+        && review.evidence.length > 0;
+    })).toBe(true);
+    expect(manifest.s6D8IndependentReviewStatus).toBe('ready-awaiting-owner-acceptance');
+    expect(new Set(Object.keys(manifest.s6D8FinalValidation?.checks ?? {})))
+      .toEqual(S6_D8_FINAL_CHECKS);
+    expect(Object.values(manifest.s6D8FinalValidation?.checks ?? {}).every((check) => (
+      check.status === 'passed' && check.evidence.length > 0
+    ))).toBe(true);
+    expect(manifest.s6D8FinalValidation).toMatchObject({
+      status: 'passed-awaiting-owner-acceptance',
+      ownerAcceptance: 'pending',
+    });
     expect([...S6_D4_DELETED_IDS].every((id) => {
       const state = manifest.entryStateById[id];
       const entry = manifest.candidates.find((candidate) => candidate.id === id);
@@ -266,6 +350,23 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
     expect(pendingCandidateLinks).toEqual([]);
   });
 
+  it('allows the explicit S6-D8 Owner-accepted terminal transition', () => {
+    const accepted = structuredClone(manifest);
+    accepted.status = 'completed-owner-accepted';
+    accepted.s6D8IndependentReviewStatus = 'ready-owner-accepted';
+    if (!accepted.s6D8FinalValidation) throw new Error('Missing S6-D8 validation fixture');
+    accepted.s6D8FinalValidation.status = 'passed-owner-accepted';
+    accepted.s6D8FinalValidation.ownerAcceptance = 'accepted';
+
+    expect(findFt11DocumentDispositionViolations(
+      accepted,
+      expectedDocuments,
+      availablePaths,
+      actualReferences,
+      actualApiM04Baseline,
+    )).toEqual([]);
+  });
+
   it('requires local Markdown successor paths and fragments to resolve', () => {
     const markdownByPath = new Map(
       referenceSources
@@ -293,6 +394,57 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
         }
       }
     }
+  });
+
+  it('requires every repository Markdown link and local anchor to resolve', async () => {
+    const markdownSources = referenceSources.filter((source) => source.path.endsWith('.md'));
+    const broken: string[] = [];
+
+    for (const source of markdownSources) {
+      const { destinations, missingReferences } = collectMarkdownDestinations(source.content);
+      for (const label of missingReferences) {
+        broken.push(`${source.path} reference=${label} violation=missing-reference-definition`);
+      }
+      for (const destination of destinations) {
+        if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/iu.test(destination)) continue;
+        const [encodedTarget = '', fragment] = destination.split('#', 2);
+        let targetPart: string;
+        try {
+          targetPart = decodeURIComponent(encodedTarget);
+        } catch {
+          broken.push(`${source.path} target=${destination} violation=invalid-target-encoding`);
+          continue;
+        }
+        const targetPath = targetPart
+          ? posix.normalize(posix.join(posix.dirname(source.path), targetPart))
+          : source.path;
+        const target = join(REPOSITORY_ROOT, ...targetPath.split('/'));
+        const targetKind = await classifyLocalTarget(target);
+        if (targetKind === 'missing') {
+          broken.push(`${source.path} target=${destination} violation=missing-target`);
+          continue;
+        }
+        if (targetKind === 'non-file') {
+          broken.push(`${source.path} target=${destination} violation=target-not-file`);
+          continue;
+        }
+        if (!fragment || !targetPath.endsWith('.md')) continue;
+        const targetContent = await readFile(target, 'utf8');
+        if (!hasMarkdownAnchor(targetContent, fragment)) {
+          broken.push(`${source.path} target=${destination} violation=missing-anchor`);
+        }
+      }
+    }
+
+    expect(broken).toEqual([]);
+  });
+
+  it('rejects directory link targets and fenced-code pseudo-anchors', async () => {
+    expect(await classifyLocalTarget(join(REPOSITORY_ROOT, 'docs'))).toBe('non-file');
+    expect(await classifyLocalTarget(join(REPOSITORY_ROOT, 'README.md'))).toBe('file');
+    expect(hasMarkdownAnchor('```markdown\n# Example Only\n```', 'example-only')).toBe(false);
+    expect(hasMarkdownAnchor('~~~markdown\n<a id="example-only"></a>\n~~~', 'example-only')).toBe(false);
+    expect(hasMarkdownAnchor('# Actual Heading', 'actual-heading')).toBe(true);
   });
 
   it('rejects identity, path, category, field, ledger, disposition, state, and API drift', () => {
@@ -332,6 +484,29 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
     v1ChangeReview.stateHistory.splice(3, 1);
     v1ChangeReview.stableHistoricalLocator = 'yes-unmapped-evidence';
     v1DesignReview.verifiedCurrentFact = 'yes-unmigrated';
+    invalid.s6D7IndependentReviewStatus = 'accepted-without-review';
+    const apiM04Removal = invalid.s6D7ApiM04Removal;
+    if (!apiM04Removal) throw new Error('Missing S6-D7 API-M04 removal fixture');
+    apiM04Removal.stateHistory.splice(3, 1);
+    apiM04Removal.dualPath = true;
+    invalid.s6D8IndependentReviewStatus = 'ready-owner-accepted';
+    const retainedState = invalid.entryStateById['DOC-C01'];
+    const retainedReview = invalid.s6D8RetainedReviewById?.['DOC-C01'];
+    const navigationReview = invalid.s6D8RetainedReviewById?.['DOC-A08'];
+    const finalValidation = invalid.s6D8FinalValidation;
+    if (!retainedState || !retainedReview || !navigationReview || !finalValidation) {
+      throw new Error('Missing S6-D8 closeout fixtures');
+    }
+    retainedState.transitionState = 'Migrated';
+    retainedReview.stateHistory.pop();
+    retainedReview.terminalDisposition = 'Delete After Migration';
+    retainedReview.evidence = [];
+    navigationReview.verifiedCurrentFact = 'no-stale-navigation';
+    delete invalid.s6D8RetainedReviewById?.['DOC-A09'];
+    finalValidation.status = 'completed-without-owner';
+    delete finalValidation.checks.integrationValidation;
+    finalValidation.checks.fullTests = { status: 'failed', evidence: [] };
+    finalValidation.ownerAcceptance = 'accepted';
     const deferredEntry = invalid.candidates.find((entry) => entry.id === 'DOC-A04');
     const deferredSpecEntry = invalid.candidates.find((entry) => entry.id === 'DOC-A05');
     const closedEntry = invalid.candidates.find((entry) => entry.id === 'DOC-A06');
@@ -342,7 +517,7 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
     deferredSpecEntry.unfinishedWorkSuccessor = ['future accepted Subagent Plan/Spec'];
     closedEntry.evidenceSuccessor.pop();
     invalid.referenceAudit.governanceLedgers.pop();
-    invalid.apiM04Baseline.facadePathImports.productionSource.pop();
+    invalid.apiM04Baseline.facadePathImports.productionSource.push('src/consumer.ts');
     const docV10 = invalid.candidates.find((entry) => entry.id === 'DOC-V10');
     const docV02 = invalid.candidates.find((entry) => entry.id === 'DOC-V02');
     const docV03 = invalid.candidates.find((entry) => entry.id === 'DOC-V03');
@@ -393,6 +568,22 @@ describe('FT-11 Slice 6 document disposition manifest', () => {
     expect(diagnostics).toContain('FT-11 entry=DOC-V03 field=unfinishedWorkSuccessor violation=s6-d6-work-unresolved');
     expect(diagnostics).toContain('FT-11 entry=DOC-V04 field=evidenceSuccessor violation=missing-s6-d6-evidence');
     expect(diagnostics).toContain('FT-11 entry=DOC-V10 field=successor/inbound violation=wizard-closeout-incomplete');
+    expect(diagnostics).toContain('FT-11 manifest field=s6D7IndependentReviewStatus violation=invalid-review-state');
+    expect(diagnostics).toContain('FT-11 manifest field=s6D7ApiM04Removal.stateHistory violation=invalid-transition');
+    expect(diagnostics).toContain('FT-11 manifest field=s6D7ApiM04Removal violation=incomplete-terminal-evidence');
+    expect(diagnostics).toContain('FT-11 manifest field=s6D8IndependentReviewStatus violation=invalid-review-state');
+    expect(diagnostics).toContain('FT-11 entry=DOC-C01 field=transitionState violation=current-authority-not-reviewed');
+    expect(diagnostics).toContain('FT-11 manifest field=s6D8RetainedReviewById violation=identity-drift');
+    expect(diagnostics).toContain('FT-11 entry=DOC-C01 field=stateHistory violation=missing-reviewed-retain-transition');
+    expect(diagnostics).toContain('FT-11 entry=DOC-C01 field=retainedReview violation=unresolved');
+    expect(diagnostics).toContain('FT-11 entry=DOC-C01 field=retainedReview.evidence violation=missing-evidence');
+    expect(diagnostics).toContain('FT-11 entry=DOC-C01 field=retainedReview.terminalDisposition violation=state-drift');
+    expect(diagnostics).toContain('FT-11 entry=DOC-A08 field=retainedReview violation=unresolved');
+    expect(diagnostics).toContain('FT-11 manifest field=s6D8FinalValidation.status violation=invalid-value');
+    expect(diagnostics).toContain('FT-11 manifest field=s6D8FinalValidation.checks violation=identity-drift');
+    expect(diagnostics).toContain('FT-11 manifest field=s6D8FinalValidation.checks.integrationValidation violation=incomplete-evidence');
+    expect(diagnostics).toContain('FT-11 manifest field=s6D8FinalValidation.checks.fullTests violation=incomplete-evidence');
+    expect(diagnostics).toContain('FT-11 manifest field=s6D8FinalValidation.ownerAcceptance violation=invalid-state');
     expect(diagnostics).toContain('FT-11 manifest field=referenceAudit.governanceLedgers violation=reference-drift');
     expect(diagnostics).toContain('FT-11 ledger=docs/architecture/legacy-migration-inventory.md violation=incomplete-candidate-coverage');
     expect(diagnostics).toContain('FT-11 manifest field=apiM04Baseline violation=reference-drift');
@@ -430,6 +621,62 @@ function categoryForId(id: string): Ft11DocumentCategory {
   return 'v1.0-candidate';
 }
 
+function collectMarkdownDestinations(content: string): {
+  destinations: string[];
+  missingReferences: string[];
+} {
+  const withoutCodeFences = stripFencedCode(content)
+    .replace(/`[^`\r\n]*`/gu, '');
+  const destinations: string[] = [];
+  const definitions = new Map<string, string>();
+
+  for (const match of withoutCodeFences.matchAll(/^\s*\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))/gmu)) {
+    const label = match[1]?.trim().toLowerCase();
+    const destination = match[2] ?? match[3];
+    if (label && destination) definitions.set(label, destination);
+  }
+  for (const match of withoutCodeFences.matchAll(/!?\[[^\]]*\]\(([^)]+)\)/gu)) {
+    let destination = match[1]?.trim() ?? '';
+    if (destination.startsWith('<') && destination.includes('>')) {
+      destination = destination.slice(1, destination.indexOf('>'));
+    } else {
+      destination = destination.split(/\s+/u)[0] ?? '';
+    }
+    if (destination) destinations.push(destination);
+  }
+  const missingReferences: string[] = [];
+  for (const match of withoutCodeFences.matchAll(/(?<!!)\[([^\]]+)\]\[([^\]]*)\]/gu)) {
+    const label = (match[2] || match[1])?.trim().toLowerCase();
+    if (!label) continue;
+    const destination = definitions.get(label);
+    if (destination) destinations.push(destination);
+    else missingReferences.push(label);
+  }
+  for (const match of withoutCodeFences.matchAll(/<a\s+[^>]*href=["']([^"']+)["'][^>]*>/giu)) {
+    if (match[1]) destinations.push(match[1]);
+  }
+
+  return {
+    destinations: [...new Set(destinations)].sort(),
+    missingReferences: [...new Set(missingReferences)].sort(),
+  };
+}
+
+async function classifyLocalTarget(target: string): Promise<'file' | 'non-file' | 'missing'> {
+  try {
+    return (await stat(target)).isFile() ? 'file' : 'non-file';
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'missing';
+    throw error;
+  }
+}
+
+function stripFencedCode(content: string): string {
+  return content
+    .replace(/^\s*`{3,}[^\r\n]*\r?\n[\s\S]*?^\s*`{3,}\s*$/gmu, '')
+    .replace(/^\s*~{3,}[^\r\n]*\r?\n[\s\S]*?^\s*~{3,}\s*$/gmu, '');
+}
+
 function hasMarkdownAnchor(content: string, encodedFragment: string): boolean {
   let fragment: string;
   try {
@@ -437,11 +684,12 @@ function hasMarkdownAnchor(content: string, encodedFragment: string): boolean {
   } catch {
     return false;
   }
-  const explicitAnchors = [...content.matchAll(/<a\s+[^>]*(?:id|name)=["']([^"']+)["'][^>]*>/giu)]
+  const withoutCodeFences = stripFencedCode(content);
+  const explicitAnchors = [...withoutCodeFences.matchAll(/<a\s+[^>]*(?:id|name)=["']([^"']+)["'][^>]*>/giu)]
     .map((match) => match[1]?.toLowerCase());
   if (explicitAnchors.includes(fragment)) return true;
 
-  return [...content.matchAll(/^#{1,6}\s+(.+?)\s*#*\s*$/gmu)]
+  return [...withoutCodeFences.matchAll(/^#{1,6}\s+(.+?)\s*#*\s*$/gmu)]
     .some((match) => markdownHeadingAnchor(match[1] ?? '') === fragment);
 }
 

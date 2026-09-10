@@ -2,7 +2,7 @@ import type {
   ProviderConnection,
   ProviderModelFacts,
   ProviderProjectionEntry,
-} from '../../core/model-resolution/index.js';
+} from '../../../core/model-resolution/index.js';
 import { AnthropicClient } from './AnthropicClient.js';
 
 export const ANTHROPIC_COMPATIBLE_PROVIDER_ID = 'anthropic-compatible';

@@ -47,6 +47,7 @@ import {
 } from './runtime-unit.js';
 import type { RuntimeDeadlineBudget } from './runtime-deadline.js';
 import type { RuntimeShutdownResidual } from './types.js';
+import { attributeRuntimeUnitCreationError } from './errors.js';
 
 interface ActiveRuntimeUnit {
   readonly loaded: LoadedRuntimeUnit;
@@ -481,7 +482,12 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
     signal: AbortSignal,
     unitInstanceId: string,
   ): Promise<ActiveRuntimeUnit> {
-    const instance = await loaded.create(signal);
+    let instance: RuntimeUnitInstance;
+    try {
+      instance = await loaded.create(signal);
+    } catch (error) {
+      throw attributeRuntimeUnitCreationError(error, loaded.unitId);
+    }
     try {
       assertRegistrationIdentity(loaded, instance);
       const staged = stageRegistryUnit(instance.registration);

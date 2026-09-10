@@ -4,7 +4,7 @@
 
 > 文档日期：2026-06-18
 > 分支：`feature/subagents`
-> 关联文档：`current/core_runner.md` · `current/core_session.md` · `current/core_tools.md` · `current/runtime.md` · `current/core_prompt.md` · `v1.0/runtime-design.md`
+> 关联文档：`current/core_runner.md` · `current/core_session.md` · `current/core_tools.md` · `current/runtime.md` · `current/core_prompt.md`
 > 调研材料：用户提供的 Claude Code 2.1.178 逆向报告 `claude-code-subagent-逆向报告.md`（部分版本）；openclaw `src/agents/subagent-*`
 
 ---
@@ -389,7 +389,7 @@ ASCII 备用（mermaid 渲染失败时参考）：
 理由：
 
 - my-agent 是"可嵌入的库"，多进程把它推向 openclaw 那种网关架构，违反定位。
-- 同进程 = 复用 `LLMClient` / `SessionManager` / `Logger`，零额外资源管理。
+- 同进程 = 复用 Core `ModelInvocationPort` binding / `SessionManager` / `Logger`，零额外资源管理。
 - 阻塞返回 = LLM 端的语义最自然（一个 tool call，一个 result）。
 - 库调用方需要异步时，外层用 `Promise.all`，runtime 不引入额外异步基建。
 
@@ -1341,7 +1341,7 @@ SubagentConfigEntry {
 | **PR-0** | `core/subagent/types.ts` + `session-key.ts` + `capabilities.ts` + 单元测试 | 纯函数，全单测 |
 | **PR-1** | `core/subagent/config-loader.ts` + `profile-tools.ts` + 单测 | config 解析 + 校验 |
 | **PR-2** | `core/runner/types.ts` AgentEvent union 扩展（含 `runId / lifecycle / trigger` 字段，仅类型，无逻辑） | tsc + 不破坏现有测试 |
-| **PR-3** | `core/subagent/behavioral-addendum.ts` + `SubagentRunner.ts`（含 `SubagentHostBindings` / `SubagentRunnerDeps` / `SubagentRunRequest` 类型，详 §8.5） + `available-subagents.ts` + 单测（mock LLMClient / SessionManager / SubagentHostBindings；SystemPromptBuilder 用真实实例） | emit `subagent_start/end` 带 runId；**必覆盖 case：**(a) systemPrompt 通过 `systemPromptBuilder.build({ mode: 'minimal', ... })` 渲染，含 datetime / safety / project-context / workspace section（§11 minimal 表），不含 identity / behavior-rules / memory / available-subagents；(b) systemPrompt 末尾追加 `addendum`；(c) 子目录文件齐全时 `# Project Context` 含子文件；(d) 子目录部分缺失时 per-file merge；(e) 子目录不存在时含父 contextFiles；(f) addendum 含 task/depth；(g) `host.registerTurnContext` / `releaseTurnContext` 在正确时机调用（含 finally 路径）；(h) `host.llmDefaults.model` 当 profile.model='inherit' 时被采用 |
+| **PR-3** | `core/subagent/behavioral-addendum.ts` + `SubagentRunner.ts`（含 `SubagentHostBindings` / `SubagentRunnerDeps` / `SubagentRunRequest` 类型，详 §8.5） + `available-subagents.ts` + 单测（mock `ModelInvocationPort` / SessionManager / SubagentHostBindings；SystemPromptBuilder 用真实实例） | emit `subagent_start/end` 带 runId；**必覆盖 case：**(a) systemPrompt 通过 `systemPromptBuilder.build({ mode: 'minimal', ... })` 渲染，含 datetime / safety / project-context / workspace section（§11 minimal 表），不含 identity / behavior-rules / memory / available-subagents；(b) systemPrompt 末尾追加 `addendum`；(c) 子目录文件齐全时 `# Project Context` 含子文件；(d) 子目录部分缺失时 per-file merge；(e) 子目录不存在时含父 contextFiles；(f) addendum 含 task/depth；(g) `host.registerTurnContext` / `releaseTurnContext` 在正确时机调用（含 finally 路径）；(h) `host.llmDefaults.model` 当 profile.model='inherit' 时被采用 |
 | **PR-4** | `core/tools/builtin/task/` + 单测（mock SubagentRunner） | trigger 构造为 `'llm-tool'` variant；**必覆盖 case：**(a) `parentToolUseId` 从 tool_use.id 正确传入、(b) `subagentType` 未命中降级 general-purpose + warn log、(c) depth 超 `maxDepth` 时返回 isError 且不调 SubagentRunner、(d) §13.2 失败矩阵每行 outcome 映射 |
 | **PR-5** | `runtime/tool-registry.ts` `buildTaskToolIfEnabled` + `prompt-factory.ts` 装配 + `SystemPromptBuilder` 增渲染分支 | 含 `<available-subagents>` 注入 |
 | **PR-6** | `runtime/subagent-orchestration.ts`（含 `SubagentHostBindings` 实现）+ `RuntimeApp.runSubagentTurn`（trigger 构造为 `'library'` variant）+ `RuntimeApp` 新增 private `subagentProfiles!` / `subagentRunner!` 字段 + `bootstrap.ts` 装配 + `aggregateUsageDuring` helper + 集成测试 | end-to-end with mock LLM；**必覆盖 case：**(a) helper 验证父+子 usage 累加正确、(b) 子 `outcome='error'` 时父 `RunResult.usage` 不被污染、(c) helper 在子失败时仍正确累加子 usage |
@@ -1363,7 +1363,7 @@ SubagentConfigEntry {
 ## 17. 相关文档
 
 - 调研：`docs/analysis/`（待补 `claude-code-subagent-analysis.md` 与 `openclaw-subagent-analysis.md` 两篇引用源文档，本 spec 不重复展开）
-- v1.0 已规定的"无 channel = fail-closed"：`v1.0/runtime-design.md` §approval
+- “无 channel = fail-closed” 的 current authority：[Current Runtime](current/runtime.md) 与 [Current Tools](current/core_tools.md)
 - 现有 Session 命名：`current/core_session.md` §3
 - Tool 框架契约：`current/core_tools.md` §3-§4
 - Runner 配置边界：`current/core_runner.md` §1.3

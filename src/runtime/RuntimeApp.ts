@@ -3,7 +3,7 @@ import type { AgentEvent } from '../core/runner/index.js';
 import type { ChatContentBlock, ChatMessage } from '../core/model-invocation/index.js';
 import type { ModelReference } from '../core/model-resolution/index.js';
 import { ModelResolutionError, ModelResolver } from '../core/model-resolution/index.js';
-import { TurnInteractionManager } from '../adapters/channel/TurnInteractionManager.js';
+import { TurnInteractionManager } from './turn-interaction/index.js';
 import type {
   ApprovalInteractionRequest,
   ChannelRunRequest,
@@ -71,6 +71,7 @@ import type {
 } from './types.js';
 
 const log = Logger.get('RuntimeApp');
+const interactionLog = Logger.get('TurnInteractionManager');
 
 interface ActiveRootTree {
   readonly requestId: string;
@@ -150,7 +151,7 @@ export class RuntimeApp {
     this.activeParentTurns = activeParentTurns;
     this.routeContextByTurn = routeContextByTurn;
     this.onEvent = onEvent;
-    this.turnInteractionManager = new TurnInteractionManager();
+    this.turnInteractionManager = new TurnInteractionManager(interactionLog);
   }
 
   static async create(options: RuntimeAppOptions): Promise<RuntimeHandle> {

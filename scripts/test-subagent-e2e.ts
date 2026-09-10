@@ -19,12 +19,13 @@ import { join } from 'node:path';
 import process from 'node:process';
 
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
+import { createLoadedRuntimeUnit } from '../src/runtime/runtime-unit.js';
 import type {
-  ChatParams,
-  ChatResponse,
-  LLMClient,
-  StreamEvent,
-} from '../src/adapters/llm/types.js';
+  ModelInvocationRequest,
+  ModelInvocationResponse,
+  ModelInvocationPort,
+  ModelStreamEvent as ModelStreamEvent,
+} from '../src/core/model-invocation/index.js';
 import type { AgentEvent } from '../src/core/runner/index.js';
 
 // ── runStep harness ─────────────────────────────────────────
@@ -65,14 +66,14 @@ async function withWorkspace<T>(fn: (dir: string) => Promise<T>): Promise<T> {
  * matches a predicate.
  */
 interface ScriptedReply {
-  match: (params: ChatParams) => boolean;
-  events: StreamEvent[];
+  match: (params: ModelInvocationRequest) => boolean;
+  events: ModelStreamEvent[];
 }
 
-function createScriptedLLM(replies: ScriptedReply[]): { client: LLMClient; calls: ChatParams[] } {
-  const calls: ChatParams[] = [];
-  const client: LLMClient = {
-    async *chatStream(params: ChatParams): AsyncIterable<StreamEvent> {
+function createScriptedLLM(replies: ScriptedReply[]): { client: ModelInvocationPort; calls: ModelInvocationRequest[] } {
+  const calls: ModelInvocationRequest[] = [];
+  const client: ModelInvocationPort = {
+    async *chatStream(params: ModelInvocationRequest): AsyncIterable<ModelStreamEvent> {
       calls.push(params);
       const hit = replies.find((r) => r.match(params));
       if (!hit) {
@@ -83,15 +84,15 @@ function createScriptedLLM(replies: ScriptedReply[]): { client: LLMClient; calls
       }
       for (const ev of hit.events) yield ev;
     },
-    async chat(): Promise<ChatResponse> {
+    async chat(): Promise<ModelInvocationResponse> {
       throw new Error('non-stream chat not used');
     },
   };
   return { client, calls };
 }
 
-function createTestProvider(client: LLMClient) {
-  return [{
+function createTestProviderUnit(client: ModelInvocationPort) {
+  const provider = {
     id: 'test',
     protocol: 'test',
     invocationPort: client,
@@ -109,10 +110,18 @@ function createTestProvider(client: LLMClient) {
         },
       },
     }),
-  }];
+  };
+  return createLoadedRuntimeUnit({
+    registration: {
+      id: 'builtin-test-provider',
+      source: 'builtin',
+      register(api) { api.registerProvider(provider); },
+    },
+    required: true,
+  });
 }
 
-function textReply(text: string, usage = { inputTokens: 10, outputTokens: 5 }): StreamEvent[] {
+function textReply(text: string, usage = { inputTokens: 10, outputTokens: 5 }): ModelStreamEvent[] {
   return [
     { type: 'message_start' },
     { type: 'text_delta', text },
@@ -125,7 +134,7 @@ function toolUseReply(opts: {
   name: string;
   input: Record<string, unknown>;
   usage?: { inputTokens: number; outputTokens: number };
-}): StreamEvent[] {
+}): ModelStreamEvent[] {
   return [
     { type: 'message_start' },
     {
@@ -169,9 +178,9 @@ async function scenarioTaskToolPath(): Promise<void> {
 
     // Match logic: distinguish parent vs subagent by system prompt content.
     // Parent has '# Behavior Rules' (full mode), subagent does not (minimal).
-    const isSubagent = (p: ChatParams) =>
+    const isSubagent = (p: ModelInvocationRequest) =>
       !!p.system && !p.system.includes('# Behavior Rules');
-    const lastIsToolResult = (p: ChatParams) => {
+    const lastIsToolResult = (p: ModelInvocationRequest) => {
       const last = p.messages[p.messages.length - 1];
       if (!last || last.role !== 'user' || !Array.isArray(last.content)) return false;
       return last.content.some((b) => (b as { type: string }).type === 'tool_result');
@@ -212,7 +221,7 @@ async function scenarioTaskToolPath(): Promise<void> {
         tools: { allow: ['task'] },
       },
       onAgentEvent: (e) => events.push(e),
-      dependencies: { createProviderProjection: () => createTestProvider(client) },
+      dependencies: { createBundledProviderUnit: () => createTestProviderUnit(client) },
     });
 
     try {

@@ -7,7 +7,7 @@ import type { AgentDefaults, LoggerModuleConfig } from './types.js';
  * 迁移到从 config 读取，而非自己维护 DEFAULT_* 常量。
  *
  * 值来源映射：
- *   llm.maxTokens          ← AnthropicClient.ts DEFAULT_MAX_TOKENS
+ *   llm.maxTokens          → Runtime Model Policy default → ModelResolver
  *   runner.*               ← AgentRunner.ts DEFAULT_MAX_TOOL_ROUNDS / DEFAULT_MAX_FOLLOWUP_ROUNDS
  *   memory.embedding.*      ← LocalEmbeddingProvider.ts DEFAULT_MODEL（dimensions 由 model 反查）
  *   memory.chunking.*       ← MemoryIndexer.ts DEFAULT_CHUNK_CHARS / DEFAULT_OVERLAP_CHARS

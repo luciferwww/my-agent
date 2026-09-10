@@ -15,7 +15,7 @@ const NEW_CORE_ROOTS = [
   'src/core/model-resolution/',
   'src/core/subagent/',
   'src/runtime/subagent-orchestration.ts',
-  'src/adapters/llm/AnthropicProvider.ts',
+  'src/adapters/provider/anthropic/AnthropicProvider.ts',
 ];
 const FORBIDDEN_ROOTS = ['src/compat/', 'src/legacy/'];
 let productionSources: SourceInput[];

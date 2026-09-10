@@ -13,7 +13,7 @@ import type {
   ChannelRunRequest,
   InboundContentBlock,
   TurnInteractionResponse,
-} from './types.js';
+} from '../../core/channel/index.js';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 
 const log = Logger.get('WebSocketChannel');

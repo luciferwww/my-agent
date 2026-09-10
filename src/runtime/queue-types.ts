@@ -1,5 +1,5 @@
 import type { ChannelRuntimeBinding } from '../core/channel/index.js';
-import type { ChatContentBlock } from '../adapters/llm/types.js';
+import type { ChatContentBlock } from '../core/model-invocation/index.js';
 import type { RunTurnParams } from './types.js';
 
 export type TurnLaunchContext = Pick<

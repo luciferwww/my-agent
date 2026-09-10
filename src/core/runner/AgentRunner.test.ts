@@ -7,10 +7,10 @@ import { AgentExecutionFailure } from './errors.js';
 import { SessionManager } from '../session/SessionManager.js';
 import type {
   ChatContentBlock,
-  LLMClient,
-  ChatParams,
-  ChatResponse,
-  StreamEvent,
+  ModelInvocationPort,
+  ModelInvocationRequest,
+  ModelInvocationResponse,
+  ModelStreamEvent as ModelStreamEvent,
 } from '../model-invocation/index.js';
 import { compilePortableToolSchema } from '../tools/portable-schema.js';
 import type {
@@ -34,7 +34,7 @@ type LegacyTestRunParams = Omit<
 };
 
 type LegacyTestRunnerConfig = AgentRunnerConfig & {
-  llmClient: LLMClient;
+  llmClient: ModelInvocationPort;
   toolExecutor?: ToolExecutor;
 };
 
@@ -43,6 +43,8 @@ type ToolExecutor = (
   input: Record<string, unknown>,
   context: ToolExecutionContext,
 ) => Promise<ToolResult>;
+
+const TEST_POLICY_DEFAULT_MAX_TOKENS = 4096;
 
 const allowAllTools: ApplicationToolPolicy = Object.freeze({
   isDenied: () => false,
@@ -56,7 +58,7 @@ const permissiveValidator = compilePortableToolSchema({
 
 /** Test-only fixture adapter; production Runner has no legacy input path. */
 class AgentRunner extends ProductionAgentRunner {
-  private readonly testInvocationPort: LLMClient;
+  private readonly testInvocationPort: ModelInvocationPort;
   private readonly testToolExecutor?: ToolExecutor;
   private readonly testHooks: HookRegistration[] = [];
 
@@ -108,7 +110,8 @@ class AgentRunner extends ProductionAgentRunner {
           mediaKinds: { value: ['image'], source: 'deployment-config' },
         },
         limits: {
-          maxTokens: maxTokens ?? 4096,
+          // Test-only pre-resolution input adapter: omission selects the simulated Model Policy default.
+          maxTokens: maxTokens ?? TEST_POLICY_DEFAULT_MAX_TOKENS,
           maxTokensSource: maxTokens === undefined ? 'policy-default' : 'request-override',
         },
       },
@@ -165,19 +168,19 @@ class AgentRunner extends ProductionAgentRunner {
   }
 }
 
-// ── Mock LLMClient ──────────────────────────────────────
+// ── Mock ModelInvocationPort ────────────────────────────
 
-type LegacyTestStreamEvent = StreamEvent | {
+type LegacyTestStreamEvent = ModelStreamEvent | {
   type: 'tool_use';
   id: string;
   name: string;
   input: Record<string, unknown>;
 };
 
-function createMockLLMClient(responses: LegacyTestStreamEvent[][]): LLMClient {
+function createMockLLMClient(responses: LegacyTestStreamEvent[][]): ModelInvocationPort {
   let callIndex = 0;
   return {
-    async *chatStream(): AsyncIterable<StreamEvent> {
+    async *chatStream(): AsyncIterable<ModelStreamEvent> {
       const events = responses[callIndex++] ?? [];
       for (const event of events) {
         yield event.type === 'tool_use'
@@ -192,7 +195,7 @@ function createMockLLMClient(responses: LegacyTestStreamEvent[][]): LLMClient {
           : event;
       }
     },
-    async chat(): Promise<ChatResponse> {
+    async chat(): Promise<ModelInvocationResponse> {
       throw new Error('Not used in tests');
     },
   };
@@ -253,14 +256,14 @@ describe('AgentRunner', () => {
     });
 
     it('preserves multi-turn conversation history', async () => {
-      let capturedMessages: ChatParams['messages'] = [];
+      let capturedMessages: ModelInvocationRequest['messages'] = [];
 
-      const llmClient: LLMClient = {
-        async *chatStream(params: ChatParams) {
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(params: ModelInvocationRequest) {
           capturedMessages = params.messages.map(m => ({ ...m }));
-          yield { type: 'message_start' } as StreamEvent;
-          yield { type: 'text_delta', text: 'Response' } as StreamEvent;
-          yield { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 10, outputTokens: 5 } } as StreamEvent;
+          yield { type: 'message_start' } as ModelStreamEvent;
+          yield { type: 'text_delta', text: 'Response' } as ModelStreamEvent;
+          yield { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 10, outputTokens: 5 } } as ModelStreamEvent;
         },
         async chat() { throw new Error('Not used'); },
       };
@@ -539,17 +542,17 @@ describe('AgentRunner', () => {
     });
 
     it('injects steering messages between tool iterations', async () => {
-      const capturedCalls: ChatParams['messages'][] = [];
+      const capturedCalls: ModelInvocationRequest['messages'][] = [];
       let callIndex = 0;
       let injected = false;
 
-      const llmClient: LLMClient = {
-        async *chatStream(params: ChatParams) {
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(params: ModelInvocationRequest) {
           capturedCalls.push(params.messages.map((m) => ({ ...m })));
 
           if (callIndex === 0) {
             callIndex++;
-            yield { type: 'message_start' } as StreamEvent;
+            yield { type: 'message_start' } as ModelStreamEvent;
             yield {
               type: 'tool_call',
               call: {
@@ -557,22 +560,22 @@ describe('AgentRunner', () => {
                 name: 'search',
                 input: { state: 'ready', value: {} },
               },
-            } as StreamEvent;
+            } as ModelStreamEvent;
             yield {
               type: 'message_end',
               stopReason: 'tool_use',
               usage: { inputTokens: 10, outputTokens: 5 },
-            } as StreamEvent;
+            } as ModelStreamEvent;
             return;
           }
 
-          yield { type: 'message_start' } as StreamEvent;
-          yield { type: 'text_delta', text: 'done' } as StreamEvent;
+          yield { type: 'message_start' } as ModelStreamEvent;
+          yield { type: 'text_delta', text: 'done' } as ModelStreamEvent;
           yield {
             type: 'message_end',
             stopReason: 'end_turn',
             usage: { inputTokens: 12, outputTokens: 6 },
-          } as StreamEvent;
+          } as ModelStreamEvent;
         },
         async chat() {
           throw new Error('Not used');
@@ -851,12 +854,12 @@ describe('AgentRunner', () => {
       let resolveLatch!: () => void;
       const latch = new Promise<void>((r) => { resolveLatch = r; });
 
-      const llmClient: LLMClient = {
+      const llmClient: ModelInvocationPort = {
         chatStream: (() => {
           let call = 0;
           return async function* () {
             const which = call++;
-            yield { type: 'message_start' } as StreamEvent;
+            yield { type: 'message_start' } as ModelStreamEvent;
             if (which === 0) {
               // First run: park here until the second run has also started.
               await latch;
@@ -864,15 +867,15 @@ describe('AgentRunner', () => {
               // Second run: release the first.
               resolveLatch();
             }
-            yield { type: 'text_delta', text: which === 0 ? 'A' : 'B' } as StreamEvent;
+            yield { type: 'text_delta', text: which === 0 ? 'A' : 'B' } as ModelStreamEvent;
             yield {
               type: 'message_end',
               stopReason: 'end_turn',
               usage: { inputTokens: 1, outputTokens: 1 },
-            } as StreamEvent;
+            } as ModelStreamEvent;
           };
         })(),
-        async chat(): Promise<ChatResponse> { throw new Error('Not used in this test'); },
+        async chat(): Promise<ModelInvocationResponse> { throw new Error('Not used in this test'); },
       };
 
       const events: AgentEvent[] = [];
@@ -1451,18 +1454,18 @@ describe('AgentRunner', () => {
       });
       expect(firstResult.compacted).toBe(true);
 
-      let nextTurnMessages: ChatParams['messages'] = [];
+      let nextTurnMessages: ModelInvocationRequest['messages'] = [];
       const reloadedSessionManager = new SessionManager(workspaceDir);
-      const nextTurnClient: LLMClient = {
-        async *chatStream(params: ChatParams) {
+      const nextTurnClient: ModelInvocationPort = {
+        async *chatStream(params: ModelInvocationRequest) {
           nextTurnMessages = params.messages.map((message) => ({ ...message }));
-          yield { type: 'message_start' } as StreamEvent;
-          yield { type: 'text_delta', text: 'Second result.' } as StreamEvent;
+          yield { type: 'message_start' } as ModelStreamEvent;
+          yield { type: 'text_delta', text: 'Second result.' } as ModelStreamEvent;
           yield {
             type: 'message_end',
             stopReason: 'end_turn',
             usage: { inputTokens: 8, outputTokens: 3 },
-          } as StreamEvent;
+          } as ModelStreamEvent;
         },
         async chat() {
           throw new Error('Not used');
@@ -1573,9 +1576,9 @@ describe('AgentRunner', () => {
         ],
       ]);
 
-      let capturedMessages: ChatParams['messages'] = [];
-      const sniffer: LLMClient = {
-        async *chatStream(params: ChatParams) {
+      let capturedMessages: ModelInvocationRequest['messages'] = [];
+      const sniffer: ModelInvocationPort = {
+        async *chatStream(params: ModelInvocationRequest) {
           capturedMessages = params.messages.map(m => ({ ...m }));
           yield* llmClient.chatStream(params);
         },
@@ -1668,7 +1671,7 @@ describe('AgentRunner', () => {
       controller.abort();
 
       let llmCalled = false;
-      const llmClient: LLMClient = {
+      const llmClient: ModelInvocationPort = {
         async *chatStream() {
           llmCalled = true;
           yield { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 0, outputTokens: 0 } };
@@ -1701,8 +1704,8 @@ describe('AgentRunner', () => {
     it('abort during LLM stream → stopReason=aborted, partial assistant 带 abortMeta 写入', async () => {
       const controller = new AbortController();
 
-      const llmClient: LLMClient = {
-        async *chatStream(params: ChatParams) {
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(params: ModelInvocationRequest) {
           yield { type: 'message_start' };
           yield { type: 'text_delta', text: 'partial reply…' };
           // 触发外部 abort，然后模拟 SDK 抛 AbortError
@@ -1998,8 +2001,8 @@ describe('AgentRunner', () => {
       });
 
       // 第一 turn：LLM 中途 abort（触发 partial assistant 写路径）
-      const llmClient1: LLMClient = {
-        async *chatStream(params: ChatParams) {
+      const llmClient1: ModelInvocationPort = {
+        async *chatStream(params: ModelInvocationRequest) {
           yield { type: 'message_start' };
           yield { type: 'text_delta', text: 'partial' };
           controller.abort();
@@ -2058,8 +2061,8 @@ describe('AgentRunner', () => {
       let round = 0;
 
       // 每次 chatStream 调用返回一轮 mock usage {100,50}
-      const llmClient: LLMClient = {
-        async *chatStream(params: ChatParams) {
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(params: ModelInvocationRequest) {
           round++;
           yield { type: 'message_start' };
           if (round < 4) {
@@ -2112,8 +2115,8 @@ describe('AgentRunner', () => {
     it('R8 partial tool_use: stream 到 tool_use 之前 abort → assistant 内容不含残缺 tool_use', async () => {
       const controller = new AbortController();
 
-      const llmClient: LLMClient = {
-        async *chatStream(params: ChatParams) {
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(params: ModelInvocationRequest) {
           yield { type: 'message_start' };
           yield { type: 'text_delta', text: 'thinking…' };
           // 在下发 tool_use（AnthropicClient 只在 content_block_stop 才 yield 完整 tool_use）
@@ -2153,8 +2156,8 @@ describe('AgentRunner', () => {
       const agentLogger = (await import('../../platform/logger/index.js')).Logger.get('AgentRunner');
       const warnSpy = vi.spyOn(agentLogger, 'warn');
 
-      const llmClient: LLMClient = {
-        async *chatStream(params: ChatParams) {
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(params: ModelInvocationRequest) {
           yield { type: 'message_start' };
           controller.abort();
           // 名字不是 AbortError（模拟 SDK 内部把 err.name 吞成 NetworkError），
@@ -2194,8 +2197,8 @@ describe('AgentRunner', () => {
       const agentLogger = (await import('../../platform/logger/index.js')).Logger.get('AgentRunner');
       const warnSpy = vi.spyOn(agentLogger, 'warn');
 
-      const llmClient: LLMClient = {
-        async *chatStream(params: ChatParams) {
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(params: ModelInvocationRequest) {
           yield { type: 'message_start' };
           controller.abort();
           if (params.signal?.aborted) {

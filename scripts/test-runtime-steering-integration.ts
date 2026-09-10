@@ -26,8 +26,8 @@ import type {
   Channel,
   ChannelCompletion,
   ChannelRunRequest,
-} from '../src/adapters/channel/types.js';
-import type { ChatMessage } from '../src/adapters/llm/types.js';
+} from '../src/core/channel/index.js';
+import type { ChatMessage } from '../src/core/model-invocation/index.js';
 import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from '../src/runtime/runtime-unit.js';
 import type { RunParams, RunResult } from '../src/core/runner/types.js';
 

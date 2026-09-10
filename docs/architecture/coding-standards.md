@@ -38,17 +38,17 @@ agent-runner/    llm-client/    prompt-builder/    session/    tools/
 | 函数 | camelCase | `loadStore()`, `extractText()`, `createMemoryTools()` |
 | 变量 | camelCase | `sessionManager`, `currentText`, `workspaceDir` |
 | 常量 | UPPER_SNAKE_CASE | `DEFAULT_MAX_TOKENS`, `SESSIONS_DIR` |
-| 私有成员 | `private` 关键字 + camelCase | `private llmClient`, `private transcripts` |
+| 私有成员 | `private` 关键字 + camelCase | `private invocationPort`, `private transcripts` |
 
 ### 接口命名后缀惯例
 
 | 后缀 | 用途 | 示例 |
 |------|------|------|
 | `Config` / `Options` | 构造参数、配置 | `AgentRunnerConfig`, `LoadContextFilesOptions` |
-| `Params` / `Input` | 方法参数 | `RunParams`, `ChatParams`, `UserPromptInput` |
-| `Result` / `Response` | 返回值 | `RunResult`, `ChatResponse`, `ToolResult` |
+| `Params` / `Input` / `Request` | 方法参数 | `RunParams`, `ModelInvocationRequest`, `UserPromptInput` |
+| `Result` / `Response` | 返回值 | `RunResult`, `ModelInvocationResponse`, `ToolResult` |
 | `Entry` / `Record` | 数据条目 | `SessionEntry`, `MessageRecord` |
-| `Event` | 事件 | `AgentEvent`, `StreamEvent` |
+| `Event` | 事件 | `AgentEvent`, `ModelStreamEvent` |
 | `Definition` | 定义/描述 | `ToolDefinition`, `ChatToolDefinition` |
 
 ---
@@ -85,7 +85,7 @@ import { join } from 'node:path';
 
 // 类型导入（单独的 import type）
 import type { SessionEntry, MessageRecord } from './types.js';
-import type { LLMClient, ChatMessage } from '../llm-client/types.js';
+import type { ModelInvocationPort, ChatMessage } from '../model-invocation/types.js';
 ```
 
 规则：
@@ -186,7 +186,7 @@ async run(params: RunParams): Promise<RunResult> {
 }
 
 // 流式：AsyncIterable
-async *chatStream(params: ChatParams): AsyncIterable<StreamEvent> {
+async *chatStream(request: ModelInvocationRequest): AsyncIterable<ModelStreamEvent> {
   for await (const event of stream) {
     yield event;
   }

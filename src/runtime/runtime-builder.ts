@@ -8,7 +8,6 @@ import type {
 import type { AgentEvent } from '../core/runner/index.js';
 import { AgentRunner } from '../core/runner/index.js';
 import { Logger } from '../platform/logger/index.js';
-import { AnthropicProvider } from '../adapters/llm/index.js';
 import { MemoryManager } from '../core/memory/index.js';
 import { SystemPromptBuilder } from '../core/prompt/index.js';
 import { SessionManager } from '../core/session/index.js';
@@ -47,13 +46,13 @@ import { loadContextFilesFromDir } from '../core/workspace/index.js';
 import { createApplicationToolPolicy } from './tool-approval-policy.js';
 import {
   createMemoryToolModule,
+  createAnthropicProviderModule,
   createTaskToolModule,
   createWorkspaceToolModule,
 } from '../runtime-modules/index.js';
 import { createSubagentDelegationPort } from './subagent-orchestration.js';
 import type { ActiveParentTurn } from './subagent-orchestration.js';
 import type { MessageRouteContext } from './queue-types.js';
-import type { ExtensionRegistrationApi, RuntimeContributionUnit } from '../core/registry/index.js';
 import { classifyRuntimeError } from './errors.js';
 import {
   RuntimeDeadlineBudget,
@@ -111,6 +110,13 @@ export async function buildRuntimeHandle(
   const fanoutFailures: Array<{ owner: string; eventType: string; message: string }> = [];
   let fanoutSequence = 0;
   const dependencies = createRuntimeDependencies(options.dependencies);
+  let defaultProviderId: string | undefined;
+  const getDefaultProviderId = (): string => {
+    if (!defaultProviderId) {
+      throw new Error('Default Provider is unavailable before Runtime composition startup.');
+    }
+    return defaultProviderId;
+  };
 
   const fanoutAgentEvent = (event: AgentEvent): Promise<void> => {
     if (kernel && !kernel.shouldDeliverAgentEvent(event)) {
@@ -211,9 +217,10 @@ export async function buildRuntimeHandle(
       routeContextByTurn,
       subagentProfiles,
       onAgentEvent: fanoutAgentEvent,
+      getDefaultProviderId,
     });
     compositionManager = new RuntimeCompositionManager(
-      new RuntimeUnitCatalog(assembly.loadedUnits),
+      new RuntimeUnitCatalog(assembly),
       coordinator,
       lifecycleLedger,
       channelHost,
@@ -224,6 +231,10 @@ export async function buildRuntimeHandle(
       },
     );
     const registrySnapshot = await compositionManager.start();
+    defaultProviderId = registrySnapshot.providers[0]?.id;
+    if (!defaultProviderId) {
+      throw new Error('Published Registry Snapshot must contain at least one Provider entry.');
+    }
     const registeredToolNames = new Set(
       registrySnapshot.tools.definitions.map((tool) => tool.name),
     );
@@ -235,7 +246,7 @@ export async function buildRuntimeHandle(
       subagentProfiles.set(profile.id, profile);
     }
     kernel = createApplication({
-      resources: { ...bootstrap.resources, defaultProviderId: assembly.defaultProviderId },
+      resources: { ...bootstrap.resources, defaultProviderId },
       state: bootstrap.state,
       subagentProfiles,
       activeParentTurns,
@@ -416,28 +427,15 @@ function assembleLoadedRuntimeUnits(params: {
   readonly routeContextByTurn: Map<string, MessageRouteContext>;
   readonly subagentProfiles: Map<string, SubagentProfile>;
   readonly onAgentEvent: (event: AgentEvent) => Promise<void>;
-}): {
-  readonly defaultProviderId: string;
-  readonly loadedUnits: readonly LoadedRuntimeUnit[];
-} {
+  readonly getDefaultProviderId: () => string;
+}): readonly LoadedRuntimeUnit[] {
   const { options, resources, dependencies } = params;
-  const providerProjection = Object.freeze([...dependencies.createProviderProjection({
+  const providerUnit = dependencies.createBundledProviderUnit({
     apiKey: resources.resolvedConfig.llm.apiKey,
     baseURL: resources.resolvedConfig.llm.baseURL,
     defaultModel: resources.resolvedConfig.llm.model,
     legacyContextWindowTokens: resources.resolvedConfig.llm.contextWindowTokens,
     deploymentFacts: resources.resolvedConfig.llm.deploymentFacts,
-  })]);
-  const defaultProviderId = providerProjection[0]?.id;
-  if (!defaultProviderId) {
-    throw new Error('Provider projection must contain at least one accepted Provider entry.');
-  }
-  const providerUnit: RuntimeContributionUnit = Object.freeze({
-    id: 'builtin-provider-bindings',
-    source: 'builtin',
-    register(api: ExtensionRegistrationApi) {
-      for (const provider of providerProjection) api.registerProvider(provider);
-    },
   });
   const toolOptions = {
     workspaceDir: options.workspaceDir,
@@ -447,7 +445,7 @@ function assembleLoadedRuntimeUnits(params: {
     processEnabled: true,
   };
   const loadedUnits: LoadedRuntimeUnit[] = [
-    createLoadedRuntimeUnit({ registration: providerUnit, required: true }),
+    providerUnit,
     ...dependencies.getBuiltinContributionUnits(toolOptions, resources.memoryManager)
       .map((registration) => createLoadedRuntimeUnit({ registration, required: true })),
     ...(options.loadedUnits ?? []),
@@ -474,7 +472,7 @@ function assembleLoadedRuntimeUnits(params: {
       activeParents: params.activeParentTurns,
       routeContextByTurn: params.routeContextByTurn,
       sessionManager: resources.sessionManager,
-      defaultProviderId,
+      getDefaultProviderId: params.getDefaultProviderId,
       defaultMaxTokens: resources.resolvedConfig.llm.maxTokens,
       maxDepth,
       executor,
@@ -491,25 +489,15 @@ function assembleLoadedRuntimeUnits(params: {
     }));
   }
 
-  return Object.freeze({
-    defaultProviderId,
-    loadedUnits: Object.freeze(loadedUnits),
-  });
+  return Object.freeze(loadedUnits);
 }
 
 function createRuntimeDependencies(
   overrides: Partial<RuntimeDependencies> | undefined,
 ): RuntimeDependencies {
   const defaults: RuntimeDependencies = {
-    createProviderProjection(options) {
-      const provider = new AnthropicProvider({
-        apiKey: options.apiKey,
-        baseURL: options.baseURL,
-        defaultModel: options.defaultModel,
-        legacyContextWindowTokens: options.legacyContextWindowTokens,
-        deploymentFacts: options.deploymentFacts,
-      });
-      return Object.freeze([provider.entry]);
+    createBundledProviderUnit(options) {
+      return createAnthropicProviderModule(options);
     },
     createSessionManager(workspaceDir, options) {
       return new SessionManager(workspaceDir, options);

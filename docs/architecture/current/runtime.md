@@ -53,6 +53,11 @@ src/runtime/
 ├── channel-lifecycle.ts             # channel host bindings/completion
 ├── prompt-factory.ts                # narrow prompt parameter projection
 └── types.ts                         # public Runtime options/events/reports
+
+src/runtime-modules/
+├── anthropic-provider.ts            # required bundled Provider Unit
+├── builtin-channels.ts              # optional builtin Channel Units
+└── builtin-tools.ts                 # builtin Tool registrations
 ```
 
 公共 barrel 导出 `RuntimeApp`、选择性的 composition/deadline/prompt/error helpers 与必要类型，但不对外泄漏内部 manager。
@@ -123,7 +128,7 @@ RuntimeAppOptions {
 
 ```
 RuntimeDependencies {
-  createProviderProjection(options): readonly ProviderProjectionEntry[]
+  createBundledProviderUnit(options: RuntimeProviderOptions): LoadedRuntimeUnit
   createSessionManager(workspaceDir, options?): SessionManager
   createMemoryManager(options: { workspaceDir, enabled, dbPath?, ... }): Promise<MemoryManager | null>
   createSystemPromptBuilder(): SystemPromptBuilder
@@ -131,6 +136,8 @@ RuntimeDependencies {
   getBuiltinContributionUnits(options, memoryManager): readonly RuntimeContributionUnit[]
 }
 ```
+
+Bundled Provider seam 始终返回一个具名 `LoadedRuntimeUnit`，不返回 Provider entry、Contribution registration 或 Unit 数组。默认实现委托给 `createAnthropicProviderModule()`；External Provider 继续经 `RuntimeAppOptions.loadedUnits` 进入同一个 Unit catalog。Production 与 Fake Provider 都经过 create → registration → staging → start → publication，Runtime Builder 不在 staging 前读取 Provider entry。
 
 ### 4.3 RunTurnParams（单轮参数）
 
@@ -150,7 +157,7 @@ RunTurnParams {
 }
 ```
 
-Runtime 使用 [Model Resolution](./core_model_resolution.md) 在已捕获 generation 的 Provider projection 上解析 `modelReference` 与 `requestOverride`；Config 中的 model 字段只是默认 Model Reference 输入，不拥有 Model Facts。
+Runtime 使用 [Model Resolution](./core_model_resolution.md) 在已捕获 generation 的 Provider projection 上解析 `modelReference` 与 `requestOverride`；Config 中的 model 字段只是默认 Model Reference 输入，不拥有 Model Facts。启动时 Runtime 从成功发布的 immutable Snapshot 按 `registrySnapshot.providers[0].id` 选择缺省 Provider，并把该 ID 固定在 `RuntimeResourceSet`；后续 generation publication 不重选该缺省值，显式 Model Reference 仍可选择其他 accepted Provider。
 
 ### 4.4 队列与路由类型（queue-types.ts）
 
@@ -183,16 +190,19 @@ PendingSteeringInput = {
 flowchart TD
   A[RuntimeApp.create] --> B[buildRuntimeHandle]
   B --> C[bootstrapRuntime: config, logger, workspace, shared resources]
-  C --> D[assemble Loaded Runtime Units]
-  D --> E[RuntimeCompositionManager.start]
-  E --> F[create/start/handoff unit instances]
-  F --> G[build complete immutable Registry Snapshot]
-  G --> H[CompositionCoordinator.commitPublish generation 1]
-  H --> I[create RuntimeApp kernel and convergence callbacks]
-  I --> J[emit app_ready and return frozen RuntimeHandle]
+  C --> D[map config to RuntimeProviderOptions]
+  D --> E[createBundledProviderUnit and assemble Unit catalog]
+  E --> F[RuntimeCompositionManager.start]
+  F --> G[create, stage, start and handoff Unit instances]
+  G --> H[build and atomically publish immutable Registry Snapshot]
+  H --> I[select registrySnapshot.providers 0 id]
+  I --> J[create RuntimeApp kernel and convergence callbacks]
+  J --> K[emit app_ready and return frozen RuntimeHandle]
 ```
 
-`RuntimeApp.create()` is delegation-only. `bootstrap.ts` prepares shared prerequisites but does not own Model Resolver, Task module, Registry assembly, publication, or reload. A Snapshot is visible only after every selected Unit has completed create/start/handoff and the full candidate has validated.
+`RuntimeApp.create()` is delegation-only. `bootstrap.ts` prepares shared prerequisites but does not own Model Resolver, Task module, Registry assembly, publication, or reload. A Snapshot is visible only after every selected Unit has completed create/start/handoff and the full candidate has validated. Provider ordering follows Registry deterministic ordering：Builtin 在 External 之前；当前 required Anthropic Unit 因此提供启动缺省 Provider，但 Runtime 不建立第二份 Provider priority metadata。
+
+Required Unit 的 `create()` 失败会终止整体启动，并携带 Unit identity 与 `phase=create`；已创建但未成功进入应用的 candidate 按 Composition ownership 清理。candidate cleanup 失败保持 fail-closed。即使 Composition 已成功发布，只要 Snapshot 的 Provider 列表为空，Builder 仍在 RuntimeApp kernel construction 与 `app_ready` 前判定 startup fatal，并关闭 Composition 与 bootstrap resources。这些失败路径不产生 partial Snapshot、kernel 或 ready event。
 
 Memory remains optional: disabled Memory contributes no tools; initialization failure emits a warning and continues with `memoryManager = null`; successful initialization participates through the Memory contribution Unit and is closed as a shared resource during bounded Shutdown.
 
@@ -413,7 +423,8 @@ The immutable `RuntimeShutdownReport` records `completed` and `deadline-exhauste
 
 | scope | 关键情形 | severity | 处理 |
 |---|---|---|---|
-| startup | API Key 缺失 | fatal | create() 失败 |
+| startup | required Provider Unit 构造或 options validation 失败 | fatal | 标注 Unit/create phase，清理 candidate，拒绝启动 |
+| startup | published Snapshot 无 Provider | fatal | kernel/app_ready 前关闭 Composition 与 bootstrap resources |
 | startup | memory 初始化失败 | recoverable | 禁用 memory，继续启动 |
 | run | phase 不对 / session busy | recoverable | 抛 RUN_REJECTED，不销毁 app |
 | run | AgentRunner 抛错 | recoverable | 本轮失败，app 继续 |
@@ -452,6 +463,6 @@ The immutable `RuntimeShutdownReport` records `completed` and `deadline-exhauste
 
 | Kind | Evidence |
 |---|---|
-| Source | [runtime-builder.ts](../../../src/runtime/runtime-builder.ts), [RuntimeApp.ts](../../../src/runtime/RuntimeApp.ts), [runtime-composition-manager.ts](../../../src/runtime/runtime-composition-manager.ts), [composition-coordinator.ts](../../../src/runtime/composition-coordinator.ts), [subagent-orchestration.ts](../../../src/runtime/subagent-orchestration.ts) |
-| Tests | [runtime-builder.test.ts](../../../src/runtime/runtime-builder.test.ts), [RuntimeApp.intake.test.ts](../../../src/runtime/RuntimeApp.intake.test.ts), [runtime-composition-manager.test.ts](../../../src/runtime/runtime-composition-manager.test.ts), [composition-coordinator.test.ts](../../../src/runtime/composition-coordinator.test.ts), [subagent-orchestration.test.ts](../../../src/runtime/subagent-orchestration.test.ts), [ft-10-runtime-composition-deletion.test.ts](../../../src/architecture-fitness/ft-10-runtime-composition-deletion.test.ts) |
-| Controlling authority | [ADR-005](../adr-005-extension-registry-runtime-composition.md), [Runtime Composition Module Spec](../runtime-composition-module-spec.md), [Core Abort Spec](../core-abort-spec.md), [Subagent Model Resolution Module Spec](../subagent-model-resolution-module-spec.md) |
+| Source | [runtime-builder.ts](../../../src/runtime/runtime-builder.ts), [Anthropic Provider Runtime Module](../../../src/runtime-modules/anthropic-provider.ts), [RuntimeApp.ts](../../../src/runtime/RuntimeApp.ts), [runtime-composition-manager.ts](../../../src/runtime/runtime-composition-manager.ts), [runtime errors](../../../src/runtime/errors.ts), [composition-coordinator.ts](../../../src/runtime/composition-coordinator.ts), [subagent-orchestration.ts](../../../src/runtime/subagent-orchestration.ts) |
+| Tests | [runtime-builder.test.ts](../../../src/runtime/runtime-builder.test.ts), [anthropic-provider.test.ts](../../../src/runtime-modules/anthropic-provider.test.ts), [RuntimeApp.test.ts](../../../src/runtime/RuntimeApp.test.ts), [RuntimeApp.intake.test.ts](../../../src/runtime/RuntimeApp.intake.test.ts), [runtime-composition-manager.test.ts](../../../src/runtime/runtime-composition-manager.test.ts), [composition-coordinator.test.ts](../../../src/runtime/composition-coordinator.test.ts), [subagent-orchestration.test.ts](../../../src/runtime/subagent-orchestration.test.ts), [ft-10-runtime-composition-deletion.test.ts](../../../src/architecture-fitness/ft-10-runtime-composition-deletion.test.ts) |
+| Controlling authority | [ADR-005](../adr-005-extension-registry-runtime-composition.md), [Runtime Composition Module Spec](../runtime-composition-module-spec.md), [Source Layout Convergence Migration Spec](../source-layout-convergence-migration-spec.md), [Core Abort Spec](../core-abort-spec.md), [Subagent Model Resolution Module Spec](../subagent-model-resolution-module-spec.md) |

@@ -15,9 +15,24 @@ export function createRuntimeError(info: RuntimeErrorInfo): RuntimeAppError {
   return new RuntimeAppError(info);
 }
 
+const unitCreationAttribution = new WeakMap<Error, { readonly unitId: string }>();
+
+export function attributeRuntimeUnitCreationError(cause: unknown, unitId: string): Error {
+  const error = cause instanceof Error ? cause : new Error(String(cause));
+  unitCreationAttribution.set(error, Object.freeze({ unitId }));
+  return error;
+}
+
 export function classifyRuntimeError(scope: RuntimeErrorScope, error: unknown): RuntimeErrorInfo {
   if (error instanceof RuntimeAppError) {
-    return error.info;
+    const creationAttribution = unitCreationAttribution.get(error);
+    return creationAttribution
+      ? {
+          ...error.info,
+          unitId: creationAttribution.unitId,
+          phase: 'create',
+        }
+      : error.info;
   }
 
   const cause = error instanceof Error ? error : new Error(String(error));
@@ -35,11 +50,15 @@ export function classifyRuntimeError(scope: RuntimeErrorScope, error: unknown): 
   }
 
   const mapping = getDefaultMapping(scope, message);
+  const creationAttribution = unitCreationAttribution.get(cause);
   return {
     scope,
     severity: mapping.severity,
     code: mapping.code,
     message,
+    ...(creationAttribution
+      ? { unitId: creationAttribution.unitId, phase: 'create' as const }
+      : {}),
     cause,
   };
 }

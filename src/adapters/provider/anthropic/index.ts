@@ -9,14 +9,3 @@ export type {
   AnthropicDeploymentFactsInput,
   AnthropicProviderOptions,
 } from './AnthropicProvider.js';
-export type {
-  LLMClient,
-  ChatParams,
-  ChatResponse,
-  ChatMessage,
-  ChatContentBlock,
-  ChatRole,
-  ChatToolDefinition,
-  StreamEvent,
-  TokenUsage,
-} from './types.js';

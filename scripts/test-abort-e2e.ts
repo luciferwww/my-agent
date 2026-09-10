@@ -31,14 +31,14 @@ import process from 'node:process';
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
 import type { RuntimeApplication } from '../src/runtime/runtime-composition.js';
 import { SessionManager } from '../src/core/session/index.js';
-import type { Channel, ChannelCompletion, ChannelRunRequest } from '../src/adapters/channel/types.js';
+import type { Channel, ChannelCompletion, ChannelRunRequest } from '../src/core/channel/index.js';
 import { createLoadedRuntimeUnit } from '../src/runtime/runtime-unit.js';
 import type {
-  ChatParams,
-  ChatResponse,
-  LLMClient,
-  StreamEvent,
-} from '../src/adapters/llm/types.js';
+  ModelInvocationRequest,
+  ModelInvocationResponse,
+  ModelInvocationPort,
+  ModelStreamEvent as ModelStreamEvent,
+} from '../src/core/model-invocation/index.js';
 import type { AgentEvent } from '../src/core/runner/index.js';
 import type { RuntimeEvent } from '../src/runtime/types.js';
 
@@ -98,13 +98,13 @@ async function writeAgentDir(workspaceDir: string): Promise<void> {
  * `perCallEvents` lets a single test drive multiple sequential LLM calls
  * (e.g. tool_use round + follow-up).
  */
-function createSignalAwareLLM(perCallEvents: StreamEvent[][], delayMs = 25): {
-  client: LLMClient;
+function createSignalAwareLLM(perCallEvents: ModelStreamEvent[][], delayMs = 25): {
+  client: ModelInvocationPort;
   callCount: () => number;
 } {
   let call = 0;
-  const client: LLMClient = {
-    async *chatStream(params: ChatParams): AsyncIterable<StreamEvent> {
+  const client: ModelInvocationPort = {
+    async *chatStream(params: ModelInvocationRequest): AsyncIterable<ModelStreamEvent> {
       const events = perCallEvents[call] ?? perCallEvents[perCallEvents.length - 1];
       call += 1;
       if (!events) throw new Error(`mock LLM: no scripted events for call #${call}`);
@@ -135,15 +135,15 @@ function createSignalAwareLLM(perCallEvents: StreamEvent[][], delayMs = 25): {
         yield ev;
       }
     },
-    async chat(): Promise<ChatResponse> {
+    async chat(): Promise<ModelInvocationResponse> {
       throw new Error('non-stream chat not used by AgentRunner');
     },
   };
   return { client, callCount: () => call };
 }
 
-function createTestProvider(client: LLMClient) {
-  return [{
+function createTestProviderUnit(client: ModelInvocationPort) {
+  const provider = {
     id: 'test',
     protocol: 'test',
     invocationPort: client,
@@ -161,7 +161,15 @@ function createTestProvider(client: LLMClient) {
         },
       },
     }),
-  }];
+  };
+  return createLoadedRuntimeUnit({
+    registration: {
+      id: 'builtin-test-provider',
+      source: 'builtin',
+      register(api) { api.registerProvider(provider); },
+    },
+    required: true,
+  });
 }
 
 function createTestChannel(id: string) {
@@ -235,7 +243,7 @@ async function scenarioAbortMidStream(): Promise<void> {
       workspaceDir,
       onAgentEvent: observer,
       dependencies: {
-        createProviderProjection: () => createTestProvider(client),
+        createBundledProviderUnit: () => createTestProviderUnit(client),
         createSessionManager: (dir, options) => {
           sessionManager = new SessionManager(dir, options);
           return sessionManager;
@@ -309,7 +317,7 @@ async function scenarioOrphanRepair(): Promise<void> {
       workspaceDir,
       onAgentEvent: (e) => agentEvents.push(e),
       dependencies: {
-        createProviderProjection: () => createTestProvider(client),
+        createBundledProviderUnit: () => createTestProviderUnit(client),
         createSessionManager: (dir, options) => {
           sessionManager = new SessionManager(dir, options);
           return sessionManager;
@@ -400,7 +408,7 @@ async function scenarioMessagesDropped(): Promise<void> {
       workspaceDir,
       loadedUnits: [testChannel.unit],
       onEvent: (e) => runtimeEvents.push(e),
-      dependencies: { createProviderProjection: () => createTestProvider(client) },
+      dependencies: { createBundledProviderUnit: () => createTestProviderUnit(client) },
     });
 
     const sk = 'main';
@@ -470,7 +478,7 @@ async function scenarioShutdownAborts(): Promise<void> {
         shutdownAbortConvergenceMs: 500,
         shutdownOverallMs: 1_000,
       },
-      dependencies: { createProviderProjection: () => createTestProvider(client) },
+      dependencies: { createBundledProviderUnit: () => createTestProviderUnit(client) },
     });
 
     try {

@@ -47,7 +47,7 @@ v1 上线后实际使用中出现的痛点：
 - **不做跨 turn 并发**："父 turn A 里 spawn 的子还没跑完，父又开 turn B" 这种场景由 `RuntimeApp.inFlightSessions` gate 现状继续兜——**父 sessionKey 仍然串行**。
 - **不放开 subagent 嵌套**：`maxDepth` 默认仍为 1，子 agent 依然拿不到 `task` 工具。orchestrator 层的并发是 v3 的题目。
 - **不做跨 agent 通信**（Claude Code 的 `SendMessage`）：v2 仍然只有"prompt 进 / final text 出"。
-- **不动 `LLMClient` 层的 rate limit 治理**：v2 只把 subagent 并发数限住，API 侧的 rate limit 由 Anthropic SDK 的重试/退避机制兜（现状）。真正的 client-side rate limiter 是独立 spec。
+- **不动 Model Invocation / Provider 层的 rate limit 治理**：v2 只把 subagent 并发数限住，API 侧的 rate limit 由 Anthropic SDK 的重试/退避机制兜（现状）。真正的 client-side rate limiter 是独立 spec。
 - **不改事件 schema**：`subagent_start / subagent_end` 已有的 `runId / trigger / parentTurnId(via trigger)` 已够 UI 做嵌套渲染。
 
 ## 4. 现状盘点（v1 → v2 迁移前审计）

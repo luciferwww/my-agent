@@ -66,7 +66,7 @@ WebSocket / 未来 HTTP channel 都把已经准备好的 ContentBlock 数组直�
 
 ### 决策 3：runner / session 数据模型做最小必要扩展
 
-- `core/session/types.ts` 与 `adapters/llm/types.ts` 的 `ContentBlock.image` 已支持 `base64` source；本 spec 只在 `ImageBlock` 上加一个**必选的** `dimensions` 字段（internal-only，wire 上不带，runtime dispatch 阶段由 media pipeline sniff 写入；sniff 失败的附件被丢弃，故内部不会出现缺 `dimensions` 的 image，详见「内部 ContentBlock」小节），其余 shape 不变。`ImageSource` 故意保留联合类型写法，为 Phase 2 可能引入的 `file` source variant 预留扩展位
+- `core/session/types.ts` 与 `core/model-invocation/types.ts` 的 `ContentBlock.image` / `ChatContentBlock.image` 已支持 `base64` source；本 spec 只在 `ImageBlock` 上加一个**必选的** `dimensions` 字段（internal-only，wire 上不带，runtime dispatch 阶段由 media pipeline sniff 写入；sniff 失败的附件被丢弃，故内部不会出现缺 `dimensions` 的 image，详见「内部 ContentBlock」小节），其余 shape 不变。`ImageSource` 故意保留联合类型写法，为 Phase 2 可能引入的 `file` source variant 预留扩展位
 - 后续按需扩展：`document`（PDF）、`text_file`（短文本附件，可选——用 `text` block 也能表达）
 - `RunParams.message` 类型放宽为 `string | ChatContentBlock[]`
 - `ChannelRunRequest.message` 类型放宽为 `string | InboundContentBlock[]`（InboundContentBlock 是 ChatContentBlock 中允许 client 入站的子集，**不包括** `tool_use` / `tool_result` 这类只能由 runner 产生的 block）
@@ -97,7 +97,7 @@ WebSocket / 未来 HTTP channel 都把已经准备好的 ContentBlock 数组直�
 
 > **为什么分两步而不是网格搜索 (size × quality)**：网格会跑出明显劣解。比如一张 4K 图，候选 `2000×1500 @ q45` 在三个维度上同时输给 `1568×1176 @ q80`——字节更多、本地 token 估算更高、Anthropic server 还会把它再缩到 1568，但 q45 的压缩痕迹消不掉。要剔除这种劣解就得写「质量评分函数」，主观且易调坏。两步法把尺寸当**约束**、画质当唯一**自由变量**——单维单调，第一个达标的就是最优解，没有评分函数。代价：典型只 encode 1-2 次（网格要 5-15 次）。
 
-> **为什么 `MAX_SIDE = 2000`**：Anthropic vision API 自己会把图缩到模型上限再算 token——Sonnet 4.6 等主流模型 1568 px，Opus 4.7+ / Fable 5 / Mythos 5 是 2576 px。2000 这个值对 Sonnet 系 LLM 视角无差异（server 强制再缩到 1568，只是本地估算上界偏高 ~3×、典型截图 ~2×，量级正确不至于误发 Layer 2）；对 Opus 4.7+ 会主动降采样，若主要服务这类模型可调到 2576。第一版以兼容性最广的 2000 为默认。详细计费规则见 [Appendix A](#appendix-a-anthropic--openai-图片-token-计算参考)。
+> **为什么 `MAX_SIDE = 2000`**：Anthropic vision API 自己会把图缩到模型上限再算 token——Sonnet 4.6 等主流模型 1568 px，Opus 4.7+ / Fable 5 / Mythos 5 是 2576 px。2000 这个值对 Sonnet 系 LLM 视角无差异（server 强制再缩到 1568，只是本地估算上界偏高 ~3×、典型截图 ~2×，量级正确不至于误发 Layer 2）；对 Opus 4.7+ 会主动降采样，若主要服务这类模型可调到 2576。第一版以兼容性最广的 2000 为默认。详细计费规则见 [Appendix A](#appendix-aanthropic--openai-图片-token-计算参考)。
 
 > **统一转 JPEG**：PNG 截图会有边缘 artifact，但对 LLM 识别影响小，省体积优先。HEIC 转换、EXIF 旋转等 openclaw 的复杂能力 phase 1 不做。
 
@@ -121,7 +121,7 @@ WebSocket / 未来 HTTP channel 都把已经准备好的 ContentBlock 数组直�
 
 回答两个问题：**一张图占多少 token？** 和 **压缩历史时图怎么处理？**
 
-- **算 token**：按 Anthropic patch 公式 `ceil(width/28) * ceil(height/28)`（每 28×28 像素 = 1 token，详见 [Appendix A](#appendix-a-anthropic--openai-图片-token-计算参考)）。`width × height` 在 runtime dispatch 阶段由 media pipeline sniff 出、挂到内部 block 上；sniff 失败由 media pipeline 返回 `{ ok: false, reason: 'metadata_unreadable' }`，runtime **丢弃该附件**——所以「到 Layer 2 不会有缺尺寸的 image」这一不变量靠**丢弃**而非拒收来保证。结合决策 4 的 max-side=2000，**单图 token 上界 = 72² = 5184**，封顶。
+- **算 token**：按 Anthropic patch 公式 `ceil(width/28) * ceil(height/28)`（每 28×28 像素 = 1 token，详见 [Appendix A](#appendix-aanthropic--openai-图片-token-计算参考)）。`width × height` 在 runtime dispatch 阶段由 media pipeline sniff 出、挂到内部 block 上；sniff 失败由 media pipeline 返回 `{ ok: false, reason: 'metadata_unreadable' }`，runtime **丢弃该附件**——所以「到 Layer 2 不会有缺尺寸的 image」这一不变量靠**丢弃**而非拒收来保证。结合决策 4 的 max-side=2000，**单图 token 上界 = 72² = 5184**，封顶。
 
   > 注：本地按 max-side=2000 估算（72² = 5184），不同模型 server 端会再缩到自己 native cap 后计费（如 Sonnet 4.6 → 1568）。本地偏高方向上对 Layer 2 安全。
 

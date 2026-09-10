@@ -111,7 +111,7 @@ export interface AttachmentSummary {
 
 `summarizeAssembled(assembled: string | ChatContentBlock[]) → { text: string; attachmentSummaries: AttachmentSummary[] }` 是本 spec 引入的辅助函数。字符串 → `{text, attachmentSummaries: []}`；数组按下表逐 block 处理：
 
-当前 [`ChatContentBlock`](../../src/adapters/llm/types.ts#L5-L18) 面向 user 消息的有效变体是 `text` 和 `image`（`tool_use` / `tool_result` 是 assistant 侧产物，不会出现在 user 消息里）。
+当前 [`ChatContentBlock`](../../src/core/model-invocation/types.ts) 面向 user 消息的有效变体是 `text` 和 `image`（`tool_use` / `tool_result` 是 assistant 侧产物，不会出现在 user 消息里）。
 
 | 输入 block | text 结果 | AttachmentSummary |
 |---|---|---|

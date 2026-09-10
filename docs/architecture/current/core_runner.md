@@ -9,7 +9,7 @@
 
 ## 1. 概述
 
-`src/core/runner/` 是 Agent 的**执行引擎**，串联 `adapters/llm`、`core/session`、`core/tools` 与上下文管理子模块，完成一次完整的"对话循环"：LLM 调用 → tool 执行 → tool 结果回传 → LLM 继续。
+`src/core/runner/` 是 Agent 的**执行引擎**，消费 resolved Provider-neutral invocation Port，并串联 `core/session`、`core/tools` 与上下文管理子模块，完成一次完整的"对话循环"：LLM 调用 → tool 执行 → tool 结果回传 → LLM 继续。
 
 ### 1.1 职责
 

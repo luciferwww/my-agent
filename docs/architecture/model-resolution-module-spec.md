@@ -67,7 +67,7 @@ direct 与 queued Parent Turn 仍在 `RuntimeApp.runTurnInternal()` 汇合，但
 - [RuntimeApp](../../src/runtime/RuntimeApp.ts)；
 - [Runtime bootstrap](../../src/runtime/bootstrap.ts)；
 - [Runner](../../src/core/runner/AgentRunner.ts)；
-- [AnthropicClient](../../src/adapters/llm/AnthropicClient.ts)。
+- [AnthropicClient](../../src/adapters/provider/anthropic/AnthropicClient.ts)。
 
 ### 4.3 第一个真实迁移控制点
 

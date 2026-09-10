@@ -11,7 +11,7 @@ import type {
   ChannelInteractionAdapter,
   ChannelRunRequest,
   TurnInteractionResponse,
-} from './types.js';
+} from '../../core/channel/index.js';
 
 // Tool result preview budget: head + tail lines visible, middle elided.
 // 10:6 split leans toward head because most CLI output (lists, file content,

@@ -1,7 +1,7 @@
 import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
-import type { ApprovalInteractionRequest } from './types.js';
+import type { ApprovalInteractionRequest } from '../../core/channel/index.js';
 import { WebSocketChannel } from './WebSocketChannel.js';
 
 describe('WebSocketChannel', () => {

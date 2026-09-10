@@ -163,9 +163,10 @@ async function generateSummary(params: {
   messages: ChatMessage[];
   llmClient: ModelInvocationPort;
   model: string;
+  maxTokens: number;
   customInstructions?: string;
 }): Promise<string> {
-  const { messages, llmClient, model, customInstructions } = params;
+  const { messages, llmClient, model, maxTokens, customInstructions } = params;
 
   const conversationText = serializeMessagesForSummary(messages);
   const messageCount = messages.length;
@@ -190,7 +191,7 @@ async function generateSummary(params: {
     for await (const event of llmClient.chatStream({
       model,
       messages: [{ role: 'user', content: summaryPrompt }],
-      maxTokens: 1024,
+      maxTokens,
     })) {
       if (event.type === 'text_delta') {
         summary += event.text;
@@ -234,9 +235,10 @@ export async function compactMessages(params: {
   config: CompactionConfig;
   llmClient: ModelInvocationPort;
   model: string;
+  maxTokens: number;
   trigger: 'preemptive' | 'overflow' | 'manual';
 }): Promise<CompactionResult> {
-  const { messages, config, llmClient, model, trigger } = params;
+  const { messages, config, llmClient, model, maxTokens, trigger } = params;
 
   // 压缩前 token 估算
   const tokensBefore = estimatePromptTokens({ messages });
@@ -257,6 +259,7 @@ export async function compactMessages(params: {
     messages: toCompress,
     llmClient,
     model,
+    maxTokens,
     customInstructions: config.customInstructions,
   });
 

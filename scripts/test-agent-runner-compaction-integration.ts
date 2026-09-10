@@ -25,12 +25,16 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import process from 'node:process';
 
-import { AgentRunner } from '../src/core/runner/index.js';
+import { AgentRunner, type RunParams } from '../src/core/runner/index.js';
 import { ContextOverflowError } from '../src/core/runner/errors.js';
-import type { ModelInvocationPort } from '../src/core/model-invocation/index.js';
+import { makeRunParams } from '../src/core/runner/test-helpers.js';
+import type {
+  ModelInvocationPort,
+  ModelInvocationRequest,
+  ModelStreamEvent as ModelStreamEvent,
+} from '../src/core/model-invocation/index.js';
 import type { ResolvedModel } from '../src/core/model-resolution/index.js';
 import { SessionManager } from '../src/core/session/index.js';
-import type { StreamEvent } from '../src/adapters/llm/types.js';
 import type { CompactionConfig } from '../src/platform/config/types.js';
 
 // ── runStep 脚手架 ──────────────────────────────────────────────
@@ -53,17 +57,28 @@ async function runStep(name: string, step: () => Promise<void>): Promise<void> {
   }
 }
 
+function runAgent(
+  runner: AgentRunner,
+  params: Omit<RunParams, 'toolProjection' | 'hookProjection' | 'toolPolicy'>,
+) {
+  return runner.run({ ...makeRunParams(), ...params });
+}
+
 // ── Mock LLM 工厂 ────────────────────────────────────────────────
 
 /**
  * 顺序消费 mock LLM：每次调用 chatStream() 消费 responses 数组的下一个元素。
- *   - StreamEvent[]：yield 这些事件
+ *   - ModelStreamEvent[]：yield 这些事件
  *   - Error：throw 这个错误（模拟 LLM API 报错）
  */
-function createSequentialMockLLM(responses: Array<StreamEvent[] | Error>) {
+function createSequentialMockLLM(
+  responses: Array<ModelStreamEvent[] | Error>,
+  capturedMaxTokens?: number[],
+) {
   let callIndex = 0;
   return {
-    async *chatStream(): AsyncIterable<StreamEvent> {
+    async *chatStream(params: ModelInvocationRequest): AsyncIterable<ModelStreamEvent> {
+      capturedMaxTokens?.push(params.maxTokens);
       const entry = responses[callIndex++];
       if (!entry) {
         throw new Error(`Mock LLM: unexpected call #${callIndex} (only ${responses.length} responses configured)`);
@@ -77,7 +92,7 @@ function createSequentialMockLLM(responses: Array<StreamEvent[] | Error>) {
   };
 }
 
-function textResponse(text: string): StreamEvent[] {
+function textResponse(text: string): ModelStreamEvent[] {
   return [
     { type: 'message_start' },
     { type: 'text_delta', text },
@@ -85,7 +100,7 @@ function textResponse(text: string): StreamEvent[] {
   ];
 }
 
-function summaryResponse(summary: string): StreamEvent[] {
+function summaryResponse(summary: string): ModelStreamEvent[] {
   return [
     { type: 'message_start' },
     { type: 'text_delta', text: summary },
@@ -101,6 +116,7 @@ function contextOverflowError(): Error {
 function resolvedModel(
   invocationPort: ModelInvocationPort,
   contextWindowTokens = 200_000,
+  maxTokens = 4096,
 ): ResolvedModel {
   return {
     identity: { providerId: 'test', modelId: 'test' },
@@ -113,9 +129,9 @@ function resolvedModel(
         value: contextWindowTokens,
         source: 'deployment-config',
       },
-      maximumOutputTokens: { value: 4096, source: 'deployment-config' },
+      maximumOutputTokens: { value: maxTokens, source: 'deployment-config' },
     },
-    limits: { maxTokens: 4096, maxTokensSource: 'policy-default' },
+    limits: { maxTokens, maxTokensSource: 'policy-default' },
   };
 }
 
@@ -194,7 +210,7 @@ try {
     ]);
 
     const runner = new AgentRunner({ sessionManager: manager });
-    const result = await runner.run({
+    const result = await runAgent(runner, {
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'New question',
@@ -221,7 +237,7 @@ try {
     ]);
 
     const runner = new AgentRunner({ sessionManager: manager });
-    await runner.run({
+    await runAgent(runner, {
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Hello',
@@ -266,7 +282,7 @@ try {
       },
     });
 
-    await runner.run({
+    await runAgent(runner, {
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Hello',
@@ -291,7 +307,7 @@ try {
     ]);
 
     const runner = new AgentRunner({ sessionManager: manager });
-    const result = await runner.run({
+    const result = await runAgent(runner, {
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Hello',
@@ -310,6 +326,32 @@ try {
     console.log(`  fallback summary: "${record!.summary.slice(0, 80)}..."`);
   });
 
+  await runStep('Path 1e: resolved maxTokens reaches initial, summary, and retry calls', async () => {
+    const manager = new SessionManager(workspaceDir + '/p1e');
+    await manager.createSession('main');
+    await prefillHistory(manager, 2);
+
+    const capturedMaxTokens: number[] = [];
+    const llmClient = createSequentialMockLLM([
+      contextOverflowError(),
+      summaryResponse('Limit forwarding summary.'),
+      textResponse('Limit forwarding retry succeeded.'),
+    ], capturedMaxTokens);
+
+    const runner = new AgentRunner({ sessionManager: manager });
+    await runAgent(runner, {
+      sessionKey: 'main',
+      turnId: randomUUID(),
+      message: 'Verify output limit forwarding',
+      resolvedModel: resolvedModel(llmClient, 200_000, 1777),
+      systemPrompt: '',
+      compaction: BASE_COMPACTION,
+    });
+
+    assert.deepEqual(capturedMaxTokens, [1777, 1777, 1777]);
+    console.log(`  maxTokens by call: [${capturedMaxTokens.join(', ')}]`);
+  });
+
   // ── Path 2：Preemptive compact ──────────────────────────────────
 
   await runStep('Path 2a: preemptive compact fires before first LLM main call', async () => {
@@ -325,7 +367,7 @@ try {
     ]);
 
     const runner = new AgentRunner({ sessionManager: manager });
-    const result = await runner.run({
+    const result = await runAgent(runner, {
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Short question',
@@ -362,7 +404,7 @@ try {
       },
     });
 
-    await runner.run({
+    await runAgent(runner, {
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Hi',
@@ -394,7 +436,7 @@ try {
 
     let thrown: unknown;
     try {
-      await runner.run({
+      await runAgent(runner, {
         sessionKey: 'main',
         turnId: randomUUID(),
         message: 'Test',
@@ -422,7 +464,7 @@ try {
     const runner = new AgentRunner({ sessionManager: manager });
 
     try {
-      await runner.run({
+      await runAgent(runner, {
         sessionKey: 'main',
         turnId: randomUUID(),
         message: 'Test',
@@ -458,7 +500,7 @@ try {
     });
 
     try {
-      await runner.run({
+      await runAgent(runner, {
         sessionKey: 'main',
         turnId: randomUUID(),
         message: 'Test',

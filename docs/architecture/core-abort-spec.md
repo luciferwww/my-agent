@@ -47,7 +47,7 @@ WebSocket 客户端与 library 调用方走的是相同链路，只是触发源�
 ## 0.2 Related docs
 
 - **Accepted target delta:** [ADR-001 Tool Result Closure and Recovery](adr-001-tool-result-closure-and-recovery.md) — 区分受控 Abort 的当轮精确闭合与 crash/未知故障的 next-turn repair；尚未实现。
-- **openclaw** ([openclaw/src/acp](../../openclaw/src/acp/), [openclaw/src/gateway/chat-abort.ts](../../openclaw/src/gateway/chat-abort.ts)) — per-session controller、`AbortSignal.any` 组合、双击 Ctrl+C UX、partial 持久化。详细对比见 §15。
+- **openclaw**（research input：`openclaw/src/acp/`、`openclaw/src/gateway/chat-abort.ts`）— per-session controller、`AbortSignal.any` 组合、双击 Ctrl+C UX、partial 持久化。详细对比见 §15。
 - **Claude Code 逆向报告** — 触发语义、双击退出窗口。
 
 ## 0.3 Locked Decisions
@@ -197,10 +197,10 @@ export interface RunParams {
 signal?: AbortSignal;
 ```
 
-### 6.3 `adapters/llm/types.ts`
+### 6.3 `core/model-invocation/types.ts`
 
 ```typescript
-export interface ChatParams {
+export interface ModelInvocationRequest {
   // ...现有...
   signal?: AbortSignal;
 }
@@ -687,7 +687,7 @@ private async repairOrphanToolUses(turnCtx: TurnContext): Promise<void> {
 
 > **不变量**：孤儿检查只负责 completeness，不负责 ordering。Anthropic API 只要每个 tool_use 有对应 tool_use_id 的 tool_result，同一条 user message 里顺序任意。
 
-> **Event `orphan_tool_results_repaired`**：新增到 `RunEvent` union（[my-agent/src/core/runner/types.ts](my-agent/src/core/runner/types.ts)，与 `session_tail_sanitized` 同域），供 transcript / audit / 测试断言使用。字段：`count`（补写块数）+ `source: 'abort' | 'recovered'`（源自 abort 还是其他崩溃恢复）。
+> **Event `orphan_tool_results_repaired`**：新增到 `RunEvent` union（[core/runner/types.ts](../../src/core/runner/types.ts)，与 `session_tail_sanitized` 同域），供 transcript / audit / 测试断言使用。字段：`count`（补写块数）+ `source: 'abort' | 'recovered'`（源自 abort 还是其他崩溃恢复）。
 
 ### 7.4 工具循环间检查
 
@@ -974,11 +974,11 @@ case 'aborted':
 只加 signal 透传，不动错误处理路径——SDK 抛 AbortError 后自然传出，后续语义全在上层收拢（§7.2）。
 
 ```typescript
-async *chatStream(params: ChatParams): AsyncIterable<StreamEvent> {
+async *chatStream(request: ModelInvocationRequest): AsyncIterable<ModelStreamEvent> {
   // ...existing...
   const stream = this.client.messages.stream(
     { ...sdkParams },
-    params.signal ? { signal: params.signal } : undefined,
+    request.signal ? { signal: request.signal } : undefined,
   );
   for await (const event of stream) { ... }
   // 原有 try/catch 不动 — SDK 会抛 AbortError，自然传出。
@@ -1245,7 +1245,7 @@ WebSocketChannel 实现 `bindAbortHooks?` — 与 CliChannel 共用 §12 的 `Ab
 | PR | 触碰文件 | 测试增加 | 依赖 |
 |---|---|---|---|
 | **abort-session-types** | `core/session/types.ts`（MessageRecord.message + abortMeta）<br>`core/session/SessionManager.ts`（appendMessage 签名） | `SessionManager.test.ts`（+2 cases：写 / 读 abortMeta round-trip） | 无 |
-| **abort-types** | `core/runner/types.ts`（RunParams.signal）<br>`core/tools/types.ts`（ToolContext.signal 注释）<br>`core/subagent/types.ts`（required delegation signal）<br>`adapters/llm/types.ts`（ChatParams.signal） | 无（纯类型） | abort-session-types |
+| **abort-types** | `core/runner/types.ts`（RunParams.signal）<br>`core/tools/types.ts`（ToolContext.signal 注释）<br>`core/subagent/types.ts`（required delegation signal）<br>`core/model-invocation/types.ts`（ModelInvocationRequest.signal） | 无（纯类型） | abort-session-types |
 | **abort-runner** | `core/runner/AgentRunner.ts`（`isAbortError` / `isAbortByName` / `logIfSwallowedByAbortFallback` / `buildAbortedResult` / `repairOrphanToolUses`（turn 起点，与 `sanitizeSessionTail` 平级）/ 循环间 abort check / ToolContext.signal 注入 / runAttempt 内层 try-catch 处理 abort / partial assistant 写入 session 携 abortMeta）<br>`core/runner/types.ts`（RunEvent 加 `orphan_tool_results_repaired`） | `AgentRunner.test.ts`（+11 cases 见 §14.1）| abort-types 且 abort-session-types |
 | **abort-llm** | `adapters/llm/AnthropicClient.ts`（chatStream signal 透传，无错误处理改动）| `AnthropicClient.test.ts`（+1 case：signal 已 abort 立即抛 AbortError）| abort-types |
 | **abort-runtime** | `runtime/RuntimeApp.ts`（activeAborts + abortTurn + runTurnInternal 注入 + shutdown abort-then-wait + registerChannel 加 bindAbortHooks 调用）<br>`runtime/types.ts`（RuntimeEvent 加 messages_dropped） | `RuntimeApp.test.ts`（+10 cases 见 §14.1）| abort-runner |

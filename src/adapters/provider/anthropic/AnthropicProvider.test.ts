@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ModelResolutionError, ModelResolver } from '../../core/model-resolution/index.js';
+import { ModelResolutionError, ModelResolver } from '../../../core/model-resolution/index.js';
 import {
   ANTHROPIC_COMPATIBLE_PROVIDER_ID,
   ANTHROPIC_MESSAGES_PROTOCOL,

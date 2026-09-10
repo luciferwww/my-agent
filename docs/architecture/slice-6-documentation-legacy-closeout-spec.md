@@ -389,22 +389,24 @@ A generic link to Current Config without verified Wizard facts does not satisfy 
 
 ## 11. API-M04 Separate Gate
 
-### 11.1 Verified baseline
+### 11.1 Verified baseline and terminal disposition
 
-API-M04 is the deprecated `LLMClient` / `ChatParams` / `StreamEvent` adapter facade. Stable invocation contracts live under `core/model-invocation`, but the 2026-09-09 audit found:
+API-M04 was the deprecated `LLMClient` / `ChatParams` / `StreamEvent` adapter facade. Stable invocation contracts live under `core/model-invocation`. The pre-S6-D7 audit on 2026-09-09 found:
 
 - two Runtime production imports of stable Core symbols through the compatibility facade path;
 - one Anthropic Adapter implementation import that still uses deprecated alias names from its local facade;
 - eight integration scripts importing the facade path: six use deprecated aliases and two use stable Core symbols through that path;
 - tests that either use deprecated aliases or import stable Core symbols through the facade path;
 - one adapter barrel re-export containing deprecated aliases and stable Core symbols;
-- unresolved external consumer/deprecation decision.
+- unresolved external consumer/deprecation decision at that baseline.
 
-The entire `adapters/llm/types.ts` module is documented as a temporary compatibility facade, while `ChatParams`, `LLMClient` and `StreamEvent` are deprecated alias names defined by Stable Core. Therefore two independent residual classes must be measured: **facade-path imports** and **deprecated-alias usages**. API-M04 is not deletion-ready, and the Inventory statement “production callers migrated” must be narrowed to the authoritative invocation contract rather than interpreted as zero facade-path usage.
+That baseline established two independently measured residual classes: **facade-path references** and **deprecated-alias usages**. It did not authorize retention as architecture. S6-D7 subsequently migrated production, tests and scripts to canonical Core contracts, removed the facade file and adapter compatibility exports, and deleted all three aliases. Both residual classes are now zero under deterministic Fitness scanning.
+
+The accepted external-consumer disposition is repository-internal breaking removal. The package remains at 0.1.0 and no supported external package contract was found, so no deprecation window or dual path was created. The Core-owned `ChatResponse` alias remains outside API-M04; internal consumers use `ModelInvocationResponse`.
 
 ### 11.2 Removal conditions
 
-S6-D7 may run only after separate public-contract authorization and must prove:
+S6-D7 received separate authorization and proved:
 
 1. external-consumer policy: deprecation window or explicit breaking release decision;
 2. zero production usage of deprecated aliases;
@@ -418,7 +420,7 @@ S6-D7 may run only after separate public-contract authorization and must prove:
 10. no reverse dependency from Stable Core to the facade;
 11. Legacy Migration Inventory and release-facing documentation are synchronized.
 
-If S6-D7 is not authorized, API-M04 remains a named Compatibility Candidate with Owner, caller list, review date and exit conditions. Pure document closeout may complete, but repository claims must not say all Compatibility has been deleted.
+All eleven conditions are satisfied. Rollback is a reviewed code/release revert; there is no runtime Feature Flag, compatibility facade, or second invocation authority.
 
 ## 12. Delivery Batches
 
@@ -496,13 +498,17 @@ S6-D1 is the first separately authorized Document Delivery batch, not a pre-acce
 
 **Delivery status（2026-09-09）：** `Completed — Owner Accepted`。DOC-V01–V12 已分别完成 six-question Review 并达到 `Deleted`，五个 conditional change records 的 delta 均有明确 Git/source/test reconstructibility evidence；DOC-V10 successor-first sequence 已完成，五个 production comments 已改指 Current Config，obsolete Wizard prompts 已删除并由 regression test 锁定，FT-09 当前 Legacy diagnostics 为零。FT-09/11/12 + Wizard focused tests 33/33、FT-01–FT-12 34/34、full Vitest 819/819、editor diagnostics、lint、build、JSON、3 个新增相对链接、scope、API-M04 isolation、physical absence 和 `git diff --check` 全部通过。Independent review 接受并修正两类 governance weakness（FT-09 governed-text/bare-reference coverage 与 FT-11 frozen exact-successor baseline）及其 comment/string boundary follow-ups；最终 re-review 为 `Ready`，无 unresolved Critical/High/Medium/Low finding。项目所有者于 2026-09-09 接受 S6-D6；该验收不授权 checkpoint commit/push，也不授权或启动 API-M04 implementation。
 
-### S6-D7 API-M04 removal — optional, separately authorized
+### S6-D7 API-M04 removal — separately authorized
 
 - execute §11 only after explicit authorization;
 - do not combine facade changes with unrelated document deletion;
 - validate public contract, callers, exports, Fitness and build.
 
 **Exit:** API-M04 is either deleted with complete evidence or remains explicitly governed Compatibility.
+
+**Code delivery status（2026-09-09）：** `Completed — Owner Accepted`。Compatibility facade、三个 deprecated aliases、adapter barrel compatibility exports 以及 production/test/script callers 已全部删除或迁移；Core `ChatResponse` alias 作为 Core-owned alias 保留，repository consumers 使用 `ModelInvocationResponse`。Deterministic path/symbol/static-string Fitness、Core/Anthropic contracts、FT-03/08、lint、build、95/95 test files（820/820 tests）、six runnable integrations 和 `git diff --check` 全部通过；independent code review 为 `Ready`。项目所有者已接受 code batch，并授权随后独立进行 docs/inventory synchronization；未授权 commit、push 或 S6-D8。
+
+**Documentation delivery status（2026-09-09）：** `Completed — Owner Accepted`。Current Model Invocation authority、Legacy Migration Inventory、manifest、Target historical-baseline labels 与仍生效的 specs/coding guidance 已同步到 canonical Core vocabulary；52 个 candidate dispositions 不变。Review follow-up 同时关闭两个实现/产物偏差：`ModelInvocationRequest.maxTokens` 现为 post-resolution required value，normal 与 Compaction invocation 都使用 `ResolvedModel.limits.maxTokens`；build 先清理 `dist`，已删除 facade 不再残留 generated declaration。Focused FT-11/12 11/11、FT-01–FT-12 37/37、added-link/package-artifact audit、editor diagnostics、lint、clean build、95/95 test files（822/822 tests）和 `git diff --check` 全部通过。最初 docs review 的两项 Medium 和一项 Low 已修正；架构一致性复审发现的两项 High、两项 Medium 也已修正或按 test-only Policy simulation 明确处置，最终 re-review 为 `Ready`，无 unresolved Critical/High/Medium blocker。另有一项非阻塞 Low：现有 Compaction integration 未以 distinct limit 单独断言转发；Unit、type 与 Fitness 已覆盖该 invariant。项目所有者已接受本批并要求继续 S6-D8；未授权 commit 或 push。
 
 ### S6-D8 Final validation and acceptance
 
@@ -512,6 +518,8 @@ S6-D1 is the first separately authorized Document Delivery batch, not a pre-acce
 - run full applicable static/build/test validation;
 - obtain independent implementation/document review;
 - present evidence to project owner for Slice completion acceptance.
+
+**Validation status（2026-09-09）：** `In Review — Awaiting Owner Acceptance`。DOC-C01–C13 与 DOC-A08/A09 已从 `Migrated` 进入 terminal `Reviewed`，其余 37 个 entries 保持 S6-D4–D7 已接受的 `Reviewed` / `Deleted` terminal disposition；52/52 无 pending entry。FT-11 现以 cumulative S6-D4–D8 rules 锁定 retained-review ledger、API-M04 removal、exact inbound references、inline/reference-style/HTML Markdown targets 与 local anchors；Owner acceptance 明确为 `pending`。Focused FT-09/11/12 16/16、full Architecture Fitness 40/40、lint、clean build、Node 22 full Vitest 95/95 files（825/825 tests）、八个 changed integration scripts（34 scenarios，含 Compaction initial/summary/retry 的 distinct `maxTokens=1777` 转发）、package-artifact/metadata/manifest JSON audit 与 `git diff --check` 全部通过。Current Architecture、Capability Inventory 与 docs index 的 authority/navigation 无需再改；本段只记录 final evidence。Independent final review 的 concrete Medium findings 已逐项修正并复核，最终结果为 `Ready`，无 unresolved Critical/High/Medium blocker。Slice 6 仍待 Owner acceptance，未标记 Completed；commit/push 均未授权。
 
 ## 13. Validation Matrix
 
@@ -582,16 +590,16 @@ Validation is incremental. The first substantive change in each batch receives t
 
 ## 17. Definition of Done
 
-- [ ] AC-DC-01..16 have evidence;
-- [ ] 52/52 candidates reach reviewed terminal disposition;
-- [ ] Current Architecture, active navigation and Capability Inventory are synchronized;
+- [x] AC-DC-01..16 have evidence;
+- [x] 52/52 candidates reach reviewed terminal disposition;
+- [x] Current Architecture, active navigation and Capability Inventory are synchronized;
 - [x] DOC-V10 known diagnostics reach zero（S6-D6）;
-- [ ] API-M04 is either removed under separate authorization or remains a fully governed Compatibility entry;
-- [ ] no active link treats a Legacy artifact as Current authority, no production source depends on a Legacy document for implementation behavior, and retained Historical/Deferred links are explicitly contextual with status/successor metadata;
-- [ ] document diagnostics, link/anchor audit, Fitness and `git diff --check` pass;
-- [ ] applicable lint, build, full tests and integration validation pass;
-- [ ] independent final review has no unresolved Critical/High/Medium blocker;
-- [ ] Legacy Migration Inventory and Architecture Foundation Plan record final dispositions;
+- [x] API-M04 is removed under separate authorization with zero facade/alias residuals and no dual path（S6-D7 code Owner Accepted）;
+- [x] no active link treats a Legacy artifact as Current authority, no production source depends on a Legacy document for implementation behavior, and retained Historical/Deferred links are explicitly contextual with status/successor metadata;
+- [x] document diagnostics, link/anchor audit, Fitness and `git diff --check` pass;
+- [x] applicable lint, build, full tests and integration validation pass;
+- [x] independent final review has no unresolved Critical/High/Medium blocker;
+- [x] Legacy Migration Inventory and Architecture Foundation Plan record final dispositions;
 - [ ] project owner accepts validation and confirms Slice 6 complete.
 
 ## 18. Planning Review History
@@ -622,4 +630,11 @@ Validation is incremental. The first substantive change in each batch receives t
 - **2026-09-09 — S6-D6 delivery and validation:** established the verified Current Config Wizard successor, removed obsolete schema prompts and Legacy source references, recorded per-entry six-question/Git reconstructibility outcomes, and deleted all twelve v1.0 candidates. Focused/full Fitness, full Vitest, diagnostics, lint, build, JSON, added-link, scope, API-isolation, physical-absence and diff checks passed. Independent review remains pending; S6-D6 is not yet presented for Owner acceptance.
 - **2026-09-09 — S6-D6 independent review:** accepted and fixed two Medium governance gaps in FT-09 scan coverage and FT-11 exact-successor independence, then hardened the historical-note exception across mixed code/comments, strings, escaped quotes, multiline block comments and templates. Each correction passed focused/full validation. The final independent re-review found no unresolved Critical/High/Medium/Low finding and returned `Ready`; S6-D6 is `In Review — Awaiting Owner Acceptance`.
 - **2026-09-09 — S6-D6 owner acceptance:** project owner accepted the twelve DOC-V deletion dispositions, DOC-V10 successor-first closeout, Wizard schema correction, governance strengthening and validation evidence. S6-D6 is complete. This acceptance does not authorize checkpoint commit/push and does not authorize or start API-M04 implementation.
-- **Next:** obtain explicit authorization for the isolated S6-D6 checkpoint commit/push. Only after that checkpoint is clean and synchronized may the next separately authorized batch be announced; do not combine API-M04 with this document checkpoint.
+- **2026-09-09 — S6-D6 checkpoint / S6-D7 start:** commit `f5bd875` was pushed to `origin/feature/refactoring`; the worktree was clean and synchronized. The next batch was announced as the separately authorized API-M04 implementation.
+- **2026-09-09 — S6-D7 code delivery and owner acceptance:** removed the compatibility facade and three API-M04 aliases, migrated all repository callers to canonical Core contracts, retained only the Core-owned `ChatResponse` alias, and added deterministic zero-residual Fitness. Lint、build、95/95 test files（820/820 tests）、six runnable integrations and diff validation passed；independent code review returned `Ready`。项目所有者接受 code batch，并授权独立 docs/inventory synchronization；未授权 commit、push 或 S6-D8。
+- **2026-09-09 — S6-D7 documentation synchronization and review:** synchronized Current Authority、Inventory、manifest、Target historical-baseline labels and active specs/guidance without changing the 52 candidate dispositions. Focused/full Fitness、added-link audit、diagnostics、lint、build、95/95 test files（820/820 tests）and diff validation passed. Independent review findings（two Medium、one Low）were verified and corrected；re-review returned `Ready` with no finding. The docs batch awaits Owner acceptance；S6-D8、commit and push remain unauthorized.
+- **2026-09-09 — S6-D7 architecture consistency correction:** Owner follow-up identified that documenting the legacy optional output limit would accommodate old implementation rather than the new ownership boundary. `ModelInvocationRequest.maxTokens` is now required；Anthropic local fallback and Compaction's `1024` bypass were removed；normal and Compaction calls consume the same resolved limit；clean build prevents deleted facade declarations from surviving in `dist`. FT-11/12 package/source gates and forwarding tests lock the outcome. Final Fitness 37/37、full Vitest 822/822、lint、clean build、package-artifact audit and diff validation passed. Independent correction re-review returned `Ready` with no unresolved Critical/High/Medium blocker.
+- **2026-09-09 — S6-D7 owner acceptance / S6-D8 start:** project owner accepted the documentation synchronization and architecture-consistency correction, then requested continuation into S6-D8 final validation. Commit and push remain unauthorized.
+- **2026-09-09 — S6-D8 terminal validation:** advanced all 15 retained entries to terminal `Reviewed`, added cumulative D4–D8 Fitness and a permanent Markdown target/anchor gate, corrected three stale anchors, and closed the Compaction integration forwarding gap. Focused FT-09/11/12 16/16、full Fitness 40/40、lint、clean build、95/95 files（825/825 tests）、eight scripts / 34 integration scenarios、package/manifest and diff checks passed. Independent final review and Owner acceptance remain open；Slice 6 is not complete.
+- **2026-09-09 — S6-D8 independent final review:** accepted and fixed the Markdown regular-file gate、backtick/tilde fenced-code normalization across destination/reference/anchor collectors、reachable Owner-accepted terminal transition and stale evidence counts. Final re-review found only the review-record synchronization gap, now corrected across manifest、Spec、Inventory and Plan；result `Ready`, with no unresolved Critical/High/Medium blocker.
+- **Next:** present the validated Slice 6 evidence for Owner acceptance. Slice 6 remains `In Review — Awaiting Owner Acceptance`; do not commit or push without separate authorization.

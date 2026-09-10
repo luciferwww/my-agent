@@ -18,6 +18,7 @@ const DELETED_IDENTIFIERS = [
   'ChannelShutdownHandoff',
   'startup:1',
 ] as const;
+const DELETED_PROVIDER_SEAM = ['createProvider', 'Projection'].join('');
 
 describe('FT-10 Runtime composition deletion', () => {
   beforeAll(async () => {
@@ -52,22 +53,54 @@ describe('FT-10 Runtime composition deletion', () => {
     expect(violations).toEqual([]);
   });
 
+  it('keeps the naked Provider projection seam deleted from production and migrated callers', () => {
+    const violations = [...productionSources, ...migratedCallerSources]
+      .filter((candidate) => candidate.content.includes(DELETED_PROVIDER_SEAM))
+      .map((candidate) => candidate.path);
+
+    expect(violations).toEqual([]);
+  });
+
   it('keeps RuntimeApp.create delegation-only and composition out of bootstrap', () => {
     const runtimeApp = source('src/runtime/RuntimeApp.ts');
     const bootstrap = source('src/runtime/bootstrap.ts');
     const resourceTypes = source('src/runtime/types.ts');
+    const runtimeBuilder = source('src/runtime/runtime-builder.ts');
+    const anthropicModule = source('src/runtime-modules/anthropic-provider.ts');
     const subagent = source('src/runtime/subagent-orchestration.ts');
 
     expect(runtimeApp.content).toMatch(
       /static async create\(options: RuntimeAppOptions\): Promise<RuntimeHandle> \{\s*return buildRuntimeHandle\(options, RuntimeApp\.createKernel\);\s*\}/,
     );
-    expect(bootstrap.content).not.toMatch(/\bdeps\.createProviderProjection\s*\(/);
+    expect(bootstrap.content).not.toContain(DELETED_PROVIDER_SEAM);
     expect(bootstrap.content).not.toContain('createTaskToolModule');
     expect(bootstrap.content).not.toContain('createSubagentDelegationPort');
     expect(bootstrap.content).not.toContain('createLoadedRuntimeUnit');
     expect(bootstrap.content).not.toContain('ModelResolver');
     const resources = objectTypeBody(resourceTypes.content, 'RuntimeResourceSet');
+    const dependencies = objectTypeBody(resourceTypes.content, 'RuntimeDependencies');
     expect(resources).not.toMatch(/\b(?:registrySnapshot|modelResolver)\s*:/);
+    expect(resourceTypes.content).toContain(
+      'createBundledProviderUnit(options: RuntimeProviderOptions): LoadedRuntimeUnit;',
+    );
+    expect(dependencies).not.toContain('ProviderProjectionEntry');
+    expect(dependencies).not.toMatch(/create\w*Provider\w*\([^)]*\):\s*readonly\s+\w+\[\]/u);
+    expect(resourceTypes.content).not.toContain(DELETED_PROVIDER_SEAM);
+    expect(runtimeBuilder.content).toContain('dependencies.createBundledProviderUnit({');
+    expect(runtimeBuilder.content).not.toContain(DELETED_PROVIDER_SEAM);
+    expect(runtimeBuilder.content).not.toContain('new AnthropicProvider(');
+    expect(runtimeBuilder.content).not.toContain('adapters/provider/anthropic');
+    expect(runtimeBuilder.content).not.toContain('.registerProvider(');
+    expect(runtimeBuilder.content).toContain('defaultProviderId = registrySnapshot.providers[0]?.id;');
+    expect(runtimeBuilder.content.indexOf('registrySnapshot.providers[0]?.id')).toBeLessThan(
+      runtimeBuilder.content.indexOf('kernel = createApplication({'),
+    );
+    expect(runtimeBuilder.content.indexOf('kernel = createApplication({')).toBeLessThan(
+      runtimeBuilder.content.indexOf("type: 'app_ready'"),
+    );
+    expect(anthropicModule.content).toContain("unitId: ANTHROPIC_PROVIDER_MODULE_ID");
+    expect(anthropicModule.content).toContain('const provider = new AnthropicProvider(capturedOptions);');
+    expect(anthropicModule.content).toContain('api.registerProvider(provider.entry);');
     expect(subagent.content).toContain('new ModelResolver(parent.registrySnapshot.providers)');
     expect(subagent.content).toContain('toolProjection: parent.registrySnapshot.tools');
     expect(subagent.content).toContain('hookProjection: parent.registrySnapshot.hooks');

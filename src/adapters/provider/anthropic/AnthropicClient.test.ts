@@ -1,64 +1,57 @@
-import { describe, it, expect, vi } from 'vitest';
-import { AnthropicClient } from './AnthropicClient.js';
-import type { ChatParams, StreamEvent, ChatContentBlock } from './types.js';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ContextOverflowError,
   ModelInvocationError,
-} from '../../core/model-invocation/index.js';
-
-// 注意：这些测试使用 mock，不需要真实 API Key
+} from '../../../core/model-invocation/index.js';
+import type {
+  ChatContentBlock,
+  ModelStreamEvent,
+} from '../../../core/model-invocation/index.js';
+import { AnthropicClient } from './AnthropicClient.js';
 
 describe('AnthropicClient', () => {
   describe('constructor', () => {
     it('creates client with apiKey', () => {
-      const client = new AnthropicClient({ apiKey: 'test-key' });
-      expect(client).toBeDefined();
+      expect(new AnthropicClient({ apiKey: 'test-key' })).toBeDefined();
     });
 
     it('creates client with baseURL', () => {
-      const client = new AnthropicClient({
+      expect(new AnthropicClient({
         apiKey: 'test-key',
         baseURL: 'http://localhost:4000',
-      });
-      expect(client).toBeDefined();
+      })).toBeDefined();
     });
   });
 
-  describe('chat (with mock)', () => {
+  describe('chat', () => {
     it('collects text_delta events into a single text block', async () => {
       const client = new AnthropicClient({ apiKey: 'test-key' });
-
-      // Mock chatStream to yield predefined events
-      const mockEvents: StreamEvent[] = [
+      const mockEvents: ModelStreamEvent[] = [
         { type: 'message_start' },
         { type: 'text_delta', text: 'Hello' },
         { type: 'text_delta', text: ' world' },
         { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 10, outputTokens: 5 } },
       ];
-
       vi.spyOn(client, 'chatStream').mockImplementation(async function* () {
-        for (const event of mockEvents) {
-          yield event;
-        }
+        yield* mockEvents;
       });
 
       const response = await client.chat({
         model: 'claude-sonnet-4-6',
+        maxTokens: 1024,
         messages: [{ role: 'user', content: 'Hi' }],
       });
 
       expect(response.content).toHaveLength(1);
-      expect(response.content[0]!.type).toBe('text');
-      expect((response.content[0] as Extract<ChatContentBlock, { type: 'text' }>).text).toBe('Hello world');
+      expect((response.content[0] as Extract<ChatContentBlock, { type: 'text' }>).text)
+        .toBe('Hello world');
       expect(response.stopReason).toBe('end_turn');
-      expect(response.usage.inputTokens).toBe(10);
-      expect(response.usage.outputTokens).toBe(5);
+      expect(response.usage).toEqual({ inputTokens: 10, outputTokens: 5 });
     });
 
     it('handles tool_use events', async () => {
       const client = new AnthropicClient({ apiKey: 'test-key' });
-
-      const mockEvents: StreamEvent[] = [
+      const mockEvents: ModelStreamEvent[] = [
         { type: 'message_start' },
         { type: 'text_delta', text: 'Let me search.' },
         {
@@ -71,76 +64,59 @@ describe('AnthropicClient', () => {
         },
         { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 20, outputTokens: 15 } },
       ];
-
       vi.spyOn(client, 'chatStream').mockImplementation(async function* () {
-        for (const event of mockEvents) {
-          yield event;
-        }
+        yield* mockEvents;
       });
 
       const response = await client.chat({
         model: 'claude-sonnet-4-6',
+        maxTokens: 1024,
         messages: [{ role: 'user', content: 'Weather?' }],
       });
 
       expect(response.content).toHaveLength(2);
-      expect(response.content[0]!.type).toBe('text');
-      expect(response.content[1]!.type).toBe('tool_use');
       const toolBlock = response.content[1] as Extract<ChatContentBlock, { type: 'tool_use' }>;
-      expect(toolBlock.name).toBe('search');
-      expect(toolBlock.input).toEqual({ query: 'weather' });
+      expect(toolBlock).toMatchObject({ name: 'search', input: { query: 'weather' } });
       expect(response.stopReason).toBe('tool_use');
     });
 
     it('throws on error event', async () => {
       const client = new AnthropicClient({ apiKey: 'test-key' });
-
-      const mockEvents: StreamEvent[] = [
-        { type: 'message_start' },
-        { type: 'error', error: new Error('API rate limit') },
-      ];
-
       vi.spyOn(client, 'chatStream').mockImplementation(async function* () {
-        for (const event of mockEvents) {
-          yield event;
-        }
+        yield { type: 'message_start' } as const;
+        yield { type: 'error', error: new Error('API rate limit') } as const;
       });
 
-      await expect(
-        client.chat({
-          model: 'claude-sonnet-4-6',
-          messages: [{ role: 'user', content: 'Hi' }],
-        }),
-      ).rejects.toThrow('API rate limit');
+      await expect(client.chat({
+        model: 'claude-sonnet-4-6',
+        maxTokens: 1024,
+        messages: [{ role: 'user', content: 'Hi' }],
+      })).rejects.toThrow('API rate limit');
     });
 
     it('handles empty response', async () => {
       const client = new AnthropicClient({ apiKey: 'test-key' });
-
-      const mockEvents: StreamEvent[] = [
-        { type: 'message_start' },
-        { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 5, outputTokens: 0 } },
-      ];
-
       vi.spyOn(client, 'chatStream').mockImplementation(async function* () {
-        for (const event of mockEvents) {
-          yield event;
-        }
+        yield { type: 'message_start' } as const;
+        yield {
+          type: 'message_end',
+          stopReason: 'end_turn',
+          usage: { inputTokens: 5, outputTokens: 0 },
+        } as const;
       });
 
       const response = await client.chat({
         model: 'claude-sonnet-4-6',
+        maxTokens: 1024,
         messages: [{ role: 'user', content: '' }],
       });
-
-      expect(response.content).toHaveLength(0);
+      expect(response.content).toEqual([]);
       expect(response.stopReason).toBe('end_turn');
     });
 
     it('handles text + tool_use + more text', async () => {
       const client = new AnthropicClient({ apiKey: 'test-key' });
-
-      const mockEvents: StreamEvent[] = [
+      const mockEvents: ModelStreamEvent[] = [
         { type: 'message_start' },
         { type: 'text_delta', text: 'Before tool. ' },
         {
@@ -154,27 +130,25 @@ describe('AnthropicClient', () => {
         { type: 'text_delta', text: 'After tool.' },
         { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 30, outputTokens: 20 } },
       ];
-
       vi.spyOn(client, 'chatStream').mockImplementation(async function* () {
-        for (const event of mockEvents) {
-          yield event;
-        }
+        yield* mockEvents;
       });
 
       const response = await client.chat({
         model: 'claude-sonnet-4-6',
+        maxTokens: 1024,
         messages: [{ role: 'user', content: 'Read the file' }],
       });
 
       expect(response.content).toHaveLength(3);
-      expect(response.content[0]!.type).toBe('text');
-      expect((response.content[0] as Extract<ChatContentBlock, { type: 'text' }>).text).toBe('Before tool. ');
+      expect((response.content[0] as Extract<ChatContentBlock, { type: 'text' }>).text)
+        .toBe('Before tool. ');
       expect(response.content[1]!.type).toBe('tool_use');
-      expect(response.content[2]!.type).toBe('text');
-      expect((response.content[2] as Extract<ChatContentBlock, { type: 'text' }>).text).toBe('After tool.');
+      expect((response.content[2] as Extract<ChatContentBlock, { type: 'text' }>).text)
+        .toBe('After tool.');
     });
 
-    it('preserves invalid Tool input in chat() canonical calls without creating an empty input block', async () => {
+    it('preserves invalid Tool input without creating an empty input block', async () => {
       const client = new AnthropicClient({ apiKey: 'test-key' });
       vi.spyOn(client, 'chatStream').mockImplementation(async function* () {
         yield { type: 'message_start' } as const;
@@ -195,6 +169,7 @@ describe('AnthropicClient', () => {
 
       const response = await client.chat({
         model: 'claude-sonnet-4-6',
+        maxTokens: 1024,
         messages: [{ role: 'user', content: 'Search' }],
       });
 
@@ -223,7 +198,7 @@ describe('AnthropicClient', () => {
       ];
       const fakeStream = {
         async *[Symbol.asyncIterator]() {
-          for (const event of sdkEvents) yield event;
+          yield* sdkEvents;
         },
         finalMessage: async () => ({
           stop_reason: 'tool_use',
@@ -235,9 +210,10 @@ describe('AnthropicClient', () => {
         messages: { stream: streamMock },
       };
 
-      const events: StreamEvent[] = [];
+      const events: ModelStreamEvent[] = [];
       for await (const event of client.chatStream({
         model: 'claude-sonnet-4-6',
+        maxTokens: 1024,
         messages: [{ role: 'user', content: 'Search' }],
       })) {
         events.push(event);
@@ -251,11 +227,11 @@ describe('AnthropicClient', () => {
           input: { state: 'invalid', reason: 'malformed_json' },
         },
       });
+      expect(streamMock.mock.calls[0]?.[0]).toMatchObject({ max_tokens: 1024 });
     });
 
     it('strips dimensions from image blocks when calling the SDK', async () => {
       const client = new AnthropicClient({ apiKey: 'test-key' });
-
       const fakeStream: AsyncIterable<unknown> & { finalMessage: () => Promise<unknown> } = {
         [Symbol.asyncIterator]() {
           return {
@@ -269,7 +245,6 @@ describe('AnthropicClient', () => {
           usage: { input_tokens: 0, output_tokens: 0 },
         }),
       };
-
       const streamMock = vi.fn().mockReturnValue(fakeStream);
       (client as unknown as { client: { messages: { stream: typeof streamMock } } }).client = {
         messages: { stream: streamMock },
@@ -277,100 +252,79 @@ describe('AnthropicClient', () => {
 
       await client.chat({
         model: 'claude-sonnet-4-6',
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'image',
-                source: { type: 'base64', media_type: 'image/png', data: 'abc' },
-                dimensions: { width: 100, height: 100 },
-              },
-            ],
-          },
-        ],
+        maxTokens: 1024,
+        messages: [{
+          role: 'user',
+          content: [{
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: 'abc' },
+            dimensions: { width: 100, height: 100 },
+          }],
+        }],
       });
 
-      expect(streamMock).toHaveBeenCalledOnce();
       const callArgs = streamMock.mock.calls[0]![0] as {
         messages: { content: Array<Record<string, unknown>> }[];
       };
       const sentBlock = callArgs.messages[0]!.content[0]!;
-      expect(sentBlock.type).toBe('image');
       expect(sentBlock.source).toEqual({ type: 'base64', media_type: 'image/png', data: 'abc' });
       expect('dimensions' in sentBlock).toBe(false);
     });
   });
 
-  describe('chatStream (with mock)', () => {
+  describe('chatStream', () => {
     it('yields events in order', async () => {
       const client = new AnthropicClient({ apiKey: 'test-key' });
-
-      const mockEvents: StreamEvent[] = [
+      const mockEvents: ModelStreamEvent[] = [
         { type: 'message_start' },
         { type: 'text_delta', text: 'Hi' },
         { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 5, outputTokens: 2 } },
       ];
-
       vi.spyOn(client, 'chatStream').mockImplementation(async function* () {
-        for (const event of mockEvents) {
-          yield event;
-        }
+        yield* mockEvents;
       });
 
-      const events: StreamEvent[] = [];
+      const events: ModelStreamEvent[] = [];
       for await (const event of client.chatStream({
         model: 'claude-sonnet-4-6',
+        maxTokens: 1024,
         messages: [{ role: 'user', content: 'Hi' }],
       })) {
         events.push(event);
       }
-
-      expect(events).toHaveLength(3);
-      expect(events[0]!.type).toBe('message_start');
-      expect(events[1]!.type).toBe('text_delta');
-      expect(events[2]!.type).toBe('message_end');
+      expect(events.map((event) => event.type))
+        .toEqual(['message_start', 'text_delta', 'message_end']);
     });
 
-    // core-abort-spec.md §11 —— signal 透传到 SDK 后，pre-aborted signal 应立即产出 error event。
-    // 底层 SDK 使用 fetch，收到 pre-aborted signal 会抛 AbortError；chatStream 的 outer catch
-    // 将其转成 { type: 'error', error }。
-    it('yields error event when signal is already aborted', async () => {
+    it('yields an AbortError when the signal is already aborted', async () => {
       const client = new AnthropicClient({ apiKey: 'test-key' });
-
-      // 直接替换 SDK 的 messages.stream，模拟 SDK 在 signal 已 abort 时抛 AbortError。
-      // 纯测试目的的 as-cast，等价于 mocking SDK 行为。
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const sdkClient = (client as any).client;
-      const streamSpy = vi.spyOn(sdkClient.messages, 'stream');
-      streamSpy.mockImplementation((..._args: unknown[]) => {
-        // 模拟真实 SDK：signal 已 abort 时构造流即抛
-        const opts = _args[1] as { signal?: AbortSignal } | undefined;
-        if (opts?.signal?.aborted) {
-          const err = new Error('The operation was aborted');
-          err.name = 'AbortError';
-          throw err;
+      const sdkClient = (client as unknown as {
+        client: { messages: { stream: (...args: unknown[]) => unknown } };
+      }).client;
+      vi.spyOn(sdkClient.messages, 'stream').mockImplementation((...args: unknown[]) => {
+        const options = args[1] as { signal?: AbortSignal } | undefined;
+        if (options?.signal?.aborted) {
+          const error = new Error('The operation was aborted');
+          error.name = 'AbortError';
+          throw error;
         }
         throw new Error('unexpected: signal not aborted');
       });
-
       const controller = new AbortController();
       controller.abort();
 
-      const events: StreamEvent[] = [];
+      const events: ModelStreamEvent[] = [];
       for await (const event of client.chatStream({
         model: 'claude-sonnet-4-6',
+        maxTokens: 1024,
         messages: [{ role: 'user', content: 'Hi' }],
         signal: controller.signal,
       })) {
         events.push(event);
       }
 
-      // 应产出 error event，AgentRunner.callLLMStream 的 isAbortError 会识别并归 abort
-      const errorEvent = events.find((e) => e.type === 'error');
-      expect(errorEvent).toBeDefined();
-      const err = (errorEvent as Extract<StreamEvent, { type: 'error' }>).error;
-      expect(err.name).toBe('AbortError');
+      const errorEvent = events.find((event) => event.type === 'error');
+      expect(errorEvent?.type === 'error' ? errorEvent.error.name : undefined).toBe('AbortError');
     });
 
     it('normalizes Provider context overflow to the Core error type', async () => {
@@ -382,9 +336,10 @@ describe('AnthropicClient', () => {
         throw new Error('request_too_large: prompt exceeds limit');
       });
 
-      const events: StreamEvent[] = [];
+      const events: ModelStreamEvent[] = [];
       for await (const event of client.chatStream({
         model: 'claude-sonnet-4-6',
+        maxTokens: 1024,
         messages: [{ role: 'user', content: 'Hi' }],
       })) {
         events.push(event);
@@ -405,9 +360,10 @@ describe('AnthropicClient', () => {
         throw providerError;
       });
 
-      const events: StreamEvent[] = [];
+      const events: ModelStreamEvent[] = [];
       for await (const event of client.chatStream({
         model: 'claude-sonnet-5',
+        maxTokens: 1024,
         messages: [{ role: 'user', content: 'Hi' }],
       })) {
         events.push(event);

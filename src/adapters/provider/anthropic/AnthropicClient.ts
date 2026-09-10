@@ -2,21 +2,19 @@ import Anthropic from '@anthropic-ai/sdk';
 import {
   ContextOverflowError,
   ModelInvocationError,
-} from '../../core/model-invocation/index.js';
+} from '../../../core/model-invocation/index.js';
 import type {
-  LLMClient,
-  ChatParams,
-  ChatResponse,
+  ModelInvocationPort,
+  ModelInvocationRequest,
+  ModelInvocationResponse,
   ChatContentBlock,
-  StreamEvent,
+  ModelStreamEvent,
   TokenUsage,
   ChatMessage,
   ChatToolDefinition,
-} from './types.js';
-import { encodeAnthropicToolDefinition } from './tool-contract-codecs.js';
-import type { ToolCall } from '../../core/tools/index.js';
-
-const DEFAULT_MAX_TOKENS = 4096;
+} from '../../../core/model-invocation/index.js';
+import type { ToolCall } from '../../../core/tools/index.js';
+import { encodeAnthropicToolDefinition } from './tool-codec.js';
 
 export interface AnthropicClientOptions {
   apiKey: string;
@@ -24,7 +22,7 @@ export interface AnthropicClientOptions {
 }
 
 /**
- * Anthropic SDK 实现的 LLMClient。
+ * Anthropic SDK implementation of ModelInvocationPort.
  *
  * 支持自定义 baseURL，可对接 LiteLLM Proxy、MAI-LLMProxy 等代理。
  *
@@ -33,7 +31,7 @@ export interface AnthropicClientOptions {
  *
  * 参考 OpenClaw 的 pi-ai 库中 anthropic provider 的实现。
  */
-export class AnthropicClient implements LLMClient {
+export class AnthropicClient implements ModelInvocationPort {
   private client: Anthropic;
 
   constructor(options: AnthropicClientOptions) {
@@ -43,18 +41,15 @@ export class AnthropicClient implements LLMClient {
     });
   }
 
-  /**
-   * 流式调用 Anthropic API。
-   * 将 Anthropic SDK 的事件格式转换为我们的 StreamEvent。
-   */
-  async *chatStream(params: ChatParams): AsyncIterable<StreamEvent> {
+  /** Convert Anthropic SDK events into canonical ModelStreamEvent values. */
+  async *chatStream(params: ModelInvocationRequest): AsyncIterable<ModelStreamEvent> {
     const messages = convertMessages(params.messages);
     const tools = params.tools ? convertTools(params.tools) : undefined;
 
     try {
       const stream = this.client.messages.stream({
         model: params.model,
-        max_tokens: params.maxTokens ?? DEFAULT_MAX_TOKENS,
+        max_tokens: params.maxTokens,
         messages,
         ...(params.system ? { system: params.system } : {}),
         ...(tools && tools.length > 0 ? { tools } : {}),
@@ -64,7 +59,6 @@ export class AnthropicClient implements LLMClient {
 
       yield { type: 'message_start' };
 
-      // 收集 tool_use 块（Anthropic 流式 tool_use 是分多个事件推送的）
       let currentToolUse: {
         id: string;
         name: string;
@@ -130,13 +124,11 @@ export class AnthropicClient implements LLMClient {
           }
 
           case 'message_stop': {
-            // 最终消息从 stream 的 finalMessage 获取
             break;
           }
         }
       }
 
-      // 获取最终消息（含 usage 和 stop_reason）
       const finalMessage = await stream.finalMessage();
       yield {
         type: 'message_end',
@@ -155,14 +147,8 @@ export class AnthropicClient implements LLMClient {
     }
   }
 
-  /**
-   * 非流式调用（便捷方法）。
-   * 内部调用 chatStream 收集完整响应后返回。
-   *
-   * 与 OpenClaw 的 Agent.prompt() 思路一致：
-   * 对外暴露简单的 async/await 接口，内部始终用流式。
-   */
-  async chat(params: ChatParams): Promise<ChatResponse> {
+  /** Collect a complete response from the streaming implementation. */
+  async chat(params: ModelInvocationRequest): Promise<ModelInvocationResponse> {
     const contentBlocks: ChatContentBlock[] = [];
     const toolCalls: ToolCall[] = [];
     let currentText = '';
@@ -177,7 +163,6 @@ export class AnthropicClient implements LLMClient {
 
         case 'tool_call':
           toolCalls.push(event.call);
-          // 先把累积的文本作为一个 text block
           if (currentText) {
             contentBlocks.push({ type: 'text', text: currentText });
             currentText = '';
@@ -202,7 +187,6 @@ export class AnthropicClient implements LLMClient {
       }
     }
 
-    // 最后的文本
     if (currentText) {
       contentBlocks.push({ type: 'text', text: currentText });
     }
@@ -252,41 +236,25 @@ function isProviderContextOverflow(error: Error): boolean {
   );
 }
 
-// ── 内部转换函数 ────────────────────────────────────────────
-
-/**
- * 出站去掉 image 上的 `dimensions`（内部 metadata，不属于 Anthropic API）。
- * 其他 block 透传。
- */
-function toAnthropicContentBlock(block: ChatContentBlock): ChatContentBlock | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } } {
+function toAnthropicContentBlock(
+  block: ChatContentBlock,
+): ChatContentBlock | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } } {
   if (block.type === 'image') {
     return { type: 'image', source: block.source };
   }
   return block;
 }
 
-/**
- * 将我们的 ChatMessage 转换为 Anthropic SDK 的消息格式。
- * 两者结构相同（都对齐 Anthropic API），但 image block 需 strip dimensions（内部字段）。
- */
-function convertMessages(
-  messages: ChatMessage[],
-): Anthropic.MessageParam[] {
+function convertMessages(messages: ChatMessage[]): Anthropic.MessageParam[] {
   return messages.map((msg) => ({
     role: msg.role,
-    content:
-      typeof msg.content === 'string'
-        ? msg.content
-        : (msg.content.map(toAnthropicContentBlock) as Anthropic.MessageParam['content']),
+    content: typeof msg.content === 'string'
+      ? msg.content
+      : (msg.content.map(toAnthropicContentBlock) as Anthropic.MessageParam['content']),
   }));
 }
 
-/**
- * 将我们的 ChatToolDefinition 转换为 Anthropic SDK 的工具格式。
- */
-function convertTools(
-  tools: ChatToolDefinition[],
-): Anthropic.Tool[] {
+function convertTools(tools: ChatToolDefinition[]): Anthropic.Tool[] {
   return tools.map((tool) => {
     const wire = encodeAnthropicToolDefinition(tool);
     return {

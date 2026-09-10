@@ -322,7 +322,7 @@ Phase 1 的构造原则足以表达当前目标对象图：
 
 ### 5.1 设计状态与证据边界
 
-本节定义 Provider/Model 身份、连接、事实、策略、请求覆盖、解析结果和执行消费的目标边界。它保留当前 `LLMClient` 隔离、流事件映射、Usage 和 Abort 透传作为迁移候选，但不把当前散装的 `model`、`maxTokens`、`contextWindowTokens` 和 `llmClient` 参数形态固定为目标 API。
+本节定义 Provider/Model 身份、连接、事实、策略、请求覆盖、解析结果和执行消费的目标边界。在 Phase 2 接受时，它把当时的 `LLMClient` 隔离、流事件映射、Usage 和 Abort 透传记录为迁移候选，但不把当时散装的 `model`、`maxTokens`、`contextWindowTokens` 和 `llmClient` 参数形态固定为目标 API。上述旧名称是 acceptance-time migration baseline，不描述当前 API；当前实现状态由 Current Architecture 的 Model Invocation topic 持有。
 
 **Target Decision：** 每个 Parent Turn 和 Child Turn 必须在进入 Runner 前独立完成 Model Resolution，并在该 Turn 内固定一个不可变 Resolved Model。RuntimeApp 编排解析时机，但不加载 Model Facts、选择具体 Provider 或拼装 Provider Client；Runner 只消费 Resolved Model。
 
@@ -542,9 +542,11 @@ Subagent Orchestration 负责成功与失败结果的对称归一化并返回 Pa
 
 **Hypothesis P2-H03：** Parent/Child 可以共享只读 Provider Integration 资源或由唯一 Lifecycle Owner 管理的受控连接池，同时不共享 Resolved Model、请求构建器、流状态或其他 per-turn 可变 Client 状态。AF-05 accepted disposable evidence 已支持 read-only owner、lease/release、single close 和 per-Turn 隔离；真实连接池、backpressure 与 process Shutdown 行为仍由后续 Accepted Module Spec 和生产验证决定。
 
-### 5.8 Current 到 Target 的迁移输入
+### 5.8 Acceptance-time Current 到 Target 的迁移输入（historical baseline）
 
-| Current Fact Candidate | Target 解释 | 迁移要求 |
+下表冻结 Target 接受时的迁移输入，用于解释设计来源，不表示这些旧 API 仍存在，也不重新授权 Compatibility。
+
+| Acceptance-time Current Fact Candidate | Target 解释 | 迁移要求 |
 |---|---|---|
 | Runner 接收 `llmClient` 和散装 `model`/`maxTokens`/`contextWindowTokens` | 一个 Resolved Model 消费边界 | AF-04 先保护执行循环、预算、Usage 和 Abort；Slice 再替换参数边界 |
 | Runtime 使用 `runTurn.model > resolvedConfig.llm.model` | Model Reference 来源和优先级候选 | 不直接升级为 Target Policy；由 AF-05 验证来源冲突和 fallback |
@@ -1544,8 +1546,8 @@ library/embedded Host receives report and decides; Runtime library never exits p
 | RuntimeApp 从 raw LLM config 拼装 Runner 参数 | [`runTurnInternal()`](../../src/runtime/RuntimeApp.ts#L1043-L1134)、[`requireModel()`](../../src/runtime/RuntimeApp.ts#L1171-L1180) |
 | RuntimeApp post-bootstrap 创建 Subagent/Task Tool 并替换 executor | [`RuntimeApp.create()` post-bootstrap wiring](../../src/runtime/RuntimeApp.ts#L171-L250) |
 | Historical Subagent used host LLM defaults and raw Profile model string；migrated in Slice 2 | Historical source removed；see [Subagent Model Resolution Module Spec](subagent-model-resolution-module-spec.md) |
-| 中央 Tool bundle 同时派生 executor、LLM 和 prompt definitions | [`assembleRuntimeTools()`](../../src/runtime/tool-registry.ts#L49-L67)、[`RuntimeToolBundle`](../../src/runtime/types.ts#L11-L16) |
-| 完整 prompt Tool definitions 仍被派生/传递，但渲染已停用；active memory 判断只读取 name | [`toPromptToolDefinitions()`](../../src/runtime/tool-registry.ts#L96-L103)、[`buildSystemPromptParams()`](../../src/runtime/prompt-factory.ts#L25-L34)、[`SystemPromptBuilder.build()`](../../src/core/prompt/SystemPromptBuilder.ts#L46-L65)、[`buildMemorySection()`](../../src/core/prompt/SystemPromptBuilder.ts#L190-L199) |
+| 中央 Tool bundle 同时派生 executor、LLM 和 prompt definitions | former `assembleRuntimeTools()` / `RuntimeToolBundle` baseline（已在 Slice 3 删除） |
+| 完整 prompt Tool definitions 仍被派生/传递，但渲染已停用；active memory 判断只读取 name | former `toPromptToolDefinitions()` baseline（已在 Slice 3 删除）；[`buildSystemPromptParams()`](../../src/runtime/prompt-factory.ts#L25-L34)、[`SystemPromptBuilder.build()`](../../src/core/prompt/SystemPromptBuilder.ts#L46-L65)、[`buildMemorySection()`](../../src/core/prompt/SystemPromptBuilder.ts#L190-L199) |
 | 三个进程脚本直接构造并注册/启动 concrete Channel | [`scripts/cli.ts`](../../scripts/cli.ts#L55-L67)、[`scripts/server.ts`](../../scripts/server.ts#L63-L83)、[`scripts/websocket.ts`](../../scripts/websocket.ts#L85-L107) |
 
 ### 9.1 Current 到 Target 术语与权威来源

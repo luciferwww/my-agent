@@ -6,7 +6,6 @@ import type {
 import type {
   ModelReference,
   ModelRequestOverride,
-  ProviderProjectionEntry,
 } from '../core/model-resolution/index.js';
 import type { MemoryManager } from '../core/memory/MemoryManager.js';
 import type { SystemPromptBuilder } from '../core/prompt/SystemPromptBuilder.js';
@@ -57,7 +56,7 @@ export interface RuntimeBuiltinToolOptions {
 }
 
 export interface RuntimeDependencies {
-  createProviderProjection(options: RuntimeProviderOptions): readonly ProviderProjectionEntry[];
+  createBundledProviderUnit(options: RuntimeProviderOptions): LoadedRuntimeUnit;
   createSessionManager(workspaceDir: string, options?: SessionManagerOptions): SessionManager;
   createMemoryManager(options: RuntimeMemoryOptions): Promise<MemoryManager | null>;
   createSystemPromptBuilder(): SystemPromptBuilder;

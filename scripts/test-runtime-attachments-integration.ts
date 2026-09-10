@@ -2,7 +2,7 @@
  * Attachments end-to-end integration test (PR-6 / Decision 8 boundaries).
  *
  * 真实链路：ws client → WebSocketChannel (real WebSocketServer) → RuntimeApp
- * → AgentRunner → mocked LLMClient (captures ChatParams)。
+ * → AgentRunner → mocked ModelInvocationPort (captures ModelInvocationRequest)。
  *
  * 覆盖 spec lines 748-755 中的 wire / pipeline / session 路径：
  *
@@ -32,6 +32,7 @@ import { WebSocket } from 'ws';
 
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
 import type { RuntimeHandle } from '../src/runtime/runtime-composition.js';
+import { createLoadedRuntimeUnit } from '../src/runtime/runtime-unit.js';
 import { createWebSocketChannelModule } from '../src/runtime-modules/builtin-channels.js';
 import {
   ATTACHMENT_INLINE_THRESHOLD_BYTES,
@@ -40,11 +41,11 @@ import {
 } from '../src/core/media/constants.js';
 import type {
   ChatContentBlock,
-  ChatParams,
-  ChatResponse,
-  LLMClient,
-  StreamEvent,
-} from '../src/adapters/llm/types.js';
+  ModelInvocationRequest,
+  ModelInvocationResponse,
+  ModelInvocationPort,
+  ModelStreamEvent as ModelStreamEvent,
+} from '../src/core/model-invocation/index.js';
 import type { AgentEvent } from '../src/core/runner/index.js';
 import type { RuntimeEvent } from '../src/runtime/types.js';
 
@@ -86,21 +87,21 @@ async function makePng(width: number, height: number): Promise<Buffer> {
 // ── Mock LLM ────────────────────────────────────────────────────
 
 interface CapturedCall {
-  params: ChatParams;
+  params: ModelInvocationRequest;
 }
 
 interface MockLLMHandle {
-  client: LLMClient;
+  client: ModelInvocationPort;
   calls: CapturedCall[];
 }
 
 function createCapturingLLM(
-  response: string | ((params: ChatParams) => string) = 'integration ok',
+  response: string | ((params: ModelInvocationRequest) => string) = 'integration ok',
 ): MockLLMHandle {
   const calls: CapturedCall[] = [];
   const responseFor = typeof response === 'function' ? response : () => response;
-  const client: LLMClient = {
-    async *chatStream(params: ChatParams): AsyncIterable<StreamEvent> {
+  const client: ModelInvocationPort = {
+    async *chatStream(params: ModelInvocationRequest): AsyncIterable<ModelStreamEvent> {
       calls.push({ params });
       const text = responseFor(params);
       yield { type: 'message_start' };
@@ -111,7 +112,7 @@ function createCapturingLLM(
         usage: { inputTokens: 10, outputTokens: 5 },
       };
     },
-    async chat(): Promise<ChatResponse> {
+    async chat(): Promise<ModelInvocationResponse> {
       throw new Error('chat() not used in integration test');
     },
   };
@@ -286,7 +287,11 @@ async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
   }
 
   const dependencies: Record<string, unknown> = {
-    createProviderProjection: () => [{
+    createBundledProviderUnit: () => createLoadedRuntimeUnit({
+      registration: {
+        id: 'builtin-test-provider',
+        source: 'builtin',
+        register(api) { api.registerProvider({
       id: 'test',
       protocol: 'test',
       invocationPort: llm.client,
@@ -311,7 +316,10 @@ async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
           },
         },
       }),
-    }],
+        }); },
+      },
+      required: true,
+    }),
   };
   if (options.mockSystemPrompt !== undefined) {
     const sys = options.mockSystemPrompt;
@@ -356,9 +364,9 @@ function findTextBlock(blocks: ChatContentBlock[] | string): string | undefined 
   return t && t.type === 'text' ? t.text : undefined;
 }
 
-function lastUserContent(params: ChatParams): string | ChatContentBlock[] {
+function lastUserContent(params: ModelInvocationRequest): string | ChatContentBlock[] {
   const lastUser = [...params.messages].reverse().find((m) => m.role === 'user');
-  if (!lastUser) throw new Error('expected at least one user message in ChatParams.messages');
+  if (!lastUser) throw new Error('expected at least one user message in ModelInvocationRequest.messages');
   return lastUser.content;
 }
 
@@ -599,7 +607,7 @@ async function testCompactionAfterImage(): Promise<void> {
   const SUMMARY_PROMPT_PREFIX = 'Please provide a concise summary';
   const SUMMARY_TEXT = 'SUMMARIZED HISTORY for compaction-image test';
 
-  const llm = createCapturingLLM((params: ChatParams) => {
+  const llm = createCapturingLLM((params: ModelInvocationRequest) => {
     const first = params.messages[0]?.content;
     if (typeof first === 'string' && first.startsWith(SUMMARY_PROMPT_PREFIX)) {
       return SUMMARY_TEXT;

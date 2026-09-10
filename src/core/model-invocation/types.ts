@@ -31,12 +31,9 @@ export interface ModelInvocationRequest {
   system?: string;
   messages: ChatMessage[];
   tools?: ChatToolDefinition[];
-  maxTokens?: number;
+  maxTokens: number;
   signal?: AbortSignal;
 }
-
-/** @deprecated Compatibility name. Use ModelInvocationRequest. */
-export type ChatParams = ModelInvocationRequest;
 
 export interface TokenUsage {
   inputTokens: number;
@@ -49,9 +46,6 @@ export type ModelStreamEvent =
   | { type: 'tool_call'; call: ToolCall }
   | { type: 'message_end'; stopReason: string; usage: TokenUsage }
   | { type: 'error'; error: Error };
-
-/** @deprecated Compatibility name. Use ModelStreamEvent. */
-export type StreamEvent = ModelStreamEvent;
 
 export interface ModelInvocationResponse {
   content: ChatContentBlock[];
@@ -68,6 +62,3 @@ export interface ModelInvocationPort {
   chatStream(params: ModelInvocationRequest): AsyncIterable<ModelStreamEvent>;
   chat(params: ModelInvocationRequest): Promise<ModelInvocationResponse>;
 }
-
-/** @deprecated Compatibility name. Use ModelInvocationPort. */
-export type LLMClient = ModelInvocationPort;

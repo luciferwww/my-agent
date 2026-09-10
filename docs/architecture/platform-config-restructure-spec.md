@@ -1,7 +1,7 @@
 # Config 结构重构 Spec
 
 > 文档日期：2026-06-26
-> 关联文档：`v1.0/platform-config-design.md` · `current/platform_config.md` · `core-subagent-spec.md`
+> 关联文档：`current/platform_config.md` · `core-subagent-spec.md`
 
 ---
 
@@ -516,7 +516,7 @@ export const DEFAULT_LOGGER_CONFIG: LoggerModuleConfig = {
 | [src/core/memory/MemoryManager.ts](../../src/core/memory/MemoryManager.ts) | `create()` 参数去掉 `dbPath`；内部固定 `join(workspaceDir, '.agent', 'memory.sqlite')` |
 | [src/core/memory/internal/LocalEmbeddingProvider.ts](../../src/core/memory/internal/LocalEmbeddingProvider.ts) | 加入 `KNOWN_DIMENSIONS` 表；缺失时加载后探测；删除 `slice(0, dimensions)` 截断（见 §7.5） |
 | [src/runtime/bootstrap.ts](../../src/runtime/bootstrap.ts) | `FileAdapter` 构造参数仅传 `dir: join(workspaceDir, 'logs')` 与 `minLevel`；不再读 `fileCfg.dir / prefix / maxQueueSize` |
-| [src/runtime/tool-registry.ts](../../src/runtime/tool-registry.ts) | 抽出 `applyDenyFilter(tools, deny)` 公共函数；**所有工具注册入口都必须调过该函数**，含 builtin 注册、memory tools 注入、未来 MCP / 动态工具注册路径（§5.2） |
+| [src/runtime/registry-builder.ts](../../src/runtime/registry-builder.ts) | Registry Builder 在发布可见 Tool projection 时统一应用 Application Tool Policy deny filter；builtin、memory 与 external contribution 不建立旁路（§5.2） |
 | [src/runtime/RuntimeApp.ts](../../src/runtime/RuntimeApp.ts#L203) | `resolvedConfig.tools.approval` 改为 `resolvedConfig.tools`（读 `allow/deny`） |
 | [src/runtime/tool-approval-policy.ts](../../src/runtime/tool-approval-policy.ts) | 删除 `TOOL_GROUPS` 常量与 group 分支（§6） |
 | [src/platform/config/loader.test.ts](../../src/platform/config/loader.test.ts) | L156–L186 现断言旧字段 `tools.approval` / `tools.execTimeout` 等，需重写为新结构（§10：不写迁移 / warn 测试用例） |

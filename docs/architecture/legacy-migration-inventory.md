@@ -164,13 +164,15 @@ DOC-V01–V12 的 frozen identity 保留在本 Inventory；实体文件已在 S6
 | API-M02 | Former WebSocket `run_turn.model/maxTokens`；`Migrated` in Slice 5 | `model_reference` 与 `request_override.max_output_tokens` 是唯一 wire vocabulary；HTML、scripts与tests同批迁移，legacy fields明确拒绝 | RC-OD-02 已接受；repository producer/consumer迁移完成，外部 consumer以breaking release notice处理；WebSocket→Runtime queue + FT-08/10 |
 | API-M03 | former `AgentRunnerConfig.llmClient`、`RunParams.model/maxTokens/contextWindowTokens`：[Runner types](../../src/core/runner/types.ts)；`Migrated` in Slice 1 | Runner Contract 只消费 `ResolvedModel`/core-owned Port；Parent 与 temporary Child Compatibility 均已迁移到该 Contract | Slice 1 validation、Runner Contract/build/FT-03/08 已通过；不再作为 Slice 2 Compatibility entry |
 | CODE-M07 | Runner-owned `4096`/`200000` fallback：[AgentRunner](../../src/core/runner/AgentRunner.ts)；Legacy Model Fact ownership | facts/request limit 只来自 Resolved Model/Policy | Slice 1；删除 Runner model defaults；Resolver/Runner/budgeting regression |
-| API-M04 | deprecated `LLMClient`、`ChatParams`、`StreamEvent` adapter facade：[LLM types](../../src/adapters/llm/types.ts)；Compatibility Candidate，authority 已迁入 Stable Core | Stable Core 拥有 Invocation Port/normalized contract；Anthropic Adapter implements。Repository production callers 已迁移；adapter facade 仅为可能的 external consumers 保留 | Slice 2 Review 确认该 facade 与 Child migration 无关；因 external consumer decision/legacy barrel closeout 未完成，延期到 Slice 6 Review；禁止新增 production caller。删除需 external consumer decision、zero internal caller、adapter Contract、FT-03/08 和 build |
+| API-M04 | Former deprecated `LLMClient`、`ChatParams`、`StreamEvent` adapter facade；`Removed` in S6-D7 | Core Model Invocation 是唯一 contract authority；Anthropic Adapter 直接实现 canonical Port。Facade 文件、三个 aliases、repository callers 与 adapter barrel compatibility exports 均为零；Core `ChatResponse` alias 保留但 internal consumers 使用 `ModelInvocationResponse` | 项目所有者接受 repository-internal breaking removal；未发现受支持的 external package contract，故无 deprecation window、compatibility facade 或 dual path。Core/Adapter Contract、FT-03/08/11/12、lint/build/full tests 与 deterministic zero-residual audit 通过；rollback 仅用 reviewed revert/release rollback |
 | CODE-M08 | Runner raw Provider error string parsing：[AgentRunner](../../src/core/runner/AgentRunner.ts)、[runner errors](../../src/core/runner/errors.ts)；Active Legacy responsibility | Provider Adapter 归一化 overflow/canonical errors；Runner 只消费 core-owned errors | Slice 1，受 ADR-002 约束；删除 raw-string classification；overflow/compaction/error regressions |
 | CODE-M09 | Former Subagent `llmDefaults`、optional/raw-string `model`、legacy Child resolver/host/request、parentless library trigger；`Migrated` in Slice 2 | Required native Profile Model Selection + Parent effective Model Reference + Runtime-owned delegation Port + independent Child resolution are the only production path | Old resolver/Runner/API/trigger/synthetic-session contracts and scenarios deleted；native Profile、real Parent、different Provider/Model、typed failure/Usage/Abort/Event/Session/cleanup、FT-04/08 and deterministic zero-reference validation passed |
 | CODE-E01 | Former central Tool bundle/list/executor setter/Task post-assembly；`Migrated` in Slice 3 | One startup `RegistrySnapshot` with canonical Tool projection and Builtin Modules | Central list/bundle/executor factory/setter deleted；Task staged before publication；Tool/Registry/Runtime tests + FT-07 |
 | CODE-E02 | Former `AgentRunner.on()` production API and startup approval Hook wiring；`Migrated` in Slice 3 | Immutable Hook Contribution/projection plus explicit Policy/current-call Approval Capability | Production mutable registration/startup authorization history deleted；Hook/approval/Runner contracts + FT-07 |
 | API-E01 | Former `registerChannel/startChannels/stopChannels` 与 concrete script construction；`Migrated` in Slice 4 | Builtin/External Channel Modules、Registry projection与Builder-owned lifecycle | definitions/exports/callers为零；Channel lifecycle、scripts、CH-07/08、FT-05/08 |
 | CODE-E03 | Former `RuntimeApp.create()` post-bootstrap composition、startup wrapper与duplicate close ownership；`Migrated` in Slice 5 | delegation-only `RuntimeApp.create()`、authoritative Runtime Builder、generation-aware Composition Manager与single lifecycle ledger | §16.3 residual为零；startup/rollback/reload/shutdown + FT-01/05/07/08/10 |
+| CODE-E04 | Former `src/adapters/llm/**` physical topology、Builder-owned Anthropic construction、naked `createProviderProjection()` seam、generic `builtin-provider-bindings` Unit 与 pre-staging default selection；`Removed` in Source Layout Convergence C1/C2 | Canonical Anthropic Adapter at `src/adapters/provider/anthropic/` + required `builtin-anthropic-provider` Runtime Module + singular `createBundledProviderUnit()` seam + post-publication Snapshot default | C1/C2 Owner acceptance；old path/seam/construction/registration loop/callers为零；module/builder/composition/Parent-Child/integration + FT-02/04/10/13 |
+| CODE-E05 | Former Channel Core-type facade、Adapter barrel compatibility exports、`ApprovalManager` alias 与 Adapter-owned `TurnInteractionManager` path；`Removed` in Source Layout Convergence C1 | Core Channel canonical entry + concrete-only Channel Adapter barrel + Runtime-owned Turn Interaction component | C1 Owner acceptance；facade/alias/old path/callers为零；Channel/Turn Interaction/Runtime + FT-01/04/13 |
 
 ### 6.1 Feature Flag 基线
 
@@ -231,6 +233,33 @@ Slice 4 frozen scope contained API-E01 and reached $Legacy_{end}=0<Legacy_{start
 
 Slice 5 frozen scope contains API-M01、API-M02 and CODE-E03 and reaches $Legacy_{end}=0<Legacy_{start}=3$. No migration Feature Flag、dual production path、startup-only Snapshot wrapper、standalone Channel stop authority or late-bound current-Snapshot Child resolution remains. Final static/build/test/integration/docs validation and independent implementation review passed；项目所有者于2026-09-08接受验证结果并确认Slice 5完成。
 
+### 6.7 Slice 6 API-M04 disposition（2026-09-09）
+
+| Entry | Delivery disposition | Evidence / remaining exit |
+|---|---|---|
+| API-M04 | `Removed` | `src/adapters/llm/types.ts`、`LLMClient`、`ChatParams`、`StreamEvent`、全部 facade imports 与 adapter compatibility exports 已删除；canonical Core names 已迁移到 production、tests 与 scripts；Core `ChatResponse` alias retained |
+
+S6-D7 采用 repository-internal breaking removal：package 尚为 0.1.0，审计未发现受支持的 external package contract，因此不建立 deprecation window 或第二 facade。初始 code batch 的 lint、build、95/95 test files（820/820 tests）、six runnable integrations、deterministic residual audit 和 `git diff --check` 均通过；independent code review 为 `Ready`，项目所有者已接受 code batch。Docs review 后的架构一致性修正进一步要求 `ModelInvocationRequest.maxTokens`，删除 Provider fallback，使 normal/Compaction invocation 共用 `ResolvedModel.limits.maxTokens`，并让 clean build 删除 stale generated declarations。最终 focused FT-11/12 11/11、FT-01–FT-12 37/37、added-link/package-artifact audit、lint、clean build、95/95 test files（822/822 tests）和 `git diff --check` 均通过；independent correction re-review 为 `Ready`，无 unresolved Critical/High/Medium blocker。项目所有者已接受 S6-D7 docs/architecture consistency batch 并要求继续 S6-D8；未授权 commit 或 push。
+
+### 6.8 Slice 6 terminal disposition validation（2026-09-09）
+
+| Entries | Terminal disposition | Evidence / remaining exit |
+|---|---|---|
+| DOC-C01–C13 | `Reviewed — Retain Current Authority` | 13 个 Current topic 的 current facts、accepted authority boundaries、source/tests/Fitness 与 exact inbound references 已逐项复核 |
+| DOC-A08/A09 | `Reviewed — Retain Active Navigation` | Root README 与 Capability Inventory 继续作为 active navigation，不建立第二 Current authority |
+| DOC-A01–A07/A10–A27、DOC-V01–V12 | prior terminal states preserved | 35 个 deletion dispositions 与 2 个 Deferred `Reviewed` dispositions 继续受 S6-D4–D7 ledger 和 cumulative FT-11 约束 |
+
+52/52 entries 已进入 reviewed terminal disposition，15-entry retained-review ledger 与 S6-D8 final-validation ledger 已记录。Focused FT-09/11/12 16/16、full Architecture Fitness 40/40、lint、clean build、Node 22 full Vitest 95/95 files（825/825 tests）、八个 integration scripts / 34 scenarios（含 Compaction distinct `maxTokens=1777` forwarding）、repository Markdown target/anchor、package artifact、manifest JSON 与 diff checks 全部通过。Current/Capability/index 经复核无需额外结构变更。Independent final review 的 accepted findings 已修正，最终结果为 `Ready`，无 unresolved Critical/High/Medium blocker。项目所有者 Slice 6 acceptance 仍待完成；本记录不将 Slice 6 标记为 Completed，也不授权 commit 或 push。
+
+### 6.9 Source Layout Convergence C1/C2 disposition（2026-09-10）
+
+| Entry | Delivery disposition | Evidence / remaining exit |
+|---|---|---|
+| CODE-E04 | `Removed` | Anthropic production source 与 tests 已迁入 canonical Provider Adapter；required `builtin-anthropic-provider` 在 Unit `create()` 内构造 concrete Provider，并经 registration closure 进入普通 staging；Runtime dependency 只返回 singular `LoadedRuntimeUnit`；Builder 不再构造 concrete Provider、执行 Provider registration loop 或读取 pre-staging entry；default ID 只取自 successful published Snapshot |
+| CODE-E05 | `Removed` | Channel Adapter barrel 只导出 concrete CLI/WebSocket transports；Core contracts 只从 Core entry 导入；Turn Interaction 位于 Runtime application boundary；旧 facade、alias、Adapter-owned manager path 与 callers 均已删除 |
+
+Source Layout Convergence 以 Accepted Proposal 和 Migration Spec v0.2 冻结 C1/C2 scope，达到 $Legacy_{end}=0<Legacy_{start}=2$。项目所有者已分别接受 C1 与 C2 Gate。C1 的 canonical path、codec anti-drift、Channel/Turn Interaction ownership、FT-01–FT-13、lint、clean build 和 Node 22 full Vitest（97 files、829 tests）通过。C2 的 production/Fake common Unit staging、Parent/Child multi-Provider、post-Snapshot default、empty Snapshot、required create attribution、candidate cleanup、no-kernel/no-ready、four migrated integration scripts、FT-10/13、lint、clean build 和 Node 22 full Vitest（98 files、839 tests）通过；独立 C2 review 结论为 `PASS`。C3 已同步 Current Architecture、source-grounded FT-12 semantic evidence 与本 Inventory；full FT-01–FT-13（46 tests）、lint、clean build、Node 22 full Vitest（98 files、840 tests）、repository Markdown/link governance、manifest、legacy path/seam 与 `git diff --check` 全部通过，独立 C3 review 结论为 `PASS`。项目所有者于 2026-09-10 验收 C3、确认整个 Source Layout Convergence Slice 完成，并授权一个 checkpoint commit；push 未授权。
+
 ## 7. Slice 视图与净减少口径
 
 | Slice | 本 Inventory 的主要 entries | 最小退出结果 |
@@ -240,7 +269,8 @@ Slice 5 frozen scope contains API-M01、API-M02 and CODE-E03 and reaches $Legacy
 | Slice 3 | CODE-E01、CODE-E02 | Tool/Hook caller 迁移，central list/setter/registration special cases 净减少 |
 | Slice 4 | API-E01 | Channel caller 迁移，concrete script registration 和 duplicate lifecycle path 删除 |
 | Slice 5 | API-M01、API-M02、CODE-E03 | canonical intake与wire callers迁移；Runtime Builder收敛composition/lifecycle ownership；删除到期Compatibility与duplicate paths |
-| Slice 6 | DOC-C01–C13、DOC-A01–A27、DOC-V01–V12 | 唯一 Current Architecture、active links 收口；逐文件完成 `Migrated -> Reviewed -> Deleted` 或明确 `Retained Authority` |
+| Slice 6 | DOC-C01–C13、DOC-A01–A27、DOC-V01–V12、API-M04 | 唯一 Current Architecture、active links 收口；逐文件完成 `Migrated -> Reviewed -> Deleted` 或明确 `Retained Authority`；API-M04 facade/aliases 完整移除 |
+| Post-Foundation Source Layout Convergence | CODE-E04、CODE-E05 | canonical physical ownership；Anthropic required Runtime Module 与 singular Unit seam；published Snapshot default；旧 path/facade/alias/projection seam 完整删除 |
 
 每个 Slice 的 accepted Slice inventory 必须冻结该 Slice 的起始计数口径，并满足：
 

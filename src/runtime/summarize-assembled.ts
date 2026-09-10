@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import type { ChatContentBlock } from '../adapters/llm/types.js';
+import type { ChatContentBlock } from '../core/model-invocation/index.js';
 import type { AttachmentSummary } from '../core/runner/index.js';
 import { Logger } from '../platform/logger/index.js';
 

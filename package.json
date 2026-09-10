@@ -3,13 +3,12 @@
   "version": "0.1.0",
   "description": "Personal AI Agent for learning purposes — exploring prompt building, workspace management, and agent architecture patterns",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
   "engines": {
     "node": "22.x"
   },
   "scripts": {
-    "build": "tsc",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",

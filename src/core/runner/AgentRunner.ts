@@ -777,6 +777,7 @@ export class AgentRunner {
       config: compaction,
       llmClient: params.resolvedModel.invocationPort,
       model: params.resolvedModel.identity.modelId,
+      maxTokens: params.resolvedModel.limits.maxTokens,
       trigger,
     });
 
@@ -891,7 +892,7 @@ export class AgentRunner {
    *
    * 关于 R8（残缺 tool_use 过滤）：AnthropicClient 只在 `content_block_stop` 事件
    * 时才 yield 完整的 `tool_use`（含 parsed input），未完成的块自然不会出现在
-   * StreamEvent 里。因此 contentBlocks 里的 tool_use 一定是完整的，无需额外过滤。
+  * ModelStreamEvent 里。因此 contentBlocks 里的 tool_use 一定是完整的，无需额外过滤。
    */
   private async callLLMStream(
     turnCtx: TurnContext,

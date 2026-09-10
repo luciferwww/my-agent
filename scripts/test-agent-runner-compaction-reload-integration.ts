@@ -25,11 +25,15 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import process from 'node:process';
 
-import { AgentRunner } from '../src/core/runner/index.js';
-import type { ModelInvocationPort } from '../src/core/model-invocation/index.js';
+import { AgentRunner, type RunParams } from '../src/core/runner/index.js';
+import { makeRunParams } from '../src/core/runner/test-helpers.js';
+import type {
+  ModelInvocationPort,
+  ModelInvocationRequest,
+  ModelStreamEvent as ModelStreamEvent,
+} from '../src/core/model-invocation/index.js';
 import type { ResolvedModel } from '../src/core/model-resolution/index.js';
 import { SessionManager } from '../src/core/session/index.js';
-import type { StreamEvent, ChatParams } from '../src/adapters/llm/types.js';
 
 // ── runStep 脚手架 ──────────────────────────────────────────────
 
@@ -51,15 +55,22 @@ async function runStep(name: string, step: () => Promise<void>): Promise<void> {
   }
 }
 
+function runAgent(
+  runner: AgentRunner,
+  params: Omit<RunParams, 'toolProjection' | 'hookProjection' | 'toolPolicy'>,
+) {
+  return runner.run({ ...makeRunParams(), ...params });
+}
+
 // ── Mock LLM 工厂 ─────────────────────────────────────────────────
 
 /**
  * 追踪型 mock LLM：每次调用时将 params.messages 写入 captured，
  * 并返回固定文本回复。用于断言 LLM 实际收到了哪些历史消息。
  */
-function createTrackingLLM(captured: { messages: ChatParams['messages'] }) {
+function createTrackingLLM(captured: { messages: ModelInvocationRequest['messages'] }) {
   return {
-    async *chatStream(params: ChatParams): AsyncIterable<StreamEvent> {
+    async *chatStream(params: ModelInvocationRequest): AsyncIterable<ModelStreamEvent> {
       // 记录本次调用传入的 messages（仅最后一次调用的快照，对单轮对话足够）
       captured.messages = params.messages.map((m) => ({ ...m }));
       yield { type: 'text_delta', text: 'Response.' };
@@ -155,11 +166,11 @@ try {
     );
 
     // 运行 agent，追踪 LLM 收到的 messages
-    const captured: { messages: ChatParams['messages'] } = { messages: [] };
+    const captured: { messages: ModelInvocationRequest['messages'] } = { messages: [] };
     const llmClient = createTrackingLLM(captured);
     const runner = new AgentRunner({ sessionManager: manager });
 
-    await runner.run({
+    await runAgent(runner, {
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Current question',
@@ -192,11 +203,11 @@ try {
 
     await manager.appendCompactionRecord('main', makeCompactionInput('Summary.'), turn2Id);
 
-    const captured: { messages: ChatParams['messages'] } = { messages: [] };
+    const captured: { messages: ModelInvocationRequest['messages'] } = { messages: [] };
     const llmClient = createTrackingLLM(captured);
     const runner = new AgentRunner({ sessionManager: manager });
 
-    await runner.run({
+    await runAgent(runner, {
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Current question',
@@ -251,11 +262,11 @@ try {
     // ── 实例 B：模拟重启，从磁盘重新加载 ──
     const managerB = new SessionManager(subDir);
 
-    const captured: { messages: ChatParams['messages'] } = { messages: [] };
+    const captured: { messages: ModelInvocationRequest['messages'] } = { messages: [] };
     const llmClient = createTrackingLLM(captured);
     const runner = new AgentRunner({ sessionManager: managerB });
 
-    await runner.run({
+    await runAgent(runner, {
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Post-restart question',
@@ -310,11 +321,11 @@ try {
       turn3Id,
     );
 
-    const captured: { messages: ChatParams['messages'] } = { messages: [] };
+    const captured: { messages: ModelInvocationRequest['messages'] } = { messages: [] };
     const llmClient = createTrackingLLM(captured);
     const runner = new AgentRunner({ sessionManager: manager });
 
-    await runner.run({
+    await runAgent(runner, {
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Current',
@@ -351,11 +362,11 @@ try {
     // 预填 2 轮历史，不写压缩记录
     await appendTurns(manager, 2);
 
-    const captured: { messages: ChatParams['messages'] } = { messages: [] };
+    const captured: { messages: ModelInvocationRequest['messages'] } = { messages: [] };
     const llmClient = createTrackingLLM(captured);
     const runner = new AgentRunner({ sessionManager: manager });
 
-    await runner.run({
+    await runAgent(runner, {
       sessionKey: 'main',
       turnId: randomUUID(),
       message: 'Current',

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { bootstrapRuntime } from './bootstrap.js';
-import { createLoadedRuntimeUnit } from './runtime-unit.js';
+import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
 import { Logger } from '../platform/logger/index.js';
+import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
 import type { RuntimeDeadlineDriver, RuntimeDeadlineRaceResult } from './runtime-deadline.js';
 import type { RuntimeAppOptions } from './types.js';
 import {
@@ -56,9 +57,41 @@ class ManualDeadlineDriver implements RuntimeDeadlineDriver {
   }
 }
 
-function createHarness(options: { memoryClose?: () => void | Promise<void> } = {}) {
-  const baseStop = vi.fn();
+function createProviderUnit(
+  providers: readonly ProviderProjectionEntry[] = [testProvider('test-provider')],
+): LoadedRuntimeUnit {
+  return createLoadedRuntimeUnit({
+    registration: {
+      id: 'builtin-test-provider',
+      source: 'builtin',
+      register(api) {
+        for (const provider of providers) api.registerProvider(provider);
+      },
+    },
+    required: true,
+  });
+}
+
+function testProvider(id: string): ProviderProjectionEntry {
+  return {
+    id,
+    protocol: 'test',
+    invocationPort: {} as never,
+    resolveConnection: () => ({ ok: false, category: 'connection_missing', message: 'unused' }),
+    resolveModel: () => ({ ok: false, category: 'model_rejected', message: 'unused' }),
+  };
+}
+
+function createHarness(options: {
+  memoryClose?: () => void | Promise<void>;
+  providerUnit?: LoadedRuntimeUnit;
+  providerFactory?: () => LoadedRuntimeUnit;
+  baseStop?: () => void | Promise<void>;
+  additionalLoadedUnits?: readonly LoadedRuntimeUnit[];
+} = {}) {
+  const baseStop = vi.fn(options.baseStop ?? (() => {}));
   const optionalStop = vi.fn();
+  const events: NonNullable<RuntimeAppOptions['onEvent']> extends (event: infer T) => void ? T[] : never[] = [];
   const loadedUnits = [
     createLoadedRuntimeUnit({
       registration: { id: 'base', source: 'builtin', register() {} },
@@ -71,10 +104,12 @@ function createHarness(options: { memoryClose?: () => void | Promise<void> } = {
       initiallyEnabled: false,
       stop: optionalStop,
     }),
+    ...(options.additionalLoadedUnits ?? []),
   ];
   const runtimeOptions: RuntimeAppOptions = {
     workspaceDir: '/workspace',
     loadedUnits,
+    onEvent: (event) => events.push(event),
   };
   vi.mocked(bootstrapRuntime).mockResolvedValue({
     resources: {
@@ -88,13 +123,9 @@ function createHarness(options: { memoryClose?: () => void | Promise<void> } = {
     },
     state: { phase: 'ready', startedAt: 1, activeRunCount: 0, contextVersion: 1 },
     dependencies: {
-      createProviderProjection: () => [{
-        id: 'test-provider',
-        protocol: 'test',
-        invocationPort: {},
-        resolveConnection: () => ({ ok: false, category: 'connection_missing', message: 'unused' }),
-        resolveModel: () => ({ ok: false, category: 'model_rejected', message: 'unused' }),
-      }],
+      createBundledProviderUnit: () => options.providerFactory?.()
+        ?? options.providerUnit
+        ?? createProviderUnit(),
       getBuiltinContributionUnits: () => [],
     },
   } as never);
@@ -159,6 +190,7 @@ function createHarness(options: { memoryClose?: () => void | Promise<void> } = {
     createApplication,
     getInput: () => input,
     runtimeOptions,
+    events,
     baseStop,
     optionalStop,
     shutdownReport,
@@ -178,11 +210,146 @@ describe('Runtime Builder', () => {
     expect(bootstrapRuntime).toHaveBeenCalledTimes(1);
     expect(harness.createApplication).toHaveBeenCalledTimes(1);
     expect(handle.application).toBe(harness.application);
+    expect(harness.getInput()?.resources.defaultProviderId).toBe('test-provider');
     const access = harness.getInput()?.snapshotAccess;
     expect(access?.currentSnapshot().generation).toBe(1);
     const pin = access?.captureRootGeneration();
     expect(pin?.generation).toBe(1);
     pin?.release();
+  });
+
+  it('runs the bundled Provider through factory, create, staging, start, and publication', async () => {
+    const trace: string[] = [];
+    const providerUnit: LoadedRuntimeUnit = {
+      unitId: 'builtin-traced-provider',
+      source: 'builtin',
+      orderKey: 'builtin-traced-provider',
+      required: true,
+      initiallyEnabled: true,
+      dependencies: [],
+      create() {
+        trace.push('create');
+        return {
+          registration: {
+            id: 'builtin-traced-provider',
+            source: 'builtin',
+            register(api) {
+              trace.push('registration');
+              api.registerProvider(testProvider('traced-provider'));
+            },
+          },
+          start() { trace.push('start'); },
+          stop() {},
+        };
+      },
+    };
+    const harness = createHarness({
+      providerFactory: () => {
+        trace.push('factory');
+        return providerUnit;
+      },
+    });
+    harness.runtimeOptions.onEvent = (event) => {
+      harness.events.push(event);
+      if (event.type === 'app_ready') trace.push('ready');
+    };
+    const createApplication = (input: RuntimeApplicationKernelInput) => {
+      trace.push('kernel');
+      return harness.createApplication(input);
+    };
+
+    const handle = await buildRuntimeHandle(harness.runtimeOptions, createApplication);
+
+    expect(trace).toEqual(['factory', 'create', 'registration', 'start', 'kernel', 'ready']);
+    expect(harness.getInput()?.resources.defaultProviderId).toBe('traced-provider');
+    await handle.close();
+  });
+
+  it('keeps a builtin Provider first when an external Provider starts in the same Snapshot', async () => {
+    const externalProviderUnit = createLoadedRuntimeUnit({
+      registration: {
+        id: 'external-test-provider',
+        source: 'external',
+        register(api) { api.registerProvider(testProvider('external-provider')); },
+      },
+      required: false,
+    });
+    const harness = createHarness({ additionalLoadedUnits: [externalProviderUnit] });
+
+    const handle = await buildRuntimeHandle(harness.runtimeOptions, harness.createApplication);
+
+    expect(harness.getInput()?.resources.defaultProviderId).toBe('test-provider');
+    expect(harness.getInput()?.snapshotAccess.currentSnapshot().providers.map(({ id }) => id))
+      .toEqual(['test-provider', 'external-provider']);
+    await handle.close();
+  });
+
+  it('rejects an empty published Provider Snapshot before kernel creation or app_ready', async () => {
+    const harness = createHarness({ providerUnit: createProviderUnit([]) });
+
+    await expect(buildRuntimeHandle(harness.runtimeOptions, harness.createApplication))
+      .rejects.toThrow('Published Registry Snapshot must contain at least one Provider entry.');
+
+    expect(harness.createApplication).not.toHaveBeenCalled();
+    expect(harness.events.some((event) => event.type === 'app_ready')).toBe(false);
+    expect(harness.baseStop).toHaveBeenCalledTimes(1);
+  });
+
+  it('attributes required Provider Unit create failure and cleans earlier candidates', async () => {
+    const providerFailure = new Error('provider construction failed');
+    const failingProviderUnit: LoadedRuntimeUnit = {
+      unitId: 'builtin-anthropic-provider',
+      source: 'builtin',
+      orderKey: 'builtin-anthropic-provider',
+      required: true,
+      initiallyEnabled: true,
+      dependencies: [],
+      create() { throw providerFailure; },
+    };
+    const harness = createHarness({ providerUnit: failingProviderUnit });
+
+    await expect(buildRuntimeHandle(harness.runtimeOptions, harness.createApplication))
+      .rejects.toBe(providerFailure);
+
+    expect(harness.createApplication).not.toHaveBeenCalled();
+    expect(harness.events).toContainEqual(expect.objectContaining({
+      type: 'error',
+      info: expect.objectContaining({
+        unitId: 'builtin-anthropic-provider',
+        phase: 'create',
+      }),
+    }));
+    expect(harness.events.some((event) => event.type === 'app_ready')).toBe(false);
+    expect(harness.baseStop).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed when earlier candidate cleanup fails after Provider create failure', async () => {
+    const failingProviderUnit: LoadedRuntimeUnit = {
+      unitId: 'builtin-anthropic-provider',
+      source: 'builtin',
+      orderKey: 'builtin-anthropic-provider',
+      required: true,
+      initiallyEnabled: true,
+      dependencies: [],
+      create() { throw new Error('provider construction failed'); },
+    };
+    const harness = createHarness({
+      providerUnit: failingProviderUnit,
+      baseStop: () => { throw new Error('candidate cleanup failed'); },
+    });
+
+    await expect(buildRuntimeHandle(harness.runtimeOptions, harness.createApplication))
+      .rejects.toMatchObject({
+        blocker: expect.objectContaining({
+          phase: 'candidate-cleanup',
+          unitId: 'base',
+          message: 'candidate cleanup failed',
+        }),
+      });
+
+    expect(harness.createApplication).not.toHaveBeenCalled();
+    expect(harness.events.some((event) => event.type === 'app_ready')).toBe(false);
+    expect(harness.baseStop).toHaveBeenCalledTimes(1);
   });
 
   it('cleans up startup resources when application creation fails', async () => {

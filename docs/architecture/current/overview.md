@@ -32,7 +32,8 @@ src/
 │   └── subagent/          Child request preparation and isolated execution
 ├── adapters/
 │   ├── channel/       CLI/WebSocket transports and interaction adapters
-│   └── llm/           Anthropic protocol adapter and portable codecs
+│   └── provider/
+│       └── anthropic/ Anthropic protocol adapter and production codec
 └── platform/
     ├── config/        configuration schema, defaults, merge and Wizard
     └── logger/        process-wide logging and output adapters
@@ -96,6 +97,6 @@ The topic pages own every detail behind these steps; this overview intentionally
 
 | Kind | Evidence |
 |---|---|
-| Source | [runtime-builder.ts](../../../src/runtime/runtime-builder.ts), [RuntimeApp.ts](../../../src/runtime/RuntimeApp.ts), [runtime-composition-manager.ts](../../../src/runtime/runtime-composition-manager.ts), [ModelResolver.ts](../../../src/core/model-resolution/ModelResolver.ts), [attachment-pipeline.ts](../../../src/core/media/attachment-pipeline.ts), [AgentRunner.ts](../../../src/core/runner/AgentRunner.ts) |
-| Tests | [runtime-builder.test.ts](../../../src/runtime/runtime-builder.test.ts), [RuntimeApp.intake.test.ts](../../../src/runtime/RuntimeApp.intake.test.ts), [ModelResolver.test.ts](../../../src/core/model-resolution/ModelResolver.test.ts), [attachment-pipeline.test.ts](../../../src/core/media/attachment-pipeline.test.ts), [ft-01-boundaries.test.ts](../../../src/architecture-fitness/ft-01-boundaries.test.ts), [ft-10-runtime-composition-deletion.test.ts](../../../src/architecture-fitness/ft-10-runtime-composition-deletion.test.ts) |
+| Source | [runtime-builder.ts](../../../src/runtime/runtime-builder.ts), [Anthropic Provider Runtime Module](../../../src/runtime-modules/anthropic-provider.ts), [RuntimeApp.ts](../../../src/runtime/RuntimeApp.ts), [runtime-composition-manager.ts](../../../src/runtime/runtime-composition-manager.ts), [ModelResolver.ts](../../../src/core/model-resolution/ModelResolver.ts), [attachment-pipeline.ts](../../../src/core/media/attachment-pipeline.ts), [AgentRunner.ts](../../../src/core/runner/AgentRunner.ts) |
+| Tests | [runtime-builder.test.ts](../../../src/runtime/runtime-builder.test.ts), [anthropic-provider.test.ts](../../../src/runtime-modules/anthropic-provider.test.ts), [RuntimeApp.intake.test.ts](../../../src/runtime/RuntimeApp.intake.test.ts), [ModelResolver.test.ts](../../../src/core/model-resolution/ModelResolver.test.ts), [attachment-pipeline.test.ts](../../../src/core/media/attachment-pipeline.test.ts), [ft-01-boundaries.test.ts](../../../src/architecture-fitness/ft-01-boundaries.test.ts), [ft-10-runtime-composition-deletion.test.ts](../../../src/architecture-fitness/ft-10-runtime-composition-deletion.test.ts) |
 | Controlling authority | [ADR-003](../adr-003-progressive-architecture-migration.md), [ADR-005](../adr-005-extension-registry-runtime-composition.md), [ADR-006](../adr-006-legacy-and-compatibility-exit.md), [Runtime Composition Module Spec](../runtime-composition-module-spec.md) |

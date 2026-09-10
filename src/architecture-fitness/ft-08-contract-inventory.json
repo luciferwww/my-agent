@@ -165,14 +165,14 @@
     "source": "src/core/channel/types.ts",
     "kind": "interaction-port",
     "positive": ["src/adapters/channel/WebSocketChannel.test.ts"],
-    "negative": ["src/adapters/channel/TurnInteractionManager.test.ts"]
+    "negative": ["src/runtime/turn-interaction/TurnInteractionManager.test.ts"]
   },
   {
     "contract": "ChannelInteractionTransport",
     "source": "src/core/channel/types.ts",
     "kind": "interaction-port",
     "positive": ["src/adapters/channel/WebSocketChannel.test.ts"],
-    "negative": ["src/adapters/channel/TurnInteractionManager.test.ts"]
+    "negative": ["src/runtime/turn-interaction/TurnInteractionManager.test.ts"]
   },
   {
     "contract": "ChannelContribution",
@@ -206,22 +206,22 @@
     "contract": "ModelInvocationPort",
     "source": "src/core/model-invocation/types.ts",
     "kind": "provider-port",
-    "positive": ["src/adapters/llm/AnthropicClient.test.ts"],
+    "positive": ["src/adapters/provider/anthropic/AnthropicClient.test.ts"],
     "negative": ["src/core/runner/AgentRunner.test.ts"]
   },
   {
     "contract": "ModelStreamEvent",
     "source": "src/core/model-invocation/types.ts",
     "kind": "event",
-    "positive": ["src/adapters/llm/AnthropicClient.test.ts"],
-    "negative": ["src/adapters/llm/AnthropicClient.test.ts"]
+    "positive": ["src/adapters/provider/anthropic/AnthropicClient.test.ts"],
+    "negative": ["src/adapters/provider/anthropic/AnthropicClient.test.ts"]
   },
   {
     "contract": "ModelInvocationError",
     "source": "src/core/model-invocation/errors.ts",
     "kind": "error",
-    "positive": ["src/adapters/llm/AnthropicClient.test.ts"],
-    "negative": ["src/adapters/llm/AnthropicClient.test.ts"]
+    "positive": ["src/adapters/provider/anthropic/AnthropicClient.test.ts"],
+    "negative": ["src/adapters/provider/anthropic/AnthropicClient.test.ts"]
   },
   {
     "contract": "ResolvedModel",

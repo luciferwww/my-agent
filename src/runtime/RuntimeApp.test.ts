@@ -10,13 +10,13 @@ import type {
   Channel,
   ChannelCompletion,
   ChannelRunRequest,
-} from '../adapters/channel/types.js';
+} from '../core/channel/index.js';
 import type { AgentEvent, BeforeToolCallHook } from '../core/runner/index.js';
 import type { RunParams, RunResult } from '../core/runner/types.js';
 import type { Tool } from '../core/tools/types.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
-import type { ResolvedModel } from '../core/model-resolution/index.js';
+import type { ProviderProjectionEntry, ResolvedModel } from '../core/model-resolution/index.js';
 import type { SubagentModelSelection } from '../platform/config/types.js';
 import { RuntimeApp } from './RuntimeApp.js';
 import type { RuntimeHandle } from './runtime-composition.js';
@@ -221,7 +221,10 @@ describe('RuntimeApp', () => {
         },
       },
       dependencies: createTestDependencies({
-        createProviderProjection: () => [makeProvider('test'), makeProvider('child')],
+        createBundledProviderUnit: () => createTestProviderUnit([
+          makeProvider('test'),
+          makeProvider('child'),
+        ]),
         createSessionManager: () => ({
           resolveSession: vi.fn(async () => ({ entry: {}, isNew: true })),
           deleteSession,
@@ -257,6 +260,7 @@ describe('RuntimeApp', () => {
     let childRuns = 0;
     let taskOutcome: string | undefined;
     let newRootProviderId: string | undefined;
+    let implicitRootProviderId: string | undefined;
     let childProviderId: string | undefined;
     let childHasGenerationOneTool = false;
     let childHasGenerationOneHook = false;
@@ -279,6 +283,8 @@ describe('RuntimeApp', () => {
         taskOutcome = result.outcome;
       } else if (params.sessionKey === 'new-root') {
         newRootProviderId = params.resolvedModel.identity.providerId;
+      } else if (params.sessionKey === 'implicit-root') {
+        implicitRootProviderId = params.resolvedModel.identity.providerId;
       } else {
         childRuns += 1;
         childProviderId = params.resolvedModel.identity.providerId;
@@ -394,6 +400,12 @@ describe('RuntimeApp', () => {
       promptMode: 'full',
     });
     expect(newRootProviderId).toBe('next-provider');
+    await app.application.runTurn({
+      sessionKey: 'implicit-root',
+      message: 'keep the startup default in generation two',
+      promptMode: 'full',
+    });
+    expect(implicitRootProviderId).toBe('test');
 
     await app.close();
   });
@@ -2102,7 +2114,7 @@ function createTestDependencies(
   };
 
   return {
-    createProviderProjection: () => [{
+    createBundledProviderUnit: () => createTestProviderUnit([{
       id: 'test',
       protocol: 'test',
       invocationPort: {} as never,
@@ -2121,7 +2133,7 @@ function createTestDependencies(
           },
         },
       }),
-    }],
+    }]),
     createSessionManager: () => ({ resolveSession: vi.fn(async () => ({ entry: {}, isNew: true })) }) as never,
     createMemoryManager: async () => null,
     createSystemPromptBuilder: () => ({ build: () => 'SYSTEM_PROMPT' }) as never,
@@ -2137,6 +2149,21 @@ function createTestDependencies(
     getBuiltinContributionUnits: () => [builtinUnit(builtinTool)],
     ...overrides,
   };
+}
+
+function createTestProviderUnit(
+  providers: readonly ProviderProjectionEntry[],
+): LoadedRuntimeUnit {
+  return createLoadedRuntimeUnit({
+    registration: {
+      id: 'builtin-test-provider',
+      source: 'builtin',
+      register(api) {
+        for (const provider of providers) api.registerProvider(provider);
+      },
+    },
+    required: true,
+  });
 }
 
 function builtinUnit(tool: Tool): RuntimeContributionUnit {

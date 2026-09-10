@@ -608,6 +608,8 @@ Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accept
 
 ### Slice 6：文档与 Legacy 收口
 
+**Plan Item 状态：** In Review — Awaiting Owner Acceptance（S6-D8 terminal validation complete；2026-09-09）
+
 **范围：**
 
 - 形成唯一 Current Architecture；
@@ -621,6 +623,8 @@ Slice 1–6 是默认依赖顺序，Slice 1–5 不并行实施。只有 `Accept
 - 活跃文档不存在同一事实的多份权威说明；
 - Legacy 文档不再被新实现引用；
 - Git History 成为旧实现和已删除过程文档的历史来源。
+
+**S6-D8 validation evidence（2026-09-09）：** 52/52 document entries 已进入 reviewed terminal disposition；15 个 retained entries 为 `Reviewed`，既有 deletion/deferred dispositions 保持不变。Cumulative FT-11 同时锁定 S6-D4–D8 ledgers、API-M04 zero-residual、exact references 与 repository Markdown targets/anchors。Focused FT-09/11/12 16/16、full Architecture Fitness 40/40、lint、clean build、Node 22 full Vitest 95/95 files（825/825 tests）、八个 changed integration scripts / 34 scenarios、package/manifest/diff audits 已通过。Independent final review 的 accepted findings 已修正，最终结果为 `Ready`，无 unresolved Critical/High/Medium blocker。项目所有者 acceptance 仍待完成，因此本 Plan Item 不标记 `Completed`；commit/push 未授权。
 
 ### Post-Foundation Subagent Concurrency Deferred Tracker
 

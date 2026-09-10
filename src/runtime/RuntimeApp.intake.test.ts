@@ -7,8 +7,9 @@ import type {
   ChannelCompletion,
   ChannelRunRequest,
   InboundContentBlock,
-} from '../adapters/channel/types.js';
-import type { ChatContentBlock, ChatMessage } from '../adapters/llm/types.js';
+} from '../core/channel/index.js';
+import type { ChatContentBlock, ChatMessage } from '../core/model-invocation/index.js';
+import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
 import type { RunResult } from '../core/runner/types.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
@@ -650,7 +651,7 @@ async function buildApp(
   };
 
   const deps: Partial<RuntimeDependencies> = {
-    createProviderProjection: () => {
+    createBundledProviderUnit: () => {
       const invocationPort = options.useRealRunner
         ? ({
           async *chatStream() {
@@ -665,7 +666,7 @@ async function buildApp(
           async chat() { throw new Error('Not used in tests'); },
         }) as never
         : ({}) as never;
-      return [{
+      return createTestProviderUnit({
         id: 'test',
         protocol: 'test',
         invocationPort,
@@ -684,7 +685,7 @@ async function buildApp(
             },
           },
         }),
-      }];
+      });
     },
     ...(options.useRealRunner
       ? {}
@@ -723,6 +724,17 @@ async function buildApp(
   });
 
   return { app, runnerRun, testChannel, runtimeEvents, agentEvents };
+}
+
+function createTestProviderUnit(provider: ProviderProjectionEntry): LoadedRuntimeUnit {
+  return createLoadedRuntimeUnit({
+    registration: {
+      id: 'builtin-test-provider',
+      source: 'builtin',
+      register(api) { api.registerProvider(provider); },
+    },
+    required: true,
+  });
 }
 
 function builtinUnit(tool: Tool): RuntimeContributionUnit {

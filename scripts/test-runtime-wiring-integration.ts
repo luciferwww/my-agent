@@ -20,13 +20,14 @@ import { join } from 'node:path';
 import process from 'node:process';
 
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
+import { createLoadedRuntimeUnit } from '../src/runtime/runtime-unit.js';
 import { SessionManager } from '../src/core/session/index.js';
 import type {
-  ChatParams,
-  ChatResponse,
-  LLMClient,
-  StreamEvent,
-} from '../src/adapters/llm/types.js';
+  ModelInvocationRequest,
+  ModelInvocationResponse,
+  ModelInvocationPort,
+  ModelStreamEvent as ModelStreamEvent,
+} from '../src/core/model-invocation/index.js';
 
 // ── runStep 脚手架 ──────────────────────────────────────────────
 
@@ -52,17 +53,17 @@ async function runStep(name: string, step: () => Promise<void>): Promise<void> {
 
 /**
  * 单次响应 mock：每次 chatStream 调用返回相同文本（用于不关心多轮的测试）。
- * 通过 onCall 回调暴露 captured ChatParams 供断言。
+ * 通过 onCall 回调暴露 captured ModelInvocationRequest 供断言。
  */
 function createSingleResponseLLM(opts: {
   text: string;
   inputTokens?: number;
   outputTokens?: number;
-  onCall?: (params: ChatParams) => void;
-}): LLMClient {
+  onCall?: (params: ModelInvocationRequest) => void;
+}): ModelInvocationPort {
   const { text, inputTokens = 10, outputTokens = 5, onCall } = opts;
   return {
-    async *chatStream(params: ChatParams): AsyncIterable<StreamEvent> {
+    async *chatStream(params: ModelInvocationRequest): AsyncIterable<ModelStreamEvent> {
       onCall?.(params);
       yield { type: 'message_start' };
       yield { type: 'text_delta', text };
@@ -72,14 +73,14 @@ function createSingleResponseLLM(opts: {
         usage: { inputTokens, outputTokens },
       };
     },
-    async chat(): Promise<ChatResponse> {
+    async chat(): Promise<ModelInvocationResponse> {
       throw new Error('Not used in this test');
     },
   };
 }
 
-function createTestProvider(client: LLMClient) {
-  return [{
+function createTestProviderUnit(client: ModelInvocationPort) {
+  const provider = {
     id: 'test',
     protocol: 'test',
     invocationPort: client,
@@ -97,7 +98,15 @@ function createTestProvider(client: LLMClient) {
         },
       },
     }),
-  }];
+  };
+  return createLoadedRuntimeUnit({
+    registration: {
+      id: 'builtin-test-provider',
+      source: 'builtin',
+      register(api) { api.registerProvider(provider); },
+    },
+    required: true,
+  });
 }
 
 // ── 工作区生命周期 ──────────────────────────────────────────────
@@ -115,7 +124,7 @@ async function withWorkspace<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 
 async function testBootsAndRunsTurn(): Promise<void> {
   await withWorkspace(async (workspaceDir) => {
-    let capturedParams: ChatParams | undefined;
+    let capturedParams: ModelInvocationRequest | undefined;
     let sessionManager: SessionManager | undefined;
 
     const app = await RuntimeApp.create({
@@ -125,7 +134,7 @@ async function testBootsAndRunsTurn(): Promise<void> {
         memory: { enabled: false },
       },
       dependencies: {
-        createProviderProjection: () => createTestProvider(createSingleResponseLLM({
+        createBundledProviderUnit: () => createTestProviderUnit(createSingleResponseLLM({
           text: 'Integration hello',
           inputTokens: 12,
           outputTokens: 8,
@@ -168,7 +177,7 @@ async function testBootsAndRunsTurn(): Promise<void> {
 
 async function testMemoryToolsInjection(): Promise<void> {
   await withWorkspace(async (workspaceDir) => {
-    let capturedParams: ChatParams | undefined;
+    let capturedParams: ModelInvocationRequest | undefined;
 
     await mkdir(join(workspaceDir, '.agent'), { recursive: true });
     await writeFile(
@@ -187,7 +196,7 @@ async function testMemoryToolsInjection(): Promise<void> {
     const app = await RuntimeApp.create({
       workspaceDir,
       dependencies: {
-        createProviderProjection: () => createTestProvider(createSingleResponseLLM({
+        createBundledProviderUnit: () => createTestProviderUnit(createSingleResponseLLM({
           text: 'Memory integration',
           inputTokens: 16,
           outputTokens: 9,
@@ -242,7 +251,7 @@ async function testReloadContextFiles(): Promise<void> {
         memory: { enabled: false },
       },
       dependencies: {
-        createProviderProjection: () => createTestProvider(createSingleResponseLLM({
+        createBundledProviderUnit: () => createTestProviderUnit(createSingleResponseLLM({
           text: 'Reload integration',
           inputTokens: 10,
           outputTokens: 7,

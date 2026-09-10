@@ -40,7 +40,7 @@ import type {
   Channel,
   ChannelCompletion,
   ChannelRunRequest,
-} from '../src/adapters/channel/types.js';
+} from '../src/core/channel/index.js';
 import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from '../src/runtime/runtime-unit.js';
 import type { AgentEvent } from '../src/core/runner/index.js';
 import type { RunParams, RunResult } from '../src/core/runner/types.js';

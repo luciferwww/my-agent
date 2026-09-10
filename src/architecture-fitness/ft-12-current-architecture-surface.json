@@ -6,7 +6,7 @@
   {"id":"channel","role":"topic","path":"docs/architecture/current/adapter_channel.md","ownershipKey":"channel-transport-and-ingress","ownedModules":["src/core/channel","src/adapters/channel"]},
   {"id":"media","role":"topic","path":"docs/architecture/current/core_media.md","ownershipKey":"media-validation-and-normalization","ownedModules":["src/core/media"]},
   {"id":"configuration","role":"topic","path":"docs/architecture/current/platform_config.md","ownershipKey":"configuration-and-wizard","ownedModules":["src/platform/config"]},
-  {"id":"model-invocation-provider","role":"topic","path":"docs/architecture/current/adapter_llm.md","ownershipKey":"provider-protocol-and-anthropic-adapter","ownedModules":["src/core/model-invocation","src/adapters/llm"]},
+  {"id":"model-invocation-provider","role":"topic","path":"docs/architecture/current/adapter_llm.md","ownershipKey":"provider-protocol-and-anthropic-adapter","ownedModules":["src/core/model-invocation","src/adapters/provider"]},
   {"id":"tools","role":"topic","path":"docs/architecture/current/core_tools.md","ownershipKey":"canonical-tool-contract","ownedModules":["src/core/tools","src/core/approval"]},
   {"id":"builtin-tools","role":"topic","path":"docs/architecture/current/core_tools_builtin.md","ownershipKey":"builtin-tool-capabilities","ownedModules":["src/core/tools/builtin"]},
   {"id":"session","role":"topic","path":"docs/architecture/current/core_session.md","ownershipKey":"session-and-transcript-persistence","ownedModules":["src/core/session"]},

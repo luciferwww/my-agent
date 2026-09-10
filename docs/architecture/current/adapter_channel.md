@@ -9,7 +9,7 @@
 
 ## 1. 概述
 
-`src/adapters/channel/` 是 my-agent 的 **I/O 适配层**，把 `RuntimeApp` 内部运行与外部输入输出（终端、WebSocket、未来 HTTP 等）之间的边界统一起来。
+`src/adapters/channel/` 是 my-agent 的 **I/O 适配层**，把 `RuntimeApp` 内部运行与外部输入输出（终端、WebSocket、未来 HTTP 等）之间的边界统一起来。Turn Interaction pending lifecycle 由 `src/runtime/turn-interaction/` 拥有，不属于 Transport Adapter。
 
 它解决三个问题：
 
@@ -27,11 +27,17 @@
 
 ```
 src/adapters/channel/
-├── types.ts                  # 全部类型定义
-├── TurnInteractionManager.ts # 进程内 Promise bus
 ├── CliChannel.ts             # readline 实现
 ├── WebSocketChannel.ts       # ws server 实现
-└── index.ts                  # 公共导出
+└── index.ts                  # concrete adapters/config only
+
+src/runtime/turn-interaction/
+├── TurnInteractionManager.ts # Runtime-owned Promise bus
+└── index.ts
+
+src/core/channel/
+├── types.ts                  # canonical Channel/interaction contracts
+└── index.ts
 ```
 
 ---
@@ -207,7 +213,7 @@ TurnInteractionResponse =
 
 ## 5. TurnInteractionManager
 
-进程内 Promise bus，统一管理 turn 内阻塞式 approval 交互。
+Runtime-owned application component，作为进程内 Promise bus 统一管理 turn 内阻塞式 approval 交互。它不是 Channel Adapter、Runtime Module 或 Registry Contribution。
 
 ```
 TurnInteractionManager {
@@ -348,6 +354,6 @@ Direct library `runTurn()` bypasses Channel ingress and queue creation but still
 
 | Kind | Evidence |
 |---|---|
-| Source | [core channel types](../../../src/core/channel/types.ts), [CliChannel.ts](../../../src/adapters/channel/CliChannel.ts), [WebSocketChannel.ts](../../../src/adapters/channel/WebSocketChannel.ts), [TurnInteractionManager.ts](../../../src/adapters/channel/TurnInteractionManager.ts), [channel-lifecycle.ts](../../../src/runtime/channel-lifecycle.ts) |
-| Tests | [CliChannel.test.ts](../../../src/adapters/channel/CliChannel.test.ts), [WebSocketChannel.test.ts](../../../src/adapters/channel/WebSocketChannel.test.ts), [TurnInteractionManager.test.ts](../../../src/adapters/channel/TurnInteractionManager.test.ts), [RuntimeApp.intake.test.ts](../../../src/runtime/RuntimeApp.intake.test.ts), [channel-lifecycle.test.ts](../../../src/runtime/channel-lifecycle.test.ts) |
+| Source | [core channel types](../../../src/core/channel/types.ts), [CliChannel.ts](../../../src/adapters/channel/CliChannel.ts), [WebSocketChannel.ts](../../../src/adapters/channel/WebSocketChannel.ts), [TurnInteractionManager.ts](../../../src/runtime/turn-interaction/TurnInteractionManager.ts), [channel-lifecycle.ts](../../../src/runtime/channel-lifecycle.ts) |
+| Tests | [CliChannel.test.ts](../../../src/adapters/channel/CliChannel.test.ts), [WebSocketChannel.test.ts](../../../src/adapters/channel/WebSocketChannel.test.ts), [TurnInteractionManager.test.ts](../../../src/runtime/turn-interaction/TurnInteractionManager.test.ts), [RuntimeApp.intake.test.ts](../../../src/runtime/RuntimeApp.intake.test.ts), [channel-lifecycle.test.ts](../../../src/runtime/channel-lifecycle.test.ts) |
 | Controlling authority | [Channel Module Spec](../channel-module-spec.md), [Approval Lifecycle Spec](../approval-lifecycle-spec.md), [Attachments Support Spec](../attachments-support-spec.md), [ADR-005](../adr-005-extension-registry-runtime-composition.md) |

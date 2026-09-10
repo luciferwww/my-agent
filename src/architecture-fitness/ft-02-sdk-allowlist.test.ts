@@ -16,7 +16,7 @@ describe('FT-02 integration SDK allowlist', () => {
 
     expect(findFt02SdkAllowlistViolations(passSources)).toEqual([]);
     expect(findFt02SdkAllowlistViolations(failSources)).toEqual([
-      'FT-02 package=@anthropic-ai/sdk source=src/runtime/RuntimeApp.ts allowedRoots=src/adapters/llm/**',
+      'FT-02 package=@anthropic-ai/sdk source=src/runtime/RuntimeApp.ts allowedRoots=src/adapters/provider/anthropic/**',
     ]);
   });
 

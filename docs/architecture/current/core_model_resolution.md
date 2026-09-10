@@ -36,6 +36,8 @@ ResolvedModel
 
 A root Turn resolves against the Provider projection captured from its published generation. A Child Turn resolves independently from the Parent generation's same immutable Provider projection; it does not sample the latest publication.
 
+Runtime supplies `defaultProviderId` from the first Provider in the successfully published immutable Registry Snapshot and freezes that ID in Runtime resources. Model Resolution consumes this value when normalizing an unqualified reference；it neither selects nor reprioritizes Providers, and it never inspects a pre-staging projection.
+
 ## 3. Reference and binding resolution
 
 A structured reference supplies `providerId` and `modelId`; a string model reference uses `defaultProviderId`. Identity parts are trimmed and empty values fail as `reference_invalid`.
@@ -82,5 +84,5 @@ Runtime maps a resolution failure into Turn failure closure. Runner never perfor
 | Kind | Evidence |
 |---|---|
 | Source | [ModelResolver.ts](../../../src/core/model-resolution/ModelResolver.ts), [types.ts](../../../src/core/model-resolution/types.ts), [RuntimeApp.ts](../../../src/runtime/RuntimeApp.ts), [subagent-orchestration.ts](../../../src/runtime/subagent-orchestration.ts) |
-| Tests | [ModelResolver.test.ts](../../../src/core/model-resolution/ModelResolver.test.ts), [AnthropicProvider.test.ts](../../../src/adapters/llm/AnthropicProvider.test.ts), [RuntimeApp.test.ts](../../../src/runtime/RuntimeApp.test.ts), [subagent-orchestration.test.ts](../../../src/runtime/subagent-orchestration.test.ts) |
+| Tests | [ModelResolver.test.ts](../../../src/core/model-resolution/ModelResolver.test.ts), [AnthropicProvider.test.ts](../../../src/adapters/provider/anthropic/AnthropicProvider.test.ts), [RuntimeApp.test.ts](../../../src/runtime/RuntimeApp.test.ts), [subagent-orchestration.test.ts](../../../src/runtime/subagent-orchestration.test.ts) |
 | Controlling authority | [ADR-004](../adr-004-provider-model-identity-and-facts-ownership.md), [Model Resolution Module Spec](../model-resolution-module-spec.md), [Runtime Composition Module Spec](../runtime-composition-module-spec.md) |

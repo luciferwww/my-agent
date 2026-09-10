@@ -1,6 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { ApprovalRequest } from '../../core/channel/index.js';
 import { TurnInteractionManager } from './TurnInteractionManager.js';
-import type { ApprovalRequest } from './types.js';
+
+const testLog = {
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+};
+
+function createManager(): TurnInteractionManager {
+  return new TurnInteractionManager(testLog);
+}
 
 function requestApproval(manager: TurnInteractionManager, signal: AbortSignal) {
   return manager.request({
@@ -19,7 +30,7 @@ describe('TurnInteractionManager approval lifecycle', () => {
     ['allow', { outcome: 'approved' }],
     ['deny', { outcome: 'denied', reason: 'user' }],
   ] as const)('settles %s exactly once and ignores a late competing result', async (decision, expected) => {
-    const manager = new TurnInteractionManager();
+    const manager = createManager();
     const controller = new AbortController();
     let request: ApprovalRequest | undefined;
     manager.onRequest((value) => {
@@ -35,7 +46,7 @@ describe('TurnInteractionManager approval lifecycle', () => {
 
   it('keeps unanswered approval pending after 120 seconds', async () => {
     vi.useFakeTimers();
-    const manager = new TurnInteractionManager();
+    const manager = createManager();
     const controller = new AbortController();
     let settled = false;
     manager.onRequest(() => ({ status: 'accepted' }));
@@ -54,7 +65,7 @@ describe('TurnInteractionManager approval lifecycle', () => {
   });
 
   it('settles exactly once when a decision races Turn abort', async () => {
-    const manager = new TurnInteractionManager();
+    const manager = createManager();
     const controller = new AbortController();
     let request: ApprovalRequest | undefined;
     manager.onRequest((value) => {
@@ -71,7 +82,7 @@ describe('TurnInteractionManager approval lifecycle', () => {
   });
 
   it('contains close handler failures after settlement', async () => {
-    const manager = new TurnInteractionManager();
+    const manager = createManager();
     const controller = new AbortController();
     manager.onRequest(() => ({ status: 'accepted' }));
     manager.onClose(() => {

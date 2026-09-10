@@ -1,7 +1,7 @@
 import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import type { AgentEvent } from '../../core/runner/types.js';
-import type { AbortHookBindings } from './types.js';
+import type { AbortHookBindings } from '../../core/channel/index.js';
 import { CliChannel } from './CliChannel.js';
 
 // Strip ANSI escape sequences so assertions don't fight color codes.
