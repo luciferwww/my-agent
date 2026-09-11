@@ -230,7 +230,7 @@
       "durableDecisionAuthority": ["docs/architecture/runtime-composition-module-spec.md", "docs/architecture/adr-005-extension-registry-runtime-composition.md"],
       "unfinishedWorkSuccessor": [],
       "evidenceSuccessor": ["src/runtime/", "src/architecture-fitness/ft-10-runtime-composition-deletion.test.ts"],
-      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/core-subagent-spec.md","docs/architecture/current/core_model_resolution.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/core-subagent-evolution-proposal.md","docs/architecture/core-subagent-v2-spec.md","docs/architecture/current/core_runner.md","docs/architecture/current/core_tools.md","docs/architecture/current/core_tools_builtin.md","docs/architecture/current/overview.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/core-subagent-spec.md","docs/architecture/current/core_model_resolution.md","docs/architecture/extension-acquisition-configuration-module-spec.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/core-subagent-evolution-proposal.md","docs/architecture/core-subagent-v2-spec.md","docs/architecture/current/core_runner.md","docs/architecture/current/core_tools.md","docs/architecture/current/core_tools_builtin.md","docs/architecture/current/overview.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Retain Current Authority",
       "validationEvidence": ["Runtime unit/contract/integration tests", "CH-01/02/05-10/12", "FT-01/05/07/08/10"]
     },
@@ -266,7 +266,7 @@
       "durableDecisionAuthority": ["docs/architecture/adr-004-provider-model-identity-and-facts-ownership.md", "docs/architecture/platform-config-restructure-spec.md"],
       "unfinishedWorkSuccessor": [],
       "evidenceSuccessor": ["src/platform/config/", "src/platform/config/loader.test.ts"],
-      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/current/core_model_resolution.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/current/overview.md"],"productionSource":["src/platform/config/wizard/diff.ts","src/platform/config/wizard/display.ts","src/platform/config/wizard/fields.ts","src/platform/config/wizard/prompts.ts","src/platform/config/wizard/run-wizard.ts"],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/current/core_model_resolution.md","docs/architecture/extension-acquisition-configuration-module-spec.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/current/overview.md"],"productionSource":["src/platform/config/wizard/diff.ts","src/platform/config/wizard/display.ts","src/platform/config/wizard/fields.ts","src/platform/config/wizard/prompts.ts","src/platform/config/wizard/run-wizard.ts"],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Retain Current Authority",
       "validationEvidence": ["Config schema/loader/defaults tests", "Config Wizard tests", "ADR-004 ownership audit"]
     },
@@ -278,7 +278,7 @@
       "durableDecisionAuthority": ["docs/architecture/adr-004-provider-model-identity-and-facts-ownership.md", "docs/architecture/model-resolution-module-spec.md"],
       "unfinishedWorkSuccessor": [],
       "evidenceSuccessor": ["src/adapters/llm/", "src/core/model-invocation/"],
-      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/current/core_model_resolution.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/current/core_prompt.md","docs/architecture/current/overview.md","docs/architecture/current/runtime.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":["docs/README.md","docs/agent-capabilities.md","docs/architecture/current/core_model_resolution.md","docs/architecture/extension-acquisition-configuration-module-spec.md","docs/architecture/model-invocation-error-boundary-amendment.md","docs/architecture/target-architecture.md"],"candidateDocs":["docs/architecture/current/core_prompt.md","docs/architecture/current/overview.md","docs/architecture/current/runtime.md"],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Retain Current Authority",
       "validationEvidence": ["Anthropic Adapter tests", "Provider contract tests", "FT-03/08"]
     },

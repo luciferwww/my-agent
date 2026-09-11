@@ -3,8 +3,8 @@
 ## 1. 文档状态与证据规则
 
 - **状态：** Accepted
-- **版本：** 1.4
-- **日期：** 2026-09-03
+- **版本：** 1.5
+- **日期：** 2026-09-11
 - **所有者：** 项目所有者
 - **执行计划：** [AF-03 Target Architecture Execution Plan](../roadmap/af-03-target-architecture-plan.md)
 - **父计划：** [Architecture Foundation Plan](../roadmap/architecture-foundation-plan.md) AF-03
@@ -13,6 +13,8 @@
 - **架构约束：** [Architecture Principles](architecture-principles.md)
 
 本文档是已接受的目标架构，不描述当前实现已经完成的结构，也不授权生产迁移。AF-05 与 AF-06 的 `Provisional Pass` Spike Results 均已获项目所有者接受并完成 disposable cleanup；`P2-H01..P2-H03`、`P3-H01..P3-H05` 与 `P4-H01..P4-H07` 因此具有各自 Results 限定范围内的 Spike evidence。该证据不表示 production implementation 完成，也不使 Foundation Gate 整体通过。
+
+**v1.5 修订：** 项目所有者于 2026-09-11 将 External Extension 的唯一身份与确定顺序收敛到静态 Descriptor ID。安装目录名降为非语义 locator；重复 Descriptor ID 的全部候选隔离，不再通过重命名目录选择冲突赢家。该修订不授权 production acquisition Delivery。
 
 ### 1.1 证据分类
 
@@ -603,7 +605,7 @@ AF-05 不以接入 OpenAI 或其他生产 Provider 为成功条件；独立 Fake
 | Extension Loader | Runtime Composition | 已验证 Descriptor 和安装目录 | 一个可调用统一注册入口的已加载 Extension 单元，或加载诊断 | 直接修改 Registry、授予 Runtime 私有状态、启动长生命周期资源 |
 | Builtin source acquisition | Composition Root | 应用构建直接提供的 Runtime Module | 一个可调用统一注册入口的 Builtin 单元 | 伪装成文件系统安装或绕过后续注册校验 |
 
-**Target Decision：** Discovery 必须在执行任何 Extension 代码前完成 Descriptor 的静态校验。候选按规范化安装目录名升序形成确定扫描顺序；文件系统原始枚举顺序不得影响最终 Snapshot。目录名因此是 External Extension 冲突的显式优先级，用户可以通过重命名安装目录改变后续启动的赢家。目录名规范化和跨平台比较算法由 AF-06 验证。
+**Target Decision：** Discovery 必须在执行任何 Extension 代码前完成 Descriptor 的静态校验。安装目录名只是 direct-child filesystem locator，不是 Extension identity、配置 namespace 或冲突优先级；重命名目录不得改变加载结果。静态有效候选以 Descriptor ID 分组，同一 ID 的多个候选全部隔离并报告；其余唯一候选按 Descriptor ID 的 code-unit 升序形成确定顺序。文件系统原始枚举顺序、目录名和注册调用先后不得影响最终 Snapshot。
 
 **Target Decision：** Source acquisition 是 Builtin/External 唯一允许不同的阶段：Builtin Runtime Module 由 Composition Root 显式提供，External Extension 由规范目录发现并经 Loader 加载。进入 Registration 后，两者使用相同 Extension API、Contribution Contract、暂存校验和 Snapshot 构建路径。
 
@@ -632,9 +634,9 @@ AF-05 不以接入 OpenAI 或其他生产 Provider 为成功条件；独立 Fake
 
 - Builtin 单元之间出现重复 Extension ID 或 Contribution identity 冲突时，整个启动失败；
 - External 与 Builtin 出现 Extension ID 或 Contribution identity 冲突时，Builtin 胜出，External 单元整体隔离，并记录结构化 startup warning；
-- External 候选按规范化安装目录名顺序校验；重复 Extension ID 时 first wins，后续重复候选整组隔离，并记录结构化 startup warning；
-- 不同 External ID 出现 Contribution identity 冲突时，同样按规范化安装目录名顺序 first wins，后续冲突单元整组隔离，并记录结构化 startup warning；
-- 每条冲突 warning 必须包含赢家、被隔离方、冲突 identity 和用于裁决的安装目录顺序；不得使用文件系统原始枚举顺序或注册调用先后裁决；
+- 重复 External Extension ID 时，不执行该 ID 的任何候选；全部重复候选整组隔离，并记录包含 ID 与各安装 locator 的结构化 startup warning；
+- 不同 External ID 出现 Contribution identity 冲突时，按 Descriptor ID code-unit 升序 first wins，后续冲突单元整组隔离，并记录结构化 startup warning；
+- 每条 Contribution 冲突 warning 必须包含赢家、被隔离方、冲突 identity 和用于裁决的 Descriptor ID 顺序；不得使用安装目录名、文件系统原始枚举顺序、配置顺序或注册调用先后裁决；
 - 最终 Snapshot 记录已接受来源和隔离诊断摘要，但消费者只取得其所需 typed projection；
 - 诊断必须通过启动结果/Observability 明确暴露，不能把缺少能力伪装成加载成功。
 
@@ -758,7 +760,7 @@ Builtin Runtime Modules ------------------------------------------------------->
 
 | ID | Hypothesis | 最小实验 | 成功条件 | 停止条件 |
 |---|---|---|---|---|
-| P3-H01 | Descriptor 静态校验、直接子目录发现和目录名排序足以在执行代码前拒绝无效安装并确定冲突优先级 | 构造有效、缺字段、越界入口、重复 External ID、External/External 与 Builtin/External Contribution 冲突、无效 Builtin、重复 Builtin ID、Builtin/Builtin Contribution 冲突、散落脚本、嵌套目录和不同文件系统枚举/来源获取顺序样例 | 只加载有效直接子目录候选；Builtin 始终胜出；规范化目录顺序和 External first-wins 结果可重复；后续冲突 External 单元整组隔离且每个冲突产生一条包含赢家、被隔离方、冲突 identity 和排序依据的 warning；无效/冲突 Builtin 导致清理后启动失败且不发布 Snapshot；无效 Descriptor 代码执行计数为零 | 必须执行入口才能确定最小身份/入口安全、路径可逃逸安装目录，或跨平台目录顺序无法稳定定义 |
+| P3-H01 | Descriptor 静态校验、直接子目录发现和 Descriptor ID 排序足以在执行代码前拒绝无效安装并确定冲突优先级 | 构造有效、缺字段、越界入口、重复 External ID、External/External 与 Builtin/External Contribution 冲突、无效 Builtin、重复 Builtin ID、Builtin/Builtin Contribution 冲突、散落脚本、嵌套目录、目录重命名和不同文件系统枚举/来源获取顺序样例 | 只加载有效直接子目录候选；Builtin 始终胜出；目录名不影响结果；重复 External ID 的全部候选不执行且整组隔离；不同 ID 按 Descriptor ID first-wins；每个冲突产生一条包含相关 ID、冲突 identity 和排序依据的 warning；无效/冲突 Builtin 导致清理后启动失败且不发布 Snapshot；无效 Descriptor 代码执行计数为零 | 必须执行入口才能确定最小身份/入口安全、路径可逃逸安装目录、目录重命名改变结果，或 Descriptor ID 顺序无法稳定定义 |
 | P3-H02 | per-unit staging 和原子 ownership handoff 可在继续启动时保证失败 External Extension 零部分发布和零实例残留 | 在 `runtime/` 外建立一个集成 External chat Extension fixture，经同一 API 注册 proprietary WebSocket Channel、平台 Tool、Hook、Config，并由该 Extension 自行管理一个内部长期对象 sentinel；在加载、各注册点、最终校验、交接前后注入失败并记录 instance cleanup、ownership 和 Builder 编排 | 交接前 Extension instance 保持 rollback ownership 且 cleanup 恰好一次；交接后唯一 instance Lifecycle Owner 可定位；每次失败均无部分 Contribution/实例残留；其他有效 Extension 的 Snapshot 相同且诊断可关联；内部对象不泄漏给 Framework 或消费者 | 任一失败污染 Snapshot、改变无关 Extension 结果、交接时出现无 Owner/多 Owner、重复清理/实例泄漏、Framework 开始管理内部对象，或 fixture 必须进入 `runtime/`/访问 RuntimeApp 私有状态才能工作 |
 | P3-H03 | 一个 Extension API 加 typed projections 足以支持首批四类 Contribution 而不成为 Service Locator | Builtin 与 External Contract Test 分别通过同一 API 注册 Tool、Hook、Channel、Provider 四类 Contribution；每个消费者只取得并执行/解析其 typed projection，Provider fixture 也不增加 Runner source branch | 四类都能注册/消费且消费者不按来源分支；不能取得 Registry mutation、无关 projection、RuntimeApp 私有状态或 arbitrary service token | 任一 Contribution Kind 需要独立注册系统、`get(any token)`、RuntimeApp 私有状态、中央 Extension 类型联合或 Runner Provider 分支 |
 | P3-H04 | Namespace 隔离、Extension-owned versioned Schema 和两阶段 discovery/load 可在执行 Extension 代码前确定最小配置校验边界，且不泄漏全局 Config | 使用两个字段重名 Extension 和同一 Extension 的 supported/obsolete/future Schema 版本 fixture；第一阶段只读取静态 Descriptor/Schema identity 并记录 Extension 代码执行计数，第二阶段仅对已接受版本加载/注册；分别测试无需迁移、显式迁移成功、无迁移路径拒绝和 Schema 内容失败 | 字段不冲突；静态拒绝时 Extension 代码执行计数为 0；支持版本或显式迁移产生同一已校验 namespace input；obsolete/future/失败迁移整组隔离并可诊断；Extension 只见自身已校验配置 | 必须先执行任意 Extension 入口才能发现 Schema/版本，版本结果依赖加载副作用，必须集中复制第三方字段/泄漏全局 Config，或无法对无迁移路径版本 fail closed |
@@ -774,6 +776,8 @@ Builtin Runtime Modules ------------------------------------------------------->
 - [x] 未验证的 Descriptor、Schema、Capability 和 Lifecycle 接口形状仍标记为 AF-06 Hypothesis。
 
 独立复审首轮发现 1 个 High、3 个 Medium 和 2 个 Low 文档问题。项目所有者确认 External Extension 按规范化安装目录名顺序 first-wins、后续冲突单元整组隔离并记录结构化 startup warning，同时接受 Capability 时点和 rollback ownership 修正。后续复审补齐单一跨类型 Registry、Builtin 冲突、Snapshot 构建失败清理、Mermaid/ASCII 失败路径和 AF-06 实验覆盖；最终复审确认无 Critical、High 或 Medium 问题。项目所有者于 2026-08-31 接受 Phase 3 静态骨架。该接受不表示生产实现或 AF-06 实验已完成，也不授权文件系统 watcher 或运行中 reload。
+
+项目所有者于 2026-09-11 以 v1.5 修订上述目录优先级：安装目录名不再具有语义；Descriptor ID 是唯一 Extension identity 和 External 排序依据；重复 ID 的全部候选隔离。AF-06 的目录键结果仍作为 mechanism feasibility evidence，不冻结被替代的 production naming policy。
 
 ## 7. Registry Snapshot and Lifecycle Transactions
 
@@ -830,7 +834,7 @@ requested -> preparing -> validating -> ready -> publishing -> published
 
 **Target Decision：** publish 前的 prepare/validate/readiness/snapshot-build 失败或 Abort 必须在 bounded candidate-cleanup deadline 内调用 candidate Extension instance 的清理，并保持 current Snapshot 和 ingress 不变。自身 candidate 失败的 request 返回 `rejected`。若 Abort 或清理未在 deadline 内收敛，Builder 保留 current，记录可关联的 candidate/Extension ID/Owner/stop failure；已被覆盖的 request 保持 `superseded`，未开始的 latest/pending request 返回 `blocked`，相关 slot 清空，后续动态 reload 返回 `blocked`；不得在残留 candidate 之外启动替代 candidate。Shutdown 只对该 instance 做有界重试。Framework 不检查或管理其内部对象。原 current generation 不需要“恢复”，因为它从未被替换。publish 是提交点；成功后不因旧 generation 的排空或实例停止失败回滚 N+1。
 
-**Target Decision：** 动态冲突使用 Phase 3 的相同确定规则：Builtin 胜过 External；External 按规范化安装目录名 first-wins。一个 enable 请求可以让排序更靠前、但 identity 不同的 External 成为赢家，并使原赢家的整个单元退出 candidate Snapshot。Reload 结果必须明确列出请求变更、连带进入 retirement 的单元和结构化冲突 warning，不能把隐式挤出报告为单纯 enable 成功；同 identity 的重复候选不启动第二个 instance。
+**Target Decision：** 动态冲突使用 Phase 3 的相同确定规则：Builtin 胜过 External；不同 identity 的 External 按 Descriptor ID code-unit 升序 first-wins。一个 enable 请求可以让 ID 排序更靠前、但 identity 不同的 External 成为赢家，并使原赢家的整个单元退出 candidate Snapshot。Reload 结果必须明确列出请求变更、连带进入 retirement 的单元和结构化冲突 warning，不能把隐式挤出报告为单纯 enable 成功；同 identity 的重复候选在 acquisition 阶段已全部隔离，不进入可启用 catalog。
 
 ### 7.4 Reload coordination 与 latest-wins
 
@@ -1022,7 +1026,7 @@ Lifecycle Owners -> Runtime Builder: successes + protected instances + aggregate
 | P4-H03 | pre-publish latest-wins、duplicate/no-op 和单一 pending latest 足以串行连续变更 | 在 prepare/validate 和 ready/commit barrier 连续提交 A/B/C，注入 superseded candidate stop 不收敛；重复提交与 current 同 identity 的 enable request，并提交已满足的 disable request；在 N retirement 成功边界提交 D/E/F | supersede 与 commit 只有一个线性化结果；被覆盖 request 返回 `superseded`；cleanup 不收敛保持 current、记录 candidate/Extension ID/Owner、终结并清空 current/latest/pending、拒绝后到 reload且不启动 candidate；duplicate/no-op request 不启动第二个同 identity instance、不产生 generation/retirement；retirement 期间只有一个 pending latest | 请求/slot 永久等待或返回错误类别、实例残留不可归属、失败后接受 reload/启动 candidate、已 publish 结果被撤销、no-op 启动第二 instance 或产生 generation/retirement、pending 与 retirement 同时启动或出现多代 retirement |
 | P4-H04 | bounded drain + bounded Abort convergence 可终止或明确失败旧 generation 且不影响 current | disable N 中一个已启动 External Extension instance；分别留下 short、Abort-responsive 和 nonresponsive Turn-tree pin；publish N+1 后推进两个 deadline | short 和可中止 tree 释放 pin；任一 N pin 不收敛时 Extension instance 不被强制停止，残留记录 generation/Extension ID/Owner/blocking Turn tree；N+1 新 Turn 仍被接受并完成 | 新 Turn被错误拒绝/取消、旧 instance 在 pin 存在时被停止、无限等待、pin/instance 丢失或残留不可归属 |
 | P4-H05 | publish 后 stop/convergence failure 可独立报告且不破坏已提交 Snapshot | disable N 中的 Extension；另在 pins 全部释放后让 instance `stop()` 失败；在 retirement success/failure barrier 提交 pending reload | N+1 保持 current且已 publish request 保持 success；任一 N pin 存在时 instance 保持启动；stop failure 记录 generation/Extension ID/Owner/error；尚未开始的 pending 返回 `blocked` 并清空，后续 reload 返回 `blocked`；Shutdown 有界重试且不重复成功 stop | 回滚 N+1、改写已 publish request、pin 存在时停止旧 instance、pending 返回错误类别或永久等待、静默丢失归属、启动第二个 retiring generation或出现多 Owner |
-| P4-H06 | 确定冲突规则可安全表达动态赢家变化 | 启用排序更靠前且与 current External 冲突、但 identity 不同的单元，并注入 Builtin/External 冲突 | candidate 明确列出赢家、连带 retirement 和 warning；Builtin 始终胜出；publish 前结果可审计 | 隐式挤出不在结果中、使用请求到达顺序裁决或出现部分 Extension 发布 |
+| P4-H06 | 确定冲突规则可安全表达动态赢家变化 | 启用 Descriptor ID 排序更靠前且与 current External 冲突、但 identity 不同的单元，并注入 Builtin/External 冲突 | candidate 明确列出赢家、连带 retirement 和 warning；Builtin 始终胜出；publish 前结果可审计 | 隐式挤出不在结果中、使用目录名或请求到达顺序裁决，或出现部分 Extension 发布 |
 | P4-H07 | Shutdown 可有界处理 candidate/current/retiring/failed-retirement 状态 | 在每个状态和 publish commit barrier 触发 Shutdown；为一个 Extension instance 留下不响应 Abort 的 Turn-tree pin；另注入 candidate/instance stop failure | Shutdown 与 publish 只有一个线性化先后；pending 返回 `shutdown/cancelled`；candidate Owner 仅做有界重试；有 generation pin 的 instance 不被强制停止并报告 generation/Extension ID/Owner/blocking Turn tree；每个 instance 至多成功停止一次；其他无 pin 的独立 instance 继续按启动依赖逆序停止 | deadlock、无限等待、强制停止受 pin 保护的 instance、重复 stop、孤立 published generation、跳过安全独立 instance、返回错误类别或错误被覆盖 |
 
 ### 7.10 Phase 4 完成条件

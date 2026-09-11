@@ -59,6 +59,7 @@ Each document's own status controls whether it is accepted, validated, implement
 - [Multi-client User Message Spec](architecture/channel-multi-client-user-message-spec.md)
 - [Attachments Support Spec](architecture/attachments-support-spec.md)
 - [Platform Config Restructure Spec](architecture/platform-config-restructure-spec.md)
+- [Extension Acquisition and Configuration Module Spec](architecture/extension-acquisition-configuration-module-spec.md)
 
 ## Plans and Roadmap
 
