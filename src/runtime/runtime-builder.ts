@@ -177,13 +177,21 @@ export async function buildRuntimeHandle(
     onInteractionUnavailable(id: string, reason: 'origin_disconnected') {
       kernel?.onInteractionUnavailable(id, reason);
     },
-    abortHooks: Object.freeze({
-      querySessionsNeedingAbort(): string[] {
-        return kernel?.querySessionsNeedingAbort() ?? [];
-      },
-      abortTurn(sessionKey: string) {
-        return kernel?.abortTurn(sessionKey) ?? { aborted: false, dropped: 0 };
-      },
+    capabilities: Object.freeze({
+      modelCatalog: Object.freeze({
+        getSnapshot() {
+          if (!kernel) throw new Error('Runtime Model Catalog is not ready.');
+          return kernel.application.getModelCatalog();
+        },
+      }),
+      abort: Object.freeze({
+        querySessionsNeedingAbort(): string[] {
+          return kernel?.querySessionsNeedingAbort() ?? [];
+        },
+        abortTurn(sessionKey: string) {
+          return kernel?.abortTurn(sessionKey) ?? { aborted: false, dropped: 0 };
+        },
+      }),
     }),
   });
 

@@ -59,6 +59,16 @@ const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   timeoutSeconds: 300,
 };
 
+function isEmptyAbortedAssistant(record: MessageRecord): boolean {
+  if (
+    record.message.role !== 'assistant'
+    || record.message.abortMeta?.partial !== true
+  ) {
+    return false;
+  }
+  return record.message.content.length === 0;
+}
+
 /**
  * Agent 执行引擎，串联所有模块完成一次完整的对话循环。
  *
@@ -567,6 +577,10 @@ export class AgentRunner {
         // callLLMStream 返回 'aborted' 的触发条件（例如 SDK 内部 timeout 也走
         // AbortError），此不变量会失效，需在本处重新审视 IO 抛错处理。
         //
+        // 只有已收到内容时才持久化 partial assistant；首个内容前中止时保留 trailing
+        // user，下一 turn 由 sanitizeSessionTail 剥离。不得写入 Provider 会拒绝的空
+        // assistant content。
+        //
         // appendMessage 同其他调用点一致，不为 abort 路径特化错误处理：若 IO 抛出，
         // 依靠 §7.1 isAbortError fallback（signal.aborted 为真）将其归入 abort 分支，
         // §4 "never throws" 仍成立——前提不变量失效时本保障同时失效。
@@ -574,12 +588,14 @@ export class AgentRunner {
         // 孤儿 tool_use 不在本处处理：下一 turn 起点的 repairOrphanToolUses 会从
         // 磁盘状态统一修（§7.3），避免与 in-memory / IO 失败纠缠。
         if (lastStopReason === 'aborted') {
-          messages.push({ role: 'assistant', content: llmResult.content });
-          await this.sessionManager.appendMessage(params.sessionKey, {
-            role: 'assistant',
-            content: llmResult.content,
-            abortMeta: { partial: true, stopReason: 'aborted' },
-          });
+          if (llmResult.content.length > 0) {
+            messages.push({ role: 'assistant', content: llmResult.content });
+            await this.sessionManager.appendMessage(params.sessionKey, {
+              role: 'assistant',
+              content: llmResult.content,
+              abortMeta: { partial: true, stopReason: 'aborted' },
+            });
+          }
           return this.buildAbortedResult(lastContent, {
             usage: totalUsage,
             toolRounds: totalToolRounds,
@@ -856,16 +872,19 @@ export class AgentRunner {
       }
     }
 
-    // 转换为 ChatMessage 格式
-    const messages: ChatMessage[] = effectiveRecords.map((record: MessageRecord) => {
-      if (record.message.role === 'toolResult') {
-        return { role: 'user' as const, content: record.message.content };
-      }
-      return {
-        role: record.message.role as 'user' | 'assistant',
-        content: record.message.content,
-      };
-    });
+    // 转换为 ChatMessage 格式。旧版本可能在首个内容前中止时持久化空的
+    // aborted assistant；保留磁盘审计记录，但不把无效 content 发给 Provider。
+    const messages: ChatMessage[] = effectiveRecords
+      .filter((record) => !isEmptyAbortedAssistant(record))
+      .map((record: MessageRecord) => {
+        if (record.message.role === 'toolResult') {
+          return { role: 'user' as const, content: record.message.content };
+        }
+        return {
+          role: record.message.role as 'user' | 'assistant',
+          content: record.message.content,
+        };
+      });
 
     // 在最前面注入摘要消息（让 LLM 了解被压缩的历史）
     if (compactionRecord) {

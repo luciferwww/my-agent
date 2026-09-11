@@ -82,9 +82,6 @@ function getDefaultMapping(
       return { code: 'SHUTDOWN_FAILED', severity: 'recoverable' };
     case 'run':
     default:
-      if (message.toLowerCase().includes('model')) {
-        return { code: 'MODEL_MISSING', severity: 'recoverable' };
-      }
       if (message.toLowerCase().includes('cannot run')) {
         return { code: 'RUN_REJECTED', severity: 'recoverable' };
       }

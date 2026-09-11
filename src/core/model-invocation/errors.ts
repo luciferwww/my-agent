@@ -11,10 +11,45 @@ export type ModelInvocationFailureCategory =
   | 'transport'
   | 'provider_failure';
 
+interface ModelInvocationRequestDiagnostics {
+  readonly model: string;
+  readonly maxTokens: number;
+  readonly hasSystem: boolean;
+  readonly messageCount: number;
+  readonly userMessageCount: number;
+  readonly assistantMessageCount: number;
+  readonly stringContentMessageCount: number;
+  readonly textBlockCount: number;
+  readonly imageBlockCount: number;
+  readonly toolUseBlockCount: number;
+  readonly toolResultBlockCount: number;
+  readonly toolDefinitionCount: number;
+}
+
+interface ModelInvocationDiagnostics {
+  readonly providerId: string;
+  readonly httpStatus?: number;
+  readonly providerErrorType?: string;
+  readonly providerMessage?: string;
+  readonly requestId?: string;
+  readonly request: ModelInvocationRequestDiagnostics;
+}
+
 export class ModelInvocationError extends Error {
-  constructor(readonly category: ModelInvocationFailureCategory) {
+  readonly diagnostics?: ModelInvocationDiagnostics;
+
+  constructor(
+    readonly category: ModelInvocationFailureCategory,
+    diagnostics?: ModelInvocationDiagnostics,
+  ) {
     super(`Model invocation failed: ${category}.`);
     this.name = 'ModelInvocationError';
+    this.diagnostics = diagnostics
+      ? Object.freeze({
+          ...diagnostics,
+          request: Object.freeze({ ...diagnostics.request }),
+        })
+      : undefined;
   }
 }
 

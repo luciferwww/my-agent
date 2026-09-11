@@ -91,7 +91,7 @@ describe('Registry staging and finalization', () => {
   });
 
   it('validates, defensively copies, and deeply freezes Provider model Catalogs', () => {
-    const sourceModel = { modelId: 'mutable-model', displayName: 'Mutable Model' };
+    const sourceModel = { modelId: 'mutable-model.1', displayName: 'Mutable Model' };
     const sourceModels = [sourceModel];
     const sourceProvider = { ...provider('primary'), models: sourceModels };
     const staged = stageRegistryUnit(unit('provider-unit', 'builtin', (api) => {
@@ -103,7 +103,7 @@ describe('Registry staging and finalization', () => {
     sourceModels.push({ modelId: 'late-model', displayName: 'Late' });
 
     expect(published.models).toEqual([
-      { modelId: 'mutable-model', displayName: 'Mutable Model' },
+      { modelId: 'mutable-model.1', displayName: 'Mutable Model' },
     ]);
     expect(Object.isFrozen(published)).toBe(true);
     expect(Object.isFrozen(published.models)).toBe(true);
@@ -111,7 +111,19 @@ describe('Registry staging and finalization', () => {
     expect(published.invocationPort).toBe(sourceProvider.invocationPort);
   });
 
-  it('rejects missing, duplicate, and invalid Provider model Catalog entries', () => {
+  it('preserves arbitrary Provider-owned Model ID strings', () => {
+    const modelIds = ['', ' ', ' model/vendor:v1?x=1\n\u0000 ', 'x'.repeat(512)];
+    const staged = stageRegistryUnit(unit('opaque-models', 'builtin', (api) => {
+      api.registerProvider({
+        ...provider('opaque-provider'),
+        models: modelIds.map((modelId) => ({ modelId })),
+      });
+    }));
+
+    expect(staged.providers[0]?.models.map((model) => model.modelId)).toEqual(modelIds);
+  });
+
+  it('rejects missing, duplicate, and non-string Provider model Catalog entries', () => {
     expect(() => stageRegistryUnit(unit('missing', 'builtin', (api) => {
       api.registerProvider({ ...provider('missing-provider'), models: undefined as never });
     }))).toThrow('must publish a model Catalog');
@@ -122,8 +134,14 @@ describe('Registry staging and finalization', () => {
       });
     }))).toThrow('published duplicate model');
     expect(() => stageRegistryUnit(unit('invalid', 'builtin', (api) => {
-      api.registerProvider({ ...provider('invalid-provider'), models: [{ modelId: 'bad/id' }] });
+      api.registerProvider({ ...provider('invalid-provider'), models: [{ modelId: 42 as never }] });
     }))).toThrow('Model identity');
+  });
+
+  it('does not widen application-owned Unit identity rules for opaque Model IDs', () => {
+    expect(() => stageRegistryUnit(unit('invalid.provider-unit', 'builtin', (api) => {
+      api.registerProvider(provider('valid-provider'));
+    }))).toThrow('unit identity');
   });
 
   it('isolates an external Unit with a conflicting Provider identity atomically', () => {

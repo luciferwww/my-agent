@@ -22,9 +22,18 @@ function host(): ChannelRuntimeHost {
     onMessage: vi.fn(async () => {}),
     onInteractionResponse: vi.fn(),
     onInteractionUnavailable: vi.fn(),
-    abortHooks: {
-      querySessionsNeedingAbort: vi.fn(() => []),
-      abortTurn: vi.fn(() => ({ aborted: false, dropped: 0 })),
+    capabilities: {
+      modelCatalog: {
+        getSnapshot: vi.fn(() => ({
+          generation: 1,
+          defaultSelection: { state: 'unset' as const },
+          providers: [],
+        })),
+      },
+      abort: {
+        querySessionsNeedingAbort: vi.fn(() => []),
+        abortTurn: vi.fn(() => ({ aborted: false, dropped: 0 })),
+      },
     },
   };
 }
@@ -90,6 +99,28 @@ describe('Channel candidate preparation', () => {
     expect(settled).toBe(false);
     ready.resolve();
     await expect(preparation).resolves.toEqual(expect.objectContaining({ accepted: true }));
+  });
+
+  it('binds the unified Runtime capabilities before Channel start', async () => {
+    const calls: string[] = [];
+    const fixture = channel('capabilities', {
+      bindRuntimeCapabilities: vi.fn(() => { calls.push('bind'); }),
+      start: vi.fn(async () => { calls.push('start'); }),
+    });
+    const runtimeHost = host();
+
+    await prepareStagedUnitChannels({
+      unit: stageRegistryUnit(unit('capabilities', [{
+        id: 'capabilities',
+        create: () => fixture.instance,
+      }])),
+      host: runtimeHost,
+    });
+
+    expect(calls).toEqual(['bind', 'start']);
+    expect(fixture.instance.bindRuntimeCapabilities).toHaveBeenCalledWith(
+      runtimeHost.capabilities,
+    );
   });
 
   it('rolls back completion-before-readiness even when start remains pending', async () => {

@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatMessage } from '../core/model-invocation/index.js';
+import { ModelInvocationError, type ChatMessage } from '../core/model-invocation/index.js';
 import type {
   ApprovalClosedResult,
   ApprovalDecision,
@@ -10,6 +10,7 @@ import type {
   Channel,
   ChannelCompletion,
   ChannelRunRequest,
+  ChannelRuntimeCapabilities,
 } from '../core/channel/index.js';
 import type { AgentEvent, BeforeToolCallHook } from '../core/runner/index.js';
 import type { RunParams, RunResult } from '../core/runner/types.js';
@@ -22,6 +23,7 @@ import { RuntimeApp } from './RuntimeApp.js';
 import type { RuntimeHandle } from './runtime-composition.js';
 import type { RuntimeDependencies, RuntimeEvent } from './types.js';
 import type { RuntimeDeadlineDriver, RuntimeDeadlineRaceResult } from './runtime-deadline.js';
+import { Logger } from '../platform/logger/index.js';
 
 class ManualDeadlineDriver implements RuntimeDeadlineDriver {
   private nowMs = 0;
@@ -569,6 +571,29 @@ describe('RuntimeApp', () => {
 
   it('seals a direct Runner failure with one caller rejection and one failed turn_end', async () => {
     const events: RuntimeEvent[] = [];
+    const providerError = new ModelInvocationError('invalid_request', {
+      providerId: 'anthropic-compatible',
+      httpStatus: 400,
+      providerErrorType: 'invalid_request_error',
+      providerMessage: 'At most one image is supported.',
+      requestId: 'req-provider-1',
+      request: {
+        model: 'test-model',
+        maxTokens: 1024,
+        hasSystem: true,
+        messageCount: 4,
+        userMessageCount: 2,
+        assistantMessageCount: 2,
+        stringContentMessageCount: 1,
+        textBlockCount: 2,
+        imageBlockCount: 4,
+        toolUseBlockCount: 1,
+        toolResultBlockCount: 1,
+        toolDefinitionCount: 3,
+      },
+    });
+    const runnerError = new Error(providerError.message, { cause: providerError });
+    const errorLog = vi.spyOn(Logger.get('RuntimeApp'), 'error');
     const app = await RuntimeApp.create({
       workspaceDir,
       onEvent: (event) => events.push(event),
@@ -578,7 +603,7 @@ describe('RuntimeApp', () => {
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({
-        createAgentRunner: () => ({ run: async () => { throw new Error('runner failed'); } }) as never,
+        createAgentRunner: () => ({ run: async () => { throw runnerError; } }) as never,
         createMemoryManager: async () => null,
       }),
     });
@@ -589,12 +614,32 @@ describe('RuntimeApp', () => {
       message: 'fail execution',
       promptMode: 'full',
     });
-    await expect(caller).rejects.toThrow('runner failed');
+    await expect(caller).rejects.toMatchObject({
+      info: {
+        code: 'RUN_FAILED',
+        message: 'Model invocation failed: invalid_request.',
+      },
+    });
     expect(events.filter((event) =>
       event.type === 'turn_end' && event.requestId === 'request-runner-failure')).toEqual([
-      expect.objectContaining({ outcome: 'failed', failure: expect.any(Object) }),
+      expect.objectContaining({
+        outcome: 'failed',
+        failure: {
+          code: 'RUN_FAILED',
+          message: 'Model invocation failed: invalid_request.',
+        },
+      }),
     ]);
+    expect(errorLog).toHaveBeenCalledWith('turn failed', expect.objectContaining({
+      requestId: 'request-runner-failure',
+      code: 'RUN_FAILED',
+      modelInvocation: {
+        category: 'invalid_request',
+        diagnostics: providerError.diagnostics,
+      },
+    }));
     await app.close();
+    errorLog.mockRestore();
   });
 
   it('CH-05 isolates channel.send failures without changing Turn execution', async () => {
@@ -2076,12 +2121,12 @@ describe('RuntimeApp', () => {
       expect(Object.isFrozen(report.instanceStops.pendingInstanceIds)).toBe(true);
     });
 
-    // ⑩ bindAbortHooks wiring：Channel activation 时同步注入 hooks，可查询 & 触发
-    it('bindAbortHooks: Channel activation injects querySessionsNeedingAbort + abortTurn', async () => {
-      let capturedHooks: { querySessionsNeedingAbort: () => string[]; abortTurn: (sk: string) => { aborted: boolean; dropped: number } } | undefined;
-      const testChannel = createTestChannel('abort-hooks-test');
-      (testChannel.channel as Channel).bindAbortHooks = (hooks) => {
-        capturedHooks = hooks;
+    // ⑩ Unified Runtime capabilities：Channel activation 时同步注入 Catalog Query 与 Abort Command。
+    it('bindRuntimeCapabilities injects current Catalog query and abort commands', async () => {
+      let capturedCapabilities: ChannelRuntimeCapabilities | undefined;
+      const testChannel = createTestChannel('runtime-capabilities-test');
+      (testChannel.channel as Channel).bindRuntimeCapabilities = (capabilities) => {
+        capturedCapabilities = capabilities;
       };
 
       const app = await RuntimeApp.create({
@@ -2091,7 +2136,17 @@ describe('RuntimeApp', () => {
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
       });
 
-      expect(capturedHooks).toBeDefined();
+      expect(capturedCapabilities).toBeDefined();
+      expect(capturedCapabilities!.modelCatalog.getSnapshot()).toMatchObject({
+        generation: 1,
+        defaultSelection: {
+          state: 'available',
+          reference: { providerId: 'test', modelId: 'test-model' },
+        },
+      });
+      expect(Object.isFrozen(capturedCapabilities)).toBe(true);
+      expect(Object.isFrozen(capturedCapabilities!.modelCatalog)).toBe(true);
+      expect(Object.isFrozen(capturedCapabilities!.abort)).toBe(true);
 
       // 塞 queued 消息到某 session
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2099,11 +2154,11 @@ describe('RuntimeApp', () => {
       queueMap.set('sk-with-queue', [{ x: 1 }, { x: 2 }]);
 
       // querySessionsNeedingAbort 应包含 'sk-with-queue'
-      const sessions = capturedHooks!.querySessionsNeedingAbort();
+      const sessions = capturedCapabilities!.abort.querySessionsNeedingAbort();
       expect(sessions).toContain('sk-with-queue');
 
       // 通过 hook 触发 abort，应清 queue + 返回真实数字
-      const result = capturedHooks!.abortTurn('sk-with-queue');
+      const result = capturedCapabilities!.abort.abortTurn('sk-with-queue');
       expect(result).toEqual({ aborted: false, dropped: 2 });
       expect(queueMap.has('sk-with-queue')).toBe(false);
 

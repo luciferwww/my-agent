@@ -31,8 +31,7 @@ export class CopilotRelayProvider {
         connection: Object.freeze({ endpointId }),
       } as const),
       resolveModel: (modelId: string, connection: ProviderConnection) => {
-        const canonicalModelId = modelId.trim();
-        const model = models.get(canonicalModelId);
+        const model = models.get(modelId);
         if (!model) {
           return {
             ok: false,
@@ -45,7 +44,7 @@ export class CopilotRelayProvider {
           descriptor: Object.freeze({
             identity: Object.freeze({
               providerId: COPILOT_RELAY_PROVIDER_ID,
-              modelId: canonicalModelId,
+              modelId,
             }),
             protocol: OPENAI_RESPONSES_PROTOCOL,
             connection,

@@ -109,9 +109,44 @@ export type ApprovalDeliveryResult =
   | { status: 'accepted' }
   | { status: 'unavailable'; reason: 'origin_missing' | 'delivery_failed' };
 
-export interface AbortHookBindings {
+export interface ModelCatalogEntry {
+  readonly modelId: string;
+  readonly displayName: string;
+}
+
+export interface ProviderCatalogEntry {
+  readonly providerId: string;
+  readonly displayName: string;
+  readonly models: readonly ModelCatalogEntry[];
+}
+
+export type DefaultModelSelection =
+  | Readonly<{ state: 'unset' }>
+  | Readonly<{ state: 'available'; reference: ModelReference }>
+  | Readonly<{
+      state: 'unavailable';
+      reference: ModelReference;
+      reason: 'provider_unregistered' | 'model_rejected';
+    }>;
+
+export interface ModelCatalogSnapshot {
+  readonly generation: number;
+  readonly defaultSelection: DefaultModelSelection;
+  readonly providers: readonly ProviderCatalogEntry[];
+}
+
+export interface ModelCatalogQuery {
+  getSnapshot(): ModelCatalogSnapshot;
+}
+
+export interface TurnAbortCapability {
   querySessionsNeedingAbort(): string[];
   abortTurn(sessionKey: string): { aborted: boolean; dropped: number };
+}
+
+export interface ChannelRuntimeCapabilities {
+  readonly modelCatalog: ModelCatalogQuery;
+  readonly abort: TurnAbortCapability;
 }
 
 export interface ChannelInteractionTransport {
@@ -142,7 +177,7 @@ export interface ChannelInstance {
   start(): Promise<void>;
   stop(): Promise<void>;
   readonly interaction?: ChannelInteractionTransport;
-  bindAbortHooks?(hooks: AbortHookBindings): void;
+  bindRuntimeCapabilities?(capabilities: ChannelRuntimeCapabilities): void;
 }
 
 /** Existing adapter-facing name; this is the same core-owned contract. */
@@ -178,5 +213,5 @@ export interface ChannelRuntimeHost {
   onMessage(binding: ChannelRuntimeBinding, request: ChannelRunRequest): Promise<void>;
   onInteractionResponse(response: TurnInteractionResponse): void;
   onInteractionUnavailable(id: string, reason: 'origin_disconnected'): void;
-  readonly abortHooks: AbortHookBindings;
+  readonly capabilities: ChannelRuntimeCapabilities;
 }

@@ -21,7 +21,7 @@
   { "contract": "ChannelInstance", "source": "src/core/channel/types.ts", "kind": "port-lifecycle" },
   { "contract": "ChannelCompletion", "source": "src/core/channel/types.ts", "kind": "lifecycle" },
   { "contract": "ChannelRunRequest", "source": "src/core/channel/types.ts", "kind": "request" },
-  { "contract": "AbortHookBindings", "source": "src/core/channel/types.ts", "kind": "abort-port" },
+  { "contract": "ChannelRuntimeCapabilities", "source": "src/core/channel/types.ts", "kind": "runtime-capabilities-port" },
   { "contract": "ChannelInteractionAdapter", "source": "src/core/channel/types.ts", "kind": "interaction-port" },
   { "contract": "ChannelInteractionTransport", "source": "src/core/channel/types.ts", "kind": "interaction-port" },
   { "contract": "ChannelContribution", "source": "src/core/channel/types.ts", "kind": "extension-contribution" },

@@ -207,12 +207,14 @@
       }
 
       input,
+      select,
       textarea,
       button {
         font: inherit;
       }
 
       input,
+      select,
       textarea {
         width: 100%;
         padding: 12px 14px;
@@ -225,6 +227,7 @@
       }
 
       input:focus,
+      select:focus,
       textarea:focus {
         border-color: rgba(216, 137, 92, 0.42);
         box-shadow: 0 0 0 4px rgba(231, 164, 125, 0.14);
@@ -974,7 +977,7 @@
           <div class="field-grid">
             <label>
               <span class="field-label-text">WebSocket URL</span>
-              <input v-model.trim="form.url" placeholder="ws://127.0.0.1:3001/ws" />
+              <input v-model.trim="form.url" placeholder="ws://127.0.0.1:8787/ws" />
             </label>
             <label>
               <span class="field-label-text">Client ID</span>
@@ -985,10 +988,36 @@
               <input v-model.trim="form.sessionKey" placeholder="main" />
             </label>
             <label>
+              <span class="field-label-text">Provider Override</span>
+              <select
+                v-model="form.providerId"
+                :disabled="!modelCatalog"
+                @change="onProviderSelectionChanged"
+              >
+                <option value="">Use Runtime default</option>
+                <option
+                  v-for="provider in catalogProviders"
+                  :key="provider.provider_id"
+                  :value="provider.provider_id"
+                >{{ provider.display_name }} ({{ provider.provider_id }})</option>
+              </select>
+            </label>
+            <label>
               <span class="field-label-text">Model Override</span>
-              <input v-model.trim="form.model" placeholder="留空则使用服务端默认模型" />
+              <select
+                v-model="form.selectedModelToken"
+                :disabled="!form.providerId"
+              >
+                <option value="">Select a model</option>
+                <option
+                  v-for="model in selectedProviderModels"
+                  :key="model.model_id"
+                  :value="JSON.stringify(model.model_id)"
+                >{{ model.display_name }} ({{ model.model_id }})</option>
+              </select>
             </label>
           </div>
+          <p class="section-note">{{ modelSelectionStatus }}</p>
           <div class="button-row">
             <button class="primary" @click="connect" :disabled="isConnecting || isConnected">
               {{ isConnected ? 'Connected' : isConnecting ? 'Connecting…' : 'Connect' }}
@@ -1250,7 +1279,7 @@
 
     <script>
       const { createApp, nextTick } = Vue;
-      const DEFAULT_SOCKET_URL = 'ws://127.0.0.1:3001/ws';
+      const DEFAULT_SOCKET_URL = 'ws://127.0.0.1:8787/ws';
       const DEFAULT_SESSION_KEY = 'main';
       const MAX_EVENT_FEED_ITEMS = 40;
       const TOOL_RESULT_PREVIEW_HEAD_LINES = 6;
@@ -1273,11 +1302,15 @@
               url: DEFAULT_SOCKET_URL,
               clientId: createClientId(),
               sessionKey: DEFAULT_SESSION_KEY,
-              model: '',
+              providerId: '',
+              selectedModelToken: '',
             },
             socket: null,
             connectionStatus: 'disconnected',
             helloAcknowledged: false,
+            modelCatalog: null,
+            pendingCatalogRequestId: null,
+            nextCatalogRequestId: 1,
             draft: '',
             // ── Chat model ──────────────────────────────────────
             // Unified list of chat items. Each item has a `kind`:
@@ -1309,6 +1342,7 @@
           isConnecting() { return this.connectionStatus === 'connecting'; },
           canSend() {
             if (!this.isConnected || !this.helloAcknowledged) return false;
+            if (!this.modelSelectionValid) return false;
             if (this.pendingApprovalCount > 0) return false;
             if (this.isWaitingForReply && this.attachments.length > 0) return false;
             const hasText = this.draft.trim().length > 0;
@@ -1327,6 +1361,46 @@
           },
           endpointPreview() { return this.form.url || DEFAULT_SOCKET_URL; },
           headerEndpoint() { return this.form.url || DEFAULT_SOCKET_URL; },
+          catalogProviders() { return this.modelCatalog?.providers ?? []; },
+          selectedProviderModels() {
+            if (!this.form.providerId) return [];
+            return this.catalogProviders.find(
+              provider => provider.provider_id === this.form.providerId,
+            )?.models ?? [];
+          },
+          selectedModelReference() {
+            if (!this.form.providerId || this.form.selectedModelToken === '') return null;
+            let modelId;
+            try {
+              modelId = JSON.parse(this.form.selectedModelToken);
+            } catch {
+              return null;
+            }
+            if (typeof modelId !== 'string') return null;
+            const exists = this.selectedProviderModels.some(model => model.model_id === modelId);
+            return exists ? { provider_id: this.form.providerId, model_id: modelId } : null;
+          },
+          modelSelectionValid() {
+            return (!this.form.providerId && this.form.selectedModelToken === '')
+              || this.selectedModelReference !== null;
+          },
+          modelSelectionStatus() {
+            if (!this.modelCatalog) return 'Model Catalog is not available yet.';
+            if (this.selectedModelReference) {
+              return `Override: ${this.form.providerId}/${this.selectedModelReference.model_id}`;
+            }
+            if (this.form.providerId || this.form.selectedModelToken !== '') {
+              return 'Choose both a Provider and a current Catalog model.';
+            }
+            const selection = this.modelCatalog.default_selection;
+            if (selection?.state === 'available') {
+              return `Runtime default: ${selection.reference.provider_id}/${selection.reference.model_id}`;
+            }
+            if (selection?.state === 'unavailable') {
+              return `Runtime default unavailable: ${selection.reference.provider_id}/${selection.reference.model_id} (${selection.reason})`;
+            }
+            return 'Runtime default is unset. Choose an override before sending.';
+          },
           pendingApprovalCount() {
             let count = 0;
             for (const item of this.chatItems) {
@@ -1345,6 +1419,10 @@
           // ── Connection ────────────────────────────────────────
           clearTransientState() {
             this.helloAcknowledged = false;
+            this.modelCatalog = null;
+            this.pendingCatalogRequestId = null;
+            this.form.providerId = '';
+            this.form.selectedModelToken = '';
             this.approvalRequest = null;
             this.isWaitingForReply = false;
             this.closePendingApprovalsForDisconnect();
@@ -1424,6 +1502,30 @@
             }
             this.socket.send(JSON.stringify(payload));
           },
+          requestModelCatalog() {
+            const requestId = `catalog-${this.nextCatalogRequestId++}`;
+            this.pendingCatalogRequestId = requestId;
+            this.sendJson({ type: 'get_model_catalog', request_id: requestId });
+          },
+          onProviderSelectionChanged() {
+            this.form.selectedModelToken = '';
+          },
+          applyModelCatalog(catalog) {
+            if (!catalog || typeof catalog !== 'object' || !Array.isArray(catalog.providers)) {
+              this.pushEvent('model_catalog', 'Ignored malformed Model Catalog response');
+              return;
+            }
+            this.modelCatalog = catalog;
+            if (this.form.providerId && !this.selectedModelReference) {
+              this.form.providerId = '';
+              this.form.selectedModelToken = '';
+              this.pushEvent('model_catalog', 'Cleared stale model override after Catalog update');
+            }
+            this.pushEvent(
+              'model_catalog',
+              `Loaded generation ${catalog.generation} with ${catalog.providers.length} provider(s)`,
+            );
+          },
           sendMessage() {
             if (!this.canSend) return;
             const text = this.draft.trim();
@@ -1465,8 +1567,8 @@
               type: 'run_turn',
               sessionKey: this.form.sessionKey,
               message: wireMessage,
-              ...(this.form.model
-                ? { model_reference: { model_id: this.form.model } }
+              ...(this.selectedModelReference
+                ? { model_reference: this.selectedModelReference }
                 : {}),
             });
             this.pushEvent(
@@ -1641,6 +1743,15 @@
                 this.helloAcknowledged = true;
                 this.lastStatusMessage = `Hello acknowledged as ${message.clientId}`;
                 this.pushEvent('hello', `Server acknowledged client ${message.clientId}`);
+                this.requestModelCatalog();
+                return;
+              case 'model_catalog':
+                if (message.request_id !== this.pendingCatalogRequestId) {
+                  this.pushEvent('model_catalog', `Ignored unexpected response ${message.request_id ?? '(missing id)'}`);
+                  return;
+                }
+                this.pendingCatalogRequestId = null;
+                this.applyModelCatalog(message.catalog);
                 return;
               case 'approval_requested': {
                 // Route approval into the active turn's segments so it stays

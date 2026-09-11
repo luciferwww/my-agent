@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentEvent } from '../core/runner/index.js';
-import type { ChatContentBlock, ChatMessage } from '../core/model-invocation/index.js';
+import {
+  ModelInvocationError,
+  type ChatContentBlock,
+  type ChatMessage,
+} from '../core/model-invocation/index.js';
 import type { ModelReference } from '../core/model-resolution/index.js';
 import { ModelResolutionError, ModelResolver } from '../core/model-resolution/index.js';
 import { TurnInteractionManager } from './turn-interaction/index.js';
@@ -73,6 +77,18 @@ import type {
 const log = Logger.get('RuntimeApp');
 const interactionLog = Logger.get('TurnInteractionManager');
 
+function findModelInvocationError(error: unknown): ModelInvocationError | undefined {
+  const seen = new Set<Error>();
+  let current = error;
+  for (let depth = 0; depth < 8 && current instanceof Error; depth += 1) {
+    if (current instanceof ModelInvocationError) return current;
+    if (seen.has(current)) return undefined;
+    seen.add(current);
+    current = current.cause;
+  }
+  return undefined;
+}
+
 interface ActiveRootTree {
   readonly requestId: string;
   readonly generation: number;
@@ -102,7 +118,7 @@ export class RuntimeApp {
    * Per-session active turn 的 AbortController，供 `abortTurn(sk)` / shutdown 触发中止。
    *  - 写：runTurnInternal 入口（清 stale + 设新）
    *  - 写：runTurnInternal finally（清掉自己注册的那个）
-   *  - 读：abortTurn / close / bindAbortHooks.querySessionsNeedingAbort
+  *  - 读：abortTurn / close / Channel runtime capability querySessionsNeedingAbort
    * 详见 core-abort-spec.md §8.1。
    */
   private readonly activeAborts = new Map<string, AbortController>();
@@ -895,6 +911,7 @@ export class RuntimeApp {
       });
     } catch (error) {
       const info = classifyRuntimeError('run', error);
+      const modelInvocationError = findModelInvocationError(info.cause);
       const runtimeError = createRuntimeError(info);
       if (gate.seal({ outcome: 'failed', error: runtimeError })) {
         this.safeEmit({
@@ -931,6 +948,14 @@ export class RuntimeApp {
         durationMs: Date.now() - turnStartedAt,
         code: info.code,
         message: info.message,
+        ...(modelInvocationError
+          ? {
+              modelInvocation: Object.freeze({
+                category: modelInvocationError.category,
+                diagnostics: modelInvocationError.diagnostics,
+              }),
+            }
+          : {}),
       });
       this.recordError('run', info);
     } finally {

@@ -1,7 +1,11 @@
 import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
-import type { ApprovalInteractionRequest } from '../../core/channel/index.js';
+import type {
+  ApprovalInteractionRequest,
+  ChannelRuntimeCapabilities,
+  ModelCatalogSnapshot,
+} from '../../core/channel/index.js';
 import { WebSocketChannel } from './WebSocketChannel.js';
 
 describe('WebSocketChannel', () => {
@@ -52,6 +56,7 @@ describe('WebSocketChannel', () => {
   });
 
   it('binds hello and forwards run_turn with clientId', async () => {
+    const modelId = ' model/vendor:v1?x=1\n\u0000 ';
     const handler = vi.fn(async () => undefined);
     channel = new WebSocketChannel({ port: 0 });
     channel.onMessage(handler);
@@ -65,7 +70,7 @@ describe('WebSocketChannel', () => {
       type: 'run_turn',
       sessionKey: 'main',
       message: 'hello ws',
-      model_reference: { provider_id: 'test', model_id: 'test-model' },
+      model_reference: { provider_id: 'test', model_id: modelId },
       request_override: { max_output_tokens: 2048 },
       maxLlmCalls: 7,
     }));
@@ -75,11 +80,36 @@ describe('WebSocketChannel', () => {
         clientId: 'client-1',
         sessionKey: 'main',
         message: 'hello ws',
-        modelReference: { providerId: 'test', modelId: 'test-model' },
+        modelReference: { providerId: 'test', modelId },
         requestOverride: { maxOutputTokens: 2048 },
         maxLlmCalls: 7,
       });
     });
+  });
+
+  it('preserves an empty string Model ID instead of treating it as missing', async () => {
+    const handler = vi.fn(async () => undefined);
+    channel = new WebSocketChannel({ port: 0 });
+    channel.onMessage(handler);
+    await channel.start();
+
+    const client = await connectClient(channel);
+    clients.push(client);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'empty-model-client' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'empty-model-client' });
+    client.send(JSON.stringify({
+      type: 'run_turn',
+      sessionKey: 'main',
+      message: 'empty model id',
+      model_reference: { provider_id: 'test', model_id: '' },
+    }));
+
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledWith({
+      clientId: 'empty-model-client',
+      sessionKey: 'main',
+      message: 'empty model id',
+      modelReference: { providerId: 'test', modelId: '' },
+    }));
   });
 
   it.each([
@@ -107,6 +137,134 @@ describe('WebSocketChannel', () => {
       message: 'Legacy model/maxTokens fields are not supported; use model_reference/request_override.',
     });
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  describe('model catalog protocol', () => {
+    const unavailableCatalog: ModelCatalogSnapshot = {
+      generation: 12,
+      defaultSelection: {
+        state: 'unavailable',
+        reference: { providerId: 'copilot-relay', modelId: 'missing-model' },
+        reason: 'model_rejected',
+      },
+      providers: [{
+        providerId: 'copilot-relay',
+        displayName: 'Copilot Relay',
+        models: [{ modelId: 'gpt-5.6-sol', displayName: 'GPT 5.6 Sol' }],
+      }],
+    };
+
+    it('returns a request-correlated snake_case Catalog after hello', async () => {
+      channel = new WebSocketChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      channel.bindRuntimeCapabilities(capabilities(() => unavailableCatalog));
+      await channel.start();
+
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'catalog-client' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'catalog-client' });
+      client.send(JSON.stringify({ type: 'get_model_catalog', request_id: 'catalog-1' }));
+
+      await expectMessage(client, {
+        type: 'model_catalog',
+        request_id: 'catalog-1',
+        catalog: {
+          generation: 12,
+          default_selection: {
+            state: 'unavailable',
+            reference: {
+              provider_id: 'copilot-relay',
+              model_id: 'missing-model',
+            },
+            reason: 'model_rejected',
+          },
+          providers: [{
+            provider_id: 'copilot-relay',
+            display_name: 'Copilot Relay',
+            models: [{ model_id: 'gpt-5.6-sol', display_name: 'GPT 5.6 Sol' }],
+          }],
+        },
+      });
+    });
+
+    it('unicasts a Catalog response only to the requesting client', async () => {
+      channel = new WebSocketChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      channel.bindRuntimeCapabilities(capabilities(() => unavailableCatalog));
+      await channel.start();
+
+      const requester = await connectClient(channel);
+      const observer = await connectClient(channel);
+      clients.push(requester, observer);
+      requester.send(JSON.stringify({ type: 'hello', clientId: 'catalog-requester' }));
+      observer.send(JSON.stringify({ type: 'hello', clientId: 'catalog-observer' }));
+      await expectMessage(requester, { type: 'hello_ack', clientId: 'catalog-requester' });
+      await expectMessage(observer, { type: 'hello_ack', clientId: 'catalog-observer' });
+
+      const observerMessages = vi.fn();
+      observer.on('message', observerMessages);
+      requester.send(JSON.stringify({ type: 'get_model_catalog', request_id: 'private-catalog' }));
+      const response = await nextMessage(requester);
+      expect(response).toMatchObject({
+        type: 'model_catalog',
+        request_id: 'private-catalog',
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(observerMessages).not.toHaveBeenCalled();
+    });
+
+    it('observes the latest generation through one long-lived binding', async () => {
+      let snapshot = unavailableCatalog;
+      channel = new WebSocketChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      channel.bindRuntimeCapabilities(capabilities(() => snapshot));
+      await channel.start();
+
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'reload-client' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'reload-client' });
+      client.send(JSON.stringify({ type: 'get_model_catalog', request_id: 'before' }));
+      const before = await nextMessage(client);
+      expect((before.catalog as { generation: number }).generation).toBe(12);
+
+      snapshot = { ...unavailableCatalog, generation: 13 };
+      client.send(JSON.stringify({ type: 'get_model_catalog', request_id: 'after' }));
+      const after = await nextMessage(client);
+      expect(after.request_id).toBe('after');
+      expect((after.catalog as { generation: number }).generation).toBe(13);
+    });
+
+    it('rejects query before hello, blank request_id, and missing capability', async () => {
+      channel = new WebSocketChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      await channel.start();
+
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'get_model_catalog', request_id: 'early' }));
+      await expectMessage(client, {
+        type: 'channel_error',
+        code: 'SERVER_NOT_READY',
+        message: 'hello must complete before business messages.',
+      });
+
+      client.send(JSON.stringify({ type: 'hello', clientId: 'catalog-client' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'catalog-client' });
+      client.send(JSON.stringify({ type: 'get_model_catalog', request_id: ' ' }));
+      await expectMessage(client, {
+        type: 'channel_error',
+        code: 'INVALID_MESSAGE',
+        message: 'request_id must be a non-empty string.',
+      });
+      client.send(JSON.stringify({ type: 'get_model_catalog', request_id: 'unbound' }));
+      await expectMessage(client, {
+        type: 'channel_error',
+        code: 'SERVER_NOT_READY',
+        message: 'Runtime Model Catalog is not bound.',
+      });
+    });
   });
 
   it('routes approval interactions to the origin client and forwards interaction responses', async () => {
@@ -542,16 +700,16 @@ describe('WebSocketChannel', () => {
   // ── Abort (core-abort-spec.md §13) ─────────────────────
 
   describe('abort_turn', () => {
-    it('inbound abort_turn → abortHooks.abortTurn called with sessionKey', async () => {
+    it('inbound abort_turn → capabilities.abort.abortTurn called with sessionKey', async () => {
       const abortTurn = vi.fn(() => ({ aborted: true, dropped: 0 }));
       const query = vi.fn(() => []);
 
       channel = new WebSocketChannel({ port: 0 });
       channel.onMessage(async () => undefined);
-      channel.bindAbortHooks({
-        querySessionsNeedingAbort: query,
-        abortTurn,
-      });
+      channel.bindRuntimeCapabilities(capabilities(
+        () => ({ generation: 1, defaultSelection: { state: 'unset' }, providers: [] }),
+        { querySessionsNeedingAbort: query, abortTurn },
+      ));
       await channel.start();
 
       const client = await connectClient(channel);
@@ -627,7 +785,24 @@ async function connectClient(channel: WebSocketChannel): Promise<WebSocket> {
 }
 
 async function expectMessage(client: WebSocket, expected: Record<string, unknown>): Promise<void> {
-  const [raw] = await once(client, 'message');
-  const actual = JSON.parse(raw.toString('utf-8')) as Record<string, unknown>;
+  const actual = await nextMessage(client);
   expect(actual).toEqual(expected);
+}
+
+async function nextMessage(client: WebSocket): Promise<Record<string, unknown>> {
+  const [raw] = await once(client, 'message');
+  return JSON.parse(raw.toString('utf-8')) as Record<string, unknown>;
+}
+
+function capabilities(
+  getSnapshot: () => ModelCatalogSnapshot,
+  abort: ChannelRuntimeCapabilities['abort'] = {
+    querySessionsNeedingAbort: () => [],
+    abortTurn: () => ({ aborted: false, dropped: 0 }),
+  },
+): ChannelRuntimeCapabilities {
+  return {
+    modelCatalog: { getSnapshot },
+    abort,
+  };
 }

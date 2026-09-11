@@ -216,9 +216,9 @@ function validateModelReference(value: unknown, label: string): ModelReference {
     throw new Error(`${label} model must be a structured Provider and Model reference.`);
   }
   const providerId = typeof value['providerId'] === 'string' ? value['providerId'].trim() : '';
-  const modelId = typeof value['modelId'] === 'string' ? value['modelId'].trim() : '';
-  if (!providerId || !modelId) {
-    throw new Error(`${label} model requires non-empty providerId and modelId.`);
+  const modelId = value['modelId'];
+  if (!providerId || typeof modelId !== 'string') {
+    throw new Error(`${label} model requires a non-empty providerId and string modelId.`);
   }
   return Object.freeze({ providerId, modelId });
 }

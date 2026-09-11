@@ -305,7 +305,7 @@ function bindInstance(
       if (ingressGate.active) host.onInteractionUnavailable(id, reason);
     });
   }
-  instance.bindAbortHooks?.(host.abortHooks);
+  instance.bindRuntimeCapabilities?.(host.capabilities);
   return binding;
 }
 

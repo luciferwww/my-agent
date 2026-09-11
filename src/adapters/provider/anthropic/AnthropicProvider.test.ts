@@ -53,6 +53,44 @@ describe('AnthropicProvider', () => {
     expect(resolved.facts.toolUse).toEqual({ value: true, source: 'deployment-config' });
   });
 
+  it('preserves an opaque deployment Model ID exactly', () => {
+    const modelId = ' model/vendor:v1?x=1\n\u0000 ';
+    const provider = new AnthropicProvider({
+      apiKey: 'test-key',
+      baseURL: 'https://proxy.example.test/',
+      deploymentFacts: [{
+        providerId: ANTHROPIC_COMPATIBLE_PROVIDER_ID,
+        endpointId: 'https://proxy.example.test',
+        modelId,
+        protocol: ANTHROPIC_MESSAGES_PROTOCOL,
+        effectiveContextLimit: 100_000,
+        maximumOutputTokens: 4096,
+      }],
+    });
+
+    expect(provider.entry.models).toEqual([{ modelId }]);
+    expect(resolve(provider, modelId).identity.modelId).toBe(modelId);
+    expect(() => resolve(provider, modelId.trim())).toThrowError(ModelResolutionError);
+  });
+
+  it('accepts an empty string deployment Model ID as Provider-owned identity', () => {
+    const provider = new AnthropicProvider({
+      apiKey: 'test-key',
+      baseURL: 'https://proxy.example.test/',
+      deploymentFacts: [{
+        providerId: ANTHROPIC_COMPATIBLE_PROVIDER_ID,
+        endpointId: 'https://proxy.example.test',
+        modelId: '',
+        protocol: ANTHROPIC_MESSAGES_PROTOCOL,
+        effectiveContextLimit: 100_000,
+        maximumOutputTokens: 4096,
+      }],
+    });
+
+    expect(provider.entry.models).toEqual([{ modelId: '' }]);
+    expect(resolve(provider, '').identity.modelId).toBe('');
+  });
+
   it('does not publish static or unproven models through a custom endpoint', () => {
     const provider = new AnthropicProvider({
       apiKey: 'test-key',

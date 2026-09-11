@@ -248,17 +248,17 @@ function normalizeProvider(provider: ProviderProjectionEntry): ProviderProjectio
     if (!model || typeof model !== 'object') {
       throw new RegistryBuildError(`Provider "${provider.id}" published an invalid model entry.`);
     }
-    assertIdentity(model.modelId, 'Model');
+    assertModelIdentity(model.modelId);
     if (modelIds.has(model.modelId)) {
       throw new RegistryBuildError(
-        `Provider "${provider.id}" published duplicate model "${model.modelId}".`,
+        `Provider "${provider.id}" published duplicate model ${formatModelIdForDiagnostic(model.modelId)}.`,
       );
     }
     modelIds.add(model.modelId);
     if (model.displayName !== undefined
       && (typeof model.displayName !== 'string' || model.displayName.trim() === '')) {
       throw new RegistryBuildError(
-        `Provider "${provider.id}" model "${model.modelId}" has an invalid display name.`,
+        `Provider "${provider.id}" model ${formatModelIdForDiagnostic(model.modelId)} has an invalid display name.`,
       );
     }
     return Object.freeze({
@@ -415,6 +415,17 @@ function assertIdentity(identity: string, kind: string): void {
   if (!CONTRIBUTION_ID.test(identity)) {
     throw new RegistryBuildError(`${kind} identity "${identity}" must match ${CONTRIBUTION_ID.source}.`);
   }
+}
+
+function assertModelIdentity(identity: string): void {
+  if (typeof identity !== 'string') {
+    throw new RegistryBuildError('Model identity must be a Provider-owned string.');
+  }
+}
+
+function formatModelIdForDiagnostic(identity: string): string {
+  const preview = identity.length > 200 ? `${identity.slice(0, 200)}…` : identity;
+  return JSON.stringify(preview);
 }
 
 function hookIdentity(hookName: HookName, hookId: string): string {

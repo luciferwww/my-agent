@@ -3,7 +3,6 @@ import { isSubagentSessionKey, parseSubagentSessionKey } from '../../core/subage
 import { Logger } from '../../platform/logger/index.js';
 import { WS_MAX_PAYLOAD_BYTES } from '../../core/media/constants.js';
 import type {
-  AbortHookBindings,
   ApprovalClosedResult,
   ApprovalDecision,
   ApprovalRequest,
@@ -11,7 +10,9 @@ import type {
   ChannelCompletion,
   ChannelInteractionAdapter,
   ChannelRunRequest,
+  ChannelRuntimeCapabilities,
   InboundContentBlock,
+  ModelCatalogSnapshot,
   TurnInteractionResponse,
 } from '../../core/channel/index.js';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
@@ -53,6 +54,10 @@ type ClientMessage =
       // (§13.1). v1 has no auth check—WS server is a single trust domain.
       type: 'abort_turn';
       sessionKey: string;
+    }
+  | {
+      type: 'get_model_catalog';
+      requestId: string;
     };
 
 type OutboundMessage =
@@ -98,11 +103,10 @@ export class WebSocketChannel implements Channel {
   private readonly pendingApprovalClientIds = new Map<string, string>();
 
   /**
-    * Channel activation 同步注入（core-abort-spec.md §12 时序保证）：
-    * bindAbortHooks 先于 start()。inbound `abort_turn` 到达时必已绑定，
-   * 未绑定时静默丢弃（单玩 channel 不接 Runtime 的开发可能性）。
+    * Channel activation 同步注入：bindRuntimeCapabilities 先于 start()。
+    * 独立 Channel 使用时能力可能仍为 undefined。
    */
-  private abortHooks?: AbortHookBindings;
+    private runtimeCapabilities?: ChannelRuntimeCapabilities;
 
   private started = false;
   private stopRequested = false;
@@ -307,6 +311,9 @@ export class WebSocketChannel implements Channel {
         case 'abort_turn':
           this.handleAbortTurn(socket, message);
           return;
+        case 'get_model_catalog':
+          this.handleGetModelCatalog(socket, message);
+          return;
       }
     } catch (error) {
       if (error instanceof ProtocolError) {
@@ -372,6 +379,11 @@ export class WebSocketChannel implements Channel {
         return {
           type,
           sessionKey: readNonEmptyString(parsed.sessionKey, 'sessionKey'),
+        };
+      case 'get_model_catalog':
+        return {
+          type,
+          requestId: readNonEmptyString(parsed.request_id, 'request_id'),
         };
       default:
         throw new ProtocolError('UNSUPPORTED_MESSAGE', `Unsupported message type: ${type}`);
@@ -456,9 +468,30 @@ export class WebSocketChannel implements Channel {
 
   // ── Abort（core-abort-spec.md §13）────────────────────────────
 
-  bindAbortHooks(hooks: AbortHookBindings): void {
-    this.abortHooks = hooks;
-    log.debug('abort hooks bound', { channelId: this.id });
+  bindRuntimeCapabilities(capabilities: ChannelRuntimeCapabilities): void {
+    this.runtimeCapabilities = capabilities;
+    log.debug('Runtime capabilities bound', { channelId: this.id });
+  }
+
+  private handleGetModelCatalog(
+    socket: WebSocket,
+    message: Extract<ClientMessage, { type: 'get_model_catalog' }>,
+  ): void {
+    this.requireBoundClientId(socket);
+    if (!this.runtimeCapabilities) {
+      throw new ProtocolError('SERVER_NOT_READY', 'Runtime Model Catalog is not bound.');
+    }
+    let snapshot: ModelCatalogSnapshot;
+    try {
+      snapshot = this.runtimeCapabilities.modelCatalog.getSnapshot();
+    } catch {
+      throw new ProtocolError('SERVER_NOT_READY', 'Runtime Model Catalog is not ready.');
+    }
+    this.sendJson(socket, {
+      type: 'model_catalog',
+      request_id: message.requestId,
+      catalog: toWireModelCatalog(snapshot),
+    });
   }
 
   /**
@@ -468,7 +501,7 @@ export class WebSocketChannel implements Channel {
    * 多客户端隔离由未来 auth 层处理。
    *
    * abort 完成通过 `run_end{result.stopReason:'aborted'}` 通道通知，
-   * 无 inline ack；abortHooks 未 bind 时静默丢弃并 warn（开发时不接
+  * 无 inline ack；Runtime capabilities 未 bind 时静默丢弃并 warn（开发时不接
    * RuntimeApp 单跑本 channel 场景）。
    */
   private handleAbortTurn(
@@ -476,15 +509,15 @@ export class WebSocketChannel implements Channel {
     message: Extract<ClientMessage, { type: 'abort_turn' }>,
   ): void {
     const clientId = this.requireBoundClientId(socket);
-    if (!this.abortHooks) {
-      log.warn('abort_turn received but abortHooks not bound; ignoring', {
+    if (!this.runtimeCapabilities) {
+      log.warn('abort_turn received but Runtime capabilities not bound; ignoring', {
         channelId: this.id,
         clientId,
         sessionKey: message.sessionKey,
       });
       return;
     }
-    const result = this.abortHooks.abortTurn(message.sessionKey);
+    const result = this.runtimeCapabilities.abort.abortTurn(message.sessionKey);
     log.info('abort_turn dispatched', {
       channelId: this.id,
       clientId,
@@ -737,6 +770,33 @@ export class WebSocketChannel implements Channel {
   }
 }
 
+function toWireModelCatalog(snapshot: ModelCatalogSnapshot): Record<string, unknown> {
+  const defaultSelection = snapshot.defaultSelection.state === 'unset'
+    ? { state: 'unset' }
+    : {
+        state: snapshot.defaultSelection.state,
+        reference: {
+          provider_id: snapshot.defaultSelection.reference.providerId,
+          model_id: snapshot.defaultSelection.reference.modelId,
+        },
+        ...(snapshot.defaultSelection.state === 'unavailable'
+          ? { reason: snapshot.defaultSelection.reason }
+          : {}),
+      };
+  return {
+    generation: snapshot.generation,
+    default_selection: defaultSelection,
+    providers: snapshot.providers.map((provider) => ({
+      provider_id: provider.providerId,
+      display_name: provider.displayName,
+      models: provider.models.map((model) => ({
+        model_id: model.modelId,
+        display_name: model.displayName,
+      })),
+    })),
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -758,8 +818,15 @@ function readOptionalModelReference(
   assertOnlyKeys(value, ['provider_id', 'model_id'], 'model_reference');
   return {
     providerId: readNonEmptyString(value.provider_id, 'model_reference.provider_id'),
-    modelId: readNonEmptyString(value.model_id, 'model_reference.model_id'),
+    modelId: readOpaqueModelId(value.model_id, 'model_reference.model_id'),
   };
+}
+
+function readOpaqueModelId(value: unknown, field: string): string {
+  if (typeof value !== 'string') {
+    throw new ProtocolError('INVALID_MESSAGE', `${field} must be a string.`);
+  }
+  return value;
 }
 
 function readOptionalRequestOverride(

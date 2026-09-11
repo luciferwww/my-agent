@@ -20,9 +20,18 @@ function host(): ChannelRuntimeHost {
     onMessage: vi.fn(async () => {}),
     onInteractionResponse: vi.fn(),
     onInteractionUnavailable: vi.fn(),
-    abortHooks: {
-      querySessionsNeedingAbort: vi.fn(() => []),
-      abortTurn: vi.fn(() => ({ aborted: false, dropped: 0 })),
+    capabilities: {
+      modelCatalog: {
+        getSnapshot: vi.fn(() => ({
+          generation: 1,
+          defaultSelection: { state: 'unset' as const },
+          providers: [],
+        })),
+      },
+      abort: {
+        querySessionsNeedingAbort: vi.fn(() => []),
+        abortTurn: vi.fn(() => ({ aborted: false, dropped: 0 })),
+      },
     },
   };
 }

@@ -2,7 +2,6 @@ import * as readline from 'node:readline';
 import type { AgentEvent } from '../../core/runner/types.js';
 import { Logger } from '../../platform/logger/index.js';
 import type {
-  AbortHookBindings,
   ApprovalClosedResult,
   ApprovalDecision,
   ApprovalRequest,
@@ -10,8 +9,11 @@ import type {
   ChannelCompletion,
   ChannelInteractionAdapter,
   ChannelRunRequest,
+  ChannelRuntimeCapabilities,
+  ModelCatalogSnapshot,
   TurnInteractionResponse,
 } from '../../core/channel/index.js';
+import type { ModelReference } from '../../core/model-resolution/index.js';
 
 // Tool result preview budget: head + tail lines visible, middle elided.
 // 10:6 split leans toward head because most CLI output (lists, file content,
@@ -32,6 +34,40 @@ const dim = (s: string) => `\x1b[90m${s}\x1b[0m`;
 const yellow = (s: string) => `\x1b[33m${s}\x1b[0m`;
 const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
 const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
+
+function formatReference(reference: ModelReference): string {
+  return `${reference.providerId}/${formatModelId(reference.modelId)}`;
+}
+
+function formatModelId(modelId: string): string {
+  if (/^[\x21-\x7e]{1,200}$/u.test(modelId)) return modelId;
+  const preview = modelId.length > 200 ? `${modelId.slice(0, 200)}…` : modelId;
+  return JSON.stringify(preview);
+}
+
+function formatTerminalText(value: string): string {
+  const escaped = value.replace(/[\u0000-\u001f\u007f-\u009f]/gu, (character) =>
+    `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  return escaped.length > 200 ? `${escaped.slice(0, 200)}…` : escaped;
+}
+
+function sameReference(
+  left: ModelReference,
+  right: ModelReference | undefined,
+): boolean {
+  return right !== undefined
+    && left.providerId === right.providerId
+    && left.modelId === right.modelId;
+}
+
+function hasCatalogModel(
+  snapshot: ModelCatalogSnapshot,
+  reference: ModelReference,
+): boolean {
+  return snapshot.providers.some((provider) =>
+    provider.providerId === reference.providerId
+    && provider.models.some((model) => model.modelId === reference.modelId));
+}
 
 function truncateLine(line: string): string {
   return line.length > PREVIEW_LINE_MAX_CHARS
@@ -109,8 +145,9 @@ export class CliChannel implements Channel {
   // ── Abort / Ctrl+C 状态（core-abort-spec.md §12）─────────────
   /** 上次 Ctrl+C 时间戳（epoch ms）；0 = 没有近期按键。用于双击检测。 */
   private lastCtrlCAt = 0;
-  /** RuntimeApp 通过 `bindAbortHooks` 注入的回调；未注册 channel 时为 undefined。 */
-  private abortHooks?: AbortHookBindings;
+  /** Runtime Composition 在 start 前注入的窄能力；独立使用时为 undefined。 */
+  private runtimeCapabilities?: ChannelRuntimeCapabilities;
+  private selectedModelOverride?: ModelReference;
   constructor(config: CliChannelConfig = {}) {
     this.input = config.input ?? process.stdin;
     this.output = config.output ?? process.stdout;
@@ -309,9 +346,23 @@ export class CliChannel implements Channel {
         });
 
         try {
+          if (this.handleModelCommand(line)) continue;
+          if (this.selectedModelOverride) {
+            const snapshot = this.getModelCatalog();
+            if (!snapshot || !hasCatalogModel(snapshot, this.selectedModelOverride)) {
+              this.breakStream();
+              this.output.write(red(
+                `[model unavailable] ${formatReference(this.selectedModelOverride)} is not in the current Catalog.\n`,
+              ));
+              continue;
+            }
+          }
           await messageHandler({
             sessionKey: this.sessionKey,
             message: trimmed,
+            ...(this.selectedModelOverride
+              ? { modelReference: { ...this.selectedModelOverride } }
+              : {}),
           });
           log.debug('cli input dispatched', {
             channelId: this.id,
@@ -346,6 +397,120 @@ export class CliChannel implements Channel {
     }
   }
 
+  private handleModelCommand(input: string): boolean {
+    if (input !== '/models' && input !== '/model' && !input.startsWith('/model ')) {
+      return false;
+    }
+    this.breakStream();
+    const snapshot = this.getModelCatalog();
+    if (!snapshot) return true;
+
+    if (input === '/models') {
+      this.renderModelCatalog(snapshot);
+      return true;
+    }
+    if (input === '/model') {
+      this.renderModelStatus(snapshot);
+      return true;
+    }
+
+    const payload = input.slice('/model '.length);
+    if (payload === 'default') {
+      this.selectedModelOverride = undefined;
+      this.output.write(cyan('[model] override cleared; using Runtime default.\n'));
+      this.renderModelStatus(snapshot);
+      return true;
+    }
+    const separator = payload.indexOf(' ');
+    const providerId = separator > 0 ? payload.slice(0, separator) : '';
+    const encodedModelId = separator > 0 ? payload.slice(separator + 1) : '';
+    let modelId: unknown;
+    try {
+      modelId = JSON.parse(encodedModelId);
+    } catch {
+      modelId = undefined;
+    }
+    if (!providerId || typeof modelId !== 'string') {
+      this.output.write(red(
+        '[model error] usage: /model <providerId> <JSON-string-modelId> | /model default\n',
+      ));
+      return true;
+    }
+
+    const reference = Object.freeze({ providerId, modelId });
+    if (!hasCatalogModel(snapshot, reference)) {
+      this.output.write(red(
+        `[model error] ${formatReference(reference)} is not in generation ${snapshot.generation}.\n`,
+      ));
+      return true;
+    }
+    this.selectedModelOverride = reference;
+    this.output.write(cyan(`[model] override set to ${formatReference(reference)}.\n`));
+    return true;
+  }
+
+  private getModelCatalog(): ModelCatalogSnapshot | undefined {
+    if (!this.runtimeCapabilities) {
+      this.output.write(red('[model unavailable] Runtime Model Catalog is not bound.\n'));
+      return undefined;
+    }
+    try {
+      return this.runtimeCapabilities.modelCatalog.getSnapshot();
+    } catch {
+      this.output.write(red('[model unavailable] Runtime Model Catalog is not ready.\n'));
+      return undefined;
+    }
+  }
+
+  private renderModelCatalog(snapshot: ModelCatalogSnapshot): void {
+    this.output.write(cyan(`[models] generation ${snapshot.generation}\n`));
+    if (snapshot.providers.length === 0) {
+      this.output.write(dim('  No models are currently available.\n'));
+      return;
+    }
+    const defaultReference = snapshot.defaultSelection.state === 'available'
+      ? snapshot.defaultSelection.reference
+      : undefined;
+    for (const provider of snapshot.providers) {
+      this.output.write(`${formatTerminalText(provider.displayName)} (${provider.providerId})\n`);
+      for (const model of provider.models) {
+        const reference = { providerId: provider.providerId, modelId: model.modelId };
+        const markers = [
+          ...(sameReference(reference, defaultReference) ? ['default'] : []),
+          ...(sameReference(reference, this.selectedModelOverride) ? ['override'] : []),
+        ];
+        this.output.write(
+          `  ${formatTerminalText(model.displayName)} (${formatModelId(model.modelId)})${markers.length ? ` [${markers.join(', ')}]` : ''}\n`,
+        );
+      }
+    }
+  }
+
+  private renderModelStatus(snapshot: ModelCatalogSnapshot): void {
+    const override = this.selectedModelOverride;
+    this.output.write(`[model] override: ${override ? formatReference(override) : 'none'}\n`);
+    switch (snapshot.defaultSelection.state) {
+      case 'unset':
+        this.output.write('[model] default: unset\n');
+        break;
+      case 'available':
+        this.output.write(
+          `[model] default: ${formatReference(snapshot.defaultSelection.reference)} (available)\n`,
+        );
+        break;
+      case 'unavailable':
+        this.output.write(
+          `[model] default: ${formatReference(snapshot.defaultSelection.reference)} (unavailable: ${snapshot.defaultSelection.reason})\n`,
+        );
+        break;
+    }
+    const effective = override
+      ?? (snapshot.defaultSelection.state === 'available'
+        ? snapshot.defaultSelection.reference
+        : undefined);
+    this.output.write(`[model] effective: ${effective ? formatReference(effective) : 'none'}\n`);
+  }
+
   async stop(): Promise<void> {
     if (this.stopRequested) return;
     this.stopRequested = true;
@@ -362,9 +527,9 @@ export class CliChannel implements Channel {
 
   // ── Abort / Ctrl+C 处理（core-abort-spec.md §12）────────────────
 
-  bindAbortHooks(hooks: AbortHookBindings): void {
-    this.abortHooks = hooks;
-    log.debug('abort hooks bound', { channelId: this.id });
+  bindRuntimeCapabilities(capabilities: ChannelRuntimeCapabilities): void {
+    this.runtimeCapabilities = capabilities;
+    log.debug('Runtime capabilities bound', { channelId: this.id });
   }
 
   /**
@@ -374,10 +539,10 @@ export class CliChannel implements Channel {
    *  2. 更新 lastCtrlCAt（为双击窗口计时）。
    *  3. 查 `querySessionsNeedingAbort()`：
    *     - 空（无 active turn + 无 queue）→ 仅提示 "press again to exit"，不调 abort。
-   *     - 非空→ 对每个 sessionKey 调 `abortHooks.abortTurn(sk)`，依返回值中
+  *     - 非空→ 对每个 sessionKey 调 `capabilities.abort.abortTurn(sk)`，依返回值中
    *       `aborted` / `dropped` 非零部分拼提示（可能只有其中一部分）。
    *
-   * `abortHooks` 未 bind 时直接当作 “无东西可 abort” 处理（退到提示分支），
+  * Runtime capabilities 未 bind 时直接当作 “无东西可 abort” 处理（退到提示分支），
    * 支持 CliChannel 单独跑（不接 RuntimeApp）下 Ctrl+C 仍能双击退出。
    */
   private handleSigInt(): void {
@@ -400,7 +565,7 @@ export class CliChannel implements Channel {
     //  (ii) 有 queued messages（→ 会被 drop）
     // 仅两者都为空时才提示 "press again to exit"；否则统一走 abortTurn 路径。
     // 详见 core-abort-spec.md §12。
-    const targets = this.abortHooks?.querySessionsNeedingAbort() ?? [];
+    const targets = this.runtimeCapabilities?.abort.querySessionsNeedingAbort() ?? [];
     if (targets.length === 0) {
       this.breakStream();
       this.output.write(dim('[press Ctrl+C again within 1s to exit]\n'));
@@ -412,7 +577,7 @@ export class CliChannel implements Channel {
     let totalAborted = 0;
     let totalDropped = 0;
     for (const sk of targets) {
-      const r = this.abortHooks!.abortTurn(sk);
+      const r = this.runtimeCapabilities!.abort.abortTurn(sk);
       if (r.aborted) totalAborted += 1;
       totalDropped += r.dropped;
     }

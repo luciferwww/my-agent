@@ -103,8 +103,7 @@ export class AnthropicProvider {
         } as const;
       },
       resolveModel: (modelId: string, connection: ProviderConnection) => {
-        const canonicalModelId = modelId.trim();
-        const model = modelMap.get(canonicalModelId);
+        const model = modelMap.get(modelId);
         if (!model) {
           return {
             ok: false,
@@ -117,7 +116,7 @@ export class AnthropicProvider {
           descriptor: Object.freeze({
             identity: Object.freeze({
               providerId: ANTHROPIC_COMPATIBLE_PROVIDER_ID,
-              modelId: canonicalModelId,
+              modelId,
             }),
             protocol: ANTHROPIC_MESSAGES_PROTOCOL,
             connection: Object.freeze({
@@ -213,7 +212,7 @@ function validateDeploymentFacts(
     if (
       entry.providerId.trim() !== ANTHROPIC_COMPATIBLE_PROVIDER_ID
       || entry.protocol.trim() !== ANTHROPIC_MESSAGES_PROTOCOL
-      || !entry.modelId.trim()
+      || typeof entry.modelId !== 'string'
       || (entry.effectiveContextLimit !== undefined && !isPositiveInteger(entry.effectiveContextLimit))
       || (entry.maximumOutputTokens !== undefined && !isPositiveInteger(entry.maximumOutputTokens))
       || entry.mediaKinds?.some((kind) => !kind.trim())
@@ -225,7 +224,7 @@ function validateDeploymentFacts(
       providerId: entry.providerId.trim(),
       protocol: entry.protocol.trim(),
       endpointId: normalizeEndpoint(entry.endpointId),
-      modelId: entry.modelId.trim(),
+      modelId: entry.modelId,
       ...(entry.deploymentId ? { deploymentId: entry.deploymentId.trim() } : {}),
       ...(entry.mediaKinds ? { mediaKinds: Object.freeze(entry.mediaKinds.map((kind) => kind.trim())) } : {}),
     });

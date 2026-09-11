@@ -1,7 +1,11 @@
 import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import type { AgentEvent } from '../../core/runner/types.js';
-import type { AbortHookBindings } from '../../core/channel/index.js';
+import type {
+  ChannelRuntimeCapabilities,
+  DefaultModelSelection,
+  TurnAbortCapability,
+} from '../../core/channel/index.js';
 import { CliChannel } from './CliChannel.js';
 
 // Strip ANSI escape sequences so assertions don't fight color codes.
@@ -166,6 +170,181 @@ describe('CliChannel lifecycle', () => {
   });
 });
 
+describe('CliChannel model commands', () => {
+  function catalogCapabilities(
+    defaultSelection: DefaultModelSelection = {
+      state: 'available',
+      reference: { providerId: 'relay', modelId: 'model-a' },
+    },
+  ): ChannelRuntimeCapabilities {
+    return {
+      modelCatalog: {
+        getSnapshot: () => ({
+          generation: 7,
+          defaultSelection,
+          providers: [{
+            providerId: 'relay',
+            displayName: 'Relay <Local>',
+            models: [
+              { modelId: 'model-a', displayName: 'Model A' },
+              { modelId: 'model-b', displayName: 'Model B' },
+              { modelId: ' model/vendor:v1?x=1\n\u0000 ', displayName: 'Opaque\nModel' },
+              { modelId: '', displayName: 'Empty ID' },
+            ],
+          }],
+        }),
+      },
+      abort: {
+        querySessionsNeedingAbort: () => [],
+        abortTurn: () => ({ aborted: false, dropped: 0 }),
+      },
+    };
+  }
+
+  async function startInteractive(
+    defaultSelection?: DefaultModelSelection,
+    capabilityOverride?: ChannelRuntimeCapabilities,
+  ) {
+    const existingSigIntListeners = process.listeners('SIGINT');
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on('data', (chunk: Buffer) => chunks.push(chunk));
+    const handler = vi.fn(async () => undefined);
+    const channel = new CliChannel({ input, output });
+    channel.bindRuntimeCapabilities(capabilityOverride ?? catalogCapabilities(defaultSelection));
+    channel.onMessage(handler);
+    await channel.start();
+    return {
+      channel,
+      input,
+      handler,
+      captured: () => stripAnsi(Buffer.concat(chunks).toString('utf-8')),
+      async close() {
+        input.end();
+        await channel.completion;
+        await channel.stop();
+        process.removeAllListeners('SIGINT');
+        for (const listener of existingSigIntListeners) process.on('SIGINT', listener);
+      },
+    };
+  }
+
+  it('lists grouped models, marks default/override, and keeps commands out of Runtime', async () => {
+    const fixture = await startInteractive();
+    try {
+      fixture.input.write('/models\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('Relay <Local> (relay)'));
+      expect(fixture.captured()).toContain('Model A (model-a) [default]');
+
+      fixture.input.write('/model relay "model-b"\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('override set to relay/model-b'));
+      fixture.input.write('/models\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('Model B (model-b) [override]'));
+      fixture.input.write('hello\n');
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
+        sessionKey: 'main',
+        message: 'hello',
+        modelReference: { providerId: 'relay', modelId: 'model-b' },
+      }));
+      expect(fixture.handler).toHaveBeenCalledTimes(1);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('selects an arbitrary opaque Model ID from JSON without mutating it', async () => {
+    const modelId = ' model/vendor:v1?x=1\n\u0000 ';
+    const fixture = await startInteractive();
+    try {
+      fixture.input.write('/models\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('Opaque\\u000aModel'));
+      expect(fixture.captured()).toContain(JSON.stringify(modelId));
+
+      fixture.input.write(`/model relay ${JSON.stringify(modelId)}\n`);
+      await vi.waitFor(() => expect(fixture.captured()).toContain('override set'));
+      fixture.input.write('hello\n');
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
+        sessionKey: 'main',
+        message: 'hello',
+        modelReference: { providerId: 'relay', modelId },
+      }));
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('selects an empty string Model ID through the JSON command grammar', async () => {
+    const fixture = await startInteractive();
+    try {
+      fixture.input.write('/model relay ""\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('override set to relay/""'));
+      fixture.input.write('hello\n');
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
+        sessionKey: 'main',
+        message: 'hello',
+        modelReference: { providerId: 'relay', modelId: '' },
+      }));
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('shows unavailable default, rejects unknown selection, and clears override', async () => {
+    const fixture = await startInteractive({
+      state: 'unavailable',
+      reference: { providerId: 'missing', modelId: 'gone' },
+      reason: 'provider_unregistered',
+    });
+    try {
+      fixture.input.write('/model\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain(
+        'default: missing/gone (unavailable: provider_unregistered)',
+      ));
+      expect(fixture.captured()).toContain('effective: none');
+
+      fixture.input.write('/model relay "missing"\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('is not in generation 7'));
+      fixture.input.write('/model relay "model-a"\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('override set to relay/model-a'));
+      fixture.input.write('/model default\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('override cleared'));
+      expect(fixture.handler).not.toHaveBeenCalled();
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('rechecks a stale override before ordinary input', async () => {
+    let current = catalogCapabilities().modelCatalog.getSnapshot();
+    const capabilities = catalogCapabilities();
+    capabilities.modelCatalog.getSnapshot = () => current;
+    const fixture = await startInteractive(undefined, capabilities);
+    try {
+      fixture.input.write('/model relay "model-b"\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('override set to relay/model-b'));
+
+      current = { ...current, generation: 8, providers: [] };
+      fixture.input.write('must not dispatch\n');
+
+      await vi.waitFor(() => expect(fixture.captured()).toContain(
+        '[model unavailable] relay/model-b is not in the current Catalog.',
+      ));
+      expect(fixture.handler).not.toHaveBeenCalled();
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('reports local unavailability when capabilities are not bound', () => {
+    const { channel, captured } = makeChannel();
+    const handled = (channel as unknown as { handleModelCommand(input: string): boolean })
+      .handleModelCommand('/models');
+    expect(handled).toBe(true);
+    expect(captured()).toContain('Runtime Model Catalog is not bound');
+  });
+});
+
 describe('CliChannel approval lifecycle', () => {
   it('cancels the underlying readline question when approval closes', async () => {
     const { channel } = makeChannel(true);
@@ -222,27 +401,40 @@ describe('CliChannel Ctrl+C / abort handling', () => {
     vi.restoreAllMocks();
   });
 
-  function makeHooks(
-    partial: Partial<AbortHookBindings> = {},
-  ): { hooks: AbortHookBindings; abortTurn: ReturnType<typeof vi.fn>; query: ReturnType<typeof vi.fn> } {
+  function makeCapabilities(
+    partial: Partial<TurnAbortCapability> = {},
+  ): {
+    capabilities: ChannelRuntimeCapabilities;
+    abortTurn: ReturnType<typeof vi.fn>;
+    query: ReturnType<typeof vi.fn>;
+  } {
     const abortTurn = vi.fn(
       partial.abortTurn ?? (() => ({ aborted: false, dropped: 0 })),
     );
     const query = vi.fn(partial.querySessionsNeedingAbort ?? (() => []));
     return {
-      hooks: { querySessionsNeedingAbort: query, abortTurn },
+      capabilities: {
+        modelCatalog: {
+          getSnapshot: () => ({
+            generation: 1,
+            defaultSelection: { state: 'unset' },
+            providers: [],
+          }),
+        },
+        abort: { querySessionsNeedingAbort: query, abortTurn },
+      },
       abortTurn,
       query,
     };
   }
 
-  it('single Ctrl+C with an active turn → calls abortHooks.abortTurn and renders "[⚠ aborted N turn(s)]"', () => {
+  it('single Ctrl+C with an active turn → calls abort capability and renders "[⚠ aborted N turn(s)]"', () => {
     const { channel, captured } = makeChannel();
-    const { hooks, abortTurn, query } = makeHooks({
+    const { capabilities, abortTurn, query } = makeCapabilities({
       querySessionsNeedingAbort: () => ['main'],
       abortTurn: () => ({ aborted: true, dropped: 0 }),
     });
-    channel.bindAbortHooks(hooks);
+    channel.bindRuntimeCapabilities(capabilities);
 
     (channel as unknown as CliChannelInternal).handleSigInt();
 
@@ -262,7 +454,7 @@ describe('CliChannel Ctrl+C / abort handling', () => {
     // Hooks bound but nothing to abort — makes the FIRST Ctrl+C fall into
     // the "press again to exit" branch (arms lastCtrlCAt) instead of the
     // abort path. Second Ctrl+C then trips the double-tap exit.
-    channel.bindAbortHooks(makeHooks().hooks);
+    channel.bindRuntimeCapabilities(makeCapabilities().capabilities);
 
     const exitSpy = vi.spyOn(process, 'exit');
 
@@ -278,7 +470,7 @@ describe('CliChannel Ctrl+C / abort handling', () => {
   it('hooks not bound (standalone CLI) → Ctrl+C renders exit hint and never crashes', () => {
     const { channel, captured } = makeChannel();
 
-    // No bindAbortHooks call — abortHooks is undefined.
+    // No capability binding — standalone behavior remains available.
     expect(() =>
       (channel as unknown as CliChannelInternal).handleSigInt(),
     ).not.toThrow();
@@ -291,14 +483,14 @@ describe('CliChannel Ctrl+C / abort handling', () => {
 
   it('no active turn + non-empty queue → renders "dropped 3 queued message(s)" and omits "aborted N turn(s)"', () => {
     const { channel, captured } = makeChannel();
-    const { hooks, abortTurn } = makeHooks({
+    const { capabilities, abortTurn } = makeCapabilities({
       // querySessionsNeedingAbort returns sessions with queued msgs even
       // when there's no active turn (spec §12 note (ii)).
       querySessionsNeedingAbort: () => ['main'],
       // Runtime side: no active abort but 3 dropped messages.
       abortTurn: () => ({ aborted: false, dropped: 3 }),
     });
-    channel.bindAbortHooks(hooks);
+    channel.bindRuntimeCapabilities(capabilities);
 
     (channel as unknown as CliChannelInternal).handleSigInt();
 

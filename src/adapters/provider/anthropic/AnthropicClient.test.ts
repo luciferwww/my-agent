@@ -355,7 +355,18 @@ describe('AnthropicClient', () => {
       const sdkClient = (client as unknown as {
         client: { messages: { stream: (...args: unknown[]) => unknown } };
       }).client;
-      const providerError = Object.assign(new Error('secret provider response'), { status: 429 });
+      const providerError = Object.assign(new Error('secret provider response'), {
+        status: 429,
+        type: 'rate_limit_error',
+        requestID: 'req-diagnostic-1',
+        error: {
+          type: 'error',
+          error: {
+            type: 'rate_limit_error',
+            message: '  rate limit reached  ',
+          },
+        },
+      });
       vi.spyOn(sdkClient.messages, 'stream').mockImplementation(() => {
         throw providerError;
       });
@@ -364,7 +375,43 @@ describe('AnthropicClient', () => {
       for await (const event of client.chatStream({
         model: 'claude-sonnet-5',
         maxTokens: 1024,
-        messages: [{ role: 'user', content: 'Hi' }],
+        system: 'secret system prompt',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'secret user prompt' },
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: 'image/png',
+                  data: 'secret base64 image',
+                },
+                dimensions: { width: 10, height: 20 },
+              },
+              {
+                type: 'tool_result',
+                tool_use_id: 'tool-1',
+                content: 'secret tool result',
+              },
+            ],
+          },
+          {
+            role: 'assistant',
+            content: [{
+              type: 'tool_use',
+              id: 'tool-1',
+              name: 'secret_tool_name',
+              input: { secret: 'tool input' },
+            }],
+          },
+        ],
+        tools: [{
+          name: 'secret_tool_name',
+          description: 'secret tool description',
+          inputSchema: { type: 'object', secretSchema: true },
+        }],
       })) {
         events.push(event);
       }
@@ -374,6 +421,30 @@ describe('AnthropicClient', () => {
       expect(error).toBeInstanceOf(ModelInvocationError);
       expect((error as ModelInvocationError).category).toBe('rate_limit');
       expect(error?.message).not.toContain('secret provider response');
+      expect((error as ModelInvocationError).diagnostics).toEqual({
+        providerId: 'anthropic-compatible',
+        httpStatus: 429,
+        providerErrorType: 'rate_limit_error',
+        providerMessage: 'rate limit reached',
+        requestId: 'req-diagnostic-1',
+        request: {
+          model: 'claude-sonnet-5',
+          maxTokens: 1024,
+          hasSystem: true,
+          messageCount: 2,
+          userMessageCount: 1,
+          assistantMessageCount: 1,
+          stringContentMessageCount: 0,
+          textBlockCount: 1,
+          imageBlockCount: 1,
+          toolUseBlockCount: 1,
+          toolResultBlockCount: 1,
+          toolDefinitionCount: 1,
+        },
+      });
+      expect(JSON.stringify((error as ModelInvocationError).diagnostics)).not.toMatch(
+        /secret provider|secret system|secret user|secret base64|secret tool|tool input|secretSchema/,
+      );
     });
   });
 });

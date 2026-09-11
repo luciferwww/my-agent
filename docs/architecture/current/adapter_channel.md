@@ -87,17 +87,16 @@ channel.send 实现:
 - **同步/异步 send 均隔离**：`send()` 可返回 `void | Promise<void>`；throw/rejection 被记录为 warning，不让单个 channel 故障中断其他分发
 - **附件广播只含摘要**：`user_message.attachmentSummaries` 不携带原始 Base64
 
-### 3.3 Abort（channel → runtime）
+### 3.3 Runtime Capabilities（channel ↔ runtime）
 
 ```
-CLI Ctrl+C / WS { type:'abort_turn', sessionKey }
-  → Channel AbortHookBindings.abortTurn(sessionKey)
-  → RuntimeApp.abortTurn(sessionKey)
-  → abort active turn + drop queued messages
-  → run_end.result.stopReason = 'aborted'
+Runtime Builder
+  → bindRuntimeCapabilities({ modelCatalog, abort })
+  ├─ modelCatalog.getSnapshot() → current immutable Provider/Model Catalog query
+  └─ abort.abortTurn(sessionKey) → abort active turn + drop queued messages
 ```
 
-Channel 通过可选 `bindAbortHooks` 接收 Runtime 注入的中止能力，不反向依赖 RuntimeApp。WebSocket 的 `abort_turn` 无单独 Ack；客户端通过 `run_end` 感知中止完成。
+Channel 在 `start()` 前通过可选 `bindRuntimeCapabilities` 一次性接收 Runtime 注入的统一能力，不反向依赖 RuntimeApp。Catalog 是实时 Query Port，每次查询当前 generation；Abort 是 Command Port。CLI 的模型 override 与 WebSocket `get_model_catalog` 都只消费 Catalog，不替代 Runtime Model Resolver 的最终校验。WebSocket 的 `abort_turn` 无单独 Ack；客户端通过 `run_end` 感知中止完成。
 
 ### 3.4 Approval / Interaction（hook ↔ channel）
 
@@ -162,7 +161,16 @@ Channel {
   start(): Promise<void>
   stop(): Promise<void>
   interaction?: ChannelInteractionTransport
-  bindAbortHooks?(hooks: AbortHookBindings): void
+  bindRuntimeCapabilities?(capabilities: ChannelRuntimeCapabilities): void
+}
+
+ChannelRuntimeCapabilities {
+  modelCatalog: ModelCatalogQuery
+  abort: TurnAbortCapability
+}
+
+ModelCatalogQuery {
+  getSnapshot(): ModelCatalogSnapshot
 }
 
 ChannelInteractionTransport {
@@ -273,13 +281,20 @@ CliChannelConfig {
 - 单行字符上限 200，超出追加 `…`
 - 纯显示截断，LLM 仍收到完整 tool result
 
-### 6.3 stop 与 readline 中断
+### 6.3 Model Catalog 命令
+
+- `/models` 显示当前 generation 的 Provider/Model Catalog；`/model` 显示 default、override 和 effective selection。
+- `/model <providerId> <JSON-string-modelId>` 从当前 Catalog 设置结构化 override；JSON string 使 CLI 可以无损表达 Provider-owned opaque Model ID。
+- `/model default` 清除 override。普通消息发送前会重新检查 override 是否仍属于 current Catalog。
+- Model ID 只在终端展示边界进行控制字符转义和预览截断；Catalog lookup、Resolver 和 invocation 始终使用未改写原值。
+
+### 6.4 stop 与 readline 中断
 
 - `stop()` 设 `stopped=true`，reject 当前等待中的 `rl.question()`（pendingPromptReject）
 - 阻塞在 approval `y/n` 时，stop() 触发 reject 后静默忽略
 - 多次调用 `stop()` 幂等
 
-### 6.4 Approval 处理
+### 6.5 Approval 处理
 
 开启 `approval: true` 时构造 `interaction` adapter：
 - `sendInteractionRequest`（kind=`'approval'`）走 `promptApproval()` → readline `y/n` prompt
@@ -305,7 +320,9 @@ WebSocketChannelConfig {
 }
 ```
 
-### 7.2 客户端协议（JSON，全 snake_case）
+### 7.2 客户端协议（JSON，既有字段保持 mixed-case；Catalog 新增字段使用 snake_case）
+
+为保持现有客户端兼容性，`hello`、`run_turn`、Approval 和 AgentEvent 的既有 mixed-case 字段不重命名。C3 新增的 `get_model_catalog` / `model_catalog` 及其嵌套 Catalog payload 使用 snake_case。
 
 **Client → Server：**
 
@@ -315,12 +332,14 @@ WebSocketChannelConfig {
 | `{ type:'run_turn'; sessionKey; message; modelReference?; requestOverride?; maxLlmCalls? }` | 发起 turn；message 支持 text/image blocks |
 | `{ type:'approval_resolve'; id; decision }` | 提交审批决策 |
 | `{ type:'abort_turn'; sessionKey }` | 中止该 session 的活动 turn 并清空普通队列 |
+| `{ type:'get_model_catalog'; request_id }` | 握手后查询当前 Provider/Model Catalog；request_id 用于响应关联 |
 
 **Server → Client：**
 
 | 消息 | 路由 |
 |---|---|
 | `{ type:'hello_ack'; clientId }` | 单播，握手确认 |
+| `{ type:'model_catalog'; request_id; catalog }` | 单播当前 generation、default_selection 和 Provider/Model 清单；不广播 |
 | 带 `sessionKey` 的普通 AgentEvent | 广播给同 session 所有已连接 client |
 | `subagent_start` / `subagent_end` | Child session 归一到 root session 后广播 |
 | `request_end` | 通过 `originMessageId` 找到 queued message 的 session 后广播；无关联则不发送 |

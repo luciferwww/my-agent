@@ -142,7 +142,7 @@ export class AnthropicClient implements ModelInvocationPort {
       const error = err instanceof Error ? err : new Error(String(err));
       yield {
         type: 'error',
-        error: normalizeProviderError(error),
+        error: normalizeProviderError(error, params),
       };
     }
   }
@@ -200,7 +200,7 @@ export class AnthropicClient implements ModelInvocationPort {
   }
 }
 
-function normalizeProviderError(error: Error): Error {
+function normalizeProviderError(error: Error, request: ModelInvocationRequest): Error {
   if (error.name === 'AbortError') {
     return error;
   }
@@ -208,22 +208,105 @@ function normalizeProviderError(error: Error): Error {
     return new ContextOverflowError('Provider reported a context overflow.');
   }
 
-  const status = 'status' in error && typeof error.status === 'number'
-    ? error.status
-    : undefined;
+  const diagnostics = buildInvocationDiagnostics(error, request);
+  const status = diagnostics.httpStatus;
   if (status === 401 || status === 403) {
-    return new ModelInvocationError('authentication');
+    return new ModelInvocationError('authentication', diagnostics);
   }
   if (status === 429) {
-    return new ModelInvocationError('rate_limit');
+    return new ModelInvocationError('rate_limit', diagnostics);
   }
   if (status === 400 || status === 404 || status === 409 || status === 422) {
-    return new ModelInvocationError('invalid_request');
+    return new ModelInvocationError('invalid_request', diagnostics);
   }
   if (status !== undefined && status >= 500) {
-    return new ModelInvocationError('unavailable');
+    return new ModelInvocationError('unavailable', diagnostics);
   }
-  return new ModelInvocationError(status === undefined ? 'transport' : 'provider_failure');
+  return new ModelInvocationError(
+    status === undefined ? 'transport' : 'provider_failure',
+    diagnostics,
+  );
+}
+
+function buildInvocationDiagnostics(error: Error, request: ModelInvocationRequest) {
+  const sdkError = asRecord(error);
+  const errorPayload = asRecord(sdkError?.error);
+  const nestedError = asRecord(errorPayload?.error);
+  const providerMessage = sanitizeProviderMessage(
+    readString(nestedError, 'message') ?? readString(errorPayload, 'message'),
+  );
+  const providerErrorType = readString(nestedError, 'type')
+    ?? readString(errorPayload, 'type')
+    ?? readString(sdkError, 'type');
+  const requestId = readString(sdkError, 'requestID');
+
+  let userMessageCount = 0;
+  let assistantMessageCount = 0;
+  let stringContentMessageCount = 0;
+  let textBlockCount = 0;
+  let imageBlockCount = 0;
+  let toolUseBlockCount = 0;
+  let toolResultBlockCount = 0;
+
+  for (const message of request.messages) {
+    if (message.role === 'user') userMessageCount += 1;
+    else assistantMessageCount += 1;
+
+    if (typeof message.content === 'string') {
+      stringContentMessageCount += 1;
+      continue;
+    }
+    for (const block of message.content) {
+      switch (block.type) {
+        case 'text': textBlockCount += 1; break;
+        case 'image': imageBlockCount += 1; break;
+        case 'tool_use': toolUseBlockCount += 1; break;
+        case 'tool_result': toolResultBlockCount += 1; break;
+      }
+    }
+  }
+
+  return Object.freeze({
+    providerId: 'anthropic-compatible',
+    ...(typeof sdkError?.status === 'number' ? { httpStatus: sdkError.status } : {}),
+    ...(providerErrorType ? { providerErrorType } : {}),
+    ...(providerMessage ? { providerMessage } : {}),
+    ...(requestId ? { requestId } : {}),
+    request: Object.freeze({
+      model: request.model,
+      maxTokens: request.maxTokens,
+      hasSystem: Boolean(request.system),
+      messageCount: request.messages.length,
+      userMessageCount,
+      assistantMessageCount,
+      stringContentMessageCount,
+      textBlockCount,
+      imageBlockCount,
+      toolUseBlockCount,
+      toolResultBlockCount,
+      toolDefinitionCount: request.tools?.length ?? 0,
+    }),
+  });
+}
+
+function asRecord(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return value !== null && typeof value === 'object'
+    ? value as Readonly<Record<string, unknown>>
+    : undefined;
+}
+
+function readString(
+  value: Readonly<Record<string, unknown>> | undefined,
+  key: string,
+): string | undefined {
+  const candidate = value?.[key];
+  return typeof candidate === 'string' && candidate.length > 0 ? candidate : undefined;
+}
+
+function sanitizeProviderMessage(message: string | undefined): string | undefined {
+  if (!message) return undefined;
+  const normalized = message.replace(/\s+/g, ' ').trim();
+  return normalized.length > 0 ? normalized.slice(0, 500) : undefined;
 }
 
 function isProviderContextOverflow(error: Error): boolean {

@@ -106,6 +106,10 @@ Technical Gate evidence（2026-09-10）：Relay focused suite 为 40 tests 全�
 
 ### C3 — Channel Runtime Capabilities and Model Selection
 
+**Plan Item 状态：** Completed（项目所有者于 2026-09-11 接受）
+
+本 Gate 修改 production CLI/WebSocket Channel Adapter 与 Web Client，但不提升其他 `scripts/` 文件的可信状态；`scripts/server.ts` 仍是 `scripts/` 下唯一受支持 Host Composition Root。
+
 - 以 `bindRuntimeCapabilities()` 替换 `bindAbortHooks()`；
 - 能力对象按 `modelCatalog`、`abort` 等窄 Port 分组；
 - CLI 增加 `/models`、`/model`、`/model default`；
@@ -115,6 +119,8 @@ Technical Gate evidence（2026-09-10）：Relay focused suite 为 40 tests 全�
 - 所有提交路径仍由 Model Resolver 执行闭集校验。
 
 **Gate C3：** Channel contract、CLI interaction、WebSocket protocol、Web UI smoke、existing Abort regression、lint、build 通过。
+
+项目所有者于 2026-09-11 接受 C3 Delivery Gate。最终验证为 99 test files / 919 tests 全部通过，`npm run lint`、`npm run build` 与 `git diff --check` 通过；supported Host 的 Relay default/explicit model、Catalog、empty opaque Model ID、stale selection 和 Abort 路径完成验证。该接受关闭 C3，但不授权 commit、push 或进入 C4。后续通用 Extension discovery/scoped configuration 作为独立 Architecture Slice 设计，不回写或重开 C2/C3。
 
 ### C4 — Authority and Closeout
 

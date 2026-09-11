@@ -39,7 +39,7 @@ Runtime supplies a complete structured reference from a per-Turn override or con
 
 ## 3. Reference and binding resolution
 
-A reference always supplies both `providerId` and `modelId`. Identity parts are trimmed and empty values fail as `reference_invalid`; a missing configured/explicit reference also fails as `reference_invalid` rather than selecting the first Provider.
+A reference always supplies both `providerId` and `modelId`. The application-owned Provider ID is normalized; the Provider-owned Model ID is an arbitrary string opaque identity, including the empty string, and is preserved exactly without trimming, character filtering, or rewriting. A missing/non-string Model ID or missing configured/explicit reference fails as `reference_invalid`; empty is distinct from missing and may resolve only when it is an exact Catalog member. Resolution never selects the first Provider or model.
 
 Resolution then:
 

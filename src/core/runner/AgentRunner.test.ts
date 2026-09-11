@@ -1660,6 +1660,61 @@ describe('AgentRunner', () => {
       expect(all).toHaveLength(4);
       expect(all.map(r => r.message.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
     });
+
+    it('旧 session 中的空 aborted assistant 不进入 Provider history', async () => {
+      await sessionManager.appendMessage('main', { role: 'user', content: 'old request' });
+      await sessionManager.appendMessage('main', {
+        role: 'assistant',
+        content: [],
+        abortMeta: { partial: true, stopReason: 'aborted' },
+      });
+      await sessionManager.appendMessage('main', { role: 'user', content: 'later request' });
+      await sessionManager.appendMessage('main', {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'later reply' }],
+      });
+
+      let capturedMessages: ModelInvocationRequest['messages'] = [];
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(params: ModelInvocationRequest) {
+          capturedMessages = params.messages.map((message) => ({ ...message }));
+          yield { type: 'message_start' };
+          yield { type: 'text_delta', text: 'current reply' };
+          yield {
+            type: 'message_end',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 5, outputTokens: 2 },
+          };
+        },
+        async chat() { throw new Error('Not used'); },
+      };
+      const runner = new AgentRunner({ llmClient, sessionManager });
+
+      await runner.run({
+        sessionKey: 'main',
+        message: 'current request',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-legacy-empty-abort',
+      });
+
+      expect(capturedMessages).not.toContainEqual({ role: 'assistant', content: [] });
+      expect(capturedMessages).toEqual([
+        { role: 'user', content: 'old request' },
+        { role: 'user', content: 'later request' },
+        { role: 'assistant', content: [{ type: 'text', text: 'later reply' }] },
+        { role: 'user', content: 'current request' },
+      ]);
+      expect(sessionManager.getMessages('main')).toContainEqual(
+        expect.objectContaining({
+          message: {
+            role: 'assistant',
+            content: [],
+            abortMeta: { partial: true, stopReason: 'aborted' },
+          },
+        }),
+      );
+    });
   });
 
   // ── Abort（core-abort-spec.md §7） ──────────────────
@@ -1738,6 +1793,37 @@ describe('AgentRunner', () => {
       const last = records[records.length - 1]!;
       expect(last.message.role).toBe('assistant');
       expect(last.message.abortMeta).toEqual({ partial: true, stopReason: 'aborted' });
+    });
+
+    it('abort before first model content → 不持久化空 assistant', async () => {
+      const controller = new AbortController();
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(params: ModelInvocationRequest) {
+          yield { type: 'message_start' };
+          controller.abort();
+          if (params.signal?.aborted) {
+            const error = new Error('aborted before content');
+            error.name = 'AbortError';
+            throw error;
+          }
+        },
+        async chat() { throw new Error('Not used'); },
+      };
+      const runner = new AgentRunner({ llmClient, sessionManager });
+
+      const result = await runner.run({
+        sessionKey: 'main',
+        message: 'Hi',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-abort-before-content',
+        signal: controller.signal,
+      });
+
+      expect(result.stopReason).toBe('aborted');
+      expect(result.content).toEqual([]);
+      expect(sessionManager.getMessages('main').map(({ message }) => message.role))
+        .toEqual(['user']);
     });
 
     // ③ abort during tool loop → current Turn closes every emitted Tool Call pair

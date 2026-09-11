@@ -1,5 +1,5 @@
 export type {
-  AbortHookBindings,
+  ChannelRuntimeCapabilities,
   ApprovalClosedResult,
   ApprovalDecision,
   ApprovalDeliveryResult,
@@ -20,7 +20,12 @@ export type {
   ChannelRuntimeBinding,
   ChannelRuntimeHost,
   ChannelRuntimeInteraction,
+  DefaultModelSelection,
   InboundContentBlock,
+  ModelCatalogEntry,
+  ModelCatalogQuery,
+  ModelCatalogSnapshot,
+  ProviderCatalogEntry,
   SelectInteractionRequest,
   SelectInteractionResponse,
   TurnInteractionKind,
@@ -28,4 +33,5 @@ export type {
   TurnInteractionOutcome,
   TurnInteractionRequest,
   TurnInteractionResponse,
+  TurnAbortCapability,
 } from './types.js';

@@ -49,8 +49,8 @@ function resolveModelSelection(
   if (unknownKey) {
     throw new Error(`subagents.list["${profileId}"].model: unknown field "${unknownKey}"`);
   }
-  if (typeof candidate.modelId !== 'string' || candidate.modelId.trim() === '') {
-    throw new Error(`subagents.list["${profileId}"].model: modelId must be nonblank`);
+  if (typeof candidate.modelId !== 'string') {
+    throw new Error(`subagents.list["${profileId}"].model: modelId must be a string`);
   }
   if (typeof candidate.providerId !== 'string' || candidate.providerId.trim() === '') {
     throw new Error(`subagents.list["${profileId}"].model: providerId must be nonblank`);
@@ -58,7 +58,7 @@ function resolveModelSelection(
 
   return Object.freeze({
     providerId: candidate.providerId.trim(),
-    modelId: candidate.modelId.trim(),
+    modelId: candidate.modelId,
   });
 }
 

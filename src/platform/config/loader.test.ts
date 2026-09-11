@@ -184,7 +184,34 @@ describe('loadConfig', () => {
     }));
 
     expect(() => loadConfig({ workspaceDir: tmpDir }))
-      .toThrow('requires non-empty providerId and modelId');
+      .toThrow('requires a non-empty providerId and string modelId');
+  });
+
+  it('preserves an arbitrary Provider-owned Model ID string', async () => {
+    const modelId = ' model/vendor:v1?x=1\n\u0000 ';
+    await mkdir(join(tmpDir, '.agent'), { recursive: true });
+    await writeFile(join(tmpDir, '.agent', 'config.json'), JSON.stringify({
+      agents: { defaults: { model: { providerId: 'anthropic-compatible', modelId } } },
+    }));
+
+    expect(loadConfig({ workspaceDir: tmpDir }).agents.defaults.model).toEqual({
+      providerId: 'anthropic-compatible',
+      modelId,
+    });
+  });
+
+  it('preserves an empty string Model ID instead of treating it as missing', async () => {
+    await mkdir(join(tmpDir, '.agent'), { recursive: true });
+    await writeFile(join(tmpDir, '.agent', 'config.json'), JSON.stringify({
+      agents: {
+        defaults: { model: { providerId: 'anthropic-compatible', modelId: '' } },
+      },
+    }));
+
+    expect(loadConfig({ workspaceDir: tmpDir }).agents.defaults.model).toEqual({
+      providerId: 'anthropic-compatible',
+      modelId: '',
+    });
   });
 
   it('merges tools.allow / deny arrays from config file', async () => {

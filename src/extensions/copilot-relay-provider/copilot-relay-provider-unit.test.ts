@@ -62,7 +62,7 @@ describe('Copilot Relay Provider Unit', () => {
       validModel({ id: 'no-responses', supported_endpoints: ['/chat/completions'] }),
       validModel({ id: 'no-output', capabilities: { limits: { max_prompt_tokens: 10 } } }),
       validModel({ id: 'no-context', capabilities: { limits: { max_output_tokens: 10 } } }),
-      validModel({ id: ' ' }),
+      validModel({ id: 42 }),
     ])) as unknown as typeof fetch;
 
     const provider = await createProvider(fetchImpl, {
@@ -94,6 +94,40 @@ describe('Copilot Relay Provider Unit', () => {
           mediaKinds: { value: ['image'], source: 'provider-metadata' },
         },
       },
+    });
+  });
+
+  it('preserves an arbitrary opaque Model ID from discovery through resolution', async () => {
+    const modelId = ' model/vendor:v1?x=1\n\u0000 ';
+    const provider = await createProvider(
+      vi.fn(async () => discoveryResponse([validModel({ id: modelId })])) as unknown as typeof fetch,
+    );
+
+    expect(provider.models).toEqual([{ modelId, displayName: 'GPT 5.6 Sol' }]);
+    const connection = provider.resolveConnection();
+    if (!connection.ok) throw new Error('Expected connection.');
+    const resolved = provider.resolveModel(modelId, connection.connection);
+    expect(resolved).toMatchObject({
+      ok: true,
+      descriptor: { identity: { providerId: 'copilot-relay', modelId } },
+    });
+    expect(provider.resolveModel(modelId.trim(), connection.connection)).toMatchObject({
+      ok: false,
+      category: 'model_rejected',
+    });
+  });
+
+  it('preserves an empty string Model ID from discovery through resolution', async () => {
+    const provider = await createProvider(
+      vi.fn(async () => discoveryResponse([validModel({ id: '' })])) as unknown as typeof fetch,
+    );
+    const connection = provider.resolveConnection();
+    if (!connection.ok) throw new Error('Expected connection.');
+
+    expect(provider.models).toEqual([{ modelId: '', displayName: 'GPT 5.6 Sol' }]);
+    expect(provider.resolveModel('', connection.connection)).toMatchObject({
+      ok: true,
+      descriptor: { identity: { modelId: '' } },
     });
   });
 

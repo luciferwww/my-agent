@@ -8,6 +8,8 @@ import type {
   SourcedFact,
 } from './types.js';
 
+const PROVIDER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
 export class ModelResolutionError extends Error {
   constructor(
     readonly category: ResolutionFailureCategory,
@@ -24,7 +26,7 @@ export class ModelResolver {
   constructor(providers: readonly ProviderProjectionEntry[]) {
     const entries = new Map<string, ProviderProjectionEntry>();
     for (const provider of providers) {
-      const id = normalizeIdentityPart(provider.id);
+      const id = validateProviderId(provider.id);
       if (!id || entries.has(id)) {
         throw new Error(`Provider projection contains an invalid or duplicate identity: ${provider.id}`);
       }
@@ -46,7 +48,7 @@ export class ModelResolver {
     if (!provider.models.some((model) => model.modelId === reference.modelId)) {
       throw new ModelResolutionError(
         'model_rejected',
-        `Model is not in the Provider Catalog: ${reference.providerId}/${reference.modelId}`,
+        `Model is not in the Provider Catalog for Provider "${reference.providerId}".`,
       );
     }
 
@@ -61,7 +63,13 @@ export class ModelResolver {
     }
 
     const { descriptor } = modelResult;
-    this.assertBindingConsistency(reference, provider, descriptor.identity.providerId, descriptor.protocol);
+    this.assertBindingConsistency(
+      reference,
+      provider,
+      descriptor.identity.providerId,
+      descriptor.identity.modelId,
+      descriptor.protocol,
+    );
     if (descriptor.connection.endpointId !== connectionResult.connection.endpointId) {
       throw new ModelResolutionError(
         'protocol_incompatible',
@@ -142,9 +150,9 @@ export class ModelResolver {
   private normalizeReference(
     reference: ModelResolutionInput['reference'],
   ): CanonicalModelIdentity {
-    const providerId = normalizeIdentityPart(reference?.providerId);
-    const modelId = normalizeIdentityPart(reference?.modelId);
-    if (!providerId || !modelId) {
+    const providerId = normalizeProviderId(reference?.providerId);
+    const modelId = reference?.modelId;
+    if (!providerId || typeof modelId !== 'string') {
       throw new ModelResolutionError('reference_invalid', 'A valid Provider and Model reference is required.');
     }
     return { providerId, modelId };
@@ -154,10 +162,12 @@ export class ModelResolver {
     reference: CanonicalModelIdentity,
     provider: ProviderProjectionEntry,
     descriptorProviderId: string,
+    descriptorModelId: string,
     descriptorProtocol: string,
   ): void {
     if (
-      normalizeIdentityPart(descriptorProviderId) !== reference.providerId
+      descriptorProviderId !== reference.providerId
+      || descriptorModelId !== reference.modelId
       || descriptorProtocol !== provider.protocol
     ) {
       throw new ModelResolutionError(
@@ -219,9 +229,13 @@ export class ModelResolver {
   }
 }
 
-function normalizeIdentityPart(value: string | undefined): string | undefined {
+function normalizeProviderId(value: string | undefined): string | undefined {
   const normalized = value?.trim();
-  return normalized || undefined;
+  return normalized && PROVIDER_ID.test(normalized) ? normalized : undefined;
+}
+
+function validateProviderId(value: string | undefined): string | undefined {
+  return value && PROVIDER_ID.test(value) ? value : undefined;
 }
 
 function isContextLimitFact(

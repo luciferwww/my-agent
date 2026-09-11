@@ -24,6 +24,8 @@
 
 项目所有者于 2026-09-11 接受 C2 Copilot Relay Provider Extension Delivery Gate。C2 implementation、Host migration、Current Architecture 同步、完整 validation、真实 Relay smoke 与独立只读审计均已完成；该接受不授权 C3、C4、commit 或 push。
 
+项目所有者随后于 2026-09-11 明确要求提交 C2 并继续，授权进入 C3 Channel Runtime Capabilities and Model Selection。C3 owner acceptance、C3 commit、push 与 C4 仍未授权；`scripts/server.ts` 继续是 `scripts/` 下唯一受支持入口，C3 不据此提升其他 legacy scripts。
+
 在本 Spec 完成对应 Delivery Gate 前，当前源码和既有 Accepted Architecture 仍是实现事实与架构权威；本文中的 interface 和行为描述是 target contract，不得倒推为 current behavior。
 
 现有 ADR-004 已决定 Provider 是模型事实的权威 producer、Model Resolution 拥有 Catalog view 和 per-Turn binding；ADR-005 已决定 typed Capability、统一 Unit staging 和 immutable Snapshot。本 Slice 不改变这些长期决策，因此不新增 ADR；若 Review 要求 Core 拥有远端目录、Channel 直接访问 Provider 或引入 Service Locator，则必须先修订 ADR。
@@ -105,9 +107,11 @@ interface ProviderProjectionEntry {
 
 Registry staging 必须拒绝：
 
-- 空白或无效 `providerId` / `modelId`；
+- 空白或无效 `providerId`，以及非 string `modelId`；
 - 同 Provider 内 duplicate `modelId`；
 - 缺失模型目录的旧 Provider entry。
+
+Provider ID 与其他 contribution identity 由本系统拥有并保持 `[A-Za-z0-9_-]{1,64}`。Model ID 由 Provider 拥有，对 Core 是任意 string（包括空字符串）opaque identity：Registry、Config、Channel、Resolver 和 Provider Adapter 不 trim、不规范化、不替换、不限制字符集或单个 ID 长度，始终按原值精确比较、去重和传递。字段缺失由 `undefined` 与空字符串区分。展示与传输层必须转义或编码，而不能靠改写 identity 获得安全性；伪造或未知值由 closed Catalog exact membership 拒绝。
 
 Registry staging 不信任外部 Unit 是否预先冻结 projection。它必须校验后 defensive copy 每个 model entry 和数组，并冻结规范化后的 nested entries、`models` 数组和 Provider projection，再允许进入 Candidate/Snapshot。不得只做浅层 `Object.freeze(provider)`，也不得因调用方传入 mutable source object 而把冻结责任外包给 Extension。
 
@@ -128,7 +132,7 @@ Provider 必须从同一个不可变私有模型 Map 同时产生：
 
 Model Resolver 在任何 Provider network invocation 前执行：
 
-1. 规范化结构化 Model Reference；
+1. 规范化系统拥有的 Provider ID，并原样保留结构化 Reference 中的 opaque Model ID；
 2. 查找 exact Provider；
 3. 校验 exact `modelId` 属于该 Provider 的 `models`；
 4. 解析 Connection；
@@ -525,13 +529,13 @@ CLI instance 持有可选 `selectedModelOverride: ModelReference`，提供本地
 ```text
 /models
 /model
-/model <providerId> <modelId>
+/model <providerId> <JSON-string-modelId>
 /model default
 ```
 
 - `/models` 按 Provider 分组显示 current Catalog，标记 default 和 override；
 - `/model` 显示 override、default selection state、effective model；unavailable default 必须显示原引用和原因；
-- `/model <providerId> <modelId>` 必须属于当前 Catalog，否则只输出本地错误且不发 Turn；
+- `/model <providerId> <JSON-string-modelId>` 用 JSON string 表达任意 opaque Model ID（包括空字符串、空白和控制字符），解析后的原值必须属于当前 Catalog，否则只输出本地错误且不发 Turn；
 - `/model default` 清除 override；default 缺失时允许 effective model 为空，default unavailable 时显示不可用状态并允许用户随后选择其他 override；
 - 普通输入携带当前 override；无 override 时不携带 Model Reference；
 - slash commands 不进入 Session、不发送给 LLM；

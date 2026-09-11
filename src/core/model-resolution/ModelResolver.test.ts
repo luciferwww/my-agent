@@ -72,6 +72,79 @@ describe('ModelResolver', () => {
     expect(Object.isFrozen(resolved.limits)).toBe(true);
   });
 
+  it('preserves an opaque Provider-owned Model ID exactly through resolution', () => {
+    const modelId = ' model/vendor:v1?x=1\n\u0000 ';
+    const resolveModel = vi.fn(provider().resolveModel);
+    const resolver = new ModelResolver([provider({
+      models: [{ modelId }],
+      resolveModel,
+    })]);
+
+    const resolved = resolver.resolve(input({
+      reference: { providerId: 'anthropic-compatible', modelId },
+    }));
+
+    expect(resolveModel).toHaveBeenCalledWith(modelId, { endpointId: 'https://example.test' });
+    expect(resolved.identity.modelId).toBe(modelId);
+  });
+
+  it('distinguishes an empty Model ID from a missing Model ID', () => {
+    const resolver = new ModelResolver([provider({ models: [{ modelId: '' }] })]);
+
+    expect(resolver.resolve(input({
+      reference: { providerId: 'anthropic-compatible', modelId: '' },
+    })).identity.modelId).toBe('');
+    expectCategory(() => resolver.resolve(input({
+      reference: { providerId: 'anthropic-compatible' } as never,
+    })), 'reference_invalid');
+  });
+
+  it('rejects a Provider descriptor that changes the selected opaque Model ID', () => {
+    const base = provider();
+    const resolver = new ModelResolver([provider({
+      resolveModel: (modelId, connection) => {
+        const result = base.resolveModel(modelId, connection);
+        if (!result.ok) return result;
+        return {
+          ok: true,
+          descriptor: {
+            ...result.descriptor,
+            identity: { ...result.descriptor.identity, modelId: 'different' },
+          },
+        };
+      },
+    })]);
+
+    expectCategory(() => resolver.resolve(input()), 'protocol_incompatible');
+  });
+
+  it('validates application-owned Provider IDs without constraining Model IDs', () => {
+    expect(() => new ModelResolver([provider({ id: 'provider/name' })]))
+      .toThrow('invalid or duplicate identity');
+    expectCategory(() => new ModelResolver([provider()]).resolve(input({
+      reference: { providerId: 'provider/name', modelId: 'test-model' },
+    })), 'reference_invalid');
+  });
+
+  it('rejects an invalid Provider ID returned by the Provider descriptor', () => {
+    const base = provider();
+    const resolver = new ModelResolver([provider({
+      resolveModel: (modelId, connection) => {
+        const result = base.resolveModel(modelId, connection);
+        if (!result.ok) return result;
+        return {
+          ok: true,
+          descriptor: {
+            ...result.descriptor,
+            identity: { providerId: 'provider/name', modelId },
+          },
+        };
+      },
+    })]);
+
+    expectCategory(() => resolver.resolve(input()), 'protocol_incompatible');
+  });
+
   it.each([
     ['reference_invalid', () => new ModelResolver([provider()]).resolve(input({ reference: { providerId: ' ', modelId: 'test-model' } }))],
     ['provider_unregistered', () => new ModelResolver([]).resolve(input())],

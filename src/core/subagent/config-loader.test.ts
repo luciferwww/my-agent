@@ -238,18 +238,21 @@ describe('loadSubagentProfiles — model selection', () => {
     ], WS, REGISTERED)).toThrow(/model must/i);
   });
 
-  it('accepts inherit and trims a native Model Reference', () => {
+  it('accepts inherit, normalizes Provider ID, and preserves opaque Model ID', () => {
     expect(loadSubagentProfiles([entry({ model: 'inherit' })], WS, REGISTERED)[0]!.model)
       .toBe('inherit');
     expect(loadSubagentProfiles([entry({
       model: { providerId: ' provider ', modelId: ' model ' },
-    })], WS, REGISTERED)[0]!.model).toEqual({ providerId: 'provider', modelId: 'model' });
+    })], WS, REGISTERED)[0]!.model).toEqual({ providerId: 'provider', modelId: ' model ' });
   });
 
-  it('rejects blank and unknown native Model Reference fields', () => {
+  it('accepts an empty Model ID but rejects non-string IDs, blank Provider IDs, and unknown fields', () => {
+    expect(loadSubagentProfiles([entry({
+      model: { providerId: 'provider', modelId: '' },
+    })], WS, REGISTERED)[0]!.model).toEqual({ providerId: 'provider', modelId: '' });
     expect(() => loadSubagentProfiles([entry({
-      model: { providerId: 'provider', modelId: ' ' },
-    })], WS, REGISTERED)).toThrow(/modelId must be nonblank/i);
+      model: { providerId: 'provider', modelId: 42 } as never,
+    })], WS, REGISTERED)).toThrow(/modelId must be a string/i);
     expect(() => loadSubagentProfiles([entry({
       model: { modelId: 'model' } as never,
     })], WS, REGISTERED)).toThrow(/providerId must be nonblank/i);

@@ -154,9 +154,9 @@
     "negative": ["src/adapters/channel/WebSocketChannel.test.ts"]
   },
   {
-    "contract": "AbortHookBindings",
+    "contract": "ChannelRuntimeCapabilities",
     "source": "src/core/channel/types.ts",
-    "kind": "abort-port",
+    "kind": "runtime-capabilities-port",
     "positive": ["src/runtime/RuntimeApp.test.ts"],
     "negative": ["src/runtime/RuntimeApp.test.ts"]
   },

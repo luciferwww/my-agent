@@ -28,8 +28,8 @@ export function parseRelayModelCatalog(payload: unknown): ReadonlyMap<string, Re
 function parseModel(value: unknown): RelayModelBinding | undefined {
   const entry = asRecord(value);
   if (!entry) return undefined;
-  const id = readTrimmedString(entry.id);
-  if (!id) return undefined;
+  const id = readOpaqueModelId(entry.id);
+  if (id === undefined) return undefined;
   if (!Array.isArray(entry.supported_endpoints)
     || !entry.supported_endpoints.includes('/responses')) return undefined;
 
@@ -98,6 +98,10 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function readTrimmedString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function readOpaqueModelId(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
 }
 
 function readPositiveInteger(value: unknown): number | undefined {
