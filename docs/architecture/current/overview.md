@@ -16,6 +16,8 @@ This page owns only the current module map, the Current Architecture authority m
 src/
 ├── runtime/          composition, generation publication, orchestration and lifecycle
 ├── runtime-modules/  composition units for builtin and optional capabilities
+├── extensions/
+│   └── copilot-relay-provider/ optional external Relay Provider Unit
 ├── core/
 │   ├── model-invocation/  provider-neutral invocation contract
 │   ├── model-resolution/  identity, Provider facts, limits and capability validation
@@ -73,7 +75,7 @@ Agent Runner
 | Channel contract, CLI/WebSocket protocol, interactions, attachment ingress and wire summary | [Channel](./adapter_channel.md) |
 | Media validation, limits, MIME verification, optimization, drop reasons, canonical block normalization | [Media](./core_media.md) |
 | Configuration sources, precedence, schema, defaults, Wizard | [Configuration](./platform_config.md) |
-| Provider protocol, Anthropic conversion, normalized invocation events/errors | [Provider Adapter](./adapter_llm.md) |
+| Provider protocol, Anthropic/Responses conversion, normalized invocation events/errors | [Provider Adapter](./adapter_llm.md) |
 | Canonical Tool contract, validation, policy/approval execution boundary | [Tools](./core_tools.md) |
 | Builtin inventory, filesystem/search/web and Exec/Process behavior | [Builtin Tools](./core_tools_builtin.md) |
 | Session, Transcript, JSONL and persistence | [Session](./core_session.md) |
@@ -97,6 +99,6 @@ The topic pages own every detail behind these steps; this overview intentionally
 
 | Kind | Evidence |
 |---|---|
-| Source | [runtime-builder.ts](../../../src/runtime/runtime-builder.ts), [Anthropic Provider Runtime Module](../../../src/runtime-modules/anthropic-provider.ts), [RuntimeApp.ts](../../../src/runtime/RuntimeApp.ts), [runtime-composition-manager.ts](../../../src/runtime/runtime-composition-manager.ts), [ModelResolver.ts](../../../src/core/model-resolution/ModelResolver.ts), [attachment-pipeline.ts](../../../src/core/media/attachment-pipeline.ts), [AgentRunner.ts](../../../src/core/runner/AgentRunner.ts) |
+| Source | [runtime-builder.ts](../../../src/runtime/runtime-builder.ts), [Anthropic Provider Runtime Module](../../../src/runtime-modules/anthropic-provider.ts), [Copilot Relay Provider Extension](../../../src/extensions/copilot-relay-provider/index.ts), [RuntimeApp.ts](../../../src/runtime/RuntimeApp.ts), [runtime-composition-manager.ts](../../../src/runtime/runtime-composition-manager.ts), [ModelResolver.ts](../../../src/core/model-resolution/ModelResolver.ts), [attachment-pipeline.ts](../../../src/core/media/attachment-pipeline.ts), [AgentRunner.ts](../../../src/core/runner/AgentRunner.ts) |
 | Tests | [runtime-builder.test.ts](../../../src/runtime/runtime-builder.test.ts), [anthropic-provider.test.ts](../../../src/runtime-modules/anthropic-provider.test.ts), [RuntimeApp.intake.test.ts](../../../src/runtime/RuntimeApp.intake.test.ts), [ModelResolver.test.ts](../../../src/core/model-resolution/ModelResolver.test.ts), [attachment-pipeline.test.ts](../../../src/core/media/attachment-pipeline.test.ts), [ft-01-boundaries.test.ts](../../../src/architecture-fitness/ft-01-boundaries.test.ts), [ft-10-runtime-composition-deletion.test.ts](../../../src/architecture-fitness/ft-10-runtime-composition-deletion.test.ts) |
 | Controlling authority | [ADR-003](../adr-003-progressive-architecture-migration.md), [ADR-005](../adr-005-extension-registry-runtime-composition.md), [ADR-006](../adr-006-legacy-and-compatibility-exit.md), [Runtime Composition Module Spec](../runtime-composition-module-spec.md) |

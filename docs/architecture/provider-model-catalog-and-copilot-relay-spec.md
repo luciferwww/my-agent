@@ -18,6 +18,12 @@
 
 项目所有者于 2026-09-10 接受 C1 Closed Provider Model Catalog Delivery Gate。C1 实现、Current Architecture 同步、focused/regression validation 与独立只读审计均已完成；该接受不授权 C2、C3、C4、commit 或 push。
 
+项目所有者于 C1 commit 后于 2026-09-10 明确要求继续，授权进入 C2 Copilot Relay Provider Extension；C3、C4、C2 commit 与 push 仍未授权。
+
+项目所有者随后选择迁移 `scripts/server.ts` 作为第一版受支持 Host Composition Root。它是 `scripts/` 非权威边界的唯一当前例外：负责读取 `COPILOT_RELAY_BASE_URL` / `COPILOT_RELAY_API_KEY`、构造 Relay Unit，并通过 `loadedUnits` 组合；其他现有脚本仍不保证可运行且不作为 C2 contract authority。
+
+项目所有者于 2026-09-11 接受 C2 Copilot Relay Provider Extension Delivery Gate。C2 implementation、Host migration、Current Architecture 同步、完整 validation、真实 Relay smoke 与独立只读审计均已完成；该接受不授权 C3、C4、commit 或 push。
+
 在本 Spec 完成对应 Delivery Gate 前，当前源码和既有 Accepted Architecture 仍是实现事实与架构权威；本文中的 interface 和行为描述是 target contract，不得倒推为 current behavior。
 
 现有 ADR-004 已决定 Provider 是模型事实的权威 producer、Model Resolution 拥有 Catalog view 和 per-Turn binding；ADR-005 已决定 typed Capability、统一 Unit staging 和 immutable Snapshot。本 Slice 不改变这些长期决策，因此不新增 ADR；若 Review 要求 Core 拥有远端目录、Channel 直接访问 Provider 或引入 Service Locator，则必须先修订 ADR。
@@ -634,7 +640,7 @@ Server → Client：
 
 现有 Session 不保存全局模型选择，因此不迁移 Session 文件。既有历史跨 Provider 可移植性不在本 Slice。
 
-`scripts/` 不是本轮 active example 或 supported process surface。其现有 model/env/runtime usage 可以继续暂存，但不得被 production `src/` 引用、不得进入 C1 typecheck/test evidence，也不得迫使 production contract 保留 `llm.model`、单独 `MY_AGENT_MODEL`、第一 Provider 推断或其他 legacy path。仓库级 residual scan 对 `scripts/` 单独报告而不以零结果作为 C1 Gate；后续脚本工作必须单向迁移到届时 active contract。
+除项目所有者在 C2 单独选定并迁移的 `scripts/server.ts` 外，`scripts/` 不是本轮 active example 或 supported process surface。其现有 model/env/runtime usage 可以继续暂存，但不得被 production `src/` 引用、不得进入 C1 typecheck/test evidence，也不得迫使 production contract 保留 `llm.model`、单独 `MY_AGENT_MODEL`、第一 Provider推断或其他 legacy path。仓库级 residual scan 对其他 `scripts/` 单独报告而不以零结果作为 C1 Gate；后续脚本工作必须单向迁移到届时 active contract。
 
 Accepted Runtime Composition Spec §4 记录的是 Slice 4 历史迁移 baseline，并明确不是目标 Contract；其 §6.5 canonical intake target 已在 current Runtime/queue/WebSocket source 中交付为 `modelReference` 与 `requestOverride.maxOutputTokens`。旧 `RunTurnParams.model` / request-level `maxTokens` aliases 因此不属于本 Slice 的 current migration。C1/C3 必须保持该 current baseline 及其 negative tests，不得把 `ModelInvocationRequest.maxTokens`、resolved model limits 或 Provider wire `maxTokens` 等合法执行字段误判为 legacy request alias。
 

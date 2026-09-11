@@ -6,7 +6,7 @@ A single-process TypeScript AI Agent runtime for learning and architecture exper
 
 - Node.js 22.x
 - npm
-- An Anthropic-compatible endpoint for the included local CLI/WebSocket entry points
+- A local Copilot Relay exposing `/v1/models` and `/v1/responses`
 
 ## Setup and validation
 
@@ -17,27 +17,27 @@ npm run build
 npm test
 ```
 
-## Run local entry points
+## Run the supported local entry point
 
-Interactive CLI against `test-workspace/`:
-
-```bash
-npx tsx scripts/cli.ts --session=main
-```
-
-WebSocket channel on `ws://127.0.0.1:3001/ws` by default:
+Start the WebSocket Channel on `ws://127.0.0.1:8787/ws` against the Relay at
+`http://127.0.0.1:5000`:
 
 ```bash
 npm run agent:websocket
 ```
 
-The browser client is [clients/html/chat.html](clients/html/chat.html). Generate or update configuration with:
+Optional Host environment:
 
-```bash
-npx tsx scripts/config.ts --path test-workspace/.agent/config.json
-```
+- `COPILOT_RELAY_BASE_URL` changes the loopback Relay URL.
+- `COPILOT_RELAY_API_KEY` adds Bearer authorization when nonblank.
+- `MY_AGENT_MODEL` changes the Relay model ID.
+- `MY_AGENT_WS_HOST` and `MY_AGENT_WS_PORT` change the Channel listener.
 
-The executable scripts are verified repository entry points. A stable package-root library import is not currently documented as a public consumer contract.
+The browser client is [clients/html/chat.html](clients/html/chat.html).
+
+[scripts/server.ts](scripts/server.ts) is the only currently supported executable under `scripts/`.
+Other scripts are retained as legacy migration inputs and are not guaranteed to run. A stable
+package-root library import is not currently documented as a public consumer contract.
 
 ## Documentation
 

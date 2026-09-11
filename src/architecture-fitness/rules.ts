@@ -1777,7 +1777,7 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
   if (sourcePath.startsWith('src/core/tools/builtin/') || sourcePath.startsWith('src/core/memory/internal/')) {
     return 'Infrastructure';
   }
-  if (sourcePath.startsWith('src/adapters/')) {
+  if (sourcePath.startsWith('src/adapters/') || sourcePath.startsWith('src/extensions/')) {
     return 'Infrastructure';
   }
   if (sourcePath === 'src/platform/logger/types.ts') {

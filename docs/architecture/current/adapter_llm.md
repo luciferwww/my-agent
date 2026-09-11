@@ -1,8 +1,8 @@
-# Model Invocation 与 Anthropic Adapter
+# Model Invocation、Anthropic 与 Copilot Relay Adapter
 
 > Status: Current Authority
 > Verified: 2026-09-09
-> Ownership: Provider protocol, normalized invocation events/errors, and Anthropic Adapter behavior
+> Ownership: Provider protocol, normalized invocation events/errors, and Anthropic/Copilot Relay Adapter behavior
 > Ownership key: provider-protocol-and-anthropic-adapter
 
 ---
@@ -39,6 +39,13 @@ src/core/tools/
 
 src/runtime-modules/
 └── anthropic-provider.ts       # required bundled Provider Unit
+
+src/extensions/copilot-relay-provider/
+├── copilot-relay-provider-unit.ts # optional external Unit and bounded discovery
+├── copilot-relay-provider.ts      # closed endpoint-scoped Provider projection
+├── responses-client.ts            # raw HTTP Responses/SSE adapter
+├── model-metadata.ts              # Relay metadata eligibility and facts
+└── index.ts
 ```
 
 ## 3. Core invocation shape
@@ -111,10 +118,18 @@ Runtime Builder maps validated Config into module options and adds the singular 
 
 Construction or Provider-option validation failure is startup-fatal for this required Unit and is attributed to `builtin-anthropic-provider`, phase `create`. No RuntimeApp kernel or `app_ready` event exists on that path. Default Provider selection and Snapshot publication remain Runtime responsibilities, not Adapter responsibilities.
 
-## 8. Evidence
+## 8. Copilot Relay external Unit
+
+`src/extensions/copilot-relay-provider/` implements the optional external Unit `copilot-relay-provider` and publishes Provider `copilot-relay`. Unit `create(signal)` validates a credential-free loopback HTTP(S) URL, performs one bounded `/v1/models` discovery, filters entries to exact `/responses` support plus usable prompt/output limits, and freezes an endpoint-scoped closed Catalog. A blank API key emits no Authorization header. Discovery failure follows generic optional external Unit isolation and publishes no partial Provider.
+
+`CopilotRelayResponsesClient` uses raw `fetch` with `stream: true`; no OpenAI SDK or Runtime branch is involved. It maps canonical text/image/Tool history to stateless Responses input, uses `call_id` rather than unstable item IDs, emits complete Tool Calls from `response.output_item.done`, and derives the sole successful terminal from completed or recognized max-output incomplete events. Usage is accepted only as non-negative safe integers. Malformed framing, ordering, identity, Usage, unknown terminal, duplicate terminal, early close, HTTP failure, and SSE failure are normalized fail-closed; Abort remains AbortError and cancels pending body reads.
+
+The supported Host in `scripts/server.ts` reads `COPILOT_RELAY_BASE_URL` and `COPILOT_RELAY_API_KEY`, directly acquires the in-repo Unit, and passes it through `RuntimeAppOptions.loadedUnits` beside the WebSocket Channel. The Extension itself reads no environment. Other scripts remain legacy and are not Provider contract authorities.
+
+## 9. Evidence
 
 | Kind | Evidence |
 |---|---|
-| Source | [AnthropicClient.ts](../../../src/adapters/provider/anthropic/AnthropicClient.ts), [AnthropicProvider.ts](../../../src/adapters/provider/anthropic/AnthropicProvider.ts), [tool-codec.ts](../../../src/adapters/provider/anthropic/tool-codec.ts), [Anthropic Provider Runtime Module](../../../src/runtime-modules/anthropic-provider.ts), [runtime-builder.ts](../../../src/runtime/runtime-builder.ts), [Core invocation types](../../../src/core/model-invocation/types.ts), [Core invocation barrel](../../../src/core/model-invocation/index.ts), [Anthropic Adapter barrel](../../../src/adapters/provider/anthropic/index.ts) |
-| Tests | [AnthropicClient.test.ts](../../../src/adapters/provider/anthropic/AnthropicClient.test.ts), [AnthropicProvider.test.ts](../../../src/adapters/provider/anthropic/AnthropicProvider.test.ts), [tool-codec.test.ts](../../../src/adapters/provider/anthropic/tool-codec.test.ts), [anthropic-provider.test.ts](../../../src/runtime-modules/anthropic-provider.test.ts), [runtime-builder.test.ts](../../../src/runtime/runtime-builder.test.ts), [provider-portability.test.ts](../../../src/core/tools/provider-portability.test.ts), [ft-03-runner-boundary.test.ts](../../../src/architecture-fitness/ft-03-runner-boundary.test.ts), [ft-08-contract-inventory.test.ts](../../../src/architecture-fitness/ft-08-contract-inventory.test.ts) |
+| Source | [AnthropicClient.ts](../../../src/adapters/provider/anthropic/AnthropicClient.ts), [AnthropicProvider.ts](../../../src/adapters/provider/anthropic/AnthropicProvider.ts), [tool-codec.ts](../../../src/adapters/provider/anthropic/tool-codec.ts), [Anthropic Provider Runtime Module](../../../src/runtime-modules/anthropic-provider.ts), [Copilot Relay Unit](../../../src/extensions/copilot-relay-provider/copilot-relay-provider-unit.ts), [Copilot Relay Provider](../../../src/extensions/copilot-relay-provider/copilot-relay-provider.ts), [Responses client](../../../src/extensions/copilot-relay-provider/responses-client.ts), [Relay metadata](../../../src/extensions/copilot-relay-provider/model-metadata.ts), [supported server Host](../../../scripts/server.ts), [runtime-builder.ts](../../../src/runtime/runtime-builder.ts), [Core invocation types](../../../src/core/model-invocation/types.ts) |
+| Tests | [AnthropicClient.test.ts](../../../src/adapters/provider/anthropic/AnthropicClient.test.ts), [AnthropicProvider.test.ts](../../../src/adapters/provider/anthropic/AnthropicProvider.test.ts), [tool-codec.test.ts](../../../src/adapters/provider/anthropic/tool-codec.test.ts), [Relay Unit tests](../../../src/extensions/copilot-relay-provider/copilot-relay-provider-unit.test.ts), [Responses client tests](../../../src/extensions/copilot-relay-provider/responses-client.test.ts), [anthropic-provider.test.ts](../../../src/runtime-modules/anthropic-provider.test.ts), [runtime-builder.test.ts](../../../src/runtime/runtime-builder.test.ts), [provider-portability.test.ts](../../../src/core/tools/provider-portability.test.ts), [ft-03-runner-boundary.test.ts](../../../src/architecture-fitness/ft-03-runner-boundary.test.ts), [ft-08-contract-inventory.test.ts](../../../src/architecture-fitness/ft-08-contract-inventory.test.ts) |
 | Controlling authority | [ADR-002](../adr-002-context-budgeting-and-compaction-recovery.md), [ADR-004](../adr-004-provider-model-identity-and-facts-ownership.md), [ADR-005](../adr-005-extension-registry-runtime-composition.md), [Model Resolution Module Spec](../model-resolution-module-spec.md), [Source Layout Convergence Migration Spec](../source-layout-convergence-migration-spec.md) |

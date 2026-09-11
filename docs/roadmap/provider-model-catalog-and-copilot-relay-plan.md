@@ -85,6 +85,10 @@ Technical Gate evidence（2026-09-10）：C1 focused tests 通过；除本机 `b
 
 ### C2 — Copilot Relay Provider Extension
 
+**Plan Item 状态：** Completed — Owner Accepted（2026-09-11）
+
+项目所有者于 2026-09-10 选择将 `scripts/server.ts` 单独迁移为 C2 受支持 Host Composition Root。该文件负责读取 Relay Host 环境、显式构造 Relay external Unit，并与 WebSocket Channel 一同传入 `RuntimeAppOptions.loadedUnits`；`scripts/` 其余文件仍保持非权威、当前不保证可运行的 legacy 状态。
+
 - 新增 in-repo external Provider Unit；
 - Unit `create()` 有界获取、校验并冻结 `/v1/models` 快照；
 - 只发布支持 HTTP `/responses` 且具备必要执行 facts 的模型；
@@ -94,7 +98,11 @@ Technical Gate evidence（2026-09-10）：C1 focused tests 通过；除本机 `b
 - Host 通过 `loadedUnits` 组合 Extension，不给 Runtime/Runner 增加 Relay branch；
 - direct in-repo factory import 仅存在于 Composition Root；Relay 注册后与未来 package-loaded external Unit 使用相同 staging、conflict isolation、Snapshot 和 lifecycle path。
 
-**Gate C2：** Provider contract、protocol fixtures、真实 Relay smoke、failure cleanup、lint、build 通过。
+**Gate C2：** Passed — Provider contract、protocol fixtures、真实 Relay smoke、failure cleanup、lint、build 已通过，项目所有者已接受。
+
+Technical Gate evidence（2026-09-10）：Relay focused suite 为 40 tests 全部通过；完整 regression 为 99 files / 894 tests 全部通过；`npm run lint` 与 `npm run build` 通过。真实 loopback Relay smoke 通过 `/v1/models` discovery、external Unit registration、`gpt-5.6-sol` Catalog membership 与原生 `/v1/responses` 调用，得到单一 `end_turn`、有效 Usage 和 text content。迁移后的 `scripts/server.ts` 在 Relay Provider + WebSocket Channel 组合下成功启动，并通过现有 Host signal path 有界关闭。两轮独立只读审计提出的 pending-body Abort、未知 terminal、Tool ordering、URL logging 与 failure cleanup 问题均已修复；最终复审结论为 Gate-ready，且无 unresolved Critical/High/Medium finding。该技术通过不构成项目所有者接受，也不授权 C2 commit、push 或进入 C3。
+
+项目所有者于 2026-09-11 接受 C2 Delivery Gate。该接受关闭 C2，但不授权 C2 commit、push 或进入 C3/C4。
 
 ### C3 — Channel Runtime Capabilities and Model Selection
 
