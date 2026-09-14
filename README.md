@@ -6,7 +6,7 @@ A single-process TypeScript AI Agent runtime for learning and architecture exper
 
 - Node.js 22.x
 - npm
-- A local Copilot Relay exposing `/v1/models` and `/v1/responses`
+- An installed Provider Extension; the example below uses a local Copilot Relay exposing `/v1/models` and `/v1/responses`
 
 ## Setup and validation
 
@@ -19,19 +19,56 @@ npm test
 
 ## Run the supported local entry point
 
-Start the WebSocket Channel on `ws://127.0.0.1:8787/ws` against the Relay at
-`http://127.0.0.1:5000`:
+The supported Host discovers explicitly enabled Extensions from Agent Home. Build the repository,
+stop the Host, and copy the complete Relay artifact directory from
+`dist/extension-artifacts/copilot-relay-provider` to a direct child such as
+`<agent-home>/extensions/relay`. Do not copy individual files or run `npm install` inside the
+artifact.
+
+Create `<agent-home>/config.json`:
+
+```json
+{
+	"extensions": {
+		"enabled": true,
+		"entries": {
+			"copilot-relay-provider": {
+				"enabled": true,
+				"config": {
+					"baseURL": { "$env": "COPILOT_RELAY_BASE_URL" },
+					"apiKey": {
+						"$secret": {
+							"source": "env",
+							"name": "COPILOT_RELAY_API_KEY"
+						}
+					}
+				}
+			}
+		}
+	}
+}
+```
+
+Set `MY_AGENT_HOME` to that directory, set the two example Relay variables referenced by the
+scoped config, and provide a complete default Model Reference through workspace config or the
+atomic environment pair `MY_AGENT_PROVIDER=copilot-relay` plus `MY_AGENT_MODEL=<model-id>`.
+Then start the static WebSocket Channel on `ws://127.0.0.1:8787/ws`:
 
 ```bash
 npm run agent:websocket
 ```
 
-Optional Host environment:
+Generic Host environment:
 
-- `COPILOT_RELAY_BASE_URL` changes the loopback Relay URL.
-- `COPILOT_RELAY_API_KEY` adds Bearer authorization when nonblank.
-- `MY_AGENT_MODEL` changes the Relay model ID.
+- `MY_AGENT_HOME` selects Agent Home; `--agent-home <path>` has higher precedence.
+- `MY_AGENT_PROVIDER` and `MY_AGENT_MODEL` must be supplied together when overriding the default Model Reference.
 - `MY_AGENT_WS_HOST` and `MY_AGENT_WS_PORT` change the Channel listener.
+
+`COPILOT_RELAY_BASE_URL` and `COPILOT_RELAY_API_KEY` above are Extension-owned reference names in
+the example config, not Relay-specific Host settings. The Host does not import Relay code, infer a
+Provider ID, or fall back to a static Relay Unit when acquisition fails. Actionable acquisition and
+optional Unit startup failures are printed as bounded, redacted operator warnings and are not sent
+to WebSocket clients.
 
 The browser client is [clients/html/chat.html](clients/html/chat.html).
 

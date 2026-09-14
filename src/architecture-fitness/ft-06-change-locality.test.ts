@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
@@ -29,5 +30,25 @@ describe('FT-06 Provider and Extension change locality', () => {
     const productionSources = await loadProductionSources(REPOSITORY_ROOT);
 
     expect(findFt06ChangeLocalityViolations(productionSources, FIXTURE_MANIFEST)).toEqual([]);
+  });
+
+  it('keeps the supported Host on generic acquisition without Extension-specific authority', async () => {
+    const host = await readFile(`${REPOSITORY_ROOT}/scripts/server.ts`, 'utf8');
+    const startup = await readFile(
+      `${REPOSITORY_ROOT}/scripts/websocket-host-startup.ts`,
+      'utf8',
+    );
+
+    expect(host).toContain('prepareWebSocketHostAcquisition(');
+    expect(host).toContain('...acquisition.result.loadedUnits');
+    expect(host).toContain('const envOverrides = getEnvOverrides();');
+    expect(host).toContain('...envOverrides');
+    expect(host.indexOf('const envOverrides = getEnvOverrides();'))
+      .toBeLessThan(host.indexOf('prepareWebSocketHostAcquisition('));
+    expect(host).toContain('createWebSocketChannelModule({');
+    expect(`${host}\n${startup}`)
+      .not.toMatch(/copilot-relay-provider|COPILOT_RELAY_|createCopilotRelayProviderUnit/);
+    expect(host).not.toMatch(/providerId\s*:\s*['"][^'"]+['"]/);
+    expect(host).not.toMatch(/catch[\s\S]{0,200}create.*ProviderUnit/u);
   });
 });

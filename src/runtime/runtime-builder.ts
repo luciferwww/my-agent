@@ -530,24 +530,35 @@ function emitStartupDiagnostics(
   snapshot: import('../core/registry/index.js').RegistrySnapshot,
 ): void {
   for (const diagnostic of snapshot.diagnostics) {
-    if (!diagnostic.code.startsWith('CHANNEL_')) continue;
-    const code = diagnostic.code === 'CHANNEL_CREATE_FAILED'
-      ? 'CHANNEL_CREATE_FAILED'
-      : diagnostic.code === 'CHANNEL_ROLLBACK_FAILED'
-        ? 'CHANNEL_ROLLBACK_FAILED'
-        : 'CHANNEL_START_FAILED';
     options.onEvent?.({
       type: 'warning',
       info: {
         scope: 'startup',
         severity: 'warning',
-        code,
-        message: diagnostic.message,
+        code: diagnostic.code,
+        message: startupDiagnosticMessage(diagnostic.code),
         unitId: diagnostic.unitId,
         contributionId: diagnostic.contributionId,
         phase: diagnostic.phase,
       },
     });
+  }
+}
+
+function startupDiagnosticMessage(
+  code: import('../core/registry/index.js').RegistryStartupDiagnostic['code'],
+): string {
+  switch (code) {
+    case 'UNIT_INVALID':
+      return 'An optional Runtime Unit was rejected during startup.';
+    case 'UNIT_CONFLICT':
+      return 'An external Runtime Unit lost deterministic conflict resolution.';
+    case 'CHANNEL_CREATE_FAILED':
+      return 'An optional Channel failed during creation.';
+    case 'CHANNEL_START_FAILED':
+      return 'An optional Channel failed during startup.';
+    case 'CHANNEL_ROLLBACK_FAILED':
+      return 'An optional Channel failed during startup rollback.';
   }
 }
 

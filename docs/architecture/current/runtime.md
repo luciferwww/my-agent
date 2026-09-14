@@ -3,6 +3,7 @@
 > Status: Current Authority
 > Verified: 2026-09-09
 > Error boundary verified: 2026-09-11
+> External Unit startup warnings verified: 2026-09-14
 > Ownership: Runtime composition, generation, queue, routing, Fanout, Abort, Shutdown, and Subagent Parent/Child lifecycle
 > Ownership key: runtime-composition-and-lifecycle
 
@@ -427,6 +428,7 @@ The immutable `RuntimeShutdownReport` records `completed` and `deadline-exhauste
 | scope | 关键情形 | severity | 处理 |
 |---|---|---|---|
 | startup | required Provider Unit 构造或 options validation 失败 | fatal | 标注 Unit/create phase，清理 candidate，拒绝启动 |
+| startup | optional External Unit 无效或 Contribution 冲突 | warning | 隔离失败 Unit/loser，以 `UNIT_INVALID` / `UNIT_CONFLICT` 继续启动 |
 | startup | published Snapshot 无 Provider | fatal | kernel/app_ready 前关闭 Composition 与 bootstrap resources |
 | startup | memory 初始化失败 | recoverable | 禁用 memory，继续启动 |
 | run | phase 不对 / session busy | recoverable | 抛 RUN_REJECTED，不销毁 app |
@@ -452,6 +454,8 @@ Runtime 沿既有 cause chain 在最多八个 same-realm `Error` 节点内调用
   - `app_start` / `app_ready` / `turn_start` / `turn_end`
   - `context_reload` / `messages_dropped` / `warning` / `error`
   - `shutdown_start` / `shutdown_end`
+
+Runtime Builder 将 Registry startup diagnostics 全部投影到既有 `warning` event，不再只转发 `CHANNEL_*`。optional External Unit create/validation failure 使用 `UNIT_INVALID`，确定性 Contribution 冲突的 external loser 使用 `UNIT_CONFLICT`；事件只携带稳定 Host-owned message 与适用的 `unitId`、`contributionId`、`phase`。raw Extension message、Error、cause 和 Channel payload 不进入该 warning contract。supported executable Host 再对允许字段执行 bounded、escaped operator projection；普通 Channel 用户不接收 startup diagnostics。
 
 - **`AgentEvent`**（via `onAgentEvent` + `channel.send`）：turn 内执行事件
   - `user_message` / `text_delta` / `tool_use` / `tool_result` / `llm_call` / `compaction_*` 等

@@ -283,6 +283,63 @@ describe('Runtime Builder', () => {
     await handle.close();
   });
 
+  it('emits a redacted UNIT_INVALID warning when optional Unit creation is isolated', async () => {
+    const secret = 'extension-secret-in-error';
+    const invalidUnit: LoadedRuntimeUnit = Object.freeze({
+      unitId: 'invalid-external',
+      source: 'external',
+      orderKey: 'invalid-external',
+      required: false,
+      initiallyEnabled: true,
+      dependencies: Object.freeze([]),
+      create() { throw new Error(secret); },
+    });
+    const harness = createHarness({ additionalLoadedUnits: [invalidUnit] });
+
+    const handle = await buildRuntimeHandle(harness.runtimeOptions, harness.createApplication);
+
+    expect(harness.events).toContainEqual({
+      type: 'warning',
+      info: expect.objectContaining({
+        scope: 'startup',
+        severity: 'warning',
+        code: 'UNIT_INVALID',
+        message: 'An optional Runtime Unit was rejected during startup.',
+        unitId: 'invalid-external',
+      }),
+    });
+    expect(JSON.stringify(harness.events)).not.toContain(secret);
+    await handle.close();
+  });
+
+  it('emits a UNIT_CONFLICT warning when an external Provider loses resolution', async () => {
+    const conflictingUnit = createLoadedRuntimeUnit({
+      registration: {
+        id: 'conflicting-external',
+        source: 'external',
+        register(api) { api.registerProvider(testProvider('test-provider')); },
+      },
+      required: false,
+    });
+    const harness = createHarness({ additionalLoadedUnits: [conflictingUnit] });
+
+    const handle = await buildRuntimeHandle(harness.runtimeOptions, harness.createApplication);
+
+    expect(harness.events).toContainEqual({
+      type: 'warning',
+      info: expect.objectContaining({
+        scope: 'startup',
+        severity: 'warning',
+        code: 'UNIT_CONFLICT',
+        message: 'An external Runtime Unit lost deterministic conflict resolution.',
+        unitId: 'conflicting-external',
+      }),
+    });
+    expect(harness.getInput()?.snapshotAccess.currentSnapshot().providers.map(({ id }) => id))
+      .toEqual(['test-provider']);
+    await handle.close();
+  });
+
   it('publishes an empty Provider Snapshot without inventing a default Provider', async () => {
     const harness = createHarness({ providerUnit: createProviderUnit([]) });
 

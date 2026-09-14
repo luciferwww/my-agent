@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 
-- **状态：** Accepted；A1–A3 completed
+- **状态：** Accepted；A1–A4 completed
 - **版本：** 0.1
 - **日期：** 2026-09-11
 - **所有者：** 项目所有者
@@ -12,7 +12,7 @@
 - **工作流：** [Development Workflow](../development-workflow.md)
 - **执行授权：** 项目所有者于 2026-09-11 授权 A0 readiness evidence，并于 2026-09-14 接受 A0 Results；production Delivery 仍需独立授权。
 
-本 Plan 独立于 Provider Model Catalog Plan C4。项目所有者于 2026-09-14 接受 Spec v0.4，随后接受 A1、A2，并明确授权 A3 Relay artifact。A4–A5 与 C4 仍未授权；当前工作不迁移 supported Host、不删除 Relay 过渡路径。
+本 Plan 独立于 Provider Model Catalog Plan C4。项目所有者于 2026-09-14 接受 Spec v0.4 与 A1–A4，并批准在既有 `RuntimeEvent.warning` 上增加 `UNIT_INVALID` / `UNIT_CONFLICT`。A5 与 C4 仍未授权。
 
 ## 2. 用户可观察目标
 
@@ -106,13 +106,23 @@
 
 ### A4 — Generic Host migration
 
-**状态：** Not Started
+**状态：** Completed（owner accepted 2026-09-14）
 
 - supported WebSocket Host 解析 Agent Home、acquire generic Units、保留 static WebSocket Channel；
 - Relay config 迁移到 Host config scoped namespace；
 - 删除 Relay import、ID、URL normalizer 与 `COPILOT_RELAY_*` reads；
 - default Model Reference 只来自 workspace config 或 generic atomic env override；
 - acquisition result 与 Runtime warning 投影给 operator。
+
+**实现记录（2026-09-14）：**
+
+- supported Host 在任何 enabled Extension import 前验证通用 Model Reference env override，按 explicit option / `MY_AGENT_HOME` / default 解析 Agent Home，并只调用 generic config/acquisition API；
+- acquisition 返回的 External Units 与 Host-owned static WebSocket Channel 一起进入唯一 `RuntimeAppOptions.loadedUnits` path；
+- 原 Relay factory/ID/base-URL normalization、`COPILOT_RELAY_*` Host reads 和隐式 Relay model fallback 已原子删除；
+- Runtime 既有 warning event 增加 `UNIT_INVALID` / `UNIT_CONFLICT`，并以稳定 Host-owned message 发送 Unit/contribution/phase allowlist fields；Host 对 acquisition 与 Runtime warning 使用 bounded/redacted operator projection，`disabled` 默认不打印；
+- 新增 Host policy/argument/formatter tests、Runtime Unit warning regressions、FT-06 no-specific-authority rule，以及 fresh Agent Home + relocated artifact + loopback Relay + real WebSocket turn smoke verifier；未增加 dependency、Runtime path 或 Extension-specific Host branch。
+
+**Validation record：** Host/Runtime/FT-06 focused tests 21/21 passed；三组 Host/Runtime regressions 64/64 passed；full Vitest 107 files / 1020 tests passed；lint、build、7-file artifact audit、Relay error-boundary audit、supported Host smoke 与 `git diff --check` passed；independent final review PASS，无 unresolved Critical/High/Medium finding。项目所有者于 2026-09-14 接受 A4 implementation、validation evidence 与 review disposition。该接受不授权 A5、C4、commit 或 push。
 
 ### A5 — Closeout
 
@@ -131,9 +141,9 @@
 - [x] A0 filesystem/module/Ajv/synthetic-artifact/redaction readiness evidence 完成；
 - [x] Descriptor/Schema/module format Contract tests 范围明确且无 blocker；
 - [x] Windows evidence 与 Linux/macOS pure-rule/CI platform evidence boundary 明确；
-- [ ] production files、真实 caller、旧路径删除条件和 rollback 明确；
-- [ ] focused/contract/integration/Fitness/broad validation matrix 完整；
-- [ ] 无需新的 dependency、第二 runtime path 或 Extension-specific Host branch。
+- [x] production files、真实 caller、旧路径删除条件和 rollback 明确；
+- [x] focused/contract/integration/Fitness/broad validation matrix 完整；
+- [x] 无需新的 dependency、第二 runtime path 或 Extension-specific Host branch。
 
 ## 6. Global exit conditions
 

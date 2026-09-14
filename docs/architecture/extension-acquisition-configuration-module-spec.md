@@ -15,7 +15,7 @@
 - **语言与术语约定：** [Architecture Foundation Plan §7.4](../roadmap/architecture-foundation-plan.md#74-当前架构重构文档的语言与术语约定)
 - **工作流：** [Development Workflow](../development-workflow.md)
 
-项目所有者于 2026-09-14 接受本 Spec v0.4，随后接受 A1、A2，并明确授权 A3 Relay artifact。A4 supported Host migration、A5 closeout 与 C4 仍未授权。当前唯一受支持 Host 仍按 Current Architecture 直接组合 Copilot Relay；只有关联 Plan 的 production Definition of Ready 全部满足且相应 Delivery Item 获得明确授权后，才能迁移该路径。
+项目所有者于 2026-09-14 接受本 Spec v0.4 与 A1–A4，并批准在既有 `RuntimeEvent.warning` 上增加 `UNIT_INVALID` / `UNIT_CONFLICT`。A5 closeout 与 C4 仍未授权。
 
 2026-09-11 readiness Spike 在 Windows/Node 22/Ajv 8.20 环境验证了 canonical containment、Agent Home alias、file/directory/junction/entry symlink rejection、multi-file ESM relocation、Draft-07 strict/default/no-coercion/no-removal/internal-ref behavior 与 bounded redaction。该证据支持 `Draft -> In Review`，不替代 A1–A4 production Contract/Integration tests，也不将单一 Windows observation表述为跨平台证明。
 
@@ -77,11 +77,11 @@
 
 当前 Runtime 已接受调用方提供的 `RuntimeAppOptions.loadedUnits`，并通过统一 `RuntimeUnitCatalog`、registration staging、immutable Registry generation 和 instance lifecycle 处理它们。该路径是本 Slice 必须复用的 production boundary。
 
-当前 [supported WebSocket Host](../../scripts/server.ts) 同时承担了 Host lifecycle 和 Relay-specific acquisition：它直接 import Copilot Relay factory、读取 `COPILOT_RELAY_BASE_URL` / `COPILOT_RELAY_API_KEY`，构造 Relay Unit 后传入 `loadedUnits`。这能完成 C2 的 in-repo 过渡接入，但意味着 Host 预先知道具体 Extension，不满足通用 plug-in/out 目标。
+当前 [supported WebSocket Host](../../scripts/server.ts) 保留 Host lifecycle 与 static WebSocket Channel ownership，但已把 External Extension acquisition 交给通用 Agent Home/config/loader boundary。它将 generic acquisition 结果传入现有 `loadedUnits` path，不 import Copilot Relay、不读取 Relay-specific environment names，也不推导 Provider identity 或保留静态 fallback。
 
 当前 workspace 配置位于 `<workspace>/.agent/config.json`，中央 `AgentDefaults` 由 Configuration 读取、合并并交给 Runtime。它描述 Agent 行为，不是 machine/Host-level Extension installation authority；把任意第三方配置并入该类型会使中央 Config 永久知道第三方字段。
 
-本 Spec 不否定 C2 的已接受交付。它定义后续删除该过渡 acquisition 的条件，并保持 Runtime 下游 Contract 不变。
+该迁移不否定 C2 的已接受交付，并保持 Runtime 下游 Contract 与单一 lifecycle path 不变。
 
 ## 6. Boundaries and Dependencies
 
@@ -453,7 +453,7 @@ External Extension 是显式启用后在 Host 进程中执行的可信代码。D
 - acquisition loader 直接注册与 Runtime staging 注册两条路径；
 - shared Error class identity 与 structural protocol 两个跨 Extension 错误权威。
 
-在迁移 Gate 前，当前 [server.ts](../../scripts/server.ts) 仍是唯一受支持路径；Draft/partial implementation 不得被表述为 Current Architecture。
+迁移 Gate 已由 A4 跨越并由项目所有者接受：[server.ts](../../scripts/server.ts) 仍是唯一受支持 executable path，但其 External Units 只来自 generic acquisition。旧静态 Relay composition 不作为 fallback 保留。
 
 ### 12.3 Rollback
 
@@ -465,11 +465,11 @@ External Extension 是显式启用后在 Host 进程中执行的可信代码。D
 
 - [ ] 未修改 Host/Runtime/Runner Extension-specific 代码即可安装并启用一个 fixture Provider Extension；重启后它出现在 Catalog；
 - [ ] 禁用或移除后重启，它不再出现在 Catalog，其他 Provider/Channel 正常；
-- [ ] Relay 通过 scoped config 和 SecretRef 完成真实 loopback Catalog discovery 与 invocation；
-- [ ] supported WebSocket Host 不再 import Relay 或读取 Relay-specific env；
-- [ ] supported WebSocket Host 仅通过 workspace `AgentDefaults.model` 或成对的 `MY_AGENT_PROVIDER` + `MY_AGENT_MODEL` 取得完整 Model Reference，不推导具体 Provider；
-- [ ] stale/invalid Extension 配置产生可定位、无 secret 的 diagnostic，不静默 fallback。
-- [ ] 显式启用的 Extension 在 acquisition 或 optional Unit lifecycle 阶段失败时，机器操作者收到 bounded、redacted warning；普通 WebSocket/browser 用户不收到 installation/startup details。
+- [x] Relay 通过 scoped config 和 SecretRef 完成真实 loopback Catalog discovery 与 invocation；
+- [x] supported WebSocket Host 不再 import Relay 或读取 Relay-specific env；
+- [x] supported WebSocket Host 仅通过 workspace `AgentDefaults.model` 或成对的 `MY_AGENT_PROVIDER` + `MY_AGENT_MODEL` 取得完整 Model Reference，不推导具体 Provider；
+- [x] stale/invalid Extension 配置产生可定位、无 secret 的 diagnostic，不静默 fallback。
+- [x] 显式启用的 Extension 在 acquisition 或 optional Unit lifecycle 阶段失败时，机器操作者收到 bounded、redacted warning；普通 WebSocket/browser 用户不收到 installation/startup details。
 
 ### 13.2 Contract evidence
 
@@ -484,19 +484,19 @@ External Extension 是显式启用后在 Host 进程中执行的可信代码。D
 - [ ] Host 不 import Extension-private Error subclass，跨 Extension 识别不以共享 `instanceof`、message matching 或公共 SDK runtime singleton 为必要条件；
 - [ ] build artifact 只有 Descriptor、ESM marker、entry 与 Relay-owned production JavaScript closure；不存在越界 runtime import、测试、声明、source map、Host Core 文件或 npm install；
 - [ ] artifact 在 fresh/relocated Agent Home 中可加载，repository/build tree 删除后仍可运行；partial/运行中/symlink deployment 明确不受支持；
-- [ ] acquisition actionable diagnostics 通过 frozen result 到达 Host；Runtime optional Unit 与 Channel degraded diagnostics 全部通过 warning event 到达 Host，不只转发 `CHANNEL_*`；
-- [ ] operator formatter 对两阶段 diagnostics 使用同一 bounded/redacted policy；fatal error 仍 reject，`disabled` 默认不打印，诊断不进入 Channel protocol；
-- [ ] Loader 只产出 `LoadedRuntimeUnit[]`，不 create/start/register Unit；
-- [ ] boundary/Fitness test 禁止 Host 和 Runtime import具体 External Extension。
+- [x] acquisition actionable diagnostics 通过 frozen result 到达 Host；Runtime optional Unit 与 Channel degraded diagnostics 全部通过 warning event 到达 Host，不只转发 `CHANNEL_*`；
+- [x] operator formatter 对两阶段 diagnostics 使用同一 bounded/redacted policy；fatal error 仍 reject，`disabled` 默认不打印，诊断不进入 Channel protocol；
+- [x] Loader 只产出 `LoadedRuntimeUnit[]`，不 create/start/register Unit；
+- [x] boundary/Fitness test 禁止 Host 和 Runtime import具体 External Extension。
 
 ### 13.3 Integration and regression evidence
 
 - [ ] fixture Extension -> generic acquisition -> Runtime staging -> immutable Snapshot -> typed projection；
 - [ ] 一个坏 Extension 不改变其他 valid Unit 的发布结果；
 - [ ] existing runtime reload/generation/retirement/Shutdown tests 不新增第二条路径；
-- [ ] Copilot Relay focused tests、真实 Relay smoke、CLI/WebSocket model selection 与 Abort regressions 通过；
-- [ ] complete `npm test`、`npm run lint`、`npm run build` 和 `git diff --check` 通过；
-- [ ] 文档链接/Fitness/Current Architecture 同步检查通过。
+- [x] Copilot Relay focused tests、supported WebSocket Host loopback smoke、CLI/WebSocket model selection 与 Abort regressions 通过；
+- [x] complete `npm test`、`npm run lint`、`npm run build` 和 `git diff --check` 通过；
+- [x] 文档链接/Fitness/Current Architecture 同步检查通过。
 
 ## 14. Definition of Ready
 
@@ -510,10 +510,10 @@ External Extension 是显式启用后在 Host 进程中执行的可信代码。D
 - [x] startup diagnostics 以 acquisition result 与 Runtime warning event 为各阶段结构化权威，supported Host 向机器操作者/Host integrator 展示；不进入 Channel，也不增加 durable `RuntimeHandle` report；
 - [x] [Model Invocation Error Boundary Amendment](model-invocation-error-boundary-amendment.md) 已接受 versioned structural error、runtime parser、Host canonicalization 与现有 class 输入的迁移/兼容规则；
 - [x] Error canonicalization 已通过同一 Core/Runtime error path 实现，未新增第二条 Runtime/Runner/Registry、invocation 或 lifecycle path；
-- [ ] 项目所有者单独授权 production Delivery。
+- [x] 项目所有者单独授权 A1–A4 production Delivery；A5/C4 不在该授权内。
 
 ## 15. Open Questions
 
 本 Spec 的本地 design Open Questions 已全部关闭。Agent Home resolution、Host config physical source、directory/identity semantics、Draft-07 Schema contract、Entry factory、跨 Extension 错误的长期 structural-authority 方向、Relay installation artifact 和 startup diagnostics surface 均已有唯一决定。
 
-本文档现为 `Accepted`：Model Invocation structural error shape 已实现并完成 validation evidence；Descriptor/Schema/module format、path containment、synthetic artifact relocation 和 diagnostic redaction 的 readiness evidence 已形成。项目所有者于 2026-09-14 只授权 A1。真实 Relay artifact repository independence、production Loader categories、Runtime warning projection 和 Host migration 仍属于 A2–A4 validation gates，不得由 readiness Spike 或 A1 代替。v1 External Unit dependencies 已决定为空；未来如需依赖图必须另行扩展 acquisition isolation 与 Runtime Catalog failure matrix。任何新证据若要求第二条 Runtime path、Extension-specific Host branch、全局 Config 暴露、不受信任代码执行、公共 SDK runtime singleton 或新的 package manager/bundler dependency，必须停止并回到项目所有者重新决策。
+本文档现为 `Accepted`：Model Invocation structural error 与 A1–A4 均已有 implementation、validation、review 和 owner acceptance evidence。A5/C4 未授权。v1 External Unit dependencies 已决定为空；未来如需依赖图必须另行扩展 acquisition isolation 与 Runtime Catalog failure matrix。任何新证据若要求第二条 Runtime path、Extension-specific Host branch、全局 Config 暴露、不受信任代码执行、公共 SDK runtime singleton 或新的 package manager/bundler dependency，必须停止并回到项目所有者重新决策。

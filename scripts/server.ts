@@ -7,26 +7,27 @@
  * Usage:
  *   npx tsx scripts/server.ts
  *   npx tsx scripts/server.ts --port=9000
+ *   npx tsx scripts/server.ts --agent-home C:\path\to\.my-agent
  *
  * Env vars (optional):
- *   COPILOT_RELAY_BASE_URL (default: 'http://127.0.0.1:5000')
- *   COPILOT_RELAY_API_KEY  (default: no Authorization header)
- *   MY_AGENT_MODEL         (default: 'gpt-5.6-sol')
+ *   MY_AGENT_HOME          (default: '<user-home>/.my-agent')
+ *   MY_AGENT_PROVIDER + MY_AGENT_MODEL (atomic default Model Reference override)
  *   MY_AGENT_WS_PORT       (default: 8787)
  *   MY_AGENT_WS_HOST       (default: '127.0.0.1')
  */
 
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  COPILOT_RELAY_PROVIDER_ID,
-  DEFAULT_COPILOT_RELAY_BASE_URL,
-  createCopilotRelayProviderUnit,
-  normalizeCopilotRelayBaseURL,
-} from '../src/extensions/copilot-relay-provider/index.js';
+import { getEnvOverrides } from '../src/platform/config/index.js';
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
 import { createWebSocketChannelModule } from '../src/runtime-modules/index.js';
 import { createRuntimeHost } from './runtime-host.js';
+import {
+  formatAcquisitionWarning,
+  formatRuntimeWarning,
+  parseAgentHomeArgument,
+  prepareWebSocketHostAcquisition,
+} from './websocket-host-startup.js';
 
 const WORKSPACE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'test-workspace');
 
@@ -41,19 +42,22 @@ const bold = (s: string) => `\x1b[1m${s}\x1b[0m`;
 const dim = (s: string) => `\x1b[90m${s}\x1b[0m`;
 
 async function main(): Promise<void> {
-  const apiKey = process.env.COPILOT_RELAY_API_KEY;
-  const baseURL = normalizeCopilotRelayBaseURL(
-    process.env.COPILOT_RELAY_BASE_URL ?? DEFAULT_COPILOT_RELAY_BASE_URL,
+  const envOverrides = getEnvOverrides();
+  const acquisition = await prepareWebSocketHostAcquisition(
+    parseAgentHomeArgument(process.argv.slice(2)),
+    process.env,
   );
-  const model = process.env.MY_AGENT_MODEL ?? 'gpt-5.6-sol';
+  for (const diagnostic of acquisition.result.diagnostics) {
+    const warning = formatAcquisitionWarning(diagnostic);
+    if (warning !== undefined) process.stderr.write(`\x1b[33m${warning}\x1b[0m\n`);
+  }
   const port = parseIntArg('port', Number.parseInt(process.env.MY_AGENT_WS_PORT ?? '8787', 10) || 8787);
   const host = process.env.MY_AGENT_WS_HOST ?? '127.0.0.1';
 
   console.log(bold('\n=== my-agent WebSocket server ==='));
   console.log(`Workspace : ${WORKSPACE_DIR}`);
-  console.log(`Provider  : ${COPILOT_RELAY_PROVIDER_ID}`);
-  console.log(`Relay     : ${new URL(baseURL).origin}`);
-  console.log(`Model     : ${COPILOT_RELAY_PROVIDER_ID}/${model}`);
+  console.log(`Agent Home: ${acquisition.agentHome}`);
+  console.log(`Extensions: ${acquisition.result.loadedUnits.length} loaded`);
   console.log(`WebSocket : ws://${host}:${port}/ws`);
   console.log(dim('Approval  : enabled (web client will be prompted)'));
   console.log(dim('Press Ctrl+C to stop.\n'));
@@ -61,7 +65,7 @@ async function main(): Promise<void> {
   const app = await RuntimeApp.create({
     workspaceDir: WORKSPACE_DIR,
     loadedUnits: [
-      createCopilotRelayProviderUnit({ baseURL, apiKey }),
+      ...acquisition.result.loadedUnits,
       createWebSocketChannelModule({
         port,
         host,
@@ -69,8 +73,13 @@ async function main(): Promise<void> {
       }),
     ],
     envOverrides: {
-      model: { providerId: COPILOT_RELAY_PROVIDER_ID, modelId: model },
+      ...envOverrides,
       memory: { enabled: true },
+    },
+    onEvent(event) {
+      if (event.type === 'warning') {
+        process.stderr.write(`\x1b[33m${formatRuntimeWarning(event.info)}\x1b[0m\n`);
+      }
     },
   });
 

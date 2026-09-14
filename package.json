@@ -16,6 +16,7 @@
     "lint": "tsc --noEmit",
     "verify:relay-error-boundary": "node scripts/audit-relay-error-boundary.mjs",
     "verify:relay-artifact": "node scripts/audit-relay-extension-artifact.mjs",
+    "verify:websocket-host": "node scripts/verify-websocket-host.mjs",
     "agent:websocket": "npx tsx scripts/server.ts",
     "test:tool:list-cwd": "npx tsx scripts/test-exec-list-cwd.ts",
     "test:tool:background": "npx tsx scripts/test-exec-background.ts",

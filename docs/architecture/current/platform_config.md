@@ -2,6 +2,7 @@
 
 > Status: Current Authority
 > Verified: 2026-09-09
+> Agent Home acquisition config verified: 2026-09-14
 > Ownership: configuration sources, precedence, schema, defaults, and Config Wizard
 > Ownership key: configuration-and-wizard
 
@@ -10,6 +11,8 @@
 `src/platform/config/` owns configuration shape, hardcoded defaults, file loading, merge precedence, environment extraction, and the interactive Config Wizard. Runtime is the production caller of `loadConfig()` and `resolveAgentConfig()` and maps the result into narrow module inputs.
 
 Config may carry a default Model Reference and Provider deployment-facts input. It does not establish canonical model identity, effective limits, or Model Facts; those are validated and owned by [Model Resolution](./core_model_resolution.md) under ADR-004.
+
+Machine/Host-level Extension installation configuration is a separate authority at `<agent-home>/config.json`; it is not merged into `AgentDefaults` or the workspace file described below.
 
 ## 2. Runtime configuration file
 
@@ -37,6 +40,14 @@ Lowest to highest precedence:
 | 5 | caller/CLI overrides | `resolveAgentConfig()` |
 
 `deepMerge()` recursively merges plain objects, ignores `undefined`, and replaces arrays/scalars rather than appending them. `getEnvOverrides()` maps `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` into the LLM branch; `MY_AGENT_PROVIDER` and `MY_AGENT_MODEL` form one atomic structured default-model override and either both must be present or both absent.
+
+The supported Host evaluates this generic override before importing any enabled External Extension. A missing half of the pair is a Host configuration error; no Extension-specific Provider inference or fallback occurs.
+
+## 3.1 Agent Home and Extension configuration
+
+Agent Home resolution precedence is explicit `--agent-home`, then `MY_AGENT_HOME`, then `<user-home>/.my-agent`. Missing Agent Home, Host config, or `extensions` directory is an empty non-creating state. An existing unreadable/malformed/root-invalid Host config, or an invalid existing discovery root, is startup-fatal.
+
+`<agent-home>/config.json` owns the `extensions.enabled` switch and `extensions.entries.<descriptor-id>` namespaces. An entry must be explicitly enabled. Generic `$env` and environment-backed `$secret` references are materialized from the Host process environment before strict Descriptor-owned Draft-07 validation; validated scoped config is defensively frozen before its Extension factory receives it. Environment variable names are deployment inputs selected by config, not centrally typed Extension fields.
 
 ## 4. Current schema and defaults
 
