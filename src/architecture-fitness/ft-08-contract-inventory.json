@@ -196,6 +196,13 @@
     "negative": ["src/extensions/acquisition/loader.test.ts"]
   },
   {
+    "contract": "createExtension",
+    "source": "src/extensions/copilot-relay-provider/entry.ts",
+    "kind": "extension-entry-factory",
+    "positive": ["src/extensions/copilot-relay-provider/entry.test.ts"],
+    "negative": ["src/extensions/copilot-relay-provider/entry.test.ts"]
+  },
+  {
     "contract": "RegistrySnapshot",
     "source": "src/core/registry/types.ts",
     "kind": "registry-snapshot",

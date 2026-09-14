@@ -27,6 +27,7 @@
   { "contract": "ExternalExtensionModule", "source": "src/extensions/acquisition/types.ts", "kind": "extension-entry-module" },
   { "contract": "ExtensionAcquisitionResult", "source": "src/extensions/acquisition/types.ts", "kind": "extension-acquisition-result" },
   { "contract": "acquireExtensions", "source": "src/extensions/acquisition/loader.ts", "kind": "extension-acquisition" },
+  { "contract": "createExtension", "source": "src/extensions/copilot-relay-provider/entry.ts", "kind": "extension-entry-factory" },
   { "contract": "RegistrySnapshot", "source": "src/core/registry/types.ts", "kind": "registry-snapshot" },
   { "contract": "Channel", "source": "src/core/channel/types.ts", "kind": "port-lifecycle" },
   { "contract": "ChannelInstance", "source": "src/core/channel/types.ts", "kind": "port-lifecycle" },

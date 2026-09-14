@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 
-- **状态：** Accepted；A1–A2 completed
+- **状态：** Accepted；A1–A3 completed
 - **版本：** 0.1
 - **日期：** 2026-09-11
 - **所有者：** 项目所有者
@@ -12,7 +12,7 @@
 - **工作流：** [Development Workflow](../development-workflow.md)
 - **执行授权：** 项目所有者于 2026-09-11 授权 A0 readiness evidence，并于 2026-09-14 接受 A0 Results；production Delivery 仍需独立授权。
 
-本 Plan 独立于 Provider Model Catalog Plan C4。项目所有者于 2026-09-14 接受 Spec v0.4，随后接受 A1 并授权 A2 scoped configuration and controlled loader。A3–A5 与 C4 仍未授权；当前工作不迁移 supported Host、不动态执行 production Relay Extension、不删除 Relay 过渡路径。
+本 Plan 独立于 Provider Model Catalog Plan C4。项目所有者于 2026-09-14 接受 Spec v0.4，随后接受 A1、A2，并明确授权 A3 Relay artifact。A4–A5 与 C4 仍未授权；当前工作不迁移 supported Host、不删除 Relay 过渡路径。
 
 ## 2. 用户可观察目标
 
@@ -87,12 +87,22 @@
 
 ### A3 — Relay artifact
 
-**状态：** Not Started
+**状态：** Completed（owner accepted 2026-09-14）
 
 - Relay `extension.json` 与 `entry.js` adapter；
 - repository build 生成 closed multi-file ESM artifact；
 - allowlist、recursive import closure、relocation、repository independence tests；
 - 构建不读写 Agent Home，不执行 `npm install`。
+
+**实现记录（2026-09-14）：**
+
+- 新增 Relay v1 Descriptor 与唯一具名 `createExtension()` entry；factory 只读取 validated scoped config、执行纯值校验并返回未调用 `create()` 的 External Unit；
+- repository build 从 TypeScript emitted output 按显式 allowlist 生成 7-file multi-file ESM staging artifact，移除 source-map references，不复制声明、source map、测试、source、Host Core 或无关输出；
+- artifact audit 使用 TypeScript parser 递归验证 entry runtime closure，只允许 artifact 内 `./*.js` import，拒绝 parent/package/absolute/file URL/dynamic non-literal import；
+- fresh relocated Agent Home 通过 A2 generic acquisition 加载 artifact；独立 child process 在整个 `dist` build tree 暂时不可用、cwd 位于 repository 外时完成真实 loopback Catalog discovery、registration 与 Responses invocation；
+- build 只写 `dist/extension-artifacts/copilot-relay-provider` staging output，不读取或写入真实 Agent Home，不执行 `npm install`，不修改 supported Host 或 Relay 现有 production composition path。
+
+**Validation record：** focused Relay entry + FT-08 4/4 passed；full Vitest 106 files / 1013 tests passed；lint、build、7-file artifact allowlist/closure/relocation/repository-independence audit、Relay emitted error-boundary audit 与 `git diff --check` passed；independent final review PASS，无 unresolved Critical/High/Medium finding。项目所有者于 2026-09-14 接受 A3 implementation、validation evidence 与 review disposition。该接受不授权 A4–A5 或 C4。
 
 ### A4 — Generic Host migration
 
