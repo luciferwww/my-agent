@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { AgentEvent } from '../core/runner/index.js';
-import {
+import { toModelInvocationError } from '../core/model-invocation/index.js';
+import type {
+  ChatContentBlock,
+  ChatMessage,
+  ModelInvocationDiagnostics,
   ModelInvocationError,
-  type ChatContentBlock,
-  type ChatMessage,
 } from '../core/model-invocation/index.js';
 import type { ModelReference } from '../core/model-resolution/index.js';
 import { ModelResolutionError, ModelResolver } from '../core/model-resolution/index.js';
@@ -79,14 +81,76 @@ const interactionLog = Logger.get('TurnInteractionManager');
 
 function findModelInvocationError(error: unknown): ModelInvocationError | undefined {
   const seen = new Set<Error>();
-  let current = error;
-  for (let depth = 0; depth < 8 && current instanceof Error; depth += 1) {
-    if (current instanceof ModelInvocationError) return current;
+  let current = asSameRealmError(error);
+  for (let depth = 0; depth < 8 && current; depth += 1) {
+    const canonical = toModelInvocationError(current);
+    if (canonical) return canonical;
     if (seen.has(current)) return undefined;
     seen.add(current);
-    current = current.cause;
+    current = readOwnErrorCause(current);
   }
   return undefined;
+}
+
+function asSameRealmError(value: unknown): Error | undefined {
+  try {
+    return value instanceof Error ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readOwnErrorCause(error: Error): Error | undefined {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(error, 'cause');
+    return descriptor && 'value' in descriptor
+      ? asSameRealmError(descriptor.value)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+interface ModelInvocationOperatorDiagnostics {
+  readonly providerId: string;
+  readonly httpStatus?: number;
+  readonly providerErrorType?: string;
+  readonly providerErrorCode?: string;
+  readonly providerMessage?: string;
+  readonly requestId?: string;
+  readonly request: Readonly<
+    Omit<ModelInvocationDiagnostics['request'], 'model'>
+    & { readonly model: string }
+  >;
+}
+
+function projectModelInvocationDiagnostics(
+  diagnostics: ModelInvocationDiagnostics | undefined,
+): ModelInvocationOperatorDiagnostics | undefined {
+  if (!diagnostics) return undefined;
+  return Object.freeze({
+    providerId: diagnostics.providerId,
+    ...(diagnostics.httpStatus === undefined ? {} : { httpStatus: diagnostics.httpStatus }),
+    ...(diagnostics.providerErrorType === undefined
+      ? {}
+      : { providerErrorType: diagnostics.providerErrorType }),
+    ...(diagnostics.providerErrorCode === undefined
+      ? {}
+      : { providerErrorCode: diagnostics.providerErrorCode }),
+    ...(diagnostics.providerMessage === undefined
+      ? {}
+      : { providerMessage: diagnostics.providerMessage }),
+    ...(diagnostics.requestId === undefined ? {} : { requestId: diagnostics.requestId }),
+    request: Object.freeze({
+      ...diagnostics.request,
+      model: formatModelIdForOperator(diagnostics.request.model),
+    }),
+  });
+}
+
+function formatModelIdForOperator(modelId: string): string {
+  const preview = modelId.length > 200 ? `${modelId.slice(0, 200)}…` : modelId;
+  return JSON.stringify(preview);
 }
 
 interface ActiveRootTree {
@@ -910,8 +974,15 @@ export class RuntimeApp {
         outputTokens: result.usage.outputTokens,
       });
     } catch (error) {
-      const info = classifyRuntimeError('run', error);
-      const modelInvocationError = findModelInvocationError(info.cause);
+      const classifiedInfo = classifyRuntimeError('run', error);
+      const modelInvocationError = findModelInvocationError(classifiedInfo.cause);
+      const info = modelInvocationError
+        ? {
+            ...classifiedInfo,
+            message: modelInvocationError.message,
+            cause: modelInvocationError,
+          }
+        : classifiedInfo;
       const runtimeError = createRuntimeError(info);
       if (gate.seal({ outcome: 'failed', error: runtimeError })) {
         this.safeEmit({
@@ -952,7 +1023,7 @@ export class RuntimeApp {
           ? {
               modelInvocation: Object.freeze({
                 category: modelInvocationError.category,
-                diagnostics: modelInvocationError.diagnostics,
+                diagnostics: projectModelInvocationDiagnostics(modelInvocationError.diagnostics),
               }),
             }
           : {}),

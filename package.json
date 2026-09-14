@@ -8,11 +8,12 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "build": "npm run clean && tsc",
+    "build": "npm run clean && tsc && npm run verify:relay-error-boundary",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
+    "verify:relay-error-boundary": "node scripts/audit-relay-error-boundary.mjs",
     "agent:websocket": "npx tsx scripts/server.ts",
     "test:tool:list-cwd": "npx tsx scripts/test-exec-list-cwd.ts",
     "test:tool:background": "npx tsx scripts/test-exec-background.ts",

@@ -60,12 +60,17 @@ Each document's own status controls whether it is accepted, validated, implement
 - [Attachments Support Spec](architecture/attachments-support-spec.md)
 - [Platform Config Restructure Spec](architecture/platform-config-restructure-spec.md)
 - [Extension Acquisition and Configuration Module Spec](architecture/extension-acquisition-configuration-module-spec.md)
+- [Extension Acquisition Readiness Spike Spec](architecture/extension-acquisition-readiness-spike-spec.md)
+- [Extension Acquisition Readiness Spike Results](architecture/extension-acquisition-readiness-spike-results.md)
+- [Model Invocation Error Boundary Amendment](architecture/model-invocation-error-boundary-amendment.md)
 
 ## Plans and Roadmap
 
 - [Architecture Foundation Plan](roadmap/architecture-foundation-plan.md)
 - [AF-03 Target Architecture Plan](roadmap/af-03-target-architecture-plan.md)
 - [AF-04 Characterization and Fitness Plan](roadmap/af-04-characterization-fitness-plan.md)
+- [Model Invocation Error Boundary Delivery Plan](roadmap/model-invocation-error-boundary-plan.md)
+- [Extension Acquisition and Configuration Delivery Plan](roadmap/extension-acquisition-delivery-plan.md)
 
 Plans own unfinished work and sequencing. They do not override verified Current Architecture.
 

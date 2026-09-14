@@ -220,8 +220,29 @@
     "contract": "ModelInvocationError",
     "source": "src/core/model-invocation/errors.ts",
     "kind": "error",
-    "positive": ["src/adapters/provider/anthropic/AnthropicClient.test.ts"],
-    "negative": ["src/adapters/provider/anthropic/AnthropicClient.test.ts"]
+    "positive": ["src/core/model-invocation/errors.test.ts", "src/adapters/provider/anthropic/AnthropicClient.test.ts"],
+    "negative": ["src/core/model-invocation/errors.test.ts", "src/adapters/provider/anthropic/AnthropicClient.test.ts"]
+  },
+  {
+    "contract": "ModelInvocationStructuralErrorV1",
+    "source": "src/core/model-invocation/errors.ts",
+    "kind": "structural-error",
+    "positive": ["src/core/model-invocation/errors.test.ts", "src/extensions/copilot-relay-provider/responses-client.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/core/model-invocation/errors.test.ts", "src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "ModelInvocationDiagnostics",
+    "source": "src/core/model-invocation/errors.ts",
+    "kind": "error-diagnostics",
+    "positive": ["src/core/model-invocation/errors.test.ts", "src/extensions/copilot-relay-provider/responses-client.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/core/model-invocation/errors.test.ts", "src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "toModelInvocationError",
+    "source": "src/core/model-invocation/errors.ts",
+    "kind": "error-canonicalization",
+    "positive": ["src/core/model-invocation/errors.test.ts", "src/extensions/copilot-relay-provider/responses-client.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/core/model-invocation/errors.test.ts", "src/runtime/RuntimeApp.test.ts"]
   },
   {
     "contract": "ResolvedModel",

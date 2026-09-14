@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ModelInvocationError, type ModelInvocationRequest } from '../../core/model-invocation/index.js';
+import {
+  ModelInvocationError,
+  toModelInvocationError,
+  type ModelInvocationRequest,
+} from '../../core/model-invocation/index.js';
 import { CopilotRelayResponsesClient } from './responses-client.js';
 
 const request: ModelInvocationRequest = {
@@ -415,6 +419,8 @@ describe('Copilot Relay Responses client', () => {
       type: 'error',
       error: {
         name: 'ModelInvocationError',
+        protocol: 'my-agent.model-invocation-error',
+        version: 1,
         category: 'invalid_request',
         diagnostics: {
           providerId: 'copilot-relay',
@@ -426,9 +432,13 @@ describe('Copilot Relay Responses client', () => {
         },
       },
     });
-    if (last?.type !== 'error' || !(last.error instanceof ModelInvocationError)) {
-      throw new Error('Expected ModelInvocationError.');
+    if (last?.type !== 'error') {
+      throw new Error('Expected structural Model Invocation Error.');
     }
-    expect(JSON.stringify(last.error.diagnostics)).not.toContain('Be concise.');
+    expect(last.error).not.toBeInstanceOf(ModelInvocationError);
+    const canonical = toModelInvocationError(last.error);
+    expect(canonical).toBeInstanceOf(ModelInvocationError);
+    expect(canonical?.diagnostics?.providerErrorCode).toBe('invalid_model');
+    expect(JSON.stringify(canonical?.diagnostics)).not.toContain('Be concise.');
   });
 });

@@ -2,6 +2,7 @@
 
 > Status: Current Authority
 > Verified: 2026-09-09
+> Error boundary verified: 2026-09-11
 > Ownership: Runtime composition, generation, queue, routing, Fanout, Abort, Shutdown, and Subagent Parent/Child lifecycle
 > Ownership key: runtime-composition-and-lifecycle
 
@@ -435,6 +436,12 @@ The immutable `RuntimeShutdownReport` records `completed` and `deadline-exhauste
 
 **核心原则**：运行失败收口在单次 turn，不污染应用生命周期。
 
+### 11.1 Model Invocation failure canonicalization
+
+Runtime 沿既有 cause chain 在最多八个 same-realm `Error` 节点内调用 Core `toModelInvocationError()`，并保留 cycle detection。`cause` 只从 own data property 读取；inherited/accessor cause 或 descriptor failure 会停止该链，Runtime 不执行 foreign getter，也不遍历任意 object graph。
+
+找到 Host-local 或 foreign structural Model Invocation Error 后，Runtime 只继续使用 Host-local canonical category、message 和 validated diagnostics；raw foreign Error、message、stack、cause 和 private fields 不进入 Runtime failure authority。Operator log 使用独立 allowlisted projection：canonical `request.model` 保持 exact opaque value，而日志值先截取最多 200 UTF-16 code units、必要时附加省略标记，再执行 JSON-style escaping。其他 diagnostics 已由 Core V1 validation bounded；unknown fields 不投影。
+
 ---
 
 ## 12. 可观测性
@@ -465,6 +472,6 @@ The immutable `RuntimeShutdownReport` records `completed` and `deadline-exhauste
 
 | Kind | Evidence |
 |---|---|
-| Source | [runtime-builder.ts](../../../src/runtime/runtime-builder.ts), [Anthropic Provider Runtime Module](../../../src/runtime-modules/anthropic-provider.ts), [RuntimeApp.ts](../../../src/runtime/RuntimeApp.ts), [runtime-composition-manager.ts](../../../src/runtime/runtime-composition-manager.ts), [runtime errors](../../../src/runtime/errors.ts), [composition-coordinator.ts](../../../src/runtime/composition-coordinator.ts), [subagent-orchestration.ts](../../../src/runtime/subagent-orchestration.ts) |
+| Source | [runtime-builder.ts](../../../src/runtime/runtime-builder.ts), [Anthropic Provider Runtime Module](../../../src/runtime-modules/anthropic-provider.ts), [RuntimeApp.ts](../../../src/runtime/RuntimeApp.ts), [Core invocation errors](../../../src/core/model-invocation/errors.ts), [runtime-composition-manager.ts](../../../src/runtime/runtime-composition-manager.ts), [runtime errors](../../../src/runtime/errors.ts), [composition-coordinator.ts](../../../src/runtime/composition-coordinator.ts), [subagent-orchestration.ts](../../../src/runtime/subagent-orchestration.ts) |
 | Tests | [runtime-builder.test.ts](../../../src/runtime/runtime-builder.test.ts), [anthropic-provider.test.ts](../../../src/runtime-modules/anthropic-provider.test.ts), [RuntimeApp.test.ts](../../../src/runtime/RuntimeApp.test.ts), [RuntimeApp.intake.test.ts](../../../src/runtime/RuntimeApp.intake.test.ts), [runtime-composition-manager.test.ts](../../../src/runtime/runtime-composition-manager.test.ts), [composition-coordinator.test.ts](../../../src/runtime/composition-coordinator.test.ts), [subagent-orchestration.test.ts](../../../src/runtime/subagent-orchestration.test.ts), [ft-10-runtime-composition-deletion.test.ts](../../../src/architecture-fitness/ft-10-runtime-composition-deletion.test.ts) |
-| Controlling authority | [ADR-005](../adr-005-extension-registry-runtime-composition.md), [Runtime Composition Module Spec](../runtime-composition-module-spec.md), [Source Layout Convergence Migration Spec](../source-layout-convergence-migration-spec.md), [Core Abort Spec](../core-abort-spec.md), [Subagent Model Resolution Module Spec](../subagent-model-resolution-module-spec.md) |
+| Controlling authority | [ADR-005](../adr-005-extension-registry-runtime-composition.md), [Runtime Composition Module Spec](../runtime-composition-module-spec.md), [Model Invocation Error Boundary Amendment](../model-invocation-error-boundary-amendment.md), [Source Layout Convergence Migration Spec](../source-layout-convergence-migration-spec.md), [Core Abort Spec](../core-abort-spec.md), [Subagent Model Resolution Module Spec](../subagent-model-resolution-module-spec.md) |

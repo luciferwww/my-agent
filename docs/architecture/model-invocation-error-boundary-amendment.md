@@ -2,7 +2,7 @@
 
 ## 1. 状态
 
-- **状态：** Accepted
+- **状态：** Validated
 - **版本：** 1.0
 - **日期：** 2026-09-11
 - **所有者：** 项目所有者
@@ -10,7 +10,7 @@
 - **当前事实：** [Model Invocation、Anthropic 与 Copilot Relay Adapter](current/adapter_llm.md)
 - **工作流：** [Development Workflow](../development-workflow.md)
 
-本文档是窄范围的 Model Invocation error-boundary 修订。它只解决独立 Extension artifact 与 Host 可能持有不同 Error constructor 时的识别问题。项目所有者已接受本 Contract；`Accepted` 不等于 `Implemented`，不建立通用 Extension SDK 或错误框架，也不改变当前生产行为。只有关联 Delivery Plan Item 达到 Ready 且项目所有者单独授权 Delivery 后，才能修改生产代码。
+本文档是窄范围的 Model Invocation error-boundary 修订。它只解决独立 Extension artifact 与 Host 可能持有不同 Error constructor 时的识别问题。项目所有者已接受本 Contract；本实现不建立通用 Extension SDK 或错误框架。项目所有者于 2026-09-11 授权关联 Delivery Plan 在本 Contract 边界内实施，并于 2026-09-14 接受实现、验证结果和评审处理。
 
 项目所有者于 2026-09-11 接受 exact discriminator `protocol: "my-agent.model-invocation-error"`。该字符串只标识协议语义，不包含版本；numeric `version` 是唯一版本来源。
 
@@ -26,7 +26,9 @@
 
 项目所有者于 2026-09-11 接受独立评审中关于 diagnostics validation、non-throwing own-data extraction、type/runtime API visibility、contract delta wording、artifact ownership 和 same-realm scope 的局部修订；拒绝把 v1 扩大为 cross-realm object traversal、恶意 Extension sandbox、通用 Proxy security framework 或完整 artifact packaging contract。这些修订已通过第二轮聚焦复审。
 
-项目所有者于 2026-09-11 接受本文档 v1.0。该接受关闭 Model Invocation structural error design gate，但不授权 production Delivery；当前代码与 Current Architecture 仍描述既有 class-identity path，直到单独批准的实现和验证完成。
+项目所有者于 2026-09-11 接受本文档 v1.0。该接受当时只关闭 Model Invocation structural error design gate，不授权 production Delivery；后续另行建立 Delivery 授权。实现与验证于同日完成，项目所有者于 2026-09-14 接受 validation result。
+
+实现记录（2026-09-11）：Core V1 contract 与 `toModelInvocationError()`、Relay-local structural Error、Runtime bounded canonicalization 和 operator projection 已落地。聚焦测试 111/111、最终 Core/Runtime 聚焦测试 65/65、最终 Architecture Fitness 20/20、Node 22.22.2 全量 Vitest 100 files / 942 tests、lint、build、emitted Relay JavaScript audit 和 `git diff --check` 通过。编辑器测试进程因使用 Node ABI 115 而仅在 4 个 `better-sqlite3` tests 初始化失败；同一依赖在项目声明的 Node 22 / ABI 127 终端环境通过，未重编原生依赖。三轮独立评审最终 PASS，无 unresolved Critical/High/Medium finding；全部前置 findings 已修正并复验。
 
 ## 2. Problem
 

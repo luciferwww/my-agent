@@ -1,12 +1,14 @@
-import {
-  ModelInvocationError,
-  type ChatContentBlock,
-  type ChatMessage,
-  type ModelInvocationPort,
-  type ModelInvocationRequest,
-  type ModelInvocationResponse,
-  type ModelStreamEvent,
-  type TokenUsage,
+import type {
+  ChatContentBlock,
+  ChatMessage,
+  ModelInvocationDiagnostics,
+  ModelInvocationFailureCategory,
+  ModelInvocationPort,
+  ModelInvocationRequest,
+  ModelInvocationResponse,
+  ModelInvocationStructuralErrorV1,
+  ModelStreamEvent,
+  TokenUsage,
 } from '../../core/model-invocation/index.js';
 import type { ToolCall } from '../../core/tools/index.js';
 
@@ -24,37 +26,21 @@ interface PendingTerminal {
   readonly usage: TokenUsage;
 }
 
-interface RelayInvocationDiagnostics {
+interface RelayInvocationDiagnostics extends ModelInvocationDiagnostics {
   readonly providerId: typeof COPILOT_RELAY_PROVIDER_ID;
-  readonly httpStatus?: number;
-  readonly providerErrorType?: string;
-  readonly providerErrorCode?: string;
-  readonly providerMessage?: string;
-  readonly requestId?: string;
-  readonly request: Readonly<{
-    model: string;
-    maxTokens: number;
-    hasSystem: boolean;
-    messageCount: number;
-    userMessageCount: number;
-    assistantMessageCount: number;
-    stringContentMessageCount: number;
-    textBlockCount: number;
-    imageBlockCount: number;
-    toolUseBlockCount: number;
-    toolResultBlockCount: number;
-    toolDefinitionCount: number;
-  }>;
 }
 
-class CopilotRelayInvocationError extends ModelInvocationError {
-  declare readonly diagnostics: RelayInvocationDiagnostics;
+class CopilotRelayInvocationError extends Error implements ModelInvocationStructuralErrorV1 {
+  readonly protocol = 'my-agent.model-invocation-error';
+  readonly version = 1 as const;
+  readonly diagnostics: RelayInvocationDiagnostics;
 
   constructor(
-    category: ConstructorParameters<typeof ModelInvocationError>[0],
+    readonly category: ModelInvocationFailureCategory,
     diagnostics: RelayInvocationDiagnostics,
   ) {
-    super(category);
+    super(`Model invocation failed: ${category}.`);
+    this.name = 'ModelInvocationError';
     this.diagnostics = Object.freeze({
       ...diagnostics,
       request: Object.freeze({ ...diagnostics.request }),
@@ -447,7 +433,7 @@ async function createHttpError(
 }
 
 function normalizeError(error: unknown, request: ModelInvocationRequest): Error {
-  if (error instanceof ModelInvocationError) return error;
+  if (error instanceof CopilotRelayInvocationError) return error;
   if (error instanceof Error && error.name === 'AbortError') return error;
   return new CopilotRelayInvocationError(
     error instanceof TypeError ? 'transport' : 'provider_failure',

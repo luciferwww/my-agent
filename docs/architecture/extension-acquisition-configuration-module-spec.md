@@ -2,11 +2,12 @@
 
 ## 1. 状态
 
-- **状态：** Draft
-- **版本：** 0.3
+- **状态：** In Review
+- **版本：** 0.4
 - **日期：** 2026-09-11
 - **所有者：** 项目所有者
-- **关联计划：** 独立 Delivery Plan Item 待本 Spec 进入评审前建立；不属于 Provider Model Catalog Plan 的 C3/C4
+- **关联计划：** [Extension Acquisition and Configuration Delivery Plan](../roadmap/extension-acquisition-delivery-plan.md)；不属于 Provider Model Catalog Plan 的 C3/C4
+- **Readiness evidence：** [Extension Acquisition Readiness Spike Results](extension-acquisition-readiness-spike-results.md)（owner accepted 2026-09-14）
 - **关联决策：** [ADR-005 Extension/Module/Registry Composition 与 Runtime Lifecycle](adr-005-extension-registry-runtime-composition.md)
 - **关联错误边界：** [Model Invocation Error Boundary Amendment](model-invocation-error-boundary-amendment.md)（Accepted）
 - **目标输入：** [Target Architecture §6](target-architecture.md#6-extensionmodulecontribution-and-registry)、[AF-06 Extension Framework Spike Results](af-06-extension-framework-spike-results.md)
@@ -14,7 +15,9 @@
 - **语言与术语约定：** [Architecture Foundation Plan §7.4](../roadmap/architecture-foundation-plan.md#74-当前架构重构文档的语言与术语约定)
 - **工作流：** [Development Workflow](../development-workflow.md)
 
-本文档是供项目所有者关闭设计决策的 `Draft for decision review`，不是可直接执行的 Contract。`Draft` 不改变当前生产行为，不授权实现、依赖变更、Extension 安装、动态代码执行或 C4。§14 所列关联 Contract 与 evidence gates 未关闭前不得把本文档提升为 `In Review`。当前唯一受支持 Host 仍按 Current Architecture 直接组合 Copilot Relay；只有本 Spec 后续达到 `Accepted`、关联 Plan Item 达到 Ready 且项目所有者单独授权 Delivery 后，才能迁移该路径。
+本文档已基于关闭的 design decisions、独立 Delivery Plan、已实现的 structural error boundary 与 readiness Spike evidence 进入 `In Review`。`In Review` 不改变当前生产 acquisition behavior，不授权 Extension 安装、动态 production code execution、supported Host migration 或 C4。当前唯一受支持 Host 仍按 Current Architecture 直接组合 Copilot Relay；只有本 Spec 后续达到 `Accepted`、关联 Plan 的 production Definition of Ready 全部满足且 production Delivery 获得明确授权后，才能迁移该路径。
+
+2026-09-11 readiness Spike 在 Windows/Node 22/Ajv 8.20 环境验证了 canonical containment、Agent Home alias、file/directory/junction/entry symlink rejection、multi-file ESM relocation、Draft-07 strict/default/no-coercion/no-removal/internal-ref behavior 与 bounded redaction。该证据支持 `Draft -> In Review`，不替代 A1–A4 production Contract/Integration tests，也不将单一 Windows observation表述为跨平台证明。
 
 项目所有者于 2026-09-11 决定不建立独立 `<agent-home>/extensions.json`；machine/Host-level 配置统一位于 `<agent-home>/config.json`，Extension 使用其中的 `extensions.entries.<id>` namespace。该决定关闭物理配置来源问题，但不接受本 Spec 的其他 Draft contract。
 
@@ -121,7 +124,7 @@ External Extension entry
 
 ## 7. Public Contract
 
-以下 TypeScript shape 是未接受的 Draft review target，只用于关闭公共边界决策；不得在 §15 blocking decisions 关闭前据此实施。实现前可在不改变后续已接受语义边界的前提下调整命名。
+以下 TypeScript shape 是 `In Review` target，不是已接受或已实现的 Contract。只能在本 Spec 达到 `Accepted` 且 production Delivery Definition of Ready 全部满足后据此实施；实现前可在不改变后续已接受语义边界的前提下调整命名。
 
 ### 7.1 Descriptor
 
@@ -496,19 +499,19 @@ External Extension 是显式启用后在 Host 进程中执行的可信代码。D
 ## 14. Definition of Ready
 
 - [ ] 本 Spec 进入 `Accepted`；
-- [ ] 独立 Plan Item、迁移 Gate 和 owner 明确；
+- [x] 独立 Plan Item、迁移 Gate 和 owner 明确；
 - [x] §15 Open Questions 全部关闭；
 - [x] Agent Home resolution 与 Host config source 有唯一权威：explicit option > `MY_AGENT_HOME` > `<user-home>/.my-agent`，配置为 `<agent-home>/config.json`；
-- [ ] Descriptor/Schema/module format 已由 Contract test 或必要 Spike 证明；
-- [ ] symlink/reparse-point、real-path containment 和 Windows/Linux path behavior 有可证伪测试计划；
-- [x] Relay artifact 由 repository build 生成封闭、可重定位的多文件 ESM directory；构建不写 Agent Home，部署方在 Host 停止时整体复制/替换，不扩展为 Marketplace、安装器、bundler 或 npm package install；
+- [x] Descriptor/Schema/module format 已由 readiness Spike 证明可实施；A1–A3 仍需 production Contract tests；
+- [x] symlink/reparse-point、real-path containment 和 Windows behavior 已有可证伪 evidence；Linux/macOS 由 pure-rule + CI/platform test plan 覆盖；
+- [x] Relay artifact delivery contract 已有唯一设计：由 repository build 生成封闭、可重定位的多文件 ESM directory；构建不写 Agent Home，部署方在 Host 停止时整体复制/替换，不扩展为 Marketplace、安装器、bundler 或 npm package install；真实 Relay closure、relocation 与 repository independence 仍待 A3 验证；
 - [x] startup diagnostics 以 acquisition result 与 Runtime warning event 为各阶段结构化权威，supported Host 向机器操作者/Host integrator 展示；不进入 Channel，也不增加 durable `RuntimeHandle` report；
 - [x] [Model Invocation Error Boundary Amendment](model-invocation-error-boundary-amendment.md) 已接受 versioned structural error、runtime parser、Host canonicalization 与现有 class 输入的迁移/兼容规则；
-- [ ] Error canonicalization 不新增第二条 Runtime/Runner/Registry、invocation 或 lifecycle path；
+- [x] Error canonicalization 已通过同一 Core/Runtime error path 实现，未新增第二条 Runtime/Runner/Registry、invocation 或 lifecycle path；
 - [ ] 项目所有者单独授权 production Delivery。
 
 ## 15. Open Questions
 
 本 Spec 的本地 design Open Questions 已全部关闭。Agent Home resolution、Host config physical source、directory/identity semantics、Draft-07 Schema contract、Entry factory、跨 Extension 错误的长期 structural-authority 方向、Relay installation artifact 和 startup diagnostics surface 均已有唯一决定。
 
-本文档仍保持 `Draft`：具体 Model Invocation structural error shape 必须由 §14 的关联 Contract Gate 关闭；Descriptor/Schema/module format、path containment、artifact relocation 和 diagnostic redaction 仍需可证伪 evidence。它们是 readiness/validation gates，不在本文档形成第二个设计权威。v1 External Unit dependencies 已决定为空；未来如需依赖图必须另行扩展 acquisition isolation 与 Runtime Catalog failure matrix。任何新证据若要求第二条 Runtime path、Extension-specific Host branch、全局 Config 暴露、不受信任代码执行、公共 SDK runtime singleton 或新的 package manager/bundler dependency，必须停止并回到项目所有者重新决策。
+本文档现为 `In Review`：Model Invocation structural error shape 已实现并完成自动 validation evidence；Descriptor/Schema/module format、path containment、synthetic artifact relocation 和 diagnostic redaction 的 readiness evidence 已形成。真实 Relay artifact repository independence、production Loader categories、Runtime warning projection 和 Host migration 仍属于 A1–A4 validation gates，不得由本 Spike代替。v1 External Unit dependencies 已决定为空；未来如需依赖图必须另行扩展 acquisition isolation 与 Runtime Catalog failure matrix。任何新证据若要求第二条 Runtime path、Extension-specific Host branch、全局 Config 暴露、不受信任代码执行、公共 SDK runtime singleton 或新的 package manager/bundler dependency，必须停止并回到项目所有者重新决策。

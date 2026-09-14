@@ -167,6 +167,9 @@ describe('FT-12 Current Architecture authority', () => {
     expect(provider).toContain('required, initially-enabled builtin Unit `builtin-anthropic-provider`');
     expect(provider).toContain('only when Composition invokes `LoadedRuntimeUnit.create()`');
     expect(provider).toContain('It does not construct the concrete Adapter');
+    expect(provider).toContain('`toModelInvocationError(value)` is the single Host/Runtime canonicalization entry');
+    expect(provider).toContain('Relay-local `Error`');
+    expect(provider).toContain('neither runtime-imports nor subclasses Host `ModelInvocationError`');
 
     const modelResolution = requireDocument('model-resolution').content;
     expect(modelResolution).toContain('sole owner of canonical Model identity');
@@ -183,6 +186,36 @@ describe('FT-12 Current Architecture authority', () => {
     const media = requireDocument('media').content;
     expect(media).toContain('pure attachment/media pipeline');
     expect(media).toContain('`processInboundMessage()`');
+  });
+
+  it('locks the structural Model Invocation error authority and Relay dependency direction', async () => {
+    const [coreErrors, runtime, relay] = await Promise.all([
+      readFile(
+        join(REPOSITORY_ROOT, 'src', 'core', 'model-invocation', 'errors.ts'),
+        'utf8',
+      ),
+      readFile(join(REPOSITORY_ROOT, 'src', 'runtime', 'RuntimeApp.ts'), 'utf8'),
+      readFile(
+        join(REPOSITORY_ROOT, 'src', 'extensions', 'copilot-relay-provider', 'responses-client.ts'),
+        'utf8',
+      ),
+    ]);
+
+    expect(coreErrors).toContain("readonly protocol = MODEL_INVOCATION_ERROR_PROTOCOL;");
+    expect(coreErrors).toContain('readonly version = 1 as const;');
+    expect(coreErrors).toContain('export function toModelInvocationError(');
+    expect(runtime).toContain('const canonical = toModelInvocationError(current);');
+    expect(runtime).toContain("Object.getOwnPropertyDescriptor(error, 'cause')");
+    expect(runtime).toContain('model: formatModelIdForOperator(diagnostics.request.model)');
+
+    expect(relay).toContain('implements ModelInvocationStructuralErrorV1');
+    expect(relay).toContain("readonly protocol = 'my-agent.model-invocation-error';");
+    expect(relay).not.toContain('extends ModelInvocationError');
+    expect(relay).not.toMatch(/import\s*\{[^}]*\bModelInvocationError\b[^}]*\}\s*from/u);
+
+    const runtimeCurrent = requireDocument('runtime').content;
+    expect(runtimeCurrent).toContain('最多八个 same-realm `Error` 节点');
+    expect(runtimeCurrent).toContain('日志值先截取最多 200 UTF-16 code units');
   });
 
   it('grounds the C2 Current Architecture claims in source and behavioral evidence', async () => {

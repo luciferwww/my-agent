@@ -635,11 +635,183 @@ describe('RuntimeApp', () => {
       code: 'RUN_FAILED',
       modelInvocation: {
         category: 'invalid_request',
-        diagnostics: providerError.diagnostics,
+        diagnostics: {
+          ...providerError.diagnostics,
+          request: {
+            ...providerError.diagnostics?.request,
+            model: '"test-model"',
+          },
+        },
       },
     }));
     await app.close();
     errorLog.mockRestore();
+  });
+
+  it('canonicalizes a foreign structural invocation error and logs only a bounded projection', async () => {
+    const opaqueModelId = `model\r\n\t${'x'.repeat(210)}hidden-suffix`;
+    const foreign = Object.assign(new Error('foreign secret message'), {
+      protocol: 'my-agent.model-invocation-error',
+      version: 1,
+      category: 'rate_limit',
+      diagnostics: {
+        providerId: 'external-provider',
+        httpStatus: 429,
+        providerErrorCode: 'quota_exhausted',
+        unknown: 'hidden diagnostic',
+        request: {
+          model: opaqueModelId,
+          maxTokens: 512,
+          hasSystem: false,
+          messageCount: 1,
+          userMessageCount: 1,
+          assistantMessageCount: 0,
+          stringContentMessageCount: 1,
+          textBlockCount: 0,
+          imageBlockCount: 0,
+          toolUseBlockCount: 0,
+          toolResultBlockCount: 0,
+          toolDefinitionCount: 0,
+          prompt: 'hidden prompt',
+        },
+      },
+      privatePayload: 'hidden payload',
+    });
+    foreign.stack = 'hidden foreign stack';
+    const runnerError = new Error('outer secret wrapper', { cause: foreign });
+    const errorLog = vi.spyOn(Logger.get('RuntimeApp'), 'error');
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      cliOverrides: {
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies({
+        createAgentRunner: () => ({ run: async () => { throw runnerError; } }) as never,
+        createMemoryManager: async () => null,
+      }),
+    });
+
+    try {
+      await expect(app.application.runTurn({
+        requestId: 'foreign-structural-error',
+        sessionKey: 'foreign',
+        message: 'fail structurally',
+        promptMode: 'full',
+      })).rejects.toMatchObject({
+        info: {
+          message: 'Model invocation failed: rate_limit.',
+          cause: {
+            name: 'ModelInvocationError',
+            category: 'rate_limit',
+            diagnostics: {
+              providerId: 'external-provider',
+              request: { model: opaqueModelId },
+            },
+          },
+        },
+      });
+
+      const logEntry = errorLog.mock.calls.find(([, fields]) => (
+        fields as { requestId?: string }
+      ).requestId === 'foreign-structural-error')?.[1];
+      expect(logEntry).toMatchObject({
+        message: 'Model invocation failed: rate_limit.',
+        modelInvocation: {
+          category: 'rate_limit',
+          diagnostics: {
+            providerId: 'external-provider',
+            providerErrorCode: 'quota_exhausted',
+            request: {
+              model: JSON.stringify(`${opaqueModelId.slice(0, 200)}…`),
+            },
+          },
+        },
+      });
+      const serializedLog = JSON.stringify(logEntry);
+      expect(serializedLog).not.toContain('foreign secret message');
+      expect(serializedLog).not.toContain('outer secret wrapper');
+      expect(serializedLog).not.toContain('hidden foreign stack');
+      expect(serializedLog).not.toContain('hidden diagnostic');
+      expect(serializedLog).not.toContain('hidden prompt');
+      expect(serializedLog).not.toContain('hidden payload');
+      expect(serializedLog).not.toContain('hidden-suffix');
+    } finally {
+      await app.close();
+      errorLog.mockRestore();
+    }
+  });
+
+  it('bounds cause traversal, detects cycles, and does not execute cause accessors', async () => {
+    const structural = Object.assign(new Error('foreign'), {
+      protocol: 'my-agent.model-invocation-error',
+      version: 1,
+      category: 'transport',
+    });
+    let lastAccepted: Error = structural;
+    for (let index = 0; index < 7; index += 1) {
+      lastAccepted = new Error(`accepted-wrapper-${index}`, { cause: lastAccepted });
+    }
+    let tooDeep: Error = structural;
+    for (let index = 0; index < 8; index += 1) {
+      tooDeep = new Error(`wrapper-${index}`, { cause: tooDeep });
+    }
+
+    const cycleA = new Error('cycle-a');
+    const cycleB = new Error('cycle-b', { cause: cycleA });
+    Object.defineProperty(cycleA, 'cause', { value: cycleB });
+
+    const causeGetter = vi.fn(() => structural);
+    const accessorCause = new Error('accessor-cause');
+    Object.defineProperty(accessorCause, 'cause', { get: causeGetter });
+
+    const failures = new Map<string, Error>([
+      ['last-accepted', lastAccepted],
+      ['too-deep', tooDeep],
+      ['cycle', cycleA],
+      ['accessor', accessorCause],
+    ]);
+    const errorLog = vi.spyOn(Logger.get('RuntimeApp'), 'error');
+    const app = await RuntimeApp.create({
+      workspaceDir,
+      cliOverrides: {
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies({
+        createAgentRunner: () => ({
+          run: async ({ sessionKey }: RunParams) => { throw failures.get(sessionKey); },
+        }) as never,
+        createMemoryManager: async () => null,
+      }),
+    });
+
+    try {
+      for (const sessionKey of failures.keys()) {
+        await expect(app.application.runTurn({
+          requestId: `cause-${sessionKey}`,
+          sessionKey,
+          message: 'fail',
+          promptMode: 'full',
+        })).rejects.toThrow();
+      }
+
+      expect(causeGetter).not.toHaveBeenCalled();
+      const logEntry = (sessionKey: string) => errorLog.mock.calls.find(([, fields]) => (
+        fields as { requestId?: string }
+      ).requestId === `cause-${sessionKey}`)?.[1];
+      expect(logEntry('last-accepted')).toMatchObject({
+        modelInvocation: { category: 'transport' },
+      });
+      expect(logEntry('too-deep')).not.toHaveProperty('modelInvocation');
+      expect(logEntry('cycle')).not.toHaveProperty('modelInvocation');
+      expect(logEntry('accessor')).not.toHaveProperty('modelInvocation');
+    } finally {
+      await app.close();
+      errorLog.mockRestore();
+    }
   });
 
   it('CH-05 isolates channel.send failures without changing Turn execution', async () => {
