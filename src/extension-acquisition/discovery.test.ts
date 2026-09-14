@@ -9,7 +9,7 @@ import { readHostExtensionsConfig } from './host-config.js';
 
 const EXECUTION_MARKER = Symbol.for('my-agent.test.extension-acquisition.executions');
 const FIXTURE_ENTRY = fileURLToPath(new URL(
-  '../../../test-fixtures/extension-acquisition/never-execute.js',
+  '../../test-fixtures/extension-acquisition/never-execute.js',
   import.meta.url,
 ));
 const VALID_SCHEMA = Object.freeze({

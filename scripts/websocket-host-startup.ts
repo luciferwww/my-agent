@@ -2,14 +2,14 @@ import {
   acquireExtensions,
   readHostExtensionsConfig,
   resolveAgentHome,
-} from '../src/extensions/acquisition/index.js';
+} from '../src/extension-acquisition/index.js';
 import type {
   AgentHomeResolutionOptions,
   ExtensionAcquisitionDiagnostic,
   ExtensionAcquisitionOptions,
   ExtensionAcquisitionResult,
   ResolvedHostExtensionsConfig,
-} from '../src/extensions/acquisition/index.js';
+} from '../src/extension-acquisition/index.js';
 import type { RuntimeErrorInfo } from '../src/runtime/index.js';
 
 const MAX_OPERATOR_FIELD_LENGTH = 200;

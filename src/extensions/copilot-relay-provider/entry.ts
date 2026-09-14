@@ -1,4 +1,4 @@
-import type { ExtensionLoadContext } from '../acquisition/types.js';
+import type { ExtensionLoadContext } from '../../extension-acquisition/contracts.js';
 import type { LoadedRuntimeUnit } from '../../runtime/runtime-unit.js';
 import {
   DEFAULT_COPILOT_RELAY_BASE_URL,

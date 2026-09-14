@@ -9,11 +9,13 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc && npm run build:relay-artifact && npm run verify:relay-error-boundary && npm run verify:relay-artifact",
+    "build:host": "node -e \"require('node:fs').rmSync('dist/host', { recursive: true, force: true })\" && tsc -p tsconfig.host.json",
     "build:relay-artifact": "node scripts/build-relay-extension-artifact.mjs",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
+    "verify:host-build": "node scripts/audit-host-build.mjs",
     "verify:relay-error-boundary": "node scripts/audit-relay-error-boundary.mjs",
     "verify:relay-artifact": "node scripts/audit-relay-extension-artifact.mjs",
     "verify:websocket-host": "node scripts/verify-websocket-host.mjs",

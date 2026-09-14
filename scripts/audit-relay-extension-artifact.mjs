@@ -178,8 +178,7 @@ async function auditRelocatedAcquisitionAndInvocation() {
     const acquisition = await import(pathToFileURL(join(
       repositoryRoot,
       'dist',
-      'extensions',
-      'acquisition',
+      'extension-acquisition',
       'index.js',
     )).href);
     const hostConfig = await acquisition.readHostExtensionsConfig(agentHome);

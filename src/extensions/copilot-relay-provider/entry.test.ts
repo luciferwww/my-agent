@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
-import { prepareExtensionConfig } from '../acquisition/configuration.js';
+import { prepareExtensionConfig } from '../../extension-acquisition/configuration.js';
 import { createExtension } from './entry.js';
 
 const DESCRIPTOR_PATH = fileURLToPath(new URL('./extension.json', import.meta.url));

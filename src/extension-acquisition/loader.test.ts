@@ -9,7 +9,7 @@ import { acquireExtensions, loadExtensionCandidate } from './loader.js';
 import type { ResolvedHostExtensionsConfig } from './types.js';
 
 const FIXTURE_ROOT = fileURLToPath(new URL(
-  '../../../test-fixtures/extension-acquisition/',
+  '../../test-fixtures/extension-acquisition/',
   import.meta.url,
 ));
 const EXECUTION_MARKER = Symbol.for('my-agent.test.extension-acquisition.executions');

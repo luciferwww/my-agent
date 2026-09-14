@@ -4,7 +4,7 @@ import type {
   ExtensionAcquisitionDiagnostic,
   ExtensionAcquisitionResult,
   ResolvedHostExtensionsConfig,
-} from '../src/extensions/acquisition/index.js';
+} from '../src/extension-acquisition/index.js';
 import {
   formatAcquisitionWarning,
   formatRuntimeWarning,

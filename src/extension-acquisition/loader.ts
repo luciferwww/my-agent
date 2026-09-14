@@ -2,7 +2,7 @@ import { lstat, realpath } from 'node:fs/promises';
 import { basename, isAbsolute, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { LoadedRuntimeUnit } from '../../runtime/runtime-unit.js';
+import type { LoadedRuntimeUnit } from '../runtime/runtime-unit.js';
 import { prepareExtensionConfig } from './configuration.js';
 import { discoverExtensionDescriptors } from './discovery.js';
 import type {

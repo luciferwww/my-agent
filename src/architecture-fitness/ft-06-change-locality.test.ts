@@ -55,7 +55,7 @@ describe('FT-06 Provider and Extension change locality', () => {
   it('guards the current direct acquisition, lifecycle, configuration, and error authorities', async () => {
     const productionSources = await loadProductionSources(REPOSITORY_ROOT);
     const loader = productionSources.find(
-      ({ path }) => path === 'src/extensions/acquisition/loader.ts',
+      ({ path }) => path === 'src/extension-acquisition/loader.ts',
     )?.content;
     const runtimeSources = productionSources.filter(
       ({ path }) => path.startsWith('src/runtime/'),
@@ -71,7 +71,7 @@ describe('FT-06 Provider and Extension change locality', () => {
     expect(loader).not.toMatch(/\b(?:unit\.)?(?:create|start|stop)\s*\(/u);
     expect(loader).not.toMatch(/\b(?:registerProvider|stageRegistryUnit)\s*\(/u);
     expect(runtimeSources.every(({ content }) =>
-      !content.includes('extensions/acquisition')
+      !content.includes('extension-acquisition')
       && !content.includes('copilot-relay-provider'))).toBe(true);
     expect(relayClient).not.toMatch(/from ['"][^'"]*runtime[^'"]*['"]/u);
     expect(relayClient).not.toMatch(/import\s*\{[^}]*\bModelInvocationError\b[^}]*\}/u);

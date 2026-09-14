@@ -300,7 +300,12 @@ describe('FT-12 Current Architecture authority', () => {
 
 async function currentSourceModules(): Promise<string[]> {
   const roots = ['core', 'adapters', 'platform', 'extensions'] as const;
-  const modules = ['src/runtime', 'src/runtime-modules', 'src/core/tools/builtin'];
+  const modules = [
+    'src/runtime',
+    'src/runtime-modules',
+    'src/extension-acquisition',
+    'src/core/tools/builtin',
+  ];
   for (const root of roots) {
     const entries = await readdir(join(REPOSITORY_ROOT, 'src', root), { withFileTypes: true });
     for (const entry of entries.filter((candidate) => candidate.isDirectory())) {

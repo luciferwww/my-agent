@@ -17,6 +17,8 @@ describe('FT-13 source layout convergence', () => {
       'src/runtime/turn-interaction/index.ts',
       'src/runtime-modules/anthropic-provider.ts',
       'src/runtime-modules/anthropic-provider.test.ts',
+      'src/extension-acquisition/index.ts',
+      'src/extension-acquisition/contracts.ts',
     ];
     for (const path of required) {
       await expect(stat(join(REPOSITORY_ROOT, ...path.split('/')))).resolves.toBeDefined();
@@ -30,6 +32,8 @@ describe('FT-13 source layout convergence', () => {
       'src/adapters/channel/types.ts',
       'src/adapters/channel/TurnInteractionManager.ts',
       'src/adapters/provider/index.ts',
+      'src/extensions/acquisition/index.ts',
+      'src/extensions/acquisition/types.ts',
     ];
     for (const path of removed) {
       await expect(stat(join(REPOSITORY_ROOT, ...path.split('/')))).rejects.toMatchObject({
@@ -75,6 +79,7 @@ describe('FT-13 source layout convergence', () => {
         'adapters/llm',
         'adapters/channel/types',
         'adapters/channel/TurnInteractionManager',
+        'extensions/acquisition',
       ]) {
         if (source.content.includes(forbidden)) {
           diagnostics.push(`FT-13 source=${source.path} forbiddenPath=${forbidden}`);

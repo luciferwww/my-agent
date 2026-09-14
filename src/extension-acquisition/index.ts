@@ -5,6 +5,10 @@ export { discoverExtensionDescriptors } from './discovery.js';
 export { readHostExtensionsConfig } from './host-config.js';
 
 export type {
+  ExtensionLoadContext,
+  ExternalExtensionModule,
+} from './contracts.js';
+export type {
   AgentHomeResolutionOptions,
   ExtensionAcquisitionDiagnostic,
   ExtensionAcquisitionFatalCode,
@@ -15,11 +19,9 @@ export type {
   ExtensionDiscoveryDiagnostic,
   ExtensionDiscoveryDiagnosticCode,
   ExtensionDiscoveryResult,
-  ExtensionLoadContext,
   ExtensionLoaderDiagnostic,
   ExtensionLoaderDiagnosticCategory,
   ExtensionLoaderDiagnosticCode,
-  ExternalExtensionModule,
   HostConfig,
   HostExtensionEntry,
   ResolvedHostExtensionsConfig,

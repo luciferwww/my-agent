@@ -120,80 +120,80 @@
   },
   {
     "contract": "ExtensionDescriptorV1",
-    "source": "src/extensions/acquisition/types.ts",
+    "source": "src/extension-acquisition/types.ts",
     "kind": "extension-descriptor",
-    "positive": ["src/extensions/acquisition/discovery.test.ts"],
-    "negative": ["src/extensions/acquisition/discovery.test.ts"]
+    "positive": ["src/extension-acquisition/discovery.test.ts"],
+    "negative": ["src/extension-acquisition/discovery.test.ts"]
   },
   {
     "contract": "HostConfig",
-    "source": "src/extensions/acquisition/types.ts",
+    "source": "src/extension-acquisition/types.ts",
     "kind": "host-config",
-    "positive": ["src/extensions/acquisition/host-config.test.ts"],
-    "negative": ["src/extensions/acquisition/host-config.test.ts"]
+    "positive": ["src/extension-acquisition/host-config.test.ts"],
+    "negative": ["src/extension-acquisition/host-config.test.ts"]
   },
   {
     "contract": "ExtensionDiscoveryResult",
-    "source": "src/extensions/acquisition/types.ts",
+    "source": "src/extension-acquisition/types.ts",
     "kind": "extension-discovery-result",
-    "positive": ["src/extensions/acquisition/discovery.test.ts"],
-    "negative": ["src/extensions/acquisition/discovery.test.ts"]
+    "positive": ["src/extension-acquisition/discovery.test.ts"],
+    "negative": ["src/extension-acquisition/discovery.test.ts"]
   },
   {
     "contract": "ExtensionAcquisitionFatalError",
-    "source": "src/extensions/acquisition/errors.ts",
+    "source": "src/extension-acquisition/errors.ts",
     "kind": "error",
-    "positive": ["src/extensions/acquisition/agent-home.test.ts", "src/extensions/acquisition/host-config.test.ts", "src/extensions/acquisition/discovery.test.ts"],
-    "negative": ["src/extensions/acquisition/agent-home.test.ts", "src/extensions/acquisition/host-config.test.ts", "src/extensions/acquisition/discovery.test.ts"]
+    "positive": ["src/extension-acquisition/agent-home.test.ts", "src/extension-acquisition/host-config.test.ts", "src/extension-acquisition/discovery.test.ts"],
+    "negative": ["src/extension-acquisition/agent-home.test.ts", "src/extension-acquisition/host-config.test.ts", "src/extension-acquisition/discovery.test.ts"]
   },
   {
     "contract": "resolveAgentHome",
-    "source": "src/extensions/acquisition/agent-home.ts",
+    "source": "src/extension-acquisition/agent-home.ts",
     "kind": "agent-home-resolution",
-    "positive": ["src/extensions/acquisition/agent-home.test.ts"],
-    "negative": ["src/extensions/acquisition/agent-home.test.ts"]
+    "positive": ["src/extension-acquisition/agent-home.test.ts"],
+    "negative": ["src/extension-acquisition/agent-home.test.ts"]
   },
   {
     "contract": "readHostExtensionsConfig",
-    "source": "src/extensions/acquisition/host-config.ts",
+    "source": "src/extension-acquisition/host-config.ts",
     "kind": "host-config-reader",
-    "positive": ["src/extensions/acquisition/host-config.test.ts"],
-    "negative": ["src/extensions/acquisition/host-config.test.ts"]
+    "positive": ["src/extension-acquisition/host-config.test.ts"],
+    "negative": ["src/extension-acquisition/host-config.test.ts"]
   },
   {
     "contract": "discoverExtensionDescriptors",
-    "source": "src/extensions/acquisition/discovery.ts",
+    "source": "src/extension-acquisition/discovery.ts",
     "kind": "extension-discovery",
-    "positive": ["src/extensions/acquisition/discovery.test.ts"],
-    "negative": ["src/extensions/acquisition/discovery.test.ts"]
+    "positive": ["src/extension-acquisition/discovery.test.ts"],
+    "negative": ["src/extension-acquisition/discovery.test.ts"]
   },
   {
     "contract": "ExtensionLoadContext",
-    "source": "src/extensions/acquisition/types.ts",
+    "source": "src/extension-acquisition/contracts.ts",
     "kind": "extension-load-context",
-    "positive": ["src/extensions/acquisition/loader.test.ts"],
-    "negative": ["src/extensions/acquisition/loader.test.ts"]
+    "positive": ["src/extension-acquisition/loader.test.ts"],
+    "negative": ["src/extension-acquisition/loader.test.ts"]
   },
   {
     "contract": "ExternalExtensionModule",
-    "source": "src/extensions/acquisition/types.ts",
+    "source": "src/extension-acquisition/contracts.ts",
     "kind": "extension-entry-module",
-    "positive": ["src/extensions/acquisition/loader.test.ts"],
-    "negative": ["src/extensions/acquisition/loader.test.ts"]
+    "positive": ["src/extension-acquisition/loader.test.ts"],
+    "negative": ["src/extension-acquisition/loader.test.ts"]
   },
   {
     "contract": "ExtensionAcquisitionResult",
-    "source": "src/extensions/acquisition/types.ts",
+    "source": "src/extension-acquisition/types.ts",
     "kind": "extension-acquisition-result",
-    "positive": ["src/extensions/acquisition/loader.test.ts"],
-    "negative": ["src/extensions/acquisition/loader.test.ts"]
+    "positive": ["src/extension-acquisition/loader.test.ts"],
+    "negative": ["src/extension-acquisition/loader.test.ts"]
   },
   {
     "contract": "acquireExtensions",
-    "source": "src/extensions/acquisition/loader.ts",
+    "source": "src/extension-acquisition/loader.ts",
     "kind": "extension-acquisition",
-    "positive": ["src/extensions/acquisition/loader.test.ts"],
-    "negative": ["src/extensions/acquisition/loader.test.ts"]
+    "positive": ["src/extension-acquisition/loader.test.ts"],
+    "negative": ["src/extension-acquisition/loader.test.ts"]
   },
   {
     "contract": "createExtension",

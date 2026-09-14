@@ -4,13 +4,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { ModelCatalogSnapshot, ProviderCatalogEntry } from '../../core/channel/index.js';
-import { RuntimeApp } from '../../runtime/RuntimeApp.js';
+import type { ModelCatalogSnapshot, ProviderCatalogEntry } from '../core/channel/index.js';
+import { RuntimeApp } from '../runtime/RuntimeApp.js';
 import { acquireExtensions } from './loader.js';
 import type { ResolvedHostExtensionsConfig } from './types.js';
 
 const FIXTURE_ROOT = fileURLToPath(new URL(
-  '../../../test-fixtures/extension-acquisition/',
+  '../../test-fixtures/extension-acquisition/',
   import.meta.url,
 ));
 const DRAFT_07 = 'http://json-schema.org/draft-07/schema#';

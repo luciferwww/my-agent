@@ -5,7 +5,7 @@
   {"id":"model-resolution","role":"topic","path":"docs/architecture/current/core_model_resolution.md","ownershipKey":"model-resolution-and-facts","ownedModules":["src/core/model-resolution"]},
   {"id":"channel","role":"topic","path":"docs/architecture/current/adapter_channel.md","ownershipKey":"channel-transport-and-ingress","ownedModules":["src/core/channel","src/adapters/channel"]},
   {"id":"media","role":"topic","path":"docs/architecture/current/core_media.md","ownershipKey":"media-validation-and-normalization","ownedModules":["src/core/media"]},
-  {"id":"configuration","role":"topic","path":"docs/architecture/current/platform_config.md","ownershipKey":"configuration-acquisition-and-wizard","ownedModules":["src/platform/config","src/extensions/acquisition"]},
+  {"id":"configuration","role":"topic","path":"docs/architecture/current/platform_config.md","ownershipKey":"configuration-acquisition-and-wizard","ownedModules":["src/platform/config","src/extension-acquisition"]},
   {"id":"model-invocation-provider","role":"topic","path":"docs/architecture/current/adapter_llm.md","ownershipKey":"provider-protocol-and-anthropic-adapter","ownedModules":["src/core/model-invocation","src/adapters/provider","src/extensions/copilot-relay-provider"]},
   {"id":"tools","role":"topic","path":"docs/architecture/current/core_tools.md","ownershipKey":"canonical-tool-contract","ownedModules":["src/core/tools","src/core/approval"]},
   {"id":"builtin-tools","role":"topic","path":"docs/architecture/current/core_tools_builtin.md","ownershipKey":"builtin-tool-capabilities","ownedModules":["src/core/tools/builtin"]},
