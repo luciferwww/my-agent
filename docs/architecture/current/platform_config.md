@@ -1,10 +1,10 @@
-# Platform Config Current Architecture
+# Platform Config and Extension Acquisition Current Architecture
 
 > Status: Current Authority
 > Verified: 2026-09-09
 > Agent Home acquisition config verified: 2026-09-14
-> Ownership: configuration sources, precedence, schema, defaults, and Config Wizard
-> Ownership key: configuration-and-wizard
+> Ownership: configuration sources, Agent Home Extension acquisition, precedence, schema, defaults, and Config Wizard
+> Ownership key: configuration-acquisition-and-wizard
 
 ## 1. Boundary
 
@@ -48,6 +48,8 @@ The supported Host evaluates this generic override before importing any enabled 
 Agent Home resolution precedence is explicit `--agent-home`, then `MY_AGENT_HOME`, then `<user-home>/.my-agent`. Missing Agent Home, Host config, or `extensions` directory is an empty non-creating state. An existing unreadable/malformed/root-invalid Host config, or an invalid existing discovery root, is startup-fatal.
 
 `<agent-home>/config.json` owns the `extensions.enabled` switch and `extensions.entries.<descriptor-id>` namespaces. An entry must be explicitly enabled. Generic `$env` and environment-backed `$secret` references are materialized from the Host process environment before strict Descriptor-owned Draft-07 validation; validated scoped config is defensively frozen before its Extension factory receives it. Environment variable names are deployment inputs selected by config, not centrally typed Extension fields.
+
+`src/extensions/acquisition/` owns direct-child Descriptor discovery, canonical containment, duplicate isolation, deterministic ordering, controlled ESM import, factory/Unit metadata validation, and frozen `ExtensionAcquisitionResult`. It returns only not-yet-created `LoadedRuntimeUnit[]`; Runtime remains the sole owner of Unit create/start/registration/publication/stop. Missing/disabled/invalid candidates never gain execution or lifecycle authority, and one rejected candidate does not remove other valid Units.
 
 ## 4. Current schema and defaults
 
@@ -112,6 +114,6 @@ npx tsx scripts/config.ts [--path <file>|--path=<file>] [--help|-h]
 
 | Kind | Evidence |
 |---|---|
-| Source | [types.ts](../../../src/platform/config/types.ts), [defaults.ts](../../../src/platform/config/defaults.ts), [loader.ts](../../../src/platform/config/loader.ts), [wizard/run-wizard.ts](../../../src/platform/config/wizard/run-wizard.ts), [wizard/diff.ts](../../../src/platform/config/wizard/diff.ts), [scripts/config.ts](../../../scripts/config.ts) |
-| Tests | [loader.test.ts](../../../src/platform/config/loader.test.ts), [wizard/fields.test.ts](../../../src/platform/config/wizard/fields.test.ts), [wizard/diff.test.ts](../../../src/platform/config/wizard/diff.test.ts) |
-| Controlling authority | [ADR-004](../adr-004-provider-model-identity-and-facts-ownership.md), [Model Resolution Module Spec](../model-resolution-module-spec.md), [Platform Config Restructure Spec](../platform-config-restructure-spec.md) |
+| Source | [types.ts](../../../src/platform/config/types.ts), [defaults.ts](../../../src/platform/config/defaults.ts), [loader.ts](../../../src/platform/config/loader.ts), [Agent Home resolution](../../../src/extensions/acquisition/agent-home.ts), [Host config](../../../src/extensions/acquisition/host-config.ts), [Extension loader](../../../src/extensions/acquisition/loader.ts), [wizard/run-wizard.ts](../../../src/platform/config/wizard/run-wizard.ts), [wizard/diff.ts](../../../src/platform/config/wizard/diff.ts), [scripts/config.ts](../../../scripts/config.ts) |
+| Tests | [config loader tests](../../../src/platform/config/loader.test.ts), [Agent Home tests](../../../src/extensions/acquisition/agent-home.test.ts), [Extension loader tests](../../../src/extensions/acquisition/loader.test.ts), [acquisition Runtime integration](../../../src/extensions/acquisition/acquisition-runtime.integration.test.ts), [wizard/fields.test.ts](../../../src/platform/config/wizard/fields.test.ts), [wizard/diff.test.ts](../../../src/platform/config/wizard/diff.test.ts) |
+| Controlling authority | [ADR-004](../adr-004-provider-model-identity-and-facts-ownership.md), [ADR-005](../adr-005-extension-registry-runtime-composition.md), [Model Resolution Module Spec](../model-resolution-module-spec.md), [Platform Config Restructure Spec](../platform-config-restructure-spec.md), [Extension Acquisition Module Spec](../extension-acquisition-configuration-module-spec.md) |

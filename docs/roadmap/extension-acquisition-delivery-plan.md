@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 
-- **状态：** Accepted；A1–A4 completed
+- **状态：** Completed；A1–A5 owner accepted
 - **版本：** 0.1
 - **日期：** 2026-09-11
 - **所有者：** 项目所有者
@@ -10,9 +10,9 @@
 - **关联 Spec：** [Extension Acquisition and Configuration Module Spec](../architecture/extension-acquisition-configuration-module-spec.md)
 - **前置 Contract：** [Model Invocation Error Boundary Amendment](../architecture/model-invocation-error-boundary-amendment.md)
 - **工作流：** [Development Workflow](../development-workflow.md)
-- **执行授权：** 项目所有者于 2026-09-11 授权 A0 readiness evidence，并于 2026-09-14 接受 A0 Results；production Delivery 仍需独立授权。
+- **执行授权：** 项目所有者于 2026-09-11 授权 A0 readiness evidence，并于 2026-09-14 依次授权、接受 A1–A5 production Delivery。
 
-本 Plan 独立于 Provider Model Catalog Plan C4。项目所有者于 2026-09-14 接受 Spec v0.4 与 A1–A4，并批准在既有 `RuntimeEvent.warning` 上增加 `UNIT_INVALID` / `UNIT_CONFLICT`。A5 与 C4 仍未授权。
+本 Plan 独立于 Provider Model Catalog Plan C4。项目所有者于 2026-09-14 接受 Spec v0.4 与 A1–A4，并批准在既有 `RuntimeEvent.warning` 上增加 `UNIT_INVALID` / `UNIT_CONFLICT`；A4 commit/push 后又明确要求继续，授权 A5 closeout；A5 validation 与 independent review 完成后，项目所有者接受 A5。C4 仍未授权。
 
 ## 2. 用户可观察目标
 
@@ -126,12 +126,21 @@
 
 ### A5 — Closeout
 
-**状态：** Not Started
+**状态：** Completed（owner accepted 2026-09-14）
 
 - 完成 integration/Fitness/Current Architecture/deployment docs；
 - 验证无 dual acquisition/config/error/lifecycle authority；
 - broad validation 与 independent review；
 - owner acceptance 后才标记 Completed。
+
+**实现记录（2026-09-14）：**
+
+- 新增无 Runtime import 的 fixture Provider Extension，并以 fresh Agent Home 贯通 generic acquisition → `RuntimeAppOptions.loadedUnits` → Runtime staging/publication → immutable typed Model Catalog projection；同一场景证明坏邻居隔离，disabled restart 场景证明 Extension 不发布且其他 builtin Provider 保持可用；
+- FT-06 对当前直接 authority signatures 增加累积 guard：Relay-specific authority 只存在于 Relay Extension、Host 只走 generic acquisition、显式 `enabled: true` 是执行门、Loader 不直接 create/start/stop/register、Runtime 不依赖 acquisition/Relay、Relay structural error 不依赖 Host Runtime class；该 source guard 与 integration/regression evidence 共同证明当前单一路径，不宣称可替代 semantic review；
+- Current Architecture module/authority map 首次纳入 `src/extensions/acquisition` 与 Relay Extension，修正 Runtime options/startup flow，并从 docs index 链接完整 Host deployment/operator guidance；
+- Spec acceptance matrix 映射到 A1–A5 cumulative evidence；未新增 dependency、第二条 lifecycle/config/error authority，未扩展 C4。
+
+**Validation and review record：** focused acquisition Runtime integration + FT-06/FT-11/FT-12 22/22 passed；full Vitest isolated rerun 108 files / 1023 tests passed；lint、build、7-file artifact allowlist/closure audit、Relay emitted error-boundary audit、fresh Agent Home supported Host smoke 与 `git diff --check` passed。一次高负载 full run 仅出现既有 filesystem/process Fitness timeout，相关 focused run 与立即 isolated rerun 全部通过，未形成产品 finding。Independent final review 首轮提出 4 Medium / 1 Low suggestions：加强 deep-freeze typed projection 与具体 builtin Provider continuity evidence、准确限定 FT-06 source guard claims 后接受；将 FT-12 全库统一 verification epoch 误作单页 stale date 的建议因违反现有 invariant 而拒绝；`npx tsx` 为 owner-accepted A4 supported Host baseline，A5 `--yes` 只使同一路径 non-interactive，记录为 inherited tooling risk 而非 dependency/artifact regression。修正后 re-review overall PASS，无 unresolved finding。项目所有者于 2026-09-14 接受 A5 implementation、validation evidence 与 review disposition。该接受不授权 C4、commit 或 push。
 
 ## 5. Definition of Ready for production Delivery
 

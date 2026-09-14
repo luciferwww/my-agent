@@ -15,9 +15,9 @@
 - **语言与术语约定：** [Architecture Foundation Plan §7.4](../roadmap/architecture-foundation-plan.md#74-当前架构重构文档的语言与术语约定)
 - **工作流：** [Development Workflow](../development-workflow.md)
 
-项目所有者于 2026-09-14 接受本 Spec v0.4 与 A1–A4，并批准在既有 `RuntimeEvent.warning` 上增加 `UNIT_INVALID` / `UNIT_CONFLICT`。A5 closeout 与 C4 仍未授权。
+项目所有者于 2026-09-14 接受本 Spec v0.4 与 A1–A4，并批准在既有 `RuntimeEvent.warning` 上增加 `UNIT_INVALID` / `UNIT_CONFLICT`；A4 commit/push 后又明确要求继续，授权 A5 closeout；A5 validation 与 independent review 完成后，项目所有者接受 A5。C4 仍未授权。
 
-2026-09-11 readiness Spike 在 Windows/Node 22/Ajv 8.20 环境验证了 canonical containment、Agent Home alias、file/directory/junction/entry symlink rejection、multi-file ESM relocation、Draft-07 strict/default/no-coercion/no-removal/internal-ref behavior 与 bounded redaction。该证据支持 `Draft -> In Review`，不替代 A1–A4 production Contract/Integration tests，也不将单一 Windows observation表述为跨平台证明。
+2026-09-11 readiness Spike 在 Windows/Node 22/Ajv 8.20 环境验证了 canonical containment、Agent Home alias、file/directory/junction/entry symlink rejection、multi-file ESM relocation、Draft-07 strict/default/no-coercion/no-removal/internal-ref behavior 与 bounded redaction。该证据支持 `Draft -> In Review`，不替代 A1–A5 production Contract/Integration tests，也不将单一 Windows observation表述为跨平台证明。
 
 项目所有者于 2026-09-11 决定不建立独立 `<agent-home>/extensions.json`；machine/Host-level 配置统一位于 `<agent-home>/config.json`，Extension 使用其中的 `extensions.entries.<id>` namespace。该决定关闭物理配置来源问题，但不接受本 Spec 的其他 Draft contract。
 
@@ -463,8 +463,8 @@ External Extension 是显式启用后在 Host 进程中执行的可信代码。D
 
 ### 13.1 User-observable acceptance
 
-- [ ] 未修改 Host/Runtime/Runner Extension-specific 代码即可安装并启用一个 fixture Provider Extension；重启后它出现在 Catalog；
-- [ ] 禁用或移除后重启，它不再出现在 Catalog，其他 Provider/Channel 正常；
+- [x] 未修改 Host/Runtime/Runner Extension-specific 代码即可安装并启用一个 fixture Provider Extension；重启后它出现在 Catalog；
+- [x] 禁用或移除后重启，它不再出现在 Catalog，其他 Provider/Channel 正常；
 - [x] Relay 通过 scoped config 和 SecretRef 完成真实 loopback Catalog discovery 与 invocation；
 - [x] supported WebSocket Host 不再 import Relay 或读取 Relay-specific env；
 - [x] supported WebSocket Host 仅通过 workspace `AgentDefaults.model` 或成对的 `MY_AGENT_PROVIDER` + `MY_AGENT_MODEL` 取得完整 Model Reference，不推导具体 Provider；
@@ -473,17 +473,17 @@ External Extension 是显式启用后在 Host 进程中执行的可信代码。D
 
 ### 13.2 Contract evidence
 
-- [ ] direct-child discovery、Descriptor-ID deterministic order、目录重命名不变性、invalid Descriptor、path escape、symlink/reparse point、duplicate ID 全部隔离；
-- [ ] config presence does not enable、explicit enable/disable、unknown installed/configured ID；
-- [ ] `$env` / `$secret` materialization、missing value、deep references、redaction、defensive freeze；
-- [ ] Draft-07 Schema URI/root contract、strict compile、internal-only `$ref`、isolated defaults、no coercion、no field removal、unknown key failure，且 rejected entry execution count 为零；
-- [ ] entry export、factory pure-validation、metadata mismatch 与 Unit `create()` failure 保持不同错误阶段和 whole-unit isolation；
-- [ ] factory context 只有递归 frozen scoped config，不包含 Descriptor、identity、version、locator、global config、environment 或 Runtime capability；
-- [ ] External Unit 返回非空 dependencies 时在 acquisition handoff 前拒绝，其他 valid Units 仍可进入 Runtime；
-- [ ] 同一语义错误来自 Host canonical class、独立 Extension bundle 或重复 constructor 时均被统一 canonicalize；malformed/未知版本结构不被误认；
-- [ ] Host 不 import Extension-private Error subclass，跨 Extension 识别不以共享 `instanceof`、message matching 或公共 SDK runtime singleton 为必要条件；
-- [ ] build artifact 只有 Descriptor、ESM marker、entry 与 Relay-owned production JavaScript closure；不存在越界 runtime import、测试、声明、source map、Host Core 文件或 npm install；
-- [ ] artifact 在 fresh/relocated Agent Home 中可加载，repository/build tree 删除后仍可运行；partial/运行中/symlink deployment 明确不受支持；
+- [x] direct-child discovery、Descriptor-ID deterministic order、目录重命名不变性、invalid Descriptor、path escape、symlink/reparse point、duplicate ID 全部隔离；
+- [x] config presence does not enable、explicit enable/disable、unknown installed/configured ID；
+- [x] `$env` / `$secret` materialization、missing value、deep references、redaction、defensive freeze；
+- [x] Draft-07 Schema URI/root contract、strict compile、internal-only `$ref`、isolated defaults、no coercion、no field removal、unknown key failure，且 rejected entry execution count 为零；
+- [x] entry export、factory pure-validation、metadata mismatch 与 Unit `create()` failure 保持不同错误阶段和 whole-unit isolation；
+- [x] factory context 只有递归 frozen scoped config，不包含 Descriptor、identity、version、locator、global config、environment 或 Runtime capability；
+- [x] External Unit 返回非空 dependencies 时在 acquisition handoff 前拒绝，其他 valid Units 仍可进入 Runtime；
+- [x] 同一语义错误来自 Host canonical class、独立 Extension bundle 或重复 constructor 时均被统一 canonicalize；malformed/未知版本结构不被误认；
+- [x] Host 不 import Extension-private Error subclass，跨 Extension 识别不以共享 `instanceof`、message matching 或公共 SDK runtime singleton 为必要条件；
+- [x] build artifact 只有 Descriptor、ESM marker、entry 与 Relay-owned production JavaScript closure；不存在越界 runtime import、测试、声明、source map、Host Core 文件或 npm install；
+- [x] artifact 在 fresh/relocated Agent Home 中可加载，repository/build tree 删除后仍可运行；partial/运行中/symlink deployment 明确不受支持；
 - [x] acquisition actionable diagnostics 通过 frozen result 到达 Host；Runtime optional Unit 与 Channel degraded diagnostics 全部通过 warning event 到达 Host，不只转发 `CHANNEL_*`；
 - [x] operator formatter 对两阶段 diagnostics 使用同一 bounded/redacted policy；fatal error 仍 reject，`disabled` 默认不打印，诊断不进入 Channel protocol；
 - [x] Loader 只产出 `LoadedRuntimeUnit[]`，不 create/start/register Unit；
@@ -491,9 +491,9 @@ External Extension 是显式启用后在 Host 进程中执行的可信代码。D
 
 ### 13.3 Integration and regression evidence
 
-- [ ] fixture Extension -> generic acquisition -> Runtime staging -> immutable Snapshot -> typed projection；
-- [ ] 一个坏 Extension 不改变其他 valid Unit 的发布结果；
-- [ ] existing runtime reload/generation/retirement/Shutdown tests 不新增第二条路径；
+- [x] fixture Extension -> generic acquisition -> Runtime staging -> immutable Snapshot -> typed projection；
+- [x] 一个坏 Extension 不改变其他 valid Unit 的发布结果；
+- [x] existing runtime reload/generation/retirement/Shutdown tests 不新增第二条路径；
 - [x] Copilot Relay focused tests、supported WebSocket Host loopback smoke、CLI/WebSocket model selection 与 Abort regressions 通过；
 - [x] complete `npm test`、`npm run lint`、`npm run build` 和 `git diff --check` 通过；
 - [x] 文档链接/Fitness/Current Architecture 同步检查通过。
@@ -510,10 +510,10 @@ External Extension 是显式启用后在 Host 进程中执行的可信代码。D
 - [x] startup diagnostics 以 acquisition result 与 Runtime warning event 为各阶段结构化权威，supported Host 向机器操作者/Host integrator 展示；不进入 Channel，也不增加 durable `RuntimeHandle` report；
 - [x] [Model Invocation Error Boundary Amendment](model-invocation-error-boundary-amendment.md) 已接受 versioned structural error、runtime parser、Host canonicalization 与现有 class 输入的迁移/兼容规则；
 - [x] Error canonicalization 已通过同一 Core/Runtime error path 实现，未新增第二条 Runtime/Runner/Registry、invocation 或 lifecycle path；
-- [x] 项目所有者单独授权 A1–A4 production Delivery；A5/C4 不在该授权内。
+- [x] 项目所有者单独授权 A1–A5 production Delivery；C4 不在该授权内。
 
 ## 15. Open Questions
 
 本 Spec 的本地 design Open Questions 已全部关闭。Agent Home resolution、Host config physical source、directory/identity semantics、Draft-07 Schema contract、Entry factory、跨 Extension 错误的长期 structural-authority 方向、Relay installation artifact 和 startup diagnostics surface 均已有唯一决定。
 
-本文档现为 `Accepted`：Model Invocation structural error 与 A1–A4 均已有 implementation、validation、review 和 owner acceptance evidence。A5/C4 未授权。v1 External Unit dependencies 已决定为空；未来如需依赖图必须另行扩展 acquisition isolation 与 Runtime Catalog failure matrix。任何新证据若要求第二条 Runtime path、Extension-specific Host branch、全局 Config 暴露、不受信任代码执行、公共 SDK runtime singleton 或新的 package manager/bundler dependency，必须停止并回到项目所有者重新决策。
+本文档现为 `Accepted`：Model Invocation structural error 与 A1–A5 均已有 implementation、validation、review 和 owner acceptance evidence；Extension Acquisition delivery 已完成，C4 未授权。v1 External Unit dependencies 已决定为空；未来如需依赖图必须另行扩展 acquisition isolation 与 Runtime Catalog failure matrix。任何新证据若要求第二条 Runtime path、Extension-specific Host branch、全局 Config 暴露、不受信任代码执行、公共 SDK runtime singleton 或新的 package manager/bundler dependency，必须停止并回到项目所有者重新决策。

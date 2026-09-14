@@ -458,7 +458,7 @@
       "durableDecisionAuthority": [],
       "unfinishedWorkSuccessor": [],
       "evidenceSuccessor": ["repository tree", "docs/architecture/current/overview.md"],
-      "inbound": {"activeDocs":["docs/architecture/target-architecture.md"],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
+      "inbound": {"activeDocs":["docs/README.md","docs/architecture/target-architecture.md"],"candidateDocs":[],"productionSource":[],"tests":[],"scripts":[],"clients":[]},
       "proposedDisposition": "Retain Active Navigation",
       "validationEvidence": ["repository tree audit", "active-link audit"]
     },

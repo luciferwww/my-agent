@@ -19,6 +19,7 @@ const HOST_ENTRY = join(REPOSITORY_ROOT, 'scripts', 'server.ts');
 const API_KEY = 'websocket-host-smoke-secret';
 const MODEL_ID = 'smoke-model';
 const TIMEOUT_MS = 15_000;
+const HOST_START_TIMEOUT_MS = 60_000;
 
 async function main() {
   await assertBuildInputs();
@@ -115,6 +116,7 @@ async function createAgentHome(agentHome, baseURL) {
 function startHost(agentHome, port, relayBaseURL, output) {
   const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
   const child = spawn(npx, [
+    '--yes',
     'tsx',
     HOST_ENTRY,
     '--agent-home',
@@ -243,7 +245,7 @@ async function reserveLoopbackPort() {
 }
 
 async function connectWithRetry(url, child) {
-  const deadline = Date.now() + TIMEOUT_MS;
+  const deadline = Date.now() + HOST_START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error('WebSocket Host exited before becoming ready.');

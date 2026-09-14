@@ -112,6 +112,9 @@ src/runtime-modules/
 ```
 RuntimeAppOptions {
   workspaceDir: string          // 唯一必填项
+  loadedUnits?: readonly LoadedRuntimeUnit[] // Host/acquisition 提供的未创建 Units
+  deadlinePolicy?: Partial<RuntimeDeadlinePolicy>
+  deadlineDriver?: RuntimeDeadlineDriver     // 测试/嵌入式 deadline driver
   agentId?: string              // per-agent 配置预留
   envOverrides?: DeepPartial<AgentDefaults>
   cliOverrides?: DeepPartial<AgentDefaults>
@@ -194,17 +197,16 @@ PendingSteeringInput = {
 flowchart TD
   A[RuntimeApp.create] --> B[buildRuntimeHandle]
   B --> C[bootstrapRuntime: config, logger, workspace, shared resources]
-  C --> D[map config to RuntimeProviderOptions]
-  D --> E[createBundledProviderUnit and assemble Unit catalog]
+  C --> D[map config to narrow builtin module options]
+  D --> E[assemble builtin and options.loadedUnits into one Unit catalog]
   E --> F[RuntimeCompositionManager.start]
   F --> G[create, stage, start and handoff Unit instances]
   G --> H[build and atomically publish immutable Registry Snapshot]
-  H --> I[select registrySnapshot.providers 0 id]
-  I --> J[create RuntimeApp kernel and convergence callbacks]
+  H --> J[create RuntimeApp kernel and convergence callbacks]
   J --> K[emit app_ready and return frozen RuntimeHandle]
 ```
 
-`RuntimeApp.create()` is delegation-only. `bootstrap.ts` prepares shared prerequisites but does not own Model Resolver, Task module, Registry assembly, publication, or reload. A Snapshot is visible only after every selected Unit has completed create/start/handoff and the full candidate has validated. Provider ordering follows Registry deterministic ordering：Builtin 在 External 之前；该顺序只控制稳定投影，不建立 default Provider 或第二份 Provider priority metadata。
+`RuntimeApp.create()` is delegation-only. `bootstrap.ts` prepares shared prerequisites but does not own Model Resolver, Task module, Registry assembly, publication, or reload. Runtime Builder combines builtin Units with caller-supplied `loadedUnits`; acquisition does not create or register them. A Snapshot is visible only after every selected Unit has completed create/start/handoff and the full candidate has validated. Provider ordering follows Registry deterministic ordering：Builtin 在 External 之前；该顺序只控制稳定投影，不建立 default Provider 或第二份 Provider priority metadata。
 
 Required Unit 的 `create()` 失败会终止整体启动，并携带 Unit identity 与 `phase=create`；已创建但未成功进入应用的 candidate 按 Composition ownership 清理。candidate cleanup 失败保持 fail-closed。完整但 Provider 列表为空的 Snapshot 可以发布，以支持 Catalog 查询和后续 Unit enable；Runtime 不为它发明 default Provider。这些失败路径不产生 partial Snapshot、kernel 或 ready event。
 

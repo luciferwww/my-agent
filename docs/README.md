@@ -22,7 +22,7 @@ Documentation is organized by authority role. For implemented architecture, alwa
 - [Model Resolution](architecture/current/core_model_resolution.md)
 - [Channel](architecture/current/adapter_channel.md)
 - [Media](architecture/current/core_media.md)
-- [Configuration](architecture/current/platform_config.md)
+- [Configuration and Extension Acquisition](architecture/current/platform_config.md)
 - [Model Invocation and Provider Adapter](architecture/current/adapter_llm.md)
 - [Tools](architecture/current/core_tools.md)
 - [Builtin Tools](architecture/current/core_tools_builtin.md)
@@ -104,4 +104,4 @@ External comparisons and research inputs are non-authoritative for this reposito
 
 ## Manual scripts
 
-Stable workflows are exposed through package scripts. Other smoke and integration scripts under `scripts/` run directly as `npx tsx scripts/<name>.ts`; consult the script header for its current contract.
+Stable workflows are exposed through package scripts. [Supported WebSocket Host deployment](../README.md#run-the-supported-local-entry-point) documents Agent Home installation, scoped Extension config, environment references, and startup. Other smoke and integration scripts under `scripts/` run directly as `npx tsx scripts/<name>.ts`; consult the script header for its current contract.

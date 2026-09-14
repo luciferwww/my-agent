@@ -51,4 +51,36 @@ describe('FT-06 Provider and Extension change locality', () => {
     expect(host).not.toMatch(/providerId\s*:\s*['"][^'"]+['"]/);
     expect(host).not.toMatch(/catch[\s\S]{0,200}create.*ProviderUnit/u);
   });
+
+  it('guards the current direct acquisition, lifecycle, configuration, and error authorities', async () => {
+    const productionSources = await loadProductionSources(REPOSITORY_ROOT);
+    const loader = productionSources.find(
+      ({ path }) => path === 'src/extensions/acquisition/loader.ts',
+    )?.content;
+    const runtimeSources = productionSources.filter(
+      ({ path }) => path.startsWith('src/runtime/'),
+    );
+    const relayClient = productionSources.find(
+      ({ path }) => path === 'src/extensions/copilot-relay-provider/responses-client.ts',
+    )?.content;
+
+    expect(loader).toBeDefined();
+    expect(relayClient).toBeDefined();
+    expect(loader).toContain('if (enabled === undefined || enabled === false)');
+    expect(loader).toContain('if (enabled !== true');
+    expect(loader).not.toMatch(/\b(?:unit\.)?(?:create|start|stop)\s*\(/u);
+    expect(loader).not.toMatch(/\b(?:registerProvider|stageRegistryUnit)\s*\(/u);
+    expect(runtimeSources.every(({ content }) =>
+      !content.includes('extensions/acquisition')
+      && !content.includes('copilot-relay-provider'))).toBe(true);
+    expect(relayClient).not.toMatch(/from ['"][^'"]*runtime[^'"]*['"]/u);
+    expect(relayClient).not.toMatch(/import\s*\{[^}]*\bModelInvocationError\b[^}]*\}/u);
+
+    const relaySpecificOutsideExtension = productionSources
+      .filter(({ path }) => !path.startsWith('src/extensions/copilot-relay-provider/'))
+      .filter(({ content }) =>
+        /COPILOT_RELAY_|createCopilotRelayProviderUnit/u.test(content))
+      .map(({ path }) => path);
+    expect(relaySpecificOutsideExtension).toEqual([]);
+  });
 });

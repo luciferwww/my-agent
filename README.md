@@ -23,7 +23,8 @@ The supported Host discovers explicitly enabled Extensions from Agent Home. Buil
 stop the Host, and copy the complete Relay artifact directory from
 `dist/extension-artifacts/copilot-relay-provider` to a direct child such as
 `<agent-home>/extensions/relay`. Do not copy individual files or run `npm install` inside the
-artifact.
+artifact. Partial overwrite, symlink-based installation, and replacement while the Host is running
+are unsupported; stop the Host and replace the complete directory.
 
 Create `<agent-home>/config.json`:
 
