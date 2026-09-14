@@ -119,6 +119,55 @@
     "negative": ["src/runtime/runtime-unit.test.ts"]
   },
   {
+    "contract": "ExtensionDescriptorV1",
+    "source": "src/extensions/acquisition/types.ts",
+    "kind": "extension-descriptor",
+    "positive": ["src/extensions/acquisition/discovery.test.ts"],
+    "negative": ["src/extensions/acquisition/discovery.test.ts"]
+  },
+  {
+    "contract": "HostConfig",
+    "source": "src/extensions/acquisition/types.ts",
+    "kind": "host-config",
+    "positive": ["src/extensions/acquisition/host-config.test.ts"],
+    "negative": ["src/extensions/acquisition/host-config.test.ts"]
+  },
+  {
+    "contract": "ExtensionDiscoveryResult",
+    "source": "src/extensions/acquisition/types.ts",
+    "kind": "extension-discovery-result",
+    "positive": ["src/extensions/acquisition/discovery.test.ts"],
+    "negative": ["src/extensions/acquisition/discovery.test.ts"]
+  },
+  {
+    "contract": "ExtensionAcquisitionFatalError",
+    "source": "src/extensions/acquisition/errors.ts",
+    "kind": "error",
+    "positive": ["src/extensions/acquisition/agent-home.test.ts", "src/extensions/acquisition/host-config.test.ts", "src/extensions/acquisition/discovery.test.ts"],
+    "negative": ["src/extensions/acquisition/agent-home.test.ts", "src/extensions/acquisition/host-config.test.ts", "src/extensions/acquisition/discovery.test.ts"]
+  },
+  {
+    "contract": "resolveAgentHome",
+    "source": "src/extensions/acquisition/agent-home.ts",
+    "kind": "agent-home-resolution",
+    "positive": ["src/extensions/acquisition/agent-home.test.ts"],
+    "negative": ["src/extensions/acquisition/agent-home.test.ts"]
+  },
+  {
+    "contract": "readHostExtensionsConfig",
+    "source": "src/extensions/acquisition/host-config.ts",
+    "kind": "host-config-reader",
+    "positive": ["src/extensions/acquisition/host-config.test.ts"],
+    "negative": ["src/extensions/acquisition/host-config.test.ts"]
+  },
+  {
+    "contract": "discoverExtensionDescriptors",
+    "source": "src/extensions/acquisition/discovery.ts",
+    "kind": "extension-discovery",
+    "positive": ["src/extensions/acquisition/discovery.test.ts"],
+    "negative": ["src/extensions/acquisition/discovery.test.ts"]
+  },
+  {
     "contract": "RegistrySnapshot",
     "source": "src/core/registry/types.ts",
     "kind": "registry-snapshot",

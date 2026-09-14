@@ -2,20 +2,20 @@
 
 ## 1. 状态
 
-- **状态：** In Review
+- **状态：** Accepted
 - **版本：** 0.4
 - **日期：** 2026-09-11
 - **所有者：** 项目所有者
 - **关联计划：** [Extension Acquisition and Configuration Delivery Plan](../roadmap/extension-acquisition-delivery-plan.md)；不属于 Provider Model Catalog Plan 的 C3/C4
 - **Readiness evidence：** [Extension Acquisition Readiness Spike Results](extension-acquisition-readiness-spike-results.md)（owner accepted 2026-09-14）
 - **关联决策：** [ADR-005 Extension/Module/Registry Composition 与 Runtime Lifecycle](adr-005-extension-registry-runtime-composition.md)
-- **关联错误边界：** [Model Invocation Error Boundary Amendment](model-invocation-error-boundary-amendment.md)（Accepted）
+- **关联错误边界：** [Model Invocation Error Boundary Amendment](model-invocation-error-boundary-amendment.md)（Validated）
 - **目标输入：** [Target Architecture §6](target-architecture.md#6-extensionmodulecontribution-and-registry)、[AF-06 Extension Framework Spike Results](af-06-extension-framework-spike-results.md)
 - **当前事实：** [Runtime Current Architecture](current/runtime.md)、[Platform Config Current Architecture](current/platform_config.md)、[Model Invocation and Provider Adapter Current Architecture](current/adapter_llm.md)
 - **语言与术语约定：** [Architecture Foundation Plan §7.4](../roadmap/architecture-foundation-plan.md#74-当前架构重构文档的语言与术语约定)
 - **工作流：** [Development Workflow](../development-workflow.md)
 
-本文档已基于关闭的 design decisions、独立 Delivery Plan、已实现的 structural error boundary 与 readiness Spike evidence 进入 `In Review`。`In Review` 不改变当前生产 acquisition behavior，不授权 Extension 安装、动态 production code execution、supported Host migration 或 C4。当前唯一受支持 Host 仍按 Current Architecture 直接组合 Copilot Relay；只有本 Spec 后续达到 `Accepted`、关联 Plan 的 production Definition of Ready 全部满足且 production Delivery 获得明确授权后，才能迁移该路径。
+项目所有者于 2026-09-14 接受本 Spec v0.4，并只授权 A1 contract/fixture foundation。该接受不授权 A2 动态加载、A3 Relay artifact、A4 supported Host migration、A5 closeout 或 C4。当前唯一受支持 Host 仍按 Current Architecture 直接组合 Copilot Relay；只有关联 Plan 的 production Definition of Ready 全部满足且相应 Delivery Item 获得明确授权后，才能迁移该路径。
 
 2026-09-11 readiness Spike 在 Windows/Node 22/Ajv 8.20 环境验证了 canonical containment、Agent Home alias、file/directory/junction/entry symlink rejection、multi-file ESM relocation、Draft-07 strict/default/no-coercion/no-removal/internal-ref behavior 与 bounded redaction。该证据支持 `Draft -> In Review`，不替代 A1–A4 production Contract/Integration tests，也不将单一 Windows observation表述为跨平台证明。
 
@@ -124,7 +124,7 @@ External Extension entry
 
 ## 7. Public Contract
 
-以下 TypeScript shape 是 `In Review` target，不是已接受或已实现的 Contract。只能在本 Spec 达到 `Accepted` 且 production Delivery Definition of Ready 全部满足后据此实施；实现前可在不改变后续已接受语义边界的前提下调整命名。
+以下 TypeScript shape 是已接受、尚未全部实现的 Contract。每个 Delivery Item 只能在其独立授权和 Definition of Ready 范围内实施；实现前可在不改变已接受语义边界的前提下调整内部命名。
 
 ### 7.1 Descriptor
 
@@ -392,9 +392,11 @@ Extension-specific cross-field validation仍由 `createExtension()` 或 Unit `cr
 - Startup acquisition 是单线程、确定顺序的阶段；v1 不并行 import candidates；
 - 单个 External candidate 的 Descriptor/config/import/factory failure 整组隔离，不污染其他 candidate；
 - Host config 文件 malformed 或根结构无效属于 Host configuration failure；不得把整个文件当空配置静默继续；
+- `extensions` discovery root 不存在等价于没有安装 Extension；已存在但不是 directory、无法读取或 canonical path 逃逸 Agent Home 时属于 Host startup failure；
 - 单个 Extension namespace invalid 只隔离该 Extension；
 - duplicate ID 没有 winner，全部候选隔离；不同 ID 的顺序只由 Descriptor ID 决定，不由目录名、import timing、registration order 或配置顺序决定；
 - diagnostics 必须稳定排序、可关联且不含 materialized secret；
+- A1 只执行 Descriptor Schema root/internal-reference preflight；Ajv strict Draft-07 compilation 与完整 Schema validity 是 A2 entry execution 前的必要 Gate；
 - v1 External Unit dependencies 必须为空；Loader 在 handoff 前拒绝非空值，因此 unknown/cycle/disabled dependency 不会泄漏到 Runtime Catalog 并把单个 External acquisition failure升级为 whole-startup failure；
 - Runtime 收到 `loadedUnits` 后的 duplicate catalog identity、create、start、registration conflict 和 publish failure继续使用现有 Runtime error/lifecycle contract；acquisition layer 不翻译成第二套 runtime semantics；
 - AbortSignal 不用于纯 discovery/import。任何可能阻塞的 Provider discovery 必须在 Unit `create(signal)` 内有界执行。
@@ -498,11 +500,11 @@ External Extension 是显式启用后在 Host 进程中执行的可信代码。D
 
 ## 14. Definition of Ready
 
-- [ ] 本 Spec 进入 `Accepted`；
+- [x] 本 Spec 进入 `Accepted`；
 - [x] 独立 Plan Item、迁移 Gate 和 owner 明确；
 - [x] §15 Open Questions 全部关闭；
 - [x] Agent Home resolution 与 Host config source 有唯一权威：explicit option > `MY_AGENT_HOME` > `<user-home>/.my-agent`，配置为 `<agent-home>/config.json`；
-- [x] Descriptor/Schema/module format 已由 readiness Spike 证明可实施；A1–A3 仍需 production Contract tests；
+- [x] Descriptor/Schema/module format 已由 readiness Spike 证明可实施；A1 static Descriptor Contract tests 已完成，A2 Ajv/loader 与 A3 artifact tests 仍待 Delivery；
 - [x] symlink/reparse-point、real-path containment 和 Windows behavior 已有可证伪 evidence；Linux/macOS 由 pure-rule + CI/platform test plan 覆盖；
 - [x] Relay artifact delivery contract 已有唯一设计：由 repository build 生成封闭、可重定位的多文件 ESM directory；构建不写 Agent Home，部署方在 Host 停止时整体复制/替换，不扩展为 Marketplace、安装器、bundler 或 npm package install；真实 Relay closure、relocation 与 repository independence 仍待 A3 验证；
 - [x] startup diagnostics 以 acquisition result 与 Runtime warning event 为各阶段结构化权威，supported Host 向机器操作者/Host integrator 展示；不进入 Channel，也不增加 durable `RuntimeHandle` report；
@@ -514,4 +516,4 @@ External Extension 是显式启用后在 Host 进程中执行的可信代码。D
 
 本 Spec 的本地 design Open Questions 已全部关闭。Agent Home resolution、Host config physical source、directory/identity semantics、Draft-07 Schema contract、Entry factory、跨 Extension 错误的长期 structural-authority 方向、Relay installation artifact 和 startup diagnostics surface 均已有唯一决定。
 
-本文档现为 `In Review`：Model Invocation structural error shape 已实现并完成自动 validation evidence；Descriptor/Schema/module format、path containment、synthetic artifact relocation 和 diagnostic redaction 的 readiness evidence 已形成。真实 Relay artifact repository independence、production Loader categories、Runtime warning projection 和 Host migration 仍属于 A1–A4 validation gates，不得由本 Spike代替。v1 External Unit dependencies 已决定为空；未来如需依赖图必须另行扩展 acquisition isolation 与 Runtime Catalog failure matrix。任何新证据若要求第二条 Runtime path、Extension-specific Host branch、全局 Config 暴露、不受信任代码执行、公共 SDK runtime singleton 或新的 package manager/bundler dependency，必须停止并回到项目所有者重新决策。
+本文档现为 `Accepted`：Model Invocation structural error shape 已实现并完成 validation evidence；Descriptor/Schema/module format、path containment、synthetic artifact relocation 和 diagnostic redaction 的 readiness evidence 已形成。项目所有者于 2026-09-14 只授权 A1。真实 Relay artifact repository independence、production Loader categories、Runtime warning projection 和 Host migration 仍属于 A2–A4 validation gates，不得由 readiness Spike 或 A1 代替。v1 External Unit dependencies 已决定为空；未来如需依赖图必须另行扩展 acquisition isolation 与 Runtime Catalog failure matrix。任何新证据若要求第二条 Runtime path、Extension-specific Host branch、全局 Config 暴露、不受信任代码执行、公共 SDK runtime singleton 或新的 package manager/bundler dependency，必须停止并回到项目所有者重新决策。

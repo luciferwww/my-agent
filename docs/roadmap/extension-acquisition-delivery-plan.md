@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 
-- **状态：** Accepted for readiness evidence；production Delivery not ready
+- **状态：** Accepted；A1 completed；A2 not authorized
 - **版本：** 0.1
 - **日期：** 2026-09-11
 - **所有者：** 项目所有者
@@ -12,7 +12,7 @@
 - **工作流：** [Development Workflow](../development-workflow.md)
 - **执行授权：** 项目所有者于 2026-09-11 授权 A0 readiness evidence，并于 2026-09-14 接受 A0 Results；production Delivery 仍需独立授权。
 
-本 Plan 独立于 Provider Model Catalog Plan C4。当前只授权 readiness evidence、Spec review closure 与 Delivery planning；在 Spec 达到 `Accepted` 前不迁移 supported Host、不动态执行 production Extension、不删除 Relay 过渡路径。
+本 Plan 独立于 Provider Model Catalog Plan C4。项目所有者于 2026-09-14 接受 Spec v0.4 并只授权 A1 contract/fixture foundation；不迁移 supported Host、不动态执行 production Extension、不删除 Relay 过渡路径。
 
 ## 2. 用户可观察目标
 
@@ -43,16 +43,28 @@
 - 验证 bounded/redacted diagnostics 可在不读取 secret value 的前提下分类；
 - 产出 disposable Spike Results；不修改 production loader/Host。
 
-**Gate A0：** Passed。Windows/Node 22/Ajv readiness evidence 已记录并由项目所有者于 2026-09-14 接受，Spec 保持 `In Review`；Spec acceptance 与 production Delivery authorization 仍未完成。
+**Gate A0：** Passed。Windows/Node 22/Ajv readiness evidence 已记录并由项目所有者于 2026-09-14 接受；Spec 已 `Accepted`，仅 A1 获得 Delivery authorization。
 
 ### A1 — Acquisition contract and fixture foundation
 
-**状态：** Not Started
+**状态：** Completed（owner accepted 2026-09-14）
 
 - 新增 acquisition type contracts、Agent Home resolution、Host config reader；
 - direct-child Descriptor discovery、identity/order/duplicate isolation；
 - fixture Extensions 证明 rejected/disabled entry execution count 为零；
 - 不接入 supported Host。
+
+**实现记录（2026-09-14）：**
+
+- 新增 internal acquisition barrel、Agent Home resolution、独立 Host extension config reader、direct-child static Descriptor discovery、canonical containment、deterministic identity/order/duplicate isolation；
+- Host config malformed/root-level invalid 与 discovery root 已存在但 unreadable/invalid/escaping 均为 fatal Host startup input；missing Agent Home/config/discovery root 保持 empty/non-creating semantics；
+- 单个 entry namespace 保留为 isolated raw value，A2 才 materialize/validate；A1 Schema preflight 只验证 Draft-07 root contract 与可解析 internal JSON Pointer，Ajv strict compilation 仍是 A2 Gate；
+- fixture entry 具有 observable top-level marker；A1 static reject、duplicate 和 disabled-config foundation 均不 import/execute。完整 enablement-to-loader zero-execution matrix 仍由 A2 完成；
+- 不修改 supported Host、Runtime、Relay 或 workspace Config，不新增 dependency，不形成第二条 lifecycle path。
+
+**Validation record：** focused acquisition 41/41；full Vitest 103 files / 983 tests；lint、build、Relay emitted audit、`git diff --check` passed；independent final review PASS，无 unresolved Critical/High/Medium finding。
+
+项目所有者于 2026-09-14 接受 A1 implementation、validation evidence 与 review disposition。该接受不授权 A2–A5。
 
 ### A2 — Scoped configuration and controlled loader
 
@@ -93,7 +105,7 @@
 
 ## 5. Definition of Ready for production Delivery
 
-- [ ] Acquisition Spec `Accepted`；
+- [x] Acquisition Spec `Accepted`；
 - [x] 独立 Plan、owner、migration Gate 与 non-goals 明确；
 - [x] structural Model Invocation error boundary 已实现并完成自动 validation evidence；
 - [x] A0 filesystem/module/Ajv/synthetic-artifact/redaction readiness evidence 完成；
