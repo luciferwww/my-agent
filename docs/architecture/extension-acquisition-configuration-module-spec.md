@@ -15,7 +15,7 @@
 - **语言与术语约定：** [Architecture Foundation Plan §7.4](../roadmap/architecture-foundation-plan.md#74-当前架构重构文档的语言与术语约定)
 - **工作流：** [Development Workflow](../development-workflow.md)
 
-项目所有者于 2026-09-14 接受本 Spec v0.4，并只授权 A1 contract/fixture foundation。该接受不授权 A2 动态加载、A3 Relay artifact、A4 supported Host migration、A5 closeout 或 C4。当前唯一受支持 Host 仍按 Current Architecture 直接组合 Copilot Relay；只有关联 Plan 的 production Definition of Ready 全部满足且相应 Delivery Item 获得明确授权后，才能迁移该路径。
+项目所有者于 2026-09-14 接受本 Spec v0.4，随后接受 A1 contract/fixture foundation，并明确授权 A2 scoped configuration and controlled loader。A3 Relay artifact、A4 supported Host migration、A5 closeout 与 C4 仍未授权。当前唯一受支持 Host 仍按 Current Architecture 直接组合 Copilot Relay；只有关联 Plan 的 production Definition of Ready 全部满足且相应 Delivery Item 获得明确授权后，才能迁移该路径。
 
 2026-09-11 readiness Spike 在 Windows/Node 22/Ajv 8.20 环境验证了 canonical containment、Agent Home alias、file/directory/junction/entry symlink rejection、multi-file ESM relocation、Draft-07 strict/default/no-coercion/no-removal/internal-ref behavior 与 bounded redaction。该证据支持 `Draft -> In Review`，不替代 A1–A4 production Contract/Integration tests，也不将单一 Windows observation表述为跨平台证明。
 

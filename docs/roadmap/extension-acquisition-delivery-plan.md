@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 
-- **状态：** Accepted；A1 completed；A2 not authorized
+- **状态：** Accepted；A1–A2 completed
 - **版本：** 0.1
 - **日期：** 2026-09-11
 - **所有者：** 项目所有者
@@ -12,7 +12,7 @@
 - **工作流：** [Development Workflow](../development-workflow.md)
 - **执行授权：** 项目所有者于 2026-09-11 授权 A0 readiness evidence，并于 2026-09-14 接受 A0 Results；production Delivery 仍需独立授权。
 
-本 Plan 独立于 Provider Model Catalog Plan C4。项目所有者于 2026-09-14 接受 Spec v0.4 并只授权 A1 contract/fixture foundation；不迁移 supported Host、不动态执行 production Extension、不删除 Relay 过渡路径。
+本 Plan 独立于 Provider Model Catalog Plan C4。项目所有者于 2026-09-14 接受 Spec v0.4，随后接受 A1 并授权 A2 scoped configuration and controlled loader。A3–A5 与 C4 仍未授权；当前工作不迁移 supported Host、不动态执行 production Relay Extension、不删除 Relay 过渡路径。
 
 ## 2. 用户可观察目标
 
@@ -68,12 +68,22 @@
 
 ### A2 — Scoped configuration and controlled loader
 
-**状态：** Not Started
+**状态：** Completed（owner accepted 2026-09-14）
 
 - `$env`/`$secret` materialization、Ajv validation、defensive freeze；
 - controlled ESM import、factory/metadata/dependency validation；
 - frozen deterministic `ExtensionAcquisitionResult`；
 - Loader 只返回 `LoadedRuntimeUnit[]`，不 create/start/register。
+
+**实现记录（2026-09-14）：**
+
+- generic `$env`/environment-backed `$secret` recursive materialization、isolated config clone、strict Draft-07 Ajv compile/validation、static defaults 与 recursive freeze；
+- explicit enablement gate、controlled unique named ESM factory export、Descriptor/Unit metadata consistency、External Unit v1 dependency rejection 与 Descriptor-ID `orderKey` normalization；
+- entry import 前重新验证 installation/entry canonical path；candidate failure isolation、deterministic frozen acquisition result 与 bounded/redacted diagnostics；
+- duplicate configured identity 只保留 `duplicate_identity` diagnostics；installed disabled entries 保留 structured `disabled` diagnostic；
+- Loader 不调用 Unit `create/start/stop`、不构建 Runtime catalog、不注册 Contribution，且不修改 supported Host、Runtime 或 Relay production path。
+
+**Validation record：** focused A2 configuration/loader + FT-08 30/30 passed；full Vitest 105 files / 1011 tests passed；lint、build、Relay emitted audit 与 `git diff --check` passed；independent final review PASS，无 unresolved Critical/High/Medium finding。项目所有者于 2026-09-14 接受 A2 implementation、validation evidence 与 review disposition。该接受不授权 A3–A5 或 C4。
 
 ### A3 — Relay artifact
 

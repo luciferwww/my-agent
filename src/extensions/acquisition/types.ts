@@ -1,3 +1,5 @@
+import type { LoadedRuntimeUnit } from '../../runtime/runtime-unit.js';
+
 export interface ExtensionDescriptorV1 {
   readonly manifestVersion: 1;
   readonly id: string;
@@ -61,6 +63,63 @@ export interface ExtensionDiscoveryDiagnostic {
 export interface ExtensionDiscoveryResult {
   readonly candidates: readonly ExtensionCandidate[];
   readonly diagnostics: readonly ExtensionDiscoveryDiagnostic[];
+}
+
+export interface ExtensionLoadContext {
+  readonly config: Readonly<Record<string, unknown>>;
+}
+
+export interface ExternalExtensionModule {
+  createExtension(context: ExtensionLoadContext): LoadedRuntimeUnit;
+}
+
+export type ExtensionLoaderDiagnosticCategory =
+  | 'disabled'
+  | 'config_invalid'
+  | 'secret_unavailable'
+  | 'entry_load_failed'
+  | 'extension_config_rejected'
+  | 'unit_invalid';
+
+export type ExtensionLoaderDiagnosticCode =
+  | 'extension_disabled'
+  | 'stale_configured_id'
+  | 'entry_config_invalid'
+  | 'environment_value_unavailable'
+  | 'environment_secret_unavailable'
+  | 'config_schema_invalid'
+  | 'config_validation_failed'
+  | 'entry_revalidation_failed'
+  | 'entry_import_failed'
+  | 'entry_export_invalid'
+  | 'factory_failed'
+  | 'unit_metadata_invalid';
+
+export interface ExtensionLoaderDiagnostic {
+  readonly category: ExtensionLoaderDiagnosticCategory;
+  readonly code: ExtensionLoaderDiagnosticCode;
+  readonly extensionId: string;
+  /** JSON-escaped and bounded installation directory name when installed. */
+  readonly locator?: string;
+  /** Bounded JSON Pointer within the Extension's scoped config. */
+  readonly referencePath?: string;
+  /** Bounded environment variable name; never its value. */
+  readonly environmentVariable?: string;
+}
+
+export type ExtensionAcquisitionDiagnostic =
+  | ExtensionDiscoveryDiagnostic
+  | ExtensionLoaderDiagnostic;
+
+export interface ExtensionAcquisitionResult {
+  readonly loadedUnits: readonly LoadedRuntimeUnit[];
+  readonly diagnostics: readonly ExtensionAcquisitionDiagnostic[];
+}
+
+export interface ExtensionAcquisitionOptions {
+  readonly agentHome: string;
+  readonly hostConfig: ResolvedHostExtensionsConfig;
+  readonly environment?: Readonly<Record<string, string | undefined>>;
 }
 
 export type ExtensionAcquisitionFatalCode =

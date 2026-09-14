@@ -168,6 +168,34 @@
     "negative": ["src/extensions/acquisition/discovery.test.ts"]
   },
   {
+    "contract": "ExtensionLoadContext",
+    "source": "src/extensions/acquisition/types.ts",
+    "kind": "extension-load-context",
+    "positive": ["src/extensions/acquisition/loader.test.ts"],
+    "negative": ["src/extensions/acquisition/loader.test.ts"]
+  },
+  {
+    "contract": "ExternalExtensionModule",
+    "source": "src/extensions/acquisition/types.ts",
+    "kind": "extension-entry-module",
+    "positive": ["src/extensions/acquisition/loader.test.ts"],
+    "negative": ["src/extensions/acquisition/loader.test.ts"]
+  },
+  {
+    "contract": "ExtensionAcquisitionResult",
+    "source": "src/extensions/acquisition/types.ts",
+    "kind": "extension-acquisition-result",
+    "positive": ["src/extensions/acquisition/loader.test.ts"],
+    "negative": ["src/extensions/acquisition/loader.test.ts"]
+  },
+  {
+    "contract": "acquireExtensions",
+    "source": "src/extensions/acquisition/loader.ts",
+    "kind": "extension-acquisition",
+    "positive": ["src/extensions/acquisition/loader.test.ts"],
+    "negative": ["src/extensions/acquisition/loader.test.ts"]
+  },
+  {
     "contract": "RegistrySnapshot",
     "source": "src/core/registry/types.ts",
     "kind": "registry-snapshot",
