@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-14
+> Verified: 2026-09-15
 > Authority: Stable workspace/application configuration contract
 
 ## Scope
@@ -21,7 +21,7 @@ Precedence is:
 
 ## Stable shape and ownership
 
-- `AgentDefaults.model?: { providerId, modelId }` is structured input, not resolved facts.
+- `AgentDefaults.model?: { providerId, modelId }` is the optional preferred reference for a Root Turn without an explicit selection, not resolved facts, a mandatory startup model, a Child default, or a fallback list.
 - LLM connection/token/deployment-facts fields are inputs to narrower boundaries.
 - Tool policy includes filesystem workspace restriction, allow, and deny.
 - Subagent policy includes enablement, max depth, and profile list.

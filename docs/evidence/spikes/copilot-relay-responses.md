@@ -23,4 +23,4 @@ The spike used raw HTTP and a bounded SSE parser against a local Relay. It queri
 
 The run did not establish broad Relay compatibility, SDK behavior, multiple-image limits, parallel Tool Calls, reasoning policy, structured output, or production delivery authority. Raw fetch was an evidence choice, not a universal protocol mandate.
 
-Current implementation facts: [Providers](../../architecture/providers.md). Stable identity/Catalog contract: [Model Resolution](../../specifications/model-resolution.md). C4 remains tracked by the [active Change](../../changes/active/provider-model-catalog/plan.md).
+Current implementation facts: [Providers](../../architecture/providers.md). Stable identity/Catalog contract: [Model Resolution](../../specifications/model-resolution.md). Delivery and C4 acceptance history: [archived Change](../../changes/archive/provider-model-catalog/plan.md).

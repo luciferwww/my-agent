@@ -215,6 +215,8 @@ The server uses the Media-owned 15 MiB maximum frame size. A socket must complet
 
 A successful `run_turn` registers the client in that session's audience. The Channel maintains forward and reverse audience maps so disconnect cleanup is proportional to that client's sessions. A newer socket using the same `clientId` supersedes and closes the old socket; the old socket's late close cannot remove the replacement. A pending approval remains associated with the logical client across replacement, but disconnect of the current socket reports `origin_disconnected`.
 
+Runtime Model Resolution errors retain their `category` on the ordinary `error` event. On `provider_unregistered` or `model_rejected`, the HTML client reports the failed exact selection and requests the current Catalog; applying that response clears a stale explicit override and requires the user to reselect. It never substitutes a model or resubmits the failed Turn. Other Provider/invocation failures retain the selection for an explicit user retry.
+
 WebSocket `abort_turn` has no dedicated acknowledgement. Clients observe completion through the correlated `run_end` whose result has `stopReason: 'aborted'`.
 
 ## 8. Runtime composition

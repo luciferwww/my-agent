@@ -7,7 +7,6 @@ Changes retain the repository's existing Plan/Specification/validation workflow.
 ## Active
 
 - [Architecture Foundation](active/architecture-foundation/plan.md)
-- [Provider Model Catalog](active/provider-model-catalog/plan.md)
 
 ## Archived
 
@@ -19,5 +18,6 @@ Archived changes preserve bounded delivery and acceptance provenance. They are n
 - [Extension Acquisition delivery](archive/extension-acquisition-delivery/plan.md)
 - [Extension Acquisition source layout](archive/extension-acquisition-source-layout/plan.md)
 - [Model Invocation Error boundary](archive/model-invocation-error-boundary/plan.md)
+- [Provider Model Catalog and Copilot Relay](archive/provider-model-catalog/plan.md) — C1–C4 accepted and completed on 2026-09-15
 - [Slice 6 closeout](archive/slice-6-closeout/specification.md), [disposition manifest](archive/slice-6-closeout/document-disposition-manifest.json), and [Legacy inventory](archive/slice-6-closeout/legacy-migration-inventory.md) — 52-entry documentation and Legacy closeout accepted on 2026-09-15
 - [Source Layout Convergence](archive/source-layout-convergence/specification.md)

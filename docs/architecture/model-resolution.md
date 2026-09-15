@@ -61,6 +61,8 @@ Resolution then:
 
 An out-of-Catalog model fails before connection or descriptor resolution. No failure silently changes Provider or Model identity. The returned invocation port comes from the selected Provider projection and is atomically bound with the validated descriptor.
 
+For each Provider instance, `models` and `resolveModel()` must derive from the same immutable model snapshot. Registry and Model Resolution enforce unique membership and observable identity/protocol/selected-endpoint consistency; `resolveModel()` may add the selected model's deployment identity. The Provider owns the private fact source and compliance with the shared-snapshot obligation. The current Anthropic and Relay implementations use one captured model map for both projections.
+
 ## 4. Facts, provenance, and limits
 
 Every execution-critical numeric fact must be a positive integer with a recognized `ModelFactSource`:
@@ -94,6 +96,8 @@ Runner consumes only the resulting `ResolvedModel`: context budgeting uses `effe
 | Binding/capability | `protocol_incompatible`, `capability_unsupported` |
 
 Root Runtime maps resolution failure into Turn failure closure before Runner invocation. A Child converts it to a terminal Subagent result with `failure.phase: 'resolution'`, the same category, and zero Usage; the Child executor and invocation ports are not called.
+
+For an interactive Root Turn, `provider_unregistered` and `model_rejected` tell the client that its exact selection is no longer available. The client can refresh the Catalog and ask for explicit reselection; Runtime does not choose a replacement or retry the failed Turn.
 
 ## 6. Related boundaries
 

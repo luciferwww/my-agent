@@ -45,7 +45,7 @@ Lowest to highest precedence:
 
 | Section | Current fields and defaults |
 |---|---|
-| `model` | Optional complete `{ providerId, modelId }`; no implicit first-Provider completion |
+| `model` | Optional preferred Root-Turn `{ providerId, modelId }` when no explicit selection is supplied; not required for startup, inherited directly by Children, or used as a fallback list |
 | `llm` | Optional API key/base URL; `maxTokens=4096`; optional Provider-owned `deploymentFacts[]` input |
 | `runner` | `maxLlmCalls=12`; `inTurnMessageMode='followup'` |
 | `memory` | Enabled; local `Xenova/all-MiniLM-L6-v2`; chunk `1600/320`; search `6`, `0.25`, weights `0.7/0.3` |

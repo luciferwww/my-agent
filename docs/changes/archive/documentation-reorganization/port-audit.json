@@ -658,12 +658,12 @@
     },
     {
       "source": "docs/architecture/provider-model-catalog-and-copilot-relay-spec.md",
-      "role": "Active accepted change specification",
-      "uniqueValue": "Closed Catalog, Relay Provider, Runtime capability, Channel selection contract, and unresolved C4 closeout scope.",
+      "role": "Archived accepted change specification",
+      "uniqueValue": "Closed Catalog, Relay Provider, Runtime capability, Channel selection delivery boundary, and completed C4 closeout history.",
       "portOutcome": "Port as Active or Archived Change",
-      "targets": ["docs/changes/active/provider-model-catalog/specification.md"],
+      "targets": ["docs/changes/archive/provider-model-catalog/specification.md"],
       "excludedContent": "Current facts already owned by Architecture and completed C1-C3 command narration after closeout.",
-      "verification": "Remain active with its Plan until C4 authorization and owner acceptance; stable contract extraction is a C4/D2 follow-up decision.",
+      "verification": "Archived with its Plan after C4 validation and explicit owner acceptance; stable contracts own ongoing behavior.",
       "status": "Ported and Reviewed",
       "deletionGate": "C4 is completed and owner accepts a stable-specification/archive split.",
       "batch": "B5-changes-cleanup"
@@ -850,12 +850,12 @@
     },
     {
       "source": "docs/roadmap/provider-model-catalog-and-copilot-relay-plan.md",
-      "role": "Active change plan",
-      "uniqueValue": "R0/C1-C3 acceptance and unresolved C4 Authority/Closeout scope.",
+      "role": "Archived accepted change plan",
+      "uniqueValue": "R0/C1-C4 delivery, validation, and owner-acceptance provenance.",
       "portOutcome": "Port as Active or Archived Change",
-      "targets": ["docs/changes/active/provider-model-catalog/plan.md"],
+      "targets": ["docs/changes/archive/provider-model-catalog/plan.md"],
       "excludedContent": "Completed Gate command narration after C4 extracts durable contract/evidence.",
-      "verification": "Remain active with its Specification until C4 is separately authorized and owner-accepted.",
+      "verification": "Archived with its Specification after C4 validation and explicit owner acceptance.",
       "status": "Ported and Reviewed",
       "deletionGate": "C4 is completed and owner accepts archive/stable-specification outcomes.",
       "batch": "B5-changes-cleanup"

@@ -1,8 +1,8 @@
 # Model Resolution Specification
 
 > Status: Stable Authority
-> Contract status: Implemented and Validated; Provider Catalog C4 closeout remains an active Change
-> Verified: 2026-09-14
+> Contract status: Implemented and Validated
+> Verified: 2026-09-15
 > Authority: Stable Model identity, Catalog, facts, and Turn-binding contract
 
 ## Scope
@@ -42,6 +42,8 @@ A Resolved Model atomically binds canonical identity, reference source, protocol
 
 Catalog membership is checked before connection/model resolution and never invokes a Provider. All execution-critical facts are positive and sourced. Context may use Provider default; output/Tool/media capabilities require specific trusted provenance. Missing requirements fail closed.
 
+`models` and `resolveModel()` are two projections of one immutable Provider-instance model snapshot. This is a Provider contract obligation because the Host must not inspect or duplicate Provider-private fact sources. Registry and Model Resolution enforce the observable boundary: unique exact Model IDs, membership before Provider work, and returned identity/protocol/selected-endpoint consistency. The model descriptor may add its model-specific deployment identity. Current Anthropic and Relay Providers derive both projections from one captured model map.
+
 No first-Provider/default fallback, brand guessing, paid probing, silent Provider switch, or Core-owned Provider table is allowed. Active Turns keep one binding through Tool rounds and Compaction retries. Children resolve independently against the inherited generation.
 
 ## Failure categories
@@ -50,11 +52,11 @@ Exactly: `provider_unregistered`, `connection_missing`, `connection_invalid`, `r
 
 ## Catalog and Channel boundary
 
-Each Provider publishes a closed, duplicate-free, deeply frozen Catalog derived from the same immutable facts as `resolveModel()`. Runtime exposes a frozen transport-safe DTO. `AgentDefaults.model?: ModelReference` is the only default input; absent or invalid default does not select the first Provider.
+Each Provider publishes a closed, duplicate-free, deeply frozen Catalog derived from the same immutable facts as `resolveModel()`. Runtime exposes a frozen transport-safe DTO. `AgentDefaults.model?: ModelReference` is an optional preferred reference for a Root Turn that omits an explicit selection; it is not a fallback list and is not inherited directly by Children. An absent or invalid default does not select the first Provider.
 
 Optional Relay acquisition resolves eligible `/responses` models during Unit creation and publishes only entries with required facts. Discovery/candidate failure cannot replace the current generation. Channels receive only immutable Catalog query and Abort capabilities and submit structured `{ providerId, modelId }`; Resolver remains authoritative.
 
-Provider Catalog C4 authority/closeout remains owned by its active Change; this stable contract does not claim it complete.
+An unavailable explicit or configured reference fails as `provider_unregistered` or `model_rejected` before invocation. Presentation clients may refresh the current Catalog and require explicit reselection, but Runtime does not substitute a Provider/Model or automatically retry the Turn. Compaction recovery is not model-selection retry and reuses the same Turn binding.
 
 ## Acceptance scenarios and evidence
 

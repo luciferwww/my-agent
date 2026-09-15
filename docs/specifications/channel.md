@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-14
+> Verified: 2026-09-15
 > Authority: Stable Channel contract
 
 ## Scope
@@ -52,6 +52,8 @@ A `ChannelContribution` creates one instance per generation. Publication exposes
 Runtime owns session queueing, origin routes, Abort, and target selection. Channel owns transport framing, connected-client audience, and presentation. Fanout failure is isolated per Channel/client and cannot change Runner outcome or sibling delivery.
 
 Model Catalog query and Abort are narrow Runtime capabilities; Channel does not own model facts or lifecycle state.
+
+When Runtime reports `provider_unregistered` or `model_rejected`, Channel presentation preserves the classified failure. A catalog-capable interactive client refreshes the current Catalog for explicit reselection; it does not substitute a Provider/Model or resubmit the failed Turn. Other resolution and invocation failures remain ordinary reported failures and retain the user's selection for an explicit retry.
 
 ## Failure semantics
 

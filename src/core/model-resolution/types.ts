@@ -97,6 +97,7 @@ export interface ProviderCatalogModel {
 export interface ProviderProjectionEntry {
   readonly id: string;
   readonly displayName?: string;
+  /** Catalog and resolveModel() must project the same immutable Provider-instance model snapshot. */
   readonly models: readonly ProviderCatalogModel[];
   readonly protocol: string;
   readonly invocationPort: ModelInvocationPort;

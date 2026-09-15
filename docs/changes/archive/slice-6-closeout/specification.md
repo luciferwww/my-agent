@@ -46,4 +46,4 @@ Acceptance required exact manifest coverage, zero unsupported inbound references
 
 ## Closeout
 
-The project owner accepted Slice 6 on 2026-09-15. These control artifacts are archived as bounded historical evidence because they retain the 52-item disposition and cross-Slice Legacy closeout record. Slice 6 completion does not supersede active Target Architecture, Provider Catalog C4, or other Changes.
+The project owner accepted Slice 6 on 2026-09-15. These control artifacts are archived as bounded historical evidence because they retain the 52-item disposition and cross-Slice Legacy closeout record. Slice 6 completion does not supersede active Target Architecture or other Changes; Provider Catalog C4 was later accepted independently.

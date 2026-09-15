@@ -1857,7 +1857,11 @@
               case 'error':
                 this.isWaitingForReply = false;
                 this.appendChatItem({ kind: 'error', label: 'Runtime', turnId: event.turnId, text: event.error || 'Unknown runtime error' });
-                this.pushEvent('error', `Turn ${event.turnId} failed`);
+                if (event.category === 'provider_unregistered' || event.category === 'model_rejected') {
+                  this.pushEvent('model_catalog', 'Selected model is unavailable; refreshing the Catalog for reselection');
+                  this.requestModelCatalog();
+                }
+                this.pushEvent('error', `Turn ${event.turnId} failed${event.category ? ` (${event.category})` : ''}`);
                 return;
 
               case 'compaction_start':

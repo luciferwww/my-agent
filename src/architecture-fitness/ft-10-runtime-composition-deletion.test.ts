@@ -133,6 +133,9 @@ describe('FT-10 Runtime composition deletion', () => {
     expect(websocket).toContain('model_reference');
     expect(websocket).toContain('request_override');
     expect(html).toContain('model_reference');
+    expect(html).toContain("event.category === 'provider_unregistered'");
+    expect(html).toContain("event.category === 'model_rejected'");
+    expect(html).toContain('this.requestModelCatalog()');
     expect(processEntries.every((content) => !content.includes('process.exit('))).toBe(true);
     expect(host).toContain('process.exit(code)');
     expect(host).toContain('overallTimeoutMs ?? 60_000');
