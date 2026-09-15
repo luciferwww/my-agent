@@ -1,12 +1,13 @@
 # Documentation Reorganization Proposal
 
-> Status: Completed — D1/D2/C1/C2/C3/V1 accepted and validated
+> Status: Archived — D1/D2/C1/C2/C3/V1 completed, accepted, and validated
 > Version: 0.3
 > Date: 2026-09-14
-> Authority: Completed documentation-migration record; not permanent architecture or workflow authority
+> Archived: 2026-09-15 after delivery checkpoint `4583711`
+> Authority: Archived documentation-migration proposal record; not permanent architecture or workflow authority
 > Scope: Define the information architecture and clean-room migration controls for reorganizing mixed legacy, transitional, current, and refactoring documentation
 
-The project owner accepted D1 on 2026-09-14 after independent design review returned PASS with no unresolved Critical/High/Medium blocker and focused documentation governance checks passed 18/18. The complete 72-entry D2 audit was accepted, C1 established the isolated clean-room boundary, and all C2 successor surfaces were ported and independently reviewed. C3/V1 then switched active references and authority metadata, replaced migration-only Fitness, removed the temporary old tree, and passed focused/full validation. Merge, release, commit, and push remain separate actions.
+The project owner accepted D1 on 2026-09-14 after independent design review returned PASS with no unresolved Critical/High/Medium blocker and focused documentation governance checks passed 18/18. The complete 72-entry D2 audit was accepted, C1 established the isolated clean-room boundary, and all C2 successor surfaces were ported and independently reviewed. C3/V1 then switched active references and authority metadata, replaced migration-only Fitness, removed the temporary old tree, and passed focused/full validation. Delivery checkpoint `4583711` was committed before this record was archived; merge, release, and push remain separate actions.
 
 ## 1. Background
 

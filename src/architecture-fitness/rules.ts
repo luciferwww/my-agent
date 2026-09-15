@@ -140,8 +140,8 @@ export async function loadFt09GovernedSources(repositoryRoot: string): Promise<S
   const rootFiles = ['README.md', 'CONTRIBUTING.md'];
   const textExtension = /\.(?:cjs|css|html|js|json|jsonc|md|mjs|ts|tsx)$/iu;
   const historicalControlPaths = new Set([
-    'docs/changes/active/documentation-reorganization/port-audit.json',
-    'docs/changes/active/documentation-reorganization/proposal.md',
+    'docs/changes/archive/documentation-reorganization/port-audit.json',
+    'docs/changes/archive/documentation-reorganization/proposal.md',
     'docs/changes/active/slice-6-closeout/document-disposition-manifest.json',
     'docs/decisions/adr-006-legacy-and-compatibility-exit.md',
   ]);

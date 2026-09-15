@@ -6,7 +6,6 @@ Changes retain the repository's existing Plan/Specification/validation workflow.
 
 ## Active
 
-- [Documentation reorganization](active/documentation-reorganization/proposal.md) — completed; retained here until the delivery checkpoint is committed and archived
 - [Architecture Foundation](active/architecture-foundation/plan.md)
 - [Provider Model Catalog](active/provider-model-catalog/plan.md)
 - [Slice 6 closeout](active/slice-6-closeout/specification.md)
@@ -17,6 +16,7 @@ Archived changes preserve bounded delivery and acceptance provenance. They are n
 
 - [AF-03 Target Architecture](archive/af-03-target-architecture/plan.md)
 - [AF-04 Characterization and Fitness](archive/af-04-characterization-fitness/plan.md)
+- [Documentation reorganization](archive/documentation-reorganization/proposal.md) and [port audit](archive/documentation-reorganization/port-audit.json) — completed clean-room migration records archived after delivery checkpoint `4583711`
 - [Extension Acquisition delivery](archive/extension-acquisition-delivery/plan.md)
 - [Extension Acquisition source layout](archive/extension-acquisition-source-layout/plan.md)
 - [Model Invocation Error boundary](archive/model-invocation-error-boundary/plan.md)
