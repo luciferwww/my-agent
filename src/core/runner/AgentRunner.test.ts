@@ -1407,9 +1407,17 @@ describe('AgentRunner', () => {
     });
 
     it('CH-11 uses persisted compaction history on the next turn', async () => {
+      const persistedImageData = 'AAAA'.repeat(500);
       await sessionManager.appendMessage('main', {
         role: 'user',
-        content: `OLD_QUESTION_${'A'.repeat(800)}`,
+        content: [
+          { type: 'text', text: `OLD_QUESTION_${'A'.repeat(800)}` },
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: persistedImageData },
+            dimensions: { width: 200, height: 200 },
+          },
+        ],
       });
       await sessionManager.appendMessage('main', {
         role: 'assistant',
@@ -1418,7 +1426,7 @@ describe('AgentRunner', () => {
       await sessionManager.appendMessage('main', { role: 'user', content: 'recent question' });
       await sessionManager.appendMessage('main', { role: 'assistant', content: 'recent answer' });
 
-      const compactingClient = createMockLLMClient([
+      const compactingDelegate = createMockLLMClient([
         [
           { type: 'message_start' },
           { type: 'text_delta', text: 'Persisted summary.' },
@@ -1430,6 +1438,14 @@ describe('AgentRunner', () => {
           { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 10, outputTokens: 4 } },
         ],
       ]);
+      const compactionRequests: ModelInvocationRequest[] = [];
+      const compactingClient: ModelInvocationPort = {
+        async *chatStream(params: ModelInvocationRequest) {
+          compactionRequests.push(params);
+          yield* compactingDelegate.chatStream(params);
+        },
+        chat: compactingDelegate.chat,
+      };
       const compactingRunner = new AgentRunner({
         llmClient: compactingClient,
         sessionManager,
@@ -1453,9 +1469,13 @@ describe('AgentRunner', () => {
         },
       });
       expect(firstResult.compacted).toBe(true);
+      const summaryRequest = JSON.stringify(compactionRequests[0]?.messages);
+      expect(summaryRequest).toContain('[Image]: media_type=image/png, ~64 tokens');
+      expect(summaryRequest).not.toContain(persistedImageData);
 
       let nextTurnMessages: ModelInvocationRequest['messages'] = [];
       const reloadedSessionManager = new SessionManager(workspaceDir);
+      expect(JSON.stringify(reloadedSessionManager.getMessages('main'))).toContain(persistedImageData);
       const nextTurnClient: ModelInvocationPort = {
         async *chatStream(params: ModelInvocationRequest) {
           nextTurnMessages = params.messages.map((message) => ({ ...message }));
@@ -1494,9 +1514,11 @@ describe('AgentRunner', () => {
       });
 
       const contents = nextTurnMessages.map((message) => message.content);
+      const serializedNextTurn = JSON.stringify(nextTurnMessages);
       expect(String(contents[0])).toContain('Persisted summary.');
-      expect(contents.map(String).join('\n')).not.toContain('OLD_QUESTION_');
-      expect(contents.map(String).join('\n')).not.toContain('OLD_ANSWER_');
+      expect(serializedNextTurn).not.toContain('OLD_QUESTION_');
+      expect(serializedNextTurn).not.toContain('OLD_ANSWER_');
+      expect(serializedNextTurn).not.toContain(persistedImageData);
       expect(contents).toContain('recent question');
       expect(contents).toContain('recent answer');
       expect(contents).toContain('first current question');

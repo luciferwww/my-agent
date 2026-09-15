@@ -170,6 +170,33 @@ describeSqlite('SqliteMemoryStore', () => {
     expect(matches[0]?.content).toBe('new content');
     expect(store.searchByKeyword('old', 5)).toEqual([]);
   });
+
+  it('preserves keyword, vector, and metadata data after reopening', () => {
+    const databasePath = join(workspaceDir, 'memory.sqlite');
+    store.upsertChunks([{
+      id: 'memory:memory/persist.md:1-1',
+      path: 'memory/persist.md',
+      source: 'memory',
+      content: 'persistent memory content',
+      startLine: 1,
+      endLine: 1,
+      embedding: [1, 0],
+      model: 'persist-model',
+      updatedAt: 1,
+    }]);
+    store.setMeta('persist-key', 'persist-value');
+
+    store.close();
+    store = new SqliteMemoryStore(databasePath);
+
+    expect(store.searchByKeyword('persistent', 5)).toEqual([
+      expect.objectContaining({ id: 'memory:memory/persist.md:1-1' }),
+    ]);
+    expect(store.searchByVector([1, 0], 5, 'persist-model')).toEqual([
+      expect.objectContaining({ id: 'memory:memory/persist.md:1-1', score: 1 }),
+    ]);
+    expect(store.getMeta('persist-key')).toBe('persist-value');
+  });
 });
 
 function canResolveBetterSqlite3(): boolean {

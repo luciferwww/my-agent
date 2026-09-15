@@ -3,7 +3,7 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 1.2
+- **版本：** 1.3
 - **迁移日期：** 2026-09-14
 - **所有者：** 项目所有者
 - **适用范围：** my-agent 的代码、测试、架构、文档和实验性变更
@@ -13,6 +13,8 @@
 **v1.1 修订：** 明确局部事实不确定性应优先自行取证，决策性不确定性必须暂停确认；增加多步骤工作的成功标准及变更可追溯性要求。
 
 **v1.2 修订：** 按已接受的文档信息架构更新权威路径；不改变工作分类、批准要求或状态模型，也不引入第二套变更流程。
+
+**v1.3 修订：** 明确 Unit、Integration、Architecture Fitness 和完整回归入口；日常修改采用影响驱动的聚焦验证，完整测试、lint 和 build 保留给最终或跨边界 Gate。
 
 ## 2. 基本原则
 
@@ -111,13 +113,18 @@ Small Change 和 Documentation 只需明确范围、事实来源和验证方式�
 
 ## 8. 验证要求
 
-稳定命令以 `package.json` 为准：
+稳定命令以 `package.json` 为准。`npm test` 是日常 Unit 层；Integration 和 Fitness 按变更影响触发；`test:all`、lint 和 build 是最终或跨边界 Gate，不是每次编辑后的固定组合：
 
 ```bash
-npm run lint
 npm test
+npm run test:integration
+npm run test:fitness
+npm run test:all
+npm run lint
 npm run build
 ```
+
+Host、Relay Artifact、真实 WebSocket 和其它环境性验证继续使用各自的显式命令，只在对应边界变化、正式评审或发布 Gate 运行。同一源码状态即将执行完整 build 时，不重复运行等价的全量 TypeScript no-emit 检查，除非验收条件明确要求两份独立证据。
 
 | 变更类型 | 最低验证 |
 |---|---|

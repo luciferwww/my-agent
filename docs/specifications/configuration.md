@@ -7,7 +7,7 @@
 
 ## Scope
 
-Own application configuration types/defaults, `<workspace>/.agent/config.json`, deep merge, five-stage precedence, environment/caller overrides, default Model Reference input, Tool/Subagent policy, and Config Wizard behavior. Host Extension configuration belongs to [Extension Acquisition](extension-acquisition.md).
+Own application configuration types/defaults, `<workspace>/.agent/config.json`, deep merge, five-stage precedence, environment/caller overrides, default Model Reference input, and Tool/Subagent policy. Host Extension configuration belongs to [Extension Acquisition](extension-acquisition.md).
 
 ## Loading and precedence
 
@@ -31,12 +31,8 @@ Removed fields are not contract: `llm.model`, global `llm.contextWindowTokens`, 
 
 Tool deny hides matching definitions and remains enforced at execution. Allow bypasses approval. Unmatched Tools require approval capability and fail closed without it. Exact names and `*`/`?` globs are supported; `group:*` is not.
 
-## Wizard
-
-Wizard reads existing JSON as prompt defaults, schema-filters governed branches, reports discarded leaves, overlays input, removes default-valued/empty objects, preserves unrelated top-level content, shows a full dry-run, and writes only after confirmation. Cancellation writes nothing. Existing-file backup is best-effort and does not block the primary write. Wizard does not read environment overrides, run Runtime resolution, or prove deployment validity.
-
 ## Acceptance scenarios and evidence
 
-Cover each precedence stage, object/array/scalar merge, partial model environment override, absent/invalid files, per-agent metadata exclusion, removed fields, Tool glob policy, Wizard preservation/discard/default elision/dry-run/cancel/backup behavior.
+Cover each precedence stage, object/array/scalar merge, partial model environment override, absent/invalid files, per-agent metadata exclusion, removed fields, and Tool glob policy.
 
-Evidence: [types](../../src/platform/config/types.ts), [defaults](../../src/platform/config/defaults.ts), [loader](../../src/platform/config/loader.ts), [loader tests](../../src/platform/config/loader.test.ts), [Wizard fields tests](../../src/platform/config/wizard/fields.test.ts), and [Wizard diff tests](../../src/platform/config/wizard/diff.test.ts). Current facts: [Configuration](../architecture/configuration.md).
+Evidence: [types](../../src/platform/config/types.ts), [defaults](../../src/platform/config/defaults.ts), [loader](../../src/platform/config/loader.ts), and [loader tests](../../src/platform/config/loader.test.ts). Current facts: [Configuration](../architecture/configuration.md).

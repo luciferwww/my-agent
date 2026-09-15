@@ -158,7 +158,7 @@ describe('FT-12 Current Architecture authority', () => {
     const config = requireDocument('configuration').content;
     expect(config).toContain('## 3. Precedence and merge');
     expect(config).toContain('[Model Resolution](model-resolution.md) owns canonical identity');
-    expect(config).toContain('## 6. Config Wizard');
+    expect(config).toContain('## 6. Evidence');
 
     const provider = requireDocument('model-invocation-provider').content;
     expect(provider).toContain('`src/core/model-invocation/` owns the Provider-neutral invocation port');

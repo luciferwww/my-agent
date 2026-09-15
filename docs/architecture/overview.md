@@ -38,7 +38,7 @@ src/
 │   ├── workspace/         workspace bootstrap and context loading
 │   └── subagent/          Child request preparation and isolated execution
 └── platform/
-    ├── config/            application configuration, merge and Wizard
+        ├── config/            application configuration, precedence and merge
     └── logger/            process-wide logging and output adapters
 ```
 
@@ -77,7 +77,7 @@ Agent Runner
 | Provider-neutral invocation plus concrete Anthropic and Relay protocol behavior | [Providers](providers.md) |
 | Channel contract, CLI/WebSocket behavior, interactions, attachment ingress, and wire summary | [Channels](channels.md) |
 | Media validation, limits, MIME verification, optimization, drop reasons, and canonical normalization | [Media](media.md) |
-| Application/workspace configuration, precedence, defaults, policy fields, and Config Wizard | [Configuration](configuration.md) |
+| Application/workspace configuration, precedence, defaults, and policy fields | [Configuration](configuration.md) |
 | Agent Home, Host Extension config, discovery, controlled loading, and Runtime handoff | [Extensions](extensions.md) |
 | Canonical Tool contract, validation, policy, approval, and execution boundary | [Tools](tools.md) |
 | Builtin inventory and filesystem, search, web, Exec, and Process behavior | [Builtin Tools](builtin-tools.md) |

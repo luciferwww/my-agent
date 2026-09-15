@@ -22,15 +22,18 @@ npm test
 
 ## Validation
 
-Run the focused checks for the changed behavior first, then the broader checks required by the work type. The stable project commands are:
+Run the focused checks for the changed behavior first, then expand only when the changed boundary or a failure requires it. `npm test` runs the default Unit tier; it is not an alias for every repository check.
 
 ```bash
-npm run lint
 npm test
+npm run test:integration
+npm run test:fitness
+npm run test:all
+npm run lint
 npm run build
 ```
 
-Document any check that could not be run and the remaining risk.
+Integration and Fitness checks are impact-driven. `test:all`, lint, and build are final or cross-cutting Gates, not a per-edit checklist. Host, Relay artifact, and WebSocket verification remain explicit commands for changes to those boundaries. Document any required check that could not be run and the remaining risk.
 
 ## Submitting Changes
 

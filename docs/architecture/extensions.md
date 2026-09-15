@@ -16,7 +16,7 @@ Acquisition stops at not-yet-created `LoadedRuntimeUnit[]`. It never creates, st
 
 `src/extensions/` contains concrete optional Extension implementations, currently including Copilot Relay. Generic acquisition does not import or identify a concrete Extension. [Providers](providers.md) owns concrete Provider protocol behavior.
 
-Application/workspace configuration and the Config Wizard are separate and owned by [Configuration](configuration.md).
+Application/workspace configuration is separate and owned by [Configuration](configuration.md).
 
 ## 2. Agent Home and Host configuration
 

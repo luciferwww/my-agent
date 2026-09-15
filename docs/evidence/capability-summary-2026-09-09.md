@@ -16,7 +16,7 @@ This bounded reader summary records capabilities observed at the snapshot date. 
 - Subagents run as blocking isolated Children with inherited generation/Abort/route context and independent Model binding.
 - CLI and WebSocket provide included Channel transports, multi-client events, model Catalog selection, approvals, and Abort.
 - Media accepts bounded text/image blocks, verifies and optimizes images, and prevents raw base64 Fanout.
-- Configuration has defined defaults/file/agent/environment/caller precedence; Wizard preserves unrelated top-level content.
+- Configuration has defined defaults/file/agent/environment/caller precedence.
 - Reload validates a full candidate before atomic publication; Shutdown is bounded and reports residuals.
 
 Observed limitations included no REST/external-platform Channels, Channel authentication/multitenancy, disconnected replay, automatic model fallback, hard steering interruption, detached/concurrent Subagents, document attachments, global queue cap/expiry, or stable package-root API contract.

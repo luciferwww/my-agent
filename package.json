@@ -12,17 +12,18 @@
     "build:host": "node -e \"require('node:fs').rmSync('dist/host', { recursive: true, force: true })\" && tsc -p tsconfig.host.json",
     "build:relay-artifact": "node scripts/build-relay-extension-artifact.mjs",
     "dev": "tsc --watch",
-    "test": "vitest run",
+    "test": "npm run test:unit",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:fitness": "vitest run --config vitest.fitness.config.ts",
+    "test:all": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
     "verify:host-build": "node scripts/audit-host-build.mjs",
     "verify:relay-error-boundary": "node scripts/audit-relay-error-boundary.mjs",
     "verify:relay-artifact": "node scripts/audit-relay-extension-artifact.mjs",
     "verify:websocket-host": "node scripts/verify-websocket-host.mjs",
-    "agent:websocket": "npx tsx scripts/server.ts",
-    "test:tool:list-cwd": "npx tsx scripts/test-exec-list-cwd.ts",
-    "test:tool:background": "npx tsx scripts/test-exec-background.ts",
-    "test:tool:yield": "npx tsx scripts/test-exec-yield.ts"
+    "agent:websocket": "npx tsx scripts/server.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",

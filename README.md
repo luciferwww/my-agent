@@ -14,7 +14,7 @@ A single-process TypeScript AI Agent runtime for learning and architecture exper
 npm install
 npm run lint
 npm run build
-npm test
+npm run test:all
 ```
 
 ## Run the supported local entry point
@@ -74,8 +74,9 @@ to WebSocket clients.
 The browser client is [clients/html/chat.html](clients/html/chat.html).
 
 [scripts/server.ts](scripts/server.ts) is the only currently supported executable under `scripts/`.
-Other scripts are retained as legacy migration inputs and are not guaranteed to run. A stable
-package-root library import is not currently documented as a public consumer contract.
+The remaining scripts support the Host, build, artifact audits, or explicit verification; historical
+research-era `test-*` programs have been retired. A stable package-root library import is not
+currently documented as a public consumer contract.
 
 ## Documentation
 

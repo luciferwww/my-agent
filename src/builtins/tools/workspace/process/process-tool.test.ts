@@ -73,6 +73,34 @@ describe('processTool', () => {
     expect(status.content).toContain('status: aborted');
   });
 
+  it('keeps kill idempotent after a background process completes', async () => {
+    const started = await execTool.execute({
+      command: 'node -e "setTimeout(() => {}, 25)"',
+      background: true,
+    }, TEST_TOOL_CONTEXT);
+
+    const runId = extractRunId(started.content);
+    try {
+      await waitFor(async () => {
+        const status = await processTool.execute({ action: 'status', runId }, TEST_TOOL_CONTEXT);
+        return status.content.includes('status: completed');
+      });
+
+      const firstKill = await processTool.execute({ action: 'kill', runId }, TEST_TOOL_CONTEXT);
+      const secondKill = await processTool.execute({ action: 'kill', runId }, TEST_TOOL_CONTEXT);
+
+      expect(firstKill).toMatchObject({ outcome: 'success' });
+      expect(firstKill.content).toContain('status: completed');
+      expect(secondKill).toMatchObject({ outcome: 'success' });
+      expect(secondKill.content).toContain('status: completed');
+    } finally {
+      const status = await processTool.execute({ action: 'status', runId }, TEST_TOOL_CONTEXT);
+      if (status.content.includes('status: starting') || status.content.includes('status: running')) {
+        await processTool.execute({ action: 'kill', runId }, TEST_TOOL_CONTEXT);
+      }
+    }
+  });
+
   it('returns not found for unknown runId', async () => {
     const result = await processTool.execute({ action: 'status', runId: 'missing' }, TEST_TOOL_CONTEXT);
     expect(result.outcome).toBe('failed');

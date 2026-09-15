@@ -3,14 +3,14 @@
 > Status: Current Authority
 > Authority: Current implemented configuration behavior
 > Verified: 2026-09-15
-> Ownership: application and workspace configuration shape, defaults, precedence, merge, environment overrides, and Config Wizard behavior
-> Ownership key: application-configuration-and-wizard
+> Ownership: application and workspace configuration shape, defaults, precedence, merge, and environment overrides
+> Ownership key: application-configuration
 
 ---
 
 ## 1. Boundary
 
-`src/platform/config/` owns application configuration types, hardcoded defaults, workspace-file loading, merge precedence, environment extraction, and the interactive Config Wizard. Runtime calls `loadConfig()` and `resolveAgentConfig()` and projects the result into narrow module inputs.
+`src/platform/config/` owns application configuration types, hardcoded defaults, workspace-file loading, merge precedence, and environment extraction. Runtime calls `loadConfig()` and `resolveAgentConfig()` and projects the result into narrow module inputs.
 
 This topic does not own Agent Home or Host Extension configuration; [Extensions](extensions.md) owns that separate acquisition surface. Configuration may carry a default Model Reference and Provider deployment-facts input, but [Model Resolution](model-resolution.md) owns canonical identity, Catalog membership, effective limits, and Model Facts.
 
@@ -77,29 +77,10 @@ deepMerge(target, source): merged copy
 
 `loadConfig()` returns `workspaceDir`, merged `agents.defaults`, unmodified `agents.list`, and merged Logger configuration. `resolveAgentConfig()` excludes `id` and `default` metadata from the selected per-agent entry before applying environment and caller overrides.
 
-## 6. Config Wizard
-
-The Wizard implementation is `src/platform/config/wizard/`; `scripts/config.ts` is a thin error and exit-code shell.
-
-```text
-npx tsx scripts/config.ts [--path <file>|--path=<file>] [--help|-h]
-```
-
-- Default output is `<cwd>/config.json`; use `--path <workspace>/.agent/config.json` for the Runtime file.
-- Help returns normally. Unknown arguments and missing or empty path values throw `WizardArgError` with exit code 2.
-- Existing JSON supplies prompt defaults. Missing input starts empty; invalid or non-object JSON is reported and treated as empty.
-- Core questions cover LLM connection/limits, Memory enablement, Logger level, and File Logger enablement. Advanced groups cover Runner, Memory, Prompt, filesystem policy, Workspace, Compaction, and adapter-specific Logger levels.
-- Enter preserves the displayed value; `--` clears an optional value; invalid input retries the same question.
-- `buildNextConfig()` schema-filters governed branches, reports discarded leaf paths, overlays collected values, removes defaults, and removes empty objects.
-- Unrelated top-level content, including `agents.list`, is preserved unless its governed branch is rewritten.
-- Dry-run shows discarded paths and complete prospective JSON. Cancellation writes nothing.
-- Saving an existing file attempts `<path>.bak`; backup failure is reported but does not block the main write.
-- `runWizard()` does not call `process.exit`, read environment variables, call Runtime loaders, or prove final Runtime assembly.
-
-## 7. Evidence
+## 6. Evidence
 
 | Kind | Evidence |
 |---|---|
-| Source | [types.ts](../../src/platform/config/types.ts), [defaults.ts](../../src/platform/config/defaults.ts), [loader.ts](../../src/platform/config/loader.ts), [wizard/run-wizard.ts](../../src/platform/config/wizard/run-wizard.ts), [wizard/diff.ts](../../src/platform/config/wizard/diff.ts), [scripts/config.ts](../../scripts/config.ts) |
-| Tests | [config loader tests](../../src/platform/config/loader.test.ts), [wizard fields tests](../../src/platform/config/wizard/fields.test.ts), [wizard diff tests](../../src/platform/config/wizard/diff.test.ts) |
+| Source | [types.ts](../../src/platform/config/types.ts), [defaults.ts](../../src/platform/config/defaults.ts), [loader.ts](../../src/platform/config/loader.ts) |
+| Tests | [config loader tests](../../src/platform/config/loader.test.ts) |
 | Controlling authority | [ADR-004](../decisions/adr-004-provider-model-identity-and-facts-ownership.md), [Configuration Specification](../specifications/configuration.md), [Model Resolution Specification](../specifications/model-resolution.md) |
