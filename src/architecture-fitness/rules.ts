@@ -142,7 +142,7 @@ export async function loadFt09GovernedSources(repositoryRoot: string): Promise<S
   const historicalControlPaths = new Set([
     'docs/changes/archive/documentation-reorganization/port-audit.json',
     'docs/changes/archive/documentation-reorganization/proposal.md',
-    'docs/changes/active/slice-6-closeout/document-disposition-manifest.json',
+    'docs/changes/archive/slice-6-closeout/document-disposition-manifest.json',
     'docs/decisions/adr-006-legacy-and-compatibility-exit.md',
   ]);
 

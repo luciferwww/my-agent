@@ -1,7 +1,9 @@
 # Slice 6 Documentation and Legacy Closeout Specification
 
-> Status: Active — terminal validation complete; project-owner Slice acceptance remains open
+> Status: Archived — project-owner accepted and completed
 > Date: 2026-09-14
+> Accepted: 2026-09-15
+> Archived: 2026-09-15
 > Owner: Project owner
 > Governing decision: [ADR-006](../../../decisions/adr-006-legacy-and-compatibility-exit.md)
 
@@ -36,12 +38,12 @@ No entry is deleted merely because it appears old. Git is sufficient only for re
 - Remaining DOC-A and DOC-V entries: reviewed for deletion after migration.
 - API-M04: removed as repository-internal breaking cleanup after caller/export/package audit.
 
-Validation is complete in the historical Slice ledger, but Slice 6 remains open until explicit project-owner acceptance. The later clean-room documentation migration may replace physical successors and references; it does not retroactively change this historical gate.
+Validation was completed in the historical Slice ledger, and the project owner accepted Slice 6 on 2026-09-15. The later clean-room documentation migration replaced physical successors and references without retroactively changing the historical disposition decisions.
 
 ## Validation gate
 
-Acceptance requires exact manifest coverage, zero unsupported inbound references, source/test verification of retained Current facts, accepted successor ownership, Architecture Fitness, Markdown target/anchor checks, JSON validation, lint, clean build, full applicable tests on Node 22, integration scenarios, stale artifact/package scans, and independent review without unresolved Critical/High/Medium findings.
+Acceptance required exact manifest coverage, zero unsupported inbound references, source/test verification of retained Current facts, accepted successor ownership, Architecture Fitness, Markdown target/anchor checks, JSON validation, lint, clean build, full applicable tests on Node 22, integration scenarios, stale artifact/package scans, and independent review without unresolved Critical/High/Medium findings. These gates passed before owner acceptance.
 
 ## Closeout
 
-On explicit owner acceptance, record Slice completion and separately decide whether these active control artifacts become archived evidence or are discarded after unique-value review. Slice 6 completion alone does not supersede active Target Architecture or other Changes.
+The project owner accepted Slice 6 on 2026-09-15. These control artifacts are archived as bounded historical evidence because they retain the 52-item disposition and cross-Slice Legacy closeout record. Slice 6 completion does not supersede active Target Architecture, Provider Catalog C4, or other Changes.

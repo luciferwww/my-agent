@@ -1,6 +1,6 @@
 # Architecture Foundation Plan
 
-> Status: Active — Foundation packages and Slices 1–5 complete; Slice 6 acceptance and deferred ownership remain open
+> Status: Active — Foundation packages and Slices 1–6 complete; deferred ownership and unsuperseded Target Architecture constraints remain open
 > Date: 2026-09-14
 > Owner: Project owner
 
@@ -21,16 +21,16 @@ AF-01 through AF-07 are complete: governance, glossary/principles, Target Archit
 | 3 Tools and Hooks | Complete | Tools and Hooks specification |
 | 4 Channels | Complete | Channel specification |
 | 5 Runtime Composition | Complete | Runtime Composition specification |
-| 6 Documentation and Legacy | Validation complete; owner closeout remains open | [Slice 6 closeout](../slice-6-closeout/specification.md) |
+| 6 Documentation and Legacy | Complete and owner-accepted | [Archived Slice 6 closeout](../../archive/slice-6-closeout/specification.md) |
 
 Source Layout Convergence and Extension Acquisition were later completed as separately accepted post-Foundation changes; their archives and stable contracts own those results.
 
 ## Remaining authority
 
 - [Target Architecture](target-architecture.md) remains active design authority only for constraints not formally superseded.
-- Slice 6 remains open until its terminal ledger and closeout are explicitly accepted.
+- Slice 6 is accepted and retained as an [archived closeout record](../../archive/slice-6-closeout/specification.md).
 - Deferred Subagent concurrency/evolution remains non-authorizing under [Deferred](../../../deferred/README.md) until a new accepted Plan/Specification supersedes it.
 
 ## Closeout gate
 
-Foundation can archive only when Slice 6 is owner-accepted, every retained target constraint has a current durable owner or remains explicitly active, deferred ownership is transferred, and no active link relies on obsolete Foundation paths. This plan does not authorize implementation, commit, push, or release by itself.
+Foundation can archive only when every retained target constraint has a current durable owner or remains explicitly active, deferred ownership is transferred, and no active link relies on obsolete Foundation paths. This plan does not authorize implementation, commit, push, or release by itself.

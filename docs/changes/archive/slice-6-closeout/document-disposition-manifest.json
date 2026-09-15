@@ -1,10 +1,12 @@
 {
   "schemaVersion": 2,
   "slice": "S6-D8",
-  "status": "validated-awaiting-owner-acceptance",
+  "status": "completed-owner-accepted",
   "capturedAt": "2026-09-09",
   "portedAt": "2026-09-14",
-  "controlRole": "Active historical Slice 6 disposition ledger; not current architecture authority",
+  "acceptedAt": "2026-09-15",
+  "archivedAt": "2026-09-15",
+  "controlRole": "Archived historical Slice 6 disposition ledger; not current architecture authority",
   "counts": {
     "total": 52,
     "retainCurrentAuthority": 13,
@@ -69,6 +71,7 @@
   "validation": {
     "terminalDispositionCoverage": "52/52",
     "independentReview": "ready-without-unresolved-critical-high-medium",
-    "ownerAcceptance": "pending"
+    "ownerAcceptance": "accepted",
+    "ownerAcceptedAt": "2026-09-15"
   }
 }

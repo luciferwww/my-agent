@@ -83,4 +83,4 @@ Changes that touch these constraints must include focused contract/integration t
 
 ## Open/deferred boundaries
 
-Provider Catalog C4 and Slice 6 closeout remain active Changes. Subagent parallel/background/detached models remain deferred. Marketplace/package SDK, watcher-driven hot reload, process isolation, arbitrary multi-generation replacement, generic DI, and distributed orchestration require separate accepted design.
+Provider Catalog C4 remains an active Change; the accepted Slice 6 closeout is archived. Subagent parallel/background/detached models remain deferred. Marketplace/package SDK, watcher-driven hot reload, process isolation, arbitrary multi-generation replacement, generic DI, and distributed orchestration require separate accepted design.

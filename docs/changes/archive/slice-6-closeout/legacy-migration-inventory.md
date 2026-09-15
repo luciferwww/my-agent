@@ -1,7 +1,9 @@
 # Legacy Migration Inventory
 
-> Status: Active control — accepted inventory; Slice 6 owner closeout remains open
+> Status: Archived — accepted Slice 6 control record
 > Date: 2026-09-14
+> Accepted: 2026-09-15
+> Archived: 2026-09-15
 > Owner: Project owner
 
 ## Purpose and classification
@@ -19,7 +21,7 @@ The frozen 52-entry document ledger is retained in [Document Disposition Manifes
 - two Subagent design inputs retained only as Deferred;
 - 25 other root candidates and 12 versioned candidates reviewed for deletion after migration.
 
-The clean-room documentation change now provides the physical successors, but the historical Slice remains active until its own owner acceptance is explicitly recorded.
+The clean-room documentation change provides the physical successors. The project owner accepted the historical Slice 6 closeout on 2026-09-15.
 
 ## Production/API terminal state
 
@@ -44,6 +46,6 @@ No architecture old/new Feature Flag existed at baseline or was introduced. Prod
 - Unknown external consumers require an explicit breaking/deprecation decision.
 - Library rollback uses reviewed version/release rollback unless a separately designed Feature Flag exists.
 
-## Remaining gate
+## Closeout
 
-The earlier terminal validation reported 52/52 reviewed document dispositions and completed production removals. Explicit project-owner Slice 6 acceptance and a later archive/discard decision remain outstanding. This inventory stays a change-control ledger, not Current Architecture or durable decision authority.
+The terminal validation reported 52/52 reviewed document dispositions and completed production removals. The project owner accepted Slice 6 on 2026-09-15. This archived inventory remains a bounded change-control record, not Current Architecture or durable decision authority.
