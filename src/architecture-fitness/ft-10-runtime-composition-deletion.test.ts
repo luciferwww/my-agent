@@ -66,7 +66,7 @@ describe('FT-10 Runtime composition deletion', () => {
     const bootstrap = source('src/runtime/bootstrap.ts');
     const resourceTypes = source('src/runtime/types.ts');
     const runtimeBuilder = source('src/runtime/runtime-builder.ts');
-    const anthropicModule = source('src/runtime-modules/anthropic-provider.ts');
+    const anthropicUnit = source('src/builtins/providers/anthropic/runtime-unit.ts');
     const subagent = source('src/runtime/subagent-orchestration.ts');
 
     expect(runtimeApp.content).toMatch(
@@ -88,7 +88,7 @@ describe('FT-10 Runtime composition deletion', () => {
     expect(resourceTypes.content).not.toContain(DELETED_PROVIDER_SEAM);
     expect(runtimeBuilder.content).toContain('dependencies.createBundledProviderUnit({');
     expect(runtimeBuilder.content).not.toContain(DELETED_PROVIDER_SEAM);
-    expect(runtimeBuilder.content).not.toContain('new AnthropicProvider(');
+    expect(runtimeBuilder.content).not.toContain('new AnthropicCompatibleProvider(');
     expect(runtimeBuilder.content).not.toContain('adapters/provider/anthropic');
     expect(runtimeBuilder.content).not.toContain('.registerProvider(');
     expect(runtimeBuilder.content).not.toContain('defaultProviderId');
@@ -96,9 +96,10 @@ describe('FT-10 Runtime composition deletion', () => {
     expect(runtimeBuilder.content.indexOf('kernel = createApplication({')).toBeLessThan(
       runtimeBuilder.content.indexOf("type: 'app_ready'"),
     );
-    expect(anthropicModule.content).toContain("unitId: ANTHROPIC_PROVIDER_MODULE_ID");
-    expect(anthropicModule.content).toContain('const provider = new AnthropicProvider(capturedOptions);');
-    expect(anthropicModule.content).toContain('api.registerProvider(provider.entry);');
+    expect(anthropicUnit.content).toContain("unitId: ANTHROPIC_PROVIDER_UNIT_ID");
+    expect(anthropicUnit.content)
+      .toContain('const provider = new AnthropicCompatibleProvider(capturedOptions);');
+    expect(anthropicUnit.content).toContain('api.registerProvider(provider.entry);');
     expect(subagent.content).toContain('new ModelResolver(parent.registrySnapshot.providers)');
     expect(subagent.content).toContain('toolProjection: parent.registrySnapshot.tools');
     expect(subagent.content).toContain('hookProjection: parent.registrySnapshot.hooks');
@@ -121,7 +122,7 @@ describe('FT-10 Runtime composition deletion', () => {
   it('keeps canonical Root intake fields and process force ownership', async () => {
     const runtimeTypes = source('src/runtime/types.ts').content;
     const queueTypes = source('src/runtime/queue-types.ts').content;
-    const websocket = source('src/adapters/channel/WebSocketChannel.ts').content;
+    const websocket = source('src/builtins/channels/websocket/WebSocketChannel.ts').content;
     const host = await readFile(`${REPOSITORY_ROOT}/scripts/runtime-host.ts`, 'utf8');
     const processEntries = await Promise.all(['cli.ts', 'server.ts', 'websocket.ts'].map(
       (name) => readFile(`${REPOSITORY_ROOT}/scripts/${name}`, 'utf8'),

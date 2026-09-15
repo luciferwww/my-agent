@@ -32,9 +32,9 @@ Choose option 2: migrate progressively and delete replaced paths as each boundar
 
 ### Migration order and concurrency
 
-The default production migration follows Slices 1 through 6 in the accepted Architecture Foundation Plan. Changing that order requires an accepted ADR, accepted Spike Results, or completed Slice evidence, followed by an accepted update to the parent Plan, validation gates, and deletion conditions before implementation changes order.
+The Architecture Foundation production migration completed through Slices 1–6. That sequence is retained only as historical provenance in the archived Foundation Plan.
 
-Slices 1 through 5 do not run in parallel by default, and at most one production Architecture Slice is active at a time. Documentation, Defect, and Small Change work may proceed independently only when it does not cross or silently alter the active Slice's approved architecture boundary.
+For future migrations, order and concurrency belong to the owner-accepted Change Plan. At most one production Architecture Slice is active by default; a different order or overlap requires accepted authority and explicit validation/deletion gates before implementation. Documentation, Defect, and Small Change work may proceed independently only when it does not cross or silently alter the active Slice's approved architecture boundary.
 
 ### Authority and migration direction
 
@@ -88,8 +88,8 @@ This ADR does not decide Provider/Model ownership, Extension lifecycle, Tool clo
 | Kind | Evidence |
 |---|---|
 | Governance | [Architecture Principles](../governance/architecture-principles.md), [Development Workflow](../governance/development-workflow.md) |
-| Active Foundation authority | [Architecture Foundation Plan](../changes/active/architecture-foundation/plan.md), [Target Architecture](../changes/active/architecture-foundation/target-architecture.md) |
+| Foundation provenance | [Archived Architecture Foundation Plan](../changes/archive/architecture-foundation/plan.md), [archived Target Architecture](../changes/archive/architecture-foundation/target-architecture.md) |
 | Foundation evidence | [AF-07 decision closeout](../evidence/foundation/af-07-decision-closeout.md), [AF-05 evidence](../evidence/spikes/af-05-provider-model-resolution.md), [AF-06 evidence](../evidence/spikes/af-06-extension-framework.md) |
 | Characterization Change | [AF-04 plan](../changes/archive/af-04-characterization-fitness/plan.md) |
 
-Changes to migration order or authority require an accepted authority update; they must not be introduced silently in implementation.
+Future changes to migration order or authority require an accepted Change/authority update; they must not be introduced silently in implementation.

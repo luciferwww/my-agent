@@ -10,17 +10,17 @@ const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const FIXTURE_ROOT = fileURLToPath(new URL('../../test-fixtures/architecture-fitness/ft-02', import.meta.url));
 
 describe('FT-02 integration SDK allowlist', () => {
-  it('accepts an Adapter SDK import and diagnoses the same import in Runtime', async () => {
+  it('accepts a builtin Provider SDK import and diagnoses the same import in Runtime', async () => {
     const passSources = await loadTypeScriptSources(`${FIXTURE_ROOT}/pass`);
     const failSources = await loadTypeScriptSources(`${FIXTURE_ROOT}/fail`);
 
     expect(findFt02SdkAllowlistViolations(passSources)).toEqual([]);
     expect(findFt02SdkAllowlistViolations(failSources)).toEqual([
-      'FT-02 package=@anthropic-ai/sdk source=src/runtime/RuntimeApp.ts allowedRoots=src/adapters/provider/anthropic/**',
+      'FT-02 package=@anthropic-ai/sdk source=src/runtime/RuntimeApp.ts allowedRoots=src/builtins/providers/anthropic/**',
     ]);
   });
 
-  it('keeps Provider and Channel SDK imports inside current Adapter roots', async () => {
+  it('keeps Provider and Channel SDK imports inside their builtin capability roots', async () => {
     const productionSources = await loadProductionSources(REPOSITORY_ROOT);
 
     expect(findFt02SdkAllowlistViolations(productionSources)).toEqual([]);

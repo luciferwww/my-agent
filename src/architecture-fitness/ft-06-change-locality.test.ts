@@ -45,7 +45,7 @@ describe('FT-06 Provider and Extension change locality', () => {
     expect(host).toContain('...envOverrides');
     expect(host.indexOf('const envOverrides = getEnvOverrides();'))
       .toBeLessThan(host.indexOf('prepareWebSocketHostAcquisition('));
-    expect(host).toContain('createWebSocketChannelModule({');
+    expect(host).toContain('createWebSocketChannelUnit({');
     expect(`${host}\n${startup}`)
       .not.toMatch(/copilot-relay-provider|COPILOT_RELAY_|createCopilotRelayProviderUnit/);
     expect(host).not.toMatch(/providerId\s*:\s*['"][^'"]+['"]/);

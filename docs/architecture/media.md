@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented media behavior
-> Verified: 2026-09-14
+> Verified: 2026-09-15
 > Ownership: Inbound media validation, limits, MIME verification, image optimization, drop reasons, and canonical content-block normalization
 > Ownership key: media-validation-and-normalization
 
@@ -83,6 +83,6 @@ Runtime normalization precedes `user_message` broadcast and queued/steering clas
 
 | Kind | Evidence |
 |---|---|
-| Source | [Attachment pipeline](../../src/core/media/attachment-pipeline.ts), [Media constants](../../src/core/media/constants.ts), [Image metadata](../../src/core/media/image-metadata.ts), [Image optimizer](../../src/core/media/image-optimize.ts), [Runtime intake](../../src/runtime/RuntimeApp.ts), [WebSocket Channel](../../src/adapters/channel/WebSocketChannel.ts) |
-| Tests | [Attachment pipeline tests](../../src/core/media/attachment-pipeline.test.ts), [Image metadata tests](../../src/core/media/image-metadata.test.ts), [Image optimizer tests](../../src/core/media/image-optimize.test.ts), [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [WebSocket Channel tests](../../src/adapters/channel/WebSocketChannel.test.ts) |
+| Source | [Attachment pipeline](../../src/core/media/attachment-pipeline.ts), [Media constants](../../src/core/media/constants.ts), [Image metadata](../../src/core/media/image-metadata.ts), [Image optimizer](../../src/core/media/image-optimize.ts), [Runtime intake](../../src/runtime/RuntimeApp.ts), [WebSocket Channel](../../src/builtins/channels/websocket/WebSocketChannel.ts) |
+| Tests | [Attachment pipeline tests](../../src/core/media/attachment-pipeline.test.ts), [Image metadata tests](../../src/core/media/image-metadata.test.ts), [Image optimizer tests](../../src/core/media/image-optimize.test.ts), [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [WebSocket Channel tests](../../src/builtins/channels/websocket/WebSocketChannel.test.ts) |
 | Controlling authority | [Attachments Support Specification](../specifications/attachments-support.md), [Runner Turn Flow Specification](../specifications/runner-turn-flow.md), [Model Resolution Specification](../specifications/model-resolution.md) |

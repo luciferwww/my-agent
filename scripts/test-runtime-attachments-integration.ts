@@ -33,7 +33,7 @@ import { WebSocket } from 'ws';
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
 import type { RuntimeHandle } from '../src/runtime/runtime-composition.js';
 import { createLoadedRuntimeUnit } from '../src/runtime/runtime-unit.js';
-import { createWebSocketChannelModule } from '../src/runtime-modules/builtin-channels.js';
+import { createWebSocketChannelUnit } from '../src/builtins/channels/websocket/index.js';
 import {
   ATTACHMENT_INLINE_THRESHOLD_BYTES,
   ATTACHMENT_RAW_MAX_BYTES,
@@ -328,7 +328,7 @@ async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
 
   const app = await RuntimeApp.create({
     workspaceDir,
-    loadedUnits: [createWebSocketChannelModule({ port, host: '127.0.0.1', path: '/ws' })],
+    loadedUnits: [createWebSocketChannelUnit({ port, host: '127.0.0.1', path: '/ws' })],
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     cliOverrides: cliOverrides as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

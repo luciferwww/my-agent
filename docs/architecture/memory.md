@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Memory behavior
-> Verified: 2026-09-14
+> Verified: 2026-09-15
 > Ownership: Memory Store, Markdown indexing, retrieval, recall tracking, Tools, and optional degradation
 > Ownership key: memory-index-and-search
 
@@ -10,7 +10,7 @@
 
 ## 1. Boundary
 
-`src/core/memory/` owns the optional Memory capability: Store abstraction, SQLite implementation, Markdown indexing, vector/keyword retrieval, recall tracking, and three Memory Tools. Runtime owns whether Memory is enabled, publication of the Memory Tool Unit, and aggregate resource Shutdown.
+`src/core/memory/` owns the optional Memory Store abstraction, SQLite implementation, Markdown indexing, vector/keyword retrieval, and recall tracking. `src/builtins/tools/memory/` owns the three concrete Memory Tools and their Runtime Contribution. Runtime owns whether Memory is enabled, publication of the Memory Tool Unit, and aggregate resource Shutdown.
 
 When Runtime cannot create or initialize Memory, startup continues with a recoverable warning and without Memory Tools. Failure to select or probe an embedding provider yields keyword-only retrieval; failures later encountered while embedding/indexing propagate to Runtime's optional-capability degradation boundary.
 
@@ -89,6 +89,6 @@ Tool execution converts read/write failures into failed Tool outcomes. Generic T
 
 | Kind | Evidence |
 |---|---|
-| Source | [MemoryManager](../../src/core/memory/MemoryManager.ts), [Memory contracts](../../src/core/memory/types.ts), [MemoryIndexer](../../src/core/memory/internal/MemoryIndexer.ts), [MemorySearcher](../../src/core/memory/internal/MemorySearcher.ts), [SQLite Store](../../src/core/memory/internal/sqlite-store.ts), [RecallTracker](../../src/core/memory/internal/RecallTracker.ts), [LocalEmbeddingProvider](../../src/core/memory/internal/LocalEmbeddingProvider.ts), [Memory Tools](../../src/core/memory/memory-tools.ts), [Runtime bootstrap](../../src/runtime/bootstrap.ts), [Builtin Tool Units](../../src/runtime-modules/builtin-tools.ts) |
-| Tests | [MemoryManager tests](../../src/core/memory/MemoryManager.test.ts), [MemoryIndexer tests](../../src/core/memory/internal/MemoryIndexer.test.ts), [MemorySearcher tests](../../src/core/memory/internal/MemorySearcher.test.ts), [SQLite Store tests](../../src/core/memory/internal/sqlite-store.test.ts), [RecallTracker tests](../../src/core/memory/internal/RecallTracker.test.ts), [LocalEmbeddingProvider tests](../../src/core/memory/internal/LocalEmbeddingProvider.test.ts), [Runtime degradation/cleanup tests](../../src/runtime/RuntimeApp.test.ts), [Builtin Tool Unit tests](../../src/runtime-modules/builtin-tools.test.ts) |
-| Controlling authority | [Runtime Composition Specification](../specifications/runtime-composition.md), [Configuration Specification](../specifications/configuration.md), [Architecture Foundation target](../changes/active/architecture-foundation/target-architecture.md) |
+| Source | [MemoryManager](../../src/core/memory/MemoryManager.ts), [Memory contracts](../../src/core/memory/types.ts), [MemoryIndexer](../../src/core/memory/internal/MemoryIndexer.ts), [MemorySearcher](../../src/core/memory/internal/MemorySearcher.ts), [SQLite Store](../../src/core/memory/internal/sqlite-store.ts), [RecallTracker](../../src/core/memory/internal/RecallTracker.ts), [LocalEmbeddingProvider](../../src/core/memory/internal/LocalEmbeddingProvider.ts), [Memory Tools](../../src/builtins/tools/memory/memory-tools.ts), [Runtime bootstrap](../../src/runtime/bootstrap.ts), [Memory Tool contribution](../../src/builtins/tools/memory/contribution.ts) |
+| Tests | [MemoryManager tests](../../src/core/memory/MemoryManager.test.ts), [MemoryIndexer tests](../../src/core/memory/internal/MemoryIndexer.test.ts), [MemorySearcher tests](../../src/core/memory/internal/MemorySearcher.test.ts), [SQLite Store tests](../../src/core/memory/internal/sqlite-store.test.ts), [RecallTracker tests](../../src/core/memory/internal/RecallTracker.test.ts), [LocalEmbeddingProvider tests](../../src/core/memory/internal/LocalEmbeddingProvider.test.ts), [Runtime degradation/cleanup tests](../../src/runtime/RuntimeApp.test.ts), [Memory Tool contribution tests](../../src/builtins/tools/memory/contribution.test.ts) |
+| Controlling authority | [ADR-007](../decisions/adr-007-builtin-capability-source-ownership.md), [Runtime Composition Specification](../specifications/runtime-composition.md), [Configuration Specification](../specifications/configuration.md) |

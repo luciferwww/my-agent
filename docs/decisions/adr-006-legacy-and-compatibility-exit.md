@@ -120,7 +120,7 @@ This ADR does not itself classify every file, delete production code, set one un
 | Kind | Evidence |
 |---|---|
 | Governance | [Development Workflow](../governance/development-workflow.md), [Architecture Principles](../governance/architecture-principles.md) |
-| Active Foundation control | [Architecture Foundation Plan](../changes/active/architecture-foundation/plan.md), [Target Architecture](../changes/active/architecture-foundation/target-architecture.md) |
+| Foundation provenance | [Archived Architecture Foundation Plan](../changes/archive/architecture-foundation/plan.md), [archived Target Architecture](../changes/archive/architecture-foundation/target-architecture.md) |
 | Archived closeout evidence | [Slice 6 inventory](../changes/archive/slice-6-closeout/legacy-migration-inventory.md), [Slice 6 disposition manifest](../changes/archive/slice-6-closeout/document-disposition-manifest.json) |
 | Foundation evidence | [AF-05 evidence](../evidence/spikes/af-05-provider-model-resolution.md), [AF-06 evidence](../evidence/spikes/af-06-extension-framework.md), [AF-07 closeout](../evidence/foundation/af-07-decision-closeout.md) |
 

@@ -54,7 +54,7 @@ describe('FT-07 immutable Registry Snapshot boundary', () => {
         .filter((symbol) => source.content.includes(symbol))
         .map((symbol) => `${source.path}: ${symbol}`),
       ...(source.path === 'src/runtime/RuntimeApp.ts'
-        ? ['createTaskToolModule', 'buildRegistrySnapshot']
+        ? ['createTaskToolContribution', 'buildRegistrySnapshot']
           .filter((symbol) => source.content.includes(symbol))
           .map((symbol) => `${source.path}: ${symbol}`)
         : []),

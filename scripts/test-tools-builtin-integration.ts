@@ -27,7 +27,7 @@ import {
   readFileTool,
   webFetchTool,
   writeFileTool,
-} from '../src/core/tools/index.js';
+} from '../src/builtins/tools/workspace/index.js';
 import type { Tool } from '../src/core/tools/index.js';
 
 type AsyncStep = () => Promise<void>;

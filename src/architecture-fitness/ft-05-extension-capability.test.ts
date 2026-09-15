@@ -8,7 +8,7 @@ import {
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const FIXTURE_ROOT = fileURLToPath(new URL('../../test-fixtures/architecture-fitness/ft-05', import.meta.url));
-const EXTENSION_ROOTS = ['src/extensions/', 'src/runtime-modules/'];
+const EXTENSION_ROOTS = ['src/extensions/', 'src/builtins/'];
 
 describe('FT-05 Extension capability boundary', () => {
   it('accepts declared capabilities and diagnoses RuntimeApp barrel and Service Locator access', async () => {
@@ -22,7 +22,7 @@ describe('FT-05 Extension capability boundary', () => {
     ]);
   });
 
-  it('keeps production Runtime Modules inside declared capability boundaries', async () => {
+  it('keeps production capability packages inside declared capability boundaries', async () => {
     const productionSources = await loadProductionSources(REPOSITORY_ROOT);
 
     expect(findFt05ExtensionCapabilityViolations(productionSources, EXTENSION_ROOTS)).toEqual([]);
@@ -36,7 +36,10 @@ describe('FT-05 Extension capability boundary', () => {
       .sort();
     const runtimeApp = productionSources.find((source) => source.path === 'src/runtime/RuntimeApp.ts');
 
-    expect(concreteConstructionPaths).toEqual(['src/runtime-modules/builtin-channels.ts']);
+    expect(concreteConstructionPaths).toEqual([
+      'src/builtins/channels/cli/runtime-unit.ts',
+      'src/builtins/channels/websocket/runtime-unit.ts',
+    ]);
     expect(runtimeApp).toBeDefined();
     expect(runtimeApp?.content).not.toMatch(/\b(?:registerChannel|startChannels|stopChannels)\s*\(/);
   });

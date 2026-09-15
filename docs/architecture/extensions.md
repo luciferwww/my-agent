@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Extension acquisition behavior
-> Verified: 2026-09-14
+> Verified: 2026-09-15
 > Ownership: Agent Home resolution, Host Extension configuration, discovery, scoped configuration, controlled entry loading, acquisition diagnostics, and Host handoff
 > Ownership key: extension-acquisition
 
@@ -79,6 +79,8 @@ The returned Units have not been created. Runtime combines them with required an
 5. passes the combined `loadedUnits` to `RuntimeApp.create()`;
 6. delegates process shutdown to the Runtime Host wrapper.
 
+The Host owns process-level signal and exit policy; Runtime library code never calls `process.exit()`. The current wrapper shares cooperative shutdown, forces exit on a second signal or Host deadline, and removes its listeners after settlement. Those signal counts, exit codes, and Host deadlines are current implementation facts, not a stable contract; ADR-005 deliberately leaves Host signal mechanics unfrozen.
+
 The Host does not import Relay-specific source. The first-class Host build starts from `scripts/server.ts`, follows its static TypeScript closure, and emits `dist/host`. That closure includes `src/extension-acquisition/` and excludes `src/extensions/**`; it is a verified Host code closure, not a self-contained deployment bundle. The aggregate repository build continues to build and audit declared Extension artifacts separately.
 
 ## 7. Failure boundaries
@@ -93,7 +95,7 @@ The Host does not import Relay-specific source. The first-class Host build start
 
 | Kind | Evidence |
 |---|---|
-| Source | [public boundary](../../src/extension-acquisition/index.ts), [entry contracts](../../src/extension-acquisition/contracts.ts), [Agent Home](../../src/extension-acquisition/agent-home.ts), [Host config](../../src/extension-acquisition/host-config.ts), [discovery](../../src/extension-acquisition/discovery.ts), [loader](../../src/extension-acquisition/loader.ts), [Host startup](../../scripts/server.ts), [Host build audit](../../scripts/audit-host-build.mjs) |
-| Tests | [Agent Home tests](../../src/extension-acquisition/agent-home.test.ts), [Host config tests](../../src/extension-acquisition/host-config.test.ts), [discovery tests](../../src/extension-acquisition/discovery.test.ts), [loader tests](../../src/extension-acquisition/loader.test.ts), [Runtime integration](../../src/extension-acquisition/acquisition-runtime.integration.test.ts), [Host startup tests](../../scripts/websocket-host-startup.test.ts) |
+| Source | [public boundary](../../src/extension-acquisition/index.ts), [entry contracts](../../src/extension-acquisition/contracts.ts), [Agent Home](../../src/extension-acquisition/agent-home.ts), [Host config](../../src/extension-acquisition/host-config.ts), [discovery](../../src/extension-acquisition/discovery.ts), [loader](../../src/extension-acquisition/loader.ts), [Host startup](../../scripts/server.ts), [Runtime Host wrapper](../../scripts/runtime-host.ts), [Host build audit](../../scripts/audit-host-build.mjs) |
+| Tests | [Agent Home tests](../../src/extension-acquisition/agent-home.test.ts), [Host config tests](../../src/extension-acquisition/host-config.test.ts), [discovery tests](../../src/extension-acquisition/discovery.test.ts), [loader tests](../../src/extension-acquisition/loader.test.ts), [Runtime integration](../../src/extension-acquisition/acquisition-runtime.integration.test.ts), [Host startup tests](../../scripts/websocket-host-startup.test.ts), [Runtime Host policy tests](../../scripts/runtime-host.test.ts) |
 | Controlling authority | [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [Extension Acquisition Specification](../specifications/extension-acquisition.md) |
 | Delivery history | [B+ archived change](../changes/archive/extension-acquisition-source-layout/specification.md) |

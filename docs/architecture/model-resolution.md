@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Model Resolution behavior
-> Verified: 2026-09-14
+> Verified: 2026-09-15
 > Ownership: Model references, Provider projections, canonical identity, Model Facts, effective limits, capability validation, and resolution failures
 > Ownership key: model-resolution-and-facts
 
@@ -111,6 +111,6 @@ For an interactive Root Turn, `provider_unregistered` and `model_rejected` tell 
 
 | Kind | Evidence |
 |---|---|
-| Source | [ModelResolver](../../src/core/model-resolution/ModelResolver.ts), [Model Resolution types](../../src/core/model-resolution/types.ts), [Registry contracts](../../src/core/registry/types.ts), [Runtime root resolution](../../src/runtime/RuntimeApp.ts), [Subagent orchestration](../../src/runtime/subagent-orchestration.ts), [AnthropicProvider](../../src/adapters/provider/anthropic/AnthropicProvider.ts), [Copilot Relay Provider](../../src/extensions/copilot-relay-provider/copilot-relay-provider.ts) |
-| Tests | [ModelResolver tests](../../src/core/model-resolution/ModelResolver.test.ts), [AnthropicProvider tests](../../src/adapters/provider/anthropic/AnthropicProvider.test.ts), [Copilot Relay Unit tests](../../src/extensions/copilot-relay-provider/copilot-relay-provider-unit.test.ts), [Runtime tests](../../src/runtime/RuntimeApp.test.ts), [Subagent orchestration tests](../../src/runtime/subagent-orchestration.test.ts) |
+| Source | [ModelResolver](../../src/core/model-resolution/ModelResolver.ts), [Model Resolution types](../../src/core/model-resolution/types.ts), [Registry contracts](../../src/core/registry/types.ts), [Runtime root resolution](../../src/runtime/RuntimeApp.ts), [Subagent orchestration](../../src/runtime/subagent-orchestration.ts), [AnthropicCompatibleProvider](../../src/builtins/providers/anthropic/AnthropicCompatibleProvider.ts), [Copilot Relay Provider](../../src/extensions/copilot-relay-provider/copilot-relay-provider.ts) |
+| Tests | [ModelResolver tests](../../src/core/model-resolution/ModelResolver.test.ts), [AnthropicCompatibleProvider tests](../../src/builtins/providers/anthropic/AnthropicCompatibleProvider.test.ts), [Copilot Relay Unit tests](../../src/extensions/copilot-relay-provider/copilot-relay-provider-unit.test.ts), [Runtime tests](../../src/runtime/RuntimeApp.test.ts), [Subagent orchestration tests](../../src/runtime/subagent-orchestration.test.ts) |
 | Controlling authority | [ADR-004](../decisions/adr-004-provider-model-identity-and-facts-ownership.md), [Model Resolution Specification](../specifications/model-resolution.md), [Runtime Composition Specification](../specifications/runtime-composition.md), [Subagent Model Resolution Specification](../specifications/subagent-model-resolution.md) |

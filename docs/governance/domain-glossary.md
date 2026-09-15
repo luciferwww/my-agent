@@ -3,16 +3,18 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 1.5
-- **日期：** 2026-09-03
+- **版本：** 1.6
+- **日期：** 2026-09-15
 - **所有者：** 项目所有者
-- **关联计划：** [Architecture Foundation Plan](../changes/active/architecture-foundation/plan.md) AF-02
+- **来源计划：** [Archived Architecture Foundation Plan](../changes/archive/architecture-foundation/plan.md) AF-02
 
 本文档定义 my-agent 目标架构使用的规范词义。定义表达目标语义，不表示当前实现已经完成对应边界；当前实现事实仍按各文档自身状态判断。
 
 **v1.5 修订：** 项目所有者确认 Reload Transaction 的 AF-06 最小范围仅含 enable/disable，Runtime Builder 只编排 instance lifecycle，Extension 自行管理内部对象。
 
-本文所称“所有者”是对概念语义和不变量负责的逻辑责任域，不预先决定 AF-03 的目录、文件、类或接口名称。中英文名称均出现时，英文名称是代码和架构文档中的规范术语。
+**v1.6 修订：** Architecture Foundation 完成后，将 AF-03 待定映射转为 Current Architecture、Accepted ADR 和 stable Specification 的既有权威分工；不改变规范词义。
+
+本文所称“所有者”是对概念语义和不变量负责的逻辑责任域，不由词汇表决定目录、文件、类或接口名称。中英文名称均出现时，英文名称是代码和架构文档中的规范术语。
 
 ## 2. 使用规则
 
@@ -552,13 +554,12 @@ Spike ─evidence─> ADR ────────────────┘   
 | “legacy” 表示所有旧代码 | 只指已被替代且待退出的路径 |
 | “current architecture” 表示设计目录 | 只指经证据验证的当前事实 |
 
-## 10. 待 AF-03 明确的映射
+## 10. 已解析的权威映射
 
-以下内容不由词汇表决定，必须在 Target Architecture 中明确：
+词汇表只定义概念语义；具体权威已分流：
 
-- 每个逻辑所有者映射到哪个目录、模块和公共入口；
-- Domain、Application、Infrastructure、Composition 的类型归属；
-- Model Resolver、Registry、Runtime Builder 和 Lifecycle Contract 的具体接口；
-- Config Namespace、Schema、Extension Capability 和 Resource Ownership 的具体结构；
-- Registry 事务、Snapshot 捕获、排空、回滚和关闭顺序；
-- Current 类型到规范术语的迁移和删除计划。
+- [Current Architecture](../architecture/README.md) 记录当前目录、模块、公共入口和已实现接口；
+- [Architecture Principles](architecture-principles.md) 定义 Domain、Application、Infrastructure 和 Composition 的依赖约束；
+- [Decisions](../decisions/README.md) 持有 Provider/Model、Registry/Runtime lifecycle、Compatibility 和 builtin ownership 的长期选择；
+- [Specifications](../specifications/README.md) 持有 Config、Schema、Extension Capability、Resource Ownership、Registry transaction、Snapshot、排空、回滚和关闭的稳定契约；
+- [Changes](../changes/README.md) 与 [Evidence](../evidence/README.md) 仅保留迁移、删除和验证记录，不反向定义规范词义。

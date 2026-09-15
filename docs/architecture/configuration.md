@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented configuration behavior
-> Verified: 2026-09-14
+> Verified: 2026-09-15
 > Ownership: application and workspace configuration shape, defaults, precedence, merge, environment overrides, and Config Wizard behavior
 > Ownership key: application-configuration-and-wizard
 

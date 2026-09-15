@@ -62,4 +62,4 @@ Cover queued and steering event shapes; ordering `user_message -> run_start -> o
 
 [Channels](../architecture/channels.md) owns transport facts, [Runtime](../architecture/runtime.md) owns routing, and [Attachments](attachments-support.md) owns Media/drop semantics.
 
-Evidence: [Runner event types](../../src/core/runner/types.ts), [Runtime intake](../../src/runtime/RuntimeApp.ts), [intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [WebSocket tests](../../src/adapters/channel/WebSocketChannel.test.ts), and [summary tests](../../src/runtime/summarize-assembled.test.ts).
+Evidence: [Runner event types](../../src/core/runner/types.ts), [Runtime intake](../../src/runtime/RuntimeApp.ts), [intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [WebSocket tests](../../src/builtins/channels/websocket/WebSocketChannel.test.ts), and [summary tests](../../src/runtime/summarize-assembled.test.ts).

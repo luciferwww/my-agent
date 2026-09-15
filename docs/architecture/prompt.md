@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented prompt behavior
-> Verified: 2026-09-14
+> Verified: 2026-09-15
 > Ownership: System and User prompt composition, Context Hook prepending, and normalized media placement
 > Ownership key: prompt-and-context-hooks
 

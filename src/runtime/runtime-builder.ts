@@ -44,12 +44,10 @@ import type { SubagentProfile } from '../core/subagent/types.js';
 import { SubagentExecutor } from '../core/subagent/SubagentExecutor.js';
 import { loadContextFilesFromDir } from '../core/workspace/index.js';
 import { createApplicationToolPolicy } from './tool-approval-policy.js';
-import {
-  createMemoryToolModule,
-  createAnthropicProviderModule,
-  createTaskToolModule,
-  createWorkspaceToolModule,
-} from '../runtime-modules/index.js';
+import { createAnthropicProviderUnit } from '../builtins/providers/anthropic/index.js';
+import { createMemoryToolsContribution } from '../builtins/tools/memory/index.js';
+import { createTaskToolContribution } from '../builtins/tools/task/index.js';
+import { createWorkspaceToolsContribution } from '../builtins/tools/workspace/index.js';
 import { createSubagentDelegationPort } from './subagent-orchestration.js';
 import type { ActiveParentTurn } from './subagent-orchestration.js';
 import type { MessageRouteContext } from './queue-types.js';
@@ -471,7 +469,7 @@ function assembleLoadedRuntimeUnits(params: {
       onEvent: params.onAgentEvent,
     });
     loadedUnits.push(createLoadedRuntimeUnit({
-      registration: createTaskToolModule({
+      registration: createTaskToolContribution({
         delegationPort,
         profileRegistry: params.subagentProfiles,
         getCapabilities: (sessionKey) => resolveSubagentCapabilities(sessionKey, maxDepth),
@@ -489,7 +487,7 @@ function createRuntimeDependencies(
 ): RuntimeDependencies {
   const defaults: RuntimeDependencies = {
     createBundledProviderUnit(options) {
-      return createAnthropicProviderModule(options);
+      return createAnthropicProviderUnit(options);
     },
     createSessionManager(workspaceDir, options) {
       return new SessionManager(workspaceDir, options);
@@ -511,14 +509,14 @@ function createRuntimeDependencies(
     },
     getBuiltinContributionUnits(options, memoryManager) {
       return Object.freeze([
-        createWorkspaceToolModule({
+        createWorkspaceToolsContribution({
           workspaceDir: options.workspaceDir,
           fsWorkspaceOnly: options.fsWorkspaceOnly ?? true,
           webFetchEnabled: options.webFetchEnabled ?? true,
           execEnabled: options.execEnabled ?? true,
           processEnabled: options.processEnabled ?? true,
         }),
-        ...(memoryManager ? [createMemoryToolModule(memoryManager)] : []),
+        ...(memoryManager ? [createMemoryToolsContribution(memoryManager)] : []),
       ]);
     },
   };

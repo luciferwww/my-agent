@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import process from 'node:process';
 
-import { createToolExecutor, execTool, processTool } from '../src/core/tools/index.js';
+import { createToolExecutor, execTool, processTool } from '../src/builtins/tools/workspace/index.js';
 
 type AsyncCase = () => Promise<void>;
 

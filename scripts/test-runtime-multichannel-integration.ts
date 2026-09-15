@@ -35,7 +35,7 @@ import { WebSocket } from 'ws';
 
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
 import type { RuntimeHandle } from '../src/runtime/runtime-composition.js';
-import { createWebSocketChannelModule } from '../src/runtime-modules/index.js';
+import { createWebSocketChannelUnit } from '../src/builtins/channels/websocket/index.js';
 import type {
   Channel,
   ChannelCompletion,
@@ -244,7 +244,7 @@ async function testQueuedWebSocketApprovalRoutesToQueuedOrigin(): Promise<void> 
         run: runnerRun,
       };
 
-      const channelUnit = createWebSocketChannelModule({ port, approval: true });
+      const channelUnit = createWebSocketChannelUnit({ port, approval: true });
 
       app = await RuntimeApp.create({
         workspaceDir,
@@ -364,7 +364,7 @@ async function testQueuedWebSocketApprovalAbortRoutesToQueuedOrigin(): Promise<v
         },
       };
 
-      const channelUnit = createWebSocketChannelModule({ port, approval: true });
+      const channelUnit = createWebSocketChannelUnit({ port, approval: true });
 
       app = await RuntimeApp.create({
         workspaceDir,

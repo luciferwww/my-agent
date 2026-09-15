@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Tool behavior
-> Verified: 2026-09-14
+> Verified: 2026-09-15
 > Ownership: Canonical Tool contract, portable validation, Registry projection, policy, approval, and execution boundary
 > Ownership key: canonical-tool-contract
 
@@ -99,7 +99,7 @@ Provider portability is proven by [provider-portability-fixtures.ts](../../src/c
 - correlated result content; and
 - non-mutation of canonical Schemas and inputs.
 
-These references are portability evidence, not a production OpenAI client. Production Anthropic definition conversion is [tool-codec.ts](../../src/adapters/provider/anthropic/tool-codec.ts), which maps `inputSchema` to `input_schema`; [AnthropicClient.ts](../../src/adapters/provider/anthropic/AnthropicClient.ts) owns Anthropic stream call decoding and message conversion.
+These references are portability evidence, not a production OpenAI client. Production Anthropic definition conversion is [tool-codec.ts](../../src/builtins/providers/anthropic/tool-codec.ts), which maps `inputSchema` to `input_schema`; [AnthropicMessagesClient.ts](../../src/builtins/providers/anthropic/AnthropicMessagesClient.ts) owns Anthropic stream call decoding and message conversion.
 
 ## 6. Policy, approval, and execution order
 
@@ -126,6 +126,6 @@ Every accepted Tool Call receives exactly one terminal result, including malform
 
 | Kind | Evidence |
 |---|---|
-| Source | [Tool contracts](../../src/core/tools/types.ts), [portable-schema.ts](../../src/core/tools/portable-schema.ts), [Registry contracts](../../src/core/registry/types.ts), [registry-builder.ts](../../src/runtime/registry-builder.ts), [runtime-composition-manager.ts](../../src/runtime/runtime-composition-manager.ts), [AgentRunner.ts](../../src/core/runner/AgentRunner.ts), [Anthropic tool-codec.ts](../../src/adapters/provider/anthropic/tool-codec.ts) |
-| Tests | [portable-schema.test.ts](../../src/core/tools/portable-schema.test.ts), [provider-portability.test.ts](../../src/core/tools/provider-portability.test.ts), [tool-codec.test.ts](../../src/adapters/provider/anthropic/tool-codec.test.ts), [AgentRunner.tool-pipeline.test.ts](../../src/core/runner/AgentRunner.tool-pipeline.test.ts), [hooks/runner.test.ts](../../src/core/runner/hooks/runner.test.ts), [registry-builder.test.ts](../../src/runtime/registry-builder.test.ts) |
+| Source | [Tool contracts](../../src/core/tools/types.ts), [portable-schema.ts](../../src/core/tools/portable-schema.ts), [Registry contracts](../../src/core/registry/types.ts), [registry-builder.ts](../../src/runtime/registry-builder.ts), [runtime-composition-manager.ts](../../src/runtime/runtime-composition-manager.ts), [AgentRunner.ts](../../src/core/runner/AgentRunner.ts), [Anthropic tool-codec.ts](../../src/builtins/providers/anthropic/tool-codec.ts) |
+| Tests | [portable-schema.test.ts](../../src/core/tools/portable-schema.test.ts), [provider-portability.test.ts](../../src/core/tools/provider-portability.test.ts), [tool-codec.test.ts](../../src/builtins/providers/anthropic/tool-codec.test.ts), [AgentRunner.tool-pipeline.test.ts](../../src/core/runner/AgentRunner.tool-pipeline.test.ts), [hooks/runner.test.ts](../../src/core/runner/hooks/runner.test.ts), [registry-builder.test.ts](../../src/runtime/registry-builder.test.ts) |
 | Controlling authority | [Tools and Hooks](../specifications/tools-and-hooks.md), [Approval Lifecycle](../specifications/approval-lifecycle.md), [ADR-001: Tool Result Closure and Recovery](../decisions/adr-001-tool-result-closure-and-recovery.md), [ADR-005: Extension Registry Runtime Composition](../decisions/adr-005-extension-registry-runtime-composition.md) |

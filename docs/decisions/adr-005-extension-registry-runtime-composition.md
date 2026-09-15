@@ -97,5 +97,5 @@ This ADR does not fix specific TypeScript APIs, descriptors, schema fields, file
 |---|---|
 | Current facts | [Extensions](../architecture/extensions.md), [Runtime](../architecture/runtime.md), [Tools](../architecture/tools.md), [Channels](../architecture/channels.md) |
 | Stable contract | [Runtime Composition Specification](../specifications/runtime-composition.md), [Extension Acquisition Specification](../specifications/extension-acquisition.md) |
-| Foundation authority/evidence | [Architecture Foundation Plan](../changes/active/architecture-foundation/plan.md), [Target Architecture](../changes/active/architecture-foundation/target-architecture.md), [AF-06 evidence](../evidence/spikes/af-06-extension-framework.md), [AF-07 closeout](../evidence/foundation/af-07-decision-closeout.md) |
+| Foundation provenance/evidence | [Archived Architecture Foundation Plan](../changes/archive/architecture-foundation/plan.md), [archived Target Architecture](../changes/archive/architecture-foundation/target-architecture.md), [AF-06 evidence](../evidence/spikes/af-06-extension-framework.md), [AF-07 closeout](../evidence/foundation/af-07-decision-closeout.md) |
 | Governance | [Architecture Principles](../governance/architecture-principles.md), [Development Workflow](../governance/development-workflow.md) |

@@ -4,7 +4,6 @@ export { MemorySearcher } from './internal/MemorySearcher.js';
 export { RecallTracker } from './internal/RecallTracker.js';
 export { LocalEmbeddingProvider, createEmbeddingProvider } from './internal/LocalEmbeddingProvider.js';
 export { SqliteMemoryStore } from './internal/sqlite-store.js';
-export { createMemoryTools } from './memory-tools.js';
 export type {
   EmbeddingProvider,
   MemoryChunk,

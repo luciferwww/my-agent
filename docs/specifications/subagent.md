@@ -59,4 +59,4 @@ Cover general-purpose and named profiles; partial Child context with Parent fall
 
 ## Ownership and evidence
 
-Current behavior is described by [Runtime](../architecture/runtime.md) and [Runner](../architecture/runner.md). Evidence: [Subagent core](../../src/core/subagent), [Runtime orchestration](../../src/runtime/subagent-orchestration.ts), [Task Tool](../../src/core/tools/builtin/task/task-tool.ts), and related unit/integration tests.
+Current behavior is described by [Runtime](../architecture/runtime.md) and [Runner](../architecture/runner.md). Evidence: [Subagent core](../../src/core/subagent), [Runtime orchestration](../../src/runtime/subagent-orchestration.ts), [Task Tool](../../src/builtins/tools/task/task-tool.ts), and related unit/integration tests.

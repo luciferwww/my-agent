@@ -19,7 +19,7 @@ interface CurrentAuthorityDocument extends CurrentAuthoritySurfaceEntry {
 const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const CURRENT_ROOT = join(REPOSITORY_ROOT, 'docs', 'architecture');
 const SURFACE_PATH = fileURLToPath(new URL('./ft-12-current-architecture-surface.json', import.meta.url));
-const VERIFIED_DATE = '2026-09-14';
+const VERIFIED_DATE = '2026-09-15';
 const STALE_CURRENT_CLAIMS = [
   /基准版本/u,
   /设计文档/u,
@@ -164,8 +164,8 @@ describe('FT-12 Current Architecture authority', () => {
     expect(provider).toContain('`src/core/model-invocation/` owns the Provider-neutral invocation port');
     expect(provider).toContain('maxTokens: number');
     expect(provider).not.toContain('maxTokens?: number');
-    expect(provider).toContain('src/runtime-modules/');
-    expect(provider).toContain('anthropic-provider.ts');
+    expect(provider).toContain('src/builtins/providers/anthropic/');
+    expect(provider).toContain('runtime-unit.ts');
     expect(provider).toContain('required, initially enabled builtin Unit `builtin-anthropic-provider`');
     expect(provider).toContain('Provider construction is deferred until Unit `create()`');
     expect(provider).toContain('`toModelInvocationError(value)` is the Runtime canonicalization entry');
@@ -219,10 +219,13 @@ describe('FT-12 Current Architecture authority', () => {
   });
 
   it('grounds Current Architecture claims in source and behavioral evidence', async () => {
-    const [runtimeTypes, builder, anthropicModule, builderTests] = await Promise.all([
+    const [runtimeTypes, builder, anthropicUnit, builderTests] = await Promise.all([
       readFile(join(REPOSITORY_ROOT, 'src', 'runtime', 'types.ts'), 'utf8'),
       readFile(join(REPOSITORY_ROOT, 'src', 'runtime', 'runtime-builder.ts'), 'utf8'),
-      readFile(join(REPOSITORY_ROOT, 'src', 'runtime-modules', 'anthropic-provider.ts'), 'utf8'),
+      readFile(
+        join(REPOSITORY_ROOT, 'src', 'builtins', 'providers', 'anthropic', 'runtime-unit.ts'),
+        'utf8',
+      ),
       readFile(join(REPOSITORY_ROOT, 'src', 'runtime', 'runtime-builder.test.ts'), 'utf8'),
     ]);
 
@@ -242,14 +245,16 @@ describe('FT-12 Current Architecture authority', () => {
     expect(compositionStart).toBeLessThan(kernelConstruction);
     expect(kernelConstruction).toBeLessThan(readyEvent);
 
-    const unitCreate = anthropicModule.indexOf('create() {');
-    const providerConstruction = anthropicModule.indexOf('new AnthropicProvider(capturedOptions)');
-    const registration = anthropicModule.indexOf('api.registerProvider(provider.entry)');
+    const unitCreate = anthropicUnit.indexOf('create() {');
+    const providerConstruction = anthropicUnit.indexOf(
+      'new AnthropicCompatibleProvider(capturedOptions)',
+    );
+    const registration = anthropicUnit.indexOf('api.registerProvider(provider.entry)');
     expect(unitCreate).toBeGreaterThan(-1);
     expect(unitCreate).toBeLessThan(providerConstruction);
     expect(providerConstruction).toBeLessThan(registration);
-    expect(anthropicModule).toContain("unitId: ANTHROPIC_PROVIDER_MODULE_ID");
-    expect(anthropicModule).toContain('required: true');
+    expect(anthropicUnit).toContain('unitId: ANTHROPIC_PROVIDER_UNIT_ID');
+    expect(anthropicUnit).toContain('required: true');
 
     for (const evidence of [
       'runs the bundled Provider through factory, create, staging, start, and publication',
@@ -268,7 +273,14 @@ describe('FT-12 Current Architecture authority', () => {
       'utf8',
     );
     const anthropicClient = await readFile(
-      join(REPOSITORY_ROOT, 'src', 'adapters', 'provider', 'anthropic', 'AnthropicClient.ts'),
+      join(
+        REPOSITORY_ROOT,
+        'src',
+        'builtins',
+        'providers',
+        'anthropic',
+        'AnthropicMessagesClient.ts',
+      ),
       'utf8',
     );
     const agentRunner = await readFile(
@@ -292,12 +304,10 @@ describe('FT-12 Current Architecture authority', () => {
 });
 
 async function currentSourceModules(): Promise<string[]> {
-  const roots = ['core', 'adapters', 'platform', 'extensions'] as const;
+  const roots = ['core', 'builtins', 'platform', 'extensions'] as const;
   const modules = [
     'src/runtime',
-    'src/runtime-modules',
     'src/extension-acquisition',
-    'src/core/tools/builtin',
   ];
   for (const root of roots) {
     const entries = await readdir(join(REPOSITORY_ROOT, 'src', root), { withFileTypes: true });

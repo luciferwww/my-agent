@@ -20,7 +20,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getEnvOverrides } from '../src/platform/config/index.js';
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
-import { createWebSocketChannelModule } from '../src/runtime-modules/index.js';
+import { createWebSocketChannelUnit } from '../src/builtins/channels/websocket/index.js';
 import { createRuntimeHost } from './runtime-host.js';
 import {
   formatAcquisitionWarning,
@@ -66,7 +66,7 @@ async function main(): Promise<void> {
     workspaceDir: WORKSPACE_DIR,
     loadedUnits: [
       ...acquisition.result.loadedUnits,
-      createWebSocketChannelModule({
+      createWebSocketChannelUnit({
         port,
         host,
         approval: true,

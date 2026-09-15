@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Session behavior
-> Verified: 2026-09-14
+> Verified: 2026-09-15
 > Ownership: Session metadata, Transcript JSONL, message trees, branching, and persistence behavior
 > Ownership key: session-and-transcript-persistence
 

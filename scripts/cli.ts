@@ -19,7 +19,7 @@
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
-import { createCliChannelModule } from '../src/runtime-modules/index.js';
+import { createCliChannelUnit } from '../src/builtins/channels/cli/index.js';
 import { createRuntimeHost } from './runtime-host.js';
 
 const WORKSPACE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'test-workspace');
@@ -47,7 +47,7 @@ async function main(): Promise<void> {
 
   const app = await RuntimeApp.create({
     workspaceDir: WORKSPACE_DIR,
-    loadedUnits: [createCliChannelModule({
+    loadedUnits: [createCliChannelUnit({
       approval: true,
       sessionKey,
       prompt: '\n> ',

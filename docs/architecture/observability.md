@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented observability behavior
-> Verified: 2026-09-14
+> Verified: 2026-09-15
 > Ownership: process-wide logging, startup buffering, log adapters, and adapter close
 > Ownership key: logging-and-adapter-lifecycle
 
@@ -124,4 +124,4 @@ Registry startup diagnostics are not raw Logger entries or Provider-owned events
 |---|---|
 | Source | [Logger](../../src/platform/logger/Logger.ts), [logging types](../../src/platform/logger/types.ts), [console adapter](../../src/platform/logger/ConsoleAdapter.ts), [file adapter](../../src/platform/logger/FileAdapter.ts), [Runtime bootstrap](../../src/runtime/bootstrap.ts), [Runtime Builder](../../src/runtime/runtime-builder.ts) |
 | Tests | [Logger tests](../../src/platform/logger/Logger.test.ts), [console adapter tests](../../src/platform/logger/ConsoleAdapter.test.ts), [file adapter tests](../../src/platform/logger/FileAdapter.test.ts), [Runtime Builder tests](../../src/runtime/runtime-builder.test.ts) |
-| Controlling authority | [Runtime Composition](../specifications/runtime-composition.md), [Architecture Foundation target](../changes/active/architecture-foundation/target-architecture.md) |
+| Controlling authority | [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [Runtime Composition](../specifications/runtime-composition.md) |

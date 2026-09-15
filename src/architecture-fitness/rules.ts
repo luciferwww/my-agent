@@ -78,8 +78,8 @@ const MIXED_PRODUCTION_PATHS = new Set([
 ]);
 
 const SDK_ALLOWLIST = new Map([
-  ['@anthropic-ai/sdk', ['src/adapters/provider/anthropic/']],
-  ['ws', ['src/adapters/channel/']],
+  ['@anthropic-ai/sdk', ['src/builtins/providers/anthropic/']],
+  ['ws', ['src/builtins/channels/websocket/']],
 ]);
 
 const LEGACY_DOCUMENT_ROOTS = [
@@ -619,12 +619,16 @@ function normalizePath(filePath: string): string {
 }
 
 function classifyBoundary(sourcePath: string): Boundary | undefined {
-  if (sourcePath.startsWith('src/core/tools/builtin/') || sourcePath.startsWith('src/core/memory/internal/')) {
+  if (sourcePath.startsWith('src/builtins/')) {
+    return /\/(?:runtime-unit|contribution|index)\.ts$/u.test(sourcePath)
+      ? 'Composition'
+      : 'Infrastructure';
+  }
+  if (sourcePath.startsWith('src/core/memory/internal/')) {
     return 'Infrastructure';
   }
   if (
-    sourcePath.startsWith('src/adapters/')
-    || sourcePath.startsWith('src/extensions/')
+    sourcePath.startsWith('src/extensions/')
     || sourcePath.startsWith('src/extension-acquisition/')
   ) {
     return 'Infrastructure';
@@ -639,8 +643,7 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
     return 'Composition';
   }
   if (
-    sourcePath.startsWith('src/runtime-modules/')
-    || sourcePath === 'src/runtime/registry-builder.ts'
+    sourcePath === 'src/runtime/registry-builder.ts'
     || sourcePath === 'src/runtime/channel-lifecycle.ts'
     || sourcePath === 'src/runtime/composition-coordinator.ts'
     || sourcePath === 'src/runtime/reload-coordinator.ts'

@@ -85,7 +85,7 @@ Controlled-Abort closure is implemented and verified: Runner preserves terminal 
 | Current facts | [Runner](../architecture/runner.md), [Session](../architecture/session.md) |
 | Source/tests | [AgentRunner](../../src/core/runner/AgentRunner.ts), [AgentRunner tests](../../src/core/runner/AgentRunner.test.ts) |
 | Stable contract | [Abort Specification](../specifications/abort.md), [Runner Turn Flow Specification](../specifications/runner-turn-flow.md) |
-| Migration evidence | [AF-04 plan](../changes/archive/af-04-characterization-fitness/plan.md), [Target Architecture](../changes/active/architecture-foundation/target-architecture.md) |
+| Migration evidence | [AF-04 plan](../changes/archive/af-04-characterization-fitness/plan.md), [archived Target Architecture](../changes/archive/architecture-foundation/target-architecture.md) |
 | Process | [Development Workflow](../governance/development-workflow.md) |
 
 Exact user-visible text, event payloads, and persistence layout are contract/implementation details rather than part of this decision.

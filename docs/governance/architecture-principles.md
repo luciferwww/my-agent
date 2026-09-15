@@ -3,15 +3,17 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 1.1
-- **日期：** 2026-09-03
+- **版本：** 1.2
+- **日期：** 2026-09-15
 - **所有者：** 项目所有者
-- **关联计划：** [Architecture Foundation Plan](../changes/active/architecture-foundation/plan.md) AF-02
+- **来源计划：** [Archived Architecture Foundation Plan](../changes/archive/architecture-foundation/plan.md) AF-02
 - **规范词汇：** [Domain Glossary](domain-glossary.md)
 
-本文档定义 Target Architecture、ADR、Spec 和 Architecture Slice 必须遵守的稳定约束。原则描述依赖方向、所有权和可验证结果，不预先决定 AF-03 的目录、类或接口形状。
+本文档定义 ADR、Spec、Current Architecture 和 Architecture Slice 必须遵守的稳定约束。原则描述依赖方向、所有权和可验证结果；当前目录、类和接口形状由 Current Architecture 记录，长期 ownership 决策由 Accepted ADR 持有。
 
 **v1.1 修订：** 项目所有者确认 AP-10 在 Extension Framework 中以 Extension/Module/Adapter instance 为编排单元；Extension 内部对象仍由 Extension 自行管理。
+
+**v1.2 修订：** Architecture Foundation 完成后，将 AF-03 的未完成映射表述收敛为 Current Architecture 与 Accepted ADR 的既有权威分工；不改变依赖方向原则。
 
 ## 2. 适用与变更规则
 
@@ -23,7 +25,7 @@
 
 ## 3. 依赖方向
 
-目标架构使用四个逻辑边界；具体目录映射由 AF-03 决定。
+架构使用四个逻辑边界；[Current Architecture](../architecture/overview.md) 记录当前目录映射，[ADR-007](../decisions/adr-007-builtin-capability-source-ownership.md) 持有 builtin source ownership 的长期决策。
 
 ```mermaid
 flowchart LR

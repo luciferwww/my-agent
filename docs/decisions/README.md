@@ -15,6 +15,7 @@ This directory contains durable architectural decisions. It does not own current
 | [ADR-004](adr-004-provider-model-identity-and-facts-ownership.md) | Accepted | Provider/Model identity and Model Facts ownership |
 | [ADR-005](adr-005-extension-registry-runtime-composition.md) | Accepted | Extension, Registry, Composition, and Runtime lifecycle |
 | [ADR-006](adr-006-legacy-and-compatibility-exit.md) | Accepted | Legacy classification and Compatibility exit |
+| [ADR-007](adr-007-builtin-capability-source-ownership.md) | Accepted | Builtin capability source ownership and layout |
 
 ## Authority rules
 

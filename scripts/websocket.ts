@@ -19,7 +19,7 @@
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RuntimeApp } from '../src/runtime/RuntimeApp.js';
-import { createWebSocketChannelModule } from '../src/runtime-modules/index.js';
+import { createWebSocketChannelUnit } from '../src/builtins/channels/websocket/index.js';
 import { createRuntimeHost } from './runtime-host.js';
 
 const WORKSPACE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'test-workspace');
@@ -77,7 +77,7 @@ async function main(): Promise<void> {
 
   const app = await RuntimeApp.create({
     workspaceDir: WORKSPACE_DIR,
-    loadedUnits: [createWebSocketChannelModule({
+    loadedUnits: [createWebSocketChannelUnit({
       port,
       host,
       path,

@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Provider behavior
-> Verified: 2026-09-14
+> Verified: 2026-09-15
 > Ownership: Provider-neutral invocation, normalized invocation failures, and concrete Anthropic-compatible and Copilot Relay integrations
 > Ownership key: provider-protocol-and-anthropic-adapter
 
@@ -22,14 +22,12 @@ src/core/model-invocation/
 ├── errors.ts                   # normalized failure and structural error boundary
 └── index.ts
 
-src/adapters/provider/anthropic/
-├── AnthropicClient.ts          # Anthropic SDK/protocol adapter
-├── AnthropicProvider.ts        # connection, Catalog, facts, and invocation binding
+src/builtins/providers/anthropic/
+├── AnthropicMessagesClient.ts  # Anthropic SDK/Messages protocol adapter
+├── AnthropicCompatibleProvider.ts # connection, Catalog, facts, and invocation binding
 ├── tool-codec.ts               # production Anthropic Tool-definition codec
+├── runtime-unit.ts             # required builtin Provider Unit
 └── index.ts
-
-src/runtime-modules/
-└── anthropic-provider.ts       # required bundled Provider Unit
 
 src/extensions/copilot-relay-provider/
 ├── entry.ts
@@ -88,7 +86,7 @@ Only allowlisted diagnostics are copied: Provider ID, bounded Provider status/ty
 
 ### 5.1 Protocol conversion
 
-`AnthropicClient` directly implements the Core `ModelInvocationPort` using the Anthropic SDK. It converts:
+`AnthropicMessagesClient` directly implements the Core `ModelInvocationPort` using the Anthropic SDK. It converts:
 
 - canonical Tool definitions through production `tool-codec.ts` into Anthropic `input_schema`;
 - canonical text/image/Tool history into Anthropic Messages content while removing image dimensions;
@@ -102,7 +100,7 @@ Abort is passed to the SDK and remains `AbortError`. Recognized context-overflow
 
 ### 5.2 Provider facts and Catalog
 
-`AnthropicProvider` publishes Provider `anthropic-compatible`, protocol `anthropic-messages`, an invocation port, normalized endpoint connection, and a closed model Catalog.
+`AnthropicCompatibleProvider` publishes Provider `anthropic-compatible`, protocol `anthropic-messages`, an invocation port, normalized endpoint connection, and a closed model Catalog.
 
 - The official endpoint `https://api.anthropic.com` starts from the static Provider Catalog; exact matching deployment facts may supplement or override individual entries.
 - A custom endpoint publishes only models proven by deployment facts matching Provider, normalized endpoint, protocol, and exact opaque Model ID.
@@ -114,13 +112,13 @@ Abort is passed to the SDK and remains `AbortError`. Recognized context-overflow
 
 Provider portability is demonstrated by independent test reference codecs in `provider-portability.test.ts`; these are not production codecs and do not import Anthropic/OpenAI SDKs. They verify shared semantics across Anthropic and OpenAI-compatible function Tool shapes for definitions, complete and fragmented calls, multiple/interleaved calls, identity/order, malformed/non-object input, duplicate identity, and Tool Result correlation/content.
 
-Production Anthropic definition conversion is owned by `src/adapters/provider/anthropic/tool-codec.ts`. Production and reference codecs do not share implementation. They share only the test fixture vectors in `src/core/tools/provider-portability-fixtures.ts`; `tool-codec.test.ts` checks the production output against those vectors. Production code does not import the reference codec or fixtures.
+Production Anthropic definition conversion is owned by `src/builtins/providers/anthropic/tool-codec.ts`. Production and reference codecs do not share implementation. They share only the test fixture vectors in `src/core/tools/provider-portability-fixtures.ts`; `tool-codec.test.ts` checks the production output against those vectors. Production code does not import the reference codec or fixtures.
 
 `ToolResultOutcome` is Core-only shared semantics. Anthropic `is_error` is a lossy wire hint, and OpenAI-compatible role=`tool` history does not need to reconstruct that outcome.
 
 ## 7. Bundled Anthropic Runtime Unit
 
-`createAnthropicProviderModule()` captures frozen Provider options and returns required, initially enabled builtin Unit `builtin-anthropic-provider`. Provider construction is deferred until Unit `create()`; its projection remains enclosed in the instance registration closure and enters Registry staging only through `registerProvider()`.
+`createAnthropicProviderUnit()` captures frozen Provider options and returns required, initially enabled builtin Unit `builtin-anthropic-provider`. Provider construction is deferred until Unit `create()`; its projection remains enclosed in the instance registration closure and enters Registry staging only through `registerProvider()`.
 
 Runtime Builder maps validated configuration into module options and adds the single Unit to the catalog. Generic Runtime composition owns Unit creation, staging, publication, rollback, and cleanup. Because this Unit is required, construction/validation failure is startup-fatal and is attributed to its Unit/create phase; no application kernel or `app_ready` event is published on that path.
 
@@ -158,9 +156,9 @@ Deployment places the complete artifact directory directly under `<agent-home>/e
 | Kind | Evidence |
 |---|---|
 | Core source | [Invocation types](../../src/core/model-invocation/types.ts), [Invocation errors](../../src/core/model-invocation/errors.ts) |
-| Anthropic source | [AnthropicClient](../../src/adapters/provider/anthropic/AnthropicClient.ts), [AnthropicProvider](../../src/adapters/provider/anthropic/AnthropicProvider.ts), [production Tool codec](../../src/adapters/provider/anthropic/tool-codec.ts), [Anthropic Runtime Unit](../../src/runtime-modules/anthropic-provider.ts) |
+| Anthropic source | [AnthropicMessagesClient](../../src/builtins/providers/anthropic/AnthropicMessagesClient.ts), [AnthropicCompatibleProvider](../../src/builtins/providers/anthropic/AnthropicCompatibleProvider.ts), [production Tool codec](../../src/builtins/providers/anthropic/tool-codec.ts), [Anthropic Runtime Unit](../../src/builtins/providers/anthropic/runtime-unit.ts) |
 | Relay source | [Extension entry](../../src/extensions/copilot-relay-provider/entry.ts), [Relay Unit](../../src/extensions/copilot-relay-provider/copilot-relay-provider-unit.ts), [Relay Provider](../../src/extensions/copilot-relay-provider/copilot-relay-provider.ts), [Responses client](../../src/extensions/copilot-relay-provider/responses-client.ts), [Relay metadata](../../src/extensions/copilot-relay-provider/model-metadata.ts), [supported Host](../../scripts/server.ts), [Host acquisition](../../scripts/websocket-host-startup.ts), [artifact builder](../../scripts/build-relay-extension-artifact.mjs) |
-| Core/Anthropic tests | [Invocation error tests](../../src/core/model-invocation/errors.test.ts), [AnthropicClient tests](../../src/adapters/provider/anthropic/AnthropicClient.test.ts), [AnthropicProvider tests](../../src/adapters/provider/anthropic/AnthropicProvider.test.ts), [production Tool codec tests](../../src/adapters/provider/anthropic/tool-codec.test.ts), [portability fixtures](../../src/core/tools/provider-portability-fixtures.ts), [independent portability tests](../../src/core/tools/provider-portability.test.ts), [Anthropic Runtime Unit tests](../../src/runtime-modules/anthropic-provider.test.ts) |
+| Core/Anthropic tests | [Invocation error tests](../../src/core/model-invocation/errors.test.ts), [AnthropicMessagesClient tests](../../src/builtins/providers/anthropic/AnthropicMessagesClient.test.ts), [AnthropicCompatibleProvider tests](../../src/builtins/providers/anthropic/AnthropicCompatibleProvider.test.ts), [production Tool codec tests](../../src/builtins/providers/anthropic/tool-codec.test.ts), [portability fixtures](../../src/core/tools/provider-portability-fixtures.ts), [independent portability tests](../../src/core/tools/provider-portability.test.ts), [Anthropic Runtime Unit tests](../../src/builtins/providers/anthropic/runtime-unit.test.ts) |
 | Relay/Host tests | [Relay Unit tests](../../src/extensions/copilot-relay-provider/copilot-relay-provider-unit.test.ts), [Responses client tests](../../src/extensions/copilot-relay-provider/responses-client.test.ts), [Host startup tests](../../scripts/websocket-host-startup.test.ts), [artifact audit](../../scripts/audit-relay-extension-artifact.mjs) |
-| Controlling authority | [ADR-002](../decisions/adr-002-context-budgeting-and-compaction-recovery.md), [ADR-004](../decisions/adr-004-provider-model-identity-and-facts-ownership.md), [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [Model Resolution Specification](../specifications/model-resolution.md), [Model Invocation Errors Specification](../specifications/model-invocation-errors.md) |
+| Controlling authority | [ADR-002](../decisions/adr-002-context-budgeting-and-compaction-recovery.md), [ADR-004](../decisions/adr-004-provider-model-identity-and-facts-ownership.md), [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [ADR-007](../decisions/adr-007-builtin-capability-source-ownership.md), [Model Resolution Specification](../specifications/model-resolution.md), [Model Invocation Errors Specification](../specifications/model-invocation-errors.md) |
 | Delivery history | [Provider Model Catalog archived change](../changes/archive/provider-model-catalog/specification.md), [Source Layout Convergence archived change](../changes/archive/source-layout-convergence/specification.md) |

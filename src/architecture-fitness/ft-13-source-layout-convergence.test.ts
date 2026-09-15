@@ -7,16 +7,22 @@ import { loadProductionSources, loadTypeScriptSources } from './rules.js';
 const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
 describe('FT-13 source layout convergence', () => {
-  it('keeps Anthropic, Channel, and Turn Interaction in their canonical module roots', async () => {
+  it('keeps builtin capabilities and Runtime interaction state in their canonical roots', async () => {
     const required = [
-      'src/adapters/provider/anthropic/AnthropicClient.ts',
-      'src/adapters/provider/anthropic/AnthropicProvider.ts',
-      'src/adapters/provider/anthropic/tool-codec.ts',
-      'src/adapters/provider/anthropic/index.ts',
+      'src/builtins/providers/anthropic/AnthropicMessagesClient.ts',
+      'src/builtins/providers/anthropic/AnthropicCompatibleProvider.ts',
+      'src/builtins/providers/anthropic/tool-codec.ts',
+      'src/builtins/providers/anthropic/runtime-unit.ts',
+      'src/builtins/providers/anthropic/index.ts',
+      'src/builtins/channels/cli/CliChannel.ts',
+      'src/builtins/channels/cli/runtime-unit.ts',
+      'src/builtins/channels/websocket/WebSocketChannel.ts',
+      'src/builtins/channels/websocket/runtime-unit.ts',
+      'src/builtins/tools/workspace/contribution.ts',
+      'src/builtins/tools/memory/contribution.ts',
+      'src/builtins/tools/task/contribution.ts',
       'src/runtime/turn-interaction/TurnInteractionManager.ts',
       'src/runtime/turn-interaction/index.ts',
-      'src/runtime-modules/anthropic-provider.ts',
-      'src/runtime-modules/anthropic-provider.test.ts',
       'src/extension-acquisition/index.ts',
       'src/extension-acquisition/contracts.ts',
     ];
@@ -25,15 +31,11 @@ describe('FT-13 source layout convergence', () => {
     }
 
     const removed = [
-      'src/adapters/llm/index.ts',
-      'src/adapters/llm/AnthropicClient.ts',
-      'src/adapters/llm/AnthropicProvider.ts',
-      'src/adapters/llm/tool-contract-codecs.ts',
-      'src/adapters/channel/types.ts',
-      'src/adapters/channel/TurnInteractionManager.ts',
-      'src/adapters/provider/index.ts',
-      'src/extensions/acquisition/index.ts',
-      'src/extensions/acquisition/types.ts',
+      'src/runtime-modules',
+      'src/adapters',
+      'src/core/tools/builtin',
+      'src/core/memory/memory-tools.ts',
+      'src/extensions/acquisition',
     ];
     for (const path of removed) {
       await expect(stat(join(REPOSITORY_ROOT, ...path.split('/')))).rejects.toMatchObject({
@@ -42,54 +44,59 @@ describe('FT-13 source layout convergence', () => {
     }
   });
 
-  it('keeps the Channel barrel limited to concrete transport adapters', async () => {
-    const barrel = await readFile(
-      join(REPOSITORY_ROOT, 'src', 'adapters', 'channel', 'index.ts'),
-      'utf8',
-    );
-    expect(barrel.trim().split(/\r?\n/u)).toEqual([
-      "export { CliChannel, type CliChannelConfig } from './CliChannel.js';",
-      "export { WebSocketChannel, type WebSocketChannelConfig } from './WebSocketChannel.js';",
+  it('keeps package entries explicit and named after their actual Runtime contracts', async () => {
+    const [provider, cli, websocket, workspace, memory, task] = await Promise.all([
+      readFile(join(REPOSITORY_ROOT, 'src', 'builtins', 'providers', 'anthropic', 'index.ts'), 'utf8'),
+      readFile(join(REPOSITORY_ROOT, 'src', 'builtins', 'channels', 'cli', 'index.ts'), 'utf8'),
+      readFile(join(REPOSITORY_ROOT, 'src', 'builtins', 'channels', 'websocket', 'index.ts'), 'utf8'),
+      readFile(join(REPOSITORY_ROOT, 'src', 'builtins', 'tools', 'workspace', 'index.ts'), 'utf8'),
+      readFile(join(REPOSITORY_ROOT, 'src', 'builtins', 'tools', 'memory', 'index.ts'), 'utf8'),
+      readFile(join(REPOSITORY_ROOT, 'src', 'builtins', 'tools', 'task', 'index.ts'), 'utf8'),
     ]);
-    expect(barrel).not.toMatch(/ApprovalManager|TurnInteractionManager|core\/channel|\.\/types/u);
+
+    expect(provider).toContain("export { AnthropicMessagesClient } from './AnthropicMessagesClient.js';");
+    expect(provider).toContain('createAnthropicProviderUnit');
+    expect(cli).toContain("export { createCliChannelUnit } from './runtime-unit.js';");
+    expect(websocket).toContain("export { createWebSocketChannelUnit } from './runtime-unit.js';");
+    expect(workspace).toContain("export { createWorkspaceToolsContribution } from './contribution.js';");
+    expect(memory).toContain("export { createMemoryToolsContribution } from './contribution.js';");
+    expect(task).toContain("export { createTaskToolContribution } from './contribution.js';");
+    expect(`${provider}\n${cli}\n${websocket}\n${workspace}\n${memory}\n${task}`)
+      .not.toMatch(/export \*|create\w+Module|AnthropicClient\b|AnthropicProvider\b/u);
   });
 
-  it('exports the Anthropic Provider factory without exposing Adapter internals', async () => {
-    const barrel = await readFile(
-      join(REPOSITORY_ROOT, 'src', 'runtime-modules', 'index.ts'),
-      'utf8',
-    );
-    expect(barrel).toContain(
-      "export { createAnthropicProviderModule } from './anthropic-provider.js';",
-    );
-    expect(barrel).not.toMatch(/\b(?:AnthropicProvider|AnthropicClient)\b/u);
-  });
-
-  it('rejects old paths, deep external module imports, and test fixtures in production or scripts', async () => {
+  it('rejects old paths, external deep capability imports, and test fixtures in production or scripts', async () => {
     const production = await loadProductionSources(REPOSITORY_ROOT);
-    const scripts = await loadTypeScriptSources(
-      join(REPOSITORY_ROOT, 'scripts'),
-      [],
-      'scripts',
-    );
+    const scripts = await loadTypeScriptSources(join(REPOSITORY_ROOT, 'scripts'), [], 'scripts');
     const diagnostics: string[] = [];
 
     for (const source of [...production, ...scripts]) {
       for (const forbidden of [
-        'adapters/llm',
-        'adapters/channel/types',
-        'adapters/channel/TurnInteractionManager',
+        'runtime-modules',
+        'adapters/provider/anthropic',
+        'adapters/channel',
+        'core/tools/builtin',
+        'core/memory/memory-tools',
         'extensions/acquisition',
       ]) {
         if (source.content.includes(forbidden)) {
           diagnostics.push(`FT-13 source=${source.path} forbiddenPath=${forbidden}`);
         }
       }
-      if (
-        !source.path.startsWith('src/adapters/provider/anthropic/')
-        && /adapters\/provider\/anthropic\/(?!index\.js)/u.test(source.content)
-      ) {
-        diagnostics.push(`FT-13 source=${source.path} violation=anthropic-deep-import`);
+      for (const capability of [
+        'builtins/providers/anthropic',
+        'builtins/channels/cli',
+        'builtins/channels/websocket',
+        'builtins/tools/workspace',
+        'builtins/tools/memory',
+        'builtins/tools/task',
+      ]) {
+        if (
+          !source.path.startsWith(`src/${capability}/`)
+          && new RegExp(`${capability}/(?!index\\.js)`, 'u').test(source.content)
+        ) {
+          diagnostics.push(`FT-13 source=${source.path} capability=${capability} violation=deep-import`);
+        }
       }
       if (
         !source.path.startsWith('src/runtime/turn-interaction/')

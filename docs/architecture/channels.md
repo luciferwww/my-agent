@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Channel behavior
-> Verified: 2026-09-14
+> Verified: 2026-09-15
 > Ownership: Channel contracts, transport, interaction, CLI/WebSocket protocol, attachment ingress, and client routing
 > Ownership key: channel-transport-and-ingress
 
@@ -10,7 +10,7 @@
 
 ## 1. Boundary
 
-`src/adapters/channel/` is the I/O adapter boundary between the in-process Runtime and external clients such as the CLI and WebSocket transport. Canonical Channel and interaction contracts live in `src/core/channel/`; the Runtime-owned pending-interaction lifecycle lives in `src/runtime/turn-interaction/`.
+`src/builtins/channels/` owns the application-delivered I/O adapters and their package-local Runtime Unit entries for CLI and WebSocket transports. Canonical Channel and interaction contracts live in `src/core/channel/`; the Runtime-owned pending-interaction lifecycle lives in `src/runtime/turn-interaction/`.
 
 Channels own transport and wire validation. They pass accepted `ChannelRunRequest` values to the Runtime; they do not schedule Turns or call the Runner directly. Runtime owns per-session queueing, steering classification, Turn identity, generation capture, interaction routing, and event Fanout. [Media](media.md) owns attachment validation and canonical normalization after Channel ingress.
 
@@ -21,10 +21,15 @@ src/core/channel/
 ├── types.ts                  # canonical Channel, interaction, Catalog, and capability contracts
 └── index.ts
 
-src/adapters/channel/
-├── CliChannel.ts             # readline transport
-├── WebSocketChannel.ts       # ws server transport
-└── index.ts                  # concrete adapters and configuration
+src/builtins/channels/
+├── cli/
+│   ├── CliChannel.ts         # readline transport
+│   ├── runtime-unit.ts
+│   └── index.ts
+└── websocket/
+  ├── WebSocketChannel.ts   # ws server transport
+  ├── runtime-unit.ts
+  └── index.ts
 
 src/runtime/turn-interaction/
 ├── TurnInteractionManager.ts # Runtime-owned Promise bus
@@ -227,6 +232,6 @@ Runtime creates and starts candidate Channel instances before publication, binds
 
 | Kind | Evidence |
 |---|---|
-| Source | [Core Channel types](../../src/core/channel/types.ts), [CliChannel](../../src/adapters/channel/CliChannel.ts), [WebSocketChannel](../../src/adapters/channel/WebSocketChannel.ts), [TurnInteractionManager](../../src/runtime/turn-interaction/TurnInteractionManager.ts), [Channel lifecycle](../../src/runtime/channel-lifecycle.ts), [Runtime intake/routing](../../src/runtime/RuntimeApp.ts), [Runtime Fanout](../../src/runtime/runtime-builder.ts) |
-| Tests | [CliChannel tests](../../src/adapters/channel/CliChannel.test.ts), [WebSocketChannel tests](../../src/adapters/channel/WebSocketChannel.test.ts), [TurnInteractionManager tests](../../src/runtime/turn-interaction/TurnInteractionManager.test.ts), [Channel lifecycle tests](../../src/runtime/channel-lifecycle.test.ts), [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [Runtime tests](../../src/runtime/RuntimeApp.test.ts) |
-| Controlling authority | [Channel Specification](../specifications/channel.md), [Approval Lifecycle Specification](../specifications/approval-lifecycle.md), [Attachments Support Specification](../specifications/attachments-support.md), [Multi-client User Messages Specification](../specifications/multi-client-user-messages.md), [Abort Specification](../specifications/abort.md), [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md) |
+| Source | [Core Channel types](../../src/core/channel/types.ts), [CliChannel](../../src/builtins/channels/cli/CliChannel.ts), [CLI Runtime Unit](../../src/builtins/channels/cli/runtime-unit.ts), [WebSocketChannel](../../src/builtins/channels/websocket/WebSocketChannel.ts), [WebSocket Runtime Unit](../../src/builtins/channels/websocket/runtime-unit.ts), [TurnInteractionManager](../../src/runtime/turn-interaction/TurnInteractionManager.ts), [Channel lifecycle](../../src/runtime/channel-lifecycle.ts), [Runtime intake/routing](../../src/runtime/RuntimeApp.ts), [Runtime Fanout](../../src/runtime/runtime-builder.ts) |
+| Tests | [CliChannel tests](../../src/builtins/channels/cli/CliChannel.test.ts), [WebSocketChannel tests](../../src/builtins/channels/websocket/WebSocketChannel.test.ts), [TurnInteractionManager tests](../../src/runtime/turn-interaction/TurnInteractionManager.test.ts), [Channel lifecycle tests](../../src/runtime/channel-lifecycle.test.ts), [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [Runtime tests](../../src/runtime/RuntimeApp.test.ts) |
+| Controlling authority | [ADR-007](../decisions/adr-007-builtin-capability-source-ownership.md), [Channel Specification](../specifications/channel.md), [Approval Lifecycle Specification](../specifications/approval-lifecycle.md), [Attachments Support Specification](../specifications/attachments-support.md), [Multi-client User Messages Specification](../specifications/multi-client-user-messages.md), [Abort Specification](../specifications/abort.md), [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md) |

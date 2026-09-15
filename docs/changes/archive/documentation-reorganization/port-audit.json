@@ -695,7 +695,7 @@
     {
       "source": "docs/architecture/slice-6-documentation-legacy-closeout-spec.md",
       "role": "Archived accepted change specification",
-      "uniqueValue": "Slice 6 scope, 52-entry closeout method, final validation, and pending owner acceptance.",
+      "uniqueValue": "Slice 6 scope, 52-entry closeout method, final validation, and owner-acceptance provenance.",
       "portOutcome": "Port as Active or Archived Change",
       "targets": ["docs/changes/archive/slice-6-closeout/specification.md"],
       "excludedContent": "Permanent governance/current facts and repeated terminal output after closeout.",
@@ -742,14 +742,14 @@
     },
     {
       "source": "docs/architecture/target-architecture.md",
-      "role": "Accepted target authority and active Foundation design input",
-      "uniqueValue": "Long-lived accepted end-state boundaries, dependency direction, validation mapping, and still-governing target constraints; authority changes only through formal supersession.",
+      "role": "Accepted target design record and archived Foundation provenance",
+      "uniqueValue": "Accepted end-state boundaries, dependency direction, validation mapping, and historical authority-transfer provenance retained after durable successors took ownership.",
       "portOutcome": "Port as Active or Archived Change",
-      "targets": ["docs/changes/active/architecture-foundation/target-architecture.md"],
+      "targets": ["docs/changes/archive/architecture-foundation/target-architecture.md"],
       "excludedContent": "Implemented facts now owned by Current Architecture, closed Slice chronology, and obsolete locators.",
-      "verification": "Preserve its distinct non-current target authority after section-level extraction; after Slice 6 closeout it remains active unless every still-governing target constraint is formally superseded by accepted Decisions, stable Specifications, or a successor Target Architecture.",
+      "verification": "Every retained target constraint was transferred to accepted Decisions, stable Specifications, Current Architecture, Governance, Deferred ownership, or deliberately unfrozen implementation detail before archival.",
       "status": "Ported and Reviewed",
-      "deletionGate": "Formal supersession covers every retained target constraint, no unfinished work depends on this authority, active inbound links are switched, and the owner separately accepts archival or discard; Slice 6 closeout alone is insufficient.",
+      "deletionGate": "Satisfied on 2026-09-15: durable successor coverage was reviewed, unfinished/deferred ownership was transferred, active inbound links were switched, and the owner accepted Foundation closeout.",
       "batch": "B5-changes-cleanup"
     },
     {
@@ -802,14 +802,14 @@
     },
     {
       "source": "docs/roadmap/architecture-foundation-plan.md",
-      "role": "Active change plan",
-      "uniqueValue": "Foundation gate, Slice sequence/status, unresolved Slice 6 acceptance, and deferred Subagent successor tracker.",
+      "role": "Archived Foundation change plan",
+      "uniqueValue": "Foundation gate, completed Slice sequence/status, Slice 6 acceptance, and deferred Subagent successor provenance.",
       "portOutcome": "Port as Active or Archived Change",
-      "targets": ["docs/changes/active/architecture-foundation/plan.md"],
+      "targets": ["docs/changes/archive/architecture-foundation/plan.md"],
       "excludedContent": "Detailed closed-batch command narration that is already retained by archive/evidence/Git.",
-      "verification": "Remain active until Slice 6 owner acceptance and deferred tracker ownership are explicitly transferred.",
+      "verification": "Slice 6 was owner-accepted, deferred ownership was transferred, and every retained Target Architecture constraint received a durable successor or deliberately unfrozen disposition.",
       "status": "Ported and Reviewed",
-      "deletionGate": "Foundation closeout is owner-accepted and all unfinished/deferred work has a successor.",
+      "deletionGate": "Satisfied on 2026-09-15: Foundation closeout was owner-authorized and all unfinished/deferred work has a successor.",
       "batch": "B5-changes-cleanup"
     },
     {

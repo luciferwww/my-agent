@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current Architecture entry and module ownership map
-> Verified: 2026-09-14
+> Verified: 2026-09-15
 > Ownership: current module map, authority map, and end-to-end Turn overview
 > Ownership key: architecture-map-and-turn-overview
 
@@ -17,7 +17,10 @@ This page owns only the current module map, Current Architecture authority map, 
 ```text
 src/
 ├── runtime/               composition, generation publication, orchestration and lifecycle
-├── runtime-modules/       composition units for required and Host-provided capabilities
+├── builtins/              concrete application-delivered capabilities and Host entries
+│   ├── providers/         concrete builtin Provider integrations
+│   ├── channels/          concrete builtin Channel transports
+│   └── tools/             concrete builtin Tool implementations
 ├── extension-acquisition/ Agent Home discovery, scoped config and controlled Unit loading
 ├── extensions/            concrete optional External Extension implementations
 ├── core/
@@ -30,13 +33,10 @@ src/
 │   ├── session/           JSONL transcript persistence
 │   ├── prompt/            system/user prompt assembly
 │   ├── media/             inbound media validation and canonical normalization
-│   ├── tools/             canonical Tool contract and builtin implementations
+│   ├── tools/             canonical Tool contract and portable validation
 │   ├── memory/            optional indexed memory
 │   ├── workspace/         workspace bootstrap and context loading
 │   └── subagent/          Child request preparation and isolated execution
-├── adapters/
-│   ├── channel/           CLI/WebSocket transports
-│   └── provider/          concrete Provider protocol adapters
 └── platform/
     ├── config/            application configuration, merge and Wizard
     └── logger/            process-wide logging and output adapters
@@ -102,6 +102,6 @@ Topic pages own every detail behind these steps; this overview intentionally doe
 
 | Kind | Evidence |
 |---|---|
-| Source | [Runtime Builder](../../src/runtime/runtime-builder.ts), [RuntimeApp](../../src/runtime/RuntimeApp.ts), [composition manager](../../src/runtime/runtime-composition-manager.ts), [Extension acquisition](../../src/extension-acquisition/index.ts), [Anthropic Runtime Module](../../src/runtime-modules/anthropic-provider.ts), [ModelResolver](../../src/core/model-resolution/ModelResolver.ts), [attachment pipeline](../../src/core/media/attachment-pipeline.ts), [AgentRunner](../../src/core/runner/AgentRunner.ts) |
-| Tests | [acquisition integration](../../src/extension-acquisition/acquisition-runtime.integration.test.ts), [Runtime Builder tests](../../src/runtime/runtime-builder.test.ts), [Anthropic Unit tests](../../src/runtime-modules/anthropic-provider.test.ts), [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [ModelResolver tests](../../src/core/model-resolution/ModelResolver.test.ts), [attachment tests](../../src/core/media/attachment-pipeline.test.ts) |
-| Controlling authority | [ADR-003](../decisions/adr-003-progressive-architecture-migration.md), [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [ADR-006](../decisions/adr-006-legacy-and-compatibility-exit.md), [Runtime Composition Specification](../specifications/runtime-composition.md) |
+| Source | [Runtime Builder](../../src/runtime/runtime-builder.ts), [RuntimeApp](../../src/runtime/RuntimeApp.ts), [composition manager](../../src/runtime/runtime-composition-manager.ts), [Extension acquisition](../../src/extension-acquisition/index.ts), [Anthropic Runtime Unit](../../src/builtins/providers/anthropic/runtime-unit.ts), [ModelResolver](../../src/core/model-resolution/ModelResolver.ts), [attachment pipeline](../../src/core/media/attachment-pipeline.ts), [AgentRunner](../../src/core/runner/AgentRunner.ts) |
+| Tests | [acquisition integration](../../src/extension-acquisition/acquisition-runtime.integration.test.ts), [Runtime Builder tests](../../src/runtime/runtime-builder.test.ts), [Anthropic Unit tests](../../src/builtins/providers/anthropic/runtime-unit.test.ts), [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [ModelResolver tests](../../src/core/model-resolution/ModelResolver.test.ts), [attachment tests](../../src/core/media/attachment-pipeline.test.ts) |
+| Controlling authority | [ADR-003](../decisions/adr-003-progressive-architecture-migration.md), [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [ADR-006](../decisions/adr-006-legacy-and-compatibility-exit.md), [ADR-007](../decisions/adr-007-builtin-capability-source-ownership.md), [Runtime Composition Specification](../specifications/runtime-composition.md) |

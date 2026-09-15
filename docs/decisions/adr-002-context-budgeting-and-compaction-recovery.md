@@ -85,5 +85,5 @@ Model Resolution now binds Provider facts and limits per Turn; Runner implements
 |---|---|
 | Current facts | [Model Resolution](../architecture/model-resolution.md), [Runner](../architecture/runner.md), [Session](../architecture/session.md), [Providers](../architecture/providers.md) |
 | Stable contracts | [Model Resolution Specification](../specifications/model-resolution.md), [Runner Turn Flow Specification](../specifications/runner-turn-flow.md) |
-| Foundation evidence | [AF-05 evidence](../evidence/spikes/af-05-provider-model-resolution.md), [AF-04 plan](../changes/archive/af-04-characterization-fitness/plan.md), [Target Architecture](../changes/active/architecture-foundation/target-architecture.md) |
+| Foundation evidence | [AF-05 evidence](../evidence/spikes/af-05-provider-model-resolution.md), [AF-04 plan](../changes/archive/af-04-characterization-fitness/plan.md), [archived Target Architecture](../changes/archive/architecture-foundation/target-architecture.md) |
 | Process | [Development Workflow](../governance/development-workflow.md) |
