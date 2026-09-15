@@ -1,6 +1,6 @@
 // ── Config Wizard 字段定义 ────────────────────────────────
 //
-// Current contract: docs/architecture/current/platform_config.md#config-wizard
+// Current contract: docs/architecture/configuration.md#6-config-wizard
 // 将当前可配置 schema 翻译成 Prompt<T> 工厂 + 分段组织。
 //
 // 每个段是一个函数 askXxx(session, current): Promise<{ kept }>，

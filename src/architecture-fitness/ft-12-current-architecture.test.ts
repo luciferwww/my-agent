@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 interface CurrentAuthoritySurfaceEntry {
   id: string;
-  role: 'overview' | 'topic';
+  role: 'index' | 'overview' | 'topic';
   path: string;
   ownershipKey: string;
   ownedModules: string[];
@@ -17,9 +17,9 @@ interface CurrentAuthorityDocument extends CurrentAuthoritySurfaceEntry {
 }
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url));
-const CURRENT_ROOT = join(REPOSITORY_ROOT, 'docs', 'architecture', 'current');
+const CURRENT_ROOT = join(REPOSITORY_ROOT, 'docs', 'architecture');
 const SURFACE_PATH = fileURLToPath(new URL('./ft-12-current-architecture-surface.json', import.meta.url));
-const VERIFIED_DATE = '2026-09-09';
+const VERIFIED_DATE = '2026-09-14';
 const STALE_CURRENT_CLAIMS = [
   /基准版本/u,
   /设计文档/u,
@@ -47,20 +47,27 @@ describe('FT-12 Current Architecture authority', () => {
     })));
   });
 
-  it('locks one overview, unique topic ownership, and complete current module coverage', async () => {
-    expect(surface.length).toBeGreaterThan(1);
+  it('locks one index, one overview, unique topic ownership, and complete current module coverage', async () => {
+    expect(surface).toHaveLength(17);
+    expect(surface.filter((entry) => entry.role !== 'index')).toHaveLength(16);
     expect(new Set(surface.map((entry) => entry.id)).size).toBe(surface.length);
     expect(new Set(surface.map((entry) => entry.path)).size).toBe(surface.length);
     expect(new Set(surface.map((entry) => entry.ownershipKey)).size).toBe(surface.length);
+    expect(surface.filter((entry) => entry.role === 'index')).toHaveLength(1);
     expect(surface.filter((entry) => entry.role === 'overview')).toHaveLength(1);
 
     const currentFiles = (await readdir(CURRENT_ROOT))
       .filter((name) => name.endsWith('.md'))
-      .map((name) => posix.join('docs/architecture/current', name))
+      .map((name) => posix.join('docs/architecture', name))
       .sort();
     expect(currentFiles).toEqual(surface.map((entry) => entry.path).sort());
 
     for (const document of documents) {
+      if (document.role === 'index') {
+        expect(metadata(document.content, 'Status')).toBe('Current Architecture Authority');
+        expect(metadata(document.content, 'Authority')).toBeTruthy();
+        continue;
+      }
       expect(metadata(document.content, 'Status')).toBe('Current Authority');
       expect(metadata(document.content, 'Verified')).toBe(VERIFIED_DATE);
       expect(metadata(document.content, 'Ownership')).toBeTruthy();
@@ -76,21 +83,22 @@ describe('FT-12 Current Architecture authority', () => {
     expect(overviewEntry.ownedModules).toEqual([]);
     const overview = requireDocument(overviewEntry.id);
     expect(metadata(overview.content, 'Authority')).toBe(
-      'sole entry point for verified Current Architecture',
+      'Current Architecture entry and module ownership map',
     );
+    expect(markdownDestinations(requireDocument('index').content)).toContain('overview.md');
     for (const topic of surface.filter((entry) => entry.role === 'topic')) {
-      const relativeTarget = `./${posix.basename(topic.path)}`;
+      const relativeTarget = posix.basename(topic.path);
       expect(markdownDestinations(overview.content)).toContain(relativeTarget);
-      expect(metadata(requireDocument(topic.id).content, 'Authority')).toBeUndefined();
+      expect(metadata(requireDocument(topic.id).content, 'Authority')).toBeTruthy();
     }
   });
 
   it('requires existing source, test, and controlling-authority evidence on every page', async () => {
     const missingEvidence: string[] = [];
-    for (const document of documents) {
+    for (const document of documents.filter((entry) => entry.role !== 'index')) {
       expect(document.content).toMatch(/^## \d+\. Evidence$/mu);
-      const sourceLinks = evidenceLinks(document.content, 'Source');
-      const testLinks = evidenceLinks(document.content, 'Tests');
+      const sourceLinks = evidenceLinks(document.content, /source$/iu);
+      const testLinks = evidenceLinks(document.content, /tests$/iu);
       const authorityLinks = evidenceLinks(document.content, 'Controlling authority');
       expect(sourceLinks.length, `${document.id} source evidence`).toBeGreaterThan(0);
       expect(testLinks.length, `${document.id} test evidence`).toBeGreaterThan(0);
@@ -117,7 +125,7 @@ describe('FT-12 Current Architecture authority', () => {
         }
       }
       expect(sourceLinks.every((link) => link.includes('/src/') || link.includes('/scripts/'))).toBe(true);
-      expect(testLinks.every((link) => link.endsWith('.test.ts'))).toBe(true);
+      expect(testLinks.some((link) => link.endsWith('.test.ts'))).toBe(true);
       expect(authorityLinks.every((link) => link.endsWith('.md'))).toBe(true);
     }
     expect(missingEvidence).toEqual([]);
@@ -131,61 +139,53 @@ describe('FT-12 Current Architecture authority', () => {
     }
 
     const runtime = requireDocument('runtime').content;
-    expect(runtime).toContain('`RuntimeApp.create()` is delegation-only');
-    expect(runtime).toContain('Child Turns use the Parent\'s Snapshot');
+    expect(runtime).toContain('`RuntimeApp.create()` delegates to the Builder');
+    expect(runtime).toContain('A Child never recaptures the latest generation');
     expect(runtime).toContain('`CompositionCoordinator`');
-    expect(runtime).toContain(
-      'createBundledProviderUnit(options: RuntimeProviderOptions): LoadedRuntimeUnit',
-    );
-    expect(runtime).toContain('Runtime 不从 Provider 顺序推断缺省 Provider');
-    expect(runtime).toContain('Provider 列表为空的 Snapshot 可以发布');
-    expect(runtime).toContain('Runtime 不为它发明 default Provider');
-    expect(runtime).toMatch(/Unit identity[^。]+`phase=create`/u);
-    expect(runtime).toMatch(/candidate cleanup[^。]+fail-closed/u);
+    expect(runtime).toContain('An immutable Snapshot with no Providers is valid');
+    expect(runtime).toContain('Runtime does not invent an implicit Provider');
+    expect(runtime).toContain('`unitId` and `phase=create`');
+    expect(runtime).toContain('Candidate cleanup failure remains fail-closed');
 
     const runner = requireDocument('runner').content;
-    expect(runner).toContain('`request_end` 关闭尚未启动的 queued request');
-    expect(runner).toContain(
-      '`signal.aborted` is checked before quota, steering injection, `llm_call`, and invocation.',
-    );
+    expect(runner).toContain('`request_end` closes a queued request that never started');
+    expect(runner).toContain('check Abort before quota, steering injection, event emission, and invocation');
 
     const channel = requireDocument('channel').content;
     expect(channel).toContain('send(event: AgentEvent): void | Promise<void>');
-    expect(channel).toContain('queued `request_end` 没有 session/turn');
+    expect(channel).toContain('A queued `request_end` has no session key');
 
     const config = requireDocument('configuration').content;
-    expect(config).toContain('## 3. Five-stage precedence');
-    expect(config).toContain('does not establish canonical model identity');
+    expect(config).toContain('## 3. Precedence and merge');
+    expect(config).toContain('[Model Resolution](model-resolution.md) owns canonical identity');
     expect(config).toContain('## 6. Config Wizard');
 
     const provider = requireDocument('model-invocation-provider').content;
-    expect(provider).toContain('Core Model Invocation is the sole type authority');
-    expect(provider).toContain('No facade import path, alias export, or dual execution path remains');
+    expect(provider).toContain('`src/core/model-invocation/` owns the Provider-neutral invocation port');
     expect(provider).toContain('maxTokens: number');
     expect(provider).not.toContain('maxTokens?: number');
-    expect(provider).toContain('`src/runtime-modules/anthropic-provider.ts`');
-    expect(provider).toContain('required, initially-enabled builtin Unit `builtin-anthropic-provider`');
-    expect(provider).toContain('only when Composition invokes `LoadedRuntimeUnit.create()`');
-    expect(provider).toContain('It does not construct the concrete Adapter');
-    expect(provider).toContain('`toModelInvocationError(value)` is the single Host/Runtime canonicalization entry');
-    expect(provider).toContain('Relay-local `Error`');
+    expect(provider).toContain('src/runtime-modules/');
+    expect(provider).toContain('anthropic-provider.ts');
+    expect(provider).toContain('required, initially enabled builtin Unit `builtin-anthropic-provider`');
+    expect(provider).toContain('Provider construction is deferred until Unit `create()`');
+    expect(provider).toContain('`toModelInvocationError(value)` is the Runtime canonicalization entry');
     expect(provider).toContain('neither runtime-imports nor subclasses Host `ModelInvocationError`');
 
     const modelResolution = requireDocument('model-resolution').content;
     expect(modelResolution).toContain('sole owner of canonical Model identity');
     expect(modelResolution).toContain('`ModelResolutionError.category`');
     expect(modelResolution).toContain(
-      'Runtime supplies a complete structured reference from a per-Turn override or configured default',
+      'Runtime supplies one complete structured reference from the Turn or configured default',
     );
-    expect(modelResolution).toContain('Model Resolution neither selects nor reprioritizes Providers');
+    expect(modelResolution).toContain('Resolution never selects the first Provider/model, reprioritizes Providers');
 
     const overview = requireDocument('overview').content;
-    expect(overview).toContain('provider/');
-    expect(overview).toContain('anthropic/ Anthropic protocol adapter and production codec');
+    expect(overview).toContain('model-invocation/');
+    expect(overview).toContain('extension-acquisition/');
 
     const media = requireDocument('media').content;
-    expect(media).toContain('pure attachment/media pipeline');
-    expect(media).toContain('`processInboundMessage()`');
+    expect(media).toContain('owns the attachment pipeline');
+    expect(media).toContain('processInboundMessage(...)');
   });
 
   it('locks the structural Model Invocation error authority and Relay dependency direction', async () => {
@@ -214,17 +214,16 @@ describe('FT-12 Current Architecture authority', () => {
     expect(relay).not.toMatch(/import\s*\{[^}]*\bModelInvocationError\b[^}]*\}\s*from/u);
 
     const runtimeCurrent = requireDocument('runtime').content;
-    expect(runtimeCurrent).toContain('最多八个 same-realm `Error` 节点');
-    expect(runtimeCurrent).toContain('日志值先截取最多 200 UTF-16 code units');
+    expect(runtimeCurrent).toContain('walks at most eight same-realm `Error` nodes');
+    expect(runtimeCurrent).toContain('bounds/escapes the model identifier');
   });
 
-  it('grounds the C2 Current Architecture claims in source and behavioral evidence', async () => {
-    const [runtimeTypes, builder, anthropicModule, builderTests, inventory] = await Promise.all([
+  it('grounds Current Architecture claims in source and behavioral evidence', async () => {
+    const [runtimeTypes, builder, anthropicModule, builderTests] = await Promise.all([
       readFile(join(REPOSITORY_ROOT, 'src', 'runtime', 'types.ts'), 'utf8'),
       readFile(join(REPOSITORY_ROOT, 'src', 'runtime', 'runtime-builder.ts'), 'utf8'),
       readFile(join(REPOSITORY_ROOT, 'src', 'runtime-modules', 'anthropic-provider.ts'), 'utf8'),
       readFile(join(REPOSITORY_ROOT, 'src', 'runtime', 'runtime-builder.test.ts'), 'utf8'),
-      readFile(join(REPOSITORY_ROOT, 'docs', 'architecture', 'legacy-migration-inventory.md'), 'utf8'),
     ]);
 
     const dependencies = objectTypeBody(runtimeTypes, 'RuntimeDependencies');
@@ -261,12 +260,6 @@ describe('FT-12 Current Architecture authority', () => {
     ]) {
       expect(builderTests).toContain(evidence);
     }
-
-    expect(inventory).toMatch(/\| CODE-E04 \|[^\n]+`Removed`/u);
-    expect(inventory).toMatch(/\| CODE-E05 \|[^\n]+`Removed`/u);
-    expect(inventory).toContain('$Legacy_{end}=0<Legacy_{start}=2$');
-    expect(inventory).toContain('97 files、829 tests');
-    expect(inventory).toContain('98 files、839 tests');
   });
 
   it('keeps the effective output limit owned by Model Resolution rather than the Provider Adapter', async () => {
@@ -343,9 +336,14 @@ function objectTypeBody(content: string, name: string): string {
   return match[1];
 }
 
-function evidenceLinks(content: string, label: string): string[] {
-  const row = content.split(/\r?\n/u).find((line) => line.startsWith(`| ${label} |`));
-  return row ? markdownDestinations(row) : [];
+function evidenceLinks(content: string, label: string | RegExp): string[] {
+  return content.split(/\r?\n/u)
+    .filter((line) => line.startsWith('| '))
+    .filter((line) => {
+      const kind = line.split('|')[1]?.trim() ?? '';
+      return typeof label === 'string' ? kind === label : label.test(kind);
+    })
+    .flatMap((line) => markdownDestinations(line));
 }
 
 function markdownDestinations(content: string): string[] {

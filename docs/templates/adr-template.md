@@ -1,37 +1,27 @@
 # ADR-NNN: Decision Title
 
-## Status
-
-- **Status:** Proposed
-- **Date:** YYYY-MM-DD
-- **Owner:**
-- **Related Plan / Spec:**
-- **Supersedes:** None
-
-Follow the approval and state rules in the [Development Workflow](../development-workflow.md). Remove template guidance before acceptance.
+> Status: Proposed | Accepted | Superseded | Rejected
+> Decision date: YYYY-MM-DD
+> Owner: Project owner
+> Related Plan/Specification: link
+> Supersedes: none or link
 
 ## Context
 
-Describe the problem, current constraints, and evidence that requires a durable decision. Separate verified facts from assumptions.
+Describe the durable problem, current evidence, constraints, and why a decision is required.
 
-## Decision Drivers
+## Decision drivers
 
-- Driver 1
-- Driver 2
+- Driver
 
-## Options Considered
+## Options considered
 
-### Option A
-
-Describe the option and its relevant tradeoffs.
-
-### Option B
-
-Describe the option and its relevant tradeoffs.
+1. Option, consequences, and evidence.
+2. Option, consequences, and evidence.
 
 ## Decision
 
-State the chosen option and the boundaries of the decision. Name what remains undecided.
+State the chosen option and its durable boundaries. Separate decision from implementation detail.
 
 ## Consequences
 
@@ -45,12 +35,14 @@ State the chosen option and the boundaries of the decision. Name what remains un
 
 ## Validation
 
-List the tests, Spike Results, call flows, or other evidence that support the decision.
+List evidence and acceptance conditions. Tests/results support the decision but are not substitute authority.
 
-## Migration and Rollback
+## Migration and rollback
 
-Describe adoption order, Compatibility requirements, deletion conditions, and the available rollback mechanism.
+Describe caller migration, compatibility expiry, and rollback strategy when relevant.
 
 ## Follow-up
 
-- [ ] Action with owner or linked Plan Item
+Link required Plans, Specifications, evidence, and formal supersession work.
+
+Process authority: [Development Workflow](../governance/development-workflow.md).

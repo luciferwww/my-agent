@@ -1,46 +1,42 @@
-# Spike Results: Experiment Title
+# Spike Results
 
-## Record
+> Status: Draft | Provisional Pass | Failed | Completed
+> Executed: YYYY-MM-DD
+> Environment: exact bounded environment
+> Owner: Project owner
+> Authority: Evidence only
 
-- **Spike Status:** Completed
-- **Outcome:** Provisional Pass | Failed
-- **Execution Date:** YYYY-MM-DD
-- **Owner:**
-- **Spike Spec:**
-- **Environment / Versions:**
+## Question and hypothesis
 
-Results record observed evidence, not the preferred design. Follow the decision and state rules in the [Development Workflow](../development-workflow.md). Remove template guidance before completion.
+Restate the accepted question without changing scope.
 
-## Hypothesis
+## Method actually executed
 
-Repeat the hypothesis exactly as accepted in the Spike Spec.
-
-## Execution
-
-List the executed steps and exact commands. Record deviations from the accepted method.
+Record deviations, fixtures, commands/scenarios, instrumentation, and cleanup.
 
 ## Evidence
 
-Provide concise outputs, measurements, traces, test names, or sanitized response facts. Link durable artifacts where applicable.
+| ID | Observation | Result |
+|---|---|---|
 
 ## Findings
 
-Separate observations from interpretation.
+Separate observed facts from inference.
 
-## Hypothesis Assessment
+## Hypothesis assessment
 
-State whether the evidence supports or falsifies the hypothesis and why. Do not generalize beyond the tested environment.
+Supported | Not supported | Inconclusive, with bounded reasoning.
 
-## Limitations and Residual Risks
+## Limitations
 
-List untested paths, environmental limitations, confidence bounds, and remaining unknowns.
+State what was not tested and what cannot be generalized.
 
-## Decision Impact
+## Decision impact
 
-State which ADR, Spec, migration order, or Plan assumption can now change. `Provisional Pass` does not itself accept a production design.
+Name the Decision/Plan/Specification this evidence informs. Results do not themselves authorize production work or become Current Architecture.
 
 ## Follow-up
 
-- [ ] ADR or Spec update
-- [ ] Additional evidence, if required
-- [ ] Disposable code, credentials, data, and resources removed
+List required re-test, design, acceptance, and disposable-artifact cleanup.
+
+Process authority: [Development Workflow](../governance/development-workflow.md).

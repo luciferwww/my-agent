@@ -1,62 +1,44 @@
-# Module Spec: Module Name
+# Module or Behavior Specification
 
-## Status
+> Status: Draft | Accepted | Implemented and Validated | Superseded
+> Date: YYYY-MM-DD
+> Owner: Project owner
+> Related Plan/Decision: links
 
-- **Status:** Draft
-- **Version:** 0.1
-- **Date:** YYYY-MM-DD
-- **Owner:**
-- **Related Plan / ADR:**
-
-Follow the readiness, approval, and validation rules in the [Development Workflow](../development-workflow.md). Remove template guidance before review.
-
-## Purpose
-
-Describe the user or system outcome owned by this module.
+## Purpose and observable outcome
 
 ## Scope
 
-- Responsibility
-
 ## Non-goals
 
-- Explicitly excluded behavior
+## Boundaries and dependency direction
 
-## Boundaries and Dependencies
+Identify owners and forbidden dependencies.
 
-Define the module owner, allowed dependency direction, injected ports, and forbidden dependencies.
+## Public and structural contracts
 
-## Public Contract
+Define types/protocols semantically; avoid incidental implementation locators.
 
-Define public types, operations, events, and compatibility expectations. Use code snippets only where they remove ambiguity.
+## Behavior and invariants
 
-## Behavior
+## Lifecycle and resource ownership
 
-Describe normal flows and important state transitions.
+Cover create/start/publication/settlement/stop and partial failure as applicable.
 
-## Lifecycle and Resource Ownership
+## Failure, Abort, deadline, and concurrency semantics
 
-Define creation, start, cancellation, drain, shutdown, and resource-release ownership where applicable.
+## Security and capabilities
 
-## Errors and Concurrency
+## Compatibility and migration
 
-Define error categories, propagation, retries, ordering, consistency, and race behavior where applicable.
+Name every temporary compatibility path, owner, callers, expiry, tests, and deletion gate.
 
-## Security and Capabilities
+## Acceptance and validation
 
-Define trust boundaries, granted capabilities, sensitive data handling, and prohibited access where applicable.
+Include Unit, contract, integration, regression, Fitness, link, lint/build, and independent-review obligations as applicable.
 
-## Compatibility and Migration
+## Open questions
 
-List current callers, migration steps, Feature Flags or adapters, rollback, and old-path deletion conditions.
+Open decisions block acceptance when they affect the contract boundary.
 
-## Acceptance and Validation
-
-- [ ] User-observable acceptance scenario
-- [ ] Unit or contract evidence
-- [ ] Integration or regression evidence
-- [ ] Static and build evidence
-
-## Open Questions
-
-Record only decisions that may remain open before implementation. A blocking unknown requires a Spike or explicit resolution.
+Follow [Development Workflow](../governance/development-workflow.md). Stable delivered contracts belong under Specifications; change-local design remains with its active Change until closeout.

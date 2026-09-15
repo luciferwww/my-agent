@@ -1,6 +1,6 @@
 # Contributing
 
-This repository uses a spec-driven workflow. The authoritative process is [Development Workflow](docs/development-workflow.md); this file is only the contributor entry point.
+This repository uses a spec-driven workflow. The authoritative process is [Development Workflow](docs/governance/development-workflow.md); this file is only the contributor entry point.
 
 ## Setup
 
@@ -17,7 +17,7 @@ npm test
 1. Classify the work as a Small Change, Defect, Documentation, Architecture Slice, or Architecture Spike.
 2. Confirm the intended scope before editing.
 3. Use an ADR, Module Spec, or Spike when required by the development workflow.
-4. Follow the [Coding Standards](docs/architecture/coding-standards.md) for TypeScript changes.
+4. Follow the [Coding Standards](docs/governance/coding-standards.md) for TypeScript changes.
 5. Do not silently change an accepted architecture decision during implementation.
 
 ## Validation

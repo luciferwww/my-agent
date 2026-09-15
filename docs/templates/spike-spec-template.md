@@ -1,59 +1,37 @@
-# Spike Spec: Experiment Title
+# Spike Specification
 
-## Status
+> Status: Draft | Accepted | Executing | Provisional Pass | Failed | Completed
+> Date: YYYY-MM-DD
+> Owner: Project owner
+> Decision unlocked: link or question
 
-- **Status:** Draft
-- **Date:** YYYY-MM-DD
-- **Owner:**
-- **Timebox:**
-- **Related Plan / ADR / Spec:**
+## Decision question
 
-Follow the approval and evidence rules in the [Development Workflow](../development-workflow.md). Remove template guidance before acceptance.
+State one bounded decision this experiment can inform.
 
-## Question
+## Falsifiable hypothesis
 
-State the single architecture or behavior question this Spike must answer.
+## Scope and non-goals
 
-## Hypothesis
-
-Write a falsifiable prediction. Avoid describing the desired implementation as if it were evidence.
-
-## Decision Unlocked
-
-Name the ADR, Spec, boundary, or migration choice that depends on this result.
-
-## Scope
-
-- Minimal experiment needed to test the hypothesis
-
-## Non-goals
-
-- Production hardening or unrelated exploration
+Keep production modification and unrelated design outside the spike unless explicitly authorized.
 
 ## Method
 
-Describe setup, inputs, versions, steps, and how observations will be captured. Use Fakes and deterministic fixtures unless a real integration is necessary to answer the question.
+Specify environment, fixture, inputs, instrumentation, counters, scenario IDs, and cleanup.
 
-## Required Evidence
+## Required evidence
 
-- Commands, tests, traces, provider responses, or measurements to retain
-- Environment and dependency versions to record
+| ID | Scenario | Required observation |
+|---|---|---|
 
-## Success Conditions
+## Success, failure, and stop conditions
 
-- Observable result that supports the hypothesis
+## Constraints and safety
 
-## Failure and Stop Conditions
+Include credentials, network/cost limits, workspace isolation, and no-authority boundary.
 
-- Observable result that falsifies the hypothesis
-- Condition that ends the experiment before the timebox
+## Deliverables
 
-## Constraints
+Produce Results, clean disposable artifacts, and identify the Plan/ADR/Specification decision that consumes evidence.
 
-Document cost, secrets, network, cleanup, and safety constraints.
-
-## Outputs
-
-- Spike Results document
-- ADR or Spec updates enabled by the result
-- Disposable code and resource cleanup
+Follow [Development Workflow](../governance/development-workflow.md). A Spike authorizes evidence collection only.

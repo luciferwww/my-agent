@@ -3,7 +3,7 @@
 // 流程：parse argv → load existing → ask core → ask advanced (optional)
 //   → buildNextConfig → dry-run summary → save? → backup .bak → write
 //
-// Current contract: docs/architecture/current/platform_config.md#config-wizard
+// Current contract: docs/architecture/configuration.md#6-config-wizard
 
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';

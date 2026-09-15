@@ -79,10 +79,10 @@ package-root library import is not currently documented as a public consumer con
 
 ## Documentation
 
-- [Current Architecture](docs/architecture/current/overview.md) — sole entry for verified current boundaries and flows
-- [Capability Summary](docs/agent-capabilities.md) — dated, non-authoritative product capability overview
+- [Current Architecture](docs/architecture/overview.md) — sole entry for verified current boundaries and flows
+- [Capability Summary](docs/evidence/capability-summary-2026-09-09.md) — dated, non-authoritative product capability overview
 - [Documentation Index](docs/README.md) — governance, decisions, Specs, Plans, Results, and analysis by authority role
-- [Development Workflow](docs/development-workflow.md) — authoritative contribution and delivery process
+- [Development Workflow](docs/governance/development-workflow.md) — authoritative contribution and delivery process
 - [Contributing](CONTRIBUTING.md) — concise contributor entry point
 
 Current implementation facts belong to Current Architecture and source/tests. Older design, implementation, historical, and deferred documents are not alternative current authority.
