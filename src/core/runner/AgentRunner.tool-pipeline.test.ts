@@ -70,17 +70,17 @@ const allowPolicy: ApplicationToolPolicy = Object.freeze({
 });
 
 describe('AgentRunner canonical Tool pipeline', () => {
-  let workspaceDir: string;
+  let agentHome: string;
   let sessionManager: SessionManager;
 
   beforeEach(async () => {
-    workspaceDir = await mkdtemp(join(tmpdir(), 'tool-pipeline-'));
-    sessionManager = new SessionManager(workspaceDir);
+    agentHome = await mkdtemp(join(tmpdir(), 'tool-pipeline-'));
+    sessionManager = new SessionManager(agentHome);
     await sessionManager.createSession('main');
   });
 
   afterEach(async () => {
-    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(agentHome, { recursive: true, force: true });
   });
 
   it('pairs malformed input without invoking Hook, policy, approval, or Tool', async () => {
@@ -155,6 +155,38 @@ describe('AgentRunner canonical Tool pipeline', () => {
     }));
   });
 
+  it('passes final transformed schema-valid input to policy and execution', async () => {
+    const policyDecision = vi.fn(() => 'allow' as const);
+    const execute = vi.fn(async (): Promise<ToolExecutionOutput> => ({
+      outcome: 'success',
+      content: 'executed',
+    }));
+    const snapshot = snapshotWithTool({
+      before: () => ({ action: 'allow', input: { count: 3 } }),
+      afterResults: [],
+      execute,
+    });
+    const port = invocationPort({
+      callId: 'valid-transformed-call',
+      name: 'demo',
+      input: { state: 'ready', value: { count: 2 } },
+    }, []);
+
+    await new AgentRunner({ sessionManager }).run({
+      sessionKey: 'main',
+      message: 'go',
+      systemPrompt: '',
+      turnId: 'turn',
+      resolvedModel: resolvedModel(port),
+      toolProjection: snapshot.tools,
+      hookProjection: snapshot.hooks,
+      toolPolicy: { isDenied: () => false, decide: policyDecision },
+    });
+
+    expect(policyDecision).toHaveBeenCalledWith('demo', { count: 3 }, false);
+    expect(execute).toHaveBeenCalledWith({ count: 3 }, expect.any(Object));
+  });
+
   it('hides an explicit-deny definition and still denies a stale Provider call at runtime', async () => {
     const afterResults: CanonicalToolResult[] = [];
     const execute = vi.fn(async (): Promise<ToolExecutionOutput> => ({ outcome: 'success', content: 'executed' }));
@@ -226,6 +258,11 @@ describe('AgentRunner canonical Tool pipeline', () => {
       approvalCapability: capability,
     });
 
+    expect(capability.request).toHaveBeenCalledWith(expect.objectContaining({
+      callId: 'approval-call',
+      toolName: 'demo',
+      input: { count: 1 },
+    }), expect.anything());
     expect(execute).not.toHaveBeenCalled();
     expect(afterResults[0]).toEqual(expect.objectContaining({
       callId: 'approval-call',

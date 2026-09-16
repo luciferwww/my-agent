@@ -1,4 +1,7 @@
 export type AgentConfigErrorCode =
+  | 'AGENT_HOME_CREATE_FAILED'
+  | 'FILE_CREATE_FAILED'
+  | 'FILE_MISSING'
   | 'FILE_UNREADABLE'
   | 'INVALID_JSON'
   | 'ROOT_INVALID'

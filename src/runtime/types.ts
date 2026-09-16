@@ -23,7 +23,6 @@ export interface RuntimeResourceSet {
   readonly appConfig: AppConfig;
   readonly resolvedConfig: AgentDefaults;
   readonly agentHome: string;
-  readonly workingDir: string;
   readonly sessionManager: SessionManager;
   readonly toolPolicy: ApplicationToolPolicy;
   readonly memoryManager: MemoryManager | null;
@@ -47,8 +46,7 @@ export interface RuntimeMemoryOptions {
 }
 
 export interface RuntimeBuiltinToolOptions {
-  workingDir: string;
-  fsWorkingDirOnly?: boolean;
+  agentHome: string;
   webFetchEnabled?: boolean;
   execEnabled?: boolean;
   processEnabled?: boolean;
@@ -68,7 +66,6 @@ export interface RuntimeDependencies {
 
 export interface RuntimeAppOptions {
   readonly agentHome: string;
-  readonly workingDir: string;
   /** Validated application projection. Omission uses hardcoded defaults without filesystem loading. */
   readonly applicationConfig?: ApplicationConfigProjection;
   readonly loadedUnits?: readonly LoadedRuntimeUnit[];
@@ -215,12 +212,10 @@ export type RuntimeEvent =
   | {
       type: 'app_start';
       agentHome: string;
-      workingDir: string;
     }
   | {
       type: 'app_ready';
       agentHome: string;
-      workingDir: string;
       contextVersion: number;
       toolNames: string[];
       channelIds: string[];

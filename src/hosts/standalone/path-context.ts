@@ -1,5 +1,5 @@
 import { lstat, readFile, realpath, stat } from 'node:fs/promises';
-import { dirname, isAbsolute, join, normalize, parse } from 'node:path';
+import { dirname, isAbsolute, join, normalize, parse, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { AgentPathContext } from '../path-context.js';
@@ -8,8 +8,7 @@ const PACKAGE_NAME = 'my-agent';
 
 export type StandaloneHostPathErrorCode =
   | 'INSTALL_DIR_INVALID'
-  | 'AGENT_HOME_INVALID'
-  | 'WORKING_DIR_INVALID';
+  | 'AGENT_HOME_INVALID';
 
 export class StandaloneHostPathError extends Error {
   readonly code: StandaloneHostPathErrorCode;
@@ -24,18 +23,18 @@ export class StandaloneHostPathError extends Error {
 export interface StandaloneHostPathResolutionOptions {
   readonly moduleUrl: string;
   readonly homeDirectory: string;
-  readonly workingDirectory: string;
+  readonly startupCwd: string;
+  readonly agentHomeArgument?: string;
 }
 
 export async function resolveStandaloneHostPathContext(
   options: StandaloneHostPathResolutionOptions,
 ): Promise<AgentPathContext> {
-  const [installDir, agentHome, workingDir] = await Promise.all([
+  const [installDir, agentHome] = await Promise.all([
     resolveInstallDir(options.moduleUrl),
-    resolveAgentHome(options.homeDirectory),
-    resolveWorkingDir(options.workingDirectory),
+    resolveAgentHome(options.homeDirectory, options.startupCwd, options.agentHomeArgument),
   ]);
-  return Object.freeze({ installDir, agentHome, workingDir });
+  return Object.freeze({ installDir, agentHome });
 }
 
 async function resolveInstallDir(moduleUrl: string): Promise<string> {
@@ -84,9 +83,22 @@ async function readPackageDocument(
   }
 }
 
-async function resolveAgentHome(homeDirectory: string): Promise<string> {
-  if (!isAbsolute(homeDirectory)) throw pathError('AGENT_HOME_INVALID');
-  const agentHome = normalize(join(homeDirectory, '.my-agent'));
+async function resolveAgentHome(
+  homeDirectory: string,
+  startupCwd: string,
+  agentHomeArgument: string | undefined,
+): Promise<string> {
+  let agentHome: string;
+  if (agentHomeArgument === undefined) {
+    if (!isAbsolute(homeDirectory)) throw pathError('AGENT_HOME_INVALID');
+    agentHome = normalize(join(homeDirectory, '.my-agent'));
+  } else if (isAbsolute(agentHomeArgument)) {
+    agentHome = normalize(agentHomeArgument);
+  } else {
+    if (!isAbsolute(startupCwd)) throw pathError('AGENT_HOME_INVALID');
+    agentHome = normalize(resolve(startupCwd, agentHomeArgument));
+  }
+
   let lexicalStats;
   try {
     lexicalStats = await lstat(agentHome);
@@ -106,25 +118,12 @@ async function resolveAgentHome(homeDirectory: string): Promise<string> {
   }
 }
 
-async function resolveWorkingDir(workingDirectory: string): Promise<string> {
-  if (!isAbsolute(workingDirectory)) throw pathError('WORKING_DIR_INVALID');
-  const normalizedPath = normalize(workingDirectory);
-  try {
-    if (!(await stat(normalizedPath)).isDirectory()) throw new Error('not a directory');
-    return normalizedPath;
-  } catch {
-    throw pathError('WORKING_DIR_INVALID');
-  }
-}
-
 function pathError(code: StandaloneHostPathErrorCode): StandaloneHostPathError {
   switch (code) {
     case 'INSTALL_DIR_INVALID':
       return new StandaloneHostPathError(code, 'Standalone installation directory is invalid.');
     case 'AGENT_HOME_INVALID':
       return new StandaloneHostPathError(code, 'Standalone Agent Home is invalid.');
-    case 'WORKING_DIR_INVALID':
-      return new StandaloneHostPathError(code, 'Standalone working directory is invalid.');
   }
 }
 

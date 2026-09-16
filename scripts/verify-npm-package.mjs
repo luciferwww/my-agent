@@ -16,9 +16,13 @@ const PROCESS_TIMEOUT_MS = 60_000;
 async function main() {
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'my-agent-package-'));
   const installationProject = join(temporaryRoot, 'installation-project');
-  const workingDir = join(temporaryRoot, 'working-directory');
-  const homeDirectory = join(temporaryRoot, 'home');
-  const agentHome = join(homeDirectory, '.my-agent');
+  const startupCwd = join(temporaryRoot, 'startup-cwd');
+  const firstStartHomeDirectory = join(temporaryRoot, 'first-start-home');
+  const firstStartAgentHome = join(firstStartHomeDirectory, '.my-agent');
+  const explicitHomeDirectory = join(temporaryRoot, 'explicit-fallback-home');
+  const explicitAgentHome = join(temporaryRoot, 'explicit-agent-home');
+  const configuredHomeDirectory = join(temporaryRoot, 'configured-home');
+  const configuredAgentHome = join(configuredHomeDirectory, '.my-agent');
   let host;
   let packageFileCount;
   let failure;
@@ -26,8 +30,9 @@ async function main() {
   try {
     await Promise.all([
       mkdir(installationProject, { recursive: true }),
-      mkdir(workingDir, { recursive: true }),
-      mkdir(agentHome, { recursive: true }),
+      mkdir(startupCwd, { recursive: true }),
+      mkdir(explicitHomeDirectory, { recursive: true }),
+      mkdir(configuredAgentHome, { recursive: true }),
     ]);
     const manifest = JSON.parse(await readFile(join(REPOSITORY_ROOT, 'package.json'), 'utf8'));
     const lockfile = JSON.parse(await readFile(join(REPOSITORY_ROOT, 'package-lock.json'), 'utf8'));
@@ -47,11 +52,11 @@ async function main() {
     );
     await access(join(installationProject, 'node_modules', '.bin', executableName('my-agent')));
 
-    const isolatedEnvironment = createIsolatedHomeEnvironment(homeDirectory);
+    const isolatedEnvironment = createIsolatedHomeEnvironment(configuredHomeDirectory);
 
     const fatal = await runInstalledCommand(
       installationProject,
-      workingDir,
+      startupCwd,
       ['--unknown-package-smoke'],
       PROCESS_TIMEOUT_MS,
       isolatedEnvironment,
@@ -66,19 +71,87 @@ async function main() {
       'Installed command emitted an unexpected fatal diagnostic.',
     );
 
+    const installDir = join(installationProject, 'node_modules', 'my-agent');
+    const firstStartInstallationBefore = await snapshotTree(installDir);
+    const firstStartStartupCwdBefore = await snapshotTree(startupCwd);
+    host = startInstalledCommand(
+      installationProject,
+      startupCwd,
+      [],
+      createIsolatedHomeEnvironment(firstStartHomeDirectory),
+    );
+    await waitForFileContent(
+      join(firstStartAgentHome, 'config.json'),
+      '{}\n',
+      host,
+      PROCESS_TIMEOUT_MS,
+    );
+    await stopChild(host);
+    host = undefined;
+    assert(
+      await readFile(join(firstStartAgentHome, 'config.json'), 'utf8') === '{}\n',
+      'First-start Agent configuration bytes changed after bootstrap.',
+    );
+    assertTreeUnchanged(
+      firstStartInstallationBefore,
+      await snapshotTree(installDir),
+      'Installed package during first start',
+    );
+    assertTreeUnchanged(
+      firstStartStartupCwdBefore,
+      await snapshotTree(startupCwd),
+      'Startup CWD during first start',
+    );
+
+    const explicitInstallationBefore = await snapshotTree(installDir);
+    const explicitStartupCwdBefore = await snapshotTree(startupCwd);
+    const explicitFallbackHomeBefore = await snapshotTree(explicitHomeDirectory);
+    host = startInstalledCommand(
+      installationProject,
+      startupCwd,
+      ['--agent-home', explicitAgentHome],
+      createIsolatedHomeEnvironment(explicitHomeDirectory),
+    );
+    await waitForFileContent(
+      join(explicitAgentHome, 'config.json'),
+      '{}\n',
+      host,
+      PROCESS_TIMEOUT_MS,
+    );
+    await stopChild(host);
+    host = undefined;
+    assert(
+      await readFile(join(explicitAgentHome, 'config.json'), 'utf8') === '{}\n',
+      'Explicit Agent Home configuration bytes changed after bootstrap.',
+    );
+    assertTreeUnchanged(
+      explicitInstallationBefore,
+      await snapshotTree(installDir),
+      'Installed package during explicit Agent Home first start',
+    );
+    assertTreeUnchanged(
+      explicitStartupCwdBefore,
+      await snapshotTree(startupCwd),
+      'Startup CWD during explicit Agent Home first start',
+    );
+    assertTreeUnchanged(
+      explicitFallbackHomeBefore,
+      await snapshotTree(explicitHomeDirectory),
+      'Fallback home during explicit Agent Home first start',
+    );
+
     const webSocketPort = await reserveLoopbackPort();
-    await writeFile(join(agentHome, 'config.json'), `${JSON.stringify({
+    await writeFile(join(configuredAgentHome, 'config.json'), `${JSON.stringify({
       host: {
         mode: 'websocket',
         websocket: { host: '127.0.0.1', port: webSocketPort, path: '/ws', approval: true },
       },
     }, null, 2)}\n`);
-    const installDir = join(installationProject, 'node_modules', 'my-agent');
     const installationBefore = await snapshotTree(installDir);
-    const workingDirectoryBefore = await snapshotTree(workingDir);
+    const startupCwdBefore = await snapshotTree(startupCwd);
     host = startInstalledCommand(
       installationProject,
-      workingDir,
+      startupCwd,
       [],
       isolatedEnvironment,
     );
@@ -101,12 +174,12 @@ async function main() {
     await stopChild(host);
     host = undefined;
     await Promise.all([
-      access(join(agentHome, 'config.json')),
-      access(join(agentHome, 'IDENTITY.md')),
-      access(join(agentHome, 'SOUL.md')),
-      access(join(agentHome, 'AGENTS.md')),
-      access(join(agentHome, 'TOOLS.md')),
-      access(join(agentHome, 'memory.sqlite')),
+      access(join(configuredAgentHome, 'config.json')),
+      access(join(configuredAgentHome, 'IDENTITY.md')),
+      access(join(configuredAgentHome, 'SOUL.md')),
+      access(join(configuredAgentHome, 'AGENTS.md')),
+      access(join(configuredAgentHome, 'TOOLS.md')),
+      access(join(configuredAgentHome, 'memory.sqlite')),
     ]);
     assertTreeUnchanged(
       installationBefore,
@@ -114,9 +187,9 @@ async function main() {
       'Installed package',
     );
     assertTreeUnchanged(
-      workingDirectoryBefore,
-      await snapshotTree(workingDir),
-      'Working directory',
+      startupCwdBefore,
+      await snapshotTree(startupCwd),
+      'Startup CWD',
     );
 
     packageFileCount = files.length;
@@ -140,7 +213,25 @@ async function main() {
     }
   }
   if (failed) throw failure;
-  console.log(`Verified npm package (${packageFileCount} files) and installed my-agent command.`);
+  console.log(
+    `Verified npm package (${packageFileCount} files), default and explicit Agent Home first starts, and installed my-agent command.`,
+  );
+}
+
+async function waitForFileContent(path, expectedContent, child, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      if (await readFile(path, 'utf8') === expectedContent) return;
+    } catch (error) {
+      if (!error || typeof error !== 'object' || error.code !== 'ENOENT') throw error;
+    }
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`Installed Host exited before first-start bootstrap with ${String(child.exitCode)}.`);
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+  }
+  throw new Error('Installed Host first-start configuration bootstrap timed out.');
 }
 
 function parsePackResult(stdout) {

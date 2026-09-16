@@ -47,7 +47,7 @@ import { createApplicationToolPolicy } from './tool-approval-policy.js';
 import { createAnthropicProviderUnit } from '../builtins/providers/anthropic/index.js';
 import { createMemoryToolsContribution } from '../builtins/tools/memory/index.js';
 import { createTaskToolContribution } from '../builtins/tools/task/index.js';
-import { createWorkspaceToolsContribution } from '../builtins/tools/workspace/index.js';
+import { createEnvironmentContribution } from '../builtins/tools/environment/index.js';
 import { createSubagentDelegationPort } from './subagent-orchestration.js';
 import type { ActiveParentTurn } from './subagent-orchestration.js';
 import type { MessageRouteContext } from './queue-types.js';
@@ -257,7 +257,6 @@ export async function buildRuntimeHandle(
     options.onEvent?.({
       type: 'app_ready',
       agentHome: options.agentHome,
-      workingDir: options.workingDir,
       contextVersion: bootstrap.state.contextVersion,
       toolNames: registrySnapshot.tools.definitions.map((tool) => tool.name),
       channelIds: registrySnapshot.channels.bindings.map((channel) => channel.id),
@@ -430,8 +429,7 @@ function assembleLoadedRuntimeUnits(params: {
     deploymentFacts: resources.resolvedConfig.llm.deploymentFacts,
   });
   const toolOptions = {
-    workingDir: options.workingDir,
-    fsWorkingDirOnly: resources.resolvedConfig.tools.fs?.workingDirOnly ?? true,
+    agentHome: options.agentHome,
     webFetchEnabled: true,
     execEnabled: true,
     processEnabled: true,
@@ -452,13 +450,16 @@ function assembleLoadedRuntimeUnits(params: {
         maxFileChars: resources.resolvedConfig.context.maxFileChars,
         maxTotalChars: resources.resolvedConfig.context.maxTotalChars,
       }),
-      workingDir: options.workingDir,
+      agentHome: options.agentHome,
       promptSafetyLevel: resources.resolvedConfig.prompt?.safetyLevel ?? 'normal',
-      resolveToolPolicy: (profile) => createApplicationToolPolicy(resolveSubagentTools(
-        profile,
-        resources.resolvedConfig.tools.allow ?? [],
-        resources.resolvedConfig.tools.deny ?? [],
-      )),
+      resolveToolPolicy: (profile) => createApplicationToolPolicy(
+        resolveSubagentTools(
+          profile,
+          resources.resolvedConfig.tools.allow ?? [],
+          resources.resolvedConfig.tools.deny ?? [],
+        ),
+        options.agentHome,
+      ),
     });
     const delegationPort = createSubagentDelegationPort({
       activeParents: params.activeParentTurns,
@@ -510,9 +511,8 @@ function createRuntimeDependencies(
     },
     getBuiltinContributionUnits(options, memoryManager) {
       return Object.freeze([
-        createWorkspaceToolsContribution({
-          workingDir: options.workingDir,
-          fsWorkingDirOnly: options.fsWorkingDirOnly ?? true,
+        createEnvironmentContribution({
+          agentHome: options.agentHome,
           webFetchEnabled: options.webFetchEnabled ?? true,
           execEnabled: options.execEnabled ?? true,
           processEnabled: options.processEnabled ?? true,

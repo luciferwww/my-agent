@@ -20,7 +20,7 @@ Agent configuration loading is owned by [Configuration](configuration.md); acqui
 
 ## 2. Installation and Extension configuration
 
-The standalone Host derives `installDir` from its installed package and injects exactly `<installDir>/extensions` into Extension Acquisition. Acquisition does not receive or resolve `installDir`, `agentHome`, `workingDir`, process-global paths, or CLI/environment precedence. A missing Extensions directory is a non-creating empty discovery state; an invalid existing discovery root is fatal.
+The standalone Host derives `installDir` from its installed package and injects exactly `<installDir>/extensions` into Extension Acquisition. Acquisition does not receive or resolve `installDir`, `agentHome`, startup CWD, process-global paths, or Agent Home CLI precedence. A missing Extensions directory is a non-creating empty discovery state; an invalid existing discovery root is fatal.
 
 The Host-injected `<agentHome>/config.json` snapshot owns:
 
@@ -66,18 +66,18 @@ The returned Units have not been created. Runtime combines them with required an
 
 `src/hosts/standalone/standalone-host.ts` is the supported service-first Host composition root. The thin executable bootstrap is `src/hosts/standalone/entry.ts`. The composition root:
 
-1. derives `installDir`, `agentHome`, and non-owning `workingDir`;
+1. derives `installDir` and selects `agentHome`;
 2. reads the atomic generic Model Reference environment override and acquires enabled External Units from `<installDir>/extensions`;
 3. reports bounded acquisition diagnostics;
 4. appends the Host-configured WebSocket or CLI Channel Unit, or no builtin Channel in headless mode;
-5. passes the combined `loadedUnits` to `RuntimeApp.create()`;
+5. passes `agentHome` and the combined `loadedUnits` to `RuntimeApp.create()`;
 6. delegates process shutdown to the Runtime Host wrapper.
 
 The Host owns process-level signal and exit policy; Runtime library code never calls `process.exit()`. The current wrapper shares cooperative shutdown, forces exit on a second signal or Host deadline, and removes its listeners after settlement. The canonical standalone Host's signal counts, exit codes, and Host deadline are governed by the [Standalone Service Host Specification](../specifications/standalone-service-host.md); ADR-005 remains limited to Runtime and Extension lifecycle ownership.
 
 The Host rejects CLI mode with an enabled Console Logger because both own terminal presentation. The Host does not import Relay-specific source. The first-class Host build starts from `src/hosts/standalone/entry.ts`, follows its static TypeScript closure, and emits `dist/host`; npm maps `my-agent` directly to `dist/host/hosts/standalone/entry.js`. That closure includes `extension-acquisition/` and excludes `extensions/**`; it is a verified Host code closure plus required Agent Context templates, not a bundled Node runtime or concrete External Extension. The aggregate repository build continues to build and audit declared Extension artifacts separately.
 
-Package verification installs the tarball into an isolated project, runs the generated command from a separate working directory with an isolated Home, and compares every installed package file path and byte after shutdown. The compiled WebSocket smoke provisions the Relay artifact under `installDir` before startup and likewise proves Runtime does not alter that Extension tree.
+Package verification installs the tarball into an isolated project, runs the generated command from a separate startup directory with isolated default and explicit Agent Homes, and compares every installed package file path and byte after shutdown. The compiled WebSocket smoke provisions the Relay artifact under `installDir` before startup and likewise proves Runtime does not alter that Extension tree.
 
 ## 7. Failure boundaries
 
@@ -93,5 +93,5 @@ Package verification installs the tarball into an isolated project, runs the gen
 |---|---|
 | Source | [public boundary](../../src/extension-acquisition/index.ts), [entry contracts](../../src/extension-acquisition/contracts.ts), [discovery](../../src/extension-acquisition/discovery.ts), [loader](../../src/extension-acquisition/loader.ts), [standalone path context](../../src/hosts/standalone/path-context.ts), [standalone entry](../../src/hosts/standalone/entry.ts), [standalone Host](../../src/hosts/standalone/standalone-host.ts), [Runtime Host wrapper](../../src/hosts/standalone/runtime-host.ts), [Host build audit](../../scripts/audit-host-build.mjs) |
 | Tests | [standalone path-context tests](../../src/hosts/standalone/path-context.test.ts), [discovery tests](../../src/extension-acquisition/discovery.test.ts), [loader tests](../../src/extension-acquisition/loader.test.ts), [Runtime integration](../../src/extension-acquisition/acquisition-runtime.integration.test.ts), [Host startup tests](../../src/hosts/standalone/standalone-host.test.ts), [Runtime Host policy tests](../../src/hosts/standalone/runtime-host.test.ts), [package verifier tests](../../scripts/verify-npm-package.test.mjs), [package smoke](../../scripts/verify-npm-package.mjs), [WebSocket Host smoke](../../scripts/verify-websocket-host.mjs) |
-| Controlling authority | [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [ADR-010](../decisions/adr-010-install-and-agent-home-ownership.md), [Extension Acquisition Specification](../specifications/extension-acquisition.md) |
+| Controlling authority | [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [ADR-010](../decisions/adr-010-install-and-agent-home-ownership.md), [ADR-012](../decisions/adr-012-agent-home-path-unification.md), [Extension Acquisition Specification](../specifications/extension-acquisition.md) |
 | Delivery history | [B+ archived change](../changes/archive/extension-acquisition-source-layout/specification.md) |

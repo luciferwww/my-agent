@@ -24,13 +24,11 @@ export async function bootstrapRuntime(
   let memoryManager: MemoryManager | null = null;
   log.info('bootstrap start', {
     agentHome: options.agentHome,
-    workingDir: options.workingDir,
     agentId: options.agentId,
   });
   emit(options.onEvent, {
     type: 'app_start',
     agentHome: options.agentHome,
-    workingDir: options.workingDir,
   });
 
   try {
@@ -117,7 +115,7 @@ export async function bootstrapRuntime(
       });
     }
 
-    const toolPolicy = createApplicationToolPolicy(resolvedConfig.tools);
+    const toolPolicy = createApplicationToolPolicy(resolvedConfig.tools, options.agentHome);
 
     const agentRunner = deps.createAgentRunner({
       sessionManager,
@@ -143,7 +141,6 @@ export async function bootstrapRuntime(
         appConfig,
         resolvedConfig,
         agentHome: options.agentHome,
-        workingDir: options.workingDir,
         sessionManager,
         toolPolicy,
         memoryManager,

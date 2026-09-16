@@ -122,15 +122,6 @@ export interface PromptConfig {
   safetyLevel: SafetyLevel;
 }
 
-/** 文件系统工具配置 */
-export interface FsToolsConfig {
-  /**
-   * 是否将文件系统工具限制在工作区目录内。
-   * 默认 true；设为 false 允许访问工作区外的路径。
-   */
-  workingDirOnly: boolean;
-}
-
 /**
  * Tools 配置。
  *
@@ -148,8 +139,6 @@ export interface FsToolsConfig {
  * v1 起不再支持 `group:*` 简写；显式列名或用 glob 替代。
  */
 export interface ToolsConfig {
-  /** 文件系统工具路径限制 */
-  fs?: FsToolsConfig;
   /**
    * 直接执行的工具列表（精确名或 glob）。
    * 命中即跳过审批；运行时由 before_tool_call hook 短路。

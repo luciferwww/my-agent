@@ -31,7 +31,7 @@ interface ExtensionAcquisitionResult {
 
 ## Installation root and discovery
 
-Standalone passes exactly `<installDir>/extensions`. Acquisition does not receive or derive `installDir`, `agentHome`, `workingDir`, process Home, CWD, CLI input, or environment path precedence.
+Standalone passes exactly `<installDir>/extensions`. Acquisition does not receive or derive `installDir`, `agentHome`, process Home, startup CWD, CLI input, or environment path precedence.
 
 Discover only direct children of the injected `extensionsDir`. A missing directory is a non-creating empty state. An existing root and every candidate/entry must remain canonically contained in the installation-owned location. Descriptor ID matches `[A-Za-z0-9_-]{1,64}`; directory name is a locator only. Entry is a contained relative `.js` regular file and may not be a symlink/reparse point. All duplicate-ID candidates are isolated; no winner is chosen. Valid candidates sort deterministically by ID.
 
@@ -59,4 +59,4 @@ Acquisition ends at `LoadedRuntimeUnit[]`. [Runtime Composition](runtime-composi
 
 Cover explicit-root handoff, missing/invalid roots, installation containment and immutability, reparse rejection, Descriptor/schema validation, renamed-directory invariance, duplicate isolation, explicit/global enablement, environment/secret materialization and redaction, import/export/factory failure, Unit normalization, deterministic frozen output, bad-neighbor isolation, and Runtime publication integration.
 
-Evidence: [acquisition source](../../src/extension-acquisition), [acquisition tests](../../src/extension-acquisition/loader.test.ts), [discovery tests](../../src/extension-acquisition/discovery.test.ts), [Runtime integration](../../src/extension-acquisition/acquisition-runtime.integration.test.ts), [Host startup tests](../../src/hosts/standalone/host-startup.test.ts), and [WebSocket Host verifier](../../scripts/verify-websocket-host.mjs). Decisions: [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [ADR-009](../decisions/adr-009-host-boundaries-and-standalone-npm-distribution.md), and [ADR-010](../decisions/adr-010-install-and-agent-home-ownership.md).
+Evidence: [acquisition source](../../src/extension-acquisition), [acquisition tests](../../src/extension-acquisition/loader.test.ts), [discovery tests](../../src/extension-acquisition/discovery.test.ts), [Runtime integration](../../src/extension-acquisition/acquisition-runtime.integration.test.ts), [Host startup tests](../../src/hosts/standalone/standalone-host.test.ts), and [WebSocket Host verifier](../../scripts/verify-websocket-host.mjs). Decisions: [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [ADR-009](../decisions/adr-009-host-boundaries-and-standalone-npm-distribution.md), [ADR-010](../decisions/adr-010-install-and-agent-home-ownership.md), and [ADR-012](../decisions/adr-012-agent-home-path-unification.md).

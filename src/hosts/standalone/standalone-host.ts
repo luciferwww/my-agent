@@ -10,6 +10,7 @@ import {
   type StandaloneHostAcquisition,
 } from './host-startup.js';
 import {
+  ensureAgentConfigDocument,
   getEnvOverrides,
   loadAgentConfig,
   type StandaloneHostConfigProjection,
@@ -18,14 +19,23 @@ import {
 import { RuntimeApp, type RuntimeHandle } from '../../runtime/index.js';
 import type { LoadedRuntimeUnit } from '../../runtime/runtime-unit.js';
 import type { AgentPathContext } from '../path-context.js';
-import { resolveStandaloneHostPathContext } from './path-context.js';
+import {
+  resolveStandaloneHostPathContext,
+  type StandaloneHostPathResolutionOptions,
+} from './path-context.js';
 import { createRuntimeHost } from './runtime-host.js';
 
 export interface StandaloneHostRunOptions {
   readonly argv?: readonly string[];
   readonly env?: NodeJS.ProcessEnv;
   readonly stderr?: Pick<NodeJS.WriteStream, 'write'>;
-  readonly resolvePathContext?: () => Promise<AgentPathContext>;
+  readonly moduleUrl?: string;
+  readonly homeDirectory?: string;
+  readonly startupCwd?: string;
+  readonly resolvePathContext?: (
+    options: StandaloneHostPathResolutionOptions,
+  ) => Promise<AgentPathContext>;
+  readonly ensureConfig?: typeof ensureAgentConfigDocument;
   readonly loadConfig?: typeof loadAgentConfig;
   readonly prepareAcquisition?: (
     extensionsDir: string,
@@ -38,10 +48,40 @@ export interface StandaloneHostRunOptions {
 
 export function parseStandaloneHostArguments(
   argv: readonly string[],
-): void {
-  if (argv.length > 0) {
-    throw new Error(`HOST_ARGUMENT_INVALID: Unknown argument ${argv[0]}.`);
+): Readonly<{ agentHomeArgument?: string }> {
+  let agentHomeArgument: string | undefined;
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index]!;
+    if (token === '--agent-home') {
+      if (agentHomeArgument !== undefined) {
+        throw new Error('HOST_ARGUMENT_INVALID: Duplicate argument --agent-home.');
+      }
+      const value = argv[index + 1];
+      if (value === undefined || !value.trim() || value.startsWith('-')) {
+        throw new Error('HOST_ARGUMENT_INVALID: Missing value for --agent-home.');
+      }
+      agentHomeArgument = value;
+      index += 1;
+      continue;
+    }
+
+    if (token.startsWith('--agent-home=')) {
+      if (agentHomeArgument !== undefined) {
+        throw new Error('HOST_ARGUMENT_INVALID: Duplicate argument --agent-home.');
+      }
+      const value = token.slice(token.indexOf('=') + 1);
+      if (!value.trim()) {
+        throw new Error('HOST_ARGUMENT_INVALID: Missing value for --agent-home.');
+      }
+      agentHomeArgument = value;
+      continue;
+    }
+
+    throw new Error(`HOST_ARGUMENT_INVALID: Unknown argument ${token}.`);
   }
+
+  return Object.freeze(agentHomeArgument === undefined ? {} : { agentHomeArgument });
 }
 
 export function validateStandaloneHostComposition(snapshot: AgentConfigSnapshot): void {
@@ -70,13 +110,19 @@ export async function runStandaloneHost(
 ): Promise<void> {
   const env = options.env ?? process.env;
   const stderr = options.stderr ?? process.stderr;
-  parseStandaloneHostArguments(options.argv ?? process.argv.slice(2));
-  const pathContext = await (options.resolvePathContext ?? (() =>
-    resolveStandaloneHostPathContext({
-      moduleUrl: import.meta.url,
-      homeDirectory: homedir(),
-      workingDirectory: process.cwd(),
-    })))();
+  const parsedArguments = parseStandaloneHostArguments(options.argv ?? process.argv.slice(2));
+  const pathOptions: StandaloneHostPathResolutionOptions = {
+    moduleUrl: options.moduleUrl ?? import.meta.url,
+    homeDirectory: options.homeDirectory ?? homedir(),
+    startupCwd: options.startupCwd ?? process.cwd(),
+    ...parsedArguments,
+  };
+  const pathContext = await (options.resolvePathContext ?? resolveStandaloneHostPathContext)(
+    pathOptions,
+  );
+  await (options.ensureConfig ?? ensureAgentConfigDocument)({
+    agentHome: pathContext.agentHome,
+  });
   const snapshot = await (options.loadConfig ?? loadAgentConfig)({
     agentHome: pathContext.agentHome,
   });
@@ -92,7 +138,6 @@ export async function runStandaloneHost(
   const builtinUnits = createBuiltinHostUnits(snapshot.host);
   const runtime = await (options.createRuntime ?? RuntimeApp.create)({
     agentHome: pathContext.agentHome,
-    workingDir: pathContext.workingDir,
     applicationConfig: snapshot.application,
     envOverrides: getEnvOverrides(env),
     loadedUnits: Object.freeze([...acquisition.result.loadedUnits, ...builtinUnits]),

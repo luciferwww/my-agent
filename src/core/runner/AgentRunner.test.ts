@@ -215,17 +215,17 @@ function createDeferred<T = void>(): {
 // ── 测试 ────────────────────────────────────────────────
 
 describe('AgentRunner', () => {
-  let workspaceDir: string;
+  let agentHome: string;
   let sessionManager: SessionManager;
 
   beforeEach(async () => {
-    workspaceDir = await mkdtemp(join(tmpdir(), 'runner-test-'));
-    sessionManager = new SessionManager(workspaceDir);
+    agentHome = await mkdtemp(join(tmpdir(), 'runner-test-'));
+    sessionManager = new SessionManager(agentHome);
     await sessionManager.createSession('main');
   });
 
   afterEach(async () => {
-    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(agentHome, { recursive: true, force: true });
   });
 
   // ── 基本对话 ────────────────────────────────────────
@@ -1474,7 +1474,7 @@ describe('AgentRunner', () => {
       expect(summaryRequest).not.toContain(persistedImageData);
 
       let nextTurnMessages: ModelInvocationRequest['messages'] = [];
-      const reloadedSessionManager = new SessionManager(workspaceDir);
+      const reloadedSessionManager = new SessionManager(agentHome);
       expect(JSON.stringify(reloadedSessionManager.getMessages('main'))).toContain(persistedImageData);
       const nextTurnClient: ModelInvocationPort = {
         async *chatStream(params: ModelInvocationRequest) {

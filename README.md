@@ -27,9 +27,15 @@ root. Do not copy individual files or run `npm install` inside the artifact. Par
 symlink-based installation, and replacement while the Host is running are unsupported; stop the
 Host and replace the complete directory.
 
-Agent Home is fixed at `<user-home>/.my-agent`. Create `<user-home>/.my-agent/config.json` with the
-Extension projection and Host mode. Configuration, Agent Context, Memory, Sessions, Subagents, logs,
-and other mutable state remain under Agent Home; no `.agent` directory is used.
+Agent Home defaults to `<user-home>/.my-agent` and can be selected with `--agent-home <path>` or
+`--agent-home=<path>`. A relative value resolves against startup CWD; after that resolution, only
+`installDir` and `agentHome` remain architecture paths. On first standalone startup, the Host creates
+a missing `<agent-home>/config.json` with exact UTF-8 bytes `{}\n` before one strict read; existing
+configuration is never overwritten. The generated empty document is valid default content, but it
+does not select a Provider/Model, provision credentials or Extensions, or guarantee a successful
+Turn. Replace it with deliberate deployment configuration such as the example below. Configuration,
+Agent Context, Memory, Sessions, Subagents, logs, and other mutable state remain under Agent Home;
+no `.agent` directory is used.
 
 ```json
 {
@@ -69,21 +75,23 @@ Set the two example Relay variables referenced by the scoped config. The complet
 Reference may instead be supplied through the atomic environment pair
 `MY_AGENT_PROVIDER=copilot-relay` plus `MY_AGENT_MODEL=<model-id>`.
 
-The installed `my-agent` command captures its current directory as non-owning `workingDir`. Start it
-from the directory whose files and command context the Agent should use:
+Agent Home is also the prompt path context, the relative-path anchor for Environment filesystem
+Tools, the default Search root, and the default Exec `cwd`. To select another Agent Home:
 
 ```bash
-cd <working-directory>
-my-agent
+my-agent --agent-home <agent-home>
 ```
 
 For repository development, `npm run agent` runs the same standalone composition from the package
-root. The standalone entry accepts no arguments and has no custom path-selection environment
-variables. Its paths are derived as follows:
+root. There are no custom path-selection environment variables. Its architecture paths are:
 
 - `installDir`: the installed `my-agent` package, including pre-provisioned `extensions/`;
-- `agentHome`: `<user-home>/.my-agent`;
-- `workingDir`: startup current directory, used for filesystem/search Tools, prompt `# Workspace`, and command execution only.
+- `agentHome`: the explicit CLI value, or `<user-home>/.my-agent` by default.
+
+Structured Environment Tool targets outside Agent Home require current-call Approval and fail closed
+when Approval is unavailable. Agent Home anchoring is not a sandbox: Exec allow grants arbitrary
+Shell authority, while unmatched Exec calls require current-call Approval. Exec `cwd` is execution
+context rather than confinement.
 
 Generic Host environment:
 

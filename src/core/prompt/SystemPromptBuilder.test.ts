@@ -42,19 +42,19 @@ describe('SystemPromptBuilder', () => {
       expect(prompt).not.toContain('<available-subagents>');
     });
 
-    it('minimal mode keeps datetime / safety / project-context / workspace', () => {
+    it('minimal mode keeps datetime / safety / project-context / Agent Home', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
         contextFiles: [{ path: 'IDENTITY.md', content: '# test' }],
-        workingDir: '/work',
+        agentHome: '/work',
       });
       expect(prompt).toContain('# Current Date & Time');
       // tool-definitions section is disabled; tools are passed via LLM API
       expect(prompt).not.toContain('# Available Tools');
       expect(prompt).toContain('# Safety');
       expect(prompt).toContain('# Project Context');
-      expect(prompt).toContain('# Workspace');
-      expect(prompt).toContain('Your working directory is: /work');
+      expect(prompt).toContain('# Agent Home');
+      expect(prompt).toContain('Your agent home directory is: /work');
     });
 
     it('none mode returns empty string', () => {
@@ -224,32 +224,32 @@ describe('SystemPromptBuilder', () => {
     });
   });
 
-  // ── workspace (Section 7) ────────────────────────────────
+  // ── Agent Home (Section 7) ───────────────────────────────
 
-  describe('workspace section (Section 7)', () => {
-    it('renders "# Workspace" with workingDir when workingDir is set', () => {
-      const prompt = new SystemPromptBuilder().build({ workingDir: '/work/space' });
-      expect(prompt).toContain('# Workspace');
-      expect(prompt).toContain('Your working directory is: /work/space');
+  describe('Agent Home section (Section 7)', () => {
+    it('renders "# Agent Home" when agentHome is set', () => {
+      const prompt = new SystemPromptBuilder().build({ agentHome: '/agent/home' });
+      expect(prompt).toContain('# Agent Home');
+      expect(prompt).toContain('Your agent home directory is: /agent/home');
     });
 
-    it('renders workspace section in minimal mode too', () => {
+    it('renders Agent Home section in minimal mode too', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
-        workingDir: '/work/space',
+        agentHome: '/agent/home',
       });
-      expect(prompt).toContain('# Workspace');
+      expect(prompt).toContain('# Agent Home');
     });
 
-    it('skips workspace section when workingDir is not provided', () => {
+    it('skips Agent Home section when agentHome is not provided', () => {
       const prompt = new SystemPromptBuilder().build();
-      expect(prompt).not.toContain('# Workspace');
+      expect(prompt).not.toContain('# Agent Home');
     });
 
-    it('returns empty string in none mode regardless of workingDir', () => {
+    it('returns empty string in none mode regardless of agentHome', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'none',
-        workingDir: '/work/space',
+        agentHome: '/agent/home',
       });
       expect(prompt).toBe('');
     });

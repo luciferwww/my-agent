@@ -13,20 +13,20 @@ const hasBetterSqlite3 = canResolveBetterSqlite3();
 const describeSqlite = hasBetterSqlite3 ? describe : describe.skip;
 
 describeSqlite('SqliteMemoryStore', () => {
-  let workspaceDir = '';
+  let agentHome = '';
   let SqliteMemoryStore: SqliteMemoryStoreClass;
   let store: SqliteMemoryStoreInstance;
 
   beforeEach(async () => {
     ({ SqliteMemoryStore } = await import('./sqlite-store.js'));
-    workspaceDir = await mkdtemp(join(tmpdir(), 'sqlite-memory-store-'));
-    store = new SqliteMemoryStore(join(workspaceDir, 'memory.sqlite'));
+    agentHome = await mkdtemp(join(tmpdir(), 'sqlite-memory-store-'));
+    store = new SqliteMemoryStore(join(agentHome, 'memory.sqlite'));
   });
 
   afterEach(async () => {
     store.close();
-    if (workspaceDir) {
-      await rm(workspaceDir, { recursive: true, force: true });
+    if (agentHome) {
+      await rm(agentHome, { recursive: true, force: true });
     }
   });
 
@@ -172,7 +172,7 @@ describeSqlite('SqliteMemoryStore', () => {
   });
 
   it('preserves keyword, vector, and metadata data after reopening', () => {
-    const databasePath = join(workspaceDir, 'memory.sqlite');
+    const databasePath = join(agentHome, 'memory.sqlite');
     store.upsertChunks([{
       id: 'memory:memory/persist.md:1-1',
       path: 'memory/persist.md',

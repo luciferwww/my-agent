@@ -22,25 +22,18 @@ describe('loadAgentConfig', () => {
     await writeFile(join(agentHome, 'config.json'), JSON.stringify(value), 'utf8');
   }
 
-  it('returns independent application and Extension defaults when the file is absent', async () => {
-    const snapshot = await loadAgentConfig({ agentHome });
-
-    expect(snapshot.application.agents.defaults).toEqual(DEFAULT_AGENT_CONFIG);
-    expect(snapshot.application.agents.list).toEqual([]);
-    expect(snapshot.application.logger).toEqual(DEFAULT_LOGGER_CONFIG);
-    expect(snapshot.extensions).toEqual({ enabled: true, entries: {} });
-    expect(snapshot.host).toEqual({
-      mode: 'websocket',
-      websocket: { host: '127.0.0.1', port: 8787, path: '/ws', approval: true },
-      cli: { sessionKey: 'main', prompt: '> ', approval: true },
+  it('rejects an absent document instead of synthesizing in-memory defaults', async () => {
+    await expect(loadAgentConfig({ agentHome })).rejects.toMatchObject({
+      code: 'FILE_MISSING',
+      message: 'Agent configuration file is missing.',
     });
   });
 
   it('reads only the Agent Home document once and ignores project-local config', async () => {
-    const workingDir = join(agentHome, 'project');
-    await mkdir(workingDir);
+    const startupCwd = join(agentHome, 'project');
+    await mkdir(startupCwd);
     await writeConfig({ agents: { defaults: { llm: { maxTokens: 8192 } } } });
-    await writeFile(join(workingDir, 'config.json'), JSON.stringify({
+    await writeFile(join(startupCwd, 'config.json'), JSON.stringify({
       agents: { defaults: { llm: { maxTokens: 1 } } },
     }), 'utf8');
     const readTextFile = vi.fn((path: string) => readFile(path, 'utf8'));
@@ -50,7 +43,7 @@ describe('loadAgentConfig', () => {
     expect(readTextFile).toHaveBeenCalledTimes(1);
     expect(readTextFile).toHaveBeenCalledWith(join(agentHome, 'config.json'));
     expect(snapshot.application.agents.defaults.llm.maxTokens).toBe(8192);
-    await expect(readFile(join(workingDir, 'config.json'), 'utf8'))
+    await expect(readFile(join(startupCwd, 'config.json'), 'utf8'))
       .resolves.toContain('"maxTokens":1');
   });
 
@@ -115,13 +108,12 @@ describe('loadAgentConfig', () => {
     });
   });
 
-  it('treats a missing Agent Home as an absent config document', async () => {
+  it('rejects a missing Agent Home as a missing config document', async () => {
     const missingAgentHome = join(agentHome, 'not-created');
 
-    const snapshot = await loadAgentConfig({ agentHome: missingAgentHome });
-
-    expect(snapshot.application.agents.defaults).toEqual(DEFAULT_AGENT_CONFIG);
-    expect(snapshot.extensions).toEqual({ enabled: true, entries: {} });
+    await expect(loadAgentConfig({ agentHome: missingAgentHome })).rejects.toMatchObject({
+      code: 'FILE_MISSING',
+    });
   });
 
   it('projects all known namespaces from one root document', async () => {
@@ -171,6 +163,7 @@ describe('loadAgentConfig', () => {
     await writeFile(join(agentHome, '.agent', 'config.json'), JSON.stringify({
       agents: { defaults: { llm: { maxTokens: 1 } } },
     }));
+    await writeConfig({});
 
     const snapshot = await loadAgentConfig({ agentHome });
 
@@ -246,6 +239,8 @@ describe('loadAgentConfig', () => {
     [{ agents: { list: [{ id: 'a', default: 'yes' }] } }, 'agents.list[0].default'],
     [{ agents: { defaults: { llm: { model: 'legacy' } } } }, 'agents.defaults'],
     [{ agents: { defaults: { model: 'unstructured' } } }, 'agents.defaults'],
+    [{ agents: { defaults: { tools: { fs: {} } } } }, 'agents.defaults.tools.fs'],
+    [{ agents: { list: [{ id: 'a', tools: { fs: {} } }] } }, 'agents.list[0].tools.fs'],
     [{ logger: [] }, 'logger'],
     [{ logger: { minLevel: 'verbose' } }, 'logger.minLevel'],
     [{ logger: { console: true } }, 'logger.console'],

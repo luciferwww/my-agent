@@ -13,7 +13,7 @@ import type {
   StandaloneHostConfigProjection,
   AgentConfigSnapshot,
 } from '../../platform/config/index.js';
-import { loadAgentConfig } from '../../platform/config/index.js';
+import { ensureAgentConfigDocument, loadAgentConfig } from '../../platform/config/index.js';
 import type { RuntimeAppOptions } from '../../runtime/index.js';
 
 const hostDefaults: StandaloneHostConfigProjection = Object.freeze({
@@ -24,14 +24,25 @@ const hostDefaults: StandaloneHostConfigProjection = Object.freeze({
 
 describe('standalone Host arguments', () => {
   it('accepts startup without arguments', () => {
-    expect(parseStandaloneHostArguments([])).toBeUndefined();
+    expect(parseStandaloneHostArguments([])).toEqual({});
+  });
+
+  it.each([
+    [['--agent-home', 'C:/agent-home'], 'C:/agent-home'],
+    [['--agent-home=C:/agent-home'], 'C:/agent-home'],
+    [['--agent-home=profiles=one'], 'profiles=one'],
+  ])('accepts one Agent Home override: %j', (argv, agentHomeArgument) => {
+    expect(parseStandaloneHostArguments(argv)).toEqual({ agentHomeArgument });
   });
 
   it.each([
     ['--workspace', 'C:/workspace'],
     ['--workspace=C:/workspace'],
-    ['--agent-home', 'C:/agent-home'],
-    ['--agent-home=C:/agent-home'],
+    ['--agent-home'],
+    ['--agent-home='],
+    ['--agent-home', '--unknown'],
+    ['--agent-home', 'one', '--agent-home=two'],
+    ['position'],
     ['--unknown'],
   ])('rejects retired or unknown arguments: %s', (...argv) => {
     expect(() => parseStandaloneHostArguments(argv)).toThrow('HOST_ARGUMENT_INVALID');
@@ -63,6 +74,7 @@ describe('standalone Host composition', () => {
   });
 
   it('hands one snapshot and one injected environment through acquisition and Runtime', async () => {
+    const events: string[] = [];
     const snapshot = createSnapshot('websocket');
     const stderr = { write: vi.fn(() => true) };
     const environment = {
@@ -74,13 +86,20 @@ describe('standalone Host composition', () => {
     const pathContext = Object.freeze({
       installDir: 'C:/installation',
       agentHome: 'C:/agent-home',
-      workingDir: 'C:/working',
     });
-    const resolvePathContext = vi.fn(async () => pathContext);
-    const loadConfig = vi.fn(async () => snapshot);
-    const prepareAcquisition = vi.fn(async () => ({
-      result: { loadedUnits: Object.freeze([]), diagnostics: Object.freeze([]) },
-    }));
+    const resolvePathContext = vi.fn(async () => {
+      events.push('paths');
+      return pathContext;
+    });
+    const ensureConfig = vi.fn(async () => { events.push('bootstrap'); });
+    const loadConfig = vi.fn(async () => {
+      events.push('load');
+      return snapshot;
+    });
+    const prepareAcquisition = vi.fn(async () => {
+      events.push('acquisition');
+      return { result: { loadedUnits: Object.freeze([]), diagnostics: Object.freeze([]) } };
+    });
     const waitForChannelCompletion = vi.fn(async () => ({
       outcome: 'closed' as const,
       reason: 'transport_closed' as const,
@@ -90,6 +109,7 @@ describe('standalone Host composition', () => {
       close: vi.fn(),
     };
     const createRuntime = vi.fn(async (runtimeOptions: RuntimeAppOptions) => {
+      events.push('Runtime');
       runtimeOptions.onEvent?.({
         type: 'warning',
         info: {
@@ -114,6 +134,7 @@ describe('standalone Host composition', () => {
       env: environment,
       stderr,
       resolvePathContext,
+      ensureConfig,
       loadConfig,
       prepareAcquisition,
       createRuntime,
@@ -121,7 +142,9 @@ describe('standalone Host composition', () => {
     });
 
     expect(resolvePathContext).toHaveBeenCalledOnce();
+  expect(ensureConfig).toHaveBeenCalledWith({ agentHome: pathContext.agentHome });
     expect(loadConfig).toHaveBeenCalledWith({ agentHome: pathContext.agentHome });
+  expect(events).toEqual(['paths', 'bootstrap', 'load', 'acquisition', 'Runtime']);
     expect(prepareAcquisition).toHaveBeenCalledWith(
       join(pathContext.installDir, 'extensions'),
       snapshot.extensions,
@@ -129,7 +152,6 @@ describe('standalone Host composition', () => {
     );
     expect(createRuntime).toHaveBeenCalledWith(expect.objectContaining({
       agentHome: pathContext.agentHome,
-      workingDir: pathContext.workingDir,
       applicationConfig: snapshot.application,
       envOverrides: {
         model: { providerId: 'injected-provider', modelId: 'injected-model' },
@@ -146,15 +168,15 @@ describe('standalone Host composition', () => {
   it('reads Agent Home config once for acquisition and Runtime without reading project config', async () => {
     const temporaryRoot = await mkdtemp(join(tmpdir(), 'standalone-host-config-'));
     const agentHome = join(temporaryRoot, 'agent-home');
-    const workingDir = join(temporaryRoot, 'project');
+    const startupCwd = join(temporaryRoot, 'project');
     await mkdir(agentHome);
-    await mkdir(workingDir);
+    await mkdir(startupCwd);
     await writeFile(join(agentHome, 'config.json'), JSON.stringify({
       agents: { defaults: { llm: { maxTokens: 8192 } } },
       extensions: { enabled: false },
       host: { mode: 'headless' },
     }), 'utf8');
-    await writeFile(join(workingDir, 'config.json'), JSON.stringify({
+    await writeFile(join(startupCwd, 'config.json'), JSON.stringify({
       agents: { defaults: { llm: { maxTokens: 1 } } },
       extensions: { enabled: true },
     }), 'utf8');
@@ -174,8 +196,8 @@ describe('standalone Host composition', () => {
         resolvePathContext: async () => Object.freeze({
           installDir: join(temporaryRoot, 'installation'),
           agentHome,
-          workingDir,
         }),
+        ensureConfig: (options) => ensureAgentConfigDocument(options),
         loadConfig: (options) => loadAgentConfig(options, { readTextFile }),
         prepareAcquisition,
         createRuntime,
@@ -195,7 +217,6 @@ describe('standalone Host composition', () => {
       );
       expect(createRuntime).toHaveBeenCalledWith(expect.objectContaining({
         agentHome,
-        workingDir,
         applicationConfig: expect.objectContaining({
           agents: expect.objectContaining({
             defaults: expect.objectContaining({
@@ -204,11 +225,84 @@ describe('standalone Host composition', () => {
           }),
         }),
       }));
-      await expect(readFile(join(workingDir, 'config.json'), 'utf8'))
+      await expect(readFile(join(startupCwd, 'config.json'), 'utf8'))
         .resolves.toContain('"maxTokens":1');
+      await expect(readFile(join(agentHome, 'config.json'), 'utf8'))
+        .resolves.toContain('"maxTokens":8192');
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
+  });
+
+  it('stops before configuration loading, acquisition, and Runtime when bootstrap fails', async () => {
+    const failure = new Error('bootstrap failed');
+    const loadConfig = vi.fn();
+    const prepareAcquisition = vi.fn();
+    const createRuntime = vi.fn();
+
+    await expect(runStandaloneHost({
+      argv: [],
+      env: {},
+      resolvePathContext: async () => createPathContext(),
+      ensureConfig: async () => { throw failure; },
+      loadConfig,
+      prepareAcquisition,
+      createRuntime,
+    })).rejects.toBe(failure);
+
+    expect(loadConfig).not.toHaveBeenCalled();
+    expect(prepareAcquisition).not.toHaveBeenCalled();
+    expect(createRuntime).not.toHaveBeenCalled();
+  });
+
+  it('keeps generated config but creates no Runtime-owned state when acquisition fails', async () => {
+    const temporaryRoot = await mkdtemp(join(tmpdir(), 'standalone-host-bootstrap-failure-'));
+    const agentHome = join(temporaryRoot, 'agent-home');
+    const failure = new Error('acquisition failed');
+    const createRuntime = vi.fn();
+
+    try {
+      await expect(runStandaloneHost({
+        argv: [],
+        env: {},
+        resolvePathContext: async () => Object.freeze({
+          installDir: join(temporaryRoot, 'installation'),
+          agentHome,
+        }),
+        prepareAcquisition: async () => { throw failure; },
+        createRuntime,
+      })).rejects.toBe(failure);
+
+      await expect(readFile(join(agentHome, 'config.json'), 'utf8')).resolves.toBe('{}\n');
+      await expect(readFile(join(agentHome, 'IDENTITY.md'), 'utf8')).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+      await expect(readFile(join(agentHome, 'memory.sqlite'))).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+      expect(createRuntime).not.toHaveBeenCalled();
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('stops before acquisition and Runtime when strict loading fails', async () => {
+    const failure = new Error('load failed');
+    const prepareAcquisition = vi.fn();
+    const createRuntime = vi.fn();
+
+    await expect(runStandaloneHost({
+      argv: [],
+      env: {},
+      resolvePathContext: async () => createPathContext(),
+      ensureConfig: async () => undefined,
+      loadConfig: async () => { throw failure; },
+      prepareAcquisition,
+      createRuntime,
+    })).rejects.toBe(failure);
+
+    expect(prepareAcquisition).not.toHaveBeenCalled();
+    expect(createRuntime).not.toHaveBeenCalled();
   });
 
   it('keeps headless mode alive until shared Host completion', async () => {
@@ -229,6 +323,7 @@ describe('standalone Host composition', () => {
       argv: [],
       env: {},
       resolvePathContext: async () => createPathContext(),
+      ensureConfig: async () => undefined,
       loadConfig: async () => snapshot,
       prepareAcquisition: async () => ({
         result: { loadedUnits: Object.freeze([]), diagnostics: Object.freeze([]) },
@@ -251,6 +346,7 @@ describe('standalone Host composition', () => {
         env: {},
         stderr: { write: vi.fn(() => true) } as never,
         resolvePathContext: async () => createPathContext(),
+        ensureConfig: async () => undefined,
         loadConfig: async () => createSnapshot('websocket'),
         prepareAcquisition: async () => ({
           result: { loadedUnits: Object.freeze([]), diagnostics: Object.freeze([]) },
@@ -287,6 +383,7 @@ describe('standalone Host composition', () => {
       argv: [],
       env: {},
       resolvePathContext: async () => createPathContext(),
+      ensureConfig: async () => undefined,
       loadConfig: async () => createSnapshot('websocket'),
       prepareAcquisition: async () => ({
         result: { loadedUnits: Object.freeze([]), diagnostics: Object.freeze([]) },
@@ -321,6 +418,5 @@ function createPathContext() {
   return Object.freeze({
     installDir: 'C:/installation',
     agentHome: 'C:/agent-home',
-    workingDir: 'C:/working',
   });
 }

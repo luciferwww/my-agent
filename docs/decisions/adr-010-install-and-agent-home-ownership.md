@@ -6,6 +6,7 @@
 > Related Plan/Specification: [Install and Agent Home Ownership](../changes/archive/install-and-agent-home-ownership/plan.md) and [Install and Agent Home Ownership Specification](../changes/archive/install-and-agent-home-ownership/install-and-agent-home-ownership-specification.md)
 > Supersedes: [ADR-008](adr-008-workspace-configuration-authority.md)
 > Refines: path-input clauses of [ADR-009](adr-009-host-boundaries-and-standalone-npm-distribution.md); its Host source and npm distribution decisions remain accepted
+> Partially superseded by: [ADR-012](adr-012-agent-home-path-unification.md) for the separate `workingDir` Runtime path and fixed standalone Agent Home selection; install ownership, mutable Agent Home ownership, and configuration/state placement remain accepted
 
 ## Context
 

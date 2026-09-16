@@ -13,7 +13,6 @@ import type { AgentDefaults, LoggerModuleConfig } from './types.js';
  *   memory.chunking.*       ← MemoryIndexer.ts DEFAULT_CHUNK_CHARS / DEFAULT_OVERLAP_CHARS
  *   memory.search.*         ← MemorySearcher.ts DEFAULT_MAX_RESULTS / DEFAULT_MIN_SCORE / DEFAULT_*_WEIGHT
  *   prompt.*                ← SystemPromptBuilder.ts default params
- *   tools.fs.workingDirOnly ← path-policy.ts working-directory containment default
  *   context.maxFileChars  ← Agent Context loader DEFAULT_MAX_FILE_CHARS
  *   context.maxTotalChars ← Agent Context loader DEFAULT_MAX_TOTAL_CHARS
  *   subagents.*             ← core-subagent-spec.md §12
@@ -65,9 +64,6 @@ export const DEFAULT_AGENT_CONFIG: AgentDefaults = {
   },
 
   tools: {
-    fs: {
-      workingDirOnly: true,
-    },
     allow: [],
     deny: [],
   },

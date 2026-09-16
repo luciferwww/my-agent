@@ -19,14 +19,12 @@ describe('Extension acquisition to Runtime integration', () => {
   let root: string;
   let extensionsDir: string;
   let agentHome: string;
-  let workspaceDir: string;
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'my-agent-acquisition-runtime-'));
     extensionsDir = join(root, 'installation', 'extensions');
     agentHome = join(root, 'agent-home');
-    workspaceDir = join(root, 'workspace');
-    await Promise.all([mkdir(agentHome), mkdir(workspaceDir)]);
+    await mkdir(agentHome);
   });
 
   afterEach(async () => {
@@ -63,7 +61,6 @@ describe('Extension acquisition to Runtime integration', () => {
 
     const runtime = await RuntimeApp.create({
       agentHome,
-      workingDir: workspaceDir,
       loadedUnits: acquisition.loadedUnits,
       cliOverrides: {
         memory: { enabled: false },
@@ -118,7 +115,6 @@ describe('Extension acquisition to Runtime integration', () => {
 
     const runtime = await RuntimeApp.create({
       agentHome,
-      workingDir: workspaceDir,
       loadedUnits: acquisition.loadedUnits,
       cliOverrides: {
         memory: { enabled: false },

@@ -9,11 +9,8 @@ export interface BuildSystemPromptParamsInput {
   contextFiles: ContextFile[];
   toolNames: readonly string[];
   overrides: Pick<RunTurnParams, 'promptMode' | 'safetyLevel'>;
-  /**
-   * 工作目录绝对路径。由 RuntimeApp 在装配 prompt 时注入；驱动
-   * SystemPromptBuilder `# Workspace` section（spec §11 Section 7）。
-   */
-  workingDir?: string;
+  /** Agent Home absolute path injected by RuntimeApp for the prompt path section. */
+  agentHome?: string;
   /**
    * `<available-subagents>` section 条目列表（spec §11 Section 8）。
    * RuntimeApp 仅在 `subagents.enabled === true` 时传入；否则不渲染。
@@ -29,7 +26,7 @@ export function buildSystemPromptParams(
     safetyLevel: input.overrides.safetyLevel ?? input.config.prompt.safetyLevel,
     contextFiles: input.contextFiles,
     toolNames: input.toolNames,
-    workingDir: input.workingDir,
+    agentHome: input.agentHome,
     availableSubagents: input.availableSubagents,
   };
 }

@@ -13,7 +13,6 @@ export type {
   SearchConfig,
   PromptConfig,
   ToolsConfig,
-  FsToolsConfig,
   AgentContextConfig,
   SubagentsConfig,
   SubagentConfigEntry,
@@ -32,6 +31,7 @@ export { resolveAgentConfig, getEnvOverrides, deepMerge } from './loader.js';
 export type { ResolveOptions } from './loader.js';
 
 // ── Agent configuration loader ───────────────────────────
+export { ensureAgentConfigDocument } from './agent-config-bootstrap.js';
 export { loadAgentConfig } from './agent-config-loader.js';
 export type {
   StandaloneHostConfigProjection,

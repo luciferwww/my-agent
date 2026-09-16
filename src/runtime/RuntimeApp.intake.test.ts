@@ -38,22 +38,22 @@ vi.mock('../core/media/attachment-pipeline.js', () => ({
 }));
 
 describe('RuntimeApp intake (PR-6 spec matrix)', () => {
-  let workspaceDir: string;
+  let agentHome: string;
 
   beforeEach(async () => {
-    workspaceDir = await mkdtemp(join(tmpdir(), 'runtime-intake-test-'));
+    agentHome = await mkdtemp(join(tmpdir(), 'runtime-intake-test-'));
     processInboundMock.mockReset();
   });
 
   afterEach(async () => {
-    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(agentHome, { recursive: true, force: true });
   });
 
   it('text-only message passes through untouched', async () => {
     processInboundMock.mockResolvedValue({ normalized: 'hello', dropped: [] });
 
     const { app, runnerRun, testChannel, agentEvents, runtimeEvents } =
-      await buildApp(workspaceDir);
+      await buildApp(agentHome);
 
     await testChannel.dispatch({
       sessionKey: 'main',
@@ -78,7 +78,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     ];
     processInboundMock.mockResolvedValue({ normalized, dropped: [] });
 
-    const { app, runnerRun, testChannel } = await buildApp(workspaceDir);
+    const { app, runnerRun, testChannel } = await buildApp(agentHome);
 
     await testChannel.dispatch({
       sessionKey: 'main',
@@ -108,7 +108,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     });
 
     const { app, runnerRun, testChannel, agentEvents, runtimeEvents } =
-      await buildApp(workspaceDir);
+      await buildApp(agentHome);
 
     await testChannel.dispatch({
       sessionKey: 'main',
@@ -130,7 +130,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
       dropped: [{ blockIndex: 0, reason: 'unsupported_mime' }],
     });
 
-    const { app, runnerRun, testChannel } = await buildApp(workspaceDir);
+    const { app, runnerRun, testChannel } = await buildApp(agentHome);
 
     await testChannel.dispatch({
       sessionKey: 'main',
@@ -153,7 +153,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
   it('degenerate input (no text, no successful attachments, no drops) skips enqueue', async () => {
     processInboundMock.mockResolvedValue({ normalized: '', dropped: [] });
 
-    const { app, runnerRun, testChannel } = await buildApp(workspaceDir);
+    const { app, runnerRun, testChannel } = await buildApp(agentHome);
 
     await testChannel.dispatch({
       sessionKey: 'main',
@@ -186,7 +186,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
       return defaultRunResult('done');
     });
 
-    const { app, testChannel } = await buildApp(workspaceDir, {
+    const { app, testChannel } = await buildApp(agentHome, {
       steerMode: true,
       runnerRun,
     });
@@ -233,7 +233,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
       return defaultRunResult('done');
     });
 
-    const { app, testChannel } = await buildApp(workspaceDir, {
+    const { app, testChannel } = await buildApp(agentHome, {
       steerMode: true,
       runnerRun,
     });
@@ -285,7 +285,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     });
 
     const { app, testChannel, runtimeEvents, agentEvents } =
-      await buildApp(workspaceDir);
+      await buildApp(agentHome);
 
     await testChannel.dispatch({
       sessionKey: 'main',
@@ -301,21 +301,21 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
 // ── user_message emit tests ─────────────────────────────────────
 // channel-multi-client-user-message-spec §7 unit tests
 describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
-  let workspaceDir: string;
+  let agentHome: string;
 
   beforeEach(async () => {
-    workspaceDir = await mkdtemp(join(tmpdir(), 'runtime-usermsg-test-'));
+    agentHome = await mkdtemp(join(tmpdir(), 'runtime-usermsg-test-'));
     processInboundMock.mockReset();
   });
 
   afterEach(async () => {
-    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(agentHome, { recursive: true, force: true });
   });
 
   it('CH-02 threads the queued user_message ID to the runner', async () => {
     processInboundMock.mockResolvedValue({ normalized: 'hello world', dropped: [] });
 
-    const { app, testChannel, agentEvents, runnerRun } = await buildApp(workspaceDir);
+    const { app, testChannel, agentEvents, runnerRun } = await buildApp(agentHome);
 
     const before = Date.now();
     await testChannel.dispatch({
@@ -349,7 +349,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
   it('queued path: originClientId is null when clientId absent (CLI / library entry)', async () => {
     processInboundMock.mockResolvedValue({ normalized: 'from cli', dropped: [] });
 
-    const { app, testChannel, agentEvents } = await buildApp(workspaceDir);
+    const { app, testChannel, agentEvents } = await buildApp(agentHome);
 
     await testChannel.dispatch({
       sessionKey: 'main',
@@ -376,7 +376,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     ];
     processInboundMock.mockResolvedValue({ normalized, dropped: [] });
 
-    const { app, testChannel, agentEvents } = await buildApp(workspaceDir);
+    const { app, testChannel, agentEvents } = await buildApp(agentHome);
 
     await testChannel.dispatch({
       sessionKey: 'main',
@@ -405,7 +405,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
   it('degenerate input (assembled === undefined): does not emit user_message', async () => {
     processInboundMock.mockResolvedValue({ normalized: '', dropped: [] });
 
-    const { app, testChannel, agentEvents, runnerRun } = await buildApp(workspaceDir);
+    const { app, testChannel, agentEvents, runnerRun } = await buildApp(agentHome);
 
     await testChannel.dispatch({
       sessionKey: 'main',
@@ -427,7 +427,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
       return defaultRunResult('done');
     });
 
-    const { app, testChannel, agentEvents } = await buildApp(workspaceDir, {
+    const { app, testChannel, agentEvents } = await buildApp(agentHome, {
       steerMode: true,
       runnerRun,
     });
@@ -479,7 +479,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
       return defaultRunResult('done');
     });
 
-    const { app, testChannel, agentEvents } = await buildApp(workspaceDir, {
+    const { app, testChannel, agentEvents } = await buildApp(agentHome, {
       steerMode: true,
       runnerRun,
     });
@@ -535,7 +535,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
   it('CH-02 correlates a runtime-generated message ID through real runner events', async () => {
     processInboundMock.mockResolvedValue({ normalized: 'go', dropped: [] });
 
-    const { app, testChannel, agentEvents } = await buildApp(workspaceDir, {
+    const { app, testChannel, agentEvents } = await buildApp(agentHome, {
       useRealRunner: true,
     });
 
@@ -624,7 +624,7 @@ function createTestChannel(id: string): {
 }
 
 async function buildApp(
-  workspaceDir: string,
+  agentHome: string,
   options: {
     steerMode?: boolean;
     runnerRun?: ReturnType<typeof vi.fn>;
@@ -710,8 +710,7 @@ async function buildApp(
   const testChannel = createTestChannel('intake-test');
 
   const app = await RuntimeApp.create({
-    agentHome: workspaceDir,
-    workingDir: workspaceDir,
+    agentHome: agentHome,
     loadedUnits: [testChannel.unit],
     cliOverrides: {
       model: { providerId: 'test', modelId: 'test-model' },

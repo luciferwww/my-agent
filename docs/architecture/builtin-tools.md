@@ -12,24 +12,24 @@
 
 | Capability | Tools | Publication condition |
 |---|---|---|
-| Filesystem | `list_dir`, `read_file`, `apply_patch`, `write_file`, `edit_file` | Working-directory-bound factories |
-| Search | `file_search`, `grep_search` | Working-directory-bound factories |
-| Web | `web_fetch` | Enabled by the Builtin Workspace Tool Unit option |
-| Exec/Process | `exec`, `process` | Independently enabled by Builtin Workspace Tool Unit options |
+| Filesystem | `list_dir`, `read_file`, `apply_patch`, `write_file`, `edit_file` | Agent Home-anchored Environment factories |
+| Search | `file_search`, `grep_search` | Agent Home-anchored Environment factories with optional call-level roots |
+| Web | `web_fetch` | Enabled by the Environment contribution option |
+| Exec/Process | `exec`, `process` | Independently enabled by Environment contribution options |
 | Memory | `memory_search`, `memory_get`, `memory_write` | Memory manager and Unit are created; behavior belongs to [Memory](memory.md) |
 | Subagent | `task` | Subagent Tool Unit is created; orchestration belongs to [Runtime](runtime.md) |
 
 The default Runtime builder enables web, Exec, and Process, while explicit Unit options remain the publication control. All Builtins enter the same portable Tool Registry path described by [Tool Contract and Policy](tools.md); this page does not redefine generic validation, policy, approval, or Hook semantics.
 
-## 2. Working-directory path policy
+## 2. Environment path and Approval policy
 
-Filesystem factories bind `workingDir` and `workingDirOnly` at creation. Relative inputs resolve from the bound working directory rather than `process.cwd()`. With `workingDirOnly` omitted, the default is `true`.
+Filesystem and Search factories receive `agentHome`. Relative structured paths resolve from Agent Home rather than `process.cwd()`. File Search and Grep Search accept an optional call-level `path`; omission selects Agent Home.
 
-`resolveWorkingPath()` returns the resolved working directory, absolute target, and display path. It throws `WorkingDirectoryPathError` with `inputPath` and `workingDir` when a restricted target is outside the working directory. Display paths use forward slashes: paths inside the working directory are relative (`.` for the root), while allowed external targets are absolute.
+`resolveEnvironmentPath()` returns the resolved Agent Home, absolute target, and display path. Display paths use forward slashes: paths inside Agent Home are relative (`.` for the root), while external targets are absolute. The helper resolves paths but does not authorize them or reject external targets.
 
-Filesystem Tools catch input/path/I/O failures at their execution boundary and report `outcome: 'failed'`. Search factories are always working-directory-bound and have no `workingDirOnly` switch.
+After Hook transformation and schema validation, Application Tool Policy examines each declared structured target before Tool execution. Tool-name deny is final. Any lexically external target requires the existing current-call Approval even when the Tool name is allowed; missing Approval capability fails closed. Internal targets follow ordinary deny/allow/per-call Approval policy. Apply Patch classification includes add, delete, update, and move targets.
 
-These are current implementation facts, not a filesystem authorization design. `workingDirOnly` performs only lexical containment: it has no user approval, multiple capability roots, canonical/symlink grant validation, session grant, or persistent authorization semantics. Setting it to `false` permits filesystem Tool paths outside `workingDir`; Search remains rooted at `workingDir`, while Exec accepts an explicit `cwd` resolved from its default `workingDir`. A future permission Change may replace this coarse behavior.
+Approval is call-scoped and origin-bound; it creates no persistent resource grant. Classification is lexical and does not canonicalize symlinks. Agent Home is therefore a relative-path anchor, not a sandbox or hard filesystem boundary. Filesystem Tools catch input/path/I/O failures at their execution boundary and report `outcome: 'failed'`.
 
 ## 3. Filesystem Tools
 
@@ -49,10 +49,10 @@ These are current implementation facts, not a filesystem authorization design. `
 
 | Tool | Inputs | Current behavior |
 |---|---|---|
-| `file_search` | `query`, `maxResults?` | Case-insensitive path substring search or anchored glob-like `*`, `**`, and `?` matching |
-| `grep_search` | `query`, `isRegexp`, `includePattern?`, `maxResults?` | Case-insensitive literal or regular-expression line search with optional glob-like path filtering |
+| `file_search` | `query`, `path?`, `maxResults?` | Case-insensitive path substring search or anchored glob-like `*`, `**`, and `?` matching below the selected root |
+| `grep_search` | `query`, `isRegexp`, `path?`, `includePattern?`, `maxResults?` | Case-insensitive literal or regular-expression line search below the selected root with optional glob-like path filtering |
 
-Both Tools walk regular files recursively in deterministic directory-entry order, skip `.git` and `node_modules` directories, ignore non-file/non-directory entries, and return forward-slash working-directory-relative paths. `grep_search` skips files that cannot be read as UTF-8 and reports 1-based line numbers. Positive integral result limits stop or slice output; omission returns all matches.
+Both Tools walk regular files recursively in deterministic directory-entry order, skip `.git` and `node_modules` directories, ignore non-file/non-directory entries, and return forward-slash paths relative to the selected search root. `grep_search` skips files that cannot be read as UTF-8 and reports 1-based line numbers. Positive integral result limits stop or slice output; omission returns all matches.
 
 ## 5. Web fetch
 
@@ -60,7 +60,7 @@ Both Tools walk regular files recursively in deterministic directory-entry order
 
 For HTML, it removes script, style, and noscript content, maps common structural tags to readable whitespace/list text, strips remaining tags, and decodes a small set of HTML entities. Non-HTML responses are trimmed as text. Both extraction modes currently use this same lightweight readable-text extraction; the selected mode is reported in output. Non-success HTTP status, timeout, protocol, and fetch errors are failed Tool executions.
 
-The singleton binds no working directory. Its timeout is not a Tool input and it uses its own timeout controller rather than `ToolExecutionContext.signal`.
+The singleton binds no filesystem path. Its timeout is not a Tool input and it uses its own timeout controller rather than `ToolExecutionContext.signal`.
 
 ## 6. Exec modes
 
@@ -69,7 +69,7 @@ The singleton binds no working directory. Its timeout is not a Tool input and it
 ```text
 command: string
 cwd?: string
-                        # resolved from injected workingDir; omission uses workingDir
+                        # relative to Agent Home; omission uses Agent Home
 env?: Record<string, string>
 timeout?: number        # seconds; must be positive when supplied
 yieldMs?: number        # positive milliseconds
@@ -77,6 +77,8 @@ background?: boolean
 ```
 
 Only `string:string` environment entries are accepted and merged over string-valued `process.env` entries. Execution uses an explicit `cmd.exe /d /s /c` wrapper on Windows and `/bin/sh -c` on Unix; `shell` is false. Unix managed commands use detached process groups.
+
+Exec is governed only by Tool-name policy. Deny blocks it; allow authorizes arbitrary Shell execution without Approval; otherwise each call requires current-call Approval and fails closed when Approval is unavailable. The full validated input, including the exact command, is the Approval subject. `cwd` is execution context, not confinement, and policy does not infer command effects from either command text or `cwd`.
 
 | Mode | Selection | Behavior |
 |---|---|---|
@@ -107,8 +109,8 @@ Pure foreground processes are not registered. Yield records start as `internal`;
 
 | Kind | Evidence |
 |---|---|
-| Registration | [Workspace contribution](../../src/builtins/tools/workspace/contribution.ts), [Memory contribution](../../src/builtins/tools/memory/contribution.ts), [Task contribution](../../src/builtins/tools/task/contribution.ts) |
-| Filesystem and search source | [path-policy.ts](../../src/builtins/tools/workspace/common/path-policy.ts), [working-directory-walk.ts](../../src/builtins/tools/workspace/common/working-directory-walk.ts), [list-dir-tool.ts](../../src/builtins/tools/workspace/filesystem/list-dir-tool.ts), [read-file-tool.ts](../../src/builtins/tools/workspace/filesystem/read-file-tool.ts), [write-file-tool.ts](../../src/builtins/tools/workspace/filesystem/write-file-tool.ts), [edit-file-tool.ts](../../src/builtins/tools/workspace/filesystem/edit-file-tool.ts), [apply-patch-tool.ts](../../src/builtins/tools/workspace/filesystem/apply-patch-tool.ts), [file-search-tool.ts](../../src/builtins/tools/workspace/search/file-search-tool.ts), [grep-search-tool.ts](../../src/builtins/tools/workspace/search/grep-search-tool.ts) |
-| Web and process source | [web-fetch-tool.ts](../../src/builtins/tools/workspace/web/web-fetch-tool.ts), [exec-tool.ts](../../src/builtins/tools/workspace/process/exec-tool.ts), [process-tool.ts](../../src/builtins/tools/workspace/process/process-tool.ts), [process-registry.ts](../../src/builtins/tools/workspace/process/process-registry.ts), [run-command.ts](../../src/builtins/tools/workspace/process/run-command.ts), [kill-process-tree.ts](../../src/builtins/tools/workspace/process/kill-process-tree.ts), [resolve-command-invocation.ts](../../src/builtins/tools/workspace/process/resolve-command-invocation.ts) |
-| Tests | [list-dir-tool.test.ts](../../src/builtins/tools/workspace/filesystem/list-dir-tool.test.ts), [read-file-tool.test.ts](../../src/builtins/tools/workspace/filesystem/read-file-tool.test.ts), [write-file-tool.test.ts](../../src/builtins/tools/workspace/filesystem/write-file-tool.test.ts), [edit-file-tool.test.ts](../../src/builtins/tools/workspace/filesystem/edit-file-tool.test.ts), [apply-patch-tool.test.ts](../../src/builtins/tools/workspace/filesystem/apply-patch-tool.test.ts), [file-search-tool.test.ts](../../src/builtins/tools/workspace/search/file-search-tool.test.ts), [grep-search-tool.test.ts](../../src/builtins/tools/workspace/search/grep-search-tool.test.ts), [web-fetch-tool.test.ts](../../src/builtins/tools/workspace/web/web-fetch-tool.test.ts), [exec-tool.test.ts](../../src/builtins/tools/workspace/process/exec-tool.test.ts), [process-tool.test.ts](../../src/builtins/tools/workspace/process/process-tool.test.ts), [process-registry.test.ts](../../src/builtins/tools/workspace/process/process-registry.test.ts), [run-command.test.ts](../../src/builtins/tools/workspace/process/run-command.test.ts), [kill-process-tree.test.ts](../../src/builtins/tools/workspace/process/kill-process-tree.test.ts), [Workspace contribution tests](../../src/builtins/tools/workspace/contribution.test.ts), [Memory contribution tests](../../src/builtins/tools/memory/contribution.test.ts), [Task contribution tests](../../src/builtins/tools/task/contribution.test.ts) |
-| Controlling authority | [ADR-007](../decisions/adr-007-builtin-capability-source-ownership.md), [Tools and Hooks](../specifications/tools-and-hooks.md), [Configuration](../specifications/configuration.md) |
+| Registration | [Environment contribution](../../src/builtins/tools/environment/contribution.ts), [Memory contribution](../../src/builtins/tools/memory/contribution.ts), [Task contribution](../../src/builtins/tools/task/contribution.ts) |
+| Filesystem and search source | [path-policy.ts](../../src/builtins/tools/environment/common/path-policy.ts), [directory-walk.ts](../../src/builtins/tools/environment/common/directory-walk.ts), [list-dir-tool.ts](../../src/builtins/tools/environment/filesystem/list-dir-tool.ts), [read-file-tool.ts](../../src/builtins/tools/environment/filesystem/read-file-tool.ts), [write-file-tool.ts](../../src/builtins/tools/environment/filesystem/write-file-tool.ts), [edit-file-tool.ts](../../src/builtins/tools/environment/filesystem/edit-file-tool.ts), [apply-patch-tool.ts](../../src/builtins/tools/environment/filesystem/apply-patch-tool.ts), [file-search-tool.ts](../../src/builtins/tools/environment/search/file-search-tool.ts), [grep-search-tool.ts](../../src/builtins/tools/environment/search/grep-search-tool.ts) |
+| Web and process source | [web-fetch-tool.ts](../../src/builtins/tools/environment/web/web-fetch-tool.ts), [exec-tool.ts](../../src/builtins/tools/environment/process/exec-tool.ts), [process-tool.ts](../../src/builtins/tools/environment/process/process-tool.ts), [process-registry.ts](../../src/builtins/tools/environment/process/process-registry.ts), [run-command.ts](../../src/builtins/tools/environment/process/run-command.ts), [kill-process-tree.ts](../../src/builtins/tools/environment/process/kill-process-tree.ts), [resolve-command-invocation.ts](../../src/builtins/tools/environment/process/resolve-command-invocation.ts) |
+| Tests | [list-dir-tool.test.ts](../../src/builtins/tools/environment/filesystem/list-dir-tool.test.ts), [read-file-tool.test.ts](../../src/builtins/tools/environment/filesystem/read-file-tool.test.ts), [write-file-tool.test.ts](../../src/builtins/tools/environment/filesystem/write-file-tool.test.ts), [edit-file-tool.test.ts](../../src/builtins/tools/environment/filesystem/edit-file-tool.test.ts), [apply-patch-tool.test.ts](../../src/builtins/tools/environment/filesystem/apply-patch-tool.test.ts), [file-search-tool.test.ts](../../src/builtins/tools/environment/search/file-search-tool.test.ts), [grep-search-tool.test.ts](../../src/builtins/tools/environment/search/grep-search-tool.test.ts), [web-fetch-tool.test.ts](../../src/builtins/tools/environment/web/web-fetch-tool.test.ts), [exec-tool.test.ts](../../src/builtins/tools/environment/process/exec-tool.test.ts), [process-tool.test.ts](../../src/builtins/tools/environment/process/process-tool.test.ts), [process-registry.test.ts](../../src/builtins/tools/environment/process/process-registry.test.ts), [run-command.test.ts](../../src/builtins/tools/environment/process/run-command.test.ts), [kill-process-tree.test.ts](../../src/builtins/tools/environment/process/kill-process-tree.test.ts), [Environment contribution tests](../../src/builtins/tools/environment/contribution.test.ts), [Memory contribution tests](../../src/builtins/tools/memory/contribution.test.ts), [Task contribution tests](../../src/builtins/tools/task/contribution.test.ts) |
+| Controlling authority | [ADR-007](../decisions/adr-007-builtin-capability-source-ownership.md), [ADR-012](../decisions/adr-012-agent-home-path-unification.md), [Tools and Hooks](../specifications/tools-and-hooks.md), [Configuration](../specifications/configuration.md) |

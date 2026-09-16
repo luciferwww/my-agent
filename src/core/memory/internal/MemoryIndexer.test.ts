@@ -25,15 +25,15 @@ function createStore(overrides: Partial<MemoryStore> = {}): MemoryStore {
 }
 
 describe('MemoryIndexer', () => {
-  let workspaceDir = '';
+  let agentHome = '';
 
   beforeEach(async () => {
-    workspaceDir = await mkdtemp(join(tmpdir(), 'memory-indexer-'));
+    agentHome = await mkdtemp(join(tmpdir(), 'memory-indexer-'));
   });
 
   afterEach(async () => {
-    if (workspaceDir) {
-      await rm(workspaceDir, { recursive: true, force: true });
+    if (agentHome) {
+      await rm(agentHome, { recursive: true, force: true });
     }
   });
 
@@ -102,16 +102,16 @@ describe('MemoryIndexer', () => {
   });
 
   it('indexes MEMORY.md and top-level markdown files under memory/', async () => {
-    await mkdir(join(workspaceDir, 'memory', 'nested'), { recursive: true });
-    await writeFile(join(workspaceDir, 'MEMORY.md'), '# Root memory\n', 'utf-8');
-    await writeFile(join(workspaceDir, 'memory', '2026-04-07.md'), '# Daily\n', 'utf-8');
-    await writeFile(join(workspaceDir, 'memory', 'ignore.txt'), 'skip\n', 'utf-8');
-    await writeFile(join(workspaceDir, 'memory', 'nested', 'deep.md'), '# Nested\n', 'utf-8');
+    await mkdir(join(agentHome, 'memory', 'nested'), { recursive: true });
+    await writeFile(join(agentHome, 'MEMORY.md'), '# Root memory\n', 'utf-8');
+    await writeFile(join(agentHome, 'memory', '2026-04-07.md'), '# Daily\n', 'utf-8');
+    await writeFile(join(agentHome, 'memory', 'ignore.txt'), 'skip\n', 'utf-8');
+    await writeFile(join(agentHome, 'memory', 'nested', 'deep.md'), '# Nested\n', 'utf-8');
 
     const indexer = new MemoryIndexer(createStore(), null);
     const indexFileSpy = vi.spyOn(indexer, 'indexFile').mockResolvedValue();
 
-    await indexer.indexAll(workspaceDir);
+    await indexer.indexAll(agentHome);
 
     expect(indexFileSpy).toHaveBeenCalledTimes(2);
     expect(indexFileSpy).toHaveBeenCalledWith('MEMORY.md', '# Root memory\n');

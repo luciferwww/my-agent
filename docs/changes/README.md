@@ -12,6 +12,7 @@ No active Changes.
 
 Archived changes preserve bounded delivery and acceptance provenance. They are neither Current Architecture nor stable contract authority.
 
+- [Agent Home Path Unification](archive/agent-home-path-unification/plan.md), its [implemented Specification](archive/agent-home-path-unification/agent-home-path-unification-specification.md), and [validation record](archive/agent-home-path-unification/validation.md) — two-path Agent Home model, Environment Tool identity and roots, structured external-path Approval, and arbitrary Exec semantics completed, validated, and accepted on 2026-09-16
 - [Architecture Foundation](archive/architecture-foundation/plan.md) and its archived [Target Architecture](archive/architecture-foundation/target-architecture.md) — Foundation packages, Slices 1–6, and authority transfer completed on 2026-09-15
 - [AF-03 Target Architecture](archive/af-03-target-architecture/plan.md)
 - [AF-04 Characterization and Fitness](archive/af-04-characterization-fitness/plan.md)
@@ -28,3 +29,4 @@ Archived changes preserve bounded delivery and acceptance provenance. They are n
 - [Slice 6 closeout](archive/slice-6-closeout/specification.md), [disposition manifest](archive/slice-6-closeout/document-disposition-manifest.json), and [Legacy inventory](archive/slice-6-closeout/legacy-migration-inventory.md) — 52-entry documentation and Legacy closeout accepted on 2026-09-15
 - [Source Layout Convergence](archive/source-layout-convergence/specification.md)
 - [Source Layout Refactoring](archive/source-layout-refactoring/plan.md) — builtin capability ownership migration completed on 2026-09-15
+- [Standalone Agent Home Configuration Bootstrap](archive/standalone-agent-home-configuration-bootstrap/plan.md), its [implemented and validated Specification](archive/standalone-agent-home-configuration-bootstrap/standalone-agent-home-configuration-bootstrap-specification.md), and [validation record](archive/standalone-agent-home-configuration-bootstrap/validation.md) — strict missing-config bootstrap, standalone ordering, package first-start verification, and unchanged Core Agent Context ownership delivered and accepted on 2026-09-16

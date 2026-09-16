@@ -109,7 +109,6 @@ function createHarness(options: {
   ];
   const runtimeOptions: RuntimeAppOptions = {
     agentHome: '/agent-home',
-    workingDir: '/working',
     loadedUnits,
     onEvent: (event) => events.push(event),
   };

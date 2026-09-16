@@ -16,7 +16,7 @@ import { renderAvailableSubagentsSection } from '../subagent/available-subagents
  *  6. project-context      — contextFiles 注入              [full + minimal, 有 contextFiles 时]
  *
  * 依存扩展（§task spec §11）：
- *  7. workspace            — working directory 锚点         [full + minimal]
+ *  7. agent-home           — Agent Home path context         [full + minimal]
  *  8. available-subagents  — task 工具可用的 subagent 列表     [full only]
  */
 export class SystemPromptBuilder {
@@ -48,8 +48,8 @@ export class SystemPromptBuilder {
     // 6. project-context — full + minimal
     this.buildProjectContextSection(lines, params);
 
-    // 7. workspace — full + minimal (any mode except 'none', already filtered above)
-    this.buildWorkspaceSection(lines, params);
+    // 7. Agent Home — full + minimal (any mode except 'none', already filtered above)
+    this.buildAgentHomeSection(lines, params);
 
     // 8. available-subagents — full only
     if (!isMinimal) this.buildAvailableSubagentsSection(lines, params);
@@ -200,15 +200,15 @@ export class SystemPromptBuilder {
     }
   }
 
-  // ── Section 7: workspace ───────────────────────────────────
+  // ── Section 7: Agent Home ──────────────────────────────────
 
-  private buildWorkspaceSection(
+  private buildAgentHomeSection(
     lines: string[],
     params: SystemPromptBuildParams,
   ): void {
-    if (!params.workingDir) return;
-    lines.push('# Workspace');
-    lines.push(`Your working directory is: ${params.workingDir}`);
+    if (!params.agentHome) return;
+    lines.push('# Agent Home');
+    lines.push(`Your agent home directory is: ${params.agentHome}`);
     lines.push('');
   }
 

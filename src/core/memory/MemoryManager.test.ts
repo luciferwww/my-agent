@@ -37,14 +37,14 @@ function createStore(overrides: Partial<MemoryStore> = {}): MemoryStore {
 }
 
 function createManager(
-  workspaceDir: string,
+  agentHome: string,
   store: MemoryStore,
   indexer: Pick<MemoryIndexer, 'indexAll' | 'indexFile'>,
   searcher: Pick<MemorySearcher, 'search'>,
   recallTracker: Pick<RecallTracker, 'record'>,
 ): MemoryManager {
   return Reflect.construct(MemoryManager as unknown as Function, [
-    workspaceDir,
+    agentHome,
     store,
     indexer,
     searcher,
@@ -54,16 +54,16 @@ function createManager(
 }
 
 describe('MemoryManager', () => {
-  let workspaceDir = '';
+  let agentHome = '';
 
   beforeEach(async () => {
-    workspaceDir = await mkdtemp(join(tmpdir(), 'memory-manager-'));
+    agentHome = await mkdtemp(join(tmpdir(), 'memory-manager-'));
     vi.clearAllMocks();
   });
 
   afterEach(async () => {
-    if (workspaceDir) {
-      await rm(workspaceDir, { recursive: true, force: true });
+    if (agentHome) {
+      await rm(agentHome, { recursive: true, force: true });
     }
   });
 
@@ -82,7 +82,7 @@ describe('MemoryManager', () => {
     const searcher = { search: vi.fn().mockResolvedValue(searchResults) };
     const recallTracker = { record: vi.fn() };
     const manager = createManager(
-      workspaceDir,
+      agentHome,
       store,
       { indexAll: vi.fn(), indexFile: vi.fn() },
       searcher,
@@ -111,13 +111,13 @@ describe('MemoryManager', () => {
   it('reads either the full file or a selected line window', async () => {
     const store = createStore();
     const manager = createManager(
-      workspaceDir,
+      agentHome,
       store,
       { indexAll: vi.fn(), indexFile: vi.fn() },
       { search: vi.fn().mockResolvedValue([]) },
       { record: vi.fn() },
     );
-    await writeFile(join(workspaceDir, 'memory.md'), ['one', 'two', 'three', 'four'].join('\n'), 'utf-8');
+    await writeFile(join(agentHome, 'memory.md'), ['one', 'two', 'three', 'four'].join('\n'), 'utf-8');
 
     await expect(manager.readFile('memory.md')).resolves.toBe('one\ntwo\nthree\nfour');
     await expect(manager.readFile('memory.md', 2, 2)).resolves.toBe('two\nthree');
@@ -126,7 +126,7 @@ describe('MemoryManager', () => {
   it('rejects reads and writes outside Agent Home', async () => {
     const store = createStore();
     const manager = createManager(
-      workspaceDir,
+      agentHome,
       store,
       { indexAll: vi.fn(), indexFile: vi.fn() },
       { search: vi.fn().mockResolvedValue([]) },
@@ -142,7 +142,7 @@ describe('MemoryManager', () => {
     const store = createStore();
     const indexer = { indexAll: vi.fn(), indexFile: vi.fn().mockResolvedValue(undefined) };
     const manager = createManager(
-      workspaceDir,
+      agentHome,
       store,
       indexer,
       { search: vi.fn().mockResolvedValue([]) },
@@ -151,7 +151,7 @@ describe('MemoryManager', () => {
 
     await manager.writeFile('memory/daily.md', 'fresh entry', 'overwrite');
 
-    const filePath = join(workspaceDir, 'memory', 'daily.md');
+    const filePath = join(agentHome, 'memory', 'daily.md');
     await expect(readFile(filePath, 'utf-8')).resolves.toBe('fresh entry');
     expect(indexer.indexFile).toHaveBeenCalledWith('memory/daily.md', 'fresh entry');
   });
@@ -160,15 +160,15 @@ describe('MemoryManager', () => {
     const store = createStore();
     const indexer = { indexAll: vi.fn(), indexFile: vi.fn().mockResolvedValue(undefined) };
     const manager = createManager(
-      workspaceDir,
+      agentHome,
       store,
       indexer,
       { search: vi.fn().mockResolvedValue([]) },
       { record: vi.fn() },
     );
-    const filePath = join(workspaceDir, 'memory', 'append.md');
+    const filePath = join(agentHome, 'memory', 'append.md');
 
-    await mkdir(join(workspaceDir, 'memory'), { recursive: true });
+    await mkdir(join(agentHome, 'memory'), { recursive: true });
     await writeFile(filePath, 'first line', 'utf-8');
     await manager.writeFile('memory/append.md', 'second line', 'append');
 
@@ -180,7 +180,7 @@ describe('MemoryManager', () => {
     const store = createStore();
     const indexer = { indexAll: vi.fn().mockResolvedValue(undefined), indexFile: vi.fn() };
     const manager = createManager(
-      workspaceDir,
+      agentHome,
       store,
       indexer,
       { search: vi.fn().mockResolvedValue([]) },
@@ -190,7 +190,7 @@ describe('MemoryManager', () => {
     await manager.reindex();
     manager.close();
 
-    expect(indexer.indexAll).toHaveBeenCalledWith(workspaceDir);
+    expect(indexer.indexAll).toHaveBeenCalledWith(agentHome);
     expect(store.close).toHaveBeenCalledTimes(1);
   });
 
@@ -200,12 +200,12 @@ describe('MemoryManager', () => {
     vi.mocked(createEmbeddingProvider).mockResolvedValue(null);
     const indexAllSpy = vi.spyOn(MemoryIndexer.prototype, 'indexAll').mockResolvedValue(undefined);
 
-    const manager = await MemoryManager.create({ agentHome: workspaceDir });
+    const manager = await MemoryManager.create({ agentHome: agentHome });
 
     expect(createEmbeddingProvider).toHaveBeenCalledWith(undefined);
-    expect(SqliteMemoryStore).toHaveBeenCalledWith(join(workspaceDir, 'memory.sqlite'));
-    expect(indexAllSpy).toHaveBeenCalledWith(workspaceDir);
-    expect((manager as unknown as { agentHome: string }).agentHome).toBe(workspaceDir);
+    expect(SqliteMemoryStore).toHaveBeenCalledWith(join(agentHome, 'memory.sqlite'));
+    expect(indexAllSpy).toHaveBeenCalledWith(agentHome);
+    expect((manager as unknown as { agentHome: string }).agentHome).toBe(agentHome);
     expect((manager as unknown as { store: MemoryStore }).store).toBe(store);
     expect((manager as unknown as { embeddingProvider: unknown }).embeddingProvider).toBeNull();
   });
@@ -213,21 +213,21 @@ describe('MemoryManager', () => {
   it('create() writes DB to the convention path <agentHome>/memory.sqlite', async () => {
     const store = createStore();
     const embeddingProvider = { embed: vi.fn(), dimensions: 3, modelId: 'mock-model' };
-    const expectedDbPath = join(workspaceDir, 'memory.sqlite');
+    const expectedDbPath = join(agentHome, 'memory.sqlite');
 
     vi.mocked(SqliteMemoryStore).mockImplementation(() => store as never);
     vi.mocked(createEmbeddingProvider).mockResolvedValue(embeddingProvider);
     const indexAllSpy = vi.spyOn(MemoryIndexer.prototype, 'indexAll').mockResolvedValue(undefined);
 
     const manager = await MemoryManager.create({
-      agentHome: workspaceDir,
+      agentHome: agentHome,
       enabled: true,
       embedding: { provider: 'local', model: 'custom-model' },
     });
 
     expect(createEmbeddingProvider).toHaveBeenCalledWith({ provider: 'local', model: 'custom-model' });
     expect(SqliteMemoryStore).toHaveBeenCalledWith(expectedDbPath);
-    expect(indexAllSpy).toHaveBeenCalledWith(workspaceDir);
+    expect(indexAllSpy).toHaveBeenCalledWith(agentHome);
     expect((manager as unknown as { embeddingProvider: unknown }).embeddingProvider).toBe(embeddingProvider);
     await expect(readFile(expectedDbPath, 'utf-8')).rejects.toThrow();
   });

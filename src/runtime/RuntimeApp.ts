@@ -1339,7 +1339,7 @@ export class RuntimeApp {
           contextFiles: this.resources.contextFiles,
           toolNames: visibleToolDefinitions.map(({ name }) => name),
           overrides: params,
-          workingDir: this.resources.workingDir,
+          agentHome: this.resources.agentHome,
           // Only inject the <available-subagents> section when the feature is
           // on. SystemPromptBuilder additionally suppresses it in minimal mode
           // (which is what subagents themselves get).

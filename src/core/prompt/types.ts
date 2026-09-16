@@ -73,16 +73,8 @@ export interface SystemPromptBuildParams {
   safetyLevel?: 'strict' | 'normal' | 'relaxed';
   /** 注入的上下文文件（IDENTITY.md、SOUL.md 等） */
   contextFiles?: ContextFile[];
-  /**
-   * 工作目录绝对路径。
-   *
-  * 主 agent 由 prompt-factory 注入；subagent 由 Child executor 从
-  * Child executor 的 working-directory dependency 注入。任何 mode（除 `'none'`）
-   * 都注入对应的 `# Workspace` section（spec §11 Section 7）。
-   *
-   * v1 PR-3 接受字段但未渲染；实际渲染逻辑由 PR-5 添加。
-   */
-  workingDir?: string;
+  /** Agent Home absolute path rendered in every mode except `'none'`. */
+  agentHome?: string;
   /**
    * `<available-subagents>` section 的条目列表（spec §11 Section 8）。
    *

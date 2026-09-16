@@ -33,7 +33,7 @@ async function main() {
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'my-agent-websocket-host-'));
   const homeDirectory = join(temporaryRoot, 'home');
   const agentHome = join(homeDirectory, '.my-agent');
-  const workingDir = join(temporaryRoot, 'working-directory');
+  const startupCwd = join(temporaryRoot, 'startup-cwd');
   let relay;
   let child;
   let client;
@@ -45,7 +45,7 @@ async function main() {
   try {
     await Promise.all([
       mkdir(agentHome, { recursive: true }),
-      mkdir(workingDir, { recursive: true }),
+      mkdir(startupCwd, { recursive: true }),
     ]);
     relay = await startLoopbackRelay();
     const webSocketPort = await reserveLoopbackPort();
@@ -53,8 +53,8 @@ async function main() {
     await provisionRelayExtension();
     provisionedExtensions = true;
     const installationBefore = await snapshotTree(EXTENSIONS_ROOT);
-    const workingDirectoryBefore = await snapshotTree(workingDir);
-    child = startHost(homeDirectory, workingDir, relay.baseURL, output);
+    const startupCwdBefore = await snapshotTree(startupCwd);
+    child = startHost(homeDirectory, startupCwd, relay.baseURL, output);
 
     client = await connectWithRetry(`ws://127.0.0.1:${webSocketPort}/ws`, child);
     const messages = createMessageQueue(client);
@@ -104,9 +104,9 @@ async function main() {
       'Installed Extension tree',
     );
     assertTreeUnchanged(
-      workingDirectoryBefore,
-      await snapshotTree(workingDir),
-      'Working directory',
+      startupCwdBefore,
+      await snapshotTree(startupCwd),
+      'Startup CWD',
     );
 
     console.log('Verified generic WebSocket Host with install-owned Relay acquisition and immutable installation contents.');
@@ -200,9 +200,9 @@ async function provisionRelayExtension() {
   throw new Error('WebSocket Host verification requires an absent repository Extensions directory.');
 }
 
-function startHost(homeDirectory, workingDir, relayBaseURL, output) {
+function startHost(homeDirectory, startupCwd, relayBaseURL, output) {
   const child = spawn(process.execPath, [HOST_ENTRY], {
-    cwd: workingDir,
+    cwd: startupCwd,
     env: createIsolatedHomeEnvironment(homeDirectory, {
       ...process.env,
       COPILOT_RELAY_BASE_URL: relayBaseURL,

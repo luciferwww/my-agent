@@ -74,20 +74,18 @@ class ManualDeadlineDriver implements RuntimeDeadlineDriver {
 }
 
 describe('RuntimeApp', () => {
-  let workspaceDir: string;
+  let agentHome: string;
 
   beforeEach(async () => {
-    workspaceDir = await mkdtemp(join(tmpdir(), 'runtime-app-test-'));
+    agentHome = await mkdtemp(join(tmpdir(), 'runtime-app-test-'));
   });
 
   afterEach(async () => {
-    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(agentHome, { recursive: true, force: true });
   });
 
-  it('routes Agent state to agentHome and Tools and prompts to workingDir', async () => {
-    const agentHome = join(workspaceDir, 'agent-home');
-    const workingDir = join(workspaceDir, 'working');
-    await mkdir(workingDir);
+  it('routes Agent state, Environment Tools, and prompts to agentHome', async () => {
+    const selectedAgentHome = join(agentHome, 'agent-home');
     const createSessionManager = vi.fn(() => ({
       resolveSession: vi.fn(async () => ({ entry: { sessionId: '1' }, isNew: true })),
     }) as never);
@@ -96,8 +94,7 @@ describe('RuntimeApp', () => {
     const build = vi.fn(() => 'SYSTEM_PROMPT');
 
     const app = await RuntimeApp.create({
-      agentHome,
-      workingDir,
+      agentHome: selectedAgentHome,
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
         llm: { apiKey: 'test-key' },
@@ -118,21 +115,19 @@ describe('RuntimeApp', () => {
       promptMode: 'full',
     });
 
-    expect(createSessionManager).toHaveBeenCalledWith(agentHome, expect.any(Object));
-    expect(createMemoryManager).toHaveBeenCalledWith(expect.objectContaining({ agentHome }));
+    expect(createSessionManager).toHaveBeenCalledWith(selectedAgentHome, expect.any(Object));
+    expect(createMemoryManager).toHaveBeenCalledWith(expect.objectContaining({ agentHome: selectedAgentHome }));
     expect(getBuiltinContributionUnits).toHaveBeenCalledWith(
-      expect.objectContaining({ workingDir }),
+      expect.objectContaining({ agentHome: selectedAgentHome }),
       null,
     );
-    expect(build).toHaveBeenCalledWith(expect.objectContaining({ workingDir }));
-    expect(await readdir(agentHome)).toEqual(expect.arrayContaining([
+    expect(build).toHaveBeenCalledWith(expect.objectContaining({ agentHome: selectedAgentHome }));
+    expect(await readdir(selectedAgentHome)).toEqual(expect.arrayContaining([
       'IDENTITY.md',
       'SOUL.md',
       'AGENTS.md',
       'TOOLS.md',
     ]));
-    expect(await readdir(workingDir)).toEqual([]);
-
     await app.close();
   });
 
@@ -155,8 +150,7 @@ describe('RuntimeApp', () => {
     });
 
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
         llm: { apiKey: 'test-key' },
@@ -190,19 +184,18 @@ describe('RuntimeApp', () => {
   });
 
   it('uses the injected application projection without rereading Workspace configuration', async () => {
-    await writeFile(join(workspaceDir, 'config.json'), JSON.stringify({
+    await writeFile(join(agentHome, 'config.json'), JSON.stringify({
       agents: { defaults: { memory: { enabled: false } } },
       logger: { console: { enabled: false } },
     }), 'utf8');
-    const snapshot = await loadAgentConfig({ agentHome: workspaceDir });
-    await writeFile(join(workspaceDir, 'config.json'), JSON.stringify({
+    const snapshot = await loadAgentConfig({ agentHome: agentHome });
+    await writeFile(join(agentHome, 'config.json'), JSON.stringify({
       agents: { defaults: { memory: { enabled: true } } },
     }), 'utf8');
     const createMemoryManager = vi.fn(async () => null);
 
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       applicationConfig: snapshot.application,
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
@@ -212,19 +205,18 @@ describe('RuntimeApp', () => {
     });
 
     expect(createMemoryManager).toHaveBeenCalledWith(expect.objectContaining({
-      agentHome: workspaceDir,
+      agentHome: agentHome,
       enabled: false,
     }));
     await app.close();
   });
 
   it('uses hardcoded defaults without reading config.json when no projection is supplied', async () => {
-    await writeFile(join(workspaceDir, 'config.json'), '{ invalid json', 'utf8');
+    await writeFile(join(agentHome, 'config.json'), '{ invalid json', 'utf8');
     const createMemoryManager = vi.fn(async () => null);
 
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
         llm: { apiKey: 'test-key' },
@@ -234,7 +226,7 @@ describe('RuntimeApp', () => {
     });
 
     expect(createMemoryManager).toHaveBeenCalledWith(expect.objectContaining({
-      agentHome: workspaceDir,
+      agentHome: agentHome,
       enabled: false,
     }));
     await app.close();
@@ -242,8 +234,7 @@ describe('RuntimeApp', () => {
 
   it('returns a deep-frozen transport-safe Catalog with an available default', async () => {
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
         llm: { apiKey: 'test-key' },
@@ -310,8 +301,7 @@ describe('RuntimeApp', () => {
     expectedCategory,
   }) => {
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       cliOverrides: {
         ...(model ? { model } : {}),
         llm: { apiKey: 'test-key' },
@@ -333,8 +323,7 @@ describe('RuntimeApp', () => {
 
   it('keeps the last published Catalog readable while closing', async () => {
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
         llm: { apiKey: 'test-key' },
@@ -427,8 +416,7 @@ describe('RuntimeApp', () => {
     });
     const events: AgentEvent[] = [];
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       cliOverrides: {
         model: { providerId: 'test', modelId: 'parent-model' },
         llm: { apiKey: 'test-key' },
@@ -575,8 +563,7 @@ describe('RuntimeApp', () => {
       initiallyEnabled: true,
     });
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       loadedUnits: [generationOneUnit, nextProviderUnit],
       cliOverrides: {
         model: { providerId: 'next-provider', modelId: 'root-model' },
@@ -654,8 +641,7 @@ describe('RuntimeApp', () => {
   it('seals a direct model-resolution failure with one failed turn_end', async () => {
     const events: RuntimeEvent[] = [];
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       onEvent: (event) => events.push(event),
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
@@ -706,8 +692,7 @@ describe('RuntimeApp', () => {
     const runnerError = new Error(providerError.message, { cause: providerError });
     const errorLog = vi.spyOn(Logger.get('RuntimeApp'), 'error');
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       onEvent: (event) => events.push(event),
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
@@ -793,8 +778,7 @@ describe('RuntimeApp', () => {
     const runnerError = new Error('outer secret wrapper', { cause: foreign });
     const errorLog = vi.spyOn(Logger.get('RuntimeApp'), 'error');
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
         llm: { apiKey: 'test-key' },
@@ -887,8 +871,7 @@ describe('RuntimeApp', () => {
     ]);
     const errorLog = vi.spyOn(Logger.get('RuntimeApp'), 'error');
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
         llm: { apiKey: 'test-key' },
@@ -949,8 +932,7 @@ describe('RuntimeApp', () => {
     const receivedEvents = vi.fn();
     receivingChannel.channel.send = receivedEvents;
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       loadedUnits: [failingChannel.unit, receivingChannel.unit],
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
@@ -995,8 +977,7 @@ describe('RuntimeApp', () => {
     });
     const testChannel = createTestChannel('observer-failure-channel');
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
@@ -1026,8 +1007,7 @@ describe('RuntimeApp', () => {
     });
 
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
         llm: { apiKey: 'test-key' },
@@ -1050,8 +1030,7 @@ describe('RuntimeApp', () => {
   }) => {
     const events: RuntimeEvent[] = [];
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
         llm: { apiKey: 'test-key' },
@@ -1077,8 +1056,7 @@ describe('RuntimeApp', () => {
     testChannel.channel.start = vi.fn(async () => ready.promise);
 
     const creation = RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
@@ -1106,8 +1084,7 @@ describe('RuntimeApp', () => {
     const stop = vi.spyOn(testChannel.channel, 'stop');
 
     await expect(RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
@@ -1133,8 +1110,7 @@ describe('RuntimeApp', () => {
     const startupError = new Error('tool assembly failed');
 
     await expect(RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
         llm: { apiKey: 'test-key' },
@@ -1160,8 +1136,7 @@ describe('RuntimeApp', () => {
     const memoryClose = vi.fn(() => new Promise<void>(() => undefined));
     const startupError = new Error('runner creation failed');
     const creation = RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       deadlineDriver,
       deadlinePolicy: { candidateCleanupMs: 5_000 },
       cliOverrides: {
@@ -1191,8 +1166,7 @@ describe('RuntimeApp', () => {
       toolRounds: 0,
     }));
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       cliOverrides: {
         llm: { apiKey: 'test-key' },
         memory: { enabled: false },
@@ -1258,7 +1232,7 @@ describe('RuntimeApp', () => {
   });
 
   it('reloads context files, closes idempotently, and rejects future runs after close', async () => {
-    await writeFile(join(workspaceDir, 'IDENTITY.md'), '# Identity', 'utf-8').catch(() => undefined);
+    await writeFile(join(agentHome, 'IDENTITY.md'), '# Identity', 'utf-8').catch(() => undefined);
 
     const memoryClose = vi.fn();
     const deps = createTestDependencies({
@@ -1266,8 +1240,7 @@ describe('RuntimeApp', () => {
     });
 
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
         llm: { apiKey: 'test-key' },
@@ -1302,8 +1275,7 @@ describe('RuntimeApp', () => {
     failingChannel.channel.stop = vi.fn(async () => {});
 
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       loadedUnits: [successfulChannel.unit, failingChannel.unit],
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
@@ -1350,8 +1322,7 @@ describe('RuntimeApp', () => {
     successfulChannel.channel.stop = vi.fn(async () => {});
 
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       loadedUnits: [failingChannel.unit, successfulChannel.unit],
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
@@ -1409,8 +1380,7 @@ describe('RuntimeApp', () => {
 
     const testChannel = createTestChannel('queue-test');
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
@@ -1500,8 +1470,7 @@ describe('RuntimeApp', () => {
 
     const testChannel = createTestChannel('steer-test');
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
@@ -1602,8 +1571,7 @@ describe('RuntimeApp', () => {
         autoDecision: null,
       });
       const app = await RuntimeApp.create({
-        agentHome: workspaceDir,
-        workingDir: workspaceDir,
+        agentHome: agentHome,
         loadedUnits: [testChannel.unit],
         cliOverrides: {
           model: { providerId: 'test', modelId: 'test-model' },
@@ -1685,6 +1653,7 @@ describe('RuntimeApp', () => {
       decisions.push({
         decision: params.toolPolicy.decide(
           'unmatched_tool',
+          {},
           params.approvalCapability !== undefined,
         ),
         hasApprovalCapability: params.approvalCapability !== undefined,
@@ -1706,8 +1675,7 @@ describe('RuntimeApp', () => {
     });
     const testChannel = createTestChannel('no-approval-channel');
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
@@ -1765,8 +1733,7 @@ describe('RuntimeApp', () => {
       autoDecision: null,
     });
     const app = await RuntimeApp.create({
-      agentHome: workspaceDir,
-      workingDir: workspaceDir,
+      agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       cliOverrides: {
         model: { providerId: 'test', modelId: 'test-model' },
@@ -1812,8 +1779,7 @@ describe('RuntimeApp', () => {
         createMemoryManager: async () => null,
       });
       return RuntimeApp.create({
-        agentHome: workspaceDir,
-        workingDir: workspaceDir,
+        agentHome: agentHome,
         cliOverrides: {
           model: { providerId: 'test', modelId: 'test-model' },
           llm: { apiKey: 'test-key' },
@@ -1835,8 +1801,7 @@ describe('RuntimeApp', () => {
       }));
       // 事后注入 event collector：override onEvent 通过创建时的方式（重建更简单）
       const app2 = await RuntimeApp.create({
-        agentHome: workspaceDir,
-        workingDir: workspaceDir,
+        agentHome: agentHome,
         cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
         onEvent: (e) => events.push(e),
@@ -1868,8 +1833,7 @@ describe('RuntimeApp', () => {
       });
 
       const app = await RuntimeApp.create({
-        agentHome: workspaceDir,
-        workingDir: workspaceDir,
+        agentHome: agentHome,
         cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
@@ -1898,8 +1862,7 @@ describe('RuntimeApp', () => {
     it('abortTurn: 无 active turn + queue 有 N → clears queue, emits messages_dropped', async () => {
       const events: RuntimeEvent[] = [];
       const app = await RuntimeApp.create({
-        agentHome: workspaceDir,
-        workingDir: workspaceDir,
+        agentHome: agentHome,
         cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
         onEvent: (e) => events.push(e),
@@ -1949,8 +1912,7 @@ describe('RuntimeApp', () => {
 
       const testChannel = createTestChannel('public-abort-test');
       const app = await RuntimeApp.create({
-        agentHome: workspaceDir,
-        workingDir: workspaceDir,
+        agentHome: agentHome,
         loadedUnits: [testChannel.unit],
         cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
@@ -2024,8 +1986,7 @@ describe('RuntimeApp', () => {
 
       const testChannel = createTestChannel('steering-abort-test');
       const app = await RuntimeApp.create({
-        agentHome: workspaceDir,
-        workingDir: workspaceDir,
+        agentHome: agentHome,
         loadedUnits: [testChannel.unit],
         cliOverrides: {
           model: { providerId: 'test', modelId: 'test-model' },
@@ -2079,8 +2040,7 @@ describe('RuntimeApp', () => {
     // ⑤ 跨 session 独立：abortTurn(sk1) 不动 sk2 的 queue
     it('abortTurn: cross-session isolation — sk1 abort does not touch sk2 queue', async () => {
       const app = await RuntimeApp.create({
-        agentHome: workspaceDir,
-        workingDir: workspaceDir,
+        agentHome: agentHome,
         cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
       });
@@ -2109,8 +2069,7 @@ describe('RuntimeApp', () => {
       }));
 
       const app = await RuntimeApp.create({
-        agentHome: workspaceDir,
-        workingDir: workspaceDir,
+        agentHome: agentHome,
         cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
@@ -2137,8 +2096,7 @@ describe('RuntimeApp', () => {
       // 只在 messages_dropped 到来时抛错——模拟"运行期 subscriber 出 bug"。
       let armed = false;
       const app = await RuntimeApp.create({
-        agentHome: workspaceDir,
-        workingDir: workspaceDir,
+        agentHome: agentHome,
         cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
         onEvent: (e) => {
@@ -2189,8 +2147,7 @@ describe('RuntimeApp', () => {
 
       const testChannel = createTestChannel('shutdown-queue-test');
       const app = await RuntimeApp.create({
-        agentHome: workspaceDir,
-        workingDir: workspaceDir,
+        agentHome: agentHome,
         deadlineDriver,
         loadedUnits: [testChannel.unit],
         cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
@@ -2251,8 +2208,7 @@ describe('RuntimeApp', () => {
       });
 
       const app = await RuntimeApp.create({
-        agentHome: workspaceDir,
-        workingDir: workspaceDir,
+        agentHome: agentHome,
         deadlineDriver,
         cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({
@@ -2290,8 +2246,7 @@ describe('RuntimeApp', () => {
         };
       });
       const app = await RuntimeApp.create({
-        agentHome: workspaceDir,
-        workingDir: workspaceDir,
+        agentHome: agentHome,
         loadedUnits: [testChannel.unit],
         onEvent: (event) => runtimeEvents.push(event),
         cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
@@ -2337,8 +2292,7 @@ describe('RuntimeApp', () => {
         };
       });
       const app = await RuntimeApp.create({
-        agentHome: workspaceDir,
-        workingDir: workspaceDir,
+        agentHome: agentHome,
         loadedUnits: [testChannel.unit],
         deadlineDriver,
         onEvent: (event) => runtimeEvents.push(event),
@@ -2399,8 +2353,7 @@ describe('RuntimeApp', () => {
         toolRounds: 0,
       };
       const app = await RuntimeApp.create({
-        agentHome: workspaceDir,
-        workingDir: workspaceDir,
+        agentHome: agentHome,
         loadedUnits: [testChannel.unit],
         deadlineDriver,
         cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
@@ -2447,8 +2400,7 @@ describe('RuntimeApp', () => {
       };
 
       const app = await RuntimeApp.create({
-        agentHome: workspaceDir,
-        workingDir: workspaceDir,
+        agentHome: agentHome,
         loadedUnits: [testChannel.unit],
         cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),

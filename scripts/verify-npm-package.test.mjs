@@ -16,7 +16,7 @@ import {
 } from './verify-npm-package.mjs';
 
 describe('npm package verification boundaries', () => {
-  it('redacts the working directory and sensitive environment values', () => {
+  it('redacts the startup CWD and sensitive environment values', () => {
     const output = 'failed in C:\\temporary with token-value and ordinary-value';
 
     expect(redactSubprocessOutput(output, 'C:\\temporary', {

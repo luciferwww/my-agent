@@ -5,16 +5,16 @@ import { tmpdir } from 'os';
 import { SessionManager } from './SessionManager.js';
 
 describe('SessionManager', () => {
-  let workspaceDir: string;
+  let agentHome: string;
   let manager: SessionManager;
 
   beforeEach(async () => {
-    workspaceDir = await mkdtemp(join(tmpdir(), 'session-mgr-test-'));
-    manager = new SessionManager(workspaceDir);
+    agentHome = await mkdtemp(join(tmpdir(), 'session-mgr-test-'));
+    manager = new SessionManager(agentHome);
   });
 
   afterEach(async () => {
-    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(agentHome, { recursive: true, force: true });
   });
 
   // ── Session CRUD ────────────────────────────────────
@@ -169,7 +169,7 @@ describe('SessionManager', () => {
       });
 
       // 新 manager 实例走磁盘反序列化路径
-      const manager2 = new SessionManager(workspaceDir);
+      const manager2 = new SessionManager(agentHome);
       const messages = manager2.getMessages('main');
       expect(messages).toHaveLength(1);
       expect(messages[0]!.message.abortMeta).toEqual({
@@ -277,7 +277,7 @@ describe('SessionManager', () => {
       await manager.appendMessage('main', { role: 'user', content: 'persisted' });
 
       // 创建新 manager 实例（模拟重启）
-      const manager2 = new SessionManager(workspaceDir);
+      const manager2 = new SessionManager(agentHome);
       const messages = manager2.getMessages('main');
       expect(messages).toHaveLength(1);
       expect(messages[0]!.message.content).toBe('persisted');
@@ -359,7 +359,7 @@ describe('SessionManager', () => {
       await manager.appendCompactionRecord('main', makeCompactionInput({ id: 'c-persist' }), id1);
 
       // 模拟重启：新 manager 实例从磁盘加载
-      const manager2 = new SessionManager(workspaceDir);
+      const manager2 = new SessionManager(agentHome);
       const record = manager2.getLastCompactionRecord('main');
       expect(record).not.toBeNull();
       expect(record!.id).toBe('c-persist');
@@ -410,7 +410,7 @@ describe('SessionManager', () => {
       });
 
       // 重新加载后内容应原样保留
-      const manager2 = new SessionManager(workspaceDir);
+      const manager2 = new SessionManager(agentHome);
       const msgs = manager2.getMessages('main');
       const record = msgs.find((m) => m.id === msgId);
       const block = (record!.message.content as Array<{ type: string; content: string }>)[0]!;
@@ -418,7 +418,7 @@ describe('SessionManager', () => {
     });
 
     it('caps tool result content when toolResultHeadChars + toolResultTailChars configured', async () => {
-      const cappedManager = new SessionManager(workspaceDir, {
+      const cappedManager = new SessionManager(agentHome, {
         toolResultHeadChars: 100,
         toolResultTailChars: 50,
       });
@@ -431,7 +431,7 @@ describe('SessionManager', () => {
       });
 
       // 重新加载，验证磁盘上已经是裁剪后的数据
-      const manager2 = new SessionManager(workspaceDir);
+      const manager2 = new SessionManager(agentHome);
       const msgs = manager2.getMessages('capped');
       const block = (msgs[0]!.message.content as Array<{ type: string; content: string }>)[0]!;
       expect(block.content).toContain('[Tool result trimmed:');
@@ -441,7 +441,7 @@ describe('SessionManager', () => {
     });
 
     it('does not cap when content length <= head + tail', async () => {
-      const cappedManager = new SessionManager(workspaceDir, {
+      const cappedManager = new SessionManager(agentHome, {
         toolResultHeadChars: 100,
         toolResultTailChars: 50,
       });
@@ -453,14 +453,14 @@ describe('SessionManager', () => {
         content: [{ type: 'tool_result', tool_use_id: 'tu_test', content: shortContent }],
       });
 
-      const manager2 = new SessionManager(workspaceDir);
+      const manager2 = new SessionManager(agentHome);
       const msgs = manager2.getMessages('small');
       const block = (msgs[0]!.message.content as Array<{ type: string; content: string }>)[0]!;
       expect(block.content).toBe(shortContent);
     });
 
     it('passes through non-tool_result blocks unchanged', async () => {
-      const cappedManager = new SessionManager(workspaceDir, {
+      const cappedManager = new SessionManager(agentHome, {
         toolResultHeadChars: 10,
         toolResultTailChars: 5,
       });
@@ -472,7 +472,7 @@ describe('SessionManager', () => {
         content: [{ type: 'text', text: longText }],
       });
 
-      const manager2 = new SessionManager(workspaceDir);
+      const manager2 = new SessionManager(agentHome);
       const msgs = manager2.getMessages('mixed');
       const block = (msgs[0]!.message.content as Array<{ type: string; text: string }>)[0]!;
       // type !== 'tool_result' → not capped

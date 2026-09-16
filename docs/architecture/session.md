@@ -25,7 +25,7 @@ The metadata index avoids scanning Transcript files to locate a Session. Each Tr
 
 | Record | Purpose |
 |---|---|
-| `SessionRecord` | First-line file metadata, including Transcript version and optional working directory |
+| `SessionRecord` | First-line file metadata, including Transcript version |
 | `MessageRecord` | A `user`, `assistant`, or internal `toolResult` message |
 | `CompactionRecord` | A summary plus the first retained message identifier and Compaction statistics |
 

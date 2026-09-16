@@ -1,7 +1,7 @@
 {
   "name": "my-agent",
   "version": "0.1.0",
-  "description": "Personal AI Agent for learning purposes — exploring prompt building, workspace management, and agent architecture patterns",
+  "description": "Personal AI Agent for learning purposes — exploring prompt building, environment tools, and agent architecture patterns",
   "type": "module",
   "bin": {
     "my-agent": "./dist/host/hosts/standalone/entry.js"

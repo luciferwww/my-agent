@@ -106,5 +106,9 @@ export type ToolPolicyDecision = 'allow' | 'deny' | 'requires_approval';
 
 export interface ApplicationToolPolicy {
   isDenied(toolName: string): boolean;
-  decide(toolName: string, hasApprovalCapability: boolean): ToolPolicyDecision;
+  decide(
+    toolName: string,
+    input: Readonly<Record<string, unknown>>,
+    hasApprovalCapability: boolean,
+  ): ToolPolicyDecision;
 }

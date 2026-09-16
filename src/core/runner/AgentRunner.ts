@@ -1096,6 +1096,7 @@ export class AgentRunner {
 
     const policyDecision = params.toolPolicy.decide(
       toolUse.name,
+      effectiveInput,
       params.approvalCapability !== undefined,
     );
     if (policyDecision === 'deny') {

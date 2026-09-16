@@ -7,20 +7,20 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { RecallTracker } from './RecallTracker.js';
 
 describe('RecallTracker', () => {
-  let workspaceDir = '';
+  let agentHome = '';
 
   beforeEach(async () => {
-    workspaceDir = await mkdtemp(join(tmpdir(), 'recall-tracker-'));
+    agentHome = await mkdtemp(join(tmpdir(), 'recall-tracker-'));
   });
 
   afterEach(async () => {
-    if (workspaceDir) {
-      await rm(workspaceDir, { recursive: true, force: true });
+    if (agentHome) {
+      await rm(agentHome, { recursive: true, force: true });
     }
   });
 
   it('writes recall entries as jsonl records', async () => {
-    const recallDir = join(workspaceDir, 'memory-recalls');
+    const recallDir = join(agentHome, 'memory-recalls');
     const tracker = new RecallTracker(recallDir);
 
     tracker.record({
@@ -56,7 +56,7 @@ describe('RecallTracker', () => {
   });
 
   it('swallows write failures so record does not interrupt callers', async () => {
-    const recallDir = join(workspaceDir, 'occupied-by-file');
+    const recallDir = join(agentHome, 'occupied-by-file');
     await writeFile(recallDir, 'not a directory', 'utf-8');
 
     const tracker = new RecallTracker(recallDir);

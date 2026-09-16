@@ -95,7 +95,12 @@ async function readAgentConfigDocument(
   try {
     raw = await dependencies.readTextFile(join(agentHome, CONFIG_FILE_NAME));
   } catch (error) {
-    if (hasErrorCode(error, 'ENOENT')) return {};
+    if (hasErrorCode(error, 'ENOENT')) {
+      throw new AgentConfigError(
+        'FILE_MISSING',
+        'Agent configuration file is missing.',
+      );
+    }
     throw new AgentConfigError(
       'FILE_UNREADABLE',
       'Agent configuration file could not be read.',
@@ -143,6 +148,7 @@ function validateAgents(value: AgentConfigDocument['agents']): void {
     if ('workspace' in value.defaults) {
       throw invalidAgentConfigField('agents.defaults.workspace');
     }
+    rejectRetiredToolsConfig(value.defaults, 'agents.defaults');
     validateAgentModelSourceAt(value.defaults, 'agents.defaults');
   }
   if (value.list === undefined) return;
@@ -159,6 +165,7 @@ function validateAgents(value: AgentConfigDocument['agents']): void {
     if ('workspace' in entry) {
       throw invalidAgentConfigField(`${entryPath}.workspace`);
     }
+    rejectRetiredToolsConfig(entry, entryPath);
     validateAgentModelSourceAt(entry, entryPath);
   }
 }
@@ -312,5 +319,15 @@ function validateNonBlankString(value: unknown, fieldPath: string): void {
 function validateOptionalBoolean(value: unknown, fieldPath: string): void {
   if (value !== undefined && typeof value !== 'boolean') {
     throw invalidAgentConfigField(fieldPath);
+  }
+}
+
+function rejectRetiredToolsConfig(
+  value: Readonly<Record<string, unknown>>,
+  fieldPath: string,
+): void {
+  const tools = value['tools'];
+  if (isPlainObject(tools) && 'fs' in tools) {
+    throw invalidAgentConfigField(`${fieldPath}.tools.fs`);
   }
 }

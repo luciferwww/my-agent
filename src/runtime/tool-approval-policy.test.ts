@@ -1,11 +1,19 @@
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createApplicationToolPolicy } from './tool-approval-policy.js';
 import type { ToolsConfig } from '../platform/config/types.js';
 
 const empty: ToolsConfig = { allow: [], deny: [] };
+const agentHome = resolve('agent-home');
 
-function decide(toolName: string, config: ToolsConfig, hasApprovalCapability: boolean) {
-  return createApplicationToolPolicy(config).decide(toolName, hasApprovalCapability);
+function decide(
+  toolName: string,
+  config: ToolsConfig,
+  hasApprovalCapability: boolean,
+  input: Readonly<Record<string, unknown>> = {},
+) {
+  return createApplicationToolPolicy(config, agentHome)
+    .decide(toolName, input, hasApprovalCapability);
 }
 
 // ── no approval channel (fail-closed) ────────────────────
@@ -80,10 +88,8 @@ describe('CH-06 resolveToolPolicy — with approval channel', () => {
     expect(decide('execXY', config, true)).toBe('requires_approval');
   });
 
-  it('reads from ToolsConfig directly (with fs / no approval nesting)', () => {
-    // ToolsConfig 完整对象——验证类型兼容
+  it('reads from ToolsConfig directly', () => {
     const config: ToolsConfig = {
-      fs: { workingDirOnly: true },
       allow: ['read_file'],
       deny: ['exec'],
     };
@@ -96,5 +102,60 @@ describe('CH-06 resolveToolPolicy — with approval channel', () => {
     const config: ToolsConfig = { allow: ['group:fs'], deny: [] };
     // group:fs 不展开 → read_file 不在 allow，走 prompt
     expect(decide('read_file', config, true)).toBe('requires_approval');
+  });
+});
+
+describe('structured external-path approval', () => {
+  const externalPath = resolve(agentHome, '..', 'outside', 'file.txt');
+
+  it('allows an allowed structured Tool for an Agent Home-relative target', () => {
+    const config: ToolsConfig = { allow: ['read_file'], deny: [] };
+    expect(decide('read_file', config, true, { path: 'notes/file.txt' })).toBe('allow');
+  });
+
+  it('requires approval for an external target even when the Tool is allowed', () => {
+    const config: ToolsConfig = { allow: ['read_file'], deny: [] };
+    expect(decide('read_file', config, true, { path: externalPath }))
+      .toBe('requires_approval');
+  });
+
+  it('fails closed for an external target when approval is unavailable', () => {
+    const config: ToolsConfig = { allow: ['read_file'], deny: [] };
+    expect(decide('read_file', config, false, { path: externalPath })).toBe('deny');
+  });
+
+  it('keeps Tool-name deny final for external targets', () => {
+    const config: ToolsConfig = { allow: ['read_file'], deny: ['read_file'] };
+    expect(decide('read_file', config, true, { path: externalPath })).toBe('deny');
+  });
+
+  it('classifies every apply_patch source and move target', () => {
+    const config: ToolsConfig = { allow: ['apply_patch'], deny: [] };
+    const input = {
+      input: [
+        '*** Begin Patch',
+        '*** Update File: notes.txt',
+        `*** Move to: ${externalPath}`,
+        '@@',
+        '-old',
+        '+new',
+        '*** End Patch',
+      ].join('\n'),
+    };
+    expect(decide('apply_patch', config, true, input)).toBe('requires_approval');
+  });
+
+  it('treats omitted Search path as the internal Agent Home default', () => {
+    const config: ToolsConfig = { allow: ['file_search', 'grep_search'], deny: [] };
+    expect(decide('file_search', config, true, { query: '*.ts' })).toBe('allow');
+    expect(decide('grep_search', config, true, { query: 'x', isRegexp: false })).toBe('allow');
+  });
+
+  it('does not infer Exec effects from cwd or command text', () => {
+    const config: ToolsConfig = { allow: ['exec'], deny: [] };
+    expect(decide('exec', config, true, {
+      command: `remove ${externalPath}`,
+      cwd: externalPath,
+    })).toBe('allow');
   });
 });

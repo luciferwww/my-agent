@@ -11,17 +11,17 @@ describe('resolveStandaloneHostPathContext', () => {
   let installDir: string;
   let modulePath: string;
   let homeDirectory: string;
-  let workingDirectory: string;
+  let startupCwd: string;
 
   beforeEach(async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'standalone-path-context-'));
     installDir = join(temporaryRoot, 'installation');
     modulePath = join(installDir, 'dist', 'host', 'hosts', 'standalone', 'entry.js');
     homeDirectory = join(temporaryRoot, 'home');
-    workingDirectory = join(temporaryRoot, 'working');
+    startupCwd = join(temporaryRoot, 'startup');
     await mkdir(dirname(modulePath), { recursive: true });
     await mkdir(homeDirectory);
-    await mkdir(workingDirectory);
+    await mkdir(startupCwd);
     await writeFile(modulePath, 'export {};\n', 'utf8');
     await writeFile(join(installDir, 'package.json'), JSON.stringify({ name: 'my-agent' }), 'utf8');
   });
@@ -30,17 +30,16 @@ describe('resolveStandaloneHostPathContext', () => {
     await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
-  it('derives immutable package, Agent Home, and working-directory paths', async () => {
+  it('derives immutable package and default Agent Home paths', async () => {
     const result = await resolveStandaloneHostPathContext({
       moduleUrl: pathToFileURL(modulePath).href,
       homeDirectory,
-      workingDirectory,
+      startupCwd,
     });
 
     expect(result).toEqual({
       installDir: await realpath(installDir),
       agentHome: join(homeDirectory, '.my-agent'),
-      workingDir: normalize(workingDirectory),
     });
     expect(Object.isFrozen(result)).toBe(true);
   });
@@ -58,7 +57,7 @@ describe('resolveStandaloneHostPathContext', () => {
     const result = await resolveStandaloneHostPathContext({
       moduleUrl: pathToFileURL(modulePath).href,
       homeDirectory,
-      workingDirectory,
+      startupCwd,
     });
 
     expect(result.agentHome).toBe(await realpath(actualAgentHome));
@@ -72,7 +71,7 @@ describe('resolveStandaloneHostPathContext', () => {
     const error = await captureFailure({
       moduleUrl: pathToFileURL(unrelatedModule).href,
       homeDirectory,
-      workingDirectory,
+      startupCwd,
     });
 
     expect(error).toMatchObject({ code: 'INSTALL_DIR_INVALID' });
@@ -85,19 +84,42 @@ describe('resolveStandaloneHostPathContext', () => {
     await expect(resolveStandaloneHostPathContext({
       moduleUrl: pathToFileURL(modulePath).href,
       homeDirectory,
-      workingDirectory,
+      startupCwd,
     })).rejects.toMatchObject({ code: 'AGENT_HOME_INVALID' });
   });
 
-  it.each([
-    ['relative', 'WORKING_DIR_INVALID'],
-    [join('missing', 'working'), 'WORKING_DIR_INVALID'],
-  ])('rejects invalid working directory %j', async (workingDir, code) => {
+  it('resolves a relative Agent Home override against startup CWD', async () => {
+    const result = await resolveStandaloneHostPathContext({
+      moduleUrl: pathToFileURL(modulePath).href,
+      homeDirectory,
+      startupCwd,
+      agentHomeArgument: join('profiles', 'one'),
+    });
+
+    expect(result.agentHome).toBe(normalize(join(startupCwd, 'profiles', 'one')));
+  });
+
+  it('uses and canonicalizes an explicit absolute Agent Home override', async () => {
+    const actualAgentHome = join(temporaryRoot, 'explicit-agent-home');
+    await mkdir(actualAgentHome);
+
+    const result = await resolveStandaloneHostPathContext({
+      moduleUrl: pathToFileURL(modulePath).href,
+      homeDirectory,
+      startupCwd,
+      agentHomeArgument: actualAgentHome,
+    });
+
+    expect(result.agentHome).toBe(await realpath(actualAgentHome));
+  });
+
+  it('rejects a relative override when startup CWD is not absolute', async () => {
     await expect(resolveStandaloneHostPathContext({
       moduleUrl: pathToFileURL(modulePath).href,
       homeDirectory,
-      workingDirectory: workingDir,
-    })).rejects.toMatchObject({ code });
+      startupCwd: 'relative',
+      agentHomeArgument: 'agent-home',
+    })).rejects.toMatchObject({ code: 'AGENT_HOME_INVALID' });
   });
 
   async function captureFailure(
