@@ -184,7 +184,8 @@ function formatBackgroundStarted(runId: string, yielded: boolean): string {
     : `Process started in background.\nrunId: ${runId}\nUse the process tool to check status, read logs, or kill it.`;
 }
 
-export const execTool: Tool = {
+export function createExecTool(workingDir: string): Tool {
+  return {
   name: 'exec',
   description: 'Execute a shell command. Supports foreground execution, yield continuation with yieldMs, and immediate background execution with background=true.',
   inputSchema: {
@@ -200,7 +201,7 @@ export const execTool: Tool = {
       },
       cwd: {
         type: 'string',
-        description: 'Working directory for the command. Defaults to the current process directory.',
+        description: 'Working directory for the command. Defaults to the Agent working directory.',
       },
       env: {
         type: 'object',
@@ -219,7 +220,7 @@ export const execTool: Tool = {
     required: ['command'],
   },
   execute: async (params, context) => {
-    const normalized = normalizeExecRequest(params, process.cwd());
+    const normalized = normalizeExecRequest(params, workingDir);
     if ('error' in normalized) {
       return {
         content: normalized.error,
@@ -313,4 +314,5 @@ export const execTool: Tool = {
       content: formatBackgroundStarted(runId, true),
     };
   },
-};
+  };
+}

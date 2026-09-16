@@ -83,7 +83,7 @@ describe('CH-06 resolveToolPolicy — with approval channel', () => {
   it('reads from ToolsConfig directly (with fs / no approval nesting)', () => {
     // ToolsConfig 完整对象——验证类型兼容
     const config: ToolsConfig = {
-      fs: { workspaceOnly: true },
+      fs: { workingDirOnly: true },
       allow: ['read_file'],
       deny: ['exec'],
     };

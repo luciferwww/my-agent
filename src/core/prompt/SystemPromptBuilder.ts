@@ -206,9 +206,9 @@ export class SystemPromptBuilder {
     lines: string[],
     params: SystemPromptBuildParams,
   ): void {
-    if (!params.workspaceDir) return;
+    if (!params.workingDir) return;
     lines.push('# Workspace');
-    lines.push(`Your working directory is: ${params.workspaceDir}`);
+    lines.push(`Your working directory is: ${params.workingDir}`);
     lines.push('');
   }
 

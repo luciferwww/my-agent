@@ -123,10 +123,9 @@ describe('FT-10 Runtime composition deletion', () => {
     const runtimeTypes = source('src/runtime/types.ts').content;
     const queueTypes = source('src/runtime/queue-types.ts').content;
     const websocket = source('src/builtins/channels/websocket/WebSocketChannel.ts').content;
-    const host = await readFile(`${REPOSITORY_ROOT}/scripts/runtime-host.ts`, 'utf8');
-    const processEntries = await Promise.all(['cli.ts', 'server.ts', 'websocket.ts'].map(
-      (name) => readFile(`${REPOSITORY_ROOT}/scripts/${name}`, 'utf8'),
-    ));
+    const host = source('src/hosts/standalone/runtime-host.ts').content;
+    const entry = source('src/hosts/standalone/entry.ts').content;
+    const composition = source('src/hosts/standalone/standalone-host.ts').content;
     const html = await readFile(`${REPOSITORY_ROOT}/clients/html/chat.html`, 'utf8');
 
     expect(objectTypeBody(runtimeTypes, 'RunTurnParams')).not.toMatch(/\b(?:model|maxTokens)\??\s*:/);
@@ -137,15 +136,17 @@ describe('FT-10 Runtime composition deletion', () => {
     expect(html).toContain("event.category === 'provider_unregistered'");
     expect(html).toContain("event.category === 'model_rejected'");
     expect(html).toContain('this.requestModelCatalog()');
-    expect(processEntries.every((content) => !content.includes('process.exit('))).toBe(true);
+    expect(entry).not.toContain('process.exit(');
+    expect(composition).not.toContain('process.exit(');
     expect(host).toContain('process.exit(code)');
     expect(host).toContain('overallTimeoutMs ?? 60_000');
     expect(host).toContain('setTimeout(() => forceExit(1), overallTimeoutMs)');
     expect(source('src/runtime/RuntimeApp.ts').content).not.toMatch(
       /this\.resources\.(?:memoryManager|sessionManager|agentRunner)\.close\s*\(/,
     );
-    expect(processEntries.every((content) =>
-      content.includes('RuntimeApp.create(') && content.includes('createRuntimeHost('))).toBe(true);
+    expect(entry.match(/runStandaloneHost\(\)/gu)).toHaveLength(1);
+    expect(composition).toContain('RuntimeApp.create');
+    expect(composition).toContain('createRuntimeHost');
   });
 });
 

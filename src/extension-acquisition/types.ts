@@ -8,18 +8,6 @@ export interface ExtensionDescriptorV1 {
   readonly configSchema: Readonly<Record<string, unknown>>;
 }
 
-export interface HostExtensionEntry {
-  readonly enabled?: boolean;
-  readonly config?: Readonly<Record<string, unknown>>;
-}
-
-export interface HostConfig {
-  readonly extensions?: Readonly<{
-    readonly enabled?: boolean;
-    readonly entries?: Readonly<Record<string, HostExtensionEntry>>;
-  }>;
-}
-
 /**
  * Parsed Host extension namespace. Individual entry values remain unknown so a
  * malformed Extension namespace can be isolated without rejecting other IDs.
@@ -27,12 +15,6 @@ export interface HostConfig {
 export interface ResolvedHostExtensionsConfig {
   readonly enabled: boolean;
   readonly entries: Readonly<Record<string, unknown>>;
-}
-
-export interface AgentHomeResolutionOptions {
-  readonly explicitPath?: string;
-  readonly environment?: Readonly<Record<string, string | undefined>>;
-  readonly homeDirectory?: string;
 }
 
 export interface ExtensionCandidate {
@@ -109,12 +91,9 @@ export interface ExtensionAcquisitionResult {
 }
 
 export interface ExtensionAcquisitionOptions {
-  readonly agentHome: string;
-  readonly hostConfig: ResolvedHostExtensionsConfig;
+  readonly extensionsDir: string;
+  readonly extensionsConfig: ResolvedHostExtensionsConfig;
   readonly environment?: Readonly<Record<string, string | undefined>>;
 }
 
-export type ExtensionAcquisitionFatalCode =
-  | 'AGENT_HOME_INVALID'
-  | 'HOST_CONFIG_INVALID'
-  | 'DISCOVERY_ROOT_INVALID';
+export type ExtensionAcquisitionFatalCode = 'DISCOVERY_ROOT_INVALID';

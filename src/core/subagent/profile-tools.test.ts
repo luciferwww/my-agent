@@ -6,7 +6,7 @@ function profile(overrides: Partial<SubagentProfile> = {}): SubagentProfile {
   return {
     id: 'reviewer',
     description: 'reviews code',
-    agentDir: '/tmp/ws/.agent/subagents/reviewer',
+    agentDir: '/tmp/ws/subagents/reviewer',
     model: 'inherit',
     ...overrides,
   };

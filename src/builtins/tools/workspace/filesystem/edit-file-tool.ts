@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
 import type { Tool } from '../../../../core/tools/types.js';
-import { resolveWorkspacePath } from '../common/path-policy.js';
+import { resolveWorkingPath } from '../common/path-policy.js';
 
 function countOccurrences(haystack: string, needle: string): number {
   if (!needle) {
@@ -24,7 +24,7 @@ function formatEditResult(path: string, replacements: number): string {
   return [`path: ${path}`, `replacements: ${replacements}`].join('\n');
 }
 
-export function createEditFileTool(workspaceDir: string, workspaceOnly = true): Tool {
+export function createEditFileTool(workingDir: string, workingDirOnly = true): Tool {
   return {
     name: 'edit_file',
     description: 'Replace one exact text occurrence in a workspace file.',
@@ -62,7 +62,7 @@ export function createEditFileTool(workspaceDir: string, workspaceOnly = true): 
           };
         }
 
-        const target = resolveWorkspacePath(params.path, workspaceDir, workspaceOnly);
+        const target = resolveWorkingPath(params.path, workingDir, workingDirOnly);
         const original = await readFile(target.resolvedPath, 'utf8');
         const occurrences = countOccurrences(original, params.oldText);
 

@@ -3,13 +3,19 @@
   "version": "0.1.0",
   "description": "Personal AI Agent for learning purposes — exploring prompt building, workspace management, and agent architecture patterns",
   "type": "module",
+  "bin": {
+    "my-agent": "./dist/host/hosts/standalone/entry.js"
+  },
+  "files": [
+    "dist/host"
+  ],
   "engines": {
     "node": "22.x"
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "build": "npm run clean && tsc && npm run build:relay-artifact && npm run verify:relay-error-boundary && npm run verify:relay-artifact",
-    "build:host": "node -e \"require('node:fs').rmSync('dist/host', { recursive: true, force: true })\" && tsc -p tsconfig.host.json",
+    "build": "npm run clean && tsc && npm run build:host && npm run verify:host-build && npm run build:relay-artifact && npm run verify:relay-error-boundary && npm run verify:relay-artifact",
+    "build:host": "node -e \"require('node:fs').rmSync('dist/host', { recursive: true, force: true })\" && tsc -p tsconfig.host.json && node scripts/copy-host-assets.mjs",
     "build:relay-artifact": "node scripts/build-relay-extension-artifact.mjs",
     "dev": "tsc --watch",
     "test": "npm run test:unit",
@@ -19,11 +25,13 @@
     "test:all": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
+    "prepack": "npm run build:host && npm run verify:host-build",
     "verify:host-build": "node scripts/audit-host-build.mjs",
+    "verify:package": "node scripts/verify-npm-package.mjs",
     "verify:relay-error-boundary": "node scripts/audit-relay-error-boundary.mjs",
     "verify:relay-artifact": "node scripts/audit-relay-extension-artifact.mjs",
     "verify:websocket-host": "node scripts/verify-websocket-host.mjs",
-    "agent:websocket": "npx tsx scripts/server.ts"
+    "agent": "npx tsx src/hosts/standalone/entry.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
@@ -37,6 +45,7 @@
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.18.1",
+    "tsx": "^4.23.13",
     "typescript": "^5.7.0",
     "vitest": "^3.1.0"
   },

@@ -13,19 +13,19 @@ import type { AgentDefaults, LoggerModuleConfig } from './types.js';
  *   memory.chunking.*       ← MemoryIndexer.ts DEFAULT_CHUNK_CHARS / DEFAULT_OVERLAP_CHARS
  *   memory.search.*         ← MemorySearcher.ts DEFAULT_MAX_RESULTS / DEFAULT_MIN_SCORE / DEFAULT_*_WEIGHT
  *   prompt.*                ← SystemPromptBuilder.ts default params
- *   tools.fs.workspaceOnly  ← path-policy.ts DEFAULT_WORKSPACE_ONLY
- *   workspace.maxFileChars  ← loader.ts DEFAULT_MAX_FILE_CHARS
- *   workspace.maxTotalChars ← loader.ts DEFAULT_MAX_TOTAL_CHARS
+ *   tools.fs.workingDirOnly ← path-policy.ts working-directory containment default
+ *   context.maxFileChars  ← Agent Context loader DEFAULT_MAX_FILE_CHARS
+ *   context.maxTotalChars ← Agent Context loader DEFAULT_MAX_TOTAL_CHARS
  *   subagents.*             ← core-subagent-spec.md §12
  *
  * 已删除字段（spec §8.2/§8.3）：
- *   memory.dbPath           → 固定 `<workspaceDir>/.agent/memory.sqlite`
+ *   memory.dbPath           → 固定 `<agentHome>/memory.sqlite`
  *   memory.embedding.dimensions → 由 model 反查（KNOWN_DIMENSIONS 表 + 动态探测）
  *   session.dir             → SessionManager hardcode `'sessions'`
- *   workspace.agentDir      → 固定 `.agent/`
+  *   legacy Workspace directory setting → 已移除；Context 和状态直接归属 Agent Home
  *   tools.execTimeout / readMaxLines / webFetchTimeout / webFetchMaxChars → 工具自身 DEFAULT_* 常量
  *   tools.approval          → 平移到 tools.allow / deny（语义升级，见 spec §10.3）
- *   logger.file.dir         → bootstrap 固定传 `<workspaceDir>/logs/`
+ *   logger.file.dir         → bootstrap 固定传 `<agentHome>/logs/`
  *   logger.file.prefix      → FileAdapter 默认 'app'
  *   logger.file.maxQueueSize → FileAdapter 默认 10_000
  */
@@ -66,13 +66,13 @@ export const DEFAULT_AGENT_CONFIG: AgentDefaults = {
 
   tools: {
     fs: {
-      workspaceOnly: true,
+      workingDirOnly: true,
     },
     allow: [],
     deny: [],
   },
 
-  workspace: {
+  context: {
     maxFileChars: 20_000,
     maxTotalChars: 150_000,
   },
@@ -100,7 +100,7 @@ export const DEFAULT_AGENT_CONFIG: AgentDefaults = {
  * console.enabled 默认 true（保持现有 stdout/stderr 行为）。
  * file.enabled 默认 false（不写文件，向后兼容；需要时在 config.json 中显式打开）。
  * file 子字段（dir / prefix / maxQueueSize）由 FileAdapter 内部默认决定，
- * bootstrap 启动时固定传 `<workspaceDir>/logs/` 给 dir。
+ * bootstrap 启动时固定传 `<agentHome>/logs/` 给 dir。
  */
 export const DEFAULT_LOGGER_CONFIG: LoggerModuleConfig = {
   minLevel: 'info',

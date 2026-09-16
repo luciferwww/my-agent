@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Memory behavior
-> Verified: 2026-09-15
+> Verified: 2026-09-16
 > Ownership: Memory Store, Markdown indexing, retrieval, recall tracking, Tools, and optional degradation
 > Ownership key: memory-index-and-search
 
@@ -18,10 +18,10 @@ When Runtime cannot create or initialize Memory, startup continues with a recove
 
 ```text
 MemoryManager
-├── SqliteMemoryStore       <workspace>/.agent/memory.sqlite
+├── SqliteMemoryStore       <agentHome>/memory.sqlite
 ├── MemoryIndexer           MEMORY.md + direct memory/*.md files
 ├── MemorySearcher          vector + FTS5 keyword retrieval
-├── RecallTracker           <workspace>/.agent/memory/.recalls/recall-log.jsonl
+├── RecallTracker           <agentHome>/memory-recalls/recall-log.jsonl
 └── EmbeddingProvider?      local provider or null
 ```
 
@@ -31,9 +31,9 @@ The SQLite and recall paths are implementation conventions, not configurable sch
 
 ## 3. Initialization and indexing
 
-`MemoryManager.create()` selects the optional embedding provider, opens SQLite, constructs the Indexer/Searcher/Recall Tracker, and calls `indexAll(workspaceDir)`.
+`MemoryManager.create()` selects the optional embedding provider, opens SQLite, constructs the Indexer/Searcher/Recall Tracker, and calls `indexAll(agentHome)`.
 
-- `MEMORY.md` at the workspace root is indexed when present.
+- `MEMORY.md` at the Agent Home root is indexed when present.
 - Only direct Markdown files under `memory/` are included; nested files and other extensions are skipped.
 - Missing root/file directories are non-fatal.
 - Content SHA-256 identifies unchanged files; unchanged content skips deletion, embedding, chunk writes, and file-metadata updates.
@@ -42,7 +42,7 @@ The SQLite and recall paths are implementation conventions, not configurable sch
 - Existing chunks for the path are deleted before replacement chunks and file metadata are written.
 - With an embedding provider, all new chunks are embedded in one batch and tagged with its model ID. Without one, chunks remain keyword-searchable.
 
-`writeFile()` creates parent directories, appends with one separating newline or overwrites, reads the resulting content, and immediately reindexes that file. `reindex()` repeats workspace discovery and indexing.
+`writeFile()` creates parent directories, appends with one separating newline or overwrites, reads the resulting content, and immediately reindexes that file. `reindex()` repeats Agent Home discovery and indexing.
 
 ## 4. Embeddings and degradation
 
@@ -74,10 +74,10 @@ Runtime publishes required builtin Unit `builtin-memory-tools` only when a `Memo
 | Tool | Current behavior |
 |---|---|
 | `memory_search` | validates a non-empty query, accepts optional `maxResults`/`minScore`, runs retrieval, and formats scored path/line results |
-| `memory_get` | reads `MEMORY.md` or any string that starts with `memory/` and ends with `.md`, optionally from a 1-based start line for a requested count; this syntactic predicate permits nested and traversal-shaped input |
+| `memory_get` | reads `MEMORY.md` or any string that starts with `memory/` and ends with `.md`, optionally from a 1-based start line for a requested count; the Manager rejects lexical escape outside Agent Home |
 | `memory_write` | appends by default or overwrites; accepts `MEMORY.md` or `memory/YYYY-MM-DD.md`, then immediately reindexes full content |
 
-The Tool predicates are distinct from startup/reindex discovery: the Indexer discovers only `MEMORY.md` and direct Markdown children of `memory/`. Files addressed through a broader `memory_get` path are not thereby added to that discovery set. The generic Tool boundary does not add a second canonical containment check beyond these current predicates.
+The Tool predicates are distinct from startup/reindex discovery: the Indexer discovers only `MEMORY.md` and direct Markdown children of `memory/`. Files addressed through a broader `memory_get` path are not thereby added to that discovery set. `MemoryManager` resolves reads and writes against Agent Home and rejects lexical traversal outside that owner boundary; this is containment, not a general permission system.
 
 Tool execution converts read/write failures into failed Tool outcomes. Generic Tool validation, policy, approval, and execution semantics belong to [Tools](tools.md).
 

@@ -46,7 +46,7 @@ describe('SystemPromptBuilder', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
         contextFiles: [{ path: 'IDENTITY.md', content: '# test' }],
-        workspaceDir: '/work',
+        workingDir: '/work',
       });
       expect(prompt).toContain('# Current Date & Time');
       // tool-definitions section is disabled; tools are passed via LLM API
@@ -227,8 +227,8 @@ describe('SystemPromptBuilder', () => {
   // ── workspace (Section 7) ────────────────────────────────
 
   describe('workspace section (Section 7)', () => {
-    it('renders "# Workspace" with workingDir when workspaceDir is set', () => {
-      const prompt = new SystemPromptBuilder().build({ workspaceDir: '/work/space' });
+    it('renders "# Workspace" with workingDir when workingDir is set', () => {
+      const prompt = new SystemPromptBuilder().build({ workingDir: '/work/space' });
       expect(prompt).toContain('# Workspace');
       expect(prompt).toContain('Your working directory is: /work/space');
     });
@@ -236,20 +236,20 @@ describe('SystemPromptBuilder', () => {
     it('renders workspace section in minimal mode too', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
-        workspaceDir: '/work/space',
+        workingDir: '/work/space',
       });
       expect(prompt).toContain('# Workspace');
     });
 
-    it('skips workspace section when workspaceDir is not provided', () => {
+    it('skips workspace section when workingDir is not provided', () => {
       const prompt = new SystemPromptBuilder().build();
       expect(prompt).not.toContain('# Workspace');
     });
 
-    it('returns empty string in none mode regardless of workspaceDir', () => {
+    it('returns empty string in none mode regardless of workingDir', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'none',
-        workspaceDir: '/work/space',
+        workingDir: '/work/space',
       });
       expect(prompt).toBe('');
     });

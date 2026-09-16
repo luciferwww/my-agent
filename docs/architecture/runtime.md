@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Runtime behavior
-> Verified: 2026-09-15
+> Verified: 2026-09-16
 > Ownership: Runtime composition, publication, generations, Turn orchestration, queues, routing, Fanout, Abort, Shutdown, and Subagent Parent/Child lifecycle
 > Ownership key: runtime-composition-and-lifecycle
 
@@ -23,7 +23,7 @@ Runtime owns:
 
 Runtime delegates the internal Turn algorithm to [Runner](runner.md). Runner owns model calls, Tool/Hook execution, context budgeting, Compaction, and the point at which steering messages are consumed. Runtime supplies an already resolved model, immutable generation projections, prompts, policy, approval capability, steering callback, and Abort signal; it does not execute the Runner loop.
 
-Runtime also does not discover or load Extension files. [Extensions](extensions.md) owns Agent Home discovery, validated scoped configuration, controlled entry loading, and production of not-yet-created `LoadedRuntimeUnit` values. Runtime owns every later create, start, registration staging, publication, retirement, and stop transition.
+Runtime also does not discover or load Extension files. [Extensions](extensions.md) owns install-root discovery, validated scoped configuration, controlled entry loading, and production of not-yet-created `LoadedRuntimeUnit` values. Runtime owns every later create, start, registration staging, publication, retirement, and stop transition.
 
 ## 2. Current source layout
 
@@ -66,7 +66,9 @@ The public Runtime barrel exposes `RuntimeApp`, the frozen-handle contracts, Uni
 
 ```ts
 interface RuntimeAppOptions {
-  workspaceDir: string;
+  agentHome: string;
+  workingDir: string;
+  applicationConfig?: ApplicationConfigProjection;
   loadedUnits?: readonly LoadedRuntimeUnit[];
   deadlinePolicy?: Partial<RuntimeDeadlinePolicy>;
   deadlineDriver?: RuntimeDeadlineDriver;
@@ -79,7 +81,7 @@ interface RuntimeAppOptions {
 }
 ```
 
-`workspaceDir` is the only required caller input. `dependencies` is a narrow construction seam used by tests and embedding; each factory receives only the parameters needed by that component.
+`agentHome` and `workingDir` are distinct required caller inputs. Agent Context, Sessions, Memory and recall, Subagent profiles, logs, and temporary state use `agentHome`; filesystem/search Tools, default Exec context, prompt `# Workspace`, and project-oriented Subagent execution use non-owning `workingDir`. A supported Host supplies the immutable `applicationConfig` projection from the one Agent configuration snapshot; direct library callers may omit it to use hardcoded defaults. `dependencies` is a narrow construction seam used by tests and embedding; each factory receives only the parameters needed by that component.
 
 `onEvent` observes application and lifecycle events. `onAgentEvent` observes Runner/Turn events in parallel with Channel Fanout; one plane does not replace the other.
 
@@ -124,7 +126,7 @@ interface RuntimeHandle {
 flowchart TD
   A[RuntimeApp.create] --> B[buildRuntimeHandle]
   B --> C[bootstrapRuntime]
-  C --> D[Resolve config, configure Logger, initialize Workspace and resources]
+  C --> D[Resolve config, configure Logger, initialize Agent Context and resources]
   D --> E[Assemble bundled, builtin, Task, and options.loadedUnits]
   E --> F[RuntimeCompositionManager.start]
   F --> G[Create, stage, start, and prepare Unit instances]
@@ -134,7 +136,7 @@ flowchart TD
   J --> K[Emit app_ready, then startup warning projections]
 ```
 
-`RuntimeApp.create()` delegates to the Builder. `bootstrapRuntime()` is limited to shared prerequisites: configuration, Logger, Workspace/context cache, Session, Prompt builders, optional Memory, Tool policy, and Runner construction. Runtime is the only runtime layer that calls `loadConfig()` and `resolveAgentConfig()`; lower layers receive projected parameters.
+`RuntimeApp.create()` delegates to the Builder. `bootstrapRuntime()` is limited to shared prerequisites: injected Application configuration, Logger, Agent Context cache, Session, Prompt builders, optional Memory, Tool policy, and Runner construction. Runtime calls `resolveAgentConfig()` but never reads configuration files; lower layers receive projected parameters.
 
 The Unit catalog validates identifiers, sources, dependencies, required/enabled state, duplicate IDs, and dependency cycles. Deterministic order is dependency-aware, with builtin Units before external Units and then ordinal `orderKey`/Unit ID order. Required Units must start enabled and cannot be disabled. Enable/disable preflight rejects unknown Units, inactive dependencies, required Unit removal, and removal required by another active Unit.
 

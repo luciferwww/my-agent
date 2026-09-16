@@ -3,7 +3,7 @@ import type {
   ModelCatalogSnapshot,
 } from '../core/channel/index.js';
 import type { AvailableSubagentEntry } from '../core/subagent/index.js';
-import type { ContextFile } from '../core/workspace/index.js';
+import type { ContextFile } from '../core/agent-context/index.js';
 import type {
   RunTurnParams,
   RunTurnResult,

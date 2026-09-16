@@ -1,4 +1,4 @@
-import type { ContextFile } from '../workspace/types.js';
+import type { ContextFile } from '../agent-context/types.js';
 import type { AvailableSubagentEntry } from '../subagent/available-subagents.js';
 
 export type { ContextFile };
@@ -77,12 +77,12 @@ export interface SystemPromptBuildParams {
    * 工作目录绝对路径。
    *
   * 主 agent 由 prompt-factory 注入；subagent 由 Child executor 从
-  * Child executor 的 workspace dependency 注入。任何 mode（除 `'none'`）
+  * Child executor 的 working-directory dependency 注入。任何 mode（除 `'none'`）
    * 都注入对应的 `# Workspace` section（spec §11 Section 7）。
    *
    * v1 PR-3 接受字段但未渲染；实际渲染逻辑由 PR-5 添加。
    */
-  workspaceDir?: string;
+  workingDir?: string;
   /**
    * `<available-subagents>` section 的条目列表（spec §11 Section 8）。
    *

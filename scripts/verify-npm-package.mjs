@@ -1,0 +1,424 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { createServer } from 'node:net';
+import { access, mkdir, mkdtemp, readdir, readFile, readlink, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import WebSocket from 'ws';
+
+import { auditNpmPackage } from './audit-npm-package.mjs';
+
+const REPOSITORY_ROOT = fileURLToPath(new URL('..', import.meta.url));
+const PROCESS_TIMEOUT_MS = 60_000;
+
+async function main() {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), 'my-agent-package-'));
+  const installationProject = join(temporaryRoot, 'installation-project');
+  const workingDir = join(temporaryRoot, 'working-directory');
+  const homeDirectory = join(temporaryRoot, 'home');
+  const agentHome = join(homeDirectory, '.my-agent');
+  let host;
+  let packageFileCount;
+  let failure;
+  let failed = false;
+  try {
+    await Promise.all([
+      mkdir(installationProject, { recursive: true }),
+      mkdir(workingDir, { recursive: true }),
+      mkdir(agentHome, { recursive: true }),
+    ]);
+    const manifest = JSON.parse(await readFile(join(REPOSITORY_ROOT, 'package.json'), 'utf8'));
+    const lockfile = JSON.parse(await readFile(join(REPOSITORY_ROOT, 'package-lock.json'), 'utf8'));
+    const packResult = await runNpm(
+      ['pack', '--json', '--pack-destination', temporaryRoot],
+      REPOSITORY_ROOT,
+    );
+    const packed = parsePackResult(packResult.stdout);
+    const files = auditNpmPackage(packed, manifest, lockfile);
+    const tarball = join(temporaryRoot, basename(packed[0].filename));
+
+    await writeFile(join(installationProject, 'package.json'), '{"private":true,"type":"module"}\n');
+    await runNpm(
+      ['install', '--no-audit', '--no-fund', tarball],
+      installationProject,
+      PROCESS_TIMEOUT_MS,
+    );
+    await access(join(installationProject, 'node_modules', '.bin', executableName('my-agent')));
+
+    const isolatedEnvironment = createIsolatedHomeEnvironment(homeDirectory);
+
+    const fatal = await runInstalledCommand(
+      installationProject,
+      workingDir,
+      ['--unknown-package-smoke'],
+      PROCESS_TIMEOUT_MS,
+      isolatedEnvironment,
+    );
+    assert(fatal.code === 1, `Installed command fatal smoke exited with ${String(fatal.code)}.`);
+    assert(
+      fatal.stdout === '',
+      'Installed command emitted unexpected standard output at the fatal boundary.',
+    );
+    assert(
+      fatal.stderr === 'HOST_ARGUMENT_INVALID: Unknown argument --unknown-package-smoke.\n',
+      'Installed command emitted an unexpected fatal diagnostic.',
+    );
+
+    const webSocketPort = await reserveLoopbackPort();
+    await writeFile(join(agentHome, 'config.json'), `${JSON.stringify({
+      host: {
+        mode: 'websocket',
+        websocket: { host: '127.0.0.1', port: webSocketPort, path: '/ws', approval: true },
+      },
+    }, null, 2)}\n`);
+    const installDir = join(installationProject, 'node_modules', 'my-agent');
+    const installationBefore = await snapshotTree(installDir);
+    const workingDirectoryBefore = await snapshotTree(workingDir);
+    host = startInstalledCommand(
+      installationProject,
+      workingDir,
+      [],
+      isolatedEnvironment,
+    );
+    const client = await connectWithRetry(
+      `ws://127.0.0.1:${webSocketPort}/ws`,
+      host,
+      PROCESS_TIMEOUT_MS,
+    );
+    try {
+      client.send(JSON.stringify({ type: 'hello', clientId: 'installed-package-smoke' }));
+      const message = await nextJsonMessage(client, PROCESS_TIMEOUT_MS);
+      assert(message.type === 'hello_ack', 'Installed Host returned no WebSocket hello acknowledgement.');
+      assert(
+        message.clientId === 'installed-package-smoke',
+        'Installed Host returned an unexpected WebSocket client identity.',
+      );
+    } finally {
+      client.close();
+    }
+    await stopChild(host);
+    host = undefined;
+    await Promise.all([
+      access(join(agentHome, 'config.json')),
+      access(join(agentHome, 'IDENTITY.md')),
+      access(join(agentHome, 'SOUL.md')),
+      access(join(agentHome, 'AGENTS.md')),
+      access(join(agentHome, 'TOOLS.md')),
+      access(join(agentHome, 'memory.sqlite')),
+    ]);
+    assertTreeUnchanged(
+      installationBefore,
+      await snapshotTree(installDir),
+      'Installed package',
+    );
+    assertTreeUnchanged(
+      workingDirectoryBefore,
+      await snapshotTree(workingDir),
+      'Working directory',
+    );
+
+    packageFileCount = files.length;
+  } catch (error) {
+    failed = true;
+    failure = error;
+  } finally {
+    const cleanupErrors = [];
+    if (host) {
+      await attemptCleanup(() => stopChild(host), cleanupErrors);
+    }
+    await attemptCleanup(
+      () => rm(temporaryRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
+      cleanupErrors,
+    );
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        failed ? [failure, ...cleanupErrors] : cleanupErrors,
+        'npm package verification cleanup failed.',
+      );
+    }
+  }
+  if (failed) throw failure;
+  console.log(`Verified npm package (${packageFileCount} files) and installed my-agent command.`);
+}
+
+function parsePackResult(stdout) {
+  const jsonStart = stdout.lastIndexOf('\n[');
+  const candidates = [stdout.trim(), ...(jsonStart < 0 ? [] : [stdout.slice(jsonStart + 1).trim()])];
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (Array.isArray(parsed) && parsed.length === 1 && typeof parsed[0]?.filename === 'string') {
+        return parsed;
+      }
+    } catch {
+      // Expected when npm includes prepack lifecycle output before its JSON report.
+    }
+  }
+  throw new Error('Could not parse the npm pack --json result.');
+}
+
+async function runNpm(args, cwd, timeoutMs = PROCESS_TIMEOUT_MS) {
+  const npmCli = process.env['npm_execpath'];
+  const child = spawnManaged(npmCli === undefined ? npmCommand() : process.execPath, [
+    ...(npmCli === undefined ? [] : [npmCli]),
+    ...args,
+  ], {
+    cwd,
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+    ...(npmCli === undefined && process.platform === 'win32' ? { shell: true } : {}),
+  });
+  const result = await collectChild(child, timeoutMs);
+  if (result.code !== 0) {
+    throw new Error(
+      `npm ${args[0]} failed with exit ${String(result.code)}:\n${redactSubprocessOutput(result.stderr, cwd)}`,
+    );
+  }
+  return result;
+}
+
+async function runInstalledCommand(binRoot, cwd, args, timeoutMs, environment) {
+  return collectChild(startInstalledCommand(binRoot, cwd, args, environment), timeoutMs);
+}
+
+function startInstalledCommand(binRoot, cwd, args, environment) {
+  const bin = resolve(binRoot, 'node_modules', '.bin', executableName('my-agent'));
+  if (process.platform === 'win32') {
+    return spawnManaged(process.env['COMSPEC'] ?? 'cmd.exe', ['/d', '/s', '/c', bin, ...args], {
+      cwd,
+      env: environment,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+  }
+  return spawnManaged(bin, args, {
+    cwd,
+    env: environment,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+export function createIsolatedHomeEnvironment(homeDirectory, environment = process.env) {
+  return {
+    ...environment,
+    HOME: homeDirectory,
+    USERPROFILE: homeDirectory,
+  };
+}
+
+export async function snapshotTree(root, relativeDir = '') {
+  const snapshot = {};
+  const entries = await readdir(join(root, relativeDir), { withFileTypes: true });
+  entries.sort((left, right) => left.name.localeCompare(right.name));
+  for (const entry of entries) {
+    const relativePath = join(relativeDir, entry.name);
+    if (entry.isDirectory()) {
+      snapshot[relativePath] = 'directory';
+      Object.assign(snapshot, await snapshotTree(root, relativePath));
+    } else if (entry.isFile()) {
+      snapshot[relativePath] = `file:${await readFile(join(root, relativePath), 'base64')}`;
+    } else if (entry.isSymbolicLink()) {
+      snapshot[relativePath] = `symlink:${await readlink(join(root, relativePath))}`;
+    } else {
+      throw new Error(`Unsupported tree entry in immutability snapshot: ${relativePath}`);
+    }
+  }
+  return snapshot;
+}
+
+export function assertTreeUnchanged(before, after, label) {
+  assert(
+    JSON.stringify(after) === JSON.stringify(before),
+    `${label} changed during Runtime operation.`,
+  );
+}
+
+async function attemptCleanup(action, errors) {
+  try {
+    await action();
+  } catch (error) {
+    errors.push(error);
+  }
+}
+
+export async function collectChild(child, timeoutMs) {
+  const stdout = [];
+  const stderr = [];
+  child.stdout.on('data', (chunk) => stdout.push(chunk.toString('utf8')));
+  child.stderr.on('data', (chunk) => stderr.push(chunk.toString('utf8')));
+  let timeout;
+  const exited = once(child, 'exit').then(([code, signal]) => ({ code, signal }));
+  const deadline = new Promise((resolveDeadline) => {
+    timeout = setTimeout(() => resolveDeadline(undefined), timeoutMs);
+  });
+  const result = await Promise.race([exited, deadline]);
+  clearTimeout(timeout);
+  if (result === undefined) {
+    await terminateChildTree(child);
+    await exited;
+    throw new Error(`Subprocess timed out after ${timeoutMs} ms.`);
+  }
+  return { ...result, stdout: stdout.join(''), stderr: stderr.join('') };
+}
+
+function spawnManaged(command, args, options) {
+  return spawn(command, args, {
+    ...options,
+    detached: process.platform !== 'win32',
+  });
+}
+
+export function redactSubprocessOutput(output, cwd, environment = process.env) {
+  let redacted = output.replaceAll(cwd, '<working-directory>');
+  for (const [name, value] of Object.entries(environment)) {
+    if (!/(?:AUTH|CREDENTIAL|KEY|PASS|SECRET|TOKEN)/iu.test(name) || !value) continue;
+    redacted = redacted.replaceAll(value, '<redacted>');
+  }
+  return redacted;
+}
+
+export async function connectWithRetry(url, child, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`Installed Host exited before WebSocket startup with ${String(child.exitCode)}.`);
+    }
+    const remainingMs = deadline - Date.now();
+    try {
+      return await connectWebSocket(url, Math.min(1_000, remainingMs));
+    } catch {
+      if (Date.now() >= deadline) break;
+      await new Promise((resolveDelay) => setTimeout(
+        resolveDelay,
+        Math.min(50, deadline - Date.now()),
+      ));
+    }
+  }
+  throw new Error('Installed Host WebSocket startup timed out.');
+}
+
+function connectWebSocket(url, timeoutMs) {
+  return new Promise((resolveConnection, rejectConnection) => {
+    const client = new WebSocket(url);
+    const timeout = setTimeout(() => {
+      client.terminate();
+      rejectConnection(new Error('WebSocket connection attempt timed out.'));
+    }, timeoutMs);
+    client.once('open', () => {
+      clearTimeout(timeout);
+      resolveConnection(client);
+    });
+    client.once('error', (error) => {
+      clearTimeout(timeout);
+      rejectConnection(error);
+    });
+  });
+}
+
+function nextJsonMessage(client, timeoutMs) {
+  return new Promise((resolveMessage, rejectMessage) => {
+    const timeout = setTimeout(() => rejectMessage(new Error('WebSocket reply timed out.')), timeoutMs);
+    client.once('message', (data) => {
+      clearTimeout(timeout);
+      try {
+        resolveMessage(JSON.parse(data.toString()));
+      } catch (error) {
+        rejectMessage(error);
+      }
+    });
+  });
+}
+
+async function reserveLoopbackPort() {
+  const server = createServer();
+  server.unref();
+  await new Promise((resolveListen, rejectListen) => {
+    server.once('error', rejectListen);
+    server.listen(0, '127.0.0.1', resolveListen);
+  });
+  const address = server.address();
+  if (address === null || typeof address === 'string') {
+    throw new Error('WebSocket address is unavailable.');
+  }
+  await new Promise((resolveClose, rejectClose) => {
+    server.close((error) => error ? rejectClose(error) : resolveClose());
+  });
+  return address.port;
+}
+
+async function waitForExit(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) return true;
+  let timeout;
+  const result = await Promise.race([
+    once(child, 'exit').then(() => true),
+    new Promise((resolveDeadline) => {
+      timeout = setTimeout(() => resolveDeadline(false), timeoutMs);
+    }),
+  ]);
+  clearTimeout(timeout);
+  return result;
+}
+
+export async function terminateChildTree(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform === 'win32' && child.pid !== undefined) {
+    let treeKilled = false;
+    for (let attempt = 0; attempt < 2 && !treeKilled; attempt += 1) {
+      const killer = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      treeKilled = await waitForExit(killer, 5_000) && killer.exitCode === 0;
+      if (!treeKilled && (child.exitCode !== null || child.signalCode !== null)) return;
+    }
+    if (!treeKilled) {
+      throw new Error('Windows subprocess tree termination failed after two taskkill attempts.');
+    }
+    if (await waitForExit(child, 2_000)) return;
+    child.kill('SIGKILL');
+    if (!await waitForExit(child, 2_000)) {
+      throw new Error('Subprocess tree did not terminate within the cleanup deadline.');
+    }
+    return;
+  }
+  if (child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, 'SIGTERM');
+    } catch {
+      child.kill('SIGTERM');
+    }
+  }
+  if (await waitForExit(child, 2_000)) return;
+  if (child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      child.kill('SIGKILL');
+    }
+  }
+  if (!await waitForExit(child, 2_000)) {
+    throw new Error('Subprocess tree did not terminate within the cleanup deadline.');
+  }
+}
+
+async function stopChild(child) {
+  await terminateChildTree(child);
+}
+
+function executableName(name) {
+  return process.platform === 'win32' ? `${name}.cmd` : name;
+}
+
+function npmCommand() {
+  return process.platform === 'win32' ? 'npm.cmd' : 'npm';
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+const invokedPath = process.argv[1] ? resolve(process.argv[1]) : undefined;
+if (invokedPath === fileURLToPath(import.meta.url)) await main();

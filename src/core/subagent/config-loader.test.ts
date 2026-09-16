@@ -159,13 +159,13 @@ describe('loadSubagentProfiles — tools.allow', () => {
 // ── projection to SubagentProfile ────────────────────────────
 
 describe('loadSubagentProfiles — projection', () => {
-  it('derives agentDir as <workspaceDir>/.agent/subagents/<id>/', () => {
+  it('derives agentDir as <agentHome>/subagents/<id>/', () => {
     const profiles = loadSubagentProfiles(
       [entry({ id: 'reviewer' })],
       '/work/space',
       REGISTERED,
     );
-    expect(profiles[0]!.agentDir).toBe(join('/work/space', '.agent', 'subagents', 'reviewer'));
+    expect(profiles[0]!.agentDir).toBe(join('/work/space', 'subagents', 'reviewer'));
   });
 
   it('preserves model / maxLlmCalls / tools verbatim', () => {
@@ -218,7 +218,7 @@ describe('buildGeneralPurposeProfile', () => {
   it('derives agentDir via the same rule as named profiles', () => {
     const profile = buildGeneralPurposeProfile('/work/space');
     expect(profile.agentDir).toBe(
-      join('/work/space', '.agent', 'subagents', 'general-purpose'),
+      join('/work/space', 'subagents', 'general-purpose'),
     );
   });
 

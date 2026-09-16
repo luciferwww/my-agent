@@ -14,7 +14,7 @@ import type {
   SubagentTerminalResult,
 } from '../core/subagent/types.js';
 import type { SubagentExecutor } from '../core/subagent/SubagentExecutor.js';
-import type { ContextFile } from '../core/workspace/types.js';
+import type { ContextFile } from '../core/agent-context/types.js';
 import { Logger } from '../platform/logger/index.js';
 import type { MessageRouteContext } from './queue-types.js';
 

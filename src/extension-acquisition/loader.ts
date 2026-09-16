@@ -25,16 +25,16 @@ const EMPTY_RESULT: ExtensionAcquisitionResult = Object.freeze({
 export async function acquireExtensions(
   options: ExtensionAcquisitionOptions,
 ): Promise<ExtensionAcquisitionResult> {
-  if (!options.hostConfig.enabled) return EMPTY_RESULT;
+  if (!options.extensionsConfig.enabled) return EMPTY_RESULT;
 
-  const discovery = await discoverExtensionDescriptors(options.agentHome);
+  const discovery = await discoverExtensionDescriptors(options.extensionsDir);
   const diagnostics: ExtensionAcquisitionDiagnostic[] = [...discovery.diagnostics];
   const installedIds = new Set(discovery.candidates.map((candidate) => candidate.descriptor.id));
   for (const diagnostic of discovery.diagnostics) {
     if (diagnostic.extensionId !== undefined) installedIds.add(diagnostic.extensionId);
   }
 
-  for (const configuredId of Object.keys(options.hostConfig.entries)) {
+  for (const configuredId of Object.keys(options.extensionsConfig.entries)) {
     if (!installedIds.has(configuredId)) {
       diagnostics.push(createLoaderDiagnostic(
         'config_invalid',
@@ -48,8 +48,8 @@ export async function acquireExtensions(
   for (const candidate of discovery.candidates) {
     const outcome = await loadExtensionCandidate(
       candidate,
-      options.agentHome,
-      options.hostConfig,
+      options.extensionsDir,
+      options.extensionsConfig,
       options.environment ?? process.env,
     );
     if ('unit' in outcome) loadedUnits.push(outcome.unit);
@@ -65,15 +65,15 @@ export async function acquireExtensions(
 
 export async function loadExtensionCandidate(
   candidate: ExtensionCandidate,
-  agentHome: string,
-  hostConfig: ResolvedHostExtensionsConfig,
+  extensionsDir: string,
+  extensionsConfig: ResolvedHostExtensionsConfig,
   environment: Readonly<Record<string, string | undefined>>,
 ): Promise<Readonly<{ unit: LoadedRuntimeUnit }> | Readonly<{
   diagnostic: ExtensionLoaderDiagnostic;
 }>> {
   const extensionId = candidate.descriptor.id;
   const locator = formatDiagnosticLocator(basename(candidate.installationPath));
-  const rawEntry = hostConfig.entries[extensionId];
+  const rawEntry = extensionsConfig.entries[extensionId];
 
   if (rawEntry === undefined) {
     return diagnosticOutcome('disabled', 'extension_disabled', extensionId, locator);
@@ -114,7 +114,7 @@ export async function loadExtensionCandidate(
     });
   }
 
-  const revalidatedEntryPath = await revalidateEntryPath(candidate, agentHome);
+  const revalidatedEntryPath = await revalidateEntryPath(candidate, extensionsDir);
   if (revalidatedEntryPath === undefined) {
     return diagnosticOutcome(
       'entry_load_failed',
@@ -157,11 +157,11 @@ export async function loadExtensionCandidate(
 
 async function revalidateEntryPath(
   candidate: ExtensionCandidate,
-  agentHome: string,
+  extensionsDir: string,
 ): Promise<string | undefined> {
   try {
-    const [canonicalAgentHome, installationStats, entryStats] = await Promise.all([
-      realpath(agentHome),
+    const [canonicalExtensionsDir, installationStats, entryStats] = await Promise.all([
+      realpath(extensionsDir),
       lstat(candidate.installationPath),
       lstat(candidate.entryPath),
     ]);
@@ -178,7 +178,7 @@ async function revalidateEntryPath(
     ]);
     if (canonicalInstallationPath !== candidate.installationPath
       || canonicalEntryPath !== candidate.entryPath
-      || !isContainedPath(canonicalAgentHome, canonicalInstallationPath)
+      || !isContainedPath(canonicalExtensionsDir, canonicalInstallationPath)
       || !isContainedPath(canonicalInstallationPath, canonicalEntryPath)) {
       return undefined;
     }

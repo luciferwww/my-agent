@@ -2,7 +2,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type { Tool } from '../../../../core/tools/types.js';
-import { resolveWorkspacePath } from '../common/path-policy.js';
+import { resolveWorkingPath } from '../common/path-policy.js';
 import { applyUpdateHunk, type UpdateFileChunk } from './apply-patch-update.js';
 
 const BEGIN_PATCH_MARKER = '*** Begin Patch';
@@ -224,7 +224,7 @@ async function ensureParentDir(filePath: string): Promise<void> {
   await mkdir(parentDir, { recursive: true });
 }
 
-export function createApplyPatchTool(workspaceDir: string, workspaceOnly = true): Tool {
+export function createApplyPatchTool(workingDir: string, workingDirOnly = true): Tool {
   return {
     name: 'apply_patch',
     description: 'Apply a multi-file patch using the *** Begin Patch / *** End Patch format.',
@@ -260,7 +260,7 @@ export function createApplyPatchTool(workspaceDir: string, workspaceOnly = true)
 
         for (const hunk of hunks) {
           if (hunk.kind === 'add') {
-            const target = resolveWorkspacePath(hunk.path, workspaceDir, workspaceOnly);
+            const target = resolveWorkingPath(hunk.path, workingDir, workingDirOnly);
             await ensureParentDir(target.resolvedPath);
             await writeFile(target.resolvedPath, hunk.contents, 'utf8');
             recordSummary(summary, 'added', target.displayPath);
@@ -268,19 +268,19 @@ export function createApplyPatchTool(workspaceDir: string, workspaceOnly = true)
           }
 
           if (hunk.kind === 'delete') {
-            const target = resolveWorkspacePath(hunk.path, workspaceDir, workspaceOnly);
+            const target = resolveWorkingPath(hunk.path, workingDir, workingDirOnly);
             await rm(target.resolvedPath);
             recordSummary(summary, 'deleted', target.displayPath);
             continue;
           }
 
-          const target = resolveWorkspacePath(hunk.path, workspaceDir, workspaceOnly);
+          const target = resolveWorkingPath(hunk.path, workingDir, workingDirOnly);
           const updatedContent = await applyUpdateHunk(target.resolvedPath, hunk.chunks, {
             readFile: (filePath) => readFile(filePath, 'utf8'),
           });
 
           if (hunk.movePath) {
-            const moveTarget = resolveWorkspacePath(hunk.movePath, workspaceDir, workspaceOnly);
+            const moveTarget = resolveWorkingPath(hunk.movePath, workingDir, workingDirOnly);
             await ensureParentDir(moveTarget.resolvedPath);
             await writeFile(moveTarget.resolvedPath, updatedContent, 'utf8');
             await rm(target.resolvedPath);

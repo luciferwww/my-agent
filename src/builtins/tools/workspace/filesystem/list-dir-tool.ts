@@ -1,7 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
 
 import type { Tool } from '../../../../core/tools/types.js';
-import { resolveWorkspacePath } from '../common/path-policy.js';
+import { resolveWorkingPath } from '../common/path-policy.js';
 
 function formatDirectoryListing(displayPath: string, entries: Array<{ name: string; type: 'file' | 'dir' }>) {
   if (entries.length === 0) {
@@ -15,7 +15,7 @@ function formatDirectoryListing(displayPath: string, entries: Array<{ name: stri
   ].join('\n');
 }
 
-export function createListDirTool(workspaceDir: string, workspaceOnly = true): Tool {
+export function createListDirTool(workingDir: string, workingDirOnly = true): Tool {
   return {
     name: 'list_dir',
     description: 'List the direct children of a directory inside the workspace.',
@@ -31,7 +31,7 @@ export function createListDirTool(workspaceDir: string, workspaceOnly = true): T
     },
     execute: async (params) => {
       try {
-        const target = resolveWorkspacePath(params.path, workspaceDir, workspaceOnly);
+        const target = resolveWorkingPath(params.path, workingDir, workingDirOnly);
         const targetStat = await stat(target.resolvedPath);
         if (!targetStat.isDirectory()) {
           return {

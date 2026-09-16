@@ -42,9 +42,9 @@ describe('listDirTool', () => {
     expect(result.content).toContain('path is not a directory');
   });
 
-  it('rejects paths outside the workspace', async () => {
+  it('rejects paths outside the working directory', async () => {
     const result = await listDirTool.execute({ path: '..' }, TEST_TOOL_CONTEXT);
     expect(result.outcome).toBe('failed');
-    expect(result.content).toContain('outside the workspace');
+    expect(result.content).toContain('outside the working directory');
   });
 });

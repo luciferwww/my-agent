@@ -123,6 +123,21 @@ describe('MemoryManager', () => {
     await expect(manager.readFile('memory.md', 2, 2)).resolves.toBe('two\nthree');
   });
 
+  it('rejects reads and writes outside Agent Home', async () => {
+    const store = createStore();
+    const manager = createManager(
+      workspaceDir,
+      store,
+      { indexAll: vi.fn(), indexFile: vi.fn() },
+      { search: vi.fn().mockResolvedValue([]) },
+      { record: vi.fn() },
+    );
+
+    await expect(manager.readFile('../outside.md')).rejects.toThrow('must stay within Agent Home');
+    await expect(manager.writeFile('../outside.md', 'escaped', 'overwrite'))
+      .rejects.toThrow('must stay within Agent Home');
+  });
+
   it('overwrites a file and reindexes the new content', async () => {
     const store = createStore();
     const indexer = { indexAll: vi.fn(), indexFile: vi.fn().mockResolvedValue(undefined) };
@@ -161,7 +176,7 @@ describe('MemoryManager', () => {
     expect(indexer.indexFile).toHaveBeenCalledWith('memory/append.md', 'first line\nsecond line');
   });
 
-  it('reindexes the workspace and closes the backing store', async () => {
+  it('reindexes Agent Home and closes the backing store', async () => {
     const store = createStore();
     const indexer = { indexAll: vi.fn().mockResolvedValue(undefined), indexFile: vi.fn() };
     const manager = createManager(
@@ -185,27 +200,27 @@ describe('MemoryManager', () => {
     vi.mocked(createEmbeddingProvider).mockResolvedValue(null);
     const indexAllSpy = vi.spyOn(MemoryIndexer.prototype, 'indexAll').mockResolvedValue(undefined);
 
-    const manager = await MemoryManager.create({ workspaceDir });
+    const manager = await MemoryManager.create({ agentHome: workspaceDir });
 
     expect(createEmbeddingProvider).toHaveBeenCalledWith(undefined);
-    expect(SqliteMemoryStore).toHaveBeenCalledWith(join(workspaceDir, '.agent', 'memory.sqlite'));
+    expect(SqliteMemoryStore).toHaveBeenCalledWith(join(workspaceDir, 'memory.sqlite'));
     expect(indexAllSpy).toHaveBeenCalledWith(workspaceDir);
-    expect((manager as unknown as { workspaceDir: string }).workspaceDir).toBe(workspaceDir);
+    expect((manager as unknown as { agentHome: string }).agentHome).toBe(workspaceDir);
     expect((manager as unknown as { store: MemoryStore }).store).toBe(store);
     expect((manager as unknown as { embeddingProvider: unknown }).embeddingProvider).toBeNull();
   });
 
-  it('create() writes DB to the convention path <workspaceDir>/.agent/memory.sqlite', async () => {
+  it('create() writes DB to the convention path <agentHome>/memory.sqlite', async () => {
     const store = createStore();
     const embeddingProvider = { embed: vi.fn(), dimensions: 3, modelId: 'mock-model' };
-    const expectedDbPath = join(workspaceDir, '.agent', 'memory.sqlite');
+    const expectedDbPath = join(workspaceDir, 'memory.sqlite');
 
     vi.mocked(SqliteMemoryStore).mockImplementation(() => store as never);
     vi.mocked(createEmbeddingProvider).mockResolvedValue(embeddingProvider);
     const indexAllSpy = vi.spyOn(MemoryIndexer.prototype, 'indexAll').mockResolvedValue(undefined);
 
     const manager = await MemoryManager.create({
-      workspaceDir,
+      agentHome: workspaceDir,
       enabled: true,
       embedding: { provider: 'local', model: 'custom-model' },
     });

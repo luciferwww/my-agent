@@ -14,7 +14,7 @@ function profile(id: string, overrides: Partial<SubagentProfile> = {}): Subagent
   return {
     id,
     description: `${id} subagent`,
-    agentDir: `/ws/.agent/subagents/${id}`,
+    agentDir: `/ws/subagents/${id}`,
     model: 'inherit',
     ...overrides,
   };

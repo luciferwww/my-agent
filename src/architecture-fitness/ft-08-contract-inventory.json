@@ -119,18 +119,53 @@
     "negative": ["src/runtime/runtime-unit.test.ts"]
   },
   {
+    "contract": "AgentPathContext",
+    "source": "src/hosts/path-context.ts",
+    "kind": "path-context",
+    "positive": ["src/hosts/standalone/path-context.test.ts", "src/hosts/standalone/standalone-host.test.ts"],
+    "negative": ["src/hosts/standalone/path-context.test.ts"]
+  },
+  {
+    "contract": "resolveStandaloneHostPathContext",
+    "source": "src/hosts/standalone/path-context.ts",
+    "kind": "host-path-resolution",
+    "positive": ["src/hosts/standalone/path-context.test.ts"],
+    "negative": ["src/hosts/standalone/path-context.test.ts"]
+  },
+  {
+    "contract": "ApplicationConfigProjection",
+    "source": "src/platform/config/types.ts",
+    "kind": "config-projection",
+    "positive": ["src/platform/config/agent-config-loader.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/platform/config/agent-config-loader.test.ts", "src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "AgentConfigSnapshot",
+    "source": "src/platform/config/agent-config-loader.ts",
+    "kind": "config-snapshot",
+    "positive": ["src/platform/config/agent-config-loader.test.ts"],
+    "negative": ["src/platform/config/agent-config-loader.test.ts"]
+  },
+  {
+    "contract": "AgentConfigError",
+    "source": "src/platform/config/agent-config-errors.ts",
+    "kind": "error",
+    "positive": ["src/platform/config/agent-config-loader.test.ts"],
+    "negative": ["src/platform/config/agent-config-loader.test.ts"]
+  },
+  {
+    "contract": "loadAgentConfig",
+    "source": "src/platform/config/agent-config-loader.ts",
+    "kind": "agent-config-reader",
+    "positive": ["src/platform/config/agent-config-loader.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/platform/config/agent-config-loader.test.ts"]
+  },
+  {
     "contract": "ExtensionDescriptorV1",
     "source": "src/extension-acquisition/types.ts",
     "kind": "extension-descriptor",
     "positive": ["src/extension-acquisition/discovery.test.ts"],
     "negative": ["src/extension-acquisition/discovery.test.ts"]
-  },
-  {
-    "contract": "HostConfig",
-    "source": "src/extension-acquisition/types.ts",
-    "kind": "host-config",
-    "positive": ["src/extension-acquisition/host-config.test.ts"],
-    "negative": ["src/extension-acquisition/host-config.test.ts"]
   },
   {
     "contract": "ExtensionDiscoveryResult",
@@ -143,22 +178,8 @@
     "contract": "ExtensionAcquisitionFatalError",
     "source": "src/extension-acquisition/errors.ts",
     "kind": "error",
-    "positive": ["src/extension-acquisition/agent-home.test.ts", "src/extension-acquisition/host-config.test.ts", "src/extension-acquisition/discovery.test.ts"],
-    "negative": ["src/extension-acquisition/agent-home.test.ts", "src/extension-acquisition/host-config.test.ts", "src/extension-acquisition/discovery.test.ts"]
-  },
-  {
-    "contract": "resolveAgentHome",
-    "source": "src/extension-acquisition/agent-home.ts",
-    "kind": "agent-home-resolution",
-    "positive": ["src/extension-acquisition/agent-home.test.ts"],
-    "negative": ["src/extension-acquisition/agent-home.test.ts"]
-  },
-  {
-    "contract": "readHostExtensionsConfig",
-    "source": "src/extension-acquisition/host-config.ts",
-    "kind": "host-config-reader",
-    "positive": ["src/extension-acquisition/host-config.test.ts"],
-    "negative": ["src/extension-acquisition/host-config.test.ts"]
+    "positive": ["src/extension-acquisition/discovery.test.ts"],
+    "negative": ["src/extension-acquisition/discovery.test.ts"]
   },
   {
     "contract": "discoverExtensionDescriptors",

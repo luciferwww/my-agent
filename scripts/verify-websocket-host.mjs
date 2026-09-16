@@ -1,12 +1,18 @@
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, cp, lstat, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import WebSocket from 'ws';
+
+import {
+  assertTreeUnchanged,
+  createIsolatedHomeEnvironment,
+  snapshotTree,
+} from './verify-npm-package.mjs';
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const ARTIFACT_ROOT = join(
@@ -15,7 +21,8 @@ const ARTIFACT_ROOT = join(
   'extension-artifacts',
   'copilot-relay-provider',
 );
-const HOST_ENTRY = join(REPOSITORY_ROOT, 'scripts', 'server.ts');
+const HOST_ENTRY = join(REPOSITORY_ROOT, 'dist', 'host', 'hosts', 'standalone', 'entry.js');
+const EXTENSIONS_ROOT = join(REPOSITORY_ROOT, 'extensions');
 const API_KEY = 'websocket-host-smoke-secret';
 const MODEL_ID = 'smoke-model';
 const TIMEOUT_MS = 15_000;
@@ -23,17 +30,31 @@ const HOST_START_TIMEOUT_MS = 60_000;
 
 async function main() {
   await assertBuildInputs();
-  const agentHome = await mkdtemp(join(tmpdir(), 'my-agent-websocket-host-'));
+  const temporaryRoot = await mkdtemp(join(tmpdir(), 'my-agent-websocket-host-'));
+  const homeDirectory = join(temporaryRoot, 'home');
+  const agentHome = join(homeDirectory, '.my-agent');
+  const workingDir = join(temporaryRoot, 'working-directory');
   let relay;
   let child;
   let client;
+  let provisionedExtensions = false;
+  let failure;
+  let failed = false;
   const output = [];
 
   try {
+    await Promise.all([
+      mkdir(agentHome, { recursive: true }),
+      mkdir(workingDir, { recursive: true }),
+    ]);
     relay = await startLoopbackRelay();
     const webSocketPort = await reserveLoopbackPort();
-    await createAgentHome(agentHome, relay.baseURL);
-    child = startHost(agentHome, webSocketPort, relay.baseURL, output);
+    await createAgentHome(agentHome, webSocketPort);
+    await provisionRelayExtension();
+    provisionedExtensions = true;
+    const installationBefore = await snapshotTree(EXTENSIONS_ROOT);
+    const workingDirectoryBefore = await snapshotTree(workingDir);
+    child = startHost(homeDirectory, workingDir, relay.baseURL, output);
 
     client = await connectWithRetry(`ws://127.0.0.1:${webSocketPort}/ws`, child);
     const messages = createMessageQueue(client);
@@ -67,18 +88,64 @@ async function main() {
     assert(relay.requests.authorizationValid, 'Host did not materialize the configured API key.');
     assert(relay.requests.requestedModel === MODEL_ID, 'Host invoked an unexpected Relay model.');
     assert(!output.join('').includes(API_KEY), 'Host output retained the configured API key.');
+    await stopHostProcess(child);
+    child = undefined;
+    await Promise.all([
+      access(join(agentHome, 'config.json')),
+      access(join(agentHome, 'IDENTITY.md')),
+      access(join(agentHome, 'SOUL.md')),
+      access(join(agentHome, 'AGENTS.md')),
+      access(join(agentHome, 'TOOLS.md')),
+      access(join(agentHome, 'memory.sqlite')),
+    ]);
+    assertTreeUnchanged(
+      installationBefore,
+      await snapshotTree(EXTENSIONS_ROOT),
+      'Installed Extension tree',
+    );
+    assertTreeUnchanged(
+      workingDirectoryBefore,
+      await snapshotTree(workingDir),
+      'Working directory',
+    );
 
-    console.log('Verified generic WebSocket Host acquisition with the relocated Relay artifact.');
+    console.log('Verified generic WebSocket Host with install-owned Relay acquisition and immutable installation contents.');
   } catch (error) {
-    const logs = redact(output.join(''), [API_KEY, agentHome]);
+    const logs = redact(output.join(''), [API_KEY, temporaryRoot]);
     if (logs.trim()) console.error(`Host output:\n${logs.trimEnd()}`);
-    throw error;
+    failed = true;
+    failure = error;
   } finally {
-    client?.close();
-    if (child) await stopHostProcess(child);
-    if (relay) await relay.close();
-    await rm(agentHome, { recursive: true, force: true });
+    const cleanupErrors = [];
+    try {
+      client?.close();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    if (child) {
+      await attemptCleanup(() => stopHostProcess(child), cleanupErrors);
+    }
+    if (relay) {
+      await attemptCleanup(() => relay.close(), cleanupErrors);
+    }
+    if (provisionedExtensions) {
+      await attemptCleanup(
+        () => rm(EXTENSIONS_ROOT, { recursive: true, force: true }),
+        cleanupErrors,
+      );
+    }
+    await attemptCleanup(
+      () => rm(temporaryRoot, { recursive: true, force: true }),
+      cleanupErrors,
+    );
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        failed ? [failure, ...cleanupErrors] : cleanupErrors,
+        'WebSocket Host verification cleanup failed.',
+      );
+    }
   }
+  if (failed) throw failure;
 }
 
 async function assertBuildInputs() {
@@ -90,10 +157,7 @@ async function assertBuildInputs() {
   });
 }
 
-async function createAgentHome(agentHome, baseURL) {
-  const installationRoot = join(agentHome, 'extensions', 'relocated-relay');
-  await mkdir(join(agentHome, 'extensions'), { recursive: true });
-  await cp(ARTIFACT_ROOT, installationRoot, { recursive: true });
+async function createAgentHome(agentHome, port) {
   await writeFile(join(agentHome, 'config.json'), `${JSON.stringify({
     extensions: {
       enabled: true,
@@ -110,31 +174,42 @@ async function createAgentHome(agentHome, baseURL) {
         },
       },
     },
+    host: {
+      mode: 'websocket',
+      websocket: { host: '127.0.0.1', port, path: '/ws', approval: true },
+    },
   }, null, 2)}\n`);
 }
 
-function startHost(agentHome, port, relayBaseURL, output) {
-  const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-  const child = spawn(npx, [
-    '--yes',
-    'tsx',
-    HOST_ENTRY,
-    '--agent-home',
-    agentHome,
-    `--port=${port}`,
-  ], {
-    cwd: REPOSITORY_ROOT,
-    shell: process.platform === 'win32',
-    env: {
+async function provisionRelayExtension() {
+  try {
+    await lstat(EXTENSIONS_ROOT);
+  } catch (error) {
+    if (hasErrorCode(error, 'ENOENT')) {
+      await mkdir(EXTENSIONS_ROOT);
+      try {
+        await cp(ARTIFACT_ROOT, join(EXTENSIONS_ROOT, 'relocated-relay'), { recursive: true });
+      } catch (copyError) {
+        await rm(EXTENSIONS_ROOT, { recursive: true, force: true });
+        throw copyError;
+      }
+      return;
+    }
+    throw error;
+  }
+  throw new Error('WebSocket Host verification requires an absent repository Extensions directory.');
+}
+
+function startHost(homeDirectory, workingDir, relayBaseURL, output) {
+  const child = spawn(process.execPath, [HOST_ENTRY], {
+    cwd: workingDir,
+    env: createIsolatedHomeEnvironment(homeDirectory, {
       ...process.env,
       COPILOT_RELAY_BASE_URL: relayBaseURL,
       COPILOT_RELAY_API_KEY: API_KEY,
-      MY_AGENT_HOME: agentHome,
       MY_AGENT_PROVIDER: 'copilot-relay',
       MY_AGENT_MODEL: MODEL_ID,
-      MY_AGENT_WS_HOST: '127.0.0.1',
-      MY_AGENT_WS_PORT: String(port),
-    },
+    }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout.on('data', (chunk) => output.push(chunk.toString('utf8')));
@@ -336,6 +411,21 @@ function assert(condition, message) {
 function redact(value, secrets) {
   return secrets.reduce((result, secret) =>
     secret ? result.replaceAll(secret, '<redacted>') : result, value);
+}
+
+function hasErrorCode(value, code) {
+  return typeof value === 'object'
+    && value !== null
+    && 'code' in value
+    && value.code === code;
+}
+
+async function attemptCleanup(action, errors) {
+  try {
+    await action();
+  } catch (error) {
+    errors.push(error);
+  }
 }
 
 await main();

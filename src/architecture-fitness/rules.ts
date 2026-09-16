@@ -61,10 +61,10 @@ const MIXED_PRODUCTION_PATHS = new Set([
   'src/core/session/store.ts',
   'src/core/session/transcript.ts',
   'src/core/session/types.ts',
-  'src/core/workspace/index.ts',
-  'src/core/workspace/init.ts',
-  'src/core/workspace/loader.ts',
-  'src/core/workspace/types.ts',
+  'src/core/agent-context/index.ts',
+  'src/core/agent-context/init.ts',
+  'src/core/agent-context/loader.ts',
+  'src/core/agent-context/types.ts',
   'src/core/media/attachment-pipeline.ts',
   'src/core/media/constants.ts',
   'src/core/media/image-metadata.ts',
@@ -619,6 +619,9 @@ function normalizePath(filePath: string): string {
 }
 
 function classifyBoundary(sourcePath: string): Boundary | undefined {
+  if (sourcePath.startsWith('src/hosts/')) {
+    return 'Composition';
+  }
   if (sourcePath.startsWith('src/builtins/')) {
     return /\/(?:runtime-unit|contribution|index)\.ts$/u.test(sourcePath)
       ? 'Composition'

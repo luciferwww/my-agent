@@ -1,4 +1,4 @@
-import { copyFile, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,11 +17,13 @@ const DRAFT_07 = 'http://json-schema.org/draft-07/schema#';
 
 describe('Extension acquisition to Runtime integration', () => {
   let root: string;
+  let extensionsDir: string;
   let agentHome: string;
   let workspaceDir: string;
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'my-agent-acquisition-runtime-'));
+    extensionsDir = join(root, 'installation', 'extensions');
     agentHome = join(root, 'agent-home');
     workspaceDir = join(root, 'workspace');
     await Promise.all([mkdir(agentHome), mkdir(workspaceDir)]);
@@ -33,16 +35,17 @@ describe('Extension acquisition to Runtime integration', () => {
 
   it('publishes an acquired fixture Provider through the authoritative Runtime projection', async () => {
     await installFixture(
-      agentHome,
+      extensionsDir,
       'renamed-runtime-provider',
       'fixture-runtime-provider',
       'runtime-provider.js',
     );
-    await installFixture(agentHome, 'bad-neighbor', 'invalid-export', 'invalid-export.js');
+    await installFixture(extensionsDir, 'bad-neighbor', 'invalid-export', 'invalid-export.js');
+    const installationBefore = await snapshotTree(join(root, 'installation'));
 
     const acquisition = await acquireExtensions({
-      agentHome,
-      hostConfig: hostConfig({
+      extensionsDir,
+      extensionsConfig: hostConfig({
         'fixture-runtime-provider': { enabled: true },
         'invalid-export': { enabled: true },
       }),
@@ -59,7 +62,8 @@ describe('Extension acquisition to Runtime integration', () => {
     ]);
 
     const runtime = await RuntimeApp.create({
-      workspaceDir,
+      agentHome,
+      workingDir: workspaceDir,
       loadedUnits: acquisition.loadedUnits,
       cliOverrides: {
         memory: { enabled: false },
@@ -85,19 +89,20 @@ describe('Extension acquisition to Runtime integration', () => {
     } finally {
       await runtime.close('acquisition Runtime integration complete');
     }
+    expect(await snapshotTree(join(root, 'installation'))).toEqual(installationBefore);
   });
 
   it('does not publish an installed fixture when its Host entry is disabled', async () => {
     await installFixture(
-      agentHome,
+      extensionsDir,
       'runtime-provider',
       'fixture-runtime-provider',
       'runtime-provider.js',
     );
 
     const acquisition = await acquireExtensions({
-      agentHome,
-      hostConfig: hostConfig({
+      extensionsDir,
+      extensionsConfig: hostConfig({
         'fixture-runtime-provider': { enabled: false },
       }),
       environment: {},
@@ -112,7 +117,8 @@ describe('Extension acquisition to Runtime integration', () => {
     ]);
 
     const runtime = await RuntimeApp.create({
-      workspaceDir,
+      agentHome,
+      workingDir: workspaceDir,
       loadedUnits: acquisition.loadedUnits,
       cliOverrides: {
         memory: { enabled: false },
@@ -140,12 +146,12 @@ function hostConfig(entries: Record<string, unknown>): ResolvedHostExtensionsCon
 }
 
 async function installFixture(
-  agentHome: string,
+  extensionsDir: string,
   locator: string,
   extensionId: string,
   fixtureFile: string,
 ): Promise<void> {
-  const installationRoot = join(agentHome, 'extensions', locator);
+  const installationRoot = join(extensionsDir, locator);
   await mkdir(installationRoot, { recursive: true });
   await Promise.all([
     copyFile(join(FIXTURE_ROOT, fixtureFile), join(installationRoot, 'entry.js')),
@@ -163,4 +169,20 @@ async function installFixture(
       },
     }, null, 2)}\n`),
   ]);
+}
+
+async function snapshotTree(root: string, relativeDir = ''): Promise<Record<string, string>> {
+  const snapshot: Record<string, string> = {};
+  const currentDir = join(root, relativeDir);
+  const entries = await readdir(currentDir, { withFileTypes: true });
+  entries.sort((left, right) => left.name.localeCompare(right.name));
+  for (const entry of entries) {
+    const relativePath = join(relativeDir, entry.name);
+    if (entry.isDirectory()) {
+      Object.assign(snapshot, await snapshotTree(root, relativePath));
+    } else if (entry.isFile()) {
+      snapshot[relativePath] = await readFile(join(root, relativePath), 'base64');
+    }
+  }
+  return snapshot;
 }

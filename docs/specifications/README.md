@@ -25,6 +25,7 @@ These documents define durable contracts that must remain true across implementa
 - [Configuration](configuration.md)
 - [Extension Acquisition](extension-acquisition.md)
 - [Runtime Composition](runtime-composition.md)
+- [Standalone Service Host](standalone-service-host.md)
 
 ## Model boundaries
 

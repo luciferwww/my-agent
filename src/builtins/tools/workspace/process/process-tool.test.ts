@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { execTool } from './exec-tool.js';
+import { createExecTool } from './exec-tool.js';
 import { processTool } from './process-tool.js';
 import { processRegistry } from './process-registry.js';
 import { TEST_TOOL_CONTEXT } from '../../../../core/tools/test-utils.js';
+
+const execTool = createExecTool(process.cwd());
 
 function extractRunId(content: string): string {
   const match = content.match(/runId:\s*(\S+)/);

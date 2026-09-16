@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Session behavior
-> Verified: 2026-09-15
+> Verified: 2026-09-16
 > Ownership: Session metadata, Transcript JSONL, message trees, branching, and persistence behavior
 > Ownership key: session-and-transcript-persistence
 
@@ -15,7 +15,7 @@ Session does not own Memory indexing or recall; those belong to [Memory](memory.
 ## 2. Files and storage
 
 ```text
-<workspaceDir>/.agent/sessions/
+<agentHome>/sessions/
 ├── sessions.json          # metadata index keyed by sessionKey
 ├── <sessionId>.jsonl      # one append-only Transcript per Session
 └── ...

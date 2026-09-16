@@ -19,24 +19,26 @@ const UNIT_CREATE_MARKER = Symbol.for('my-agent.test.extension-acquisition.unit-
 const DRAFT_07 = 'http://json-schema.org/draft-07/schema#';
 
 describe('acquireExtensions', () => {
-  let agentHome: string;
+  let installDir: string;
+  let extensionsDir: string;
 
   beforeEach(async () => {
-    agentHome = await mkdtemp(join(tmpdir(), 'my-agent-loader-'));
+    installDir = await mkdtemp(join(tmpdir(), 'my-agent-loader-'));
+    extensionsDir = join(installDir, 'extensions');
     clearMarkers();
   });
 
   afterEach(async () => {
     clearMarkers();
-    await rm(agentHome, { recursive: true, force: true });
+    await rm(installDir, { recursive: true, force: true });
   });
 
   it('returns immediately when the global kill switch is disabled', async () => {
-    await writeFile(join(agentHome, 'extensions'), 'discovery must not run');
+    await writeFile(extensionsDir, 'discovery must not run');
 
     const result = await acquireExtensions({
-      agentHome,
-      hostConfig: hostConfig(false, {}),
+      extensionsDir,
+      extensionsConfig: hostConfig(false, {}),
       environment: {},
     });
 
@@ -45,12 +47,12 @@ describe('acquireExtensions', () => {
   });
 
   it('keeps missing and explicitly disabled entries structured without execution', async () => {
-    await installFixture(agentHome, 'missing-config', 'missing-config', 'never-execute.js');
-    await installFixture(agentHome, 'disabled', 'disabled', 'never-execute.js');
+    await installFixture(extensionsDir, 'missing-config', 'missing-config', 'never-execute.js');
+    await installFixture(extensionsDir, 'disabled', 'disabled', 'never-execute.js');
 
     const result = await acquireExtensions({
-      agentHome,
-      hostConfig: hostConfig(true, { disabled: { enabled: false } }),
+      extensionsDir: extensionsDir,
+      extensionsConfig: hostConfig(true, { disabled: { enabled: false } }),
       environment: {},
     });
 
@@ -71,11 +73,11 @@ describe('acquireExtensions', () => {
   });
 
   it('rejects malformed enabled entry configuration before import', async () => {
-    await installFixture(agentHome, 'malformed', 'malformed', 'never-execute.js');
+    await installFixture(extensionsDir, 'malformed', 'malformed', 'never-execute.js');
 
     const result = await acquireExtensions({
-      agentHome,
-      hostConfig: hostConfig(true, { malformed: { enabled: true, unknown: true } }),
+      extensionsDir,
+      extensionsConfig: hostConfig(true, { malformed: { enabled: true, unknown: true } }),
       environment: {},
     });
 
@@ -90,14 +92,14 @@ describe('acquireExtensions', () => {
   });
 
   it('isolates missing environment values and secrets before import', async () => {
-    await installFixture(agentHome, 'missing-value', 'missing-value', 'never-execute.js',
+    await installFixture(extensionsDir, 'missing-value', 'missing-value', 'never-execute.js',
       objectSchema({ endpoint: { type: 'string' } }, ['endpoint']));
-    await installFixture(agentHome, 'missing-secret', 'missing-secret', 'never-execute.js',
+    await installFixture(extensionsDir, 'missing-secret', 'missing-secret', 'never-execute.js',
       objectSchema({ token: { type: 'string' } }, ['token']));
 
     const result = await acquireExtensions({
-      agentHome,
-      hostConfig: hostConfig(true, {
+      extensionsDir: extensionsDir,
+      extensionsConfig: hostConfig(true, {
         'missing-value': {
           enabled: true,
           config: { endpoint: { $env: 'MISSING_URL' } },
@@ -130,16 +132,16 @@ describe('acquireExtensions', () => {
   });
 
   it('rejects strict Schema compilation and input validation before import', async () => {
-    await installFixture(agentHome, 'bad-schema', 'bad-schema', 'never-execute.js', {
+    await installFixture(extensionsDir, 'bad-schema', 'bad-schema', 'never-execute.js', {
       ...objectSchema({}),
       unknownKeyword: true,
     });
-    await installFixture(agentHome, 'bad-input', 'bad-input', 'never-execute.js',
+    await installFixture(extensionsDir, 'bad-input', 'bad-input', 'never-execute.js',
       objectSchema({ count: { type: 'integer' } }, ['count']));
 
     const result = await acquireExtensions({
-      agentHome,
-      hostConfig: hostConfig(true, {
+      extensionsDir: extensionsDir,
+      extensionsConfig: hostConfig(true, {
         'bad-schema': { enabled: true },
         'bad-input': { enabled: true, config: { count: '2' } },
       }),
@@ -155,15 +157,15 @@ describe('acquireExtensions', () => {
   });
 
   it('loads a valid factory with only frozen scoped config and normalizes Unit ordering', async () => {
-    await installFixture(agentHome, 'renamed-directory', 'fixture-valid', 'valid-unit.js',
+    await installFixture(extensionsDir, 'renamed-directory', 'fixture-valid', 'valid-unit.js',
       objectSchema({
         endpoint: { type: 'string' },
         retries: { type: 'integer', default: 2 },
       }, ['endpoint']));
 
     const result = await acquireExtensions({
-      agentHome,
-      hostConfig: hostConfig(true, {
+      extensionsDir: extensionsDir,
+      extensionsConfig: hostConfig(true, {
         'fixture-valid': {
           enabled: true,
           config: { endpoint: { $env: 'SERVICE_URL' } },
@@ -196,12 +198,12 @@ describe('acquireExtensions', () => {
 
   it('does not retain factory errors or materialized secrets', async () => {
     const secret = 'sentinel-secret-value';
-    await installFixture(agentHome, 'factory-throws', 'factory-throws', 'factory-throws.js',
+    await installFixture(extensionsDir, 'factory-throws', 'factory-throws', 'factory-throws.js',
       objectSchema({ secret: { type: 'string' } }, ['secret']));
 
     const result = await acquireExtensions({
-      agentHome,
-      hostConfig: hostConfig(true, {
+      extensionsDir: extensionsDir,
+      extensionsConfig: hostConfig(true, {
         'factory-throws': {
           enabled: true,
           config: { secret: { $secret: { source: 'env', name: 'FACTORY_SECRET' } } },
@@ -221,19 +223,19 @@ describe('acquireExtensions', () => {
   });
 
   it('distinguishes import, export, and Unit metadata failures', async () => {
-    await installSource(agentHome, 'syntax-error', 'syntax-error', 'export function broken( {');
-    await installFixture(agentHome, 'invalid-export', 'invalid-export', 'invalid-export.js');
+    await installSource(extensionsDir, 'syntax-error', 'syntax-error', 'export function broken( {');
+    await installFixture(extensionsDir, 'invalid-export', 'invalid-export', 'invalid-export.js');
     await installSource(
-      agentHome,
+      extensionsDir,
       'extra-export',
       'extra-export',
       `${unitSource('extra-export', {})}\nexport const extra = true;`,
     );
-    await installFixture(agentHome, 'metadata-mismatch', 'metadata-mismatch', 'metadata-mismatch.js');
+    await installFixture(extensionsDir, 'metadata-mismatch', 'metadata-mismatch', 'metadata-mismatch.js');
 
     const result = await acquireExtensions({
-      agentHome,
-      hostConfig: hostConfig(true, {
+      extensionsDir: extensionsDir,
+      extensionsConfig: hostConfig(true, {
         'syntax-error': { enabled: true },
         'invalid-export': { enabled: true },
         'extra-export': { enabled: true },
@@ -254,15 +256,15 @@ describe('acquireExtensions', () => {
 
   it('rejects an asynchronous entry factory as invalid Unit output', async () => {
     await installSource(
-      agentHome,
+      extensionsDir,
       'async-factory',
       'async-factory',
       'export async function createExtension() { return {}; }',
     );
 
     const result = await acquireExtensions({
-      agentHome,
-      hostConfig: hostConfig(true, { 'async-factory': { enabled: true } }),
+      extensionsDir: extensionsDir,
+      extensionsConfig: hostConfig(true, { 'async-factory': { enabled: true } }),
       environment: {},
     });
 
@@ -283,11 +285,11 @@ describe('acquireExtensions', () => {
     ['missing create', { create: null }],
   ])('rejects %s metadata', async (_label, override) => {
     const source = unitSource('metadata-case', override);
-    await installSource(agentHome, 'metadata-case', 'metadata-case', source);
+    await installSource(extensionsDir, 'metadata-case', 'metadata-case', source);
 
     const result = await acquireExtensions({
-      agentHome,
-      hostConfig: hostConfig(true, { 'metadata-case': { enabled: true } }),
+      extensionsDir: extensionsDir,
+      extensionsConfig: hostConfig(true, { 'metadata-case': { enabled: true } }),
       environment: {},
     });
 
@@ -297,12 +299,12 @@ describe('acquireExtensions', () => {
   });
 
   it('keeps duplicate identity diagnostics without adding stale configuration', async () => {
-    await installFixture(agentHome, 'duplicate-a', 'duplicate', 'never-execute.js');
-    await installFixture(agentHome, 'duplicate-b', 'duplicate', 'never-execute.js');
+    await installFixture(extensionsDir, 'duplicate-a', 'duplicate', 'never-execute.js');
+    await installFixture(extensionsDir, 'duplicate-b', 'duplicate', 'never-execute.js');
 
     const result = await acquireExtensions({
-      agentHome,
-      hostConfig: hostConfig(true, { duplicate: { enabled: true } }),
+      extensionsDir: extensionsDir,
+      extensionsConfig: hostConfig(true, { duplicate: { enabled: true } }),
       environment: {},
     });
 
@@ -315,8 +317,8 @@ describe('acquireExtensions', () => {
 
   it('reports stale configured IDs without executing any entry', async () => {
     const result = await acquireExtensions({
-      agentHome,
-      hostConfig: hostConfig(true, { stale: { enabled: true } }),
+      extensionsDir: extensionsDir,
+      extensionsConfig: hostConfig(true, { stale: { enabled: true } }),
       environment: {},
     });
 
@@ -328,12 +330,12 @@ describe('acquireExtensions', () => {
   });
 
   it('isolates a bad candidate while retaining a valid Unit', async () => {
-    await installFixture(agentHome, 'valid', 'fixture-valid', 'valid-unit.js');
-    await installFixture(agentHome, 'bad', 'invalid-export', 'invalid-export.js');
+    await installFixture(extensionsDir, 'valid', 'fixture-valid', 'valid-unit.js');
+    await installFixture(extensionsDir, 'bad', 'invalid-export', 'invalid-export.js');
 
     const result = await acquireExtensions({
-      agentHome,
-      hostConfig: hostConfig(true, {
+      extensionsDir: extensionsDir,
+      extensionsConfig: hostConfig(true, {
         'fixture-valid': { enabled: true },
         'invalid-export': { enabled: true },
       }),
@@ -350,15 +352,15 @@ describe('acquireExtensions', () => {
   });
 
   it('revalidates the entry immediately before import', async () => {
-    await installFixture(agentHome, 'replace-entry', 'replace-entry', 'never-execute.js');
-    const discovery = await discoverExtensionDescriptors(agentHome);
+    await installFixture(extensionsDir, 'replace-entry', 'replace-entry', 'never-execute.js');
+    const discovery = await discoverExtensionDescriptors(extensionsDir);
     const candidate = discovery.candidates[0]!;
     await rm(candidate.entryPath);
     await mkdir(candidate.entryPath);
 
     const result = await loadExtensionCandidate(
       candidate,
-      agentHome,
+      extensionsDir,
       hostConfig(true, { 'replace-entry': { enabled: true } }),
       {},
     );
@@ -400,7 +402,7 @@ async function installFixture(
   fixtureName: string,
   schema: Record<string, unknown> = objectSchema({}),
 ): Promise<void> {
-  const candidatePath = join(home, 'extensions', installationName);
+  const candidatePath = join(home, installationName);
   await mkdir(candidatePath, { recursive: true });
   await Promise.all([
     copyFile(join(FIXTURE_ROOT, fixtureName), join(candidatePath, 'entry.js')),
@@ -421,7 +423,7 @@ async function installSource(
   extensionId: string,
   source: string,
 ): Promise<void> {
-  const candidatePath = join(home, 'extensions', installationName);
+  const candidatePath = join(home, installationName);
   await mkdir(candidatePath, { recursive: true });
   await writeFile(join(candidatePath, 'package.json'), '{"type":"module"}');
   await writeFile(join(candidatePath, 'entry.js'), source);

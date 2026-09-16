@@ -11,8 +11,8 @@ describe('Workspace Tools Runtime Contribution', () => {
     const candidate = resolveStagedRegistryCandidate({
       providers: [],
       units: [createWorkspaceToolsContribution({
-        workspaceDir: 'C:/workspace',
-        fsWorkspaceOnly: true,
+        workingDir: 'C:/workspace',
+        fsWorkingDirOnly: true,
         webFetchEnabled: true,
         execEnabled: true,
         processEnabled: true,

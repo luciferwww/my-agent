@@ -13,7 +13,7 @@ describe('Task Tool Runtime Contribution', () => {
       {
         id: 'general-purpose',
         description: 'General purpose',
-        agentDir: 'C:/workspace/.agent/subagents/general-purpose',
+        agentDir: 'C:/workspace/subagents/general-purpose',
         model: 'inherit' as const,
       },
     ]]);

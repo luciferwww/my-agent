@@ -37,8 +37,8 @@ export interface SessionManagerOptions {
  * 管理 Session 的创建/查询/更新/删除，以及树形消息历史的追加/读取/分支。
  *
  * 存储结构：
- *   <workspaceDir>/.agent/sessions/sessions.json   — Session Store（元数据索引）
- *   <workspaceDir>/.agent/sessions/{sessionId}.jsonl — Session Transcript（树形消息历史）
+ *   <agentHome>/sessions/sessions.json   — Session Store（元数据索引）
+ *   <agentHome>/sessions/{sessionId}.jsonl — Session Transcript（树形消息历史）
  *
  * 参考 OpenClaw 的 Session 管理系统 + pi-coding-agent 的树形 SessionManager。
  */
@@ -50,8 +50,8 @@ export class SessionManager {
   /** 每个 Session 的内存状态（byId Map + leafId） */
   private transcripts = new Map<string, TranscriptState>();
 
-  constructor(workspaceDir: string, options: SessionManagerOptions = {}) {
-    this.sessionsDir = join(workspaceDir, '.agent', SESSIONS_DIR);
+  constructor(agentHome: string, options: SessionManagerOptions = {}) {
+    this.sessionsDir = join(agentHome, SESSIONS_DIR);
     this.storePath = join(this.sessionsDir, STORE_FILE);
     this.options = options;
   }

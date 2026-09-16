@@ -43,7 +43,7 @@ describe('SubagentExecutor', () => {
       agentRunner: { run } as never,
       systemPromptBuilder: { build } as never,
       loadContextFilesFromDir,
-      workspaceDir: '/workspace',
+      workingDir: '/workspace',
       promptSafetyLevel: 'normal',
       resolveToolPolicy: () => ({
         isDenied: () => true,
@@ -88,7 +88,7 @@ describe('SubagentExecutor', () => {
       mode: 'minimal',
       contextFiles: [],
       toolNames: [],
-      workspaceDir: '/workspace',
+      workingDir: '/workspace',
       safetyLevel: 'normal',
     });
     expect(run).toHaveBeenCalledWith(expect.objectContaining({

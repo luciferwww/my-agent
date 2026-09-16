@@ -20,7 +20,7 @@ describe('RecallTracker', () => {
   });
 
   it('writes recall entries as jsonl records', async () => {
-    const recallDir = join(workspaceDir, '.agent', 'memory', '.recalls');
+    const recallDir = join(workspaceDir, 'memory-recalls');
     const tracker = new RecallTracker(recallDir);
 
     tracker.record({

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 import type { Tool } from '../../../../core/tools/types.js';
-import { buildPathMatcher, listWorkspaceFiles } from '../common/workspace-walk.js';
+import { buildPathMatcher, listWorkingDirectoryFiles } from '../common/working-directory-walk.js';
 
 function parsePositiveInteger(value: unknown, fieldName: string): number | undefined {
   if (value === undefined) {
@@ -42,7 +42,7 @@ function formatResults(
   ].join('\n');
 }
 
-export function createGrepSearchTool(workspaceDir: string): Tool {
+export function createGrepSearchTool(workingDir: string): Tool {
   return {
     name: 'grep_search',
     description: 'Search workspace files for matching text or regex patterns.',
@@ -90,7 +90,7 @@ export function createGrepSearchTool(workspaceDir: string): Tool {
             ? buildPathMatcher(params.includePattern)
             : undefined;
         const contentMatcher = buildContentMatcher(params.query, params.isRegexp);
-        const files = await listWorkspaceFiles(workspaceDir);
+        const files = await listWorkingDirectoryFiles(workingDir);
         const matches: Array<{ path: string; lineNumber: number; line: string }> = [];
 
         for (const file of files) {

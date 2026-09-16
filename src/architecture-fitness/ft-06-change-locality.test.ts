@@ -33,19 +33,20 @@ describe('FT-06 Provider and Extension change locality', () => {
   });
 
   it('keeps the supported Host on generic acquisition without Extension-specific authority', async () => {
-    const host = await readFile(`${REPOSITORY_ROOT}/scripts/server.ts`, 'utf8');
+    const host = await readFile(
+      `${REPOSITORY_ROOT}/src/hosts/standalone/standalone-host.ts`,
+      'utf8',
+    );
     const startup = await readFile(
-      `${REPOSITORY_ROOT}/scripts/websocket-host-startup.ts`,
+      `${REPOSITORY_ROOT}/src/hosts/standalone/host-startup.ts`,
       'utf8',
     );
 
-    expect(host).toContain('prepareWebSocketHostAcquisition(');
+    expect(host).toContain('options.prepareAcquisition ?? prepareStandaloneHostAcquisition');
     expect(host).toContain('...acquisition.result.loadedUnits');
-    expect(host).toContain('const envOverrides = getEnvOverrides();');
-    expect(host).toContain('...envOverrides');
-    expect(host.indexOf('const envOverrides = getEnvOverrides();'))
-      .toBeLessThan(host.indexOf('prepareWebSocketHostAcquisition('));
-    expect(host).toContain('createWebSocketChannelUnit({');
+    expect(host).toContain('envOverrides: getEnvOverrides(env)');
+    expect(host).toContain("case 'websocket':");
+    expect(host).toContain('createWebSocketChannelUnit(host.websocket)');
     expect(`${host}\n${startup}`)
       .not.toMatch(/copilot-relay-provider|COPILOT_RELAY_|createCopilotRelayProviderUnit/);
     expect(host).not.toMatch(/providerId\s*:\s*['"][^'"]+['"]/);

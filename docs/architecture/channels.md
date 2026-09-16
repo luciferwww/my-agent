@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Channel behavior
-> Verified: 2026-09-15
+> Verified: 2026-09-16
 > Ownership: Channel contracts, transport, interaction, CLI/WebSocket protocol, attachment ingress, and client routing
 > Ownership key: channel-transport-and-ingress
 

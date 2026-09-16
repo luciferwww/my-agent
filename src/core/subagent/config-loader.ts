@@ -11,8 +11,8 @@ const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
  *  built-in anonymous subagent (built by {@link buildGeneralPurposeProfile}). */
 const RESERVED_IDS = new Set<string>(['general-purpose']);
 
-/** Path segments appended to `workspaceDir` to derive a subagent's `agentDir`. */
-const SUBAGENT_DIR_SEGMENTS = ['.agent', 'subagents'] as const;
+/** Path segments appended to `agentHome` to derive a subagent's `agentDir`. */
+const SUBAGENT_DIR_SEGMENTS = ['subagents'] as const;
 
 /** Built into v1 capabilities; subagents cannot grant themselves `task`
  *  to spawn further subagents (spec §13 overflow protection). */
@@ -20,8 +20,8 @@ const TASK_TOOL_NAME = 'task';
 
 // ── Helpers ──────────────────────────────────────────────────
 
-function deriveAgentDir(workspaceDir: string, id: string): string {
-  return join(workspaceDir, ...SUBAGENT_DIR_SEGMENTS, id);
+function deriveAgentDir(agentHome: string, id: string): string {
+  return join(agentHome, ...SUBAGENT_DIR_SEGMENTS, id);
 }
 
 /** A glob entry contains `*` or `?`. Glob lookups bypass the registered-name
@@ -79,12 +79,12 @@ function resolveModelSelection(
  * - Every exact name (non-glob) in `tools.allow` must be a registered tool.
  *   Glob entries (`*` / `?`) are passed through without name checking.
  *
- * `agentDir` is ALWAYS derived from `workspaceDir + id` (spec §8.1). Whether
+ * `agentDir` is ALWAYS derived from `agentHome + id` (spec §8.1). Whether
  * the directory actually exists is probed later by the Child executor.
  */
 export function loadSubagentProfiles(
   list: SubagentConfigEntry[],
-  workspaceDir: string,
+  agentHome: string,
   registeredToolNames: ReadonlySet<string>,
 ): SubagentProfile[] {
   const seen = new Set<string>();
@@ -123,7 +123,7 @@ export function loadSubagentProfiles(
     profiles.push({
       id: entry.id,
       description: entry.description,
-      agentDir: deriveAgentDir(workspaceDir, entry.id),
+      agentDir: deriveAgentDir(agentHome, entry.id),
       model,
       tools: entry.tools,
       maxLlmCalls: entry.maxLlmCalls,
@@ -145,12 +145,12 @@ export function loadSubagentProfiles(
  * The built-in profile explicitly inherits the Parent effective Model
  * Reference. Other optional execution settings remain unset.
  */
-export function buildGeneralPurposeProfile(workspaceDir: string): SubagentProfile {
+export function buildGeneralPurposeProfile(agentHome: string): SubagentProfile {
   return {
     id: 'general-purpose',
     description:
       'General-purpose task executor. Use when no named subagent matches the request.',
-    agentDir: deriveAgentDir(workspaceDir, 'general-purpose'),
+    agentDir: deriveAgentDir(agentHome, 'general-purpose'),
     model: 'inherit',
   };
 }

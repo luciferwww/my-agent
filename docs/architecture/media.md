@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented media behavior
-> Verified: 2026-09-15
+> Verified: 2026-09-16
 > Ownership: Inbound media validation, limits, MIME verification, image optimization, drop reasons, and canonical content-block normalization
 > Ownership key: media-validation-and-normalization
 

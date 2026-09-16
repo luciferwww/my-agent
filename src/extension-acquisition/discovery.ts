@@ -1,5 +1,5 @@
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { ExtensionAcquisitionFatalError } from './errors.js';
 import type {
@@ -15,15 +15,14 @@ const DRAFT_07_SCHEMA = 'http://json-schema.org/draft-07/schema#';
 const MAX_DIAGNOSTIC_LOCATOR_LENGTH = 200;
 
 export async function discoverExtensionDescriptors(
-  agentHome: string,
+  extensionsDir: string,
 ): Promise<ExtensionDiscoveryResult> {
-  const extensionsRoot = join(agentHome, 'extensions');
-  const rootState = await resolveDiscoveryRoot(agentHome, extensionsRoot);
+  const rootState = await resolveDiscoveryRoot(extensionsDir);
   if (rootState === undefined) return emptyResult();
 
   let entries;
   try {
-    entries = await readdir(extensionsRoot, { withFileTypes: true });
+    entries = await readdir(extensionsDir, { withFileTypes: true });
   } catch {
     throw invalidDiscoveryRoot('Extension discovery root could not be read.');
   }
@@ -35,9 +34,9 @@ export async function discoverExtensionDescriptors(
   for (const entry of sortedEntries) {
     if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
     const outcome = await inspectCandidate(
-      rootState.canonicalAgentHome,
+      rootState.canonicalInstallDir,
       rootState.canonicalExtensionsRoot,
-      extensionsRoot,
+      extensionsDir,
       entry.name,
       entry.isSymbolicLink(),
     );
@@ -79,15 +78,14 @@ export async function discoverExtensionDescriptors(
 }
 
 async function resolveDiscoveryRoot(
-  agentHome: string,
-  extensionsRoot: string,
+  extensionsDir: string,
 ): Promise<Readonly<{
-  canonicalAgentHome: string;
+  canonicalInstallDir: string;
   canonicalExtensionsRoot: string;
 }> | undefined> {
   let rootStats;
   try {
-    rootStats = await lstat(extensionsRoot);
+    rootStats = await lstat(extensionsDir);
   } catch (error) {
     if (hasErrorCode(error, 'ENOENT')) return undefined;
     throw invalidDiscoveryRoot('Extension discovery root could not be inspected.');
@@ -96,24 +94,24 @@ async function resolveDiscoveryRoot(
     throw invalidDiscoveryRoot('Extension discovery root must be a directory.');
   }
 
-  let canonicalAgentHome: string;
+  let canonicalInstallDir: string;
   let canonicalExtensionsRoot: string;
   try {
-    [canonicalAgentHome, canonicalExtensionsRoot] = await Promise.all([
-      realpath(agentHome),
-      realpath(extensionsRoot),
+    [canonicalInstallDir, canonicalExtensionsRoot] = await Promise.all([
+      realpath(dirname(extensionsDir)),
+      realpath(extensionsDir),
     ]);
   } catch {
     throw invalidDiscoveryRoot('Extension discovery root could not be resolved.');
   }
-  if (!isContainedPath(canonicalAgentHome, canonicalExtensionsRoot)) {
-    throw invalidDiscoveryRoot('Extension discovery root escapes Agent Home.');
+  if (!isContainedPath(canonicalInstallDir, canonicalExtensionsRoot)) {
+    throw invalidDiscoveryRoot('Extension discovery root escapes the installation directory.');
   }
-  return Object.freeze({ canonicalAgentHome, canonicalExtensionsRoot });
+  return Object.freeze({ canonicalInstallDir, canonicalExtensionsRoot });
 }
 
 async function inspectCandidate(
-  canonicalAgentHome: string,
+  canonicalInstallDir: string,
   canonicalExtensionsRoot: string,
   extensionsRoot: string,
   installationName: string,
@@ -138,7 +136,7 @@ async function inspectCandidate(
     return diagnosticOutcome('candidate_unreadable', installationName);
   }
 
-  if (!isContainedPath(canonicalAgentHome, canonicalInstallationPath)
+  if (!isContainedPath(canonicalInstallDir, canonicalInstallationPath)
     || !isContainedPath(canonicalExtensionsRoot, canonicalInstallationPath)) {
     return diagnosticOutcome('candidate_reparse_point', installationName);
   }
@@ -189,7 +187,7 @@ async function inspectCandidate(
     return diagnosticOutcome('entry_invalid', installationName, descriptor.id);
   }
 
-  if (!isContainedPath(canonicalAgentHome, canonicalEntryPath)
+  if (!isContainedPath(canonicalInstallDir, canonicalEntryPath)
     || !isContainedPath(canonicalInstallationPath, canonicalEntryPath)) {
     return diagnosticOutcome('entry_invalid', installationName, descriptor.id);
   }

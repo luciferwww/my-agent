@@ -1,10 +1,12 @@
 import { join } from 'node:path';
-import { loadConfig, resolveAgentConfig } from '../platform/config/index.js';
+import { resolveAgentConfig } from '../platform/config/index.js';
+import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from '../platform/config/defaults.js';
+import type { AppConfig } from '../platform/config/types.js';
 import { ConsoleAdapter, FileAdapter, Logger } from '../platform/logger/index.js';
 import type { LogAdapter } from '../platform/logger/index.js';
 import type { MemoryManager } from '../core/memory/index.js';
 import { UserPromptBuilder } from '../core/prompt/index.js';
-import { ensureWorkspace, loadContextFiles } from '../core/workspace/index.js';
+import { ensureAgentContext, loadContextFiles } from '../core/agent-context/index.js';
 import { classifyRuntimeError } from './errors.js';
 import { createApplicationToolPolicy } from './tool-approval-policy.js';
 import type { RuntimeAppOptions, RuntimeBootstrapResult, RuntimeDependencies, RuntimeEvent } from './types.js';
@@ -21,16 +23,29 @@ export async function bootstrapRuntime(
   let loggerConfigured = false;
   let memoryManager: MemoryManager | null = null;
   log.info('bootstrap start', {
-    workspaceDir: options.workspaceDir,
+    agentHome: options.agentHome,
+    workingDir: options.workingDir,
     agentId: options.agentId,
   });
   emit(options.onEvent, {
     type: 'app_start',
-    workspaceDir: options.workspaceDir,
+    agentHome: options.agentHome,
+    workingDir: options.workingDir,
   });
 
   try {
-    const appConfig = loadConfig({ workspaceDir: options.workspaceDir });
+    const applicationConfig = deepFreeze(structuredClone(options.applicationConfig ?? {
+      agents: {
+        defaults: DEFAULT_AGENT_CONFIG,
+        list: [],
+      },
+      logger: DEFAULT_LOGGER_CONFIG,
+    }));
+    const appConfig: AppConfig = {
+      agentHome: options.agentHome,
+      agents: applicationConfig.agents,
+      logger: applicationConfig.logger,
+    };
 
     const adapters: LogAdapter[] = [];
     if (appConfig.logger.console?.enabled !== false) {
@@ -40,8 +55,8 @@ export async function bootstrapRuntime(
     if (appConfig.logger.file?.enabled) {
       const fileCfg = appConfig.logger.file;
       adapters.push(new FileAdapter({
-        // 路径固定为 <workspaceDir>/logs/；prefix / maxQueueSize 走 FileAdapter 内部默认
-        dir: join(options.workspaceDir, 'logs'),
+        // 路径固定为 <agentHome>/logs/；prefix / maxQueueSize 走 FileAdapter 内部默认
+        dir: join(options.agentHome, 'logs'),
         ...(fileCfg.minLevel !== undefined ? { minLevel: fileCfg.minLevel } : {}),
       }));
     }
@@ -61,18 +76,18 @@ export async function bootstrapRuntime(
       cliOverrides: options.cliOverrides,
     });
 
-    await ensureWorkspace(options.workspaceDir);
+    await ensureAgentContext(options.agentHome);
 
-    const contextFiles = await loadContextFiles(options.workspaceDir, {
+    const contextFiles = await loadContextFiles(options.agentHome, {
       mode: 'full',
-      maxFileChars: resolvedConfig.workspace.maxFileChars,
-      maxTotalChars: resolvedConfig.workspace.maxTotalChars,
+      maxFileChars: resolvedConfig.context.maxFileChars,
+      maxTotalChars: resolvedConfig.context.maxTotalChars,
     });
     log.debug('context files loaded', {
       fileCount: contextFiles.length,
     });
 
-    const sessionManager = deps.createSessionManager(options.workspaceDir, {
+    const sessionManager = deps.createSessionManager(options.agentHome, {
       toolResultHeadChars: resolvedConfig.compaction.toolResultHeadChars,
       toolResultTailChars: resolvedConfig.compaction.toolResultTailChars,
     });
@@ -81,13 +96,13 @@ export async function bootstrapRuntime(
 
     try {
       memoryManager = await deps.createMemoryManager({
-        workspaceDir: options.workspaceDir,
+        agentHome: options.agentHome,
         enabled: resolvedConfig.memory.enabled,
         embedding: resolvedConfig.memory.embedding,
         search: resolvedConfig.memory.search,
       });
       if (memoryManager) {
-        log.info('memory manager ready', { workspaceDir: options.workspaceDir });
+        log.info('memory manager ready', { agentHome: options.agentHome });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -127,7 +142,8 @@ export async function bootstrapRuntime(
       resources: {
         appConfig,
         resolvedConfig,
-        workspaceDir: options.workspaceDir,
+        agentHome: options.agentHome,
+        workingDir: options.workingDir,
         sessionManager,
         toolPolicy,
         memoryManager,
@@ -171,4 +187,10 @@ export async function bootstrapRuntime(
 
 function emit(onEvent: RuntimeAppOptions['onEvent'], event: RuntimeEvent): void {
   onEvent?.(event);
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
 }

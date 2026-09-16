@@ -16,6 +16,9 @@ This directory contains durable architectural decisions. It does not own current
 | [ADR-005](adr-005-extension-registry-runtime-composition.md) | Accepted | Extension, Registry, Composition, and Runtime lifecycle |
 | [ADR-006](adr-006-legacy-and-compatibility-exit.md) | Accepted | Legacy classification and Compatibility exit |
 | [ADR-007](adr-007-builtin-capability-source-ownership.md) | Accepted | Builtin capability source ownership and layout |
+| [ADR-008](adr-008-workspace-configuration-authority.md) | Superseded by ADR-010 | Former Workspace-root configuration/state authority and startup snapshot ownership |
+| [ADR-009](adr-009-host-boundaries-and-standalone-npm-distribution.md) | Accepted | Environment Host source boundaries and standalone npm distribution |
+| [ADR-010](adr-010-install-and-agent-home-ownership.md) | Accepted | Immutable `installDir`, writable `agentHome`, and non-owning working context |
 
 ## Authority rules
 

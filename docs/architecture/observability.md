@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented observability behavior
-> Verified: 2026-09-15
+> Verified: 2026-09-16
 > Ownership: process-wide logging, startup buffering, log adapters, and adapter close
 > Ownership key: logging-and-adapter-lifecycle
 
@@ -114,7 +114,7 @@ A flush groups queued entries by the UTC date derived from each entry timestamp 
 
 ## 8. Runtime integration
 
-Runtime bootstrap derives Logger adapters from application configuration. Console logging is enabled unless explicitly disabled; file logging is opt-in and writes under `<workspaceDir>/logs/`. Runtime's global and adapter-local configured levels remain separate.
+Runtime bootstrap derives Logger adapters from application configuration. Console logging is enabled unless explicitly disabled; file logging is opt-in and writes under `<agentHome>/logs/`. Runtime's global and adapter-local configured levels remain separate.
 
 Registry startup diagnostics are not raw Logger entries or Provider-owned events. Runtime converts accepted diagnostic codes into stable Host-owned `warning` events and omits raw Extension errors from that event contract. Runtime also decides how Logger close success, failure, or deadline exhaustion appears in the immutable `RuntimeShutdownReport`.
 

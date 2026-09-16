@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type { Tool } from '../../../../core/tools/types.js';
-import { resolveWorkspacePath } from '../common/path-policy.js';
+import { resolveWorkingPath } from '../common/path-policy.js';
 
 function formatWriteResult(params: { path: string; created: boolean; bytesWritten: number }): string {
   return [
@@ -12,7 +12,7 @@ function formatWriteResult(params: { path: string; created: boolean; bytesWritte
   ].join('\n');
 }
 
-export function createWriteFileTool(workspaceDir: string, workspaceOnly = true): Tool {
+export function createWriteFileTool(workingDir: string, workingDirOnly = true): Tool {
   return {
     name: 'write_file',
     description: 'Create or overwrite a file inside the workspace with the provided full content.',
@@ -39,7 +39,7 @@ export function createWriteFileTool(workspaceDir: string, workspaceOnly = true):
           };
         }
 
-        const target = resolveWorkspacePath(params.path, workspaceDir, workspaceOnly);
+        const target = resolveWorkingPath(params.path, workingDir, workingDirOnly);
         let created = false;
 
         try {

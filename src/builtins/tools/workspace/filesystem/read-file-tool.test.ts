@@ -52,9 +52,9 @@ describe('readFileTool', () => {
     expect(result.content).toContain('startLine');
   });
 
-  it('rejects paths outside the workspace', async () => {
+  it('rejects paths outside the working directory', async () => {
     const result = await readFileTool.execute({ path: '..\\outside.txt' }, TEST_TOOL_CONTEXT);
     expect(result.outcome).toBe('failed');
-    expect(result.content).toContain('outside the workspace');
+    expect(result.content).toContain('outside the working directory');
   });
 });

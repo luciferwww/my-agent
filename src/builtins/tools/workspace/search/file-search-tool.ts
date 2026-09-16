@@ -1,5 +1,5 @@
 import type { Tool } from '../../../../core/tools/types.js';
-import { buildPathMatcher, listWorkspaceFiles } from '../common/workspace-walk.js';
+import { buildPathMatcher, listWorkingDirectoryFiles } from '../common/working-directory-walk.js';
 
 function parseMaxResults(value: unknown): number | undefined {
   if (value === undefined) {
@@ -21,7 +21,7 @@ function formatResults(query: string, matches: string[]): string {
   return [`query: ${query}`, 'matches:', ...matches].join('\n');
 }
 
-export function createFileSearchTool(workspaceDir: string): Tool {
+export function createFileSearchTool(workingDir: string): Tool {
   return {
     name: 'file_search',
     description: 'Search for files in the workspace by filename or glob-like path pattern.',
@@ -50,7 +50,7 @@ export function createFileSearchTool(workspaceDir: string): Tool {
 
         const matcher = buildPathMatcher(params.query);
         const maxResults = parseMaxResults(params.maxResults);
-        const files = await listWorkspaceFiles(workspaceDir);
+        const files = await listWorkingDirectoryFiles(workingDir);
         const matches = files
           .map((entry) => entry.relativePath)
           .filter((candidate) => matcher(candidate))

@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Runner behavior
-> Verified: 2026-09-15
+> Verified: 2026-09-16
 > Ownership: Turn loop, context budgeting, Compaction, Tool and Hook invocation, recovery, and Runner events
 > Ownership key: runner-execution-and-context
 

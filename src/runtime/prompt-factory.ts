@@ -1,6 +1,6 @@
 import type { AgentDefaults } from '../platform/config/types.js';
 import type { SystemPromptBuildParams } from '../core/prompt/types.js';
-import type { ContextFile } from '../core/workspace/types.js';
+import type { ContextFile } from '../core/agent-context/types.js';
 import type { AvailableSubagentEntry } from '../core/subagent/available-subagents.js';
 import type { RunTurnParams } from './types.js';
 
@@ -13,7 +13,7 @@ export interface BuildSystemPromptParamsInput {
    * 工作目录绝对路径。由 RuntimeApp 在装配 prompt 时注入；驱动
    * SystemPromptBuilder `# Workspace` section（spec §11 Section 7）。
    */
-  workspaceDir?: string;
+  workingDir?: string;
   /**
    * `<available-subagents>` section 条目列表（spec §11 Section 8）。
    * RuntimeApp 仅在 `subagents.enabled === true` 时传入；否则不渲染。
@@ -29,7 +29,7 @@ export function buildSystemPromptParams(
     safetyLevel: input.overrides.safetyLevel ?? input.config.prompt.safetyLevel,
     contextFiles: input.contextFiles,
     toolNames: input.toolNames,
-    workspaceDir: input.workspaceDir,
+    workingDir: input.workingDir,
     availableSubagents: input.availableSubagents,
   };
 }

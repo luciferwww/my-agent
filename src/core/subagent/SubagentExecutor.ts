@@ -5,7 +5,7 @@ import type { AgentRunner, RunResult } from '../runner/index.js';
 import type { HookProjection, ToolProjection } from '../registry/index.js';
 import type { ApplicationToolPolicy } from '../tools/index.js';
 import type { SystemPromptBuilder } from '../prompt/SystemPromptBuilder.js';
-import type { ContextFile } from '../workspace/types.js';
+import type { ContextFile } from '../agent-context/types.js';
 import { buildSubagentBehavioralAddendum } from './behavioral-addendum.js';
 import type { SubagentProfile } from './types.js';
 
@@ -13,7 +13,7 @@ export interface SubagentExecutorDeps {
   readonly agentRunner: AgentRunner;
   readonly systemPromptBuilder: SystemPromptBuilder;
   readonly loadContextFilesFromDir: (absDir: string) => Promise<ContextFile[]>;
-  readonly workspaceDir: string;
+  readonly workingDir: string;
   readonly promptSafetyLevel: 'relaxed' | 'normal' | 'strict';
   readonly resolveToolPolicy: (profile: SubagentProfile) => ApplicationToolPolicy;
 }
@@ -66,7 +66,7 @@ export class SubagentExecutor {
       mode: 'minimal',
       contextFiles: mergedFiles,
       toolNames: tools.map(({ name }) => name),
-      workspaceDir: this.deps.workspaceDir,
+      workingDir: this.deps.workingDir,
       safetyLevel: this.deps.promptSafetyLevel,
     });
 

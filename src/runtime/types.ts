@@ -1,4 +1,5 @@
 import type { AppConfig, AgentDefaults, DeepPartial } from '../platform/config/types.js';
+import type { ApplicationConfigProjection } from '../platform/config/types.js';
 import type {
   ChatContentBlock,
   TokenUsage,
@@ -12,7 +13,7 @@ import type { SystemPromptBuilder } from '../core/prompt/SystemPromptBuilder.js'
 import type { SessionManager, SessionManagerOptions } from '../core/session/SessionManager.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import type { ApplicationToolPolicy } from '../core/tools/types.js';
-import type { ContextFile } from '../core/workspace/types.js';
+import type { ContextFile } from '../core/agent-context/types.js';
 import type { AgentEvent, AgentRunner, AgentRunnerConfig } from '../core/runner/index.js';
 import type { UserPromptBuilder } from '../core/prompt/UserPromptBuilder.js';
 import type { LoadedRuntimeUnit } from './runtime-unit.js';
@@ -21,7 +22,8 @@ import type { RuntimeDeadlineDriver, RuntimeDeadlinePolicy } from './runtime-dea
 export interface RuntimeResourceSet {
   readonly appConfig: AppConfig;
   readonly resolvedConfig: AgentDefaults;
-  readonly workspaceDir: string;
+  readonly agentHome: string;
+  readonly workingDir: string;
   readonly sessionManager: SessionManager;
   readonly toolPolicy: ApplicationToolPolicy;
   readonly memoryManager: MemoryManager | null;
@@ -38,15 +40,15 @@ export interface RuntimeProviderOptions {
 }
 
 export interface RuntimeMemoryOptions {
-  workspaceDir: string;
+  agentHome: string;
   enabled: boolean;
   embedding?: AgentDefaults['memory']['embedding'];
   search?: AgentDefaults['memory']['search'];
 }
 
 export interface RuntimeBuiltinToolOptions {
-  workspaceDir: string;
-  fsWorkspaceOnly?: boolean;
+  workingDir: string;
+  fsWorkingDirOnly?: boolean;
   webFetchEnabled?: boolean;
   execEnabled?: boolean;
   processEnabled?: boolean;
@@ -54,7 +56,7 @@ export interface RuntimeBuiltinToolOptions {
 
 export interface RuntimeDependencies {
   createBundledProviderUnit(options: RuntimeProviderOptions): LoadedRuntimeUnit;
-  createSessionManager(workspaceDir: string, options?: SessionManagerOptions): SessionManager;
+  createSessionManager(agentHome: string, options?: SessionManagerOptions): SessionManager;
   createMemoryManager(options: RuntimeMemoryOptions): Promise<MemoryManager | null>;
   createSystemPromptBuilder(): SystemPromptBuilder;
   createAgentRunner(config: AgentRunnerConfig): AgentRunner;
@@ -65,7 +67,10 @@ export interface RuntimeDependencies {
 }
 
 export interface RuntimeAppOptions {
-  workspaceDir: string;
+  readonly agentHome: string;
+  readonly workingDir: string;
+  /** Validated application projection. Omission uses hardcoded defaults without filesystem loading. */
+  readonly applicationConfig?: ApplicationConfigProjection;
   readonly loadedUnits?: readonly LoadedRuntimeUnit[];
   readonly deadlinePolicy?: Partial<RuntimeDeadlinePolicy>;
   readonly deadlineDriver?: RuntimeDeadlineDriver;
@@ -142,7 +147,7 @@ export type RuntimeErrorSeverity = 'warning' | 'recoverable' | 'fatal';
 export type RuntimeErrorCode =
   | 'CONFIG_INVALID'
   | 'MODEL_MISSING'
-  | 'WORKSPACE_INIT_FAILED'
+  | 'AGENT_CONTEXT_INIT_FAILED'
   | 'CONTEXT_LOAD_FAILED'
   | 'MEMORY_INIT_FAILED'
   | 'TOOL_ASSEMBLY_FAILED'
@@ -209,11 +214,13 @@ export interface RuntimeShutdownReport {
 export type RuntimeEvent =
   | {
       type: 'app_start';
-      workspaceDir: string;
+      agentHome: string;
+      workingDir: string;
     }
   | {
       type: 'app_ready';
-      workspaceDir: string;
+      agentHome: string;
+      workingDir: string;
       contextVersion: number;
       toolNames: string[];
       channelIds: string[];

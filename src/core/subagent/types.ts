@@ -1,5 +1,5 @@
 import type { TokenUsage } from '../model-invocation/index.js';
-import type { ContextFile } from '../workspace/types.js';
+import type { ContextFile } from '../agent-context/types.js';
 import type { ModelReference, ResolutionFailureCategory } from '../model-resolution/index.js';
 
 // ── Profile / role / capabilities ────────────────────────────
@@ -8,8 +8,8 @@ import type { ModelReference, ResolutionFailureCategory } from '../model-resolut
  * Static configuration for a named subagent profile.
  *
  * `agentDir` is the **absolute path** to the role-personality directory
- * (`<workspaceDir>/.agent/subagents/<id>/`). The config-loader always
- * derives it from `id` + `workspaceDir`; users do not set it directly.
+ * (`<agentHome>/subagents/<id>/`). The config-loader always
+ * derives it from `id` + `agentHome`; users do not set it directly.
  * Whether the directory actually exists is probed at run time by the
  * internal Child executor (deciding anonymous vs named context-files behavior).
  */

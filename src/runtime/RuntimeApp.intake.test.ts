@@ -710,7 +710,8 @@ async function buildApp(
   const testChannel = createTestChannel('intake-test');
 
   const app = await RuntimeApp.create({
-    workspaceDir,
+    agentHome: workspaceDir,
+    workingDir: workspaceDir,
     loadedUnits: [testChannel.unit],
     cliOverrides: {
       model: { providerId: 'test', modelId: 'test-model' },

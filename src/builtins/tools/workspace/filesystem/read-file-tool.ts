@@ -1,7 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 
 import type { Tool } from '../../../../core/tools/types.js';
-import { resolveWorkspacePath } from '../common/path-policy.js';
+import { resolveWorkingPath } from '../common/path-policy.js';
 
 const DEFAULT_MAX_LINES = 200;
 
@@ -43,7 +43,7 @@ function formatReadResult(params: {
   return `${header.join('\n')}\n\n${params.selectedLines.join('\n')}`.trimEnd();
 }
 
-export function createReadFileTool(workspaceDir: string, workspaceOnly = true): Tool {
+export function createReadFileTool(workingDir: string, workingDirOnly = true): Tool {
   return {
     name: 'read_file',
     description: 'Read file contents from the workspace, optionally limited to a 1-based line range.',
@@ -67,7 +67,7 @@ export function createReadFileTool(workspaceDir: string, workspaceOnly = true): 
     },
     execute: async (params) => {
       try {
-        const target = resolveWorkspacePath(params.path, workspaceDir, workspaceOnly);
+        const target = resolveWorkingPath(params.path, workingDir, workingDirOnly);
         const startLine = normalizePositiveInteger(params.startLine, 'startLine');
         const endLine = normalizePositiveInteger(params.endLine, 'endLine');
 

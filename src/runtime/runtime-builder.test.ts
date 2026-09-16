@@ -108,7 +108,8 @@ function createHarness(options: {
     ...(options.additionalLoadedUnits ?? []),
   ];
   const runtimeOptions: RuntimeAppOptions = {
-    workspaceDir: '/workspace',
+    agentHome: '/agent-home',
+    workingDir: '/working',
     loadedUnits,
     onEvent: (event) => events.push(event),
   };
@@ -118,7 +119,7 @@ function createHarness(options: {
       resolvedConfig: {
         llm: { maxTokens: 1 },
         tools: {},
-        workspace: { maxFileChars: 1, maxTotalChars: 1 },
+        context: { maxFileChars: 1, maxTotalChars: 1 },
         subagents: { enabled: false, list: [] },
       },
     },

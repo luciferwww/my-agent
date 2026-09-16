@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Provider behavior
-> Verified: 2026-09-15
+> Verified: 2026-09-16
 > Ownership: Provider-neutral invocation, normalized invocation failures, and concrete Anthropic-compatible and Copilot Relay integrations
 > Ownership key: provider-protocol-and-anthropic-adapter
 
@@ -147,9 +147,9 @@ The Relay emits a local `Error` satisfying the V1 structural invocation-error co
 
 The repository build creates an exact seven-file ESM artifact at `dist/extension-artifacts/copilot-relay-provider`: five reachable JavaScript files plus `extension.json` and the ESM package marker. The artifact audit rejects extra files, source-map metadata, non-relative/escaping imports, and unreachable runtime files, then verifies relocated generic acquisition and invocation.
 
-Deployment places the complete artifact directory directly under `<agent-home>/extensions`. Agent Home configuration enables Descriptor ID `copilot-relay-provider`; its scoped config may materialize `baseURL`, `apiKey`, and `discoveryTimeoutMs`. The Extension entry reads only its validated `ExtensionLoadContext.config`, not process environment.
+Deployment places the complete artifact directory directly under `<installDir>/extensions`. Agent configuration under `<agentHome>/config.json` enables Descriptor ID `copilot-relay-provider`; its scoped config may materialize `baseURL`, `apiKey`, and `discoveryTimeoutMs`. The Extension entry reads only its validated `ExtensionLoadContext.config`, not process environment.
 
-`scripts/server.ts` uses the generic Extension acquisition boundary and passes acquired `LoadedRuntimeUnit[]` beside a static WebSocket Channel Unit. It does not import Relay implementation or infer the Relay Provider ID. A default Model Reference comes from ordinary agent configuration or the atomic `MY_AGENT_PROVIDER` plus `MY_AGENT_MODEL` environment override.
+`src/hosts/standalone/standalone-host.ts` uses the generic Extension acquisition boundary and passes acquired `LoadedRuntimeUnit[]` beside the selected optional builtin Channel Unit. It does not import Relay implementation or infer the Relay Provider ID. A default Model Reference comes from ordinary Agent configuration or the atomic `MY_AGENT_PROVIDER` plus `MY_AGENT_MODEL` environment override.
 
 ## 9. Evidence
 
@@ -157,8 +157,8 @@ Deployment places the complete artifact directory directly under `<agent-home>/e
 |---|---|
 | Core source | [Invocation types](../../src/core/model-invocation/types.ts), [Invocation errors](../../src/core/model-invocation/errors.ts) |
 | Anthropic source | [AnthropicMessagesClient](../../src/builtins/providers/anthropic/AnthropicMessagesClient.ts), [AnthropicCompatibleProvider](../../src/builtins/providers/anthropic/AnthropicCompatibleProvider.ts), [production Tool codec](../../src/builtins/providers/anthropic/tool-codec.ts), [Anthropic Runtime Unit](../../src/builtins/providers/anthropic/runtime-unit.ts) |
-| Relay source | [Extension entry](../../src/extensions/copilot-relay-provider/entry.ts), [Relay Unit](../../src/extensions/copilot-relay-provider/copilot-relay-provider-unit.ts), [Relay Provider](../../src/extensions/copilot-relay-provider/copilot-relay-provider.ts), [Responses client](../../src/extensions/copilot-relay-provider/responses-client.ts), [Relay metadata](../../src/extensions/copilot-relay-provider/model-metadata.ts), [supported Host](../../scripts/server.ts), [Host acquisition](../../scripts/websocket-host-startup.ts), [artifact builder](../../scripts/build-relay-extension-artifact.mjs) |
+| Relay source | [Extension entry](../../src/extensions/copilot-relay-provider/entry.ts), [Relay Unit](../../src/extensions/copilot-relay-provider/copilot-relay-provider-unit.ts), [Relay Provider](../../src/extensions/copilot-relay-provider/copilot-relay-provider.ts), [Responses client](../../src/extensions/copilot-relay-provider/responses-client.ts), [Relay metadata](../../src/extensions/copilot-relay-provider/model-metadata.ts), [supported Host](../../src/hosts/standalone/standalone-host.ts), [Host acquisition](../../src/hosts/standalone/host-startup.ts), [artifact builder](../../scripts/build-relay-extension-artifact.mjs) |
 | Core/Anthropic tests | [Invocation error tests](../../src/core/model-invocation/errors.test.ts), [AnthropicMessagesClient tests](../../src/builtins/providers/anthropic/AnthropicMessagesClient.test.ts), [AnthropicCompatibleProvider tests](../../src/builtins/providers/anthropic/AnthropicCompatibleProvider.test.ts), [production Tool codec tests](../../src/builtins/providers/anthropic/tool-codec.test.ts), [portability fixtures](../../src/core/tools/provider-portability-fixtures.ts), [independent portability tests](../../src/core/tools/provider-portability.test.ts), [Anthropic Runtime Unit tests](../../src/builtins/providers/anthropic/runtime-unit.test.ts) |
-| Relay/Host tests | [Relay Unit tests](../../src/extensions/copilot-relay-provider/copilot-relay-provider-unit.test.ts), [Responses client tests](../../src/extensions/copilot-relay-provider/responses-client.test.ts), [Host startup tests](../../scripts/websocket-host-startup.test.ts), [artifact audit](../../scripts/audit-relay-extension-artifact.mjs) |
+| Relay/Host tests | [Relay Unit tests](../../src/extensions/copilot-relay-provider/copilot-relay-provider-unit.test.ts), [Responses client tests](../../src/extensions/copilot-relay-provider/responses-client.test.ts), [Host startup tests](../../src/hosts/standalone/host-startup.test.ts), [artifact audit](../../scripts/audit-relay-extension-artifact.mjs) |
 | Controlling authority | [ADR-002](../decisions/adr-002-context-budgeting-and-compaction-recovery.md), [ADR-004](../decisions/adr-004-provider-model-identity-and-facts-ownership.md), [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [ADR-007](../decisions/adr-007-builtin-capability-source-ownership.md), [Model Resolution Specification](../specifications/model-resolution.md), [Model Invocation Errors Specification](../specifications/model-invocation-errors.md) |
 | Delivery history | [Provider Model Catalog archived change](../changes/archive/provider-model-catalog/specification.md), [Source Layout Convergence archived change](../changes/archive/source-layout-convergence/specification.md) |

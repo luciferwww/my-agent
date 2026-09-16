@@ -82,12 +82,12 @@ export class MemoryIndexer {
   /**
    * 索引所有记忆文件（MEMORY.md + memory/*.md）。
    */
-  async indexAll(workspaceDir: string): Promise<void> {
-    log.info('indexAll start', { workspaceDir });
+  async indexAll(agentHome: string): Promise<void> {
+    log.info('indexAll start', { agentHome });
     let indexed = 0;
 
     // 索引 MEMORY.md
-    const memoryPath = join(workspaceDir, 'MEMORY.md');
+    const memoryPath = join(agentHome, 'MEMORY.md');
     const memoryContent = await readFileSafe(memoryPath);
     if (memoryContent !== null) {
       await this.indexFile('MEMORY.md', memoryContent);
@@ -97,7 +97,7 @@ export class MemoryIndexer {
     }
 
     // 索引 memory/*.md
-    const memoryDir = join(workspaceDir, 'memory');
+    const memoryDir = join(agentHome, 'memory');
     const entries = await readdirSafe(memoryDir);
     for (const entry of entries) {
       if (!entry.endsWith('.md')) continue;

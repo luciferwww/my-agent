@@ -42,7 +42,7 @@ import {
 } from '../core/subagent/index.js';
 import type { SubagentProfile } from '../core/subagent/types.js';
 import { SubagentExecutor } from '../core/subagent/SubagentExecutor.js';
-import { loadContextFilesFromDir } from '../core/workspace/index.js';
+import { loadContextFilesFromDir } from '../core/agent-context/index.js';
 import { createApplicationToolPolicy } from './tool-approval-policy.js';
 import { createAnthropicProviderUnit } from '../builtins/providers/anthropic/index.js';
 import { createMemoryToolsContribution } from '../builtins/tools/memory/index.js';
@@ -204,7 +204,7 @@ export async function buildRuntimeHandle(
   try {
     const activeParentTurns = new Map<string, ActiveParentTurn>();
     const routeContextByTurn = new Map<string, MessageRouteContext>();
-    const generalPurpose = buildGeneralPurposeProfile(options.workspaceDir);
+    const generalPurpose = buildGeneralPurposeProfile(options.agentHome);
     const subagentProfiles = new Map<string, SubagentProfile>([
       [generalPurpose.id, generalPurpose],
     ]);
@@ -234,7 +234,7 @@ export async function buildRuntimeHandle(
     );
     for (const profile of loadSubagentProfiles(
       bootstrap.resources.resolvedConfig.subagents?.list ?? [],
-      options.workspaceDir,
+      options.agentHome,
       registeredToolNames,
     )) {
       subagentProfiles.set(profile.id, profile);
@@ -256,7 +256,8 @@ export async function buildRuntimeHandle(
     }));
     options.onEvent?.({
       type: 'app_ready',
-      workspaceDir: options.workspaceDir,
+      agentHome: options.agentHome,
+      workingDir: options.workingDir,
       contextVersion: bootstrap.state.contextVersion,
       toolNames: registrySnapshot.tools.definitions.map((tool) => tool.name),
       channelIds: registrySnapshot.channels.bindings.map((channel) => channel.id),
@@ -429,8 +430,8 @@ function assembleLoadedRuntimeUnits(params: {
     deploymentFacts: resources.resolvedConfig.llm.deploymentFacts,
   });
   const toolOptions = {
-    workspaceDir: options.workspaceDir,
-    fsWorkspaceOnly: resources.resolvedConfig.tools.fs?.workspaceOnly ?? true,
+    workingDir: options.workingDir,
+    fsWorkingDirOnly: resources.resolvedConfig.tools.fs?.workingDirOnly ?? true,
     webFetchEnabled: true,
     execEnabled: true,
     processEnabled: true,
@@ -448,10 +449,10 @@ function assembleLoadedRuntimeUnits(params: {
       agentRunner: resources.agentRunner,
       systemPromptBuilder: resources.systemPromptBuilder,
       loadContextFilesFromDir: (absDir) => loadContextFilesFromDir(absDir, {
-        maxFileChars: resources.resolvedConfig.workspace.maxFileChars,
-        maxTotalChars: resources.resolvedConfig.workspace.maxTotalChars,
+        maxFileChars: resources.resolvedConfig.context.maxFileChars,
+        maxTotalChars: resources.resolvedConfig.context.maxTotalChars,
       }),
-      workspaceDir: options.workspaceDir,
+      workingDir: options.workingDir,
       promptSafetyLevel: resources.resolvedConfig.prompt?.safetyLevel ?? 'normal',
       resolveToolPolicy: (profile) => createApplicationToolPolicy(resolveSubagentTools(
         profile,
@@ -489,13 +490,13 @@ function createRuntimeDependencies(
     createBundledProviderUnit(options) {
       return createAnthropicProviderUnit(options);
     },
-    createSessionManager(workspaceDir, options) {
-      return new SessionManager(workspaceDir, options);
+    createSessionManager(agentHome, options) {
+      return new SessionManager(agentHome, options);
     },
     async createMemoryManager(options) {
       if (!options.enabled) return null;
       return MemoryManager.create({
-        workspaceDir: options.workspaceDir,
+        agentHome: options.agentHome,
         embedding: options.embedding,
         search: options.search,
         enabled: options.enabled,
@@ -510,8 +511,8 @@ function createRuntimeDependencies(
     getBuiltinContributionUnits(options, memoryManager) {
       return Object.freeze([
         createWorkspaceToolsContribution({
-          workspaceDir: options.workspaceDir,
-          fsWorkspaceOnly: options.fsWorkspaceOnly ?? true,
+          workingDir: options.workingDir,
+          fsWorkingDirOnly: options.fsWorkingDirOnly ?? true,
           webFetchEnabled: options.webFetchEnabled ?? true,
           execEnabled: options.execEnabled ?? true,
           processEnabled: options.processEnabled ?? true,

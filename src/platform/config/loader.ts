@@ -1,11 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from './defaults.js';
-import type { AppConfig, AgentDefaults, AgentEntry, ConfigFile, DeepPartial, LoggerModuleConfig } from './types.js';
+import type { AppConfig, AgentDefaults, DeepPartial } from './types.js';
 import type { ModelReference } from '../../core/model-resolution/index.js';
-
-const CONFIG_FILE_NAME = 'config.json';
-const AGENT_DIR = '.agent';   // 与 workspace/init.ts 保持一致；spec §4.1 约定路径
 
 // ── 深度合并 ──────────────────────────────────────────────
 
@@ -56,19 +50,21 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 // ── 环境变量映射 ──────────────────────────────────────────
 
 /** 从环境变量中提取配置覆盖 */
-export function getEnvOverrides(): DeepPartial<AgentDefaults> {
+export function getEnvOverrides(
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): DeepPartial<AgentDefaults> {
   const overrides: DeepPartial<AgentDefaults> = {};
 
-  const apiKey = process.env['ANTHROPIC_API_KEY'];
-  const baseURL = process.env['ANTHROPIC_BASE_URL'];
-  const provider = process.env['MY_AGENT_PROVIDER'];
-  const model = process.env['MY_AGENT_MODEL'];
+  const apiKey = environment['ANTHROPIC_API_KEY'];
+  const baseURL = environment['ANTHROPIC_BASE_URL'];
+  const providerId = environment['MY_AGENT_PROVIDER'];
+  const modelId = environment['MY_AGENT_MODEL'];
 
-  if ((provider === undefined) !== (model === undefined)) {
+  if ((providerId === undefined) !== (modelId === undefined)) {
     throw new Error('MY_AGENT_PROVIDER and MY_AGENT_MODEL must be provided together.');
   }
-  if (provider !== undefined && model !== undefined) {
-    overrides.model = validateModelReference({ providerId: provider, modelId: model }, 'environment');
+  if (providerId !== undefined && modelId !== undefined) {
+    overrides.model = validateModelReference({ providerId, modelId }, 'environment');
   }
 
   if (apiKey || baseURL) {
@@ -78,72 +74,6 @@ export function getEnvOverrides(): DeepPartial<AgentDefaults> {
   }
 
   return overrides;
-}
-
-// ── 配置文件加载 ──────────────────────────────────────────
-
-/** 从 .agent/config.json 读取配置。文件不存在或格式错误返回空对象。 */
-function readConfigFile(workspaceDir: string): ConfigFile {
-  const configPath = join(workspaceDir, AGENT_DIR, CONFIG_FILE_NAME);
-
-  try {
-    const raw = readFileSync(configPath, 'utf-8');
-    const parsed = JSON.parse(raw);
-
-    // 基本类型校验：顶层必须是对象
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      return {};
-    }
-
-    return parsed as ConfigFile;
-  } catch {
-    // 文件不存在、权限不足、JSON 语法错误 → 降级为空配置
-    return {};
-  }
-}
-
-// ── loadConfig ───────────────────────────────────────────
-
-export interface LoadConfigOptions {
-  /** 工作区根目录 */
-  workspaceDir: string;
-}
-
-/**
- * 加载配置。
- *
- * 合并硬编码默认值和 config.json 文件，返回 AppConfig。
- * 环境变量和 CLI 覆盖不在此处合并——由 resolveAgentConfig() 负责。
- */
-export function loadConfig(options: LoadConfigOptions): AppConfig {
-  const { workspaceDir } = options;
-
-  // 1. 起点：硬编码默认值
-  let defaults: AgentDefaults = { ...DEFAULT_AGENT_CONFIG };
-
-  // 2. 合并配置文件中的 agents.defaults
-  const file = readConfigFile(workspaceDir);
-  if (file.agents?.defaults) {
-    validateAgentModelSource(file.agents.defaults, 'agents.defaults');
-    defaults = deepMerge(defaults, file.agents.defaults);
-  }
-  for (const entry of file.agents?.list ?? []) {
-    validateAgentModelSource(entry, `agents.list[${entry.id}]`);
-  }
-
-  // 3. 合并 logger 配置（默认值 + 文件覆盖）
-  const logger: LoggerModuleConfig = file.logger
-    ? deepMerge(DEFAULT_LOGGER_CONFIG, file.logger)
-    : { ...DEFAULT_LOGGER_CONFIG };
-
-  return {
-    workspaceDir,
-    agents: {
-      defaults,
-      list: file.agents?.list ?? [],
-    },
-    logger,
-  };
 }
 
 // ── resolveAgentConfig ───────────────────────────────────
@@ -200,7 +130,7 @@ export function resolveAgentConfig(
   return resolved;
 }
 
-function validateAgentModelSource(source: unknown, label: string): void {
+export function validateAgentModelSource(source: unknown, label: string): void {
   if (!isPlainObject(source)) return;
   const llm = source['llm'];
   if (isPlainObject(llm) && Object.prototype.hasOwnProperty.call(llm, 'model')) {

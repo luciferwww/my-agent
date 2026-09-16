@@ -2,12 +2,12 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-14
+> Verified: 2026-09-16
 > Authority: Stable Host acquisition contract
 
 ## Scope
 
-Own Agent Home resolution, Host config, direct-child discovery, Descriptor and path validation, duplicate isolation, scoped configuration, controlled ESM loading, Unit metadata validation, diagnostics, and frozen handoff of uncreated Units.
+Own an explicit Host-injected `extensionsDir`, injected Agent Extension configuration semantics, direct-child discovery, Descriptor and path validation, duplicate isolation, scoped configuration, controlled ESM loading, Unit metadata validation, diagnostics, and frozen handoff of uncreated Units.
 
 Excluded: marketplace/install/update/signing; watchers/hot reload; sandboxing; Unit creation, registration, publication, retirement, or stop; Extension dependencies; public SDK packaging; and self-contained deployment bundling.
 
@@ -29,15 +29,15 @@ interface ExtensionAcquisitionResult {
 }
 ```
 
-## Agent Home and discovery
+## Installation root and discovery
 
-Agent Home precedence is explicit path, `MY_AGENT_HOME`, then `<home>/.my-agent`. Missing paths are normalized but not created. Existing paths must canonically resolve to directories.
+Standalone passes exactly `<installDir>/extensions`. Acquisition does not receive or derive `installDir`, `agentHome`, `workingDir`, process Home, CWD, CLI input, or environment path precedence.
 
-Discover only direct children of `<agent-home>/extensions`. Descriptor ID matches `[A-Za-z0-9_-]{1,64}`; directory name is a locator only. Entry is a contained relative `.js` regular file and may not be a symlink/reparse point. All duplicate-ID candidates are isolated; no winner is chosen. Valid candidates sort deterministically by ID.
+Discover only direct children of the injected `extensionsDir`. A missing directory is a non-creating empty state. An existing root and every candidate/entry must remain canonically contained in the installation-owned location. Descriptor ID matches `[A-Za-z0-9_-]{1,64}`; directory name is a locator only. Entry is a contained relative `.js` regular file and may not be a symlink/reparse point. All duplicate-ID candidates are isolated; no winner is chosen. Valid candidates sort deterministically by ID.
 
 Descriptor schema is Draft-07, root object, `additionalProperties: false`, with internal JSON Pointer references only.
 
-## Host configuration and loading
+## Agent Extension configuration and loading
 
 Global `extensions.enabled` defaults true and short-circuits discovery when false. A candidate loads only when `entries.<id>.enabled === true`; config presence alone does not enable it.
 
@@ -47,7 +47,7 @@ The returned Unit must match Descriptor ID, use source `external`, be optional a
 
 ## Failure semantics
 
-Invalid explicit/environment Agent Home, invalid existing Host config, and invalid existing discovery root are fatal Host failures. Missing Agent Home/config/extensions roots are empty states.
+An invalid existing discovery root or escaped installation candidate is a fatal Host failure. A missing `extensionsDir` is an empty state. Agent configuration errors fail before acquisition.
 
 Descriptor, containment, duplicate, schema, environment, import/export, factory, and Unit metadata failures are candidate-local diagnostics. A bad candidate does not suppress valid neighbors. Configured IDs without installed candidates produce `stale_configured_id`. Diagnostics/results are frozen, deterministic, bounded, and secret-free.
 
@@ -57,6 +57,6 @@ Acquisition ends at `LoadedRuntimeUnit[]`. [Runtime Composition](runtime-composi
 
 ## Acceptance scenarios and evidence
 
-Cover precedence, missing/invalid roots, containment/reparse rejection, Descriptor/schema validation, renamed-directory invariance, duplicate isolation, explicit/global enablement, environment/secret materialization and redaction, import/export/factory failure, Unit normalization, deterministic frozen output, bad-neighbor isolation, and Runtime publication integration.
+Cover explicit-root handoff, missing/invalid roots, installation containment and immutability, reparse rejection, Descriptor/schema validation, renamed-directory invariance, duplicate isolation, explicit/global enablement, environment/secret materialization and redaction, import/export/factory failure, Unit normalization, deterministic frozen output, bad-neighbor isolation, and Runtime publication integration.
 
-Evidence: [acquisition source](../../src/extension-acquisition), [acquisition tests](../../src/extension-acquisition/loader.test.ts), [discovery tests](../../src/extension-acquisition/discovery.test.ts), [Runtime integration](../../src/extension-acquisition/acquisition-runtime.integration.test.ts), and [Host startup tests](../../scripts/websocket-host-startup.test.ts). Decision: [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md).
+Evidence: [acquisition source](../../src/extension-acquisition), [acquisition tests](../../src/extension-acquisition/loader.test.ts), [discovery tests](../../src/extension-acquisition/discovery.test.ts), [Runtime integration](../../src/extension-acquisition/acquisition-runtime.integration.test.ts), [Host startup tests](../../src/hosts/standalone/host-startup.test.ts), and [WebSocket Host verifier](../../scripts/verify-websocket-host.mjs). Decisions: [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [ADR-009](../decisions/adr-009-host-boundaries-and-standalone-npm-distribution.md), and [ADR-010](../decisions/adr-010-install-and-agent-home-ownership.md).

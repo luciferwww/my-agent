@@ -19,7 +19,7 @@ interface CurrentAuthorityDocument extends CurrentAuthoritySurfaceEntry {
 const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const CURRENT_ROOT = join(REPOSITORY_ROOT, 'docs', 'architecture');
 const SURFACE_PATH = fileURLToPath(new URL('./ft-12-current-architecture-surface.json', import.meta.url));
-const VERIFIED_DATE = '2026-09-15';
+const VERIFIED_DATE = '2026-09-16';
 const STALE_CURRENT_CLAIMS = [
   /基准版本/u,
   /设计文档/u,
@@ -308,6 +308,7 @@ async function currentSourceModules(): Promise<string[]> {
   const modules = [
     'src/runtime',
     'src/extension-acquisition',
+    'src/hosts',
   ];
   for (const root of roots) {
     const entries = await readdir(join(REPOSITORY_ROOT, 'src', root), { withFileTypes: true });

@@ -6,8 +6,12 @@ import ts from 'typescript';
 
 const DEFAULT_REPOSITORY_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const REQUIRED_FILES = Object.freeze([
-  'scripts/server.js',
-  'src/extension-acquisition/index.js',
+  'hosts/standalone/entry.js',
+  'extension-acquisition/index.js',
+  'core/agent-context/templates/IDENTITY.md',
+  'core/agent-context/templates/SOUL.md',
+  'core/agent-context/templates/AGENTS.md',
+  'core/agent-context/templates/TOOLS.md',
 ]);
 const FORBIDDEN_IDENTITIES = Object.freeze([
   'COPILOT_RELAY_',
@@ -25,8 +29,15 @@ export async function auditHostBuild(repositoryRoot = DEFAULT_REPOSITORY_ROOT) {
   for (const required of REQUIRED_FILES) {
     if (!relativeFiles.includes(required)) diagnostics.push(`missing required file: ${required}`);
   }
+  const entryPath = join(hostRoot, 'hosts', 'standalone', 'entry.js');
+  if (relativeFiles.includes('hosts/standalone/entry.js')) {
+    const entrySource = await readFile(entryPath, 'utf8');
+    if (!entrySource.startsWith('#!/usr/bin/env node\n')) {
+      diagnostics.push('standalone entry is missing the Node executable shebang');
+    }
+  }
   for (const file of relativeFiles) {
-    if (file.startsWith('src/extensions/')) diagnostics.push(`concrete Extension emitted: ${file}`);
+    if (file.startsWith('extensions/')) diagnostics.push(`concrete Extension emitted: ${file}`);
     if (file.includes('/test-fixtures/') || /(?:^|\/)test-fixtures\//u.test(file)) {
       diagnostics.push(`test fixture emitted: ${file}`);
     }

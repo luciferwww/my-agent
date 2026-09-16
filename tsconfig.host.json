@@ -1,12 +1,12 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "rootDir": ".",
+    "rootDir": "src",
     "outDir": "dist/host",
     "declaration": false,
     "declarationMap": false,
     "sourceMap": false
   },
-  "files": ["scripts/server.ts"],
+  "files": ["src/hosts/standalone/entry.ts"],
   "include": []
 }

@@ -153,8 +153,8 @@ function isAllowedRuntimeSpecifier(specifier) {
 
 async function auditRelocatedAcquisitionAndInvocation() {
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'my-agent-relay-artifact-'));
-  const agentHome = join(temporaryRoot, 'agent-home');
-  const installationRoot = join(agentHome, 'extensions', 'renamed-relay-directory');
+  const extensionsDir = join(temporaryRoot, 'installation', 'extensions');
+  const installationRoot = join(extensionsDir, 'renamed-relay-directory');
   const backupBuildRoot = `${buildRoot}.artifact-audit-backup`;
   const server = createRelayServer();
   let buildRootRenamed = false;
@@ -163,8 +163,15 @@ async function auditRelocatedAcquisitionAndInvocation() {
     await mkdir(dirname(installationRoot), { recursive: true });
     await cp(artifactRoot, installationRoot, { recursive: true });
     const baseURL = await listen(server);
-    await writeFile(join(agentHome, 'config.json'), JSON.stringify({
-      extensions: {
+    const acquisition = await import(pathToFileURL(join(
+      repositoryRoot,
+      'dist',
+      'extension-acquisition',
+      'index.js',
+    )).href);
+    const result = await acquisition.acquireExtensions({
+      extensionsDir,
+      extensionsConfig: {
         enabled: true,
         entries: {
           'copilot-relay-provider': {
@@ -173,16 +180,8 @@ async function auditRelocatedAcquisitionAndInvocation() {
           },
         },
       },
-    }));
-
-    const acquisition = await import(pathToFileURL(join(
-      repositoryRoot,
-      'dist',
-      'extension-acquisition',
-      'index.js',
-    )).href);
-    const hostConfig = await acquisition.readHostExtensionsConfig(agentHome);
-    const result = await acquisition.acquireExtensions({ agentHome, hostConfig, environment: {} });
+      environment: {},
+    });
     if (result.diagnostics.length !== 0
       || result.loadedUnits.length !== 1
       || result.loadedUnits[0]?.unitId !== 'copilot-relay-provider') {

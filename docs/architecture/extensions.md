@@ -2,39 +2,33 @@
 
 > Status: Current Authority
 > Authority: Current implemented Extension acquisition behavior
-> Verified: 2026-09-15
-> Ownership: Agent Home resolution, Host Extension configuration, discovery, scoped configuration, controlled entry loading, acquisition diagnostics, and Host handoff
+> Verified: 2026-09-16
+> Ownership: Host-injected Extension root, Extension configuration, discovery, scoped configuration, controlled entry loading, acquisition diagnostics, and Host handoff
 > Ownership key: extension-acquisition
 
 ---
 
 ## 1. Boundary
 
-`src/extension-acquisition/` is a generic Host boundary. It resolves Agent Home, reads machine-level Extension configuration, discovers direct-child descriptors, validates and materializes scoped configuration, controls ESM entry loading, validates returned Unit metadata, and returns a frozen acquisition result.
+`src/extension-acquisition/` is a generic Host boundary. It consumes an explicit `extensionsDir` and injected Extension configuration, discovers direct-child descriptors, validates and materializes scoped configuration, controls ESM entry loading, validates returned Unit metadata, and returns a frozen acquisition result.
 
 Acquisition stops at not-yet-created `LoadedRuntimeUnit[]`. It never creates, starts, registers, publishes, retires, or stops Units. [Runtime](runtime.md) is the sole owner of those lifecycle and Registry-publication transitions.
 
 `src/extensions/` contains concrete optional Extension implementations, currently including Copilot Relay. Generic acquisition does not import or identify a concrete Extension. [Providers](providers.md) owns concrete Provider protocol behavior.
 
-Application/workspace configuration is separate and owned by [Configuration](configuration.md).
+Agent configuration loading is owned by [Configuration](configuration.md); acquisition owns the semantics of its injected Extension projection.
 
-## 2. Agent Home and Host configuration
+## 2. Installation and Extension configuration
 
-Agent Home precedence is:
+The standalone Host derives `installDir` from its installed package and injects exactly `<installDir>/extensions` into Extension Acquisition. Acquisition does not receive or resolve `installDir`, `agentHome`, `workingDir`, process-global paths, or CLI/environment precedence. A missing Extensions directory is a non-creating empty discovery state; an invalid existing discovery root is fatal.
 
-1. explicit `--agent-home` input;
-2. `MY_AGENT_HOME`;
-3. `<user-home>/.my-agent`.
-
-The path must be non-blank and absolute after `~` expansion. A missing path is returned as a normalized, non-created empty state. An existing path must canonically resolve to a directory.
-
-`<agent-home>/config.json` is separate from `<workspace>/.agent/config.json`. It owns:
+The Host-injected `<agentHome>/config.json` snapshot owns:
 
 - `extensions.enabled`, the global boolean acquisition switch, defaulting to `true`;
 - `extensions.entries.<descriptor-id>.enabled`, the required per-Descriptor boolean enablement switch;
 - `extensions.entries.<descriptor-id>.config`, the Descriptor-scoped configuration value.
 
-Missing Agent Home, Host config, or Extensions directory produces an empty non-creating state. An existing unreadable, malformed, or root-invalid Host config, and an invalid existing discovery root, are fatal Host configuration errors.
+Configuration failures are classified before acquisition.
 
 ## 3. Scoped configuration
 
@@ -49,7 +43,7 @@ Environment variable names are deployment inputs selected by Host configuration,
 
 ## 4. Discovery and loading
 
-Discovery considers direct children of `<agent-home>/extensions`. It enforces canonical containment, validates Descriptor shape, isolates all candidates participating in a duplicate Descriptor ID, and orders valid candidates deterministically by Descriptor ID.
+Discovery considers direct children of the injected install-owned `extensionsDir`. It enforces canonical containment, validates Descriptor shape, isolates all candidates participating in a duplicate Descriptor ID, and orders valid candidates deterministically by Descriptor ID.
 
 Controlled loading imports the declared ESM entry only after enablement, containment, and configuration checks. `contracts.ts` owns exactly the Host-facing `ExtensionLoadContext` and `ExternalExtensionModule` contracts; acquisition data shapes remain in `types.ts`.
 
@@ -70,22 +64,24 @@ The returned Units have not been created. Runtime combines them with required an
 
 ## 6. Supported Host and build boundary
 
-`scripts/server.ts` is the supported WebSocket Host composition root. It:
+`src/hosts/standalone/standalone-host.ts` is the supported service-first Host composition root. The thin executable bootstrap is `src/hosts/standalone/entry.ts`. The composition root:
 
-1. reads the atomic generic Model Reference environment override;
-2. resolves Agent Home and acquires enabled External Units;
+1. derives `installDir`, `agentHome`, and non-owning `workingDir`;
+2. reads the atomic generic Model Reference environment override and acquires enabled External Units from `<installDir>/extensions`;
 3. reports bounded acquisition diagnostics;
-4. appends the statically configured WebSocket Channel Unit;
+4. appends the Host-configured WebSocket or CLI Channel Unit, or no builtin Channel in headless mode;
 5. passes the combined `loadedUnits` to `RuntimeApp.create()`;
 6. delegates process shutdown to the Runtime Host wrapper.
 
-The Host owns process-level signal and exit policy; Runtime library code never calls `process.exit()`. The current wrapper shares cooperative shutdown, forces exit on a second signal or Host deadline, and removes its listeners after settlement. Those signal counts, exit codes, and Host deadlines are current implementation facts, not a stable contract; ADR-005 deliberately leaves Host signal mechanics unfrozen.
+The Host owns process-level signal and exit policy; Runtime library code never calls `process.exit()`. The current wrapper shares cooperative shutdown, forces exit on a second signal or Host deadline, and removes its listeners after settlement. The canonical standalone Host's signal counts, exit codes, and Host deadline are governed by the [Standalone Service Host Specification](../specifications/standalone-service-host.md); ADR-005 remains limited to Runtime and Extension lifecycle ownership.
 
-The Host does not import Relay-specific source. The first-class Host build starts from `scripts/server.ts`, follows its static TypeScript closure, and emits `dist/host`. That closure includes `src/extension-acquisition/` and excludes `src/extensions/**`; it is a verified Host code closure, not a self-contained deployment bundle. The aggregate repository build continues to build and audit declared Extension artifacts separately.
+The Host rejects CLI mode with an enabled Console Logger because both own terminal presentation. The Host does not import Relay-specific source. The first-class Host build starts from `src/hosts/standalone/entry.ts`, follows its static TypeScript closure, and emits `dist/host`; npm maps `my-agent` directly to `dist/host/hosts/standalone/entry.js`. That closure includes `extension-acquisition/` and excludes `extensions/**`; it is a verified Host code closure plus required Agent Context templates, not a bundled Node runtime or concrete External Extension. The aggregate repository build continues to build and audit declared Extension artifacts separately.
+
+Package verification installs the tarball into an isolated project, runs the generated command from a separate working directory with an isolated Home, and compares every installed package file path and byte after shutdown. The compiled WebSocket smoke provisions the Relay artifact under `installDir` before startup and likewise proves Runtime does not alter that Extension tree.
 
 ## 7. Failure boundaries
 
-- Invalid explicit/environment Agent Home values are fatal before discovery.
+- Invalid Host-derived path context is fatal before discovery.
 - Missing optional roots are empty states; invalid existing roots are fatal.
 - Candidate-level Descriptor, containment, duplicate, schema, environment-reference, import, export, or Unit-metadata failures are isolated diagnostics.
 - No invalid candidate is passed to Runtime.
@@ -95,7 +91,7 @@ The Host does not import Relay-specific source. The first-class Host build start
 
 | Kind | Evidence |
 |---|---|
-| Source | [public boundary](../../src/extension-acquisition/index.ts), [entry contracts](../../src/extension-acquisition/contracts.ts), [Agent Home](../../src/extension-acquisition/agent-home.ts), [Host config](../../src/extension-acquisition/host-config.ts), [discovery](../../src/extension-acquisition/discovery.ts), [loader](../../src/extension-acquisition/loader.ts), [Host startup](../../scripts/server.ts), [Runtime Host wrapper](../../scripts/runtime-host.ts), [Host build audit](../../scripts/audit-host-build.mjs) |
-| Tests | [Agent Home tests](../../src/extension-acquisition/agent-home.test.ts), [Host config tests](../../src/extension-acquisition/host-config.test.ts), [discovery tests](../../src/extension-acquisition/discovery.test.ts), [loader tests](../../src/extension-acquisition/loader.test.ts), [Runtime integration](../../src/extension-acquisition/acquisition-runtime.integration.test.ts), [Host startup tests](../../scripts/websocket-host-startup.test.ts), [Runtime Host policy tests](../../scripts/runtime-host.test.ts) |
-| Controlling authority | [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [Extension Acquisition Specification](../specifications/extension-acquisition.md) |
+| Source | [public boundary](../../src/extension-acquisition/index.ts), [entry contracts](../../src/extension-acquisition/contracts.ts), [discovery](../../src/extension-acquisition/discovery.ts), [loader](../../src/extension-acquisition/loader.ts), [standalone path context](../../src/hosts/standalone/path-context.ts), [standalone entry](../../src/hosts/standalone/entry.ts), [standalone Host](../../src/hosts/standalone/standalone-host.ts), [Runtime Host wrapper](../../src/hosts/standalone/runtime-host.ts), [Host build audit](../../scripts/audit-host-build.mjs) |
+| Tests | [standalone path-context tests](../../src/hosts/standalone/path-context.test.ts), [discovery tests](../../src/extension-acquisition/discovery.test.ts), [loader tests](../../src/extension-acquisition/loader.test.ts), [Runtime integration](../../src/extension-acquisition/acquisition-runtime.integration.test.ts), [Host startup tests](../../src/hosts/standalone/standalone-host.test.ts), [Runtime Host policy tests](../../src/hosts/standalone/runtime-host.test.ts), [package verifier tests](../../scripts/verify-npm-package.test.mjs), [package smoke](../../scripts/verify-npm-package.mjs), [WebSocket Host smoke](../../scripts/verify-websocket-host.mjs) |
+| Controlling authority | [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [ADR-010](../decisions/adr-010-install-and-agent-home-ownership.md), [Extension Acquisition Specification](../specifications/extension-acquisition.md) |
 | Delivery history | [B+ archived change](../changes/archive/extension-acquisition-source-layout/specification.md) |

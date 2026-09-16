@@ -1,6 +1,7 @@
 // ── Types ─────────────────────────────────────────────────
 export type {
   AppConfig,
+  ApplicationConfigProjection,
   AgentsConfig,
   AgentDefaults,
   AgentEntry,
@@ -13,19 +14,28 @@ export type {
   PromptConfig,
   ToolsConfig,
   FsToolsConfig,
-  WorkspaceConfig,
+  AgentContextConfig,
   SubagentsConfig,
   SubagentConfigEntry,
   SubagentToolsConfig,
-  ConfigFile,
   DeepPartial,
   EmbeddingProviderType,
   SafetyLevel,
+  StandaloneHostMode,
 } from './types.js';
 
 // ── Defaults ──────────────────────────────────────────────
 export { DEFAULT_AGENT_CONFIG } from './defaults.js';
 
-// ── Loader ────────────────────────────────────────────────
-export { loadConfig, resolveAgentConfig, getEnvOverrides, deepMerge } from './loader.js';
-export type { LoadConfigOptions, ResolveOptions } from './loader.js';
+// ── Resolution ────────────────────────────────────────────
+export { resolveAgentConfig, getEnvOverrides, deepMerge } from './loader.js';
+export type { ResolveOptions } from './loader.js';
+
+// ── Agent configuration loader ───────────────────────────
+export { loadAgentConfig } from './agent-config-loader.js';
+export type {
+  StandaloneHostConfigProjection,
+  AgentConfigSnapshot,
+} from './agent-config-loader.js';
+export { AgentConfigError } from './agent-config-errors.js';
+export type { AgentConfigErrorCode } from './agent-config-errors.js';

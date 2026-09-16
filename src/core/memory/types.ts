@@ -118,10 +118,10 @@ export interface MemoryStore {
 
 // ── Configuration ─────────────────────────────────────────
 
-/** Memory 模块配置。SQLite 路径固定为 `<workspaceDir>/.agent/memory.sqlite`，不可配。 */
+/** Memory 模块配置。SQLite 路径固定为 `<agentHome>/memory.sqlite`，不可配。 */
 export interface MemoryConfig {
-  /** 工作区根目录 */
-  workspaceDir: string;
+  /** Agent 状态根目录 */
+  agentHome: string;
   /** 嵌入配置 */
   embedding?: {
     /** 提供者类型，默认 'local'。后续可扩展 'openai' 等 */

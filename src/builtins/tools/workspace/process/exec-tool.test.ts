@@ -1,9 +1,14 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { execTool } from './exec-tool.js';
+import { createExecTool } from './exec-tool.js';
 import { processTool } from './process-tool.js';
 import { processRegistry } from './process-registry.js';
 import { TEST_TOOL_CONTEXT } from '../../../../core/tools/test-utils.js';
+
+const execTool = createExecTool(process.cwd());
 
 function extractRunId(content: string): string {
   const match = content.match(/runId:\s*(\S+)/);
@@ -32,6 +37,20 @@ afterEach(() => {
 });
 
 describe('execTool', () => {
+  it('defaults to the injected Agent working directory', async () => {
+    const workingDir = await mkdtemp(join(tmpdir(), 'exec-working-dir-'));
+    try {
+      const result = await createExecTool(workingDir).execute({
+        command: 'node -e "console.log(process.cwd())"',
+      }, TEST_TOOL_CONTEXT);
+
+      expect(result.outcome).toBe('success');
+      expect(result.content).toContain(workingDir);
+    } finally {
+      await rm(workingDir, { recursive: true, force: true });
+    }
+  });
+
   it('returns stdout for a simple command', async () => {
     const result = await execTool.execute({ command: 'node -e "console.log(\'hello\')"' }, TEST_TOOL_CONTEXT);
     expect(result.outcome).toBe('success');

@@ -7,7 +7,7 @@
 
 ## Scope
 
-Own loaded Unit catalog, dependency ordering, Unit creation/staging/start, candidate validation, immutable Registry publication, process-local generations, capture/inheritance, reload coordination, retirement, lifecycle ownership, completion sealing, and bounded Shutdown.
+Own loaded Unit catalog, dependency ordering, Unit creation/staging/start, candidate validation, immutable Registry publication, process-local generations, capture/inheritance, reload coordination, retirement, lifecycle ownership, completion sealing, bounded Shutdown, and routing of explicit Agent Home versus working-directory inputs to Runtime resources.
 
 ## Public control
 
@@ -24,6 +24,14 @@ interface RuntimeCompositionControl {
 ```
 
 Reload results distinguish publication, no-op, rejection, supersession, blocking, and shutdown cancellation.
+
+## Runtime path ownership
+
+`RuntimeApp.create()` requires distinct `agentHome` and `workingDir` inputs. `agentHome` owns Agent Context, Sessions, Memory and recall state, Subagent profiles, logs, and temporary Runtime state. `workingDir` is non-owning execution context supplied only to filesystem/search Tools, default Exec context, prompt `# Workspace` rendering, and project-oriented Subagent execution.
+
+Runtime does not infer either path from process globals and never reads configuration files. A supported Host injects one immutable Application projection. Direct library callers may omit that projection to use hardcoded defaults, but may not omit or alias the two path roles.
+
+This contract fixes path ownership and context routing only. It does not define filesystem authorization, external-path approval, capability roots, or grant persistence; current Tool containment behavior remains an implementation fact pending a separate decision.
 
 ## Composition invariants
 
@@ -56,4 +64,4 @@ Cleanup preserves ownership and reverse order across Units, Channels, Memory, an
 
 Cover dependency order, required/optional failure, atomic cross-kind conflict, immutable projections, unchanged-instance reuse, generation capture and Child inheritance, no-op, latest-wins, candidate rollback, publication, retirement, blocked reload after nonconvergence, queued cancellation, completion sealing, bounded Shutdown, reverse stop, and residual reports.
 
-Evidence: [composition source](../../src/runtime/runtime-composition.ts), [manager](../../src/runtime/runtime-composition-manager.ts), [reload coordinator](../../src/runtime/reload-coordinator.ts), [lifecycle](../../src/runtime/runtime-lifecycle.ts), [manager tests](../../src/runtime/runtime-composition-manager.test.ts), and [Runtime tests](../../src/runtime/RuntimeApp.test.ts). Decision: [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md).
+Evidence: [Runtime contracts](../../src/runtime/types.ts), [bootstrap](../../src/runtime/bootstrap.ts), [composition source](../../src/runtime/runtime-composition.ts), [manager](../../src/runtime/runtime-composition-manager.ts), [reload coordinator](../../src/runtime/reload-coordinator.ts), [lifecycle](../../src/runtime/runtime-lifecycle.ts), [manager tests](../../src/runtime/runtime-composition-manager.test.ts), and [Runtime tests](../../src/runtime/RuntimeApp.test.ts). Decisions: [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md) and [ADR-010](../decisions/adr-010-install-and-agent-home-ownership.md).

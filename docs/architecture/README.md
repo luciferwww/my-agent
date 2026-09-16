@@ -20,7 +20,7 @@ Start with the [Current Architecture Overview](overview.md) for the module map, 
 - [Session](session.md)
 - [Prompt](prompt.md)
 - [Memory](memory.md)
-- [Workspace](workspace.md)
+- [Agent Context](agent-context.md)
 - [Observability](observability.md)
 
 ## Authority boundaries

@@ -19,8 +19,8 @@ import type {
   TurnInteractionResponse,
 } from '../core/channel/index.js';
 import { Logger } from '../platform/logger/index.js';
-import { loadContextFiles } from '../core/workspace/index.js';
-import type { ContextFile } from '../core/workspace/types.js';
+import { loadContextFiles } from '../core/agent-context/index.js';
+import type { ContextFile } from '../core/agent-context/types.js';
 import {
   processInboundMessage,
   type DroppedAttachment,
@@ -1074,10 +1074,10 @@ export class RuntimeApp {
     this.assertCanReload();
 
     try {
-      const nextFiles = await loadContextFiles(this.resources.workspaceDir, {
+      const nextFiles = await loadContextFiles(this.resources.agentHome, {
         mode: 'full',
-        maxFileChars: this.resources.resolvedConfig.workspace.maxFileChars,
-        maxTotalChars: this.resources.resolvedConfig.workspace.maxTotalChars,
+        maxFileChars: this.resources.resolvedConfig.context.maxFileChars,
+        maxTotalChars: this.resources.resolvedConfig.context.maxTotalChars,
       });
 
       this.resources.contextFiles = nextFiles;
@@ -1339,7 +1339,7 @@ export class RuntimeApp {
           contextFiles: this.resources.contextFiles,
           toolNames: visibleToolDefinitions.map(({ name }) => name),
           overrides: params,
-          workspaceDir: this.resources.workspaceDir,
+          workingDir: this.resources.workingDir,
           // Only inject the <available-subagents> section when the feature is
           // on. SystemPromptBuilder additionally suppresses it in minimal mode
           // (which is what subagents themselves get).

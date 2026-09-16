@@ -12,8 +12,8 @@ const baseConfig: AgentDefaults = {
     search: { maxResults: 6, minScore: 0.25, vectorWeight: 0.7, textWeight: 0.3 },
   },
   prompt: { safetyLevel: 'normal' },
-  tools: { fs: { workspaceOnly: true }, allow: [], deny: [] },
-  workspace: { maxFileChars: 20_000, maxTotalChars: 150_000 },
+  tools: { fs: { workingDirOnly: true }, allow: [], deny: [] },
+  context: { maxFileChars: 20_000, maxTotalChars: 150_000 },
   compaction: {
     enabled: true,
     reserveTokens: 20_000,
@@ -43,15 +43,15 @@ describe('runtime prompt factory', () => {
     expect(params.toolNames).toEqual(['demo_tool']);
   });
 
-  it('threads workspaceDir into the SystemPromptBuildParams', () => {
+  it('threads workingDir into the SystemPromptBuildParams', () => {
     const params = buildSystemPromptParams({
       config: baseConfig,
       contextFiles: [],
       toolNames: [],
       overrides: { promptMode: 'full' },
-      workspaceDir: '/work/space',
+      workingDir: '/work/space',
     });
-    expect(params.workspaceDir).toBe('/work/space');
+    expect(params.workingDir).toBe('/work/space');
   });
 
   it('threads availableSubagents into the SystemPromptBuildParams', () => {
@@ -71,14 +71,14 @@ describe('runtime prompt factory', () => {
     ]);
   });
 
-  it('leaves workspaceDir / availableSubagents undefined when caller omits them', () => {
+  it('leaves workingDir / availableSubagents undefined when caller omits them', () => {
     const params = buildSystemPromptParams({
       config: baseConfig,
       contextFiles: [],
       toolNames: [],
       overrides: { promptMode: 'full' },
     });
-    expect(params.workspaceDir).toBeUndefined();
+    expect(params.workingDir).toBeUndefined();
     expect(params.availableSubagents).toBeUndefined();
   });
 

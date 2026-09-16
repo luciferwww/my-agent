@@ -69,8 +69,8 @@ function getDefaultMapping(
 ): { code: RuntimeErrorCode; severity: RuntimeErrorSeverity } {
   switch (scope) {
     case 'startup':
-      if (message.toLowerCase().includes('workspace')) {
-        return { code: 'WORKSPACE_INIT_FAILED', severity: 'fatal' };
+      if (message.toLowerCase().includes('agent context')) {
+        return { code: 'AGENT_CONTEXT_INIT_FAILED', severity: 'fatal' };
       }
       if (message.toLowerCase().includes('tool')) {
         return { code: 'TOOL_ASSEMBLY_FAILED', severity: 'fatal' };

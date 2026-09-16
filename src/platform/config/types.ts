@@ -104,7 +104,7 @@ export interface SearchConfig {
   textWeight: number;
 }
 
-/** Memory 模块配置。DB 路径固定为 `<workspaceDir>/.agent/memory.sqlite`，不可配。 */
+/** Memory 模块配置。DB 路径固定为 `<agentHome>/memory.sqlite`，不可配。 */
 export interface MemoryModuleConfig {
   /** 是否启用 */
   enabled: boolean;
@@ -128,7 +128,7 @@ export interface FsToolsConfig {
    * 是否将文件系统工具限制在工作区目录内。
    * 默认 true；设为 false 允许访问工作区外的路径。
    */
-  workspaceOnly: boolean;
+  workingDirOnly: boolean;
 }
 
 /**
@@ -164,8 +164,8 @@ export interface ToolsConfig {
   deny?: string[];
 }
 
-/** Workspace 配置。Agent 目录固定为 `.agent/`，不可配。 */
-export interface WorkspaceConfig {
+/** Agent Context 文件加载预算；文件路径固定在 Agent Home，不可配。 */
+export interface AgentContextConfig {
   /** 上下文文件单文件最大字符数 */
   maxFileChars: number;
   /** 上下文文件总字符数上限 */
@@ -231,7 +231,7 @@ export interface AgentDefaults {
   memory: MemoryModuleConfig;
   prompt: PromptConfig;
   tools: ToolsConfig;
-  workspace: WorkspaceConfig;
+  context: AgentContextConfig;
   compaction: CompactionConfig;
   /** subagents 节；未提供时走 DEFAULT_AGENT_CONFIG.subagents */
   subagents?: SubagentsConfig;
@@ -287,12 +287,12 @@ export interface LoggerModuleConfig {
 /**
  * 应用顶层配置。
  *
- * 运行时最终态——由 loadConfig() 合并硬编码默认值和配置文件后生成。
+ * 运行时最终态——由 Agent 配置投影和显式 agentHome 组合生成。
  * 环境变量和 CLI 覆盖在 resolveAgentConfig() 中叠加。
  */
 export interface AppConfig {
-  /** 工作区根目录（运行时确定，不来自文件） */
-  workspaceDir: string;
+  /** Agent 状态根目录（运行时确定，不来自文件） */
+  agentHome: string;
   /** agent 配置（defaults + list） */
   agents: AgentsConfig;
   /** logger 配置 */
@@ -301,16 +301,40 @@ export interface AppConfig {
 
 // ── Config File Schema ───────────────────────────────────
 
-/**
- * config.json 文件的 schema。
- *
- * 与 AppConfig 的区别：所有字段都是可选的（部分配置），
- * 且不包含 workspaceDir（运行时确定）。
- */
-export interface ConfigFile {
+/** Immutable application-owned projection from the Agent configuration document. */
+export interface ApplicationConfigProjection {
+  readonly agents: AgentsConfig;
+  readonly logger: LoggerModuleConfig;
+}
+
+export type StandaloneHostMode = 'websocket' | 'cli' | 'headless';
+
+interface AgentApplicationDocument {
   agents?: {
     defaults?: DeepPartial<AgentDefaults>;
     list?: AgentEntry[];
   };
   logger?: LoggerModuleConfig;
+}
+
+/** Raw Agent configuration document shape; structural validation occurs before projection. */
+export interface AgentConfigDocument extends AgentApplicationDocument {
+  readonly extensions?: {
+    readonly enabled?: boolean;
+    readonly entries?: Record<string, unknown>;
+  };
+  readonly host?: {
+    readonly mode?: StandaloneHostMode;
+    readonly websocket?: {
+      readonly host?: string;
+      readonly port?: number;
+      readonly path?: string;
+      readonly approval?: boolean;
+    };
+    readonly cli?: {
+      readonly sessionKey?: string;
+      readonly prompt?: string;
+      readonly approval?: boolean;
+    };
+  };
 }
