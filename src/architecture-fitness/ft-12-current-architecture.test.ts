@@ -18,8 +18,8 @@ interface CurrentAuthorityDocument extends CurrentAuthoritySurfaceEntry {
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const CURRENT_ROOT = join(REPOSITORY_ROOT, 'docs', 'architecture');
-const SURFACE_PATH = fileURLToPath(new URL('./ft-12-current-architecture-surface.json', import.meta.url));
-const VERIFIED_DATE = '2026-09-16';
+const MODULE_OWNERSHIP_PATH = fileURLToPath(new URL('./ft-12-module-ownership.json', import.meta.url));
+const VERIFIED_DATE = '2026-09-17';
 const STALE_CURRENT_CLAIMS = [
   /基准版本/u,
   /设计文档/u,
@@ -39,12 +39,34 @@ let documents: CurrentAuthorityDocument[];
 
 describe('FT-12 Current Architecture authority', () => {
   beforeAll(async () => {
-    surface = JSON.parse(await readFile(SURFACE_PATH, 'utf8')) as CurrentAuthoritySurfaceEntry[];
-    documents = await Promise.all(surface.map(async (entry) => ({
-      ...entry,
-      absolutePath: join(REPOSITORY_ROOT, ...entry.path.split('/')),
-      content: await readFile(join(REPOSITORY_ROOT, ...entry.path.split('/')), 'utf8'),
-    })));
+    const moduleOwnership = JSON.parse(
+      await readFile(MODULE_OWNERSHIP_PATH, 'utf8'),
+    ) as Record<string, string[]>;
+    const currentFiles = (await readdir(CURRENT_ROOT))
+      .filter((name) => name.endsWith('.md'))
+      .sort();
+    documents = await Promise.all(currentFiles.map(async (name) => {
+      const absolutePath = join(CURRENT_ROOT, name);
+      const content = await readFile(absolutePath, 'utf8');
+      const id = name === 'README.md' ? 'index' : name.slice(0, -'.md'.length);
+      const role = name === 'README.md' ? 'index' : name === 'overview.md' ? 'overview' : 'topic';
+      return {
+        id,
+        role,
+        path: posix.join('docs/architecture', name),
+        ownershipKey: role === 'index' ? 'navigation-only' : metadata(content, 'Ownership key') ?? '',
+        ownedModules: moduleOwnership[name] ?? [],
+        absolutePath,
+        content,
+      };
+    }));
+    surface = documents;
+
+    const topicFiles = documents
+      .filter((entry) => entry.role === 'topic')
+      .map((entry) => posix.basename(entry.path))
+      .sort();
+    expect(Object.keys(moduleOwnership).sort()).toEqual(topicFiles);
   });
 
   it('locks one index, one overview, unique topic ownership, and complete current module coverage', async () => {
@@ -124,7 +146,9 @@ describe('FT-12 Current Architecture authority', () => {
           ).toBe(true);
         }
       }
-      expect(sourceLinks.every((link) => link.includes('/src/') || link.includes('/scripts/'))).toBe(true);
+      expect(sourceLinks.every((link) => (
+        link.includes('/src/') || link.includes('/scripts/') || link.includes('/extensions/')
+      ))).toBe(true);
       expect(testLinks.some((link) => link.endsWith('.test.ts'))).toBe(true);
       expect(authorityLinks.every((link) => link.endsWith('.md'))).toBe(true);
     }
@@ -151,7 +175,7 @@ describe('FT-12 Current Architecture authority', () => {
     expect(runner).toContain('`request_end` closes a queued request that never started');
     expect(runner).toContain('check Abort before quota, steering injection, event emission, and invocation');
 
-    const channel = requireDocument('channel').content;
+    const channel = requireDocument('channels').content;
     expect(channel).toContain('send(event: AgentEvent): void | Promise<void>');
     expect(channel).toContain('A queued `request_end` has no session key');
 
@@ -160,7 +184,7 @@ describe('FT-12 Current Architecture authority', () => {
     expect(config).toContain('[Model Resolution](model-resolution.md) owns canonical identity');
     expect(config).toContain('## 6. Evidence');
 
-    const provider = requireDocument('model-invocation-provider').content;
+    const provider = requireDocument('providers').content;
     expect(provider).toContain('`src/core/model-invocation/` owns the Provider-neutral invocation port');
     expect(provider).toContain('maxTokens: number');
     expect(provider).not.toContain('maxTokens?: number');
@@ -181,7 +205,7 @@ describe('FT-12 Current Architecture authority', () => {
 
     const overview = requireDocument('overview').content;
     expect(overview).toContain('model-invocation/');
-    expect(overview).toContain('extension-acquisition/');
+    expect(overview).toContain('extension/acquisition/');
 
     const media = requireDocument('media').content;
     expect(media).toContain('owns the attachment pipeline');
@@ -196,7 +220,7 @@ describe('FT-12 Current Architecture authority', () => {
       ),
       readFile(join(REPOSITORY_ROOT, 'src', 'runtime', 'RuntimeApp.ts'), 'utf8'),
       readFile(
-        join(REPOSITORY_ROOT, 'src', 'extensions', 'copilot-relay-provider', 'responses-client.ts'),
+        join(REPOSITORY_ROOT, 'extensions', 'copilot-relay-provider', 'responses-client.ts'),
         'utf8',
       ),
     ]);
@@ -304,10 +328,10 @@ describe('FT-12 Current Architecture authority', () => {
 });
 
 async function currentSourceModules(): Promise<string[]> {
-  const roots = ['core', 'builtins', 'platform', 'extensions'] as const;
+  const roots = ['core', 'builtins', 'platform'] as const;
   const modules = [
     'src/runtime',
-    'src/extension-acquisition',
+    'src/extension',
     'src/hosts',
   ];
   for (const root of roots) {
@@ -316,6 +340,12 @@ async function currentSourceModules(): Promise<string[]> {
       if (await containsTypeScriptSource(join(REPOSITORY_ROOT, 'src', root, entry.name))) {
         modules.push(posix.join('src', root, entry.name));
       }
+    }
+  }
+  const extensions = await readdir(join(REPOSITORY_ROOT, 'extensions'), { withFileTypes: true });
+  for (const extension of extensions.filter((candidate) => candidate.isDirectory())) {
+    if (await containsTypeScriptSource(join(REPOSITORY_ROOT, 'extensions', extension.name))) {
+      modules.push(posix.join('extensions', extension.name));
     }
   }
   return modules;

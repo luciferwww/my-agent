@@ -37,17 +37,17 @@ describe('FT-06 Provider and Extension change locality', () => {
       `${REPOSITORY_ROOT}/src/hosts/standalone/standalone-host.ts`,
       'utf8',
     );
-    const startup = await readFile(
-      `${REPOSITORY_ROOT}/src/hosts/standalone/host-startup.ts`,
+    const acquisition = await readFile(
+      `${REPOSITORY_ROOT}/src/extension/acquisition/loader.ts`,
       'utf8',
     );
 
-    expect(host).toContain('options.prepareAcquisition ?? prepareStandaloneHostAcquisition');
-    expect(host).toContain('...acquisition.result.loadedUnits');
-    expect(host).toContain('envOverrides: getEnvOverrides(env)');
+    expect(host).toContain('startupContext:');
+    expect(host).not.toMatch(/acquireExtensions|extensionAcquisition|extensionsDir/u);
+    expect(acquisition).toContain('export async function acquireExtensions');
     expect(host).toContain('createWebSocketChannelUnit(WEBSOCKET_CHANNEL_CONFIG)');
     expect(host).toContain('createCliChannelUnit(CLI_CHANNEL_CONFIG)');
-    expect(`${host}\n${startup}`)
+    expect(`${host}\n${acquisition}`)
       .not.toMatch(/copilot-relay-provider|COPILOT_RELAY_|createCopilotRelayProviderUnit/);
     expect(host).not.toMatch(/providerId\s*:\s*['"][^'"]+['"]/);
     expect(host).not.toMatch(/catch[\s\S]{0,200}create.*ProviderUnit/u);
@@ -56,19 +56,20 @@ describe('FT-06 Provider and Extension change locality', () => {
   it('guards the current direct acquisition, lifecycle, configuration, and error authorities', async () => {
     const productionSources = await loadProductionSources(REPOSITORY_ROOT);
     const loader = productionSources.find(
-      ({ path }) => path === 'src/extension-acquisition/loader.ts',
+      ({ path }) => path === 'src/extension/acquisition/loader.ts',
     )?.content;
     const runtimeSources = productionSources.filter(
       ({ path }) => path.startsWith('src/runtime/'),
     );
     const relayClient = productionSources.find(
-      ({ path }) => path === 'src/extensions/copilot-relay-provider/responses-client.ts',
+      ({ path }) => path === 'extensions/copilot-relay-provider/responses-client.ts',
     )?.content;
 
     expect(loader).toBeDefined();
     expect(relayClient).toBeDefined();
-    expect(loader).toContain('if (enabled === undefined || enabled === false)');
-    expect(loader).toContain('if (enabled !== true');
+    expect(loader).toContain('if (rawEntry === undefined)');
+    expect(loader).toContain('if (enabled === false)');
+    expect(loader).toContain('if (enabled !== undefined && enabled !== true');
     expect(loader).not.toMatch(/\b(?:unit\.)?(?:create|start|stop)\s*\(/u);
     expect(loader).not.toMatch(/\b(?:registerProvider|stageRegistryUnit)\s*\(/u);
     expect(runtimeSources.every(({ content }) =>
@@ -78,7 +79,7 @@ describe('FT-06 Provider and Extension change locality', () => {
     expect(relayClient).not.toMatch(/import\s*\{[^}]*\bModelInvocationError\b[^}]*\}/u);
 
     const relaySpecificOutsideExtension = productionSources
-      .filter(({ path }) => !path.startsWith('src/extensions/copilot-relay-provider/'))
+      .filter(({ path }) => !path.startsWith('extensions/copilot-relay-provider/'))
       .filter(({ content }) =>
         /COPILOT_RELAY_|createCopilotRelayProviderUnit/u.test(content))
       .map(({ path }) => path);

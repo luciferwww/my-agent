@@ -50,8 +50,6 @@ Terminal failure phases are setup, resolution with category, and execution. Abor
 
 Cover explicit inherit; fresh Child binding; concrete different Provider/Model; missing Parent; pre-invocation resolution failure; request-derived capabilities; stable Parent/Child bindings through Tool loops/Compaction; Abort during setup/resolution/execution; one terminal event; exact cleanup; Usage preservation; and zero Compatibility dependency.
 
-## Ownership and evidence
+## Related authority
 
 [Model Resolution](model-resolution.md) owns shared resolution rules, [Runtime Composition](runtime-composition.md) owns generations, and [Abort](abort.md) owns tree cancellation.
-
-Evidence: [subagent orchestration](../../src/runtime/subagent-orchestration.ts), [orchestration tests](../../src/runtime/subagent-orchestration.test.ts), [ModelResolver](../../src/core/model-resolution/ModelResolver.ts), and [Runner tests](../../src/core/runner/AgentRunner.test.ts).

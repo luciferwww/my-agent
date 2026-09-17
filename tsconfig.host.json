@@ -3,10 +3,13 @@
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist/host",
-    "declaration": false,
+    "declaration": true,
     "declarationMap": false,
     "sourceMap": false
   },
-  "files": ["src/hosts/standalone/entry.ts"],
+  "files": [
+    "src/hosts/standalone/entry.ts",
+    "src/extension/api/index.ts"
+  ],
   "include": []
 }

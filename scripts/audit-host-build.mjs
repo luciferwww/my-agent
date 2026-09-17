@@ -7,7 +7,9 @@ import ts from 'typescript';
 const DEFAULT_REPOSITORY_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const REQUIRED_FILES = Object.freeze([
   'hosts/standalone/entry.js',
-  'extension-acquisition/index.js',
+  'extension/acquisition/index.js',
+  'extension/api/index.d.ts',
+  'extension/api/index.js',
   'core/agent-context/templates/IDENTITY.md',
   'core/agent-context/templates/SOUL.md',
   'core/agent-context/templates/AGENTS.md',

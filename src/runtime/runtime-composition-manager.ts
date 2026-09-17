@@ -9,6 +9,7 @@ import type {
   RegistrySnapshot,
   RegistryStartupDiagnostic,
 } from '../core/registry/index.js';
+import { Logger } from '../platform/logger/index.js';
 import {
   prepareStagedUnitChannels,
   recheckPreparedUnitChannels,
@@ -47,7 +48,9 @@ import {
 } from './runtime-unit.js';
 import type { RuntimeDeadlineBudget } from './runtime-deadline.js';
 import type { RuntimeShutdownResidual } from './types.js';
-import { attributeRuntimeUnitCreationError } from './errors.js';
+import { attributeRuntimeUnitCreationError, classifyRuntimeError } from './errors.js';
+
+const log = Logger.get('RuntimeCompositionManager');
 
 interface ActiveRuntimeUnit {
   readonly loaded: LoadedRuntimeUnit;
@@ -177,7 +180,7 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
   waitForChannelCompletion(id: string): Promise<ChannelCompletion> {
     for (const unit of this.currentComposition?.units.values() ?? []) {
       const record = unit.channels.records.find((candidate) => candidate.id === id);
-      if (record) return record.completion;
+      if (record) return record.runtimeCompletion;
     }
     const failedCompletion = this.failedChannelCompletions.get(id);
     if (failedCompletion) return failedCompletion;
@@ -590,6 +593,18 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
     for (const unit of prepared.removedUnits) unit.channels.deactivateIngress();
     for (const unit of prepared.createdUnits) unit.channels.activateIngress();
     this.currentComposition = prepared.composition;
+    for (const unit of prepared.createdUnits) {
+      for (const record of unit.channels.records) {
+        void record.runtimeCompletion.then((completion) => {
+          if (completion.outcome === 'failed') {
+            log.warn('channel completion failed', {
+              channelId: record.id,
+              phase: completion.phase,
+            });
+          }
+        });
+      }
+    }
   }
 
   private async cleanupPrepared(
@@ -742,10 +757,12 @@ function diagnosticsForStartupFailure(
   error: unknown,
 ): readonly RegistryStartupDiagnostic[] {
   if (error instanceof RuntimeChannelPreparationError) return error.diagnostics;
+  const phase = classifyRuntimeError('startup', error).phase;
   return [Object.freeze({
     unitId: loaded.unitId,
     source: loaded.source,
     code: 'UNIT_INVALID',
+    ...(phase === undefined ? {} : { phase }),
     message: error instanceof Error ? error.message : String(error),
   })];
 }

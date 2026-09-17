@@ -51,8 +51,6 @@ Events include run/model-call lifecycle, Tool use/result, Compaction, sanitation
 
 Cover empty Session, normal Turn, preflight overflow, post-persistence overflow and sanitation, multiple bounded retries, trailing-user idempotence, trailing Tool Result preservation, Layer 1 and aggregate pruning, invalid/unknown/denied/unavailable/failed/aborted Tools, sequential multi-Tool calls, Abort at each phase, Usage after Abort/failure, Compaction persistence and next-Turn loading, and complete event correlation.
 
-## Ownership and evidence
+## Related authority
 
 [Abort](abort.md) owns cross-cutting cancellation, [Tools and Hooks](tools-and-hooks.md) owns Tool/Hook contracts, [ADR-002](../decisions/adr-002-context-budgeting-and-compaction-recovery.md) owns budgeting/Compaction decisions, and [Session](../architecture/session.md) records current persistence behavior.
-
-Evidence: [AgentRunner](../../src/core/runner/AgentRunner.ts), [Runner tests](../../src/core/runner/AgentRunner.test.ts), [Tool pipeline tests](../../src/core/runner/AgentRunner.tool-pipeline.test.ts), and [Compaction tests](../../src/core/runner/context/compaction.test.ts).

@@ -35,4 +35,4 @@ The final suite passed 28 tests, including canonical scenarios and a non-canonic
 
 ## Limits and later authority
 
-No watcher, hot reload, production SDK, multi-instance identity, or broad dynamic Extension promise was proven. Current contracts are [Runtime Composition](../../specifications/runtime-composition.md), [Extension Acquisition](../../specifications/extension-acquisition.md), and [ADR-005](../../decisions/adr-005-extension-registry-runtime-composition.md).
+No watcher, hot reload, production SDK, multi-instance identity, or broad dynamic Extension promise was proven. Current contracts are [Runtime Composition](../../specifications/runtime-composition.md), [Extension Acquisition](../../specifications/extension-acquisition.md), and [ADR-014](../../decisions/adr-014-extension-packages-and-runtime-composition.md).

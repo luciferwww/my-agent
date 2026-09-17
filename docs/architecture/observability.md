@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented observability behavior
-> Verified: 2026-09-16
+> Verified: 2026-09-17
 > Ownership: process-wide logging, startup buffering, log adapters, and adapter close
 > Ownership key: logging-and-adapter-lifecycle
 
@@ -116,7 +116,7 @@ A flush groups queued entries by the UTC date derived from each entry timestamp 
 
 Runtime bootstrap derives Logger adapters from application configuration. Console logging is enabled unless explicitly disabled; file logging is opt-in and writes under `<agentHome>/logs/`. Runtime's global and adapter-local configured levels remain separate.
 
-Registry startup diagnostics are not raw Logger entries or Provider-owned events. Runtime converts accepted diagnostic codes into stable Host-owned `warning` events and omits raw Extension errors from that event contract. Runtime also decides how Logger close success, failure, or deadline exhaustion appears in the immutable `RuntimeShutdownReport`.
+Registry startup diagnostics are Runtime-owned. Runtime includes the original optional Unit error message in the local operator log, while stable `warning` events expose only the accepted code, identity, phase, and generic message. Error objects, stacks, causes, and additional Extension payloads remain excluded. Runtime Composition also observes successfully published Channel completions and logs failed outcomes once with bounded Channel ID/phase fields; concrete Hosts retain process policy without duplicating those logs. Runtime decides how Logger close success, failure, or deadline exhaustion appears in the immutable `RuntimeShutdownReport`.
 
 ## 9. Evidence
 
@@ -124,4 +124,4 @@ Registry startup diagnostics are not raw Logger entries or Provider-owned events
 |---|---|
 | Source | [Logger](../../src/platform/logger/Logger.ts), [logging types](../../src/platform/logger/types.ts), [console adapter](../../src/platform/logger/ConsoleAdapter.ts), [file adapter](../../src/platform/logger/FileAdapter.ts), [Runtime bootstrap](../../src/runtime/bootstrap.ts), [Runtime Builder](../../src/runtime/runtime-builder.ts) |
 | Tests | [Logger tests](../../src/platform/logger/Logger.test.ts), [console adapter tests](../../src/platform/logger/ConsoleAdapter.test.ts), [file adapter tests](../../src/platform/logger/FileAdapter.test.ts), [Runtime Builder tests](../../src/runtime/runtime-builder.test.ts) |
-| Controlling authority | [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [Runtime Composition](../specifications/runtime-composition.md) |
+| Controlling authority | [ADR-014](../decisions/adr-014-extension-packages-and-runtime-composition.md), [Runtime Composition](../specifications/runtime-composition.md) |

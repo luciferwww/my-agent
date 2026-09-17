@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { access, mkdir, mkdtemp, readdir, readFile, readlink, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import WebSocket from 'ws';
 
@@ -35,12 +35,16 @@ async function main() {
     ]);
     const manifest = JSON.parse(await readFile(join(REPOSITORY_ROOT, 'package.json'), 'utf8'));
     const lockfile = JSON.parse(await readFile(join(REPOSITORY_ROOT, 'package-lock.json'), 'utf8'));
+    const relayManifest = JSON.parse(await readFile(
+      join(REPOSITORY_ROOT, 'extensions', 'copilot-relay-provider', 'package.json'),
+      'utf8',
+    ));
     const packResult = await runNpm(
       ['pack', '--json', '--pack-destination', temporaryRoot],
       REPOSITORY_ROOT,
     );
     const packed = parsePackResult(packResult.stdout);
-    const files = auditNpmPackage(packed, manifest, lockfile);
+    const files = auditNpmPackage(packed, manifest, lockfile, [relayManifest]);
     const tarball = join(temporaryRoot, basename(packed[0].filename));
 
     await writeFile(join(installationProject, 'package.json'), '{"private":true,"type":"module"}\n');
@@ -50,6 +54,8 @@ async function main() {
       PROCESS_TIMEOUT_MS,
     );
     await access(join(installationProject, 'node_modules', '.bin', executableName('my-agent')));
+    await verifyInstalledExtensionApiTypes(installationProject);
+    await verifyInstalledExtensionAcquisition(installationProject);
 
     const isolatedEnvironment = createIsolatedHomeEnvironment(configuredHomeDirectory);
 
@@ -225,6 +231,76 @@ async function main() {
   console.log(
     `Verified npm package (${packageFileCount} files), Host-neutral default WebSocket startup, explicit Builtin selection, legacy Host rejection, and installed my-agent command.`,
   );
+}
+
+async function verifyInstalledExtensionAcquisition(installationProject) {
+  const installDir = join(installationProject, 'node_modules', 'my-agent');
+  const acquisitionModule = await import(pathToFileURL(join(
+    installDir,
+    'dist',
+    'host',
+    'extension',
+    'acquisition',
+    'index.js',
+  )).href);
+  const result = await acquisitionModule.acquireExtensions({
+    extensionsDir: join(installDir, 'extensions'),
+    extensionsConfig: {
+      enabled: true,
+      entries: { 'copilot-relay-provider': {} },
+    },
+    environment: {},
+  });
+  assert(result.diagnostics.length === 0, 'Installed Relay Extension produced diagnostics.');
+  assert(
+    result.loadedUnits.length === 1
+      && result.loadedUnits[0]?.unitId === 'copilot-relay-provider',
+    'Installed Relay Extension did not load through Host acquisition.',
+  );
+}
+
+async function verifyInstalledExtensionApiTypes(installationProject) {
+  const sourcePath = join(installationProject, 'extension-consumer.ts');
+  const configPath = join(installationProject, 'tsconfig.json');
+  await Promise.all([
+    writeFile(sourcePath, [
+      "import { createLoadedRuntimeUnit, type ExtensionLoadContext } from 'my-agent/extension-api';",
+      '',
+      'export function createExtension(context: ExtensionLoadContext) {',
+      '  void context.config;',
+      '  return createLoadedRuntimeUnit({',
+      "    registration: { id: 'consumer', source: 'external', register() {} },",
+      '    required: false,',
+      '  });',
+      '}',
+      '',
+    ].join('\n')),
+    writeFile(configPath, `${JSON.stringify({
+      compilerOptions: {
+        target: 'ES2022',
+        module: 'NodeNext',
+        moduleResolution: 'NodeNext',
+        lib: ['ES2022', 'DOM'],
+        strict: true,
+        noEmit: true,
+        skipLibCheck: false,
+      },
+      files: ['./extension-consumer.ts'],
+    }, null, 2)}\n`),
+  ]);
+
+  const compiler = join(REPOSITORY_ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
+  const result = await collectChild(spawnManaged(process.execPath, [compiler, '--project', configPath], {
+    cwd: installationProject,
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  }), PROCESS_TIMEOUT_MS);
+  if (result.code !== 0) {
+    throw new Error(
+      `Installed Extension API typecheck failed with exit ${String(result.code)}:\n${redactSubprocessOutput(result.stderr || result.stdout, installationProject)}`,
+    );
+  }
 }
 
 async function waitForFileContent(path, expectedContent, child, timeoutMs) {

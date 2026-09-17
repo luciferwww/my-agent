@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Runner behavior
-> Verified: 2026-09-16
+> Verified: 2026-09-17
 > Ownership: Turn loop, context budgeting, Compaction, Tool and Hook invocation, recovery, and Runner events
 > Ownership key: runner-execution-and-context
 
@@ -14,47 +14,13 @@ Runner does not load configuration, read environment variables, discover or regi
 
 ## 2. Inputs and result
 
-`RunParams` contains:
-
-```text
-sessionKey
-message: string | ChatContentBlock[]
-systemPrompt
-turnId
-requestId?                         # defaults to turnId
-resolvedModel                      # Turn-bound identity, Port, facts, and limits
-toolProjection
-hookProjection
-toolPolicy
-approvalCapability?
-maxLlmCalls?                       # defaults to 12
-getSteeringMessages?
-compaction?
-originMessageId?
-signal?
-```
-
-Runtime resolves these values before entry. Runner neither calls configuration loaders nor reads `process.env`. If no steering reader is supplied, the read path returns immediately with no messages.
+Runtime supplies Session and request identity, normalized input, one Turn-bound `ResolvedModel`, immutable Tool/Hook projections, Tool policy, optional Approval/steering capabilities, Compaction policy, and Abort signal. Runner neither calls configuration loaders nor reads `process.env`.
 
 `RunResult` contains final text, complete final Assistant blocks, stop reason, cumulative usage for completed Model calls, Tool-round count, and whether any Compaction retry occurred. Detailed Compaction statistics are events and persisted records rather than additional result fields.
 
 ## 3. Top-level lifecycle and recovery
 
-```mermaid
-flowchart TD
-    A[run] --> B[Build immutable TurnContext]
-    B --> C[emit run_start]
-    C --> D{signal already aborted?}
-    D -- yes --> E[emit run_end with aborted result]
-    D -- no --> F[runAttempt]
-    F --> G{result or error}
-    G -- result --> H[emit run_end and return]
-    G -- ContextOverflow and fewer than 3 Compactions --> I[compactHistory]
-    I --> F
-    G -- other or retries exhausted --> J[emit error and throw]
-```
-
-`TurnContext` carries `sessionKey`, `turnId`, and the effective `requestId` explicitly through the call stack. Runner stores no mutable "current run" field, so nested Child execution and concurrent runs on one instance retain correct event correlation.
+`run()` builds an immutable `TurnContext`, emits lifecycle events, invokes `runAttempt()`, and routes normalized context overflow through `compactHistory()` before retry. `TurnContext` carries `sessionKey`, `turnId`, and the effective `requestId` explicitly; Runner stores no mutable "current run" field.
 
 An already-aborted Turn still emits the `run_start`/`run_end` pair but performs no Session append or Model call. Context recovery may perform at most three Compactions; each retry reloads persisted history.
 
@@ -86,27 +52,7 @@ Missing IDs receive `[tool call interrupted; session recovered]`. The event sour
 
 ## 5. Model and Tool loop
 
-```text
-while the Model requested more Tools or steering is pending:
-  check Abort before quota, steering injection, event emission, and invocation
-  stop with max_llm_calls when the next call would exceed the quota
-  persist pending steering after prior Tool Results
-  emit llm_call and invoke resolvedModel.invocationPort.chatStream
-  collect text deltas, canonical Tool Calls, stop reason, and usage
-  persist the Assistant blocks
-
-  for every Tool Call in Provider order:
-    emit tool_use with ready input, or {} for invalid canonical input
-    close invalid/unknown/denied/unavailable/aborted calls without implementation
-    otherwise run interceptors, validate, apply policy/approval, and execute
-    emit presentation tool_result and collect a correlated Tool Result block
-    start after_tool_call Observer settlement
-
-  persist the complete Tool Result batch
-  settle all after_tool_call Observers, including on persistence failure
-  if not aborted, prune the in-memory results and check the 90% threshold
-  read steering for the next iteration
-```
+Each loop iteration must check Abort before quota, steering injection, event emission, and invocation. `AgentRunner` streams through the bound invocation Port, persists Assistant blocks, executes complete canonical Tool Calls in Provider order, persists one correlated Tool Result batch, settles observers, applies in-memory pruning, and then consumes steering for the next call.
 
 The quota counts actual Model calls, including a final call without Tools. The check occurs before each invocation, so Abort before a call consumes neither quota nor an `llm_call` event. Usage is summed from `message_end` records; if a later execution error occurs, `AgentExecutionFailure` carries usage already accumulated.
 
@@ -114,29 +60,11 @@ Steering is read after every completed loop iteration, not only Tool-producing o
 
 ## 6. Tool and Hook semantics
 
-The Tool pipeline is described in [Tool Contract and Policy](tools.md). Runner guarantees one terminal correlated result per complete canonical Tool Call. If Abort occurs between multiple calls in one Assistant response, remaining implementations do not start and receive `not_executed` results; the whole batch is persisted.
-
-| Hook | Timing | Execution | Authority |
-|---|---|---|---|
-| `before_tool_call` | Before validation and execution | Sequential in Snapshot order | May replace JSON input or deny |
-| `after_tool_call` | After terminal result creation | Parallel, isolated, per-handler bounded settlement | Observer only |
-| `before_compaction` | Before summary generation | Parallel, isolated, per-handler bounded settlement | Observer only |
-| `after_compaction` | After Compaction record commit | Parallel, isolated, per-handler bounded settlement | Observer only |
-
-Observer handlers receive local Abort signals. Their logical settlement is `fulfilled`, `rejected`, `aborted`, or `timed_out`; the default deadline is five seconds. Approval is a separate capability, not a Hook.
+Runner implements the pipeline described by [Tools and Hooks](../specifications/tools-and-hooks.md): one terminal correlated result per complete canonical Tool Call, sequential interceptors, isolated bounded observers, and whole-batch persistence. Approval remains a separate capability rather than a Hook.
 
 ## 7. Context management
 
-| Layer | Implementation | Model call? | Timing |
-|---|---|:---:|---|
-| 1 | `pruneToolResults` | no | Attempt start and after a new Tool Result batch |
-| 1.5 | `pruneToolResultsAggregate` | no | When Layer 2 selects Tool-only truncation |
-| 2 | `checkContextBudget` | no | Attempt preflight before current-message persistence |
-| 3 | `compactMessages` | yes | Outer recovery after `ContextOverflowError` |
-
-Layer 1 immutably caps each oversized Tool Result using a model-window-derived threshold, retaining configured head and tail text. The initial-history path emits `tool_result_pruned`; current-round pruning does not emit that event. Layer 1.5 proportionally reduces aggregate Tool Result content toward 30% of the model context character budget without going below each result's configured head-plus-tail floor.
-
-Layer 2 estimates history, System prompt, current text or media blocks, structural overhead, and a safety margin. It routes to `fits`, `truncate_tool_results_only`, or `compact`, reserving configured output capacity.
+`pruneToolResults`, `pruneToolResultsAggregate`, `checkContextBudget`, and `compactMessages` implement the four current context-management stages. Budgeting uses the Turn-bound Model limits and runs before current-message persistence; only summary Compaction makes another Model call.
 
 A `ContextOverflowError` can come from preflight (`preemptive`), the inner 90% threshold (`overflow`), or a Provider-neutral invocation Port that canonicalizes a Provider context overflow. Other Provider failures are not treated as context overflow.
 
@@ -144,39 +72,20 @@ A `ContextOverflowError` can come from preflight (`preemptive`), the inner 90% t
 
 `compactHistory()` sanitizes a trailing user, reloads history, runs bounded pre-Compaction Observers, emits `compaction_start`, and calls `compactMessages()` through the same resolved invocation Port and Model identity.
 
-`compactMessages()` keeps the latest configured number of ordinary user Turns and summarizes older messages. Provider-facing Tool Result messages do not count as new user Turns, and split logic protects Tool Use/Result pairing. Summary serialization caps each Tool Result preview at 500 characters and replaces image bytes with media type and patch-based token estimates. Unknown or incomplete blocks are skipped. If summary invocation fails, Compaction uses a visible fallback summary; if no older messages can be compressed, it fails rather than writing an empty Compaction.
-
-Runner computes `firstKeptEntryId`, appends a Compaction marker without deleting history, runs post-Compaction Observers, emits `compaction_end`, and updates Session token metadata. The next attempt reloads only the retained range and prepends the persisted summary.
+The implementation protects Tool Use/Result pairing, writes a Compaction marker without deleting history, and reloads only the retained range on retry. [Runner Turn Flow](../specifications/runner-turn-flow.md) owns retry, persistence, and fallback semantics.
 
 ## 9. Abort and errors
 
-`signal` reaches Model invocation, Tool execution, Interceptors, and Observer settlement. Runner stops scheduling new work, but an in-flight third-party Tool controls how quickly it observes cancellation.
-
-During streaming Abort, buffered text is flushed. A non-empty partial Assistant response is persisted with `abortMeta`; Abort before first content does not persist an empty Assistant record. Completed usage and Tool rounds remain in the aborted result. As a defensive fallback, any Error observed after the supplied signal has become aborted is treated as Abort and logged when its identity is not a recognized Abort error.
-
-A Provider `stopReason: 'error'` is returned as a normal result with its reported usage. Thrown non-Abort, non-context failures become `AgentExecutionFailure`; top-level `run()` emits `error` and rethrows. `ContextOverflowError` retries as described above and is emitted/thrown only after retries are exhausted.
+`signal` reaches Model invocation, Tool execution, Interceptors, and Observer settlement. Runner stops scheduling new work, preserves completed Usage, and normalizes non-Abort execution failures as `AgentExecutionFailure`; [Abort](../specifications/abort.md) owns cancellation and closure semantics.
 
 ## 10. Events
 
-`AgentEvent` is a discriminated union; fields vary by lifecycle rather than pretending every event has the same correlations.
-
-Runner emits the Turn-scoped Run, stream, Tool, context, and recovery events. Runtime uses the same union for queue, user-message, and Subagent lifecycle events; their presence in the shared type does not transfer those lifecycle responsibilities to Runner.
-
-| Family | Events and notable correlation |
-|---|---|
-| Run | `run_start`, `run_end`, `error` carry request, Session, and Turn identities |
-| Queue | `request_end` closes a queued request that never started and carries request identity only |
-| Input | `user_message` uses its own message identity and delivery mode rather than a Turn identity |
-| Stream and Tools | `text_delta`, `llm_call`, `tool_use`, `tool_result` carry Session and Turn |
-| Context | `tool_result_pruned`, `compaction_start`, `compaction_end`, `session_tail_sanitized`, `orphan_tool_results_repaired` |
-| Subagent | `subagent_start` and `subagent_end` carry request/run/tree/parent correlation and terminal usage |
-
-`compaction_start.estimatedTokens` is an estimate; committed before/after statistics arrive on `compaction_end`. `tool_result` remains the presentation event shape even though internal execution uses canonical outcomes.
+Runner emits Turn-scoped Run, stream, Tool, context, and recovery events. Runtime emits queue, input, and Subagent lifecycle members of the same `AgentEvent` union; `request_end` closes a queued request that never started and carries request identity only.
 
 ## 11. Evidence
 
 | Kind | Evidence |
 |---|---|
-| Source | [AgentRunner.ts](../../src/core/runner/AgentRunner.ts), [types.ts](../../src/core/runner/types.ts), [errors.ts](../../src/core/runner/errors.ts), [context-budget.ts](../../src/core/runner/context/context-budget.ts), [tool-result-pruning.ts](../../src/core/runner/context/tool-result-pruning.ts), [compaction.ts](../../src/core/runner/context/compaction.ts), [hooks/runner.ts](../../src/core/runner/hooks/runner.ts) |
-| Tests | [AgentRunner.test.ts](../../src/core/runner/AgentRunner.test.ts), [AgentRunner.tool-pipeline.test.ts](../../src/core/runner/AgentRunner.tool-pipeline.test.ts), [context-budget.test.ts](../../src/core/runner/context/context-budget.test.ts), [tool-result-pruning.test.ts](../../src/core/runner/context/tool-result-pruning.test.ts), [compaction.test.ts](../../src/core/runner/context/compaction.test.ts), [hooks/runner.test.ts](../../src/core/runner/hooks/runner.test.ts) |
-| Controlling authority | [ADR-001: Tool Result Closure and Recovery](../decisions/adr-001-tool-result-closure-and-recovery.md), [ADR-002: Context Budgeting and Compaction Recovery](../decisions/adr-002-context-budgeting-and-compaction-recovery.md), [ADR-004: Provider Model Identity and Facts Ownership](../decisions/adr-004-provider-model-identity-and-facts-ownership.md), [Tools and Hooks](../specifications/tools-and-hooks.md), [Runner Turn Flow](../specifications/runner-turn-flow.md), [Abort](../specifications/abort.md) |
+| Source | [AgentRunner](../../src/core/runner/AgentRunner.ts), [context budget](../../src/core/runner/context/context-budget.ts) |
+| Tests | [Runner tests](../../src/core/runner/AgentRunner.test.ts), [Tool pipeline tests](../../src/core/runner/AgentRunner.tool-pipeline.test.ts) |
+| Controlling authority | [Runner Turn Flow](../specifications/runner-turn-flow.md), [Tools and Hooks](../specifications/tools-and-hooks.md), [Abort](../specifications/abort.md) |

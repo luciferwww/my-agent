@@ -38,8 +38,10 @@ Relay and other separately emitted producers must not runtime-import, subclass, 
 
 Abort remains `AbortError`; context overflow remains its own normalized error and recovery path.
 
-## Acceptance scenarios and evidence
+## Acceptance scenarios
 
 Cover duplicate-constructor acceptance, same-name lookalike rejection, invalid protocol/version/category, diagnostics discard, accessor/inherited rejection, proxy failure containment, exact opaque IDs, privacy allowlist, bounded cyclic cause traversal, and emitted Relay code without Host constructor import.
 
-Evidence: [Core errors](../../src/core/model-invocation/errors.ts), [Core tests](../../src/core/model-invocation/errors.test.ts), [Runtime](../../src/runtime/RuntimeApp.ts), and [Relay producer](../../src/extensions/copilot-relay-provider/responses-client.ts). Current facts: [Providers](../architecture/providers.md).
+## Related authority
+
+[Providers](../architecture/providers.md) owns current implementation facts. [Model Resolution](model-resolution.md) owns pre-invocation selection failures.

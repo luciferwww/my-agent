@@ -57,7 +57,7 @@ When Runtime reports `provider_unregistered` or `model_rejected`, Channel presen
 
 ## Failure semantics
 
-Create failure means no instance. Start rejection or pre-readiness completion is `failed/startup`. Unexpected post-handoff transport failure is `failed/runtime` and does not mutate the published Snapshot. Explicit stop produces `closed/stopped` unless another terminal result won; stop rejection is `failed/shutdown`. Cleanup errors do not erase the root failure.
+Create failure means no instance. Start rejection or pre-readiness completion is `failed/startup`. Unexpected post-handoff transport failure is `failed/runtime` and does not mutate the published Snapshot. Runtime Composition observes each successfully published Channel completion once and records failed outcomes with bounded Channel ID/phase fields rather than raw Error content. A rejected completion Promise is normalized at the Runtime boundary to `failed/runtime`; it does not reject Host or embedded-caller completion observation. Concrete Hosts do not duplicate that failure log. Explicit stop produces `closed/stopped` unless another terminal result won; stop rejection is `failed/shutdown`. Cleanup errors do not erase the root failure.
 
 There is no Channel-specific wall-clock timeout. Bounded aggregate deadlines belong to Runtime Composition.
 
@@ -65,8 +65,6 @@ There is no Channel-specific wall-clock timeout. Bounded aggregate deadlines bel
 
 Cover identical Builtin/External staging; invalid/duplicate IDs; staging without creation; mixed contribution atomicity; immutable narrow projections; readiness vs completion; create/start rollback; zero-Channel readiness; close-once; sibling failure isolation; completion-before-readiness; post-start failure; origin-bound approval; Fanout isolation; and no direct script-owned Channel lifecycle.
 
-## Ownership and evidence
+## Related authority
 
-[Channels](../architecture/channels.md) owns current facts and [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md) owns the composition decision. Related contracts: [Approval Lifecycle](approval-lifecycle.md), [Attachments](attachments-support.md), and [Multi-client User Messages](multi-client-user-messages.md).
-
-Evidence: [Channel types](../../src/core/channel/types.ts), [Channel lifecycle](../../src/runtime/channel-lifecycle.ts), [Runtime Builder](../../src/runtime/runtime-builder.ts), [lifecycle tests](../../src/runtime/channel-lifecycle.test.ts), [CLI tests](../../src/builtins/channels/cli/CliChannel.test.ts), and [WebSocket tests](../../src/builtins/channels/websocket/WebSocketChannel.test.ts).
+[Channels](../architecture/channels.md) owns current facts and [ADR-014](../decisions/adr-014-extension-packages-and-runtime-composition.md) owns the composition decision. Related contracts: [Approval Lifecycle](approval-lifecycle.md), [Attachments](attachments-support.md), and [Multi-client User Messages](multi-client-user-messages.md).

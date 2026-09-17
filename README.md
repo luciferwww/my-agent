@@ -20,12 +20,11 @@ npm run test:all
 ## Run the supported standalone service
 
 The installed program directory owns executable Extensions and is immutable while the service
-runs. Build the repository, stop the Host, and use deployment tooling to copy the complete Relay
-artifact directory from `dist/extension-artifacts/copilot-relay-provider` to a direct child such as
-`<install-dir>/extensions/relay`. In a source checkout, `<install-dir>` is the repository package
-root. Do not copy individual files or run `npm install` inside the artifact. Partial overwrite,
+runs. A source checkout uses the tracked `extensions/copilot-relay-provider` workspace package
+directly; the published npm package ships the same Extension package under `<install-dir>/extensions`.
+Do not copy individual files or run `npm install` while the Host is running. Partial overwrite,
 symlink-based installation, and replacement while the Host is running are unsupported; stop the
-Host and replace the complete directory.
+Host and replace the complete Extension package directory.
 
 Agent Home defaults to `<user-home>/.my-agent` and can be selected with `--agent-home <path>` or
 `--agent-home=<path>`. A relative value resolves against startup CWD; after that resolution, only
@@ -124,9 +123,8 @@ public consumer contract.
 ## Documentation
 
 - [Current Architecture](docs/architecture/overview.md) — sole entry for verified current boundaries and flows
-- [Capability Summary](docs/evidence/capability-summary-2026-09-09.md) — dated, non-authoritative product capability overview
-- [Documentation Index](docs/README.md) — governance, decisions, Specs, Plans, Results, and analysis by authority role
+- [Documentation Index](docs/README.md) — default current-authority reading path and opt-in historical sources
 - [Development Workflow](docs/governance/development-workflow.md) — authoritative contribution and delivery process
 - [Contributing](CONTRIBUTING.md) — concise contributor entry point
 
-Current implementation facts belong to Current Architecture and source/tests. Older design, implementation, historical, and deferred documents are not alternative current authority.
+Current implementation facts belong to source/tests and Current Architecture. Historical, Evidence, Research, Deferred, and archived Change documents are opt-in sources, not alternative current authority.

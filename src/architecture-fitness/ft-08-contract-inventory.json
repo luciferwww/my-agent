@@ -162,66 +162,66 @@
   },
   {
     "contract": "ExtensionDescriptorV1",
-    "source": "src/extension-acquisition/types.ts",
+    "source": "src/extension/acquisition/types.ts",
     "kind": "extension-descriptor",
-    "positive": ["src/extension-acquisition/discovery.test.ts"],
-    "negative": ["src/extension-acquisition/discovery.test.ts"]
+    "positive": ["src/extension/acquisition/discovery.test.ts"],
+    "negative": ["src/extension/acquisition/discovery.test.ts"]
   },
   {
     "contract": "ExtensionDiscoveryResult",
-    "source": "src/extension-acquisition/types.ts",
+    "source": "src/extension/acquisition/types.ts",
     "kind": "extension-discovery-result",
-    "positive": ["src/extension-acquisition/discovery.test.ts"],
-    "negative": ["src/extension-acquisition/discovery.test.ts"]
+    "positive": ["src/extension/acquisition/discovery.test.ts"],
+    "negative": ["src/extension/acquisition/discovery.test.ts"]
   },
   {
     "contract": "ExtensionAcquisitionFatalError",
-    "source": "src/extension-acquisition/errors.ts",
+    "source": "src/extension/acquisition/errors.ts",
     "kind": "error",
-    "positive": ["src/extension-acquisition/discovery.test.ts"],
-    "negative": ["src/extension-acquisition/discovery.test.ts"]
+    "positive": ["src/extension/acquisition/discovery.test.ts"],
+    "negative": ["src/extension/acquisition/discovery.test.ts"]
   },
   {
     "contract": "discoverExtensionDescriptors",
-    "source": "src/extension-acquisition/discovery.ts",
+    "source": "src/extension/acquisition/discovery.ts",
     "kind": "extension-discovery",
-    "positive": ["src/extension-acquisition/discovery.test.ts"],
-    "negative": ["src/extension-acquisition/discovery.test.ts"]
+    "positive": ["src/extension/acquisition/discovery.test.ts"],
+    "negative": ["src/extension/acquisition/discovery.test.ts"]
   },
   {
     "contract": "ExtensionLoadContext",
-    "source": "src/extension-acquisition/contracts.ts",
+    "source": "src/extension/api/contracts.ts",
     "kind": "extension-load-context",
-    "positive": ["src/extension-acquisition/loader.test.ts"],
-    "negative": ["src/extension-acquisition/loader.test.ts"]
+    "positive": ["src/extension/acquisition/loader.test.ts"],
+    "negative": ["src/extension/acquisition/loader.test.ts"]
   },
   {
     "contract": "ExternalExtensionModule",
-    "source": "src/extension-acquisition/contracts.ts",
+    "source": "src/extension/api/contracts.ts",
     "kind": "extension-entry-module",
-    "positive": ["src/extension-acquisition/loader.test.ts"],
-    "negative": ["src/extension-acquisition/loader.test.ts"]
+    "positive": ["src/extension/acquisition/loader.test.ts"],
+    "negative": ["src/extension/acquisition/loader.test.ts"]
   },
   {
     "contract": "ExtensionAcquisitionResult",
-    "source": "src/extension-acquisition/types.ts",
+    "source": "src/extension/acquisition/types.ts",
     "kind": "extension-acquisition-result",
-    "positive": ["src/extension-acquisition/loader.test.ts"],
-    "negative": ["src/extension-acquisition/loader.test.ts"]
+    "positive": ["src/extension/acquisition/loader.test.ts"],
+    "negative": ["src/extension/acquisition/loader.test.ts"]
   },
   {
     "contract": "acquireExtensions",
-    "source": "src/extension-acquisition/loader.ts",
+    "source": "src/extension/acquisition/loader.ts",
     "kind": "extension-acquisition",
-    "positive": ["src/extension-acquisition/loader.test.ts"],
-    "negative": ["src/extension-acquisition/loader.test.ts"]
+    "positive": ["src/extension/acquisition/loader.test.ts"],
+    "negative": ["src/extension/acquisition/loader.test.ts"]
   },
   {
     "contract": "createExtension",
-    "source": "src/extensions/copilot-relay-provider/entry.ts",
+    "source": "extensions/copilot-relay-provider/entry.ts",
     "kind": "extension-entry-factory",
-    "positive": ["src/extensions/copilot-relay-provider/entry.test.ts"],
-    "negative": ["src/extensions/copilot-relay-provider/entry.test.ts"]
+    "positive": ["extensions/copilot-relay-provider/entry.test.ts"],
+    "negative": ["extensions/copilot-relay-provider/entry.test.ts"]
   },
   {
     "contract": "RegistrySnapshot",
@@ -332,21 +332,21 @@
     "contract": "ModelInvocationStructuralErrorV1",
     "source": "src/core/model-invocation/errors.ts",
     "kind": "structural-error",
-    "positive": ["src/core/model-invocation/errors.test.ts", "src/extensions/copilot-relay-provider/responses-client.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "positive": ["src/core/model-invocation/errors.test.ts", "extensions/copilot-relay-provider/responses-client.test.ts", "src/runtime/RuntimeApp.test.ts"],
     "negative": ["src/core/model-invocation/errors.test.ts", "src/runtime/RuntimeApp.test.ts"]
   },
   {
     "contract": "ModelInvocationDiagnostics",
     "source": "src/core/model-invocation/errors.ts",
     "kind": "error-diagnostics",
-    "positive": ["src/core/model-invocation/errors.test.ts", "src/extensions/copilot-relay-provider/responses-client.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "positive": ["src/core/model-invocation/errors.test.ts", "extensions/copilot-relay-provider/responses-client.test.ts", "src/runtime/RuntimeApp.test.ts"],
     "negative": ["src/core/model-invocation/errors.test.ts", "src/runtime/RuntimeApp.test.ts"]
   },
   {
     "contract": "toModelInvocationError",
     "source": "src/core/model-invocation/errors.ts",
     "kind": "error-canonicalization",
-    "positive": ["src/core/model-invocation/errors.test.ts", "src/extensions/copilot-relay-provider/responses-client.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "positive": ["src/core/model-invocation/errors.test.ts", "extensions/copilot-relay-provider/responses-client.test.ts", "src/runtime/RuntimeApp.test.ts"],
     "negative": ["src/core/model-invocation/errors.test.ts", "src/runtime/RuntimeApp.test.ts"]
   },
   {

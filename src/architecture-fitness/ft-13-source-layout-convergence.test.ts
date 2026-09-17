@@ -24,8 +24,8 @@ describe('FT-13 source layout convergence', () => {
       'src/builtins/tools/task/contribution.ts',
       'src/runtime/turn-interaction/TurnInteractionManager.ts',
       'src/runtime/turn-interaction/index.ts',
-      'src/extension-acquisition/index.ts',
-      'src/extension-acquisition/contracts.ts',
+      'src/extension/acquisition/index.ts',
+      'src/extension/api/contracts.ts',
     ];
     for (const path of required) {
       await expect(stat(join(REPOSITORY_ROOT, ...path.split('/')))).resolves.toBeDefined();
@@ -37,6 +37,8 @@ describe('FT-13 source layout convergence', () => {
       'src/core/tools/builtin',
       'src/core/memory/memory-tools.ts',
       'src/extensions/acquisition',
+      'src/extension-acquisition',
+      'src/extension-api',
       'src/builtins/tools/workspace',
       'src/builtins/tools/environment/common/working-directory-walk.ts',
     ];

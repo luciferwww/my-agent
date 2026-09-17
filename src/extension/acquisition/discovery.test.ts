@@ -1,0 +1,309 @@
+import { copyFile, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { discoverExtensionDescriptors } from './discovery.js';
+
+const EXECUTION_MARKER = Symbol.for('my-agent.test.extension-acquisition.executions');
+const FIXTURE_ENTRY = fileURLToPath(new URL(
+  '../../../test-fixtures/extension-acquisition/never-execute.js',
+  import.meta.url,
+));
+const VALID_SCHEMA = Object.freeze({
+  $schema: 'http://json-schema.org/draft-07/schema#',
+  type: 'object',
+  additionalProperties: false,
+});
+
+describe('discoverExtensionDescriptors', () => {
+  let installDir: string;
+  let extensionsDir: string;
+
+  beforeEach(async () => {
+    installDir = await mkdtemp(join(tmpdir(), 'my-agent-discovery-'));
+    extensionsDir = join(installDir, 'extensions');
+    delete (globalThis as Record<PropertyKey, unknown>)[EXECUTION_MARKER];
+  });
+
+  afterEach(async () => {
+    delete (globalThis as Record<PropertyKey, unknown>)[EXECUTION_MARKER];
+    await rm(installDir, { recursive: true, force: true });
+  });
+
+  it('returns an empty frozen result when the discovery root is missing', async () => {
+    const result = await discoverExtensionDescriptors(extensionsDir);
+
+    expect(result).toEqual({ candidates: [], diagnostics: [] });
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.candidates)).toBe(true);
+    expect(Object.isFrozen(result.diagnostics)).toBe(true);
+  });
+
+  it('discovers direct children and orders candidates by Descriptor ID', async () => {
+    await installCandidate(extensionsDir, 'first-created', descriptor('zeta'));
+    await installCandidate(extensionsDir, 'renamed-locator', descriptor('alpha'));
+    await mkdir(join(extensionsDir, 'container', 'nested'), { recursive: true });
+    await writeFile(join(extensionsDir, 'ordinary-file'), 'ignored');
+
+    const result = await discoverExtensionDescriptors(extensionsDir);
+
+    expect(result.candidates.map((candidate) => candidate.descriptor.id)).toEqual(['alpha', 'zeta']);
+    expect(basename(result.candidates[0]!.installationPath)).toBe('renamed-locator');
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ code: 'descriptor_missing', locator: '"container"' }),
+    ]);
+    expect(Object.isFrozen(result.candidates[0]!.descriptor.configSchema)).toBe(true);
+  });
+
+  it('isolates every candidate sharing a Descriptor ID with no winner', async () => {
+    await installCandidate(extensionsDir, 'duplicate-b', descriptor('shared'));
+    await installCandidate(extensionsDir, 'duplicate-a', descriptor('shared'));
+    await installCandidate(extensionsDir, 'unique', descriptor('unique'));
+
+    const result = await discoverExtensionDescriptors(extensionsDir);
+
+    expect(result.candidates.map((candidate) => candidate.descriptor.id)).toEqual(['unique']);
+    expect(result.diagnostics).toEqual([
+      {
+        category: 'duplicate_identity',
+        code: 'duplicate_identity',
+        extensionId: 'shared',
+        locator: '"duplicate-a"',
+      },
+      {
+        category: 'duplicate_identity',
+        code: 'duplicate_identity',
+        extensionId: 'shared',
+        locator: '"duplicate-b"',
+      },
+    ]);
+  });
+
+  it.each([
+    ['invalid identity', { id: 'invalid/id' }, 'descriptor_invalid'],
+    ['empty version', { version: '' }, 'descriptor_invalid'],
+    ['wrong manifest version', { manifestVersion: 2 }, 'descriptor_invalid'],
+    ['absolute entry', {
+      entry: process.platform === 'win32' ? 'C:\\outside\\entry.js' : '/outside/entry.js',
+    }, 'descriptor_invalid'],
+    ['parent entry', { entry: '../entry.js' }, 'descriptor_invalid'],
+    ['URL entry', { entry: 'file:///outside/entry.js' }, 'descriptor_invalid'],
+    ['external Schema reference', {
+      configSchema: {
+        ...VALID_SCHEMA,
+        properties: { value: { $ref: 'https://example.invalid/schema.json' } },
+      },
+    }, 'descriptor_invalid'],
+    ['unresolved internal Schema reference', {
+      configSchema: {
+        ...VALID_SCHEMA,
+        properties: { value: { $ref: '#/definitions/missing' } },
+      },
+    }, 'descriptor_invalid'],
+    ['invalid Schema root', {
+      configSchema: {
+        $schema: 'http://json-schema.org/draft-07/schema#',
+        type: 'array',
+        additionalProperties: false,
+      },
+    }, 'descriptor_invalid'],
+  ])('diagnoses %s before entry execution', async (_label, overrides, expectedCode) => {
+    await installCandidate(extensionsDir, 'invalid', descriptor('invalid-candidate', overrides));
+
+    const result = await discoverExtensionDescriptors(extensionsDir);
+
+    expect(result.candidates).toEqual([]);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ code: expectedCode, locator: '"invalid"' }),
+    ]);
+    expect((globalThis as Record<PropertyKey, unknown>)[EXECUTION_MARKER]).toBeUndefined();
+  });
+
+  it('diagnoses malformed and missing descriptors independently', async () => {
+    const root = extensionsDir;
+    await mkdir(join(root, 'malformed'), { recursive: true });
+    await writeFile(join(root, 'malformed', 'extension.json'), '{ invalid');
+    await mkdir(join(root, 'missing'), { recursive: true });
+
+    const result = await discoverExtensionDescriptors(extensionsDir);
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      'descriptor_invalid_json',
+      'descriptor_missing',
+    ]);
+  });
+
+  it('accepts a resolvable Descriptor-internal Schema reference during A1 preflight', async () => {
+    await installCandidate(extensionsDir, 'internal-ref', descriptor('internal-ref', {
+      configSchema: {
+        ...VALID_SCHEMA,
+        definitions: { text: { type: 'string' } },
+        properties: { value: { $ref: '#/definitions/text' } },
+      },
+    }));
+
+    const result = await discoverExtensionDescriptors(extensionsDir);
+
+    expect(result.candidates.map((candidate) => candidate.descriptor.id)).toEqual(['internal-ref']);
+  });
+
+  it('accepts a TypeScript module entry', async () => {
+    const candidatePath = join(extensionsDir, 'typescript-entry');
+    await mkdir(candidatePath, { recursive: true });
+    await copyFile(FIXTURE_ENTRY, join(candidatePath, 'entry.ts'));
+    await writeFile(
+      join(candidatePath, 'extension.json'),
+      JSON.stringify(descriptor('typescript-entry', { entry: 'entry.ts' })),
+    );
+
+    const result = await discoverExtensionDescriptors(extensionsDir);
+
+    expect(result.candidates.map((candidate) => candidate.descriptor.id))
+      .toEqual(['typescript-entry']);
+  });
+
+  it('rejects a descriptor path that is not a regular file without execution', async () => {
+    const candidatePath = join(extensionsDir, 'descriptor-directory');
+    await mkdir(join(candidatePath, 'extension.json'), { recursive: true });
+    await copyFile(FIXTURE_ENTRY, join(candidatePath, 'entry.js'));
+
+    const result = await discoverExtensionDescriptors(extensionsDir);
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ code: 'descriptor_unreadable' }),
+    ]);
+    expect((globalThis as Record<PropertyKey, unknown>)[EXECUTION_MARKER]).toBeUndefined();
+  });
+
+  it('rejects a candidate directory reparse point', async () => {
+    const outside = join(installDir, 'outside-candidate');
+    await installCandidateAt(outside, descriptor('outside'));
+    const root = extensionsDir;
+    await mkdir(root, { recursive: true });
+    await symlink(outside, join(root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
+
+    const result = await discoverExtensionDescriptors(extensionsDir);
+
+    expect(result.candidates).toEqual([]);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ code: 'candidate_reparse_point', locator: '"linked"' }),
+    ]);
+  });
+
+  it('rejects an entry reparse point before execution', async (context) => {
+    const candidatePath = join(extensionsDir, 'linked-entry');
+    const outsideEntry = join(installDir, 'outside-entry.js');
+    await mkdir(candidatePath, { recursive: true });
+    await copyFile(FIXTURE_ENTRY, outsideEntry);
+    await writeFile(
+      join(candidatePath, 'extension.json'),
+      JSON.stringify(descriptor('linked-entry')),
+    );
+    try {
+      await symlink(outsideEntry, join(candidatePath, 'entry.js'), 'file');
+    } catch (error) {
+      if (hasErrorCode(error, 'EPERM')) {
+        context.skip();
+        return;
+      }
+      throw error;
+    }
+
+    const result = await discoverExtensionDescriptors(extensionsDir);
+
+    expect(result.candidates).toEqual([]);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        code: 'entry_reparse_point',
+        extensionId: 'linked-entry',
+      }),
+    ]);
+    expect((globalThis as Record<PropertyKey, unknown>)[EXECUTION_MARKER]).toBeUndefined();
+  });
+
+  it('does not execute statically rejected fixture entries during discovery', async () => {
+    await installCandidate(extensionsDir, 'rejected', descriptor('bad/id'));
+
+    await discoverExtensionDescriptors(extensionsDir);
+
+    expect((globalThis as Record<PropertyKey, unknown>)[EXECUTION_MARKER]).toBeUndefined();
+  });
+
+  it('fails when an existing discovery root is not a readable directory', async () => {
+    await writeFile(extensionsDir, 'not-a-directory');
+
+    await expect(discoverExtensionDescriptors(extensionsDir))
+      .rejects.toMatchObject({
+        code: 'DISCOVERY_ROOT_INVALID',
+      });
+  });
+
+  it('fails when the discovery root canonical path escapes the installation directory', async () => {
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'my-agent-outside-extensions-'));
+    try {
+      await symlink(
+        outsideRoot,
+        extensionsDir,
+        process.platform === 'win32' ? 'junction' : 'dir',
+      );
+
+      await expect(discoverExtensionDescriptors(extensionsDir)).rejects.toMatchObject({
+        code: 'DISCOVERY_ROOT_INVALID',
+      });
+    } finally {
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a long non-BMP diagnostic locator bounded and validly escaped', async () => {
+    const installationName = `invalid-${'😀'.repeat(100)}`;
+    await mkdir(join(extensionsDir, installationName), { recursive: true });
+
+    const result = await discoverExtensionDescriptors(extensionsDir);
+    const locator = result.diagnostics[0]!.locator;
+
+    expect(locator.length).toBeLessThanOrEqual(200);
+    expect(() => JSON.parse(locator)).not.toThrow();
+    expect(JSON.parse(locator)).toMatch(/\.\.\.$/);
+  });
+});
+
+function descriptor(
+  id: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    manifestVersion: 1,
+    id,
+    version: '1.0.0',
+    entry: 'entry.js',
+    configSchema: { ...VALID_SCHEMA },
+    ...overrides,
+  };
+}
+
+async function installCandidate(
+  home: string,
+  installationName: string,
+  descriptorValue: Record<string, unknown>,
+): Promise<void> {
+  await installCandidateAt(join(home, installationName), descriptorValue);
+}
+
+async function installCandidateAt(
+  candidatePath: string,
+  descriptorValue: Record<string, unknown>,
+): Promise<void> {
+  await mkdir(candidatePath, { recursive: true });
+  await copyFile(FIXTURE_ENTRY, join(candidatePath, 'entry.js'));
+  await writeFile(join(candidatePath, 'extension.json'), JSON.stringify(descriptorValue));
+}
+
+function hasErrorCode(value: unknown, code: string): boolean {
+  return typeof value === 'object'
+    && value !== null
+    && 'code' in value
+    && (value as { readonly code?: unknown }).code === code;
+}

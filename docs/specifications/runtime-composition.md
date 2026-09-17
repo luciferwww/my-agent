@@ -60,8 +60,10 @@ Shutdown closes future admission and capture/reload, cancels queued requests wit
 
 Cleanup preserves ownership and reverse order across Units, Channels, Memory, and Logger. Failures and residual resources are reported rather than hidden or forcibly double-closed.
 
-## Acceptance scenarios and evidence
+## Acceptance scenarios
 
 Cover dependency order, required/optional failure, atomic cross-kind conflict, immutable projections, unchanged-instance reuse, generation capture and Child inheritance, no-op, latest-wins, candidate rollback, publication, retirement, blocked reload after nonconvergence, queued cancellation, completion sealing, bounded Shutdown, reverse stop, and residual reports.
 
-Evidence: [Runtime contracts](../../src/runtime/types.ts), [bootstrap](../../src/runtime/bootstrap.ts), [Tool Approval policy](../../src/runtime/tool-approval-policy.ts), [composition source](../../src/runtime/runtime-composition.ts), [manager](../../src/runtime/runtime-composition-manager.ts), [reload coordinator](../../src/runtime/reload-coordinator.ts), [lifecycle](../../src/runtime/runtime-lifecycle.ts), [manager tests](../../src/runtime/runtime-composition-manager.test.ts), and [Runtime tests](../../src/runtime/RuntimeApp.test.ts). Decisions: [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [ADR-010](../decisions/adr-010-install-and-agent-home-ownership.md), and [ADR-012](../decisions/adr-012-agent-home-path-unification.md).
+## Related authority
+
+[Runtime](../architecture/runtime.md) owns current implementation facts, [ADR-014](../decisions/adr-014-extension-packages-and-runtime-composition.md) owns Unit composition, and [ADR-012](../decisions/adr-012-agent-home-path-unification.md) owns the shared Agent Home path context.

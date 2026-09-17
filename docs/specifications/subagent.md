@@ -1,7 +1,7 @@
 # Subagent Specification
 
 > Status: Stable Authority
-> Contract status: Implemented and Validated where not superseded
+> Contract status: Implemented and Validated
 > Verified: 2026-09-14
 > Authority: Stable base Subagent contract
 
@@ -57,6 +57,6 @@ An explicit Child allow list replaces the Parent allow list; Child deny adds to 
 
 Cover general-purpose and named profiles; partial Child context with Parent fallback; missing Child directory; unknown profile fallback; invalid profile; depth limit; blocking return; isolated Session; best-effort cleanup; Parent Abort; normalized Child failures; distinct event correlation; sequential execution; and no detached work.
 
-## Ownership and evidence
+## Related authority
 
-Current behavior is described by [Runtime](../architecture/runtime.md) and [Runner](../architecture/runner.md). Evidence: [Subagent core](../../src/core/subagent), [Runtime orchestration](../../src/runtime/subagent-orchestration.ts), [Task Tool](../../src/builtins/tools/task/task-tool.ts), and related unit/integration tests.
+Current implementation boundaries are described by [Runtime](../architecture/runtime.md) and [Runner](../architecture/runner.md). [Subagent Model Resolution](subagent-model-resolution.md) owns Child resolution and terminalization.

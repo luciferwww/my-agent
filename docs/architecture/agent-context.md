@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Agent Context behavior
-> Verified: 2026-09-16
+> Verified: 2026-09-17
 > Ownership: Agent Context initialization and allowlisted Context-file loading
 > Ownership key: agent-context-initialization-and-loading
 

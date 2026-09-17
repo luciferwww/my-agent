@@ -9,7 +9,6 @@ import type { ContractInventoryEntry, ContractSurfaceEntry } from './rules.js';
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const FIXTURE_ROOT = fileURLToPath(new URL('../../test-fixtures/architecture-fitness/ft-08', import.meta.url));
-const SURFACE_PATH = fileURLToPath(new URL('./ft-08-contract-surface.json', import.meta.url));
 const INVENTORY_PATH = fileURLToPath(new URL('./ft-08-contract-inventory.json', import.meta.url));
 
 async function readJson<T>(path: string): Promise<T> {
@@ -45,16 +44,23 @@ describe('FT-08 Contract Test inventory', () => {
   });
 
   it('locks the reviewed public Contract surface and current coverage gaps', async () => {
-    const allSources = await loadTypeScriptSources(`${REPOSITORY_ROOT}/src`, [
-      'src/architecture-fitness/',
-      'src/test-setup.ts',
-    ], 'src');
+    const allSources = [
+      ...await loadTypeScriptSources(`${REPOSITORY_ROOT}/src`, [
+        'src/architecture-fitness/',
+        'src/test-setup.ts',
+      ], 'src'),
+      ...await loadTypeScriptSources(`${REPOSITORY_ROOT}/extensions`, [], 'extensions'),
+    ];
     const productionSources = allSources.filter((source) => !source.path.endsWith('.test.ts'));
     const availableTestPaths = new Set(
       allSources.filter((source) => source.path.endsWith('.test.ts')).map((source) => source.path),
     );
-    const surface = await readJson<ContractSurfaceEntry[]>(SURFACE_PATH);
     const inventory = await readJson<ContractInventoryEntry[]>(INVENTORY_PATH);
+    const surface: ContractSurfaceEntry[] = inventory.map(({ contract, source, kind }) => ({
+      contract,
+      source,
+      kind,
+    }));
 
     expect(findFt08ContractInventoryViolations(
       productionSources,

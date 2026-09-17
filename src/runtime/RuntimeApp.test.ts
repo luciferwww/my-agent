@@ -131,6 +131,56 @@ describe('RuntimeApp', () => {
     await app.close();
   });
 
+  it('acquires Extensions during Runtime Bootstrap from generic Host startup facts', async () => {
+    const installDir = join(agentHome, 'installation');
+    const environment = Object.freeze({});
+    await writeFile(join(agentHome, 'config.json'), '{}\n', 'utf8');
+    const snapshot = await loadAgentConfig({ agentHome });
+    const create = vi.fn(() => ({
+      registration: { id: 'external-bootstrap', source: 'external' as const, register() {} },
+      start() {},
+      stop() {},
+    }));
+    const acquiredUnit: LoadedRuntimeUnit = Object.freeze({
+      unitId: 'external-bootstrap',
+      source: 'external',
+      orderKey: 'external-bootstrap',
+      required: false,
+      initiallyEnabled: true,
+      dependencies: Object.freeze([]),
+      create,
+    });
+    const acquireExtensions = vi.fn(async () => Object.freeze({
+      loadedUnits: Object.freeze([acquiredUnit]),
+      diagnostics: Object.freeze([]),
+    }));
+
+    const app = await RuntimeApp.create({
+      agentHome,
+      startupContext: {
+        installDir,
+        configuration: snapshot,
+        environment,
+      },
+      cliOverrides: {
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies({ acquireExtensions }),
+    });
+
+    expect(acquireExtensions).toHaveBeenCalledWith({
+      extensionsDir: join(installDir, 'extensions'),
+      extensionsConfig: snapshot.extensions,
+      environment,
+    });
+    expect(create).toHaveBeenCalledOnce();
+    expect(acquireExtensions.mock.invocationCallOrder[0])
+      .toBeLessThan(create.mock.invocationCallOrder[0]!);
+    await app.close();
+  });
+
   it('creates, resolves a session automatically, and delegates a turn to AgentRunner', async () => {
     const resolveSession = vi.fn(async () => ({ entry: { sessionId: '1' }, isNew: true }));
     const build = vi.fn(() => 'SYSTEM_PROMPT');

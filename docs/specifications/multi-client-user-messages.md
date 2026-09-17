@@ -58,8 +58,6 @@ A queued `run_start.originMessageId` equals the originating message ID. Message 
 
 Cover queued and steering event shapes; ordering `user_message -> run_start -> output -> run_end`; message correlation; pure-image steering; degenerate input; no base64 leakage; future block safety; two-client origin-inclusive Fanout; CLI echo behavior; one transcript append; session isolation; and no history replay on subscription.
 
-## Ownership and evidence
+## Related authority
 
 [Channels](../architecture/channels.md) owns transport facts, [Runtime](../architecture/runtime.md) owns routing, and [Attachments](attachments-support.md) owns Media/drop semantics.
-
-Evidence: [Runner event types](../../src/core/runner/types.ts), [Runtime intake](../../src/runtime/RuntimeApp.ts), [intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [WebSocket tests](../../src/builtins/channels/websocket/WebSocketChannel.test.ts), and [summary tests](../../src/runtime/summarize-assembled.test.ts).

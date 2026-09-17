@@ -29,14 +29,16 @@ Precedence is:
 - Configuration does not own Catalog membership, canonical Model identity, effective facts, Provider semantics, or Runtime lifecycle.
 - The only top-level namespaces are `agents`, `logger`, and `extensions`; the physical-load snapshot contains only immutable `application` and `extensions` projections.
 
-Removed fields are not contract: top-level `host` and its mode/Channel settings, `llm.model`, global `llm.contextWindowTokens`, Memory DB path/dimensions, configurable Session/agent directories, the former `workspace` Context-budget key, Tool implementation limits, nested `tools.approval`, and Logger path/prefix/queue fields. `host` is rejected as an unknown top-level namespace. The former `agents.defaults.workspace` and per-agent `workspace` keys are rejected directly without aliases or dual reads.
+Unknown fields are rejected rather than ignored or treated as aliases. Top-level `host` and `agents.defaults.workspace` or per-agent `workspace` are explicitly invalid.
 
 Tool deny hides matching definitions and remains final at execution. For structured path Tools, lexically external declared targets require current-call Approval even when the Tool name is allowed; internal allowed targets bypass Approval. Unmatched Tools require Approval capability and fail closed without it. Exec allow grants arbitrary Shell authority without Approval, while unmatched Exec calls require Approval and fail closed without it. Exact names and `*`/`?` globs are supported; `group:*` is not.
 
 Agent Home is the relative path anchor, not a confinement boundary. Approval is current-call only. Canonical/symlink-aware authorization, persistent grants, command patterns, and sandboxing are outside this contract.
 
-## Acceptance scenarios and evidence
+## Acceptance scenarios
 
 Cover each precedence stage, object/array/scalar merge, partial model environment override, absent/invalid files, one-read immutable Application/Extension projections, per-agent metadata exclusion, direct rejection of `host` and other retired fields, Context budget projection, and Tool glob policy.
 
-Evidence: [types](../../src/platform/config/types.ts), [defaults](../../src/platform/config/defaults.ts), [Agent configuration bootstrap](../../src/platform/config/agent-config-bootstrap.ts), [Agent configuration loader](../../src/platform/config/agent-config-loader.ts), [resolution loader](../../src/platform/config/loader.ts), [bootstrap tests](../../src/platform/config/agent-config-bootstrap.test.ts), [Agent configuration tests](../../src/platform/config/agent-config-loader.test.ts), and [resolution tests](../../src/platform/config/loader.test.ts). Decisions: [ADR-010](../decisions/adr-010-install-and-agent-home-ownership.md), [ADR-011](../decisions/adr-011-standalone-agent-home-configuration-bootstrap.md), [ADR-012](../decisions/adr-012-agent-home-path-unification.md), and [ADR-013](../decisions/adr-013-standalone-host-arguments-and-channels.md). Current facts: [Configuration](../architecture/configuration.md).
+## Related authority
+
+[Configuration](../architecture/configuration.md) owns current implementation facts. [ADR-012](../decisions/adr-012-agent-home-path-unification.md) owns Agent Home path unification and [ADR-013](../decisions/adr-013-standalone-host-arguments-and-channels.md) owns Host-private argument selection.

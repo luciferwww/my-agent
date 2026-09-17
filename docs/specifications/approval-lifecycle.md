@@ -60,8 +60,6 @@ Elapsed time alone has no state-transition meaning. Approval does not use Tool/H
 
 Validation must cover indefinite waiting, allow/deny exactly once, late-response suppression, root and Child Abort, bounded Shutdown, missing capability, delivery failure, disconnect, same-client replacement, CLI cancellation, WebSocket `approval_closed`, and absence of timeout/expiry behavior.
 
-## Ownership and evidence
+## Related authority
 
 [Channels](../architecture/channels.md) owns current transport facts; [Runtime](../architecture/runtime.md) owns current routing and Shutdown facts; [Tools and Hooks](tools-and-hooks.md) owns Tool policy ordering; [Abort](abort.md) owns cross-cutting cancellation.
-
-Evidence: [Approval types](../../src/core/approval/types.ts), [TurnInteractionManager](../../src/runtime/turn-interaction/TurnInteractionManager.ts), [manager tests](../../src/runtime/turn-interaction/TurnInteractionManager.test.ts), [CLI tests](../../src/builtins/channels/cli/CliChannel.test.ts), and [WebSocket tests](../../src/builtins/channels/websocket/WebSocketChannel.test.ts).

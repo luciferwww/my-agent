@@ -43,6 +43,8 @@ export interface ContractInventoryEntry extends ContractSurfaceEntry {
 type Boundary = 'Application' | 'Domain/Application' | 'Infrastructure' | 'Composition' | 'Mixed';
 
 const MIXED_PRODUCTION_PATHS = new Set([
+  'src/extension/api/contracts.ts',
+  'src/extension/api/index.ts',
   'src/runtime/bootstrap.ts',
   'src/runtime/errors.ts',
   'src/runtime/glob-match.ts',
@@ -121,12 +123,17 @@ export async function loadTypeScriptSources(
 }
 
 export async function loadProductionSources(repositoryRoot: string): Promise<SourceInput[]> {
-  const sources = await loadTypeScriptSources(
-    join(repositoryRoot, 'src'),
-    ['src/architecture-fitness/', 'src/test-setup.ts'],
-    'src',
-  );
-  return sources.filter((source) => !source.path.endsWith('.test.ts'));
+  const sources = await Promise.all([
+    loadTypeScriptSources(
+      join(repositoryRoot, 'src'),
+      ['src/architecture-fitness/', 'src/test-setup.ts'],
+      'src',
+    ),
+    loadTypeScriptSources(join(repositoryRoot, 'extensions'), [], 'extensions'),
+  ]);
+  return sources.flat()
+    .filter((source) => !source.path.endsWith('.test.ts'))
+    .sort((left, right) => left.path.localeCompare(right.path));
 }
 
 export async function loadFt09GovernedSources(repositoryRoot: string): Promise<SourceInput[]> {
@@ -631,8 +638,9 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
     return 'Infrastructure';
   }
   if (
-    sourcePath.startsWith('src/extensions/')
-    || sourcePath.startsWith('src/extension-acquisition/')
+    sourcePath.startsWith('extensions/')
+    || sourcePath.startsWith('src/extensions/')
+    || sourcePath.startsWith('src/extension/acquisition/')
   ) {
     return 'Infrastructure';
   }

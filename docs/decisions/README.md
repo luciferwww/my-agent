@@ -13,7 +13,6 @@ This directory contains durable architectural decisions. It does not own current
 | [ADR-002](adr-002-context-budgeting-and-compaction-recovery.md) | Accepted | Context budgeting and Compaction recovery |
 | [ADR-003](adr-003-progressive-architecture-migration.md) | Accepted | Progressive migration and authority convergence |
 | [ADR-004](adr-004-provider-model-identity-and-facts-ownership.md) | Accepted | Provider/Model identity and Model Facts ownership |
-| [ADR-005](adr-005-extension-registry-runtime-composition.md) | Accepted | Extension, Registry, Composition, and Runtime lifecycle |
 | [ADR-006](adr-006-legacy-and-compatibility-exit.md) | Accepted | Legacy classification and Compatibility exit |
 | [ADR-007](adr-007-builtin-capability-source-ownership.md) | Accepted; package identity partially superseded by ADR-012 | Builtin capability source ownership and layout |
 | [ADR-008](adr-008-workspace-configuration-authority.md) | Superseded by ADR-010 | Former Workspace-root configuration/state authority and startup snapshot ownership |
@@ -22,6 +21,7 @@ This directory contains durable architectural decisions. It does not own current
 | [ADR-011](adr-011-standalone-agent-home-configuration-bootstrap.md) | Accepted; selected-path semantics refined by ADR-012 | Standalone materialization of the missing selected Agent Home configuration document before Runtime state initialization |
 | [ADR-012](adr-012-agent-home-path-unification.md) | Accepted | Two-path Agent Home model, Environment Tool relative-path defaults, structured external-path Approval, and Exec semantics |
 | [ADR-013](adr-013-standalone-host-arguments-and-channels.md) | Accepted | Standalone Host arguments, argument-selected Builtin Channels, and Host-neutral global configuration |
+| [ADR-014](adr-014-extension-packages-and-runtime-composition.md) | Accepted | Extension packages, unified Jiti loading, public API, and Runtime composition lifecycle |
 
 ## Authority rules
 

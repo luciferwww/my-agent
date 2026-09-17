@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented configuration behavior
-> Verified: 2026-09-16
+> Verified: 2026-09-17
 > Ownership: Agent configuration shape, defaults, precedence, immutable projections, and environment overrides
 > Ownership key: application-configuration
 
@@ -10,7 +10,7 @@
 
 ## 1. Boundary
 
-`src/platform/config/` owns Agent configuration types, hardcoded defaults, missing-document bootstrap, one strict Agent Home file read, immutable consumer projections, merge precedence, and environment extraction. After resolving paths, the standalone Host ensures Agent Home exists, exclusively creates a missing `<agentHome>/config.json` with exact UTF-8 bytes `{}\n`, then reads that document once and injects the Application projection into `RuntimeApp.create()` and the Extension projection into acquisition. Bootstrap does not read document content. Runtime never reads configuration files.
+`src/platform/config/` owns Agent configuration types, hardcoded defaults, missing-document bootstrap, one strict Agent Home file read, immutable consumer projections, merge precedence, and environment extraction. After resolving paths, the standalone Host ensures Agent Home exists, exclusively creates a missing `<agentHome>/config.json` with exact UTF-8 bytes `{}\n`, then reads that document once and passes the complete immutable snapshot to `RuntimeApp.create()` as a generic startup fact. Runtime Bootstrap selects the Application and Extension projections without rereading document content; Runtime never reads configuration files.
 
 Agent Home owns the configuration document and mutable Agent state. Platform Configuration owns configuration bootstrap and loading; Core Agent Context independently owns Context files even though both may ensure their shared parent exists. `installDir` owns executable Extensions; Extension enablement and scoped configuration remain a namespace in the Agent document. Configuration may carry a default Model Reference and Provider deployment-facts input, but [Model Resolution](model-resolution.md) owns canonical identity, Catalog membership, effective limits, and Model Facts.
 
@@ -57,8 +57,6 @@ Lowest to highest precedence:
 | `subagents` | Enabled; `maxDepth=1`; empty profile list |
 | `logger` | Global `info`; console enabled; file disabled |
 
-Removed concepts are not current fields: top-level `host` and its mode/Channel settings, `llm.model`, `llm.contextWindowTokens`, Memory DB path, embedding dimensions, Session directory, the legacy workspace-owned agent directory, `tools.fs`, Tool implementation limits, nested `tools.approval`, and Logger file path/prefix/queue size.
-
 ### Tool policy
 
 `tools.deny` removes matching definitions from the visible Tool projection and remains final at execution. For structured path Tools, any lexically external declared target requires current-call Approval even when the Tool name is allowed; internal targets honor allow bypass. Unmatched Tools request Approval when an origin interaction capability exists and fail closed otherwise. Exec has no path confinement inference: deny blocks, allow authorizes arbitrary Shell execution, and otherwise it requires current-call Approval. Exact names and `*`/`?` globs are supported; `group:*` expansion is not.
@@ -85,6 +83,6 @@ The retired `agents.defaults.workspace` and per-agent `workspace` keys are rejec
 
 | Kind | Evidence |
 |---|---|
-| Source | [types.ts](../../src/platform/config/types.ts), [defaults.ts](../../src/platform/config/defaults.ts), [Agent configuration bootstrap](../../src/platform/config/agent-config-bootstrap.ts), [Agent configuration loader](../../src/platform/config/agent-config-loader.ts), [configuration errors](../../src/platform/config/agent-config-errors.ts), [resolution](../../src/platform/config/loader.ts) |
-| Tests | [Agent configuration bootstrap tests](../../src/platform/config/agent-config-bootstrap.test.ts), [Agent configuration loader tests](../../src/platform/config/agent-config-loader.test.ts), [resolution tests](../../src/platform/config/loader.test.ts) |
-| Controlling authority | [ADR-004](../decisions/adr-004-provider-model-identity-and-facts-ownership.md), [ADR-011](../decisions/adr-011-standalone-agent-home-configuration-bootstrap.md), [ADR-012](../decisions/adr-012-agent-home-path-unification.md), [ADR-013](../decisions/adr-013-standalone-host-arguments-and-channels.md), [Configuration Specification](../specifications/configuration.md), [Model Resolution Specification](../specifications/model-resolution.md) |
+| Source | [configuration types](../../src/platform/config/types.ts), [configuration loader](../../src/platform/config/agent-config-loader.ts) |
+| Tests | [configuration loader tests](../../src/platform/config/agent-config-loader.test.ts) |
+| Controlling authority | [Configuration Specification](../specifications/configuration.md) |

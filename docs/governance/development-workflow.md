@@ -3,18 +3,12 @@
 ## 1. 文档状态
 
 - **状态：** Accepted
-- **版本：** 1.3
-- **迁移日期：** 2026-09-14
+- **版本：** 1.4
+- **日期：** 2026-09-17
 - **所有者：** 项目所有者
 - **适用范围：** my-agent 的代码、测试、架构、文档和实验性变更
 
 本文档是开发流程的唯一权威来源。`CONTRIBUTING.md` 只提供贡献入口，模板只定义工件结构；发生冲突时以本文档和已 `Accepted` 的 ADR、Spec 为准。
-
-**v1.1 修订：** 明确局部事实不确定性应优先自行取证，决策性不确定性必须暂停确认；增加多步骤工作的成功标准及变更可追溯性要求。
-
-**v1.2 修订：** 按已接受的文档信息架构更新权威路径；不改变工作分类、批准要求或状态模型，也不引入第二套变更流程。
-
-**v1.3 修订：** 明确 Unit、Integration、Architecture Fitness 和完整回归入口；日常修改采用影响驱动的聚焦验证，完整测试、lint 和 build 保留给最终或跨边界 Gate。
 
 ## 2. 基本原则
 
@@ -110,6 +104,14 @@ Small Change 和 Documentation 只需明确范围、事实来源和验证方式�
 8. **评审完成：** 核对验收、风险、Deferred 项和无关差异，再进入提交或合并。
 
 实现发现已 `Accepted` 文档错误、依赖方向不成立或迁移顺序需要改变时，暂停实现并列出证据与选项。架构文档修订需单独确认；不得在代码提交中静默改变架构。
+
+### 文档查找与同步
+
+普通实现工作按以下顺序取证：源码与聚焦测试、一个 owning Current Architecture topic、一个 owning Stable Specification（仅当公共行为或生命周期契约相关）、一个 Accepted ADR（仅当决策理由相关）、当前 Active Change（仅当属于已批准交付）。
+
+`docs/changes/archive/`、`docs/evidence/`、`docs/research/`、Deferred、superseded 决策和 Git 历史默认不读取、不搜索。只有任务要求追溯来源、比较旧方案、重建迁移过程或解决未完成权威转移时才进入这些路径。
+
+文档同步遵循单一 prose owner：Current Architecture 记录当前边界，Stable Specification 记录当前契约，ADR 记录长期决策理由，Active Change 记录临时交付细节和验证。局部实现修改不例行同步 ADR、Archive 或 Evidence；没有改变对应权威内容时，也不为保持措辞相似而修改其它文档。
 
 ## 8. 验证要求
 

@@ -23,6 +23,7 @@ export interface PreparedChannelRecord {
   readonly source: ContributionSource;
   readonly instance: ChannelInstance;
   readonly completion: Promise<ChannelCompletion>;
+  readonly runtimeCompletion: Promise<ChannelCompletion>;
   stopStarted: boolean;
 }
 
@@ -111,10 +112,11 @@ async function activateUnit(
         source: unit.unit.source,
         instance,
         completion: instance.completion,
+        runtimeCompletion: normalizeChannelCompletion(instance.completion),
         stopStarted: false,
       };
       records.push(record);
-      completionById.set(contribution.id, instance.completion);
+      completionById.set(contribution.id, record.runtimeCompletion);
       const binding = bindInstance(instance, host, ingressGate);
       bindings.push(binding);
     } catch (error) {
@@ -282,6 +284,16 @@ function waitForReadinessOrFirstFailure(
   });
 }
 
+function normalizeChannelCompletion(
+  completion: Promise<ChannelCompletion>,
+): Promise<ChannelCompletion> {
+  return completion.catch((error: unknown) => Object.freeze({
+    outcome: 'failed' as const,
+    phase: 'runtime' as const,
+    error: asError(error),
+  }));
+}
+
 function bindInstance(
   instance: ChannelInstance,
   host: ChannelRuntimeHost,
@@ -331,8 +343,16 @@ async function settledValue(
   promise: Promise<ChannelCompletion>,
 ): Promise<ChannelCompletion | undefined> {
   const sentinel = Symbol('pending');
-  const result = await Promise.race([promise, Promise.resolve(sentinel)]);
-  return result === sentinel ? undefined : result;
+  try {
+    const result = await Promise.race([promise, Promise.resolve(sentinel)]);
+    return result === sentinel ? undefined : result;
+  } catch (error) {
+    return Object.freeze({
+      outcome: 'failed',
+      phase: 'runtime',
+      error: asError(error),
+    });
+  }
 }
 
 function asError(error: unknown): Error {

@@ -56,8 +56,10 @@ Explicit deny removes matching Provider-visible definitions and rejects stale/ha
 
 For `after_tool_call`, `before_compaction`, and `after_compaction`, each handler settles independently as fulfilled, rejected, aborted, or timed out. The default per-handler deadline is five seconds. Turn Abort reaches observer-local signals. Late completion cannot mutate Tool results, Session, events, Compaction, or Turn outcome; failures produce bounded diagnostics only. `after_compaction` runs only after Session commit.
 
-## Acceptance scenarios and evidence
+## Acceptance scenarios
 
 Cover portable-schema validation, deterministic contribution conflict/order, transformed-input validation, malformed/unknown pairing, visibility plus runtime deny, approval classifications, sequential interceptors, concurrent observers, timeout/Abort, late isolation, persistence before next invocation, controlled Abort closure, and unknown next-Turn repair.
 
-Evidence: [Tool types](../../src/core/tools/types.ts), [Registry types](../../src/core/registry/types.ts), [Registry Builder](../../src/runtime/registry-builder.ts), [Hook runner](../../src/core/runner/hooks/runner.ts), [Tool pipeline tests](../../src/core/runner/AgentRunner.tool-pipeline.test.ts), and [Hook tests](../../src/core/runner/hooks/runner.test.ts). Decisions: [ADR-001](../decisions/adr-001-tool-result-closure-and-recovery.md) and [ADR-002](../decisions/adr-002-context-budgeting-and-compaction-recovery.md).
+## Related authority
+
+[ADR-001](../decisions/adr-001-tool-result-closure-and-recovery.md) owns Tool Result closure and [ADR-002](../decisions/adr-002-context-budgeting-and-compaction-recovery.md) owns context recovery decisions. [Approval Lifecycle](approval-lifecycle.md) owns approval terminalization and [Abort](abort.md) owns cross-cutting cancellation.

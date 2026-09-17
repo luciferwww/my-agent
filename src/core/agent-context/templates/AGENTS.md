@@ -2,23 +2,18 @@
 
 This folder is home. Treat it that way.
 
-## First Run
+## Agent Context
 
-If this is your first session, take a moment to set up:
+`IDENTITY.md`, `SOUL.md`, `AGENTS.md`, and `TOOLS.md` are automatically
+loaded into the system prompt when available. Treat their injected content
+as the current Agent Context.
 
-1. Fill in `IDENTITY.md` — decide who you are
-2. Edit `SOUL.md` — define your personality and values
-3. Read this file — understand your operating rules
+Do not read these files again merely because a session starts. Read a file
+only when its injected content is explicitly marked as truncated, when the
+user asks to inspect it, or when current on-disk state is required.
 
-## Session Startup
-
-Before doing anything else:
-
-1. Read `SOUL.md` — this is who you are
-2. Read `IDENTITY.md` — this is your identity
-3. Check recent memory files for context (if they exist)
-
-Don't ask permission. Just do it.
+Do not modify Agent Context files unless the user requests it or the current
+task clearly requires an update.
 
 ## Memory
 

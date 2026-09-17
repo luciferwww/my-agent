@@ -13,8 +13,12 @@ import { stageRegistryUnit } from './registry-builder.js';
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((next) => { resolve = next; });
-  return { promise, resolve };
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
 }
 
 function host(): ChannelRuntimeHost {
@@ -184,6 +188,26 @@ describe('Channel candidate preparation', () => {
 
     expect(checked.accepted).toBe(false);
     expect(checked.bindings).toEqual([]);
+    expect(fixture.instance.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('normalizes a rejected completion immediately before ownership handoff', async () => {
+    const fixture = channel('rejected-before-handoff');
+    const prepared = await prepareStagedUnitChannels({
+      unit: stageRegistryUnit(unit('recheck-rejection', [{
+        id: 'rejected-before-handoff',
+        create: () => fixture.instance,
+      }])),
+      host: host(),
+    });
+    fixture.completion.reject(new Error('raw pre-handoff rejection'));
+
+    const checked = await recheckPreparedUnitChannels(prepared);
+
+    expect(checked.accepted).toBe(false);
+    await expect(checked.completions.get('rejected-before-handoff')).resolves.toEqual(
+      expect.objectContaining({ outcome: 'failed', phase: 'startup' }),
+    );
     expect(fixture.instance.stop).toHaveBeenCalledTimes(1);
   });
 

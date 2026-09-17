@@ -21,4 +21,4 @@ C1 completed canonical Provider/Channel/interaction paths and removed old import
 
 No compatibility facade, duplicate Provider construction path, old projection seam, direct pre-staging default read, or architecture Feature Flag remained. The superseded proposal had no unique retained authority and is discarded by the clean-room audit.
 
-Current owners: [Providers](../../../architecture/providers.md), [Channels](../../../architecture/channels.md), [Runtime](../../../architecture/runtime.md), [Runtime Composition](../../../specifications/runtime-composition.md), and [ADR-005](../../../decisions/adr-005-extension-registry-runtime-composition.md).
+Current owners: [Providers](../../../architecture/providers.md), [Channels](../../../architecture/channels.md), [Runtime](../../../architecture/runtime.md), [Runtime Composition](../../../specifications/runtime-composition.md), and [ADR-014](../../../decisions/adr-014-extension-packages-and-runtime-composition.md).

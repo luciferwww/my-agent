@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Runtime behavior
-> Verified: 2026-09-16
+> Verified: 2026-09-17
 > Ownership: Runtime composition, publication, generations, Turn orchestration, queues, routing, Fanout, Abort, Shutdown, and Subagent Parent/Child lifecycle
 > Ownership key: runtime-composition-and-lifecycle
 
@@ -56,7 +56,7 @@ src/builtins/
 └── tools/{environment,memory,task}/contribution.ts
 ```
 
-The converged integration layout keeps concrete builtin capabilities and their Host entries under `src/builtins/`, Runtime-owned interaction state under `src/runtime/turn-interaction/`, generic Host acquisition under `src/extension-acquisition/`, and optional concrete Extensions under `src/extensions/`. Runtime and its Builder do not import a concrete External Extension or the acquisition implementation.
+The converged integration layout keeps concrete builtin capabilities and their Host entries under `src/builtins/`, Runtime-owned interaction state under `src/runtime/turn-interaction/`, generic Host acquisition under `src/extension/acquisition/`, and independently owned concrete Extension packages under repository-root `extensions/`. Runtime and its Builder do not import a concrete External Extension or the acquisition implementation.
 
 The public Runtime barrel exposes `RuntimeApp`, the frozen-handle contracts, Unit loading contracts, selected deadline/prompt/error helpers, and public types. Internal managers remain implementation details.
 
@@ -67,6 +67,11 @@ The public Runtime barrel exposes `RuntimeApp`, the frozen-handle contracts, Uni
 ```ts
 interface RuntimeAppOptions {
   agentHome: string;
+  startupContext?: {
+    installDir: string;
+    configuration: AgentConfigSnapshot;
+    environment: Readonly<Record<string, string | undefined>>;
+  };
   applicationConfig?: ApplicationConfigProjection;
   loadedUnits?: readonly LoadedRuntimeUnit[];
   deadlinePolicy?: Partial<RuntimeDeadlinePolicy>;
@@ -80,7 +85,7 @@ interface RuntimeAppOptions {
 }
 ```
 
-`agentHome` is the sole required architecture path input. Agent Context, Sessions, Memory and recall, Subagent profiles, logs, temporary state, prompt path context, Environment Tool relative paths, default Search roots, and default Exec `cwd` use `agentHome`. Startup CWD is used only by the standalone Host to resolve a relative Agent Home CLI value before Runtime creation. A supported Host supplies the immutable `applicationConfig` projection from the one Agent configuration snapshot; direct library callers may omit it to use hardcoded defaults. `dependencies` is a narrow construction seam used by tests and embedding; each factory receives only the parameters needed by that component.
+`agentHome` is the sole required architecture path input. Agent Context, Sessions, Memory and recall, Subagent profiles, logs, temporary state, prompt path context, Environment Tool relative paths, default Search roots, and default Exec `cwd` use `agentHome`. Startup CWD is used only by the standalone Host to resolve a relative Agent Home CLI value before Runtime creation. A supported Host supplies generic `startupContext`; Runtime Bootstrap owns application projection selection, environment override derivation, and Extension Acquisition. Direct library callers may omit it and use explicit `applicationConfig`, `envOverrides`, and `loadedUnits`. `dependencies` is a narrow construction seam used by tests and embedding.
 
 `onEvent` observes application and lifecycle events. `onAgentEvent` observes Runner/Turn events in parallel with Channel Fanout; one plane does not replace the other.
 
@@ -91,14 +96,14 @@ The supported Host-to-Runtime flow is:
 ```text
 Extension Acquisition
   -> frozen LoadedRuntimeUnit[]
-  -> RuntimeAppOptions.loadedUnits
+  -> Runtime Bootstrap result
   -> one RuntimeUnitCatalog with bundled and builtin Units
   -> Unit create / registration staging / start / Channel preparation
   -> complete immutable RegistrySnapshot
   -> atomic publication
 ```
 
-Runtime Builder combines exactly one required bundled Provider Unit, required builtin contribution Units, optional Runtime-created Task Tool Unit, and caller-supplied `loadedUnits` into one catalog. External Units do not have a second registration or lifecycle path. Acquisition returns Units without calling `create()`, `start()`, `stop()`, or registration; Runtime does all of those operations.
+Runtime Bootstrap acquires External Units after Logger configuration. Runtime Builder combines those acquired Units with exactly one required bundled Provider Unit, required builtin contribution Units, optional Runtime-created Task Tool Unit, and caller-supplied `loadedUnits` into one catalog. External Units do not have a second registration or lifecycle path. Acquisition returns Units without calling `create()`, `start()`, `stop()`, or registration; Runtime does all of those operations.
 
 The bundled Provider dependency seam returns one named `LoadedRuntimeUnit`. Its default implementation delegates to `createAnthropicProviderUnit()`. `AnthropicCompatibleProvider` construction occurs inside that Unit's `create()` method, and its Provider entry reaches the candidate only through `registerProvider()` during staging. Runtime Builder does not construct the concrete Provider or inspect a Provider entry before staging. Production and Fake Providers therefore follow the same factory → create → registration → staging → start → publication path.
 
@@ -125,17 +130,18 @@ interface RuntimeHandle {
 flowchart TD
   A[RuntimeApp.create] --> B[buildRuntimeHandle]
   B --> C[bootstrapRuntime]
-  C --> D[Resolve config, configure Logger, initialize Agent Context and resources]
-  D --> E[Assemble bundled, builtin, Task, and options.loadedUnits]
-  E --> F[RuntimeCompositionManager.start]
-  F --> G[Create, stage, start, and prepare Unit instances]
-  G --> H[Resolve complete candidate]
-  H --> I[Atomically publish generation 1 RegistrySnapshot]
-  I --> J[Construct RuntimeApp kernel and convergence callbacks]
-  J --> K[Emit app_ready, then startup warning projections]
+  C --> D[Resolve config and configure Logger]
+  D --> E[Acquire Extensions and initialize Agent Context/resources]
+  E --> F[Assemble acquired, bundled, builtin, Task, and options.loadedUnits]
+  F --> G[RuntimeCompositionManager.start]
+  G --> H[Create, stage, start, and prepare Unit instances]
+  H --> I[Resolve complete candidate]
+  I --> J[Atomically publish generation 1 RegistrySnapshot]
+  J --> K[Construct RuntimeApp kernel and convergence callbacks]
+  K --> L[Emit app_ready, then startup warning projections]
 ```
 
-`RuntimeApp.create()` delegates to the Builder. `bootstrapRuntime()` is limited to shared prerequisites: injected Application configuration, Logger, Agent Context cache, Session, Prompt builders, optional Memory, Tool policy, and Runner construction. Runtime calls `resolveAgentConfig()` but never reads configuration files; lower layers receive projected parameters.
+`RuntimeApp.create()` delegates to the Builder. `bootstrapRuntime()` owns shared startup prerequisites: injected configuration, Logger, Extension Acquisition, Agent Context cache, Session, Prompt builders, optional Memory, Tool policy, and Runner construction. Runtime calls `resolveAgentConfig()` but never reads configuration files; a Host supplies an immutable snapshot and generic startup facts.
 
 The Unit catalog validates identifiers, sources, dependencies, required/enabled state, duplicate IDs, and dependency cycles. Deterministic order is dependency-aware, with builtin Units before external Units and then ordinal `orderKey`/Unit ID order. Required Units must start enabled and cannot be disabled. Enable/disable preflight rejects unknown Units, inactive dependencies, required Unit removal, and removal required by another active Unit.
 
@@ -304,13 +310,12 @@ Runtime has two observable planes:
 - `RuntimeEvent`: `app_start`, `app_ready`, `turn_start`, `turn_end`, `request_end`, `context_reload`, `messages_dropped`, `warning`, `error`, `shutdown_start`, and `shutdown_end`.
 - `AgentEvent`: `user_message`, Runner streaming/Tool/Compaction events, request/run terminals, and Subagent lifecycle events, sent to pinned Turn Channels and the optional observer.
 
-Registry startup diagnostics are projected to stable Host-owned warning messages and bounded identity fields. Raw Extension errors and payloads are not copied into that warning contract. Fanout target failures are isolated, logged, and represented in Shutdown failures or residuals where applicable. See [Observability](observability.md) for Logger and adapter behavior.
+Registry startup diagnostics are logged locally by Runtime with bounded identity fields, creation phase, and the original Extension error message so operators can diagnose optional Unit failure. Stable Runtime warning events omit that message and use a generic projection; Error objects, stacks, causes, and additional Extension payloads are not copied into either surface. Fanout target failures are isolated, logged, and represented in Shutdown failures or residuals where applicable. See [Observability](observability.md) for Logger and adapter behavior.
 
 ## 13. Evidence
 
 | Kind | Evidence |
 |---|---|
-| Source | [RuntimeApp](../../src/runtime/RuntimeApp.ts), [Runtime Builder](../../src/runtime/runtime-builder.ts), [Runtime public composition](../../src/runtime/runtime-composition.ts), [Runtime types](../../src/runtime/types.ts), [Runtime Unit catalog](../../src/runtime/runtime-unit.ts), [Registry candidate builder](../../src/runtime/registry-builder.ts), [Composition manager](../../src/runtime/runtime-composition-manager.ts), [Composition coordinator](../../src/runtime/composition-coordinator.ts), [lifecycle ledger](../../src/runtime/runtime-lifecycle.ts), [deadline budget](../../src/runtime/runtime-deadline.ts), [Channel lifecycle](../../src/runtime/channel-lifecycle.ts), [request completion gate](../../src/runtime/request-completion-gate.ts), [Subagent orchestration](../../src/runtime/subagent-orchestration.ts), [Runtime bootstrap](../../src/runtime/bootstrap.ts), [Anthropic Runtime Unit](../../src/builtins/providers/anthropic/runtime-unit.ts), [Environment Tool contribution](../../src/builtins/tools/environment/contribution.ts), [Memory Tool contribution](../../src/builtins/tools/memory/contribution.ts), [Task Tool contribution](../../src/builtins/tools/task/contribution.ts), [Extension acquisition result](../../src/extension-acquisition/types.ts), [Extension acquisition loader](../../src/extension-acquisition/loader.ts) |
-| Tests | [RuntimeApp tests](../../src/runtime/RuntimeApp.test.ts), [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [Runtime Builder tests](../../src/runtime/runtime-builder.test.ts), [Composition manager tests](../../src/runtime/runtime-composition-manager.test.ts), [Composition coordinator tests](../../src/runtime/composition-coordinator.test.ts), [Subagent orchestration tests](../../src/runtime/subagent-orchestration.test.ts), [Unit catalog tests](../../src/runtime/runtime-unit.test.ts), [lifecycle tests](../../src/runtime/runtime-lifecycle.test.ts), [deadline tests](../../src/runtime/runtime-deadline.test.ts), [acquisition-to-Runtime integration](../../src/extension-acquisition/acquisition-runtime.integration.test.ts), [Anthropic Runtime Unit tests](../../src/builtins/providers/anthropic/runtime-unit.test.ts) |
-| Controlling authority | [ADR-005: Extension Registry Runtime Composition](../decisions/adr-005-extension-registry-runtime-composition.md), [ADR-007: Builtin Capability Source Ownership](../decisions/adr-007-builtin-capability-source-ownership.md), [ADR-012: Agent Home Path Unification](../decisions/adr-012-agent-home-path-unification.md), [Runtime Composition](../specifications/runtime-composition.md), [Model Invocation Errors](../specifications/model-invocation-errors.md), [Abort](../specifications/abort.md), [Subagent Model Resolution](../specifications/subagent-model-resolution.md) |
-| Delivery history | [Source Layout Convergence](../changes/archive/source-layout-convergence/specification.md) |
+| Source | [RuntimeApp](../../src/runtime/RuntimeApp.ts), [composition manager](../../src/runtime/runtime-composition-manager.ts) |
+| Tests | [RuntimeApp tests](../../src/runtime/RuntimeApp.test.ts), [composition manager tests](../../src/runtime/runtime-composition-manager.test.ts) |
+| Controlling authority | [Runtime Composition Specification](../specifications/runtime-composition.md) |

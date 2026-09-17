@@ -8,6 +8,7 @@ import type {
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
 import type { Tool } from '../core/tools/index.js';
+import { Logger } from '../platform/logger/index.js';
 import { CompositionCoordinator } from './composition-coordinator.js';
 import { RuntimeCompositionManager } from './runtime-composition-manager.js';
 import type { RuntimeCompositionManagerOptions } from './runtime-composition-manager.js';
@@ -199,6 +200,108 @@ describe('RuntimeCompositionManager', () => {
     await expect(manager.waitForChannelCompletion('early-channel')).resolves.toEqual(
       expect.objectContaining({ outcome: 'failed', phase: 'startup' }),
     );
+    await manager.shutdown();
+  });
+
+  it('logs a bounded warning when a published Channel fails', async () => {
+    const completion = deferred<ChannelCompletion>();
+    const warningLog = vi.spyOn(Logger.get('RuntimeCompositionManager'), 'warn');
+    const channel: Channel = {
+      id: 'observed-channel',
+      completion: completion.promise,
+      send: vi.fn(),
+      onMessage: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+    };
+    const channelUnit: LoadedRuntimeUnit = {
+      unitId: 'observed-unit',
+      source: 'builtin',
+      orderKey: 'observed-unit',
+      required: true,
+      initiallyEnabled: true,
+      dependencies: [],
+      async create() {
+        return {
+          registration: {
+            id: 'observed-unit',
+            source: 'builtin',
+            register(api) {
+              api.registerChannel({ id: channel.id, create: () => channel });
+            },
+          },
+          start: vi.fn(),
+          stop: vi.fn(),
+        };
+      },
+    };
+    const { manager } = harness([channelUnit]);
+    await manager.start();
+
+    completion.resolve({
+      outcome: 'failed',
+      phase: 'runtime',
+      error: new Error('secret transport details'),
+    });
+
+    await vi.waitFor(() => expect(warningLog).toHaveBeenCalledWith(
+      'channel completion failed',
+      { channelId: 'observed-channel', phase: 'runtime' },
+    ));
+    expect(JSON.stringify(warningLog.mock.calls)).not.toContain('secret transport details');
+    await manager.shutdown();
+  });
+
+  it('normalizes a rejected published Channel completion without duplicate reload observers', async () => {
+    const completion = deferred<ChannelCompletion>();
+    const warningLog = vi.spyOn(Logger.get('RuntimeCompositionManager'), 'warn');
+    const channel: Channel = {
+      id: 'reused-channel',
+      completion: completion.promise,
+      send: vi.fn(),
+      onMessage: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+    };
+    const channelUnit: LoadedRuntimeUnit = {
+      unitId: 'reused-channel-unit',
+      source: 'builtin',
+      orderKey: 'reused-channel-unit',
+      required: true,
+      initiallyEnabled: true,
+      dependencies: [],
+      async create() {
+        return {
+          registration: {
+            id: 'reused-channel-unit',
+            source: 'builtin',
+            register(api) {
+              api.registerChannel({ id: channel.id, create: () => channel });
+            },
+          },
+          start: vi.fn(),
+          stop: vi.fn(),
+        };
+      },
+    };
+    const { manager } = harness([
+      channelUnit,
+      loadedUnit({ id: 'reload-unit', initiallyEnabled: false, toolName: 'reload_tool' }),
+    ]);
+    await manager.start();
+    await manager.compositionControl().enableUnit('reload-unit');
+
+    completion.reject(new Error('raw completion rejection'));
+
+    await expect(manager.waitForChannelCompletion('reused-channel')).resolves.toEqual(
+      expect.objectContaining({ outcome: 'failed', phase: 'runtime' }),
+    );
+    await vi.waitFor(() => expect(warningLog).toHaveBeenCalledTimes(1));
+    expect(warningLog).toHaveBeenCalledWith(
+      'channel completion failed',
+      { channelId: 'reused-channel', phase: 'runtime' },
+    );
+    expect(JSON.stringify(warningLog.mock.calls)).not.toContain('raw completion rejection');
     await manager.shutdown();
   });
 
@@ -700,6 +803,10 @@ describe('RuntimeCompositionManager', () => {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((nextResolve) => { resolve = nextResolve; });
-  return { promise, resolve };
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
 }

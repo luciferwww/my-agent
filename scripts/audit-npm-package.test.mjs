@@ -5,7 +5,7 @@ import { auditNpmPackage } from './audit-npm-package.mjs';
 const expectedBin = './dist/host/hosts/standalone/entry.js';
 
 describe('npm package audit', () => {
-  it('accepts the explicit Host-only package surface and matching bin metadata', () => {
+  it('accepts the explicit Host and Extension package surface with matching metadata', () => {
     expect(auditNpmPackage(packResult(), manifest(), lockfile())).toContain(
       'dist/host/hosts/standalone/entry.js',
     );
@@ -30,6 +30,13 @@ describe('npm package audit', () => {
     expect(() => auditNpmPackage(result, { ...manifest(), files: ['dist'] }, staleLock))
       .toThrow(/files allowlist|missing package file|package lock/u);
   });
+
+  it('rejects an official Extension dependency missing from the root package closure', () => {
+    expect(() => auditNpmPackage(packResult(), manifest(), lockfile(), [{
+      name: '@my-agent/example-extension',
+      dependencies: { 'example-runtime': '^1.0.0' },
+    }])).toThrow(/Extension dependency example-runtime@\^1\.0\.0/u);
+  });
 });
 
 function packResult() {
@@ -38,17 +45,42 @@ function packResult() {
     files: [
       { path: 'package.json' },
       { path: 'README.md' },
+      { path: 'dist/host/extension/api/index.d.ts' },
+      { path: 'dist/host/extension/api/index.js' },
       { path: 'dist/host/hosts/standalone/entry.js' },
       { path: 'dist/host/core/agent-context/templates/IDENTITY.md' },
       { path: 'dist/host/core/agent-context/templates/SOUL.md' },
       { path: 'dist/host/core/agent-context/templates/AGENTS.md' },
       { path: 'dist/host/core/agent-context/templates/TOOLS.md' },
+      { path: 'extensions/copilot-relay-provider/entry.ts' },
+      { path: 'extensions/copilot-relay-provider/extension.json' },
+      { path: 'extensions/copilot-relay-provider/package.json' },
     ],
   }];
 }
 
 function manifest() {
-  return { files: ['dist/host'], bin: { 'my-agent': expectedBin } };
+  return {
+    files: [
+      'dist/host',
+      'extensions/copilot-relay-provider/copilot-relay-provider-unit.ts',
+      'extensions/copilot-relay-provider/copilot-relay-provider.ts',
+      'extensions/copilot-relay-provider/entry.ts',
+      'extensions/copilot-relay-provider/extension.json',
+      'extensions/copilot-relay-provider/index.ts',
+      'extensions/copilot-relay-provider/model-metadata.ts',
+      'extensions/copilot-relay-provider/package.json',
+      'extensions/copilot-relay-provider/responses-client.ts',
+      'extensions/copilot-relay-provider/types.ts',
+    ],
+    bin: { 'my-agent': expectedBin },
+    exports: {
+      './extension-api': {
+        types: './dist/host/extension/api/index.d.ts',
+        default: './dist/host/extension/api/index.js',
+      },
+    },
+  };
 }
 
 function lockfile() {

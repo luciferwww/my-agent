@@ -1,17 +1,9 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
 
 import { createCliChannelUnit } from '../../builtins/channels/cli/index.js';
 import { createWebSocketChannelUnit } from '../../builtins/channels/websocket/index.js';
 import {
-  formatAcquisitionWarning,
-  formatRuntimeWarning,
-  prepareStandaloneHostAcquisition,
-  type StandaloneHostAcquisition,
-} from './host-startup.js';
-import {
   ensureAgentConfigDocument,
-  getEnvOverrides,
   loadAgentConfig,
   type AgentConfigSnapshot,
 } from '../../platform/config/index.js';
@@ -48,7 +40,6 @@ const CLI_CHANNEL_CONFIG = Object.freeze({
 export interface StandaloneHostRunOptions {
   readonly argv?: readonly string[];
   readonly env?: NodeJS.ProcessEnv;
-  readonly stderr?: Pick<NodeJS.WriteStream, 'write'>;
   readonly moduleUrl?: string;
   readonly homeDirectory?: string;
   readonly startupCwd?: string;
@@ -57,11 +48,6 @@ export interface StandaloneHostRunOptions {
   ) => Promise<AgentPathContext>;
   readonly ensureConfig?: typeof ensureAgentConfigDocument;
   readonly loadConfig?: typeof loadAgentConfig;
-  readonly prepareAcquisition?: (
-    extensionsDir: string,
-    extensionsConfig: AgentConfigSnapshot['extensions'],
-    environment: Readonly<Record<string, string | undefined>>,
-  ) => Promise<StandaloneHostAcquisition>;
   readonly createRuntime?: typeof RuntimeApp.create;
   readonly createHost?: typeof createRuntimeHost;
 }
@@ -175,7 +161,6 @@ export async function runStandaloneHost(
   options: StandaloneHostRunOptions = {},
 ): Promise<void> {
   const env = options.env ?? process.env;
-  const stderr = options.stderr ?? process.stderr;
   const parsedArguments = parseStandaloneHostArguments(options.argv ?? process.argv.slice(2));
   const pathOptions: StandaloneHostPathResolutionOptions = {
     moduleUrl: options.moduleUrl ?? import.meta.url,
@@ -194,28 +179,20 @@ export async function runStandaloneHost(
   });
   validateStandaloneHostComposition(snapshot, parsedArguments.builtinChannels);
 
-  const acquisition = await (options.prepareAcquisition ?? prepareStandaloneHostAcquisition)(
-    join(pathContext.installDir, 'extensions'),
-    snapshot.extensions,
-    env,
-  );
-  reportDiagnostics(acquisition, stderr);
-
   const builtinUnits = createBuiltinHostUnits(parsedArguments.builtinChannels);
   const runtime = await (options.createRuntime ?? RuntimeApp.create)({
     agentHome: pathContext.agentHome,
-    applicationConfig: snapshot.application,
-    envOverrides: getEnvOverrides(env),
-    loadedUnits: Object.freeze([...acquisition.result.loadedUnits, ...builtinUnits]),
-    onEvent(event) {
-      if (event.type === 'warning') stderr.write(`${formatRuntimeWarning(event.info)}\n`);
+    startupContext: {
+      installDir: pathContext.installDir,
+      configuration: snapshot,
+      environment: env,
     },
+    loadedUnits: builtinUnits,
   });
   await awaitHostLifetime(
     runtime,
     parsedArguments.builtinChannels,
     options.createHost ?? createRuntimeHost,
-    stderr,
   );
 }
 
@@ -223,7 +200,6 @@ async function awaitHostLifetime(
   runtime: RuntimeHandle,
   builtinChannels: readonly BuiltinChannelName[],
   createHost: typeof createRuntimeHost,
-  stderr: Pick<NodeJS.WriteStream, 'write'>,
 ): Promise<void> {
   const host = createHost(runtime);
   const controllingChannel = builtinChannels.includes('websocket')
@@ -236,43 +212,12 @@ async function awaitHostLifetime(
     return;
   }
 
-  if (builtinChannels.includes('websocket') && builtinChannels.includes('cli')) {
-    observeSecondaryCliCompletion(runtime, stderr);
-  }
-
   try {
     const completion = await runtime.application.waitForChannelCompletion(controllingChannel);
     if (completion.outcome === 'failed') {
       process.exitCode = 1;
-      stderr.write(`Channel ${controllingChannel} failed; shutting down.\n`);
     }
   } finally {
     await host.shutdown(`builtin ${controllingChannel} channel completed`);
-  }
-}
-
-function observeSecondaryCliCompletion(
-  runtime: RuntimeHandle,
-  stderr: Pick<NodeJS.WriteStream, 'write'>,
-): void {
-  void runtime.application.waitForChannelCompletion('cli').then(
-    (completion) => {
-      if (completion.outcome === 'failed') {
-        stderr.write('Secondary Channel cli failed; WebSocket remains active.\n');
-      }
-    },
-    () => {
-      stderr.write('Secondary Channel cli completion observation failed; WebSocket remains active.\n');
-    },
-  ).catch(() => undefined);
-}
-
-function reportDiagnostics(
-  acquisition: StandaloneHostAcquisition,
-  stderr: Pick<NodeJS.WriteStream, 'write'>,
-): void {
-  for (const diagnostic of acquisition.result.diagnostics) {
-    const warning = formatAcquisitionWarning(diagnostic);
-    if (warning !== undefined) stderr.write(`${warning}\n`);
   }
 }

@@ -8,7 +8,7 @@ import {
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const FIXTURE_ROOT = fileURLToPath(new URL('../../test-fixtures/architecture-fitness/ft-05', import.meta.url));
-const EXTENSION_ROOTS = ['src/extensions/', 'src/builtins/'];
+const EXTENSION_ROOTS = ['extensions/', 'src/extensions/', 'src/builtins/'];
 
 describe('FT-05 Extension capability boundary', () => {
   it('accepts declared capabilities and diagnoses RuntimeApp barrel and Service Locator access', async () => {

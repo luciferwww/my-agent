@@ -26,6 +26,10 @@ describe('ensureAgentContext', () => {
     expect(identity).toContain('# Identity');
     expect(soul).toContain('# Soul');
     expect(agents).toContain('# Agents');
+    expect(agents).toContain('are automatically');
+    expect(agents).toContain('loaded into the system prompt');
+    expect(agents).toContain('Do not read these files again merely because a session starts.');
+    expect(agents).not.toContain('Before doing anything else:');
     expect(tools).toContain('# Tools');
   });
 

@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Channel behavior
-> Verified: 2026-09-16
+> Verified: 2026-09-17
 > Ownership: Channel contracts, transport, interaction, CLI/WebSocket protocol, attachment ingress, and client routing
 > Ownership key: channel-transport-and-ingress
 
@@ -13,6 +13,8 @@
 `src/builtins/channels/` owns the application-delivered I/O adapters and their package-local Runtime Unit entries for CLI and WebSocket transports. Canonical Channel and interaction contracts live in `src/core/channel/`; the Runtime-owned pending-interaction lifecycle lives in `src/runtime/turn-interaction/`.
 
 Channels own transport and wire validation. They pass accepted `ChannelRunRequest` values to the Runtime; they do not schedule Turns or call the Runner directly. Runtime owns per-session queueing, steering classification, Turn identity, generation capture, interaction routing, and event Fanout. [Media](media.md) owns attachment validation and canonical normalization after Channel ingress.
+
+Runtime Composition observes each successfully published Channel completion once. A failed completion produces one bounded Runtime warning containing only Channel ID and phase; raw transport errors are not logged at this boundary. Concrete Hosts retain process-liveness and exit policy but do not duplicate Channel failure logs or observe secondary completions only for logging.
 
 ## 2. Source layout
 
@@ -90,54 +92,11 @@ bindRuntimeCapabilities({ modelCatalog, abort })
 
 ## 4. Canonical contracts
 
-```text
-ChannelRunRequest {
-  sessionKey: string
-  message: string | InboundContentBlock[]
-  modelReference?: ModelReference
-  requestOverride?: ModelRequestOverride
-  maxLlmCalls?: number
-  clientId?: string
-}
-
-ChannelInstance {
-  id: string
-  completion: Promise<ChannelCompletion>
-  send(event: AgentEvent): void | Promise<void>
-  onMessage(handler): void
-  start(): Promise<void>
-  stop(): Promise<void>
-  interaction?: ChannelInteractionTransport
-  bindRuntimeCapabilities?(capabilities): void
-}
-```
-
-`Channel` is the existing adapter-facing alias of the Core-owned `ChannelInstance` contract. A `ChannelContribution` supplies an `id` and factory; Runtime publishes only immutable `ChannelRuntimeBinding` projections.
-
-The interaction contract supports the discriminated kinds `approval` and `select`. Approval responses distinguish submitted allow/deny, user cancellation, and abort. `ApprovalResult` classifies approved, user-denied, Turn/Shutdown-aborted, unavailable-origin/delivery, and internal failure outcomes. `select` exists in the Core type system, but neither built-in Channel implements it.
+`src/core/channel/types.ts` owns `ChannelRunRequest`, `ChannelInstance`, completion, interaction, and Runtime-capability types. The adapter-facing send boundary is `send(event: AgentEvent): void | Promise<void>`. A Unit stages `ChannelContribution` factories; Runtime publishes only immutable narrow `ChannelRuntimeBinding` projections. [Channel Specification](../specifications/channel.md) owns the stable contract.
 
 ## 5. Approval and interaction lifecycle
 
-```mermaid
-sequenceDiagram
-    participant Runner as AgentRunner
-    participant Runtime as RuntimeApp
-    participant Manager as TurnInteractionManager
-    participant Channel
-
-    Runner->>Runtime: before_tool_call request
-    Runtime->>Manager: request({ request, signal })
-    Manager->>Runtime: onRequest(approval)
-    Runtime->>Channel: sendInteractionRequest
-    Channel-->>Manager: accepted or unavailable
-    Channel->>Runtime: interaction response/unavailable
-    Runtime->>Manager: resolve or settle
-    Manager-->>Runner: classified ApprovalResult
-```
-
-`TurnInteractionManager` stores pending entries in memory and settles each ID at most once. It has no elapsed-time timeout: an accepted request remains pending until user response, Turn abort, Shutdown, delivery failure, or current-origin disconnect. Abort and Shutdown remove the signal listener, resolve the Promise, and invoke `onClose`; user approval/denial does not produce a separate close notification.
-
-Routing is origin-only. Runtime looks up the Channel binding and `originClientId` captured for the Turn. Missing routes, missing interaction capability, initial delivery failure, and origin disconnect fail closed rather than being represented as a user denial. A direct library Turn has no origin interaction route, so a Tool requiring approval also fails closed.
+`TurnInteractionManager` is the Runtime-owned in-memory Promise bus. It routes a Tool interaction to the Turn's captured Channel/client origin and reports responses or terminal unavailability back to Runner. Builtin Channels implement only approval interactions; [Approval Lifecycle](../specifications/approval-lifecycle.md) owns settlement and failure semantics.
 
 ## 6. CLI Channel
 
@@ -155,29 +114,11 @@ CliChannelConfig {
 
 ### 6.1 Presentation
 
-| Event | Current presentation |
-|---|---|
-| `text_delta` | writes streaming text directly |
-| `tool_use` | writes a dimmed Tool label |
-| `tool_result` | writes success/error label and a display-only bounded preview |
-| `user_message` | shows only non-local client input; local CLI/library-origin input is not echoed |
-| `compaction_start` / `compaction_end` | writes compaction status and counts |
-| `subagent_start` / `subagent_end` | writes child lifecycle summary |
-| `error` | only breaks streaming; the input-loop error handler prints the error once |
-| `run_end` | breaks streaming with a newline |
-| `run_start`, `llm_call`, `tool_result_pruned`, `request_end` | no CLI presentation |
-
-Tool Result previews remove trailing blank lines, collapse repeated blank lines, show at most 10 head plus 6 tail lines with an omission marker, and cap each displayed line at 200 characters. This does not truncate the result passed to the model.
+CLI streams text, presents bounded Tool/Compaction/Subagent status, suppresses local input echo, and lets the input loop print failures once. Tool Result preview limits affect terminal presentation only, never the result passed to the Model.
 
 ### 6.2 Model commands and lifecycle
 
-- `/models` renders the current generation grouped by Provider; `/model` renders default, override, and effective selection.
-- `/model <providerId> <JSON-string-modelId>` preserves an opaque Provider-owned Model ID, including an empty string. `/model default` clears the override.
-- Before ordinary input is dispatched, a selected override is rechecked against the current Catalog.
-- Control characters and long Model IDs are escaped or truncated only for terminal display; lookup and invocation preserve the original string.
-- With approval enabled, only `approval` interactions are accepted and readline prompts for `y/n`. Closure or `stop()` aborts the active `readline.question`; a late callback cannot submit a decision.
-- One Ctrl+C aborts all Runtime sessions that currently have an active Turn or queued input. If there is nothing to abort, it arms the one-second exit hint; a second Ctrl+C closes the Channel. Process exit policy remains Host-owned.
-- `stop()` is idempotent and completion reports distinguish input closure, transport closure, explicit stop, and phase-attributed failure.
+`/models` and `/model` query and select exact current-Catalog references; display escaping never changes opaque Model identity. CLI approval uses its readline interaction, Ctrl+C delegates active/queued Abort through Runtime capabilities before closing the Channel, and process exit policy remains Host-owned.
 
 ## 7. WebSocket Channel
 
@@ -193,47 +134,24 @@ WebSocketChannelConfig {
 
 The server uses the Media-owned 15 MiB maximum frame size. A socket must complete `hello` before business messages.
 
-### 7.1 Client protocol
+### 7.1 Protocol and routing
 
-| Client message | Meaning |
-|---|---|
-| `{ type: 'hello', clientId }` | binds the logical client ID |
-| `{ type: 'run_turn', sessionKey, message, model_reference?, request_override?, maxLlmCalls? }` | submits text or ordered text/image blocks |
-| `{ type: 'approval_resolve', id, decision }` | submits `allow` or `deny` |
-| `{ type: 'abort_turn', sessionKey }` | aborts the active Turn and drops queued requests; there is no inline acknowledgement |
-| `{ type: 'get_model_catalog', request_id }` | queries the current Catalog after `hello` |
-
-`model_reference` uses `provider_id` and opaque `model_id`; `request_override` uses `max_output_tokens`. Removed `model` and `maxTokens` fields are rejected. Wire validation checks JSON/object shape, required strings, positive integer request limits, supported block shapes, and a PNG/JPEG/WebP/GIF `media_type` declaration. Media owns decoded-byte validation, header sniffing, declared-versus-actual MIME verification, dimensions, optimization, and limits.
-
-### 7.2 Server protocol and routing
-
-| Server message | Routing |
-|---|---|
-| `{ type: 'hello_ack', clientId }` | requesting socket only |
-| `{ type: 'model_catalog', request_id, catalog }` | requesting client only; Catalog fields are snake_case |
-| ordinary correlated `AgentEvent` | every connected client registered for the session |
-| `subagent_start` / `subagent_end` | root-session audience |
-| `request_end` | queued request audience resolved by `origin_message_id`; IDs are serialized snake_case |
-| `{ type: 'approval_requested', id, toolName, input }` | origin client only |
-| `{ type: 'approval_closed', id, outcome, reason }` | origin client only for aborted/unavailable/failed closure |
-| `{ type: 'channel_error', code, message }` | requesting socket only |
+After `hello`, WebSocket accepts Turn submission, approval resolution, Abort, and Catalog queries. It emits acknowledgements, Catalog responses, correlated `AgentEvent` values, approval lifecycle messages, and requesting-socket errors. Wire validation owns JSON and transport shape; Media owns decoded attachment validation.
 
 A successful `run_turn` registers the client in that session's audience. The Channel maintains forward and reverse audience maps so disconnect cleanup is proportional to that client's sessions. A newer socket using the same `clientId` supersedes and closes the old socket; the old socket's late close cannot remove the replacement. A pending approval remains associated with the logical client across replacement, but disconnect of the current socket reports `origin_disconnected`.
 
-Runtime Model Resolution errors retain their `category` on the ordinary `error` event. On `provider_unregistered` or `model_rejected`, the HTML client reports the failed exact selection and requests the current Catalog; applying that response clears a stale explicit override and requires the user to reselect. It never substitutes a model or resubmits the failed Turn. Other Provider/invocation failures retain the selection for an explicit user retry.
-
-WebSocket `abort_turn` has no dedicated acknowledgement. Clients observe completion through the correlated `run_end` whose result has `stopReason: 'aborted'`.
+Runtime Model Resolution errors retain their category. The HTML client refreshes the Catalog after an unavailable exact selection and requires explicit reselection; it does not substitute a model or resubmit the failed Turn. WebSocket Abort completion remains visible through correlated Turn events.
 
 ## 8. Runtime composition
 
 Runtime creates and starts candidate Channel instances before publication, binds the Runtime host and capabilities before readiness, and keeps ingress closed until publication. Candidate create/start failure rolls back all sibling Channels in that Unit. Root Turn trees retain their captured generation's Channel bindings; reload does not reroute in-flight events to newer instances. `waitForChannelCompletion(id)` exposes terminal Channel completion.
 
-Standalone selects Builtin Channel Units with `-bc`/`--builtin-channels`; omission means WebSocket, while `none` means no Builtin Channel. Its fixed WebSocket construction is `127.0.0.1:8787`, path `/ws`, approval enabled; its fixed CLI construction uses Session `main`, prompt `> `, approval enabled. The global Agent configuration has no Channel-selection or Host-settings namespace. When both are selected, Runtime publishes both bindings, WebSocket controls process-host lifetime, and CLI completion/failure remains secondary. This does not alter Runtime event Fanout or origin-bound interaction routing.
+Standalone selects zero to two Builtin Channel Units and supplies their fixed construction values. The global Agent configuration has no Channel-selection namespace; [Standalone Service Host Specification](../specifications/standalone-service-host.md) owns selection and process-lifetime policy.
 
 ## 9. Evidence
 
 | Kind | Evidence |
 |---|---|
-| Source | [Core Channel types](../../src/core/channel/types.ts), [CliChannel](../../src/builtins/channels/cli/CliChannel.ts), [CLI Runtime Unit](../../src/builtins/channels/cli/runtime-unit.ts), [WebSocketChannel](../../src/builtins/channels/websocket/WebSocketChannel.ts), [WebSocket Runtime Unit](../../src/builtins/channels/websocket/runtime-unit.ts), [TurnInteractionManager](../../src/runtime/turn-interaction/TurnInteractionManager.ts), [Channel lifecycle](../../src/runtime/channel-lifecycle.ts), [Runtime intake/routing](../../src/runtime/RuntimeApp.ts), [Runtime Fanout](../../src/runtime/runtime-builder.ts) |
-| Tests | [CliChannel tests](../../src/builtins/channels/cli/CliChannel.test.ts), [WebSocketChannel tests](../../src/builtins/channels/websocket/WebSocketChannel.test.ts), [TurnInteractionManager tests](../../src/runtime/turn-interaction/TurnInteractionManager.test.ts), [Channel lifecycle tests](../../src/runtime/channel-lifecycle.test.ts), [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [Runtime tests](../../src/runtime/RuntimeApp.test.ts) |
-| Controlling authority | [ADR-007](../decisions/adr-007-builtin-capability-source-ownership.md), [ADR-013](../decisions/adr-013-standalone-host-arguments-and-channels.md), [Channel Specification](../specifications/channel.md), [Approval Lifecycle Specification](../specifications/approval-lifecycle.md), [Attachments Support Specification](../specifications/attachments-support.md), [Multi-client User Messages Specification](../specifications/multi-client-user-messages.md), [Abort Specification](../specifications/abort.md), [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md) |
+| Source | [Core Channel types](../../src/core/channel/types.ts), [Runtime intake](../../src/runtime/RuntimeApp.ts), [WebSocketChannel](../../src/builtins/channels/websocket/WebSocketChannel.ts) |
+| Tests | [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [WebSocketChannel tests](../../src/builtins/channels/websocket/WebSocketChannel.test.ts) |
+| Controlling authority | [Channel Specification](../specifications/channel.md), [Approval Lifecycle Specification](../specifications/approval-lifecycle.md), [Multi-client User Messages Specification](../specifications/multi-client-user-messages.md) |

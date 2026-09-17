@@ -49,8 +49,6 @@ No attachment-specific Runtime/Agent event or Channel error is introduced. Attac
 
 Cover text-only preservation; supported and unsupported MIME; magic/MIME mismatch; corrupt metadata; optimization success/failure; count and aggregate limits; mixed valid/invalid blocks; pure failure notice; empty input; text-only steering; pure-image steering visibility; no raw payload in events; Provider dimension stripping; dimension-based token estimation; Compaction placeholder with persisted original; and concurrent-session isolation.
 
-## Ownership and evidence
+## Related authority
 
 [Media](../architecture/media.md) owns current pipeline facts, [Channels](../architecture/channels.md) owns wire validation, [Runner](../architecture/runner.md) owns budgeting/Compaction, and [Multi-client User Messages](multi-client-user-messages.md) owns summary fanout.
-
-Evidence: [attachment pipeline](../../src/core/media/attachment-pipeline.ts), [constants](../../src/core/media/constants.ts), [metadata](../../src/core/media/image-metadata.ts), [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts), and [pipeline tests](../../src/core/media/attachment-pipeline.test.ts).

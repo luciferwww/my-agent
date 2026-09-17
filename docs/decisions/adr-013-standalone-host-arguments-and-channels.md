@@ -6,6 +6,7 @@
 > Related Plan/Specification: [Standalone Host Arguments and Channels](../changes/archive/standalone-host-arguments-and-channels/plan.md) and [Specification](../changes/archive/standalone-host-arguments-and-channels/standalone-host-arguments-and-channels-specification.md)
 > Supersedes: exclusive Builtin Channel mode and Host-configuration clauses of the [Standalone Service Host Specification](../specifications/standalone-service-host.md)
 > Refines: Host input preservation in [ADR-009](adr-009-host-boundaries-and-standalone-npm-distribution.md) and Host projection wording in [ADR-011](adr-011-standalone-agent-home-configuration-bootstrap.md); their remaining decisions stay accepted
+> Refined by: [ADR-014](adr-014-extension-packages-and-runtime-composition.md) for Runtime-owned Channel failure logging; Host selection and process-liveness decisions remain accepted
 
 ## Context
 
@@ -43,7 +44,7 @@ The top-level `host` namespace and all Standalone Host projections are removed f
 
 Selected Channel Units use fixed current defaults. This decision adds no replacement Host settings source.
 
-Runtime continues to own Channel creation, start, publication, completion, and stop. Standalone observes completion only for process lifetime. WebSocket controls lifetime whenever selected; CLI controls lifetime only when selected without WebSocket; no Builtin Channel means waiting for a process signal or explicit `RuntimeHost.shutdown()`. Secondary CLI closure is isolated. Secondary CLI startup/runtime failure is consumed as a bounded warning; controlling startup/runtime failure sets exit status 1 and initiates Runtime shutdown.
+Runtime continues to own Channel creation, start, publication, completion, stop, and bounded failure logging. Standalone observes only the controlling completion required for process lifetime. WebSocket controls lifetime whenever selected; CLI controls lifetime only when selected without WebSocket; no Builtin Channel means waiting for a process signal or explicit `RuntimeHost.shutdown()`. Secondary CLI closure or failure is isolated without Host observation. A controlling failure sets exit status 1 and initiates Runtime shutdown.
 
 `none` means no Builtin Channel and does not suppress External Extension Channels.
 
@@ -63,7 +64,7 @@ Runtime continues to own Channel creation, start, publication, completion, and s
 - Existing documents containing `host` must be edited manually.
 - WebSocket bind and CLI presentation values become fixed until a separate configuration authority is justified.
 - CLI selection becomes a process invocation concern rather than persistent Agent policy.
-- Standalone must explicitly observe one controlling and, when applicable, one secondary completion path.
+- Standalone must explicitly observe the controlling completion path; Runtime observes published Channel failures independently of Host process policy.
 
 ## Validation
 

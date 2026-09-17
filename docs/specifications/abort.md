@@ -43,8 +43,6 @@ Signal state changes synchronously, but Provider SDKs, Tools, observers, event-l
 
 Cover Abort before start; during streaming with and without partial content; between multiple Tools; active-only, queue-only, and mixed active/queued state; no-op Abort; cross-session isolation; steering discard; event-subscriber failure; CLI/WebSocket commands; Parent Abort during Child stages; graceful Shutdown; Abort convergence; deadline exhaustion; and unknown orphan repair.
 
-## Ownership and evidence
+## Related authority
 
 [ADR-001](../decisions/adr-001-tool-result-closure-and-recovery.md) owns Tool closure/recovery; [Runner Turn Flow](runner-turn-flow.md) owns loop/persistence detail; [Subagent Model Resolution](subagent-model-resolution.md) owns Child terminalization.
-
-Evidence: [RuntimeApp](../../src/runtime/RuntimeApp.ts), [AgentRunner](../../src/core/runner/AgentRunner.ts), [deadline policy](../../src/runtime/runtime-deadline.ts), [Runtime tests](../../src/runtime/RuntimeApp.test.ts), and [Runner tests](../../src/core/runner/AgentRunner.test.ts).

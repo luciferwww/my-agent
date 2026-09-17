@@ -123,6 +123,7 @@ function createHarness(options: {
       },
     },
     state: { phase: 'ready', startedAt: 1, activeRunCount: 0, contextVersion: 1 },
+    acquiredUnits: Object.freeze([]),
     dependencies: {
       createBundledProviderUnit: () => options.providerFactory?.()
         ?? options.providerUnit
@@ -283,8 +284,9 @@ describe('Runtime Builder', () => {
     await handle.close();
   });
 
-  it('emits a redacted UNIT_INVALID warning when optional Unit creation is isolated', async () => {
+  it('logs optional Unit creation detail locally while keeping the warning event redacted', async () => {
     const secret = 'extension-secret-in-error';
+    const warningLog = vi.spyOn(Logger.get('RuntimeBuilder'), 'warn');
     const invalidUnit: LoadedRuntimeUnit = Object.freeze({
       unitId: 'invalid-external',
       source: 'external',
@@ -309,6 +311,12 @@ describe('Runtime Builder', () => {
       }),
     });
     expect(JSON.stringify(harness.events)).not.toContain(secret);
+    expect(warningLog).toHaveBeenCalledWith('runtime startup warning', {
+      code: 'UNIT_INVALID',
+      unitId: 'invalid-external',
+      detail: secret,
+      phase: 'create',
+    });
     await handle.close();
   });
 

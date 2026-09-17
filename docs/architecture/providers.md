@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Provider behavior
-> Verified: 2026-09-16
+> Verified: 2026-09-17
 > Ownership: Provider-neutral invocation, normalized invocation failures, and concrete Anthropic-compatible and Copilot Relay integrations
 > Ownership key: provider-protocol-and-anthropic-adapter
 
@@ -29,7 +29,7 @@ src/builtins/providers/anthropic/
 ├── runtime-unit.ts             # required builtin Provider Unit
 └── index.ts
 
-src/extensions/copilot-relay-provider/
+extensions/copilot-relay-provider/
 ├── entry.ts
 ├── copilot-relay-provider-unit.ts
 ├── copilot-relay-provider.ts
@@ -108,11 +108,9 @@ Abort is passed to the SDK and remains `AbortError`. Recognized context-overflow
 - Model IDs, including whitespace/control characters or the empty string, are preserved exactly.
 - Missing API key is a connection failure at resolution time. Invalid endpoint or deployment-fact input fails Provider construction.
 
-## 6. Portable Tool conversion evidence
+## 6. Portable Tool conversion
 
-Provider portability is demonstrated by independent test reference codecs in `provider-portability.test.ts`; these are not production codecs and do not import Anthropic/OpenAI SDKs. They verify shared semantics across Anthropic and OpenAI-compatible function Tool shapes for definitions, complete and fragmented calls, multiple/interleaved calls, identity/order, malformed/non-object input, duplicate identity, and Tool Result correlation/content.
-
-Production Anthropic definition conversion is owned by `src/builtins/providers/anthropic/tool-codec.ts`. Production and reference codecs do not share implementation. They share only the test fixture vectors in `src/core/tools/provider-portability-fixtures.ts`; `tool-codec.test.ts` checks the production output against those vectors. Production code does not import the reference codec or fixtures.
+Production Anthropic Tool conversion is owned by `src/builtins/providers/anthropic/tool-codec.ts`. Portable Tool definitions, calls, and results preserve canonical Core identity, order, argument, and outcome semantics across Provider wire formats.
 
 `ToolResultOutcome` is Core-only shared semantics. Anthropic `is_error` is a lossy wire hint, and OpenAI-compatible role=`tool` history does not need to reconstruct that outcome.
 
@@ -143,22 +141,18 @@ Malformed JSON/SSE framing, events before creation or after terminal, duplicate/
 
 The Relay emits a local `Error` satisfying the V1 structural invocation-error contract through type-only Core imports. It neither runtime-imports nor subclasses Host `ModelInvocationError`; Runtime canonicalizes the structural value at the existing Core boundary.
 
-### 8.2 Artifact and supported Host
+### 8.2 Package and supported Host
 
-The repository build creates an exact seven-file ESM artifact at `dist/extension-artifacts/copilot-relay-provider`: five reachable JavaScript files plus `extension.json` and the ESM package marker. The artifact audit rejects extra files, source-map metadata, non-relative/escaping imports, and unreachable runtime files, then verifies relocated generic acquisition and invocation.
+Copilot Relay is an npm workspace package under `extensions/copilot-relay-provider`. Its Descriptor points to `entry.ts`; Runtime Bootstrap loads it through the same Jiti path used for other source or built entries. The package imports Host contracts only from `my-agent/extension-api` and owns any package-manager dependencies it adds.
 
-Deployment places the complete artifact directory directly under `<installDir>/extensions`. Agent configuration under `<agentHome>/config.json` enables Descriptor ID `copilot-relay-provider`; its scoped config may materialize `baseURL`, `apiKey`, and `discoveryTimeoutMs`. The Extension entry reads only its validated `ExtensionLoadContext.config`, not process environment.
+Development uses the tracked package directly. The npm package includes the same Extension package beneath `<installDir>/extensions`. Agent configuration under `<agentHome>/config.json` enables Descriptor ID `copilot-relay-provider`; its scoped config may materialize `baseURL`, `apiKey`, and `discoveryTimeoutMs`. The Extension entry reads only its validated `ExtensionLoadContext.config`, not process environment.
 
-`src/hosts/standalone/standalone-host.ts` uses the generic Extension acquisition boundary and passes acquired `LoadedRuntimeUnit[]` beside zero to two argument-selected Builtin Channel Units. It does not import Relay implementation or infer the Relay Provider ID. A default Model Reference comes from ordinary Agent configuration or the atomic `MY_AGENT_PROVIDER` plus `MY_AGENT_MODEL` environment override.
+`src/hosts/standalone/standalone-host.ts` passes generic startup facts and zero to two argument-selected Builtin Channel Units to Runtime. Runtime Bootstrap invokes the generic Extension Acquisition boundary and hands acquired `LoadedRuntimeUnit[]` to composition. Neither Host nor Runtime imports Relay implementation or infers the Relay Provider ID. A default Model Reference comes from ordinary Agent configuration or the atomic `MY_AGENT_PROVIDER` plus `MY_AGENT_MODEL` environment override.
 
 ## 9. Evidence
 
 | Kind | Evidence |
 |---|---|
-| Core source | [Invocation types](../../src/core/model-invocation/types.ts), [Invocation errors](../../src/core/model-invocation/errors.ts) |
-| Anthropic source | [AnthropicMessagesClient](../../src/builtins/providers/anthropic/AnthropicMessagesClient.ts), [AnthropicCompatibleProvider](../../src/builtins/providers/anthropic/AnthropicCompatibleProvider.ts), [production Tool codec](../../src/builtins/providers/anthropic/tool-codec.ts), [Anthropic Runtime Unit](../../src/builtins/providers/anthropic/runtime-unit.ts) |
-| Relay source | [Extension entry](../../src/extensions/copilot-relay-provider/entry.ts), [Relay Unit](../../src/extensions/copilot-relay-provider/copilot-relay-provider-unit.ts), [Relay Provider](../../src/extensions/copilot-relay-provider/copilot-relay-provider.ts), [Responses client](../../src/extensions/copilot-relay-provider/responses-client.ts), [Relay metadata](../../src/extensions/copilot-relay-provider/model-metadata.ts), [supported Host](../../src/hosts/standalone/standalone-host.ts), [Host acquisition](../../src/hosts/standalone/host-startup.ts), [artifact builder](../../scripts/build-relay-extension-artifact.mjs) |
-| Core/Anthropic tests | [Invocation error tests](../../src/core/model-invocation/errors.test.ts), [AnthropicMessagesClient tests](../../src/builtins/providers/anthropic/AnthropicMessagesClient.test.ts), [AnthropicCompatibleProvider tests](../../src/builtins/providers/anthropic/AnthropicCompatibleProvider.test.ts), [production Tool codec tests](../../src/builtins/providers/anthropic/tool-codec.test.ts), [portability fixtures](../../src/core/tools/provider-portability-fixtures.ts), [independent portability tests](../../src/core/tools/provider-portability.test.ts), [Anthropic Runtime Unit tests](../../src/builtins/providers/anthropic/runtime-unit.test.ts) |
-| Relay/Host tests | [Relay Unit tests](../../src/extensions/copilot-relay-provider/copilot-relay-provider-unit.test.ts), [Responses client tests](../../src/extensions/copilot-relay-provider/responses-client.test.ts), [Host startup tests](../../src/hosts/standalone/host-startup.test.ts), [artifact audit](../../scripts/audit-relay-extension-artifact.mjs) |
-| Controlling authority | [ADR-002](../decisions/adr-002-context-budgeting-and-compaction-recovery.md), [ADR-004](../decisions/adr-004-provider-model-identity-and-facts-ownership.md), [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [ADR-007](../decisions/adr-007-builtin-capability-source-ownership.md), [Model Resolution Specification](../specifications/model-resolution.md), [Model Invocation Errors Specification](../specifications/model-invocation-errors.md) |
-| Delivery history | [Provider Model Catalog archived change](../changes/archive/provider-model-catalog/specification.md), [Source Layout Convergence archived change](../changes/archive/source-layout-convergence/specification.md) |
+| Source | [Invocation errors](../../src/core/model-invocation/errors.ts), [Anthropic Runtime Unit](../../src/builtins/providers/anthropic/runtime-unit.ts), [Relay client](../../extensions/copilot-relay-provider/responses-client.ts) |
+| Tests | [Invocation error tests](../../src/core/model-invocation/errors.test.ts), [Anthropic client tests](../../src/builtins/providers/anthropic/AnthropicMessagesClient.test.ts), [Relay client tests](../../extensions/copilot-relay-provider/responses-client.test.ts) |
+| Controlling authority | [Model Resolution Specification](../specifications/model-resolution.md), [Model Invocation Errors Specification](../specifications/model-invocation-errors.md) |

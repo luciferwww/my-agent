@@ -1,5 +1,6 @@
 import type { AppConfig, AgentDefaults, DeepPartial } from '../platform/config/types.js';
 import type { ApplicationConfigProjection } from '../platform/config/types.js';
+import type { AgentConfigSnapshot } from '../platform/config/agent-config-loader.js';
 import type {
   ChatContentBlock,
   TokenUsage,
@@ -16,6 +17,10 @@ import type { ApplicationToolPolicy } from '../core/tools/types.js';
 import type { ContextFile } from '../core/agent-context/types.js';
 import type { AgentEvent, AgentRunner, AgentRunnerConfig } from '../core/runner/index.js';
 import type { UserPromptBuilder } from '../core/prompt/UserPromptBuilder.js';
+import type {
+  ExtensionAcquisitionOptions,
+  ExtensionAcquisitionResult,
+} from '../extension/acquisition/index.js';
 import type { LoadedRuntimeUnit } from './runtime-unit.js';
 import type { RuntimeDeadlineDriver, RuntimeDeadlinePolicy } from './runtime-deadline.js';
 
@@ -53,6 +58,7 @@ export interface RuntimeBuiltinToolOptions {
 }
 
 export interface RuntimeDependencies {
+  acquireExtensions(options: ExtensionAcquisitionOptions): Promise<ExtensionAcquisitionResult>;
   createBundledProviderUnit(options: RuntimeProviderOptions): LoadedRuntimeUnit;
   createSessionManager(agentHome: string, options?: SessionManagerOptions): SessionManager;
   createMemoryManager(options: RuntimeMemoryOptions): Promise<MemoryManager | null>;
@@ -66,6 +72,12 @@ export interface RuntimeDependencies {
 
 export interface RuntimeAppOptions {
   readonly agentHome: string;
+  /** Generic Host startup facts consumed only during Runtime Bootstrap. */
+  readonly startupContext?: Readonly<{
+    installDir: string;
+    configuration: AgentConfigSnapshot;
+    environment: Readonly<Record<string, string | undefined>>;
+  }>;
   /** Validated application projection. Omission uses hardcoded defaults without filesystem loading. */
   readonly applicationConfig?: ApplicationConfigProjection;
   readonly loadedUnits?: readonly LoadedRuntimeUnit[];
@@ -295,4 +307,5 @@ export interface RuntimeBootstrapResult {
   readonly resources: RuntimeResourceSet;
   readonly state: RuntimeLifecycleState;
   readonly dependencies: RuntimeDependencies;
+  readonly acquiredUnits: readonly LoadedRuntimeUnit[];
 }

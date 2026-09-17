@@ -12,6 +12,7 @@ import { MemoryManager } from '../core/memory/index.js';
 import { SystemPromptBuilder } from '../core/prompt/index.js';
 import { SessionManager } from '../core/session/index.js';
 import { bootstrapRuntime } from './bootstrap.js';
+import { acquireExtensions } from '../extension/acquisition/index.js';
 import {
   CompositionCoordinator,
   type RuntimeSnapshotAccess,
@@ -210,6 +211,7 @@ export async function buildRuntimeHandle(
     ]);
     const assembly = assembleLoadedRuntimeUnits({
       options,
+      acquiredUnits: bootstrap.acquiredUnits,
       resources: bootstrap.resources,
       dependencies: bootstrap.dependencies,
       activeParentTurns,
@@ -415,6 +417,7 @@ export async function buildRuntimeHandle(
 
 function assembleLoadedRuntimeUnits(params: {
   readonly options: RuntimeAppOptions;
+  readonly acquiredUnits: readonly LoadedRuntimeUnit[];
   readonly resources: RuntimeResourceSet;
   readonly dependencies: RuntimeDependencies;
   readonly activeParentTurns: Map<string, ActiveParentTurn>;
@@ -438,6 +441,7 @@ function assembleLoadedRuntimeUnits(params: {
     providerUnit,
     ...dependencies.getBuiltinContributionUnits(toolOptions, resources.memoryManager)
       .map((registration) => createLoadedRuntimeUnit({ registration, required: true })),
+    ...params.acquiredUnits,
     ...(options.loadedUnits ?? []),
   ];
 
@@ -488,6 +492,7 @@ function createRuntimeDependencies(
   overrides: Partial<RuntimeDependencies> | undefined,
 ): RuntimeDependencies {
   const defaults: RuntimeDependencies = {
+    acquireExtensions,
     createBundledProviderUnit(options) {
       return createAnthropicProviderUnit(options);
     },
@@ -529,6 +534,15 @@ function emitStartupDiagnostics(
   snapshot: import('../core/registry/index.js').RegistrySnapshot,
 ): void {
   for (const diagnostic of snapshot.diagnostics) {
+    log.warn('runtime startup warning', {
+      code: diagnostic.code,
+      unitId: diagnostic.unitId,
+      detail: diagnostic.message,
+      ...(diagnostic.contributionId === undefined
+        ? {}
+        : { contributionId: diagnostic.contributionId }),
+      ...(diagnostic.phase === undefined ? {} : { phase: diagnostic.phase }),
+    });
     options.onEvent?.({
       type: 'warning',
       info: {

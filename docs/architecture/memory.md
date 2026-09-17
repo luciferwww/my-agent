@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Memory behavior
-> Verified: 2026-09-16
+> Verified: 2026-09-17
 > Ownership: Memory Store, Markdown indexing, retrieval, recall tracking, Tools, and optional degradation
 > Ownership key: memory-index-and-search
 

@@ -1,6 +1,6 @@
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { access, cp, lstat, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -15,12 +15,6 @@ import {
 } from './verify-npm-package.mjs';
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('..', import.meta.url));
-const ARTIFACT_ROOT = join(
-  REPOSITORY_ROOT,
-  'dist',
-  'extension-artifacts',
-  'copilot-relay-provider',
-);
 const HOST_ENTRY = join(REPOSITORY_ROOT, 'dist', 'host', 'hosts', 'standalone', 'entry.js');
 const EXTENSIONS_ROOT = join(REPOSITORY_ROOT, 'extensions');
 const API_KEY = 'websocket-host-smoke-secret';
@@ -37,7 +31,6 @@ async function main() {
   let relay;
   let child;
   let client;
-  let provisionedExtensions = false;
   let failure;
   let failed = false;
   const output = [];
@@ -49,8 +42,6 @@ async function main() {
     ]);
     relay = await startLoopbackRelay();
     await createAgentHome(agentHome);
-    await provisionRelayExtension();
-    provisionedExtensions = true;
     const installationBefore = await snapshotTree(EXTENSIONS_ROOT);
     const startupCwdBefore = await snapshotTree(startupCwd);
     child = startHost(homeDirectory, startupCwd, relay.baseURL, output);
@@ -127,12 +118,6 @@ async function main() {
     if (relay) {
       await attemptCleanup(() => relay.close(), cleanupErrors);
     }
-    if (provisionedExtensions) {
-      await attemptCleanup(
-        () => rm(EXTENSIONS_ROOT, { recursive: true, force: true }),
-        cleanupErrors,
-      );
-    }
     await attemptCleanup(
       () => rm(temporaryRoot, { recursive: true, force: true }),
       cleanupErrors,
@@ -149,8 +134,9 @@ async function main() {
 
 async function assertBuildInputs() {
   await Promise.all([
-    readFile(join(ARTIFACT_ROOT, 'extension.json')),
+    readFile(join(EXTENSIONS_ROOT, 'copilot-relay-provider', 'extension.json')),
     readFile(HOST_ENTRY),
+    readFile(join(REPOSITORY_ROOT, 'dist', 'host', 'extension', 'api', 'index.js')),
   ]).catch(() => {
     throw new Error('WebSocket Host verification requires a successful npm run build first.');
   });
@@ -174,25 +160,6 @@ async function createAgentHome(agentHome) {
       },
     },
   }, null, 2)}\n`);
-}
-
-async function provisionRelayExtension() {
-  try {
-    await lstat(EXTENSIONS_ROOT);
-  } catch (error) {
-    if (hasErrorCode(error, 'ENOENT')) {
-      await mkdir(EXTENSIONS_ROOT);
-      try {
-        await cp(ARTIFACT_ROOT, join(EXTENSIONS_ROOT, 'relocated-relay'), { recursive: true });
-      } catch (copyError) {
-        await rm(EXTENSIONS_ROOT, { recursive: true, force: true });
-        throw copyError;
-      }
-      return;
-    }
-    throw error;
-  }
-  throw new Error('WebSocket Host verification requires an absent repository Extensions directory.');
 }
 
 function startHost(homeDirectory, startupCwd, relayBaseURL, output) {
@@ -396,12 +363,6 @@ function redact(value, secrets) {
     secret ? result.replaceAll(secret, '<redacted>') : result, value);
 }
 
-function hasErrorCode(value, code) {
-  return typeof value === 'object'
-    && value !== null
-    && 'code' in value
-    && value.code === code;
-}
 
 async function attemptCleanup(action, errors) {
   try {

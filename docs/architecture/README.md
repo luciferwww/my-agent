@@ -28,7 +28,7 @@ Start with the [Current Architecture Overview](overview.md) for the module map, 
 - Current Architecture records verified implemented facts.
 - Decisions record why durable choices were made.
 - Specifications own long-lived contracts.
-- Active Changes own authorized unfinished work; archived Changes retain reviewed delivery history.
+- Active Changes own authorized unfinished work; archived Changes are opt-in historical records.
 - Evidence records observations without becoming current facts or contracts.
 - Deferred inputs and Research are non-authorizing.
 

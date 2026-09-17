@@ -7,9 +7,11 @@ import { auditHostBuild } from './audit-host-build.mjs';
 describe('Host build audit', () => {
   it('accepts a closed Host tree with builtins and declared runtime packages', async () => {
     await withHostBuild({
-      'hosts/standalone/entry.js': "#!/usr/bin/env node\nimport 'node:path'; import 'ws'; import '../../extension-acquisition/index.js';\n",
-      'extension-acquisition/index.js': "export { load } from './loader.js';\n",
-      'extension-acquisition/loader.js': 'export const load = () => [];\n',
+      'hosts/standalone/entry.js': "#!/usr/bin/env node\nimport 'node:path'; import 'ws'; import '../../extension/acquisition/index.js';\n",
+      'extension/acquisition/index.js': "export { load } from './loader.js';\n",
+      'extension/acquisition/loader.js': 'export const load = () => [];\n',
+      'extension/api/index.d.ts': 'export {};\n',
+      'extension/api/index.js': 'export {};\n',
       ...hostAssets(),
     }, async (root) => {
       await expect(auditHostBuild(root)).resolves.toContain('hosts/standalone/entry.js');
@@ -18,8 +20,10 @@ describe('Host build audit', () => {
 
   it('rejects concrete Extension output and identity', async () => {
     await withHostBuild({
-      'hosts/standalone/entry.js': "import '../../extension-acquisition/index.js';\n",
-      'extension-acquisition/index.js': 'export const marker = "COPILOT_RELAY_";\n',
+      'hosts/standalone/entry.js': "import '../../extension/acquisition/index.js';\n",
+      'extension/acquisition/index.js': 'export const marker = "COPILOT_RELAY_";\n',
+      'extension/api/index.d.ts': 'export {};\n',
+      'extension/api/index.js': 'export {};\n',
       'extensions/example/index.js': 'export {};\n',
       ...hostAssets(),
     }, async (root) => {
@@ -29,8 +33,10 @@ describe('Host build audit', () => {
 
   it('rejects unresolved relative imports, including literal dynamic imports', async () => {
     await withHostBuild({
-      'hosts/standalone/entry.js': "import('../../missing.js'); import '../../extension-acquisition/index.js';\n",
-      'extension-acquisition/index.js': 'export {};\n',
+      'hosts/standalone/entry.js': "import('../../missing.js'); import '../../extension/acquisition/index.js';\n",
+      'extension/acquisition/index.js': 'export {};\n',
+      'extension/api/index.d.ts': 'export {};\n',
+      'extension/api/index.js': 'export {};\n',
       ...hostAssets(),
     }, async (root) => {
       await expect(auditHostBuild(root)).rejects.toThrow(/unresolved or escaping relative import/u);
@@ -39,8 +45,10 @@ describe('Host build audit', () => {
 
   it('rejects undeclared runtime packages', async () => {
     await withHostBuild({
-      'hosts/standalone/entry.js': "import 'undeclared-package/subpath'; import '../../extension-acquisition/index.js';\n",
-      'extension-acquisition/index.js': 'export {};\n',
+      'hosts/standalone/entry.js': "import 'undeclared-package/subpath'; import '../../extension/acquisition/index.js';\n",
+      'extension/acquisition/index.js': 'export {};\n',
+      'extension/api/index.d.ts': 'export {};\n',
+      'extension/api/index.js': 'export {};\n',
       ...hostAssets(),
     }, async (root) => {
       await expect(auditHostBuild(root)).rejects.toThrow(/undeclared runtime package/u);
@@ -49,8 +57,10 @@ describe('Host build audit', () => {
 
   it('rejects a standalone entry without the Node executable shebang', async () => {
     await withHostBuild({
-      'hosts/standalone/entry.js': "import '../../extension-acquisition/index.js';\n",
-      'extension-acquisition/index.js': 'export {};\n',
+      'hosts/standalone/entry.js': "import '../../extension/acquisition/index.js';\n",
+      'extension/acquisition/index.js': 'export {};\n',
+      'extension/api/index.d.ts': 'export {};\n',
+      'extension/api/index.js': 'export {};\n',
       ...hostAssets(),
     }, async (root) => {
       await expect(auditHostBuild(root)).rejects.toThrow(/executable shebang/u);

@@ -50,7 +50,7 @@ Durable successors: [Model Resolution](../../../specifications/model-resolution.
 - Extension-private config/resources remain private and cannot be recovered through Runtime service lookup.
 - Invalid optional Units are isolated; required/core failures prevent an unsafe candidate.
 
-Durable successors: [Extension Acquisition](../../../specifications/extension-acquisition.md), [Runtime Composition](../../../specifications/runtime-composition.md), and [ADR-005](../../../decisions/adr-005-extension-registry-runtime-composition.md).
+Durable successors: [Extension Acquisition](../../../specifications/extension-acquisition.md), [Runtime Composition](../../../specifications/runtime-composition.md), and [ADR-014](../../../decisions/adr-014-extension-packages-and-runtime-composition.md).
 
 ## Generations and lifecycle transactions
 
@@ -64,7 +64,7 @@ Durable successors: [Extension Acquisition](../../../specifications/extension-ac
 - Reload cannot create a mixed-generation Turn, mutate a Snapshot, or replace same identity by arbitrary file execution.
 - Shutdown closes admission/reload, drains and aborts under one deadline, seals request outcomes once, and reports residual resources without `process.exit()` from the library.
 
-Durable successors: [Runtime Composition](../../../specifications/runtime-composition.md), [Abort](../../../specifications/abort.md), [ADR-005](../../../decisions/adr-005-extension-registry-runtime-composition.md), and current [Runtime](../../../architecture/runtime.md).
+Durable successors: [Runtime Composition](../../../specifications/runtime-composition.md), [Abort](../../../specifications/abort.md), [ADR-014](../../../decisions/adr-014-extension-packages-and-runtime-composition.md), and current [Runtime](../../../architecture/runtime.md).
 
 ## Runtime call-flow ownership
 

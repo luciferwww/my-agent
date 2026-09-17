@@ -58,8 +58,10 @@ Optional Relay acquisition resolves eligible `/responses` models during Unit cre
 
 An unavailable explicit or configured reference fails as `provider_unregistered` or `model_rejected` before invocation. Presentation clients may refresh the current Catalog and require explicit reselection, but Runtime does not substitute a Provider/Model or automatically retry the Turn. Compaction recovery is not model-selection retry and reuses the same Turn binding.
 
-## Acceptance scenarios and evidence
+## Acceptance scenarios
 
 Cover exact Catalog membership before connection, opaque Model IDs, connection/fact failures, policy/override/capability checks, no invocation on failure, immutable result, default absence, no first-Provider fallback, Parent/Child generation consistency, Relay Catalog eligibility, frozen transport DTO, and Channel structured selection.
 
-Evidence: [ModelResolver](../../src/core/model-resolution/ModelResolver.ts), [Resolver tests](../../src/core/model-resolution/ModelResolver.test.ts), [Registry tests](../../src/runtime/registry-builder.test.ts), and [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts). Decision: [ADR-004](../decisions/adr-004-provider-model-identity-and-facts-ownership.md).
+## Related authority
+
+[Model Resolution](../architecture/model-resolution.md) owns current implementation facts and [ADR-004](../decisions/adr-004-provider-model-identity-and-facts-ownership.md) owns identity and fact provenance.

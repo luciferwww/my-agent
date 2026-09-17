@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current Architecture entry and module ownership map
-> Verified: 2026-09-16
+> Verified: 2026-09-17
 > Ownership: current module map, authority map, and end-to-end Turn overview
 > Ownership key: architecture-map-and-turn-overview
 
@@ -23,8 +23,9 @@ src/
 │   ├── providers/         concrete builtin Provider integrations
 │   ├── channels/          concrete builtin Channel transports
 │   └── tools/             concrete builtin Tool implementations
-├── extension-acquisition/ install-owned discovery, scoped config and controlled Unit loading
-├── extensions/            concrete optional External Extension implementations
+├── extension/
+│   ├── acquisition/       install-owned discovery, scoped config and controlled Unit loading
+│   └── api/               public Host contracts for External Extension packages
 ├── core/
 │   ├── model-invocation/  provider-neutral invocation contract
 │   ├── model-resolution/  identity, Provider facts, limits and capability validation
@@ -42,6 +43,9 @@ src/
 └── platform/
         ├── config/            Agent configuration, precedence and merge
     └── logger/            process-wide logging and output adapters
+
+extensions/
+└── */                      independently owned External Extension workspace packages
 ```
 
 Runtime Builder is the composition authority. `RuntimeApp.create()` delegates construction; it does not itself assemble Provider, Tool, Hook, Task, or Model Resolution components. Each root Turn captures one complete immutable generation; Child Turns inherit their Parent generation.
@@ -81,7 +85,7 @@ Agent Runner
 | Channel contract, CLI/WebSocket behavior, interactions, attachment ingress, and wire summary | [Channels](channels.md) |
 | Media validation, limits, MIME verification, optimization, drop reasons, and canonical normalization | [Media](media.md) |
 | Agent configuration, precedence, defaults, and policy fields | [Configuration](configuration.md) |
-| Install-owned Extensions, Host Extension config, discovery, controlled loading, and Runtime handoff | [Extensions](extensions.md) |
+| Extension packages, public API, Host Extension config, discovery, controlled loading, and Runtime handoff | [Extensions](extensions.md) |
 | Canonical Tool contract, validation, policy, approval, and execution boundary | [Tools](tools.md) |
 | Builtin inventory and Environment filesystem, search, web, Exec, and Process behavior | [Builtin Tools](builtin-tools.md) |
 | Session, Transcript, JSONL, and persistence | [Session](session.md) |
@@ -105,6 +109,6 @@ Topic pages own every detail behind these steps; this overview intentionally doe
 
 | Kind | Evidence |
 |---|---|
-| Source | [standalone entry](../../src/hosts/standalone/entry.ts), [standalone Host](../../src/hosts/standalone/standalone-host.ts), [Runtime Builder](../../src/runtime/runtime-builder.ts), [RuntimeApp](../../src/runtime/RuntimeApp.ts), [composition manager](../../src/runtime/runtime-composition-manager.ts), [Extension acquisition](../../src/extension-acquisition/index.ts), [Anthropic Runtime Unit](../../src/builtins/providers/anthropic/runtime-unit.ts), [ModelResolver](../../src/core/model-resolution/ModelResolver.ts), [attachment pipeline](../../src/core/media/attachment-pipeline.ts), [AgentRunner](../../src/core/runner/AgentRunner.ts) |
-| Tests | [standalone Host tests](../../src/hosts/standalone/standalone-host.test.ts), [acquisition integration](../../src/extension-acquisition/acquisition-runtime.integration.test.ts), [Runtime Builder tests](../../src/runtime/runtime-builder.test.ts), [Anthropic Unit tests](../../src/builtins/providers/anthropic/runtime-unit.test.ts), [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [ModelResolver tests](../../src/core/model-resolution/ModelResolver.test.ts), [attachment tests](../../src/core/media/attachment-pipeline.test.ts) |
-| Controlling authority | [ADR-003](../decisions/adr-003-progressive-architecture-migration.md), [ADR-005](../decisions/adr-005-extension-registry-runtime-composition.md), [ADR-006](../decisions/adr-006-legacy-and-compatibility-exit.md), [ADR-007](../decisions/adr-007-builtin-capability-source-ownership.md), [ADR-009](../decisions/adr-009-host-boundaries-and-standalone-npm-distribution.md), [ADR-010](../decisions/adr-010-install-and-agent-home-ownership.md), [ADR-012](../decisions/adr-012-agent-home-path-unification.md), [Runtime Composition Specification](../specifications/runtime-composition.md), [Standalone Service Host Specification](../specifications/standalone-service-host.md) |
+| Source | [Runtime Builder](../../src/runtime/runtime-builder.ts), [Extension acquisition](../../src/extension/acquisition/index.ts), [standalone Host](../../src/hosts/standalone/standalone-host.ts) |
+| Tests | [Runtime Builder tests](../../src/runtime/runtime-builder.test.ts), [standalone Host tests](../../src/hosts/standalone/standalone-host.test.ts) |
+| Controlling authority | [ADR-014](../decisions/adr-014-extension-packages-and-runtime-composition.md), [Runtime Composition Specification](../specifications/runtime-composition.md) |

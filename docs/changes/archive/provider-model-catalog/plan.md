@@ -13,7 +13,7 @@ Providers publish closed, immutable model Catalogs and own opaque Model IDs, end
 
 Copilot Relay is an optional external Unit using native HTTP `/responses`. Its Catalog includes only eligible discovered models with required facts. Acquisition differences do not create a second Runtime path: all Units use common staging, Snapshot, generation, lifecycle, and retirement.
 
-The durable implemented contract is extracted to [Model Resolution](../../../specifications/model-resolution.md). Decisions remain in [ADR-004](../../../decisions/adr-004-provider-model-identity-and-facts-ownership.md) and [ADR-005](../../../decisions/adr-005-extension-registry-runtime-composition.md).
+The durable implemented contract is extracted to [Model Resolution](../../../specifications/model-resolution.md). Decisions remain in [ADR-004](../../../decisions/adr-004-provider-model-identity-and-facts-ownership.md) and [ADR-014](../../../decisions/adr-014-extension-packages-and-runtime-composition.md).
 
 ## Gate record
 

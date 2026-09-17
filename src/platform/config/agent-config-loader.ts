@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { ResolvedHostExtensionsConfig } from '../../extension-acquisition/types.js';
+import type { ResolvedHostExtensionsConfig } from '../../extension/acquisition/types.js';
 import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from './defaults.js';
 import { deepMerge, validateAgentModelSource } from './loader.js';
 import {

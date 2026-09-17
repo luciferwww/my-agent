@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { resolveAgentConfig } from '../platform/config/index.js';
+import { getEnvOverrides, resolveAgentConfig } from '../platform/config/index.js';
 import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from '../platform/config/defaults.js';
 import type { AppConfig } from '../platform/config/types.js';
 import { ConsoleAdapter, FileAdapter, Logger } from '../platform/logger/index.js';
@@ -32,13 +32,17 @@ export async function bootstrapRuntime(
   });
 
   try {
-    const applicationConfig = deepFreeze(structuredClone(options.applicationConfig ?? {
-      agents: {
-        defaults: DEFAULT_AGENT_CONFIG,
-        list: [],
+    const applicationConfig = deepFreeze(structuredClone(
+      options.startupContext?.configuration.application
+      ?? options.applicationConfig
+      ?? {
+        agents: {
+          defaults: DEFAULT_AGENT_CONFIG,
+          list: [],
+        },
+        logger: DEFAULT_LOGGER_CONFIG,
       },
-      logger: DEFAULT_LOGGER_CONFIG,
-    }));
+    ));
     const appConfig: AppConfig = {
       agentHome: options.agentHome,
       agents: applicationConfig.agents,
@@ -70,9 +74,20 @@ export async function bootstrapRuntime(
 
     const resolvedConfig = resolveAgentConfig(appConfig, {
       agentId: options.agentId,
-      envOverrides: options.envOverrides,
+      envOverrides: options.envOverrides
+        ?? (options.startupContext === undefined
+          ? undefined
+          : getEnvOverrides(options.startupContext.environment)),
       cliOverrides: options.cliOverrides,
     });
+
+    const acquiredUnits = options.startupContext === undefined
+      ? Object.freeze([])
+      : (await deps.acquireExtensions({
+          extensionsDir: join(options.startupContext.installDir, 'extensions'),
+          extensionsConfig: options.startupContext.configuration.extensions,
+          environment: options.startupContext.environment,
+        })).loadedUnits;
 
     await ensureAgentContext(options.agentHome);
 
@@ -151,6 +166,7 @@ export async function bootstrapRuntime(
       },
       state,
       dependencies: deps,
+      acquiredUnits,
     };
   } catch (error) {
     const info = classifyRuntimeError('startup', error);

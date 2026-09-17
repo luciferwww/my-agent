@@ -1,0 +1,10 @@
+{
+  "name": "@my-agent/copilot-relay-provider",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --root ../.. --config vitest.unit.config.ts extensions/copilot-relay-provider"
+  }
+}
