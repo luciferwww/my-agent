@@ -13,7 +13,6 @@ import {
   ensureAgentConfigDocument,
   getEnvOverrides,
   loadAgentConfig,
-  type StandaloneHostConfigProjection,
   type AgentConfigSnapshot,
 } from '../../platform/config/index.js';
 import { RuntimeApp, type RuntimeHandle } from '../../runtime/index.js';
@@ -24,6 +23,27 @@ import {
   type StandaloneHostPathResolutionOptions,
 } from './path-context.js';
 import { createRuntimeHost } from './runtime-host.js';
+
+export type BuiltinChannelName = 'websocket' | 'cli';
+
+export interface StandaloneHostArguments {
+  readonly agentHomeArgument?: string;
+  readonly builtinChannels: readonly BuiltinChannelName[];
+}
+
+const DEFAULT_BUILTIN_CHANNELS = Object.freeze<BuiltinChannelName[]>(['websocket']);
+const NO_BUILTIN_CHANNELS = Object.freeze<BuiltinChannelName[]>([]);
+const WEBSOCKET_CHANNEL_CONFIG = Object.freeze({
+  host: '127.0.0.1',
+  port: 8787,
+  path: '/ws',
+  approval: true,
+});
+const CLI_CHANNEL_CONFIG = Object.freeze({
+  sessionKey: 'main',
+  prompt: '> ',
+  approval: true,
+});
 
 export interface StandaloneHostRunOptions {
   readonly argv?: readonly string[];
@@ -48,12 +68,13 @@ export interface StandaloneHostRunOptions {
 
 export function parseStandaloneHostArguments(
   argv: readonly string[],
-): Readonly<{ agentHomeArgument?: string }> {
+): Readonly<StandaloneHostArguments> {
   let agentHomeArgument: string | undefined;
+  let builtinChannels: readonly BuiltinChannelName[] | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index]!;
-    if (token === '--agent-home') {
+    if (token === '-ah' || token === '--agent-home') {
       if (agentHomeArgument !== undefined) {
         throw new Error('HOST_ARGUMENT_INVALID: Duplicate argument --agent-home.');
       }
@@ -78,14 +99,59 @@ export function parseStandaloneHostArguments(
       continue;
     }
 
+    if (token === '-bc' || token === '--builtin-channels') {
+      if (builtinChannels !== undefined) {
+        throw new Error('HOST_ARGUMENT_INVALID: Duplicate argument --builtin-channels.');
+      }
+      const value = argv[index + 1];
+      if (value === undefined || value.startsWith('-')) {
+        throw new Error('HOST_ARGUMENT_INVALID: Missing value for --builtin-channels.');
+      }
+      builtinChannels = parseBuiltinChannels(value);
+      index += 1;
+      continue;
+    }
+
+    if (token.startsWith('--builtin-channels=')) {
+      if (builtinChannels !== undefined) {
+        throw new Error('HOST_ARGUMENT_INVALID: Duplicate argument --builtin-channels.');
+      }
+      builtinChannels = parseBuiltinChannels(token.slice(token.indexOf('=') + 1));
+      continue;
+    }
+
     throw new Error(`HOST_ARGUMENT_INVALID: Unknown argument ${token}.`);
   }
 
-  return Object.freeze(agentHomeArgument === undefined ? {} : { agentHomeArgument });
+  return Object.freeze({
+    ...(agentHomeArgument === undefined ? {} : { agentHomeArgument }),
+    builtinChannels: builtinChannels ?? DEFAULT_BUILTIN_CHANNELS,
+  });
 }
 
-export function validateStandaloneHostComposition(snapshot: AgentConfigSnapshot): void {
-  if (snapshot.host.mode === 'cli' && snapshot.application.logger.console?.enabled !== false) {
+function parseBuiltinChannels(value: string): readonly BuiltinChannelName[] {
+  if (value === 'none') return NO_BUILTIN_CHANNELS;
+  const names = value.split(',');
+  if (
+    names.length === 0
+    || names.some((name) => name !== 'websocket' && name !== 'cli')
+    || new Set(names).size !== names.length
+  ) {
+    throw new Error(`HOST_ARGUMENT_INVALID: Invalid Builtin Channel list ${value}.`);
+  }
+  return Object.freeze(
+    (['websocket', 'cli'] as const).filter((name) => names.includes(name)),
+  );
+}
+
+export function validateStandaloneHostComposition(
+  snapshot: AgentConfigSnapshot,
+  builtinChannels: readonly BuiltinChannelName[],
+): void {
+  if (
+    builtinChannels.includes('cli')
+    && snapshot.application.logger.console?.enabled !== false
+  ) {
     throw new Error(
       'HOST_OUTPUT_CONFLICT: CLI Channel and Console Logger cannot be enabled together.',
     );
@@ -93,16 +159,16 @@ export function validateStandaloneHostComposition(snapshot: AgentConfigSnapshot)
 }
 
 export function createBuiltinHostUnits(
-  host: StandaloneHostConfigProjection,
+  builtinChannels: readonly BuiltinChannelName[],
 ): readonly LoadedRuntimeUnit[] {
-  switch (host.mode) {
-    case 'websocket':
-      return Object.freeze([createWebSocketChannelUnit(host.websocket)]);
-    case 'cli':
-      return Object.freeze([createCliChannelUnit(host.cli)]);
-    case 'headless':
-      return Object.freeze([]);
-  }
+  return Object.freeze([
+    ...(builtinChannels.includes('websocket')
+      ? [createWebSocketChannelUnit(WEBSOCKET_CHANNEL_CONFIG)]
+      : []),
+    ...(builtinChannels.includes('cli')
+      ? [createCliChannelUnit(CLI_CHANNEL_CONFIG)]
+      : []),
+  ]);
 }
 
 export async function runStandaloneHost(
@@ -126,7 +192,7 @@ export async function runStandaloneHost(
   const snapshot = await (options.loadConfig ?? loadAgentConfig)({
     agentHome: pathContext.agentHome,
   });
-  validateStandaloneHostComposition(snapshot);
+  validateStandaloneHostComposition(snapshot, parsedArguments.builtinChannels);
 
   const acquisition = await (options.prepareAcquisition ?? prepareStandaloneHostAcquisition)(
     join(pathContext.installDir, 'extensions'),
@@ -135,7 +201,7 @@ export async function runStandaloneHost(
   );
   reportDiagnostics(acquisition, stderr);
 
-  const builtinUnits = createBuiltinHostUnits(snapshot.host);
+  const builtinUnits = createBuiltinHostUnits(parsedArguments.builtinChannels);
   const runtime = await (options.createRuntime ?? RuntimeApp.create)({
     agentHome: pathContext.agentHome,
     applicationConfig: snapshot.application,
@@ -145,30 +211,60 @@ export async function runStandaloneHost(
       if (event.type === 'warning') stderr.write(`${formatRuntimeWarning(event.info)}\n`);
     },
   });
-  await awaitHostLifetime(runtime, snapshot.host, options.createHost ?? createRuntimeHost, stderr);
+  await awaitHostLifetime(
+    runtime,
+    parsedArguments.builtinChannels,
+    options.createHost ?? createRuntimeHost,
+    stderr,
+  );
 }
 
 async function awaitHostLifetime(
   runtime: RuntimeHandle,
-  hostConfig: StandaloneHostConfigProjection,
+  builtinChannels: readonly BuiltinChannelName[],
   createHost: typeof createRuntimeHost,
   stderr: Pick<NodeJS.WriteStream, 'write'>,
 ): Promise<void> {
   const host = createHost(runtime);
-  if (hostConfig.mode === 'headless') {
+  const controllingChannel = builtinChannels.includes('websocket')
+    ? 'websocket'
+    : builtinChannels.includes('cli')
+      ? 'cli'
+      : undefined;
+  if (controllingChannel === undefined) {
     await host.completion;
     return;
   }
 
+  if (builtinChannels.includes('websocket') && builtinChannels.includes('cli')) {
+    observeSecondaryCliCompletion(runtime, stderr);
+  }
+
   try {
-    const completion = await runtime.application.waitForChannelCompletion(hostConfig.mode);
+    const completion = await runtime.application.waitForChannelCompletion(controllingChannel);
     if (completion.outcome === 'failed') {
       process.exitCode = 1;
-      stderr.write(`Channel ${hostConfig.mode} failed; shutting down.\n`);
+      stderr.write(`Channel ${controllingChannel} failed; shutting down.\n`);
     }
   } finally {
-    await host.shutdown(`builtin ${hostConfig.mode} channel completed`);
+    await host.shutdown(`builtin ${controllingChannel} channel completed`);
   }
+}
+
+function observeSecondaryCliCompletion(
+  runtime: RuntimeHandle,
+  stderr: Pick<NodeJS.WriteStream, 'write'>,
+): void {
+  void runtime.application.waitForChannelCompletion('cli').then(
+    (completion) => {
+      if (completion.outcome === 'failed') {
+        stderr.write('Secondary Channel cli failed; WebSocket remains active.\n');
+      }
+    },
+    () => {
+      stderr.write('Secondary Channel cli completion observation failed; WebSocket remains active.\n');
+    },
+  ).catch(() => undefined);
 }
 
 function reportDiagnostics(

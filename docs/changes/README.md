@@ -12,6 +12,7 @@ No active Changes.
 
 Archived changes preserve bounded delivery and acceptance provenance. They are neither Current Architecture nor stable contract authority.
 
+- [Standalone Host Arguments and Channels](archive/standalone-host-arguments-and-channels/plan.md), its [implemented Specification](archive/standalone-host-arguments-and-channels/standalone-host-arguments-and-channels-specification.md), and [validation record](archive/standalone-host-arguments-and-channels/validation.md) — argument-owned Builtin Channel sets, default WebSocket, Host-neutral global configuration, and Standalone `-ah` alias completed and validated on 2026-09-17
 - [Agent Home Path Unification](archive/agent-home-path-unification/plan.md), its [implemented Specification](archive/agent-home-path-unification/agent-home-path-unification-specification.md), and [validation record](archive/agent-home-path-unification/validation.md) — two-path Agent Home model, Environment Tool identity and roots, structured external-path Approval, and arbitrary Exec semantics completed, validated, and accepted on 2026-09-16
 - [Architecture Foundation](archive/architecture-foundation/plan.md) and its archived [Target Architecture](archive/architecture-foundation/target-architecture.md) — Foundation packages, Slices 1–6, and authority transfer completed on 2026-09-15
 - [AF-03 Target Architecture](archive/af-03-target-architecture/plan.md)

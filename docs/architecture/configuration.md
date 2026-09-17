@@ -23,11 +23,10 @@ AgentConfigDocument
 ├── agents.defaults?: DeepPartial<AgentDefaults>
 ├── agents.list?: AgentEntry[]
 ├── logger?: LoggerModuleConfig
-├── extensions?: Extension enablement and scoped settings
-└── host?: standalone Host mode settings
+└── extensions?: Extension enablement and scoped settings
 ```
 
-The returned snapshot and all nested projections are defensively copied and frozen. Startup CWD is not a configuration source, and there is no multi-file merge.
+These are the only valid top-level namespaces. Retired `host` and every other unknown namespace fail directly. The returned Application/Extension snapshot and all nested projections are defensively copied and frozen. Startup CWD is not a configuration source, and there is no multi-file merge.
 
 ## 3. Precedence and merge
 
@@ -58,7 +57,7 @@ Lowest to highest precedence:
 | `subagents` | Enabled; `maxDepth=1`; empty profile list |
 | `logger` | Global `info`; console enabled; file disabled |
 
-Removed concepts are not current fields: `llm.model`, `llm.contextWindowTokens`, Memory DB path, embedding dimensions, Session directory, the legacy workspace-owned agent directory, `tools.fs`, Tool implementation limits, nested `tools.approval`, and Logger file path/prefix/queue size.
+Removed concepts are not current fields: top-level `host` and its mode/Channel settings, `llm.model`, `llm.contextWindowTokens`, Memory DB path, embedding dimensions, Session directory, the legacy workspace-owned agent directory, `tools.fs`, Tool implementation limits, nested `tools.approval`, and Logger file path/prefix/queue size.
 
 ### Tool policy
 
@@ -78,7 +77,7 @@ getEnvOverrides(): DeepPartial<AgentDefaults>
 deepMerge(target, source): merged copy
 ```
 
-`AgentConfigSnapshot` contains immutable `application`, `extensions`, and `host` projections. Runtime combines the injected Application projection with explicit `agentHome`. `resolveAgentConfig()` excludes `id` and `default` metadata from the selected per-agent entry before applying environment and caller overrides.
+`AgentConfigSnapshot` contains only immutable `application` and `extensions` projections. Runtime combines the injected Application projection with explicit `agentHome`. `resolveAgentConfig()` excludes `id` and `default` metadata from the selected per-agent entry before applying environment and caller overrides.
 
 The retired `agents.defaults.workspace` and per-agent `workspace` keys are rejected directly. There is no alias or dual read; Agent Context budgets use `context` only.
 
@@ -88,4 +87,4 @@ The retired `agents.defaults.workspace` and per-agent `workspace` keys are rejec
 |---|---|
 | Source | [types.ts](../../src/platform/config/types.ts), [defaults.ts](../../src/platform/config/defaults.ts), [Agent configuration bootstrap](../../src/platform/config/agent-config-bootstrap.ts), [Agent configuration loader](../../src/platform/config/agent-config-loader.ts), [configuration errors](../../src/platform/config/agent-config-errors.ts), [resolution](../../src/platform/config/loader.ts) |
 | Tests | [Agent configuration bootstrap tests](../../src/platform/config/agent-config-bootstrap.test.ts), [Agent configuration loader tests](../../src/platform/config/agent-config-loader.test.ts), [resolution tests](../../src/platform/config/loader.test.ts) |
-| Controlling authority | [ADR-004](../decisions/adr-004-provider-model-identity-and-facts-ownership.md), [ADR-011](../decisions/adr-011-standalone-agent-home-configuration-bootstrap.md), [ADR-012](../decisions/adr-012-agent-home-path-unification.md), [Configuration Specification](../specifications/configuration.md), [Model Resolution Specification](../specifications/model-resolution.md) |
+| Controlling authority | [ADR-004](../decisions/adr-004-provider-model-identity-and-facts-ownership.md), [ADR-011](../decisions/adr-011-standalone-agent-home-configuration-bootstrap.md), [ADR-012](../decisions/adr-012-agent-home-path-unification.md), [ADR-013](../decisions/adr-013-standalone-host-arguments-and-channels.md), [Configuration Specification](../specifications/configuration.md), [Model Resolution Specification](../specifications/model-resolution.md) |

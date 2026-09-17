@@ -21,6 +21,7 @@ This directory contains durable architectural decisions. It does not own current
 | [ADR-010](adr-010-install-and-agent-home-ownership.md) | Accepted; separate working context and fixed selection superseded by ADR-012 | Immutable `installDir` and writable `agentHome` ownership |
 | [ADR-011](adr-011-standalone-agent-home-configuration-bootstrap.md) | Accepted; selected-path semantics refined by ADR-012 | Standalone materialization of the missing selected Agent Home configuration document before Runtime state initialization |
 | [ADR-012](adr-012-agent-home-path-unification.md) | Accepted | Two-path Agent Home model, Environment Tool relative-path defaults, structured external-path Approval, and Exec semantics |
+| [ADR-013](adr-013-standalone-host-arguments-and-channels.md) | Accepted | Standalone Host arguments, argument-selected Builtin Channels, and Host-neutral global configuration |
 
 ## Authority rules
 

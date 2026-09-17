@@ -149,7 +149,7 @@ The repository build creates an exact seven-file ESM artifact at `dist/extension
 
 Deployment places the complete artifact directory directly under `<installDir>/extensions`. Agent configuration under `<agentHome>/config.json` enables Descriptor ID `copilot-relay-provider`; its scoped config may materialize `baseURL`, `apiKey`, and `discoveryTimeoutMs`. The Extension entry reads only its validated `ExtensionLoadContext.config`, not process environment.
 
-`src/hosts/standalone/standalone-host.ts` uses the generic Extension acquisition boundary and passes acquired `LoadedRuntimeUnit[]` beside the selected optional builtin Channel Unit. It does not import Relay implementation or infer the Relay Provider ID. A default Model Reference comes from ordinary Agent configuration or the atomic `MY_AGENT_PROVIDER` plus `MY_AGENT_MODEL` environment override.
+`src/hosts/standalone/standalone-host.ts` uses the generic Extension acquisition boundary and passes acquired `LoadedRuntimeUnit[]` beside zero to two argument-selected Builtin Channel Units. It does not import Relay implementation or infer the Relay Provider ID. A default Model Reference comes from ordinary Agent configuration or the atomic `MY_AGENT_PROVIDER` plus `MY_AGENT_MODEL` environment override.
 
 ## 9. Evidence
 

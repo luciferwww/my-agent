@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { createServer } from 'node:net';
 import { access, mkdir, mkdtemp, readdir, readFile, readlink, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
@@ -109,7 +108,7 @@ async function main() {
     host = startInstalledCommand(
       installationProject,
       startupCwd,
-      ['--agent-home', explicitAgentHome],
+      ['--agent-home', explicitAgentHome, '--builtin-channels', 'none'],
       createIsolatedHomeEnvironment(explicitHomeDirectory),
     );
     await waitForFileContent(
@@ -140,13 +139,23 @@ async function main() {
       'Fallback home during explicit Agent Home first start',
     );
 
-    const webSocketPort = await reserveLoopbackPort();
     await writeFile(join(configuredAgentHome, 'config.json'), `${JSON.stringify({
-      host: {
-        mode: 'websocket',
-        websocket: { host: '127.0.0.1', port: webSocketPort, path: '/ws', approval: true },
-      },
+      host: { mode: 'websocket' },
     }, null, 2)}\n`);
+    const retiredHost = await runInstalledCommand(
+      installationProject,
+      startupCwd,
+      ['--builtin-channels=none'],
+      PROCESS_TIMEOUT_MS,
+      isolatedEnvironment,
+    );
+    assert(retiredHost.code === 1, 'Installed command accepted the retired Host namespace.');
+    assert(retiredHost.stdout === '', 'Retired Host rejection emitted unexpected standard output.');
+    assert(
+      retiredHost.stderr === 'Agent configuration contains unknown top-level namespace "host".\n',
+      'Installed command emitted an unexpected retired Host diagnostic.',
+    );
+    await writeFile(join(configuredAgentHome, 'config.json'), '{}\n');
     const installationBefore = await snapshotTree(installDir);
     const startupCwdBefore = await snapshotTree(startupCwd);
     host = startInstalledCommand(
@@ -156,7 +165,7 @@ async function main() {
       isolatedEnvironment,
     );
     const client = await connectWithRetry(
-      `ws://127.0.0.1:${webSocketPort}/ws`,
+      'ws://127.0.0.1:8787/ws',
       host,
       PROCESS_TIMEOUT_MS,
     );
@@ -214,7 +223,7 @@ async function main() {
   }
   if (failed) throw failure;
   console.log(
-    `Verified npm package (${packageFileCount} files), default and explicit Agent Home first starts, and installed my-agent command.`,
+    `Verified npm package (${packageFileCount} files), Host-neutral default WebSocket startup, explicit Builtin selection, legacy Host rejection, and installed my-agent command.`,
   );
 }
 
@@ -421,23 +430,6 @@ function nextJsonMessage(client, timeoutMs) {
       }
     });
   });
-}
-
-async function reserveLoopbackPort() {
-  const server = createServer();
-  server.unref();
-  await new Promise((resolveListen, rejectListen) => {
-    server.once('error', rejectListen);
-    server.listen(0, '127.0.0.1', resolveListen);
-  });
-  const address = server.address();
-  if (address === null || typeof address === 'string') {
-    throw new Error('WebSocket address is unavailable.');
-  }
-  await new Promise((resolveClose, rejectClose) => {
-    server.close((error) => error ? rejectClose(error) : resolveClose());
-  });
-  return address.port;
 }
 
 async function waitForExit(child, timeoutMs) {

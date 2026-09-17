@@ -15,32 +15,15 @@ import type {
   ApplicationConfigProjection,
   LoggerLevel,
   LoggerModuleConfig,
-  StandaloneHostMode,
 } from './types.js';
 
 const CONFIG_FILE_NAME = 'config.json';
-const TOP_LEVEL_NAMESPACES = new Set(['agents', 'logger', 'extensions', 'host']);
+const TOP_LEVEL_NAMESPACES = new Set(['agents', 'logger', 'extensions']);
 const LOGGER_LEVELS = new Set<LoggerLevel>(['debug', 'info', 'warn', 'error']);
-
-export interface StandaloneHostConfigProjection {
-  readonly mode: StandaloneHostMode;
-  readonly websocket: Readonly<{
-    host: string;
-    port: number;
-    path: string;
-    approval: boolean;
-  }>;
-  readonly cli: Readonly<{
-    sessionKey: string;
-    prompt: string;
-    approval: boolean;
-  }>;
-}
 
 export interface AgentConfigSnapshot {
   readonly application: ApplicationConfigProjection;
   readonly extensions: ResolvedHostExtensionsConfig;
-  readonly host: StandaloneHostConfigProjection;
 }
 
 interface AgentConfigLoaderDependencies {
@@ -78,12 +61,10 @@ export async function loadAgentConfig(options: {
     enabled: document.extensions?.enabled ?? true,
     entries: structuredClone(document.extensions?.entries ?? {}),
   };
-  const host = resolveHostConfig(document.host);
 
   return deepFreeze({
     application: { agents, logger },
     extensions,
-    host,
   });
 }
 
@@ -135,7 +116,6 @@ function validateAgentConfigDocument(document: AgentConfigDocument): void {
   validateAgents(document.agents);
   validateLogger(document.logger);
   validateExtensions(document.extensions);
-  validateHost(document.host);
 }
 
 function validateAgents(value: AgentConfigDocument['agents']): void {
@@ -230,96 +210,6 @@ function hasErrorCode(value: unknown, code: string): boolean {
     && value !== null
     && 'code' in value
     && (value as { readonly code?: unknown }).code === code;
-}
-
-function validateHost(value: AgentConfigDocument['host']): void {
-  if (value === undefined) return;
-  if (!isPlainObject(value)) throw invalidAgentConfigField('host');
-  rejectUnknownFields(value, ['mode', 'websocket', 'cli'], 'host');
-  if (
-    value.mode !== undefined
-    && value.mode !== 'websocket'
-    && value.mode !== 'cli'
-    && value.mode !== 'headless'
-  ) {
-    throw invalidAgentConfigField('host.mode');
-  }
-
-  if (value.websocket !== undefined) {
-    if (!isPlainObject(value.websocket)) throw invalidAgentConfigField('host.websocket');
-    rejectUnknownFields(value.websocket, ['host', 'port', 'path', 'approval'], 'host.websocket');
-    if (value.websocket.host !== undefined) {
-      validateNonBlankString(value.websocket.host, 'host.websocket.host');
-    }
-    if (
-      value.websocket.port !== undefined
-      && (!Number.isInteger(value.websocket.port)
-        || value.websocket.port < 1
-        || value.websocket.port > 65_535)
-    ) {
-      throw invalidAgentConfigField('host.websocket.port');
-    }
-    if (
-      value.websocket.path !== undefined
-      && (typeof value.websocket.path !== 'string' || !value.websocket.path.startsWith('/'))
-    ) {
-      throw invalidAgentConfigField('host.websocket.path');
-    }
-    validateOptionalBoolean(value.websocket.approval, 'host.websocket.approval');
-  }
-
-  if (value.cli !== undefined) {
-    if (!isPlainObject(value.cli)) throw invalidAgentConfigField('host.cli');
-    rejectUnknownFields(value.cli, ['sessionKey', 'prompt', 'approval'], 'host.cli');
-    if (value.cli.sessionKey !== undefined) {
-      validateNonBlankString(value.cli.sessionKey, 'host.cli.sessionKey');
-    }
-    if (value.cli.prompt !== undefined && typeof value.cli.prompt !== 'string') {
-      throw invalidAgentConfigField('host.cli.prompt');
-    }
-    validateOptionalBoolean(value.cli.approval, 'host.cli.approval');
-  }
-}
-
-function resolveHostConfig(
-  value: AgentConfigDocument['host'],
-): StandaloneHostConfigProjection {
-  return {
-    mode: value?.mode ?? 'websocket',
-    websocket: {
-      host: value?.websocket?.host ?? '127.0.0.1',
-      port: value?.websocket?.port ?? 8787,
-      path: value?.websocket?.path ?? '/ws',
-      approval: value?.websocket?.approval ?? true,
-    },
-    cli: {
-      sessionKey: value?.cli?.sessionKey ?? 'main',
-      prompt: value?.cli?.prompt ?? '> ',
-      approval: value?.cli?.approval ?? true,
-    },
-  };
-}
-
-function rejectUnknownFields(
-  value: Readonly<Record<string, unknown>>,
-  allowedFields: readonly string[],
-  fieldPath: string,
-): void {
-  const allowed = new Set(allowedFields);
-  const unknown = Object.keys(value).find((field) => !allowed.has(field));
-  if (unknown !== undefined) throw invalidAgentConfigField(`${fieldPath}.${unknown}`);
-}
-
-function validateNonBlankString(value: unknown, fieldPath: string): void {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw invalidAgentConfigField(fieldPath);
-  }
-}
-
-function validateOptionalBoolean(value: unknown, fieldPath: string): void {
-  if (value !== undefined && typeof value !== 'boolean') {
-    throw invalidAgentConfigField(fieldPath);
-  }
 }
 
 function rejectRetiredToolsConfig(

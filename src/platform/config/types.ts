@@ -296,8 +296,6 @@ export interface ApplicationConfigProjection {
   readonly logger: LoggerModuleConfig;
 }
 
-export type StandaloneHostMode = 'websocket' | 'cli' | 'headless';
-
 interface AgentApplicationDocument {
   agents?: {
     defaults?: DeepPartial<AgentDefaults>;
@@ -311,19 +309,5 @@ export interface AgentConfigDocument extends AgentApplicationDocument {
   readonly extensions?: {
     readonly enabled?: boolean;
     readonly entries?: Record<string, unknown>;
-  };
-  readonly host?: {
-    readonly mode?: StandaloneHostMode;
-    readonly websocket?: {
-      readonly host?: string;
-      readonly port?: number;
-      readonly path?: string;
-      readonly approval?: boolean;
-    };
-    readonly cli?: {
-      readonly sessionKey?: string;
-      readonly prompt?: string;
-      readonly approval?: boolean;
-    };
   };
 }

@@ -63,10 +63,6 @@ no `.agent` directory is used.
 				}
 			}
 		}
-	},
-	"host": {
-		"mode": "websocket",
-		"websocket": { "host": "127.0.0.1", "port": 8787, "path": "/ws" }
 	}
 }
 ```
@@ -79,8 +75,22 @@ Agent Home is also the prompt path context, the relative-path anchor for Environ
 Tools, the default Search root, and the default Exec `cwd`. To select another Agent Home:
 
 ```bash
-my-agent --agent-home <agent-home>
+my-agent -ah <agent-home>
 ```
+
+Standalone opens the WebSocket Channel by default at `ws://127.0.0.1:8787/ws`. Builtin Channels
+are selected per process rather than in `config.json`:
+
+```bash
+my-agent                                      # WebSocket
+my-agent -bc websocket,cli                    # WebSocket plus CLI
+my-agent --builtin-channels cli               # CLI only
+my-agent --builtin-channels=none              # no Builtin Channel
+```
+
+CLI selection requires `logger.console.enabled=false` because CLI owns terminal presentation.
+The global configuration accepts only `agents`, `logger`, and `extensions`; retired `host` content
+is rejected directly.
 
 For repository development, `npm run agent` runs the same standalone composition from the package
 root. There are no custom path-selection environment variables. Its architecture paths are:
@@ -96,7 +106,6 @@ context rather than confinement.
 Generic Host environment:
 
 - `MY_AGENT_PROVIDER` and `MY_AGENT_MODEL` must be supplied together when overriding the default Model Reference.
-- `host.mode` selects `websocket`, `cli`, or `headless`; CLI requires Console Logger to be disabled.
 
 `COPILOT_RELAY_BASE_URL` and `COPILOT_RELAY_API_KEY` above are Extension-owned reference names in
 the example config, not Relay-specific Host settings. The Host does not import Relay code, infer a

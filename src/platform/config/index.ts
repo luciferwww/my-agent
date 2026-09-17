@@ -20,7 +20,6 @@ export type {
   DeepPartial,
   EmbeddingProviderType,
   SafetyLevel,
-  StandaloneHostMode,
 } from './types.js';
 
 // ── Defaults ──────────────────────────────────────────────
@@ -33,9 +32,6 @@ export type { ResolveOptions } from './loader.js';
 // ── Agent configuration loader ───────────────────────────
 export { ensureAgentConfigDocument } from './agent-config-bootstrap.js';
 export { loadAgentConfig } from './agent-config-loader.js';
-export type {
-  StandaloneHostConfigProjection,
-  AgentConfigSnapshot,
-} from './agent-config-loader.js';
+export type { AgentConfigSnapshot } from './agent-config-loader.js';
 export { AgentConfigError } from './agent-config-errors.js';
 export type { AgentConfigErrorCode } from './agent-config-errors.js';

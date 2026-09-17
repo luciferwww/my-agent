@@ -9,30 +9,44 @@ import {
   runStandaloneHost,
   validateStandaloneHostComposition,
 } from './standalone-host.js';
-import type {
-  StandaloneHostConfigProjection,
-  AgentConfigSnapshot,
-} from '../../platform/config/index.js';
+import type { AgentConfigSnapshot } from '../../platform/config/index.js';
 import { ensureAgentConfigDocument, loadAgentConfig } from '../../platform/config/index.js';
 import type { RuntimeAppOptions } from '../../runtime/index.js';
 
-const hostDefaults: StandaloneHostConfigProjection = Object.freeze({
-  mode: 'websocket',
-  websocket: Object.freeze({ host: '127.0.0.1', port: 8787, path: '/ws', approval: true }),
-  cli: Object.freeze({ sessionKey: 'main', prompt: '> ', approval: true }),
-});
-
 describe('standalone Host arguments', () => {
   it('accepts startup without arguments', () => {
-    expect(parseStandaloneHostArguments([])).toEqual({});
+    const parsed = parseStandaloneHostArguments([]);
+
+    expect(parsed).toEqual({ builtinChannels: ['websocket'] });
+    expect(Object.isFrozen(parsed)).toBe(true);
+    expect(Object.isFrozen(parsed.builtinChannels)).toBe(true);
   });
 
   it.each([
+    [['-ah', 'C:/agent-home'], 'C:/agent-home'],
     [['--agent-home', 'C:/agent-home'], 'C:/agent-home'],
     [['--agent-home=C:/agent-home'], 'C:/agent-home'],
     [['--agent-home=profiles=one'], 'profiles=one'],
   ])('accepts one Agent Home override: %j', (argv, agentHomeArgument) => {
-    expect(parseStandaloneHostArguments(argv)).toEqual({ agentHomeArgument });
+    expect(parseStandaloneHostArguments(argv)).toEqual({
+      agentHomeArgument,
+      builtinChannels: ['websocket'],
+    });
+  });
+
+  it.each([
+    [['-bc', 'websocket'], ['websocket']],
+    [['--builtin-channels', 'cli'], ['cli']],
+    [['--builtin-channels=websocket,cli'], ['websocket', 'cli']],
+    [['-bc', 'cli,websocket'], ['websocket', 'cli']],
+    [['--builtin-channels', 'none'], []],
+    [['-bc', 'cli', '--agent-home=C:/agent-home'], ['cli']],
+    [['--agent-home', 'C:/agent-home', '--builtin-channels=none'], []],
+  ] as const)('accepts and canonicalizes Builtin Channels: %j', (argv, builtinChannels) => {
+    const parsed = parseStandaloneHostArguments(argv);
+
+    expect(parsed.builtinChannels).toEqual(builtinChannels);
+    expect(Object.isFrozen(parsed.builtinChannels)).toBe(true);
   });
 
   it.each([
@@ -42,8 +56,23 @@ describe('standalone Host arguments', () => {
     ['--agent-home='],
     ['--agent-home', '--unknown'],
     ['--agent-home', 'one', '--agent-home=two'],
+    ['-ah', 'one', '--agent-home=two'],
+    ['-ah'],
+    ['-ah=one'],
     ['position'],
     ['--unknown'],
+    ['-bc'],
+    ['--builtin-channels'],
+    ['--builtin-channels='],
+    ['-bc', 'websocket,'],
+    ['-bc', ',websocket'],
+    ['-bc', 'websocket,,cli'],
+    ['-bc', 'websocket,websocket'],
+    ['-bc', 'none,cli'],
+    ['-bc', 'WebSocket'],
+    ['-bc', ' websocket'],
+    ['-bc=cli'],
+    ['-bc', 'cli', '--builtin-channels=websocket'],
   ])('rejects retired or unknown arguments: %s', (...argv) => {
     expect(() => parseStandaloneHostArguments(argv)).toThrow('HOST_ARGUMENT_INVALID');
   });
@@ -51,12 +80,15 @@ describe('standalone Host arguments', () => {
 
 describe('standalone Host composition', () => {
   it.each([
-    ['websocket', ['builtin-websocket-channel']],
-    ['cli', ['builtin-cli-channel']],
-    ['headless', []],
-  ] as const)('creates only the selected builtin mode for %s', (mode, ids) => {
-    expect(createBuiltinHostUnits({ ...hostDefaults, mode }).map((unit) => unit.unitId))
-      .toEqual(ids);
+    [['websocket'], ['builtin-websocket-channel']],
+    [['cli'], ['builtin-cli-channel']],
+    [['cli', 'websocket'], ['builtin-websocket-channel', 'builtin-cli-channel']],
+    [[], []],
+  ] as const)('creates the canonical Builtin Unit set for %j', (channels, ids) => {
+    const units = createBuiltinHostUnits(channels);
+
+    expect(units.map((unit) => unit.unitId)).toEqual(ids);
+    expect(Object.isFrozen(units)).toBe(true);
   });
 
   it('rejects CLI with Console Logger and accepts CLI with File-only Logger', () => {
@@ -66,16 +98,51 @@ describe('standalone Host composition', () => {
         logger: { console: { enabled: consoleEnabled }, file: { enabled: true } },
       },
       extensions: { enabled: true, entries: {} },
-      host: { ...hostDefaults, mode: 'cli' },
     });
 
-    expect(() => validateStandaloneHostComposition(snapshot(true))).toThrow('HOST_OUTPUT_CONFLICT');
-    expect(() => validateStandaloneHostComposition(snapshot(false))).not.toThrow();
+    expect(() => validateStandaloneHostComposition(snapshot(true), ['cli']))
+      .toThrow('HOST_OUTPUT_CONFLICT');
+    expect(() => validateStandaloneHostComposition(snapshot(true), ['websocket', 'cli']))
+      .toThrow('HOST_OUTPUT_CONFLICT');
+    expect(() => validateStandaloneHostComposition(snapshot(false), ['cli'])).not.toThrow();
+    expect(() => validateStandaloneHostComposition(snapshot(true), ['websocket'])).not.toThrow();
+  });
+
+  it('rejects a CLI output conflict before acquisition and Runtime creation', async () => {
+    const prepareAcquisition = vi.fn();
+    const createRuntime = vi.fn();
+
+    await expect(runStandaloneHost({
+      argv: ['-bc', 'cli'],
+      env: {},
+      resolvePathContext: async () => createPathContext(),
+      ensureConfig: async () => undefined,
+      loadConfig: async () => createSnapshot(true),
+      prepareAcquisition,
+      createRuntime,
+    })).rejects.toThrow('HOST_OUTPUT_CONFLICT');
+
+    expect(prepareAcquisition).not.toHaveBeenCalled();
+    expect(createRuntime).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid arguments before path and configuration side effects', async () => {
+    const resolvePathContext = vi.fn();
+    const ensureConfig = vi.fn();
+
+    await expect(runStandaloneHost({
+      argv: ['-bc', 'websocket,websocket'],
+      resolvePathContext,
+      ensureConfig,
+    })).rejects.toThrow('HOST_ARGUMENT_INVALID');
+
+    expect(resolvePathContext).not.toHaveBeenCalled();
+    expect(ensureConfig).not.toHaveBeenCalled();
   });
 
   it('hands one snapshot and one injected environment through acquisition and Runtime', async () => {
     const events: string[] = [];
-    const snapshot = createSnapshot('websocket');
+    const snapshot = createSnapshot();
     const stderr = { write: vi.fn(() => true) };
     const environment = {
       MY_AGENT_PROVIDER: 'injected-provider',
@@ -174,7 +241,6 @@ describe('standalone Host composition', () => {
     await writeFile(join(agentHome, 'config.json'), JSON.stringify({
       agents: { defaults: { llm: { maxTokens: 8192 } } },
       extensions: { enabled: false },
-      host: { mode: 'headless' },
     }), 'utf8');
     await writeFile(join(startupCwd, 'config.json'), JSON.stringify({
       agents: { defaults: { llm: { maxTokens: 1 } } },
@@ -191,7 +257,7 @@ describe('standalone Host composition', () => {
 
     try {
       await runStandaloneHost({
-        argv: [],
+        argv: ['--builtin-channels', 'none'],
         env: {},
         resolvePathContext: async () => Object.freeze({
           installDir: join(temporaryRoot, 'installation'),
@@ -305,8 +371,8 @@ describe('standalone Host composition', () => {
     expect(createRuntime).not.toHaveBeenCalled();
   });
 
-  it('keeps headless mode alive until shared Host completion', async () => {
-    const snapshot = createSnapshot('headless');
+  it('keeps no-Builtin mode alive until shared Host completion', async () => {
+    const snapshot = createSnapshot();
     const waitForChannelCompletion = vi.fn();
     const createRuntime = vi.fn(async () => ({
       application: { waitForChannelCompletion },
@@ -320,7 +386,7 @@ describe('standalone Host composition', () => {
     }));
 
     await runStandaloneHost({
-      argv: [],
+      argv: ['--builtin-channels=none'],
       env: {},
       resolvePathContext: async () => createPathContext(),
       ensureConfig: async () => undefined,
@@ -347,7 +413,7 @@ describe('standalone Host composition', () => {
         stderr: { write: vi.fn(() => true) } as never,
         resolvePathContext: async () => createPathContext(),
         ensureConfig: async () => undefined,
-        loadConfig: async () => createSnapshot('websocket'),
+        loadConfig: async () => createSnapshot(),
         prepareAcquisition: async () => ({
           result: { loadedUnits: Object.freeze([]), diagnostics: Object.freeze([]) },
         }),
@@ -384,7 +450,7 @@ describe('standalone Host composition', () => {
       env: {},
       resolvePathContext: async () => createPathContext(),
       ensureConfig: async () => undefined,
-      loadConfig: async () => createSnapshot('websocket'),
+      loadConfig: async () => createSnapshot(),
       prepareAcquisition: async () => ({
         result: { loadedUnits: Object.freeze([]), diagnostics: Object.freeze([]) },
       }),
@@ -401,16 +467,127 @@ describe('standalone Host composition', () => {
 
     expect(shutdown).toHaveBeenCalledWith('builtin websocket channel completed');
   });
+
+  it('lets CLI control lifetime when it is the only selected Builtin Channel', async () => {
+    const waitForChannelCompletion = vi.fn(async () => ({
+      outcome: 'closed' as const,
+      reason: 'input_closed' as const,
+    }));
+    const shutdown = vi.fn(async () => ({ outcome: 'completed' } as never));
+
+    await runStandaloneHost({
+      argv: ['-bc', 'cli'],
+      env: {},
+      resolvePathContext: async () => createPathContext(),
+      ensureConfig: async () => undefined,
+      loadConfig: async () => createSnapshot(false),
+      prepareAcquisition: async () => ({
+        result: { loadedUnits: Object.freeze([]), diagnostics: Object.freeze([]) },
+      }),
+      createRuntime: async () => ({
+        application: { waitForChannelCompletion },
+        close: vi.fn(),
+      }) as never,
+      createHost: (() => ({
+        shutdown,
+        completion: new Promise<never>(() => undefined),
+        dispose: vi.fn(),
+      })) as never,
+    });
+
+    expect(waitForChannelCompletion).toHaveBeenCalledWith('cli');
+    expect(shutdown).toHaveBeenCalledWith('builtin cli channel completed');
+  });
+
+  it('isolates normal secondary CLI completion while WebSocket remains active', async () => {
+    const websocketCompletion = createDeferred<{
+      outcome: 'closed';
+      reason: 'transport_closed';
+    }>();
+    const waitForChannelCompletion = vi.fn((id: string) => id === 'cli'
+      ? Promise.resolve({ outcome: 'closed' as const, reason: 'input_closed' as const })
+      : websocketCompletion.promise);
+    const shutdown = vi.fn(async () => ({ outcome: 'completed' } as never));
+    const run = runStandaloneHost({
+      argv: ['-bc', 'cli,websocket'],
+      env: {},
+      resolvePathContext: async () => createPathContext(),
+      ensureConfig: async () => undefined,
+      loadConfig: async () => createSnapshot(false),
+      prepareAcquisition: async () => ({
+        result: { loadedUnits: Object.freeze([]), diagnostics: Object.freeze([]) },
+      }),
+      createRuntime: async () => ({
+        application: { waitForChannelCompletion },
+        close: vi.fn(),
+      }) as never,
+      createHost: (() => ({
+        shutdown,
+        completion: new Promise<never>(() => undefined),
+        dispose: vi.fn(),
+      })) as never,
+    });
+    await vi.waitFor(() => expect(waitForChannelCompletion).toHaveBeenCalledTimes(2));
+
+    expect(shutdown).not.toHaveBeenCalled();
+    websocketCompletion.resolve({ outcome: 'closed', reason: 'transport_closed' });
+    await run;
+    expect(shutdown).toHaveBeenCalledWith('builtin websocket channel completed');
+  });
+
+  it('warns and consumes secondary CLI failure without stopping WebSocket', async () => {
+    const websocketCompletion = createDeferred<{
+      outcome: 'closed';
+      reason: 'transport_closed';
+    }>();
+    const stderr = { write: vi.fn(() => true) };
+    const shutdown = vi.fn(async () => ({ outcome: 'completed' } as never));
+    const run = runStandaloneHost({
+      argv: ['--builtin-channels=websocket,cli'],
+      env: {},
+      stderr,
+      resolvePathContext: async () => createPathContext(),
+      ensureConfig: async () => undefined,
+      loadConfig: async () => createSnapshot(false),
+      prepareAcquisition: async () => ({
+        result: { loadedUnits: Object.freeze([]), diagnostics: Object.freeze([]) },
+      }),
+      createRuntime: async () => ({
+        application: {
+          waitForChannelCompletion: (id: string) => id === 'cli'
+            ? Promise.resolve({
+                outcome: 'failed' as const,
+                phase: 'startup' as const,
+                error: new Error('secret failure'),
+              })
+            : websocketCompletion.promise,
+        },
+        close: vi.fn(),
+      }) as never,
+      createHost: (() => ({
+        shutdown,
+        completion: new Promise<never>(() => undefined),
+        dispose: vi.fn(),
+      })) as never,
+    });
+    await vi.waitFor(() => expect(stderr.write).toHaveBeenCalledWith(
+      'Secondary Channel cli failed; WebSocket remains active.\n',
+    ));
+
+    expect(shutdown).not.toHaveBeenCalled();
+    expect(stderr.write).not.toHaveBeenCalledWith(expect.stringContaining('secret failure'));
+    websocketCompletion.resolve({ outcome: 'closed', reason: 'transport_closed' });
+    await run;
+  });
 });
 
-function createSnapshot(mode: StandaloneHostConfigProjection['mode']): AgentConfigSnapshot {
+function createSnapshot(consoleEnabled = true): AgentConfigSnapshot {
   return {
     application: {
       agents: { defaults: {} as never, list: [] },
-      logger: { console: { enabled: mode !== 'cli' } },
+      logger: { console: { enabled: consoleEnabled } },
     },
     extensions: { enabled: true, entries: {} },
-    host: { ...hostDefaults, mode },
   };
 }
 
@@ -419,4 +596,13 @@ function createPathContext() {
     installDir: 'C:/installation',
     agentHome: 'C:/agent-home',
   });
+}
+
+function createDeferred<T>(): {
+  readonly promise: Promise<T>;
+  resolve(value: T): void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => { resolve = settle; });
+  return { promise, resolve };
 }

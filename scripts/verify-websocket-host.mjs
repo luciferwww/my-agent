@@ -48,15 +48,14 @@ async function main() {
       mkdir(startupCwd, { recursive: true }),
     ]);
     relay = await startLoopbackRelay();
-    const webSocketPort = await reserveLoopbackPort();
-    await createAgentHome(agentHome, webSocketPort);
+    await createAgentHome(agentHome);
     await provisionRelayExtension();
     provisionedExtensions = true;
     const installationBefore = await snapshotTree(EXTENSIONS_ROOT);
     const startupCwdBefore = await snapshotTree(startupCwd);
     child = startHost(homeDirectory, startupCwd, relay.baseURL, output);
 
-    client = await connectWithRetry(`ws://127.0.0.1:${webSocketPort}/ws`, child);
+    client = await connectWithRetry('ws://127.0.0.1:8787/ws', child);
     const messages = createMessageQueue(client);
     client.send(JSON.stringify({ type: 'hello', clientId: 'host-smoke' }));
     const hello = await messages.next((message) => message.type === 'hello_ack');
@@ -157,7 +156,7 @@ async function assertBuildInputs() {
   });
 }
 
-async function createAgentHome(agentHome, port) {
+async function createAgentHome(agentHome) {
   await writeFile(join(agentHome, 'config.json'), `${JSON.stringify({
     extensions: {
       enabled: true,
@@ -173,10 +172,6 @@ async function createAgentHome(agentHome, port) {
           },
         },
       },
-    },
-    host: {
-      mode: 'websocket',
-      websocket: { host: '127.0.0.1', port, path: '/ws', approval: true },
     },
   }, null, 2)}\n`);
 }
@@ -305,18 +300,6 @@ async function startLoopbackRelay() {
       await once(server, 'close');
     },
   };
-}
-
-async function reserveLoopbackPort() {
-  const server = createServer();
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('WebSocket address is unavailable.');
-  const { port } = address;
-  server.close();
-  await once(server, 'close');
-  return port;
 }
 
 async function connectWithRetry(url, child) {

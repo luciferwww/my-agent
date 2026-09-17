@@ -69,13 +69,13 @@ The returned Units have not been created. Runtime combines them with required an
 1. derives `installDir` and selects `agentHome`;
 2. reads the atomic generic Model Reference environment override and acquires enabled External Units from `<installDir>/extensions`;
 3. reports bounded acquisition diagnostics;
-4. appends the Host-configured WebSocket or CLI Channel Unit, or no builtin Channel in headless mode;
+4. appends the argument-selected WebSocket and/or CLI Channel Units in canonical order, or none for `none`;
 5. passes `agentHome` and the combined `loadedUnits` to `RuntimeApp.create()`;
 6. delegates process shutdown to the Runtime Host wrapper.
 
 The Host owns process-level signal and exit policy; Runtime library code never calls `process.exit()`. The current wrapper shares cooperative shutdown, forces exit on a second signal or Host deadline, and removes its listeners after settlement. The canonical standalone Host's signal counts, exit codes, and Host deadline are governed by the [Standalone Service Host Specification](../specifications/standalone-service-host.md); ADR-005 remains limited to Runtime and Extension lifecycle ownership.
 
-The Host rejects CLI mode with an enabled Console Logger because both own terminal presentation. The Host does not import Relay-specific source. The first-class Host build starts from `src/hosts/standalone/entry.ts`, follows its static TypeScript closure, and emits `dist/host`; npm maps `my-agent` directly to `dist/host/hosts/standalone/entry.js`. That closure includes `extension-acquisition/` and excludes `extensions/**`; it is a verified Host code closure plus required Agent Context templates, not a bundled Node runtime or concrete External Extension. The aggregate repository build continues to build and audit declared Extension artifacts separately.
+The Host rejects any CLI selection with an enabled Console Logger because both own terminal presentation. Builtin selection and fixed Channel construction values come only from Standalone arguments/code, never the Agent configuration snapshot. The Host does not import Relay-specific source. The first-class Host build starts from `src/hosts/standalone/entry.ts`, follows its static TypeScript closure, and emits `dist/host`; npm maps `my-agent` directly to `dist/host/hosts/standalone/entry.js`. That closure includes `extension-acquisition/` and excludes `extensions/**`; it is a verified Host code closure plus required Agent Context templates, not a bundled Node runtime or concrete External Extension. The aggregate repository build continues to build and audit declared Extension artifacts separately.
 
 Package verification installs the tarball into an isolated project, runs the generated command from a separate startup directory with isolated default and explicit Agent Homes, and compares every installed package file path and byte after shutdown. The compiled WebSocket smoke provisions the Relay artifact under `installDir` before startup and likewise proves Runtime does not alter that Extension tree.
 

@@ -72,39 +72,12 @@ describe('loadAgentConfig', () => {
     });
   });
 
-  it('projects validated standalone Host settings from the same document', async () => {
-    await writeConfig({
-      host: {
-        mode: 'cli',
-        websocket: { host: '0.0.0.0', port: 9876, path: '/agent', approval: false },
-        cli: { sessionKey: 'operator', prompt: 'agent> ', approval: false },
-      },
-    });
-
-    const snapshot = await loadAgentConfig({ agentHome });
-
-    expect(snapshot.host).toEqual({
-      mode: 'cli',
-      websocket: { host: '0.0.0.0', port: 9876, path: '/agent', approval: false },
-      cli: { sessionKey: 'operator', prompt: 'agent> ', approval: false },
-    });
-    expect(Object.isFrozen(snapshot.host)).toBe(true);
-    expect(Object.isFrozen(snapshot.host.websocket)).toBe(true);
-    expect(Object.isFrozen(snapshot.host.cli)).toBe(true);
-  });
-
-  it.each([
-    [{ mode: 'both' }, 'host.mode'],
-    [{ websocket: { port: 0 } }, 'host.websocket.port'],
-    [{ websocket: { path: 'ws' } }, 'host.websocket.path'],
-    [{ cli: { sessionKey: ' ' } }, 'host.cli.sessionKey'],
-    [{ extra: true }, 'host.extra'],
-  ])('rejects an invalid Host projection %#', async (host, expectedField) => {
-    await writeConfig({ host });
+  it('rejects the retired Host namespace directly', async () => {
+    await writeConfig({ host: { mode: 'websocket' } });
 
     await expect(loadAgentConfig({ agentHome })).rejects.toMatchObject({
-      code: 'NAMESPACE_INVALID',
-      fieldPath: expectedField,
+      code: 'UNKNOWN_NAMESPACE',
+      fieldPath: 'host',
     });
   });
 
@@ -140,6 +113,7 @@ describe('loadAgentConfig', () => {
 
     const snapshot = await loadAgentConfig({ agentHome });
 
+    expect(Object.keys(snapshot)).toEqual(['application', 'extensions']);
     expect(snapshot.application.agents.defaults.llm.maxTokens).toBe(8192);
     expect(snapshot.application.agents.defaults.runner).toEqual(DEFAULT_AGENT_CONFIG.runner);
     expect(snapshot.application.agents.list).toEqual([
