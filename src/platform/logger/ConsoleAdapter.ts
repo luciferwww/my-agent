@@ -21,9 +21,8 @@ const LEVEL_LABEL: Record<LogLevel, string> = {
   error: 'ERROR',
 };
 
-const COLOR: Record<LogLevel, string> = {
-  debug: '\x1b[37m',  // white
-  info: '\x1b[36m',   // cyan
+const COLOR: Partial<Record<LogLevel, string>> = {
+  debug: '\x1b[90m',  // gray
   warn: '\x1b[33m',   // yellow
   error: '\x1b[31m',  // red
 };
@@ -49,8 +48,9 @@ export class ConsoleAdapter implements LogAdapter {
     const ctx = entry.context !== undefined ? ' ' + JSON.stringify(entry.context) : '';
     const line = `[${ts}] [${label}] [${entry.module}] ${entry.message}${ctx}`;
 
-    if (this.colors) {
-      const colored = `${COLOR[entry.level]}${line}${RESET}`;
+    const color = COLOR[entry.level];
+    if (this.colors && color !== undefined) {
+      const colored = `${color}${line}${RESET}`;
       if (entry.level === 'error') {
         process.stderr.write(colored + '\n');
       } else {
