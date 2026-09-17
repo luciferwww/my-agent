@@ -233,6 +233,200 @@
         box-shadow: 0 0 0 4px rgba(231, 164, 125, 0.14);
       }
 
+      .model-picker {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .model-picker-trigger {
+        position: relative;
+        z-index: 32;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        width: 100%;
+        min-width: 0;
+        padding: 11px 13px;
+        color: var(--text);
+        text-align: left;
+        background: rgba(255, 255, 255, 0.9);
+        border: 1px solid rgba(191, 160, 128, 0.25);
+        border-radius: 14px;
+      }
+
+      .model-picker-trigger:hover:not(:disabled) {
+        transform: none;
+        border-color: rgba(216, 137, 92, 0.42);
+      }
+
+      .model-picker.open .model-picker-trigger {
+        border-color: rgba(216, 137, 92, 0.42);
+        box-shadow: 0 0 0 4px rgba(231, 164, 125, 0.14);
+      }
+
+      .model-picker-trigger-copy {
+        min-width: 0;
+        display: grid;
+        gap: 2px;
+      }
+
+      .model-picker-trigger-name,
+      .model-picker-trigger-provider {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .model-picker-trigger-name {
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      .model-picker-trigger-provider {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .model-picker-chevron {
+        flex: none;
+        color: var(--muted);
+        transition: transform 140ms ease;
+      }
+
+      .model-picker.open .model-picker-chevron {
+        transform: rotate(180deg);
+      }
+
+      .model-picker-scrim {
+        position: fixed;
+        z-index: 30;
+        inset: 0;
+      }
+
+      .model-picker-panel {
+        position: absolute;
+        z-index: 33;
+        top: calc(100% + 8px);
+        left: 0;
+        width: 100%;
+        overflow: hidden;
+        padding: 8px;
+        color: var(--text);
+        background: rgba(255, 253, 249, 0.99);
+        border: 1px solid var(--border-strong);
+        border-radius: 16px;
+        box-shadow: 0 18px 44px rgba(75, 52, 31, 0.18);
+      }
+
+      .model-picker-search {
+        padding: 10px 12px;
+        border-radius: 11px;
+      }
+
+      .model-picker-list {
+        max-height: 300px;
+        margin-top: 7px;
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(122, 103, 80, 0.45) transparent;
+      }
+
+      .model-provider-group + .model-provider-group {
+        margin-top: 5px;
+        padding-top: 5px;
+        border-top: 1px solid var(--border);
+      }
+
+      .model-provider-heading {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 9px 5px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .model-provider-id {
+        overflow: hidden;
+        font-size: 10px;
+        font-weight: 500;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .model-picker-option {
+        display: grid;
+        grid-template-columns: 18px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 7px;
+        width: 100%;
+        padding: 8px 9px;
+        color: var(--text);
+        text-align: left;
+        background: transparent;
+        border-radius: 10px;
+      }
+
+      .model-picker-option:hover,
+      .model-picker-option.active {
+        transform: none;
+        background: rgba(231, 164, 125, 0.13);
+      }
+
+      .model-picker-option.selected {
+        background: rgba(216, 137, 92, 0.16);
+      }
+
+      .model-picker-check {
+        color: var(--accent-strong);
+        font-weight: 800;
+      }
+
+      .model-picker-option-copy {
+        min-width: 0;
+        display: grid;
+        gap: 1px;
+      }
+
+      .model-picker-option-name,
+      .model-picker-option-id {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .model-picker-option-name {
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .model-picker-option-id {
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .model-picker-default-badge {
+        padding: 3px 6px;
+        color: #9d562e;
+        font-size: 9px;
+        font-weight: 700;
+        background: rgba(231, 164, 125, 0.2);
+        border-radius: 999px;
+        text-transform: uppercase;
+      }
+
+      .model-picker-empty {
+        padding: 22px 12px;
+        color: var(--muted);
+        font-size: 12px;
+        text-align: center;
+      }
+
       textarea {
         min-height: 108px;
         resize: vertical;
@@ -987,35 +1181,91 @@
               <span class="field-label-text">Session Key</span>
               <input v-model.trim="form.sessionKey" placeholder="main" />
             </label>
-            <label>
-              <span class="field-label-text">Provider Override</span>
-              <select
-                v-model="form.providerId"
-                :disabled="!modelCatalog"
-                @change="onProviderSelectionChanged"
+            <div class="model-picker" :class="{ open: modelPickerOpen }">
+              <span class="field-label-text">Model</span>
+              <button
+                class="model-picker-trigger"
+                type="button"
+                :disabled="!modelCatalog || availableModels.length === 0"
+                :aria-expanded="String(modelPickerOpen)"
+                aria-haspopup="listbox"
+                @click="toggleModelPicker"
               >
-                <option value="">Use Runtime default</option>
-                <option
-                  v-for="provider in catalogProviders"
-                  :key="provider.provider_id"
-                  :value="provider.provider_id"
-                >{{ provider.display_name }} ({{ provider.provider_id }})</option>
-              </select>
-            </label>
-            <label>
-              <span class="field-label-text">Model Override</span>
-              <select
-                v-model="form.selectedModelToken"
-                :disabled="!form.providerId"
+                <span class="model-picker-trigger-copy">
+                  <span class="model-picker-trigger-name">{{ modelPickerLabel }}</span>
+                  <span v-if="selectedModelDetails" class="model-picker-trigger-provider">
+                    {{ selectedModelDetails.provider.display_name }}
+                  </span>
+                </span>
+                <span class="model-picker-chevron">⌄</span>
+              </button>
+              <div v-if="modelPickerOpen" class="model-picker-scrim" @click="closeModelPicker"></div>
+              <div
+                v-if="modelPickerOpen"
+                class="model-picker-panel"
+                role="dialog"
+                aria-label="Select model"
+                @keydown.esc.stop="closeModelPicker"
               >
-                <option value="">Select a model</option>
-                <option
-                  v-for="model in selectedProviderModels"
-                  :key="model.model_id"
-                  :value="JSON.stringify(model.model_id)"
-                >{{ model.display_name }} ({{ model.model_id }})</option>
-              </select>
-            </label>
+                <input
+                  ref="modelSearchEl"
+                  v-model="modelSearch"
+                  class="model-picker-search"
+                  type="search"
+                  role="combobox"
+                  aria-label="搜索模型或 Provider"
+                  aria-autocomplete="list"
+                  aria-controls="model-picker-options"
+                  aria-expanded="true"
+                  :aria-activedescendant="activeModelOptionId"
+                  placeholder="搜索模型或 Provider"
+                  @input="onModelSearchInput"
+                  @keydown="onModelSearchKeydown"
+                />
+                <div id="model-picker-options" class="model-picker-list" role="listbox">
+                  <div v-if="filteredModelProviders.length === 0" class="model-picker-empty">
+                    {{ availableModels.length === 0 ? '无可用模型' : '没有匹配的模型' }}
+                  </div>
+                  <section
+                    v-for="provider in filteredModelProviders"
+                    :key="provider.provider_id"
+                    class="model-provider-group"
+                  >
+                    <div class="model-provider-heading">
+                      <span>{{ provider.display_name }}</span>
+                      <span class="model-provider-id">{{ provider.provider_id }}</span>
+                    </div>
+                    <button
+                      v-for="model in provider.models"
+                      :key="modelOptionToken(provider.provider_id, model.model_id)"
+                      class="model-picker-option"
+                      :class="{
+                        selected: isSelectedModel(provider.provider_id, model.model_id),
+                        active: activeModelOptionIndex === modelOptionIndex(provider.provider_id, model.model_id),
+                      }"
+                      type="button"
+                      role="option"
+                      :id="modelOptionId(provider.provider_id, model.model_id)"
+                      :aria-selected="String(isSelectedModel(provider.provider_id, model.model_id))"
+                      @mouseenter="activeModelOptionIndex = modelOptionIndex(provider.provider_id, model.model_id)"
+                      @click="selectModel(provider.provider_id, model.model_id)"
+                    >
+                      <span class="model-picker-check">
+                        {{ isSelectedModel(provider.provider_id, model.model_id) ? '✓' : '' }}
+                      </span>
+                      <span class="model-picker-option-copy">
+                        <span class="model-picker-option-name">{{ model.display_name }}</span>
+                        <span class="model-picker-option-id">{{ model.model_id }}</span>
+                      </span>
+                      <span
+                        v-if="isRuntimeDefaultModel(provider.provider_id, model.model_id)"
+                        class="model-picker-default-badge"
+                      >默认</span>
+                    </button>
+                  </section>
+                </div>
+              </div>
+            </div>
           </div>
           <p class="section-note">{{ modelSelectionStatus }}</p>
           <div class="button-row">
@@ -1302,8 +1552,6 @@
               url: DEFAULT_SOCKET_URL,
               clientId: createClientId(),
               sessionKey: DEFAULT_SESSION_KEY,
-              providerId: '',
-              selectedModelToken: '',
             },
             socket: null,
             connectionStatus: 'disconnected',
@@ -1311,6 +1559,11 @@
             modelCatalog: null,
             pendingCatalogRequestId: null,
             nextCatalogRequestId: 1,
+            modelSelection: null,
+            modelSelectionSource: 'none',
+            modelPickerOpen: false,
+            modelSearch: '',
+            activeModelOptionIndex: -1,
             draft: '',
             // ── Chat model ──────────────────────────────────────
             // Unified list of chat items. Each item has a `kind`:
@@ -1361,45 +1614,86 @@
           },
           endpointPreview() { return this.form.url || DEFAULT_SOCKET_URL; },
           headerEndpoint() { return this.form.url || DEFAULT_SOCKET_URL; },
-          catalogProviders() { return this.modelCatalog?.providers ?? []; },
-          selectedProviderModels() {
-            if (!this.form.providerId) return [];
-            return this.catalogProviders.find(
-              provider => provider.provider_id === this.form.providerId,
-            )?.models ?? [];
+          availableModelProviders() {
+            return (this.modelCatalog?.providers ?? []).filter(
+              provider => provider
+                && Array.isArray(provider.models)
+                && provider.models.length > 0,
+            );
+          },
+          availableModels() {
+            return this.availableModelProviders.flatMap(provider => provider.models.map(model => ({
+              provider,
+              model,
+              reference: {
+                provider_id: provider.provider_id,
+                model_id: model.model_id,
+              },
+            })));
+          },
+          filteredModelProviders() {
+            const query = this.modelSearch.trim().toLocaleLowerCase();
+            if (!query) return this.availableModelProviders;
+            return this.availableModelProviders.flatMap(provider => {
+              const providerMatches = `${provider.display_name} ${provider.provider_id}`
+                .toLocaleLowerCase()
+                .includes(query);
+              const models = providerMatches
+                ? provider.models
+                : provider.models.filter(model => `${model.display_name} ${model.model_id}`
+                    .toLocaleLowerCase()
+                    .includes(query));
+              return models.length > 0 ? [{ ...provider, models }] : [];
+            });
+          },
+          filteredModelOptions() {
+            return this.filteredModelProviders.flatMap(provider => provider.models.map(model => ({
+              provider_id: provider.provider_id,
+              model_id: model.model_id,
+            })));
+          },
+          activeModelOptionId() {
+            return this.activeModelOptionIndex >= 0
+              && this.activeModelOptionIndex < this.filteredModelOptions.length
+              ? `model-picker-option-${this.activeModelOptionIndex}`
+              : null;
           },
           selectedModelReference() {
-            if (!this.form.providerId || this.form.selectedModelToken === '') return null;
-            let modelId;
-            try {
-              modelId = JSON.parse(this.form.selectedModelToken);
-            } catch {
-              return null;
-            }
-            if (typeof modelId !== 'string') return null;
-            const exists = this.selectedProviderModels.some(model => model.model_id === modelId);
-            return exists ? { provider_id: this.form.providerId, model_id: modelId } : null;
+            if (!this.modelSelection) return null;
+            return this.availableModels.some(({ reference }) => this.sameModelReference(
+              reference,
+              this.modelSelection,
+            )) ? this.modelSelection : null;
+          },
+          selectedModelDetails() {
+            if (!this.selectedModelReference) return null;
+            return this.availableModels.find(({ reference }) => this.sameModelReference(
+              reference,
+              this.selectedModelReference,
+            )) ?? null;
+          },
+          requestModelReference() {
+            if (this.modelSelectionSource === 'default') return null;
+            return this.selectedModelReference;
           },
           modelSelectionValid() {
-            return (!this.form.providerId && this.form.selectedModelToken === '')
-              || this.selectedModelReference !== null;
+            return this.selectedModelReference !== null;
+          },
+          modelPickerLabel() {
+            if (!this.modelCatalog) return '正在加载模型…';
+            return this.selectedModelDetails?.model.display_name ?? '无可用模型';
           },
           modelSelectionStatus() {
-            if (!this.modelCatalog) return 'Model Catalog is not available yet.';
-            if (this.selectedModelReference) {
-              return `Override: ${this.form.providerId}/${this.selectedModelReference.model_id}`;
+            if (!this.modelCatalog) return '连接后将读取 Runtime Model Catalog。';
+            if (!this.selectedModelDetails) return '无可用模型，无法发送消息。';
+            const reference = this.selectedModelDetails.reference;
+            if (this.modelSelectionSource === 'default') {
+              return `Runtime default · ${reference.provider_id}/${reference.model_id}`;
             }
-            if (this.form.providerId || this.form.selectedModelToken !== '') {
-              return 'Choose both a Provider and a current Catalog model.';
+            if (this.modelSelectionSource === 'fallback') {
+              return `Runtime default 不可用，已选择首个可用模型 · ${reference.provider_id}/${reference.model_id}`;
             }
-            const selection = this.modelCatalog.default_selection;
-            if (selection?.state === 'available') {
-              return `Runtime default: ${selection.reference.provider_id}/${selection.reference.model_id}`;
-            }
-            if (selection?.state === 'unavailable') {
-              return `Runtime default unavailable: ${selection.reference.provider_id}/${selection.reference.model_id} (${selection.reason})`;
-            }
-            return 'Runtime default is unset. Choose an override before sending.';
+            return `用户选择 · ${reference.provider_id}/${reference.model_id}`;
           },
           pendingApprovalCount() {
             let count = 0;
@@ -1421,8 +1715,7 @@
             this.helloAcknowledged = false;
             this.modelCatalog = null;
             this.pendingCatalogRequestId = null;
-            this.form.providerId = '';
-            this.form.selectedModelToken = '';
+            this.clearModelSelection();
             this.approvalRequest = null;
             this.isWaitingForReply = false;
             this.closePendingApprovalsForDisconnect();
@@ -1503,24 +1796,175 @@
             this.socket.send(JSON.stringify(payload));
           },
           requestModelCatalog() {
+            if (this.pendingCatalogRequestId !== null) return;
             const requestId = `catalog-${this.nextCatalogRequestId++}`;
             this.pendingCatalogRequestId = requestId;
             this.sendJson({ type: 'get_model_catalog', request_id: requestId });
           },
-          onProviderSelectionChanged() {
-            this.form.selectedModelToken = '';
+          toggleModelPicker() {
+            if (this.modelPickerOpen) {
+              this.closeModelPicker();
+              return;
+            }
+            if (!this.modelCatalog || this.availableModels.length === 0) return;
+            this.modelSearch = '';
+            this.modelPickerOpen = true;
+            this.activeModelOptionIndex = this.modelOptionIndex(
+              this.selectedModelReference?.provider_id,
+              this.selectedModelReference?.model_id,
+            );
+            nextTick(() => {
+              this.$refs.modelSearchEl?.focus();
+              this.scrollActiveModelOptionIntoView();
+            });
+          },
+          closeModelPicker() {
+            this.modelPickerOpen = false;
+            this.modelSearch = '';
+            this.activeModelOptionIndex = -1;
+          },
+          onModelSearchInput() {
+            nextTick(() => {
+              this.activeModelOptionIndex = this.filteredModelOptions.length > 0 ? 0 : -1;
+              this.scrollActiveModelOptionIntoView();
+            });
+          },
+          onModelSearchKeydown(event) {
+            const options = this.filteredModelOptions;
+            if (event.key === 'ArrowDown') {
+              event.preventDefault();
+              this.activeModelOptionIndex = options.length === 0
+                ? -1
+                : Math.min(this.activeModelOptionIndex + 1, options.length - 1);
+              this.scrollActiveModelOptionIntoView();
+              return;
+            }
+            if (event.key === 'ArrowUp') {
+              event.preventDefault();
+              this.activeModelOptionIndex = options.length === 0
+                ? -1
+                : Math.max(this.activeModelOptionIndex - 1, 0);
+              this.scrollActiveModelOptionIntoView();
+              return;
+            }
+            if (event.key === 'Enter' && options.length > 0) {
+              event.preventDefault();
+              const optionIndex = Math.min(
+                Math.max(this.activeModelOptionIndex, 0),
+                options.length - 1,
+              );
+              const option = options[optionIndex];
+              this.selectModel(option.provider_id, option.model_id);
+            }
+          },
+          selectModel(providerId, modelId) {
+            const reference = Object.freeze({ provider_id: providerId, model_id: modelId });
+            this.modelSelection = reference;
+            this.modelSelectionSource = 'user';
+            this.closeModelPicker();
+          },
+          clearModelSelection() {
+            this.modelSelection = null;
+            this.modelSelectionSource = 'none';
+            this.closeModelPicker();
+          },
+          sameModelReference(left, right) {
+            return left !== null
+              && left !== undefined
+              && right !== null
+              && right !== undefined
+              && left.provider_id === right.provider_id
+              && left.model_id === right.model_id;
+          },
+          modelOptionToken(providerId, modelId) {
+            return JSON.stringify([providerId, modelId]);
+          },
+          modelOptionIndex(providerId, modelId) {
+            return this.filteredModelOptions.findIndex(option =>
+              option.provider_id === providerId && option.model_id === modelId);
+          },
+          modelOptionId(providerId, modelId) {
+            const index = this.modelOptionIndex(providerId, modelId);
+            return index >= 0 ? `model-picker-option-${index}` : undefined;
+          },
+          scrollActiveModelOptionIntoView() {
+            nextTick(() => {
+              this.$refs.modelSearchEl
+                ?.closest('.model-picker-panel')
+                ?.querySelector('.model-picker-option.active')
+                ?.scrollIntoView({ block: 'nearest' });
+            });
+          },
+          isSelectedModel(providerId, modelId) {
+            return this.sameModelReference(
+              { provider_id: providerId, model_id: modelId },
+              this.selectedModelReference,
+            );
+          },
+          isRuntimeDefaultModel(providerId, modelId) {
+            return this.sameModelReference(
+              { provider_id: providerId, model_id: modelId },
+              this.availableRuntimeDefault(this.modelCatalog),
+            );
+          },
+          catalogHasModel(catalog, reference) {
+            if (!reference || !Array.isArray(catalog?.providers)) return false;
+            return catalog.providers.some(provider =>
+              provider?.provider_id === reference.provider_id
+              && Array.isArray(provider.models)
+              && provider.models.some(model => model?.model_id === reference.model_id));
+          },
+          availableRuntimeDefault(catalog) {
+            const selection = catalog?.default_selection;
+            if (selection?.state !== 'available' || !selection.reference) return null;
+            return this.catalogHasModel(catalog, selection.reference)
+              ? {
+                  provider_id: selection.reference.provider_id,
+                  model_id: selection.reference.model_id,
+                }
+              : null;
+          },
+          firstAvailableModel(catalog) {
+            if (!Array.isArray(catalog?.providers)) return null;
+            for (const provider of catalog.providers) {
+              if (!provider || !Array.isArray(provider.models) || provider.models.length === 0) {
+                continue;
+              }
+              const model = provider.models[0];
+              if (model) {
+                return { provider_id: provider.provider_id, model_id: model.model_id };
+              }
+            }
+            return null;
           },
           applyModelCatalog(catalog) {
             if (!catalog || typeof catalog !== 'object' || !Array.isArray(catalog.providers)) {
               this.pushEvent('model_catalog', 'Ignored malformed Model Catalog response');
               return;
             }
+            const previousSelection = this.modelSelection
+              ? { ...this.modelSelection }
+              : null;
+            const preserveUserSelection = this.modelSelectionSource === 'user'
+              && this.catalogHasModel(catalog, previousSelection);
             this.modelCatalog = catalog;
-            if (this.form.providerId && !this.selectedModelReference) {
-              this.form.providerId = '';
-              this.form.selectedModelToken = '';
-              this.pushEvent('model_catalog', 'Cleared stale model override after Catalog update');
+            if (preserveUserSelection) {
+              this.modelSelection = Object.freeze(previousSelection);
+              this.modelSelectionSource = 'user';
+            } else {
+              const runtimeDefault = this.availableRuntimeDefault(catalog);
+              const fallback = this.firstAvailableModel(catalog);
+              if (runtimeDefault) {
+                this.modelSelection = Object.freeze(runtimeDefault);
+                this.modelSelectionSource = 'default';
+              } else if (fallback) {
+                this.modelSelection = Object.freeze(fallback);
+                this.modelSelectionSource = 'fallback';
+              } else {
+                this.clearModelSelection();
+              }
             }
+            this.closeModelPicker();
             this.pushEvent(
               'model_catalog',
               `Loaded generation ${catalog.generation} with ${catalog.providers.length} provider(s)`,
@@ -1567,8 +2011,8 @@
               type: 'run_turn',
               sessionKey: this.form.sessionKey,
               message: wireMessage,
-              ...(this.selectedModelReference
-                ? { model_reference: this.selectedModelReference }
+              ...(this.requestModelReference
+                ? { model_reference: this.requestModelReference }
                 : {}),
             });
             this.pushEvent(
@@ -1858,6 +2302,7 @@
                 this.isWaitingForReply = false;
                 this.appendChatItem({ kind: 'error', label: 'Runtime', turnId: event.turnId, text: event.error || 'Unknown runtime error' });
                 if (event.category === 'provider_unregistered' || event.category === 'model_rejected') {
+                  this.clearModelSelection();
                   this.pushEvent('model_catalog', 'Selected model is unavailable; refreshing the Catalog for reselection');
                   this.requestModelCatalog();
                 }
