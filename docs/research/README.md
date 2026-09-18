@@ -7,4 +7,5 @@ This directory is reserved for external comparisons and exploratory analysis. Re
 ## Current research
 
 - [Agent Session Management Comparison](agent-session-management-comparison.md) - external comparison of Claude Code, GitHub Copilot CLI, OpenAI Codex CLI, and OpenCode.
+- [Built-in LLM Providers Design Draft](builtin-llm-providers-design-draft.md) - non-authorizing Chinese design draft for Anthropic-compatible and multi-protocol OpenAI-compatible Built-in Providers.
 - [New Session Model Draft](session-model-design-draft.md) - non-authorizing clean-format proposal derived from the comparison and current implementation.
