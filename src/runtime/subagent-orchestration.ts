@@ -7,7 +7,6 @@ import type { RegistrySnapshot } from '../core/registry/index.js';
 import type { SessionManager } from '../core/session/SessionManager.js';
 import { resolveSubagentCapabilities } from '../core/subagent/capabilities.js';
 import { deriveSubagentRequestRequirements } from '../core/subagent/request-requirements.js';
-import { formatSubagentSessionKey, getSubagentDepth } from '../core/subagent/session-key.js';
 import type {
   SubagentDelegationPort,
   SubagentTerminalFailure,
@@ -22,7 +21,8 @@ const log = Logger.get('SubagentOrchestration');
 
 export interface ActiveParentTurn {
   readonly requestId: string;
-  readonly sessionKey: string;
+  readonly sessionId: string;
+  readonly depth: number;
   readonly turnId: string;
   readonly signal: AbortSignal;
   readonly effectiveReference: ModelReference;
@@ -53,7 +53,7 @@ export function createSubagentDelegationPort(
       const parent = params.activeParents.get(request.parent.turnId);
       if (
         !parent
-        || parent.sessionKey !== request.parent.sessionKey
+        || parent.sessionId !== request.parent.sessionId
         || parent.signal !== request.signal
         || parent.signal.aborted
       ) {
@@ -64,27 +64,23 @@ export function createSubagentDelegationPort(
       const releaseChild = parent.registerChild();
       const runId = randomUUID();
       const childTurnId = randomUUID();
-      const childDepth = getSubagentDepth(parent.sessionKey) + 1;
-      const childSessionKey = formatSubagentSessionKey({
-        rootLabel: parent.sessionKey,
-        runId,
-        depth: childDepth,
-      });
+      const childDepth = parent.depth + 1;
+      const childSessionId = randomUUID();
       const eventIdentity = {
         requestId: parent.requestId,
         runId,
-        sessionKey: childSessionKey,
+        sessionId: childSessionId,
         turnId: childTurnId,
         depth: childDepth,
         subagentType: request.profile.id,
         lifecycle: 'blocking' as const,
-        parentSessionKey: parent.sessionKey,
+        callerSessionId: parent.sessionId,
         parentTurnId: parent.turnId,
         parentToolUseId: request.parent.toolUseId,
       };
 
       let routeRegistered = false;
-      let sessionAcquired = false;
+      let transcriptAcquired = false;
       let result: SubagentTerminalResult | undefined;
 
       try {
@@ -96,16 +92,15 @@ export function createSubagentDelegationPort(
           routeRegistered = true;
         }
 
-        const session = await params.sessionManager.resolveSession(childSessionKey, {
-          spawnedBy: parent.sessionKey,
+        await params.sessionManager.createTransientSubagentTranscript({
+          sessionId: childSessionId,
+          callerSessionId: parent.sessionId,
+          createdAt: startedAt,
         });
-        if (!session.isNew) {
-          throw new Error('Child session identity already exists.');
-        }
-        sessionAcquired = true;
+        transcriptAcquired = true;
         throwIfAborted(parent.signal);
 
-        const capabilities = resolveSubagentCapabilities(childSessionKey, params.maxDepth);
+        const capabilities = resolveSubagentCapabilities(childDepth, params.maxDepth);
         const prepared = await params.executor.prepare({
           requestId: parent.requestId,
           profile: request.profile,
@@ -114,7 +109,7 @@ export function createSubagentDelegationPort(
           parentContextFiles: parent.contextFiles,
           childDepth,
           canSpawn: capabilities.canSpawn,
-          childSessionKey,
+          childSessionId,
           childTurnId,
           signal: parent.signal,
           toolProjection: parent.registrySnapshot.tools,
@@ -145,7 +140,7 @@ export function createSubagentDelegationPort(
             : 'ok';
         result = {
           runId,
-          sessionKey: childSessionKey,
+          sessionId: childSessionId,
           turnId: childTurnId,
           text: runResult.text,
           outcome,
@@ -157,7 +152,7 @@ export function createSubagentDelegationPort(
         const failure = aborted ? undefined : classifyFailure(error);
         result = {
           runId,
-          sessionKey: childSessionKey,
+          sessionId: childSessionId,
           turnId: childTurnId,
           text: '',
           outcome: aborted ? 'aborted' : 'error',
@@ -170,7 +165,7 @@ export function createSubagentDelegationPort(
       } finally {
         const terminal = result ?? {
           runId,
-          sessionKey: childSessionKey,
+          sessionId: childSessionId,
           turnId: childTurnId,
           text: '',
           outcome: 'error' as const,
@@ -189,7 +184,7 @@ export function createSubagentDelegationPort(
           });
         } catch (error) {
           log.warn('child terminal event delivery failed', {
-            sessionKey: childSessionKey,
+            sessionId: childSessionId,
             error: error instanceof Error ? error.message : String(error),
           });
         }
@@ -199,17 +194,17 @@ export function createSubagentDelegationPort(
             params.routeContextByTurn.delete(childTurnId);
           } catch (error) {
             log.warn('child route cleanup failed', {
-              sessionKey: childSessionKey,
+              sessionId: childSessionId,
               error: error instanceof Error ? error.message : String(error),
             });
           }
         }
-        if (sessionAcquired) {
+        if (transcriptAcquired) {
           try {
-            await params.sessionManager.deleteSession(childSessionKey);
+            await params.sessionManager.deleteTransientSubagentTranscript(childSessionId);
           } catch (error) {
-            log.warn('child session cleanup failed', {
-              sessionKey: childSessionKey,
+            log.warn('child Transcript cleanup failed', {
+              sessionId: childSessionId,
               error: error instanceof Error ? error.message : String(error),
             });
           }

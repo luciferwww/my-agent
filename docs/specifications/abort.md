@@ -11,7 +11,7 @@ This contract defines session-local Turn Abort across Runtime, Runner, Model Inv
 
 ## Runtime command
 
-`abortTurn(sessionKey)` synchronously signals the active tree, removes normal queued requests, discards pending steering, and returns `{ aborted, dropped }`. It is idempotent and isolated by session. `dropped` counts normal queued requests only.
+`abortTurn(sessionId)` synchronously signals the active tree, removes normal queued requests, discards pending steering, and returns `{ aborted, dropped }`. It is idempotent and isolated by session. `dropped` counts normal queued requests only.
 
 Each dropped request settles once with `request_end` outcome `cancelled` and reason `abort_queue_drop`. Runtime emits `messages_dropped` only when at least one normal queued request was removed. Subscriber failure cannot make `abortTurn` throw.
 
@@ -31,7 +31,7 @@ Runtime owns one active tree signal per root Turn. Accepted blocking Children sh
 
 ## Channel surfaces
 
-CLI Ctrl+C aborts the active Turn; a second Ctrl+C within the configured exit window terminates the host, while Ctrl+C with no active Turn reports that state. WebSocket accepts `{ type: 'abort_turn', sessionKey }`; completion remains observable through normal events.
+CLI Ctrl+C aborts the active Turn; a second Ctrl+C within the configured exit window terminates the host, while Ctrl+C with no active Turn reports that state. WebSocket accepts `{ type: 'abort_turn', sessionId }`; completion remains observable through normal events.
 
 ## Shutdown and deadlines
 

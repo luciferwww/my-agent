@@ -45,6 +45,20 @@ type ToolExecutor = (
 ) => Promise<ToolResult>;
 
 const TEST_POLICY_DEFAULT_MAX_TOKENS = 4096;
+const MAIN_SESSION_ID = '00000000-0000-4000-8000-000000000101';
+const CHILD_SESSION_ID = '00000000-0000-4000-8000-000000000102';
+const OTHER_SESSION_ID = '00000000-0000-4000-8000-000000000103';
+const CONCURRENT_SESSION_ID = '00000000-0000-4000-8000-000000000104';
+
+async function createEmptyTestSession(
+  sessionManager: SessionManager,
+  sessionId: string,
+): Promise<void> {
+  await sessionManager.materializeSession({
+    sessionId,
+    createdAt: Date.now(),
+  });
+}
 
 const allowAllTools: ApplicationToolPolicy = Object.freeze({
   isDenied: () => false,
@@ -212,7 +226,53 @@ function createDeferred<T = void>(): {
   return { promise, resolve };
 }
 
-// ── 测试 ────────────────────────────────────────────────
+describe('newly materialized Session', () => {
+  it('persists the Runner message exactly once in the Transcript and Provider input', async () => {
+    const agentHome = await mkdtemp(join(tmpdir(), 'runner-materialized-test-'));
+    try {
+      const sessionManager = new SessionManager(agentHome);
+      const sessionId = '00000000-0000-4000-8000-000000000001';
+      await sessionManager.materializeSession({
+        sessionId,
+        createdAt: Date.now(),
+      });
+      let providerMessages: ModelInvocationRequest['messages'] = [];
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(request: ModelInvocationRequest) {
+          providerMessages = request.messages.map((message) => ({ ...message }));
+          yield { type: 'message_start' } as ModelStreamEvent;
+          yield { type: 'text_delta', text: 'done' } as ModelStreamEvent;
+          yield {
+            type: 'message_end',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 1, outputTokens: 1 },
+          } as ModelStreamEvent;
+        },
+        async chat() {
+          throw new Error('Not used');
+        },
+      };
+
+      await new AgentRunner({ llmClient, sessionManager }).run({
+        sessionId: sessionId,
+        message: 'materialized once',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'materialized-turn',
+      });
+
+      const persistedUsers = sessionManager.getMessages(sessionId)
+        .filter(({ message }) => message.role === 'user');
+      const providerUsers = providerMessages.filter((message) => message.role === 'user');
+      expect(persistedUsers).toHaveLength(1);
+      expect(providerUsers).toEqual([{ role: 'user', content: 'materialized once' }]);
+    } finally {
+      await rm(agentHome, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── Tests ───────────────────────────────────────────────
 
 describe('AgentRunner', () => {
   let agentHome: string;
@@ -221,14 +281,14 @@ describe('AgentRunner', () => {
   beforeEach(async () => {
     agentHome = await mkdtemp(join(tmpdir(), 'runner-test-'));
     sessionManager = new SessionManager(agentHome);
-    await sessionManager.createSession('main');
+    await createEmptyTestSession(sessionManager, MAIN_SESSION_ID);
   });
 
   afterEach(async () => {
     await rm(agentHome, { recursive: true, force: true });
   });
 
-  // ── 基本对话 ────────────────────────────────────────
+  // ── Basic conversation ──────────────────────────────
 
   describe('basic conversation', () => {
     it('handles simple text response', async () => {
@@ -242,7 +302,7 @@ describe('AgentRunner', () => {
 
       const runner = new AgentRunner({ llmClient, sessionManager });
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Hi',
         model: 'test',
         systemPrompt: 'You are helpful.',
@@ -270,17 +330,16 @@ describe('AgentRunner', () => {
 
       const runner = new AgentRunner({ llmClient, sessionManager });
 
-      // 第一轮
-      await runner.run({ sessionKey: 'main', message: 'First', model: 'test', systemPrompt: '', turnId: 'test-turn' });
+      // First Turn.
+      await runner.run({ sessionId: MAIN_SESSION_ID, message: 'First', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
-      // 第二轮——应该能看到第一轮的历史
-      await runner.run({ sessionKey: 'main', message: 'Second', model: 'test', systemPrompt: '', turnId: 'test-turn' });
+      // The second Turn should see the first Turn's history.
+      await runner.run({ sessionId: MAIN_SESSION_ID, message: 'Second', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
-      // 第二轮的 messages 应包含第一轮的历史
-      // user(First) + assistant([{type:'text',text:'Response'}]) + user(Second)
+      // Expected: user(First) + assistant(Response) + user(Second).
       expect(capturedMessages[0]!.content).toBe('First');
       expect(capturedMessages[capturedMessages.length - 1]!.content).toBe('Second');
-      // 中间有 assistant 消息
+      // The assistant response remains between the user messages.
       const assistantMsg = capturedMessages.find(m => m.role === 'assistant');
       expect(assistantMsg).toBeDefined();
     });
@@ -295,7 +354,7 @@ describe('AgentRunner', () => {
 
       const runner = new AgentRunner({ llmClient, sessionManager });
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Hi',
         model: 'test',
         systemPrompt: '',
@@ -312,13 +371,13 @@ describe('AgentRunner', () => {
   describe('tool use loop', () => {
     it('executes single tool call and continues', async () => {
       const llmClient = createMockLLMClient([
-        // 第一轮：LLM 请求工具
+        // First round: the LLM requests a tool.
         [
           { type: 'message_start' },
           { type: 'tool_use', id: 'tool_01', name: 'get_weather', input: { city: 'Tokyo' } },
           { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 20, outputTokens: 10 } },
         ],
-        // 第二轮：LLM 收到工具结果后回复
+        // Second round: the LLM responds after receiving the tool result.
         [
           { type: 'message_start' },
           { type: 'text_delta', text: 'The weather in Tokyo is sunny.' },
@@ -333,7 +392,7 @@ describe('AgentRunner', () => {
       });
 
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Weather?',
         model: 'test',
         systemPrompt: '',
@@ -373,7 +432,7 @@ describe('AgentRunner', () => {
       });
 
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Do tasks',
         model: 'test',
         systemPrompt: '',
@@ -384,7 +443,7 @@ describe('AgentRunner', () => {
       expect(result.toolRounds).toBe(2);
     });
 
-    it('passes ToolExecutionContext (sessionKey/turnId/callId) to the test executor', async () => {
+    it('passes ToolExecutionContext (sessionId/turnId/callId) to the test executor', async () => {
       const llmClient = createMockLLMClient([
         [
           { type: 'message_start' },
@@ -409,7 +468,7 @@ describe('AgentRunner', () => {
       });
 
       await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'inspect ctx',
         model: 'test',
         systemPrompt: '',
@@ -419,15 +478,16 @@ describe('AgentRunner', () => {
       expect(seen).toHaveLength(1);
       expect(seen[0]!.name).toBe('inspect');
       expect(seen[0]!.ctx).toEqual({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         turnId: 'turn-ctx-99',
         callId: 'tool_ctx_42',
+        subagentDepth: 0,
         signal: expect.any(AbortSignal),
       });
     });
 
     it('respects maxLlmCalls limit', async () => {
-      // LLM 每次都返回 tool_use
+      // The LLM returns tool_use on every call.
       const infiniteToolResponses = Array.from({ length: 20 }, () => [
         { type: 'message_start' as const },
         { type: 'tool_use' as const, id: 'tool_01', name: 'loop_tool', input: {} },
@@ -443,7 +503,7 @@ describe('AgentRunner', () => {
       });
 
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Loop',
         model: 'test',
         systemPrompt: '',
@@ -451,7 +511,7 @@ describe('AgentRunner', () => {
         maxLlmCalls: 3,
       });
 
-      // maxLlmCalls=3 意味着本次 run 最多只进行 3 次 LLM 调用。
+      // maxLlmCalls=3 limits this run to three LLM calls.
       expect(result.toolRounds).toBe(3);
       expect(result.stopReason).toBe('max_llm_calls');
       expect(result.text).toBe('');
@@ -474,7 +534,7 @@ describe('AgentRunner', () => {
       const runner = new AgentRunner({ llmClient, sessionManager });
 
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Search something',
         model: 'test',
         systemPrompt: '',
@@ -506,7 +566,7 @@ describe('AgentRunner', () => {
       });
 
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Try tool',
         model: 'test',
         systemPrompt: '',
@@ -528,7 +588,7 @@ describe('AgentRunner', () => {
 
       const runner = new AgentRunner({ llmClient, sessionManager });
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Hi',
         model: 'test',
         systemPrompt: '',
@@ -589,7 +649,7 @@ describe('AgentRunner', () => {
       });
 
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'start',
         model: 'test',
         systemPrompt: '',
@@ -607,7 +667,7 @@ describe('AgentRunner', () => {
     });
   });
 
-  // ── 事件回调 ────────────────────────────────────────
+  // ── Event callbacks ─────────────────────────────────
 
   describe('events', () => {
     it('CH-02 correlates run_start with the origin message and run_end', async () => {
@@ -627,7 +687,7 @@ describe('AgentRunner', () => {
       });
 
       await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Hi',
         model: 'test',
         systemPrompt: '',
@@ -637,13 +697,13 @@ describe('AgentRunner', () => {
 
       expect(events[0]).toMatchObject({
         type: 'run_start',
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         turnId: 'test-turn',
         originMessageId: 'message-1',
       });
       expect(events[events.length - 1]).toMatchObject({
         type: 'run_end',
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         turnId: 'test-turn',
       });
     });
@@ -665,7 +725,7 @@ describe('AgentRunner', () => {
         onEvent: (e) => { if (e.type === 'text_delta') textDeltas.push(e.text); },
       });
 
-      await runner.run({ sessionKey: 'main', message: 'Hi', model: 'test', systemPrompt: '', turnId: 'test-turn' });
+      await runner.run({ sessionId: MAIN_SESSION_ID, message: 'Hi', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       expect(textDeltas).toEqual(['Hello', ' world']);
     });
@@ -692,7 +752,7 @@ describe('AgentRunner', () => {
         onEvent: (e) => events.push(e),
       });
 
-      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '', turnId: 'test-turn' });
+      await runner.run({ sessionId: MAIN_SESSION_ID, message: 'Search', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       const toolUseEvent = events.find((e) => e.type === 'tool_use');
       const toolResultEvent = events.find((e) => e.type === 'tool_result');
@@ -725,14 +785,14 @@ describe('AgentRunner', () => {
         onEvent: (e) => { if (e.type === 'llm_call') llmCalls.push(e.round); },
       });
 
-      await runner.run({ sessionKey: 'main', message: 'Go', model: 'test', systemPrompt: '', turnId: 'test-turn' });
+      await runner.run({ sessionId: MAIN_SESSION_ID, message: 'Go', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       expect(llmCalls).toEqual([0, 1]);
     });
 
     it('preserves the parent run\'s emit context when a tool re-enters run() (nested subagent regression)', async () => {
       // Simulates the subagent path: the parent's toolExecutor invokes
-      // runner.run(...) for a CHILD turn with a different sessionKey/turnId,
+      // runner.run(...) for a CHILD turn with a different sessionId/turnId,
       // then control returns to the parent. If currentParams were reset to
       // null after the nested call, the parent's subsequent emit() events
       // (tool_result, second llm_call, run_end) would all be dropped.
@@ -763,10 +823,10 @@ describe('AgentRunner', () => {
         sessionManager,
         onEvent: (e) => events.push(e),
         toolExecutor: async () => {
-          // Re-enter run() with a different sessionKey, mirroring Child execution.
-          await sessionManager.createSession('child').catch(() => undefined);
+          // Re-enter run() with a different sessionId, mirroring Child execution.
+          await createEmptyTestSession(sessionManager, CHILD_SESSION_ID).catch(() => undefined);
           await runner.run({
-            sessionKey: 'child',
+            sessionId: CHILD_SESSION_ID,
             message: 'child-msg',
             model: 'test',
             systemPrompt: '',
@@ -777,7 +837,7 @@ describe('AgentRunner', () => {
       });
 
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Parent kicks off',
         model: 'test',
         systemPrompt: '',
@@ -785,9 +845,9 @@ describe('AgentRunner', () => {
       });
 
       // Parent-only assertions: post-nested events must reach onEvent with
-      // the parent's sessionKey/turnId.
+      // the parent's sessionId/turnId.
       expect(result.text).toBe('parent-final');
-      const parentEvents = events.filter((e) => e.sessionKey === 'main');
+      const parentEvents = events.filter((e) => e.sessionId === MAIN_SESSION_ID);
       const parentTypes = parentEvents.map((e) => e.type);
       expect(parentTypes).toContain('tool_result');
       expect(parentTypes.filter((t) => t === 'llm_call').length).toBe(2);
@@ -826,15 +886,15 @@ describe('AgentRunner', () => {
       });
 
       await runner.run({
-        sessionKey: 'main', message: 'first', model: 'test', systemPrompt: '', turnId: 'turn-A',
+        sessionId: MAIN_SESSION_ID, message: 'first', model: 'test', systemPrompt: '', turnId: 'turn-A',
       });
-      await sessionManager.createSession('other');
+      await createEmptyTestSession(sessionManager, OTHER_SESSION_ID);
       await runner.run({
-        sessionKey: 'other', message: 'second', model: 'test', systemPrompt: '', turnId: 'turn-B',
+        sessionId: OTHER_SESSION_ID, message: 'second', model: 'test', systemPrompt: '', turnId: 'turn-B',
       });
 
-      const aEvents = events.filter((e) => e.sessionKey === 'main');
-      const bEvents = events.filter((e) => e.sessionKey === 'other');
+      const aEvents = events.filter((e) => e.sessionId === MAIN_SESSION_ID);
+      const bEvents = events.filter((e) => e.sessionId === OTHER_SESSION_ID);
       expect(aEvents.length).toBeGreaterThan(0);
       expect(bEvents.length).toBeGreaterThan(0);
       for (const e of aEvents) {
@@ -884,23 +944,23 @@ describe('AgentRunner', () => {
         sessionManager,
         onEvent: (e) => events.push(e),
       });
-      await sessionManager.createSession('concurrent-B');
+      await createEmptyTestSession(sessionManager, CONCURRENT_SESSION_ID);
 
       await Promise.all([
         runner.run({
-          sessionKey: 'main', message: 'p-A', model: 'test', systemPrompt: '', turnId: 'turn-A',
+          sessionId: MAIN_SESSION_ID, message: 'p-A', model: 'test', systemPrompt: '', turnId: 'turn-A',
         }),
         runner.run({
-          sessionKey: 'concurrent-B', message: 'p-B', model: 'test', systemPrompt: '', turnId: 'turn-B',
+          sessionId: CONCURRENT_SESSION_ID, message: 'p-B', model: 'test', systemPrompt: '', turnId: 'turn-B',
         }),
       ]);
 
-      // Every event must carry the (sessionKey, turnId) pair of the run that
+      // Every event must carry the (sessionId, turnId) pair of the run that
       // produced it. If the pre-refactor instance-state design were in place,
       // run A's text_delta (emitted AFTER B set currentParams) would carry
       // run B's tag.
-      const a = events.filter((e) => e.sessionKey === 'main');
-      const b = events.filter((e) => e.sessionKey === 'concurrent-B');
+      const a = events.filter((e) => e.sessionId === MAIN_SESSION_ID);
+      const b = events.filter((e) => e.sessionId === CONCURRENT_SESSION_ID);
       expect(a.length).toBeGreaterThan(0);
       expect(b.length).toBeGreaterThan(0);
       for (const e of a) {
@@ -914,7 +974,7 @@ describe('AgentRunner', () => {
     });
   });
 
-  // ── Session 持久化 ─────────────────────────────────
+  // ── Session persistence ─────────────────────────────
 
   describe('session persistence', () => {
     it('saves user and assistant messages', async () => {
@@ -927,9 +987,9 @@ describe('AgentRunner', () => {
       ]);
 
       const runner = new AgentRunner({ llmClient, sessionManager });
-      await runner.run({ sessionKey: 'main', message: 'Hello', model: 'test', systemPrompt: '', turnId: 'test-turn' });
+      await runner.run({ sessionId: MAIN_SESSION_ID, message: 'Hello', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
-      const messages = sessionManager.getMessages('main');
+      const messages = sessionManager.getMessages(MAIN_SESSION_ID);
       expect(messages).toHaveLength(2);
       expect(messages[0]!.message.role).toBe('user');
       expect(messages[0]!.message.content).toBe('Hello');
@@ -956,9 +1016,9 @@ describe('AgentRunner', () => {
         toolExecutor: async () => ({ content: 'result' }),
       });
 
-      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '', turnId: 'test-turn' });
+      await runner.run({ sessionId: MAIN_SESSION_ID, message: 'Search', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
-      const messages = sessionManager.getMessages('main');
+      const messages = sessionManager.getMessages(MAIN_SESSION_ID);
       // user(Search) → assistant(tool_use) → toolResult → assistant(Done)
       expect(messages).toHaveLength(4);
       expect(messages[0]!.message.role).toBe('user');
@@ -1016,14 +1076,14 @@ describe('AgentRunner', () => {
       });
 
       await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Use a tool',
         model: 'test',
         systemPrompt: '',
         turnId: 'test-turn',
       });
 
-      const messages = sessionManager.getMessages('main');
+      const messages = sessionManager.getMessages(MAIN_SESSION_ID);
       expect(messages.map(({ message }) => message.role)).toEqual([
         'user',
         'assistant',
@@ -1047,7 +1107,7 @@ describe('AgentRunner', () => {
     });
   });
 
-  // ── 错误处理 ────────────────────────────────────────
+  // ── Error handling ──────────────────────────────────
 
   describe('error handling', () => {
     it('CH-13 emits error event and throws after one Provider stream call', async () => {
@@ -1067,7 +1127,7 @@ describe('AgentRunner', () => {
       });
 
       await expect(
-        runner.run({ sessionKey: 'main', message: 'Hi', model: 'test', systemPrompt: '', turnId: 'test-turn' }),
+        runner.run({ sessionId: MAIN_SESSION_ID, message: 'Hi', model: 'test', systemPrompt: '', turnId: 'test-turn' }),
       ).rejects.toThrow('API error');
 
       expect(events.some((e) => e.type === 'error')).toBe(true);
@@ -1093,7 +1153,7 @@ describe('AgentRunner', () => {
       });
 
       const failure = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Hi',
         model: 'test',
         systemPrompt: '',
@@ -1138,7 +1198,7 @@ describe('AgentRunner', () => {
       });
 
       const runPromise = runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Search',
         model: 'test',
         systemPrompt: '',
@@ -1184,7 +1244,7 @@ describe('AgentRunner', () => {
       });
 
       await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Search',
         model: 'test',
         systemPrompt: '',
@@ -1220,13 +1280,13 @@ describe('AgentRunner', () => {
       });
       runner.on('before_tool_call', async () => ({ action: 'deny', reason: 'dangerous command' }));
 
-      const result = await runner.run({ sessionKey: 'main', message: 'Run it', model: 'test', systemPrompt: '', turnId: 'test-turn' });
+      const result = await runner.run({ sessionId: MAIN_SESSION_ID, message: 'Run it', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       expect(executedTools).toHaveLength(0);
       expect(result.text).toBe('Tool was blocked.');
       const toolResult = events.find((e) => e.type === 'tool_result');
       expect(toolResult?.type === 'tool_result' && toolResult.result.isError).toBe(true);
-      const messages = sessionManager.getMessages('main');
+      const messages = sessionManager.getMessages(MAIN_SESSION_ID);
       expect(messages.map(({ message }) => message.role)).toEqual([
         'user',
         'assistant',
@@ -1271,7 +1331,7 @@ describe('AgentRunner', () => {
         input: { ...input, q: 'modified' },
       }));
 
-      await runner.run({ sessionKey: 'main', message: 'Search', model: 'test', systemPrompt: '', turnId: 'test-turn' });
+      await runner.run({ sessionId: MAIN_SESSION_ID, message: 'Search', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       expect(capturedInputs[0]?.q).toBe('modified');
     });
@@ -1307,7 +1367,7 @@ describe('AgentRunner', () => {
       });
 
       const runPromise = runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Search',
         model: 'test',
         systemPrompt: '',
@@ -1326,10 +1386,10 @@ describe('AgentRunner', () => {
     });
 
     it('awaits bounded compaction observers before summary and after commit', async () => {
-      await sessionManager.appendMessage('main', { role: 'user', content: 'A'.repeat(800) });
-      await sessionManager.appendMessage('main', { role: 'assistant', content: 'B'.repeat(800) });
-      await sessionManager.appendMessage('main', { role: 'user', content: 'recent question' });
-      await sessionManager.appendMessage('main', { role: 'assistant', content: 'recent answer' });
+      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'user', content: 'A'.repeat(800) });
+      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'assistant', content: 'B'.repeat(800) });
+      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'user', content: 'recent question' });
+      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'assistant', content: 'recent answer' });
 
       const llmClient = createMockLLMClient([
         [
@@ -1367,7 +1427,7 @@ describe('AgentRunner', () => {
       });
 
       const runPromise = runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Continue',
         model: 'test',
         systemPrompt: '',
@@ -1399,16 +1459,15 @@ describe('AgentRunner', () => {
       expect(afterPayloads).toHaveLength(1);
       expect(afterPayloads[0]?.trigger).toBe('preemptive');
       expect(afterPayloads[0]?.tokensBefore).toBeGreaterThan(afterPayloads[0]?.tokensAfter ?? 0);
-      // 当前 user 消息（'Continue'）下沉到 preflight 之后才 append，preemptive 压缩在
-      // append 之前抛出，因此 compactHistory 看到的是 4 条预置消息（非 5 条），
-      // keepRecentTurns:1 保留最近 1 个 user turn (recent question + recent answer = 2 条)，
-      // 丢弃前 2 条。这是"压缩输入不被当前 user 污染"的预期表现。
+      // The current user message is appended only after preflight. Preemptive
+      // compaction therefore sees four seeded messages, keeps the latest Turn,
+      // and drops the first two without including the current prompt.
       expect(afterPayloads[0]?.droppedMessages).toBe(2);
     });
 
     it('CH-11 uses persisted compaction history on the next turn', async () => {
       const persistedImageData = 'AAAA'.repeat(500);
-      await sessionManager.appendMessage('main', {
+      await sessionManager.appendMessage(MAIN_SESSION_ID, {
         role: 'user',
         content: [
           { type: 'text', text: `OLD_QUESTION_${'A'.repeat(800)}` },
@@ -1419,12 +1478,12 @@ describe('AgentRunner', () => {
           },
         ],
       });
-      await sessionManager.appendMessage('main', {
+      await sessionManager.appendMessage(MAIN_SESSION_ID, {
         role: 'assistant',
         content: `OLD_ANSWER_${'B'.repeat(800)}`,
       });
-      await sessionManager.appendMessage('main', { role: 'user', content: 'recent question' });
-      await sessionManager.appendMessage('main', { role: 'assistant', content: 'recent answer' });
+      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'user', content: 'recent question' });
+      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'assistant', content: 'recent answer' });
 
       const compactingDelegate = createMockLLMClient([
         [
@@ -1452,7 +1511,7 @@ describe('AgentRunner', () => {
       });
 
       const firstResult = await compactingRunner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'first current question',
         model: 'test',
         systemPrompt: '',
@@ -1475,7 +1534,7 @@ describe('AgentRunner', () => {
 
       let nextTurnMessages: ModelInvocationRequest['messages'] = [];
       const reloadedSessionManager = new SessionManager(agentHome);
-      expect(JSON.stringify(reloadedSessionManager.getMessages('main'))).toContain(persistedImageData);
+      expect(JSON.stringify(reloadedSessionManager.getMessages(MAIN_SESSION_ID))).toContain(persistedImageData);
       const nextTurnClient: ModelInvocationPort = {
         async *chatStream(params: ModelInvocationRequest) {
           nextTurnMessages = params.messages.map((message) => ({ ...message }));
@@ -1497,7 +1556,7 @@ describe('AgentRunner', () => {
       });
 
       await nextRunner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'second current question',
         model: 'test',
         systemPrompt: '',
@@ -1553,18 +1612,17 @@ describe('AgentRunner', () => {
         .on('before_tool_call', async () => { order.push(1); return { action: 'allow' }; }, { priority: 1 })
         .on('before_tool_call', async () => { order.push(10); return { action: 'allow' }; }, { priority: 10 });
 
-      await runner.run({ sessionKey: 'main', message: 'Go', model: 'test', systemPrompt: '', turnId: 'test-turn' });
+      await runner.run({ sessionId: MAIN_SESSION_ID, message: 'Go', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       expect(order).toEqual([10, 1]);
     });
   });
 
-  // ── sanitizeSessionTail / trailing user 清洗 ──────────
+  // ── sanitizeSessionTail / trailing user cleanup ──────
 
   describe('sanitizeSessionTail', () => {
     it('user 消息已下沉到 runAttempt: run() 不再于入口立即 append', async () => {
-      // 让 LLM 抛错，run() 会在 emit error 后抛出。
-      // 关键断言：此时 session 中已有 user 消息（说明 runAttempt 在 preflight 通过后 append 了）。
+      // Force an LLM error after runAttempt persists the user following preflight.
       const llmClient = createMockLLMClient([
         [
           { type: 'message_start' },
@@ -1574,20 +1632,20 @@ describe('AgentRunner', () => {
 
       const runner = new AgentRunner({ llmClient, sessionManager });
       await expect(
-        runner.run({ sessionKey: 'main', message: 'Hello', model: 'test', systemPrompt: '', turnId: 'test-turn' }),
+        runner.run({ sessionId: MAIN_SESSION_ID, message: 'Hello', model: 'test', systemPrompt: '', turnId: 'test-turn' }),
       ).rejects.toThrow('boom');
 
-      // runAttempt preflight 通过后会 append user，所以 LLM 报错时 user 已经在 session
-      const messages = sessionManager.getMessages('main');
+      // The user remains persisted when the LLM fails after preflight.
+      const messages = sessionManager.getMessages(MAIN_SESSION_ID);
       expect(messages.length).toBeGreaterThanOrEqual(1);
       expect(messages[0]!.message.role).toBe('user');
       expect(messages[0]!.message.content).toBe('Hello');
     });
 
     it('启动时若末尾存在孤立 trailing user, runAttempt 入口将其从内存视图剥离', async () => {
-      // 手工伪造一条"上一轮失败遗留"的孤立 user 消息
-      await sessionManager.appendMessage('main', { role: 'user', content: 'orphan' });
-      const beforeCount = sessionManager.getMessages('main').length;
+      // Seed an orphan user message left by a failed previous Turn.
+      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'user', content: 'orphan' });
+      const beforeCount = sessionManager.getMessages(MAIN_SESSION_ID).length;
       expect(beforeCount).toBe(1);
 
       const llmClient = createMockLLMClient([
@@ -1614,20 +1672,20 @@ describe('AgentRunner', () => {
         onEvent: (e) => events.push(e),
       });
 
-      await runner.run({ sessionKey: 'main', message: 'real', model: 'test', systemPrompt: '', turnId: 't1' });
+      await runner.run({ sessionId: MAIN_SESSION_ID, message: 'real', model: 'test', systemPrompt: '', turnId: 't1' });
 
-      // sniffer 看到的 user content 应是 'real'，不含 'orphan'
+      // Provider input contains the real message, not the orphan.
       const userMsgs = capturedMessages.filter(m => m.role === 'user');
       expect(userMsgs).toHaveLength(1);
       expect(userMsgs[0]!.content).toBe('real');
 
-      // session 视图：orphan 已被 branch 剥离，新视图为 user(real) + assistant
-      const afterMessages = sessionManager.getMessages('main');
+      // The active Session branch contains user(real) and assistant only.
+      const afterMessages = sessionManager.getMessages(MAIN_SESSION_ID);
       expect(afterMessages).toHaveLength(2);
       expect(afterMessages[0]!.message.content).toBe('real');
       expect(afterMessages[1]!.message.role).toBe('assistant');
 
-      // emit 了 session_tail_sanitized 事件
+      // A session_tail_sanitized event is emitted.
       const sanitized = events.find(e => e.type === 'session_tail_sanitized');
       expect(sanitized).toBeDefined();
       expect((sanitized as { discardedRole: string }).discardedRole).toBe('user');
@@ -1644,13 +1702,13 @@ describe('AgentRunner', () => {
       const events: AgentEvent[] = [];
       const runner = new AgentRunner({ llmClient, sessionManager, onEvent: (e) => events.push(e) });
 
-      await runner.run({ sessionKey: 'main', message: 'first', model: 'test', systemPrompt: '', turnId: 't1' });
+      await runner.run({ sessionId: MAIN_SESSION_ID, message: 'first', model: 'test', systemPrompt: '', turnId: 't1' });
 
       expect(events.find(e => e.type === 'session_tail_sanitized')).toBeUndefined();
     });
 
     it('末尾为 assistant 时不触发清洗', async () => {
-      // 先完成一轮正常对话，末尾是 assistant
+      // Complete one normal Turn ending with an assistant message.
       const llmClient1 = createMockLLMClient([
         [
           { type: 'message_start' },
@@ -1659,11 +1717,11 @@ describe('AgentRunner', () => {
         ],
       ]);
       const runner1 = new AgentRunner({ llmClient: llmClient1, sessionManager });
-      await runner1.run({ sessionKey: 'main', message: 'q1', model: 'test', systemPrompt: '', turnId: 't1' });
-      const tail = sessionManager.getMessages('main').slice(-1)[0];
+      await runner1.run({ sessionId: MAIN_SESSION_ID, message: 'q1', model: 'test', systemPrompt: '', turnId: 't1' });
+      const tail = sessionManager.getMessages(MAIN_SESSION_ID).slice(-1)[0];
       expect(tail!.message.role).toBe('assistant');
 
-      // 第二轮：sanitize 应是 no-op
+      // Sanitization is a no-op on the second Turn.
       const events: AgentEvent[] = [];
       const llmClient2 = createMockLLMClient([
         [
@@ -1673,25 +1731,25 @@ describe('AgentRunner', () => {
         ],
       ]);
       const runner2 = new AgentRunner({ llmClient: llmClient2, sessionManager, onEvent: (e) => events.push(e) });
-      await runner2.run({ sessionKey: 'main', message: 'q2', model: 'test', systemPrompt: '', turnId: 't2' });
+      await runner2.run({ sessionId: MAIN_SESSION_ID, message: 'q2', model: 'test', systemPrompt: '', turnId: 't2' });
 
       expect(events.find(e => e.type === 'session_tail_sanitized')).toBeUndefined();
 
-      // 完整序列: u(q1) → a(reply1) → u(q2) → a(reply2)
-      const all = sessionManager.getMessages('main');
+      // Full sequence: user(q1), assistant(reply1), user(q2), assistant(reply2).
+      const all = sessionManager.getMessages(MAIN_SESSION_ID);
       expect(all).toHaveLength(4);
       expect(all.map(r => r.message.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
     });
 
     it('旧 session 中的空 aborted assistant 不进入 Provider history', async () => {
-      await sessionManager.appendMessage('main', { role: 'user', content: 'old request' });
-      await sessionManager.appendMessage('main', {
+      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'user', content: 'old request' });
+      await sessionManager.appendMessage(MAIN_SESSION_ID, {
         role: 'assistant',
         content: [],
         abortMeta: { partial: true, stopReason: 'aborted' },
       });
-      await sessionManager.appendMessage('main', { role: 'user', content: 'later request' });
-      await sessionManager.appendMessage('main', {
+      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'user', content: 'later request' });
+      await sessionManager.appendMessage(MAIN_SESSION_ID, {
         role: 'assistant',
         content: [{ type: 'text', text: 'later reply' }],
       });
@@ -1713,7 +1771,7 @@ describe('AgentRunner', () => {
       const runner = new AgentRunner({ llmClient, sessionManager });
 
       await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'current request',
         model: 'test',
         systemPrompt: '',
@@ -1727,7 +1785,7 @@ describe('AgentRunner', () => {
         { role: 'assistant', content: [{ type: 'text', text: 'later reply' }] },
         { role: 'user', content: 'current request' },
       ]);
-      expect(sessionManager.getMessages('main')).toContainEqual(
+      expect(sessionManager.getMessages(MAIN_SESSION_ID)).toContainEqual(
         expect.objectContaining({
           message: {
             role: 'assistant',
@@ -1742,7 +1800,7 @@ describe('AgentRunner', () => {
   // ── Abort（core-abort-spec.md §7） ──────────────────
 
   describe('abort', () => {
-    // ① abort before run starts → 立即返回
+    // Abort before run starts returns immediately.
     it('abort before run starts → 立即返回 aborted，无 LLM 调用', async () => {
       const controller = new AbortController();
       controller.abort();
@@ -1760,7 +1818,7 @@ describe('AgentRunner', () => {
       const runner = new AgentRunner({ llmClient, sessionManager, onEvent: (e) => events.push(e) });
 
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Hi',
         model: 'test',
         systemPrompt: '',
@@ -1772,12 +1830,12 @@ describe('AgentRunner', () => {
       expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
       expect(result.toolRounds).toBe(0);
       expect(llmCalled).toBe(false);
-      // run_start + run_end 事件对完整
+      // The run_start and run_end event pair remains complete.
       expect(events.find(e => e.type === 'run_start')).toBeDefined();
       expect(events.find(e => e.type === 'run_end')).toBeDefined();
     });
 
-    // ② abort during LLM stream → stopReason='aborted', partial assistant 写入（带 abortMeta）
+    // Abort during streaming persists a partial assistant with abort metadata.
     it('abort during LLM stream → stopReason=aborted, partial assistant 带 abortMeta 写入', async () => {
       const controller = new AbortController();
 
@@ -1785,7 +1843,7 @@ describe('AgentRunner', () => {
         async *chatStream(params: ModelInvocationRequest) {
           yield { type: 'message_start' };
           yield { type: 'text_delta', text: 'partial reply…' };
-          // 触发外部 abort，然后模拟 SDK 抛 AbortError
+          // Trigger external abort, then simulate the SDK AbortError.
           controller.abort();
           if (params.signal?.aborted) {
             const err = new Error('aborted');
@@ -1799,7 +1857,7 @@ describe('AgentRunner', () => {
 
       const runner = new AgentRunner({ llmClient, sessionManager });
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Hi',
         model: 'test',
         systemPrompt: '',
@@ -1810,8 +1868,8 @@ describe('AgentRunner', () => {
       expect(result.stopReason).toBe('aborted');
       expect(result.text).toBe('partial reply…');
 
-      // session 里最后一条 assistant 应含 abortMeta
-      const records = sessionManager.getMessages('main');
+      // The final assistant record carries abort metadata.
+      const records = sessionManager.getMessages(MAIN_SESSION_ID);
       const last = records[records.length - 1]!;
       expect(last.message.role).toBe('assistant');
       expect(last.message.abortMeta).toEqual({ partial: true, stopReason: 'aborted' });
@@ -1834,7 +1892,7 @@ describe('AgentRunner', () => {
       const runner = new AgentRunner({ llmClient, sessionManager });
 
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'Hi',
         model: 'test',
         systemPrompt: '',
@@ -1844,7 +1902,7 @@ describe('AgentRunner', () => {
 
       expect(result.stopReason).toBe('aborted');
       expect(result.content).toEqual([]);
-      expect(sessionManager.getMessages('main').map(({ message }) => message.role))
+      expect(sessionManager.getMessages(MAIN_SESSION_ID).map(({ message }) => message.role))
         .toEqual(['user']);
     });
 
@@ -1852,7 +1910,7 @@ describe('AgentRunner', () => {
     it('closes remaining Tool Calls as not_executed after abort between calls', async () => {
       const controller = new AbortController();
 
-      // LLM 返回两个 tool_use 块
+      // The LLM returns two tool_use blocks.
       const llmClient = createMockLLMClient([
         [
           { type: 'message_start' },
@@ -1868,7 +1926,7 @@ describe('AgentRunner', () => {
         sessionManager,
         toolExecutor: async (_name, input) => {
           toolCallCount++;
-          // 第一个工具跑完后触发 abort，第二个工具不应启动
+          // Abort after the first tool; the second must not start.
           if (toolCallCount === 1) {
             controller.abort();
           }
@@ -1877,7 +1935,7 @@ describe('AgentRunner', () => {
       });
 
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'run tools',
         model: 'test',
         systemPrompt: '',
@@ -1886,9 +1944,9 @@ describe('AgentRunner', () => {
       });
 
       expect(result.stopReason).toBe('aborted');
-      // 第一个 tool 跑完，第二个不启动
+      // The first tool completes and the second does not start.
       expect(toolCallCount).toBe(1);
-      const records = sessionManager.getMessages('main');
+      const records = sessionManager.getMessages(MAIN_SESSION_ID);
       expect(records.map(({ message }) => message.role)).toEqual(['user', 'assistant', 'toolResult']);
       const assistantBlocks = records[1]!.message.content as ChatContentBlock[];
       expect(assistantBlocks.filter((block) => block.type === 'tool_use').map((block) => block.id)).toEqual([
@@ -1907,14 +1965,14 @@ describe('AgentRunner', () => {
         onEvent: (event) => repairEvents.push(event),
       });
       await recoveryRunner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'continue',
         model: 'test',
         systemPrompt: '',
         turnId: 't-after-tool-loop-abort',
       });
 
-      const recoveredRecords = sessionManager.getMessages('main');
+      const recoveredRecords = sessionManager.getMessages(MAIN_SESSION_ID);
       expect(recoveredRecords.map(({ message }) => message.role)).toEqual([
         'user',
         'assistant',
@@ -1939,10 +1997,10 @@ describe('AgentRunner', () => {
       );
     });
 
-    // ④ 【孤儿修复—turn 起点（abort source）】
+    // Orphan repair at Turn start with an abort source.
     it('orphan repair: abort 造孤儿 → 下一 turn 起点写 aborted 内容 + emit source:abort', async () => {
-      // 手工模拟：上一 turn abort 遗留一条 assistant 含 tool_use 且带 abortMeta
-      await sessionManager.appendMessage('main', {
+      // Seed an assistant tool_use with abort metadata from a previous Turn.
+      await sessionManager.appendMessage(MAIN_SESSION_ID, {
         role: 'assistant',
         content: [
           { type: 'text', text: 'starting…' },
@@ -1963,7 +2021,7 @@ describe('AgentRunner', () => {
       const runner = new AgentRunner({ llmClient, sessionManager, onEvent: (e) => events.push(e) });
 
       await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'retry',
         model: 'test',
         systemPrompt: '',
@@ -1977,19 +2035,19 @@ describe('AgentRunner', () => {
       expect((repairEvent as { source: string }).source).toBe('abort');
 
       // session：assistant(with tool_use) → toolResult(synthetic aborted) → user(retry) → assistant(continue)
-      const records = sessionManager.getMessages('main');
+      const records = sessionManager.getMessages(MAIN_SESSION_ID);
       const toolResultRecord = records.find(r => r.message.role === 'toolResult');
       expect(toolResultRecord).toBeDefined();
       const trContent = toolResultRecord!.message.content as Array<{ type: string; tool_use_id: string; content: string }>;
       expect(trContent[0]!.tool_use_id).toBe('orphan-1');
-      // Option 1: 统一中性 content，不区分 abort vs recovered——source 字段承担区分职责
+      // Content stays neutral; source distinguishes abort from recovery.
       expect(trContent[0]!.content).toBe('[tool call interrupted; session recovered]');
     });
 
-    // ⑤ 【孤儿修复—非-abort 来源（recovered）】
+    // Orphan repair for a non-abort recovery source.
     it('orphan repair: 无 abortMeta 孤儿（模拟崩溃恢复）→ 写 recovered 内容 + emit source:recovered', async () => {
-      // 预置一条无 abortMeta 的 assistant 含 tool_use 孤儿（模拟进程崩溃）
-      await sessionManager.appendMessage('main', {
+      // Seed an orphan assistant tool_use without abort metadata to mimic a crash.
+      await sessionManager.appendMessage(MAIN_SESSION_ID, {
         role: 'assistant',
         content: [
           { type: 'tool_use', id: 'crash-1', name: 'echo', input: { msg: 'y' } },
@@ -2008,7 +2066,7 @@ describe('AgentRunner', () => {
       const runner = new AgentRunner({ llmClient, sessionManager, onEvent: (e) => events.push(e) });
 
       await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'hi',
         model: 'test',
         systemPrompt: '',
@@ -2019,13 +2077,13 @@ describe('AgentRunner', () => {
       expect(repairEvent).toBeDefined();
       expect((repairEvent as { source: string }).source).toBe('recovered');
 
-      const records = sessionManager.getMessages('main');
+      const records = sessionManager.getMessages(MAIN_SESSION_ID);
       const toolResultRecord = records.find(r => r.message.role === 'toolResult');
       const trContent = toolResultRecord!.message.content as Array<{ tool_use_id: string; content: string }>;
       expect(trContent[0]!.content).toBe('[tool call interrupted; session recovered]');
     });
 
-    // ⑥ 【孤儿修复—no-op】
+    // Orphan-repair no-op.
     it('orphan repair: 干净 session（无孤儿）→ 不写盘、不 emit', async () => {
       const llmClient = createMockLLMClient([
         [
@@ -2040,24 +2098,24 @@ describe('AgentRunner', () => {
 
       const runner = new AgentRunner({ llmClient, sessionManager, onEvent: (e) => events.push(e) });
       await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'hi',
         model: 'test',
         systemPrompt: '',
         turnId: 't-no-orphan',
       });
 
-      // 没有 orphan_tool_results_repaired 事件
+      // No orphan_tool_results_repaired event is emitted.
       expect(events.find(e => e.type === 'orphan_tool_results_repaired')).toBeUndefined();
-      // appendMessage 调用中不应有 role='toolResult' 的调用（因为不存在真实 tool_use）
+      // No toolResult is appended because no real tool_use exists.
       const toolResultCalls = appendSpy.mock.calls.filter(c => (c[1] as { role: string }).role === 'toolResult');
       expect(toolResultCalls).toHaveLength(0);
     });
 
-    // ⑦ 【孤儿修复—write 失败不 crash】
+    // Orphan-repair write failure does not crash the Turn.
     it('orphan repair: write 失败 → log warn，turn 继续启动（不 rethrow）', async () => {
-      // 预置一个孤儿
-      await sessionManager.appendMessage('main', {
+      // Seed an orphan.
+      await sessionManager.appendMessage(MAIN_SESSION_ID, {
         role: 'assistant',
         content: [{ type: 'tool_use', id: 'x-1', name: 'echo', input: {} }],
       });
@@ -2070,7 +2128,7 @@ describe('AgentRunner', () => {
         ],
       ]);
 
-      // 让 appendMessage 在 repair 阶段（role='toolResult'）抛错，其他角色正常
+      // Fail appendMessage only for the repair toolResult.
       const originalAppend = sessionManager.appendMessage.bind(sessionManager);
       const appendSpy = vi.spyOn(sessionManager, 'appendMessage').mockImplementation(async (key, msg) => {
         if (msg.role === 'toolResult') {
@@ -2082,24 +2140,24 @@ describe('AgentRunner', () => {
       const runner = new AgentRunner({ llmClient, sessionManager });
 
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'hi',
         model: 'test',
         systemPrompt: '',
         turnId: 't-repair-fail',
       });
 
-      // turn 未 crash，正常完成
+      // The Turn completes normally.
       expect(result.stopReason).toBe('end_turn');
       expect(result.text).toBe('still ok');
       appendSpy.mockRestore();
     });
 
-    // ⑧ 【孤儿修复—partial-assistant 写盘失败边角（从磁盘为真的免疫属性）】
+    // Persisted-state recovery when writing a partial assistant fails.
     it('orphan repair: partial-assistant 写盘失败 → 磁盘无 assistant → 下轮 repair no-op', async () => {
       const controller = new AbortController();
 
-      // 让 assistant 写盘抛 IO error（模拟磁盘满）
+      // Simulate a disk-full error while writing the assistant.
       const originalAppend = sessionManager.appendMessage.bind(sessionManager);
       const appendSpy = vi.spyOn(sessionManager, 'appendMessage').mockImplementation(async (key, msg) => {
         if (msg.role === 'assistant') {
@@ -2108,7 +2166,7 @@ describe('AgentRunner', () => {
         return originalAppend(key, msg);
       });
 
-      // 第一 turn：LLM 中途 abort（触发 partial assistant 写路径）
+      // First Turn aborts midstream and enters partial-assistant persistence.
       const llmClient1: ModelInvocationPort = {
         async *chatStream(params: ModelInvocationRequest) {
           yield { type: 'message_start' };
@@ -2125,7 +2183,7 @@ describe('AgentRunner', () => {
 
       const runner1 = new AgentRunner({ llmClient: llmClient1, sessionManager });
       const result1 = await runner1.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'hi',
         model: 'test',
         systemPrompt: '',
@@ -2133,16 +2191,16 @@ describe('AgentRunner', () => {
         signal: controller.signal,
       });
 
-      // §4 never throws + 走 isAbortError fallback → aborted
+      // The section 4 fallback preserves the never-throws abort result.
       expect(result1.stopReason).toBe('aborted');
 
-      // 磁盘上只有 user（assistant 写失败），无孤儿
-      const recordsAfterAbort = sessionManager.getMessages('main');
+      // Only the user is persisted, so there is no tool-use orphan.
+      const recordsAfterAbort = sessionManager.getMessages(MAIN_SESSION_ID);
       expect(recordsAfterAbort.map(r => r.message.role)).toEqual(['user']);
 
       appendSpy.mockRestore();
 
-      // 第二 turn：起点 repair 应 no-op（因为磁盘没有孤儿）
+      // Repair is a no-op at the start of the second Turn.
       const events: AgentEvent[] = [];
       const llmClient2 = createMockLLMClient([
         [
@@ -2153,7 +2211,7 @@ describe('AgentRunner', () => {
       ]);
       const runner2 = new AgentRunner({ llmClient: llmClient2, sessionManager, onEvent: (e) => events.push(e) });
       await runner2.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'retry',
         model: 'test',
         systemPrompt: '',
@@ -2163,18 +2221,18 @@ describe('AgentRunner', () => {
       expect(events.find(e => e.type === 'orphan_tool_results_repaired')).toBeUndefined();
     });
 
-    // ⑨ 【R2 usage 累计】
+    // R2 cumulative usage.
     it('R2 usage 累计: abort 前跑过 3 轮 tool → 返回 usage 累计值，非 0/0', async () => {
       const controller = new AbortController();
       let round = 0;
 
-      // 每次 chatStream 调用返回一轮 mock usage {100,50}
+      // Each chatStream call reports mock usage {100, 50}.
       const llmClient: ModelInvocationPort = {
         async *chatStream(params: ModelInvocationRequest) {
           round++;
           yield { type: 'message_start' };
           if (round < 4) {
-            // 前 3 轮：返回 tool_use 触发下一轮
+            // The first three rounds request a tool and continue.
             yield {
               type: 'tool_call',
               call: {
@@ -2185,7 +2243,7 @@ describe('AgentRunner', () => {
             };
             yield { type: 'message_end', stopReason: 'tool_use', usage: { inputTokens: 100, outputTokens: 50 } };
           } else {
-            // 第 4 轮：LLM stream abort（partial stream 分支）
+            // The fourth round aborts in the partial-stream branch.
             yield { type: 'text_delta', text: 'partial' };
             controller.abort();
             if (params.signal?.aborted) {
@@ -2205,7 +2263,7 @@ describe('AgentRunner', () => {
       });
 
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'go',
         model: 'test',
         systemPrompt: '',
@@ -2214,12 +2272,12 @@ describe('AgentRunner', () => {
       });
 
       expect(result.stopReason).toBe('aborted');
-      // 3 轮 tool + partial stream 分支的 usage {0,0}
+      // Three tool rounds plus zero reported usage from the partial stream.
       expect(result.usage).toEqual({ inputTokens: 300, outputTokens: 150 });
       expect(result.toolRounds).toBe(3);
     });
 
-    // ⑩ 【R8 partial tool_use 完整性】
+    // R8 partial tool_use integrity.
     it('R8 partial tool_use: stream 到 tool_use 之前 abort → assistant 内容不含残缺 tool_use', async () => {
       const controller = new AbortController();
 
@@ -2227,8 +2285,7 @@ describe('AgentRunner', () => {
         async *chatStream(params: ModelInvocationRequest) {
           yield { type: 'message_start' };
           yield { type: 'text_delta', text: 'thinking…' };
-          // 在下发 tool_use（AnthropicClient 只在 content_block_stop 才 yield 完整 tool_use）
-          // 之前 abort：mock 层不发 tool_use 事件，直接抛 AbortError
+          // Abort before AnthropicClient would yield a complete tool_use.
           controller.abort();
           if (params.signal?.aborted) {
             const err = new Error('aborted');
@@ -2241,7 +2298,7 @@ describe('AgentRunner', () => {
 
       const runner = new AgentRunner({ llmClient, sessionManager });
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'hi',
         model: 'test',
         systemPrompt: '',
@@ -2250,15 +2307,15 @@ describe('AgentRunner', () => {
       });
 
       expect(result.stopReason).toBe('aborted');
-      // session 里 assistant 消息只含 text，不含任何 tool_use
-      const records = sessionManager.getMessages('main');
+      // The assistant record contains text only and no tool_use.
+      const records = sessionManager.getMessages(MAIN_SESSION_ID);
       const assistant = records.find(r => r.message.role === 'assistant')!;
       const content = assistant.message.content as Array<{ type: string }>;
       expect(content.every(b => b.type === 'text')).toBe(true);
       expect(content.some(b => b.type === 'tool_use')).toBe(false);
     });
 
-    // ⑪ 【R11 isAbortError fallback + 诊断 log】
+    // R11 isAbortError fallback diagnostics.
     it('R11 fallback: NetworkError + signal.aborted → 走 abort 分支 + log.warn 命中', async () => {
       const controller = new AbortController();
       const agentLogger = (await import('../../platform/logger/index.js')).Logger.get('AgentRunner');
@@ -2268,8 +2325,7 @@ describe('AgentRunner', () => {
         async *chatStream(params: ModelInvocationRequest) {
           yield { type: 'message_start' };
           controller.abort();
-          // 名字不是 AbortError（模拟 SDK 内部把 err.name 吞成 NetworkError），
-          // 但 signal.aborted 为真 → isAbortError fallback 命中
+          // Simulate an SDK that reports NetworkError while the signal is aborted.
           if (params.signal?.aborted) {
             const err = new Error('network broken');
             err.name = 'NetworkError';
@@ -2281,7 +2337,7 @@ describe('AgentRunner', () => {
 
       const runner = new AgentRunner({ llmClient, sessionManager });
       const result = await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'hi',
         model: 'test',
         systemPrompt: '',
@@ -2290,7 +2346,7 @@ describe('AgentRunner', () => {
       });
 
       expect(result.stopReason).toBe('aborted');
-      // warn log 被调用，携带 errName='NetworkError'
+      // The warning includes errName='NetworkError'.
       const swallowedCall = warnSpy.mock.calls.find(
         c => c[0] === 'non-abort error swallowed by abort fallback',
       );
@@ -2299,7 +2355,7 @@ describe('AgentRunner', () => {
       warnSpy.mockRestore();
     });
 
-    // R11 对照组：真 AbortError 不应触发该 warn log
+    // A real AbortError does not trigger the fallback warning.
     it('R11 对照组: 真 AbortError 名字 → 不触发 fallback warn log', async () => {
       const controller = new AbortController();
       const agentLogger = (await import('../../platform/logger/index.js')).Logger.get('AgentRunner');
@@ -2311,7 +2367,7 @@ describe('AgentRunner', () => {
           controller.abort();
           if (params.signal?.aborted) {
             const err = new Error('aborted');
-            err.name = 'AbortError'; // 名字命中主判据
+            err.name = 'AbortError'; // Matches the primary name predicate.
             throw err;
           }
         },
@@ -2320,7 +2376,7 @@ describe('AgentRunner', () => {
 
       const runner = new AgentRunner({ llmClient, sessionManager });
       await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'hi',
         model: 'test',
         systemPrompt: '',
@@ -2335,16 +2391,15 @@ describe('AgentRunner', () => {
       warnSpy.mockRestore();
     });
 
-    // 【pending steering log-only】runAttempt 内 pendingSteering 非空时命中 abort →
-    // 触发 log.info('dropped pending steering on abort', ...)。核心 §7.2.3 行为。
-    // 注：spec §14.1 把这条列在 RuntimeApp tests，实际行为发生在 AgentRunner，故此处实现。
+    // Pending steering is logged when abort occurs before injection. The behavior
+    // belongs here even though the specification lists it with RuntimeApp tests.
     it('pending steering log-only: pendingSteering 非空时命中 abort 触发 log.info', async () => {
       const controller = new AbortController();
       const agentLogger = (await import('../../platform/logger/index.js')).Logger.get('AgentRunner');
       const infoSpy = vi.spyOn(agentLogger, 'info');
 
-      // 触发链路：第一轮 LLM 返回 tool_use → 跑完 tool → 拉 steering 消息（3 条）→
-      // 进入下一轮 while 迭代顶部时 signal 已 abort，命中丢弃分支。
+      // First round requests a tool, drains three steering messages, then reaches
+      // the next iteration with an aborted signal and discards them.
       let round = 0;
       const llmClient = createMockLLMClient([
         [
@@ -2359,20 +2414,20 @@ describe('AgentRunner', () => {
         sessionManager,
         toolExecutor: async () => {
           round++;
-          // tool 跑完后 abort → 下一轮 while 顶命中 signal check
+          // Abort after the tool so the next iteration hits the signal check.
           controller.abort();
           return { content: 'ok' };
         },
       });
 
       await runner.run({
-        sessionKey: 'main',
+        sessionId: MAIN_SESSION_ID,
         message: 'go',
         model: 'test',
         systemPrompt: '',
         turnId: 't-pending-steering',
         signal: controller.signal,
-        // getSteeringMessages 返回 3 条 steering，触发 pendingSteering 非空
+        // Return three steering messages so pendingSteering is non-empty.
         getSteeringMessages: async () => [
           { role: 'user', content: 's1' },
           { role: 'user', content: 's2' },

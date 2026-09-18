@@ -41,7 +41,7 @@ describe('Hook runner', () => {
       toolName: 'demo',
       input: { start: true },
       turnId: 'turn',
-      sessionKey: 'main',
+      sessionId: 'main',
       signal: new AbortController().signal,
     });
 
@@ -68,7 +68,7 @@ describe('Hook runner', () => {
       toolName: 'demo',
       input: {},
       turnId: 'turn',
-      sessionKey: 'main',
+      sessionId: 'main',
       signal: new AbortController().signal,
     })).resolves.toEqual({ action: 'deny', reason: 'blocked', input: {} });
     expect(later).not.toHaveBeenCalled();
@@ -83,7 +83,7 @@ describe('Hook runner', () => {
       toolName: 'demo',
       input: {},
       turnId: 'turn',
-      sessionKey: 'main',
+      sessionId: 'main',
       signal: new AbortController().signal,
     })).rejects.toThrow('hook failed');
   });
@@ -107,7 +107,7 @@ describe('Hook runner', () => {
       toolName: 'demo',
       input: {},
       turnId: 'turn',
-      sessionKey: 'main',
+      sessionId: 'main',
       signal: new AbortController().signal,
     })).rejects.toThrow('returned a non-JSON object input');
     expect(later).not.toHaveBeenCalled();
@@ -141,7 +141,7 @@ describe('Hook runner', () => {
       result: { callId: 'call', outcome: 'success', content: 'ok' },
       implementationStarted: true,
       turnId: 'turn',
-      sessionKey: 'main',
+      sessionId: 'main',
     }, new AbortController().signal, 1_000);
 
     await vi.waitFor(() => expect(entered).toEqual(['first', 'second']));
@@ -167,7 +167,7 @@ describe('Hook runner', () => {
       trigger: 'preemptive',
       estimatedTokens: 100,
       turnId: 'turn',
-      sessionKey: 'main',
+      sessionId: 'main',
     }, new AbortController().signal, 25);
 
     await vi.advanceTimersByTimeAsync(25);
@@ -194,7 +194,7 @@ describe('Hook runner', () => {
       trigger: 'overflow',
       estimatedTokens: 100,
       turnId: 'turn',
-      sessionKey: 'main',
+      sessionId: 'main',
     }, turn.signal, 1_000);
 
     await vi.waitFor(() => expect(observerSignal).toBeDefined());

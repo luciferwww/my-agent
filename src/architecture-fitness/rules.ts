@@ -57,10 +57,12 @@ const MIXED_PRODUCTION_PATHS = new Set([
   'src/runtime/summarize-assembled.ts',
   'src/runtime/tool-approval-policy.ts',
   'src/runtime/types.ts',
+  'src/core/session/errors.ts',
   'src/core/session/index.ts',
   'src/core/session/lock.ts',
   'src/core/session/SessionManager.ts',
   'src/core/session/store.ts',
+  'src/core/session/title.ts',
   'src/core/session/transcript.ts',
   'src/core/session/types.ts',
   'src/core/agent-context/index.ts',
@@ -670,7 +672,10 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
   if (sourcePath.startsWith('src/compat/')) {
     return 'Composition';
   }
-  if (sourcePath.startsWith('src/runtime/turn-interaction/')) {
+  if (
+    sourcePath.startsWith('src/runtime/session/')
+    || sourcePath.startsWith('src/runtime/turn-interaction/')
+  ) {
     return 'Application';
   }
   if (MIXED_PRODUCTION_PATHS.has(sourcePath)) {

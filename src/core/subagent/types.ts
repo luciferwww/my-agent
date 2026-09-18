@@ -50,7 +50,7 @@ export type SubagentTerminalFailure =
 
 export interface SubagentTerminalResult {
   runId: string;
-  sessionKey: string;
+  sessionId: string;
   turnId: string;
   text: string;
   /**
@@ -70,7 +70,7 @@ export interface SubagentDelegationRequest {
   readonly description: string;
   readonly prompt: string;
   readonly parent: {
-    readonly sessionKey: string;
+    readonly sessionId: string;
     readonly turnId: string;
     readonly toolUseId: string;
   };

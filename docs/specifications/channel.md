@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-15
+> Verified: 2026-09-18
 > Authority: Stable Channel contract
 
 ## Scope
@@ -30,7 +30,7 @@ type ChannelCompletion =
 
 A `ChannelContribution` creates one instance per generation. Publication exposes immutable narrow bindings with `id`, `send`, and optional interaction capability; it never exposes the factory, concrete instance, or stop authority.
 
-`ChannelRunRequest` carries session key, text or structured blocks, optional `modelReference`, optional `requestOverride`, optional LLM-call limit, and optional client ID.
+`ChannelRunRequest` carries the server-issued `sessionId`, text or structured blocks, optional `modelReference`, optional `requestOverride`, optional LLM-call limit, and optional client ID. A Channel never treats an omitted or unknown ID as an implicit Session create.
 
 ## Lifecycle invariants
 
@@ -51,7 +51,9 @@ A `ChannelContribution` creates one instance per generation. Publication exposes
 
 Runtime owns session queueing, origin routes, Abort, and target selection. Channel owns transport framing, connected-client audience, and presentation. Fanout failure is isolated per Channel/client and cannot change Runner outcome or sibling delivery.
 
-Model Catalog query and Abort are narrow Runtime capabilities; Channel does not own model facts or lifecycle state.
+Model Catalog query, Abort, and Session management are narrow Runtime capabilities; Channel does not own model facts or lifecycle state. Session management exposes create, list/get, rename, archive/unarchive, delete, and fork while Runtime remains the lifecycle policy owner.
+
+Selecting a new conversation is client-local state. CLI creates a Pending Session only when the first ordinary message is submitted, then immediately sends with the returned ID. WebSocket clients perform the same explicit `create_session` -> `session_created` -> `run_turn` sequence. WebSocket JSON properties use camelCase while `type` discriminator values use snake_case.
 
 When Runtime reports `provider_unregistered` or `model_rejected`, Channel presentation preserves the classified failure. A catalog-capable interactive client refreshes the current Catalog for explicit reselection; it does not substitute a Provider/Model or resubmit the failed Turn. Other resolution and invocation failures remain ordinary reported failures and retain the user's selection for an explicit retry.
 

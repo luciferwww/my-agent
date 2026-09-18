@@ -1,61 +1,103 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, readFile } from 'fs/promises';
-import { join } from 'path';
-import { tmpdir } from 'os';
-import { loadStore, updateStore } from './store.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { loadStore, SessionDataError, updateStore } from './store.js';
 
-describe('store', () => {
-  let dir: string;
+describe('Session Store', () => {
+  let root: string;
   let storePath: string;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'store-test-'));
-    storePath = join(dir, 'sessions.json');
+    root = await mkdtemp(join(tmpdir(), 'session-store-test-'));
+    const sessionsDir = join(root, 'sessions');
+    await mkdir(sessionsDir);
+    storePath = join(sessionsDir, 'sessions.json');
   });
 
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   });
 
-  it('returns empty object when file does not exist', () => {
-    const store = loadStore(storePath);
-    expect(store).toEqual({});
+  it('returns an empty versioned Store when the file is absent', () => {
+    expect(loadStore(storePath)).toEqual({ version: 1, sessions: {} });
   });
 
-  it('reads and writes correctly', async () => {
+  it('atomically persists the versioned Store wrapper', async () => {
+    const sessionId = randomUUID();
     await updateStore(storePath, (store) => {
-      store['main'] = {
-        sessionId: 'abc',
-        sessionKey: 'main',
-        sessionFile: 'abc.jsonl',
-        createdAt: 1000,
-        updatedAt: 1000,
+      store.sessions[sessionId] = {
+        sessionId,
+        title: 'First session',
+        createdAt: 10,
+        updatedAt: 10,
       };
     });
 
-    const store = loadStore(storePath);
-    expect(store['main']).toBeDefined();
-    expect(store['main']!.sessionId).toBe('abc');
+    expect(loadStore(storePath).sessions[sessionId]).toEqual({
+      sessionId,
+      title: 'First session',
+      createdAt: 10,
+      updatedAt: 10,
+    });
+    expect(JSON.parse(await readFile(storePath, 'utf8'))).toHaveProperty('version', 1);
   });
 
-  it('handles concurrent writes without data loss', async () => {
-    // 并发写入 3 个不同的 key
-    await Promise.all([
+  it('rejects the prior unversioned Store format', async () => {
+    const sessionId = randomUUID();
+    await writeFile(storePath, JSON.stringify({
+      main: { sessionId, sessionKey: 'main', sessionFile: `${sessionId}.jsonl` },
+    }));
+
+    expect(() => loadStore(storePath)).toThrowError(SessionDataError);
+  });
+
+  it('rejects key mismatches and unknown fork source references', async () => {
+    const sessionId = randomUUID();
+    const otherId = randomUUID();
+    await writeFile(storePath, JSON.stringify({
+      version: 1,
+      sessions: {
+        [sessionId]: {
+          sessionId: otherId,
+          createdAt: 10,
+          updatedAt: 10,
+        },
+      },
+    }));
+    expect(() => loadStore(storePath)).toThrowError(SessionDataError);
+
+    await writeFile(storePath, JSON.stringify({
+      version: 1,
+      sessions: {
+        [sessionId]: {
+          sessionId,
+          createdAt: 10,
+          updatedAt: 10,
+          forkedFromSessionId: otherId,
+        },
+      },
+    }));
+    expect(() => loadStore(storePath)).toThrowError(SessionDataError);
+  });
+
+  it('serializes concurrent writes without data loss', async () => {
+    const sessionIds = [randomUUID(), randomUUID(), randomUUID()];
+    await Promise.all(sessionIds.map((sessionId, index) => (
       updateStore(storePath, (store) => {
-        store['a'] = { sessionId: 'a', sessionKey: 'a', sessionFile: 'a.jsonl', createdAt: 1, updatedAt: 1 };
-      }),
-      updateStore(storePath, (store) => {
-        store['b'] = { sessionId: 'b', sessionKey: 'b', sessionFile: 'b.jsonl', createdAt: 2, updatedAt: 2 };
-      }),
-      updateStore(storePath, (store) => {
-        store['c'] = { sessionId: 'c', sessionKey: 'c', sessionFile: 'c.jsonl', createdAt: 3, updatedAt: 3 };
-      }),
-    ]);
+        store.sessions[sessionId] = {
+          sessionId,
+          createdAt: index + 1,
+          updatedAt: index + 1,
+        };
+      })
+    )));
 
     const store = loadStore(storePath);
-    expect(Object.keys(store)).toHaveLength(3);
-    expect(store['a']).toBeDefined();
-    expect(store['b']).toBeDefined();
-    expect(store['c']).toBeDefined();
+    expect(Object.keys(store.sessions)).toHaveLength(3);
+    for (const sessionId of sessionIds) {
+      expect(store.sessions[sessionId]).toBeDefined();
+    }
   });
 });

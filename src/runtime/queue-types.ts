@@ -18,7 +18,7 @@ export type MessageRouteContext = {
  */
 export type QueuedChannelTurn = {
   requestId: string;
-  sessionKey: string;
+  sessionId: string;
   message: string | ChatContentBlock[];
   launchContext?: TurnLaunchContext;
   routeContext?: MessageRouteContext;

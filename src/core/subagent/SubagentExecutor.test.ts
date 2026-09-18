@@ -66,7 +66,7 @@ describe('SubagentExecutor', () => {
       parentContextFiles: [],
       childDepth: 1,
       canSpawn: false,
-      childSessionKey: 'main:subagent:run:1',
+      childSessionId: '5a848f00-b15f-4a5e-a4cc-3e6aa47342b1',
       childTurnId: 'child-turn',
       signal,
       toolProjection,
@@ -75,7 +75,8 @@ describe('SubagentExecutor', () => {
     await executor.execute(prepared, resolvedModel);
 
     expect(prepared).toEqual(expect.objectContaining({
-      sessionKey: 'main:subagent:run:1',
+      sessionId: '5a848f00-b15f-4a5e-a4cc-3e6aa47342b1',
+      subagentDepth: 1,
       turnId: 'child-turn',
       message: 'Inspect the patch',
       maxLlmCalls: 4,
@@ -92,7 +93,8 @@ describe('SubagentExecutor', () => {
       safetyLevel: 'normal',
     });
     expect(run).toHaveBeenCalledWith(expect.objectContaining({
-      sessionKey: prepared.sessionKey,
+      sessionId: prepared.sessionId,
+      subagentDepth: prepared.subagentDepth,
       turnId: prepared.turnId,
       message: prepared.message,
       systemPrompt: prepared.systemPrompt,

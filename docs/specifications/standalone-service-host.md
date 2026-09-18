@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-17
+> Verified: 2026-09-18
 > Authority: Canonical standalone process Host contract
 
 ## Scope
@@ -30,7 +30,7 @@ Standalone process arguments select zero, one, or both Builtin Channels. Omissio
 
 Whitespace is not normalized. Empty segments, duplicate names, unknown/case-variant names, and mixed `none` are invalid. Selection is immutable for the process lifetime.
 
-Standalone supplies fixed WebSocket values `127.0.0.1:8787`, path `/ws`, approval enabled, and fixed CLI values Session key `main`, prompt `> `, approval enabled. These are not configurable in the global Agent document. The only top-level configuration namespaces are `agents`, `logger`, and `extensions`; retired `host` content is rejected directly. CLI selection and enabled Console Logger are incompatible because both own terminal presentation. The Host rejects the combination with `HOST_OUTPUT_CONFLICT`; File Logger is compatible.
+Standalone supplies fixed WebSocket values `127.0.0.1:8787`, path `/ws`, approval enabled, and fixed CLI values prompt `> ` and approval enabled. The CLI starts in a new-conversation state without a Session ID; its first ordinary message obtains a server-issued `sessionId`, and later messages reuse it until the user selects another or new Session. These values are not configurable in the global Agent document. The only top-level configuration namespaces are `agents`, `logger`, and `extensions`; retired `host` content is rejected directly. CLI selection and enabled Console Logger are incompatible because both own terminal presentation. The Host rejects the combination with `HOST_OUTPUT_CONFLICT`; File Logger is compatible.
 
 ## Composition and liveness
 

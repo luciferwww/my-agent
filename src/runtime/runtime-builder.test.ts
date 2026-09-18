@@ -160,6 +160,28 @@ function createHarness(options: {
   let input: RuntimeApplicationKernelInput | undefined;
   const application = Object.freeze({
     runTurn: vi.fn(),
+    createSession: vi.fn(async () => ({ sessionId: 'session' })),
+    listSessions: vi.fn(async () => []),
+    getSession: vi.fn(async (sessionId: string) => ({ sessionId, createdAt: 1, updatedAt: 1 })),
+    renameSession: vi.fn(async (sessionId: string, title: string | null) => ({
+      sessionId,
+      createdAt: 1,
+      updatedAt: 1,
+      ...(title === null ? {} : { title }),
+    })),
+    archiveSession: vi.fn(async (sessionId: string) => ({
+      sessionId,
+      createdAt: 1,
+      updatedAt: 1,
+      archivedAt: 1,
+    })),
+    unarchiveSession: vi.fn(async (sessionId: string) => ({
+      sessionId,
+      createdAt: 1,
+      updatedAt: 1,
+    })),
+    deleteSession: vi.fn(async () => undefined),
+    forkSession: vi.fn(async () => ({ sessionId: 'fork', createdAt: 1, updatedAt: 1 })),
     getModelCatalog: vi.fn(),
     abortTurn: vi.fn(() => ({ aborted: false, dropped: 0 })),
     reloadContextFiles: vi.fn(),
@@ -507,7 +529,7 @@ describe('Runtime Builder', () => {
 
     harness.getInput()!.fanoutAgentEvent({
       type: 'text_delta',
-      sessionKey: 'session',
+      sessionId: 'session',
       turnId: 'turn-old',
       text: 'done',
     });

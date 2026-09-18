@@ -1,27 +1,21 @@
-// ── SessionEntry（sessions.json 中的元数据） ────────────────
+// Session metadata stored in sessions.json.
 
 export interface SessionEntry {
   sessionId: string;
-  sessionKey: string;
-  sessionFile: string;
   createdAt: number;
   updatedAt: number;
-
-  status?: 'running' | 'done' | 'failed';
-  abortedLastRun?: boolean;
-
-  totalTokens?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-
-  compactionCount?: number;
-
-  spawnedBy?: string;
+  title?: string;
+  archivedAt?: number;
+  forkedFromSessionId?: string;
 }
 
-// ── Transcript 记录类型（JSONL 中每行的结构） ───────────────
+export interface UpdateSessionInput {
+  title?: string | null;
+}
 
-/** 所有记录的基础字段（对齐 pi-coding-agent 的 SessionEntryBase） */
+// Transcript record types, one record per JSONL line.
+
+/** Fields shared by every Transcript record. */
 export interface TranscriptEntryBase {
   type: string;
   id: string;
@@ -29,24 +23,27 @@ export interface TranscriptEntryBase {
   timestamp: string;
 }
 
-/** session 记录（JSONL 首行，文件元信息） */
+/** Transcript root record, stored as the first JSONL line. */
 export interface SessionRecord extends TranscriptEntryBase {
   type: 'session';
   version: number;
   cwd?: string;
+  provenance?: {
+    type: 'subagent';
+    callerSessionId: string;
+  };
 }
 
-/** message 记录（对齐 Anthropic API） */
+/** Persisted conversation message. */
 export interface MessageRecord extends TranscriptEntryBase {
   type: 'message';
   message: {
     role: 'user' | 'assistant' | 'toolResult';
     content: string | ContentBlock[];
     /**
-      * abort 路径标记。**透明持久化到 JSONL**，供调试 / audit / 未来不同
-      * UI 渲染使用。AgentRunner.loadHistory() 不把该字段发送给 LLM；仅用它
-      * 识别并过滤旧版本产生的空 aborted assistant 记录。
-     * 详见 core-abort-spec.md §6.5。
+      * Abort metadata is persisted unchanged for diagnostics, auditing, and UI
+      * rendering. AgentRunner.loadHistory() does not send it to the model; it
+      * only uses it to filter empty aborted assistant records.
      */
     abortMeta?: {
       partial: boolean;
@@ -55,39 +52,36 @@ export interface MessageRecord extends TranscriptEntryBase {
   };
 }
 
-/** compaction 记录（压缩摘要） */
+/** Persisted Compaction summary record. */
 export interface CompactionRecord extends TranscriptEntryBase {
   type: 'compaction';
-  /** LLM 生成的历史摘要文本（失败时为兜底文本） */
+  /** Model-generated history summary, or a fallback summary on failure. */
   summary: string;
   /**
-   * 保留区第一条消息的 ID。
-   * loadHistory() 用此字段截断历史：只取 firstKeptEntryId 之后的消息，
-   * 并在最前面注入摘要，避免重复加载已被压缩的旧消息。
+  * ID of the first retained message. loadHistory() uses it to omit compacted
+  * messages and prepend the summary.
    */
   firstKeptEntryId: string;
-  /** 压缩前的估算 token 数（含 SAFETY_MARGIN） */
+  /** Estimated token count before Compaction, including the safety margin. */
   tokensBefore: number;
-  /** 压缩后的估算 token 数（含 SAFETY_MARGIN） */
+  /** Estimated token count after Compaction, including the safety margin. */
   tokensAfter: number;
   /**
-   * 触发原因：
-   *   'preemptive' — runAttempt 开头的预判检测（checkContextBudget 返回 compact）
-   *   'overflow'   — 内层 90% 阈值检查或 LLM API 报错后的被动触发
-   *   'manual'     — 未来预留（用户手动触发）
+  * Trigger source: preflight budget check, overflow recovery, or an explicit
+  * manual request.
    */
   trigger: 'preemptive' | 'overflow' | 'manual';
   /**
-   * 被摘要替代的消息条数（压缩区消息数）。
-   * 纯审计字段，不参与运行时决策。
+  * Number of messages replaced by the summary. This is audit data and does
+  * not participate in Runtime decisions.
    */
   droppedMessages: number;
 }
 
-/** 所有 Transcript 记录的联合类型 */
+/** Union of all persisted Transcript records. */
 export type TranscriptEntry = SessionRecord | MessageRecord | CompactionRecord;
 
-// ── ContentBlock（对齐 Anthropic API） ──────────────────────
+// Content blocks aligned with the model message format.
 
 export type ContentBlock =
   | { type: 'text'; text: string }
@@ -99,15 +93,18 @@ export type ContentBlock =
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; tool_use_id: string; content: string };
 
-// ── Session Store 类型 ─────────────────────────────────────
+// Versioned Session Store.
 
-export type SessionStore = Record<string, SessionEntry>;
+export interface SessionStore {
+  version: 1;
+  sessions: Record<string, SessionEntry>;
+}
 
-// ── 内存中的 Transcript 状态 ────────────────────────────────
+// In-memory Transcript state.
 
 export interface TranscriptState {
-  /** 所有记录的索引（id → entry） */
+  /** Record index by ID. */
   byId: Map<string, TranscriptEntry>;
-  /** 当前活跃分支的末端指针 */
+  /** Active branch leaf. */
   leafId: string | null;
 }

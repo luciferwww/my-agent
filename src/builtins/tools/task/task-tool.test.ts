@@ -22,7 +22,8 @@ function profile(id: string, overrides: Partial<SubagentProfile> = {}): Subagent
 
 function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {
-    sessionKey: 'main',
+    sessionId: 'main',
+    subagentDepth: 0,
     turnId: 'turn-1',
     callId: 'tu-42',
     signal: new AbortController().signal,
@@ -37,7 +38,7 @@ function caps(canSpawn: boolean, depth = 0): SubagentCapabilities {
 function okResult(overrides: Partial<SubagentTerminalResult> = {}): SubagentTerminalResult {
   return {
     runId: 'run-1',
-    sessionKey: 'main:subagent:run-1:1',
+    sessionId: '5a848f00-b15f-4a5e-a4cc-3e6aa47342b1',
     turnId: 'child-turn-1',
     text: 'subagent final answer',
     outcome: 'ok',
@@ -75,7 +76,7 @@ function makeDeps(opts: BuildDepsOpts = {}) {
       return opts.runResult ?? okResult();
     },
   );
-  const getCapabilities = vi.fn((_sessionKey: string) => capabilities);
+  const getCapabilities = vi.fn((_depth: number) => capabilities);
 
   const deps: TaskToolDeps = {
     delegationPort: { delegate },
@@ -114,20 +115,20 @@ describe('createTaskTool — Tool shape', () => {
 // ── (a) ctx.callId is forwarded as parentToolUseId ─────
 
 describe('(a) Parent correlation forwarding', () => {
-  it('passes ctx.sessionKey / turnId / callId into the delegation request', async () => {
+  it('passes ctx Session identity / turnId / callId into the delegation request', async () => {
     const { deps, delegate } = makeDeps();
     const tool = createTaskTool(deps);
 
     await exec(
       tool,
       { description: 'x', prompt: 'y' },
-      makeCtx({ sessionKey: 'main', turnId: 'turn-7', callId: 'tu-999' }),
+      makeCtx({ sessionId: 'main', turnId: 'turn-7', callId: 'tu-999' }),
     );
 
     expect(delegate).toHaveBeenCalledTimes(1);
     const req = delegate.mock.calls[0]![0];
     expect(req.parent).toEqual({
-      sessionKey: 'main',
+      sessionId: 'main',
       turnId: 'turn-7',
       toolUseId: 'tu-999',
     });
@@ -218,11 +219,11 @@ describe('(c) depth check', () => {
     expect(delegate).toHaveBeenCalledTimes(1);
   });
 
-  it('queries capabilities with ctx.sessionKey', async () => {
+  it('queries capabilities with ctx.subagentDepth', async () => {
     const { deps, getCapabilities } = makeDeps();
     const tool = createTaskTool(deps);
-    await exec(tool, { description: 'x', prompt: 'y' }, makeCtx({ sessionKey: 'main:subagent:r:1' }));
-    expect(getCapabilities).toHaveBeenCalledWith('main:subagent:r:1');
+    await exec(tool, { description: 'x', prompt: 'y' }, makeCtx({ subagentDepth: 1 }));
+    expect(getCapabilities).toHaveBeenCalledWith(1);
   });
 });
 

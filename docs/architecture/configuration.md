@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented configuration behavior
-> Verified: 2026-09-17
+> Verified: 2026-09-18
 > Ownership: Agent configuration shape, defaults, precedence, immutable projections, and environment overrides
 > Ownership key: application-configuration
 

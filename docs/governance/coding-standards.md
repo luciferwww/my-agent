@@ -131,7 +131,7 @@ export class AgentRunner { }
 
 ```typescript
 // 从 session 加载历史消息，转换为 ChatMessage[]
-const history = this.loadHistory(params.sessionKey);
+const history = this.loadHistory(params.sessionId);
 ```
 
 ### 分隔线 — 文件内分区
@@ -150,7 +150,7 @@ const history = this.loadHistory(params.sessionKey);
 
 ```typescript
 // 抛出错误：明确的错误消息
-throw new Error(`Session key "${key}" not found`);
+throw new Error(`Session "${sessionId}" not found`);
 
 // 捕获错误：类型守卫
 try {

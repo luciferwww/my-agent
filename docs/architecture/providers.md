@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Provider behavior
-> Verified: 2026-09-17
+> Verified: 2026-09-18
 > Ownership: Provider-neutral invocation, normalized invocation failures, and concrete Anthropic-compatible and Copilot Relay integrations
 > Ownership key: provider-protocol-and-anthropic-adapter
 

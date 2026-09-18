@@ -6,6 +6,7 @@ import type {
   ChannelRuntimeCapabilities,
   ModelCatalogSnapshot,
 } from '../../../core/channel/index.js';
+import { SessionError } from '../../../core/session/index.js';
 import { WebSocketChannel } from './WebSocketChannel.js';
 
 describe('WebSocketChannel', () => {
@@ -68,17 +69,17 @@ describe('WebSocketChannel', () => {
 
     client.send(JSON.stringify({
       type: 'run_turn',
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'hello ws',
-      model_reference: { provider_id: 'test', model_id: modelId },
-      request_override: { max_output_tokens: 2048 },
+      modelReference: { providerId: 'test', modelId },
+      requestOverride: { maxOutputTokens: 2048 },
       maxLlmCalls: 7,
     }));
 
     await vi.waitFor(() => {
       expect(handler).toHaveBeenCalledWith({
         clientId: 'client-1',
-        sessionKey: 'main',
+        sessionId: 'main',
         message: 'hello ws',
         modelReference: { providerId: 'test', modelId },
         requestOverride: { maxOutputTokens: 2048 },
@@ -99,16 +100,45 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, { type: 'hello_ack', clientId: 'empty-model-client' });
     client.send(JSON.stringify({
       type: 'run_turn',
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'empty model id',
-      model_reference: { provider_id: 'test', model_id: '' },
+      modelReference: { providerId: 'test', modelId: '' },
     }));
 
     await vi.waitFor(() => expect(handler).toHaveBeenCalledWith({
       clientId: 'empty-model-client',
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'empty model id',
       modelReference: { providerId: 'test', modelId: '' },
+    }));
+  });
+
+  it('accepts camelCase mediaType and converts it to the internal content-block shape', async () => {
+    const handler = vi.fn(async () => undefined);
+    channel = new WebSocketChannel({ port: 0 });
+    channel.onMessage(handler);
+    await channel.start();
+
+    const client = await connectClient(channel);
+    clients.push(client);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'image-client' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'image-client' });
+    client.send(JSON.stringify({
+      type: 'run_turn',
+      sessionId: 'main',
+      message: [{
+        type: 'image',
+        source: { type: 'base64', mediaType: 'image/png', data: 'aGVsbG8=' },
+      }],
+    }));
+
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledWith({
+      clientId: 'image-client',
+      sessionId: 'main',
+      message: [{
+        type: 'image',
+        source: { type: 'base64', mediaType: 'image/png', data: 'aGVsbG8=' },
+      }],
     }));
   });
 
@@ -126,7 +156,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, { type: 'hello_ack', clientId: 'client-1' });
     client.send(JSON.stringify({
       type: 'run_turn',
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'legacy',
       ...legacyField,
     }));
@@ -134,7 +164,34 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'channel_error',
       code: 'INVALID_MESSAGE',
-      message: 'Legacy model/maxTokens fields are not supported; use model_reference/request_override.',
+      message: 'Legacy model/maxTokens fields are not supported; use modelReference/requestOverride.',
+    });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { model_reference: { provider_id: 'test', model_id: 'model' } },
+    { request_override: { max_output_tokens: 2048 } },
+  ])('rejects retired snake_case run_turn fields: %j', async (retiredField) => {
+    const handler = vi.fn(async () => undefined);
+    channel = new WebSocketChannel({ port: 0 });
+    channel.onMessage(handler);
+    await channel.start();
+
+    const client = await connectClient(channel);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'client-1' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'client-1' });
+    client.send(JSON.stringify({
+      type: 'run_turn',
+      sessionId: 'main',
+      message: 'retired',
+      ...retiredField,
+    }));
+
+    await expectMessage(client, {
+      type: 'channel_error',
+      code: 'INVALID_MESSAGE',
+      message: 'snake_case fields are not supported; use modelReference/requestOverride.',
     });
     expect(handler).not.toHaveBeenCalled();
   });
@@ -154,7 +211,7 @@ describe('WebSocketChannel', () => {
       }],
     };
 
-    it('returns a request-correlated snake_case Catalog after hello', async () => {
+    it('returns a request-correlated camelCase Catalog after hello', async () => {
       channel = new WebSocketChannel({ port: 0 });
       channel.onMessage(async () => undefined);
       channel.bindRuntimeCapabilities(capabilities(() => unavailableCatalog));
@@ -164,25 +221,25 @@ describe('WebSocketChannel', () => {
       clients.push(client);
       client.send(JSON.stringify({ type: 'hello', clientId: 'catalog-client' }));
       await expectMessage(client, { type: 'hello_ack', clientId: 'catalog-client' });
-      client.send(JSON.stringify({ type: 'get_model_catalog', request_id: 'catalog-1' }));
+      client.send(JSON.stringify({ type: 'get_model_catalog', requestId: 'catalog-1' }));
 
       await expectMessage(client, {
         type: 'model_catalog',
-        request_id: 'catalog-1',
+        requestId: 'catalog-1',
         catalog: {
           generation: 12,
-          default_selection: {
+          defaultSelection: {
             state: 'unavailable',
             reference: {
-              provider_id: 'copilot-relay',
-              model_id: 'missing-model',
+              providerId: 'copilot-relay',
+              modelId: 'missing-model',
             },
             reason: 'model_rejected',
           },
           providers: [{
-            provider_id: 'copilot-relay',
-            display_name: 'Copilot Relay',
-            models: [{ model_id: 'gpt-5.6-sol', display_name: 'GPT 5.6 Sol' }],
+            providerId: 'copilot-relay',
+            displayName: 'Copilot Relay',
+            models: [{ modelId: 'gpt-5.6-sol', displayName: 'GPT 5.6 Sol' }],
           }],
         },
       });
@@ -204,11 +261,11 @@ describe('WebSocketChannel', () => {
 
       const observerMessages = vi.fn();
       observer.on('message', observerMessages);
-      requester.send(JSON.stringify({ type: 'get_model_catalog', request_id: 'private-catalog' }));
+      requester.send(JSON.stringify({ type: 'get_model_catalog', requestId: 'private-catalog' }));
       const response = await nextMessage(requester);
       expect(response).toMatchObject({
         type: 'model_catalog',
-        request_id: 'private-catalog',
+        requestId: 'private-catalog',
       });
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(observerMessages).not.toHaveBeenCalled();
@@ -225,25 +282,25 @@ describe('WebSocketChannel', () => {
       clients.push(client);
       client.send(JSON.stringify({ type: 'hello', clientId: 'reload-client' }));
       await expectMessage(client, { type: 'hello_ack', clientId: 'reload-client' });
-      client.send(JSON.stringify({ type: 'get_model_catalog', request_id: 'before' }));
+      client.send(JSON.stringify({ type: 'get_model_catalog', requestId: 'before' }));
       const before = await nextMessage(client);
       expect((before.catalog as { generation: number }).generation).toBe(12);
 
       snapshot = { ...unavailableCatalog, generation: 13 };
-      client.send(JSON.stringify({ type: 'get_model_catalog', request_id: 'after' }));
+      client.send(JSON.stringify({ type: 'get_model_catalog', requestId: 'after' }));
       const after = await nextMessage(client);
-      expect(after.request_id).toBe('after');
+      expect(after.requestId).toBe('after');
       expect((after.catalog as { generation: number }).generation).toBe(13);
     });
 
-    it('rejects query before hello, blank request_id, and missing capability', async () => {
+    it('rejects query before hello, blank requestId, and missing capability', async () => {
       channel = new WebSocketChannel({ port: 0 });
       channel.onMessage(async () => undefined);
       await channel.start();
 
       const client = await connectClient(channel);
       clients.push(client);
-      client.send(JSON.stringify({ type: 'get_model_catalog', request_id: 'early' }));
+      client.send(JSON.stringify({ type: 'get_model_catalog', requestId: 'early' }));
       await expectMessage(client, {
         type: 'channel_error',
         code: 'SERVER_NOT_READY',
@@ -252,17 +309,193 @@ describe('WebSocketChannel', () => {
 
       client.send(JSON.stringify({ type: 'hello', clientId: 'catalog-client' }));
       await expectMessage(client, { type: 'hello_ack', clientId: 'catalog-client' });
-      client.send(JSON.stringify({ type: 'get_model_catalog', request_id: ' ' }));
+      client.send(JSON.stringify({ type: 'get_model_catalog', requestId: ' ' }));
       await expectMessage(client, {
         type: 'channel_error',
         code: 'INVALID_MESSAGE',
-        message: 'request_id must be a non-empty string.',
+        message: 'requestId must be a non-empty string.',
       });
-      client.send(JSON.stringify({ type: 'get_model_catalog', request_id: 'unbound' }));
+      client.send(JSON.stringify({ type: 'get_model_catalog', requestId: 'unbound' }));
       await expectMessage(client, {
         type: 'channel_error',
         code: 'SERVER_NOT_READY',
         message: 'Runtime Model Catalog is not bound.',
+      });
+    });
+  });
+
+  describe('Session creation protocol', () => {
+    it('returns a request-correlated server-issued sessionId after hello', async () => {
+      const createSession = vi.fn(async () => ({
+        sessionId: '123e4567-e89b-42d3-a456-426614174000',
+      }));
+      channel = new WebSocketChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      channel.bindRuntimeCapabilities(capabilities(
+        () => ({
+          generation: 1,
+          defaultSelection: { state: 'unset' },
+          providers: [],
+        }),
+        undefined,
+        sessionCapabilities({ createSession }),
+      ));
+      await channel.start();
+
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'session-client' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'session-client' });
+      client.send(JSON.stringify({ type: 'create_session', requestId: 'create-1' }));
+
+      await expectMessage(client, {
+        type: 'session_created',
+        requestId: 'create-1',
+        sessionId: '123e4567-e89b-42d3-a456-426614174000',
+      });
+      expect(createSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('supports create, first send, list, get, rename, and delete', async () => {
+      const sessionId = '123e4567-e89b-42d3-a456-426614174000';
+      const entry = { sessionId, createdAt: 1, updatedAt: 2, title: 'First message' };
+      const renamed = { ...entry, updatedAt: 3, title: 'Renamed' };
+      const sessionCapability = sessionCapabilities({
+        createSession: vi.fn(async () => ({ sessionId })),
+        listSessions: vi.fn(async () => [entry]),
+        getSession: vi.fn(async () => entry),
+        renameSession: vi.fn(async () => renamed),
+        deleteSession: vi.fn(async () => undefined),
+      });
+      const handler = vi.fn(async () => undefined);
+      channel = new WebSocketChannel({ port: 0 });
+      channel.onMessage(handler);
+      channel.bindRuntimeCapabilities(capabilities(
+        () => ({
+          generation: 1,
+          defaultSelection: { state: 'unset' },
+          providers: [],
+        }),
+        undefined,
+        sessionCapability,
+      ));
+      await channel.start();
+
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'session-flow-client' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'session-flow-client' });
+
+      client.send(JSON.stringify({ type: 'create_session', requestId: 'create-1' }));
+      await expectMessage(client, { type: 'session_created', requestId: 'create-1', sessionId });
+      client.send(JSON.stringify({ type: 'run_turn', sessionId, message: 'First message' }));
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledWith({
+        clientId: 'session-flow-client',
+        sessionId,
+        message: 'First message',
+      }));
+
+      client.send(JSON.stringify({ type: 'list_sessions', requestId: 'list-1' }));
+      await expectMessage(client, { type: 'sessions_listed', requestId: 'list-1', sessions: [entry] });
+      client.send(JSON.stringify({ type: 'get_session', requestId: 'get-1', sessionId }));
+      await expectMessage(client, { type: 'session_retrieved', requestId: 'get-1', session: entry });
+      client.send(JSON.stringify({
+        type: 'rename_session',
+        requestId: 'rename-1',
+        sessionId,
+        title: 'Renamed',
+      }));
+      await expectMessage(client, {
+        type: 'session_renamed',
+        requestId: 'rename-1',
+        session: renamed,
+      });
+      client.send(JSON.stringify({ type: 'delete_session', requestId: 'delete-1', sessionId }));
+      await expectMessage(client, { type: 'session_deleted', requestId: 'delete-1', sessionId });
+
+      expect(sessionCapability.renameSession).toHaveBeenCalledWith(sessionId, 'Renamed');
+      expect(sessionCapability.deleteSession).toHaveBeenCalledWith(sessionId);
+    });
+
+    it('supports archive, unarchive, and fork and preserves Session error codes', async () => {
+      const sessionId = '123e4567-e89b-42d3-a456-426614174000';
+      const forkId = '223e4567-e89b-42d3-a456-426614174000';
+      const entry = { sessionId, createdAt: 1, updatedAt: 2, archivedAt: 3 };
+      const unarchived = { sessionId, createdAt: 1, updatedAt: 4 };
+      const forked = { sessionId: forkId, createdAt: 5, updatedAt: 5 };
+      const sessionCapability = sessionCapabilities({
+        archiveSession: vi.fn(async () => entry),
+        unarchiveSession: vi.fn(async () => unarchived),
+        forkSession: vi.fn(async () => forked),
+        getSession: vi.fn(async () => {
+          throw new SessionError('SESSION_NOT_FOUND', 'Session does not exist.');
+        }),
+      });
+      channel = new WebSocketChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      channel.bindRuntimeCapabilities(capabilities(undefined, undefined, sessionCapability));
+      await channel.start();
+
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'session-lifecycle-client' }));
+      await expectMessage(client, {
+        type: 'hello_ack',
+        clientId: 'session-lifecycle-client',
+      });
+
+      client.send(JSON.stringify({ type: 'archive_session', requestId: 'archive-1', sessionId }));
+      await expectMessage(client, {
+        type: 'session_archived',
+        requestId: 'archive-1',
+        session: entry,
+      });
+      client.send(JSON.stringify({
+        type: 'unarchive_session',
+        requestId: 'unarchive-1',
+        sessionId,
+      }));
+      await expectMessage(client, {
+        type: 'session_unarchived',
+        requestId: 'unarchive-1',
+        session: unarchived,
+      });
+      client.send(JSON.stringify({
+        type: 'fork_session',
+        requestId: 'fork-1',
+        sessionId,
+        entryId: 'entry-1',
+      }));
+      await expectMessage(client, {
+        type: 'session_forked',
+        requestId: 'fork-1',
+        session: forked,
+      });
+      expect(sessionCapability.forkSession).toHaveBeenCalledWith(sessionId, 'entry-1');
+
+      client.send(JSON.stringify({ type: 'get_session', requestId: 'get-missing', sessionId }));
+      await expectMessage(client, {
+        type: 'channel_error',
+        code: 'SESSION_NOT_FOUND',
+        message: 'Session does not exist.',
+      });
+    });
+
+    it('rejects a create request when the Session capability is not bound', async () => {
+      channel = new WebSocketChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      await channel.start();
+
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'session-client' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'session-client' });
+      client.send(JSON.stringify({ type: 'create_session', requestId: 'create-1' }));
+
+      await expectMessage(client, {
+        type: 'channel_error',
+        code: 'SERVER_NOT_READY',
+        message: 'Runtime Session capability is not bound.',
       });
     });
   });
@@ -283,7 +516,7 @@ describe('WebSocketChannel', () => {
       kind: 'approval',
       toolName: 'write_file',
       input: { path: 'README.md' },
-      sessionKey: 'main',
+      sessionId: 'main',
       turnId: 'turn-1',
       originClientId: 'client-1',
     };
@@ -318,7 +551,7 @@ describe('WebSocketChannel', () => {
       kind: 'approval',
       toolName: 'write_file',
       input: {},
-      sessionKey: 'main',
+      sessionId: 'main',
       turnId: 'turn-missing',
       originClientId: 'missing-client',
     })).toEqual({ status: 'unavailable', reason: 'delivery_failed' });
@@ -339,7 +572,7 @@ describe('WebSocketChannel', () => {
       kind: 'approval',
       toolName: 'write_file',
       input: {},
-      sessionKey: 'main',
+      sessionId: 'main',
       turnId: 'turn-close',
       originClientId: 'client-close',
     };
@@ -382,7 +615,7 @@ describe('WebSocketChannel', () => {
       kind: 'approval',
       toolName: 'write_file',
       input: {},
-      sessionKey: 'main',
+      sessionId: 'main',
       turnId: 'turn-replace',
       originClientId: 'client-replace',
     };
@@ -452,7 +685,7 @@ describe('WebSocketChannel', () => {
       kind: 'approval',
       toolName: 'write_file',
       input: {},
-      sessionKey: 'main',
+      sessionId: 'main',
       turnId: 'turn-disconnect',
       originClientId: 'client-disconnect',
     });
@@ -482,13 +715,13 @@ describe('WebSocketChannel', () => {
     const client = await connectClient(channel);
     client.send(JSON.stringify({ type: 'hello', clientId: 'client-resolution' }));
     await expectMessage(client, { type: 'hello_ack', clientId: 'client-resolution' });
-    client.send(JSON.stringify({ type: 'run_turn', sessionKey: 'main', message: 'hi' }));
+    client.send(JSON.stringify({ type: 'run_turn', sessionId: 'main', message: 'hi' }));
     await vi.waitFor(() => expect(handler).toHaveBeenCalled());
 
     channel.send({
       type: 'error',
       requestId: 'request-resolution',
-      sessionKey: 'main',
+      sessionId: 'main',
       turnId: 'resolution-turn',
       error: new Error('Provider is not registered.'),
       category: 'provider_unregistered',
@@ -498,7 +731,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'error',
       requestId: 'request-resolution',
-      sessionKey: 'main',
+      sessionId: 'main',
       turnId: 'resolution-turn',
       error: 'Provider is not registered.',
       category: 'provider_unregistered',
@@ -506,7 +739,7 @@ describe('WebSocketChannel', () => {
     });
   });
 
-  it('routes queued request_end by origin message and serializes request ids as snake_case', async () => {
+  it('routes queued request_end by origin message with camelCase fields', async () => {
     const handler = vi.fn(async () => undefined);
     channel = new WebSocketChannel({ port: 0 });
     channel.onMessage(handler);
@@ -515,12 +748,12 @@ describe('WebSocketChannel', () => {
     const client = await connectClient(channel);
     client.send(JSON.stringify({ type: 'hello', clientId: 'client-request-end' }));
     await expectMessage(client, { type: 'hello_ack', clientId: 'client-request-end' });
-    client.send(JSON.stringify({ type: 'run_turn', sessionKey: 'main', message: 'hi' }));
+    client.send(JSON.stringify({ type: 'run_turn', sessionId: 'main', message: 'hi' }));
     await vi.waitFor(() => expect(handler).toHaveBeenCalled());
 
     channel.send({
       type: 'user_message',
-      sessionKey: 'main',
+      sessionId: 'main',
       messageId: 'origin-queued',
       content: 'queued',
       originClientId: 'client-request-end',
@@ -529,7 +762,7 @@ describe('WebSocketChannel', () => {
     });
     await expectMessage(client, {
       type: 'user_message',
-      sessionKey: 'main',
+      sessionId: 'main',
       messageId: 'origin-queued',
       content: 'queued',
       originClientId: 'client-request-end',
@@ -546,17 +779,17 @@ describe('WebSocketChannel', () => {
 
     await expectMessage(client, {
       type: 'request_end',
-      request_id: 'request-queued',
-      origin_message_id: 'origin-queued',
+      requestId: 'request-queued',
+      originMessageId: 'origin-queued',
       outcome: 'cancelled',
       reason: 'shutdown',
     });
   });
 
-  // PR-7: subagent_* events carry the child sessionKey; WebSocketChannel must
+  // Subagent events carry the Child UUID; WebSocketChannel must
   // route them to the parent's audience so subscribers actually see them.
   describe('subagent event audience routing', () => {
-    it('routes subagent_start to the parent sessionKey audience', async () => {
+    it('routes subagent_start to the caller Session audience', async () => {
       const handler = vi.fn(async () => undefined);
       channel = new WebSocketChannel({ port: 0 });
       channel.onMessage(handler);
@@ -567,19 +800,19 @@ describe('WebSocketChannel', () => {
       await expectMessage(client, { type: 'hello_ack', clientId: 'client-1' });
 
       // Subscribe to 'main' by running a turn against it.
-      client.send(JSON.stringify({ type: 'run_turn', sessionKey: 'main', message: 'hi' }));
+      client.send(JSON.stringify({ type: 'run_turn', sessionId: 'main', message: 'hi' }));
       await vi.waitFor(() => expect(handler).toHaveBeenCalled());
 
       channel.send({
         type: 'subagent_start',
         requestId: 'request-1',
         runId: 'run-1',
-        sessionKey: 'main:subagent:run-1:1',
+        sessionId: '5cb8b687-f263-4355-9d09-7749064e3319',
         turnId: 'child-turn-1',
         depth: 1,
         subagentType: 'general-purpose',
         lifecycle: 'blocking',
-        parentSessionKey: 'main',
+        callerSessionId: 'main',
         parentTurnId: 'parent-turn-1',
         parentToolUseId: 'tu-1',
       });
@@ -588,12 +821,12 @@ describe('WebSocketChannel', () => {
         type: 'subagent_start',
         requestId: 'request-1',
         runId: 'run-1',
-        sessionKey: 'main:subagent:run-1:1',
+        sessionId: '5cb8b687-f263-4355-9d09-7749064e3319',
         turnId: 'child-turn-1',
         depth: 1,
         subagentType: 'general-purpose',
         lifecycle: 'blocking',
-        parentSessionKey: 'main',
+        callerSessionId: 'main',
         parentTurnId: 'parent-turn-1',
         parentToolUseId: 'tu-1',
       });
@@ -617,14 +850,14 @@ describe('WebSocketChannel', () => {
       await expectMessage(clientB, { type: 'hello_ack', clientId: 'client-B' });
 
       // Both subscribe to 'main' via run_turn
-      clientA.send(JSON.stringify({ type: 'run_turn', sessionKey: 'main', message: 'first' }));
-      clientB.send(JSON.stringify({ type: 'run_turn', sessionKey: 'main', message: 'second' }));
+      clientA.send(JSON.stringify({ type: 'run_turn', sessionId: 'main', message: 'first' }));
+      clientB.send(JSON.stringify({ type: 'run_turn', sessionId: 'main', message: 'second' }));
       await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(2));
 
       const timestamp = Date.now();
       channel.send({
         type: 'user_message',
-        sessionKey: 'main',
+        sessionId: 'main',
         messageId: 'msg-abc',
         content: 'hello everyone',
         attachmentSummaries: [{ type: 'image', mime: 'image/png', bytes: 1024 }],
@@ -635,7 +868,7 @@ describe('WebSocketChannel', () => {
 
       const expected = {
         type: 'user_message',
-        sessionKey: 'main',
+        sessionId: 'main',
         messageId: 'msg-abc',
         content: 'hello everyone',
         attachmentSummaries: [{ type: 'image', mime: 'image/png', bytes: 1024 }],
@@ -648,7 +881,7 @@ describe('WebSocketChannel', () => {
       await expectMessage(clientB, expected);
     });
 
-    it('routes subagent_end to the parent sessionKey audience', async () => {
+    it('routes subagent_end to the caller Session audience', async () => {
       const handler = vi.fn(async () => undefined);
       channel = new WebSocketChannel({ port: 0 });
       channel.onMessage(handler);
@@ -658,19 +891,19 @@ describe('WebSocketChannel', () => {
       client.send(JSON.stringify({ type: 'hello', clientId: 'client-1' }));
       await expectMessage(client, { type: 'hello_ack', clientId: 'client-1' });
 
-      client.send(JSON.stringify({ type: 'run_turn', sessionKey: 'main', message: 'hi' }));
+      client.send(JSON.stringify({ type: 'run_turn', sessionId: 'main', message: 'hi' }));
       await vi.waitFor(() => expect(handler).toHaveBeenCalled());
 
       channel.send({
         type: 'subagent_end',
         requestId: 'request-1',
         runId: 'run-1',
-        sessionKey: 'main:subagent:run-1:1',
+        sessionId: '5cb8b687-f263-4355-9d09-7749064e3319',
         turnId: 'child-turn-1',
         depth: 1,
         subagentType: 'general-purpose',
         lifecycle: 'blocking',
-        parentSessionKey: 'main',
+        callerSessionId: 'main',
         parentTurnId: 'parent-turn-1',
         parentToolUseId: 'tu-1',
         outcome: 'ok',
@@ -682,12 +915,12 @@ describe('WebSocketChannel', () => {
         type: 'subagent_end',
         requestId: 'request-1',
         runId: 'run-1',
-        sessionKey: 'main:subagent:run-1:1',
+        sessionId: '5cb8b687-f263-4355-9d09-7749064e3319',
         turnId: 'child-turn-1',
         depth: 1,
         subagentType: 'general-purpose',
         lifecycle: 'blocking',
-        parentSessionKey: 'main',
+        callerSessionId: 'main',
         parentTurnId: 'parent-turn-1',
         parentToolUseId: 'tu-1',
         outcome: 'ok',
@@ -700,7 +933,7 @@ describe('WebSocketChannel', () => {
   // ── Abort (core-abort-spec.md §13) ─────────────────────
 
   describe('abort_turn', () => {
-    it('inbound abort_turn → capabilities.abort.abortTurn called with sessionKey', async () => {
+    it('inbound abort_turn → capabilities.abort.abortTurn called with sessionId', async () => {
       const abortTurn = vi.fn(() => ({ aborted: true, dropped: 0 }));
       const query = vi.fn(() => []);
 
@@ -717,7 +950,7 @@ describe('WebSocketChannel', () => {
       client.send(JSON.stringify({ type: 'hello', clientId: 'client-abort' }));
       await expectMessage(client, { type: 'hello_ack', clientId: 'client-abort' });
 
-      client.send(JSON.stringify({ type: 'abort_turn', sessionKey: 'main' }));
+      client.send(JSON.stringify({ type: 'abort_turn', sessionId: 'main' }));
 
       await vi.waitFor(() => {
         expect(abortTurn).toHaveBeenCalledTimes(1);
@@ -739,13 +972,13 @@ describe('WebSocketChannel', () => {
       await expectMessage(client, { type: 'hello_ack', clientId: 'client-observer' });
 
       // Subscribe to the session audience so send() will fan to this client.
-      client.send(JSON.stringify({ type: 'run_turn', sessionKey: 'main', message: 'anything' }));
+      client.send(JSON.stringify({ type: 'run_turn', sessionId: 'main', message: 'anything' }));
       await vi.waitFor(() => expect(handler).toHaveBeenCalled());
 
       channel.send({
         type: 'run_end',
         requestId: 'request-aborted-1',
-        sessionKey: 'main',
+        sessionId: 'main',
         turnId: 'turn-aborted-1',
         result: {
           text: 'partial reply',
@@ -759,7 +992,7 @@ describe('WebSocketChannel', () => {
       await expectMessage(client, {
         type: 'run_end',
         requestId: 'request-aborted-1',
-        sessionKey: 'main',
+        sessionId: 'main',
         turnId: 'turn-aborted-1',
         result: {
           text: 'partial reply',
@@ -795,14 +1028,41 @@ async function nextMessage(client: WebSocket): Promise<Record<string, unknown>> 
 }
 
 function capabilities(
-  getSnapshot: () => ModelCatalogSnapshot,
+  getSnapshot: () => ModelCatalogSnapshot = () => ({
+    generation: 1,
+    defaultSelection: { state: 'unset' },
+    providers: [],
+  }),
   abort: ChannelRuntimeCapabilities['abort'] = {
     querySessionsNeedingAbort: () => [],
     abortTurn: () => ({ aborted: false, dropped: 0 }),
   },
+  sessions: ChannelRuntimeCapabilities['sessions'] = sessionCapabilities(),
 ): ChannelRuntimeCapabilities {
   return {
     modelCatalog: { getSnapshot },
     abort,
+    sessions,
+  };
+}
+
+function sessionCapabilities(
+  overrides: Partial<ChannelRuntimeCapabilities['sessions']> = {},
+): ChannelRuntimeCapabilities['sessions'] {
+  const sessionId = '123e4567-e89b-42d3-a456-426614174000';
+  const entry = { sessionId, createdAt: 1, updatedAt: 1 };
+  return {
+    createSession: async () => ({ sessionId }),
+    listSessions: async () => [],
+    getSession: async () => entry,
+    renameSession: async (_sessionId, title) => ({
+      ...entry,
+      ...(title === null ? {} : { title }),
+    }),
+    archiveSession: async () => ({ ...entry, archivedAt: 2 }),
+    unarchiveSession: async () => entry,
+    deleteSession: async () => undefined,
+    forkSession: async () => ({ ...entry, sessionId: '223e4567-e89b-42d3-a456-426614174000' }),
+    ...overrides,
   };
 }

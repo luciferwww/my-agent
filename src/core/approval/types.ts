@@ -14,7 +14,7 @@ export interface CurrentCallApprovalCapability {
       readonly callId: string;
       readonly toolName: string;
       readonly input: Readonly<Record<string, unknown>>;
-      readonly sessionKey: string;
+      readonly sessionId: string;
       readonly turnId: string;
     },
     signal: AbortSignal,

@@ -113,8 +113,6 @@ export interface CliChannelConfig {
   input?: NodeJS.ReadableStream;
   output?: NodeJS.WritableStream;
   prompt?: string;
-  /** 单 channel 单 session：所有 CLI 输入归到此 sessionKey。默认 'main' */
-  sessionKey?: string;
   /** 启用审批交互；启用时收到审批请求会阻塞 readline 等待 y/n */
   approval?: boolean;
 }
@@ -127,7 +125,7 @@ export class CliChannel implements Channel {
   private readonly input: NodeJS.ReadableStream;
   private readonly output: NodeJS.WritableStream;
   private readonly promptText: string;
-  private readonly sessionKey: string;
+  private sessionId?: string;
   private rl?: readline.Interface;
 
   private messageHandler?: (req: ChannelRunRequest) => Promise<void>;
@@ -145,14 +143,13 @@ export class CliChannel implements Channel {
   // ── Abort / Ctrl+C 状态（core-abort-spec.md §12）─────────────
   /** 上次 Ctrl+C 时间戳（epoch ms）；0 = 没有近期按键。用于双击检测。 */
   private lastCtrlCAt = 0;
-  /** Runtime Composition 在 start 前注入的窄能力；独立使用时为 undefined。 */
+  /** Runtime Composition 在 start 前注入；未绑定时模型查询和首次 Session 创建不可用。 */
   private runtimeCapabilities?: ChannelRuntimeCapabilities;
   private selectedModelOverride?: ModelReference;
   constructor(config: CliChannelConfig = {}) {
     this.input = config.input ?? process.stdin;
     this.output = config.output ?? process.stdout;
     this.promptText = config.prompt ?? '> ';
-    this.sessionKey = config.sessionKey ?? 'main';
     this.completion = new Promise<ChannelCompletion>((resolve) => {
       this.settleCompletion = (result) => {
         if (this.completionSettled) return;
@@ -268,7 +265,6 @@ export class CliChannel implements Channel {
     this.messageHandler = handler;
     log.debug('message handler registered', {
       channelId: this.id,
-      sessionKey: this.sessionKey,
     });
   }
 
@@ -301,7 +297,7 @@ export class CliChannel implements Channel {
       });
       log.info('cli channel readline closed', {
         channelId: this.id,
-        sessionKey: this.sessionKey,
+        sessionId: this.sessionId,
       });
     });
 
@@ -314,7 +310,6 @@ export class CliChannel implements Channel {
 
     log.info('cli channel started', {
       channelId: this.id,
-      sessionKey: this.sessionKey,
       approvalEnabled: !!this.interaction,
     });
 
@@ -341,11 +336,12 @@ export class CliChannel implements Channel {
 
         log.info('cli input received', {
           channelId: this.id,
-          sessionKey: this.sessionKey,
+          sessionId: this.sessionId,
           length: trimmed.length,
         });
 
         try {
+          if (await this.handleSessionCommand(line)) continue;
           if (this.handleModelCommand(line)) continue;
           if (this.selectedModelOverride) {
             const snapshot = this.getModelCatalog();
@@ -357,8 +353,9 @@ export class CliChannel implements Channel {
               continue;
             }
           }
+          const sessionId = await this.getOrCreateSessionId();
           await messageHandler({
-            sessionKey: this.sessionKey,
+            sessionId,
             message: trimmed,
             ...(this.selectedModelOverride
               ? { modelReference: { ...this.selectedModelOverride } }
@@ -366,7 +363,7 @@ export class CliChannel implements Channel {
           });
           log.debug('cli input dispatched', {
             channelId: this.id,
-            sessionKey: this.sessionKey,
+            sessionId,
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -374,7 +371,7 @@ export class CliChannel implements Channel {
           this.output.write(red(`[error] ${message}\n`));
           log.error('cli message handling failed', {
             channelId: this.id,
-            sessionKey: this.sessionKey,
+            sessionId: this.sessionId,
             error: message,
           });
         }
@@ -386,7 +383,7 @@ export class CliChannel implements Channel {
       });
       log.info('cli channel stopped', {
         channelId: this.id,
-        sessionKey: this.sessionKey,
+        sessionId: this.sessionId,
       });
     } catch (error) {
       this.settleCompletion({
@@ -395,6 +392,104 @@ export class CliChannel implements Channel {
         error: error instanceof Error ? error : new Error(String(error)),
       });
     }
+  }
+
+  private async handleSessionCommand(input: string): Promise<boolean> {
+    if (input !== '/sessions' && input !== '/session' && !input.startsWith('/session ')) {
+      return false;
+    }
+    this.breakStream();
+    const capability = this.runtimeCapabilities?.sessions;
+    if (!capability) {
+      this.output.write(red('[session unavailable] Runtime Session capability is not bound.\n'));
+      return true;
+    }
+
+    if (input === '/sessions') {
+      const sessions = await capability.listSessions();
+      this.output.write(cyan('[sessions]\n'));
+      if (sessions.length === 0) {
+        this.output.write(dim('  No persisted Sessions.\n'));
+        return true;
+      }
+      for (const session of sessions) {
+        const current = session.sessionId === this.sessionId ? ' [current]' : '';
+        const title = session.title ? ` ${formatTerminalText(session.title)}` : '';
+        this.output.write(`  ${session.sessionId}${current}${title}\n`);
+      }
+      return true;
+    }
+
+    if (input === '/session') {
+      if (!this.sessionId) {
+        this.output.write('[session] new (not yet created)\n');
+        return true;
+      }
+      const session = await capability.getSession(this.sessionId);
+      this.output.write(
+        `[session] ${session.sessionId}${session.title ? ` ${formatTerminalText(session.title)}` : ''}\n`,
+      );
+      return true;
+    }
+
+    const payload = input.slice('/session '.length);
+    if (payload === 'new') {
+      this.sessionId = undefined;
+      this.output.write(cyan('[session] new; the first message will create it.\n'));
+      return true;
+    }
+    if (payload.startsWith('use ')) {
+      const sessionId = payload.slice('use '.length).trim();
+      if (!sessionId) {
+        this.renderSessionUsage();
+        return true;
+      }
+      const session = await capability.getSession(sessionId);
+      this.sessionId = session.sessionId;
+      this.output.write(cyan(`[session] current ${session.sessionId}.\n`));
+      return true;
+    }
+    if (payload.startsWith('rename ')) {
+      if (!this.sessionId) {
+        this.output.write(red('[session error] No persisted Session is selected.\n'));
+        return true;
+      }
+      let title: unknown;
+      try {
+        title = JSON.parse(payload.slice('rename '.length));
+      } catch {
+        title = undefined;
+      }
+      if (title !== null && typeof title !== 'string') {
+        this.renderSessionUsage();
+        return true;
+      }
+      const session = await capability.renameSession(this.sessionId, title);
+      this.output.write(cyan(
+        `[session] renamed ${session.sessionId}${session.title ? ` ${formatTerminalText(session.title)}` : ''}.\n`,
+      ));
+      return true;
+    }
+    if (payload === 'delete') {
+      if (!this.sessionId) {
+        this.output.write(red('[session error] No persisted Session is selected.\n'));
+        return true;
+      }
+      const deletedSessionId = this.sessionId;
+      await capability.deleteSession(deletedSessionId);
+      this.sessionId = undefined;
+      this.output.write(cyan(`[session] deleted ${deletedSessionId}.\n`));
+      return true;
+    }
+
+    this.renderSessionUsage();
+    return true;
+  }
+
+  private renderSessionUsage(): void {
+    this.output.write(red(
+      '[session error] usage: /sessions | /session | /session new | /session use <sessionId> | /session rename <JSON-string|null> | /session delete\n',
+    ));
   }
 
   private handleModelCommand(input: string): boolean {
@@ -447,6 +542,18 @@ export class CliChannel implements Channel {
     this.selectedModelOverride = reference;
     this.output.write(cyan(`[model] override set to ${formatReference(reference)}.\n`));
     return true;
+  }
+
+  private async getOrCreateSessionId(): Promise<string> {
+    if (this.sessionId) return this.sessionId;
+    // Entering the new-Session state does not allocate an ID; the first message does.
+    const capability = this.runtimeCapabilities?.sessions;
+    if (!capability) {
+      throw new Error('Runtime Session capability is not bound.');
+    }
+    const { sessionId } = await capability.createSession();
+    this.sessionId = sessionId;
+    return sessionId;
   }
 
   private getModelCatalog(): ModelCatalogSnapshot | undefined {
@@ -517,7 +624,7 @@ export class CliChannel implements Channel {
     this.stopped = true;
     log.info('cli channel stopping', {
       channelId: this.id,
-      sessionKey: this.sessionKey,
+      sessionId: this.sessionId,
     });
     this.pendingPromptAbort?.abort(new Error('CliChannel stopped'));
     this.rl?.close();
@@ -539,7 +646,7 @@ export class CliChannel implements Channel {
    *  2. 更新 lastCtrlCAt（为双击窗口计时）。
    *  3. 查 `querySessionsNeedingAbort()`：
    *     - 空（无 active turn + 无 queue）→ 仅提示 "press again to exit"，不调 abort。
-  *     - 非空→ 对每个 sessionKey 调 `capabilities.abort.abortTurn(sk)`，依返回值中
+  *     - 非空→ 对每个 sessionId 调 `capabilities.abort.abortTurn(sessionId)`，依返回值中
    *       `aborted` / `dropped` 非零部分拼提示（可能只有其中一部分）。
    *
   * Runtime capabilities 未 bind 时直接当作 “无东西可 abort” 处理（退到提示分支），

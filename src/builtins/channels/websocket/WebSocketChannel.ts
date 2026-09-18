@@ -1,5 +1,5 @@
 import type { AgentEvent } from '../../../core/runner/types.js';
-import { isSubagentSessionKey, parseSubagentSessionKey } from '../../../core/subagent/index.js';
+import { SessionError, type SessionErrorCode } from '../../../core/session/index.js';
 import { Logger } from '../../../platform/logger/index.js';
 import { WS_MAX_PAYLOAD_BYTES } from '../../../core/media/constants.js';
 import type {
@@ -28,7 +28,8 @@ type ChannelErrorCode =
   | 'INVALID_JSON'
   | 'INVALID_MESSAGE'
   | 'UNSUPPORTED_MESSAGE'
-  | 'SERVER_NOT_READY';
+  | 'SERVER_NOT_READY'
+  | SessionErrorCode;
 
 type ClientMessage =
   | {
@@ -37,7 +38,7 @@ type ClientMessage =
     }
   | {
       type: 'run_turn';
-      sessionKey: string;
+      sessionId: string;
       message: string | InboundContentBlock[];
       modelReference?: ChannelRunRequest['modelReference'];
       requestOverride?: ChannelRunRequest['requestOverride'];
@@ -53,11 +54,42 @@ type ClientMessage =
       // clients observe completion via `run_end{stopReason:'aborted'}`
       // (§13.1). v1 has no auth check—WS server is a single trust domain.
       type: 'abort_turn';
-      sessionKey: string;
+      sessionId: string;
     }
   | {
       type: 'get_model_catalog';
       requestId: string;
+    }
+  | {
+      type: 'create_session';
+      requestId: string;
+    }
+  | {
+      type: 'list_sessions';
+      requestId: string;
+      archived?: boolean;
+    }
+  | {
+      type: 'get_session';
+      requestId: string;
+      sessionId: string;
+    }
+  | {
+      type: 'rename_session';
+      requestId: string;
+      sessionId: string;
+      title: string | null;
+    }
+  | {
+      type: 'archive_session' | 'unarchive_session' | 'delete_session';
+      requestId: string;
+      sessionId: string;
+    }
+  | {
+      type: 'fork_session';
+      requestId: string;
+      sessionId: string;
+      entryId?: string;
     };
 
 type OutboundMessage =
@@ -103,10 +135,10 @@ export class WebSocketChannel implements Channel {
   private readonly pendingApprovalClientIds = new Map<string, string>();
 
   /**
-    * Channel activation 同步注入：bindRuntimeCapabilities 先于 start()。
-    * 独立 Channel 使用时能力可能仍为 undefined。
+   * Channel activation 同步注入：bindRuntimeCapabilities 先于 start()。
+   * 独立使用时能力可能未绑定，此时需要能力的协议请求返回 SERVER_NOT_READY。
    */
-    private runtimeCapabilities?: ChannelRuntimeCapabilities;
+  private runtimeCapabilities?: ChannelRuntimeCapabilities;
 
   private started = false;
   private stopRequested = false;
@@ -133,26 +165,22 @@ export class WebSocketChannel implements Channel {
 
   send(event: AgentEvent): void {
     if (event.type === 'user_message') {
-      this.sessionByOriginMessageId.set(event.messageId, event.sessionKey);
+      this.sessionByOriginMessageId.set(event.messageId, event.sessionId);
     } else if (event.type === 'run_start' && event.originMessageId) {
       this.sessionByOriginMessageId.delete(event.originMessageId);
     }
-    // Subagent events carry the CHILD sessionKey (e.g. "main:subagent:abc:1"),
-    // but WebSocket clients subscribe to the parent's sessionKey. Re-derive
-    // the root label so events reach the right audience.
+    // Subagent events carry the Child UUID, while clients subscribe to the caller Session.
     const requestAudience = event.type === 'request_end' && event.originMessageId
       ? this.sessionByOriginMessageId.get(event.originMessageId)
       : undefined;
     if (event.type === 'request_end' && event.originMessageId) {
       this.sessionByOriginMessageId.delete(event.originMessageId);
     }
-    const eventSessionKey = 'sessionKey' in event ? event.sessionKey : requestAudience;
-    if (!eventSessionKey) return;
-    const audienceKey =
-      (event.type === 'subagent_start' || event.type === 'subagent_end') &&
-      isSubagentSessionKey(eventSessionKey)
-        ? parseSubagentSessionKey(eventSessionKey).rootLabel
-        : eventSessionKey;
+    const eventSessionId = 'sessionId' in event ? event.sessionId : requestAudience;
+    if (!eventSessionId) return;
+    const audienceKey = event.type === 'subagent_start' || event.type === 'subagent_end'
+      ? event.callerSessionId
+      : eventSessionId;
     const sessionAudience = this.sessions.get(audienceKey);
     if (!sessionAudience || sessionAudience.size === 0) return;
 
@@ -160,7 +188,7 @@ export class WebSocketChannel implements Channel {
       log.debug('broadcasting event to session audience', {
         channelId: this.id,
         eventType: event.type,
-        sessionKey: eventSessionKey,
+        sessionId: eventSessionId,
         audienceKey,
         audienceSize: sessionAudience.size,
       });
@@ -314,6 +342,18 @@ export class WebSocketChannel implements Channel {
         case 'get_model_catalog':
           this.handleGetModelCatalog(socket, message);
           return;
+        case 'create_session':
+          await this.handleCreateSession(socket, message);
+          return;
+        case 'list_sessions':
+        case 'get_session':
+        case 'rename_session':
+        case 'archive_session':
+        case 'unarchive_session':
+        case 'delete_session':
+        case 'fork_session':
+          await this.handleSessionRequest(socket, message);
+          return;
       }
     } catch (error) {
       if (error instanceof ProtocolError) {
@@ -350,18 +390,24 @@ export class WebSocketChannel implements Channel {
           clientId: readNonEmptyString(parsed.clientId, 'clientId'),
         };
       case 'run_turn':
+        if ('model_reference' in parsed || 'request_override' in parsed) {
+          throw new ProtocolError(
+            'INVALID_MESSAGE',
+            'snake_case fields are not supported; use modelReference/requestOverride.',
+          );
+        }
         if ('model' in parsed || 'maxTokens' in parsed) {
           throw new ProtocolError(
             'INVALID_MESSAGE',
-            'Legacy model/maxTokens fields are not supported; use model_reference/request_override.',
+            'Legacy model/maxTokens fields are not supported; use modelReference/requestOverride.',
           );
         }
         return {
           type,
-          sessionKey: readNonEmptyString(parsed.sessionKey, 'sessionKey'),
+          sessionId: readNonEmptyString(parsed.sessionId, 'sessionId'),
           message: readRunTurnMessage(parsed.message),
-          modelReference: readOptionalModelReference(parsed.model_reference),
-          requestOverride: readOptionalRequestOverride(parsed.request_override),
+          modelReference: readOptionalModelReference(parsed.modelReference),
+          requestOverride: readOptionalRequestOverride(parsed.requestOverride),
           maxLlmCalls: readOptionalPositiveInteger(parsed.maxLlmCalls, 'maxLlmCalls'),
         };
       case 'approval_resolve': {
@@ -378,12 +424,46 @@ export class WebSocketChannel implements Channel {
       case 'abort_turn':
         return {
           type,
-          sessionKey: readNonEmptyString(parsed.sessionKey, 'sessionKey'),
+          sessionId: readNonEmptyString(parsed.sessionId, 'sessionId'),
         };
       case 'get_model_catalog':
         return {
           type,
-          requestId: readNonEmptyString(parsed.request_id, 'request_id'),
+          requestId: readNonEmptyString(parsed.requestId, 'requestId'),
+        };
+      case 'create_session':
+        return {
+          type,
+          requestId: readNonEmptyString(parsed.requestId, 'requestId'),
+        };
+      case 'list_sessions':
+        return {
+          type,
+          requestId: readNonEmptyString(parsed.requestId, 'requestId'),
+          archived: readOptionalBoolean(parsed.archived, 'archived'),
+        };
+      case 'get_session':
+      case 'archive_session':
+      case 'unarchive_session':
+      case 'delete_session':
+        return {
+          type,
+          requestId: readNonEmptyString(parsed.requestId, 'requestId'),
+          sessionId: readNonEmptyString(parsed.sessionId, 'sessionId'),
+        };
+      case 'rename_session':
+        return {
+          type,
+          requestId: readNonEmptyString(parsed.requestId, 'requestId'),
+          sessionId: readNonEmptyString(parsed.sessionId, 'sessionId'),
+          title: readNullableString(parsed.title, 'title'),
+        };
+      case 'fork_session':
+        return {
+          type,
+          requestId: readNonEmptyString(parsed.requestId, 'requestId'),
+          sessionId: readNonEmptyString(parsed.sessionId, 'sessionId'),
+          entryId: readOptionalNonEmptyString(parsed.entryId, 'entryId'),
         };
       default:
         throw new ProtocolError('UNSUPPORTED_MESSAGE', `Unsupported message type: ${type}`);
@@ -431,11 +511,11 @@ export class WebSocketChannel implements Channel {
       throw new ProtocolError('SERVER_NOT_READY', 'Message handler is not ready.');
     }
 
-    this.registerSessionAudience(clientId, message.sessionKey);
+    this.registerSessionAudience(clientId, message.sessionId);
     log.info('run_turn received', {
       channelId: this.id,
       clientId,
-      sessionKey: message.sessionKey,
+      sessionId: message.sessionId,
       hasModelOverride: message.modelReference !== undefined,
       hasMaxOutputTokens: message.requestOverride?.maxOutputTokens !== undefined,
       hasMaxLlmCalls: message.maxLlmCalls !== undefined,
@@ -444,7 +524,7 @@ export class WebSocketChannel implements Channel {
     });
     await handler({
       clientId,
-      sessionKey: message.sessionKey,
+      sessionId: message.sessionId,
       message: message.message,
       modelReference: message.modelReference,
       requestOverride: message.requestOverride,
@@ -489,15 +569,105 @@ export class WebSocketChannel implements Channel {
     }
     this.sendJson(socket, {
       type: 'model_catalog',
-      request_id: message.requestId,
+      requestId: message.requestId,
       catalog: toWireModelCatalog(snapshot),
     });
   }
 
+  private async handleCreateSession(
+    socket: WebSocket,
+    message: Extract<ClientMessage, { type: 'create_session' }>,
+  ): Promise<void> {
+    this.requireBoundClientId(socket);
+    const { sessionId } = await this.invokeSessionOperation((capability) =>
+      capability.createSession());
+    this.sendJson(socket, {
+      type: 'session_created',
+      requestId: message.requestId,
+      sessionId,
+    });
+  }
+
+  private async handleSessionRequest(
+    socket: WebSocket,
+    message: Exclude<
+      ClientMessage,
+      { type: 'hello' | 'run_turn' | 'approval_resolve' | 'abort_turn' | 'get_model_catalog' | 'create_session' }
+    >,
+  ): Promise<void> {
+    this.requireBoundClientId(socket);
+    switch (message.type) {
+      case 'list_sessions': {
+        const sessions = await this.invokeSessionOperation((capability) =>
+          capability.listSessions(message.archived === undefined
+            ? undefined
+            : { archived: message.archived }));
+        this.sendJson(socket, { type: 'sessions_listed', requestId: message.requestId, sessions });
+        return;
+      }
+      case 'get_session': {
+        const session = await this.invokeSessionOperation((capability) =>
+          capability.getSession(message.sessionId));
+        this.sendJson(socket, { type: 'session_retrieved', requestId: message.requestId, session });
+        return;
+      }
+      case 'rename_session': {
+        const session = await this.invokeSessionOperation((capability) =>
+          capability.renameSession(message.sessionId, message.title));
+        this.sendJson(socket, { type: 'session_renamed', requestId: message.requestId, session });
+        return;
+      }
+      case 'archive_session': {
+        const session = await this.invokeSessionOperation((capability) =>
+          capability.archiveSession(message.sessionId));
+        this.sendJson(socket, { type: 'session_archived', requestId: message.requestId, session });
+        return;
+      }
+      case 'unarchive_session': {
+        const session = await this.invokeSessionOperation((capability) =>
+          capability.unarchiveSession(message.sessionId));
+        this.sendJson(socket, { type: 'session_unarchived', requestId: message.requestId, session });
+        return;
+      }
+      case 'delete_session':
+        await this.invokeSessionOperation((capability) =>
+          capability.deleteSession(message.sessionId));
+        this.sendJson(socket, {
+          type: 'session_deleted',
+          requestId: message.requestId,
+          sessionId: message.sessionId,
+        });
+        return;
+      case 'fork_session': {
+        const session = await this.invokeSessionOperation((capability) =>
+          capability.forkSession(message.sessionId, message.entryId));
+        this.sendJson(socket, { type: 'session_forked', requestId: message.requestId, session });
+        return;
+      }
+    }
+  }
+
+  private async invokeSessionOperation<T>(
+    operation: (capability: ChannelRuntimeCapabilities['sessions']) => Promise<T>,
+  ): Promise<T> {
+    const capability = this.runtimeCapabilities?.sessions;
+    if (!capability) {
+      throw new ProtocolError('SERVER_NOT_READY', 'Runtime Session capability is not bound.');
+    }
+    try {
+      return await operation(capability);
+    } catch (error) {
+      if (error instanceof SessionError) {
+        throw new ProtocolError(error.code, error.message);
+      }
+      throw new ProtocolError('SERVER_NOT_READY', 'Runtime Session capability is not ready.');
+    }
+  }
+
   /**
-   * inbound `abort_turn`：`sessionKey` 已通过 parseMessage 校验非空。
-   * v1 不做 sessionKey ↔ 发送方 clientId 的 owner 关系校验（§0.3 D5：
-   * 单信任域假设），任何已 hello 的客户端都能 abort 任何 sessionKey；
+  * inbound `abort_turn`：`sessionId` 已通过 parseMessage 校验非空。
+  * v1 不做 sessionId ↔ 发送方 clientId 的 owner 关系校验（§0.3 D5：
+  * 单信任域假设），任何已 hello 的客户端都能 abort 任何 Session；
    * 多客户端隔离由未来 auth 层处理。
    *
    * abort 完成通过 `run_end{result.stopReason:'aborted'}` 通道通知，
@@ -513,15 +683,15 @@ export class WebSocketChannel implements Channel {
       log.warn('abort_turn received but Runtime capabilities not bound; ignoring', {
         channelId: this.id,
         clientId,
-        sessionKey: message.sessionKey,
+        sessionId: message.sessionId,
       });
       return;
     }
-    const result = this.runtimeCapabilities.abort.abortTurn(message.sessionKey);
+    const result = this.runtimeCapabilities.abort.abortTurn(message.sessionId);
     log.info('abort_turn dispatched', {
       channelId: this.id,
       clientId,
-      sessionKey: message.sessionKey,
+      sessionId: message.sessionId,
       aborted: result.aborted,
       dropped: result.dropped,
     });
@@ -551,12 +721,12 @@ export class WebSocketChannel implements Channel {
 
     const sessionAudienceKeys = this.clientSessions.get(clientId);
     if (sessionAudienceKeys) {
-      for (const sessionKey of sessionAudienceKeys) {
-        const clientIds = this.sessions.get(sessionKey);
+      for (const sessionId of sessionAudienceKeys) {
+        const clientIds = this.sessions.get(sessionId);
         if (!clientIds) continue;
         clientIds.delete(clientId);
         if (clientIds.size === 0) {
-          this.sessions.delete(sessionKey);
+          this.sessions.delete(sessionId);
         }
       }
       this.clientSessions.delete(clientId);
@@ -580,28 +750,28 @@ export class WebSocketChannel implements Channel {
   }
 
   // 当前这张表只表示“谁应该继续收到该 session 的 AgentEvent 广播”，不表示共享 UI 或自动共享历史。
-  private registerSessionAudience(clientId: string, sessionKey: string): void {
-    let clientIds = this.sessions.get(sessionKey);
+  private registerSessionAudience(clientId: string, sessionId: string): void {
+    let clientIds = this.sessions.get(sessionId);
     if (!clientIds) {
       clientIds = new Set<string>();
-      this.sessions.set(sessionKey, clientIds);
+      this.sessions.set(sessionId, clientIds);
     }
     clientIds.add(clientId);
 
-    let sessionKeys = this.clientSessions.get(clientId);
-    if (!sessionKeys) {
-      sessionKeys = new Set<string>();
-      this.clientSessions.set(clientId, sessionKeys);
+    let sessionIds = this.clientSessions.get(clientId);
+    if (!sessionIds) {
+      sessionIds = new Set<string>();
+      this.clientSessions.set(clientId, sessionIds);
     }
     // 反向索引用于断线时按 clientId 做 O(关联 session 数) 清理，而不是全表扫描 sessions。
-    sessionKeys.add(sessionKey);
+    sessionIds.add(sessionId);
 
     log.debug('session audience registered', {
       channelId: this.id,
       clientId,
-      sessionKey,
+      sessionId,
       sessionAudienceSize: clientIds.size,
-      clientSessionCount: sessionKeys.size,
+      clientSessionCount: sessionIds.size,
     });
   }
 
@@ -743,15 +913,6 @@ export class WebSocketChannel implements Channel {
   }
 
   private serializeEvent(event: AgentEvent): Record<string, unknown> {
-    if (event.type === 'request_end') {
-      return {
-        type: event.type,
-        request_id: event.requestId,
-        ...(event.originMessageId ? { origin_message_id: event.originMessageId } : {}),
-        outcome: event.outcome,
-        reason: event.reason,
-      };
-    }
     if (event.type === 'error') {
       // Error 对象直接 JSON.stringify 会退化成空对象，这里显式降成 message 以匹配协议文档。
       return {
@@ -776,8 +937,8 @@ function toWireModelCatalog(snapshot: ModelCatalogSnapshot): Record<string, unkn
     : {
         state: snapshot.defaultSelection.state,
         reference: {
-          provider_id: snapshot.defaultSelection.reference.providerId,
-          model_id: snapshot.defaultSelection.reference.modelId,
+          providerId: snapshot.defaultSelection.reference.providerId,
+          modelId: snapshot.defaultSelection.reference.modelId,
         },
         ...(snapshot.defaultSelection.state === 'unavailable'
           ? { reason: snapshot.defaultSelection.reason }
@@ -785,13 +946,13 @@ function toWireModelCatalog(snapshot: ModelCatalogSnapshot): Record<string, unkn
       };
   return {
     generation: snapshot.generation,
-    default_selection: defaultSelection,
+    defaultSelection,
     providers: snapshot.providers.map((provider) => ({
-      provider_id: provider.providerId,
-      display_name: provider.displayName,
+      providerId: provider.providerId,
+      displayName: provider.displayName,
       models: provider.models.map((model) => ({
-        model_id: model.modelId,
-        display_name: model.displayName,
+        modelId: model.modelId,
+        displayName: model.displayName,
       })),
     })),
   };
@@ -813,12 +974,12 @@ function readOptionalModelReference(
 ): ChannelRunRequest['modelReference'] | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) {
-    throw new ProtocolError('INVALID_MESSAGE', 'model_reference must be an object.');
+    throw new ProtocolError('INVALID_MESSAGE', 'modelReference must be an object.');
   }
-  assertOnlyKeys(value, ['provider_id', 'model_id'], 'model_reference');
+  assertOnlyKeys(value, ['providerId', 'modelId'], 'modelReference');
   return {
-    providerId: readNonEmptyString(value.provider_id, 'model_reference.provider_id'),
-    modelId: readOpaqueModelId(value.model_id, 'model_reference.model_id'),
+    providerId: readNonEmptyString(value.providerId, 'modelReference.providerId'),
+    modelId: readOpaqueModelId(value.modelId, 'modelReference.modelId'),
   };
 }
 
@@ -834,13 +995,13 @@ function readOptionalRequestOverride(
 ): ChannelRunRequest['requestOverride'] | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) {
-    throw new ProtocolError('INVALID_MESSAGE', 'request_override must be an object.');
+    throw new ProtocolError('INVALID_MESSAGE', 'requestOverride must be an object.');
   }
-  assertOnlyKeys(value, ['max_output_tokens'], 'request_override');
+  assertOnlyKeys(value, ['maxOutputTokens'], 'requestOverride');
   return {
     maxOutputTokens: readOptionalPositiveInteger(
-      value.max_output_tokens,
-      'request_override.max_output_tokens',
+      value.maxOutputTokens,
+      'requestOverride.maxOutputTokens',
     ),
   };
 }
@@ -903,22 +1064,37 @@ function parseInboundContentBlock(value: unknown, index: number): InboundContent
     if (!isRecord(source) || source.type !== 'base64') {
       throw new ProtocolError('INVALID_MESSAGE', `message[${index}].source must be {type:'base64',...}.`);
     }
-    const mediaType = source.media_type;
+    const mediaType = source.mediaType;
     if (
       mediaType !== 'image/png'
       && mediaType !== 'image/jpeg'
       && mediaType !== 'image/webp'
       && mediaType !== 'image/gif'
     ) {
-      throw new ProtocolError('INVALID_MESSAGE', `message[${index}].source.media_type unsupported at wire layer.`);
+      throw new ProtocolError('INVALID_MESSAGE', `message[${index}].source.mediaType unsupported at wire layer.`);
     }
     if (typeof source.data !== 'string' || source.data.length === 0) {
       throw new ProtocolError('INVALID_MESSAGE', `message[${index}].source.data must be a non-empty string.`);
     }
     return {
       type: 'image',
-      source: { type: 'base64', media_type: mediaType, data: source.data },
+      source: { type: 'base64', mediaType, data: source.data },
     };
   }
   throw new ProtocolError('INVALID_MESSAGE', `message[${index}].type unsupported.`);
+}
+
+function readOptionalNonEmptyString(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined;
+  return readNonEmptyString(value, field);
+}
+
+function readNullableString(value: unknown, field: string): string | null {
+  if (value === null || typeof value === 'string') return value;
+  throw new ProtocolError('INVALID_MESSAGE', `${field} must be a string or null.`);
+}
+
+function readOptionalBoolean(value: unknown, field: string): boolean | undefined {
+  if (value === undefined || typeof value === 'boolean') return value;
+  throw new ProtocolError('INVALID_MESSAGE', `${field} must be a boolean.`);
 }

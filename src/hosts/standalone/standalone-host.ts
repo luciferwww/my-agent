@@ -32,7 +32,6 @@ const WEBSOCKET_CHANNEL_CONFIG = Object.freeze({
   approval: true,
 });
 const CLI_CHANNEL_CONFIG = Object.freeze({
-  sessionKey: 'main',
   prompt: '> ',
   approval: true,
 });

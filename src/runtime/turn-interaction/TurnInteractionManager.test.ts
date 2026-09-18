@@ -18,7 +18,7 @@ function requestApproval(manager: TurnInteractionManager, signal: AbortSignal) {
     request: {
       toolName: 'demo_tool',
       input: {},
-      sessionKey: 'main',
+      sessionId: 'main',
       turnId: 'turn-1',
     },
     signal,

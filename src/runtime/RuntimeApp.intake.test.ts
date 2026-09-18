@@ -11,6 +11,7 @@ import type {
 import type { ChatContentBlock, ChatMessage } from '../core/model-invocation/index.js';
 import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
 import type { RunResult } from '../core/runner/types.js';
+import { SessionManager } from '../core/session/SessionManager.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
 import type { Tool } from '../core/tools/types.js';
@@ -56,7 +57,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
       await buildApp(agentHome);
 
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'hello',
       clientId: 'c1',
     });
@@ -81,7 +82,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     const { app, runnerRun, testChannel } = await buildApp(agentHome);
 
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: [{ type: 'text', text: 'see image' }] as InboundContentBlock[],
       clientId: 'c1',
     });
@@ -111,7 +112,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
       await buildApp(agentHome);
 
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'hello world',
       clientId: 'c1',
     });
@@ -133,11 +134,11 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     const { app, runnerRun, testChannel } = await buildApp(agentHome);
 
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: [
         {
           type: 'image',
-          source: { type: 'base64', media_type: 'image/png', data: 'x' },
+          source: { type: 'base64', mediaType: 'image/png', data: 'x' },
         },
       ] satisfies InboundContentBlock[],
       clientId: 'c1',
@@ -156,7 +157,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     const { app, runnerRun, testChannel } = await buildApp(agentHome);
 
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: '',
       clientId: 'c1',
     });
@@ -197,7 +198,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
       dropped: [],
     });
     const firstDispatch = testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'first',
       clientId: 'c1',
     });
@@ -206,7 +207,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     // 2) Steering dispatch: text + image; image must be stripped
     processInboundMock.mockResolvedValueOnce({ normalized, dropped: [] });
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: [{ type: 'text', text: 'steer me' }] as InboundContentBlock[],
       clientId: 'c2',
     });
@@ -243,7 +244,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
       dropped: [],
     });
     const firstDispatch = testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'first',
       clientId: 'c1',
     });
@@ -261,11 +262,11 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
       dropped: [],
     });
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: [
         {
           type: 'image',
-          source: { type: 'base64', media_type: 'image/png', data: 'aaaa' },
+          source: { type: 'base64', mediaType: 'image/png', data: 'aaaa' },
         },
       ] satisfies InboundContentBlock[],
       clientId: 'c2',
@@ -288,7 +289,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
       await buildApp(agentHome);
 
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'hello',
       clientId: 'c1',
     });
@@ -319,7 +320,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
 
     const before = Date.now();
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'hello world',
       clientId: 'client-A',
     });
@@ -328,7 +329,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     const userMsgs = agentEvents.filter((e) => e.type === 'user_message');
     expect(userMsgs).toHaveLength(1);
     const evt = userMsgs[0]! as Extract<AgentEvent, { type: 'user_message' }>;
-    expect(evt.sessionKey).toBe('main');
+    expect(evt.sessionId).toBe('main');
     expect(evt.content).toBe('hello world');
     expect(evt.originClientId).toBe('client-A');
     expect(evt.deliveryMode).toBe('queued');
@@ -352,7 +353,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     const { app, testChannel, agentEvents } = await buildApp(agentHome);
 
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'from cli',
     });
 
@@ -379,7 +380,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     const { app, testChannel, agentEvents } = await buildApp(agentHome);
 
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: [{ type: 'text', text: 'look' }] as InboundContentBlock[],
       clientId: 'c1',
     });
@@ -408,7 +409,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     const { app, testChannel, agentEvents, runnerRun } = await buildApp(agentHome);
 
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: '',
       clientId: 'c1',
     });
@@ -435,7 +436,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     // First dispatch: starts and blocks the runner
     processInboundMock.mockResolvedValueOnce({ normalized: 'first', dropped: [] });
     const first = testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'first',
       clientId: 'client-A',
     });
@@ -444,7 +445,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     // Second dispatch: routes to steering (active turn present)
     processInboundMock.mockResolvedValueOnce({ normalized: 'steer me', dropped: [] });
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'steer me',
       clientId: 'client-B',
     });
@@ -486,7 +487,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
 
     processInboundMock.mockResolvedValueOnce({ normalized: 'first', dropped: [] });
     const first = testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'first',
       clientId: 'client-A',
     });
@@ -504,11 +505,11 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
       dropped: [],
     });
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: [
         {
           type: 'image',
-          source: { type: 'base64', media_type: 'image/png', data: 'aaaa' },
+          source: { type: 'base64', mediaType: 'image/png', data: 'aaaa' },
         },
       ] satisfies InboundContentBlock[],
       clientId: 'client-B',
@@ -534,13 +535,18 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
 
   it('CH-02 correlates a runtime-generated message ID through real runner events', async () => {
     processInboundMock.mockResolvedValue({ normalized: 'go', dropped: [] });
+    const sessionId = '00000000-0000-4000-8000-000000000001';
+    await new SessionManager(agentHome).materializeSession({
+      sessionId,
+      createdAt: 1,
+    });
 
     const { app, testChannel, agentEvents } = await buildApp(agentHome, {
       useRealRunner: true,
     });
 
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId,
       message: 'go',
       clientId: 'c1',
     });
@@ -691,8 +697,14 @@ async function buildApp(
     ...(options.useRealRunner
       ? {}
       : {
-          createSessionManager: () =>
-            ({ resolveSession: vi.fn(async () => ({ entry: {}, isNew: true })) }) as never,
+          createSessionManager: () => ({
+            initialize: vi.fn(async () => undefined),
+            getSession: vi.fn((sessionId: string) => ({
+              sessionId,
+              createdAt: 1,
+              updatedAt: 1,
+            })),
+          }) as never,
         }),
     createMemoryManager: async () => null,
     createSystemPromptBuilder: () => ({ build: () => 'SYSTEM_PROMPT' }) as never,

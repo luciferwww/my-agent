@@ -1,7 +1,7 @@
 /**
  * Tool execution context, passed to every tool invocation.
  *
- * Required fields (`sessionKey`, `turnId`, `callId`) identify the run-time
+ * Required fields (`sessionId`, `turnId`, `callId`) identify the run-time
  * origin of the call and are used by approval hooks, audit logs, and the
  * `task` subagent tool (which sets `parentToolUseId = ctx.callId`).
  *
@@ -11,9 +11,11 @@
  * are NOT guaranteed to terminate immediately. See core-abort-spec.md §6.2.
  */
 export interface ToolExecutionContext {
-  /** Tool run's owning sessionKey; used by approval hooks / routing / logs. */
-  readonly sessionKey: string;
-  /** Tool run's owning turnId; same purpose as `sessionKey`. */
+  /** Tool run's owning sessionId; used by approval hooks / routing / logs. */
+  readonly sessionId: string;
+  /** Owning agent's explicit Subagent nesting depth. */
+  readonly subagentDepth: number;
+  /** Tool run's owning turnId; same purpose as `sessionId`. */
   readonly turnId: string;
   /**
    * The id of the LLM `tool_use` block that triggered this invocation.

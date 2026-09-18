@@ -22,6 +22,7 @@ This directory contains durable architectural decisions. It does not own current
 | [ADR-012](adr-012-agent-home-path-unification.md) | Accepted | Two-path Agent Home model, Environment Tool relative-path defaults, structured external-path Approval, and Exec semantics |
 | [ADR-013](adr-013-standalone-host-arguments-and-channels.md) | Accepted | Standalone Host arguments, argument-selected Builtin Channels, and Host-neutral global configuration |
 | [ADR-014](adr-014-extension-packages-and-runtime-composition.md) | Accepted | Extension packages, unified Jiti loading, public API, and Runtime composition lifecycle |
+| [ADR-015](adr-015-session-identity-and-materialization.md) | Accepted | Canonical Session identity, Pending first-message materialization, and clean-format cutover |
 
 ## Authority rules
 

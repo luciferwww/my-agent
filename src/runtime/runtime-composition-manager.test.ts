@@ -33,6 +33,26 @@ function host(): ChannelRuntimeHost {
         querySessionsNeedingAbort: vi.fn(() => []),
         abortTurn: vi.fn(() => ({ aborted: false, dropped: 0 })),
       },
+      sessions: {
+        createSession: vi.fn(async () => ({ sessionId: 'session' })),
+        listSessions: vi.fn(async () => []),
+        getSession: vi.fn(async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 })),
+        renameSession: vi.fn(async (sessionId, title) => ({
+          sessionId,
+          createdAt: 1,
+          updatedAt: 1,
+          ...(title === null ? {} : { title }),
+        })),
+        archiveSession: vi.fn(async (sessionId) => ({
+          sessionId,
+          createdAt: 1,
+          updatedAt: 1,
+          archivedAt: 1,
+        })),
+        unarchiveSession: vi.fn(async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 })),
+        deleteSession: vi.fn(async () => undefined),
+        forkSession: vi.fn(async () => ({ sessionId: 'fork', createdAt: 1, updatedAt: 1 })),
+      },
     },
   };
 }
@@ -495,13 +515,13 @@ describe('RuntimeCompositionManager', () => {
     await expect(manager.compositionControl().enableUnit('reload-channel')).resolves.toEqual(
       expect.objectContaining({ outcome: 'published', generation: 2 }),
     );
-    await expect(handlers[0]!({ sessionKey: 'one', message: 'first' })).resolves.toBeUndefined();
+    await expect(handlers[0]!({ sessionId: 'one', message: 'first' })).resolves.toBeUndefined();
 
     await expect(manager.compositionControl().disableUnit('reload-channel')).resolves.toEqual(
       expect.objectContaining({ outcome: 'published', generation: 3 }),
     );
     await vi.waitFor(() => expect(stops[0]).toHaveBeenCalledTimes(1));
-    await expect(handlers[0]!({ sessionKey: 'one', message: 'late' }))
+    await expect(handlers[0]!({ sessionId: 'one', message: 'late' }))
       .rejects.toThrow('ingress is not published');
     await expect(manager.waitForChannelCompletion('reload-channel'))
       .rejects.toThrow('CHANNEL_NOT_FOUND');
@@ -510,7 +530,7 @@ describe('RuntimeCompositionManager', () => {
       expect.objectContaining({ outcome: 'published', generation: 4 }),
     );
     expect(channelSequence).toBe(2);
-    await expect(handlers[1]!({ sessionKey: 'two', message: 'second' })).resolves.toBeUndefined();
+    await expect(handlers[1]!({ sessionId: 'two', message: 'second' })).resolves.toBeUndefined();
   });
 
   it('publishes startup and reload candidates while reusing unchanged Unit instances', async () => {

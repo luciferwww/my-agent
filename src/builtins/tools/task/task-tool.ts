@@ -23,8 +23,8 @@ export interface TaskToolDeps {
   delegationPort: SubagentDelegationPort;
   /** All registered profiles, keyed by id. Must include `'general-purpose'`. */
   profileRegistry: ReadonlyMap<string, SubagentProfile>;
-  /** Computes role/depth/canSpawn from a sessionKey (typically wraps `resolveSubagentCapabilities`). */
-  getCapabilities: (sessionKey: string) => SubagentCapabilities;
+  /** Computes role/depth/canSpawn from an explicit Subagent depth. */
+  getCapabilities: (depth: number) => SubagentCapabilities;
   /** Used only for the user-facing error message when depth is exceeded. */
   maxDepth: number;
 }
@@ -61,7 +61,7 @@ interface TaskInput {
  * Flow per call (see spec §10.1 sequence diagram + §13.2 failure matrix):
  *  1. Resolve `subagent_type` → `SubagentProfile`. Unknown ids degrade to
  *     `'general-purpose'` with a warn log (spec §6 decision 10 LLM path).
- *  2. Belt-and-suspenders depth check via `getCapabilities(ctx.sessionKey)`.
+ *  2. Belt-and-suspenders depth check via `getCapabilities(ctx.subagentDepth)`.
   *     If `!canSpawn`, return a failed output and do
  *     NOT invoke the delegation Port.
  *  3. Require the active Parent tree signal from `ctx`.
@@ -110,7 +110,7 @@ export function createTaskTool(deps: TaskToolDeps): Tool {
 
       // Depth check. Mirrors the addendum's `canSpawn` flag so the LLM
       // can't smuggle a `task` call through when it shouldn't be able to.
-      const caps = deps.getCapabilities(ctx.sessionKey);
+      const caps = deps.getCapabilities(ctx.subagentDepth);
       if (!caps.canSpawn) {
         return {
           outcome: 'failed',
@@ -124,7 +124,7 @@ export function createTaskTool(deps: TaskToolDeps): Tool {
           description: params.description,
           prompt: params.prompt,
           parent: {
-            sessionKey: ctx.sessionKey,
+            sessionId: ctx.sessionId,
             turnId: ctx.turnId,
             toolUseId: ctx.callId,
           },

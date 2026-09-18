@@ -1,16 +1,14 @@
 import { readFileSync } from 'fs';
 import { appendFile } from 'fs/promises';
+import { SessionDataError } from './store.js';
 import { withFileLock } from './lock.js';
 import type { CompactionRecord, TranscriptEntry, TranscriptState } from './types.js';
 
 /**
- * 加载 JSONL 文件，构建 byId Map 和 leafId。
- *
- * leafId 策略：取文件中最后一条记录的 id。
- * 这对线性对话是正确的（最后一条就是当前末端）。
- * 对有分支的文件也是合理的默认值（最后追加的记录是最近的活跃点）。
- *
- * 文件不存在返回空状态。
+ * Loads a JSONL Transcript into its record index and active leaf.
+ * The last message is the active leaf; trailing Compaction records do not
+ * change the branch. Missing or structurally invalid persisted data fails
+ * closed as a Session data error.
  */
 export function loadTranscript(filePath: string): TranscriptState {
   const byId = new Map<string, TranscriptEntry>();
@@ -19,8 +17,10 @@ export function loadTranscript(filePath: string): TranscriptState {
   let raw: string;
   try {
     raw = readFileSync(filePath, 'utf-8');
-  } catch {
-    return { byId, leafId };
+  } catch (error) {
+    throw new SessionDataError(`Session Transcript "${filePath}" could not be read.`, {
+      cause: error,
+    });
   }
 
   const lines = raw.split('\n');
@@ -28,24 +28,54 @@ export function loadTranscript(filePath: string): TranscriptState {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
+    let entry: TranscriptEntry;
     try {
-      const entry = JSON.parse(trimmed) as TranscriptEntry;
-      if (entry && typeof entry === 'object' && entry.id) {
-        byId.set(entry.id, entry);
-        leafId = entry.id;
-      }
-    } catch {
-      // 跳过格式错误的行
+      entry = JSON.parse(trimmed) as TranscriptEntry;
+    } catch (error) {
+      throw new SessionDataError(`Session Transcript "${filePath}" contains invalid JSON.`, {
+        cause: error,
+      });
     }
+    assertTranscriptEntry(entry, byId.size === 0, byId);
+    byId.set(entry.id, entry);
+    if (entry.type === 'session' || entry.type === 'message') {
+      leafId = entry.id;
+    }
+  }
+
+  if (byId.size === 0) {
+    throw new SessionDataError(`Session Transcript "${filePath}" is empty.`);
   }
 
   return { byId, leafId };
 }
 
-/**
- * 从 leafId 沿 parentId 回溯到根，返回正序路径。
- * 只返回 type === 'message' 的记录。
- */
+function assertTranscriptEntry(
+  entry: TranscriptEntry,
+  first: boolean,
+  priorEntries: ReadonlyMap<string, TranscriptEntry>,
+): void {
+  if (!entry || typeof entry !== 'object' || typeof entry.id !== 'string' || !entry.id) {
+    throw new SessionDataError('Session Transcript contains an invalid record identity.');
+  }
+  if (priorEntries.has(entry.id)) {
+    throw new SessionDataError(`Session Transcript contains duplicate record "${entry.id}".`);
+  }
+  if (first) {
+    if (entry.type !== 'session' || entry.parentId !== null || entry.version !== 1) {
+      throw new SessionDataError('Session Transcript must begin with a version 1 root record.');
+    }
+    return;
+  }
+  if (entry.type !== 'message' && entry.type !== 'compaction') {
+    throw new SessionDataError(`Session Transcript contains unsupported record type "${entry.type}".`);
+  }
+  if (typeof entry.parentId !== 'string' || !priorEntries.has(entry.parentId)) {
+    throw new SessionDataError(`Session Transcript record "${entry.id}" has an invalid parent.`);
+  }
+}
+
+/** Walks from a leaf to the root and returns messages in chronological order. */
 export function resolveLinearPath(
   state: TranscriptState,
   leafId: string | null,
@@ -67,9 +97,7 @@ export function resolveLinearPath(
   return path;
 }
 
-/**
- * 追加一条记录到 JSONL 文件（带锁）。
- */
+/** Appends one record to a JSONL Transcript under its per-file lock. */
 export async function appendToTranscript(
   filePath: string,
   entry: TranscriptEntry,
@@ -80,18 +108,9 @@ export async function appendToTranscript(
 }
 
 /**
- * 在 TranscriptState 中查找最近一次压缩记录。
- *
- * resolveLinearPath() 在遍历 parentId 链时会跳过 type !== 'message' 的记录，
- * 因此压缩记录不会出现在 getMessages() 的返回值中。
- * 此函数专门从 byId Map 中扫描所有 type === 'compaction' 的记录，
- * 并返回时间戳最新的一条（即最近一次压缩）。
- *
- * 用途：AgentRunner.loadHistory() 调用此函数，判断是否需要：
- *   1. 截断历史（只取 firstKeptEntryId 之后的消息）
- *   2. 在历史消息最前面注入摘要消息
- *
- * @returns 最近一次 CompactionRecord，若从未压缩则返回 null
+ * Returns the newest Compaction record by ISO timestamp. Compaction markers
+ * are excluded from the active message path but remain available to
+ * AgentRunner.loadHistory() for history truncation and summary injection.
  */
 export function findLastCompaction(state: TranscriptState): CompactionRecord | null {
   let last: CompactionRecord | null = null;
@@ -100,7 +119,7 @@ export function findLastCompaction(state: TranscriptState): CompactionRecord | n
     if (entry.type !== 'compaction') continue;
 
     const record = entry as CompactionRecord;
-    // 以 timestamp 字符串比较（ISO 8601 格式天然支持字典序比较）
+    // ISO 8601 timestamps sort chronologically as strings.
     if (!last || record.timestamp > last.timestamp) {
       last = record;
     }

@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Tool behavior
-> Verified: 2026-09-17
+> Verified: 2026-09-18
 > Ownership: Canonical Tool contract, portable validation, Registry projection, policy, approval, and execution boundary
 > Ownership key: canonical-tool-contract
 

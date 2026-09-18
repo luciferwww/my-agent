@@ -14,159 +14,159 @@ export type { ToolResult };
 export type PendingMessageReader = () => ChatMessage[] | Promise<ChatMessage[]>;
 
 /**
- * 一次 run 期间事件标识所需的最小上下文。
+ * Minimal context required to identify events during one run.
  *
- * AgentRunner 内部沿调用链显式透传给所有 emit() 调用点，替代过往把
- * RunParams 整体挂在实例字段（this.currentParams）上的做法。这样：
- *  - emit 不再依赖隐式实例状态，类对事件标签无副作用、可重入、可并发；
- *  - 编译期强制每个 emit 调用提供 ctx；
- *  - Child executor 嵌套 AgentRunner.run() 不再有任何状态串号风险。
+ * AgentRunner passes this explicitly to every emit() call instead of storing
+ * RunParams on the instance. This keeps event tagging stateless, reentrant,
+ * concurrency-safe, and required by the type checker.
  *
- * 仅 sessionKey/turnId 两字段，故不复用 RunParams（后者太重，包含 message
- * / tools / model 等不适合作为事件 tag 到处传的内容）。
+ * This deliberately contains only identities, rather than the much larger RunParams.
  */
 export interface TurnContext {
-  readonly sessionKey: string;
+  readonly sessionId: string;
   readonly turnId: string;
   readonly requestId: string;
 }
 
-/** AgentRunner 构造参数 */
+/** AgentRunner constructor parameters. */
 export interface AgentRunnerConfig {
-  /** Session 管理器 */
+  /** Session manager. */
   sessionManager: import('../session/SessionManager.js').SessionManager;
-  /** 运行时事件回调 */
+  /** Runtime event callback. */
   onEvent?: (event: AgentEvent) => void;
 }
 
-/** 单次 run 的参数 */
+/** Parameters for one run. */
 export interface RunParams {
   /** Session key */
-  sessionKey: string;
-  /** 用户消息文本或多模态 content blocks */
+  sessionId: string;
+  /** Subagent nesting depth; root Turns default to zero. */
+  subagentDepth?: number;
+  /** User text or multimodal content blocks. */
   message: string | ChatContentBlock[];
-  /** 当前 Turn 已解析并固定的模型、调用端口、Facts 与执行限制 */
+  /** Model, invocation port, facts, and limits fixed for this Turn. */
   resolvedModel: ResolvedModel;
-  /** System prompt（由调用方通过 prompt-builder 构建） */
+  /** System prompt built by the caller through prompt-builder. */
   systemPrompt: string;
-  /** 本次 turn 的唯一 id；由 RuntimeApp 生成并传入 */
+  /** Unique Turn ID generated and passed by RuntimeApp. */
   turnId: string;
   /** Root request identity shared by every node in the execution tree. */
   requestId?: string;
-  /** 当前 Turn 固定的 Tool/Hook projections 与 Application policy。 */
+  /** Tool and Hook projections plus Application policy fixed for this Turn. */
   toolProjection: ToolProjection;
   hookProjection: HookProjection;
   toolPolicy: ApplicationToolPolicy;
-  /** 当前调用来源可提供的审批能力；缺失时 requires-approval fail closed。 */
+  /** Approval capability of this caller; requires-approval fails closed when absent. */
   approvalCapability?: CurrentCallApprovalCapability;
-  /** 单次 run 允许的最大 LLM 调用次数，默认 12 */
+  /** Maximum LLM calls for one run; defaults to 12. */
   maxLlmCalls?: number;
-  /** steering 专用消息读取回调（总在 steering 注入点消费） */
+  /** Reader consumed only at steering injection points. */
   getSteeringMessages?: PendingMessageReader;
-  /** 压缩配置（由 RuntimeApp 传入） */
+  /** Compaction configuration supplied by RuntimeApp. */
   compaction?: CompactionConfig;
   /**
-   * 触发本 turn 的 `user_message.messageId`。由 RuntimeApp 从 queued 路径透传；
-   * 传入即在 run_start 上回写为 originMessageId，供客户端反向关联。
-   * 见 channel-multi-client-user-message-spec §5.1 D6。
+  * `user_message.messageId` that triggered this Turn. RuntimeApp passes it
+  * from the queued path and run_start exposes it as originMessageId.
+  * See channel-multi-client-user-message-spec section 5.1 D6.
    */
   originMessageId?: string;
   /**
-   * 用户中断 / turn timeout / shutdown 等都通过此 signal 传递。
-  * AgentRunner 在 chatStream 调用 + ToolExecutionContext 构造时透传；
-   * catch AbortError 后返回 RunResult.stopReason='aborted'，不抛。
-   * 见 core-abort-spec.md §6.1。
+  * Carries user aborts, Turn timeouts, shutdown, and similar cancellation.
+  * AgentRunner forwards it to chatStream and ToolExecutionContext. An
+  * AbortError returns RunResult.stopReason='aborted' instead of throwing.
+  * See core-abort-spec.md section 6.1.
    */
   signal?: AbortSignal;
 }
 
-/** 单次 run 的结果 */
+/** Result of one run. */
 export interface RunResult {
-  /** 助手最终回复的文本 */
+  /** Final assistant response text. */
   text: string;
-  /** 助手回复的完整 content blocks */
+  /** Complete assistant response content blocks. */
   content: ChatContentBlock[];
   /** stop reason */
   stopReason: string;
-  /** 累计 token 用量（所有 LLM 调用的总和） */
+  /** Cumulative token usage across all LLM calls. */
   usage: TokenUsage;
-  /** tool use 循环总轮数（所有外层迭代的总和） */
+  /** Total tool-use rounds across all outer iterations. */
   toolRounds: number;
-  /** 本次运行是否触发了压缩（Phase 2 实现后才会为 true） */
+  /** Whether this run triggered compaction. */
   compacted?: boolean;
 }
 
 /**
- * 用户消息附件摘要。仅广播用；原始字节仍走 transcript / LLM 路径。
- * 见 channel-multi-client-user-message-spec §5.1 D8。
+ * Attachment summary for user-message broadcasts. Original bytes still use
+ * the Transcript and LLM path. See channel-multi-client-user-message-spec section 5.1 D8.
  */
 export interface AttachmentSummary {
-  /** UI 至少要知道渲染哪种占位；未来加类型是 additive */
+  /** Minimum type required for the UI placeholder; future types are additive. */
   type: 'image' | 'other';
-  /** 文件名（若可得） */
+  /** File name, when available. */
   name?: string;
-  /** 原始字节数（若可得） */
+  /** Original byte count, when available. */
   bytes?: number;
-  /** MIME type（若可得） */
+  /** MIME type, when available. */
   mime?: string;
 }
 
-/** 运行时事件 */
+/** Runtime events. */
 export type AgentEvent =
   | {
       type: 'run_start';
-      sessionKey: string;
+      sessionId: string;
       turnId: string;
       requestId: string;
       /**
-       * 反向关联到触发本 turn 的 `user_message.messageId`。
-       * 仅 queued 路径有值；直接调用 runTurn / steering 无此字段。
-       * 见 channel-multi-client-user-message-spec §5.1 D6。
+      * Correlates this Turn to its triggering `user_message.messageId`.
+      * Present only for the queued path, not direct runTurn or steering.
+      * See channel-multi-client-user-message-spec section 5.1 D6.
        */
       originMessageId?: string;
     }
   /**
-   * 用户输入广播。emit 时机在 assemble 通过后、queued/steering 分歧前，
-   * 用于同 session 多 client 之间的可见性对齐。见 channel-multi-client-user-message-spec §5.3。
+   * User-input broadcast emitted after assembly and before queued/steering
+   * routing, keeping multiple clients for one Session consistent.
    *
-   * 与 turnId 解耦：steering 消息不产生 turn，messageId 是独立生命周期。
+   * Independent of turnId because steering messages do not create Turns.
+   * See channel-multi-client-user-message-spec section 5.3.
    */
   | {
       type: 'user_message';
-      sessionKey: string;
-      /** emit 时生成的 UUID；后续 run_start 通过 originMessageId 反向关联 */
+      sessionId: string;
+      /** UUID generated when emitted; run_start correlates through originMessageId. */
       messageId: string;
-      /** 用户输入的文本部分（从 assembled 抽出并拼接） */
+      /** Text extracted and joined from the assembled user input. */
       content: string;
-      /** 附件摘要；无附件时省略 */
+      /** Attachment summaries, omitted when there are no attachments. */
       attachmentSummaries?: AttachmentSummary[];
-      /** WS clientId；来自非 WS channel（CLI / library API）则为 null */
+      /** WebSocket client ID, or null for CLI and library channels. */
       originClientId: string | null;
-      /** queued = 走 session 队列；steering = 注入运行中 turn */
+      /** queued uses the Session queue; steering injects into the active Turn. */
       deliveryMode: 'queued' | 'steering';
       /** ms since epoch */
       timestamp: number;
     }
-  | { type: 'text_delta'; sessionKey: string; turnId: string; text: string }
+  | { type: 'text_delta'; sessionId: string; turnId: string; text: string }
   | {
       type: 'tool_use';
-      sessionKey: string;
+      sessionId: string;
       turnId: string;
       name: string;
       input: Record<string, unknown>;
     }
   | {
       type: 'tool_result';
-      sessionKey: string;
+      sessionId: string;
       turnId: string;
       name: string;
       result: ToolResult;
     }
-  | { type: 'llm_call'; sessionKey: string; turnId: string; round: number }
-    | { type: 'run_end'; sessionKey: string; turnId: string; requestId: string; result: RunResult }
+  | { type: 'llm_call'; sessionId: string; turnId: string; round: number }
+    | { type: 'run_end'; sessionId: string; turnId: string; requestId: string; result: RunResult }
   | {
       type: 'error';
-      sessionKey: string;
+      sessionId: string;
       turnId: string;
       requestId: string;
       error: Error;
@@ -176,80 +176,79 @@ export type AgentEvent =
   | {
       type: 'request_end';
       requestId: string;
-      sessionKey?: never;
+      sessionId?: never;
       turnId?: never;
       originMessageId?: string;
       outcome: 'cancelled';
       reason: 'abort_queue_drop' | 'shutdown';
     }
-  /** tool result 被 per-result 裁剪（Layer 1）时触发 */
+  /** Emitted when a tool result is pruned individually at Layer 1. */
   | {
       type: 'tool_result_pruned';
-      sessionKey: string;
+      sessionId: string;
       turnId: string;
       toolUseId: string;
       originalChars: number;
       prunedChars: number;
     }
-  /** 压缩开始：LLM 摘要生成前触发，包含触发原因和压缩前 token 数 */
+  /** Compaction start, before LLM summarization. */
   | {
       type: 'compaction_start';
-      sessionKey: string;
+      sessionId: string;
       turnId: string;
       trigger: 'preemptive' | 'overflow' | 'manual';
       estimatedTokens: number;
     }
-  /** 压缩结束：摘要写入 session 后触发，包含压缩效果统计 */
+  /** Compaction end, after the summary is persisted. */
   | {
       type: 'compaction_end';
-      sessionKey: string;
+      sessionId: string;
       turnId: string;
       tokensBefore: number;
       tokensAfter: number;
       droppedMessages: number;
     }
   /**
-   * 会话末尾被净化：runAttempt / compactHistory 开头检测到当前分支末尾
-   * 是孤立的 trailing user message，已通过 branch(parentId) 回退 leafId。
-   * 仅修改内存，不写 JSONL；被丢弃的 entry 仍保留在文件中可审计。
+  * The Session tail was sanitized after runAttempt or compactHistory found an
+  * orphan trailing user message. branch(parentId) moves the in-memory leaf;
+  * the discarded entry remains in JSONL for audit.
    */
   | {
       type: 'session_tail_sanitized';
-      sessionKey: string;
+      sessionId: string;
       turnId: string;
       discardedEntryId: string;
       discardedRole: 'user';
     }
   /**
-   * 孤儿 tool_use 修复：runAttempt 入口检测到 session 末尾 assistant/user pair
-   * 里存在缺失 tool_result 的 tool_use，已写 synthetic tool_result 补齐。
-   *  - source='abort'：来自本项目 abort 路径（末尾 assistant 携 abortMeta.partial=true）
-   *  - source='recovered'：其他来源（进程崩溃 / kill / bug 等，无 abortMeta）
-   * 详见 core-abort-spec.md §7.3。
+  * Orphan tool_use repair found missing tool_result blocks in the trailing
+  * assistant/user pair and persisted synthetic results.
+  * source='abort' identifies this project's abort path; source='recovered'
+  * covers crashes, kills, bugs, and other causes. See core-abort-spec.md section 7.3.
    */
   | {
       type: 'orphan_tool_results_repaired';
-      sessionKey: string;
+      sessionId: string;
       turnId: string;
-      /** 本次补写的 synthetic tool_result 块数（= 孤儿 tool_use id 数） */
+      /** Number of synthetic tool_result blocks persisted. */
       count: number;
       source: 'abort' | 'recovered';
     }
   | {
       type: 'subagent_start';
       requestId: string;
-      /** 单次 subagent 运行的 runId（由 orchestrator 生成） */
+      /** Run ID generated by the orchestrator for one Subagent execution. */
       runId: string;
-      /** 子 agent 的 sessionKey（含 :subagent: 后缀） */
-      sessionKey: string;
-      /** 子 agent 第一个 turn 的 id（与子的 run_start.turnId 相同） */
+      /** Child Agent UUID. */
+      sessionId: string;
+      /** Child Agent's first Turn ID, matching its run_start.turnId. */
       turnId: string;
-      /** 嵌套深度，与 `getSubagentDepth(sessionKey)` 一致 */
+      /** Explicit Subagent nesting depth. */
       depth: number;
-      /** 'general-purpose' 或具名 profile.id（caller 原始输入） */
+      /** 'general-purpose' or the named profile.id supplied by the caller. */
       subagentType: string;
       lifecycle: 'blocking';
-      parentSessionKey: string;
+      callerSessionId: string;
       parentTurnId: string;
       parentToolUseId: string;
     }
@@ -257,12 +256,12 @@ export type AgentEvent =
       type: 'subagent_end';
       requestId: string;
       runId: string;
-      sessionKey: string;
+      sessionId: string;
       turnId: string;
       depth: number;
       subagentType: string;
       lifecycle: 'blocking';
-      parentSessionKey: string;
+      callerSessionId: string;
       parentTurnId: string;
       parentToolUseId: string;
       /** Parent tree signal interrupted Child execution. */
@@ -275,7 +274,7 @@ export type AgentEvent =
             readonly message: string;
           }
         | { readonly phase: 'execution'; readonly message: string };
-      /** 子自身 + 所有子孙累计（spec §6.1 决策 6） */
+      /** Cumulative usage for the Child and all descendants. */
       usage: TokenUsage;
       durationMs: number;
     };

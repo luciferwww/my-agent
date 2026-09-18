@@ -2,7 +2,7 @@
 //
 // Subagent runtime wiring lives in `src/runtime/subagent-orchestration.ts`
 // (see spec §6.4 dependency direction). This package only exports types,
-// session-key helpers, and capability resolution.
+// configuration, prompt helpers, and capability resolution.
 
 export type {
   SubagentProfile,
@@ -13,14 +13,6 @@ export type {
   SubagentTerminalFailure,
   SubagentTerminalResult,
 } from './types.js';
-
-export {
-  formatSubagentSessionKey,
-  isSubagentSessionKey,
-  getSubagentDepth,
-  parseSubagentSessionKey,
-} from './session-key.js';
-export type { ParsedSubagentKey } from './session-key.js';
 
 export { resolveSubagentCapabilities } from './capabilities.js';
 

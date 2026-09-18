@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented observability behavior
-> Verified: 2026-09-17
+> Verified: 2026-09-18
 > Ownership: process-wide logging, startup buffering, log adapters, and adapter close
 > Ownership key: logging-and-adapter-lifecycle
 

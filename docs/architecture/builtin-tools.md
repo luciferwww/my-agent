@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented builtin Tool behavior
-> Verified: 2026-09-17
+> Verified: 2026-09-18
 > Ownership: Builtin inventory and concrete filesystem, search, web, Exec, and Process behavior
 > Ownership key: builtin-tool-capabilities
 

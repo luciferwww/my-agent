@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Runtime behavior
-> Verified: 2026-09-17
+> Verified: 2026-09-18
 > Ownership: Runtime composition, publication, generations, Turn orchestration, queues, routing, Fanout, Abort, Shutdown, and Subagent Parent/Child lifecycle
 > Ownership key: runtime-composition-and-lifecycle
 
@@ -208,7 +208,7 @@ sequenceDiagram
   Caller->>Runtime: runTurn(params)
   Runtime->>Runtime: admission and request completion gate
   Runtime->>Coordinator: capture current generation pin
-  Runtime->>Session: resolveSession
+  Runtime->>Session: admit message by sessionId
   Runtime->>Resolver: resolve against captured Providers
   Runtime->>Prompt: build system and user prompts
   Runtime->>Runner: run with immutable projections, policy, capabilities, steering callback, signal
@@ -219,7 +219,7 @@ sequenceDiagram
 
 `RunTurnParams` carries stable request identity, session/message, prompt mode, optional structured model/request overrides, optional LLM-call limit, safety override, context reload request, optional Turn ID, and internal user-message correlation.
 
-Before Runner starts, Runtime resolves Session, optionally reloads context, computes policy-visible Tool definitions from the captured Snapshot, resolves the model, builds prompts, creates the per-session `AbortController`, and registers the active Parent record. It passes the captured Tool and Hook projections unchanged; Provider wire conversion remains owned by [Providers](providers.md), and generic Tool execution remains owned by [Tools](tools.md).
+Before Runner starts, Runtime admits the message through the Session coordinator, materializing a live Pending `sessionId` when needed. It then optionally reloads context, computes policy-visible Tool definitions from the captured Snapshot, resolves the model, builds prompts, creates the per-session `AbortController`, and registers the active Parent record. Admission persists only Session metadata and a root record; Runner remains the sole user-message writer. Runtime passes the captured Tool and Hook projections unchanged; Provider wire conversion remains owned by [Providers](providers.md), and generic Tool execution remains owned by [Tools](tools.md).
 
 The request completion gate seals exactly one public terminal outcome. A run or resolution failure is contained to that request; Runtime records and emits the failure but the application remains usable. `finally` clears session/Turn/Abort/Parent/steering state, decrements the active count, releases the Root member, and schedules the next queued item.
 
@@ -244,12 +244,12 @@ The Task Tool can delegate only from an active matching Parent Turn. Runtime rej
 An accepted Child:
 
 1. registers a Root-tree member before asynchronous setup;
-2. receives a new run ID, Turn ID, and isolated spawned Session key;
+2. receives a new canonical `sessionId`, Turn ID, and root-only transient Transcript that is absent from Session Store/get/list;
 3. inherits the Parent route, Abort signal, context snapshot, and Registry Snapshot;
 4. prepares the Child prompt/tools;
 5. resolves either the Parent's effective Model Reference or the profile's concrete reference against the Parent generation;
 6. emits `subagent_start` and exactly one `subagent_end` terminal event;
-7. releases route, spawned Session, and tree membership in `finally`.
+7. releases route, deletes the transient Transcript, and releases tree membership in `finally`.
 
 A Child never recaptures the latest generation. Root pin release waits until the Parent and all registered Child members finish. Setup, resolution, execution, and Abort outcomes are classified separately; cleanup continues where possible if one cleanup step fails.
 
@@ -265,7 +265,7 @@ Runtime policy applies deterministic `deny` before `allow`; patterns support exa
 
 ## 11. Abort and bounded Shutdown
 
-`RuntimeApplication.abortTurn(sessionKey)` is the shared library/Channel abort command. It:
+`RuntimeApplication.abortTurn(sessionId)` is the shared library/Channel abort command. It:
 
 - aborts the active Turn's controller when present;
 - removes all not-yet-started normal queue items for that session;

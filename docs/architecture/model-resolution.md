@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Model Resolution behavior
-> Verified: 2026-09-17
+> Verified: 2026-09-18
 > Ownership: Model references, Provider projections, canonical identity, Model Facts, effective limits, capability validation, and resolution failures
 > Ownership key: model-resolution-and-facts
 

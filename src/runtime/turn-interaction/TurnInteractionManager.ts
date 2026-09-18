@@ -37,7 +37,7 @@ export class TurnInteractionManager {
     this.log.info('interaction request created', {
       interactionId: id,
       toolName: request.toolName,
-      sessionKey: request.sessionKey,
+      sessionId: request.sessionId,
       turnId: request.turnId,
       originClientId: request.originClientId,
     });
@@ -102,7 +102,7 @@ export class TurnInteractionManager {
       interactionId: id,
       outcome: result.outcome,
       toolName: entry.request.toolName,
-      sessionKey: entry.request.sessionKey,
+      sessionId: entry.request.sessionId,
       turnId: entry.request.turnId,
       pendingCount: this.pending.size,
     });

@@ -10,13 +10,13 @@ export type InboundContentBlock =
       type: 'image';
       source: {
         type: 'base64';
-        media_type: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+        mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
         data: string;
       };
     };
 
 export interface ChannelRunRequest {
-  sessionKey: string;
+  sessionId: string;
   message: string | InboundContentBlock[];
   modelReference?: ModelReference;
   requestOverride?: ModelRequestOverride;
@@ -36,7 +36,7 @@ export interface TurnInteractionOption {
 interface TurnInteractionRequestBase<K extends TurnInteractionKind> {
   id: string;
   kind: K;
-  sessionKey: string;
+  sessionId: string;
   turnId: string;
   originClientId?: string;
 }
@@ -88,7 +88,7 @@ export interface ApprovalRequest {
   id: string;
   toolName: string;
   input: Record<string, unknown>;
-  sessionKey: string;
+  sessionId: string;
   turnId: string;
   originClientId?: string;
 }
@@ -141,12 +141,34 @@ export interface ModelCatalogQuery {
 
 export interface TurnAbortCapability {
   querySessionsNeedingAbort(): string[];
-  abortTurn(sessionKey: string): { aborted: boolean; dropped: number };
+  abortTurn(sessionId: string): { aborted: boolean; dropped: number };
+}
+
+/** Channel 只通过此能力申请服务端 Session ID；创建本身不会写入持久化 Session。 */
+export interface SessionCapabilityEntry {
+  readonly sessionId: string;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly title?: string;
+  readonly archivedAt?: number;
+  readonly forkedFromSessionId?: string;
+}
+
+export interface SessionCapability {
+  createSession(): Promise<{ sessionId: string }>;
+  listSessions(input?: { archived?: boolean }): Promise<SessionCapabilityEntry[]>;
+  getSession(sessionId: string): Promise<SessionCapabilityEntry>;
+  renameSession(sessionId: string, title: string | null): Promise<SessionCapabilityEntry>;
+  archiveSession(sessionId: string): Promise<SessionCapabilityEntry>;
+  unarchiveSession(sessionId: string): Promise<SessionCapabilityEntry>;
+  deleteSession(sessionId: string): Promise<void>;
+  forkSession(sessionId: string, entryId?: string): Promise<SessionCapabilityEntry>;
 }
 
 export interface ChannelRuntimeCapabilities {
   readonly modelCatalog: ModelCatalogQuery;
   readonly abort: TurnAbortCapability;
+  readonly sessions: SessionCapability;
 }
 
 export interface ChannelInteractionTransport {

@@ -98,7 +98,7 @@ export interface RuntimeAppOptions {
 export interface RunTurnParams {
   /** Stable caller-facing Root request identity; generated at intake when omitted. */
   requestId?: string;
-  sessionKey: string;
+  sessionId: string;
   message: string | ChatContentBlock[];
   modelReference?: ModelReference;
   requestOverride?: ModelRequestOverride;
@@ -118,7 +118,7 @@ export interface RunTurnParams {
 }
 
 export interface RunTurnResult {
-  sessionKey: string;
+  sessionId: string;
   text: string;
   content: ChatContentBlock[];
   stopReason: string;
@@ -238,7 +238,7 @@ export type RuntimeEvent =
       requestId: string;
       originMessageId?: string;
       turnId: string;
-      sessionKey: string;
+      sessionId: string;
       contextVersion: number;
     }
   | {
@@ -246,7 +246,7 @@ export type RuntimeEvent =
       requestId: string;
       originMessageId?: string;
       turnId: string;
-      sessionKey: string;
+      sessionId: string;
       outcome: 'completed' | 'failed' | 'aborted' | 'shutdown_nonconverged';
       result?: RunTurnResult;
       failure?: { readonly code: string; readonly message: string };
@@ -292,7 +292,7 @@ export type RuntimeEvent =
    */
   | {
       type: 'messages_dropped';
-      sessionKey: string;
+      sessionId: string;
       /** v1 只有 'abort'，预留 'shutdown' 等 */
       reason: 'abort';
       /** 从 messageQueueBySession 中被丢弃的 queued/followup 消息数（≥1） */

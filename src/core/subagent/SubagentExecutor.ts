@@ -26,7 +26,7 @@ export interface SubagentExecutionRequest {
   readonly parentContextFiles: readonly ContextFile[];
   readonly childDepth: number;
   readonly canSpawn: boolean;
-  readonly childSessionKey: string;
+  readonly childSessionId: string;
   readonly childTurnId: string;
   readonly signal: AbortSignal;
   readonly toolProjection: ToolProjection;
@@ -35,7 +35,8 @@ export interface SubagentExecutionRequest {
 
 export interface PreparedSubagentExecution {
   readonly requestId: string;
-  readonly sessionKey: string;
+  readonly sessionId: string;
+  readonly subagentDepth: number;
   readonly turnId: string;
   readonly message: string;
   readonly systemPrompt: string;
@@ -72,7 +73,8 @@ export class SubagentExecutor {
 
     return {
       requestId: request.requestId,
-      sessionKey: request.childSessionKey,
+      sessionId: request.childSessionId,
+      subagentDepth: request.childDepth,
       message: request.prompt,
       systemPrompt: basePrompt ? `${basePrompt}\n\n${addendum}` : addendum,
       turnId: request.childTurnId,
@@ -88,6 +90,7 @@ export class SubagentExecutor {
 
   execute(request: PreparedSubagentExecution, resolvedModel: ResolvedModel): Promise<RunResult> {
     const {
+      sessionId,
       profile: _profile,
       tools: _tools,
       toolPolicy,
@@ -97,6 +100,7 @@ export class SubagentExecutor {
     } = request;
     return this.deps.agentRunner.run({
       ...runRequest,
+      sessionId: sessionId,
       resolvedModel,
       toolProjection,
       hookProjection,

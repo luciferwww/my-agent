@@ -4,8 +4,7 @@
  * - `taskDescription` comes from the delegation request description (i.e. the
  *   `description` argument of the `task` tool call). Not the user `prompt`,
  *   which already lives in the first user message and need not be repeated.
- * - `depth` is the subagent's nesting depth (matches the trailing `:depth`
- *   in its session-key — see {@link import('./session-key.js').getSubagentDepth}).
+ * - `depth` is the subagent's nesting depth, passed explicitly by Runtime.
  * - `canSpawn` is whether further `task` calls are permitted at this depth
  *   (i.e. role is `'main'` or `'orchestrator'`, not `'leaf'`). When `false`,
  *   the addendum explicitly tells the model the `task` tool is unavailable
@@ -21,8 +20,8 @@ export interface BehavioralAddendumOpts {
  * Build the per-run "behavioral addendum" appended to a subagent's system
  * prompt (after `SystemPromptBuilder.build({ mode: 'minimal' })`).
  *
- * Deliberately does NOT echo `sessionKey` or `prompt`:
- * - `sessionKey` is an internal identifier with no value to the LLM.
+ * 刻意不回显 `sessionId` 或 `prompt`：
+ * - `sessionId` 是内部标识，对 LLM 没有价值。
  * - `prompt` is already injected as the first user message of the turn;
  *   echoing it would double the cost without adding information.
  *

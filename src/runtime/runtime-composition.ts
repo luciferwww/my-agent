@@ -4,6 +4,7 @@ import type {
 } from '../core/channel/index.js';
 import type { AvailableSubagentEntry } from '../core/subagent/index.js';
 import type { ContextFile } from '../core/agent-context/index.js';
+import type { SessionEntry } from '../core/session/index.js';
 import type {
   RunTurnParams,
   RunTurnResult,
@@ -20,8 +21,16 @@ export type {
 
 export interface RuntimeApplication {
   runTurn(params: RunTurnParams): Promise<RunTurnResult>;
+  createSession(): Promise<{ sessionId: string }>;
+  listSessions(input?: { archived?: boolean }): Promise<SessionEntry[]>;
+  getSession(sessionId: string): Promise<SessionEntry>;
+  renameSession(sessionId: string, title: string | null): Promise<SessionEntry>;
+  archiveSession(sessionId: string): Promise<SessionEntry>;
+  unarchiveSession(sessionId: string): Promise<SessionEntry>;
+  deleteSession(sessionId: string): Promise<void>;
+  forkSession(sessionId: string, entryId?: string): Promise<SessionEntry>;
   getModelCatalog(): ModelCatalogSnapshot;
-  abortTurn(sessionKey: string): { aborted: boolean; dropped: number };
+  abortTurn(sessionId: string): { aborted: boolean; dropped: number };
   getState(): RuntimeLifecycleState;
   getToolNames(): string[];
   getContextFiles(): ContextFile[];

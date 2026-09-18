@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Extension acquisition behavior
-> Verified: 2026-09-17
+> Verified: 2026-09-18
 > Ownership: Extension packages, public API, Runtime-Bootstrap-derived Extension root, configuration, discovery, Jiti loading, acquisition diagnostics, and Runtime handoff
 > Ownership key: extension-acquisition
 

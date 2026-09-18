@@ -145,7 +145,7 @@ export async function processInboundMessage(
     }
     totalBytes += raw.byteLength;
 
-    const r = await processImageAttachment(raw, b.source.media_type);
+    const r = await processImageAttachment(raw, b.source.mediaType);
     if (!r.ok) {
       dropped.push({ blockIndex: i, reason: r.reason });
       continue;

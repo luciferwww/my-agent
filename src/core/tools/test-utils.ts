@@ -8,7 +8,8 @@ import type { ToolExecutionContext } from './types.js';
  * (e.g. via spies on the executor wrapper).
  */
 export const TEST_TOOL_CONTEXT: ToolExecutionContext = {
-  sessionKey: 'test-session',
+  sessionId: 'test-session',
+  subagentDepth: 0,
   turnId: 'test-turn',
   callId: 'test-tool-use',
   signal: new AbortController().signal,

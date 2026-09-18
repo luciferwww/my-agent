@@ -38,6 +38,26 @@ function host(): ChannelRuntimeHost {
         querySessionsNeedingAbort: vi.fn(() => []),
         abortTurn: vi.fn(() => ({ aborted: false, dropped: 0 })),
       },
+      sessions: {
+        createSession: vi.fn(async () => ({ sessionId: 'session' })),
+        listSessions: vi.fn(async () => []),
+        getSession: vi.fn(async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 })),
+        renameSession: vi.fn(async (sessionId, title) => ({
+          sessionId,
+          createdAt: 1,
+          updatedAt: 1,
+          ...(title === null ? {} : { title }),
+        })),
+        archiveSession: vi.fn(async (sessionId) => ({
+          sessionId,
+          createdAt: 1,
+          updatedAt: 1,
+          archivedAt: 1,
+        })),
+        unarchiveSession: vi.fn(async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 })),
+        deleteSession: vi.fn(async () => undefined),
+        forkSession: vi.fn(async () => ({ sessionId: 'fork', createdAt: 1, updatedAt: 1 })),
+      },
     },
   };
 }
@@ -71,7 +91,7 @@ function unit(
 
 describe('Channel candidate preparation', () => {
   it('keeps ingress closed until publication and closes it again on removal', async () => {
-    let dispatch: ((request: { sessionKey: string; message: string }) => Promise<void>) | undefined;
+    let dispatch: ((request: { sessionId: string; message: string }) => Promise<void>) | undefined;
     const fixture = channel('gated', {
       onMessage: vi.fn((handler) => { dispatch = handler; }),
     });
@@ -80,7 +100,7 @@ describe('Channel candidate preparation', () => {
       unit: stageRegistryUnit(unit('gated', [{ id: 'gated', create: () => fixture.instance }])),
       host: runtimeHost,
     });
-    const request = { sessionKey: 'session', message: 'hello' };
+    const request = { sessionId: 'session', message: 'hello' };
 
     await expect(dispatch!(request)).rejects.toThrow('ingress is not published');
     prepared.activateIngress();

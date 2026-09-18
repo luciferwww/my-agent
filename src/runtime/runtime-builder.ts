@@ -67,7 +67,7 @@ export interface RuntimeApplicationKernel {
   onInteractionResponse(response: TurnInteractionResponse): void;
   onInteractionUnavailable(id: string, reason: 'origin_disconnected'): void;
   querySessionsNeedingAbort(): string[];
-  abortTurn(sessionKey: string): { aborted: boolean; dropped: number };
+  abortTurn(sessionId: string): { aborted: boolean; dropped: number };
   blockingTurnIds(generation: number): readonly string[];
   abortGeneration(generation: number): readonly string[];
   channelBindingsForTurn(turnId: string): readonly ChannelRuntimeBinding[] | undefined;
@@ -187,8 +187,58 @@ export async function buildRuntimeHandle(
         querySessionsNeedingAbort(): string[] {
           return kernel?.querySessionsNeedingAbort() ?? [];
         },
-        abortTurn(sessionKey: string) {
-          return kernel?.abortTurn(sessionKey) ?? { aborted: false, dropped: 0 };
+        abortTurn(sessionId: string) {
+          return kernel?.abortTurn(sessionId) ?? { aborted: false, dropped: 0 };
+        },
+      }),
+      sessions: Object.freeze({
+        createSession() {
+          if (!kernel) {
+            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+          }
+          return kernel.application.createSession();
+        },
+        listSessions(input?: { archived?: boolean }) {
+          if (!kernel) {
+            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+          }
+          return kernel.application.listSessions(input);
+        },
+        getSession(sessionId: string) {
+          if (!kernel) {
+            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+          }
+          return kernel.application.getSession(sessionId);
+        },
+        renameSession(sessionId: string, title: string | null) {
+          if (!kernel) {
+            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+          }
+          return kernel.application.renameSession(sessionId, title);
+        },
+        archiveSession(sessionId: string) {
+          if (!kernel) {
+            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+          }
+          return kernel.application.archiveSession(sessionId);
+        },
+        unarchiveSession(sessionId: string) {
+          if (!kernel) {
+            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+          }
+          return kernel.application.unarchiveSession(sessionId);
+        },
+        deleteSession(sessionId: string) {
+          if (!kernel) {
+            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+          }
+          return kernel.application.deleteSession(sessionId);
+        },
+        forkSession(sessionId: string, entryId?: string) {
+          if (!kernel) {
+            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+          }
+          return kernel.application.forkSession(sessionId, entryId);
         },
       }),
     }),
@@ -478,7 +528,7 @@ function assembleLoadedRuntimeUnits(params: {
       registration: createTaskToolContribution({
         delegationPort,
         profileRegistry: params.subagentProfiles,
-        getCapabilities: (sessionKey) => resolveSubagentCapabilities(sessionKey, maxDepth),
+        getCapabilities: (depth) => resolveSubagentCapabilities(depth, maxDepth),
         maxDepth,
       }),
       required: true,

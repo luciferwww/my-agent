@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-14
+> Verified: 2026-09-18
 > Authority: Stable Tool and Hook contract
 
 ## Scope
@@ -17,7 +17,7 @@ The canonical Tool Result type admits `success`, `unknown_tool`, `denied`, `inva
 
 ```ts
 interface ToolExecutionContext {
-  readonly sessionKey: string;
+  readonly sessionId: string;
   readonly turnId: string;
   readonly callId: string;
   readonly signal: AbortSignal;

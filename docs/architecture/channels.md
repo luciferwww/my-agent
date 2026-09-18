@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Channel behavior
-> Verified: 2026-09-17
+> Verified: 2026-09-18
 > Ownership: Channel contracts, transport, interaction, CLI/WebSocket protocol, attachment ingress, and client routing
 > Ownership key: channel-transport-and-ingress
 
@@ -78,7 +78,7 @@ Runtime Builder Fanout
 
 Fanout selects captured-generation Channel bindings for events with a live `turnId`; events without Turn correlation use current bindings. Each synchronous throw or asynchronous rejection is contained and logged so one Channel or observer failure does not stop other deliveries or alter Turn execution. Terminal Fanout promises are tracked for bounded Shutdown convergence.
 
-Most events route by `sessionKey`. Subagent events carry a child session key and WebSocket normalizes them to the root-session audience. A queued `request_end` has no session key, so WebSocket resolves its audience from the earlier `user_message` through `originMessageId`; an uncorrelated event is not sent. `user_message.attachmentSummaries` may expose type, MIME, byte count, and dimensions, but never raw base64.
+Most events route by `sessionId`. Subagent events carry a child `sessionId` plus `callerSessionId`, and WebSocket routes them to the caller Session audience. A queued `request_end` has no Session ID, so WebSocket resolves its audience from the earlier `user_message` through `originMessageId`; an uncorrelated event is not sent. `user_message.attachmentSummaries` may expose type, MIME, byte count, and dimensions, but never raw base64.
 
 ### 3.3 Runtime capabilities
 
@@ -88,7 +88,7 @@ Before `start()`, candidate activation may call:
 bindRuntimeCapabilities({ modelCatalog, abort })
 ```
 
-`modelCatalog.getSnapshot()` is a live query over the current published generation. `abort.querySessionsNeedingAbort()` and `abort.abortTurn(sessionKey)` form the abort capability; aborting a session can terminate its active Turn and drop ordinary queued requests. Channel model selection consumes the Catalog for presentation and early checks, but Model Resolution remains the final authority.
+`modelCatalog.getSnapshot()` is a live query over the current published generation. `abort.querySessionsNeedingAbort()` and `abort.abortTurn(sessionId)` form the abort capability; aborting a session can terminate its active Turn and drop ordinary queued requests. Channel model selection consumes the Catalog for presentation and early checks, but Model Resolution remains the final authority.
 
 ## 4. Canonical contracts
 
@@ -107,7 +107,6 @@ CliChannelConfig {
   input?: NodeJS.ReadableStream   # default process.stdin
   output?: NodeJS.WritableStream  # default process.stdout
   prompt?: string                 # default "> "
-  sessionKey?: string             # default "main"
   approval?: boolean              # default false
 }
 ```
@@ -118,7 +117,7 @@ CLI streams text, presents bounded Tool/Compaction/Subagent status, suppresses l
 
 ### 6.2 Model commands and lifecycle
 
-`/models` and `/model` query and select exact current-Catalog references; display escaping never changes opaque Model identity. CLI approval uses its readline interaction, Ctrl+C delegates active/queued Abort through Runtime capabilities before closing the Channel, and process exit policy remains Host-owned.
+`/models` and `/model` query and select exact current-Catalog references; display escaping never changes opaque Model identity. A new CLI conversation initially has no Session ID. The first ordinary message calls the Runtime Session capability and immediately submits the message with the returned server-issued UUID; later messages reuse that ID. Merely entering a new-conversation state does not create a Pending Session. CLI approval uses its readline interaction, Ctrl+C delegates active/queued Abort through Runtime capabilities before closing the Channel, and process exit policy remains Host-owned.
 
 ## 7. WebSocket Channel
 
@@ -136,7 +135,9 @@ The server uses the Media-owned 15 MiB maximum frame size. A socket must complet
 
 ### 7.1 Protocol and routing
 
-After `hello`, WebSocket accepts Turn submission, approval resolution, Abort, and Catalog queries. It emits acknowledgements, Catalog responses, correlated `AgentEvent` values, approval lifecycle messages, and requesting-socket errors. Wire validation owns JSON and transport shape; Media owns decoded attachment validation.
+After `hello`, WebSocket accepts Session creation, Turn submission, approval resolution, Abort, and Catalog queries. All JSON property names use camelCase; snake_case is reserved for `type` discriminator values such as `create_session` and `run_turn`. `create_session` carries a `requestId`; `session_created` returns the same `requestId` and the server-issued `sessionId`. `run_turn` continues to require `sessionId`, so the Channel never treats an omitted ID as an implicit create. It also emits acknowledgements, Catalog responses, correlated `AgentEvent` values, approval lifecycle messages, and requesting-socket errors. Wire validation owns JSON and transport shape; Media owns decoded attachment validation.
+
+Clients should treat “new Session” as local state only. When the user submits the first message, the client issues `create_session`, waits for `session_created`, and immediately issues `run_turn` with the returned ID. This avoids abandoned UI create actions producing even a Pending registration.
 
 A successful `run_turn` registers the client in that session's audience. The Channel maintains forward and reverse audience maps so disconnect cleanup is proportional to that client's sessions. A newer socket using the same `clientId` supersedes and closes the old socket; the old socket's late close cannot remove the replacement. A pending approval remains associated with the logical client across replacement, but disconnect of the current socket reports `origin_disconnected`.
 

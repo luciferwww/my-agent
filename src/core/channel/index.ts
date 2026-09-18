@@ -28,6 +28,8 @@ export type {
   ProviderCatalogEntry,
   SelectInteractionRequest,
   SelectInteractionResponse,
+  SessionCapability,
+  SessionCapabilityEntry,
   TurnInteractionKind,
   TurnInteractionOption,
   TurnInteractionOutcome,

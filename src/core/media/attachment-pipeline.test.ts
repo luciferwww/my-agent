@@ -120,11 +120,11 @@ describe('processInboundMessage', () => {
       // BMP declared — unsupported MIME, will land in dropped[]
       {
         type: 'image',
-        source: { type: 'base64', media_type: 'image/png', data: toBase64(new Uint8Array([1, 2, 3])) },
+        source: { type: 'base64', mediaType: 'image/png', data: toBase64(new Uint8Array([1, 2, 3])) },
       },
     ];
     // Force unsupported MIME by post-mutating (channel-side wire type is constrained).
-    (msg[1] as { source: { media_type: string } }).source.media_type = 'image/bmp';
+    (msg[1] as { source: { mediaType: string } }).source.mediaType = 'image/bmp';
     const r = await processInboundMessage(msg);
     expect(Array.isArray(r.normalized)).toBe(true);
     const arr = r.normalized as ChatContentBlock[];
@@ -143,7 +143,7 @@ describe('processInboundMessage', () => {
         type: 'image',
         source: {
           type: 'base64',
-          media_type: 'image/png',
+          mediaType: 'image/png',
           data: toBase64(buildMinimalPng(10 + i, 10 + i)),
         },
       });
@@ -161,7 +161,7 @@ describe('processInboundMessage', () => {
     const msg: InboundContentBlock[] = [
       {
         type: 'image',
-        source: { type: 'base64', media_type: 'image/png', data: toBase64(big) },
+        source: { type: 'base64', mediaType: 'image/png', data: toBase64(big) },
       },
     ];
     const r = await processInboundMessage(msg);
@@ -179,7 +179,7 @@ describe('processInboundMessage', () => {
         type: 'image',
         source: {
           type: 'base64',
-          media_type: 'image/png',
+          mediaType: 'image/png',
           data: toBase64(buildFakeLargePng(SIZE)),
         },
       });

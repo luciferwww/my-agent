@@ -86,6 +86,26 @@ function host(): ChannelRuntimeHost {
         querySessionsNeedingAbort: () => [],
         abortTurn: () => ({ aborted: false, dropped: 0 }),
       },
+      sessions: {
+        createSession: async () => ({ sessionId: 'session' }),
+        listSessions: async () => [],
+        getSession: async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 }),
+        renameSession: async (sessionId, title) => ({
+          sessionId,
+          createdAt: 1,
+          updatedAt: 1,
+          ...(title === null ? {} : { title }),
+        }),
+        archiveSession: async (sessionId) => ({
+          sessionId,
+          createdAt: 1,
+          updatedAt: 1,
+          archivedAt: 1,
+        }),
+        unarchiveSession: async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 }),
+        deleteSession: async () => undefined,
+        forkSession: async () => ({ sessionId: 'fork', createdAt: 1, updatedAt: 1 }),
+      },
     },
   };
 }
@@ -117,15 +137,15 @@ describe('External Test Channel module', () => {
     const snapshot = await manager.start();
     expect(snapshot.channels.resolve('external-test-channel')).toBeDefined();
 
-    await channel!.dispatch({ sessionKey: 'main', message: 'external inbound' });
+    await channel!.dispatch({ sessionId: 'main', message: 'external inbound' });
     expect(runtimeHost.onMessage).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'external-test-channel' }),
-      { sessionKey: 'main', message: 'external inbound' },
+      { sessionId: 'main', message: 'external inbound' },
     );
     snapshot.channels.resolve('external-test-channel')?.send({
       type: 'run_start',
       requestId: 'request-1',
-      sessionKey: 'main',
+      sessionId: 'main',
       turnId: 'turn-1',
     });
     expect(channel!.sentEvents).toHaveLength(1);

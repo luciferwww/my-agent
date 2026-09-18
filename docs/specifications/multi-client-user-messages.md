@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-14
+> Verified: 2026-09-18
 > Authority: Stable multi-client user-message contract
 
 ## Scope
@@ -21,7 +21,7 @@ interface AttachmentSummary {
 
 type UserMessageEvent = {
   type: 'user_message';
-  sessionKey: string;
+  sessionId: string;
   messageId: string;
   content: string;
   attachmentSummaries?: AttachmentSummary[];

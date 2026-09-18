@@ -19,7 +19,7 @@ describe('WebSocketChannel payload integration', () => {
     const message = 'x'.repeat(10 * 1024 * 1024 + 1);
     const frame = JSON.stringify({
       type: 'run_turn',
-      sessionKey: 'payload-limit',
+      sessionId: 'payload-limit',
       message,
     });
     expect(Buffer.byteLength(frame)).toBeGreaterThan(10 * 1024 * 1024);
@@ -38,7 +38,7 @@ describe('WebSocketChannel payload integration', () => {
     await vi.waitFor(() => {
       expect(handler).toHaveBeenCalledWith({
         clientId: 'payload-client',
-        sessionKey: 'payload-limit',
+        sessionId: 'payload-limit',
         message,
       });
     }, { timeout: 5_000 });

@@ -19,6 +19,18 @@ import {
 } from '../../runtime/registry-builder.js';
 import { AgentRunner } from './AgentRunner.js';
 
+const MAIN_SESSION_ID = '00000000-0000-4000-8000-000000000201';
+
+async function createEmptyTestSession(
+  sessionManager: SessionManager,
+  sessionId: string,
+): Promise<void> {
+  await sessionManager.materializeSession({
+    sessionId,
+    createdAt: Date.now(),
+  });
+}
+
 function invocationPort(call: ToolCall, requests: ModelInvocationRequest[]): ModelInvocationPort {
   let round = 0;
   return {
@@ -76,7 +88,7 @@ describe('AgentRunner canonical Tool pipeline', () => {
   beforeEach(async () => {
     agentHome = await mkdtemp(join(tmpdir(), 'tool-pipeline-'));
     sessionManager = new SessionManager(agentHome);
-    await sessionManager.createSession('main');
+    await createEmptyTestSession(sessionManager, MAIN_SESSION_ID);
   });
 
   afterEach(async () => {
@@ -98,7 +110,7 @@ describe('AgentRunner canonical Tool pipeline', () => {
     }, requests);
 
     await new AgentRunner({ sessionManager }).run({
-      sessionKey: 'main',
+      sessionId: MAIN_SESSION_ID,
       message: 'go',
       systemPrompt: '',
       turnId: 'turn',
@@ -137,7 +149,7 @@ describe('AgentRunner canonical Tool pipeline', () => {
     }, []);
 
     await new AgentRunner({ sessionManager }).run({
-      sessionKey: 'main',
+      sessionId: MAIN_SESSION_ID,
       message: 'go',
       systemPrompt: '',
       turnId: 'turn',
@@ -173,7 +185,7 @@ describe('AgentRunner canonical Tool pipeline', () => {
     }, []);
 
     await new AgentRunner({ sessionManager }).run({
-      sessionKey: 'main',
+      sessionId: MAIN_SESSION_ID,
       message: 'go',
       systemPrompt: '',
       turnId: 'turn',
@@ -207,7 +219,7 @@ describe('AgentRunner canonical Tool pipeline', () => {
     }, requests);
 
     await new AgentRunner({ sessionManager }).run({
-      sessionKey: 'main',
+      sessionId: MAIN_SESSION_ID,
       message: 'go',
       systemPrompt: '',
       turnId: 'turn',
@@ -247,7 +259,7 @@ describe('AgentRunner canonical Tool pipeline', () => {
     }, []);
 
     await new AgentRunner({ sessionManager }).run({
-      sessionKey: 'main',
+      sessionId: MAIN_SESSION_ID,
       message: 'go',
       systemPrompt: '',
       turnId: 'turn',
@@ -294,7 +306,7 @@ describe('AgentRunner canonical Tool pipeline', () => {
     }, requests);
 
     const runPromise = new AgentRunner({ sessionManager }).run({
-      sessionKey: 'main',
+      sessionId: MAIN_SESSION_ID,
       message: 'go',
       systemPrompt: '',
       turnId: 'turn',
@@ -305,7 +317,7 @@ describe('AgentRunner canonical Tool pipeline', () => {
     });
 
     await vi.waitFor(() => expect(observerEntered).toHaveBeenCalledTimes(1));
-    expect(appendMessage).toHaveBeenCalledWith('main', expect.objectContaining({
+    expect(appendMessage).toHaveBeenCalledWith(MAIN_SESSION_ID, expect.objectContaining({
       role: 'toolResult',
     }));
     expect(requests).toHaveLength(1);
@@ -341,7 +353,7 @@ describe('AgentRunner canonical Tool pipeline', () => {
     }, []);
 
     const runPromise = new AgentRunner({ sessionManager }).run({
-      sessionKey: 'main',
+      sessionId: MAIN_SESSION_ID,
       message: 'go',
       systemPrompt: '',
       turnId: 'turn',

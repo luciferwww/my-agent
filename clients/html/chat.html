@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -74,10 +74,10 @@
       }
 
       .sidebar {
-        padding: 22px;
+        padding: 20px;
         display: flex;
         flex-direction: column;
-        gap: 18px;
+        gap: 16px;
         overflow: auto;
       }
 
@@ -98,33 +98,9 @@
 
       .brand-title {
         margin: 0;
-        font-size: 30px;
+        font-size: 24px;
         line-height: 1;
         font-weight: 700;
-      }
-
-      .muted-copy {
-        margin: 0;
-        color: var(--muted);
-        line-height: 1.45;
-      }
-
-      .status-copy {
-        margin-top: 10px;
-      }
-
-      .status-card {
-        padding: 16px 18px;
-        border-radius: 18px;
-        background: rgba(255, 255, 255, 0.72);
-        border: 1px solid var(--border);
-      }
-
-      .status-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
       }
 
       .status-pill {
@@ -470,6 +446,143 @@
       .ghost {
         color: var(--muted);
         background: rgba(122, 103, 80, 0.08);
+      }
+
+      .connection-meta {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .icon-button {
+        display: inline-grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        color: var(--muted);
+        background: rgba(122, 103, 80, 0.08);
+        border: 1px solid transparent;
+        border-radius: 8px;
+        font-size: 17px;
+        line-height: 1;
+      }
+
+      .icon-button:hover:not(:disabled) {
+        transform: none;
+        color: var(--text);
+        border-color: var(--border-strong);
+      }
+
+      .section-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .session-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-height: 92px;
+        max-height: min(34vh, 320px);
+        overflow-y: auto;
+      }
+
+      .session-list-state {
+        padding: 16px 12px;
+        color: var(--muted);
+        font-size: 12px;
+        text-align: center;
+        border: 1px dashed var(--border-strong);
+        border-radius: 8px;
+      }
+
+      .session-list-state.error {
+        color: var(--danger);
+      }
+
+      .session-item {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        min-height: 54px;
+        padding: 9px 10px;
+        color: var(--text);
+        text-align: left;
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+
+      .session-item:hover:not(:disabled) {
+        transform: none;
+        border-color: var(--border-strong);
+        background: rgba(255, 255, 255, 0.94);
+      }
+
+      .session-item.selected {
+        border-color: rgba(216, 137, 92, 0.55);
+        background: rgba(231, 164, 125, 0.14);
+      }
+
+      .session-item-copy {
+        min-width: 0;
+        display: grid;
+        gap: 3px;
+      }
+
+      .session-item-title {
+        overflow: hidden;
+        color: var(--text);
+        font-size: 13px;
+        font-weight: 650;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .session-item-id,
+      .session-item-time {
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .session-item-time {
+        white-space: nowrap;
+      }
+
+      .event-feed-toggle {
+        width: 100%;
+        padding: 0;
+        color: inherit;
+        text-align: left;
+        background: transparent;
+        border-radius: 0;
+      }
+
+      .event-feed-toggle:hover:not(:disabled) {
+        transform: none;
+      }
+
+      .event-feed-toggle-copy {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .event-feed-chevron {
+        color: var(--muted);
+        font-size: 12px;
+        transition: transform 140ms ease;
+      }
+
+      .event-feed-chevron.expanded {
+        transform: rotate(90deg);
       }
 
       /* Conversation */
@@ -1144,146 +1257,182 @@
         <header class="brand">
           <div class="eyebrow">WebSocket Client</div>
           <h1 class="brand-title">my-agent chat</h1>
-          <p class="muted-copy">
-            一个不需要构建的单文件客户端。连接当前 websocket channel，发送消息，接收流式回复，并处理 approval。
-          </p>
         </header>
-
-        <section class="status-card">
-          <div class="status-row">
-            <div>
-              <div class="eyebrow">Connection</div>
-              <strong>{{ connectionLabel }}</strong>
-            </div>
-            <div class="status-pill" :class="statusClass">{{ connectionStatus }}</div>
-          </div>
-          <p class="muted-copy status-copy">{{ lastStatusMessage }}</p>
-        </section>
 
         <section class="section">
           <div class="section-title">
             <h2>Connection</h2>
-            <small>{{ endpointPreview }}</small>
+            <div class="status-pill" :class="statusClass">{{ connectionStatus }}</div>
           </div>
-          <p class="section-note">
-            Client ID 标识逻辑客户端；Session Key 决定这条消息落到哪条会话，并影响当前页面收到哪些 session 事件。
-          </p>
           <div class="field-grid">
             <label>
               <span class="field-label-text">WebSocket URL</span>
               <input v-model.trim="form.url" placeholder="ws://127.0.0.1:8787/ws" />
             </label>
-            <label>
-              <span class="field-label-text">Client ID</span>
-              <input v-model.trim="form.clientId" placeholder="browser-client" />
-            </label>
-            <label>
-              <span class="field-label-text">Session Key</span>
-              <input v-model.trim="form.sessionKey" placeholder="main" />
-            </label>
-            <div class="model-picker" :class="{ open: modelPickerOpen }">
-              <span class="field-label-text">Model</span>
-              <button
-                class="model-picker-trigger"
-                type="button"
-                :disabled="!modelCatalog || availableModels.length === 0"
-                :aria-expanded="String(modelPickerOpen)"
-                aria-haspopup="listbox"
-                @click="toggleModelPicker"
-              >
+          </div>
+          <div class="button-row">
+            <button class="primary" @click="connect" :disabled="isConnecting || isConnected">
+              {{ isConnected ? 'Connected' : isConnecting ? 'Connecting…' : 'Connect' }}
+            </button>
+            <button class="secondary" @click="disconnect" :disabled="!socket">Disconnect</button>
+          </div>
+          <div class="connection-meta" :title="form.clientId">
+            {{ lastStatusMessage }} · {{ form.clientId }}
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">
+            <h2>Model</h2>
+          </div>
+          <div class="model-picker" :class="{ open: modelPickerOpen }">
+            <button
+              class="model-picker-trigger"
+              type="button"
+              :disabled="!modelCatalog || availableModels.length === 0"
+              :aria-expanded="String(modelPickerOpen)"
+              aria-haspopup="listbox"
+              @click="toggleModelPicker"
+            >
                 <span class="model-picker-trigger-copy">
                   <span class="model-picker-trigger-name">{{ modelPickerLabel }}</span>
                   <span v-if="selectedModelDetails" class="model-picker-trigger-provider">
-                    {{ selectedModelDetails.provider.display_name }}
+                    {{ selectedModelDetails.provider.displayName }}
                   </span>
                 </span>
                 <span class="model-picker-chevron">⌄</span>
-              </button>
-              <div v-if="modelPickerOpen" class="model-picker-scrim" @click="closeModelPicker"></div>
-              <div
-                v-if="modelPickerOpen"
-                class="model-picker-panel"
-                role="dialog"
-                aria-label="Select model"
-                @keydown.esc.stop="closeModelPicker"
-              >
+            </button>
+            <div v-if="modelPickerOpen" class="model-picker-scrim" @click="closeModelPicker"></div>
+            <div
+              v-if="modelPickerOpen"
+              class="model-picker-panel"
+              role="dialog"
+              aria-label="Select model"
+              @keydown.esc.stop="closeModelPicker"
+            >
                 <input
                   ref="modelSearchEl"
                   v-model="modelSearch"
                   class="model-picker-search"
                   type="search"
                   role="combobox"
-                  aria-label="搜索模型或 Provider"
+                  aria-label="Search models or providers"
                   aria-autocomplete="list"
                   aria-controls="model-picker-options"
                   aria-expanded="true"
                   :aria-activedescendant="activeModelOptionId"
-                  placeholder="搜索模型或 Provider"
+                  placeholder="Search models or providers"
                   @input="onModelSearchInput"
                   @keydown="onModelSearchKeydown"
                 />
                 <div id="model-picker-options" class="model-picker-list" role="listbox">
                   <div v-if="filteredModelProviders.length === 0" class="model-picker-empty">
-                    {{ availableModels.length === 0 ? '无可用模型' : '没有匹配的模型' }}
+                    {{ availableModels.length === 0 ? 'No models available' : 'No matching models' }}
                   </div>
                   <section
                     v-for="provider in filteredModelProviders"
-                    :key="provider.provider_id"
+                    :key="provider.providerId"
                     class="model-provider-group"
                   >
                     <div class="model-provider-heading">
-                      <span>{{ provider.display_name }}</span>
-                      <span class="model-provider-id">{{ provider.provider_id }}</span>
+                      <span>{{ provider.displayName }}</span>
+                      <span class="model-provider-id">{{ provider.providerId }}</span>
                     </div>
                     <button
                       v-for="model in provider.models"
-                      :key="modelOptionToken(provider.provider_id, model.model_id)"
+                      :key="modelOptionToken(provider.providerId, model.modelId)"
                       class="model-picker-option"
                       :class="{
-                        selected: isSelectedModel(provider.provider_id, model.model_id),
-                        active: activeModelOptionIndex === modelOptionIndex(provider.provider_id, model.model_id),
+                        selected: isSelectedModel(provider.providerId, model.modelId),
+                        active: activeModelOptionIndex === modelOptionIndex(provider.providerId, model.modelId),
                       }"
                       type="button"
                       role="option"
-                      :id="modelOptionId(provider.provider_id, model.model_id)"
-                      :aria-selected="String(isSelectedModel(provider.provider_id, model.model_id))"
-                      @mouseenter="activeModelOptionIndex = modelOptionIndex(provider.provider_id, model.model_id)"
-                      @click="selectModel(provider.provider_id, model.model_id)"
+                      :id="modelOptionId(provider.providerId, model.modelId)"
+                      :aria-selected="String(isSelectedModel(provider.providerId, model.modelId))"
+                      @mouseenter="activeModelOptionIndex = modelOptionIndex(provider.providerId, model.modelId)"
+                      @click="selectModel(provider.providerId, model.modelId)"
                     >
                       <span class="model-picker-check">
-                        {{ isSelectedModel(provider.provider_id, model.model_id) ? '✓' : '' }}
+                        {{ isSelectedModel(provider.providerId, model.modelId) ? '✓' : '' }}
                       </span>
                       <span class="model-picker-option-copy">
-                        <span class="model-picker-option-name">{{ model.display_name }}</span>
-                        <span class="model-picker-option-id">{{ model.model_id }}</span>
+                        <span class="model-picker-option-name">{{ model.displayName }}</span>
+                        <span class="model-picker-option-id">{{ model.modelId }}</span>
                       </span>
                       <span
-                        v-if="isRuntimeDefaultModel(provider.provider_id, model.model_id)"
+                        v-if="isRuntimeDefaultModel(provider.providerId, model.modelId)"
                         class="model-picker-default-badge"
-                      >默认</span>
+                      >Default</span>
                     </button>
                   </section>
                 </div>
-              </div>
             </div>
-          </div>
-          <p class="section-note">{{ modelSelectionStatus }}</p>
-          <div class="button-row">
-            <button class="primary" @click="connect" :disabled="isConnecting || isConnected">
-              {{ isConnected ? 'Connected' : isConnecting ? 'Connecting…' : 'Connect' }}
-            </button>
-            <button class="secondary" @click="disconnect" :disabled="!socket">Disconnect</button>
-            <button class="ghost" @click="resetChat" :disabled="chatItems.length === 0">Clear Chat</button>
           </div>
         </section>
 
         <section class="section">
           <div class="section-title">
-            <h2>Event Feed</h2>
-            <small>{{ eventFeed.length }} items</small>
+            <h2>Sessions</h2>
+            <div class="section-actions">
+              <button
+                class="icon-button"
+                type="button"
+                title="Refresh Sessions"
+                aria-label="Refresh Sessions"
+                :disabled="!isConnected || pendingSessionsRequestId !== null"
+                @click="requestSessionList"
+              >↻</button>
+              <button
+                class="icon-button"
+                type="button"
+                title="New Session"
+                aria-label="New Session"
+                @click="startNewSession"
+                :disabled="isWaitingForReply || pendingSessionRequestId !== null || (!form.sessionId && chatItems.length === 0)"
+              >＋</button>
+            </div>
           </div>
-          <p class="section-note">这里保留最近的 transport/runtime 事件，便于观察 websocket 连接和 turn 生命周期。</p>
-          <div class="event-list">
+          <div class="session-list" aria-live="polite">
+            <div v-if="pendingSessionsRequestId !== null && sessions.length === 0" class="session-list-state">
+              Loading Sessions…
+            </div>
+            <div v-else-if="sessionsError" class="session-list-state error">{{ sessionsError }}</div>
+            <div v-else-if="sessions.length === 0" class="session-list-state">
+              {{ isConnected ? 'No persisted Sessions.' : 'Connect to load Sessions.' }}
+            </div>
+            <button
+              v-for="session in sessions"
+              :key="session.sessionId"
+              class="session-item"
+              :class="{ selected: session.sessionId === form.sessionId }"
+              type="button"
+              :disabled="isWaitingForReply || pendingSessionRequestId !== null"
+              @click="selectSession(session)"
+            >
+              <span class="session-item-copy">
+                <span class="session-item-title">{{ session.title || 'Untitled' }}</span>
+                <span class="session-item-id">{{ shortSessionId(session.sessionId) }}</span>
+              </span>
+              <span class="session-item-time">{{ formatSessionTime(session.updatedAt) }}</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="section">
+          <button
+            class="section-title event-feed-toggle"
+            type="button"
+            :aria-expanded="String(eventFeedExpanded)"
+            @click="eventFeedExpanded = !eventFeedExpanded"
+          >
+            <span class="event-feed-toggle-copy">
+              <span class="event-feed-chevron" :class="{ expanded: eventFeedExpanded }">›</span>
+              <h2>Event Feed</h2>
+            </span>
+            <small>{{ eventFeed.length }} items</small>
+          </button>
+          <div v-if="eventFeedExpanded" class="event-list">
             <div v-if="eventFeed.length === 0" class="event-item">No events yet.</div>
             <div v-for="item in eventFeed" :key="item.id" class="event-item">
               <strong>{{ item.title }}</strong><br />
@@ -1297,7 +1446,7 @@
         <header class="chat-header">
           <div>
             <h2 class="chat-title">Conversation</h2>
-            <p class="chat-subtitle">Session {{ form.sessionKey }} over {{ headerEndpoint }}</p>
+            <p class="chat-subtitle">{{ currentSessionLabel }} · {{ headerEndpoint }}</p>
           </div>
           <div class="chat-header-actions">
             <div v-if="pendingApprovalCount > 0" class="waiting-badge">
@@ -1308,13 +1457,8 @@
 
         <section ref="chatLogEl" class="chat-log">
           <div v-if="chatItems.length === 0" class="empty-state">
-            <h3>准备开始一轮会话</h3>
-            <p>先连接 websocket agent，再发送第一条消息。这个 demo 当前重点是观察同一 session 下的 AgentEvent 流。</p>
-            <ul class="empty-state-list">
-              <li>连接成功后会先发送 <code>hello</code>，等服务端返回 <code>hello_ack</code>。</li>
-              <li>首次发送 <code>run_turn</code> 后，当前客户端才会加入该 session 的事件广播受众。</li>
-              <li>不会自动拉取历史；但同 session 内其他 client（含 CLI）发送的用户消息会自动回显。</li>
-            </ul>
+            <h3>{{ form.sessionId ? 'Session selected' : 'New Session' }}</h3>
+            <p>{{ form.sessionId ? 'Send a message to continue this Session. Existing history is not loaded by this client.' : 'Send the first message to create this Session.' }}</p>
           </div>
 
           <article
@@ -1434,7 +1578,7 @@
                     <img :src="att.previewUrl" :alt="att.name" />
                     <div class="bubble-attachment-meta">
                       <span>{{ att.name }}</span>
-                      <span>{{ formatBytes(att.sizeBytes) }}{{ att.willResize ? ' · 已压缩' : '' }}</span>
+                      <span>{{ formatBytes(att.sizeBytes) }}{{ att.willResize ? ' · compressed' : '' }}</span>
                     </div>
                   </div>
                 </div>
@@ -1468,13 +1612,13 @@
                 <div class="attachment-chip-meta">
                   <span class="attachment-chip-name">{{ a.name }}</span>
                   <span class="attachment-chip-size">{{ formatBytes(a.sizeBytes) }}</span>
-                  <span v-if="a.willResize" class="attachment-chip-badge">已压缩</span>
+                  <span v-if="a.willResize" class="attachment-chip-badge">Compressed</span>
                 </div>
-                <button class="attachment-chip-remove" @click="removeAttachment(a.id)" aria-label="移除附件">×</button>
+                <button class="attachment-chip-remove" @click="removeAttachment(a.id)" aria-label="Remove attachment">×</button>
               </div>
             </div>
             <div v-if="isWaitingForReply && attachments.length > 0" class="composer-attach-error">
-              打断中的回复不能携带附件，请移除后发送。
+              Steering messages cannot include attachments. Remove them before sending.
             </div>
           </div>
 
@@ -1482,7 +1626,7 @@
             Message
             <textarea
               v-model="draft"
-              placeholder="给 agent 发送一条消息…"
+              placeholder="Send a message to the agent…"
               @keydown.enter.exact.prevent="sendMessage"
               @paste="onPaste"
             ></textarea>
@@ -1499,23 +1643,23 @@
 
           <div class="composer-row">
             <div class="composer-hint">
-              <span>Enter 发送，Shift+Enter 换行。📎 / 拖拽 / 粘贴均可附图（≤ 10 MB，最多 {{ maxAttachmentsPerMessage }} 张）。</span>
-              <span>连接成功后会自动发送 <code>hello</code> 并等待 <code>hello_ack</code>；首次 <code>run_turn</code> 后才会加入当前 session 的事件广播受众。</span>
+              <span>Press Enter to send or Shift+Enter for a new line. Attach up to {{ maxAttachmentsPerMessage }} images (10 MB total) by button, drop, or paste.</span>
+              <span>A new Session requests its ID on first send and joins event broadcasts after <code>run_turn</code> is sent.</span>
             </div>
             <div class="button-row">
               <button
                 class="secondary"
                 @click="onAttachClick"
                 :disabled="!isConnected || isWaitingForReply"
-                :title="isWaitingForReply ? 'Steering 状态不支持附件' : '添加图片'"
-              >📎 图片</button>
+                :title="isWaitingForReply ? 'Steering does not support attachments' : 'Add images'"
+              >📎 Images</button>
               <button class="secondary" @click="resetComposer" :disabled="!draft && attachments.length === 0">Reset</button>
               <button
                 v-if="isWaitingForReply"
                 class="secondary abort-btn"
                 @click="abortTurn"
                 :disabled="!isConnected"
-                title="中断当前 turn 并丢弃排队消息（core-abort-spec.md §13.1）"
+                title="Abort the current turn and discard queued messages (core-abort-spec.md §13.1)"
               >⏹ Stop</button>
               <button class="primary" @click="sendMessage" :disabled="!canSend">
                 {{ pendingApprovalCount > 0 ? 'Approval pending…' : isWaitingForReply ? 'Steer' : 'Send' }}
@@ -1530,7 +1674,6 @@
     <script>
       const { createApp, nextTick } = Vue;
       const DEFAULT_SOCKET_URL = 'ws://127.0.0.1:8787/ws';
-      const DEFAULT_SESSION_KEY = 'main';
       const MAX_EVENT_FEED_ITEMS = 40;
       const TOOL_RESULT_PREVIEW_HEAD_LINES = 6;
       const TOOL_RESULT_PREVIEW_TAIL_LINES = 4;
@@ -1551,7 +1694,7 @@
             form: {
               url: DEFAULT_SOCKET_URL,
               clientId: createClientId(),
-              sessionKey: DEFAULT_SESSION_KEY,
+              sessionId: '',
             },
             socket: null,
             connectionStatus: 'disconnected',
@@ -1559,6 +1702,14 @@
             modelCatalog: null,
             pendingCatalogRequestId: null,
             nextCatalogRequestId: 1,
+            pendingSessionRequestId: null,
+            nextSessionRequestId: 1,
+            pendingFirstTurn: null,
+            sessions: [],
+            pendingSessionsRequestId: null,
+            nextSessionsRequestId: 1,
+            sessionsError: '',
+            eventFeedExpanded: false,
             modelSelection: null,
             modelSelectionSource: 'none',
             modelPickerOpen: false,
@@ -1596,6 +1747,7 @@
           canSend() {
             if (!this.isConnected || !this.helloAcknowledged) return false;
             if (!this.modelSelectionValid) return false;
+            if (this.pendingSessionRequestId !== null) return false;
             if (this.pendingApprovalCount > 0) return false;
             if (this.isWaitingForReply && this.attachments.length > 0) return false;
             const hasText = this.draft.trim().length > 0;
@@ -1607,13 +1759,14 @@
             if (this.connectionStatus === 'connecting') return 'connecting';
             return '';
           },
-          connectionLabel() {
-            if (this.isConnected) return 'Socket ready';
-            if (this.isConnecting) return 'Attempting handshake';
-            return 'Socket offline';
-          },
-          endpointPreview() { return this.form.url || DEFAULT_SOCKET_URL; },
           headerEndpoint() { return this.form.url || DEFAULT_SOCKET_URL; },
+          currentSession() {
+            return this.sessions.find(session => session.sessionId === this.form.sessionId) ?? null;
+          },
+          currentSessionLabel() {
+            if (!this.form.sessionId) return 'New Session';
+            return this.currentSession?.title || `Session ${this.shortSessionId(this.form.sessionId)}`;
+          },
           availableModelProviders() {
             return (this.modelCatalog?.providers ?? []).filter(
               provider => provider
@@ -1626,8 +1779,8 @@
               provider,
               model,
               reference: {
-                provider_id: provider.provider_id,
-                model_id: model.model_id,
+                providerId: provider.providerId,
+                modelId: model.modelId,
               },
             })));
           },
@@ -1635,12 +1788,12 @@
             const query = this.modelSearch.trim().toLocaleLowerCase();
             if (!query) return this.availableModelProviders;
             return this.availableModelProviders.flatMap(provider => {
-              const providerMatches = `${provider.display_name} ${provider.provider_id}`
+              const providerMatches = `${provider.displayName} ${provider.providerId}`
                 .toLocaleLowerCase()
                 .includes(query);
               const models = providerMatches
                 ? provider.models
-                : provider.models.filter(model => `${model.display_name} ${model.model_id}`
+                : provider.models.filter(model => `${model.displayName} ${model.modelId}`
                     .toLocaleLowerCase()
                     .includes(query));
               return models.length > 0 ? [{ ...provider, models }] : [];
@@ -1648,8 +1801,8 @@
           },
           filteredModelOptions() {
             return this.filteredModelProviders.flatMap(provider => provider.models.map(model => ({
-              provider_id: provider.provider_id,
-              model_id: model.model_id,
+              providerId: provider.providerId,
+              modelId: model.modelId,
             })));
           },
           activeModelOptionId() {
@@ -1680,20 +1833,8 @@
             return this.selectedModelReference !== null;
           },
           modelPickerLabel() {
-            if (!this.modelCatalog) return '正在加载模型…';
-            return this.selectedModelDetails?.model.display_name ?? '无可用模型';
-          },
-          modelSelectionStatus() {
-            if (!this.modelCatalog) return '连接后将读取 Runtime Model Catalog。';
-            if (!this.selectedModelDetails) return '无可用模型，无法发送消息。';
-            const reference = this.selectedModelDetails.reference;
-            if (this.modelSelectionSource === 'default') {
-              return `Runtime default · ${reference.provider_id}/${reference.model_id}`;
-            }
-            if (this.modelSelectionSource === 'fallback') {
-              return `Runtime default 不可用，已选择首个可用模型 · ${reference.provider_id}/${reference.model_id}`;
-            }
-            return `用户选择 · ${reference.provider_id}/${reference.model_id}`;
+            if (!this.modelCatalog) return 'Loading models…';
+            return this.selectedModelDetails?.model.displayName ?? 'No models available';
           },
           pendingApprovalCount() {
             let count = 0;
@@ -1715,6 +1856,11 @@
             this.helloAcknowledged = false;
             this.modelCatalog = null;
             this.pendingCatalogRequestId = null;
+            this.pendingSessionRequestId = null;
+            this.pendingFirstTurn = null;
+            this.pendingSessionsRequestId = null;
+            this.sessions = [];
+            this.sessionsError = '';
             this.clearModelSelection();
             this.approvalRequest = null;
             this.isWaitingForReply = false;
@@ -1799,7 +1945,14 @@
             if (this.pendingCatalogRequestId !== null) return;
             const requestId = `catalog-${this.nextCatalogRequestId++}`;
             this.pendingCatalogRequestId = requestId;
-            this.sendJson({ type: 'get_model_catalog', request_id: requestId });
+            this.sendJson({ type: 'get_model_catalog', requestId });
+          },
+          requestSessionList() {
+            if (!this.isConnected || this.pendingSessionsRequestId !== null) return;
+            const requestId = `sessions-${this.nextSessionsRequestId++}`;
+            this.pendingSessionsRequestId = requestId;
+            this.sessionsError = '';
+            this.sendJson({ type: 'list_sessions', requestId });
           },
           toggleModelPicker() {
             if (this.modelPickerOpen) {
@@ -1810,8 +1963,8 @@
             this.modelSearch = '';
             this.modelPickerOpen = true;
             this.activeModelOptionIndex = this.modelOptionIndex(
-              this.selectedModelReference?.provider_id,
-              this.selectedModelReference?.model_id,
+              this.selectedModelReference?.providerId,
+              this.selectedModelReference?.modelId,
             );
             nextTick(() => {
               this.$refs.modelSearchEl?.focus();
@@ -1854,11 +2007,11 @@
                 options.length - 1,
               );
               const option = options[optionIndex];
-              this.selectModel(option.provider_id, option.model_id);
+              this.selectModel(option.providerId, option.modelId);
             }
           },
           selectModel(providerId, modelId) {
-            const reference = Object.freeze({ provider_id: providerId, model_id: modelId });
+            const reference = Object.freeze({ providerId, modelId });
             this.modelSelection = reference;
             this.modelSelectionSource = 'user';
             this.closeModelPicker();
@@ -1873,15 +2026,15 @@
               && left !== undefined
               && right !== null
               && right !== undefined
-              && left.provider_id === right.provider_id
-              && left.model_id === right.model_id;
+              && left.providerId === right.providerId
+              && left.modelId === right.modelId;
           },
           modelOptionToken(providerId, modelId) {
             return JSON.stringify([providerId, modelId]);
           },
           modelOptionIndex(providerId, modelId) {
             return this.filteredModelOptions.findIndex(option =>
-              option.provider_id === providerId && option.model_id === modelId);
+              option.providerId === providerId && option.modelId === modelId);
           },
           modelOptionId(providerId, modelId) {
             const index = this.modelOptionIndex(providerId, modelId);
@@ -1897,30 +2050,30 @@
           },
           isSelectedModel(providerId, modelId) {
             return this.sameModelReference(
-              { provider_id: providerId, model_id: modelId },
+              { providerId, modelId },
               this.selectedModelReference,
             );
           },
           isRuntimeDefaultModel(providerId, modelId) {
             return this.sameModelReference(
-              { provider_id: providerId, model_id: modelId },
+              { providerId, modelId },
               this.availableRuntimeDefault(this.modelCatalog),
             );
           },
           catalogHasModel(catalog, reference) {
             if (!reference || !Array.isArray(catalog?.providers)) return false;
             return catalog.providers.some(provider =>
-              provider?.provider_id === reference.provider_id
+              provider?.providerId === reference.providerId
               && Array.isArray(provider.models)
-              && provider.models.some(model => model?.model_id === reference.model_id));
+              && provider.models.some(model => model?.modelId === reference.modelId));
           },
           availableRuntimeDefault(catalog) {
-            const selection = catalog?.default_selection;
+            const selection = catalog?.defaultSelection;
             if (selection?.state !== 'available' || !selection.reference) return null;
             return this.catalogHasModel(catalog, selection.reference)
               ? {
-                  provider_id: selection.reference.provider_id,
-                  model_id: selection.reference.model_id,
+                  providerId: selection.reference.providerId,
+                  modelId: selection.reference.modelId,
                 }
               : null;
           },
@@ -1932,7 +2085,7 @@
               }
               const model = provider.models[0];
               if (model) {
-                return { provider_id: provider.provider_id, model_id: model.model_id };
+                return { providerId: provider.providerId, modelId: model.modelId };
               }
             }
             return null;
@@ -1985,7 +2138,7 @@
               for (const a of this.attachments) {
                 blocks.push({
                   type: 'image',
-                  source: { type: 'base64', media_type: a.mediaType, data: a.base64 },
+                  source: { type: 'base64', mediaType: a.mediaType, data: a.base64 },
                 });
               }
               wireMessage = blocks;
@@ -2007,23 +2160,40 @@
                 : [],
             });
 
-            this.sendJson({
-              type: 'run_turn',
-              sessionKey: this.form.sessionKey,
+            const pendingTurn = {
               message: wireMessage,
-              ...(this.requestModelReference
-                ? { model_reference: this.requestModelReference }
-                : {}),
-            });
-            this.pushEvent(
-              isSteer ? 'steer' : 'run_turn',
-              `Sent ${isSteer ? 'steer ' : ''}message to session ${this.form.sessionKey}`
-                + (hasAttachments ? ` (${this.attachments.length} attachment${this.attachments.length !== 1 ? 's' : ''})` : ''),
-            );
+              modelReference: this.requestModelReference,
+              isSteer,
+              attachmentCount: this.attachments.length,
+            };
+            if (this.form.sessionId) {
+              this.dispatchRunTurn(pendingTurn);
+            } else {
+              // A new Session is local empty-ID state until the first message requests an ID.
+              const requestId = `session-${this.nextSessionRequestId++}`;
+              this.pendingSessionRequestId = requestId;
+              this.pendingFirstTurn = pendingTurn;
+              this.sendJson({ type: 'create_session', requestId });
+              this.pushEvent('create_session', 'Requested a Session for the first message');
+            }
             this.draft = '';
             // Do NOT revoke previewUrl here — the bubble still references it.
             this.attachments = [];
             this.attachError = '';
+          },
+
+          dispatchRunTurn(turn) {
+            this.sendJson({
+              type: 'run_turn',
+              sessionId: this.form.sessionId,
+              message: turn.message,
+              ...(turn.modelReference ? { modelReference: turn.modelReference } : {}),
+            });
+            this.pushEvent(
+              turn.isSteer ? 'steer' : 'run_turn',
+              `Sent ${turn.isSteer ? 'steer ' : ''}message to session ${this.form.sessionId}`
+                + (turn.attachmentCount ? ` (${turn.attachmentCount} attachment${turn.attachmentCount !== 1 ? 's' : ''})` : ''),
+            );
             this.isWaitingForReply = true;
           },
 
@@ -2038,19 +2208,19 @@
 
             for (const file of incoming) {
               if (!SUPPORTED_IMAGE_MIME.has(file.type)) {
-                errors.push(`${file.name || '未命名'}：类型 ${file.type || '未知'} 不支持`);
+                errors.push(`${file.name || 'Unnamed file'}: type ${file.type || 'unknown'} is not supported`);
                 continue;
               }
               if (file.size > ATTACHMENT_RAW_MAX_BYTES) {
-                errors.push(`${file.name}：超过单图 ${ATTACHMENT_RAW_MAX_BYTES / 1024 / 1024} MB 限制`);
+                errors.push(`${file.name}: exceeds the ${ATTACHMENT_RAW_MAX_BYTES / 1024 / 1024} MB per-image limit`);
                 continue;
               }
               if (runningCount + 1 > MAX_ATTACHMENTS_PER_MESSAGE) {
-                errors.push(`最多 ${MAX_ATTACHMENTS_PER_MESSAGE} 张，已截断剩余文件`);
+                errors.push(`Maximum ${MAX_ATTACHMENTS_PER_MESSAGE} images; remaining files were skipped`);
                 break;
               }
               if (runningTotal + file.size > ATTACHMENT_TOTAL_MAX_BYTES) {
-                errors.push(`总额超限（累计上限 ${ATTACHMENT_TOTAL_MAX_BYTES / 1024 / 1024} MB），已截断 ${file.name} 及后续文件`);
+                errors.push(`Total size exceeds ${ATTACHMENT_TOTAL_MAX_BYTES / 1024 / 1024} MB; ${file.name} and remaining files were skipped`);
                 break;
               }
               accepted.push(file);
@@ -2072,11 +2242,11 @@
                   previewUrl: URL.createObjectURL(file),
                 });
               } catch (err) {
-                errors.push(`${file.name}：读取失败（${err?.message || err}）`);
+                errors.push(`${file.name}: failed to read (${err?.message || err})`);
               }
             }
 
-            this.attachError = errors.join('；');
+            this.attachError = errors.join('; ');
           },
           readAsBase64(file) {
             return new Promise((resolve, reject) => {
@@ -2113,10 +2283,10 @@
           // is observed via run_end{stopReason:'aborted'} (special-cased
           // below in handleServerMessage's run_end branch).
           abortTurn() {
-            if (!this.isConnected) return;
+            if (!this.isConnected || !this.form.sessionId) return;
             try {
-              this.sendJson({ type: 'abort_turn', sessionKey: this.form.sessionKey });
-              this.pushEvent('abort_turn', `Sent abort_turn for session ${this.form.sessionKey}`);
+              this.sendJson({ type: 'abort_turn', sessionId: this.form.sessionId });
+              this.pushEvent('abort_turn', `Sent abort_turn for session ${this.form.sessionId}`);
             } catch (err) {
               this.pushEvent('error', `Failed to send abort_turn: ${err?.message ?? err}`);
             }
@@ -2188,14 +2358,43 @@
                 this.lastStatusMessage = `Hello acknowledged as ${message.clientId}`;
                 this.pushEvent('hello', `Server acknowledged client ${message.clientId}`);
                 this.requestModelCatalog();
+                this.requestSessionList();
                 return;
               case 'model_catalog':
-                if (message.request_id !== this.pendingCatalogRequestId) {
-                  this.pushEvent('model_catalog', `Ignored unexpected response ${message.request_id ?? '(missing id)'}`);
+                if (message.requestId !== this.pendingCatalogRequestId) {
+                  this.pushEvent('model_catalog', `Ignored unexpected response ${message.requestId ?? '(missing id)'}`);
                   return;
                 }
                 this.pendingCatalogRequestId = null;
                 this.applyModelCatalog(message.catalog);
+                return;
+              case 'session_created': {
+                if (message.requestId !== this.pendingSessionRequestId || !this.pendingFirstTurn) {
+                  this.pushEvent('session_created', `Ignored unexpected response ${message.requestId ?? '(missing id)'}`);
+                  return;
+                }
+                const pendingTurn = this.pendingFirstTurn;
+                this.pendingSessionRequestId = null;
+                this.pendingFirstTurn = null;
+                this.form.sessionId = message.sessionId;
+                this.pushEvent('session_created', `Created session ${message.sessionId}`);
+                this.dispatchRunTurn(pendingTurn);
+                return;
+              }
+              case 'sessions_listed':
+                if (message.requestId !== this.pendingSessionsRequestId) {
+                  this.pushEvent('sessions_listed', `Ignored unexpected response ${message.requestId ?? '(missing id)'}`);
+                  return;
+                }
+                this.pendingSessionsRequestId = null;
+                if (!Array.isArray(message.sessions)) {
+                  this.sessionsError = 'Invalid Session list response.';
+                  this.pushEvent('sessions_listed', this.sessionsError);
+                  return;
+                }
+                this.sessions = message.sessions;
+                this.sessionsError = '';
+                this.pushEvent('sessions_listed', `Loaded ${message.sessions.length} Session(s)`);
                 return;
               case 'approval_requested': {
                 // Route approval into the active turn's segments so it stays
@@ -2219,6 +2418,12 @@
                 this.pushEvent('approval', `Approval ${message.outcome}: ${message.id}`);
                 return;
               case 'channel_error':
+                this.pendingSessionRequestId = null;
+                this.pendingFirstTurn = null;
+                if (this.pendingSessionsRequestId !== null) {
+                  this.pendingSessionsRequestId = null;
+                  this.sessionsError = `${message.code}: ${message.message}`;
+                }
                 this.pushEvent('channel_error', `${message.code}: ${message.message}`);
                 this.appendChatItem({ kind: 'error', label: 'Channel', text: `${message.code}: ${message.message}` });
                 return;
@@ -2269,6 +2474,7 @@
 
               case 'run_end':
                 this.isWaitingForReply = false;
+                this.requestSessionList();
                 // spec §13.1: special-case aborted so users can distinguish
                 // it from a normal end_turn. Rendered as a system bubble
                 // rather than reused text bubble to make the interruption
@@ -2295,7 +2501,7 @@
                     ? 'Queued request cancelled during shutdown'
                     : 'Queued request cancelled',
                 });
-                this.pushEvent('request_end', `Request ${event.request_id} cancelled`);
+                this.pushEvent('request_end', `Request ${event.requestId} cancelled`);
                 return;
 
               case 'error':
@@ -2456,12 +2662,33 @@
             return item.kind;
           },
 
-          resetChat() {
+          startNewSession() {
             this.chatItems = [];
             this.turnMap = {};
-            this.eventFeed = [];
             this.approvalRequest = null;
             this.isWaitingForReply = false;
+            this.form.sessionId = '';
+          },
+          selectSession(session) {
+            if (!session?.sessionId || this.isWaitingForReply || this.pendingSessionRequestId !== null) {
+              return;
+            }
+            if (session.sessionId === this.form.sessionId) return;
+            this.chatItems = [];
+            this.turnMap = {};
+            this.approvalRequest = null;
+            this.form.sessionId = session.sessionId;
+            this.pushEvent('session_selected', `Selected Session ${session.sessionId}`);
+          },
+          shortSessionId(sessionId) {
+            return typeof sessionId === 'string' ? sessionId.slice(0, 8) : '';
+          },
+          formatSessionTime(timestamp) {
+            if (!Number.isFinite(timestamp)) return '';
+            return new Date(timestamp).toLocaleDateString([], {
+              month: 'short',
+              day: 'numeric',
+            });
           },
 
           // ── Tool result preview ───────────────────────────────

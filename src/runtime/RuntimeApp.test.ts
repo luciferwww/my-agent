@@ -87,7 +87,8 @@ describe('RuntimeApp', () => {
   it('routes Agent state, Environment Tools, and prompts to agentHome', async () => {
     const selectedAgentHome = join(agentHome, 'agent-home');
     const createSessionManager = vi.fn(() => ({
-      resolveSession: vi.fn(async () => ({ entry: { sessionId: '1' }, isNew: true })),
+      initialize: vi.fn(async () => undefined),
+      getSession: vi.fn(() => sessionEntry('main')),
     }) as never);
     const createMemoryManager = vi.fn(async () => null);
     const getBuiltinContributionUnits = vi.fn(() => []);
@@ -110,7 +111,7 @@ describe('RuntimeApp', () => {
     });
 
     await app.application.runTurn({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'verify path ownership',
       promptMode: 'full',
     });
@@ -128,6 +129,79 @@ describe('RuntimeApp', () => {
       'AGENTS.md',
       'TOOLS.md',
     ]));
+    await app.close();
+  });
+
+  it('rejects archive, delete, and fork while a Session is active or queued', async () => {
+    const releaseRun = createDeferred<void>();
+    const archiveSession = vi.fn(async (sessionId: string) => ({
+      ...sessionEntry(sessionId),
+      archivedAt: 2,
+    }));
+    const deleteSession = vi.fn(async () => undefined);
+    const forkSession = vi.fn(async () => sessionEntry('fork'));
+    const runnerRun = vi.fn(async (): Promise<RunResult> => {
+      await releaseRun.promise;
+      return {
+        text: 'done',
+        content: [{ type: 'text', text: 'done' }],
+        stopReason: 'end_turn',
+        usage: { inputTokens: 1, outputTokens: 1 },
+        toolRounds: 0,
+      };
+    });
+    const app = await RuntimeApp.create({
+      agentHome,
+      cliOverrides: {
+        model: { providerId: 'test', modelId: 'test-model' },
+        llm: { apiKey: 'test-key' },
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies({
+        createSessionManager: () => ({
+          initialize: vi.fn(async () => undefined),
+          getSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
+          archiveSession,
+          deleteSession,
+          forkSession,
+        }) as never,
+        createAgentRunner: () => ({ run: runnerRun }) as never,
+        createMemoryManager: async () => null,
+      }),
+    });
+
+    const assertBusy = async () => {
+      await expect(app.application.archiveSession('main')).rejects.toMatchObject({
+        code: 'SESSION_BUSY',
+      });
+      await expect(app.application.deleteSession('main')).rejects.toMatchObject({
+        code: 'SESSION_BUSY',
+      });
+      await expect(app.application.forkSession('main')).rejects.toMatchObject({
+        code: 'SESSION_BUSY',
+      });
+    };
+
+    const activeTurn = app.application.runTurn({
+      sessionId: 'main',
+      message: 'active',
+      promptMode: 'full',
+    });
+    await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(1));
+    await assertBusy();
+    releaseRun.resolve();
+    await activeTurn;
+
+    const queueMap = (app.application as unknown as {
+      messageQueueBySession: Map<string, unknown[]>;
+    }).messageQueueBySession;
+    queueMap.set('main', [{ queued: true }]);
+    await assertBusy();
+    queueMap.delete('main');
+
+    expect(archiveSession).not.toHaveBeenCalled();
+    expect(deleteSession).not.toHaveBeenCalled();
+    expect(forkSession).not.toHaveBeenCalled();
     await app.close();
   });
 
@@ -181,8 +255,11 @@ describe('RuntimeApp', () => {
     await app.close();
   });
 
-  it('creates, resolves a session automatically, and delegates a turn to AgentRunner', async () => {
-    const resolveSession = vi.fn(async () => ({ entry: { sessionId: '1' }, isNew: true }));
+  it('admits an existing canonical session and rejects an unknown identity', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000001';
+    const getSession = vi.fn((candidate: string) =>
+      candidate === sessionId ? sessionEntry(sessionId) : undefined,
+    );
     const build = vi.fn(() => 'SYSTEM_PROMPT');
     const runnerRun = vi.fn(async (): Promise<RunResult> => ({
       text: 'hello',
@@ -193,7 +270,10 @@ describe('RuntimeApp', () => {
     }));
 
     const deps = createTestDependencies({
-      createSessionManager: () => ({ resolveSession } as never),
+      createSessionManager: () => ({
+        initialize: vi.fn(async () => undefined),
+        getSession,
+      }) as never,
       createSystemPromptBuilder: () => ({ build } as never),
       createAgentRunner: () => ({ run: runnerRun } as never),
       createMemoryManager: async () => null,
@@ -210,16 +290,16 @@ describe('RuntimeApp', () => {
     });
 
     const result = await app.application.runTurn({
-      sessionKey: 'main',
+      sessionId: sessionId,
       message: 'Hello runtime',
       promptMode: 'full',
     });
 
-    expect(resolveSession).toHaveBeenCalledWith('main');
+    expect(getSession).toHaveBeenCalledWith(sessionId);
     expect(build).toHaveBeenCalled();
     expect(runnerRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        sessionKey: 'main',
+        sessionId,
         message: 'Hello runtime',
         resolvedModel: expect.objectContaining({
           identity: { providerId: 'test', modelId: 'test-model' },
@@ -228,9 +308,18 @@ describe('RuntimeApp', () => {
         systemPrompt: 'SYSTEM_PROMPT',
       }),
     );
-    expect(result.sessionKey).toBe('main');
+    expect(result.sessionId).toBe(sessionId);
     expect(result.text).toBe('hello');
     expect(app.application.getState().phase).toBe('ready');
+
+    runnerRun.mockClear();
+    await expect(app.application.runTurn({
+      sessionId: '00000000-0000-4000-8000-000000000002',
+      message: 'unknown',
+      promptMode: 'full',
+    })).rejects.toThrow('was not found');
+    expect(runnerRun).not.toHaveBeenCalled();
+    await app.close();
   });
 
   it('uses the injected application projection without rereading Workspace configuration', async () => {
@@ -362,7 +451,7 @@ describe('RuntimeApp', () => {
 
     expect(app.application.getModelCatalog().defaultSelection).toEqual(expected);
     await expect(app.application.runTurn({
-      sessionKey: `default-${expectedCategory}`,
+      sessionId: `default-${expectedCategory}`,
       message: 'must not fall back',
       promptMode: 'full',
     })).rejects.toMatchObject({
@@ -411,9 +500,9 @@ describe('RuntimeApp', () => {
   }) => {
     let parentModel: ResolvedModel | undefined;
     let childModel: ResolvedModel | undefined;
-    const deleteSession = vi.fn(async () => {});
+    const deleteTransientSubagentTranscript = vi.fn(async () => {});
     const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
-      if (params.sessionKey === 'main') {
+      if (params.sessionId === 'main') {
         parentModel = params.resolvedModel;
         const taskTool = params.toolProjection.resolve('task');
         if (!taskTool || !params.signal) throw new Error('Parent task wiring is incomplete.');
@@ -422,9 +511,10 @@ describe('RuntimeApp', () => {
           description: 'review',
           prompt: 'inspect the patch',
         }, {
-          sessionKey: params.sessionKey,
+          sessionId: params.sessionId,
           turnId: params.turnId,
           callId: 'task-use-1',
+          subagentDepth: 0,
           signal: params.signal,
         });
         return {
@@ -487,8 +577,10 @@ describe('RuntimeApp', () => {
           makeProvider('child'),
         ]),
         createSessionManager: () => ({
-          resolveSession: vi.fn(async () => ({ entry: {}, isNew: true })),
-          deleteSession,
+          initialize: vi.fn(async () => undefined),
+          getSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
+          createTransientSubagentTranscript: vi.fn(async () => {}),
+          deleteTransientSubagentTranscript,
         }) as never,
         createAgentRunner: () => ({
           run: runnerRun,
@@ -499,7 +591,7 @@ describe('RuntimeApp', () => {
     });
 
     const result = await app.application.runTurn({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'delegate',
       promptMode: 'full',
     });
@@ -510,7 +602,7 @@ describe('RuntimeApp', () => {
     expect(childModel).not.toBe(parentModel);
     expect(events.filter((event) => event.type === 'subagent_start')).toHaveLength(1);
     expect(events.filter((event) => event.type === 'subagent_end')).toHaveLength(1);
-    expect(deleteSession).toHaveBeenCalledTimes(1);
+    expect(deleteTransientSubagentTranscript).toHaveBeenCalledTimes(1);
 
     await app.close();
   });
@@ -526,7 +618,7 @@ describe('RuntimeApp', () => {
     let childHasGenerationOneTool = false;
     let childHasGenerationOneHook = false;
     const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
-      if (params.sessionKey === 'parent') {
+      if (params.sessionId === 'parent') {
         parentEntered.resolve();
         await continueParent.promise;
         const task = params.toolProjection.resolve('task');
@@ -536,15 +628,16 @@ describe('RuntimeApp', () => {
           description: 'generation check',
           prompt: 'must stay pinned',
         }, {
-          sessionKey: params.sessionKey,
+          sessionId: params.sessionId,
           turnId: params.turnId,
           callId: 'generation-task',
+          subagentDepth: 0,
           signal: params.signal,
         });
         taskOutcome = result.outcome;
-      } else if (params.sessionKey === 'new-root') {
+      } else if (params.sessionId === 'new-root') {
         newRootProviderId = params.resolvedModel.identity.providerId;
-      } else if (params.sessionKey === 'implicit-root') {
+      } else if (params.sessionId === 'implicit-root') {
         implicitRootProviderId = params.resolvedModel.identity.providerId;
       } else {
         childRuns += 1;
@@ -632,8 +725,10 @@ describe('RuntimeApp', () => {
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: runnerRun }) as never,
         createSessionManager: () => ({
-          resolveSession: vi.fn(async () => ({ entry: {}, isNew: true })),
-          deleteSession: vi.fn(async () => {}),
+          initialize: vi.fn(async () => undefined),
+          getSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
+          createTransientSubagentTranscript: vi.fn(async () => {}),
+          deleteTransientSubagentTranscript: vi.fn(async () => {}),
         }) as never,
         createMemoryManager: async () => null,
       }),
@@ -649,7 +744,7 @@ describe('RuntimeApp', () => {
     });
 
     const parent = app.application.runTurn({
-      sessionKey: 'parent',
+      sessionId: 'parent',
       message: 'hold generation one',
       modelReference: { providerId: 'test', modelId: 'parent-model' },
       promptMode: 'full',
@@ -672,14 +767,14 @@ describe('RuntimeApp', () => {
     expect(childHasGenerationOneTool).toBe(true);
     expect(childHasGenerationOneHook).toBe(true);
     await app.application.runTurn({
-      sessionKey: 'new-root',
+      sessionId: 'new-root',
       message: 'use generation two',
       modelReference: { providerId: 'next-provider', modelId: 'root-model' },
       promptMode: 'full',
     });
     expect(newRootProviderId).toBe('next-provider');
     await app.application.runTurn({
-      sessionKey: 'implicit-root',
+      sessionId: 'implicit-root',
       message: 'use the recovered default in generation two',
       promptMode: 'full',
     });
@@ -703,7 +798,7 @@ describe('RuntimeApp', () => {
 
     await expect(app.application.runTurn({
       requestId: 'request-resolution-failure',
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'fail resolution',
       modelReference: { providerId: 'missing-provider', modelId: 'missing-model' },
       promptMode: 'full',
@@ -757,7 +852,7 @@ describe('RuntimeApp', () => {
 
     const caller = app.application.runTurn({
       requestId: 'request-runner-failure',
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'fail execution',
       promptMode: 'full',
     });
@@ -843,7 +938,7 @@ describe('RuntimeApp', () => {
     try {
       await expect(app.application.runTurn({
         requestId: 'foreign-structural-error',
-        sessionKey: 'foreign',
+        sessionId: 'foreign',
         message: 'fail structurally',
         promptMode: 'full',
       })).rejects.toMatchObject({
@@ -929,7 +1024,7 @@ describe('RuntimeApp', () => {
       },
       dependencies: createTestDependencies({
         createAgentRunner: () => ({
-          run: async ({ sessionKey }: RunParams) => { throw failures.get(sessionKey); },
+          run: async ({ sessionId: sessionKey }: RunParams) => { throw failures.get(sessionKey); },
         }) as never,
         createMemoryManager: async () => null,
       }),
@@ -939,7 +1034,7 @@ describe('RuntimeApp', () => {
       for (const sessionKey of failures.keys()) {
         await expect(app.application.runTurn({
           requestId: `cause-${sessionKey}`,
-          sessionKey,
+          sessionId: sessionKey,
           message: 'fail',
           promptMode: 'full',
         })).rejects.toThrow();
@@ -994,7 +1089,7 @@ describe('RuntimeApp', () => {
     });
 
     await failingChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'fan out',
       clientId: 'client-1',
     });
@@ -1002,12 +1097,12 @@ describe('RuntimeApp', () => {
     expect(receivedEvents).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'user_message',
-        sessionKey: 'main',
+        sessionId: 'main',
         content: 'fan out',
       }),
     );
     expect(observedEvents).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'user_message', sessionKey: 'main' }),
+      expect.objectContaining({ type: 'user_message', sessionId: 'main' }),
     );
     expect(runnerRun).toHaveBeenCalledTimes(1);
   });
@@ -1040,7 +1135,7 @@ describe('RuntimeApp', () => {
       },
     });
     await expect(testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'observe',
       clientId: 'client-1',
     })).resolves.toBeUndefined();
@@ -1229,7 +1324,7 @@ describe('RuntimeApp', () => {
     });
 
     await expect(app.application.runTurn({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'missing model',
       promptMode: 'full',
     })).rejects.toMatchObject({
@@ -1243,7 +1338,7 @@ describe('RuntimeApp', () => {
     expect(agentEvents.filter((event) => event.type === 'error')).toEqual([]);
 
     await expect(app.application.runTurn({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'queued missing model',
       promptMode: 'full',
       turnId: 'queued-resolution-turn',
@@ -1252,7 +1347,7 @@ describe('RuntimeApp', () => {
     expect(agentEvents.filter((event) => event.type === 'error')).toEqual([
       expect.objectContaining({
         type: 'error',
-        sessionKey: 'main',
+        sessionId: 'main',
         turnId: 'queued-resolution-turn',
         category: 'reference_invalid',
         originMessageId: 'queued-message',
@@ -1261,7 +1356,7 @@ describe('RuntimeApp', () => {
     expect(runnerRun).not.toHaveBeenCalled();
 
     await expect(app.application.runTurn({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'explicit model',
       promptMode: 'full',
       modelReference: { providerId: 'test', modelId: 'test-model' },
@@ -1307,7 +1402,7 @@ describe('RuntimeApp', () => {
     await app.close('test shutdown');
 
     expect(memoryClose).toHaveBeenCalledTimes(1);
-    await expect(app.application.runTurn({ sessionKey: 'main', message: 'after close', promptMode: 'full' })).rejects.toThrow(
+    await expect(app.application.runTurn({ sessionId: 'main', message: 'after close', promptMode: 'full' })).rejects.toThrow(
       'Cannot run when runtime phase is closed.',
     );
   });
@@ -1406,11 +1501,11 @@ describe('RuntimeApp', () => {
     const firstRun = createDeferred<RunResult>();
     const secondRun = createDeferred<RunResult>();
     const otherRun = createDeferred<RunResult>();
-    const runnerRun = vi.fn(async (params: { sessionKey: string; message: string }): Promise<RunResult> => {
-      if (params.sessionKey === 'main' && params.message === 'first') {
+    const runnerRun = vi.fn(async (params: { sessionId: string; message: string }): Promise<RunResult> => {
+      if (params.sessionId === 'main' && params.message === 'first') {
         return firstRun.promise;
       }
-      if (params.sessionKey === 'other') {
+      if (params.sessionId === 'other') {
         return otherRun.promise;
       }
       return secondRun.promise;
@@ -1441,7 +1536,7 @@ describe('RuntimeApp', () => {
     });
 
     const firstDispatch = testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'first',
       clientId: 'client-1',
     });
@@ -1451,7 +1546,7 @@ describe('RuntimeApp', () => {
     });
 
     const secondDispatch = testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'second',
       clientId: 'client-1',
       maxLlmCalls: 9,
@@ -1461,7 +1556,7 @@ describe('RuntimeApp', () => {
     expect(runnerRun).toHaveBeenCalledTimes(1);
 
     const otherDispatch = testChannel.dispatch({
-      sessionKey: 'other',
+      sessionId: 'other',
       message: 'parallel',
       clientId: 'client-2',
     });
@@ -1469,7 +1564,7 @@ describe('RuntimeApp', () => {
     await vi.waitFor(() => {
       expect(runnerRun).toHaveBeenCalledTimes(2);
     });
-    expect(runnerRun.mock.calls.map(([params]) => [params.sessionKey, params.message])).toEqual([
+    expect(runnerRun.mock.calls.map(([params]) => [params.sessionId, params.message])).toEqual([
       ['main', 'first'],
       ['other', 'parallel'],
     ]);
@@ -1482,7 +1577,7 @@ describe('RuntimeApp', () => {
     });
     expect(runnerRun.mock.calls[2]?.[0]).toEqual(
       expect.objectContaining({
-        sessionKey: 'main',
+        sessionId: 'main',
         message: 'second',
         maxLlmCalls: 9,
       }),
@@ -1532,7 +1627,7 @@ describe('RuntimeApp', () => {
     });
 
     const firstDispatch = testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'first',
       clientId: 'client-1',
     });
@@ -1542,7 +1637,7 @@ describe('RuntimeApp', () => {
     });
 
     const steeringDispatch = testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'steer now',
       clientId: 'client-2',
     });
@@ -1584,7 +1679,7 @@ describe('RuntimeApp', () => {
               toolName: 'demo_tool',
               input: { approval: true },
               turnId: params.turnId,
-              sessionKey: params.sessionKey,
+              sessionId: params.sessionId,
             }, params.signal);
           approvalDecision = approval.outcome;
           if (approval.outcome === 'aborted') {
@@ -1632,7 +1727,7 @@ describe('RuntimeApp', () => {
       });
 
       const firstDispatch = testChannel.dispatch({
-        sessionKey: 'main',
+        sessionId: 'main',
         message: 'first',
         clientId: 'client-1',
       });
@@ -1642,7 +1737,7 @@ describe('RuntimeApp', () => {
       });
 
       const secondDispatch = testChannel.dispatch({
-        sessionKey: 'main',
+        sessionId: 'main',
         message: 'second',
         clientId: 'client-2',
       });
@@ -1679,14 +1774,14 @@ describe('RuntimeApp', () => {
 
       expect(approvalRequests[0]).toEqual(
         expect.objectContaining({
-          sessionKey: 'main',
+          sessionId: 'main',
           toolName: 'demo_tool',
           originClientId: 'client-2',
         }),
       );
       expect(approvalClosures[0]).toEqual({
         request: expect.objectContaining({
-          sessionKey: 'main',
+          sessionId: 'main',
           toolName: 'demo_tool',
           originClientId: 'client-2',
         }),
@@ -1735,10 +1830,10 @@ describe('RuntimeApp', () => {
       },
       dependencies: deps,
     });
-    await testChannel.dispatch({ sessionKey: 'main', message: 'first request' });
+    await testChannel.dispatch({ sessionId: 'main', message: 'first request' });
     expect(decisions).toEqual([{ decision: 'deny', hasApprovalCapability: false }]);
 
-    await testChannel.dispatch({ sessionKey: 'main', message: 'second request' });
+    await testChannel.dispatch({ sessionId: 'main', message: 'second request' });
 
     expect(decisions).toEqual([
       { decision: 'deny', hasApprovalCapability: false },
@@ -1763,7 +1858,7 @@ describe('RuntimeApp', () => {
             toolName: 'demo_tool',
             input: {},
             turnId: params.turnId,
-            sessionKey: params.sessionKey,
+            sessionId: params.sessionId,
           }, params.signal);
         if (approval.outcome !== 'aborted') {
           throw new Error('approval unexpectedly settled without shutdown');
@@ -1796,7 +1891,7 @@ describe('RuntimeApp', () => {
       }),
     });
     const dispatch = testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'wait for approval',
       clientId: 'client-1',
     });
@@ -1822,7 +1917,7 @@ describe('RuntimeApp', () => {
   // ── Abort（core-abort-spec.md §8） ──────────────────
 
   describe('abort', () => {
-    // helper：跑一个 turn 并给它一个可 abort 的 hook；runnerRun 内部可自定义
+    // Run one Turn with an abortable hook; callers can customize runnerRun.
     async function makeAppWithRunner(runnerRun: (params: unknown) => Promise<RunResult>): Promise<RuntimeHandle> {
       const deps = createTestDependencies({
         createAgentRunner: () => ({ run: runnerRun }) as never,
@@ -1839,7 +1934,7 @@ describe('RuntimeApp', () => {
       });
     }
 
-    // ① abortTurn 无 active + 无 queue → { aborted: false, dropped: 0 }，不 emit
+    // With no active Turn or queue, abortTurn reports no work and emits nothing.
     it('abortTurn: 无 active + 无 queue → returns { false, 0 }, no emit', async () => {
       const events: RuntimeEvent[] = [];
       const app = await makeAppWithRunner(async () => ({
@@ -1849,7 +1944,7 @@ describe('RuntimeApp', () => {
         usage: { inputTokens: 1, outputTokens: 1 },
         toolRounds: 0,
       }));
-      // 事后注入 event collector：override onEvent 通过创建时的方式（重建更简单）
+      // Recreate the app to install the event collector through onEvent.
       const app2 = await RuntimeApp.create({
         agentHome: agentHome,
         cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
@@ -1864,7 +1959,7 @@ describe('RuntimeApp', () => {
       await app2.close();
     });
 
-    // ② abortTurn 有 active turn + queue 空 → { aborted: true, dropped: 0 }，不 emit
+    // An active Turn with an empty queue reports aborted without a drop event.
     it('abortTurn: 有 active turn + queue 空 → aborts turn, no emit', async () => {
       const events: RuntimeEvent[] = [];
       const releaseRun = createDeferred<void>();
@@ -1892,9 +1987,9 @@ describe('RuntimeApp', () => {
         onEvent: (e) => events.push(e),
       });
 
-      const turnPromise = app.application.runTurn({ sessionKey: 'main', message: 'go', promptMode: 'full' });
+      const turnPromise = app.application.runTurn({ sessionId: 'main', message: 'go', promptMode: 'full' });
 
-      // 等 runner 收到 signal
+      // Wait until Runner receives the signal.
       await vi.waitFor(() => expect(capturedSignal).toBeDefined());
 
       const abortResult = app.application.abortTurn('main');
@@ -1902,13 +1997,13 @@ describe('RuntimeApp', () => {
       expect(capturedSignal!.aborted).toBe(true);
       expect(events.find((e) => e.type === 'messages_dropped')).toBeUndefined();
 
-      // 释放 runner，等 turn 收尾
+      // Release Runner and wait for Turn cleanup.
       releaseRun.resolve();
       await turnPromise;
       await app.close();
     });
 
-    // ③ abortTurn 无 active + queue 有 N → 只清 queue + emit messages_dropped{ dropped: N }
+    // With no active Turn, abortTurn clears the queue and emits messages_dropped.
     it('abortTurn: 无 active turn + queue 有 N → clears queue, emits messages_dropped', async () => {
       const events: RuntimeEvent[] = [];
       const app = await RuntimeApp.create({
@@ -1918,7 +2013,7 @@ describe('RuntimeApp', () => {
         onEvent: (e) => events.push(e),
       });
 
-      // 手工向 messageQueueBySession 塞 3 条（模拟 queued 消息）
+      // Seed three queued messages directly.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
       queueMap.set('main', [{ dummy: 1 }, { dummy: 2 }, { dummy: 3 }]);
@@ -1926,15 +2021,15 @@ describe('RuntimeApp', () => {
       const result = app.application.abortTurn('main');
       expect(result).toEqual({ aborted: false, dropped: 3 });
 
-      // queue 已清
+      // The queue is empty.
       expect(queueMap.has('main')).toBe(false);
 
-      // 有 messages_dropped event
+      // A messages_dropped event was emitted.
       const dropEvent = events.find((e) => e.type === 'messages_dropped');
       expect(dropEvent).toBeDefined();
       expect(dropEvent).toMatchObject({
         type: 'messages_dropped',
-        sessionKey: 'main',
+        sessionId: 'main',
         reason: 'abort',
         dropped: 3,
       });
@@ -1942,7 +2037,7 @@ describe('RuntimeApp', () => {
       await app.close();
     });
 
-    // ④ public Channel 路径：active turn + queued message → 两者都清 + exactly-once observation
+    // Public Channel path aborts the active Turn and drops queued messages once.
     it('CH-09 aborts an active public Channel turn and drops its queued message exactly once', async () => {
       const events: RuntimeEvent[] = [];
       const releaseRun = createDeferred<void>();
@@ -1972,14 +2067,14 @@ describe('RuntimeApp', () => {
         onEvent: (e) => events.push(e),
       });
       const firstDispatch = testChannel.dispatch({
-        sessionKey: 'main',
+        sessionId: 'main',
         message: 'active',
         clientId: 'client-1',
       });
       await vi.waitFor(() => expect(capturedSignal).toBeDefined());
 
       await testChannel.dispatch({
-        sessionKey: 'main',
+        sessionId: 'main',
         message: 'queued',
         clientId: 'client-2',
       });
@@ -1989,7 +2084,7 @@ describe('RuntimeApp', () => {
       expect(result).toEqual({ aborted: true, dropped: 1 });
       expect(capturedSignal!.aborted).toBe(true);
       expect(events.filter((e) => e.type === 'messages_dropped')).toEqual([
-        expect.objectContaining({ sessionKey: 'main', reason: 'abort', dropped: 1 }),
+        expect.objectContaining({ sessionId: 'main', reason: 'abort', dropped: 1 }),
       ]);
 
       releaseRun.resolve();
@@ -2052,14 +2147,14 @@ describe('RuntimeApp', () => {
         onAgentEvent: (event) => agentEvents.push(event),
       });
       const firstDispatch = testChannel.dispatch({
-        sessionKey: 'main',
+        sessionId: 'main',
         message: 'active',
         clientId: 'client-1',
       });
       await vi.waitFor(() => expect(capturedSignal).toBeDefined());
 
       await testChannel.dispatch({
-        sessionKey: 'main',
+        sessionId: 'main',
         message: 'unread steering',
         clientId: 'client-2',
       });
@@ -2077,7 +2172,7 @@ describe('RuntimeApp', () => {
       releaseRun.resolve();
       await firstDispatch;
       await testChannel.dispatch({
-        sessionKey: 'main',
+        sessionId: 'main',
         message: 'next root',
         clientId: 'client-3',
       });
@@ -2087,7 +2182,7 @@ describe('RuntimeApp', () => {
       await app.close();
     });
 
-    // ⑤ 跨 session 独立：abortTurn(sk1) 不动 sk2 的 queue
+    // Cross-Session isolation leaves another Session's queue untouched.
     it('abortTurn: cross-session isolation — sk1 abort does not touch sk2 queue', async () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
@@ -2108,7 +2203,7 @@ describe('RuntimeApp', () => {
       await app.close();
     });
 
-    // ⑥ stale controller 防御：手动 pre-set stale entry → 启新 turn → 旧 entry 被清
+    // A new Turn defensively clears a manually seeded stale controller.
     it('stale controller defense: pre-existing entry is cleared on new turn', async () => {
       const runnerRun = vi.fn(async (): Promise<RunResult> => ({
         text: 'ok',
@@ -2132,18 +2227,18 @@ describe('RuntimeApp', () => {
       const staleController = new AbortController();
       activeAborts.set('main', staleController);
 
-      await app.application.runTurn({ sessionKey: 'main', message: 'hi', promptMode: 'full' });
+      await app.application.runTurn({ sessionId: 'main', message: 'hi', promptMode: 'full' });
 
-      // 新 turn 后：stale 已被清、finally 也清了新的 controller → map 里不该有 'main'
+      // Both the stale and newly registered controllers are gone after the Turn.
       expect(activeAborts.has('main')).toBe(false);
 
       await app.close();
     });
 
-    // ⑦ safeEmit：subscriber 抛错 → API 仍正常返回，不 rethrow
+    // safeEmit prevents subscriber failures from escaping the API.
     it('safeEmit: throwing subscriber does not break abortTurn contract', async () => {
-      // 用 flag 控制：bootstrap 期间的 app_start / app_ready 正常放行，
-      // 只在 messages_dropped 到来时抛错——模拟"运行期 subscriber 出 bug"。
+      // Allow startup events and throw only for messages_dropped to model a
+      // runtime subscriber defect.
       let armed = false;
       const app = await RuntimeApp.create({
         agentHome: agentHome,
@@ -2161,7 +2256,7 @@ describe('RuntimeApp', () => {
       const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
       queueMap.set('main', [{ dummy: 1 }]);
 
-      // API 不该抛，返回值反映真实状态
+      // The API does not throw and returns the actual state.
       const result = app.application.abortTurn('main');
       expect(result).toEqual({ aborted: false, dropped: 1 });
       expect(queueMap.has('main')).toBe(false);
@@ -2169,7 +2264,7 @@ describe('RuntimeApp', () => {
       await app.close();
     });
 
-    // ⑧ CH-08：先 abort active turn，再等待回收；queued request 不启动
+    // CH-08 aborts the active Turn before convergence; queued work never starts.
     it('CH-08 shutdown aborts the active turn, waits for it, and does not start queued work', async () => {
       const releaseRun = createDeferred<void>();
       const deadlineDriver = new ManualDeadlineDriver();
@@ -2177,7 +2272,7 @@ describe('RuntimeApp', () => {
 
       const runnerRun = vi.fn(async (params: { signal?: AbortSignal }): Promise<RunResult> => {
         capturedSignal = params.signal;
-        // 等 signal.aborted 后再返回，模拟响应 signal 的 turn
+        // Return after signal.aborted to model a responsive Turn.
         await new Promise<void>((resolve) => {
           const check = () => {
             if (params.signal?.aborted) resolve();
@@ -2207,13 +2302,13 @@ describe('RuntimeApp', () => {
         }),
       });
       const firstDispatch = testChannel.dispatch({
-        sessionKey: 'main',
+        sessionId: 'main',
         message: 'active',
         clientId: 'client-1',
       });
       await vi.waitFor(() => expect(capturedSignal).toBeDefined());
       await testChannel.dispatch({
-        sessionKey: 'main',
+        sessionId: 'main',
         message: 'queued',
         clientId: 'client-2',
       });
@@ -2225,7 +2320,7 @@ describe('RuntimeApp', () => {
         closeSettled = true;
       });
 
-      // graceful 阶段不提前 Abort；deadline 后进入独立 Abort convergence。
+      // Graceful shutdown does not abort early; convergence starts after its deadline.
       await Promise.resolve();
       expect(capturedSignal!.aborted).toBe(false);
       deadlineDriver.advanceBy(30_000);
@@ -2238,7 +2333,7 @@ describe('RuntimeApp', () => {
       expect(runnerRun).toHaveBeenCalledTimes(1);
     });
 
-    // ⑨ shutdown timing：完全由 monotonic manual deadline 驱动，不依赖 wall-clock sleep
+    // Shutdown timing uses the monotonic manual deadline without wall-clock sleeps.
     it('shutdown deadline: responsive signal path aborts after graceful drain and converges', async () => {
       let capturedSignal: AbortSignal | undefined;
       const deadlineDriver = new ManualDeadlineDriver();
@@ -2267,7 +2362,7 @@ describe('RuntimeApp', () => {
         }),
       });
 
-      const turnPromise = app.application.runTurn({ sessionKey: 'main', message: 'go', promptMode: 'full' });
+      const turnPromise = app.application.runTurn({ sessionId: 'main', message: 'go', promptMode: 'full' });
       await vi.waitFor(() => expect(capturedSignal).toBeDefined());
 
       const closePromise = app.close();
@@ -2306,9 +2401,9 @@ describe('RuntimeApp', () => {
         }),
       });
 
-      const active = testChannel.dispatch({ sessionKey: 'main', message: 'active' });
+      const active = testChannel.dispatch({ sessionId: 'main', message: 'active' });
       await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(1));
-      await testChannel.dispatch({ sessionKey: 'main', message: 'queued' });
+      await testChannel.dispatch({ sessionId: 'main', message: 'queued' });
 
       expect(app.application.abortTurn('main')).toEqual({ aborted: true, dropped: 1 });
       await vi.waitFor(() => expect(agentEvents.filter((event) => event.type === 'request_end')).toHaveLength(1));
@@ -2355,7 +2450,7 @@ describe('RuntimeApp', () => {
       const caller = app.application.runTurn({
         requestId: 'request-nonconverged',
         turnId: 'turn-nonconverged',
-        sessionKey: 'main',
+        sessionId: 'main',
         message: 'hang',
         promptMode: 'full',
       });
@@ -2413,7 +2508,7 @@ describe('RuntimeApp', () => {
               config.onEvent?.({
                 type: 'run_end',
                 requestId: params.requestId ?? params.turnId,
-                sessionKey: params.sessionKey,
+                sessionId: params.sessionId,
                 turnId: params.turnId,
                 result: runResult,
               });
@@ -2425,7 +2520,7 @@ describe('RuntimeApp', () => {
       });
       await app.application.runTurn({
         requestId: 'request-fanout',
-        sessionKey: 'main',
+        sessionId: 'main',
         message: 'done',
         promptMode: 'full',
       });
@@ -2441,8 +2536,8 @@ describe('RuntimeApp', () => {
       expect(Object.isFrozen(report.instanceStops.pendingInstanceIds)).toBe(true);
     });
 
-    // ⑩ Unified Runtime capabilities：Channel activation 时同步注入 Catalog Query 与 Abort Command。
-    it('bindRuntimeCapabilities injects current Catalog query and abort commands', async () => {
+    // Channel activation receives unified Catalog, Abort, and Session capabilities.
+    it('bindRuntimeCapabilities injects current Catalog, abort, and Session commands', async () => {
       let capturedCapabilities: ChannelRuntimeCapabilities | undefined;
       const testChannel = createTestChannel('runtime-capabilities-test');
       (testChannel.channel as Channel).bindRuntimeCapabilities = (capabilities) => {
@@ -2467,17 +2562,23 @@ describe('RuntimeApp', () => {
       expect(Object.isFrozen(capturedCapabilities)).toBe(true);
       expect(Object.isFrozen(capturedCapabilities!.modelCatalog)).toBe(true);
       expect(Object.isFrozen(capturedCapabilities!.abort)).toBe(true);
+      expect(Object.isFrozen(capturedCapabilities!.sessions)).toBe(true);
 
-      // 塞 queued 消息到某 session
+      const created = await capturedCapabilities!.sessions.createSession();
+      expect(created.sessionId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+      );
+
+      // Seed a queued message for one Session.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
       queueMap.set('sk-with-queue', [{ x: 1 }, { x: 2 }]);
 
-      // querySessionsNeedingAbort 应包含 'sk-with-queue'
+      // querySessionsNeedingAbort includes the queued Session.
       const sessions = capturedCapabilities!.abort.querySessionsNeedingAbort();
       expect(sessions).toContain('sk-with-queue');
 
-      // 通过 hook 触发 abort，应清 queue + 返回真实数字
+      // Triggering abort through the hook clears the queue and returns the count.
       const result = capturedCapabilities!.abort.abortTurn('sk-with-queue');
       expect(result).toEqual({ aborted: false, dropped: 2 });
       expect(queueMap.has('sk-with-queue')).toBe(false);
@@ -2662,7 +2763,12 @@ function createTestDependencies(
         },
       }),
     }]),
-    createSessionManager: () => ({ resolveSession: vi.fn(async () => ({ entry: {}, isNew: true })) }) as never,
+    createSessionManager: () => ({
+      initialize: vi.fn(async () => undefined),
+      getSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
+      createTransientSubagentTranscript: vi.fn(async () => {}),
+      deleteTransientSubagentTranscript: vi.fn(async () => {}),
+    }) as never,
     createMemoryManager: async () => null,
     createSystemPromptBuilder: () => ({ build: () => 'SYSTEM_PROMPT' }) as never,
     createAgentRunner: () => ({
@@ -2702,4 +2808,8 @@ function builtinUnit(tool: Tool): RuntimeContributionUnit {
       api.registerTool(tool);
     },
   };
+}
+
+function sessionEntry(sessionId: string) {
+  return { sessionId, createdAt: 1, updatedAt: 1 };
 }

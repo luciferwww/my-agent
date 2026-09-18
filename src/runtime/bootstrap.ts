@@ -57,7 +57,7 @@ export async function bootstrapRuntime(
     if (appConfig.logger.file?.enabled) {
       const fileCfg = appConfig.logger.file;
       adapters.push(new FileAdapter({
-        // 路径固定为 <agentHome>/logs/；prefix / maxQueueSize 走 FileAdapter 内部默认
+        // Agent Home owns the log directory; FileAdapter owns the remaining defaults.
         dir: join(options.agentHome, 'logs'),
         ...(fileCfg.minLevel !== undefined ? { minLevel: fileCfg.minLevel } : {}),
       }));
@@ -104,6 +104,7 @@ export async function bootstrapRuntime(
       toolResultHeadChars: resolvedConfig.compaction.toolResultHeadChars,
       toolResultTailChars: resolvedConfig.compaction.toolResultTailChars,
     });
+    await sessionManager.initialize();
     const systemPromptBuilder = deps.createSystemPromptBuilder();
     const userPromptBuilder = new UserPromptBuilder();
 

@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-14
+> Verified: 2026-09-18
 > Authority: Stable base Subagent contract
 
 ## Scope
@@ -28,7 +28,7 @@ Child profile identity and role come from configuration plus context files. Each
 
 Unknown LLM-supplied profile names fall back to `general-purpose` with a warning. Invalid configured profiles fail configuration/startup validation.
 
-Depth is encoded in the Child Session key and derives role/capability. Default policy prevents recursive `task` use beyond the allowed depth.
+Depth and capability derive from explicit Parent/Child execution context rather than Session identity. Each accepted Child receives a fresh canonical `sessionId` and a root-only transient Transcript with caller provenance. It has no Session Store entry, never appears in get/list, and is removed at terminal cleanup or subsequent startup recovery. Default policy prevents recursive `task` use beyond the allowed depth.
 
 ## Execution contract
 
@@ -37,7 +37,7 @@ Parent task Tool
   -> profile lookup/fallback
   -> depth check
   -> Runtime delegation
-  -> isolated Child Session and prompt setup
+  -> isolated transient Child Transcript and prompt setup
   -> blocking Child execution
   -> normalized Tool Result
   -> terminal cleanup

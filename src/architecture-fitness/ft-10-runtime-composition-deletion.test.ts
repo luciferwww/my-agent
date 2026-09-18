@@ -132,7 +132,9 @@ describe('FT-10 Runtime composition deletion', () => {
     expect(objectTypeBody(queueTypes, 'QueuedChannelTurn')).not.toMatch(/\b(?:model|maxTokens)\??\s*:/);
     expect(websocket).toContain('model_reference');
     expect(websocket).toContain('request_override');
-    expect(html).toContain('model_reference');
+    expect(html).toContain('modelReference');
+    expect(html).not.toContain('model_reference');
+    expect(html).not.toContain('request_override');
     expect(html).toContain("event.category === 'provider_unregistered'");
     expect(html).toContain("event.category === 'model_rejected'");
     expect(html).toContain('this.requestModelCatalog()');

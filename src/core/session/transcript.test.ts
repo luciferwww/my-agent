@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile, readFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { loadTranscript, resolveLinearPath, appendToTranscript, findLastCompaction } from './transcript.js';
+import { SessionDataError } from './store.js';
 import type { MessageRecord, SessionRecord, CompactionRecord, TranscriptEntry } from './types.js';
 
 describe('transcript', () => {
@@ -17,10 +18,9 @@ describe('transcript', () => {
   });
 
   describe('loadTranscript', () => {
-    it('returns empty state when file does not exist', () => {
-      const state = loadTranscript(join(dir, 'nonexistent.jsonl'));
-      expect(state.byId.size).toBe(0);
-      expect(state.leafId).toBeNull();
+    it('rejects a missing persisted Transcript', () => {
+      expect(() => loadTranscript(join(dir, 'nonexistent.jsonl')))
+        .toThrowError(SessionDataError);
     });
 
     it('loads linear messages correctly', async () => {
@@ -49,11 +49,10 @@ describe('transcript', () => {
 
       const state = loadTranscript(filePath);
       expect(state.byId.size).toBe(4);
-      // leafId 是最后一条记录
       expect(state.leafId).toBe('m3');
     });
 
-    it('skips empty lines and malformed JSON', async () => {
+    it('rejects malformed JSON instead of silently dropping records', async () => {
       const filePath = join(dir, 'messy.jsonl');
       const content = [
         JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-04-02T00:00:00Z', version: 1 }),
@@ -64,9 +63,7 @@ describe('transcript', () => {
       ].join('\n');
       await writeFile(filePath, content, 'utf-8');
 
-      const state = loadTranscript(filePath);
-      expect(state.byId.size).toBe(2);
-      expect(state.leafId).toBe('m1');
+      expect(() => loadTranscript(filePath)).toThrowError(SessionDataError);
     });
   });
 
@@ -98,12 +95,10 @@ describe('transcript', () => {
 
       const byId = new Map<string, any>([['s1', session], ['m1', m1], ['m2a', m2a], ['m2b', m2b]]);
 
-      // 从分支 A 的末端回溯
       const pathA = resolveLinearPath({ byId, leafId: 'm2a' }, 'm2a');
       expect(pathA).toHaveLength(2);
       expect((pathA[1] as MessageRecord).message.content).toBe('branch A');
 
-      // 从分支 B 的末端回溯
       const pathB = resolveLinearPath({ byId, leafId: 'm2b' }, 'm2b');
       expect(pathB).toHaveLength(2);
       expect((pathB[1] as MessageRecord).message.content).toBe('branch B');
@@ -154,7 +149,6 @@ describe('transcript', () => {
   // ── findLastCompaction ────────────────────────────────────
 
   describe('findLastCompaction', () => {
-    /** 构造一条 CompactionRecord（parentId 可选） */
     function makeCompactionRecord(id: string, timestamp: string): CompactionRecord {
       return {
         type: 'compaction',
@@ -199,7 +193,6 @@ describe('transcript', () => {
     });
 
     it('returns the most recent compaction record when multiple exist', () => {
-      // c2 的 timestamp 晚于 c1，应该返回 c2
       const c1 = makeCompactionRecord('c1', '2026-04-01T08:00:00Z');
       const c2 = makeCompactionRecord('c2', '2026-04-01T12:00:00Z');
       const state = { byId: new Map([['c1', c1], ['c2', c2]]), leafId: null };
@@ -209,12 +202,10 @@ describe('transcript', () => {
     });
 
     it('uses ISO 8601 string comparison (lexicographic order)', () => {
-      // 两条记录同一天，不同时间
       const c1 = makeCompactionRecord('c1', '2026-04-01T23:59:59Z');
       const c2 = makeCompactionRecord('c2', '2026-04-02T00:00:01Z');
       const state = { byId: new Map([['c1', c1], ['c2', c2]]), leafId: null };
 
-      // c2 的字典序更大（"2026-04-02..." > "2026-04-01..."）
       expect(findLastCompaction(state)!.id).toBe('c2');
     });
 
@@ -245,12 +236,14 @@ describe('transcript', () => {
         type: 'session', id: 's1', parentId: null,
         timestamp: '2026-04-01T00:00:00Z', version: 1,
       };
-      const c1 = makeCompactionRecord('c1', '2026-04-01T10:00:00Z');
+      const c1 = {
+        ...makeCompactionRecord('c1', '2026-04-01T10:00:00Z'),
+        parentId: 's1',
+      };
 
       await appendToTranscript(filePath, session);
       await appendToTranscript(filePath, c1);
 
-      // 重新从磁盘加载，验证持久化后仍可查询
       const loaded = loadTranscript(filePath);
       const result = findLastCompaction(loaded);
       expect(result).not.toBeNull();

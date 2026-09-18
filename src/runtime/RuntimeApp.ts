@@ -7,6 +7,7 @@ import type {
   ModelInvocationDiagnostics,
   ModelInvocationError,
 } from '../core/model-invocation/index.js';
+import type { SessionEntry } from '../core/session/index.js';
 import type { ModelReference } from '../core/model-resolution/index.js';
 import { ModelResolutionError, ModelResolver } from '../core/model-resolution/index.js';
 import { TurnInteractionManager } from './turn-interaction/index.js';
@@ -49,6 +50,7 @@ import {
   resolveRuntimeDeadlinePolicy,
 } from './runtime-deadline.js';
 import type { CurrentCallApprovalCapability } from '../core/approval/index.js';
+import { SessionCoordinator } from './session/SessionCoordinator.js';
 import type { ActiveParentTurn } from './subagent-orchestration.js';
 import {
   collectAvailableSubagents,
@@ -156,7 +158,7 @@ function formatModelIdForOperator(modelId: string): string {
 interface ActiveRootTree {
   readonly requestId: string;
   readonly generation: number;
-  readonly sessionKey: string;
+  readonly sessionId: string;
   readonly channels: readonly ChannelRuntimeBinding[];
   readonly pin: RuntimeGenerationPin;
   members: number;
@@ -165,25 +167,24 @@ interface ActiveRootTree {
 
 export class RuntimeApp {
   private readonly onEvent?: RuntimeAppOptions['onEvent'];
+  private readonly sessionCoordinator: SessionCoordinator;
   private readonly inFlightRuns = new Set<Promise<unknown>>();
-  /** Per-session 串行 gate：同一 sessionKey 同时只允许一个 turn。跨 session 可并发 */
+  /** Per-Session gate: one Turn per sessionId, with concurrency across Sessions. */
   private readonly inFlightSessions = new Set<string>();
-  /** 每个 session 的普通消息队列；消息在真正启动 turn 前先进入这里。 */
+  /** Normal message queue for each Session before a Turn starts. */
   private readonly messageQueueBySession = new Map<string, QueuedChannelTurn[]>();
-  /** 当前活动 run-turn 的 steering inbox；由 runner 在执行过程中的注入点拉取并清空。 */
+  /** Steering inbox drained by the Runner at injection points in the active Turn. */
   private readonly steeringInboxBySession = new Map<string, PendingSteeringInput[]>();
   /**
-   * 仅跟踪当前正在运行的 run-turn；steering 路由依赖这个最小运行态。
-   * 它和 inFlightSessions 的区别是：前者表达“是否 busy”，这里表达“是否存在可接 steering 的活动 run-turn”。
+   * Tracks only active run-Turns for steering. inFlightSessions represents busy
+   * state, while this map identifies an active Turn that can accept steering.
    */
   private readonly activeTurnIdBySession = new Map<string, string>();
 
   /**
-   * Per-session active turn 的 AbortController，供 `abortTurn(sk)` / shutdown 触发中止。
-   *  - 写：runTurnInternal 入口（清 stale + 设新）
-   *  - 写：runTurnInternal finally（清掉自己注册的那个）
-  *  - 读：abortTurn / close / Channel runtime capability querySessionsNeedingAbort
-   * 详见 core-abort-spec.md §8.1。
+  * AbortController for each active Session Turn, used by abortTurn and shutdown.
+  * runTurnInternal installs and removes its own controller; abortTurn, close,
+  * and querySessionsNeedingAbort read it. See core-abort-spec.md section 8.1.
    */
   private readonly activeAborts = new Map<string, AbortController>();
   private readonly activeRootGenerations = new Map<string, ActiveRootTree>();
@@ -191,9 +192,9 @@ export class RuntimeApp {
   /** Active resolved Parent Turns eligible to delegate a tracked Child. */
   private readonly activeParentTurns: Map<string, ActiveParentTurn>;
 
-  // ── Channel 层 ──────────────────────────────────────────────────
+  // ── Channel layer ───────────────────────────────────────────────
   private readonly turnInteractionManager: TurnInteractionManager;
-  /** turnId → 交互路由上下文；当前最小实现仍用 channel 引用加 originClientId 做定向。 */
+  /** Turn-to-interaction route using the Channel reference and originClientId. */
   private readonly routeContextByTurn: Map<string, MessageRouteContext>;
   private approvalRoutingWired = false;
 
@@ -205,7 +206,7 @@ export class RuntimeApp {
     * when it constructs the application kernel; instance methods (notably
    * `handleInboundChannelMessage`) call this to emit `user_message` events
    * without needing to import the fanout closure.
-   * 见 channel-multi-client-user-message-spec §5.3。
+  * See channel-multi-client-user-message-spec section 5.3.
    */
   private fanoutAgentEvent!: (event: AgentEvent) => void | Promise<void>;
 
@@ -232,6 +233,11 @@ export class RuntimeApp {
     this.routeContextByTurn = routeContextByTurn;
     this.onEvent = onEvent;
     this.turnInteractionManager = new TurnInteractionManager(interactionLog);
+    this.sessionCoordinator = new SessionCoordinator({
+      sessionManager: resources.sessionManager,
+      isBusy: (sessionId) => this.inFlightSessions.has(sessionId)
+        || (this.messageQueueBySession.get(sessionId)?.length ?? 0) > 0,
+    });
   }
 
   static async create(options: RuntimeAppOptions): Promise<RuntimeHandle> {
@@ -267,7 +273,7 @@ export class RuntimeApp {
         }
         return [...sessions];
       },
-      abortTurn: (sessionKey) => app.abortTurn(sessionKey),
+      abortTurn: (sessionId) => app.abortTurn(sessionId),
       blockingTurnIds: (generation) => app.blockingTurnIds(generation),
       abortGeneration: (generation) => app.abortGeneration(generation),
       channelBindingsForTurn: (turnId) => app.channelBindingsForTurn(turnId),
@@ -276,7 +282,39 @@ export class RuntimeApp {
     };
   }
 
-  // ── 状态查询 ──────────────────────────────────────────────────────
+  // ── State queries ────────────────────────────────────────────────
+
+  createSession(): Promise<{ sessionId: string }> {
+    return this.sessionCoordinator.createSession();
+  }
+
+  listSessions(input?: { archived?: boolean }): Promise<SessionEntry[]> {
+    return this.sessionCoordinator.listSessions(input);
+  }
+
+  getSession(sessionId: string): Promise<SessionEntry> {
+    return this.sessionCoordinator.getSession(sessionId);
+  }
+
+  renameSession(sessionId: string, title: string | null): Promise<SessionEntry> {
+    return this.sessionCoordinator.renameSession(sessionId, title);
+  }
+
+  archiveSession(sessionId: string): Promise<SessionEntry> {
+    return this.sessionCoordinator.archiveSession(sessionId);
+  }
+
+  unarchiveSession(sessionId: string): Promise<SessionEntry> {
+    return this.sessionCoordinator.unarchiveSession(sessionId);
+  }
+
+  deleteSession(sessionId: string): Promise<void> {
+    return this.sessionCoordinator.deleteSession(sessionId);
+  }
+
+  forkSession(sessionId: string, entryId?: string): Promise<SessionEntry> {
+    return this.sessionCoordinator.forkSession(sessionId, entryId);
+  }
 
   getState(): RuntimeLifecycleState {
     return {
@@ -343,7 +381,7 @@ export class RuntimeApp {
     const aborted: string[] = [];
     for (const [turnId, root] of this.activeRootGenerations) {
       if (root.generation !== generation) continue;
-      this.activeAborts.get(root.sessionKey)?.abort('generation-retirement');
+      this.activeAborts.get(root.sessionId)?.abort('generation-retirement');
       aborted.push(turnId);
     }
     return Object.freeze(aborted.sort());
@@ -389,31 +427,28 @@ export class RuntimeApp {
   }
 
   /**
-   * Abort the active turn on `sessionKey` AND drop any queued (followup)
+  * Abort the active turn on `sessionId` AND drop any queued (followup)
    * messages for that session. See core-abort-spec.md §0.3 D3 — single-step
    * "stop everything for this session" semantics.
    *
-   * 返回 `{ aborted, dropped }`（两个字段正交）：
-   *  - `aborted`：是否有 active turn 被 abort（`activeAborts` 命中）
-   *  - `dropped`：从 `messageQueueBySession` 里被清空的消息数（可为 0）
+   * Returns independent `{ aborted, dropped }` values: whether an active Turn
+   * was aborted and how many queued messages were removed.
    *
-   * `aborted === false && dropped === 0` 时表示无事发生，此时也不 emit event。
+   * When both are empty, no event is emitted.
    *
-   * Never throws —— 包括 EventEmitter subscriber 抛错也会被 `safeEmit` swallow 为 log warn。
+   * Never throws; safeEmit reduces subscriber failures to warnings.
    *
-   * Cascade：通过 AbortSignal 透传，正在跑的子 subagent 也会自动 abort。
+   * AbortSignal propagation also aborts active Child Agents.
    *
-   * `messages_dropped` runtime event 仍照常 emit（供 library 用户 / telemetry 消费）；
-   * 事件字段 `dropped` 与本返回值 `dropped` 同义。Channel 侧走返回值路径以避免
-   * event 订阅顺序敏感问题。
+   * The messages_dropped event mirrors the returned dropped count for library
+   * and telemetry consumers. Channels use the return value to avoid subscription ordering.
    *
-   * **pending steering 处理**：runAttempt 内 abort 命中时未注入的 steering 消息会
-   * 被丢弃、仅写 `log.info`，**不计入本返回值 `dropped`，也不进 `messages_dropped`
-   * event**。理由见 core-abort-spec.md §7.2.3。
+   * Pending steering drained inside runAttempt is discarded and logged on abort,
+   * but is not included in dropped or messages_dropped. See section 7.2.3.
    */
-  abortTurn(sessionKey: string): { aborted: boolean; dropped: number } {
-    const controller = this.activeAborts.get(sessionKey);
-    const queue = this.messageQueueBySession.get(sessionKey);
+  abortTurn(sessionId: string): { aborted: boolean; dropped: number } {
+    const controller = this.activeAborts.get(sessionId);
+    const queue = this.messageQueueBySession.get(sessionId);
     const dropped = queue?.length ?? 0;
     const aborted = !!controller;
 
@@ -421,24 +456,23 @@ export class RuntimeApp {
 
     if (controller) controller.abort();
     if (dropped > 0) {
-      this.messageQueueBySession.delete(sessionKey);
+      this.messageQueueBySession.delete(sessionId);
       for (const item of queue ?? []) {
         void this.settleQueuedRequest(item, 'abort_queue_drop');
       }
       this.safeEmit({
         type: 'messages_dropped',
-        sessionKey,
+        sessionId,
         reason: 'abort',
-        dropped, // pending steering 不计入（§7.2.3）
+        dropped, // Excludes pending steering; see section 7.2.3.
       });
     }
-    log.info('turn aborted by user', { sessionKey, aborted, dropped });
+    log.info('turn aborted by user', { sessionId, aborted, dropped });
     return { aborted, dropped };
   }
 
   /**
-   * emit 抛错时降级为 warn 而非传出，保证调用方 "never throws" 契约。
-   * Node EventEmitter 语义下 subscriber 抛错默认会传出——`safeEmit` 兜底。
+  * Convert subscriber exceptions to warnings to preserve the never-throws contract.
    */
   private safeEmit(event: RuntimeEvent): void {
     try {
@@ -451,7 +485,7 @@ export class RuntimeApp {
     }
   }
 
-  // ── Approval 路由（详见 channel-design.md §4.3）────────────────────
+  // ── Approval routing (channel-design.md section 4.3) ─────────────
 
   /** Configure interaction transport once; Tool authorization stays in Runner policy flow. */
   private wireApprovalRouting(): void {
@@ -466,7 +500,7 @@ export class RuntimeApp {
           interactionId: request.id,
           toolName: request.toolName,
           turnId: request.turnId,
-          sessionKey: request.sessionKey,
+          sessionId: request.sessionId,
           originClientId: request.originClientId,
         });
         return { status: 'unavailable', reason: 'origin_missing' };
@@ -476,7 +510,7 @@ export class RuntimeApp {
         interactionId: request.id,
         toolName: request.toolName,
         turnId: request.turnId,
-        sessionKey: request.sessionKey,
+        sessionId: request.sessionId,
         originClientId: request.originClientId,
         channelId: originChannel.id,
         route: 'interaction',
@@ -498,7 +532,7 @@ export class RuntimeApp {
           interactionId: request.id,
           toolName: request.toolName,
           turnId: request.turnId,
-          sessionKey: request.sessionKey,
+          sessionId: request.sessionId,
           originClientId: request.originClientId,
         });
         return;
@@ -508,7 +542,7 @@ export class RuntimeApp {
         interactionId: request.id,
         toolName: request.toolName,
         turnId: request.turnId,
-        sessionKey: request.sessionKey,
+        sessionId: request.sessionId,
         originClientId: request.originClientId,
         channelId: originChannel.id,
         route: 'interaction',
@@ -534,7 +568,7 @@ export class RuntimeApp {
         request: {
           toolName: request.toolName,
           input: { ...request.input },
-          sessionKey: request.sessionKey,
+          sessionId: request.sessionId,
           turnId: request.turnId,
           originClientId: this.routeContextByTurn.get(request.turnId)?.originClientId,
         },
@@ -581,11 +615,10 @@ export class RuntimeApp {
   }
 
   /**
-   * Channel 入站统一先过 runtime intake。
-   * 顺序：media 处理 → 占位装配 → user_message 广播 → steering 剥离 → 普通队列。
-   * 决策 8：失败即丢弃 + 可选文本占位；不发任何事件 / 拒收。
-   * user_message emit 时机对齐 channel-multi-client-user-message-spec §5.3
-   * （assemble 后、route 分歧前，覆盖 queued+steering 两条路径）。
+  * All inbound Channel messages pass through Runtime intake: media processing,
+  * placeholder assembly, user_message broadcast, steering routing, then queueing.
+  * Decision 8 drops failed attachments with an optional text placeholder.
+  * user_message is emitted after assembly and before queued/steering routing.
    */
   private async handleInboundChannelMessage(
     channel: ChannelRuntimeBinding,
@@ -594,17 +627,17 @@ export class RuntimeApp {
     log.info('channel message received', {
       channelId: channel.id,
       clientId: req.clientId,
-      sessionKey: req.sessionKey,
+      sessionKey: req.sessionId,
       hasModelOverride: req.modelReference !== undefined,
       hasMaxOutputTokens: req.requestOverride?.maxOutputTokens !== undefined,
       hasMaxLlmCalls: req.maxLlmCalls !== undefined,
       messageChars: typeof req.message === 'string' ? req.message.length : undefined,
       attachmentCount: Array.isArray(req.message) ? req.message.length : 0,
     });
-    // ① Media 处理：永不整体失败，失败 / 超限的附件已进 dropped[]
+    // Media processing reports failed or oversized attachments in dropped.
     const { normalized, dropped } = await processInboundMessage(req.message);
 
-    // ② 占位装配：失败提示 + 空消息回落 + 退化输入 skip
+    // Assemble failure notices and skip degenerate empty input.
     const assembled = this.assembleInboundMessage(normalized, dropped);
     if (assembled === undefined) return;
 
@@ -612,15 +645,15 @@ export class RuntimeApp {
       typeof assembled === 'string' ? assembled.length : undefined;
     const assembledAttachmentCount = Array.isArray(assembled) ? assembled.length : 0;
 
-    // ③ 路由分歧前先广播 user_message（spec §5.3）
-    const routeToSteering = this.shouldRouteMessageToSteering(req.sessionKey);
+    // Broadcast user_message before selecting queued or steering delivery.
+    const routeToSteering = this.shouldRouteMessageToSteering(req.sessionId);
     const deliveryMode: 'queued' | 'steering' = routeToSteering ? 'steering' : 'queued';
     const { text: broadcastText, attachmentSummaries } = summarizeAssembled(assembled);
     const messageId = randomUUID();
 
     this.fanoutAgentEvent({
       type: 'user_message',
-      sessionKey: req.sessionKey,
+      sessionId: req.sessionId,
       messageId,
       content: broadcastText,
       attachmentSummaries: attachmentSummaries.length ? attachmentSummaries : undefined,
@@ -629,36 +662,36 @@ export class RuntimeApp {
       timestamp: Date.now(),
     });
 
-    // ④ Steering 剥离：steering 路径只接文本（R1）；纯附件消息不入队（R1'）
+    // Steering accepts text only; attachment-only steering is not queued.
     if (routeToSteering) {
       if (broadcastText.trim() === '') {
         log.info('steering message has no text after summarize; skipping enqueue', {
           channelId: channel.id,
           clientId: req.clientId,
-          sessionKey: req.sessionKey,
+          sessionKey: req.sessionId,
           attachmentCount: attachmentSummaries.length,
         });
         return;
       }
       this.enqueueSteeringInput(
-        req.sessionKey,
+        req.sessionId,
         broadcastText,
         this.buildMessageRouteContext(channel, req),
       );
       log.info('channel message routed to steering', {
         channelId: channel.id,
         clientId: req.clientId,
-        sessionKey: req.sessionKey,
+        sessionKey: req.sessionId,
         messageChars: broadcastText.length,
         droppedAttachments: dropped.length,
       });
       return;
     }
 
-    // ⑤ 普通队列
+    // Normal queued delivery.
     const queuedTurn: QueuedChannelTurn = {
       requestId: randomUUID(),
-      sessionKey: req.sessionKey,
+      sessionId: req.sessionId,
       message: assembled,
       launchContext: this.buildTurnLaunchContext(req),
       routeContext: this.buildMessageRouteContext(channel, req),
@@ -673,25 +706,23 @@ export class RuntimeApp {
     log.info('channel message enqueued', {
       channelId: channel.id,
       clientId: req.clientId,
-      sessionKey: req.sessionKey,
-      queueLength: this.messageQueueBySession.get(req.sessionKey)?.length ?? 0,
+      sessionKey: req.sessionId,
+      queueLength: this.messageQueueBySession.get(req.sessionId)?.length ?? 0,
       messageChars: assembledMessageChars,
       attachmentCount: assembledAttachmentCount,
       droppedAttachments: dropped.length,
     });
 
-    const started = this.scheduleNextQueuedTurn(req.sessionKey);
+    const started = this.scheduleNextQueuedTurn(req.sessionId);
     if (started) {
       await started;
     }
   }
 
   /**
-   * 占位装配（决策 8）：把 media 输出 + dropped 列表组装成可入队的消息。
+   * Assemble media output and dropped-attachment notices into a queueable message.
    *
-   * 返回值语义：
-   *   string | ChatContentBlock[] → 正常入队
-   *   undefined                   → 退化输入（无文本、无成功附件、占位也空），调用方 skip
+   * undefined means there is no text, successful attachment, or placeholder to queue.
    */
   private assembleInboundMessage(
     normalized: string | ChatContentBlock[],
@@ -706,7 +737,7 @@ export class RuntimeApp {
       return body.trim() === '' ? undefined : body;
     }
 
-    // 数组：是否含「有意义内容」= 任一非 text block，或任一 trim 后非空的 text。
+    // Meaningful arrays contain a non-text block or non-empty trimmed text.
     const hasContent = normalized.some(
       (b) => b.type !== 'text' || (b as { type: 'text'; text: string }).text.trim() !== '',
     );
@@ -715,7 +746,7 @@ export class RuntimeApp {
     }
     if (!notice) return normalized;
 
-    // 追加提示行：并入首个 text block，无则在末尾插一个 text block
+    // Append the notice to the first text block, or add a text block at the end.
     const hostIndex = normalized.findIndex((b) => b.type === 'text');
     if (hostIndex >= 0) {
       return normalized.map((b, i) =>
@@ -728,8 +759,8 @@ export class RuntimeApp {
   }
 
   /**
-   * steering 只在配置开启 steer 模式且当前 session 确实有活动 run-turn 时接收。
-   * 这样可以保证“没有活动 turn 的消息默认回到普通排队路径”。
+  * Steering requires both steer mode and an active Session Turn. Messages with
+  * no active Turn use normal queueing.
    */
   private shouldRouteMessageToSteering(sessionKey: string): boolean {
     return this.resources.resolvedConfig.runner.inTurnMessageMode === 'steer'
@@ -762,11 +793,11 @@ export class RuntimeApp {
     };
   }
 
-  /** 普通消息入队只修改局部 queue state；真正何时启动 turn 交给 scheduleNextQueuedTurn 决定。 */
+  /** Queueing mutates only local state; scheduleNextQueuedTurn decides when to start. */
   private enqueueQueuedTurn(item: QueuedChannelTurn): void {
-    const queue = this.messageQueueBySession.get(item.sessionKey) ?? [];
+    const queue = this.messageQueueBySession.get(item.sessionId) ?? [];
     queue.push(item);
-    this.messageQueueBySession.set(item.sessionKey, queue);
+    this.messageQueueBySession.set(item.sessionId, queue);
   }
 
   private settleQueuedRequest(
@@ -794,8 +825,8 @@ export class RuntimeApp {
   }
 
   /**
-   * 活动 turn 的 steering inbox 采用追加写入；
-   * 当前 runner 只消费文本，但这里仍保留 routeContext 以对齐统一消息模型，便于后续审计或扩展站内交互路由。
+  * Append to the active Turn's steering inbox. Runner currently consumes only
+  * text, while routeContext remains available for audit and future routing.
    */
   private enqueueSteeringInput(
     sessionKey: string,
@@ -808,8 +839,8 @@ export class RuntimeApp {
   }
 
   /**
-   * 最小调度器：同 session 只拉起一条队头消息。
-   * 如果该 session 当前仍 busy，就保持队列静止，等当前 turn 释放后再续跑下一条。
+  * Start at most one queued message for a Session. A busy Session remains
+  * queued until the current Turn releases it.
    */
   private scheduleNextQueuedTurn(sessionKey: string): Promise<RunTurnResult> | undefined {
     if (this.inFlightSessions.has(sessionKey)) {
@@ -834,8 +865,8 @@ export class RuntimeApp {
   }
 
   /**
-   * 队列项真正启动时才生成 turnId 并登记 origin 路由。
-   * 这样排队阶段不占用 turn 级资源，同时仍能把审批/交互回到原始 channel/client。
+  * Allocate turnId and origin routing only when a queued item starts, avoiding
+  * Turn resources while queued while preserving approval and interaction routing.
    */
   private async startQueuedTurn(item: QueuedChannelTurn): Promise<RunTurnResult> {
     const turnId = randomUUID();
@@ -846,7 +877,7 @@ export class RuntimeApp {
     try {
       return await this.runTurn({
         requestId: item.requestId,
-        sessionKey: item.sessionKey,
+        sessionId: item.sessionId,
         message: item.message,
         promptMode: 'full',
         modelReference: item.launchContext?.modelReference,
@@ -858,7 +889,7 @@ export class RuntimeApp {
     } finally {
       this.routeContextByTurn.delete(turnId);
       log.debug('queued turn routing cleared', {
-        sessionKey: item.sessionKey,
+        sessionKey: item.sessionId,
         turnId,
       });
     }
@@ -868,7 +899,7 @@ export class RuntimeApp {
 
   runTurn(params: RunTurnParams): Promise<RunTurnResult> {
     try {
-      this.assertCanRunForSession(params.sessionKey);
+      this.assertCanRunForSession(params.sessionId);
     } catch (error) {
       return Promise.reject(error);
     }
@@ -912,14 +943,14 @@ export class RuntimeApp {
     const tree: ActiveRootTree = {
       requestId: params.requestId,
       generation: generationPin.generation,
-      sessionKey: params.sessionKey,
+      sessionId: params.sessionId,
       channels: generationPin.snapshot.channels.bindings,
       pin: generationPin,
       members: 1,
       released: false,
     };
     this.activeRootGenerations.set(params.turnId, tree);
-    this.inFlightSessions.add(params.sessionKey);
+    this.inFlightSessions.add(params.sessionId);
     this.state.activeRunCount += 1;
     this.state.lastRunStartedAt = Date.now();
     this.safeEmit({
@@ -927,15 +958,15 @@ export class RuntimeApp {
       requestId: params.requestId,
       ...(params.originMessageId ? { originMessageId: params.originMessageId } : {}),
       turnId: params.turnId,
-      sessionKey: params.sessionKey,
+      sessionId: params.sessionId,
       contextVersion: this.state.contextVersion,
     });
 
     const turnStartedAt = Date.now();
-    this.activeTurnIdBySession.set(params.sessionKey, params.turnId);
+    this.activeTurnIdBySession.set(params.sessionId, params.turnId);
     log.debug('turn start', {
       requestId: params.requestId,
-      sessionKey: params.sessionKey,
+      sessionKey: params.sessionId,
       turnId: params.turnId,
       generation: generationPin.generation,
       messageChars: typeof params.message === 'string' ? params.message.length : undefined,
@@ -952,7 +983,7 @@ export class RuntimeApp {
           requestId: params.requestId,
           ...(params.originMessageId ? { originMessageId: params.originMessageId } : {}),
           turnId: params.turnId,
-          sessionKey: params.sessionKey,
+          sessionId: params.sessionId,
           outcome,
           result,
         });
@@ -965,7 +996,7 @@ export class RuntimeApp {
       }
       log.info('turn end', {
         requestId: params.requestId,
-        sessionKey: params.sessionKey,
+        sessionKey: params.sessionId,
         turnId: params.turnId,
         durationMs: Date.now() - turnStartedAt,
         toolRounds: result.toolRounds,
@@ -990,7 +1021,7 @@ export class RuntimeApp {
           requestId: params.requestId,
           ...(params.originMessageId ? { originMessageId: params.originMessageId } : {}),
           turnId: params.turnId,
-          sessionKey: params.sessionKey,
+          sessionId: params.sessionId,
           outcome: 'failed',
           failure: Object.freeze({ code: info.code, message: info.message }),
         });
@@ -1005,7 +1036,7 @@ export class RuntimeApp {
         void Promise.resolve(this.fanoutAgentEvent({
           type: 'error',
           requestId: params.requestId,
-          sessionKey: params.sessionKey,
+          sessionId: params.sessionId,
           turnId: params.turnId,
           error,
           category: error.category,
@@ -1014,7 +1045,7 @@ export class RuntimeApp {
       }
       log.error('turn failed', {
         requestId: params.requestId,
-        sessionKey: params.sessionKey,
+        sessionKey: params.sessionId,
         turnId: params.turnId,
         durationMs: Date.now() - turnStartedAt,
         code: info.code,
@@ -1030,21 +1061,21 @@ export class RuntimeApp {
       });
       this.recordError('run', info);
     } finally {
-      this.inFlightSessions.delete(params.sessionKey);
-      if (this.activeTurnIdBySession.get(params.sessionKey) === params.turnId) {
-        this.activeTurnIdBySession.delete(params.sessionKey);
+      this.inFlightSessions.delete(params.sessionId);
+      if (this.activeTurnIdBySession.get(params.sessionId) === params.turnId) {
+        this.activeTurnIdBySession.delete(params.sessionId);
       }
-      this.steeringInboxBySession.delete(params.sessionKey);
+      this.steeringInboxBySession.delete(params.sessionId);
       this.state.activeRunCount = Math.max(0, this.state.activeRunCount - 1);
       this.state.lastRunEndedAt = Date.now();
       this.releaseTreeMember(params.turnId, tree);
       this.requestGates.delete(params.requestId);
 
-      const next = this.scheduleNextQueuedTurn(params.sessionKey);
+      const next = this.scheduleNextQueuedTurn(params.sessionId);
       if (next) {
         void next.catch((error) => {
           log.warn('queued turn failed after scheduling', {
-            sessionKey: params.sessionKey,
+            sessionKey: params.sessionId,
             error: error instanceof Error ? error.message : String(error),
           });
         });
@@ -1158,7 +1189,7 @@ export class RuntimeApp {
         if (graceful.outcome === 'deadline-exhausted') {
           for (const [turnId, tree] of activeAtAdmission) {
             if (this.activeRootGenerations.get(turnId) !== tree) continue;
-            this.activeAborts.get(tree.sessionKey)?.abort('shutdown');
+            this.activeAborts.get(tree.sessionId)?.abort('shutdown');
           }
         }
 
@@ -1182,7 +1213,7 @@ export class RuntimeApp {
                 requestId: tree.requestId,
                 ...(gate.originMessageId ? { originMessageId: gate.originMessageId } : {}),
                 turnId,
-                sessionKey: tree.sessionKey,
+                sessionId: tree.sessionId,
                 outcome: 'shutdown_nonconverged',
                 failure: Object.freeze({
                   code: 'SHUTDOWN_NONCONVERGED',
@@ -1282,33 +1313,34 @@ export class RuntimeApp {
     return this.closePromise;
   }
 
-  // ── 内部辅助 ──────────────────────────────────────────────────────
+  // ── Internal helpers ─────────────────────────────────────────────
 
   /**
-   * turn 一旦真正开始执行后，就进入既有的 turn body bridge：
-   * resolve session、按需 reload context、构建 prompts，然后把一次完整 turn 委托给 agentRunner。
+  * Admit the message, optionally reload context, build prompts, and delegate
+  * the Turn to AgentRunner.
    */
   private async runTurnInternal(
     params: RunTurnParams & { requestId: string; turnId: string },
     generationPin: RuntimeGenerationPin,
     tree: ActiveRootTree,
   ): Promise<RunTurnResult> {
-    // 防御性 stale 清理（core-abort-spec.md §8.2）：正常流由下面 finally 保证 cleanup，
-    // 不会遗留 stale entry。仅为防未来意外路径（finally 本身 throw / 某次重构意外
-    // 提前 return）留一层兜底。命中即 log warn。
-    const stale = this.activeAborts.get(params.sessionKey);
+    // Defensive stale cleanup for unexpected paths that bypassed normal finally cleanup.
+    const stale = this.activeAborts.get(params.sessionId);
     if (stale) {
-      log.warn('stale abort controller cleared (defensive)', { sessionKey: params.sessionKey });
-      this.activeAborts.delete(params.sessionKey);
+      log.warn('stale abort controller cleared (defensive)', { sessionKey: params.sessionId });
+      this.activeAborts.delete(params.sessionId);
     }
 
-    // 注册本 turn 的 controller —— abortTurn / shutdown 拿它来 abort。
+    // Register this Turn's controller for abortTurn and shutdown.
     const controller = new AbortController();
-    this.activeAborts.set(params.sessionKey, controller);
+    this.activeAborts.set(params.sessionId, controller);
     let parentRecord: ActiveParentTurn | undefined;
 
     try {
-      await this.resources.sessionManager.resolveSession(params.sessionKey);
+      const admission = await this.sessionCoordinator.admitMessage(
+        params.sessionId,
+        params.message,
+      );
 
       if (params.reloadContextFiles) {
         await this.reloadContextFiles();
@@ -1350,14 +1382,14 @@ export class RuntimeApp {
         }),
       );
 
-      // context-hook prepend 只作用于文本部分：数组消息保持图文混排顺序与原始内容
+      // Context-hook prepend modifies only text and preserves multimodal ordering.
       let runnerMessage: string | ChatContentBlock[];
       if (typeof params.message === 'string') {
         runnerMessage = (await this.resources.userPromptBuilder.build({
           text: params.message,
         })).text;
       } else {
-        // 用首个 text block 作为 prepend 宿主；其余 block 保持原序原值
+        // Use the first text block as the prepend host; preserve all other blocks.
         const hostIndex = params.message.findIndex((b) => b.type === 'text');
         const hostText = hostIndex >= 0
           ? (params.message[hostIndex] as { type: 'text'; text: string }).text
@@ -1379,7 +1411,8 @@ export class RuntimeApp {
       });
       parentRecord = Object.freeze({
         requestId: params.requestId,
-        sessionKey: params.sessionKey,
+        sessionId: params.sessionId,
+        depth: 0,
         turnId: params.turnId,
         signal: controller.signal,
         effectiveReference,
@@ -1391,7 +1424,7 @@ export class RuntimeApp {
 
       const result = await this.resources.agentRunner.run({
         requestId: params.requestId,
-        sessionKey: params.sessionKey,
+        sessionId: params.sessionId,
         message: runnerMessage,
         resolvedModel,
         systemPrompt,
@@ -1401,15 +1434,15 @@ export class RuntimeApp {
         toolPolicy: this.resources.toolPolicy,
         approvalCapability: this.getApprovalCapability(params.turnId),
         maxLlmCalls: params.maxLlmCalls ?? this.resources.resolvedConfig.runner.maxLlmCalls,
-        // runtime 只提供"读取并清空当前 steering inbox"的能力，具体消费时机仍由 runner 控制。
-        getSteeringMessages: async () => this.drainSteeringMessages(params.sessionKey),
+        // Runtime drains the inbox; Runner controls when steering is consumed.
+        getSteeringMessages: async () => this.drainSteeringMessages(params.sessionId),
         compaction: this.resources.resolvedConfig.compaction,
         originMessageId: params.originMessageId,
         signal: controller.signal, // core-abort-spec.md §8.2
       });
 
       return {
-        sessionKey: params.sessionKey,
+        sessionId: params.sessionId,
         text: result.text,
         content: result.content,
         stopReason: result.stopReason,
@@ -1420,15 +1453,15 @@ export class RuntimeApp {
       if (parentRecord && this.activeParentTurns.get(params.turnId) === parentRecord) {
         this.activeParentTurns.delete(params.turnId);
       }
-      // 只清自己注册的那一个（防止"另一个 turn 已重置 map"误清）
-      if (this.activeAborts.get(params.sessionKey) === controller) {
-        this.activeAborts.delete(params.sessionKey);
+      // Remove only the controller registered by this Turn.
+      if (this.activeAborts.get(params.sessionId) === controller) {
+        this.activeAborts.delete(params.sessionId);
       }
     }
   }
 
   /**
-   * steering 输入在被 runner 读取后立即从 inbox 删除，避免同一条输入在多个注入点重复消费。
+  * Remove steering input as Runner reads it to prevent duplicate injection.
    */
   private async drainSteeringMessages(sessionKey: string): Promise<ChatMessage[]> {
     const inbox = this.steeringInboxBySession.get(sessionKey);
@@ -1439,7 +1472,7 @@ export class RuntimeApp {
     this.steeringInboxBySession.delete(sessionKey);
 
     const messages = await Promise.all(inbox.map(async (item) => {
-      // 当前 runner 只消费文本；routeContext 仍保留在 inbox 项里，用于后续扩展统一消息路由模型。
+      // Runner currently consumes text only; routeContext remains for future routing.
       const builtUserPrompt = await this.resources.userPromptBuilder.build({ text: item.message });
       return {
         role: 'user' as const,
@@ -1451,8 +1484,8 @@ export class RuntimeApp {
   }
 
   /**
-   * Per-session 并发控制：同 session 串行（消息历史一致性），跨 session 可并发。
-   * runtime 关闭后任何 turn 都拒绝。
+  * Serialize Turns within a Session while allowing cross-Session concurrency.
+  * Reject all Turns after Runtime shutdown begins.
    */
   private assertCanRunForSession(sessionKey: string): void {
     if (

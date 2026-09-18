@@ -2,13 +2,15 @@
 
 > Status: Current Authority
 > Authority: Current implemented Session behavior
-> Verified: 2026-09-17
+> Verified: 2026-09-18
 > Ownership: Session metadata, Transcript JSONL, message trees, branching, and persistence behavior
 > Ownership key: session-and-transcript-persistence
 
 ## 1. Boundary
 
-`src/core/session/` persists conversation history: user messages, Assistant messages, Tool Result batches, partial-abort metadata, and Compaction records. [Runner](runner.md) decides when records are appended and converts persisted history into Provider-neutral messages. Runtime owns queueing and Parent/Child execution lifecycle. Session owns only the persisted `spawnedBy` relationship and each Child's isolated transcript.
+`src/core/session/` persists Session metadata and conversation history: user messages, Assistant messages, Tool Result batches, partial-abort metadata, and Compaction records. `src/runtime/session/` owns process-local Pending registrations, first-message admission, idle checks, and the application-facing Session lifecycle. [Runner](runner.md) remains the sole owner of user-message persistence and converts persisted history into Provider-neutral messages. Runtime owns queueing and Parent/Child execution lifecycle.
+
+Persisted Sessions and transient Subagent Transcripts share the Transcript implementation but not visibility. A transient Child has root provenance and no Store entry, so it is absent from Session get/list and lifecycle operations.
 
 Session does not own Memory indexing or recall; those belong to [Memory](memory.md).
 
@@ -16,8 +18,8 @@ Session does not own Memory indexing or recall; those belong to [Memory](memory.
 
 ```text
 <agentHome>/sessions/
-├── sessions.json          # metadata index keyed by sessionKey
-├── <sessionId>.jsonl      # one append-only Transcript per Session
+├── sessions.json          # versioned metadata index keyed by sessionId
+├── <sessionId>.jsonl      # one append-only Transcript per persisted Session
 └── ...
 ```
 
@@ -29,7 +31,9 @@ The metadata index avoids scanning Transcript files to locate a Session. Each Tr
 | `MessageRecord` | A `user`, `assistant`, or internal `toolResult` message |
 | `CompactionRecord` | A summary plus the first retained message identifier and Compaction statistics |
 
-Malformed or empty JSONL lines are skipped when loading. A missing Transcript yields an empty in-memory state; a missing metadata store yields an empty store, while other store read errors propagate.
+The Store accepts only version 1 and entries whose key matches their canonical UUID `sessionId`. A missing Store yields an empty Store, while invalid or unsupported data fails closed. Startup removes temporary materialization files and canonical Transcript files without matching Store entries.
+
+Malformed or empty JSONL lines are skipped when loading. A persisted Session with a missing Transcript fails rather than becoming empty. Store replacement is the visibility commit point for materialization.
 
 ## 3. Data contracts
 
@@ -38,21 +42,15 @@ Malformed or empty JSONL lines are skipped when loading. A missing Transcript yi
 ```text
 SessionEntry {
   sessionId: string
-  sessionKey: string
-  sessionFile: string
   createdAt: number
   updatedAt: number
-  status?: 'running' | 'done' | 'failed'
-  abortedLastRun?: boolean
-  totalTokens?: number
-  inputTokens?: number
-  outputTokens?: number
-  compactionCount?: number
-  spawnedBy?: string
+  title?: string
+  archivedAt?: number
+  forkedFromSessionId?: string
 }
 ```
 
-`sessionKey` is the caller-facing logical identity. `sessionId` is an internal UUID used in the Transcript filename.
+`sessionId` is the immutable server-issued identity, Store key, Runtime concurrency key, routing key, and Transcript filename stem. Title is mutable display metadata. Active/queued status is derived from Runtime state and is not persisted.
 
 ### 3.2 Transcript entries
 
@@ -71,41 +69,48 @@ This metadata survives JSONL round trips. Runner does not send it to Providers; 
 
 A `CompactionRecord` stores `summary`, `firstKeptEntryId`, `tokensBefore`, `tokensAfter`, `trigger`, and `droppedMessages`. Its trigger is `preemptive`, `overflow`, or `manual`.
 
-## 4. SessionManager behavior
+## 4. Session lifecycle
 
 ```text
-createSession(key, opts?)
-  -> SessionEntry
+SessionCoordinator.createSession()
+  -> { sessionId }                 # Pending only
 
-resolveSession(key, opts?)
-  -> { entry: SessionEntry, isNew: boolean }
+SessionCoordinator.admitMessage(sessionId, content)
+  -> { entry: SessionEntry }       # materializes on first accepted message
 
-getSession(key)
-  -> SessionEntry | undefined
+SessionCoordinator.listSessions({ archived? })
+SessionCoordinator.getSession(sessionId)
+SessionCoordinator.renameSession(sessionId, title)
+SessionCoordinator.archiveSession(sessionId)
+SessionCoordinator.unarchiveSession(sessionId)
+SessionCoordinator.deleteSession(sessionId)
+SessionCoordinator.forkSession(sessionId, entryId?)
 
-listSessions()
-  -> SessionEntry[]
+SessionManager.materializeSession(input)
+SessionManager.createTransientSubagentTranscript(input)
+SessionManager.deleteTransientSubagentTranscript(sessionId)
 
-updateSession(key, fields)
-deleteSession(key)
-
-appendMessage(key, message)
+SessionManager.appendMessage(sessionId, message)
   -> new message id
 
-getMessages(key)
+SessionManager.getMessages(sessionId)
   -> current branch's MessageRecord[]
 
-branch(key, entryId)
-getLeafId(key)
+SessionManager.branch(sessionId, entryId)
+SessionManager.getLeafId(sessionId)
 
-appendCompactionRecord(key, record, firstKeptEntryId)
-getLastCompactionSummary(key)
-getLastCompactionRecord(key)
+SessionManager.appendCompactionRecord(sessionId, record, firstKeptEntryId)
+SessionManager.getLastCompactionSummary(sessionId)
+SessionManager.getLastCompactionRecord(sessionId)
 ```
 
-Creating a Session generates UUIDs, creates the directory and first `session` JSONL record, initializes the in-memory Transcript, and updates the metadata store under its per-file queue. Duplicate keys fail. Deletion is idempotent for a missing Session and removes the metadata, Transcript file when present, and cached state.
+`createSession()` allocates a canonical UUID in a bounded process-local Pending registry. Pending registrations expire after 30 minutes, are capped at 4096, disappear on restart, create no files, and are invisible to get/list. Selecting a new Session in a client does not allocate even a Pending registration; the first submitted message creates the registration and immediately sends with its ID.
 
-`updateSession()` merges fields and always refreshes `updatedAt`. Appending a message persists first, updates the `byId` map and `leafId`, and refreshes metadata time.
+First-message admission is serialized per `sessionId`. A live Pending ID materializes one root-only Transcript and one Store entry using the Pending `createdAt` plus a deterministic title derived from the first usable user text. Admission does not persist message content; Runner appends the admitted user message exactly once after preflight. Unknown or expired IDs fail, and archived Sessions reject new messages.
+
+List returns non-archived Sessions by default and archived Sessions only when requested. Rename trims non-null titles and allows `null` to clear them. Archive, delete, and fork require an idle persisted Session; unarchive and rename do not. Delete rejects a Session with persisted fork descendants and has no cascade. Fork copies the selected linear message path into a new persisted Session with a fresh UUID.
+
+Subagent setup creates a root-only transient Transcript with `{ type: 'subagent', callerSessionId }` provenance and no Store entry. Runner appends the Child prompt. Runtime deletes the Transcript at terminal cleanup, and startup removes orphaned transient files after interruption.
 
 ## 5. Message tree and branching
 
@@ -133,7 +138,7 @@ Appending a Compaction record:
 1. sets its `parentId` to the current leaf;
 2. writes it to JSONL and indexes it in `byId`;
 3. does not move `leafId`, because the record is a marker rather than a conversation message;
-4. increments `compactionCount` and updates metadata time.
+4. updates Session metadata time while keeping Compaction statistics in the Transcript record.
 
 The latest Compaction is selected by ISO timestamp. Runner uses `firstKeptEntryId` to discard older history from the invocation view and prepends the summary; the original JSONL records remain intact.
 
@@ -147,6 +152,6 @@ This is process-local serialization, not an inter-process filesystem lock. Trans
 
 | Kind | Evidence |
 |---|---|
-| Source | [SessionManager.ts](../../src/core/session/SessionManager.ts), [types.ts](../../src/core/session/types.ts), [transcript.ts](../../src/core/session/transcript.ts), [store.ts](../../src/core/session/store.ts), [lock.ts](../../src/core/session/lock.ts) |
-| Tests | [SessionManager.test.ts](../../src/core/session/SessionManager.test.ts), [transcript.test.ts](../../src/core/session/transcript.test.ts), [store.test.ts](../../src/core/session/store.test.ts), [lock.test.ts](../../src/core/session/lock.test.ts), [AgentRunner.test.ts](../../src/core/runner/AgentRunner.test.ts) |
-| Controlling authority | [Runner Turn Flow](../specifications/runner-turn-flow.md), [ADR-002: Context Budgeting and Compaction Recovery](../decisions/adr-002-context-budgeting-and-compaction-recovery.md), [Abort](../specifications/abort.md) |
+| Source | [SessionManager.ts](../../src/core/session/SessionManager.ts), [SessionCoordinator.ts](../../src/runtime/session/SessionCoordinator.ts), [PendingSessionRegistry.ts](../../src/runtime/session/PendingSessionRegistry.ts), [types.ts](../../src/core/session/types.ts), [transcript.ts](../../src/core/session/transcript.ts), [store.ts](../../src/core/session/store.ts), [lock.ts](../../src/core/session/lock.ts) |
+| Tests | [SessionManager.v1.test.ts](../../src/core/session/SessionManager.v1.test.ts), [SessionCoordinator.test.ts](../../src/runtime/session/SessionCoordinator.test.ts), [PendingSessionRegistry.test.ts](../../src/runtime/session/PendingSessionRegistry.test.ts), [title.test.ts](../../src/core/session/title.test.ts), [transcript.test.ts](../../src/core/session/transcript.test.ts), [store.test.ts](../../src/core/session/store.test.ts), [AgentRunner.test.ts](../../src/core/runner/AgentRunner.test.ts) |
+| Controlling authority | [ADR-015: Session Identity and Materialization](../decisions/adr-015-session-identity-and-materialization.md), [Runner Turn Flow](../specifications/runner-turn-flow.md), [Abort](../specifications/abort.md) |

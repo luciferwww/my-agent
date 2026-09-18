@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Runner behavior
-> Verified: 2026-09-17
+> Verified: 2026-09-18
 > Ownership: Turn loop, context budgeting, Compaction, Tool and Hook invocation, recovery, and Runner events
 > Ownership key: runner-execution-and-context
 
@@ -20,7 +20,7 @@ Runtime supplies Session and request identity, normalized input, one Turn-bound 
 
 ## 3. Top-level lifecycle and recovery
 
-`run()` builds an immutable `TurnContext`, emits lifecycle events, invokes `runAttempt()`, and routes normalized context overflow through `compactHistory()` before retry. `TurnContext` carries `sessionKey`, `turnId`, and the effective `requestId` explicitly; Runner stores no mutable "current run" field.
+`run()` builds an immutable `TurnContext`, emits lifecycle events, invokes `runAttempt()`, and routes normalized context overflow through `compactHistory()` before retry. `TurnContext` carries `sessionId`, `turnId`, and the effective `requestId` explicitly; Runner stores no mutable "current run" field.
 
 An already-aborted Turn still emits the `run_start`/`run_end` pair but performs no Session append or Model call. Context recovery may perform at most three Compactions; each retry reloads persisted history.
 

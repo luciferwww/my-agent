@@ -154,12 +154,12 @@ export async function runBeforeToolCall(
 
 function observerCorrelation(payload: object): Record<string, string> {
   const correlated = payload as {
-    readonly sessionKey?: unknown;
+    readonly sessionId?: unknown;
     readonly turnId?: unknown;
     readonly result?: { readonly callId?: unknown };
   };
   return {
-    ...(typeof correlated.sessionKey === 'string' ? { sessionKey: correlated.sessionKey } : {}),
+    ...(typeof correlated.sessionId === 'string' ? { sessionId: correlated.sessionId } : {}),
     ...(typeof correlated.turnId === 'string' ? { turnId: correlated.turnId } : {}),
     ...(typeof correlated.result?.callId === 'string'
       ? { callId: correlated.result.callId }

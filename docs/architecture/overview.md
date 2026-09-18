@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current Architecture entry and module ownership map
-> Verified: 2026-09-17
+> Verified: 2026-09-18
 > Ownership: current module map, authority map, and end-to-end Turn overview
 > Ownership key: architecture-map-and-turn-overview
 

@@ -10,6 +10,7 @@ import { CliChannel } from './CliChannel.js';
 
 // Strip ANSI escape sequences so assertions don't fight color codes.
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
+const CLI_SESSION_ID = '123e4567-e89b-42d3-a456-426614174000';
 function stripAnsi(s: string): string {
   return s.replace(ANSI_RE, '');
 }
@@ -34,7 +35,7 @@ describe('CliChannel user_message rendering', () => {
     const { channel, captured } = makeChannel();
     const event: AgentEvent = {
       type: 'user_message',
-      sessionKey: 'main',
+      sessionId: 'main',
       messageId: 'msg-1',
       content: 'hello there',
       originClientId: 'client-prefix-suffix',
@@ -52,7 +53,7 @@ describe('CliChannel user_message rendering', () => {
     const { channel, captured } = makeChannel();
     channel.send({
       type: 'user_message',
-      sessionKey: 'main',
+      sessionId: 'main',
       messageId: 'msg-2',
       content: 'from cli',
       originClientId: null,
@@ -66,7 +67,7 @@ describe('CliChannel user_message rendering', () => {
     const { channel, captured } = makeChannel();
     channel.send({
       type: 'user_message',
-      sessionKey: 'main',
+      sessionId: 'main',
       messageId: 'msg-3',
       content: 'look',
       attachmentSummaries: [{ type: 'image', mime: 'image/png', bytes: 1024 }],
@@ -83,7 +84,7 @@ describe('CliChannel user_message rendering', () => {
     const { channel, captured } = makeChannel();
     channel.send({
       type: 'user_message',
-      sessionKey: 'main',
+      sessionId: 'main',
       messageId: 'msg-4',
       content: 'many',
       attachmentSummaries: [
@@ -100,10 +101,10 @@ describe('CliChannel user_message rendering', () => {
 
   it('breaks streaming text with a newline before rendering user_message', () => {
     const { channel, captured } = makeChannel();
-    channel.send({ type: 'text_delta', sessionKey: 'main', turnId: 't1', text: 'streaming...' });
+    channel.send({ type: 'text_delta', sessionId: 'main', turnId: 't1', text: 'streaming...' });
     channel.send({
       type: 'user_message',
-      sessionKey: 'main',
+      sessionId: 'main',
       messageId: 'msg-5',
       content: 'inject',
       originClientId: 'abcdef123',
@@ -119,7 +120,7 @@ describe('CliChannel user_message rendering', () => {
     const { channel, captured } = makeChannel();
     channel.send({
       type: 'user_message',
-      sessionKey: 'main',
+      sessionId: 'main',
       messageId: 'msg-6',
       content: 'x',
       attachmentSummaries: [
@@ -176,6 +177,9 @@ describe('CliChannel model commands', () => {
       state: 'available',
       reference: { providerId: 'relay', modelId: 'model-a' },
     },
+    createSession: ChannelRuntimeCapabilities['sessions']['createSession'] = async () => ({
+      sessionId: CLI_SESSION_ID,
+    }),
   ): ChannelRuntimeCapabilities {
     return {
       modelCatalog: {
@@ -197,6 +201,30 @@ describe('CliChannel model commands', () => {
       abort: {
         querySessionsNeedingAbort: () => [],
         abortTurn: () => ({ aborted: false, dropped: 0 }),
+      },
+      sessions: {
+        createSession,
+        listSessions: async () => [],
+        getSession: async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 }),
+        renameSession: async (sessionId, title) => ({
+          sessionId,
+          createdAt: 1,
+          updatedAt: 1,
+          ...(title === null ? {} : { title }),
+        }),
+        archiveSession: async (sessionId) => ({
+          sessionId,
+          createdAt: 1,
+          updatedAt: 1,
+          archivedAt: 1,
+        }),
+        unarchiveSession: async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 }),
+        deleteSession: async () => undefined,
+        forkSession: async () => ({
+          sessionId: CLI_SESSION_ID,
+          createdAt: 1,
+          updatedAt: 1,
+        }),
       },
     };
   }
@@ -243,7 +271,7 @@ describe('CliChannel model commands', () => {
       await vi.waitFor(() => expect(fixture.captured()).toContain('Model B (model-b) [override]'));
       fixture.input.write('hello\n');
       await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
-        sessionKey: 'main',
+        sessionId: CLI_SESSION_ID,
         message: 'hello',
         modelReference: { providerId: 'relay', modelId: 'model-b' },
       }));
@@ -265,7 +293,7 @@ describe('CliChannel model commands', () => {
       await vi.waitFor(() => expect(fixture.captured()).toContain('override set'));
       fixture.input.write('hello\n');
       await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
-        sessionKey: 'main',
+        sessionId: CLI_SESSION_ID,
         message: 'hello',
         modelReference: { providerId: 'relay', modelId },
       }));
@@ -281,7 +309,7 @@ describe('CliChannel model commands', () => {
       await vi.waitFor(() => expect(fixture.captured()).toContain('override set to relay/""'));
       fixture.input.write('hello\n');
       await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
-        sessionKey: 'main',
+        sessionId: CLI_SESSION_ID,
         message: 'hello',
         modelReference: { providerId: 'relay', modelId: '' },
       }));
@@ -343,6 +371,102 @@ describe('CliChannel model commands', () => {
     expect(handled).toBe(true);
     expect(captured()).toContain('Runtime Model Catalog is not bound');
   });
+
+  it('creates one Session only when the first ordinary message is sent', async () => {
+    const createSession = vi.fn(async () => ({ sessionId: CLI_SESSION_ID }));
+    const fixture = await startInteractive(undefined, catalogCapabilities(undefined, createSession));
+    try {
+      fixture.input.write('/models\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('Relay <Local> (relay)'));
+      expect(createSession).not.toHaveBeenCalled();
+
+      fixture.input.write('first\n');
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
+        sessionId: CLI_SESSION_ID,
+        message: 'first',
+      }));
+      fixture.input.write('second\n');
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
+        sessionId: CLI_SESSION_ID,
+        message: 'second',
+      }));
+      expect(createSession).toHaveBeenCalledTimes(1);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('supports create, first send, list/get/select, rename, and delete', async () => {
+    let entry = {
+      sessionId: CLI_SESSION_ID,
+      createdAt: 1,
+      updatedAt: 2,
+      title: 'First message',
+    };
+    const createSession = vi.fn(async () => ({ sessionId: CLI_SESSION_ID }));
+    const listSessions = vi.fn(async () => [entry]);
+    const getSession = vi.fn(async () => entry);
+    const renameSession = vi.fn(async (_sessionId: string, title: string | null) => {
+      entry = {
+        ...entry,
+        updatedAt: 3,
+        title: title ?? '',
+      };
+      return entry;
+    });
+    const deleteSession = vi.fn(async () => undefined);
+    const baseCapabilities = catalogCapabilities(undefined, createSession);
+    const runtimeCapabilities: ChannelRuntimeCapabilities = {
+      ...baseCapabilities,
+      sessions: {
+        ...baseCapabilities.sessions,
+        listSessions,
+        getSession,
+        renameSession,
+        deleteSession,
+      },
+    };
+    const fixture = await startInteractive(undefined, runtimeCapabilities);
+    try {
+      fixture.input.write('First message\n');
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
+        sessionId: CLI_SESSION_ID,
+        message: 'First message',
+      }));
+
+      fixture.input.write('/sessions\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain(
+        `${CLI_SESSION_ID} [current] First message`,
+      ));
+      fixture.input.write('/session new\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain(
+        '[session] new; the first message will create it.',
+      ));
+      expect(createSession).toHaveBeenCalledTimes(1);
+
+      fixture.input.write(`/session use ${CLI_SESSION_ID}\n`);
+      await vi.waitFor(() => expect(fixture.captured()).toContain(
+        `[session] current ${CLI_SESSION_ID}.`,
+      ));
+      fixture.input.write('/session\n');
+      await vi.waitFor(() => expect(getSession).toHaveBeenCalledTimes(2));
+      fixture.input.write('/session rename "Renamed"\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain(
+        `[session] renamed ${CLI_SESSION_ID} Renamed.`,
+      ));
+      fixture.input.write('/session delete\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain(
+        `[session] deleted ${CLI_SESSION_ID}.`,
+      ));
+
+      expect(listSessions).toHaveBeenCalledTimes(1);
+      expect(renameSession).toHaveBeenCalledWith(CLI_SESSION_ID, 'Renamed');
+      expect(deleteSession).toHaveBeenCalledWith(CLI_SESSION_ID);
+      expect(fixture.handler).toHaveBeenCalledTimes(1);
+    } finally {
+      await fixture.close();
+    }
+  });
 });
 
 describe('CliChannel approval lifecycle', () => {
@@ -371,7 +495,7 @@ describe('CliChannel approval lifecycle', () => {
       kind: 'approval' as const,
       toolName: 'write_file',
       input: {},
-      sessionKey: 'main',
+      sessionId: 'main',
       turnId: 'turn-1',
     };
 
@@ -422,6 +546,30 @@ describe('CliChannel Ctrl+C / abort handling', () => {
           }),
         },
         abort: { querySessionsNeedingAbort: query, abortTurn },
+        sessions: {
+          createSession: async () => ({ sessionId: CLI_SESSION_ID }),
+          listSessions: async () => [],
+          getSession: async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 }),
+          renameSession: async (sessionId, title) => ({
+            sessionId,
+            createdAt: 1,
+            updatedAt: 1,
+            ...(title === null ? {} : { title }),
+          }),
+          archiveSession: async (sessionId) => ({
+            sessionId,
+            createdAt: 1,
+            updatedAt: 1,
+            archivedAt: 1,
+          }),
+          unarchiveSession: async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 }),
+          deleteSession: async () => undefined,
+          forkSession: async () => ({
+            sessionId: CLI_SESSION_ID,
+            createdAt: 1,
+            updatedAt: 1,
+          }),
+        },
       },
       abortTurn,
       query,

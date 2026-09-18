@@ -19,7 +19,7 @@ interface CurrentAuthorityDocument extends CurrentAuthoritySurfaceEntry {
 const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const CURRENT_ROOT = join(REPOSITORY_ROOT, 'docs', 'architecture');
 const MODULE_OWNERSHIP_PATH = fileURLToPath(new URL('./ft-12-module-ownership.json', import.meta.url));
-const VERIFIED_DATE = '2026-09-17';
+const VERIFIED_DATE = '2026-09-18';
 const STALE_CURRENT_CLAIMS = [
   /基准版本/u,
   /设计文档/u,
@@ -177,7 +177,7 @@ describe('FT-12 Current Architecture authority', () => {
 
     const channel = requireDocument('channels').content;
     expect(channel).toContain('send(event: AgentEvent): void | Promise<void>');
-    expect(channel).toContain('A queued `request_end` has no session key');
+    expect(channel).toContain('A queued `request_end` has no Session ID');
 
     const config = requireDocument('configuration').content;
     expect(config).toContain('## 3. Precedence and merge');
