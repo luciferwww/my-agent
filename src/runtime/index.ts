@@ -42,7 +42,6 @@ export type {
   RuntimeEvent,
   RuntimeLifecyclePhase,
   RuntimeLifecycleState,
-  RuntimeProviderOptions,
   RuntimeMemoryOptions,
   RuntimeResourceSet,
   RuntimeShutdownReport,

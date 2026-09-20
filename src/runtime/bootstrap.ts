@@ -36,6 +36,7 @@ export async function bootstrapRuntime(
       options.startupContext?.configuration.application
       ?? options.applicationConfig
       ?? {
+        llm: {},
         agents: {
           defaults: DEFAULT_AGENT_CONFIG,
           list: [],
@@ -45,6 +46,7 @@ export async function bootstrapRuntime(
     ));
     const appConfig: AppConfig = {
       agentHome: options.agentHome,
+      llm: applicationConfig.llm,
       agents: applicationConfig.agents,
       logger: applicationConfig.logger,
     };

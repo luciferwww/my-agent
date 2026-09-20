@@ -91,6 +91,17 @@ describe('Model Invocation structural error boundary', () => {
     expect(canonical?.diagnostics?.request.model).toBe(requestDiagnostics.model);
   });
 
+  it('keeps V1 diagnostics valid when request.maxTokens is absent', () => {
+    const { maxTokens: _maxTokens, ...requestWithoutMaxTokens } = requestDiagnostics;
+    const foreign = new ForeignModelInvocationError('transport', {
+      ...diagnostics,
+      request: requestWithoutMaxTokens,
+    });
+
+    expect(toModelInvocationError(foreign)?.diagnostics?.request).toEqual(requestWithoutMaxTokens);
+    expect(toModelInvocationError(foreign)?.diagnostics?.request).not.toHaveProperty('maxTokens');
+  });
+
   it.each([
     ['missing protocol', { version: 1, category: 'transport' }],
     ['wrong protocol', { protocol: 'other', version: 1, category: 'transport' }],

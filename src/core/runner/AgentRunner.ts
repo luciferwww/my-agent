@@ -293,7 +293,7 @@ export class AgentRunner {
   // ── Public entry point ────────────────────────────────────
 
   async run(params: RunParams): Promise<RunResult> {
-    const contextWindowTokens = params.resolvedModel.facts.effectiveContextLimit.value;
+    const contextWindowTokens = params.resolvedModel.facts.effectiveContextLimit;
     const compaction = params.compaction ?? DEFAULT_COMPACTION_CONFIG;
 
     // Explicit event context prevents nested or concurrent runs from mixing tags.
@@ -729,7 +729,6 @@ export class AgentRunner {
       config: compaction,
       llmClient: params.resolvedModel.invocationPort,
       model: params.resolvedModel.identity.modelId,
-      maxTokens: params.resolvedModel.limits.maxTokens,
       trigger,
     });
 
@@ -866,7 +865,6 @@ export class AgentRunner {
         system: params.system,
         messages: params.messages,
         tools: params.tools,
-        maxTokens: resolvedModel.limits.maxTokens,
         signal,
       })) {
         switch (event.type) {

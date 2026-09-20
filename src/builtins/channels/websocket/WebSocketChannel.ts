@@ -15,6 +15,7 @@ import type {
   ModelCatalogSnapshot,
   TurnInteractionResponse,
 } from '../../../core/channel/index.js';
+import { AttachmentValidationError } from '../../../core/media/attachment-pipeline.js';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 
 const log = Logger.get('WebSocketChannel');
@@ -29,6 +30,7 @@ type ChannelErrorCode =
   | 'INVALID_MESSAGE'
   | 'UNSUPPORTED_MESSAGE'
   | 'SERVER_NOT_READY'
+  | 'ATTACHMENT_REJECTED'
   | SessionErrorCode;
 
 type ClientMessage =
@@ -41,7 +43,6 @@ type ClientMessage =
       sessionId: string;
       message: string | InboundContentBlock[];
       modelReference?: ChannelRunRequest['modelReference'];
-      requestOverride?: ChannelRunRequest['requestOverride'];
       maxLlmCalls?: number;
     }
   | {
@@ -360,6 +361,10 @@ export class WebSocketChannel implements Channel {
         this.sendChannelError(socket, error.code, error.message);
         return;
       }
+      if (error instanceof AttachmentValidationError) {
+        this.sendChannelError(socket, 'ATTACHMENT_REJECTED', error.message);
+        return;
+      }
 
       log.warn('message handling failed', {
         channelId: this.id,
@@ -390,16 +395,17 @@ export class WebSocketChannel implements Channel {
           clientId: readNonEmptyString(parsed.clientId, 'clientId'),
         };
       case 'run_turn':
-        if ('model_reference' in parsed || 'request_override' in parsed) {
+        if ('model_reference' in parsed) {
           throw new ProtocolError(
             'INVALID_MESSAGE',
-            'snake_case fields are not supported; use modelReference/requestOverride.',
+            'snake_case fields are not supported; use modelReference.',
           );
         }
-        if ('model' in parsed || 'maxTokens' in parsed) {
+        if ('model' in parsed || 'maxTokens' in parsed || 'requestOverride' in parsed
+          || 'request_override' in parsed) {
           throw new ProtocolError(
             'INVALID_MESSAGE',
-            'Legacy model/maxTokens fields are not supported; use modelReference/requestOverride.',
+            'Legacy model/output-token override fields are not supported; use modelReference.',
           );
         }
         return {
@@ -407,7 +413,6 @@ export class WebSocketChannel implements Channel {
           sessionId: readNonEmptyString(parsed.sessionId, 'sessionId'),
           message: readRunTurnMessage(parsed.message),
           modelReference: readOptionalModelReference(parsed.modelReference),
-          requestOverride: readOptionalRequestOverride(parsed.requestOverride),
           maxLlmCalls: readOptionalPositiveInteger(parsed.maxLlmCalls, 'maxLlmCalls'),
         };
       case 'approval_resolve': {
@@ -517,7 +522,6 @@ export class WebSocketChannel implements Channel {
       clientId,
       sessionId: message.sessionId,
       hasModelOverride: message.modelReference !== undefined,
-      hasMaxOutputTokens: message.requestOverride?.maxOutputTokens !== undefined,
       hasMaxLlmCalls: message.maxLlmCalls !== undefined,
       messageLength: typeof message.message === 'string' ? message.message.length : undefined,
       blockCount: Array.isArray(message.message) ? message.message.length : undefined,
@@ -527,7 +531,6 @@ export class WebSocketChannel implements Channel {
       sessionId: message.sessionId,
       message: message.message,
       modelReference: message.modelReference,
-      requestOverride: message.requestOverride,
       maxLlmCalls: message.maxLlmCalls,
     });
   }
@@ -953,6 +956,18 @@ function toWireModelCatalog(snapshot: ModelCatalogSnapshot): Record<string, unkn
       models: provider.models.map((model) => ({
         modelId: model.modelId,
         displayName: model.displayName,
+        ...(model.capabilities
+          ? {
+              capabilities: {
+                ...(model.capabilities.toolUse !== undefined
+                  ? { toolUse: model.capabilities.toolUse }
+                  : {}),
+                ...(model.capabilities.mediaKinds !== undefined
+                  ? { mediaKinds: [...model.capabilities.mediaKinds] }
+                  : {}),
+              },
+            }
+          : {}),
       })),
     })),
   };
@@ -988,22 +1003,6 @@ function readOpaqueModelId(value: unknown, field: string): string {
     throw new ProtocolError('INVALID_MESSAGE', `${field} must be a string.`);
   }
   return value;
-}
-
-function readOptionalRequestOverride(
-  value: unknown,
-): ChannelRunRequest['requestOverride'] | undefined {
-  if (value === undefined) return undefined;
-  if (!isRecord(value)) {
-    throw new ProtocolError('INVALID_MESSAGE', 'requestOverride must be an object.');
-  }
-  assertOnlyKeys(value, ['maxOutputTokens'], 'requestOverride');
-  return {
-    maxOutputTokens: readOptionalPositiveInteger(
-      value.maxOutputTokens,
-      'requestOverride.maxOutputTokens',
-    ),
-  };
 }
 
 function assertOnlyKeys(

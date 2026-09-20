@@ -51,7 +51,7 @@ src/runtime/
 └── types.ts
 
 src/builtins/
-├── providers/anthropic/runtime-unit.ts
+├── providers/builtin/runtime-unit.ts
 ├── channels/{cli,websocket}/runtime-unit.ts
 └── tools/{environment,memory,task}/contribution.ts
 ```
@@ -103,9 +103,9 @@ Extension Acquisition
   -> atomic publication
 ```
 
-Runtime Bootstrap acquires External Units after Logger configuration. Runtime Builder combines those acquired Units with exactly one required bundled Provider Unit, required builtin contribution Units, optional Runtime-created Task Tool Unit, and caller-supplied `loadedUnits` into one catalog. External Units do not have a second registration or lifecycle path. Acquisition returns Units without calling `create()`, `start()`, `stop()`, or registration; Runtime does all of those operations.
+Runtime Bootstrap acquires External Units after Logger configuration. Runtime Builder combines those acquired Units with the optional configured Built-in LLM Provider Unit, required builtin contribution Units, optional Runtime-created Task Tool Unit, and caller-supplied `loadedUnits` into one catalog. External Units do not have a second registration or lifecycle path. Acquisition returns Units without calling `create()`, `start()`, `stop()`, or registration; Runtime does all of those operations.
 
-The bundled Provider dependency seam returns one named `LoadedRuntimeUnit`. Its default implementation delegates to `createAnthropicProviderUnit()`. `AnthropicCompatibleProvider` construction occurs inside that Unit's `create()` method, and its Provider entry reaches the candidate only through `registerProvider()` during staging. Runtime Builder does not construct the concrete Provider or inspect a Provider entry before staging. Production and Fake Providers therefore follow the same factory → create → registration → staging → start → publication path.
+The Built-in Provider dependency seam accepts the validated module-owned configuration and returns one named `LoadedRuntimeUnit`. Runtime calls it only when `llm.builtin` exists; absent configuration leaves Extension-only and Provider-free startup valid. Its default implementation delegates to `createBuiltinLlmProviderUnit()`. `BuiltinLlmProvider` construction occurs inside that Unit's `create()` method, and its Provider entry reaches the candidate only through `registerProvider()` during staging. A configured empty model list still publishes Provider `builtin` with an empty Catalog and constructs no Protocol Clients. Production and Fake Providers therefore follow the same factory → create → registration → staging → start → publication path.
 
 ### 3.3 Runtime handle
 
@@ -177,6 +177,8 @@ normalize media and assemble the accepted message
   -> if steer mode and an active Turn exists: append text to steering inbox
   -> otherwise: append a QueuedChannelTurn and schedule the session
 ```
+
+Media intake is atomic. Any attachment validation or optimization failure rejects the complete inbound message before `user_message`, queueing, persistence, model resolution, or Provider invocation; Runtime never removes a failed attachment and retries the remaining text or media.
 
 `user_message` carries a separate `messageId`, origin client, delivery mode, timestamp, text, and attachment summaries without raw Base64. A queued request later carries that ID as `originMessageId` so its actual run can be correlated. Degenerate assembled input emits no message and starts no Turn. Pure-attachment steering is observable as `user_message` but is not inserted into the text-only steering inbox.
 

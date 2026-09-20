@@ -30,7 +30,7 @@ Runner validates only the effective input after `before_tool_call` transformatio
 
 ## 5. Provider portability and production conversion
 
-Provider adapters independently map canonical definitions, calls, and results to wire formats. Production Anthropic definition conversion is owned by `tool-codec.ts`; `AnthropicMessagesClient.ts` owns stream call decoding and message conversion.
+Provider adapters independently map canonical definitions, calls, and results to wire formats. The unified Built-in Provider's Anthropic Messages, OpenAI Responses, and OpenAI Chat Completions Clients own their respective definition, call, result, and stream conversion behind one model-aware routing Port.
 
 ## 6. Policy, approval, and execution order
 

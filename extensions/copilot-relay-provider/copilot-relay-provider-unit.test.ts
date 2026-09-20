@@ -77,7 +77,11 @@ describe('Copilot Relay Provider Unit', () => {
       id: 'copilot-relay',
       displayName: 'Copilot Relay',
       protocol: 'openai-responses',
-      models: [{ modelId: 'gpt-5.6-sol', displayName: 'GPT 5.6 Sol' }],
+      models: [{
+        modelId: 'gpt-5.6-sol',
+        displayName: 'GPT 5.6 Sol',
+        capabilities: { toolUse: true, mediaKinds: ['image'] },
+      }],
     });
     expect(Object.isFrozen(provider.models)).toBe(true);
     expect(Object.isFrozen(provider.models[0])).toBe(true);
@@ -88,10 +92,10 @@ describe('Copilot Relay Provider Unit', () => {
       ok: true,
       descriptor: {
         facts: {
-          effectiveContextLimit: { value: 922_000, source: 'provider-metadata' },
-          maximumOutputTokens: { value: 128_000, source: 'provider-metadata' },
-          toolUse: { value: true, source: 'provider-metadata' },
-          mediaKinds: { value: ['image'], source: 'provider-metadata' },
+          effectiveContextLimit: 922_000,
+          maximumOutputTokens: 128_000,
+          toolUse: true,
+          mediaKinds: ['image'],
         },
       },
     });
@@ -103,7 +107,11 @@ describe('Copilot Relay Provider Unit', () => {
       vi.fn(async () => discoveryResponse([validModel({ id: modelId })])) as unknown as typeof fetch,
     );
 
-    expect(provider.models).toEqual([{ modelId, displayName: 'GPT 5.6 Sol' }]);
+    expect(provider.models).toEqual([{
+      modelId,
+      displayName: 'GPT 5.6 Sol',
+      capabilities: { toolUse: true, mediaKinds: ['image'] },
+    }]);
     const connection = provider.resolveConnection();
     if (!connection.ok) throw new Error('Expected connection.');
     const resolved = provider.resolveModel(modelId, connection.connection);
@@ -124,7 +132,11 @@ describe('Copilot Relay Provider Unit', () => {
     const connection = provider.resolveConnection();
     if (!connection.ok) throw new Error('Expected connection.');
 
-    expect(provider.models).toEqual([{ modelId: '', displayName: 'GPT 5.6 Sol' }]);
+    expect(provider.models).toEqual([{
+      modelId: '',
+      displayName: 'GPT 5.6 Sol',
+      capabilities: { toolUse: true, mediaKinds: ['image'] },
+    }]);
     expect(provider.resolveModel('', connection.connection)).toMatchObject({
       ok: true,
       descriptor: { identity: { modelId: '' } },

@@ -13,17 +13,6 @@ export type ResolutionFailureCategory =
   | 'protocol_incompatible'
   | 'capability_unsupported';
 
-export type ModelFactSource =
-  | 'deployment-config'
-  | 'provider-metadata'
-  | 'static-provider-catalog'
-  | 'provider-default';
-
-export interface SourcedFact<T> {
-  readonly value: T;
-  readonly source: ModelFactSource;
-}
-
 export interface ModelReference {
   readonly providerId: string;
   readonly modelId: string;
@@ -39,13 +28,7 @@ export interface ModelRequestRequirements {
   readonly mediaKinds: readonly string[];
 }
 
-export interface ModelRequestOverride {
-  readonly maxOutputTokens?: number;
-}
-
 export interface ModelPolicy {
-  readonly defaultMaxTokens: number;
-  readonly maximumMaxTokens?: number;
   readonly allowModel?: (identity: CanonicalModelIdentity) => boolean;
 }
 
@@ -60,10 +43,10 @@ export interface ProviderConnection {
 }
 
 export interface ProviderModelFacts {
-  readonly effectiveContextLimit?: SourcedFact<number>;
-  readonly maximumOutputTokens?: SourcedFact<number>;
-  readonly toolUse?: SourcedFact<boolean>;
-  readonly mediaKinds?: SourcedFact<readonly string[]>;
+  readonly effectiveContextLimit?: number;
+  readonly maximumOutputTokens?: number;
+  readonly toolUse?: boolean;
+  readonly mediaKinds?: readonly string[];
 }
 
 export interface ProviderModelDescriptor {
@@ -92,6 +75,10 @@ export type ProviderModelResult =
 export interface ProviderCatalogModel {
   readonly modelId: string;
   readonly displayName?: string;
+  readonly capabilities?: {
+    readonly toolUse?: boolean;
+    readonly mediaKinds?: readonly string[];
+  };
 }
 
 export interface ProviderProjectionEntry {
@@ -109,7 +96,6 @@ export interface ModelResolutionInput {
   readonly reference: ModelReference | undefined;
   readonly referenceSource?: ModelReferenceSource;
   readonly request: ModelRequestRequirements;
-  readonly requestOverride?: ModelRequestOverride;
   readonly policy: ModelPolicy;
 }
 
@@ -121,13 +107,9 @@ export interface ResolvedModel {
   readonly deploymentId?: string;
   readonly invocationPort: ModelInvocationPort;
   readonly facts: Readonly<{
-    effectiveContextLimit: SourcedFact<number>;
-    maximumOutputTokens: SourcedFact<number>;
-    toolUse?: SourcedFact<boolean>;
-    mediaKinds?: SourcedFact<readonly string[]>;
-  }>;
-  readonly limits: Readonly<{
-    maxTokens: number;
-    maxTokensSource: 'policy-default' | 'request-override';
+    effectiveContextLimit: number;
+    maximumOutputTokens?: number;
+    toolUse?: boolean;
+    mediaKinds?: readonly string[];
   }>;
 }

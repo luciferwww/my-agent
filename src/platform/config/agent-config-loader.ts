@@ -2,13 +2,23 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { ResolvedHostExtensionsConfig } from '../../extension/acquisition/types.js';
+import {
+  BuiltinLlmConfigError,
+  validateBuiltinLlmProviderConfig,
+  type LLMConfig,
+} from '../../builtins/providers/builtin/index.js';
 import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from './defaults.js';
-import { deepMerge, validateAgentModelSource } from './loader.js';
+import { deepMerge } from './loader.js';
 import {
   AgentConfigError,
   invalidAgentConfigField,
+  unavailableConfigSecret,
   unknownAgentConfigNamespace,
 } from './agent-config-errors.js';
+import {
+  CredentialMaterializationError,
+  materializeExactStringCredential,
+} from './credential-materialization.js';
 import type {
   AgentConfigDocument,
   AgentsConfig,
@@ -18,7 +28,7 @@ import type {
 } from './types.js';
 
 const CONFIG_FILE_NAME = 'config.json';
-const TOP_LEVEL_NAMESPACES = new Set(['agents', 'logger', 'extensions']);
+const TOP_LEVEL_NAMESPACES = new Set(['llm', 'agents', 'logger', 'extensions']);
 const LOGGER_LEVELS = new Set<LoggerLevel>(['debug', 'info', 'warn', 'error']);
 
 export interface AgentConfigSnapshot {
@@ -37,8 +47,10 @@ const DEFAULT_DEPENDENCIES: AgentConfigLoaderDependencies = {
 /** Reads `<agentHome>/config.json` once and returns immutable consumer projections. */
 export async function loadAgentConfig(options: {
   readonly agentHome: string;
+  readonly environment?: Readonly<Record<string, string | undefined>>;
 }, dependencies: AgentConfigLoaderDependencies = DEFAULT_DEPENDENCIES): Promise<AgentConfigSnapshot> {
   const document = await readAgentConfigDocument(options.agentHome, dependencies);
+  const llm = validateLlm(document.llm, options.environment ?? process.env);
   validateAgentConfigDocument(document);
 
   const defaults = document.agents?.defaults === undefined
@@ -63,7 +75,7 @@ export async function loadAgentConfig(options: {
   };
 
   return deepFreeze({
-    application: { agents, logger },
+    application: { llm, agents, logger },
     extensions,
   });
 }
@@ -118,6 +130,51 @@ function validateAgentConfigDocument(document: AgentConfigDocument): void {
   validateExtensions(document.extensions);
 }
 
+function validateLlm(
+  value: AgentConfigDocument['llm'],
+  environment: Readonly<Record<string, string | undefined>>,
+): LLMConfig {
+  if (value === undefined) return {};
+  if (!isPlainObject(value)) throw invalidAgentConfigField('llm');
+
+  const defaultModel = value['defaultModel'] === undefined
+    ? undefined
+    : validateModelReference(value['defaultModel'], 'llm.defaultModel');
+  let builtin;
+  try {
+    builtin = value['builtin'] === undefined
+      ? undefined
+      : validateBuiltinLlmProviderConfig(value['builtin']);
+  } catch (error) {
+    if (!(error instanceof BuiltinLlmConfigError)) throw error;
+    const fieldPath = error.fieldPath.length === 0
+      ? 'llm.builtin'
+      : `llm.builtin.${error.fieldPath}`;
+    throw invalidAgentConfigField(fieldPath);
+  }
+  if (builtin?.apiKey !== undefined) {
+    try {
+      const apiKey = materializeExactStringCredential(builtin.apiKey, environment);
+      builtin = {
+        ...builtin,
+        ...(apiKey === undefined ? {} : { apiKey }),
+      };
+      if (apiKey === undefined) delete (builtin as { apiKey?: string }).apiKey;
+    } catch (error) {
+      if (!(error instanceof CredentialMaterializationError)) throw error;
+      if (error.secretUnavailable && error.environmentVariable !== undefined) {
+        throw unavailableConfigSecret('llm.builtin.apiKey', error.environmentVariable);
+      }
+      throw invalidAgentConfigField('llm.builtin.apiKey');
+    }
+  }
+
+  return {
+    ...(defaultModel === undefined ? {} : { defaultModel }),
+    ...(builtin === undefined ? {} : { builtin }),
+  };
+}
+
 function validateAgents(value: AgentConfigDocument['agents']): void {
   if (value === undefined) return;
   if (!isPlainObject(value)) throw invalidAgentConfigField('agents');
@@ -125,11 +182,16 @@ function validateAgents(value: AgentConfigDocument['agents']): void {
     throw invalidAgentConfigField('agents.defaults');
   }
   if (value.defaults !== undefined) {
+    if ('model' in value.defaults) {
+      throw invalidAgentConfigField('agents.defaults.model');
+    }
+    if ('llm' in value.defaults) {
+      throw invalidAgentConfigField('agents.defaults.llm');
+    }
     if ('workspace' in value.defaults) {
       throw invalidAgentConfigField('agents.defaults.workspace');
     }
     rejectRetiredToolsConfig(value.defaults, 'agents.defaults');
-    validateAgentModelSourceAt(value.defaults, 'agents.defaults');
   }
   if (value.list === undefined) return;
   if (!Array.isArray(value.list)) throw invalidAgentConfigField('agents.list');
@@ -145,8 +207,13 @@ function validateAgents(value: AgentConfigDocument['agents']): void {
     if ('workspace' in entry) {
       throw invalidAgentConfigField(`${entryPath}.workspace`);
     }
+    if ('model' in entry) {
+      throw invalidAgentConfigField(`${entryPath}.model`);
+    }
+    if ('llm' in entry) {
+      throw invalidAgentConfigField(`${entryPath}.llm`);
+    }
     rejectRetiredToolsConfig(entry, entryPath);
-    validateAgentModelSourceAt(entry, entryPath);
   }
 }
 
@@ -185,18 +252,20 @@ function validateExtensions(value: AgentConfigDocument['extensions']): void {
   }
 }
 
-function validateAgentModelSourceAt(value: unknown, fieldPath: string): void {
-  try {
-    validateAgentModelSource(value, fieldPath);
-  } catch {
-    throw invalidAgentConfigField(fieldPath);
-  }
-}
-
 function deepFreeze<T>(value: T): T {
   if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return value;
   for (const child of Object.values(value)) deepFreeze(child);
   return Object.freeze(value);
+}
+
+function validateModelReference(value: unknown, fieldPath: string) {
+  if (!isPlainObject(value)) throw invalidAgentConfigField(fieldPath);
+  const providerId = typeof value['providerId'] === 'string' ? value['providerId'].trim() : '';
+  const modelId = typeof value['modelId'] === 'string' ? value['modelId'].trim() : '';
+  if (providerId.length === 0 || modelId.length === 0) {
+    throw invalidAgentConfigField(fieldPath);
+  }
+  return { providerId, modelId };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

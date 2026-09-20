@@ -45,7 +45,7 @@ import type { SubagentProfile } from '../core/subagent/types.js';
 import { SubagentExecutor } from '../core/subagent/SubagentExecutor.js';
 import { loadContextFilesFromDir } from '../core/agent-context/index.js';
 import { createApplicationToolPolicy } from './tool-approval-policy.js';
-import { createAnthropicProviderUnit } from '../builtins/providers/anthropic/index.js';
+import { createBuiltinLlmProviderUnit } from '../builtins/providers/builtin/index.js';
 import { createMemoryToolsContribution } from '../builtins/tools/memory/index.js';
 import { createTaskToolContribution } from '../builtins/tools/task/index.js';
 import { createEnvironmentContribution } from '../builtins/tools/environment/index.js';
@@ -476,11 +476,7 @@ function assembleLoadedRuntimeUnits(params: {
   readonly onAgentEvent: (event: AgentEvent) => Promise<void>;
 }): readonly LoadedRuntimeUnit[] {
   const { options, resources, dependencies } = params;
-  const providerUnit = dependencies.createBundledProviderUnit({
-    apiKey: resources.resolvedConfig.llm.apiKey,
-    baseURL: resources.resolvedConfig.llm.baseURL,
-    deploymentFacts: resources.resolvedConfig.llm.deploymentFacts,
-  });
+  const builtinProviderConfig = resources.appConfig.llm.builtin;
   const toolOptions = {
     agentHome: options.agentHome,
     webFetchEnabled: true,
@@ -488,7 +484,9 @@ function assembleLoadedRuntimeUnits(params: {
     processEnabled: true,
   };
   const loadedUnits: LoadedRuntimeUnit[] = [
-    providerUnit,
+    ...(builtinProviderConfig
+      ? [dependencies.createBuiltinProviderUnit(builtinProviderConfig)]
+      : []),
     ...dependencies.getBuiltinContributionUnits(toolOptions, resources.memoryManager)
       .map((registration) => createLoadedRuntimeUnit({ registration, required: true })),
     ...params.acquiredUnits,
@@ -519,7 +517,6 @@ function assembleLoadedRuntimeUnits(params: {
       activeParents: params.activeParentTurns,
       routeContextByTurn: params.routeContextByTurn,
       sessionManager: resources.sessionManager,
-      defaultMaxTokens: resources.resolvedConfig.llm.maxTokens,
       maxDepth,
       executor,
       onEvent: params.onAgentEvent,
@@ -543,8 +540,8 @@ function createRuntimeDependencies(
 ): RuntimeDependencies {
   const defaults: RuntimeDependencies = {
     acquireExtensions,
-    createBundledProviderUnit(options) {
-      return createAnthropicProviderUnit(options);
+    createBuiltinProviderUnit(config) {
+      return createBuiltinLlmProviderUnit(config);
     },
     createSessionManager(agentHome, options) {
       return new SessionManager(agentHome, options);

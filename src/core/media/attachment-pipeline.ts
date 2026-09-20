@@ -4,9 +4,7 @@
  * - `processImageAttachment`：MIME 白名单 → sniff → 必要时 resize → 构造带 dimensions 的 ImageBlock。
  *   失败返回中性 `reason`（不耦合 channel / runtime）。
  * - `processInboundMessage`：纯文本直通；数组逐 block 处理；附件数量、单文件 / 总量字节上限在此层判定。
- *   **永不整体失败**——失败 / 超限的 block 进 `dropped[]`，其余进 `normalized`。
- *
- * 决策 8：失败即丢弃 + 由调用方装配文本占位。
+ *   附件与文本原子处理：任一附件失败时不返回任何可入队内容。
  */
 
 import type { ChatContentBlock } from '../model-invocation/index.js';
@@ -55,6 +53,16 @@ export interface ProcessInboundResult {
   dropped: DroppedAttachment[];
 }
 
+export class AttachmentValidationError extends Error {
+  readonly failures: readonly DroppedAttachment[];
+
+  constructor(failures: readonly DroppedAttachment[]) {
+    super(`Inbound message rejected because ${failures.length} attachment validation failure(s) occurred.`);
+    this.name = 'AttachmentValidationError';
+    this.failures = Object.freeze(failures.map((failure) => Object.freeze({ ...failure })));
+  }
+}
+
 // ── 单附件 ──────────────────────────────────────────────────
 
 export async function processImageAttachment(
@@ -79,7 +87,15 @@ export async function processImageAttachment(
 
   if (rawBytes.byteLength > ATTACHMENT_INLINE_THRESHOLD_BYTES) {
     const opt = await optimizeImage(rawBytes, ATTACHMENT_INLINE_THRESHOLD_BYTES);
-    if (!opt.ok) return { ok: false, reason: 'resize_failed' };
+    if (!opt.ok) {
+      return {
+        ok: false,
+        reason: opt.reason === 'cannot_fit_budget' ? 'too_large' : 'resize_failed',
+      };
+    }
+    if (opt.bytes.byteLength > ATTACHMENT_INLINE_THRESHOLD_BYTES) {
+      return { ok: false, reason: 'too_large' };
+    }
     finalBytes = opt.bytes;
     finalMeta = opt.metadata;
     resized = {
@@ -114,25 +130,26 @@ export async function processInboundMessage(
 
   const out: ChatContentBlock[] = [];
   const dropped: DroppedAttachment[] = [];
+  const attachments: Array<{
+    blockIndex: number;
+    block: Extract<InboundContentBlock, { type: 'image' }>;
+    raw: Uint8Array;
+  }> = [];
   let totalBytes = 0;
   let imageCount = 0;
 
   for (let i = 0; i < message.length; i++) {
     const b = message[i]!;
     if (b.type === 'text') {
-      out.push(b);
       continue;
     }
 
-    // limit_exceeded 按 image 数量判定，避免 text block 挤占名额
     if (imageCount >= MAX_ATTACHMENTS_PER_MESSAGE) {
       dropped.push({ blockIndex: i, reason: 'limit_exceeded' });
       continue;
     }
     imageCount++;
 
-    // Buffer.from(str, 'base64') 不抛——非法字符静默丢弃，能解多少解多少；
-    // 非法 base64 会在下游 sniffImage 处判 unreadable → metadata_unreadable
     const raw = Buffer.from(b.source.data, 'base64');
 
     if (raw.byteLength > ATTACHMENT_RAW_MAX_BYTES) {
@@ -144,14 +161,29 @@ export async function processInboundMessage(
       continue;
     }
     totalBytes += raw.byteLength;
-
-    const r = await processImageAttachment(raw, b.source.mediaType);
-    if (!r.ok) {
-      dropped.push({ blockIndex: i, reason: r.reason });
-      continue;
-    }
-    out.push(r.block);
+    attachments.push({ blockIndex: i, block: b, raw });
   }
 
+  if (dropped.length > 0) return { normalized: [], dropped };
+
+  const normalizedImages = new Map<number, ChatContentBlock>();
+  for (const attachment of attachments) {
+    const r = await processImageAttachment(
+      attachment.raw,
+      attachment.block.source.mediaType,
+    );
+    if (!r.ok) {
+      dropped.push({ blockIndex: attachment.blockIndex, reason: r.reason });
+      continue;
+    }
+    normalizedImages.set(attachment.blockIndex, r.block);
+  }
+
+  if (dropped.length > 0) return { normalized: [], dropped };
+
+  for (let i = 0; i < message.length; i++) {
+    const block = message[i]!;
+    out.push(block.type === 'text' ? block : normalizedImages.get(i)!);
+  }
   return { normalized: out, dropped };
 }

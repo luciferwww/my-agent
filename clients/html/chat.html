@@ -1604,8 +1604,11 @@
           @dragleave="onComposerDragLeave"
           @drop="onComposerDrop"
         >
-          <div v-if="attachments.length > 0 || attachError" class="composer-attachments">
+          <div v-if="attachments.length > 0 || attachError || !selectedModelSupportsImages" class="composer-attachments">
             <div v-if="attachError" class="composer-attach-error">{{ attachError }}</div>
+            <div v-if="!selectedModelSupportsImages" class="composer-attach-error">
+              {{ attachmentCapabilityExplanation }}
+            </div>
             <div v-if="attachments.length > 0" class="attachment-chip-row">
               <div v-for="a in attachments" :key="a.id" class="attachment-chip">
                 <img :src="a.previewUrl" :alt="a.name" />
@@ -1650,8 +1653,8 @@
               <button
                 class="secondary"
                 @click="onAttachClick"
-                :disabled="!isConnected || isWaitingForReply"
-                :title="isWaitingForReply ? 'Steering does not support attachments' : 'Add images'"
+                :disabled="!isConnected || isWaitingForReply || !selectedModelSupportsImages"
+                :title="isWaitingForReply ? 'Steering does not support attachments' : attachmentCapabilityExplanation"
               >📎 Images</button>
               <button class="secondary" @click="resetComposer" :disabled="!draft && attachments.length === 0">Reset</button>
               <button
@@ -1749,7 +1752,9 @@
             if (!this.modelSelectionValid) return false;
             if (this.pendingSessionRequestId !== null) return false;
             if (this.pendingApprovalCount > 0) return false;
+            if (this.attachError) return false;
             if (this.isWaitingForReply && this.attachments.length > 0) return false;
+            if (!this.selectedModelSupportsImages && this.attachments.length > 0) return false;
             const hasText = this.draft.trim().length > 0;
             const hasAttachments = this.attachments.length > 0;
             return hasText || hasAttachments;
@@ -1824,6 +1829,19 @@
               reference,
               this.selectedModelReference,
             )) ?? null;
+          },
+          selectedModelSupportsImages() {
+            const mediaKinds = this.selectedModelDetails?.model?.capabilities?.mediaKinds;
+            return !Array.isArray(mediaKinds) || mediaKinds.includes('image');
+          },
+          attachmentCapabilityExplanation() {
+            if (!this.selectedModelSupportsImages) {
+              return 'The selected model explicitly does not support image attachments.';
+            }
+            const mediaKinds = this.selectedModelDetails?.model?.capabilities?.mediaKinds;
+            return Array.isArray(mediaKinds)
+              ? 'Add images'
+              : 'Add images (model capability is unknown; the server will validate the request)';
           },
           requestModelReference() {
             if (this.modelSelectionSource === 'default') return null;
@@ -2201,37 +2219,47 @@
           async ingestFiles(fileList) {
             const incoming = Array.from(fileList ?? []);
             if (incoming.length === 0) return;
+            if (!this.selectedModelSupportsImages) {
+              this.attachError = this.attachmentCapabilityExplanation;
+              return;
+            }
             const errors = [];
-            const accepted = [];
             let runningTotal = this.attachments.reduce((sum, a) => sum + a.sizeBytes, 0);
             let runningCount = this.attachments.length;
 
             for (const file of incoming) {
               if (!SUPPORTED_IMAGE_MIME.has(file.type)) {
                 errors.push(`${file.name || 'Unnamed file'}: type ${file.type || 'unknown'} is not supported`);
-                continue;
               }
               if (file.size > ATTACHMENT_RAW_MAX_BYTES) {
                 errors.push(`${file.name}: exceeds the ${ATTACHMENT_RAW_MAX_BYTES / 1024 / 1024} MB per-image limit`);
-                continue;
               }
               if (runningCount + 1 > MAX_ATTACHMENTS_PER_MESSAGE) {
-                errors.push(`Maximum ${MAX_ATTACHMENTS_PER_MESSAGE} images; remaining files were skipped`);
+                errors.push(`Maximum ${MAX_ATTACHMENTS_PER_MESSAGE} images`);
                 break;
               }
               if (runningTotal + file.size > ATTACHMENT_TOTAL_MAX_BYTES) {
-                errors.push(`Total size exceeds ${ATTACHMENT_TOTAL_MAX_BYTES / 1024 / 1024} MB; ${file.name} and remaining files were skipped`);
+                errors.push(`Total size exceeds ${ATTACHMENT_TOTAL_MAX_BYTES / 1024 / 1024} MB`);
                 break;
               }
-              accepted.push(file);
               runningTotal += file.size;
               runningCount += 1;
             }
+            if (errors.length > 0) {
+              this.attachError = `${errors.join('; ')}. No files from this selection were added.`;
+              return;
+            }
 
-            for (const file of accepted) {
-              try {
-                const base64 = await this.readAsBase64(file);
-                this.attachments.push({
+            try {
+              const encoded = await Promise.all(incoming.map(async file => ({
+                file,
+                base64: await this.readAsBase64(file),
+              })));
+              if (!this.selectedModelSupportsImages) {
+                this.attachError = this.attachmentCapabilityExplanation;
+                return;
+              }
+              const prepared = encoded.map(({ file, base64 }) => ({
                   id: this.nextId++,
                   file,
                   name: file.name,
@@ -2240,13 +2268,12 @@
                   base64,
                   willResize: file.size > ATTACHMENT_INLINE_THRESHOLD_BYTES,
                   previewUrl: URL.createObjectURL(file),
-                });
-              } catch (err) {
-                errors.push(`${file.name}: failed to read (${err?.message || err})`);
-              }
+                }));
+              this.attachments.push(...prepared);
+              this.attachError = '';
+            } catch (err) {
+              this.attachError = `Failed to read the selected files (${err?.message || err}). No files were added.`;
             }
-
-            this.attachError = errors.join('; ');
           },
           readAsBase64(file) {
             return new Promise((resolve, reject) => {
@@ -2291,7 +2318,13 @@
               this.pushEvent('error', `Failed to send abort_turn: ${err?.message ?? err}`);
             }
           },
-          onAttachClick() { this.$refs.fileInput?.click(); },
+          onAttachClick() {
+            if (!this.selectedModelSupportsImages) {
+              this.attachError = this.attachmentCapabilityExplanation;
+              return;
+            }
+            this.$refs.fileInput?.click();
+          },
           onFileInputChange(e) {
             this.ingestFiles(e.target.files);
             e.target.value = '';
@@ -2423,6 +2456,9 @@
                 if (this.pendingSessionsRequestId !== null) {
                   this.pendingSessionsRequestId = null;
                   this.sessionsError = `${message.code}: ${message.message}`;
+                }
+                if (message.code === 'ATTACHMENT_REJECTED') {
+                  this.isWaitingForReply = false;
                 }
                 this.pushEvent('channel_error', `${message.code}: ${message.message}`);
                 this.appendChatItem({ kind: 'error', label: 'Channel', text: `${message.code}: ${message.message}` });

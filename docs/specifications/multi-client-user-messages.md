@@ -40,7 +40,7 @@ A queued `run_start.originMessageId` equals the originating message ID. Message 
 - Base64 images produce summaries with MIME and decoded bytes; unknown/future blocks produce `other`.
 - Raw base64 and source data never enter event JSON.
 - Degenerate input emits neither event nor Run.
-- Attachment drop notices, if any, are part of assembled text before emission.
+- Attachment validation is atomic; any failure rejects the complete input before this event, queueing, or Provider invocation.
 - Session history remains written exactly once by Runner/Session.
 
 ## Routing invariants
@@ -56,7 +56,7 @@ A queued `run_start.originMessageId` equals the originating message ID. Message 
 
 ## Acceptance scenarios
 
-Cover queued and steering event shapes; ordering `user_message -> run_start -> output -> run_end`; message correlation; pure-image steering; degenerate input; no base64 leakage; future block safety; two-client origin-inclusive Fanout; CLI echo behavior; one transcript append; session isolation; and no history replay on subscription.
+Cover queued and steering event shapes; ordering `user_message -> run_start -> output -> run_end`; message correlation; atomic attachment rejection with no event; pure-image steering; degenerate input; no base64 leakage; future block safety; two-client origin-inclusive Fanout; CLI echo behavior; one transcript append; session isolation; and no history replay on subscription.
 
 ## Related authority
 

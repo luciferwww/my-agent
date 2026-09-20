@@ -67,25 +67,14 @@ function parseModel(value: unknown): RelayModelBinding | undefined {
   return Object.freeze({
     metadata,
     facts: Object.freeze({
-      effectiveContextLimit: Object.freeze({
-        value: metadata.maximumPromptTokens,
-        source: 'provider-metadata' as const,
-      }),
-      maximumOutputTokens: Object.freeze({
-        value: metadata.maximumOutputTokens,
-        source: 'provider-metadata' as const,
-      }),
+      effectiveContextLimit: metadata.maximumPromptTokens,
+      maximumOutputTokens: metadata.maximumOutputTokens,
       ...(toolUse === undefined
         ? {}
-        : { toolUse: Object.freeze({ value: toolUse, source: 'provider-metadata' as const }) }),
-      ...(vision === true && supportedImageMediaTypes.length > 0
-        ? {
-            mediaKinds: Object.freeze({
-              value: Object.freeze(['image']),
-              source: 'provider-metadata' as const,
-            }),
-          }
-        : {}),
+        : { toolUse }),
+      ...(vision === undefined
+        ? {}
+        : { mediaKinds: Object.freeze(vision ? ['image'] : []) }),
     }),
   });
 }

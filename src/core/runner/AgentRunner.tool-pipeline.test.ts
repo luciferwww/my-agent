@@ -68,11 +68,10 @@ function resolvedModel(port: ModelInvocationPort) {
     endpointId: 'test',
     invocationPort: port,
     facts: {
-      effectiveContextLimit: { value: 200_000, source: 'deployment-config' as const },
-      maximumOutputTokens: { value: 4096, source: 'deployment-config' as const },
-      toolUse: { value: true, source: 'deployment-config' as const },
+      effectiveContextLimit: 200_000,
+      maximumOutputTokens: 4096,
+      toolUse: true,
     },
-    limits: { maxTokens: 4096, maxTokensSource: 'policy-default' as const },
   };
 }
 

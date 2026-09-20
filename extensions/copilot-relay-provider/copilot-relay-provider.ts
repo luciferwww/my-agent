@@ -20,9 +20,19 @@ export class CopilotRelayProvider {
     this.entry = Object.freeze({
       id: COPILOT_RELAY_PROVIDER_ID,
       displayName: 'Copilot Relay',
-      models: Object.freeze([...models.values()].map(({ metadata }) => Object.freeze({
+      models: Object.freeze([...models.values()].map(({ metadata, facts }) => Object.freeze({
         modelId: metadata.id,
         ...(metadata.displayName ? { displayName: metadata.displayName } : {}),
+        ...((facts.toolUse !== undefined || facts.mediaKinds !== undefined)
+          ? {
+              capabilities: Object.freeze({
+                ...(facts.toolUse !== undefined ? { toolUse: facts.toolUse } : {}),
+                ...(facts.mediaKinds !== undefined
+                  ? { mediaKinds: Object.freeze([...facts.mediaKinds]) }
+                  : {}),
+              }),
+            }
+          : {}),
       }))),
       protocol: OPENAI_RESPONSES_PROTOCOL,
       invocationPort: client,

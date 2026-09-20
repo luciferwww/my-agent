@@ -1,5 +1,5 @@
 import type { ApprovalResult } from '../approval/index.js';
-import type { ModelReference, ModelRequestOverride } from '../model-resolution/index.js';
+import type { ModelReference } from '../model-resolution/index.js';
 import type { AgentEvent } from '../runner/types.js';
 
 export type { ApprovalResult } from '../approval/index.js';
@@ -19,7 +19,6 @@ export interface ChannelRunRequest {
   sessionId: string;
   message: string | InboundContentBlock[];
   modelReference?: ModelReference;
-  requestOverride?: ModelRequestOverride;
   maxLlmCalls?: number;
   clientId?: string;
 }
@@ -112,6 +111,10 @@ export type ApprovalDeliveryResult =
 export interface ModelCatalogEntry {
   readonly modelId: string;
   readonly displayName: string;
+  readonly capabilities?: {
+    readonly toolUse?: boolean;
+    readonly mediaKinds?: readonly string[];
+  };
 }
 
 export interface ProviderCatalogEntry {

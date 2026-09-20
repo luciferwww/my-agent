@@ -6,7 +6,7 @@ A single-process TypeScript AI Agent runtime for learning and architecture exper
 
 - Node.js 22.x
 - npm
-- An installed Provider Extension; the example below uses a local Copilot Relay exposing `/v1/models` and `/v1/responses`
+- A configured Built-in Provider or an installed Provider Extension; the example below uses the Built-in Provider
 
 ## Setup and validation
 
@@ -38,37 +38,34 @@ no `.agent` directory is used.
 
 ```json
 {
-	"agents": {
-		"defaults": {
-			"model": {
-				"providerId": "copilot-relay",
-				"modelId": "<model-id>"
-			}
+	"llm": {
+		"defaultModel": {
+			"providerId": "builtin",
+			"modelId": "<model-id>"
+		},
+		"builtin": {
+			"baseURL": "https://gateway.example/v1",
+			"apiKey": "${LLM_API_KEY}",
+			"models": [
+				{
+					"modelId": "<model-id>",
+					"protocol": "openai-responses",
+					"displayName": "My model"
+				}
+			]
 		}
 	},
 	"extensions": {
-		"enabled": true,
-		"entries": {
-			"copilot-relay-provider": {
-				"enabled": true,
-				"config": {
-					"baseURL": { "$env": "COPILOT_RELAY_BASE_URL" },
-					"apiKey": {
-						"$secret": {
-							"source": "env",
-							"name": "COPILOT_RELAY_API_KEY"
-						}
-					}
-				}
-			}
-		}
+		"enabled": true
 	}
 }
 ```
 
-Set the two example Relay variables referenced by the scoped config. The complete default Model
-Reference may instead be supplied through the atomic environment pair
-`MY_AGENT_PROVIDER=copilot-relay` plus `MY_AGENT_MODEL=<model-id>`.
+Set `LLM_API_KEY` for the exact credential reference above. Supported protocols are
+`anthropic-messages`, `openai-responses`, and `openai-chat-completions`; the configured `baseURL`
+is the complete API prefix before the operation path. The complete per-run Model Reference may
+instead be supplied through the atomic environment pair `MY_AGENT_PROVIDER=builtin` plus
+`MY_AGENT_MODEL=<model-id>`. An empty configuration starts without a Provider or default Model.
 
 Agent Home is also the prompt path context, the relative-path anchor for Environment filesystem
 Tools, the default Search root, and the default Exec `cwd`. To select another Agent Home:

@@ -32,9 +32,9 @@ describe('loadAgentConfig', () => {
   it('reads only the Agent Home document once and ignores project-local config', async () => {
     const startupCwd = join(agentHome, 'project');
     await mkdir(startupCwd);
-    await writeConfig({ agents: { defaults: { llm: { maxTokens: 8192 } } } });
+    await writeConfig({ agents: { defaults: { runner: { maxLlmCalls: 8 } } } });
     await writeFile(join(startupCwd, 'config.json'), JSON.stringify({
-      agents: { defaults: { llm: { maxTokens: 1 } } },
+      agents: { defaults: { runner: { maxLlmCalls: 1 } } },
     }), 'utf8');
     const readTextFile = vi.fn((path: string) => readFile(path, 'utf8'));
 
@@ -42,9 +42,9 @@ describe('loadAgentConfig', () => {
 
     expect(readTextFile).toHaveBeenCalledTimes(1);
     expect(readTextFile).toHaveBeenCalledWith(join(agentHome, 'config.json'));
-    expect(snapshot.application.agents.defaults.llm.maxTokens).toBe(8192);
+    expect(snapshot.application.agents.defaults.runner.maxLlmCalls).toBe(8);
     await expect(readFile(join(startupCwd, 'config.json'), 'utf8'))
-      .resolves.toContain('"maxTokens":1');
+      .resolves.toContain('"maxLlmCalls":1');
   });
 
   it('projects Agent Context budgets from agents.defaults.context', async () => {
@@ -92,11 +92,16 @@ describe('loadAgentConfig', () => {
   it('projects all known namespaces from one root document', async () => {
     await writeConfig({
       agents: {
-        defaults: {
-          llm: { maxTokens: 8192 },
-          model: { providerId: 'provider-a', modelId: 'model-a' },
-        },
+        defaults: {},
         list: [{ id: 'reviewer', default: true, runner: { maxLlmCalls: 3 } }],
+      },
+      llm: {
+        defaultModel: { providerId: 'builtin', modelId: 'model-a' },
+        builtin: {
+          baseURL: 'https://example.test/v1///',
+          apiKey: '${BUILTIN_API_KEY}',
+          models: [{ modelId: 'model-a', protocol: 'openai-responses' }],
+        },
       },
       logger: {
         minLevel: 'warn',
@@ -111,10 +116,20 @@ describe('loadAgentConfig', () => {
       },
     });
 
-    const snapshot = await loadAgentConfig({ agentHome });
+    const snapshot = await loadAgentConfig({
+      agentHome,
+      environment: { BUILTIN_API_KEY: 'secret' },
+    });
 
     expect(Object.keys(snapshot)).toEqual(['application', 'extensions']);
-    expect(snapshot.application.agents.defaults.llm.maxTokens).toBe(8192);
+    expect(snapshot.application.llm).toEqual({
+      defaultModel: { providerId: 'builtin', modelId: 'model-a' },
+      builtin: {
+        baseURL: 'https://example.test/v1',
+        apiKey: 'secret',
+        models: [{ modelId: 'model-a', protocol: 'openai-responses' }],
+      },
+    });
     expect(snapshot.application.agents.defaults.runner).toEqual(DEFAULT_AGENT_CONFIG.runner);
     expect(snapshot.application.agents.list).toEqual([
       { id: 'reviewer', default: true, runner: { maxLlmCalls: 3 } },
@@ -142,6 +157,42 @@ describe('loadAgentConfig', () => {
     const snapshot = await loadAgentConfig({ agentHome });
 
     expect(snapshot.application.agents.defaults).toEqual(DEFAULT_AGENT_CONFIG);
+    expect(snapshot.application.llm).toEqual({});
+  });
+
+  it.each([
+    [{ agents: { defaults: { model: { providerId: 'a', modelId: 'b' } } } }, 'agents.defaults.model'],
+    [{ agents: { defaults: { llm: {} } } }, 'agents.defaults.llm'],
+    [{ agents: { list: [{ id: 'a', model: { providerId: 'a', modelId: 'b' } }] } }, 'agents.list[0].model'],
+    [{ agents: { list: [{ id: 'a', llm: {} }] } }, 'agents.list[0].llm'],
+  ])('rejects legacy Agent-level LLM configuration %#', async (document, fieldPath) => {
+    await writeConfig(document);
+
+    await expect(loadAgentConfig({ agentHome })).rejects.toMatchObject({
+      code: 'NAMESPACE_INVALID',
+      fieldPath,
+    });
+  });
+
+  it('reports unavailable API-key references without exposing secret values', async () => {
+    await writeConfig({
+      llm: {
+        builtin: {
+          baseURL: 'https://example.test',
+          apiKey: '${BUILTIN_API_KEY}',
+          models: [],
+        },
+      },
+    });
+
+    const error = await captureConfigError({ BUILTIN_API_KEY: '   ' });
+
+    expect(error).toMatchObject({
+      code: 'SECRET_UNAVAILABLE',
+      fieldPath: 'llm.builtin.apiKey',
+    });
+    expect(error.message).toContain('BUILTIN_API_KEY');
+    expect(error.message).not.toContain('   ');
   });
 
   it('deep-freezes every value reachable from both projections without freezing defaults', async () => {
@@ -211,8 +262,10 @@ describe('loadAgentConfig', () => {
     [{ agents: { list: [null] } }, 'agents.list[0]'],
     [{ agents: { list: [{ id: '  ' }] } }, 'agents.list[0].id'],
     [{ agents: { list: [{ id: 'a', default: 'yes' }] } }, 'agents.list[0].default'],
-    [{ agents: { defaults: { llm: { model: 'legacy' } } } }, 'agents.defaults'],
-    [{ agents: { defaults: { model: 'unstructured' } } }, 'agents.defaults'],
+    [{ llm: [] }, 'llm'],
+    [{ llm: { defaultModel: 'unstructured' } }, 'llm.defaultModel'],
+    [{ llm: { builtin: {} } }, 'llm.builtin.baseURL'],
+    [{ llm: { builtin: { baseURL: 'https://example.test', models: {} } } }, 'llm.builtin.models'],
     [{ agents: { defaults: { tools: { fs: {} } } } }, 'agents.defaults.tools.fs'],
     [{ agents: { list: [{ id: 'a', tools: { fs: {} } }] } }, 'agents.list[0].tools.fs'],
     [{ logger: [] }, 'logger'],
@@ -236,9 +289,11 @@ describe('loadAgentConfig', () => {
     expect(error.code).toBe(code);
   }
 
-  async function captureConfigError(): Promise<AgentConfigError> {
+  async function captureConfigError(
+    environment?: Readonly<Record<string, string | undefined>>,
+  ): Promise<AgentConfigError> {
     try {
-      await loadAgentConfig({ agentHome });
+      await loadAgentConfig({ agentHome, environment });
     } catch (error) {
       expect(error).toBeInstanceOf(AgentConfigError);
       return error as AgentConfigError;

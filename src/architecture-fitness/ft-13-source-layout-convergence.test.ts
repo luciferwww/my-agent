@@ -9,11 +9,12 @@ const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 describe('FT-13 source layout convergence', () => {
   it('keeps builtin capabilities and Runtime interaction state in their canonical roots', async () => {
     const required = [
-      'src/builtins/providers/anthropic/AnthropicMessagesClient.ts',
-      'src/builtins/providers/anthropic/AnthropicCompatibleProvider.ts',
-      'src/builtins/providers/anthropic/tool-codec.ts',
-      'src/builtins/providers/anthropic/runtime-unit.ts',
-      'src/builtins/providers/anthropic/index.ts',
+      'src/builtins/providers/builtin/AnthropicMessagesClient.ts',
+      'src/builtins/providers/builtin/OpenAIResponsesClient.ts',
+      'src/builtins/providers/builtin/OpenAIChatCompletionsClient.ts',
+      'src/builtins/providers/builtin/BuiltinLlmProvider.ts',
+      'src/builtins/providers/builtin/runtime-unit.ts',
+      'src/builtins/providers/builtin/index.ts',
       'src/builtins/channels/cli/CliChannel.ts',
       'src/builtins/channels/cli/runtime-unit.ts',
       'src/builtins/channels/websocket/WebSocketChannel.ts',
@@ -34,6 +35,7 @@ describe('FT-13 source layout convergence', () => {
     const removed = [
       'src/runtime-modules',
       'src/adapters',
+      'src/builtins/providers/anthropic',
       'src/core/tools/builtin',
       'src/core/memory/memory-tools.ts',
       'src/extensions/acquisition',
@@ -51,7 +53,7 @@ describe('FT-13 source layout convergence', () => {
 
   it('keeps package entries explicit and named after their actual Runtime contracts', async () => {
     const [provider, cli, websocket, environment, memory, task] = await Promise.all([
-      readFile(join(REPOSITORY_ROOT, 'src', 'builtins', 'providers', 'anthropic', 'index.ts'), 'utf8'),
+      readFile(join(REPOSITORY_ROOT, 'src', 'builtins', 'providers', 'builtin', 'index.ts'), 'utf8'),
       readFile(join(REPOSITORY_ROOT, 'src', 'builtins', 'channels', 'cli', 'index.ts'), 'utf8'),
       readFile(join(REPOSITORY_ROOT, 'src', 'builtins', 'channels', 'websocket', 'index.ts'), 'utf8'),
       readFile(join(REPOSITORY_ROOT, 'src', 'builtins', 'tools', 'environment', 'index.ts'), 'utf8'),
@@ -60,7 +62,7 @@ describe('FT-13 source layout convergence', () => {
     ]);
 
     expect(provider).toContain("export { AnthropicMessagesClient } from './AnthropicMessagesClient.js';");
-    expect(provider).toContain('createAnthropicProviderUnit');
+    expect(provider).toContain('createBuiltinLlmProviderUnit');
     expect(cli).toContain("export { createCliChannelUnit } from './runtime-unit.js';");
     expect(websocket).toContain("export { createWebSocketChannelUnit } from './runtime-unit.js';");
     expect(environment).toContain("export { createEnvironmentContribution } from './contribution.js';");
@@ -93,7 +95,7 @@ describe('FT-13 source layout convergence', () => {
         }
       }
       for (const capability of [
-        'builtins/providers/anthropic',
+        'builtins/providers/builtin',
         'builtins/channels/cli',
         'builtins/channels/websocket',
         'builtins/tools/environment',

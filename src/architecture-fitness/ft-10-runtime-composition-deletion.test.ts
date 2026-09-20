@@ -66,7 +66,7 @@ describe('FT-10 Runtime composition deletion', () => {
     const bootstrap = source('src/runtime/bootstrap.ts');
     const resourceTypes = source('src/runtime/types.ts');
     const runtimeBuilder = source('src/runtime/runtime-builder.ts');
-    const anthropicUnit = source('src/builtins/providers/anthropic/runtime-unit.ts');
+    const builtinUnit = source('src/builtins/providers/builtin/runtime-unit.ts');
     const subagent = source('src/runtime/subagent-orchestration.ts');
 
     expect(runtimeApp.content).toMatch(
@@ -81,12 +81,13 @@ describe('FT-10 Runtime composition deletion', () => {
     const dependencies = objectTypeBody(resourceTypes.content, 'RuntimeDependencies');
     expect(resources).not.toMatch(/\b(?:registrySnapshot|modelResolver)\s*:/);
     expect(resourceTypes.content).toContain(
-      'createBundledProviderUnit(options: RuntimeProviderOptions): LoadedRuntimeUnit;',
+      'createBuiltinProviderUnit(config: BuiltinLlmProviderConfig): LoadedRuntimeUnit;',
     );
     expect(dependencies).not.toContain('ProviderProjectionEntry');
     expect(dependencies).not.toMatch(/create\w*Provider\w*\([^)]*\):\s*readonly\s+\w+\[\]/u);
     expect(resourceTypes.content).not.toContain(DELETED_PROVIDER_SEAM);
-    expect(runtimeBuilder.content).toContain('dependencies.createBundledProviderUnit({');
+    expect(runtimeBuilder.content).toContain('dependencies.createBuiltinProviderUnit(builtinProviderConfig)');
+    expect(runtimeBuilder.content).toContain('...(builtinProviderConfig');
     expect(runtimeBuilder.content).not.toContain(DELETED_PROVIDER_SEAM);
     expect(runtimeBuilder.content).not.toContain('new AnthropicCompatibleProvider(');
     expect(runtimeBuilder.content).not.toContain('adapters/provider/anthropic');
@@ -96,10 +97,10 @@ describe('FT-10 Runtime composition deletion', () => {
     expect(runtimeBuilder.content.indexOf('kernel = createApplication({')).toBeLessThan(
       runtimeBuilder.content.indexOf("type: 'app_ready'"),
     );
-    expect(anthropicUnit.content).toContain("unitId: ANTHROPIC_PROVIDER_UNIT_ID");
-    expect(anthropicUnit.content)
-      .toContain('const provider = new AnthropicCompatibleProvider(capturedOptions);');
-    expect(anthropicUnit.content).toContain('api.registerProvider(provider.entry);');
+    expect(builtinUnit.content).toContain('unitId: BUILTIN_LLM_PROVIDER_UNIT_ID');
+    expect(builtinUnit.content)
+      .toContain('const provider = new BuiltinLlmProvider(capturedConfig, capturedOptions);');
+    expect(builtinUnit.content).toContain('api.registerProvider(provider.entry);');
     expect(subagent.content).toContain('new ModelResolver(parent.registrySnapshot.providers)');
     expect(subagent.content).toContain('toolProjection: parent.registrySnapshot.tools');
     expect(subagent.content).toContain('hookProjection: parent.registrySnapshot.hooks');

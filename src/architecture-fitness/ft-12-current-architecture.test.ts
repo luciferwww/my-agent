@@ -186,11 +186,10 @@ describe('FT-12 Current Architecture authority', () => {
 
     const provider = requireDocument('providers').content;
     expect(provider).toContain('`src/core/model-invocation/` owns the Provider-neutral invocation port');
-    expect(provider).toContain('maxTokens: number');
-    expect(provider).not.toContain('maxTokens?: number');
-    expect(provider).toContain('src/builtins/providers/anthropic/');
+    expect(provider).not.toContain('maxTokens: number');
+    expect(provider).toContain('src/builtins/providers/builtin/');
     expect(provider).toContain('runtime-unit.ts');
-    expect(provider).toContain('required, initially enabled builtin Unit `builtin-anthropic-provider`');
+    expect(provider).toContain('required, initially enabled Unit `builtin-llm-provider`');
     expect(provider).toContain('Provider construction is deferred until Unit `create()`');
     expect(provider).toContain('`toModelInvocationError(value)` is the Runtime canonicalization entry');
     expect(provider).toContain('neither runtime-imports nor subclasses Host `ModelInvocationError`');
@@ -243,11 +242,11 @@ describe('FT-12 Current Architecture authority', () => {
   });
 
   it('grounds Current Architecture claims in source and behavioral evidence', async () => {
-    const [runtimeTypes, builder, anthropicUnit, builderTests] = await Promise.all([
+    const [runtimeTypes, builder, builtinUnit, builderTests] = await Promise.all([
       readFile(join(REPOSITORY_ROOT, 'src', 'runtime', 'types.ts'), 'utf8'),
       readFile(join(REPOSITORY_ROOT, 'src', 'runtime', 'runtime-builder.ts'), 'utf8'),
       readFile(
-        join(REPOSITORY_ROOT, 'src', 'builtins', 'providers', 'anthropic', 'runtime-unit.ts'),
+        join(REPOSITORY_ROOT, 'src', 'builtins', 'providers', 'builtin', 'runtime-unit.ts'),
         'utf8',
       ),
       readFile(join(REPOSITORY_ROOT, 'src', 'runtime', 'runtime-builder.test.ts'), 'utf8'),
@@ -255,7 +254,7 @@ describe('FT-12 Current Architecture authority', () => {
 
     const dependencies = objectTypeBody(runtimeTypes, 'RuntimeDependencies');
     expect(dependencies).toContain(
-      'createBundledProviderUnit(options: RuntimeProviderOptions): LoadedRuntimeUnit;',
+      'createBuiltinProviderUnit(config: BuiltinLlmProviderConfig): LoadedRuntimeUnit;',
     );
     expect(dependencies).not.toContain('ProviderProjectionEntry');
     expect(builder).not.toContain('new AnthropicProvider(');
@@ -269,19 +268,20 @@ describe('FT-12 Current Architecture authority', () => {
     expect(compositionStart).toBeLessThan(kernelConstruction);
     expect(kernelConstruction).toBeLessThan(readyEvent);
 
-    const unitCreate = anthropicUnit.indexOf('create() {');
-    const providerConstruction = anthropicUnit.indexOf(
-      'new AnthropicCompatibleProvider(capturedOptions)',
+    const unitCreate = builtinUnit.indexOf('create() {');
+    const providerConstruction = builtinUnit.indexOf(
+      'new BuiltinLlmProvider(capturedConfig, capturedOptions)',
     );
-    const registration = anthropicUnit.indexOf('api.registerProvider(provider.entry)');
+    const registration = builtinUnit.indexOf('api.registerProvider(provider.entry)');
     expect(unitCreate).toBeGreaterThan(-1);
     expect(unitCreate).toBeLessThan(providerConstruction);
     expect(providerConstruction).toBeLessThan(registration);
-    expect(anthropicUnit).toContain('unitId: ANTHROPIC_PROVIDER_UNIT_ID');
-    expect(anthropicUnit).toContain('required: true');
+    expect(builtinUnit).toContain('unitId: BUILTIN_LLM_PROVIDER_UNIT_ID');
+    expect(builtinUnit).toContain('required: true');
 
     for (const evidence of [
-      'runs the bundled Provider through factory, create, staging, start, and publication',
+      'runs the configured Built-in Provider through factory, create, staging, start, and publication',
+      'does not create a Built-in Provider Unit when llm.builtin is absent',
       'keeps a builtin Provider first when an external Provider starts in the same Snapshot',
       'publishes an empty Provider Snapshot without inventing a default Provider',
       'attributes required Provider Unit create failure and cleans earlier candidates',
@@ -291,7 +291,7 @@ describe('FT-12 Current Architecture authority', () => {
     }
   });
 
-  it('keeps the effective output limit owned by Model Resolution rather than the Provider Adapter', async () => {
+  it('removes public output-token controls while keeping Anthropic protocol fallback private', async () => {
     const invocationTypes = await readFile(
       join(REPOSITORY_ROOT, 'src', 'core', 'model-invocation', 'types.ts'),
       'utf8',
@@ -302,7 +302,7 @@ describe('FT-12 Current Architecture authority', () => {
         'src',
         'builtins',
         'providers',
-        'anthropic',
+        'builtin',
         'AnthropicMessagesClient.ts',
       ),
       'utf8',
@@ -316,14 +316,11 @@ describe('FT-12 Current Architecture authority', () => {
       'utf8',
     );
 
-    expect(invocationTypes).toMatch(/interface ModelInvocationRequest\s*\{[\s\S]*?\bmaxTokens: number;/u);
-    expect(invocationTypes).not.toMatch(/\bmaxTokens\?: number;/u);
-    expect(anthropicClient).toContain('max_tokens: params.maxTokens');
-    expect(anthropicClient).not.toContain('DEFAULT_MAX_TOKENS');
-    expect(anthropicClient).not.toMatch(/maxTokens\s*\?\?/u);
-    expect(agentRunner).toContain('maxTokens: params.resolvedModel.limits.maxTokens');
-    expect(compaction).toContain('maxTokens,');
-    expect(compaction).not.toContain('maxTokens: 1024');
+    expect(invocationTypes).not.toMatch(/\bmaxTokens\??: number;/u);
+    expect(anthropicClient).toContain("import { DEFAULT_ANTHROPIC_MAX_TOKENS } from './config.js';");
+    expect(anthropicClient).toContain('max_tokens: DEFAULT_ANTHROPIC_MAX_TOKENS');
+    expect(agentRunner).not.toContain('resolvedModel.limits');
+    expect(compaction).not.toMatch(/\bmaxTokens\b/u);
   });
 });
 

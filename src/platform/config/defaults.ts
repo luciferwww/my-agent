@@ -7,7 +7,6 @@ import type { AgentDefaults, LoggerModuleConfig } from './types.js';
  * 迁移到从 config 读取，而非自己维护 DEFAULT_* 常量。
  *
  * 值来源映射：
- *   llm.maxTokens          → Runtime Model Policy default → ModelResolver
  *   runner.*               ← AgentRunner.ts DEFAULT_MAX_TOOL_ROUNDS / DEFAULT_MAX_FOLLOWUP_ROUNDS
  *   memory.embedding.*      ← LocalEmbeddingProvider.ts DEFAULT_MODEL（dimensions 由 model 反查）
  *   memory.chunking.*       ← MemoryIndexer.ts DEFAULT_CHUNK_CHARS / DEFAULT_OVERLAP_CHARS
@@ -29,12 +28,6 @@ import type { AgentDefaults, LoggerModuleConfig } from './types.js';
  *   logger.file.maxQueueSize → FileAdapter 默认 10_000
  */
 export const DEFAULT_AGENT_CONFIG: AgentDefaults = {
-  llm: {
-    apiKey: undefined, // 可选，不设则由 env 或配置文件提供
-    baseURL: undefined, // 可选，不设则用 Anthropic 官方端点
-    maxTokens: 4096,
-  },
-
   runner: {
     maxLlmCalls: 12,
     inTurnMessageMode: 'followup',

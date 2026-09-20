@@ -3,8 +3,8 @@
 > Status: Current Authority
 > Authority: Current implemented Provider behavior
 > Verified: 2026-09-18
-> Ownership: Provider-neutral invocation, normalized invocation failures, and concrete Anthropic-compatible and Copilot Relay integrations
-> Ownership key: provider-protocol-and-anthropic-adapter
+> Ownership: Provider-neutral invocation, normalized invocation failures, and concrete Built-in and Copilot Relay integrations
+> Ownership key: provider-protocol-and-builtin-adapter
 
 ---
 
@@ -22,11 +22,14 @@ src/core/model-invocation/
 ├── errors.ts                   # normalized failure and structural error boundary
 └── index.ts
 
-src/builtins/providers/anthropic/
-├── AnthropicMessagesClient.ts  # Anthropic SDK/Messages protocol adapter
-├── AnthropicCompatibleProvider.ts # connection, Catalog, facts, and invocation binding
-├── tool-codec.ts               # production Anthropic Tool-definition codec
-├── runtime-unit.ts             # required builtin Provider Unit
+src/builtins/providers/builtin/
+├── BuiltinLlmProvider.ts       # Catalog, facts, and private model-to-Protocol routing
+├── AnthropicMessagesClient.ts  # Anthropic Messages protocol Client
+├── OpenAIResponsesClient.ts    # OpenAI Responses protocol Client
+├── OpenAIChatCompletionsClient.ts # OpenAI Chat Completions protocol Client
+├── config.ts                   # module-owned configuration and operational defaults
+├── client-common.ts            # shared HTTP/SSE conversion and error normalization
+├── runtime-unit.ts             # optional configured builtin Provider Unit
 └── index.ts
 
 extensions/copilot-relay-provider/
@@ -51,7 +54,6 @@ ModelInvocationRequest {
   system?: string
   messages: ChatMessage[]
   tools?: ChatToolDefinition[]
-  maxTokens: number
   signal?: AbortSignal
 }
 
@@ -63,7 +65,7 @@ ModelStreamEvent =
   | error
 ```
 
-Canonical history supports text, base64 image, Tool Use, and correlated Tool Result blocks. Image dimensions are internal metadata and Provider adapters remove them from the wire. `maxTokens` is required after Model Resolution; normal calls, Tool loops, and Compaction use the same Turn-bound `ResolvedModel.limits.maxTokens`. Provider adapters do not supply a local output default or reinterpret policy.
+Canonical history supports text, base64 image, Tool Use, and correlated Tool Result blocks. Image dimensions are internal metadata and Provider adapters remove them from the wire. Core does not expose an output-token limit. Protocol clients omit one when optional; clients for protocols that require one own a private operational default.
 
 Provider fragments, indexes, SDK objects, Anthropic `input_schema`, and Responses `function.parameters` remain inside adapter/test boundaries. Complete canonical Tool Calls preserve Provider call identity, name, order, and either ready object input or explicit invalid input state.
 
@@ -82,51 +84,29 @@ Core defines six categories:
 
 Only allowlisted diagnostics are copied: Provider ID, bounded Provider status/type/code/message/request ID, and a content-free request summary. The summary preserves the opaque model string exactly and counts roles/content block types/Tool definitions without retaining prompts, image data, Tool input, schema, foreign message, stack, cause, or unknown fields. Invalid diagnostics are discarded while a valid category remains usable. Canonical diagnostics and the nested request summary are frozen.
 
-## 5. Anthropic-compatible adapter
+## 5. Unified Built-in Provider
 
 ### 5.1 Protocol conversion
 
-`AnthropicMessagesClient` directly implements the Core `ModelInvocationPort` using the Anthropic SDK. It converts:
-
-- canonical Tool definitions through production `tool-codec.ts` into Anthropic `input_schema`;
-- canonical text/image/Tool history into Anthropic Messages content while removing image dimensions;
-- streamed `content_block_start`, `input_json_delta`, and `content_block_stop` into complete canonical Tool Calls;
-- canonical correlated Tool Result blocks into Anthropic `tool_result` history;
-- SDK/protocol failures into Core-owned normalized errors.
-
-The current stream decoder accumulates the active Anthropic Tool block until its stop event. Blank call ID/name and duplicate call IDs fail closed. Malformed JSON preserves identity with `input.state: 'invalid'` and reason `malformed_json`; decoded arrays, primitives, and other non-plain objects use `not_an_object`. `chat()` retains invalid calls in `toolCalls` but does not fabricate a valid `tool_use` content block.
-
-Abort is passed to the SDK and remains `AbortError`. Recognized context-overflow messages become `ContextOverflowError`. HTTP status maps authentication, rate-limit, invalid-request, unavailable, and remaining Provider failures; absence of a status maps to transport failure.
+The three fetch-based Protocol Clients directly implement the Core `ModelInvocationPort`. Each appends only its operation path to the configured API prefix, uses only the materialized credential, performs one HTTP attempt, converts canonical text/image/Tool history, streams canonical events, preserves Abort, and normalizes failures through Model Invocation Error V1. OpenAI requests omit output limits; Anthropic Messages supplies its private required `4,096` fallback.
 
 ### 5.2 Provider facts and Catalog
 
-`AnthropicCompatibleProvider` publishes Provider `anthropic-compatible`, protocol `anthropic-messages`, an invocation port, normalized endpoint connection, and a closed model Catalog.
+`BuiltinLlmProvider` publishes Provider `builtin`, protocol `builtin-model-router`, and only explicitly configured models. Its private router selects the Client declared by each model registration without changing the public Provider ABI or opaque model ID. Each model receives the conservative effective Context limit `32,768`; Tool and Media capabilities remain unknown and therefore fail open. Unknown models fail closed.
 
-- The official endpoint `https://api.anthropic.com` starts from the static Provider Catalog; exact matching deployment facts may supplement or override individual entries.
-- A custom endpoint publishes only models proven by deployment facts matching Provider, normalized endpoint, protocol, and exact opaque Model ID.
-- A model without authoritative maximum-output facts is not published. A Provider-default context limit alone does not make a custom model executable.
-- Model IDs, including whitespace/control characters or the empty string, are preserved exactly.
-- Missing API key is a connection failure at resolution time. Invalid endpoint or deployment-fact input fails Provider construction.
+## 6. Built-in Runtime Unit
 
-## 6. Portable Tool conversion
+`createBuiltinLlmProviderUnit()` captures frozen configuration and returns required, initially enabled Unit `builtin-llm-provider`. The Unit exists only when `llm.builtin` is configured. Provider construction is deferred until Unit `create()`; its projection remains enclosed in the instance registration closure and enters Registry staging only through `registerProvider()`.
 
-Production Anthropic Tool conversion is owned by `src/builtins/providers/anthropic/tool-codec.ts`. Portable Tool definitions, calls, and results preserve canonical Core identity, order, argument, and outcome semantics across Provider wire formats.
+An empty model registration list publishes an empty Catalog and creates no Protocol Clients or network traffic. Without `llm.builtin`, Runtime does not create the Unit, so empty and Extension-only configurations remain valid. Generic Runtime composition continues to own Unit creation, staging, publication, generation reload, rollback, retirement, and immutable per-Turn binding.
 
-`ToolResultOutcome` is Core-only shared semantics. Anthropic `is_error` is a lossy wire hint, and OpenAI-compatible role=`tool` history does not need to reconstruct that outcome.
-
-## 7. Bundled Anthropic Runtime Unit
-
-`createAnthropicProviderUnit()` captures frozen Provider options and returns required, initially enabled builtin Unit `builtin-anthropic-provider`. Provider construction is deferred until Unit `create()`; its projection remains enclosed in the instance registration closure and enters Registry staging only through `registerProvider()`.
-
-Runtime Builder maps validated configuration into module options and adds the single Unit to the catalog. Generic Runtime composition owns Unit creation, staging, publication, rollback, and cleanup. Because this Unit is required, construction/validation failure is startup-fatal and is attributed to its Unit/create phase; no application kernel or `app_ready` event is published on that path.
-
-## 8. Copilot Relay external Unit
+## 7. Copilot Relay external Unit
 
 `copilot-relay-provider` is an optional external Unit. `create(signal)` validates a credential-free loopback HTTP(S) base URL, then performs one bounded `/v1/models` discovery. The default discovery deadline is 5 seconds and the response body is capped at 2 MiB. A blank API key emits no Authorization header.
 
 Discovery publishes only exact `/responses` models with positive safe-integer output limits and at least one prompt/context limit. The smaller prompt/context value becomes the effective context limit. Tool support and image support are published only when metadata proves them; supported image MIME values are intersected with Core PNG/JPEG/WebP/GIF support. Duplicate eligible opaque Model IDs fail discovery. Unit creation failure follows optional external-Unit isolation and publishes no partial Provider.
 
-### 8.1 Responses protocol
+### 7.1 Responses protocol
 
 `CopilotRelayResponsesClient` uses raw `fetch` and SSE with `stream: true`; no OpenAI SDK or Runtime protocol branch exists. It:
 
@@ -153,6 +133,6 @@ Development uses the tracked package directly. The npm package includes the same
 
 | Kind | Evidence |
 |---|---|
-| Source | [Invocation errors](../../src/core/model-invocation/errors.ts), [Anthropic Runtime Unit](../../src/builtins/providers/anthropic/runtime-unit.ts), [Relay client](../../extensions/copilot-relay-provider/responses-client.ts) |
-| Tests | [Invocation error tests](../../src/core/model-invocation/errors.test.ts), [Anthropic client tests](../../src/builtins/providers/anthropic/AnthropicMessagesClient.test.ts), [Relay client tests](../../extensions/copilot-relay-provider/responses-client.test.ts) |
+| Source | [Invocation errors](../../src/core/model-invocation/errors.ts), [Built-in Runtime Unit](../../src/builtins/providers/builtin/runtime-unit.ts), [Relay client](../../extensions/copilot-relay-provider/responses-client.ts) |
+| Tests | [Invocation error tests](../../src/core/model-invocation/errors.test.ts), [Built-in protocol tests](../../src/builtins/providers/builtin/protocol-clients.test.ts), [Relay client tests](../../extensions/copilot-relay-provider/responses-client.test.ts) |
 | Controlling authority | [Model Resolution Specification](../specifications/model-resolution.md), [Model Invocation Errors Specification](../specifications/model-invocation-errors.md) |

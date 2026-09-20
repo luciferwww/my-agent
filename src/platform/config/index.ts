@@ -5,7 +5,6 @@ export type {
   AgentsConfig,
   AgentDefaults,
   AgentEntry,
-  LLMConfig,
   RunnerConfig,
   MemoryModuleConfig,
   EmbeddingConfig,
@@ -21,6 +20,12 @@ export type {
   EmbeddingProviderType,
   SafetyLevel,
 } from './types.js';
+export type {
+  BuiltinLlmProviderConfig,
+  BuiltinModelRegistration,
+  BuiltinProtocol,
+  LLMConfig,
+} from '../../builtins/providers/builtin/index.js';
 
 // ── Defaults ──────────────────────────────────────────────
 export { DEFAULT_AGENT_CONFIG } from './defaults.js';

@@ -5,6 +5,7 @@ export type AgentConfigErrorCode =
   | 'FILE_UNREADABLE'
   | 'INVALID_JSON'
   | 'ROOT_INVALID'
+  | 'SECRET_UNAVAILABLE'
   | 'UNKNOWN_NAMESPACE'
   | 'NAMESPACE_INVALID';
 
@@ -38,6 +39,19 @@ export function unknownAgentConfigNamespace(namespace: string): AgentConfigError
     'UNKNOWN_NAMESPACE',
     `Agent configuration contains unknown top-level namespace ${JSON.stringify(boundedNamespace)}.`,
     boundedNamespace,
+  );
+}
+
+export function unavailableConfigSecret(
+  fieldPath: string,
+  environmentVariable: string,
+): AgentConfigError {
+  const boundedPath = boundFieldPath(fieldPath);
+  const boundedVariable = boundFieldPath(environmentVariable);
+  return new AgentConfigError(
+    'SECRET_UNAVAILABLE',
+    `Agent configuration secret ${JSON.stringify(boundedVariable)} referenced by ${JSON.stringify(boundedPath)} is unavailable.`,
+    boundedPath,
   );
 }
 

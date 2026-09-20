@@ -2,12 +2,12 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-14
+> Verified: 2026-09-20
 > Authority: Stable attachment ingress and media contract
 
 ## Scope
 
-User input may be text or ordered content blocks. Version 1 accepts base64 PNG, JPEG, WebP, and GIF images. Channel validates wire shape; Media validates decoded bytes and normalizes content. One bad attachment does not reject the message.
+User input may be text or ordered content blocks. Version 1 accepts base64 PNG, JPEG, WebP, and GIF images. Channel validates wire shape; Media validates decoded bytes and normalizes content. Text and attachments are atomic: one bad attachment rejects the complete message before queueing, broadcast, persistence, or Provider invocation.
 
 Excluded: URLs/fetching, PDFs/documents, OCR, durable attachment stores/references, assistant-generated images, and attachment steering.
 
@@ -31,10 +31,10 @@ Drop reasons are `unsupported_mime`, `mime_mismatch`, `metadata_unreadable`, `to
 - Maximum optimized side: 2000 pixels; quality attempts: 85, 75, 65, 55, 45; transparency is flattened onto white.
 - WebSocket frame ceiling is 15 MiB.
 - Aggregate budget charges decoded bytes before MIME, metadata, or optimization checks.
-- Text and accepted-image order are preserved; drop indexes refer to original blocks.
+- On success, text and image order are preserved. Failure indexes refer to original blocks.
 - A string remains a string; an all-text block array remains an array.
-- Pure failed attachments become an aggregate textual notice; content with no meaningful input is skipped.
-- Resize success is silent; invalid image bytes are dropped rather than failing the whole intake path.
+- Any image failure returns no normalized content and rejects the whole inbound message with structured failure reasons.
+- Resize success is silent; invalid image bytes reject the whole message.
 - Raw base64 never enters event or log payloads.
 
 ## Steering, persistence, and budgeting
@@ -43,11 +43,11 @@ Steering strips image blocks and forwards text only. Pure-image steering remains
 
 Session persists normalized inline image blocks. Runner estimates image tokens as `ceil(width / 28) * ceil(height / 28)`. Compaction presents textual image summaries to the summary model without changing persisted original blocks. Layer-1 Tool Result pruning does not prune images.
 
-No attachment-specific Runtime/Agent event or Channel error is introduced. Attachment summaries contain type/name/bytes/MIME only; dimensions are not part of the current summary contract.
+No attachment-specific Runtime/Agent event is introduced. WebSocket reports an `ATTACHMENT_REJECTED` Channel error for atomic validation failure. Attachment summaries for admitted messages contain type/name/bytes/MIME only; dimensions are not part of the current summary contract.
 
 ## Acceptance scenarios
 
-Cover text-only preservation; supported and unsupported MIME; magic/MIME mismatch; corrupt metadata; optimization success/failure; count and aggregate limits; mixed valid/invalid blocks; pure failure notice; empty input; text-only steering; pure-image steering visibility; no raw payload in events; Provider dimension stripping; dimension-based token estimation; Compaction placeholder with persisted original; and concurrent-session isolation.
+Cover text-only preservation; supported and unsupported MIME; magic/MIME mismatch; corrupt metadata; optimization success/failure; count and aggregate limits; atomic mixed valid/invalid rejection; no broadcast, queue, persistence, or Provider call on failure; empty input; text-only steering; pure-image steering visibility; no raw payload in events; Provider dimension stripping; dimension-based token estimation; Compaction placeholder with persisted original; and concurrent-session isolation.
 
 ## Related authority
 

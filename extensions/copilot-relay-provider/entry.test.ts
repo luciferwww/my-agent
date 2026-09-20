@@ -1,8 +1,24 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createExtension } from './entry.js';
 
+const capturedOptions = vi.hoisted(() => [] as unknown[]);
+vi.mock('./copilot-relay-provider-unit.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./copilot-relay-provider-unit.js')>();
+  return {
+    ...actual,
+    createCopilotRelayProviderUnit: (options: unknown) => {
+      capturedOptions.push(options);
+      return actual.createCopilotRelayProviderUnit(options as never);
+    },
+  };
+});
+
 describe('Copilot Relay Extension entry', () => {
+  beforeEach(() => {
+    capturedOptions.length = 0;
+  });
+
   it('maps scoped config to an uncreated External Unit', () => {
     const config = Object.freeze({
       baseURL: 'http://localhost:5000/',
@@ -26,6 +42,7 @@ describe('Copilot Relay Extension entry', () => {
       apiKey: 'relay-secret',
       discoveryTimeoutMs: 5000,
     });
+    expect(capturedOptions[0]).toEqual(expect.objectContaining({ apiKey: 'relay-secret' }));
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
   });
@@ -42,4 +59,5 @@ describe('Copilot Relay Extension entry', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
   });
+
 });

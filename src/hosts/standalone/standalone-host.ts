@@ -175,6 +175,7 @@ export async function runStandaloneHost(
   });
   const snapshot = await (options.loadConfig ?? loadAgentConfig)({
     agentHome: pathContext.agentHome,
+    environment: env,
   });
   validateStandaloneHostComposition(snapshot, parsedArguments.builtinChannels);
 

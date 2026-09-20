@@ -19,12 +19,36 @@ import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
 import type { ProviderProjectionEntry, ResolvedModel } from '../core/model-resolution/index.js';
 import type { SubagentModelSelection } from '../platform/config/types.js';
+import type { ApplicationConfigProjection } from '../platform/config/types.js';
+import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from '../platform/config/defaults.js';
 import { loadAgentConfig } from '../platform/config/agent-config-loader.js';
 import { RuntimeApp } from './RuntimeApp.js';
 import type { RuntimeHandle } from './runtime-composition.js';
 import type { RuntimeDependencies, RuntimeEvent } from './types.js';
 import type { RuntimeDeadlineDriver, RuntimeDeadlineRaceResult } from './runtime-deadline.js';
 import { Logger } from '../platform/logger/index.js';
+
+function testApplicationConfig(
+  defaultModel: { readonly providerId: string; readonly modelId: string } | null = {
+    providerId: 'test',
+    modelId: 'test-model',
+  },
+): ApplicationConfigProjection {
+  return {
+    llm: {
+      ...(defaultModel === null ? {} : { defaultModel }),
+      builtin: {
+        baseURL: 'https://example.test/v1',
+        models: [{ modelId: 'test-model', protocol: 'openai-responses' }],
+      },
+    },
+    agents: {
+      defaults: structuredClone(DEFAULT_AGENT_CONFIG),
+      list: [],
+    },
+    logger: structuredClone(DEFAULT_LOGGER_CONFIG),
+  };
+}
 
 class ManualDeadlineDriver implements RuntimeDeadlineDriver {
   private nowMs = 0;
@@ -96,9 +120,8 @@ describe('RuntimeApp', () => {
 
     const app = await RuntimeApp.create({
       agentHome: selectedAgentHome,
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: true },
         subagents: { enabled: false, maxDepth: 1 },
       },
@@ -152,9 +175,8 @@ describe('RuntimeApp', () => {
     });
     const app = await RuntimeApp.create({
       agentHome,
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({
@@ -231,14 +253,13 @@ describe('RuntimeApp', () => {
 
     const app = await RuntimeApp.create({
       agentHome,
+      applicationConfig: testApplicationConfig(),
       startupContext: {
         installDir,
         configuration: snapshot,
         environment,
       },
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({ acquireExtensions }),
@@ -281,9 +302,8 @@ describe('RuntimeApp', () => {
 
     const app = await RuntimeApp.create({
       agentHome: agentHome,
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: deps,
@@ -335,10 +355,9 @@ describe('RuntimeApp', () => {
 
     const app = await RuntimeApp.create({
       agentHome: agentHome,
-      applicationConfig: snapshot.application,
-      cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
+      applicationConfig: {
+        ...snapshot.application,
+        llm: testApplicationConfig().llm,
       },
       dependencies: createTestDependencies({ createMemoryManager }),
     });
@@ -356,9 +375,8 @@ describe('RuntimeApp', () => {
 
     const app = await RuntimeApp.create({
       agentHome: agentHome,
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({ createMemoryManager }),
@@ -374,9 +392,8 @@ describe('RuntimeApp', () => {
   it('returns a deep-frozen transport-safe Catalog with an available default', async () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({ createMemoryManager: async () => null }),
@@ -405,6 +422,45 @@ describe('RuntimeApp', () => {
     expect(Object.isFrozen(catalog.providers[0]?.models[0])).toBe(true);
     expect(JSON.parse(JSON.stringify(catalog))).toEqual(catalog);
     await app.close();
+  });
+
+  it('composes the real Built-in Unit with an empty Catalog without network I/O', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const app = await RuntimeApp.create({
+      agentHome,
+      applicationConfig: {
+        llm: {
+          defaultModel: { providerId: 'builtin', modelId: 'staged-model' },
+          builtin: { baseURL: 'https://example.test/v1', models: [] },
+        },
+        agents: {
+          defaults: structuredClone(DEFAULT_AGENT_CONFIG),
+          list: [],
+        },
+        logger: structuredClone(DEFAULT_LOGGER_CONFIG),
+      },
+      cliOverrides: {
+        memory: { enabled: false },
+        subagents: { enabled: false, maxDepth: 1 },
+      },
+      dependencies: { createMemoryManager: async () => null },
+    });
+
+    expect(app.application.getModelCatalog()).toMatchObject({
+      defaultSelection: {
+        state: 'unavailable',
+        reference: { providerId: 'builtin', modelId: 'staged-model' },
+        reason: 'model_rejected',
+      },
+      providers: [{
+        providerId: 'builtin',
+        displayName: 'Built-in LLM',
+        models: [],
+      }],
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    await app.close();
+    fetchSpy.mockRestore();
   });
 
   it.each([
@@ -441,9 +497,8 @@ describe('RuntimeApp', () => {
   }) => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
+      applicationConfig: testApplicationConfig(model ?? null),
       cliOverrides: {
-        ...(model ? { model } : {}),
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({ createMemoryManager: async () => null }),
@@ -463,9 +518,8 @@ describe('RuntimeApp', () => {
   it('keeps the last published Catalog readable while closing', async () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({ createMemoryManager: async () => null }),
@@ -547,9 +601,9 @@ describe('RuntimeApp', () => {
           protocol: 'test',
           connection,
           facts: {
-            effectiveContextLimit: { value: 200_000, source: 'deployment-config' as const },
-            maximumOutputTokens: { value: 8192, source: 'deployment-config' as const },
-            toolUse: { value: true, source: 'deployment-config' as const },
+            effectiveContextLimit: 200_000,
+            maximumOutputTokens: 8192,
+            toolUse: true,
           },
         },
       }),
@@ -557,9 +611,11 @@ describe('RuntimeApp', () => {
     const events: AgentEvent[] = [];
     const app = await RuntimeApp.create({
       agentHome: agentHome,
+      applicationConfig: testApplicationConfig({
+        providerId: 'test',
+        modelId: 'parent-model',
+      }),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'parent-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
         subagents: {
           enabled: true,
@@ -572,7 +628,7 @@ describe('RuntimeApp', () => {
         },
       },
       dependencies: createTestDependencies({
-        createBundledProviderUnit: () => createTestProviderUnit([
+        createBuiltinProviderUnit: () => createTestProviderUnit([
           makeProvider('test'),
           makeProvider('child'),
         ]),
@@ -668,9 +724,9 @@ describe('RuntimeApp', () => {
           protocol: 'test',
           connection,
           facts: {
-            effectiveContextLimit: { value: 200_000, source: 'deployment-config' as const },
-            maximumOutputTokens: { value: 8192, source: 'deployment-config' as const },
-            toolUse: { value: true, source: 'deployment-config' as const },
+            effectiveContextLimit: 200_000,
+            maximumOutputTokens: 8192,
+            toolUse: true,
           },
         },
       }),
@@ -708,9 +764,11 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [generationOneUnit, nextProviderUnit],
+      applicationConfig: testApplicationConfig({
+        providerId: 'next-provider',
+        modelId: 'root-model',
+      }),
       cliOverrides: {
-        model: { providerId: 'next-provider', modelId: 'root-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
         subagents: {
           enabled: true,
@@ -788,9 +846,8 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       onEvent: (event) => events.push(event),
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({ createMemoryManager: async () => null }),
@@ -814,7 +871,7 @@ describe('RuntimeApp', () => {
   it('seals a direct Runner failure with one caller rejection and one failed turn_end', async () => {
     const events: RuntimeEvent[] = [];
     const providerError = new ModelInvocationError('invalid_request', {
-      providerId: 'anthropic-compatible',
+      providerId: 'test-provider',
       httpStatus: 400,
       providerErrorType: 'invalid_request_error',
       providerMessage: 'At most one image is supported.',
@@ -839,9 +896,8 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       onEvent: (event) => events.push(event),
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({
@@ -924,9 +980,8 @@ describe('RuntimeApp', () => {
     const errorLog = vi.spyOn(Logger.get('RuntimeApp'), 'error');
     const app = await RuntimeApp.create({
       agentHome: agentHome,
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({
@@ -1017,9 +1072,8 @@ describe('RuntimeApp', () => {
     const errorLog = vi.spyOn(Logger.get('RuntimeApp'), 'error');
     const app = await RuntimeApp.create({
       agentHome: agentHome,
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({
@@ -1079,9 +1133,8 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [failingChannel.unit, receivingChannel.unit],
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: deps,
@@ -1124,9 +1177,8 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: deps,
@@ -1153,9 +1205,8 @@ describe('RuntimeApp', () => {
 
     const app = await RuntimeApp.create({
       agentHome: agentHome,
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
       },
       dependencies: deps,
       onEvent: (event) => events.push(event),
@@ -1176,9 +1227,8 @@ describe('RuntimeApp', () => {
     const events: RuntimeEvent[] = [];
     const app = await RuntimeApp.create({
       agentHome: agentHome,
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
         subagents: { enabled: subagentsEnabled, maxDepth: 1 },
       },
@@ -1203,9 +1253,8 @@ describe('RuntimeApp', () => {
     const creation = RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies(),
@@ -1231,9 +1280,8 @@ describe('RuntimeApp', () => {
     await expect(RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies(),
@@ -1256,9 +1304,8 @@ describe('RuntimeApp', () => {
 
     await expect(RuntimeApp.create({
       agentHome: agentHome,
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: true },
       },
       dependencies: createTestDependencies({
@@ -1284,9 +1331,8 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       deadlineDriver,
       deadlinePolicy: { candidateCleanupMs: 5_000 },
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: true },
       },
       dependencies: createTestDependencies({
@@ -1312,8 +1358,8 @@ describe('RuntimeApp', () => {
     }));
     const app = await RuntimeApp.create({
       agentHome: agentHome,
+      applicationConfig: testApplicationConfig(null),
       cliOverrides: {
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({
@@ -1360,7 +1406,6 @@ describe('RuntimeApp', () => {
       message: 'explicit model',
       promptMode: 'full',
       modelReference: { providerId: 'test', modelId: 'test-model' },
-      requestOverride: { maxOutputTokens: 2048 },
     })).resolves.toEqual(expect.objectContaining({ text: 'provider accepted model' }));
     expect(runnerRun).toHaveBeenCalledTimes(1);
     expect(runnerRun).toHaveBeenCalledWith(
@@ -1368,7 +1413,6 @@ describe('RuntimeApp', () => {
         resolvedModel: expect.objectContaining({
           identity: { providerId: 'test', modelId: 'test-model' },
           referenceSource: 'turn-explicit',
-          limits: { maxTokens: 2048, maxTokensSource: 'request-override' },
         }),
       }),
     );
@@ -1386,9 +1430,8 @@ describe('RuntimeApp', () => {
 
     const app = await RuntimeApp.create({
       agentHome: agentHome,
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: true },
       },
       dependencies: deps,
@@ -1422,9 +1465,8 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [successfulChannel.unit, failingChannel.unit],
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({
@@ -1469,9 +1511,8 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [failingChannel.unit, successfulChannel.unit],
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({
@@ -1527,9 +1568,8 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: deps,
@@ -1617,9 +1657,8 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
         runner: { inTurnMessageMode: 'steer' },
       },
@@ -1718,9 +1757,8 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
         loadedUnits: [testChannel.unit],
+        applicationConfig: testApplicationConfig(),
         cliOverrides: {
-          model: { providerId: 'test', modelId: 'test-model' },
-          llm: { apiKey: 'test-key' },
           memory: { enabled: false },
         },
         dependencies: deps,
@@ -1822,9 +1860,8 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
         tools: { allow: [], deny: [] },
       },
@@ -1880,9 +1917,8 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
+      applicationConfig: testApplicationConfig(),
       cliOverrides: {
-        model: { providerId: 'test', modelId: 'test-model' },
-        llm: { apiKey: 'test-key' },
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({
@@ -1925,9 +1961,8 @@ describe('RuntimeApp', () => {
       });
       return RuntimeApp.create({
         agentHome: agentHome,
+        applicationConfig: testApplicationConfig(),
         cliOverrides: {
-          model: { providerId: 'test', modelId: 'test-model' },
-          llm: { apiKey: 'test-key' },
           memory: { enabled: false },
         },
         dependencies: deps,
@@ -1947,7 +1982,8 @@ describe('RuntimeApp', () => {
       // Recreate the app to install the event collector through onEvent.
       const app2 = await RuntimeApp.create({
         agentHome: agentHome,
-        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
+        applicationConfig: testApplicationConfig(),
+        cliOverrides: { memory: { enabled: false } },
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
         onEvent: (e) => events.push(e),
       });
@@ -1979,7 +2015,8 @@ describe('RuntimeApp', () => {
 
       const app = await RuntimeApp.create({
         agentHome: agentHome,
-        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
+        applicationConfig: testApplicationConfig(),
+        cliOverrides: { memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -2008,7 +2045,8 @@ describe('RuntimeApp', () => {
       const events: RuntimeEvent[] = [];
       const app = await RuntimeApp.create({
         agentHome: agentHome,
-        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
+        applicationConfig: testApplicationConfig(),
+        cliOverrides: { memory: { enabled: false } },
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
         onEvent: (e) => events.push(e),
       });
@@ -2059,7 +2097,8 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
         loadedUnits: [testChannel.unit],
-        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
+        applicationConfig: testApplicationConfig(),
+        cliOverrides: { memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -2133,9 +2172,8 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
         loadedUnits: [testChannel.unit],
+        applicationConfig: testApplicationConfig(),
         cliOverrides: {
-          model: { providerId: 'test', modelId: 'test-model' },
-          llm: { apiKey: 'test-key' },
           memory: { enabled: false },
           runner: { inTurnMessageMode: 'steer' },
         },
@@ -2186,7 +2224,8 @@ describe('RuntimeApp', () => {
     it('abortTurn: cross-session isolation — sk1 abort does not touch sk2 queue', async () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
-        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
+        applicationConfig: testApplicationConfig(),
+        cliOverrides: { memory: { enabled: false } },
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
       });
 
@@ -2215,7 +2254,8 @@ describe('RuntimeApp', () => {
 
       const app = await RuntimeApp.create({
         agentHome: agentHome,
-        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
+        applicationConfig: testApplicationConfig(),
+        cliOverrides: { memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -2242,7 +2282,8 @@ describe('RuntimeApp', () => {
       let armed = false;
       const app = await RuntimeApp.create({
         agentHome: agentHome,
-        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
+        applicationConfig: testApplicationConfig(),
+        cliOverrides: { memory: { enabled: false } },
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
         onEvent: (e) => {
           if (armed && e.type === 'messages_dropped') {
@@ -2295,7 +2336,8 @@ describe('RuntimeApp', () => {
         agentHome: agentHome,
         deadlineDriver,
         loadedUnits: [testChannel.unit],
-        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
+        applicationConfig: testApplicationConfig(),
+        cliOverrides: { memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -2355,7 +2397,8 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
         deadlineDriver,
-        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
+        applicationConfig: testApplicationConfig(),
+        cliOverrides: { memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -2394,7 +2437,8 @@ describe('RuntimeApp', () => {
         agentHome: agentHome,
         loadedUnits: [testChannel.unit],
         onEvent: (event) => runtimeEvents.push(event),
-        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
+        applicationConfig: testApplicationConfig(),
+        cliOverrides: { memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -2441,7 +2485,8 @@ describe('RuntimeApp', () => {
         loadedUnits: [testChannel.unit],
         deadlineDriver,
         onEvent: (event) => runtimeEvents.push(event),
-        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
+        applicationConfig: testApplicationConfig(),
+        cliOverrides: { memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -2501,7 +2546,8 @@ describe('RuntimeApp', () => {
         agentHome: agentHome,
         loadedUnits: [testChannel.unit],
         deadlineDriver,
-        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
+        applicationConfig: testApplicationConfig(),
+        cliOverrides: { memory: { enabled: false } },
         dependencies: createTestDependencies({
           createAgentRunner: (config) => ({
             run: async (params: RunParams) => {
@@ -2547,7 +2593,8 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
         loadedUnits: [testChannel.unit],
-        cliOverrides: { model: { providerId: 'test', modelId: 'test-model' }, llm: { apiKey: 'test-key' }, memory: { enabled: false } },
+        applicationConfig: testApplicationConfig(),
+        cliOverrides: { memory: { enabled: false } },
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
       });
 
@@ -2739,7 +2786,7 @@ function createTestDependencies(
   };
 
   return {
-    createBundledProviderUnit: () => createTestProviderUnit([{
+    createBuiltinProviderUnit: () => createTestProviderUnit([{
       id: 'test',
       protocol: 'test',
       models: [
@@ -2755,10 +2802,10 @@ function createTestDependencies(
           protocol: 'test',
           connection,
           facts: {
-            effectiveContextLimit: { value: 200_000, source: 'deployment-config' },
-            maximumOutputTokens: { value: 8192, source: 'deployment-config' },
-            toolUse: { value: true, source: 'deployment-config' },
-            mediaKinds: { value: ['image'], source: 'deployment-config' },
+            effectiveContextLimit: 200_000,
+            maximumOutputTokens: 8192,
+            toolUse: true,
+            mediaKinds: ['image'],
           },
         },
       }),

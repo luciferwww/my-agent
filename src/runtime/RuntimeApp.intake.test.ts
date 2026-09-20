@@ -27,6 +27,7 @@ import type {
 import { RuntimeApp } from './RuntimeApp.js';
 import type { RuntimeHandle } from './runtime-composition.js';
 import type { RuntimeDependencies, RuntimeEvent } from './types.js';
+import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from '../platform/config/defaults.js';
 
 // 单元测试用 mock：跳过真实 sharp 解码，直接受控注入 normalized + dropped
 const processInboundMock = vi.fn<
@@ -34,6 +35,11 @@ const processInboundMock = vi.fn<
 >();
 
 vi.mock('../core/media/attachment-pipeline.js', () => ({
+  AttachmentValidationError: class AttachmentValidationError extends Error {
+    constructor(readonly failures: readonly DroppedAttachment[]) {
+      super(`Inbound message rejected because ${failures.length} attachment validation failure(s) occurred.`);
+    }
+  },
   processInboundMessage: (msg: string | InboundContentBlock[]) =>
     processInboundMock(msg),
 }));
@@ -101,8 +107,51 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     await app.close();
   });
 
-  it('appends drop notice to existing text when ATTACHMENT_DROP_NOTICE_DEFAULT=true and a block dropped', async () => {
-    // Default constant is true, so notice should be appended
+  it('does not invoke the provider path when image capability is explicitly unsupported', async () => {
+    const normalized: ChatContentBlock[] = [{
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'aaaa' },
+      dimensions: { width: 10, height: 10 },
+    }];
+    processInboundMock.mockResolvedValue({ normalized, dropped: [] });
+
+    const { app, runnerRun, testChannel } = await buildApp(agentHome, { mediaKinds: [] });
+    await expect(testChannel.dispatch({
+      sessionId: 'main',
+      message: [{
+        type: 'image',
+        source: { type: 'base64', mediaType: 'image/png', data: 'aaaa' },
+      }],
+      clientId: 'c1',
+    })).rejects.toThrow('does not support all requested media kinds');
+
+    expect(runnerRun).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('attempts an image request when media capability is unknown', async () => {
+    const normalized: ChatContentBlock[] = [{
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'aaaa' },
+      dimensions: { width: 10, height: 10 },
+    }];
+    processInboundMock.mockResolvedValue({ normalized, dropped: [] });
+
+    const { app, runnerRun, testChannel } = await buildApp(agentHome, { mediaKinds: null });
+    await testChannel.dispatch({
+      sessionId: 'main',
+      message: [{
+        type: 'image',
+        source: { type: 'base64', mediaType: 'image/png', data: 'aaaa' },
+      }],
+      clientId: 'c1',
+    });
+
+    expect(runnerRun).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('rejects text and attachments atomically when one attachment fails', async () => {
     processInboundMock.mockResolvedValue({
       normalized: 'hello world',
       dropped: [{ blockIndex: 1, reason: 'too_large' }] satisfies DroppedAttachment[],
@@ -111,21 +160,19 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     const { app, runnerRun, testChannel, agentEvents, runtimeEvents } =
       await buildApp(agentHome);
 
-    await testChannel.dispatch({
+    await expect(testChannel.dispatch({
       sessionId: 'main',
       message: 'hello world',
       clientId: 'c1',
-    });
+    })).rejects.toThrow('attachment validation failure');
 
-    const got = runnerRun.mock.calls[0]?.[0]?.message;
-    expect(typeof got).toBe('string');
-    expect(got).toContain('hello world');
-    expect(got).toContain('1 个附件');
+    expect(runnerRun).not.toHaveBeenCalled();
+    expect(agentEvents).toEqual([]);
     assertNoAttachmentEvents(runtimeEvents, agentEvents);
     await app.close();
   });
 
-  it('pure-bad-attachments with empty text falls back to notice text (notice enabled)', async () => {
+  it('rejects a pure bad attachment before enqueue', async () => {
     processInboundMock.mockResolvedValue({
       normalized: [],
       dropped: [{ blockIndex: 0, reason: 'unsupported_mime' }],
@@ -133,7 +180,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
 
     const { app, runnerRun, testChannel } = await buildApp(agentHome);
 
-    await testChannel.dispatch({
+    await expect(testChannel.dispatch({
       sessionId: 'main',
       message: [
         {
@@ -142,12 +189,9 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
         },
       ] satisfies InboundContentBlock[],
       clientId: 'c1',
-    });
+    })).rejects.toThrow('attachment validation failure');
 
-    expect(runnerRun).toHaveBeenCalledTimes(1);
-    const got = runnerRun.mock.calls[0]?.[0]?.message;
-    expect(typeof got).toBe('string');
-    expect(got).toContain('1 个附件');
+    expect(runnerRun).not.toHaveBeenCalled();
     await app.close();
   });
 
@@ -279,7 +323,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     await app.close();
   });
 
-  it('no attachment-related RuntimeEvent / AgentEvent / channel_error emitted on any path', async () => {
+  it('does not emit user or turn events for a rejected attachment message', async () => {
     processInboundMock.mockResolvedValue({
       normalized: 'hello',
       dropped: [{ blockIndex: 0, reason: 'unsupported_mime' }],
@@ -288,12 +332,13 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     const { app, testChannel, runtimeEvents, agentEvents } =
       await buildApp(agentHome);
 
-    await testChannel.dispatch({
+    await expect(testChannel.dispatch({
       sessionId: 'main',
       message: 'hello',
       clientId: 'c1',
-    });
+    })).rejects.toThrow('attachment validation failure');
 
+    expect(agentEvents).toEqual([]);
     assertNoAttachmentEvents(runtimeEvents, agentEvents);
     await app.close();
   });
@@ -635,6 +680,7 @@ async function buildApp(
     steerMode?: boolean;
     runnerRun?: ReturnType<typeof vi.fn>;
     useRealRunner?: boolean;
+    mediaKinds?: readonly ['image'] | readonly [] | null;
   } = {},
 ): Promise<{
   app: RuntimeHandle;
@@ -657,7 +703,7 @@ async function buildApp(
   };
 
   const deps: Partial<RuntimeDependencies> = {
-    createBundledProviderUnit: () => {
+    createBuiltinProviderUnit: () => {
       const invocationPort = options.useRealRunner
         ? ({
           async *chatStream() {
@@ -685,10 +731,12 @@ async function buildApp(
             protocol: 'test',
             connection,
             facts: {
-              effectiveContextLimit: { value: 200_000, source: 'deployment-config' },
-              maximumOutputTokens: { value: 8192, source: 'deployment-config' },
-              toolUse: { value: true, source: 'deployment-config' },
-              mediaKinds: { value: ['image'], source: 'deployment-config' },
+              effectiveContextLimit: 200_000,
+              maximumOutputTokens: 8192,
+              toolUse: true,
+              ...(options.mediaKinds === null
+                ? {}
+                : { mediaKinds: options.mediaKinds ?? ['image'] }),
             },
           },
         }),
@@ -724,9 +772,21 @@ async function buildApp(
   const app = await RuntimeApp.create({
     agentHome: agentHome,
     loadedUnits: [testChannel.unit],
+    applicationConfig: {
+      llm: {
+        defaultModel: { providerId: 'test', modelId: 'test-model' },
+        builtin: {
+          baseURL: 'https://example.test/v1',
+          models: [{ modelId: 'test-model', protocol: 'openai-responses' }],
+        },
+      },
+      agents: {
+        defaults: structuredClone(DEFAULT_AGENT_CONFIG),
+        list: [],
+      },
+      logger: structuredClone(DEFAULT_LOGGER_CONFIG),
+    },
     cliOverrides: {
-      model: { providerId: 'test', modelId: 'test-model' },
-      llm: { apiKey: 'test-key' },
       memory: { enabled: false },
       ...(options.steerMode
         ? { runner: { inTurnMessageMode: 'steer' as const } }

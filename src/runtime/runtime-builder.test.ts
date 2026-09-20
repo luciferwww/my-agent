@@ -87,6 +87,7 @@ function createHarness(options: {
   memoryClose?: () => void | Promise<void>;
   providerUnit?: LoadedRuntimeUnit;
   providerFactory?: () => LoadedRuntimeUnit;
+  builtinConfigured?: boolean;
   baseStop?: () => void | Promise<void>;
   additionalLoadedUnits?: readonly LoadedRuntimeUnit[];
 } = {}) {
@@ -115,8 +116,17 @@ function createHarness(options: {
   vi.mocked(bootstrapRuntime).mockResolvedValue({
     resources: {
       memoryManager: options.memoryClose ? { close: options.memoryClose } : null,
+      appConfig: {
+        llm: options.builtinConfigured === false
+          ? {}
+          : {
+              builtin: {
+            baseURL: 'https://example.test/v1',
+            models: [{ modelId: 'test-model', protocol: 'openai-responses' }],
+              },
+            },
+      },
       resolvedConfig: {
-        llm: { maxTokens: 1 },
         tools: {},
         context: { maxFileChars: 1, maxTotalChars: 1 },
         subagents: { enabled: false, list: [] },
@@ -125,7 +135,7 @@ function createHarness(options: {
     state: { phase: 'ready', startedAt: 1, activeRunCount: 0, contextVersion: 1 },
     acquiredUnits: Object.freeze([]),
     dependencies: {
-      createBundledProviderUnit: () => options.providerFactory?.()
+      createBuiltinProviderUnit: () => options.providerFactory?.()
         ?? options.providerUnit
         ?? createProviderUnit(),
       getBuiltinContributionUnits: () => [],
@@ -242,7 +252,7 @@ describe('Runtime Builder', () => {
     pin?.release();
   });
 
-  it('runs the bundled Provider through factory, create, staging, start, and publication', async () => {
+  it('runs the configured Built-in Provider through factory, create, staging, start, and publication', async () => {
     const trace: string[] = [];
     const providerUnit: LoadedRuntimeUnit = {
       unitId: 'builtin-traced-provider',
@@ -273,6 +283,7 @@ describe('Runtime Builder', () => {
         return providerUnit;
       },
     });
+
     harness.runtimeOptions.onEvent = (event) => {
       harness.events.push(event);
       if (event.type === 'app_ready') trace.push('ready');
@@ -285,6 +296,18 @@ describe('Runtime Builder', () => {
     const handle = await buildRuntimeHandle(harness.runtimeOptions, createApplication);
 
     expect(trace).toEqual(['factory', 'create', 'registration', 'start', 'kernel', 'ready']);
+    await handle.close();
+  });
+
+  it('does not create a Built-in Provider Unit when llm.builtin is absent', async () => {
+    const providerFactory = vi.fn(() => createProviderUnit());
+    const harness = createHarness({ builtinConfigured: false, providerFactory });
+
+    const handle = await buildRuntimeHandle(harness.runtimeOptions, harness.createApplication);
+
+    expect(providerFactory).not.toHaveBeenCalled();
+    expect(harness.getInput()?.snapshotAccess.currentSnapshot().providers).toEqual([]);
+    expect(harness.events.some((event) => event.type === 'app_ready')).toBe(true);
     await handle.close();
   });
 
@@ -384,9 +407,9 @@ describe('Runtime Builder', () => {
   it('attributes required Provider Unit create failure and cleans earlier candidates', async () => {
     const providerFailure = new Error('provider construction failed');
     const failingProviderUnit: LoadedRuntimeUnit = {
-      unitId: 'builtin-anthropic-provider',
+      unitId: 'builtin-llm-provider',
       source: 'builtin',
-      orderKey: 'builtin-anthropic-provider',
+      orderKey: 'builtin-llm-provider',
       required: true,
       initiallyEnabled: true,
       dependencies: [],
@@ -401,7 +424,7 @@ describe('Runtime Builder', () => {
     expect(harness.events).toContainEqual(expect.objectContaining({
       type: 'error',
       info: expect.objectContaining({
-        unitId: 'builtin-anthropic-provider',
+        unitId: 'builtin-llm-provider',
         phase: 'create',
       }),
     }));
@@ -411,9 +434,9 @@ describe('Runtime Builder', () => {
 
   it('fails closed when earlier candidate cleanup fails after Provider create failure', async () => {
     const failingProviderUnit: LoadedRuntimeUnit = {
-      unitId: 'builtin-anthropic-provider',
+      unitId: 'builtin-llm-provider',
       source: 'builtin',
-      orderKey: 'builtin-anthropic-provider',
+      orderKey: 'builtin-llm-provider',
       required: true,
       initiallyEnabled: true,
       dependencies: [],

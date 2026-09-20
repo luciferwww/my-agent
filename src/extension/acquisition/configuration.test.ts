@@ -80,6 +80,60 @@ describe('prepareExtensionConfig', () => {
     expect(JSON.stringify(result)).not.toContain('value');
   });
 
+  it.each([
+    ['literal', 'relay-secret', {}, 'relay-secret'],
+    ['exact reference', '${RELAY_API_KEY}', { RELAY_API_KEY: 'resolved-secret' }, 'resolved-secret'],
+    ['embedded non-reference', 'prefix-${RELAY_API_KEY}', { RELAY_API_KEY: 'ignored' }, 'prefix-${RELAY_API_KEY}'],
+  ])('materializes an extension apiKey %s before schema validation', (
+    _label,
+    apiKey,
+    environment,
+    expected,
+  ) => {
+    const result = prepareExtensionConfig(
+      { apiKey },
+      objectSchema({ apiKey: { type: 'string' } }, ['apiKey']),
+      environment,
+    );
+
+    expect(result).toEqual({ ok: true, config: { apiKey: expected } });
+  });
+
+  it.each([undefined, '   '])(
+    'rejects a missing or blank exact apiKey reference safely',
+    (value) => {
+      const result = prepareExtensionConfig(
+        { apiKey: '${RELAY_API_KEY}' },
+        objectSchema({ apiKey: { type: 'string' } }, ['apiKey']),
+        { RELAY_API_KEY: value },
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        category: 'secret_unavailable',
+        code: 'environment_secret_unavailable',
+        referencePath: '/apiKey',
+        environmentVariable: 'RELAY_API_KEY',
+      });
+      expect(JSON.stringify(result)).not.toContain('   ');
+    },
+  );
+
+  it.each([
+    [{ endpoint: { $env: 'BLANK_VALUE' } }, 'environment_value_unavailable'],
+    [{ token: { $secret: { source: 'env', name: 'BLANK_SECRET' } } }, 'environment_secret_unavailable'],
+  ])('rejects whitespace-only legacy environment references %#', (input, code) => {
+    const key = 'endpoint' in input ? 'endpoint' : 'token';
+    const result = prepareExtensionConfig(
+      input,
+      objectSchema({ [key]: { type: 'string' } }, [key]),
+      { BLANK_VALUE: '   ', BLANK_SECRET: '\t' },
+    );
+
+    expect(result).toMatchObject({ ok: false, code });
+    expect(JSON.stringify(result)).not.toContain('   ');
+  });
+
   it('treats reference-shaped objects with extra fields as ordinary config', () => {
     const result = prepareExtensionConfig(
       { value: { $env: 'NOT_READ', literal: true } },

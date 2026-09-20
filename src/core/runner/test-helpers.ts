@@ -48,10 +48,9 @@ export function makeRunParams(overrides: Partial<RunParams> = {}): RunParams {
       endpointId: 'test',
       invocationPort: unusedInvocationPort,
       facts: {
-        effectiveContextLimit: { value: 200_000, source: 'deployment-config' },
-        maximumOutputTokens: { value: 4096, source: 'deployment-config' },
+        effectiveContextLimit: 200_000,
+        maximumOutputTokens: 4096,
       },
-      limits: { maxTokens: 4096, maxTokensSource: 'policy-default' },
     },
     systemPrompt: '',
     turnId: randomUUID(),

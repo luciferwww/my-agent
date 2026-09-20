@@ -53,11 +53,16 @@ async function main() {
     assert(hello.clientId === 'host-smoke', 'Host returned an unexpected hello acknowledgement.');
 
     client.send(JSON.stringify({
+      type: 'create_session',
+      requestId: 'host-smoke-session',
+    }));
+    const session = await messages.next((message) =>
+      message.type === 'session_created' && message.requestId === 'host-smoke-session');
+
+    client.send(JSON.stringify({
       type: 'run_turn',
-      sessionKey: 'main',
+      sessionId: session.sessionId,
       message: 'Reply with exactly: smoke ok',
-      model_reference: { provider_id: 'copilot-relay', model_id: MODEL_ID },
-      request_override: { max_output_tokens: 32 },
       maxLlmCalls: 1,
     }));
 
@@ -144,6 +149,12 @@ async function assertBuildInputs() {
 
 async function createAgentHome(agentHome) {
   await writeFile(join(agentHome, 'config.json'), `${JSON.stringify({
+    llm: {
+      defaultModel: {
+        providerId: 'copilot-relay',
+        modelId: MODEL_ID,
+      },
+    },
     extensions: {
       enabled: true,
       entries: {
@@ -169,8 +180,6 @@ function startHost(homeDirectory, startupCwd, relayBaseURL, output) {
       ...process.env,
       COPILOT_RELAY_BASE_URL: relayBaseURL,
       COPILOT_RELAY_API_KEY: API_KEY,
-      MY_AGENT_PROVIDER: 'copilot-relay',
-      MY_AGENT_MODEL: MODEL_ID,
     }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });

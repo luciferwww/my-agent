@@ -7,6 +7,7 @@ import type { AppConfig, AgentEntry } from './types.js';
 function appConfig(list: AgentEntry[] = []): AppConfig {
   return {
     agentHome: '/tmp',
+    llm: {},
     agents: {
       defaults: structuredClone(DEFAULT_AGENT_CONFIG),
       list,
@@ -48,83 +49,32 @@ describe('resolveAgentConfig', () => {
   it('applies matching Agent, environment, then caller overrides', () => {
     const config = appConfig([{
       id: 'coding',
-      model: { providerId: 'agent', modelId: 'agent-model' },
-      llm: { apiKey: 'from-agent', maxTokens: 8192 },
       memory: { enabled: false },
     }]);
 
     const resolved = resolveAgentConfig(config, {
       agentId: 'coding',
       envOverrides: {
-        model: { providerId: 'environment', modelId: 'environment-model' },
-        llm: { apiKey: 'from-environment' },
+        runner: { maxLlmCalls: 7 },
       },
       cliOverrides: {
-        model: { providerId: 'caller', modelId: '' },
-        llm: { apiKey: 'from-caller' },
+        runner: { maxLlmCalls: 2 },
       },
     });
 
-    expect(resolved.model).toEqual({ providerId: 'caller', modelId: '' });
-    expect(resolved.llm.apiKey).toBe('from-caller');
-    expect(resolved.llm.maxTokens).toBe(8192);
+    expect(resolved.runner.maxLlmCalls).toBe(2);
+    expect(resolved.runner.inTurnMessageMode).toBe(DEFAULT_AGENT_CONFIG.runner.inTurnMessageMode);
     expect(resolved.memory.enabled).toBe(false);
-    expect(resolved.runner).toEqual(DEFAULT_AGENT_CONFIG.runner);
-  });
-
-  it('rejects legacy and incomplete Model References in overrides', () => {
-    const config = appConfig();
-
-    expect(() => resolveAgentConfig(config, {
-      envOverrides: { llm: { model: 'legacy' } } as never,
-    })).toThrow('uses legacy llm.model');
-    expect(() => resolveAgentConfig(config, {
-      cliOverrides: { model: { providerId: '', modelId: 'model' } },
-    })).toThrow('requires a non-empty providerId');
   });
 });
 
 describe('getEnvOverrides', () => {
-  it('maps connection values and the atomic default Model Reference', () => {
-    const previous = {
-      apiKey: process.env['ANTHROPIC_API_KEY'],
-      baseURL: process.env['ANTHROPIC_BASE_URL'],
-      provider: process.env['MY_AGENT_PROVIDER'],
-      model: process.env['MY_AGENT_MODEL'],
-    };
-    try {
-      process.env['ANTHROPIC_API_KEY'] = 'key';
-      process.env['ANTHROPIC_BASE_URL'] = 'https://example.test';
-      process.env['MY_AGENT_PROVIDER'] = 'provider';
-      process.env['MY_AGENT_MODEL'] = 'model';
-
-      expect(getEnvOverrides()).toEqual({
-        llm: { apiKey: 'key', baseURL: 'https://example.test' },
-        model: { providerId: 'provider', modelId: 'model' },
-      });
-    } finally {
-      restoreEnvironment('ANTHROPIC_API_KEY', previous.apiKey);
-      restoreEnvironment('ANTHROPIC_BASE_URL', previous.baseURL);
-      restoreEnvironment('MY_AGENT_PROVIDER', previous.provider);
-      restoreEnvironment('MY_AGENT_MODEL', previous.model);
-    }
-  });
-
-  it('requires Provider and Model environment values as an atomic pair', () => {
-    const previousProvider = process.env['MY_AGENT_PROVIDER'];
-    const previousModel = process.env['MY_AGENT_MODEL'];
-    try {
-      process.env['MY_AGENT_PROVIDER'] = 'provider';
-      delete process.env['MY_AGENT_MODEL'];
-      expect(() => getEnvOverrides()).toThrow('must be provided together');
-    } finally {
-      restoreEnvironment('MY_AGENT_PROVIDER', previousProvider);
-      restoreEnvironment('MY_AGENT_MODEL', previousModel);
-    }
+  it('does not retain retired Agent-level LLM environment overrides', () => {
+    expect(getEnvOverrides({
+      ANTHROPIC_API_KEY: 'key',
+      ANTHROPIC_BASE_URL: 'https://example.test',
+      MY_AGENT_PROVIDER: 'provider',
+      MY_AGENT_MODEL: 'model',
+    })).toEqual({});
   });
 });
-
-function restoreEnvironment(name: string, value: string | undefined): void {
-  if (value === undefined) delete process.env[name];
-  else process.env[name] = value;
-}

@@ -186,7 +186,6 @@ describe('compactMessages', () => {
       config: BASE_CONFIG,  // keepRecentTurns=2
       llmClient: llmClient as any,
       model: 'claude-test',
-      maxTokens: 2048,
       trigger: 'preemptive',
     });
 
@@ -194,7 +193,9 @@ describe('compactMessages', () => {
     expect(result.messages).toHaveLength(5);
     expect((result.messages[0] as any).content).toContain('[Previous conversation summary]');
     expect((result.messages[0] as any).content).toContain('Summary of turns 1 and 2.');
-    expect(llmClient.chatStream).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: 2048 }));
+    expect(llmClient.chatStream).toHaveBeenCalledWith(
+      expect.not.objectContaining({ maxTokens: expect.anything() }),
+    );
   });
 
   it('stats reflect tokensBefore > tokensAfter after compression', async () => {
@@ -209,7 +210,6 @@ describe('compactMessages', () => {
       config: { ...BASE_CONFIG, keepRecentTurns: 2 },
       llmClient: llmClient as any,
       model: 'claude-test',
-      maxTokens: 2048,
       trigger: 'overflow',
     });
 
@@ -231,7 +231,6 @@ describe('compactMessages', () => {
       config: { ...BASE_CONFIG, keepRecentTurns: 1 },
       llmClient: llmClient as any,
       model: 'claude-test',
-      maxTokens: 2048,
       trigger: 'preemptive',
     });
 
@@ -251,7 +250,6 @@ describe('compactMessages', () => {
       config: { ...BASE_CONFIG, keepRecentTurns: 1 },
       llmClient: llmClient as any,
       model: 'claude-test',
-      maxTokens: 2048,
       trigger: 'overflow',
     });
 
@@ -276,7 +274,6 @@ describe('compactMessages', () => {
         config: { ...BASE_CONFIG, keepRecentTurns: 5 },
         llmClient: llmClient as any,
         model: 'claude-test',
-        maxTokens: 2048,
         trigger: 'preemptive',
       }),
     ).rejects.toThrow('Cannot compact');
@@ -294,7 +291,6 @@ describe('compactMessages', () => {
       config: { ...BASE_CONFIG, keepRecentTurns: 1 },
       llmClient: llmClient as any,
       model: 'claude-test',
-      maxTokens: 2048,
       trigger: 'manual',
     });
 
@@ -340,7 +336,6 @@ describe('compactMessages', () => {
       config: { ...BASE_CONFIG, keepRecentTurns: 1 },
       llmClient: llmClient as any,
       model: 'claude-test',
-      maxTokens: 2048,
       trigger: 'preemptive',
     });
 
@@ -385,7 +380,6 @@ describe('compactMessages', () => {
       config: { ...BASE_CONFIG, keepRecentTurns: 1 },
       llmClient: llmClient as any,
       model: 'claude-test',
-      maxTokens: 2048,
       trigger: 'preemptive',
     });
 

@@ -6,12 +6,13 @@ Changes retain the repository's existing Plan/Specification/validation workflow.
 
 ## Active
 
-No active Changes.
+No active Change is currently tracked.
 
 ## Archived
 
 Archived changes preserve bounded delivery and acceptance provenance. They are neither Current Architecture nor stable contract authority.
 
+- [Unified Built-in LLM Provider](archive/builtin-llm-provider/plan.md), its [implemented Specification](archive/builtin-llm-provider/builtin-llm-provider-specification.md), and [validation record](archive/builtin-llm-provider/validation.md) — optional multi-Protocol Built-in Provider, explicit model registration, bounded credential materialization, capability projection, and atomic attachment admission completed, validated, and accepted on 2026-09-20
 - [Session Identity and Management](archive/session-identity-and-management/plan.md), its [implemented Specification](archive/session-identity-and-management/session-management-specification.md), and [validation record](archive/session-identity-and-management/validation.md) — canonical server-issued Session identity, Pending first-message materialization, lifecycle management, transient Subagent Transcripts, and Channel/caller migration completed and validated on 2026-09-18
 - [Documentation Authority Simplification](archive/documentation-authority-simplification/specification.md) and its [current-authority audit](archive/documentation-authority-simplification/audit.md) — default reading guidance, current-authority deduplication, and Fitness inventory simplification completed, validated, and accepted on 2026-09-17
 - [Extension 独立包与统一模块加载](archive/extension-package-loading/specification.md)及其[验证记录](archive/extension-package-loading/validation.md) — Extension package/Jiti loading、Runtime Bootstrap Acquisition 与 Runtime-owned startup/Channel failure 日志完成并验证于 2026-09-17

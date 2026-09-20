@@ -200,7 +200,6 @@ export class CopilotRelayResponsesClient implements ModelInvocationPort {
 function buildResponsesRequest(request: ModelInvocationRequest): Record<string, unknown> {
   return {
     model: request.model,
-    max_output_tokens: request.maxTokens,
     stream: true,
     ...(request.system ? { instructions: request.system } : {}),
     input: convertMessages(request.messages),
@@ -477,7 +476,6 @@ function invocationDiagnostics(
     ...provider,
     request: Object.freeze({
       model: request.model,
-      maxTokens: request.maxTokens,
       hasSystem: Boolean(request.system),
       messageCount: request.messages.length,
       userMessageCount,

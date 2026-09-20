@@ -1,11 +1,9 @@
 export { ModelResolver, ModelResolutionError } from './ModelResolver.js';
 export type {
   CanonicalModelIdentity,
-  ModelFactSource,
   ModelPolicy,
   ModelReference,
   ModelReferenceSource,
-  ModelRequestOverride,
   ModelRequestRequirements,
   ModelResolutionInput,
   ProviderConnection,
@@ -17,5 +15,4 @@ export type {
   ProviderProjectionEntry,
   ResolvedModel,
   ResolutionFailureCategory,
-  SourcedFact,
 } from './types.js';

@@ -114,7 +114,7 @@ describe('processInboundMessage', () => {
     expect(r.dropped).toEqual([]);
   });
 
-  it('keeps text and records a single bad image without wholesale failure', async () => {
+  it('rejects all content when one image is invalid', async () => {
     const msg: InboundContentBlock[] = [
       { type: 'text', text: 'see this' },
       // BMP declared — unsupported MIME, will land in dropped[]
@@ -126,14 +126,40 @@ describe('processInboundMessage', () => {
     // Force unsupported MIME by post-mutating (channel-side wire type is constrained).
     (msg[1] as { source: { mediaType: string } }).source.mediaType = 'image/bmp';
     const r = await processInboundMessage(msg);
-    expect(Array.isArray(r.normalized)).toBe(true);
-    const arr = r.normalized as ChatContentBlock[];
-    expect(arr).toHaveLength(1);
-    expect(arr[0]!.type).toBe('text');
+    expect(r.normalized).toEqual([]);
     expect(r.dropped).toEqual([{ blockIndex: 1, reason: 'unsupported_mime' }]);
   });
 
-  it('drops the 21st image with limit_exceeded; counts images not array index', async () => {
+  it('rejects valid attachments alongside one invalid attachment', async () => {
+    const valid = {
+      type: 'image',
+      source: {
+        type: 'base64',
+        mediaType: 'image/png',
+        data: toBase64(buildMinimalPng(12, 12)),
+      },
+    } satisfies InboundContentBlock;
+    const invalid = {
+      type: 'image',
+      source: {
+        type: 'base64',
+        mediaType: 'image/png',
+        data: toBase64(new Uint8Array([1, 2, 3])),
+      },
+    } satisfies InboundContentBlock;
+
+    const r = await processInboundMessage([
+      valid,
+      { type: 'text', text: 'both images are required' },
+      invalid,
+      valid,
+    ]);
+
+    expect(r.normalized).toEqual([]);
+    expect(r.dropped).toEqual([{ blockIndex: 2, reason: 'metadata_unreadable' }]);
+  });
+
+  it('rejects the whole message when the image count is exceeded', async () => {
     const blocks: InboundContentBlock[] = [];
     // 2 leading text blocks must not consume image slots
     blocks.push({ type: 'text', text: 'a' });
@@ -149,8 +175,7 @@ describe('processInboundMessage', () => {
       });
     }
     const r = await processInboundMessage(blocks);
-    const arr = r.normalized as ChatContentBlock[];
-    expect(arr).toHaveLength(22); // 2 text + 20 images
+    expect(r.normalized).toEqual([]);
     expect(r.dropped).toEqual([{ blockIndex: blocks.length - 1, reason: 'limit_exceeded' }]);
   });
 
@@ -169,7 +194,7 @@ describe('processInboundMessage', () => {
     expect(r.dropped).toEqual([{ blockIndex: 0, reason: 'too_large' }]);
   });
 
-  it('drops blocks that push cumulative bytes over the total budget', async () => {
+  it('rejects all attachments when cumulative bytes exceed the total budget', async () => {
     // 6 blocks × ~1.9 MB. All sniff-valid (header), all under inline threshold so
     // optimizeImage is NEVER invoked. After 5 blocks totalBytes ≈ 9.5 MB; 6th tips over 10 MB.
     const SIZE = Math.floor(1.9 * 1024 * 1024);
@@ -185,8 +210,7 @@ describe('processInboundMessage', () => {
       });
     }
     const r = await processInboundMessage(blocks);
-    const arr = r.normalized as ChatContentBlock[];
-    expect(arr).toHaveLength(5);
+    expect(r.normalized).toEqual([]);
     expect(r.dropped).toEqual([{ blockIndex: 5, reason: 'total_exceeded' }]);
   });
 });

@@ -13,7 +13,7 @@ export type ModelInvocationFailureCategory =
 
 interface ModelInvocationRequestDiagnostics {
   readonly model: string;
-  readonly maxTokens: number;
+  readonly maxTokens?: number;
   readonly hasSystem: boolean;
   readonly messageCount: number;
   readonly userMessageCount: number;
@@ -133,23 +133,23 @@ function canonicalizeDiagnostics(value: unknown): ModelInvocationDiagnostics | u
   const maxTokensProperty = inspectOwnDataProperty(request, 'maxTokens');
   const hasSystemProperty = inspectOwnDataProperty(request, 'hasSystem');
   if (modelProperty.state !== 'data' || typeof modelProperty.value !== 'string') return undefined;
-  if (
-    maxTokensProperty.state !== 'data'
-    || !Number.isSafeInteger(maxTokensProperty.value)
-    || (maxTokensProperty.value as number) <= 0
-  ) {
+  if (maxTokensProperty.state === 'accessor'
+    || (maxTokensProperty.state === 'data'
+      && (!Number.isSafeInteger(maxTokensProperty.value)
+        || (maxTokensProperty.value as number) <= 0))) {
     return undefined;
   }
   if (hasSystemProperty.state !== 'data' || typeof hasSystemProperty.value !== 'boolean') {
     return undefined;
   }
   const model = modelProperty.value;
-  const maxTokens = maxTokensProperty.value as number;
   const hasSystem = hasSystemProperty.value;
 
   const canonicalRequest: Record<string, string | number | boolean> = {
     model,
-    maxTokens: maxTokens as number,
+    ...(maxTokensProperty.state === 'data'
+      ? { maxTokens: maxTokensProperty.value as number }
+      : {}),
     hasSystem,
   };
   for (const field of REQUEST_COUNT_FIELDS) {

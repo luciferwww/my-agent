@@ -36,11 +36,8 @@ function provider(id: string): ProviderProjectionEntry {
         protocol: `${id}-protocol`,
         connection,
         facts: {
-          effectiveContextLimit: {
-            value: id === 'parent' ? 1000 : 2000,
-            source: 'provider-default',
-          },
-          maximumOutputTokens: { value: 100, source: 'deployment-config' },
+          effectiveContextLimit: id === 'parent' ? 1000 : 2000,
+          maximumOutputTokens: 100,
         },
       },
     }),
@@ -131,7 +128,6 @@ function setup(options: {
       createTransientSubagentTranscript,
       deleteTransientSubagentTranscript,
     } as never,
-    defaultMaxTokens: 50,
     maxDepth: 1,
     executor: { prepare, execute } as never,
     onEvent: (event) => events.push(event),
@@ -216,7 +212,7 @@ describe('Runtime Subagent delegation', () => {
       endpointId: 'child-endpoint',
       invocationPort: invocationPorts.child,
       facts: expect.objectContaining({
-        effectiveContextLimit: { value: 2000, source: 'provider-default' },
+        effectiveContextLimit: 2000,
       }),
     }));
   });

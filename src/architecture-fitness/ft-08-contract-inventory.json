@@ -311,22 +311,22 @@
     "contract": "ModelInvocationPort",
     "source": "src/core/model-invocation/types.ts",
     "kind": "provider-port",
-    "positive": ["src/builtins/providers/anthropic/AnthropicMessagesClient.test.ts"],
+    "positive": ["src/builtins/providers/builtin/protocol-clients.test.ts"],
     "negative": ["src/core/runner/AgentRunner.test.ts"]
   },
   {
     "contract": "ModelStreamEvent",
     "source": "src/core/model-invocation/types.ts",
     "kind": "event",
-    "positive": ["src/builtins/providers/anthropic/AnthropicMessagesClient.test.ts"],
-    "negative": ["src/builtins/providers/anthropic/AnthropicMessagesClient.test.ts"]
+    "positive": ["src/builtins/providers/builtin/protocol-clients.test.ts"],
+    "negative": ["src/builtins/providers/builtin/protocol-clients.test.ts"]
   },
   {
     "contract": "ModelInvocationError",
     "source": "src/core/model-invocation/errors.ts",
     "kind": "error",
-    "positive": ["src/core/model-invocation/errors.test.ts", "src/builtins/providers/anthropic/AnthropicMessagesClient.test.ts"],
-    "negative": ["src/core/model-invocation/errors.test.ts", "src/builtins/providers/anthropic/AnthropicMessagesClient.test.ts"]
+    "positive": ["src/core/model-invocation/errors.test.ts", "src/builtins/providers/builtin/protocol-clients.test.ts"],
+    "negative": ["src/core/model-invocation/errors.test.ts", "src/builtins/providers/builtin/protocol-clients.test.ts"]
   },
   {
     "contract": "ModelInvocationStructuralErrorV1",

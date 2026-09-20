@@ -9,7 +9,6 @@ import { CopilotRelayResponsesClient } from './responses-client.js';
 const request: ModelInvocationRequest = {
   model: 'gpt-5.6-sol',
   system: 'Be concise.',
-  maxTokens: 128,
   messages: [
     { role: 'user', content: 'Hello' },
     { role: 'assistant', content: 'Hi' },
@@ -75,7 +74,6 @@ describe('Copilot Relay Responses client', () => {
     const body = JSON.parse(String(init?.body));
     expect(body).toMatchObject({
       model: 'gpt-5.6-sol',
-      max_output_tokens: 128,
       stream: true,
       instructions: 'Be concise.',
       input: [

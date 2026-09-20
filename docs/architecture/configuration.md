@@ -10,9 +10,9 @@
 
 ## 1. Boundary
 
-`src/platform/config/` owns Agent configuration types, hardcoded defaults, missing-document bootstrap, one strict Agent Home file read, immutable consumer projections, merge precedence, and environment extraction. After resolving paths, the standalone Host ensures Agent Home exists, exclusively creates a missing `<agentHome>/config.json` with exact UTF-8 bytes `{}\n`, then reads that document once and passes the complete immutable snapshot to `RuntimeApp.create()` as a generic startup fact. Runtime Bootstrap selects the Application and Extension projections without rereading document content; Runtime never reads configuration files.
+`src/platform/config/` owns application-document composition, missing-document bootstrap, one strict Agent Home file read, credential materialization, immutable consumer projections, Agent merge precedence, and environment extraction. Modules own their leaf contracts and behavioral defaults; the Built-in LLM module applies this boundary under `src/builtins/providers/builtin/`. After resolving paths, the standalone Host ensures Agent Home exists, exclusively creates a missing `<agentHome>/config.json` with exact UTF-8 bytes `{}\n`, then reads that document once and passes the complete immutable snapshot to `RuntimeApp.create()` as a generic startup fact. Runtime Bootstrap selects the Application and Extension projections without rereading document content; Runtime never reads configuration files.
 
-Agent Home owns the configuration document and mutable Agent state. Platform Configuration owns configuration bootstrap and loading; Core Agent Context independently owns Context files even though both may ensure their shared parent exists. `installDir` owns executable Extensions; Extension enablement and scoped configuration remain a namespace in the Agent document. Configuration may carry a default Model Reference and Provider deployment-facts input, but [Model Resolution](model-resolution.md) owns canonical identity, Catalog membership, effective limits, and Model Facts.
+Agent Home owns the configuration document and mutable Agent state. Platform Configuration owns configuration bootstrap and loading; Core Agent Context independently owns Context files even though both may ensure their shared parent exists. `installDir` owns executable Extensions; Extension enablement and scoped configuration remain a namespace in the Agent document. Configuration may carry `llm.defaultModel` and one optional Built-in Provider deployment, but [Model Resolution](model-resolution.md) owns canonical identity, Catalog membership, effective limits, and Model Facts.
 
 ## 2. Agent configuration
 
@@ -20,13 +20,15 @@ Agent Home owns the configuration document and mutable Agent state. Platform Con
 
 ```text
 AgentConfigDocument
+├── llm.defaultModel?: ModelReference
+├── llm.builtin?: { baseURL, apiKey?, models[] }
 ├── agents.defaults?: DeepPartial<AgentDefaults>
 ├── agents.list?: AgentEntry[]
 ├── logger?: LoggerModuleConfig
 └── extensions?: Extension enablement and scoped settings
 ```
 
-These are the only valid top-level namespaces. Retired `host` and every other unknown namespace fail directly. The returned Application/Extension snapshot and all nested projections are defensively copied and frozen. Startup CWD is not a configuration source, and there is no multi-file merge.
+These are the only valid top-level namespaces. Retired `host` and every other unknown namespace fail directly. Retired Agent-level `model`/`llm` fields are also rejected. The returned Application/Extension snapshot and all nested projections are defensively copied and frozen. Startup CWD is not a configuration source, and there is no multi-file merge.
 
 ## 3. Precedence and merge
 
@@ -40,14 +42,14 @@ Lowest to highest precedence:
 | 4 | environment overrides | `resolveAgentConfig()` |
 | 5 | caller/CLI overrides | `resolveAgentConfig()` |
 
-`deepMerge()` recursively merges plain objects, ignores `undefined`, and replaces arrays and scalars. `getEnvOverrides()` maps `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` into the LLM branch. `MY_AGENT_PROVIDER` and `MY_AGENT_MODEL` form one atomic default Model Reference override: both must be present or both absent. A supported Host rejects a partial pair rather than inferring a Provider or Model.
+`deepMerge()` recursively merges plain objects, ignores `undefined`, and replaces arrays and scalars. `MY_AGENT_PROVIDER` and `MY_AGENT_MODEL` form one atomic per-run Model Reference override: both must be present or both absent. A supported Host rejects a partial pair rather than inferring a Provider or Model. Built-in `apiKey` supports a literal or one exact `${ENV_VAR}` reference. Platform materializes that reference once; missing or blank referenced values fail without exposing the secret. The same resolver is used by Copilot Relay while retaining its `$env`/`$secret` forms.
 
 ## 4. Current schema and defaults
 
 | Section | Current fields and defaults |
 |---|---|
-| `model` | Optional preferred Root-Turn `{ providerId, modelId }` when no explicit selection is supplied; not required for startup, inherited directly by Children, or used as a fallback list |
-| `llm` | Optional API key/base URL; `maxTokens=4096`; optional Provider-owned `deploymentFacts[]` input |
+| `llm.defaultModel` | Optional preferred Root-Turn `{ providerId, modelId }`; also projected to clients as `unset`, `available`, or `unavailable`; never a fallback list |
+| `llm.builtin` | Optional `{ baseURL, apiKey?, models[] }`; each model has `modelId`, `protocol`, and optional `displayName`; an empty model list is valid |
 | `runner` | `maxLlmCalls=12`; `inTurnMessageMode='followup'` |
 | `memory` | Enabled; local `Xenova/all-MiniLM-L6-v2`; chunk `1600/320`; search `6`, `0.25`, weights `0.7/0.3` |
 | `prompt` | `safetyLevel='normal'` |
@@ -77,7 +79,7 @@ deepMerge(target, source): merged copy
 
 `AgentConfigSnapshot` contains only immutable `application` and `extensions` projections. Runtime combines the injected Application projection with explicit `agentHome`. `resolveAgentConfig()` excludes `id` and `default` metadata from the selected per-agent entry before applying environment and caller overrides.
 
-The retired `agents.defaults.workspace` and per-agent `workspace` keys are rejected directly. There is no alias or dual read; Agent Context budgets use `context` only.
+The retired `agents.defaults.workspace`, Agent-level `model`/`llm`, and corresponding per-agent keys are rejected directly. Public output-token configuration is removed; there is no `llm.maxTokens` or replacement. There is no alias or dual read; Agent Context budgets use `context` only.
 
 ## 6. Evidence
 

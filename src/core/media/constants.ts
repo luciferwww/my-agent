@@ -2,8 +2,7 @@
  * Attachment / media pipeline constants.
  *
  * Single source of truth for size limits, MIME allowlist, and pipeline defaults.
- * Imported by media/* modules, WebSocketChannel (maxPayload), and RuntimeApp
- * (drop-notice toggle).
+ * Imported by media/* modules and WebSocketChannel (maxPayload).
  */
 
 /** Inline-vs-host threshold. Blocks larger than this MAY be hosted off-band in future. */
@@ -20,9 +19,6 @@ export const MAX_ATTACHMENTS_PER_MESSAGE = 20;
 
 /** WebSocket frame ceiling. Slightly larger than ATTACHMENT_TOTAL to absorb JSON/base64 overhead. */
 export const WS_MAX_PAYLOAD_BYTES = 15 * 1024 * 1024;
-
-/** Default for whether dropped-attachment notices are appended to the assistant-visible message. */
-export const ATTACHMENT_DROP_NOTICE_DEFAULT = true;
 
 /** Allowlist of inbound image MIME types. */
 export const SUPPORTED_IMAGE_MIME = [

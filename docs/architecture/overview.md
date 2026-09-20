@@ -81,7 +81,7 @@ Agent Runner
 | Runtime composition, generation, queue, routing, Fanout, Abort, Shutdown, and Parent/Child lifecycle | [Runtime](runtime.md) |
 | Turn loop, Tool/Hook invocation, context budgeting, Compaction, and Runner events | [Runner](runner.md) |
 | Model references, Catalog projections, canonical identity, Model Facts/limits, capability validation, and resolution failures | [Model Resolution](model-resolution.md) |
-| Provider-neutral invocation plus concrete Anthropic and Relay protocol behavior | [Providers](providers.md) |
+| Provider-neutral invocation plus unified Built-in multi-protocol and Copilot Relay behavior | [Providers](providers.md) |
 | Channel contract, CLI/WebSocket behavior, interactions, attachment ingress, and wire summary | [Channels](channels.md) |
 | Media validation, limits, MIME verification, optimization, drop reasons, and canonical normalization | [Media](media.md) |
 | Agent configuration, precedence, defaults, and policy fields | [Configuration](configuration.md) |

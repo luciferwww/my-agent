@@ -5,7 +5,6 @@ import type {
   ProviderProjectionEntry,
   ResolvedModel,
   ResolutionFailureCategory,
-  SourcedFact,
 } from './types.js';
 
 const PROVIDER_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -82,35 +81,16 @@ export class ModelResolver {
     }
 
     const facts = this.requireFacts(descriptor.facts);
-    const requestedMaxTokens = this.resolveMaxTokens(input);
-    if (requestedMaxTokens.value > facts.maximumOutputTokens.value) {
+    if (input.request.tools && facts.toolUse === false) {
       throw new ModelResolutionError(
         'capability_unsupported',
-        'Requested output limit exceeds the Provider model capability.',
-      );
-    }
-    const toolUse = facts.toolUse;
-    if (input.request.tools && toolUse === undefined) {
-      throw new ModelResolutionError(
-        'facts_insufficient',
-        'Tool Use capability is required but was not declared by the Provider.',
-      );
-    }
-    if (input.request.tools && toolUse?.value !== true) {
-      throw new ModelResolutionError(
-        'capability_unsupported',
-        'The selected model does not declare Tool Use support.',
+        'The selected model does not support Tool Use.',
       );
     }
     if (input.request.mediaKinds.length > 0) {
-      const supported = facts.mediaKinds?.value;
-      if (!supported) {
-        throw new ModelResolutionError(
-          'facts_insufficient',
-          'Media capability is required but was not declared by the Provider.',
-        );
-      }
-      if (input.request.mediaKinds.some((kind) => !supported.includes(kind))) {
+      const supported = facts.mediaKinds;
+      if (supported
+        && input.request.mediaKinds.some((kind) => !supported.includes(kind))) {
         throw new ModelResolutionError(
           'capability_unsupported',
           'The selected model does not support all requested media kinds.',
@@ -128,21 +108,14 @@ export class ModelResolver {
         : {}),
       invocationPort: provider.invocationPort,
       facts: Object.freeze({
-        effectiveContextLimit: Object.freeze({ ...facts.effectiveContextLimit }),
-        maximumOutputTokens: Object.freeze({ ...facts.maximumOutputTokens }),
-        ...(facts.toolUse ? { toolUse: Object.freeze({ ...facts.toolUse }) } : {}),
-        ...(facts.mediaKinds
-          ? {
-              mediaKinds: Object.freeze({
-                ...facts.mediaKinds,
-                value: Object.freeze([...facts.mediaKinds.value]),
-              }),
-            }
+        effectiveContextLimit: facts.effectiveContextLimit,
+        ...(facts.maximumOutputTokens !== undefined
+          ? { maximumOutputTokens: facts.maximumOutputTokens }
           : {}),
-      }),
-      limits: Object.freeze({
-        maxTokens: requestedMaxTokens.value,
-        maxTokensSource: requestedMaxTokens.source,
+        ...(facts.toolUse !== undefined ? { toolUse: facts.toolUse } : {}),
+        ...(facts.mediaKinds
+          ? { mediaKinds: Object.freeze([...facts.mediaKinds]) }
+          : {}),
       }),
     });
   }
@@ -178,54 +151,30 @@ export class ModelResolver {
   }
 
   private requireFacts(facts: ProviderModelFacts): {
-    effectiveContextLimit: SourcedFact<number>;
-    maximumOutputTokens: SourcedFact<number>;
-    toolUse?: SourcedFact<boolean>;
-    mediaKinds?: SourcedFact<readonly string[]>;
+    effectiveContextLimit: number;
+    maximumOutputTokens?: number;
+    toolUse?: boolean;
+    mediaKinds?: readonly string[];
   } {
     if (
-      !isContextLimitFact(facts.effectiveContextLimit)
-      || !isCapabilityLimitFact(facts.maximumOutputTokens)
-      || (facts.toolUse !== undefined && !isCapabilityBooleanFact(facts.toolUse))
-      || (facts.mediaKinds !== undefined && !isMediaKindsFact(facts.mediaKinds))
+      !isPositiveInteger(facts.effectiveContextLimit)
+      || (facts.maximumOutputTokens !== undefined && !isPositiveInteger(facts.maximumOutputTokens))
+      || (facts.toolUse !== undefined && typeof facts.toolUse !== 'boolean')
+      || (facts.mediaKinds !== undefined && !isMediaKinds(facts.mediaKinds))
     ) {
       throw new ModelResolutionError(
         'facts_insufficient',
-        'Provider model facts are missing an execution-critical positive limit or provenance.',
+        'Provider model facts are missing a valid effective Context limit.',
       );
     }
     return {
       effectiveContextLimit: facts.effectiveContextLimit,
-      maximumOutputTokens: facts.maximumOutputTokens,
-      ...(facts.toolUse ? { toolUse: facts.toolUse } : {}),
+      ...(facts.maximumOutputTokens !== undefined
+        ? { maximumOutputTokens: facts.maximumOutputTokens }
+        : {}),
+      ...(facts.toolUse !== undefined ? { toolUse: facts.toolUse } : {}),
       ...(facts.mediaKinds ? { mediaKinds: facts.mediaKinds } : {}),
     };
-  }
-
-  private resolveMaxTokens(input: ModelResolutionInput): {
-    value: number;
-    source: 'policy-default' | 'request-override';
-  } {
-    if (!Number.isInteger(input.policy.defaultMaxTokens) || input.policy.defaultMaxTokens <= 0) {
-      throw new ModelResolutionError('policy_denied', 'Model policy has an invalid default output limit.');
-    }
-    if (
-      input.policy.maximumMaxTokens !== undefined
-      && input.policy.defaultMaxTokens > input.policy.maximumMaxTokens
-    ) {
-      throw new ModelResolutionError('policy_denied', 'Model policy default exceeds its output limit.');
-    }
-    const override = input.requestOverride?.maxOutputTokens;
-    if (override === undefined) {
-      return { value: input.policy.defaultMaxTokens, source: 'policy-default' };
-    }
-    if (!Number.isInteger(override) || override <= 0) {
-      throw new ModelResolutionError('override_unauthorized', 'Output override must be a positive integer.');
-    }
-    if (input.policy.maximumMaxTokens !== undefined && override > input.policy.maximumMaxTokens) {
-      throw new ModelResolutionError('override_unauthorized', 'Output override exceeds the policy limit.');
-    }
-    return { value: override, source: 'request-override' };
   }
 }
 
@@ -238,56 +187,13 @@ function validateProviderId(value: string | undefined): string | undefined {
   return value && PROVIDER_ID.test(value) ? value : undefined;
 }
 
-function isContextLimitFact(
-  fact: SourcedFact<number> | undefined,
-): fact is SourcedFact<number> {
-  return Boolean(
-    fact
-    && Number.isInteger(fact.value)
-    && fact.value > 0
-    && isFactSource(fact.source),
-  );
+function isPositiveInteger(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) > 0;
 }
 
-function isCapabilityLimitFact(
-  fact: SourcedFact<number> | undefined,
-): fact is SourcedFact<number> {
-  return Boolean(
-    isContextLimitFact(fact)
-    && fact.source !== 'provider-default'
-  );
-}
-
-function isCapabilityBooleanFact(
-  fact: SourcedFact<boolean>,
-): boolean {
+function isMediaKinds(value: readonly string[]): boolean {
   return (
-    typeof fact.value === 'boolean'
-    && isCapabilitySource(fact.source)
-  );
-}
-
-function isMediaKindsFact(
-  fact: SourcedFact<readonly string[]>,
-): boolean {
-  return (
-    Array.isArray(fact.value)
-    && fact.value.every((kind) => typeof kind === 'string' && kind.length > 0)
-    && isCapabilitySource(fact.source)
-  );
-}
-
-function isCapabilitySource(source: SourcedFact<unknown>['source']): boolean {
-  return (
-    source === 'deployment-config'
-    || source === 'provider-metadata'
-    || source === 'static-provider-catalog'
-  );
-}
-
-function isFactSource(source: SourcedFact<unknown>['source']): boolean {
-  return (
-    isCapabilitySource(source)
-    || source === 'provider-default'
+    Array.isArray(value)
+    && value.every((kind) => typeof kind === 'string' && kind.length > 0)
   );
 }

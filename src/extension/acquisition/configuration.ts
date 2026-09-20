@@ -4,6 +4,10 @@ import type {
   ExtensionLoaderDiagnosticCategory,
   ExtensionLoaderDiagnosticCode,
 } from './types.js';
+import {
+  CredentialMaterializationError,
+  materializeExactStringCredential,
+} from '../../platform/config/credential-materialization.js';
 
 const MAX_DIAGNOSTIC_FIELD_LENGTH = 200;
 
@@ -48,6 +52,9 @@ export function prepareExtensionConfig(
     return configFailure('config_invalid', 'config_validation_failed');
   }
 
+  const apiKeyFailure = materializeApiKey(config, environment);
+  if (apiKeyFailure !== undefined) return Object.freeze({ ok: false, ...apiKeyFailure });
+
   const referenceFailure = materializeConfigValue(config, environment, '');
   if (referenceFailure !== undefined) {
     return Object.freeze({ ok: false, ...referenceFailure });
@@ -75,6 +82,41 @@ export function prepareExtensionConfig(
     ok: true,
     config: deepFreeze(config),
   });
+}
+
+function materializeApiKey(
+  config: Record<string, unknown>,
+  environment: Readonly<Record<string, string | undefined>>,
+): ConfigReferenceFailure | Readonly<{
+  category: 'config_invalid';
+  code: 'config_validation_failed';
+  referencePath: string;
+}> | undefined {
+  if (typeof config['apiKey'] !== 'string') return undefined;
+  try {
+    const apiKey = materializeExactStringCredential(config['apiKey'], environment);
+    if (apiKey === undefined) delete config['apiKey'];
+    else config['apiKey'] = apiKey;
+    return undefined;
+  } catch (error) {
+    if (
+      error instanceof CredentialMaterializationError
+      && error.secretUnavailable
+      && error.environmentVariable !== undefined
+    ) {
+      return referenceFailure(
+        'secret_unavailable',
+        'environment_secret_unavailable',
+        '/apiKey',
+        error.environmentVariable,
+      );
+    }
+    return {
+      category: 'config_invalid',
+      code: 'config_validation_failed',
+      referencePath: '/apiKey',
+    };
+  }
 }
 
 function materializeConfigValue(
@@ -118,7 +160,9 @@ function resolveReference(
 ): string | ConfigReferenceFailure | undefined {
   if (isExactEnvironmentValueReference(value)) {
     const environmentValue = environment[value.$env];
-    if (environmentValue !== undefined) return environmentValue;
+    if (environmentValue !== undefined && environmentValue.trim().length > 0) {
+      return environmentValue;
+    }
     return referenceFailure(
       'config_invalid',
       'environment_value_unavailable',
@@ -128,7 +172,9 @@ function resolveReference(
   }
   if (isExactEnvironmentSecretReference(value)) {
     const environmentValue = environment[value.$secret.name];
-    if (environmentValue !== undefined) return environmentValue;
+    if (environmentValue !== undefined && environmentValue.trim().length > 0) {
+      return environmentValue;
+    }
     return referenceFailure(
       'secret_unavailable',
       'environment_secret_unavailable',

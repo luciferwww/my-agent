@@ -35,7 +35,6 @@ export interface CreateSubagentDelegationPortParams {
   readonly activeParents: ReadonlyMap<string, ActiveParentTurn>;
   readonly routeContextByTurn: Map<string, MessageRouteContext>;
   readonly sessionManager: SessionManager;
-  readonly defaultMaxTokens: number;
   readonly maxDepth: number;
   readonly executor: SubagentExecutor;
   readonly onEvent: (event: AgentEvent) => void;
@@ -128,7 +127,7 @@ export function createSubagentDelegationPort(
           reference,
           referenceSource: 'native',
           request: requirements,
-          policy: { defaultMaxTokens: params.defaultMaxTokens },
+          policy: {},
         });
         throwIfAborted(parent.signal);
 

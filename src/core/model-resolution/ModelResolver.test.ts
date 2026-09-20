@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ModelInvocationPort } from '../model-invocation/index.js';
 import { ModelResolutionError, ModelResolver } from './ModelResolver.js';
-import type { ModelResolutionInput, ProviderProjectionEntry } from './types.js';
+import type {
+  ModelResolutionInput,
+  ProviderModelFacts,
+  ProviderProjectionEntry,
+} from './types.js';
 
 const port: ModelInvocationPort = {
   chatStream: vi.fn(),
@@ -10,7 +14,7 @@ const port: ModelInvocationPort = {
 
 function provider(overrides: Partial<ProviderProjectionEntry> = {}): ProviderProjectionEntry {
   return {
-    id: 'anthropic-compatible',
+    id: 'test-provider',
     models: [{ modelId: 'test-model' }],
     protocol: 'anthropic-messages',
     invocationPort: port,
@@ -21,14 +25,14 @@ function provider(overrides: Partial<ProviderProjectionEntry> = {}): ProviderPro
     resolveModel: (modelId, connection) => ({
       ok: true,
       descriptor: {
-        identity: { providerId: 'anthropic-compatible', modelId },
+        identity: { providerId: 'test-provider', modelId },
         protocol: 'anthropic-messages',
         connection,
         facts: {
-          effectiveContextLimit: { value: 200_000, source: 'static-provider-catalog' },
-          maximumOutputTokens: { value: 8192, source: 'static-provider-catalog' },
-          toolUse: { value: true, source: 'static-provider-catalog' },
-          mediaKinds: { value: ['image'], source: 'static-provider-catalog' },
+          effectiveContextLimit: 200_000,
+          maximumOutputTokens: 8192,
+          toolUse: true,
+          mediaKinds: ['image'],
         },
       },
     }),
@@ -38,9 +42,9 @@ function provider(overrides: Partial<ProviderProjectionEntry> = {}): ProviderPro
 
 function input(overrides: Partial<ModelResolutionInput> = {}): ModelResolutionInput {
   return {
-    reference: { providerId: 'anthropic-compatible', modelId: 'test-model' },
+    reference: { providerId: 'test-provider', modelId: 'test-model' },
     request: { tools: false, mediaKinds: [] },
-    policy: { defaultMaxTokens: 4096, maximumMaxTokens: 8192 },
+    policy: {},
     ...overrides,
   };
 }
@@ -56,20 +60,18 @@ function expectCategory(action: () => unknown, category: ModelResolutionError['c
 }
 
 describe('ModelResolver', () => {
-  it('atomically resolves an immutable identity, Port, Facts, provenance, and limits binding', () => {
+  it('atomically resolves an immutable identity, Port, and plain Facts binding', () => {
     const resolver = new ModelResolver([provider()]);
-    const resolved = resolver.resolve(input({ requestOverride: { maxOutputTokens: 2048 } }));
+    const resolved = resolver.resolve(input());
 
-    expect(resolved.identity).toEqual({ providerId: 'anthropic-compatible', modelId: 'test-model' });
+    expect(resolved.identity).toEqual({ providerId: 'test-provider', modelId: 'test-model' });
     expect(resolved.referenceSource).toBe('native');
     expect(resolved.invocationPort).toBe(port);
-    expect(resolved.facts.effectiveContextLimit)
-      .toEqual({ value: 200_000, source: 'static-provider-catalog' });
-    expect(resolved.limits).toEqual({ maxTokens: 2048, maxTokensSource: 'request-override' });
+    expect(resolved.facts.effectiveContextLimit).toBe(200_000);
+    expect(resolved.facts.maximumOutputTokens).toBe(8192);
     expect(Object.isFrozen(resolved)).toBe(true);
     expect(Object.isFrozen(resolved.identity)).toBe(true);
     expect(Object.isFrozen(resolved.facts)).toBe(true);
-    expect(Object.isFrozen(resolved.limits)).toBe(true);
   });
 
   it('preserves an opaque Provider-owned Model ID exactly through resolution', () => {
@@ -81,7 +83,7 @@ describe('ModelResolver', () => {
     })]);
 
     const resolved = resolver.resolve(input({
-      reference: { providerId: 'anthropic-compatible', modelId },
+      reference: { providerId: 'test-provider', modelId },
     }));
 
     expect(resolveModel).toHaveBeenCalledWith(modelId, { endpointId: 'https://example.test' });
@@ -92,10 +94,10 @@ describe('ModelResolver', () => {
     const resolver = new ModelResolver([provider({ models: [{ modelId: '' }] })]);
 
     expect(resolver.resolve(input({
-      reference: { providerId: 'anthropic-compatible', modelId: '' },
+      reference: { providerId: 'test-provider', modelId: '' },
     })).identity.modelId).toBe('');
     expectCategory(() => resolver.resolve(input({
-      reference: { providerId: 'anthropic-compatible' } as never,
+      reference: { providerId: 'test-provider' } as never,
     })), 'reference_invalid');
   });
 
@@ -152,9 +154,8 @@ describe('ModelResolver', () => {
     ['connection_invalid', () => new ModelResolver([provider({ resolveConnection: () => ({ ok: false, category: 'connection_invalid', message: 'invalid' }) })]).resolve(input())],
     ['model_rejected', () => new ModelResolver([provider({ resolveModel: () => ({ ok: false, category: 'model_rejected', message: 'rejected' }) })]).resolve(input())],
     ['model_ambiguous', () => new ModelResolver([provider({ resolveModel: () => ({ ok: false, category: 'model_ambiguous', message: 'ambiguous' }) })]).resolve(input())],
-    ['facts_insufficient', () => new ModelResolver([provider({ resolveModel: (modelId, connection) => ({ ok: true, descriptor: { identity: { providerId: 'anthropic-compatible', modelId }, protocol: 'anthropic-messages', connection, facts: {} } }) })]).resolve(input())],
-    ['policy_denied', () => new ModelResolver([provider()]).resolve(input({ policy: { defaultMaxTokens: 4096, allowModel: () => false } }))],
-    ['override_unauthorized', () => new ModelResolver([provider()]).resolve(input({ requestOverride: { maxOutputTokens: 9000 } }))],
+    ['facts_insufficient', () => new ModelResolver([provider({ resolveModel: (modelId, connection) => ({ ok: true, descriptor: { identity: { providerId: 'test-provider', modelId }, protocol: 'anthropic-messages', connection, facts: {} } }) })]).resolve(input())],
+    ['policy_denied', () => new ModelResolver([provider()]).resolve(input({ policy: { allowModel: () => false } }))],
     ['protocol_incompatible', () => new ModelResolver([provider({ protocol: 'other' })]).resolve(input())],
     ['capability_unsupported', () => new ModelResolver([provider()]).resolve(input({ request: { tools: false, mediaKinds: ['audio'] } }))],
   ] as const)('fails closed with %s before invoking the Port', (category, action) => {
@@ -166,13 +167,54 @@ describe('ModelResolver', () => {
     expect(port.chat).not.toHaveBeenCalled();
   });
 
+  it('fails open for unknown Tool and Media capabilities', () => {
+    const base = provider();
+    const resolver = new ModelResolver([provider({
+      resolveModel: (modelId, connection) => {
+        const result = base.resolveModel(modelId, connection);
+        if (!result.ok) return result;
+        return {
+          ok: true,
+          descriptor: {
+            ...result.descriptor,
+            facts: { effectiveContextLimit: 32_768 },
+          },
+        };
+      },
+    })]);
+
+    expect(() => resolver.resolve(input({
+      request: { tools: true, mediaKinds: ['image'] },
+    }))).not.toThrow();
+  });
+
+  it('rejects explicit negative Tool and Media capabilities', () => {
+    const base = provider();
+    const withFacts = (facts: ProviderModelFacts) => provider({
+      resolveModel: (modelId, connection) => {
+        const result = base.resolveModel(modelId, connection);
+        if (!result.ok) return result;
+        return { ok: true, descriptor: { ...result.descriptor, facts } };
+      },
+    });
+
+    expectCategory(() => new ModelResolver([withFacts({
+      effectiveContextLimit: 32_768,
+      toolUse: false,
+    })]).resolve(input({ request: { tools: true, mediaKinds: [] } })), 'capability_unsupported');
+    expectCategory(() => new ModelResolver([withFacts({
+      effectiveContextLimit: 32_768,
+      mediaKinds: [],
+    })]).resolve(input({ request: { tools: false, mediaKinds: ['image'] } })), 'capability_unsupported');
+  });
+
   it('rejects a model outside the closed Catalog before resolving a connection or model', () => {
     const resolveConnection = vi.fn(provider().resolveConnection);
     const resolveModel = vi.fn(provider().resolveModel);
     const resolver = new ModelResolver([provider({ resolveConnection, resolveModel })]);
 
     expectCategory(() => resolver.resolve(input({
-      reference: { providerId: 'anthropic-compatible', modelId: 'not-published' },
+      reference: { providerId: 'test-provider', modelId: 'not-published' },
     })), 'model_rejected');
     expect(resolveConnection).not.toHaveBeenCalled();
     expect(resolveModel).not.toHaveBeenCalled();

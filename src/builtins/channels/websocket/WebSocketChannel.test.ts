@@ -7,6 +7,7 @@ import type {
   ModelCatalogSnapshot,
 } from '../../../core/channel/index.js';
 import { SessionError } from '../../../core/session/index.js';
+import { AttachmentValidationError } from '../../../core/media/attachment-pipeline.js';
 import { WebSocketChannel } from './WebSocketChannel.js';
 
 describe('WebSocketChannel', () => {
@@ -72,7 +73,6 @@ describe('WebSocketChannel', () => {
       sessionId: 'main',
       message: 'hello ws',
       modelReference: { providerId: 'test', modelId },
-      requestOverride: { maxOutputTokens: 2048 },
       maxLlmCalls: 7,
     }));
 
@@ -82,9 +82,38 @@ describe('WebSocketChannel', () => {
         sessionId: 'main',
         message: 'hello ws',
         modelReference: { providerId: 'test', modelId },
-        requestOverride: { maxOutputTokens: 2048 },
         maxLlmCalls: 7,
       });
+    });
+  });
+
+  it('returns an attachment rejection to the originating client', async () => {
+    channel = new WebSocketChannel({ port: 0 });
+    channel.onMessage(async () => {
+      throw new AttachmentValidationError([{ blockIndex: 1, reason: 'mime_mismatch' }]);
+    });
+    await channel.start();
+
+    const client = await connectClient(channel);
+    clients.push(client);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'client-1' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'client-1' });
+    client.send(JSON.stringify({
+      type: 'run_turn',
+      sessionId: 'main',
+      message: [
+        { type: 'text', text: 'do not send without the image' },
+        {
+          type: 'image',
+          source: { type: 'base64', mediaType: 'image/png', data: 'AAAA' },
+        },
+      ],
+    }));
+
+    await expectMessage(client, {
+      type: 'channel_error',
+      code: 'ATTACHMENT_REJECTED',
+      message: 'Inbound message rejected because 1 attachment validation failure(s) occurred.',
     });
   });
 
@@ -145,6 +174,7 @@ describe('WebSocketChannel', () => {
   it.each([
     { model: 'legacy-model' },
     { maxTokens: 2048 },
+    { requestOverride: { maxOutputTokens: 2048 } },
   ])('rejects removed legacy run_turn fields: %j', async (legacyField) => {
     const handler = vi.fn(async () => undefined);
     channel = new WebSocketChannel({ port: 0 });
@@ -164,15 +194,19 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'channel_error',
       code: 'INVALID_MESSAGE',
-      message: 'Legacy model/maxTokens fields are not supported; use modelReference/requestOverride.',
+      message: 'Legacy model/output-token override fields are not supported; use modelReference.',
     });
     expect(handler).not.toHaveBeenCalled();
   });
 
   it.each([
-    { model_reference: { provider_id: 'test', model_id: 'model' } },
-    { request_override: { max_output_tokens: 2048 } },
-  ])('rejects retired snake_case run_turn fields: %j', async (retiredField) => {
+    [{
+      model_reference: { provider_id: 'test', model_id: 'model' },
+    }, 'snake_case fields are not supported; use modelReference.'],
+    [{
+      request_override: { max_output_tokens: 2048 },
+    }, 'Legacy model/output-token override fields are not supported; use modelReference.'],
+  ] as const)('rejects retired snake_case run_turn fields: %j', async (retiredField, message) => {
     const handler = vi.fn(async () => undefined);
     channel = new WebSocketChannel({ port: 0 });
     channel.onMessage(handler);
@@ -191,7 +225,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'channel_error',
       code: 'INVALID_MESSAGE',
-      message: 'snake_case fields are not supported; use modelReference/requestOverride.',
+      message,
     });
     expect(handler).not.toHaveBeenCalled();
   });
@@ -207,7 +241,14 @@ describe('WebSocketChannel', () => {
       providers: [{
         providerId: 'copilot-relay',
         displayName: 'Copilot Relay',
-        models: [{ modelId: 'gpt-5.6-sol', displayName: 'GPT 5.6 Sol' }],
+        models: [
+          { modelId: 'unknown', displayName: 'Unknown' },
+          {
+            modelId: 'gpt-5.6-sol',
+            displayName: 'GPT 5.6 Sol',
+            capabilities: { toolUse: false, mediaKinds: [] },
+          },
+        ],
       }],
     };
 
@@ -239,7 +280,14 @@ describe('WebSocketChannel', () => {
           providers: [{
             providerId: 'copilot-relay',
             displayName: 'Copilot Relay',
-            models: [{ modelId: 'gpt-5.6-sol', displayName: 'GPT 5.6 Sol' }],
+            models: [
+              { modelId: 'unknown', displayName: 'Unknown' },
+              {
+                modelId: 'gpt-5.6-sol',
+                displayName: 'GPT 5.6 Sol',
+                capabilities: { toolUse: false, mediaKinds: [] },
+              },
+            ],
           }],
         },
       });

@@ -1,4 +1,5 @@
 import type { ModelReference } from '../../core/model-resolution/index.js';
+import type { LLMConfig } from '../../builtins/providers/builtin/index.js';
 
 // ── Utility Types ────────────────────────────────────────
 
@@ -16,33 +17,6 @@ export type EmbeddingProviderType = 'local' | 'openai';
 export type SafetyLevel = 'strict' | 'normal' | 'relaxed';
 
 // ── Module Configs ───────────────────────────────────────
-
-/** LLM 配置 */
-export interface LLMDeploymentFactsEntry {
-  /** Exact Provider scope. */
-  providerId: string;
-  /** Exact normalized Endpoint scope. */
-  endpointId: string;
-  /** Exact canonical Model scope. */
-  modelId: string;
-  deploymentId?: string;
-  protocol: string;
-  effectiveContextLimit?: number;
-  maximumOutputTokens?: number;
-  toolUse?: boolean;
-  mediaKinds?: string[];
-}
-
-export interface LLMConfig {
-  /** Anthropic API Key（env ANTHROPIC_API_KEY 优先） */
-  apiKey?: string;
-  /** API base URL（支持 LiteLLM Proxy、MAI-LLMProxy） */
-  baseURL?: string;
-  /** 默认 max tokens */
-  maxTokens: number;
-  /** Provider-owned deployment facts input; semantic validation is performed by Provider Integration. */
-  deploymentFacts?: LLMDeploymentFactsEntry[];
-}
 
 /** 对话压缩配置 */
 export interface CompactionConfig {
@@ -213,9 +187,6 @@ export interface SubagentsConfig {
 
 /** 单个 agent 的完整配置集 */
 export interface AgentDefaults {
-  /** Optional structured Runtime default model. */
-  model?: ModelReference;
-  llm: LLMConfig;
   runner: RunnerConfig;
   memory: MemoryModuleConfig;
   prompt: PromptConfig;
@@ -282,6 +253,8 @@ export interface LoggerModuleConfig {
 export interface AppConfig {
   /** Agent 状态根目录（运行时确定，不来自文件） */
   agentHome: string;
+  /** Application-level LLM selection and optional Built-in Provider. */
+  llm: LLMConfig;
   /** agent 配置（defaults + list） */
   agents: AgentsConfig;
   /** logger 配置 */
@@ -292,11 +265,16 @@ export interface AppConfig {
 
 /** Immutable application-owned projection from the Agent configuration document. */
 export interface ApplicationConfigProjection {
+  readonly llm: LLMConfig;
   readonly agents: AgentsConfig;
   readonly logger: LoggerModuleConfig;
 }
 
 interface AgentApplicationDocument {
+  llm?: {
+    defaultModel?: ModelReference;
+    builtin?: unknown;
+  };
   agents?: {
     defaults?: DeepPartial<AgentDefaults>;
     list?: AgentEntry[];

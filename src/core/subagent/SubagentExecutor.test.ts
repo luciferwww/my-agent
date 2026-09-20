@@ -9,10 +9,9 @@ const resolvedModel = {
   endpointId: 'test',
   invocationPort: {},
   facts: {
-    effectiveContextLimit: { value: 1000, source: 'provider-default' },
-    maximumOutputTokens: { value: 100, source: 'deployment-config' },
+    effectiveContextLimit: 1000,
+    maximumOutputTokens: 100,
   },
-  limits: { maxTokens: 100, maxTokensSource: 'policy-default' },
 } as ResolvedModel;
 
 const toolProjection = {

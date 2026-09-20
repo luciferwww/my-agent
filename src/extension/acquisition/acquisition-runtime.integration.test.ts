@@ -125,12 +125,8 @@ describe('Extension acquisition to Runtime integration', () => {
       const catalog = runtime.application.getModelCatalog();
       expect(catalog.providers.map(({ providerId }) => providerId))
         .not.toContain('fixture-provider');
-      expect(catalog.providers).toContainEqual(expect.objectContaining({
-        providerId: 'anthropic-compatible',
-        models: expect.arrayContaining([
-          expect.objectContaining({ modelId: 'claude-opus-5' }),
-        ]),
-      }));
+      expect(catalog.providers).toEqual([]);
+      expect(catalog.defaultSelection).toEqual({ state: 'unset' });
     } finally {
       await runtime.close('disabled acquisition Runtime integration complete');
     }

@@ -5,10 +5,8 @@ import type {
   ChatContentBlock,
   TokenUsage,
 } from '../core/model-invocation/index.js';
-import type {
-  ModelReference,
-  ModelRequestOverride,
-} from '../core/model-resolution/index.js';
+import type { ModelReference } from '../core/model-resolution/index.js';
+import type { BuiltinLlmProviderConfig } from '../builtins/providers/builtin/index.js';
 import type { MemoryManager } from '../core/memory/MemoryManager.js';
 import type { SystemPromptBuilder } from '../core/prompt/SystemPromptBuilder.js';
 import type { SessionManager, SessionManagerOptions } from '../core/session/SessionManager.js';
@@ -37,12 +35,6 @@ export interface RuntimeResourceSet {
   readonly agentRunner: AgentRunner;
 }
 
-export interface RuntimeProviderOptions {
-  apiKey?: string;
-  baseURL?: string;
-  deploymentFacts?: AgentDefaults['llm']['deploymentFacts'];
-}
-
 export interface RuntimeMemoryOptions {
   agentHome: string;
   enabled: boolean;
@@ -59,7 +51,7 @@ export interface RuntimeBuiltinToolOptions {
 
 export interface RuntimeDependencies {
   acquireExtensions(options: ExtensionAcquisitionOptions): Promise<ExtensionAcquisitionResult>;
-  createBundledProviderUnit(options: RuntimeProviderOptions): LoadedRuntimeUnit;
+  createBuiltinProviderUnit(config: BuiltinLlmProviderConfig): LoadedRuntimeUnit;
   createSessionManager(agentHome: string, options?: SessionManagerOptions): SessionManager;
   createMemoryManager(options: RuntimeMemoryOptions): Promise<MemoryManager | null>;
   createSystemPromptBuilder(): SystemPromptBuilder;
@@ -101,7 +93,6 @@ export interface RunTurnParams {
   sessionId: string;
   message: string | ChatContentBlock[];
   modelReference?: ModelReference;
-  requestOverride?: ModelRequestOverride;
   maxLlmCalls?: number;
   /** v1.0 必填；调用方明确传入，不再回退 config。交互式场景传 'full'，sub-agent / 定时任务传 'minimal' 或 'none' */
   promptMode: 'full' | 'minimal' | 'none';

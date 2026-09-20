@@ -94,6 +94,7 @@ describe('standalone Host composition', () => {
   it('rejects CLI with Console Logger and accepts CLI with File-only Logger', () => {
     const snapshot = (consoleEnabled: boolean): AgentConfigSnapshot => ({
       application: {
+        llm: {},
         agents: { defaults: {} as never, list: [] },
         logger: { console: { enabled: consoleEnabled }, file: { enabled: true } },
       },
@@ -190,7 +191,10 @@ describe('standalone Host composition', () => {
 
     expect(resolvePathContext).toHaveBeenCalledOnce();
   expect(ensureConfig).toHaveBeenCalledWith({ agentHome: pathContext.agentHome });
-    expect(loadConfig).toHaveBeenCalledWith({ agentHome: pathContext.agentHome });
+    expect(loadConfig).toHaveBeenCalledWith({
+      agentHome: pathContext.agentHome,
+      environment,
+    });
   expect(events).toEqual(['paths', 'bootstrap', 'load', 'Runtime']);
     expect(createRuntime).toHaveBeenCalledWith(expect.objectContaining({
       agentHome: pathContext.agentHome,
@@ -211,11 +215,11 @@ describe('standalone Host composition', () => {
     await mkdir(agentHome);
     await mkdir(startupCwd);
     await writeFile(join(agentHome, 'config.json'), JSON.stringify({
-      agents: { defaults: { llm: { maxTokens: 8192 } } },
+      agents: { defaults: { runner: { maxLlmCalls: 8 } } },
       extensions: { enabled: false },
     }), 'utf8');
     await writeFile(join(startupCwd, 'config.json'), JSON.stringify({
-      agents: { defaults: { llm: { maxTokens: 1 } } },
+      agents: { defaults: { runner: { maxLlmCalls: 1 } } },
       extensions: { enabled: true },
     }), 'utf8');
     const readTextFile = vi.fn((path: string) => readFile(path, 'utf8'));
@@ -252,7 +256,7 @@ describe('standalone Host composition', () => {
             application: expect.objectContaining({
               agents: expect.objectContaining({
                 defaults: expect.objectContaining({
-                  llm: expect.objectContaining({ maxTokens: 8192 }),
+                  runner: expect.objectContaining({ maxLlmCalls: 8 }),
                 }),
               }),
             }),
@@ -260,9 +264,9 @@ describe('standalone Host composition', () => {
         }),
       }));
       await expect(readFile(join(startupCwd, 'config.json'), 'utf8'))
-        .resolves.toContain('"maxTokens":1');
+        .resolves.toContain('"maxLlmCalls":1');
       await expect(readFile(join(agentHome, 'config.json'), 'utf8'))
-        .resolves.toContain('"maxTokens":8192');
+        .resolves.toContain('"maxLlmCalls":8');
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
@@ -487,6 +491,7 @@ describe('standalone Host composition', () => {
 function createSnapshot(consoleEnabled = true): AgentConfigSnapshot {
   return {
     application: {
+      llm: {},
       agents: { defaults: {} as never, list: [] },
       logger: { console: { enabled: consoleEnabled } },
     },

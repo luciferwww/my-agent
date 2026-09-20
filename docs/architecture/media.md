@@ -10,9 +10,9 @@
 
 ## 1. Boundary
 
-`src/core/media/` owns the attachment pipeline between [Channel](channels.md) input and Runtime queue admission. It validates ordered inbound text/image blocks and returns canonical `ChatContentBlock[]` plus structured dropped-item reasons.
+`src/core/media/` owns the attachment pipeline between [Channel](channels.md) input and Runtime queue admission. It validates ordered inbound text/image blocks atomically and returns either canonical `ChatContentBlock[]` or structured attachment failures.
 
-Channel owns transport and wire shape. Runtime invokes Media, assembles optional dropped-item notice text, broadcasts summaries, and chooses queued or steering delivery. [Prompt](prompt.md) owns Context Hook placement. [Model Resolution](model-resolution.md) validates the resulting requested media kinds. Provider adapters own SDK/wire conversion.
+Channel owns transport and wire shape. Runtime invokes Media and rejects any failed attachment before broadcast, queueing, persistence, or Provider invocation. On success it broadcasts summaries and chooses queued or steering delivery. [Prompt](prompt.md) owns Context Hook placement. [Model Resolution](model-resolution.md) validates the resulting requested media kinds. Provider adapters own wire conversion.
 
 ## 2. Inbound pipeline
 
@@ -28,7 +28,7 @@ processInboundMessage(...)
 └── normalized blocks + dropped[]
 ```
 
-A string is returned unchanged. Array input remains a canonical block array even if it contains only text. Rejection of one image does not fail the whole message: accepted blocks keep relative order, and each rejected image records its original block index.
+A string is returned unchanged. Array input remains a canonical block array even if it contains only text. Successful blocks keep relative order. If any image fails, the pipeline returns no admissible content and records each detected failure by original block index.
 
 Image count ignores text blocks. The aggregate budget is charged after base64 decode and the per-item check, before MIME/metadata validation and optimization. Node base64 decoding may tolerate invalid characters; unreadable decoded bytes are rejected by metadata sniffing rather than accepted as an image.
 
@@ -38,11 +38,11 @@ Image count ignores text blocks. The aggregate budget is charged after base64 de
 
 ## 4. Image normalization and optimization
 
-`processImageAttachment()` applies the allowlist, verifies bytes, and attaches dimensions. Oversized accepted images pass through the Sharp-backed optimizer for EXIF rotation, bounded resizing, transparency flattening, and JPEG quality reduction; failure returns a structured drop rather than throwing the whole message.
+`processImageAttachment()` applies the allowlist, verifies bytes, and attaches dimensions. Oversized accepted images pass through the Sharp-backed optimizer for EXIF rotation, bounded resizing, transparency flattening, and JPEG quality reduction; any failure causes Runtime to reject the complete inbound message.
 
 ## 5. Drop results
 
-The pipeline returns neutral Core drop reasons for unsupported/mismatched/unreadable media, size/count/aggregate limits, and failed optimization. Media does not own user-visible wording; Runtime assembles the aggregate notice.
+The pipeline returns neutral Core failure reasons for unsupported/mismatched/unreadable media, size/count/aggregate limits, and failed optimization. Media does not own user-visible wording; Runtime raises `AttachmentValidationError` before any message side effect.
 
 ## 6. Downstream use
 

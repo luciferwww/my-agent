@@ -2,12 +2,12 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-16
+> Verified: 2026-09-20
 > Authority: Stable Agent configuration contract
 
 ## Scope
 
-Own Agent configuration types/defaults, the sole `<agentHome>/config.json` document, one-read immutable Application/Extension projections, deep merge, five-stage Agent precedence, environment/caller overrides, default Model Reference input, Context loading budgets, and Tool/Subagent policy. Extension projection semantics belong to [Extension Acquisition](extension-acquisition.md). Host-private process and Channel selection are not configuration namespaces.
+Own the sole `<agentHome>/config.json` document, application composition, one-read immutable Application/Extension projections, deep merge, five-stage Agent precedence, credential materialization, environment/caller overrides, default Model Reference input, Context loading budgets, and Tool/Subagent policy. Modules own leaf contracts and behavioral defaults; the Built-in LLM contract lives under `src/builtins/providers/builtin/`. Extension projection semantics belong to [Extension Acquisition](extension-acquisition.md). Host-private process and Channel selection are not configuration namespaces.
 
 ## Loading and precedence
 
@@ -21,15 +21,17 @@ Precedence is:
 
 ## Stable shape and ownership
 
-- `AgentDefaults.model?: { providerId, modelId }` is the optional preferred reference for a Root Turn without an explicit selection, not resolved facts, a mandatory startup model, a Child default, or a fallback list.
-- LLM connection/token/deployment-facts fields are inputs to narrower boundaries.
+- `llm.defaultModel?: { providerId, modelId }` is the optional preferred reference for a Root Turn without an explicit selection and the client Catalog default, not resolved facts, a mandatory startup model, a Child default, or a fallback list.
+- `llm.builtin?: { baseURL, apiKey?, models[] }` configures one optional Built-in Provider. Each model declares an opaque `modelId`, one of the three supported protocols, and optional `displayName`; an empty list is valid.
+- Built-in `apiKey` accepts a literal or one exact `${ENV_VAR}` reference. Platform materializes it once and fails safely when the referenced value is missing or blank. Arbitrary interpolation is not supported.
+- Public output-token configuration is removed. There is no `llm.maxTokens`, replacement output-limit field, or Agent-level LLM compatibility path.
 - Tool policy includes only allow and deny; there is no `tools.fs` subtree.
 - `AgentDefaults.context` owns Agent Context per-file and total loading budgets.
 - Subagent policy includes enablement, max depth, and profile list.
 - Configuration does not own Catalog membership, canonical Model identity, effective facts, Provider semantics, or Runtime lifecycle.
-- The only top-level namespaces are `agents`, `logger`, and `extensions`; the physical-load snapshot contains only immutable `application` and `extensions` projections.
+- The only top-level namespaces are `llm`, `agents`, `logger`, and `extensions`; the physical-load snapshot contains only immutable `application` and `extensions` projections.
 
-Unknown fields are rejected rather than ignored or treated as aliases. Top-level `host` and `agents.defaults.workspace` or per-agent `workspace` are explicitly invalid.
+Unknown fields are rejected rather than ignored or treated as aliases. Top-level `host`, Agent-level `model`/`llm`, and `agents.defaults.workspace` or per-agent `workspace` are explicitly invalid.
 
 Tool deny hides matching definitions and remains final at execution. For structured path Tools, lexically external declared targets require current-call Approval even when the Tool name is allowed; internal allowed targets bypass Approval. Unmatched Tools require Approval capability and fail closed without it. Exec allow grants arbitrary Shell authority without Approval, while unmatched Exec calls require Approval and fail closed without it. Exact names and `*`/`?` globs are supported; `group:*` is not.
 
@@ -37,7 +39,7 @@ Agent Home is the relative path anchor, not a confinement boundary. Approval is 
 
 ## Acceptance scenarios
 
-Cover each precedence stage, object/array/scalar merge, partial model environment override, absent/invalid files, one-read immutable Application/Extension projections, per-agent metadata exclusion, direct rejection of `host` and other retired fields, Context budget projection, and Tool glob policy.
+Cover each precedence stage, object/array/scalar merge, partial model environment override, absent/invalid files, one-read immutable Application/Extension projections, Built-in endpoint/model validation, exact credential reference materialization, per-agent metadata exclusion, direct rejection of `host` and other retired fields, Context budget projection, and Tool glob policy.
 
 ## Related authority
 

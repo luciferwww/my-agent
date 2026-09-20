@@ -6,3 +6,4 @@
  */
 
 export * from './constants.js';
+export * from './attachment-pipeline.js';

@@ -2,12 +2,12 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-15
+> Verified: 2026-09-20
 > Authority: Stable Model identity, Catalog, facts, and Turn-binding contract
 
 ## Scope
 
-Own structured Model References, Provider projection and closed Catalog membership, Provider-ID normalization, opaque Model-ID preservation, connection/model resolution, fact provenance, policy/override/capability checks, immutable per-Turn binding, and failure categories.
+Own structured Model References, Provider projection and closed Catalog membership, Provider-ID normalization, opaque Model-ID preservation, connection/model resolution, plain Model Facts, policy/capability checks, immutable per-Turn binding, and failure categories.
 
 ## Contracts
 
@@ -24,7 +24,7 @@ interface ProviderProjectionEntry {
 }
 ```
 
-A Resolved Model atomically binds canonical identity, reference source, protocol, endpoint/deployment identity, invocation Port, sourced context/output/tool/media facts, and effective output limit/source.
+A Resolved Model atomically binds canonical identity, reference source, protocol, endpoint/deployment identity, invocation Port, and final plain context/output/tool/media facts.
 
 ## Resolution order and invariants
 
@@ -36,15 +36,14 @@ A Resolved Model atomically binds canonical identity, reference source, protocol
 6. Resolve the exact model descriptor.
 7. Verify identity, protocol, endpoint, and facts.
 8. Apply policy.
-9. Validate request override.
-10. Validate required capabilities.
-11. Freeze the Turn binding.
+9. Validate required capabilities.
+10. Freeze the Turn binding.
 
-Catalog membership is checked before connection/model resolution and never invokes a Provider. All execution-critical facts are positive and sourced. Context may use Provider default; output/Tool/media capabilities require specific trusted provenance. Missing requirements fail closed.
+Catalog membership is checked before connection/model resolution and never invokes a Provider. A positive effective Context limit is required. Tool and Media facts are optional: unknown capabilities fail open, while an explicit negative or missing requested media kind fails before invocation. `ModelFactSource` and `SourcedFact<T>` are not public contracts; Provider Integration owns precedence and publishes final values.
 
-`models` and `resolveModel()` are two projections of one immutable Provider-instance model snapshot. This is a Provider contract obligation because the Host must not inspect or duplicate Provider-private fact sources. Registry and Model Resolution enforce the observable boundary: unique exact Model IDs, membership before Provider work, and returned identity/protocol/selected-endpoint consistency. The model descriptor may add its model-specific deployment identity. Current Anthropic and Relay Providers derive both projections from one captured model map.
+`models` and `resolveModel()` are two projections of one immutable Provider-instance model snapshot. This is a Provider contract obligation because the Host must not inspect or duplicate Provider-private fact sources. Registry and Model Resolution enforce the observable boundary: unique exact Model IDs, membership before Provider work, and returned identity/protocol/selected-endpoint consistency. The model descriptor may add its model-specific deployment identity. Current unified Built-in and Copilot Relay Providers derive both projections from one captured model map.
 
-No first-Provider/default fallback, brand guessing, paid probing, silent Provider switch, or Core-owned Provider table is allowed. Active Turns keep one binding through Tool rounds and Compaction retries. Children resolve independently against the inherited generation.
+No first-Provider/default fallback, brand guessing, paid probing, silent Provider switch, or Core-owned Provider table is allowed. There is no public output-token override or resolved output-limit policy; optional trusted `maximumOutputTokens` metadata is informational. Active Turns keep one binding through Tool rounds and Compaction retries. Children resolve independently against the inherited generation.
 
 ## Failure categories
 
@@ -52,7 +51,7 @@ Exactly: `provider_unregistered`, `connection_missing`, `connection_invalid`, `r
 
 ## Catalog and Channel boundary
 
-Each Provider publishes a closed, duplicate-free, deeply frozen Catalog derived from the same immutable facts as `resolveModel()`. Runtime exposes a frozen transport-safe DTO. `AgentDefaults.model?: ModelReference` is an optional preferred reference for a Root Turn that omits an explicit selection; it is not a fallback list and is not inherited directly by Children. An absent or invalid default does not select the first Provider.
+Each Provider publishes a closed, duplicate-free, deeply frozen Catalog derived from the same immutable facts as `resolveModel()`. Runtime exposes a frozen transport-safe DTO with optional known Tool/Media capabilities; absent capabilities remain absent. `llm.defaultModel?: ModelReference` is an optional preferred reference for a Root Turn that omits an explicit selection and the Catalog's client default; it is not a fallback list and is not inherited directly by Children. Its Catalog state is `unset`, `available`, or `unavailable`. An absent or unavailable default does not select the first Provider.
 
 Optional Relay acquisition resolves eligible `/responses` models during Unit creation and publishes only entries with required facts. Discovery/candidate failure cannot replace the current generation. Channels receive only immutable Catalog query and Abort capabilities and submit structured `{ providerId, modelId }`; Resolver remains authoritative.
 
@@ -60,8 +59,8 @@ An unavailable explicit or configured reference fails as `provider_unregistered`
 
 ## Acceptance scenarios
 
-Cover exact Catalog membership before connection, opaque Model IDs, connection/fact failures, policy/override/capability checks, no invocation on failure, immutable result, default absence, no first-Provider fallback, Parent/Child generation consistency, Relay Catalog eligibility, frozen transport DTO, and Channel structured selection.
+Cover exact Catalog membership before connection, opaque Model IDs, connection/fact failures, policy/capability checks, unknown versus explicit-negative capabilities, no invocation on failure, immutable result, all default-selection states, no first-Provider fallback, Parent/Child generation consistency, Relay Catalog eligibility, frozen transport DTO, and Channel structured selection.
 
 ## Related authority
 
-[Model Resolution](../architecture/model-resolution.md) owns current implementation facts and [ADR-004](../decisions/adr-004-provider-model-identity-and-facts-ownership.md) owns identity and fact provenance.
+[Model Resolution](../architecture/model-resolution.md) owns current implementation facts. [ADR-004](../decisions/adr-004-provider-model-identity-and-facts-ownership.md) retains Provider fact ownership and immutable Turn binding; [ADR-016](../decisions/adr-016-unified-builtin-llm-provider.md) supersedes its public per-fact provenance requirement.

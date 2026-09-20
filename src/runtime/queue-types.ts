@@ -4,7 +4,7 @@ import type { RunTurnParams } from './types.js';
 
 export type TurnLaunchContext = Pick<
   RunTurnParams,
-  'modelReference' | 'requestOverride' | 'maxLlmCalls'
+  'modelReference' | 'maxLlmCalls'
 >;
 
 export type MessageRouteContext = {

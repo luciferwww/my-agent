@@ -28,7 +28,6 @@ type LegacyTestRunParams = Omit<
   'resolvedModel' | 'toolProjection' | 'hookProjection' | 'toolPolicy'
 > & {
   model: string;
-  maxTokens?: number;
   contextWindowTokens?: number;
   tools?: ToolDefinition[];
 };
@@ -44,7 +43,6 @@ type ToolExecutor = (
   context: ToolExecutionContext,
 ) => Promise<ToolResult>;
 
-const TEST_POLICY_DEFAULT_MAX_TOKENS = 4096;
 const MAIN_SESSION_ID = '00000000-0000-4000-8000-000000000101';
 const CHILD_SESSION_ID = '00000000-0000-4000-8000-000000000102';
 const OTHER_SESSION_ID = '00000000-0000-4000-8000-000000000103';
@@ -101,7 +99,7 @@ class AgentRunner extends ProductionAgentRunner {
     if ('resolvedModel' in params) {
       return super.run(params);
     }
-    const { model, maxTokens, contextWindowTokens, tools = [], ...rest } = params;
+    const { model, contextWindowTokens, tools = [], ...rest } = params;
     const toolProjection = this.makeToolProjection(tools);
     return super.run({
       ...rest,
@@ -115,18 +113,10 @@ class AgentRunner extends ProductionAgentRunner {
         endpointId: 'test',
         invocationPort: this.testInvocationPort,
         facts: {
-          effectiveContextLimit: {
-            value: contextWindowTokens ?? 200_000,
-            source: 'deployment-config',
-          },
-          maximumOutputTokens: { value: 1_000_000, source: 'deployment-config' },
-          toolUse: { value: true, source: 'deployment-config' },
-          mediaKinds: { value: ['image'], source: 'deployment-config' },
-        },
-        limits: {
-          // Test-only pre-resolution input adapter: omission selects the simulated Model Policy default.
-          maxTokens: maxTokens ?? TEST_POLICY_DEFAULT_MAX_TOKENS,
-          maxTokensSource: maxTokens === undefined ? 'policy-default' : 'request-override',
+          effectiveContextLimit: contextWindowTokens ?? 200_000,
+          maximumOutputTokens: 1_000_000,
+          toolUse: true,
+          mediaKinds: ['image'],
         },
       },
     });

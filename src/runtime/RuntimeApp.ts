@@ -23,10 +23,9 @@ import { Logger } from '../platform/logger/index.js';
 import { loadContextFiles } from '../core/agent-context/index.js';
 import type { ContextFile } from '../core/agent-context/types.js';
 import {
+  AttachmentValidationError,
   processInboundMessage,
-  type DroppedAttachment,
 } from '../core/media/attachment-pipeline.js';
-import { ATTACHMENT_DROP_NOTICE_DEFAULT } from '../core/media/constants.js';
 import { classifyRuntimeError, createRuntimeError } from './errors.js';
 import {
   buildRuntimeHandle,
@@ -339,9 +338,21 @@ export class RuntimeApp {
       models: Object.freeze(provider.models.map((model) => Object.freeze({
         modelId: model.modelId,
         displayName: model.displayName ?? model.modelId,
+        ...(model.capabilities
+          ? {
+              capabilities: Object.freeze({
+                ...(model.capabilities.toolUse !== undefined
+                  ? { toolUse: model.capabilities.toolUse }
+                  : {}),
+                ...(model.capabilities.mediaKinds !== undefined
+                  ? { mediaKinds: Object.freeze([...model.capabilities.mediaKinds]) }
+                  : {}),
+              }),
+            }
+          : {}),
       }))),
     })));
-    const configured = this.resources.resolvedConfig.model;
+    const configured = this.resources.appConfig.llm.defaultModel;
     let defaultSelection: ModelCatalogSnapshot['defaultSelection'];
     if (!configured) {
       defaultSelection = Object.freeze({ state: 'unset' });
@@ -616,8 +627,7 @@ export class RuntimeApp {
 
   /**
   * All inbound Channel messages pass through Runtime intake: media processing,
-  * placeholder assembly, user_message broadcast, steering routing, then queueing.
-  * Decision 8 drops failed attachments with an optional text placeholder.
+  * atomic media validation, user_message broadcast, steering routing, then queueing.
   * user_message is emitted after assembly and before queued/steering routing.
    */
   private async handleInboundChannelMessage(
@@ -629,16 +639,16 @@ export class RuntimeApp {
       clientId: req.clientId,
       sessionKey: req.sessionId,
       hasModelOverride: req.modelReference !== undefined,
-      hasMaxOutputTokens: req.requestOverride?.maxOutputTokens !== undefined,
       hasMaxLlmCalls: req.maxLlmCalls !== undefined,
       messageChars: typeof req.message === 'string' ? req.message.length : undefined,
       attachmentCount: Array.isArray(req.message) ? req.message.length : 0,
     });
-    // Media processing reports failed or oversized attachments in dropped.
     const { normalized, dropped } = await processInboundMessage(req.message);
+    if (dropped.length > 0) {
+      throw new AttachmentValidationError(dropped);
+    }
 
-    // Assemble failure notices and skip degenerate empty input.
-    const assembled = this.assembleInboundMessage(normalized, dropped);
+    const assembled = this.assembleInboundMessage(normalized);
     if (assembled === undefined) return;
 
     const assembledMessageChars =
@@ -720,21 +730,15 @@ export class RuntimeApp {
   }
 
   /**
-   * Assemble media output and dropped-attachment notices into a queueable message.
+   * Reject degenerate normalized input before it reaches the Session queue.
    *
    * undefined means there is no text, successful attachment, or placeholder to queue.
    */
   private assembleInboundMessage(
     normalized: string | ChatContentBlock[],
-    dropped: DroppedAttachment[],
   ): string | ChatContentBlock[] | undefined {
-    const notice = dropped.length > 0 && ATTACHMENT_DROP_NOTICE_DEFAULT
-      ? `[系统提示：${dropped.length} 个附件因无法处理已忽略]`
-      : '';
-
     if (typeof normalized === 'string') {
-      const body = notice ? (normalized ? `${normalized}\n\n${notice}` : notice) : normalized;
-      return body.trim() === '' ? undefined : body;
+      return normalized.trim() === '' ? undefined : normalized;
     }
 
     // Meaningful arrays contain a non-text block or non-empty trimmed text.
@@ -742,20 +746,9 @@ export class RuntimeApp {
       (b) => b.type !== 'text' || (b as { type: 'text'; text: string }).text.trim() !== '',
     );
     if (!hasContent) {
-      return notice ? notice : undefined;
+      return undefined;
     }
-    if (!notice) return normalized;
-
-    // Append the notice to the first text block, or add a text block at the end.
-    const hostIndex = normalized.findIndex((b) => b.type === 'text');
-    if (hostIndex >= 0) {
-      return normalized.map((b, i) =>
-        i === hostIndex
-          ? { type: 'text', text: `${(b as { type: 'text'; text: string }).text}\n\n${notice}` }
-          : b,
-      );
-    }
-    return [...normalized, { type: 'text', text: notice }];
+    return normalized;
   }
 
   /**
@@ -770,7 +763,6 @@ export class RuntimeApp {
   private buildTurnLaunchContext(req: ChannelRunRequest): TurnLaunchContext | undefined {
     if (
       req.modelReference === undefined
-      && req.requestOverride === undefined
       && req.maxLlmCalls === undefined
     ) {
       return undefined;
@@ -778,7 +770,6 @@ export class RuntimeApp {
 
     return {
       modelReference: req.modelReference,
-      requestOverride: req.requestOverride,
       maxLlmCalls: req.maxLlmCalls,
     };
   }
@@ -881,7 +872,6 @@ export class RuntimeApp {
         message: item.message,
         promptMode: 'full',
         modelReference: item.launchContext?.modelReference,
-        requestOverride: item.launchContext?.requestOverride,
         maxLlmCalls: item.launchContext?.maxLlmCalls,
         turnId,
         originMessageId: item.originMessageId,
@@ -1352,7 +1342,7 @@ export class RuntimeApp {
       );
 
       const resolvedModel = new ModelResolver(snapshot.providers).resolve({
-        reference: params.modelReference ?? this.resources.resolvedConfig.model,
+        reference: params.modelReference ?? this.resources.appConfig.llm.defaultModel,
         referenceSource: params.modelReference === undefined ? 'config-default' : 'turn-explicit',
         request: {
           tools: visibleToolDefinitions.length > 0,
@@ -1361,8 +1351,7 @@ export class RuntimeApp {
             ? ['image']
             : [],
         },
-        requestOverride: params.requestOverride,
-        policy: { defaultMaxTokens: this.resources.resolvedConfig.llm.maxTokens },
+        policy: {},
       });
 
       const systemPrompt = this.resources.systemPromptBuilder.build(
