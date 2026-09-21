@@ -32,9 +32,9 @@ describe('loadAgentConfig', () => {
   it('reads only the Agent Home document once and ignores project-local config', async () => {
     const startupCwd = join(agentHome, 'project');
     await mkdir(startupCwd);
-    await writeConfig({ agents: { defaults: { runner: { maxLlmCalls: 8 } } } });
+    await writeConfig({ runner: { maxLlmCalls: 8 } });
     await writeFile(join(startupCwd, 'config.json'), JSON.stringify({
-      agents: { defaults: { runner: { maxLlmCalls: 1 } } },
+      runner: { maxLlmCalls: 1 },
     }), 'utf8');
     const readTextFile = vi.fn((path: string) => readFile(path, 'utf8'));
 
@@ -42,7 +42,7 @@ describe('loadAgentConfig', () => {
 
     expect(readTextFile).toHaveBeenCalledTimes(1);
     expect(readTextFile).toHaveBeenCalledWith(join(agentHome, 'config.json'));
-    expect(snapshot.application.agents.defaults.runner.maxLlmCalls).toBe(8);
+    expect(snapshot.application.runner.maxLlmCalls).toBe(8);
     await expect(readFile(join(startupCwd, 'config.json'), 'utf8'))
       .resolves.toContain('"maxLlmCalls":1');
   });
@@ -58,6 +58,17 @@ describe('loadAgentConfig', () => {
       maxFileChars: 1234,
       maxTotalChars: 5678,
     });
+  });
+
+  it('defaults Runtime steering off and leaves the Runner budget absent', async () => {
+    await writeConfig({});
+
+    const snapshot = await loadAgentConfig({ agentHome });
+
+    expect(snapshot.application.runtime).toEqual({
+      steeringEnabled: false,
+    });
+    expect(snapshot.application.runner).toEqual({});
   });
 
   it.each([
@@ -93,8 +104,10 @@ describe('loadAgentConfig', () => {
     await writeConfig({
       agents: {
         defaults: {},
-        list: [{ id: 'reviewer', default: true, runner: { maxLlmCalls: 3 } }],
+        list: [{ id: 'reviewer', default: true, memory: { enabled: false } }],
       },
+      runtime: { steeringEnabled: true },
+      runner: { maxLlmCalls: 3 },
       llm: {
         defaultModel: { providerId: 'builtin', modelId: 'model-a' },
         builtin: {
@@ -130,9 +143,10 @@ describe('loadAgentConfig', () => {
         models: [{ modelId: 'model-a', protocol: 'openai-responses' }],
       },
     });
-    expect(snapshot.application.agents.defaults.runner).toEqual(DEFAULT_AGENT_CONFIG.runner);
+    expect(snapshot.application.runtime).toEqual({ steeringEnabled: true });
+    expect(snapshot.application.runner).toEqual({ maxLlmCalls: 3 });
     expect(snapshot.application.agents.list).toEqual([
-      { id: 'reviewer', default: true, runner: { maxLlmCalls: 3 } },
+      { id: 'reviewer', default: true, memory: { enabled: false } },
     ]);
     expect(snapshot.application.logger).toEqual({
       minLevel: 'warn',
@@ -268,6 +282,18 @@ describe('loadAgentConfig', () => {
     [{ llm: { builtin: { baseURL: 'https://example.test', models: {} } } }, 'llm.builtin.models'],
     [{ agents: { defaults: { tools: { fs: {} } } } }, 'agents.defaults.tools.fs'],
     [{ agents: { list: [{ id: 'a', tools: { fs: {} } }] } }, 'agents.list[0].tools.fs'],
+    [{ runtime: [] }, 'runtime'],
+    [{ runtime: { steeringEnabled: 'yes' } }, 'runtime.steeringEnabled'],
+    [{ runtime: { unknown: true } }, 'runtime.unknown'],
+    [{ runner: [] }, 'runner'],
+    [{ runner: { maxLlmCalls: 0 } }, 'runner.maxLlmCalls'],
+    [{ runner: { maxLlmCalls: 1.5 } }, 'runner.maxLlmCalls'],
+    [{ runner: { maxLlmCalls: '12' } }, 'runner.maxLlmCalls'],
+    [{ runner: { inTurnMessageMode: 'steer' } }, 'runner.inTurnMessageMode'],
+    [{ agents: { defaults: { runtime: { steeringEnabled: true } } } }, 'agents.defaults.runtime'],
+    [{ agents: { defaults: { runner: { maxLlmCalls: 1 } } } }, 'agents.defaults.runner'],
+    [{ agents: { list: [{ id: 'a', runtime: { steeringEnabled: true } }] } }, 'agents.list[0].runtime'],
+    [{ agents: { list: [{ id: 'a', runner: { maxLlmCalls: 1 } }] } }, 'agents.list[0].runner'],
     [{ logger: [] }, 'logger'],
     [{ logger: { minLevel: 'verbose' } }, 'logger.minLevel'],
     [{ logger: { console: true } }, 'logger.console'],

@@ -46,6 +46,7 @@ const MIXED_PRODUCTION_PATHS = new Set([
   'src/extension/api/contracts.ts',
   'src/extension/api/index.ts',
   'src/runtime/bootstrap.ts',
+  'src/runtime/config.ts',
   'src/runtime/errors.ts',
   'src/runtime/glob-match.ts',
   'src/runtime/index.ts',

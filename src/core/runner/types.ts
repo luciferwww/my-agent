@@ -58,7 +58,7 @@ export interface RunParams {
   toolPolicy: ApplicationToolPolicy;
   /** Approval capability of this caller; requires-approval fails closed when absent. */
   approvalCapability?: CurrentCallApprovalCapability;
-  /** Maximum LLM calls for one run; defaults to 12. */
+  /** Maximum LLM calls for one run; omitted means no count limit. */
   maxLlmCalls?: number;
   /** Reader consumed only at steering injection points. */
   getSteeringMessages?: PendingMessageReader;

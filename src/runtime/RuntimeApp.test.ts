@@ -27,6 +27,8 @@ import type { RuntimeHandle } from './runtime-composition.js';
 import type { RuntimeDependencies, RuntimeEvent } from './types.js';
 import type { RuntimeDeadlineDriver, RuntimeDeadlineRaceResult } from './runtime-deadline.js';
 import { Logger } from '../platform/logger/index.js';
+import { DEFAULT_RUNNER_CONFIG } from '../core/runner/config.js';
+import { DEFAULT_RUNTIME_CONFIG } from './config.js';
 
 function testApplicationConfig(
   defaultModel: { readonly providerId: string; readonly modelId: string } | null = {
@@ -42,6 +44,8 @@ function testApplicationConfig(
         models: [{ modelId: 'test-model', protocol: 'openai-responses' }],
       },
     },
+    runtime: structuredClone(DEFAULT_RUNTIME_CONFIG),
+    runner: structuredClone(DEFAULT_RUNNER_CONFIG),
     agents: {
       defaults: structuredClone(DEFAULT_AGENT_CONFIG),
       list: [],
@@ -282,7 +286,7 @@ describe('RuntimeApp', () => {
       candidate === sessionId ? sessionEntry(sessionId) : undefined,
     );
     const build = vi.fn(() => 'SYSTEM_PROMPT');
-    const runnerRun = vi.fn(async (): Promise<RunResult> => ({
+    const runnerRun = vi.fn(async (_params: RunParams): Promise<RunResult> => ({
       text: 'hello',
       content: [{ type: 'text', text: 'hello' }],
       stopReason: 'end_turn',
@@ -389,6 +393,43 @@ describe('RuntimeApp', () => {
     await app.close();
   });
 
+  it('uses the global Runner limit unless the Turn supplies an override', async () => {
+    const runnerRun = vi.fn(async (_params: RunParams): Promise<RunResult> => ({
+      text: 'ok',
+      content: [{ type: 'text', text: 'ok' }],
+      stopReason: 'end_turn',
+      usage: { inputTokens: 1, outputTokens: 1 },
+      toolRounds: 0,
+    }));
+    const app = await RuntimeApp.create({
+      agentHome,
+      applicationConfig: {
+        ...testApplicationConfig(),
+        runner: { maxLlmCalls: 7 },
+      },
+      cliOverrides: { memory: { enabled: false } },
+      dependencies: createTestDependencies({
+        createAgentRunner: () => ({ run: runnerRun }) as never,
+      }),
+    });
+
+    await app.application.runTurn({
+      sessionId: 'global-limit',
+      message: 'global',
+      promptMode: 'full',
+    });
+    await app.application.runTurn({
+      sessionId: 'turn-limit',
+      message: 'turn',
+      promptMode: 'full',
+      maxLlmCalls: 2,
+    });
+
+    expect(runnerRun.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ maxLlmCalls: 7 }));
+    expect(runnerRun.mock.calls[1]?.[0]).toEqual(expect.objectContaining({ maxLlmCalls: 2 }));
+    await app.close();
+  });
+
   it('returns a deep-frozen transport-safe Catalog with an available default', async () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
@@ -433,6 +474,8 @@ describe('RuntimeApp', () => {
           defaultModel: { providerId: 'builtin', modelId: 'staged-model' },
           builtin: { baseURL: 'https://example.test/v1', models: [] },
         },
+        runtime: structuredClone(DEFAULT_RUNTIME_CONFIG),
+        runner: structuredClone(DEFAULT_RUNNER_CONFIG),
         agents: {
           defaults: structuredClone(DEFAULT_AGENT_CONFIG),
           list: [],
@@ -1657,10 +1700,12 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
-      applicationConfig: testApplicationConfig(),
+      applicationConfig: {
+        ...testApplicationConfig(),
+        runtime: { steeringEnabled: true },
+      },
       cliOverrides: {
         memory: { enabled: false },
-        runner: { inTurnMessageMode: 'steer' },
       },
       dependencies: deps,
     });
@@ -2172,10 +2217,12 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
         loadedUnits: [testChannel.unit],
-        applicationConfig: testApplicationConfig(),
+        applicationConfig: {
+          ...testApplicationConfig(),
+          runtime: { steeringEnabled: true },
+        },
         cliOverrides: {
           memory: { enabled: false },
-          runner: { inTurnMessageMode: 'steer' },
         },
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,

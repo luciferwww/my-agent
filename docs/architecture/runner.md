@@ -8,13 +8,13 @@
 
 ## 1. Boundary
 
-`src/core/runner/` is the Agent execution engine. For one Turn it consumes a resolved Provider-neutral invocation Port, immutable Tool and Hook projections, application Tool policy, and optional current-call approval capability. It joins [Session persistence](session.md), [Tool execution](tools.md), streaming Model invocation, context management, and steering into the conversation loop.
+`src/core/runner/` is the Agent execution engine and owns `RunnerConfig`. For one Turn it consumes a resolved Provider-neutral invocation Port, immutable Tool and Hook projections, application Tool policy, and optional current-call approval capability. It joins [Session persistence](session.md), [Tool execution](tools.md), streaming Model invocation, context management, and steering into the conversation loop.
 
 Runner does not load configuration, read environment variables, discover or register Units, select Providers, infer Model facts, manage Channel transport, or own root request-tree admission. Those responsibilities belong to [Runtime](runtime.md), [Model Resolution](model-resolution.md), and [Channels](channels.md).
 
 ## 2. Inputs and result
 
-Runtime supplies Session and request identity, normalized input, one Turn-bound `ResolvedModel`, immutable Tool/Hook projections, Tool policy, optional Approval/steering capabilities, Compaction policy, and Abort signal. Runner neither calls configuration loaders nor reads `process.env`.
+Runtime supplies Session and request identity, normalized input, one Turn-bound `ResolvedModel`, immutable Tool/Hook projections, Tool policy, optional Approval/steering capabilities, optional `maxLlmCalls`, Compaction policy, and Abort signal. Runner neither calls configuration loaders nor reads `process.env`. Omitted `maxLlmCalls` means no Model-call count limit.
 
 `RunResult` contains final text, complete final Assistant blocks, stop reason, cumulative usage for completed Model calls, Tool-round count, and whether any Compaction retry occurred. Detailed Compaction statistics are events and persisted records rather than additional result fields.
 
@@ -54,9 +54,9 @@ Missing IDs receive `[tool call interrupted; session recovered]`. The event sour
 
 Each loop iteration must check Abort before quota, steering injection, event emission, and invocation. `AgentRunner` streams through the bound invocation Port, persists Assistant blocks, executes complete canonical Tool Calls in Provider order, persists one correlated Tool Result batch, settles observers, applies in-memory pruning, and then consumes steering for the next call.
 
-The quota counts actual Model calls, including a final call without Tools. The check occurs before each invocation, so Abort before a call consumes neither quota nor an `llm_call` event. Usage is summed from `message_end` records; if a later execution error occurs, `AgentExecutionFailure` carries usage already accumulated.
+An explicit positive quota counts actual Model calls, including a final call without Tools. The check occurs before each invocation, so Abort before a call consumes neither quota nor an `llm_call` event. Reaching it returns the last Assistant content with `stopReason='max_llm_calls'`; it does not throw. With no quota, Runner has no hidden numeric cutoff. Usage is summed from `message_end` records; if a later execution error occurs, `AgentExecutionFailure` carries usage already accumulated.
 
-Steering is read after every completed loop iteration, not only Tool-producing ones. The reader is expected to use consume-and-clear semantics. Runner filters malformed entries and accepts only messages with `user` or `assistant` role plus a `content` property. Accepted steering is persisted and appended before the next Model call. Locally pending steering is dropped and logged on Abort.
+Steering is read after every completed loop iteration, not only Tool-producing ones. The reader uses consume-and-clear semantics. Runner filters malformed entries and accepts only messages with `user` or `assistant` role plus a `content` property. Every accepted item is persisted and appended separately in FIFO order; one ready batch produces one continuation Model call. Locally pending steering is dropped and logged on Abort or an explicit limit.
 
 ## 6. Tool and Hook semantics
 
@@ -86,6 +86,6 @@ Runner emits Turn-scoped Run, stream, Tool, context, and recovery events. Runtim
 
 | Kind | Evidence |
 |---|---|
-| Source | [AgentRunner](../../src/core/runner/AgentRunner.ts), [context budget](../../src/core/runner/context/context-budget.ts) |
+| Source | [AgentRunner](../../src/core/runner/AgentRunner.ts), [Runner config](../../src/core/runner/config.ts), [context budget](../../src/core/runner/context/context-budget.ts) |
 | Tests | [Runner tests](../../src/core/runner/AgentRunner.test.ts), [Tool pipeline tests](../../src/core/runner/AgentRunner.tool-pipeline.test.ts) |
 | Controlling authority | [Runner Turn Flow](../specifications/runner-turn-flow.md), [Tools and Hooks](../specifications/tools-and-hooks.md), [Abort](../specifications/abort.md) |

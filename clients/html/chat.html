@@ -2523,6 +2523,14 @@
                     text: '⚠ Turn aborted',
                   });
                   this.pushEvent('run_end', `Turn ${event.turnId} aborted`);
+                } else if (event.result?.stopReason === 'max_llm_calls') {
+                  this.appendChatItem({
+                    kind: 'system',
+                    label: 'Limit reached',
+                    turnId: event.turnId,
+                    text: 'Configured model call limit reached',
+                  });
+                  this.pushEvent('run_end', `Turn ${event.turnId} reached the configured model call limit`);
                 } else {
                   this.pushEvent('run_end', `Turn ${event.turnId} finished with ${event.result.stopReason}`);
                 }

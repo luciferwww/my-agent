@@ -1,5 +1,11 @@
 export { AgentRunner } from './AgentRunner.js';
 export { AgentExecutionFailure } from './errors.js';
+export {
+  DEFAULT_RUNNER_CONFIG,
+  RunnerConfigValidationError,
+  validateRunnerConfig,
+} from './config.js';
+export type { RunnerConfig } from './config.js';
 export type {
   AgentRunnerConfig,
   RunParams,

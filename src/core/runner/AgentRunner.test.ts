@@ -507,6 +507,51 @@ describe('AgentRunner', () => {
       expect(result.text).toBe('');
     });
 
+    it('has no Model-call count limit when maxLlmCalls is omitted', async () => {
+      const responses = [
+        ...Array.from({ length: 13 }, (_, index) => [
+          { type: 'message_start' as const },
+          {
+            type: 'tool_use' as const,
+            id: `tool_${index}`,
+            name: 'loop_tool',
+            input: {},
+          },
+          {
+            type: 'message_end' as const,
+            stopReason: 'tool_use',
+            usage: { inputTokens: 10, outputTokens: 5 },
+          },
+        ]),
+        [
+          { type: 'message_start' as const },
+          { type: 'text_delta' as const, text: 'done' },
+          {
+            type: 'message_end' as const,
+            stopReason: 'end_turn',
+            usage: { inputTokens: 10, outputTokens: 5 },
+          },
+        ],
+      ];
+      const runner = new AgentRunner({
+        llmClient: createMockLLMClient(responses),
+        sessionManager,
+        toolExecutor: async () => ({ content: 'result' }),
+      });
+
+      const result = await runner.run({
+        sessionId: MAIN_SESSION_ID,
+        message: 'Loop past the retired default',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'unlimited-turn',
+      });
+
+      expect(result.toolRounds).toBe(13);
+      expect(result.stopReason).toBe('end_turn');
+      expect(result.text).toBe('done');
+    });
+
     it('returns error when no toolExecutor and LLM requests tool', async () => {
       const llmClient = createMockLLMClient([
         [
@@ -2432,6 +2477,35 @@ describe('AgentRunner', () => {
       expect(infoCall).toBeDefined();
       expect((infoCall![1] as { count: number }).count).toBe(3);
       infoSpy.mockRestore();
+    });
+
+    it('returns aborted when cancellation occurs during the final steering read', async () => {
+      const controller = new AbortController();
+      const llmClient = createMockLLMClient([[
+        { type: 'message_start' },
+        { type: 'text_delta', text: 'done' },
+        {
+          type: 'message_end',
+          stopReason: 'end_turn',
+          usage: { inputTokens: 5, outputTokens: 3 },
+        },
+      ]]);
+      const runner = new AgentRunner({ llmClient, sessionManager });
+
+      const result = await runner.run({
+        sessionId: MAIN_SESSION_ID,
+        message: 'go',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 't-final-steering-abort',
+        signal: controller.signal,
+        getSteeringMessages: async () => {
+          controller.abort();
+          return [];
+        },
+      });
+
+      expect(result.stopReason).toBe('aborted');
     });
   });
 });

@@ -26,6 +26,7 @@ export interface ActiveParentTurn {
   readonly turnId: string;
   readonly signal: AbortSignal;
   readonly effectiveReference: ModelReference;
+  readonly effectiveMaxLlmCalls?: number;
   readonly contextFiles: readonly ContextFile[];
   readonly registrySnapshot: RegistrySnapshot;
   registerChild(): () => void;
@@ -110,6 +111,7 @@ export function createSubagentDelegationPort(
           canSpawn: capabilities.canSpawn,
           childSessionId,
           childTurnId,
+          parentMaxLlmCalls: parent.effectiveMaxLlmCalls,
           signal: parent.signal,
           toolProjection: parent.registrySnapshot.tools,
           hookProjection: parent.registrySnapshot.hooks,

@@ -10,7 +10,7 @@ import type {
 } from '../core/channel/index.js';
 import type { ChatContentBlock, ChatMessage } from '../core/model-invocation/index.js';
 import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
-import type { RunResult } from '../core/runner/types.js';
+import type { RunParams, RunResult } from '../core/runner/types.js';
 import { SessionManager } from '../core/session/SessionManager.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
@@ -466,14 +466,19 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     await app.close();
   });
 
-  it('steering path: emits deliveryMode=steering and does not spawn a new run', async () => {
+  it('promotes unread steering to distinct FIFO Turns without duplicate intake events', async () => {
     const releaseRun = createDeferred<void>();
-    const runnerRun = vi.fn(async (): Promise<RunResult> => {
-      await releaseRun.promise;
-      return defaultRunResult('done');
+    const releasePromotedRun = createDeferred<void>();
+    const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      if (params.message === 'first') {
+        await releaseRun.promise;
+      } else if (params.message === 'steer one') {
+        await releasePromotedRun.promise;
+      }
+      return defaultRunResult(String(params.message));
     });
 
-    const { app, testChannel, agentEvents } = await buildApp(agentHome, {
+    const { app, testChannel, agentEvents, runtimeEvents } = await buildApp(agentHome, {
       steerMode: true,
       runnerRun,
     });
@@ -488,28 +493,157 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(1));
 
     // Second dispatch: routes to steering (active turn present)
-    processInboundMock.mockResolvedValueOnce({ normalized: 'steer me', dropped: [] });
+    processInboundMock.mockResolvedValueOnce({ normalized: 'steer one', dropped: [] });
     await testChannel.dispatch({
       sessionId: 'main',
-      message: 'steer me',
+      message: 'steer one',
       clientId: 'client-B',
+      modelReference: { providerId: 'test', modelId: 'test-model' },
+      maxLlmCalls: 7,
+    });
+    processInboundMock.mockResolvedValueOnce({ normalized: 'steer two', dropped: [] });
+    await testChannel.dispatch({
+      sessionId: 'main',
+      message: 'steer two',
+      clientId: 'client-C',
     });
 
     const userMsgs = agentEvents.filter((e) => e.type === 'user_message') as Array<
       Extract<AgentEvent, { type: 'user_message' }>
     >;
-    expect(userMsgs).toHaveLength(2);
+    expect(userMsgs).toHaveLength(3);
     expect(userMsgs[0]!.deliveryMode).toBe('queued');
     expect(userMsgs[0]!.originClientId).toBe('client-A');
     expect(userMsgs[1]!.deliveryMode).toBe('steering');
     expect(userMsgs[1]!.originClientId).toBe('client-B');
-    expect(userMsgs[1]!.content).toBe('steer me');
+    expect(userMsgs[1]!.content).toBe('steer one');
+    expect(userMsgs[2]!.deliveryMode).toBe('steering');
+    expect(userMsgs[2]!.originClientId).toBe('client-C');
 
-    // Only one runner run — steering does not spawn a new turn
+    // Steering does not interrupt or spawn a Turn before normal completion.
     expect(runnerRun).toHaveBeenCalledTimes(1);
 
     releaseRun.resolve();
     await first;
+    await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(2));
+
+    expect(runnerRun.mock.calls[1]![0]).toEqual(expect.objectContaining({
+      maxLlmCalls: 7,
+      originMessageId: userMsgs[1]!.messageId,
+      resolvedModel: expect.objectContaining({
+        identity: { providerId: 'test', modelId: 'test-model' },
+      }),
+    }));
+    const promotedTurnId = runnerRun.mock.calls[1]![0].turnId;
+    const routeMap = (
+      app.application as unknown as {
+        routeContextByTurn: Map<string, { originClientId?: string; originChannel?: Channel }>;
+      }
+    ).routeContextByTurn;
+    expect(routeMap.get(promotedTurnId)).toEqual(expect.objectContaining({
+      originClientId: 'client-B',
+      originChannel: expect.objectContaining({ id: 'intake-test' }),
+    }));
+
+    releasePromotedRun.resolve();
+    await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(3));
+    expect(runnerRun.mock.calls.map(([params]) => params.message)).toEqual([
+      'first',
+      'steer one',
+      'steer two',
+    ]);
+    const starts = runtimeEvents.filter((event) => event.type === 'turn_start');
+    expect(starts.map((event) => event.originMessageId)).toEqual([
+      userMsgs[0]!.messageId,
+      userMsgs[1]!.messageId,
+      userMsgs[2]!.messageId,
+    ]);
+    expect(agentEvents.filter((event) => event.type === 'user_message')).toHaveLength(3);
+    await app.close();
+  });
+
+  it.each([
+    { stopReason: 'max_llm_calls', expectedCalls: 1 },
+    { stopReason: 'aborted', expectedCalls: 1 },
+    { stopReason: 'error', expectedCalls: 2 },
+  ])(
+    'applies terminal steering disposition for $stopReason',
+    async ({ stopReason, expectedCalls }) => {
+      const releaseRun = createDeferred<void>();
+      const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
+        if (params.message === 'first') {
+          await releaseRun.promise;
+          return {
+            ...defaultRunResult('first result'),
+            stopReason,
+          };
+        }
+        return defaultRunResult('promoted result');
+      });
+      const { app, testChannel } = await buildApp(agentHome, {
+        steerMode: true,
+        runnerRun,
+      });
+
+      processInboundMock.mockResolvedValueOnce({ normalized: 'first', dropped: [] });
+      const first = testChannel.dispatch({
+        sessionId: 'main',
+        message: 'first',
+      });
+      await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(1));
+
+      processInboundMock.mockResolvedValueOnce({ normalized: 'late', dropped: [] });
+      await testChannel.dispatch({
+        sessionId: 'main',
+        message: 'late',
+      });
+
+      releaseRun.resolve();
+      await first;
+      await vi.waitFor(() => {
+        expect(runnerRun).toHaveBeenCalledTimes(expectedCalls);
+        expect(app.application.getState().activeRunCount).toBe(0);
+      });
+      if (expectedCalls === 2) {
+        expect(runnerRun.mock.calls[1]![0].message).toBe('late');
+      }
+
+      await app.close();
+    },
+  );
+
+  it('discards unread steering when the active Turn throws', async () => {
+    const releaseRun = createDeferred<void>();
+    const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      if (params.message === 'first') {
+        await releaseRun.promise;
+        throw new Error('test failure');
+      }
+      return defaultRunResult('unexpected');
+    });
+    const { app, testChannel } = await buildApp(agentHome, {
+      steerMode: true,
+      runnerRun,
+    });
+
+    processInboundMock.mockResolvedValueOnce({ normalized: 'first', dropped: [] });
+    const first = testChannel.dispatch({
+      sessionId: 'main',
+      message: 'first',
+    });
+    await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(1));
+
+    processInboundMock.mockResolvedValueOnce({ normalized: 'late', dropped: [] });
+    await testChannel.dispatch({
+      sessionId: 'main',
+      message: 'late',
+    });
+
+    releaseRun.resolve();
+    await expect(first).rejects.toThrow('test failure');
+    await vi.waitFor(() => expect(app.application.getState().activeRunCount).toBe(0));
+    expect(runnerRun).toHaveBeenCalledTimes(1);
+
     await app.close();
   });
 
@@ -780,6 +914,8 @@ async function buildApp(
           models: [{ modelId: 'test-model', protocol: 'openai-responses' }],
         },
       },
+      runtime: { steeringEnabled: options.steerMode ?? false },
+      runner: {},
       agents: {
         defaults: structuredClone(DEFAULT_AGENT_CONFIG),
         list: [],
@@ -788,9 +924,6 @@ async function buildApp(
     },
     cliOverrides: {
       memory: { enabled: false },
-      ...(options.steerMode
-        ? { runner: { inTurnMessageMode: 'steer' as const } }
-        : {}),
     },
     dependencies: deps,
     onEvent: (e) => runtimeEvents.push(e),

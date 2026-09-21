@@ -1,6 +1,8 @@
 import { join } from 'node:path';
 import { getEnvOverrides, resolveAgentConfig } from '../platform/config/index.js';
 import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from '../platform/config/defaults.js';
+import { DEFAULT_RUNNER_CONFIG } from '../core/runner/config.js';
+import { DEFAULT_RUNTIME_CONFIG } from './config.js';
 import type { AppConfig } from '../platform/config/types.js';
 import { ConsoleAdapter, FileAdapter, Logger } from '../platform/logger/index.js';
 import type { LogAdapter } from '../platform/logger/index.js';
@@ -37,6 +39,8 @@ export async function bootstrapRuntime(
       ?? options.applicationConfig
       ?? {
         llm: {},
+        runtime: DEFAULT_RUNTIME_CONFIG,
+        runner: DEFAULT_RUNNER_CONFIG,
         agents: {
           defaults: DEFAULT_AGENT_CONFIG,
           list: [],
@@ -47,6 +51,8 @@ export async function bootstrapRuntime(
     const appConfig: AppConfig = {
       agentHome: options.agentHome,
       llm: applicationConfig.llm,
+      runtime: applicationConfig.runtime,
+      runner: applicationConfig.runner,
       agents: applicationConfig.agents,
       logger: applicationConfig.logger,
     };
@@ -157,6 +163,8 @@ export async function bootstrapRuntime(
     return {
       resources: {
         appConfig,
+        runtimeConfig: appConfig.runtime,
+        runnerConfig: appConfig.runner,
         resolvedConfig,
         agentHome: options.agentHome,
         sessionManager,

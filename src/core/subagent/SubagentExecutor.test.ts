@@ -67,6 +67,7 @@ describe('SubagentExecutor', () => {
       canSpawn: false,
       childSessionId: '5a848f00-b15f-4a5e-a4cc-3e6aa47342b1',
       childTurnId: 'child-turn',
+      parentMaxLlmCalls: 9,
       signal,
       toolProjection,
       hookProjection,
@@ -104,6 +105,43 @@ describe('SubagentExecutor', () => {
       hookProjection: expect.any(Object),
       toolPolicy: expect.any(Object),
     }));
+  });
+
+  it('inherits the Parent limit when the Child profile omits one', async () => {
+    const executor = new SubagentExecutor({
+      agentRunner: { run: vi.fn() } as never,
+      systemPromptBuilder: { build: () => 'base' } as never,
+      loadContextFilesFromDir: vi.fn(async () => []),
+      agentHome: '/agent-home',
+      promptSafetyLevel: 'normal',
+      resolveToolPolicy: () => ({
+        isDenied: () => true,
+        decide: () => 'deny',
+      }),
+    });
+
+    const prepared = await executor.prepare({
+      requestId: 'request-2',
+      profile: {
+        id: 'reviewer',
+        description: 'review',
+        agentDir: '/missing-profile-dir',
+        model: 'inherit',
+      },
+      description: 'Review code',
+      prompt: 'Inspect the patch',
+      parentContextFiles: [],
+      childDepth: 1,
+      canSpawn: false,
+      childSessionId: '5a848f00-b15f-4a5e-a4cc-3e6aa47342b2',
+      childTurnId: 'child-turn-2',
+      parentMaxLlmCalls: 6,
+      signal: new AbortController().signal,
+      toolProjection,
+      hookProjection,
+    });
+
+    expect(prepared.maxLlmCalls).toBe(6);
   });
 
   it('prefers Child context files by path and preserves Parent ordering', () => {

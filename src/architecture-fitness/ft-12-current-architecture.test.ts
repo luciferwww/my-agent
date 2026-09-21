@@ -170,18 +170,27 @@ describe('FT-12 Current Architecture authority', () => {
     expect(runtime).toContain('Runtime does not invent an implicit Provider');
     expect(runtime).toContain('`unitId` and `phase=create`');
     expect(runtime).toContain('Candidate cleanup failure remains fail-closed');
+    expect(runtime).toContain('`runtime.steeringEnabled` is `true`');
+    expect(runtime).toContain('promotes every unread inbox item into the existing normal queue');
 
     const runner = requireDocument('runner').content;
     expect(runner).toContain('`request_end` closes a queued request that never started');
     expect(runner).toContain('check Abort before quota, steering injection, event emission, and invocation');
+    expect(runner).toContain('Omitted `maxLlmCalls` means no Model-call count limit');
+    expect(runner).toContain('one ready batch produces one continuation Model call');
 
     const channel = requireDocument('channels').content;
     expect(channel).toContain('send(event: AgentEvent): void | Promise<void>');
     expect(channel).toContain('A queued `request_end` has no Session ID');
+    expect(channel).toContain('generic configured-limit notice');
 
     const config = requireDocument('configuration').content;
     expect(config).toContain('## 3. Precedence and merge');
     expect(config).toContain('[Model Resolution](model-resolution.md) owns canonical identity');
+    expect(config).toContain('| `runtime` | `steeringEnabled=false` |');
+    expect(config).toContain('omitted means no Model-call count limit');
+    expect(config).toContain('Runtime and Runner are global Application policy');
+    expect(config).toContain('Agent selection, environment overrides, and caller Agent overrides cannot change them');
     expect(config).toContain('## 6. Evidence');
 
     const provider = requireDocument('providers').content;

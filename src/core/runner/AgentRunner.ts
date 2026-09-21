@@ -30,10 +30,6 @@ import { Logger } from '../../platform/logger/index.js';
 
 const logger = Logger.get('AgentRunner');
 
-// ── Constants ───────────────────────────────────────────────
-
-const DEFAULT_MAX_LLM_CALLS = 12;
-
 /**
  * Maximum outer compaction retries. Each ContextOverflowError triggers one
  * compactHistory call and retry before the error is returned to the caller.
@@ -402,7 +398,6 @@ export class AgentRunner {
     contextWindowTokens: number,
     compaction: CompactionConfig,
   ): Promise<Omit<RunResult, 'compacted'>> {
-    const maxLlmCalls = params.maxLlmCalls ?? DEFAULT_MAX_LLM_CALLS;
     const turnSignal = params.signal ?? new AbortController().signal;
 
     this.sanitizeSessionTail(turnCtx);
@@ -488,7 +483,7 @@ export class AgentRunner {
           throw new DOMException('Aborted', 'AbortError');
         }
 
-        if (llmCallCount >= maxLlmCalls) {
+        if (params.maxLlmCalls !== undefined && llmCallCount >= params.maxLlmCalls) {
           const text = this.extractText(lastContent);
           return {
             text,
@@ -663,6 +658,15 @@ export class AgentRunner {
 
         // Read steering after every round for injection before the next LLM call.
         pendingSteeringMessages = await this.readPendingMessages(params.getSteeringMessages);
+        if (turnSignal.aborted) {
+          if (pendingSteeringMessages.length > 0) {
+            logger.info('dropped pending steering on abort', {
+              sessionKey: params.sessionId,
+              count: pendingSteeringMessages.length,
+            });
+          }
+          throw new DOMException('Aborted', 'AbortError');
+        }
       }
 
       const text = this.extractText(lastContent);

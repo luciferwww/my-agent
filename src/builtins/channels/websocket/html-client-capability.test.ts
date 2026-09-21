@@ -19,4 +19,15 @@ describe('HTML attachment capability UX', () => {
       'The selected model explicitly does not support image attachments.',
     );
   });
+
+  it('renders max_llm_calls as a system notice without changing Assistant content', async () => {
+    const html = await readFile(
+      join(process.cwd(), 'clients', 'html', 'chat.html'),
+      'utf8',
+    );
+
+    expect(html).toContain("event.result?.stopReason === 'max_llm_calls'");
+    expect(html).toContain("kind: 'system'");
+    expect(html).toContain("text: 'Configured model call limit reached'");
+  });
 });

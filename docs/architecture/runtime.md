@@ -30,6 +30,7 @@ Runtime also does not discover or load Extension files. [Extensions](extensions.
 ```text
 src/runtime/
 ├── RuntimeApp.ts
+├── config.ts
 ├── bootstrap.ts
 ├── runtime-builder.ts
 ├── runtime-composition.ts
@@ -174,7 +175,7 @@ Channel input follows this order:
 ```text
 normalize media and assemble the accepted message
   -> emit user_message before route divergence
-  -> if steer mode and an active Turn exists: append text to steering inbox
+  -> if runtime.steeringEnabled and an active Turn accepts steering: append text and origin context to steering inbox
   -> otherwise: append a QueuedChannelTurn and schedule the session
 ```
 
@@ -186,12 +187,14 @@ Media intake is atomic. Any attachment validation or optimization failure reject
 
 `inFlightSessions` is the per-session serialization gate. `activeTurnIdBySession` identifies a currently running Turn that can receive steering. The two conditions for steering are:
 
-1. resolved `runner.inTurnMessageMode` is `steer`; and
+1. resolved `runtime.steeringEnabled` is `true`; and
 2. the session has an active Turn ID.
 
 Otherwise input uses the normal queue. Sessions are serialized independently, so different sessions can run concurrently.
 
-Runtime supplies Runner a callback that drains and deletes the current steering inbox. Runner owns when to invoke it. Runtime clears any unread inbox when the Turn ends, so messages cannot carry into a later Turn.
+Runtime supplies Runner a callback that atomically drains the current steering inbox. Runner owns when to invoke it. One ready batch remains separate FIFO user messages and produces one continuation call.
+
+At normal completion Runtime first removes the active steering-admission marker, then promotes every unread inbox item into the existing normal queue before releasing the Session gate and scheduling once. Promotion creates an ordinary request gate and preserves the original message ID, route context, and explicit launch overrides; it emits no second `user_message`. Abort, `max_llm_calls`, thrown failure, and Shutdown discard unread steering. A returned Provider `stopReason='error'` remains a completed result and uses normal handoff.
 
 ## 7. Root Turn orchestration
 
@@ -223,7 +226,7 @@ sequenceDiagram
 
 Before Runner starts, Runtime admits the message through the Session coordinator, materializing a live Pending `sessionId` when needed. It then optionally reloads context, computes policy-visible Tool definitions from the captured Snapshot, resolves the model, builds prompts, creates the per-session `AbortController`, and registers the active Parent record. Admission persists only Session metadata and a root record; Runner remains the sole user-message writer. Runtime passes the captured Tool and Hook projections unchanged; Provider wire conversion remains owned by [Providers](providers.md), and generic Tool execution remains owned by [Tools](tools.md).
 
-The request completion gate seals exactly one public terminal outcome. A run or resolution failure is contained to that request; Runtime records and emits the failure but the application remains usable. `finally` clears session/Turn/Abort/Parent/steering state, decrements the active count, releases the Root member, and schedules the next queued item.
+The request completion gate seals exactly one public terminal outcome. A run or resolution failure is contained to that request; Runtime records and emits the failure but the application remains usable. `finally` closes steering admission, promotes or discards the unread inbox according to terminal disposition, clears session/Turn/Abort/Parent state, decrements the active count, releases the Root member, and schedules the next queued item.
 
 ## 8. Generations, reload, and retirement
 
@@ -318,6 +321,6 @@ Registry startup diagnostics are logged locally by Runtime with bounded identity
 
 | Kind | Evidence |
 |---|---|
-| Source | [RuntimeApp](../../src/runtime/RuntimeApp.ts), [composition manager](../../src/runtime/runtime-composition-manager.ts) |
+| Source | [RuntimeApp](../../src/runtime/RuntimeApp.ts), [Runtime config](../../src/runtime/config.ts), [queue types](../../src/runtime/queue-types.ts), [composition manager](../../src/runtime/runtime-composition-manager.ts) |
 | Tests | [RuntimeApp tests](../../src/runtime/RuntimeApp.test.ts), [composition manager tests](../../src/runtime/runtime-composition-manager.test.ts) |
 | Controlling authority | [Runtime Composition Specification](../specifications/runtime-composition.md) |

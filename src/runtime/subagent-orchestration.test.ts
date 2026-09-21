@@ -80,6 +80,7 @@ function setup(options: {
     turnId: 'parent-turn',
     signal: controller.signal,
     effectiveReference: { providerId: 'parent', modelId: 'parent-model' },
+    effectiveMaxLlmCalls: 6,
     contextFiles: [],
     registrySnapshot,
     registerChild,

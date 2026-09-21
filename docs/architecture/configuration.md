@@ -10,7 +10,7 @@
 
 ## 1. Boundary
 
-`src/platform/config/` owns application-document composition, missing-document bootstrap, one strict Agent Home file read, credential materialization, immutable consumer projections, Agent merge precedence, and environment extraction. Modules own their leaf contracts and behavioral defaults; the Built-in LLM module applies this boundary under `src/builtins/providers/builtin/`. After resolving paths, the standalone Host ensures Agent Home exists, exclusively creates a missing `<agentHome>/config.json` with exact UTF-8 bytes `{}\n`, then reads that document once and passes the complete immutable snapshot to `RuntimeApp.create()` as a generic startup fact. Runtime Bootstrap selects the Application and Extension projections without rereading document content; Runtime never reads configuration files.
+`src/platform/config/` owns application-document composition, missing-document bootstrap, one strict Agent Home file read, credential materialization, immutable consumer projections, Agent merge precedence, and environment extraction. Modules own their leaf contracts, semantic validation, and behavioral defaults: Runtime owns `RuntimeConfig`, Runner owns `RunnerConfig`, and the Built-in LLM module owns its deployment contract. After resolving paths, the standalone Host ensures Agent Home exists, exclusively creates a missing `<agentHome>/config.json` with exact UTF-8 bytes `{}\n`, then reads that document once and passes the complete immutable snapshot to `RuntimeApp.create()` as a generic startup fact. Runtime Bootstrap selects the Application and Extension projections without rereading document content; Runtime never reads configuration files.
 
 Agent Home owns the configuration document and mutable Agent state. Platform Configuration owns configuration bootstrap and loading; Core Agent Context independently owns Context files even though both may ensure their shared parent exists. `installDir` owns executable Extensions; Extension enablement and scoped configuration remain a namespace in the Agent document. Configuration may carry `llm.defaultModel` and one optional Built-in Provider deployment, but [Model Resolution](model-resolution.md) owns canonical identity, Catalog membership, effective limits, and Model Facts.
 
@@ -22,13 +22,15 @@ Agent Home owns the configuration document and mutable Agent state. Platform Con
 AgentConfigDocument
 ├── llm.defaultModel?: ModelReference
 ├── llm.builtin?: { baseURL, apiKey?, models[] }
+├── runtime?: Partial<RuntimeConfig>
+├── runner?: Partial<RunnerConfig>
 ├── agents.defaults?: DeepPartial<AgentDefaults>
 ├── agents.list?: AgentEntry[]
 ├── logger?: LoggerModuleConfig
 └── extensions?: Extension enablement and scoped settings
 ```
 
-These are the only valid top-level namespaces. Retired `host` and every other unknown namespace fail directly. Retired Agent-level `model`/`llm` fields are also rejected. The returned Application/Extension snapshot and all nested projections are defensively copied and frozen. Startup CWD is not a configuration source, and there is no multi-file merge.
+These are the only valid top-level namespaces. Runtime and Runner are global Application policy and cannot appear in `agents.defaults` or `agents.list[]`. Retired `host` and every other unknown namespace fail directly. Retired Agent-level `model`/`llm` fields are also rejected. The returned Application/Extension snapshot and all nested projections are defensively copied and frozen. Startup CWD is not a configuration source, and there is no multi-file merge.
 
 ## 3. Precedence and merge
 
@@ -36,13 +38,13 @@ Lowest to highest precedence:
 
 | Stage | Source | Owner/API |
 |---:|---|---|
-| 1 | `DEFAULT_AGENT_CONFIG` / `DEFAULT_LOGGER_CONFIG` | `loadAgentConfig()` |
-| 2 | file `agents.defaults` and `logger` | `loadAgentConfig()` |
+| 1 | module defaults, `DEFAULT_AGENT_CONFIG`, and `DEFAULT_LOGGER_CONFIG` | `loadAgentConfig()` |
+| 2 | top-level `runtime`/`runner`, file `agents.defaults`, and `logger` | `loadAgentConfig()` |
 | 3 | matching `agents.list[]` entry | `resolveAgentConfig()` |
 | 4 | environment overrides | `resolveAgentConfig()` |
 | 5 | caller/CLI overrides | `resolveAgentConfig()` |
 
-`deepMerge()` recursively merges plain objects, ignores `undefined`, and replaces arrays and scalars. `MY_AGENT_PROVIDER` and `MY_AGENT_MODEL` form one atomic per-run Model Reference override: both must be present or both absent. A supported Host rejects a partial pair rather than inferring a Provider or Model. Built-in `apiKey` supports a literal or one exact `${ENV_VAR}` reference. Platform materializes that reference once; missing or blank referenced values fail without exposing the secret. The same resolver is used by Copilot Relay while retaining its `$env`/`$secret` forms.
+Stages 3–5 apply only to Agent-scoped configuration. Runtime and Runner use `module default -> top-level file value`; Agent selection, environment overrides, and caller Agent overrides cannot change them. `deepMerge()` recursively merges plain objects, ignores `undefined`, and replaces arrays and scalars. `MY_AGENT_PROVIDER` and `MY_AGENT_MODEL` form one atomic per-run Model Reference override: both must be present or both absent. A supported Host rejects a partial pair rather than inferring a Provider or Model. Built-in `apiKey` supports a literal or one exact `${ENV_VAR}` reference. Platform materializes that reference once; missing or blank referenced values fail without exposing the secret. The same resolver is used by Copilot Relay while retaining its `$env`/`$secret` forms.
 
 ## 4. Current schema and defaults
 
@@ -50,7 +52,8 @@ Lowest to highest precedence:
 |---|---|
 | `llm.defaultModel` | Optional preferred Root-Turn `{ providerId, modelId }`; also projected to clients as `unset`, `available`, or `unavailable`; never a fallback list |
 | `llm.builtin` | Optional `{ baseURL, apiKey?, models[] }`; each model has `modelId`, `protocol`, and optional `displayName`; an empty model list is valid |
-| `runner` | `maxLlmCalls=12`; `inTurnMessageMode='followup'` |
+| `runtime` | `steeringEnabled=false` |
+| `runner` | Optional positive integer `maxLlmCalls`; omitted means no Model-call count limit |
 | `memory` | Enabled; local `Xenova/all-MiniLM-L6-v2`; chunk `1600/320`; search `6`, `0.25`, weights `0.7/0.3` |
 | `prompt` | `safetyLevel='normal'` |
 | `tools` | `allow=[]`; `deny=[]` |
@@ -77,14 +80,14 @@ getEnvOverrides(): DeepPartial<AgentDefaults>
 deepMerge(target, source): merged copy
 ```
 
-`AgentConfigSnapshot` contains only immutable `application` and `extensions` projections. Runtime combines the injected Application projection with explicit `agentHome`. `resolveAgentConfig()` excludes `id` and `default` metadata from the selected per-agent entry before applying environment and caller overrides.
+`AgentConfigSnapshot` contains only immutable `application` and `extensions` projections. Runtime combines the injected Application projection with explicit `agentHome`, keeps global Runtime/Runner projections separate from resolved Agent defaults, and applies an explicit per-Turn `maxLlmCalls` over the global Runner value. `resolveAgentConfig()` excludes `id` and `default` metadata from the selected per-agent entry before applying environment and caller overrides.
 
-The retired `agents.defaults.workspace`, Agent-level `model`/`llm`, and corresponding per-agent keys are rejected directly. Public output-token configuration is removed; there is no `llm.maxTokens` or replacement. There is no alias or dual read; Agent Context budgets use `context` only.
+The retired `agents.defaults.workspace`, Agent-level `model`/`llm`, nested/per-Agent `runtime`/`runner`, and corresponding per-agent keys are rejected directly. `runner.inTurnMessageMode` has no compatibility reader and is rejected by strict Runner leaf validation. Public output-token configuration is removed; there is no `llm.maxTokens` or replacement. There is no alias or dual read; Agent Context budgets use `context` only.
 
 ## 6. Evidence
 
 | Kind | Evidence |
 |---|---|
-| Source | [configuration types](../../src/platform/config/types.ts), [configuration loader](../../src/platform/config/agent-config-loader.ts) |
+| Source | [configuration types](../../src/platform/config/types.ts), [configuration loader](../../src/platform/config/agent-config-loader.ts), [Runtime config](../../src/runtime/config.ts), [Runner config](../../src/core/runner/config.ts) |
 | Tests | [configuration loader tests](../../src/platform/config/agent-config-loader.test.ts) |
 | Controlling authority | [Configuration Specification](../specifications/configuration.md) |

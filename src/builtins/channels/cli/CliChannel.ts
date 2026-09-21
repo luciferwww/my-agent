@@ -230,6 +230,9 @@ export class CliChannel implements Channel {
 
       case 'run_end':
         this.breakStream();
+        if (event.result.stopReason === 'max_llm_calls') {
+          this.output.write(yellow('[configured model call limit reached]\n'));
+        }
         break;
 
       case 'request_end':

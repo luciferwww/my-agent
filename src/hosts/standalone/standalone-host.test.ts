@@ -95,6 +95,8 @@ describe('standalone Host composition', () => {
     const snapshot = (consoleEnabled: boolean): AgentConfigSnapshot => ({
       application: {
         llm: {},
+        runtime: { steeringEnabled: false },
+        runner: {},
         agents: { defaults: {} as never, list: [] },
         logger: { console: { enabled: consoleEnabled }, file: { enabled: true } },
       },
@@ -215,11 +217,11 @@ describe('standalone Host composition', () => {
     await mkdir(agentHome);
     await mkdir(startupCwd);
     await writeFile(join(agentHome, 'config.json'), JSON.stringify({
-      agents: { defaults: { runner: { maxLlmCalls: 8 } } },
+      runner: { maxLlmCalls: 8 },
       extensions: { enabled: false },
     }), 'utf8');
     await writeFile(join(startupCwd, 'config.json'), JSON.stringify({
-      agents: { defaults: { runner: { maxLlmCalls: 1 } } },
+      runner: { maxLlmCalls: 1 },
       extensions: { enabled: true },
     }), 'utf8');
     const readTextFile = vi.fn((path: string) => readFile(path, 'utf8'));
@@ -254,11 +256,7 @@ describe('standalone Host composition', () => {
           installDir: join(temporaryRoot, 'installation'),
           configuration: expect.objectContaining({
             application: expect.objectContaining({
-              agents: expect.objectContaining({
-                defaults: expect.objectContaining({
-                  runner: expect.objectContaining({ maxLlmCalls: 8 }),
-                }),
-              }),
+              runner: expect.objectContaining({ maxLlmCalls: 8 }),
             }),
           }),
         }),
@@ -492,6 +490,8 @@ function createSnapshot(consoleEnabled = true): AgentConfigSnapshot {
   return {
     application: {
       llm: {},
+      runtime: { steeringEnabled: false },
+      runner: {},
       agents: { defaults: {} as never, list: [] },
       logger: { console: { enabled: consoleEnabled } },
     },

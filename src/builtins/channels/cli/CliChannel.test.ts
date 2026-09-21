@@ -137,6 +137,48 @@ describe('CliChannel user_message rendering', () => {
   });
 });
 
+describe('CliChannel run completion rendering', () => {
+  it('renders a generic notice when the configured Model-call limit is reached', () => {
+    const { channel, captured } = makeChannel();
+
+    channel.send({
+      type: 'run_end',
+      sessionId: CLI_SESSION_ID,
+      turnId: 'turn-limit',
+      requestId: 'request-limit',
+      result: {
+        text: 'partial',
+        content: [{ type: 'text', text: 'partial' }],
+        stopReason: 'max_llm_calls',
+        usage: { inputTokens: 10, outputTokens: 5 },
+        toolRounds: 2,
+      },
+    });
+
+    expect(captured()).toContain('[configured model call limit reached]');
+  });
+
+  it('does not add the limit notice for normal completion', () => {
+    const { channel, captured } = makeChannel();
+
+    channel.send({
+      type: 'run_end',
+      sessionId: CLI_SESSION_ID,
+      turnId: 'turn-complete',
+      requestId: 'request-complete',
+      result: {
+        text: 'done',
+        content: [{ type: 'text', text: 'done' }],
+        stopReason: 'end_turn',
+        usage: { inputTokens: 10, outputTokens: 5 },
+        toolRounds: 0,
+      },
+    });
+
+    expect(captured()).not.toContain('model call limit');
+  });
+});
+
 describe('CliChannel lifecycle', () => {
   it('reports readiness before natural input closure settles completion', async () => {
     const existingSigIntListeners = process.listeners('SIGINT');

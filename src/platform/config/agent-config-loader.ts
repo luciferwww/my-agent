@@ -7,6 +7,8 @@ import {
   validateBuiltinLlmProviderConfig,
   type LLMConfig,
 } from '../../builtins/providers/builtin/index.js';
+import { DEFAULT_RUNNER_CONFIG } from '../../core/runner/config.js';
+import { DEFAULT_RUNTIME_CONFIG } from '../../runtime/config.js';
 import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from './defaults.js';
 import { deepMerge } from './loader.js';
 import {
@@ -19,6 +21,7 @@ import {
   CredentialMaterializationError,
   materializeExactStringCredential,
 } from './credential-materialization.js';
+import { validateRuntimeAndRunnerConfig } from './agent-leaf-validation.js';
 import type {
   AgentConfigDocument,
   AgentsConfig,
@@ -28,7 +31,14 @@ import type {
 } from './types.js';
 
 const CONFIG_FILE_NAME = 'config.json';
-const TOP_LEVEL_NAMESPACES = new Set(['llm', 'agents', 'logger', 'extensions']);
+const TOP_LEVEL_NAMESPACES = new Set([
+  'llm',
+  'runtime',
+  'runner',
+  'agents',
+  'logger',
+  'extensions',
+]);
 const LOGGER_LEVELS = new Set<LoggerLevel>(['debug', 'info', 'warn', 'error']);
 
 export interface AgentConfigSnapshot {
@@ -52,6 +62,23 @@ export async function loadAgentConfig(options: {
   const document = await readAgentConfigDocument(options.agentHome, dependencies);
   const llm = validateLlm(document.llm, options.environment ?? process.env);
   validateAgentConfigDocument(document);
+  const globalPolicyInput = {
+    runtime: document.runtime,
+    runner: document.runner,
+  };
+  validateRuntimeAndRunnerConfig(globalPolicyInput, '');
+  const runtime = document.runtime === undefined
+    ? structuredClone(DEFAULT_RUNTIME_CONFIG)
+    : deepMerge(
+        structuredClone(DEFAULT_RUNTIME_CONFIG),
+        structuredClone(document.runtime),
+      );
+  const runner = document.runner === undefined
+    ? structuredClone(DEFAULT_RUNNER_CONFIG)
+    : deepMerge(
+        structuredClone(DEFAULT_RUNNER_CONFIG),
+        structuredClone(document.runner),
+      );
 
   const defaults = document.agents?.defaults === undefined
     ? structuredClone(DEFAULT_AGENT_CONFIG)
@@ -75,7 +102,7 @@ export async function loadAgentConfig(options: {
   };
 
   return deepFreeze({
-    application: { llm, agents, logger },
+    application: { llm, runtime, runner, agents, logger },
     extensions,
   });
 }
@@ -191,6 +218,7 @@ function validateAgents(value: AgentConfigDocument['agents']): void {
     if ('workspace' in value.defaults) {
       throw invalidAgentConfigField('agents.defaults.workspace');
     }
+    rejectGlobalPolicyConfig(value.defaults, 'agents.defaults');
     rejectRetiredToolsConfig(value.defaults, 'agents.defaults');
   }
   if (value.list === undefined) return;
@@ -213,7 +241,16 @@ function validateAgents(value: AgentConfigDocument['agents']): void {
     if ('llm' in entry) {
       throw invalidAgentConfigField(`${entryPath}.llm`);
     }
+    rejectGlobalPolicyConfig(entry, entryPath);
     rejectRetiredToolsConfig(entry, entryPath);
+  }
+
+  function rejectGlobalPolicyConfig(
+    value: Readonly<Record<string, unknown>>,
+    fieldPath: string,
+  ): void {
+    if ('runtime' in value) throw invalidAgentConfigField(`${fieldPath}.runtime`);
+    if ('runner' in value) throw invalidAgentConfigField(`${fieldPath}.runner`);
   }
 }
 

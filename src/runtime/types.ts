@@ -14,6 +14,8 @@ import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import type { ApplicationToolPolicy } from '../core/tools/types.js';
 import type { ContextFile } from '../core/agent-context/types.js';
 import type { AgentEvent, AgentRunner, AgentRunnerConfig } from '../core/runner/index.js';
+import type { RunnerConfig } from '../core/runner/config.js';
+import type { RuntimeConfig } from './config.js';
 import type { UserPromptBuilder } from '../core/prompt/UserPromptBuilder.js';
 import type {
   ExtensionAcquisitionOptions,
@@ -24,6 +26,8 @@ import type { RuntimeDeadlineDriver, RuntimeDeadlinePolicy } from './runtime-dea
 
 export interface RuntimeResourceSet {
   readonly appConfig: AppConfig;
+  readonly runtimeConfig: RuntimeConfig;
+  readonly runnerConfig: RunnerConfig;
   readonly resolvedConfig: AgentDefaults;
   readonly agentHome: string;
   readonly sessionManager: SessionManager;

@@ -1,5 +1,7 @@
 import type { ModelReference } from '../../core/model-resolution/index.js';
 import type { LLMConfig } from '../../builtins/providers/builtin/index.js';
+import type { RunnerConfig } from '../../core/runner/config.js';
+import type { RuntimeConfig } from '../../runtime/config.js';
 
 // ── Utility Types ────────────────────────────────────────
 
@@ -40,14 +42,6 @@ export interface CompactionConfig {
   timeoutSeconds: number;
   /** 摘要生成的自定义指令（追加到默认指令后） */
   customInstructions?: string;
-}
-
-/** Agent Runner 配置 */
-export interface RunnerConfig {
-  /** 单次 run 允许的最大 LLM 调用次数 */
-  maxLlmCalls: number;
-  /** turn 内新消息默认注入策略 */
-  inTurnMessageMode: 'steer' | 'followup';
 }
 
 /** 嵌入配置。维度由 model 反查（见 LocalEmbeddingProvider.KNOWN_DIMENSIONS），不再接受配置。 */
@@ -187,7 +181,6 @@ export interface SubagentsConfig {
 
 /** 单个 agent 的完整配置集 */
 export interface AgentDefaults {
-  runner: RunnerConfig;
   memory: MemoryModuleConfig;
   prompt: PromptConfig;
   tools: ToolsConfig;
@@ -255,6 +248,10 @@ export interface AppConfig {
   agentHome: string;
   /** Application-level LLM selection and optional Built-in Provider. */
   llm: LLMConfig;
+  /** Application-wide Runtime policy. */
+  runtime: RuntimeConfig;
+  /** Application-wide Runner policy. */
+  runner: RunnerConfig;
   /** agent 配置（defaults + list） */
   agents: AgentsConfig;
   /** logger 配置 */
@@ -266,6 +263,8 @@ export interface AppConfig {
 /** Immutable application-owned projection from the Agent configuration document. */
 export interface ApplicationConfigProjection {
   readonly llm: LLMConfig;
+  readonly runtime: RuntimeConfig;
+  readonly runner: RunnerConfig;
   readonly agents: AgentsConfig;
   readonly logger: LoggerModuleConfig;
 }
@@ -275,6 +274,8 @@ interface AgentApplicationDocument {
     defaultModel?: ModelReference;
     builtin?: unknown;
   };
+  runtime?: Partial<RuntimeConfig>;
+  runner?: Partial<RunnerConfig>;
   agents?: {
     defaults?: DeepPartial<AgentDefaults>;
     list?: AgentEntry[];

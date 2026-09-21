@@ -5,7 +5,6 @@ export type {
   AgentsConfig,
   AgentDefaults,
   AgentEntry,
-  RunnerConfig,
   MemoryModuleConfig,
   EmbeddingConfig,
   ChunkingConfig,
@@ -20,6 +19,8 @@ export type {
   EmbeddingProviderType,
   SafetyLevel,
 } from './types.js';
+export type { RunnerConfig } from '../../core/runner/config.js';
+export type { RuntimeConfig } from '../../runtime/config.js';
 export type {
   BuiltinLlmProviderConfig,
   BuiltinModelRegistration,

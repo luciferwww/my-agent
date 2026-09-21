@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-14
+> Verified: 2026-09-21
 > Authority: Stable cross-cutting Abort contract
 
 ## Scope
@@ -11,7 +11,7 @@ This contract defines session-local Turn Abort across Runtime, Runner, Model Inv
 
 ## Runtime command
 
-`abortTurn(sessionId)` synchronously signals the active tree, removes normal queued requests, discards pending steering, and returns `{ aborted, dropped }`. It is idempotent and isolated by session. `dropped` counts normal queued requests only.
+`abortTurn(sessionId)` synchronously signals the active tree, removes normal queued requests, discards pending steering, and returns `{ aborted, dropped }`. It is idempotent and isolated by session. `dropped` counts normal queued requests only. The normal-completion steering handoff is disabled for an aborted result, so unread steering is not promoted after Abort.
 
 Each dropped request settles once with `request_end` outcome `cancelled` and reason `abort_queue_drop`. Runtime emits `messages_dropped` only when at least one normal queued request was removed. Subscriber failure cannot make `abortTurn` throw.
 

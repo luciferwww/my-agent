@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_AGENT_CONFIG } from './defaults.js';
+import { DEFAULT_RUNNER_CONFIG } from '../../core/runner/config.js';
+import { DEFAULT_RUNTIME_CONFIG } from '../../runtime/config.js';
 import { deepMerge, getEnvOverrides, resolveAgentConfig } from './loader.js';
 import type { AppConfig, AgentEntry } from './types.js';
 
@@ -8,6 +10,8 @@ function appConfig(list: AgentEntry[] = []): AppConfig {
   return {
     agentHome: '/tmp',
     llm: {},
+    runtime: structuredClone(DEFAULT_RUNTIME_CONFIG),
+    runner: structuredClone(DEFAULT_RUNNER_CONFIG),
     agents: {
       defaults: structuredClone(DEFAULT_AGENT_CONFIG),
       list,
@@ -46,7 +50,7 @@ describe('resolveAgentConfig', () => {
     expect(resolveAgentConfig(config, { agentId: 'missing' })).toEqual(config.agents.defaults);
   });
 
-  it('applies matching Agent, environment, then caller overrides', () => {
+  it('applies matching Agent, environment, then caller overrides to Agent-scoped fields', () => {
     const config = appConfig([{
       id: 'coding',
       memory: { enabled: false },
@@ -55,15 +59,13 @@ describe('resolveAgentConfig', () => {
     const resolved = resolveAgentConfig(config, {
       agentId: 'coding',
       envOverrides: {
-        runner: { maxLlmCalls: 7 },
+        memory: { enabled: true },
       },
       cliOverrides: {
-        runner: { maxLlmCalls: 2 },
+        memory: { enabled: false },
       },
     });
 
-    expect(resolved.runner.maxLlmCalls).toBe(2);
-    expect(resolved.runner.inTurnMessageMode).toBe(DEFAULT_AGENT_CONFIG.runner.inTurnMessageMode);
     expect(resolved.memory.enabled).toBe(false);
   });
 });

@@ -30,8 +30,10 @@ export type QueuedChannelTurn = {
   originMessageId?: string;
 };
 
-/** 当前活动 run-turn 可在执行中途消费的最小 steering 输入形态。 */
+/** Runtime 接受的 steering 输入；保留正常结束时提升为 queued Turn 所需的上下文。 */
 export type PendingSteeringInput = {
   message: string;
+  launchContext?: TurnLaunchContext;
   routeContext?: MessageRouteContext;
+  originMessageId: string;
 };

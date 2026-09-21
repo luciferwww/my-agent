@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-18
+> Verified: 2026-09-21
 > Authority: Stable multi-client user-message contract
 
 ## Scope
@@ -31,7 +31,7 @@ type UserMessageEvent = {
 };
 ```
 
-A queued `run_start.originMessageId` equals the originating message ID. Message identity is independent from Turn identity; steering creates no new Turn.
+A queued `run_start.originMessageId` equals the originating message ID. Message identity is independent from Turn identity. Steering does not immediately create a Turn; if it misses Runner's final safe point before normal completion, Runtime promotes it into the existing FIFO and its later `run_start.originMessageId` uses the same message ID.
 
 ## Assembly and emission
 
@@ -46,7 +46,8 @@ A queued `run_start.originMessageId` equals the originating message ID. Message 
 ## Routing invariants
 
 - Queued requests retain message ID through queueing into `run_start`.
-- Steering is broadcast with `deliveryMode: 'steering'` but starts no new Run.
+- Steering is broadcast with `deliveryMode: 'steering'` and does not interrupt or immediately start a Run. Normal terminal promotion emits no second `user_message` and does not mutate the original delivery mode.
+- Promoted steering preserves FIFO order, origin route, and explicit launch overrides.
 - Pure-image steering is visible but not inserted into the text-only steering inbox.
 - Different sessions remain isolated; same-session admission keeps Runtime ordering.
 - WebSocket origin receives its own message. CLI renders external WebSocket messages but does not echo its local input.
@@ -56,7 +57,7 @@ A queued `run_start.originMessageId` equals the originating message ID. Message 
 
 ## Acceptance scenarios
 
-Cover queued and steering event shapes; ordering `user_message -> run_start -> output -> run_end`; message correlation; atomic attachment rejection with no event; pure-image steering; degenerate input; no base64 leakage; future block safety; two-client origin-inclusive Fanout; CLI echo behavior; one transcript append; session isolation; and no history replay on subscription.
+Cover queued and steering event shapes; ordering `user_message -> run_start -> output -> run_end`; direct and promoted message correlation; no duplicate event during promotion; atomic attachment rejection with no event; pure-image steering; degenerate input; no base64 leakage; future block safety; two-client origin-inclusive Fanout; CLI echo behavior; one transcript append; session isolation; and no history replay on subscription.
 
 ## Related authority
 

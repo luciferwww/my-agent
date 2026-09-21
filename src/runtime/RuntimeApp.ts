@@ -685,8 +685,12 @@ export class RuntimeApp {
       }
       this.enqueueSteeringInput(
         req.sessionId,
-        broadcastText,
-        this.buildMessageRouteContext(channel, req),
+        {
+          message: broadcastText,
+          launchContext: this.buildTurnLaunchContext(req),
+          routeContext: this.buildMessageRouteContext(channel, req),
+          originMessageId: messageId,
+        },
       );
       log.info('channel message routed to steering', {
         channelId: channel.id,
@@ -752,11 +756,11 @@ export class RuntimeApp {
   }
 
   /**
-  * Steering requires both steer mode and an active Session Turn. Messages with
-  * no active Turn use normal queueing.
+  * Steering requires both the Runtime switch and an active Session Turn.
+  * Messages with no active Turn use normal queueing.
    */
   private shouldRouteMessageToSteering(sessionKey: string): boolean {
-    return this.resources.resolvedConfig.runner.inTurnMessageMode === 'steer'
+    return this.resources.runtimeConfig.steeringEnabled
       && this.activeTurnIdBySession.has(sessionKey);
   }
 
@@ -821,12 +825,37 @@ export class RuntimeApp {
    */
   private enqueueSteeringInput(
     sessionKey: string,
-    message: string,
-    routeContext?: MessageRouteContext,
+    item: PendingSteeringInput,
   ): void {
     const inbox = this.steeringInboxBySession.get(sessionKey) ?? [];
-    inbox.push({ message, routeContext });
+    inbox.push(item);
     this.steeringInboxBySession.set(sessionKey, inbox);
+  }
+
+  /**
+   * Move steering that missed Runner's final safe point into the existing
+   * queued-Turn path. The original user_message remains the sole intake event.
+   */
+  private promoteUnreadSteering(sessionKey: string): void {
+    const inbox = this.steeringInboxBySession.get(sessionKey);
+    if (!inbox || inbox.length === 0) return;
+
+    this.steeringInboxBySession.delete(sessionKey);
+    for (const item of inbox) {
+      const queuedTurn: QueuedChannelTurn = {
+        requestId: randomUUID(),
+        sessionId: sessionKey,
+        message: item.message,
+        launchContext: item.launchContext,
+        routeContext: item.routeContext,
+        originMessageId: item.originMessageId,
+      };
+      this.requestGates.set(
+        queuedTurn.requestId,
+        new RequestCompletionGate(queuedTurn.requestId, queuedTurn.originMessageId),
+      );
+      this.enqueueQueuedTurn(queuedTurn);
+    }
   }
 
   /**
@@ -953,6 +982,7 @@ export class RuntimeApp {
     });
 
     const turnStartedAt = Date.now();
+    let promoteUnreadSteering = false;
     this.activeTurnIdBySession.set(params.sessionId, params.turnId);
     log.debug('turn start', {
       requestId: params.requestId,
@@ -967,6 +997,8 @@ export class RuntimeApp {
     try {
       const result = await this.runTurnInternal(params, generationPin, tree);
       const outcome = result.stopReason === 'aborted' ? 'aborted' : 'completed';
+      promoteUnreadSteering = result.stopReason !== 'aborted'
+        && result.stopReason !== 'max_llm_calls';
       if (gate.seal({ outcome, value: result })) {
         this.safeEmit({
           type: 'turn_end',
@@ -1051,11 +1083,20 @@ export class RuntimeApp {
       });
       this.recordError('run', info);
     } finally {
-      this.inFlightSessions.delete(params.sessionId);
       if (this.activeTurnIdBySession.get(params.sessionId) === params.turnId) {
         this.activeTurnIdBySession.delete(params.sessionId);
       }
-      this.steeringInboxBySession.delete(params.sessionId);
+      if (
+        promoteUnreadSteering
+        && this.state.phase !== 'closing'
+        && this.state.phase !== 'closed'
+        && this.state.phase !== 'failed'
+      ) {
+        this.promoteUnreadSteering(params.sessionId);
+      } else {
+        this.steeringInboxBySession.delete(params.sessionId);
+      }
+      this.inFlightSessions.delete(params.sessionId);
       this.state.activeRunCount = Math.max(0, this.state.activeRunCount - 1);
       this.state.lastRunEndedAt = Date.now();
       this.releaseTreeMember(params.turnId, tree);
@@ -1398,6 +1439,8 @@ export class RuntimeApp {
         providerId: resolvedModel.identity.providerId,
         modelId: resolvedModel.identity.modelId,
       });
+      const effectiveMaxLlmCalls =
+        params.maxLlmCalls ?? this.resources.runnerConfig.maxLlmCalls;
       parentRecord = Object.freeze({
         requestId: params.requestId,
         sessionId: params.sessionId,
@@ -1405,6 +1448,7 @@ export class RuntimeApp {
         turnId: params.turnId,
         signal: controller.signal,
         effectiveReference,
+        effectiveMaxLlmCalls,
         contextFiles: Object.freeze([...this.resources.contextFiles]),
         registrySnapshot: snapshot,
         registerChild: () => this.registerChild(params.turnId, tree),
@@ -1422,7 +1466,7 @@ export class RuntimeApp {
         hookProjection: snapshot.hooks,
         toolPolicy: this.resources.toolPolicy,
         approvalCapability: this.getApprovalCapability(params.turnId),
-        maxLlmCalls: params.maxLlmCalls ?? this.resources.resolvedConfig.runner.maxLlmCalls,
+        maxLlmCalls: effectiveMaxLlmCalls,
         // Runtime drains the inbox; Runner controls when steering is consumed.
         getSteeringMessages: async () => this.drainSteeringMessages(params.sessionId),
         compaction: this.resources.resolvedConfig.compaction,

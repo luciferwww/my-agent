@@ -28,6 +28,7 @@ export interface SubagentExecutionRequest {
   readonly canSpawn: boolean;
   readonly childSessionId: string;
   readonly childTurnId: string;
+  readonly parentMaxLlmCalls?: number;
   readonly signal: AbortSignal;
   readonly toolProjection: ToolProjection;
   readonly hookProjection: HookProjection;
@@ -78,7 +79,7 @@ export class SubagentExecutor {
       message: request.prompt,
       systemPrompt: basePrompt ? `${basePrompt}\n\n${addendum}` : addendum,
       turnId: request.childTurnId,
-      maxLlmCalls: request.profile.maxLlmCalls,
+      maxLlmCalls: request.profile.maxLlmCalls ?? request.parentMaxLlmCalls,
       signal: request.signal,
       profile: request.profile,
       tools,
