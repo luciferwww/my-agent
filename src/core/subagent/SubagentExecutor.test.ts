@@ -71,6 +71,7 @@ describe('SubagentExecutor', () => {
       signal,
       toolProjection,
       hookProjection,
+      getSessionPermissionMode: () => 'manual',
     });
     await executor.execute(prepared, resolvedModel);
 
@@ -139,6 +140,7 @@ describe('SubagentExecutor', () => {
       signal: new AbortController().signal,
       toolProjection,
       hookProjection,
+      getSessionPermissionMode: () => 'manual',
     });
 
     expect(prepared.maxLlmCalls).toBe(6);

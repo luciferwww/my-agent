@@ -87,7 +87,10 @@ function host(): ChannelRuntimeHost {
         abortTurn: () => ({ aborted: false, dropped: 0 }),
       },
       sessions: {
-        createSession: async () => ({ sessionId: 'session' }),
+        createSession: async () => ({
+          sessionId: 'session',
+          permission: { sessionId: 'session', mode: 'manual' as const, changedAt: 1 },
+        }),
         listSessions: async () => [],
         getSession: async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 }),
         renameSession: async (sessionId, title) => ({
@@ -105,6 +108,17 @@ function host(): ChannelRuntimeHost {
         unarchiveSession: async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 }),
         deleteSession: async () => undefined,
         forkSession: async () => ({ sessionId: 'fork', createdAt: 1, updatedAt: 1 }),
+        getPermissionMode: (sessionId) => ({
+          sessionId,
+          mode: 'manual' as const,
+          changedAt: 1,
+        }),
+        setPermissionMode: (input) => ({
+          sessionId: input.sessionId,
+          mode: input.mode,
+          changedAt: 1,
+        }),
+        onPermissionModeChanged: () => () => {},
       },
     },
   };

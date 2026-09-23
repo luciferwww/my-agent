@@ -1,5 +1,6 @@
 export type ApprovalResult =
   | { readonly outcome: 'approved' }
+  | { readonly outcome: 'approved'; readonly source: 'session_allow_all' }
   | { readonly outcome: 'denied'; readonly reason: 'user' | 'user_cancelled' }
   | { readonly outcome: 'aborted'; readonly reason: 'turn' | 'shutdown' }
   | {
@@ -19,4 +20,13 @@ export interface CurrentCallApprovalCapability {
     },
     signal: AbortSignal,
   ): Promise<ApprovalResult>;
+}
+
+export type SessionPermissionMode = 'manual' | 'allow_all';
+
+export interface SessionPermissionState {
+  readonly sessionId: string;
+  readonly mode: SessionPermissionMode;
+  readonly changedAt: number;
+  readonly changedByClientId?: string;
 }

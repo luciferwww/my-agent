@@ -194,8 +194,92 @@ describe('AgentRunner canonical Tool pipeline', () => {
       toolPolicy: { isDenied: () => false, decide: policyDecision },
     });
 
-    expect(policyDecision).toHaveBeenCalledWith('demo', { count: 3 }, false);
+    expect(policyDecision).toHaveBeenCalledWith('demo', { count: 3 }, false, 'manual');
     expect(execute).toHaveBeenCalledWith({ count: 3 }, expect.any(Object));
+  });
+
+  it('reads the live Session permission mode for every Tool authorization', async () => {
+    const permissionMode = vi.fn()
+      .mockReturnValueOnce('allow_all')
+      .mockReturnValueOnce('manual');
+    const policyDecision = vi.fn(() => 'allow' as const);
+    const execute = vi.fn(async (): Promise<ToolExecutionOutput> => ({
+      outcome: 'success',
+      content: 'executed',
+    }));
+    const snapshot = snapshotWithTool({
+      before: () => ({ action: 'allow' }),
+      afterResults: [],
+      execute,
+    });
+    let round = 0;
+    const port: ModelInvocationPort = {
+      async *chatStream() {
+        round++;
+        yield { type: 'message_start' as const };
+        if (round === 1) {
+          yield {
+            type: 'tool_call' as const,
+            call: {
+              callId: 'first-call',
+              name: 'demo',
+              input: { state: 'ready' as const, value: { count: 1 } },
+            },
+          };
+          yield {
+            type: 'tool_call' as const,
+            call: {
+              callId: 'second-call',
+              name: 'demo',
+              input: { state: 'ready' as const, value: { count: 2 } },
+            },
+          };
+          yield {
+            type: 'message_end' as const,
+            stopReason: 'tool_use',
+            usage: { inputTokens: 2, outputTokens: 1 },
+          };
+          return;
+        }
+        yield { type: 'text_delta' as const, text: 'done' };
+        yield {
+          type: 'message_end' as const,
+          stopReason: 'end_turn',
+          usage: { inputTokens: 2, outputTokens: 1 },
+        };
+      },
+      async chat() {
+        throw new Error('not used');
+      },
+    };
+
+    await new AgentRunner({ sessionManager }).run({
+      sessionId: MAIN_SESSION_ID,
+      message: 'go',
+      systemPrompt: '',
+      turnId: 'turn',
+      resolvedModel: resolvedModel(port),
+      toolProjection: snapshot.tools,
+      hookProjection: snapshot.hooks,
+      toolPolicy: { isDenied: () => false, decide: policyDecision },
+      getSessionPermissionMode: permissionMode,
+    });
+
+    expect(permissionMode).toHaveBeenCalledTimes(2);
+    expect(policyDecision).toHaveBeenNthCalledWith(
+      1,
+      'demo',
+      { count: 1 },
+      false,
+      'allow_all',
+    );
+    expect(policyDecision).toHaveBeenNthCalledWith(
+      2,
+      'demo',
+      { count: 2 },
+      false,
+      'manual',
+    );
   });
 
   it('hides an explicit-deny definition and still denies a stale Provider call at runtime', async () => {

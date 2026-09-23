@@ -1,4 +1,8 @@
 import type { AgentEvent } from '../../../core/runner/types.js';
+import type {
+  SessionPermissionMode,
+  SessionPermissionState,
+} from '../../../core/approval/index.js';
 import { SessionError, type SessionErrorCode } from '../../../core/session/index.js';
 import { Logger } from '../../../platform/logger/index.js';
 import { WS_MAX_PAYLOAD_BYTES } from '../../../core/media/constants.js';
@@ -64,6 +68,16 @@ type ClientMessage =
   | {
       type: 'create_session';
       requestId: string;
+      permissionMode?: SessionPermissionMode;
+    }
+  | {
+      type: 'get_session_permission_mode';
+      sessionId: string;
+    }
+  | {
+      type: 'set_session_permission_mode';
+      sessionId: string;
+      mode: SessionPermissionMode;
     }
   | {
       type: 'list_sessions';
@@ -140,6 +154,7 @@ export class WebSocketChannel implements Channel {
    * 独立使用时能力可能未绑定，此时需要能力的协议请求返回 SERVER_NOT_READY。
    */
   private runtimeCapabilities?: ChannelRuntimeCapabilities;
+  private unsubscribePermissionModeChanged?: () => void;
 
   private started = false;
   private stopRequested = false;
@@ -277,6 +292,10 @@ export class WebSocketChannel implements Channel {
     }
 
     this.started = true;
+    this.unsubscribePermissionModeChanged =
+      this.runtimeCapabilities?.sessions.onPermissionModeChanged((permission) => {
+        this.broadcastPermissionMode(permission);
+      });
     log.info('websocket channel started', {
       channelId: this.id,
       host: this.host,
@@ -288,6 +307,8 @@ export class WebSocketChannel implements Channel {
   async stop(): Promise<void> {
     if (this.stopRequested) return;
     this.stopRequested = true;
+    this.unsubscribePermissionModeChanged?.();
+    this.unsubscribePermissionModeChanged = undefined;
     if (!this.server) {
       this.settleCompletion({ outcome: 'closed', reason: 'stopped' });
       return;
@@ -345,6 +366,10 @@ export class WebSocketChannel implements Channel {
           return;
         case 'create_session':
           await this.handleCreateSession(socket, message);
+          return;
+        case 'get_session_permission_mode':
+        case 'set_session_permission_mode':
+          await this.handlePermissionModeRequest(socket, message);
           return;
         case 'list_sessions':
         case 'get_session':
@@ -437,9 +462,24 @@ export class WebSocketChannel implements Channel {
           requestId: readNonEmptyString(parsed.requestId, 'requestId'),
         };
       case 'create_session':
+        assertOnlyKeys(parsed, ['type', 'requestId', 'permissionMode'], type);
         return {
           type,
           requestId: readNonEmptyString(parsed.requestId, 'requestId'),
+          permissionMode: readOptionalPermissionMode(parsed.permissionMode, 'permissionMode'),
+        };
+      case 'get_session_permission_mode':
+        assertOnlyKeys(parsed, ['type', 'sessionId'], type);
+        return {
+          type,
+          sessionId: readNonEmptyString(parsed.sessionId, 'sessionId'),
+        };
+      case 'set_session_permission_mode':
+        assertOnlyKeys(parsed, ['type', 'sessionId', 'mode'], type);
+        return {
+          type,
+          sessionId: readNonEmptyString(parsed.sessionId, 'sessionId'),
+          mode: readPermissionMode(parsed.mode, 'mode'),
         };
       case 'list_sessions':
         return {
@@ -581,21 +621,65 @@ export class WebSocketChannel implements Channel {
     socket: WebSocket,
     message: Extract<ClientMessage, { type: 'create_session' }>,
   ): Promise<void> {
-    this.requireBoundClientId(socket);
-    const { sessionId } = await this.invokeSessionOperation((capability) =>
-      capability.createSession());
+    const clientId = this.requireBoundClientId(socket);
+    const { sessionId, permission } = await this.invokeSessionOperation((capability) =>
+      capability.createSession({
+        ...(message.permissionMode === undefined ? {} : { permissionMode: message.permissionMode }),
+        originClientId: clientId,
+      }));
+    this.registerSessionAudience(clientId, sessionId);
     this.sendJson(socket, {
       type: 'session_created',
       requestId: message.requestId,
       sessionId,
+      permission,
     });
+  }
+
+  private async handlePermissionModeRequest(
+    socket: WebSocket,
+    message: Extract<
+      ClientMessage,
+      { type: 'get_session_permission_mode' | 'set_session_permission_mode' }
+    >,
+  ): Promise<void> {
+    const clientId = this.requireBoundClientId(socket);
+    const permission = message.type === 'get_session_permission_mode'
+      ? await this.invokeSessionOperation((capability) =>
+          capability.getPermissionMode(message.sessionId))
+      : await this.invokeSessionOperation((capability) =>
+          capability.setPermissionMode({
+            sessionId: message.sessionId,
+            mode: message.mode,
+            originClientId: clientId,
+          }));
+    this.registerSessionAudience(clientId, message.sessionId);
+    this.sendJson(socket, {
+      type: 'session_permission_mode_changed',
+      ...toWirePermissionMode(permission),
+    });
+  }
+
+  private broadcastPermissionMode(permission: SessionPermissionState): void {
+    const audience = this.sessions.get(permission.sessionId);
+    if (!audience) return;
+    for (const clientId of audience) {
+      if (clientId === permission.changedByClientId) continue;
+      const socket = this.clients.get(clientId);
+      if (socket?.readyState === WebSocket.OPEN) {
+        this.sendJson(socket, {
+          type: 'session_permission_mode_changed',
+          ...toWirePermissionMode(permission),
+        });
+      }
+    }
   }
 
   private async handleSessionRequest(
     socket: WebSocket,
     message: Exclude<
       ClientMessage,
-      { type: 'hello' | 'run_turn' | 'approval_resolve' | 'abort_turn' | 'get_model_catalog' | 'create_session' }
+      { type: 'hello' | 'run_turn' | 'approval_resolve' | 'abort_turn' | 'get_model_catalog' | 'create_session' | 'get_session_permission_mode' | 'set_session_permission_mode' }
     >,
   ): Promise<void> {
     this.requireBoundClientId(socket);
@@ -651,7 +735,7 @@ export class WebSocketChannel implements Channel {
   }
 
   private async invokeSessionOperation<T>(
-    operation: (capability: ChannelRuntimeCapabilities['sessions']) => Promise<T>,
+    operation: (capability: ChannelRuntimeCapabilities['sessions']) => Promise<T> | T,
   ): Promise<T> {
     const capability = this.runtimeCapabilities?.sessions;
     if (!capability) {
@@ -898,7 +982,11 @@ export class WebSocketChannel implements Channel {
       type: 'approval_closed',
       id,
       outcome: result.outcome,
-      reason: 'reason' in result ? result.reason : 'failed',
+      reason: result.outcome === 'approved'
+        ? result.source
+        : 'reason' in result
+          ? result.reason
+          : result.message,
     });
   }
 
@@ -970,6 +1058,16 @@ function toWireModelCatalog(snapshot: ModelCatalogSnapshot): Record<string, unkn
           : {}),
       })),
     })),
+  };
+}
+
+function toWirePermissionMode(
+  permission: SessionPermissionState,
+): Pick<SessionPermissionState, 'sessionId' | 'mode' | 'changedAt'> {
+  return {
+    sessionId: permission.sessionId,
+    mode: permission.mode,
+    changedAt: permission.changedAt,
   };
 }
 
@@ -1096,4 +1194,18 @@ function readNullableString(value: unknown, field: string): string | null {
 function readOptionalBoolean(value: unknown, field: string): boolean | undefined {
   if (value === undefined || typeof value === 'boolean') return value;
   throw new ProtocolError('INVALID_MESSAGE', `${field} must be a boolean.`);
+}
+
+function readPermissionMode(value: unknown, field: string): SessionPermissionMode {
+  if (value !== 'manual' && value !== 'allow_all') {
+    throw new ProtocolError('INVALID_MESSAGE', `${field} must be manual or allow_all.`);
+  }
+  return value;
+}
+
+function readOptionalPermissionMode(
+  value: unknown,
+  field: string,
+): SessionPermissionMode | undefined {
+  return value === undefined ? undefined : readPermissionMode(value, field);
 }

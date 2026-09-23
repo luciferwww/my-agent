@@ -1249,6 +1249,15 @@
       .bubble-attachment { display: flex; flex-direction: column; gap: 4px; max-width: 240px; }
       .bubble-attachment img { width: 100%; max-height: 240px; object-fit: contain; border-radius: 6px; background: rgba(0,0,0,0.2); }
       .bubble-attachment-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--fg-muted, #888); }
+      .permission-panel { display: grid; gap: 8px; }
+      .permission-indicator {
+        padding: 8px 10px; border-radius: 8px; font-size: 12px; font-weight: 700;
+        border: 1px solid var(--border, #2a2a2a);
+      }
+      .permission-indicator.allow-all {
+        color: var(--danger, #c0382b); background: rgba(192, 56, 43, 0.1);
+      }
+      .permission-warning { margin: 0; color: var(--danger, #c0382b); font-size: 12px; }
     </style>
   </head>
   <body>
@@ -1417,6 +1426,36 @@
               <span class="session-item-time">{{ formatSessionTime(session.updatedAt) }}</span>
             </button>
           </div>
+        </section>
+
+        <section class="section permission-panel">
+          <div class="section-title">
+            <h2>Session permissions</h2>
+          </div>
+          <label>
+            <span class="field-label-text">Permission mode</span>
+            <select
+              :value="permissionMode"
+              :disabled="!isConnected || pendingPermissionRequestId !== null"
+              @change="changePermissionMode($event.target.value); $event.target.value = permissionMode"
+            >
+              <option value="manual">Manual permissions</option>
+              <option value="allow_all">Allow all for this Session</option>
+            </select>
+          </label>
+          <div
+            class="permission-indicator"
+            :class="{ 'allow-all': permissionMode === 'allow_all' }"
+            aria-live="polite"
+          >
+            Active: {{ permissionMode === 'allow_all' ? 'Allow all for this Session' : 'Manual permissions' }}
+          </div>
+          <p v-if="permissionMode === 'allow_all'" class="permission-warning">
+            Warning: every non-denied tool can run without asking, including Shell commands
+            and external filesystem changes. Executable and dependency integrity is not
+            verified. This remains active after disconnect until revoked, archived, deleted,
+            or the Runtime restarts.
+          </p>
         </section>
 
         <section class="section">
@@ -1708,6 +1747,10 @@
             pendingSessionRequestId: null,
             nextSessionRequestId: 1,
             pendingFirstTurn: null,
+            permissionMode: 'manual',
+            permissionChangedAt: 0,
+            pendingPermissionRequestId: null,
+            nextPermissionRequestId: 1,
             sessions: [],
             pendingSessionsRequestId: null,
             nextSessionsRequestId: 1,
@@ -1876,6 +1919,9 @@
             this.pendingCatalogRequestId = null;
             this.pendingSessionRequestId = null;
             this.pendingFirstTurn = null;
+            this.permissionMode = 'manual';
+            this.permissionChangedAt = 0;
+            this.pendingPermissionRequestId = null;
             this.pendingSessionsRequestId = null;
             this.sessions = [];
             this.sessionsError = '';
@@ -1971,6 +2017,39 @@
             this.pendingSessionsRequestId = requestId;
             this.sessionsError = '';
             this.sendJson({ type: 'list_sessions', requestId });
+          },
+          requestPermissionMode() {
+            if (!this.isConnected || !this.form.sessionId || this.pendingPermissionRequestId !== null) return;
+            const requestId = `permission-${this.nextPermissionRequestId++}`;
+            this.pendingPermissionRequestId = requestId;
+            this.sendJson({
+              type: 'get_session_permission_mode',
+              sessionId: this.form.sessionId,
+            });
+          },
+          changePermissionMode(mode) {
+            if (mode !== 'manual' && mode !== 'allow_all') return;
+            if (mode === this.permissionMode) return;
+            if (mode === 'allow_all' && !window.confirm(
+              'Allow all tools for this Session?\n\n'
+                + 'Every non-denied tool will run without asking. Arbitrary Shell commands and '
+                + 'external filesystem changes are possible. Executable and dependency integrity '
+                + 'is not verified. This mode remains active after disconnect and ends only when '
+                + 'you revoke it, archive/delete the Session, or restart the Runtime.',
+            )) {
+              return;
+            }
+            if (!this.form.sessionId) {
+              this.permissionMode = mode;
+              return;
+            }
+            const requestId = `permission-${this.nextPermissionRequestId++}`;
+            this.pendingPermissionRequestId = requestId;
+            this.sendJson({
+              type: 'set_session_permission_mode',
+              sessionId: this.form.sessionId,
+              mode,
+            });
           },
           toggleModelPicker() {
             if (this.modelPickerOpen) {
@@ -2191,7 +2270,11 @@
               const requestId = `session-${this.nextSessionRequestId++}`;
               this.pendingSessionRequestId = requestId;
               this.pendingFirstTurn = pendingTurn;
-              this.sendJson({ type: 'create_session', requestId });
+              this.sendJson({
+                type: 'create_session',
+                requestId,
+                permissionMode: this.permissionMode,
+              });
               this.pushEvent('create_session', 'Requested a Session for the first message');
             }
             this.draft = '';
@@ -2392,6 +2475,7 @@
                 this.pushEvent('hello', `Server acknowledged client ${message.clientId}`);
                 this.requestModelCatalog();
                 this.requestSessionList();
+                this.requestPermissionMode();
                 return;
               case 'model_catalog':
                 if (message.requestId !== this.pendingCatalogRequestId) {
@@ -2410,8 +2494,26 @@
                 this.pendingSessionRequestId = null;
                 this.pendingFirstTurn = null;
                 this.form.sessionId = message.sessionId;
+                if (message.permission?.sessionId === message.sessionId) {
+                  this.permissionMode = message.permission.mode;
+                  this.permissionChangedAt = message.permission.changedAt;
+                }
                 this.pushEvent('session_created', `Created session ${message.sessionId}`);
                 this.dispatchRunTurn(pendingTurn);
+                return;
+              }
+              case 'session_permission_mode_changed': {
+                if (message.sessionId !== this.form.sessionId
+                  || (message.mode !== 'manual' && message.mode !== 'allow_all')
+                  || !Number.isFinite(message.changedAt)
+                  || message.changedAt < this.permissionChangedAt) {
+                  this.pushEvent('permission', 'Ignored invalid or unrelated permission update');
+                  return;
+                }
+                this.pendingPermissionRequestId = null;
+                this.permissionMode = message.mode;
+                this.permissionChangedAt = message.changedAt;
+                this.pushEvent('permission', `Session permission mode is ${message.mode}`);
                 return;
               }
               case 'sessions_listed':
@@ -2453,6 +2555,7 @@
               case 'channel_error':
                 this.pendingSessionRequestId = null;
                 this.pendingFirstTurn = null;
+                this.pendingPermissionRequestId = null;
                 if (this.pendingSessionsRequestId !== null) {
                   this.pendingSessionsRequestId = null;
                   this.sessionsError = `${message.code}: ${message.message}`;
@@ -2712,6 +2815,9 @@
             this.approvalRequest = null;
             this.isWaitingForReply = false;
             this.form.sessionId = '';
+            this.permissionMode = 'manual';
+            this.permissionChangedAt = 0;
+            this.pendingPermissionRequestId = null;
           },
           selectSession(session) {
             if (!session?.sessionId || this.isWaitingForReply || this.pendingSessionRequestId !== null) {
@@ -2722,7 +2828,11 @@
             this.turnMap = {};
             this.approvalRequest = null;
             this.form.sessionId = session.sessionId;
+            this.permissionMode = 'manual';
+            this.permissionChangedAt = 0;
+            this.pendingPermissionRequestId = null;
             this.pushEvent('session_selected', `Selected Session ${session.sessionId}`);
+            this.requestPermissionMode();
           },
           shortSessionId(sessionId) {
             return typeof sessionId === 'string' ? sessionId.slice(0, 8) : '';

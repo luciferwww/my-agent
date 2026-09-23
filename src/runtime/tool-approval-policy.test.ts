@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createApplicationToolPolicy } from './tool-approval-policy.js';
 import type { ToolsConfig } from '../platform/config/types.js';
+import type { SessionPermissionMode } from '../core/approval/index.js';
 
 const empty: ToolsConfig = { allow: [], deny: [] };
 const agentHome = resolve('agent-home');
@@ -11,9 +12,10 @@ function decide(
   config: ToolsConfig,
   hasApprovalCapability: boolean,
   input: Readonly<Record<string, unknown>> = {},
+  permissionMode: SessionPermissionMode = 'manual',
 ) {
   return createApplicationToolPolicy(config, agentHome)
-    .decide(toolName, input, hasApprovalCapability);
+    .decide(toolName, input, hasApprovalCapability, permissionMode);
 }
 
 // ── no approval channel (fail-closed) ────────────────────
@@ -23,9 +25,9 @@ describe('CH-06 resolveToolPolicy — no approval channel', () => {
     expect(decide('exec', empty, false)).toBe('deny');
   });
 
-  it('allows tool that matches exact name in allow list', () => {
+  it('keeps Exec fail-closed even when its name is in the allow list', () => {
     const config: ToolsConfig = { allow: ['exec'], deny: [] };
-    expect(decide('exec', config, false)).toBe('allow');
+    expect(decide('exec', config, false)).toBe('deny');
     expect(decide('read_file', config, false)).toBe('deny');
   });
 
@@ -113,6 +115,23 @@ describe('structured external-path approval', () => {
     expect(decide('read_file', config, true, { path: 'notes/file.txt' })).toBe('allow');
   });
 
+  describe('Session Allow All', () => {
+    it('allows Exec and external structured paths without approval capability', () => {
+      const config: ToolsConfig = { allow: [], deny: [] };
+      const externalPath = resolve(agentHome, '..', 'outside', 'file.txt');
+
+      expect(decide('exec', config, false, { command: 'npm test' }, 'allow_all')).toBe('allow');
+      expect(decide('read_file', config, false, { path: externalPath }, 'allow_all')).toBe('allow');
+    });
+
+    it('keeps deny final in Allow All mode', () => {
+      const config: ToolsConfig = { allow: ['*'], deny: ['exec'] };
+
+      expect(decide('exec', config, true, { command: 'npm test' }, 'allow_all')).toBe('deny');
+      expect(decide('read_file', config, false, { path: 'notes.txt' }, 'allow_all')).toBe('allow');
+    });
+  });
+
   it('requires approval for an external target even when the Tool is allowed', () => {
     const config: ToolsConfig = { allow: ['read_file'], deny: [] };
     expect(decide('read_file', config, true, { path: externalPath }))
@@ -151,11 +170,11 @@ describe('structured external-path approval', () => {
     expect(decide('grep_search', config, true, { query: 'x', isRegexp: false })).toBe('allow');
   });
 
-  it('does not infer Exec effects from cwd or command text', () => {
+  it('requires approval for Exec without inferring effects from cwd or command text', () => {
     const config: ToolsConfig = { allow: ['exec'], deny: [] };
     expect(decide('exec', config, true, {
       command: `remove ${externalPath}`,
       cwd: externalPath,
-    })).toBe('allow');
+    })).toBe('requires_approval');
   });
 });

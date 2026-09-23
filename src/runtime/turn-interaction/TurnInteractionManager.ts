@@ -22,6 +22,13 @@ type PendingEntry = {
   abortHandler: () => void;
 };
 
+function requiresCloseNotification(result: ApprovalResult): result is ApprovalClosedResult {
+  return (
+    (result.outcome === 'approved' && 'source' in result)
+    || (result.outcome !== 'approved' && result.outcome !== 'denied')
+  );
+}
+
 /** Manages the lifecycle of blocking interactions within a Turn. */
 export class TurnInteractionManager {
   private pending = new Map<string, PendingEntry>();
@@ -86,6 +93,16 @@ export class TurnInteractionManager {
     );
   }
 
+  authorizeSession(sessionId: string): number {
+    const matchingIds = [...this.pending]
+      .filter(([, entry]) => entry.request.sessionId === sessionId)
+      .map(([id]) => id);
+    for (const id of matchingIds) {
+      this.settle(id, { outcome: 'approved', source: 'session_allow_all' });
+    }
+    return matchingIds.length;
+  }
+
   settle(id: string, result: ApprovalResult): boolean {
     const entry = this.pending.get(id);
     if (!entry) {
@@ -107,7 +124,7 @@ export class TurnInteractionManager {
       pendingCount: this.pending.size,
     });
     entry.resolve(result);
-    if (result.outcome !== 'approved' && result.outcome !== 'denied') {
+    if (requiresCloseNotification(result)) {
       try {
         this.closeHandler?.(entry.request, result);
       } catch (error) {

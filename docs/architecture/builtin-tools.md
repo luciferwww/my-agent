@@ -27,9 +27,9 @@ Filesystem and Search factories receive `agentHome`. Relative structured paths r
 
 `resolveEnvironmentPath()` returns the resolved Agent Home, absolute target, and display path. Display paths use forward slashes: paths inside Agent Home are relative (`.` for the root), while external targets are absolute. The helper resolves paths but does not authorize them or reject external targets.
 
-After Hook transformation and schema validation, Application Tool Policy examines each declared structured target before Tool execution. Tool-name deny is final. Any lexically external target requires the existing current-call Approval even when the Tool name is allowed; missing Approval capability fails closed. Internal targets follow ordinary deny/allow/per-call Approval policy. Apply Patch classification includes add, delete, update, and move targets.
+After Hook transformation and schema validation, Application Tool Policy examines each declared structured target before Tool execution. Tool-name deny is final. In `manual` Session mode, any lexically external target requires current-call Approval even when the Tool name is allowed; missing Approval capability fails closed. Internal targets follow ordinary allow/per-call Approval policy. In `allow_all`, every non-denied target is automatically authorized. Apply Patch classification includes add, delete, update, and move targets.
 
-Approval is call-scoped and origin-bound; it creates no persistent resource grant. Classification is lexical and does not canonicalize symlinks. Agent Home is therefore a relative-path anchor, not a sandbox or hard filesystem boundary. Filesystem Tools catch input/path/I/O failures at their execution boundary and report `outcome: 'failed'`.
+Current-call Approval is call-scoped and origin-bound; `allow_all` is broader but remains process-local to the live root Session. Neither creates a persistent resource grant. Classification is lexical and does not canonicalize symlinks. Agent Home is therefore a relative-path anchor, not a sandbox or hard filesystem boundary. Filesystem Tools catch input/path/I/O failures at their execution boundary and report `outcome: 'failed'`.
 
 ## 3. Filesystem Tools
 
@@ -78,7 +78,7 @@ background?: boolean
 
 Only `string:string` environment entries are accepted and merged over string-valued `process.env` entries. Execution uses an explicit `cmd.exe /d /s /c` wrapper on Windows and `/bin/sh -c` on Unix; `shell` is false. Unix managed commands use detached process groups.
 
-Exec is governed only by Tool-name policy. Deny blocks it; allow authorizes arbitrary Shell execution without Approval; otherwise each call requires current-call Approval and fails closed when Approval is unavailable. The full validated input, including the exact command, is the Approval subject. `cwd` is execution context, not confinement, and policy does not infer command effects from either command text or `cwd`.
+Exec is always blocked by an effective Tool-name deny. In `manual` Session mode every Exec call requires current-call Approval, even when `tools.allow` matches, and fails closed when Approval is unavailable. In `allow_all`, non-denied Exec calls are automatically authorized. The full validated input, including the exact command, is the current-call Approval subject. `cwd` is execution context, not confinement, and policy does not infer command effects from either command text or `cwd`. Neither approval mode verifies the executable selected by the Shell or provides process, filesystem, or network isolation.
 
 | Mode | Selection | Behavior |
 |---|---|---|

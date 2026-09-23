@@ -38,7 +38,7 @@ Global Runtime/Runner precedence is `module default -> top-level file value`. Ag
 
 Unknown fields are rejected rather than ignored or treated as aliases. Top-level `host`, Agent-level `model`/`llm`, nested/per-Agent `runtime`/`runner`, and `agents.defaults.workspace` or per-agent `workspace` are explicitly invalid.
 
-Tool deny hides matching definitions and remains final at execution. For structured path Tools, lexically external declared targets require current-call Approval even when the Tool name is allowed; internal allowed targets bypass Approval. Unmatched Tools require Approval capability and fail closed without it. Exec allow grants arbitrary Shell authority without Approval, while unmatched Exec calls require Approval and fail closed without it. Exact names and `*`/`?` globs are supported; `group:*` is not.
+Tool deny hides matching definitions and remains final at execution. Session permission mode is Runtime state, not configuration. In `manual`, lexically external structured targets and all Exec calls require current-call Approval even when the Tool name is allowed; internal allowed targets bypass Approval, while other unmatched Tools require Approval. Missing required Approval fails closed. In `allow_all`, every non-denied registered Tool is automatically authorized. Exact names and `*`/`?` globs are supported; `group:*` is not.
 
 Agent Home is the relative path anchor, not a confinement boundary. Approval is current-call only. Canonical/symlink-aware authorization, persistent grants, command patterns, and sandboxing are outside this contract.
 

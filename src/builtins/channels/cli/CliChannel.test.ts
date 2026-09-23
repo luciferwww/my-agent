@@ -11,6 +11,11 @@ import { CliChannel } from './CliChannel.js';
 // Strip ANSI escape sequences so assertions don't fight color codes.
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 const CLI_SESSION_ID = '123e4567-e89b-42d3-a456-426614174000';
+const MANUAL_PERMISSION = {
+  sessionId: CLI_SESSION_ID,
+  mode: 'manual' as const,
+  changedAt: 1,
+};
 function stripAnsi(s: string): string {
   return s.replace(ANSI_RE, '');
 }
@@ -221,6 +226,7 @@ describe('CliChannel model commands', () => {
     },
     createSession: ChannelRuntimeCapabilities['sessions']['createSession'] = async () => ({
       sessionId: CLI_SESSION_ID,
+      permission: MANUAL_PERMISSION,
     }),
   ): ChannelRuntimeCapabilities {
     return {
@@ -267,6 +273,14 @@ describe('CliChannel model commands', () => {
           createdAt: 1,
           updatedAt: 1,
         }),
+        getPermissionMode: () => MANUAL_PERMISSION,
+        setPermissionMode: ({ sessionId, mode, originClientId }) => ({
+          sessionId,
+          mode,
+          changedAt: 2,
+          ...(originClientId ? { changedByClientId: originClientId } : {}),
+        }),
+        onPermissionModeChanged: () => () => undefined,
       },
     };
   }
@@ -415,7 +429,10 @@ describe('CliChannel model commands', () => {
   });
 
   it('creates one Session only when the first ordinary message is sent', async () => {
-    const createSession = vi.fn(async () => ({ sessionId: CLI_SESSION_ID }));
+    const createSession = vi.fn(async () => ({
+      sessionId: CLI_SESSION_ID,
+      permission: MANUAL_PERMISSION,
+    }));
     const fixture = await startInteractive(undefined, catalogCapabilities(undefined, createSession));
     try {
       fixture.input.write('/models\n');
@@ -445,7 +462,10 @@ describe('CliChannel model commands', () => {
       updatedAt: 2,
       title: 'First message',
     };
-    const createSession = vi.fn(async () => ({ sessionId: CLI_SESSION_ID }));
+    const createSession = vi.fn(async () => ({
+      sessionId: CLI_SESSION_ID,
+      permission: MANUAL_PERMISSION,
+    }));
     const listSessions = vi.fn(async () => [entry]);
     const getSession = vi.fn(async () => entry);
     const renameSession = vi.fn(async (_sessionId: string, title: string | null) => {
@@ -505,6 +525,54 @@ describe('CliChannel model commands', () => {
       expect(renameSession).toHaveBeenCalledWith(CLI_SESSION_ID, 'Renamed');
       expect(deleteSession).toHaveBeenCalledWith(CLI_SESSION_ID);
       expect(fixture.handler).toHaveBeenCalledTimes(1);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('shows permission mode, strongly confirms Allow All, and switches back to manual', async () => {
+    let mode: 'manual' | 'allow_all' = 'manual';
+    const baseCapabilities = catalogCapabilities();
+    const setPermissionMode = vi.fn(({ sessionId, mode: nextMode }: {
+      sessionId: string;
+      mode: 'manual' | 'allow_all';
+    }) => {
+      mode = nextMode;
+      return { sessionId, mode, changedAt: 2 };
+    });
+    const fixture = await startInteractive(undefined, {
+      ...baseCapabilities,
+      sessions: {
+        ...baseCapabilities.sessions,
+        getPermissionMode: (sessionId) => ({ sessionId, mode, changedAt: 1 }),
+        setPermissionMode,
+      },
+    });
+    try {
+      fixture.input.write('create me\n');
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledTimes(1));
+
+      fixture.input.write('/permission\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[permission] manual'));
+
+      fixture.input.write('/permission allow_all\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain(
+        'every non-denied tool without asking',
+      ));
+      expect(setPermissionMode).not.toHaveBeenCalled();
+      fixture.input.write('ALLOW ALL\n');
+      await vi.waitFor(() => expect(setPermissionMode).toHaveBeenCalledWith({
+        sessionId: CLI_SESSION_ID,
+        mode: 'allow_all',
+      }));
+      expect(fixture.captured()).toContain('Allow all for this Session');
+
+      fixture.input.write('/permission manual\n');
+      await vi.waitFor(() => expect(setPermissionMode).toHaveBeenLastCalledWith({
+        sessionId: CLI_SESSION_ID,
+        mode: 'manual',
+      }));
+      expect(fixture.captured()).toContain('individual approvals required');
     } finally {
       await fixture.close();
     }
@@ -589,7 +657,10 @@ describe('CliChannel Ctrl+C / abort handling', () => {
         },
         abort: { querySessionsNeedingAbort: query, abortTurn },
         sessions: {
-          createSession: async () => ({ sessionId: CLI_SESSION_ID }),
+          createSession: async () => ({
+            sessionId: CLI_SESSION_ID,
+            permission: MANUAL_PERMISSION,
+          }),
           listSessions: async () => [],
           getSession: async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 }),
           renameSession: async (sessionId, title) => ({
@@ -611,6 +682,9 @@ describe('CliChannel Ctrl+C / abort handling', () => {
             createdAt: 1,
             updatedAt: 1,
           }),
+          getPermissionMode: () => MANUAL_PERMISSION,
+          setPermissionMode: ({ sessionId, mode }) => ({ sessionId, mode, changedAt: 2 }),
+          onPermissionModeChanged: () => () => undefined,
         },
       },
       abortTurn,

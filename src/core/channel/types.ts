@@ -1,4 +1,8 @@
 import type { ApprovalResult } from '../approval/index.js';
+import type {
+  SessionPermissionMode,
+  SessionPermissionState,
+} from '../approval/index.js';
 import type { ModelReference } from '../model-resolution/index.js';
 import type { AgentEvent } from '../runner/types.js';
 
@@ -102,6 +106,7 @@ export interface ApprovalRequestOptions {
 export type ApprovalClosedResult = Extract<
   ApprovalResult,
   { outcome: 'aborted' | 'unavailable' | 'failed' }
+  | { outcome: 'approved'; source: 'session_allow_all' }
 >;
 
 export type ApprovalDeliveryResult =
@@ -158,7 +163,10 @@ export interface SessionCapabilityEntry {
 }
 
 export interface SessionCapability {
-  createSession(): Promise<{ sessionId: string }>;
+  createSession(input?: {
+    permissionMode?: SessionPermissionMode;
+    originClientId?: string;
+  }): Promise<{ sessionId: string; permission: SessionPermissionState }>;
   listSessions(input?: { archived?: boolean }): Promise<SessionCapabilityEntry[]>;
   getSession(sessionId: string): Promise<SessionCapabilityEntry>;
   renameSession(sessionId: string, title: string | null): Promise<SessionCapabilityEntry>;
@@ -166,6 +174,15 @@ export interface SessionCapability {
   unarchiveSession(sessionId: string): Promise<SessionCapabilityEntry>;
   deleteSession(sessionId: string): Promise<void>;
   forkSession(sessionId: string, entryId?: string): Promise<SessionCapabilityEntry>;
+  getPermissionMode(sessionId: string): SessionPermissionState;
+  setPermissionMode(input: {
+    sessionId: string;
+    mode: SessionPermissionMode;
+    originClientId?: string;
+  }): SessionPermissionState;
+  onPermissionModeChanged(
+    handler: (state: SessionPermissionState) => void,
+  ): () => void;
 }
 
 export interface ChannelRuntimeCapabilities {

@@ -8,6 +8,7 @@ import type { SystemPromptBuilder } from '../prompt/SystemPromptBuilder.js';
 import type { ContextFile } from '../agent-context/types.js';
 import { buildSubagentBehavioralAddendum } from './behavioral-addendum.js';
 import type { SubagentProfile } from './types.js';
+import type { SessionPermissionMode } from '../approval/index.js';
 
 export interface SubagentExecutorDeps {
   readonly agentRunner: AgentRunner;
@@ -32,6 +33,7 @@ export interface SubagentExecutionRequest {
   readonly signal: AbortSignal;
   readonly toolProjection: ToolProjection;
   readonly hookProjection: HookProjection;
+  readonly getSessionPermissionMode: () => SessionPermissionMode;
 }
 
 export interface PreparedSubagentExecution {
@@ -48,6 +50,7 @@ export interface PreparedSubagentExecution {
   readonly toolPolicy: ApplicationToolPolicy;
   readonly toolProjection: ToolProjection;
   readonly hookProjection: HookProjection;
+  readonly getSessionPermissionMode: () => SessionPermissionMode;
 }
 
 /** Internal executor for an already tracked and resolved Child Turn. */
@@ -86,6 +89,7 @@ export class SubagentExecutor {
       toolPolicy,
       toolProjection: request.toolProjection,
       hookProjection: request.hookProjection,
+      getSessionPermissionMode: request.getSessionPermissionMode,
     };
   }
 
@@ -97,6 +101,7 @@ export class SubagentExecutor {
       toolPolicy,
       toolProjection,
       hookProjection,
+      getSessionPermissionMode,
       ...runRequest
     } = request;
     return this.deps.agentRunner.run({
@@ -106,6 +111,7 @@ export class SubagentExecutor {
       toolProjection,
       hookProjection,
       toolPolicy,
+      getSessionPermissionMode,
     });
   }
 

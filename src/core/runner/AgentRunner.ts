@@ -1019,11 +1019,20 @@ export class AgentRunner {
       };
     }
 
+    const permissionMode = params.getSessionPermissionMode?.() ?? 'manual';
     const policyDecision = params.toolPolicy.decide(
       toolUse.name,
       effectiveInput,
       params.approvalCapability !== undefined,
+      permissionMode,
     );
+    if (policyDecision === 'allow' && permissionMode === 'allow_all') {
+      logger.info('tool authorized by Session Allow All', {
+        sessionId: params.sessionId,
+        turnId: params.turnId,
+        toolName: toolUse.name,
+      });
+    }
     if (policyDecision === 'deny') {
       return {
         result: this.canonicalToolResult(

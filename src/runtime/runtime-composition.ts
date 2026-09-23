@@ -11,6 +11,10 @@ import type {
   RuntimeLifecycleState,
   RuntimeShutdownReport,
 } from './types.js';
+import type {
+  SessionPermissionMode,
+  SessionPermissionState,
+} from '../core/approval/index.js';
 
 export type {
   DefaultModelSelection,
@@ -21,7 +25,10 @@ export type {
 
 export interface RuntimeApplication {
   runTurn(params: RunTurnParams): Promise<RunTurnResult>;
-  createSession(): Promise<{ sessionId: string }>;
+  createSession(input?: {
+    permissionMode?: SessionPermissionMode;
+    originClientId?: string;
+  }): Promise<{ sessionId: string; permission: SessionPermissionState }>;
   listSessions(input?: { archived?: boolean }): Promise<SessionEntry[]>;
   getSession(sessionId: string): Promise<SessionEntry>;
   renameSession(sessionId: string, title: string | null): Promise<SessionEntry>;
@@ -29,6 +36,15 @@ export interface RuntimeApplication {
   unarchiveSession(sessionId: string): Promise<SessionEntry>;
   deleteSession(sessionId: string): Promise<void>;
   forkSession(sessionId: string, entryId?: string): Promise<SessionEntry>;
+  getSessionPermissionMode(sessionId: string): SessionPermissionState;
+  setSessionPermissionMode(input: {
+    sessionId: string;
+    mode: SessionPermissionMode;
+    originClientId?: string;
+  }): SessionPermissionState;
+  onSessionPermissionModeChanged(
+    handler: (state: SessionPermissionState) => void,
+  ): () => void;
   getModelCatalog(): ModelCatalogSnapshot;
   abortTurn(sessionId: string): { aborted: boolean; dropped: number };
   getState(): RuntimeLifecycleState;

@@ -6,6 +6,10 @@ import type {
   TurnInteractionResponse,
 } from '../core/channel/index.js';
 import type { AgentEvent } from '../core/runner/index.js';
+import type {
+  SessionPermissionMode,
+  SessionPermissionState,
+} from '../core/approval/index.js';
 import { AgentRunner } from '../core/runner/index.js';
 import { Logger } from '../platform/logger/index.js';
 import { MemoryManager } from '../core/memory/index.js';
@@ -107,6 +111,8 @@ export async function buildRuntimeHandle(
     { readonly owner: string; readonly eventType: string; readonly promise: Promise<void> }
   >();
   const fanoutFailures: Array<{ owner: string; eventType: string; message: string }> = [];
+  const sessionPermissionListeners = new Set<(state: SessionPermissionState) => void>();
+  let unsubscribeSessionPermissionBridge: (() => void) | undefined;
   let fanoutSequence = 0;
   const dependencies = createRuntimeDependencies(options.dependencies);
 
@@ -192,11 +198,14 @@ export async function buildRuntimeHandle(
         },
       }),
       sessions: Object.freeze({
-        createSession() {
+        createSession(input?: {
+          permissionMode?: SessionPermissionMode;
+          originClientId?: string;
+        }) {
           if (!kernel) {
             return Promise.reject(new Error('Runtime Session capability is not ready.'));
           }
-          return kernel.application.createSession();
+          return kernel.application.createSession(input);
         },
         listSessions(input?: { archived?: boolean }) {
           if (!kernel) {
@@ -239,6 +248,22 @@ export async function buildRuntimeHandle(
             return Promise.reject(new Error('Runtime Session capability is not ready.'));
           }
           return kernel.application.forkSession(sessionId, entryId);
+        },
+        getPermissionMode(sessionId: string) {
+          if (!kernel) throw new Error('Runtime Session capability is not ready.');
+          return kernel.application.getSessionPermissionMode(sessionId);
+        },
+        setPermissionMode(input: {
+          sessionId: string;
+          mode: SessionPermissionMode;
+          originClientId?: string;
+        }) {
+          if (!kernel) throw new Error('Runtime Session capability is not ready.');
+          return kernel.application.setSessionPermissionMode(input);
+        },
+        onPermissionModeChanged(handler: (state: SessionPermissionState) => void) {
+          sessionPermissionListeners.add(handler);
+          return () => sessionPermissionListeners.delete(handler);
         },
       }),
     }),
@@ -302,6 +327,20 @@ export async function buildRuntimeHandle(
       fanoutAgentEvent,
       snapshotAccess: coordinator.createSnapshotAccess(),
     });
+    unsubscribeSessionPermissionBridge = kernel.application.onSessionPermissionModeChanged(
+      (state) => {
+        for (const listener of sessionPermissionListeners) {
+          try {
+            listener(state);
+          } catch (error) {
+            log.warn('Session permission listener failed', {
+              sessionId: state.sessionId,
+              error: messageOf(error),
+            });
+          }
+        }
+      },
+    );
     compositionManager.setGenerationConvergence(Object.freeze({
       blockingTurnIds: (generation: number) => kernel!.blockingTurnIds(generation),
       abortGeneration: (generation: number) => kernel!.abortGeneration(generation),
@@ -316,6 +355,7 @@ export async function buildRuntimeHandle(
     });
     emitStartupDiagnostics(options, registrySnapshot);
   } catch (error) {
+    unsubscribeSessionPermissionBridge?.();
     options.onEvent?.({ type: 'error', info: classifyRuntimeError('startup', error) });
     const report = await compositionManager?.shutdown();
     for (const failure of report?.failed ?? []) {
@@ -381,6 +421,8 @@ export async function buildRuntimeHandle(
       }
 
       const unitReport = await compositionManager!.shutdown(budget);
+      unsubscribeSessionPermissionBridge?.();
+      unsubscribeSessionPermissionBridge = undefined;
       completed.push(...unitReport.completed);
       failed.push(...unitReport.failed.map((failure) => ({
         resource: failure.instanceId,

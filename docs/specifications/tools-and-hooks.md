@@ -38,7 +38,7 @@ Hook kinds are `before_tool_call`, `after_tool_call`, `before_compaction`, and `
 2. Pair unknown/malformed calls without entering before hooks.
 3. Run before interceptors sequentially.
 4. Validate final transformed input.
-5. Apply deny, then allow/approval policy.
+5. Apply deny, live Session permission mode, mandatory Manual-mode checks, then allow/approval policy.
 6. Request approval when required.
 7. Execute only after authorization.
 8. Produce one canonical terminal result.
@@ -50,7 +50,7 @@ A real terminal Tool result wins an Abort race. `signal.aborted` alone does not 
 
 ## Policy and visibility
 
-Explicit deny removes matching Provider-visible definitions and rejects stale/hallucinated calls at execution. Deny precedes allow. Allow bypasses approval but cannot grant Hook authority. Approval is an application capability, not a Hook, and fails closed when absent.
+Explicit deny removes matching Provider-visible definitions and rejects stale/hallucinated calls at execution. Deny is final in both `manual` and `allow_all`. In `allow_all`, every other registered Tool is automatically authorized. In `manual`, Exec and lexically external structured filesystem targets require current-call approval even when statically allowed; internal allowed Tools bypass approval, while unmatched Tools request approval. Any required approval fails closed when the capability is absent. Session permission does not grant Hook authority, provide filesystem or network confinement, or verify executable integrity.
 
 ## Observer settlement
 

@@ -30,4 +30,23 @@ describe('HTML attachment capability UX', () => {
     expect(html).toContain("kind: 'system'");
     expect(html).toContain("text: 'Configured model call limit reached'");
   });
+
+  it('uses authoritative per-Session permission modes without local persistence', async () => {
+    const html = await readFile(
+      join(process.cwd(), 'clients', 'html', 'chat.html'),
+      'utf8',
+    );
+
+    expect(html).toContain('Manual permissions');
+    expect(html).toContain('Allow all for this Session');
+    expect(html).toContain('Every non-denied tool will run without asking');
+    expect(html).toContain('Executable and dependency integrity');
+    expect(html).toContain('remains active after disconnect');
+    expect(html).toContain("type: 'get_session_permission_mode'");
+    expect(html).toContain("type: 'set_session_permission_mode'");
+    expect(html).toContain("case 'session_permission_mode_changed'");
+    expect(html).toContain('mode,');
+    expect(html).toContain('permissionMode: this.permissionMode');
+    expect(html).not.toContain('localStorage');
+  });
 });

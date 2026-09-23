@@ -64,7 +64,7 @@ Stages 3–5 apply only to Agent-scoped configuration. Runtime and Runner use `m
 
 ### Tool policy
 
-`tools.deny` removes matching definitions from the visible Tool projection and remains final at execution. For structured path Tools, any lexically external declared target requires current-call Approval even when the Tool name is allowed; internal targets honor allow bypass. Unmatched Tools request Approval when an origin interaction capability exists and fail closed otherwise. Exec has no path confinement inference: deny blocks, allow authorizes arbitrary Shell execution, and otherwise it requires current-call Approval. Exact names and `*`/`?` globs are supported; `group:*` expansion is not.
+`tools.deny` removes matching definitions from the visible Tool projection and remains final at execution. The Runtime-owned Session permission mode is deliberately not configuration and does not alter these projected lists. In `manual`, structured targets outside Agent Home and all Exec calls require current-call Approval even when their Tool names are allowed; internal targets honor allow bypass, and other unmatched Tools request Approval. Missing required Approval fails closed. In process-local `allow_all`, every non-denied registered Tool is automatically authorized. Exact names and `*`/`?` globs are supported; `group:*` expansion is not.
 
 ### Subagent policy
 

@@ -29,8 +29,13 @@ export function createApplicationToolPolicy(
       toolName: string,
       input: Readonly<Record<string, unknown>>,
       hasApprovalCapability: boolean,
+      permissionMode = 'manual',
     ) {
       if (matchesAny(toolName, deny)) return 'deny' as const;
+      if (permissionMode === 'allow_all') return 'allow' as const;
+      if (toolName === 'exec') {
+        return hasApprovalCapability ? 'requires_approval' as const : 'deny' as const;
+      }
       if (touchesExternalPath(toolName, input, normalizedAgentHome)) {
         return hasApprovalCapability ? 'requires_approval' as const : 'deny' as const;
       }

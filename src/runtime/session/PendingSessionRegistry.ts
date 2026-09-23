@@ -11,6 +11,7 @@ export interface PendingSessionRegistryOptions {
   capacity?: number;
   now?: () => number;
   generateSessionId?: () => string;
+  onExpire?: (sessionId: string) => void;
 }
 
 const DEFAULT_TTL_MS = 30 * 60 * 1000;
@@ -22,12 +23,14 @@ export class PendingSessionRegistry {
   private readonly capacity: number;
   private readonly now: () => number;
   private readonly generateSessionId: () => string;
+  private readonly onExpire?: (sessionId: string) => void;
 
   constructor(options: PendingSessionRegistryOptions = {}) {
     this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
     this.capacity = options.capacity ?? DEFAULT_CAPACITY;
     this.now = options.now ?? Date.now;
     this.generateSessionId = options.generateSessionId ?? randomUUID;
+    this.onExpire = options.onExpire;
 
     if (!Number.isSafeInteger(this.ttlMs) || this.ttlMs <= 0) {
       throw new TypeError('Pending Session TTL must be a positive integer.');
@@ -68,6 +71,7 @@ export class PendingSessionRegistry {
     for (const [sessionId, registration] of this.registrations) {
       if (now - registration.createdAt >= this.ttlMs) {
         this.registrations.delete(sessionId);
+        this.onExpire?.(sessionId);
       }
     }
   }

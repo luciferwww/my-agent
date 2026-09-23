@@ -58,6 +58,23 @@ describe('PendingSessionRegistry', () => {
     expect(registry.create()).toEqual({ sessionId: 'session-2', createdAt: 10 });
   });
 
+  it('reports expired Session IDs for coupled Runtime cleanup', () => {
+    let now = 0;
+    const expired: string[] = [];
+    const registry = new PendingSessionRegistry({
+      ttlMs: 10,
+      now: () => now,
+      generateSessionId: () => `session-${now}`,
+      onExpire: (sessionId) => expired.push(sessionId),
+    });
+    registry.create();
+
+    now = 10;
+    registry.create();
+
+    expect(expired).toEqual(['session-0']);
+  });
+
   it('deletes a registration idempotently', () => {
     const registry = new PendingSessionRegistry({
       generateSessionId: () => 'session-one',

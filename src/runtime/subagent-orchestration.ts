@@ -16,6 +16,7 @@ import type { SubagentExecutor } from '../core/subagent/SubagentExecutor.js';
 import type { ContextFile } from '../core/agent-context/types.js';
 import { Logger } from '../platform/logger/index.js';
 import type { MessageRouteContext } from './queue-types.js';
+import type { SessionPermissionMode } from '../core/approval/index.js';
 
 const log = Logger.get('SubagentOrchestration');
 
@@ -29,6 +30,7 @@ export interface ActiveParentTurn {
   readonly effectiveMaxLlmCalls?: number;
   readonly contextFiles: readonly ContextFile[];
   readonly registrySnapshot: RegistrySnapshot;
+  readonly getSessionPermissionMode: () => SessionPermissionMode;
   registerChild(): () => void;
 }
 
@@ -115,6 +117,7 @@ export function createSubagentDelegationPort(
           signal: parent.signal,
           toolProjection: parent.registrySnapshot.tools,
           hookProjection: parent.registrySnapshot.hooks,
+          getSessionPermissionMode: parent.getSessionPermissionMode,
         });
         throwIfAborted(parent.signal);
 

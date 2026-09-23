@@ -34,7 +34,7 @@ Provider adapters independently map canonical definitions, calls, and results to
 
 ## 6. Policy, approval, and execution order
 
-`AgentRunner` separates Model-visible definitions from executable resolution, then applies decode, interceptor, validation, policy, current-call Approval, execution, result persistence, and observer settlement against one Snapshot. [Tools and Hooks](../specifications/tools-and-hooks.md) owns ordering and closure semantics; [Approval Lifecycle](../specifications/approval-lifecycle.md) owns interaction terminalization.
+`AgentRunner` separates Model-visible definitions from executable resolution, then applies decode, interceptor, validation, final deny, the live root Session permission mode, Manual-mode checks, static allow/current-call Approval, execution, result persistence, and observer settlement against one Snapshot. The immutable Tool/Hook projection remains generation-bound, while permission mode is read at every authorization decision so revocation affects later calls. [Tools and Hooks](../specifications/tools-and-hooks.md) owns ordering and closure semantics; [Approval Lifecycle](../specifications/approval-lifecycle.md) owns interaction terminalization.
 
 ## 7. Evidence
 

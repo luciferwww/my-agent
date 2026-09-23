@@ -113,6 +113,22 @@ describe('SessionCoordinator', () => {
     });
   });
 
+  it('recognizes only pending or unarchived persisted Sessions as live', async () => {
+    const { sessionId } = await coordinator.createSession();
+    expect(() => coordinator.assertLiveSession(sessionId)).not.toThrow();
+
+    await coordinator.admitMessage(sessionId, 'first');
+    expect(() => coordinator.assertLiveSession(sessionId)).not.toThrow();
+
+    await coordinator.archiveSession(sessionId);
+    expect(() => coordinator.assertLiveSession(sessionId)).toThrow(
+      expect.objectContaining({ code: 'SESSION_ARCHIVED' }),
+    );
+    expect(() => coordinator.assertLiveSession(
+      '00000000-0000-4000-8000-999999999999',
+    )).toThrow(expect.objectContaining({ code: 'SESSION_NOT_FOUND' }));
+  });
+
   it('enforces idle-only lifecycle operations', async () => {
     let busy = false;
     coordinator = new SessionCoordinator({

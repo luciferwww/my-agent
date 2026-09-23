@@ -51,6 +51,18 @@ export class SessionCoordinator {
     return this.requirePersistedSession(sessionId);
   }
 
+  assertLiveSession(sessionId: string): void {
+    const persisted = this.sessionManager.getSession(sessionId);
+    if (persisted) {
+      if (persisted.archivedAt !== undefined) {
+        throw new SessionError('SESSION_ARCHIVED', `Session "${sessionId}" is archived.`);
+      }
+      return;
+    }
+    if (this.pendingSessions.get(sessionId)) return;
+    throw new SessionError('SESSION_NOT_FOUND', `Session "${sessionId}" was not found.`);
+  }
+
   async renameSession(sessionId: string, title: string | null): Promise<SessionEntry> {
     return this.sessionManager.renameSession(sessionId, { title });
   }

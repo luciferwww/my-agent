@@ -105,6 +105,7 @@ export interface ToolDefinition {
 }
 
 export type ToolPolicyDecision = 'allow' | 'deny' | 'requires_approval';
+export type { SessionPermissionMode } from '../approval/index.js';
 
 export interface ApplicationToolPolicy {
   isDenied(toolName: string): boolean;
@@ -112,5 +113,6 @@ export interface ApplicationToolPolicy {
     toolName: string,
     input: Readonly<Record<string, unknown>>,
     hasApprovalCapability: boolean,
+    permissionMode?: import('../approval/index.js').SessionPermissionMode,
   ): ToolPolicyDecision;
 }

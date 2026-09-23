@@ -2662,6 +2662,56 @@ describe('RuntimeApp', () => {
       expect(created.sessionId).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
       );
+      expect(created.permission).toMatchObject({
+        sessionId: created.sessionId,
+        mode: 'manual',
+      });
+      expect(capturedCapabilities!.sessions.getPermissionMode(created.sessionId))
+        .toEqual(created.permission);
+
+      const permissionChanges: unknown[] = [];
+      const unsubscribe = capturedCapabilities!.sessions.onPermissionModeChanged((state) => {
+        permissionChanges.push(state);
+      });
+      const elevated = capturedCapabilities!.sessions.setPermissionMode({
+        sessionId: created.sessionId,
+        mode: 'allow_all',
+        originClientId: 'test-client',
+      });
+      expect(elevated).toMatchObject({
+        sessionId: created.sessionId,
+        mode: 'allow_all',
+        changedByClientId: 'test-client',
+      });
+      expect(permissionChanges).toEqual([elevated]);
+      unsubscribe();
+      capturedCapabilities!.sessions.setPermissionMode({
+        sessionId: created.sessionId,
+        mode: 'manual',
+      });
+      expect(permissionChanges).toEqual([elevated]);
+
+      const elevatedAtCreation = await capturedCapabilities!.sessions.createSession({
+        permissionMode: 'allow_all',
+        originClientId: 'test-client',
+      });
+      expect(elevatedAtCreation.permission).toMatchObject({
+        sessionId: elevatedAtCreation.sessionId,
+        mode: 'allow_all',
+        changedByClientId: 'test-client',
+      });
+      const deletionChanges: unknown[] = [];
+      const unsubscribeDeletion = capturedCapabilities!.sessions.onPermissionModeChanged((state) => {
+        deletionChanges.push(state);
+      });
+      await capturedCapabilities!.sessions.deleteSession(elevatedAtCreation.sessionId);
+      expect(deletionChanges).toEqual([
+        expect.objectContaining({
+          sessionId: elevatedAtCreation.sessionId,
+          mode: 'manual',
+        }),
+      ]);
+      unsubscribeDeletion();
 
       // Seed a queued message for one Session.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2677,7 +2727,15 @@ describe('RuntimeApp', () => {
       expect(result).toEqual({ aborted: false, dropped: 2 });
       expect(queueMap.has('sk-with-queue')).toBe(false);
 
+      capturedCapabilities!.sessions.setPermissionMode({
+        sessionId: created.sessionId,
+        mode: 'allow_all',
+      });
       await app.close();
+      expect(capturedCapabilities!.sessions.getPermissionMode(created.sessionId)).toMatchObject({
+        sessionId: created.sessionId,
+        mode: 'manual',
+      });
     });
   });
 });

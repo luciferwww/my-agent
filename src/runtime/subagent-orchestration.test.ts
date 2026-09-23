@@ -83,6 +83,7 @@ function setup(options: {
     effectiveMaxLlmCalls: 6,
     contextFiles: [],
     registrySnapshot,
+    getSessionPermissionMode: () => 'manual',
     registerChild,
   };
   const activeParents = new Map([[parent.turnId, parent]]);

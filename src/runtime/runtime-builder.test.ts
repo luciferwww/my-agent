@@ -170,7 +170,10 @@ function createHarness(options: {
   let input: RuntimeApplicationKernelInput | undefined;
   const application = Object.freeze({
     runTurn: vi.fn(),
-    createSession: vi.fn(async () => ({ sessionId: 'session' })),
+    createSession: vi.fn(async () => ({
+      sessionId: 'session',
+      permission: { sessionId: 'session', mode: 'manual' as const, changedAt: 1 },
+    })),
     listSessions: vi.fn(async () => []),
     getSession: vi.fn(async (sessionId: string) => ({ sessionId, createdAt: 1, updatedAt: 1 })),
     renameSession: vi.fn(async (sessionId: string, title: string | null) => ({
@@ -192,6 +195,20 @@ function createHarness(options: {
     })),
     deleteSession: vi.fn(async () => undefined),
     forkSession: vi.fn(async () => ({ sessionId: 'fork', createdAt: 1, updatedAt: 1 })),
+    getSessionPermissionMode: vi.fn((sessionId: string) => ({
+      sessionId,
+      mode: 'manual' as const,
+      changedAt: 1,
+    })),
+    setSessionPermissionMode: vi.fn((input: {
+      sessionId: string;
+      mode: 'manual' | 'allow_all';
+    }) => ({
+      sessionId: input.sessionId,
+      mode: input.mode,
+      changedAt: 1,
+    })),
+    onSessionPermissionModeChanged: vi.fn(() => () => {}),
     getModelCatalog: vi.fn(),
     abortTurn: vi.fn(() => ({ aborted: false, dropped: 0 })),
     reloadContextFiles: vi.fn(),

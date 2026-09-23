@@ -1,1 +1,6 @@
-export type { ApprovalResult, CurrentCallApprovalCapability } from './types.js';
+export type {
+  ApprovalResult,
+  CurrentCallApprovalCapability,
+  SessionPermissionMode,
+  SessionPermissionState,
+} from './types.js';

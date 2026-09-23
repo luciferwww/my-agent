@@ -6,12 +6,13 @@ Changes retain the repository's existing Plan/Specification/validation workflow.
 
 ## Active
 
-No active Change is currently tracked.
+No active Change.
 
 ## Archived
 
 Archived changes preserve bounded delivery and acceptance provenance. They are neither Current Architecture nor stable contract authority.
 
+- [Session Permission Modes](archive/session-permission-modes/plan.md), its [implemented Specification](archive/session-permission-modes/session-permission-modes-specification.md), and [validation record](archive/session-permission-modes/validation.md) — Runtime-owned `manual`/`allow_all` Session switch, final deny precedence, live Root/Child authorization, pending-Approval convergence, and CLI/WebSocket/HTML controls completed, validated, and accepted on 2026-09-23
 - [Global Runtime and Runner Configuration](archive/global-runtime-runner-configuration/plan.md), its [implemented Specification](archive/global-runtime-runner-configuration/global-runtime-runner-configuration-specification.md), and [validation record](archive/global-runtime-runner-configuration/validation.md) — top-level global Runtime/Runner policy, strict rejection of Agent-scoped placement, preserved per-Turn Runner override, and retained Agent-scoped module precedence completed, validated, and accepted on 2026-09-21
 - [Runtime Steering and Runner Configuration](archive/runtime-steering-and-runner-configuration/plan.md), its [implemented Specification](archive/runtime-steering-and-runner-configuration/runtime-steering-and-runner-configuration-specification.md), and [validation record](archive/runtime-steering-and-runner-configuration/validation.md) — Runtime-owned steering policy, Runner-owned optional Model-call budget, FIFO steering batching, and lossless normal terminal handoff completed, validated, and accepted on 2026-09-21
 - [Unified Built-in LLM Provider](archive/builtin-llm-provider/plan.md), its [implemented Specification](archive/builtin-llm-provider/builtin-llm-provider-specification.md), and [validation record](archive/builtin-llm-provider/validation.md) — optional multi-Protocol Built-in Provider, explicit model registration, bounded credential materialization, capability projection, and atomic attachment admission completed, validated, and accepted on 2026-09-20

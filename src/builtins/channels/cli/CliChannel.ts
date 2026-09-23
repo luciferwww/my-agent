@@ -345,6 +345,7 @@ export class CliChannel implements Channel {
 
         try {
           if (await this.handleSessionCommand(line)) continue;
+          if (await this.handlePermissionCommand(line)) continue;
           if (this.handleModelCommand(line)) continue;
           if (this.selectedModelOverride) {
             const snapshot = this.getModelCatalog();
@@ -493,6 +494,60 @@ export class CliChannel implements Channel {
     this.output.write(red(
       '[session error] usage: /sessions | /session | /session new | /session use <sessionId> | /session rename <JSON-string|null> | /session delete\n',
     ));
+  }
+
+  private async handlePermissionCommand(input: string): Promise<boolean> {
+    if (input !== '/permission' && !input.startsWith('/permission ')) return false;
+    this.breakStream();
+    const capability = this.runtimeCapabilities?.sessions;
+    if (!capability) {
+      this.output.write(red('[permission unavailable] Runtime Session capability is not bound.\n'));
+      return true;
+    }
+    if (!this.sessionId) {
+      this.output.write(red(
+        '[permission error] No persisted Session is selected; send the first message first.\n',
+      ));
+      return true;
+    }
+
+    const mode = input.slice('/permission'.length).trim();
+    if (!mode) {
+      const permission = capability.getPermissionMode(this.sessionId);
+      this.output.write(cyan(`[permission] ${permission.mode}\n`));
+      return true;
+    }
+    if (mode !== 'manual' && mode !== 'allow_all') {
+      this.renderPermissionUsage();
+      return true;
+    }
+    if (mode === 'allow_all') {
+      this.output.write(yellow(
+        '[warning] Allow All runs every non-denied tool without asking. Shell commands and '
+          + 'external filesystem changes are possible; executable and dependency integrity '
+          + 'is not verified. It remains active after disconnect until revoked, archived, '
+          + 'deleted, or Runtime restart.\n',
+      ));
+      const answer = await this.question(yellow('Type ALLOW ALL to confirm> '));
+      if (answer.trim() !== 'ALLOW ALL') {
+        this.output.write(yellow('[permission] unchanged; Allow All was not confirmed.\n'));
+        return true;
+      }
+    }
+    const permission = capability.setPermissionMode({
+      sessionId: this.sessionId,
+      mode,
+    });
+    this.output.write(cyan(
+      `[permission] ${permission.mode === 'allow_all'
+        ? 'allow_all (Allow all for this Session)'
+        : 'manual (individual approvals required)'}\n`,
+    ));
+    return true;
+  }
+
+  private renderPermissionUsage(): void {
+    this.output.write(red('[permission error] usage: /permission | /permission manual | /permission allow_all\n'));
   }
 
   private handleModelCommand(input: string): boolean {

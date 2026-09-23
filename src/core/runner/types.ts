@@ -5,6 +5,7 @@ import type {
 } from '../model-invocation/index.js';
 import type { ResolvedModel } from '../model-resolution/index.js';
 import type { CurrentCallApprovalCapability } from '../approval/index.js';
+import type { SessionPermissionMode } from '../approval/index.js';
 import type { HookProjection, ToolProjection } from '../registry/index.js';
 import type { ApplicationToolPolicy, ToolResult } from '../tools/types.js';
 import type { CompactionConfig } from '../../platform/config/types.js';
@@ -58,6 +59,8 @@ export interface RunParams {
   toolPolicy: ApplicationToolPolicy;
   /** Approval capability of this caller; requires-approval fails closed when absent. */
   approvalCapability?: CurrentCallApprovalCapability;
+  /** Live Runtime-owned permission mode reader, evaluated for every Tool call. */
+  getSessionPermissionMode?: () => SessionPermissionMode;
   /** Maximum LLM calls for one run; omitted means no count limit. */
   maxLlmCalls?: number;
   /** Reader consumed only at steering injection points. */

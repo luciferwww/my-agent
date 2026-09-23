@@ -264,9 +264,9 @@ Detailed Child execution remains owned by [Runner](runner.md), while Runtime own
 
 The generation-bound `before_tool_call` Hook projection and the current-call human approval capability are separate inputs to Runner's Tool pipeline.
 
-Runtime policy applies deterministic `deny` before `allow`; patterns support exact names plus `*` and `?` glob characters. If a Tool is not allowed and the origin Channel has no interaction transport, policy fails closed. When interaction is available, Runtime routes the request and closure to the Channel/client recorded for that Turn.
+Runtime policy applies deterministic `deny` before the live root Session permission mode, mandatory Manual-mode checks, static `allow`, and current-call Approval; Tool patterns support exact names plus `*` and `?` glob characters. `deny` is final. `allow_all` authorizes every other registered Tool. In `manual`, Exec and external structured paths require Approval even when statically allowed, and unmatched Tools require Approval. If required Approval has no interaction transport, policy fails closed. When interaction is available, Runtime routes the request and closure to the Channel/client recorded for that Turn.
 
-`TurnInteractionManager` is Runtime-owned application state. It holds pending interactions, accepts submitted/cancelled/aborted responses, reacts to origin disconnect, and closes pending interactions during Turn Abort or Shutdown. There is no elapsed-time approval expiry in this layer.
+`SessionPermissionRegistry` is Runtime-owned process-local state keyed by root Session ID. The mode is read for every Tool authorization and inherited by Child execution. It survives client disconnect and later Turns, but restart/resume, fork, and unarchive use `manual`; archive/delete clear it. `TurnInteractionManager` holds pending interactions, accepts submitted/cancelled/aborted responses, reacts to origin disconnect, and closes pending interactions during Turn Abort or Shutdown. Elevation to `allow_all` settles only that Session's pending approvals with the `session_allow_all` source. There is no elapsed-time approval expiry in this layer.
 
 ## 11. Abort and bounded Shutdown
 

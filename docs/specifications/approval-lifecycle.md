@@ -7,28 +7,41 @@
 
 ## Scope
 
-This contract defines current-call, origin-bound Tool approval from request delivery through user decision, Turn Abort, Shutdown, or origin failure. It does not define persistent authorization, “allow all”, approval expiry, retry, or cross-process recovery.
+This contract defines current-call, origin-bound Tool approval from request delivery through user decision, Turn Abort, Shutdown, origin failure, or elevation of the live Session to `allow_all`. It also defines the process-local Session permission switch. It does not define persistent authorization, approval expiry, retry, or cross-process recovery.
 
 ## Result contract
 
 ```ts
 type ApprovalResult =
   | { outcome: 'approved' }
+  | { outcome: 'approved'; source: 'session_allow_all' }
   | { outcome: 'denied'; reason: 'user' | 'user_cancelled' }
   | { outcome: 'aborted'; reason: 'turn' | 'shutdown' }
   | { outcome: 'unavailable'; reason: 'origin_missing' | 'delivery_failed' | 'origin_disconnected' }
   | { outcome: 'failed'; message: string };
 ```
 
-Only `approved` authorizes execution. Every other outcome fails closed and retains its own classification; Abort or unavailability is not represented as user denial.
+Only `approved` authorizes execution. `source: 'session_allow_all'` records policy authorization and must not be represented as a user review of the specific Tool input. Every other outcome fails closed and retains its own classification; Abort or unavailability is not represented as user denial.
 
 `approval_requested` carries no timeout. A non-user terminal outcome sends:
 
 ```ts
-{ type: 'approval_closed'; id: string; outcome: 'aborted' | 'unavailable' | 'failed'; reason: string }
+{ type: 'approval_closed'; id: string; outcome: 'approved' | 'aborted' | 'unavailable' | 'failed'; reason: string }
 ```
 
-Approved and denied choices are already visible to the submitting UI and do not emit `approval_closed`.
+For an `approved` closure, `reason` is `session_allow_all`; otherwise it carries the existing terminal reason or bounded failure message. An `approved` closure is emitted only when a pending request is settled by a Session changing to `allow_all`. Approved and denied current-call choices are already visible to the submitting UI and do not emit `approval_closed`.
+
+## Session permission mode
+
+Each live root Session has one Runtime-owned mode:
+
+```ts
+type SessionPermissionMode = 'manual' | 'allow_all';
+```
+
+`manual` uses normal deny, mandatory approval, allow-list, and current-call approval rules. `allow_all` automatically authorizes every registered Tool except an effective `tools.deny` match. The mode is process-local Runtime memory: it survives client disconnect, Turn completion, and later Turns, but it is not written to configuration, Session metadata, Transcript, Memory, Agent Context, or client storage. Runtime restart/resume, fork, and unarchive start in `manual`; archive and delete clear the state.
+
+Root and Child executions read the root live Session mode at every Tool authorization. Revocation affects later Tool calls, not an implementation that already started. Changing from `manual` to `allow_all` settles only that Session's already-pending approvals as `{ outcome: 'approved', source: 'session_allow_all' }`; first settlement still wins.
 
 ## Lifecycle invariants
 
@@ -42,6 +55,7 @@ Approved and denied choices are already visible to the submitting UI and do not 
 - Shutdown settles pending approvals as `aborted/shutdown` before Channels stop.
 - Closure notification failure is contained after Promise settlement.
 - A same-client socket replacement preserves the logical client route; a stale socket cannot decide, while loss of the current socket produces `origin_disconnected`.
+- Tool-name deny remains final in both Session modes and never creates an approval request.
 
 ## Failure mapping
 

@@ -86,6 +86,11 @@ SessionCoordinator.unarchiveSession(sessionId)
 SessionCoordinator.deleteSession(sessionId)
 SessionCoordinator.forkSession(sessionId, entryId?)
 
+SessionPermissionRegistry.initialize(sessionId, mode?)
+SessionPermissionRegistry.get(sessionId)
+SessionPermissionRegistry.set(sessionId, mode, changedByClientId?)
+SessionPermissionRegistry.delete(sessionId)
+
 SessionManager.materializeSession(input)
 SessionManager.createTransientSubagentTranscript(input)
 SessionManager.deleteTransientSubagentTranscript(sessionId)
@@ -105,6 +110,8 @@ SessionManager.getLastCompactionRecord(sessionId)
 ```
 
 `createSession()` allocates a canonical UUID in a bounded process-local Pending registry. Pending registrations expire after 30 minutes, are capped at 4096, disappear on restart, create no files, and are invisible to get/list. Selecting a new Session in a client does not allocate even a Pending registration; the first submitted message creates the registration and immediately sends with its ID.
+
+Each live root Session also has a process-local `manual | allow_all` permission state. It is intentionally absent from `SessionEntry`, Transcript, configuration, Memory, and Agent Context. Client disconnect and Turn completion preserve it in the current Runtime. Archive and delete clear it; unarchive and fork initialize `manual`; Runtime restart or resume also starts `manual`. Transient Child Sessions have no independent permission state and read their root Session's current mode.
 
 First-message admission is serialized per `sessionId`. A live Pending ID materializes one root-only Transcript and one Store entry using the Pending `createdAt` plus a deterministic title derived from the first usable user text. Admission does not persist message content; Runner appends the admitted user message exactly once after preflight. Unknown or expired IDs fail, and archived Sessions reject new messages.
 

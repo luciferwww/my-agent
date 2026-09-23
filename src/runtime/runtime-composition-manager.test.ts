@@ -34,7 +34,10 @@ function host(): ChannelRuntimeHost {
         abortTurn: vi.fn(() => ({ aborted: false, dropped: 0 })),
       },
       sessions: {
-        createSession: vi.fn(async () => ({ sessionId: 'session' })),
+        createSession: vi.fn(async () => ({
+          sessionId: 'session',
+          permission: { sessionId: 'session', mode: 'manual' as const, changedAt: 1 },
+        })),
         listSessions: vi.fn(async () => []),
         getSession: vi.fn(async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 })),
         renameSession: vi.fn(async (sessionId, title) => ({
@@ -52,6 +55,17 @@ function host(): ChannelRuntimeHost {
         unarchiveSession: vi.fn(async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 })),
         deleteSession: vi.fn(async () => undefined),
         forkSession: vi.fn(async () => ({ sessionId: 'fork', createdAt: 1, updatedAt: 1 })),
+        getPermissionMode: vi.fn((sessionId) => ({
+          sessionId,
+          mode: 'manual' as const,
+          changedAt: 1,
+        })),
+        setPermissionMode: vi.fn((input) => ({
+          sessionId: input.sessionId,
+          mode: input.mode,
+          changedAt: 1,
+        })),
+        onPermissionModeChanged: vi.fn(() => () => {}),
       },
     },
   };

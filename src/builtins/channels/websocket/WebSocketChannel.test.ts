@@ -376,6 +376,11 @@ describe('WebSocketChannel', () => {
     it('returns a request-correlated server-issued sessionId after hello', async () => {
       const createSession = vi.fn(async () => ({
         sessionId: '123e4567-e89b-42d3-a456-426614174000',
+        permission: {
+          sessionId: '123e4567-e89b-42d3-a456-426614174000',
+          mode: 'manual' as const,
+          changedAt: 1,
+        },
       }));
       channel = new WebSocketChannel({ port: 0 });
       channel.onMessage(async () => undefined);
@@ -400,6 +405,11 @@ describe('WebSocketChannel', () => {
         type: 'session_created',
         requestId: 'create-1',
         sessionId: '123e4567-e89b-42d3-a456-426614174000',
+        permission: {
+          sessionId: '123e4567-e89b-42d3-a456-426614174000',
+          mode: 'manual',
+          changedAt: 1,
+        },
       });
       expect(createSession).toHaveBeenCalledTimes(1);
     });
@@ -409,12 +419,160 @@ describe('WebSocketChannel', () => {
       const entry = { sessionId, createdAt: 1, updatedAt: 2, title: 'First message' };
       const renamed = { ...entry, updatedAt: 3, title: 'Renamed' };
       const sessionCapability = sessionCapabilities({
-        createSession: vi.fn(async () => ({ sessionId })),
+        createSession: vi.fn(async () => ({
+          sessionId,
+          permission: { sessionId, mode: 'manual' as const, changedAt: 1 },
+        })),
         listSessions: vi.fn(async () => [entry]),
         getSession: vi.fn(async () => entry),
         renameSession: vi.fn(async () => renamed),
         deleteSession: vi.fn(async () => undefined),
       });
+
+      const runPermissionProtocolTest = async () => {
+        const sessionId = '123e4567-e89b-42d3-a456-426614174000';
+        let changedHandler: ((state: {
+          sessionId: string;
+          mode: 'manual' | 'allow_all';
+          changedAt: number;
+          changedByClientId?: string;
+        }) => void) | undefined;
+        const unsubscribe = vi.fn();
+        const createSession = vi.fn(async (input) => ({
+          sessionId,
+          permission: {
+            sessionId,
+            mode: input?.permissionMode ?? 'manual',
+            changedAt: 1,
+            changedByClientId: input?.originClientId,
+          },
+        }));
+        const getPermissionMode = vi.fn(() => ({
+          sessionId,
+          mode: 'allow_all' as const,
+          changedAt: 2,
+        }));
+        const setPermissionMode = vi.fn(({ mode, originClientId }) => ({
+          sessionId,
+          mode,
+          changedAt: 3,
+          changedByClientId: originClientId,
+        }));
+        const sessionCapability = sessionCapabilities({
+          createSession,
+          getPermissionMode,
+          setPermissionMode,
+          onPermissionModeChanged: (handler) => {
+            changedHandler = handler;
+            return unsubscribe;
+          },
+        });
+        channel = new WebSocketChannel({ port: 0 });
+        channel.onMessage(async () => undefined);
+        channel.bindRuntimeCapabilities(capabilities(undefined, undefined, sessionCapability));
+        await channel.start();
+
+        const client = await connectClient(channel);
+        clients.push(client);
+        client.send(JSON.stringify({ type: 'hello', clientId: 'permission-client' }));
+        await expectMessage(client, { type: 'hello_ack', clientId: 'permission-client' });
+
+        client.send(JSON.stringify({
+          type: 'create_session',
+          requestId: 'create-permission',
+          permissionMode: 'allow_all',
+        }));
+        await expectMessage(client, {
+          type: 'session_created',
+          requestId: 'create-permission',
+          sessionId,
+          permission: {
+            sessionId,
+            mode: 'allow_all',
+            changedAt: 1,
+            changedByClientId: 'permission-client',
+          },
+        });
+        expect(createSession).toHaveBeenCalledWith({
+          permissionMode: 'allow_all',
+          originClientId: 'permission-client',
+        });
+
+        client.send(JSON.stringify({
+          type: 'get_session_permission_mode',
+          sessionId,
+        }));
+        await expectMessage(client, {
+          type: 'session_permission_mode_changed',
+          sessionId,
+          mode: 'allow_all',
+          changedAt: 2,
+        });
+
+        client.send(JSON.stringify({
+          type: 'set_session_permission_mode',
+          sessionId,
+          mode: 'manual',
+        }));
+        await expectMessage(client, {
+          type: 'session_permission_mode_changed',
+          sessionId,
+          mode: 'manual',
+          changedAt: 3,
+        });
+        expect(setPermissionMode).toHaveBeenCalledWith({
+          sessionId,
+          mode: 'manual',
+          originClientId: 'permission-client',
+        });
+
+        changedHandler?.({ sessionId, mode: 'allow_all', changedAt: 4 });
+        await expectMessage(client, {
+          type: 'session_permission_mode_changed',
+          sessionId,
+          mode: 'allow_all',
+          changedAt: 4,
+        });
+
+        await channel.stop();
+        expect(unsubscribe).toHaveBeenCalledTimes(1);
+      };
+
+      const runStrictPermissionValidationTest = async () => {
+        channel = new WebSocketChannel({ port: 0 });
+        channel.onMessage(async () => undefined);
+        channel.bindRuntimeCapabilities(capabilities());
+        await channel.start();
+        const client = await connectClient(channel);
+        clients.push(client);
+        client.send(JSON.stringify({ type: 'hello', clientId: 'strict-permission-client' }));
+        await expectMessage(client, {
+          type: 'hello_ack',
+          clientId: 'strict-permission-client',
+        });
+
+        client.send(JSON.stringify({
+          type: 'set_session_permission_mode',
+          sessionId: 'main',
+          mode: 'always',
+        }));
+        await expectMessage(client, {
+          type: 'channel_error',
+          code: 'INVALID_MESSAGE',
+          message: 'mode must be manual or allow_all.',
+        });
+
+        client.send(JSON.stringify({
+          type: 'get_session_permission_mode',
+          sessionId: 'main',
+          mode: 'manual',
+        }));
+        await expectMessage(client, {
+          type: 'channel_error',
+          code: 'INVALID_MESSAGE',
+          message: 'get_session_permission_mode.mode is not supported.',
+        });
+      };
       const handler = vi.fn(async () => undefined);
       channel = new WebSocketChannel({ port: 0 });
       channel.onMessage(handler);
@@ -435,7 +593,12 @@ describe('WebSocketChannel', () => {
       await expectMessage(client, { type: 'hello_ack', clientId: 'session-flow-client' });
 
       client.send(JSON.stringify({ type: 'create_session', requestId: 'create-1' }));
-      await expectMessage(client, { type: 'session_created', requestId: 'create-1', sessionId });
+      await expectMessage(client, {
+        type: 'session_created',
+        requestId: 'create-1',
+        sessionId,
+        permission: { sessionId, mode: 'manual', changedAt: 1 },
+      });
       client.send(JSON.stringify({ type: 'run_turn', sessionId, message: 'First message' }));
       await vi.waitFor(() => expect(handler).toHaveBeenCalledWith({
         clientId: 'session-flow-client',
@@ -463,6 +626,9 @@ describe('WebSocketChannel', () => {
 
       expect(sessionCapability.renameSession).toHaveBeenCalledWith(sessionId, 'Renamed');
       expect(sessionCapability.deleteSession).toHaveBeenCalledWith(sessionId);
+      await channel.stop();
+      await runPermissionProtocolTest();
+      await runStrictPermissionValidationTest();
     });
 
     it('supports archive, unarchive, and fork and preserves Session error codes', async () => {
@@ -641,6 +807,17 @@ describe('WebSocketChannel', () => {
       id: 'apr-close',
       outcome: 'aborted',
       reason: 'turn',
+    });
+
+    channel.interaction?.sendInteractionClosed(request, {
+      outcome: 'approved',
+      source: 'session_allow_all',
+    });
+    await expectMessage(client, {
+      type: 'approval_closed',
+      id: 'apr-close',
+      outcome: 'approved',
+      reason: 'session_allow_all',
     });
   });
 
@@ -1100,7 +1277,10 @@ function sessionCapabilities(
   const sessionId = '123e4567-e89b-42d3-a456-426614174000';
   const entry = { sessionId, createdAt: 1, updatedAt: 1 };
   return {
-    createSession: async () => ({ sessionId }),
+    createSession: async () => ({
+      sessionId,
+      permission: { sessionId, mode: 'manual', changedAt: 1 },
+    }),
     listSessions: async () => [],
     getSession: async () => entry,
     renameSession: async (_sessionId, title) => ({
@@ -1111,6 +1291,18 @@ function sessionCapabilities(
     unarchiveSession: async () => entry,
     deleteSession: async () => undefined,
     forkSession: async () => ({ ...entry, sessionId: '223e4567-e89b-42d3-a456-426614174000' }),
+    getPermissionMode: (requestedSessionId) => ({
+      sessionId: requestedSessionId,
+      mode: 'manual',
+      changedAt: 1,
+    }),
+    setPermissionMode: ({ sessionId: requestedSessionId, mode, originClientId }) => ({
+      sessionId: requestedSessionId,
+      mode,
+      changedAt: 2,
+      ...(originClientId ? { changedByClientId: originClientId } : {}),
+    }),
+    onPermissionModeChanged: () => () => undefined,
     ...overrides,
   };
 }

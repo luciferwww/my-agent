@@ -93,4 +93,29 @@ describe('TurnInteractionManager approval lifecycle', () => {
     expect(() => controller.abort('turn')).not.toThrow();
     await expect(result).resolves.toEqual({ outcome: 'aborted', reason: 'turn' });
   });
+
+  it('authorizes only pending approvals in the selected Session', async () => {
+    const manager = createManager();
+    const controller = new AbortController();
+    manager.onRequest(() => ({ status: 'accepted' }));
+    const first = requestApproval(manager, controller.signal);
+    const other = manager.request({
+      request: {
+        toolName: 'demo_tool',
+        input: {},
+        sessionId: 'other',
+        turnId: 'turn-2',
+      },
+      signal: controller.signal,
+    });
+
+    expect(manager.authorizeSession('main')).toBe(1);
+    await expect(first).resolves.toEqual({
+      outcome: 'approved',
+      source: 'session_allow_all',
+    });
+
+    controller.abort('turn');
+    await expect(other).resolves.toEqual({ outcome: 'aborted', reason: 'turn' });
+  });
 });

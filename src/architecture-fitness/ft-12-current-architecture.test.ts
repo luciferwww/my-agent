@@ -172,6 +172,8 @@ describe('FT-12 Current Architecture authority', () => {
     expect(runtime).toContain('Candidate cleanup failure remains fail-closed');
     expect(runtime).toContain('`runtime.steeringEnabled` is `true`');
     expect(runtime).toContain('promotes every unread inbox item into the existing normal queue');
+    expect(runtime).toContain('`deny` is final');
+    expect(runtime).toContain('`SessionPermissionRegistry` is Runtime-owned process-local state');
 
     const runner = requireDocument('runner').content;
     expect(runner).toContain('`request_end` closes a queued request that never started');
@@ -183,6 +185,26 @@ describe('FT-12 Current Architecture authority', () => {
     expect(channel).toContain('send(event: AgentEvent): void | Promise<void>');
     expect(channel).toContain('A queued `request_end` has no Session ID');
     expect(channel).toContain('generic configured-limit notice');
+    expect(channel).toContain('`/permission manual` and `/permission allow_all`');
+    expect(channel).toContain(
+      'Strict `get_session_permission_mode` and `set_session_permission_mode`',
+    );
+
+    const builtinTools = requireDocument('builtin-tools').content;
+    expect(builtinTools).toContain(
+      'In `manual` Session mode every Exec call requires current-call Approval',
+    );
+    expect(builtinTools).toContain(
+      'In `allow_all`, non-denied Exec calls are automatically authorized',
+    );
+
+    const session = requireDocument('session').content;
+    expect(session).toContain(
+      'Each live root Session also has a process-local `manual | allow_all` permission state',
+    );
+    expect(session).toContain(
+      'Transient Child Sessions have no independent permission state',
+    );
 
     const config = requireDocument('configuration').content;
     expect(config).toContain('## 3. Precedence and merge');

@@ -31,7 +31,7 @@ Reload results distinguish publication, no-op, rejection, supersession, blocking
 
 Runtime does not infer this path from process globals and never reads configuration files. A supported Host injects one immutable Application projection. Direct library callers may omit that projection to use hardcoded defaults, but may not omit or alias Agent Home.
 
-Agent Home anchoring is not confinement. Structured Tool targets outside Agent Home require current-call Approval and fail closed when Approval capability is absent; Tool-name deny remains final, while internal allowed targets bypass Approval. Exec is arbitrary Shell authority: deny blocks it, allow permits it without Approval, and otherwise it requires current-call Approval. Runtime does not parse command text or `cwd` as a confinement mechanism. Canonical/symlink-aware authorization, persistent grants, command patterns, and sandboxing are excluded.
+Agent Home anchoring is not confinement. Tool-name deny is always final. In the default `manual` Session mode, structured Tool targets outside Agent Home and every Exec call require current-call Approval even when the Tool name is statically allowed; missing Approval capability fails closed. Internal allowed targets bypass Approval. A live Session may be elevated to process-local `allow_all`, which automatically authorizes every non-denied Tool without claiming that its concrete input was reviewed. Runtime does not parse command text or `cwd` as a confinement mechanism. Canonical/symlink-aware authorization, persistent grants, command patterns, executable integrity verification, and sandboxing are excluded.
 
 ## Composition invariants
 

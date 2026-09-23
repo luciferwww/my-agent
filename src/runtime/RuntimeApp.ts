@@ -49,7 +49,13 @@ import {
   resolveRuntimeDeadlinePolicy,
 } from './runtime-deadline.js';
 import type { CurrentCallApprovalCapability } from '../core/approval/index.js';
+import type {
+  SessionPermissionMode,
+  SessionPermissionState,
+} from '../core/approval/index.js';
 import { SessionCoordinator } from './session/SessionCoordinator.js';
+import { SessionPermissionRegistry } from './session/SessionPermissionRegistry.js';
+import { PendingSessionRegistry } from './session/PendingSessionRegistry.js';
 import type { ActiveParentTurn } from './subagent-orchestration.js';
 import {
   collectAvailableSubagents,
@@ -154,6 +160,12 @@ function formatModelIdForOperator(modelId: string): string {
   return JSON.stringify(preview);
 }
 
+function assertSessionPermissionMode(value: unknown): asserts value is SessionPermissionMode {
+  if (value !== 'manual' && value !== 'allow_all') {
+    throw new TypeError('Session permission mode must be "manual" or "allow_all".');
+  }
+}
+
 interface ActiveRootTree {
   readonly requestId: string;
   readonly generation: number;
@@ -167,6 +179,7 @@ interface ActiveRootTree {
 export class RuntimeApp {
   private readonly onEvent?: RuntimeAppOptions['onEvent'];
   private readonly sessionCoordinator: SessionCoordinator;
+  private readonly sessionPermissions = new SessionPermissionRegistry();
   private readonly inFlightRuns = new Set<Promise<unknown>>();
   /** Per-Session gate: one Turn per sessionId, with concurrency across Sessions. */
   private readonly inFlightSessions = new Set<string>();
@@ -234,6 +247,9 @@ export class RuntimeApp {
     this.turnInteractionManager = new TurnInteractionManager(interactionLog);
     this.sessionCoordinator = new SessionCoordinator({
       sessionManager: resources.sessionManager,
+      pendingSessions: new PendingSessionRegistry({
+        onExpire: (sessionId) => this.sessionPermissions.delete(sessionId),
+      }),
       isBusy: (sessionId) => this.inFlightSessions.has(sessionId)
         || (this.messageQueueBySession.get(sessionId)?.length ?? 0) > 0,
     });
@@ -283,8 +299,20 @@ export class RuntimeApp {
 
   // ── State queries ────────────────────────────────────────────────
 
-  createSession(): Promise<{ sessionId: string }> {
-    return this.sessionCoordinator.createSession();
+  async createSession(input?: {
+    permissionMode?: SessionPermissionMode;
+    originClientId?: string;
+  }): Promise<{ sessionId: string; permission: SessionPermissionState }> {
+    if (input?.permissionMode !== undefined) {
+      assertSessionPermissionMode(input.permissionMode);
+    }
+    const { sessionId } = await this.sessionCoordinator.createSession();
+    const permission = this.sessionPermissions.initialize(
+      sessionId,
+      input?.permissionMode ?? 'manual',
+      input?.originClientId,
+    );
+    return { sessionId, permission };
   }
 
   listSessions(input?: { archived?: boolean }): Promise<SessionEntry[]> {
@@ -299,20 +327,65 @@ export class RuntimeApp {
     return this.sessionCoordinator.renameSession(sessionId, title);
   }
 
-  archiveSession(sessionId: string): Promise<SessionEntry> {
-    return this.sessionCoordinator.archiveSession(sessionId);
+  async archiveSession(sessionId: string): Promise<SessionEntry> {
+    const entry = await this.sessionCoordinator.archiveSession(sessionId);
+    this.resetSessionPermissionMode(sessionId);
+    return entry;
   }
 
-  unarchiveSession(sessionId: string): Promise<SessionEntry> {
-    return this.sessionCoordinator.unarchiveSession(sessionId);
+  async unarchiveSession(sessionId: string): Promise<SessionEntry> {
+    const entry = await this.sessionCoordinator.unarchiveSession(sessionId);
+    this.sessionPermissions.initialize(sessionId);
+    return entry;
   }
 
-  deleteSession(sessionId: string): Promise<void> {
-    return this.sessionCoordinator.deleteSession(sessionId);
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.sessionCoordinator.deleteSession(sessionId);
+    this.resetSessionPermissionMode(sessionId);
   }
 
-  forkSession(sessionId: string, entryId?: string): Promise<SessionEntry> {
-    return this.sessionCoordinator.forkSession(sessionId, entryId);
+  async forkSession(sessionId: string, entryId?: string): Promise<SessionEntry> {
+    const entry = await this.sessionCoordinator.forkSession(sessionId, entryId);
+    this.sessionPermissions.initialize(entry.sessionId);
+    return entry;
+  }
+
+  getSessionPermissionMode(sessionId: string): SessionPermissionState {
+    this.sessionCoordinator.assertLiveSession(sessionId);
+    return this.sessionPermissions.get(sessionId);
+  }
+
+  setSessionPermissionMode(input: {
+    sessionId: string;
+    mode: SessionPermissionMode;
+    originClientId?: string;
+  }): SessionPermissionState {
+    this.sessionCoordinator.assertLiveSession(input.sessionId);
+    assertSessionPermissionMode(input.mode);
+    const previous = this.sessionPermissions.get(input.sessionId);
+    const state = this.sessionPermissions.set(
+      input.sessionId,
+      input.mode,
+      input.originClientId,
+    );
+    if (previous.mode !== 'allow_all' && state.mode === 'allow_all') {
+      this.turnInteractionManager.authorizeSession(input.sessionId);
+    }
+    return state;
+  }
+
+  onSessionPermissionModeChanged(
+    handler: (state: SessionPermissionState) => void,
+  ): () => void {
+    return this.sessionPermissions.onChange(handler);
+  }
+
+  private resetSessionPermissionMode(sessionId: string): void {
+    const existing = this.sessionPermissions.peek(sessionId);
+    if (existing?.mode === 'allow_all') {
+      this.sessionPermissions.set(sessionId, 'manual');
+    }
+    this.sessionPermissions.delete(sessionId);
   }
 
   getState(): RuntimeLifecycleState {
@@ -1338,6 +1411,8 @@ export class RuntimeApp {
         this.recordError('shutdown', info);
         this.setPhase('failed');
         throw createRuntimeError(info);
+      } finally {
+        this.sessionPermissions.clear();
       }
     })();
 
@@ -1451,6 +1526,8 @@ export class RuntimeApp {
         effectiveMaxLlmCalls,
         contextFiles: Object.freeze([...this.resources.contextFiles]),
         registrySnapshot: snapshot,
+        getSessionPermissionMode: () =>
+          this.sessionPermissions.get(params.sessionId).mode,
         registerChild: () => this.registerChild(params.turnId, tree),
       });
       this.activeParentTurns.set(params.turnId, parentRecord);
@@ -1465,6 +1542,8 @@ export class RuntimeApp {
         toolProjection: snapshot.tools,
         hookProjection: snapshot.hooks,
         toolPolicy: this.resources.toolPolicy,
+        getSessionPermissionMode: () =>
+          this.sessionPermissions.get(params.sessionId).mode,
         approvalCapability: this.getApprovalCapability(params.turnId),
         maxLlmCalls: effectiveMaxLlmCalls,
         // Runtime drains the inbox; Runner controls when steering is consumed.
