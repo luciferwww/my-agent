@@ -30,6 +30,7 @@ describe('BuiltinLlmProvider', () => {
           maximumContextTokens: 300_000,
           maximumPromptTokens: 272_000,
           maximumOutputTokens: 28_000,
+          outputTokenLimit: 16_000,
         },
         { modelId: 'beta', protocol: 'anthropic-messages' },
       ],
@@ -73,6 +74,7 @@ describe('BuiltinLlmProvider', () => {
           maximumPromptTokens: 272_000,
           maximumOutputTokens: 28_000,
         },
+        invocationDefaults: { outputTokenLimit: 16_000 },
       },
     });
     expect(provider.entry.resolveModel('beta', connection.connection)).toEqual({
@@ -112,6 +114,51 @@ describe('BuiltinLlmProvider', () => {
     expect(createClient).toHaveBeenCalledTimes(1);
   });
 
+  it('applies model output defaults and clamps explicit overrides to capability', async () => {
+    const requests: ModelInvocationRequest[] = [];
+    const provider = new BuiltinLlmProvider({
+      baseURL: 'https://example.test',
+      models: [{
+        modelId: 'one',
+        protocol: 'openai-responses',
+        maximumOutputTokens: 8_192,
+        outputTokenLimit: 16_384,
+      }],
+    }, {
+      createClient: () => ({
+        async *chatStream(value) {
+          requests.push(value);
+          yield { type: 'message_start' };
+          yield {
+            type: 'message_end',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 0, outputTokens: 0 },
+          };
+        },
+        async chat(value) {
+          requests.push(value);
+          return {
+            content: [],
+            toolCalls: [],
+            stopReason: 'end_turn',
+            usage: { inputTokens: 0, outputTokens: 0 },
+          };
+        },
+      }),
+    });
+
+    await provider.entry.invocationPort.chat({
+      model: 'one',
+      messages: [],
+    });
+    await provider.entry.invocationPort.chat({
+      model: 'one',
+      messages: [],
+      outputTokenLimit: 32_768,
+    });
+
+    expect(requests.map((value) => value.outputTokenLimit)).toEqual([8_192, 8_192]);
+  });
 });
 
 function client(protocol: BuiltinProtocol, calls: string[]): ModelInvocationPort {

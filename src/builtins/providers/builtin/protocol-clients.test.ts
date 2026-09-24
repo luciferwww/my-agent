@@ -184,6 +184,53 @@ describe('Built-in Protocol Clients', () => {
     expect(body).not.toHaveProperty('max_completion_tokens');
   });
 
+  it('maps one output-token limit to each protocol wire field', async () => {
+    const responsesFetch = vi.fn(async () => sse(
+      frame({ type: 'response.created' })
+      + frame({
+        type: 'response.completed',
+        response: { usage: { input_tokens: 1, output_tokens: 0 } },
+      }),
+    )) as unknown as typeof fetch;
+    const chatFetch = vi.fn(async () => sse(
+      frame({
+        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+      })
+      + frame({
+        choices: [],
+        usage: { prompt_tokens: 1, completion_tokens: 0 },
+      })
+      + 'data: [DONE]\n\n',
+    )) as unknown as typeof fetch;
+    const anthropicFetch = vi.fn(async () => sse(
+      frame({ type: 'message_start', message: { usage: { input_tokens: 1 } } })
+      + frame({
+        type: 'message_delta',
+        delta: { stop_reason: 'end_turn' },
+        usage: { output_tokens: 0 },
+      })
+      + frame({ type: 'message_stop' }),
+    )) as unknown as typeof fetch;
+    const limitedRequest = { ...request, outputTokenLimit: 12_345 };
+
+    await new OpenAIResponsesClient({
+      baseURL: 'https://example.test',
+      fetch: responsesFetch,
+    }).chat(limitedRequest);
+    await new OpenAIChatCompletionsClient({
+      baseURL: 'https://example.test',
+      fetch: chatFetch,
+    }).chat(limitedRequest);
+    await new AnthropicMessagesClient({
+      baseURL: 'https://example.test',
+      fetch: anthropicFetch,
+    }).chat(limitedRequest);
+
+    expect(requestBody(responsesFetch)).toMatchObject({ max_output_tokens: 12_345 });
+    expect(requestBody(chatFetch)).toMatchObject({ max_tokens: 12_345 });
+    expect(requestBody(anthropicFetch)).toMatchObject({ max_tokens: 12_345 });
+  });
+
   it('preserves Abort and normalizes malformed streams and HTTP failures', async () => {
     const controller = new AbortController();
     controller.abort();
@@ -306,4 +353,9 @@ async function collect(
   const events: ModelStreamEvent[] = [];
   for await (const event of client.chatStream(value)) events.push(event);
   return events;
+}
+
+function requestBody(fetchImpl: typeof fetch): Record<string, unknown> {
+  const init = vi.mocked(fetchImpl).mock.calls[0]?.[1];
+  return JSON.parse(String(init?.body)) as Record<string, unknown>;
 }

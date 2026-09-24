@@ -31,6 +31,7 @@ export interface ModelInvocationRequest {
   system?: string;
   messages: ChatMessage[];
   tools?: ChatToolDefinition[];
+  outputTokenLimit?: number;
   signal?: AbortSignal;
 }
 

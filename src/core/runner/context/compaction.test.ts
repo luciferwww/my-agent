@@ -237,6 +237,31 @@ describe('compactMessages', () => {
     expect(result.stats.droppedMessages).toBe(2); // turn 1 + reply 1
   });
 
+  it('passes the output-token limit to summary generation', async () => {
+    const messages: ChatMessage[] = [
+      userMsg('turn 1'), assistantMsg('reply 1'),
+      userMsg('turn 2'), assistantMsg('reply 2'),
+    ];
+    let capturedLimit: number | undefined;
+    const llmClient = {
+      async *chatStream(request: { outputTokenLimit?: number }) {
+        capturedLimit = request.outputTokenLimit;
+        yield { type: 'text_delta', text: 'Summary.' };
+      },
+    };
+
+    await compactMessages({
+      messages,
+      config: { ...BASE_CONFIG, keepRecentTurns: 1 },
+      llmClient: llmClient as any,
+      model: 'claude-test',
+      outputTokenLimit: 8192,
+      trigger: 'preemptive',
+    });
+
+    expect(capturedLimit).toBe(8192);
+  });
+
   it('falls back to placeholder summary when LLM fails', async () => {
     const messages: ChatMessage[] = [
       userMsg('turn 1'), assistantMsg('reply 1'),

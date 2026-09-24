@@ -16,7 +16,7 @@ Providers publish connection/model facts and a `ModelInvocationPort` through `Pr
 
 ## 2. Inputs and output
 
-`ModelResolver.resolve(...)` accepts one structured reference and provenance, Tool/media requirements, and application policy. It returns one frozen `ResolvedModel` containing canonical identity, protocol/deployment identity, a Turn-bound invocation Port, and plain model facts.
+`ModelResolver.resolve(...)` accepts one structured reference and provenance, Tool/media requirements, and application policy. It returns one frozen `ResolvedModel` containing canonical identity, protocol/deployment identity, a Turn-bound invocation Port, plain model facts, and separate frozen invocation defaults.
 
 A root Turn resolves against the Provider projection from its captured published generation. A Child resolves independently from the same immutable Parent-generation projection, using either the Parent's effective reference or the Child profile's explicit reference; it does not sample the latest publication.
 
@@ -35,6 +35,11 @@ Resolver requires a positive `effectiveContextLimit`, validates optional raw
 total Context, Prompt, and output limits plus capability facts, rejects
 Context-inconsistent limits, and rejects only explicitly unsupported
 Tool/media requirements before binding.
+
+An optional positive output invocation default is validated separately from
+facts and clamped to a known maximum output capability. Omission resolves to
+an empty frozen defaults object; capability metadata is never promoted into an
+invocation policy.
 
 Runner consumes only the resulting `ResolvedModel`: context budgeting prefers
 a known Prompt limit, otherwise derives bounded output headroom from a known

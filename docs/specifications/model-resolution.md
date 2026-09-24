@@ -26,7 +26,10 @@ interface ProviderProjectionEntry {
 
 A Resolved Model atomically binds canonical identity, reference source,
 protocol, endpoint/deployment identity, invocation Port, and final plain
-effective/raw Context, Prompt, output, Tool, and Media facts.
+effective/raw Context, Prompt, output, Tool, and Media facts. It also contains
+a separate frozen invocation-default object. An optional positive
+`outputTokenLimit` is clamped to known `maximumOutputTokens`; omission remains
+empty and never inherits the capability value.
 
 ## Resolution order and invariants
 
@@ -46,12 +49,12 @@ Catalog membership is checked before connection/model resolution and never invok
 `models` and `resolveModel()` are two projections of one immutable Provider-instance model snapshot. This is a Provider contract obligation because the Host must not inspect or duplicate Provider-private fact sources. Registry and Model Resolution enforce the observable boundary: unique exact Model IDs, membership before Provider work, and returned identity/protocol/selected-endpoint consistency. The model descriptor may add its model-specific deployment identity. Current unified Built-in and Copilot Relay Providers derive both projections from one captured model map.
 
 No first-Provider/default fallback, brand guessing, paid probing, silent
-Provider switch, or Core-owned Provider table is allowed. There is no public
-output-token override or resolved output-limit request policy. Optional trusted
+Provider switch, or Core-owned Provider table is allowed. Optional trusted
 `maximumOutputTokens` metadata may bound Runner headroom when only a total
-Context limit is known, but does not become an invocation output cap. Active
-Turns keep one binding through Tool rounds and Compaction retries. Children
-resolve independently against the inherited generation.
+Context limit is known, but does not become an invocation output cap.
+Provider descriptors may separately publish an `outputTokenLimit` invocation
+default. Active Turns keep one binding through Tool rounds and Compaction
+retries. Children resolve independently against the inherited generation.
 
 ## Failure categories
 

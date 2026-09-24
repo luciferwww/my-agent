@@ -44,7 +44,9 @@ export class OpenAIResponsesClient implements ModelInvocationPort {
         body: JSON.stringify(buildRequest(request)),
         signal: request.signal,
       });
-      if (!response.ok) throw await createHttpError(response, request);
+      if (!response.ok) {
+        throw await createHttpError(response, request, request.outputTokenLimit);
+      }
       if (!response.body) throw new Error('OpenAI Responses streaming response has no body.');
 
       let started = false;
@@ -101,7 +103,7 @@ export class OpenAIResponsesClient implements ModelInvocationPort {
             break;
           case 'response.failed':
           case 'error':
-            throw createStreamError(event, request);
+            throw createStreamError(event, request, request.outputTokenLimit);
           default:
             if (/^response\.[^.]+$/u.test(type)
               && type !== 'response.queued'
@@ -114,7 +116,10 @@ export class OpenAIResponsesClient implements ModelInvocationPort {
       if (!terminal) throw new Error('OpenAI Responses stream ended before a terminal event.');
       yield { type: 'message_end', ...terminal };
     } catch (error) {
-      yield { type: 'error', error: normalizeError(error, request) };
+      yield {
+        type: 'error',
+        error: normalizeError(error, request, request.outputTokenLimit),
+      };
     }
   }
 
@@ -127,6 +132,9 @@ function buildRequest(request: ModelInvocationRequest): Record<string, unknown> 
   return {
     model: request.model,
     stream: true,
+    ...(request.outputTokenLimit === undefined
+      ? {}
+      : { max_output_tokens: request.outputTokenLimit }),
     ...(request.system ? { instructions: request.system } : {}),
     input: convertMessages(request.messages),
     ...(request.tools?.length

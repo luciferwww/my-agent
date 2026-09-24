@@ -28,6 +28,9 @@ function provider(overrides: Partial<ProviderProjectionEntry> = {}): ProviderPro
         identity: { providerId: 'test-provider', modelId },
         protocol: 'anthropic-messages',
         connection,
+        invocationDefaults: {
+          outputTokenLimit: 16_384,
+        },
         facts: {
           effectiveContextLimit: 200_000,
           maximumContextTokens: 200_000,
@@ -69,12 +72,14 @@ describe('ModelResolver', () => {
     expect(resolved.identity).toEqual({ providerId: 'test-provider', modelId: 'test-model' });
     expect(resolved.referenceSource).toBe('native');
     expect(resolved.invocationPort).toBe(port);
+    expect(resolved.invocationDefaults.outputTokenLimit).toBe(8192);
     expect(resolved.facts.effectiveContextLimit).toBe(200_000);
     expect(resolved.facts.maximumContextTokens).toBe(200_000);
     expect(resolved.facts.maximumPromptTokens).toBe(190_000);
     expect(resolved.facts.maximumOutputTokens).toBe(8192);
     expect(Object.isFrozen(resolved)).toBe(true);
     expect(Object.isFrozen(resolved.identity)).toBe(true);
+    expect(Object.isFrozen(resolved.invocationDefaults)).toBe(true);
     expect(Object.isFrozen(resolved.facts)).toBe(true);
   });
 
@@ -243,6 +248,24 @@ describe('ModelResolver', () => {
     }
   });
 
+  it('rejects invalid invocation defaults', () => {
+    const base = provider();
+    const resolver = new ModelResolver([provider({
+      resolveModel: (modelId, connection) => {
+        const result = base.resolveModel(modelId, connection);
+        if (!result.ok) return result;
+        return {
+          ok: true,
+          descriptor: {
+            ...result.descriptor,
+            invocationDefaults: { outputTokenLimit: 0 },
+          },
+        };
+      },
+    })]);
+
+    expectCategory(() => resolver.resolve(input()), 'facts_insufficient');
+  });
 
   it('rejects a model outside the closed Catalog before resolving a connection or model', () => {
     const resolveConnection = vi.fn(provider().resolveConnection);

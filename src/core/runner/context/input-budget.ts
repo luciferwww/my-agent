@@ -13,6 +13,7 @@ type ModelLimitFacts = Pick<
 export function resolveInputTokenBudget(
   facts: ModelLimitFacts,
   configuredReserveTokens: number,
+  outputTokenLimit?: number,
 ): number {
   if (facts.maximumPromptTokens !== undefined) {
     return facts.maximumPromptTokens;
@@ -25,7 +26,9 @@ export function resolveInputTokenBudget(
     const outputHeadroom = Math.min(
       configuredReserveTokens,
       proportionalHeadroom,
-      facts.maximumOutputTokens ?? Number.POSITIVE_INFINITY,
+      outputTokenLimit
+        ?? facts.maximumOutputTokens
+        ?? Number.POSITIVE_INFINITY,
     );
     return Math.max(0, facts.maximumContextTokens - outputHeadroom);
   }

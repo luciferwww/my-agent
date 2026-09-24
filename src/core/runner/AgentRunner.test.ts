@@ -112,6 +112,7 @@ class AgentRunner extends ProductionAgentRunner {
         protocol: 'test',
         endpointId: 'test',
         invocationPort: this.testInvocationPort,
+        invocationDefaults: {},
         facts: {
           effectiveContextLimit: contextWindowTokens ?? 200_000,
           maximumOutputTokens: 1_000_000,

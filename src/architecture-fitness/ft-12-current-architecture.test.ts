@@ -322,7 +322,7 @@ describe('FT-12 Current Architecture authority', () => {
     }
   });
 
-  it('removes public output-token controls while keeping Anthropic protocol fallback private', async () => {
+  it('separates output capability from invocation policy across Built-in protocols', async () => {
     const invocationTypes = await readFile(
       join(REPOSITORY_ROOT, 'src', 'core', 'model-invocation', 'types.ts'),
       'utf8',
@@ -338,6 +338,28 @@ describe('FT-12 Current Architecture authority', () => {
       ),
       'utf8',
     );
+    const responsesClient = await readFile(
+      join(
+        REPOSITORY_ROOT,
+        'src',
+        'builtins',
+        'providers',
+        'builtin',
+        'OpenAIResponsesClient.ts',
+      ),
+      'utf8',
+    );
+    const chatClient = await readFile(
+      join(
+        REPOSITORY_ROOT,
+        'src',
+        'builtins',
+        'providers',
+        'builtin',
+        'OpenAIChatCompletionsClient.ts',
+      ),
+      'utf8',
+    );
     const agentRunner = await readFile(
       join(REPOSITORY_ROOT, 'src', 'core', 'runner', 'AgentRunner.ts'),
       'utf8',
@@ -347,11 +369,18 @@ describe('FT-12 Current Architecture authority', () => {
       'utf8',
     );
 
+    expect(invocationTypes).toContain('outputTokenLimit?: number;');
     expect(invocationTypes).not.toMatch(/\bmaxTokens\??: number;/u);
     expect(anthropicClient).toContain("import { DEFAULT_ANTHROPIC_MAX_TOKENS } from './config.js';");
-    expect(anthropicClient).toContain('max_tokens: DEFAULT_ANTHROPIC_MAX_TOKENS');
+    expect(anthropicClient).toContain(
+      'request.outputTokenLimit ?? DEFAULT_ANTHROPIC_MAX_TOKENS',
+    );
+    expect(anthropicClient).toContain('max_tokens: maxTokens');
+    expect(responsesClient).toContain('max_output_tokens: request.outputTokenLimit');
+    expect(chatClient).toContain('max_tokens: request.outputTokenLimit');
     expect(agentRunner).not.toContain('resolvedModel.limits');
-    expect(compaction).not.toMatch(/\bmaxTokens\b/u);
+    expect(agentRunner).toContain('resolvedModel.invocationDefaults.outputTokenLimit');
+    expect(compaction).toContain('outputTokenLimit');
   });
 });
 

@@ -69,9 +69,11 @@ Runner implements the pipeline described by [Tools and Hooks](../specifications/
 implement the current context-management stages. A known Prompt limit is the
 input budget directly. Otherwise, a known total Context limit reserves the
 smallest of configured headroom, ten percent of Context, and known maximum
-output. If neither raw limit is known, Runner uses the Provider effective
-fallback directly. Budgeting runs before current-message persistence; only
-summary Compaction makes another Model call.
+output, preferring a resolved invocation output limit when one exists. If
+neither raw limit is known, Runner uses the Provider effective fallback
+directly. The resolved limit is passed to normal and summary-Compaction model
+calls. Budgeting runs before current-message persistence; only summary
+Compaction makes another Model call.
 
 A `ContextOverflowError` can come from preflight (`preemptive`), the inner 90% threshold (`overflow`), or a Provider-neutral invocation Port that canonicalizes a Provider context overflow. Other Provider failures are not treated as context overflow.
 

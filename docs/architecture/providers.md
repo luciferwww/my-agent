@@ -54,6 +54,7 @@ ModelInvocationRequest {
   system?: string
   messages: ChatMessage[]
   tools?: ChatToolDefinition[]
+  outputTokenLimit?: number
   signal?: AbortSignal
 }
 
@@ -65,7 +66,7 @@ ModelStreamEvent =
   | error
 ```
 
-Canonical history supports text, base64 image, Tool Use, and correlated Tool Result blocks. Image dimensions are internal metadata and Provider adapters remove them from the wire. Core does not expose an output-token limit. Protocol clients omit one when optional; clients for protocols that require one own a private operational default.
+Canonical history supports text, base64 image, Tool Use, and correlated Tool Result blocks. Image dimensions are internal metadata and Provider adapters remove them from the wire. The optional output limit is an already-resolved invocation policy, not a model capability fact.
 
 Provider fragments, indexes, SDK objects, Anthropic `input_schema`, and Responses `function.parameters` remain inside adapter/test boundaries. Complete canonical Tool Calls preserve Provider call identity, name, order, and either ready object input or explicit invalid input state.
 
@@ -88,7 +89,7 @@ Only allowlisted diagnostics are copied: Provider ID, bounded Provider status/ty
 
 ### 5.1 Protocol conversion
 
-The three fetch-based Protocol Clients directly implement the Core `ModelInvocationPort`. Each appends only its operation path to the configured API prefix, uses only the materialized credential, performs one HTTP attempt, converts canonical text/image/Tool history, streams canonical events, preserves Abort, and normalizes failures through Model Invocation Error V1. OpenAI requests omit output limits; Anthropic Messages supplies its private required `4,096` fallback.
+The three fetch-based Protocol Clients directly implement the Core `ModelInvocationPort`. Each appends only its operation path to the configured API prefix, uses only the materialized credential, performs one HTTP attempt, converts canonical text/image/Tool history, streams canonical events, preserves Abort, and normalizes failures through Model Invocation Error V1. A configured effective policy maps to Anthropic `max_tokens`, Responses `max_output_tokens`, or Chat Completions `max_tokens`. Without one, OpenAI requests omit output limits and Anthropic Messages supplies its private required `4,096` fallback.
 
 ### 5.2 Provider facts and Catalog
 
@@ -100,7 +101,8 @@ independently declare positive safe-integer total Context, Prompt, and output
 limits. Its compatibility effective limit is the Prompt limit, otherwise the
 Context limit, otherwise the conservative `32,768` fallback. Tool and Media
 capabilities remain unknown and therefore fail open. Unknown models fail
-closed.
+closed. Optional `outputTokenLimit` is published separately as an invocation
+default and clamped to known maximum output capability.
 
 ## 6. Built-in Runtime Unit
 

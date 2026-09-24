@@ -49,7 +49,9 @@ export class OpenAIChatCompletionsClient implements ModelInvocationPort {
         body: JSON.stringify(buildRequest(request)),
         signal: request.signal,
       });
-      if (!response.ok) throw await createHttpError(response, request);
+      if (!response.ok) {
+        throw await createHttpError(response, request, request.outputTokenLimit);
+      }
       if (!response.body) throw new Error('OpenAI Chat Completions streaming response has no body.');
 
       let started = false;
@@ -68,7 +70,7 @@ export class OpenAIChatCompletionsClient implements ModelInvocationPort {
         if (done) throw new Error('OpenAI Chat Completions sent an event after [DONE].');
         const chunk = parseRecord(data, 'OpenAI Chat Completions sent malformed SSE JSON.');
         if (chunk.type === 'error' || chunk.error !== undefined) {
-          throw createStreamError(chunk, request);
+          throw createStreamError(chunk, request, request.outputTokenLimit);
         }
         if (!started) {
           started = true;
@@ -138,7 +140,10 @@ export class OpenAIChatCompletionsClient implements ModelInvocationPort {
         usage: Object.freeze(usage),
       };
     } catch (error) {
-      yield { type: 'error', error: normalizeError(error, request) };
+      yield {
+        type: 'error',
+        error: normalizeError(error, request, request.outputTokenLimit),
+      };
     }
   }
 
@@ -152,6 +157,9 @@ function buildRequest(request: ModelInvocationRequest): Record<string, unknown> 
     model: request.model,
     stream: true,
     stream_options: { include_usage: true },
+    ...(request.outputTokenLimit === undefined
+      ? {}
+      : { max_tokens: request.outputTokenLimit }),
     messages: [
       ...(request.system ? [{ role: 'system', content: request.system }] : []),
       ...convertMessages(request.messages),

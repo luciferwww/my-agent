@@ -74,7 +74,9 @@ Replace `<model-id>` with a model exposed by your endpoint. A model registration
 may declare `maximumContextTokens`, `maximumPromptTokens`, and
 `maximumOutputTokens` when the deployment publishes those facts. Every limit
 is optional; omitting Prompt and Context limits uses the conservative Built-in
-Provider fallback of `32768`. For SiliconFlow,
+Provider fallback of `32768`. An optional `outputTokenLimit` separately caps
+each generated response and is clamped to a known `maximumOutputTokens`;
+omitting it keeps the Protocol Client's existing default behavior. For SiliconFlow,
 the model catalog can be queried with:
 
 ```bash

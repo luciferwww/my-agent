@@ -47,6 +47,7 @@ export function makeRunParams(overrides: Partial<RunParams> = {}): RunParams {
       protocol: 'test',
       endpointId: 'test',
       invocationPort: unusedInvocationPort,
+      invocationDefaults: {},
       facts: {
         effectiveContextLimit: 200_000,
         maximumOutputTokens: 4096,

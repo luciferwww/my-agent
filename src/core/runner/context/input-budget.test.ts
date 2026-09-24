@@ -26,6 +26,14 @@ describe('resolveInputTokenBudget', () => {
     }, 20_000)).toBe(30_720);
   });
 
+  it('uses the invocation output limit before the model capability', () => {
+    expect(resolveInputTokenBudget({
+      effectiveContextLimit: 100_000,
+      maximumContextTokens: 100_000,
+      maximumOutputTokens: 50_000,
+    }, 20_000, 4_096)).toBe(95_904);
+  });
+
   it('bounds Context-only headroom by configured policy', () => {
     expect(resolveInputTokenBudget({
       effectiveContextLimit: 100_000,

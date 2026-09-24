@@ -12,6 +12,7 @@ export interface BuiltinModelRegistration {
   readonly maximumContextTokens?: number;
   readonly maximumPromptTokens?: number;
   readonly maximumOutputTokens?: number;
+  readonly outputTokenLimit?: number;
 }
 
 export interface BuiltinLlmProviderConfig {
@@ -126,6 +127,7 @@ function validateModels(value: unknown): readonly BuiltinModelRegistration[] {
       maximumContextTokens: entry['maximumContextTokens'],
       maximumPromptTokens: entry['maximumPromptTokens'],
       maximumOutputTokens: entry['maximumOutputTokens'],
+      outputTokenLimit: entry['outputTokenLimit'],
     };
     for (const [field, limit] of Object.entries(limits)) {
       if (limit !== undefined && (!Number.isSafeInteger(limit) || (limit as number) <= 0)) {
@@ -160,6 +162,7 @@ function copyConfiguredLimits(limits: Readonly<Record<string, unknown>>): {
   maximumContextTokens?: number;
   maximumPromptTokens?: number;
   maximumOutputTokens?: number;
+  outputTokenLimit?: number;
 } {
   return {
     ...(typeof limits['maximumContextTokens'] === 'number'
@@ -170,6 +173,9 @@ function copyConfiguredLimits(limits: Readonly<Record<string, unknown>>): {
       : {}),
     ...(typeof limits['maximumOutputTokens'] === 'number'
       ? { maximumOutputTokens: limits['maximumOutputTokens'] }
+      : {}),
+    ...(typeof limits['outputTokenLimit'] === 'number'
+      ? { outputTokenLimit: limits['outputTokenLimit'] }
       : {}),
   };
 }

@@ -56,6 +56,9 @@ export interface ProviderModelDescriptor {
   readonly protocol: string;
   readonly connection: ProviderConnection;
   readonly facts: ProviderModelFacts;
+  readonly invocationDefaults?: {
+    readonly outputTokenLimit?: number;
+  };
 }
 
 export type ProviderConnectionResult =
@@ -108,6 +111,9 @@ export interface ResolvedModel {
   readonly endpointId: string;
   readonly deploymentId?: string;
   readonly invocationPort: ModelInvocationPort;
+  readonly invocationDefaults: Readonly<{
+    outputTokenLimit?: number;
+  }>;
   readonly facts: Readonly<{
     effectiveContextLimit: number;
     maximumContextTokens?: number;

@@ -60,13 +60,16 @@ function invocationPort(call: ToolCall, requests: ModelInvocationRequest[]): Mod
   };
 }
 
-function resolvedModel(port: ModelInvocationPort) {
+function resolvedModel(port: ModelInvocationPort, outputTokenLimit?: number) {
   return {
     identity: { providerId: 'test', modelId: 'test' },
     referenceSource: 'native' as const,
     protocol: 'test',
     endpointId: 'test',
     invocationPort: port,
+    invocationDefaults: {
+      ...(outputTokenLimit === undefined ? {} : { outputTokenLimit }),
+    },
     facts: {
       effectiveContextLimit: 200_000,
       maximumOutputTokens: 4096,
@@ -113,7 +116,7 @@ describe('AgentRunner canonical Tool pipeline', () => {
       message: 'go',
       systemPrompt: '',
       turnId: 'turn',
-      resolvedModel: resolvedModel(port),
+      resolvedModel: resolvedModel(port, 8192),
       toolProjection: snapshot.tools,
       hookProjection: snapshot.hooks,
       toolPolicy: { isDenied: () => false, decide: policyDecision },
@@ -130,6 +133,7 @@ describe('AgentRunner canonical Tool pipeline', () => {
       content: 'Invalid input for tool "demo": malformed_json.',
     }]);
     expect(requests).toHaveLength(2);
+    expect(requests.every((value) => value.outputTokenLimit === 8192)).toBe(true);
   });
 
   it('validates only the final transformed input before policy and execution', async () => {

@@ -51,7 +51,7 @@ Stages 3–5 apply only to Agent-scoped configuration. Runtime and Runner use `m
 | Section | Current fields and defaults |
 |---|---|
 | `llm.defaultModel` | Optional preferred Root-Turn `{ providerId, modelId }`; also projected to clients as `unset`, `available`, or `unavailable`; never a fallback list |
-| `llm.builtin` | Optional `{ baseURL, apiKey?, models[] }`; each model has `modelId`, `protocol`, optional `displayName`, and optional positive safe-integer `maximumContextTokens`, `maximumPromptTokens`, and `maximumOutputTokens`; omitting Prompt and Context limits uses `32768`; an empty model list is valid |
+| `llm.builtin` | Optional `{ baseURL, apiKey?, models[] }`; each model has `modelId`, `protocol`, optional `displayName`, optional positive safe-integer capability facts `maximumContextTokens`, `maximumPromptTokens`, and `maximumOutputTokens`, plus separate optional invocation policy `outputTokenLimit`; omitting Prompt and Context limits uses `32768`; an empty model list is valid |
 | `runtime` | `steeringEnabled=false` |
 | `runner` | Optional positive integer `maxLlmCalls`; omitted means no Model-call count limit |
 | `memory` | Enabled; local `Xenova/all-MiniLM-L6-v2`; chunk `1600/320`; search `6`, `0.25`, weights `0.7/0.3` |
@@ -84,7 +84,7 @@ deepMerge(target, source): merged copy
 
 `createDefaultAgentConfig()` returns a fresh aggregate assembled from immutable owner defaults; it contains no leaf literals. The former centralized `platform/config/defaults.ts` and mutable `DEFAULT_AGENT_CONFIG` export are removed. `platform/config/types.ts` retains only composition contracts and type re-exports.
 
-The retired `agents.defaults.workspace`, Agent-level `model`/`llm`, nested/per-Agent `runtime`/`runner`, and corresponding per-agent keys are rejected directly. `runner.inTurnMessageMode` has no compatibility reader and is rejected by strict Runner leaf validation. Public output-token configuration is removed; there is no `llm.maxTokens` or replacement. There is no alias or dual read; Agent Context budgets use `context` only.
+The retired `agents.defaults.workspace`, Agent-level `model`/`llm`, nested/per-Agent `runtime`/`runner`, and corresponding per-agent keys are rejected directly. `runner.inTurnMessageMode` has no compatibility reader and is rejected by strict Runner leaf validation. The legacy global `llm.maxTokens` remains removed with no alias; Built-in per-model `outputTokenLimit` is the only configured output invocation policy. There is no dual read, and Agent Context budgets use `context` only.
 
 ## 6. Evidence
 

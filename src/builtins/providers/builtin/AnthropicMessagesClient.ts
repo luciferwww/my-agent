@@ -33,6 +33,7 @@ export class AnthropicMessagesClient implements ModelInvocationPort {
   }
 
   async *chatStream(request: ModelInvocationRequest): AsyncIterable<ModelStreamEvent> {
+    const maxTokens = request.outputTokenLimit ?? DEFAULT_ANTHROPIC_MAX_TOKENS;
     try {
       const apiKey = this.options.apiKey?.trim();
       const response = await this.fetchImpl(`${this.options.baseURL}/messages`, {
@@ -43,11 +44,11 @@ export class AnthropicMessagesClient implements ModelInvocationPort {
           'anthropic-version': '2023-06-01',
           ...(apiKey ? { 'x-api-key': apiKey } : {}),
         },
-        body: JSON.stringify(buildRequest(request)),
+        body: JSON.stringify(buildRequest(request, maxTokens)),
         signal: request.signal,
       });
       if (!response.ok) {
-        throw await createHttpError(response, request, DEFAULT_ANTHROPIC_MAX_TOKENS);
+        throw await createHttpError(response, request, maxTokens);
       }
       if (!response.body) throw new Error('Anthropic streaming response has no body.');
 
@@ -149,7 +150,7 @@ export class AnthropicMessagesClient implements ModelInvocationPort {
           case 'ping':
             break;
           case 'error':
-            throw createStreamError(event, request, DEFAULT_ANTHROPIC_MAX_TOKENS);
+            throw createStreamError(event, request, maxTokens);
           default:
             throw new Error(`Anthropic sent unsupported event "${type}".`);
         }
@@ -160,7 +161,7 @@ export class AnthropicMessagesClient implements ModelInvocationPort {
     } catch (error) {
       yield {
         type: 'error',
-        error: normalizeError(error, request, DEFAULT_ANTHROPIC_MAX_TOKENS),
+        error: normalizeError(error, request, maxTokens),
       };
     }
   }
@@ -170,10 +171,13 @@ export class AnthropicMessagesClient implements ModelInvocationPort {
   }
 }
 
-function buildRequest(request: ModelInvocationRequest): Record<string, unknown> {
+function buildRequest(
+  request: ModelInvocationRequest,
+  maxTokens: number,
+): Record<string, unknown> {
   return {
     model: request.model,
-    max_tokens: DEFAULT_ANTHROPIC_MAX_TOKENS,
+    max_tokens: maxTokens,
     stream: true,
     messages: convertMessages(request.messages),
     ...(request.system ? { system: request.system } : {}),

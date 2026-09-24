@@ -1,6 +1,7 @@
 import type {
   CanonicalModelIdentity,
   ModelResolutionInput,
+  ProviderModelDescriptor,
   ProviderModelFacts,
   ProviderProjectionEntry,
   ResolvedModel,
@@ -81,6 +82,10 @@ export class ModelResolver {
     }
 
     const facts = this.requireFacts(descriptor.facts);
+    const invocationDefaults = this.requireInvocationDefaults(
+      descriptor.invocationDefaults,
+      facts.maximumOutputTokens,
+    );
     if (input.request.tools && facts.toolUse === false) {
       throw new ModelResolutionError(
         'capability_unsupported',
@@ -107,6 +112,7 @@ export class ModelResolver {
         ? { deploymentId: descriptor.connection.deploymentId }
         : {}),
       invocationPort: provider.invocationPort,
+      invocationDefaults,
       facts: Object.freeze({
         effectiveContextLimit: facts.effectiveContextLimit,
         ...(facts.maximumContextTokens !== undefined
@@ -203,6 +209,27 @@ export class ModelResolver {
     };
   }
 
+  private requireInvocationDefaults(
+    defaults: ProviderModelDescriptor['invocationDefaults'],
+    maximumOutputTokens: number | undefined,
+  ): ResolvedModel['invocationDefaults'] {
+    const outputTokenLimit = defaults?.outputTokenLimit;
+    if (outputTokenLimit !== undefined && !isPositiveInteger(outputTokenLimit)) {
+      throw new ModelResolutionError(
+        'facts_insufficient',
+        'Provider model invocation defaults are invalid.',
+      );
+    }
+    return Object.freeze({
+      ...(outputTokenLimit === undefined
+        ? {}
+        : {
+            outputTokenLimit: maximumOutputTokens === undefined
+              ? outputTokenLimit
+              : Math.min(outputTokenLimit, maximumOutputTokens),
+          }),
+    });
+  }
 }
 
 function normalizeProviderId(value: string | undefined): string | undefined {

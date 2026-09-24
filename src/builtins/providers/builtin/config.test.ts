@@ -49,6 +49,7 @@ describe('Built-in LLM configuration', () => {
           maximumContextTokens: 300_000,
           maximumPromptTokens: 272_000,
           maximumOutputTokens: 28_000,
+          outputTokenLimit: 16_000,
         },
         { modelId: 'c', protocol: 'openai-chat-completions' },
       ],
@@ -61,6 +62,7 @@ describe('Built-in LLM configuration', () => {
         maximumContextTokens: 300_000,
         maximumPromptTokens: 272_000,
         maximumOutputTokens: 28_000,
+        outputTokenLimit: 16_000,
       },
       { modelId: 'c', protocol: 'openai-chat-completions' },
     ]);
@@ -80,6 +82,9 @@ describe('Built-in LLM configuration', () => {
     [[
       { modelId: 'a', protocol: 'openai-responses', maximumPromptTokens: 1.5 },
     ], 'models[0].maximumPromptTokens'],
+    [[
+      { modelId: 'a', protocol: 'openai-responses', outputTokenLimit: 0 },
+    ], 'models[0].outputTokenLimit'],
     [[
       {
         modelId: 'a',

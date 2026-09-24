@@ -98,6 +98,16 @@ export class BuiltinLlmProvider {
                 ? {}
                 : { maximumOutputTokens: registration.maximumOutputTokens }),
             }),
+            ...(registration.outputTokenLimit === undefined
+              ? {}
+              : {
+                  invocationDefaults: Object.freeze({
+                    outputTokenLimit: resolveOutputTokenLimit(
+                      registration.outputTokenLimit,
+                      registration.maximumOutputTokens,
+                    ),
+                  }),
+                }),
           }),
         } as const;
       },
@@ -112,15 +122,19 @@ export class BuiltinModelRouter implements ModelInvocationPort {
   ) {}
 
   async *chatStream(request: ModelInvocationRequest): AsyncIterable<ModelStreamEvent> {
-    const client = this.resolveClient(request.model);
-    yield* client.chatStream(request);
+    const { client, registration } = this.resolveRoute(request.model);
+    yield* client.chatStream(withRegistrationDefaults(request, registration));
   }
 
   async chat(request: ModelInvocationRequest): Promise<ModelInvocationResponse> {
-    return await this.resolveClient(request.model).chat(request);
+    const { client, registration } = this.resolveRoute(request.model);
+    return await client.chat(withRegistrationDefaults(request, registration));
   }
 
-  private resolveClient(modelId: string): ModelInvocationPort {
+  private resolveRoute(modelId: string): {
+    client: ModelInvocationPort;
+    registration: BuiltinModelRegistration;
+  } {
     const registration = this.registrations.get(modelId);
     if (!registration) {
       throw new Error(`Built-in LLM Provider has no registration for model ${JSON.stringify(modelId)}.`);
@@ -131,8 +145,32 @@ export class BuiltinModelRouter implements ModelInvocationPort {
         `Built-in LLM Provider has no Client for protocol ${JSON.stringify(registration.protocol)}.`,
       );
     }
-    return client;
+    return { client, registration };
   }
+}
+
+function withRegistrationDefaults(
+  request: ModelInvocationRequest,
+  registration: BuiltinModelRegistration,
+): ModelInvocationRequest {
+  const requestedLimit = request.outputTokenLimit ?? registration.outputTokenLimit;
+  if (requestedLimit === undefined) return request;
+  return {
+    ...request,
+    outputTokenLimit: resolveOutputTokenLimit(
+      requestedLimit,
+      registration.maximumOutputTokens,
+    ),
+  };
+}
+
+function resolveOutputTokenLimit(
+  outputTokenLimit: number,
+  maximumOutputTokens: number | undefined,
+): number {
+  return maximumOutputTokens === undefined
+    ? outputTokenLimit
+    : Math.min(outputTokenLimit, maximumOutputTokens);
 }
 
 function createProtocolClient(

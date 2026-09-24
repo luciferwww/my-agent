@@ -286,6 +286,7 @@ export class AgentRunner {
     const inputBudgetTokens = resolveInputTokenBudget(
       params.resolvedModel.facts,
       compaction.reserveTokens,
+      params.resolvedModel.invocationDefaults.outputTokenLimit,
     );
 
     // Explicit event context prevents nested or concurrent runs from mixing tags.
@@ -729,6 +730,7 @@ export class AgentRunner {
       config: compaction,
       llmClient: params.resolvedModel.invocationPort,
       model: params.resolvedModel.identity.modelId,
+      outputTokenLimit: params.resolvedModel.invocationDefaults.outputTokenLimit,
       trigger,
     });
 
@@ -865,6 +867,9 @@ export class AgentRunner {
         system: params.system,
         messages: params.messages,
         tools: params.tools,
+        ...(resolvedModel.invocationDefaults.outputTokenLimit === undefined
+          ? {}
+          : { outputTokenLimit: resolvedModel.invocationDefaults.outputTokenLimit }),
         signal,
       })) {
         switch (event.type) {
