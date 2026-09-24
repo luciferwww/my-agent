@@ -1,7 +1,7 @@
 {
   "agent-context.md": ["src/core/agent-context"],
   "builtin-tools.md": ["src/builtins/tools"],
-  "channels.md": ["src/core/channel", "src/builtins/channels"],
+  "channels.md": ["src/core/channel", "src/builtins/channels", "extensions/websocket-channel"],
   "configuration.md": ["src/platform/config"],
   "extensions.md": ["src/extension", "src/hosts"],
   "media.md": ["src/core/media"],

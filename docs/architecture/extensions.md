@@ -14,7 +14,14 @@
 
 Acquisition stops at not-yet-created `LoadedRuntimeUnit[]`. It never creates, starts, registers, publishes, retires, or stops Units. [Runtime](runtime.md) is the sole owner of those lifecycle and Registry-publication transitions.
 
-`extensions/*` contains independently owned npm workspace packages, currently including Copilot Relay. Each package owns its metadata, source, tests, runtime dependencies, and optional build process. `src/extension/api/` exposes the minimum stable Host contract used by those packages through `my-agent/extension-api`. Generic acquisition does not import or identify a concrete Extension. [Providers](providers.md) owns concrete Provider protocol behavior.
+`extensions/*` contains independently owned npm workspace packages, currently
+including Copilot Relay and WebSocket Channel. Each package owns its metadata,
+source, tests, runtime dependencies, and optional build process.
+`src/extension/api/` exposes the minimum stable Host contract used by those
+packages through `my-agent/extension-api`. Generic acquisition does not import
+or identify a concrete Extension. [Providers](providers.md) owns concrete
+Provider protocol behavior, while [Channels](channels.md) owns Channel
+contracts and transport behavior.
 
 Agent configuration loading is owned by [Configuration](configuration.md); acquisition owns the semantics of its injected Extension projection.
 
@@ -69,15 +76,28 @@ The returned Units have not been created. Runtime combines them with required an
 1. derives `installDir` and selects `agentHome`;
 2. passes generic `installDir`, configuration snapshot, and environment startup facts to Runtime;
 3. lets Runtime Bootstrap derive `<installDir>/extensions` and invoke the shared Acquisition boundary after Logger configuration;
-4. appends the argument-selected WebSocket and/or CLI Channel Units in canonical order, or none for `none`;
+4. appends the Host-local CLI Unit only when `--cli` is present, otherwise no
+   Host-local Channel Unit;
 5. passes `agentHome` and Host-constructed Channel Units to `RuntimeApp.create()`;
 6. delegates process shutdown to the Runtime Host wrapper.
 
 The Host owns process-level signal and exit policy; Runtime library code never calls `process.exit()`. The current wrapper shares cooperative shutdown, forces exit on a second signal or Host deadline, and removes its listeners after settlement. The canonical standalone Host's signal counts, exit codes, and Host deadline are governed by the [Standalone Service Host Specification](../specifications/standalone-service-host.md); ADR-014 owns Extension package/loading and Runtime Unit lifecycle decisions.
 
-The Host rejects any CLI selection with an enabled Console Logger because both own terminal presentation. Builtin selection and fixed Channel construction values come only from Standalone arguments/code, never the Agent configuration snapshot. The Host does not import Relay-specific source. The first-class Host build starts from `src/hosts/standalone/entry.ts`, follows its static TypeScript closure, and emits `dist/host`; npm maps `my-agent` directly to `dist/host/hosts/standalone/entry.js`. That closure includes `extension/acquisition/` and the public `extension/api/`, while concrete `extensions/**` packages remain outside the Host closure.
+The Host rejects `--cli` with an enabled Console Logger because both own
+terminal presentation. Host-local CLI selection and fixed construction values
+come only from Standalone arguments/code, never the Agent configuration
+snapshot. The Host does not import Relay- or WebSocket-specific source. The
+first-class Host build starts from `src/hosts/standalone/entry.ts`, follows its
+static TypeScript closure, and emits `dist/host`; npm maps `my-agent` directly
+to `dist/host/hosts/standalone/entry.js`. That closure includes
+`extension/acquisition/` and the public `extension/api/`, while concrete
+`extensions/**` packages remain outside the Host closure.
 
-The npm package carries the public Extension API and selected official Extension packages under its installation root.
+The npm package carries the public Extension API plus the official Copilot
+Relay and WebSocket Channel Extension packages under its installation root.
+Each official Extension manifest remains the dependency authority; the root
+manifest mirrors those exact ranges for installation assembly. The WebSocket
+package currently owns the `ws` runtime dependency.
 
 ## 7. Failure boundaries
 
@@ -91,6 +111,6 @@ The npm package carries the public Extension API and selected official Extension
 
 | Kind | Evidence |
 |---|---|
-| Source | [acquisition boundary](../../src/extension/acquisition/index.ts), [Extension API](../../src/extension/api/index.ts) |
-| Tests | [discovery tests](../../src/extension/acquisition/discovery.test.ts), [loader tests](../../src/extension/acquisition/loader.test.ts) |
+| Source | [acquisition boundary](../../src/extension/acquisition/index.ts), [Extension API](../../src/extension/api/index.ts), [WebSocket Extension entry](../../extensions/websocket-channel/entry.ts) |
+| Tests | [discovery tests](../../src/extension/acquisition/discovery.test.ts), [loader tests](../../src/extension/acquisition/loader.test.ts), [WebSocket acquisition tests](../../src/extension/acquisition/websocket-extension-acquisition.test.ts) |
 | Controlling authority | [Extension Acquisition Specification](../specifications/extension-acquisition.md) |

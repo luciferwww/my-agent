@@ -1,0 +1,13 @@
+{
+  "name": "@my-agent/websocket-channel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --root ../.. --config vitest.unit.config.ts extensions/websocket-channel"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}

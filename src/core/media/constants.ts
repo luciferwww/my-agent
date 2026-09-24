@@ -2,7 +2,7 @@
  * Attachment / media pipeline constants.
  *
  * Single source of truth for size limits, MIME allowlist, and pipeline defaults.
- * Imported by media/* modules and WebSocketChannel (maxPayload).
+ * Imported by media/* modules.
  */
 
 /** Inline-vs-host threshold. Blocks larger than this MAY be hosted off-band in future. */
@@ -16,9 +16,6 @@ export const ATTACHMENT_TOTAL_MAX_BYTES = 10 * 1024 * 1024;
 
 /** Hard cap on attachment count per inbound message. */
 export const MAX_ATTACHMENTS_PER_MESSAGE = 20;
-
-/** WebSocket frame ceiling. Slightly larger than ATTACHMENT_TOTAL to absorb JSON/base64 overhead. */
-export const WS_MAX_PAYLOAD_BYTES = 15 * 1024 * 1024;
 
 /** Allowlist of inbound image MIME types. */
 export const SUPPORTED_IMAGE_MIME = [

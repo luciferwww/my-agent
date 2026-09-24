@@ -5,6 +5,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createJiti } from 'jiti';
 
 import { Logger } from '../../platform/logger/index.js';
+import type {
+  ExtensionLoadContext,
+  ExtensionLogger,
+} from '../api/contracts.js';
 import type { LoadedRuntimeUnit } from '../../runtime/runtime-unit.js';
 import { prepareExtensionConfig } from './configuration.js';
 import { discoverExtensionDescriptors } from './discovery.js';
@@ -166,7 +170,10 @@ export async function loadExtensionCandidate(
 
   let returnedUnit: unknown;
   try {
-    returnedUnit = factory(Object.freeze({ config: configuration.config }));
+    returnedUnit = factory(Object.freeze({
+      config: configuration.config,
+      logger: createExtensionLogger(extensionId),
+    }));
   } catch {
     return diagnosticOutcome(
       'extension_config_rejected',
@@ -218,7 +225,7 @@ async function revalidateEntryPath(
 
 function readExtensionFactory(
   value: unknown,
-): ((context: Readonly<{ config: Readonly<Record<string, unknown>> }>) => unknown) | undefined {
+): ((context: ExtensionLoadContext) => unknown) | undefined {
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return undefined;
   const exportedKeys = Object.keys(value);
   if (exportedKeys.length !== 1 || exportedKeys[0] !== 'createExtension') return undefined;
@@ -230,13 +237,35 @@ function readExtensionFactory(
     // conforming representations preserve the exact single-export contract.
     const factory = Reflect.get(value, 'createExtension');
     return typeof factory === 'function'
-      ? factory as (context: Readonly<{
-          config: Readonly<Record<string, unknown>>;
-        }>) => unknown
+      ? factory as (context: ExtensionLoadContext) => unknown
       : undefined;
   } catch {
     return undefined;
   }
+}
+
+function createExtensionLogger(extensionId: string): ExtensionLogger {
+  const logger = Logger.get(`Extension:${extensionId}`);
+  return Object.freeze({
+    debug: (message: string, context?: Readonly<Record<string, unknown>>) => {
+      logger.debug(message, mutableLogContext(context));
+    },
+    info: (message: string, context?: Readonly<Record<string, unknown>>) => {
+      logger.info(message, mutableLogContext(context));
+    },
+    warn: (message: string, context?: Readonly<Record<string, unknown>>) => {
+      logger.warn(message, mutableLogContext(context));
+    },
+    error: (message: string, context?: Readonly<Record<string, unknown>>) => {
+      logger.error(message, mutableLogContext(context));
+    },
+  });
+}
+
+function mutableLogContext(
+  context: Readonly<Record<string, unknown>> | undefined,
+): Record<string, unknown> | undefined {
+  return context === undefined ? undefined : { ...context };
 }
 
 function normalizeExternalUnit(value: unknown, extensionId: string): LoadedRuntimeUnit | undefined {

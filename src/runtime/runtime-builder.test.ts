@@ -2,7 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { bootstrapRuntime } from './bootstrap.js';
 import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
 import { Logger } from '../platform/logger/index.js';
+import {
+  ChannelOperationError,
+  type Channel,
+  type ChannelRuntimeCapabilities,
+} from '../core/channel/index.js';
 import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
+import { SessionError } from '../core/session/index.js';
 import type { RuntimeDeadlineDriver, RuntimeDeadlineRaceResult } from './runtime-deadline.js';
 import type { RuntimeAppOptions } from './types.js';
 import {
@@ -267,6 +273,63 @@ describe('Runtime Builder', () => {
     const pin = access?.captureRootGeneration();
     expect(pin?.generation).toBe(1);
     pin?.release();
+  });
+
+  it('normalizes internal Session errors at the Channel capability boundary', async () => {
+    let capabilities: ChannelRuntimeCapabilities | undefined;
+    const channel: Channel = {
+      id: 'capability-probe',
+      completion: new Promise(() => undefined),
+      send() {},
+      onMessage() {},
+      bindRuntimeCapabilities(next) {
+        capabilities = next;
+      },
+      async start() {},
+      async stop() {},
+    };
+    const channelUnit = createLoadedRuntimeUnit({
+      registration: {
+        id: 'capability-probe',
+        source: 'external',
+        register(api) {
+          api.registerChannel({
+            id: channel.id,
+            create: () => channel,
+          });
+        },
+      },
+      required: false,
+    });
+    const harness = createHarness({ additionalLoadedUnits: [channelUnit] });
+    harness.application.getSession.mockRejectedValueOnce(
+      new SessionError('SESSION_NOT_FOUND', 'Session does not exist.'),
+    );
+    harness.application.getSessionPermissionMode.mockImplementationOnce(() => {
+      throw new SessionError('SESSION_ARCHIVED', 'Session is archived.');
+    });
+    const handle = await buildRuntimeHandle(harness.runtimeOptions, harness.createApplication);
+
+    await expect(capabilities?.sessions.getSession('missing')).rejects.toEqual(
+      expect.objectContaining({
+        name: ChannelOperationError.name,
+        code: 'SESSION_NOT_FOUND',
+        message: 'Session does not exist.',
+      }),
+    );
+    let permissionError: unknown;
+    try {
+      capabilities?.sessions.getPermissionMode('archived');
+    } catch (error) {
+      permissionError = error;
+    }
+    expect(permissionError).toEqual(expect.objectContaining({
+      name: ChannelOperationError.name,
+      code: 'SESSION_ARCHIVED',
+      message: 'Session is archived.',
+    }));
+
+    await handle.close();
   });
 
   it('runs the configured Built-in Provider through factory, create, staging, start, and publication', async () => {

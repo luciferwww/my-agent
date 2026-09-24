@@ -25,7 +25,16 @@
     "extensions/copilot-relay-provider/model-metadata.ts",
     "extensions/copilot-relay-provider/package.json",
     "extensions/copilot-relay-provider/responses-client.ts",
-    "extensions/copilot-relay-provider/types.ts"
+    "extensions/copilot-relay-provider/types.ts",
+    "extensions/websocket-channel/WebSocketChannel.ts",
+    "extensions/websocket-channel/client/chat.html",
+    "extensions/websocket-channel/config.ts",
+    "extensions/websocket-channel/entry.ts",
+    "extensions/websocket-channel/extension.json",
+    "extensions/websocket-channel/index.ts",
+    "extensions/websocket-channel/package.json",
+    "extensions/websocket-channel/websocket-channel-unit.ts",
+    "extensions/websocket-channel/websocket-constants.ts"
   ],
   "engines": {
     "node": "22.x"
@@ -37,7 +46,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:fitness": "vitest run --config vitest.fitness.config.ts",
     "test:all": "vitest run",
-    "lint": "tsc --noEmit && npm run lint --workspace @my-agent/copilot-relay-provider",
+    "lint": "tsc --noEmit && npm run lint --workspaces --if-present",
     "prepack": "npm run build",
     "agent": "npx tsx src/hosts/standalone/entry.ts",
     "verify:host-build": "node scripts/audit-host-build.mjs",

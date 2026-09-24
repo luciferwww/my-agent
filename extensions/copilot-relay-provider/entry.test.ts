@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ExtensionLoadContext } from 'my-agent/extension-api';
 
 import { createExtension } from './entry.js';
 
@@ -27,7 +28,7 @@ describe('Copilot Relay Extension entry', () => {
     });
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
-    const unit = createExtension(Object.freeze({ config }));
+    const unit = createExtension(extensionContext(config));
 
     expect(unit).toMatchObject({
       unitId: 'copilot-relay-provider',
@@ -50,14 +51,28 @@ describe('Copilot Relay Extension entry', () => {
   it('rejects invalid direct factory input without starting Unit I/O', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
-    expect(() => createExtension(Object.freeze({
-      config: Object.freeze({ baseURL: 'https://relay.example.com' }),
-    }))).toThrow('loopback');
-    expect(() => createExtension(Object.freeze({
-      config: Object.freeze({ discoveryTimeoutMs: 0 }),
-    }))).toThrow('positive safe integer');
+    expect(() => createExtension(extensionContext(
+      Object.freeze({ baseURL: 'https://relay.example.com' }),
+    ))).toThrow('loopback');
+    expect(() => createExtension(extensionContext(
+      Object.freeze({ discoveryTimeoutMs: 0 }),
+    ))).toThrow('positive safe integer');
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
   });
 
 });
+
+function extensionContext(
+  config: Readonly<Record<string, unknown>>,
+): ExtensionLoadContext {
+  return Object.freeze({
+    config,
+    logger: Object.freeze({
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    }),
+  });
+}

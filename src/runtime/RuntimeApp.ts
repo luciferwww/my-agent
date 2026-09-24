@@ -19,13 +19,11 @@ import type {
   ChannelRuntimeBinding,
   TurnInteractionResponse,
 } from '../core/channel/index.js';
+import { ChannelOperationError } from '../core/channel/index.js';
 import { Logger } from '../platform/logger/index.js';
 import { loadContextFiles } from '../core/agent-context/index.js';
 import type { ContextFile } from '../core/agent-context/types.js';
-import {
-  AttachmentValidationError,
-  processInboundMessage,
-} from '../core/media/attachment-pipeline.js';
+import { processInboundMessage } from '../core/media/attachment-pipeline.js';
 import { classifyRuntimeError, createRuntimeError } from './errors.js';
 import {
   buildRuntimeHandle,
@@ -718,7 +716,10 @@ export class RuntimeApp {
     });
     const { normalized, dropped } = await processInboundMessage(req.message);
     if (dropped.length > 0) {
-      throw new AttachmentValidationError(dropped);
+      throw new ChannelOperationError(
+        'ATTACHMENT_REJECTED',
+        `Inbound message rejected because ${dropped.length} attachment validation failure(s) occurred.`,
+      );
     }
 
     const assembled = this.assembleInboundMessage(normalized);

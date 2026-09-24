@@ -1,7 +1,6 @@
 import { homedir } from 'node:os';
 
 import { createCliChannelUnit } from '../../builtins/channels/cli/index.js';
-import { createWebSocketChannelUnit } from '../../builtins/channels/websocket/index.js';
 import {
   ensureAgentConfigDocument,
   loadAgentConfig,
@@ -16,21 +15,11 @@ import {
 } from './path-context.js';
 import { createRuntimeHost } from './runtime-host.js';
 
-export type BuiltinChannelName = 'websocket' | 'cli';
-
 export interface StandaloneHostArguments {
   readonly agentHomeArgument?: string;
-  readonly builtinChannels: readonly BuiltinChannelName[];
+  readonly cli: boolean;
 }
 
-const DEFAULT_BUILTIN_CHANNELS = Object.freeze<BuiltinChannelName[]>(['websocket']);
-const NO_BUILTIN_CHANNELS = Object.freeze<BuiltinChannelName[]>([]);
-const WEBSOCKET_CHANNEL_CONFIG = Object.freeze({
-  host: '127.0.0.1',
-  port: 8787,
-  path: '/ws',
-  approval: true,
-});
 const CLI_CHANNEL_CONFIG = Object.freeze({
   prompt: '> ',
   approval: true,
@@ -55,7 +44,8 @@ export function parseStandaloneHostArguments(
   argv: readonly string[],
 ): Readonly<StandaloneHostArguments> {
   let agentHomeArgument: string | undefined;
-  let builtinChannels: readonly BuiltinChannelName[] | undefined;
+  let cli = false;
+  let cliSeen = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index]!;
@@ -84,24 +74,12 @@ export function parseStandaloneHostArguments(
       continue;
     }
 
-    if (token === '-bc' || token === '--builtin-channels') {
-      if (builtinChannels !== undefined) {
-        throw new Error('HOST_ARGUMENT_INVALID: Duplicate argument --builtin-channels.');
+    if (token === '--cli') {
+      if (cliSeen) {
+        throw new Error('HOST_ARGUMENT_INVALID: Duplicate argument --cli.');
       }
-      const value = argv[index + 1];
-      if (value === undefined || value.startsWith('-')) {
-        throw new Error('HOST_ARGUMENT_INVALID: Missing value for --builtin-channels.');
-      }
-      builtinChannels = parseBuiltinChannels(value);
-      index += 1;
-      continue;
-    }
-
-    if (token.startsWith('--builtin-channels=')) {
-      if (builtinChannels !== undefined) {
-        throw new Error('HOST_ARGUMENT_INVALID: Duplicate argument --builtin-channels.');
-      }
-      builtinChannels = parseBuiltinChannels(token.slice(token.indexOf('=') + 1));
+      cli = true;
+      cliSeen = true;
       continue;
     }
 
@@ -110,31 +88,16 @@ export function parseStandaloneHostArguments(
 
   return Object.freeze({
     ...(agentHomeArgument === undefined ? {} : { agentHomeArgument }),
-    builtinChannels: builtinChannels ?? DEFAULT_BUILTIN_CHANNELS,
+    cli,
   });
-}
-
-function parseBuiltinChannels(value: string): readonly BuiltinChannelName[] {
-  if (value === 'none') return NO_BUILTIN_CHANNELS;
-  const names = value.split(',');
-  if (
-    names.length === 0
-    || names.some((name) => name !== 'websocket' && name !== 'cli')
-    || new Set(names).size !== names.length
-  ) {
-    throw new Error(`HOST_ARGUMENT_INVALID: Invalid Builtin Channel list ${value}.`);
-  }
-  return Object.freeze(
-    (['websocket', 'cli'] as const).filter((name) => names.includes(name)),
-  );
 }
 
 export function validateStandaloneHostComposition(
   snapshot: AgentConfigSnapshot,
-  builtinChannels: readonly BuiltinChannelName[],
+  cliEnabled: boolean,
 ): void {
   if (
-    builtinChannels.includes('cli')
+    cliEnabled
     && snapshot.application.logger.console?.enabled !== false
   ) {
     throw new Error(
@@ -143,17 +106,10 @@ export function validateStandaloneHostComposition(
   }
 }
 
-export function createBuiltinHostUnits(
-  builtinChannels: readonly BuiltinChannelName[],
+export function createStandaloneHostUnits(
+  cliEnabled: boolean,
 ): readonly LoadedRuntimeUnit[] {
-  return Object.freeze([
-    ...(builtinChannels.includes('websocket')
-      ? [createWebSocketChannelUnit(WEBSOCKET_CHANNEL_CONFIG)]
-      : []),
-    ...(builtinChannels.includes('cli')
-      ? [createCliChannelUnit(CLI_CHANNEL_CONFIG)]
-      : []),
-  ]);
+  return Object.freeze(cliEnabled ? [createCliChannelUnit(CLI_CHANNEL_CONFIG)] : []);
 }
 
 export async function runStandaloneHost(
@@ -165,7 +121,9 @@ export async function runStandaloneHost(
     moduleUrl: options.moduleUrl ?? import.meta.url,
     homeDirectory: options.homeDirectory ?? homedir(),
     startupCwd: options.startupCwd ?? process.cwd(),
-    ...parsedArguments,
+    ...(parsedArguments.agentHomeArgument === undefined
+      ? {}
+      : { agentHomeArgument: parsedArguments.agentHomeArgument }),
   };
   const pathContext = await (options.resolvePathContext ?? resolveStandaloneHostPathContext)(
     pathOptions,
@@ -177,9 +135,9 @@ export async function runStandaloneHost(
     agentHome: pathContext.agentHome,
     environment: env,
   });
-  validateStandaloneHostComposition(snapshot, parsedArguments.builtinChannels);
+  validateStandaloneHostComposition(snapshot, parsedArguments.cli);
 
-  const builtinUnits = createBuiltinHostUnits(parsedArguments.builtinChannels);
+  const hostUnits = createStandaloneHostUnits(parsedArguments.cli);
   const runtime = await (options.createRuntime ?? RuntimeApp.create)({
     agentHome: pathContext.agentHome,
     startupContext: {
@@ -187,37 +145,32 @@ export async function runStandaloneHost(
       configuration: snapshot,
       environment: env,
     },
-    loadedUnits: builtinUnits,
+    loadedUnits: hostUnits,
   });
   await awaitHostLifetime(
     runtime,
-    parsedArguments.builtinChannels,
+    parsedArguments.cli,
     options.createHost ?? createRuntimeHost,
   );
 }
 
 async function awaitHostLifetime(
   runtime: RuntimeHandle,
-  builtinChannels: readonly BuiltinChannelName[],
+  cliEnabled: boolean,
   createHost: typeof createRuntimeHost,
 ): Promise<void> {
   const host = createHost(runtime);
-  const controllingChannel = builtinChannels.includes('websocket')
-    ? 'websocket'
-    : builtinChannels.includes('cli')
-      ? 'cli'
-      : undefined;
-  if (controllingChannel === undefined) {
+  if (!cliEnabled) {
     await host.completion;
     return;
   }
 
   try {
-    const completion = await runtime.application.waitForChannelCompletion(controllingChannel);
+    const completion = await runtime.application.waitForChannelCompletion('cli');
     if (completion.outcome === 'failed') {
       process.exitCode = 1;
     }
   } finally {
-    await host.shutdown(`builtin ${controllingChannel} channel completed`);
+    await host.shutdown('cli channel completed');
   }
 }

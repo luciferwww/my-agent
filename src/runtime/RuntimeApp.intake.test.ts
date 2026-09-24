@@ -8,6 +8,7 @@ import type {
   ChannelRunRequest,
   InboundContentBlock,
 } from '../core/channel/index.js';
+import { ChannelOperationError } from '../core/channel/index.js';
 import type { ChatContentBlock, ChatMessage } from '../core/model-invocation/index.js';
 import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
 import type { RunParams, RunResult } from '../core/runner/types.js';
@@ -36,11 +37,6 @@ const processInboundMock = vi.fn<
 >();
 
 vi.mock('../core/media/attachment-pipeline.js', () => ({
-  AttachmentValidationError: class AttachmentValidationError extends Error {
-    constructor(readonly failures: readonly DroppedAttachment[]) {
-      super(`Inbound message rejected because ${failures.length} attachment validation failure(s) occurred.`);
-    }
-  },
   processInboundMessage: (msg: string | InboundContentBlock[]) =>
     processInboundMock(msg),
 }));
@@ -165,7 +161,11 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
       sessionId: 'main',
       message: 'hello world',
       clientId: 'c1',
-    })).rejects.toThrow('attachment validation failure');
+    })).rejects.toEqual(expect.objectContaining({
+      name: ChannelOperationError.name,
+      code: 'ATTACHMENT_REJECTED',
+      message: expect.stringContaining('attachment validation failure'),
+    }));
 
     expect(runnerRun).not.toHaveBeenCalled();
     expect(agentEvents).toEqual([]);

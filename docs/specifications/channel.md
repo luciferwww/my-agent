@@ -53,6 +53,12 @@ Runtime owns session queueing, origin routes, Abort, and target selection. Chann
 
 Model Catalog query, Abort, and Session management are narrow Runtime capabilities; Channel does not own model facts or lifecycle state. Session management exposes create, list/get, rename, archive/unarchive, delete, and fork while Runtime remains the lifecycle policy owner.
 
+Runtime normalizes owner-internal Session and attachment-ingress failures into
+`ChannelOperationError` before they cross the Channel boundary. Its bounded
+code preserves the presentation decision a Channel needs without exposing
+concrete Session or Media error classes. Transport-specific limits and wire
+errors remain owned by each Channel implementation.
+
 Selecting a new conversation is client-local state. CLI creates a Pending Session only when the first ordinary message is submitted, then immediately sends with the returned ID. WebSocket clients perform the same explicit `create_session` -> `session_created` -> `run_turn` sequence. WebSocket JSON properties use camelCase while `type` discriminator values use snake_case.
 
 When Runtime reports `provider_unregistered` or `model_rejected`, Channel presentation preserves the classified failure. A catalog-capable interactive client refreshes the current Catalog for explicit reselection; it does not substitute a Provider/Model or resubmit the failed Turn. Other resolution and invocation failures remain ordinary reported failures and retain the user's selection for an explicit retry.

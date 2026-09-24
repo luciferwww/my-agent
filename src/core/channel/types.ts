@@ -5,8 +5,24 @@ import type {
 } from '../approval/index.js';
 import type { ModelReference } from '../model-resolution/index.js';
 import type { AgentEvent } from '../runner/types.js';
+import type { SessionErrorCode } from '../session/index.js';
 
 export type { ApprovalResult } from '../approval/index.js';
+
+export type ChannelOperationErrorCode =
+  | 'ATTACHMENT_REJECTED'
+  | SessionErrorCode;
+
+export class ChannelOperationError extends Error {
+  constructor(
+    readonly code: ChannelOperationErrorCode,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = 'ChannelOperationError';
+  }
+}
 
 export type InboundContentBlock =
   | { type: 'text'; text: string }

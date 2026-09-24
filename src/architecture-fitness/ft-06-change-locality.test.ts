@@ -45,10 +45,11 @@ describe('FT-06 Provider and Extension change locality', () => {
     expect(host).toContain('startupContext:');
     expect(host).not.toMatch(/acquireExtensions|extensionAcquisition|extensionsDir/u);
     expect(acquisition).toContain('export async function acquireExtensions');
-    expect(host).toContain('createWebSocketChannelUnit(WEBSOCKET_CHANNEL_CONFIG)');
     expect(host).toContain('createCliChannelUnit(CLI_CHANNEL_CONFIG)');
     expect(`${host}\n${acquisition}`)
-      .not.toMatch(/copilot-relay-provider|COPILOT_RELAY_|createCopilotRelayProviderUnit/);
+      .not.toMatch(
+        /copilot-relay-provider|COPILOT_RELAY_|createCopilotRelayProviderUnit|websocket-channel|createWebSocketChannelUnit/u,
+      );
     expect(host).not.toMatch(/providerId\s*:\s*['"][^'"]+['"]/);
     expect(host).not.toMatch(/catch[\s\S]{0,200}create.*ProviderUnit/u);
   });

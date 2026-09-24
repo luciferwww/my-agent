@@ -6,7 +6,10 @@ const expectedBin = './dist/host/hosts/standalone/entry.js';
 
 describe('npm package audit', () => {
   it('accepts the explicit Host and Extension package surface with matching metadata', () => {
-    expect(auditNpmPackage(packResult(), manifest(), lockfile())).toContain(
+    expect(auditNpmPackage(packResult(), manifest(), lockfile(), [{
+      name: '@my-agent/websocket-channel',
+      dependencies: { ws: '^8.18.3' },
+    }])).toContain(
       'dist/host/hosts/standalone/entry.js',
     );
   });
@@ -55,12 +58,18 @@ function packResult() {
       { path: 'extensions/copilot-relay-provider/entry.ts' },
       { path: 'extensions/copilot-relay-provider/extension.json' },
       { path: 'extensions/copilot-relay-provider/package.json' },
+      { path: 'extensions/websocket-channel/WebSocketChannel.ts' },
+      { path: 'extensions/websocket-channel/client/chat.html' },
+      { path: 'extensions/websocket-channel/entry.ts' },
+      { path: 'extensions/websocket-channel/extension.json' },
+      { path: 'extensions/websocket-channel/package.json' },
     ],
   }];
 }
 
 function manifest() {
   return {
+    dependencies: { ws: '^8.18.3' },
     files: [
       'dist/host',
       'extensions/copilot-relay-provider/copilot-relay-provider-unit.ts',
@@ -72,6 +81,15 @@ function manifest() {
       'extensions/copilot-relay-provider/package.json',
       'extensions/copilot-relay-provider/responses-client.ts',
       'extensions/copilot-relay-provider/types.ts',
+      'extensions/websocket-channel/WebSocketChannel.ts',
+      'extensions/websocket-channel/client/chat.html',
+      'extensions/websocket-channel/config.ts',
+      'extensions/websocket-channel/entry.ts',
+      'extensions/websocket-channel/extension.json',
+      'extensions/websocket-channel/index.ts',
+      'extensions/websocket-channel/package.json',
+      'extensions/websocket-channel/websocket-channel-unit.ts',
+      'extensions/websocket-channel/websocket-constants.ts',
     ],
     bin: { 'my-agent': expectedBin },
     exports: {
@@ -84,5 +102,12 @@ function manifest() {
 }
 
 function lockfile() {
-  return { packages: { '': { bin: { 'my-agent': expectedBin.slice(2) } } } };
+  return {
+    packages: {
+      '': {
+        bin: { 'my-agent': expectedBin.slice(2) },
+        dependencies: { ws: '^8.18.3' },
+      },
+    },
+  };
 }

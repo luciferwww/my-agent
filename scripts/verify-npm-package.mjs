@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { access, mkdir, mkdtemp, readdir, readFile, readlink, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:net';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -39,12 +40,21 @@ async function main() {
       join(REPOSITORY_ROOT, 'extensions', 'copilot-relay-provider', 'package.json'),
       'utf8',
     ));
+    const webSocketManifest = JSON.parse(await readFile(
+      join(REPOSITORY_ROOT, 'extensions', 'websocket-channel', 'package.json'),
+      'utf8',
+    ));
     const packResult = await runNpm(
       ['pack', '--json', '--pack-destination', temporaryRoot],
       REPOSITORY_ROOT,
     );
     const packed = parsePackResult(packResult.stdout);
-    const files = auditNpmPackage(packed, manifest, lockfile, [relayManifest]);
+    const files = auditNpmPackage(
+      packed,
+      manifest,
+      lockfile,
+      [relayManifest, webSocketManifest],
+    );
     const tarball = join(temporaryRoot, basename(packed[0].filename));
 
     await writeFile(join(installationProject, 'package.json'), '{"private":true,"type":"module"}\n');
@@ -114,7 +124,7 @@ async function main() {
     host = startInstalledCommand(
       installationProject,
       startupCwd,
-      ['--agent-home', explicitAgentHome, '--builtin-channels', 'none'],
+      ['--agent-home', explicitAgentHome],
       createIsolatedHomeEnvironment(explicitHomeDirectory),
     );
     await waitForFileContent(
@@ -151,7 +161,7 @@ async function main() {
     const retiredHost = await runInstalledCommand(
       installationProject,
       startupCwd,
-      ['--builtin-channels=none'],
+      [],
       PROCESS_TIMEOUT_MS,
       isolatedEnvironment,
     );
@@ -161,7 +171,19 @@ async function main() {
       retiredHost.stderr === 'Agent configuration contains unknown top-level namespace "host".\n',
       'Installed command emitted an unexpected retired Host diagnostic.',
     );
-    await writeFile(join(configuredAgentHome, 'config.json'), '{}\n');
+    const webSocketPort = await findAvailableLoopbackPort();
+    await writeFile(
+      join(configuredAgentHome, 'config.json'),
+      `${JSON.stringify({
+        extensions: {
+          entries: {
+            'websocket-channel': {
+              config: { port: webSocketPort },
+            },
+          },
+        },
+      }, null, 2)}\n`,
+    );
     const installationBefore = await snapshotTree(installDir);
     const startupCwdBefore = await snapshotTree(startupCwd);
     host = startInstalledCommand(
@@ -171,7 +193,7 @@ async function main() {
       isolatedEnvironment,
     );
     const client = await connectWithRetry(
-      'ws://127.0.0.1:8787/ws',
+      `ws://127.0.0.1:${webSocketPort}/ws`,
       host,
       PROCESS_TIMEOUT_MS,
     );
@@ -182,6 +204,21 @@ async function main() {
       assert(
         message.clientId === 'installed-package-smoke',
         'Installed Host returned an unexpected WebSocket client identity.',
+      );
+      const clientResponse = await fetch(`http://127.0.0.1:${webSocketPort}/`);
+      assert(clientResponse.status === 200, 'Installed WebSocket client returned a non-200 status.');
+      assert(
+        clientResponse.headers.get('content-type')?.includes('text/html') === true,
+        'Installed WebSocket client returned an unexpected content type.',
+      );
+      const clientHtml = await clientResponse.text();
+      assert(
+        clientHtml.includes('const DEFAULT_SOCKET_PATH = "/ws";'),
+        'Installed WebSocket client did not receive its configured socket path.',
+      );
+      assert(
+        !clientHtml.includes('__MY_AGENT_WEBSOCKET_PATH__'),
+        'Installed WebSocket client retained its build-time path token.',
       );
     } finally {
       client.close();
@@ -229,7 +266,7 @@ async function main() {
   }
   if (failed) throw failure;
   console.log(
-    `Verified npm package (${packageFileCount} files), Host-neutral default WebSocket startup, explicit Builtin selection, legacy Host rejection, and installed my-agent command.`,
+    `Verified npm package (${packageFileCount} files), zero-Channel Host startup, explicit WebSocket Extension acquisition and client serving, legacy Host rejection, and installed my-agent command.`,
   );
 }
 
@@ -247,16 +284,35 @@ async function verifyInstalledExtensionAcquisition(installationProject) {
     extensionsDir: join(installDir, 'extensions'),
     extensionsConfig: {
       enabled: true,
-      entries: { 'copilot-relay-provider': {} },
+      entries: {
+        'copilot-relay-provider': {},
+        'websocket-channel': {},
+      },
     },
     environment: {},
   });
-  assert(result.diagnostics.length === 0, 'Installed Relay Extension produced diagnostics.');
+  assert(result.diagnostics.length === 0, 'Installed official Extensions produced diagnostics.');
   assert(
-    result.loadedUnits.length === 1
-      && result.loadedUnits[0]?.unitId === 'copilot-relay-provider',
-    'Installed Relay Extension did not load through Host acquisition.',
+    result.loadedUnits.length === 2
+      && result.loadedUnits[0]?.unitId === 'copilot-relay-provider'
+      && result.loadedUnits[1]?.unitId === 'websocket-channel',
+    'Installed official Extensions did not load through Host acquisition.',
   );
+}
+
+async function findAvailableLoopbackPort() {
+  const server = createServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  if (address === null || typeof address === 'string') {
+    server.close();
+    throw new Error('Installed WebSocket smoke port is unavailable.');
+  }
+  const { port } = address;
+  server.close();
+  await once(server, 'close');
+  return port;
 }
 
 async function verifyInstalledExtensionApiTypes(installationProject) {

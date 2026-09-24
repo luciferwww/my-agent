@@ -3,14 +3,19 @@
 > Status: Current Authority
 > Authority: Current implemented Channel behavior
 > Verified: 2026-09-18
-> Ownership: Channel contracts, transport, interaction, CLI/WebSocket protocol, attachment ingress, and client routing
+> Ownership: Channel contracts, Host-local CLI, Extension-delivered WebSocket protocol, interaction, attachment ingress, and client routing
 > Ownership key: channel-transport-and-ingress
 
 ---
 
 ## 1. Boundary
 
-`src/builtins/channels/` owns the application-delivered I/O adapters and their package-local Runtime Unit entries for CLI and WebSocket transports. Canonical Channel and interaction contracts live in `src/core/channel/`; the Runtime-owned pending-interaction lifecycle lives in `src/runtime/turn-interaction/`.
+`src/builtins/channels/cli/` owns the Standalone-local CLI adapter and its
+Runtime Unit entry. `extensions/websocket-channel/` independently owns the
+reusable WebSocket transport, HTTP client delivery, and external Runtime Unit
+entry. Canonical Channel and interaction contracts live in
+`src/core/channel/`; the Runtime-owned pending-interaction lifecycle lives in
+`src/runtime/turn-interaction/`.
 
 Channels own transport and wire validation. They pass accepted `ChannelRunRequest` values to the Runtime; they do not schedule Turns or call the Runner directly. Runtime owns per-session queueing, steering classification, Turn identity, generation capture, interaction routing, and event Fanout. [Media](media.md) owns attachment validation and canonical normalization after Channel ingress.
 
@@ -24,14 +29,16 @@ src/core/channel/
 └── index.ts
 
 src/builtins/channels/
-├── cli/
-│   ├── CliChannel.ts         # readline transport
-│   ├── runtime-unit.ts
-│   └── index.ts
-└── websocket/
-  ├── WebSocketChannel.ts   # ws server transport
-  ├── runtime-unit.ts
-  └── index.ts
+└── cli/
+    ├── CliChannel.ts         # readline transport
+    ├── runtime-unit.ts
+    └── index.ts
+
+extensions/websocket-channel/
+├── WebSocketChannel.ts       # HTTP and WebSocket transport
+├── websocket-channel-unit.ts
+├── entry.ts                  # Extension factory
+└── client/chat.html
 
 src/runtime/turn-interaction/
 ├── TurnInteractionManager.ts # Runtime-owned Promise bus
@@ -93,11 +100,19 @@ bindRuntimeCapabilities({ modelCatalog, abort })
 
 ## 4. Canonical contracts
 
-`src/core/channel/types.ts` owns `ChannelRunRequest`, `ChannelInstance`, completion, interaction, and Runtime-capability types. The adapter-facing send boundary is `send(event: AgentEvent): void | Promise<void>`. A Unit stages `ChannelContribution` factories; Runtime publishes only immutable narrow `ChannelRuntimeBinding` projections. [Channel Specification](../specifications/channel.md) owns the stable contract.
+`src/core/channel/types.ts` owns `ChannelRunRequest`, `ChannelInstance`,
+completion, interaction, Runtime-capability, and `ChannelOperationError`
+types. Runtime normalizes owner-internal Session and Media failures into that
+bounded Channel-facing error instead of exposing their concrete classes
+through the Extension API. The adapter-facing send boundary is
+`send(event: AgentEvent): void | Promise<void>`. A Unit stages
+`ChannelContribution` factories; Runtime publishes only immutable narrow
+`ChannelRuntimeBinding` projections. [Channel Specification](../specifications/channel.md)
+owns the stable contract.
 
 ## 5. Approval and interaction lifecycle
 
-`TurnInteractionManager` is the Runtime-owned in-memory Promise bus. It routes a Tool interaction to the Turn's captured Channel/client origin and reports responses or terminal unavailability back to Runner. Elevating a Session to `allow_all` closes its already-pending requests as mode-authorized so clients can remove stale approval UI. Builtin Channels implement approval interactions and user-facing Session permission controls; [Approval Lifecycle](../specifications/approval-lifecycle.md) owns settlement and failure semantics.
+`TurnInteractionManager` is the Runtime-owned in-memory Promise bus. It routes a Tool interaction to the Turn's captured Channel/client origin and reports responses or terminal unavailability back to Runner. Elevating a Session to `allow_all` closes its already-pending requests as mode-authorized so clients can remove stale approval UI. Channel implementations provide approval interactions and user-facing Session permission controls; [Approval Lifecycle](../specifications/approval-lifecycle.md) owns settlement and failure semantics.
 
 ## 6. CLI Channel
 
@@ -124,15 +139,25 @@ CLI streams text, presents bounded Tool/Compaction/Subagent status, suppresses l
 
 ```text
 WebSocketChannelConfig {
+  host: string
   port: number
-  host?: string       # default "127.0.0.1"
-  path?: string       # default "/ws"
+  webSocketPath: string
+  clientPath: string
   maxClients?: number
-  approval?: boolean  # default false
+  approval: boolean
+  openBrowser: boolean
 }
 ```
 
-The server uses the Media-owned 15 MiB maximum frame size. A socket must complete `hello` before business messages.
+The Extension Descriptor supplies defaults after explicit enablement:
+`127.0.0.1:8787`, WebSocket path `/ws`, client path `/`, approval enabled,
+and browser launch disabled. The Extension owns its 15 MiB maximum frame size.
+A socket must complete `hello` before business messages.
+
+The bundled HTML is a minimal reference/debugging client. A production website
+may run elsewhere and connect to the endpoint directly. Authentication, TLS,
+Origin/Host policy, and public-network hardening are deliberately outside this
+Channel and belong to the operational proxy/gateway boundary.
 
 ### 7.1 Protocol and routing
 
@@ -140,7 +165,26 @@ After `hello`, WebSocket accepts Session creation, permission query/change, Turn
 
 Clients should treat “new Session” as local state only. When the user submits the first message, the client issues `create_session` with the selected initial permission mode, waits for `session_created`, and immediately issues `run_turn` with the returned ID. This makes initial elevation atomic and avoids abandoned UI create actions producing even a Pending registration. For an existing Session, the HTML client queries Runtime truth on selection/reconnect, stores no grant locally, requires confirmation before Allow All, shows a persistent warning while elevated, and can revoke to Manual for future calls.
 
-A successful `run_turn` registers the client in that session's audience. The Channel maintains forward and reverse audience maps so disconnect cleanup is proportional to that client's sessions. A newer socket using the same `clientId` supersedes and closes the old socket; the old socket's late close cannot remove the replacement. A pending approval remains associated with the logical client across replacement, but disconnect of the current socket reports `origin_disconnected`.
+A successful `run_turn` registers the client in that session's audience. The
+relationship is many-to-many: one logical `clientId` may work in multiple
+Sessions concurrently, and one Session may have multiple connected clients.
+The Channel maintains forward and reverse audience maps so disconnect cleanup
+is proportional to that client's sessions. The bundled reference client keeps
+independent in-memory draft, attachment, Turn, Approval, permission, and
+waiting state for each Session, so switching the visible Session does not
+cancel or hide another Session's active work. This state is page-local and is
+not replayed after a refresh or reconnect.
+
+A newer socket using the same `clientId` supersedes and closes the old socket;
+the old socket's late close cannot remove the replacement. A pending approval
+route carries `clientId`, `sessionId`, and `turnId`. Both `approval_requested`
+and `approval_closed` expose the Session and Turn correlation on the wire.
+Only that logical client may resolve the pending approval; foreign and unknown
+approval IDs fail without consuming the pending route. A disconnect of the
+current socket reports `origin_disconnected`. For the queued terminal event
+whose canonical `AgentEvent` has no Session ID, the Channel resolves the
+Session from `originMessageId` and adds that Session correlation to the
+WebSocket payload.
 
 Runtime Model Resolution errors retain their category. The HTML client refreshes the Catalog after an unavailable exact selection and requires explicit reselection; it does not substitute a model or resubmit the failed Turn. WebSocket Abort completion remains visible through correlated Turn events.
 
@@ -148,12 +192,16 @@ Runtime Model Resolution errors retain their category. The HTML client refreshes
 
 Runtime creates and starts candidate Channel instances before publication, binds the Runtime host and capabilities before readiness, and keeps ingress closed until publication. Candidate create/start failure rolls back all sibling Channels in that Unit. Root Turn trees retain their captured generation's Channel bindings; reload does not reroute in-flight events to newer instances. `waitForChannelCompletion(id)` exposes terminal Channel completion.
 
-Standalone selects zero to two Builtin Channel Units and supplies their fixed construction values. The global Agent configuration has no Channel-selection namespace; [Standalone Service Host Specification](../specifications/standalone-service-host.md) owns selection and process-lifetime policy.
+Standalone supplies no Host-local Channel by default and supplies only the CLI
+Unit when `--cli` is present. WebSocket is loaded only through generic
+Extension Acquisition after an explicit `extensions.entries.websocket-channel`
+entry. The Host does not import or identify that Extension. The global Agent
+configuration has no general Channel-selection namespace.
 
 ## 9. Evidence
 
 | Kind | Evidence |
 |---|---|
-| Source | [Core Channel types](../../src/core/channel/types.ts), [Runtime intake](../../src/runtime/RuntimeApp.ts), [WebSocketChannel](../../src/builtins/channels/websocket/WebSocketChannel.ts) |
-| Tests | [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [WebSocketChannel tests](../../src/builtins/channels/websocket/WebSocketChannel.test.ts) |
+| Source | [Core Channel types](../../src/core/channel/types.ts), [Runtime intake](../../src/runtime/RuntimeApp.ts), [WebSocket Extension](../../extensions/websocket-channel/WebSocketChannel.ts) |
+| Tests | [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [WebSocket Extension tests](../../extensions/websocket-channel/WebSocketChannel.test.ts) |
 | Controlling authority | [Channel Specification](../specifications/channel.md), [Approval Lifecycle Specification](../specifications/approval-lifecycle.md), [Multi-client User Messages Specification](../specifications/multi-client-user-messages.md) |

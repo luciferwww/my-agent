@@ -10,6 +10,15 @@ const EXPECTED_FILES_ALLOWLIST = Object.freeze([
   'extensions/copilot-relay-provider/package.json',
   'extensions/copilot-relay-provider/responses-client.ts',
   'extensions/copilot-relay-provider/types.ts',
+  'extensions/websocket-channel/WebSocketChannel.ts',
+  'extensions/websocket-channel/client/chat.html',
+  'extensions/websocket-channel/config.ts',
+  'extensions/websocket-channel/entry.ts',
+  'extensions/websocket-channel/extension.json',
+  'extensions/websocket-channel/index.ts',
+  'extensions/websocket-channel/package.json',
+  'extensions/websocket-channel/websocket-channel-unit.ts',
+  'extensions/websocket-channel/websocket-constants.ts',
 ]);
 const REQUIRED_PACKAGE_FILES = Object.freeze([
   'package.json',
@@ -20,6 +29,11 @@ const REQUIRED_PACKAGE_FILES = Object.freeze([
   'extensions/copilot-relay-provider/entry.ts',
   'extensions/copilot-relay-provider/extension.json',
   'extensions/copilot-relay-provider/package.json',
+  'extensions/websocket-channel/WebSocketChannel.ts',
+  'extensions/websocket-channel/client/chat.html',
+  'extensions/websocket-channel/entry.ts',
+  'extensions/websocket-channel/extension.json',
+  'extensions/websocket-channel/package.json',
   'dist/host/core/agent-context/templates/IDENTITY.md',
   'dist/host/core/agent-context/templates/SOUL.md',
   'dist/host/core/agent-context/templates/AGENTS.md',
@@ -45,7 +59,8 @@ export function auditNpmPackage(packResult, manifest, lockfile, extensionManifes
     if (path === 'package.json'
       || path === 'README.md'
       || path.startsWith('dist/host/')
-      || path.startsWith('extensions/copilot-relay-provider/')) {
+      || path.startsWith('extensions/copilot-relay-provider/')
+      || path.startsWith('extensions/websocket-channel/')) {
       continue;
     }
     diagnostics.push(`unexpected package file: ${path}`);

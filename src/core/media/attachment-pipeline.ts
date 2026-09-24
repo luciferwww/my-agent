@@ -53,15 +53,7 @@ export interface ProcessInboundResult {
   dropped: DroppedAttachment[];
 }
 
-export class AttachmentValidationError extends Error {
-  readonly failures: readonly DroppedAttachment[];
 
-  constructor(failures: readonly DroppedAttachment[]) {
-    super(`Inbound message rejected because ${failures.length} attachment validation failure(s) occurred.`);
-    this.name = 'AttachmentValidationError';
-    this.failures = Object.freeze(failures.map((failure) => Object.freeze({ ...failure })));
-  }
-}
 
 // ── 单附件 ──────────────────────────────────────────────────
 

@@ -1,7 +1,27 @@
 export type {
   ExtensionLoadContext,
+  ExtensionLogger,
   ExternalExtensionModule,
 } from './contracts.js';
+export { ChannelOperationError } from '../../core/channel/index.js';
+export type {
+  AgentEvent,
+  ApprovalClosedResult,
+  ApprovalDecision,
+  ApprovalInteractionRequest,
+  ApprovalRequest,
+  Channel,
+  ChannelCompletion,
+  ChannelInteractionAdapter,
+  ChannelOperationErrorCode,
+  ChannelRunRequest,
+  ChannelRuntimeCapabilities,
+  InboundContentBlock,
+  ModelCatalogSnapshot,
+  SessionPermissionMode,
+  SessionPermissionState,
+  TurnInteractionResponse,
+} from '../../core/channel/index.js';
 export type {
   ProviderConnection,
   ProviderModelFacts,

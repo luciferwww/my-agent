@@ -8,7 +8,7 @@
 > Related Plan: [Source Layout Refactoring Migration Plan](../changes/archive/source-layout-refactoring/plan.md)
 > Decision input: temporary design comparison deleted after authority transfer
 > Supersedes: None; refines builtin source ownership and naming without changing the Runtime lifecycle now owned by [ADR-014](adr-014-extension-packages-and-runtime-composition.md)
-> Partially superseded by: [ADR-012](adr-012-agent-home-path-unification.md) for the Workspace-to-Environment Tool package, factory, contribution, and Unit identity rename; other source-ownership decisions remain accepted
+> Partially superseded by: [ADR-012](adr-012-agent-home-path-unification.md) for the Workspace-to-Environment Tool package, factory, contribution, and Unit identity rename; [ADR-015](adr-015-host-local-and-extension-delivered-channels.md) for WebSocket ownership moving from Builtin to a first-party Extension; other source-ownership decisions remain accepted
 
 ## Context
 

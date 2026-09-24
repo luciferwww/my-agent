@@ -1276,7 +1276,7 @@
           <div class="field-grid">
             <label>
               <span class="field-label-text">WebSocket URL</span>
-              <input v-model.trim="form.url" placeholder="ws://127.0.0.1:8787/ws" />
+              <input v-model.trim="form.url" placeholder="WebSocket URL" />
             </label>
           </div>
           <div class="button-row">
@@ -1398,7 +1398,7 @@
                 title="New Session"
                 aria-label="New Session"
                 @click="startNewSession"
-                :disabled="isWaitingForReply || pendingSessionRequestId !== null || (!form.sessionId && chatItems.length === 0)"
+                :disabled="pendingSessionRequestId !== null || (!form.sessionId && chatItems.length === 0)"
               >＋</button>
             </div>
           </div>
@@ -1416,7 +1416,7 @@
               class="session-item"
               :class="{ selected: session.sessionId === form.sessionId }"
               type="button"
-              :disabled="isWaitingForReply || pendingSessionRequestId !== null"
+              :disabled="pendingSessionRequestId !== null"
               @click="selectSession(session)"
             >
               <span class="session-item-copy">
@@ -1715,7 +1715,9 @@
 
     <script>
       const { createApp, nextTick } = Vue;
-      const DEFAULT_SOCKET_URL = 'ws://127.0.0.1:8787/ws';
+      const DEFAULT_SOCKET_PATH = __MY_AGENT_WEBSOCKET_PATH__;
+      const DEFAULT_SOCKET_PROTOCOL = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const DEFAULT_SOCKET_URL = `${DEFAULT_SOCKET_PROTOCOL}//${window.location.host}${DEFAULT_SOCKET_PATH}`;
       const MAX_EVENT_FEED_ITEMS = 40;
       const TOOL_RESULT_PREVIEW_HEAD_LINES = 6;
       const TOOL_RESULT_PREVIEW_TAIL_LINES = 4;
@@ -1728,6 +1730,20 @@
 
       function createClientId() {
         return `browser-${Math.random().toString(36).slice(2, 8)}`;
+      }
+
+      function createSessionUiState() {
+        return {
+          draft: '',
+          chatItems: [],
+          turnMap: {},
+          isWaitingForReply: false,
+          permissionMode: 'manual',
+          permissionChangedAt: 0,
+          pendingPermissionRequestId: null,
+          attachments: [],
+          attachError: '',
+        };
       }
 
       createApp({
@@ -1747,9 +1763,6 @@
             pendingSessionRequestId: null,
             nextSessionRequestId: 1,
             pendingFirstTurn: null,
-            permissionMode: 'manual',
-            permissionChangedAt: 0,
-            pendingPermissionRequestId: null,
             nextPermissionRequestId: 1,
             sessions: [],
             pendingSessionsRequestId: null,
@@ -1761,33 +1774,56 @@
             modelPickerOpen: false,
             modelSearch: '',
             activeModelOptionIndex: -1,
-            draft: '',
-            // ── Chat model ──────────────────────────────────────
-            // Unified list of chat items. Each item has a `kind`:
-            //   'user'     — user message bubble
-            //   'turn'     — assistant turn (contains segments[])
-            //   'approval' — approval card
-            //   'error'    — error bubble
-            //   'system'   — system info bubble (compaction, etc.)
-            chatItems: [],
-            // Maps turnId → turn object for fast segment appending
-            turnMap: {},
+            sessionStates: { '': createSessionUiState() },
             nextId: 1,
-            // ────────────────────────────────────────────────────
             eventFeed: [],
             nextEventId: 1,
-            approvalRequest: null,
-            isWaitingForReply: false,
             lastStatusMessage: 'Not connected.',
-            // ── Attachments ─────────────────────────────────────
-            attachments: [],
-            attachError: '',
             dragHover: false,
             dragDepth: 0,
           };
         },
 
         computed: {
+          activeSessionState() {
+            return this.ensureSessionState(this.form.sessionId);
+          },
+          draft: {
+            get() { return this.activeSessionState.draft; },
+            set(value) { this.activeSessionState.draft = value; },
+          },
+          chatItems: {
+            get() { return this.activeSessionState.chatItems; },
+            set(value) { this.activeSessionState.chatItems = value; },
+          },
+          turnMap: {
+            get() { return this.activeSessionState.turnMap; },
+            set(value) { this.activeSessionState.turnMap = value; },
+          },
+          isWaitingForReply: {
+            get() { return this.activeSessionState.isWaitingForReply; },
+            set(value) { this.activeSessionState.isWaitingForReply = value; },
+          },
+          permissionMode: {
+            get() { return this.activeSessionState.permissionMode; },
+            set(value) { this.activeSessionState.permissionMode = value; },
+          },
+          permissionChangedAt: {
+            get() { return this.activeSessionState.permissionChangedAt; },
+            set(value) { this.activeSessionState.permissionChangedAt = value; },
+          },
+          pendingPermissionRequestId: {
+            get() { return this.activeSessionState.pendingPermissionRequestId; },
+            set(value) { this.activeSessionState.pendingPermissionRequestId = value; },
+          },
+          attachments: {
+            get() { return this.activeSessionState.attachments; },
+            set(value) { this.activeSessionState.attachments = value; },
+          },
+          attachError: {
+            get() { return this.activeSessionState.attachError; },
+            set(value) { this.activeSessionState.attachError = value; },
+          },
           isConnected() { return this.connectionStatus === 'connected'; },
           isConnecting() { return this.connectionStatus === 'connecting'; },
           canSend() {
@@ -1912,6 +1948,13 @@
         },
 
         methods: {
+          ensureSessionState(sessionId) {
+            const key = sessionId || '';
+            if (!this.sessionStates[key]) {
+              this.sessionStates[key] = createSessionUiState();
+            }
+            return this.sessionStates[key];
+          },
           // ── Connection ────────────────────────────────────────
           clearTransientState() {
             this.helloAcknowledged = false;
@@ -1919,24 +1962,27 @@
             this.pendingCatalogRequestId = null;
             this.pendingSessionRequestId = null;
             this.pendingFirstTurn = null;
-            this.permissionMode = 'manual';
-            this.permissionChangedAt = 0;
-            this.pendingPermissionRequestId = null;
             this.pendingSessionsRequestId = null;
             this.sessions = [];
             this.sessionsError = '';
             this.clearModelSelection();
-            this.approvalRequest = null;
-            this.isWaitingForReply = false;
             this.closePendingApprovalsForDisconnect();
+            for (const state of Object.values(this.sessionStates)) {
+              state.permissionMode = 'manual';
+              state.permissionChangedAt = 0;
+              state.pendingPermissionRequestId = null;
+              state.isWaitingForReply = false;
+            }
           },
           closePendingApprovalsForDisconnect() {
-            for (const item of this.chatItems) {
-              if (item.kind !== 'turn') continue;
-              for (const seg of item.segments) {
-                if (seg.type !== 'approval' || seg.approval?.status !== 'pending') continue;
-                seg.approval.status = 'unavailable';
-                seg.approval.closeReason = 'origin_disconnected';
+            for (const state of Object.values(this.sessionStates)) {
+              for (const item of state.chatItems) {
+                if (item.kind !== 'turn') continue;
+                for (const seg of item.segments) {
+                  if (seg.type !== 'approval' || seg.approval?.status !== 'pending') continue;
+                  seg.approval.status = 'unavailable';
+                  seg.approval.closeReason = 'origin_disconnected';
+                }
               }
             }
           },
@@ -2450,7 +2496,6 @@
             if (!seg || seg.type !== 'approval' || seg.approval.status !== 'pending') return;
             this.sendJson({ type: 'approval_resolve', id: seg.approval.id, decision });
             seg.approval.status = decision === 'allow' ? 'resolved' : 'denied';
-            if (this.approvalRequest?.id === seg.approval.id) this.approvalRequest = null;
             this.pushEvent('approval', `${decision === 'allow' ? 'Allowed' : 'Denied'} ${seg.approval.toolName}`);
           },
 
@@ -2493,6 +2538,8 @@
                 const pendingTurn = this.pendingFirstTurn;
                 this.pendingSessionRequestId = null;
                 this.pendingFirstTurn = null;
+                this.sessionStates[message.sessionId] = this.ensureSessionState('');
+                delete this.sessionStates[''];
                 this.form.sessionId = message.sessionId;
                 if (message.permission?.sessionId === message.sessionId) {
                   this.permissionMode = message.permission.mode;
@@ -2503,16 +2550,20 @@
                 return;
               }
               case 'session_permission_mode_changed': {
-                if (message.sessionId !== this.form.sessionId
-                  || (message.mode !== 'manual' && message.mode !== 'allow_all')
+                if (typeof message.sessionId !== 'string' || message.sessionId.length === 0) {
+                  this.pushEvent('permission', 'Ignored permission update without a Session ID');
+                  return;
+                }
+                const state = this.ensureSessionState(message.sessionId);
+                if ((message.mode !== 'manual' && message.mode !== 'allow_all')
                   || !Number.isFinite(message.changedAt)
-                  || message.changedAt < this.permissionChangedAt) {
+                  || message.changedAt < state.permissionChangedAt) {
                   this.pushEvent('permission', 'Ignored invalid or unrelated permission update');
                   return;
                 }
-                this.pendingPermissionRequestId = null;
-                this.permissionMode = message.mode;
-                this.permissionChangedAt = message.changedAt;
+                state.pendingPermissionRequestId = null;
+                state.permissionMode = message.mode;
+                state.permissionChangedAt = message.changedAt;
                 this.pushEvent('permission', `Session permission mode is ${message.mode}`);
                 return;
               }
@@ -2532,24 +2583,32 @@
                 this.pushEvent('sessions_listed', `Loaded ${message.sessions.length} Session(s)`);
                 return;
               case 'approval_requested': {
-                // Route approval into the active turn's segments so it stays
+                const state = this.ensureSessionState(message.sessionId);
+                // Route approval into its turn's segments so it stays
                 // in the correct position within the turn's event sequence.
-                const activeTurn = [...this.chatItems].reverse().find(i => i.kind === 'turn');
+                const activeTurn = state.turnMap[message.turnId]
+                  ?? [...state.chatItems].reverse().find(i => i.kind === 'turn');
                 if (activeTurn) {
                   activeTurn.segments.push({
                     type: 'approval',
                     id: this.nextId++,
                     approval: { ...message, status: 'pending' },
                   });
-                  this.scrollChatToBottom();
+                  this.scrollChatToBottom(message.sessionId);
                 }
-                this.approvalRequest = message;
-                this.pushEvent('approval', `Approval requested for ${message.toolName}`);
+                this.pushEvent(
+                  'approval',
+                  `Approval requested for ${message.toolName} in ${this.shortSessionId(message.sessionId)}`,
+                );
                 return;
               }
               case 'approval_closed':
-                this.markApprovalClosed(message.id, message.outcome, message.reason);
-                if (this.approvalRequest?.id === message.id) this.approvalRequest = null;
+                this.markApprovalClosed(
+                  message.id,
+                  message.outcome,
+                  message.reason,
+                  message.sessionId,
+                );
                 this.pushEvent('approval', `Approval ${message.outcome}: ${message.id}`);
                 return;
               case 'channel_error':
@@ -2571,17 +2630,19 @@
           },
 
           handleAgentEvent(event) {
+            const sessionId = event.callerSessionId || event.sessionId || this.form.sessionId;
+            const state = this.ensureSessionState(sessionId);
             switch (event.type) {
               case 'run_start':
                 this.pushEvent('run_start', `Turn ${event.turnId} started`);
                 return;
 
               case 'text_delta':
-                this.appendTextToTurn(event.turnId, event.text);
+                this.appendTextToTurn(event.turnId, event.text, sessionId);
                 return;
 
               case 'tool_use': {
-                const turn = this.getOrCreateTurn(event.turnId);
+                const turn = this.getOrCreateTurn(event.turnId, sessionId);
                 turn.segments.push({
                   type: 'tool_use',
                   id: this.nextId++,
@@ -2589,12 +2650,12 @@
                   input: event.input,
                 });
                 this.pushEvent('tool_use', event.name);
-                this.scrollChatToBottom();
+                this.scrollChatToBottom(sessionId);
                 return;
               }
 
               case 'tool_result': {
-                const turn = this.getOrCreateTurn(event.turnId);
+                const turn = this.getOrCreateTurn(event.turnId, sessionId);
                 turn.segments.push({
                   type: 'tool_result',
                   id: this.nextId++,
@@ -2603,7 +2664,7 @@
                   isError: Boolean(event.result?.isError),
                   expanded: false,
                 });
-                this.scrollChatToBottom();
+                this.scrollChatToBottom(sessionId);
                 return;
               }
 
@@ -2612,7 +2673,7 @@
                 return;
 
               case 'run_end':
-                this.isWaitingForReply = false;
+                state.isWaitingForReply = false;
                 this.requestSessionList();
                 // spec §13.1: special-case aborted so users can distinguish
                 // it from a normal end_turn. Rendered as a system bubble
@@ -2624,7 +2685,7 @@
                     label: 'Aborted',
                     turnId: event.turnId,
                     text: '⚠ Turn aborted',
-                  });
+                  }, sessionId);
                   this.pushEvent('run_end', `Turn ${event.turnId} aborted`);
                 } else if (event.result?.stopReason === 'max_llm_calls') {
                   this.appendChatItem({
@@ -2632,7 +2693,7 @@
                     label: 'Limit reached',
                     turnId: event.turnId,
                     text: 'Configured model call limit reached',
-                  });
+                  }, sessionId);
                   this.pushEvent('run_end', `Turn ${event.turnId} reached the configured model call limit`);
                 } else {
                   this.pushEvent('run_end', `Turn ${event.turnId} finished with ${event.result.stopReason}`);
@@ -2640,20 +2701,25 @@
                 return;
 
               case 'request_end':
-                this.isWaitingForReply = false;
+                state.isWaitingForReply = false;
                 this.appendChatItem({
                   kind: 'system',
                   label: 'Cancelled',
                   text: event.reason === 'shutdown'
                     ? 'Queued request cancelled during shutdown'
                     : 'Queued request cancelled',
-                });
+                }, sessionId);
                 this.pushEvent('request_end', `Request ${event.requestId} cancelled`);
                 return;
 
               case 'error':
-                this.isWaitingForReply = false;
-                this.appendChatItem({ kind: 'error', label: 'Runtime', turnId: event.turnId, text: event.error || 'Unknown runtime error' });
+                state.isWaitingForReply = false;
+                this.appendChatItem({
+                  kind: 'error',
+                  label: 'Runtime',
+                  turnId: event.turnId,
+                  text: event.error || 'Unknown runtime error',
+                }, sessionId);
                 if (event.category === 'provider_unregistered' || event.category === 'model_rejected') {
                   this.clearModelSelection();
                   this.pushEvent('model_catalog', 'Selected model is unavailable; refreshing the Catalog for reselection');
@@ -2668,7 +2734,7 @@
                   label: 'Compaction',
                   turnId: event.turnId,
                   text: `Compaction started (${event.trigger}), tokens before: ${event.estimatedTokens}`,
-                });
+                }, sessionId);
                 return;
 
               case 'compaction_end':
@@ -2677,7 +2743,7 @@
                   label: 'Compaction',
                   turnId: event.turnId,
                   text: `Compaction finished: ${event.tokensBefore} → ${event.tokensAfter}, dropped ${event.droppedMessages} messages`,
-                });
+                }, sessionId);
                 return;
 
               case 'tool_result_pruned':
@@ -2696,7 +2762,7 @@
                   text: event.content ?? '',
                   isSteer: event.deliveryMode === 'steering',
                   attachmentSummaries: event.attachmentSummaries ?? [],
-                });
+                }, sessionId);
                 return;
               }
 
@@ -2712,10 +2778,11 @@
           // user inserted a steer message mid-turn), mark the old entry as
           // interrupted and start a fresh continuation entry so subsequent
           // text/tool events render *after* the interrupting messages.
-          getOrCreateTurn(turnId) {
-            const existing = this.turnMap[turnId];
+          getOrCreateTurn(turnId, sessionId = this.form.sessionId) {
+            const state = this.ensureSessionState(sessionId);
+            const existing = state.turnMap[turnId];
             if (existing) {
-              const lastItem = this.chatItems[this.chatItems.length - 1];
+              const lastItem = state.chatItems[state.chatItems.length - 1];
               if (lastItem === existing) return existing;
               existing.interrupted = true;
               const continuation = {
@@ -2728,8 +2795,8 @@
                 segments: [],
                 isContinuation: true,
               };
-              this.chatItems.push(continuation);
-              this.turnMap[turnId] = continuation;
+              state.chatItems.push(continuation);
+              state.turnMap[turnId] = continuation;
               return continuation;
             }
             const turn = {
@@ -2741,15 +2808,15 @@
               toolsExpanded: true,
               segments: [],
             };
-            this.chatItems.push(turn);
-            this.turnMap[turnId] = turn;
+            state.chatItems.push(turn);
+            state.turnMap[turnId] = turn;
             return turn;
           },
 
           // Append text to the last text segment of a turn,
           // or create a new text segment if the last segment is a tool segment.
-          appendTextToTurn(turnId, delta) {
-            const turn = this.getOrCreateTurn(turnId);
+          appendTextToTurn(turnId, delta, sessionId = this.form.sessionId) {
+            const turn = this.getOrCreateTurn(turnId, sessionId);
             const last = turn.segments[turn.segments.length - 1];
             if (last && last.type === 'text') {
               last.text += delta;
@@ -2757,7 +2824,7 @@
               turn.segments.push({ type: 'text', id: this.nextId++, text: delta });
             }
             turn.timestamp = Date.now();
-            this.scrollChatToBottom();
+            this.scrollChatToBottom(sessionId);
           },
 
           // Returns true if the segment at idx is the first tool_use in the list
@@ -2775,7 +2842,8 @@
           },
 
           // ── Chat item helpers ─────────────────────────────────
-          appendChatItem(fields) {
+          appendChatItem(fields, sessionId = this.form.sessionId) {
+            const state = this.ensureSessionState(sessionId);
             const item = {
               id: this.nextId++,
               timestamp: Date.now(),
@@ -2783,13 +2851,14 @@
               turnId: null,
               ...fields,
             };
-            this.chatItems.push(item);
-            this.scrollChatToBottom();
+            state.chatItems.push(item);
+            this.scrollChatToBottom(sessionId);
             return item;
           },
 
-          markApprovalClosed(approvalId, outcome, reason) {
-            for (const item of this.chatItems) {
+          markApprovalClosed(approvalId, outcome, reason, sessionId = this.form.sessionId) {
+            const state = this.ensureSessionState(sessionId);
+            for (const item of state.chatItems) {
               if (item.kind !== 'turn') continue;
               const seg = item.segments.find(s => s.type === 'approval' && s.approval?.id === approvalId);
               if (seg) {
@@ -2810,27 +2879,16 @@
           },
 
           startNewSession() {
-            this.chatItems = [];
-            this.turnMap = {};
-            this.approvalRequest = null;
-            this.isWaitingForReply = false;
+            this.sessionStates[''] = createSessionUiState();
             this.form.sessionId = '';
-            this.permissionMode = 'manual';
-            this.permissionChangedAt = 0;
-            this.pendingPermissionRequestId = null;
           },
           selectSession(session) {
-            if (!session?.sessionId || this.isWaitingForReply || this.pendingSessionRequestId !== null) {
+            if (!session?.sessionId || this.pendingSessionRequestId !== null) {
               return;
             }
             if (session.sessionId === this.form.sessionId) return;
-            this.chatItems = [];
-            this.turnMap = {};
-            this.approvalRequest = null;
             this.form.sessionId = session.sessionId;
-            this.permissionMode = 'manual';
-            this.permissionChangedAt = 0;
-            this.pendingPermissionRequestId = null;
+            this.ensureSessionState(session.sessionId);
             this.pushEvent('session_selected', `Selected Session ${session.sessionId}`);
             this.requestPermissionMode();
           },
@@ -2894,7 +2952,8 @@
               this.eventFeed.length = MAX_EVENT_FEED_ITEMS;
             }
           },
-          scrollChatToBottom() {
+          scrollChatToBottom(sessionId = this.form.sessionId) {
+            if (sessionId !== this.form.sessionId) return;
             nextTick(() => {
               const el = this.$refs.chatLogEl;
               if (el) el.scrollTop = el.scrollHeight;

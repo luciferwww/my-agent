@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  createBuiltinHostUnits,
+  createStandaloneHostUnits,
   parseStandaloneHostArguments,
   runStandaloneHost,
   validateStandaloneHostComposition,
@@ -17,9 +17,8 @@ describe('standalone Host arguments', () => {
   it('accepts startup without arguments', () => {
     const parsed = parseStandaloneHostArguments([]);
 
-    expect(parsed).toEqual({ builtinChannels: ['websocket'] });
+    expect(parsed).toEqual({ cli: false });
     expect(Object.isFrozen(parsed)).toBe(true);
-    expect(Object.isFrozen(parsed.builtinChannels)).toBe(true);
   });
 
   it.each([
@@ -30,23 +29,19 @@ describe('standalone Host arguments', () => {
   ])('accepts one Agent Home override: %j', (argv, agentHomeArgument) => {
     expect(parseStandaloneHostArguments(argv)).toEqual({
       agentHomeArgument,
-      builtinChannels: ['websocket'],
+      cli: false,
     });
   });
 
   it.each([
-    [['-bc', 'websocket'], ['websocket']],
-    [['--builtin-channels', 'cli'], ['cli']],
-    [['--builtin-channels=websocket,cli'], ['websocket', 'cli']],
-    [['-bc', 'cli,websocket'], ['websocket', 'cli']],
-    [['--builtin-channels', 'none'], []],
-    [['-bc', 'cli', '--agent-home=C:/agent-home'], ['cli']],
-    [['--agent-home', 'C:/agent-home', '--builtin-channels=none'], []],
-  ] as const)('accepts and canonicalizes Builtin Channels: %j', (argv, builtinChannels) => {
-    const parsed = parseStandaloneHostArguments(argv);
-
-    expect(parsed.builtinChannels).toEqual(builtinChannels);
-    expect(Object.isFrozen(parsed.builtinChannels)).toBe(true);
+    [['--cli'], undefined],
+    [['--cli', '--agent-home=C:/agent-home'], 'C:/agent-home'],
+    [['--agent-home', 'C:/agent-home', '--cli'], 'C:/agent-home'],
+  ] as const)('accepts the optional CLI flag: %j', (argv, agentHomeArgument) => {
+    expect(parseStandaloneHostArguments(argv)).toEqual({
+      ...(agentHomeArgument === undefined ? {} : { agentHomeArgument }),
+      cli: true,
+    });
   });
 
   it.each([
@@ -61,6 +56,9 @@ describe('standalone Host arguments', () => {
     ['-ah=one'],
     ['position'],
     ['--unknown'],
+    ['--cli', '--cli'],
+    ['--cli=true'],
+    ['-c'],
     ['-bc'],
     ['--builtin-channels'],
     ['--builtin-channels='],
@@ -80,12 +78,10 @@ describe('standalone Host arguments', () => {
 
 describe('standalone Host composition', () => {
   it.each([
-    [['websocket'], ['builtin-websocket-channel']],
-    [['cli'], ['builtin-cli-channel']],
-    [['cli', 'websocket'], ['builtin-websocket-channel', 'builtin-cli-channel']],
-    [[], []],
-  ] as const)('creates the canonical Builtin Unit set for %j', (channels, ids) => {
-    const units = createBuiltinHostUnits(channels);
+    [true, ['builtin-cli-channel']],
+    [false, []],
+  ] as const)('creates the Host-local Unit set when CLI is %j', (cliEnabled, ids) => {
+    const units = createStandaloneHostUnits(cliEnabled);
 
     expect(units.map((unit) => unit.unitId)).toEqual(ids);
     expect(Object.isFrozen(units)).toBe(true);
@@ -103,19 +99,17 @@ describe('standalone Host composition', () => {
       extensions: { enabled: true, entries: {} },
     });
 
-    expect(() => validateStandaloneHostComposition(snapshot(true), ['cli']))
+    expect(() => validateStandaloneHostComposition(snapshot(true), true))
       .toThrow('HOST_OUTPUT_CONFLICT');
-    expect(() => validateStandaloneHostComposition(snapshot(true), ['websocket', 'cli']))
-      .toThrow('HOST_OUTPUT_CONFLICT');
-    expect(() => validateStandaloneHostComposition(snapshot(false), ['cli'])).not.toThrow();
-    expect(() => validateStandaloneHostComposition(snapshot(true), ['websocket'])).not.toThrow();
+    expect(() => validateStandaloneHostComposition(snapshot(false), true)).not.toThrow();
+    expect(() => validateStandaloneHostComposition(snapshot(true), false)).not.toThrow();
   });
 
   it('rejects a CLI output conflict before Runtime creation', async () => {
     const createRuntime = vi.fn();
 
     await expect(runStandaloneHost({
-      argv: ['-bc', 'cli'],
+      argv: ['--cli'],
       env: {},
       resolvePathContext: async () => createPathContext(),
       ensureConfig: async () => undefined,
@@ -131,7 +125,7 @@ describe('standalone Host composition', () => {
     const ensureConfig = vi.fn();
 
     await expect(runStandaloneHost({
-      argv: ['-bc', 'websocket,websocket'],
+      argv: ['--builtin-channels=websocket'],
       resolvePathContext,
       ensureConfig,
     })).rejects.toThrow('HOST_ARGUMENT_INVALID');
@@ -177,7 +171,7 @@ describe('standalone Host composition', () => {
     const shutdown = vi.fn(async () => ({ outcome: 'completed' } as never));
     const createHost = vi.fn(() => ({
       shutdown,
-      completion: new Promise<never>(() => undefined),
+      completion: Promise.resolve({ outcome: 'completed' } as never),
       dispose: vi.fn(),
     }));
 
@@ -192,12 +186,12 @@ describe('standalone Host composition', () => {
     });
 
     expect(resolvePathContext).toHaveBeenCalledOnce();
-  expect(ensureConfig).toHaveBeenCalledWith({ agentHome: pathContext.agentHome });
+    expect(ensureConfig).toHaveBeenCalledWith({ agentHome: pathContext.agentHome });
     expect(loadConfig).toHaveBeenCalledWith({
       agentHome: pathContext.agentHome,
       environment,
     });
-  expect(events).toEqual(['paths', 'bootstrap', 'load', 'Runtime']);
+    expect(events).toEqual(['paths', 'bootstrap', 'load', 'Runtime']);
     expect(createRuntime).toHaveBeenCalledWith(expect.objectContaining({
       agentHome: pathContext.agentHome,
       startupContext: {
@@ -205,9 +199,10 @@ describe('standalone Host composition', () => {
         configuration: snapshot,
         environment,
       },
+      loadedUnits: [],
     }));
-    expect(waitForChannelCompletion).toHaveBeenCalledWith('websocket');
-    expect(shutdown).toHaveBeenCalledWith('builtin websocket channel completed');
+    expect(waitForChannelCompletion).not.toHaveBeenCalled();
+    expect(shutdown).not.toHaveBeenCalled();
   });
 
   it('reads Agent Home config once for acquisition and Runtime without reading project config', async () => {
@@ -232,7 +227,7 @@ describe('standalone Host composition', () => {
 
     try {
       await runStandaloneHost({
-        argv: ['--builtin-channels', 'none'],
+        argv: [],
         env: {},
         resolvePathContext: async () => Object.freeze({
           installDir: join(temporaryRoot, 'installation'),
@@ -337,7 +332,7 @@ describe('standalone Host composition', () => {
     expect(createRuntime).not.toHaveBeenCalled();
   });
 
-  it('keeps no-Builtin mode alive until shared Host completion', async () => {
+  it('keeps zero-Channel mode alive until shared Host completion', async () => {
     const snapshot = createSnapshot();
     const waitForChannelCompletion = vi.fn();
     const createRuntime = vi.fn(async () => ({
@@ -352,7 +347,7 @@ describe('standalone Host composition', () => {
     }));
 
     await runStandaloneHost({
-      argv: ['--builtin-channels=none'],
+      argv: [],
       env: {},
       resolvePathContext: async () => createPathContext(),
       ensureConfig: async () => undefined,
@@ -365,17 +360,17 @@ describe('standalone Host composition', () => {
     expect(shutdown).not.toHaveBeenCalled();
   });
 
-  it('sets failure status and shuts down when the selected builtin Channel fails', async () => {
+  it('sets failure status and shuts down when the Host-local CLI fails', async () => {
     const previousExitCode = process.exitCode;
     const shutdown = vi.fn(async () => ({ outcome: 'completed' } as never));
     try {
       process.exitCode = undefined;
       await runStandaloneHost({
-        argv: [],
+        argv: ['--cli'],
         env: {},
         resolvePathContext: async () => createPathContext(),
         ensureConfig: async () => undefined,
-        loadConfig: async () => createSnapshot(),
+        loadConfig: async () => createSnapshot(false),
         createRuntime: async () => ({
           application: {
             waitForChannelCompletion: async () => ({
@@ -394,22 +389,22 @@ describe('standalone Host composition', () => {
       });
 
       expect(process.exitCode).toBe(1);
-      expect(shutdown).toHaveBeenCalledWith('builtin websocket channel completed');
+      expect(shutdown).toHaveBeenCalledWith('cli channel completed');
     } finally {
       process.exitCode = previousExitCode;
     }
   });
 
-  it('shuts down when observing builtin Channel completion rejects', async () => {
+  it('shuts down when observing Host-local CLI completion rejects', async () => {
     const shutdown = vi.fn(async () => ({ outcome: 'completed' } as never));
     const failure = new Error('completion observer failed');
 
     await expect(runStandaloneHost({
-      argv: [],
+      argv: ['--cli'],
       env: {},
       resolvePathContext: async () => createPathContext(),
       ensureConfig: async () => undefined,
-      loadConfig: async () => createSnapshot(),
+      loadConfig: async () => createSnapshot(false),
       createRuntime: async () => ({
         application: { waitForChannelCompletion: async () => { throw failure; } },
         close: vi.fn(),
@@ -421,10 +416,10 @@ describe('standalone Host composition', () => {
       })) as never,
     })).rejects.toBe(failure);
 
-    expect(shutdown).toHaveBeenCalledWith('builtin websocket channel completed');
+    expect(shutdown).toHaveBeenCalledWith('cli channel completed');
   });
 
-  it('lets CLI control lifetime when it is the only selected Builtin Channel', async () => {
+  it('lets CLI control lifetime when explicitly enabled', async () => {
     const waitForChannelCompletion = vi.fn(async () => ({
       outcome: 'closed' as const,
       reason: 'input_closed' as const,
@@ -432,7 +427,7 @@ describe('standalone Host composition', () => {
     const shutdown = vi.fn(async () => ({ outcome: 'completed' } as never));
 
     await runStandaloneHost({
-      argv: ['-bc', 'cli'],
+      argv: ['--cli'],
       env: {},
       resolvePathContext: async () => createPathContext(),
       ensureConfig: async () => undefined,
@@ -449,39 +444,7 @@ describe('standalone Host composition', () => {
     });
 
     expect(waitForChannelCompletion).toHaveBeenCalledWith('cli');
-    expect(shutdown).toHaveBeenCalledWith('builtin cli channel completed');
-  });
-
-  it('lets WebSocket control lifetime without observing secondary CLI completion', async () => {
-    const websocketCompletion = createDeferred<{
-      outcome: 'closed';
-      reason: 'transport_closed';
-    }>();
-    const waitForChannelCompletion = vi.fn(() => websocketCompletion.promise);
-    const shutdown = vi.fn(async () => ({ outcome: 'completed' } as never));
-    const run = runStandaloneHost({
-      argv: ['-bc', 'cli,websocket'],
-      env: {},
-      resolvePathContext: async () => createPathContext(),
-      ensureConfig: async () => undefined,
-      loadConfig: async () => createSnapshot(false),
-      createRuntime: async () => ({
-        application: { waitForChannelCompletion },
-        close: vi.fn(),
-      }) as never,
-      createHost: (() => ({
-        shutdown,
-        completion: new Promise<never>(() => undefined),
-        dispose: vi.fn(),
-      })) as never,
-    });
-    await vi.waitFor(() => expect(waitForChannelCompletion).toHaveBeenCalledOnce());
-
-    expect(shutdown).not.toHaveBeenCalled();
-    websocketCompletion.resolve({ outcome: 'closed', reason: 'transport_closed' });
-    await run;
-    expect(waitForChannelCompletion).toHaveBeenCalledWith('websocket');
-    expect(shutdown).toHaveBeenCalledWith('builtin websocket channel completed');
+    expect(shutdown).toHaveBeenCalledWith('cli channel completed');
   });
 
 });
@@ -504,13 +467,4 @@ function createPathContext() {
     installDir: 'C:/installation',
     agentHome: 'C:/agent-home',
   });
-}
-
-function createDeferred<T>(): {
-  readonly promise: Promise<T>;
-  resolve(value: T): void;
-} {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((settle) => { resolve = settle; });
-  return { promise, resolve };
 }

@@ -127,7 +127,13 @@ Copilot Relay is an npm workspace package under `extensions/copilot-relay-provid
 
 Development uses the tracked package directly. The npm package includes the same Extension package beneath `<installDir>/extensions`. Agent configuration under `<agentHome>/config.json` enables Descriptor ID `copilot-relay-provider`; its scoped config may materialize `baseURL`, `apiKey`, and `discoveryTimeoutMs`. The Extension entry reads only its validated `ExtensionLoadContext.config`, not process environment.
 
-`src/hosts/standalone/standalone-host.ts` passes generic startup facts and zero to two argument-selected Builtin Channel Units to Runtime. Runtime Bootstrap invokes the generic Extension Acquisition boundary and hands acquired `LoadedRuntimeUnit[]` to composition. Neither Host nor Runtime imports Relay implementation or infers the Relay Provider ID. A default Model Reference comes from ordinary Agent configuration or the atomic `MY_AGENT_PROVIDER` plus `MY_AGENT_MODEL` environment override.
+`src/hosts/standalone/standalone-host.ts` passes generic startup facts and zero
+or one argument-selected Host-local CLI Unit to Runtime. Runtime Bootstrap
+invokes the generic Extension Acquisition boundary and hands acquired
+`LoadedRuntimeUnit[]` to composition. Neither Host nor Runtime imports Relay
+or WebSocket Extension implementation or infers their identities. A default
+Model Reference comes from ordinary Agent configuration or the atomic
+`MY_AGENT_PROVIDER` plus `MY_AGENT_MODEL` environment override.
 
 ## 9. Evidence
 

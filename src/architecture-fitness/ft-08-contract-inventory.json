@@ -3,7 +3,7 @@
     "contract": "AgentEvent",
     "source": "src/core/runner/types.ts",
     "kind": "event",
-    "positive": ["src/core/runner/AgentRunner.test.ts", "src/runtime/RuntimeApp.test.ts", "src/builtins/channels/websocket/WebSocketChannel.test.ts"],
+    "positive": ["src/core/runner/AgentRunner.test.ts", "src/runtime/RuntimeApp.test.ts", "extensions/websocket-channel/WebSocketChannel.test.ts"],
     "negative": ["src/core/runner/AgentRunner.test.ts", "src/runtime/RuntimeApp.test.ts"]
   },
   {
@@ -234,7 +234,7 @@
     "contract": "Channel",
     "source": "src/core/channel/types.ts",
     "kind": "port-lifecycle",
-    "positive": ["src/builtins/channels/websocket/WebSocketChannel.test.ts"],
+    "positive": ["extensions/websocket-channel/WebSocketChannel.test.ts"],
     "negative": ["src/runtime/RuntimeApp.test.ts"]
   },
   {
@@ -255,8 +255,8 @@
     "contract": "ChannelRunRequest",
     "source": "src/core/channel/types.ts",
     "kind": "request",
-    "positive": ["src/builtins/channels/websocket/WebSocketChannel.test.ts", "src/runtime/RuntimeApp.intake.test.ts"],
-    "negative": ["src/builtins/channels/websocket/WebSocketChannel.test.ts"]
+    "positive": ["extensions/websocket-channel/WebSocketChannel.test.ts", "src/runtime/RuntimeApp.intake.test.ts"],
+    "negative": ["extensions/websocket-channel/WebSocketChannel.test.ts"]
   },
   {
     "contract": "ChannelRuntimeCapabilities",
@@ -269,14 +269,14 @@
     "contract": "ChannelInteractionAdapter",
     "source": "src/core/channel/types.ts",
     "kind": "interaction-port",
-    "positive": ["src/builtins/channels/websocket/WebSocketChannel.test.ts"],
+    "positive": ["extensions/websocket-channel/WebSocketChannel.test.ts"],
     "negative": ["src/runtime/turn-interaction/TurnInteractionManager.test.ts"]
   },
   {
     "contract": "ChannelInteractionTransport",
     "source": "src/core/channel/types.ts",
     "kind": "interaction-port",
-    "positive": ["src/builtins/channels/websocket/WebSocketChannel.test.ts"],
+    "positive": ["extensions/websocket-channel/WebSocketChannel.test.ts"],
     "negative": ["src/runtime/turn-interaction/TurnInteractionManager.test.ts"]
   },
   {

@@ -24,8 +24,14 @@ describe('FT-05 Extension capability boundary', () => {
 
   it('keeps production capability packages inside declared capability boundaries', async () => {
     const productionSources = await loadProductionSources(REPOSITORY_ROOT);
+    const extensionApi = productionSources.find(
+      (source) => source.path === 'src/extension/api/index.ts',
+    )?.content;
 
     expect(findFt05ExtensionCapabilityViolations(productionSources, EXTENSION_ROOTS)).toEqual([]);
+    expect(extensionApi).toBeDefined();
+    expect(extensionApi).toContain('ChannelOperationError');
+    expect(extensionApi).not.toMatch(/\b(?:SessionError|AttachmentValidationError)\b/u);
   });
 
   it('keeps builtin concrete Channel construction out of RuntimeApp and removes legacy lifecycle APIs', async () => {
@@ -37,8 +43,8 @@ describe('FT-05 Extension capability boundary', () => {
     const runtimeApp = productionSources.find((source) => source.path === 'src/runtime/RuntimeApp.ts');
 
     expect(concreteConstructionPaths).toEqual([
+      'extensions/websocket-channel/websocket-channel-unit.ts',
       'src/builtins/channels/cli/runtime-unit.ts',
-      'src/builtins/channels/websocket/runtime-unit.ts',
     ]);
     expect(runtimeApp).toBeDefined();
     expect(runtimeApp?.content).not.toMatch(/\b(?:registerChannel|startChannels|stopChannels)\s*\(/);

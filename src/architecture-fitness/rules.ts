@@ -85,7 +85,7 @@ const MIXED_PRODUCTION_PATHS = new Set([
 
 const SDK_ALLOWLIST = new Map([
   ['@anthropic-ai/sdk', []],
-  ['ws', ['src/builtins/channels/websocket/']],
+  ['ws', ['extensions/websocket-channel/']],
 ]);
 
 const LEGACY_DOCUMENT_ROOTS = [

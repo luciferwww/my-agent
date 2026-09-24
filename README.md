@@ -100,20 +100,48 @@ The Built-in Provider also supports:
 
 ### 3. Start the agent
 
-From a source checkout:
+Standalone starts no Host-local Channel by default. To use the WebSocket
+Extension from a source checkout, add this entry to Agent Home
+`config.json` alongside the LLM configuration:
+
+```json
+{
+  "extensions": {
+    "entries": {
+      "websocket-channel": {}
+    }
+  }
+}
+```
+
+Then run:
 
 ```bash
 npm run agent -- --agent-home ./agent-home
 ```
 
-The default WebSocket endpoint is:
+The Extension serves its chat client and WebSocket endpoint at:
 
 ```text
+http://127.0.0.1:8787/
 ws://127.0.0.1:8787/ws
 ```
 
-Open [clients/html/chat.html](clients/html/chat.html) in a browser and connect
-to that endpoint.
+Open the HTTP URL in a browser. This bundled single-page client is a minimal
+reference and debugging UI, not the required production website. An external
+website can connect directly to the configured WebSocket endpoint. One
+connected client may keep work active in multiple Sessions and switch between
+their independent page-local views. Refresh/reconnect does not restore that
+ephemeral UI state or replay earlier events.
+
+The Channel intentionally does not implement authentication, TLS, Origin/Host
+policy, or public-network hardening. Production deployment must provide those
+controls at the operational boundary, such as an authenticated reverse proxy
+or gateway.
+
+Set
+`extensions.entries.websocket-channel.config.openBrowser` to `true` to open
+it automatically after listener readiness.
 
 If `--agent-home` is omitted, Agent Home defaults to `<user-home>/.my-agent`.
 On first startup, a missing `config.json` is created as `{}`, but an empty
@@ -136,7 +164,7 @@ The CLI owns terminal output, so Console Logger must be disabled:
 Keep the LLM configuration from the Quick Start and run:
 
 ```bash
-npm run agent -- --agent-home ./agent-home --builtin-channels cli
+npm run agent -- --agent-home ./agent-home --cli
 ```
 
 Useful CLI commands include:
@@ -151,14 +179,15 @@ Useful CLI commands include:
 /permission allow_all
 ```
 
-Available Built-in Channel selections:
+Standalone Host-local Channel selection:
 
 ```bash
-npm run agent -- --agent-home ./agent-home                         # WebSocket
-npm run agent -- --agent-home ./agent-home -bc websocket,cli       # Both
-npm run agent -- --agent-home ./agent-home --builtin-channels cli  # CLI only
-npm run agent -- --agent-home ./agent-home --builtin-channels none # External Channels only
+npm run agent -- --agent-home ./agent-home       # No Host-local Channel
+npm run agent -- --agent-home ./agent-home --cli # CLI only
 ```
+
+Reusable Channels such as WebSocket are enabled through their Extension
+entries, independently of `--cli`.
 
 ## Configuration
 
@@ -241,10 +270,10 @@ Stop the Host before replacing installed Extensions. Partial overwrite,
 symlink-based installation, mutation while running, and running `npm install`
 inside the live installation are unsupported.
 
-The source checkout uses the tracked
-`extensions/copilot-relay-provider` workspace package. The npm package ships
-the Extension under its installation directory. The standalone Host acquires
-Extensions generically and does not hard-code Relay fallback behavior.
+The source checkout uses the tracked `extensions/copilot-relay-provider` and
+`extensions/websocket-channel` workspace packages. The npm package ships both
+Extensions under its installation directory. The standalone Host acquires
+them generically and does not hard-code either Extension.
 
 ## Development
 

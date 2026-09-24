@@ -123,11 +123,14 @@ describe('FT-10 Runtime composition deletion', () => {
   it('keeps canonical Root intake fields and process force ownership', async () => {
     const runtimeTypes = source('src/runtime/types.ts').content;
     const queueTypes = source('src/runtime/queue-types.ts').content;
-    const websocket = source('src/builtins/channels/websocket/WebSocketChannel.ts').content;
+    const websocket = source('extensions/websocket-channel/WebSocketChannel.ts').content;
     const host = source('src/hosts/standalone/runtime-host.ts').content;
     const entry = source('src/hosts/standalone/entry.ts').content;
     const composition = source('src/hosts/standalone/standalone-host.ts').content;
-    const html = await readFile(`${REPOSITORY_ROOT}/clients/html/chat.html`, 'utf8');
+    const html = await readFile(
+      `${REPOSITORY_ROOT}/extensions/websocket-channel/client/chat.html`,
+      'utf8',
+    );
 
     expect(objectTypeBody(runtimeTypes, 'RunTurnParams')).not.toMatch(/\b(?:model|maxTokens)\??\s*:/);
     expect(objectTypeBody(queueTypes, 'QueuedChannelTurn')).not.toMatch(/\b(?:model|maxTokens)\??\s*:/);

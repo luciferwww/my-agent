@@ -1,4 +1,5 @@
-import type {
+import {
+  ChannelOperationError,
   ChannelCompletionObserver,
   ChannelRunRequest,
   ChannelRuntimeBinding,
@@ -14,7 +15,7 @@ import { AgentRunner } from '../core/runner/index.js';
 import { Logger } from '../platform/logger/index.js';
 import { MemoryManager } from '../core/memory/index.js';
 import { SystemPromptBuilder } from '../core/prompt/index.js';
-import { SessionManager } from '../core/session/index.js';
+import { SessionError, SessionManager } from '../core/session/index.js';
 import { bootstrapRuntime } from './bootstrap.js';
 import { acquireExtensions } from '../extension/acquisition/index.js';
 import {
@@ -205,53 +206,64 @@ export async function buildRuntimeHandle(
           if (!kernel) {
             return Promise.reject(new Error('Runtime Session capability is not ready.'));
           }
-          return kernel.application.createSession(input);
+          const { application } = kernel;
+          return invokeSessionCapability(() => application.createSession(input));
         },
         listSessions(input?: { archived?: boolean }) {
           if (!kernel) {
             return Promise.reject(new Error('Runtime Session capability is not ready.'));
           }
-          return kernel.application.listSessions(input);
+          const { application } = kernel;
+          return invokeSessionCapability(() => application.listSessions(input));
         },
         getSession(sessionId: string) {
           if (!kernel) {
             return Promise.reject(new Error('Runtime Session capability is not ready.'));
           }
-          return kernel.application.getSession(sessionId);
+          const { application } = kernel;
+          return invokeSessionCapability(() => application.getSession(sessionId));
         },
         renameSession(sessionId: string, title: string | null) {
           if (!kernel) {
             return Promise.reject(new Error('Runtime Session capability is not ready.'));
           }
-          return kernel.application.renameSession(sessionId, title);
+          const { application } = kernel;
+          return invokeSessionCapability(() => application.renameSession(sessionId, title));
         },
         archiveSession(sessionId: string) {
           if (!kernel) {
             return Promise.reject(new Error('Runtime Session capability is not ready.'));
           }
-          return kernel.application.archiveSession(sessionId);
+          const { application } = kernel;
+          return invokeSessionCapability(() => application.archiveSession(sessionId));
         },
         unarchiveSession(sessionId: string) {
           if (!kernel) {
             return Promise.reject(new Error('Runtime Session capability is not ready.'));
           }
-          return kernel.application.unarchiveSession(sessionId);
+          const { application } = kernel;
+          return invokeSessionCapability(() => application.unarchiveSession(sessionId));
         },
         deleteSession(sessionId: string) {
           if (!kernel) {
             return Promise.reject(new Error('Runtime Session capability is not ready.'));
           }
-          return kernel.application.deleteSession(sessionId);
+          const { application } = kernel;
+          return invokeSessionCapability(() => application.deleteSession(sessionId));
         },
         forkSession(sessionId: string, entryId?: string) {
           if (!kernel) {
             return Promise.reject(new Error('Runtime Session capability is not ready.'));
           }
-          return kernel.application.forkSession(sessionId, entryId);
+          const { application } = kernel;
+          return invokeSessionCapability(() => application.forkSession(sessionId, entryId));
         },
         getPermissionMode(sessionId: string) {
           if (!kernel) throw new Error('Runtime Session capability is not ready.');
-          return kernel.application.getSessionPermissionMode(sessionId);
+          const { application } = kernel;
+          return invokeSessionCapabilitySync(
+            () => application.getSessionPermissionMode(sessionId),
+          );
         },
         setPermissionMode(input: {
           sessionId: string;
@@ -259,7 +271,10 @@ export async function buildRuntimeHandle(
           originClientId?: string;
         }) {
           if (!kernel) throw new Error('Runtime Session capability is not ready.');
-          return kernel.application.setSessionPermissionMode(input);
+          const { application } = kernel;
+          return invokeSessionCapabilitySync(
+            () => application.setSessionPermissionMode(input),
+          );
         },
         onPermissionModeChanged(handler: (state: SessionPermissionState) => void) {
           sessionPermissionListeners.add(handler);
@@ -316,6 +331,7 @@ export async function buildRuntimeHandle(
     )) {
       subagentProfiles.set(profile.id, profile);
     }
+
     kernel = createApplication({
       resources: bootstrap.resources,
       state: bootstrap.state,
@@ -505,6 +521,29 @@ export async function buildRuntimeHandle(
     composition: compositionManager.compositionControl(),
     close,
   });
+}
+
+async function invokeSessionCapability<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throwChannelOperationError(error);
+  }
+}
+
+function invokeSessionCapabilitySync<T>(operation: () => T): T {
+  try {
+    return operation();
+  } catch (error) {
+    throwChannelOperationError(error);
+  }
+}
+
+function throwChannelOperationError(error: unknown): never {
+  if (error instanceof SessionError) {
+    throw new ChannelOperationError(error.code, error.message, { cause: error });
+  }
+  throw error;
 }
 
 function assembleLoadedRuntimeUnits(params: {

@@ -42,7 +42,11 @@ Image count ignores text blocks. The aggregate budget is charged after base64 de
 
 ## 5. Drop results
 
-The pipeline returns neutral Core failure reasons for unsupported/mismatched/unreadable media, size/count/aggregate limits, and failed optimization. Media does not own user-visible wording; Runtime raises `AttachmentValidationError` before any message side effect.
+The pipeline returns neutral Core failure reasons for
+unsupported/mismatched/unreadable media, size/count/aggregate limits, and
+failed optimization. Media does not own user-visible wording. Runtime rejects
+the message before any side effect and reports the Channel-owned
+`ChannelOperationError` code `ATTACHMENT_REJECTED`.
 
 ## 6. Downstream use
 

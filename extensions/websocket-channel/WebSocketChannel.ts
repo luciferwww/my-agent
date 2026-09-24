@@ -1,41 +1,42 @@
-import type { AgentEvent } from '../../../core/runner/types.js';
-import type {
+import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { createServer, type Server as HttpServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+
+import {
+  ChannelOperationError,
+  type AgentEvent,
+  type ApprovalClosedResult,
+  type ApprovalDecision,
+  type ApprovalRequest,
+  type Channel,
+  type ChannelCompletion,
+  type ChannelInteractionAdapter,
+  type ChannelOperationErrorCode,
+  type ChannelRunRequest,
+  type ChannelRuntimeCapabilities,
+  type ExtensionLogger,
+  type InboundContentBlock,
+  type ModelCatalogSnapshot,
   SessionPermissionMode,
   SessionPermissionState,
-} from '../../../core/approval/index.js';
-import { SessionError, type SessionErrorCode } from '../../../core/session/index.js';
-import { Logger } from '../../../platform/logger/index.js';
-import { WS_MAX_PAYLOAD_BYTES } from '../../../core/media/constants.js';
-import type {
-  ApprovalClosedResult,
-  ApprovalDecision,
-  ApprovalRequest,
-  Channel,
-  ChannelCompletion,
-  ChannelInteractionAdapter,
-  ChannelRunRequest,
-  ChannelRuntimeCapabilities,
-  InboundContentBlock,
-  ModelCatalogSnapshot,
-  TurnInteractionResponse,
-} from '../../../core/channel/index.js';
-import { AttachmentValidationError } from '../../../core/media/attachment-pipeline.js';
+  type TurnInteractionResponse,
+} from 'my-agent/extension-api';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 
-const log = Logger.get('WebSocketChannel');
+import type { WebSocketExtensionConfig } from './config.js';
+import { WS_MAX_PAYLOAD_BYTES } from './websocket-constants.js';
 
-const DEFAULT_HOST = '127.0.0.1';
-const DEFAULT_PATH = '/ws';
 const CLOSE_CODE_SUPERSEDED = 1000;
 const CLOSE_CODE_MAX_CLIENTS = 1008;
+const CLIENT_PATH_TOKEN = '__MY_AGENT_WEBSOCKET_PATH__';
 
 type ChannelErrorCode =
   | 'INVALID_JSON'
   | 'INVALID_MESSAGE'
   | 'UNSUPPORTED_MESSAGE'
   | 'SERVER_NOT_READY'
-  | 'ATTACHMENT_REJECTED'
-  | SessionErrorCode;
+  | ChannelOperationErrorCode;
 
 type ClientMessage =
   | {
@@ -57,7 +58,7 @@ type ClientMessage =
   | {
       // core-abort-spec.md §13: single-direction inbound abort. No ack;
       // clients observe completion via `run_end{stopReason:'aborted'}`
-      // (§13.1). v1 has no auth check—WS server is a single trust domain.
+      // (§13.1).
       type: 'abort_turn';
       sessionId: string;
     }
@@ -109,17 +110,38 @@ type ClientMessage =
 
 type OutboundMessage =
   | { type: 'hello_ack'; clientId: string }
-  | { type: 'approval_requested'; id: string; toolName: string; input: Record<string, unknown> }
-  | { type: 'approval_closed'; id: string; outcome: ApprovalClosedResult['outcome']; reason: string }
+  | {
+      type: 'approval_requested';
+      id: string;
+      sessionId: string;
+      turnId: string;
+      toolName: string;
+      input: Record<string, unknown>;
+    }
+  | {
+      type: 'approval_closed';
+      id: string;
+      sessionId: string;
+      turnId: string;
+      outcome: ApprovalClosedResult['outcome'];
+      reason: string;
+    }
   | { type: 'channel_error'; code: ChannelErrorCode; message: string }
   | Record<string, unknown>;
 
-export interface WebSocketChannelConfig {
-  port: number;
-  host?: string;
-  path?: string;
-  maxClients?: number;
-  approval?: boolean;
+export type BrowserLauncher = (url: string) => Promise<void>;
+
+export interface WebSocketChannelOptions {
+  readonly config: WebSocketExtensionConfig;
+  readonly clientFilePath: string;
+  readonly logger: ExtensionLogger;
+  readonly browserLauncher?: BrowserLauncher;
+}
+
+interface PendingApprovalRoute {
+  readonly clientId: string;
+  readonly sessionId: string;
+  readonly turnId: string;
 }
 
 class ProtocolError extends Error {
@@ -136,9 +158,15 @@ export class WebSocketChannel implements Channel {
 
   private readonly host: string;
   private readonly path: string;
+  private readonly clientPath: string;
   private readonly maxClients?: number;
+  private readonly logger: ExtensionLogger;
+  private readonly clientFilePath: string;
+  private readonly openBrowser: boolean;
+  private readonly browserLauncher: BrowserLauncher;
 
   private server?: WebSocketServer;
+  private httpServer?: HttpServer;
   private messageHandler?: (req: ChannelRunRequest) => Promise<void>;
   private interactionResponseHandler?: (response: TurnInteractionResponse) => void;
   private interactionUnavailableHandler?: (id: string, reason: 'origin_disconnected') => void;
@@ -147,7 +175,7 @@ export class WebSocketChannel implements Channel {
   private readonly sessions = new Map<string, Set<string>>();
   private readonly clientSessions = new Map<string, Set<string>>();
   private readonly socketClientIds = new WeakMap<WebSocket, string>();
-  private readonly pendingApprovalClientIds = new Map<string, string>();
+  private readonly pendingApprovals = new Map<string, PendingApprovalRoute>();
 
   /**
    * Channel activation 同步注入：bindRuntimeCapabilities 先于 start()。
@@ -162,10 +190,15 @@ export class WebSocketChannel implements Channel {
   private completionSettled = false;
   private readonly sessionByOriginMessageId = new Map<string, string>();
 
-  constructor(private readonly config: WebSocketChannelConfig) {
-    this.host = config.host ?? DEFAULT_HOST;
-    this.path = config.path ?? DEFAULT_PATH;
-    this.maxClients = config.maxClients;
+  constructor(private readonly options: WebSocketChannelOptions) {
+    this.host = options.config.host;
+    this.path = options.config.webSocketPath;
+    this.clientPath = options.config.clientPath;
+    this.maxClients = options.config.maxClients;
+    this.logger = options.logger;
+    this.clientFilePath = options.clientFilePath;
+    this.openBrowser = options.config.openBrowser;
+    this.browserLauncher = options.browserLauncher ?? launchBrowser;
     this.completion = new Promise<ChannelCompletion>((resolve) => {
       this.settleCompletion = (result) => {
         if (this.completionSettled) return;
@@ -174,7 +207,7 @@ export class WebSocketChannel implements Channel {
       };
     });
 
-    if (config.approval) {
+    if (options.config.approval) {
       this.interaction = this.makeInteractionAdapter();
     }
   }
@@ -201,7 +234,7 @@ export class WebSocketChannel implements Channel {
     if (!sessionAudience || sessionAudience.size === 0) return;
 
     if (event.type !== 'text_delta') {
-      log.debug('broadcasting event to session audience', {
+      this.logger.debug('broadcasting event to session audience', {
         channelId: this.id,
         eventType: event.type,
         sessionId: eventSessionId,
@@ -210,7 +243,7 @@ export class WebSocketChannel implements Channel {
       });
     }
 
-    const payload = this.serializeEvent(event);
+    const payload = this.serializeEvent(event, eventSessionId);
     for (const clientId of sessionAudience) {
       const socket = this.clients.get(clientId);
       if (!socket || socket.readyState !== WebSocket.OPEN) continue;
@@ -231,11 +264,39 @@ export class WebSocketChannel implements Channel {
     }
 
     this.stopRequested = false;
+    let clientHtml: string;
+    try {
+      clientHtml = await this.loadClientHtml();
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      this.settleCompletion({ outcome: 'failed', phase: 'startup', error: failure });
+      throw failure;
+    }
+    if (this.stopRequested) {
+      throw new Error('WebSocketChannel.start: server closed before readiness');
+    }
+
+    const httpServer = createServer((request, response) => {
+      const requestPath = new URL(request.url ?? '/', 'http://localhost').pathname;
+      if (
+        requestPath !== this.clientPath
+        || (request.method !== 'GET' && request.method !== 'HEAD')
+      ) {
+        response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+        response.end('Not found');
+        return;
+      }
+      response.writeHead(200, {
+        'cache-control': 'no-store',
+        'content-type': 'text/html; charset=utf-8',
+      });
+      response.end(request.method === 'HEAD' ? undefined : clientHtml);
+    });
+    this.httpServer = httpServer;
 
     const server = new WebSocketServer({
-      host: this.host,
+      server: httpServer,
       path: this.path,
-      port: this.config.port,
       maxPayload: WS_MAX_PAYLOAD_BYTES,
     });
     this.server = server;
@@ -246,9 +307,9 @@ export class WebSocketChannel implements Channel {
         return;
       }
 
-      log.info('client connected', {
+      this.logger.info('client connected', {
         channelId: this.id,
-        path: request.url,
+        path: new URL(request.url ?? '/', 'http://localhost').pathname,
         remoteAddress: request.socket.remoteAddress,
       });
 
@@ -259,16 +320,10 @@ export class WebSocketChannel implements Channel {
         this.handleSocketClose(socket);
       });
       socket.on('error', (error) => {
-        log.warn('socket error', {
+        this.logger.warn('socket error', {
           channelId: this.id,
           error: error.message,
         });
-      });
-    });
-    server.once('close', () => {
-      this.settleCompletion({
-        outcome: 'closed',
-        reason: this.stopRequested ? 'stopped' : 'transport_closed',
       });
     });
     server.on('error', (error) => {
@@ -276,17 +331,41 @@ export class WebSocketChannel implements Channel {
         this.settleCompletion({ outcome: 'failed', phase: 'runtime', error });
       }
     });
+    httpServer.once('close', () => {
+      this.settleCompletion({
+        outcome: 'closed',
+        reason: this.stopRequested ? 'stopped' : 'transport_closed',
+      });
+    });
+    httpServer.on('error', (error) => {
+      if (this.started) {
+        this.settleCompletion({ outcome: 'failed', phase: 'runtime', error });
+      }
+    });
 
     try {
       await new Promise<void>((resolve, reject) => {
-        server.once('listening', resolve);
-        server.once('error', reject);
-        server.once('close', () => {
+        httpServer.once('listening', resolve);
+        httpServer.once('error', reject);
+        httpServer.once('close', () => {
           reject(new Error('WebSocketChannel.start: server closed before readiness'));
         });
+        httpServer.listen(this.options.config.port, this.host);
       });
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
+      if (this.server === server) {
+        this.server = undefined;
+        this.httpServer = undefined;
+        await new Promise<void>((resolve) => {
+          server.close(() => resolve());
+        });
+        if (httpServer.listening) {
+          await new Promise<void>((resolve) => {
+            httpServer.close(() => resolve());
+          });
+        }
+      }
       this.settleCompletion({ outcome: 'failed', phase: 'startup', error: failure });
       throw failure;
     }
@@ -296,12 +375,19 @@ export class WebSocketChannel implements Channel {
       this.runtimeCapabilities?.sessions.onPermissionModeChanged((permission) => {
         this.broadcastPermissionMode(permission);
       });
-    log.info('websocket channel started', {
+    this.logger.info('websocket channel started', {
       channelId: this.id,
       host: this.host,
       path: this.path,
-      port: this.config.port,
+      port: this.listeningPort(),
     });
+    if (this.openBrowser) {
+      try {
+        await this.browserLauncher(this.clientUrl());
+      } catch {
+        this.logger.warn('browser launch failed', { channelId: this.id });
+      }
+    }
   }
 
   async stop(): Promise<void> {
@@ -309,13 +395,15 @@ export class WebSocketChannel implements Channel {
     this.stopRequested = true;
     this.unsubscribePermissionModeChanged?.();
     this.unsubscribePermissionModeChanged = undefined;
-    if (!this.server) {
+    if (!this.server || !this.httpServer) {
       this.settleCompletion({ outcome: 'closed', reason: 'stopped' });
       return;
     }
 
     const server = this.server;
+    const httpServer = this.httpServer;
     this.server = undefined;
+    this.httpServer = undefined;
     this.started = false;
 
     for (const socket of server.clients) {
@@ -332,6 +420,14 @@ export class WebSocketChannel implements Channel {
           resolve();
         });
       });
+      if (httpServer.listening) {
+        await new Promise<void>((resolve, reject) => {
+          httpServer.close((error) => {
+            if (error) reject(error);
+            else resolve();
+          });
+        });
+      }
       this.settleCompletion({ outcome: 'closed', reason: 'stopped' });
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
@@ -342,7 +438,36 @@ export class WebSocketChannel implements Channel {
     this.clients.clear();
     this.sessions.clear();
     this.clientSessions.clear();
-    log.info('websocket channel stopped', { channelId: this.id });
+    this.logger.info('websocket channel stopped', { channelId: this.id });
+  }
+
+  private async loadClientHtml(): Promise<string> {
+    const source = await readFile(this.clientFilePath, 'utf8');
+    if (!source.includes(CLIENT_PATH_TOKEN)) {
+      throw new Error('WebSocketChannel.start: client asset is missing its path token');
+    }
+    const scriptSafePath = JSON.stringify(this.path).replaceAll('<', '\\u003c');
+    return source.replaceAll(CLIENT_PATH_TOKEN, scriptSafePath);
+  }
+
+  private listeningPort(): number {
+    const address = this.httpServer?.address();
+    if (address === null || typeof address === 'string' || address === undefined) {
+      throw new Error('WebSocketChannel: HTTP listener address is unavailable');
+    }
+    return (address as AddressInfo).port;
+  }
+
+  private clientUrl(): string {
+    return `${this.clientOrigin()}${this.clientPath}`;
+  }
+
+  private clientOrigin(): string {
+    const host = this.host === '0.0.0.0' || this.host === '::'
+      ? '127.0.0.1'
+      : this.host;
+    const urlHost = host.includes(':') ? `[${host}]` : host;
+    return new URL(`http://${urlHost}:${this.listeningPort()}`).origin;
   }
 
   private async handleRawMessage(socket: WebSocket, raw: RawData): Promise<void> {
@@ -386,12 +511,12 @@ export class WebSocketChannel implements Channel {
         this.sendChannelError(socket, error.code, error.message);
         return;
       }
-      if (error instanceof AttachmentValidationError) {
-        this.sendChannelError(socket, 'ATTACHMENT_REJECTED', error.message);
+      if (error instanceof ChannelOperationError) {
+        this.sendChannelError(socket, error.code, error.message);
         return;
       }
 
-      log.warn('message handling failed', {
+      this.logger.warn('message handling failed', {
         channelId: this.id,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -525,7 +650,7 @@ export class WebSocketChannel implements Channel {
     this.clients.set(message.clientId, socket);
     this.socketClientIds.set(socket, message.clientId);
 
-    log.info('client hello acknowledged', {
+    this.logger.info('client hello acknowledged', {
       channelId: this.id,
       clientId: message.clientId,
       replacedExistingConnection: Boolean(previousSocket && previousSocket !== socket),
@@ -533,7 +658,7 @@ export class WebSocketChannel implements Channel {
 
     // 同一 clientId 只允许一个逻辑活跃连接；旧连接的晚到 close 会在 handleSocketClose 中被忽略。
     if (previousSocket && previousSocket !== socket) {
-      log.info('closing superseded client connection', {
+      this.logger.info('closing superseded client connection', {
         channelId: this.id,
         clientId: message.clientId,
       });
@@ -557,7 +682,7 @@ export class WebSocketChannel implements Channel {
     }
 
     this.registerSessionAudience(clientId, message.sessionId);
-    log.info('run_turn received', {
+    this.logger.info('run_turn received', {
       channelId: this.id,
       clientId,
       sessionId: message.sessionId,
@@ -580,7 +705,13 @@ export class WebSocketChannel implements Channel {
     message: Extract<ClientMessage, { type: 'approval_resolve' }>,
   ): void {
     const clientId = this.requireBoundClientId(socket);
-    log.info('approval response received', {
+    if (this.pendingApprovals.get(message.id)?.clientId !== clientId) {
+      throw new ProtocolError(
+        'INVALID_MESSAGE',
+        'Approval response does not belong to this client.',
+      );
+    }
+    this.logger.info('approval response received', {
       channelId: this.id,
       clientId,
       approvalId: message.id,
@@ -593,7 +724,7 @@ export class WebSocketChannel implements Channel {
 
   bindRuntimeCapabilities(capabilities: ChannelRuntimeCapabilities): void {
     this.runtimeCapabilities = capabilities;
-    log.debug('Runtime capabilities bound', { channelId: this.id });
+    this.logger.debug('Runtime capabilities bound', { channelId: this.id });
   }
 
   private handleGetModelCatalog(
@@ -744,7 +875,7 @@ export class WebSocketChannel implements Channel {
     try {
       return await operation(capability);
     } catch (error) {
-      if (error instanceof SessionError) {
+      if (error instanceof ChannelOperationError) {
         throw new ProtocolError(error.code, error.message);
       }
       throw new ProtocolError('SERVER_NOT_READY', 'Runtime Session capability is not ready.');
@@ -767,7 +898,7 @@ export class WebSocketChannel implements Channel {
   ): void {
     const clientId = this.requireBoundClientId(socket);
     if (!this.runtimeCapabilities) {
-      log.warn('abort_turn received but Runtime capabilities not bound; ignoring', {
+      this.logger.warn('abort_turn received but Runtime capabilities not bound; ignoring', {
         channelId: this.id,
         clientId,
         sessionId: message.sessionId,
@@ -775,7 +906,7 @@ export class WebSocketChannel implements Channel {
       return;
     }
     const result = this.runtimeCapabilities.abort.abortTurn(message.sessionId);
-    log.info('abort_turn dispatched', {
+    this.logger.info('abort_turn dispatched', {
       channelId: this.id,
       clientId,
       sessionId: message.sessionId,
@@ -791,7 +922,7 @@ export class WebSocketChannel implements Channel {
     this.socketClientIds.delete(socket);
     // 新连接接管后，旧连接的 close 仍可能晚到；这类 stale close 不得清掉当前活跃状态。
     if (this.clients.get(clientId) !== socket) {
-      log.debug('ignoring stale socket close', {
+      this.logger.debug('ignoring stale socket close', {
         channelId: this.id,
         clientId,
       });
@@ -800,9 +931,9 @@ export class WebSocketChannel implements Channel {
 
     this.clients.delete(clientId);
 
-    for (const [approvalId, pendingClientId] of this.pendingApprovalClientIds) {
-      if (pendingClientId !== clientId) continue;
-      this.pendingApprovalClientIds.delete(approvalId);
+    for (const [approvalId, route] of this.pendingApprovals) {
+      if (route.clientId !== clientId) continue;
+      this.pendingApprovals.delete(approvalId);
       this.dispatchApprovalUnavailable(approvalId, 'origin_disconnected');
     }
 
@@ -819,7 +950,7 @@ export class WebSocketChannel implements Channel {
       this.clientSessions.delete(clientId);
     }
 
-    log.info('client disconnected', {
+    this.logger.info('client disconnected', {
       channelId: this.id,
       clientId,
     });
@@ -853,7 +984,7 @@ export class WebSocketChannel implements Channel {
     // 反向索引用于断线时按 clientId 做 O(关联 session 数) 清理，而不是全表扫描 sessions。
     sessionIds.add(sessionId);
 
-    log.debug('session audience registered', {
+    this.logger.debug('session audience registered', {
       channelId: this.id,
       clientId,
       sessionId,
@@ -874,7 +1005,7 @@ export class WebSocketChannel implements Channel {
         if (request.kind !== 'approval') {
           throw new Error(`WebSocketChannel does not support interaction kind: ${request.kind}`);
         }
-        this.sendApprovalClosedMessage(request.id, request.originClientId, result);
+        this.sendApprovalClosedMessage(request, result);
       },
       onInteractionResponse: (handler) => {
         this.interactionResponseHandler = handler;
@@ -886,9 +1017,9 @@ export class WebSocketChannel implements Channel {
   }
 
   private dispatchApprovalSubmission(id: string, decision: ApprovalDecision): void {
-    this.pendingApprovalClientIds.delete(id);
+    this.pendingApprovals.delete(id);
     if (this.interactionResponseHandler) {
-      log.debug('routing approval submission through interaction adapter', {
+      this.logger.debug('routing approval submission through interaction adapter', {
         channelId: this.id,
         approvalId: id,
         decision,
@@ -915,10 +1046,13 @@ export class WebSocketChannel implements Channel {
   }
 
   private sendApprovalRequestMessage(
-    request: Pick<ApprovalRequest, 'id' | 'toolName' | 'input' | 'originClientId'>,
+    request: Pick<
+      ApprovalRequest,
+      'id' | 'sessionId' | 'turnId' | 'toolName' | 'input' | 'originClientId'
+    >,
   ): { status: 'accepted' } | { status: 'unavailable'; reason: 'origin_missing' | 'delivery_failed' } {
     if (!request.originClientId) {
-      log.debug('skipping approval request without origin client', {
+      this.logger.debug('skipping approval request without origin client', {
         channelId: this.id,
         approvalId: request.id,
         toolName: request.toolName,
@@ -927,7 +1061,7 @@ export class WebSocketChannel implements Channel {
     }
     const socket = this.clients.get(request.originClientId);
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      log.warn('unable to deliver approval request to client', {
+      this.logger.warn('unable to deliver approval request to client', {
         channelId: this.id,
         approvalId: request.id,
         toolName: request.toolName,
@@ -935,16 +1069,22 @@ export class WebSocketChannel implements Channel {
       });
       return { status: 'unavailable', reason: 'delivery_failed' };
     }
-    log.info('delivering approval request to client', {
+    this.logger.info('delivering approval request to client', {
       channelId: this.id,
       approvalId: request.id,
       toolName: request.toolName,
       originClientId: request.originClientId,
     });
-    this.pendingApprovalClientIds.set(request.id, request.originClientId);
+    this.pendingApprovals.set(request.id, {
+      clientId: request.originClientId,
+      sessionId: request.sessionId,
+      turnId: request.turnId,
+    });
     this.sendJson(socket, {
       type: 'approval_requested',
       id: request.id,
+      sessionId: request.sessionId,
+      turnId: request.turnId,
       toolName: request.toolName,
       input: request.input,
     });
@@ -952,35 +1092,36 @@ export class WebSocketChannel implements Channel {
   }
 
   private sendApprovalClosedMessage(
-    id: string,
-    originClientId: string | undefined,
+    request: Pick<ApprovalRequest, 'id' | 'sessionId' | 'turnId' | 'originClientId'>,
     result: ApprovalClosedResult,
   ): void {
-    this.pendingApprovalClientIds.delete(id);
-    if (!originClientId) {
-      log.debug('skipping approval closure without origin client', {
+    this.pendingApprovals.delete(request.id);
+    if (!request.originClientId) {
+      this.logger.debug('skipping approval closure without origin client', {
         channelId: this.id,
-        approvalId: id,
+        approvalId: request.id,
       });
       return;
     }
-    const socket = this.clients.get(originClientId);
+    const socket = this.clients.get(request.originClientId);
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      log.warn('unable to deliver approval closure to client', {
+      this.logger.warn('unable to deliver approval closure to client', {
         channelId: this.id,
-        approvalId: id,
-        originClientId,
+        approvalId: request.id,
+        originClientId: request.originClientId,
       });
       return;
     }
-    log.info('delivering approval closure to client', {
+    this.logger.info('delivering approval closure to client', {
       channelId: this.id,
-      approvalId: id,
-      originClientId,
+      approvalId: request.id,
+      originClientId: request.originClientId,
     });
     this.sendJson(socket, {
       type: 'approval_closed',
-      id,
+      id: request.id,
+      sessionId: request.sessionId,
+      turnId: request.turnId,
       outcome: result.outcome,
       reason: result.outcome === 'approved'
         ? result.source
@@ -1003,7 +1144,13 @@ export class WebSocketChannel implements Channel {
     socket.send(JSON.stringify(payload));
   }
 
-  private serializeEvent(event: AgentEvent): Record<string, unknown> {
+  private serializeEvent(event: AgentEvent, eventSessionId: string): Record<string, unknown> {
+    if (event.type === 'request_end') {
+      return {
+        ...event,
+        sessionId: eventSessionId,
+      };
+    }
     if (event.type === 'error') {
       // Error 对象直接 JSON.stringify 会退化成空对象，这里显式降成 message 以匹配协议文档。
       return {
@@ -1133,6 +1280,7 @@ function readRunTurnMessage(value: unknown): string | InboundContentBlock[] {
     if (value.trim().length === 0) {
       throw new ProtocolError('INVALID_MESSAGE', 'message must be a non-empty string or content-block array.');
     }
+
     return value;
   }
   if (!Array.isArray(value) || value.length === 0) {
@@ -1208,4 +1356,28 @@ function readOptionalPermissionMode(
   field: string,
 ): SessionPermissionMode | undefined {
   return value === undefined ? undefined : readPermissionMode(value, field);
+}
+
+async function launchBrowser(url: string): Promise<void> {
+  const command = process.platform === 'win32'
+    ? 'rundll32.exe'
+    : process.platform === 'darwin'
+      ? 'open'
+      : 'xdg-open';
+  const args = process.platform === 'win32'
+    ? ['url.dll,FileProtocolHandler', url]
+    : [url];
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.once('error', reject);
+    child.once('spawn', () => {
+      child.unref();
+      resolve();
+    });
+  });
 }

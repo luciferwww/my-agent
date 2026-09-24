@@ -1,14 +1,29 @@
 import { once } from 'node:events';
+import { createServer } from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
-import type {
-  ApprovalInteractionRequest,
-  ChannelRuntimeCapabilities,
-  ModelCatalogSnapshot,
-} from '../../../core/channel/index.js';
-import { SessionError } from '../../../core/session/index.js';
-import { AttachmentValidationError } from '../../../core/media/attachment-pipeline.js';
-import { WebSocketChannel } from './WebSocketChannel.js';
+import {
+  ChannelOperationError,
+  type ExtensionLogger,
+  type ApprovalInteractionRequest,
+  type ChannelRuntimeCapabilities,
+  type ModelCatalogSnapshot,
+} from 'my-agent/extension-api';
+import {
+  WebSocketChannel,
+  type BrowserLauncher,
+  type WebSocketChannelOptions,
+} from './WebSocketChannel.js';
+import type { WebSocketExtensionConfig } from './config.js';
+
+const CLIENT_FILE_PATH = fileURLToPath(new URL('./client/chat.html', import.meta.url));
+const logger: ExtensionLogger = {
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+};
 
 describe('WebSocketChannel', () => {
   let channel: WebSocketChannel | undefined;
@@ -23,7 +38,7 @@ describe('WebSocketChannel', () => {
   });
 
   it('requires an onMessage handler before start', async () => {
-    channel = new WebSocketChannel({ port: 0 });
+    channel = createChannel({ port: 0 });
     await expect(channel.start()).rejects.toThrow('WebSocketChannel.start: no message handler registered');
     await expect(channel.completion).resolves.toEqual(
       expect.objectContaining({ outcome: 'failed', phase: 'startup' }),
@@ -31,7 +46,7 @@ describe('WebSocketChannel', () => {
   });
 
   it('reports listening readiness separately from terminal stop completion', async () => {
-    channel = new WebSocketChannel({ port: 0 });
+    channel = createChannel({ port: 0 });
     channel.onMessage(async () => undefined);
     let completed = false;
     void channel.completion.then(() => {
@@ -46,8 +61,80 @@ describe('WebSocketChannel', () => {
     await expect(channel.completion).resolves.toEqual({ outcome: 'closed', reason: 'stopped' });
   });
 
+  it('rejects startup and cleans up when the configured port is occupied', async () => {
+    const occupyingServer = createServer();
+    occupyingServer.listen(0, '127.0.0.1');
+    await once(occupyingServer, 'listening');
+    const address = occupyingServer.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Occupied test listener address is unavailable');
+    }
+
+    try {
+      channel = createChannel({ port: address.port });
+      channel.onMessage(async () => undefined);
+
+      await expect(channel.start()).rejects.toMatchObject({ code: 'EADDRINUSE' });
+      await expect(channel.completion).resolves.toEqual(
+        expect.objectContaining({ outcome: 'failed', phase: 'startup' }),
+      );
+      expect((channel as unknown as { server?: unknown }).server).toBeUndefined();
+      expect((channel as unknown as { httpServer?: unknown }).httpServer).toBeUndefined();
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        occupyingServer.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+    }
+  });
+
+  it('serves the packaged client and derives its WebSocket URL from the listener', async () => {
+    channel = createChannel({ port: 0 });
+    channel.onMessage(async () => undefined);
+    await channel.start();
+
+    const response = await fetch(clientUrl(channel));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/html');
+    const html = await response.text();
+    expect(html).toContain("const DEFAULT_SOCKET_PATH = \"/ws\";");
+    expect(html).not.toContain('__MY_AGENT_WEBSOCKET_PATH__');
+    await expect(fetch(`${clientUrl(channel)}missing`)).resolves.toMatchObject({ status: 404 });
+  });
+
+  it('escapes the configured WebSocket path before embedding it in the client script', async () => {
+    channel = createChannel({ port: 0, webSocketPath: '/</script><script>alert(1)</script>' });
+    channel.onMessage(async () => undefined);
+    await channel.start();
+
+    const html = await (await fetch(clientUrl(channel))).text();
+
+    expect(html).toContain('\\u003c/script>');
+    expect(html).not.toContain('"/</script><script>alert(1)</script>"');
+  });
+
+  it('opens the browser only when explicitly enabled and contains launch failure', async () => {
+    const browserLauncher = vi.fn<BrowserLauncher>().mockRejectedValue(new Error('launch failed'));
+    channel = createChannel({ port: 0 }, browserLauncher);
+    channel.onMessage(async () => undefined);
+    await channel.start();
+    expect(browserLauncher).not.toHaveBeenCalled();
+    await channel.stop();
+
+    channel = createChannel({ port: 0, openBrowser: true }, browserLauncher);
+    channel.onMessage(async () => undefined);
+    await expect(channel.start()).resolves.toBeUndefined();
+    expect(browserLauncher).toHaveBeenCalledWith(clientUrl(channel));
+    expect(logger.warn).toHaveBeenCalledWith('browser launch failed', {
+      channelId: 'websocket',
+    });
+  });
+
   it('stops safely while start is still waiting for listening readiness', async () => {
-    channel = new WebSocketChannel({ port: 0 });
+    channel = createChannel({ port: 0 });
     channel.onMessage(async () => undefined);
 
     const start = channel.start();
@@ -60,7 +147,7 @@ describe('WebSocketChannel', () => {
   it('binds hello and forwards run_turn with clientId', async () => {
     const modelId = ' model/vendor:v1?x=1\n\u0000 ';
     const handler = vi.fn(async () => undefined);
-    channel = new WebSocketChannel({ port: 0 });
+    channel = createChannel({ port: 0 });
     channel.onMessage(handler);
     await channel.start();
 
@@ -88,9 +175,12 @@ describe('WebSocketChannel', () => {
   });
 
   it('returns an attachment rejection to the originating client', async () => {
-    channel = new WebSocketChannel({ port: 0 });
+    channel = createChannel({ port: 0 });
     channel.onMessage(async () => {
-      throw new AttachmentValidationError([{ blockIndex: 1, reason: 'mime_mismatch' }]);
+      throw new ChannelOperationError(
+        'ATTACHMENT_REJECTED',
+        'Inbound message rejected because 1 attachment validation failure(s) occurred.',
+      );
     });
     await channel.start();
 
@@ -119,7 +209,7 @@ describe('WebSocketChannel', () => {
 
   it('preserves an empty string Model ID instead of treating it as missing', async () => {
     const handler = vi.fn(async () => undefined);
-    channel = new WebSocketChannel({ port: 0 });
+    channel = createChannel({ port: 0 });
     channel.onMessage(handler);
     await channel.start();
 
@@ -144,7 +234,7 @@ describe('WebSocketChannel', () => {
 
   it('accepts camelCase mediaType and converts it to the internal content-block shape', async () => {
     const handler = vi.fn(async () => undefined);
-    channel = new WebSocketChannel({ port: 0 });
+    channel = createChannel({ port: 0 });
     channel.onMessage(handler);
     await channel.start();
 
@@ -177,7 +267,7 @@ describe('WebSocketChannel', () => {
     { requestOverride: { maxOutputTokens: 2048 } },
   ])('rejects removed legacy run_turn fields: %j', async (legacyField) => {
     const handler = vi.fn(async () => undefined);
-    channel = new WebSocketChannel({ port: 0 });
+    channel = createChannel({ port: 0 });
     channel.onMessage(handler);
     await channel.start();
 
@@ -208,7 +298,7 @@ describe('WebSocketChannel', () => {
     }, 'Legacy model/output-token override fields are not supported; use modelReference.'],
   ] as const)('rejects retired snake_case run_turn fields: %j', async (retiredField, message) => {
     const handler = vi.fn(async () => undefined);
-    channel = new WebSocketChannel({ port: 0 });
+    channel = createChannel({ port: 0 });
     channel.onMessage(handler);
     await channel.start();
 
@@ -253,7 +343,7 @@ describe('WebSocketChannel', () => {
     };
 
     it('returns a request-correlated camelCase Catalog after hello', async () => {
-      channel = new WebSocketChannel({ port: 0 });
+      channel = createChannel({ port: 0 });
       channel.onMessage(async () => undefined);
       channel.bindRuntimeCapabilities(capabilities(() => unavailableCatalog));
       await channel.start();
@@ -294,7 +384,7 @@ describe('WebSocketChannel', () => {
     });
 
     it('unicasts a Catalog response only to the requesting client', async () => {
-      channel = new WebSocketChannel({ port: 0 });
+      channel = createChannel({ port: 0 });
       channel.onMessage(async () => undefined);
       channel.bindRuntimeCapabilities(capabilities(() => unavailableCatalog));
       await channel.start();
@@ -321,7 +411,7 @@ describe('WebSocketChannel', () => {
 
     it('observes the latest generation through one long-lived binding', async () => {
       let snapshot = unavailableCatalog;
-      channel = new WebSocketChannel({ port: 0 });
+      channel = createChannel({ port: 0 });
       channel.onMessage(async () => undefined);
       channel.bindRuntimeCapabilities(capabilities(() => snapshot));
       await channel.start();
@@ -342,7 +432,7 @@ describe('WebSocketChannel', () => {
     });
 
     it('rejects query before hello, blank requestId, and missing capability', async () => {
-      channel = new WebSocketChannel({ port: 0 });
+      channel = createChannel({ port: 0 });
       channel.onMessage(async () => undefined);
       await channel.start();
 
@@ -382,7 +472,7 @@ describe('WebSocketChannel', () => {
           changedAt: 1,
         },
       }));
-      channel = new WebSocketChannel({ port: 0 });
+      channel = createChannel({ port: 0 });
       channel.onMessage(async () => undefined);
       channel.bindRuntimeCapabilities(capabilities(
         () => ({
@@ -467,7 +557,7 @@ describe('WebSocketChannel', () => {
             return unsubscribe;
           },
         });
-        channel = new WebSocketChannel({ port: 0 });
+        channel = createChannel({ port: 0 });
         channel.onMessage(async () => undefined);
         channel.bindRuntimeCapabilities(capabilities(undefined, undefined, sessionCapability));
         await channel.start();
@@ -539,7 +629,7 @@ describe('WebSocketChannel', () => {
       };
 
       const runStrictPermissionValidationTest = async () => {
-        channel = new WebSocketChannel({ port: 0 });
+        channel = createChannel({ port: 0 });
         channel.onMessage(async () => undefined);
         channel.bindRuntimeCapabilities(capabilities());
         await channel.start();
@@ -574,7 +664,7 @@ describe('WebSocketChannel', () => {
         });
       };
       const handler = vi.fn(async () => undefined);
-      channel = new WebSocketChannel({ port: 0 });
+      channel = createChannel({ port: 0 });
       channel.onMessage(handler);
       channel.bindRuntimeCapabilities(capabilities(
         () => ({
@@ -642,10 +732,10 @@ describe('WebSocketChannel', () => {
         unarchiveSession: vi.fn(async () => unarchived),
         forkSession: vi.fn(async () => forked),
         getSession: vi.fn(async () => {
-          throw new SessionError('SESSION_NOT_FOUND', 'Session does not exist.');
+          throw new ChannelOperationError('SESSION_NOT_FOUND', 'Session does not exist.');
         }),
       });
-      channel = new WebSocketChannel({ port: 0 });
+      channel = createChannel({ port: 0 });
       channel.onMessage(async () => undefined);
       channel.bindRuntimeCapabilities(capabilities(undefined, undefined, sessionCapability));
       await channel.start();
@@ -696,7 +786,7 @@ describe('WebSocketChannel', () => {
     });
 
     it('rejects a create request when the Session capability is not bound', async () => {
-      channel = new WebSocketChannel({ port: 0 });
+      channel = createChannel({ port: 0 });
       channel.onMessage(async () => undefined);
       await channel.start();
 
@@ -716,7 +806,7 @@ describe('WebSocketChannel', () => {
 
   it('routes approval interactions to the origin client and forwards interaction responses', async () => {
     const interactionResponse = vi.fn();
-    channel = new WebSocketChannel({ port: 0, approval: true });
+    channel = createChannel({ port: 0, approval: true });
     channel.onMessage(async () => undefined);
     channel.interaction?.onInteractionResponse(interactionResponse);
     await channel.start();
@@ -739,6 +829,8 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'approval_requested',
       id: 'apr-1',
+      sessionId: 'main',
+      turnId: 'turn-1',
       toolName: 'write_file',
       input: { path: 'README.md' },
     });
@@ -755,8 +847,142 @@ describe('WebSocketChannel', () => {
     });
   });
 
+  it('rejects approval responses from a different connected client', async () => {
+    const interactionResponse = vi.fn();
+    channel = createChannel({ port: 0, approval: true });
+    channel.onMessage(async () => undefined);
+    channel.interaction?.onInteractionResponse(interactionResponse);
+    await channel.start();
+
+    const origin = await connectClient(channel);
+    const foreign = await connectClient(channel);
+    clients.push(origin, foreign);
+    origin.send(JSON.stringify({ type: 'hello', clientId: 'approval-origin' }));
+    foreign.send(JSON.stringify({ type: 'hello', clientId: 'approval-foreign' }));
+    await expectMessage(origin, { type: 'hello_ack', clientId: 'approval-origin' });
+    await expectMessage(foreign, { type: 'hello_ack', clientId: 'approval-foreign' });
+
+    const request: ApprovalInteractionRequest = {
+      id: 'apr-foreign',
+      kind: 'approval',
+      toolName: 'write_file',
+      input: {},
+      sessionId: 'main',
+      turnId: 'turn-foreign',
+      originClientId: 'approval-origin',
+    };
+    expect(channel.interaction?.sendInteractionRequest(request)).toEqual({ status: 'accepted' });
+    await expectMessage(origin, {
+      type: 'approval_requested',
+      id: 'apr-foreign',
+      sessionId: 'main',
+      turnId: 'turn-foreign',
+      toolName: 'write_file',
+      input: {},
+    });
+
+    foreign.send(JSON.stringify({
+      type: 'approval_resolve',
+      id: 'apr-foreign',
+      decision: 'allow',
+    }));
+    await expectMessage(foreign, {
+      type: 'channel_error',
+      code: 'INVALID_MESSAGE',
+      message: 'Approval response does not belong to this client.',
+    });
+    expect(interactionResponse).not.toHaveBeenCalled();
+
+    origin.send(JSON.stringify({
+      type: 'approval_resolve',
+      id: 'apr-foreign',
+      decision: 'deny',
+    }));
+    await vi.waitFor(() => {
+      expect(interactionResponse).toHaveBeenCalledWith({
+        id: 'apr-foreign',
+        kind: 'approval',
+        outcome: 'submitted',
+        decision: 'deny',
+      });
+    });
+  });
+
+  it('correlates concurrent approvals for one client across different sessions', async () => {
+    const interactionResponse = vi.fn();
+    channel = createChannel({ port: 0, approval: true });
+    channel.onMessage(async () => undefined);
+    channel.interaction?.onInteractionResponse(interactionResponse);
+    await channel.start();
+
+    const client = await connectClient(channel);
+    clients.push(client);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'multi-session-client' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'multi-session-client' });
+
+    const requests: ApprovalInteractionRequest[] = [
+      {
+        id: 'apr-session-a',
+        kind: 'approval',
+        toolName: 'write_file',
+        input: { path: 'a.txt' },
+        sessionId: 'session-a',
+        turnId: 'turn-a',
+        originClientId: 'multi-session-client',
+      },
+      {
+        id: 'apr-session-b',
+        kind: 'approval',
+        toolName: 'write_file',
+        input: { path: 'b.txt' },
+        sessionId: 'session-b',
+        turnId: 'turn-b',
+        originClientId: 'multi-session-client',
+      },
+    ];
+
+    for (const request of requests) {
+      expect(channel.interaction?.sendInteractionRequest(request)).toEqual({ status: 'accepted' });
+      await expectMessage(client, {
+        type: 'approval_requested',
+        id: request.id,
+        sessionId: request.sessionId,
+        turnId: request.turnId,
+        toolName: request.toolName,
+        input: request.input,
+      });
+    }
+
+    client.send(JSON.stringify({
+      type: 'approval_resolve',
+      id: 'apr-session-b',
+      decision: 'deny',
+    }));
+    client.send(JSON.stringify({
+      type: 'approval_resolve',
+      id: 'apr-session-a',
+      decision: 'allow',
+    }));
+
+    await vi.waitFor(() => {
+      expect(interactionResponse).toHaveBeenCalledTimes(2);
+    });
+    expect(interactionResponse).toHaveBeenNthCalledWith(1, {
+      id: 'apr-session-b',
+      kind: 'approval',
+      outcome: 'submitted',
+      decision: 'deny',
+    });
+    expect(interactionResponse).toHaveBeenNthCalledWith(2, {
+      id: 'apr-session-a',
+      kind: 'approval',
+      outcome: 'submitted',
+      decision: 'allow',
+    });
+  });
+
   it('returns unavailable when an approval origin cannot receive the request', async () => {
-    channel = new WebSocketChannel({ port: 0, approval: true });
+    channel = createChannel({ port: 0, approval: true });
     channel.onMessage(async () => undefined);
     await channel.start();
 
@@ -772,7 +998,7 @@ describe('WebSocketChannel', () => {
   });
 
   it('sends approval_closed for a non-user terminal outcome', async () => {
-    channel = new WebSocketChannel({ port: 0, approval: true });
+    channel = createChannel({ port: 0, approval: true });
     channel.onMessage(async () => undefined);
     await channel.start();
 
@@ -794,6 +1020,8 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'approval_requested',
       id: 'apr-close',
+      sessionId: 'main',
+      turnId: 'turn-close',
       toolName: 'write_file',
       input: {},
     });
@@ -805,6 +1033,8 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'approval_closed',
       id: 'apr-close',
+      sessionId: 'main',
+      turnId: 'turn-close',
       outcome: 'aborted',
       reason: 'turn',
     });
@@ -816,6 +1046,8 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'approval_closed',
       id: 'apr-close',
+      sessionId: 'main',
+      turnId: 'turn-close',
       outcome: 'approved',
       reason: 'session_allow_all',
     });
@@ -824,7 +1056,7 @@ describe('WebSocketChannel', () => {
   it('keeps pending approval bound across same-client socket replacement', async () => {
     const interactionResponse = vi.fn();
     const interactionUnavailable = vi.fn();
-    channel = new WebSocketChannel({ port: 0, approval: true });
+    channel = createChannel({ port: 0, approval: true });
     channel.onMessage(async () => undefined);
     channel.interaction?.onInteractionResponse(interactionResponse);
     channel.interaction?.onInteractionUnavailable(interactionUnavailable);
@@ -848,6 +1080,8 @@ describe('WebSocketChannel', () => {
     await expectMessage(firstClient, {
       type: 'approval_requested',
       id: 'apr-replace',
+      sessionId: 'main',
+      turnId: 'turn-replace',
       toolName: 'write_file',
       input: {},
     });
@@ -895,7 +1129,7 @@ describe('WebSocketChannel', () => {
 
   it('reports unavailable when the current approval origin disconnects', async () => {
     const interactionUnavailable = vi.fn();
-    channel = new WebSocketChannel({ port: 0, approval: true });
+    channel = createChannel({ port: 0, approval: true });
     channel.onMessage(async () => undefined);
     channel.interaction?.onInteractionUnavailable(interactionUnavailable);
     await channel.start();
@@ -917,6 +1151,8 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'approval_requested',
       id: 'apr-disconnect',
+      sessionId: 'main',
+      turnId: 'turn-disconnect',
       toolName: 'write_file',
       input: {},
     });
@@ -933,7 +1169,7 @@ describe('WebSocketChannel', () => {
 
   it('serializes resolution failure category and queued correlation', async () => {
     const handler = vi.fn(async () => undefined);
-    channel = new WebSocketChannel({ port: 0 });
+    channel = createChannel({ port: 0 });
     channel.onMessage(handler);
     await channel.start();
 
@@ -966,7 +1202,7 @@ describe('WebSocketChannel', () => {
 
   it('routes queued request_end by origin message with camelCase fields', async () => {
     const handler = vi.fn(async () => undefined);
-    channel = new WebSocketChannel({ port: 0 });
+    channel = createChannel({ port: 0 });
     channel.onMessage(handler);
     await channel.start();
 
@@ -1005,6 +1241,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'request_end',
       requestId: 'request-queued',
+      sessionId: 'main',
       originMessageId: 'origin-queued',
       outcome: 'cancelled',
       reason: 'shutdown',
@@ -1016,7 +1253,7 @@ describe('WebSocketChannel', () => {
   describe('subagent event audience routing', () => {
     it('routes subagent_start to the caller Session audience', async () => {
       const handler = vi.fn(async () => undefined);
-      channel = new WebSocketChannel({ port: 0 });
+      channel = createChannel({ port: 0 });
       channel.onMessage(handler);
       await channel.start();
 
@@ -1060,7 +1297,7 @@ describe('WebSocketChannel', () => {
     it('broadcasts user_message to every client on the session (including origin)', async () => {
       // channel-multi-client-user-message-spec §7: multi-client visibility
       const handler = vi.fn(async () => undefined);
-      channel = new WebSocketChannel({ port: 0 });
+      channel = createChannel({ port: 0 });
       channel.onMessage(handler);
       await channel.start();
 
@@ -1108,7 +1345,7 @@ describe('WebSocketChannel', () => {
 
     it('routes subagent_end to the caller Session audience', async () => {
       const handler = vi.fn(async () => undefined);
-      channel = new WebSocketChannel({ port: 0 });
+      channel = createChannel({ port: 0 });
       channel.onMessage(handler);
       await channel.start();
 
@@ -1162,7 +1399,7 @@ describe('WebSocketChannel', () => {
       const abortTurn = vi.fn(() => ({ aborted: true, dropped: 0 }));
       const query = vi.fn(() => []);
 
-      channel = new WebSocketChannel({ port: 0 });
+      channel = createChannel({ port: 0 });
       channel.onMessage(async () => undefined);
       channel.bindRuntimeCapabilities(capabilities(
         () => ({ generation: 1, defaultSelection: { state: 'unset' }, providers: [] }),
@@ -1187,7 +1424,7 @@ describe('WebSocketChannel', () => {
       // Proves the client-facing signal used to detect abort completion
       // (spec §13: no inline ack — client observes via run_end).
       const handler = vi.fn(async () => undefined);
-      channel = new WebSocketChannel({ port: 0 });
+      channel = createChannel({ port: 0 });
       channel.onMessage(handler);
       await channel.start();
 
@@ -1232,14 +1469,26 @@ describe('WebSocketChannel', () => {
 });
 
 async function connectClient(channel: WebSocketChannel): Promise<WebSocket> {
-  const address = (channel as unknown as { server?: { address(): unknown } }).server?.address();
-  if (!address || typeof address !== 'object' || !('port' in address)) {
-    throw new Error('WebSocketChannel server address is not available');
-  }
-
+  const address = channelAddress(channel);
   const client = new WebSocket(`ws://127.0.0.1:${address.port}/ws`);
   await once(client, 'open');
   return client;
+}
+
+function channelAddress(channel: WebSocketChannel): { port: number } {
+  const address = (channel as unknown as { httpServer?: { address(): unknown } }).httpServer?.address();
+  if (!address || typeof address !== 'object' || !('port' in address)) {
+    throw new Error('WebSocketChannel server address is not available');
+  }
+  return address as { port: number };
+}
+
+function clientUrl(channel: WebSocketChannel): string {
+  const address = (channel as unknown as { httpServer?: { address(): unknown } }).httpServer?.address();
+  if (!address || typeof address !== 'object' || !('port' in address)) {
+    throw new Error('WebSocketChannel HTTP address is not available');
+  }
+  return `http://127.0.0.1:${address.port}/`;
 }
 
 async function expectMessage(client: WebSocket, expected: Record<string, unknown>): Promise<void> {
@@ -1305,4 +1554,26 @@ function sessionCapabilities(
     onPermissionModeChanged: () => () => undefined,
     ...overrides,
   };
+}
+
+function createChannel(
+  config: Partial<WebSocketExtensionConfig> = {},
+  browserLauncher?: BrowserLauncher,
+): WebSocketChannel {
+  const completeConfig: WebSocketExtensionConfig = {
+    host: '127.0.0.1',
+    port: 0,
+    webSocketPath: '/ws',
+    clientPath: '/',
+    approval: false,
+    openBrowser: false,
+    ...config,
+  };
+  const options: WebSocketChannelOptions = {
+    config: completeConfig,
+    clientFilePath: CLIENT_FILE_PATH,
+    logger,
+    ...(browserLauncher === undefined ? {} : { browserLauncher }),
+  };
+  return new WebSocketChannel(options);
 }

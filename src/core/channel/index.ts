@@ -1,4 +1,11 @@
+export { ChannelOperationError } from './types.js';
 export type {
+  SessionPermissionMode,
+  SessionPermissionState,
+} from '../approval/index.js';
+export type { AgentEvent } from '../runner/types.js';
+export type {
+  ChannelOperationErrorCode,
   ChannelRuntimeCapabilities,
   ApprovalClosedResult,
   ApprovalDecision,

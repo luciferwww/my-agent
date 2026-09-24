@@ -17,8 +17,8 @@ describe('FT-13 source layout convergence', () => {
       'src/builtins/providers/builtin/index.ts',
       'src/builtins/channels/cli/CliChannel.ts',
       'src/builtins/channels/cli/runtime-unit.ts',
-      'src/builtins/channels/websocket/WebSocketChannel.ts',
-      'src/builtins/channels/websocket/runtime-unit.ts',
+      'extensions/websocket-channel/WebSocketChannel.ts',
+      'extensions/websocket-channel/websocket-channel-unit.ts',
       'src/builtins/tools/environment/contribution.ts',
       'src/builtins/tools/environment/common/directory-walk.ts',
       'src/builtins/tools/memory/contribution.ts',
@@ -43,6 +43,8 @@ describe('FT-13 source layout convergence', () => {
       'src/extension-api',
       'src/builtins/tools/workspace',
       'src/builtins/tools/environment/common/working-directory-walk.ts',
+      'src/builtins/channels/websocket',
+      'clients/html/chat.html',
     ];
     for (const path of removed) {
       await expect(stat(join(REPOSITORY_ROOT, ...path.split('/')))).rejects.toMatchObject({
@@ -55,7 +57,7 @@ describe('FT-13 source layout convergence', () => {
     const [provider, cli, websocket, environment, memory, task] = await Promise.all([
       readFile(join(REPOSITORY_ROOT, 'src', 'builtins', 'providers', 'builtin', 'index.ts'), 'utf8'),
       readFile(join(REPOSITORY_ROOT, 'src', 'builtins', 'channels', 'cli', 'index.ts'), 'utf8'),
-      readFile(join(REPOSITORY_ROOT, 'src', 'builtins', 'channels', 'websocket', 'index.ts'), 'utf8'),
+      readFile(join(REPOSITORY_ROOT, 'extensions', 'websocket-channel', 'index.ts'), 'utf8'),
       readFile(join(REPOSITORY_ROOT, 'src', 'builtins', 'tools', 'environment', 'index.ts'), 'utf8'),
       readFile(join(REPOSITORY_ROOT, 'src', 'builtins', 'tools', 'memory', 'index.ts'), 'utf8'),
       readFile(join(REPOSITORY_ROOT, 'src', 'builtins', 'tools', 'task', 'index.ts'), 'utf8'),
@@ -64,7 +66,7 @@ describe('FT-13 source layout convergence', () => {
     expect(provider).toContain("export { AnthropicMessagesClient } from './AnthropicMessagesClient.js';");
     expect(provider).toContain('createBuiltinLlmProviderUnit');
     expect(cli).toContain("export { createCliChannelUnit } from './runtime-unit.js';");
-    expect(websocket).toContain("export { createWebSocketChannelUnit } from './runtime-unit.js';");
+    expect(websocket).toContain('createWebSocketChannelUnit');
     expect(environment).toContain("export { createEnvironmentContribution } from './contribution.js';");
     expect(memory).toContain("export { createMemoryToolsContribution } from './contribution.js';");
     expect(task).toContain("export { createTaskToolContribution } from './contribution.js';");
@@ -97,7 +99,6 @@ describe('FT-13 source layout convergence', () => {
       for (const capability of [
         'builtins/providers/builtin',
         'builtins/channels/cli',
-        'builtins/channels/websocket',
         'builtins/tools/environment',
         'builtins/tools/memory',
         'builtins/tools/task',

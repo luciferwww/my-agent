@@ -6,7 +6,8 @@
 > Related Plan/Specification: [Standalone Host Arguments and Channels](../changes/archive/standalone-host-arguments-and-channels/plan.md) and [Specification](../changes/archive/standalone-host-arguments-and-channels/standalone-host-arguments-and-channels-specification.md)
 > Supersedes: exclusive Builtin Channel mode and Host-configuration clauses of the [Standalone Service Host Specification](../specifications/standalone-service-host.md)
 > Refines: Host input preservation in [ADR-009](adr-009-host-boundaries-and-standalone-npm-distribution.md) and Host projection wording in [ADR-011](adr-011-standalone-agent-home-configuration-bootstrap.md); their remaining decisions stay accepted
-> Refined by: [ADR-014](adr-014-extension-packages-and-runtime-composition.md) for Runtime-owned Channel failure logging; Host selection and process-liveness decisions remain accepted
+> Refined by: [ADR-014](adr-014-extension-packages-and-runtime-composition.md) for Runtime-owned Channel failure logging
+> Partially superseded by: [ADR-015](adr-015-host-local-and-extension-delivered-channels.md) for Builtin Channel selection, default WebSocket, and Channel-controlled process-liveness clauses; Agent Home and Host-neutral configuration decisions remain accepted
 
 ## Context
 

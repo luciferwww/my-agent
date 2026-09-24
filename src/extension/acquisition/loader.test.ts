@@ -179,6 +179,7 @@ describe('acquireExtensions', () => {
   });
 
   it('loads a valid factory with only frozen scoped config and normalizes Unit ordering', async () => {
+    const loggerGet = vi.spyOn(Logger, 'get');
     await installFixture(extensionsDir, 'renamed-directory', 'fixture-valid', 'valid-unit.js',
       objectSchema({
         endpoint: { type: 'string' },
@@ -211,11 +212,19 @@ describe('acquireExtensions', () => {
     expect(Object.isFrozen(result.loadedUnits[0])).toBe(true);
     expect(marker(UNIT_CREATE_MARKER)).toBeUndefined();
 
-    const context = marker(CONTEXT_MARKER) as { readonly config: Record<string, unknown> };
-    expect(Object.keys(context)).toEqual(['config']);
+    const context = marker(CONTEXT_MARKER) as {
+      readonly config: Record<string, unknown>;
+      readonly logger: {
+        info(message: string, value?: Readonly<Record<string, unknown>>): void;
+      };
+    };
+    expect(Object.keys(context)).toEqual(['config', 'logger']);
     expect(context.config).toEqual({ endpoint: 'https://relay.invalid', retries: 2 });
     expect(Object.isFrozen(context)).toBe(true);
     expect(Object.isFrozen(context.config)).toBe(true);
+    expect(Object.isFrozen(context.logger)).toBe(true);
+    expect(typeof context.logger.info).toBe('function');
+    expect(loggerGet).toHaveBeenCalledWith('Extension:fixture-valid');
   });
 
   it('loads a TypeScript entry through Jiti', async () => {

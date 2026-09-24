@@ -10,13 +10,13 @@ const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const FIXTURE_ROOT = fileURLToPath(new URL('../../test-fixtures/architecture-fitness/ft-02', import.meta.url));
 
 describe('FT-02 integration SDK allowlist', () => {
-  it('accepts a builtin Channel SDK import and diagnoses the same import in Runtime', async () => {
+  it('accepts an Extension Channel SDK import and diagnoses the same import in Runtime', async () => {
     const passSources = await loadTypeScriptSources(`${FIXTURE_ROOT}/pass`);
     const failSources = await loadTypeScriptSources(`${FIXTURE_ROOT}/fail`);
 
     expect(findFt02SdkAllowlistViolations(passSources)).toEqual([]);
     expect(findFt02SdkAllowlistViolations(failSources)).toEqual([
-      'FT-02 package=ws source=src/runtime/RuntimeApp.ts allowedRoots=src/builtins/channels/websocket/**',
+      'FT-02 package=ws source=src/runtime/RuntimeApp.ts allowedRoots=extensions/websocket-channel/**',
     ]);
   });
 
