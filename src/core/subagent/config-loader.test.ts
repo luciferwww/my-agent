@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
 import { loadSubagentProfiles, buildGeneralPurposeProfile } from './config-loader.js';
-import type { SubagentConfigEntry } from '../../platform/config/types.js';
+import type { SubagentConfigEntry } from './config.js';
 
 const WS = '/tmp/ws';
 const REGISTERED = new Set<string>(['read_file', 'write_file', 'exec', 'grep_search']);

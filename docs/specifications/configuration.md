@@ -2,12 +2,14 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-21
+> Verified: 2026-09-23
 > Authority: Stable Agent configuration contract
 
 ## Scope
 
-Own the sole `<agentHome>/config.json` document, application composition, one-read immutable Application/Extension projections, deep merge, five-stage Agent precedence, credential materialization, environment/caller overrides, default Model Reference input, Context loading budgets, and Tool/Subagent policy. Modules own leaf contracts, semantic validation, and behavioral defaults: Runtime owns `RuntimeConfig`, Runner owns `RunnerConfig`, and the Built-in LLM contract lives under `src/builtins/providers/builtin/`. Extension projection semantics belong to [Extension Acquisition](extension-acquisition.md). Host-private process and Channel selection are not configuration namespaces.
+Own the sole `<agentHome>/config.json` document, application composition, one-read immutable Application/Extension projections, deep merge, five-stage Agent precedence, credential materialization, environment/caller overrides, and validation-error field attribution. Every behavioral module owns its leaf contract, semantic validation, and immutable default: Built-in LLM, Runtime, Runner/Compaction, Memory, Prompt, Tool Policy, Agent Context, Subagent, and Logger. Platform Configuration imports and assembles those leaves without redefining their structures or literals. Extension projection semantics belong to [Extension Acquisition](extension-acquisition.md). Host-private process and Channel selection are not configuration namespaces.
+
+Owner validators reject unknown fields at every leaf and nested-leaf level. Platform preserves the exact composed field path in the resulting `NAMESPACE_INVALID` error.
 
 ## Loading and precedence
 
@@ -31,8 +33,10 @@ Global Runtime/Runner precedence is `module default -> top-level file value`. Ag
 - An explicit per-Turn `RunTurnParams.maxLlmCalls` overrides the global Runner value. Child profile override and Parent effective-limit inheritance remain unchanged.
 - `runner.inTurnMessageMode` is removed with no alias or compatibility path; strict Runner leaf validation rejects it as unknown.
 - Tool policy includes only allow and deny; there is no `tools.fs` subtree.
-- `AgentDefaults.context` owns Agent Context per-file and total loading budgets.
+- Agent Context owns the contract/defaults for per-file and total loading budgets; `AgentDefaults.context` composes that leaf.
+- Memory owns embedding, chunking, and search contracts/defaults. Resolved chunking values control actual indexing boundaries and require positive safe integers with overlap smaller than chunk size.
 - Subagent policy includes enablement, max depth, and profile list.
+- Platform Logger owns Logger contracts/defaults/validation; Platform Configuration only composes the `logger` namespace.
 - Configuration does not own Catalog membership, canonical Model identity, effective facts, Provider semantics, or Runtime lifecycle.
 - The only top-level namespaces are `llm`, `runtime`, `runner`, `agents`, `logger`, and `extensions`; the physical-load snapshot contains only immutable `application` and `extensions` projections.
 
@@ -44,7 +48,7 @@ Agent Home is the relative path anchor, not a confinement boundary. Approval is 
 
 ## Acceptance scenarios
 
-Cover each Agent precedence stage, global Runtime/Runner precedence, object/array/scalar merge, partial model environment override, absent/invalid files, one-read immutable Application/Extension projections, Runtime/Runner leaf defaults and strict top-level validation, rejection of nested/per-Agent placement, absence of the retired steering field and hidden Runner limit, Built-in endpoint/model validation, exact credential reference materialization, per-agent metadata exclusion, direct rejection of `host` and other retired fields, Context budget projection, and Tool glob policy.
+Cover each Agent precedence stage, global Runtime/Runner precedence, object/array/scalar merge, partial model environment override, absent/invalid files, one-read immutable Application/Extension projections, owner-module defaults and validation with exact field attribution, rejection of nested/per-Agent placement, absence of the retired steering field and hidden Runner limit, Built-in endpoint/model validation, exact credential reference materialization, per-agent metadata exclusion, direct rejection of `host` and other retired fields, effective Memory chunking, Context budget projection, Tool glob policy, fresh default composition, and the absence of centralized leaf contracts/default literals.
 
 ## Related authority
 

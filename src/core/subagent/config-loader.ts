@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import type { SubagentConfigEntry } from '../../platform/config/types.js';
+import type { SubagentConfigEntry } from './config.js';
 import type { SubagentProfile } from './types.js';
 
 // ── Constants ────────────────────────────────────────────────

@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from './defaults.js';
+import { DEFAULT_MEMORY_CONFIG } from '../../core/memory/index.js';
+import { DEFAULT_LOGGER_CONFIG } from '../logger/index.js';
+import { createDefaultAgentConfig } from './default-composition.js';
 import { AgentConfigError } from './agent-config-errors.js';
 import { loadAgentConfig } from './agent-config-loader.js';
 
@@ -170,7 +172,7 @@ describe('loadAgentConfig', () => {
 
     const snapshot = await loadAgentConfig({ agentHome });
 
-    expect(snapshot.application.agents.defaults).toEqual(DEFAULT_AGENT_CONFIG);
+    expect(snapshot.application.agents.defaults).toEqual(createDefaultAgentConfig());
     expect(snapshot.application.llm).toEqual({});
   });
 
@@ -209,7 +211,7 @@ describe('loadAgentConfig', () => {
     expect(error.message).not.toContain('   ');
   });
 
-  it('deep-freezes every value reachable from both projections without freezing defaults', async () => {
+  it('deep-freezes every projection while owner defaults remain immutable', async () => {
     await writeConfig({
       agents: { defaults: { tools: { allow: ['read_file'] } } },
       extensions: { entries: { sample: { config: { nested: ['value'] } } } },
@@ -218,8 +220,8 @@ describe('loadAgentConfig', () => {
     const snapshot = await loadAgentConfig({ agentHome });
 
     expectAllFrozen(snapshot);
-    expect(Object.isFrozen(DEFAULT_AGENT_CONFIG)).toBe(false);
-    expect(Object.isFrozen(DEFAULT_AGENT_CONFIG.tools)).toBe(false);
+    expect(Object.isFrozen(DEFAULT_MEMORY_CONFIG)).toBe(true);
+    expect(Object.isFrozen(DEFAULT_MEMORY_CONFIG.chunking)).toBe(true);
     expect(() => {
       (snapshot.application.agents.defaults.tools.allow as string[]).push('exec');
     }).toThrow();
@@ -294,10 +296,39 @@ describe('loadAgentConfig', () => {
     [{ agents: { defaults: { runner: { maxLlmCalls: 1 } } } }, 'agents.defaults.runner'],
     [{ agents: { list: [{ id: 'a', runtime: { steeringEnabled: true } }] } }, 'agents.list[0].runtime'],
     [{ agents: { list: [{ id: 'a', runner: { maxLlmCalls: 1 } }] } }, 'agents.list[0].runner'],
+    [{ agents: { defaults: { memory: { chunking: { chunkChars: 0 } } } } }, 'agents.defaults.memory.chunking.chunkChars'],
+    [{ agents: { defaults: { memory: { bogus: true } } } }, 'agents.defaults.memory.bogus'],
+    [{ agents: { defaults: { memory: { chunking: { bogus: true } } } } }, 'agents.defaults.memory.chunking.bogus'],
+    [{ agents: { defaults: { memory: { chunking: { overlapChars: 1600 } } } } }, 'agents.defaults.memory.chunking.overlapChars'],
+    [{ agents: { list: [{ id: 'a', memory: { chunking: { chunkChars: 100, overlapChars: 100 } } }] } }, 'agents.list[0].memory.chunking.overlapChars'],
+    [{ agents: { defaults: { prompt: { safetyLevel: 'unsafe' } } } }, 'agents.defaults.prompt.safetyLevel'],
+    [{ agents: { defaults: { prompt: { bogus: true } } } }, 'agents.defaults.prompt.bogus'],
+    [{ agents: { defaults: { tools: { bogus: true } } } }, 'agents.defaults.tools.bogus'],
+    [{ agents: { defaults: { context: { maxFileChars: -1 } } } }, 'agents.defaults.context.maxFileChars'],
+    [{ agents: { defaults: { context: { bogus: true } } } }, 'agents.defaults.context.bogus'],
+    [{ agents: { defaults: { compaction: { timeoutSeconds: 0 } } } }, 'agents.defaults.compaction.timeoutSeconds'],
+    [{ agents: { defaults: { compaction: { bogus: true } } } }, 'agents.defaults.compaction.bogus'],
+    [{ agents: { defaults: { subagents: { maxDepth: -1 } } } }, 'agents.defaults.subagents.maxDepth'],
+    [{ agents: { defaults: { subagents: { bogus: true } } } }, 'agents.defaults.subagents.bogus'],
+    [{
+      agents: {
+        defaults: {
+          subagents: {
+            list: [{
+              id: 'worker',
+              description: 'Worker',
+              model: { providerId: 'provider', modelId: 'model', bogus: true },
+            }],
+          },
+        },
+      },
+    }, 'agents.defaults.subagents.list[0].model.bogus'],
     [{ logger: [] }, 'logger'],
+    [{ logger: { bogus: true } }, 'logger.bogus'],
     [{ logger: { minLevel: 'verbose' } }, 'logger.minLevel'],
     [{ logger: { console: true } }, 'logger.console'],
     [{ logger: { console: { enabled: 'yes' } } }, 'logger.console.enabled'],
+    [{ logger: { console: { bogus: true } } }, 'logger.console.bogus'],
     [{ logger: { file: { minLevel: 1 } } }, 'logger.file.minLevel'],
     [{ extensions: [] }, 'extensions'],
     [{ extensions: { enabled: 'yes' } }, 'extensions.enabled'],

@@ -20,7 +20,8 @@ import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.
 import type { ProviderProjectionEntry, ResolvedModel } from '../core/model-resolution/index.js';
 import type { SubagentModelSelection } from '../platform/config/types.js';
 import type { ApplicationConfigProjection } from '../platform/config/types.js';
-import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from '../platform/config/defaults.js';
+import { createDefaultAgentConfig } from '../platform/config/default-composition.js';
+import { DEFAULT_LOGGER_CONFIG } from '../platform/logger/index.js';
 import { loadAgentConfig } from '../platform/config/agent-config-loader.js';
 import { RuntimeApp } from './RuntimeApp.js';
 import type { RuntimeHandle } from './runtime-composition.js';
@@ -47,7 +48,7 @@ function testApplicationConfig(
     runtime: structuredClone(DEFAULT_RUNTIME_CONFIG),
     runner: structuredClone(DEFAULT_RUNNER_CONFIG),
     agents: {
-      defaults: structuredClone(DEFAULT_AGENT_CONFIG),
+      defaults: createDefaultAgentConfig(),
       list: [],
     },
     logger: structuredClone(DEFAULT_LOGGER_CONFIG),
@@ -348,7 +349,14 @@ describe('RuntimeApp', () => {
 
   it('uses the injected application projection without rereading Workspace configuration', async () => {
     await writeFile(join(agentHome, 'config.json'), JSON.stringify({
-      agents: { defaults: { memory: { enabled: false } } },
+      agents: {
+        defaults: {
+          memory: {
+            enabled: false,
+            chunking: { chunkChars: 800, overlapChars: 80 },
+          },
+        },
+      },
       logger: { console: { enabled: false } },
     }), 'utf8');
     const snapshot = await loadAgentConfig({ agentHome: agentHome });
@@ -369,6 +377,7 @@ describe('RuntimeApp', () => {
     expect(createMemoryManager).toHaveBeenCalledWith(expect.objectContaining({
       agentHome: agentHome,
       enabled: false,
+      chunking: { chunkChars: 800, overlapChars: 80 },
     }));
     await app.close();
   });
@@ -477,7 +486,7 @@ describe('RuntimeApp', () => {
         runtime: structuredClone(DEFAULT_RUNTIME_CONFIG),
         runner: structuredClone(DEFAULT_RUNNER_CONFIG),
         agents: {
-          defaults: structuredClone(DEFAULT_AGENT_CONFIG),
+          defaults: createDefaultAgentConfig(),
           list: [],
         },
         logger: structuredClone(DEFAULT_LOGGER_CONFIG),

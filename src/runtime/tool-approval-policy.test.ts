@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createApplicationToolPolicy } from './tool-approval-policy.js';
-import type { ToolsConfig } from '../platform/config/types.js';
+import type { ToolPolicyConfig as ToolsConfig } from '../core/tools/index.js';
 import type { SessionPermissionMode } from '../core/approval/index.js';
 
 const empty: ToolsConfig = { allow: [], deny: [] };

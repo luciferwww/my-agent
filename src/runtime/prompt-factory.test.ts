@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_SUBAGENT_CONFIG } from '../core/subagent/index.js';
 import type { AgentDefaults } from '../platform/config/types.js';
 import { buildSystemPromptParams, resolveContextLoadMode } from './prompt-factory.js';
 
@@ -21,6 +22,7 @@ const baseConfig: AgentDefaults = {
     toolResultTailChars: 5_000,
     timeoutSeconds: 300,
   },
+  subagents: structuredClone(DEFAULT_SUBAGENT_CONFIG),
 };
 
 describe('runtime prompt factory', () => {

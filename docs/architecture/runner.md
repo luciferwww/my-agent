@@ -8,7 +8,7 @@
 
 ## 1. Boundary
 
-`src/core/runner/` is the Agent execution engine and owns `RunnerConfig`. For one Turn it consumes a resolved Provider-neutral invocation Port, immutable Tool and Hook projections, application Tool policy, and optional current-call approval capability. It joins [Session persistence](session.md), [Tool execution](tools.md), streaming Model invocation, context management, and steering into the conversation loop.
+`src/core/runner/` is the Agent execution engine and owns `RunnerConfig` plus the Compaction leaf contract, immutable defaults, and semantic validation. For one Turn it consumes a resolved Provider-neutral invocation Port, immutable Tool and Hook projections, application Tool policy, and optional current-call approval capability. It joins [Session persistence](session.md), [Tool execution](tools.md), streaming Model invocation, context management, and steering into the conversation loop.
 
 Runner does not load configuration, read environment variables, discover or register Units, select Providers, infer Model facts, manage Channel transport, or own root request-tree admission. Those responsibilities belong to [Runtime](runtime.md), [Model Resolution](model-resolution.md), and [Channels](channels.md).
 
@@ -71,6 +71,8 @@ A `ContextOverflowError` can come from preflight (`preemptive`), the inner 90% t
 ## 8. Compaction
 
 `compactHistory()` sanitizes a trailing user, reloads history, runs bounded pre-Compaction Observers, emits `compaction_start`, and calls `compactMessages()` through the same resolved invocation Port and Model identity.
+
+Runtime supplies resolved Compaction policy. A direct Runner call that omits it uses the same Runner-owned `DEFAULT_COMPACTION_CONFIG`; there is no Platform copy of those literals.
 
 The implementation protects Tool Use/Result pairing, writes a Compaction marker without deleting history, and reloads only the retained range on retry. [Runner Turn Flow](../specifications/runner-turn-flow.md) owns retry, persistence, and fallback semantics.
 

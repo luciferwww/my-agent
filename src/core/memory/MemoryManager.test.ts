@@ -17,6 +17,7 @@ import { MemoryManager } from './MemoryManager.js';
 import { MemorySearcher } from './internal/MemorySearcher.js';
 import { RecallTracker } from './internal/RecallTracker.js';
 import { createEmbeddingProvider } from './internal/LocalEmbeddingProvider.js';
+import { DEFAULT_MEMORY_CONFIG } from './config.js';
 import { SqliteMemoryStore } from './internal/sqlite-store.js';
 import type { MemorySearchResult, MemoryStore } from './types.js';
 
@@ -202,7 +203,7 @@ describe('MemoryManager', () => {
 
     const manager = await MemoryManager.create({ agentHome: agentHome });
 
-    expect(createEmbeddingProvider).toHaveBeenCalledWith(undefined);
+    expect(createEmbeddingProvider).toHaveBeenCalledWith(DEFAULT_MEMORY_CONFIG.embedding);
     expect(SqliteMemoryStore).toHaveBeenCalledWith(join(agentHome, 'memory.sqlite'));
     expect(indexAllSpy).toHaveBeenCalledWith(agentHome);
     expect((manager as unknown as { agentHome: string }).agentHome).toBe(agentHome);

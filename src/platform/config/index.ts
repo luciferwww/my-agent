@@ -29,7 +29,8 @@ export type {
 } from '../../builtins/providers/builtin/index.js';
 
 // ── Defaults ──────────────────────────────────────────────
-export { DEFAULT_AGENT_CONFIG } from './defaults.js';
+export { createDefaultAgentConfig } from './default-composition.js';
+export { DEFAULT_LOGGER_CONFIG } from '../logger/index.js';
 
 // ── Resolution ────────────────────────────────────────────
 export { resolveAgentConfig, getEnvOverrides, deepMerge } from './loader.js';

@@ -8,7 +8,7 @@
 
 ## 1. Boundary
 
-`src/core/tools/` owns the Provider-neutral Tool contract and portable input-schema validation. `src/core/registry/` owns Contribution and immutable projection contracts. Runtime composition stages Units and publishes complete Registry generations.
+`src/core/tools/` owns the Provider-neutral Tool contract, portable input-schema validation, and static Tool Policy configuration contract/default/validation. `src/core/registry/` owns Contribution and immutable projection contracts. Runtime composition stages Units and publishes complete Registry generations.
 
 Concrete filesystem, search, web, Exec, and Process behavior belongs to [Builtin Tools](builtin-tools.md). Runtime routing and interaction settlement belong to [Runtime](runtime.md) and [Channels](channels.md).
 

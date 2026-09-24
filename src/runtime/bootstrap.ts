@@ -1,10 +1,18 @@
 import { join } from 'node:path';
-import { getEnvOverrides, resolveAgentConfig } from '../platform/config/index.js';
-import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from '../platform/config/defaults.js';
+import {
+  createDefaultAgentConfig,
+  getEnvOverrides,
+  resolveAgentConfig,
+} from '../platform/config/index.js';
 import { DEFAULT_RUNNER_CONFIG } from '../core/runner/config.js';
 import { DEFAULT_RUNTIME_CONFIG } from './config.js';
 import type { AppConfig } from '../platform/config/types.js';
-import { ConsoleAdapter, FileAdapter, Logger } from '../platform/logger/index.js';
+import {
+  ConsoleAdapter,
+  DEFAULT_LOGGER_CONFIG,
+  FileAdapter,
+  Logger,
+} from '../platform/logger/index.js';
 import type { LogAdapter } from '../platform/logger/index.js';
 import type { MemoryManager } from '../core/memory/index.js';
 import { UserPromptBuilder } from '../core/prompt/index.js';
@@ -42,7 +50,7 @@ export async function bootstrapRuntime(
         runtime: DEFAULT_RUNTIME_CONFIG,
         runner: DEFAULT_RUNNER_CONFIG,
         agents: {
-          defaults: DEFAULT_AGENT_CONFIG,
+          defaults: createDefaultAgentConfig(),
           list: [],
         },
         logger: DEFAULT_LOGGER_CONFIG,
@@ -72,11 +80,11 @@ export async function bootstrapRuntime(
     }
     await Logger.configure({
       adapters,
-      minLevel: appConfig.logger.minLevel ?? 'info',
+      minLevel: appConfig.logger.minLevel ?? DEFAULT_LOGGER_CONFIG.minLevel,
     });
     loggerConfigured = true;
     log.debug('logger configured', {
-      minLevel: appConfig.logger.minLevel ?? 'info',
+      minLevel: appConfig.logger.minLevel ?? DEFAULT_LOGGER_CONFIG.minLevel,
       adapters: adapters.map((a) => a.constructor.name),
     });
 
@@ -121,6 +129,7 @@ export async function bootstrapRuntime(
         agentHome: options.agentHome,
         enabled: resolvedConfig.memory.enabled,
         embedding: resolvedConfig.memory.embedding,
+        chunking: resolvedConfig.memory.chunking,
         search: resolvedConfig.memory.search,
       });
       if (memoryManager) {

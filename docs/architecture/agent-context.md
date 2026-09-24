@@ -15,7 +15,7 @@
 1. `ensureAgentContext(agentHome)` ensures the Agent Home parent exists for Context initialization and creates any missing default Context files there.
 2. `loadContextFiles(agentHome, options)` reads the allowlisted Context files from Agent Home, while `loadContextFilesFromDir(absDir, options)` reads the same allowlist from an explicit Context directory.
 
-Agent Context owns neither `config.json` bootstrap/configuration precedence, caching, nor prompt rendering. [Configuration](configuration.md) owns the configuration document and loading budgets. [Runtime](runtime.md) owns when Context files are initialized, loaded, cached, and reloaded. [Prompt](prompt.md) owns how a supplied `ContextFile[]` is rendered.
+Agent Context owns its loading-budget contract, immutable defaults, semantic validation, initialization, and loading behavior. It does not own `config.json` bootstrap/composition/precedence, caching, or prompt rendering. [Configuration](configuration.md) composes the Agent Context leaf into the document and maps validation failures to document paths. [Runtime](runtime.md) owns when Context files are initialized, loaded, cached, and reloaded. [Prompt](prompt.md) owns how a supplied `ContextFile[]` is rendered.
 
 Agent Context is persistent Agent state under `agentHome`. Agent Home is also the prompt path context and the relative-path anchor for structured Environment Tools, but those Tools do not own Context files.
 
@@ -24,6 +24,7 @@ Agent Context is persistent Agent state under `agentHome`. Agent Home is also th
 ```text
 src/core/agent-context/
 ├── index.ts
+├── config.ts
 ├── init.ts
 ├── loader.ts
 ├── types.ts
@@ -69,6 +70,6 @@ Before each file, the loader stops when no budget remains and warns and skips th
 
 | Kind | Evidence |
 |---|---|
-| Source | [Agent Context initialization](../../src/core/agent-context/init.ts), [Context loader](../../src/core/agent-context/loader.ts), [Context-file type](../../src/core/agent-context/types.ts), [Runtime bootstrap](../../src/runtime/bootstrap.ts), [Runtime reload and Turn integration](../../src/runtime/RuntimeApp.ts), [prompt parameter projection](../../src/runtime/prompt-factory.ts) |
+| Source | [Agent Context configuration](../../src/core/agent-context/config.ts), [Agent Context initialization](../../src/core/agent-context/init.ts), [Context loader](../../src/core/agent-context/loader.ts), [Context-file type](../../src/core/agent-context/types.ts), [Runtime bootstrap](../../src/runtime/bootstrap.ts), [Runtime reload and Turn integration](../../src/runtime/RuntimeApp.ts), [prompt parameter projection](../../src/runtime/prompt-factory.ts) |
 | Tests | [initialization tests](../../src/core/agent-context/init.test.ts), [loader tests](../../src/core/agent-context/loader.test.ts), [Runtime tests](../../src/runtime/RuntimeApp.test.ts), [prompt projection tests](../../src/runtime/prompt-factory.test.ts) |
 | Controlling authority | [ADR-010](../decisions/adr-010-install-and-agent-home-ownership.md), [ADR-011](../decisions/adr-011-standalone-agent-home-configuration-bootstrap.md), [ADR-012](../decisions/adr-012-agent-home-path-unification.md), [Runtime Composition](../specifications/runtime-composition.md) |

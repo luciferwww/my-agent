@@ -29,3 +29,14 @@ export {
   renderAvailableSubagentsSection,
 } from './available-subagents.js';
 export type { AvailableSubagentEntry } from './available-subagents.js';
+export {
+  DEFAULT_SUBAGENT_CONFIG,
+  SubagentConfigValidationError,
+  validateSubagentConfig,
+} from './config.js';
+export type {
+  SubagentConfig,
+  SubagentConfigEntry,
+  SubagentToolsConfig,
+  SubagentModelSelection,
+} from './config.js';

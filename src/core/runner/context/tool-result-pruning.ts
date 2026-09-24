@@ -7,7 +7,7 @@
  */
 
 import type { ChatMessage, ChatContentBlock } from '../../model-invocation/index.js';
-import type { CompactionConfig } from '../../../platform/config/types.js';
+import type { CompactionConfig } from '../compaction-config.js';
 
 // ── 常量 ────────────────────────────────────────────────────
 

@@ -15,6 +15,12 @@ export {
   compilePortableToolSchema,
   PortableToolSchemaError,
 } from './portable-schema.js';
+export {
+  DEFAULT_TOOL_POLICY_CONFIG,
+  ToolPolicyConfigValidationError,
+  validateToolPolicyConfig,
+} from './config.js';
+export type { ToolPolicyConfig } from './config.js';
 export type {
   CompiledToolInputValidator,
   PortableToolSchema,

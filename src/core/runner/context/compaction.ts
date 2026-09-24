@@ -10,7 +10,7 @@
 
 import { randomUUID } from 'crypto';
 import type { ChatMessage, ModelInvocationPort } from '../../model-invocation/index.js';
-import type { CompactionConfig } from '../../../platform/config/types.js';
+import type { CompactionConfig } from '../compaction-config.js';
 import type { CompactionRecord } from '../../session/types.js';
 import { estimatePromptTokens, ANTHROPIC_PATCH_SIZE } from './token-estimation.js';
 

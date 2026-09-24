@@ -74,6 +74,10 @@ describe('MemoryIndexer', () => {
         size: Buffer.byteLength(content, 'utf-8'),
       }),
     );
+    expect(store.setMeta).toHaveBeenCalledWith(
+      'memory-chunking:memory/today.md',
+      '1600:320',
+    );
   });
 
   it('skips indexing when the file hash is unchanged', async () => {
@@ -85,7 +89,9 @@ describe('MemoryIndexer', () => {
         mtime: 1,
         size: Buffer.byteLength(content, 'utf-8'),
       }),
+      getMeta: vi.fn().mockReturnValue('1600:320'),
     });
+
     const embeddingProvider: EmbeddingProvider = {
       embed: vi.fn().mockResolvedValue([[1, 2, 3]]),
       dimensions: 3,
@@ -99,6 +105,64 @@ describe('MemoryIndexer', () => {
     expect(store.upsertChunks).not.toHaveBeenCalled();
     expect(store.upsertFile).not.toHaveBeenCalled();
     expect(embeddingProvider.embed).not.toHaveBeenCalled();
+  });
+
+  it('uses configured chunking values to change produced boundaries', async () => {
+    const content = ['aaaa', 'bbbb', 'cccc', 'dddd'].join('\n');
+    const defaultStore = createStore();
+    const configuredStore = createStore();
+
+    await new MemoryIndexer(defaultStore, null).indexFile('memory/chunks.md', content);
+    await new MemoryIndexer(
+      configuredStore,
+      null,
+      { chunkChars: 9, overlapChars: 1 },
+    ).indexFile('memory/chunks.md', content);
+
+    const defaultChunks = vi.mocked(defaultStore.upsertChunks).mock.calls[0]?.[0];
+    const configuredChunks = vi.mocked(configuredStore.upsertChunks).mock.calls[0]?.[0];
+    expect(defaultChunks?.map(({ startLine, endLine }) => [startLine, endLine]))
+      .toEqual([[1, 4]]);
+    expect(configuredChunks?.map(({ startLine, endLine }) => [startLine, endLine]))
+      .toEqual([[1, 2], [2, 3], [3, 4]]);
+  });
+
+  it('reindexes unchanged content when chunking configuration changes', async () => {
+    const content = ['aaaa', 'bbbb', 'cccc'].join('\n');
+    const store = createStore({
+      getFile: vi.fn().mockReturnValue({
+        source: 'memory',
+        hash: createHash('sha256').update(content, 'utf-8').digest('hex'),
+        mtime: 1,
+        size: Buffer.byteLength(content, 'utf-8'),
+      }),
+      getMeta: vi.fn().mockReturnValue('1600:320'),
+    });
+
+    await new MemoryIndexer(
+      store,
+      null,
+      { chunkChars: 9, overlapChars: 1 },
+    ).indexFile('memory/chunks.md', content);
+
+    expect(store.deleteByPath).toHaveBeenCalledWith('memory/chunks.md');
+    expect(store.upsertChunks).toHaveBeenCalled();
+    expect(store.setMeta).toHaveBeenCalledWith('memory-chunking:memory/chunks.md', '9:1');
+  });
+
+  it('advances after a line longer than the chunk size', async () => {
+    const store = createStore();
+    const content = ['abcdefghijk', 'next', 'last'].join('\n');
+
+    await new MemoryIndexer(
+      store,
+      null,
+      { chunkChars: 10, overlapChars: 9 },
+    ).indexFile('memory/oversized.md', content);
+
+    const chunks = vi.mocked(store.upsertChunks).mock.calls[0]?.[0];
+    expect(chunks?.map(({ startLine, endLine }) => [startLine, endLine]))
+      .toEqual([[1, 1], [2, 3]]);
   });
 
   it('indexes MEMORY.md and top-level markdown files under memory/', async () => {

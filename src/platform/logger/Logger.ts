@@ -1,4 +1,5 @@
-import type { LogAdapter, LogEntry, LoggerConfig, LogLevel } from './types.js';
+import type { LogAdapter, LogEntry, LoggerRuntimeConfig, LogLevel } from './types.js';
+import { DEFAULT_LOGGER_CONFIG } from './config.js';
 
 // ── 级别顺序 ──────────────────────────────────────────────
 
@@ -101,10 +102,10 @@ export class Logger {
    *
    * 二次及以上调用：仅交换 adapters / minLevel，不重新启用 buffer。
    */
-  static async configure(config: LoggerConfig): Promise<void> {
+  static async configure(config: LoggerRuntimeConfig): Promise<void> {
     await Logger.closeAdapters(Logger.adapters);
     Logger.adapters = config.adapters;
-    Logger.minLevel = config.minLevel ?? 'info';
+    Logger.minLevel = config.minLevel ?? DEFAULT_LOGGER_CONFIG.minLevel;
     for (const adapter of Logger.adapters) {
       await adapter.start?.();
     }

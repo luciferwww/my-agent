@@ -1,6 +1,7 @@
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 import type { ContextFile } from './types.js';
+import { DEFAULT_AGENT_CONTEXT_CONFIG } from './config.js';
 
 /** 所有支持的上下文文件，按固定顺序 */
 const ALL_FILES = [
@@ -27,11 +28,6 @@ const TAIL_RATIO = 0.2;
 const MIN_FILE_BUDGET_CHARS = 64;
 
 /** 默认单文件最大字符数（与 OpenClaw 的 DEFAULT_BOOTSTRAP_MAX_CHARS 一致） */
-const DEFAULT_MAX_FILE_CHARS = 20_000;
-
-/** 默认所有文件总最大字符数（与 OpenClaw 的 DEFAULT_BOOTSTRAP_TOTAL_MAX_CHARS 一致） */
-const DEFAULT_MAX_TOTAL_CHARS = 150_000;
-
 /**
  * 截断文件内容，保留前 70% + 后 20%，中间插入截断标记。
  * 参考 OpenClaw 的 trimBootstrapContent()。
@@ -164,8 +160,8 @@ export async function loadContextFiles(
     agentHome,
     opts?.mode === 'minimal' ? MINIMAL_FILES : ALL_FILES,
     {
-      maxFileChars: opts?.maxFileChars ?? DEFAULT_MAX_FILE_CHARS,
-      maxTotalChars: opts?.maxTotalChars ?? DEFAULT_MAX_TOTAL_CHARS,
+      maxFileChars: opts?.maxFileChars ?? DEFAULT_AGENT_CONTEXT_CONFIG.maxFileChars,
+      maxTotalChars: opts?.maxTotalChars ?? DEFAULT_AGENT_CONTEXT_CONFIG.maxTotalChars,
       warn: opts?.warn ?? console.warn,
     },
   );
@@ -193,8 +189,8 @@ export async function loadContextFilesFromDir(
     absDir,
     opts?.mode === 'minimal' ? MINIMAL_FILES : ALL_FILES,
     {
-      maxFileChars: opts?.maxFileChars ?? DEFAULT_MAX_FILE_CHARS,
-      maxTotalChars: opts?.maxTotalChars ?? DEFAULT_MAX_TOTAL_CHARS,
+      maxFileChars: opts?.maxFileChars ?? DEFAULT_AGENT_CONTEXT_CONFIG.maxFileChars,
+      maxTotalChars: opts?.maxTotalChars ?? DEFAULT_AGENT_CONTEXT_CONFIG.maxTotalChars,
       warn: opts?.warn ?? console.warn,
     },
   );

@@ -70,6 +70,7 @@ const MIXED_PRODUCTION_PATHS = new Set([
   'src/core/agent-context/init.ts',
   'src/core/agent-context/loader.ts',
   'src/core/agent-context/types.ts',
+  'src/core/agent-context/config.ts',
   'src/core/media/attachment-pipeline.ts',
   'src/core/media/constants.ts',
   'src/core/media/image-metadata.ts',

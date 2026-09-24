@@ -8,7 +8,7 @@
 
 ## 1. Boundary
 
-`src/core/prompt/` owns deterministic System and User prompt construction and the library-level Context Hook prepender. Runtime supplies the current Context files, visible Tool names, Agent Home, available Subagent summaries, safety settings, and already normalized media blocks.
+`src/core/prompt/` owns the Prompt leaf configuration contract/default/validation, deterministic System and User prompt construction, and the library-level Context Hook prepender. Runtime supplies the resolved safety setting, current Context files, visible Tool names, Agent Home, available Subagent summaries, and already normalized media blocks.
 
 Prompt does not own configuration precedence, canonical Tool schemas, Channel wire delivery, [media validation and normalization](media.md), [Model Resolution](model-resolution.md), [Provider conversion](providers.md), or [Agent Context file loading](agent-context.md).
 

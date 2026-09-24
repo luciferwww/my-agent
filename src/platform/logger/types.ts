@@ -21,7 +21,7 @@ export interface LogAdapter {
   onError?: (err: Error, entry: LogEntry) => void;
 }
 
-export interface LoggerConfig {
+export interface LoggerRuntimeConfig {
   adapters: LogAdapter[];
   /** 全局最低输出级别，低于此级别的 entry 不传给任何 adapter；默认 'info' */
   minLevel?: LogLevel;

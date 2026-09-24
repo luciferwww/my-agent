@@ -535,8 +535,8 @@ function assembleLoadedRuntimeUnits(params: {
     ...(options.loadedUnits ?? []),
   ];
 
-  if (resources.resolvedConfig.subagents?.enabled !== false) {
-    const maxDepth = resources.resolvedConfig.subagents?.maxDepth ?? 1;
+  if (resources.resolvedConfig.subagents.enabled) {
+    const maxDepth = resources.resolvedConfig.subagents.maxDepth;
     const executor = new SubagentExecutor({
       agentRunner: resources.agentRunner,
       systemPromptBuilder: resources.systemPromptBuilder,
@@ -545,7 +545,7 @@ function assembleLoadedRuntimeUnits(params: {
         maxTotalChars: resources.resolvedConfig.context.maxTotalChars,
       }),
       agentHome: options.agentHome,
-      promptSafetyLevel: resources.resolvedConfig.prompt?.safetyLevel ?? 'normal',
+      promptSafetyLevel: resources.resolvedConfig.prompt.safetyLevel,
       resolveToolPolicy: (profile) => createApplicationToolPolicy(
         resolveSubagentTools(
           profile,
@@ -593,6 +593,7 @@ function createRuntimeDependencies(
       return MemoryManager.create({
         agentHome: options.agentHome,
         embedding: options.embedding,
+        chunking: options.chunking,
         search: options.search,
         enabled: options.enabled,
       });

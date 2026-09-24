@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { ChatMessage } from '../../model-invocation/index.js';
 import { splitForCompaction, compactMessages } from './compaction.js';
-import type { CompactionConfig } from '../../../platform/config/types.js';
+import type { CompactionConfig } from '../compaction-config.js';
 
 // ── 测试用常量 ────────────────────────────────────────────
 

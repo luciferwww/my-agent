@@ -1,9 +1,8 @@
 import type { EmbeddingProvider } from '../types.js';
+import { DEFAULT_MEMORY_CONFIG } from '../config.js';
 import { Logger } from '../../../platform/logger/index.js';
 
 const log = Logger.get('LocalEmbeddingProvider');
-
-const DEFAULT_MODEL = 'Xenova/all-MiniLM-L6-v2';
 
 /**
  * 常见 Xenova 模型的向量维度静态映射表。
@@ -116,7 +115,7 @@ export async function createEmbeddingProvider(
   const providerType = config?.provider ?? 'local';
   if (providerType !== 'local') return null;
 
-  const model = config?.model ?? DEFAULT_MODEL;
+  const model = config?.model ?? DEFAULT_MEMORY_CONFIG.embedding.model;
 
   let dimensions = KNOWN_DIMENSIONS[model];
   if (dimensions === undefined) {

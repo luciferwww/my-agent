@@ -1,6 +1,6 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
-import type { ToolsConfig } from '../platform/config/types.js';
+import type { ToolPolicyConfig } from '../core/tools/index.js';
 import type { ApplicationToolPolicy } from '../core/tools/types.js';
 import { matchesAny } from './glob-match.js';
 
@@ -14,7 +14,7 @@ const DIRECT_PATH_TOOLS = new Set([
 ]);
 
 export function createApplicationToolPolicy(
-  tools: ToolsConfig,
+  tools: ToolPolicyConfig,
   agentHome: string,
 ): ApplicationToolPolicy {
   const allow = Object.freeze([...(tools.allow ?? [])]);

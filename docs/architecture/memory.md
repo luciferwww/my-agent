@@ -10,7 +10,7 @@
 
 ## 1. Boundary
 
-`src/core/memory/` owns the optional Memory Store abstraction, SQLite implementation, Markdown indexing, vector/keyword retrieval, and recall tracking. `src/builtins/tools/memory/` owns the three concrete Memory Tools and their Runtime Contribution. Runtime owns whether Memory is enabled, publication of the Memory Tool Unit, and aggregate resource Shutdown.
+`src/core/memory/` owns the optional Memory configuration contract/default/validation, Store abstraction, SQLite implementation, Markdown indexing, vector/keyword retrieval, and recall tracking. `src/builtins/tools/memory/` owns the three concrete Memory Tools and their Runtime Contribution. Runtime supplies the resolved Memory projection, owns publication of the Memory Tool Unit, and owns aggregate resource Shutdown.
 
 When Runtime cannot create or initialize Memory, startup continues with a recoverable warning and without Memory Tools. Failure to select or probe an embedding provider yields keyword-only retrieval; failures later encountered while embedding/indexing propagate to Runtime's optional-capability degradation boundary.
 
@@ -37,7 +37,9 @@ The SQLite and recall paths are implementation conventions, not configurable sch
 - Only direct Markdown files under `memory/` are included; nested files and other extensions are skipped.
 - Missing root/file directories are non-fatal.
 - Content SHA-256 identifies unchanged files; unchanged content skips deletion, embedding, chunk writes, and file-metadata updates.
-- Changed content is split on line boundaries into approximately 1600-character chunks with approximately 320 characters of line-aligned overlap.
+- Changed content is split on line boundaries using resolved `memory.chunking.chunkChars` and `overlapChars`; defaults are approximately 1600 characters with 320 characters of line-aligned overlap.
+- The Store records a per-file chunking fingerprint. Unchanged content is skipped only when both its content hash and that fingerprint match, so a chunking configuration change rebuilds existing indexes.
+- Oversized individual lines form a chunk without overlap when reusing that line would prevent forward progress.
 - Chunk IDs encode source, relative path, and inclusive 1-based line range.
 - Existing chunks for the path are deleted before replacement chunks and file metadata are written.
 - With an embedding provider, all new chunks are embedded in one batch and tagged with its model ID. Without one, chunks remain keyword-searchable.
@@ -52,7 +54,7 @@ A `LocalEmbeddingProvider` lazily initializes one shared Transformers feature-ex
 
 ## 5. Search
 
-`MemorySearcher.search()` uses per-call options or implementation defaults:
+`MemorySearcher.search()` uses per-call options over the resolved Memory search configuration:
 
 | Option | Default |
 |---|---:|
@@ -63,7 +65,7 @@ A `LocalEmbeddingProvider` lazily initializes one shared Transformers feature-ex
 
 With embeddings, the query is embedded once. Vector and FTS5 candidates are fetched at twice the requested result count, each score set is min-max normalized, duplicate chunk IDs are merged, dual matches are marked `hybrid`, and results are thresholded, sorted, and truncated. With no embedding provider, vector work is skipped and normalized keyword results are returned. Invalid FTS5 query syntax is contained as an empty keyword result rather than escaping.
 
-Although `MemoryConfig` currently carries a `search` field and Runtime passes resolved search configuration into `MemoryManager.create()`, the manager does not apply that field to `MemorySearcher`; effective defaults are the constants above unless a caller supplies `SearchOptions` to `search()`.
+Runtime passes resolved embedding, chunking, and search projections into `MemoryManager.create()`. Direct construction without overrides uses the same immutable Memory-owned defaults. Chunking values must be positive safe integers and overlap must be smaller than chunk size; configuration validation fails before Runtime startup when those invariants are violated.
 
 `MemoryManager.search()` asynchronously records the query plus hit paths, line ranges, and scores. Recall logging is fire-and-forget; directory or append failure does not change the returned result.
 
@@ -89,6 +91,6 @@ Tool execution converts read/write failures into failed Tool outcomes. Generic T
 
 | Kind | Evidence |
 |---|---|
-| Source | [MemoryManager](../../src/core/memory/MemoryManager.ts), [Memory contracts](../../src/core/memory/types.ts), [MemoryIndexer](../../src/core/memory/internal/MemoryIndexer.ts), [MemorySearcher](../../src/core/memory/internal/MemorySearcher.ts), [SQLite Store](../../src/core/memory/internal/sqlite-store.ts), [RecallTracker](../../src/core/memory/internal/RecallTracker.ts), [LocalEmbeddingProvider](../../src/core/memory/internal/LocalEmbeddingProvider.ts), [Memory Tools](../../src/builtins/tools/memory/memory-tools.ts), [Runtime bootstrap](../../src/runtime/bootstrap.ts), [Memory Tool contribution](../../src/builtins/tools/memory/contribution.ts) |
+| Source | [Memory configuration](../../src/core/memory/config.ts), [MemoryManager](../../src/core/memory/MemoryManager.ts), [Memory contracts](../../src/core/memory/types.ts), [MemoryIndexer](../../src/core/memory/internal/MemoryIndexer.ts), [MemorySearcher](../../src/core/memory/internal/MemorySearcher.ts), [SQLite Store](../../src/core/memory/internal/sqlite-store.ts), [RecallTracker](../../src/core/memory/internal/RecallTracker.ts), [LocalEmbeddingProvider](../../src/core/memory/internal/LocalEmbeddingProvider.ts), [Memory Tools](../../src/builtins/tools/memory/memory-tools.ts), [Runtime bootstrap](../../src/runtime/bootstrap.ts), [Memory Tool contribution](../../src/builtins/tools/memory/contribution.ts) |
 | Tests | [MemoryManager tests](../../src/core/memory/MemoryManager.test.ts), [MemoryIndexer tests](../../src/core/memory/internal/MemoryIndexer.test.ts), [MemorySearcher tests](../../src/core/memory/internal/MemorySearcher.test.ts), [SQLite Store tests](../../src/core/memory/internal/sqlite-store.test.ts), [RecallTracker tests](../../src/core/memory/internal/RecallTracker.test.ts), [LocalEmbeddingProvider tests](../../src/core/memory/internal/LocalEmbeddingProvider.test.ts), [Runtime degradation/cleanup tests](../../src/runtime/RuntimeApp.test.ts), [Memory Tool contribution tests](../../src/builtins/tools/memory/contribution.test.ts) |
 | Controlling authority | [ADR-007](../decisions/adr-007-builtin-capability-source-ownership.md), [Runtime Composition Specification](../specifications/runtime-composition.md), [Configuration Specification](../specifications/configuration.md) |

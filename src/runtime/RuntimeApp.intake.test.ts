@@ -27,7 +27,8 @@ import type {
 import { RuntimeApp } from './RuntimeApp.js';
 import type { RuntimeHandle } from './runtime-composition.js';
 import type { RuntimeDependencies, RuntimeEvent } from './types.js';
-import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from '../platform/config/defaults.js';
+import { createDefaultAgentConfig } from '../platform/config/default-composition.js';
+import { DEFAULT_LOGGER_CONFIG } from '../platform/logger/index.js';
 
 // 单元测试用 mock：跳过真实 sharp 解码，直接受控注入 normalized + dropped
 const processInboundMock = vi.fn<
@@ -917,7 +918,7 @@ async function buildApp(
       runtime: { steeringEnabled: options.steerMode ?? false },
       runner: {},
       agents: {
-        defaults: structuredClone(DEFAULT_AGENT_CONFIG),
+        defaults: createDefaultAgentConfig(),
         list: [],
       },
       logger: structuredClone(DEFAULT_LOGGER_CONFIG),

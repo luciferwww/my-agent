@@ -6,6 +6,12 @@ export {
   validateRunnerConfig,
 } from './config.js';
 export type { RunnerConfig } from './config.js';
+export {
+  DEFAULT_COMPACTION_CONFIG,
+  CompactionConfigValidationError,
+  validateCompactionConfig,
+} from './compaction-config.js';
+export type { CompactionConfig } from './compaction-config.js';
 export type {
   AgentRunnerConfig,
   RunParams,

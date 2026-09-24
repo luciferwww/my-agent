@@ -43,6 +43,7 @@ export interface RuntimeMemoryOptions {
   agentHome: string;
   enabled: boolean;
   embedding?: AgentDefaults['memory']['embedding'];
+  chunking?: AgentDefaults['memory']['chunking'];
   search?: AgentDefaults['memory']['search'];
 }
 

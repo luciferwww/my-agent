@@ -42,14 +42,8 @@ describe('FT-01 stable core boundaries', () => {
       'FT-01 source=src/core/memory/index.ts boundary=Application import=./internal/MemorySearcher.js target=src/core/memory/internal/MemorySearcher.ts targetBoundary=Infrastructure',
       'FT-01 source=src/core/memory/index.ts boundary=Application import=./internal/RecallTracker.js target=src/core/memory/internal/RecallTracker.ts targetBoundary=Infrastructure',
       'FT-01 source=src/core/memory/index.ts boundary=Application import=./internal/sqlite-store.js target=src/core/memory/internal/sqlite-store.ts targetBoundary=Infrastructure',
-      'FT-01 source=src/core/runner/AgentRunner.ts boundary=Application import=../../platform/config/types.js target=src/platform/config/types.ts targetBoundary=Composition',
       'FT-01 source=src/core/runner/AgentRunner.ts boundary=Application import=../../platform/logger/index.js target=src/platform/logger/index.ts targetBoundary=Infrastructure',
-      'FT-01 source=src/core/runner/context/compaction.ts boundary=Application import=../../../platform/config/types.js target=src/platform/config/types.ts targetBoundary=Composition',
-      'FT-01 source=src/core/runner/context/context-budget.ts boundary=Application import=../../../platform/config/types.js target=src/platform/config/types.ts targetBoundary=Composition',
-      'FT-01 source=src/core/runner/context/tool-result-pruning.ts boundary=Application import=../../../platform/config/types.js target=src/platform/config/types.ts targetBoundary=Composition',
       'FT-01 source=src/core/runner/hooks/runner.ts boundary=Application import=../../../platform/logger/index.js target=src/platform/logger/index.ts targetBoundary=Infrastructure',
-      'FT-01 source=src/core/runner/types.ts boundary=Application import=../../platform/config/types.js target=src/platform/config/types.ts targetBoundary=Composition',
-      'FT-01 source=src/core/subagent/config-loader.ts boundary=Application import=../../platform/config/types.js target=src/platform/config/types.ts targetBoundary=Composition',
     ]);
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_AGENT_CONFIG } from './defaults.js';
+import { createDefaultAgentConfig } from './default-composition.js';
 import { DEFAULT_RUNNER_CONFIG } from '../../core/runner/config.js';
 import { DEFAULT_RUNTIME_CONFIG } from '../../runtime/config.js';
 import { deepMerge, getEnvOverrides, resolveAgentConfig } from './loader.js';
@@ -13,7 +13,7 @@ function appConfig(list: AgentEntry[] = []): AppConfig {
     runtime: structuredClone(DEFAULT_RUNTIME_CONFIG),
     runner: structuredClone(DEFAULT_RUNNER_CONFIG),
     agents: {
-      defaults: structuredClone(DEFAULT_AGENT_CONFIG),
+      defaults: createDefaultAgentConfig(),
       list,
     },
     logger: {},

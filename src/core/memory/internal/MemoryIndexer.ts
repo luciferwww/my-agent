@@ -3,13 +3,13 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readdir, stat } from 'node:fs/promises';
 import type { MemoryStore, MemoryChunk, EmbeddingProvider } from '../types.js';
+import { DEFAULT_MEMORY_CONFIG, type ChunkingConfig } from '../config.js';
 import { Logger } from '../../../platform/logger/index.js';
 
 const log = Logger.get('MemoryIndexer');
 
-const DEFAULT_CHUNK_CHARS = 1600;   // ~400 tokens
-const DEFAULT_OVERLAP_CHARS = 320;  // ~80 tokens
 const MEMORY_SOURCE = 'memory';
+const CHUNKING_META_PREFIX = 'memory-chunking:';
 
 /**
  * 记忆文件索引器。
@@ -20,10 +20,16 @@ const MEMORY_SOURCE = 'memory';
 export class MemoryIndexer {
   private store: MemoryStore;
   private embeddingProvider: EmbeddingProvider | null;
+  private chunking: ChunkingConfig;
 
-  constructor(store: MemoryStore, embeddingProvider: EmbeddingProvider | null) {
+  constructor(
+    store: MemoryStore,
+    embeddingProvider: EmbeddingProvider | null,
+    chunking: ChunkingConfig = DEFAULT_MEMORY_CONFIG.chunking,
+  ) {
     this.store = store;
     this.embeddingProvider = embeddingProvider;
+    this.chunking = chunking;
   }
 
   /**
@@ -32,8 +38,13 @@ export class MemoryIndexer {
   async indexFile(relativePath: string, content: string): Promise<void> {
     const hash = sha256(content);
     const existing = this.store.getFile(relativePath);
+    const chunkingFingerprint = `${this.chunking.chunkChars}:${this.chunking.overlapChars}`;
 
-    if (existing && existing.hash === hash) {
+    if (
+      existing
+      && existing.hash === hash
+      && this.store.getMeta(chunkingMetaKey(relativePath)) === chunkingFingerprint
+    ) {
       log.debug('indexFile skip (unchanged)', { path: relativePath });
       return; // 文件未变，跳过
     }
@@ -41,7 +52,11 @@ export class MemoryIndexer {
     log.debug('indexFile', { path: relativePath });
 
     // 分块
-    const rawChunks = splitIntoChunks(content, DEFAULT_CHUNK_CHARS, DEFAULT_OVERLAP_CHARS);
+    const rawChunks = splitIntoChunks(
+      content,
+      this.chunking.chunkChars,
+      this.chunking.overlapChars,
+    );
 
     // 嵌入
     const modelId = this.embeddingProvider?.modelId ?? '';
@@ -77,6 +92,7 @@ export class MemoryIndexer {
       mtime: now,
       size: Buffer.byteLength(content, 'utf-8'),
     });
+    this.store.setMeta(chunkingMetaKey(relativePath), chunkingFingerprint);
   }
 
   /**
@@ -177,7 +193,7 @@ function splitIntoChunks(content: string, chunkChars: number, overlapChars: numb
       overlapCount += lines[newStart].length + 1;
     }
 
-    startIdx = newStart;
+    startIdx = newStart === startIdx ? endIdx : newStart;
   }
 
   return chunks;
@@ -187,6 +203,10 @@ function splitIntoChunks(content: string, chunkChars: number, overlapChars: numb
 
 function sha256(content: string): string {
   return createHash('sha256').update(content, 'utf-8').digest('hex');
+}
+
+function chunkingMetaKey(relativePath: string): string {
+  return `${CHUNKING_META_PREFIX}${relativePath}`;
 }
 
 async function readFileSafe(filePath: string): Promise<string | null> {

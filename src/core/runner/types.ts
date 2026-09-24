@@ -8,7 +8,7 @@ import type { CurrentCallApprovalCapability } from '../approval/index.js';
 import type { SessionPermissionMode } from '../approval/index.js';
 import type { HookProjection, ToolProjection } from '../registry/index.js';
 import type { ApplicationToolPolicy, ToolResult } from '../tools/types.js';
-import type { CompactionConfig } from '../../platform/config/types.js';
+import type { CompactionConfig } from './compaction-config.js';
 
 export type { ToolResult };
 

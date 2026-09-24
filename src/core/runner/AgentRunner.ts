@@ -19,7 +19,10 @@ import type {
   ToolDefinition,
   ToolResultOutcome,
 } from '../tools/types.js';
-import type { CompactionConfig } from '../../platform/config/types.js';
+import {
+  DEFAULT_COMPACTION_CONFIG,
+  type CompactionConfig,
+} from './compaction-config.js';
 import { runBeforeToolCall, runAfterToolCall, runBeforeCompaction, runAfterCompaction } from './hooks/index.js';
 import { pruneToolResults, pruneToolResultsAggregate } from './context/tool-result-pruning.js';
 import { checkContextBudget } from './context/context-budget.js';
@@ -41,17 +44,6 @@ const MAX_COMPACTION_RETRIES = 3;
  * ContextOverflowError when estimated tokens exceed this context-window ratio.
  */
 const INNER_LOOP_OVERFLOW_THRESHOLD = 0.9;
-
-/** Default compaction configuration when the caller does not provide one. */
-const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
-  enabled: true,
-  reserveTokens: 20_000,
-  keepRecentTurns: 3,
-  toolResultContextShare: 0.5,
-  toolResultHeadChars: 10_000,
-  toolResultTailChars: 5_000,
-  timeoutSeconds: 300,
-};
 
 function isEmptyAbortedAssistant(record: MessageRecord): boolean {
   if (

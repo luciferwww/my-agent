@@ -1,12 +1,17 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type {
-  MemoryConfig,
   MemoryStore,
   MemorySearchResult,
   SearchOptions,
   EmbeddingProvider,
 } from './types.js';
+import {
+  DEFAULT_MEMORY_CONFIG,
+  type ChunkingConfig,
+  type EmbeddingConfig,
+  type MemorySearchConfig,
+} from './config.js';
 import { SqliteMemoryStore } from './internal/sqlite-store.js';
 import { createEmbeddingProvider } from './internal/LocalEmbeddingProvider.js';
 import { MemoryIndexer } from './internal/MemoryIndexer.js';
@@ -18,6 +23,14 @@ const log = Logger.get('MemoryManager');
 
 const DB_FILE = 'memory.sqlite';
 const RECALL_DIR = 'memory-recalls';
+
+export interface MemoryManagerConfig {
+  readonly agentHome: string;
+  readonly enabled?: boolean;
+  readonly embedding?: Partial<EmbeddingConfig>;
+  readonly chunking?: ChunkingConfig;
+  readonly search?: MemorySearchConfig;
+}
 
 /**
  * Memory 模块统一入口。
@@ -52,11 +65,13 @@ export class MemoryManager {
   /**
    * 异步工厂方法：初始化所有组件 + 首次索引。
    */
-  static async create(config: MemoryConfig): Promise<MemoryManager> {
+  static async create(config: MemoryManagerConfig): Promise<MemoryManager> {
     const { agentHome } = config;
 
     // 1. 嵌入提供者（失败则为 null → 降级搜索）
-    const embeddingProvider = await createEmbeddingProvider(config.embedding);
+    const embeddingProvider = await createEmbeddingProvider(
+      config.embedding ?? DEFAULT_MEMORY_CONFIG.embedding,
+    );
     log.info('Embedding provider', { provider: embeddingProvider ? embeddingProvider.modelId : 'none (keyword-only)' });
 
     // 2. SQLite 存储（路径固定在 <agentHome>/memory.sqlite，不可配）
@@ -66,8 +81,16 @@ export class MemoryManager {
     log.info('MemoryManager init', { dbPath });
 
     // 3. 组件
-    const indexer = new MemoryIndexer(store, embeddingProvider);
-    const searcher = new MemorySearcher(store, embeddingProvider);
+    const indexer = new MemoryIndexer(
+      store,
+      embeddingProvider,
+      config.chunking ?? DEFAULT_MEMORY_CONFIG.chunking,
+    );
+    const searcher = new MemorySearcher(
+      store,
+      embeddingProvider,
+      config.search ?? DEFAULT_MEMORY_CONFIG.search,
+    );
     const recallTracker = new RecallTracker(join(agentHome, RECALL_DIR));
 
     const manager = new MemoryManager(

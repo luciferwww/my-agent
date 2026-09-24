@@ -2,6 +2,7 @@ import type {
   SystemPromptBuildParams,
   ContextFile,
 } from './types.js';
+import { DEFAULT_PROMPT_CONFIG } from './config.js';
 import { renderAvailableSubagentsSection } from '../subagent/available-subagents.js';
 
 /**
@@ -120,7 +121,7 @@ export class SystemPromptBuilder {
     lines: string[],
     params: SystemPromptBuildParams,
   ): void {
-    const level = params.safetyLevel ?? 'normal';
+    const level = params.safetyLevel ?? DEFAULT_PROMPT_CONFIG.safetyLevel;
     if (level === 'relaxed') return;
 
     lines.push('# Safety');

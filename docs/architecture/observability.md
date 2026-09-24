@@ -13,6 +13,7 @@
 `src/platform/logger/` provides the process-wide logging facility:
 
 - `Logger` owns static process state, named logger-instance caching, global level filtering, adapter configuration, and the one-time startup buffer.
+- `config.ts` owns Logger's document leaf contract, immutable defaults, and semantic validation.
 - `ConsoleAdapter` formats human-readable process output.
 - `FileAdapter` queues and appends JSON Lines records to UTC date-named files.
 
@@ -22,6 +23,7 @@ Logger does not own Runtime event contracts, Registry diagnostic classification,
 
 ```text
 src/platform/logger/
+├── config.ts
 ├── Logger.ts
 ├── ConsoleAdapter.ts
 ├── FileAdapter.ts

@@ -10,7 +10,7 @@
 
 ## 1. Boundary
 
-`src/platform/config/` owns application-document composition, missing-document bootstrap, one strict Agent Home file read, credential materialization, immutable consumer projections, Agent merge precedence, and environment extraction. Modules own their leaf contracts, semantic validation, and behavioral defaults: Runtime owns `RuntimeConfig`, Runner owns `RunnerConfig`, and the Built-in LLM module owns its deployment contract. After resolving paths, the standalone Host ensures Agent Home exists, exclusively creates a missing `<agentHome>/config.json` with exact UTF-8 bytes `{}\n`, then reads that document once and passes the complete immutable snapshot to `RuntimeApp.create()` as a generic startup fact. Runtime Bootstrap selects the Application and Extension projections without rereading document content; Runtime never reads configuration files.
+`src/platform/config/` owns application-document composition, missing-document bootstrap, one strict Agent Home file read, credential materialization, immutable consumer projections, Agent merge precedence, and environment extraction. Modules own their leaf contracts, semantic validation, and behavioral defaults: Built-in LLM, Runtime, Runner/Compaction, Memory, Prompt, Tool Policy, Agent Context, Subagent, and Logger each export their own contract/default/validator. Platform imports those leaves and maps owner validation failures to document field paths; leaf modules never import Platform Configuration. After resolving paths, the standalone Host ensures Agent Home exists, exclusively creates a missing `<agentHome>/config.json` with exact UTF-8 bytes `{}\n`, then reads that document once and passes the complete immutable snapshot to `RuntimeApp.create()` as a generic startup fact. Runtime Bootstrap selects the Application and Extension projections without rereading document content; Runtime never reads configuration files.
 
 Agent Home owns the configuration document and mutable Agent state. Platform Configuration owns configuration bootstrap and loading; Core Agent Context independently owns Context files even though both may ensure their shared parent exists. `installDir` owns executable Extensions; Extension enablement and scoped configuration remain a namespace in the Agent document. Configuration may carry `llm.defaultModel` and one optional Built-in Provider deployment, but [Model Resolution](model-resolution.md) owns canonical identity, Catalog membership, effective limits, and Model Facts.
 
@@ -38,7 +38,7 @@ Lowest to highest precedence:
 
 | Stage | Source | Owner/API |
 |---:|---|---|
-| 1 | module defaults, `DEFAULT_AGENT_CONFIG`, and `DEFAULT_LOGGER_CONFIG` | `loadAgentConfig()` |
+| 1 | owner-module defaults assembled by `createDefaultAgentConfig()` plus the Logger-owned default | `loadAgentConfig()` |
 | 2 | top-level `runtime`/`runner`, file `agents.defaults`, and `logger` | `loadAgentConfig()` |
 | 3 | matching `agents.list[]` entry | `resolveAgentConfig()` |
 | 4 | environment overrides | `resolveAgentConfig()` |
@@ -82,12 +82,14 @@ deepMerge(target, source): merged copy
 
 `AgentConfigSnapshot` contains only immutable `application` and `extensions` projections. Runtime combines the injected Application projection with explicit `agentHome`, keeps global Runtime/Runner projections separate from resolved Agent defaults, and applies an explicit per-Turn `maxLlmCalls` over the global Runner value. `resolveAgentConfig()` excludes `id` and `default` metadata from the selected per-agent entry before applying environment and caller overrides.
 
+`createDefaultAgentConfig()` returns a fresh aggregate assembled from immutable owner defaults; it contains no leaf literals. The former centralized `platform/config/defaults.ts` and mutable `DEFAULT_AGENT_CONFIG` export are removed. `platform/config/types.ts` retains only composition contracts and type re-exports.
+
 The retired `agents.defaults.workspace`, Agent-level `model`/`llm`, nested/per-Agent `runtime`/`runner`, and corresponding per-agent keys are rejected directly. `runner.inTurnMessageMode` has no compatibility reader and is rejected by strict Runner leaf validation. Public output-token configuration is removed; there is no `llm.maxTokens` or replacement. There is no alias or dual read; Agent Context budgets use `context` only.
 
 ## 6. Evidence
 
 | Kind | Evidence |
 |---|---|
-| Source | [configuration types](../../src/platform/config/types.ts), [configuration loader](../../src/platform/config/agent-config-loader.ts), [Runtime config](../../src/runtime/config.ts), [Runner config](../../src/core/runner/config.ts) |
+| Source | [configuration types](../../src/platform/config/types.ts), [configuration loader](../../src/platform/config/agent-config-loader.ts), [default composition](../../src/platform/config/default-composition.ts), [Runtime config](../../src/runtime/config.ts), [Runner config](../../src/core/runner/config.ts), [Memory config](../../src/core/memory/config.ts), [Prompt config](../../src/core/prompt/config.ts), [Tool policy config](../../src/core/tools/config.ts), [Agent Context config](../../src/core/agent-context/config.ts), [Compaction config](../../src/core/runner/compaction-config.ts), [Subagent config](../../src/core/subagent/config.ts), [Logger config](../../src/platform/logger/config.ts) |
 | Tests | [configuration loader tests](../../src/platform/config/agent-config-loader.test.ts) |
 | Controlling authority | [Configuration Specification](../specifications/configuration.md) |

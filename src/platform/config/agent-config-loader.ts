@@ -9,7 +9,8 @@ import {
 } from '../../builtins/providers/builtin/index.js';
 import { DEFAULT_RUNNER_CONFIG } from '../../core/runner/config.js';
 import { DEFAULT_RUNTIME_CONFIG } from '../../runtime/config.js';
-import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from './defaults.js';
+import { DEFAULT_LOGGER_CONFIG, LoggerConfigValidationError, validateLoggerConfig } from '../logger/index.js';
+import { createDefaultAgentConfig } from './default-composition.js';
 import { deepMerge } from './loader.js';
 import {
   AgentConfigError,
@@ -21,13 +22,11 @@ import {
   CredentialMaterializationError,
   materializeExactStringCredential,
 } from './credential-materialization.js';
-import { validateRuntimeAndRunnerConfig } from './agent-leaf-validation.js';
+import { validateAgentLeafConfig, validateRuntimeAndRunnerConfig } from './agent-leaf-validation.js';
 import type {
   AgentConfigDocument,
   AgentsConfig,
   ApplicationConfigProjection,
-  LoggerLevel,
-  LoggerModuleConfig,
 } from './types.js';
 
 const CONFIG_FILE_NAME = 'config.json';
@@ -39,7 +38,6 @@ const TOP_LEVEL_NAMESPACES = new Set([
   'logger',
   'extensions',
 ]);
-const LOGGER_LEVELS = new Set<LoggerLevel>(['debug', 'info', 'warn', 'error']);
 
 export interface AgentConfigSnapshot {
   readonly application: ApplicationConfigProjection;
@@ -80,12 +78,21 @@ export async function loadAgentConfig(options: {
         structuredClone(document.runner),
       );
 
+  const defaultAgentConfig = createDefaultAgentConfig();
   const defaults = document.agents?.defaults === undefined
-    ? structuredClone(DEFAULT_AGENT_CONFIG)
+    ? defaultAgentConfig
     : deepMerge(
-        structuredClone(DEFAULT_AGENT_CONFIG),
+        defaultAgentConfig,
         structuredClone(document.agents.defaults),
       );
+  validateAgentLeafConfig(defaults, 'agents.defaults');
+  for (const [index, entry] of (document.agents?.list ?? []).entries()) {
+    const { id: _id, default: _default, ...overrides } = entry;
+    validateAgentLeafConfig(
+      deepMerge(structuredClone(defaults), structuredClone(overrides)),
+      `agents.list[${index}]`,
+    );
+  }
   const agents: AgentsConfig = {
     defaults,
     list: structuredClone(document.agents?.list ?? []),
@@ -220,6 +227,7 @@ function validateAgents(value: AgentConfigDocument['agents']): void {
     }
     rejectGlobalPolicyConfig(value.defaults, 'agents.defaults');
     rejectRetiredToolsConfig(value.defaults, 'agents.defaults');
+    validateAgentLeafConfig(value.defaults, 'agents.defaults');
   }
   if (value.list === undefined) return;
   if (!Array.isArray(value.list)) throw invalidAgentConfigField('agents.list');
@@ -243,6 +251,7 @@ function validateAgents(value: AgentConfigDocument['agents']): void {
     }
     rejectGlobalPolicyConfig(entry, entryPath);
     rejectRetiredToolsConfig(entry, entryPath);
+    validateAgentLeafConfig(entry, entryPath);
   }
 
   function rejectGlobalPolicyConfig(
@@ -256,25 +265,13 @@ function validateAgents(value: AgentConfigDocument['agents']): void {
 
 function validateLogger(value: AgentConfigDocument['logger']): void {
   if (value === undefined) return;
-  if (!isPlainObject(value)) throw invalidAgentConfigField('logger');
-  validateLoggerLevel(value['minLevel'], 'logger.minLevel');
-  validateLoggerAdapter(value['console'], 'logger.console');
-  validateLoggerAdapter(value['file'], 'logger.file');
-}
-
-function validateLoggerAdapter(value: unknown, fieldPath: string): void {
-  if (value === undefined) return;
-  if (!isPlainObject(value)) throw invalidAgentConfigField(fieldPath);
-  if (value['enabled'] !== undefined && typeof value['enabled'] !== 'boolean') {
-    throw invalidAgentConfigField(`${fieldPath}.enabled`);
-  }
-  validateLoggerLevel(value['minLevel'], `${fieldPath}.minLevel`);
-}
-
-function validateLoggerLevel(value: unknown, fieldPath: string): void {
-  if (value === undefined) return;
-  if (typeof value !== 'string' || !LOGGER_LEVELS.has(value as LoggerLevel)) {
-    throw invalidAgentConfigField(fieldPath);
+  try {
+    validateLoggerConfig(value);
+  } catch (error) {
+    if (!(error instanceof LoggerConfigValidationError)) throw error;
+    throw invalidAgentConfigField(
+      error.fieldPath === undefined ? 'logger' : `logger.${error.fieldPath}`,
+    );
   }
 }
 

@@ -1481,7 +1481,7 @@ export class RuntimeApp {
           // on. SystemPromptBuilder additionally suppresses it in minimal mode
           // (which is what subagents themselves get).
           availableSubagents:
-            this.resources.resolvedConfig.subagents?.enabled !== false
+            this.resources.resolvedConfig.subagents.enabled
               ? this.getAvailableSubagents()
               : undefined,
         }),
