@@ -30,9 +30,18 @@ For each Provider instance, `models` and `resolveModel()` must derive from the s
 
 ## 4. Facts and capabilities
 
-Providers own fact-source precedence and publish only final values. The Resolver requires a positive `effectiveContextLimit`, validates optional facts, and rejects only explicitly unsupported Tool/media requirements before binding.
+Providers own fact-source precedence and publish only final values. The
+Resolver requires a positive `effectiveContextLimit`, validates optional raw
+total Context, Prompt, and output limits plus capability facts, rejects
+Context-inconsistent limits, and rejects only explicitly unsupported
+Tool/media requirements before binding.
 
-Runner consumes only the resulting `ResolvedModel`: context budgeting uses the required plain `effectiveContextLimit`, and invocation uses the bound port/protocol/model identity. Tool and Media facts are optional: unknown capabilities fail open, while explicit negative capabilities reject incompatible requests.
+Runner consumes only the resulting `ResolvedModel`: context budgeting prefers
+a known Prompt limit, otherwise derives bounded output headroom from a known
+total Context limit, otherwise uses the required effective fallback.
+Invocation uses the bound port/protocol/model identity. Tool and Media facts
+are optional: unknown capabilities fail open, while explicit negative
+capabilities reject incompatible requests.
 
 ## 5. Failure contract
 

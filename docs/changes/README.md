@@ -6,12 +6,11 @@ Changes retain the repository's existing Plan/Specification/validation workflow.
 
 ## Active
 
-No active Change.
-
 ## Archived
 
 Archived changes preserve bounded delivery and acceptance provenance. They are neither Current Architecture nor stable contract authority.
 
+- [Model-Aware Input Budget](archive/model-aware-input-budget/plan.md), with its [implemented Specification](archive/model-aware-input-budget/model-aware-input-budget-specification.md) and [validation record](archive/model-aware-input-budget/validation.md) — optional raw Context/Prompt/output facts, Built-in and Copilot Relay projection, and adaptive Runner input budgeting completed, validated, and accepted on 2026-09-24
 - [WebSocket Channel Extension](archive/websocket-channel-extension/plan.md), with its [implemented Specification](archive/websocket-channel-extension/websocket-channel-extension-specification.md) and [WCE-4 validation record](archive/websocket-channel-extension/wce-4-validation.md) — first-party Extension extraction, Standalone convergence, installed-package distribution, multi-Session client behavior, and authority closeout completed, validated, and accepted on 2026-09-24
 - [Module-owned Agent Configuration and Defaults](archive/module-owned-agent-configuration/plan.md), its [implemented Specification](archive/module-owned-agent-configuration/module-owned-agent-configuration-specification.md), and [validation record](archive/module-owned-agent-configuration/validation.md) — owner-module leaf contracts/defaults/validation, fresh Platform composition, effective Memory chunking with safe invalidation, and central defaults removal completed, validated, and accepted on 2026-09-23
 - [Session Permission Modes](archive/session-permission-modes/plan.md), its [implemented Specification](archive/session-permission-modes/session-permission-modes-specification.md), and [validation record](archive/session-permission-modes/validation.md) — Runtime-owned `manual`/`allow_all` Session switch, final deny precedence, live Root/Child authorization, pending-Approval convergence, and CLI/WebSocket/HTML controls completed, validated, and accepted on 2026-09-23

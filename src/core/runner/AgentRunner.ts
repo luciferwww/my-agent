@@ -26,6 +26,7 @@ import {
 import { runBeforeToolCall, runAfterToolCall, runBeforeCompaction, runAfterCompaction } from './hooks/index.js';
 import { pruneToolResults, pruneToolResultsAggregate } from './context/tool-result-pruning.js';
 import { checkContextBudget } from './context/context-budget.js';
+import { resolveInputTokenBudget } from './context/input-budget.js';
 import { estimatePromptTokens } from './context/token-estimation.js';
 import { ContextOverflowError } from './errors.js';
 import { compactMessages } from './context/compaction.js';
@@ -281,8 +282,11 @@ export class AgentRunner {
   // ── Public entry point ────────────────────────────────────
 
   async run(params: RunParams): Promise<RunResult> {
-    const contextWindowTokens = params.resolvedModel.facts.effectiveContextLimit;
     const compaction = params.compaction ?? DEFAULT_COMPACTION_CONFIG;
+    const inputBudgetTokens = resolveInputTokenBudget(
+      params.resolvedModel.facts,
+      compaction.reserveTokens,
+    );
 
     // Explicit event context prevents nested or concurrent runs from mixing tags.
     const turnCtx: TurnContext = {
@@ -313,7 +317,7 @@ export class AgentRunner {
     // Outer retry loop compacts the Session after ContextOverflowError.
     while (true) {
       try {
-        const result = await this.runAttempt(turnCtx, params, contextWindowTokens, compaction);
+        const result = await this.runAttempt(turnCtx, params, inputBudgetTokens, compaction);
         const finalResult: RunResult = { ...result, compacted };
         this.emit(turnCtx, { type: 'run_end', result: finalResult });
         return finalResult;
@@ -387,7 +391,7 @@ export class AgentRunner {
   private async runAttempt(
     turnCtx: TurnContext,
     params: RunParams,
-    contextWindowTokens: number,
+    inputBudgetTokens: number,
     compaction: CompactionConfig,
   ): Promise<Omit<RunResult, 'compacted'>> {
     const turnSignal = params.signal ?? new AbortController().signal;
@@ -401,7 +405,7 @@ export class AgentRunner {
 
     // Layer 1 prunes individual historical tool results, not the current message.
     if (compaction.enabled) {
-      messages = pruneToolResults(messages, compaction, contextWindowTokens, (info) => {
+      messages = pruneToolResults(messages, compaction, inputBudgetTokens, (info) => {
         this.emit(turnCtx, {
           type: 'tool_result_pruned',
           toolUseId: info.toolUseId ?? `index:${info.index}`,
@@ -417,7 +421,7 @@ export class AgentRunner {
         messages,
         systemPrompt: params.systemPrompt,
         currentPrompt: params.message,
-        contextWindowTokens,
+        inputBudgetTokens,
         config: compaction,
       });
 
@@ -431,7 +435,7 @@ export class AgentRunner {
 
       if (budget.route === 'truncate_tool_results_only') {
         // Layer 1.5 applies the aggregate tool-result budget without an LLM call.
-        messages = pruneToolResultsAggregate(messages, contextWindowTokens, compaction);
+        messages = pruneToolResultsAggregate(messages, inputBudgetTokens, compaction);
       } else if (budget.route === 'compact') {
         // Delegate preemptive LLM summarization to the outer retry loop.
         throw new ContextOverflowError(
@@ -624,23 +628,23 @@ export class AgentRunner {
 
           // Reapply Layer 1 after appending new tool results.
           if (compaction.enabled) {
-            messages = pruneToolResults(messages, compaction, contextWindowTokens);
+            messages = pruneToolResults(messages, compaction, inputBudgetTokens);
           }
 
           // Check the proactive threshold before relying on an LLM API error.
           if (compaction.enabled) {
             const estimated = estimatePromptTokens({ messages, systemPrompt: params.systemPrompt });
-            if (estimated > contextWindowTokens * INNER_LOOP_OVERFLOW_THRESHOLD) {
+            if (estimated > inputBudgetTokens * INNER_LOOP_OVERFLOW_THRESHOLD) {
               logger.warn('inner-loop overflow threshold breached', {
                 sessionKey: params.sessionId,
                 turnId: params.turnId,
                 estimatedTokens: estimated,
-                contextWindowTokens,
+                inputBudgetTokens,
                 thresholdPct: INNER_LOOP_OVERFLOW_THRESHOLD * 100,
               });
               throw new ContextOverflowError(
                 `Context exceeds ${INNER_LOOP_OVERFLOW_THRESHOLD * 100}% threshold during tool loop `
-                + `(estimated ${estimated} of ${contextWindowTokens} tokens)`,
+                + `(estimated ${estimated} of ${inputBudgetTokens} tokens)`,
               );
             }
           }

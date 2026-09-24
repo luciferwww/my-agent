@@ -92,7 +92,15 @@ The three fetch-based Protocol Clients directly implement the Core `ModelInvocat
 
 ### 5.2 Provider facts and Catalog
 
-`BuiltinLlmProvider` publishes Provider `builtin`, protocol `builtin-model-router`, and only explicitly configured models. Its private router selects the Client declared by each model registration without changing the public Provider ABI or opaque model ID. Each model receives the conservative effective Context limit `32,768`; Tool and Media capabilities remain unknown and therefore fail open. Unknown models fail closed.
+`BuiltinLlmProvider` publishes Provider `builtin`, protocol
+`builtin-model-router`, and only explicitly configured models. Its private
+router selects the Client declared by each model registration without changing
+the public Provider identity or opaque model ID. A registration may
+independently declare positive safe-integer total Context, Prompt, and output
+limits. Its compatibility effective limit is the Prompt limit, otherwise the
+Context limit, otherwise the conservative `32,768` fallback. Tool and Media
+capabilities remain unknown and therefore fail open. Unknown models fail
+closed.
 
 ## 6. Built-in Runtime Unit
 
@@ -104,7 +112,14 @@ An empty model registration list publishes an empty Catalog and creates no Proto
 
 `copilot-relay-provider` is an optional external Unit. `create(signal)` validates a credential-free loopback HTTP(S) base URL, then performs one bounded `/v1/models` discovery. The default discovery deadline is 5 seconds and the response body is capped at 2 MiB. A blank API key emits no Authorization header.
 
-Discovery publishes only exact `/responses` models with positive safe-integer output limits and at least one prompt/context limit. The smaller prompt/context value becomes the effective context limit. Tool support and image support are published only when metadata proves them; supported image MIME values are intersected with Core PNG/JPEG/WebP/GIF support. Duplicate eligible opaque Model IDs fail discovery. Unit creation failure follows optional external-Unit isolation and publishes no partial Provider.
+Discovery publishes only exact `/responses` models with positive safe-integer
+output limits and at least one Prompt/Context limit. Relay preserves the exact
+known total Context, Prompt, and output facts; the smaller known Prompt/Context
+input boundary remains the compatibility effective limit. Tool support and
+image support are published only when metadata proves them; supported image
+MIME values are intersected with Core PNG/JPEG/WebP/GIF support. Duplicate
+eligible opaque Model IDs fail discovery. Unit creation failure follows
+optional external-Unit isolation and publishes no partial Provider.
 
 ### 7.1 Responses protocol
 

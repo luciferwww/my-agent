@@ -13,7 +13,9 @@ export interface RelayModelMetadata {
   readonly displayName?: string;
   readonly vendor?: string;
   readonly version?: string;
-  readonly maximumPromptTokens: number;
+  readonly effectiveContextLimit: number;
+  readonly maximumContextTokens?: number;
+  readonly maximumPromptTokens?: number;
   readonly maximumOutputTokens: number;
   readonly toolUse?: boolean;
   readonly vision?: boolean;

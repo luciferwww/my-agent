@@ -69,7 +69,8 @@ export class BuiltinLlmProvider {
         connection: Object.freeze({ endpointId: capturedConfig.baseURL }),
       } as const),
       resolveModel: (modelId: string, connection: ProviderConnection) => {
-        if (!registrations.has(modelId)) {
+        const registration = registrations.get(modelId);
+        if (!registration) {
           return {
             ok: false,
             category: 'model_rejected',
@@ -82,7 +83,21 @@ export class BuiltinLlmProvider {
             identity: Object.freeze({ providerId: BUILTIN_PROVIDER_ID, modelId }),
             protocol: BUILTIN_MODEL_ROUTER_PROTOCOL,
             connection,
-            facts: Object.freeze({ effectiveContextLimit: DEFAULT_BUILTIN_CONTEXT_LIMIT }),
+            facts: Object.freeze({
+              effectiveContextLimit:
+                registration.maximumPromptTokens
+                ?? registration.maximumContextTokens
+                ?? DEFAULT_BUILTIN_CONTEXT_LIMIT,
+              ...(registration.maximumContextTokens === undefined
+                ? {}
+                : { maximumContextTokens: registration.maximumContextTokens }),
+              ...(registration.maximumPromptTokens === undefined
+                ? {}
+                : { maximumPromptTokens: registration.maximumPromptTokens }),
+              ...(registration.maximumOutputTokens === undefined
+                ? {}
+                : { maximumOutputTokens: registration.maximumOutputTokens }),
+            }),
           }),
         } as const;
       },

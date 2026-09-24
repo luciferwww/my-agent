@@ -48,7 +48,7 @@ export interface ContextBudgetResult {
  * 估算通过聚合裁剪（Layer 1.5）最多可释放的字符数。
  *
  * 公式：
- *   aggregateBudgetChars = contextWindowTokens × CHARS_PER_TOKEN × AGGREGATE_TOOL_RESULT_CONTEXT_SHARE
+ *   aggregateBudgetChars = inputBudgetTokens × CHARS_PER_TOKEN × AGGREGATE_TOOL_RESULT_CONTEXT_SHARE
  *   totalToolResultChars = sum(block.content.length) for all tool_result blocks
  *   minKeepChars         = toolResultHeadChars + toolResultTailChars（每条 result 的不可压缩下限）
  *
@@ -59,11 +59,11 @@ export interface ContextBudgetResult {
  */
 function estimateToolResultReductionPotential(
   messages: ChatMessage[],
-  contextWindowTokens: number,
+  inputBudgetTokens: number,
   config: Pick<CompactionConfig, 'toolResultHeadChars' | 'toolResultTailChars'>,
 ): number {
   const aggregateBudgetChars = Math.floor(
-    contextWindowTokens * CHARS_PER_TOKEN * AGGREGATE_TOOL_RESULT_CONTEXT_SHARE,
+    inputBudgetTokens * CHARS_PER_TOKEN * AGGREGATE_TOOL_RESULT_CONTEXT_SHARE,
   );
   const minKeepChars = config.toolResultHeadChars + config.toolResultTailChars;
 
@@ -99,14 +99,14 @@ function estimateToolResultReductionPotential(
  *   ceil(overflowTokens × CHARS_PER_TOKEN × 1.5),
  * )
  *
- * 设计说明：messages 传入时不含当前用户消息；currentPrompt 作为独立字符串参数显式传入，
- * 单独计入 token 估算。reserveTokens 仅覆盖模型输出预留量，不代理当前消息体积。
+ * 设计说明：messages 传入时不含当前用户消息；currentPrompt 作为独立参数显式传入，
+ * 单独计入 token 估算。调用方已经从模型 facts 和 Runner policy 派生输入上限。
  *
  * @param params.messages - 待发送的消息数组（不含当前用户消息，已经过 Layer 1 裁剪）
  * @param params.systemPrompt - system prompt 文本
  * @param params.currentPrompt - 当前用户消息字符串，独立传入，显式计入估算，不会被压缩
- * @param params.contextWindowTokens - 模型上下文窗口大小（tokens）
- * @param params.config - 压缩配置（reserveTokens / toolResultHeadChars / toolResultTailChars）
+ * @param params.inputBudgetTokens - 已根据模型 facts 和输出 headroom 派生的输入上限
+ * @param params.config - Tool Result 裁剪配置
  * @returns 路由策略和估算数据
  */
 export function checkContextBudget(params: {
@@ -115,19 +115,19 @@ export function checkContextBudget(params: {
   systemPrompt?: string;
   /** 当前用户消息：string 或多 block 数组（含附件场景）；独立传入，显式计入 token 估算，不会被压缩 */
   currentPrompt?: string | ChatContentBlock[];
-  contextWindowTokens: number;
-  config: Pick<CompactionConfig, 'reserveTokens' | 'toolResultHeadChars' | 'toolResultTailChars'>;
+  inputBudgetTokens: number;
+  config: Pick<CompactionConfig, 'toolResultHeadChars' | 'toolResultTailChars'>;
 }): ContextBudgetResult {
-  const { messages, systemPrompt, currentPrompt, contextWindowTokens, config } = params;
+  const { messages, systemPrompt, currentPrompt, inputBudgetTokens, config } = params;
 
   const estimatedTokens = estimatePromptTokens({ messages, systemPrompt, currentPrompt });
 
-  const availableTokens = Math.max(0, contextWindowTokens - config.reserveTokens);
+  const availableTokens = Math.max(0, inputBudgetTokens);
   const overflowTokens = Math.max(0, estimatedTokens - availableTokens);
 
   const reducibleChars = estimateToolResultReductionPotential(
     messages,
-    contextWindowTokens,
+    inputBudgetTokens,
     config,
   );
 

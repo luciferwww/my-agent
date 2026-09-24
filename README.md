@@ -54,7 +54,8 @@ mutable state. Create `agent-home/config.json`:
         {
           "modelId": "<model-id>",
           "protocol": "openai-chat-completions",
-          "displayName": "My model"
+          "displayName": "My model",
+          "maximumContextTokens": 131072
         }
       ]
     }
@@ -69,7 +70,11 @@ mutable state. Create `agent-home/config.json`:
 }
 ```
 
-Replace `<model-id>` with a model exposed by your endpoint. For SiliconFlow,
+Replace `<model-id>` with a model exposed by your endpoint. A model registration
+may declare `maximumContextTokens`, `maximumPromptTokens`, and
+`maximumOutputTokens` when the deployment publishes those facts. Every limit
+is optional; omitting Prompt and Context limits uses the conservative Built-in
+Provider fallback of `32768`. For SiliconFlow,
 the model catalog can be queried with:
 
 ```bash

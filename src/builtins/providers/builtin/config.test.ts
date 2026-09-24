@@ -42,10 +42,28 @@ describe('Built-in LLM configuration', () => {
       baseURL: 'http://localhost:5000/v1',
       models: [
         { modelId: 'a', protocol: 'anthropic-messages' },
-        { modelId: 'b', protocol: 'openai-responses', displayName: 'Model B' },
+        {
+          modelId: 'b',
+          protocol: 'openai-responses',
+          displayName: 'Model B',
+          maximumContextTokens: 300_000,
+          maximumPromptTokens: 272_000,
+          maximumOutputTokens: 28_000,
+        },
         { modelId: 'c', protocol: 'openai-chat-completions' },
       ],
-    }).models).toHaveLength(3);
+    }).models).toEqual([
+      { modelId: 'a', protocol: 'anthropic-messages' },
+      {
+        modelId: 'b',
+        protocol: 'openai-responses',
+        displayName: 'Model B',
+        maximumContextTokens: 300_000,
+        maximumPromptTokens: 272_000,
+        maximumOutputTokens: 28_000,
+      },
+      { modelId: 'c', protocol: 'openai-chat-completions' },
+    ]);
   });
 
   it.each([
@@ -56,6 +74,28 @@ describe('Built-in LLM configuration', () => {
     ], 'models[1].modelId'],
     [[{ modelId: 'a', protocol: 'unsupported' }], 'models[0].protocol'],
     [[{ modelId: 'a', protocol: 'openai-responses', displayName: ' ' }], 'models[0].displayName'],
+    [[
+      { modelId: 'a', protocol: 'openai-responses', maximumContextTokens: 0 },
+    ], 'models[0].maximumContextTokens'],
+    [[
+      { modelId: 'a', protocol: 'openai-responses', maximumPromptTokens: 1.5 },
+    ], 'models[0].maximumPromptTokens'],
+    [[
+      {
+        modelId: 'a',
+        protocol: 'openai-responses',
+        maximumContextTokens: 100,
+        maximumPromptTokens: 101,
+      },
+    ], 'models[0].maximumPromptTokens'],
+    [[
+      {
+        modelId: 'a',
+        protocol: 'openai-responses',
+        maximumContextTokens: 100,
+        maximumOutputTokens: 101,
+      },
+    ], 'models[0].maximumOutputTokens'],
   ])('rejects invalid model registrations %#', (models, fieldPath) => {
     try {
       validateBuiltinLlmProviderConfig({

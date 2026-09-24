@@ -24,7 +24,7 @@ Global Runtime/Runner precedence is `module default -> top-level file value`. Ag
 ## Stable shape and ownership
 
 - `llm.defaultModel?: { providerId, modelId }` is the optional preferred reference for a Root Turn without an explicit selection and the client Catalog default, not resolved facts, a mandatory startup model, a Child default, or a fallback list.
-- `llm.builtin?: { baseURL, apiKey?, models[] }` configures one optional Built-in Provider. Each model declares an opaque `modelId`, one of the three supported protocols, and optional `displayName`; an empty list is valid.
+- `llm.builtin?: { baseURL, apiKey?, models[] }` configures one optional Built-in Provider. Each model declares an opaque `modelId`, one of the three supported protocols, optional `displayName`, and optional positive safe-integer `maximumContextTokens`, `maximumPromptTokens`, and `maximumOutputTokens`; an empty list is valid. Omitting Prompt and Context limits uses the Built-in Provider's conservative `32,768` effective fallback.
 - Built-in `apiKey` accepts a literal or one exact `${ENV_VAR}` reference. Platform materializes it once and fails safely when the referenced value is missing or blank. Arbitrary interpolation is not supported.
 - Public output-token configuration is removed. There is no `llm.maxTokens`, replacement output-limit field, or Agent-level LLM compatibility path.
 - Top-level `runtime.steeringEnabled` is a Runtime-owned boolean and defaults to `false`.

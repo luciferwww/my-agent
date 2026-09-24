@@ -9,6 +9,9 @@ export interface BuiltinModelRegistration {
   readonly modelId: string;
   readonly protocol: BuiltinProtocol;
   readonly displayName?: string;
+  readonly maximumContextTokens?: number;
+  readonly maximumPromptTokens?: number;
+  readonly maximumOutputTokens?: number;
 }
 
 export interface BuiltinLlmProviderConfig {
@@ -119,12 +122,56 @@ function validateModels(value: unknown): readonly BuiltinModelRegistration[] {
       throw new BuiltinLlmConfigError(`${path}.displayName`);
     }
 
+    const limits = {
+      maximumContextTokens: entry['maximumContextTokens'],
+      maximumPromptTokens: entry['maximumPromptTokens'],
+      maximumOutputTokens: entry['maximumOutputTokens'],
+    };
+    for (const [field, limit] of Object.entries(limits)) {
+      if (limit !== undefined && (!Number.isSafeInteger(limit) || (limit as number) <= 0)) {
+        throw new BuiltinLlmConfigError(`${path}.${field}`);
+      }
+    }
+    if (
+      typeof limits.maximumContextTokens === 'number'
+      && typeof limits.maximumPromptTokens === 'number'
+      && limits.maximumPromptTokens > limits.maximumContextTokens
+    ) {
+      throw new BuiltinLlmConfigError(`${path}.maximumPromptTokens`);
+    }
+    if (
+      typeof limits.maximumContextTokens === 'number'
+      && typeof limits.maximumOutputTokens === 'number'
+      && limits.maximumOutputTokens > limits.maximumContextTokens
+    ) {
+      throw new BuiltinLlmConfigError(`${path}.maximumOutputTokens`);
+    }
+
     return {
       modelId,
       protocol: protocol as BuiltinProtocol,
       ...(displayName === undefined ? {} : { displayName }),
+      ...copyConfiguredLimits(limits),
     };
   });
+}
+
+function copyConfiguredLimits(limits: Readonly<Record<string, unknown>>): {
+  maximumContextTokens?: number;
+  maximumPromptTokens?: number;
+  maximumOutputTokens?: number;
+} {
+  return {
+    ...(typeof limits['maximumContextTokens'] === 'number'
+      ? { maximumContextTokens: limits['maximumContextTokens'] }
+      : {}),
+    ...(typeof limits['maximumPromptTokens'] === 'number'
+      ? { maximumPromptTokens: limits['maximumPromptTokens'] }
+      : {}),
+    ...(typeof limits['maximumOutputTokens'] === 'number'
+      ? { maximumOutputTokens: limits['maximumOutputTokens'] }
+      : {}),
+  };
 }
 
 function isPlainObject(value: unknown): value is Readonly<Record<string, unknown>> {

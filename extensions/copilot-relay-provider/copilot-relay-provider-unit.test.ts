@@ -93,6 +93,8 @@ describe('Copilot Relay Provider Unit', () => {
       descriptor: {
         facts: {
           effectiveContextLimit: 922_000,
+          maximumContextTokens: 1_050_000,
+          maximumPromptTokens: 922_000,
           maximumOutputTokens: 128_000,
           toolUse: true,
           mediaKinds: ['image'],
@@ -123,6 +125,51 @@ describe('Copilot Relay Provider Unit', () => {
       ok: false,
       category: 'model_rejected',
     });
+  });
+
+  it('preserves whether discovery supplied a Prompt limit or only a Context limit', async () => {
+    const provider = await createProvider(
+      vi.fn(async () => discoveryResponse([
+        validModel({
+          id: 'context-only',
+          capabilities: {
+            limits: {
+              max_context_window_tokens: 32_768,
+              max_output_tokens: 2_048,
+            },
+          },
+        }),
+        validModel({
+          id: 'prompt-only',
+          capabilities: {
+            limits: {
+              max_prompt_tokens: 24_000,
+              max_output_tokens: 2_048,
+            },
+          },
+        }),
+      ])) as unknown as typeof fetch,
+    );
+    const connection = provider.resolveConnection();
+    if (!connection.ok) throw new Error('Expected connection.');
+
+    const contextOnly = provider.resolveModel('context-only', connection.connection);
+    if (!contextOnly.ok) throw new Error('Expected context-only model.');
+    expect(contextOnly.descriptor.facts).toMatchObject({
+      effectiveContextLimit: 32_768,
+      maximumContextTokens: 32_768,
+      maximumOutputTokens: 2_048,
+    });
+    expect(contextOnly.descriptor.facts.maximumPromptTokens).toBeUndefined();
+
+    const promptOnly = provider.resolveModel('prompt-only', connection.connection);
+    if (!promptOnly.ok) throw new Error('Expected prompt-only model.');
+    expect(promptOnly.descriptor.facts).toMatchObject({
+      effectiveContextLimit: 24_000,
+      maximumPromptTokens: 24_000,
+      maximumOutputTokens: 2_048,
+    });
+    expect(promptOnly.descriptor.facts.maximumContextTokens).toBeUndefined();
   });
 
   it('preserves an empty string Model ID from discovery through resolution', async () => {

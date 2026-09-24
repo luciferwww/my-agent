@@ -41,7 +41,11 @@ Adopt option 3 with these durable boundaries:
 5. `llm.builtin` and `llm.defaultModel` are optional. Empty configuration starts; a configured default is both a Client preference and the Server fallback for requests without an explicit selection.
 6. `baseURL` is the complete API prefix before the operation path. Clients append only their operation path and never guess a version segment.
 7. `apiKey` remains a string. Exact `${ENV_VAR}` references are resolved only for explicit credential fields through one shared resolver; arbitrary configuration strings are not interpolated. The materialized value is the Protocol Clients' only credential source: vendor SDK environment fallback is disabled, and absent credentials produce no authentication header.
-8. Unknown models use a `32,768` effective Context boundary. Unknown Tool and Media capabilities fail open; explicit negative capabilities reject.
+8. A manually registered model may independently declare positive safe-integer
+   total Context, Prompt, and output limits. The effective compatibility limit
+   is Prompt, otherwise Context, otherwise the conservative `32,768` fallback.
+   Unknown Tool and Media capabilities fail open; explicit negative
+   capabilities reject.
 9. Known capabilities may be projected additively to clients. Client gating improves UX, while Server validation remains authoritative.
 10. Inbound text and attachments are atomic. Any attachment-processing failure rejects the complete message before invocation. No valid attachment is silently removed and no failed Media request is retried as text-only.
 11. Public output-token controls are removed. OpenAI requests omit limits; the Anthropic Client privately supplies its required `4,096` fallback. This fallback is not a model fact.
@@ -68,7 +72,9 @@ Adopt option 3 with these durable boundaries:
 ### Negative
 
 - Unknown Tool or Media support can produce a first-call upstream error.
-- The `32,768` Context boundary can underuse larger models or overestimate unusually small ones.
+- Omitted Prompt and Context limits can underuse larger models or overestimate
+  unusually small ones through the conservative `32,768` fallback; explicit
+  registration avoids that mismatch.
 - Core diagnostics no longer expose the origin of each individual model fact.
 - Anthropic's required output fallback remains a protocol-specific constant.
 - Removing output-token request fields is a coordinated public contract cutover.

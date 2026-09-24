@@ -23,7 +23,14 @@ describe('BuiltinLlmProvider', () => {
     const provider = new BuiltinLlmProvider({
       baseURL: 'https://example.test/v1',
       models: [
-        { modelId: 'alpha', protocol: 'openai-responses', displayName: 'Alpha' },
+        {
+          modelId: 'alpha',
+          protocol: 'openai-responses',
+          displayName: 'Alpha',
+          maximumContextTokens: 300_000,
+          maximumPromptTokens: 272_000,
+          maximumOutputTokens: 28_000,
+        },
         { modelId: 'beta', protocol: 'anthropic-messages' },
       ],
     }, {
@@ -60,6 +67,20 @@ describe('BuiltinLlmProvider', () => {
         identity: { providerId: 'builtin', modelId: 'alpha' },
         protocol: 'builtin-model-router',
         connection: { endpointId: 'https://example.test/v1' },
+        facts: {
+          effectiveContextLimit: 272_000,
+          maximumContextTokens: 300_000,
+          maximumPromptTokens: 272_000,
+          maximumOutputTokens: 28_000,
+        },
+      },
+    });
+    expect(provider.entry.resolveModel('beta', connection.connection)).toEqual({
+      ok: true,
+      descriptor: {
+        identity: { providerId: 'builtin', modelId: 'beta' },
+        protocol: 'builtin-model-router',
+        connection: { endpointId: 'https://example.test/v1' },
         facts: { effectiveContextLimit: 32_768 },
       },
     });
@@ -90,6 +111,7 @@ describe('BuiltinLlmProvider', () => {
     }, { createClient });
     expect(createClient).toHaveBeenCalledTimes(1);
   });
+
 });
 
 function client(protocol: BuiltinProtocol, calls: string[]): ModelInvocationPort {

@@ -36,9 +36,11 @@ function parseModel(value: unknown): RelayModelBinding | undefined {
   const capabilities = asRecord(entry.capabilities);
   const limits = asRecord(capabilities?.limits);
   const maximumOutputTokens = readPositiveInteger(limits?.max_output_tokens);
+  const maximumContextTokens = readPositiveInteger(limits?.max_context_window_tokens);
+  const declaredMaximumPromptTokens = readPositiveInteger(limits?.max_prompt_tokens);
   const promptLimits = [
-    readPositiveInteger(limits?.max_prompt_tokens),
-    readPositiveInteger(limits?.max_context_window_tokens),
+    declaredMaximumPromptTokens,
+    maximumContextTokens,
   ].filter((candidate): candidate is number => candidate !== undefined);
   if (maximumOutputTokens === undefined || promptLimits.length === 0) return undefined;
 
@@ -57,7 +59,11 @@ function parseModel(value: unknown): RelayModelBinding | undefined {
     ...(readTrimmedString(entry.name) ? { displayName: readTrimmedString(entry.name) } : {}),
     ...(readTrimmedString(entry.vendor) ? { vendor: readTrimmedString(entry.vendor) } : {}),
     ...(readTrimmedString(entry.version) ? { version: readTrimmedString(entry.version) } : {}),
-    maximumPromptTokens: Math.min(...promptLimits),
+    effectiveContextLimit: Math.min(...promptLimits),
+    ...(maximumContextTokens === undefined ? {} : { maximumContextTokens }),
+    ...(declaredMaximumPromptTokens === undefined
+      ? {}
+      : { maximumPromptTokens: declaredMaximumPromptTokens }),
     maximumOutputTokens,
     ...(toolUse === undefined ? {} : { toolUse }),
     ...(vision === undefined ? {} : { vision }),
@@ -67,7 +73,13 @@ function parseModel(value: unknown): RelayModelBinding | undefined {
   return Object.freeze({
     metadata,
     facts: Object.freeze({
-      effectiveContextLimit: metadata.maximumPromptTokens,
+      effectiveContextLimit: metadata.effectiveContextLimit,
+      ...(metadata.maximumContextTokens === undefined
+        ? {}
+        : { maximumContextTokens: metadata.maximumContextTokens }),
+      ...(metadata.maximumPromptTokens === undefined
+        ? {}
+        : { maximumPromptTokens: metadata.maximumPromptTokens }),
       maximumOutputTokens: metadata.maximumOutputTokens,
       ...(toolUse === undefined
         ? {}

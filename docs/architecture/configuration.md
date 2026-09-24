@@ -51,14 +51,14 @@ Stages 3–5 apply only to Agent-scoped configuration. Runtime and Runner use `m
 | Section | Current fields and defaults |
 |---|---|
 | `llm.defaultModel` | Optional preferred Root-Turn `{ providerId, modelId }`; also projected to clients as `unset`, `available`, or `unavailable`; never a fallback list |
-| `llm.builtin` | Optional `{ baseURL, apiKey?, models[] }`; each model has `modelId`, `protocol`, and optional `displayName`; an empty model list is valid |
+| `llm.builtin` | Optional `{ baseURL, apiKey?, models[] }`; each model has `modelId`, `protocol`, optional `displayName`, and optional positive safe-integer `maximumContextTokens`, `maximumPromptTokens`, and `maximumOutputTokens`; omitting Prompt and Context limits uses `32768`; an empty model list is valid |
 | `runtime` | `steeringEnabled=false` |
 | `runner` | Optional positive integer `maxLlmCalls`; omitted means no Model-call count limit |
 | `memory` | Enabled; local `Xenova/all-MiniLM-L6-v2`; chunk `1600/320`; search `6`, `0.25`, weights `0.7/0.3` |
 | `prompt` | `safetyLevel='normal'` |
 | `tools` | `allow=[]`; `deny=[]` |
 | `context` | Agent Context budgets: `maxFileChars=20000`; `maxTotalChars=150000` |
-| `compaction` | Enabled; reserve `20000`; keep 3 turns; result share `0.5`; head/tail `10000/5000`; timeout 300 seconds |
+| `compaction` | Enabled; maximum desired output headroom `20000` when only a total Context limit is known; keep 3 turns; result share `0.5`; head/tail `10000/5000`; timeout 300 seconds |
 | `subagents` | Enabled; `maxDepth=1`; empty profile list |
 | `logger` | Global `info`; console enabled; file disabled |
 

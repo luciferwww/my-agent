@@ -44,6 +44,8 @@ export interface ProviderConnection {
 
 export interface ProviderModelFacts {
   readonly effectiveContextLimit?: number;
+  readonly maximumContextTokens?: number;
+  readonly maximumPromptTokens?: number;
   readonly maximumOutputTokens?: number;
   readonly toolUse?: boolean;
   readonly mediaKinds?: readonly string[];
@@ -108,6 +110,8 @@ export interface ResolvedModel {
   readonly invocationPort: ModelInvocationPort;
   readonly facts: Readonly<{
     effectiveContextLimit: number;
+    maximumContextTokens?: number;
+    maximumPromptTokens?: number;
     maximumOutputTokens?: number;
     toolUse?: boolean;
     mediaKinds?: readonly string[];

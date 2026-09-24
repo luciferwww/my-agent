@@ -109,6 +109,12 @@ export class ModelResolver {
       invocationPort: provider.invocationPort,
       facts: Object.freeze({
         effectiveContextLimit: facts.effectiveContextLimit,
+        ...(facts.maximumContextTokens !== undefined
+          ? { maximumContextTokens: facts.maximumContextTokens }
+          : {}),
+        ...(facts.maximumPromptTokens !== undefined
+          ? { maximumPromptTokens: facts.maximumPromptTokens }
+          : {}),
         ...(facts.maximumOutputTokens !== undefined
           ? { maximumOutputTokens: facts.maximumOutputTokens }
           : {}),
@@ -152,23 +158,43 @@ export class ModelResolver {
 
   private requireFacts(facts: ProviderModelFacts): {
     effectiveContextLimit: number;
+    maximumContextTokens?: number;
+    maximumPromptTokens?: number;
     maximumOutputTokens?: number;
     toolUse?: boolean;
     mediaKinds?: readonly string[];
   } {
     if (
       !isPositiveInteger(facts.effectiveContextLimit)
+      || (facts.maximumContextTokens !== undefined && !isPositiveInteger(facts.maximumContextTokens))
+      || (facts.maximumPromptTokens !== undefined && !isPositiveInteger(facts.maximumPromptTokens))
       || (facts.maximumOutputTokens !== undefined && !isPositiveInteger(facts.maximumOutputTokens))
+      || (
+        facts.maximumContextTokens !== undefined
+        && facts.maximumPromptTokens !== undefined
+        && facts.maximumPromptTokens > facts.maximumContextTokens
+      )
+      || (
+        facts.maximumContextTokens !== undefined
+        && facts.maximumOutputTokens !== undefined
+        && facts.maximumOutputTokens > facts.maximumContextTokens
+      )
       || (facts.toolUse !== undefined && typeof facts.toolUse !== 'boolean')
       || (facts.mediaKinds !== undefined && !isMediaKinds(facts.mediaKinds))
     ) {
       throw new ModelResolutionError(
         'facts_insufficient',
-        'Provider model facts are missing a valid effective Context limit.',
+        'Provider model facts are invalid or missing a valid effective Context limit.',
       );
     }
     return {
       effectiveContextLimit: facts.effectiveContextLimit,
+      ...(facts.maximumContextTokens !== undefined
+        ? { maximumContextTokens: facts.maximumContextTokens }
+        : {}),
+      ...(facts.maximumPromptTokens !== undefined
+        ? { maximumPromptTokens: facts.maximumPromptTokens }
+        : {}),
       ...(facts.maximumOutputTokens !== undefined
         ? { maximumOutputTokens: facts.maximumOutputTokens }
         : {}),
@@ -176,6 +202,7 @@ export class ModelResolver {
       ...(facts.mediaKinds ? { mediaKinds: facts.mediaKinds } : {}),
     };
   }
+
 }
 
 function normalizeProviderId(value: string | undefined): string | undefined {
@@ -188,7 +215,7 @@ function validateProviderId(value: string | undefined): string | undefined {
 }
 
 function isPositiveInteger(value: unknown): value is number {
-  return Number.isInteger(value) && (value as number) > 0;
+  return Number.isSafeInteger(value) && (value as number) > 0;
 }
 
 function isMediaKinds(value: readonly string[]): boolean {

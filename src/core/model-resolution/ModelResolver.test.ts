@@ -30,6 +30,8 @@ function provider(overrides: Partial<ProviderProjectionEntry> = {}): ProviderPro
         connection,
         facts: {
           effectiveContextLimit: 200_000,
+          maximumContextTokens: 200_000,
+          maximumPromptTokens: 190_000,
           maximumOutputTokens: 8192,
           toolUse: true,
           mediaKinds: ['image'],
@@ -68,6 +70,8 @@ describe('ModelResolver', () => {
     expect(resolved.referenceSource).toBe('native');
     expect(resolved.invocationPort).toBe(port);
     expect(resolved.facts.effectiveContextLimit).toBe(200_000);
+    expect(resolved.facts.maximumContextTokens).toBe(200_000);
+    expect(resolved.facts.maximumPromptTokens).toBe(190_000);
     expect(resolved.facts.maximumOutputTokens).toBe(8192);
     expect(Object.isFrozen(resolved)).toBe(true);
     expect(Object.isFrozen(resolved.identity)).toBe(true);
@@ -207,6 +211,38 @@ describe('ModelResolver', () => {
       mediaKinds: [],
     })]).resolve(input({ request: { tools: false, mediaKinds: ['image'] } })), 'capability_unsupported');
   });
+
+  it('rejects invalid or Context-inconsistent optional model limits', () => {
+    const base = provider();
+    const withFacts = (facts: ProviderModelFacts) => provider({
+      resolveModel: (modelId, connection) => {
+        const result = base.resolveModel(modelId, connection);
+        if (!result.ok) return result;
+        return { ok: true, descriptor: { ...result.descriptor, facts } };
+      },
+    });
+
+    for (const facts of [
+      { effectiveContextLimit: 100, maximumContextTokens: 0 },
+      { effectiveContextLimit: 100, maximumPromptTokens: 1.5 },
+      {
+        effectiveContextLimit: 100,
+        maximumContextTokens: 100,
+        maximumPromptTokens: 101,
+      },
+      {
+        effectiveContextLimit: 100,
+        maximumContextTokens: 100,
+        maximumOutputTokens: 101,
+      },
+    ]) {
+      expectCategory(
+        () => new ModelResolver([withFacts(facts)]).resolve(input()),
+        'facts_insufficient',
+      );
+    }
+  });
+
 
   it('rejects a model outside the closed Catalog before resolving a connection or model', () => {
     const resolveConnection = vi.fn(provider().resolveConnection);

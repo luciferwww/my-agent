@@ -36,7 +36,14 @@ Choose option 3.
 
 ### Provider-owned limits and Turn binding
 
-Provider Integration interprets model facts. Model Resolution validates provenance and creates an immutable per-Turn Resolved Model. Effective context limits are positive Provider-produced facts with provenance; a Provider-owned fallback may fill a missing value but may not override a more specific applicable fact. Overflow observation can only tighten a limit.
+Provider Integration interprets model facts. Model Resolution validates them
+and creates an immutable per-Turn Resolved Model. Providers may publish raw
+total Context, Prompt, and output limits; an effective positive fallback
+remains required for compatibility. Runner uses a known Prompt limit directly,
+otherwise derives bounded headroom from a known total Context limit, otherwise
+uses the effective fallback. A Provider-owned fallback may fill a missing value
+but may not override a more specific applicable fact. Overflow observation can
+only tighten a limit.
 
 A model switch atomically changes Provider binding, protocol, endpoint/deployment identity, capabilities, limits, and provenance. No cross-Provider default such as `200000` belongs to Stable Core.
 
