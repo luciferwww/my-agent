@@ -112,7 +112,7 @@ An empty model registration list publishes an empty Catalog and creates no Proto
 
 ## 7. Copilot Relay external Unit
 
-`copilot-relay-provider` is an optional external Unit. `create(signal)` validates a credential-free loopback HTTP(S) base URL, then performs one bounded `/v1/models` discovery. The default discovery deadline is 5 seconds and the response body is capped at 2 MiB. A blank API key emits no Authorization header.
+`copilot-relay-provider` is an optional external Unit. `create(signal)` validates a credential-free HTTP(S) base URL, then performs one bounded `/v1/models` discovery. The default discovery deadline is 5 seconds and the response body is capped at 2 MiB. A blank API key emits no Authorization header. The default endpoint is loopback. A configured non-loopback endpoint sends model discovery, prompts, Tool definitions and results, media, and credentials over the selected network path; operators should use a trusted endpoint and HTTPS outside a trusted local network.
 
 Discovery publishes only exact `/responses` models with positive safe-integer
 output limits and at least one Prompt/Context limit. Relay preserves the exact

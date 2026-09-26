@@ -51,20 +51,16 @@ export function normalizeCopilotRelayBaseURL(value: string): string {
   try {
     url = new URL(value);
   } catch {
-    throw new Error('Copilot Relay baseURL must be a valid loopback HTTP URL.');
+    throw new Error('Copilot Relay baseURL must be a valid HTTP(S) URL.');
   }
-  const loopback = url.hostname === 'localhost'
-    || url.hostname === '127.0.0.1'
-    || url.hostname === '[::1]';
   if (
-    !loopback
-    || (url.protocol !== 'http:' && url.protocol !== 'https:')
+    (url.protocol !== 'http:' && url.protocol !== 'https:')
     || url.username
     || url.password
     || url.search
     || url.hash
   ) {
-    throw new Error('Copilot Relay baseURL must be a credential-free loopback HTTP URL without query or fragment.');
+    throw new Error('Copilot Relay baseURL must be a credential-free HTTP(S) URL without query or fragment.');
   }
   url.pathname = url.pathname.replace(/\/+$/u, '');
   return url.toString().replace(/\/$/u, '');

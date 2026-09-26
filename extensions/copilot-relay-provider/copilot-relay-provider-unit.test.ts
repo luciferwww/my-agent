@@ -246,11 +246,15 @@ describe('Copilot Relay Provider Unit', () => {
     });
   });
 
-  it('validates loopback base URLs before discovery', () => {
+  it('validates HTTP(S) base URLs before discovery', () => {
     expect(normalizeCopilotRelayBaseURL('http://127.0.0.1:5000///'))
       .toBe('http://127.0.0.1:5000');
-    expect(() => normalizeCopilotRelayBaseURL('https://relay.example.com'))
-      .toThrow('loopback');
+    expect(normalizeCopilotRelayBaseURL('http://192.168.1.14:5000'))
+      .toBe('http://192.168.1.14:5000');
+    expect(normalizeCopilotRelayBaseURL('https://relay.example.com'))
+      .toBe('https://relay.example.com');
+    expect(() => normalizeCopilotRelayBaseURL('ftp://relay.example.com'))
+      .toThrow('HTTP(S)');
     expect(() => normalizeCopilotRelayBaseURL('http://user:secret@localhost:5000'))
       .toThrow('credential-free');
     expect(() => normalizeCopilotRelayBaseURL('http://localhost:5000?secret=yes'))

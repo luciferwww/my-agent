@@ -22,7 +22,7 @@ describe('Copilot Relay Extension entry', () => {
 
   it('maps scoped config to an uncreated External Unit', () => {
     const config = Object.freeze({
-      baseURL: 'http://localhost:5000/',
+      baseURL: 'http://relay.example.test:5000/',
       apiKey: 'relay-secret',
       discoveryTimeoutMs: 5000,
     });
@@ -39,7 +39,7 @@ describe('Copilot Relay Extension entry', () => {
       dependencies: [],
     });
     expect(config).toEqual({
-      baseURL: 'http://localhost:5000/',
+      baseURL: 'http://relay.example.test:5000/',
       apiKey: 'relay-secret',
       discoveryTimeoutMs: 5000,
     });
@@ -52,8 +52,8 @@ describe('Copilot Relay Extension entry', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
     expect(() => createExtension(extensionContext(
-      Object.freeze({ baseURL: 'https://relay.example.com' }),
-    ))).toThrow('loopback');
+      Object.freeze({ baseURL: 'ftp://relay.example.com' }),
+    ))).toThrow('HTTP(S)');
     expect(() => createExtension(extensionContext(
       Object.freeze({ discoveryTimeoutMs: 0 }),
     ))).toThrow('positive safe integer');
