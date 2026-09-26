@@ -1628,17 +1628,61 @@
           <div class="section-title">
             <h2>Session permissions</h2>
           </div>
-          <label>
+          <div class="model-picker" :class="{ open: permissionPickerOpen }">
             <span class="field-label-text">Permission mode</span>
-            <select
-              :value="permissionMode"
+            <button
+              class="model-picker-trigger"
+              type="button"
               :disabled="!isConnected || pendingPermissionRequestId !== null"
-              @change="changePermissionMode($event.target.value); $event.target.value = permissionMode"
+              :aria-expanded="String(permissionPickerOpen)"
+              aria-haspopup="listbox"
+              @click="togglePermissionPicker"
             >
-              <option value="manual">Manual permissions</option>
-              <option value="allow_all">Allow all for this Session</option>
-            </select>
-          </label>
+              <span class="model-picker-trigger-copy">
+                <span class="model-picker-trigger-name">
+                  {{ permissionMode === 'allow_all' ? 'Allow all for this Session' : 'Manual permissions' }}
+                </span>
+              </span>
+              <span class="model-picker-chevron">⌄</span>
+            </button>
+            <div v-if="permissionPickerOpen" class="model-picker-scrim" @click="closePermissionPicker"></div>
+            <div
+              v-if="permissionPickerOpen"
+              class="model-picker-panel"
+              role="listbox"
+              aria-label="Permission mode"
+              @keydown.esc.stop="closePermissionPicker"
+            >
+              <button
+                class="model-picker-option"
+                :class="{ selected: permissionMode === 'manual' }"
+                type="button"
+                role="option"
+                :aria-selected="String(permissionMode === 'manual')"
+                @click="selectPermissionMode('manual')"
+              >
+                <span class="model-picker-check">{{ permissionMode === 'manual' ? '✓' : '' }}</span>
+                <span class="model-picker-option-copy">
+                  <span class="model-picker-option-name">Manual permissions</span>
+                  <span class="model-picker-option-id">Ask before protected tool calls</span>
+                </span>
+              </button>
+              <button
+                class="model-picker-option"
+                :class="{ selected: permissionMode === 'allow_all' }"
+                type="button"
+                role="option"
+                :aria-selected="String(permissionMode === 'allow_all')"
+                @click="selectPermissionMode('allow_all')"
+              >
+                <span class="model-picker-check">{{ permissionMode === 'allow_all' ? '✓' : '' }}</span>
+                <span class="model-picker-option-copy">
+                  <span class="model-picker-option-name">Allow all for this Session</span>
+                  <span class="model-picker-option-id">Run every non-denied tool without asking</span>
+                </span>
+              </button>
+            </div>
+          </div>
           <div
             class="permission-indicator"
             :class="{ 'allow-all': permissionMode === 'allow_all' }"
@@ -1980,6 +2024,7 @@
             modelSelection: null,
             modelSelectionSource: 'none',
             modelPickerOpen: false,
+            permissionPickerOpen: false,
             modelSearch: '',
             activeModelOptionIndex: -1,
             sessionStates: { '': createSessionUiState() },
@@ -2179,6 +2224,7 @@
             this.pendingSessionsRequestId = null;
             this.pendingSessionOperation = null;
             this.closeSessionActionMenu();
+            this.closePermissionPicker();
             this.sessions = [];
             this.sessionsError = '';
             this.clearModelSelection();
@@ -2404,12 +2450,29 @@
               mode,
             });
           },
+          togglePermissionPicker() {
+            if (this.permissionPickerOpen) {
+              this.closePermissionPicker();
+              return;
+            }
+            if (!this.isConnected || this.pendingPermissionRequestId !== null) return;
+            this.closeModelPicker();
+            this.permissionPickerOpen = true;
+          },
+          closePermissionPicker() {
+            this.permissionPickerOpen = false;
+          },
+          selectPermissionMode(mode) {
+            this.closePermissionPicker();
+            this.changePermissionMode(mode);
+          },
           toggleModelPicker() {
             if (this.modelPickerOpen) {
               this.closeModelPicker();
               return;
             }
             if (!this.modelCatalog || this.availableModels.length === 0) return;
+            this.closePermissionPicker();
             this.modelSearch = '';
             this.modelPickerOpen = true;
             this.activeModelOptionIndex = this.modelOptionIndex(
