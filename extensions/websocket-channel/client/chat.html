@@ -1034,6 +1034,12 @@
         border-color: rgba(239, 131, 84, 0.28);
       }
 
+      .approval-card.collapsed {
+        padding: 14px 16px;
+        gap: 10px;
+        border-radius: 18px;
+      }
+
       .approval-card.resolved {
         border-color: rgba(107, 179, 156, 0.32);
         background: #f5fbf9;
@@ -1050,6 +1056,13 @@
         margin: 0;
         font-size: 18px;
         font-weight: 700;
+      }
+
+      .approval-title-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
       }
 
       .approval-code {
@@ -1154,6 +1167,41 @@
         gap: 10px;
       }
 
+      .tool-card-toggle {
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 18px;
+        cursor: pointer;
+      }
+
+      .tool-card-toggle:hover {
+        background: rgba(47, 36, 30, 0.08);
+        color: var(--text);
+      }
+
+      .tool-card-summary {
+        min-width: 0;
+        color: var(--muted);
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .tool-card-section-label {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
       .tool-result-card {
         width: fit-content;
         min-width: var(--message-min-width);
@@ -1243,6 +1291,12 @@
       .tool-result-body .tool-result-scroll {
         padding: 6px 8px 8px;
         font-family: Consolas, "Courier New", monospace;
+        max-height: min(60vh, 720px);
+      }
+
+      .approval-code {
+        max-height: min(50vh, 560px);
+        overflow: auto;
       }
 
       .approval-status {
@@ -1659,91 +1713,100 @@
 
             <!-- ── Assistant turn: segments ── -->
             <template v-if="item.kind === 'turn'">
-              <template v-for="(seg, idx) in item.segments" :key="seg.id">
-
-                <!-- Toggle button before the first tool_use segment -->
-                <button
-                  v-if="seg.type === 'tool_use' && isFirstToolSeg(item.segments, idx)"
-                  class="turn-tools-toggle"
-                  @click="item.toolsExpanded = !item.toolsExpanded"
-                >
-                  {{ item.toolsExpanded ? '▼' : '▶' }}
-                  {{ countToolCalls(item) }} tool call{{ countToolCalls(item) !== 1 ? 's' : '' }}
-                </button>
+              <template v-for="seg in item.segments" :key="seg.id">
 
                 <!-- Text bubble -->
                 <div v-if="seg.type === 'text'" class="bubble">
                   <div class="rich-text" v-html="renderAssistantText(seg.text)"></div>
                 </div>
 
-                <!-- Tool use card (visible when expanded) -->
+                <!-- Tool call card -->
                 <section
-                  v-if="seg.type === 'tool_use' && item.toolsExpanded"
-                  class="tool-result-card"
-                >
-                  <div class="tool-result-header">
-                    <div class="tool-result-title">
-                      <span class="tool-result-name">{{ seg.name }}</span>
-                      <span class="tool-result-badge">Tool call</span>
-                    </div>
-                  </div>
-                  <div class="tool-result-preview">
-                    <pre class="tool-result-scroll">{{ prettyJson(seg.input) }}</pre>
-                  </div>
-                </section>
-
-                <!-- Approval card (always visible, not affected by toolsExpanded) -->
-                <section
-                  v-if="seg.type === 'approval'"
-                  class="approval-card"
-                  :class="seg.approval.status"
-                >
-                  <div class="eyebrow">Approval Required</div>
-                  <h3>{{ seg.approval.toolName }}</h3>
-                  <div class="approval-meta">
-                    <span>ID: {{ seg.approval.id }}</span>
-                  </div>
-                  <div class="approval-status" :class="approvalStatusClass(seg.approval.status)">
-                    {{ approvalStatusLabel(seg.approval.status) }}
-                  </div>
-                  <pre class="approval-code">{{ prettyJson(seg.approval.input) }}</pre>
-                  <div class="approval-actions">
-                    <button
-                      class="secondary"
-                      @click="resolveApproval(seg, 'deny')"
-                      :disabled="seg.approval.status !== 'pending'"
-                    >Deny</button>
-                    <button
-                      class="primary"
-                      @click="resolveApproval(seg, 'allow')"
-                      :disabled="seg.approval.status !== 'pending'"
-                    >Allow</button>
-                  </div>
-                </section>
-
-                <section
-                  v-if="seg.type === 'tool_result' && item.toolsExpanded"
+                  v-if="seg.type === 'tool_call'"
                   class="tool-result-card"
                   :class="{ 'is-error': seg.isError }"
                 >
                   <div class="tool-result-header">
                     <div class="tool-result-title">
                       <span class="tool-result-name">{{ seg.name }}</span>
-                      <span class="tool-result-badge">{{ seg.isError ? 'Error' : 'Result' }}</span>
+                      <span class="tool-result-badge">{{ seg.isError ? 'Failed' : seg.status === 'completed' ? 'Succeeded' : 'Running' }}</span>
                     </div>
                     <button
-                      v-if="segResultTruncated(seg)"
-                      class="secondary"
+                      class="tool-card-toggle"
+                      type="button"
+                      :aria-label="seg.expanded ? 'Collapse tool call' : 'Expand tool call'"
+                      :aria-expanded="String(seg.expanded)"
                       @click="seg.expanded = !seg.expanded"
-                    >
-                      {{ seg.expanded ? 'Collapse' : 'Expand' }}
-                    </button>
+                    >{{ seg.expanded ? '⌃' : '⌄' }}</button>
                   </div>
-                  <div v-if="!seg.expanded" class="tool-result-preview">
-                    <pre class="tool-result-scroll">{{ segResultPreview(seg).text }}</pre>
+                  <div v-if="!seg.expanded" class="tool-card-summary" :title="toolInputSummary(seg.input)">
+                    {{ toolInputSummary(seg.input) }}
                   </div>
-                  <div v-else class="tool-result-body">
-                    <pre class="tool-result-scroll">{{ seg.content }}</pre>
+                  <template v-else>
+                    <div class="tool-card-section-label">Input</div>
+                    <div class="tool-result-preview">
+                      <pre class="tool-result-scroll">{{ prettyJson(seg.input) }}</pre>
+                    </div>
+                    <template v-if="seg.resultContent">
+                      <div class="tool-card-section-label">{{ seg.isError ? 'Error' : 'Result' }}</div>
+                      <div v-if="!seg.resultExpanded" class="tool-result-preview">
+                        <pre class="tool-result-scroll">{{ segResultPreview(seg).text }}</pre>
+                      </div>
+                      <div v-else class="tool-result-body">
+                        <pre class="tool-result-scroll">{{ seg.resultContent }}</pre>
+                      </div>
+                      <button
+                        v-if="segResultTruncated(seg)"
+                        class="secondary"
+                        @click="seg.resultExpanded = !seg.resultExpanded"
+                      >{{ seg.resultExpanded ? 'Show preview' : 'Show full result' }}</button>
+                    </template>
+                  </template>
+                </section>
+
+                <!-- Approval card -->
+                <section
+                  v-if="seg.type === 'approval'"
+                  class="approval-card"
+                  :class="[seg.approval.status, { collapsed: !seg.expanded }]"
+                >
+                  <div class="tool-result-header">
+                    <div>
+                      <div class="eyebrow">Approval Required</div>
+                      <div class="approval-title-row">
+                        <h3>{{ seg.approval.toolName }}</h3>
+                        <div class="approval-status" :class="approvalStatusClass(seg.approval.status)">
+                          {{ approvalStatusLabel(seg.approval.status) }}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      class="tool-card-toggle"
+                      type="button"
+                      :aria-label="seg.expanded ? 'Collapse approval details' : 'Expand approval details'"
+                      :aria-expanded="String(seg.expanded)"
+                      @click="seg.expanded = !seg.expanded"
+                    >{{ seg.expanded ? '⌃' : '⌄' }}</button>
+                  </div>
+                  <div v-if="!seg.expanded" class="tool-card-summary" :title="toolInputSummary(seg.approval.input)">
+                    {{ toolInputSummary(seg.approval.input) }}
+                  </div>
+                  <template v-else>
+                    <div class="approval-meta">
+                      <span>ID: {{ seg.approval.id }}</span>
+                    </div>
+                    <div class="tool-card-section-label">Input</div>
+                    <pre class="approval-code">{{ prettyJson(seg.approval.input) }}</pre>
+                  </template>
+                  <div v-if="seg.approval.status === 'pending'" class="approval-actions">
+                    <button
+                      class="secondary"
+                      @click="resolveApproval(seg, 'deny')"
+                    >Deny</button>
+                    <button
+                      class="primary"
+                      @click="resolveApproval(seg, 'allow')"
+                    >Allow</button>
                   </div>
                 </section>
 
@@ -2885,6 +2948,7 @@
                   activeTurn.segments.push({
                     type: 'approval',
                     id: this.nextId++,
+                    expanded: false,
                     approval: { ...message, status: 'pending' },
                   });
                   this.scrollChatToBottom(message.sessionId);
@@ -2942,10 +3006,15 @@
               case 'tool_use': {
                 const turn = this.getOrCreateTurn(event.turnId, sessionId);
                 turn.segments.push({
-                  type: 'tool_use',
+                  type: 'tool_call',
                   id: this.nextId++,
                   name: event.name,
                   input: event.input,
+                  status: 'running',
+                  resultContent: '',
+                  isError: false,
+                  expanded: false,
+                  resultExpanded: false,
                 });
                 this.pushEvent('tool_use', event.name);
                 this.scrollChatToBottom(sessionId);
@@ -2953,15 +3022,12 @@
               }
 
               case 'tool_result': {
-                const turn = this.getOrCreateTurn(event.turnId, sessionId);
-                turn.segments.push({
-                  type: 'tool_result',
-                  id: this.nextId++,
-                  name: event.name,
-                  content: this.normalizeToolResultContent(event.result?.content),
-                  isError: Boolean(event.result?.isError),
-                  expanded: false,
-                });
+                const toolCall = this.findPendingToolCall(event.turnId, sessionId);
+                if (toolCall) {
+                  toolCall.status = 'completed';
+                  toolCall.resultContent = this.normalizeToolResultContent(event.result?.content);
+                  toolCall.isError = Boolean(event.result?.isError);
+                }
                 this.scrollChatToBottom(sessionId);
                 return;
               }
@@ -3089,7 +3155,6 @@
                 turnId,
                 label: 'Assistant',
                 timestamp: Date.now(),
-                toolsExpanded: existing.toolsExpanded,
                 segments: [],
                 isContinuation: true,
               };
@@ -3103,7 +3168,6 @@
               turnId,
               label: 'Assistant',
               timestamp: Date.now(),
-              toolsExpanded: true,
               segments: [],
             };
             state.chatItems.push(turn);
@@ -3125,18 +3189,17 @@
             this.scrollChatToBottom(sessionId);
           },
 
-          // Returns true if the segment at idx is the first tool_use in the list
-          // (used to decide where to render the toggle button).
-          isFirstToolSeg(segments, idx) {
-            if (segments[idx].type !== 'tool_use') return false;
-            for (let i = 0; i < idx; i++) {
-              if (segments[i].type === 'tool_use') return false;
+          findPendingToolCall(turnId, sessionId) {
+            const state = this.ensureSessionState(sessionId);
+            for (let itemIndex = state.chatItems.length - 1; itemIndex >= 0; itemIndex--) {
+              const item = state.chatItems[itemIndex];
+              if (item.kind !== 'turn' || item.turnId !== turnId) continue;
+              for (let segmentIndex = item.segments.length - 1; segmentIndex >= 0; segmentIndex--) {
+                const segment = item.segments[segmentIndex];
+                if (segment.type === 'tool_call' && segment.status === 'running') return segment;
+              }
             }
-            return true;
-          },
-
-          countToolCalls(turn) {
-            return turn.segments.filter(s => s.type === 'tool_use').length;
+            return null;
           },
 
           // ── Chat item helpers ─────────────────────────────────
@@ -3230,10 +3293,27 @@
             return `${String(lineNumber).padStart(width, ' ')} ${line}`;
           },
           segResultPreview(seg) {
-            return this.previewLines(seg.content);
+            return this.previewLines(seg.resultContent);
           },
           segResultTruncated(seg) {
             return this.segResultPreview(seg).omittedCount > 0;
+          },
+
+          toolInputSummary(input) {
+            if (!input || typeof input !== 'object' || Array.isArray(input)) return '';
+            const entries = Object.entries(input).slice(0, 3);
+            const summary = entries.map(([key, value]) => `${key}=${this.singleLineValue(value)}`).join(', ');
+            return Object.keys(input).length > entries.length ? `${summary}, …` : summary;
+          },
+          singleLineValue(value) {
+            let text;
+            if (typeof value === 'string') text = JSON.stringify(value);
+            else {
+              try { text = JSON.stringify(value); }
+              catch { text = String(value); }
+            }
+            text = String(text ?? '').replace(/\r?\n/g, '\\n').replace(/\t/g, '\\t');
+            return text.length > 120 ? `${text.slice(0, 117)}...` : text;
           },
 
           // ── Misc helpers ──────────────────────────────────────

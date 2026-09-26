@@ -107,6 +107,10 @@ describe('WebSocketChannel', () => {
     expect(html).toContain('deleteSessionFromMenu');
     expect(html).toContain("case 'session_renamed'");
     expect(html).toContain("case 'session_deleted'");
+    expect(html).not.toContain('toolsExpanded');
+    expect(html).toContain("type: 'tool_call'");
+    expect(html).toContain('expanded: false');
+    expect(html).toContain('findPendingToolCall');
     await expect(fetch(`${clientUrl(channel)}missing`)).resolves.toMatchObject({ status: 404 });
   });
 
