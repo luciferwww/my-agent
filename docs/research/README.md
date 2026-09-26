@@ -7,7 +7,6 @@ This directory is reserved for external comparisons and exploratory analysis. Re
 ## Current research
 
 - [Agent Session Management Comparison](agent-session-management-comparison.md) - external comparison of Claude Code, GitHub Copilot CLI, OpenAI Codex CLI, and OpenCode.
-- [Session History Progressive Loading Draft](session-history-loading-design-draft.md) - non-authorizing design for active-branch history pagination, bounded transport DTOs, and incremental WebSocket client loading.
 - [Tool Activity Presentation Draft](tool-activity-presentation-design-draft.md) - non-authorizing design for independent Tool Call and Approval cards, per-card disclosure, and realtime/history presentation boundaries.
 - [Built-in LLM Provider Design Draft](builtin-llm-providers-design-draft.md) - non-authorizing Chinese design draft for one Built-in Provider, one upstream connection, multiple Protocol Clients, and manually registered models.
 - [New Session Model Draft](session-model-design-draft.md) - non-authorizing clean-format proposal derived from the comparison and current implementation.

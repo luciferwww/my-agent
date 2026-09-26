@@ -78,6 +78,7 @@ describe('SessionCoordinator', () => {
       archiveSession: sessionManager.archiveSession.bind(sessionManager),
       deleteSession: sessionManager.deleteSession.bind(sessionManager),
       forkSession: sessionManager.forkSession.bind(sessionManager),
+      getHistory: sessionManager.getHistory.bind(sessionManager),
       getSession: sessionManager.getSession.bind(sessionManager),
       listSessions: sessionManager.listSessions.bind(sessionManager),
       materializeSession: async () => {

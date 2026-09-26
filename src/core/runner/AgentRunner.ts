@@ -144,9 +144,11 @@ export class AgentRunner {
       const records = this.sessionManager.getMessages(sessionKey);
       if (records.length === 0) return;
 
-      const last = records[records.length - 1]!.message;
+      const lastRecord = records[records.length - 1]!;
+      const last = lastRecord.message;
       let orphanIds: string[] = [];
       let hint: MessageRecord['message']['abortMeta'] | undefined;
+      let repairedTurnId = lastRecord.turnId;
 
       // Case A: every tool_use in a trailing assistant message is orphaned.
       if (last.role === 'assistant' && Array.isArray(last.content)) {
@@ -158,8 +160,10 @@ export class AgentRunner {
       // Case B: a trailing toolResult covers only part of the preceding tool_use set.
       // Persisted results are excluded naturally, including the R6' abort path.
       else if (last.role === 'toolResult' && Array.isArray(last.content) && records.length >= 2) {
-        const prev = records[records.length - 2]!.message;
+        const prevRecord = records[records.length - 2]!;
+        const prev = prevRecord.message;
         if (prev.role === 'assistant' && Array.isArray(prev.content)) {
+          repairedTurnId = prevRecord.turnId;
           const useIds = new Set(
             prev.content
               .filter((b): b is Extract<ContentBlock, { type: 'tool_use' }> => b.type === 'tool_use')
@@ -188,6 +192,7 @@ export class AgentRunner {
       }));
 
       await this.sessionManager.appendMessage(sessionKey, {
+        turnId: repairedTurnId,
         role: 'toolResult',
         content: blocks,
       });
@@ -449,6 +454,7 @@ export class AgentRunner {
     }
 
     await this.sessionManager.appendMessage(params.sessionId, {
+      turnId: params.turnId,
       role: 'user',
       content: params.message,
     });
@@ -493,7 +499,12 @@ export class AgentRunner {
 
         // Inject steering after preceding tool results and before the next LLM call.
         if (pendingSteeringMessages.length > 0) {
-          await this.appendInjectedMessages(params.sessionId, messages, pendingSteeringMessages);
+          await this.appendInjectedMessages(
+            params.sessionId,
+            params.turnId,
+            messages,
+            pendingSteeringMessages,
+          );
           pendingSteeringMessages = [];
         }
 
@@ -530,6 +541,7 @@ export class AgentRunner {
           if (llmResult.content.length > 0) {
             messages.push({ role: 'assistant', content: llmResult.content });
             await this.sessionManager.appendMessage(params.sessionId, {
+              turnId: params.turnId,
               role: 'assistant',
               content: llmResult.content,
               abortMeta: { partial: true, stopReason: 'aborted' },
@@ -544,6 +556,7 @@ export class AgentRunner {
         messages.push({ role: 'assistant', content: llmResult.content });
 
         await this.sessionManager.appendMessage(params.sessionId, {
+          turnId: params.turnId,
           role: 'assistant',
           content: llmResult.content,
         });
@@ -606,6 +619,7 @@ export class AgentRunner {
 
           try {
             await this.sessionManager.appendMessage(params.sessionId, {
+              turnId: params.turnId,
               role: 'toolResult',
               content: toolResultBlocks,
             });
@@ -1154,12 +1168,14 @@ export class AgentRunner {
 
   private async appendInjectedMessages(
     sessionKey: string,
+    turnId: string,
     targetMessages: ChatMessage[],
     injectedMessages: ChatMessage[],
   ): Promise<void> {
     for (const message of injectedMessages) {
       targetMessages.push(message);
       await this.sessionManager.appendMessage(sessionKey, {
+        turnId,
         role: message.role,
         content: message.content,
       });

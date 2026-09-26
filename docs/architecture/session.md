@@ -54,7 +54,11 @@ SessionEntry {
 
 ### 3.2 Transcript entries
 
-Every record has an `id`, `parentId`, and ISO-8601 `timestamp`. Message content is either text or canonical content blocks. `toolResult` is an internal persisted role; Runner projects it as a `user` role for Provider-neutral invocation without changing the stored role.
+Every record has an `id`, `parentId`, and ISO-8601 `timestamp`. Every
+`MessageRecord` also has the required `turnId` of its owning Turn. Message
+content is either text or canonical content blocks. `toolResult` is an internal
+persisted role; Runner projects it as a `user` role for Provider-neutral
+invocation without changing the stored role.
 
 Assistant messages may carry:
 
@@ -101,6 +105,9 @@ SessionManager.appendMessage(sessionId, message)
 SessionManager.getMessages(sessionId)
   -> current branch's MessageRecord[]
 
+SessionManager.getHistory({ sessionId, beforeEntryId?, limit? })
+  -> latest or earlier active-branch page in chronological order
+
 SessionManager.branch(sessionId, entryId)
 SessionManager.getLeafId(sessionId)
 
@@ -118,6 +125,12 @@ First-message admission is serialized per `sessionId`. A live Pending ID materia
 List returns non-archived Sessions by default and archived Sessions only when requested. Rename trims non-null titles and allows `null` to clear them. Archive, delete, and fork require an idle persisted Session; unarchive and rename do not. Delete rejects a Session with persisted fork descendants and has no cascade. Fork copies the selected linear message path into a new persisted Session with a fresh UUID.
 
 Subagent setup creates a root-only transient Transcript with `{ type: 'subagent', callerSessionId }` provenance and no Store entry. Runner appends the Child prompt. Runtime deletes the Transcript at terminal cleanup, and startup removes orphaned transient files after interruption.
+
+History pages count persisted messages, default to 50, and reject limits above
+100. `beforeEntryId` is an exclusive cursor on the resolved active branch.
+History projection removes image base64 and emits a MIME/dimensions text
+placeholder while preserving persisted text, Tool Use input, Tool Result
+content, and Assistant abort metadata.
 
 ## 5. Message tree and branching
 
@@ -160,5 +173,5 @@ This is process-local serialization, not an inter-process filesystem lock. Trans
 | Kind | Evidence |
 |---|---|
 | Source | [SessionManager.ts](../../src/core/session/SessionManager.ts), [SessionCoordinator.ts](../../src/runtime/session/SessionCoordinator.ts), [PendingSessionRegistry.ts](../../src/runtime/session/PendingSessionRegistry.ts), [types.ts](../../src/core/session/types.ts), [transcript.ts](../../src/core/session/transcript.ts), [store.ts](../../src/core/session/store.ts), [lock.ts](../../src/core/session/lock.ts) |
-| Tests | [SessionManager.v1.test.ts](../../src/core/session/SessionManager.v1.test.ts), [SessionCoordinator.test.ts](../../src/runtime/session/SessionCoordinator.test.ts), [PendingSessionRegistry.test.ts](../../src/runtime/session/PendingSessionRegistry.test.ts), [title.test.ts](../../src/core/session/title.test.ts), [transcript.test.ts](../../src/core/session/transcript.test.ts), [store.test.ts](../../src/core/session/store.test.ts), [AgentRunner.test.ts](../../src/core/runner/AgentRunner.test.ts) |
+| Tests | [SessionManager.lifecycle.test.ts](../../src/core/session/SessionManager.lifecycle.test.ts), [SessionCoordinator.test.ts](../../src/runtime/session/SessionCoordinator.test.ts), [PendingSessionRegistry.test.ts](../../src/runtime/session/PendingSessionRegistry.test.ts), [title.test.ts](../../src/core/session/title.test.ts), [transcript.test.ts](../../src/core/session/transcript.test.ts), [store.test.ts](../../src/core/session/store.test.ts), [AgentRunner.test.ts](../../src/core/runner/AgentRunner.test.ts) |
 | Controlling authority | [ADR-015: Session Identity and Materialization](../decisions/adr-015-session-identity-and-materialization.md), [Runner Turn Flow](../specifications/runner-turn-flow.md), [Abort](../specifications/abort.md) |

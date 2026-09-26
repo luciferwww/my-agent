@@ -19,4 +19,8 @@ export type {
   TranscriptEntry,
   TranscriptState,
   ContentBlock,
+  SessionHistoryContentBlock,
+  SessionHistoryMessage,
+  SessionHistoryPage,
+  SessionHistoryQuery,
 } from './types.js';

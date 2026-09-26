@@ -463,6 +463,80 @@ describe('WebSocketChannel', () => {
   });
 
   describe('Session creation protocol', () => {
+    it('returns correlated Session history and History operation errors', async () => {
+      const sessionId = '123e4567-e89b-42d3-a456-426614174000';
+      const page = {
+        sessionId,
+        items: [{
+          entryId: 'entry-1',
+          turnId: 'turn-1',
+          timestamp: '2026-09-27T00:00:00.000Z',
+          role: 'user' as const,
+          content: 'hello',
+        }],
+        nextCursor: null,
+        hasMore: false,
+      };
+      const getHistory = vi.fn().mockResolvedValueOnce(page).mockRejectedValueOnce(
+        new ChannelOperationError(
+          'SESSION_HISTORY_CURSOR_INVALID',
+          'The history cursor is not on the active branch.',
+        ),
+      );
+      channel = createChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      channel.bindRuntimeCapabilities(capabilities(
+        undefined,
+        undefined,
+        sessionCapabilities({ getHistory }),
+      ));
+      await channel.start();
+
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'history-client' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'history-client' });
+
+      client.send(JSON.stringify({
+        type: 'get_session_history',
+        requestId: 'history-1',
+        sessionId,
+        limit: 50,
+      }));
+      await expectMessage(client, {
+        type: 'session_history',
+        requestId: 'history-1',
+        ...page,
+      });
+      expect(getHistory).toHaveBeenCalledWith({ sessionId, limit: 50 });
+
+      client.send(JSON.stringify({
+        type: 'get_session_history',
+        requestId: 'history-2',
+        sessionId,
+        beforeEntryId: 'missing',
+      }));
+      await expectMessage(client, {
+        type: 'session_history_error',
+        requestId: 'history-2',
+        sessionId,
+        code: 'SESSION_HISTORY_CURSOR_INVALID',
+        message: 'The history cursor is not on the active branch.',
+      });
+
+      client.send(JSON.stringify({
+        type: 'get_session_history',
+        requestId: 'history-3',
+        sessionId,
+        limit: 101,
+      }));
+      await expectMessage(client, {
+        type: 'channel_error',
+        code: 'INVALID_MESSAGE',
+        message: 'limit must be no greater than 100.',
+      });
+    });
+
     it('returns a request-correlated server-issued sessionId after hello', async () => {
       const createSession = vi.fn(async () => ({
         sessionId: '123e4567-e89b-42d3-a456-426614174000',
@@ -1532,6 +1606,12 @@ function sessionCapabilities(
     }),
     listSessions: async () => [],
     getSession: async () => entry,
+    getHistory: async ({ sessionId: requestedSessionId }) => ({
+      sessionId: requestedSessionId,
+      items: [],
+      nextCursor: null,
+      hasMore: false,
+    }),
     renameSession: async (_sessionId, title) => ({
       ...entry,
       ...(title === null ? {} : { title }),

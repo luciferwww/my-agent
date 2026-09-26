@@ -37,6 +37,7 @@ export interface SessionRecord extends TranscriptEntryBase {
 /** Persisted conversation message. */
 export interface MessageRecord extends TranscriptEntryBase {
   type: 'message';
+  turnId: string;
   message: {
     role: 'user' | 'assistant' | 'toolResult';
     content: string | ContentBlock[];
@@ -92,6 +93,33 @@ export type ContentBlock =
     }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; tool_use_id: string; content: string };
+
+export type SessionHistoryContentBlock = Exclude<
+  ContentBlock,
+  Extract<ContentBlock, { type: 'image' }>
+>;
+
+export interface SessionHistoryQuery {
+  readonly sessionId: string;
+  readonly beforeEntryId?: string;
+  readonly limit?: number;
+}
+
+export interface SessionHistoryMessage {
+  readonly entryId: string;
+  readonly turnId: string;
+  readonly timestamp: string;
+  readonly role: MessageRecord['message']['role'];
+  readonly content: string | readonly SessionHistoryContentBlock[];
+  readonly abortMeta?: MessageRecord['message']['abortMeta'];
+}
+
+export interface SessionHistoryPage {
+  readonly sessionId: string;
+  readonly items: readonly SessionHistoryMessage[];
+  readonly nextCursor: string | null;
+  readonly hasMore: boolean;
+}
 
 // Versioned Session Store.
 

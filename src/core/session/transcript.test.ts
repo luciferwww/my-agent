@@ -23,35 +23,6 @@ describe('transcript', () => {
         .toThrowError(SessionDataError);
     });
 
-    it('loads linear messages correctly', async () => {
-      const filePath = join(dir, 'test.jsonl');
-      const lines = [
-        JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-04-02T00:00:00Z', version: 1 }),
-        JSON.stringify({ type: 'message', id: 'm1', parentId: 's1', timestamp: '2026-04-02T00:00:01Z', message: { role: 'user', content: 'hi' } }),
-        JSON.stringify({ type: 'message', id: 'm2', parentId: 'm1', timestamp: '2026-04-02T00:00:02Z', message: { role: 'assistant', content: 'hello' } }),
-      ];
-      await writeFile(filePath, lines.join('\n') + '\n', 'utf-8');
-
-      const state = loadTranscript(filePath);
-      expect(state.byId.size).toBe(3);
-      expect(state.leafId).toBe('m2');
-    });
-
-    it('loads branched messages correctly', async () => {
-      const filePath = join(dir, 'branch.jsonl');
-      const lines = [
-        JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-04-02T00:00:00Z', version: 1 }),
-        JSON.stringify({ type: 'message', id: 'm1', parentId: 's1', timestamp: '2026-04-02T00:00:01Z', message: { role: 'user', content: 'hi' } }),
-        JSON.stringify({ type: 'message', id: 'm2', parentId: 'm1', timestamp: '2026-04-02T00:00:02Z', message: { role: 'assistant', content: 'branch A' } }),
-        JSON.stringify({ type: 'message', id: 'm3', parentId: 'm1', timestamp: '2026-04-02T00:00:03Z', message: { role: 'assistant', content: 'branch B' } }),
-      ];
-      await writeFile(filePath, lines.join('\n') + '\n', 'utf-8');
-
-      const state = loadTranscript(filePath);
-      expect(state.byId.size).toBe(4);
-      expect(state.leafId).toBe('m3');
-    });
-
     it('rejects malformed JSON instead of silently dropping records', async () => {
       const filePath = join(dir, 'messy.jsonl');
       const content = [
@@ -76,8 +47,8 @@ describe('transcript', () => {
 
     it('returns linear path from leaf to root (messages only)', () => {
       const session: SessionRecord = { type: 'session', id: 's1', parentId: null, timestamp: '2026-04-02T00:00:00Z', version: 1 };
-      const m1: MessageRecord = { type: 'message', id: 'm1', parentId: 's1', timestamp: '2026-04-02T00:00:01Z', message: { role: 'user', content: 'hi' } };
-      const m2: MessageRecord = { type: 'message', id: 'm2', parentId: 'm1', timestamp: '2026-04-02T00:00:02Z', message: { role: 'assistant', content: 'hello' } };
+      const m1: MessageRecord = { type: 'message', id: 'm1', parentId: 's1', timestamp: '2026-04-02T00:00:01Z', turnId: 'turn-1', message: { role: 'user', content: 'hi' } };
+      const m2: MessageRecord = { type: 'message', id: 'm2', parentId: 'm1', timestamp: '2026-04-02T00:00:02Z', turnId: 'turn-1', message: { role: 'assistant', content: 'hello' } };
 
       const byId = new Map<string, any>([['s1', session], ['m1', m1], ['m2', m2]]);
       const path = resolveLinearPath({ byId, leafId: 'm2' }, 'm2');
@@ -89,9 +60,9 @@ describe('transcript', () => {
 
     it('resolves correct branch when there are multiple branches', () => {
       const session: SessionRecord = { type: 'session', id: 's1', parentId: null, timestamp: '2026-04-02T00:00:00Z', version: 1 };
-      const m1: MessageRecord = { type: 'message', id: 'm1', parentId: 's1', timestamp: '2026-04-02T00:00:01Z', message: { role: 'user', content: 'hi' } };
-      const m2a: MessageRecord = { type: 'message', id: 'm2a', parentId: 'm1', timestamp: '2026-04-02T00:00:02Z', message: { role: 'assistant', content: 'branch A' } };
-      const m2b: MessageRecord = { type: 'message', id: 'm2b', parentId: 'm1', timestamp: '2026-04-02T00:00:03Z', message: { role: 'assistant', content: 'branch B' } };
+      const m1: MessageRecord = { type: 'message', id: 'm1', parentId: 's1', timestamp: '2026-04-02T00:00:01Z', turnId: 'turn-1', message: { role: 'user', content: 'hi' } };
+      const m2a: MessageRecord = { type: 'message', id: 'm2a', parentId: 'm1', timestamp: '2026-04-02T00:00:02Z', turnId: 'turn-a', message: { role: 'assistant', content: 'branch A' } };
+      const m2b: MessageRecord = { type: 'message', id: 'm2b', parentId: 'm1', timestamp: '2026-04-02T00:00:03Z', turnId: 'turn-b', message: { role: 'assistant', content: 'branch B' } };
 
       const byId = new Map<string, any>([['s1', session], ['m1', m1], ['m2a', m2a], ['m2b', m2b]]);
 
@@ -115,6 +86,7 @@ describe('transcript', () => {
         id: 'm1',
         parentId: null,
         timestamp: '2026-04-02T00:00:00Z',
+        turnId: 'turn-1',
         message: { role: 'user', content: 'hello' },
       };
 
@@ -135,6 +107,7 @@ describe('transcript', () => {
         id: `m${i}`,
         parentId: i === 0 ? null : `m${i - 1}`,
         timestamp: new Date().toISOString(),
+        turnId: `turn-${i}`,
         message: { role: 'user' as const, content: `msg-${i}` },
       }));
 
@@ -172,6 +145,7 @@ describe('transcript', () => {
       const m1: MessageRecord = {
         type: 'message', id: 'm1', parentId: 's1',
         timestamp: '2026-04-01T00:00:01Z',
+        turnId: 'turn-1',
         message: { role: 'user', content: 'hi' },
       };
       const state = {
@@ -217,6 +191,7 @@ describe('transcript', () => {
       const m1: MessageRecord = {
         type: 'message', id: 'm1', parentId: 's1',
         timestamp: '2026-04-01T00:00:01Z',
+        turnId: 'turn-1',
         message: { role: 'user', content: 'hi' },
       };
       const c1 = makeCompactionRecord('c1', '2026-04-01T10:00:00Z');

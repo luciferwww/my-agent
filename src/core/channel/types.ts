@@ -6,6 +6,10 @@ import type {
 import type { ModelReference } from '../model-resolution/index.js';
 import type { AgentEvent } from '../runner/types.js';
 import type { SessionErrorCode } from '../session/index.js';
+import type {
+  SessionHistoryPage,
+  SessionHistoryQuery,
+} from '../session/index.js';
 
 export type { ApprovalResult } from '../approval/index.js';
 
@@ -185,6 +189,7 @@ export interface SessionCapability {
   }): Promise<{ sessionId: string; permission: SessionPermissionState }>;
   listSessions(input?: { archived?: boolean }): Promise<SessionCapabilityEntry[]>;
   getSession(sessionId: string): Promise<SessionCapabilityEntry>;
+  getHistory(query: SessionHistoryQuery): Promise<SessionHistoryPage>;
   renameSession(sessionId: string, title: string | null): Promise<SessionCapabilityEntry>;
   archiveSession(sessionId: string): Promise<SessionCapabilityEntry>;
   unarchiveSession(sessionId: string): Promise<SessionCapabilityEntry>;

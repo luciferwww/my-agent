@@ -1,6 +1,11 @@
 import { SessionError } from '../../core/session/errors.js';
 import type { SessionManager } from '../../core/session/SessionManager.js';
-import type { ContentBlock, SessionEntry } from '../../core/session/types.js';
+import type {
+  ContentBlock,
+  SessionEntry,
+  SessionHistoryPage,
+  SessionHistoryQuery,
+} from '../../core/session/types.js';
 import { deriveInitialSessionTitle } from '../../core/session/title.js';
 import { PendingSessionRegistry } from './PendingSessionRegistry.js';
 
@@ -9,6 +14,7 @@ export type SessionPersistence = Pick<
   | 'archiveSession'
   | 'deleteSession'
   | 'forkSession'
+  | 'getHistory'
   | 'getSession'
   | 'listSessions'
   | 'materializeSession'
@@ -49,6 +55,11 @@ export class SessionCoordinator {
 
   async getSession(sessionId: string): Promise<SessionEntry> {
     return this.requirePersistedSession(sessionId);
+  }
+
+  getHistory(query: SessionHistoryQuery): SessionHistoryPage {
+    this.requirePersistedSession(query.sessionId);
+    return this.sessionManager.getHistory(query);
   }
 
   assertLiveSession(sessionId: string): void {

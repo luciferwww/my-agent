@@ -5,6 +5,12 @@ export type {
 } from '../approval/index.js';
 export type { AgentEvent } from '../runner/types.js';
 export type {
+  SessionHistoryContentBlock,
+  SessionHistoryMessage,
+  SessionHistoryPage,
+  SessionHistoryQuery,
+} from '../session/index.js';
+export type {
   ChannelOperationErrorCode,
   ChannelRuntimeCapabilities,
   ApprovalClosedResult,

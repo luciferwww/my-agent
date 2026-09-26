@@ -7,13 +7,13 @@ import { SessionError } from './errors.js';
 import { withFileLock } from './lock.js';
 import { SessionManager } from './SessionManager.js';
 
-describe('SessionManager v1 persistence', () => {
+describe('SessionManager lifecycle persistence', () => {
   let agentHome: string;
   let manager: SessionManager;
   let now: number;
 
   beforeEach(async () => {
-    agentHome = await mkdtemp(join(tmpdir(), 'session-manager-v1-test-'));
+    agentHome = await mkdtemp(join(tmpdir(), 'session-manager-lifecycle-test-'));
     now = 200;
     manager = new SessionManager(agentHome, { now: () => now });
   });
@@ -29,7 +29,11 @@ describe('SessionManager v1 persistence', () => {
       createdAt: 100,
       ...(title === undefined ? {} : { title }),
     });
-    await manager.appendMessage(sessionId, { role: 'user', content: 'hello' });
+    await manager.appendMessage(sessionId, {
+      turnId: 'turn-materialize',
+      role: 'user',
+      content: 'hello',
+    });
     return sessionId;
   }
 
@@ -85,7 +89,11 @@ describe('SessionManager v1 persistence', () => {
     expect(manager.listSessions().map((entry) => entry.sessionId)).toEqual([callerSessionId]);
     expect(manager.getMessages(childSessionId)).toEqual([]);
 
-    await manager.appendMessage(childSessionId, { role: 'user', content: 'delegated work' });
+    await manager.appendMessage(childSessionId, {
+      turnId: 'child-turn',
+      role: 'user',
+      content: 'delegated work',
+    });
     expect(manager.getMessages(childSessionId)[0]?.message.content).toBe('delegated work');
 
     const transcriptPath = join(agentHome, 'sessions', `${childSessionId}.jsonl`);
@@ -95,7 +103,11 @@ describe('SessionManager v1 persistence', () => {
       provenance: { type: 'subagent', callerSessionId },
     });
 
-    await manager.appendMessage(childSessionId, { role: 'assistant', content: 'done' });
+    await manager.appendMessage(childSessionId, {
+      turnId: 'child-turn',
+      role: 'assistant',
+      content: 'done',
+    });
     expect(manager.getMessages(childSessionId)).toHaveLength(2);
 
     await manager.deleteTransientSubagentTranscript(childSessionId);
@@ -131,10 +143,15 @@ describe('SessionManager v1 persistence', () => {
   it('forks selected linear history and protects the source from deletion', async () => {
     const sourceId = await materialize('Source');
     const secondMessageId = await manager.appendMessage(sourceId, {
+      turnId: 'turn-reply',
       role: 'assistant',
       content: 'reply',
     });
-    await manager.appendMessage(sourceId, { role: 'user', content: 'later' });
+    await manager.appendMessage(sourceId, {
+      turnId: 'turn-later',
+      role: 'user',
+      content: 'later',
+    });
 
     const fork = await manager.forkSession(sourceId, secondMessageId);
 
@@ -186,7 +203,7 @@ describe('SessionManager v1 persistence', () => {
     });
 
     await expect(materialization).rejects.toMatchObject({ code: 'SESSION_PERSISTENCE_FAILED' });
-  await rm(storePath, { recursive: true });
+    await rm(storePath, { recursive: true });
     expect(manager.getSession(sessionId)).toBeUndefined();
     await expect(access(transcriptPath)).rejects.toMatchObject({ code: 'ENOENT' });
 

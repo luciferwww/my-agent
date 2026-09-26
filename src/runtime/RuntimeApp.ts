@@ -7,7 +7,11 @@ import type {
   ModelInvocationDiagnostics,
   ModelInvocationError,
 } from '../core/model-invocation/index.js';
-import type { SessionEntry } from '../core/session/index.js';
+import type {
+  SessionEntry,
+  SessionHistoryPage,
+  SessionHistoryQuery,
+} from '../core/session/index.js';
 import type { ModelReference } from '../core/model-resolution/index.js';
 import { ModelResolutionError, ModelResolver } from '../core/model-resolution/index.js';
 import { TurnInteractionManager } from './turn-interaction/index.js';
@@ -319,6 +323,10 @@ export class RuntimeApp {
 
   getSession(sessionId: string): Promise<SessionEntry> {
     return this.sessionCoordinator.getSession(sessionId);
+  }
+
+  getSessionHistory(query: SessionHistoryQuery): Promise<SessionHistoryPage> {
+    return Promise.resolve(this.sessionCoordinator.getHistory(query));
   }
 
   renameSession(sessionId: string, title: string | null): Promise<SessionEntry> {

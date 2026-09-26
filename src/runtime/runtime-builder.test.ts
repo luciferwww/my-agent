@@ -182,6 +182,12 @@ function createHarness(options: {
     })),
     listSessions: vi.fn(async () => []),
     getSession: vi.fn(async (sessionId: string) => ({ sessionId, createdAt: 1, updatedAt: 1 })),
+    getSessionHistory: vi.fn(async (query: { sessionId: string }) => ({
+      sessionId: query.sessionId,
+      items: [],
+      nextCursor: null,
+      hasMore: false,
+    })),
     renameSession: vi.fn(async (sessionId: string, title: string | null) => ({
       sessionId,
       createdAt: 1,

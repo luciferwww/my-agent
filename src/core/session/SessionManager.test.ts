@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SessionManager } from './SessionManager.js';
+import type { SessionMessageInput } from './SessionManager.js';
 
 describe('SessionManager transcript behavior', () => {
   let agentHome: string;
@@ -18,6 +19,14 @@ describe('SessionManager transcript behavior', () => {
     await rm(agentHome, { recursive: true, force: true });
   });
 
+  function appendMessage(
+    sessionId: string,
+    message: Omit<SessionMessageInput, 'turnId'>,
+    target: SessionManager = manager,
+  ) {
+    return target.appendMessage(sessionId, { turnId: 'test-turn', ...message });
+  }
+
   async function materialize(
     target: SessionManager = manager,
     content = 'initial message',
@@ -27,7 +36,7 @@ describe('SessionManager transcript behavior', () => {
       sessionId,
       createdAt: Date.now(),
     });
-    await target.appendMessage(sessionId, { role: 'user', content });
+    await appendMessage(sessionId, { role: 'user', content }, target);
     return sessionId;
   }
 
@@ -47,11 +56,11 @@ describe('SessionManager transcript behavior', () => {
 
   it('appends and reloads a linear message chain', async () => {
     const sessionId = await materialize(manager, 'first');
-    const assistantId = await manager.appendMessage(sessionId, {
+    const assistantId = await appendMessage(sessionId, {
       role: 'assistant',
       content: 'second',
     });
-    await manager.appendMessage(sessionId, { role: 'user', content: 'third' });
+    await appendMessage(sessionId, { role: 'user', content: 'third' });
 
     const reloaded = new SessionManager(agentHome);
     const messages = reloaded.getMessages(sessionId);
@@ -62,11 +71,13 @@ describe('SessionManager transcript behavior', () => {
     ]);
     expect(messages[1]?.id).toBe(assistantId);
     expect(messages[2]?.parentId).toBe(assistantId);
+    expect(messages.every((message) => message.turnId === 'test-turn')).toBe(true);
+    expect(messages.every((message) => !Object.hasOwn(message.message, 'turnId'))).toBe(true);
   });
 
   it('preserves abort metadata across reload', async () => {
     const sessionId = await materialize();
-    await manager.appendMessage(sessionId, {
+    await appendMessage(sessionId, {
       role: 'assistant',
       content: [{ type: 'text', text: 'partial…' }],
       abortMeta: { partial: true, stopReason: 'aborted' },
@@ -82,16 +93,60 @@ describe('SessionManager transcript behavior', () => {
   it('moves the active leaf to form an alternate branch', async () => {
     const sessionId = await materialize(manager, 'shared');
     const sharedId = manager.getMessages(sessionId)[0]!.id;
-    await manager.appendMessage(sessionId, { role: 'assistant', content: 'branch A' });
+    await appendMessage(sessionId, { role: 'assistant', content: 'branch A' });
 
     manager.branch(sessionId, sharedId);
-    await manager.appendMessage(sessionId, { role: 'assistant', content: 'branch B' });
+    await appendMessage(sessionId, { role: 'assistant', content: 'branch B' });
 
     expect(manager.getMessages(sessionId).map((message) => message.message.content)).toEqual([
       'shared',
       'branch B',
     ]);
     expect(() => manager.branch(sessionId, 'missing')).toThrow('not found');
+  });
+
+  it('returns chronological active-branch History pages with exclusive cursors', async () => {
+    const sessionId = await materialize(manager, 'first');
+    await appendMessage(sessionId, { role: 'assistant', content: 'second' });
+    await appendMessage(sessionId, { role: 'user', content: 'third' });
+
+    const latest = manager.getHistory({ sessionId, limit: 2 });
+    expect(latest.items.map((item) => item.content)).toEqual(['second', 'third']);
+    expect(latest.items.every((item) => item.turnId === 'test-turn')).toBe(true);
+    expect(latest.hasMore).toBe(true);
+    expect(latest.nextCursor).toBe(latest.items[0]?.entryId);
+
+    const earlier = manager.getHistory({
+      sessionId,
+      beforeEntryId: latest.nextCursor!,
+      limit: 2,
+    });
+    expect(earlier.items.map((item) => item.content)).toEqual(['first']);
+    expect(earlier).toMatchObject({ hasMore: false, nextCursor: null });
+  });
+
+  it('rejects off-branch History cursors and projects images to text placeholders', async () => {
+    const sessionId = await materialize(manager, 'shared');
+    const sharedId = manager.getMessages(sessionId)[0]!.id;
+    const abandonedId = await appendMessage(sessionId, {
+      role: 'assistant',
+      content: 'abandoned',
+    });
+    manager.branch(sessionId, sharedId);
+    await appendMessage(sessionId, {
+      role: 'user',
+      content: [{
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/png', data: 'secret' },
+        dimensions: { width: 1280, height: 720 },
+      }],
+    });
+
+    expect(() => manager.getHistory({ sessionId, beforeEntryId: abandonedId }))
+      .toThrowError(expect.objectContaining({ code: 'SESSION_HISTORY_CURSOR_INVALID' }));
+    expect(manager.getHistory({ sessionId }).items.at(-1)?.content).toEqual([
+      { type: 'text', text: '[Image: image/png, 1280x720]' },
+    ]);
   });
 
   it('persists Compaction records without storing summary counters', async () => {
@@ -140,7 +195,7 @@ describe('SessionManager transcript behavior', () => {
   it('does not cap tool results when limits are absent', async () => {
     const sessionId = await materialize();
     const longContent = 'A'.repeat(50_000);
-    const messageId = await manager.appendMessage(sessionId, {
+    const messageId = await appendMessage(sessionId, {
       role: 'toolResult',
       content: [{ type: 'tool_result', tool_use_id: 'tool', content: longContent }],
     });
@@ -160,13 +215,13 @@ describe('SessionManager transcript behavior', () => {
     const sessionId = await materialize(capped);
     const longContent = 'H'.repeat(100) + 'M'.repeat(200) + 'T'.repeat(50);
     const longText = 'Z'.repeat(1000);
-    await capped.appendMessage(sessionId, {
+    await appendMessage(sessionId, {
       role: 'toolResult',
       content: [
         { type: 'tool_result', tool_use_id: 'tool', content: longContent },
         { type: 'text', text: longText },
       ],
-    });
+    }, capped);
 
     const blocks = new SessionManager(agentHome).getMessages(sessionId).at(-1)!
       .message.content as Array<{ type: string; content?: string; text?: string }>;
@@ -184,10 +239,10 @@ describe('SessionManager transcript behavior', () => {
     });
     const sessionId = await materialize(capped);
     const content = 'X'.repeat(150);
-    await capped.appendMessage(sessionId, {
+    await appendMessage(sessionId, {
       role: 'toolResult',
       content: [{ type: 'tool_result', tool_use_id: 'tool', content }],
-    });
+    }, capped);
 
     const block = new SessionManager(agentHome).getMessages(sessionId).at(-1)!
       .message.content as Array<{ content: string }>;

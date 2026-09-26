@@ -15,7 +15,11 @@ import { AgentRunner } from '../core/runner/index.js';
 import { Logger } from '../platform/logger/index.js';
 import { MemoryManager } from '../core/memory/index.js';
 import { SystemPromptBuilder } from '../core/prompt/index.js';
-import { SessionError, SessionManager } from '../core/session/index.js';
+import {
+  SessionError,
+  SessionManager,
+  type SessionHistoryQuery,
+} from '../core/session/index.js';
 import { bootstrapRuntime } from './bootstrap.js';
 import { acquireExtensions } from '../extension/acquisition/index.js';
 import {
@@ -222,6 +226,13 @@ export async function buildRuntimeHandle(
           }
           const { application } = kernel;
           return invokeSessionCapability(() => application.getSession(sessionId));
+        },
+        getHistory(query: SessionHistoryQuery) {
+          if (!kernel) {
+            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+          }
+          const { application } = kernel;
+          return invokeSessionCapability(() => application.getSessionHistory(query));
         },
         renameSession(sessionId: string, title: string | null) {
           if (!kernel) {

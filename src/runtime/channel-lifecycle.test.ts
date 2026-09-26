@@ -45,6 +45,9 @@ function host(): ChannelRuntimeHost {
         })),
         listSessions: vi.fn(async () => []),
         getSession: vi.fn(async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 })),
+        getHistory: vi.fn(async ({ sessionId }) => ({
+          sessionId, items: [], nextCursor: null, hasMore: false,
+        })),
         renameSession: vi.fn(async (sessionId, title) => ({
           sessionId,
           createdAt: 1,

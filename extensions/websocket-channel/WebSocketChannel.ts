@@ -91,6 +91,13 @@ type ClientMessage =
       sessionId: string;
     }
   | {
+      type: 'get_session_history';
+      requestId: string;
+      sessionId: string;
+      beforeEntryId?: string;
+      limit?: number;
+    }
+  | {
       type: 'rename_session';
       requestId: string;
       sessionId: string;
@@ -496,6 +503,9 @@ export class WebSocketChannel implements Channel {
         case 'set_session_permission_mode':
           await this.handlePermissionModeRequest(socket, message);
           return;
+        case 'get_session_history':
+          await this.handleSessionHistoryRequest(socket, message);
+          return;
         case 'list_sessions':
         case 'get_session':
         case 'rename_session':
@@ -620,6 +630,19 @@ export class WebSocketChannel implements Channel {
           type,
           requestId: readNonEmptyString(parsed.requestId, 'requestId'),
           sessionId: readNonEmptyString(parsed.sessionId, 'sessionId'),
+        };
+      case 'get_session_history':
+        assertOnlyKeys(
+          parsed,
+          ['type', 'requestId', 'sessionId', 'beforeEntryId', 'limit'],
+          type,
+        );
+        return {
+          type,
+          requestId: readNonEmptyString(parsed.requestId, 'requestId'),
+          sessionId: readNonEmptyString(parsed.sessionId, 'sessionId'),
+          beforeEntryId: readOptionalNonEmptyString(parsed.beforeEntryId, 'beforeEntryId'),
+          limit: readOptionalBoundedPositiveInteger(parsed.limit, 'limit', 100),
         };
       case 'rename_session':
         return {
@@ -803,6 +826,39 @@ export class WebSocketChannel implements Channel {
           ...toWirePermissionMode(permission),
         });
       }
+    }
+  }
+
+  private async handleSessionHistoryRequest(
+    socket: WebSocket,
+    message: Extract<ClientMessage, { type: 'get_session_history' }>,
+  ): Promise<void> {
+    this.requireBoundClientId(socket);
+    try {
+      const page = await this.invokeSessionOperation((capability) => capability.getHistory({
+        sessionId: message.sessionId,
+        ...(message.beforeEntryId === undefined
+          ? {}
+          : { beforeEntryId: message.beforeEntryId }),
+        ...(message.limit === undefined ? {} : { limit: message.limit }),
+      }));
+      this.sendJson(socket, {
+        type: 'session_history',
+        requestId: message.requestId,
+        ...page,
+      });
+    } catch (error) {
+      if (error instanceof ProtocolError) {
+        this.sendJson(socket, {
+          type: 'session_history_error',
+          requestId: message.requestId,
+          sessionId: message.sessionId,
+          code: error.code,
+          message: error.message,
+        });
+        return;
+      }
+      throw error;
     }
   }
 
@@ -1268,6 +1324,21 @@ function readOptionalPositiveInteger(value: unknown, field: string): number | un
     throw new ProtocolError('INVALID_MESSAGE', `${field} must be a positive integer.`);
   }
   return value;
+}
+
+function readOptionalBoundedPositiveInteger(
+  value: unknown,
+  field: string,
+  maximum: number,
+): number | undefined {
+  const integer = readOptionalPositiveInteger(value, field);
+  if (integer !== undefined && integer > maximum) {
+    throw new ProtocolError(
+      'INVALID_MESSAGE',
+      `${field} must be no greater than ${maximum}.`,
+    );
+  }
+  return integer;
 }
 
 /**

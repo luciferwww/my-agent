@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import { AgentRunner as ProductionAgentRunner } from './AgentRunner.js';
 import { AgentExecutionFailure } from './errors.js';
 import { SessionManager } from '../session/SessionManager.js';
+import type { SessionMessageInput } from '../session/SessionManager.js';
 import type {
   ChatContentBlock,
   ModelInvocationPort,
@@ -56,6 +57,14 @@ async function createEmptyTestSession(
     sessionId,
     createdAt: Date.now(),
   });
+}
+
+function appendPersistedMessage(
+  sessionManager: SessionManager,
+  message: Omit<SessionMessageInput, 'turnId'>,
+  turnId = 'fixture-turn',
+) {
+  return sessionManager.appendMessage(MAIN_SESSION_ID, { turnId, ...message });
 }
 
 const allowAllTools: ApplicationToolPolicy = Object.freeze({
@@ -1422,10 +1431,10 @@ describe('AgentRunner', () => {
     });
 
     it('awaits bounded compaction observers before summary and after commit', async () => {
-      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'user', content: 'A'.repeat(800) });
-      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'assistant', content: 'B'.repeat(800) });
-      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'user', content: 'recent question' });
-      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'assistant', content: 'recent answer' });
+      await appendPersistedMessage(sessionManager, { role: 'user', content: 'A'.repeat(800) });
+      await appendPersistedMessage(sessionManager, { role: 'assistant', content: 'B'.repeat(800) });
+      await appendPersistedMessage(sessionManager, { role: 'user', content: 'recent question' });
+      await appendPersistedMessage(sessionManager, { role: 'assistant', content: 'recent answer' });
 
       const llmClient = createMockLLMClient([
         [
@@ -1503,7 +1512,7 @@ describe('AgentRunner', () => {
 
     it('CH-11 uses persisted compaction history on the next turn', async () => {
       const persistedImageData = 'AAAA'.repeat(500);
-      await sessionManager.appendMessage(MAIN_SESSION_ID, {
+      await appendPersistedMessage(sessionManager, {
         role: 'user',
         content: [
           { type: 'text', text: `OLD_QUESTION_${'A'.repeat(800)}` },
@@ -1514,12 +1523,12 @@ describe('AgentRunner', () => {
           },
         ],
       });
-      await sessionManager.appendMessage(MAIN_SESSION_ID, {
+      await appendPersistedMessage(sessionManager, {
         role: 'assistant',
         content: `OLD_ANSWER_${'B'.repeat(800)}`,
       });
-      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'user', content: 'recent question' });
-      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'assistant', content: 'recent answer' });
+      await appendPersistedMessage(sessionManager, { role: 'user', content: 'recent question' });
+      await appendPersistedMessage(sessionManager, { role: 'assistant', content: 'recent answer' });
 
       const compactingDelegate = createMockLLMClient([
         [
@@ -1680,7 +1689,7 @@ describe('AgentRunner', () => {
 
     it('启动时若末尾存在孤立 trailing user, runAttempt 入口将其从内存视图剥离', async () => {
       // Seed an orphan user message left by a failed previous Turn.
-      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'user', content: 'orphan' });
+      await appendPersistedMessage(sessionManager, { role: 'user', content: 'orphan' });
       const beforeCount = sessionManager.getMessages(MAIN_SESSION_ID).length;
       expect(beforeCount).toBe(1);
 
@@ -1778,14 +1787,14 @@ describe('AgentRunner', () => {
     });
 
     it('旧 session 中的空 aborted assistant 不进入 Provider history', async () => {
-      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'user', content: 'old request' });
-      await sessionManager.appendMessage(MAIN_SESSION_ID, {
+      await appendPersistedMessage(sessionManager, { role: 'user', content: 'old request' });
+      await appendPersistedMessage(sessionManager, {
         role: 'assistant',
         content: [],
         abortMeta: { partial: true, stopReason: 'aborted' },
       });
-      await sessionManager.appendMessage(MAIN_SESSION_ID, { role: 'user', content: 'later request' });
-      await sessionManager.appendMessage(MAIN_SESSION_ID, {
+      await appendPersistedMessage(sessionManager, { role: 'user', content: 'later request' });
+      await appendPersistedMessage(sessionManager, {
         role: 'assistant',
         content: [{ type: 'text', text: 'later reply' }],
       });
@@ -2036,7 +2045,7 @@ describe('AgentRunner', () => {
     // Orphan repair at Turn start with an abort source.
     it('orphan repair: abort 造孤儿 → 下一 turn 起点写 aborted 内容 + emit source:abort', async () => {
       // Seed an assistant tool_use with abort metadata from a previous Turn.
-      await sessionManager.appendMessage(MAIN_SESSION_ID, {
+      await appendPersistedMessage(sessionManager, {
         role: 'assistant',
         content: [
           { type: 'text', text: 'starting…' },
@@ -2083,7 +2092,7 @@ describe('AgentRunner', () => {
     // Orphan repair for a non-abort recovery source.
     it('orphan repair: 无 abortMeta 孤儿（模拟崩溃恢复）→ 写 recovered 内容 + emit source:recovered', async () => {
       // Seed an orphan assistant tool_use without abort metadata to mimic a crash.
-      await sessionManager.appendMessage(MAIN_SESSION_ID, {
+      await appendPersistedMessage(sessionManager, {
         role: 'assistant',
         content: [
           { type: 'tool_use', id: 'crash-1', name: 'echo', input: { msg: 'y' } },
@@ -2151,7 +2160,7 @@ describe('AgentRunner', () => {
     // Orphan-repair write failure does not crash the Turn.
     it('orphan repair: write 失败 → log warn，turn 继续启动（不 rethrow）', async () => {
       // Seed an orphan.
-      await sessionManager.appendMessage(MAIN_SESSION_ID, {
+      await appendPersistedMessage(sessionManager, {
         role: 'assistant',
         content: [{ type: 'tool_use', id: 'x-1', name: 'echo', input: {} }],
       });

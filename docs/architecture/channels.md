@@ -93,10 +93,17 @@ Most events route by `sessionId`. Subagent events carry a child `sessionId` plus
 Before `start()`, candidate activation may call:
 
 ```text
-bindRuntimeCapabilities({ modelCatalog, abort })
+bindRuntimeCapabilities({ modelCatalog, abort, sessions })
 ```
 
-`modelCatalog.getSnapshot()` is a live query over the current published generation. `abort.querySessionsNeedingAbort()` and `abort.abortTurn(sessionId)` form the abort capability; aborting a session can terminate its active Turn and drop ordinary queued requests. Channel model selection consumes the Catalog for presentation and early checks, but Model Resolution remains the final authority.
+`modelCatalog.getSnapshot()` is a live query over the current published
+generation. `abort.querySessionsNeedingAbort()` and
+`abort.abortTurn(sessionId)` form the abort capability; aborting a session can
+terminate its active Turn and drop ordinary queued requests. `sessions`
+exposes Session lifecycle, permission, and read-only paginated History
+operations without exposing Transcript internals. Channel model selection
+consumes the Catalog for presentation and early checks, but Model Resolution
+remains the final authority.
 
 ## 4. Canonical contracts
 
@@ -161,7 +168,23 @@ Channel and belong to the operational proxy/gateway boundary.
 
 ### 7.1 Protocol and routing
 
-After `hello`, WebSocket accepts Session creation, permission query/change, Turn submission, approval resolution, Abort, and Catalog queries. All JSON property names use camelCase; snake_case is reserved for `type` discriminator values such as `create_session` and `run_turn`. `create_session` carries a `requestId` and optional `permissionMode`; `session_created` returns the same `requestId`, server-issued `sessionId`, and authoritative permission state. Strict `get_session_permission_mode` and `set_session_permission_mode` messages use `sessionId`; the setter additionally requires `mode: 'manual' | 'allow_all'`. Successful queries and changes produce `session_permission_mode_changed`, and changes are broadcast to the connected audience observing that Session. `run_turn` continues to require `sessionId`, so the Channel never treats an omitted ID as an implicit create. It also emits acknowledgements, Catalog responses, correlated `AgentEvent` values, approval lifecycle messages, and requesting-socket errors. Wire validation owns JSON and transport shape; Media owns decoded attachment validation.
+After `hello`, WebSocket accepts Session creation and management, explicit
+single-Session History queries, permission query/change, Turn submission,
+approval resolution, Abort, and Catalog queries. History is never sent merely
+because `hello` completed; the bundled client requests it only after selecting
+a persisted Session. `get_session_history` is socket-local, request-correlated,
+and does not join a Session audience. All JSON property names use camelCase;
+snake_case is reserved for `type` discriminator values such as
+`create_session` and `run_turn`. `create_session` carries a `requestId` and
+optional `permissionMode`; `session_created` returns the same `requestId`,
+server-issued `sessionId`, and authoritative permission state. Strict `get_session_permission_mode` and `set_session_permission_mode` messages use `sessionId`; the setter additionally requires `mode: 'manual' | 'allow_all'`.
+Successful queries and changes produce `session_permission_mode_changed`, and
+changes are broadcast to the connected audience observing that Session.
+`run_turn` continues to require `sessionId`, so the Channel never treats an
+omitted ID as an implicit create. It also emits acknowledgements, Catalog and
+History responses, correlated `AgentEvent` values, approval lifecycle
+messages, and requesting-socket errors. Wire validation owns JSON and
+transport shape; Media owns decoded attachment validation.
 
 Clients should treat “new Session” as local state only. When the user submits the first message, the client issues `create_session` with the selected initial permission mode, waits for `session_created`, and immediately issues `run_turn` with the returned ID. This makes initial elevation atomic and avoids abandoned UI create actions producing even a Pending registration. For an existing Session, the HTML client queries Runtime truth on selection/reconnect, stores no grant locally, requires confirmation before Allow All, shows a persistent warning while elevated, and can revoke to Manual for future calls.
 

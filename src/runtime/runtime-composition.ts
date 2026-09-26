@@ -4,7 +4,11 @@ import type {
 } from '../core/channel/index.js';
 import type { AvailableSubagentEntry } from '../core/subagent/index.js';
 import type { ContextFile } from '../core/agent-context/index.js';
-import type { SessionEntry } from '../core/session/index.js';
+import type {
+  SessionEntry,
+  SessionHistoryPage,
+  SessionHistoryQuery,
+} from '../core/session/index.js';
 import type {
   RunTurnParams,
   RunTurnResult,
@@ -31,6 +35,7 @@ export interface RuntimeApplication {
   }): Promise<{ sessionId: string; permission: SessionPermissionState }>;
   listSessions(input?: { archived?: boolean }): Promise<SessionEntry[]>;
   getSession(sessionId: string): Promise<SessionEntry>;
+  getSessionHistory(query: SessionHistoryQuery): Promise<SessionHistoryPage>;
   renameSession(sessionId: string, title: string | null): Promise<SessionEntry>;
   archiveSession(sessionId: string): Promise<SessionEntry>;
   unarchiveSession(sessionId: string): Promise<SessionEntry>;

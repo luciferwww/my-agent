@@ -1735,13 +1735,24 @@
         </header>
 
         <section ref="chatLogEl" class="chat-log">
-          <div v-if="chatItems.length === 0" class="empty-state">
+          <div v-if="historyStatus === 'loading' && displayedChatItems.length === 0" class="empty-state">
+            <h3>Loading history…</h3>
+          </div>
+          <div v-else-if="displayedChatItems.length === 0" class="empty-state">
             <h3>{{ form.sessionId ? 'Session selected' : 'New Session' }}</h3>
-            <p>{{ form.sessionId ? 'Send a message to continue this Session. Existing history is not loaded by this client.' : 'Send the first message to create this Session.' }}</p>
+            <p>{{ form.sessionId ? 'Send a message to continue this Session.' : 'Send the first message to create this Session.' }}</p>
           </div>
 
+          <div v-if="historyHasMore" class="button-row">
+            <button class="secondary" :disabled="historyStatus === 'loading'" @click="loadEarlierHistory">
+              {{ historyStatus === 'loading' ? 'Loading…' : 'Load earlier messages' }}
+            </button>
+          </div>
+
+          <div v-if="historyError" class="session-list-state error">{{ historyError }}</div>
+
           <article
-            v-for="item in chatItems"
+            v-for="item in displayedChatItems"
             :key="item.id"
             class="message"
             :class="[itemRoleClass(item), { 'is-interrupted': item.kind === 'turn' && item.interrupted }]"
@@ -1986,6 +1997,16 @@
           draft: '',
           chatItems: [],
           turnMap: {},
+          activeTurnId: null,
+          historyRecords: [],
+          historyItems: [],
+          historyStatus: 'notLoaded',
+          historyError: '',
+          historyNextCursor: null,
+          historyHasMore: false,
+          pendingHistoryRequest: null,
+          pendingLatestHistoryRefresh: false,
+          pendingLatestHistoryTurnIds: [],
           isWaitingForReply: false,
           permissionMode: 'manual',
           permissionChangedAt: 0,
@@ -2019,6 +2040,7 @@
             sessionActionMenu: null,
             pendingSessionOperation: null,
             nextSessionOperationRequestId: 1,
+            nextHistoryRequestId: 1,
             sessionsError: '',
             eventFeedExpanded: false,
             modelSelection: null,
@@ -2049,6 +2071,12 @@
             get() { return this.activeSessionState.chatItems; },
             set(value) { this.activeSessionState.chatItems = value; },
           },
+          displayedChatItems() {
+            return [...this.activeSessionState.historyItems, ...this.chatItems];
+          },
+          historyStatus() { return this.activeSessionState.historyStatus; },
+          historyError() { return this.activeSessionState.historyError; },
+          historyHasMore() { return this.activeSessionState.historyHasMore; },
           turnMap: {
             get() { return this.activeSessionState.turnMap; },
             set(value) { this.activeSessionState.turnMap = value; },
@@ -2234,6 +2262,10 @@
               state.permissionChangedAt = 0;
               state.pendingPermissionRequestId = null;
               state.isWaitingForReply = false;
+              state.pendingHistoryRequest = null;
+              state.pendingLatestHistoryRefresh = false;
+              state.pendingLatestHistoryTurnIds = [];
+              if (state.historyStatus === 'loading') state.historyStatus = 'notLoaded';
             }
           },
           closePendingApprovalsForDisconnect() {
@@ -2326,6 +2358,162 @@
             this.pendingSessionsRequestId = requestId;
             this.sessionsError = '';
             this.sendJson({ type: 'list_sessions', requestId });
+          },
+          requestSessionHistory(sessionId, options = {}) {
+            if (!this.isConnected || !sessionId) return;
+            const state = this.ensureSessionState(sessionId);
+            if (state.pendingHistoryRequest) {
+              if (options.latest) {
+                state.pendingLatestHistoryRefresh = true;
+                for (const turnId of options.terminalTurnIds ?? [options.terminalTurnId]) {
+                  if (turnId && !state.pendingLatestHistoryTurnIds.includes(turnId)) {
+                    state.pendingLatestHistoryTurnIds.push(turnId);
+                  }
+                }
+              }
+              return;
+            }
+            const requestId = `history-${this.nextHistoryRequestId++}`;
+            state.pendingHistoryRequest = {
+              requestId,
+              beforeEntryId: options.beforeEntryId ?? null,
+              terminalTurnIds: (options.terminalTurnIds ?? [options.terminalTurnId]).filter(Boolean),
+            };
+            state.historyStatus = 'loading';
+            state.historyError = '';
+            this.sendJson({
+              type: 'get_session_history',
+              requestId,
+              sessionId,
+              ...(options.beforeEntryId ? { beforeEntryId: options.beforeEntryId } : {}),
+              limit: 50,
+            });
+          },
+          loadEarlierHistory() {
+            const state = this.activeSessionState;
+            if (!state.historyHasMore || !state.historyNextCursor) return;
+            this.requestSessionHistory(this.form.sessionId, {
+              beforeEntryId: state.historyNextCursor,
+            });
+          },
+          settleHistoryRequest(sessionId) {
+            const state = this.ensureSessionState(sessionId);
+            state.pendingHistoryRequest = null;
+            state.historyStatus = state.historyError ? 'error' : 'loaded';
+            if (state.pendingLatestHistoryRefresh) {
+              state.pendingLatestHistoryRefresh = false;
+              const terminalTurnIds = [...state.pendingLatestHistoryTurnIds];
+              state.pendingLatestHistoryTurnIds = [];
+              this.requestSessionHistory(sessionId, { latest: true, terminalTurnIds });
+            }
+          },
+          mergeHistoryPage(sessionId, message) {
+            const state = this.ensureSessionState(sessionId);
+            const pending = state.pendingHistoryRequest;
+            const incoming = Array.isArray(message.items) ? message.items : [];
+            const hadHistory = state.historyRecords.length > 0;
+            const recordsById = new Map(state.historyRecords.map(record => [record.entryId, record]));
+            for (const record of incoming) {
+              if (record?.entryId) recordsById.set(record.entryId, record);
+            }
+            let merged;
+            let replacedPersistedWindow = false;
+            if (pending?.beforeEntryId) {
+              merged = [...incoming, ...state.historyRecords];
+            } else {
+              const firstIncomingId = incoming[0]?.entryId;
+              const overlapIndex = firstIncomingId
+                ? state.historyRecords.findIndex(record => record.entryId === firstIncomingId)
+                : -1;
+              merged = overlapIndex >= 0
+                ? [...state.historyRecords.slice(0, overlapIndex), ...incoming]
+                : incoming;
+              replacedPersistedWindow = overlapIndex < 0 && hadHistory;
+            }
+            const seen = new Set();
+            state.historyRecords = merged.filter(record => {
+              if (!record?.entryId || seen.has(record.entryId)) return false;
+              seen.add(record.entryId);
+              return recordsById.has(record.entryId);
+            });
+            if (pending?.beforeEntryId || !hadHistory || replacedPersistedWindow) {
+              state.historyNextCursor = message.nextCursor ?? null;
+              state.historyHasMore = message.hasMore === true;
+            }
+            state.historyItems = this.buildHistoryItems(state.historyRecords);
+            for (const turnId of pending?.terminalTurnIds ?? []) {
+              if (!incoming.some(record => record.turnId === turnId)) continue;
+              state.chatItems = state.chatItems.filter(
+                item => item.turnId !== turnId || item.kind === 'system' || item.kind === 'error',
+              );
+              delete state.turnMap[turnId];
+            }
+          },
+          buildHistoryItems(records) {
+            const items = [];
+            const toolCalls = new Map();
+            const unmatchedResults = new Map();
+            for (const record of records) {
+              const content = typeof record.content === 'string'
+                ? [{ type: 'text', text: record.content }]
+                : Array.isArray(record.content) ? record.content : [];
+              if (record.role === 'toolResult') {
+                for (const block of content) {
+                  if (block.type !== 'tool_result') continue;
+                  const segment = toolCalls.get(block.tool_use_id);
+                  if (segment) {
+                    segment.status = 'completed';
+                    segment.resultContent = String(block.content ?? '');
+                  } else {
+                    unmatchedResults.set(block.tool_use_id, String(block.content ?? ''));
+                  }
+                }
+                continue;
+              }
+              if (record.role === 'user') {
+                items.push({
+                  kind: 'user',
+                  id: `history-${record.entryId}`,
+                  entryId: record.entryId,
+                  turnId: record.turnId,
+                  label: 'You',
+                  timestamp: Date.parse(record.timestamp) || Date.now(),
+                  text: content.filter(block => block.type === 'text').map(block => block.text).join('\n'),
+                  attachments: [],
+                });
+                continue;
+              }
+              const turn = {
+                kind: 'turn',
+                id: `history-${record.entryId}`,
+                entryId: record.entryId,
+                turnId: record.turnId,
+                label: 'Assistant',
+                timestamp: Date.parse(record.timestamp) || Date.now(),
+                segments: [],
+              };
+              for (const block of content) {
+                if (block.type === 'text') {
+                  turn.segments.push({ type: 'text', id: `${record.entryId}-text-${turn.segments.length}`, text: block.text });
+                } else if (block.type === 'tool_use') {
+                  const segment = {
+                    type: 'tool_call',
+                    id: `${record.entryId}-tool-${block.id}`,
+                    name: block.name,
+                    input: block.input,
+                    status: unmatchedResults.has(block.id) ? 'completed' : 'running',
+                    resultContent: unmatchedResults.get(block.id) ?? '',
+                    isError: false,
+                    expanded: false,
+                    resultExpanded: false,
+                  };
+                  toolCalls.set(block.id, segment);
+                  turn.segments.push(segment);
+                }
+              }
+              items.push(turn);
+            }
+            return items;
           },
           toggleSessionActionMenu(session, event) {
             if (!session?.sessionId || !this.isConnected || this.pendingSessionOperation !== null) {
@@ -2955,6 +3143,32 @@
                 this.sessionsError = '';
                 this.pushEvent('sessions_listed', `Loaded ${message.sessions.length} Session(s)`);
                 return;
+              case 'session_history': {
+                const state = this.ensureSessionState(message.sessionId);
+                if (message.requestId !== state.pendingHistoryRequest?.requestId) {
+                  this.pushEvent('session_history', `Ignored unexpected response ${message.requestId ?? '(missing id)'}`);
+                  return;
+                }
+                const pendingWasEarlier = Boolean(state.pendingHistoryRequest?.beforeEntryId);
+                this.mergeHistoryPage(message.sessionId, message);
+                this.settleHistoryRequest(message.sessionId);
+                if (message.sessionId === this.form.sessionId) {
+                  if (!pendingWasEarlier) this.scrollChatToBottom(message.sessionId);
+                }
+                this.pushEvent('session_history', `Loaded ${message.items?.length ?? 0} message record(s)`);
+                return;
+              }
+              case 'session_history_error': {
+                const state = this.ensureSessionState(message.sessionId);
+                if (message.requestId !== state.pendingHistoryRequest?.requestId) {
+                  this.pushEvent('session_history', `Ignored unexpected error ${message.requestId ?? '(missing id)'}`);
+                  return;
+                }
+                state.historyError = `${message.code}: ${message.message}`;
+                this.settleHistoryRequest(message.sessionId);
+                this.pushEvent('session_history', state.historyError);
+                return;
+              }
               case 'session_renamed': {
                 const pending = this.pendingSessionOperation;
                 if (
@@ -2992,7 +3206,7 @@
                     this.form.sessionId = replacement.sessionId;
                     this.ensureSessionState(replacement.sessionId);
                     this.requestPermissionMode();
-                    this.scrollChatToBottom(replacement.sessionId);
+                    this.requestSessionHistory(replacement.sessionId, { latest: true });
                   } else {
                     this.startNewSession();
                   }
@@ -3059,14 +3273,23 @@
             const state = this.ensureSessionState(sessionId);
             switch (event.type) {
               case 'run_start':
+                state.activeTurnId = event.turnId;
+                if (event.originMessageId) {
+                  const userItem = state.chatItems.find(
+                    item => item.kind === 'user' && item.messageId === event.originMessageId,
+                  );
+                  if (userItem) userItem.turnId = event.turnId;
+                }
                 this.pushEvent('run_start', `Turn ${event.turnId} started`);
                 return;
 
               case 'text_delta':
+                this.bindActiveTurn(state, event.turnId);
                 this.appendTextToTurn(event.turnId, event.text, sessionId);
                 return;
 
               case 'tool_use': {
+                this.bindActiveTurn(state, event.turnId);
                 const turn = this.getOrCreateTurn(event.turnId, sessionId);
                 turn.segments.push({
                   type: 'tool_call',
@@ -3085,6 +3308,7 @@
               }
 
               case 'tool_result': {
+                this.bindActiveTurn(state, event.turnId);
                 const toolCall = this.findPendingToolCall(event.turnId, sessionId);
                 if (toolCall) {
                   toolCall.status = 'completed';
@@ -3096,12 +3320,18 @@
               }
 
               case 'llm_call':
+                this.bindActiveTurn(state, event.turnId);
                 this.pushEvent('llm_call', `Round ${event.round} for turn ${event.turnId}`);
                 return;
 
               case 'run_end':
                 state.isWaitingForReply = false;
+                state.activeTurnId = null;
                 this.requestSessionList();
+                this.requestSessionHistory(sessionId, {
+                  latest: true,
+                  terminalTurnId: event.turnId,
+                });
                 // spec §13.1: special-case aborted so users can distinguish
                 // it from a normal end_turn. Rendered as a system bubble
                 // rather than reused text bubble to make the interruption
@@ -3141,6 +3371,7 @@
 
               case 'error':
                 state.isWaitingForReply = false;
+                state.activeTurnId = null;
                 this.appendChatItem({
                   kind: 'error',
                   label: 'Runtime',
@@ -3153,6 +3384,10 @@
                   this.requestModelCatalog();
                 }
                 this.pushEvent('error', `Turn ${event.turnId} failed${event.category ? ` (${event.category})` : ''}`);
+                this.requestSessionHistory(sessionId, {
+                  latest: true,
+                  terminalTurnId: event.turnId,
+                });
                 return;
 
               case 'compaction_start':
@@ -3179,7 +3414,18 @@
 
               case 'user_message': {
                 // Dedup: origin client already rendered a local "You" bubble in sendMessage().
-                if (event.originClientId === this.form.clientId) return;
+                if (event.originClientId === this.form.clientId) {
+                  const pendingLocal = state.chatItems.find(
+                    item => item.kind === 'user' && !item.messageId,
+                  );
+                  if (pendingLocal) {
+                    pendingLocal.messageId = event.messageId;
+                    if (event.deliveryMode === 'steering' && state.activeTurnId) {
+                      pendingLocal.turnId = state.activeTurnId;
+                    }
+                  }
+                  return;
+                }
                 const label = event.originClientId
                   ? `user @${event.originClientId.slice(0, 6)}`
                   : 'user (external)';
@@ -3188,6 +3434,8 @@
                   label,
                   text: event.content ?? '',
                   isSteer: event.deliveryMode === 'steering',
+                  messageId: event.messageId,
+                  turnId: event.deliveryMode === 'steering' ? state.activeTurnId : null,
                   attachmentSummaries: event.attachmentSummaries ?? [],
                 }, sessionId);
                 return;
@@ -3200,6 +3448,16 @@
 
           // ── Turn / segment helpers ────────────────────────────
 
+          bindActiveTurn(state, turnId) {
+            if (!turnId) return;
+            state.activeTurnId = turnId;
+            for (const item of state.chatItems) {
+              if (item.kind === 'user' && item.isSteer && item.messageId && !item.turnId) {
+                item.turnId = turnId;
+              }
+            }
+          },
+
           // Find or lazily create the turn entry for a given turnId.
           // If the existing turn entry is no longer the last chat item (e.g. the
           // user inserted a steer message mid-turn), mark the old entry as
@@ -3207,6 +3465,12 @@
           // text/tool events render *after* the interrupting messages.
           getOrCreateTurn(turnId, sessionId = this.form.sessionId) {
             const state = this.ensureSessionState(sessionId);
+            state.activeTurnId = turnId;
+            for (const item of state.chatItems) {
+              if (item.kind === 'user' && item.isSteer && item.messageId && !item.turnId) {
+                item.turnId = turnId;
+              }
+            }
             const existing = state.turnMap[turnId];
             if (existing) {
               const lastItem = state.chatItems[state.chatItems.length - 1];
@@ -3317,7 +3581,7 @@
             this.ensureSessionState(session.sessionId);
             this.pushEvent('session_selected', `Selected Session ${session.sessionId}`);
             this.requestPermissionMode();
-            this.scrollChatToBottom(session.sessionId);
+            this.requestSessionHistory(session.sessionId, { latest: true });
           },
           shortSessionId(sessionId) {
             return typeof sessionId === 'string' ? sessionId.slice(0, 8) : '';

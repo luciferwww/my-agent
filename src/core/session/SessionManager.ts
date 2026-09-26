@@ -11,12 +11,17 @@ import type {
   SessionRecord,
   CompactionRecord,
   ContentBlock,
+  SessionHistoryPage,
+  SessionHistoryQuery,
+  SessionHistoryContentBlock,
   UpdateSessionInput,
 } from './types.js';
 
 const SESSIONS_DIR = 'sessions';
 const STORE_FILE = 'sessions.json';
 const TRANSCRIPT_VERSION = 1;
+const DEFAULT_HISTORY_LIMIT = 50;
+const MAX_HISTORY_LIMIT = 100;
 
 /** SessionManager construction options. */
 export interface SessionManagerOptions {
@@ -28,6 +33,7 @@ export interface SessionManagerOptions {
 }
 
 export interface SessionMessageInput {
+  turnId: string;
   role: 'user' | 'assistant' | 'toolResult';
   content: string | ContentBlock[];
   abortMeta?: { partial: boolean; stopReason: 'aborted' };
@@ -298,17 +304,22 @@ export class SessionManager {
   ): Promise<string> {
     const state = this.ensureTranscriptLoaded(sessionId);
     const filePath = this.resolveTranscriptPath(sessionId);
+    const { turnId, ...messagePayload } = message;
 
     // Persist capped tool results so later history loads need no repeated trimming.
-    const persistedMessage = message.role === 'toolResult'
-      ? { ...message, content: this.capToolResults(message.content as ContentBlock[]) }
-      : message;
+    const persistedMessage = messagePayload.role === 'toolResult'
+      ? {
+          ...messagePayload,
+          content: this.capToolResults(messagePayload.content as ContentBlock[]),
+        }
+      : messagePayload;
 
     const record: MessageRecord = {
       type: 'message',
       id: randomUUID(),
       parentId: state.leafId,
       timestamp: new Date().toISOString(),
+      turnId,
       message: persistedMessage,
     };
 
@@ -331,6 +342,36 @@ export class SessionManager {
   getMessages(key: string): MessageRecord[] {
     const state = this.ensureTranscriptLoaded(key);
     return resolveLinearPath(state, state.leafId) as MessageRecord[];
+  }
+
+  getHistory(query: SessionHistoryQuery): SessionHistoryPage {
+    const limit = query.limit ?? DEFAULT_HISTORY_LIMIT;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_HISTORY_LIMIT) {
+      throw new TypeError(`Session history limit must be an integer from 1 through ${MAX_HISTORY_LIMIT}.`);
+    }
+
+    const messages = this.getMessages(query.sessionId);
+    let end = messages.length;
+    if (query.beforeEntryId !== undefined) {
+      end = messages.findIndex((message) => message.id === query.beforeEntryId);
+      if (end < 0) {
+        throw new SessionError(
+          'SESSION_HISTORY_CURSOR_INVALID',
+          'The history cursor is not on the active branch.',
+        );
+      }
+    }
+
+    const start = Math.max(0, end - limit);
+    const selected = messages.slice(start, end);
+    const items = selected.map((record) => this.projectHistoryMessage(record));
+    const hasMore = start > 0;
+    return {
+      sessionId: query.sessionId,
+      items,
+      nextCursor: hasMore ? (items[0]?.entryId ?? null) : null,
+      hasMore,
+    };
   }
 
   /** Moves the in-memory leaf so subsequent messages form a new branch. */
@@ -416,6 +457,26 @@ export class SessionManager {
         + ` of ${block.content.length} chars]`;
       return { ...block, content: capped };
     });
+  }
+
+  private projectHistoryMessage(record: MessageRecord): import('./types.js').SessionHistoryMessage {
+    const content = typeof record.message.content === 'string'
+      ? record.message.content
+      : record.message.content.map((block): SessionHistoryContentBlock => {
+          if (block.type !== 'image') return block;
+          return {
+            type: 'text',
+            text: `[Image: ${block.source.media_type}, ${block.dimensions.width}x${block.dimensions.height}]`,
+          };
+        });
+    return {
+      entryId: record.id,
+      turnId: record.turnId,
+      timestamp: record.timestamp,
+      role: record.message.role,
+      content,
+      ...(record.message.abortMeta === undefined ? {} : { abortMeta: record.message.abortMeta }),
+    };
   }
 
   /** Loads and caches a persisted Transcript on first access. */

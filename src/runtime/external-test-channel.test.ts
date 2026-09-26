@@ -93,6 +93,9 @@ function host(): ChannelRuntimeHost {
         }),
         listSessions: async () => [],
         getSession: async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 }),
+        getHistory: async ({ sessionId }) => ({
+          sessionId, items: [], nextCursor: null, hasMore: false,
+        }),
         renameSession: async (sessionId, title) => ({
           sessionId,
           createdAt: 1,
