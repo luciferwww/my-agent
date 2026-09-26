@@ -102,6 +102,11 @@ describe('WebSocketChannel', () => {
     const html = await response.text();
     expect(html).toContain("const DEFAULT_SOCKET_PATH = \"/ws\";");
     expect(html).not.toContain('__MY_AGENT_WEBSOCKET_PATH__');
+    expect(html).toContain('class="session-action-trigger"');
+    expect(html).toContain('renameSessionFromMenu');
+    expect(html).toContain('deleteSessionFromMenu');
+    expect(html).toContain("case 'session_renamed'");
+    expect(html).toContain("case 'session_deleted'");
     await expect(fetch(`${clientUrl(channel)}missing`)).resolves.toMatchObject({ status: 404 });
   });
 

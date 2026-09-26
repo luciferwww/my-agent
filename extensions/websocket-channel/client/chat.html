@@ -506,22 +506,20 @@
       }
 
       .session-item {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
+        position: relative;
+        display: flex;
         align-items: center;
-        gap: 10px;
         width: 100%;
         min-height: 54px;
-        padding: 9px 10px;
+        padding: 4px;
         color: var(--text);
-        text-align: left;
         background: rgba(255, 255, 255, 0.72);
         border: 1px solid var(--border);
         border-radius: 8px;
       }
 
-      .session-item:hover:not(:disabled) {
-        transform: none;
+      .session-item:hover,
+      .session-item:focus-within {
         border-color: var(--border-strong);
         background: rgba(255, 255, 255, 0.94);
       }
@@ -529,6 +527,26 @@
       .session-item.selected {
         border-color: rgba(216, 137, 92, 0.55);
         background: rgba(231, 164, 125, 0.14);
+      }
+
+      .session-select-button {
+        min-width: 0;
+        min-height: 44px;
+        flex: 1;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+        padding: 5px 6px;
+        color: inherit;
+        text-align: left;
+        background: transparent;
+        border-radius: 6px;
+      }
+
+      .session-select-button:hover:not(:disabled) {
+        transform: none;
+        background: transparent;
       }
 
       .session-item-copy {
@@ -554,6 +572,80 @@
 
       .session-item-time {
         white-space: nowrap;
+      }
+
+      .session-action-trigger {
+        width: 32px;
+        height: 32px;
+        flex: none;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        color: var(--muted);
+        font-size: 19px;
+        line-height: 1;
+        background: transparent;
+        border-radius: 7px;
+        opacity: 0;
+      }
+
+      .session-item:hover .session-action-trigger,
+      .session-item:focus-within .session-action-trigger,
+      .session-item.selected .session-action-trigger,
+      .session-action-trigger[aria-expanded="true"] {
+        opacity: 1;
+      }
+
+      .session-action-trigger:hover:not(:disabled) {
+        transform: none;
+        color: var(--text);
+        background: rgba(122, 103, 80, 0.1);
+      }
+
+      .session-action-scrim {
+        position: fixed;
+        z-index: 40;
+        inset: 0;
+        background: transparent;
+      }
+
+      .session-action-menu {
+        position: fixed;
+        z-index: 41;
+        width: 148px;
+        padding: 6px;
+        background: rgba(255, 253, 249, 0.99);
+        border: 1px solid var(--border-strong);
+        border-radius: 10px;
+        box-shadow: 0 16px 34px rgba(75, 52, 31, 0.2);
+      }
+
+      .session-action-menu-item {
+        display: grid;
+        grid-template-columns: 20px minmax(0, 1fr);
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        padding: 9px 10px;
+        color: var(--text);
+        text-align: left;
+        background: transparent;
+        border-radius: 7px;
+      }
+
+      .session-action-menu-item:hover:not(:disabled),
+      .session-action-menu-item:focus-visible {
+        transform: none;
+        background: rgba(122, 103, 80, 0.1);
+      }
+
+      .session-action-menu-item.danger {
+        color: var(--danger);
+      }
+
+      .session-action-icon {
+        font-size: 15px;
+        text-align: center;
       }
 
       .event-feed-toggle {
@@ -1410,20 +1502,70 @@
             <div v-else-if="sessions.length === 0" class="session-list-state">
               {{ isConnected ? 'No persisted Sessions.' : 'Connect to load Sessions.' }}
             </div>
-            <button
+            <div
               v-for="session in sessions"
               :key="session.sessionId"
               class="session-item"
               :class="{ selected: session.sessionId === form.sessionId }"
-              type="button"
-              :disabled="pendingSessionRequestId !== null"
-              @click="selectSession(session)"
             >
-              <span class="session-item-copy">
-                <span class="session-item-title">{{ session.title || 'Untitled' }}</span>
-                <span class="session-item-id">{{ shortSessionId(session.sessionId) }}</span>
-              </span>
-              <span class="session-item-time">{{ formatSessionTime(session.updatedAt) }}</span>
+              <button
+                class="session-select-button"
+                type="button"
+                :disabled="pendingSessionRequestId !== null || pendingSessionOperation !== null"
+                @click="selectSession(session)"
+              >
+                <span class="session-item-copy">
+                  <span class="session-item-title">{{ session.title || 'Untitled' }}</span>
+                  <span class="session-item-id">{{ shortSessionId(session.sessionId) }}</span>
+                </span>
+                <span class="session-item-time">{{ formatSessionTime(session.updatedAt) }}</span>
+              </button>
+              <button
+                class="session-action-trigger"
+                type="button"
+                title="Session actions"
+                :aria-label="`Actions for ${session.title || 'Untitled Session'}`"
+                aria-haspopup="menu"
+                :aria-expanded="sessionActionMenu?.sessionId === session.sessionId"
+                :disabled="!isConnected || pendingSessionRequestId !== null || pendingSessionOperation !== null"
+                @click.stop="toggleSessionActionMenu(session, $event)"
+                @keydown.escape.stop="closeSessionActionMenu"
+              >⋯</button>
+            </div>
+          </div>
+          <button
+            v-if="sessionActionMenu"
+            class="session-action-scrim"
+            type="button"
+            tabindex="-1"
+            aria-label="Close Session actions"
+            @click="closeSessionActionMenu"
+          ></button>
+          <div
+            v-if="sessionActionMenuEntry"
+            class="session-action-menu"
+            role="menu"
+            :style="{ top: `${sessionActionMenu.top}px`, left: `${sessionActionMenu.left}px` }"
+            @keydown.escape.stop="closeSessionActionMenu"
+          >
+            <button
+              ref="sessionActionFirstItem"
+              class="session-action-menu-item"
+              type="button"
+              role="menuitem"
+              @click="renameSessionFromMenu"
+            >
+              <span class="session-action-icon" aria-hidden="true">✎</span>
+              <span>Rename</span>
+            </button>
+            <button
+              class="session-action-menu-item danger"
+              type="button"
+              role="menuitem"
+              @click="deleteSessionFromMenu"
+            >
+              <span class="session-action-icon" aria-hidden="true">⌫</span>
+              <span>Delete</span>
             </button>
           </div>
         </section>
@@ -1767,6 +1909,9 @@
             sessions: [],
             pendingSessionsRequestId: null,
             nextSessionsRequestId: 1,
+            sessionActionMenu: null,
+            pendingSessionOperation: null,
+            nextSessionOperationRequestId: 1,
             sessionsError: '',
             eventFeedExpanded: false,
             modelSelection: null,
@@ -1944,6 +2089,12 @@
             }
             return count;
           },
+          sessionActionMenuEntry() {
+            if (!this.sessionActionMenu) return null;
+            return this.sessions.find(
+              session => session.sessionId === this.sessionActionMenu.sessionId,
+            ) ?? null;
+          },
           maxAttachmentsPerMessage() { return MAX_ATTACHMENTS_PER_MESSAGE; },
         },
 
@@ -1963,6 +2114,8 @@
             this.pendingSessionRequestId = null;
             this.pendingFirstTurn = null;
             this.pendingSessionsRequestId = null;
+            this.pendingSessionOperation = null;
+            this.closeSessionActionMenu();
             this.sessions = [];
             this.sessionsError = '';
             this.clearModelSelection();
@@ -2059,10 +2212,101 @@
           },
           requestSessionList() {
             if (!this.isConnected || this.pendingSessionsRequestId !== null) return;
+            this.closeSessionActionMenu();
             const requestId = `sessions-${this.nextSessionsRequestId++}`;
             this.pendingSessionsRequestId = requestId;
             this.sessionsError = '';
             this.sendJson({ type: 'list_sessions', requestId });
+          },
+          toggleSessionActionMenu(session, event) {
+            if (!session?.sessionId || !this.isConnected || this.pendingSessionOperation !== null) {
+              return;
+            }
+            if (this.sessionActionMenu?.sessionId === session.sessionId) {
+              this.closeSessionActionMenu();
+              return;
+            }
+            const rect = event.currentTarget.getBoundingClientRect();
+            const menuWidth = 148;
+            const menuHeight = 92;
+            const gap = 5;
+            const left = Math.max(8, Math.min(
+              window.innerWidth - menuWidth - 8,
+              rect.right - menuWidth,
+            ));
+            const below = rect.bottom + gap;
+            const top = below + menuHeight <= window.innerHeight - 8
+              ? below
+              : Math.max(8, rect.top - menuHeight - gap);
+            this.sessionActionMenu = {
+              sessionId: session.sessionId,
+              top,
+              left,
+            };
+            nextTick(() => this.$refs.sessionActionFirstItem?.focus());
+          },
+          closeSessionActionMenu() {
+            this.sessionActionMenu = null;
+          },
+          beginSessionOperation(type, sessionId, payload = {}) {
+            if (!this.isConnected || this.pendingSessionOperation !== null) return;
+            const requestId = `session-${type}-${this.nextSessionOperationRequestId++}`;
+            this.pendingSessionOperation = { type, requestId, sessionId };
+            this.sessionsError = '';
+            try {
+              this.sendJson({
+                type: `${type}_session`,
+                requestId,
+                sessionId,
+                ...payload,
+              });
+            } catch (error) {
+              this.pendingSessionOperation = null;
+              this.sessionsError = error instanceof Error ? error.message : String(error);
+              this.pushEvent('error', `Failed to ${type} Session ${sessionId}`);
+            }
+          },
+          renameSessionFromMenu() {
+            const session = this.sessionActionMenuEntry;
+            if (!session) return;
+            this.closeSessionActionMenu();
+            const title = window.prompt(
+              'Rename Session\n\nLeave blank to clear the custom name.',
+              session.title || '',
+            );
+            if (title === null) return;
+            const normalizedTitle = title.trim();
+            this.beginSessionOperation(
+              'rename',
+              session.sessionId,
+              { title: normalizedTitle || null },
+            );
+          },
+          deleteSessionFromMenu() {
+            const session = this.sessionActionMenuEntry;
+            if (!session) return;
+            this.closeSessionActionMenu();
+            const label = session.title || this.shortSessionId(session.sessionId);
+            if (!window.confirm(
+              `Delete Session "${label}"?\n\n`
+                + 'Its conversation history will be permanently removed. This cannot be undone.',
+            )) {
+              return;
+            }
+            this.beginSessionOperation('delete', session.sessionId);
+          },
+          upsertSession(session) {
+            if (!session?.sessionId) return;
+            const existingIndex = this.sessions.findIndex(
+              entry => entry.sessionId === session.sessionId,
+            );
+            const next = [...this.sessions];
+            if (existingIndex >= 0) next.splice(existingIndex, 1, session);
+            else next.push(session);
+            next.sort((left, right) =>
+              (Number(right.updatedAt) || 0) - (Number(left.updatedAt) || 0)
+                || String(left.sessionId).localeCompare(String(right.sessionId)));
+            this.sessions = next;
           },
           requestPermissionMode() {
             if (!this.isConnected || !this.form.sessionId || this.pendingPermissionRequestId !== null) return;
@@ -2579,9 +2823,58 @@
                   return;
                 }
                 this.sessions = message.sessions;
+                if (this.sessionActionMenu && !this.sessionActionMenuEntry) {
+                  this.closeSessionActionMenu();
+                }
                 this.sessionsError = '';
                 this.pushEvent('sessions_listed', `Loaded ${message.sessions.length} Session(s)`);
                 return;
+              case 'session_renamed': {
+                const pending = this.pendingSessionOperation;
+                if (
+                  pending?.type !== 'rename'
+                  || message.requestId !== pending.requestId
+                  || message.session?.sessionId !== pending.sessionId
+                ) {
+                  this.pushEvent('session_renamed', `Ignored unexpected response ${message.requestId ?? '(missing id)'}`);
+                  return;
+                }
+                this.pendingSessionOperation = null;
+                this.upsertSession(message.session);
+                this.sessionsError = '';
+                this.pushEvent('session_renamed', `Renamed Session ${pending.sessionId}`);
+                return;
+              }
+              case 'session_deleted': {
+                const pending = this.pendingSessionOperation;
+                if (
+                  pending?.type !== 'delete'
+                  || message.requestId !== pending.requestId
+                  || message.sessionId !== pending.sessionId
+                ) {
+                  this.pushEvent('session_deleted', `Ignored unexpected response ${message.requestId ?? '(missing id)'}`);
+                  return;
+                }
+                this.pendingSessionOperation = null;
+                this.sessions = this.sessions.filter(
+                  session => session.sessionId !== pending.sessionId,
+                );
+                delete this.sessionStates[pending.sessionId];
+                if (this.form.sessionId === pending.sessionId) {
+                  const replacement = this.sessions[0];
+                  if (replacement) {
+                    this.form.sessionId = replacement.sessionId;
+                    this.ensureSessionState(replacement.sessionId);
+                    this.requestPermissionMode();
+                    this.scrollChatToBottom(replacement.sessionId);
+                  } else {
+                    this.startNewSession();
+                  }
+                }
+                this.sessionsError = '';
+                this.pushEvent('session_deleted', `Deleted Session ${pending.sessionId}`);
+                return;
+              }
               case 'approval_requested': {
                 const state = this.ensureSessionState(message.sessionId);
                 // Route approval into its turn's segments so it stays
@@ -2615,6 +2908,11 @@
                 this.pendingSessionRequestId = null;
                 this.pendingFirstTurn = null;
                 this.pendingPermissionRequestId = null;
+                if (this.pendingSessionOperation !== null) {
+                  this.pendingSessionOperation = null;
+                  this.closeSessionActionMenu();
+                  this.sessionsError = `${message.code}: ${message.message}`;
+                }
                 if (this.pendingSessionsRequestId !== null) {
                   this.pendingSessionsRequestId = null;
                   this.sessionsError = `${message.code}: ${message.message}`;
@@ -2879,6 +3177,7 @@
           },
 
           startNewSession() {
+            this.closeSessionActionMenu();
             this.sessionStates[''] = createSessionUiState();
             this.form.sessionId = '';
           },
@@ -2887,10 +3186,12 @@
               return;
             }
             if (session.sessionId === this.form.sessionId) return;
+            this.closeSessionActionMenu();
             this.form.sessionId = session.sessionId;
             this.ensureSessionState(session.sessionId);
             this.pushEvent('session_selected', `Selected Session ${session.sessionId}`);
             this.requestPermissionMode();
+            this.scrollChatToBottom(session.sessionId);
           },
           shortSessionId(sessionId) {
             return typeof sessionId === 'string' ? sessionId.slice(0, 8) : '';
