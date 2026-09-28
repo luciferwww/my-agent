@@ -472,7 +472,15 @@ describe('WebSocketChannel', () => {
           turnId: 'turn-1',
           timestamp: '2026-09-27T00:00:00.000Z',
           role: 'user' as const,
-          content: 'hello',
+          content: [{
+            type: 'image' as const,
+            source: {
+              type: 'base64' as const,
+              media_type: 'image/png',
+              data: 'aGVsbG8=',
+            },
+            dimensions: { width: 32, height: 24 },
+          }],
         }],
         nextCursor: null,
         hasMore: false,

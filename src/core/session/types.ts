@@ -94,10 +94,7 @@ export type ContentBlock =
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; tool_use_id: string; content: string };
 
-export type SessionHistoryContentBlock = Exclude<
-  ContentBlock,
-  Extract<ContentBlock, { type: 'image' }>
->;
+export type SessionHistoryContentBlock = ContentBlock;
 
 export interface SessionHistoryQuery {
   readonly sessionId: string;

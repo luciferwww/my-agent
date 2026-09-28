@@ -462,13 +462,7 @@ export class SessionManager {
   private projectHistoryMessage(record: MessageRecord): import('./types.js').SessionHistoryMessage {
     const content = typeof record.message.content === 'string'
       ? record.message.content
-      : record.message.content.map((block): SessionHistoryContentBlock => {
-          if (block.type !== 'image') return block;
-          return {
-            type: 'text',
-            text: `[Image: ${block.source.media_type}, ${block.dimensions.width}x${block.dimensions.height}]`,
-          };
-        });
+      : record.message.content.map((block): SessionHistoryContentBlock => block);
     return {
       entryId: record.id,
       turnId: record.turnId,

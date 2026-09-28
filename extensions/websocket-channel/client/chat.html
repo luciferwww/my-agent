@@ -1418,6 +1418,42 @@
         }
       }
 
+      function base64DecodedSize(value) {
+        const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+        return Math.max(0, Math.floor(value.length * 3 / 4) - padding);
+      }
+
+      function takeFirstMatching(items, predicate) {
+        const index = items.findIndex(predicate);
+        return index < 0 ? null : items.splice(index, 1)[0];
+      }
+
+      function preserveRealtimePresentationIdentity(historyItems, chatItems, turnIds) {
+        for (const turnId of turnIds) {
+          const candidates = chatItems.filter(
+            item => item.turnId === turnId && item.kind !== 'system' && item.kind !== 'error',
+          );
+          for (const historyItem of historyItems.filter(item => item.turnId === turnId)) {
+            const realtimeItem = takeFirstMatching(
+              candidates,
+              item => item.kind === historyItem.kind,
+            );
+            if (!realtimeItem) continue;
+            historyItem.id = realtimeItem.id;
+
+            if (historyItem.kind !== 'turn') continue;
+            const segments = [...(realtimeItem.segments ?? [])];
+            for (const historySegment of historyItem.segments) {
+              const realtimeSegment = takeFirstMatching(
+                segments,
+                segment => segment.type === historySegment.type,
+              );
+              if (realtimeSegment) historySegment.id = realtimeSegment.id;
+            }
+          }
+        }
+      }
+
       function createSessionUiState() {
         return {
           draft: '',
@@ -1895,9 +1931,13 @@
               state.historyNextCursor = message.nextCursor ?? null;
               state.historyHasMore = message.hasMore === true;
             }
-            state.historyItems = this.buildHistoryItems(state.historyRecords);
-            for (const turnId of pending?.terminalTurnIds ?? []) {
-              if (!incoming.some(record => record.turnId === turnId)) continue;
+            const settledTurnIds = (pending?.terminalTurnIds ?? []).filter(
+              turnId => incoming.some(record => record.turnId === turnId),
+            );
+            const historyItems = this.buildHistoryItems(state.historyRecords);
+            preserveRealtimePresentationIdentity(historyItems, state.chatItems, settledTurnIds);
+            state.historyItems = historyItems;
+            for (const turnId of settledTurnIds) {
               state.chatItems = state.chatItems.filter(
                 item => item.turnId !== turnId || item.kind === 'system' || item.kind === 'error',
               );
@@ -1926,6 +1966,19 @@
                 continue;
               }
               if (record.role === 'user') {
+                const attachments = content
+                  .filter(block =>
+                    block.type === 'image'
+                    && block.source?.type === 'base64'
+                    && SUPPORTED_IMAGE_MIME.has(block.source.media_type)
+                    && typeof block.source.data === 'string')
+                  .map((block, index) => ({
+                    id: `${record.entryId}-image-${index}`,
+                    previewUrl: `data:${block.source.media_type};base64,${block.source.data}`,
+                    name: `Image ${index + 1} (${block.dimensions?.width ?? '?'}×${block.dimensions?.height ?? '?'})`,
+                    sizeBytes: base64DecodedSize(block.source.data),
+                    willResize: false,
+                  }));
                 items.push({
                   kind: 'user',
                   id: `history-${record.entryId}`,
@@ -1934,7 +1987,7 @@
                   label: 'You',
                   timestamp: Date.parse(record.timestamp) || Date.now(),
                   text: content.filter(block => block.type === 'text').map(block => block.text).join('\n'),
-                  attachments: [],
+                  attachments,
                 });
                 continue;
               }

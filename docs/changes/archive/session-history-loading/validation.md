@@ -10,7 +10,7 @@
 
 - Every persisted `MessageRecord` carries one top-level `turnId`.
 - Core returns chronological pages from the complete active branch with an exclusive `beforeEntryId` cursor, default limit 50, and maximum 100.
-- History projection replaces persisted image base64 with MIME/dimensions text and preserves persisted Tool content.
+- History projection preserves persisted image base64, MIME type, and dimensions so terminal convergence keeps bounded attachment previews visible, and preserves persisted Tool content.
 - Runtime exposes the read-only query through the public Session capability.
 - WebSocket supports socket-local correlated History success and operation-error responses without joining an audience.
 - The bundled client requests no History on `hello` or in new-Session state; selecting a persisted Session loads its latest page.
@@ -46,6 +46,13 @@ The 2026-09-28 implementation review identified and corrected three gaps:
   request.
 - Transcript loading now fails closed when a message has a missing, empty, or
   whitespace-only `turnId`.
+- A subsequent UX correction preserves normalized image blocks in History and
+  renders them with the client's bounded attachment preview instead of
+  replacing the preview with a MIME/dimensions text placeholder at terminal
+  convergence.
+- Terminal convergence transfers matching realtime item and segment identities
+  to persisted History presentation so Vue patches the existing DOM instead of
+  visibly removing and recreating the completed Turn.
 
 Focused Transcript and SessionManager tests pass (26/26), WebSocket Channel
 tests pass (39/39), TypeScript and workspace lint pass, and the Host build and

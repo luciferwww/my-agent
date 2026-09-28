@@ -125,7 +125,7 @@ describe('SessionManager transcript behavior', () => {
     expect(earlier).toMatchObject({ hasMore: false, nextCursor: null });
   });
 
-  it('rejects off-branch History cursors and projects images to text placeholders', async () => {
+  it('rejects off-branch History cursors and preserves images', async () => {
     const sessionId = await materialize(manager, 'shared');
     const sharedId = manager.getMessages(sessionId)[0]!.id;
     const abandonedId = await appendMessage(sessionId, {
@@ -145,7 +145,11 @@ describe('SessionManager transcript behavior', () => {
     expect(() => manager.getHistory({ sessionId, beforeEntryId: abandonedId }))
       .toThrowError(expect.objectContaining({ code: 'SESSION_HISTORY_CURSOR_INVALID' }));
     expect(manager.getHistory({ sessionId }).items.at(-1)?.content).toEqual([
-      { type: 'text', text: '[Image: image/png, 1280x720]' },
+      {
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/png', data: 'secret' },
+        dimensions: { width: 1280, height: 720 },
+      },
     ]);
   });
 

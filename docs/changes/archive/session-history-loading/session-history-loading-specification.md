@@ -91,10 +91,12 @@ The Session capability adds one read operation equivalent to:
 getHistory(query: SessionHistoryQuery): Promise<SessionHistoryPage>;
 ```
 
-The History content reuses the existing non-image `ContentBlock` variants.
-Image blocks become text blocks before crossing the capability boundary. The
-exact type location and name may follow the existing owner-module naming
-conventions, but the semantics above are stable.
+The History content reuses the existing `ContentBlock` variants, including
+image blocks. Image blocks retain their base64 source, MIME type, and
+dimensions so persisted History can render the same attachment after terminal
+convergence, page reload, or loading from another client. The exact type
+location and name may follow the existing owner-module naming conventions, but
+the semantics above are stable.
 
 `MessageRecord` likewise requires `turnId: string`. Session roots and
 Compaction records do not acquire a Turn identity.
@@ -154,8 +156,7 @@ no History record.
 ## 7. Content projection
 
 - String content and text blocks retain their complete persisted text.
-- Image blocks become text blocks containing MIME type and dimensions, for
-  example `[Image: image/png, 1280x720]`; base64 data is never returned.
+- Image blocks retain their base64 source, MIME type, and dimensions.
 - Tool Use blocks retain the persisted call ID, name, and input.
 - Tool Result blocks retain the persisted Tool Use ID and complete persisted
   result content.
