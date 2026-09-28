@@ -12,7 +12,10 @@ import type { CompactionConfig } from './compaction-config.js';
 
 export type { ToolResult };
 
-export type PendingMessageReader = () => ChatMessage[] | Promise<ChatMessage[]>;
+export type SteeringMessageClaimer = () => ChatMessage[];
+export type SteeringMessagePreparer = (
+  messages: ChatMessage[],
+) => Promise<ChatMessage[]>;
 
 /**
  * Minimal context required to identify events during one run.
@@ -63,8 +66,10 @@ export interface RunParams {
   getSessionPermissionMode?: () => SessionPermissionMode;
   /** Maximum LLM calls for one run; omitted means no count limit. */
   maxLlmCalls?: number;
-  /** Reader consumed only at steering injection points. */
-  getSteeringMessages?: PendingMessageReader;
+  /** Atomically claims the compatible FIFO prefix at a steering safe point. */
+  claimSteeringMessages?: SteeringMessageClaimer;
+  /** Applies the normal user-prompt pipeline after messages are claimed. */
+  prepareSteeringMessages?: SteeringMessagePreparer;
   /** Compaction configuration supplied by RuntimeApp. */
   compaction?: CompactionConfig;
   /**
@@ -120,18 +125,14 @@ export type AgentEvent =
       sessionId: string;
       turnId: string;
       requestId: string;
-      /**
-      * Correlates this Turn to its triggering `user_message.messageId`.
-      * Present only for the queued path, not direct runTurn or steering.
-      * See channel-multi-client-user-message-spec section 5.1 D6.
-       */
+      /** Correlates this Turn to its triggering `user_message.messageId`. */
       originMessageId?: string;
     }
   /**
-   * User-input broadcast emitted after assembly and before queued/steering
-   * routing, keeping multiple clients for one Session consistent.
+   * User-input broadcast emitted after assembly and before FIFO append,
+   * keeping multiple clients for one Session consistent.
    *
-   * Independent of turnId because steering messages do not create Turns.
+   * Independent of turnId because binding happens later.
    * See channel-multi-client-user-message-spec section 5.3.
    */
   | {
@@ -145,10 +146,15 @@ export type AgentEvent =
       attachmentSummaries?: AttachmentSummary[];
       /** WebSocket client ID, or null for CLI and library channels. */
       originClientId: string | null;
-      /** queued uses the Session queue; steering injects into the active Turn. */
-      deliveryMode: 'queued' | 'steering';
       /** ms since epoch */
       timestamp: number;
+    }
+  | {
+      type: 'user_message_bound';
+      messageId: string;
+      sessionId: string;
+      turnId: string;
+      binding: 'steering';
     }
   | { type: 'text_delta'; sessionId: string; turnId: string; text: string }
   | {

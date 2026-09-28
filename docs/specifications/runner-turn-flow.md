@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-21
+> Verified: 2026-09-28
 > Authority: Stable Runner Turn-flow contract
 
 ## Scope
@@ -38,10 +38,12 @@ On normalized context overflow, Runner performs blocking Compaction, commits thr
 - Tool Calls execute sequentially in Provider order and each complete call receives one terminal correlated result.
 - Abort prevents later Tool starts.
 - Compaction keeps atomic Tool Call/Result exchange groups intact and must make measurable progress.
-- Runtime admission controls whether busy-Session input enters the steering inbox.
-- After each loop iteration Runner atomically consumes every ready steering item,
-  persists each as a separate FIFO user message, and performs one continuation
-  Model call for that batch.
+- Runtime places every accepted Channel user message in one per-Session FIFO.
+- At an eligible safe point Runner synchronously claims the largest contiguous
+  compatible FIFO prefix, persists each message separately, and performs one
+  continuation Model call for the batch.
+- Runner checks Abort and Model-call capacity before claim. An empty claim is
+  the final steering boundary for that Turn; claimed input is at-most-once.
 - `maxLlmCalls` is an optional positive integer. Omission means no Model-call
   count limit; there is no hidden fallback. An explicit limit counts semantic
   Model calls and returns the last content with `stopReason='max_llm_calls'`.
@@ -49,13 +51,13 @@ On normalized context overflow, Runner performs blocking Compaction, commits thr
 
 ## Failure and events
 
-Only normalized context overflow enters bounded Compaction recovery. Other non-Abort failures become `AgentExecutionFailure` with accumulated Usage and are rethrown after an `error` event. Provider `stopReason: 'error'` remains a normal Runner result. Abort returns an aborted result rather than an execution error. Abort and explicit limit discard Runner-local drained but uninjected steering.
+Only normalized context overflow enters bounded Compaction recovery. Other non-Abort failures become `AgentExecutionFailure` with accumulated Usage and are rethrown after an `error` event. Provider `stopReason: 'error'` remains a normal Runner result. Abort returns an aborted result rather than an execution error. There is no Runner-local drained steering buffer.
 
 Events include run/model-call lifecycle, Tool use/result, Compaction, sanitation, orphan repair, `run_end`, and `error`. Observer settlement is bounded and cannot mutate a settled result.
 
 ## Acceptance scenarios
 
-Cover empty Session, normal Turn, omitted and explicit Model-call limits, preflight overflow, post-persistence overflow and sanitation, multiple bounded retries, trailing-user idempotence, trailing Tool Result preservation, Layer 1 and aggregate pruning, distinct FIFO steering batches with one continuation call, invalid/unknown/denied/unavailable/failed/aborted Tools, sequential multi-Tool calls, Abort at each phase, Usage after Abort/failure, Compaction persistence and next-Turn loading, and complete event correlation.
+Cover empty Session, normal Turn, omitted and explicit Model-call limits, preflight overflow, post-persistence overflow and sanitation, multiple bounded retries, trailing-user idempotence, trailing Tool Result preservation, Layer 1 and aggregate pruning, compatible-prefix steering batches, final empty claim, invalid/unknown/denied/unavailable/failed/aborted Tools, sequential multi-Tool calls, Abort at each phase, Usage after Abort/failure, Compaction persistence and next-Turn loading, and complete event correlation.
 
 ## Related authority
 

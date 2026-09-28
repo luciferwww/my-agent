@@ -3006,9 +3006,6 @@
                   );
                   if (pendingLocal) {
                     pendingLocal.messageId = event.messageId;
-                    if (event.deliveryMode === 'steering' && state.activeTurnId) {
-                      pendingLocal.turnId = state.activeTurnId;
-                    }
                   }
                   return;
                 }
@@ -3019,11 +3016,22 @@
                   kind: 'user',
                   label,
                   text: event.content ?? '',
-                  isSteer: event.deliveryMode === 'steering',
+                  isSteer: false,
                   messageId: event.messageId,
-                  turnId: event.deliveryMode === 'steering' ? state.activeTurnId : null,
+                  turnId: null,
                   attachmentSummaries: event.attachmentSummaries ?? [],
                 }, sessionId);
+                return;
+              }
+
+              case 'user_message_bound': {
+                const userItem = state.chatItems.find(
+                  item => item.kind === 'user' && item.messageId === event.messageId,
+                );
+                if (userItem) {
+                  userItem.turnId = event.turnId;
+                  userItem.isSteer = event.binding === 'steering';
+                }
                 return;
               }
 

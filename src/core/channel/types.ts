@@ -43,7 +43,6 @@ export interface ChannelRunRequest {
   sessionId: string;
   message: string | InboundContentBlock[];
   modelReference?: ModelReference;
-  maxLlmCalls?: number;
   clientId?: string;
 }
 
@@ -172,7 +171,7 @@ export interface TurnAbortCapability {
   abortTurn(sessionId: string): { aborted: boolean; dropped: number };
 }
 
-/** Channel 只通过此能力申请服务端 Session ID；创建本身不会写入持久化 Session。 */
+/** Channel capability for allocating a server Session ID without persisting it. */
 export interface SessionCapabilityEntry {
   readonly sessionId: string;
   readonly createdAt: number;

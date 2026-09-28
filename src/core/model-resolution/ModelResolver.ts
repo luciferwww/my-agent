@@ -36,7 +36,7 @@ export class ModelResolver {
   }
 
   resolve(input: ModelResolutionInput): ResolvedModel {
-    const reference = this.normalizeReference(input.reference);
+    const reference = normalizeModelReference(input.reference);
     const provider = this.providers.get(reference.providerId);
     if (!provider) {
       throw new ModelResolutionError(
@@ -132,17 +132,6 @@ export class ModelResolver {
     });
   }
 
-  private normalizeReference(
-    reference: ModelResolutionInput['reference'],
-  ): CanonicalModelIdentity {
-    const providerId = normalizeProviderId(reference?.providerId);
-    const modelId = reference?.modelId;
-    if (!providerId || typeof modelId !== 'string') {
-      throw new ModelResolutionError('reference_invalid', 'A valid Provider and Model reference is required.');
-    }
-    return { providerId, modelId };
-  }
-
   private assertBindingConsistency(
     reference: CanonicalModelIdentity,
     provider: ProviderProjectionEntry,
@@ -235,6 +224,17 @@ export class ModelResolver {
 function normalizeProviderId(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && PROVIDER_ID.test(normalized) ? normalized : undefined;
+}
+
+export function normalizeModelReference(
+  reference: ModelResolutionInput['reference'],
+): CanonicalModelIdentity {
+  const providerId = normalizeProviderId(reference?.providerId);
+  const modelId = reference?.modelId;
+  if (!providerId || typeof modelId !== 'string') {
+    throw new ModelResolutionError('reference_invalid', 'A valid Provider and Model reference is required.');
+  }
+  return Object.freeze({ providerId, modelId });
 }
 
 function validateProviderId(value: string | undefined): string | undefined {

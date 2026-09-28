@@ -10,8 +10,6 @@ import type {
   SessionHistoryQuery,
 } from '../core/session/index.js';
 import type {
-  RunTurnParams,
-  RunTurnResult,
   RuntimeLifecycleState,
   RuntimeShutdownReport,
 } from './types.js';
@@ -28,7 +26,6 @@ export type {
 } from '../core/channel/index.js';
 
 export interface RuntimeApplication {
-  runTurn(params: RunTurnParams): Promise<RunTurnResult>;
   createSession(input?: {
     permissionMode?: SessionPermissionMode;
     originClientId?: string;

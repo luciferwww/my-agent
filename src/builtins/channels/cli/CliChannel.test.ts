@@ -44,7 +44,6 @@ describe('CliChannel user_message rendering', () => {
       messageId: 'msg-1',
       content: 'hello there',
       originClientId: 'client-prefix-suffix',
-      deliveryMode: 'queued',
       timestamp: Date.now(),
     };
     channel.send(event);
@@ -62,7 +61,6 @@ describe('CliChannel user_message rendering', () => {
       messageId: 'msg-2',
       content: 'from cli',
       originClientId: null,
-      deliveryMode: 'queued',
       timestamp: Date.now(),
     });
     expect(captured()).toBe('');
@@ -77,7 +75,6 @@ describe('CliChannel user_message rendering', () => {
       content: 'look',
       attachmentSummaries: [{ type: 'image', mime: 'image/png', bytes: 1024 }],
       originClientId: 'abcdef123',
-      deliveryMode: 'queued',
       timestamp: Date.now(),
     });
     const out = captured();
@@ -98,7 +95,6 @@ describe('CliChannel user_message rendering', () => {
         { type: 'other' },
       ],
       originClientId: 'abcdef123',
-      deliveryMode: 'queued',
       timestamp: Date.now(),
     });
     expect(captured()).toContain('(+3 attachments)');
@@ -113,7 +109,6 @@ describe('CliChannel user_message rendering', () => {
       messageId: 'msg-5',
       content: 'inject',
       originClientId: 'abcdef123',
-      deliveryMode: 'steering',
       timestamp: Date.now(),
     });
     const out = captured();
@@ -132,7 +127,6 @@ describe('CliChannel user_message rendering', () => {
         { type: 'image', mime: 'image/png', bytes: 999999, name: 'secret.png' },
       ],
       originClientId: 'abcdef123',
-      deliveryMode: 'queued',
       timestamp: Date.now(),
     });
     const out = captured();
@@ -629,9 +623,8 @@ describe('CliChannel approval lifecycle', () => {
 // ── Ctrl+C / abort（core-abort-spec.md §12）─────────────────────────
 
 describe('CliChannel Ctrl+C / abort handling', () => {
-  // handleSigInt 是 private——测试通过桥接类型直接调用，避免依赖 process.emit
-  // 触发全局 SIGINT listener（会牵动 vitest 自己装的 handler）。start() 里
-  // 装 handler 的行为由 spec §12 的 code review 保证；这里只测行为矩阵。
+  // Invoke the private handler through a test bridge instead of triggering
+  // Vitest's process-wide SIGINT listeners. This covers only the behavior matrix.
   type CliChannelInternal = { handleSigInt(): void };
 
   afterEach(() => {

@@ -31,7 +31,7 @@ import type { RuntimeDependencies, RuntimeEvent } from './types.js';
 import { createDefaultAgentConfig } from '../platform/config/default-composition.js';
 import { DEFAULT_LOGGER_CONFIG } from '../platform/logger/index.js';
 
-// 单元测试用 mock：跳过真实 sharp 解码，直接受控注入 normalized + dropped
+// Bypass image decoding so tests can inject normalized and dropped results.
 const processInboundMock = vi.fn<
   (msg: string | InboundContentBlock[]) => Promise<ProcessInboundResult>
 >();
@@ -211,7 +211,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     await app.close();
   });
 
-  it('steering: image-bearing message in steer mode strips non-text and routes only text', async () => {
+  it('steering: image-bearing message remains multimodal when active capability is unknown', async () => {
     const normalized: ChatContentBlock[] = [
       { type: 'text', text: 'steer me' },
       {
@@ -225,10 +225,14 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     let drainedSteering: ChatMessage[] = [];
 
     const runnerRun = vi.fn(async (params: {
-      getSteeringMessages?: () => Promise<ChatMessage[]>;
+      claimSteeringMessages?: () => ChatMessage[];
+      prepareSteeringMessages?: (messages: ChatMessage[]) => Promise<ChatMessage[]>;
     }): Promise<RunResult> => {
       await releaseRun.promise;
-      drainedSteering = (await params.getSteeringMessages?.()) ?? [];
+      const claimed = params.claimSteeringMessages?.() ?? [];
+      drainedSteering = params.prepareSteeringMessages
+        ? await params.prepareSteeringMessages(claimed)
+        : claimed;
       return defaultRunResult('done');
     });
 
@@ -249,7 +253,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     });
     await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(1));
 
-    // 2) Steering dispatch: text + image; image must be stripped
+    // 2) Steering dispatch: text + image is retained in the canonical FIFO.
     processInboundMock.mockResolvedValueOnce({ normalized, dropped: [] });
     await testChannel.dispatch({
       sessionId: 'main',
@@ -261,21 +265,27 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     await firstDispatch;
 
     expect(drainedSteering).toHaveLength(1);
-    expect(typeof drainedSteering[0]?.content).toBe('string');
-    expect(drainedSteering[0]?.content).toContain('steer me');
+    expect(drainedSteering[0]?.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'text', text: expect.stringContaining('steer me') }),
+      expect.objectContaining({ type: 'image' }),
+    ]));
 
     await app.close();
   });
 
-  it('steering: empty post-strip text is skipped (no inbox push)', async () => {
+  it('steering: a pure image can be claimed when active capability is unknown', async () => {
     const releaseRun = createDeferred<void>();
     let drainedSteering: ChatMessage[] = [];
 
     const runnerRun = vi.fn(async (params: {
-      getSteeringMessages?: () => Promise<ChatMessage[]>;
+      claimSteeringMessages?: () => ChatMessage[];
+      prepareSteeringMessages?: (messages: ChatMessage[]) => Promise<ChatMessage[]>;
     }): Promise<RunResult> => {
       await releaseRun.promise;
-      drainedSteering = (await params.getSteeringMessages?.()) ?? [];
+      const claimed = params.claimSteeringMessages?.() ?? [];
+      drainedSteering = params.prepareSteeringMessages
+        ? await params.prepareSteeringMessages(claimed)
+        : claimed;
       return defaultRunResult('done');
     });
 
@@ -320,7 +330,10 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     releaseRun.resolve();
     await firstDispatch;
 
-    expect(drainedSteering).toHaveLength(0);
+    expect(drainedSteering).toHaveLength(1);
+    expect(drainedSteering[0]?.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'image' }),
+    ]));
     await app.close();
   });
 
@@ -378,7 +391,6 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     expect(evt.sessionId).toBe('main');
     expect(evt.content).toBe('hello world');
     expect(evt.originClientId).toBe('client-A');
-    expect(evt.deliveryMode).toBe('queued');
     expect(evt.messageId).toMatch(/^[0-9a-f-]{36}$/i);
     expect(evt.timestamp).toBeGreaterThanOrEqual(before);
     expect(evt.timestamp).toBeLessThanOrEqual(after);
@@ -449,6 +461,70 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     await app.close();
   });
 
+  it('claims only the contiguous model-compatible prefix and delays queued gates', async () => {
+    const releaseRun = createDeferred<void>();
+    let claimed: ChatMessage[] = [];
+    const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      if (params.message === 'first') {
+        await releaseRun.promise;
+        claimed = params.claimSteeringMessages?.() ?? [];
+      }
+      return defaultRunResult(String(params.message));
+    });
+    const { app, testChannel, agentEvents } = await buildApp(agentHome, {
+      steerMode: true,
+      runnerRun,
+    });
+
+    processInboundMock.mockResolvedValueOnce({ normalized: 'first', dropped: [] });
+    const first = testChannel.dispatch({ sessionId: 'main', message: 'first' });
+    await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(1));
+
+    processInboundMock.mockResolvedValueOnce({ normalized: 'same', dropped: [] });
+    await testChannel.dispatch({ sessionId: 'main', message: 'same' });
+    processInboundMock.mockResolvedValueOnce({ normalized: 'other', dropped: [] });
+    await testChannel.dispatch({
+      sessionId: 'main',
+      message: 'other',
+      modelReference: { providerId: ' test ', modelId: 'other-model' },
+    });
+    processInboundMock.mockResolvedValueOnce({ normalized: 'later', dropped: [] });
+    await testChannel.dispatch({ sessionId: 'main', message: 'later' });
+
+    const runtime = app.application as unknown as {
+      messageQueueBySession: Map<string, unknown[]>;
+      requestGates: Map<string, unknown>;
+    };
+    expect(runtime.messageQueueBySession.get('main')).toHaveLength(3);
+    expect(runtime.requestGates.size).toBe(1);
+
+    releaseRun.resolve();
+    await first;
+    await vi.waitFor(() => {
+      expect(runnerRun).toHaveBeenCalledTimes(3);
+      expect(app.application.getState().activeRunCount).toBe(0);
+    });
+
+    expect(claimed).toEqual([{ role: 'user', content: 'same' }]);
+    expect(runnerRun.mock.calls.map(([params]) => params.message)).toEqual([
+      'first',
+      'other',
+      'later',
+    ]);
+    const messages = agentEvents.filter(
+      (event): event is Extract<AgentEvent, { type: 'user_message' }> =>
+        event.type === 'user_message',
+    );
+    expect(agentEvents.filter((event) => event.type === 'user_message_bound')).toEqual([
+      expect.objectContaining({
+        messageId: messages[1]!.messageId,
+        binding: 'steering',
+      }),
+    ]);
+
+    await app.close();
+  });
+
   it('degenerate input (assembled === undefined): does not emit user_message', async () => {
     processInboundMock.mockResolvedValue({ normalized: '', dropped: [] });
 
@@ -467,7 +543,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     await app.close();
   });
 
-  it('promotes unread steering to distinct FIFO Turns without duplicate intake events', async () => {
+  it('leaves unclaimed FIFO messages for distinct Turns without duplicate intake events', async () => {
     const releaseRun = createDeferred<void>();
     const releasePromotedRun = createDeferred<void>();
     const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
@@ -500,7 +576,6 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
       message: 'steer one',
       clientId: 'client-B',
       modelReference: { providerId: 'test', modelId: 'test-model' },
-      maxLlmCalls: 7,
     });
     processInboundMock.mockResolvedValueOnce({ normalized: 'steer two', dropped: [] });
     await testChannel.dispatch({
@@ -513,12 +588,9 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
       Extract<AgentEvent, { type: 'user_message' }>
     >;
     expect(userMsgs).toHaveLength(3);
-    expect(userMsgs[0]!.deliveryMode).toBe('queued');
     expect(userMsgs[0]!.originClientId).toBe('client-A');
-    expect(userMsgs[1]!.deliveryMode).toBe('steering');
     expect(userMsgs[1]!.originClientId).toBe('client-B');
     expect(userMsgs[1]!.content).toBe('steer one');
-    expect(userMsgs[2]!.deliveryMode).toBe('steering');
     expect(userMsgs[2]!.originClientId).toBe('client-C');
 
     // Steering does not interrupt or spawn a Turn before normal completion.
@@ -529,7 +601,6 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(2));
 
     expect(runnerRun.mock.calls[1]![0]).toEqual(expect.objectContaining({
-      maxLlmCalls: 7,
       originMessageId: userMsgs[1]!.messageId,
       resolvedModel: expect.objectContaining({
         identity: { providerId: 'test', modelId: 'test-model' },
@@ -564,12 +635,12 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
   });
 
   it.each([
-    { stopReason: 'max_llm_calls', expectedCalls: 1 },
-    { stopReason: 'aborted', expectedCalls: 1 },
-    { stopReason: 'error', expectedCalls: 2 },
+    { stopReason: 'max_llm_calls' },
+    { stopReason: 'aborted' },
+    { stopReason: 'error' },
   ])(
-    'applies terminal steering disposition for $stopReason',
-    async ({ stopReason, expectedCalls }) => {
+    'schedules unclaimed FIFO input after $stopReason',
+    async ({ stopReason }) => {
       const releaseRun = createDeferred<void>();
       const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
         if (params.message === 'first') {
@@ -602,25 +673,23 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
       releaseRun.resolve();
       await first;
       await vi.waitFor(() => {
-        expect(runnerRun).toHaveBeenCalledTimes(expectedCalls);
+        expect(runnerRun).toHaveBeenCalledTimes(2);
         expect(app.application.getState().activeRunCount).toBe(0);
       });
-      if (expectedCalls === 2) {
-        expect(runnerRun.mock.calls[1]![0].message).toBe('late');
-      }
+      expect(runnerRun.mock.calls[1]![0].message).toBe('late');
 
       await app.close();
     },
   );
 
-  it('discards unread steering when the active Turn throws', async () => {
+  it('schedules unclaimed FIFO input when the active Turn throws', async () => {
     const releaseRun = createDeferred<void>();
     const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
       if (params.message === 'first') {
         await releaseRun.promise;
         throw new Error('test failure');
       }
-      return defaultRunResult('unexpected');
+      return defaultRunResult('late');
     });
     const { app, testChannel } = await buildApp(agentHome, {
       steerMode: true,
@@ -642,21 +711,28 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
 
     releaseRun.resolve();
     await expect(first).rejects.toThrow('test failure');
-    await vi.waitFor(() => expect(app.application.getState().activeRunCount).toBe(0));
-    expect(runnerRun).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(runnerRun).toHaveBeenCalledTimes(2);
+      expect(app.application.getState().activeRunCount).toBe(0);
+    });
+    expect(runnerRun.mock.calls[1]![0].message).toBe('late');
 
     await app.close();
   });
 
-  it('steering pure-attachment (R1\'): emits user_message but does not enqueue steering input', async () => {
+  it('pure-attachment input stays in FIFO and can be claimed', async () => {
     const releaseRun = createDeferred<void>();
     let drainedSteering: ChatMessage[] = [];
 
     const runnerRun = vi.fn(async (params: {
-      getSteeringMessages?: () => Promise<ChatMessage[]>;
+      claimSteeringMessages?: () => ChatMessage[];
+      prepareSteeringMessages?: (messages: ChatMessage[]) => Promise<ChatMessage[]>;
     }): Promise<RunResult> => {
       await releaseRun.promise;
-      drainedSteering = (await params.getSteeringMessages?.()) ?? [];
+      const claimed = params.claimSteeringMessages?.() ?? [];
+      drainedSteering = params.prepareSteeringMessages
+        ? await params.prepareSteeringMessages(claimed)
+        : claimed;
       return defaultRunResult('done');
     });
 
@@ -703,12 +779,13 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     >;
     expect(userMsgs).toHaveLength(2);
     const steeringEvt = userMsgs[1]!;
-    expect(steeringEvt.deliveryMode).toBe('steering');
     expect(steeringEvt.content).toBe('');
     expect(steeringEvt.attachmentSummaries).toHaveLength(1);
 
-    // Steering inbox stayed empty — runner saw nothing to inject
-    expect(drainedSteering).toHaveLength(0);
+    expect(drainedSteering).toHaveLength(1);
+    expect(drainedSteering[0]?.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'image' }),
+    ]));
 
     await app.close();
   });
@@ -856,7 +933,7 @@ async function buildApp(
       return createTestProviderUnit({
         id: 'test',
         protocol: 'test',
-        models: [{ modelId: 'test-model' }],
+        models: [{ modelId: 'test-model' }, { modelId: 'other-model' }],
         invocationPort,
         resolveConnection: () => ({ ok: true, connection: { endpointId: 'test' } }),
         resolveModel: (modelId, connection) => ({
@@ -912,7 +989,10 @@ async function buildApp(
         defaultModel: { providerId: 'test', modelId: 'test-model' },
         builtin: {
           baseURL: 'https://example.test/v1',
-          models: [{ modelId: 'test-model', protocol: 'openai-responses' }],
+          models: [
+            { modelId: 'test-model', protocol: 'openai-responses' },
+            { modelId: 'other-model', protocol: 'openai-responses' },
+          ],
         },
       },
       runtime: { steeringEnabled: options.steerMode ?? false },

@@ -86,31 +86,30 @@ export interface RuntimeAppOptions {
   dependencies?: Partial<RuntimeDependencies>;
   onEvent?: (event: RuntimeEvent) => void;
   /**
-   * 可选的 AgentEvent 观察者（telemetry/调试日志用）。
-   * RuntimeApp 在 fanout 闭包末尾调用此回调，与 channel.send 并行触发。
+   * Optional AgentEvent observer for telemetry and diagnostics.
+   * RuntimeApp invokes it from the fanout closure alongside channel.send.
    */
   onAgentEvent?: (event: AgentEvent) => unknown;
 }
 
 export interface RunTurnParams {
-  /** Stable caller-facing Root request identity; generated at intake when omitted. */
-  requestId?: string;
+  /** Root request identity allocated by Channel intake. */
+  requestId: string;
   sessionId: string;
   message: string | ChatContentBlock[];
   modelReference?: ModelReference;
   maxLlmCalls?: number;
-  /** v1.0 必填；调用方明确传入，不再回退 config。交互式场景传 'full'，sub-agent / 定时任务传 'minimal' 或 'none' */
+  /** Root Channel Turns use full prompts. */
   promptMode: 'full' | 'minimal' | 'none';
   safetyLevel?: AgentDefaults['prompt']['safetyLevel'];
   reloadContextFiles?: boolean;
-  /** 可选 turn 标识；不提供则由 RuntimeApp 自动生成 UUID */
-  turnId?: string;
+  /** Turn identity allocated when the queued message starts. */
+  turnId: string;
   /**
-   * 触发本 turn 的 `user_message.messageId`。仅由 handleInboundChannelMessage → startQueuedTurn
-   * 内部透传；直接调用 runTurn 一般不需要。
-   * 见 channel-multi-client-user-message-spec §5.1 D6。
+   * `user_message.messageId` that triggered this Turn, passed internally from
+   * handleInboundChannelMessage through startQueuedTurn.
    */
-  originMessageId?: string;
+  originMessageId: string;
 }
 
 export interface RunTurnResult {
@@ -275,23 +274,11 @@ export type RuntimeEvent =
       type: 'shutdown_end';
       report: RuntimeShutdownReport;
     }
-  /**
-   * abort 时从 `messageQueueBySession` 里被丢弃的 queued/followup 消息计数。
-   * 与 `RuntimeApp.abortTurn()` 返回值的 `dropped` 字段同义，供 caller / telemetry
-   * 消费者跨返回值与 event 两条路径对齐。详见 core-abort-spec.md §8.3。
-   *
-   * **不包含**：
-   *  - `runAttempt` 内 `pendingSteeringMessages` 未注入部分（仅写 log；见 §7.2 pending
-   *    steering 处理）——那些位于 AgentRunner 局部变量，RuntimeApp 拿不到
-   *
-   * `dropped === 0` 且 abort 命中 active turn 时 event 不 emit（无 audit 价值）。
-   */
+  /** Reports unclaimed FIFO messages removed by Abort. */
   | {
       type: 'messages_dropped';
       sessionId: string;
-      /** v1 只有 'abort'，预留 'shutdown' 等 */
       reason: 'abort';
-      /** 从 messageQueueBySession 中被丢弃的 queued/followup 消息数（≥1） */
       dropped: number;
     };
 

@@ -6,6 +6,8 @@ Changes retain the repository's existing Plan/Specification/validation workflow.
 
 ## Active
 
+- [Runner Steering Simplification](active/runner-steering-simplification/plan.md), with its [Accepted Specification](active/runner-steering-simplification/runner-steering-simplification-specification.md) and [ADR-017](../decisions/adr-017-session-message-queue-and-steering-claim.md) — implemented one per-Session FIFO with Runner-owned safe-point claim, replacing the steering inbox and terminal promotion; pending closeout
+
 ## Archived
 
 Archived changes preserve bounded delivery and acceptance provenance. They are neither Current Architecture nor stable contract authority.

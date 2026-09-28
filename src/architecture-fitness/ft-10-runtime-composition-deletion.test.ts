@@ -133,7 +133,7 @@ describe('FT-10 Runtime composition deletion', () => {
     );
 
     expect(objectTypeBody(runtimeTypes, 'RunTurnParams')).not.toMatch(/\b(?:model|maxTokens)\??\s*:/);
-    expect(objectTypeBody(queueTypes, 'QueuedChannelTurn')).not.toMatch(/\b(?:model|maxTokens)\??\s*:/);
+    expect(objectTypeBody(queueTypes, 'QueuedUserMessage')).not.toMatch(/\b(?:model|maxTokens|maxLlmCalls)\??\s*:/);
     expect(websocket).toContain('model_reference');
     expect(websocket).toContain('request_override');
     expect(html).toContain('modelReference');

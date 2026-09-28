@@ -48,7 +48,6 @@ type ClientMessage =
       sessionId: string;
       message: string | InboundContentBlock[];
       modelReference?: ChannelRunRequest['modelReference'];
-      maxLlmCalls?: number;
     }
   | {
       type: 'approval_resolve';
@@ -185,8 +184,9 @@ export class WebSocketChannel implements Channel {
   private readonly pendingApprovals = new Map<string, PendingApprovalRoute>();
 
   /**
-   * Channel activation 同步注入：bindRuntimeCapabilities 先于 start()。
-   * 独立使用时能力可能未绑定，此时需要能力的协议请求返回 SERVER_NOT_READY。
+   * Runtime capabilities are bound synchronously before Channel start.
+   * Standalone use can leave them unavailable; dependent requests then fail
+   * with SERVER_NOT_READY.
    */
   private runtimeCapabilities?: ChannelRuntimeCapabilities;
   private unsubscribePermissionModeChanged?: () => void;
@@ -568,12 +568,17 @@ export class WebSocketChannel implements Channel {
             'Legacy model/output-token override fields are not supported; use modelReference.',
           );
         }
+        if ('maxLlmCalls' in parsed) {
+          throw new ProtocolError(
+            'INVALID_MESSAGE',
+            'maxLlmCalls is execution policy and is not accepted on run_turn.',
+          );
+        }
         return {
           type,
           sessionId: readNonEmptyString(parsed.sessionId, 'sessionId'),
           message: readRunTurnMessage(parsed.message),
           modelReference: readOptionalModelReference(parsed.modelReference),
-          maxLlmCalls: readOptionalPositiveInteger(parsed.maxLlmCalls, 'maxLlmCalls'),
         };
       case 'approval_resolve': {
         const decision = parsed.decision;
@@ -679,7 +684,7 @@ export class WebSocketChannel implements Channel {
       replacedExistingConnection: Boolean(previousSocket && previousSocket !== socket),
     });
 
-    // 同一 clientId 只允许一个逻辑活跃连接；旧连接的晚到 close 会在 handleSocketClose 中被忽略。
+    // One logical connection owns a clientId; stale close events are ignored.
     if (previousSocket && previousSocket !== socket) {
       this.logger.info('closing superseded client connection', {
         channelId: this.id,
@@ -710,7 +715,6 @@ export class WebSocketChannel implements Channel {
       clientId,
       sessionId: message.sessionId,
       hasModelOverride: message.modelReference !== undefined,
-      hasMaxLlmCalls: message.maxLlmCalls !== undefined,
       messageLength: typeof message.message === 'string' ? message.message.length : undefined,
       blockCount: Array.isArray(message.message) ? message.message.length : undefined,
     });
@@ -719,7 +723,6 @@ export class WebSocketChannel implements Channel {
       sessionId: message.sessionId,
       message: message.message,
       modelReference: message.modelReference,
-      maxLlmCalls: message.maxLlmCalls,
     });
   }
 
@@ -939,14 +942,9 @@ export class WebSocketChannel implements Channel {
   }
 
   /**
-  * inbound `abort_turn`：`sessionId` 已通过 parseMessage 校验非空。
-  * v1 不做 sessionId ↔ 发送方 clientId 的 owner 关系校验（§0.3 D5：
-  * 单信任域假设），任何已 hello 的客户端都能 abort 任何 Session；
-   * 多客户端隔离由未来 auth 层处理。
-   *
-   * abort 完成通过 `run_end{result.stopReason:'aborted'}` 通道通知，
-  * 无 inline ack；Runtime capabilities 未 bind 时静默丢弃并 warn（开发时不接
-   * RuntimeApp 单跑本 channel 场景）。
+  * `abort_turn` relies on parseMessage for a non-empty sessionId. Under the
+  * single-trust-domain assumption, any initialized client may abort a Session.
+  * Completion arrives through run_end; there is no inline acknowledgment.
    */
   private handleAbortTurn(
     socket: WebSocket,
@@ -976,7 +974,7 @@ export class WebSocketChannel implements Channel {
     if (!clientId) return;
 
     this.socketClientIds.delete(socket);
-    // 新连接接管后，旧连接的 close 仍可能晚到；这类 stale close 不得清掉当前活跃状态。
+    // A stale close from the replaced socket must not clear the new owner.
     if (this.clients.get(clientId) !== socket) {
       this.logger.debug('ignoring stale socket close', {
         channelId: this.id,
@@ -1023,7 +1021,7 @@ export class WebSocketChannel implements Channel {
     return clientId;
   }
 
-  // 当前这张表只表示“谁应该继续收到该 session 的 AgentEvent 广播”，不表示共享 UI 或自动共享历史。
+  // This table controls AgentEvent audience only; it does not imply shared UI or history.
   private registerSessionAudience(clientId: string, sessionId: string): void {
     let clientIds = this.sessions.get(sessionId);
     if (!clientIds) {
@@ -1037,7 +1035,7 @@ export class WebSocketChannel implements Channel {
       sessionIds = new Set<string>();
       this.clientSessions.set(clientId, sessionIds);
     }
-    // 反向索引用于断线时按 clientId 做 O(关联 session 数) 清理，而不是全表扫描 sessions。
+    // The reverse index removes only this client's Session memberships on disconnect.
     sessionIds.add(sessionId);
 
     this.logger.debug('session audience registered', {
@@ -1208,7 +1206,7 @@ export class WebSocketChannel implements Channel {
       };
     }
     if (event.type === 'error') {
-      // Error 对象直接 JSON.stringify 会退化成空对象，这里显式降成 message 以匹配协议文档。
+      // Error objects stringify to {}; project the message explicitly.
       return {
         ...event,
         error: event.error.message,

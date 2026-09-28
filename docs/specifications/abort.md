@@ -11,9 +11,9 @@ This contract defines session-local Turn Abort across Runtime, Runner, Model Inv
 
 ## Runtime command
 
-`abortTurn(sessionId)` synchronously signals the active tree, removes normal queued requests, discards pending steering, and returns `{ aborted, dropped }`. It is idempotent and isolated by session. `dropped` counts normal queued requests only. The normal-completion steering handoff is disabled for an aborted result, so unread steering is not promoted after Abort.
+`abortTurn(sessionId)` synchronously signals the active tree, removes every unclaimed message from the Session FIFO, and returns `{ aborted, dropped }`. It is idempotent and isolated by Session. Claimed messages already belong to the active Turn and are not counted as queued drops.
 
-Each dropped request settles once with `request_end` outcome `cancelled` and reason `abort_queue_drop`. Runtime emits `messages_dropped` only when at least one normal queued request was removed. Subscriber failure cannot make `abortTurn` throw.
+Each dropped request emits one `request_end` outcome `cancelled` with reason `abort_queue_drop`. Runtime emits `messages_dropped` only when at least one FIFO item was removed. Subscriber failure cannot make `abortTurn` throw.
 
 ## Runner behavior
 
@@ -41,7 +41,7 @@ Signal state changes synchronously, but Provider SDKs, Tools, observers, event-l
 
 ## Acceptance scenarios
 
-Cover Abort before start; during streaming with and without partial content; between multiple Tools; active-only, queue-only, and mixed active/queued state; no-op Abort; cross-session isolation; steering discard; event-subscriber failure; CLI/WebSocket commands; Parent Abort during Child stages; graceful Shutdown; Abort convergence; deadline exhaustion; and unknown orphan repair.
+Cover Abort before start; during streaming with and without partial content; between multiple Tools; active-only, queue-only, and mixed active/queued state; no-op Abort; cross-session isolation; unclaimed FIFO removal; event-subscriber failure; CLI/WebSocket commands; Parent Abort during Child stages; graceful Shutdown; Abort convergence; deadline exhaustion; and unknown orphan repair.
 
 ## Related authority
 

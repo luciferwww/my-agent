@@ -12,8 +12,12 @@ import type {
   SessionHistoryPage,
   SessionHistoryQuery,
 } from '../core/session/index.js';
-import type { ModelReference } from '../core/model-resolution/index.js';
-import { ModelResolutionError, ModelResolver } from '../core/model-resolution/index.js';
+import type { ModelReference, ResolvedModel } from '../core/model-resolution/index.js';
+import {
+  ModelResolutionError,
+  ModelResolver,
+  normalizeModelReference,
+} from '../core/model-resolution/index.js';
 import { TurnInteractionManager } from './turn-interaction/index.js';
 import type {
   ApprovalInteractionRequest,
@@ -68,9 +72,7 @@ import type {
 import type { AvailableSubagentEntry } from '../core/subagent/index.js';
 import type {
   MessageRouteContext,
-  PendingSteeringInput,
-  QueuedChannelTurn,
-  TurnLaunchContext,
+  QueuedUserMessage,
 } from './queue-types.js';
 import type {
   RunTurnParams,
@@ -185,15 +187,8 @@ export class RuntimeApp {
   private readonly inFlightRuns = new Set<Promise<unknown>>();
   /** Per-Session gate: one Turn per sessionId, with concurrency across Sessions. */
   private readonly inFlightSessions = new Set<string>();
-  /** Normal message queue for each Session before a Turn starts. */
-  private readonly messageQueueBySession = new Map<string, QueuedChannelTurn[]>();
-  /** Steering inbox drained by the Runner at injection points in the active Turn. */
-  private readonly steeringInboxBySession = new Map<string, PendingSteeringInput[]>();
-  /**
-   * Tracks only active run-Turns for steering. inFlightSessions represents busy
-   * state, while this map identifies an active Turn that can accept steering.
-   */
-  private readonly activeTurnIdBySession = new Map<string, string>();
+  /** Canonical FIFO for accepted Channel user messages in each Session. */
+  private readonly messageQueueBySession = new Map<string, QueuedUserMessage[]>();
 
   /**
   * AbortController for each active Session Turn, used by abortTurn and shutdown.
@@ -533,8 +528,8 @@ export class RuntimeApp {
    * The messages_dropped event mirrors the returned dropped count for library
    * and telemetry consumers. Channels use the return value to avoid subscription ordering.
    *
-   * Pending steering drained inside runAttempt is discarded and logged on abort,
-   * but is not included in dropped or messages_dropped. See section 7.2.3.
+   * Claimed messages already belong to the active Turn and are not counted as
+   * queued drops.
    */
   abortTurn(sessionId: string): { aborted: boolean; dropped: number } {
     const controller = this.activeAborts.get(sessionId);
@@ -554,7 +549,7 @@ export class RuntimeApp {
         type: 'messages_dropped',
         sessionId,
         reason: 'abort',
-        dropped, // Excludes pending steering; see section 7.2.3.
+        dropped,
       });
     }
     log.info('turn aborted by user', { sessionId, aborted, dropped });
@@ -706,8 +701,7 @@ export class RuntimeApp {
 
   /**
   * All inbound Channel messages pass through Runtime intake: media processing,
-  * atomic media validation, user_message broadcast, steering routing, then queueing.
-  * user_message is emitted after assembly and before queued/steering routing.
+  * atomic validation, user_message broadcast, then one Session FIFO.
    */
   private async handleInboundChannelMessage(
     channel: ChannelRuntimeBinding,
@@ -718,7 +712,6 @@ export class RuntimeApp {
       clientId: req.clientId,
       sessionKey: req.sessionId,
       hasModelOverride: req.modelReference !== undefined,
-      hasMaxLlmCalls: req.maxLlmCalls !== undefined,
       messageChars: typeof req.message === 'string' ? req.message.length : undefined,
       attachmentCount: Array.isArray(req.message) ? req.message.length : 0,
     });
@@ -737,12 +730,20 @@ export class RuntimeApp {
       typeof assembled === 'string' ? assembled.length : undefined;
     const assembledAttachmentCount = Array.isArray(assembled) ? assembled.length : 0;
 
-    // Broadcast user_message before selecting queued or steering delivery.
-    const routeToSteering = this.shouldRouteMessageToSteering(req.sessionId);
-    const deliveryMode: 'queued' | 'steering' = routeToSteering ? 'steering' : 'queued';
     const { text: broadcastText, attachmentSummaries } = summarizeAssembled(assembled);
     const messageId = randomUUID();
+    const queuedMessage: QueuedUserMessage = {
+      requestId: randomUUID(),
+      sessionId: req.sessionId,
+      message: assembled,
+      ...(req.modelReference
+        ? { modelReference: normalizeModelReference(req.modelReference) }
+        : {}),
+      routeContext: this.buildMessageRouteContext(channel, req),
+      originMessageId: messageId,
+    };
 
+    this.assertAcceptsIntake();
     this.fanoutAgentEvent({
       type: 'user_message',
       sessionId: req.sessionId,
@@ -750,55 +751,10 @@ export class RuntimeApp {
       content: broadcastText,
       attachmentSummaries: attachmentSummaries.length ? attachmentSummaries : undefined,
       originClientId: req.clientId ?? null,
-      deliveryMode,
       timestamp: Date.now(),
     });
 
-    // Steering accepts text only; attachment-only steering is not queued.
-    if (routeToSteering) {
-      if (broadcastText.trim() === '') {
-        log.info('steering message has no text after summarize; skipping enqueue', {
-          channelId: channel.id,
-          clientId: req.clientId,
-          sessionKey: req.sessionId,
-          attachmentCount: attachmentSummaries.length,
-        });
-        return;
-      }
-      this.enqueueSteeringInput(
-        req.sessionId,
-        {
-          message: broadcastText,
-          launchContext: this.buildTurnLaunchContext(req),
-          routeContext: this.buildMessageRouteContext(channel, req),
-          originMessageId: messageId,
-        },
-      );
-      log.info('channel message routed to steering', {
-        channelId: channel.id,
-        clientId: req.clientId,
-        sessionKey: req.sessionId,
-        messageChars: broadcastText.length,
-        droppedAttachments: dropped.length,
-      });
-      return;
-    }
-
-    // Normal queued delivery.
-    const queuedTurn: QueuedChannelTurn = {
-      requestId: randomUUID(),
-      sessionId: req.sessionId,
-      message: assembled,
-      launchContext: this.buildTurnLaunchContext(req),
-      routeContext: this.buildMessageRouteContext(channel, req),
-      originMessageId: messageId,
-    };
-    this.requestGates.set(
-      queuedTurn.requestId,
-      new RequestCompletionGate(queuedTurn.requestId, queuedTurn.originMessageId),
-    );
-
-    this.enqueueQueuedTurn(queuedTurn);
+    this.enqueueQueuedTurn(queuedMessage);
     log.info('channel message enqueued', {
       channelId: channel.id,
       clientId: req.clientId,
@@ -837,29 +793,6 @@ export class RuntimeApp {
     return normalized;
   }
 
-  /**
-  * Steering requires both the Runtime switch and an active Session Turn.
-  * Messages with no active Turn use normal queueing.
-   */
-  private shouldRouteMessageToSteering(sessionKey: string): boolean {
-    return this.resources.runtimeConfig.steeringEnabled
-      && this.activeTurnIdBySession.has(sessionKey);
-  }
-
-  private buildTurnLaunchContext(req: ChannelRunRequest): TurnLaunchContext | undefined {
-    if (
-      req.modelReference === undefined
-      && req.maxLlmCalls === undefined
-    ) {
-      return undefined;
-    }
-
-    return {
-      modelReference: req.modelReference,
-      maxLlmCalls: req.maxLlmCalls,
-    };
-  }
-
   private buildMessageRouteContext(
     channel: ChannelRuntimeBinding,
     req: ChannelRunRequest,
@@ -871,18 +804,18 @@ export class RuntimeApp {
   }
 
   /** Queueing mutates only local state; scheduleNextQueuedTurn decides when to start. */
-  private enqueueQueuedTurn(item: QueuedChannelTurn): void {
+  private enqueueQueuedTurn(item: QueuedUserMessage): void {
     const queue = this.messageQueueBySession.get(item.sessionId) ?? [];
     queue.push(item);
     this.messageQueueBySession.set(item.sessionId, queue);
   }
 
   private settleQueuedRequest(
-    item: QueuedChannelTurn,
+    item: QueuedUserMessage,
     reason: 'abort_queue_drop' | 'shutdown',
   ): Promise<void> | undefined {
     const gate = this.requestGates.get(item.requestId);
-    if (!gate?.seal({ outcome: 'cancelled', reason })) return undefined;
+    if (gate && !gate.seal({ outcome: 'cancelled', reason })) return undefined;
     const event = Object.freeze({
       type: 'request_end' as const,
       requestId: item.requestId,
@@ -902,50 +835,11 @@ export class RuntimeApp {
   }
 
   /**
-  * Append to the active Turn's steering inbox. Runner currently consumes only
-  * text, while routeContext remains available for audit and future routing.
-   */
-  private enqueueSteeringInput(
-    sessionKey: string,
-    item: PendingSteeringInput,
-  ): void {
-    const inbox = this.steeringInboxBySession.get(sessionKey) ?? [];
-    inbox.push(item);
-    this.steeringInboxBySession.set(sessionKey, inbox);
-  }
-
-  /**
-   * Move steering that missed Runner's final safe point into the existing
-   * queued-Turn path. The original user_message remains the sole intake event.
-   */
-  private promoteUnreadSteering(sessionKey: string): void {
-    const inbox = this.steeringInboxBySession.get(sessionKey);
-    if (!inbox || inbox.length === 0) return;
-
-    this.steeringInboxBySession.delete(sessionKey);
-    for (const item of inbox) {
-      const queuedTurn: QueuedChannelTurn = {
-        requestId: randomUUID(),
-        sessionId: sessionKey,
-        message: item.message,
-        launchContext: item.launchContext,
-        routeContext: item.routeContext,
-        originMessageId: item.originMessageId,
-      };
-      this.requestGates.set(
-        queuedTurn.requestId,
-        new RequestCompletionGate(queuedTurn.requestId, queuedTurn.originMessageId),
-      );
-      this.enqueueQueuedTurn(queuedTurn);
-    }
-  }
-
-  /**
   * Start at most one queued message for a Session. A busy Session remains
   * queued until the current Turn releases it.
    */
   private scheduleNextQueuedTurn(sessionKey: string): Promise<RunTurnResult> | undefined {
-    if (this.inFlightSessions.has(sessionKey)) {
+    if (this.inFlightSessions.has(sessionKey) || !this.acceptsNewTurns()) {
       return undefined;
     }
 
@@ -970,20 +864,19 @@ export class RuntimeApp {
   * Allocate turnId and origin routing only when a queued item starts, avoiding
   * Turn resources while queued while preserving approval and interaction routing.
    */
-  private async startQueuedTurn(item: QueuedChannelTurn): Promise<RunTurnResult> {
+  private async startQueuedTurn(item: QueuedUserMessage): Promise<RunTurnResult> {
     const turnId = randomUUID();
     if (item.routeContext) {
       this.routeContextByTurn.set(turnId, item.routeContext);
     }
 
     try {
-      return await this.runTurn({
+      return await this.startRootTurn({
         requestId: item.requestId,
         sessionId: item.sessionId,
         message: item.message,
         promptMode: 'full',
-        modelReference: item.launchContext?.modelReference,
-        maxLlmCalls: item.launchContext?.maxLlmCalls,
+        modelReference: item.modelReference,
         turnId,
         originMessageId: item.originMessageId,
       });
@@ -996,30 +889,25 @@ export class RuntimeApp {
     }
   }
 
-  // ── runTurn ───────────────────────────────────────────────────────
-
-  runTurn(params: RunTurnParams): Promise<RunTurnResult> {
+  private startRootTurn(params: RunTurnParams): Promise<RunTurnResult> {
     try {
       this.assertCanRunForSession(params.sessionId);
     } catch (error) {
       return Promise.reject(error);
     }
 
-    const requestId = params.requestId ?? randomUUID();
-    const existingGate = this.requestGates.get(requestId);
-    const gate = existingGate ?? new RequestCompletionGate<RunTurnResult>(
-      requestId,
+    const gate = new RequestCompletionGate<RunTurnResult>(
+      params.requestId,
       params.originMessageId,
     );
-    if (!existingGate) this.requestGates.set(requestId, gate);
+    this.requestGates.set(params.requestId, gate);
 
-    const turnId = params.turnId ?? randomUUID();
-    if (!gate.start(turnId)) {
-      return Promise.reject(new Error(`Runtime request "${requestId}" is already started or terminal.`));
+    if (!gate.start(params.turnId)) {
+      return Promise.reject(new Error(`Runtime request "${params.requestId}" is already started or terminal.`));
     }
 
     const worker = this.executeRootRequest(
-      { ...params, requestId, turnId },
+      params,
       gate,
     );
     this.inFlightRuns.add(worker);
@@ -1029,7 +917,7 @@ export class RuntimeApp {
         this.inFlightRuns.delete(worker);
         const runtimeError = error instanceof Error ? error : new Error(String(error));
         gate.seal({ outcome: 'failed', error: runtimeError });
-        this.requestGates.delete(requestId);
+        this.requestGates.delete(params.requestId);
       },
     );
 
@@ -1064,8 +952,6 @@ export class RuntimeApp {
     });
 
     const turnStartedAt = Date.now();
-    let promoteUnreadSteering = false;
-    this.activeTurnIdBySession.set(params.sessionId, params.turnId);
     log.debug('turn start', {
       requestId: params.requestId,
       sessionKey: params.sessionId,
@@ -1079,8 +965,6 @@ export class RuntimeApp {
     try {
       const result = await this.runTurnInternal(params, generationPin, tree);
       const outcome = result.stopReason === 'aborted' ? 'aborted' : 'completed';
-      promoteUnreadSteering = result.stopReason !== 'aborted'
-        && result.stopReason !== 'max_llm_calls';
       if (gate.seal({ outcome, value: result })) {
         this.safeEmit({
           type: 'turn_end',
@@ -1165,19 +1049,6 @@ export class RuntimeApp {
       });
       this.recordError('run', info);
     } finally {
-      if (this.activeTurnIdBySession.get(params.sessionId) === params.turnId) {
-        this.activeTurnIdBySession.delete(params.sessionId);
-      }
-      if (
-        promoteUnreadSteering
-        && this.state.phase !== 'closing'
-        && this.state.phase !== 'closed'
-        && this.state.phase !== 'failed'
-      ) {
-        this.promoteUnreadSteering(params.sessionId);
-      } else {
-        this.steeringInboxBySession.delete(params.sessionId);
-      }
       this.inFlightSessions.delete(params.sessionId);
       this.state.activeRunCount = Math.max(0, this.state.activeRunCount - 1);
       this.state.lastRunEndedAt = Date.now();
@@ -1496,28 +1367,7 @@ export class RuntimeApp {
         }),
       );
 
-      // Context-hook prepend modifies only text and preserves multimodal ordering.
-      let runnerMessage: string | ChatContentBlock[];
-      if (typeof params.message === 'string') {
-        runnerMessage = (await this.resources.userPromptBuilder.build({
-          text: params.message,
-        })).text;
-      } else {
-        // Use the first text block as the prepend host; preserve all other blocks.
-        const hostIndex = params.message.findIndex((b) => b.type === 'text');
-        const hostText = hostIndex >= 0
-          ? (params.message[hostIndex] as { type: 'text'; text: string }).text
-          : '';
-        const prepended = (await this.resources.userPromptBuilder.build({
-          text: hostText,
-        })).text;
-
-        runnerMessage = hostIndex >= 0
-          ? params.message.map((b, i) =>
-              i === hostIndex ? { type: 'text', text: prepended } : b,
-            )
-          : [{ type: 'text', text: prepended }, ...params.message];
-      }
+      const runnerMessage = await this.prepareUserMessage(params.message);
 
       const effectiveReference: ModelReference = Object.freeze({
         providerId: resolvedModel.identity.providerId,
@@ -1555,8 +1405,20 @@ export class RuntimeApp {
           this.sessionPermissions.get(params.sessionId).mode,
         approvalCapability: this.getApprovalCapability(params.turnId),
         maxLlmCalls: effectiveMaxLlmCalls,
-        // Runtime drains the inbox; Runner controls when steering is consumed.
-        getSteeringMessages: async () => this.drainSteeringMessages(params.sessionId),
+        ...(this.resources.runtimeConfig.steeringEnabled
+          ? {
+              claimSteeringMessages: () => this.claimSteeringMessages(
+                params.sessionId,
+                params.turnId,
+                resolvedModel,
+              ),
+              prepareSteeringMessages: async (messages: ChatMessage[]) =>
+                Promise.all(messages.map(async (message) => ({
+                  ...message,
+                  content: await this.prepareUserMessage(message.content),
+                }))),
+            }
+          : {}),
         compaction: this.resources.resolvedConfig.compaction,
         originMessageId: params.originMessageId,
         signal: controller.signal, // core-abort-spec.md §8.2
@@ -1581,27 +1443,112 @@ export class RuntimeApp {
     }
   }
 
-  /**
-  * Remove steering input as Runner reads it to prevent duplicate injection.
-   */
-  private async drainSteeringMessages(sessionKey: string): Promise<ChatMessage[]> {
-    const inbox = this.steeringInboxBySession.get(sessionKey);
-    if (!inbox || inbox.length === 0) {
-      return [];
+  private async prepareUserMessage(
+    message: string | ChatContentBlock[],
+  ): Promise<string | ChatContentBlock[]> {
+    if (typeof message === 'string') {
+      return (await this.resources.userPromptBuilder.build({ text: message })).text;
     }
 
-    this.steeringInboxBySession.delete(sessionKey);
+    const hostIndex = message.findIndex((block) => block.type === 'text');
+    const hostText = hostIndex >= 0
+      ? (message[hostIndex] as { type: 'text'; text: string }).text
+      : '';
+    const prepended = (await this.resources.userPromptBuilder.build({
+      text: hostText,
+    })).text;
 
-    const messages = await Promise.all(inbox.map(async (item) => {
-      // Runner currently consumes text only; routeContext remains for future routing.
-      const builtUserPrompt = await this.resources.userPromptBuilder.build({ text: item.message });
-      return {
-        role: 'user' as const,
-        content: builtUserPrompt.text,
-      } satisfies ChatMessage;
+    return hostIndex >= 0
+      ? message.map((block, index) =>
+          index === hostIndex ? { type: 'text', text: prepended } : block,
+        )
+      : [{ type: 'text', text: prepended }, ...message];
+  }
+
+  private claimSteeringMessages(
+    sessionKey: string,
+    turnId: string,
+    resolvedModel: ResolvedModel,
+  ): ChatMessage[] {
+    const queue = this.messageQueueBySession.get(sessionKey);
+    if (!queue || queue.length === 0) return [];
+
+    let claimCount = 0;
+    while (
+      claimCount < queue.length
+      && this.isSteeringCompatible(queue[claimCount]!, resolvedModel)
+    ) {
+      claimCount++;
+    }
+    if (claimCount === 0) return [];
+
+    const claimed = queue.splice(0, claimCount);
+    if (queue.length === 0) {
+      this.messageQueueBySession.delete(sessionKey);
+    }
+
+    for (const item of claimed) {
+      const event: AgentEvent = {
+        type: 'user_message_bound',
+        messageId: item.originMessageId,
+        sessionId: sessionKey,
+        turnId,
+        binding: 'steering',
+      };
+      void Promise.resolve(this.fanoutAgentEvent(event)).catch((error) => {
+        log.warn('user_message_bound Fanout failed', {
+          messageId: item.originMessageId,
+          sessionKey,
+          turnId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+
+    return claimed.map((item) => ({
+      role: 'user',
+      content: item.message,
     }));
+  }
 
-    return messages;
+  private isSteeringCompatible(
+    item: QueuedUserMessage,
+    resolvedModel: ResolvedModel,
+  ): boolean {
+    if (
+      item.modelReference
+      && (
+        item.modelReference.providerId !== resolvedModel.identity.providerId
+        || item.modelReference.modelId !== resolvedModel.identity.modelId
+      )
+    ) {
+      return false;
+    }
+
+    const mediaKinds = Array.isArray(item.message)
+      && item.message.some((block) => block.type === 'image')
+      ? ['image']
+      : [];
+    const supportedMediaKinds = resolvedModel.facts.mediaKinds;
+    return supportedMediaKinds === undefined
+      || mediaKinds.every((kind) => supportedMediaKinds.includes(kind));
+  }
+
+  private acceptsNewTurns(): boolean {
+    return this.state.phase !== 'closing'
+      && this.state.phase !== 'closed'
+      && this.state.phase !== 'failed';
+  }
+
+  private assertAcceptsIntake(): void {
+    if (!this.acceptsNewTurns()) {
+      throw createRuntimeError({
+        scope: 'run',
+        severity: 'recoverable',
+        code: 'RUN_REJECTED',
+        message: `Cannot accept input when runtime phase is ${this.state.phase}.`,
+      });
+    }
   }
 
   /**
@@ -1609,11 +1556,7 @@ export class RuntimeApp {
   * Reject all Turns after Runtime shutdown begins.
    */
   private assertCanRunForSession(sessionKey: string): void {
-    if (
-      this.state.phase === 'closing' ||
-      this.state.phase === 'closed' ||
-      this.state.phase === 'failed'
-    ) {
+    if (!this.acceptsNewTurns()) {
       throw createRuntimeError({
         scope: 'run',
         severity: 'recoverable',

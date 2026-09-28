@@ -57,22 +57,22 @@ channel.onMessage(handler)
   ▼
 RuntimeApp.handleInboundChannelMessage
   ├─ atomic Media normalization; reject the whole message on any failure
-  ├─ emit user_message before routing divergence
-  ├─ enabled active-session steering → steering inbox
-  └─ ordinary input → per-session queue → scheduler
+  ├─ normalize optional Model reference
+  ├─ emit user_message
+  └─ append to the per-session FIFO → scheduler or active-Turn claim
                                       ▼
                                  startQueuedTurn
-                                 ├─ create turnId
+                                 ├─ create request gate and turnId
                                  ├─ register origin Channel/client route
-                                 └─ runTurn(...)
+                                 └─ execute Root Turn
 ```
 
-- A queued request receives a `requestId` and `originMessageId`, but its `turnId` is created only when that queue item starts. Queue waiting therefore does not allocate Turn-level routing state.
+- A queued request receives a `requestId` and `originMessageId`, but its request gate and `turnId` are created only when that queue item starts. Queue waiting therefore allocates no Turn-level completion or routing state.
 - `clientId` remains transport routing metadata in `MessageRouteContext`; it is not added to `RunTurnParams`.
-- `user_message` is emitted after input assembly and before queued/steering classification. Queued execution carries its ID as `originMessageId` on subsequent lifecycle events. A steering message that misses the final Runner safe point is promoted after normal completion and later carries the same ID into its own Turn without another `user_message`.
+- `user_message` records accepted intake without predicting delivery. Standalone execution carries its ID as `originMessageId`; steering claim emits `user_message_bound`.
 - Any attachment failure rejects the complete inbound message before `user_message` emission or Runtime routing. WebSocket reports `ATTACHMENT_REJECTED`; no partial content is admitted.
-- Steering currently accepts text only. A pure-attachment message is broadcast as `user_message` but is not added to the steering inbox.
-- Direct library `runTurn()` bypasses Channel ingress and Channel queue creation, while still using the Runtime per-session gate and generation capture.
+- Text and multimodal input use the same FIFO. Claim compatibility uses the active resolved Model's media facts.
+- Root user messages are submitted through Channels. `RuntimeApplication` does not expose a direct `runTurn()` bypass.
 
 ### 3.2 Runtime to clients
 

@@ -692,6 +692,11 @@ describe('AgentRunner', () => {
         sessionManager,
         toolExecutor: async () => ({ content: 'ok' }),
       });
+      const claimSteeringMessages = vi.fn(() => {
+        if (injected) return [];
+        injected = true;
+        return [{ role: 'user' as const, content: 'interrupt now' }];
+      });
 
       const result = await runner.run({
         sessionId: MAIN_SESSION_ID,
@@ -699,16 +704,13 @@ describe('AgentRunner', () => {
         model: 'test',
         systemPrompt: '',
         turnId: 'test-turn',
-        getSteeringMessages: () => {
-          if (injected) return [];
-          injected = true;
-          return [{ role: 'user', content: 'interrupt now' }];
-        },
+        claimSteeringMessages,
       });
 
       expect(result.text).toBe('done');
       expect(capturedCalls).toHaveLength(2);
       expect(capturedCalls[1]!.some((m) => m.role === 'user' && m.content === 'interrupt now')).toBe(true);
+      expect(claimSteeringMessages).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -2436,15 +2438,12 @@ describe('AgentRunner', () => {
       warnSpy.mockRestore();
     });
 
-    // Pending steering is logged when abort occurs before injection. The behavior
-    // belongs here even though the specification lists it with RuntimeApp tests.
-    it('pending steering log-only: pendingSteering 非空时命中 abort 触发 log.info', async () => {
+    it('does not claim after Abort is observed following Tool execution', async () => {
       const controller = new AbortController();
       const agentLogger = (await import('../../platform/logger/index.js')).Logger.get('AgentRunner');
       const infoSpy = vi.spyOn(agentLogger, 'info');
 
-      // First round requests a tool, drains three steering messages, then reaches
-      // the next iteration with an aborted signal and discards them.
+      // The Tool aborts the Turn before the next safe claim point.
       let round = 0;
       const llmClient = createMockLLMClient([
         [
@@ -2472,24 +2471,18 @@ describe('AgentRunner', () => {
         systemPrompt: '',
         turnId: 't-pending-steering',
         signal: controller.signal,
-        // Return three steering messages so pendingSteering is non-empty.
-        getSteeringMessages: async () => [
-          { role: 'user', content: 's1' },
-          { role: 'user', content: 's2' },
-          { role: 'user', content: 's3' },
-        ],
+        claimSteeringMessages: vi.fn(() => []),
       });
 
       expect(round).toBe(1);
-      const infoCall = infoSpy.mock.calls.find(
-        (c) => c[0] === 'dropped pending steering on abort',
+      expect(infoSpy).not.toHaveBeenCalledWith(
+        'dropped pending steering on abort',
+        expect.anything(),
       );
-      expect(infoCall).toBeDefined();
-      expect((infoCall![1] as { count: number }).count).toBe(3);
       infoSpy.mockRestore();
     });
 
-    it('returns aborted when cancellation occurs during the final steering read', async () => {
+    it('returns aborted when cancellation occurs during the final steering claim', async () => {
       const controller = new AbortController();
       const llmClient = createMockLLMClient([[
         { type: 'message_start' },
@@ -2509,7 +2502,7 @@ describe('AgentRunner', () => {
         systemPrompt: '',
         turnId: 't-final-steering-abort',
         signal: controller.signal,
-        getSteeringMessages: async () => {
+        claimSteeringMessages: () => {
           controller.abort();
           return [];
         },

@@ -25,7 +25,12 @@ import { DEFAULT_LOGGER_CONFIG } from '../platform/logger/index.js';
 import { loadAgentConfig } from '../platform/config/agent-config-loader.js';
 import { RuntimeApp } from './RuntimeApp.js';
 import type { RuntimeHandle } from './runtime-composition.js';
-import type { RuntimeDependencies, RuntimeEvent } from './types.js';
+import type {
+  RunTurnParams,
+  RunTurnResult,
+  RuntimeDependencies,
+  RuntimeEvent,
+} from './types.js';
 import type { RuntimeDeadlineDriver, RuntimeDeadlineRaceResult } from './runtime-deadline.js';
 import { Logger } from '../platform/logger/index.js';
 import { DEFAULT_RUNNER_CONFIG } from '../core/runner/config.js';
@@ -53,6 +58,28 @@ function testApplicationConfig(
     },
     logger: structuredClone(DEFAULT_LOGGER_CONFIG),
   };
+}
+
+let rootTurnSequence = 0;
+
+function runRootTurnForTest(
+  handle: RuntimeHandle,
+  params: Omit<RunTurnParams, 'requestId' | 'turnId' | 'originMessageId'> & {
+    requestId?: string;
+    turnId?: string;
+    originMessageId?: string;
+  },
+): Promise<RunTurnResult> {
+  rootTurnSequence++;
+  const application = handle.application as unknown as {
+    startRootTurn(input: RunTurnParams): Promise<RunTurnResult>;
+  };
+  return application.startRootTurn({
+    ...params,
+    requestId: params.requestId ?? `test-request-${rootTurnSequence}`,
+    turnId: params.turnId ?? `test-turn-${rootTurnSequence}`,
+    originMessageId: params.originMessageId ?? '',
+  });
 }
 
 class ManualDeadlineDriver implements RuntimeDeadlineDriver {
@@ -138,7 +165,7 @@ describe('RuntimeApp', () => {
       }),
     });
 
-    await app.application.runTurn({
+    await runRootTurnForTest(app, {
       sessionId: 'main',
       message: 'verify path ownership',
       promptMode: 'full',
@@ -209,7 +236,7 @@ describe('RuntimeApp', () => {
       });
     };
 
-    const activeTurn = app.application.runTurn({
+    const activeTurn = runRootTurnForTest(app, {
       sessionId: 'main',
       message: 'active',
       promptMode: 'full',
@@ -314,7 +341,7 @@ describe('RuntimeApp', () => {
       dependencies: deps,
     });
 
-    const result = await app.application.runTurn({
+    const result = await runRootTurnForTest(app, {
       sessionId: sessionId,
       message: 'Hello runtime',
       promptMode: 'full',
@@ -338,7 +365,7 @@ describe('RuntimeApp', () => {
     expect(app.application.getState().phase).toBe('ready');
 
     runnerRun.mockClear();
-    await expect(app.application.runTurn({
+    await expect(runRootTurnForTest(app, {
       sessionId: '00000000-0000-4000-8000-000000000002',
       message: 'unknown',
       promptMode: 'full',
@@ -422,12 +449,12 @@ describe('RuntimeApp', () => {
       }),
     });
 
-    await app.application.runTurn({
+    await runRootTurnForTest(app, {
       sessionId: 'global-limit',
       message: 'global',
       promptMode: 'full',
     });
-    await app.application.runTurn({
+    await runRootTurnForTest(app, {
       sessionId: 'turn-limit',
       message: 'turn',
       promptMode: 'full',
@@ -557,7 +584,7 @@ describe('RuntimeApp', () => {
     });
 
     expect(app.application.getModelCatalog().defaultSelection).toEqual(expected);
-    await expect(app.application.runTurn({
+    await expect(runRootTurnForTest(app, {
       sessionId: `default-${expectedCategory}`,
       message: 'must not fall back',
       promptMode: 'full',
@@ -698,7 +725,7 @@ describe('RuntimeApp', () => {
       onAgentEvent: (event) => events.push(event),
     });
 
-    const result = await app.application.runTurn({
+    const result = await runRootTurnForTest(app, {
       sessionId: 'main',
       message: 'delegate',
       promptMode: 'full',
@@ -853,7 +880,7 @@ describe('RuntimeApp', () => {
       providers: [{ providerId: 'test' }],
     });
 
-    const parent = app.application.runTurn({
+    const parent = runRootTurnForTest(app, {
       sessionId: 'parent',
       message: 'hold generation one',
       modelReference: { providerId: 'test', modelId: 'parent-model' },
@@ -876,14 +903,14 @@ describe('RuntimeApp', () => {
     expect(childProviderId).toBe('test');
     expect(childHasGenerationOneTool).toBe(true);
     expect(childHasGenerationOneHook).toBe(true);
-    await app.application.runTurn({
+    await runRootTurnForTest(app, {
       sessionId: 'new-root',
       message: 'use generation two',
       modelReference: { providerId: 'next-provider', modelId: 'root-model' },
       promptMode: 'full',
     });
     expect(newRootProviderId).toBe('next-provider');
-    await app.application.runTurn({
+    await runRootTurnForTest(app, {
       sessionId: 'implicit-root',
       message: 'use the recovered default in generation two',
       promptMode: 'full',
@@ -905,7 +932,7 @@ describe('RuntimeApp', () => {
       dependencies: createTestDependencies({ createMemoryManager: async () => null }),
     });
 
-    await expect(app.application.runTurn({
+    await expect(runRootTurnForTest(app, {
       requestId: 'request-resolution-failure',
       sessionId: 'main',
       message: 'fail resolution',
@@ -958,7 +985,7 @@ describe('RuntimeApp', () => {
       }),
     });
 
-    const caller = app.application.runTurn({
+    const caller = runRootTurnForTest(app, {
       requestId: 'request-runner-failure',
       sessionId: 'main',
       message: 'fail execution',
@@ -1043,7 +1070,7 @@ describe('RuntimeApp', () => {
     });
 
     try {
-      await expect(app.application.runTurn({
+      await expect(runRootTurnForTest(app, {
         requestId: 'foreign-structural-error',
         sessionId: 'foreign',
         message: 'fail structurally',
@@ -1138,7 +1165,7 @@ describe('RuntimeApp', () => {
 
     try {
       for (const sessionKey of failures.keys()) {
-        await expect(app.application.runTurn({
+        await expect(runRootTurnForTest(app, {
           requestId: `cause-${sessionKey}`,
           sessionId: sessionKey,
           message: 'fail',
@@ -1421,7 +1448,7 @@ describe('RuntimeApp', () => {
       onAgentEvent: (event) => agentEvents.push(event),
     });
 
-    await expect(app.application.runTurn({
+    await expect(runRootTurnForTest(app, {
       sessionId: 'main',
       message: 'missing model',
       promptMode: 'full',
@@ -1435,7 +1462,7 @@ describe('RuntimeApp', () => {
     expect(runnerRun).not.toHaveBeenCalled();
     expect(agentEvents.filter((event) => event.type === 'error')).toEqual([]);
 
-    await expect(app.application.runTurn({
+    await expect(runRootTurnForTest(app, {
       sessionId: 'main',
       message: 'queued missing model',
       promptMode: 'full',
@@ -1453,7 +1480,7 @@ describe('RuntimeApp', () => {
     ]);
     expect(runnerRun).not.toHaveBeenCalled();
 
-    await expect(app.application.runTurn({
+    await expect(runRootTurnForTest(app, {
       sessionId: 'main',
       message: 'explicit model',
       promptMode: 'full',
@@ -1497,7 +1524,7 @@ describe('RuntimeApp', () => {
     await app.close('test shutdown');
 
     expect(memoryClose).toHaveBeenCalledTimes(1);
-    await expect(app.application.runTurn({ sessionId: 'main', message: 'after close', promptMode: 'full' })).rejects.toThrow(
+    await expect(runRootTurnForTest(app, { sessionId: 'main', message: 'after close', promptMode: 'full' })).rejects.toThrow(
       'Cannot run when runtime phase is closed.',
     );
   });
@@ -1641,7 +1668,6 @@ describe('RuntimeApp', () => {
       sessionId: 'main',
       message: 'second',
       clientId: 'client-1',
-      maxLlmCalls: 9,
     });
 
     await secondDispatch;
@@ -1671,7 +1697,6 @@ describe('RuntimeApp', () => {
       expect.objectContaining({
         sessionId: 'main',
         message: 'second',
-        maxLlmCalls: 9,
       }),
     );
 
@@ -1683,14 +1708,18 @@ describe('RuntimeApp', () => {
     });
   });
 
-  it('routes busy-session channel input to steering when steer mode is enabled', async () => {
+  it('allows an active Turn to claim busy-session FIFO input when steering is enabled', async () => {
     const releaseRun = createDeferred<void>();
     let drainedSteering: ChatMessage[] = [];
     const runnerRun = vi.fn(async (params: {
-      getSteeringMessages?: () => Promise<ChatMessage[]>;
+      claimSteeringMessages?: () => ChatMessage[];
+      prepareSteeringMessages?: (messages: ChatMessage[]) => Promise<ChatMessage[]>;
     }): Promise<RunResult> => {
       await releaseRun.promise;
-      drainedSteering = await params.getSteeringMessages?.() ?? [];
+      const claimed = params.claimSteeringMessages?.() ?? [];
+      drainedSteering = params.prepareSteeringMessages
+        ? await params.prepareSteeringMessages(claimed)
+        : claimed;
       return {
         text: 'done',
         content: [{ type: 'text', text: 'done' }],
@@ -2078,7 +2107,7 @@ describe('RuntimeApp', () => {
         onEvent: (e) => events.push(e),
       });
 
-      const turnPromise = app.application.runTurn({ sessionId: 'main', message: 'go', promptMode: 'full' });
+      const turnPromise = runRootTurnForTest(app, { sessionId: 'main', message: 'go', promptMode: 'full' });
 
       // Wait until Runner receives the signal.
       await vi.waitFor(() => expect(capturedSignal).toBeDefined());
@@ -2188,17 +2217,15 @@ describe('RuntimeApp', () => {
       await app.close();
     });
 
-    it('CH-09 clears unread steering on abort without settling or carrying it into the next turn', async () => {
+    it('CH-09 drops unclaimed FIFO input on abort and emits correlated cancellation', async () => {
       const events: RuntimeEvent[] = [];
-      const agentEvents: Array<{ type: string; content?: string; deliveryMode?: string }> = [];
+      const agentEvents: AgentEvent[] = [];
       const releaseRun = createDeferred<void>();
       let capturedSignal: AbortSignal | undefined;
-      let nextTurnSteering: ChatMessage[] | undefined;
 
       const runnerRun = vi.fn(async (params: {
         message: string;
         signal?: AbortSignal;
-        getSteeringMessages?: () => Promise<ChatMessage[]>;
       }): Promise<RunResult> => {
         if (params.message === 'active') {
           capturedSignal = params.signal;
@@ -2212,7 +2239,6 @@ describe('RuntimeApp', () => {
           };
         }
 
-        nextTurnSteering = await params.getSteeringMessages?.() ?? [];
         return {
           text: 'next',
           content: [{ type: 'text', text: 'next' }],
@@ -2256,12 +2282,18 @@ describe('RuntimeApp', () => {
         expect.objectContaining({
           type: 'user_message',
           content: 'unread steering',
-          deliveryMode: 'steering',
         }),
       );
 
-      expect(app.application.abortTurn('main')).toEqual({ aborted: true, dropped: 0 });
-      expect(events.filter((event) => event.type === 'messages_dropped')).toEqual([]);
+      expect(app.application.abortTurn('main')).toEqual({ aborted: true, dropped: 1 });
+      expect(events.filter((event) => event.type === 'messages_dropped')).toEqual([
+        expect.objectContaining({ sessionId: 'main', reason: 'abort', dropped: 1 }),
+      ]);
+      expect(agentEvents).toContainEqual(expect.objectContaining({
+        type: 'request_end',
+        outcome: 'cancelled',
+        reason: 'abort_queue_drop',
+      }));
 
       releaseRun.resolve();
       await firstDispatch;
@@ -2272,7 +2304,6 @@ describe('RuntimeApp', () => {
       });
 
       expect(runnerRun).toHaveBeenCalledTimes(2);
-      expect(nextTurnSteering).toEqual([]);
       await app.close();
     });
 
@@ -2323,7 +2354,7 @@ describe('RuntimeApp', () => {
       const staleController = new AbortController();
       activeAborts.set('main', staleController);
 
-      await app.application.runTurn({ sessionId: 'main', message: 'hi', promptMode: 'full' });
+      await runRootTurnForTest(app, { sessionId: 'main', message: 'hi', promptMode: 'full' });
 
       // Both the stale and newly registered controllers are gone after the Turn.
       expect(activeAborts.has('main')).toBe(false);
@@ -2461,7 +2492,7 @@ describe('RuntimeApp', () => {
         }),
       });
 
-      const turnPromise = app.application.runTurn({ sessionId: 'main', message: 'go', promptMode: 'full' });
+      const turnPromise = runRootTurnForTest(app, { sessionId: 'main', message: 'go', promptMode: 'full' });
       await vi.waitFor(() => expect(capturedSignal).toBeDefined());
 
       const closePromise = app.close();
@@ -2548,7 +2579,7 @@ describe('RuntimeApp', () => {
           createMemoryManager: async () => null,
         }),
       });
-      const caller = app.application.runTurn({
+      const caller = runRootTurnForTest(app, {
         requestId: 'request-nonconverged',
         turnId: 'turn-nonconverged',
         sessionId: 'main',
@@ -2620,7 +2651,7 @@ describe('RuntimeApp', () => {
           createMemoryManager: async () => null,
         }),
       });
-      await app.application.runTurn({
+      await runRootTurnForTest(app, {
         requestId: 'request-fanout',
         sessionId: 'main',
         message: 'done',

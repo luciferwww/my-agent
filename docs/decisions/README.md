@@ -24,6 +24,7 @@ This directory contains durable architectural decisions. It does not own current
 | [ADR-014](adr-014-extension-packages-and-runtime-composition.md) | Accepted | Extension packages, unified Jiti loading, public API, and Runtime composition lifecycle |
 | [ADR-015](adr-015-session-identity-and-materialization.md) | Accepted | Canonical Session identity, Pending first-message materialization, and clean-format cutover |
 | [ADR-016](adr-016-unified-builtin-llm-provider.md) | Accepted | One optional Built-in Provider with private per-model Protocol routing and explicit model registration |
+| [ADR-017](adr-017-session-message-queue-and-steering-claim.md) | Accepted | One per-Session user-message FIFO with active-Turn safe-point claim |
 
 ## Authority rules
 

@@ -9,7 +9,6 @@ import type {
   RunResult,
   AgentEvent,
   ToolResult,
-  PendingMessageReader,
   TurnContext,
 } from './types.js';
 import type {
@@ -467,22 +466,12 @@ export class AgentRunner {
     let lastStopReason = 'end_turn';
     let llmCallCount = 0;
     let hasMoreToolCalls = true; // Ensures at least one LLM call.
-    let pendingSteeringMessages: ChatMessage[] = [];
+    let steeringOpen = params.claimSteeringMessages !== undefined;
 
     try {
-      while (hasMoreToolCalls || pendingSteeringMessages.length > 0) {
+      while (hasMoreToolCalls) {
         // Check for abort before every LLM call (core-abort-spec.md section 7.2).
-        //
-        // Drained but uninjected steering messages are discarded on abort. This
-        // narrow window is logged rather than emitted because RuntimeApp cannot
-        // observe this local queue.
         if (params.signal?.aborted) {
-          if (pendingSteeringMessages.length > 0) {
-            logger.info('dropped pending steering on abort', {
-              sessionKey: params.sessionId,
-              count: pendingSteeringMessages.length,
-            });
-          }
           throw new DOMException('Aborted', 'AbortError');
         }
 
@@ -495,17 +484,6 @@ export class AgentRunner {
             usage: totalUsage,
             toolRounds: totalToolRounds,
           };
-        }
-
-        // Inject steering after preceding tool results and before the next LLM call.
-        if (pendingSteeringMessages.length > 0) {
-          await this.appendInjectedMessages(
-            params.sessionId,
-            params.turnId,
-            messages,
-            pendingSteeringMessages,
-          );
-          pendingSteeringMessages = [];
         }
 
         this.emit(turnCtx, { type: 'llm_call', round: llmCallCount });
@@ -628,13 +606,6 @@ export class AgentRunner {
           }
 
           if (turnSignal.aborted) {
-            pendingSteeringMessages = await this.readPendingMessages(params.getSteeringMessages);
-            if (pendingSteeringMessages.length > 0) {
-              logger.info('dropped pending steering on abort', {
-                sessionKey: params.sessionId,
-                count: pendingSteeringMessages.length,
-              });
-            }
             return this.buildAbortedResult(lastContent, {
               usage: totalUsage,
               toolRounds: totalToolRounds,
@@ -667,16 +638,31 @@ export class AgentRunner {
           totalToolRounds++;
         }
 
-        // Read steering after every round for injection before the next LLM call.
-        pendingSteeringMessages = await this.readPendingMessages(params.getSteeringMessages);
         if (turnSignal.aborted) {
-          if (pendingSteeringMessages.length > 0) {
-            logger.info('dropped pending steering on abort', {
-              sessionKey: params.sessionId,
-              count: pendingSteeringMessages.length,
-            });
-          }
           throw new DOMException('Aborted', 'AbortError');
+        }
+
+        const anotherCallAllowed =
+          params.maxLlmCalls === undefined || llmCallCount < params.maxLlmCalls;
+        if (steeringOpen && anotherCallAllowed) {
+          const claimedMessages = params.claimSteeringMessages?.() ?? [];
+          if (turnSignal.aborted) {
+            throw new DOMException('Aborted', 'AbortError');
+          }
+          if (claimedMessages.length === 0) {
+            steeringOpen = false;
+          } else {
+            const preparedMessages = params.prepareSteeringMessages
+              ? await params.prepareSteeringMessages(claimedMessages)
+              : claimedMessages;
+            await this.appendInjectedMessages(
+              params.sessionId,
+              params.turnId,
+              messages,
+              preparedMessages,
+            );
+            hasMoreToolCalls = true;
+          }
         }
       }
 
@@ -1180,27 +1166,6 @@ export class AgentRunner {
         content: message.content,
       });
     }
-  }
-
-  private async readPendingMessages(reader?: PendingMessageReader): Promise<ChatMessage[]> {
-    if (!reader) {
-      return [];
-    }
-
-    const result = await reader();
-    if (!Array.isArray(result)) {
-      return [];
-    }
-
-    return result.filter((message): message is ChatMessage => {
-      if (!message || typeof message !== 'object') {
-        return false;
-      }
-      if (message.role !== 'user' && message.role !== 'assistant') {
-        return false;
-      }
-      return Object.hasOwn(message, 'content');
-    });
   }
 
   /**

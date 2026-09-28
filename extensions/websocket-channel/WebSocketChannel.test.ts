@@ -160,7 +160,6 @@ describe('WebSocketChannel', () => {
       sessionId: 'main',
       message: 'hello ws',
       modelReference: { providerId: 'test', modelId },
-      maxLlmCalls: 7,
     }));
 
     await vi.waitFor(() => {
@@ -169,7 +168,6 @@ describe('WebSocketChannel', () => {
         sessionId: 'main',
         message: 'hello ws',
         modelReference: { providerId: 'test', modelId },
-        maxLlmCalls: 7,
       });
     });
   });
@@ -285,6 +283,30 @@ describe('WebSocketChannel', () => {
       type: 'channel_error',
       code: 'INVALID_MESSAGE',
       message: 'Legacy model/output-token override fields are not supported; use modelReference.',
+    });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('rejects message-level maxLlmCalls', async () => {
+    const handler = vi.fn(async () => undefined);
+    channel = createChannel({ port: 0 });
+    channel.onMessage(handler);
+    await channel.start();
+
+    const client = await connectClient(channel);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'client-1' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'client-1' });
+    client.send(JSON.stringify({
+      type: 'run_turn',
+      sessionId: 'main',
+      message: 'policy override',
+      maxLlmCalls: 2,
+    }));
+
+    await expectMessage(client, {
+      type: 'channel_error',
+      code: 'INVALID_MESSAGE',
+      message: 'maxLlmCalls is execution policy and is not accepted on run_turn.',
     });
     expect(handler).not.toHaveBeenCalled();
   });
@@ -1300,7 +1322,6 @@ describe('WebSocketChannel', () => {
       messageId: 'origin-queued',
       content: 'queued',
       originClientId: 'client-request-end',
-      deliveryMode: 'queued',
       timestamp: 1,
     });
     await expectMessage(client, {
@@ -1309,7 +1330,6 @@ describe('WebSocketChannel', () => {
       messageId: 'origin-queued',
       content: 'queued',
       originClientId: 'client-request-end',
-      deliveryMode: 'queued',
       timestamp: 1,
     });
     channel.send({
@@ -1406,7 +1426,6 @@ describe('WebSocketChannel', () => {
         content: 'hello everyone',
         attachmentSummaries: [{ type: 'image', mime: 'image/png', bytes: 1024 }],
         originClientId: 'client-A',
-        deliveryMode: 'queued',
         timestamp,
       });
 
@@ -1417,7 +1436,6 @@ describe('WebSocketChannel', () => {
         content: 'hello everyone',
         attachmentSummaries: [{ type: 'image', mime: 'image/png', bytes: 1024 }],
         originClientId: 'client-A',
-        deliveryMode: 'queued',
         timestamp,
       };
 

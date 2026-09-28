@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-21
+> Verified: 2026-09-28
 > Authority: Stable multi-client user-message contract
 
 ## Scope
@@ -26,16 +26,23 @@ type UserMessageEvent = {
   content: string;
   attachmentSummaries?: AttachmentSummary[];
   originClientId: string | null;
-  deliveryMode: 'queued' | 'steering';
   timestamp: number;
+};
+
+type UserMessageBoundEvent = {
+  type: 'user_message_bound';
+  sessionId: string;
+  turnId: string;
+  messageId: string;
+  binding: 'steering';
 };
 ```
 
-A queued `run_start.originMessageId` equals the originating message ID. Message identity is independent from Turn identity. Steering does not immediately create a Turn; if it misses Runner's final safe point before normal completion, Runtime promotes it into the existing FIFO and its later `run_start.originMessageId` uses the same message ID.
+A standalone `run_start.originMessageId` equals the originating message ID. A steering claim emits one `user_message_bound` for each claimed message. Message identity is independent from Turn identity.
 
 ## Assembly and emission
 
-- Emit once after successful assembly and before queued/steering divergence.
+- Emit once after successful assembly and immediately before FIFO append.
 - String input becomes text without summaries; text blocks join with two newlines.
 - Base64 images produce summaries with MIME and decoded bytes; unknown/future blocks produce `other`.
 - Raw base64 and source data never enter event JSON.
@@ -45,10 +52,10 @@ A queued `run_start.originMessageId` equals the originating message ID. Message 
 
 ## Routing invariants
 
-- Queued requests retain message ID through queueing into `run_start`.
-- Steering is broadcast with `deliveryMode: 'steering'` and does not interrupt or immediately start a Run. Normal terminal promotion emits no second `user_message` and does not mutate the original delivery mode.
-- Promoted steering preserves FIFO order, origin route, and explicit launch overrides.
-- Pure-image steering is visible but not inserted into the text-only steering inbox.
+- Standalone requests retain message ID through queueing into `run_start`.
+- Steering claim emits `user_message_bound`; intake does not predict binding.
+- A claimed message keeps FIFO order and does not replace the active Turn's origin route.
+- Text and multimodal messages share the same FIFO and capability checks.
 - Different sessions remain isolated; same-session admission keeps Runtime ordering.
 - WebSocket origin receives its own message. CLI renders external WebSocket messages but does not echo its local input.
 - CLI/library input uses `originClientId: null`; that value does not distinguish those two sources.
@@ -57,7 +64,7 @@ A queued `run_start.originMessageId` equals the originating message ID. Message 
 
 ## Acceptance scenarios
 
-Cover queued and steering event shapes; ordering `user_message -> run_start -> output -> run_end`; direct and promoted message correlation; no duplicate event during promotion; atomic attachment rejection with no event; pure-image steering; degenerate input; no base64 leakage; future block safety; two-client origin-inclusive Fanout; CLI echo behavior; one transcript append; session isolation; and no history replay on subscription.
+Cover intake and binding event shapes; standalone ordering `user_message -> run_start -> output -> run_end`; steering ordering `user_message -> user_message_bound -> continuation`; atomic attachment rejection with no event; multimodal steering; degenerate input; no base64 leakage; future block safety; two-client origin-inclusive Fanout; CLI echo behavior; one transcript append; Session isolation; cancellation of unbound queued input; and no history replay on subscription.
 
 ## Related authority
 

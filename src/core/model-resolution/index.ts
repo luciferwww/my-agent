@@ -1,4 +1,8 @@
-export { ModelResolver, ModelResolutionError } from './ModelResolver.js';
+export {
+  ModelResolver,
+  ModelResolutionError,
+  normalizeModelReference,
+} from './ModelResolver.js';
 export type {
   CanonicalModelIdentity,
   ModelPolicy,

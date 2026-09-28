@@ -174,27 +174,30 @@ Channel input follows this order:
 
 ```text
 normalize media and assemble the accepted message
-  -> emit user_message before route divergence
-  -> if runtime.steeringEnabled and an active Turn accepts steering: append text and origin context to steering inbox
-  -> otherwise: append a QueuedChannelTurn and schedule the session
+  -> normalize the optional explicit Model reference
+  -> recheck Runtime intake phase
+  -> emit user_message
+  -> append a QueuedUserMessage to the per-Session FIFO
+  -> schedule the Session if idle
 ```
 
 Media intake is atomic. Any attachment validation or optimization failure rejects the complete inbound message before `user_message`, queueing, persistence, model resolution, or Provider invocation; Runtime never removes a failed attachment and retries the remaining text or media.
 
-`user_message` carries a separate `messageId`, origin client, delivery mode, timestamp, text, and attachment summaries without raw Base64. A queued request later carries that ID as `originMessageId` so its actual run can be correlated. Degenerate assembled input emits no message and starts no Turn. Pure-attachment steering is observable as `user_message` but is not inserted into the text-only steering inbox.
+`user_message` carries a separate `messageId`, origin client, timestamp, text, and attachment summaries without raw Base64. It records acceptance, not predicted delivery. A standalone request later carries that ID as `originMessageId`; a steering claim emits `user_message_bound`. Degenerate assembled input emits no message and starts no Turn.
 
-`handleInboundChannelMessage()` never calls the Turn body directly. The per-session scheduler starts only a queue head when that session is idle. The Turn ID is generated when the item leaves the queue, then its origin Channel/client route is registered for the duration of that queued Turn.
+`handleInboundChannelMessage()` never calls the Turn body directly. The per-session scheduler starts only a queue head when that Session is idle. The request gate and Turn ID are generated when the item leaves the queue, then its origin Channel/client route is registered for that Turn. `RuntimeApplication` exposes no direct Root user-message execution API.
 
-`inFlightSessions` is the per-session serialization gate. `activeTurnIdBySession` identifies a currently running Turn that can receive steering. The two conditions for steering are:
+`inFlightSessions` is the per-session serialization gate. Sessions are serialized independently, so different Sessions can run concurrently.
 
-1. resolved `runtime.steeringEnabled` is `true`; and
-2. the session has an active Turn ID.
+When `runtime.steeringEnabled` is true, Runner may request a claim at a safe point after persistence and before another permitted Model call. Runtime synchronously peeks from the FIFO head and splices the largest contiguous compatible prefix:
 
-Otherwise input uses the normal queue. Sessions are serialized independently, so different sessions can run concurrently.
+- an omitted Model reference is compatible;
+- an explicit reference must match the active canonical Provider and Model IDs;
+- clearly unsupported media stops claim, while unknown capability is fail-open.
 
-Runtime supplies Runner a callback that atomically drains the current steering inbox. Runner owns when to invoke it. One ready batch remains separate FIFO user messages and produces one continuation call.
+Runtime never skips, dequeues, or requeues an incompatible item. Claimed messages remain separate user messages, are persisted immediately, and produce one continuation Model call. `user_message_bound` associates each claimed message with the active Turn without changing the active origin route.
 
-At normal completion Runtime first removes the active steering-admission marker, then promotes every unread inbox item into the existing normal queue before releasing the Session gate and scheduling once. Promotion creates an ordinary request gate and preserves the original message ID, route context, and explicit launch overrides; it emits no second `user_message`. Abort, `max_llm_calls`, thrown failure, and Shutdown discard unread steering. A returned Provider `stopReason='error'` remains a completed result and uses normal handoff.
+An empty claim closes steering for the active Turn. Input accepted afterward remains queued. At completion, `max_llm_calls`, Abort, or failure, Runtime releases the Session gate and schedules the next unclaimed FIFO head. Abort and Shutdown may explicitly remove queued work and emit correlated cancellation.
 
 ## 7. Root Turn orchestration
 
@@ -210,8 +213,9 @@ sequenceDiagram
   participant Prompt
   participant Runner
 
-  Caller->>Runtime: runTurn(params)
-  Runtime->>Runtime: admission and request completion gate
+  Caller->>Runtime: Channel user message
+  Runtime->>Runtime: FIFO append and Session scheduling
+  Runtime->>Runtime: dequeue and request completion gate
   Runtime->>Coordinator: capture current generation pin
   Runtime->>Session: admit message by sessionId
   Runtime->>Resolver: resolve against captured Providers
@@ -222,7 +226,7 @@ sequenceDiagram
   Runtime->>Coordinator: release Root-tree member
 ```
 
-`RunTurnParams` carries stable request identity, session/message, prompt mode, optional structured model/request overrides, optional LLM-call limit, safety override, context reload request, optional Turn ID, and internal user-message correlation.
+Internal `RunTurnParams` carries the allocated request/Turn identities, Session message, prompt mode, optional structured Model selection, execution-policy LLM-call limit, safety/context options, and user-message correlation. It is not a public Root intake API.
 
 Before Runner starts, Runtime admits the message through the Session coordinator, materializing a live Pending `sessionId` when needed. It then optionally reloads context, computes policy-visible Tool definitions from the captured Snapshot, resolves the model, builds prompts, creates the per-session `AbortController`, and registers the active Parent record. Admission persists only Session metadata and a root record; Runner remains the sole user-message writer. Runtime passes the captured Tool and Hook projections unchanged; Provider wire conversion remains owned by [Providers](providers.md), and generic Tool execution remains owned by [Tools](tools.md).
 
