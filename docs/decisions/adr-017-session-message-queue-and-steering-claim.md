@@ -3,7 +3,7 @@
 > Status: Accepted
 > Decision date: 2026-09-28
 > Owner: Project owner
-> Related Plan/Specification: [Runner Steering Simplification Plan](../changes/active/runner-steering-simplification/plan.md), [Runner Steering Simplification Specification](../changes/active/runner-steering-simplification/runner-steering-simplification-specification.md)
+> Related Plan/Specification: [Runner Steering Simplification Plan](../changes/archive/runner-steering-simplification/plan.md), [Runner Steering Simplification Specification](../changes/archive/runner-steering-simplification/runner-steering-simplification-specification.md)
 > Supersedes: the dual normal-queue/steering-inbox and terminal-promotion decisions in the accepted Runtime Steering and Runner Configuration design
 
 ## Context

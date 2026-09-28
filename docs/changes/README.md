@@ -6,12 +6,13 @@ Changes retain the repository's existing Plan/Specification/validation workflow.
 
 ## Active
 
-- [Runner Steering Simplification](active/runner-steering-simplification/plan.md), with its [Accepted Specification](active/runner-steering-simplification/runner-steering-simplification-specification.md) and [ADR-017](../decisions/adr-017-session-message-queue-and-steering-claim.md) — implemented one per-Session FIFO with Runner-owned safe-point claim, replacing the steering inbox and terminal promotion; pending closeout
+No active changes.
 
 ## Archived
 
 Archived changes preserve bounded delivery and acceptance provenance. They are neither Current Architecture nor stable contract authority.
 
+- [Runner Steering Simplification](archive/runner-steering-simplification/plan.md), with its [implemented Specification](archive/runner-steering-simplification/runner-steering-simplification-specification.md), [validation record](archive/runner-steering-simplification/validation.md), and [ADR-017](../decisions/adr-017-session-message-queue-and-steering-claim.md) — one per-Session FIFO, Runner-owned compatible-prefix claims, actual binding events, and removal of dual steering paths implemented, validated, manually accepted, and archived on 2026-09-28
 - [Session History Loading](archive/session-history-loading/plan.md), with its [implemented Specification](archive/session-history-loading/session-history-loading-specification.md) and [validation record](archive/session-history-loading/validation.md) — active-branch pagination, persisted Turn correlation, WebSocket query protocol, and bundled-client progressive loading implemented, validated, and accepted on 2026-09-27 with two documented environment/baseline exceptions
 - [Model-Aware Input Budget](archive/model-aware-input-budget/plan.md), with its [implemented Specification](archive/model-aware-input-budget/model-aware-input-budget-specification.md) and [validation record](archive/model-aware-input-budget/validation.md) — optional raw Context/Prompt/output facts, Built-in and Copilot Relay projection, and adaptive Runner input budgeting completed, validated, and accepted on 2026-09-24
 - [Model-Aware Output Control](archive/model-aware-output-control/plan.md), with its [implemented Specification](archive/model-aware-output-control/model-aware-output-control-specification.md) and [validation record](archive/model-aware-output-control/validation.md) — separate model output capability from optional clamped invocation policy, all three Built-in protocol adapters, and omitted-policy compatibility completed, validated, and accepted on 2026-09-24

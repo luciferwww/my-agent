@@ -1,10 +1,11 @@
 # Runner Steering Simplification Specification
 
-> Status: Accepted and Implemented
+> Status: Implemented, Validated, Accepted, and Archived
 > Date: 2026-09-28
 > Owner: Project owner
 > Related Plan: [Runner Steering Simplification Plan](plan.md)
 > Related Decision: [ADR-017](../../../decisions/adr-017-session-message-queue-and-steering-claim.md)
+> Validation: [Runner Steering Simplification Validation](validation.md)
 > Authorization: Accepted after independent design review.
 
 ## 1. Purpose

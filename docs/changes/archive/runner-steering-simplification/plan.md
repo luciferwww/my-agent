@@ -1,12 +1,14 @@
 # Runner Steering Simplification Plan
 
-> Status: Implemented; pending closeout
+> Status: Implemented, Validated, Accepted, and Archived
 > Date: 2026-09-28
 > Owner: Project owner
 > Type: Architecture Slice
 > Specification: [Runner Steering Simplification Specification](runner-steering-simplification-specification.md)
+> Validation: [Runner Steering Simplification Validation](validation.md)
 > Decision: [ADR-017: One Session Message Queue with Turn-owned Claim Points](../../../decisions/adr-017-session-message-queue-and-steering-claim.md)
 > Authorization: Accepted after independent design review; Delivery completed.
+> Acceptance: Accepted and archived by the project owner on 2026-09-28 after manual testing.
 
 ## 1. Outcome
 
