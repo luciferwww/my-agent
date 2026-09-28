@@ -73,6 +73,9 @@ function assertTranscriptEntry(
   if (typeof entry.parentId !== 'string' || !priorEntries.has(entry.parentId)) {
     throw new SessionDataError(`Session Transcript record "${entry.id}" has an invalid parent.`);
   }
+  if (entry.type === 'message' && (typeof entry.turnId !== 'string' || entry.turnId.trim().length === 0)) {
+    throw new SessionDataError(`Session Transcript message "${entry.id}" has an invalid Turn identity.`);
+  }
 }
 
 /** Walks from a leaf to the root and returns messages in chronological order. */

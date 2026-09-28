@@ -27,7 +27,9 @@ function formatEditResult(path: string, replacements: number): string {
 export function createEditFileTool(agentHome: string): Tool {
   return {
     name: 'edit_file',
-    description: 'Replace one exact text occurrence in a selected file.',
+    description:
+      'Preferred for one localized change to an existing file: replace one exact, uniquely matching text occurrence '
+      + 'while preserving all other content. Use apply_patch when several regions must change.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -37,7 +39,7 @@ export function createEditFileTool(agentHome: string): Tool {
         },
         oldText: {
           type: 'string',
-          description: 'Exact text to replace. Must appear exactly once.',
+          description: 'Exact existing text to replace. It must appear exactly once in the file.',
         },
         newText: {
           type: 'string',

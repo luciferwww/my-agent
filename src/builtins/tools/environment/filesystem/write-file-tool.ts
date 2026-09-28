@@ -15,7 +15,10 @@ function formatWriteResult(params: { path: string; created: boolean; bytesWritte
 export function createWriteFileTool(agentHome: string): Tool {
   return {
     name: 'write_file',
-    description: 'Create or overwrite a selected file with the provided full content.',
+    description:
+      'Create a new file or intentionally replace an existing file in full. '
+      + 'For localized changes to an existing file, prefer edit_file for one exact replacement '
+      + 'or apply_patch for multiple edits so unrelated content is preserved.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -25,7 +28,7 @@ export function createWriteFileTool(agentHome: string): Tool {
         },
         content: {
           type: 'string',
-          description: 'Full file content to write.',
+          description: 'Complete replacement content. Existing content is discarded in full.',
         },
       },
       required: ['path', 'content'],

@@ -35,6 +35,25 @@
 | Session switching | Pass: two persisted Sessions loaded independently without cross-session contamination |
 | `git diff --check` | Pass |
 
+## Post-archive review corrections
+
+The 2026-09-28 implementation review identified and corrected three gaps:
+
+- Earlier-page insertion now restores the first visible message's viewport
+  offset after Vue updates the DOM.
+- Failed History requests retain their cursor and terminal Turn IDs, expose a
+  Retry action, and preserve terminal convergence across a later latest-page
+  request.
+- Transcript loading now fails closed when a message has a missing, empty, or
+  whitespace-only `turnId`.
+
+Focused Transcript and SessionManager tests pass (26/26), WebSocket Channel
+tests pass (39/39), TypeScript and workspace lint pass, and the Host build and
+WebSocket Host verification pass. Browser automation measured a `0px` scroll
+anchor delta after prepending an earlier page and confirmed that a failed
+terminal refresh retries with its original Turn ID before removing temporary
+Turn presentation.
+
 ## Exceptions
 
 1. `src/platform/config/agent-config-bootstrap.test.ts` could not create a file symlink on this Windows process (`EPERM`). This is an OS privilege/environment failure unrelated to Session History Loading.

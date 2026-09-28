@@ -43,5 +43,16 @@ describe('Environment Runtime Contribution', () => {
       expect(snapshot.tools.resolve(definition.name)?.validator.validate({}).errors)
         .toEqual(expect.any(Array));
     }
+
+    const definitions = new Map(snapshot.tools.definitions.map((definition) => [
+      definition.name,
+      definition,
+    ]));
+    expect(definitions.get('write_file')?.description).toContain('prefer edit_file');
+    expect(definitions.get('write_file')?.description).toContain('apply_patch');
+    expect(definitions.get('edit_file')?.description).toContain('one localized change');
+    expect(definitions.get('apply_patch')?.description).toContain('preserving untouched content');
+    expect(JSON.stringify(definitions.get('apply_patch')?.inputSchema))
+      .toContain('*** Update File:');
   });
 });

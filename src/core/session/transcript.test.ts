@@ -36,6 +36,29 @@ describe('transcript', () => {
 
       expect(() => loadTranscript(filePath)).toThrowError(SessionDataError);
     });
+
+    it.each([
+      ['missing', undefined],
+      ['empty', ''],
+      ['blank', '   '],
+    ])('rejects a message with a %s Turn identity', async (_case, turnId) => {
+      const filePath = join(dir, `invalid-turn-${_case}.jsonl`);
+      const message = {
+        type: 'message',
+        id: 'm1',
+        parentId: 's1',
+        timestamp: '2026-04-02T00:00:01Z',
+        ...(turnId === undefined ? {} : { turnId }),
+        message: { role: 'user', content: 'hi' },
+      };
+      await writeFile(filePath, [
+        JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-04-02T00:00:00Z', version: 1 }),
+        JSON.stringify(message),
+      ].join('\n'), 'utf-8');
+
+      expect(() => loadTranscript(filePath))
+        .toThrowError(new SessionDataError('Session Transcript message "m1" has an invalid Turn identity.'));
+    });
   });
 
   describe('resolveLinearPath', () => {

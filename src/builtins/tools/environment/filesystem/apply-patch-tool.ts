@@ -227,13 +227,18 @@ async function ensureParentDir(filePath: string): Promise<void> {
 export function createApplyPatchTool(agentHome: string): Tool {
   return {
     name: 'apply_patch',
-    description: 'Apply a multi-file patch using the *** Begin Patch / *** End Patch format.',
+    description:
+      'Preferred for localized changes across one or more existing files while preserving untouched content. '
+      + 'Also supports adding, deleting, and moving files. Use write_file only for new files or intentional full replacement.',
     inputSchema: {
       type: 'object',
       properties: {
         input: {
           type: 'string',
-          description: 'Full patch contents including *** Begin Patch and *** End Patch.',
+          description:
+            'Full patch text. Wrap hunks in *** Begin Patch and *** End Patch. '
+            + 'Use *** Update File: <path> followed by @@ chunks whose lines begin with space (context), - (remove), '
+            + 'or + (add). Also supports *** Add File:, *** Delete File:, and *** Move to: markers.',
         },
       },
       required: ['input'],
