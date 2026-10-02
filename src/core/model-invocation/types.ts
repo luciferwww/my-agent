@@ -5,6 +5,7 @@ import type { ToolCall } from '../tools/types.js';
 export type ChatRole = 'user' | 'assistant';
 
 export type ThinkingWireProtocol =
+  | 'anthropic-messages'
   | 'openai-chat-completions'
   | 'openai-responses';
 

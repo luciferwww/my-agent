@@ -147,8 +147,9 @@ describe('BuiltinLlmProvider', () => {
     expect(model.descriptor.facts.reasoning).toBe(catalogReasoning);
   });
 
-  it('does not publish non-empty reasoning capabilities before a Client mapper exists', () => {
-    expect(() => new BuiltinLlmProvider({
+  it('publishes non-empty reasoning capabilities after Client mapping is available', async () => {
+    const requests: ModelInvocationRequest[] = [];
+    const provider = new BuiltinLlmProvider({
       baseURL: 'https://example.test',
       models: [{
         modelId: 'one',
@@ -156,10 +157,84 @@ describe('BuiltinLlmProvider', () => {
         reasoning: { efforts: ['high'] },
       }],
     }, {
-      createClient: (protocol) => client(protocol, []),
-    })).toThrow(expect.objectContaining({
-      fieldPath: 'models[0].reasoning',
-    }));
+      createClient: () => ({
+        async *chatStream(value) {
+          requests.push(value);
+          yield { type: 'message_start' };
+          yield {
+            type: 'message_end',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 0, outputTokens: 0 },
+          };
+        },
+        async chat(value) {
+          requests.push(value);
+          return {
+            content: [],
+            toolCalls: [],
+            stopReason: 'end_turn',
+            usage: { inputTokens: 0, outputTokens: 0 },
+          };
+        },
+      }),
+    });
+
+    expect(provider.entry.models[0]?.capabilities?.reasoning)
+      .toEqual({ efforts: ['high'] });
+    await provider.entry.invocationPort.chat({
+      ...request,
+      model: 'one',
+      reasoning: { effort: 'high' },
+    });
+    expect(requests[0]?.reasoning).toEqual({ effort: 'high' });
+  });
+
+  it('keeps private Responses summary behavior scoped to its configured model', async () => {
+    const fetchImpl = vi.fn(async () => new Response(
+      [
+        `data: ${JSON.stringify({ type: 'response.created' })}\n\n`,
+        `data: ${JSON.stringify({
+          type: 'response.completed',
+          response: { usage: { input_tokens: 1, output_tokens: 1 } },
+        })}\n\n`,
+        'data: [DONE]\n\n',
+      ].join(''),
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    )) as unknown as typeof fetch;
+    const provider = new BuiltinLlmProvider({
+      baseURL: 'https://example.test',
+      models: [
+        {
+          modelId: 'summary',
+          protocol: 'openai-responses',
+          reasoning: { efforts: ['high'] },
+          readableSummary: 'auto-on-explicit-reasoning',
+        },
+        {
+          modelId: 'plain',
+          protocol: 'openai-responses',
+          reasoning: { efforts: ['high'] },
+        },
+      ],
+    }, { fetch: fetchImpl });
+
+    await provider.entry.invocationPort.chat({
+      model: 'summary',
+      messages: [],
+      reasoning: { effort: 'high' },
+    });
+    await provider.entry.invocationPort.chat({
+      model: 'plain',
+      messages: [],
+      reasoning: { effort: 'high' },
+    });
+
+    const bodies = vi.mocked(fetchImpl).mock.calls.map((call) =>
+      JSON.parse(String(call[1]?.body)) as Record<string, unknown>);
+    expect(bodies.map((body) => body.reasoning)).toEqual([
+      { effort: 'high', summary: 'auto' },
+      { effort: 'high' },
+    ]);
   });
 
   it('applies model output defaults and clamps explicit overrides to capability', async () => {

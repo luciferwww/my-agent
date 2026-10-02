@@ -8,13 +8,12 @@ import type {
   ProviderConnection,
   ProviderProjectionEntry,
 } from '../../../core/model-resolution/index.js';
-import { normalizeReasoningCapabilities } from '../../../core/model-resolution/index.js';
 import { AnthropicMessagesClient } from './AnthropicMessagesClient.js';
 import { OpenAIChatCompletionsClient } from './OpenAIChatCompletionsClient.js';
 import { OpenAIResponsesClient } from './OpenAIResponsesClient.js';
 import {
-  BuiltinLlmConfigError,
   DEFAULT_BUILTIN_CONTEXT_LIMIT,
+  normalizeBuiltinReasoningConfig,
   type BuiltinLlmProviderConfig,
   type BuiltinModelRegistration,
   type BuiltinProtocol,
@@ -38,6 +37,9 @@ export class BuiltinLlmProvider {
 
   constructor(config: BuiltinLlmProviderConfig, options: BuiltinLlmProviderOptions = {}) {
     const capturedConfig = captureConfig(config);
+    const registrations = new Map(
+      capturedConfig.models.map((model) => [model.modelId, model] as const),
+    );
     const protocols = new Set(capturedConfig.models.map((model) => model.protocol));
     const clients = new Map<BuiltinProtocol, ModelInvocationPort>();
     for (const protocol of protocols) {
@@ -49,12 +51,9 @@ export class BuiltinLlmProvider {
       clients.set(
         protocol,
         options.createClient?.(protocol, clientOptions)
-          ?? createProtocolClient(protocol, clientOptions),
+          ?? createProtocolClient(protocol, clientOptions, capturedConfig.models),
       );
     }
-    const registrations = new Map(
-      capturedConfig.models.map((model) => [model.modelId, model] as const),
-    );
     const invocationPort = new BuiltinModelRouter(registrations, clients);
 
     this.entry = Object.freeze({
@@ -188,12 +187,29 @@ function resolveOutputTokenLimit(
 function createProtocolClient(
   protocol: BuiltinProtocol,
   options: ProtocolClientOptions,
+  models: readonly BuiltinModelRegistration[],
 ): ModelInvocationPort {
   switch (protocol) {
     case 'anthropic-messages':
-      return new AnthropicMessagesClient(options);
+      return new AnthropicMessagesClient({
+        ...options,
+        thinkingAdapters: new Map(
+          models.flatMap((model) => (
+            model.protocol === protocol && model.anthropicThinking
+              ? [[model.modelId, model.anthropicThinking] as const]
+              : []
+          )),
+        ),
+      });
     case 'openai-responses':
-      return new OpenAIResponsesClient(options);
+      return new OpenAIResponsesClient({
+        ...options,
+        readableSummaryModels: Object.freeze(models.flatMap((model) => (
+          model.protocol === protocol && model.readableSummary
+            ? [model.modelId]
+            : []
+        ))),
+      });
     case 'openai-chat-completions':
       return new OpenAIChatCompletionsClient(options);
   }
@@ -204,18 +220,10 @@ function captureConfig(config: BuiltinLlmProviderConfig): BuiltinLlmProviderConf
     baseURL: config.baseURL,
     ...(config.apiKey === undefined ? {} : { apiKey: config.apiKey }),
     models: Object.freeze(config.models.map((model, index) => {
-      const reasoning = model.reasoning === undefined
-        ? undefined
-        : normalizeReasoningCapabilities(model.reasoning);
-      if (
-        (reasoning?.thinking?.length ?? 0) > 0
-        || (reasoning?.efforts?.length ?? 0) > 0
-      ) {
-        throw new BuiltinLlmConfigError(`models[${index}].reasoning`);
-      }
+      const reasoningConfig = normalizeBuiltinReasoningConfig(model, index);
       return Object.freeze({
         ...model,
-        ...(reasoning === undefined ? {} : { reasoning }),
+        ...reasoningConfig,
       });
     })),
   });

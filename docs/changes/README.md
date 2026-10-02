@@ -6,7 +6,7 @@ Changes retain the repository's existing Plan/Specification/validation workflow.
 
 ## Active
 
-- [Thinking Generation Controls](active/thinking-generation-controls/plan.md), with its [accepted Specification](active/thinking-generation-controls/specification.md) and [acceptance/validation matrix](active/thinking-generation-controls/validation.md) — TGC-P1 and TGC-P2 completed; full remaining Delivery authorized on 2026-10-03, currently implementing TGC-P3
+- [Thinking Generation Controls](active/thinking-generation-controls/plan.md), with its [accepted Specification](active/thinking-generation-controls/specification.md) and [acceptance/validation matrix](active/thinking-generation-controls/validation.md) — TGC-P1 through TGC-P3 completed; full remaining Delivery authorized on 2026-10-03, currently implementing TGC-P4
 
 ## Archived
 

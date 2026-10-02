@@ -6,6 +6,7 @@ import {
   type ModelInvocationRequest,
   type ModelStreamEvent,
   type ProviderReplayState,
+  projectContentForPresentation,
 } from '../../../core/model-invocation/index.js';
 import { AnthropicMessagesClient } from './AnthropicMessagesClient.js';
 import { OpenAIChatCompletionsClient } from './OpenAIChatCompletionsClient.js';
@@ -111,6 +112,267 @@ describe('Built-in Protocol Clients', () => {
       type: 'image',
       source: { type: 'base64', media_type: 'image/png', data: 'cG5n' },
     });
+    expect(body).not.toHaveProperty('thinking');
+    expect(body).not.toHaveProperty('output_config');
+  });
+
+  it.each([
+    [
+      { thinking: 'on' as const, effort: 'default' as const },
+      { thinking: { type: 'adaptive' } },
+    ],
+    [
+      { effort: 'high' as const },
+      { thinking: { type: 'adaptive' }, output_config: { effort: 'high' } },
+    ],
+    [
+      { thinking: 'off' as const, effort: 'default' as const },
+      { thinking: { type: 'disabled' } },
+    ],
+    [
+      { thinking: 'off' as const, effort: 'none' as const },
+      { thinking: { type: 'disabled' } },
+    ],
+  ])('maps Anthropic adaptive reasoning policy %j', async (reasoning, expected) => {
+    const fetchImpl = vi.fn(async () => anthropicTerminal()) as unknown as typeof fetch;
+    const client = new AnthropicMessagesClient({
+      baseURL: 'https://example.test',
+      fetch: fetchImpl,
+      thinkingAdapters: new Map([['opaque/model:1', { mode: 'adaptive' }]]),
+    });
+
+    await client.chat({ ...request, reasoning });
+
+    const body = requestBody(fetchImpl);
+    expect(body).toMatchObject(expected);
+    if (!('output_config' in expected)) {
+      expect(body).not.toHaveProperty('output_config');
+    }
+  });
+
+  it('maps configured Anthropic budgets and rejects a dynamic max_tokens conflict before fetch', async () => {
+    const fetchImpl = vi.fn(async () => anthropicTerminal()) as unknown as typeof fetch;
+    const client = new AnthropicMessagesClient({
+      baseURL: 'https://example.test',
+      fetch: fetchImpl,
+      thinkingAdapters: new Map([[
+        'opaque/model:1',
+        {
+          mode: 'budget',
+          defaultBudgetTokens: 1_024,
+          budgets: { high: 2_048 },
+        },
+      ]]),
+    });
+
+    await client.chat({
+      ...request,
+      outputTokenLimit: 4_096,
+      reasoning: { effort: 'high' },
+    });
+    expect(requestBody(fetchImpl)).toMatchObject({
+      max_tokens: 4_096,
+      thinking: { type: 'enabled', budget_tokens: 2_048 },
+    });
+
+    await expect(client.chat({
+      ...request,
+      outputTokenLimit: 2_048,
+      reasoning: { effort: 'high' },
+    })).rejects.toMatchObject({
+      category: 'invalid_request',
+      diagnostics: {
+        providerMessage: 'Anthropic Thinking budget must be lower than max_tokens.',
+      },
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['high', { effort: 'high', summary: 'auto' }],
+    ['none', { effort: 'none' }],
+  ] as const)('maps Responses effort %s and summary policy', async (effort, expected) => {
+    const fetchImpl = vi.fn(async () => responsesTerminal()) as unknown as typeof fetch;
+    const client = new OpenAIResponsesClient({
+      baseURL: 'https://example.test',
+      fetch: fetchImpl,
+      readableSummaryModels: ['opaque/model:1'],
+    });
+
+    await client.chat({ ...request, reasoning: { effort } });
+    expect(requestBody(fetchImpl).reasoning).toEqual(expected);
+  });
+
+  it('maps independent Responses on only for a configured readable-summary adapter', async () => {
+    const fetchImpl = vi.fn(async () => responsesTerminal()) as unknown as typeof fetch;
+    const configured = new OpenAIResponsesClient({
+      baseURL: 'https://example.test',
+      fetch: fetchImpl,
+      readableSummaryModels: ['opaque/model:1'],
+    });
+    await configured.chat({
+      ...request,
+      reasoning: { thinking: 'on', effort: 'default' },
+    });
+    expect(requestBody(fetchImpl).reasoning).toEqual({ summary: 'auto' });
+
+    const unconfiguredFetch = vi.fn() as unknown as typeof fetch;
+    const unconfigured = new OpenAIResponsesClient({
+      baseURL: 'https://example.test',
+      fetch: unconfiguredFetch,
+    });
+    await expect(unconfigured.chat({
+      ...request,
+      reasoning: { thinking: 'on', effort: 'default' },
+    })).rejects.toMatchObject({
+      category: 'invalid_request',
+      diagnostics: {
+        providerMessage: 'OpenAI Responses has no adapter for the requested Thinking switch.',
+      },
+    });
+    expect(unconfiguredFetch).not.toHaveBeenCalled();
+  });
+
+  it('sends Responses effort without guessing summary when no private adapter exists', async () => {
+    const fetchImpl = vi.fn(async () => responsesTerminal()) as unknown as typeof fetch;
+    const client = new OpenAIResponsesClient({
+      baseURL: 'https://example.test',
+      fetch: fetchImpl,
+    });
+
+    await client.chat({ ...request, reasoning: { effort: 'high' } });
+    expect(requestBody(fetchImpl).reasoning).toEqual({ effort: 'high' });
+  });
+
+  it.each(['high', 'none'] as const)(
+    'maps Chat Completions effort %s without extra reasoning fields',
+    async (effort) => {
+      const fetchImpl = vi.fn(async () => chatTerminal()) as unknown as typeof fetch;
+      const client = new OpenAIChatCompletionsClient({
+        baseURL: 'https://example.test',
+        fetch: fetchImpl,
+      });
+
+      await client.chat({ ...request, reasoning: { effort } });
+      expect(requestBody(fetchImpl).reasoning_effort).toBe(effort);
+      expect(requestBody(fetchImpl)).not.toHaveProperty('reasoning');
+    },
+  );
+
+  it('rejects a Chat Completions Thinking switch before fetch', async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const client = new OpenAIChatCompletionsClient({
+      baseURL: 'https://example.test',
+      fetch: fetchImpl,
+    });
+
+    await expect(client.chat({
+      ...request,
+      reasoning: { thinking: 'on', effort: 'default' },
+    })).rejects.toMatchObject({
+      category: 'invalid_request',
+      diagnostics: {
+        providerMessage:
+          'OpenAI Chat Completions does not support the requested Thinking switch.',
+      },
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('captures, hides, and replays ordered Anthropic Thinking blocks', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(sse([
+        frame({
+          type: 'message_start',
+          message: { model: 'claude-test', usage: { input_tokens: 3 } },
+        }),
+        frame({
+          type: 'content_block_start',
+          content_block: { type: 'thinking', thinking: '' },
+        }),
+        frame({
+          type: 'content_block_delta',
+          delta: { type: 'thinking_delta', thinking: 'working' },
+        }),
+        frame({
+          type: 'content_block_delta',
+          delta: { type: 'signature_delta', signature: 'signed-state' },
+        }),
+        frame({ type: 'content_block_stop' }),
+        frame({
+          type: 'content_block_start',
+          content_block: { type: 'redacted_thinking', data: 'redacted-state' },
+        }),
+        frame({ type: 'content_block_stop' }),
+        frame({
+          type: 'content_block_start',
+          content_block: { type: 'tool_use', id: 'call-1', name: 'lookup' },
+        }),
+        frame({
+          type: 'content_block_delta',
+          delta: { type: 'input_json_delta', partial_json: '{"id":1}' },
+        }),
+        frame({ type: 'content_block_stop' }),
+        frame({
+          type: 'message_delta',
+          delta: { stop_reason: 'tool_use' },
+          usage: { output_tokens: 4 },
+        }),
+        frame({ type: 'message_stop' }),
+      ].join('')))
+      .mockResolvedValueOnce(anthropicTerminal());
+    const client = new AnthropicMessagesClient({
+      baseURL: 'https://example.test',
+      fetch: fetchImpl as unknown as typeof fetch,
+    });
+
+    const first = await client.chat({ ...request, invocationId: 'anthropic-invocation' });
+    expect(first.invocation?.source).toMatchObject({
+      wireProtocol: 'anthropic-messages',
+      responseModelId: 'claude-test',
+    });
+    expect(first.content).toMatchObject([
+      {
+        type: 'thinking',
+        text: 'working',
+        replay: {
+          format: 'anthropic-messages.thinking-block.v1',
+          payload: {
+            type: 'thinking',
+            thinking: 'working',
+            signature: 'signed-state',
+          },
+        },
+      },
+      {
+        type: 'thinking',
+        text: '',
+        replay: {
+          payload: { type: 'redacted_thinking', data: 'redacted-state' },
+        },
+      },
+      { type: 'tool_use', id: 'call-1' },
+    ]);
+    expect(projectContentForPresentation(first.content)).toEqual([
+      expect.objectContaining({ type: 'thinking', text: 'working' }),
+      expect.objectContaining({ type: 'tool_use', id: 'call-1' }),
+    ]);
+
+    await client.chat({
+      ...request,
+      messages: [{
+        role: 'assistant',
+        content: first.content,
+        invocation: first.invocation,
+      }],
+    });
+    const replayBody = requestBody(fetchImpl as unknown as typeof fetch, 1);
+    const replayMessages = replayBody.messages as Array<{ content: unknown }>;
+    expect(replayMessages[0]?.content).toEqual([
+      { type: 'thinking', thinking: 'working', signature: 'signed-state' },
+      { type: 'redacted_thinking', data: 'redacted-state' },
+      { type: 'tool_use', id: 'call-1', name: 'lookup', input: { id: 1 } },
+    ]);
   });
 
   it('preserves Anthropic text emitted before a Tool Call', async () => {
@@ -182,6 +444,7 @@ describe('Built-in Protocol Clients', () => {
     expect(init?.headers).not.toHaveProperty('authorization');
     const body = JSON.parse(String(init?.body));
     expect(body).not.toHaveProperty('max_output_tokens');
+    expect(body).not.toHaveProperty('reasoning');
     expect(body.input[0].content[1]).not.toHaveProperty('dimensions');
   });
 
@@ -235,6 +498,7 @@ describe('Built-in Protocol Clients', () => {
     const body = JSON.parse(String(init?.body));
     expect(body).not.toHaveProperty('max_tokens');
     expect(body).not.toHaveProperty('max_completion_tokens');
+    expect(body).not.toHaveProperty('reasoning_effort');
   });
 
   it('captures and replays Chat Completions reasoning inside the Client boundary', async () => {
@@ -649,6 +913,22 @@ describe('Built-in Protocol Clients', () => {
         },
       ),
     },
+    {
+      label: 'Anthropic Messages',
+      create: (fetchImpl: typeof fetch) => new AnthropicMessagesClient({
+        baseURL: 'https://example.test',
+        fetch: fetchImpl,
+      }),
+      wireProtocol: 'anthropic-messages' as const,
+      replay: replayState(
+        'anthropic-messages.thinking-block.v1',
+        {
+          type: 'thinking',
+          thinking: 'why',
+          signature: 'signed-state',
+        },
+      ),
+    },
   ])('rejects incompatible $label replay before sending a request', async ({
     create,
     wireProtocol,
@@ -690,6 +970,43 @@ describe('Built-in Protocol Clients', () => {
       category: 'provider_failure',
     });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('closes interrupted Anthropic Thinking as partial state without replay', async () => {
+    const client = new AnthropicMessagesClient({
+      baseURL: 'https://example.test',
+      fetch: vi.fn(async () => sse([
+        frame({ type: 'message_start', message: { usage: { input_tokens: 1 } } }),
+        frame({
+          type: 'content_block_start',
+          content_block: { type: 'thinking', thinking: '' },
+        }),
+        frame({
+          type: 'content_block_delta',
+          delta: { type: 'thinking_delta', thinking: 'partial thought' },
+        }),
+        frame({
+          type: 'error',
+          error: { type: 'overloaded_error', message: 'overloaded' },
+        }),
+      ].join(''))) as unknown as typeof fetch,
+    });
+
+    const events = await collect(client, {
+      ...request,
+      invocationId: 'anthropic-partial',
+    });
+    expect(events).toContainEqual({
+      type: 'thinking_delta',
+      blockId: 'thinking-0',
+      text: 'partial thought',
+    });
+    expect(events.some((event) => event.type === 'thinking_end')).toBe(false);
+    expect(events.at(-1)).toMatchObject({
+      type: 'error',
+      error: { category: 'unavailable' },
+    });
+    expect(JSON.stringify(events)).not.toContain('signature');
   });
 
   it('omits cross-protocol Thinking while preserving ordinary assistant text', async () => {
@@ -849,6 +1166,82 @@ describe('Built-in Protocol Clients', () => {
       role: 'assistant',
       content: [{ type: 'text', text: 'ordinary answer' }],
     }]);
+  });
+
+  it('preserves Anthropic replay across an Anthropic to OpenAI to Anthropic round trip', async () => {
+    const sourceMessage: ModelInvocationRequest['messages'][number] = {
+      role: 'assistant',
+      content: [{
+        type: 'thinking',
+        id: 'anthropic-invocation:thinking-0',
+        status: 'complete',
+        text: 'private thought',
+        replay: replayState('anthropic-messages.thinking-block.v1', {
+          type: 'thinking',
+          thinking: 'private thought',
+          signature: 'signed-state',
+        }),
+      }, {
+        type: 'text',
+        text: 'ordinary answer',
+      }],
+      invocation: {
+        id: 'anthropic-invocation',
+        source: {
+          providerId: 'builtin',
+          connectionId: 'https://example.test',
+          requestModelId: 'claude-model',
+          wireProtocol: 'anthropic-messages',
+        },
+        completion: {
+          status: 'complete',
+          stopReason: 'end_turn',
+          usage: { inputTokens: 1, outputTokens: 1 },
+        },
+      },
+    };
+    const original = structuredClone(sourceMessage);
+    const responsesFetch = vi.fn(async () => responsesTerminal()) as unknown as typeof fetch;
+    const chatFetch = vi.fn(async () => chatTerminal()) as unknown as typeof fetch;
+    const anthropicFetch = vi.fn(async () => anthropicTerminal()) as unknown as typeof fetch;
+
+    await new OpenAIResponsesClient({
+      baseURL: 'https://example.test',
+      fetch: responsesFetch,
+    }).chat({ ...request, messages: [sourceMessage] });
+    expect(requestBody(responsesFetch).input).toEqual([{
+      role: 'assistant',
+      content: [{ type: 'output_text', text: 'ordinary answer' }],
+    }]);
+
+    await new OpenAIChatCompletionsClient({
+      baseURL: 'https://example.test',
+      fetch: chatFetch,
+    }).chat({ ...request, messages: [sourceMessage] });
+    expect(requestBody(chatFetch).messages).toEqual([
+      { role: 'system', content: 'system' },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'ordinary answer' }],
+      },
+    ]);
+
+    await new AnthropicMessagesClient({
+      baseURL: 'https://example.test',
+      fetch: anthropicFetch,
+    }).chat({ ...request, messages: [sourceMessage] });
+    expect(requestBody(anthropicFetch).messages).toEqual([{
+      role: 'assistant',
+      content: [
+        {
+          type: 'thinking',
+          thinking: 'private thought',
+          signature: 'signed-state',
+        },
+        { type: 'text', text: 'ordinary answer' },
+      ],
+    }]);
+    expect(sourceMessage).toEqual(original);
   });
 
   it('maps one output-token limit to each protocol wire field', async () => {
@@ -1121,7 +1514,43 @@ async function collect(
   return events;
 }
 
-function requestBody(fetchImpl: typeof fetch): Record<string, unknown> {
-  const init = vi.mocked(fetchImpl).mock.calls[0]?.[1];
+function anthropicTerminal(): Response {
+  return sse([
+    frame({ type: 'message_start', message: { usage: { input_tokens: 1 } } }),
+    frame({
+      type: 'message_delta',
+      delta: { stop_reason: 'end_turn' },
+      usage: { output_tokens: 1 },
+    }),
+    frame({ type: 'message_stop' }),
+  ].join(''));
+}
+
+function responsesTerminal(): Response {
+  return sse(
+    frame({ type: 'response.created' })
+    + frame({
+      type: 'response.completed',
+      response: { usage: { input_tokens: 1, output_tokens: 1 } },
+    })
+    + 'data: [DONE]\n\n',
+  );
+}
+
+function chatTerminal(): Response {
+  return sse(
+    frame({
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+    })
+    + frame({
+      choices: [],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    })
+    + 'data: [DONE]\n\n',
+  );
+}
+
+function requestBody(fetchImpl: typeof fetch, callIndex = 0): Record<string, unknown> {
+  const init = vi.mocked(fetchImpl).mock.calls[callIndex]?.[1];
   return JSON.parse(String(init?.body)) as Record<string, unknown>;
 }

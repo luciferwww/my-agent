@@ -181,4 +181,110 @@ describe('Built-in LLM configuration', () => {
     expect(Object.isFrozen(result.models[0]?.reasoning)).toBe(true);
     expect(Object.isFrozen(result.models[0]?.reasoning?.efforts)).toBe(true);
   });
+
+  it('validates and freezes protocol-private reasoning adapters', () => {
+    const result = validateBuiltinLlmProviderConfig({
+      baseURL: 'https://example.test',
+      models: [
+        {
+          modelId: 'responses',
+          protocol: 'openai-responses',
+          reasoning: { thinking: ['on'], efforts: ['high'] },
+          readableSummary: 'auto-on-explicit-reasoning',
+        },
+        {
+          modelId: 'adaptive',
+          protocol: 'anthropic-messages',
+          reasoning: { thinking: ['on', 'off'], efforts: ['none', 'high'] },
+          anthropicThinking: { mode: 'adaptive' },
+        },
+        {
+          modelId: 'budget',
+          protocol: 'anthropic-messages',
+          outputTokenLimit: 8_192,
+          reasoning: { thinking: ['on'], efforts: ['low', 'high'] },
+          anthropicThinking: {
+            mode: 'budget',
+            defaultBudgetTokens: 1_024,
+            budgets: { low: 1_024, high: 4_096 },
+          },
+        },
+      ],
+    });
+
+    expect(result.models[0]).toMatchObject({
+      readableSummary: 'auto-on-explicit-reasoning',
+    });
+    expect(result.models[1]?.anthropicThinking).toEqual({ mode: 'adaptive' });
+    expect(result.models[2]?.anthropicThinking).toEqual({
+      mode: 'budget',
+      defaultBudgetTokens: 1_024,
+      budgets: { low: 1_024, high: 4_096 },
+    });
+    expect(Object.isFrozen(result.models[2]?.anthropicThinking)).toBe(true);
+    expect(Object.isFrozen(
+      result.models[2]?.anthropicThinking?.mode === 'budget'
+        ? result.models[2].anthropicThinking.budgets
+        : undefined,
+    )).toBe(true);
+  });
+
+  it.each([
+    [{
+      modelId: 'chat',
+      protocol: 'openai-chat-completions',
+      reasoning: { thinking: ['on'] },
+    }, 'models[0].reasoning.thinking[0]'],
+    [{
+      modelId: 'responses',
+      protocol: 'openai-responses',
+      reasoning: { thinking: ['off'] },
+      readableSummary: 'auto-on-explicit-reasoning',
+    }, 'models[0].reasoning.thinking[0]'],
+    [{
+      modelId: 'responses',
+      protocol: 'openai-responses',
+      reasoning: { thinking: ['on'] },
+    }, 'models[0].reasoning.thinking[0]'],
+    [{
+      modelId: 'chat',
+      protocol: 'openai-chat-completions',
+      readableSummary: 'auto-on-explicit-reasoning',
+    }, 'models[0].readableSummary'],
+    [{
+      modelId: 'anthropic',
+      protocol: 'anthropic-messages',
+      reasoning: { efforts: ['high'] },
+    }, 'models[0].anthropicThinking'],
+    [{
+      modelId: 'anthropic',
+      protocol: 'anthropic-messages',
+      reasoning: { thinking: ['on'] },
+      anthropicThinking: { mode: 'budget' },
+    }, 'models[0].anthropicThinking.defaultBudgetTokens'],
+    [{
+      modelId: 'anthropic',
+      protocol: 'anthropic-messages',
+      reasoning: { efforts: ['high'] },
+      anthropicThinking: { mode: 'budget', budgets: { low: 1024 } },
+    }, 'models[0].reasoning.efforts[0]'],
+    [{
+      modelId: 'anthropic',
+      protocol: 'anthropic-messages',
+      outputTokenLimit: 4096,
+      reasoning: { efforts: ['high'] },
+      anthropicThinking: { mode: 'budget', budgets: { high: 4096 } },
+    }, 'models[0].anthropicThinking'],
+    [{
+      modelId: 'anthropic',
+      protocol: 'anthropic-messages',
+      reasoning: { efforts: ['high'] },
+      anthropicThinking: { mode: 'budget', budgets: { high: 512 } },
+    }, 'models[0].anthropicThinking.budgets.high'],
+  ])('rejects inconsistent reasoning adapter configuration %#', (model, fieldPath) => {
+    expect(() => validateBuiltinLlmProviderConfig({
+      baseURL: 'https://example.test',
+      models: [model],
+    })).toThrow(expect.objectContaining({ fieldPath }));
+  });
 });

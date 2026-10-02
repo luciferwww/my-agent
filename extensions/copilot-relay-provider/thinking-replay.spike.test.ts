@@ -225,11 +225,11 @@ describe('Thinking replay spike', () => {
     expect(JSON.stringify(messages)).toContain('fixture-chat-opaque');
   });
 
-  it.each([true, false])('Anthropic currently loses thinking/redacted state (signature present: %s)', async (signed) => {
+  it('Anthropic preserves signed thinking and redacted state across fresh Clients', async () => {
     const bodies: unknown[] = [];
     const fetchImpl: typeof fetch = async (_url, init) => {
       bodies.push(JSON.parse(String(init?.body)));
-      return anthropicTool(bodies.length, signed);
+      return anthropicTool(bodies.length, true);
     };
     const createClient = () => new AnthropicMessagesClient({ baseURL: 'https://fixture.invalid', fetch: fetchImpl });
     const messages = structuredClone(request.messages);
@@ -241,14 +241,44 @@ describe('Thinking replay spike', () => {
     expect(bodies[2]).toMatchObject({
       messages: [
         request.messages[0],
-        { role: 'assistant', content: [{ type: 'tool_use', id: 'call-1', name: 'lookup', input: {} }] },
+        { role: 'assistant', content: [
+          { type: 'thinking', thinking: 'Fixture thought.', signature: 'fixture-sig-1' },
+          { type: 'redacted_thinking', data: 'fixture-redacted' },
+          { type: 'tool_use', id: 'call-1', name: 'lookup', input: {} },
+        ] },
         { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-1', content: 'value-1' }] },
-        { role: 'assistant', content: [{ type: 'tool_use', id: 'call-2', name: 'lookup', input: {} }] },
+        { role: 'assistant', content: [
+          { type: 'thinking', thinking: 'Fixture thought.', signature: 'fixture-sig-2' },
+          { type: 'redacted_thinking', data: 'fixture-redacted' },
+          { type: 'tool_use', id: 'call-2', name: 'lookup', input: {} },
+        ] },
         { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-2', content: 'value-2' }] },
       ],
     });
-    expect(JSON.stringify(bodies)).not.toMatch(/fixture-sig|fixture-redacted|Fixture thought/);
+    expect(JSON.stringify(bodies[2])).toMatch(/fixture-sig-1|fixture-redacted|Fixture thought/);
     expect(bodies[0]).not.toHaveProperty('thinking');
+  });
+
+  it('Anthropic rejects an unsigned completed thinking block without replaying it', async () => {
+    const bodies: unknown[] = [];
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return anthropicTool(bodies.length, false);
+    };
+    const client = new AnthropicMessagesClient({
+      baseURL: 'https://fixture.invalid',
+      fetch: fetchImpl,
+    });
+
+    await expect(appendToolRound(client, structuredClone(request.messages), 1))
+      .rejects.toMatchObject({
+        category: 'provider_failure',
+        diagnostics: {
+          providerMessage: 'Anthropic completed Thinking without a signature.',
+        },
+      });
+    expect(bodies).toHaveLength(1);
+    expect(JSON.stringify(bodies)).not.toContain('fixture-sig');
   });
 
   for (const Client of [OpenAIResponsesClient, CopilotRelayResponsesClient]) {

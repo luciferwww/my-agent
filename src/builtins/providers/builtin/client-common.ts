@@ -164,6 +164,19 @@ export function normalizeError(
   );
 }
 
+export function createInvalidRequestError(
+  request: ModelInvocationRequest,
+  providerMessage: string,
+  maxTokens?: number,
+): ModelInvocationError {
+  return new ModelInvocationError(
+    'invalid_request',
+    diagnostics(request, {
+      providerMessage: sanitize(providerMessage),
+    }, maxTokens),
+  );
+}
+
 export function createStreamError(
   payload: Record<string, unknown>,
   request: ModelInvocationRequest,

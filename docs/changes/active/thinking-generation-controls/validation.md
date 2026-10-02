@@ -93,7 +93,7 @@ verify:websocket-host。上述为后续验证计划，本次没有执行。
 | 文档准备 | Created；结构检查通过 | 文件/导航存在、链接、JSON、围栏、38项覆盖、空白检查 |
 | G0 Spec与Delivery接受 | Passed（2026-10-03） | 所有者接受Spec、确认TGC-P1，并授权继续至完整实施 |
 | 协议fixture准备 | Pending | 来源/版本、有效预算约束、请求/事件/工具续轮fixture；必要有界Spike结论 |
-| 各Plan Item聚焦验证 | TGC-P1、TGC-P2 Completed；TGC-P3 In Progress | 命令、执行结果、关联TGC及具体失败/限制 |
+| 各Plan Item聚焦验证 | TGC-P1–P3 Completed；TGC-P4 In Progress | 命令、执行结果、关联TGC及具体失败/限制 |
 | G1完整验收 | Not Started | 自动/浏览器/集成/构建证据、独立评审、文档同步与所有者接受 |
 
 文档结构检查、后续测试命令和Gate结果追加在本节，不将Pending改为Passed而没有证据。
@@ -169,3 +169,36 @@ TGC-01–05、TGC-26和TGC-33只取得P1结构/投影部分证据，矩阵仍保
 随后完整Unit重跑1318/1318通过。TGC-18–22、29–30及36–37取得P2范围证据；
 协议wire、Anthropic恢复和Web摘要仍由P3/P5完成，因此验收矩阵对应行继续保持Pending，
 没有把阶段结构测试冒充完整端到端验收。
+
+### 2026-10-03 TGC-P3 Built-in协议闭环
+
+实现范围：
+
+- Responses精确映射显式effort；仅配置`readableSummary`的模型在显式非none或独立on时请求
+  `summary=auto`。Chat Completions只映射`reasoning_effort`，两个协议的Default wire均不变。
+- Built-in逐模型校验私有summary及Anthropic adaptive/budget adapter；budget值、能力声明、
+  独立on和默认/等级预算在配置与Provider staging时一致，动态`max_tokens`冲突在fetch前失败。
+- Anthropic映射disabled/adaptive/enabled+budget_tokens，采集thinking/signature及
+  redacted_thinking为Provider replay；公开投影隐藏空redacted卡片。
+- Anthropic工具续轮按原顺序恢复thinking/signature/redacted；跨协议只过滤不兼容replay，
+  保留正文和Tool，并验证Anthropic→OpenAI→Anthropic不修改源消息。
+- 旧Spike中“Anthropic当前丢失Thinking”的候选结论已替换为生产行为断言：
+  有签名完整恢复，无签名完成块失败关闭。
+
+验证：
+
+| Gate | 结果 |
+|---|---|
+| P3聚焦测试 | Built-in配置/Provider/三Client/Collector/Transcript及replay Spike共119项通过 |
+| Unit | 111 files，1345/1345通过 |
+| Integration | 7 files，22/22通过 |
+| Type/lint | 根项目及两个Workspace通过 |
+| Build | TypeScript、Host build audit（354 files）通过 |
+| Relay验证 | 6 files，94/94通过 |
+| Fitness | 12 files、42项通过；仅FT-12的既有日期断言失败 |
+
+首次并行全量运行时，旧Anthropic Spike按预期因结论过期失败并已更新；同时进程Integration、
+process-tool及Fitness扫描出现负载型超时。之后Unit、Integration和Fitness分别独立重跑，
+前两者全过，Fitness只剩已记录的FT-12日期基线。未执行真实模型或产生费用。
+TGC-06–17、20、22及31取得P3范围证据；Relay和Web依赖项仍由P4/P5完成，
+矩阵对应行继续保持Pending，最终状态只在完整验收后更新。

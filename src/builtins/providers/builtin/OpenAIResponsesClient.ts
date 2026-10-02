@@ -14,6 +14,7 @@ import {
   asRecord,
   collectChat,
   createHttpError,
+  createInvalidRequestError,
   createStreamError,
   normalizeError,
   parseRecord,
@@ -26,7 +27,9 @@ import {
   type Terminal,
 } from './client-common.js';
 
-export type OpenAIResponsesClientOptions = ProtocolClientOptions;
+export type OpenAIResponsesClientOptions = ProtocolClientOptions & {
+  readonly readableSummaryModels?: readonly string[];
+};
 
 const RESPONSES_REASONING_REPLAY_FORMAT = 'openai-responses.reasoning-item.v1';
 
@@ -67,7 +70,11 @@ export class OpenAIResponsesClient implements ModelInvocationPort {
           accept: 'text/event-stream',
           ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
         },
-        body: JSON.stringify(buildRequest(request, this.options.baseURL)),
+        body: JSON.stringify(buildRequest(
+          request,
+          this.options.baseURL,
+          this.options.readableSummaryModels?.includes(request.model) === true,
+        )),
         signal: request.signal,
       });
       if (!response.ok) {
@@ -290,7 +297,9 @@ export class OpenAIResponsesClient implements ModelInvocationPort {
 function buildRequest(
   request: ModelInvocationRequest,
   connectionId: string,
+  readableSummary: boolean,
 ): Record<string, unknown> {
+  const reasoning = buildReasoningRequest(request, readableSummary);
   return {
     model: request.model,
     stream: true,
@@ -298,6 +307,7 @@ function buildRequest(
       ? {}
       : { max_output_tokens: request.outputTokenLimit }),
     ...(request.system ? { instructions: request.system } : {}),
+    ...(reasoning === undefined ? {} : { reasoning }),
     input: convertMessages(request.messages, connectionId),
     ...(request.tools?.length
       ? {
@@ -309,6 +319,37 @@ function buildRequest(
           })),
         }
       : {}),
+  };
+}
+
+function buildReasoningRequest(
+  request: ModelInvocationRequest,
+  readableSummary: boolean,
+): Record<string, string> | undefined {
+  const policy = request.reasoning;
+  if (!policy) return undefined;
+  if (policy.thinking === 'off') {
+    throw createInvalidRequestError(
+      request,
+      'OpenAI Responses does not support the requested Thinking switch.',
+    );
+  }
+  if (policy.thinking === 'on' && !readableSummary) {
+    throw createInvalidRequestError(
+      request,
+      'OpenAI Responses has no adapter for the requested Thinking switch.',
+    );
+  }
+  const explicitEffort = policy.effort === 'default' ? undefined : policy.effort;
+  const requestSummary = readableSummary
+    && (
+      policy.thinking === 'on'
+      || (explicitEffort !== undefined && explicitEffort !== 'none')
+    );
+  if (explicitEffort === undefined && !requestSummary) return undefined;
+  return {
+    ...(explicitEffort === undefined ? {} : { effort: explicitEffort }),
+    ...(requestSummary ? { summary: 'auto' } : {}),
   };
 }
 

@@ -14,6 +14,7 @@ import {
   asRecord,
   collectChat,
   createHttpError,
+  createInvalidRequestError,
   createStreamError,
   normalizeError,
   parseRecord,
@@ -241,6 +242,15 @@ function buildRequest(
   request: ModelInvocationRequest,
   connectionId: string,
 ): Record<string, unknown> {
+  if (request.reasoning?.thinking !== undefined) {
+    throw createInvalidRequestError(
+      request,
+      'OpenAI Chat Completions does not support the requested Thinking switch.',
+    );
+  }
+  const reasoningEffort = request.reasoning?.effort === 'default'
+    ? undefined
+    : request.reasoning?.effort;
   return {
     model: request.model,
     stream: true,
@@ -248,6 +258,7 @@ function buildRequest(
     ...(request.outputTokenLimit === undefined
       ? {}
       : { max_tokens: request.outputTokenLimit }),
+    ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort }),
     messages: [
       ...(request.system ? [{ role: 'system', content: request.system }] : []),
       ...convertMessages(request.messages, connectionId),
