@@ -32,6 +32,11 @@ export {
   projectThinkingText,
 } from './stream-collector.js';
 export {
+  normalizeReasoningPreference,
+  ReasoningPreferenceValidationError,
+} from './reasoning-policy.js';
+export type { NormalizedReasoningPreference } from './reasoning-policy.js';
+export {
   ContextOverflowError,
   ModelInvocationError,
   toModelInvocationError,

@@ -4,6 +4,10 @@ import { appendFile, rename, unlink, writeFile } from 'fs/promises';
 import { SessionDataError } from './store.js';
 import { withFileLock } from './lock.js';
 import type { CompactionRecord, TranscriptEntry, TranscriptState } from './types.js';
+import {
+  normalizeReasoningPreference,
+  ReasoningPreferenceValidationError,
+} from '../model-invocation/index.js';
 
 const TRANSCRIPT_RECORD_TYPES = new Set<string>([
   'message',
@@ -138,6 +142,21 @@ function assertTranscriptEntry(
             );
           }
           assertInvocation(value.invocation, entryId);
+        }
+        if (value.reasoning !== undefined) {
+          if (value.role !== 'user' || version !== 2) {
+            throw new SessionDataError(
+              `Session Transcript message "${entryId}" has invalid reasoning metadata.`,
+            );
+          }
+          try {
+            normalizeReasoningPreference(value.reasoning);
+          } catch (error) {
+            if (!(error instanceof ReasoningPreferenceValidationError)) throw error;
+            throw new SessionDataError(
+              `Session Transcript message "${entryId}" has invalid reasoning metadata.`,
+            );
+          }
         }
         if (typeof value.content === 'string') return;
         if (!Array.isArray(value.content)) {

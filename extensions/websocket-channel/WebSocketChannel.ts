@@ -18,6 +18,7 @@ import {
   type ExtensionLogger,
   type InboundContentBlock,
   type ModelCatalogSnapshot,
+  type ReasoningPreference,
   SessionPermissionMode,
   SessionPermissionState,
   type TurnInteractionResponse,
@@ -48,6 +49,7 @@ type ClientMessage =
       sessionId: string;
       message: string | InboundContentBlock[];
       modelReference?: ChannelRunRequest['modelReference'];
+      reasoning?: ReasoningPreference;
     }
   | {
       type: 'approval_resolve';
@@ -580,6 +582,7 @@ export class WebSocketChannel implements Channel {
           sessionId: readNonEmptyString(parsed.sessionId, 'sessionId'),
           message: readRunTurnMessage(parsed.message),
           modelReference: readOptionalModelReference(parsed.modelReference),
+          reasoning: readOptionalReasoningPreference(parsed.reasoning),
         };
       case 'approval_resolve': {
         const decision = parsed.decision;
@@ -723,7 +726,8 @@ export class WebSocketChannel implements Channel {
       clientId,
       sessionId: message.sessionId,
       message: message.message,
-      modelReference: message.modelReference,
+      ...(message.modelReference ? { modelReference: message.modelReference } : {}),
+      ...(message.reasoning ? { reasoning: message.reasoning } : {}),
     });
   }
 
@@ -1296,6 +1300,49 @@ function readOptionalModelReference(
   return {
     providerId: readNonEmptyString(value.providerId, 'modelReference.providerId'),
     modelId: readOpaqueModelId(value.modelId, 'modelReference.modelId'),
+  };
+}
+
+function readOptionalReasoningPreference(
+  value: unknown,
+): ReasoningPreference | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) {
+    throw new ProtocolError('INVALID_MESSAGE', 'reasoning must be an object.');
+  }
+  assertOnlyKeys(value, ['thinking', 'effort'], 'reasoning');
+  const thinking = value.thinking;
+  const effort = value.effort;
+  if (thinking !== undefined && thinking !== 'on' && thinking !== 'off') {
+    throw new ProtocolError('INVALID_MESSAGE', 'reasoning.thinking must be on or off.');
+  }
+  if (
+    effort !== undefined
+    && effort !== 'default'
+    && effort !== 'none'
+    && effort !== 'minimal'
+    && effort !== 'low'
+    && effort !== 'medium'
+    && effort !== 'high'
+    && effort !== 'xhigh'
+    && effort !== 'max'
+  ) {
+    throw new ProtocolError('INVALID_MESSAGE', 'reasoning.effort is not supported.');
+  }
+  if (thinking === 'on' && effort === 'none') {
+    throw new ProtocolError('INVALID_MESSAGE', 'reasoning on conflicts with effort none.');
+  }
+  if (
+    thinking === 'off'
+    && effort !== undefined
+    && effort !== 'default'
+    && effort !== 'none'
+  ) {
+    throw new ProtocolError('INVALID_MESSAGE', 'reasoning off conflicts with the effort.');
+  }
+  return {
+    ...(thinking === undefined ? {} : { thinking }),
+    ...(effort === undefined ? {} : { effort }),
   };
 }
 

@@ -10,7 +10,10 @@ import type {
 } from '../core/channel/index.js';
 import { ChannelOperationError } from '../core/channel/index.js';
 import type { ChatContentBlock, ChatMessage } from '../core/model-invocation/index.js';
-import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
+import type {
+  ProviderProjectionEntry,
+  ReasoningCapabilities,
+} from '../core/model-resolution/index.js';
 import type { RunParams, RunResult } from '../core/runner/types.js';
 import { SessionManager } from '../core/session/SessionManager.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
@@ -68,6 +71,71 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     expect(runnerRun).toHaveBeenCalledTimes(1);
     expect(runnerRun.mock.calls[0]?.[0]?.message).toBe('hello');
     assertNoAttachmentEvents(runtimeEvents, agentEvents);
+    await app.close();
+  });
+
+  it('normalizes and snapshots a supported reasoning preference before enqueue', async () => {
+    processInboundMock.mockResolvedValue({ normalized: 'reason', dropped: [] });
+    const { app, runnerRun, testChannel, agentEvents } = await buildApp(agentHome, {
+      reasoning: { thinking: ['on'], efforts: ['high'] },
+    });
+
+    const reasoning = { thinking: 'on', effort: 'high' } as const;
+    await testChannel.dispatch({
+      sessionId: 'main',
+      message: 'reason',
+      reasoning,
+      clientId: 'c1',
+    });
+
+    expect(runnerRun).toHaveBeenCalledWith(expect.objectContaining({
+      reasoningPreference: reasoning,
+      reasoningPolicy: reasoning,
+    }));
+    expect(agentEvents).toContainEqual(expect.objectContaining({
+      type: 'user_message',
+      reasoning,
+    }));
+    await app.close();
+  });
+
+  it.each([
+    { effrot: 'high' },
+    { thinking: 'on', effort: 'none' },
+    { thinking: 'off', effort: 'high' },
+  ])('rejects invalid reasoning before media processing and enqueue: %j', async (reasoning) => {
+    const { app, runnerRun, testChannel, agentEvents } = await buildApp(agentHome);
+
+    await expect(testChannel.dispatch({
+      sessionId: 'main',
+      message: 'invalid reasoning',
+      reasoning: reasoning as never,
+      clientId: 'c1',
+    })).rejects.toMatchObject({
+      name: 'ChannelOperationError',
+      code: 'REQUEST_INVALID',
+    });
+
+    expect(processInboundMock).not.toHaveBeenCalled();
+    expect(runnerRun).not.toHaveBeenCalled();
+    expect(agentEvents).toEqual([]);
+    await app.close();
+  });
+
+  it('rejects an unsupported explicit reasoning option before Runner execution', async () => {
+    processInboundMock.mockResolvedValue({ normalized: 'unsupported', dropped: [] });
+    const { app, runnerRun, testChannel } = await buildApp(agentHome, {
+      reasoning: { efforts: ['low'] },
+    });
+
+    await expect(testChannel.dispatch({
+      sessionId: 'main',
+      message: 'unsupported',
+      reasoning: { effort: 'high' },
+      clientId: 'c1',
+    })).rejects.toThrow('does not support the requested reasoning policy');
+
+    expect(runnerRun).not.toHaveBeenCalled();
     await app.close();
   });
 
@@ -893,6 +961,7 @@ async function buildApp(
     runnerRun?: ReturnType<typeof vi.fn>;
     useRealRunner?: boolean;
     mediaKinds?: readonly ['image'] | readonly [] | null;
+    reasoning?: ReasoningCapabilities | null;
   } = {},
 ): Promise<{
   app: RuntimeHandle;
@@ -933,7 +1002,20 @@ async function buildApp(
       return createTestProviderUnit({
         id: 'test',
         protocol: 'test',
-        models: [{ modelId: 'test-model' }, { modelId: 'other-model' }],
+        models: [
+          {
+            modelId: 'test-model',
+            ...(options.reasoning
+              ? { capabilities: { reasoning: options.reasoning } }
+              : {}),
+          },
+          {
+            modelId: 'other-model',
+            ...(options.reasoning
+              ? { capabilities: { reasoning: options.reasoning } }
+              : {}),
+          },
+        ],
         invocationPort,
         resolveConnection: () => ({ ok: true, connection: { endpointId: 'test' } }),
         resolveModel: (modelId, connection) => ({
@@ -949,6 +1031,7 @@ async function buildApp(
               ...(options.mediaKinds === null
                 ? {}
                 : { mediaKinds: options.mediaKinds ?? ['image'] }),
+              ...(options.reasoning ? { reasoning: options.reasoning } : {}),
             },
           },
         }),

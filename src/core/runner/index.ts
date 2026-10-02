@@ -18,6 +18,7 @@ export type {
   RunResult,
   AgentEvent,
   AttachmentSummary,
+  SteeringMessage,
   SteeringMessageSource,
   ToolResult,
 } from './types.js';

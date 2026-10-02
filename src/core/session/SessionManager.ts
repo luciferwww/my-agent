@@ -32,7 +32,11 @@ import type {
   TurnAbortedRecord,
   UpdateSessionInput,
 } from './types.js';
-import { projectThinkingText } from '../model-invocation/index.js';
+import {
+  normalizeReasoningPreference,
+  projectThinkingText,
+  type ReasoningPreference,
+} from '../model-invocation/index.js';
 
 const SESSIONS_DIR = 'sessions';
 const STORE_FILE = 'sessions.json';
@@ -54,6 +58,7 @@ export interface SessionMessageInput {
   role: 'user' | 'assistant' | 'toolResult';
   content: string | ContentBlock[];
   invocation?: import('../model-invocation/index.js').AssistantInvocation;
+  reasoning?: ReasoningPreference;
   abortMeta?: { partial: boolean; stopReason: 'aborted' };
   turnStopReason?: 'max_llm_calls';
 }
@@ -380,14 +385,23 @@ export class SessionManager {
     if (turnStopReason !== undefined && messagePayload.role !== 'assistant') {
       throw new TypeError('turnStopReason can only be set on an Assistant message.');
     }
+    if (messagePayload.reasoning !== undefined && messagePayload.role !== 'user') {
+      throw new TypeError('reasoning can only be set on a User message.');
+    }
+    const reasoning = messagePayload.reasoning === undefined
+      ? undefined
+      : normalizeReasoningPreference(messagePayload.reasoning).preference;
+    const normalizedMessagePayload = reasoning === undefined
+      ? messagePayload
+      : { ...messagePayload, reasoning };
 
     // Persist capped tool results so later history loads need no repeated trimming.
-    const persistedMessage = messagePayload.role === 'toolResult'
+    const persistedMessage = normalizedMessagePayload.role === 'toolResult'
       ? {
-          ...messagePayload,
-          content: this.capToolResults(messagePayload.content as ContentBlock[]),
+          ...normalizedMessagePayload,
+          content: this.capToolResults(normalizedMessagePayload.content as ContentBlock[]),
         }
-      : messagePayload;
+      : normalizedMessagePayload;
 
     const record: MessageRecord = {
       type: 'message',
@@ -399,10 +413,11 @@ export class SessionManager {
       message: persistedMessage,
     };
 
-    const requiresV2 = messagePayload.invocation !== undefined
+    const requiresV2 = normalizedMessagePayload.invocation !== undefined
+      || normalizedMessagePayload.reasoning !== undefined
       || (
-        Array.isArray(messagePayload.content)
-        && messagePayload.content.some((block) => block.type === 'thinking')
+        Array.isArray(normalizedMessagePayload.content)
+        && normalizedMessagePayload.content.some((block) => block.type === 'thinking')
       );
     if (state.version !== 2 && requiresV2) {
       const entries = [...state.byId.values()];
@@ -858,6 +873,9 @@ export class SessionManager {
       timestamp: record.timestamp,
       role: record.message.role,
       content,
+      ...(record.message.reasoning === undefined
+        ? {}
+        : { reasoning: record.message.reasoning }),
       ...(record.message.abortMeta === undefined ? {} : { abortMeta: record.message.abortMeta }),
     };
   }

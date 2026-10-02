@@ -338,6 +338,46 @@ describe('AgentRunner', () => {
       expect(result.toolRounds).toBe(0);
     });
 
+    it('passes one resolved reasoning policy to normal calls and persists the raw preference', async () => {
+      const requests: ModelInvocationRequest[] = [];
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(request) {
+          requests.push({
+            ...request,
+            messages: structuredClone(request.messages),
+          });
+          yield { type: 'message_start' };
+          yield {
+            type: 'message_end',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 1, outputTokens: 1 },
+          };
+        },
+        async chat() {
+          throw new Error('Not used.');
+        },
+      };
+      const runner = new AgentRunner({ llmClient, sessionManager });
+
+      await runner.run({
+        sessionId: MAIN_SESSION_ID,
+        message: 'reason',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'reasoning-turn',
+        reasoningPreference: { effort: 'high' },
+        reasoningPolicy: { effort: 'high' },
+      });
+
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.reasoning).toEqual({ effort: 'high' });
+      expect(requests[0]?.messages).toEqual([
+        { role: 'user', content: 'reason' },
+      ]);
+      expect(sessionManager.getMessages(MAIN_SESSION_ID)[0]?.message.reasoning)
+        .toEqual({ effort: 'high' });
+    });
+
     it('emits Thinking lifecycle events while removing replay state from RunResult', async () => {
       const llmClient: ModelInvocationPort = {
         async *chatStream(request) {
@@ -1042,7 +1082,11 @@ describe('AgentRunner', () => {
       const claimSteeringMessages = vi.fn(() => {
         if (injected) return [];
         injected = true;
-        return [{ role: 'user' as const, content: 'interrupt now' }];
+        return [{
+          role: 'user' as const,
+          content: 'interrupt now',
+          reasoning: { effort: 'high' as const },
+        }];
       });
 
       const result = await runner.run({
@@ -1061,6 +1105,10 @@ describe('AgentRunner', () => {
         role: 'user',
         origin: 'host',
       }));
+      expect(capturedCalls.flat().some((message) => 'reasoning' in message)).toBe(false);
+      expect(sessionManager.getMessages(MAIN_SESSION_ID)
+        .find(({ message }) => message.role === 'user' && message.content === 'interrupt now')
+        ?.message.reasoning).toEqual({ effort: 'high' });
       expect(claimSteeringMessages).toHaveBeenCalled();
     });
 
@@ -2025,7 +2073,7 @@ describe('AgentRunner', () => {
       await appendPersistedMessage(sessionManager, { role: 'user', content: 'recent question' });
       await appendPersistedMessage(sessionManager, { role: 'assistant', content: 'recent answer' });
 
-      const llmClient = createMockLLMClient([
+      const baseLlmClient = createMockLLMClient([
         [
           { type: 'message_start' },
           { type: 'text_delta', text: 'Condensed summary.' },
@@ -2037,6 +2085,17 @@ describe('AgentRunner', () => {
           { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 15, outputTokens: 5 } },
         ],
       ]);
+      const compactionRequests: ModelInvocationRequest[] = [];
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(request) {
+          compactionRequests.push({
+            ...request,
+            messages: structuredClone(request.messages),
+          });
+          yield* baseLlmClient.chatStream(request);
+        },
+        chat: baseLlmClient.chat.bind(baseLlmClient),
+      };
 
       const beforeHookEntered = createDeferred();
       const releaseBeforeHook = createDeferred();
@@ -2066,6 +2125,8 @@ describe('AgentRunner', () => {
         model: 'test',
         systemPrompt: '',
         turnId: 'test-turn',
+        reasoningPreference: { effort: 'high' },
+        reasoningPolicy: { effort: 'high' },
         contextWindowTokens: 120,
         compaction: {
           enabled: true,
@@ -2097,6 +2158,9 @@ describe('AgentRunner', () => {
       // compaction therefore sees four seeded messages, keeps the latest Turn,
       // and drops the first two without including the current prompt.
       expect(afterPayloads[0]?.droppedMessages).toBe(2);
+      expect(compactionRequests).toHaveLength(2);
+      expect(compactionRequests[0]).not.toHaveProperty('reasoning');
+      expect(compactionRequests[1]?.reasoning).toEqual({ effort: 'high' });
     });
 
     it('CH-11 uses persisted compaction history on the next turn', async () => {

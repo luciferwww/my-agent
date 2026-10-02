@@ -91,9 +91,9 @@ verify:websocket-host。上述为后续验证计划，本次没有执行。
 | Gate/记录 | 当前状态 | 需要的证据 |
 |---|---|---|
 | 文档准备 | Created；结构检查通过 | 文件/导航存在、链接、JSON、围栏、38项覆盖、空白检查 |
-| G0 Spec与首步Delivery接受 | Passed（2026-10-03） | 所有者明确接受Spec并仅授权TGC-P1；P2及以后未授权 |
+| G0 Spec与Delivery接受 | Passed（2026-10-03） | 所有者接受Spec、确认TGC-P1，并授权继续至完整实施 |
 | 协议fixture准备 | Pending | 来源/版本、有效预算约束、请求/事件/工具续轮fixture；必要有界Spike结论 |
-| 各Plan Item聚焦验证 | TGC-P1 Completed；P2–P5 Not Started | 命令、执行结果、关联TGC及具体失败/限制 |
+| 各Plan Item聚焦验证 | TGC-P1、TGC-P2 Completed；TGC-P3 In Progress | 命令、执行结果、关联TGC及具体失败/限制 |
 | G1完整验收 | Not Started | 自动/浏览器/集成/构建证据、独立评审、文档同步与所有者接受 |
 
 文档结构检查、后续测试命令和Gate结果追加在本节，不将Pending改为Passed而没有证据。
@@ -138,4 +138,34 @@ verify:websocket-host。上述为后续验证计划，本次没有执行。
 
 TGC-01–05、TGC-26和TGC-33只取得P1结构/投影部分证据，矩阵仍保持Pending；
 没有用类型测试冒充消息、wire、reload或UI验收。未运行真实模型请求。
-所有者于2026-10-03确认TGC-P1完成；该确认不授权TGC-P2或后续Plan Item。
+所有者于2026-10-03确认TGC-P1完成，随后授权继续至完整实施。
+
+### 2026-10-03 TGC-P2 消息与Turn链路
+
+实现范围：
+
+- Channel及WebSocket接受消息级`reasoning`，严格拒绝未知字段、非法类型和值及通用组合冲突；
+  Runtime intake重复执行同一校验，不信任Channel输入。
+- Queue同时冻结原始`ReasoningPreference`和执行用`ResolvedReasoningPolicy`；模型解析后按同一
+  Catalog事实拒绝不支持的显式选项，Default不要求模型发布能力。
+- Runner仅在正常模型调用携带resolved策略；Compaction保持省略。Steering只领取模型、媒体和
+  resolved策略均兼容的连续前缀，raw preference仅作为用户消息元数据持久化，不进入模型历史。
+- Transcript v2、Session reload、History和Fork保留原始选择，并区分省略、空对象和显式Default；
+  reasoning只允许出现在user message。
+
+验证：
+
+| Gate | 结果 |
+|---|---|
+| P2聚焦测试 | reasoning normalizer、Runtime intake/FIFO、Runner/Compaction、Session/reload/Fork及WebSocket共291项通过 |
+| Unit | 111 files，1318/1318通过 |
+| Integration | 7 files，22/22通过 |
+| Type/lint | 根项目及两个Workspace通过 |
+| Build | TypeScript、Host build audit（354 files）通过 |
+| Relay验证 | 6 files，94/94通过 |
+| Fitness | 12 files通过；FT-12的1项既有日期断言失败，与P1记录的基线相同 |
+
+首次Unit全量并行运行时`process-tool`日志等待测试超时；该文件单独重跑5/5通过，
+随后完整Unit重跑1318/1318通过。TGC-18–22、29–30及36–37取得P2范围证据；
+协议wire、Anthropic恢复和Web摘要仍由P3/P5完成，因此验收矩阵对应行继续保持Pending，
+没有把阶段结构测试冒充完整端到端验收。

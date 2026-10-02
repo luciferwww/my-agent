@@ -8,6 +8,7 @@ import type {
   ReasoningCapabilities,
 } from '../model-resolution/index.js';
 import type { AgentEvent } from '../runner/types.js';
+import type { ReasoningPreference } from '../model-invocation/index.js';
 import type { SessionErrorCode } from '../session/index.js';
 import type {
   SessionHistoryPage,
@@ -18,6 +19,7 @@ export type { ApprovalResult } from '../approval/index.js';
 
 export type ChannelOperationErrorCode =
   | 'ATTACHMENT_REJECTED'
+  | 'REQUEST_INVALID'
   | SessionErrorCode;
 
 export class ChannelOperationError extends Error {
@@ -46,6 +48,7 @@ export interface ChannelRunRequest {
   sessionId: string;
   message: string | InboundContentBlock[];
   modelReference?: ModelReference;
+  reasoning?: ReasoningPreference;
   clientId?: string;
 }
 

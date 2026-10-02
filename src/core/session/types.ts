@@ -6,6 +6,7 @@ import type {
   AssistantInvocation,
   ChatContentBlock,
   PresentationThinkingBlock,
+  ReasoningPreference,
 } from '../model-invocation/index.js';
 
 // Session metadata stored in sessions.json.
@@ -53,6 +54,7 @@ export interface MessageRecord extends TranscriptEntryBase {
     role: 'user' | 'assistant' | 'toolResult';
     content: string | ContentBlock[];
     invocation?: AssistantInvocation;
+    reasoning?: ReasoningPreference;
     /**
       * Abort metadata is persisted unchanged for diagnostics, auditing, and UI
       * rendering. AgentRunner.loadHistory() does not send it to the model; it
@@ -161,6 +163,7 @@ export interface SessionHistoryMessage {
   readonly timestamp: string;
   readonly role: MessageRecord['message']['role'];
   readonly content: string | readonly SessionHistoryContentBlock[];
+  readonly reasoning?: ReasoningPreference;
   readonly abortMeta?: MessageRecord['message']['abortMeta'];
 }
 

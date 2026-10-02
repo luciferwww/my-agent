@@ -1,11 +1,11 @@
 # Thinking Generation Controls Plan
 
-> Status: Accepted — TGC-P1 Delivery authorized
+> Status: Accepted — full Delivery authorized
 > Date: 2026-10-03
 > Owner: Project owner
 > Classification: Architecture Slice
-> Authorization: 所有者于2026-10-03接受Specification并批准TGC-P1；后续Plan Item未授权
-> Current phase: TGC-P1 类型与能力校验
+> Authorization: 所有者于2026-10-03接受Specification，确认TGC-P1，并批准继续至实施完毕
+> Current phase: TGC-P3 Built-in协议闭环
 
 ## 1. 目标与来源
 
@@ -18,8 +18,8 @@
 - [Development Workflow](../../../governance/development-workflow.md)：流程唯一权威。
 - [既有采集与展示交付](../../archive/thinking-capture-and-display/plan.md)：实现基线，不重做或改写归档结论。
 
-当前授权只覆盖TGC-P1。Plan接受不表示后续消息、协议、Session或Web实现获准，
-也不表示对应Gate已经通过。
+当前授权覆盖剩余Plan Item，但每步仍须满足自己的退出条件并提交后再进入下一步。
+Plan接受不表示对应Gate已经通过。
 
 ## 2. 范围与非目标
 
@@ -42,8 +42,8 @@
 |---|---|---|---|
 | TGC-P0 契约准备 | Completed | 建立Plan/Spec/验收；核实私有adapter配置及协议证据边界 | 文档校验通过；所有者已接受Spec并批准TGC-P1 |
 | TGC-P1 类型与能力校验 | Completed | Core类型及Extension导出；Provider Facts/Catalog/Runtime DTO；Built-in配置、深冻与静态一致性校验 | 聚焦、Unit、Integration、lint及build通过；所有者已确认完成 |
-| TGC-P2 消息与Turn链路 | Not Started | Channel/WebSocket入口、Runtime队列与解析、Runner正常调用与Steering；Session元数据及History | TGC-18–22、29–30、36–37相关测试通过；原始选择与resolved策略分离 |
-| TGC-P3 Built-in协议闭环 | Not Started | Responses/Chat映射与私有summary；Anthropic生成、事件与replay codec | TGC-06–17、20、22、31相关fixture/恢复测试通过，默认请求不变 |
+| TGC-P2 消息与Turn链路 | Completed | Channel/WebSocket入口、Runtime队列与解析、Runner正常调用与Steering；Session元数据及History | 原始选择与resolved策略分离；intake、不可变Turn、Steering、Compaction及恢复测试通过 |
+| TGC-P3 Built-in协议闭环 | In Progress | Responses/Chat映射与私有summary；Anthropic生成、事件与replay codec | TGC-06–17、20、22、31相关fixture/恢复测试通过，默认请求不变 |
 | TGC-P4 Relay双协议 | Not Started | discovery、私有模型绑定、独立Chat Client/Router、包发布清单及测试 | TGC-23–26、32、35相关测试通过；不导入Built-in私有模块 |
 | TGC-P5 Web与收口 | Not Started | 控件与摘要、切模型校验、实时/历史回归；同步当前契约与架构 | TGC-27–28、30、33–34、38通过，完整验收与最终Gate有证据 |
 
@@ -84,4 +84,5 @@ P1不把尚未完成codec的能力发布为可用；P3开始前固化Anthropic�
 
 ## 6. 当前状态
 
-Specification已接受，TGC-P1实现、验证及所有者确认完成；TGC-P2及以后未获授权。
+Specification已接受，TGC-P1和TGC-P2已实现并通过各自Gate；剩余Delivery已获授权，
+当前执行TGC-P3。

@@ -177,6 +177,7 @@ describe('WebSocketChannel', () => {
       sessionId: 'main',
       message: 'hello ws',
       modelReference: { providerId: 'test', modelId },
+      reasoning: { thinking: 'on', effort: 'high' },
     }));
 
     await vi.waitFor(() => {
@@ -185,6 +186,7 @@ describe('WebSocketChannel', () => {
         sessionId: 'main',
         message: 'hello ws',
         modelReference: { providerId: 'test', modelId },
+        reasoning: { thinking: 'on', effort: 'high' },
       });
     });
   });
@@ -324,6 +326,37 @@ describe('WebSocketChannel', () => {
       type: 'channel_error',
       code: 'INVALID_MESSAGE',
       message: 'maxLlmCalls is execution policy and is not accepted on run_turn.',
+    });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [null, 'reasoning must be an object.'],
+    [{ effrot: 'high' }, 'reasoning.effrot is not supported.'],
+    [{ thinking: true }, 'reasoning.thinking must be on or off.'],
+    [{ effort: 'ultra' }, 'reasoning.effort is not supported.'],
+    [{ thinking: 'on', effort: 'none' }, 'reasoning on conflicts with effort none.'],
+    [{ thinking: 'off', effort: 'high' }, 'reasoning off conflicts with the effort.'],
+  ])('rejects invalid reasoning policy %j', async (reasoning, message) => {
+    const handler = vi.fn(async () => undefined);
+    channel = createChannel({ port: 0 });
+    channel.onMessage(handler);
+    await channel.start();
+
+    const client = await connectClient(channel);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'client-1' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'client-1' });
+    client.send(JSON.stringify({
+      type: 'run_turn',
+      sessionId: 'main',
+      message: 'invalid reasoning',
+      reasoning,
+    }));
+
+    await expectMessage(client, {
+      type: 'channel_error',
+      code: 'INVALID_MESSAGE',
+      message,
     });
     expect(handler).not.toHaveBeenCalled();
   });

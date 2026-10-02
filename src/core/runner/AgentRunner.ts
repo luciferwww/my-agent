@@ -558,6 +558,9 @@ export class AgentRunner {
       turnId: params.turnId,
       role: 'user',
       content: params.message,
+      ...(params.reasoningPreference === undefined
+        ? {}
+        : { reasoning: params.reasoningPreference }),
     });
     messages = [...messages, { role: 'user', content: params.message }];
 
@@ -605,6 +608,9 @@ export class AgentRunner {
           system: params.systemPrompt,
           messages,
           tools: [...params.toolProjection.visibleDefinitions(params.toolPolicy)],
+          ...(params.reasoningPolicy === undefined
+            ? {}
+            : { reasoning: params.reasoningPolicy }),
         }, params.resolvedModel, params.signal);
 
         totalUsage = {
@@ -1188,6 +1194,7 @@ export class AgentRunner {
       system?: string;
       messages: ChatMessage[];
       tools?: ToolDefinition[];
+      reasoning?: import('../model-invocation/index.js').ResolvedReasoningPolicy;
     },
     resolvedModel: ResolvedModel,
     signal?: AbortSignal,
@@ -1215,6 +1222,7 @@ export class AgentRunner {
         ...(resolvedModel.invocationDefaults.outputTokenLimit === undefined
           ? {}
           : { outputTokenLimit: resolvedModel.invocationDefaults.outputTokenLimit }),
+        ...(params.reasoning === undefined ? {} : { reasoning: params.reasoning }),
         signal,
       })) {
         if (event.type === 'tool_call') {
@@ -1860,9 +1868,10 @@ export class AgentRunner {
     sessionKey: string,
     turnId: string,
     targetMessages: ChatMessage[],
-    injectedMessages: ChatMessage[],
+    injectedMessages: import('./types.js').SteeringMessage[],
   ): Promise<void> {
-    for (const message of injectedMessages) {
+    for (const injected of injectedMessages) {
+      const { reasoning, ...message } = injected;
       if (message.origin === 'host') {
         throw new TypeError('Trusted Host messages cannot enter through steering injection.');
       }
@@ -1871,6 +1880,7 @@ export class AgentRunner {
         turnId,
         role: message.role,
         content: message.content,
+        ...(reasoning === undefined ? {} : { reasoning }),
       });
     }
   }

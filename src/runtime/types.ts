@@ -4,6 +4,8 @@ import type { AgentConfigSnapshot } from '../platform/config/agent-config-loader
 import type {
   ChatContentBlock,
   PresentationContentBlock,
+  ReasoningPreference,
+  ResolvedReasoningPolicy,
   TokenUsage,
 } from '../core/model-invocation/index.js';
 import type { ModelReference } from '../core/model-resolution/index.js';
@@ -106,6 +108,8 @@ export interface RunTurnParams {
   sessionId: string;
   message: string | ChatContentBlock[];
   modelReference?: ModelReference;
+  reasoningPreference?: ReasoningPreference;
+  reasoningPolicy?: ResolvedReasoningPolicy;
   maxLlmCalls?: number;
   /** Root Channel Turns use full prompts. */
   promptMode: 'full' | 'minimal' | 'none';

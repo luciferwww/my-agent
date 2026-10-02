@@ -2,6 +2,8 @@ import type {
   ChatContentBlock,
   ChatMessage,
   PresentationContentBlock,
+  ReasoningPreference,
+  ResolvedReasoningPolicy,
   TokenUsage,
 } from '../model-invocation/index.js';
 import type { ResolvedModel } from '../model-resolution/index.js';
@@ -13,13 +15,17 @@ import type { CompactionConfig } from './compaction-config.js';
 
 export type { ToolResult };
 
+export interface SteeringMessage extends ChatMessage {
+  readonly reasoning?: ReasoningPreference;
+}
+
 export interface SteeringMessageSource {
-  claimReady(): ChatMessage[];
+  claimReady(): SteeringMessage[];
   waitUntilPotentiallyReady(signal: AbortSignal): Promise<void>;
 }
 export type SteeringMessagePreparer = (
-  messages: ChatMessage[],
-) => Promise<ChatMessage[]>;
+  messages: SteeringMessage[],
+) => Promise<SteeringMessage[]>;
 
 /**
  * Minimal context required to identify events during one run.
@@ -56,6 +62,10 @@ export interface RunParams {
   message: string | ChatContentBlock[];
   /** Model, invocation port, facts, and limits fixed for this Turn. */
   resolvedModel: ResolvedModel;
+  /** Original message-level selection, persisted on the user message when present. */
+  reasoningPreference?: ReasoningPreference;
+  /** Normalized policy fixed for this Turn and all of its normal Model calls. */
+  reasoningPolicy?: ResolvedReasoningPolicy;
   /** System prompt built by the caller through prompt-builder. */
   systemPrompt: string;
   /** Unique Turn ID generated and passed by RuntimeApp. */
@@ -150,6 +160,8 @@ export type AgentEvent =
       content: string;
       /** Attachment summaries, omitted when there are no attachments. */
       attachmentSummaries?: AttachmentSummary[];
+      /** Original structured generation policy submitted with this message. */
+      reasoning?: ReasoningPreference;
       /** WebSocket client ID, or null for CLI and library channels. */
       originClientId: string | null;
       /** ms since epoch */

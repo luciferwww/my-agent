@@ -91,6 +91,41 @@ describe('SessionManager transcript behavior', () => {
     });
   });
 
+  it('preserves omitted, empty, and explicit-default reasoning shapes in History and reload', async () => {
+    const sessionId = await materialize(manager, 'omitted');
+    await appendMessage(sessionId, {
+      role: 'user',
+      content: 'empty',
+      reasoning: {},
+    });
+    await appendMessage(sessionId, {
+      role: 'user',
+      content: 'explicit',
+      reasoning: { effort: 'default' },
+    });
+
+    const reloaded = new SessionManager(agentHome);
+    const messages = reloaded.getMessages(sessionId);
+    expect(messages.map((message) => message.message.reasoning)).toEqual([
+      undefined,
+      {},
+      { effort: 'default' },
+    ]);
+    expect(reloaded.getHistory({ sessionId }).items.map((message) => message.reasoning))
+      .toEqual([undefined, {}, { effort: 'default' }]);
+    expect(messages[0]?.message).not.toHaveProperty('reasoning');
+    expect(messages[1]?.message).toHaveProperty('reasoning');
+  });
+
+  it('rejects reasoning metadata on non-user messages', async () => {
+    const sessionId = await materialize();
+    await expect(appendMessage(sessionId, {
+      role: 'assistant',
+      content: 'invalid',
+      reasoning: { effort: 'high' },
+    } as never)).rejects.toThrow('reasoning can only be set on a User message');
+  });
+
   it('persists Provider replay state while projecting only safe Thinking history', async () => {
     const sessionId = await materialize();
     await appendMessage(sessionId, {

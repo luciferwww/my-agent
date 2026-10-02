@@ -1,18 +1,27 @@
 import { randomUUID } from 'node:crypto';
-import type { AgentEvent } from '../core/runner/index.js';
-import { toModelInvocationError } from '../core/model-invocation/index.js';
+import type { AgentEvent, SteeringMessage } from '../core/runner/index.js';
+import {
+  normalizeReasoningPreference,
+  ReasoningPreferenceValidationError,
+  toModelInvocationError,
+} from '../core/model-invocation/index.js';
 import type {
   ChatContentBlock,
   ChatMessage,
   ModelInvocationDiagnostics,
   ModelInvocationError,
+  ResolvedReasoningPolicy,
 } from '../core/model-invocation/index.js';
 import type {
   SessionEntry,
   SessionHistoryPage,
   SessionHistoryQuery,
 } from '../core/session/index.js';
-import type { ModelReference, ResolvedModel } from '../core/model-resolution/index.js';
+import type {
+  ModelReference,
+  ReasoningCapabilities,
+  ResolvedModel,
+} from '../core/model-resolution/index.js';
 import {
   ModelResolutionError,
   ModelResolver,
@@ -733,11 +742,23 @@ export class RuntimeApp {
     channel: ChannelRuntimeBinding,
     req: ChannelRunRequest,
   ): Promise<void> {
+    let normalizedReasoning;
+    try {
+      normalizedReasoning = normalizeReasoningPreference(req.reasoning);
+    } catch (error) {
+      if (!(error instanceof ReasoningPreferenceValidationError)) throw error;
+      throw new ChannelOperationError(
+        'REQUEST_INVALID',
+        'Inbound message contains an invalid reasoning preference.',
+        { cause: error },
+      );
+    }
     log.info('channel message received', {
       channelId: channel.id,
       clientId: req.clientId,
       sessionKey: req.sessionId,
       hasModelOverride: req.modelReference !== undefined,
+      hasReasoningOverride: normalizedReasoning.preference !== undefined,
       messageChars: typeof req.message === 'string' ? req.message.length : undefined,
       attachmentCount: Array.isArray(req.message) ? req.message.length : 0,
     });
@@ -765,6 +786,10 @@ export class RuntimeApp {
       ...(req.modelReference
         ? { modelReference: normalizeModelReference(req.modelReference) }
         : {}),
+      ...(normalizedReasoning.preference === undefined
+        ? {}
+        : { reasoningPreference: normalizedReasoning.preference }),
+      reasoningPolicy: normalizedReasoning.policy,
       routeContext: this.buildMessageRouteContext(channel, req),
       originMessageId: messageId,
     };
@@ -776,6 +801,9 @@ export class RuntimeApp {
       messageId,
       content: broadcastText,
       attachmentSummaries: attachmentSummaries.length ? attachmentSummaries : undefined,
+      ...(normalizedReasoning.preference === undefined
+        ? {}
+        : { reasoning: normalizedReasoning.preference }),
       originClientId: req.clientId ?? null,
       timestamp: Date.now(),
     });
@@ -904,6 +932,8 @@ export class RuntimeApp {
         message: item.message,
         promptMode: 'full',
         modelReference: item.modelReference,
+        reasoningPreference: item.reasoningPreference,
+        reasoningPolicy: item.reasoningPolicy,
         turnId,
         originMessageId: item.originMessageId,
       });
@@ -1391,6 +1421,14 @@ export class RuntimeApp {
         },
         policy: {},
       });
+      const normalizedReasoning = normalizeReasoningPreference(params.reasoningPreference);
+      const reasoningPolicy = params.reasoningPolicy ?? normalizedReasoning.policy;
+      if (!supportsReasoningPolicy(reasoningPolicy, resolvedModel.facts.reasoning)) {
+        throw new ModelResolutionError(
+          'capability_unsupported',
+          'The selected model does not support the requested reasoning policy.',
+        );
+      }
 
       const systemPrompt = this.resources.systemPromptBuilder.build(
         buildSystemPromptParams({
@@ -1438,6 +1476,10 @@ export class RuntimeApp {
         sessionId: params.sessionId,
         message: runnerMessage,
         resolvedModel,
+        ...(normalizedReasoning.preference === undefined
+          ? {}
+          : { reasoningPreference: normalizedReasoning.preference }),
+        reasoningPolicy,
         systemPrompt,
         turnId: params.turnId,
         toolProjection: snapshot.tools,
@@ -1454,11 +1496,12 @@ export class RuntimeApp {
                   params.sessionId,
                   params.turnId,
                   resolvedModel,
+                  reasoningPolicy,
                 ),
                 waitUntilPotentiallyReady: (signal: AbortSignal) =>
                   this.waitUntilSteeringPotentiallyReady(params.sessionId, signal),
               },
-              prepareSteeringMessages: async (messages: ChatMessage[]) =>
+              prepareSteeringMessages: async (messages: SteeringMessage[]) =>
                 Promise.all(messages.map(async (message) => ({
                   ...message,
                   content: await this.prepareUserMessage(message.content),
@@ -1515,14 +1558,15 @@ export class RuntimeApp {
     sessionKey: string,
     turnId: string,
     resolvedModel: ResolvedModel,
-  ): ChatMessage[] {
+    reasoningPolicy: ResolvedReasoningPolicy,
+  ): SteeringMessage[] {
     const queue = this.messageQueueBySession.get(sessionKey);
     if (!queue || queue.length === 0) return [];
 
     let claimCount = 0;
     while (
       claimCount < queue.length
-      && this.isSteeringCompatible(queue[claimCount]!, resolvedModel)
+      && this.isSteeringCompatible(queue[claimCount]!, resolvedModel, reasoningPolicy)
     ) {
       claimCount++;
     }
@@ -1554,6 +1598,9 @@ export class RuntimeApp {
     return claimed.map((item) => ({
       role: 'user',
       content: item.message,
+      ...(item.reasoningPreference === undefined
+        ? {}
+        : { reasoning: item.reasoningPreference }),
     }));
   }
 
@@ -1597,6 +1644,7 @@ export class RuntimeApp {
   private isSteeringCompatible(
     item: QueuedUserMessage,
     resolvedModel: ResolvedModel,
+    reasoningPolicy: ResolvedReasoningPolicy,
   ): boolean {
     if (
       item.modelReference
@@ -1604,6 +1652,12 @@ export class RuntimeApp {
         item.modelReference.providerId !== resolvedModel.identity.providerId
         || item.modelReference.modelId !== resolvedModel.identity.modelId
       )
+    ) {
+      return false;
+    }
+    if (
+      item.reasoningPolicy.thinking !== reasoningPolicy.thinking
+      || item.reasoningPolicy.effort !== reasoningPolicy.effort
     ) {
       return false;
     }
@@ -1704,6 +1758,20 @@ export class RuntimeApp {
   private emit(event: RuntimeEvent): void {
     this.onEvent?.(event);
   }
+}
+
+function supportsReasoningPolicy(
+  policy: ResolvedReasoningPolicy,
+  capabilities: ReasoningCapabilities | undefined,
+): boolean {
+  if (
+    policy.thinking !== undefined
+    && !capabilities?.thinking?.includes(policy.thinking)
+  ) {
+    return false;
+  }
+  return policy.effort === 'default'
+    || capabilities?.efforts?.includes(policy.effort) === true;
 }
 
 function freezeShutdownReport(report: RuntimeShutdownReport): RuntimeShutdownReport {

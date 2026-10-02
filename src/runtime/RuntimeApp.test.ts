@@ -12,7 +12,11 @@ import type {
   ChannelRunRequest,
   ChannelRuntimeCapabilities,
 } from '../core/channel/index.js';
-import type { AgentEvent, BeforeToolCallHook } from '../core/runner/index.js';
+import type {
+  AgentEvent,
+  BeforeToolCallHook,
+  SteeringMessage,
+} from '../core/runner/index.js';
 import type { RunParams, RunResult } from '../core/runner/types.js';
 import type { Tool } from '../core/tools/types.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
@@ -1802,13 +1806,13 @@ describe('RuntimeApp', () => {
   });
 
   it('wakes an active Turn before it claims busy-session FIFO input', async () => {
-    let drainedSteering: ChatMessage[] = [];
+    let drainedSteering: SteeringMessage[] = [];
     const runnerRun = vi.fn(async (params: {
       steeringSource?: {
-        claimReady(): ChatMessage[];
+        claimReady(): SteeringMessage[];
         waitUntilPotentiallyReady(signal: AbortSignal): Promise<void>;
       };
-      prepareSteeringMessages?: (messages: ChatMessage[]) => Promise<ChatMessage[]>;
+      prepareSteeringMessages?: (messages: SteeringMessage[]) => Promise<SteeringMessage[]>;
     }): Promise<RunResult> => {
       await params.steeringSource?.waitUntilPotentiallyReady(new AbortController().signal);
       const claimed = params.steeringSource?.claimReady() ?? [];
@@ -1846,6 +1850,7 @@ describe('RuntimeApp', () => {
     const firstDispatch = testChannel.dispatch({
       sessionId: 'main',
       message: 'first',
+      reasoning: { effort: 'high' },
       clientId: 'client-1',
     });
 
@@ -1856,6 +1861,7 @@ describe('RuntimeApp', () => {
     const steeringDispatch = testChannel.dispatch({
       sessionId: 'main',
       message: 'steer now',
+      reasoning: { effort: 'high' },
       clientId: 'client-2',
     });
 
@@ -1868,8 +1874,71 @@ describe('RuntimeApp', () => {
       {
         role: 'user',
         content: 'steer now',
+        reasoning: { effort: 'high' },
       },
     ]);
+  });
+
+  it('keeps a different reasoning policy in FIFO for the next Turn', async () => {
+    const firstClaims: SteeringMessage[][] = [];
+    const makeResult = (text: string): RunResult => ({
+      text,
+      content: [{ type: 'text', text }],
+      stopReason: 'end_turn',
+      usage: { inputTokens: 1, outputTokens: 1 },
+      toolRounds: 0,
+    });
+    let runIndex = 0;
+    const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      const currentRun = runIndex++;
+      if (currentRun === 0) {
+        await params.steeringSource?.waitUntilPotentiallyReady(
+          new AbortController().signal,
+        );
+        firstClaims.push(params.steeringSource?.claimReady() ?? []);
+      }
+      return makeResult(currentRun === 0 ? 'first' : 'second');
+    });
+
+    const testChannel = createTestChannel('reasoning-fifo-test');
+    const app = await RuntimeApp.create({
+      agentHome: agentHome,
+      loadedUnits: [testChannel.unit],
+      applicationConfig: {
+        ...testApplicationConfig(),
+        runtime: { steeringEnabled: true },
+      },
+      cliOverrides: { memory: { enabled: false } },
+      dependencies: createTestDependencies({
+        createAgentRunner: () => ({ run: runnerRun } as never),
+        createMemoryManager: async () => null,
+      }),
+    });
+
+    const firstDispatch = testChannel.dispatch({
+      sessionId: 'main',
+      message: 'first',
+      reasoning: { effort: 'high' },
+      clientId: 'client-1',
+    });
+    await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(1));
+
+    await testChannel.dispatch({
+      sessionId: 'main',
+      message: 'second',
+      reasoning: { effort: 'low' },
+      clientId: 'client-2',
+    });
+    await firstDispatch;
+    await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(2));
+
+    expect(firstClaims).toEqual([[]]);
+    expect(runnerRun.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+      message: 'second',
+      reasoningPreference: { effort: 'low' },
+      reasoningPolicy: { effort: 'low' },
+    }));
+    await app.close();
   });
 
   it('CH-06 keeps queued turn approval pending past 120 seconds and closes it on Turn abort', async () => {

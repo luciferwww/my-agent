@@ -148,19 +148,23 @@ describe('SessionManager lifecycle persistence', () => {
       content: 'reply',
     })).id;
 
-    await manager.appendMessage(sourceId, {
+    const laterMessageId = (await manager.appendMessage(sourceId, {
       turnId: 'turn-later',
       role: 'user',
       content: 'later',
-    });
+      reasoning: { effort: 'high' },
+    })).id;
 
-    const fork = await manager.forkSession(sourceId, secondMessageId);
+    const fork = await manager.forkSession(sourceId, laterMessageId);
 
     expect(fork).toMatchObject({ forkedFromSessionId: sourceId, title: 'Source' });
     expect(manager.getMessages(fork.sessionId).map((message) => message.message.content)).toEqual([
       'hello',
       'reply',
+      'later',
     ]);
+    expect(manager.getMessages(fork.sessionId).at(-1)?.message.reasoning)
+      .toEqual({ effort: 'high' });
     await expect(manager.deleteSession(sourceId)).rejects.toMatchObject({
       code: 'SESSION_HAS_DESCENDANTS',
     });
