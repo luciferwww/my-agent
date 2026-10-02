@@ -56,6 +56,11 @@ export class RuntimeDeadlineBudget {
     if (this.remaining() <= 0) return Promise.resolve({ outcome: 'deadline-exhausted' });
     return this.driver.race(operation, this.absoluteDeadline);
   }
+
+  raceRemainingLazy<T>(operation: () => Promise<T>): Promise<RuntimeDeadlineRaceResult<T>> {
+    if (this.remaining() <= 0) return Promise.resolve({ outcome: 'deadline-exhausted' });
+    return this.driver.race(operation(), this.absoluteDeadline);
+  }
 }
 
 export function resolveRuntimeDeadlinePolicy(

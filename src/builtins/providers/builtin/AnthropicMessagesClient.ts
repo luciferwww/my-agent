@@ -6,6 +6,7 @@ import type {
   ModelInvocationResponse,
   ModelStreamEvent,
 } from '../../../core/model-invocation/index.js';
+import { renderExecutionAcceptedReceipt } from '../../../core/model-invocation/index.js';
 import type { ToolCall } from '../../../core/tools/index.js';
 import { DEFAULT_ANTHROPIC_MAX_TOKENS } from './config.js';
 import {
@@ -187,13 +188,23 @@ function buildRequest(
 
 function convertMessages(messages: readonly ChatMessage[]): unknown[] {
   return messages.map((message) => ({
-    role: message.role,
+    role: message.origin === 'host' ? 'user' : message.role,
     content: typeof message.content === 'string'
       ? message.content
       : message.content.map((block) => {
           if (block.type === 'image') return { type: 'image', source: block.source };
           if (block.type === 'tool_result') {
             return { type: 'tool_result', tool_use_id: block.tool_use_id, content: block.content };
+          }
+          if (block.type === 'execution_accepted') {
+            return {
+              type: 'tool_result',
+              tool_use_id: block.tool_use_id,
+              content: renderExecutionAcceptedReceipt({
+                executionId: block.execution_id,
+                status: 'accepted',
+              }),
+            };
           }
           return block;
         }),

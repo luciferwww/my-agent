@@ -18,6 +18,7 @@ export interface OutputChunk {
 
 export interface ProcessRecord {
   runId: string;
+  sessionId: string;
   command: string;
   cwd: string;
   env: Record<string, string>;
@@ -33,8 +34,9 @@ export interface ProcessRecord {
   chunks: OutputChunk[];
   output: string;
   errorMessage?: string;
-  child?: ChildProcess;
+  child?: Pick<ChildProcess, 'kill'>;
   yielded?: boolean;
+  outputTruncated?: boolean;
 }
 
 export interface ExecToolInput {

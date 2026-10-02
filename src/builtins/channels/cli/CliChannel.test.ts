@@ -600,6 +600,7 @@ describe('CliChannel approval lifecycle', () => {
     const request = {
       id: 'approval-1',
       kind: 'approval' as const,
+      callId: 'call-1',
       toolName: 'write_file',
       input: {},
       sessionId: 'main',

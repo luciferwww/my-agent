@@ -90,6 +90,154 @@ describe('SessionManager transcript behavior', () => {
     });
   });
 
+  it('rejects max_llm_calls metadata on a non-Assistant message before persistence', async () => {
+    const sessionId = await materialize();
+
+    await expect(manager.appendMessage(sessionId, {
+      turnId: 'test-turn',
+      role: 'user',
+      content: 'continue',
+      turnStopReason: 'max_llm_calls',
+    })).rejects.toThrow('turnStopReason can only be set on an Assistant message');
+
+    expect(manager.getMessages(sessionId)).toHaveLength(1);
+  });
+
+  it('persists async Tool lifecycle facts idempotently across reload', async () => {
+    const sessionId = await materialize();
+    const accepted = {
+      turnId: 'test-turn',
+      callId: 'call-1',
+      executionId: 'execution-1',
+      toolName: 'demo',
+    };
+
+    const [firstAcceptedId, duplicateAcceptedId] = await Promise.all([
+      manager.appendToolExecutionAccepted(sessionId, accepted),
+      manager.appendToolExecutionAccepted(sessionId, accepted),
+    ]);
+    expect(duplicateAcceptedId).toBe(firstAcceptedId);
+
+    const terminal = {
+      executionId: 'execution-1',
+      outcome: 'success' as const,
+      content: 'done',
+    };
+    const firstTerminalId = await manager.appendToolExecutionTerminal(sessionId, terminal);
+    const duplicateTerminalId = await manager.appendToolExecutionTerminal(sessionId, terminal);
+    expect(duplicateTerminalId).toBe(firstTerminalId);
+
+    const completion = {
+      turnId: 'test-turn',
+      completion: {
+        executionId: 'execution-1',
+        toolName: 'demo',
+        status: 'success' as const,
+        content: 'done',
+      },
+    };
+    const firstCompletionId = await manager.appendHostTaskCompletion(sessionId, completion);
+    const duplicateCompletionId = await manager.appendHostTaskCompletion(sessionId, completion);
+    expect(duplicateCompletionId).toBe(firstCompletionId);
+
+    const firstAbortedId = await manager.appendTurnAborted(sessionId, 'aborted-turn');
+    const duplicateAbortedId = await manager.appendTurnAborted(sessionId, 'aborted-turn');
+    expect(duplicateAbortedId).toBe(firstAbortedId);
+
+    const reloaded = new SessionManager(agentHome);
+    expect(reloaded.getAsyncToolRecords(sessionId)).toEqual([
+      expect.objectContaining({ type: 'tool_execution_accepted', executionId: 'execution-1' }),
+      expect.objectContaining({ type: 'tool_execution_terminal', outcome: 'success' }),
+      expect.objectContaining({
+        type: 'host_task_completion',
+        completion: expect.objectContaining({ status: 'success' }),
+      }),
+      expect.objectContaining({ type: 'turn_aborted', turnId: 'aborted-turn' }),
+    ]);
+  });
+
+  it('fails closed on missing or conflicting async Tool lifecycle facts', async () => {
+    const sessionId = await materialize();
+
+    await expect(manager.appendToolExecutionTerminal(sessionId, {
+      executionId: 'execution-1',
+      outcome: 'failed',
+      content: 'failed',
+    })).rejects.toMatchObject({ code: 'SESSION_DATA_INVALID' });
+
+    await manager.appendToolExecutionAccepted(sessionId, {
+      turnId: 'test-turn',
+      callId: 'call-1',
+      executionId: 'execution-1',
+      toolName: 'demo',
+    });
+    await expect(manager.appendToolExecutionAccepted(sessionId, {
+      turnId: 'test-turn',
+      callId: 'call-2',
+      executionId: 'execution-1',
+      toolName: 'other',
+    })).rejects.toMatchObject({ code: 'SESSION_DATA_INVALID' });
+
+    await manager.appendToolExecutionTerminal(sessionId, {
+      executionId: 'execution-1',
+      outcome: 'success',
+      content: 'done',
+    });
+    await expect(manager.appendToolExecutionTerminal(sessionId, {
+      executionId: 'execution-1',
+      outcome: 'failed',
+      content: 'different',
+    })).rejects.toMatchObject({ code: 'SESSION_DATA_INVALID' });
+
+    await expect(manager.appendHostTaskCompletion(sessionId, {
+      turnId: 'test-turn',
+      completion: {
+        executionId: 'execution-1',
+        toolName: 'other',
+        status: 'success',
+        content: 'done',
+      },
+    })).rejects.toMatchObject({ code: 'SESSION_DATA_INVALID' });
+
+    expect(manager.getAsyncToolRecords(sessionId)).toHaveLength(2);
+  });
+
+  it('maps outcome_unknown only to an aborted Host completion', async () => {
+    const sessionId = await materialize();
+    await manager.appendToolExecutionAccepted(sessionId, {
+      turnId: 'test-turn',
+      callId: 'call-1',
+      executionId: 'execution-1',
+      toolName: 'demo',
+    });
+    await manager.appendToolExecutionTerminal(sessionId, {
+      executionId: 'execution-1',
+      outcome: 'outcome_unknown',
+      reason: 'host_recovery',
+      content: 'Supervision was lost.',
+    });
+
+    await expect(manager.appendHostTaskCompletion(sessionId, {
+      turnId: 'test-turn',
+      completion: {
+        executionId: 'execution-1',
+        toolName: 'demo',
+        status: 'failed',
+        content: 'Supervision was lost.',
+      },
+    })).rejects.toMatchObject({ code: 'SESSION_DATA_INVALID' });
+
+    await expect(manager.appendHostTaskCompletion(sessionId, {
+      turnId: 'test-turn',
+      completion: {
+        executionId: 'execution-1',
+        toolName: 'demo',
+        status: 'aborted',
+        content: 'Supervision was lost.',
+      },
+    })).resolves.toEqual(expect.any(String));
+  });
+
   it('moves the active leaf to form an alternate branch', async () => {
     const sessionId = await materialize(manager, 'shared');
     const sharedId = manager.getMessages(sessionId)[0]!.id;
@@ -201,7 +349,12 @@ describe('SessionManager transcript behavior', () => {
     const longContent = 'A'.repeat(50_000);
     const messageId = await appendMessage(sessionId, {
       role: 'toolResult',
-      content: [{ type: 'tool_result', tool_use_id: 'tool', content: longContent }],
+      content: [{
+        type: 'tool_result',
+        tool_use_id: 'tool',
+        content: longContent,
+        status: 'success',
+      }],
     });
 
     const record = new SessionManager(agentHome)
@@ -222,7 +375,12 @@ describe('SessionManager transcript behavior', () => {
     await appendMessage(sessionId, {
       role: 'toolResult',
       content: [
-        { type: 'tool_result', tool_use_id: 'tool', content: longContent },
+        {
+          type: 'tool_result',
+          tool_use_id: 'tool',
+          content: longContent,
+          status: 'success',
+        },
         { type: 'text', text: longText },
       ],
     }, capped);
@@ -245,7 +403,7 @@ describe('SessionManager transcript behavior', () => {
     const content = 'X'.repeat(150);
     await appendMessage(sessionId, {
       role: 'toolResult',
-      content: [{ type: 'tool_result', tool_use_id: 'tool', content }],
+      content: [{ type: 'tool_result', tool_use_id: 'tool', content, status: 'success' }],
     }, capped);
 
     const block = new SessionManager(agentHome).getMessages(sessionId).at(-1)!

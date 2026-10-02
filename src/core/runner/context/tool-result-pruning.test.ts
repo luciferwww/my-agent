@@ -6,7 +6,12 @@ import { pruneToolResults, type PruneInfo } from './tool-result-pruning.js';
 function makeToolResultMessage(content: string, toolUseId = 'tu_1'): ChatMessage {
   return {
     role: 'user',
-    content: [{ type: 'tool_result', tool_use_id: toolUseId, content }],
+    content: [{
+      type: 'tool_result',
+      tool_use_id: toolUseId,
+      content,
+      status: 'success',
+    }],
   };
 }
 

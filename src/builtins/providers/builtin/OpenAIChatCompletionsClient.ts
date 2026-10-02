@@ -5,6 +5,7 @@ import type {
   ModelInvocationResponse,
   ModelStreamEvent,
 } from '../../../core/model-invocation/index.js';
+import { renderExecutionAcceptedReceipt } from '../../../core/model-invocation/index.js';
 import type { ToolCall } from '../../../core/tools/index.js';
 import {
   asRecord,
@@ -182,15 +183,16 @@ function buildRequest(request: ModelInvocationRequest): Record<string, unknown> 
 function convertMessages(messages: readonly ChatMessage[]): unknown[] {
   const output: unknown[] = [];
   for (const message of messages) {
+    const wireRole = message.origin === 'host' ? 'user' : message.role;
     if (typeof message.content === 'string') {
-      output.push({ role: message.role, content: message.content });
+      output.push({ role: wireRole, content: message.content });
       continue;
     }
     let content: unknown[] = [];
     const toolCalls: unknown[] = [];
     const flushContent = (): void => {
       if (!content.length) return;
-      output.push({ role: message.role, content });
+      output.push({ role: wireRole, content });
       content = [];
     };
     for (const block of message.content) {
@@ -207,9 +209,19 @@ function convertMessages(messages: readonly ChatMessage[]): unknown[] {
           type: 'function',
           function: { name: block.name, arguments: JSON.stringify(block.input) },
         });
-      } else {
+      } else if (block.type === 'tool_result') {
         flushContent();
         output.push({ role: 'tool', tool_call_id: block.tool_use_id, content: block.content });
+      } else {
+        flushContent();
+        output.push({
+          role: 'tool',
+          tool_call_id: block.tool_use_id,
+          content: renderExecutionAcceptedReceipt({
+            executionId: block.execution_id,
+            status: 'accepted',
+          }),
+        });
       }
     }
     if (toolCalls.length) {

@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-14
+> Verified: 2026-10-01
 > Authority: Stable approval lifecycle contract
 
 ## Scope
@@ -23,7 +23,7 @@ type ApprovalResult =
 
 Only `approved` authorizes execution. `source: 'session_allow_all'` records policy authorization and must not be represented as a user review of the specific Tool input. Every other outcome fails closed and retains its own classification; Abort or unavailability is not represented as user denial.
 
-`approval_requested` carries no timeout. A non-user terminal outcome sends:
+`approval_requested` carries the canonical Tool `callId` and no timeout. Clients attach the interaction to that exact Tool card; they do not infer association by Tool name or latest pending position. A non-user terminal outcome sends:
 
 ```ts
 { type: 'approval_closed'; id: string; outcome: 'approved' | 'aborted' | 'unavailable' | 'failed'; reason: string }
@@ -56,6 +56,7 @@ Root and Child executions read the root live Session mode at every Tool authoriz
 - Closure notification failure is contained after Promise settlement.
 - A same-client socket replacement preserves the logical client route; a stale socket cannot decide, while loss of the current socket produces `origin_disconnected`.
 - Tool-name deny remains final in both Session modes and never creates an approval request.
+- Pending-count, composer gating, decision controls, and disconnect cleanup operate on the inline approval attached to the correlated Tool Call.
 
 ## Failure mapping
 

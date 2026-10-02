@@ -6,7 +6,10 @@ import type {
   ProcessRecord,
   TerminalProcessStatus,
 } from './exec-types.js';
-import { processRegistry } from './process-registry.js';
+import {
+  ProcessRegistryCapacityError,
+  processRegistry,
+} from './process-registry.js';
 import { runCommand } from './run-command.js';
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
@@ -58,9 +61,11 @@ function buildManagedRecord(
   request: NormalizedExecRequest,
   runId: string,
   visibility: ProcessRecord['visibility'],
+  sessionId: string,
 ): ProcessRecord {
   return {
     runId,
+    sessionId,
     command: request.command,
     cwd: request.cwd,
     env: request.env,
@@ -138,8 +143,15 @@ function normalizeExecRequest(params: Record<string, unknown>, defaultCwd: strin
   };
 }
 
-function startManagedCommand(request: NormalizedExecRequest, runId: string, visibility: ProcessRecord['visibility'], signal?: AbortSignal) {
-  processRegistry.create(buildManagedRecord(request, runId, visibility));
+function startManagedCommand(
+  request: NormalizedExecRequest,
+  runId: string,
+  visibility: ProcessRecord['visibility'],
+  sessionId: string,
+  reportActivity: () => void,
+  signal?: AbortSignal,
+) {
+  processRegistry.create(buildManagedRecord(request, runId, visibility, sessionId));
 
   let childRef: ReturnType<typeof runCommand>['child'] | undefined;
   const running = runCommand({
@@ -150,9 +162,11 @@ function startManagedCommand(request: NormalizedExecRequest, runId: string, visi
     detached: process.platform !== 'win32',
     signal,
     onStdout: (chunk) => {
+      reportActivity();
       processRegistry.appendOutput(runId, chunk);
     },
     onStderr: (chunk) => {
+      reportActivity();
       processRegistry.appendOutput(runId, chunk);
     },
     onSpawn: (pid) => {
@@ -174,6 +188,7 @@ function startManagedCommand(request: NormalizedExecRequest, runId: string, visi
   });
 
   childRef = running.child;
+  processRegistry.setChild(runId, running.child);
 
   return running;
 }
@@ -238,6 +253,8 @@ export function createExecTool(agentHome: string): Tool {
         env: request.env,
         timeoutMs: request.timeoutMs,
         signal: context.signal,
+        onStdout: context.reportActivity,
+        onStderr: context.reportActivity,
       });
       const outcome = await running.completion;
       return mapForegroundStatusToToolResult(
@@ -251,11 +268,34 @@ export function createExecTool(agentHome: string): Tool {
 
     const runId = createRunId();
     const visibility = request.mode === 'background' ? 'background' : 'internal';
-    const running = startManagedCommand(request, runId, visibility, context.signal);
+    const handoffController = new AbortController();
+    const onParentAbort = () => handoffController.abort(context.signal.reason);
+    if (request.mode !== 'background') {
+      if (context.signal.aborted) onParentAbort();
+      else context.signal.addEventListener('abort', onParentAbort, { once: true });
+    }
+    let running: ReturnType<typeof startManagedCommand>;
+    try {
+      running = startManagedCommand(
+        request,
+        runId,
+        visibility,
+        context.sessionId,
+        context.reportActivity,
+        request.mode === 'background' ? undefined : handoffController.signal,
+      );
+    } catch (error) {
+      context.signal.removeEventListener('abort', onParentAbort);
+      if (error instanceof ProcessRegistryCapacityError) {
+        return { outcome: 'failed', content: error.message };
+      }
+      throw error;
+    }
 
     try {
       await running.started;
     } catch (error) {
+      context.signal.removeEventListener('abort', onParentAbort);
       processRegistry.delete(runId);
       return {
         content: `Error executing command: ${error instanceof Error ? error.message : String(error)}`,
@@ -279,6 +319,7 @@ export function createExecTool(agentHome: string): Tool {
     ]);
 
     if (race.type === 'completed') {
+      context.signal.removeEventListener('abort', onParentAbort);
       processRegistry.delete(runId);
       return mapForegroundStatusToToolResult(
         race.outcome.status,
@@ -289,10 +330,11 @@ export function createExecTool(agentHome: string): Tool {
       );
     }
 
-    const record = processRegistry.get(runId);
+    const record = processRegistry.get(runId, context.sessionId);
     if (!record || (record.status !== 'starting' && record.status !== 'running')) {
       // The process may have finished just as the yield deadline was reached; in that case, fall back to a foreground result.
       const outcome = await running.completion;
+      context.signal.removeEventListener('abort', onParentAbort);
       processRegistry.delete(runId);
       return mapForegroundStatusToToolResult(
         outcome.status,
@@ -304,6 +346,7 @@ export function createExecTool(agentHome: string): Tool {
     }
 
     // Only still-running tasks are promoted from an internal record to a background-visible record.
+    context.signal.removeEventListener('abort', onParentAbort);
     processRegistry.exposeToBackground(runId, {
       exposedAt: Date.now(),
       yielded: true,

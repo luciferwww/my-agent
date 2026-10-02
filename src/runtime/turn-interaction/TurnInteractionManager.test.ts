@@ -16,6 +16,7 @@ function createManager(): TurnInteractionManager {
 function requestApproval(manager: TurnInteractionManager, signal: AbortSignal) {
   return manager.request({
     request: {
+      callId: 'call-1',
       toolName: 'demo_tool',
       input: {},
       sessionId: 'main',
@@ -101,6 +102,7 @@ describe('TurnInteractionManager approval lifecycle', () => {
     const first = requestApproval(manager, controller.signal);
     const other = manager.request({
       request: {
+        callId: 'call-2',
         toolName: 'demo_tool',
         input: {},
         sessionId: 'other',

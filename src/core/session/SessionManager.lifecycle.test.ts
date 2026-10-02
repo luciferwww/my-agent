@@ -147,6 +147,7 @@ describe('SessionManager lifecycle persistence', () => {
       role: 'assistant',
       content: 'reply',
     });
+
     await manager.appendMessage(sourceId, {
       turnId: 'turn-later',
       role: 'user',
@@ -163,6 +164,54 @@ describe('SessionManager lifecycle persistence', () => {
     await expect(manager.deleteSession(sourceId)).rejects.toMatchObject({
       code: 'SESSION_HAS_DESCENDANTS',
     });
+  });
+
+  it('projects terminal Tool status into History and preserves it across a fork', async () => {
+    const sourceId = await materialize('Tool history');
+    const assistantId = await manager.appendMessage(sourceId, {
+      turnId: 'tool-turn',
+      role: 'assistant',
+      content: [{ type: 'tool_use', id: 'call-1', name: 'demo', input: {} }],
+    });
+    await manager.appendToolExecutionAccepted(sourceId, {
+      turnId: 'tool-turn',
+      callId: 'call-1',
+      executionId: 'execution-1',
+      toolName: 'demo',
+    });
+    await manager.appendToolExecutionTerminal(sourceId, {
+      executionId: 'execution-1',
+      outcome: 'failed',
+      content: 'demo failed',
+    });
+    await manager.appendHostTaskCompletion(sourceId, {
+      turnId: 'tool-turn',
+      completion: {
+        executionId: 'execution-1',
+        toolName: 'demo',
+        status: 'failed',
+        content: 'demo failed',
+      },
+    });
+
+    const expected = [{
+      type: 'tool_use',
+      id: 'call-1',
+      name: 'demo',
+      input: {},
+      execution_id: 'execution-1',
+      status: 'error',
+      result_content: 'demo failed',
+    }];
+    expect(manager.getHistory({ sessionId: sourceId }).items.at(-1)?.content).toEqual(expected);
+
+    const fork = await manager.forkSession(sourceId, assistantId);
+    expect(manager.getHistory({ sessionId: fork.sessionId }).items.at(-1)?.content)
+      .toEqual(expected);
+
+    const nestedFork = await manager.forkSession(fork.sessionId);
+    expect(manager.getHistory({ sessionId: nestedFork.sessionId }).items.at(-1)?.content)
+      .toEqual(expected);
   });
 
   it('removes temporary and unindexed Transcript artifacts at initialization', async () => {

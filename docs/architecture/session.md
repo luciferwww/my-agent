@@ -29,6 +29,10 @@ The metadata index avoids scanning Transcript files to locate a Session. Each Tr
 |---|---|
 | `SessionRecord` | First-line file metadata, including Transcript version |
 | `MessageRecord` | A `user`, `assistant`, or internal `toolResult` message |
+| `ToolExecutionAcceptedRecord` | Host ownership of one admitted call and its `executionId` |
+| `ToolExecutionTerminalRecord` | One durable execution outcome and content |
+| `HostTaskCompletionRecord` | Exactly-once trusted completion delivery for an execution |
+| `TurnAbortedRecord` | Structural Root-Abort boundary |
 | `CompactionRecord` | A summary plus the first retained message identifier and Compaction statistics |
 
 The Store accepts only version 1 and entries whose key matches their canonical UUID `sessionId`. A missing Store yields an empty Store, while invalid or unsupported data fails closed. Startup removes temporary materialization files and canonical Transcript files without matching Store entries.
@@ -56,9 +60,17 @@ SessionEntry {
 
 Every record has an `id`, `parentId`, and ISO-8601 `timestamp`. Every
 `MessageRecord` also has the required `turnId` of its owning Turn. Message
-content is either text or canonical content blocks. `toolResult` is an internal
+content is either text or canonical content blocks. Persisted Tool Result blocks
+require `status: success | error | denied | aborted`; legacy missing-status
+records fail closed. `toolResult` is an internal
 persisted role; Runner projects it as a `user` role for Provider-neutral
 invocation without changing the stored role.
+
+Async lifecycle records are parented to their owning Assistant message and are
+validated relationally on load. History folds `execution_id`, terminal
+`status`, and `result_content` into the corresponding Tool Use. A trusted Host
+completion projects as `role: 'user', origin: 'host'` locally; Provider
+encoders remove the local marker while Channel/steering input cannot create it.
 
 Assistant messages may carry:
 
@@ -122,21 +134,21 @@ Each live root Session also has a process-local `manual | allow_all` permission 
 
 First-message admission is serialized per `sessionId`. A live Pending ID materializes one root-only Transcript and one Store entry using the Pending `createdAt` plus a deterministic title derived from the first usable user text. Admission does not persist message content; Runner appends the admitted user message exactly once after preflight. Unknown or expired IDs fail, and archived Sessions reject new messages.
 
-List returns non-archived Sessions by default and archived Sessions only when requested. Rename trims non-null titles and allows `null` to clear them. Archive, delete, and fork require an idle persisted Session; unarchive and rename do not. Delete rejects a Session with persisted fork descendants and has no cascade. Fork copies the selected linear message path into a new persisted Session with a fresh UUID.
+List returns non-archived Sessions by default and archived Sessions only when requested. Rename trims non-null titles and allows `null` to clear them. Archive, delete, and fork require an idle persisted Session; unarchive and rename do not. Delete rejects a Session with persisted fork descendants and has no cascade. Runtime validates deletion, cleans Session-owned managed processes, revalidates, and only then commits deletion so cleanup failure remains retryable. Fork copies the selected linear message path plus related lifecycle records into a new persisted Session with a fresh UUID; managed processes are not inherited.
 
 Subagent setup creates a root-only transient Transcript with `{ type: 'subagent', callerSessionId }` provenance and no Store entry. Runner appends the Child prompt. Runtime deletes the Transcript at terminal cleanup, and startup removes orphaned transient files after interruption.
 
 History pages count persisted messages, default to 50, and reject limits above
 100. `beforeEntryId` is an exclusive cursor on the resolved active branch.
 History projection removes image base64 and emits a MIME/dimensions text
-placeholder while preserving persisted text, Tool Use input, Tool Result
-content, and Assistant abort metadata.
+placeholder while preserving persisted text, Tool Use input, folded execution
+identity/status/result content, and Assistant abort metadata.
 
 ## 5. Message tree and branching
 
 Each Transcript entry points to its parent. `resolveLinearPath(state, leafId)` follows parents back to the root, retains only message records, and reverses the result into conversation order.
 
-`branch()` changes only the in-memory `leafId`; it does not rewrite JSONL. Later appends form a new branch from that point, while abandoned records remain auditable. On reload, the last valid physical record—including a Compaction marker—becomes the default leaf; parent traversal still resolves the most recently appended conversation branch.
+`branch()` changes only the in-memory `leafId`; it does not rewrite JSONL. Later appends form a new branch from that point, while abandoned records remain auditable. Lifecycle and Compaction records never become the active message leaf; both initial serialization and reload select the last Session/message record so in-process and restarted fork behavior is identical.
 
 ```text
 session root

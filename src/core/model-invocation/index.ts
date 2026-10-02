@@ -15,6 +15,10 @@ export {
   ModelInvocationError,
   toModelInvocationError,
 } from './errors.js';
+export {
+  renderExecutionAcceptedReceipt,
+  renderHostTaskCompletion,
+} from './lifecycle-projection.js';
 export type {
   ContextLimitCorrection,
   ModelInvocationDiagnostics,

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createTaskTool, type TaskToolDeps } from './task-tool.js';
 import type { ToolExecutionContext, ToolExecutionOutput } from '../../../core/tools/types.js';
+import { bindToolTurnAuthority } from '../../../core/tools/execution.js';
 import type {
   SubagentCapabilities,
   SubagentDelegationRequest,
@@ -28,6 +29,8 @@ function makeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     callId: 'tu-42',
     signal: new AbortController().signal,
     ...overrides,
+    executionId: overrides.executionId ?? 'execution-42',
+    reportActivity: overrides.reportActivity ?? (() => {}),
   };
 }
 
@@ -145,6 +148,23 @@ describe('(a) Parent correlation forwarding', () => {
     const req = delegate.mock.calls[0]![0];
     expect(req.description).toBe('audit it');
     expect(req.prompt).toBe('audit the PR');
+  });
+
+  it('separates Parent authority from execution-local cancellation', async () => {
+    const { deps, delegate } = makeDeps();
+    const tool = createTaskTool(deps);
+    const parentController = new AbortController();
+    const executionController = new AbortController();
+    const context = bindToolTurnAuthority(
+      makeCtx({ signal: executionController.signal }),
+      parentController.signal,
+    );
+
+    await exec(tool, { description: 'audit it', prompt: 'audit the PR' }, context);
+
+    const request = delegate.mock.calls[0]![0];
+    expect(request.parentSignal).toBe(parentController.signal);
+    expect(request.signal).toBe(executionController.signal);
   });
 });
 

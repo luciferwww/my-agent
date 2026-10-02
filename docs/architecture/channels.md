@@ -119,7 +119,7 @@ owns the stable contract.
 
 ## 5. Approval and interaction lifecycle
 
-`TurnInteractionManager` is the Runtime-owned in-memory Promise bus. It routes a Tool interaction to the Turn's captured Channel/client origin and reports responses or terminal unavailability back to Runner. Elevating a Session to `allow_all` closes its already-pending requests as mode-authorized so clients can remove stale approval UI. Channel implementations provide approval interactions and user-facing Session permission controls; [Approval Lifecycle](../specifications/approval-lifecycle.md) owns settlement and failure semantics.
+`TurnInteractionManager` is the Runtime-owned in-memory Promise bus. It routes a Tool interaction, including its canonical `callId`, to the Turn's captured Channel/client origin and reports responses or terminal unavailability back to Runner. Elevating a Session to `allow_all` closes its already-pending requests as mode-authorized so clients can remove stale approval UI. Channel implementations provide approval interactions and user-facing Session permission controls; [Approval Lifecycle](../specifications/approval-lifecycle.md) owns settlement and failure semantics.
 
 ## 6. CLI Channel
 
@@ -136,7 +136,7 @@ CliChannelConfig {
 
 ### 6.1 Presentation
 
-CLI streams text, presents bounded Tool/Compaction/Subagent status, suppresses local input echo, and lets the input loop print failures once. It renders `max_llm_calls` as a generic configured-limit notice based on the existing `run_end` result. The HTML client uses the same existing stop reason for a system notice. Tool Result preview limits affect presentation only, never the result passed to the Model.
+CLI streams text, presents bounded Tool/Compaction/Subagent status, and renders terminal Tool state as success, error, denied, or aborted. It suppresses local input echo and lets the input loop print failures once. It renders `max_llm_calls` as a generic configured-limit notice based on the existing `run_end` result. The HTML client uses the same existing stop reason for a system notice. Tool Result preview limits affect presentation only, never the result passed to the Model.
 
 ### 6.2 Model commands and lifecycle
 

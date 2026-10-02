@@ -1,5 +1,6 @@
 import { Logger } from '../../../platform/logger/index.js';
 import type { Tool, ToolExecutionContext, ToolExecutionOutput } from '../../../core/tools/types.js';
+import { getToolTurnAuthority } from '../../../core/tools/execution.js';
 import type {
   SubagentDelegationPort,
   SubagentProfile,
@@ -128,7 +129,9 @@ export function createTaskTool(deps: TaskToolDeps): Tool {
             turnId: ctx.turnId,
             toolUseId: ctx.callId,
           },
+          parentSignal: getToolTurnAuthority(ctx),
           signal: ctx.signal,
+          reportActivity: ctx.reportActivity,
         });
 
         return formatSubagentResult(result);

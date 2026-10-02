@@ -2,7 +2,11 @@ import type { ChatMessage, ChatContentBlock, TokenUsage } from '../model-invocat
 import { AgentExecutionFailure } from './errors.js';
 import type { ResolvedModel } from '../model-resolution/index.js';
 import type { SessionManager } from '../session/SessionManager.js';
-import type { ContentBlock, MessageRecord } from '../session/types.js';
+import type {
+  ContentBlock,
+  MessageRecord,
+  ToolExecutionAcceptedRecord,
+} from '../session/types.js';
 import type {
   AgentRunnerConfig,
   RunParams,
@@ -13,11 +17,12 @@ import type {
 } from './types.js';
 import type {
   CanonicalToolResult,
-  ToolExecutionContext,
   ToolCall,
   ToolDefinition,
   ToolResultOutcome,
 } from '../tools/types.js';
+import type { ResolvedTool } from '../registry/index.js';
+import { renderHostTaskCompletion } from '../model-invocation/index.js';
 import {
   DEFAULT_COMPACTION_CONFIG,
   type CompactionConfig,
@@ -30,6 +35,14 @@ import { estimatePromptTokens } from './context/token-estimation.js';
 import { ContextOverflowError } from './errors.js';
 import { compactMessages } from './context/compaction.js';
 import { Logger } from '../../platform/logger/index.js';
+import {
+  DefaultAsyncToolExecutionFramework,
+  ToolExecutionUnavailableError,
+  processToolExecutionRuntimeState,
+  type AsyncToolExecutionFramework,
+  type ToolExecutionRuntimeState,
+  type TurnExecutionEvent,
+} from './async-tools/index.js';
 
 const logger = Logger.get('AgentRunner');
 
@@ -44,6 +57,40 @@ const MAX_COMPACTION_RETRIES = 3;
  * ContextOverflowError when estimated tokens exceed this context-window ratio.
  */
 const INNER_LOOP_OVERFLOW_THRESHOLD = 0.9;
+
+interface ImmediateToolAdmission {
+  readonly kind: 'immediate';
+  readonly toolUse: ToolCall;
+  readonly result: CanonicalToolResult;
+  readonly effectiveInput: Record<string, unknown>;
+  readonly implementationStarted: false;
+}
+
+interface PreparedToolAdmission {
+  readonly kind: 'prepared';
+  readonly toolUse: ToolCall & {
+    readonly input: { readonly state: 'ready'; readonly value: Readonly<Record<string, unknown>> };
+  };
+  readonly resolvedTool: ResolvedTool;
+  readonly effectiveInput: Record<string, unknown>;
+}
+
+interface AcceptedToolAdmission {
+  readonly kind: 'accepted';
+  readonly toolUse: ToolCall;
+  readonly executionId: string;
+  readonly effectiveInput: Record<string, unknown>;
+}
+
+type ToolAdmission = ImmediateToolAdmission | AcceptedToolAdmission;
+
+interface CompletedToolCall {
+  readonly toolUse: ToolCall;
+  readonly result: CanonicalToolResult;
+  readonly effectiveInput: Record<string, unknown>;
+  readonly implementationStarted: boolean;
+  readonly durationMs?: number;
+}
 
 function isEmptyAbortedAssistant(record: MessageRecord): boolean {
   if (
@@ -71,10 +118,13 @@ function isEmptyAbortedAssistant(record: MessageRecord): boolean {
  */
 export class AgentRunner {
   private sessionManager: SessionManager;
+  private readonly toolExecutionRuntimeState: ToolExecutionRuntimeState;
   private onEvent?: (event: AgentEvent) => void;
 
   constructor(config: AgentRunnerConfig) {
     this.sessionManager = config.sessionManager;
+    this.toolExecutionRuntimeState = config.toolExecutionRuntimeState
+      ?? processToolExecutionRuntimeState;
     this.onEvent = config.onEvent;
   }
 
@@ -146,15 +196,19 @@ export class AgentRunner {
       const lastRecord = records[records.length - 1]!;
       const last = lastRecord.message;
       let orphanIds: string[] = [];
+      let orphanToolNames = new Map<string, string>();
       let hint: MessageRecord['message']['abortMeta'] | undefined;
       let repairedTurnId = lastRecord.turnId;
+      let sourceAssistant: MessageRecord | undefined;
 
       // Case A: every tool_use in a trailing assistant message is orphaned.
       if (last.role === 'assistant' && Array.isArray(last.content)) {
-        orphanIds = last.content
-          .filter((b): b is Extract<ContentBlock, { type: 'tool_use' }> => b.type === 'tool_use')
-          .map((b) => b.id);
+        const toolUses = last.content
+          .filter((b): b is Extract<ContentBlock, { type: 'tool_use' }> => b.type === 'tool_use');
+        orphanIds = toolUses.map((block) => block.id);
+        orphanToolNames = new Map(toolUses.map((block) => [block.id, block.name]));
         hint = last.abortMeta;
+        sourceAssistant = lastRecord;
       }
       // Case B: a trailing toolResult covers only part of the preceding tool_use set.
       // Persisted results are excluded naturally, including the R6' abort path.
@@ -168,6 +222,11 @@ export class AgentRunner {
               .filter((b): b is Extract<ContentBlock, { type: 'tool_use' }> => b.type === 'tool_use')
               .map((b) => b.id),
           );
+          orphanToolNames = new Map(
+            prev.content
+              .filter((b): b is Extract<ContentBlock, { type: 'tool_use' }> => b.type === 'tool_use')
+              .map((b) => [b.id, b.name]),
+          );
           const resultIds = new Set(
             last.content
               .filter((b): b is Extract<ContentBlock, { type: 'tool_result' }> => b.type === 'tool_result')
@@ -175,10 +234,35 @@ export class AgentRunner {
           );
           orphanIds = [...useIds].filter((id) => !resultIds.has(id));
           hint = prev.abortMeta;
+          sourceAssistant = prevRecord;
         }
       }
 
       if (orphanIds.length === 0) return;
+      const acceptedCallIds = new Set(
+        this.sessionManager.getAsyncToolRecords(sessionKey)
+          .filter((record) => (
+            record.type === 'tool_execution_accepted'
+            && record.turnId === repairedTurnId
+          ))
+          .map((record) => record.type === 'tool_execution_accepted' ? record.callId : ''),
+      );
+      orphanIds = orphanIds.filter((id) => !acceptedCallIds.has(id));
+      if (orphanIds.length === 0) return;
+
+      if (sourceAssistant?.turnStopReason === 'max_llm_calls') {
+        await this.sessionManager.appendMessage(sessionKey, {
+          turnId: repairedTurnId,
+          role: 'toolResult',
+          content: orphanIds.map((id) => ({
+            type: 'tool_result',
+            tool_use_id: id,
+            content: this.maxLlmCallsUnavailableContent(orphanToolNames.get(id) ?? 'unknown'),
+            status: 'error',
+          })),
+        });
+        return;
+      }
 
       // Keep synthetic content neutral. source is audit metadata and does not
       // alter user-visible content. See core-abort-spec.md section 7.3.
@@ -188,6 +272,7 @@ export class AgentRunner {
         type: 'tool_result',
         tool_use_id: id,
         content,
+        status: 'error',
       }));
 
       await this.sessionManager.appendMessage(sessionKey, {
@@ -403,6 +488,8 @@ export class AgentRunner {
 
     this.sanitizeSessionTail(turnCtx);
 
+    await this.recoverPersistedToolLifecycle(params.sessionId);
+
     // Repair missing tool results from persisted state before loading history.
     await this.repairOrphanToolUses(turnCtx);
 
@@ -466,10 +553,17 @@ export class AgentRunner {
     let lastStopReason = 'end_turn';
     let llmCallCount = 0;
     let hasMoreToolCalls = true; // Ensures at least one LLM call.
-    let steeringOpen = params.claimSteeringMessages !== undefined;
+    let steeringOpen = params.steeringSource !== undefined;
+    let completionReserveHeld = false;
+    let nextCallConsumesReserve = false;
+    const toolFramework = new DefaultAsyncToolExecutionFramework({
+      sessionManager: this.sessionManager,
+      runtimeState: this.toolExecutionRuntimeState,
+    });
 
     try {
       while (hasMoreToolCalls) {
+        let steeringClaimedWhileWaiting = false;
         // Check for abort before every LLM call (core-abort-spec.md section 7.2).
         if (params.signal?.aborted) {
           throw new DOMException('Aborted', 'AbortError');
@@ -488,6 +582,8 @@ export class AgentRunner {
 
         this.emit(turnCtx, { type: 'llm_call', round: llmCallCount });
         llmCallCount++;
+        const consumesCompletionReserve = nextCallConsumesReserve;
+        nextCallConsumesReserve = false;
 
         // Stream the LLM response, normalizing API overflow and abort behavior.
         const llmResult = await this.callLLMStream(turnCtx, {
@@ -503,6 +599,7 @@ export class AgentRunner {
 
         lastContent = llmResult.content;
         lastStopReason = llmResult.stopReason;
+        if (consumesCompletionReserve) completionReserveHeld = false;
 
         // Partial-stream branch: callLLMStream returns stopReason='aborted'.
         //
@@ -525,11 +622,13 @@ export class AgentRunner {
               abortMeta: { partial: true, stopReason: 'aborted' },
             });
           }
-          return this.buildAbortedResult(lastContent, {
-            usage: totalUsage,
-            toolRounds: totalToolRounds,
-          });
+          throw new DOMException('Aborted', 'AbortError');
         }
+
+        const toolUseBlocks = llmResult.toolCalls;
+        const lacksCompletionReserve = toolUseBlocks.length > 0
+          && params.maxLlmCalls !== undefined
+          && llmCallCount >= params.maxLlmCalls;
 
         messages.push({ role: 'assistant', content: llmResult.content });
 
@@ -537,6 +636,7 @@ export class AgentRunner {
           turnId: params.turnId,
           role: 'assistant',
           content: llmResult.content,
+          ...(lacksCompletionReserve ? { turnStopReason: 'max_llm_calls' as const } : {}),
         });
 
         // Abort was handled above, so only a normal error can return here.
@@ -545,71 +645,140 @@ export class AgentRunner {
           return { text, content: lastContent, stopReason: lastStopReason, usage: totalUsage, toolRounds: totalToolRounds };
         }
 
-        const toolUseBlocks = llmResult.toolCalls;
+        for (const toolUse of toolUseBlocks) {
+          const eventInput = toolUse.input.state === 'ready' ? toolUse.input.value : {};
+          this.emit(turnCtx, {
+            type: 'tool_call_requested',
+            callId: toolUse.callId,
+            name: toolUse.name,
+            input: eventInput,
+          });
+        }
 
         if (toolUseBlocks.length === 0) {
           // Exit when the model requests no tools.
           hasMoreToolCalls = false;
-        } else {
-          // Execute requested tools.
-          const toolResultBlocks: ChatContentBlock[] = [];
-          const afterToolCallSettlements: Promise<unknown>[] = [];
+        } else if (lacksCompletionReserve) {
+          const unavailableBlocks: ChatContentBlock[] = toolUseBlocks.map((toolUse) => ({
+            type: 'tool_result',
+            tool_use_id: toolUse.callId,
+            content: this.maxLlmCallsUnavailableContent(toolUse.name),
+            status: 'error',
+          }));
           for (const toolUse of toolUseBlocks) {
-            // Event schema migration is outside Slice 3; retain the existing event shape.
-            const eventInput = toolUse.input.state === 'ready' ? toolUse.input.value : {};
-            this.emit(turnCtx, { type: 'tool_use', name: toolUse.name, input: eventInput });
-
-            const execution = turnSignal.aborted
-              ? {
-                  result: this.canonicalToolResult(
-                    toolUse.callId,
-                    'not_executed',
-                    `Tool "${toolUse.name}" was not executed because the Turn was aborted.`,
-                  ),
-                  effectiveInput: eventInput,
-                  implementationStarted: false,
-                }
-              : await this.executeCanonicalToolCall(toolUse, params, turnSignal);
-
-            const legacyResult = this.toLegacyToolResult(execution.result);
-            this.emit(turnCtx, { type: 'tool_result', name: toolUse.name, result: legacyResult });
+            this.emit(turnCtx, {
+              type: 'tool_result',
+              callId: toolUse.callId,
+              name: toolUse.name,
+              result: {
+                status: 'error',
+                content: this.maxLlmCallsUnavailableContent(toolUse.name),
+              },
+            });
+          }
+          messages.push({ role: 'user', content: unavailableBlocks });
+          await this.sessionManager.appendMessage(params.sessionId, {
+            turnId: params.turnId,
+            role: 'toolResult',
+            content: unavailableBlocks,
+          });
+          totalToolRounds++;
+          return {
+            text: this.extractText(lastContent),
+            content: lastContent,
+            stopReason: 'max_llm_calls',
+            usage: totalUsage,
+            toolRounds: totalToolRounds,
+          };
+        } else {
+          completionReserveHeld = true;
+          const admissions = await this.admitToolBatch(
+            toolUseBlocks,
+            params,
+            turnSignal,
+            toolFramework,
+            (admission) => {
+              if (admission.kind === 'accepted') {
+                const eventInput = admission.toolUse.input.state === 'ready'
+                  ? admission.toolUse.input.value
+                  : {};
+                this.emit(turnCtx, {
+                  type: 'tool_use',
+                  callId: admission.toolUse.callId,
+                  executionId: admission.executionId,
+                  name: admission.toolUse.name,
+                  input: eventInput,
+                });
+                return;
+              }
+              this.emit(turnCtx, {
+                type: 'tool_result',
+                callId: admission.toolUse.callId,
+                name: admission.toolUse.name,
+                result: this.toPublicToolResult(admission.result, false),
+              });
+            },
+          );
+          const toolResultBlocks: ChatContentBlock[] = [];
+          const immediateCalls: CompletedToolCall[] = [];
+          for (const admission of admissions) {
+            if (admission.kind === 'accepted') {
+              toolResultBlocks.push({
+                type: 'execution_accepted',
+                tool_use_id: admission.toolUse.callId,
+                execution_id: admission.executionId,
+              });
+              continue;
+            }
+            const completed: CompletedToolCall = {
+              toolUse: admission.toolUse,
+              result: admission.result,
+              effectiveInput: admission.effectiveInput,
+              implementationStarted: false,
+            };
+            immediateCalls.push(completed);
             toolResultBlocks.push({
               type: 'tool_result',
-              tool_use_id: toolUse.callId,
-              content: execution.result.content,
+              tool_use_id: admission.toolUse.callId,
+              content: admission.result.content,
+              status: this.toPublicToolResult(admission.result, false).status,
             });
+          }
 
-            if (params.hookProjection.afterToolCall.length > 0) {
-              afterToolCallSettlements.push(runAfterToolCall(params.hookProjection.afterToolCall, {
-                toolName: toolUse.name,
+          // Anthropic represents tool results as user-role messages.
+          messages.push({ role: 'user', content: toolResultBlocks });
+
+          const immediateBlocks = toolResultBlocks.filter(
+            (block): block is Extract<ChatContentBlock, { type: 'tool_result' }> => (
+              block.type === 'tool_result'
+            ),
+          );
+          if (immediateBlocks.length > 0) {
+            await this.sessionManager.appendMessage(params.sessionId, {
+              turnId: params.turnId,
+              role: 'toolResult',
+              content: immediateBlocks,
+            });
+          }
+
+          if (params.hookProjection.afterToolCall.length > 0 && immediateCalls.length > 0) {
+            await Promise.all(immediateCalls.map((execution) => runAfterToolCall(
+              params.hookProjection.afterToolCall,
+              {
+                toolName: execution.toolUse.name,
                 input: execution.effectiveInput,
                 result: execution.result,
                 durationMs: execution.durationMs,
                 implementationStarted: execution.implementationStarted,
                 turnId: params.turnId,
                 sessionId: params.sessionId,
-              }, turnSignal));
-            }
-          }
-
-          // Anthropic represents tool results as user-role messages.
-          messages.push({ role: 'user', content: toolResultBlocks });
-
-          try {
-            await this.sessionManager.appendMessage(params.sessionId, {
-              turnId: params.turnId,
-              role: 'toolResult',
-              content: toolResultBlocks,
-            });
-          } finally {
-            await Promise.all(afterToolCallSettlements);
+              },
+              turnSignal,
+            )));
           }
 
           if (turnSignal.aborted) {
-            return this.buildAbortedResult(lastContent, {
-              usage: totalUsage,
-              toolRounds: totalToolRounds,
-            });
+            throw new DOMException('Aborted', 'AbortError');
           }
 
           // Reapply Layer 1 after appending new tool results.
@@ -617,35 +786,58 @@ export class AgentRunner {
             messages = pruneToolResults(messages, compaction, inputBudgetTokens);
           }
 
-          // Check the proactive threshold before relying on an LLM API error.
-          if (compaction.enabled) {
-            const estimated = estimatePromptTokens({ messages, systemPrompt: params.systemPrompt });
-            if (estimated > inputBudgetTokens * INNER_LOOP_OVERFLOW_THRESHOLD) {
-              logger.warn('inner-loop overflow threshold breached', {
-                sessionKey: params.sessionId,
-                turnId: params.turnId,
-                estimatedTokens: estimated,
-                inputBudgetTokens,
-                thresholdPct: INNER_LOOP_OVERFLOW_THRESHOLD * 100,
-              });
-              throw new ContextOverflowError(
-                `Context exceeds ${INNER_LOOP_OVERFLOW_THRESHOLD * 100}% threshold during tool loop `
-                + `(estimated ${estimated} of ${inputBudgetTokens} tokens)`,
-              );
-            }
-          }
-
           totalToolRounds++;
+        }
+
+        if (toolFramework.hasUnsettledWork()) {
+          const steeringMayUseBudget = params.maxLlmCalls === undefined
+            || (completionReserveHeld
+              ? llmCallCount + 1 < params.maxLlmCalls
+              : llmCallCount < params.maxLlmCalls);
+          steeringClaimedWhileWaiting = await this.waitForToolProgress(
+            toolFramework,
+            params,
+            turnSignal,
+            messages,
+            turnCtx,
+            steeringMayUseBudget,
+          );
+          if (!steeringClaimedWhileWaiting) nextCallConsumesReserve = true;
+          hasMoreToolCalls = true;
+        } else if (toolUseBlocks.length > 0 && !lacksCompletionReserve) {
+          nextCallConsumesReserve = true;
         }
 
         if (turnSignal.aborted) {
           throw new DOMException('Aborted', 'AbortError');
         }
 
-        const anotherCallAllowed =
-          params.maxLlmCalls === undefined || llmCallCount < params.maxLlmCalls;
-        if (steeringOpen && anotherCallAllowed) {
-          const claimedMessages = params.claimSteeringMessages?.() ?? [];
+        // Never abandon an active Framework to compact. Tool execution and Host
+        // completion persistence must converge before the outer retry can reload.
+        if (compaction.enabled && !toolFramework.hasUnsettledWork()) {
+          const estimated = estimatePromptTokens({ messages, systemPrompt: params.systemPrompt });
+          if (estimated > inputBudgetTokens * INNER_LOOP_OVERFLOW_THRESHOLD) {
+            logger.warn('inner-loop overflow threshold breached', {
+              sessionKey: params.sessionId,
+              turnId: params.turnId,
+              estimatedTokens: estimated,
+              inputBudgetTokens,
+              thresholdPct: INNER_LOOP_OVERFLOW_THRESHOLD * 100,
+            });
+            throw new ContextOverflowError(
+              `Context exceeds ${INNER_LOOP_OVERFLOW_THRESHOLD * 100}% threshold during tool loop `
+              + `(estimated ${estimated} of ${inputBudgetTokens} tokens)`,
+            );
+          }
+        }
+
+        const steeringMayUseBudget =
+          params.maxLlmCalls === undefined
+          || (completionReserveHeld
+            ? llmCallCount + 1 < params.maxLlmCalls
+            : llmCallCount < params.maxLlmCalls);
+        if (!steeringClaimedWhileWaiting && steeringOpen && steeringMayUseBudget) {
+          const claimedMessages = params.steeringSource?.claimReady() ?? [];
           if (turnSignal.aborted) {
             throw new DOMException('Aborted', 'AbortError');
           }
@@ -673,10 +865,21 @@ export class AgentRunner {
       if (this.isAbortError(err, params.signal)) {
         // Preserve diagnostics when only the signal fallback classified the error.
         this.logIfSwallowedByAbortFallback(err, params.sessionId);
+        await this.drainToolFrameworkAfterAbort(toolFramework, params, turnCtx, turnSignal);
         return this.buildAbortedResult(lastContent, {
           usage: totalUsage,
           toolRounds: totalToolRounds,
         });
+      }
+      if (toolFramework.hasUnsettledWork()) {
+        await this.waitForToolProgress(
+          toolFramework,
+          params,
+          turnSignal,
+          messages,
+          turnCtx,
+          false,
+        );
       }
       if (err instanceof ContextOverflowError || err instanceof AgentExecutionFailure) {
         throw err;
@@ -789,6 +992,7 @@ export class AgentRunner {
    */
   private loadHistory(sessionKey: string): ChatMessage[] {
     const records = this.sessionManager.getMessages(sessionKey);
+    const lifecycleRecords = this.sessionManager.getAsyncToolRecords(sessionKey);
 
     // Read the latest Compaction record, if any.
     const compactionRecord = this.sessionManager.getLastCompactionRecord(sessionKey);
@@ -804,17 +1008,84 @@ export class AgentRunner {
 
     // Preserve old empty aborted-assistant records on disk but omit their invalid
     // content from Provider input.
-    const messages: ChatMessage[] = effectiveRecords
-      .filter((record) => !isEmptyAbortedAssistant(record))
-      .map((record: MessageRecord) => {
-        if (record.message.role === 'toolResult') {
-          return { role: 'user' as const, content: record.message.content };
-        }
-        return {
-          role: record.message.role as 'user' | 'assistant',
-          content: record.message.content,
-        };
+    const acceptedByParent = new Map<string, typeof lifecycleRecords>();
+    const completionsByParent = new Map<string, typeof lifecycleRecords>();
+    for (const record of lifecycleRecords) {
+      if (record.type === 'tool_execution_accepted' && record.parentId) {
+        const current = acceptedByParent.get(record.parentId) ?? [];
+        acceptedByParent.set(record.parentId, [...current, record]);
+      } else if (record.type === 'host_task_completion' && record.parentId) {
+        const current = completionsByParent.get(record.parentId) ?? [];
+        completionsByParent.set(record.parentId, [...current, record]);
+      }
+    }
+
+    const messages: ChatMessage[] = [];
+    for (let index = 0; index < effectiveRecords.length; index++) {
+      const record = effectiveRecords[index]!;
+      if (isEmptyAbortedAssistant(record)) continue;
+      if (record.message.role === 'toolResult') {
+        messages.push({ role: 'user', content: record.message.content });
+        this.appendPersistedHostCompletions(messages, completionsByParent.get(record.id));
+        continue;
+      }
+
+      messages.push({
+        role: record.message.role,
+        content: record.message.content,
       });
+
+      const accepted = acceptedByParent.get(record.id)?.filter(
+        (candidate) => candidate.type === 'tool_execution_accepted',
+      ) ?? [];
+      if (accepted.length > 0 && record.message.role === 'assistant') {
+        const next = effectiveRecords[index + 1];
+        const immediateBlocks = next?.parentId === record.id
+          && next.message.role === 'toolResult'
+          && Array.isArray(next.message.content)
+          ? next.message.content.filter(
+              (block): block is Extract<ContentBlock, { type: 'tool_result' }> => (
+                block.type === 'tool_result'
+              ),
+            )
+          : [];
+        const acceptedByCallId = new Map(accepted.map((candidate) => [
+          candidate.callId,
+          candidate,
+        ]));
+        const immediateByCallId = new Map(immediateBlocks.map((block) => [
+          block.tool_use_id,
+          block,
+        ]));
+        const toolUses = Array.isArray(record.message.content)
+          ? record.message.content.filter(
+              (block): block is Extract<ContentBlock, { type: 'tool_use' }> => (
+                block.type === 'tool_use'
+              ),
+            )
+          : [];
+        const paired: ChatContentBlock[] = [];
+        for (const toolUse of toolUses) {
+          const acceptedRecord = acceptedByCallId.get(toolUse.id);
+          if (acceptedRecord) {
+            paired.push({
+              type: 'execution_accepted',
+              tool_use_id: toolUse.id,
+              execution_id: acceptedRecord.executionId,
+            });
+            continue;
+          }
+          const immediate = immediateByCallId.get(toolUse.id);
+          if (immediate) paired.push(immediate);
+        }
+        if (paired.length > 0) messages.push({ role: 'user', content: paired });
+        if (immediateBlocks.length > 0) {
+          index++;
+          this.appendPersistedHostCompletions(messages, completionsByParent.get(next!.id));
+        }
+      }
+      this.appendPersistedHostCompletions(messages, completionsByParent.get(record.id));
+    }
 
     // Prepend the summary so the LLM retains compacted context.
     if (compactionRecord) {
@@ -825,6 +1096,25 @@ export class AgentRunner {
     }
 
     return messages;
+  }
+
+  private appendPersistedHostCompletions(
+    messages: ChatMessage[],
+    records: ReturnType<SessionManager['getAsyncToolRecords']> | undefined,
+  ): void {
+    const completions = records?.filter(
+      (record) => record.type === 'host_task_completion',
+    ) ?? [];
+    if (completions.length === 0) return;
+    messages.push({
+      role: 'user',
+      origin: 'host',
+      content: completions
+        .map((record) => record.type === 'host_task_completion'
+          ? renderHostTaskCompletion(record.completion)
+          : '')
+        .join('\n\n'),
+    });
   }
 
   // ── Internal methods ──────────────────────────────────────
@@ -933,18 +1223,51 @@ export class AgentRunner {
     return { content: contentBlocks, toolCalls, stopReason, usage };
   }
 
-  private async executeCanonicalToolCall(
+  private async admitToolBatch(
+    toolUses: readonly ToolCall[],
+    params: RunParams,
+    turnSignal: AbortSignal,
+    framework: AsyncToolExecutionFramework,
+    onSettled: (admission: ToolAdmission) => void,
+  ): Promise<ToolAdmission[]> {
+    const admissionTasks: Array<Promise<ToolAdmission>> = [];
+    for (const toolUse of toolUses) {
+      const prepared = await this.prepareToolAdmission(toolUse, params, turnSignal);
+      const task = prepared.kind === 'immediate'
+        ? Promise.resolve(prepared)
+        : this.completeToolAdmission(prepared, params, turnSignal, framework);
+      admissionTasks.push(task.then((admission) => {
+        onSettled(admission);
+        return admission;
+      }));
+    }
+
+    return Promise.all(admissionTasks);
+  }
+
+  private async prepareToolAdmission(
     toolUse: ToolCall,
     params: RunParams,
     turnSignal: AbortSignal,
-  ): Promise<{
-    result: CanonicalToolResult;
-    effectiveInput: Record<string, unknown>;
-    implementationStarted: boolean;
-    durationMs?: number;
-  }> {
+  ): Promise<ImmediateToolAdmission | PreparedToolAdmission> {
+    if (turnSignal.aborted) {
+      return {
+        kind: 'immediate',
+        toolUse,
+        result: this.canonicalToolResult(
+          toolUse.callId,
+          'not_executed',
+          `Tool "${toolUse.name}" was not executed because the Turn was aborted.`,
+        ),
+        effectiveInput: toolUse.input.state === 'ready' ? { ...toolUse.input.value } : {},
+        implementationStarted: false,
+      };
+    }
+
     if (toolUse.input.state === 'invalid') {
       return {
+        kind: 'immediate',
+        toolUse,
         result: this.canonicalToolResult(
           toolUse.callId,
           'invalid_input',
@@ -958,6 +1281,8 @@ export class AgentRunner {
     const resolvedTool = params.toolProjection.resolve(toolUse.name);
     if (!resolvedTool) {
       return {
+        kind: 'immediate',
+        toolUse,
         result: this.canonicalToolResult(
           toolUse.callId,
           'unknown_tool',
@@ -980,6 +1305,8 @@ export class AgentRunner {
       effectiveInput = beforeResult.input;
       if (beforeResult.action === 'deny') {
         return {
+          kind: 'immediate',
+          toolUse,
           result: this.canonicalToolResult(
             toolUse.callId,
             'denied',
@@ -994,6 +1321,8 @@ export class AgentRunner {
         ? 'aborted'
         : 'failed';
       return {
+        kind: 'immediate',
+        toolUse,
         result: this.canonicalToolResult(
           toolUse.callId,
           outcome,
@@ -1004,12 +1333,30 @@ export class AgentRunner {
       };
     }
 
+    return {
+      kind: 'prepared',
+      toolUse: { ...toolUse, input: toolUse.input },
+      resolvedTool,
+      effectiveInput,
+    };
+  }
+
+  private async completeToolAdmission(
+    prepared: PreparedToolAdmission,
+    params: RunParams,
+    turnSignal: AbortSignal,
+    framework: AsyncToolExecutionFramework,
+  ): Promise<ToolAdmission> {
+    const { toolUse, resolvedTool } = prepared;
+    const effectiveInput = prepared.effectiveInput;
     const validation = resolvedTool.validator.validate(effectiveInput);
     if (!validation.valid) {
       const details = validation.errors
         .map((error) => `${error.instancePath || '/'} ${error.message}`)
         .join('; ');
       return {
+        kind: 'immediate',
+        toolUse,
         result: this.canonicalToolResult(
           toolUse.callId,
           'invalid_input',
@@ -1036,6 +1383,8 @@ export class AgentRunner {
     }
     if (policyDecision === 'deny') {
       return {
+        kind: 'immediate',
+        toolUse,
         result: this.canonicalToolResult(
           toolUse.callId,
           'denied',
@@ -1067,6 +1416,8 @@ export class AgentRunner {
             ? approval.message
             : approval.reason;
           return {
+            kind: 'immediate',
+            toolUse,
             result: this.canonicalToolResult(
               toolUse.callId,
               outcome,
@@ -1081,6 +1432,8 @@ export class AgentRunner {
           ? 'aborted'
           : 'failed';
         return {
+          kind: 'immediate',
+          toolUse,
           result: this.canonicalToolResult(
             toolUse.callId,
             outcome,
@@ -1092,41 +1445,247 @@ export class AgentRunner {
       }
     }
 
-    const startTime = Date.now();
-    const toolContext: ToolExecutionContext = {
-      sessionId: params.sessionId,
-      subagentDepth: params.subagentDepth ?? 0,
-      turnId: params.turnId,
-      callId: toolUse.callId,
-      signal: turnSignal,
-    };
-    try {
-      const result = await resolvedTool.execute(effectiveInput, toolContext);
+    if (turnSignal.aborted) {
       return {
+        kind: 'immediate',
+        toolUse,
         result: this.canonicalToolResult(
           toolUse.callId,
-          result.outcome,
-          result.content,
+          'not_executed',
+          `Tool "${toolUse.name}" was not executed because the Turn was aborted.`,
         ),
         effectiveInput,
-        implementationStarted: true,
-        durationMs: Date.now() - startTime,
-      };
-    } catch (error) {
-      const outcome: ToolResultOutcome = this.isAbortError(error, turnSignal)
-        ? 'aborted'
-        : 'failed';
-      return {
-        result: this.canonicalToolResult(
-          toolUse.callId,
-          outcome,
-          `Error executing tool "${toolUse.name}": ${error instanceof Error ? error.message : String(error)}`,
-        ),
-        effectiveInput,
-        implementationStarted: true,
-        durationMs: Date.now() - startTime,
+        implementationStarted: false,
       };
     }
+
+    try {
+      const receipt = await framework.submit({
+        callId: toolUse.callId,
+        toolName: toolUse.name,
+        unitId: resolvedTool.unitId,
+        input: effectiveInput,
+        execute: resolvedTool.execute,
+      }, {
+        sessionId: params.sessionId,
+        turnId: params.turnId,
+        subagentDepth: params.subagentDepth ?? 0,
+        signal: turnSignal,
+      });
+      return {
+        kind: 'accepted',
+        toolUse,
+        executionId: receipt.executionId,
+        effectiveInput,
+      };
+    } catch (error) {
+      if (!(error instanceof ToolExecutionUnavailableError)) throw error;
+      return {
+        kind: 'immediate',
+        toolUse,
+        result: this.canonicalToolResult(
+          toolUse.callId,
+          'unavailable',
+          error.message,
+        ),
+        effectiveInput,
+        implementationStarted: false,
+      };
+    }
+  }
+
+  private async waitForToolProgress(
+    framework: AsyncToolExecutionFramework,
+    params: RunParams,
+    turnSignal: AbortSignal,
+    messages: ChatMessage[],
+    turnCtx: TurnContext,
+    allowSteering: boolean,
+  ): Promise<boolean> {
+    const hostCompletions: string[] = [];
+    while (framework.hasUnsettledWork()) {
+      const event = allowSteering && params.steeringSource
+        ? await this.waitForFrameworkOrSteering(framework, params.steeringSource, turnSignal)
+        : {
+            type: 'framework' as const,
+            event: await framework.waitForNextEvent(turnSignal),
+          };
+
+      if (event.type === 'steering') {
+        const claimed = params.steeringSource?.claimReady() ?? [];
+        if (claimed.length === 0) continue;
+        this.appendHostCompletionBatch(messages, hostCompletions);
+        const prepared = params.prepareSteeringMessages
+          ? await params.prepareSteeringMessages(claimed)
+          : claimed;
+        await this.appendInjectedMessages(
+          params.sessionId,
+          params.turnId,
+          messages,
+          prepared,
+        );
+        return true;
+      }
+
+      hostCompletions.push(await this.handleFrameworkEvent(
+        event.event,
+        params,
+        turnSignal,
+        turnCtx,
+      ));
+    }
+
+    this.appendHostCompletionBatch(messages, hostCompletions);
+    return false;
+  }
+
+  private async recoverPersistedToolLifecycle(sessionId: string): Promise<void> {
+    const activeMessageIds = new Set(
+      this.sessionManager.getMessages(sessionId).map((record) => record.id),
+    );
+    const records = this.sessionManager.getAsyncToolRecords(sessionId);
+    const accepted = records.filter(
+      (record): record is ToolExecutionAcceptedRecord => (
+        record.type === 'tool_execution_accepted'
+        && record.parentId !== null
+        && activeMessageIds.has(record.parentId)
+      ),
+    );
+
+    for (const acceptance of accepted) {
+      let terminal = records.find(
+        (record) => record.type === 'tool_execution_terminal'
+          && record.executionId === acceptance.executionId,
+      );
+      if (!terminal) {
+        await this.sessionManager.appendToolExecutionTerminal(sessionId, {
+          executionId: acceptance.executionId,
+          outcome: 'outcome_unknown',
+          reason: 'host_recovery',
+          content: `Tool "${acceptance.toolName}" did not retain a terminal outcome across Host recovery.`,
+        });
+        terminal = this.sessionManager.getAsyncToolRecords(sessionId).find(
+          (record) => record.type === 'tool_execution_terminal'
+            && record.executionId === acceptance.executionId,
+        );
+      }
+      if (!terminal || terminal.type !== 'tool_execution_terminal') {
+        throw new Error(
+          `Tool execution "${acceptance.executionId}" recovery did not persist a terminal fact.`,
+        );
+      }
+
+      const hasCompletion = this.sessionManager.getAsyncToolRecords(sessionId).some(
+        (record) => record.type === 'host_task_completion'
+          && record.completion.executionId === acceptance.executionId,
+      );
+      if (hasCompletion) continue;
+      await this.sessionManager.appendHostTaskCompletion(sessionId, {
+        turnId: acceptance.turnId,
+        completion: {
+          executionId: acceptance.executionId,
+          toolName: acceptance.toolName,
+          status: terminal.outcome === 'success'
+            ? 'success'
+            : terminal.outcome === 'failed'
+              ? 'failed'
+              : 'aborted',
+          content: terminal.content,
+        },
+      });
+    }
+  }
+
+  private async waitForFrameworkOrSteering(
+    framework: AsyncToolExecutionFramework,
+    steeringSource: NonNullable<RunParams['steeringSource']>,
+    turnSignal: AbortSignal,
+  ): Promise<
+    | { readonly type: 'framework'; readonly event: TurnExecutionEvent }
+    | { readonly type: 'steering' }
+  > {
+    if (turnSignal.aborted) throw new DOMException('Aborted', 'AbortError');
+    const frameworkController = new AbortController();
+    const steeringController = new AbortController();
+    const onTurnAbort = () => {
+      frameworkController.abort(turnSignal.reason);
+      steeringController.abort(turnSignal.reason);
+    };
+    turnSignal.addEventListener('abort', onTurnAbort, { once: true });
+    try {
+      const winner = await Promise.race([
+        framework.waitForNextEvent(frameworkController.signal).then((event) => ({
+          type: 'framework' as const,
+          event,
+        })),
+        steeringSource.waitUntilPotentiallyReady(steeringController.signal).then(() => ({
+          type: 'steering' as const,
+        })),
+      ]);
+      if (winner.type === 'framework') steeringController.abort();
+      else frameworkController.abort();
+      return winner;
+    } finally {
+      turnSignal.removeEventListener('abort', onTurnAbort);
+    }
+  }
+
+  private async handleFrameworkEvent(
+    event: TurnExecutionEvent,
+    params: RunParams,
+    turnSignal: AbortSignal,
+    turnCtx: TurnContext,
+  ): Promise<string> {
+    if (event.type === 'execution_persistence_failed'
+      || event.type === 'execution_invariant_failed') {
+      throw event.error;
+    }
+
+    const result = this.canonicalToolResult(event.callId, event.outcome, event.content);
+    this.emit(turnCtx, {
+      type: 'tool_result',
+      callId: event.callId,
+      executionId: event.executionId,
+      name: event.toolName,
+      result: this.toPublicToolResult(result, true),
+    });
+    if (params.hookProjection.afterToolCall.length > 0) {
+      await runAfterToolCall(params.hookProjection.afterToolCall, {
+        toolName: event.toolName,
+        input: { ...event.input },
+        result,
+        durationMs: event.durationMs,
+        implementationStarted: event.implementationStarted,
+        turnId: params.turnId,
+        sessionId: params.sessionId,
+      }, turnSignal);
+    }
+
+    const completion = {
+      executionId: event.executionId,
+      toolName: event.toolName,
+      status: event.outcome === 'success'
+        ? 'success' as const
+        : event.outcome === 'failed'
+          ? 'failed' as const
+          : 'aborted' as const,
+      content: event.content,
+    };
+    await this.sessionManager.appendHostTaskCompletion(params.sessionId, {
+      turnId: params.turnId,
+      completion,
+    });
+    return renderHostTaskCompletion(completion);
+  }
+
+  private appendHostCompletionBatch(messages: ChatMessage[], completions: string[]): void {
+    if (completions.length === 0) return;
+    messages.push({
+      role: 'user',
+      origin: 'host',
+      content: completions.join('\n\n'),
+    });
+    completions.length = 0;
   }
 
   private canonicalToolResult(
@@ -1137,10 +1696,50 @@ export class AgentRunner {
     return Object.freeze({ callId, outcome, content });
   }
 
-  private toLegacyToolResult(result: CanonicalToolResult): ToolResult {
+  private maxLlmCallsUnavailableContent(toolName: string): string {
+    return `Tool "${toolName}" was not executed because the Model-call limit left no completion call.`;
+  }
+
+  private async drainToolFrameworkAfterAbort(
+    framework: AsyncToolExecutionFramework,
+    params: RunParams,
+    turnCtx: TurnContext,
+    turnSignal: AbortSignal,
+  ): Promise<void> {
+    const drainSignal = new AbortController().signal;
+    await this.sessionManager.appendTurnAborted(params.sessionId, params.turnId);
+    while (framework.hasUnsettledWork()) {
+      const event = await framework.waitForNextEvent(drainSignal);
+      if (event.type === 'execution_terminal') {
+        await this.handleFrameworkEvent(event, params, turnSignal, turnCtx);
+      } else {
+        logger.error('Tool Framework failed while draining an aborted Turn', {
+          sessionId: params.sessionId,
+          executionId: event.executionId,
+          error: event.error.message,
+          failureType: event.type,
+        });
+        return;
+      }
+    }
+  }
+
+  private toPublicToolResult(
+    result: CanonicalToolResult,
+    admitted: boolean,
+  ): ToolResult {
+    const status = result.outcome === 'success'
+      ? 'success' as const
+      : result.outcome === 'denied'
+        ? 'denied' as const
+        : result.outcome === 'aborted'
+          || result.outcome === 'outcome_unknown'
+          || (admitted && result.outcome === 'not_executed')
+          ? 'aborted' as const
+          : 'error' as const;
     return {
       content: result.content,
-      isError: result.outcome !== 'success',
+      status,
     };
   }
 
@@ -1159,6 +1758,9 @@ export class AgentRunner {
     injectedMessages: ChatMessage[],
   ): Promise<void> {
     for (const message of injectedMessages) {
+      if (message.origin === 'host') {
+        throw new TypeError('Trusted Host messages cannot enter through steering injection.');
+      }
       targetMessages.push(message);
       await this.sessionManager.appendMessage(sessionKey, {
         turnId,

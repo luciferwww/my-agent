@@ -189,6 +189,8 @@ export class RuntimeApp {
   private readonly inFlightSessions = new Set<string>();
   /** Canonical FIFO for accepted Channel user messages in each Session. */
   private readonly messageQueueBySession = new Map<string, QueuedUserMessage[]>();
+  /** Wake-only steering listeners; queue ownership remains with claimSteeringMessages(). */
+  private readonly steeringWaiters = new Map<string, Set<() => void>>();
 
   /**
   * AbortController for each active Session Turn, used by abortTurn and shutdown.
@@ -341,7 +343,10 @@ export class RuntimeApp {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    await this.sessionCoordinator.deleteSession(sessionId);
+    await this.sessionCoordinator.deleteSession(
+      sessionId,
+      () => this.resources.managedProcessLifecycle.cleanupSession(sessionId),
+    );
     this.resetSessionPermissionMode(sessionId);
   }
 
@@ -651,6 +656,7 @@ export class RuntimeApp {
     const capability: CurrentCallApprovalCapability = {
       request: async (request, signal) => this.turnInteractionManager.request({
         request: {
+          callId: request.callId,
           toolName: request.toolName,
           input: { ...request.input },
           sessionId: request.sessionId,
@@ -808,6 +814,7 @@ export class RuntimeApp {
     const queue = this.messageQueueBySession.get(item.sessionId) ?? [];
     queue.push(item);
     this.messageQueueBySession.set(item.sessionId, queue);
+    this.notifySteeringWaiters(item.sessionId);
   }
 
   private settleQueuedRequest(
@@ -1248,6 +1255,21 @@ export class RuntimeApp {
           [...this.activeRootGenerations.values()].map((tree) => tree.generation),
         )].sort((left, right) => left - right);
 
+        const processCleanup = await budget.raceRemainingLazy(
+          () => this.resources.managedProcessLifecycle.shutdown(),
+        );
+        if (processCleanup.outcome === 'completed') {
+          completed.push('managedProcesses');
+        } else if (processCleanup.outcome === 'failed') {
+          failed.push({ resource: 'managedProcesses', message: processCleanup.message });
+        } else {
+          residuals.push({
+            owner: 'resource',
+            phase: 'managed-process-cleanup',
+            message: 'Managed process cleanup did not converge before the shutdown deadline.',
+          });
+        }
+
         this.resources.contextFiles = [];
         this.state.closedAt = Date.now();
         this.setPhase('closed');
@@ -1407,11 +1429,15 @@ export class RuntimeApp {
         maxLlmCalls: effectiveMaxLlmCalls,
         ...(this.resources.runtimeConfig.steeringEnabled
           ? {
-              claimSteeringMessages: () => this.claimSteeringMessages(
-                params.sessionId,
-                params.turnId,
-                resolvedModel,
-              ),
+              steeringSource: {
+                claimReady: () => this.claimSteeringMessages(
+                  params.sessionId,
+                  params.turnId,
+                  resolvedModel,
+                ),
+                waitUntilPotentiallyReady: (signal: AbortSignal) =>
+                  this.waitUntilSteeringPotentiallyReady(params.sessionId, signal),
+              },
               prepareSteeringMessages: async (messages: ChatMessage[]) =>
                 Promise.all(messages.map(async (message) => ({
                   ...message,
@@ -1509,6 +1535,43 @@ export class RuntimeApp {
       role: 'user',
       content: item.message,
     }));
+  }
+
+  private waitUntilSteeringPotentiallyReady(
+    sessionId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if ((this.messageQueueBySession.get(sessionId)?.length ?? 0) > 0) {
+      return Promise.resolve();
+    }
+    if (signal.aborted) {
+      return Promise.reject(new DOMException('Aborted', 'AbortError'));
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      const waiters = this.steeringWaiters.get(sessionId) ?? new Set<() => void>();
+      const settle = () => {
+        signal.removeEventListener('abort', onAbort);
+        waiters.delete(settle);
+        if (waiters.size === 0) this.steeringWaiters.delete(sessionId);
+        resolve();
+      };
+      const onAbort = () => {
+        waiters.delete(settle);
+        if (waiters.size === 0) this.steeringWaiters.delete(sessionId);
+        reject(new DOMException('Aborted', 'AbortError'));
+      };
+      waiters.add(settle);
+      this.steeringWaiters.set(sessionId, waiters);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  private notifySteeringWaiters(sessionId: string): void {
+    const waiters = this.steeringWaiters.get(sessionId);
+    if (!waiters) return;
+    this.steeringWaiters.delete(sessionId);
+    for (const settle of waiters) settle();
   }
 
   private isSteeringCompatible(

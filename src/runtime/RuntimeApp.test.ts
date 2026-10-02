@@ -259,6 +259,76 @@ describe('RuntimeApp', () => {
     await app.close();
   });
 
+  it('cleans Session-owned processes on deletion and all processes on shutdown', async () => {
+    const deletionOrder: string[] = [];
+    const assertSessionDeletable = vi.fn(() => {
+      deletionOrder.push('validate');
+    });
+    const deleteSession = vi.fn(async () => {
+      deletionOrder.push('delete');
+    });
+    const cleanupSession = vi.fn(async () => {
+      deletionOrder.push('cleanup');
+    });
+    const shutdown = vi.fn(async () => undefined);
+    const app = await RuntimeApp.create({
+      agentHome,
+      applicationConfig: testApplicationConfig(),
+      cliOverrides: {
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies({
+        createSessionManager: () => ({
+          initialize: vi.fn(async () => undefined),
+          getSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
+          assertSessionDeletable,
+          deleteSession,
+        }) as never,
+        createMemoryManager: async () => null,
+        managedProcessLifecycle: { cleanupSession, shutdown },
+      }),
+    });
+
+    await app.application.deleteSession('main');
+    expect(deleteSession).toHaveBeenCalledWith('main');
+    expect(cleanupSession).toHaveBeenCalledWith('main');
+    expect(deletionOrder).toEqual(['validate', 'cleanup', 'validate', 'delete']);
+
+    const report = await app.close();
+    expect(shutdown).toHaveBeenCalledTimes(1);
+    expect(report.completed).toContain('managedProcesses');
+  });
+
+  it('keeps a Session intact when managed process cleanup fails', async () => {
+    const deleteSession = vi.fn(async () => undefined);
+    const app = await RuntimeApp.create({
+      agentHome,
+      applicationConfig: testApplicationConfig(),
+      cliOverrides: {
+        memory: { enabled: false },
+      },
+      dependencies: createTestDependencies({
+        createSessionManager: () => ({
+          initialize: vi.fn(async () => undefined),
+          getSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
+          assertSessionDeletable: vi.fn(),
+          deleteSession,
+        }) as never,
+        createMemoryManager: async () => null,
+        managedProcessLifecycle: {
+          cleanupSession: vi.fn(async () => {
+            throw new Error('process cleanup failed');
+          }),
+          shutdown: vi.fn(async () => undefined),
+        },
+      }),
+    });
+
+    await expect(app.application.deleteSession('main')).rejects.toThrow('process cleanup failed');
+    expect(deleteSession).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it('acquires Extensions during Runtime Bootstrap from generic Host startup facts', async () => {
     const installDir = join(agentHome, 'installation');
     const environment = Object.freeze({});
@@ -647,6 +717,8 @@ describe('RuntimeApp', () => {
           sessionId: params.sessionId,
           turnId: params.turnId,
           callId: 'task-use-1',
+          executionId: 'task-execution-1',
+          reportActivity: () => {},
           subagentDepth: 0,
           signal: params.signal,
         });
@@ -766,6 +838,8 @@ describe('RuntimeApp', () => {
           sessionId: params.sessionId,
           turnId: params.turnId,
           callId: 'generation-task',
+          executionId: 'generation-task-execution',
+          reportActivity: () => {},
           subagentDepth: 0,
           signal: params.signal,
         });
@@ -1708,15 +1782,17 @@ describe('RuntimeApp', () => {
     });
   });
 
-  it('allows an active Turn to claim busy-session FIFO input when steering is enabled', async () => {
-    const releaseRun = createDeferred<void>();
+  it('wakes an active Turn before it claims busy-session FIFO input', async () => {
     let drainedSteering: ChatMessage[] = [];
     const runnerRun = vi.fn(async (params: {
-      claimSteeringMessages?: () => ChatMessage[];
+      steeringSource?: {
+        claimReady(): ChatMessage[];
+        waitUntilPotentiallyReady(signal: AbortSignal): Promise<void>;
+      };
       prepareSteeringMessages?: (messages: ChatMessage[]) => Promise<ChatMessage[]>;
     }): Promise<RunResult> => {
-      await releaseRun.promise;
-      const claimed = params.claimSteeringMessages?.() ?? [];
+      await params.steeringSource?.waitUntilPotentiallyReady(new AbortController().signal);
+      const claimed = params.steeringSource?.claimReady() ?? [];
       drainedSteering = params.prepareSteeringMessages
         ? await params.prepareSteeringMessages(claimed)
         : claimed;
@@ -1767,7 +1843,6 @@ describe('RuntimeApp', () => {
     await steeringDispatch;
     expect(runnerRun).toHaveBeenCalledTimes(1);
 
-    releaseRun.resolve();
     await firstDispatch;
 
     expect(drainedSteering).toEqual([

@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-21
+> Verified: 2026-10-02
 > Authority: Stable cross-cutting Abort contract
 
 ## Scope
@@ -21,13 +21,15 @@ Each dropped request emits one `request_end` outcome `cancelled` with reason `ab
 - Streaming Abort flushes non-empty buffered Assistant text and persists it with `abortMeta: { partial: true, stopReason: 'aborted' }`.
 - Empty partial Assistant content is not persisted or sent later to a Provider.
 - Abort prevents new Model calls and later Tool implementations from starting.
-- Complete Tool Calls receive terminal correlated results before settlement: real completion wins; confirmed cancellation is aborted; unstarted calls are `not_executed`.
-- Unknown/crash/persistence repair remains a next-Turn safety net. It synthesizes only missing Provider-facing Tool Result pairings with neutral recovery content, does not claim cancellation or execution failure, and never replays a Tool.
+- Accepted Tool executions are cancelled through the Framework. Real completion wins; confirmed cancellation is aborted; unstarted calls are `not_executed`.
+- If an implementation ignores Abort beyond the fixed grace period, Framework persists `outcome_unknown`, transfers the Promise and slot to quarantine, disables new admission for that Tool registration, and lets the Turn converge without claiming that side effects stopped.
+- Root Abort persists `turn_aborted`, starts no later Model call, and waits until every accepted execution has terminalized or been isolated. Any trailing trusted Host completion is consumed by the next non-aborted Turn.
+- Unknown/crash/persistence repair remains a next-Turn safety net. Accepted-without-terminal becomes `outcome_unknown`; terminal-without-Host-delivery is delivered once; neither path replays a Tool.
 - Completed Usage and Tool-round counts survive an aborted result.
 
 ## Propagation and Child Turns
 
-Runtime owns one active tree signal per root Turn. Accepted blocking Children share Parent cancellation through the delegation contract. Parent Abort during setup, resolution, or execution yields one terminal Child result and one terminal event; no accepted Child remains detached.
+Runtime owns one active tree signal per root Turn. The Framework derives one execution-local signal per accepted Tool and propagates Root Abort into each signal. Subagent delegation validates the original Parent signal as authority but runs each Child with its Task execution signal, so targeted cancellation affects only that Child while Parent Abort reaches all siblings. Parent Abort during setup, resolution, or execution yields one terminal Child result and one terminal event; no accepted Child remains detached.
 
 ## Channel surfaces
 

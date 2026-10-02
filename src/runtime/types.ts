@@ -37,6 +37,12 @@ export interface RuntimeResourceSet {
   readonly userPromptBuilder: UserPromptBuilder;
   contextFiles: ContextFile[];
   readonly agentRunner: AgentRunner;
+  readonly managedProcessLifecycle: ManagedProcessLifecycle;
+}
+
+export interface ManagedProcessLifecycle {
+  cleanupSession(sessionId: string): Promise<void>;
+  shutdown(): Promise<void>;
 }
 
 export interface RuntimeMemoryOptions {
@@ -61,6 +67,7 @@ export interface RuntimeDependencies {
   createMemoryManager(options: RuntimeMemoryOptions): Promise<MemoryManager | null>;
   createSystemPromptBuilder(): SystemPromptBuilder;
   createAgentRunner(config: AgentRunnerConfig): AgentRunner;
+  readonly managedProcessLifecycle: ManagedProcessLifecycle;
   getBuiltinContributionUnits(
     options: RuntimeBuiltinToolOptions,
     memoryManager: MemoryManager | null,

@@ -59,6 +59,236 @@ describe('transcript', () => {
       expect(() => loadTranscript(filePath))
         .toThrowError(new SessionDataError('Session Transcript message "m1" has an invalid Turn identity.'));
     });
+
+    it('loads the async Tool lifecycle record shapes', async () => {
+      const filePath = join(dir, 'async-tool-records.jsonl');
+      const records = [
+        { type: 'session', id: 's1', parentId: null, timestamp: '2026-10-01T00:00:00Z', version: 1 },
+        {
+          type: 'tool_execution_accepted',
+          id: 'accepted',
+          parentId: 's1',
+          timestamp: '2026-10-01T00:00:01Z',
+          turnId: 'turn-1',
+          callId: 'call-1',
+          executionId: 'execution-1',
+          toolName: 'demo',
+        },
+        {
+          type: 'tool_execution_terminal',
+          id: 'terminal',
+          parentId: 'accepted',
+          timestamp: '2026-10-01T00:00:02Z',
+          executionId: 'execution-1',
+          outcome: 'success',
+          content: 'done',
+        },
+        {
+          type: 'host_task_completion',
+          id: 'completion',
+          parentId: 'terminal',
+          timestamp: '2026-10-01T00:00:03Z',
+          turnId: 'turn-1',
+          completion: {
+            executionId: 'execution-1',
+            toolName: 'demo',
+            status: 'success',
+            content: 'done',
+          },
+        },
+        {
+          type: 'turn_aborted',
+          id: 'aborted',
+          parentId: 'completion',
+          timestamp: '2026-10-01T00:00:04Z',
+          turnId: 'turn-1',
+        },
+      ];
+      await writeFile(filePath, records.map((record) => JSON.stringify(record)).join('\n'), 'utf-8');
+
+      const state = loadTranscript(filePath);
+
+      expect([...state.byId.keys()]).toEqual([
+        's1',
+        'accepted',
+        'terminal',
+        'completion',
+        'aborted',
+      ]);
+      expect(state.leafId).toBe('s1');
+    });
+
+    it('rejects an accepted record without an execution identity', async () => {
+      const filePath = join(dir, 'invalid-accepted.jsonl');
+      await writeFile(filePath, [
+        JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-10-01T00:00:00Z', version: 1 }),
+        JSON.stringify({
+          type: 'tool_execution_accepted',
+          id: 'accepted',
+          parentId: 's1',
+          timestamp: '2026-10-01T00:00:01Z',
+          turnId: 'turn-1',
+          callId: 'call-1',
+          toolName: 'demo',
+        }),
+      ].join('\n'), 'utf-8');
+
+      expect(() => loadTranscript(filePath)).toThrow(
+        'accepted execution "accepted" execution identity is invalid',
+      );
+    });
+
+    it('accepts max_llm_calls only on an Assistant message', async () => {
+      const assistantPath = join(dir, 'assistant-stop.jsonl');
+      const userPath = join(dir, 'user-stop.jsonl');
+      const root = JSON.stringify({
+        type: 'session',
+        id: 's1',
+        parentId: null,
+        timestamp: '2026-10-01T00:00:00Z',
+        version: 1,
+      });
+      await writeFile(assistantPath, [
+        root,
+        JSON.stringify({
+          type: 'message',
+          id: 'assistant',
+          parentId: 's1',
+          timestamp: '2026-10-01T00:00:01Z',
+          turnId: 'turn-1',
+          turnStopReason: 'max_llm_calls',
+          message: { role: 'assistant', content: '' },
+        }),
+      ].join('\n'), 'utf-8');
+      await writeFile(userPath, [
+        root,
+        JSON.stringify({
+          type: 'message',
+          id: 'user',
+          parentId: 's1',
+          timestamp: '2026-10-01T00:00:01Z',
+          turnId: 'turn-1',
+          turnStopReason: 'max_llm_calls',
+          message: { role: 'user', content: 'continue' },
+        }),
+      ].join('\n'), 'utf-8');
+
+      expect(loadTranscript(assistantPath).byId.get('assistant')).toMatchObject({
+        turnStopReason: 'max_llm_calls',
+      });
+      expect(() => loadTranscript(userPath)).toThrow(
+        'message "user" has an invalid Turn stop reason',
+      );
+    });
+
+    it('rejects an invalid Host completion status', async () => {
+      const filePath = join(dir, 'invalid-host-completion.jsonl');
+      await writeFile(filePath, [
+        JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-10-01T00:00:00Z', version: 1 }),
+        JSON.stringify({
+          type: 'host_task_completion',
+          id: 'completion',
+          parentId: 's1',
+          timestamp: '2026-10-01T00:00:01Z',
+          turnId: 'turn-1',
+          completion: {
+            executionId: 'execution-1',
+            toolName: 'demo',
+            status: 'outcome_unknown',
+            content: 'unknown',
+          },
+        }),
+      ].join('\n'), 'utf-8');
+
+      expect(() => loadTranscript(filePath)).toThrow(
+        'Host completion "completion" has an invalid status',
+      );
+    });
+
+    it('rejects a terminal fact without a prior accepted record', async () => {
+      const filePath = join(dir, 'terminal-without-accepted.jsonl');
+      await writeFile(filePath, [
+        JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-10-01T00:00:00Z', version: 1 }),
+        JSON.stringify({
+          type: 'tool_execution_terminal',
+          id: 'terminal',
+          parentId: 's1',
+          timestamp: '2026-10-01T00:00:01Z',
+          executionId: 'execution-1',
+          outcome: 'success',
+          content: 'done',
+        }),
+      ].join('\n'), 'utf-8');
+
+      expect(() => loadTranscript(filePath)).toThrow(
+        'terminal execution "terminal" has no accepted record',
+      );
+    });
+
+    it('rejects duplicate accepted identity mappings', async () => {
+      const filePath = join(dir, 'duplicate-accepted.jsonl');
+      const accepted = {
+        type: 'tool_execution_accepted',
+        parentId: 's1',
+        timestamp: '2026-10-01T00:00:01Z',
+        turnId: 'turn-1',
+        callId: 'call-1',
+        executionId: 'execution-1',
+        toolName: 'demo',
+      };
+      await writeFile(filePath, [
+        JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-10-01T00:00:00Z', version: 1 }),
+        JSON.stringify({ ...accepted, id: 'accepted-1' }),
+        JSON.stringify({ ...accepted, id: 'accepted-2', parentId: 'accepted-1' }),
+      ].join('\n'), 'utf-8');
+
+      expect(() => loadTranscript(filePath)).toThrow(
+        'accepted execution "accepted-2" conflicts with an existing mapping',
+      );
+    });
+
+    it('rejects a Host completion that conflicts with its terminal fact', async () => {
+      const filePath = join(dir, 'conflicting-host-completion.jsonl');
+      await writeFile(filePath, [
+        JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-10-01T00:00:00Z', version: 1 }),
+        JSON.stringify({
+          type: 'tool_execution_accepted',
+          id: 'accepted',
+          parentId: 's1',
+          timestamp: '2026-10-01T00:00:01Z',
+          turnId: 'turn-1',
+          callId: 'call-1',
+          executionId: 'execution-1',
+          toolName: 'demo',
+        }),
+        JSON.stringify({
+          type: 'tool_execution_terminal',
+          id: 'terminal',
+          parentId: 'accepted',
+          timestamp: '2026-10-01T00:00:02Z',
+          executionId: 'execution-1',
+          outcome: 'success',
+          content: 'done',
+        }),
+        JSON.stringify({
+          type: 'host_task_completion',
+          id: 'completion',
+          parentId: 'terminal',
+          timestamp: '2026-10-01T00:00:03Z',
+          turnId: 'turn-1',
+          completion: {
+            executionId: 'execution-1',
+            toolName: 'demo',
+            status: 'failed',
+            content: 'done',
+          },
+        }),
+      ].join('\n'), 'utf-8');
+
+      expect(() => loadTranscript(filePath)).toThrow(
+        'Host completion "completion" conflicts with its execution facts',
+      );
+    });
   });
 
   describe('resolveLinearPath', () => {

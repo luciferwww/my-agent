@@ -1,3 +1,8 @@
+import type {
+  ExecutionTerminalFact,
+  HostTaskCompletion,
+} from '../tools/execution.js';
+
 // Session metadata stored in sessions.json.
 
 export interface SessionEntry {
@@ -38,6 +43,7 @@ export interface SessionRecord extends TranscriptEntryBase {
 export interface MessageRecord extends TranscriptEntryBase {
   type: 'message';
   turnId: string;
+  turnStopReason?: 'max_llm_calls';
   message: {
     role: 'user' | 'assistant' | 'toolResult';
     content: string | ContentBlock[];
@@ -52,6 +58,40 @@ export interface MessageRecord extends TranscriptEntryBase {
     };
   };
 }
+
+/** Durable Host ownership of one admitted Tool invocation. */
+export interface ToolExecutionAcceptedRecord extends TranscriptEntryBase {
+  type: 'tool_execution_accepted';
+  turnId: string;
+  callId: string;
+  executionId: string;
+  toolName: string;
+}
+
+/** Immutable terminal fact for one accepted Tool invocation. */
+export type ToolExecutionTerminalRecord = TranscriptEntryBase & {
+  type: 'tool_execution_terminal';
+  executionId: string;
+} & ExecutionTerminalFact;
+
+/** Trusted Host-origin completion queued for Model delivery. */
+export interface HostTaskCompletionRecord extends TranscriptEntryBase {
+  type: 'host_task_completion';
+  turnId: string;
+  completion: HostTaskCompletion;
+}
+
+/** Records intentional non-consumption of trailing completions after Root Abort. */
+export interface TurnAbortedRecord extends TranscriptEntryBase {
+  type: 'turn_aborted';
+  turnId: string;
+}
+
+export type AsyncToolTranscriptRecord =
+  | ToolExecutionAcceptedRecord
+  | ToolExecutionTerminalRecord
+  | HostTaskCompletionRecord
+  | TurnAbortedRecord;
 
 /** Persisted Compaction summary record. */
 export interface CompactionRecord extends TranscriptEntryBase {
@@ -80,7 +120,11 @@ export interface CompactionRecord extends TranscriptEntryBase {
 }
 
 /** Union of all persisted Transcript records. */
-export type TranscriptEntry = SessionRecord | MessageRecord | CompactionRecord;
+export type TranscriptEntry =
+  | SessionRecord
+  | MessageRecord
+  | CompactionRecord
+  | AsyncToolTranscriptRecord;
 
 // Content blocks aligned with the model message format.
 
@@ -92,9 +136,25 @@ export type ContentBlock =
       dimensions: { width: number; height: number };
     }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
-  | { type: 'tool_result'; tool_use_id: string; content: string };
+  | {
+      type: 'tool_result';
+      tool_use_id: string;
+      content: string;
+      status: import('../tools/types.js').ToolResultStatus;
+    }
+  | { type: 'execution_accepted'; tool_use_id: string; execution_id: string };
 
-export type SessionHistoryContentBlock = ContentBlock;
+export type SessionHistoryContentBlock =
+  | Exclude<ContentBlock, { type: 'tool_use' }>
+  | {
+      type: 'tool_use';
+      id: string;
+      name: string;
+      input: Record<string, unknown>;
+      execution_id?: string;
+      status?: import('../tools/types.js').ToolResultStatus;
+      result_content?: string;
+    };
 
 export interface SessionHistoryQuery {
   readonly sessionId: string;

@@ -76,6 +76,7 @@ describe('SessionCoordinator', () => {
     const { sessionId } = await coordinator.createSession();
     const failingManager = {
       archiveSession: sessionManager.archiveSession.bind(sessionManager),
+      assertSessionDeletable: sessionManager.assertSessionDeletable.bind(sessionManager),
       deleteSession: sessionManager.deleteSession.bind(sessionManager),
       forkSession: sessionManager.forkSession.bind(sessionManager),
       getHistory: sessionManager.getHistory.bind(sessionManager),

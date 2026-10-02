@@ -88,11 +88,14 @@ export const processTool: Tool = {
     },
     required: ['action'],
   },
-  execute: async (params) => {
+  execute: async (params, context) => {
     const action = params.action;
     if (action === 'list') {
       // List only exposes records that have actually entered the background-management path.
-      return { outcome: 'success', content: formatList(processRegistry.listVisible()) };
+      return {
+        outcome: 'success',
+        content: formatList(processRegistry.listVisible(context.sessionId)),
+      };
     }
 
     if ((action === 'status' || action === 'log' || action === 'kill') && !isNonEmptyString(params.runId)) {
@@ -103,7 +106,10 @@ export const processTool: Tool = {
     }
 
     if (action === 'status') {
-      const record = processRegistry.get((params as Extract<ProcessToolInput, { action: 'status' }>).runId);
+      const record = processRegistry.get(
+        (params as Extract<ProcessToolInput, { action: 'status' }>).runId,
+        context.sessionId,
+      );
       if (!record || record.visibility !== 'background') {
         return {
           content: `runId not found: ${(params as Extract<ProcessToolInput, { action: 'status' }>).runId}`,
@@ -116,7 +122,7 @@ export const processTool: Tool = {
 
     if (action === 'log') {
       const input = params as Extract<ProcessToolInput, { action: 'log' }>;
-      const record = processRegistry.get(input.runId);
+      const record = processRegistry.get(input.runId, context.sessionId);
       if (!record || record.visibility !== 'background') {
         return {
           content: `runId not found: ${input.runId}`,
@@ -133,7 +139,7 @@ export const processTool: Tool = {
 
     if (action === 'kill') {
       const input = params as Extract<ProcessToolInput, { action: 'kill' }>;
-      const record = processRegistry.get(input.runId);
+      const record = processRegistry.get(input.runId, context.sessionId);
       if (!record || record.visibility !== 'background') {
         return {
           content: `runId not found: ${input.runId}`,
@@ -157,7 +163,7 @@ export const processTool: Tool = {
 
       if (!killed.ok) {
         // Keep kill idempotent even if the process has already disappeared between lookup and termination.
-        const current = processRegistry.get(record.runId);
+        const current = processRegistry.get(record.runId, context.sessionId);
         return {
           outcome: 'success',
           content: formatRecordSummary(current ?? record),
@@ -171,7 +177,7 @@ export const processTool: Tool = {
         signal: 'SIGTERM',
       });
 
-      const updated = processRegistry.get(record.runId);
+      const updated = processRegistry.get(record.runId, context.sessionId);
       return {
         outcome: 'success',
         content: updated ? formatRecordSummary(updated) : `runId: ${record.runId}\nstatus: aborted`,

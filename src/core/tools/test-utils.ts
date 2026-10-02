@@ -12,5 +12,7 @@ export const TEST_TOOL_CONTEXT: ToolExecutionContext = {
   subagentDepth: 0,
   turnId: 'test-turn',
   callId: 'test-tool-use',
+  executionId: 'test-execution',
+  reportActivity: () => {},
   signal: new AbortController().signal,
 };

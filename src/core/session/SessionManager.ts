@@ -5,6 +5,11 @@ import { SessionError } from './errors.js';
 import { isCanonicalSessionId, loadStore, updateStore } from './store.js';
 import { loadTranscript, resolveLinearPath, appendToTranscript, findLastCompaction } from './transcript.js';
 import type {
+  ExecutionTerminalFact,
+  HostTaskCompletion,
+} from '../tools/execution.js';
+import type {
+  AsyncToolTranscriptRecord,
   SessionEntry,
   TranscriptState,
   MessageRecord,
@@ -14,6 +19,11 @@ import type {
   SessionHistoryPage,
   SessionHistoryQuery,
   SessionHistoryContentBlock,
+  TranscriptEntry,
+  ToolExecutionAcceptedRecord,
+  ToolExecutionTerminalRecord,
+  HostTaskCompletionRecord,
+  TurnAbortedRecord,
   UpdateSessionInput,
 } from './types.js';
 
@@ -37,6 +47,7 @@ export interface SessionMessageInput {
   role: 'user' | 'assistant' | 'toolResult';
   content: string | ContentBlock[];
   abortMeta?: { partial: boolean; stopReason: 'aborted' };
+  turnStopReason?: 'max_llm_calls';
 }
 
 export interface MaterializeSessionInput {
@@ -49,6 +60,22 @@ export interface CreateTransientSubagentTranscriptInput {
   sessionId: string;
   callerSessionId: string;
   createdAt: number;
+}
+
+export interface ToolExecutionAcceptedInput {
+  readonly turnId: string;
+  readonly callId: string;
+  readonly executionId: string;
+  readonly toolName: string;
+}
+
+export type ToolExecutionTerminalInput = {
+  readonly executionId: string;
+} & ExecutionTerminalFact;
+
+export interface HostTaskCompletionInput {
+  readonly turnId: string;
+  readonly completion: HostTaskCompletion;
 }
 
 /**
@@ -64,6 +91,7 @@ export class SessionManager {
   /** In-memory Transcript state keyed by canonical Session ID. */
   private transcripts = new Map<string, TranscriptState>();
   private transientTranscriptIds = new Set<string>();
+  private transcriptWriteTails = new Map<string, Promise<void>>();
 
   constructor(agentHome: string, options: SessionManagerOptions = {}) {
     this.sessionsDir = join(agentHome, SESSIONS_DIR);
@@ -235,6 +263,19 @@ export class SessionManager {
     return updated;
   }
 
+  assertSessionDeletable(sessionId: string): void {
+    const sessions = loadStore(this.storePath).sessions;
+    this.requireSession(sessions, sessionId);
+    if (Object.values(sessions).some(
+      (entry) => entry.forkedFromSessionId === sessionId,
+    )) {
+      throw new SessionError(
+        'SESSION_HAS_DESCENDANTS',
+        `Session "${sessionId}" has fork descendants.`,
+      );
+    }
+  }
+
   async deleteSession(sessionId: string): Promise<void> {
     await updateStore(this.storePath, (store) => {
       this.requireSession(store.sessions, sessionId);
@@ -283,6 +324,19 @@ export class SessionManager {
       parentId = copy.id;
       return copy;
     });
+    const copiedMessageIds = new Set(messages.map((message) => message.id));
+    const lifecycle = [...sourceState.byId.values()].filter(
+      (record): record is AsyncToolTranscriptRecord => (
+        (
+          record.type === 'tool_execution_accepted'
+          || record.type === 'tool_execution_terminal'
+          || record.type === 'host_task_completion'
+          || record.type === 'turn_aborted'
+        )
+        && record.parentId !== null
+        && copiedMessageIds.has(record.parentId)
+      ),
+    );
     const entry: SessionEntry = {
       sessionId,
       createdAt: now,
@@ -291,7 +345,7 @@ export class SessionManager {
       ...(source.title === undefined ? {} : { title: source.title }),
     };
 
-    await this.persistNewSession(entry, [root, ...messages]);
+    await this.persistNewSession(entry, [root, ...messages, ...lifecycle]);
     return entry;
   }
 
@@ -302,9 +356,22 @@ export class SessionManager {
     sessionId: string,
     message: SessionMessageInput,
   ): Promise<string> {
+    return this.withTranscriptWrite(
+      sessionId,
+      () => this.appendMessageUnlocked(sessionId, message),
+    );
+  }
+
+  private async appendMessageUnlocked(
+    sessionId: string,
+    message: SessionMessageInput,
+  ): Promise<string> {
     const state = this.ensureTranscriptLoaded(sessionId);
     const filePath = this.resolveTranscriptPath(sessionId);
-    const { turnId, ...messagePayload } = message;
+    const { turnId, turnStopReason, ...messagePayload } = message;
+    if (turnStopReason !== undefined && messagePayload.role !== 'assistant') {
+      throw new TypeError('turnStopReason can only be set on an Assistant message.');
+    }
 
     // Persist capped tool results so later history loads need no repeated trimming.
     const persistedMessage = messagePayload.role === 'toolResult'
@@ -320,6 +387,7 @@ export class SessionManager {
       parentId: state.leafId,
       timestamp: new Date().toISOString(),
       turnId,
+      ...(turnStopReason === undefined ? {} : { turnStopReason }),
       message: persistedMessage,
     };
 
@@ -327,13 +395,7 @@ export class SessionManager {
 
     state.byId.set(record.id, record);
     state.leafId = record.id;
-
-    await updateStore(this.storePath, (store) => {
-      const entry = store.sessions[sessionId];
-      if (entry) {
-        entry.updatedAt = this.nextTimestamp(entry.updatedAt);
-      }
-    });
+    await this.touchSession(sessionId);
 
     return record.id;
   }
@@ -364,7 +426,8 @@ export class SessionManager {
 
     const start = Math.max(0, end - limit);
     const selected = messages.slice(start, end);
-    const items = selected.map((record) => this.projectHistoryMessage(record));
+    const lifecycle = this.getAsyncToolRecords(query.sessionId);
+    const items = selected.map((record) => this.projectHistoryMessage(record, lifecycle));
     const hasMore = start > 0;
     return {
       sessionId: query.sessionId,
@@ -389,6 +452,198 @@ export class SessionManager {
     return state.leafId;
   }
 
+  async appendToolExecutionAccepted(
+    sessionId: string,
+    input: ToolExecutionAcceptedInput,
+  ): Promise<string> {
+    return this.withTranscriptWrite(sessionId, async () => {
+      const state = this.ensureTranscriptLoaded(sessionId);
+      const acceptedRecords = this.asyncToolRecords(state)
+        .filter((record): record is ToolExecutionAcceptedRecord => (
+          record.type === 'tool_execution_accepted'
+        ));
+      const byExecution = acceptedRecords.find(
+        (record) => record.executionId === input.executionId,
+      );
+      const byCall = acceptedRecords.find(
+        (record) => record.turnId === input.turnId && record.callId === input.callId,
+      );
+      const existing = byExecution ?? byCall;
+      if (existing) {
+        if (
+          existing.executionId === input.executionId
+          && existing.turnId === input.turnId
+          && existing.callId === input.callId
+          && existing.toolName === input.toolName
+        ) {
+          return existing.id;
+        }
+        throw this.lifecycleConflict(
+          `Tool execution acceptance conflicts with existing record "${existing.id}".`,
+        );
+      }
+
+      const record: ToolExecutionAcceptedRecord = {
+        type: 'tool_execution_accepted',
+        id: randomUUID(),
+        parentId: state.leafId,
+        timestamp: this.nowIso(),
+        ...input,
+      };
+      await this.appendAsyncToolRecord(sessionId, state, record);
+      return record.id;
+    });
+  }
+
+  async appendToolExecutionTerminal(
+    sessionId: string,
+    input: ToolExecutionTerminalInput,
+  ): Promise<string> {
+    return this.withTranscriptWrite(sessionId, async () => {
+      const state = this.ensureTranscriptLoaded(sessionId);
+      const records = this.asyncToolRecords(state);
+      const accepted = records.find(
+        (record): record is ToolExecutionAcceptedRecord => (
+          record.type === 'tool_execution_accepted'
+          && record.executionId === input.executionId
+        ),
+      );
+      if (!accepted) {
+        throw this.lifecycleConflict(
+          `Tool execution "${input.executionId}" has no accepted record.`,
+        );
+      }
+
+      const existing = records.find(
+        (record): record is ToolExecutionTerminalRecord => (
+          record.type === 'tool_execution_terminal'
+          && record.executionId === input.executionId
+        ),
+      );
+      if (existing) {
+        if (
+          existing.outcome === input.outcome
+          && existing.content === input.content
+          && existing.reason === input.reason
+        ) {
+          return existing.id;
+        }
+        throw this.lifecycleConflict(
+          `Tool execution "${input.executionId}" already has a conflicting terminal fact.`,
+        );
+      }
+
+      const record: ToolExecutionTerminalRecord = {
+        type: 'tool_execution_terminal',
+        id: randomUUID(),
+        parentId: state.leafId,
+        timestamp: this.nowIso(),
+        ...input,
+      };
+      await this.appendAsyncToolRecord(sessionId, state, record);
+      return record.id;
+    });
+  }
+
+  async appendHostTaskCompletion(
+    sessionId: string,
+    input: HostTaskCompletionInput,
+  ): Promise<string> {
+    return this.withTranscriptWrite(sessionId, async () => {
+      const state = this.ensureTranscriptLoaded(sessionId);
+      const records = this.asyncToolRecords(state);
+      const accepted = records.find(
+        (record): record is ToolExecutionAcceptedRecord => (
+          record.type === 'tool_execution_accepted'
+          && record.executionId === input.completion.executionId
+        ),
+      );
+      const terminal = records.find(
+        (record): record is ToolExecutionTerminalRecord => (
+          record.type === 'tool_execution_terminal'
+          && record.executionId === input.completion.executionId
+        ),
+      );
+      if (!accepted || !terminal) {
+        throw this.lifecycleConflict(
+          `Host completion "${input.completion.executionId}" has no terminal execution fact.`,
+        );
+      }
+      if (
+        accepted.turnId !== input.turnId
+        || accepted.toolName !== input.completion.toolName
+        || this.hostCompletionStatus(terminal.outcome) !== input.completion.status
+        || terminal.content !== input.completion.content
+      ) {
+        throw this.lifecycleConflict(
+          `Host completion "${input.completion.executionId}" conflicts with its execution facts.`,
+        );
+      }
+
+      const existing = records.find(
+        (record): record is HostTaskCompletionRecord => (
+          record.type === 'host_task_completion'
+          && record.completion.executionId === input.completion.executionId
+        ),
+      );
+      if (existing) {
+        if (
+          existing.turnId === input.turnId
+          && existing.completion.toolName === input.completion.toolName
+          && existing.completion.status === input.completion.status
+          && existing.completion.content === input.completion.content
+        ) {
+          return existing.id;
+        }
+        throw this.lifecycleConflict(
+          `Tool execution "${input.completion.executionId}" already has a conflicting Host completion.`,
+        );
+      }
+
+      const record: HostTaskCompletionRecord = {
+        type: 'host_task_completion',
+        id: randomUUID(),
+        parentId: state.leafId,
+        timestamp: this.nowIso(),
+        turnId: input.turnId,
+        completion: { ...input.completion },
+      };
+      await this.appendAsyncToolRecord(sessionId, state, record);
+      return record.id;
+    });
+  }
+
+  async appendTurnAborted(sessionId: string, turnId: string): Promise<string> {
+    return this.withTranscriptWrite(sessionId, async () => {
+      const state = this.ensureTranscriptLoaded(sessionId);
+      const existing = this.asyncToolRecords(state).find(
+        (record): record is TurnAbortedRecord => (
+          record.type === 'turn_aborted' && record.turnId === turnId
+        ),
+      );
+      if (existing) return existing.id;
+
+      const record: TurnAbortedRecord = {
+        type: 'turn_aborted',
+        id: randomUUID(),
+        parentId: state.leafId,
+        timestamp: this.nowIso(),
+        turnId,
+      };
+      await this.appendAsyncToolRecord(sessionId, state, record);
+      return record.id;
+    });
+  }
+
+  getAsyncToolRecords(sessionId: string): readonly AsyncToolTranscriptRecord[] {
+    const records = this.asyncToolRecords(this.ensureTranscriptLoaded(sessionId));
+    return records.map((record) => (
+      record.type === 'host_task_completion'
+        ? { ...record, completion: { ...record.completion } }
+        : { ...record }
+    ));
+  }
+
   // Compaction record operations.
 
   /**
@@ -401,25 +656,22 @@ export class SessionManager {
     record: Omit<CompactionRecord, 'parentId' | 'firstKeptEntryId'>,
     firstKeptEntryId: string,
   ): Promise<void> {
-    const state = this.ensureTranscriptLoaded(sessionId);
-    const filePath = this.resolveTranscriptPath(sessionId);
+    await this.withTranscriptWrite(sessionId, async () => {
+      const state = this.ensureTranscriptLoaded(sessionId);
+      const filePath = this.resolveTranscriptPath(sessionId);
 
-    const fullRecord: CompactionRecord = {
-      ...record,
-      parentId: state.leafId,
-      firstKeptEntryId,
-    };
+      const fullRecord: CompactionRecord = {
+        ...record,
+        parentId: state.leafId,
+        firstKeptEntryId,
+      };
 
-    await appendToTranscript(filePath, fullRecord);
+      await appendToTranscript(filePath, fullRecord);
 
-    state.byId.set(fullRecord.id, fullRecord);
+      state.byId.set(fullRecord.id, fullRecord);
 
-    // Compaction statistics remain authoritative in the Transcript record.
-    await updateStore(this.storePath, (store) => {
-      const entry = store.sessions[sessionId];
-      if (entry) {
-        entry.updatedAt = this.nextTimestamp(entry.updatedAt);
-      }
+      // Compaction statistics remain authoritative in the Transcript record.
+      await this.touchSession(sessionId);
     });
   }
 
@@ -437,6 +689,71 @@ export class SessionManager {
   }
 
   // Internal helpers.
+
+  private async withTranscriptWrite<T>(
+    sessionId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const prior = this.transcriptWriteTails.get(sessionId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = prior.catch(() => undefined).then(() => current);
+    this.transcriptWriteTails.set(sessionId, tail);
+    await prior.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.transcriptWriteTails.get(sessionId) === tail) {
+        this.transcriptWriteTails.delete(sessionId);
+      }
+    }
+  }
+
+  private async appendAsyncToolRecord(
+    sessionId: string,
+    state: TranscriptState,
+    record: AsyncToolTranscriptRecord,
+  ): Promise<void> {
+    await appendToTranscript(this.resolveTranscriptPath(sessionId), record);
+    state.byId.set(record.id, record);
+    await this.touchSession(sessionId);
+  }
+
+  private async touchSession(sessionId: string): Promise<void> {
+    await updateStore(this.storePath, (store) => {
+      const entry = store.sessions[sessionId];
+      if (entry) entry.updatedAt = this.nextTimestamp(entry.updatedAt);
+    });
+  }
+
+  private asyncToolRecords(state: TranscriptState): AsyncToolTranscriptRecord[] {
+    return [...state.byId.values()].filter(
+      (record): record is AsyncToolTranscriptRecord => (
+        record.type === 'tool_execution_accepted'
+        || record.type === 'tool_execution_terminal'
+        || record.type === 'host_task_completion'
+        || record.type === 'turn_aborted'
+      ),
+    );
+  }
+
+  private hostCompletionStatus(
+    outcome: ToolExecutionTerminalRecord['outcome'],
+  ): HostTaskCompletion['status'] {
+    if (outcome === 'success' || outcome === 'failed') return outcome;
+    return 'aborted';
+  }
+
+  private lifecycleConflict(message: string): SessionError {
+    return new SessionError('SESSION_DATA_INVALID', message);
+  }
+
+  private nowIso(): string {
+    return new Date(this.now()).toISOString();
+  }
 
   /** Caps persisted tool-result blocks when both head and tail limits are set. */
   private capToolResults(blocks: ContentBlock[]): ContentBlock[] {
@@ -459,10 +776,43 @@ export class SessionManager {
     });
   }
 
-  private projectHistoryMessage(record: MessageRecord): import('./types.js').SessionHistoryMessage {
+  private projectHistoryMessage(
+    record: MessageRecord,
+    lifecycle: readonly AsyncToolTranscriptRecord[],
+  ): import('./types.js').SessionHistoryMessage {
     const content = typeof record.message.content === 'string'
       ? record.message.content
-      : record.message.content.map((block): SessionHistoryContentBlock => block);
+      : record.message.content.map((block): SessionHistoryContentBlock => {
+          if (block.type !== 'tool_use') return block;
+          const accepted = lifecycle.find(
+            (candidate): candidate is ToolExecutionAcceptedRecord => (
+              candidate.type === 'tool_execution_accepted'
+              && candidate.parentId === record.id
+              && candidate.callId === block.id
+            ),
+          );
+          if (!accepted) return block;
+          const terminal = lifecycle.find(
+            (candidate): candidate is ToolExecutionTerminalRecord => (
+              candidate.type === 'tool_execution_terminal'
+              && candidate.executionId === accepted.executionId
+            ),
+          );
+          return {
+            ...block,
+            execution_id: accepted.executionId,
+            ...(terminal === undefined
+              ? {}
+              : {
+                  status: terminal.outcome === 'success'
+                    ? 'success' as const
+                    : terminal.outcome === 'failed'
+                      ? 'error' as const
+                      : 'aborted' as const,
+                  result_content: terminal.content,
+                }),
+          };
+        });
     return {
       entryId: record.id,
       turnId: record.turnId,
@@ -540,7 +890,7 @@ export class SessionManager {
 
   private async persistNewSession(
     entry: SessionEntry,
-    records: Array<SessionRecord | MessageRecord>,
+    records: TranscriptEntry[],
   ): Promise<void> {
     const finalPath = this.resolveTranscriptPathUnchecked(entry.sessionId);
     let state: TranscriptState;
@@ -572,7 +922,7 @@ export class SessionManager {
 
   private async writeNewTranscript(
     sessionId: string,
-    records: Array<SessionRecord | MessageRecord>,
+    records: TranscriptEntry[],
   ): Promise<TranscriptState> {
     const finalPath = this.resolveTranscriptPathUnchecked(sessionId);
     const temporaryPath = join(this.sessionsDir, `${sessionId}.${randomUUID()}.tmp`);
@@ -592,9 +942,16 @@ export class SessionManager {
       throw error;
     }
 
+    let leafId: string | null = null;
+    for (const record of records) {
+      if (record.type === 'session' || record.type === 'message') {
+        leafId = record.id;
+      }
+    }
+
     return {
       byId: new Map(records.map((record) => [record.id, record])),
-      leafId: records.at(-1)?.id ?? null,
+      leafId,
     };
   }
 }

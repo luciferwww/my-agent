@@ -118,7 +118,12 @@ describe('Copilot Relay Responses client', () => {
         content: [{ type: 'tool_use', id: 'call-1', name: 'lookup', input: { key: 'value' } }],
       }, {
         role: 'user',
-        content: [{ type: 'tool_result', tool_use_id: 'call-1', content: 'found' }],
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'call-1',
+          content: 'found',
+          status: 'success',
+        }],
       }],
     };
 

@@ -22,6 +22,10 @@ export interface ToolExecutionContext {
   * The `task` tool reads this to populate Parent correlation on delegation.
    */
   readonly callId: string;
+  /** Host execution identity allocated after admission. */
+  readonly executionId: string;
+  /** Reports real implementation activity to refresh the idle deadline. */
+  readonly reportActivity: () => void;
   /**
    * User abort / turn timeout / shutdown interrupt signal.
    *
@@ -43,10 +47,12 @@ export interface ToolExecutionContext {
   readonly signal: AbortSignal;
 }
 
-/** Existing public event/presentation result shape; not a Tool implementation contract. */
+export type ToolResultStatus = 'success' | 'error' | 'denied' | 'aborted';
+
+/** Public terminal event/presentation result shape. */
 export interface ToolResult {
-  content: string;
-  isError?: boolean;
+  readonly content: string;
+  readonly status: ToolResultStatus;
 }
 
 /** Canonical output reported by a Tool implementation. */

@@ -12,6 +12,7 @@ import { PendingSessionRegistry } from './PendingSessionRegistry.js';
 export type SessionPersistence = Pick<
   SessionManager,
   | 'archiveSession'
+  | 'assertSessionDeletable'
   | 'deleteSession'
   | 'forkSession'
   | 'getHistory'
@@ -87,9 +88,16 @@ export class SessionCoordinator {
     return this.sessionManager.unarchiveSession(sessionId);
   }
 
-  async deleteSession(sessionId: string): Promise<void> {
+  async deleteSession(
+    sessionId: string,
+    beforeDelete?: () => Promise<void>,
+  ): Promise<void> {
     if (this.pendingSessions.delete(sessionId)) return;
     this.assertIdle(sessionId);
+    this.sessionManager.assertSessionDeletable(sessionId);
+    await beforeDelete?.();
+    this.assertIdle(sessionId);
+    this.sessionManager.assertSessionDeletable(sessionId);
     await this.sessionManager.deleteSession(sessionId);
   }
 

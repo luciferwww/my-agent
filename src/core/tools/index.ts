@@ -5,12 +5,29 @@ export type {
   ToolCall,
   ToolCallInput,
   ToolResult,
+  ToolResultStatus,
   ToolResultOutcome,
   ToolExecutionContext,
   ToolExecutionOutput,
   ToolDefinition,
   ToolPolicyDecision,
 } from './types.js';
+export {
+  MAX_TOOL_EXECUTION_SLOTS,
+  TOOL_CANCELLATION_GRACE_MS,
+  TOOL_IDLE_TIMEOUT_MS,
+  TOOL_TOTAL_TIMEOUT_MS,
+} from './execution.js';
+export type {
+  ExecutionAcceptedReceipt,
+  ExecutionCancelReason,
+  ExecutionOutcome,
+  ExecutionTerminalFact,
+  ExecutionTerminalReason,
+  HostTaskCompletion,
+  SupervisedToolExecute,
+  SupervisedToolExecutionContext,
+} from './execution.js';
 export {
   compilePortableToolSchema,
   PortableToolSchemaError,

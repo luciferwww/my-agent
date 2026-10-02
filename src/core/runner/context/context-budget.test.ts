@@ -101,7 +101,12 @@ describe('context-budget', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'ok' }] },
       {
         role: 'user',
-        content: [{ type: 'tool_result', tool_use_id: 'tu_1', content: 'x'.repeat(50_000) }],
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'tu_1',
+          content: 'x'.repeat(50_000),
+          status: 'success',
+        }],
       },
     ];
     const result = checkContextBudget({

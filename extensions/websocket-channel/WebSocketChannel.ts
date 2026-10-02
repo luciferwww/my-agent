@@ -121,6 +121,7 @@ type OutboundMessage =
       id: string;
       sessionId: string;
       turnId: string;
+      callId: string;
       toolName: string;
       input: Record<string, unknown>;
     }
@@ -1102,7 +1103,7 @@ export class WebSocketChannel implements Channel {
   private sendApprovalRequestMessage(
     request: Pick<
       ApprovalRequest,
-      'id' | 'sessionId' | 'turnId' | 'toolName' | 'input' | 'originClientId'
+      'id' | 'sessionId' | 'turnId' | 'callId' | 'toolName' | 'input' | 'originClientId'
     >,
   ): { status: 'accepted' } | { status: 'unavailable'; reason: 'origin_missing' | 'delivery_failed' } {
     if (!request.originClientId) {
@@ -1139,6 +1140,7 @@ export class WebSocketChannel implements Channel {
       id: request.id,
       sessionId: request.sessionId,
       turnId: request.turnId,
+      callId: request.callId,
       toolName: request.toolName,
       input: request.input,
     });

@@ -183,6 +183,7 @@ export async function bootstrapRuntime(
         userPromptBuilder,
         contextFiles,
         agentRunner,
+        managedProcessLifecycle: deps.managedProcessLifecycle,
       },
       state,
       dependencies: deps,

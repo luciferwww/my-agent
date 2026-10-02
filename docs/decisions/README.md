@@ -25,6 +25,7 @@ This directory contains durable architectural decisions. It does not own current
 | [ADR-015](adr-015-session-identity-and-materialization.md) | Accepted | Canonical Session identity, Pending first-message materialization, and clean-format cutover |
 | [ADR-016](adr-016-unified-builtin-llm-provider.md) | Accepted | One optional Built-in Provider with private per-model Protocol routing and explicit model registration |
 | [ADR-017](adr-017-session-message-queue-and-steering-claim.md) | Accepted | One per-Session user-message FIFO with active-Turn safe-point claim |
+| [ADR-018](adr-018-unified-async-tool-execution-and-completion-delivery.md) | Accepted | Unified Async Tool Execution Framework replacing Runner direct-await invocation |
 
 ## Authority rules
 

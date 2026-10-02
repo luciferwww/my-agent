@@ -8,6 +8,7 @@ import { SessionManager } from '../session/SessionManager.js';
 import type { SessionMessageInput } from '../session/SessionManager.js';
 import type {
   ChatContentBlock,
+  ChatMessage,
   ModelInvocationPort,
   ModelInvocationRequest,
   ModelInvocationResponse,
@@ -18,7 +19,6 @@ import type {
   ApplicationToolPolicy,
   ToolExecutionContext,
   ToolDefinition,
-  ToolResult,
 } from '../tools/types.js';
 import type { HookName, HookHandlerMap, HookRegistration } from './hooks/index.js';
 import type { HookProjection, ToolProjection } from '../registry/index.js';
@@ -38,11 +38,16 @@ type LegacyTestRunnerConfig = AgentRunnerConfig & {
   toolExecutor?: ToolExecutor;
 };
 
+interface LegacyToolResult {
+  content: string;
+  isError?: boolean;
+}
+
 type ToolExecutor = (
   toolName: string,
   input: Record<string, unknown>,
   context: ToolExecutionContext,
-) => Promise<ToolResult>;
+) => Promise<LegacyToolResult>;
 
 const MAIN_SESSION_ID = '00000000-0000-4000-8000-000000000101';
 const CHILD_SESSION_ID = '00000000-0000-4000-8000-000000000102';
@@ -76,6 +81,24 @@ const permissiveValidator = compilePortableToolSchema({
   type: 'object',
   additionalProperties: true,
 });
+
+function testSteeringSource(claimReady: () => ChatMessage[]) {
+  let notified = false;
+  return {
+    claimReady,
+    waitUntilPotentiallyReady: (signal: AbortSignal) => {
+      if (!notified) {
+        notified = true;
+        return Promise.resolve();
+      }
+      return new Promise<void>((_resolve, reject) => {
+        const onAbort = () => reject(new DOMException('Aborted', 'AbortError'));
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+      });
+    },
+  };
+}
 
 /** Test-only fixture adapter; production Runner has no legacy input path. */
 class AgentRunner extends ProductionAgentRunner {
@@ -477,29 +500,32 @@ describe('AgentRunner', () => {
 
       expect(seen).toHaveLength(1);
       expect(seen[0]!.name).toBe('inspect');
-      expect(seen[0]!.ctx).toEqual({
+      expect(seen[0]!.ctx).toEqual(expect.objectContaining({
         sessionId: MAIN_SESSION_ID,
         turnId: 'turn-ctx-99',
         callId: 'tool_ctx_42',
         subagentDepth: 0,
         signal: expect.any(AbortSignal),
-      });
+        executionId: expect.any(String),
+        reportActivity: expect.any(Function),
+      }));
     });
 
     it('respects maxLlmCalls limit', async () => {
       // The LLM returns tool_use on every call.
-      const infiniteToolResponses = Array.from({ length: 20 }, () => [
+      const infiniteToolResponses = Array.from({ length: 20 }, (_, index) => [
         { type: 'message_start' as const },
-        { type: 'tool_use' as const, id: 'tool_01', name: 'loop_tool', input: {} },
+        { type: 'tool_use' as const, id: `tool_${index}`, name: 'loop_tool', input: {} },
         { type: 'message_end' as const, stopReason: 'tool_use', usage: { inputTokens: 10, outputTokens: 5 } },
       ]);
 
       const llmClient = createMockLLMClient(infiniteToolResponses);
+      const toolExecutor = vi.fn(async () => ({ content: 'result' }));
 
       const runner = new AgentRunner({
         llmClient,
         sessionManager,
-        toolExecutor: async () => ({ content: 'result' }),
+        toolExecutor,
       });
 
       const result = await runner.run({
@@ -515,6 +541,197 @@ describe('AgentRunner', () => {
       expect(result.toolRounds).toBe(3);
       expect(result.stopReason).toBe('max_llm_calls');
       expect(result.text).toBe('');
+      expect(toolExecutor).toHaveBeenCalledTimes(2);
+      const records = sessionManager.getMessages(MAIN_SESSION_ID);
+      expect(records.at(-2)).toEqual(expect.objectContaining({
+        turnStopReason: 'max_llm_calls',
+        message: expect.objectContaining({ role: 'assistant' }),
+      }));
+      expect(records.at(-1)?.message).toEqual({
+        role: 'toolResult',
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'tool_2',
+          content: 'Tool "loop_tool" was not executed because the Model-call limit left no completion call.',
+          status: 'error',
+        }],
+      });
+    });
+
+    it('recovers persisted async executions without replay or duplicate Host completion', async () => {
+      await sessionManager.appendMessage(MAIN_SESSION_ID, {
+        turnId: 'interrupted-turn',
+        role: 'user',
+        content: 'Run both',
+      });
+      await sessionManager.appendMessage(MAIN_SESSION_ID, {
+        turnId: 'interrupted-turn',
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'recovery-1', name: 'first_tool', input: {} },
+          { type: 'tool_use', id: 'recovery-2', name: 'second_tool', input: {} },
+        ],
+      });
+      await sessionManager.appendToolExecutionAccepted(MAIN_SESSION_ID, {
+        turnId: 'interrupted-turn',
+        callId: 'recovery-1',
+        executionId: 'execution-recovery-1',
+        toolName: 'first_tool',
+      });
+      await sessionManager.appendToolExecutionAccepted(MAIN_SESSION_ID, {
+        turnId: 'interrupted-turn',
+        callId: 'recovery-2',
+        executionId: 'execution-recovery-2',
+        toolName: 'second_tool',
+      });
+      await sessionManager.appendToolExecutionTerminal(MAIN_SESSION_ID, {
+        executionId: 'execution-recovery-1',
+        outcome: 'success',
+        content: 'persisted result',
+      });
+
+      const requests: ModelInvocationRequest['messages'][] = [];
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(params: ModelInvocationRequest) {
+          requests.push(params.messages.map((message) => ({ ...message })));
+          yield { type: 'message_start' } as ModelStreamEvent;
+          yield { type: 'text_delta', text: 'Recovered' } as ModelStreamEvent;
+          yield {
+            type: 'message_end',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 1, outputTokens: 1 },
+          } as ModelStreamEvent;
+        },
+        async chat() { throw new Error('Not used'); },
+      };
+      const toolExecutor = vi.fn(async () => ({ content: 'must not run' }));
+      const runner = new AgentRunner({ llmClient, sessionManager, toolExecutor });
+
+      await runner.run({
+        sessionId: MAIN_SESSION_ID,
+        message: 'Continue',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'recovery-turn-1',
+      });
+      await runner.run({
+        sessionId: MAIN_SESSION_ID,
+        message: 'Continue again',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'recovery-turn-2',
+      });
+
+      expect(toolExecutor).not.toHaveBeenCalled();
+      const lifecycle = sessionManager.getAsyncToolRecords(MAIN_SESSION_ID);
+      expect(lifecycle.filter((record) => record.type === 'tool_execution_terminal')).toHaveLength(2);
+      expect(lifecycle.filter((record) => record.type === 'host_task_completion')).toHaveLength(2);
+      expect(lifecycle).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'tool_execution_terminal',
+          executionId: 'execution-recovery-2',
+          outcome: 'outcome_unknown',
+          reason: 'host_recovery',
+        }),
+        expect.objectContaining({
+          type: 'host_task_completion',
+          completion: expect.objectContaining({
+            executionId: 'execution-recovery-1',
+            status: 'success',
+          }),
+        }),
+        expect.objectContaining({
+          type: 'host_task_completion',
+          completion: expect.objectContaining({
+            executionId: 'execution-recovery-2',
+            status: 'aborted',
+          }),
+        }),
+      ]));
+      expect(requests[0]).toContainEqual({
+        role: 'user',
+        content: [
+          {
+            type: 'execution_accepted',
+            tool_use_id: 'recovery-1',
+            execution_id: 'execution-recovery-1',
+          },
+          {
+            type: 'execution_accepted',
+            tool_use_id: 'recovery-2',
+            execution_id: 'execution-recovery-2',
+          },
+        ],
+      });
+      expect(requests[0]).toContainEqual(expect.objectContaining({
+        role: 'user',
+        origin: 'host',
+        content: expect.stringContaining('persisted result'),
+      }));
+    });
+
+    it('repairs a max-call Tool exchange with unavailable results and never executes it', async () => {
+      await sessionManager.appendMessage(MAIN_SESSION_ID, {
+        turnId: 'limited-turn',
+        role: 'user',
+        content: 'Run later',
+      });
+      await sessionManager.appendMessage(MAIN_SESSION_ID, {
+        turnId: 'limited-turn',
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'limited-1', name: 'limited_tool', input: {} },
+          { type: 'tool_use', id: 'limited-2', name: 'limited_tool', input: {} },
+        ],
+        turnStopReason: 'max_llm_calls',
+      });
+
+      let captured: ModelInvocationRequest['messages'] = [];
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(params: ModelInvocationRequest) {
+          captured = params.messages.map((message) => ({ ...message }));
+          yield { type: 'message_start' } as ModelStreamEvent;
+          yield {
+            type: 'message_end',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 1, outputTokens: 1 },
+          } as ModelStreamEvent;
+        },
+        async chat() { throw new Error('Not used'); },
+      };
+      const toolExecutor = vi.fn(async () => ({ content: 'must not run' }));
+      const runner = new AgentRunner({ llmClient, sessionManager, toolExecutor });
+
+      await runner.run({
+        sessionId: MAIN_SESSION_ID,
+        message: 'Next turn',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'after-limited-turn',
+      });
+
+      expect(toolExecutor).not.toHaveBeenCalled();
+      const repaired = sessionManager.getMessages(MAIN_SESSION_ID).find(
+        (record) => record.message.role === 'toolResult',
+      );
+      expect(repaired?.message.content).toEqual([
+        {
+          type: 'tool_result',
+          tool_use_id: 'limited-1',
+          content: 'Tool "limited_tool" was not executed because the Model-call limit left no completion call.',
+          status: 'error',
+        },
+        {
+          type: 'tool_result',
+          tool_use_id: 'limited-2',
+          content: 'Tool "limited_tool" was not executed because the Model-call limit left no completion call.',
+          status: 'error',
+        },
+      ]);
+      expect(captured).toContainEqual({
+        role: 'user',
+        content: repaired?.message.content,
+      });
     });
 
     it('has no Model-call count limit when maxLlmCalls is omitted', async () => {
@@ -704,12 +921,209 @@ describe('AgentRunner', () => {
         model: 'test',
         systemPrompt: '',
         turnId: 'test-turn',
-        claimSteeringMessages,
+        steeringSource: testSteeringSource(claimSteeringMessages),
       });
 
       expect(result.text).toBe('done');
-      expect(capturedCalls).toHaveLength(2);
+      expect(capturedCalls).toHaveLength(3);
       expect(capturedCalls[1]!.some((m) => m.role === 'user' && m.content === 'interrupt now')).toBe(true);
+      expect(capturedCalls[2]!).toContainEqual(expect.objectContaining({
+        role: 'user',
+        origin: 'host',
+      }));
+      expect(claimSteeringMessages).toHaveBeenCalled();
+    });
+
+    it('spike: resumes the parent through an interruptible task and wait tool sequence', async () => {
+      const deferred = <T = void>() => {
+        let resolve!: (value: T | PromiseLike<T>) => void;
+        const promise = new Promise<T>((settle) => {
+          resolve = settle;
+        });
+        return { promise, resolve };
+      };
+
+      const capturedCalls: ModelInvocationRequest['messages'][] = [];
+      const events: AgentEvent[] = [];
+      const taskStarted = deferred();
+      const steeringAvailable = deferred();
+      const waitStarted = deferred();
+      const childTerminal = deferred();
+      const queuedMessages: ChatMessage[] = [];
+      let callIndex = 0;
+
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(params: ModelInvocationRequest) {
+          capturedCalls.push(params.messages.map((message) => ({
+            ...message,
+            content: Array.isArray(message.content)
+              ? message.content.map((block) => ({ ...block }))
+              : message.content,
+          })));
+
+          yield { type: 'message_start' } as ModelStreamEvent;
+          if (callIndex === 0) {
+            callIndex++;
+            yield {
+              type: 'tool_call',
+              call: {
+                callId: 'task-call',
+                name: 'task_spike',
+                input: { state: 'ready', value: {} },
+              },
+            } as ModelStreamEvent;
+            yield {
+              type: 'message_end',
+              stopReason: 'tool_use',
+              usage: { inputTokens: 10, outputTokens: 5 },
+            } as ModelStreamEvent;
+            return;
+          }
+
+          if (callIndex === 1) {
+            callIndex++;
+            yield { type: 'text_delta', text: 'The child is still running.' } as ModelStreamEvent;
+            yield {
+              type: 'tool_call',
+              call: {
+                callId: 'wait-call',
+                name: 'scope_control_spike',
+                input: { state: 'ready', value: { action: 'wait' } },
+              },
+            } as ModelStreamEvent;
+            yield {
+              type: 'message_end',
+              stopReason: 'tool_use',
+              usage: { inputTokens: 12, outputTokens: 6 },
+            } as ModelStreamEvent;
+            return;
+          }
+
+          yield { type: 'text_delta', text: 'The child completed successfully.' } as ModelStreamEvent;
+          yield {
+            type: 'message_end',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 14, outputTokens: 7 },
+          } as ModelStreamEvent;
+        },
+        async chat() {
+          throw new Error('Not used');
+        },
+      };
+
+      const runner = new AgentRunner({
+        llmClient,
+        sessionManager,
+        onEvent: (event) => events.push(event),
+        toolExecutor: async (toolName) => {
+          if (toolName === 'task_spike') {
+            taskStarted.resolve();
+            await steeringAvailable.promise;
+            return { content: 'scope_state=running; wake_reason=parent_steering' };
+          }
+
+          if (toolName === 'scope_control_spike') {
+            waitStarted.resolve();
+            await childTerminal.promise;
+            return { content: 'scope_state=completed; aggregate=verified' };
+          }
+
+          return { content: `Unexpected tool: ${toolName}`, isError: true };
+        },
+      });
+
+      const claimSteeringMessages = vi.fn(() => queuedMessages.splice(0));
+      const runPromise = runner.run({
+        sessionId: MAIN_SESSION_ID,
+        message: 'start delegated work',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'test-turn',
+        tools: [
+          {
+            name: 'task_spike',
+            description: 'Start an interruptible child scope.',
+            inputSchema: permissiveValidator.schema,
+          },
+          {
+            name: 'scope_control_spike',
+            description: 'Wait for the active child scope.',
+            inputSchema: permissiveValidator.schema,
+          },
+        ],
+        steeringSource: testSteeringSource(claimSteeringMessages),
+      });
+
+      await taskStarted.promise;
+      queuedMessages.push({ role: 'user', content: 'What is the current progress?' });
+      steeringAvailable.resolve();
+
+      await waitStarted.promise;
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'text_delta',
+        text: 'The child is still running.',
+      }));
+
+      let runSettled = false;
+      void runPromise.finally(() => {
+        runSettled = true;
+      });
+      await Promise.resolve();
+      expect(runSettled).toBe(false);
+
+      childTerminal.resolve();
+      const result = await runPromise;
+
+      expect(result.text).toBe('The child completed successfully.');
+      expect(capturedCalls).toHaveLength(3);
+
+      const secondCall = capturedCalls[1]!;
+      const taskAcceptedIndex = secondCall.findIndex((message) =>
+        Array.isArray(message.content)
+        && message.content.some((block) =>
+          block.type === 'execution_accepted'
+          && block.tool_use_id === 'task-call'));
+      const taskCompletionIndex = secondCall.findIndex((message) =>
+        message.origin === 'host'
+        && typeof message.content === 'string'
+        && message.content.includes('scope_state=running'));
+      const steeringIndex = secondCall.findIndex((message) =>
+        message.role === 'user' && message.content === 'What is the current progress?');
+      expect(taskAcceptedIndex).toBeGreaterThanOrEqual(0);
+      expect(taskCompletionIndex).toBe(-1);
+      expect(steeringIndex).toBeGreaterThan(taskAcceptedIndex);
+
+      const thirdCall = capturedCalls[2]!;
+      expect(thirdCall).toContainEqual(expect.objectContaining({
+        role: 'assistant',
+        content: expect.arrayContaining([
+          { type: 'text', text: 'The child is still running.' },
+          expect.objectContaining({
+            type: 'tool_use',
+            id: 'wait-call',
+            name: 'scope_control_spike',
+          }),
+        ]),
+      }));
+      expect(thirdCall).toContainEqual(expect.objectContaining({
+        role: 'user',
+        content: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'execution_accepted',
+            tool_use_id: 'wait-call',
+          }),
+        ]),
+      }));
+      expect(thirdCall).toContainEqual(expect.objectContaining({
+        role: 'user',
+        origin: 'host',
+        content: expect.stringContaining('scope_state=running; wake_reason=parent_steering'),
+      }));
+      expect(thirdCall).toContainEqual(expect.objectContaining({
+        role: 'user',
+        origin: 'host',
+        content: expect.stringContaining('scope_state=completed; aggregate=verified'),
+      }));
       expect(claimSteeringMessages).toHaveBeenCalledTimes(2);
     });
   });
@@ -1043,7 +1457,7 @@ describe('AgentRunner', () => {
       expect(messages[1]!.message.role).toBe('assistant');
     });
 
-    it('saves toolResult messages with correct role', async () => {
+    it('persists accepted execution facts without a terminal ToolResult message', async () => {
       const llmClient = createMockLLMClient([
         [
           { type: 'message_start' },
@@ -1066,12 +1480,19 @@ describe('AgentRunner', () => {
       await runner.run({ sessionId: MAIN_SESSION_ID, message: 'Search', model: 'test', systemPrompt: '', turnId: 'test-turn' });
 
       const messages = sessionManager.getMessages(MAIN_SESSION_ID);
-      // user(Search) → assistant(tool_use) → toolResult → assistant(Done)
-      expect(messages).toHaveLength(4);
+      // accepted and Host completion are structural records, not terminal ToolResult messages.
+      expect(messages).toHaveLength(3);
       expect(messages[0]!.message.role).toBe('user');
       expect(messages[1]!.message.role).toBe('assistant');
-      expect(messages[2]!.message.role).toBe('toolResult');
-      expect(messages[3]!.message.role).toBe('assistant');
+      expect(messages[2]!.message.role).toBe('assistant');
+      expect(sessionManager.getAsyncToolRecords(MAIN_SESSION_ID)).toEqual([
+        expect.objectContaining({ type: 'tool_execution_accepted', callId: 'tool_01' }),
+        expect.objectContaining({ type: 'tool_execution_terminal', outcome: 'success' }),
+        expect.objectContaining({
+          type: 'host_task_completion',
+          completion: expect.objectContaining({ status: 'success', content: 'result' }),
+        }),
+      ]);
     });
 
     it.each([
@@ -1101,7 +1522,7 @@ describe('AgentRunner', () => {
       toolName: string;
       executor: ToolExecutor;
       expectedError: string;
-    }>)('CH-03 persists a paired error tool result for $label', async ({ toolName, executor, expectedError }) => {
+    }>)('CH-03 persists an accepted terminal failure for $label', async ({ toolName, executor, expectedError }) => {
       const llmClient = createMockLLMClient([
         [
           { type: 'message_start' },
@@ -1134,23 +1555,52 @@ describe('AgentRunner', () => {
       expect(messages.map(({ message }) => message.role)).toEqual([
         'user',
         'assistant',
-        'toolResult',
         'assistant',
       ]);
       const assistantBlocks = messages[1]!.message.content as ChatContentBlock[];
       expect(assistantBlocks).toContainEqual(
         expect.objectContaining({ type: 'tool_use', id: 'tool-error', name: toolName }),
       );
-      const resultBlocks = messages[2]!.message.content as ChatContentBlock[];
-      expect(resultBlocks).toEqual([
+      expect(sessionManager.getAsyncToolRecords(MAIN_SESSION_ID)).toEqual([
         expect.objectContaining({
-          type: 'tool_result',
-          tool_use_id: 'tool-error',
+          type: 'tool_execution_accepted',
+          callId: 'tool-error',
+        }),
+        expect.objectContaining({
+          type: 'tool_execution_terminal',
+          outcome: 'failed',
           content: expect.stringContaining(expectedError),
         }),
+        expect.objectContaining({
+          type: 'host_task_completion',
+          completion: expect.objectContaining({
+            status: 'failed',
+            content: expect.stringContaining(expectedError),
+          }),
+        }),
       ]);
+      const requestedEventIndex = events.findIndex(
+        (event) => event.type === 'tool_call_requested',
+      );
+      const useEventIndex = events.findIndex((event) => event.type === 'tool_use');
+      const resultEventIndex = events.findIndex((event) => event.type === 'tool_result');
+      expect(requestedEventIndex).toBeGreaterThanOrEqual(0);
+      expect(useEventIndex).toBeGreaterThan(requestedEventIndex);
+      expect(resultEventIndex).toBeGreaterThan(useEventIndex);
+      expect(events[requestedEventIndex]).toEqual(expect.objectContaining({
+        callId: 'tool-error',
+        name: toolName,
+      }));
+      expect(events[useEventIndex]).toEqual(expect.objectContaining({
+        callId: 'tool-error',
+        executionId: expect.any(String),
+      }));
       const resultEvent = events.find((event) => event.type === 'tool_result');
-      expect(resultEvent?.type === 'tool_result' && resultEvent.result.isError).toBe(true);
+      expect(resultEvent?.type === 'tool_result' && resultEvent.result.status).toBe('error');
+      expect(resultEvent).toEqual(expect.objectContaining({
+        callId: 'tool-error',
+        executionId: expect.any(String),
+      }));
     });
   });
 
@@ -1332,7 +1782,13 @@ describe('AgentRunner', () => {
       expect(executedTools).toHaveLength(0);
       expect(result.text).toBe('Tool was blocked.');
       const toolResult = events.find((e) => e.type === 'tool_result');
-      expect(toolResult?.type === 'tool_result' && toolResult.result.isError).toBe(true);
+      expect(toolResult?.type === 'tool_result' && toolResult.result.status).toBe('denied');
+      expect(events.filter((event) => event.type === 'tool_call_requested')).toHaveLength(1);
+      expect(events.filter((event) => event.type === 'tool_use')).toHaveLength(0);
+      expect(toolResult).toEqual(expect.objectContaining({
+        callId: 'tool_01',
+      }));
+      expect(toolResult).not.toHaveProperty('executionId');
       const messages = sessionManager.getMessages(MAIN_SESSION_ID);
       expect(messages.map(({ message }) => message.role)).toEqual([
         'user',
@@ -1349,6 +1805,7 @@ describe('AgentRunner', () => {
           type: 'tool_result',
           tool_use_id: 'tool_01',
           content: 'Tool blocked: dangerous command',
+          status: 'denied',
         },
       ]);
     });
@@ -1994,7 +2451,7 @@ describe('AgentRunner', () => {
       // The first tool completes and the second does not start.
       expect(toolCallCount).toBe(1);
       const records = sessionManager.getMessages(MAIN_SESSION_ID);
-      expect(records.map(({ message }) => message.role)).toEqual(['user', 'assistant', 'toolResult']);
+      expect(records.map(({ message }) => message.role)).toEqual(['user', 'assistant']);
       const assistantBlocks = records[1]!.message.content as ChatContentBlock[];
       expect(assistantBlocks.filter((block) => block.type === 'tool_use').map((block) => block.id)).toEqual([
         'tu-1',
@@ -2023,22 +2480,31 @@ describe('AgentRunner', () => {
       expect(recoveredRecords.map(({ message }) => message.role)).toEqual([
         'user',
         'assistant',
-        'toolResult',
         'user',
         'assistant',
       ]);
-      expect(recoveredRecords[2]!.message.content).toEqual([
-        {
-          type: 'tool_result',
-          tool_use_id: 'tu-1',
-          content: 'echoed a',
-        },
-        {
-          type: 'tool_result',
-          tool_use_id: 'tu-2',
-          content: 'Tool "echo" was not executed because the Turn was aborted.',
-        },
-      ]);
+      const lifecycle = sessionManager.getAsyncToolRecords(MAIN_SESSION_ID);
+      expect(lifecycle).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: 'tool_execution_terminal',
+            outcome: 'success',
+            content: 'echoed a',
+          }),
+          expect.objectContaining({
+            type: 'tool_execution_terminal',
+            outcome: 'aborted',
+            reason: 'start_interrupted',
+          }),
+          expect.objectContaining({ type: 'turn_aborted', turnId: 't-tool-loop-abort' }),
+        ]),
+      );
+      const abortedIndex = lifecycle.findIndex((record) => record.type === 'turn_aborted');
+      const firstCompletionIndex = lifecycle.findIndex(
+        (record) => record.type === 'host_task_completion',
+      );
+      expect(abortedIndex).toBeGreaterThanOrEqual(0);
+      expect(firstCompletionIndex).toBeGreaterThan(abortedIndex);
       expect(repairEvents).not.toContainEqual(
         expect.objectContaining({ type: 'orphan_tool_results_repaired' }),
       );
@@ -2471,7 +2937,7 @@ describe('AgentRunner', () => {
         systemPrompt: '',
         turnId: 't-pending-steering',
         signal: controller.signal,
-        claimSteeringMessages: vi.fn(() => []),
+        steeringSource: testSteeringSource(vi.fn(() => [])),
       });
 
       expect(round).toBe(1);
@@ -2502,10 +2968,10 @@ describe('AgentRunner', () => {
         systemPrompt: '',
         turnId: 't-final-steering-abort',
         signal: controller.signal,
-        claimSteeringMessages: () => {
+        steeringSource: testSteeringSource(() => {
           controller.abort();
           return [];
-        },
+        }),
       });
 
       expect(result.stopReason).toBe('aborted');

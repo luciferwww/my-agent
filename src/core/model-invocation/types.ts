@@ -13,10 +13,18 @@ export type ChatContentBlock =
       dimensions: { width: number; height: number };
     }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
-  | { type: 'tool_result'; tool_use_id: string; content: string };
+  | {
+      type: 'tool_result';
+      tool_use_id: string;
+      content: string;
+      status: import('../tools/types.js').ToolResultStatus;
+    }
+  | { type: 'execution_accepted'; tool_use_id: string; execution_id: string };
 
 export interface ChatMessage {
   role: ChatRole;
+  /** Trusted Core origin; Provider adapters encode it as an ordinary user role. */
+  origin?: 'host';
   content: string | ChatContentBlock[];
 }
 

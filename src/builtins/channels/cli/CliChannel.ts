@@ -193,7 +193,13 @@ export class CliChannel implements Channel {
         break;
 
       case 'tool_result': {
-        const label = event.result.isError ? red('[tool error]') : dim('[tool result]');
+        const label = event.result.status === 'success'
+          ? dim('[tool result]')
+          : event.result.status === 'denied'
+            ? yellow('[tool denied]')
+            : event.result.status === 'aborted'
+              ? yellow('[tool aborted]')
+              : red('[tool error]');
         const previewLines = formatToolResultPreview(event.result.content);
         if (previewLines.length === 0) {
           this.output.write(`${label}\n`);

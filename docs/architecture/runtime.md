@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Runtime behavior
-> Verified: 2026-09-18
+> Verified: 2026-10-02
 > Ownership: Runtime composition, publication, generations, Turn orchestration, queues, routing, Fanout, Abort, Shutdown, and Subagent Parent/Child lifecycle
 > Ownership key: runtime-composition-and-lifecycle
 
@@ -19,9 +19,10 @@ Runtime owns:
 - Registry candidate staging, validation, immutable Snapshot publication, generation capture, retirement, and reload admission;
 - per-session Turn admission and queueing;
 - origin routing, Agent-event Fanout, interactions, Abort, and bounded Shutdown;
-- tracked Subagent Parent/Child membership and inherited generation/route lifecycle.
+- tracked Subagent Parent/Child membership and inherited generation/route lifecycle;
+- process-global Tool execution slot/quarantine state and managed-process Session/shutdown cleanup.
 
-Runtime delegates the internal Turn algorithm to [Runner](runner.md). Runner owns model calls, Tool/Hook execution, context budgeting, Compaction, and the point at which steering messages are consumed. Runtime supplies an already resolved model, immutable generation projections, prompts, policy, approval capability, steering callback, and Abort signal; it does not execute the Runner loop.
+Runtime delegates the internal Turn algorithm to [Runner](runner.md). Runner owns model calls, Tool/Hook admission, context budgeting, Compaction, and the point at which steering messages are consumed; the Async Tool Execution Framework owns implementation Promises. Runtime supplies an already resolved model, immutable generation projections, prompts, policy, approval capability, a wakeable steering source, and Abort signal; it does not execute Tools.
 
 Runtime also does not discover or load Extension files. [Extensions](extensions.md) owns install-root discovery, validated scoped configuration, controlled entry loading, and production of not-yet-created `LoadedRuntimeUnit` values. Runtime owns every later create, start, registration staging, publication, retirement, and stop transition.
 
@@ -248,19 +249,19 @@ The request completion gate seals exactly one public terminal outcome. A run or 
 
 ## 9. Subagent Parent/Child lifecycle
 
-The Task Tool can delegate only from an active matching Parent Turn. Runtime rejects delegation unless the Parent Turn ID, session, and signal identity match an active non-aborted Parent; it then derives the Child depth and capabilities for setup.
+The Task Tool can delegate only from an active matching Parent Turn. Runtime rejects delegation unless the Parent Turn ID, session, and Parent-authority signal identity match an active non-aborted Parent; it then derives the Child depth and capabilities for setup. The authority signal is distinct from the Framework's execution-local cancellation signal.
 
 An accepted Child:
 
 1. registers a Root-tree member before asynchronous setup;
 2. receives a new canonical `sessionId`, Turn ID, and root-only transient Transcript that is absent from Session Store/get/list;
-3. inherits the Parent route, Abort signal, context snapshot, and Registry Snapshot;
+3. inherits the Parent route, context snapshot, Registry Snapshot, and Root Abort through its execution-local cancellation signal;
 4. prepares the Child prompt/tools;
 5. resolves either the Parent's effective Model Reference or the profile's concrete reference against the Parent generation;
 6. emits `subagent_start` and exactly one `subagent_end` terminal event;
 7. releases route, deletes the transient Transcript, and releases tree membership in `finally`.
 
-A Child never recaptures the latest generation. Root pin release waits until the Parent and all registered Child members finish. Setup, resolution, execution, and Abort outcomes are classified separately; cleanup continues where possible if one cleanup step fails.
+A Child never recaptures the latest generation. Independent sibling Task calls may run concurrently, with distinct execution signals, Child identities, routes, tree memberships, terminal events, and cleanup. Root pin release waits until the Parent and all registered Child members finish. Setup, resolution, execution, and Abort outcomes are classified separately; cleanup continues where possible if one cleanup step fails.
 
 Detailed Child execution remains owned by [Runner](runner.md), while Runtime owns membership, inheritance, routing, and lifecycle convergence.
 
@@ -268,7 +269,7 @@ Detailed Child execution remains owned by [Runner](runner.md), while Runtime own
 
 The generation-bound `before_tool_call` Hook projection and the current-call human approval capability are separate inputs to Runner's Tool pipeline.
 
-Runtime policy applies deterministic `deny` before the live root Session permission mode, mandatory Manual-mode checks, static `allow`, and current-call Approval; Tool patterns support exact names plus `*` and `?` glob characters. `deny` is final. `allow_all` authorizes every other registered Tool. In `manual`, Exec and external structured paths require Approval even when statically allowed, and unmatched Tools require Approval. If required Approval has no interaction transport, policy fails closed. When interaction is available, Runtime routes the request and closure to the Channel/client recorded for that Turn.
+Runtime policy applies deterministic `deny` before the live root Session permission mode, mandatory Manual-mode checks, static `allow`, and current-call Approval; Tool patterns support exact names plus `*` and `?` glob characters. `deny` is final. `allow_all` authorizes every other registered Tool. In `manual`, Exec and external structured paths require Approval even when statically allowed, and unmatched Tools require Approval. If required Approval has no interaction transport, policy fails closed. When interaction is available, Runtime routes the call-correlated request and closure to the Channel/client recorded for that Turn.
 
 `SessionPermissionRegistry` is Runtime-owned process-local state keyed by root Session ID. The mode is read for every Tool authorization and inherited by Child execution. It survives client disconnect and later Turns, but restart/resume, fork, and unarchive use `manual`; archive/delete clear it. `TurnInteractionManager` holds pending interactions, accepts submitted/cancelled/aborted responses, reacts to origin disconnect, and closes pending interactions during Turn Abort or Shutdown. Elevation to `allow_all` settles only that Session's pending approvals with the `session_allow_all` source. There is no elapsed-time approval expiry in this layer.
 
@@ -294,7 +295,8 @@ Unread steering is discarded during Turn cleanup and is not counted in `dropped`
 5. converges reload and retirement where budget remains;
 6. stops eligible Unit and Channel instances in reverse dependency order;
 7. closes Memory and Logger while budget remains;
-8. waits for tracked terminal Fanout while possible.
+8. waits for tracked terminal Fanout while possible;
+9. lazily starts managed-process cleanup only while deadline budget remains and records failure or residual nonconvergence explicitly.
 
 The deeply frozen `RuntimeShutdownReport` records `completed` or `deadline-exhausted`, completed/failed resources, completed/aborted/nonconverged/cancelled requests, protected generations, completed/failed/pending/protected instance stops, and structured residuals. Deadline exhaustion never reopens admission or hides protected work.
 

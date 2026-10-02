@@ -18,6 +18,7 @@ import {
   stageRegistryUnit,
 } from '../../runtime/registry-builder.js';
 import { AgentRunner } from './AgentRunner.js';
+import type { AgentEvent } from './types.js';
 
 const MAIN_SESSION_ID = '00000000-0000-4000-8000-000000000201';
 
@@ -369,6 +370,90 @@ describe('AgentRunner canonical Tool pipeline', () => {
     }));
   });
 
+  it('publishes an accepted call while a sibling approval remains pending', async () => {
+    let releaseApproval!: (value: { outcome: 'denied'; reason: 'user' }) => void;
+    const approval = new Promise<{ outcome: 'denied'; reason: 'user' }>((resolve) => {
+      releaseApproval = resolve;
+    });
+    let releaseExecution!: (value: ToolExecutionOutput) => void;
+    const execution = new Promise<ToolExecutionOutput>((resolve) => {
+      releaseExecution = resolve;
+    });
+    const snapshot = snapshotWithTool({
+      before: () => ({ action: 'allow' }),
+      afterResults: [],
+      execute: async () => execution,
+    });
+    const events: AgentEvent[] = [];
+    let round = 0;
+    const port: ModelInvocationPort = {
+      async *chatStream() {
+        round++;
+        yield { type: 'message_start' as const };
+        if (round === 1) {
+          for (let index = 1; index <= 2; index++) {
+            yield {
+              type: 'tool_call' as const,
+              call: {
+                callId: `call-${index}`,
+                name: 'demo',
+                input: { state: 'ready' as const, value: { count: index } },
+              },
+            };
+          }
+          yield {
+            type: 'message_end' as const,
+            stopReason: 'tool_use',
+            usage: { inputTokens: 2, outputTokens: 1 },
+          };
+          return;
+        }
+        yield { type: 'text_delta' as const, text: 'done' };
+        yield {
+          type: 'message_end' as const,
+          stopReason: 'end_turn',
+          usage: { inputTokens: 2, outputTokens: 1 },
+        };
+      },
+      async chat() {
+        throw new Error('not used');
+      },
+    };
+    const runner = new AgentRunner({
+      sessionManager,
+      onEvent: (event) => events.push(event),
+    });
+    const run = runner.run({
+      sessionId: MAIN_SESSION_ID,
+      message: 'go',
+      systemPrompt: '',
+      turnId: 'turn',
+      resolvedModel: resolvedModel(port),
+      toolProjection: snapshot.tools,
+      hookProjection: snapshot.hooks,
+      toolPolicy: {
+        isDenied: () => false,
+        decide: (_name, input) => input.count === 2 ? 'requires_approval' : 'allow',
+      },
+      approvalCapability: {
+        request: vi.fn(async () => approval),
+      },
+    });
+
+    await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({
+      type: 'tool_use',
+      callId: 'call-1',
+    })));
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: 'tool_result',
+      callId: 'call-2',
+    }));
+
+    releaseApproval({ outcome: 'denied', reason: 'user' });
+    releaseExecution({ outcome: 'success', content: 'done' });
+    await run;
+  });
+
   it('persists the complete Tool exchange before after observers settle', async () => {
     let releaseObserver!: () => void;
     const observerBarrier = new Promise<void>((resolve) => {
@@ -404,7 +489,11 @@ describe('AgentRunner canonical Tool pipeline', () => {
     });
 
     await vi.waitFor(() => expect(observerEntered).toHaveBeenCalledTimes(1));
-    expect(appendMessage).toHaveBeenCalledWith(MAIN_SESSION_ID, expect.objectContaining({
+    expect(sessionManager.getAsyncToolRecords(MAIN_SESSION_ID)).toEqual([
+      expect.objectContaining({ type: 'tool_execution_accepted' }),
+      expect.objectContaining({ type: 'tool_execution_terminal' }),
+    ]);
+    expect(appendMessage).not.toHaveBeenCalledWith(MAIN_SESSION_ID, expect.objectContaining({
       role: 'toolResult',
     }));
     expect(requests).toHaveLength(1);
@@ -414,25 +503,131 @@ describe('AgentRunner canonical Tool pipeline', () => {
     expect(requests).toHaveLength(2);
   });
 
-  it('settles after observers before reporting Tool-result persistence failure', async () => {
-    let releaseObserver!: () => void;
-    const observerBarrier = new Promise<void>((resolve) => {
-      releaseObserver = resolve;
+  it('uses one shared completion reserve for concurrent Tools and preserves queued steering', async () => {
+    const pending = [0, 1, 2].map(() => {
+      let resolve!: (value: ToolExecutionOutput) => void;
+      const promise = new Promise<ToolExecutionOutput>((settle) => {
+        resolve = settle;
+      });
+      return { promise, resolve };
     });
+    const beforeOrder: number[] = [];
+    const started: number[] = [];
+    let activeBeforeHooks = 0;
+    let maxActiveBeforeHooks = 0;
+    const afterResults: CanonicalToolResult[] = [];
+    const snapshot = snapshotWithTool({
+      before: async ({ input }: { input: { count: number } }) => {
+        activeBeforeHooks++;
+        maxActiveBeforeHooks = Math.max(maxActiveBeforeHooks, activeBeforeHooks);
+        beforeOrder.push(input.count);
+        await Promise.resolve();
+        activeBeforeHooks--;
+        return { action: 'allow' as const };
+      },
+      afterResults,
+      execute: async (input) => {
+        const index = Number(input.count) - 1;
+        started.push(index + 1);
+        return pending[index]!.promise;
+      },
+    });
+    const requests: ModelInvocationRequest[] = [];
+    const claimReady = vi.fn(() => [{ role: 'user' as const, content: 'queued steering' }]);
+    const waitUntilPotentiallyReady = vi.fn(async () => {});
+    let round = 0;
+    const port: ModelInvocationPort = {
+      async *chatStream(request) {
+        requests.push(request);
+        round++;
+        yield { type: 'message_start' as const };
+        if (round === 1) {
+          for (let index = 1; index <= 3; index++) {
+            yield {
+              type: 'tool_call' as const,
+              call: {
+                callId: `call-${index}`,
+                name: 'demo',
+                input: { state: 'ready' as const, value: { count: index } },
+              },
+            };
+          }
+          yield {
+            type: 'message_end' as const,
+            stopReason: 'tool_use',
+            usage: { inputTokens: 2, outputTokens: 1 },
+          };
+          return;
+        }
+        yield { type: 'text_delta' as const, text: 'done' };
+        yield {
+          type: 'message_end' as const,
+          stopReason: 'end_turn',
+          usage: { inputTokens: 2, outputTokens: 1 },
+        };
+      },
+      async chat() {
+        throw new Error('not used');
+      },
+    };
+
+    const runPromise = new AgentRunner({ sessionManager }).run({
+      sessionId: MAIN_SESSION_ID,
+      message: 'go',
+      systemPrompt: '',
+      turnId: 'turn',
+      resolvedModel: resolvedModel(port),
+      toolProjection: snapshot.tools,
+      hookProjection: snapshot.hooks,
+      toolPolicy: allowPolicy,
+      maxLlmCalls: 2,
+      steeringSource: {
+        claimReady,
+        waitUntilPotentiallyReady,
+      },
+    });
+
+    await vi.waitFor(() => expect(started).toEqual([1, 2, 3]));
+    expect(beforeOrder).toEqual([1, 2, 3]);
+    expect(maxActiveBeforeHooks).toBe(1);
+    expect(requests).toHaveLength(1);
+    expect(claimReady).not.toHaveBeenCalled();
+    expect(waitUntilPotentiallyReady).not.toHaveBeenCalled();
+
+    pending[2]!.resolve({ outcome: 'success', content: 'third' });
+    pending[0]!.resolve({ outcome: 'success', content: 'first' });
+    pending[1]!.resolve({ outcome: 'success', content: 'second' });
+    await runPromise;
+    expect(requests).toHaveLength(2);
+    expect(claimReady).not.toHaveBeenCalled();
+
+    const paired = requests[1]!.messages.find((message) => (
+      message.role === 'user'
+      && Array.isArray(message.content)
+      && message.content.some((block) => block.type === 'execution_accepted')
+    ));
+    expect(paired?.content).toEqual([
+      { type: 'execution_accepted', tool_use_id: 'call-1', execution_id: expect.any(String) },
+      { type: 'execution_accepted', tool_use_id: 'call-2', execution_id: expect.any(String) },
+      { type: 'execution_accepted', tool_use_id: 'call-3', execution_id: expect.any(String) },
+    ]);
+    const hostCompletion = requests[1]!.messages.find((message) => message.origin === 'host');
+    expect(hostCompletion?.content).toEqual(expect.stringContaining('third'));
+    expect(hostCompletion?.content).toEqual(expect.stringContaining('first'));
+    expect(hostCompletion?.content).toEqual(expect.stringContaining('second'));
+  });
+
+  it('runs observers before reporting Host-completion persistence failure', async () => {
     const observerEntered = vi.fn();
     const snapshot = snapshotWithTool({
       before: () => ({ action: 'allow' }),
       afterResults: [],
       execute: async () => ({ outcome: 'success', content: 'executed' }),
-      after: async () => {
-        observerEntered();
-        await observerBarrier;
-      },
+      after: () => observerEntered(),
     });
-    vi.spyOn(sessionManager, 'appendMessage').mockImplementation(async (_sessionKey, message) => {
-      if (message.role === 'toolResult') throw new Error('persistence failed');
-      return 'entry-id';
-    });
+
+    vi.spyOn(sessionManager, 'appendHostTaskCompletion')
+      .mockRejectedValueOnce(new Error('persistence failed'));
     const port = invocationPort({
       callId: 'persistence-call',
       name: 'demo',
@@ -449,18 +644,99 @@ describe('AgentRunner canonical Tool pipeline', () => {
       hookProjection: snapshot.hooks,
       toolPolicy: allowPolicy,
     });
-    let settled = false;
-    void runPromise.then(
-      () => { settled = true; },
-      () => { settled = true; },
+    await expect(runPromise).rejects.toThrow('persistence failed');
+    expect(observerEntered).toHaveBeenCalledTimes(1);
+  });
+
+  it('converges active execution before surfacing a steering Model failure', async () => {
+    let settleTool!: (value: ToolExecutionOutput) => void;
+    const pendingTool = new Promise<ToolExecutionOutput>((resolve) => {
+      settleTool = resolve;
+    });
+    const snapshot = snapshotWithTool({
+      before: () => ({ action: 'allow' }),
+      afterResults: [],
+      execute: () => pendingTool,
+    });
+    let round = 0;
+    const requests: ModelInvocationRequest[] = [];
+    const port: ModelInvocationPort = {
+      async *chatStream(request) {
+        requests.push(request);
+        round++;
+        if (round === 2) throw new Error('steering invocation failed');
+        yield { type: 'message_start' as const };
+        yield {
+          type: 'tool_call' as const,
+          call: {
+            callId: 'failure-call',
+            name: 'demo',
+            input: { state: 'ready' as const, value: { count: 1 } },
+          },
+        };
+        yield {
+          type: 'message_end' as const,
+          stopReason: 'tool_use',
+          usage: { inputTokens: 2, outputTokens: 1 },
+        };
+      },
+      async chat() {
+        throw new Error('not used');
+      },
+    };
+    let claimed = false;
+    const runOutcome = new AgentRunner({ sessionManager }).run({
+      sessionId: MAIN_SESSION_ID,
+      message: 'go',
+      systemPrompt: '',
+      turnId: 'turn',
+      resolvedModel: resolvedModel(port),
+      toolProjection: snapshot.tools,
+      hookProjection: snapshot.hooks,
+      toolPolicy: allowPolicy,
+      steeringSource: {
+        claimReady: () => {
+          if (claimed) return [];
+          claimed = true;
+          return [{ role: 'user', content: 'status?' }];
+        },
+        waitUntilPotentiallyReady: async () => {},
+      },
+    }).then(
+      () => ({ status: 'fulfilled' as const }),
+      (error: unknown) => ({ status: 'rejected' as const, error }),
     );
 
-    await vi.waitFor(() => expect(observerEntered).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    let settled = false;
+    void runOutcome.then(() => {
+      settled = true;
+    });
     await Promise.resolve();
     expect(settled).toBe(false);
 
-    releaseObserver();
-    await expect(runPromise).rejects.toThrow('persistence failed');
+    settleTool({ outcome: 'success', content: 'completed after failure' });
+    const outcome = await runOutcome;
+
+    expect(outcome.status).toBe('rejected');
+    if (outcome.status === 'rejected') {
+      expect(outcome.error).toEqual(expect.objectContaining({
+        message: 'steering invocation failed',
+      }));
+    }
+    expect(sessionManager.getAsyncToolRecords(MAIN_SESSION_ID)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'tool_execution_terminal',
+          outcome: 'success',
+          content: 'completed after failure',
+        }),
+        expect.objectContaining({
+          type: 'host_task_completion',
+          completion: expect.objectContaining({ content: 'completed after failure' }),
+        }),
+      ]),
+    );
   });
 });
 

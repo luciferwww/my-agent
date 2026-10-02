@@ -1,4 +1,5 @@
 import { once } from 'node:events';
+import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -35,6 +36,22 @@ describe('WebSocketChannel', () => {
     }
     await channel?.stop();
     channel = undefined;
+  });
+
+  it('tracks pending and disconnected approvals on inline Tool Call segments', async () => {
+    const source = await readFile(CLIENT_FILE_PATH, 'utf8');
+
+    expect(source).toContain(
+      "seg.type === 'tool_call' && seg.approval?.status === 'pending'",
+    );
+    expect(source).toContain(
+      "seg.type !== 'tool_call' || seg.approval?.status !== 'pending'",
+    );
+    expect(source).toContain("seg.status = 'approval_unavailable'");
+    expect(source).toContain("case 'approval_unavailable': return 'Approval unavailable'");
+    expect(source).not.toContain(
+      "seg.type === 'approval' && seg.approval?.status === 'pending'",
+    );
   });
 
   it('requires an onMessage handler before start', async () => {
@@ -922,6 +939,7 @@ describe('WebSocketChannel', () => {
     const request: ApprovalInteractionRequest = {
       id: 'apr-1',
       kind: 'approval',
+      callId: 'call-1',
       toolName: 'write_file',
       input: { path: 'README.md' },
       sessionId: 'main',
@@ -933,6 +951,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'approval_requested',
       id: 'apr-1',
+      callId: 'call-1',
       sessionId: 'main',
       turnId: 'turn-1',
       toolName: 'write_file',
@@ -969,6 +988,7 @@ describe('WebSocketChannel', () => {
     const request: ApprovalInteractionRequest = {
       id: 'apr-foreign',
       kind: 'approval',
+      callId: 'call-foreign',
       toolName: 'write_file',
       input: {},
       sessionId: 'main',
@@ -979,6 +999,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(origin, {
       type: 'approval_requested',
       id: 'apr-foreign',
+      callId: 'call-foreign',
       sessionId: 'main',
       turnId: 'turn-foreign',
       toolName: 'write_file',
@@ -1027,6 +1048,7 @@ describe('WebSocketChannel', () => {
     const requests: ApprovalInteractionRequest[] = [
       {
         id: 'apr-session-a',
+        callId: 'call-session-a',
         kind: 'approval',
         toolName: 'write_file',
         input: { path: 'a.txt' },
@@ -1036,6 +1058,7 @@ describe('WebSocketChannel', () => {
       },
       {
         id: 'apr-session-b',
+        callId: 'call-session-b',
         kind: 'approval',
         toolName: 'write_file',
         input: { path: 'b.txt' },
@@ -1050,6 +1073,7 @@ describe('WebSocketChannel', () => {
       await expectMessage(client, {
         type: 'approval_requested',
         id: request.id,
+        callId: request.callId,
         sessionId: request.sessionId,
         turnId: request.turnId,
         toolName: request.toolName,
@@ -1093,6 +1117,7 @@ describe('WebSocketChannel', () => {
     expect(channel.interaction?.sendInteractionRequest({
       id: 'apr-missing',
       kind: 'approval',
+      callId: 'call-missing',
       toolName: 'write_file',
       input: {},
       sessionId: 'main',
@@ -1114,6 +1139,7 @@ describe('WebSocketChannel', () => {
     const request: ApprovalInteractionRequest = {
       id: 'apr-close',
       kind: 'approval',
+      callId: 'call-close',
       toolName: 'write_file',
       input: {},
       sessionId: 'main',
@@ -1124,6 +1150,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'approval_requested',
       id: 'apr-close',
+      callId: 'call-close',
       sessionId: 'main',
       turnId: 'turn-close',
       toolName: 'write_file',
@@ -1174,6 +1201,7 @@ describe('WebSocketChannel', () => {
     const request: ApprovalInteractionRequest = {
       id: 'apr-replace',
       kind: 'approval',
+      callId: 'call-replace',
       toolName: 'write_file',
       input: {},
       sessionId: 'main',
@@ -1184,6 +1212,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(firstClient, {
       type: 'approval_requested',
       id: 'apr-replace',
+      callId: 'call-replace',
       sessionId: 'main',
       turnId: 'turn-replace',
       toolName: 'write_file',
@@ -1246,6 +1275,7 @@ describe('WebSocketChannel', () => {
     channel.interaction?.sendInteractionRequest({
       id: 'apr-disconnect',
       kind: 'approval',
+      callId: 'call-disconnect',
       toolName: 'write_file',
       input: {},
       sessionId: 'main',
@@ -1255,6 +1285,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'approval_requested',
       id: 'apr-disconnect',
+      callId: 'call-disconnect',
       sessionId: 'main',
       turnId: 'turn-disconnect',
       toolName: 'write_file',

@@ -225,11 +225,11 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     let drainedSteering: ChatMessage[] = [];
 
     const runnerRun = vi.fn(async (params: {
-      claimSteeringMessages?: () => ChatMessage[];
+      steeringSource?: { claimReady(): ChatMessage[] };
       prepareSteeringMessages?: (messages: ChatMessage[]) => Promise<ChatMessage[]>;
     }): Promise<RunResult> => {
       await releaseRun.promise;
-      const claimed = params.claimSteeringMessages?.() ?? [];
+      const claimed = params.steeringSource?.claimReady() ?? [];
       drainedSteering = params.prepareSteeringMessages
         ? await params.prepareSteeringMessages(claimed)
         : claimed;
@@ -278,11 +278,11 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     let drainedSteering: ChatMessage[] = [];
 
     const runnerRun = vi.fn(async (params: {
-      claimSteeringMessages?: () => ChatMessage[];
+      steeringSource?: { claimReady(): ChatMessage[] };
       prepareSteeringMessages?: (messages: ChatMessage[]) => Promise<ChatMessage[]>;
     }): Promise<RunResult> => {
       await releaseRun.promise;
-      const claimed = params.claimSteeringMessages?.() ?? [];
+      const claimed = params.steeringSource?.claimReady() ?? [];
       drainedSteering = params.prepareSteeringMessages
         ? await params.prepareSteeringMessages(claimed)
         : claimed;
@@ -467,7 +467,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
       if (params.message === 'first') {
         await releaseRun.promise;
-        claimed = params.claimSteeringMessages?.() ?? [];
+        claimed = params.steeringSource?.claimReady() ?? [];
       }
       return defaultRunResult(String(params.message));
     });
@@ -725,11 +725,11 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     let drainedSteering: ChatMessage[] = [];
 
     const runnerRun = vi.fn(async (params: {
-      claimSteeringMessages?: () => ChatMessage[];
+      steeringSource?: { claimReady(): ChatMessage[] };
       prepareSteeringMessages?: (messages: ChatMessage[]) => Promise<ChatMessage[]>;
     }): Promise<RunResult> => {
       await releaseRun.promise;
-      const claimed = params.claimSteeringMessages?.() ?? [];
+      const claimed = params.steeringSource?.claimReady() ?? [];
       drainedSteering = params.prepareSteeringMessages
         ? await params.prepareSteeringMessages(claimed)
         : claimed;

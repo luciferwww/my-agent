@@ -37,7 +37,7 @@ function assistantToolUseMsg(toolId: string, toolName: string): ChatMessage {
 function toolResultMsg(toolUseId: string, content: string): ChatMessage {
   return {
     role: 'user',
-    content: [{ type: 'tool_result', tool_use_id: toolUseId, content }],
+    content: [{ type: 'tool_result', tool_use_id: toolUseId, content, status: 'success' }],
   };
 }
 
@@ -106,6 +106,35 @@ describe('splitForCompaction', () => {
     expect(toKeep).toHaveLength(2);
     expect((toKeep[0] as any).content).toBe('turn 2');
     expect(toCompress).toHaveLength(3); // turn 1 + tool_use + tool_result
+  });
+
+  it('does not count trusted Host completions as user turns', () => {
+    const accepted: ChatMessage = {
+      role: 'user',
+      content: [{
+        type: 'execution_accepted',
+        tool_use_id: 'tu_1',
+        execution_id: 'execution-1',
+      }],
+    };
+    const completion: ChatMessage = {
+      role: 'user',
+      origin: 'host',
+      content: '<host_task_completion>done</host_task_completion>',
+    };
+    const messages: ChatMessage[] = [
+      userMsg('old turn'),
+      assistantMsg('old reply'),
+      userMsg('pending turn'),
+      assistantToolUseMsg('tu_1', 'read_file'),
+      accepted,
+      completion,
+    ];
+
+    const { toCompress, toKeep } = splitForCompaction(messages, 1);
+
+    expect(toCompress).toEqual(messages.slice(0, 2));
+    expect(toKeep).toEqual(messages.slice(2));
   });
 
   it('moves split point before assistant(tool_use) to protect tool_use/tool_result pairing', () => {

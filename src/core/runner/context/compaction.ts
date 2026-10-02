@@ -46,12 +46,12 @@ export interface CompactionResult {
 /**
  * 将 messages 数组拆分为"压缩区"和"保留区"。
  *
- * 保留区：从末尾数 keepRecentTurns 个用户轮次（user 消息）及其后续消息。
+ * 保留区：从末尾数 keepRecentTurns 个 Channel 用户轮次及其后续消息。
  * 压缩区：保留区之前的所有消息。
  *
  * "轮次"定义：一条 role='user' 消息（不含 tool_result）算一轮的起点。
  * 注意：tool_result 消息在 API 层也是 role='user'，但它不是对话轮次的起点。
- * 这里通过 content 类型（string = 普通用户消息）来区分。
+ * 这里通过 content 类型（string = 普通用户消息）和 trusted Host origin 来区分。
  *
  * 安全保护：如果拆分点落在 assistant(tool_use) 之后、tool_result 之前，
  * 则向前移动到该 assistant 消息之前，确保 tool_use/tool_result 配对不被拆散。
@@ -72,7 +72,7 @@ export function splitForCompaction(
 
     // 识别普通用户消息：role='user' 且 content 为字符串
     // tool_result 消息的 content 是 ContentBlock 数组，不算一个新轮次
-    if (msg.role === 'user' && typeof msg.content === 'string') {
+    if (msg.role === 'user' && msg.origin !== 'host' && typeof msg.content === 'string') {
       userTurnCount++;
       if (userTurnCount === keepRecentTurns) {
         // 找到第 keepRecentTurns 个用户消息，此处开始为保留区
@@ -119,7 +119,9 @@ function serializeMessagesForSummary(messages: ChatMessage[]): string {
 
   for (const msg of messages) {
     if (typeof msg.content === 'string') {
-      parts.push(`[User]: ${msg.content}`);
+      parts.push(msg.origin === 'host'
+        ? `[Host Tool Completion]: ${msg.content}`
+        : `[User]: ${msg.content}`);
     } else if (Array.isArray(msg.content)) {
       for (const block of msg.content) {
         const b = block as { type: string; text?: string; content?: string; name?: string };

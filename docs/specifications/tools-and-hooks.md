@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-18
+> Verified: 2026-10-01
 > Authority: Stable Tool and Hook contract
 
 ## Scope
@@ -20,7 +20,9 @@ interface ToolExecutionContext {
   readonly sessionId: string;
   readonly turnId: string;
   readonly callId: string;
+  readonly executionId: string;
   readonly signal: AbortSignal;
+  reportActivity(): void;
 }
 ```
 
@@ -36,17 +38,15 @@ Hook kinds are `before_tool_call`, `after_tool_call`, `before_compaction`, and `
 
 1. Decode and resolve the Tool Call.
 2. Pair unknown/malformed calls without entering before hooks.
-3. Run before interceptors sequentially.
-4. Validate final transformed input.
-5. Apply deny, live Session permission mode, mandatory Manual-mode checks, then allow/approval policy.
-6. Request approval when required.
-7. Execute only after authorization.
-8. Produce one canonical terminal result.
-9. Run after observers.
-10. Persist the complete exchange and settle observers before next Model invocation or Turn completion.
-11. After Abort, do not start later Tools; close them as `not_executed`.
+3. Run each complete before-interceptor chain serially in Provider call order.
+4. After a call leaves that ordered stage, validate and apply deny, live Session permission mode, mandatory Manual-mode checks, then allow/approval policy independently of sibling calls.
+5. Request Approval when required; one pending Approval does not block an independently admitted sibling.
+6. Submit an authorized call to the Async Tool Execution Framework. Accepted persistence and `executionId` precede implementation start.
+7. Let Framework-owned implementation Promises run and settle concurrently under fixed activity, total, and cancellation-grace deadlines.
+8. Persist one canonical terminal fact, run bounded after observers, and deliver one trusted Host completion. The original call ID receives no second Provider Tool Result.
+9. After Abort, do not start later Tools; close unstarted calls as `not_executed`, and isolate a noncooperative started execution in quarantine after grace.
 
-A real terminal Tool result wins an Abort race. `signal.aborted` alone does not prove cancellation. Unknown crash/persistence recovery synthesizes only missing same-ID transcript pairings with neutral recovery content, never replaces a real result, and never replays automatically.
+A real terminal Tool result wins an Abort race. `signal.aborted` alone does not prove cancellation. Unknown crash/persistence recovery synthesizes only missing same-ID transcript pairings with neutral recovery content, never replaces a real result, and never replays automatically. Tool implementations report only real activity; synthetic heartbeat is forbidden.
 
 ## Policy and visibility
 

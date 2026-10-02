@@ -5,6 +5,7 @@ import type {
   ModelInvocationResponse,
   ModelStreamEvent,
 } from '../../../core/model-invocation/index.js';
+import { renderExecutionAcceptedReceipt } from '../../../core/model-invocation/index.js';
 import type { ToolCall } from '../../../core/tools/index.js';
 import {
   asRecord,
@@ -153,11 +154,12 @@ function buildRequest(request: ModelInvocationRequest): Record<string, unknown> 
 function convertMessages(messages: readonly ChatMessage[]): unknown[] {
   const input: unknown[] = [];
   for (const message of messages) {
+    const wireRole = message.origin === 'host' ? 'user' : message.role;
     if (typeof message.content === 'string') {
       input.push({
-        role: message.role,
+        role: wireRole,
         content: [{
-          type: message.role === 'assistant' ? 'output_text' : 'input_text',
+          type: wireRole === 'assistant' ? 'output_text' : 'input_text',
           text: message.content,
         }],
       });
@@ -166,13 +168,13 @@ function convertMessages(messages: readonly ChatMessage[]): unknown[] {
     let pending: unknown[] = [];
     const flush = (): void => {
       if (!pending.length) return;
-      input.push({ role: message.role, content: pending });
+      input.push({ role: wireRole, content: pending });
       pending = [];
     };
     for (const block of message.content) {
       if (block.type === 'text') {
         pending.push({
-          type: message.role === 'assistant' ? 'output_text' : 'input_text',
+          type: wireRole === 'assistant' ? 'output_text' : 'input_text',
           text: block.text,
         });
       } else if (block.type === 'image') {
@@ -188,12 +190,22 @@ function convertMessages(messages: readonly ChatMessage[]): unknown[] {
           name: block.name,
           arguments: JSON.stringify(block.input),
         });
-      } else {
+      } else if (block.type === 'tool_result') {
         flush();
         input.push({
           type: 'function_call_output',
           call_id: block.tool_use_id,
           output: block.content,
+        });
+      } else {
+        flush();
+        input.push({
+          type: 'function_call_output',
+          call_id: block.tool_use_id,
+          output: renderExecutionAcceptedReceipt({
+            executionId: block.execution_id,
+            status: 'accepted',
+          }),
         });
       }
     }

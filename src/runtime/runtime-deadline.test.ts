@@ -49,4 +49,23 @@ describe('runtime deadline policy', () => {
     });
     expect(race).toHaveBeenCalledTimes(2);
   });
+
+  it('does not start a lazy operation after the budget expires', async () => {
+    const operation = vi.fn(async () => 'late');
+    const driver: RuntimeDeadlineDriver = {
+      now: () => 200,
+      race: vi.fn(),
+    };
+    const budget = new RuntimeDeadlineBudget(
+      driver,
+      resolveRuntimeDeadlinePolicy({ shutdownOverallMs: 60 }),
+      200,
+    );
+
+    await expect(budget.raceRemainingLazy(operation)).resolves.toEqual({
+      outcome: 'deadline-exhausted',
+    });
+    expect(operation).not.toHaveBeenCalled();
+    expect(driver.race).not.toHaveBeenCalled();
+  });
 });

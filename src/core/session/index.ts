@@ -3,6 +3,9 @@ export type {
   MaterializeSessionInput,
   SessionManagerOptions,
   SessionMessageInput,
+  ToolExecutionAcceptedInput,
+  ToolExecutionTerminalInput,
+  HostTaskCompletionInput,
 } from './SessionManager.js';
 export { SessionError } from './errors.js';
 export type { SessionErrorCode } from './errors.js';
@@ -16,6 +19,11 @@ export type {
   SessionRecord,
   MessageRecord,
   CompactionRecord,
+  ToolExecutionAcceptedRecord,
+  ToolExecutionTerminalRecord,
+  HostTaskCompletionRecord,
+  TurnAbortedRecord,
+  AsyncToolTranscriptRecord,
   TranscriptEntry,
   TranscriptState,
   ContentBlock,

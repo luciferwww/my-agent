@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-14
+> Verified: 2026-10-02
 > Authority: Stable Parent/Child resolution contract
 
 ## Scope
@@ -19,13 +19,13 @@ type SubagentModelSelection =
 
 User profiles explicitly provide `model`; built-in `general-purpose` explicitly uses `inherit`.
 
-Delegation supplies profile, description, prompt, real Parent session/Turn/Tool-call identity, and Parent Abort signal. A Parent must be an active Runtime-managed Turn. `inherit` means the Parent's canonical effective Model Reference, not a global default and not the Parent Resolved Model object.
+Delegation supplies profile, description, prompt, real Parent session/Turn/Tool-call identity, the original Parent-authority signal, and a Framework-owned execution cancellation signal. Runtime validates the authority signal by object identity against an active non-aborted Parent. The execution signal drives Child setup and execution so one Task cancellation cannot cancel a sibling. `inherit` means the Parent's canonical effective Model Reference, not a global default and not the Parent Resolved Model object.
 
 A concrete or inherited Child reference is independently resolved against the Parent's captured generation. Child receives a fresh Resolved Model, invocation Port, facts, limits, and request state. Requirements derive from the actual Child execution request. Resolution failure occurs before Provider invocation.
 
 ## Runtime ownership
 
-Runtime validates Parent identity, allocates Child identity, registers route/tree membership, shares the tree Abort signal and Parent generation, emits lifecycle events, releases acquired resources, and returns one terminal result. Child does not recapture the latest generation.
+Runtime validates Parent identity, allocates Child identity, registers route/tree membership, propagates Root Abort through the Child's execution-local signal, shares the Parent generation, emits lifecycle events, releases acquired resources, and returns one terminal result. Child does not recapture the latest generation. Concurrent siblings allocate and release each lifecycle independently.
 
 Exactly one `subagent_start` and one correlated `subagent_end` exist for every accepted Child. A failure before acceptance emits neither. Cleanup releases only resources actually acquired; cleanup failure is diagnostic and does not rewrite the terminal outcome.
 

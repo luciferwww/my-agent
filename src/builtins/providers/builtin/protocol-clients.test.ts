@@ -105,6 +105,51 @@ describe('Built-in Protocol Clients', () => {
     });
   });
 
+  it('preserves Anthropic text emitted before a Tool Call', async () => {
+    const client = new AnthropicMessagesClient({
+      baseURL: 'https://example.test/api',
+      apiKey: 'key',
+      fetch: vi.fn(async () => sse([
+        frame({ type: 'message_start', message: { usage: { input_tokens: 3 } } }),
+        frame({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'still running' } }),
+        frame({
+          type: 'content_block_start',
+          content_block: { type: 'tool_use', id: 'wait-call', name: 'scope_control', input: {} },
+        }),
+        frame({
+          type: 'content_block_delta',
+          delta: { type: 'input_json_delta', partial_json: '{"action":"wait"}' },
+        }),
+        frame({ type: 'content_block_stop' }),
+        frame({
+          type: 'message_delta',
+          delta: { stop_reason: 'tool_use' },
+          usage: { output_tokens: 4 },
+        }),
+        frame({ type: 'message_stop' }),
+      ].join(''))) as unknown as typeof fetch,
+    });
+
+    await expect(client.chat(request)).resolves.toMatchObject({
+      content: [
+        { type: 'text', text: 'still running' },
+        {
+          type: 'tool_use',
+          id: 'wait-call',
+          name: 'scope_control',
+          input: { action: 'wait' },
+        },
+      ],
+      toolCalls: [{
+        callId: 'wait-call',
+        name: 'scope_control',
+        input: { state: 'ready', value: { action: 'wait' } },
+      }],
+      stopReason: 'tool_use',
+      usage: { inputTokens: 3, outputTokens: 4 },
+    });
+  });
+
   it('encodes and decodes OpenAI Responses without an output limit or ambient auth', async () => {
     const fetchImpl = vi.fn(async () => sse(
       frame({ type: 'response.created' })
@@ -229,6 +274,100 @@ describe('Built-in Protocol Clients', () => {
     expect(requestBody(responsesFetch)).toMatchObject({ max_output_tokens: 12_345 });
     expect(requestBody(chatFetch)).toMatchObject({ max_tokens: 12_345 });
     expect(requestBody(anthropicFetch)).toMatchObject({ max_tokens: 12_345 });
+  });
+
+  it('projects accepted receipts and trusted Host messages for all protocols', async () => {
+    const lifecycleRequest: ModelInvocationRequest = {
+      model: 'test',
+      messages: [
+        {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'call-1', name: 'demo', input: { value: 1 } }],
+        },
+        {
+          role: 'user',
+          content: [{
+            type: 'execution_accepted',
+            tool_use_id: 'call-1',
+            execution_id: 'execution-1',
+          }],
+        },
+        {
+          role: 'user',
+          origin: 'host',
+          content: 'trusted Host completion envelope',
+        },
+      ],
+    };
+    const anthropicFetch = vi.fn(async () => sse(
+      frame({ type: 'message_start', message: { usage: { input_tokens: 1 } } })
+      + frame({
+        type: 'message_delta',
+        delta: { stop_reason: 'end_turn' },
+        usage: { output_tokens: 0 },
+      })
+      + frame({ type: 'message_stop' }),
+    )) as unknown as typeof fetch;
+    const chatFetch = vi.fn(async () => sse(
+      frame({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })
+      + frame({ choices: [], usage: { prompt_tokens: 1, completion_tokens: 0 } })
+      + 'data: [DONE]\n\n',
+    )) as unknown as typeof fetch;
+    const responsesFetch = vi.fn(async () => sse(
+      frame({ type: 'response.created' })
+      + frame({
+        type: 'response.completed',
+        response: { usage: { input_tokens: 1, output_tokens: 0 } },
+      }),
+    )) as unknown as typeof fetch;
+
+    await collect(new AnthropicMessagesClient({
+      baseURL: 'https://example.test',
+      apiKey: 'token',
+      fetch: anthropicFetch,
+    }), lifecycleRequest);
+    await collect(new OpenAIChatCompletionsClient({
+      baseURL: 'https://example.test',
+      fetch: chatFetch,
+    }), lifecycleRequest);
+    await collect(new OpenAIResponsesClient({
+      baseURL: 'https://example.test',
+      fetch: responsesFetch,
+    }), lifecycleRequest);
+
+    const accepted = '{"status":"accepted","executionId":"execution-1"}';
+    expect(requestBody(anthropicFetch).messages).toEqual([
+      {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'call-1', name: 'demo', input: { value: 1 } }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'call-1', content: accepted }],
+      },
+      { role: 'user', content: 'trusted Host completion envelope' },
+    ]);
+    expect(requestBody(chatFetch).messages).toEqual([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: 'call-1',
+          type: 'function',
+          function: { name: 'demo', arguments: '{"value":1}' },
+        }],
+      },
+      { role: 'tool', tool_call_id: 'call-1', content: accepted },
+      { role: 'user', content: 'trusted Host completion envelope' },
+    ]);
+    expect(requestBody(responsesFetch).input).toEqual([
+      { type: 'function_call', call_id: 'call-1', name: 'demo', arguments: '{"value":1}' },
+      { type: 'function_call_output', call_id: 'call-1', output: accepted },
+      {
+        role: 'user',
+        content: [{ type: 'input_text', text: 'trusted Host completion envelope' }],
+      },
+    ]);
   });
 
   it('preserves Abort and normalizes malformed streams and HTTP failures', async () => {

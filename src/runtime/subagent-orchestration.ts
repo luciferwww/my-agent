@@ -56,8 +56,9 @@ export function createSubagentDelegationPort(
       if (
         !parent
         || parent.sessionId !== request.parent.sessionId
-        || parent.signal !== request.signal
+        || parent.signal !== request.parentSignal
         || parent.signal.aborted
+        || request.signal.aborted
       ) {
         throw new SubagentDelegationRejected('Subagent requires an active matching Parent Turn.');
       }
@@ -87,6 +88,7 @@ export function createSubagentDelegationPort(
 
       try {
         params.onEvent({ type: 'subagent_start', ...eventIdentity });
+        request.reportActivity();
 
         const parentRoute = params.routeContextByTurn.get(parent.turnId);
         if (parentRoute) {
@@ -100,7 +102,7 @@ export function createSubagentDelegationPort(
           createdAt: startedAt,
         });
         transcriptAcquired = true;
-        throwIfAborted(parent.signal);
+        throwIfAborted(request.signal);
 
         const capabilities = resolveSubagentCapabilities(childDepth, params.maxDepth);
         const prepared = await params.executor.prepare({
@@ -114,12 +116,12 @@ export function createSubagentDelegationPort(
           childSessionId,
           childTurnId,
           parentMaxLlmCalls: parent.effectiveMaxLlmCalls,
-          signal: parent.signal,
+          signal: request.signal,
           toolProjection: parent.registrySnapshot.tools,
           hookProjection: parent.registrySnapshot.hooks,
           getSessionPermissionMode: parent.getSessionPermissionMode,
         });
-        throwIfAborted(parent.signal);
+        throwIfAborted(request.signal);
 
         const requirements = deriveSubagentRequestRequirements({
           message: prepared.message,
@@ -134,7 +136,7 @@ export function createSubagentDelegationPort(
           request: requirements,
           policy: {},
         });
-        throwIfAborted(parent.signal);
+        throwIfAborted(request.signal);
 
         const runResult = await params.executor.execute(prepared, resolvedModel);
         const outcome: SubagentTerminalResult['outcome'] = runResult.stopReason === 'aborted'
@@ -152,7 +154,7 @@ export function createSubagentDelegationPort(
           durationMs: Date.now() - startedAt,
         };
       } catch (error) {
-        const aborted = isAbortError(error, parent.signal);
+        const aborted = isAbortError(error, request.signal);
         const failure = aborted ? undefined : classifyFailure(error);
         result = {
           runId,
@@ -186,6 +188,7 @@ export function createSubagentDelegationPort(
             usage: terminal.usage,
             durationMs: terminal.durationMs,
           });
+          request.reportActivity();
         } catch (error) {
           log.warn('child terminal event delivery failed', {
             sessionId: childSessionId,

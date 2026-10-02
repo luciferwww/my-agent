@@ -18,6 +18,7 @@ export type {
   RunResult,
   AgentEvent,
   AttachmentSummary,
+  SteeringMessageSource,
   ToolResult,
 } from './types.js';
 export type {
@@ -34,3 +35,15 @@ export type {
   AfterCompactionHook,
   AfterCompactionPayload,
 } from './hooks/index.js';
+export type {
+  AdmittedToolCall,
+  AsyncToolExecutionFramework,
+  TurnExecutionContext,
+  TurnExecutionEvent,
+} from './async-tools/index.js';
+export {
+  DefaultAsyncToolExecutionFramework,
+  ToolExecutionRuntimeState,
+  ToolExecutionUnavailableError,
+  processToolExecutionRuntimeState,
+} from './async-tools/index.js';

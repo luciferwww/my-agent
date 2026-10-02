@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-28
+> Verified: 2026-10-01
 > Authority: Stable Runner Turn-flow contract
 
 ## Scope
@@ -17,12 +17,14 @@ run
   -> early Abort check
   -> runAttempt
       -> sanitize trailing user
-      -> repair orphan Tool Results
+      -> recover accepted/terminal/Host-completion lifecycle
       -> load persisted branch
       -> prune / budget preflight
       -> persist current user
       -> Model / Tool / steering loop
-      -> persist Assistant and Tool Result records
+      -> persist Assistant and ordered accepted/immediate pairing
+      -> supervise concurrent executions and wakeable steering
+      -> persist terminal facts and trusted Host completions
   -> emit run_end
 ```
 
@@ -35,9 +37,10 @@ On normalized context overflow, Runner performs blocking Compaction, commits thr
 - `sanitizeSessionTail()` runs at attempt and Compaction entry; a trailing Tool Result is preserved because side effects may have occurred.
 - Persistence metadata such as `abortMeta` is omitted from Provider history.
 - One Turn uses one Resolved Model binding through Tool rounds and Compaction retries; Runner never selects Providers or infers facts.
-- Tool Calls execute sequentially in Provider order and each complete call receives one terminal correlated result.
-- Abort prevents later Tool starts.
-- Compaction keeps atomic Tool Call/Result exchange groups intact and must make measurable progress.
+- Complete before-hook chains execute sequentially in Provider order. Calls then pass validation/policy/Approval and enter the Framework independently; implementation Promises may settle out of order.
+- The original response is a Provider-order pairing barrier. Accepted ownership closes an admitted call once; its real terminal outcome is a later trusted Host completion, not a second result for the original call ID.
+- Abort prevents later Tool starts and waits for Framework terminalization or quarantine isolation before the Turn returns.
+- Compaction keeps atomic Tool Call/accepted-or-immediate-result exchanges intact, retains undelivered Host completions, and must make measurable progress.
 - Runtime places every accepted Channel user message in one per-Session FIFO.
 - At an eligible safe point Runner synchronously claims the largest contiguous
   compatible FIFO prefix, persists each message separately, and performs one
@@ -45,19 +48,21 @@ On normalized context overflow, Runner performs blocking Compaction, commits thr
 - Runner checks Abort and Model-call capacity before claim. An empty claim is
   the final steering boundary for that Turn; claimed input is at-most-once.
 - `maxLlmCalls` is an optional positive integer. Omission means no Model-call
-  count limit; there is no hidden fallback. An explicit limit counts semantic
-  Model calls and returns the last content with `stopReason='max_llm_calls'`.
+  count limit; there is no hidden fallback. Active Tool work holds one shared
+  completion reserve. Tool Calls returned by the last available call are paired
+  unavailable without running Hook, Approval, or Tool work, and return with
+  `stopReason='max_llm_calls'`.
 - Nested and concurrent runs keep event correlation through explicit Turn context.
 
 ## Failure and events
 
 Only normalized context overflow enters bounded Compaction recovery. Other non-Abort failures become `AgentExecutionFailure` with accumulated Usage and are rethrown after an `error` event. Provider `stopReason: 'error'` remains a normal Runner result. Abort returns an aborted result rather than an execution error. There is no Runner-local drained steering buffer.
 
-Events include run/model-call lifecycle, Tool use/result, Compaction, sanitation, orphan repair, `run_end`, and `error`. Observer settlement is bounded and cannot mutate a settled result.
+Events include run/model-call lifecycle, call-correlated Tool requested/accepted/terminal presentation, Compaction, sanitation, recovery, `run_end`, and `error`. Observer settlement is bounded and cannot mutate a settled result.
 
 ## Acceptance scenarios
 
-Cover empty Session, normal Turn, omitted and explicit Model-call limits, preflight overflow, post-persistence overflow and sanitation, multiple bounded retries, trailing-user idempotence, trailing Tool Result preservation, Layer 1 and aggregate pruning, compatible-prefix steering batches, final empty claim, invalid/unknown/denied/unavailable/failed/aborted Tools, sequential multi-Tool calls, Abort at each phase, Usage after Abort/failure, Compaction persistence and next-Turn loading, and complete event correlation.
+Cover empty Session, normal Turn, omitted and explicit Model-call limits with completion reserve, preflight overflow, post-persistence overflow and sanitation, multiple bounded retries, trailing-user idempotence, lifecycle recovery without replay, Layer 1 and aggregate pruning, compatible-prefix steering batches, invalid/unknown/denied/unavailable/failed/aborted Tools, ordered hooks plus concurrent multi-Tool settlement, pending sibling Approval, Abort at each phase, quarantine/late settlement, Usage after Abort/failure, Compaction persistence and next-Turn loading, and complete call/execution correlation.
 
 ## Related authority
 

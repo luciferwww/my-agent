@@ -12,7 +12,10 @@ import type { CompactionConfig } from './compaction-config.js';
 
 export type { ToolResult };
 
-export type SteeringMessageClaimer = () => ChatMessage[];
+export interface SteeringMessageSource {
+  claimReady(): ChatMessage[];
+  waitUntilPotentiallyReady(signal: AbortSignal): Promise<void>;
+}
 export type SteeringMessagePreparer = (
   messages: ChatMessage[],
 ) => Promise<ChatMessage[]>;
@@ -36,6 +39,8 @@ export interface TurnContext {
 export interface AgentRunnerConfig {
   /** Session manager. */
   sessionManager: import('../session/SessionManager.js').SessionManager;
+  /** Runtime-wide Tool execution slots and quarantine ownership. */
+  toolExecutionRuntimeState?: import('./async-tools/index.js').ToolExecutionRuntimeState;
   /** Runtime event callback. */
   onEvent?: (event: AgentEvent) => void;
 }
@@ -66,8 +71,8 @@ export interface RunParams {
   getSessionPermissionMode?: () => SessionPermissionMode;
   /** Maximum LLM calls for one run; omitted means no count limit. */
   maxLlmCalls?: number;
-  /** Atomically claims the compatible FIFO prefix at a steering safe point. */
-  claimSteeringMessages?: SteeringMessageClaimer;
+  /** Wakes without claiming, then atomically claims at a steering safe point. */
+  steeringSource?: SteeringMessageSource;
   /** Applies the normal user-prompt pipeline after messages are claimed. */
   prepareSteeringMessages?: SteeringMessagePreparer;
   /** Compaction configuration supplied by RuntimeApp. */
@@ -158,9 +163,19 @@ export type AgentEvent =
     }
   | { type: 'text_delta'; sessionId: string; turnId: string; text: string }
   | {
+      type: 'tool_call_requested';
+      sessionId: string;
+      turnId: string;
+      callId: string;
+      name: string;
+      input: Record<string, unknown>;
+    }
+  | {
       type: 'tool_use';
       sessionId: string;
       turnId: string;
+      callId: string;
+      executionId: string;
       name: string;
       input: Record<string, unknown>;
     }
@@ -168,6 +183,8 @@ export type AgentEvent =
       type: 'tool_result';
       sessionId: string;
       turnId: string;
+      callId: string;
+      executionId?: string;
       name: string;
       result: ToolResult;
     }

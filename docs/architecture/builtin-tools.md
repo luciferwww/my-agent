@@ -86,7 +86,7 @@ Exec is always blocked by an effective Tool-name deny. In `manual` Session mode 
 | Yield | Positive `yieldMs`, without `background` | Races completion against the deadline; completed commands return normally, still-running commands become background-visible |
 | Background | `background: true` | Waits only for successful spawn and returns a `runId` immediately |
 
-An explicit timeout applies to every mode. Background and yield modes have no implicit 30-second timeout. Foreground commands bypass the registry; managed yield/background commands create records. Output combines stdout and stderr chunks in observed timestamp order. Non-zero exit, timeout, and Abort are failed Tool executions; `ToolExecutionContext.signal` is passed to process execution.
+An explicit timeout applies to every mode. Background and yield modes have no implicit 30-second timeout. Foreground commands bypass the registry; managed yield/background commands create records. Output combines stdout and stderr chunks in observed timestamp order and reports real Framework activity. Non-zero exit, timeout, and Abort are failed Tool executions; `ToolExecutionContext.signal` is passed to process execution until ownership is handed to ProcessRegistry.
 
 ## 7. Process management
 
@@ -99,9 +99,9 @@ An explicit timeout applies to every mode. Background and yield modes have no im
 { action: 'kill', runId }
 ```
 
-`ProcessRegistry` is a module-level in-memory singleton shared by both Tools. Records track command, working directory, environment, lifecycle status, visibility, timing, PID, output chunks, aggregate output, exit data, and whether a yield promoted the process.
+`ProcessRegistry` is a module-level in-memory singleton shared by both Tools. Records are owned and queried by Session. It admits at most eight active managed processes, retains only the newest 1 MiB of combined output per process with an explicit truncation marker, and retains at most 32 terminal records. Records track command, working directory, lifecycle status, visibility, timing, PID, bounded output, exit data, and whether a yield promoted the process.
 
-Pure foreground processes are not registered. Yield records start as `internal`; a still-running record becomes `background` only at the yield deadline. Immediate background records are visible from creation. `list` returns only visible records in creation order; status, log, and kill reject internal or unknown IDs. Logs may return a positive `tailLines` suffix.
+Pure foreground processes are not registered. Yield records start as `internal`; a still-running record becomes `background` only at the yield deadline. Immediate background records are visible from creation. Successful background/yield handoff removes Parent Abort ownership. `list` returns only visible records owned by the calling Session in creation order; status, log, and kill reject internal, unknown, or cross-Session IDs. Logs may return a positive `tailLines` suffix. Forks inherit no records; Session deletion cleans owned processes before committing deletion, and bounded Host shutdown cleans every remaining managed process.
 
 `kill` is idempotent for terminal or concurrently disappeared processes and records manual termination as `aborted`. On Windows, tree termination tries `taskkill /T /PID` and escalates after a grace window to `/F /T /PID`. On Unix, it prefers process-group `SIGTERM`, falls back to a single PID when needed, and escalates to `SIGKILL` after the grace window. Timeout and Abort reuse the same tree-kill path. The registry's normal completion does not overwrite an existing terminal state; manual kill has a force-complete path to settle platform races.
 

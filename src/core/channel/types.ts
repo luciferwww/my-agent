@@ -65,6 +65,7 @@ interface TurnInteractionRequestBase<K extends TurnInteractionKind> {
 
 export interface ApprovalInteractionRequest
   extends TurnInteractionRequestBase<'approval'> {
+  callId: string;
   toolName: string;
   input: Record<string, unknown>;
 }
@@ -108,6 +109,7 @@ export type TurnInteractionResponse = ApprovalInteractionResponse | SelectIntera
 
 export interface ApprovalRequest {
   id: string;
+  callId: string;
   toolName: string;
   input: Record<string, unknown>;
   sessionId: string;

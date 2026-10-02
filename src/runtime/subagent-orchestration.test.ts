@@ -55,12 +55,14 @@ function profile(model: SubagentProfile['model'] = 'inherit'): SubagentProfile {
 
 function setup(options: {
   executeError?: Error;
+  executeGate?: Promise<void>;
   prepareError?: Error;
   routeSetError?: Error;
   routeDeleteError?: Error;
   abortDuringPrepare?: boolean;
 } = {}) {
   const controller = new AbortController();
+  const executionController = new AbortController();
   const registrySnapshot = finalizeRegistrySnapshot({
     generation: 1,
     candidate: {
@@ -101,19 +103,20 @@ function setup(options: {
   const events: AgentEvent[] = [];
   const createTransientSubagentTranscript = vi.fn(async () => {});
   const deleteTransientSubagentTranscript = vi.fn(async () => {});
-  const prepare = vi.fn(async () => {
+  const prepare = vi.fn(async (params: { signal: AbortSignal }) => {
     if (options.prepareError) throw options.prepareError;
-    if (options.abortDuringPrepare) controller.abort();
+    if (options.abortDuringPrepare) executionController.abort();
     return {
       sessionId: 'ignored-by-test',
       subagentDepth: 1,
       turnId: 'ignored-by-test',
       message: 'child prompt',
       systemPrompt: 'child system',
-      signal: controller.signal,
+      signal: params.signal,
     };
   });
   const execute = vi.fn(async (_prepared, resolvedModel) => {
+    if (options.executeGate) await options.executeGate;
     if (options.executeError) throw options.executeError;
     return {
       text: `${resolvedModel.identity.providerId}/${resolvedModel.identity.modelId}`,
@@ -143,7 +146,9 @@ function setup(options: {
       turnId: 'parent-turn',
       toolUseId: 'tool-1',
     },
-    signal: controller.signal,
+    parentSignal: controller.signal,
+    signal: executionController.signal,
+    reportActivity: vi.fn(),
   };
   return {
     port,
@@ -153,10 +158,13 @@ function setup(options: {
     createTransientSubagentTranscript,
     deleteTransientSubagentTranscript,
     controller,
+    executionController,
     activeParents,
     routeContextByTurn,
     registerChild,
     releaseChild,
+    prepare,
+    parent,
   };
 }
 
@@ -176,10 +184,12 @@ describe('Runtime Subagent delegation', () => {
     const result = await port.delegate(request);
 
     expect(result.text).toBe('parent/parent-model');
+    expect(request.reportActivity).toHaveBeenCalledTimes(2);
     expect(execute.mock.calls[0]![1].identity).toEqual({
       providerId: 'parent',
       modelId: 'parent-model',
     });
+
     expect(events.map((event) => event.type)).toEqual(['subagent_start', 'subagent_end']);
     expect(events[0]).toEqual(expect.objectContaining({
       sessionId: expect.stringMatching(/^[0-9a-f-]{36}$/),
@@ -195,6 +205,61 @@ describe('Runtime Subagent delegation', () => {
     expect(registerChild).toHaveBeenCalledTimes(1);
     expect(releaseChild).toHaveBeenCalledTimes(1);
     expect([...routeContextByTurn.keys()]).toEqual(['parent-turn']);
+  });
+
+  it('validates Parent authority while using execution-local cancellation for the Child', async () => {
+    const {
+      port,
+      request,
+      parent,
+      executionController,
+      prepare,
+    } = setup();
+
+    await expect(port.delegate(request)).resolves.toMatchObject({ outcome: 'ok' });
+    expect(request.parentSignal).toBe(parent.signal);
+    expect(request.signal).toBe(executionController.signal);
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
+      signal: executionController.signal,
+    }));
+  });
+
+  it('runs sibling delegations concurrently with independent Child lifecycles', async () => {
+    let releaseExecution!: () => void;
+    const executeGate = new Promise<void>((resolve) => {
+      releaseExecution = resolve;
+    });
+    const subject = setup({ executeGate });
+    const siblingController = new AbortController();
+
+    const first = subject.port.delegate(subject.request);
+    const second = subject.port.delegate({
+      ...subject.request,
+      parent: {
+        ...subject.request.parent,
+        toolUseId: 'tool-2',
+      },
+      signal: siblingController.signal,
+    });
+
+    await vi.waitFor(() => {
+      expect(subject.execute).toHaveBeenCalledTimes(2);
+    });
+    expect(subject.events.filter((event) => event.type === 'subagent_start')).toHaveLength(2);
+    expect(subject.registerChild).toHaveBeenCalledTimes(2);
+    expect(new Set(subject.execute.mock.calls.map(([prepared]) => prepared.signal)).size).toBe(2);
+
+    releaseExecution();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ outcome: 'ok' }),
+      expect.objectContaining({ outcome: 'ok' }),
+    ]);
+
+    const starts = subject.events.filter((event) => event.type === 'subagent_start');
+    expect(new Set(starts.map((event) => event.sessionId)).size).toBe(2);
+    expect(subject.releaseChild).toHaveBeenCalledTimes(2);
+    expect(subject.deleteTransientSubagentTranscript).toHaveBeenCalledTimes(2);
+    expect([...subject.routeContextByTurn.keys()]).toEqual(['parent-turn']);
   });
 
   it('uses a concrete Child Provider/Model independently of Parent selection', async () => {
@@ -248,6 +313,17 @@ describe('Runtime Subagent delegation', () => {
     activeParents.clear();
 
     await expect(port.delegate(request)).rejects.toBeInstanceOf(SubagentDelegationRejected);
+    expect(events).toEqual([]);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects a mismatched Parent authority signal before allocating Child lifecycle', async () => {
+    const { port, request, events, execute } = setup();
+
+    await expect(port.delegate({
+      ...request,
+      parentSignal: new AbortController().signal,
+    })).rejects.toBeInstanceOf(SubagentDelegationRejected);
     expect(events).toEqual([]);
     expect(execute).not.toHaveBeenCalled();
   });

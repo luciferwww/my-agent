@@ -74,7 +74,11 @@ export interface SubagentDelegationRequest {
     readonly turnId: string;
     readonly toolUseId: string;
   };
+  /** Original active Parent Turn signal used only for delegation authority validation. */
+  readonly parentSignal: AbortSignal;
+  /** Execution-local cancellation signal used by the delegated Child. */
   readonly signal: AbortSignal;
+  readonly reportActivity: () => void;
 }
 
 export interface SubagentDelegationPort {

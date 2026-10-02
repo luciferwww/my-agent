@@ -57,7 +57,10 @@ import { createApplicationToolPolicy } from './tool-approval-policy.js';
 import { createBuiltinLlmProviderUnit } from '../builtins/providers/builtin/index.js';
 import { createMemoryToolsContribution } from '../builtins/tools/memory/index.js';
 import { createTaskToolContribution } from '../builtins/tools/task/index.js';
-import { createEnvironmentContribution } from '../builtins/tools/environment/index.js';
+import {
+  createEnvironmentContribution,
+  processRegistry,
+} from '../builtins/tools/environment/index.js';
 import { createSubagentDelegationPort } from './subagent-orchestration.js';
 import type { ActiveParentTurn } from './subagent-orchestration.js';
 import type { MessageRouteContext } from './queue-types.js';
@@ -654,6 +657,7 @@ function createRuntimeDependencies(
     createAgentRunner(config) {
       return new AgentRunner(config);
     },
+    managedProcessLifecycle: processRegistry,
     getBuiltinContributionUnits(options, memoryManager) {
       return Object.freeze([
         createEnvironmentContribution({

@@ -1185,7 +1185,7 @@
                   <div class="tool-result-header">
                     <div class="tool-result-title">
                       <span class="tool-result-name">{{ seg.name }}</span>
-                      <span class="tool-result-badge">{{ seg.isError ? 'Failed' : seg.status === 'completed' ? 'Succeeded' : 'Running' }}</span>
+                      <span class="tool-result-badge">{{ toolStatusLabel(seg.status) }}</span>
                     </div>
                     <button
                       class="tool-card-toggle"
@@ -1218,6 +1218,16 @@
                       >{{ seg.resultExpanded ? 'Show preview' : 'Show full result' }}</button>
                     </template>
                   </template>
+                  <div v-if="seg.approval?.status === 'pending'" class="approval-actions">
+                    <button
+                      class="secondary"
+                      @click="resolveApproval(seg, 'deny')"
+                    >Deny</button>
+                    <button
+                      class="primary"
+                      @click="resolveApproval(seg, 'allow')"
+                    >Allow</button>
+                  </div>
                 </section>
 
                 <!-- Approval card -->
@@ -1693,7 +1703,7 @@
             for (const item of this.chatItems) {
               if (item.kind === 'turn') {
                 for (const seg of item.segments) {
-                  if (seg.type === 'approval' && seg.approval?.status === 'pending') count++;
+                  if (seg.type === 'tool_call' && seg.approval?.status === 'pending') count++;
                 }
               }
             }
@@ -1753,9 +1763,11 @@
               for (const item of state.chatItems) {
                 if (item.kind !== 'turn') continue;
                 for (const seg of item.segments) {
-                  if (seg.type !== 'approval' || seg.approval?.status !== 'pending') continue;
+                  if (seg.type !== 'tool_call' || seg.approval?.status !== 'pending') continue;
                   seg.approval.status = 'unavailable';
                   seg.approval.closeReason = 'origin_disconnected';
+                  seg.status = 'approval_unavailable';
+                  seg.isError = true;
                 }
               }
             }
@@ -1957,10 +1969,14 @@
                   if (block.type !== 'tool_result') continue;
                   const segment = toolCalls.get(block.tool_use_id);
                   if (segment) {
-                    segment.status = 'completed';
+                    segment.status = block.status;
                     segment.resultContent = String(block.content ?? '');
+                    segment.isError = block.status === 'error';
                   } else {
-                    unmatchedResults.set(block.tool_use_id, String(block.content ?? ''));
+                    unmatchedResults.set(block.tool_use_id, {
+                      content: String(block.content ?? ''),
+                      status: block.status,
+                    });
                   }
                 }
                 continue;
@@ -2007,11 +2023,13 @@
                   const segment = {
                     type: 'tool_call',
                     id: `${record.entryId}-tool-${block.id}`,
+                    callId: block.id,
+                    executionId: block.execution_id,
                     name: block.name,
                     input: block.input,
-                    status: unmatchedResults.has(block.id) ? 'completed' : 'running',
-                    resultContent: unmatchedResults.get(block.id) ?? '',
-                    isError: false,
+                    status: block.status ?? unmatchedResults.get(block.id)?.status ?? 'running',
+                    resultContent: block.result_content ?? unmatchedResults.get(block.id)?.content ?? '',
+                    isError: (block.status ?? unmatchedResults.get(block.id)?.status) === 'error',
                     expanded: false,
                     resultExpanded: false,
                   };
@@ -2622,7 +2640,7 @@
             return `${(n / 1024 / 1024).toFixed(1)} MB`;
           },
           resolveApproval(seg, decision) {
-            if (!seg || seg.type !== 'approval' || seg.approval.status !== 'pending') return;
+            if (!seg?.approval || seg.approval.status !== 'pending') return;
             this.sendJson({ type: 'approval_resolve', id: seg.approval.id, decision });
             seg.approval.status = decision === 'allow' ? 'resolved' : 'denied';
             this.pushEvent('approval', `${decision === 'allow' ? 'Allowed' : 'Denied'} ${seg.approval.toolName}`);
@@ -2803,19 +2821,18 @@
               }
               case 'approval_requested': {
                 const state = this.ensureSessionState(message.sessionId);
-                // Route approval into its turn's segments so it stays
-                // in the correct position within the turn's event sequence.
-                const activeTurn = state.turnMap[message.turnId]
-                  ?? [...state.chatItems].reverse().find(i => i.kind === 'turn');
-                if (activeTurn) {
-                  activeTurn.segments.push({
-                    type: 'approval',
-                    id: this.nextId++,
-                    expanded: false,
-                    approval: { ...message, status: 'pending' },
-                  });
-                  this.scrollChatToBottom(message.sessionId);
+                const toolCall = this.findToolCall(message.turnId, message.callId, message.sessionId);
+                if (!toolCall) {
+                  this.pushEvent(
+                    'client_protocol_error',
+                    `Approval ${message.id} has no Tool Call ${message.callId}`,
+                  );
+                  return;
                 }
+                toolCall.input = message.input;
+                toolCall.status = 'approval';
+                toolCall.approval = { ...message, status: 'pending' };
+                this.scrollChatToBottom(message.sessionId);
                 this.pushEvent(
                   'approval',
                   `Approval requested for ${message.toolName} in ${this.shortSessionId(message.sessionId)}`,
@@ -2874,20 +2891,39 @@
                 this.appendTextToTurn(event.turnId, event.text, sessionId);
                 return;
 
-              case 'tool_use': {
+              case 'tool_call_requested': {
                 this.bindActiveTurn(state, event.turnId);
                 const turn = this.getOrCreateTurn(event.turnId, sessionId);
                 turn.segments.push({
                   type: 'tool_call',
                   id: this.nextId++,
+                  callId: event.callId,
                   name: event.name,
                   input: event.input,
-                  status: 'running',
+                  status: 'requested',
                   resultContent: '',
                   isError: false,
                   expanded: false,
                   resultExpanded: false,
                 });
+                this.pushEvent('tool_call_requested', event.name);
+                this.scrollChatToBottom(sessionId);
+                return;
+              }
+
+              case 'tool_use': {
+                this.bindActiveTurn(state, event.turnId);
+                const toolCall = this.findToolCall(event.turnId, event.callId, sessionId);
+                if (!toolCall) {
+                  this.pushEvent(
+                    'client_protocol_error',
+                    `Accepted execution ${event.executionId} has no Tool Call ${event.callId}`,
+                  );
+                  return;
+                }
+                toolCall.executionId = event.executionId;
+                toolCall.status = 'running';
+                if (toolCall.approval) toolCall.approval.status = 'resolved';
                 this.pushEvent('tool_use', event.name);
                 this.scrollChatToBottom(sessionId);
                 return;
@@ -2895,12 +2931,18 @@
 
               case 'tool_result': {
                 this.bindActiveTurn(state, event.turnId);
-                const toolCall = this.findPendingToolCall(event.turnId, sessionId);
-                if (toolCall) {
-                  toolCall.status = 'completed';
-                  toolCall.resultContent = this.normalizeToolResultContent(event.result?.content);
-                  toolCall.isError = Boolean(event.result?.isError);
+                const toolCall = this.findToolCall(event.turnId, event.callId, sessionId);
+                if (!toolCall) {
+                  this.pushEvent(
+                    'client_protocol_error',
+                    `Tool Result has no Tool Call ${event.callId}`,
+                  );
+                  return;
                 }
+                toolCall.status = event.result?.status;
+                toolCall.resultContent = this.normalizeToolResultContent(event.result?.content);
+                toolCall.isError = event.result?.status === 'error';
+                if (event.executionId) toolCall.executionId = event.executionId;
                 this.scrollChatToBottom(sessionId);
                 return;
               }
@@ -3110,15 +3152,16 @@
             this.scrollChatToBottom(sessionId);
           },
 
-          findPendingToolCall(turnId, sessionId) {
+          findToolCall(turnId, callId, sessionId) {
             const state = this.ensureSessionState(sessionId);
             for (let itemIndex = state.chatItems.length - 1; itemIndex >= 0; itemIndex--) {
               const item = state.chatItems[itemIndex];
               if (item.kind !== 'turn' || item.turnId !== turnId) continue;
-              for (let segmentIndex = item.segments.length - 1; segmentIndex >= 0; segmentIndex--) {
-                const segment = item.segments[segmentIndex];
-                if (segment.type === 'tool_call' && segment.status === 'running') return segment;
-              }
+              const matches = item.segments.filter(
+                segment => segment.type === 'tool_call' && segment.callId === callId,
+              );
+              if (matches.length === 1) return matches[0];
+              if (matches.length > 1) return null;
             }
             return null;
           },
@@ -3142,7 +3185,7 @@
             const state = this.ensureSessionState(sessionId);
             for (const item of state.chatItems) {
               if (item.kind !== 'turn') continue;
-              const seg = item.segments.find(s => s.type === 'approval' && s.approval?.id === approvalId);
+              const seg = item.segments.find(s => s.approval?.id === approvalId);
               if (seg) {
                 seg.approval.status = outcome;
                 seg.approval.closeReason = reason;
@@ -3304,6 +3347,19 @@
               case 'unavailable': return 'Approval unavailable';
               case 'failed':   return 'Approval failed';
               default:         return status;
+            }
+          },
+          toolStatusLabel(status) {
+            switch (status) {
+              case 'requested': return 'Requested';
+              case 'approval': return 'Approval required';
+              case 'approval_unavailable': return 'Approval unavailable';
+              case 'running': return 'Running';
+              case 'success': return 'Succeeded';
+              case 'error': return 'Failed';
+              case 'denied': return 'Denied';
+              case 'aborted': return 'Aborted';
+              default: return String(status || 'Unknown');
             }
           },
           formatTime(ts) {

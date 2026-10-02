@@ -16,7 +16,7 @@ Core contracts do not expose Anthropic `input_schema` or OpenAI-compatible `func
 
 ## 2. Canonical contracts
 
-`types.ts` defines immutable Tool identity/schema, execution context, implementation output, and canonical call/result shapes. Implementations report execution success/failure; Runner owns all pre-execution, cancellation, closure, and recovery outcomes. [Tools and Hooks](../specifications/tools-and-hooks.md) owns the stable contract.
+`types.ts` defines immutable Tool identity/schema, execution context, implementation output, and canonical call/result shapes. An admitted implementation receives `executionId`, its execution `signal`, and `reportActivity()`; implementations report only real activity and final success/failure. Framework and Runner own cancellation, deadline, closure, quarantine, and recovery outcomes. Public Tool presentation uses required `success | error | denied | aborted` status. [Tools and Hooks](../specifications/tools-and-hooks.md) owns the stable contract.
 
 ## 3. Portable input schemas
 
@@ -34,7 +34,7 @@ Provider adapters independently map canonical definitions, calls, and results to
 
 ## 6. Policy, approval, and execution order
 
-`AgentRunner` separates Model-visible definitions from executable resolution, then applies decode, interceptor, validation, final deny, the live root Session permission mode, Manual-mode checks, static allow/current-call Approval, execution, result persistence, and observer settlement against one Snapshot. The immutable Tool/Hook projection remains generation-bound, while permission mode is read at every authorization decision so revocation affects later calls. [Tools and Hooks](../specifications/tools-and-hooks.md) owns ordering and closure semantics; [Approval Lifecycle](../specifications/approval-lifecycle.md) owns interaction terminalization.
+`AgentRunner` separates Model-visible definitions from executable resolution. Complete before-hook chains serialize in Provider order; each call then independently applies validation, final deny, the live root Session permission mode, Manual-mode checks, static allow/current-call Approval, and Framework submission. The Framework owns concurrent implementation Promises and terminal persistence; Runner owns Provider-order accepted/immediate pairing and trusted Host completion delivery. The immutable Tool/Hook projection remains generation-bound, while permission mode is read at every authorization decision so revocation affects later calls. [Tools and Hooks](../specifications/tools-and-hooks.md) owns ordering and closure semantics; [Approval Lifecycle](../specifications/approval-lifecycle.md) owns interaction terminalization.
 
 ## 7. Evidence
 

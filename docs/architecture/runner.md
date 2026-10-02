@@ -29,7 +29,7 @@ An already-aborted Turn still emits the `run_start`/`run_end` pair but performs 
 Each `runAttempt()` performs these steps before Model invocation:
 
 1. If the active Session branch ends in an isolated `user` message from a failed attempt, `sanitizeSessionTail()` branches back to its parent and emits `session_tail_sanitized`.
-2. `repairOrphanToolUses()` inspects persisted tail state and appends synthetic Tool Results for incomplete Tool Use/Result pairs.
+2. Lifecycle recovery reconstructs accepted ownership, terminal facts, and trusted Host completions. A terminal without Host delivery is delivered once; an accepted execution without a terminal becomes `outcome_unknown` and is never replayed. Only Tool Uses with no accepted ownership receive synthetic unavailable pairing.
 3. Runner reloads the current Session branch and applies Layer 1 in-memory Tool Result pruning.
 4. Layer 2 estimates System prompt, history, and the current prompt separately.
 5. If Tool-only reduction can cover overflow, Layer 1.5 aggregate pruning runs; if summary Compaction is required, preflight throws before persisting the current message.
@@ -52,15 +52,17 @@ Missing IDs receive `[tool call interrupted; session recovered]`. The event sour
 
 ## 5. Model and Tool loop
 
-Each loop iteration must check Abort before quota, steering injection, event emission, and invocation. `AgentRunner` streams through the bound invocation Port, persists Assistant blocks, executes complete canonical Tool Calls in Provider order, persists one correlated Tool Result batch, settles observers, applies in-memory pruning, and then consumes steering for the next call.
+Each loop iteration must check Abort before quota, steering injection, event emission, and invocation. `AgentRunner` streams through the bound invocation Port and persists Assistant blocks before emitting `tool_call_requested`. Complete before-hook chains run serially in Provider order; validation, policy, Approval, and Framework submission then progress independently per call. The original response remains a pairing barrier: accepted receipts or immediate results are projected in Provider order before the next Model invocation even though accepted Tool Promises execute concurrently.
 
-An explicit positive quota counts actual Model calls, including a final call without Tools. The check occurs before each invocation, so Abort before a call consumes neither quota nor an `llm_call` event. Reaching it returns the last Assistant content with `stopReason='max_llm_calls'`; it does not throw. With no quota, Runner has no hidden numeric cutoff. Usage is summed from `message_end` records; if a later execution error occurs, `AgentExecutionFailure` carries usage already accumulated.
+The Async Tool Execution Framework exclusively owns admitted implementation Promises, process-global execution slots, activity/deadline clocks, cancellation grace, terminal persistence, quarantine transfer, and late-settlement isolation. Runner waits on Framework events and wakeable steering rather than directly awaiting a Tool implementation. Accepted ownership closes the original Provider Tool Call with `execution_accepted`; real terminal facts are delivered later through trusted Host completion messages and one serialized continuation.
+
+An explicit positive quota counts actual Model calls and reserves one shared completion call while a Tool batch owns unfinished work. The last available Model call cannot start Hook, Approval, or Tool work: any Tool Calls it returns are paired as unavailable and the Assistant persists `turnStopReason='max_llm_calls'`. Abort releases the reserve without a later Model call. With no quota, Runner has no hidden numeric cutoff. Usage is summed from `message_end` records; if a later execution error occurs, `AgentExecutionFailure` carries usage already accumulated.
 
 Steering is read after every completed loop iteration, not only Tool-producing ones. The reader uses consume-and-clear semantics. Runner filters malformed entries and accepts only messages with `user` or `assistant` role plus a `content` property. Every accepted item is persisted and appended separately in FIFO order; one ready batch produces one continuation Model call. Locally pending steering is dropped and logged on Abort or an explicit limit.
 
 ## 6. Tool and Hook semantics
 
-Runner implements the pipeline described by [Tools and Hooks](../specifications/tools-and-hooks.md): one terminal correlated result per complete canonical Tool Call, sequential interceptors, isolated bounded observers, and whole-batch persistence. Approval remains a separate capability rather than a Hook.
+Runner implements the pipeline described by [Tools and Hooks](../specifications/tools-and-hooks.md): ordered interceptors, independent post-Hook admission, Framework-owned Promise concurrency, accepted-first Provider pairing, isolated bounded observers, and exactly one public terminal presentation. Approval remains a separate capability rather than a Hook.
 
 ## 7. Context management
 
@@ -83,7 +85,7 @@ A `ContextOverflowError` can come from preflight (`preemptive`), the inner 90% t
 
 Runtime supplies resolved Compaction policy. A direct Runner call that omits it uses the same Runner-owned `DEFAULT_COMPACTION_CONFIG`; there is no Platform copy of those literals.
 
-The implementation protects Tool Use/Result pairing, writes a Compaction marker without deleting history, and reloads only the retained range on retry. [Runner Turn Flow](../specifications/runner-turn-flow.md) owns retry, persistence, and fallback semantics.
+The implementation protects Tool Use/accepted or immediate-result exchanges, retains undelivered Host completion authority, excludes trusted Host completion from Channel user-turn counting, writes a Compaction marker without deleting history, and reloads only the retained range on retry. Compaction cannot abandon unsettled Framework work. [Runner Turn Flow](../specifications/runner-turn-flow.md) owns retry, persistence, and fallback semantics.
 
 ## 9. Abort and errors
 
@@ -91,7 +93,7 @@ The implementation protects Tool Use/Result pairing, writes a Compaction marker 
 
 ## 10. Events
 
-Runner emits Turn-scoped Run, stream, Tool, context, and recovery events. Runtime emits queue, input, and Subagent lifecycle members of the same `AgentEvent` union; `request_end` closes a queued request that never started and carries request identity only.
+Runner emits Turn-scoped Run, stream, context, recovery, and call-correlated Tool lifecycle events. Tool presentation order is `tool_call_requested(callId)`, then `tool_use(callId, executionId)` after accepted persistence when admitted, then one `tool_result(callId, executionId?, status)` where status is `success | error | denied | aborted`. Runtime emits queue, input, and Subagent lifecycle members of the same `AgentEvent` union; `request_end` closes a queued request that never started and carries request identity only.
 
 ## 11. Evidence
 
