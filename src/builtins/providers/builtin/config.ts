@@ -228,10 +228,9 @@ export function normalizeBuiltinReasoningConfig(
     throw new BuiltinLlmConfigError(`${path}.reasoning.thinking[0]`);
   }
   if (model.protocol === 'openai-responses') {
-    const unsupportedIndex = thinking.findIndex((value) => value !== 'on');
-    if (unsupportedIndex >= 0 || (thinking.length > 0 && readableSummary === undefined)) {
+    if (thinking.length > 0) {
       throw new BuiltinLlmConfigError(
-        `${path}.reasoning.thinking[${Math.max(unsupportedIndex, 0)}]`,
+        `${path}.reasoning.thinking[0]`,
       );
     }
   }

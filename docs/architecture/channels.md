@@ -70,6 +70,7 @@ RuntimeApp.handleInboundChannelMessage
 - A queued request receives a `requestId` and `originMessageId`, but its request gate and `turnId` are created only when that queue item starts. Queue waiting therefore allocates no Turn-level completion or routing state.
 - `clientId` remains transport routing metadata in `MessageRouteContext`; it is not added to `RunTurnParams`.
 - `user_message` records accepted intake without predicting delivery. Standalone execution carries its ID as `originMessageId`; steering claim emits `user_message_bound`.
+- A user message may carry a strictly validated raw reasoning preference. Runtime validates it again, snapshots its resolved policy with the queued request, and includes the raw preference in `user_message` for presentation.
 - Any attachment failure rejects the complete inbound message before `user_message` emission or Runtime routing. WebSocket reports `ATTACHMENT_REJECTED`; no partial content is admitted.
 - Text and multimodal input use the same FIFO. Claim compatibility uses the active resolved Model's media facts.
 - Root user messages are submitted through Channels. `RuntimeApplication` does not expose a direct `runTurn()` bypass.
@@ -195,6 +196,15 @@ omitted ID as an implicit create. It also emits acknowledgements, Catalog and
 History responses, correlated `AgentEvent` values, approval lifecycle
 messages, and requesting-socket errors. Wire validation owns JSON and
 transport shape; Media owns decoded attachment validation.
+
+`run_turn.reasoning` accepts only own `thinking` and `effort` fields with the
+public enum values; unknown fields, inherited/non-plain objects, and conflicting
+combinations fail before Runtime routing. Catalog DTOs expose cloned reasoning
+capability arrays. The bundled client orders options independently of Provider
+metadata, starts at Default, preserves supported selections across model
+switches, resets only unsupported dimensions with a notice, snapshots the
+preference at send time, and renders message/History summaries from structured
+reasoning fields. Dimensions with no explicit capability are hidden.
 
 Clients should treat “new Session” as local state only. When the user submits the first message, the client issues `create_session` with the selected initial permission mode, waits for `session_created`, and immediately issues `run_turn` with the returned ID. This makes initial elevation atomic and avoids abandoned UI create actions producing even a Pending registration. For an existing Session, the HTML client queries Runtime truth on selection/reconnect, stores no grant locally, requires confirmation before Allow All, shows a persistent warning while elevated, and can revoke to Manual for future calls.
 

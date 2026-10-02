@@ -328,13 +328,7 @@ function buildReasoningRequest(
 ): Record<string, string> | undefined {
   const policy = request.reasoning;
   if (!policy) return undefined;
-  if (policy.thinking === 'off') {
-    throw createInvalidRequestError(
-      request,
-      'OpenAI Responses does not support the requested Thinking switch.',
-    );
-  }
-  if (policy.thinking === 'on' && !readableSummary) {
+  if (policy.thinking !== undefined) {
     throw createInvalidRequestError(
       request,
       'OpenAI Responses has no adapter for the requested Thinking switch.',
@@ -342,10 +336,8 @@ function buildReasoningRequest(
   }
   const explicitEffort = policy.effort === 'default' ? undefined : policy.effort;
   const requestSummary = readableSummary
-    && (
-      policy.thinking === 'on'
-      || (explicitEffort !== undefined && explicitEffort !== 'none')
-    );
+    && explicitEffort !== undefined
+    && explicitEffort !== 'none';
   if (explicitEffort === undefined && !requestSummary) return undefined;
   return {
     ...(explicitEffort === undefined ? {} : { effort: explicitEffort }),

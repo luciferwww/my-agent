@@ -75,6 +75,12 @@ validated relationally on load. History folds `execution_id`, terminal
 completion projects as `role: 'user', origin: 'host'` locally; Provider
 encoders remove the local marker while Channel/steering input cannot create it.
 
+User messages may store the original reasoning preference as structured
+metadata. Omission, an empty object, and explicit `effort: 'default'` remain
+distinct persisted forms even though they resolve to the same execution
+policy. The metadata is not projected into Provider user content. Fork and
+reload preserve it, while later messages do not inherit it.
+
 Assistant messages may carry:
 
 ```text
@@ -95,7 +101,9 @@ rewritten to v2 before the first invocation/Thinking append. Fork preserves the
 selected path's invocation and internal replay state.
 
 Paginated History is a presentation projection. It exposes Thinking
-`id/text/status` but never invocation source or replay payload.
+`id/text/status` but never invocation source or replay payload. User History
+also exposes the original structured reasoning preference so clients can
+rebuild a summary without persisting display text.
 
 A `CompactionRecord` stores `summary`, `firstKeptEntryId`, `tokensBefore`, `tokensAfter`, `trigger`, and `droppedMessages`. Its trigger is `preemptive`, `overflow`, or `manual`.
 

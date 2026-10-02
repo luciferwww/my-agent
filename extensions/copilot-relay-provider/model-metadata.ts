@@ -155,7 +155,12 @@ function parseReasoningCapabilities(
       continue;
     }
     const effort = value as ExplicitThinkingEffort;
-    if (!efforts.includes(effort)) efforts.push(effort);
+    if (efforts.includes(effort)) {
+      throw new Error(
+        `Copilot Relay reasoning_effort[${index}] duplicates "${effort}".`,
+      );
+    }
+    efforts.push(effort);
   }
   if (unknownCount > 0) {
     onDiagnostic?.({

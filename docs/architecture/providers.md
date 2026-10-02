@@ -80,6 +80,11 @@ are internal metadata and Provider adapters remove them from the wire. The
 optional output limit is an already-resolved invocation policy, not a model
 capability fact.
 
+An invocation may also carry a resolved reasoning policy with an optional
+Thinking switch and an effort value. `default` means the Client leaves its wire
+request unchanged; it is not a model capability. Model capabilities publish
+only explicitly supported `on`/`off` switches and non-default effort values.
+
 Provider fragments, indexes, SDK objects, Anthropic `input_schema`, and Responses `function.parameters` remain inside adapter/test boundaries. Complete canonical Tool Calls preserve Provider call identity, name, order, and either ready object input or explicit invalid input state.
 
 Each actual invocation has a local identity and source facts. Concrete Clients
@@ -114,6 +119,12 @@ Only allowlisted diagnostics are copied: Provider ID, bounded Provider status/ty
 
 The three fetch-based Protocol Clients directly implement the Core `ModelInvocationPort`. Each appends only its operation path to the configured API prefix, uses only the materialized credential, performs one HTTP attempt, converts canonical text/image/Tool history, streams canonical events, preserves Abort, and normalizes failures through Model Invocation Error V1. A configured effective policy maps to Anthropic `max_tokens`, Responses `max_output_tokens`, or Chat Completions `max_tokens`. Without one, OpenAI requests omit output limits and Anthropic Messages supplies its private required `4,096` fallback.
 
+Responses maps explicit effort to `reasoning.effort` and requests readable
+summary only when the model registration declares that private adapter. Chat
+Completions maps explicit effort to `reasoning_effort`. Anthropic uses its
+configured adaptive or budget adapter and rejects invalid budget/output
+combinations before fetch. No Client invents a non-default policy.
+
 OpenAI Chat Completions captures ordered reasoning text and at most one non-empty
 opaque reasoning value per Assistant response. OpenAI Responses captures summary
 deltas for presentation and treats the complete reasoning item as replay
@@ -133,6 +144,12 @@ Context limit, otherwise the conservative `32,768` fallback. Tool and Media
 capabilities remain unknown and therefore fail open. Unknown models fail
 closed. Optional `outputTokenLimit` is published separately as an invocation
 default and clamped to known maximum output capability.
+
+Each registration may also publish strictly validated reasoning capabilities
+and protocol-private mapping facts. The Copilot Relay Provider derives effort
+capabilities from discovery metadata, binds each model immutably to Responses
+or Chat Completions with Responses precedence, and keeps one stable public
+router protocol without retrying through the other wire protocol.
 
 ## 6. Built-in Runtime Unit
 

@@ -1260,6 +1260,18 @@ function toWireModelCatalog(snapshot: ModelCatalogSnapshot): Record<string, unkn
                 ...(model.capabilities.mediaKinds !== undefined
                   ? { mediaKinds: [...model.capabilities.mediaKinds] }
                   : {}),
+                ...(model.capabilities.reasoning !== undefined
+                  ? {
+                      reasoning: {
+                        ...(model.capabilities.reasoning.thinking !== undefined
+                          ? { thinking: [...model.capabilities.reasoning.thinking] }
+                          : {}),
+                        ...(model.capabilities.reasoning.efforts !== undefined
+                          ? { efforts: [...model.capabilities.reasoning.efforts] }
+                          : {}),
+                      },
+                    }
+                  : {}),
               },
             }
           : {}),

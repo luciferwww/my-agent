@@ -1,18 +1,18 @@
 # Thinking Generation Controls Plan
 
-> Status: Accepted — full Delivery authorized
+> Status: Delivery complete — owner acceptance pending
 > Date: 2026-10-03
 > Owner: Project owner
 > Classification: Architecture Slice
 > Authorization: 所有者于2026-10-03接受Specification，确认TGC-P1，并批准继续至实施完毕
-> Current phase: TGC-P5 Web与收口
+> Current phase: G1 owner acceptance
 
 ## 1. 目标与来源
 
 模型声明可兑现的Thinking开关与effort，用户为消息选择策略；默认请求保持不变，
 实际可读Thinking沿用已有采集、展示和历史机制。
 
-- [Specification（Draft）](specification.md)：本Change的交付契约候选。
+- [Specification](specification.md)：本Change已接受的交付契约。
 - [验收矩阵与Gate记录](validation.md)：承接38项验收，目前均未验证。
 - [研究草稿](../../../research/thinking-generation-and-display-controls-design-draft.md)：讨论与来源，不再作为交付契约owner。
 - [Development Workflow](../../../governance/development-workflow.md)：流程唯一权威。
@@ -45,7 +45,7 @@ Plan接受不表示对应Gate已经通过。
 | TGC-P2 消息与Turn链路 | Completed | Channel/WebSocket入口、Runtime队列与解析、Runner正常调用与Steering；Session元数据及History | 原始选择与resolved策略分离；intake、不可变Turn、Steering、Compaction及恢复测试通过 |
 | TGC-P3 Built-in协议闭环 | Completed | Responses/Chat映射与私有summary；Anthropic生成、事件与replay codec | 默认wire不变；三协议请求、恢复、过滤、错误及配置fixture通过 |
 | TGC-P4 Relay双协议 | Completed | discovery、私有模型绑定、独立Chat Client/Router、包发布清单及测试 | discovery分类、稳定路由、双Client、无重试及包清单测试通过 |
-| TGC-P5 Web与收口 | In Progress | 控件与摘要、切模型校验、实时/历史回归；同步当前契约与架构 | TGC-27–28、30、33–34、38通过，完整验收与最终Gate有证据 |
+| TGC-P5 Web与收口 | Completed | 控件与摘要、切模型校验、实时/历史回归；同步当前契约与架构 | TGC-27–28、30、33–34、38通过，完整验收与最终Gate有证据 |
 
 依赖顺序：P0 → P1 → P2 → P3 → P4 → P5。每步先运行最小相关测试再继续；
 契约测试的部分通过不代表整行验收或整体Change通过。
@@ -84,5 +84,5 @@ P1不把尚未完成codec的能力发布为可用；P3开始前固化Anthropic�
 
 ## 6. 当前状态
 
-Specification已接受，TGC-P1至TGC-P4已实现并通过各自Gate；剩余Delivery已获授权，
-当前执行TGC-P5。
+Specification已接受，TGC-P1至TGC-P5均已实现并通过技术Gate。Change保留在Active，
+等待所有者接受完整交付后归档。

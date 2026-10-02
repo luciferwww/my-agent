@@ -203,25 +203,14 @@ describe('Built-in Protocol Clients', () => {
     expect(requestBody(fetchImpl).reasoning).toEqual(expected);
   });
 
-  it('maps independent Responses on only for a configured readable-summary adapter', async () => {
-    const fetchImpl = vi.fn(async () => responsesTerminal()) as unknown as typeof fetch;
-    const configured = new OpenAIResponsesClient({
+  it('rejects independent Responses on even when readable summaries are configured', async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const client = new OpenAIResponsesClient({
       baseURL: 'https://example.test',
       fetch: fetchImpl,
       readableSummaryModels: ['opaque/model:1'],
     });
-    await configured.chat({
-      ...request,
-      reasoning: { thinking: 'on', effort: 'default' },
-    });
-    expect(requestBody(fetchImpl).reasoning).toEqual({ summary: 'auto' });
-
-    const unconfiguredFetch = vi.fn() as unknown as typeof fetch;
-    const unconfigured = new OpenAIResponsesClient({
-      baseURL: 'https://example.test',
-      fetch: unconfiguredFetch,
-    });
-    await expect(unconfigured.chat({
+    await expect(client.chat({
       ...request,
       reasoning: { thinking: 'on', effort: 'default' },
     })).rejects.toMatchObject({
@@ -230,7 +219,7 @@ describe('Built-in Protocol Clients', () => {
         providerMessage: 'OpenAI Responses has no adapter for the requested Thinking switch.',
       },
     });
-    expect(unconfiguredFetch).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('sends Responses effort without guessing summary when no private adapter exists', async () => {

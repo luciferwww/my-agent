@@ -189,7 +189,7 @@ describe('Built-in LLM configuration', () => {
         {
           modelId: 'responses',
           protocol: 'openai-responses',
-          reasoning: { thinking: ['on'], efforts: ['high'] },
+          reasoning: { efforts: ['high'] },
           readableSummary: 'auto-on-explicit-reasoning',
         },
         {
@@ -245,6 +245,12 @@ describe('Built-in LLM configuration', () => {
       modelId: 'responses',
       protocol: 'openai-responses',
       reasoning: { thinking: ['on'] },
+    }, 'models[0].reasoning.thinking[0]'],
+    [{
+      modelId: 'responses',
+      protocol: 'openai-responses',
+      reasoning: { thinking: ['on'] },
+      readableSummary: 'auto-on-explicit-reasoning',
     }, 'models[0].reasoning.thinking[0]'],
     [{
       modelId: 'chat',

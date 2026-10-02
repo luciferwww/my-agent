@@ -1,17 +1,14 @@
 # Thinking Generation Controls Validation
 
-> Status: Not Started — delivery validation pending
+> Status: Technical validation complete — owner acceptance pending
 > Date: 2026-10-03
 > Authority: Acceptance matrix, evidence and gate tracking only
-> Related: [Plan](plan.md), [Specification（Draft）](specification.md)
+> Related: [Plan](plan.md), [Specification](specification.md)
 
 ## 1. 证据基线与执行边界
 
-本次只建立正式Change和导航，未修改生产代码、用户配置或运行生产测试/真实模型请求。
-研究草稿的JSON、链接、围栏及验收编号检查只证明文档结构，不证明目标功能实现。
-已有采集与展示测试属于基线，不能代替本Change新增控制、Anthropic或Relay双协议验收。
-
-下表全部为待验证目标。“自动”表示离线Unit/契约/集成测试，使用fake fetch或fixture；
+交付实现已完成；未调用真实计费模型，协议接受性由离线fixture和Host smoke覆盖。
+“自动”表示离线Unit/契约/集成测试，使用fake fetch或fixture；
 “自动＋Web手工”还需浏览器验证。LLM请求为零不包含预先发生的独立Catalog discovery。
 不重复保存研究讨论；本表作为正式验收及后续执行结果的owner。
 
@@ -19,44 +16,44 @@
 
 | ID | 场景与必须观察到的结果 | 类型与主要验证面 | 状态 |
 |---|---|---|---|
-| TGC-01 | 策略省略：开关省略、effort=default，wire不变，无全局默认层 | 自动；三Client默认请求对照、配置 | Pending |
-| TGC-02 | 能力缺失/空/仅开关/仅effort：只提供声明选项，不丢实际合法Thinking | 自动；能力契约、采集 | Pending |
-| TGC-03 | Built-in非法schema：配置/候选staging失败，不发布Catalog；reload保留旧generation | 自动；配置、Unit生命周期 | Pending |
-| TGC-04 | 合法显式选项不受模型支持：解析后以capability_unsupported失败；Runner、MessageRecord和LLM请求均未发生，不降级 | 自动；Model Resolution与Runtime边界 | Pending |
-| TGC-05 | 同协议不同模型：使用各自schema与冻结事实 | 自动；Provider、Resolver | Pending |
-| TGC-06 | Responses high且有私有summary事实：发送high/auto，可读文本进入卡片/History | 自动＋Web手工；请求与公开投影 | Pending |
-| TGC-07 | Responses high无summary事实：只发送effort，不猜summary | 自动；Client请求fixture | Pending |
-| TGC-08 | Responses none：精确发送none，不请求summary，实际文本仍展示 | 自动；请求、采集与投影 | Pending |
-| TGC-09 | Chat high/none：仅发送允许的reasoning_effort | 自动；Client请求fixture | Pending |
-| TGC-10 | Anthropic adaptive on/high/off/none：on不补effort，high用adaptive+effort，关闭用disabled | 自动；请求fixture、能力校验 | Pending |
-| TGC-11 | Anthropic budget等级：用配置预算，不发送output_config.effort | 自动；配置、请求fixture | Pending |
-| TGC-12 | Anthropic静态adapter/预算不一致在配置/staging失败；动态输出冲突preflight失败，不自动调整 | 自动；配置、有效输出上限与请求计数 | Pending |
-| TGC-13 | Anthropic redacted：有序保存replay-only块，不生成空卡片 | 自动；事件、Collector、公开投影 | Pending |
-| TGC-14 | Anthropic同源工具续轮：thinking/signature/redacted按验证协议顺序恢复 | 自动；多次调用与工具关联fixture | Pending |
-| TGC-15 | 三协议互切：不兼容replay省略，正文/Tool关联保留 | 自动；目标Client请求、源Transcript不变 | Pending |
-| TGC-16 | Anthropic→OpenAI→Anthropic：各次只投影兼容且经校验replay，不改Transcript | 自动；往返切换、恢复 | Pending |
-| TGC-17 | 同协议来源冲突：发送前失败，opaque不进日志 | 自动；来源、请求计数、安全错误投影 | Pending |
-| TGC-18 | 运行中改变选择：当前Turn模型/策略固定，新消息采用新快照 | 自动；Runtime队列、generation/Runner | Pending |
-| TGC-19 | 不同resolved策略的Steering留在FIFO下一Turn，不注入当前Turn | 自动；队列、Runner领取 | Pending |
-| TGC-20 | Abort/流错误：可读partial保留，无未完成replay | 自动；三协议流与持久化 | Pending |
-| TGC-21 | reload/Fork：可读文本/原始策略恢复、摘要一致、History无opaque、不继承历史策略 | 自动＋Web手工；磁盘恢复、History | Pending |
-| TGC-22 | Compaction不继承用户策略/请求summary；内部Thinking/replay不持久化，只保存摘要正文 | 自动；内部调用、Transcript及事件 | Pending |
-| TGC-23 | Relay GPT/Gemini discovery分别绑定Responses/Chat并发布准确effort | 自动；metadata、Provider/Router | Pending |
-| TGC-24 | Relay已知值投影；未知非空字符串诊断后忽略；全未知保留模型但无显式effort | 自动；metadata、诊断 | Pending |
-| TGC-25 | Relay双endpoint稳定绑定Responses；跨协议历史正确过滤，无失败后协议重试 | 自动；Router请求次数、历史 | Pending |
-| TGC-26 | 静态Catalog在staging校验，动态descriptor在解析时校验；同一深冻快照、不发布错误候选 | 自动；Registry/Resolver、Provider | Pending |
-| TGC-27 | Web首次选模型为Default+Default；切换时逐字段保留新模型支持值，不支持项重置Default并提示，不恢复按模型旧值；已入队/运行中Turn不变 | 自动＋Web手工；模型切换与队列快照 | Pending |
-| TGC-28 | 正常Turn无Display隐藏控制；实际可读Thinking显示；内部调用按TGC-22隔离 | 自动＋Web手工；实时/历史/CLI回归 | Pending |
-| TGC-29 | off+high或on+none等通用冲突在Runtime intake拒绝，不入队、不保存MessageRecord、不调用LLM | 自动；入口/组合校验 | Pending |
-| TGC-30 | off+none且各自支持：两种选择顺序可用，关闭只映射一次，无冲突effort | 自动＋Web手工；组合与请求fixture | Pending |
-| TGC-31 | Anthropic budget独立on需要defaultBudgetTokens并满足max_tokens；缺失时不发布on | 自动；配置、staging与调用限制 | Pending |
-| TGC-32 | Relay只有effort：只提交effort即可调用，不强制thinking字段 | 自动；消息、能力、Client请求 | Pending |
-| TGC-33 | Built-in无选项隐藏控件，语义Default；有选项才显示，不创建调用默认 | 自动＋Web手工；配置、Catalog、控件 | Pending |
-| TGC-34 | 显示控件的Default是首项且初始选中；隐藏维度也按Default；thinking省略、effort解析default，不依赖Relay默认metadata | 自动＋Web手工；初始化、提交与规范化 | Pending |
-| TGC-35 | Relay非数组/非字符串/空白等结构非法：候选失败，不发布Catalog，reload保留旧generation | 自动；discovery、Unit生命周期 | Pending |
-| TGC-36 | reasoning省略/空对象/显式default执行等价，History/reload/Fork保留原始形态，摘要一致，不被resolved覆盖 | 自动；规范化、磁盘与DTO结构断言 | Pending |
-| TGC-37 | effrot等未知字段由Channel解析或Runtime intake拒绝；Runtime不信任Channel，不入队、不保存MessageRecord、不调用LLM | 自动；Channel/WebSocket及Runtime入口 | Pending |
-| TGC-38 | 快照保留Provider有效顺序，Web按公共枚举排序且Default首项，不增补能力或改请求值 | 自动＋Web手工；乱序metadata与控件 | Pending |
+| TGC-01 | 策略省略：开关省略、effort=default，wire不变，无全局默认层 | 自动；三Client默认请求对照、配置 | Passed |
+| TGC-02 | 能力缺失/空/仅开关/仅effort：只提供声明选项，不丢实际合法Thinking | 自动；能力契约、采集 | Passed |
+| TGC-03 | Built-in非法schema：配置/候选staging失败，不发布Catalog；reload保留旧generation | 自动；配置、Unit生命周期 | Passed |
+| TGC-04 | 合法显式选项不受模型支持：解析后以capability_unsupported失败；Runner、MessageRecord和LLM请求均未发生，不降级 | 自动；Model Resolution与Runtime边界 | Passed |
+| TGC-05 | 同协议不同模型：使用各自schema与冻结事实 | 自动；Provider、Resolver | Passed |
+| TGC-06 | Responses high且有私有summary事实：发送high/auto，可读文本进入卡片/History | 自动＋Web手工；请求与公开投影 | Passed |
+| TGC-07 | Responses high无summary事实：只发送effort，不猜summary | 自动；Client请求fixture | Passed |
+| TGC-08 | Responses none：精确发送none，不请求summary，实际文本仍展示 | 自动；请求、采集与投影 | Passed |
+| TGC-09 | Chat high/none：仅发送允许的reasoning_effort | 自动；Client请求fixture | Passed |
+| TGC-10 | Anthropic adaptive on/high/off/none：on不补effort，high用adaptive+effort，关闭用disabled | 自动；请求fixture、能力校验 | Passed |
+| TGC-11 | Anthropic budget等级：用配置预算，不发送output_config.effort | 自动；配置、请求fixture | Passed |
+| TGC-12 | Anthropic静态adapter/预算不一致在配置/staging失败；动态输出冲突preflight失败，不自动调整 | 自动；配置、有效输出上限与请求计数 | Passed |
+| TGC-13 | Anthropic redacted：有序保存replay-only块，不生成空卡片 | 自动；事件、Collector、公开投影 | Passed |
+| TGC-14 | Anthropic同源工具续轮：thinking/signature/redacted按验证协议顺序恢复 | 自动；多次调用与工具关联fixture | Passed |
+| TGC-15 | 三协议互切：不兼容replay省略，正文/Tool关联保留 | 自动；目标Client请求、源Transcript不变 | Passed |
+| TGC-16 | Anthropic→OpenAI→Anthropic：各次只投影兼容且经校验replay，不改Transcript | 自动；往返切换、恢复 | Passed |
+| TGC-17 | 同协议来源冲突：发送前失败，opaque不进日志 | 自动；来源、请求计数、安全错误投影 | Passed |
+| TGC-18 | 运行中改变选择：当前Turn模型/策略固定，新消息采用新快照 | 自动；Runtime队列、generation/Runner | Passed |
+| TGC-19 | 不同resolved策略的Steering留在FIFO下一Turn，不注入当前Turn | 自动；队列、Runner领取 | Passed |
+| TGC-20 | Abort/流错误：可读partial保留，无未完成replay | 自动；三协议流与持久化 | Passed |
+| TGC-21 | reload/Fork：可读文本/原始策略恢复、摘要一致、History无opaque、不继承历史策略 | 自动＋Web手工；磁盘恢复、History | Passed |
+| TGC-22 | Compaction不继承用户策略/请求summary；内部Thinking/replay不持久化，只保存摘要正文 | 自动；内部调用、Transcript及事件 | Passed |
+| TGC-23 | Relay GPT/Gemini discovery分别绑定Responses/Chat并发布准确effort | 自动；metadata、Provider/Router | Passed |
+| TGC-24 | Relay已知值投影；未知非空字符串诊断后忽略；全未知保留模型但无显式effort | 自动；metadata、诊断 | Passed |
+| TGC-25 | Relay双endpoint稳定绑定Responses；跨协议历史正确过滤，无失败后协议重试 | 自动；Router请求次数、历史 | Passed |
+| TGC-26 | 静态Catalog在staging校验，动态descriptor在解析时校验；同一深冻快照、不发布错误候选 | 自动；Registry/Resolver、Provider | Passed |
+| TGC-27 | Web首次选模型为Default+Default；切换时逐字段保留新模型支持值，不支持项重置Default并提示，不恢复按模型旧值；已入队/运行中Turn不变 | 自动＋Web手工；模型切换与队列快照 | Passed |
+| TGC-28 | 正常Turn无Display隐藏控制；实际可读Thinking显示；内部调用按TGC-22隔离 | 自动＋Web手工；实时/历史/CLI回归 | Passed |
+| TGC-29 | off+high或on+none等通用冲突在Runtime intake拒绝，不入队、不保存MessageRecord、不调用LLM | 自动；入口/组合校验 | Passed |
+| TGC-30 | off+none且各自支持：两种选择顺序可用，关闭只映射一次，无冲突effort | 自动＋Web手工；组合与请求fixture | Passed |
+| TGC-31 | Anthropic budget独立on需要defaultBudgetTokens并满足max_tokens；缺失时不发布on | 自动；配置、staging与调用限制 | Passed |
+| TGC-32 | Relay只有effort：只提交effort即可调用，不强制thinking字段 | 自动；消息、能力、Client请求 | Passed |
+| TGC-33 | Built-in无选项隐藏控件，语义Default；有选项才显示，不创建调用默认 | 自动＋Web手工；配置、Catalog、控件 | Passed |
+| TGC-34 | 显示控件的Default是首项且初始选中；隐藏维度也按Default；thinking省略、effort解析default，不依赖Relay默认metadata | 自动＋Web手工；初始化、提交与规范化 | Passed |
+| TGC-35 | Relay非数组/非字符串/空白等结构非法：候选失败，不发布Catalog，reload保留旧generation | 自动；discovery、Unit生命周期 | Passed |
+| TGC-36 | reasoning省略/空对象/显式default执行等价，History/reload/Fork保留原始形态，摘要一致，不被resolved覆盖 | 自动；规范化、磁盘与DTO结构断言 | Passed |
+| TGC-37 | effrot等未知字段由Channel解析或Runtime intake拒绝；Runtime不信任Channel，不入队、不保存MessageRecord、不调用LLM | 自动；Channel/WebSocket及Runtime入口 | Passed |
+| TGC-38 | 快照保留Provider有效顺序，Web按公共枚举排序且Default首项，不增补能力或改请求值 | 自动＋Web手工；乱序metadata与控件 | Passed |
 
 ## 3. 验证执行顺序
 
@@ -81,8 +78,8 @@ npm run lint
 npm run build
 ```
 
-Relay交付时按影响运行verify:relay及verify:package；WebSocket Host有接线变化时运行
-verify:websocket-host。上述为后续验证计划，本次没有执行。
+Relay交付按影响运行verify:relay及verify:package；WebSocket Host接线运行
+verify:websocket-host。
 执行记录必须区分离线fixture、浏览器组件测试、Host集成和真实模型接受性。
 离线成功不证明任意模型/version接受参数；必要真实验证使用合成输入并先确认费用边界。
 
@@ -92,9 +89,9 @@ verify:websocket-host。上述为后续验证计划，本次没有执行。
 |---|---|---|
 | 文档准备 | Created；结构检查通过 | 文件/导航存在、链接、JSON、围栏、38项覆盖、空白检查 |
 | G0 Spec与Delivery接受 | Passed（2026-10-03） | 所有者接受Spec、确认TGC-P1，并授权继续至完整实施 |
-| 协议fixture准备 | Pending | 来源/版本、有效预算约束、请求/事件/工具续轮fixture；必要有界Spike结论 |
-| 各Plan Item聚焦验证 | TGC-P1–P4 Completed；TGC-P5 In Progress | 命令、执行结果、关联TGC及具体失败/限制 |
-| G1完整验收 | Not Started | 自动/浏览器/集成/构建证据、独立评审、文档同步与所有者接受 |
+| 协议fixture准备 | Passed | 三协议请求/事件/工具续轮、预算及Relay双协议fixture |
+| 各Plan Item聚焦验证 | TGC-P1–P5 Completed | 命令、执行结果、关联TGC及具体失败/限制 |
+| G1完整验收 | Technical gate passed；owner acceptance pending | 自动/浏览器/集成/构建证据、独立评审、文档同步已完成；等待所有者接受 |
 
 文档结构检查、后续测试命令和Gate结果追加在本节，不将Pending改为Passed而没有证据。
 后续P1结果记录如下；仍没有真实协议接受性结论。
@@ -174,10 +171,12 @@ TGC-01–05、TGC-26和TGC-33只取得P1结构/投影部分证据，矩阵仍保
 
 实现范围：
 
-- Responses精确映射显式effort；仅配置`readableSummary`的模型在显式非none或独立on时请求
-  `summary=auto`。Chat Completions只映射`reasoning_effort`，两个协议的Default wire均不变。
-- Built-in逐模型校验私有summary及Anthropic adaptive/budget adapter；budget值、能力声明、
-  独立on和默认/等级预算在配置与Provider staging时一致，动态`max_tokens`冲突在fetch前失败。
+- Responses精确映射显式effort；仅配置`readableSummary`的模型在显式非none effort时请求
+  `summary=auto`，不能用summary冒充独立on。Chat Completions只映射`reasoning_effort`，
+  两个协议的Default wire均不变。
+- Built-in逐模型校验私有summary及Anthropic adaptive/budget adapter；Responses/Chat不发布
+  未实现的独立开关；Anthropic budget值、独立on和默认/等级预算在配置与Provider staging时
+  一致，动态`max_tokens`冲突在fetch前失败。
 - Anthropic映射disabled/adaptive/enabled+budget_tokens，采集thinking/signature及
   redacted_thinking为Provider replay；公开投影隐藏空redacted卡片。
 - Anthropic工具续轮按原顺序恢复thinking/signature/redacted；跨协议只过滤不兼容replay，
@@ -232,3 +231,38 @@ TGC-06–17、20、22及31取得P3范围证据；Relay和Web依赖项仍由P4/P5
 
 TGC-23–26、32及35取得P4范围证据；UI排序、选择和摘要仍由P5完成。
 未进行失败协议重试或真实Relay调用，未把未知等级映射为相邻值。
+
+### 2026-10-03 TGC-P5 Web与最终Gate
+
+实现范围：
+
+- WebSocket Catalog DTO补齐reasoning能力深拷贝；HTML客户端仅在选中模型声明显式值时显示
+  对应控件，Default固定首项，Thinking和Effort按公共UI顺序展示。
+- 编辑器初始为Default+Default；模型切换逐字段保留仍受支持的显式值，只重置不支持维度并
+  显示提示，不建立每模型历史选择。
+- `off + none`两种选择顺序均可达；冲突选项被禁用并给出说明，Runtime最终校验仍保留。
+- 发送前构造并快照原始reasoning preference；首次Session创建等待期间及运行中Turn不受后续
+  UI选择影响。实时用户消息和History都从结构化字段渲染同一摘要。
+- Host smoke删除已被WebSocket契约禁止的`maxLlmCalls`，改为通过Relay metadata发布`high`
+  并断言`run_turn.reasoning.effort`端到端到达Responses请求。
+- 当前架构及稳定Model Resolution、Runner、Channel契约已同步。
+
+验证：
+
+| Gate | 结果 |
+|---|---|
+| WebSocket聚焦测试 | 47/47通过；Catalog reasoning DTO、客户端资产及History结构化字段覆盖 |
+| 浏览器交互 | 真实HTML + 可控WebSocket通过：Default初始、乱序能力排序、无能力隐藏、逐字段保留/重置提示、`off + none`双顺序、请求payload、实时与History摘要 |
+| Unit | 112 files，1361/1361通过 |
+| Integration | 7 files，22/22通过 |
+| Relay完整验证 | 7 files，109/109通过 |
+| Type/lint | 根项目及两个Workspace通过 |
+| Build | TypeScript、Host build audit（354 files）及Relay验证通过 |
+| WebSocket Host smoke | 通过；合法reasoning effort端到端到Relay Responses请求 |
+| Fitness | 12 files、42项通过；仅FT-12的既有日期断言失败 |
+| npm临时安装验证 | `verify:package`仍因当前Node 20与项目`engines.node=22.x`不符而`EBADENGINE`；包清单审计9/9已在Integration通过 |
+| 独立评审 | 发现并修复2项中优先级契约偏差：Responses summary冒充独立on、Relay重复已知effort静默去重；相关测试94/94及最终全量Gate通过 |
+
+TGC-01–38均有对应阶段自动证据；TGC-06、21、27–28、30、33–34、38另有浏览器证据。
+没有真实模型调用或费用。技术Gate完成，保留已知FT-12日期基线和Node版本环境限制，等待
+所有者接受后归档。

@@ -366,6 +366,7 @@ describe('Copilot Relay Provider Unit', () => {
     {},
     ['high', 1],
     ['high', ' '],
+    ['high', 'high'],
   ])('rejects structurally invalid reasoning_effort metadata %j', async (reasoningEffort) => {
     await expect(createProvider(
       vi.fn(async () => discoveryResponse([validModel({

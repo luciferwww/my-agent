@@ -64,6 +64,12 @@ and read-only paginated active-branch History while Runtime remains the
 lifecycle policy owner. History queries are socket-local and do not join a
 Session audience.
 
+Channel input may include a raw message-level reasoning preference containing
+only `thinking` and `effort`. Channel and Runtime both reject unknown fields,
+invalid values, non-plain objects, and universal conflicts before enqueue.
+Accepted raw preferences are presentation metadata, while Runtime owns model
+capability validation and the immutable resolved Turn policy.
+
 Runtime normalizes owner-internal Session and attachment-ingress failures into
 `ChannelOperationError` before they cross the Channel boundary. Its bounded
 code preserves the presentation decision a Channel needs without exposing
@@ -75,6 +81,11 @@ Selecting a new conversation is client-local state. CLI creates a Pending Sessio
 Completing WebSocket `hello` does not select a Session or trigger History.
 The bundled client sends `get_session_history` only after selecting a persisted
 Session, and prepends persisted History before page-local realtime state.
+It derives reasoning controls from the selected model's Catalog facts, orders
+known values by the public UI order, hides dimensions with no explicit values,
+and treats Default as no Provider-wire override. Model changes preserve each
+still-supported explicit dimension and reset only unsupported dimensions.
+Message and History summaries are rendered from structured preferences.
 
 When Runtime reports `provider_unregistered` or `model_rejected`, Channel presentation preserves the classified failure. A catalog-capable interactive client refreshes the current Catalog for explicit reselection; it does not substitute a Provider/Model or resubmit the failed Turn. Other resolution and invocation failures remain ordinary reported failures and retain the user's selection for an explicit retry.
 

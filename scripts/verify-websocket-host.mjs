@@ -64,7 +64,7 @@ async function main() {
       type: 'run_turn',
       sessionId: session.sessionId,
       message: 'Reply with exactly: smoke ok',
-      maxLlmCalls: 1,
+      reasoning: { effort: 'high' },
     }));
 
     const text = [];
@@ -83,6 +83,10 @@ async function main() {
     assert(relay.requests.responses === 1, 'Host did not invoke the Relay exactly once.');
     assert(relay.requests.authorizationValid, 'Host did not materialize the configured API key.');
     assert(relay.requests.requestedModel === MODEL_ID, 'Host invoked an unexpected Relay model.');
+    assert(
+      relay.requests.requestedReasoningEffort === 'high',
+      'Host did not forward the selected reasoning effort.',
+    );
     assert(!output.join('').includes(API_KEY), 'Host output retained the configured API key.');
     await stopHostProcess(child);
     child = undefined;
@@ -243,6 +247,7 @@ async function startLoopbackRelay() {
     responses: 0,
     authorizationValid: true,
     requestedModel: undefined,
+    requestedReasoningEffort: undefined,
   };
   const server = createServer(async (request, response) => {
     requests.authorizationValid &&= request.headers.authorization === `Bearer ${API_KEY}`;
@@ -256,7 +261,11 @@ async function startLoopbackRelay() {
           supported_endpoints: ['/responses'],
           capabilities: {
             limits: { max_prompt_tokens: 100_000, max_output_tokens: 256 },
-            supports: { tool_calls: true, vision: false },
+            supports: {
+              tool_calls: true,
+              vision: false,
+              reasoning_effort: ['high'],
+            },
           },
         }],
       }));
@@ -265,7 +274,9 @@ async function startLoopbackRelay() {
     if (request.method === 'POST' && request.url === '/v1/responses') {
       requests.responses += 1;
       const body = await readRequestBody(request);
-      requests.requestedModel = JSON.parse(body).model;
+      const parsedBody = JSON.parse(body);
+      requests.requestedModel = parsedBody.model;
+      requests.requestedReasoningEffort = parsedBody.reasoning?.effort;
       response.writeHead(200, {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache',

@@ -119,6 +119,9 @@ describe('WebSocketChannel', () => {
     const html = await response.text();
     expect(html).toContain("const DEFAULT_SOCKET_PATH = \"/ws\";");
     expect(html).not.toContain('__MY_AGENT_WEBSOCKET_PATH__');
+    expect(html).toContain('aria-label="Thinking"');
+    expect(html).toContain('aria-label="Reasoning effort"');
+    expect(html).toContain('reasoning: turn.reasoning');
     await expect(fetch(`${clientUrl(channel)}missing`)).resolves.toMatchObject({ status: 404 });
   });
 
@@ -408,7 +411,14 @@ describe('WebSocketChannel', () => {
           {
             modelId: 'gpt-5.6-sol',
             displayName: 'GPT 5.6 Sol',
-            capabilities: { toolUse: false, mediaKinds: [] },
+            capabilities: {
+              toolUse: false,
+              mediaKinds: [],
+              reasoning: {
+                thinking: ['on', 'off'],
+                efforts: ['low', 'high'],
+              },
+            },
           },
         ],
       }],
@@ -447,7 +457,14 @@ describe('WebSocketChannel', () => {
               {
                 modelId: 'gpt-5.6-sol',
                 displayName: 'GPT 5.6 Sol',
-                capabilities: { toolUse: false, mediaKinds: [] },
+                capabilities: {
+                  toolUse: false,
+                  mediaKinds: [],
+                  reasoning: {
+                    thinking: ['on', 'off'],
+                    efforts: ['low', 'high'],
+                  },
+                },
               },
             ],
           }],
@@ -544,6 +561,7 @@ describe('WebSocketChannel', () => {
           turnId: 'turn-1',
           timestamp: '2026-09-27T00:00:00.000Z',
           role: 'user' as const,
+          reasoning: { thinking: 'on' as const, effort: 'high' as const },
           content: [{
             type: 'image' as const,
             source: {
