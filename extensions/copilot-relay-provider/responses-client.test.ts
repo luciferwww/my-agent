@@ -94,6 +94,43 @@ describe('Copilot Relay Responses client', () => {
       tools: [{ type: 'function', name: 'lookup', parameters: { type: 'object' } }],
     });
     expect(body).not.toHaveProperty('previous_response_id');
+    expect(body).not.toHaveProperty('reasoning');
+  });
+
+  it.each(['none', 'high'] as const)('maps explicit reasoning effort %s', async (effort) => {
+    const fetchImpl = vi.fn(async () => sseResponse(
+      event('response.created')
+      + terminal()
+      + 'data: [DONE]\n\n',
+    )) as unknown as typeof fetch;
+    const client = new CopilotRelayResponsesClient({
+      baseURL: 'http://127.0.0.1:5000',
+      fetch: fetchImpl,
+    });
+
+    await client.chat({ ...request, reasoning: { effort } });
+    const body = JSON.parse(String(vi.mocked(fetchImpl).mock.calls[0]?.[1]?.body));
+    expect(body.reasoning).toEqual({ effort });
+  });
+
+  it('rejects a Thinking switch before fetch', async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const client = new CopilotRelayResponsesClient({
+      baseURL: 'http://127.0.0.1:5000',
+      fetch: fetchImpl,
+    });
+
+    await expect(client.chat({
+      ...request,
+      reasoning: { thinking: 'on', effort: 'default' },
+    })).rejects.toMatchObject({
+      category: 'invalid_request',
+      diagnostics: {
+        providerMessage:
+          'Copilot Relay Responses does not support the requested Thinking switch.',
+      },
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('captures and replays complete reasoning items without exposing wire fields to Core logic', async () => {

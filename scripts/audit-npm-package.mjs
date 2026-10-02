@@ -1,6 +1,7 @@
 const EXPECTED_BIN = 'dist/host/hosts/standalone/entry.js';
 const EXPECTED_FILES_ALLOWLIST = Object.freeze([
   'dist/host',
+  'extensions/copilot-relay-provider/chat-client.ts',
   'extensions/copilot-relay-provider/copilot-relay-provider-unit.ts',
   'extensions/copilot-relay-provider/copilot-relay-provider.ts',
   'extensions/copilot-relay-provider/entry.ts',

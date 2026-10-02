@@ -1,8 +1,10 @@
 import type { ExtensionRegistrationApi, LoadedRuntimeUnit } from 'my-agent/extension-api';
 import { CopilotRelayProvider } from './copilot-relay-provider.js';
+import { CopilotRelayChatCompletionsClient } from './chat-client.js';
 import { parseRelayModelCatalog } from './model-metadata.js';
 import { CopilotRelayResponsesClient } from './responses-client.js';
 import type { CopilotRelayProviderUnitOptions } from './types.js';
+import type { RelayWireProtocol } from './types.js';
 
 export const COPILOT_RELAY_PROVIDER_UNIT_ID = 'copilot-relay-provider';
 export const DEFAULT_COPILOT_RELAY_BASE_URL = 'http://127.0.0.1:5000';
@@ -25,12 +27,16 @@ export function createCopilotRelayProviderUnit(
         captured.baseURL ?? DEFAULT_COPILOT_RELAY_BASE_URL,
       );
       const models = await discoverModels(baseURL, captured, signal);
-      const client = new CopilotRelayResponsesClient({
+      const clientOptions = {
         baseURL,
         apiKey: captured.apiKey,
         fetch: captured.fetch,
-      });
-      const provider = new CopilotRelayProvider(baseURL, client, models);
+      };
+      const clients = new Map<RelayWireProtocol, CopilotRelayResponsesClient | CopilotRelayChatCompletionsClient>([
+        ['openai-responses', new CopilotRelayResponsesClient(clientOptions)],
+        ['openai-chat-completions', new CopilotRelayChatCompletionsClient(clientOptions)],
+      ]);
+      const provider = new CopilotRelayProvider(baseURL, clients, models);
       return Object.freeze({
         registration: Object.freeze({
           id: COPILOT_RELAY_PROVIDER_UNIT_ID,
@@ -79,6 +85,7 @@ function captureOptions(
     ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
     discoveryTimeoutMs,
     ...(options.fetch ? { fetch: options.fetch } : {}),
+    ...(options.logger ? { logger: options.logger } : {}),
   });
 }
 
@@ -129,7 +136,12 @@ async function discoverModels(
     } catch {
       throw new Error('Copilot Relay model discovery returned invalid JSON.');
     }
-    return parseRelayModelCatalog(payload);
+    return parseRelayModelCatalog(payload, (diagnostic) => {
+      options.logger?.warn('Copilot Relay ignored unknown reasoning effort values.', {
+        code: diagnostic.code,
+        ignoredValueCount: diagnostic.ignoredValueCount,
+      });
+    });
   } finally {
     clearTimeout(timeout);
     parentSignal.removeEventListener('abort', onAbort);

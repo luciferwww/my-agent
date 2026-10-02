@@ -93,7 +93,7 @@ verify:websocket-host。上述为后续验证计划，本次没有执行。
 | 文档准备 | Created；结构检查通过 | 文件/导航存在、链接、JSON、围栏、38项覆盖、空白检查 |
 | G0 Spec与Delivery接受 | Passed（2026-10-03） | 所有者接受Spec、确认TGC-P1，并授权继续至完整实施 |
 | 协议fixture准备 | Pending | 来源/版本、有效预算约束、请求/事件/工具续轮fixture；必要有界Spike结论 |
-| 各Plan Item聚焦验证 | TGC-P1–P3 Completed；TGC-P4 In Progress | 命令、执行结果、关联TGC及具体失败/限制 |
+| 各Plan Item聚焦验证 | TGC-P1–P4 Completed；TGC-P5 In Progress | 命令、执行结果、关联TGC及具体失败/限制 |
 | G1完整验收 | Not Started | 自动/浏览器/集成/构建证据、独立评审、文档同步与所有者接受 |
 
 文档结构检查、后续测试命令和Gate结果追加在本节，不将Pending改为Passed而没有证据。
@@ -202,3 +202,33 @@ process-tool及Fitness扫描出现负载型超时。之后Unit、Integration和F
 前两者全过，Fitness只剩已记录的FT-12日期基线。未执行真实模型或产生费用。
 TGC-06–17、20、22及31取得P3范围证据；Relay和Web依赖项仍由P4/P5完成，
 矩阵对应行继续保持Pending，最终状态只在完整验收后更新。
+
+### 2026-10-03 TGC-P4 Relay双协议
+
+实现范围：
+
+- discovery按每模型`/responses`优先、Chat-only回退的规则捕获不可变协议绑定；
+  Provider公开稳定Router protocol，实际Client在`InvocationSource.wireProtocol`记录wire协议。
+- `capabilities.supports.reasoning_effort`只投影已知显式等级，保留Provider顺序；
+  未知非空字符串按计数诊断并忽略，全未知保留模型但不发布能力，结构非法拒绝候选snapshot。
+- Responses精确映射`reasoning.effort`；新增独立Relay Chat Client映射`reasoning_effort`，
+  支持文本、媒体、Tool及Chat reasoning replay，不导入Built-in私有模块。
+- 双endpoint固定走Responses，失败不切Chat重试；Chat-only固定走Chat。
+- 根包发布清单及npm审计权威加入`chat-client.ts`，对应自动审计测试通过。
+
+验证：
+
+| Gate | 结果 |
+|---|---|
+| P4聚焦测试 | Relay Unit/Router/Responses/Chat/entry共62项通过 |
+| Relay完整验证 | 7 files，108/108通过 |
+| Unit | 112 files，1359/1359通过 |
+| Integration | 7 files，22/22通过 |
+| Type/lint | 根项目及两个Workspace通过 |
+| Build | TypeScript、Host build audit（354 files）通过 |
+| 包清单审计 | audit/verify脚本自动测试9/9通过；发布allowlist包含Chat Client |
+| npm临时安装验证 | `verify:package`打包完成后因当前Node 20与项目`engines.node=22.x`不符而`EBADENGINE`；未放宽引擎 |
+| Fitness | 12 files、42项通过；仅FT-12的既有日期断言失败 |
+
+TGC-23–26、32及35取得P4范围证据；UI排序、选择和摘要仍由P5完成。
+未进行失败协议重试或真实Relay调用，未把未知等级映射为相邻值。

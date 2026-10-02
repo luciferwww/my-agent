@@ -30,7 +30,12 @@ function validModel(overrides: Record<string, unknown> = {}) {
 
 async function createProvider(
   fetchImpl: typeof fetch,
-  options: { baseURL?: string; apiKey?: string; discoveryTimeoutMs?: number } = {},
+  options: {
+    baseURL?: string;
+    apiKey?: string;
+    discoveryTimeoutMs?: number;
+    logger?: { warn: ReturnType<typeof vi.fn> };
+  } = {},
 ): Promise<ProviderProjectionEntry> {
   const unit = createCopilotRelayProviderUnit({ ...options, fetch: fetchImpl });
   const instance = await unit.create(new AbortController().signal);
@@ -57,9 +62,35 @@ describe('Copilot Relay Provider Unit', () => {
   });
 
   it('discovers, filters, and freezes an endpoint-scoped Catalog', async () => {
+    const logger = { warn: vi.fn() };
     const fetchImpl = vi.fn(async () => discoveryResponse([
-      validModel(),
-      validModel({ id: 'no-responses', supported_endpoints: ['/chat/completions'] }),
+      validModel({
+        capabilities: {
+          limits: {
+            max_context_window_tokens: 1_050_000,
+            max_prompt_tokens: 922_000,
+            max_output_tokens: 128_000,
+          },
+          supports: {
+            tool_calls: true,
+            vision: true,
+            reasoning_effort: ['high', 'ultra', 'low', 'medium'],
+          },
+          supported_media_types: ['image/png', 'image/jpeg', 'application/pdf'],
+        },
+      }),
+      validModel({
+        id: 'chat-only',
+        supported_endpoints: ['/chat/completions'],
+        capabilities: {
+          limits: {
+            max_context_window_tokens: 128_000,
+            max_output_tokens: 8_192,
+          },
+          supports: { reasoning_effort: ['low', 'medium', 'high'] },
+        },
+      }),
+      validModel({ id: 'no-supported-route', supported_endpoints: ['/messages'] }),
       validModel({ id: 'no-output', capabilities: { limits: { max_prompt_tokens: 10 } } }),
       validModel({ id: 'no-context', capabilities: { limits: { max_output_tokens: 10 } } }),
       validModel({ id: 42 }),
@@ -68,6 +99,7 @@ describe('Copilot Relay Provider Unit', () => {
     const provider = await createProvider(fetchImpl, {
       baseURL: 'http://localhost:5000/',
       apiKey: ' relay-secret ',
+      logger,
     });
 
     expect(fetchImpl).toHaveBeenCalledWith('http://localhost:5000/v1/models', expect.objectContaining({
@@ -76,12 +108,25 @@ describe('Copilot Relay Provider Unit', () => {
     expect(provider).toMatchObject({
       id: 'copilot-relay',
       displayName: 'Copilot Relay',
-      protocol: 'openai-responses',
-      models: [{
-        modelId: 'gpt-5.6-sol',
-        displayName: 'GPT 5.6 Sol',
-        capabilities: { toolUse: true, mediaKinds: ['image'] },
-      }],
+      protocol: 'copilot-relay-model-router',
+      models: [
+        {
+          modelId: 'gpt-5.6-sol',
+          displayName: 'GPT 5.6 Sol',
+          capabilities: {
+            toolUse: true,
+            mediaKinds: ['image'],
+            reasoning: { efforts: ['high', 'low', 'medium'] },
+          },
+        },
+        {
+          modelId: 'chat-only',
+          displayName: 'GPT 5.6 Sol',
+          capabilities: {
+            reasoning: { efforts: ['low', 'medium', 'high'] },
+          },
+        },
+      ],
     });
     expect(Object.isFrozen(provider.models)).toBe(true);
     expect(Object.isFrozen(provider.models[0])).toBe(true);
@@ -98,9 +143,119 @@ describe('Copilot Relay Provider Unit', () => {
           maximumOutputTokens: 128_000,
           toolUse: true,
           mediaKinds: ['image'],
+          reasoning: { efforts: ['high', 'low', 'medium'] },
         },
       },
     });
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Copilot Relay ignored unknown reasoning effort values.',
+      { code: 'unknown_reasoning_effort', ignoredValueCount: 1 },
+    );
+  });
+
+  it('binds dual-endpoint models to Responses and chat-only models to Chat without retry', async () => {
+    const calls: Array<{ url: string; body?: Record<string, unknown> }> = [];
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const text = String(url);
+      calls.push({
+        url: text,
+        ...(init?.body
+          ? { body: JSON.parse(String(init.body)) as Record<string, unknown> }
+          : {}),
+      });
+      if (text.endsWith('/v1/models')) {
+        return discoveryResponse([
+          validModel({
+            id: 'dual',
+            supported_endpoints: ['/chat/completions', '/responses'],
+            capabilities: {
+              limits: {
+                max_context_window_tokens: 32_768,
+                max_output_tokens: 4_096,
+              },
+              supports: { reasoning_effort: ['high'] },
+            },
+          }),
+          validModel({
+            id: 'chat-only',
+            supported_endpoints: ['/chat/completions'],
+            capabilities: {
+              limits: {
+                max_context_window_tokens: 32_768,
+                max_output_tokens: 4_096,
+              },
+              supports: { reasoning_effort: ['low'] },
+            },
+          }),
+        ]);
+      }
+      if (text.endsWith('/v1/responses')) {
+        return new Response([
+          `data: ${JSON.stringify({ type: 'response.created' })}\n\n`,
+          `data: ${JSON.stringify({
+            type: 'response.completed',
+            response: { usage: { input_tokens: 1, output_tokens: 1 } },
+          })}\n\n`,
+          'data: [DONE]\n\n',
+        ].join(''), { status: 200 });
+      }
+      return new Response([
+        `data: ${JSON.stringify({
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        })}\n\n`,
+        `data: ${JSON.stringify({
+          choices: [],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        })}\n\n`,
+        'data: [DONE]\n\n',
+      ].join(''), { status: 200 });
+    }) as unknown as typeof fetch;
+    const provider = await createProvider(fetchImpl);
+
+    await provider.invocationPort.chat({
+      model: 'dual',
+      messages: [],
+      reasoning: { effort: 'high' },
+    });
+    await provider.invocationPort.chat({
+      model: 'chat-only',
+      messages: [],
+      reasoning: { effort: 'low' },
+    });
+
+    expect(calls.slice(1).map((call) => call.url)).toEqual([
+      'http://127.0.0.1:5000/v1/responses',
+      'http://127.0.0.1:5000/v1/chat/completions',
+    ]);
+    expect(calls[1]?.body?.reasoning).toEqual({ effort: 'high' });
+    expect(calls[2]?.body?.reasoning_effort).toBe('low');
+  });
+
+  it('does not retry a dual-endpoint model through Chat after a Responses failure', async () => {
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const text = String(url);
+      urls.push(text);
+      if (text.endsWith('/v1/models')) {
+        return discoveryResponse([validModel({
+          supported_endpoints: ['/responses', '/chat/completions'],
+        })]);
+      }
+      return Response.json(
+        { error: { type: 'server_error', message: 'failed' } },
+        { status: 500 },
+      );
+    }) as unknown as typeof fetch;
+    const provider = await createProvider(fetchImpl);
+
+    await expect(provider.invocationPort.chat({
+      model: 'gpt-5.6-sol',
+      messages: [],
+    })).rejects.toMatchObject({ category: 'unavailable' });
+    expect(urls).toEqual([
+      'http://127.0.0.1:5000/v1/models',
+      'http://127.0.0.1:5000/v1/responses',
+    ]);
   });
 
   it('preserves an arbitrary opaque Model ID from discovery through resolution', async () => {
@@ -204,6 +359,48 @@ describe('Copilot Relay Provider Unit', () => {
     await expect(createProvider(
       vi.fn(async () => Response.json({ models: [] })) as unknown as typeof fetch,
     )).rejects.toThrow('data array');
+  });
+
+  it.each([
+    true,
+    {},
+    ['high', 1],
+    ['high', ' '],
+  ])('rejects structurally invalid reasoning_effort metadata %j', async (reasoningEffort) => {
+    await expect(createProvider(
+      vi.fn(async () => discoveryResponse([validModel({
+        capabilities: {
+          limits: {
+            max_context_window_tokens: 32_768,
+            max_output_tokens: 4_096,
+          },
+          supports: { reasoning_effort: reasoningEffort },
+        },
+      })])) as unknown as typeof fetch,
+    )).rejects.toThrow('reasoning_effort');
+  });
+
+  it('keeps an all-unknown effort model without publishing explicit effort capability', async () => {
+    const logger = { warn: vi.fn() };
+    const provider = await createProvider(
+      vi.fn(async () => discoveryResponse([validModel({
+        capabilities: {
+          limits: {
+            max_context_window_tokens: 32_768,
+            max_output_tokens: 4_096,
+          },
+          supports: { reasoning_effort: ['ultra'] },
+        },
+      })])) as unknown as typeof fetch,
+      { logger },
+    );
+
+    expect(provider.models).toHaveLength(1);
+    expect(provider.models[0]?.capabilities?.reasoning).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.any(String),
+      { code: 'unknown_reasoning_effort', ignoredValueCount: 1 },
+    );
   });
 
   it('cancels a non-success discovery response body', async () => {

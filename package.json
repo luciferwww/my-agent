@@ -17,6 +17,7 @@
   },
   "files": [
     "dist/host",
+    "extensions/copilot-relay-provider/chat-client.ts",
     "extensions/copilot-relay-provider/copilot-relay-provider-unit.ts",
     "extensions/copilot-relay-provider/copilot-relay-provider.ts",
     "extensions/copilot-relay-provider/entry.ts",

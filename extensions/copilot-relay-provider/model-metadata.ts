@@ -1,4 +1,11 @@
-import type { RelayModelBinding, RelayModelMetadata } from './types.js';
+import type {
+  ExplicitThinkingEffort,
+} from 'my-agent/extension-api';
+import type {
+  RelayModelBinding,
+  RelayModelMetadata,
+  RelayWireProtocol,
+} from './types.js';
 
 const CORE_IMAGE_MEDIA_TYPES = new Set([
   'image/gif',
@@ -7,7 +14,25 @@ const CORE_IMAGE_MEDIA_TYPES = new Set([
   'image/webp',
 ]);
 
-export function parseRelayModelCatalog(payload: unknown): ReadonlyMap<string, RelayModelBinding> {
+const KNOWN_REASONING_EFFORTS = new Set([
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+]);
+
+export interface RelayDiscoveryDiagnostic {
+  readonly code: 'unknown_reasoning_effort';
+  readonly ignoredValueCount: number;
+}
+
+export function parseRelayModelCatalog(
+  payload: unknown,
+  onDiagnostic?: (diagnostic: RelayDiscoveryDiagnostic) => void,
+): ReadonlyMap<string, RelayModelBinding> {
   const root = asRecord(payload);
   if (!root || !Array.isArray(root.data)) {
     throw new Error('Copilot Relay model discovery response must contain a data array.');
@@ -15,7 +40,7 @@ export function parseRelayModelCatalog(payload: unknown): ReadonlyMap<string, Re
 
   const models = new Map<string, RelayModelBinding>();
   for (const raw of root.data) {
-    const binding = parseModel(raw);
+    const binding = parseModel(raw, onDiagnostic);
     if (!binding) continue;
     if (models.has(binding.metadata.id)) {
       throw new Error(`Copilot Relay returned duplicate model id "${binding.metadata.id}".`);
@@ -25,13 +50,22 @@ export function parseRelayModelCatalog(payload: unknown): ReadonlyMap<string, Re
   return models;
 }
 
-function parseModel(value: unknown): RelayModelBinding | undefined {
+function parseModel(
+  value: unknown,
+  onDiagnostic: ((diagnostic: RelayDiscoveryDiagnostic) => void) | undefined,
+): RelayModelBinding | undefined {
   const entry = asRecord(value);
   if (!entry) return undefined;
   const id = readOpaqueModelId(entry.id);
   if (id === undefined) return undefined;
-  if (!Array.isArray(entry.supported_endpoints)
-    || !entry.supported_endpoints.includes('/responses')) return undefined;
+  if (!Array.isArray(entry.supported_endpoints)) return undefined;
+  const protocol: RelayWireProtocol | undefined =
+    entry.supported_endpoints.includes('/responses')
+      ? 'openai-responses'
+      : entry.supported_endpoints.includes('/chat/completions')
+        ? 'openai-chat-completions'
+        : undefined;
+  if (!protocol) return undefined;
 
   const capabilities = asRecord(entry.capabilities);
   const limits = asRecord(capabilities?.limits);
@@ -54,6 +88,10 @@ function parseModel(value: unknown): RelayModelBinding | undefined {
       ?? capabilities?.supported_media_types,
   ).filter((mediaType) => CORE_IMAGE_MEDIA_TYPES.has(mediaType));
   const supportedImageMediaTypes = Object.freeze(mediaTypes);
+  const reasoning = parseReasoningCapabilities(
+    supports,
+    onDiagnostic,
+  );
   const metadata: RelayModelMetadata = Object.freeze({
     id,
     ...(readTrimmedString(entry.name) ? { displayName: readTrimmedString(entry.name) } : {}),
@@ -68,10 +106,12 @@ function parseModel(value: unknown): RelayModelBinding | undefined {
     ...(toolUse === undefined ? {} : { toolUse }),
     ...(vision === undefined ? {} : { vision }),
     supportedImageMediaTypes,
+    ...(reasoning === undefined ? {} : { reasoning }),
   });
 
   return Object.freeze({
     metadata,
+    protocol,
     facts: Object.freeze({
       effectiveContextLimit: metadata.effectiveContextLimit,
       ...(metadata.maximumContextTokens === undefined
@@ -87,7 +127,45 @@ function parseModel(value: unknown): RelayModelBinding | undefined {
       ...(vision === undefined
         ? {}
         : { mediaKinds: Object.freeze(vision ? ['image'] : []) }),
+      ...(reasoning === undefined ? {} : { reasoning }),
     }),
+  });
+}
+
+function parseReasoningCapabilities(
+  supports: Record<string, unknown> | undefined,
+  onDiagnostic: ((diagnostic: RelayDiscoveryDiagnostic) => void) | undefined,
+): RelayModelMetadata['reasoning'] {
+  if (!supports || !Object.hasOwn(supports, 'reasoning_effort')) return undefined;
+  const raw = supports.reasoning_effort;
+  if (!Array.isArray(raw)) {
+    throw new Error('Copilot Relay reasoning_effort must be an array.');
+  }
+  const efforts: ExplicitThinkingEffort[] = [];
+  let unknownCount = 0;
+  for (let index = 0; index < raw.length; index++) {
+    const value = raw[index];
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      throw new Error(
+        `Copilot Relay reasoning_effort[${index}] must be a non-empty string.`,
+      );
+    }
+    if (!KNOWN_REASONING_EFFORTS.has(value)) {
+      unknownCount += 1;
+      continue;
+    }
+    const effort = value as ExplicitThinkingEffort;
+    if (!efforts.includes(effort)) efforts.push(effort);
+  }
+  if (unknownCount > 0) {
+    onDiagnostic?.({
+      code: 'unknown_reasoning_effort',
+      ignoredValueCount: unknownCount,
+    });
+  }
+  if (efforts.length === 0) return undefined;
+  return Object.freeze({
+    efforts: Object.freeze(efforts),
   });
 }
 

@@ -19,6 +19,7 @@ export function createExtension(context: ExtensionLoadContext): LoadedRuntimeUni
     baseURL: normalizeCopilotRelayBaseURL(baseURL),
     ...(apiKey === undefined ? {} : { apiKey }),
     discoveryTimeoutMs,
+    logger: context.logger,
   });
 }
 

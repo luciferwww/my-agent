@@ -43,7 +43,7 @@ interface RelayInvocationDiagnostics extends ModelInvocationDiagnostics {
   readonly providerId: typeof COPILOT_RELAY_PROVIDER_ID;
 }
 
-class CopilotRelayInvocationError extends Error implements ModelInvocationStructuralErrorV1 {
+export class CopilotRelayInvocationError extends Error implements ModelInvocationStructuralErrorV1 {
   readonly protocol = 'my-agent.model-invocation-error';
   readonly version = 1 as const;
   readonly diagnostics: RelayInvocationDiagnostics;
@@ -300,10 +300,22 @@ function buildResponsesRequest(
   request: ModelInvocationRequest,
   connectionId: string,
 ): Record<string, unknown> {
+  if (request.reasoning?.thinking !== undefined) {
+    throw createRelayInvalidRequestError(
+      request,
+      'Copilot Relay Responses does not support the requested Thinking switch.',
+    );
+  }
+  const reasoningEffort = request.reasoning?.effort === 'default'
+    ? undefined
+    : request.reasoning?.effort;
   return {
     model: request.model,
     stream: true,
     ...(request.system ? { instructions: request.system } : {}),
+    ...(reasoningEffort === undefined
+      ? {}
+      : { reasoning: { effort: reasoningEffort } }),
     input: convertMessages(request.messages, connectionId),
     ...(request.tools?.length
       ? {
@@ -498,7 +510,7 @@ function messageItem(role: ChatMessage['role'], content: unknown[]): Record<stri
   return { role, content };
 }
 
-async function* readSseData(
+export async function* readSseData(
   body: ReadableStream<Uint8Array>,
   signal?: AbortSignal,
 ): AsyncIterable<string> {
@@ -619,7 +631,7 @@ function terminalFromResponse(
   });
 }
 
-async function createHttpError(
+export async function createHttpError(
   response: Response,
   request: ModelInvocationRequest,
 ): Promise<CopilotRelayInvocationError> {
@@ -654,7 +666,7 @@ async function createHttpError(
   return new CopilotRelayInvocationError(category, diagnostics);
 }
 
-function normalizeError(error: unknown, request: ModelInvocationRequest): Error {
+export function normalizeError(error: unknown, request: ModelInvocationRequest): Error {
   if (error instanceof CopilotRelayInvocationError) return error;
   if (error instanceof Error && error.name === 'AbortError') return error;
   return new CopilotRelayInvocationError(
@@ -663,7 +675,7 @@ function normalizeError(error: unknown, request: ModelInvocationRequest): Error 
   );
 }
 
-function invocationDiagnostics(
+export function invocationDiagnostics(
   request: ModelInvocationRequest,
   provider: {
     httpStatus?: number;
@@ -763,7 +775,7 @@ function isUnknownResponseState(type: string): boolean {
     && type !== 'response.in_progress';
 }
 
-function parseJsonRecord(value: string, message: string): Record<string, unknown> {
+export function parseJsonRecord(value: string, message: string): Record<string, unknown> {
   try {
     const parsed = asRecord(JSON.parse(value));
     if (parsed) return parsed;
@@ -773,23 +785,23 @@ function parseJsonRecord(value: string, message: string): Record<string, unknown
   throw new Error(message);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
+export function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
 }
 
-function readString(value: unknown): string | undefined {
+export function readString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
-function readNonEmptyString(value: unknown, field: string): string {
+export function readNonEmptyString(value: unknown, field: string): string {
   const result = readString(value)?.trim();
   if (!result) throw new Error(`Copilot Relay ${field} is missing.`);
   return result;
 }
 
-function readNonNegativeInteger(value: unknown, field: string): number {
+export function readNonNegativeInteger(value: unknown, field: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) {
     throw new Error(`Copilot Relay ${field} must be a non-negative integer.`);
   }
@@ -800,6 +812,18 @@ function sanitize(value: string | null | undefined): string | undefined {
   if (!value) return undefined;
   const normalized = value.replace(/[\r\n\t]+/gu, ' ').trim();
   return normalized ? normalized.slice(0, 500) : undefined;
+}
+
+export function createRelayInvalidRequestError(
+  request: ModelInvocationRequest,
+  providerMessage: string,
+): CopilotRelayInvocationError {
+  return new CopilotRelayInvocationError(
+    'invalid_request',
+    invocationDiagnostics(request, {
+      providerMessage: sanitize(providerMessage),
+    }),
+  );
 }
 
 function abortError(reason: unknown): Error {

@@ -56,6 +56,7 @@ function packResult() {
       { path: 'dist/host/core/agent-context/templates/AGENTS.md' },
       { path: 'dist/host/core/agent-context/templates/TOOLS.md' },
       { path: 'extensions/copilot-relay-provider/entry.ts' },
+      { path: 'extensions/copilot-relay-provider/chat-client.ts' },
       { path: 'extensions/copilot-relay-provider/extension.json' },
       { path: 'extensions/copilot-relay-provider/package.json' },
       { path: 'extensions/websocket-channel/WebSocketChannel.ts' },
@@ -72,6 +73,7 @@ function manifest() {
     dependencies: { ws: '^8.18.3' },
     files: [
       'dist/host',
+      'extensions/copilot-relay-provider/chat-client.ts',
       'extensions/copilot-relay-provider/copilot-relay-provider-unit.ts',
       'extensions/copilot-relay-provider/copilot-relay-provider.ts',
       'extensions/copilot-relay-provider/entry.ts',
