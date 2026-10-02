@@ -26,6 +26,7 @@ export type {
   ProviderConnection,
   ProviderModelFacts,
   ProviderProjectionEntry,
+  ReasoningCapabilities,
 } from '../../core/model-resolution/index.js';
 export {
   ModelInvocationError,
@@ -47,9 +48,14 @@ export type {
   PresentationContentBlock,
   PresentationThinkingBlock,
   ProviderReplayState,
+  ReasoningPreference,
   ReplayJsonValue,
+  ResolvedReasoningPolicy,
+  ExplicitThinkingEffort,
   ThinkingCompletion,
   ThinkingContentBlock,
+  ThinkingEffort,
+  ThinkingSwitch,
   TokenUsage,
 } from '../../core/model-invocation/index.js';
 export {

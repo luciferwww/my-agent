@@ -8,10 +8,12 @@ import type {
   ProviderConnection,
   ProviderProjectionEntry,
 } from '../../../core/model-resolution/index.js';
+import { normalizeReasoningCapabilities } from '../../../core/model-resolution/index.js';
 import { AnthropicMessagesClient } from './AnthropicMessagesClient.js';
 import { OpenAIChatCompletionsClient } from './OpenAIChatCompletionsClient.js';
 import { OpenAIResponsesClient } from './OpenAIResponsesClient.js';
 import {
+  BuiltinLlmConfigError,
   DEFAULT_BUILTIN_CONTEXT_LIMIT,
   type BuiltinLlmProviderConfig,
   type BuiltinModelRegistration,
@@ -61,6 +63,13 @@ export class BuiltinLlmProvider {
       models: Object.freeze(capturedConfig.models.map((model) => Object.freeze({
         modelId: model.modelId,
         ...(model.displayName === undefined ? {} : { displayName: model.displayName }),
+        ...(model.reasoning === undefined
+          ? {}
+          : {
+              capabilities: Object.freeze({
+                reasoning: model.reasoning,
+              }),
+            }),
       }))),
       protocol: BUILTIN_MODEL_ROUTER_PROTOCOL,
       invocationPort,
@@ -97,6 +106,9 @@ export class BuiltinLlmProvider {
               ...(registration.maximumOutputTokens === undefined
                 ? {}
                 : { maximumOutputTokens: registration.maximumOutputTokens }),
+              ...(registration.reasoning === undefined
+                ? {}
+                : { reasoning: registration.reasoning }),
             }),
             ...(registration.outputTokenLimit === undefined
               ? {}
@@ -191,6 +203,20 @@ function captureConfig(config: BuiltinLlmProviderConfig): BuiltinLlmProviderConf
   return Object.freeze({
     baseURL: config.baseURL,
     ...(config.apiKey === undefined ? {} : { apiKey: config.apiKey }),
-    models: Object.freeze(config.models.map((model) => Object.freeze({ ...model }))),
+    models: Object.freeze(config.models.map((model, index) => {
+      const reasoning = model.reasoning === undefined
+        ? undefined
+        : normalizeReasoningCapabilities(model.reasoning);
+      if (
+        (reasoning?.thinking?.length ?? 0) > 0
+        || (reasoning?.efforts?.length ?? 0) > 0
+      ) {
+        throw new BuiltinLlmConfigError(`models[${index}].reasoning`);
+      }
+      return Object.freeze({
+        ...model,
+        ...(reasoning === undefined ? {} : { reasoning }),
+      });
+    })),
   });
 }

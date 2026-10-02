@@ -197,6 +197,68 @@ describe('ModelResolver', () => {
     }))).not.toThrow();
   });
 
+  it('defensively copies and deeply freezes valid reasoning capabilities', () => {
+    const base = provider();
+    const thinking: Array<'off' | 'on'> = ['off', 'on'];
+    const efforts: Array<'high' | 'low'> = ['high', 'low'];
+    const resolver = new ModelResolver([provider({
+      resolveModel: (modelId, connection) => {
+        const result = base.resolveModel(modelId, connection);
+        if (!result.ok) return result;
+        return {
+          ok: true,
+          descriptor: {
+            ...result.descriptor,
+            facts: {
+              ...result.descriptor.facts,
+              reasoning: { thinking, efforts },
+            },
+          },
+        };
+      },
+    })]);
+
+    const resolved = resolver.resolve(input());
+    thinking.reverse();
+    efforts.reverse();
+
+    expect(resolved.facts.reasoning).toEqual({
+      thinking: ['off', 'on'],
+      efforts: ['high', 'low'],
+    });
+    expect(Object.isFrozen(resolved.facts.reasoning)).toBe(true);
+    expect(Object.isFrozen(resolved.facts.reasoning?.thinking)).toBe(true);
+    expect(Object.isFrozen(resolved.facts.reasoning?.efforts)).toBe(true);
+  });
+
+  it.each([
+    { efforts: ['default'] },
+    { efforts: ['high', 'high'] },
+    { thinking: ['on', 'unknown'] },
+    { thinking: 'on' },
+    { unknown: [] },
+  ])('rejects invalid reasoning capabilities %#', (reasoning) => {
+    const base = provider();
+    const resolver = new ModelResolver([provider({
+      resolveModel: (modelId, connection) => {
+        const result = base.resolveModel(modelId, connection);
+        if (!result.ok) return result;
+        return {
+          ok: true,
+          descriptor: {
+            ...result.descriptor,
+            facts: {
+              ...result.descriptor.facts,
+              reasoning: reasoning as never,
+            },
+          },
+        };
+      },
+    })]);
+
+    expectCategory(() => resolver.resolve(input()), 'facts_insufficient');
+  });
+
   it('rejects explicit negative Tool and Media capabilities', () => {
     const base = provider();
     const withFacts = (facts: ProviderModelFacts) => provider({

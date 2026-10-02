@@ -1,6 +1,6 @@
 # Thinking Generation Controls Specification
 
-> Status: Draft
+> Status: Accepted
 > Date: 2026-10-03
 > Owner: Project owner
 > Related: [Plan](plan.md), [Validation](validation.md), [Research source](../../../research/thinking-generation-and-display-controls-design-draft.md)

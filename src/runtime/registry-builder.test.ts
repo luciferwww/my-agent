@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
+import type {
+  ProviderCatalogModel,
+  ProviderProjectionEntry,
+} from '../core/model-resolution/index.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import type { ApplicationToolPolicy, Tool } from '../core/tools/types.js';
 import {
@@ -91,7 +94,17 @@ describe('Registry staging and finalization', () => {
   });
 
   it('validates, defensively copies, and deeply freezes Provider model Catalogs', () => {
-    const sourceModel = { modelId: 'mutable-model.1', displayName: 'Mutable Model' };
+    const mediaKinds = ['image'];
+    const efforts: Array<'high' | 'low'> = ['high', 'low'];
+    const sourceModel: ProviderCatalogModel = {
+      modelId: 'mutable-model.1',
+      displayName: 'Mutable Model',
+      capabilities: {
+        toolUse: true,
+        mediaKinds,
+        reasoning: { efforts },
+      },
+    };
     const sourceModels = [sourceModel];
     const sourceProvider = { ...provider('primary'), models: sourceModels };
     const staged = stageRegistryUnit(unit('provider-unit', 'builtin', (api) => {
@@ -99,16 +112,44 @@ describe('Registry staging and finalization', () => {
     }));
     const published = staged.providers[0]!;
 
-    sourceModel.displayName = 'Changed';
+    (sourceModel as { displayName: string }).displayName = 'Changed';
     sourceModels.push({ modelId: 'late-model', displayName: 'Late' });
+    mediaKinds.push('audio');
+    efforts.reverse();
 
     expect(published.models).toEqual([
-      { modelId: 'mutable-model.1', displayName: 'Mutable Model' },
+      {
+        modelId: 'mutable-model.1',
+        displayName: 'Mutable Model',
+        capabilities: {
+          toolUse: true,
+          mediaKinds: ['image'],
+          reasoning: { efforts: ['high', 'low'] },
+        },
+      },
     ]);
     expect(Object.isFrozen(published)).toBe(true);
     expect(Object.isFrozen(published.models)).toBe(true);
     expect(Object.isFrozen(published.models[0])).toBe(true);
+    expect(Object.isFrozen(published.models[0]?.capabilities)).toBe(true);
+    expect(Object.isFrozen(published.models[0]?.capabilities?.mediaKinds)).toBe(true);
+    expect(Object.isFrozen(published.models[0]?.capabilities?.reasoning)).toBe(true);
+    expect(Object.isFrozen(published.models[0]?.capabilities?.reasoning?.efforts)).toBe(true);
     expect(published.invocationPort).toBe(sourceProvider.invocationPort);
+  });
+
+  it('rejects structurally invalid reasoning capabilities during staging', () => {
+    expect(() => stageRegistryUnit(unit('invalid-reasoning', 'builtin', (api) => {
+      api.registerProvider({
+        ...provider('invalid-reasoning-provider'),
+        models: [{
+          modelId: 'invalid',
+          capabilities: {
+            reasoning: { efforts: ['default'] as never },
+          },
+        }],
+      });
+    }))).toThrow('invalid reasoning capabilities');
   });
 
   it('preserves arbitrary Provider-owned Model ID strings', () => {

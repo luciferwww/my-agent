@@ -557,7 +557,16 @@ describe('RuntimeApp', () => {
         providerId: 'test',
         displayName: 'test',
         models: [
-          { modelId: 'test-model', displayName: 'Test Model' },
+          {
+            modelId: 'test-model',
+            displayName: 'Test Model',
+            capabilities: {
+              reasoning: {
+                thinking: ['off'],
+                efforts: ['high', 'low'],
+              },
+            },
+          },
           { modelId: 'parent-model', displayName: 'parent-model' },
         ],
       }],
@@ -567,6 +576,16 @@ describe('RuntimeApp', () => {
     expect(Object.isFrozen(catalog.providers)).toBe(true);
     expect(Object.isFrozen(catalog.providers[0]?.models)).toBe(true);
     expect(Object.isFrozen(catalog.providers[0]?.models[0])).toBe(true);
+    expect(Object.isFrozen(catalog.providers[0]?.models[0]?.capabilities)).toBe(true);
+    expect(Object.isFrozen(
+      catalog.providers[0]?.models[0]?.capabilities?.reasoning,
+    )).toBe(true);
+    expect(Object.isFrozen(
+      catalog.providers[0]?.models[0]?.capabilities?.reasoning?.thinking,
+    )).toBe(true);
+    expect(Object.isFrozen(
+      catalog.providers[0]?.models[0]?.capabilities?.reasoning?.efforts,
+    )).toBe(true);
     expect(JSON.parse(JSON.stringify(catalog))).toEqual(catalog);
     await app.close();
   });
@@ -3010,7 +3029,16 @@ function createTestDependencies(
       id: 'test',
       protocol: 'test',
       models: [
-        { modelId: 'test-model', displayName: 'Test Model' },
+        {
+          modelId: 'test-model',
+          displayName: 'Test Model',
+          capabilities: {
+            reasoning: {
+              thinking: ['off'],
+              efforts: ['high', 'low'],
+            },
+          },
+        },
         { modelId: 'parent-model' },
       ],
       invocationPort: {} as never,
@@ -3026,6 +3054,10 @@ function createTestDependencies(
             maximumOutputTokens: 8192,
             toolUse: true,
             mediaKinds: ['image'],
+            reasoning: {
+              thinking: ['off'],
+              efforts: ['high', 'low'],
+            },
           },
         },
       }),

@@ -7,6 +7,10 @@ import type {
   ResolvedModel,
   ResolutionFailureCategory,
 } from './types.js';
+import {
+  normalizeReasoningCapabilities,
+  ReasoningCapabilitiesValidationError,
+} from './reasoning-capabilities.js';
 
 const PROVIDER_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -128,6 +132,7 @@ export class ModelResolver {
         ...(facts.mediaKinds
           ? { mediaKinds: Object.freeze([...facts.mediaKinds]) }
           : {}),
+        ...(facts.reasoning === undefined ? {} : { reasoning: facts.reasoning }),
       }),
     });
   }
@@ -158,7 +163,20 @@ export class ModelResolver {
     maximumOutputTokens?: number;
     toolUse?: boolean;
     mediaKinds?: readonly string[];
+    reasoning?: ProviderModelFacts['reasoning'];
   } {
+    let reasoning: ProviderModelFacts['reasoning'];
+    try {
+      reasoning = facts.reasoning === undefined
+        ? undefined
+        : normalizeReasoningCapabilities(facts.reasoning);
+    } catch (error) {
+      if (!(error instanceof ReasoningCapabilitiesValidationError)) throw error;
+      throw new ModelResolutionError(
+        'facts_insufficient',
+        'Provider model facts contain invalid reasoning capabilities.',
+      );
+    }
     if (
       !isPositiveInteger(facts.effectiveContextLimit)
       || (facts.maximumContextTokens !== undefined && !isPositiveInteger(facts.maximumContextTokens))
@@ -195,6 +213,7 @@ export class ModelResolver {
         : {}),
       ...(facts.toolUse !== undefined ? { toolUse: facts.toolUse } : {}),
       ...(facts.mediaKinds ? { mediaKinds: facts.mediaKinds } : {}),
+      ...(reasoning === undefined ? {} : { reasoning }),
     };
   }
 

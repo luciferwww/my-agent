@@ -1,4 +1,9 @@
 import type { ModelReference } from '../../../core/model-resolution/index.js';
+import {
+  normalizeReasoningCapabilities,
+  ReasoningCapabilitiesValidationError,
+  type ReasoningCapabilities,
+} from '../../../core/model-resolution/index.js';
 
 export type BuiltinProtocol =
   | 'anthropic-messages'
@@ -13,6 +18,7 @@ export interface BuiltinModelRegistration {
   readonly maximumPromptTokens?: number;
   readonly maximumOutputTokens?: number;
   readonly outputTokenLimit?: number;
+  readonly reasoning?: ReasoningCapabilities;
 }
 
 export interface BuiltinLlmProviderConfig {
@@ -149,13 +155,33 @@ function validateModels(value: unknown): readonly BuiltinModelRegistration[] {
       throw new BuiltinLlmConfigError(`${path}.maximumOutputTokens`);
     }
 
+    const reasoning = validateReasoningCapabilities(entry['reasoning'], path);
     return {
       modelId,
       protocol: protocol as BuiltinProtocol,
       ...(displayName === undefined ? {} : { displayName }),
       ...copyConfiguredLimits(limits),
+      ...(reasoning === undefined ? {} : { reasoning }),
     };
   });
+}
+
+function validateReasoningCapabilities(
+  value: unknown,
+  modelPath: string,
+): ReasoningCapabilities | undefined {
+  if (value === undefined) return undefined;
+  try {
+    return normalizeReasoningCapabilities(value);
+  } catch (error) {
+    if (!(error instanceof ReasoningCapabilitiesValidationError)) throw error;
+    const suffix = error.fieldPath.length === 0
+      ? ''
+      : error.fieldPath.startsWith('[')
+        ? error.fieldPath
+        : `.${error.fieldPath}`;
+    throw new BuiltinLlmConfigError(`${modelPath}.reasoning${suffix}`);
+  }
 }
 
 function copyConfiguredLimits(limits: Readonly<Record<string, unknown>>): {

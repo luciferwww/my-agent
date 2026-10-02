@@ -50,6 +50,9 @@ describe('Built-in LLM configuration', () => {
           maximumPromptTokens: 272_000,
           maximumOutputTokens: 28_000,
           outputTokenLimit: 16_000,
+          reasoning: {
+            efforts: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+          },
         },
         { modelId: 'c', protocol: 'openai-chat-completions' },
       ],
@@ -63,6 +66,9 @@ describe('Built-in LLM configuration', () => {
         maximumPromptTokens: 272_000,
         maximumOutputTokens: 28_000,
         outputTokenLimit: 16_000,
+        reasoning: {
+          efforts: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+        },
       },
       { modelId: 'c', protocol: 'openai-chat-completions' },
     ]);
@@ -101,6 +107,48 @@ describe('Built-in LLM configuration', () => {
         maximumOutputTokens: 101,
       },
     ], 'models[0].maximumOutputTokens'],
+    [[
+      {
+        modelId: 'a',
+        protocol: 'openai-responses',
+        reasoning: null,
+      },
+    ], 'models[0].reasoning'],
+    [[
+      {
+        modelId: 'a',
+        protocol: 'openai-responses',
+        reasoning: { effrot: ['high'] },
+      },
+    ], 'models[0].reasoning.effrot'],
+    [[
+      {
+        modelId: 'a',
+        protocol: 'openai-responses',
+        reasoning: { thinking: 'on' },
+      },
+    ], 'models[0].reasoning.thinking'],
+    [[
+      {
+        modelId: 'a',
+        protocol: 'openai-responses',
+        reasoning: { thinking: ['on', 'on'] },
+      },
+    ], 'models[0].reasoning.thinking[1]'],
+    [[
+      {
+        modelId: 'a',
+        protocol: 'openai-responses',
+        reasoning: { efforts: ['default'] },
+      },
+    ], 'models[0].reasoning.efforts[0]'],
+    [[
+      {
+        modelId: 'a',
+        protocol: 'openai-responses',
+        reasoning: { efforts: ['high', 'high'] },
+      },
+    ], 'models[0].reasoning.efforts[1]'],
   ])('rejects invalid model registrations %#', (models, fieldPath) => {
     try {
       validateBuiltinLlmProviderConfig({
@@ -112,5 +160,25 @@ describe('Built-in LLM configuration', () => {
       return;
     }
     throw new Error('Expected validation to fail.');
+  });
+
+  it('defensively copies and freezes reasoning capability arrays in Provider order', () => {
+    const efforts: Array<'high' | 'low' | 'medium'> = ['high', 'low', 'medium'];
+    const result = validateBuiltinLlmProviderConfig({
+      baseURL: 'https://example.test',
+      models: [{
+        modelId: 'a',
+        protocol: 'openai-chat-completions',
+        reasoning: { efforts },
+      }],
+    });
+
+    efforts.reverse();
+
+    expect(result.models[0]?.reasoning).toEqual({
+      efforts: ['high', 'low', 'medium'],
+    });
+    expect(Object.isFrozen(result.models[0]?.reasoning)).toBe(true);
+    expect(Object.isFrozen(result.models[0]?.reasoning?.efforts)).toBe(true);
   });
 });

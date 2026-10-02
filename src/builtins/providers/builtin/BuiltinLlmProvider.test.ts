@@ -114,6 +114,54 @@ describe('BuiltinLlmProvider', () => {
     expect(createClient).toHaveBeenCalledTimes(1);
   });
 
+  it('projects one captured empty reasoning capability snapshot to Catalog and Facts', () => {
+    const thinking: Array<'on' | 'off'> = [];
+    const efforts: Array<'high' | 'low'> = [];
+    const provider = new BuiltinLlmProvider({
+      baseURL: 'https://example.test',
+      models: [{
+        modelId: 'one',
+        protocol: 'openai-responses',
+        reasoning: { thinking, efforts },
+      }],
+    }, {
+      createClient: (protocol) => client(protocol, []),
+    });
+
+    thinking.push('on');
+    efforts.push('high');
+
+    const catalogReasoning = provider.entry.models[0]?.capabilities?.reasoning;
+    expect(catalogReasoning).toEqual({
+      thinking: [],
+      efforts: [],
+    });
+    expect(Object.isFrozen(catalogReasoning)).toBe(true);
+    expect(Object.isFrozen(catalogReasoning?.thinking)).toBe(true);
+    expect(Object.isFrozen(catalogReasoning?.efforts)).toBe(true);
+
+    const connection = provider.entry.resolveConnection();
+    if (!connection.ok) throw new Error('Expected connection.');
+    const model = provider.entry.resolveModel('one', connection.connection);
+    if (!model.ok) throw new Error('Expected model.');
+    expect(model.descriptor.facts.reasoning).toBe(catalogReasoning);
+  });
+
+  it('does not publish non-empty reasoning capabilities before a Client mapper exists', () => {
+    expect(() => new BuiltinLlmProvider({
+      baseURL: 'https://example.test',
+      models: [{
+        modelId: 'one',
+        protocol: 'openai-responses',
+        reasoning: { efforts: ['high'] },
+      }],
+    }, {
+      createClient: (protocol) => client(protocol, []),
+    })).toThrow(expect.objectContaining({
+      fieldPath: 'models[0].reasoning',
+    }));
+  });
+
   it('applies model output defaults and clamps explicit overrides to capability', async () => {
     const requests: ModelInvocationRequest[] = [];
     const provider = new BuiltinLlmProvider({

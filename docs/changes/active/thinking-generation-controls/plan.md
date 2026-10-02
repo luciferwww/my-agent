@@ -1,11 +1,11 @@
 # Thinking Generation Controls Plan
 
-> Status: Accepted — preparation only
+> Status: Accepted — TGC-P1 Delivery authorized
 > Date: 2026-10-03
 > Owner: Project owner
 > Classification: Architecture Slice
-> Authorization: 所有者批准建立正式Active Change；尚未批准生产Delivery
-> Current phase: 契约、实施任务与验收准备
+> Authorization: 所有者于2026-10-03接受Specification并批准TGC-P1；后续Plan Item未授权
+> Current phase: TGC-P1 类型与能力校验
 
 ## 1. 目标与来源
 
@@ -18,7 +18,8 @@
 - [Development Workflow](../../../governance/development-workflow.md)：流程唯一权威。
 - [既有采集与展示交付](../../archive/thinking-capture-and-display/plan.md)：实现基线，不重做或改写归档结论。
 
-本次授权仅创建上述文档及导航。Plan接受不表示Spec已接受、实现已完成或Gate已通过。
+当前授权只覆盖TGC-P1。Plan接受不表示后续消息、协议、Session或Web实现获准，
+也不表示对应Gate已经通过。
 
 ## 2. 范围与非目标
 
@@ -39,8 +40,8 @@
 
 | Plan Item | 状态 | 工作与owner边界 | 退出条件 |
 |---|---|---|---|
-| TGC-P0 契约准备 | In Progress | 建立Plan/Spec/验收；核实私有adapter配置及协议证据边界 | 文档校验通过，所有者接受Spec并批准首个Delivery步骤 |
-| TGC-P1 类型与能力校验 | Not Started | Core类型及Extension导出；Provider Facts/Catalog/Runtime DTO；Built-in配置、深冻与静态一致性校验 | TGC-01–05、26、33的相关契约测试通过；无策略请求不变 |
+| TGC-P0 契约准备 | Completed | 建立Plan/Spec/验收；核实私有adapter配置及协议证据边界 | 文档校验通过；所有者已接受Spec并批准TGC-P1 |
+| TGC-P1 类型与能力校验 | Completed | Core类型及Extension导出；Provider Facts/Catalog/Runtime DTO；Built-in配置、深冻与静态一致性校验 | 聚焦、Unit、Integration、lint及build通过；所有者已确认完成 |
 | TGC-P2 消息与Turn链路 | Not Started | Channel/WebSocket入口、Runtime队列与解析、Runner正常调用与Steering；Session元数据及History | TGC-18–22、29–30、36–37相关测试通过；原始选择与resolved策略分离 |
 | TGC-P3 Built-in协议闭环 | Not Started | Responses/Chat映射与私有summary；Anthropic生成、事件与replay codec | TGC-06–17、20、22、31相关fixture/恢复测试通过，默认请求不变 |
 | TGC-P4 Relay双协议 | Not Started | discovery、私有模型绑定、独立Chat Client/Router、包发布清单及测试 | TGC-23–26、32、35相关测试通过；不导入Built-in私有模块 |
@@ -83,5 +84,4 @@ P1不把尚未完成codec的能力发布为可用；P3开始前固化Anthropic�
 
 ## 6. 当前状态
 
-正式Change已建立；Specification仍为Draft，生产Delivery未开始。
-下一步评审并接受Spec，随后从TGC-P1的小步类型/校验交付开始。
+Specification已接受，TGC-P1实现、验证及所有者确认完成；TGC-P2及以后未获授权。

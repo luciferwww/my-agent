@@ -91,13 +91,13 @@ verify:websocket-host。上述为后续验证计划，本次没有执行。
 | Gate/记录 | 当前状态 | 需要的证据 |
 |---|---|---|
 | 文档准备 | Created；结构检查通过 | 文件/导航存在、链接、JSON、围栏、38项覆盖、空白检查 |
-| G0 Spec与首步Delivery接受 | Pending | 所有者明确接受Spec与P1实施范围 |
+| G0 Spec与首步Delivery接受 | Passed（2026-10-03） | 所有者明确接受Spec并仅授权TGC-P1；P2及以后未授权 |
 | 协议fixture准备 | Pending | 来源/版本、有效预算约束、请求/事件/工具续轮fixture；必要有界Spike结论 |
-| 各Plan Item聚焦验证 | Not Started | 命令、执行结果、关联TGC及具体失败/限制 |
+| 各Plan Item聚焦验证 | TGC-P1 Completed；P2–P5 Not Started | 命令、执行结果、关联TGC及具体失败/限制 |
 | G1完整验收 | Not Started | 自动/浏览器/集成/构建证据、独立评审、文档同步与所有者接受 |
 
 文档结构检查、后续测试命令和Gate结果追加在本节，不将Pending改为Passed而没有证据。
-当前没有新增生产测试结果或真实协议接受性结论。
+后续P1结果记录如下；仍没有真实协议接受性结论。
 
 ### 2026-10-03 文档准备检查
 
@@ -106,4 +106,36 @@ verify:websocket-host。上述为后续验证计划，本次没有执行。
 - 6份文档无尾随空白并保留结尾换行；已跟踪导航文件的git diff --check通过，
   新文件另行直接检查，未把git忽略未跟踪文件误当成验证。
 - 首次检查器对Pending行未兼容CRLF；修正检查正则后全项通过，未改验收状态。
-- 未运行生产测试、构建、浏览器或真实模型请求；G0/G1未通过。
+- 该次文档准备检查未运行生产测试、构建、浏览器或真实模型请求；当时G0/G1未通过。
+
+### 2026-10-03 TGC-P1 类型与能力校验
+
+实现范围：
+
+- 增加公共Thinking effort/switch、原始Preference、Resolved policy及ReasoningCapabilities类型，
+  并通过Core与Extension API导出；ModelInvocationRequest只增加可选结构字段，尚无调用方。
+- Provider Facts、Provider Catalog、Registry staging、Resolved Facts及Runtime Catalog DTO
+  投影同一reasoning schema，保持Provider顺序并深度复制/冻结。
+- Built-in逐模型配置严格校验reasoning对象、字段、数组值和重复项，错误保留具体fieldPath。
+- Registry原先重建Catalog条目时没有保留已有capabilities；P1沿同一投影点保留并冻结
+  既有tool/media及新增reasoning，避免只为reasoning建立旁路。
+- P1尚无Client wire mapper，因此Built-in Provider对非空reasoning选项在staging失败关闭；
+  空schema可验证投影链。P3实现具体协议映射前不发布无法兑现的Built-in选项。
+- 未修改Channel消息、Runtime intake策略、Runner、Session、任何协议请求体或Web。
+
+验证：
+
+| Gate | 结果 |
+|---|---|
+| 聚焦配置/Provider/Resolver/Registry/Runtime测试 | 130/130通过 |
+| Unit | 110 files，1284/1284通过 |
+| Integration | 7 files，22/22通过 |
+| Type/lint | 根项目及两个Workspace通过 |
+| Build | TypeScript、Host build audit（352 files）通过 |
+| Relay验证 | 6 files，94/94通过 |
+| Fitness | 12 files通过；FT-12的1项日期断言失败，与提交`7048e3b`中已存在的runtime.md=2026-10-02、测试常量=2026-09-18基线一致 |
+| diff check | 通过 |
+
+TGC-01–05、TGC-26和TGC-33只取得P1结构/投影部分证据，矩阵仍保持Pending；
+没有用类型测试冒充消息、wire、reload或UI验收。未运行真实模型请求。
+所有者于2026-10-03确认TGC-P1完成；该确认不授权TGC-P2或后续Plan Item。

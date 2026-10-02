@@ -1,4 +1,8 @@
-import type { ModelInvocationPort } from '../model-invocation/index.js';
+import type {
+  ExplicitThinkingEffort,
+  ModelInvocationPort,
+  ThinkingSwitch,
+} from '../model-invocation/index.js';
 
 export type ResolutionFailureCategory =
   | 'provider_unregistered'
@@ -42,6 +46,11 @@ export interface ProviderConnection {
   readonly deploymentId?: string;
 }
 
+export interface ReasoningCapabilities {
+  readonly thinking?: readonly ThinkingSwitch[];
+  readonly efforts?: readonly ExplicitThinkingEffort[];
+}
+
 export interface ProviderModelFacts {
   readonly effectiveContextLimit?: number;
   readonly maximumContextTokens?: number;
@@ -49,6 +58,7 @@ export interface ProviderModelFacts {
   readonly maximumOutputTokens?: number;
   readonly toolUse?: boolean;
   readonly mediaKinds?: readonly string[];
+  readonly reasoning?: ReasoningCapabilities;
 }
 
 export interface ProviderModelDescriptor {
@@ -83,6 +93,7 @@ export interface ProviderCatalogModel {
   readonly capabilities?: {
     readonly toolUse?: boolean;
     readonly mediaKinds?: readonly string[];
+    readonly reasoning?: ReasoningCapabilities;
   };
 }
 
@@ -121,5 +132,6 @@ export interface ResolvedModel {
     maximumOutputTokens?: number;
     toolUse?: boolean;
     mediaKinds?: readonly string[];
+    reasoning?: ReasoningCapabilities;
   }>;
 }

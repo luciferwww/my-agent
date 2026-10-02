@@ -6,7 +6,7 @@ Changes retain the repository's existing Plan/Specification/validation workflow.
 
 ## Active
 
-- [Thinking Generation Controls](active/thinking-generation-controls/plan.md), with its [draft Specification](active/thinking-generation-controls/specification.md) and [acceptance/validation matrix](active/thinking-generation-controls/validation.md) — preparation authorized on 2026-10-03; per-model capabilities, message-level controls, original preference recovery, three Built-in protocol mappings and dual-protocol Relay; production Delivery not started
+- [Thinking Generation Controls](active/thinking-generation-controls/plan.md), with its [accepted Specification](active/thinking-generation-controls/specification.md) and [acceptance/validation matrix](active/thinking-generation-controls/validation.md) — TGC-P1 type, capability and Built-in static validation completed and owner-confirmed on 2026-10-03; later message, protocol, Session and Web items are not yet authorized
 
 ## Archived
 

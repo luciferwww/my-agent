@@ -3,7 +3,10 @@ import type {
   SessionPermissionMode,
   SessionPermissionState,
 } from '../approval/index.js';
-import type { ModelReference } from '../model-resolution/index.js';
+import type {
+  ModelReference,
+  ReasoningCapabilities,
+} from '../model-resolution/index.js';
 import type { AgentEvent } from '../runner/types.js';
 import type { SessionErrorCode } from '../session/index.js';
 import type {
@@ -140,6 +143,7 @@ export interface ModelCatalogEntry {
   readonly capabilities?: {
     readonly toolUse?: boolean;
     readonly mediaKinds?: readonly string[];
+    readonly reasoning?: ReasoningCapabilities;
   };
 }
 

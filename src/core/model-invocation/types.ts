@@ -109,6 +109,30 @@ export interface ChatToolDefinition {
   inputSchema: Readonly<Record<string, unknown>>;
 }
 
+export type ThinkingEffort =
+  | 'default'
+  | 'none'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max';
+
+export type ExplicitThinkingEffort = Exclude<ThinkingEffort, 'default'>;
+
+export type ThinkingSwitch = 'on' | 'off';
+
+export interface ReasoningPreference {
+  readonly thinking?: ThinkingSwitch;
+  readonly effort?: ThinkingEffort;
+}
+
+export interface ResolvedReasoningPolicy {
+  readonly thinking?: ThinkingSwitch;
+  readonly effort: ThinkingEffort;
+}
+
 export interface ModelInvocationRequest {
   model: string;
   /** Core-generated identity for this actual invocation. */
@@ -117,6 +141,7 @@ export interface ModelInvocationRequest {
   messages: ChatMessage[];
   tools?: ChatToolDefinition[];
   outputTokenLimit?: number;
+  reasoning?: ResolvedReasoningPolicy;
   signal?: AbortSignal;
 }
 

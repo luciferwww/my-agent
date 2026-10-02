@@ -426,6 +426,26 @@ export class RuntimeApp {
                 ...(model.capabilities.mediaKinds !== undefined
                   ? { mediaKinds: Object.freeze([...model.capabilities.mediaKinds]) }
                   : {}),
+                ...(model.capabilities.reasoning !== undefined
+                  ? {
+                      reasoning: Object.freeze({
+                        ...(model.capabilities.reasoning.thinking === undefined
+                          ? {}
+                          : {
+                              thinking: Object.freeze([
+                                ...model.capabilities.reasoning.thinking,
+                              ]),
+                            }),
+                        ...(model.capabilities.reasoning.efforts === undefined
+                          ? {}
+                          : {
+                              efforts: Object.freeze([
+                                ...model.capabilities.reasoning.efforts,
+                              ]),
+                            }),
+                      }),
+                    }
+                  : {}),
               }),
             }
           : {}),
