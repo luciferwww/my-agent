@@ -338,6 +338,136 @@ describe('AgentRunner', () => {
       expect(result.toolRounds).toBe(0);
     });
 
+    it('emits Thinking lifecycle events while removing replay state from RunResult', async () => {
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(request) {
+          const invocationId = request.invocationId!;
+          yield {
+            type: 'message_start',
+            invocation: {
+              id: invocationId,
+              source: {
+                providerId: 'test',
+                connectionId: 'test',
+                requestModelId: request.model,
+                wireProtocol: 'openai-responses',
+              },
+            },
+          };
+          yield { type: 'thinking_start', blockId: 'thinking-0' };
+          yield { type: 'thinking_delta', blockId: 'thinking-0', text: 'working' };
+          yield {
+            type: 'thinking_end',
+            blockId: 'thinking-0',
+            completion: {
+              status: 'complete',
+              text: 'working',
+              replay: {
+                format: 'provider.reasoning.v1',
+                payload: { opaque: 'private state' },
+              },
+            },
+          };
+          yield { type: 'text_delta', text: 'done' };
+          yield {
+            type: 'message_end',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 2, outputTokens: 3 },
+          };
+        },
+        async chat() {
+          throw new Error('Not used');
+        },
+      };
+      const events: AgentEvent[] = [];
+      const result = await new AgentRunner({
+        llmClient,
+        sessionManager,
+        onEvent: (event) => events.push(event),
+      }).run({
+        sessionId: MAIN_SESSION_ID,
+        message: 'Hi',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'thinking-turn',
+      });
+
+      const thinkingEvents = events.filter((event) => event.type.startsWith('thinking_'));
+      expect(thinkingEvents).toEqual([
+        expect.objectContaining({ type: 'thinking_start', thinkingId: expect.any(String) }),
+        expect.objectContaining({ type: 'thinking_delta', text: 'working' }),
+        expect.objectContaining({ type: 'thinking_end', text: 'working', status: 'complete' }),
+      ]);
+      expect(result.content).toEqual([
+        expect.objectContaining({
+          type: 'thinking',
+          text: 'working',
+          status: 'complete',
+        }),
+        { type: 'text', text: 'done' },
+      ]);
+      expect(JSON.stringify(result)).not.toContain('private state');
+      expect(JSON.stringify(sessionManager.getMessages(MAIN_SESSION_ID))).toContain('private state');
+    });
+
+    it('persists opaque-only Thinking without emitting an empty presentation block', async () => {
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(request) {
+          const invocationId = request.invocationId!;
+          yield {
+            type: 'message_start',
+            invocation: {
+              id: invocationId,
+              source: {
+                providerId: 'test',
+                connectionId: 'test',
+                requestModelId: request.model,
+                wireProtocol: 'openai-responses',
+              },
+            },
+          };
+          yield { type: 'thinking_start', blockId: 'thinking-0' };
+          yield {
+            type: 'thinking_end',
+            blockId: 'thinking-0',
+            completion: {
+              status: 'complete',
+              text: '',
+              replay: {
+                format: 'provider.reasoning.v1',
+                payload: { opaque: 'private state' },
+              },
+            },
+          };
+          yield { type: 'text_delta', text: 'done' };
+          yield {
+            type: 'message_end',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 2, outputTokens: 3 },
+          };
+        },
+        async chat() {
+          throw new Error('Not used');
+        },
+      };
+      const events: AgentEvent[] = [];
+      const result = await new AgentRunner({
+        llmClient,
+        sessionManager,
+        onEvent: (event) => events.push(event),
+      }).run({
+        sessionId: MAIN_SESSION_ID,
+        message: 'Hi',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'opaque-thinking-turn',
+      });
+
+      expect(events.filter((event) => event.type.startsWith('thinking_'))).toEqual([]);
+      expect(result.content).toEqual([{ type: 'text', text: 'done' }]);
+      expect(JSON.stringify(sessionManager.getMessages(MAIN_SESSION_ID))).toContain('private state');
+    });
+
     it('preserves multi-turn conversation history', async () => {
       let capturedMessages: ModelInvocationRequest['messages'] = [];
 

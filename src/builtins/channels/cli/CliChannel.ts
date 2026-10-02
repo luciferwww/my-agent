@@ -133,6 +133,7 @@ export class CliChannel implements Channel {
 
   /** 流式输出过程中插入 tool/error 行前需要先换行；run_end / 显式插入会重置 */
   private inStream = false;
+  private thinkingStream = false;
   private stopped = false;
   private started = false;
   private stopRequested = false;
@@ -168,8 +169,28 @@ export class CliChannel implements Channel {
   send(event: AgentEvent): void {
     switch (event.type) {
       case 'text_delta':
+        if (this.thinkingStream) {
+          this.breakStream();
+          this.thinkingStream = false;
+        }
         this.inStream = true;
         this.output.write(event.text);
+        break;
+
+      case 'thinking_start':
+        this.breakStream();
+        this.thinkingStream = true;
+        this.output.write(dim('[thinking]\n'));
+        break;
+
+      case 'thinking_delta':
+        this.inStream = true;
+        this.output.write(dim(event.text));
+        break;
+
+      case 'thinking_end':
+        this.breakStream();
+        this.thinkingStream = false;
         break;
 
       case 'user_message': {
@@ -189,6 +210,7 @@ export class CliChannel implements Channel {
 
       case 'tool_use':
         this.breakStream();
+        this.thinkingStream = false;
         this.output.write(dim(`[tool: ${event.name}]\n`));
         break;
 
@@ -232,10 +254,12 @@ export class CliChannel implements Channel {
         // 由 start() 的 try/catch 统一以 [error] 输出，避免双行重复。
         // 其他 channel（如 WebSocketChannel）可能选择推送 error event 给 client。
         this.breakStream();
+        this.thinkingStream = false;
         break;
 
       case 'run_end':
         this.breakStream();
+        this.thinkingStream = false;
         if (event.result.stopReason === 'max_llm_calls') {
           this.output.write(yellow('[configured model call limit reached]\n'));
         }

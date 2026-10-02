@@ -19,6 +19,7 @@ Concrete Providers own connection/model fact publication and protocol conversion
 ```text
 src/core/model-invocation/
 ├── types.ts                    # request, response, stream event, and Port contracts
+├── stream-collector.ts         # ordered text/Tool/Thinking assembly and safe projection
 ├── errors.ts                   # normalized failure and structural error boundary
 └── index.ts
 
@@ -51,6 +52,7 @@ ModelInvocationPort {
 
 ModelInvocationRequest {
   model: string
+  invocationId?: string
   system?: string
   messages: ChatMessage[]
   tools?: ChatToolDefinition[]
@@ -60,15 +62,36 @@ ModelInvocationRequest {
 
 ModelStreamEvent =
   | message_start
+  | thinking_start
+  | thinking_delta
+  | thinking_end
   | text_delta
   | tool_call
   | message_end
   | error
 ```
 
-Canonical history supports text, base64 image, Tool Use, and correlated Tool Result blocks. Image dimensions are internal metadata and Provider adapters remove them from the wire. The optional output limit is an already-resolved invocation policy, not a model capability fact.
+Canonical history supports text, base64 image, Tool Use, correlated Tool Result,
+and Thinking blocks. Complete Thinking carries normalized display text plus a
+Provider-owned JSON replay envelope; partial Thinking carries display text only.
+Core persists and orders the envelope but never interprets its format or payload.
+Presentation projection exposes only `id`, `text`, and `status`. Image dimensions
+are internal metadata and Provider adapters remove them from the wire. The
+optional output limit is an already-resolved invocation policy, not a model
+capability fact.
 
 Provider fragments, indexes, SDK objects, Anthropic `input_schema`, and Responses `function.parameters` remain inside adapter/test boundaries. Complete canonical Tool Calls preserve Provider call identity, name, order, and either ready object input or explicit invalid input state.
+
+Each actual invocation has a local identity and source facts. Concrete Clients
+map wire Thinking to invocation-local block IDs, validate their own replay codec
+and source compatibility before sending, and restore wire fields only inside the
+Client boundary. When a Built-in request switches wire protocols, the target
+Chat Completions, Responses, or Anthropic Client omits Thinking blocks it cannot
+consume from its wire projection while preserving ordinary assistant text and
+Tool history; the internal Transcript remains unchanged. Same-protocol replay
+with an incompatible source still fails before sending. Chat Completions
+reasoning fields and Responses reasoning item shapes do not enter Runner,
+Session, Runtime, or Channel protocol branches.
 
 ## 4. Model Invocation failure boundary
 
@@ -90,6 +113,13 @@ Only allowlisted diagnostics are copied: Provider ID, bounded Provider status/ty
 ### 5.1 Protocol conversion
 
 The three fetch-based Protocol Clients directly implement the Core `ModelInvocationPort`. Each appends only its operation path to the configured API prefix, uses only the materialized credential, performs one HTTP attempt, converts canonical text/image/Tool history, streams canonical events, preserves Abort, and normalizes failures through Model Invocation Error V1. A configured effective policy maps to Anthropic `max_tokens`, Responses `max_output_tokens`, or Chat Completions `max_tokens`. Without one, OpenAI requests omit output limits and Anthropic Messages supplies its private required `4,096` fallback.
+
+OpenAI Chat Completions captures ordered reasoning text and at most one non-empty
+opaque reasoning value per Assistant response. OpenAI Responses captures summary
+deltas for presentation and treats the complete reasoning item as replay
+authority. Abort, stream failure, or incomplete item state may preserve readable
+partial text but never replay state. Copilot Relay applies the same canonical
+Responses boundary through its own Client implementation.
 
 ### 5.2 Provider facts and Catalog
 

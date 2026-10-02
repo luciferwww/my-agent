@@ -136,7 +136,17 @@ CliChannelConfig {
 
 ### 6.1 Presentation
 
-CLI streams text, presents bounded Tool/Compaction/Subagent status, and renders terminal Tool state as success, error, denied, or aborted. It suppresses local input echo and lets the input loop print failures once. It renders `max_llm_calls` as a generic configured-limit notice based on the existing `run_end` result. The HTML client uses the same existing stop reason for a system notice. Tool Result preview limits affect presentation only, never the result passed to the Model.
+CLI streams Thinking in a distinct dimmed section, restores normal styling at
+Thinking end or before body/Tool output, presents bounded
+Tool/Compaction/Subagent status, and renders terminal Tool state as success,
+error, denied, or aborted. It suppresses local input echo and lets the input
+loop print failures once. It renders `max_llm_calls` as a generic configured-limit notice
+based on the existing `run_end` result. The HTML client renders Thinking
+as escaped plain text, expands live readable content, collapses completed
+Thinking before body/Tool output, restores History collapsed, removes empty
+cards, and converges unfinished cards to partial on terminal failure. Tool
+Result preview limits affect presentation only, never the result passed to the
+Model.
 
 ### 6.2 Model commands and lifecycle
 

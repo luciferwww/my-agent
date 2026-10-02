@@ -1,9 +1,12 @@
+import { randomUUID } from 'crypto';
 import type {
+  ChatContentBlock,
   ChatMessage,
   ModelInvocationPort,
   ModelInvocationRequest,
   ModelInvocationResponse,
   ModelStreamEvent,
+  ProviderReplayState,
 } from '../../../core/model-invocation/index.js';
 import { renderExecutionAcceptedReceipt } from '../../../core/model-invocation/index.js';
 import type { ToolCall } from '../../../core/tools/index.js';
@@ -24,6 +27,8 @@ import {
 
 export type OpenAIChatCompletionsClientOptions = ProtocolClientOptions;
 
+const CHAT_REASONING_REPLAY_FORMAT = 'openai-chat-completions.reasoning.v1';
+
 interface PendingTool {
   id: string;
   name: string;
@@ -38,6 +43,11 @@ export class OpenAIChatCompletionsClient implements ModelInvocationPort {
   }
 
   async *chatStream(request: ModelInvocationRequest): AsyncIterable<ModelStreamEvent> {
+    const invocationId = request.invocationId ?? randomUUID();
+    let thinkingStarted = false;
+    let thinkingEnded = false;
+    let reasoningText = '';
+    let reasoningOpaque: string | undefined;
     try {
       const apiKey = this.options.apiKey?.trim();
       const response = await this.fetchImpl(`${this.options.baseURL}/chat/completions`, {
@@ -47,7 +57,7 @@ export class OpenAIChatCompletionsClient implements ModelInvocationPort {
           accept: 'text/event-stream',
           ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
         },
-        body: JSON.stringify(buildRequest(request)),
+        body: JSON.stringify(buildRequest(request, this.options.baseURL)),
         signal: request.signal,
       });
       if (!response.ok) {
@@ -75,7 +85,20 @@ export class OpenAIChatCompletionsClient implements ModelInvocationPort {
         }
         if (!started) {
           started = true;
-          yield { type: 'message_start' };
+          const responseModelId = readString(chunk.model);
+          yield {
+            type: 'message_start',
+            invocation: {
+              id: invocationId,
+              source: {
+                providerId: 'builtin',
+                connectionId: this.options.baseURL,
+                requestModelId: request.model,
+                wireProtocol: 'openai-chat-completions',
+                ...(responseModelId === undefined ? {} : { responseModelId }),
+              },
+            },
+          };
         }
         const rawUsage = asRecord(chunk.usage);
         if (rawUsage) {
@@ -104,6 +127,42 @@ export class OpenAIChatCompletionsClient implements ModelInvocationPort {
           if (index !== 0) throw new Error('OpenAI Chat Completions returned multiple choices.');
           const delta = asRecord(choice.delta);
           if (!delta) throw new Error('OpenAI Chat Completions choice delta is invalid.');
+          const rawReasoningText = delta.reasoning_text;
+          if (rawReasoningText !== undefined && rawReasoningText !== null) {
+            if (typeof rawReasoningText !== 'string') {
+              throw new Error('OpenAI Chat Completions reasoning_text is invalid.');
+            }
+            if (rawReasoningText) {
+              if (!thinkingStarted) {
+                thinkingStarted = true;
+                yield { type: 'thinking_start', blockId: 'thinking-0' };
+              }
+              reasoningText += rawReasoningText;
+              yield {
+                type: 'thinking_delta',
+                blockId: 'thinking-0',
+                text: rawReasoningText,
+              };
+            }
+          }
+          const rawReasoningOpaque = delta.reasoning_opaque;
+          if (rawReasoningOpaque !== undefined && rawReasoningOpaque !== null) {
+            if (typeof rawReasoningOpaque !== 'string') {
+              throw new Error('OpenAI Chat Completions reasoning_opaque is invalid.');
+            }
+            if (rawReasoningOpaque) {
+              if (reasoningOpaque !== undefined) {
+                throw new Error(
+                  'OpenAI Chat Completions sent multiple non-empty reasoning_opaque values.',
+                );
+              }
+              reasoningOpaque = rawReasoningOpaque;
+              if (!thinkingStarted) {
+                thinkingStarted = true;
+                yield { type: 'thinking_start', blockId: 'thinking-0' };
+              }
+            }
+          }
           const text = readString(delta.content);
           if (text !== undefined) yield { type: 'text_delta', text };
           appendToolDeltas(delta.tool_calls, tools);
@@ -119,6 +178,24 @@ export class OpenAIChatCompletionsClient implements ModelInvocationPort {
       if (!started) throw new Error('OpenAI Chat Completions stream ended before a response chunk.');
       if (!finishReason) throw new Error('OpenAI Chat Completions stream ended before a terminal choice.');
       if (!usage) throw new Error('OpenAI Chat Completions stream ended without usage.');
+      if (thinkingStarted) {
+        thinkingEnded = true;
+        yield {
+          type: 'thinking_end',
+          blockId: 'thinking-0',
+          completion: {
+            status: 'complete',
+            text: reasoningText,
+            replay: {
+              format: CHAT_REASONING_REPLAY_FORMAT,
+              payload: {
+                ...(reasoningText ? { reasoning_text: reasoningText } : {}),
+                ...(reasoningOpaque === undefined ? {} : { reasoning_opaque: reasoningOpaque }),
+              },
+            },
+          },
+        };
+      }
       const seenIds = new Set<string>();
       for (const [, pending] of [...tools].sort(([left], [right]) => left - right)) {
         const callId = pending.id.trim();
@@ -141,6 +218,13 @@ export class OpenAIChatCompletionsClient implements ModelInvocationPort {
         usage: Object.freeze(usage),
       };
     } catch (error) {
+      if (thinkingStarted && !thinkingEnded) {
+        yield {
+          type: 'thinking_end',
+          blockId: 'thinking-0',
+          completion: { status: 'partial', text: reasoningText },
+        };
+      }
       yield {
         type: 'error',
         error: normalizeError(error, request, request.outputTokenLimit),
@@ -153,7 +237,10 @@ export class OpenAIChatCompletionsClient implements ModelInvocationPort {
   }
 }
 
-function buildRequest(request: ModelInvocationRequest): Record<string, unknown> {
+function buildRequest(
+  request: ModelInvocationRequest,
+  connectionId: string,
+): Record<string, unknown> {
   return {
     model: request.model,
     stream: true,
@@ -163,7 +250,7 @@ function buildRequest(request: ModelInvocationRequest): Record<string, unknown> 
       : { max_tokens: request.outputTokenLimit }),
     messages: [
       ...(request.system ? [{ role: 'system', content: request.system }] : []),
-      ...convertMessages(request.messages),
+      ...convertMessages(request.messages, connectionId),
     ],
     ...(request.tools?.length
       ? {
@@ -180,7 +267,10 @@ function buildRequest(request: ModelInvocationRequest): Record<string, unknown> 
   };
 }
 
-function convertMessages(messages: readonly ChatMessage[]): unknown[] {
+function convertMessages(
+  messages: readonly ChatMessage[],
+  connectionId: string,
+): unknown[] {
   const output: unknown[] = [];
   for (const message of messages) {
     const wireRole = message.origin === 'host' ? 'user' : message.role;
@@ -190,6 +280,7 @@ function convertMessages(messages: readonly ChatMessage[]): unknown[] {
     }
     let content: unknown[] = [];
     const toolCalls: unknown[] = [];
+    let replay: Extract<ChatContentBlock, { type: 'thinking' }> | undefined;
     const flushContent = (): void => {
       if (!content.length) return;
       output.push({ role: wireRole, content });
@@ -212,7 +303,7 @@ function convertMessages(messages: readonly ChatMessage[]): unknown[] {
       } else if (block.type === 'tool_result') {
         flushContent();
         output.push({ role: 'tool', tool_call_id: block.tool_use_id, content: block.content });
-      } else {
+      } else if (block.type === 'execution_accepted') {
         flushContent();
         output.push({
           role: 'tool',
@@ -222,19 +313,89 @@ function convertMessages(messages: readonly ChatMessage[]): unknown[] {
             status: 'accepted',
           }),
         });
+      } else {
+        if (message.role !== 'assistant') {
+          throw new Error('OpenAI Chat Completions cannot project Thinking on a user message.');
+        }
+        if (block.status === 'partial') continue;
+        if (message.invocation?.source.wireProtocol !== 'openai-chat-completions') continue;
+        assertReplaySource(
+          message,
+          block.id,
+          'builtin',
+          connectionId,
+          'openai-chat-completions',
+        );
+        if (replay) {
+          throw new Error('OpenAI Chat Completions supports one replay block per assistant message.');
+        }
+
+        replay = block;
       }
     }
-    if (toolCalls.length) {
+    if (toolCalls.length || replay) {
+      const replayPayload = replay?.status === 'complete'
+        ? readChatReplay(replay.replay)
+        : undefined;
       output.push({
         role: 'assistant',
         content: content.length ? content : null,
-        tool_calls: toolCalls,
+        ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
+        ...(replayPayload?.reasoning_text !== undefined
+          ? { reasoning_text: replayPayload.reasoning_text }
+          : {}),
+        ...(replayPayload?.reasoning_opaque !== undefined
+          ? { reasoning_opaque: replayPayload.reasoning_opaque }
+          : {}),
       });
       content = [];
     }
+
     flushContent();
   }
   return output;
+}
+
+function assertReplaySource(
+  message: ChatMessage,
+  thinkingId: string,
+  providerId: string,
+  connectionId: string,
+  wireProtocol: 'openai-chat-completions',
+): void {
+  const invocation = message.invocation;
+  if (
+    !invocation
+    || !thinkingId.startsWith(`${invocation.id}:`)
+    || invocation.source.providerId !== providerId
+    || invocation.source.connectionId !== connectionId
+    || invocation.source.wireProtocol !== wireProtocol
+  ) {
+    throw new Error('OpenAI Chat Completions replay source is unsupported.');
+  }
+}
+
+function readChatReplay(
+  replay: ProviderReplayState,
+): { reasoning_text?: string; reasoning_opaque?: string } {
+  if (replay.format !== CHAT_REASONING_REPLAY_FORMAT) {
+    throw new Error('OpenAI Chat Completions received unsupported replay state.');
+  }
+  const reasoningText = replay.payload.reasoning_text;
+  const reasoningOpaque = replay.payload.reasoning_opaque;
+  if (reasoningText !== undefined && typeof reasoningText !== 'string') {
+    throw new Error('OpenAI Chat Completions replay reasoning_text is invalid.');
+  }
+  if (reasoningOpaque !== undefined && typeof reasoningOpaque !== 'string') {
+    throw new Error('OpenAI Chat Completions replay reasoning_opaque is invalid.');
+  }
+  if (!reasoningText && !reasoningOpaque) {
+    throw new Error('OpenAI Chat Completions replay state is empty.');
+  }
+  return {
+    ...(reasoningText === undefined ? {} : { reasoning_text: reasoningText }),
+    ...(reasoningOpaque === undefined ? {} : { reasoning_opaque: reasoningOpaque }),
+  };
 }
 
 function appendToolDeltas(value: unknown, tools: Map<number, PendingTool>): void {

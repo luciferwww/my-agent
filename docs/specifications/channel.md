@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-18
+> Verified: 2026-10-02
 > Authority: Stable Channel contract
 
 ## Scope
@@ -50,6 +50,12 @@ A `ChannelContribution` creates one instance per generation. Publication exposes
 ## Routing and Fanout
 
 Runtime owns session queueing, origin routes, Abort, and target selection. Channel owns transport framing, connected-client audience, and presentation. Fanout failure is isolated per Channel/client and cannot change Runner outcome or sibling delivery.
+
+Thinking presentation uses the canonical `thinking_start`, `thinking_delta`,
+and `thinking_end` Agent events. These events carry only local block identity,
+readable text, and partial/complete status; Provider replay payload and
+invocation source never cross the Channel boundary. Opaque-only internal blocks
+produce no empty presentation lifecycle.
 
 Model Catalog query, Abort, and Session management are narrow Runtime
 capabilities; Channel does not own model facts or lifecycle state. Session

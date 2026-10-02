@@ -1,4 +1,15 @@
-import type { ChatMessage, ChatContentBlock, TokenUsage } from '../model-invocation/index.js';
+import { randomUUID } from 'crypto';
+import type {
+  AssistantInvocation,
+  ChatMessage,
+  ChatContentBlock,
+  ThinkingCompletion,
+  TokenUsage,
+} from '../model-invocation/index.js';
+import {
+  ModelStreamCollector,
+  projectContentForPresentation,
+} from '../model-invocation/index.js';
 import { AgentExecutionFailure } from './errors.js';
 import type { ResolvedModel } from '../model-resolution/index.js';
 import type { SessionManager } from '../session/SessionManager.js';
@@ -45,6 +56,10 @@ import {
 } from './async-tools/index.js';
 
 const logger = Logger.get('AgentRunner');
+
+interface InternalRunResult extends Omit<RunResult, 'content'> {
+  content: ChatContentBlock[];
+}
 
 /**
  * Maximum outer compaction retries. Each ContextOverflowError triggers one
@@ -358,7 +373,7 @@ export class AgentRunner {
   private buildAbortedResult(
     lastContent: ChatContentBlock[],
     accumulated?: { usage: TokenUsage; toolRounds: number },
-  ): Omit<RunResult, 'compacted'> {
+  ): Omit<InternalRunResult, 'compacted'> {
     return {
       text: this.extractText(lastContent),
       content: lastContent,
@@ -390,10 +405,7 @@ export class AgentRunner {
     // Fast-path an already-aborted signal without making an LLM call. run_start
     // has already fired, so emit run_end to preserve event pairing.
     if (params.signal?.aborted) {
-      const finalResult: RunResult = {
-        ...this.buildAbortedResult([]),
-        compacted: false,
-      };
+      const finalResult = this.toPublicRunResult(this.buildAbortedResult([]), false);
       this.emit(turnCtx, { type: 'run_end', result: finalResult });
       return finalResult;
     }
@@ -408,7 +420,7 @@ export class AgentRunner {
     while (true) {
       try {
         const result = await this.runAttempt(turnCtx, params, inputBudgetTokens, compaction);
-        const finalResult: RunResult = { ...result, compacted };
+        const finalResult = this.toPublicRunResult(result, compacted);
         this.emit(turnCtx, { type: 'run_end', result: finalResult });
         return finalResult;
       } catch (err) {
@@ -416,10 +428,7 @@ export class AgentRunner {
         // This catches cancellation concurrent with overflow and compaction.
         if (this.isAbortError(err, params.signal)) {
           this.logIfSwallowedByAbortFallback(err, params.sessionId);
-          const finalResult: RunResult = {
-            ...this.buildAbortedResult([]),
-            compacted,
-          };
+          const finalResult = this.toPublicRunResult(this.buildAbortedResult([]), compacted);
           this.emit(turnCtx, { type: 'run_end', result: finalResult });
           return finalResult;
         }
@@ -440,10 +449,7 @@ export class AgentRunner {
             // An abort during compaction returns cleanly under the section 4 contract.
             if (this.isAbortError(compactErr, params.signal)) {
               this.logIfSwallowedByAbortFallback(compactErr, params.sessionId);
-              const finalResult: RunResult = {
-                ...this.buildAbortedResult([]),
-                compacted,
-              };
+              const finalResult = this.toPublicRunResult(this.buildAbortedResult([]), compacted);
               this.emit(turnCtx, { type: 'run_end', result: finalResult });
               return finalResult;
             }
@@ -483,7 +489,7 @@ export class AgentRunner {
     params: RunParams,
     inputBudgetTokens: number,
     compaction: CompactionConfig,
-  ): Promise<Omit<RunResult, 'compacted'>> {
+  ): Promise<Omit<InternalRunResult, 'compacted'>> {
     const turnSignal = params.signal ?? new AbortController().signal;
 
     this.sanitizeSessionTail(turnCtx);
@@ -524,6 +530,15 @@ export class AgentRunner {
         estimatedTokens: budget.estimatedTokens,
         availableTokens: budget.availableTokens,
       });
+
+      if (budget.route === 'unavailable') {
+        logger.warn('context budget estimate unavailable for Provider replay state; deferring to Provider', {
+          sessionKey: params.sessionId,
+          turnId: params.turnId,
+          estimatedKnownTokens: budget.estimatedTokens,
+          availableTokens: budget.availableTokens,
+        });
+      }
 
       if (budget.route === 'truncate_tool_results_only') {
         // Layer 1.5 applies the aggregate tool-result budget without an LLM call.
@@ -614,11 +629,20 @@ export class AgentRunner {
         // blocks from persisted state.
         if (lastStopReason === 'aborted') {
           if (llmResult.content.length > 0) {
-            messages.push({ role: 'assistant', content: llmResult.content });
+            messages.push({
+              role: 'assistant',
+              content: llmResult.content,
+              ...(llmResult.invocation === undefined
+                ? {}
+                : { invocation: llmResult.invocation }),
+            });
             await this.sessionManager.appendMessage(params.sessionId, {
               turnId: params.turnId,
               role: 'assistant',
               content: llmResult.content,
+              ...(llmResult.invocation === undefined
+                ? {}
+                : { invocation: llmResult.invocation }),
               abortMeta: { partial: true, stopReason: 'aborted' },
             });
           }
@@ -630,12 +654,21 @@ export class AgentRunner {
           && params.maxLlmCalls !== undefined
           && llmCallCount >= params.maxLlmCalls;
 
-        messages.push({ role: 'assistant', content: llmResult.content });
+        messages.push({
+          role: 'assistant',
+          content: llmResult.content,
+          ...(llmResult.invocation === undefined
+            ? {}
+            : { invocation: llmResult.invocation }),
+        });
 
         await this.sessionManager.appendMessage(params.sessionId, {
           turnId: params.turnId,
           role: 'assistant',
           content: llmResult.content,
+          ...(llmResult.invocation === undefined
+            ? {}
+            : { invocation: llmResult.invocation }),
           ...(lacksCompletionReserve ? { turnStopReason: 'max_llm_calls' as const } : {}),
         });
 
@@ -676,11 +709,14 @@ export class AgentRunner {
               },
             });
           }
-          messages.push({ role: 'user', content: unavailableBlocks });
-          await this.sessionManager.appendMessage(params.sessionId, {
+          const persistedUnavailable = await this.sessionManager.appendMessage(params.sessionId, {
             turnId: params.turnId,
             role: 'toolResult',
             content: unavailableBlocks,
+          });
+          messages.push({
+            role: 'user',
+            content: persistedUnavailable.message.content,
           });
           totalToolRounds++;
           return {
@@ -745,21 +781,35 @@ export class AgentRunner {
             });
           }
 
-          // Anthropic represents tool results as user-role messages.
-          messages.push({ role: 'user', content: toolResultBlocks });
-
           const immediateBlocks = toolResultBlocks.filter(
             (block): block is Extract<ChatContentBlock, { type: 'tool_result' }> => (
               block.type === 'tool_result'
             ),
           );
+          let effectiveToolResultBlocks = toolResultBlocks;
           if (immediateBlocks.length > 0) {
-            await this.sessionManager.appendMessage(params.sessionId, {
+            const persisted = await this.sessionManager.appendMessage(params.sessionId, {
               turnId: params.turnId,
               role: 'toolResult',
               content: immediateBlocks,
             });
+            const persistedByCallId = new Map(
+              (persisted.message.content as ChatContentBlock[])
+                .filter(
+                  (block): block is Extract<ChatContentBlock, { type: 'tool_result' }> => (
+                    block.type === 'tool_result'
+                  ),
+                )
+                .map((block) => [block.tool_use_id, block] as const),
+            );
+            effectiveToolResultBlocks = toolResultBlocks.map((block) => (
+              block.type === 'tool_result'
+                ? persistedByCallId.get(block.tool_use_id) ?? block
+                : block
+            ));
           }
+          // Provider adapters encode canonical Tool Results using their wire-specific role.
+          messages.push({ role: 'user', content: effectiveToolResultBlocks });
 
           if (params.hookProjection.afterToolCall.length > 0 && immediateCalls.length > 0) {
             await Promise.all(immediateCalls.map((execution) => runAfterToolCall(
@@ -1033,6 +1083,9 @@ export class AgentRunner {
       messages.push({
         role: record.message.role,
         content: record.message.content,
+        ...(record.message.role === 'assistant' && record.message.invocation !== undefined
+          ? { invocation: record.message.invocation }
+          : {}),
       });
 
       const accepted = acceptedByParent.get(record.id)?.filter(
@@ -1143,17 +1196,19 @@ export class AgentRunner {
     toolCalls: ToolCall[];
     stopReason: string;
     usage: TokenUsage;
+    invocation?: AssistantInvocation;
   }> {
-    const contentBlocks: ChatContentBlock[] = [];
-    const toolCalls: ToolCall[] = [];
+    const collector = new ModelStreamCollector();
     const toolCallIds = new Set<string>();
-    let currentText = '';
     let stopReason = 'end_turn';
     let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
+    let streamInvocationId: string | undefined;
+    const visibleThinking = new Set<string>();
 
     try {
       for await (const event of resolvedModel.invocationPort.chatStream({
         model: resolvedModel.identity.modelId,
+        invocationId: randomUUID(),
         system: params.system,
         messages: params.messages,
         tools: params.tools,
@@ -1162,31 +1217,65 @@ export class AgentRunner {
           : { outputTokenLimit: resolvedModel.invocationDefaults.outputTokenLimit }),
         signal,
       })) {
+        if (event.type === 'tool_call') {
+          if (event.call.callId.trim() === '' || event.call.name.trim() === '') {
+            throw new Error('Canonical Tool Call id and name must be non-empty.');
+          }
+          if (toolCallIds.has(event.call.callId)) {
+            throw new Error(`Duplicate canonical Tool Call id "${event.call.callId}".`);
+          }
+          toolCallIds.add(event.call.callId);
+        }
+        collector.push(event);
         switch (event.type) {
+          case 'message_start':
+            streamInvocationId = event.invocation?.id;
+            break;
+
+          case 'thinking_start':
+            break;
+
+          case 'thinking_delta': {
+            if (!streamInvocationId) {
+              throw new Error('Thinking delta is missing invocation identity.');
+            }
+            const thinkingId = `${streamInvocationId}:${event.blockId}`;
+            if (event.text && !visibleThinking.has(thinkingId)) {
+              visibleThinking.add(thinkingId);
+              this.emit(turnCtx, { type: 'thinking_start', thinkingId });
+            }
+            if (event.text) {
+              this.emit(turnCtx, { type: 'thinking_delta', thinkingId, text: event.text });
+            }
+            break;
+          }
+
+          case 'thinking_end': {
+            if (!streamInvocationId) {
+              throw new Error('Thinking end is missing invocation identity.');
+            }
+            const thinkingId = `${streamInvocationId}:${event.blockId}`;
+            const text = this.projectThinkingCompletion(event.completion);
+            if (text && !visibleThinking.has(thinkingId)) {
+              visibleThinking.add(thinkingId);
+              this.emit(turnCtx, { type: 'thinking_start', thinkingId });
+            }
+            if (visibleThinking.has(thinkingId)) {
+              this.emit(turnCtx, {
+                type: 'thinking_end',
+                thinkingId,
+                text,
+                status: event.completion.status,
+              });
+            }
+            break;
+          }
+
           case 'text_delta':
-            currentText += event.text;
             this.emit(turnCtx, { type: 'text_delta', text: event.text });
             break;
 
           case 'tool_call':
-            if (event.call.callId.trim() === '' || event.call.name.trim() === '') {
-              throw new Error('Canonical Tool Call id and name must be non-empty.');
-            }
-            if (toolCallIds.has(event.call.callId)) {
-              throw new Error(`Duplicate canonical Tool Call id "${event.call.callId}".`);
-            }
-            toolCallIds.add(event.call.callId);
-            if (currentText) {
-              contentBlocks.push({ type: 'text', text: currentText });
-              currentText = '';
-            }
-            toolCalls.push(event.call);
-            contentBlocks.push({
-              type: 'tool_use',
-              id: event.call.callId,
-              name: event.call.name,
-              input: event.call.input.state === 'ready' ? { ...event.call.input.value } : {},
-            });
             break;
 
           case 'message_end':
@@ -1195,32 +1284,48 @@ export class AgentRunner {
             break;
 
           case 'error':
-            throw event.error;
+            break;
         }
       }
     } catch (err) {
       // Abort takes precedence over overflow and returns for partial persistence.
       if (this.isAbortError(err, signal)) {
         this.logIfSwallowedByAbortFallback(err, turnCtx.sessionId);
-        // Flush buffered text; tool_use blocks are already complete by construction.
-        if (currentText) {
-          contentBlocks.push({ type: 'text', text: currentText });
-        }
+        const partial = collector.finishPartial('aborted');
         return {
-          content: contentBlocks,
-          toolCalls,
+          content: partial.content,
+          toolCalls: [...partial.toolCalls],
           stopReason: 'aborted',
           usage, // Best effort: an abort before message_end may hide billed usage.
+          ...(partial.invocation === undefined ? {} : { invocation: partial.invocation }),
         };
       }
       throw err;
     }
 
-    if (currentText) {
-      contentBlocks.push({ type: 'text', text: currentText });
-    }
+    const result = collector.finish();
+    return {
+      content: result.content,
+      toolCalls: [...result.toolCalls],
+      stopReason,
+      usage,
+      ...(result.invocation === undefined ? {} : { invocation: result.invocation }),
+    };
+  }
 
-    return { content: contentBlocks, toolCalls, stopReason, usage };
+  private projectThinkingCompletion(completion: ThinkingCompletion): string {
+    return completion.text;
+  }
+
+  private toPublicRunResult(
+    result: Omit<InternalRunResult, 'compacted'>,
+    compacted: boolean,
+  ): RunResult {
+    return {
+      ...result,
+      content: projectContentForPresentation(result.content),
+      compacted,
+    };
   }
 
   private async admitToolBatch(

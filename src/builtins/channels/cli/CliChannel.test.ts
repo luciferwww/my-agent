@@ -136,6 +136,31 @@ describe('CliChannel user_message rendering', () => {
   });
 });
 
+describe('CliChannel Thinking rendering', () => {
+  it('renders Thinking separately and restores normal text output', () => {
+    const { channel, captured } = makeChannel();
+    const base = { sessionId: 'main', turnId: 't1', requestId: 'r1' };
+
+    channel.send({ ...base, type: 'thinking_start', thinkingId: 'thinking-1' });
+    channel.send({
+      ...base,
+      type: 'thinking_delta',
+      thinkingId: 'thinking-1',
+      text: 'considering',
+    });
+    channel.send({
+      ...base,
+      type: 'thinking_end',
+      thinkingId: 'thinking-1',
+      text: 'considering',
+      status: 'complete',
+    });
+    channel.send({ ...base, type: 'text_delta', text: 'answer' });
+
+    expect(captured()).toBe('[thinking]\nconsidering\nanswer');
+  });
+});
+
 describe('CliChannel run completion rendering', () => {
   it('renders a generic notice when the configured Model-call limit is reached', () => {
     const { channel, captured } = makeChannel();

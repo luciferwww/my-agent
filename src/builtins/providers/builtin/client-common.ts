@@ -1,9 +1,9 @@
 import {
   ContextOverflowError,
   ModelInvocationError,
+  ModelStreamCollector,
 } from '../../../core/model-invocation/index.js';
 import type {
-  ChatContentBlock,
   ModelInvocationDiagnostics,
   ModelInvocationRequest,
   ModelInvocationResponse,
@@ -28,47 +28,11 @@ const MAX_SSE_EVENT_BUFFER_CHARS = 1024 * 1024;
 export async function collectChat(
   events: AsyncIterable<ModelStreamEvent>,
 ): Promise<ModelInvocationResponse> {
-  const content: ChatContentBlock[] = [];
-  const toolCalls: ToolCall[] = [];
-  let text = '';
-  let terminal: Terminal | undefined;
+  const collector = new ModelStreamCollector();
   for await (const event of events) {
-    switch (event.type) {
-      case 'message_start':
-        break;
-      case 'text_delta':
-        text += event.text;
-        break;
-      case 'tool_call':
-        if (text) {
-          content.push({ type: 'text', text });
-          text = '';
-        }
-        toolCalls.push(event.call);
-        if (event.call.input.state === 'ready') {
-          content.push({
-            type: 'tool_use',
-            id: event.call.callId,
-            name: event.call.name,
-            input: { ...event.call.input.value },
-          });
-        }
-        break;
-      case 'message_end':
-        terminal = { stopReason: event.stopReason, usage: event.usage };
-        break;
-      case 'error':
-        throw event.error;
-    }
+    collector.push(event);
   }
-  if (!terminal) throw new Error('Model invocation completed without a terminal event.');
-  if (text) content.push({ type: 'text', text });
-  return Object.freeze({
-    content,
-    toolCalls: Object.freeze(toolCalls),
-    stopReason: terminal.stopReason,
-    usage: terminal.usage,
-  });
+  return collector.finish();
 }
 
 export async function* readSseData(
@@ -192,7 +156,11 @@ export function normalizeError(
   }
   return new ModelInvocationError(
     error instanceof TypeError ? 'transport' : 'provider_failure',
-    diagnostics(request, {}, maxTokens),
+    diagnostics(request, {
+      ...(error instanceof Error
+        ? { providerMessage: sanitize(error.message) }
+        : {}),
+    }, maxTokens),
   );
 }
 
@@ -262,7 +230,7 @@ function diagnostics(
       if (block.type === 'text') textBlockCount += 1;
       else if (block.type === 'image') imageBlockCount += 1;
       else if (block.type === 'tool_use') toolUseBlockCount += 1;
-      else toolResultBlockCount += 1;
+      else if (block.type === 'tool_result') toolResultBlockCount += 1;
     }
   }
   return Object.freeze({

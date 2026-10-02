@@ -1,5 +1,5 @@
+import { randomUUID } from 'crypto';
 import type {
-  ChatContentBlock,
   ChatMessage,
   ModelInvocationDiagnostics,
   ModelInvocationFailureCategory,
@@ -8,12 +8,25 @@ import type {
   ModelInvocationResponse,
   ModelInvocationStructuralErrorV1,
   ModelStreamEvent,
+  ProviderReplayState,
+  ReplayJsonValue,
   TokenUsage,
   ToolCall,
 } from 'my-agent/extension-api';
+import { ModelStreamCollector } from 'my-agent/extension-api';
 
 export const COPILOT_RELAY_PROVIDER_ID = 'copilot-relay';
 export const OPENAI_RESPONSES_PROTOCOL = 'openai-responses';
+const RESPONSES_REASONING_REPLAY_FORMAT = 'openai-responses.reasoning-item.v1';
+
+interface ResponsesReasoningItem {
+  type: 'reasoning';
+  id: string;
+  summary: { type: 'summary_text'; text: string }[];
+  content?: { type: 'reasoning_text'; text: string }[];
+  encrypted_content?: string | null;
+  status?: 'completed';
+}
 
 interface ResponsesClientOptions {
   readonly baseURL: string;
@@ -59,6 +72,17 @@ export class CopilotRelayResponsesClient implements ModelInvocationPort {
   }
 
   async *chatStream(request: ModelInvocationRequest): AsyncIterable<ModelStreamEvent> {
+    const invocationId = request.invocationId ?? randomUUID();
+    const reasoning = new Map<string, {
+      blockId: string;
+      summaries: Map<number, string>;
+      ended: boolean;
+    }>();
+    const reasoningByOutputIndex = new Map<number, {
+      blockId: string;
+      summaries: Map<number, string>;
+      ended: boolean;
+    }>();
     try {
       const response = await this.fetchImpl(`${this.options.baseURL}/v1/responses`, {
         method: 'POST',
@@ -67,7 +91,7 @@ export class CopilotRelayResponsesClient implements ModelInvocationPort {
           accept: 'text/event-stream',
           ...(this.authorization ? { authorization: this.authorization } : {}),
         },
-        body: JSON.stringify(buildResponsesRequest(request)),
+        body: JSON.stringify(buildResponsesRequest(request, this.options.baseURL)),
         signal: request.signal,
       });
       if (!response.ok) throw await createHttpError(response, request);
@@ -103,8 +127,69 @@ export class CopilotRelayResponsesClient implements ModelInvocationPort {
           case 'response.created':
             if (started) throw new Error('Copilot Relay sent duplicate response.created events.');
             started = true;
-            yield { type: 'message_start' };
+            {
+              const created = asRecord(event.response);
+              const responseModelId = readString(created?.model);
+              yield {
+                type: 'message_start',
+                invocation: {
+                  id: invocationId,
+                  source: {
+                    providerId: COPILOT_RELAY_PROVIDER_ID,
+                    connectionId: this.options.baseURL,
+                    requestModelId: request.model,
+                    wireProtocol: 'openai-responses',
+                    ...(responseModelId === undefined ? {} : { responseModelId }),
+                  },
+                },
+              };
+            }
             break;
+          case 'response.output_item.added': {
+            const item = asRecord(event.item);
+            if (item?.type !== 'reasoning') break;
+            const itemId = readNonEmptyString(item.id, 'Copilot Relay reasoning item id');
+            if (reasoning.has(itemId)) {
+              throw new Error('Copilot Relay sent a duplicate reasoning item id.');
+            }
+            const outputIndex = readNonNegativeInteger(
+              event.output_index,
+              'Copilot Relay reasoning output_index',
+            );
+            if (reasoningByOutputIndex.has(outputIndex)) {
+              throw new Error('Copilot Relay sent a duplicate reasoning output_index.');
+            }
+            const blockId = `thinking-${outputIndex}`;
+            const pending = { blockId, summaries: new Map<number, string>(), ended: false };
+            reasoning.set(itemId, pending);
+            reasoningByOutputIndex.set(outputIndex, pending);
+            yield { type: 'thinking_start', blockId };
+            break;
+          }
+          case 'response.reasoning_summary_text.delta': {
+            const itemId = readNonEmptyString(
+              event.item_id,
+              'Copilot Relay reasoning summary item_id',
+            );
+            const pending = reasoning.get(itemId);
+            if (!pending || pending.ended) {
+              throw new Error('Copilot Relay referenced an unknown reasoning item.');
+            }
+            const summaryIndex = readNonNegativeInteger(
+              event.summary_index,
+              'Copilot Relay reasoning summary_index',
+            );
+            const delta = readString(event.delta);
+            if (delta === undefined) {
+              throw new Error('Copilot Relay reasoning summary delta is invalid.');
+            }
+            pending.summaries.set(
+              summaryIndex,
+              (pending.summaries.get(summaryIndex) ?? '') + delta,
+            );
+            yield { type: 'thinking_delta', blockId: pending.blockId, text: delta };
+            break;
+          }
           case 'response.output_text.delta': {
             if (!started) throw new Error('Copilot Relay sent text before response.created.');
             const text = readString(event.delta);
@@ -114,6 +199,43 @@ export class CopilotRelayResponsesClient implements ModelInvocationPort {
           }
           case 'response.output_item.done': {
             const item = asRecord(event.item);
+            if (item?.type === 'reasoning') {
+              const itemId = readNonEmptyString(item.id, 'Copilot Relay reasoning item id');
+              const outputIndex = event.output_index === undefined
+                ? undefined
+                : readNonNegativeInteger(
+                    event.output_index,
+                    'Copilot Relay reasoning output_index',
+                  );
+              const pendingById = reasoning.get(itemId);
+              const pendingByIndex = outputIndex === undefined
+                ? undefined
+                : reasoningByOutputIndex.get(outputIndex);
+              if (pendingById && pendingByIndex && pendingById !== pendingByIndex) {
+                throw new Error('Copilot Relay reasoning item correlation is ambiguous.');
+              }
+              const pending = pendingById ?? pendingByIndex;
+              if (!pending || pending.ended) {
+                throw new Error('Copilot Relay completed an unknown reasoning item.');
+              }
+              const parsed = parseReasoningItem(item);
+              pending.ended = true;
+              yield {
+                type: 'thinking_end',
+                blockId: pending.blockId,
+                completion: parsed.complete
+                  ? {
+                      status: 'complete',
+                      text: projectSummary(parsed.summary),
+                      replay: {
+                        format: RESPONSES_REASONING_REPLAY_FORMAT,
+                        payload: { item: reasoningItemToPayload(parsed.item) },
+                      },
+                    }
+                  : { status: 'partial', text: projectSummary(parsed.summary) },
+              };
+              break;
+            }
             if (item?.type !== 'function_call') break;
             const call = parseToolCall(item, seenCallIds);
             yield { type: 'tool_call', call };
@@ -137,8 +259,27 @@ export class CopilotRelayResponsesClient implements ModelInvocationPort {
       }
       if (!started) throw new Error('Copilot Relay stream ended before response.created.');
       if (!pendingTerminal) throw new Error('Copilot Relay stream ended before a terminal event.');
+      for (const pending of reasoning.values()) {
+        if (!pending.ended) {
+          throw new Error('Copilot Relay left a reasoning item incomplete.');
+        }
+      }
       yield { type: 'message_end', ...pendingTerminal };
     } catch (error) {
+      for (const pending of reasoning.values()) {
+        if (pending.ended) continue;
+        pending.ended = true;
+        yield {
+          type: 'thinking_end',
+          blockId: pending.blockId,
+          completion: {
+            status: 'partial',
+            text: projectSummary([...pending.summaries]
+              .sort(([left], [right]) => left - right)
+              .map(([, text]) => ({ type: 'summary_text' as const, text }))),
+          },
+        };
+      }
       yield {
         type: 'error',
         error: normalizeError(error, request),
@@ -147,62 +288,23 @@ export class CopilotRelayResponsesClient implements ModelInvocationPort {
   }
 
   async chat(request: ModelInvocationRequest): Promise<ModelInvocationResponse> {
-    const content: ChatContentBlock[] = [];
-    const toolCalls: ToolCall[] = [];
-    let text = '';
-    let terminal: PendingTerminal | undefined;
-
+    const collector = new ModelStreamCollector();
     for await (const event of this.chatStream(request)) {
-      switch (event.type) {
-        case 'text_delta':
-          text += event.text;
-          break;
-        case 'tool_call':
-          if (text) {
-            content.push({ type: 'text', text });
-            text = '';
-          }
-          toolCalls.push(event.call);
-          if (event.call.input.state === 'ready') {
-            content.push({
-              type: 'tool_use',
-              id: event.call.callId,
-              name: event.call.name,
-              input: { ...event.call.input.value },
-            });
-          }
-          break;
-        case 'message_end':
-          if (event.stopReason !== 'end_turn'
-            && event.stopReason !== 'tool_use'
-            && event.stopReason !== 'max_tokens') {
-            throw new Error(`Copilot Relay returned unsupported stop reason "${event.stopReason}".`);
-          }
-          terminal = Object.freeze({ stopReason: event.stopReason, usage: event.usage });
-          break;
-        case 'error':
-          throw event.error;
-        case 'message_start':
-          break;
-      }
+      collector.push(event);
     }
-    if (text) content.push({ type: 'text', text });
-    if (!terminal) throw new Error('Copilot Relay invocation completed without a terminal event.');
-    return Object.freeze({
-      content,
-      toolCalls: Object.freeze(toolCalls),
-      stopReason: terminal.stopReason,
-      usage: terminal.usage,
-    });
+    return collector.finish();
   }
 }
 
-function buildResponsesRequest(request: ModelInvocationRequest): Record<string, unknown> {
+function buildResponsesRequest(
+  request: ModelInvocationRequest,
+  connectionId: string,
+): Record<string, unknown> {
   return {
     model: request.model,
     stream: true,
     ...(request.system ? { instructions: request.system } : {}),
-    input: convertMessages(request.messages),
+    input: convertMessages(request.messages, connectionId),
     ...(request.tools?.length
       ? {
           tools: request.tools.map((tool) => ({
@@ -216,7 +318,10 @@ function buildResponsesRequest(request: ModelInvocationRequest): Record<string, 
   };
 }
 
-function convertMessages(messages: readonly ChatMessage[]): unknown[] {
+function convertMessages(
+  messages: readonly ChatMessage[],
+  connectionId: string,
+): unknown[] {
   const input: unknown[] = [];
   for (const message of messages) {
     if (typeof message.content === 'string') {
@@ -264,11 +369,129 @@ function convertMessages(messages: readonly ChatMessage[]): unknown[] {
             output: block.content,
           });
           break;
+        case 'thinking':
+          if (message.role !== 'assistant') {
+            throw new Error('Copilot Relay cannot project Thinking on a user message.');
+          }
+          if (block.status === 'partial') break;
+          assertReplaySource(message, block.id, connectionId);
+          flush();
+          input.push(readResponsesReplay(block.replay));
+          break;
       }
+
     }
     flush();
   }
   return input;
+}
+
+function assertReplaySource(
+  message: ChatMessage,
+  thinkingId: string,
+  connectionId: string,
+): void {
+  const invocation = message.invocation;
+  if (
+    !invocation
+    || !thinkingId.startsWith(`${invocation.id}:`)
+    || invocation.source.providerId !== COPILOT_RELAY_PROVIDER_ID
+    || invocation.source.connectionId !== connectionId
+    || invocation.source.wireProtocol !== OPENAI_RESPONSES_PROTOCOL
+  ) {
+    throw new Error('Copilot Relay replay source is unsupported.');
+  }
+}
+
+function parseReasoningItem(value: Record<string, unknown>): {
+  readonly complete: boolean;
+  readonly item: ResponsesReasoningItem;
+  readonly summary: ResponsesReasoningItem['summary'];
+} {
+  const id = readNonEmptyString(value.id, 'Copilot Relay reasoning item id');
+  if (!Array.isArray(value.summary)) throw new Error('Copilot Relay reasoning summary is invalid.');
+  const summary = value.summary.map((raw, index) => {
+    const part = asRecord(raw);
+    if (part?.type !== 'summary_text' || typeof part.text !== 'string') {
+      throw new Error(`Copilot Relay reasoning summary item ${index} is invalid.`);
+    }
+    return { type: 'summary_text' as const, text: part.text };
+  });
+  let content: ResponsesReasoningItem['content'];
+  if (value.content !== undefined) {
+    if (!Array.isArray(value.content)) throw new Error('Copilot Relay reasoning content is invalid.');
+    content = value.content.map((raw, index) => {
+      const part = asRecord(raw);
+      if (part?.type !== 'reasoning_text' || typeof part.text !== 'string') {
+        throw new Error(`Copilot Relay reasoning content item ${index} is invalid.`);
+      }
+      return { type: 'reasoning_text' as const, text: part.text };
+    });
+  }
+  let encryptedContent: string | null | undefined;
+  if (Object.hasOwn(value, 'encrypted_content')) {
+    if (value.encrypted_content !== null && typeof value.encrypted_content !== 'string') {
+      throw new Error('Copilot Relay reasoning encrypted_content is invalid.');
+    }
+    encryptedContent = value.encrypted_content;
+  }
+  const status = value.status;
+  if (
+    status !== undefined
+    && status !== 'completed'
+    && status !== 'in_progress'
+    && status !== 'incomplete'
+  ) {
+    throw new Error('Copilot Relay reasoning status is invalid.');
+  }
+  return {
+    complete: status === undefined || status === 'completed',
+    summary,
+    item: {
+      type: 'reasoning',
+      id,
+      summary,
+      ...(content === undefined ? {} : { content }),
+      ...(Object.hasOwn(value, 'encrypted_content')
+        ? { encrypted_content: encryptedContent }
+        : {}),
+      ...(status === 'completed' ? { status } : {}),
+    },
+  };
+}
+
+function readResponsesReplay(replay: ProviderReplayState): ResponsesReasoningItem {
+  if (replay.format !== RESPONSES_REASONING_REPLAY_FORMAT) {
+    throw new Error('Copilot Relay received unsupported replay state.');
+  }
+  const item = asRecord(replay.payload.item);
+  if (!item) throw new Error('Copilot Relay replay item is invalid.');
+  const parsed = parseReasoningItem(item);
+  if (!parsed.complete) throw new Error('Copilot Relay replay item is incomplete.');
+  return parsed.item;
+}
+
+function reasoningItemToPayload(
+  item: ResponsesReasoningItem,
+): { [key: string]: ReplayJsonValue } {
+  return {
+    type: 'reasoning',
+    id: item.id,
+    summary: item.summary.map((part) => ({ type: part.type, text: part.text })),
+    ...(item.content === undefined
+      ? {}
+      : {
+          content: item.content.map((part) => ({ type: part.type, text: part.text })),
+        }),
+    ...(Object.hasOwn(item, 'encrypted_content')
+      ? { encrypted_content: item.encrypted_content ?? null }
+      : {}),
+    ...(item.status === undefined ? {} : { status: item.status }),
+  };
+}
+
+function projectSummary(summary: ResponsesReasoningItem['summary']): string {
+  return summary.map((part) => part.text).join('\n\n');
 }
 
 function messageItem(role: ChatMessage['role'], content: unknown[]): Record<string, unknown> {

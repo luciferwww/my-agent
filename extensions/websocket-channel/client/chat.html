@@ -388,6 +388,22 @@
       .message.assistant .bubble {
         background: rgba(255, 255, 255, 0.96); border-top-left-radius: 12px;
       }
+      .thinking-card {
+        max-width: var(--message-max-width);
+        border: 1px solid rgba(191, 160, 128, 0.22);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.72);
+        overflow: hidden;
+      }
+      .thinking-header {
+        width: 100%; border: 0; background: transparent; color: var(--muted);
+        padding: 9px 12px; display: flex; justify-content: space-between;
+        cursor: pointer; font: inherit;
+      }
+      .thinking-text {
+        margin: 0; padding: 0 12px 12px; color: var(--muted);
+        white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit;
+      }
       .rich-text {
         display: grid; gap: 14px; white-space: normal; overflow-x: auto;
       }
@@ -1175,6 +1191,19 @@
                 <div v-if="seg.type === 'text'" class="bubble">
                   <div class="rich-text" v-html="renderAssistantText(seg.text)"></div>
                 </div>
+
+                <section v-if="seg.type === 'thinking'" class="thinking-card">
+                  <button
+                    class="thinking-header"
+                    type="button"
+                    :aria-expanded="String(seg.expanded)"
+                    @click="seg.expanded = !seg.expanded"
+                  >
+                    <span>{{ seg.status === 'running' ? 'Thinking…' : 'Thinking' }}</span>
+                    <span>{{ seg.expanded ? '⌃' : '⌄' }}</span>
+                  </button>
+                  <pre v-if="seg.expanded" class="thinking-text">{{ seg.text }}</pre>
+                </section>
 
                 <!-- Tool call card -->
                 <section
@@ -2019,6 +2048,15 @@
               for (const block of content) {
                 if (block.type === 'text') {
                   turn.segments.push({ type: 'text', id: `${record.entryId}-text-${turn.segments.length}`, text: block.text });
+                } else if (block.type === 'thinking' && typeof block.text === 'string' && block.text) {
+                  turn.segments.push({
+                    type: 'thinking',
+                    id: block.id,
+                    thinkingId: block.id,
+                    text: block.text,
+                    status: block.status,
+                    expanded: false,
+                  });
                 } else if (block.type === 'tool_use') {
                   const segment = {
                     type: 'tool_call',
@@ -2888,11 +2926,60 @@
 
               case 'text_delta':
                 this.bindActiveTurn(state, event.turnId);
+                this.collapseCompletedThinking(event.turnId, sessionId);
                 this.appendTextToTurn(event.turnId, event.text, sessionId);
                 return;
 
+              case 'thinking_start': {
+                this.bindActiveTurn(state, event.turnId);
+                const turn = this.getOrCreateTurn(event.turnId, sessionId);
+                if (turn.segments.some(seg => seg.thinkingId === event.thinkingId)) {
+                  this.pushEvent('client_protocol_error', `Duplicate Thinking ${event.thinkingId}`);
+                  return;
+                }
+                turn.segments.push({
+                  type: 'thinking',
+                  id: event.thinkingId,
+                  thinkingId: event.thinkingId,
+                  text: '',
+                  status: 'running',
+                  expanded: true,
+                });
+                this.scrollChatToBottom(sessionId);
+                return;
+              }
+
+              case 'thinking_delta': {
+                const segment = this.findThinking(event.turnId, event.thinkingId, sessionId);
+                if (!segment) {
+                  this.pushEvent('client_protocol_error', `Thinking delta has no start ${event.thinkingId}`);
+                  return;
+                }
+                segment.text += event.text;
+                this.scrollChatToBottom(sessionId);
+                return;
+              }
+
+              case 'thinking_end': {
+                const turn = this.getOrCreateTurn(event.turnId, sessionId);
+                const segment = this.findThinking(event.turnId, event.thinkingId, sessionId);
+                if (!segment) {
+                  this.pushEvent('client_protocol_error', `Thinking end has no start ${event.thinkingId}`);
+                  return;
+                }
+                if (!event.text) {
+                  turn.segments = turn.segments.filter(seg => seg !== segment);
+                } else {
+                  segment.text = event.text;
+                  segment.status = event.status;
+                }
+                this.scrollChatToBottom(sessionId);
+                return;
+              }
+
               case 'tool_call_requested': {
                 this.bindActiveTurn(state, event.turnId);
+                this.collapseCompletedThinking(event.turnId, sessionId);
                 const turn = this.getOrCreateTurn(event.turnId, sessionId);
                 turn.segments.push({
                   type: 'tool_call',
@@ -2953,6 +3040,7 @@
                 return;
 
               case 'run_end':
+                this.closeActiveThinking(event.turnId, sessionId);
                 state.isWaitingForReply = false;
                 state.activeTurnId = null;
                 this.requestSessionList();
@@ -2998,6 +3086,7 @@
                 return;
 
               case 'error':
+                this.closeActiveThinking(event.turnId, sessionId);
                 state.isWaitingForReply = false;
                 state.activeTurnId = null;
                 this.appendChatItem({
@@ -3150,6 +3239,43 @@
             }
             turn.timestamp = Date.now();
             this.scrollChatToBottom(sessionId);
+          },
+
+          findThinking(turnId, thinkingId, sessionId) {
+            const state = this.ensureSessionState(sessionId);
+            for (let itemIndex = state.chatItems.length - 1; itemIndex >= 0; itemIndex--) {
+              const item = state.chatItems[itemIndex];
+              if (item.kind !== 'turn' || item.turnId !== turnId) continue;
+              const segment = item.segments.find(
+                candidate => candidate.type === 'thinking' && candidate.thinkingId === thinkingId,
+              );
+              if (segment) return segment;
+            }
+            return null;
+          },
+
+          collapseCompletedThinking(turnId, sessionId) {
+            const state = this.ensureSessionState(sessionId);
+            for (const item of state.chatItems) {
+              if (item.kind !== 'turn' || item.turnId !== turnId) continue;
+              for (const segment of item.segments) {
+                if (segment.type === 'thinking' && segment.status !== 'running') {
+                  segment.expanded = false;
+                }
+              }
+            }
+          },
+
+          closeActiveThinking(turnId, sessionId) {
+            const state = this.ensureSessionState(sessionId);
+            for (const item of state.chatItems) {
+              if (item.kind !== 'turn' || item.turnId !== turnId) continue;
+              for (const segment of item.segments) {
+                if (segment.type === 'thinking' && segment.status === 'running') {
+                  segment.status = 'partial';
+                }
+              }
+            }
           },
 
           findToolCall(turnId, callId, sessionId) {

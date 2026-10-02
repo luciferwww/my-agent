@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -24,7 +24,8 @@ describe('SessionManager transcript behavior', () => {
     message: Omit<SessionMessageInput, 'turnId'>,
     target: SessionManager = manager,
   ) {
-    return target.appendMessage(sessionId, { turnId: 'test-turn', ...message });
+    return target.appendMessage(sessionId, { turnId: 'test-turn', ...message })
+      .then((record) => record.id);
   }
 
   async function materialize(
@@ -87,6 +88,100 @@ describe('SessionManager transcript behavior', () => {
     expect(messages.at(-1)?.message.abortMeta).toEqual({
       partial: true,
       stopReason: 'aborted',
+    });
+  });
+
+  it('persists Provider replay state while projecting only safe Thinking history', async () => {
+    const sessionId = await materialize();
+    await appendMessage(sessionId, {
+      role: 'assistant',
+      content: [{
+        type: 'thinking',
+        id: 'invocation-1:thinking-0',
+        status: 'complete',
+        text: 'visible summary',
+        replay: {
+          format: 'provider.reasoning.v1',
+          payload: { opaque: 'private replay state' },
+        },
+      }],
+      invocation: {
+        id: 'invocation-1',
+        source: {
+          providerId: 'provider',
+          connectionId: 'connection',
+          requestModelId: 'model',
+          wireProtocol: 'openai-responses',
+        },
+        completion: {
+          status: 'complete',
+          stopReason: 'end_turn',
+          usage: { inputTokens: 1, outputTokens: 2 },
+        },
+      },
+    });
+
+    const reloaded = new SessionManager(agentHome);
+    expect(reloaded.getMessages(sessionId).at(-1)?.message.content).toEqual([{
+      type: 'thinking',
+      id: 'invocation-1:thinking-0',
+      status: 'complete',
+      text: 'visible summary',
+      replay: {
+        format: 'provider.reasoning.v1',
+        payload: { opaque: 'private replay state' },
+      },
+    }]);
+    expect(reloaded.getHistory({ sessionId }).items.at(-1)?.content).toEqual([{
+      type: 'thinking',
+      id: 'invocation-1:thinking-0',
+      status: 'complete',
+      text: 'visible summary',
+    }]);
+    expect(JSON.stringify(reloaded.getHistory({ sessionId }))).not.toContain('private replay state');
+  });
+
+  it('atomically upgrades a v1 Transcript before appending Thinking state', async () => {
+    const sessionId = await materialize();
+    const transcriptPath = join(agentHome, 'sessions', `${sessionId}.jsonl`);
+    const lines = (await readFile(transcriptPath, 'utf8')).trimEnd().split('\n');
+    const root = JSON.parse(lines[0]!) as { version: number };
+    root.version = 1;
+    lines[0] = JSON.stringify(root);
+    await writeFile(transcriptPath, `${lines.join('\n')}\n`, 'utf8');
+
+    const reloaded = new SessionManager(agentHome);
+    await appendMessage(sessionId, {
+      role: 'assistant',
+      content: [{
+        type: 'thinking',
+        id: 'invocation-1:thinking-0',
+        status: 'partial',
+        text: 'partial summary',
+      }],
+      invocation: {
+        id: 'invocation-1',
+        source: {
+          providerId: 'provider',
+          connectionId: 'connection',
+          requestModelId: 'model',
+          wireProtocol: 'openai-responses',
+        },
+        completion: { status: 'partial', stopReason: 'aborted' },
+      },
+    }, reloaded);
+
+    const upgraded = (await readFile(transcriptPath, 'utf8'))
+      .trimEnd()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(upgraded[0]?.version).toBe(2);
+    expect(upgraded.at(-1)).toMatchObject({
+      type: 'message',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'thinking', status: 'partial', text: 'partial summary' }],
+      },
     });
   });
 

@@ -1,5 +1,6 @@
 import { readFileSync } from 'fs';
-import { appendFile } from 'fs/promises';
+import { randomUUID } from 'crypto';
+import { appendFile, rename, unlink, writeFile } from 'fs/promises';
 import { SessionDataError } from './store.js';
 import { withFileLock } from './lock.js';
 import type { CompactionRecord, TranscriptEntry, TranscriptState } from './types.js';
@@ -35,6 +36,7 @@ const TOOL_RESULT_STATUSES = new Set(['success', 'error', 'denied', 'aborted']);
 export function loadTranscript(filePath: string): TranscriptState {
   const byId = new Map<string, TranscriptEntry>();
   let leafId: string | null = null;
+  let version: 1 | 2 | undefined;
 
   let raw: string;
   try {
@@ -58,8 +60,9 @@ export function loadTranscript(filePath: string): TranscriptState {
         cause: error,
       });
     }
-    assertTranscriptEntry(parsed, byId.size === 0, byId);
+    assertTranscriptEntry(parsed, byId.size === 0, byId, version);
     const entry = parsed;
+    if (entry.type === 'session') version = entry.version as 1 | 2;
     byId.set(entry.id, entry);
     if (entry.type === 'session' || entry.type === 'message') {
       leafId = entry.id;
@@ -70,13 +73,14 @@ export function loadTranscript(filePath: string): TranscriptState {
     throw new SessionDataError(`Session Transcript "${filePath}" is empty.`);
   }
 
-  return { byId, leafId };
+  return { version: version!, byId, leafId };
 }
 
 function assertTranscriptEntry(
   value: unknown,
   first: boolean,
   priorEntries: ReadonlyMap<string, TranscriptEntry>,
+  version: 1 | 2 | undefined,
 ): asserts value is TranscriptEntry {
   if (!isRecord(value) || typeof value.id !== 'string' || !value.id) {
     throw new SessionDataError('Session Transcript contains an invalid record identity.');
@@ -87,8 +91,12 @@ function assertTranscriptEntry(
     throw new SessionDataError(`Session Transcript contains duplicate record "${id}".`);
   }
   if (first) {
-    if (entry.type !== 'session' || entry.parentId !== null || entry.version !== 1) {
-      throw new SessionDataError('Session Transcript must begin with a version 1 root record.');
+    if (
+      entry.type !== 'session'
+      || entry.parentId !== null
+      || (entry.version !== 1 && entry.version !== 2)
+    ) {
+      throw new SessionDataError('Session Transcript must begin with a supported root record.');
     }
     return;
   }
@@ -123,10 +131,19 @@ function assertTranscriptEntry(
         if (value.role !== 'user' && value.role !== 'assistant' && value.role !== 'toolResult') {
           throw new SessionDataError(`Session Transcript message "${entryId}" has an invalid role.`);
         }
+        if (value.invocation !== undefined) {
+          if (value.role !== 'assistant' || version !== 2) {
+            throw new SessionDataError(
+              `Session Transcript message "${entryId}" has invalid invocation metadata.`,
+            );
+          }
+          assertInvocation(value.invocation, entryId);
+        }
         if (typeof value.content === 'string') return;
         if (!Array.isArray(value.content)) {
           throw new SessionDataError(`Session Transcript message "${entryId}" has invalid content.`);
         }
+        let hasThinking = false;
         for (const block of value.content) {
           if (!isRecord(block) || typeof block.type !== 'string') {
             throw new SessionDataError(
@@ -144,7 +161,20 @@ function assertTranscriptEntry(
                 `Session Transcript message "${entryId}" has an invalid Tool Result block.`,
               );
             }
+          } else if (block.type === 'thinking') {
+            hasThinking = true;
+            if (version !== 2) {
+              throw new SessionDataError(
+                `Session Transcript v1 message "${entryId}" contains Thinking state.`,
+              );
+            }
+            assertThinkingBlock(block, entryId);
           }
+        }
+        if (hasThinking && value.invocation === undefined) {
+          throw new SessionDataError(
+            `Session Transcript message "${entryId}" is missing invocation metadata.`,
+          );
         }
       }
       return;
@@ -169,6 +199,7 @@ function assertTranscriptEntry(
           `Session Transcript accepted execution "${entry.id}" conflicts with an existing mapping.`,
         );
       }
+
       return;
     case 'tool_execution_terminal':
       assertNonEmptyString(
@@ -311,6 +342,91 @@ function hostCompletionStatus(
   return 'aborted';
 }
 
+function assertInvocation(value: unknown, entryId: string): void {
+  if (!isRecord(value)) {
+    throw new SessionDataError(`Session Transcript message "${entryId}" has invalid invocation metadata.`);
+  }
+  assertNonEmptyString(value.id, `message "${entryId}" invocation identity`);
+  if (!isRecord(value.source)) {
+    throw new SessionDataError(`Session Transcript message "${entryId}" has invalid invocation source.`);
+  }
+  for (const field of ['providerId', 'connectionId', 'requestModelId', 'wireProtocol'] as const) {
+    assertNonEmptyString(
+      value.source[field],
+      `message "${entryId}" invocation source ${field}`,
+    );
+  }
+  if (
+    value.source.responseModelId !== undefined
+    && typeof value.source.responseModelId !== 'string'
+  ) {
+    throw new SessionDataError(
+      `Session Transcript message "${entryId}" has invalid response model identity.`,
+    );
+  }
+  if (!isRecord(value.completion)) {
+    throw new SessionDataError(
+      `Session Transcript message "${entryId}" has invalid invocation completion.`,
+    );
+  }
+  if (value.completion.status === 'partial') {
+    if (value.completion.stopReason !== 'aborted' && value.completion.stopReason !== 'error') {
+      throw new SessionDataError(
+        `Session Transcript message "${entryId}" has invalid partial invocation completion.`,
+      );
+    }
+  } else if (
+    value.completion.status !== 'complete'
+    || typeof value.completion.stopReason !== 'string'
+    || !isRecord(value.completion.usage)
+    || !isNonNegativeInteger(value.completion.usage.inputTokens)
+    || !isNonNegativeInteger(value.completion.usage.outputTokens)
+  ) {
+    throw new SessionDataError(
+      `Session Transcript message "${entryId}" has invalid complete invocation completion.`,
+    );
+  }
+}
+
+function assertThinkingBlock(value: Record<string, unknown>, entryId: string): void {
+  assertNonEmptyString(value.id, `message "${entryId}" Thinking identity`);
+  if (typeof value.text !== 'string') {
+    throw new SessionDataError(`Session Transcript message "${entryId}" has invalid Thinking text.`);
+  }
+  if (value.status === 'partial') {
+    if (value.replay !== undefined) {
+      throw new SessionDataError(
+        `Session Transcript message "${entryId}" has replay state on partial Thinking.`,
+      );
+    }
+    return;
+  }
+  if (value.status !== 'complete' || !isRecord(value.replay)) {
+    throw new SessionDataError(`Session Transcript message "${entryId}" has invalid Thinking completion.`);
+  }
+  assertNonEmptyString(value.replay.format, `message "${entryId}" replay format`);
+  if (!isRecord(value.replay.payload) || !isJsonValue(value.replay.payload)) {
+    throw new SessionDataError(`Session Transcript message "${entryId}" has invalid replay payload.`);
+  }
+}
+
+function isJsonValue(value: unknown): boolean {
+  if (
+    value === null
+    || typeof value === 'string'
+    || typeof value === 'boolean'
+    || (typeof value === 'number' && Number.isFinite(value))
+  ) {
+    return true;
+  }
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  return isRecord(value) && Object.values(value).every(isJsonValue);
+}
+
+function isNonNegativeInteger(value: unknown): boolean {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
 function assertTurnId(value: unknown, subject: string): asserts value is string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new SessionDataError(`Session Transcript ${subject} has an invalid Turn identity.`);
@@ -356,6 +472,24 @@ export async function appendToTranscript(
 ): Promise<void> {
   await withFileLock(filePath, async () => {
     await appendFile(filePath, JSON.stringify(entry) + '\n', 'utf-8');
+  });
+}
+
+/** Atomically replaces a Transcript while preserving the original on failure. */
+export async function replaceTranscript(
+  filePath: string,
+  entries: readonly TranscriptEntry[],
+): Promise<void> {
+  await withFileLock(filePath, async () => {
+    const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
+    const serialized = entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n';
+    try {
+      await writeFile(temporaryPath, serialized, { encoding: 'utf-8', flag: 'wx' });
+      await rename(temporaryPath, filePath);
+    } catch (error) {
+      await unlink(temporaryPath).catch(() => undefined);
+      throw error;
+    }
   });
 }
 

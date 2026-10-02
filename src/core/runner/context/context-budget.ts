@@ -9,7 +9,10 @@
 
 import type { ChatMessage, ChatContentBlock } from '../../model-invocation/index.js';
 import type { CompactionConfig } from '../compaction-config.js';
-import { estimatePromptTokens } from './token-estimation.js';
+import {
+  containsUnestimableReplayState,
+  estimatePromptTokens,
+} from './token-estimation.js';
 import { AGGREGATE_TOOL_RESULT_CONTEXT_SHARE } from './tool-result-pruning.js';
 
 // ── 局部常量 ────────────────────────────────────────────────
@@ -26,13 +29,14 @@ const TRUNCATION_BUFFER_TOKENS = 512;
 export type ContextBudgetRoute =
   | 'fits'                       // 不需要任何处理
   | 'truncate_tool_results_only' // 聚合裁剪（Layer 1.5）可覆盖溢出，无需 LLM
-  | 'compact';                   // 需要 LLM 摘要压缩（Layer 3）
+  | 'compact'                    // 需要 LLM 摘要压缩（Layer 3）
+  | 'unavailable';               // Provider replay token cost cannot be estimated by Core
 
 /** 预算检查结果 */
 export interface ContextBudgetResult {
   /** 路由策略 */
   route: ContextBudgetRoute;
-  /** 估算的 prompt token 数（已含安全边际） */
+  /** 估算的 prompt token 数（已含安全边际）；unavailable 时仅为可估算部分的下界 */
   estimatedTokens: number;
   /** 可用 token 预算（contextWindow - reserve） */
   availableTokens: number;
@@ -133,7 +137,9 @@ export function checkContextBudget(params: {
 
   let route: ContextBudgetRoute;
 
-  if (overflowTokens === 0) {
+  if (containsUnestimableReplayState(messages)) {
+    route = 'unavailable';
+  } else if (overflowTokens === 0) {
     route = 'fits';
   } else {
     const overflowChars = overflowTokens * CHARS_PER_TOKEN;

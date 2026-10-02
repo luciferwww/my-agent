@@ -3,6 +3,7 @@ import type { ApplicationConfigProjection } from '../platform/config/types.js';
 import type { AgentConfigSnapshot } from '../platform/config/agent-config-loader.js';
 import type {
   ChatContentBlock,
+  PresentationContentBlock,
   TokenUsage,
 } from '../core/model-invocation/index.js';
 import type { ModelReference } from '../core/model-resolution/index.js';
@@ -122,7 +123,7 @@ export interface RunTurnParams {
 export interface RunTurnResult {
   sessionId: string;
   text: string;
-  content: ChatContentBlock[];
+  content: PresentationContentBlock[];
   stopReason: string;
   usage: TokenUsage;
   toolRounds: number;

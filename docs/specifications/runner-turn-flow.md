@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-10-01
+> Verified: 2026-10-02
 > Authority: Stable Runner Turn-flow contract
 
 ## Scope
@@ -37,6 +37,10 @@ On normalized context overflow, Runner performs blocking Compaction, commits thr
 - `sanitizeSessionTail()` runs at attempt and Compaction entry; a trailing Tool Result is preserved because side effects may have occurred.
 - Persistence metadata such as `abortMeta` is omitted from Provider history.
 - One Turn uses one Resolved Model binding through Tool rounds and Compaction retries; Runner never selects Providers or infers facts.
+- Every actual Model call receives a fresh invocation identity. Runner uses the
+  shared stream collector to preserve text/Tool/Thinking order, persists the
+  internal replay envelope, and projects only safe Thinking text/status in
+  public results.
 - Complete before-hook chains execute sequentially in Provider order. Calls then pass validation/policy/Approval and enter the Framework independently; implementation Promises may settle out of order.
 - The original response is a Provider-order pairing barrier. Accepted ownership closes an admitted call once; its real terminal outcome is a later trusted Host completion, not a second result for the original call ID.
 - Abort prevents later Tool starts and waits for Framework terminalization or quarantine isolation before the Turn returns.
@@ -53,12 +57,21 @@ On normalized context overflow, Runner performs blocking Compaction, commits thr
   unavailable without running Hook, Approval, or Tool work, and return with
   `stopReason='max_llm_calls'`.
 - Nested and concurrent runs keep event correlation through explicit Turn context.
+- Complete Provider replay makes local token sizing unavailable rather than
+  falsely fitting at zero. Runner records a content-free warning and lets the
+  Provider enforce the first request; normalized overflow continues through the
+  existing bounded Compaction retry path.
 
 ## Failure and events
 
 Only normalized context overflow enters bounded Compaction recovery. Other non-Abort failures become `AgentExecutionFailure` with accumulated Usage and are rethrown after an `error` event. Provider `stopReason: 'error'` remains a normal Runner result. Abort returns an aborted result rather than an execution error. There is no Runner-local drained steering buffer.
 
-Events include run/model-call lifecycle, call-correlated Tool requested/accepted/terminal presentation, Compaction, sanitation, recovery, `run_end`, and `error`. Observer settlement is bounded and cannot mutate a settled result.
+Events include run/model-call lifecycle, `thinking_start/delta/end`,
+call-correlated Tool requested/accepted/terminal presentation, Compaction,
+sanitation, recovery, `run_end`, and `error`. Public Thinking events contain a
+stable local ID and readable text/status only. Opaque-only blocks emit no public
+card lifecycle. Observer settlement is bounded and cannot mutate a settled
+result.
 
 ## Acceptance scenarios
 

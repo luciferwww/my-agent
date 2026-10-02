@@ -5,6 +5,7 @@ import {
   type ModelInvocationPort,
   type ModelInvocationRequest,
   type ModelStreamEvent,
+  type ProviderReplayState,
 } from '../../../core/model-invocation/index.js';
 import { AnthropicMessagesClient } from './AnthropicMessagesClient.js';
 import { OpenAIChatCompletionsClient } from './OpenAIChatCompletionsClient.js';
@@ -26,6 +27,13 @@ const request: ModelInvocationRequest = {
   }],
   tools: [{ name: 'lookup', description: 'Lookup', inputSchema: { type: 'object' } }],
 };
+
+function replayState(
+  format: string,
+  payload: ProviderReplayState['payload'],
+): ProviderReplayState {
+  return { format, payload };
+}
 
 describe('Built-in Protocol Clients', () => {
   it('parses CR-only SSE framing', async () => {
@@ -229,6 +237,620 @@ describe('Built-in Protocol Clients', () => {
     expect(body).not.toHaveProperty('max_completion_tokens');
   });
 
+  it('captures and replays Chat Completions reasoning inside the Client boundary', async () => {
+    const captureFetch = vi.fn(async () => sse(
+      frame({
+        model: 'response-model',
+        choices: [{
+          index: 0,
+          delta: { reasoning_text: 'why', reasoning_opaque: 'opaque-state' },
+          finish_reason: 'stop',
+        }],
+      })
+      + frame({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 3 } })
+      + 'data: [DONE]\n\n',
+    )) as unknown as typeof fetch;
+    const captureClient = new OpenAIChatCompletionsClient({
+      baseURL: 'https://example.test',
+      fetch: captureFetch,
+    });
+    const result = await captureClient.chat({ ...request, invocationId: 'invocation-1' });
+
+    expect(result.content).toEqual([{
+      type: 'thinking',
+      id: 'invocation-1:thinking-0',
+      status: 'complete',
+      text: 'why',
+      replay: {
+        format: 'openai-chat-completions.reasoning.v1',
+        payload: { reasoning_text: 'why', reasoning_opaque: 'opaque-state' },
+      },
+    }]);
+
+    const replayFetch = vi.fn(async () => sse(
+      frame({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })
+      + frame({ choices: [], usage: { prompt_tokens: 1, completion_tokens: 0 } })
+      + 'data: [DONE]\n\n',
+    )) as unknown as typeof fetch;
+    await new OpenAIChatCompletionsClient({
+      baseURL: 'https://example.test',
+      fetch: replayFetch,
+    }).chat({
+      ...request,
+      messages: [{
+        role: 'assistant',
+        content: result.content,
+        invocation: result.invocation,
+      }],
+    });
+
+    expect(requestBody(replayFetch).messages).toEqual([
+      { role: 'system', content: 'system' },
+      {
+      role: 'assistant',
+      content: null,
+      reasoning_text: 'why',
+      reasoning_opaque: 'opaque-state',
+      },
+    ]);
+  });
+
+  it('fails closed when Chat Completions sends multiple opaque reasoning values', async () => {
+    const client = new OpenAIChatCompletionsClient({
+      baseURL: 'https://example.test',
+      fetch: vi.fn(async () => sse(
+        frame({
+          choices: [{
+            index: 0,
+            delta: { reasoning_opaque: 'first' },
+            finish_reason: null,
+          }],
+        })
+        + frame({
+          choices: [{
+            index: 0,
+            delta: { reasoning_opaque: 'second' },
+            finish_reason: 'stop',
+          }],
+        }),
+      )) as unknown as typeof fetch,
+    });
+
+    await expect(client.chat({ ...request, invocationId: 'invocation-1' }))
+      .rejects.toMatchObject({
+        name: 'ModelInvocationError',
+        category: 'provider_failure',
+      });
+  });
+
+  it('closes interrupted Chat reasoning as readable partial state without opaque replay', async () => {
+    const client = new OpenAIChatCompletionsClient({
+      baseURL: 'https://example.test',
+      fetch: vi.fn(async () => sse(frame({
+        choices: [{
+          index: 0,
+          delta: {
+            reasoning_text: 'partial thought',
+            reasoning_opaque: 'incomplete opaque state',
+          },
+          finish_reason: null,
+        }],
+      }))) as unknown as typeof fetch,
+    });
+
+    const events = await collect(client, { ...request, invocationId: 'invocation-1' });
+    expect(events).toContainEqual({
+      type: 'thinking_end',
+      blockId: 'thinking-0',
+      completion: { status: 'partial', text: 'partial thought' },
+    });
+    expect(JSON.stringify(events)).not.toContain('incomplete opaque state');
+    expect(events.at(-1)).toMatchObject({ type: 'error' });
+  });
+
+  it('captures and replays complete Responses reasoning items inside the Client boundary', async () => {
+    const item = {
+      type: 'reasoning',
+      id: 'reasoning-1',
+      summary: [
+        { type: 'summary_text', text: 'first' },
+        { type: 'summary_text', text: 'second' },
+      ],
+      content: [{ type: 'reasoning_text', text: 'private detail' }],
+      encrypted_content: 'encrypted-state',
+      status: 'completed',
+    };
+    const captureFetch = vi.fn(async () => sse(
+      frame({ type: 'response.created', response: { model: 'response-model' } })
+      + frame({
+        type: 'response.output_item.added',
+        output_index: 0,
+        item: { type: 'reasoning', id: 'reasoning-1' },
+      })
+      + frame({
+        type: 'response.reasoning_summary_text.delta',
+        item_id: 'reasoning-1',
+        summary_index: 0,
+        delta: 'first',
+      })
+      + frame({ type: 'response.output_item.done', item })
+      + frame({
+        type: 'response.completed',
+        response: { usage: { input_tokens: 4, output_tokens: 2 } },
+      }),
+    )) as unknown as typeof fetch;
+    const result = await new OpenAIResponsesClient({
+      baseURL: 'https://example.test',
+      fetch: captureFetch,
+    }).chat({ ...request, invocationId: 'invocation-1' });
+
+    expect(result.content).toEqual([{
+      type: 'thinking',
+      id: 'invocation-1:thinking-0',
+      status: 'complete',
+      text: 'first\n\nsecond',
+      replay: {
+        format: 'openai-responses.reasoning-item.v1',
+        payload: { item },
+      },
+    }]);
+
+    const replayFetch = vi.fn(async () => sse(
+      frame({ type: 'response.created' })
+      + frame({
+        type: 'response.completed',
+        response: { usage: { input_tokens: 1, output_tokens: 0 } },
+      }),
+    )) as unknown as typeof fetch;
+    await new OpenAIResponsesClient({
+      baseURL: 'https://example.test',
+      fetch: replayFetch,
+    }).chat({
+      ...request,
+      messages: [{
+        role: 'assistant',
+        content: result.content,
+        invocation: result.invocation,
+      }],
+    });
+
+    expect(requestBody(replayFetch).input).toEqual([item]);
+  });
+
+  it('accepts opaque-only Responses reasoning before a text answer', async () => {
+    const item = {
+      type: 'reasoning',
+      id: 'reasoning-opaque',
+      summary: [],
+      content: [],
+      encrypted_content: 'encrypted-state',
+    };
+    const client = new OpenAIResponsesClient({
+      baseURL: 'https://example.test',
+      fetch: vi.fn(async () => sse(
+        frame({ type: 'response.created', response: { model: 'response-model' } })
+        + frame({ type: 'response.in_progress', response: { status: 'in_progress' } })
+        + frame({
+          type: 'response.output_item.added',
+          output_index: 0,
+          item: {
+            type: 'reasoning',
+            id: 'reasoning-added',
+            summary: [],
+            content: [],
+            encrypted_content: 'encrypted-state',
+          },
+        })
+        + frame({ type: 'response.output_item.done', output_index: 0, item })
+        + frame({
+          type: 'response.output_item.added',
+          output_index: 1,
+          item: {
+            type: 'message',
+            id: 'message-1',
+            role: 'assistant',
+            status: 'in_progress',
+            content: [],
+          },
+        })
+        + frame({ type: 'response.output_text.delta', delta: 'answer' })
+        + frame({
+          type: 'response.output_item.done',
+          output_index: 1,
+          item: {
+            type: 'message',
+            id: 'message-1',
+            role: 'assistant',
+            status: 'completed',
+            content: [{ type: 'output_text', text: 'answer' }],
+          },
+        })
+        + frame({
+          type: 'response.completed',
+          response: { usage: { input_tokens: 4, output_tokens: 2 } },
+        }),
+      )) as unknown as typeof fetch,
+    });
+
+    await expect(client.chat({ ...request, invocationId: 'invocation-1' })).resolves.toMatchObject({
+      content: [{
+        type: 'thinking',
+        id: 'invocation-1:thinking-0',
+        status: 'complete',
+        text: '',
+        replay: {
+          format: 'openai-responses.reasoning-item.v1',
+          payload: { item },
+        },
+      }, {
+        type: 'text',
+        text: 'answer',
+      }],
+      stopReason: 'end_turn',
+    });
+  });
+
+  it('correlates Responses summary deltas by output_index when item ids change', async () => {
+    const item = {
+      type: 'reasoning',
+      id: 'reasoning-done',
+      summary: [{ type: 'summary_text', text: 'visible summary' }],
+      encrypted_content: 'encrypted-state',
+    };
+    const client = new OpenAIResponsesClient({
+      baseURL: 'https://example.test',
+      fetch: vi.fn(async () => sse(
+        frame({ type: 'response.created' })
+        + frame({
+          type: 'response.output_item.added',
+          output_index: 0,
+          item: { type: 'reasoning', id: 'reasoning-added' },
+        })
+        + frame({
+          type: 'response.reasoning_summary_text.delta',
+          item_id: 'reasoning-delta',
+          output_index: 0,
+          summary_index: 0,
+          delta: 'visible summary',
+        })
+        + frame({
+          type: 'response.output_item.done',
+          output_index: 0,
+          item,
+        })
+        + frame({
+          type: 'response.completed',
+          response: { usage: { input_tokens: 4, output_tokens: 2 } },
+        }),
+      )) as unknown as typeof fetch,
+    });
+
+    await expect(client.chat({ ...request, invocationId: 'invocation-1' })).resolves.toMatchObject({
+      content: [{
+        type: 'thinking',
+        id: 'invocation-1:thinking-0',
+        status: 'complete',
+        text: 'visible summary',
+        replay: {
+          format: 'openai-responses.reasoning-item.v1',
+          payload: { item },
+        },
+      }],
+    });
+  });
+
+  it('does not expose an uncorrelated Responses reasoning id in diagnostics', async () => {
+    const client = new OpenAIResponsesClient({
+      baseURL: 'https://example.test',
+      fetch: vi.fn(async () => sse(
+        frame({ type: 'response.created' })
+        + frame({
+          type: 'response.output_item.added',
+          output_index: 0,
+          item: { type: 'reasoning', id: 'reasoning-added' },
+        })
+        + frame({
+          type: 'response.output_item.done',
+          item: {
+            type: 'reasoning',
+            id: 'private-opaque-id',
+            summary: [],
+            encrypted_content: 'encrypted-state',
+          },
+        }),
+      )) as unknown as typeof fetch,
+    });
+
+    const error = await client.chat({ ...request, invocationId: 'invocation-1' })
+      .then(() => undefined, (reason: unknown) => reason);
+    expect(error).toMatchObject({
+      category: 'provider_failure',
+      diagnostics: {
+        providerMessage: 'OpenAI Responses completed an unknown reasoning item.',
+      },
+    });
+    expect(JSON.stringify(error)).not.toContain('private-opaque-id');
+  });
+
+  it('keeps incomplete Responses reasoning as display-only partial state', async () => {
+    const client = new OpenAIResponsesClient({
+      baseURL: 'https://example.test',
+      fetch: vi.fn(async () => sse(
+        frame({ type: 'response.created' })
+        + frame({
+          type: 'response.output_item.added',
+          output_index: 0,
+          item: { type: 'reasoning', id: 'reasoning-1' },
+        })
+        + frame({
+          type: 'response.reasoning_summary_text.delta',
+          item_id: 'reasoning-1',
+          summary_index: 0,
+          delta: 'partial summary',
+        })
+        + frame({
+          type: 'response.output_item.done',
+          item: {
+            type: 'reasoning',
+            id: 'reasoning-1',
+            summary: [{ type: 'summary_text', text: 'partial summary' }],
+            encrypted_content: 'incomplete state',
+            status: 'incomplete',
+          },
+        })
+        + frame({
+          type: 'response.completed',
+          response: { usage: { input_tokens: 4, output_tokens: 2 } },
+        }),
+      )) as unknown as typeof fetch,
+    });
+
+    const result = await client.chat({ ...request, invocationId: 'invocation-1' });
+    expect(result).toMatchObject({
+      content: [{
+        type: 'thinking',
+        id: 'invocation-1:thinking-0',
+        status: 'partial',
+        text: 'partial summary',
+      }],
+    });
+    expect(JSON.stringify(result)).not.toContain('incomplete state');
+  });
+
+  it.each([
+    {
+      label: 'Chat Completions',
+      create: (fetchImpl: typeof fetch) => new OpenAIChatCompletionsClient({
+        baseURL: 'https://example.test',
+        fetch: fetchImpl,
+      }),
+      wireProtocol: 'openai-chat-completions' as const,
+      replay: replayState(
+        'openai-chat-completions.reasoning.v1',
+        { reasoning_opaque: 'opaque-state' },
+      ),
+    },
+    {
+      label: 'Responses',
+      create: (fetchImpl: typeof fetch) => new OpenAIResponsesClient({
+        baseURL: 'https://example.test',
+        fetch: fetchImpl,
+      }),
+      wireProtocol: 'openai-responses' as const,
+      replay: replayState(
+        'openai-responses.reasoning-item.v1',
+        {
+          item: {
+            type: 'reasoning',
+            id: 'reasoning-1',
+            summary: [],
+            encrypted_content: 'encrypted-state',
+          },
+        },
+      ),
+    },
+  ])('rejects incompatible $label replay before sending a request', async ({
+    create,
+    wireProtocol,
+    replay,
+  }) => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('fetch must not be called');
+    }) as unknown as typeof fetch;
+    const client = create(fetchImpl);
+
+    await expect(client.chat({
+      ...request,
+      messages: [{
+        role: 'assistant',
+        content: [{
+          type: 'thinking',
+          id: 'invocation-1:thinking-0',
+          status: 'complete',
+          text: '',
+          replay,
+        }],
+        invocation: {
+          id: 'invocation-1',
+          source: {
+            providerId: 'builtin',
+            connectionId: 'https://different.example.test',
+            requestModelId: request.model,
+            wireProtocol,
+          },
+          completion: {
+            status: 'complete',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 1, outputTokens: 1 },
+          },
+        },
+      }],
+    })).rejects.toMatchObject({
+      name: 'ModelInvocationError',
+      category: 'provider_failure',
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('omits cross-protocol Thinking while preserving ordinary assistant text', async () => {
+    const chatFetch = vi.fn(async () => sse(
+      frame({
+        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+      })
+      + frame({
+        choices: [],
+        usage: { prompt_tokens: 1, completion_tokens: 0 },
+      }),
+    )) as unknown as typeof fetch;
+    const responsesFetch = vi.fn(async () => sse(
+      frame({ type: 'response.created' })
+      + frame({
+        type: 'response.completed',
+        response: { usage: { input_tokens: 1, output_tokens: 0 } },
+      }),
+    )) as unknown as typeof fetch;
+    const anthropicFetch = vi.fn(async () => sse(
+      frame({ type: 'message_start', message: { usage: { input_tokens: 1 } } })
+      + frame({ type: 'message_stop' }),
+    )) as unknown as typeof fetch;
+    const completion = {
+      status: 'complete' as const,
+      stopReason: 'end_turn',
+      usage: { inputTokens: 1, outputTokens: 1 },
+    };
+
+    await new OpenAIChatCompletionsClient({
+      baseURL: 'https://example.test',
+      fetch: chatFetch,
+    }).chat({
+      ...request,
+      messages: [{
+        role: 'assistant',
+        content: [{
+          type: 'thinking',
+          id: 'responses-invocation:thinking-0',
+          status: 'complete',
+          text: 'responses summary',
+          replay: replayState(
+            'openai-responses.reasoning-item.v1',
+            {
+              item: {
+                type: 'reasoning',
+                id: 'reasoning-1',
+                summary: [{ type: 'summary_text', text: 'responses summary' }],
+                encrypted_content: 'encrypted-state',
+              },
+            },
+          ),
+        }, {
+          type: 'text',
+          text: 'ordinary answer',
+        }],
+        invocation: {
+          id: 'responses-invocation',
+          source: {
+            providerId: 'builtin',
+            connectionId: 'https://example.test',
+            requestModelId: 'responses-model',
+            wireProtocol: 'openai-responses',
+          },
+          completion,
+        },
+      }],
+    });
+
+    expect(requestBody(chatFetch).messages).toEqual([
+      { role: 'system', content: 'system' },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'ordinary answer' }],
+      },
+    ]);
+
+    await new OpenAIResponsesClient({
+      baseURL: 'https://example.test',
+      fetch: responsesFetch,
+    }).chat({
+      ...request,
+      messages: [{
+        role: 'assistant',
+        content: [{
+          type: 'thinking',
+          id: 'chat-invocation:thinking-0',
+          status: 'complete',
+          text: 'chat reasoning',
+          replay: replayState(
+            'openai-chat-completions.reasoning.v1',
+            { reasoning_text: 'chat reasoning', reasoning_opaque: 'opaque-state' },
+          ),
+        }, {
+          type: 'text',
+          text: 'ordinary answer',
+        }],
+        invocation: {
+          id: 'chat-invocation',
+          source: {
+            providerId: 'builtin',
+            connectionId: 'https://example.test',
+            requestModelId: 'chat-model',
+            wireProtocol: 'openai-chat-completions',
+          },
+          completion,
+        },
+      }],
+    });
+
+    expect(requestBody(responsesFetch).input).toEqual([{
+      role: 'assistant',
+      content: [{ type: 'output_text', text: 'ordinary answer' }],
+    }]);
+
+    await new AnthropicMessagesClient({
+      baseURL: 'https://example.test',
+      fetch: anthropicFetch,
+    }).chat({
+      ...request,
+      messages: [{
+        role: 'assistant',
+        content: [{
+          type: 'thinking',
+          id: 'responses-invocation:thinking-0',
+          status: 'complete',
+          text: 'responses summary',
+          replay: replayState(
+            'openai-responses.reasoning-item.v1',
+            {
+              item: {
+                type: 'reasoning',
+                id: 'reasoning-1',
+                summary: [{ type: 'summary_text', text: 'responses summary' }],
+                encrypted_content: 'encrypted-state',
+              },
+            },
+          ),
+        }, {
+          type: 'text',
+          text: 'ordinary answer',
+        }],
+        invocation: {
+          id: 'responses-invocation',
+          source: {
+            providerId: 'builtin',
+            connectionId: 'https://example.test',
+            requestModelId: 'responses-model',
+            wireProtocol: 'openai-responses',
+          },
+          completion,
+        },
+      }],
+    });
+
+    expect(requestBody(anthropicFetch).messages).toEqual([{
+      role: 'assistant',
+      content: [{ type: 'text', text: 'ordinary answer' }],
+    }]);
+  });
+
   it('maps one output-token limit to each protocol wire field', async () => {
     const responsesFetch = vi.fn(async () => sse(
       frame({ type: 'response.created' })
@@ -391,7 +1013,12 @@ describe('Built-in Protocol Clients', () => {
     const malformedEvents = await collect(malformed, request);
     const malformedEvent = malformedEvents.at(-1);
     expect(malformedEvent?.type === 'error' ? malformedEvent.error : undefined)
-      .toBeInstanceOf(ModelInvocationError);
+      .toMatchObject({
+        category: 'provider_failure',
+        diagnostics: {
+          providerMessage: 'OpenAI Responses sent malformed SSE JSON.',
+        },
+      });
 
     const overflow = new OpenAIResponsesClient({
       baseURL: 'https://example.test',

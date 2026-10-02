@@ -2,6 +2,11 @@ import type {
   ExecutionTerminalFact,
   HostTaskCompletion,
 } from '../tools/execution.js';
+import type {
+  AssistantInvocation,
+  ChatContentBlock,
+  PresentationThinkingBlock,
+} from '../model-invocation/index.js';
 
 // Session metadata stored in sessions.json.
 
@@ -47,6 +52,7 @@ export interface MessageRecord extends TranscriptEntryBase {
   message: {
     role: 'user' | 'assistant' | 'toolResult';
     content: string | ContentBlock[];
+    invocation?: AssistantInvocation;
     /**
       * Abort metadata is persisted unchanged for diagnostics, auditing, and UI
       * rendering. AgentRunner.loadHistory() does not send it to the model; it
@@ -128,24 +134,11 @@ export type TranscriptEntry =
 
 // Content blocks aligned with the model message format.
 
-export type ContentBlock =
-  | { type: 'text'; text: string }
-  | {
-      type: 'image';
-      source: { type: 'base64'; media_type: string; data: string };
-      dimensions: { width: number; height: number };
-    }
-  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
-  | {
-      type: 'tool_result';
-      tool_use_id: string;
-      content: string;
-      status: import('../tools/types.js').ToolResultStatus;
-    }
-  | { type: 'execution_accepted'; tool_use_id: string; execution_id: string };
+export type ContentBlock = ChatContentBlock;
 
 export type SessionHistoryContentBlock =
-  | Exclude<ContentBlock, { type: 'tool_use' }>
+  | Exclude<ContentBlock, { type: 'tool_use' } | { type: 'thinking' }>
+  | PresentationThinkingBlock
   | {
       type: 'tool_use';
       id: string;
@@ -188,6 +181,8 @@ export interface SessionStore {
 // In-memory Transcript state.
 
 export interface TranscriptState {
+  /** Transcript root schema version. */
+  version?: 1 | 2;
   /** Record index by ID. */
   byId: Map<string, TranscriptEntry>;
   /** Active branch leaf. */

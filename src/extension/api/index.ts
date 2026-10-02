@@ -34,6 +34,9 @@ export {
 export type {
   ChatContentBlock,
   ChatMessage,
+  AssistantInvocation,
+  InvocationSource,
+  InvocationUsage,
   ModelInvocationDiagnostics,
   ModelInvocationFailureCategory,
   ModelInvocationPort,
@@ -41,7 +44,18 @@ export type {
   ModelInvocationResponse,
   ModelInvocationStructuralErrorV1,
   ModelStreamEvent,
+  PresentationContentBlock,
+  PresentationThinkingBlock,
+  ProviderReplayState,
+  ReplayJsonValue,
+  ThinkingCompletion,
+  ThinkingContentBlock,
   TokenUsage,
+} from '../../core/model-invocation/index.js';
+export {
+  ModelStreamCollector,
+  projectContentForPresentation,
+  projectThinkingText,
 } from '../../core/model-invocation/index.js';
 export type { ToolCall } from '../../core/tools/index.js';
 export type { ExtensionRegistrationApi } from '../../core/registry/index.js';

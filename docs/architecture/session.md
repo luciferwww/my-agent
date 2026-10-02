@@ -37,7 +37,10 @@ The metadata index avoids scanning Transcript files to locate a Session. Each Tr
 
 The Store accepts only version 1 and entries whose key matches their canonical UUID `sessionId`. A missing Store yields an empty Store, while invalid or unsupported data fails closed. Startup removes temporary materialization files and canonical Transcript files without matching Store entries.
 
-Malformed or empty JSONL lines are skipped when loading. A persisted Session with a missing Transcript fails rather than becoming empty. Store replacement is the visibility commit point for materialization.
+Malformed non-empty JSONL and structurally invalid records fail closed. Empty
+lines are ignored. A persisted Session with a missing Transcript fails rather
+than becoming empty. Store replacement is the visibility commit point for
+materialization.
 
 ## 3. Data contracts
 
@@ -83,6 +86,17 @@ abortMeta {
 
 This metadata survives JSONL round trips. Runner does not send it to Providers; it uses it for recovery and filters legacy empty partial Assistant records from invocation history.
 
+Transcript v2 Assistant messages may also carry invocation identity, Provider
+source facts, completion state, and ordered Thinking blocks. Complete Thinking
+stores normalized display text plus an opaque Provider-owned JSON replay
+envelope; partial Thinking stores text only. A v2 Thinking block requires its
+Assistant invocation. Valid v1 Transcripts remain readable and are atomically
+rewritten to v2 before the first invocation/Thinking append. Fork preserves the
+selected path's invocation and internal replay state.
+
+Paginated History is a presentation projection. It exposes Thinking
+`id/text/status` but never invocation source or replay payload.
+
 A `CompactionRecord` stores `summary`, `firstKeptEntryId`, `tokensBefore`, `tokensAfter`, `trigger`, and `droppedMessages`. Its trigger is `preemptive`, `overflow`, or `manual`.
 
 ## 4. Session lifecycle
@@ -112,7 +126,7 @@ SessionManager.createTransientSubagentTranscript(input)
 SessionManager.deleteTransientSubagentTranscript(sessionId)
 
 SessionManager.appendMessage(sessionId, message)
-  -> new message id
+  -> persisted MessageRecord
 
 SessionManager.getMessages(sessionId)
   -> current branch's MessageRecord[]

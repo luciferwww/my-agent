@@ -52,9 +52,22 @@ function estimateBlockTokens(block: ChatContentBlock): number {
         Math.ceil(block.dimensions.width / ANTHROPIC_PATCH_SIZE) *
         Math.ceil(block.dimensions.height / ANTHROPIC_PATCH_SIZE)
       );
+    case 'thinking':
+      // This is only a lower bound. Complete blocks may carry Provider-owned
+      // replay state whose wire-token cost cannot be inferred by Core.
+      return block.status === 'complete' ? estimateTextTokens(block.text) : 0;
     default:
       return 0;
   }
+}
+
+export function containsUnestimableReplayState(
+  messages: readonly ChatMessage[],
+): boolean {
+  return messages.some((message) =>
+    Array.isArray(message.content)
+    && message.content.some((block) =>
+      block.type === 'thinking' && block.status === 'complete'));
 }
 
 // ── 公共 API ────────────────────────────────────────────────

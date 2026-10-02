@@ -187,28 +187,49 @@ function buildRequest(
 }
 
 function convertMessages(messages: readonly ChatMessage[]): unknown[] {
-  return messages.map((message) => ({
-    role: message.origin === 'host' ? 'user' : message.role,
-    content: typeof message.content === 'string'
-      ? message.content
-      : message.content.map((block) => {
-          if (block.type === 'image') return { type: 'image', source: block.source };
-          if (block.type === 'tool_result') {
-            return { type: 'tool_result', tool_use_id: block.tool_use_id, content: block.content };
-          }
-          if (block.type === 'execution_accepted') {
-            return {
-              type: 'tool_result',
-              tool_use_id: block.tool_use_id,
-              content: renderExecutionAcceptedReceipt({
-                executionId: block.execution_id,
-                status: 'accepted',
-              }),
-            };
-          }
-          return block;
-        }),
-  }));
+  const output: unknown[] = [];
+  for (const message of messages) {
+    if (typeof message.content === 'string') {
+      output.push({
+        role: message.origin === 'host' ? 'user' : message.role,
+        content: message.content,
+      });
+      continue;
+    }
+    const content = message.content.flatMap((block): unknown[] => {
+      if (block.type === 'thinking') {
+        if (message.role !== 'assistant') {
+          throw new Error('Anthropic Messages cannot project Thinking on a user message.');
+        }
+        return [];
+      }
+      if (block.type === 'image') return [{ type: 'image', source: block.source }];
+      if (block.type === 'tool_result') {
+        return [{
+          type: 'tool_result',
+          tool_use_id: block.tool_use_id,
+          content: block.content,
+        }];
+      }
+      if (block.type === 'execution_accepted') {
+        return [{
+          type: 'tool_result',
+          tool_use_id: block.tool_use_id,
+          content: renderExecutionAcceptedReceipt({
+            executionId: block.execution_id,
+            status: 'accepted',
+          }),
+        }];
+      }
+      return [block];
+    });
+    if (!content.length) continue;
+    output.push({
+      role: message.origin === 'host' ? 'user' : message.role,
+      content,
+    });
+  }
+  return output;
 }
 
 function convertTools(tools: readonly ChatToolDefinition[]): unknown[] {

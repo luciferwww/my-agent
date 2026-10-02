@@ -65,7 +65,18 @@ describe('Copilot Relay Responses client', () => {
     });
 
     await expect(collect(client)).resolves.toEqual([
-      { type: 'message_start' },
+      {
+        type: 'message_start',
+        invocation: {
+          id: expect.any(String),
+          source: {
+            providerId: 'copilot-relay',
+            connectionId: 'http://127.0.0.1:5000',
+            requestModelId: 'gpt-5.6-sol',
+            wireProtocol: 'openai-responses',
+          },
+        },
+      },
       { type: 'text_delta', text: 'Hello back' },
       { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 7, outputTokens: 3 } },
     ]);
@@ -83,6 +94,116 @@ describe('Copilot Relay Responses client', () => {
       tools: [{ type: 'function', name: 'lookup', parameters: { type: 'object' } }],
     });
     expect(body).not.toHaveProperty('previous_response_id');
+  });
+
+  it('captures and replays complete reasoning items without exposing wire fields to Core logic', async () => {
+    const reasoningItem = {
+      type: 'reasoning',
+      id: 'reasoning-1',
+      summary: [{ type: 'summary_text', text: 'summary' }],
+      encrypted_content: 'encrypted-state',
+      status: 'completed',
+    };
+    const capture = new CopilotRelayResponsesClient({
+      baseURL: 'http://127.0.0.1:5000',
+      fetch: vi.fn(async () => sseResponse(
+        event('response.created')
+        + event('response.output_item.added', {
+          output_index: 0,
+          item: { type: 'reasoning', id: 'reasoning-added' },
+        })
+        + event('response.reasoning_summary_text.delta', {
+          item_id: 'reasoning-added',
+          summary_index: 0,
+          delta: 'summary',
+        })
+        + event('response.output_item.done', { output_index: 0, item: reasoningItem })
+        + terminal(),
+      )) as unknown as typeof fetch,
+    });
+    const result = await capture.chat({ ...request, invocationId: 'invocation-1' });
+
+    expect(result.content).toEqual([{
+      type: 'thinking',
+      id: 'invocation-1:thinking-0',
+      status: 'complete',
+      text: 'summary',
+      replay: {
+        format: 'openai-responses.reasoning-item.v1',
+        payload: { item: reasoningItem },
+      },
+    }]);
+
+    const replayFetch = vi.fn(async () => sseResponse(
+      event('response.created') + terminal(),
+    )) as unknown as typeof fetch;
+    const replay = new CopilotRelayResponsesClient({
+      baseURL: 'http://127.0.0.1:5000',
+      fetch: replayFetch,
+    });
+    await replay.chat({
+      ...request,
+      messages: [{
+        role: 'assistant',
+        content: result.content,
+        invocation: result.invocation,
+      }],
+    });
+
+    const body = JSON.parse(String(vi.mocked(replayFetch).mock.calls[0]?.[1]?.body));
+    expect(body.input).toEqual([reasoningItem]);
+  });
+
+  it('rejects replay from another connection before sending a request', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('fetch must not be called');
+    }) as unknown as typeof fetch;
+    const client = new CopilotRelayResponsesClient({
+      baseURL: 'http://127.0.0.1:5000',
+      fetch: fetchImpl,
+    });
+
+    await expect(client.chat({
+      ...request,
+      messages: [{
+        role: 'assistant',
+        content: [{
+          type: 'thinking',
+          id: 'invocation-1:thinking-0',
+          status: 'complete',
+          text: '',
+          replay: {
+            format: 'openai-responses.reasoning-item.v1',
+            payload: {
+              item: {
+                type: 'reasoning',
+                id: 'reasoning-1',
+                summary: [],
+                encrypted_content: 'encrypted-state',
+              },
+            },
+          },
+        }],
+        invocation: {
+          id: 'invocation-1',
+          source: {
+            providerId: 'copilot-relay',
+            connectionId: 'http://127.0.0.1:6000',
+            requestModelId: request.model,
+            wireProtocol: 'openai-responses',
+          },
+          completion: {
+            status: 'complete',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 1, outputTokens: 1 },
+          },
+        },
+      }],
+    })).rejects.toMatchObject({
+      name: 'ModelInvocationError',
+      category: 'provider_failure',
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('uses complete function_call items and call_id for stateless tool replay', async () => {
@@ -128,7 +249,18 @@ describe('Copilot Relay Responses client', () => {
     };
 
     await expect(collect(client, toolRequest)).resolves.toEqual([
-      { type: 'message_start' },
+      {
+        type: 'message_start',
+        invocation: {
+          id: expect.any(String),
+          source: {
+            providerId: 'copilot-relay',
+            connectionId: 'http://127.0.0.1:5000',
+            requestModelId: 'gpt-5.6-sol',
+            wireProtocol: 'openai-responses',
+          },
+        },
+      },
       {
         type: 'tool_call',
         call: {

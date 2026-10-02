@@ -4,12 +4,28 @@ export type {
   ChatResponse,
   ChatRole,
   ChatToolDefinition,
+  AssistantInvocation,
+  InvocationCompletion,
+  InvocationSource,
+  InvocationUsage,
   ModelInvocationPort,
   ModelInvocationRequest,
   ModelInvocationResponse,
   ModelStreamEvent,
+  PresentationContentBlock,
+  PresentationThinkingBlock,
+  ProviderReplayState,
+  ReplayJsonValue,
+  ThinkingCompletion,
+  ThinkingContentBlock,
+  ThinkingWireProtocol,
   TokenUsage,
 } from './types.js';
+export {
+  ModelStreamCollector,
+  projectContentForPresentation,
+  projectThinkingText,
+} from './stream-collector.js';
 export {
   ContextOverflowError,
   ModelInvocationError,

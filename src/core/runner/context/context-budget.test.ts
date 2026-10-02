@@ -118,4 +118,29 @@ describe('context-budget', () => {
     expect(result.reducibleChars).toBeGreaterThan(0);
     expect(result.route).toBe('truncate_tool_results_only');
   });
+
+  it('defers opaque Provider replay sizing instead of reporting that it fits', () => {
+    const messages: ChatMessage[] = [{
+      role: 'assistant',
+      content: [{
+        type: 'thinking',
+        id: 'invocation-1:thinking-0',
+        status: 'complete',
+        text: 'short summary',
+        replay: {
+          format: 'provider.reasoning.v1',
+          payload: { opaque: 'not measurable by Core' },
+        },
+      }],
+    }];
+
+    const result = checkContextBudget({
+      messages,
+      config: baseConfig,
+      inputBudgetTokens,
+    });
+
+    expect(result.route).toBe('unavailable');
+    expect(result.estimatedTokens).toBeGreaterThan(0);
+  });
 });

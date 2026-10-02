@@ -241,7 +241,7 @@ export class WebSocketChannel implements Channel {
     const sessionAudience = this.sessions.get(audienceKey);
     if (!sessionAudience || sessionAudience.size === 0) return;
 
-    if (event.type !== 'text_delta') {
+    if (event.type !== 'text_delta' && event.type !== 'thinking_delta') {
       this.logger.debug('broadcasting event to session audience', {
         channelId: this.id,
         eventType: event.type,

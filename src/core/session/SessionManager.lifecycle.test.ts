@@ -142,11 +142,11 @@ describe('SessionManager lifecycle persistence', () => {
 
   it('forks selected linear history and protects the source from deletion', async () => {
     const sourceId = await materialize('Source');
-    const secondMessageId = await manager.appendMessage(sourceId, {
+    const secondMessageId = (await manager.appendMessage(sourceId, {
       turnId: 'turn-reply',
       role: 'assistant',
       content: 'reply',
-    });
+    })).id;
 
     await manager.appendMessage(sourceId, {
       turnId: 'turn-later',
@@ -166,13 +166,73 @@ describe('SessionManager lifecycle persistence', () => {
     });
   });
 
+  it('preserves internal Thinking replay across forks while keeping History safe', async () => {
+    const sourceId = await materialize('Thinking history');
+    const assistantId = (await manager.appendMessage(sourceId, {
+      turnId: 'thinking-turn',
+      role: 'assistant',
+      content: [{
+        type: 'thinking',
+        id: 'invocation-1:thinking-0',
+        status: 'complete',
+        text: 'visible summary',
+        replay: {
+          format: 'provider.reasoning.v1',
+          payload: { opaque: 'private replay state' },
+        },
+      }, {
+        type: 'text',
+        text: 'answer',
+      }],
+      invocation: {
+        id: 'invocation-1',
+        source: {
+          providerId: 'provider',
+          connectionId: 'connection',
+          requestModelId: 'model',
+          wireProtocol: 'openai-responses',
+        },
+        completion: {
+          status: 'complete',
+          stopReason: 'end_turn',
+          usage: { inputTokens: 1, outputTokens: 2 },
+        },
+      },
+    })).id;
+
+    const fork = await manager.forkSession(sourceId, assistantId);
+    const forkedMessage = manager.getMessages(fork.sessionId).at(-1)?.message;
+    expect(forkedMessage).toMatchObject({
+      invocation: { id: 'invocation-1' },
+      content: [{
+        type: 'thinking',
+        replay: { payload: { opaque: 'private replay state' } },
+      }, {
+        type: 'text',
+        text: 'answer',
+      }],
+    });
+
+    const history = manager.getHistory({ sessionId: fork.sessionId });
+    expect(history.items.at(-1)?.content).toEqual([{
+      type: 'thinking',
+      id: 'invocation-1:thinking-0',
+      status: 'complete',
+      text: 'visible summary',
+    }, {
+      type: 'text',
+      text: 'answer',
+    }]);
+    expect(JSON.stringify(history)).not.toContain('private replay state');
+  });
+
   it('projects terminal Tool status into History and preserves it across a fork', async () => {
     const sourceId = await materialize('Tool history');
-    const assistantId = await manager.appendMessage(sourceId, {
+    const assistantId = (await manager.appendMessage(sourceId, {
       turnId: 'tool-turn',
       role: 'assistant',
       content: [{ type: 'tool_use', id: 'call-1', name: 'demo', input: {} }],
-    });
+    })).id;
     await manager.appendToolExecutionAccepted(sourceId, {
       turnId: 'tool-turn',
       callId: 'call-1',

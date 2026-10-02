@@ -60,6 +60,51 @@ describe('transcript', () => {
         .toThrowError(new SessionDataError('Session Transcript message "m1" has an invalid Turn identity.'));
     });
 
+    it.each([
+      ['user message', 2, 'user'],
+      ['v1 assistant message', 1, 'assistant'],
+    ])('rejects invocation metadata on a %s with string content', async (_label, version, role) => {
+      const filePath = join(dir, `invalid-invocation-${version}-${role}.jsonl`);
+      await writeFile(filePath, [
+        JSON.stringify({
+          type: 'session',
+          id: 's1',
+          parentId: null,
+          timestamp: '2026-04-02T00:00:00Z',
+          version,
+        }),
+        JSON.stringify({
+          type: 'message',
+          id: 'm1',
+          parentId: 's1',
+          timestamp: '2026-04-02T00:00:01Z',
+          turnId: 'turn-1',
+          message: {
+            role,
+            content: 'text',
+            invocation: {
+              id: 'invocation-1',
+              source: {
+                providerId: 'provider',
+                connectionId: 'connection',
+                requestModelId: 'model',
+                wireProtocol: 'openai-responses',
+              },
+              completion: {
+                status: 'complete',
+                stopReason: 'end_turn',
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            },
+          },
+        }),
+      ].join('\n'), 'utf8');
+
+      expect(() => loadTranscript(filePath)).toThrow(
+        'message "m1" has invalid invocation metadata',
+      );
+    });
+
     it('loads the async Tool lifecycle record shapes', async () => {
       const filePath = join(dir, 'async-tool-records.jsonl');
       const records = [

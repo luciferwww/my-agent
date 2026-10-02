@@ -1,6 +1,7 @@
 import type {
   ChatContentBlock,
   ChatMessage,
+  PresentationContentBlock,
   TokenUsage,
 } from '../model-invocation/index.js';
 import type { ResolvedModel } from '../model-resolution/index.js';
@@ -97,7 +98,7 @@ export interface RunResult {
   /** Final assistant response text. */
   text: string;
   /** Complete assistant response content blocks. */
-  content: ChatContentBlock[];
+  content: PresentationContentBlock[];
   /** stop reason */
   stopReason: string;
   /** Cumulative token usage across all LLM calls. */
@@ -162,6 +163,27 @@ export type AgentEvent =
       binding: 'steering';
     }
   | { type: 'text_delta'; sessionId: string; turnId: string; text: string }
+  | {
+      type: 'thinking_start';
+      sessionId: string;
+      turnId: string;
+      thinkingId: string;
+    }
+  | {
+      type: 'thinking_delta';
+      sessionId: string;
+      turnId: string;
+      thinkingId: string;
+      text: string;
+    }
+  | {
+      type: 'thinking_end';
+      sessionId: string;
+      turnId: string;
+      thinkingId: string;
+      text: string;
+      status: 'partial' | 'complete';
+    }
   | {
       type: 'tool_call_requested';
       sessionId: string;

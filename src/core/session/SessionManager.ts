@@ -3,7 +3,13 @@ import { mkdir, readdir, rename, unlink, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { SessionError } from './errors.js';
 import { isCanonicalSessionId, loadStore, updateStore } from './store.js';
-import { loadTranscript, resolveLinearPath, appendToTranscript, findLastCompaction } from './transcript.js';
+import {
+  loadTranscript,
+  resolveLinearPath,
+  appendToTranscript,
+  findLastCompaction,
+  replaceTranscript,
+} from './transcript.js';
 import type {
   ExecutionTerminalFact,
   HostTaskCompletion,
@@ -26,10 +32,11 @@ import type {
   TurnAbortedRecord,
   UpdateSessionInput,
 } from './types.js';
+import { projectThinkingText } from '../model-invocation/index.js';
 
 const SESSIONS_DIR = 'sessions';
 const STORE_FILE = 'sessions.json';
-const TRANSCRIPT_VERSION = 1;
+const TRANSCRIPT_VERSION = 2;
 const DEFAULT_HISTORY_LIMIT = 50;
 const MAX_HISTORY_LIMIT = 100;
 
@@ -46,6 +53,7 @@ export interface SessionMessageInput {
   turnId: string;
   role: 'user' | 'assistant' | 'toolResult';
   content: string | ContentBlock[];
+  invocation?: import('../model-invocation/index.js').AssistantInvocation;
   abortMeta?: { partial: boolean; stopReason: 'aborted' };
   turnStopReason?: 'max_llm_calls';
 }
@@ -351,11 +359,11 @@ export class SessionManager {
 
   // Tree-structured message operations.
 
-  /** Appends a message to the active branch and returns its record ID. */
+  /** Appends a message to the active branch and returns the persisted record. */
   async appendMessage(
     sessionId: string,
     message: SessionMessageInput,
-  ): Promise<string> {
+  ): Promise<MessageRecord> {
     return this.withTranscriptWrite(
       sessionId,
       () => this.appendMessageUnlocked(sessionId, message),
@@ -365,7 +373,7 @@ export class SessionManager {
   private async appendMessageUnlocked(
     sessionId: string,
     message: SessionMessageInput,
-  ): Promise<string> {
+  ): Promise<MessageRecord> {
     const state = this.ensureTranscriptLoaded(sessionId);
     const filePath = this.resolveTranscriptPath(sessionId);
     const { turnId, turnStopReason, ...messagePayload } = message;
@@ -391,13 +399,33 @@ export class SessionManager {
       message: persistedMessage,
     };
 
-    await appendToTranscript(filePath, record);
+    const requiresV2 = messagePayload.invocation !== undefined
+      || (
+        Array.isArray(messagePayload.content)
+        && messagePayload.content.some((block) => block.type === 'thinking')
+      );
+    if (state.version !== 2 && requiresV2) {
+      const entries = [...state.byId.values()];
+      const root = entries[0];
+      if (!root || root.type !== 'session') {
+        throw new SessionError(
+          'SESSION_DATA_INVALID',
+          `Session "${sessionId}" has no Transcript root.`,
+        );
+      }
+      const upgradedRoot: SessionRecord = { ...root, version: 2 };
+      await replaceTranscript(filePath, [upgradedRoot, ...entries.slice(1), record]);
+      state.byId.set(upgradedRoot.id, upgradedRoot);
+      state.version = 2;
+    } else {
+      await appendToTranscript(filePath, record);
+    }
 
     state.byId.set(record.id, record);
     state.leafId = record.id;
     await this.touchSession(sessionId);
 
-    return record.id;
+    return record;
   }
 
   /** Returns the active branch in chronological order. */
@@ -782,8 +810,19 @@ export class SessionManager {
   ): import('./types.js').SessionHistoryMessage {
     const content = typeof record.message.content === 'string'
       ? record.message.content
-      : record.message.content.map((block): SessionHistoryContentBlock => {
-          if (block.type !== 'tool_use') return block;
+      : record.message.content.flatMap((block): SessionHistoryContentBlock[] => {
+          if (block.type === 'thinking') {
+            const text = projectThinkingText(block);
+            return text
+              ? [{
+                  type: 'thinking',
+                  id: block.id,
+                  text,
+                  status: block.status,
+                }]
+              : [];
+          }
+          if (block.type !== 'tool_use') return [block];
           const accepted = lifecycle.find(
             (candidate): candidate is ToolExecutionAcceptedRecord => (
               candidate.type === 'tool_execution_accepted'
@@ -791,14 +830,14 @@ export class SessionManager {
               && candidate.callId === block.id
             ),
           );
-          if (!accepted) return block;
+          if (!accepted) return [block];
           const terminal = lifecycle.find(
             (candidate): candidate is ToolExecutionTerminalRecord => (
               candidate.type === 'tool_execution_terminal'
               && candidate.executionId === accepted.executionId
             ),
           );
-          return {
+          return [{
             ...block,
             execution_id: accepted.executionId,
             ...(terminal === undefined
@@ -811,7 +850,7 @@ export class SessionManager {
                       : 'aborted' as const,
                   result_content: terminal.content,
                 }),
-          };
+          }];
         });
     return {
       entryId: record.id,
@@ -950,6 +989,7 @@ export class SessionManager {
     }
 
     return {
+      version: TRANSCRIPT_VERSION,
       byId: new Map(records.map((record) => [record.id, record])),
       leafId,
     };
