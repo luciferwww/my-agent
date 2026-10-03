@@ -37,7 +37,6 @@ The accepted top-level sections are:
 
 ```text
 llm
-runtime
 runner
 agents
 logger
@@ -86,10 +85,8 @@ The following example configures:
       ]
     }
   },
-  "runtime": {
-    "steeringEnabled": true
-  },
   "runner": {
+    "steeringEnabled": true,
     "maxLlmCalls": 12
   },
   "agents": {
@@ -273,17 +270,15 @@ There is no Anthropic-specific model configuration field. Deployments that
 cannot support this adaptive mapping must not declare the corresponding
 Thinking or Effort capabilities.
 
-## 4. Runtime and Runner
+## 4. Runner
 
-These sections are global. They cannot be placed under `agents.defaults` or
-an individual Agent entry.
+This section is global. It cannot be placed under `agents.defaults` or an
+individual Agent entry.
 
 ```json
 {
-  "runtime": {
-    "steeringEnabled": true
-  },
   "runner": {
+    "steeringEnabled": true,
     "maxLlmCalls": 12
   }
 }
@@ -291,10 +286,11 @@ an individual Agent entry.
 
 | Field | Default | Meaning |
 |---|---:|---|
-| `runtime.steeringEnabled` | `false` | Allow compatible user messages to steer a running Turn |
+| `runner.steeringEnabled` | `false` | Allow the Runner to claim compatible queued user messages at steering-safe points |
 | `runner.maxLlmCalls` | omitted | Maximum Model calls in one Turn; omission means no count limit |
 
-`maxLlmCalls`, when present, must be a positive integer.
+`steeringEnabled` must be a boolean. `maxLlmCalls`, when present, must be a
+positive integer.
 
 ## 5. Agent defaults and per-Agent overrides
 
@@ -358,19 +354,7 @@ selection falls back to keyword-only search. Chunk sizes and `maxResults` are
 positive integers; overlap must be smaller than chunk size. Search scores and
 weights must be between `0` and `1`.
 
-### 5.2 Prompt
-
-```json
-{
-  "prompt": {
-    "safetyLevel": "normal"
-  }
-}
-```
-
-Allowed levels are `strict`, `normal`, and `relaxed`. The default is `normal`.
-
-### 5.3 Tool policy
+### 5.2 Tool policy
 
 ```json
 {
@@ -388,7 +372,7 @@ not supported.
 Session permission mode (`manual` or `allow_all`) is Runtime state and is not
 a configuration field.
 
-### 5.4 Agent Context budgets
+### 5.3 Agent Context budgets
 
 ```json
 {
@@ -401,7 +385,7 @@ a configuration field.
 
 Both values are positive safe integers. The values shown are the defaults.
 
-### 5.5 Compaction
+### 5.4 Compaction
 
 ```json
 {
@@ -423,7 +407,7 @@ All fields except `customInstructions` have the values above by default.
 `timeoutSeconds` must be positive. Token, Turn, and character counts must be
 non-negative safe integers.
 
-### 5.6 Subagents
+### 5.5 Subagents
 
 ```json
 {
@@ -589,32 +573,25 @@ Completions endpoint from `<baseURL>/v1/models`.
 | `apiKey` | omitted |
 | `discoveryTimeoutMs` | `5000` |
 
-### 7.3 Extension environment references
+### 7.3 Extension API key
 
-Extension configuration supports exact environment-backed values:
+An Extension `apiKey` uses the same rule as Built-in Provider credentials: it
+can be a literal string or one exact `"${ENV_VAR}"` reference.
 
 ```json
 {
   "config": {
-    "baseURL": {
-      "$env": "COPILOT_RELAY_URL"
-    },
-    "apiKey": {
-      "$secret": {
-        "source": "env",
-        "name": "COPILOT_RELAY_API_KEY"
-      }
-    }
+    "baseURL": "http://127.0.0.1:5000",
+    "apiKey": "${COPILOT_RELAY_API_KEY}"
   }
 }
 ```
 
-An `apiKey` string may alternatively use the exact
-`"${COPILOT_RELAY_API_KEY}"` form.
-
-References must occupy the entire value. Missing or blank environment values
-disable the affected Extension with a bounded diagnostic; secret values are
-not included in diagnostics.
+The reference must occupy the entire `apiKey` value. A missing or blank
+environment variable disables the affected Extension with a bounded
+diagnostic; its value is never included in diagnostics. Other Extension
+configuration fields, including `baseURL`, are ordinary values defined by that
+Extension's schema.
 
 ## 8. Precedence
 
@@ -629,8 +606,8 @@ Agent-scoped settings resolve from lowest to highest precedence:
 Arrays and scalar values replace the lower-precedence value. Plain objects are
 merged recursively.
 
-Global `runtime` and `runner` settings use only module defaults followed by
-their top-level file values.
+Global `runner` settings use only module defaults followed by the top-level
+file value.
 
 ## 9. Common failures
 

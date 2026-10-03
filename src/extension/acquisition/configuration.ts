@@ -21,7 +21,6 @@ export type ExtensionConfigPreparationResult =
       category: Extract<ExtensionLoaderDiagnosticCategory, 'config_invalid' | 'secret_unavailable'>;
       code: Extract<
         ExtensionLoaderDiagnosticCode,
-        | 'environment_value_unavailable'
         | 'environment_secret_unavailable'
         | 'config_schema_invalid'
         | 'config_validation_failed'
@@ -30,12 +29,9 @@ export type ExtensionConfigPreparationResult =
       environmentVariable?: string;
     }>;
 
-interface ConfigReferenceFailure {
+interface ApiKeyMaterializationFailure {
   readonly category: Extract<ExtensionLoaderDiagnosticCategory, 'config_invalid' | 'secret_unavailable'>;
-  readonly code: Extract<
-    ExtensionLoaderDiagnosticCode,
-    'environment_value_unavailable' | 'environment_secret_unavailable'
-  >;
+  readonly code: Extract<ExtensionLoaderDiagnosticCode, 'environment_secret_unavailable'>;
   readonly referencePath: string;
   readonly environmentVariable: string;
 }
@@ -54,11 +50,6 @@ export function prepareExtensionConfig(
 
   const apiKeyFailure = materializeApiKey(config, environment);
   if (apiKeyFailure !== undefined) return Object.freeze({ ok: false, ...apiKeyFailure });
-
-  const referenceFailure = materializeConfigValue(config, environment, '');
-  if (referenceFailure !== undefined) {
-    return Object.freeze({ ok: false, ...referenceFailure });
-  }
 
   let validate: ValidateFunction;
   try {
@@ -87,7 +78,7 @@ export function prepareExtensionConfig(
 function materializeApiKey(
   config: Record<string, unknown>,
   environment: Readonly<Record<string, string | undefined>>,
-): ConfigReferenceFailure | Readonly<{
+): ApiKeyMaterializationFailure | Readonly<{
   category: 'config_invalid';
   code: 'config_validation_failed';
   referencePath: string;
@@ -104,12 +95,12 @@ function materializeApiKey(
       && error.secretUnavailable
       && error.environmentVariable !== undefined
     ) {
-      return referenceFailure(
-        'secret_unavailable',
-        'environment_secret_unavailable',
-        '/apiKey',
-        error.environmentVariable,
-      );
+      return Object.freeze({
+        category: 'secret_unavailable',
+        code: 'environment_secret_unavailable',
+        referencePath: '/apiKey',
+        environmentVariable: boundField(error.environmentVariable),
+      });
     }
     return {
       category: 'config_invalid',
@@ -117,107 +108,6 @@ function materializeApiKey(
       referencePath: '/apiKey',
     };
   }
-}
-
-function materializeConfigValue(
-  value: unknown,
-  environment: Readonly<Record<string, string | undefined>>,
-  path: string,
-): ConfigReferenceFailure | undefined {
-  if (Array.isArray(value)) {
-    for (let index = 0; index < value.length; index += 1) {
-      const childPath = appendPointer(path, String(index));
-      const child = value[index];
-      const replacement = resolveReference(child, environment, childPath);
-      if (isReferenceFailure(replacement)) return replacement;
-      if (replacement !== undefined) value[index] = replacement;
-      else {
-        const failure = materializeConfigValue(child, environment, childPath);
-        if (failure !== undefined) return failure;
-      }
-    }
-    return undefined;
-  }
-  if (!isPlainObject(value)) return undefined;
-
-  for (const [key, child] of Object.entries(value)) {
-    const childPath = appendPointer(path, key);
-    const replacement = resolveReference(child, environment, childPath);
-    if (isReferenceFailure(replacement)) return replacement;
-    if (replacement !== undefined) value[key] = replacement;
-    else {
-      const failure = materializeConfigValue(child, environment, childPath);
-      if (failure !== undefined) return failure;
-    }
-  }
-  return undefined;
-}
-
-function resolveReference(
-  value: unknown,
-  environment: Readonly<Record<string, string | undefined>>,
-  path: string,
-): string | ConfigReferenceFailure | undefined {
-  if (isExactEnvironmentValueReference(value)) {
-    const environmentValue = environment[value.$env];
-    if (environmentValue !== undefined && environmentValue.trim().length > 0) {
-      return environmentValue;
-    }
-    return referenceFailure(
-      'config_invalid',
-      'environment_value_unavailable',
-      path,
-      value.$env,
-    );
-  }
-  if (isExactEnvironmentSecretReference(value)) {
-    const environmentValue = environment[value.$secret.name];
-    if (environmentValue !== undefined && environmentValue.trim().length > 0) {
-      return environmentValue;
-    }
-    return referenceFailure(
-      'secret_unavailable',
-      'environment_secret_unavailable',
-      path,
-      value.$secret.name,
-    );
-  }
-  return undefined;
-}
-
-function isExactEnvironmentValueReference(
-  value: unknown,
-): value is Readonly<{ $env: string }> {
-  return isPlainObject(value)
-    && hasExactKeys(value, ['$env'])
-    && typeof value['$env'] === 'string';
-}
-
-function isExactEnvironmentSecretReference(
-  value: unknown,
-): value is Readonly<{
-  $secret: Readonly<{ source: 'env'; name: string }>;
-}> {
-  if (!isPlainObject(value) || !hasExactKeys(value, ['$secret'])) return false;
-  const secret = value['$secret'];
-  return isPlainObject(secret)
-    && hasExactKeys(secret, ['source', 'name'])
-    && secret['source'] === 'env'
-    && typeof secret['name'] === 'string';
-}
-
-function referenceFailure(
-  category: ConfigReferenceFailure['category'],
-  code: ConfigReferenceFailure['code'],
-  path: string,
-  environmentVariable: string,
-): ConfigReferenceFailure {
-  return Object.freeze({
-    category,
-    code,
-    referencePath: boundField(path || '/'),
-    environmentVariable: boundField(environmentVariable),
-  });
 }
 
 function configFailure(
@@ -263,25 +153,10 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-function appendPointer(path: string, segment: string): string {
-  return `${path}/${segment.replace(/~/g, '~0').replace(/\//g, '~1')}`;
-}
-
 function boundField(value: string): string {
   const codePoints = Array.from(value);
   if (codePoints.length <= MAX_DIAGNOSTIC_FIELD_LENGTH) return value;
   return `${codePoints.slice(0, MAX_DIAGNOSTIC_FIELD_LENGTH - 3).join('')}...`;
-}
-
-function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const keys = Object.keys(value);
-  return keys.length === expected.length && expected.every((key) => keys.includes(key));
-}
-
-function isReferenceFailure(value: unknown): value is ConfigReferenceFailure {
-  return isPlainObject(value)
-    && (value['category'] === 'config_invalid' || value['category'] === 'secret_unavailable')
-    && typeof value['code'] === 'string';
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

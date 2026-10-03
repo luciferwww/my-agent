@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   ContextOverflowError,
-  ModelInvocationError,
   type ModelInvocationPort,
   type ModelInvocationRequest,
   type ModelStreamEvent,

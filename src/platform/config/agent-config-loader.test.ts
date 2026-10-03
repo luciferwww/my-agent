@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DEFAULT_MEMORY_CONFIG } from '../../core/memory/index.js';
-import { DEFAULT_LOGGER_CONFIG } from '../logger/index.js';
 import { createDefaultAgentConfig } from './default-composition.js';
 import { AgentConfigError } from './agent-config-errors.js';
 import { loadAgentConfig } from './agent-config-loader.js';
@@ -62,15 +61,14 @@ describe('loadAgentConfig', () => {
     });
   });
 
-  it('defaults Runtime steering off and leaves the Runner budget absent', async () => {
+  it('defaults Runner steering off and leaves the call budget absent', async () => {
     await writeConfig({});
 
     const snapshot = await loadAgentConfig({ agentHome });
 
-    expect(snapshot.application.runtime).toEqual({
+    expect(snapshot.application.runner).toEqual({
       steeringEnabled: false,
     });
-    expect(snapshot.application.runner).toEqual({});
   });
 
   it.each([
@@ -85,12 +83,15 @@ describe('loadAgentConfig', () => {
     });
   });
 
-  it('rejects the retired Host namespace directly', async () => {
-    await writeConfig({ host: { mode: 'websocket' } });
+  it.each([
+    ['runtime', { steeringEnabled: true }],
+    ['host', { mode: 'websocket' }],
+  ])('rejects the retired %s namespace directly', async (fieldPath, value) => {
+    await writeConfig({ [fieldPath]: value });
 
     await expect(loadAgentConfig({ agentHome })).rejects.toMatchObject({
       code: 'UNKNOWN_NAMESPACE',
-      fieldPath: 'host',
+      fieldPath,
     });
   });
 
@@ -108,8 +109,7 @@ describe('loadAgentConfig', () => {
         defaults: {},
         list: [{ id: 'reviewer', default: true, memory: { enabled: false } }],
       },
-      runtime: { steeringEnabled: true },
-      runner: { maxLlmCalls: 3 },
+      runner: { steeringEnabled: true, maxLlmCalls: 3 },
       llm: {
         defaultModel: { providerId: 'builtin', modelId: 'model-a' },
         builtin: {
@@ -126,7 +126,7 @@ describe('loadAgentConfig', () => {
       extensions: {
         enabled: false,
         entries: {
-          relay: { enabled: true, config: { token: { $env: 'RELAY_TOKEN' } } },
+          relay: { enabled: true, config: { baseURL: 'https://relay.invalid' } },
         },
       },
     });
@@ -145,8 +145,10 @@ describe('loadAgentConfig', () => {
         models: [{ modelId: 'model-a', protocol: 'openai-responses' }],
       },
     });
-    expect(snapshot.application.runtime).toEqual({ steeringEnabled: true });
-    expect(snapshot.application.runner).toEqual({ maxLlmCalls: 3 });
+    expect(snapshot.application.runner).toEqual({
+      steeringEnabled: true,
+      maxLlmCalls: 3,
+    });
     expect(snapshot.application.agents.list).toEqual([
       { id: 'reviewer', default: true, memory: { enabled: false } },
     ]);
@@ -158,7 +160,7 @@ describe('loadAgentConfig', () => {
     expect(snapshot.extensions).toEqual({
       enabled: false,
       entries: {
-        relay: { enabled: true, config: { token: { $env: 'RELAY_TOKEN' } } },
+        relay: { enabled: true, config: { baseURL: 'https://relay.invalid' } },
       },
     });
   });
@@ -284,10 +286,8 @@ describe('loadAgentConfig', () => {
     [{ llm: { builtin: { baseURL: 'https://example.test', models: {} } } }, 'llm.builtin.models'],
     [{ agents: { defaults: { tools: { fs: {} } } } }, 'agents.defaults.tools.fs'],
     [{ agents: { list: [{ id: 'a', tools: { fs: {} } }] } }, 'agents.list[0].tools.fs'],
-    [{ runtime: [] }, 'runtime'],
-    [{ runtime: { steeringEnabled: 'yes' } }, 'runtime.steeringEnabled'],
-    [{ runtime: { unknown: true } }, 'runtime.unknown'],
     [{ runner: [] }, 'runner'],
+    [{ runner: { steeringEnabled: 'yes' } }, 'runner.steeringEnabled'],
     [{ runner: { maxLlmCalls: 0 } }, 'runner.maxLlmCalls'],
     [{ runner: { maxLlmCalls: 1.5 } }, 'runner.maxLlmCalls'],
     [{ runner: { maxLlmCalls: '12' } }, 'runner.maxLlmCalls'],
@@ -301,8 +301,8 @@ describe('loadAgentConfig', () => {
     [{ agents: { defaults: { memory: { chunking: { bogus: true } } } } }, 'agents.defaults.memory.chunking.bogus'],
     [{ agents: { defaults: { memory: { chunking: { overlapChars: 1600 } } } } }, 'agents.defaults.memory.chunking.overlapChars'],
     [{ agents: { list: [{ id: 'a', memory: { chunking: { chunkChars: 100, overlapChars: 100 } } }] } }, 'agents.list[0].memory.chunking.overlapChars'],
-    [{ agents: { defaults: { prompt: { safetyLevel: 'unsafe' } } } }, 'agents.defaults.prompt.safetyLevel'],
-    [{ agents: { defaults: { prompt: { bogus: true } } } }, 'agents.defaults.prompt.bogus'],
+    [{ agents: { defaults: { prompt: { safetyLevel: 'normal' } } } }, 'agents.defaults.prompt'],
+    [{ agents: { list: [{ id: 'a', prompt: { safetyLevel: 'normal' } }] } }, 'agents.list[0].prompt'],
     [{ agents: { defaults: { tools: { bogus: true } } } }, 'agents.defaults.tools.bogus'],
     [{ agents: { defaults: { context: { maxFileChars: -1 } } } }, 'agents.defaults.context.maxFileChars'],
     [{ agents: { defaults: { context: { bogus: true } } } }, 'agents.defaults.context.bogus'],

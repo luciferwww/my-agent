@@ -2,6 +2,7 @@
 
 > Status: Accepted
 > Decision date: 2026-09-28
+> Configuration ownership updated: 2026-10-03
 > Owner: Project owner
 > Related Plan/Specification: [Runner Steering Simplification Plan](../changes/archive/runner-steering-simplification/plan.md), [Runner Steering Simplification Specification](../changes/archive/runner-steering-simplification/runner-steering-simplification-specification.md)
 > Supersedes: the dual normal-queue/steering-inbox and terminal-promotion decisions in the accepted Runtime Steering and Runner Configuration design
@@ -41,7 +42,7 @@ authority.
 Adopt option 2.
 
 1. Every accepted Root user message enters one Runtime-owned per-Session FIFO.
-2. `runtime.steeringEnabled` controls whether Runner asks Runtime to claim a
+2. `runner.steeringEnabled` controls whether Runner asks Runtime to claim a
    ready batch.
 3. Runner checks Abort, terminal state, and Model-call capacity before claim.
 4. Runtime synchronously peeks from the FIFO head and atomically splices only

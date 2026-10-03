@@ -1,8 +1,11 @@
 export interface RunnerConfig {
+  readonly steeringEnabled: boolean;
   readonly maxLlmCalls?: number;
 }
 
-export const DEFAULT_RUNNER_CONFIG: RunnerConfig = Object.freeze({});
+export const DEFAULT_RUNNER_CONFIG: RunnerConfig = Object.freeze({
+  steeringEnabled: false,
+});
 
 export class RunnerConfigValidationError extends Error {
   readonly fieldPath?: string;
@@ -22,9 +25,16 @@ export function validateRunnerConfig(
   }
 
   for (const field of Object.keys(value)) {
-    if (field !== 'maxLlmCalls') {
+    if (field !== 'steeringEnabled' && field !== 'maxLlmCalls') {
       throw new RunnerConfigValidationError(field);
     }
+  }
+
+  if (
+    value['steeringEnabled'] !== undefined
+    && typeof value['steeringEnabled'] !== 'boolean'
+  ) {
+    throw new RunnerConfigValidationError('steeringEnabled');
   }
 
   const maxLlmCalls = value['maxLlmCalls'];

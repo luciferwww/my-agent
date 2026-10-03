@@ -113,11 +113,11 @@ describe('acquireExtensions', () => {
     expect(marker(EXECUTION_MARKER)).toBeUndefined();
   });
 
-  it('isolates missing environment values and secrets before import', async () => {
+  it('isolates missing apiKey credentials and legacy wrappers before import', async () => {
     await installFixture(extensionsDir, 'missing-value', 'missing-value', 'never-execute.js',
       objectSchema({ endpoint: { type: 'string' } }, ['endpoint']));
     await installFixture(extensionsDir, 'missing-secret', 'missing-secret', 'never-execute.js',
-      objectSchema({ token: { type: 'string' } }, ['token']));
+      objectSchema({ apiKey: { type: 'string' } }, ['apiKey']));
 
     const result = await acquireExtensions({
       extensionsDir: extensionsDir,
@@ -128,7 +128,7 @@ describe('acquireExtensions', () => {
         },
         'missing-secret': {
           enabled: true,
-          config: { token: { $secret: { source: 'env', name: 'MISSING_TOKEN' } } },
+          config: { apiKey: '${MISSING_TOKEN}' },
         },
       }),
       environment: {},
@@ -139,15 +139,13 @@ describe('acquireExtensions', () => {
         category: 'secret_unavailable',
         code: 'environment_secret_unavailable',
         extensionId: 'missing-secret',
-        referencePath: '/token',
+        referencePath: '/apiKey',
         environmentVariable: 'MISSING_TOKEN',
       }),
       expect.objectContaining({
         category: 'config_invalid',
-        code: 'environment_value_unavailable',
+        code: 'config_validation_failed',
         extensionId: 'missing-value',
-        referencePath: '/endpoint',
-        environmentVariable: 'MISSING_URL',
       }),
     ]);
     expect(marker(EXECUTION_MARKER)).toBeUndefined();
@@ -191,10 +189,10 @@ describe('acquireExtensions', () => {
       extensionsConfig: hostConfig(true, {
         'fixture-valid': {
           enabled: true,
-          config: { endpoint: { $env: 'SERVICE_URL' } },
+          config: { endpoint: 'https://relay.invalid' },
         },
       }),
-      environment: { SERVICE_URL: 'https://relay.invalid' },
+      environment: {},
     });
 
     expect(result.diagnostics).toEqual([]);
@@ -320,14 +318,14 @@ describe('acquireExtensions', () => {
     const secret = 'sentinel-secret-value';
     const warn = vi.spyOn(Logger.get('ExtensionAcquisition'), 'warn');
     await installFixture(extensionsDir, 'factory-throws', 'factory-throws', 'factory-throws.js',
-      objectSchema({ secret: { type: 'string' } }, ['secret']));
+      objectSchema({ apiKey: { type: 'string' } }, ['apiKey']));
 
     const result = await acquireExtensions({
       extensionsDir: extensionsDir,
       extensionsConfig: hostConfig(true, {
         'factory-throws': {
           enabled: true,
-          config: { secret: { $secret: { source: 'env', name: 'FACTORY_SECRET' } } },
+          config: { apiKey: '${FACTORY_SECRET}' },
         },
       }),
       environment: { FACTORY_SECRET: secret },

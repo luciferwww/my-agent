@@ -9,7 +9,6 @@ export type {
   EmbeddingConfig,
   ChunkingConfig,
   SearchConfig,
-  PromptConfig,
   ToolsConfig,
   AgentContextConfig,
   SubagentsConfig,
@@ -17,10 +16,8 @@ export type {
   SubagentToolsConfig,
   DeepPartial,
   EmbeddingProviderType,
-  SafetyLevel,
 } from './types.js';
 export type { RunnerConfig } from '../../core/runner/config.js';
-export type { RuntimeConfig } from '../../runtime/config.js';
 export type {
   BuiltinLlmProviderConfig,
   BuiltinModelRegistration,
@@ -33,7 +30,7 @@ export { createDefaultAgentConfig } from './default-composition.js';
 export { DEFAULT_LOGGER_CONFIG } from '../logger/index.js';
 
 // ── Resolution ────────────────────────────────────────────
-export { resolveAgentConfig, getEnvOverrides, deepMerge } from './loader.js';
+export { resolveAgentConfig, deepMerge } from './loader.js';
 export type { ResolveOptions } from './loader.js';
 
 // ── Agent configuration loader ───────────────────────────

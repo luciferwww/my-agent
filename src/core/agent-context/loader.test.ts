@@ -105,11 +105,6 @@ describe('loadContextFiles', () => {
       const content = 'A'.repeat(1000);
       const warn = vi.fn();
 
-      const files = await loadContextFiles(agentHome, {
-        maxFileChars: 200,
-        warn,
-      });
-
       await writeFile(join(agentContextDir, 'IDENTITY.md'), content, 'utf-8');
       const result = await loadContextFiles(agentHome, {
         maxFileChars: 200,

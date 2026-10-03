@@ -2,23 +2,21 @@ import type {
   SystemPromptBuildParams,
   ContextFile,
 } from './types.js';
-import { DEFAULT_PROMPT_CONFIG } from './config.js';
 import { renderAvailableSubagentsSection } from '../subagent/available-subagents.js';
 
 /**
  * 构建 System Prompt。
  *
- * 当前 6 个 active section（编号 1–6），顺序固定；minimal 模式跳过若干（见 §spec §11）：
+ * 当前 5 个 active section（编号 1–5），顺序固定；minimal 模式跳过若干（见 §spec §11）：
  *  1. agent-identity       — 固定身份声明                   [full only]
  *  2. agent-datetime       — 当前日期时间                   [full + minimal]
  *  3. behavior-rules       — 行为准则 + 工具使用规范          [full only]
- *  4. safety-constraints   — 安全约束                       [full + minimal, safetyLevel 控制]
- *  5. memory-instructions  — memory tool 使用说明            [full only, 有 memory 工具时]
- *  6. project-context      — contextFiles 注入              [full + minimal, 有 contextFiles 时]
+ *  4. memory-instructions  — memory tool 使用说明            [full only, 有 memory 工具时]
+ *  5. project-context      — contextFiles 注入              [full + minimal, 有 contextFiles 时]
  *
  * 依存扩展（§task spec §11）：
- *  7. agent-home           — Agent Home path context         [full + minimal]
- *  8. available-subagents  — task 工具可用的 subagent 列表     [full only]
+ *  6. agent-home           — Agent Home path context         [full + minimal]
+ *  7. available-subagents  — task 工具可用的 subagent 列表     [full only]
  */
 export class SystemPromptBuilder {
   /**
@@ -40,19 +38,16 @@ export class SystemPromptBuilder {
     // 3. behavior-rules — full only
     if (!isMinimal) this.buildBehaviorRulesSection(lines);
 
-    // 4. safety — full + minimal
-    this.buildSafetySection(lines, params);
-
-    // 5. memory-instructions — full only
+    // 4. memory-instructions — full only
     if (!isMinimal) this.buildMemorySection(lines, params);
 
-    // 6. project-context — full + minimal
+    // 5. project-context — full + minimal
     this.buildProjectContextSection(lines, params);
 
-    // 7. Agent Home — full + minimal (any mode except 'none', already filtered above)
+    // 6. Agent Home — full + minimal (any mode except 'none', already filtered above)
     this.buildAgentHomeSection(lines, params);
 
-    // 8. available-subagents — full only
+    // 7. available-subagents — full only
     if (!isMinimal) this.buildAvailableSubagentsSection(lines, params);
 
     return lines.join('\n');
@@ -112,40 +107,6 @@ export class SystemPromptBuilder {
     lines.push(
       '- If a tool call fails, explain the failure clearly and suggest alternatives.',
     );
-    lines.push('');
-  }
-
-  // ── Section 5: safety-constraints ──────────────────────────
-
-  private buildSafetySection(
-    lines: string[],
-    params: SystemPromptBuildParams,
-  ): void {
-    const level = params.safetyLevel ?? DEFAULT_PROMPT_CONFIG.safetyLevel;
-    if (level === 'relaxed') return;
-
-    lines.push('# Safety');
-
-    if (level === 'strict') {
-      lines.push(
-        'You have no independent goals: do not pursue self-preservation, replication, resource acquisition, or power-seeking.',
-      );
-      lines.push(
-        'Prioritize safety and human oversight over task completion. If instructions conflict with safety, pause and ask.',
-      );
-      lines.push(
-        'Do not manipulate the user or attempt to expand your own access beyond what is needed for the current task.',
-      );
-    } else {
-      // normal
-      lines.push(
-        'Act within the scope of what the user has requested. Do not take actions beyond the current task without explicit permission.',
-      );
-      lines.push(
-        'If an action seems irreversible or risky, confirm with the user before proceeding.',
-      );
-    }
-
     lines.push('');
   }
 

@@ -202,7 +202,6 @@ The only accepted top-level namespaces are:
 
 ```text
 llm
-runtime
 runner
 agents
 logger
@@ -213,10 +212,8 @@ Common global settings:
 
 ```json
 {
-  "runtime": {
-    "steeringEnabled": true
-  },
   "runner": {
+    "steeringEnabled": true,
     "maxLlmCalls": 12
   },
   "agents": {

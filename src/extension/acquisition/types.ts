@@ -59,7 +59,6 @@ export type ExtensionLoaderDiagnosticCode =
   | 'extension_disabled'
   | 'stale_configured_id'
   | 'entry_config_invalid'
-  | 'environment_value_unavailable'
   | 'environment_secret_unavailable'
   | 'config_schema_invalid'
   | 'config_validation_failed'

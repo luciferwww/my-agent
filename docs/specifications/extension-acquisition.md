@@ -43,7 +43,7 @@ Descriptor schema is Draft-07, root object, `additionalProperties: false`, with 
 
 Global `extensions.enabled` defaults true and short-circuits discovery when false. An installed candidate requires a matching `entries.<id>` object. Within that object, omitted `enabled` defaults to true and explicit `false` disables it.
 
-Exact `$env` and environment-backed `$secret` references are materialized before strict Ajv validation. Defaults are allowed; coercion and unknown-property removal are not. The synchronous factory receives only defensively frozen scoped config and must not create resources. After all static checks, one Host-owned Jiti Loader loads source and built entries through the same path.
+The root `apiKey` field may be a literal string or one exact `${ENV_VAR}` credential reference. That reference is materialized before strict Ajv validation; no generic environment-reference syntax is supported for other fields. Defaults are allowed; coercion and unknown-property removal are not. The synchronous factory receives only defensively frozen scoped config and must not create resources. After all static checks, one Host-owned Jiti Loader loads source and built entries through the same path.
 
 The returned Unit must match Descriptor ID, use source `external`, be optional and initially enabled, have no dependencies, and expose callable `create`. Loader never invokes `create`, `start`, `stop`, or registration.
 
@@ -65,7 +65,7 @@ Acquisition ends at `LoadedRuntimeUnit[]`. [Runtime Composition](runtime-composi
 
 ## Acceptance scenarios
 
-Cover explicit-root handoff, missing/invalid roots, installation containment and immutability, reparse rejection, Descriptor/schema validation, renamed-directory invariance, duplicate isolation, explicit/global enablement, environment/secret materialization and redaction, import/export/factory failure, Unit normalization, deterministic frozen output, bounded secret-free logs, bad-neighbor isolation, and Runtime publication integration.
+Cover explicit-root handoff, missing/invalid roots, installation containment and immutability, reparse rejection, Descriptor/schema validation, renamed-directory invariance, duplicate isolation, explicit/global enablement, exact `apiKey` credential materialization and redaction, import/export/factory failure, Unit normalization, deterministic frozen output, bounded secret-free logs, bad-neighbor isolation, and Runtime publication integration.
 
 ## Related authority
 

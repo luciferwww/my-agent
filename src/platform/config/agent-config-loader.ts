@@ -8,7 +8,6 @@ import {
   type LLMConfig,
 } from '../../builtins/providers/builtin/index.js';
 import { DEFAULT_RUNNER_CONFIG } from '../../core/runner/config.js';
-import { DEFAULT_RUNTIME_CONFIG } from '../../runtime/config.js';
 import { DEFAULT_LOGGER_CONFIG, LoggerConfigValidationError, validateLoggerConfig } from '../logger/index.js';
 import { createDefaultAgentConfig } from './default-composition.js';
 import { deepMerge } from './loader.js';
@@ -22,7 +21,7 @@ import {
   CredentialMaterializationError,
   materializeExactStringCredential,
 } from './credential-materialization.js';
-import { validateAgentLeafConfig, validateRuntimeAndRunnerConfig } from './agent-leaf-validation.js';
+import { validateAgentLeafConfig, validateRunnerConfigSection } from './agent-leaf-validation.js';
 import type {
   AgentConfigDocument,
   AgentsConfig,
@@ -32,7 +31,6 @@ import type {
 const CONFIG_FILE_NAME = 'config.json';
 const TOP_LEVEL_NAMESPACES = new Set([
   'llm',
-  'runtime',
   'runner',
   'agents',
   'logger',
@@ -60,17 +58,7 @@ export async function loadAgentConfig(options: {
   const document = await readAgentConfigDocument(options.agentHome, dependencies);
   const llm = validateLlm(document.llm, options.environment ?? process.env);
   validateAgentConfigDocument(document);
-  const globalPolicyInput = {
-    runtime: document.runtime,
-    runner: document.runner,
-  };
-  validateRuntimeAndRunnerConfig(globalPolicyInput, '');
-  const runtime = document.runtime === undefined
-    ? structuredClone(DEFAULT_RUNTIME_CONFIG)
-    : deepMerge(
-        structuredClone(DEFAULT_RUNTIME_CONFIG),
-        structuredClone(document.runtime),
-      );
+  validateRunnerConfigSection(document.runner, 'runner');
   const runner = document.runner === undefined
     ? structuredClone(DEFAULT_RUNNER_CONFIG)
     : deepMerge(
@@ -109,7 +97,7 @@ export async function loadAgentConfig(options: {
   };
 
   return deepFreeze({
-    application: { llm, runtime, runner, agents, logger },
+    application: { llm, runner, agents, logger },
     extensions,
   });
 }
@@ -225,6 +213,9 @@ function validateAgents(value: AgentConfigDocument['agents']): void {
     if ('workspace' in value.defaults) {
       throw invalidAgentConfigField('agents.defaults.workspace');
     }
+    if ('prompt' in value.defaults) {
+      throw invalidAgentConfigField('agents.defaults.prompt');
+    }
     rejectGlobalPolicyConfig(value.defaults, 'agents.defaults');
     rejectRetiredToolsConfig(value.defaults, 'agents.defaults');
     validateAgentLeafConfig(value.defaults, 'agents.defaults');
@@ -248,6 +239,9 @@ function validateAgents(value: AgentConfigDocument['agents']): void {
     }
     if ('llm' in entry) {
       throw invalidAgentConfigField(`${entryPath}.llm`);
+    }
+    if ('prompt' in entry) {
+      throw invalidAgentConfigField(`${entryPath}.prompt`);
     }
     rejectGlobalPolicyConfig(entry, entryPath);
     rejectRetiredToolsConfig(entry, entryPath);

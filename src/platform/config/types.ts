@@ -1,9 +1,7 @@
 import type { ModelReference } from '../../core/model-resolution/index.js';
 import type { LLMConfig } from '../../builtins/providers/builtin/index.js';
 import type { RunnerConfig } from '../../core/runner/config.js';
-import type { RuntimeConfig } from '../../runtime/config.js';
 import type { MemoryConfig } from '../../core/memory/index.js';
-import type { PromptConfig } from '../../core/prompt/index.js';
 import type { ToolPolicyConfig } from '../../core/tools/index.js';
 import type { AgentContextConfig } from '../../core/agent-context/index.js';
 import type { CompactionConfig } from '../../core/runner/index.js';
@@ -22,7 +20,6 @@ export type DeepPartial<T> = {
 export type {
   MemoryConfig,
   MemoryConfig as MemoryModuleConfig,
-  PromptConfig,
   ToolPolicyConfig,
   ToolPolicyConfig as ToolsConfig,
   AgentContextConfig,
@@ -41,12 +38,10 @@ export type {
   MemorySearchConfig as SearchConfig,
   EmbeddingProviderType,
 } from '../../core/memory/index.js';
-export type { SafetyLevel } from '../../core/prompt/index.js';
 export type { LogLevel as LoggerLevel } from '../logger/index.js';
 
 export interface AgentDefaults {
   readonly memory: MemoryConfig;
-  readonly prompt: PromptConfig;
   readonly tools: ToolPolicyConfig;
   readonly context: AgentContextConfig;
   readonly compaction: CompactionConfig;
@@ -66,7 +61,6 @@ export interface AgentsConfig {
 export interface AppConfig {
   readonly agentHome: string;
   readonly llm: LLMConfig;
-  readonly runtime: RuntimeConfig;
   readonly runner: RunnerConfig;
   readonly agents: AgentsConfig;
   readonly logger: LoggerConfig;
@@ -74,7 +68,6 @@ export interface AppConfig {
 
 export interface ApplicationConfigProjection {
   readonly llm: LLMConfig;
-  readonly runtime: RuntimeConfig;
   readonly runner: RunnerConfig;
   readonly agents: AgentsConfig;
   readonly logger: LoggerConfig;
@@ -85,7 +78,6 @@ interface AgentApplicationDocument {
     readonly defaultModel?: ModelReference;
     readonly builtin?: unknown;
   };
-  readonly runtime?: Partial<RuntimeConfig>;
   readonly runner?: Partial<RunnerConfig>;
   readonly agents?: {
     readonly defaults?: DeepPartial<AgentDefaults>;

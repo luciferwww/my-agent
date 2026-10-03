@@ -5,7 +5,6 @@ import {
   TOOL_IDLE_TIMEOUT_MS,
   TOOL_TOTAL_TIMEOUT_MS,
   type ExecutionCancelReason,
-  type ExecutionOutcome,
   type ExecutionTerminalFact,
   type ToolExecutionOutput,
 } from '../../tools/index.js';

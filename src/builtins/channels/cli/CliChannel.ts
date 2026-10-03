@@ -22,7 +22,6 @@ const PREVIEW_HEAD_LINES = 10;
 const PREVIEW_TAIL_LINES = 6;
 // Per-line cap so a single very long line can't blow up the preview format.
 const PREVIEW_LINE_MAX_CHARS = 200;
-const MAX_TOOL_RESULT_PREVIEW = 200;
 
 /**
  * Ctrl+C 双击关闭窗口。进程级 force policy 由 Host 独占。

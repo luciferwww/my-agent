@@ -4,7 +4,6 @@ import type {
   MemoryStore,
   MemorySearchResult,
   SearchOptions,
-  EmbeddingProvider,
 } from './types.js';
 import {
   DEFAULT_MEMORY_CONFIG,
@@ -44,7 +43,6 @@ export class MemoryManager {
   private indexer: MemoryIndexer;
   private searcher: MemorySearcher;
   private recallTracker: RecallTracker;
-  private embeddingProvider: EmbeddingProvider | null;
 
   private constructor(
     agentHome: string,
@@ -52,14 +50,12 @@ export class MemoryManager {
     indexer: MemoryIndexer,
     searcher: MemorySearcher,
     recallTracker: RecallTracker,
-    embeddingProvider: EmbeddingProvider | null,
   ) {
     this.agentHome = agentHome;
     this.store = store;
     this.indexer = indexer;
     this.searcher = searcher;
     this.recallTracker = recallTracker;
-    this.embeddingProvider = embeddingProvider;
   }
 
   /**
@@ -99,7 +95,6 @@ export class MemoryManager {
       indexer,
       searcher,
       recallTracker,
-      embeddingProvider,
     );
 
     // 4. 首次索引

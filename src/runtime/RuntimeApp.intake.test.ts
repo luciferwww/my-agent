@@ -1078,8 +1078,7 @@ async function buildApp(
           ],
         },
       },
-      runtime: { steeringEnabled: options.steerMode ?? false },
-      runner: {},
+      runner: { steeringEnabled: options.steerMode ?? false },
       agents: {
         defaults: createDefaultAgentConfig(),
         list: [],

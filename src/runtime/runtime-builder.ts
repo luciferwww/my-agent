@@ -598,7 +598,6 @@ function assembleLoadedRuntimeUnits(params: {
         maxTotalChars: resources.resolvedConfig.context.maxTotalChars,
       }),
       agentHome: options.agentHome,
-      promptSafetyLevel: resources.resolvedConfig.prompt.safetyLevel,
       resolveToolPolicy: (profile) => createApplicationToolPolicy(
         resolveSubagentTools(
           profile,

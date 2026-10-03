@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ModelInvocationError, type ChatMessage } from '../core/model-invocation/index.js';
+import { ModelInvocationError } from '../core/model-invocation/index.js';
 import type {
   ApprovalClosedResult,
   ApprovalDecision,
@@ -14,7 +14,6 @@ import type {
 } from '../core/channel/index.js';
 import type {
   AgentEvent,
-  BeforeToolCallHook,
   SteeringMessage,
 } from '../core/runner/index.js';
 import type { RunParams, RunResult } from '../core/runner/types.js';
@@ -38,7 +37,6 @@ import type {
 import type { RuntimeDeadlineDriver, RuntimeDeadlineRaceResult } from './runtime-deadline.js';
 import { Logger } from '../platform/logger/index.js';
 import { DEFAULT_RUNNER_CONFIG } from '../core/runner/config.js';
-import { DEFAULT_RUNTIME_CONFIG } from './config.js';
 
 function testApplicationConfig(
   defaultModel: { readonly providerId: string; readonly modelId: string } | null = {
@@ -54,7 +52,6 @@ function testApplicationConfig(
         models: [{ modelId: 'test-model', protocol: 'openai-responses' }],
       },
     },
-    runtime: structuredClone(DEFAULT_RUNTIME_CONFIG),
     runner: structuredClone(DEFAULT_RUNNER_CONFIG),
     agents: {
       defaults: createDefaultAgentConfig(),
@@ -515,7 +512,7 @@ describe('RuntimeApp', () => {
       agentHome,
       applicationConfig: {
         ...testApplicationConfig(),
-        runner: { maxLlmCalls: 7 },
+        runner: { steeringEnabled: false, maxLlmCalls: 7 },
       },
       cliOverrides: { memory: { enabled: false } },
       dependencies: createTestDependencies({
@@ -603,7 +600,6 @@ describe('RuntimeApp', () => {
           defaultModel: { providerId: 'builtin', modelId: 'staged-model' },
           builtin: { baseURL: 'https://example.test/v1', models: [] },
         },
-        runtime: structuredClone(DEFAULT_RUNTIME_CONFIG),
         runner: structuredClone(DEFAULT_RUNNER_CONFIG),
         agents: {
           defaults: createDefaultAgentConfig(),
@@ -1306,7 +1302,7 @@ describe('RuntimeApp', () => {
     const receivingChannel = createTestChannel('receiving-channel');
     const receivedEvents = vi.fn();
     receivingChannel.channel.send = receivedEvents;
-    const app = await RuntimeApp.create({
+    await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [failingChannel.unit, receivingChannel.unit],
       applicationConfig: testApplicationConfig(),
@@ -1350,7 +1346,7 @@ describe('RuntimeApp', () => {
       createMemoryManager: async () => null,
     });
     const testChannel = createTestChannel('observer-failure-channel');
-    const app = await RuntimeApp.create({
+    await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       applicationConfig: testApplicationConfig(),
@@ -1834,12 +1830,12 @@ describe('RuntimeApp', () => {
     });
 
     const testChannel = createTestChannel('steer-test');
-    const app = await RuntimeApp.create({
+    await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       applicationConfig: {
         ...testApplicationConfig(),
-        runtime: { steeringEnabled: true },
+        runner: { steeringEnabled: true },
       },
       cliOverrides: {
         memory: { enabled: false },
@@ -1906,7 +1902,7 @@ describe('RuntimeApp', () => {
       loadedUnits: [testChannel.unit],
       applicationConfig: {
         ...testApplicationConfig(),
-        runtime: { steeringEnabled: true },
+        runner: { steeringEnabled: true },
       },
       cliOverrides: { memory: { enabled: false } },
       dependencies: createTestDependencies({
@@ -2103,7 +2099,7 @@ describe('RuntimeApp', () => {
       createMemoryManager: async () => null,
     });
     const testChannel = createTestChannel('no-approval-channel');
-    const app = await RuntimeApp.create({
+    await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       applicationConfig: testApplicationConfig(),
@@ -2298,7 +2294,6 @@ describe('RuntimeApp', () => {
       });
 
       // Seed three queued messages directly.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
       queueMap.set('main', [{ dummy: 1 }, { dummy: 2 }, { dummy: 3 }]);
 
@@ -2417,7 +2412,7 @@ describe('RuntimeApp', () => {
         loadedUnits: [testChannel.unit],
         applicationConfig: {
           ...testApplicationConfig(),
-          runtime: { steeringEnabled: true },
+          runner: { steeringEnabled: true },
         },
         cliOverrides: {
           memory: { enabled: false },
@@ -2479,7 +2474,6 @@ describe('RuntimeApp', () => {
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
       queueMap.set('sk1', [{ x: 1 }]);
       queueMap.set('sk2', [{ y: 1 }, { y: 2 }]);
@@ -2512,7 +2506,6 @@ describe('RuntimeApp', () => {
         }),
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const activeAborts = (app.application as any).activeAborts as Map<string, AbortController>;
       const staleController = new AbortController();
       activeAborts.set('main', staleController);
@@ -2543,7 +2536,6 @@ describe('RuntimeApp', () => {
       });
       armed = true;
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
       queueMap.set('main', [{ dummy: 1 }]);
 
@@ -2917,7 +2909,6 @@ describe('RuntimeApp', () => {
       unsubscribeDeletion();
 
       // Seed a queued message for one Session.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
       queueMap.set('sk-with-queue', [{ x: 1 }, { x: 2 }]);
 

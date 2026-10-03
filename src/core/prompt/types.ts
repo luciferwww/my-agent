@@ -69,8 +69,6 @@ export interface SystemPromptBuildParams {
   mode?: PromptMode;
   /** Narrow Tool-name projection used only for capability-conditional prompt sections. */
   toolNames?: readonly string[];
-  /** 安全约束级别，默认 'normal'，'relaxed' 跳过安全 Section */
-  safetyLevel?: 'strict' | 'normal' | 'relaxed';
   /** 注入的上下文文件（IDENTITY.md、SOUL.md 等） */
   contextFiles?: ContextFile[];
   /** Agent Home absolute path rendered in every mode except `'none'`. */

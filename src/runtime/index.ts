@@ -1,10 +1,4 @@
 export { RuntimeApp } from './RuntimeApp.js';
-export {
-  DEFAULT_RUNTIME_CONFIG,
-  RuntimeConfigValidationError,
-  validateRuntimeConfig,
-} from './config.js';
-export type { RuntimeConfig } from './config.js';
 export type {
   DefaultModelSelection,
   ModelCatalogEntry,

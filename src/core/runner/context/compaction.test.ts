@@ -150,7 +150,7 @@ describe('splitForCompaction', () => {
       assistantMsg('reply 2'),
     ];
 
-    const { toCompress, toKeep } = splitForCompaction(messages, 1);
+    const { toKeep } = splitForCompaction(messages, 1);
 
     // toKeep 应该包含 turn 2 及其之前（保护 tool_use/tool_result 配对）
     // turn 2 之前的 tool_result 不算用户轮次，所以保留区起点还是 turn 2
@@ -196,7 +196,6 @@ describe('compactMessages', () => {
     return {
       chatStream: vi.fn().mockImplementation(async function* () {
         throw new Error('LLM service unavailable');
-        // eslint-disable-next-line no-unreachable
         yield; // TypeScript 需要 generator 函数有 yield
       }),
     };

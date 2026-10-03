@@ -1,14 +1,12 @@
-import type { AgentDefaults } from '../platform/config/types.js';
 import type { SystemPromptBuildParams } from '../core/prompt/types.js';
 import type { ContextFile } from '../core/agent-context/types.js';
 import type { AvailableSubagentEntry } from '../core/subagent/available-subagents.js';
 import type { RunTurnParams } from './types.js';
 
 export interface BuildSystemPromptParamsInput {
-  config: AgentDefaults;
   contextFiles: ContextFile[];
   toolNames: readonly string[];
-  overrides: Pick<RunTurnParams, 'promptMode' | 'safetyLevel'>;
+  overrides: Pick<RunTurnParams, 'promptMode'>;
   /** Agent Home absolute path injected by RuntimeApp for the prompt path section. */
   agentHome?: string;
   /**
@@ -23,7 +21,6 @@ export function buildSystemPromptParams(
 ): SystemPromptBuildParams {
   return {
     mode: input.overrides.promptMode,
-    safetyLevel: input.overrides.safetyLevel ?? input.config.prompt.safetyLevel,
     contextFiles: input.contextFiles,
     toolNames: input.toolNames,
     agentHome: input.agentHome,

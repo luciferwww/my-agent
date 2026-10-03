@@ -170,7 +170,7 @@ describe('FT-12 Current Architecture authority', () => {
     expect(runtime).toContain('Runtime does not invent an implicit Provider');
     expect(runtime).toContain('`unitId` and `phase=create`');
     expect(runtime).toContain('Candidate cleanup failure remains fail-closed');
-    expect(runtime).toContain('When `runtime.steeringEnabled` is true');
+    expect(runtime).toContain('When `runner.steeringEnabled` is true');
     expect(runtime).toContain('largest contiguous compatible prefix');
     expect(runtime).toContain('`deny` is final');
     expect(runtime).toContain('`SessionPermissionRegistry` is Runtime-owned process-local state');
@@ -209,10 +209,10 @@ describe('FT-12 Current Architecture authority', () => {
     const config = requireDocument('configuration').content;
     expect(config).toContain('## 3. Precedence and merge');
     expect(config).toContain('[Model Resolution](model-resolution.md) owns canonical identity');
-    expect(config).toContain('| `runtime` | `steeringEnabled=false` |');
+    expect(config).toContain('| `runner` | `steeringEnabled=false`; optional positive integer `maxLlmCalls`');
     expect(config).toContain('omitted means no Model-call count limit');
-    expect(config).toContain('Runtime and Runner are global Application policy');
-    expect(config).toContain('Agent selection, environment overrides, and caller Agent overrides cannot change them');
+    expect(config).toContain('Runner is global Application policy');
+    expect(config).toContain('Agent selection, environment overrides, and caller Agent overrides cannot change it');
     expect(config).toContain('## 6. Evidence');
 
     const provider = requireDocument('providers').content;

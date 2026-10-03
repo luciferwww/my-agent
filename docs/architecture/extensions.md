@@ -42,11 +42,11 @@ Configuration failures are classified before acquisition.
 When global `extensions.enabled` is `false`, acquisition returns an empty result without discovery. An installed Extension without a matching configured entry remains disabled. For an existing entry, omitted `enabled` defaults to `true` and explicit `false` disables it. Before a factory receives its configuration, acquisition:
 
 1. selects the Descriptor-owned namespace;
-2. materializes generic `$env` and environment-backed `$secret` references from the Host process environment;
+2. materializes a root `apiKey` when it is one exact `${ENV_VAR}` credential reference;
 3. validates the materialized value against the Descriptor-owned Draft-07 schema;
 4. defensively freezes the validated scoped value.
 
-Environment variable names are deployment inputs selected by Host configuration, not centrally typed Extension fields. A disabled or invalid candidate gains no execution or lifecycle authority.
+Other Extension fields have no generic environment-reference syntax and remain ordinary values defined by the Descriptor-owned schema. A disabled or invalid candidate gains no execution or lifecycle authority.
 
 ## 4. Discovery and loading
 

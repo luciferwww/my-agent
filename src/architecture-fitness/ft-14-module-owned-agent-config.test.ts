@@ -17,7 +17,6 @@ describe('FT-14 module-owned Agent configuration', () => {
     );
     for (const leaf of [
       'MemoryConfig',
-      'PromptConfig',
       'ToolPolicyConfig',
       'AgentContextConfig',
       'CompactionConfig',
@@ -31,7 +30,7 @@ describe('FT-14 module-owned Agent configuration', () => {
       join(REPOSITORY_ROOT, 'src', 'platform', 'config', 'default-composition.ts'),
       'utf8',
     );
-    expect(composition).not.toMatch(/1600|20_000|150_000|safetyLevel:\s*['"]normal/u);
+    expect(composition).not.toMatch(/1600|20_000|150_000/u);
   });
 
   it('prevents leaf modules from depending on Platform Configuration', async () => {

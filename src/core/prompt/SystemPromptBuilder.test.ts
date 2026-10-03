@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { SystemPromptBuilder } from './SystemPromptBuilder.js';
 
 describe('SystemPromptBuilder', () => {
@@ -10,7 +10,7 @@ describe('SystemPromptBuilder', () => {
       const prompt = new SystemPromptBuilder().build();
       expect(prompt).toContain('# Identity');
       expect(prompt).toContain('# Behavior Rules');
-      expect(prompt).toContain('# Safety');
+      expect(prompt).not.toContain('# Safety');
     });
 
     it('full mode includes all sections', () => {
@@ -18,7 +18,6 @@ describe('SystemPromptBuilder', () => {
       expect(prompt).toContain('# Identity');
       expect(prompt).toContain('# Current Date & Time');
       expect(prompt).toContain('# Behavior Rules');
-      expect(prompt).toContain('# Safety');
     });
 
     it('minimal mode skips memory-instructions', () => {
@@ -42,7 +41,7 @@ describe('SystemPromptBuilder', () => {
       expect(prompt).not.toContain('<available-subagents>');
     });
 
-    it('minimal mode keeps datetime / safety / project-context / Agent Home', () => {
+    it('minimal mode keeps datetime / project-context / Agent Home', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
         contextFiles: [{ path: 'IDENTITY.md', content: '# test' }],
@@ -51,7 +50,6 @@ describe('SystemPromptBuilder', () => {
       expect(prompt).toContain('# Current Date & Time');
       // tool-definitions section is disabled; tools are passed via LLM API
       expect(prompt).not.toContain('# Available Tools');
-      expect(prompt).toContain('# Safety');
       expect(prompt).toContain('# Project Context');
       expect(prompt).toContain('# Agent Home');
       expect(prompt).toContain('Your agent home directory is: /work');
@@ -83,13 +81,6 @@ describe('SystemPromptBuilder', () => {
     });
   });
 
-  // ── tool-definitions ──────────────────────────────────────
-  //
-  // 该 section 已在 SystemPromptBuilder 中停用（buildToolDefinitionsSection
-  // 被注释掉）。工具定义现由 LLM API 的 `tools` 参数传递，在 system
-  // prompt 里重复列为冗余。原有测试（断言 # Available Tools 出现 /
-  // **search_web** 等）随代码一同移除。
-
   // ── behavior-rules ────────────────────────────────────────
 
   describe('behavior-rules', () => {
@@ -98,27 +89,6 @@ describe('SystemPromptBuilder', () => {
       expect(prompt).toContain('# Behavior Rules');
       expect(prompt).toContain('Be concise and direct');
       expect(prompt).toContain('Only call a tool when it is clearly necessary');
-    });
-  });
-
-  // ── safety-constraints ────────────────────────────────────
-
-  describe('safety-constraints', () => {
-    it('includes normal safety by default', () => {
-      const prompt = new SystemPromptBuilder().build();
-      expect(prompt).toContain('# Safety');
-      expect(prompt).toContain('Act within the scope');
-    });
-
-    it('includes strict safety when safetyLevel is strict', () => {
-      const prompt = new SystemPromptBuilder().build({ safetyLevel: 'strict' });
-      expect(prompt).toContain('# Safety');
-      expect(prompt).toContain('no independent goals');
-    });
-
-    it('skips safety section when safetyLevel is relaxed', () => {
-      const prompt = new SystemPromptBuilder().build({ safetyLevel: 'relaxed' });
-      expect(prompt).not.toContain('# Safety');
     });
   });
 

@@ -15,7 +15,6 @@ export interface SubagentExecutorDeps {
   readonly systemPromptBuilder: SystemPromptBuilder;
   readonly loadContextFilesFromDir: (absDir: string) => Promise<ContextFile[]>;
   readonly agentHome: string;
-  readonly promptSafetyLevel: 'relaxed' | 'normal' | 'strict';
   readonly resolveToolPolicy: (profile: SubagentProfile) => ApplicationToolPolicy;
 }
 
@@ -72,7 +71,6 @@ export class SubagentExecutor {
       contextFiles: mergedFiles,
       toolNames: tools.map(({ name }) => name),
       agentHome: this.deps.agentHome,
-      safetyLevel: this.deps.promptSafetyLevel,
     });
 
     return {

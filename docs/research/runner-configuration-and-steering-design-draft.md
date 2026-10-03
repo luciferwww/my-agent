@@ -2,10 +2,11 @@
 
 > 状态：非权威研究草稿
 > 创建日期：2026-09-20
-> 范围：Runtime steering 开关、Runtime/Runner 配置与默认值所有权、pending steering 批处理、Model 调用预算
+> 范围：Runner steering 开关、Runner 配置与默认值所有权、pending steering 批处理、Model 调用预算
 > 后续工件：[Runtime Steering and Runner Configuration Archived Change](../changes/archive/runtime-steering-and-runner-configuration/plan.md)
 > 约束：本文不授权实现；后续 Active Change 的 Plan 和 Specification 优先于本文，不覆盖 Current Architecture、Accepted Decisions、Stable Specifications 或源代码
-> 当前讨论结论：Runtime owns steering policy/default；Runner owns Model-loop limits and safe injection points；新设计不提供旧字段兼容路径；`maxLlmCalls` 可选且默认无限制；显式上限保留现有终止逻辑，Client 根据现有 `stopReason` 提示；正常结束时迟到 steering 转入下一 Turn FIFO
+> 2026-10-03修订：单一Session FIFO落地后，Runtime只提供原子claim adapter，Runner决定是否及何时claim；`steeringEnabled`因此迁移到Runner配置，不保留旧字段兼容路径。
+> 当前讨论结论：Runner owns steering execution policy/default、Model-loop limits and safe injection points；Runtime owns FIFO storage and atomic claim；`maxLlmCalls`可选且默认无限制；显式上限保留现有终止逻辑，Client根据现有`stopReason`提示；正常结束时迟到steering留在下一Turn FIFO
 
 ## 1. 背景
 
@@ -13,9 +14,9 @@
 
 1. 将全局配置
    `runner.inTurnMessageMode: 'steer' | 'followup'`
-   简化并迁移为 `runtime.steeringEnabled: boolean`；
-2. 按项目已经确立的模块配置规则，分别调整 Runtime 与 Runner 配置 Contract、
-   默认值和 Platform Configuration 之间的所有权与依赖方向；
+   简化并迁移为 `runner.steeringEnabled: boolean`；
+2. 按项目已经确立的模块配置规则，调整Runner配置Contract、默认值和Platform
+   Configuration之间的所有权与依赖方向；
 3. 调研多条 pending steering message 应逐条处理、保留为多条消息后批量处理，
    还是先合并成一条文本再交给模型；
 4. 调研 `maxLlmCalls=12` 是否应继续作为每个 Turn 的默认硬上限。
@@ -206,13 +207,14 @@ pi 的 pending queue 支持两种消费方式：
 Tool 超时、Subagent 深度与并发，或者提供可选执行预算。这些限制不等同于一个
 固定的成功 Model 调用次数上限。
 
-## 4. 设计结论一：Steering 全局开关
+## 4. 设计结论一：Steering Runner 开关
 
 确认配置为：
 
 ```ts
-interface RuntimeConfig {
+interface RunnerConfig {
   readonly steeringEnabled: boolean;
+  readonly maxLlmCalls?: number;
 }
 ```
 
@@ -222,14 +224,14 @@ interface RuntimeConfig {
 |---|---|
 | 无活动 Turn | 正常进入 per-Session 队列 |
 | 有活动 Turn，`steeringEnabled=false` | 进入队列，当前 Turn 完成后创建新 Turn |
-| 有活动 Turn，`steeringEnabled=true` | 非空文本进入当前 Turn 的 steering inbox |
+| 有活动 Turn，`steeringEnabled=true` | 进入同一队列，并可由当前Turn在Runner安全点原子claim |
 
 默认值采用 `false`；其可观察结果与当前默认的 follow-up queue 行为一致。
 
-新设计使用 `runtime.steeringEnabled`，不包含
-`runner.inTurnMessageMode`。Steering 的启用判断、活动 Turn 识别、消息分类和
-inbox 都由 Runtime 实现；把该字段放在 `runner` 下会让公开配置名称与实际行为
-所有者不一致。
+新设计使用`runner.steeringEnabled`，不包含`runner.inTurnMessageMode`。
+所有消息始终进入Runtime持有的单一Session FIFO；Runner在自己的安全点和调用预算内
+决定是否调用Runtime提供的原子claim adapter。因此开关属于Runner执行策略，而不是
+FIFO存储实现。
 
 不提供旧字段 alias、迁移器、冲突规则或旧字段专用错误。原始文档中的非 Contract
 字段是否报错，只遵循 Platform Configuration 的通用未知字段规则，不形成
@@ -251,36 +253,35 @@ Runtime 本身始终具备 steering 实现。
 
 当前讨论采用以下方向，并在未来提升为 Active Change 时进入正式评审：
 
-- Runtime 拥有 `RuntimeConfig` 和 `steeringEnabled=false` 默认值；
-- Runner 拥有 `RunnerConfig` 和 Model/Tool 循环相关的配置语义；
-- Platform Configuration 导入 Runtime 与 Runner 的 leaf Contract 和默认值；
+- Runner拥有`RunnerConfig`、`steeringEnabled=false`默认值以及Model/Tool循环相关语义；
+- Runtime拥有Session FIFO和原子claim adapter，不再拥有用户配置leaf；
+- Platform Configuration导入Runner的leaf Contract和默认值；
 - Platform Configuration 继续负责顶层文档组合、严格校验、优先级合并和不可变
   application projection；
-- Runtime 和 Runner 都不读取配置文件、不读取环境变量，也不反向依赖
+- Runtime和Runner都不读取配置文件、不读取环境变量，也不反向依赖
   Platform Configuration。
 
 依赖方向为：
 
 ```text
 core/runner
-  └─ owns RunnerConfig and Model-loop limits
+  └─ owns RunnerConfig, steering policy, and Model-loop limits
 
 runtime
-  └─ owns RuntimeConfig, steering routing, inbox, and default
+  └─ owns Session FIFO and atomic claim
 
 platform/config
-  └─ imports and composes Runtime-owned and Runner-owned leaf configs
+  └─ imports and composes the Runner-owned leaf config
 ```
 
 该规则虽然已经在稳定 Configuration Specification 中确立，但上一个 Built-in
-LLM Provider Change 明确没有迁移非 LLM 模块。本轮如果实施 Runtime/Runner
-的所有权迁移，仍需单独批准，不能把它视为上一 Change 已授权的遗留工作。
+LLM Provider Change明确没有迁移非LLM模块。本轮Runner所有权迁移仍需单独批准，
+不能把它视为上一Change已授权的遗留工作。
 
 公开配置组合采用：
 
 ```ts
-interface AgentDefaults {
-  readonly runtime: RuntimeConfig;
+interface ApplicationConfigProjection {
   readonly runner: RunnerConfig;
   // other module configs
 }
@@ -394,13 +395,13 @@ Turn queue”定义明确的线性化交接点，并保留原消息身份、顺�
 
 ### 9.1 Steering 全局开关
 
-`runner.inTurnMessageMode` 改为 `runtime.steeringEnabled` 会改变用户可见的
+`runner.inTurnMessageMode`改为`runner.steeringEnabled`会改变用户可见的
 `config.json` Contract。根据 Development Workflow，即使实现改动很小，也
 不能仅按代码量归类为 Small Change。
 
 ### 9.2 配置与默认值所有权
 
-Runtime 与 Runner 配置和默认值的迁移会改变模块所有权和依赖方向，应作为
+Runner配置和默认值的迁移会改变模块所有权和依赖方向，应作为
 Architecture Slice 审批。
 
 ### 9.3 Pending steering 批处理
@@ -420,16 +421,16 @@ VS Code 而引入不必要的字符串拼接。
 Steering 全局开关、配置所有权、可选 Model 调用预算和第 8 节的正常结束交接
 共同进入一个范围较窄的 Active Architecture Slice：
 
-- 前三项共同修改 Runtime/Runner 的公共配置 Contract、默认值及其所有权；
+- 前三项共同修改Runner的公共配置Contract、默认值及其所有权；
 - 正常结束交接是 steering 生命周期中已经确认要修复的可观察行为；
 - pending steering 批处理本身保持 no-change，只需要 Contract/回归测试防止
   后续误改为逐条调用或字符串拼接。
 
 ## 10. 当前讨论结论
 
-1. 新设计使用 `runtime.steeringEnabled`，默认 `false`。
-2. Runtime owns steering policy、routing、inbox 和默认值；Runner owns
-   Model-loop limits 与 safe injection points。
+1. 新设计使用`runner.steeringEnabled`，默认`false`。
+2. Runner owns steering执行策略、默认值、Model-loop limits与safe injection
+   points；Runtime owns Session FIFO和原子claim adapter。
 3. 不保留 `runner.inTurnMessageMode`，也不增加旧字段兼容或专用拒绝逻辑。
 4. Pending steering 保持多条独立消息、FIFO，并在一个安全边界形成一次
    continuation Model 调用；不进行换行拼接。

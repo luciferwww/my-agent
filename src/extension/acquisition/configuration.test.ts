@@ -5,79 +5,26 @@ import { prepareExtensionConfig } from './configuration.js';
 const DRAFT_07 = 'http://json-schema.org/draft-07/schema#';
 
 describe('prepareExtensionConfig', () => {
-  it('materializes exact nested environment value and secret references', () => {
-    const input = {
-      endpoint: { $env: 'SERVICE_URL' },
-      nested: [{ token: { $secret: { source: 'env', name: 'SERVICE_TOKEN' } } }],
-    };
-    const result = prepareExtensionConfig(input, objectSchema({
-      endpoint: { type: 'string' },
-      nested: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['token'],
-          properties: { token: { type: 'string' } },
-        },
-      },
-    }, ['endpoint', 'nested']), {
-      SERVICE_URL: 'https://relay.invalid',
-      SERVICE_TOKEN: 'secret-value',
-    });
-
-    expect(result).toEqual({
-      ok: true,
-      config: {
-        endpoint: 'https://relay.invalid',
-        nested: [{ token: 'secret-value' }],
-      },
-    });
-    if (!result.ok) throw new Error('Expected configuration success.');
-    expect(Object.isFrozen(result.config)).toBe(true);
-    expect(Object.isFrozen(result.config.nested)).toBe(true);
-    expect(Object.isFrozen((result.config.nested as readonly object[])[0])).toBe(true);
-    expect(input.endpoint).toEqual({ $env: 'SERVICE_URL' });
-  });
-
-  it('reports missing environment values without retaining a config value', () => {
+  it.each([
+    { baseURL: { $env: 'RELAY_URL' } },
+    { apiKey: { $secret: { source: 'env', name: 'RELAY_API_KEY' } } },
+  ])('does not interpret legacy Extension reference wrappers %#', (input) => {
+    const key = 'baseURL' in input ? 'baseURL' : 'apiKey';
     const result = prepareExtensionConfig(
-      { endpoint: { $env: 'MISSING_URL' } },
-      objectSchema({ endpoint: { type: 'string' } }, ['endpoint']),
-      {},
+      input,
+      objectSchema({ [key]: { type: 'string' } }, [key]),
+      {
+        RELAY_URL: 'https://relay.invalid',
+        RELAY_API_KEY: 'secret-value',
+      },
     );
 
     expect(result).toEqual({
       ok: false,
       category: 'config_invalid',
-      code: 'environment_value_unavailable',
-      referencePath: '/endpoint',
-      environmentVariable: 'MISSING_URL',
+      code: 'config_validation_failed',
     });
-  });
-
-  it('reports missing secrets without retaining secret material', () => {
-    const result = prepareExtensionConfig(
-      { auth: { token: { $secret: { source: 'env', name: 'MISSING_TOKEN' } } } },
-      objectSchema({
-        auth: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['token'],
-          properties: { token: { type: 'string' } },
-        },
-      }, ['auth']),
-      {},
-    );
-
-    expect(result).toEqual({
-      ok: false,
-      category: 'secret_unavailable',
-      code: 'environment_secret_unavailable',
-      referencePath: '/auth/token',
-      environmentVariable: 'MISSING_TOKEN',
-    });
-    expect(JSON.stringify(result)).not.toContain('value');
+    expect(input[key]).toEqual(expect.any(Object));
   });
 
   it.each([
@@ -118,44 +65,6 @@ describe('prepareExtensionConfig', () => {
       expect(JSON.stringify(result)).not.toContain('   ');
     },
   );
-
-  it.each([
-    [{ endpoint: { $env: 'BLANK_VALUE' } }, 'environment_value_unavailable'],
-    [{ token: { $secret: { source: 'env', name: 'BLANK_SECRET' } } }, 'environment_secret_unavailable'],
-  ])('rejects whitespace-only legacy environment references %#', (input, code) => {
-    const key = 'endpoint' in input ? 'endpoint' : 'token';
-    const result = prepareExtensionConfig(
-      input,
-      objectSchema({ [key]: { type: 'string' } }, [key]),
-      { BLANK_VALUE: '   ', BLANK_SECRET: '\t' },
-    );
-
-    expect(result).toMatchObject({ ok: false, code });
-    expect(JSON.stringify(result)).not.toContain('   ');
-  });
-
-  it('treats reference-shaped objects with extra fields as ordinary config', () => {
-    const result = prepareExtensionConfig(
-      { value: { $env: 'NOT_READ', literal: true } },
-      objectSchema({
-        value: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['$env', 'literal'],
-          properties: {
-            $env: { const: 'NOT_READ' },
-            literal: { type: 'boolean' },
-          },
-        },
-      }, ['value']),
-      {},
-    );
-
-    expect(result).toEqual({
-      ok: true,
-      config: { value: { $env: 'NOT_READ', literal: true } },
-    });
-  });
 
   it('applies static defaults only to the cloned config', () => {
     const input = {};

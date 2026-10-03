@@ -32,14 +32,13 @@ describe('FT-03 Runner input boundary', () => {
     ]);
   });
 
-  it('keeps Runtime and Runner leaf configuration owned by their modules', async () => {
+  it('keeps Runner leaf configuration owned by its module', async () => {
     const productionSources = await loadProductionSources(REPOSITORY_ROOT);
-    const [platformTypes, defaultComposition, configLoader, runtimeConfig, runnerConfig, runner] =
+    const [platformTypes, defaultComposition, configLoader, runnerConfig, runner] =
       await Promise.all([
         readFile(join(REPOSITORY_ROOT, 'src', 'platform', 'config', 'types.ts'), 'utf8'),
         readFile(join(REPOSITORY_ROOT, 'src', 'platform', 'config', 'default-composition.ts'), 'utf8'),
         readFile(join(REPOSITORY_ROOT, 'src', 'platform', 'config', 'agent-config-loader.ts'), 'utf8'),
-        readFile(join(REPOSITORY_ROOT, 'src', 'runtime', 'config.ts'), 'utf8'),
         readFile(join(REPOSITORY_ROOT, 'src', 'core', 'runner', 'config.ts'), 'utf8'),
         readFile(join(REPOSITORY_ROOT, 'src', 'core', 'runner', 'AgentRunner.ts'), 'utf8'),
       ]);
@@ -52,12 +51,11 @@ describe('FT-03 Runner input boundary', () => {
     expect(defaultComposition).not.toContain('DEFAULT_RUNTIME_CONFIG');
     expect(defaultComposition).not.toContain('DEFAULT_RUNNER_CONFIG');
     expect(defaultComposition).not.toContain('maxLlmCalls: 12');
-    expect(configLoader).toContain('runtime: document.runtime');
-    expect(configLoader).toContain('runner: document.runner');
+    expect(configLoader).toContain('validateRunnerConfigSection(document.runner');
     expect(configLoader).toContain("rejectGlobalPolicyConfig(value.defaults, 'agents.defaults')");
-    expect(runtimeConfig).toContain('export interface RuntimeConfig');
-    expect(runtimeConfig).toContain('steeringEnabled: false');
     expect(runnerConfig).toContain('export interface RunnerConfig');
+    expect(runnerConfig).toContain('readonly steeringEnabled: boolean');
+    expect(runnerConfig).toContain('steeringEnabled: false');
     expect(runnerConfig).toContain('readonly maxLlmCalls?: number');
     expect(runner).not.toContain('DEFAULT_MAX_LLM_CALLS');
     expect(

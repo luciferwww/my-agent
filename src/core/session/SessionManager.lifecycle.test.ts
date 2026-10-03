@@ -142,11 +142,11 @@ describe('SessionManager lifecycle persistence', () => {
 
   it('forks selected linear history and protects the source from deletion', async () => {
     const sourceId = await materialize('Source');
-    const secondMessageId = (await manager.appendMessage(sourceId, {
+    await manager.appendMessage(sourceId, {
       turnId: 'turn-reply',
       role: 'assistant',
       content: 'reply',
-    })).id;
+    });
 
     const laterMessageId = (await manager.appendMessage(sourceId, {
       turnId: 'turn-later',

@@ -43,7 +43,6 @@ describe('SubagentExecutor', () => {
       systemPromptBuilder: { build } as never,
       loadContextFilesFromDir,
       agentHome: '/agent-home',
-      promptSafetyLevel: 'normal',
       resolveToolPolicy: () => ({
         isDenied: () => true,
         decide: () => 'deny',
@@ -91,7 +90,6 @@ describe('SubagentExecutor', () => {
       contextFiles: [],
       toolNames: [],
       agentHome: '/agent-home',
-      safetyLevel: 'normal',
     });
     expect(run).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: prepared.sessionId,
@@ -114,7 +112,6 @@ describe('SubagentExecutor', () => {
       systemPromptBuilder: { build: () => 'base' } as never,
       loadContextFilesFromDir: vi.fn(async () => []),
       agentHome: '/agent-home',
-      promptSafetyLevel: 'normal',
       resolveToolPolicy: () => ({
         isDenied: () => true,
         decide: () => 'deny',

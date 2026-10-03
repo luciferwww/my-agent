@@ -320,7 +320,7 @@ API Key 是可选凭据。部分本地服务、可信网络内的网关和测试
 
 共享的凭据字符串解析函数在严格配置校验前完成解析，由 Built-in 配置加载和 Copilot Relay Extension 配置物化共同调用。环境变量不存在或值为空时配置失败，不得把占位字符串原样传给上游，也不得静默降级为无认证请求。错误和日志可以记录环境变量名，但不得记录解析后的值。
 
-Provider 只接收最终字符串，不区分该值由用户直接填写还是由环境变量解析得到。Builtin Provider 和 Copilot Relay Provider 共用该解析函数，不各自实现环境变量解析，也不为 Built-in 定义专用的 SecretRef 类型或隐式环境变量覆盖规则。Extension Acquisition 现有的 `$env` / `$secret` 对象语法继续兼容，本变更不对已有 Extension 配置做破坏性迁移。
+Provider 只接收最终字符串，不区分该值由用户直接填写还是由环境变量解析得到。Builtin Provider 和 Copilot Relay Provider 共用该解析函数，不各自实现环境变量解析，也不定义专用的 SecretRef 类型或隐式环境变量覆盖规则。Extension Acquisition 只对根级 `apiKey` 应用这一规则，不再解析通用 `$env` / `$secret` 对象。
 
 对 API Key 执行 `trim()`；未提供或只包含空白字符时统一视为未配置。Provider 仍正常启动，Protocol Client 发起请求时不添加认证 Header。
 
@@ -832,7 +832,7 @@ Extension Provider 继续通过现有 Extension API 注册独立 `ProviderProjec
 - 不解析 `"prefix-${ENV_VAR}"` 等内嵌占位符；
 - Prompt、命令模板和非凭据字段中的 `${ENV_VAR}` 保持原值；
 - Built-in 和 Copilot Relay 使用同一配置加载规则；
-- Copilot Relay 现有 `$env` / `$secret` 配置继续有效；
+- Copilot Relay 的 `$env` / `$secret` 对象配置按 Schema 类型错误拒绝；
 - 不同 Protocol 使用各自的认证 Header；
 - 拒绝旧的 `agents.defaults.model` 和 Agent 级 LLM 配置；
 - 拒绝旧的 Agent 级 `llm.apiKey`、`llm.baseURL` 和 `llm.deploymentFacts`。

@@ -46,7 +46,6 @@ const MIXED_PRODUCTION_PATHS = new Set([
   'src/extension/api/contracts.ts',
   'src/extension/api/index.ts',
   'src/runtime/bootstrap.ts',
-  'src/runtime/config.ts',
   'src/runtime/errors.ts',
   'src/runtime/glob-match.ts',
   'src/runtime/index.ts',
@@ -291,7 +290,7 @@ export function findFt03RunnerBoundaryViolations(sources: SourceInput[]): string
           if (!parameter.type) {
             continue;
           }
-          const mutableRegistry = findMutableRegistrySymbol(parameter.type, sourceFile, declarations);
+          const mutableRegistry = findMutableRegistrySymbol(parameter.type, declarations);
           if (mutableRegistry) {
             diagnostics.push(
               `FT-03 source=${source.path} symbol=${mutableRegistry} violation=mutable-registry-input`,
@@ -302,7 +301,7 @@ export function findFt03RunnerBoundaryViolations(sources: SourceInput[]): string
         (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node))
         && hasExportModifier(node)
       ) {
-        const mutableRegistry = findMutableRegistrySymbol(node, sourceFile, declarations);
+        const mutableRegistry = findMutableRegistrySymbol(node, declarations);
         if (mutableRegistry) {
           diagnostics.push(
             `FT-03 source=${source.path} symbol=${mutableRegistry} violation=mutable-registry-input`,
@@ -895,7 +894,6 @@ function isMutableCollectionText(typeText: string): boolean {
 
 function findMutableRegistrySymbol(
   boundaryNode: ts.Node,
-  sourceFile: ts.SourceFile,
   declarations: Map<string, NamedDeclaration>,
 ): string | undefined {
   const referencedTypes = new Set<string>();

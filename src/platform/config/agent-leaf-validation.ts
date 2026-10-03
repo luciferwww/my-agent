@@ -1,8 +1,4 @@
 import {
-  RuntimeConfigValidationError,
-  validateRuntimeConfig,
-} from '../../runtime/config.js';
-import {
   RunnerConfigValidationError,
   validateRunnerConfig,
 } from '../../core/runner/config.js';
@@ -11,10 +7,6 @@ import {
   MemoryConfigValidationError,
   validateMemoryConfig,
 } from '../../core/memory/index.js';
-import {
-  PromptConfigValidationError,
-  validatePromptConfig,
-} from '../../core/prompt/index.js';
 import {
   ToolPolicyConfigValidationError,
   validateToolPolicyConfig,
@@ -32,22 +24,11 @@ import {
   validateSubagentConfig,
 } from '../../core/subagent/index.js';
 
-export function validateRuntimeAndRunnerConfig(
-  value: Readonly<Record<string, unknown>>,
+export function validateRunnerConfigSection(
+  value: unknown,
   fieldPath: string,
 ): void {
-  validateLeaf(
-    value['runtime'],
-    joinFieldPath(fieldPath, 'runtime'),
-    validateRuntimeConfig,
-    RuntimeConfigValidationError,
-  );
-  validateLeaf(
-    value['runner'],
-    joinFieldPath(fieldPath, 'runner'),
-    validateRunnerConfig,
-    RunnerConfigValidationError,
-  );
+  validateLeaf(value, fieldPath, validateRunnerConfig, RunnerConfigValidationError);
 }
 
 export function validateAgentLeafConfig(
@@ -56,7 +37,6 @@ export function validateAgentLeafConfig(
 ): void {
   const leaves = value as Readonly<Record<string, unknown>>;
   validateLeaf(leaves['memory'], joinFieldPath(fieldPath, 'memory'), validateMemoryConfig, MemoryConfigValidationError);
-  validateLeaf(leaves['prompt'], joinFieldPath(fieldPath, 'prompt'), validatePromptConfig, PromptConfigValidationError);
   validateLeaf(leaves['tools'], joinFieldPath(fieldPath, 'tools'), validateToolPolicyConfig, ToolPolicyConfigValidationError);
   validateLeaf(leaves['context'], joinFieldPath(fieldPath, 'context'), validateAgentContextConfig, AgentContextConfigValidationError);
   validateLeaf(leaves['compaction'], joinFieldPath(fieldPath, 'compaction'), validateCompactionConfig, CompactionConfigValidationError);

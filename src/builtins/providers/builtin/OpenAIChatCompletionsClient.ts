@@ -19,7 +19,6 @@ import {
   normalizeError,
   parseRecord,
   parseToolInput,
-  readNonEmptyString,
   readNonNegativeInteger,
   readSseData,
   readString,

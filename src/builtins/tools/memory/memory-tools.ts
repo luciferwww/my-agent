@@ -1,5 +1,3 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
 import type { Tool, ToolExecutionOutput } from '../../../core/tools/types.js';
 import type { MemoryManager } from '../../../core/memory/MemoryManager.js';
 

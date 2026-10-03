@@ -7,7 +7,6 @@ import {
 } from '../core/model-invocation/index.js';
 import type {
   ChatContentBlock,
-  ChatMessage,
   ModelInvocationDiagnostics,
   ModelInvocationError,
   ResolvedReasoningPolicy,
@@ -1395,7 +1394,7 @@ export class RuntimeApp {
     let parentRecord: ActiveParentTurn | undefined;
 
     try {
-      const admission = await this.sessionCoordinator.admitMessage(
+      await this.sessionCoordinator.admitMessage(
         params.sessionId,
         params.message,
       );
@@ -1432,7 +1431,6 @@ export class RuntimeApp {
 
       const systemPrompt = this.resources.systemPromptBuilder.build(
         buildSystemPromptParams({
-          config: this.resources.resolvedConfig,
           contextFiles: this.resources.contextFiles,
           toolNames: visibleToolDefinitions.map(({ name }) => name),
           overrides: params,
@@ -1489,7 +1487,7 @@ export class RuntimeApp {
           this.sessionPermissions.get(params.sessionId).mode,
         approvalCapability: this.getApprovalCapability(params.turnId),
         maxLlmCalls: effectiveMaxLlmCalls,
-        ...(this.resources.runtimeConfig.steeringEnabled
+        ...(this.resources.runnerConfig.steeringEnabled
           ? {
               steeringSource: {
                 claimReady: () => this.claimSteeringMessages(
@@ -1718,17 +1716,6 @@ export class RuntimeApp {
         severity: 'recoverable',
         code: 'CONTEXT_LOAD_FAILED',
         message: `Cannot reload context files when runtime phase is ${this.state.phase}.`,
-      });
-    }
-  }
-
-  private assertNotClosed(): void {
-    if (this.state.phase === 'closing' || this.state.phase === 'closed' || this.state.phase === 'failed') {
-      throw createRuntimeError({
-        scope: 'startup',
-        severity: 'recoverable',
-        code: 'RUN_REJECTED',
-        message: `Cannot register channel when runtime phase is ${this.state.phase}.`,
       });
     }
   }

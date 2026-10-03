@@ -32,7 +32,6 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
   readonly dimensions: number;
 
   // 用 any 避免 @xenova/transformers 的复杂泛型
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private pipelinePromise: Promise<any> | null = null;
 
   constructor(modelId: string, dimensions: number) {
@@ -68,7 +67,6 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
    * 懒加载 pipeline。首次调用时初始化，后续复用同一个 Promise。
    * 多个并发调用不会重复初始化。
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private ensurePipeline(): Promise<any> {
     if (!this.pipelinePromise) {
       this.pipelinePromise = this.initPipeline();
@@ -76,7 +74,6 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
     return this.pipelinePromise;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async initPipeline(): Promise<any> {
     log.info('Loading embedding model', { modelId: this.modelId });
     // 动态 import，避免未安装 @xenova/transformers 时模块加载失败
@@ -93,7 +90,6 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
  */
 async function detectDimensions(modelId: string): Promise<number> {
   const { pipeline } = await import('@xenova/transformers');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pipe: any = await pipeline('feature-extraction', modelId);
   const output = await pipe('', { pooling: 'mean', normalize: true });
   return (output.data as Float32Array).length;

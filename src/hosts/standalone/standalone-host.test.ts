@@ -91,8 +91,7 @@ describe('standalone Host composition', () => {
     const snapshot = (consoleEnabled: boolean): AgentConfigSnapshot => ({
       application: {
         llm: {},
-        runtime: { steeringEnabled: false },
-        runner: {},
+        runner: { steeringEnabled: false },
         agents: { defaults: {} as never, list: [] },
         logger: { console: { enabled: consoleEnabled }, file: { enabled: true } },
       },
@@ -164,7 +163,7 @@ describe('standalone Host composition', () => {
       application: { waitForChannelCompletion },
       close: vi.fn(),
     };
-    const createRuntime = vi.fn(async (runtimeOptions: RuntimeAppOptions) => {
+    const createRuntime = vi.fn(async (_runtimeOptions: RuntimeAppOptions) => {
       events.push('Runtime');
       return runtime as never;
     });
@@ -453,8 +452,7 @@ function createSnapshot(consoleEnabled = true): AgentConfigSnapshot {
   return {
     application: {
       llm: {},
-      runtime: { steeringEnabled: false },
-      runner: {},
+      runner: { steeringEnabled: false },
       agents: { defaults: {} as never, list: [] },
       logger: { console: { enabled: consoleEnabled } },
     },

@@ -46,15 +46,6 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-// ── 环境变量映射 ──────────────────────────────────────────
-
-/** 从环境变量中提取配置覆盖 */
-export function getEnvOverrides(
-  _environment: Readonly<Record<string, string | undefined>> = process.env,
-): DeepPartial<AgentDefaults> {
-  return {};
-}
-
 // ── resolveAgentConfig ───────────────────────────────────
 
 export interface ResolveOptions {

@@ -1,11 +1,9 @@
 import { join } from 'node:path';
 import {
   createDefaultAgentConfig,
-  getEnvOverrides,
   resolveAgentConfig,
 } from '../platform/config/index.js';
 import { DEFAULT_RUNNER_CONFIG } from '../core/runner/config.js';
-import { DEFAULT_RUNTIME_CONFIG } from './config.js';
 import type { AppConfig } from '../platform/config/types.js';
 import {
   ConsoleAdapter,
@@ -47,7 +45,6 @@ export async function bootstrapRuntime(
       ?? options.applicationConfig
       ?? {
         llm: {},
-        runtime: DEFAULT_RUNTIME_CONFIG,
         runner: DEFAULT_RUNNER_CONFIG,
         agents: {
           defaults: createDefaultAgentConfig(),
@@ -59,7 +56,6 @@ export async function bootstrapRuntime(
     const appConfig: AppConfig = {
       agentHome: options.agentHome,
       llm: applicationConfig.llm,
-      runtime: applicationConfig.runtime,
       runner: applicationConfig.runner,
       agents: applicationConfig.agents,
       logger: applicationConfig.logger,
@@ -90,10 +86,7 @@ export async function bootstrapRuntime(
 
     const resolvedConfig = resolveAgentConfig(appConfig, {
       agentId: options.agentId,
-      envOverrides: options.envOverrides
-        ?? (options.startupContext === undefined
-          ? undefined
-          : getEnvOverrides(options.startupContext.environment)),
+      envOverrides: options.envOverrides,
       cliOverrides: options.cliOverrides,
     });
 
@@ -172,7 +165,6 @@ export async function bootstrapRuntime(
     return {
       resources: {
         appConfig,
-        runtimeConfig: appConfig.runtime,
         runnerConfig: appConfig.runner,
         resolvedConfig,
         agentHome: options.agentHome,

@@ -208,7 +208,6 @@ describe('MemoryManager', () => {
     expect(indexAllSpy).toHaveBeenCalledWith(agentHome);
     expect((manager as unknown as { agentHome: string }).agentHome).toBe(agentHome);
     expect((manager as unknown as { store: MemoryStore }).store).toBe(store);
-    expect((manager as unknown as { embeddingProvider: unknown }).embeddingProvider).toBeNull();
   });
 
   it('create() writes DB to the convention path <agentHome>/memory.sqlite', async () => {
@@ -220,7 +219,7 @@ describe('MemoryManager', () => {
     vi.mocked(createEmbeddingProvider).mockResolvedValue(embeddingProvider);
     const indexAllSpy = vi.spyOn(MemoryIndexer.prototype, 'indexAll').mockResolvedValue(undefined);
 
-    const manager = await MemoryManager.create({
+    await MemoryManager.create({
       agentHome: agentHome,
       enabled: true,
       embedding: { provider: 'local', model: 'custom-model' },
@@ -229,7 +228,6 @@ describe('MemoryManager', () => {
     expect(createEmbeddingProvider).toHaveBeenCalledWith({ provider: 'local', model: 'custom-model' });
     expect(SqliteMemoryStore).toHaveBeenCalledWith(expectedDbPath);
     expect(indexAllSpy).toHaveBeenCalledWith(agentHome);
-    expect((manager as unknown as { embeddingProvider: unknown }).embeddingProvider).toBe(embeddingProvider);
     await expect(readFile(expectedDbPath, 'utf-8')).rejects.toThrow();
   });
 });

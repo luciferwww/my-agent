@@ -8,7 +8,7 @@
 
 ## 1. Boundary
 
-`src/core/prompt/` owns the Prompt leaf configuration contract/default/validation, deterministic System and User prompt construction, and the library-level Context Hook prepender. Runtime supplies the resolved safety setting, current Context files, visible Tool names, Agent Home, available Subagent summaries, and already normalized media blocks.
+`src/core/prompt/` owns deterministic System and User prompt construction and the library-level Context Hook prepender. Runtime supplies the prompt mode, current Context files, visible Tool names, Agent Home, available Subagent summaries, and already normalized media blocks.
 
 Prompt does not own configuration precedence, canonical Tool schemas, Channel wire delivery, [media validation and normalization](media.md), [Model Resolution](model-resolution.md), [Provider conversion](providers.md), or [Agent Context file loading](agent-context.md).
 
@@ -21,13 +21,12 @@ Prompt does not own configuration precedence, canonical Tool schemas, Channel wi
 | 1 | Identity | yes | no |
 | 2 | Current Date & Time | yes | yes |
 | 3 | Behavior Rules | yes | no |
-| 4 | Safety | unless `safetyLevel` is `relaxed` | unless `safetyLevel` is `relaxed` |
-| 5 | Memory Recall | when an exact supported Memory Tool name is visible | no |
-| 6 | Project Context | when non-empty Context files exist | when non-empty Context files exist |
-| 7 | Agent Home | when `agentHome` exists | when `agentHome` exists |
-| 8 | Available Subagents | when entries are supplied | no |
+| 4 | Memory Recall | when an exact supported Memory Tool name is visible | no |
+| 5 | Project Context | when non-empty Context files exist | when non-empty Context files exist |
+| 6 | Agent Home | when `agentHome` exists | when `agentHome` exists |
+| 7 | Available Subagents | when entries are supplied | no |
 
-`mode: 'none'` returns an empty string regardless of the other inputs. Safety defaults to `normal`; `strict` selects stronger constraints and `relaxed` omits the section.
+`mode: 'none'` returns an empty string regardless of the other inputs.
 
 Tool names are a narrow capability projection used only for conditional prompt text. The Memory Recall section recognizes the exact names `memory_search`, `memory_get`, and the retained compatibility name `search_memory`; nearby names do not match. Tool definitions themselves travel through the Model Invocation request rather than being duplicated in the System prompt.
 
@@ -60,7 +59,7 @@ Prompt does not revalidate, optimize, reorder, or convert media. Runtime intake 
 
 ## 5. Runtime projection
 
-`runtime/prompt-factory.ts` maps only Runtime-owned inputs into `SystemPromptBuildParams`: prompt mode, effective safety level, Context files, visible Tool names, Agent Home, and available Subagent entries. Even when prompt mode is `none`, Runtime selects the full Context-load mode so its cache remains warm; `minimal` selects minimal Context loading.
+`runtime/prompt-factory.ts` maps only Runtime-owned inputs into `SystemPromptBuildParams`: prompt mode, Context files, visible Tool names, Agent Home, and available Subagent entries. Even when prompt mode is `none`, Runtime selects the full Context-load mode so its cache remains warm; `minimal` selects minimal Context loading.
 
 Context-file initialization and loading belong to [Agent Context](agent-context.md). Runtime generation and Subagent lifecycle belong to [Runtime](runtime.md).
 

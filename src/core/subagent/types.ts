@@ -1,5 +1,4 @@
 import type { TokenUsage } from '../model-invocation/index.js';
-import type { ContextFile } from '../agent-context/types.js';
 import type { ModelReference, ResolutionFailureCategory } from '../model-resolution/index.js';
 
 // ── Profile / role / capabilities ────────────────────────────

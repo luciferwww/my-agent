@@ -1,51 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SUBAGENT_CONFIG } from '../core/subagent/index.js';
-import type { AgentDefaults } from '../platform/config/types.js';
 import { buildSystemPromptParams, resolveContextLoadMode } from './prompt-factory.js';
 
-const baseConfig: AgentDefaults = {
-  memory: {
-    enabled: false,
-    embedding: { provider: 'local', model: 'x' },
-    chunking: { chunkChars: 100, overlapChars: 10 },
-    search: { maxResults: 6, minScore: 0.25, vectorWeight: 0.7, textWeight: 0.3 },
-  },
-  prompt: { safetyLevel: 'normal' },
-  tools: { allow: [], deny: [] },
-  context: { maxFileChars: 20_000, maxTotalChars: 150_000 },
-  compaction: {
-    enabled: true,
-    reserveTokens: 20_000,
-    keepRecentTurns: 3,
-    toolResultContextShare: 0.5,
-    toolResultHeadChars: 10_000,
-    toolResultTailChars: 5_000,
-    timeoutSeconds: 300,
-  },
-  subagents: structuredClone(DEFAULT_SUBAGENT_CONFIG),
-};
-
 describe('runtime prompt factory', () => {
-  it('maps runtime config and per-turn overrides into prompt builder params', () => {
+  it('maps per-turn mode and runtime inputs into prompt builder params', () => {
     const params = buildSystemPromptParams({
-      config: baseConfig,
       contextFiles: [{ path: 'IDENTITY.md', content: 'identity' }],
       toolNames: ['demo_tool'],
       overrides: {
         promptMode: 'minimal',
-        safetyLevel: 'strict',
       },
     });
 
     expect(params.mode).toBe('minimal');
-    expect(params.safetyLevel).toBe('strict');
     expect(params.contextFiles).toHaveLength(1);
     expect(params.toolNames).toEqual(['demo_tool']);
   });
 
   it('threads agentHome into the SystemPromptBuildParams', () => {
     const params = buildSystemPromptParams({
-      config: baseConfig,
       contextFiles: [],
       toolNames: [],
       overrides: { promptMode: 'full' },
@@ -56,7 +28,6 @@ describe('runtime prompt factory', () => {
 
   it('threads availableSubagents into the SystemPromptBuildParams', () => {
     const params = buildSystemPromptParams({
-      config: baseConfig,
       contextFiles: [],
       toolNames: [],
       overrides: { promptMode: 'full' },
@@ -73,7 +44,6 @@ describe('runtime prompt factory', () => {
 
   it('leaves agentHome / availableSubagents undefined when caller omits them', () => {
     const params = buildSystemPromptParams({
-      config: baseConfig,
       contextFiles: [],
       toolNames: [],
       overrides: { promptMode: 'full' },

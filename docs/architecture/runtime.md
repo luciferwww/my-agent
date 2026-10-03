@@ -190,7 +190,7 @@ Media intake is atomic. Any attachment validation or optimization failure reject
 
 `inFlightSessions` is the per-session serialization gate. Sessions are serialized independently, so different Sessions can run concurrently.
 
-When `runtime.steeringEnabled` is true, Runner may request a claim at a safe point after persistence and before another permitted Model call. Runtime synchronously peeks from the FIFO head and splices the largest contiguous compatible prefix:
+When `runner.steeringEnabled` is true, Runner may request a claim at a safe point after persistence and before another permitted Model call. Runtime synchronously peeks from the FIFO head and splices the largest contiguous compatible prefix:
 
 - an omitted Model reference is compatible;
 - an explicit reference must match the active canonical Provider and Model IDs;
@@ -327,6 +327,6 @@ Registry startup diagnostics are logged locally by Runtime with bounded identity
 
 | Kind | Evidence |
 |---|---|
-| Source | [RuntimeApp](../../src/runtime/RuntimeApp.ts), [Runtime config](../../src/runtime/config.ts), [queue types](../../src/runtime/queue-types.ts), [composition manager](../../src/runtime/runtime-composition-manager.ts) |
+| Source | [RuntimeApp](../../src/runtime/RuntimeApp.ts), [queue types](../../src/runtime/queue-types.ts), [composition manager](../../src/runtime/runtime-composition-manager.ts) |
 | Tests | [RuntimeApp tests](../../src/runtime/RuntimeApp.test.ts), [composition manager tests](../../src/runtime/runtime-composition-manager.test.ts) |
 | Controlling authority | [Runtime Composition Specification](../specifications/runtime-composition.md) |

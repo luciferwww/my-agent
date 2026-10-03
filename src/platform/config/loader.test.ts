@@ -2,15 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import { createDefaultAgentConfig } from './default-composition.js';
 import { DEFAULT_RUNNER_CONFIG } from '../../core/runner/config.js';
-import { DEFAULT_RUNTIME_CONFIG } from '../../runtime/config.js';
-import { deepMerge, getEnvOverrides, resolveAgentConfig } from './loader.js';
+import { deepMerge, resolveAgentConfig } from './loader.js';
 import type { AppConfig, AgentEntry } from './types.js';
 
 function appConfig(list: AgentEntry[] = []): AppConfig {
   return {
     agentHome: '/tmp',
     llm: {},
-    runtime: structuredClone(DEFAULT_RUNTIME_CONFIG),
     runner: structuredClone(DEFAULT_RUNNER_CONFIG),
     agents: {
       defaults: createDefaultAgentConfig(),
@@ -67,16 +65,5 @@ describe('resolveAgentConfig', () => {
     });
 
     expect(resolved.memory.enabled).toBe(false);
-  });
-});
-
-describe('getEnvOverrides', () => {
-  it('does not retain retired Agent-level LLM environment overrides', () => {
-    expect(getEnvOverrides({
-      ANTHROPIC_API_KEY: 'key',
-      ANTHROPIC_BASE_URL: 'https://example.test',
-      MY_AGENT_PROVIDER: 'provider',
-      MY_AGENT_MODEL: 'model',
-    })).toEqual({});
   });
 });
