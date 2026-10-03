@@ -254,36 +254,6 @@ There is no separate `readableSummary` configuration field.
 Anthropic models that publish Thinking or Effort capabilities must also select
 an adapter.
 
-`reasoning` and `anthropicThinking` have different responsibilities:
-
-- `reasoning` is the public capability declaration. It determines which
-  Thinking and Effort values clients may offer to users.
-- `anthropicThinking` is private Built-in Provider wiring. It tells the
-  Anthropic Client how to translate those generic values into an Anthropic
-  request.
-
-This extra mapping is required because Anthropic deployments can expose two
-different control mechanisms:
-
-| Adapter | Generic selection | Anthropic request |
-|---|---|---|
-| `adaptive` | Thinking On, Default Effort | `thinking: { "type": "adaptive" }` |
-| `adaptive` | Thinking On, High Effort | adaptive Thinking plus `output_config.effort: "high"` |
-| `budget` | Thinking On, Default Effort | enabled Thinking with `defaultBudgetTokens` |
-| `budget` | Thinking On, High Effort | enabled Thinking with the configured `budgets.high` value |
-| either | Thinking Off or Effort None | `thinking: { "type": "disabled" }` |
-
-The Client cannot safely infer the adapter:
-
-- not every Anthropic model supports adaptive Thinking;
-- budget token counts are deployment-specific;
-- an Effort label such as `high` does not define a numeric budget.
-
-`anthropicThinking` is not projected to the Model Catalog or shown as another
-UI control. Readable Thinking still comes from the Thinking blocks returned by
-Anthropic. Models that do not publish `reasoning` capabilities do not need
-this field.
-
 Adaptive example:
 
 ```json
