@@ -108,21 +108,16 @@
         display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;
       }
       .reasoning-control {
-        position: relative;
+        min-width: 0;
       }
-      .reasoning-control::after {
-        content: "⌄"; position: absolute; right: 13px; bottom: 13px; color: var(--muted);
-        line-height: 1; pointer-events: none;
+      .reasoning-picker-trigger {
+        min-height: 45px;
       }
-      .reasoning-select {
-        min-height: 45px; padding: 11px 34px 11px 13px; border-radius: 14px; font-size: 16px;
-        line-height: 22px; appearance: none; cursor: pointer;
+      .reasoning-picker-panel {
+        padding: 6px;
       }
-      .reasoning-select:hover:not(:disabled) {
-        border-color: rgba(216, 137, 92, 0.42);
-      }
-      .reasoning-select:disabled {
-        opacity: 0.5; cursor: not-allowed;
+      .reasoning-picker-option {
+        grid-template-columns: 18px minmax(0, 1fr); padding: 9px;
       }
       .reasoning-notice {
         color: var(--muted); font-size: 12px; line-height: 1.45;
@@ -931,38 +926,112 @@
             </div>
           </div>
           <div v-if="showThinkingControl || showEffortControl" class="reasoning-controls">
-            <label v-if="showThinkingControl" class="reasoning-control">
+            <div
+              v-if="showThinkingControl"
+              class="reasoning-control model-picker"
+              :class="{ open: reasoningPickerOpen === 'thinking' }"
+            >
               <span class="field-label-text">Thinking</span>
-              <select
-                v-model="reasoningSelection.thinking"
-                class="reasoning-select"
-                aria-label="Thinking"
+              <button
+                class="model-picker-trigger reasoning-picker-trigger"
+                type="button"
+                :aria-label="`Thinking: ${formatReasoningOption(reasoningSelection.thinking)}`"
+                :aria-expanded="String(reasoningPickerOpen === 'thinking')"
+                aria-haspopup="listbox"
+                @click="toggleReasoningPicker('thinking')"
               >
-                <option value="default">Default</option>
-                <option
-                  v-for="value in thinkingOptions"
+                <span class="model-picker-trigger-copy">
+                  <span class="model-picker-trigger-name">
+                    {{ formatReasoningOption(reasoningSelection.thinking) }}
+                  </span>
+                </span>
+                <span class="model-picker-chevron">⌄</span>
+              </button>
+              <div
+                v-if="reasoningPickerOpen === 'thinking'"
+                class="model-picker-scrim"
+                @click="closeReasoningPicker"
+              ></div>
+              <div
+                v-if="reasoningPickerOpen === 'thinking'"
+                class="model-picker-panel reasoning-picker-panel"
+                role="listbox"
+                aria-label="Thinking options"
+                @keydown.esc.stop="closeReasoningPicker"
+              >
+                <button
+                  v-for="value in reasoningPickerOptions('thinking')"
                   :key="value"
-                  :value="value"
-                  :disabled="isThinkingOptionDisabled(value)"
-                >{{ formatReasoningOption(value) }}</option>
-              </select>
-            </label>
-            <label v-if="showEffortControl" class="reasoning-control">
+                  class="model-picker-option reasoning-picker-option"
+                  :class="{ selected: reasoningSelection.thinking === value }"
+                  type="button"
+                  role="option"
+                  :aria-selected="String(reasoningSelection.thinking === value)"
+                  :disabled="isReasoningPickerOptionDisabled('thinking', value)"
+                  @click="selectReasoningOption('thinking', value)"
+                >
+                  <span class="model-picker-check">
+                    {{ reasoningSelection.thinking === value ? '✓' : '' }}
+                  </span>
+                  <span class="model-picker-option-copy">
+                    <span class="model-picker-option-name">{{ formatReasoningOption(value) }}</span>
+                  </span>
+                </button>
+              </div>
+            </div>
+            <div
+              v-if="showEffortControl"
+              class="reasoning-control model-picker"
+              :class="{ open: reasoningPickerOpen === 'effort' }"
+            >
               <span class="field-label-text">Effort</span>
-              <select
-                v-model="reasoningSelection.effort"
-                class="reasoning-select"
-                aria-label="Reasoning effort"
+              <button
+                class="model-picker-trigger reasoning-picker-trigger"
+                type="button"
+                :aria-label="`Reasoning effort: ${formatReasoningOption(reasoningSelection.effort)}`"
+                :aria-expanded="String(reasoningPickerOpen === 'effort')"
+                aria-haspopup="listbox"
+                @click="toggleReasoningPicker('effort')"
               >
-                <option value="default">Default</option>
-                <option
-                  v-for="value in effortOptions"
+                <span class="model-picker-trigger-copy">
+                  <span class="model-picker-trigger-name">
+                    {{ formatReasoningOption(reasoningSelection.effort) }}
+                  </span>
+                </span>
+                <span class="model-picker-chevron">⌄</span>
+              </button>
+              <div
+                v-if="reasoningPickerOpen === 'effort'"
+                class="model-picker-scrim"
+                @click="closeReasoningPicker"
+              ></div>
+              <div
+                v-if="reasoningPickerOpen === 'effort'"
+                class="model-picker-panel reasoning-picker-panel"
+                role="listbox"
+                aria-label="Reasoning effort options"
+                @keydown.esc.stop="closeReasoningPicker"
+              >
+                <button
+                  v-for="value in reasoningPickerOptions('effort')"
                   :key="value"
-                  :value="value"
-                  :disabled="isEffortOptionDisabled(value)"
-                >{{ formatReasoningOption(value) }}</option>
-              </select>
-            </label>
+                  class="model-picker-option reasoning-picker-option"
+                  :class="{ selected: reasoningSelection.effort === value }"
+                  type="button"
+                  role="option"
+                  :aria-selected="String(reasoningSelection.effort === value)"
+                  :disabled="isReasoningPickerOptionDisabled('effort', value)"
+                  @click="selectReasoningOption('effort', value)"
+                >
+                  <span class="model-picker-check">
+                    {{ reasoningSelection.effort === value ? '✓' : '' }}
+                  </span>
+                  <span class="model-picker-option-copy">
+                    <span class="model-picker-option-name">{{ formatReasoningOption(value) }}</span>
+                  </span>
+                </button>
+              </div>
+            </div>
           </div>
           <div v-if="reasoningNotice" class="reasoning-notice" role="status">
             {{ reasoningNotice }}
@@ -1634,6 +1703,7 @@
             },
             reasoningNotice: '',
             modelPickerOpen: false,
+            reasoningPickerOpen: null,
             permissionPickerOpen: false,
             modelSearch: '',
             activeModelOptionIndex: -1,
@@ -1886,6 +1956,7 @@
             this.pendingSessionOperation = null;
             this.closeSessionActionMenu();
             this.closePermissionPicker();
+            this.closeReasoningPicker();
             this.sessions = [];
             this.sessionsError = '';
             this.clearModelSelection();
@@ -2393,6 +2464,7 @@
             }
             if (!this.isConnected || this.pendingPermissionRequestId !== null) return;
             this.closeModelPicker();
+            this.closeReasoningPicker();
             this.permissionPickerOpen = true;
           },
           closePermissionPicker() {
@@ -2409,6 +2481,7 @@
             }
             if (!this.modelCatalog || this.availableModels.length === 0) return;
             this.closePermissionPicker();
+            this.closeReasoningPicker();
             this.modelSearch = '';
             this.modelPickerOpen = true;
             this.activeModelOptionIndex = this.modelOptionIndex(
@@ -2424,6 +2497,41 @@
             this.modelPickerOpen = false;
             this.modelSearch = '';
             this.activeModelOptionIndex = -1;
+          },
+          reasoningPickerOptions(kind) {
+            return [
+              'default',
+              ...(kind === 'thinking' ? this.thinkingOptions : this.effortOptions),
+            ];
+          },
+          isReasoningPickerOptionDisabled(kind, value) {
+            if (value === 'default') return false;
+            return kind === 'thinking'
+              ? this.isThinkingOptionDisabled(value)
+              : this.isEffortOptionDisabled(value);
+          },
+          toggleReasoningPicker(kind) {
+            if (this.reasoningPickerOpen === kind) {
+              this.closeReasoningPicker();
+              return;
+            }
+            if (
+              (kind === 'thinking' && !this.showThinkingControl)
+              || (kind === 'effort' && !this.showEffortControl)
+            ) {
+              return;
+            }
+            this.closeModelPicker();
+            this.closePermissionPicker();
+            this.reasoningPickerOpen = kind;
+          },
+          closeReasoningPicker() {
+            this.reasoningPickerOpen = null;
+          },
+          selectReasoningOption(kind, value) {
+            if (this.isReasoningPickerOptionDisabled(kind, value)) return;
+            this.reasoningSelection[kind] = value;
+            this.closeReasoningPicker();
           },
           onModelSearchInput() {
             nextTick(() => {
@@ -2473,6 +2581,7 @@
             this.reasoningSelection.effort = 'default';
             this.reasoningNotice = '';
             this.closeModelPicker();
+            this.closeReasoningPicker();
           },
           sameModelReference(left, right) {
             return left !== null
@@ -3531,6 +3640,7 @@
             return Object.keys(input).length > entries.length ? `${summary}, …` : summary;
           },
           reconcileReasoningSelection() {
+            this.closeReasoningPicker();
             const reset = [];
             if (
               this.reasoningSelection.thinking !== 'default'
