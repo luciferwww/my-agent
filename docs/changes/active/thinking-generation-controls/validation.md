@@ -174,6 +174,8 @@ TGC-01–05、TGC-26和TGC-33只取得P1结构/投影部分证据，矩阵仍保
 - Responses精确映射显式effort；仅配置`readableSummary`的模型在显式非none effort时请求
   `summary=auto`，不能用summary冒充独立on。Chat Completions只映射`reasoning_effort`，
   两个协议的Default wire均不变。
+- 后续实机配置确认两个Relay-backed Built-in模型提供独立开关；逐模型声明后，Responses和
+  Chat均以省略effort表达`on + default`、以单个`none`表达`off`，未声明模型仍在fetch前拒绝。
 - Built-in逐模型校验私有summary及Anthropic adaptive/budget adapter；Responses/Chat不发布
   未实现的独立开关；Anthropic budget值、独立on和默认/等级预算在配置与Provider staging时
   一致，动态`max_tokens`冲突在fetch前失败。
@@ -266,3 +268,12 @@ TGC-23–26、32及35取得P4范围证据；UI排序、选择和摘要仍由P5�
 TGC-01–38均有对应阶段自动证据；TGC-06、21、27–28、30、33–34、38另有浏览器证据。
 没有真实模型调用或费用。技术Gate完成，保留已知FT-12日期基线和Node版本环境限制，等待
 所有者接受后归档。
+
+### 2026-10-03 Built-in OpenAI独立开关补齐
+
+- 两个本地Relay-backed Built-in模型确认并配置`thinking: ["on", "off"]`。
+- Responses与Chat Client只为逐模型声明该能力的模型启用映射：
+  `on + default`省略effort，`off + default/none`精确发送一次`none`；未声明模型fetch前拒绝。
+- Built-in配置校验不再错误拒绝OpenAI模型的合法Thinking能力；Anthropic私有adapter约束不变。
+- 真实`test-workspace/config.json`通过Built-in配置校验；未执行真实模型调用。
+- 聚焦配置/Provider/Client测试80/80、Unit 1360/1360、Integration 22/22、build/Relay及lint通过。

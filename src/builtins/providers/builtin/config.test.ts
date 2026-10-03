@@ -189,8 +189,13 @@ describe('Built-in LLM configuration', () => {
         {
           modelId: 'responses',
           protocol: 'openai-responses',
-          reasoning: { efforts: ['high'] },
+          reasoning: { thinking: ['on', 'off'], efforts: ['high'] },
           readableSummary: 'auto-on-explicit-reasoning',
+        },
+        {
+          modelId: 'chat',
+          protocol: 'openai-chat-completions',
+          reasoning: { thinking: ['on', 'off'], efforts: ['none', 'high'] },
         },
         {
           modelId: 'adaptive',
@@ -215,43 +220,21 @@ describe('Built-in LLM configuration', () => {
     expect(result.models[0]).toMatchObject({
       readableSummary: 'auto-on-explicit-reasoning',
     });
-    expect(result.models[1]?.anthropicThinking).toEqual({ mode: 'adaptive' });
-    expect(result.models[2]?.anthropicThinking).toEqual({
+    expect(result.models[2]?.anthropicThinking).toEqual({ mode: 'adaptive' });
+    expect(result.models[3]?.anthropicThinking).toEqual({
       mode: 'budget',
       defaultBudgetTokens: 1_024,
       budgets: { low: 1_024, high: 4_096 },
     });
-    expect(Object.isFrozen(result.models[2]?.anthropicThinking)).toBe(true);
+    expect(Object.isFrozen(result.models[3]?.anthropicThinking)).toBe(true);
     expect(Object.isFrozen(
-      result.models[2]?.anthropicThinking?.mode === 'budget'
-        ? result.models[2].anthropicThinking.budgets
+      result.models[3]?.anthropicThinking?.mode === 'budget'
+        ? result.models[3].anthropicThinking.budgets
         : undefined,
     )).toBe(true);
   });
 
   it.each([
-    [{
-      modelId: 'chat',
-      protocol: 'openai-chat-completions',
-      reasoning: { thinking: ['on'] },
-    }, 'models[0].reasoning.thinking[0]'],
-    [{
-      modelId: 'responses',
-      protocol: 'openai-responses',
-      reasoning: { thinking: ['off'] },
-      readableSummary: 'auto-on-explicit-reasoning',
-    }, 'models[0].reasoning.thinking[0]'],
-    [{
-      modelId: 'responses',
-      protocol: 'openai-responses',
-      reasoning: { thinking: ['on'] },
-    }, 'models[0].reasoning.thinking[0]'],
-    [{
-      modelId: 'responses',
-      protocol: 'openai-responses',
-      reasoning: { thinking: ['on'] },
-      readableSummary: 'auto-on-explicit-reasoning',
-    }, 'models[0].reasoning.thinking[0]'],
     [{
       modelId: 'chat',
       protocol: 'openai-chat-completions',

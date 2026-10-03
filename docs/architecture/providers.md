@@ -124,6 +124,10 @@ summary only when the model registration declares that private adapter. Chat
 Completions maps explicit effort to `reasoning_effort`. Anthropic uses its
 configured adaptive or budget adapter and rejects invalid budget/output
 combinations before fetch. No Client invents a non-default policy.
+For a Built-in OpenAI model that explicitly declares Thinking switches,
+`on + default` preserves the deployment's default reasoning behavior by
+omitting effort, while `off` maps once to effort `none`. Models without that
+declaration reject the switch before fetch.
 
 OpenAI Chat Completions captures ordered reasoning text and at most one non-empty
 opaque reasoning value per Assistant response. OpenAI Responses captures summary

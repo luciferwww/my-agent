@@ -203,13 +203,42 @@ describe('Built-in Protocol Clients', () => {
     expect(requestBody(fetchImpl).reasoning).toEqual(expected);
   });
 
-  it('rejects independent Responses on even when readable summaries are configured', async () => {
-    const fetchImpl = vi.fn() as unknown as typeof fetch;
+  it('maps configured Responses Thinking switches through effort none', async () => {
+    const fetchImpl = vi.fn(async () => responsesTerminal()) as unknown as typeof fetch;
     const client = new OpenAIResponsesClient({
       baseURL: 'https://example.test',
       fetch: fetchImpl,
       readableSummaryModels: ['opaque/model:1'],
+      thinkingSwitchModels: ['opaque/model:1'],
     });
+    await client.chat({
+      ...request,
+      reasoning: { thinking: 'on', effort: 'default' },
+    });
+    expect(requestBody(fetchImpl)).not.toHaveProperty('reasoning');
+
+    vi.mocked(fetchImpl).mockClear();
+    await client.chat({
+      ...request,
+      reasoning: { thinking: 'off', effort: 'default' },
+    });
+    expect(requestBody(fetchImpl).reasoning).toEqual({ effort: 'none' });
+
+    vi.mocked(fetchImpl).mockClear();
+    await client.chat({
+      ...request,
+      reasoning: { thinking: 'off', effort: 'none' },
+    });
+    expect(requestBody(fetchImpl).reasoning).toEqual({ effort: 'none' });
+  });
+
+  it('rejects an unconfigured Responses Thinking switch before fetch', async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const client = new OpenAIResponsesClient({
+      baseURL: 'https://example.test',
+      fetch: fetchImpl,
+    });
+
     await expect(client.chat({
       ...request,
       reasoning: { thinking: 'on', effort: 'default' },
@@ -262,10 +291,39 @@ describe('Built-in Protocol Clients', () => {
       category: 'invalid_request',
       diagnostics: {
         providerMessage:
-          'OpenAI Chat Completions does not support the requested Thinking switch.',
+          'OpenAI Chat Completions has no adapter for the requested Thinking switch.',
       },
     });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('maps configured Chat Completions Thinking switches through effort none', async () => {
+    const fetchImpl = vi.fn(async () => chatTerminal()) as unknown as typeof fetch;
+    const client = new OpenAIChatCompletionsClient({
+      baseURL: 'https://example.test',
+      fetch: fetchImpl,
+      thinkingSwitchModels: ['opaque/model:1'],
+    });
+
+    await client.chat({
+      ...request,
+      reasoning: { thinking: 'on', effort: 'default' },
+    });
+    expect(requestBody(fetchImpl)).not.toHaveProperty('reasoning_effort');
+
+    vi.mocked(fetchImpl).mockClear();
+    await client.chat({
+      ...request,
+      reasoning: { thinking: 'off', effort: 'default' },
+    });
+    expect(requestBody(fetchImpl).reasoning_effort).toBe('none');
+
+    vi.mocked(fetchImpl).mockClear();
+    await client.chat({
+      ...request,
+      reasoning: { thinking: 'off', effort: 'none' },
+    });
+    expect(requestBody(fetchImpl).reasoning_effort).toBe('none');
   });
 
   it('captures, hides, and replays ordered Anthropic Thinking blocks', async () => {

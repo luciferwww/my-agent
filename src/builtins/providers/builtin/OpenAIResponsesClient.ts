@@ -29,6 +29,7 @@ import {
 
 export type OpenAIResponsesClientOptions = ProtocolClientOptions & {
   readonly readableSummaryModels?: readonly string[];
+  readonly thinkingSwitchModels?: readonly string[];
 };
 
 const RESPONSES_REASONING_REPLAY_FORMAT = 'openai-responses.reasoning-item.v1';
@@ -74,6 +75,7 @@ export class OpenAIResponsesClient implements ModelInvocationPort {
           request,
           this.options.baseURL,
           this.options.readableSummaryModels?.includes(request.model) === true,
+          this.options.thinkingSwitchModels?.includes(request.model) === true,
         )),
         signal: request.signal,
       });
@@ -298,8 +300,13 @@ function buildRequest(
   request: ModelInvocationRequest,
   connectionId: string,
   readableSummary: boolean,
+  supportsThinkingSwitch: boolean,
 ): Record<string, unknown> {
-  const reasoning = buildReasoningRequest(request, readableSummary);
+  const reasoning = buildReasoningRequest(
+    request,
+    readableSummary,
+    supportsThinkingSwitch,
+  );
   return {
     model: request.model,
     stream: true,
@@ -325,17 +332,21 @@ function buildRequest(
 function buildReasoningRequest(
   request: ModelInvocationRequest,
   readableSummary: boolean,
+  supportsThinkingSwitch: boolean,
 ): Record<string, string> | undefined {
   const policy = request.reasoning;
   if (!policy) return undefined;
-  if (policy.thinking !== undefined) {
+  if (policy.thinking !== undefined && !supportsThinkingSwitch) {
     throw createInvalidRequestError(
       request,
       'OpenAI Responses has no adapter for the requested Thinking switch.',
     );
   }
-  const explicitEffort = policy.effort === 'default' ? undefined : policy.effort;
+  const explicitEffort = policy.thinking === 'off'
+    ? 'none'
+    : policy.effort === 'default' ? undefined : policy.effort;
   const requestSummary = readableSummary
+    && policy.thinking !== 'off'
     && explicitEffort !== undefined
     && explicitEffort !== 'none';
   if (explicitEffort === undefined && !requestSummary) return undefined;

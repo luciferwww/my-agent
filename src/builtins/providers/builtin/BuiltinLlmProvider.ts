@@ -209,10 +209,25 @@ function createProtocolClient(
             ? [model.modelId]
             : []
         ))),
+        thinkingSwitchModels: thinkingSwitchModels(models, protocol),
       });
     case 'openai-chat-completions':
-      return new OpenAIChatCompletionsClient(options);
+      return new OpenAIChatCompletionsClient({
+        ...options,
+        thinkingSwitchModels: thinkingSwitchModels(models, protocol),
+      });
   }
+}
+
+function thinkingSwitchModels(
+  models: readonly BuiltinModelRegistration[],
+  protocol: BuiltinProtocol,
+): readonly string[] {
+  return Object.freeze(models.flatMap((model) => (
+    model.protocol === protocol && (model.reasoning?.thinking?.length ?? 0) > 0
+      ? [model.modelId]
+      : []
+  )));
 }
 
 function captureConfig(config: BuiltinLlmProviderConfig): BuiltinLlmProviderConfig {

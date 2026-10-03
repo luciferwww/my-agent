@@ -166,10 +166,11 @@ RunResult或History；不因此额外删除原会话已有Thinking。
 |---|---|---|
 | 开关省略 + default | 不增加reasoning | 不增加推理参数 |
 | 开关省略 + 显式effort（含none） | reasoning.effort精确值 | reasoning_effort精确值 |
-| 独立开关 | 只有已验证具体adapter才能声明 | 同左；首期通用映射不发送enable_thinking |
+| 配置声明的独立开关 | on+default省略effort，off映射reasoning.effort=none | on+default省略effort，off映射reasoning_effort=none |
 
-首期通用OpenAI两协议只提供effort，不推导独立on/off。
-未来具体adapter可验证关闭或开启路径；不能通过summary冒充开启或偷偷补medium。
+OpenAI两协议只在逐模型配置声明thinking能力时启用该映射；该声明表示部署保证省略effort
+使用开启的默认推理行为，`none`关闭推理。未声明模型继续拒绝独立开关。实现不发送
+`enable_thinking`、不通过summary冒充开启，也不偷偷补medium。
 Chat现有reasoning_text/reasoning_opaque不是所有兼容服务的统一协议。
 
 Built-in模型私有可选`readableSummary: "auto-on-explicit-reasoning"`仅用于已验证的

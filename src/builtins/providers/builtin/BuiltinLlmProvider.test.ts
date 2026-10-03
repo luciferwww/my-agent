@@ -237,6 +237,58 @@ describe('BuiltinLlmProvider', () => {
     ]);
   });
 
+  it('wires configured Thinking switches into both OpenAI protocol Clients', async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      const data = url.endsWith('/responses')
+        ? [
+            'data: {"type":"response.created"}\n\n',
+            'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1}}}\n\n',
+            'data: [DONE]\n\n',
+          ]
+        : [
+            'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+            'data: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1}}\n\n',
+            'data: [DONE]\n\n',
+          ];
+      return new Response(data.join(''), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    }) as unknown as typeof fetch;
+    const provider = new BuiltinLlmProvider({
+      baseURL: 'https://example.test',
+      models: [
+        {
+          modelId: 'responses',
+          protocol: 'openai-responses',
+          reasoning: { thinking: ['on', 'off'] },
+        },
+        {
+          modelId: 'chat',
+          protocol: 'openai-chat-completions',
+          reasoning: { thinking: ['on', 'off'] },
+        },
+      ],
+    }, { fetch: fetchImpl });
+
+    await provider.entry.invocationPort.chat({
+      ...request,
+      model: 'responses',
+      reasoning: { thinking: 'off', effort: 'default' },
+    });
+    await provider.entry.invocationPort.chat({
+      ...request,
+      model: 'chat',
+      reasoning: { thinking: 'off', effort: 'default' },
+    });
+
+    const bodies = vi.mocked(fetchImpl).mock.calls.map((call) =>
+      JSON.parse(String(call[1]?.body)) as Record<string, unknown>);
+    expect(bodies[0]?.reasoning).toEqual({ effort: 'none' });
+    expect(bodies[1]?.reasoning_effort).toBe('none');
+  });
+
   it('applies model output defaults and clamps explicit overrides to capability', async () => {
     const requests: ModelInvocationRequest[] = [];
     const provider = new BuiltinLlmProvider({

@@ -224,16 +224,6 @@ export function normalizeBuiltinReasoningConfig(
 
   const thinking = reasoning?.thinking ?? [];
   const efforts = reasoning?.efforts ?? [];
-  if (model.protocol === 'openai-chat-completions' && thinking.length > 0) {
-    throw new BuiltinLlmConfigError(`${path}.reasoning.thinking[0]`);
-  }
-  if (model.protocol === 'openai-responses') {
-    if (thinking.length > 0) {
-      throw new BuiltinLlmConfigError(
-        `${path}.reasoning.thinking[0]`,
-      );
-    }
-  }
   if (
     model.protocol === 'anthropic-messages'
     && (thinking.length > 0 || efforts.length > 0)

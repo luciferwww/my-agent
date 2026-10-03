@@ -26,7 +26,9 @@ import {
   type ProtocolClientOptions,
 } from './client-common.js';
 
-export type OpenAIChatCompletionsClientOptions = ProtocolClientOptions;
+export type OpenAIChatCompletionsClientOptions = ProtocolClientOptions & {
+  readonly thinkingSwitchModels?: readonly string[];
+};
 
 const CHAT_REASONING_REPLAY_FORMAT = 'openai-chat-completions.reasoning.v1';
 
@@ -58,7 +60,11 @@ export class OpenAIChatCompletionsClient implements ModelInvocationPort {
           accept: 'text/event-stream',
           ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
         },
-        body: JSON.stringify(buildRequest(request, this.options.baseURL)),
+        body: JSON.stringify(buildRequest(
+          request,
+          this.options.baseURL,
+          this.options.thinkingSwitchModels?.includes(request.model) === true,
+        )),
         signal: request.signal,
       });
       if (!response.ok) {
@@ -241,16 +247,19 @@ export class OpenAIChatCompletionsClient implements ModelInvocationPort {
 function buildRequest(
   request: ModelInvocationRequest,
   connectionId: string,
+  supportsThinkingSwitch: boolean,
 ): Record<string, unknown> {
-  if (request.reasoning?.thinking !== undefined) {
+  if (request.reasoning?.thinking !== undefined && !supportsThinkingSwitch) {
     throw createInvalidRequestError(
       request,
-      'OpenAI Chat Completions does not support the requested Thinking switch.',
+      'OpenAI Chat Completions has no adapter for the requested Thinking switch.',
     );
   }
-  const reasoningEffort = request.reasoning?.effort === 'default'
-    ? undefined
-    : request.reasoning?.effort;
+  const reasoningEffort = request.reasoning?.thinking === 'off'
+    ? 'none'
+    : request.reasoning?.effort === 'default'
+      ? undefined
+      : request.reasoning?.effort;
   return {
     model: request.model,
     stream: true,
