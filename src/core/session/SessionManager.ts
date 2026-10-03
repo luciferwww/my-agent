@@ -1,241 +1,486 @@
 import { randomUUID } from 'crypto';
-import { mkdir, unlink, writeFile } from 'fs/promises';
+import { mkdir, readdir, rename, unlink, writeFile } from 'fs/promises';
 import { join } from 'path';
-import { loadStore, updateStore } from './store.js';
-import { loadTranscript, resolveLinearPath, appendToTranscript, findLastCompaction } from './transcript.js';
+import { SessionError } from './errors.js';
+import { isCanonicalSessionId, loadStore, updateStore } from './store.js';
+import {
+  loadTranscript,
+  resolveLinearPath,
+  appendToTranscript,
+  findLastCompaction,
+  replaceTranscript,
+} from './transcript.js';
 import type {
+  ExecutionTerminalFact,
+  HostTaskCompletion,
+} from '../tools/execution.js';
+import type {
+  AsyncToolTranscriptRecord,
   SessionEntry,
   TranscriptState,
   MessageRecord,
   SessionRecord,
   CompactionRecord,
   ContentBlock,
+  SessionHistoryPage,
+  SessionHistoryQuery,
+  SessionHistoryContentBlock,
+  TranscriptEntry,
+  ToolExecutionAcceptedRecord,
+  ToolExecutionTerminalRecord,
+  HostTaskCompletionRecord,
+  TurnAbortedRecord,
+  UpdateSessionInput,
 } from './types.js';
+import {
+  normalizeReasoningPreference,
+  projectThinkingText,
+  type ReasoningPreference,
+} from '../model-invocation/index.js';
 
 const SESSIONS_DIR = 'sessions';
 const STORE_FILE = 'sessions.json';
-const TRANSCRIPT_VERSION = 1;
+const TRANSCRIPT_VERSION = 2;
+const DEFAULT_HISTORY_LIMIT = 50;
+const MAX_HISTORY_LIMIT = 100;
 
-/**
- * SessionManager 构造选项。
- *
- * toolResultHeadChars / toolResultTailChars：
- *   写入 JSONL 前对 tool result 内容做硬上限裁剪。
- *   裁剪后磁盘上存储的就是截断数据，后续每次 loadHistory() 加载时无需重复裁剪。
- *   两个字段同时设置才生效；未设置则不裁剪（向后兼容）。
- */
+/** SessionManager construction options. */
 export interface SessionManagerOptions {
-  /** 保留 tool result 头部的最大字符数 */
+  /** Maximum number of leading tool-result characters to retain. */
   toolResultHeadChars?: number;
-  /** 保留 tool result 尾部的最大字符数 */
+  /** Maximum number of trailing tool-result characters to retain. */
   toolResultTailChars?: number;
+  now?: () => number;
+}
+
+export interface SessionMessageInput {
+  turnId: string;
+  role: 'user' | 'assistant' | 'toolResult';
+  content: string | ContentBlock[];
+  invocation?: import('../model-invocation/index.js').AssistantInvocation;
+  reasoning?: ReasoningPreference;
+  abortMeta?: { partial: boolean; stopReason: 'aborted' };
+  turnStopReason?: 'max_llm_calls';
+}
+
+export interface MaterializeSessionInput {
+  sessionId: string;
+  createdAt: number;
+  title?: string;
+}
+
+export interface CreateTransientSubagentTranscriptInput {
+  sessionId: string;
+  callerSessionId: string;
+  createdAt: number;
+}
+
+export interface ToolExecutionAcceptedInput {
+  readonly turnId: string;
+  readonly callId: string;
+  readonly executionId: string;
+  readonly toolName: string;
+}
+
+export type ToolExecutionTerminalInput = {
+  readonly executionId: string;
+} & ExecutionTerminalFact;
+
+export interface HostTaskCompletionInput {
+  readonly turnId: string;
+  readonly completion: HostTaskCompletion;
 }
 
 /**
- * Session 管理器。
- *
- * 管理 Session 的创建/查询/更新/删除，以及树形消息历史的追加/读取/分支。
- *
- * 存储结构：
- *   <workspaceDir>/.agent/sessions/sessions.json   — Session Store（元数据索引）
- *   <workspaceDir>/.agent/sessions/{sessionId}.jsonl — Session Transcript（树形消息历史）
- *
- * 参考 OpenClaw 的 Session 管理系统 + pi-coding-agent 的树形 SessionManager。
+ * Owns persisted Session metadata and tree-structured Transcript operations.
+ * Metadata is stored in <agentHome>/sessions/sessions.json and each Transcript
+ * is derived as <agentHome>/sessions/<sessionId>.jsonl.
  */
 export class SessionManager {
   private readonly sessionsDir: string;
   private readonly storePath: string;
   private readonly options: SessionManagerOptions;
 
-  /** 每个 Session 的内存状态（byId Map + leafId） */
+  /** In-memory Transcript state keyed by canonical Session ID. */
   private transcripts = new Map<string, TranscriptState>();
+  private transientTranscriptIds = new Set<string>();
+  private transcriptWriteTails = new Map<string, Promise<void>>();
 
-  constructor(workspaceDir: string, options: SessionManagerOptions = {}) {
-    this.sessionsDir = join(workspaceDir, '.agent', SESSIONS_DIR);
+  constructor(agentHome: string, options: SessionManagerOptions = {}) {
+    this.sessionsDir = join(agentHome, SESSIONS_DIR);
     this.storePath = join(this.sessionsDir, STORE_FILE);
     this.options = options;
   }
 
+  async initialize(): Promise<void> {
+    let fileNames: string[];
+    try {
+      fileNames = await readdir(this.sessionsDir);
+    } catch (error) {
+      if ((error as { code?: string }).code === 'ENOENT') return;
+      throw error;
+    }
+
+    const store = loadStore(this.storePath);
+    await Promise.all(fileNames.map(async (fileName) => {
+      if (fileName.endsWith('.tmp')) {
+        await unlink(join(this.sessionsDir, fileName));
+        return;
+      }
+      const match = /^([0-9a-f-]+)\.jsonl$/.exec(fileName);
+      if (match && isCanonicalSessionId(match[1]) && !store.sessions[match[1]]) {
+        await unlink(join(this.sessionsDir, fileName));
+      }
+    }));
+  }
+
   // ── Session CRUD ─────────────────────────────────────
 
-  /**
-   * 创建新 Session。
-   * 生成 UUID，创建 JSONL 文件（含 session 首行记录），写入 Store。
-   */
-  async createSession(
-    key: string,
-    opts?: { spawnedBy?: string },
-  ): Promise<SessionEntry> {
+  async materializeSession(input: MaterializeSessionInput): Promise<SessionEntry> {
+    this.assertSessionId(input.sessionId);
     await mkdir(this.sessionsDir, { recursive: true });
 
-    const sessionId = randomUUID();
-    const sessionFile = `${sessionId}.jsonl`;
-    const now = Date.now();
+    if (this.getSession(input.sessionId)) {
+      throw new SessionError(
+        'SESSION_PERSISTENCE_FAILED',
+        `Session "${input.sessionId}" is already materialized.`,
+      );
+    }
+
+    const now = Math.max(input.createdAt, this.now());
 
     const entry: SessionEntry = {
-      sessionId,
-      sessionKey: key,
-      sessionFile,
-      createdAt: now,
+      sessionId: input.sessionId,
+      createdAt: input.createdAt,
       updatedAt: now,
-      ...(opts?.spawnedBy ? { spawnedBy: opts.spawnedBy } : {}),
+      ...(input.title === undefined ? {} : { title: input.title }),
     };
 
-    // 创建 JSONL 文件，写入 session 首行记录
     const sessionRecord: SessionRecord = {
+      type: 'session',
+      id: randomUUID(),
+      parentId: null,
+      timestamp: new Date(input.createdAt).toISOString(),
+      version: TRANSCRIPT_VERSION,
+    };
+
+    await this.persistNewSession(entry, [sessionRecord]);
+
+    return entry;
+  }
+
+  async createTransientSubagentTranscript(
+    input: CreateTransientSubagentTranscriptInput,
+  ): Promise<void> {
+    this.assertSessionId(input.sessionId);
+    this.requireTranscript(input.callerSessionId);
+    await mkdir(this.sessionsDir, { recursive: true });
+
+    if (this.getSession(input.sessionId) || this.transientTranscriptIds.has(input.sessionId)) {
+      throw new SessionError(
+        'SESSION_PERSISTENCE_FAILED',
+        `Transcript "${input.sessionId}" already exists.`,
+      );
+    }
+
+    const sessionRecord: SessionRecord = {
+      type: 'session',
+      id: randomUUID(),
+      parentId: null,
+      timestamp: new Date(input.createdAt).toISOString(),
+      version: TRANSCRIPT_VERSION,
+      provenance: {
+        type: 'subagent',
+        callerSessionId: input.callerSessionId,
+      },
+    };
+
+    let state: TranscriptState;
+    try {
+      state = await this.writeNewTranscript(input.sessionId, [sessionRecord]);
+    } catch (error) {
+      throw new SessionError(
+        'SESSION_PERSISTENCE_FAILED',
+        `Transcript "${input.sessionId}" could not be persisted.`,
+        { cause: error },
+      );
+    }
+    this.transientTranscriptIds.add(input.sessionId);
+    this.transcripts.set(input.sessionId, state);
+  }
+
+  async deleteTransientSubagentTranscript(sessionId: string): Promise<void> {
+    this.assertSessionId(sessionId);
+    if (!this.transientTranscriptIds.has(sessionId)) {
+      throw new SessionError('SESSION_NOT_FOUND', `Transcript "${sessionId}" was not found.`);
+    }
+
+    await unlink(this.resolveTranscriptPathUnchecked(sessionId)).catch((error: unknown) => {
+      if ((error as { code?: string }).code !== 'ENOENT') throw error;
+    });
+    this.transcripts.delete(sessionId);
+    this.transientTranscriptIds.delete(sessionId);
+  }
+
+  getSession(sessionId: string): SessionEntry | undefined {
+    const store = loadStore(this.storePath);
+    return store.sessions[sessionId];
+  }
+
+  listSessions(input: { archived?: boolean } = {}): SessionEntry[] {
+    const store = loadStore(this.storePath);
+    const archived = input.archived ?? false;
+    return Object.values(store.sessions)
+      .filter((entry) => (entry.archivedAt !== undefined) === archived)
+      .sort((left, right) => right.updatedAt - left.updatedAt
+        || left.sessionId.localeCompare(right.sessionId));
+  }
+
+  async renameSession(sessionId: string, input: UpdateSessionInput): Promise<SessionEntry> {
+    const title = input.title === null ? undefined : input.title?.trim();
+    if (input.title !== null && !title) {
+      throw new SessionError('SESSION_TITLE_INVALID', 'Session title must not be empty.');
+    }
+
+    let updated!: SessionEntry;
+    await updateStore(this.storePath, (store) => {
+      const entry = this.requireSession(store.sessions, sessionId);
+      if (title === undefined) delete entry.title;
+      else entry.title = title;
+      entry.updatedAt = this.nextTimestamp(entry.updatedAt);
+      updated = { ...entry };
+    });
+    return updated;
+  }
+
+  async archiveSession(sessionId: string): Promise<SessionEntry> {
+    let updated!: SessionEntry;
+    await updateStore(this.storePath, (store) => {
+      const entry = this.requireSession(store.sessions, sessionId);
+      const now = this.nextTimestamp(entry.updatedAt);
+      entry.archivedAt = now;
+      entry.updatedAt = now;
+      updated = { ...entry };
+    });
+    return updated;
+  }
+
+  async unarchiveSession(sessionId: string): Promise<SessionEntry> {
+    let updated!: SessionEntry;
+    await updateStore(this.storePath, (store) => {
+      const entry = this.requireSession(store.sessions, sessionId);
+      delete entry.archivedAt;
+      entry.updatedAt = this.nextTimestamp(entry.updatedAt);
+      updated = { ...entry };
+    });
+    return updated;
+  }
+
+  assertSessionDeletable(sessionId: string): void {
+    const sessions = loadStore(this.storePath).sessions;
+    this.requireSession(sessions, sessionId);
+    if (Object.values(sessions).some(
+      (entry) => entry.forkedFromSessionId === sessionId,
+    )) {
+      throw new SessionError(
+        'SESSION_HAS_DESCENDANTS',
+        `Session "${sessionId}" has fork descendants.`,
+      );
+    }
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    await updateStore(this.storePath, (store) => {
+      this.requireSession(store.sessions, sessionId);
+      if (Object.values(store.sessions).some(
+        (entry) => entry.forkedFromSessionId === sessionId,
+      )) {
+        throw new SessionError(
+          'SESSION_HAS_DESCENDANTS',
+          `Session "${sessionId}" has fork descendants.`,
+        );
+      }
+      delete store.sessions[sessionId];
+    });
+
+    await unlink(this.resolveTranscriptPathUnchecked(sessionId)).catch((error: unknown) => {
+      if ((error as { code?: string }).code !== 'ENOENT') throw error;
+    });
+    this.transcripts.delete(sessionId);
+  }
+
+  async forkSession(sourceSessionId: string, entryId?: string): Promise<SessionEntry> {
+    const source = this.requireExistingSession(sourceSessionId);
+    const sourceState = this.ensureTranscriptLoaded(sourceSessionId);
+    const selectedId = entryId ?? sourceState.leafId;
+    const selected = selectedId ? sourceState.byId.get(selectedId) : undefined;
+    if (!selected || selected.type !== 'message') {
+      throw new SessionError(
+        'SESSION_NOT_FOUND',
+        `Transcript entry "${entryId ?? ''}" was not found.`,
+      );
+    }
+
+    const sourceMessages = resolveLinearPath(sourceState, selected.id) as MessageRecord[];
+    const sessionId = randomUUID();
+    const now = this.now();
+    const root: SessionRecord = {
       type: 'session',
       id: randomUUID(),
       parentId: null,
       timestamp: new Date(now).toISOString(),
       version: TRANSCRIPT_VERSION,
     };
-
-    const filePath = join(this.sessionsDir, sessionFile);
-    await writeFile(filePath, JSON.stringify(sessionRecord) + '\n', 'utf-8');
-
-    // 初始化内存状态
-    const state: TranscriptState = {
-      byId: new Map([[sessionRecord.id, sessionRecord]]),
-      leafId: sessionRecord.id,
-    };
-    this.transcripts.set(key, state);
-
-    // 写入 Store
-    await updateStore(this.storePath, (store) => {
-      if (store[key]) {
-        throw new Error(`Session key "${key}" already exists`);
-      }
-      store[key] = entry;
+    let parentId = root.id;
+    const messages = sourceMessages.map((message): MessageRecord => {
+      const copy = { ...message, parentId };
+      parentId = copy.id;
+      return copy;
     });
+    const copiedMessageIds = new Set(messages.map((message) => message.id));
+    const lifecycle = [...sourceState.byId.values()].filter(
+      (record): record is AsyncToolTranscriptRecord => (
+        (
+          record.type === 'tool_execution_accepted'
+          || record.type === 'tool_execution_terminal'
+          || record.type === 'host_task_completion'
+          || record.type === 'turn_aborted'
+        )
+        && record.parentId !== null
+        && copiedMessageIds.has(record.parentId)
+      ),
+    );
+    const entry: SessionEntry = {
+      sessionId,
+      createdAt: now,
+      updatedAt: now,
+      forkedFromSessionId: sourceSessionId,
+      ...(source.title === undefined ? {} : { title: source.title }),
+    };
 
+    await this.persistNewSession(entry, [root, ...messages, ...lifecycle]);
     return entry;
   }
 
-  /**
-   * 获取已有 Session 或创建新的。
-   */
-  async resolveSession(
-    key: string,
-    opts?: { spawnedBy?: string },
-  ): Promise<{ entry: SessionEntry; isNew: boolean }> {
-    const existing = this.getSession(key);
-    if (existing) {
-      return { entry: existing, isNew: false };
-    }
-    const entry = await this.createSession(key, opts);
-    return { entry, isNew: true };
-  }
+  // Tree-structured message operations.
 
-  /** 通过 key 获取 SessionEntry，不存在返回 undefined */
-  getSession(key: string): SessionEntry | undefined {
-    const store = loadStore(this.storePath);
-    return store[key];
-  }
-
-  /** 列出所有 Session */
-  listSessions(): SessionEntry[] {
-    const store = loadStore(this.storePath);
-    return Object.values(store);
-  }
-
-  /** 更新 SessionEntry 元数据 */
-  async updateSession(
-    key: string,
-    fields: Partial<SessionEntry>,
-  ): Promise<void> {
-    await updateStore(this.storePath, (store) => {
-      const entry = store[key];
-      if (!entry) {
-        throw new Error(`Session key "${key}" not found`);
-      }
-      Object.assign(entry, fields, { updatedAt: Date.now() });
-    });
-  }
-
-  /** 删除 Session（Store 条目 + JSONL 文件） */
-  async deleteSession(key: string): Promise<void> {
-    const entry = this.getSession(key);
-    if (!entry) return;
-
-    // 删除 JSONL 文件
-    try {
-      await unlink(join(this.sessionsDir, entry.sessionFile));
-    } catch {
-      // 文件不存在，忽略
-    }
-
-    // 删除 Store 条目
-    await updateStore(this.storePath, (store) => {
-      delete store[key];
-    });
-
-    // 清理内存状态
-    this.transcripts.delete(key);
-  }
-
-  // ── 消息操作（树形） ──────────────────────────────────
-
-  /**
-   * 追加消息到当前分支末端。
-   * parentId 自动设为当前 leafId。
-   * 返回新消息的 id。
-   */
+  /** Appends a message to the active branch and returns the persisted record. */
   async appendMessage(
-    key: string,
-    message: {
-      role: 'user' | 'assistant' | 'toolResult';
-      content: string | ContentBlock[];
-    },
-  ): Promise<string> {
-    const state = this.ensureTranscriptLoaded(key);
-    const filePath = this.resolveTranscriptPath(key);
+    sessionId: string,
+    message: SessionMessageInput,
+  ): Promise<MessageRecord> {
+    return this.withTranscriptWrite(
+      sessionId,
+      () => this.appendMessageUnlocked(sessionId, message),
+    );
+  }
 
-    // 写盘前对 toolResult 做硬上限裁剪。
-    // 裁剪后 JSONL 存储的是截断数据，后续 loadHistory() 无需重复裁剪。
-    const persistedMessage = message.role === 'toolResult'
-      ? { ...message, content: this.capToolResults(message.content as ContentBlock[]) }
-      : message;
+  private async appendMessageUnlocked(
+    sessionId: string,
+    message: SessionMessageInput,
+  ): Promise<MessageRecord> {
+    const state = this.ensureTranscriptLoaded(sessionId);
+    const filePath = this.resolveTranscriptPath(sessionId);
+    const { turnId, turnStopReason, ...messagePayload } = message;
+    if (turnStopReason !== undefined && messagePayload.role !== 'assistant') {
+      throw new TypeError('turnStopReason can only be set on an Assistant message.');
+    }
+    if (messagePayload.reasoning !== undefined && messagePayload.role !== 'user') {
+      throw new TypeError('reasoning can only be set on a User message.');
+    }
+    const reasoning = messagePayload.reasoning === undefined
+      ? undefined
+      : normalizeReasoningPreference(messagePayload.reasoning).preference;
+    const normalizedMessagePayload = reasoning === undefined
+      ? messagePayload
+      : { ...messagePayload, reasoning };
+
+    // Persist capped tool results so later history loads need no repeated trimming.
+    const persistedMessage = normalizedMessagePayload.role === 'toolResult'
+      ? {
+          ...normalizedMessagePayload,
+          content: this.capToolResults(normalizedMessagePayload.content as ContentBlock[]),
+        }
+      : normalizedMessagePayload;
 
     const record: MessageRecord = {
       type: 'message',
       id: randomUUID(),
       parentId: state.leafId,
       timestamp: new Date().toISOString(),
+      turnId,
+      ...(turnStopReason === undefined ? {} : { turnStopReason }),
       message: persistedMessage,
     };
 
-    // 写入 JSONL
-    await appendToTranscript(filePath, record);
+    const requiresV2 = normalizedMessagePayload.invocation !== undefined
+      || normalizedMessagePayload.reasoning !== undefined
+      || (
+        Array.isArray(normalizedMessagePayload.content)
+        && normalizedMessagePayload.content.some((block) => block.type === 'thinking')
+      );
+    if (state.version !== 2 && requiresV2) {
+      const entries = [...state.byId.values()];
+      const root = entries[0];
+      if (!root || root.type !== 'session') {
+        throw new SessionError(
+          'SESSION_DATA_INVALID',
+          `Session "${sessionId}" has no Transcript root.`,
+        );
+      }
+      const upgradedRoot: SessionRecord = { ...root, version: 2 };
+      await replaceTranscript(filePath, [upgradedRoot, ...entries.slice(1), record]);
+      state.byId.set(upgradedRoot.id, upgradedRoot);
+      state.version = 2;
+    } else {
+      await appendToTranscript(filePath, record);
+    }
 
-    // 更新内存
     state.byId.set(record.id, record);
     state.leafId = record.id;
+    await this.touchSession(sessionId);
 
-    // 更新 Store 的 updatedAt
-    await updateStore(this.storePath, (store) => {
-      const entry = store[key];
-      if (entry) {
-        entry.updatedAt = Date.now();
-      }
-    });
-
-    return record.id;
+    return record;
   }
 
-  /**
-   * 获取当前分支的线性消息列表。
-   * 从 leafId 沿 parentId 回溯到根，返回正序排列的 MessageRecord。
-   */
+  /** Returns the active branch in chronological order. */
   getMessages(key: string): MessageRecord[] {
     const state = this.ensureTranscriptLoaded(key);
     return resolveLinearPath(state, state.leafId) as MessageRecord[];
   }
 
-  /**
-   * 将 leafId 移动到指定记录。
-   * 后续 appendMessage 从该点展开新分支。
-   * 不修改 JSONL 文件，只修改内存中的 leafId 指针。
-   */
+  getHistory(query: SessionHistoryQuery): SessionHistoryPage {
+    const limit = query.limit ?? DEFAULT_HISTORY_LIMIT;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_HISTORY_LIMIT) {
+      throw new TypeError(`Session history limit must be an integer from 1 through ${MAX_HISTORY_LIMIT}.`);
+    }
+
+    const messages = this.getMessages(query.sessionId);
+    let end = messages.length;
+    if (query.beforeEntryId !== undefined) {
+      end = messages.findIndex((message) => message.id === query.beforeEntryId);
+      if (end < 0) {
+        throw new SessionError(
+          'SESSION_HISTORY_CURSOR_INVALID',
+          'The history cursor is not on the active branch.',
+        );
+      }
+    }
+
+    const start = Math.max(0, end - limit);
+    const selected = messages.slice(start, end);
+    const lifecycle = this.getAsyncToolRecords(query.sessionId);
+    const items = selected.map((record) => this.projectHistoryMessage(record, lifecycle));
+    const hasMore = start > 0;
+    return {
+      sessionId: query.sessionId,
+      items,
+      nextCursor: hasMore ? (items[0]?.entryId ?? null) : null,
+      hasMore,
+    };
+  }
+
+  /** Moves the in-memory leaf so subsequent messages form a new branch. */
   branch(key: string, entryId: string): void {
     const state = this.ensureTranscriptLoaded(key);
     if (!state.byId.has(entryId)) {
@@ -244,95 +489,320 @@ export class SessionManager {
     state.leafId = entryId;
   }
 
-  /** 获取当前 leafId */
+  /** Returns the current active branch leaf. */
   getLeafId(key: string): string | null {
     const state = this.ensureTranscriptLoaded(key);
     return state.leafId;
   }
 
-  // ── 压缩记录操作 ──────────────────────────────────────
-
-  /**
-   * 将压缩记录追加到 JSONL，并更新内存中的 byId。
-   *
-   * 与 appendMessage() 的关键区别：
-   *   - parentId 自动设为当前 leafId（记录在压缩发生时的链表末端位置）
-   *   - **不更新 leafId**：压缩记录是一个"标记节点"，不是消息链表的一部分，
-   *     后续消息仍然从原 leafId 继续追加，不从压缩记录分叉
-   *   - 写入后通过 findLastCompaction() 可查询到此记录
-   *
-   * @param key       Session key
-   * @param record    compactMessages() 返回的 record（parentId 和 firstKeptEntryId 由此方法填入）
-   * @param firstKeptEntryId  保留区第一条消息的 ID，用于 loadHistory() 截断历史
-   */
-  async appendCompactionRecord(
-    key: string,
-    record: Omit<CompactionRecord, 'parentId' | 'firstKeptEntryId'>,
-    firstKeptEntryId: string,
-  ): Promise<void> {
-    const state = this.ensureTranscriptLoaded(key);
-    const filePath = this.resolveTranscriptPath(key);
-
-    const fullRecord: CompactionRecord = {
-      ...record,
-      parentId: state.leafId,   // 记录在当前链表末端
-      firstKeptEntryId,
-    };
-
-    // 写入 JSONL
-    await appendToTranscript(filePath, fullRecord);
-
-    // 更新内存 byId（不动 leafId）
-    state.byId.set(fullRecord.id, fullRecord);
-
-    // 更新 Store 元数据：递增压缩次数、更新时间戳
-    await updateStore(this.storePath, (store) => {
-      const entry = store[key];
-      if (entry) {
-        entry.compactionCount = (entry.compactionCount ?? 0) + 1;
-        entry.updatedAt = Date.now();
+  async appendToolExecutionAccepted(
+    sessionId: string,
+    input: ToolExecutionAcceptedInput,
+  ): Promise<string> {
+    return this.withTranscriptWrite(sessionId, async () => {
+      const state = this.ensureTranscriptLoaded(sessionId);
+      const acceptedRecords = this.asyncToolRecords(state)
+        .filter((record): record is ToolExecutionAcceptedRecord => (
+          record.type === 'tool_execution_accepted'
+        ));
+      const byExecution = acceptedRecords.find(
+        (record) => record.executionId === input.executionId,
+      );
+      const byCall = acceptedRecords.find(
+        (record) => record.turnId === input.turnId && record.callId === input.callId,
+      );
+      const existing = byExecution ?? byCall;
+      if (existing) {
+        if (
+          existing.executionId === input.executionId
+          && existing.turnId === input.turnId
+          && existing.callId === input.callId
+          && existing.toolName === input.toolName
+        ) {
+          return existing.id;
+        }
+        throw this.lifecycleConflict(
+          `Tool execution acceptance conflicts with existing record "${existing.id}".`,
+        );
       }
+
+      const record: ToolExecutionAcceptedRecord = {
+        type: 'tool_execution_accepted',
+        id: randomUUID(),
+        parentId: state.leafId,
+        timestamp: this.nowIso(),
+        ...input,
+      };
+      await this.appendAsyncToolRecord(sessionId, state, record);
+      return record.id;
     });
   }
 
+  async appendToolExecutionTerminal(
+    sessionId: string,
+    input: ToolExecutionTerminalInput,
+  ): Promise<string> {
+    return this.withTranscriptWrite(sessionId, async () => {
+      const state = this.ensureTranscriptLoaded(sessionId);
+      const records = this.asyncToolRecords(state);
+      const accepted = records.find(
+        (record): record is ToolExecutionAcceptedRecord => (
+          record.type === 'tool_execution_accepted'
+          && record.executionId === input.executionId
+        ),
+      );
+      if (!accepted) {
+        throw this.lifecycleConflict(
+          `Tool execution "${input.executionId}" has no accepted record.`,
+        );
+      }
+
+      const existing = records.find(
+        (record): record is ToolExecutionTerminalRecord => (
+          record.type === 'tool_execution_terminal'
+          && record.executionId === input.executionId
+        ),
+      );
+      if (existing) {
+        if (
+          existing.outcome === input.outcome
+          && existing.content === input.content
+          && existing.reason === input.reason
+        ) {
+          return existing.id;
+        }
+        throw this.lifecycleConflict(
+          `Tool execution "${input.executionId}" already has a conflicting terminal fact.`,
+        );
+      }
+
+      const record: ToolExecutionTerminalRecord = {
+        type: 'tool_execution_terminal',
+        id: randomUUID(),
+        parentId: state.leafId,
+        timestamp: this.nowIso(),
+        ...input,
+      };
+      await this.appendAsyncToolRecord(sessionId, state, record);
+      return record.id;
+    });
+  }
+
+  async appendHostTaskCompletion(
+    sessionId: string,
+    input: HostTaskCompletionInput,
+  ): Promise<string> {
+    return this.withTranscriptWrite(sessionId, async () => {
+      const state = this.ensureTranscriptLoaded(sessionId);
+      const records = this.asyncToolRecords(state);
+      const accepted = records.find(
+        (record): record is ToolExecutionAcceptedRecord => (
+          record.type === 'tool_execution_accepted'
+          && record.executionId === input.completion.executionId
+        ),
+      );
+      const terminal = records.find(
+        (record): record is ToolExecutionTerminalRecord => (
+          record.type === 'tool_execution_terminal'
+          && record.executionId === input.completion.executionId
+        ),
+      );
+      if (!accepted || !terminal) {
+        throw this.lifecycleConflict(
+          `Host completion "${input.completion.executionId}" has no terminal execution fact.`,
+        );
+      }
+      if (
+        accepted.turnId !== input.turnId
+        || accepted.toolName !== input.completion.toolName
+        || this.hostCompletionStatus(terminal.outcome) !== input.completion.status
+        || terminal.content !== input.completion.content
+      ) {
+        throw this.lifecycleConflict(
+          `Host completion "${input.completion.executionId}" conflicts with its execution facts.`,
+        );
+      }
+
+      const existing = records.find(
+        (record): record is HostTaskCompletionRecord => (
+          record.type === 'host_task_completion'
+          && record.completion.executionId === input.completion.executionId
+        ),
+      );
+      if (existing) {
+        if (
+          existing.turnId === input.turnId
+          && existing.completion.toolName === input.completion.toolName
+          && existing.completion.status === input.completion.status
+          && existing.completion.content === input.completion.content
+        ) {
+          return existing.id;
+        }
+        throw this.lifecycleConflict(
+          `Tool execution "${input.completion.executionId}" already has a conflicting Host completion.`,
+        );
+      }
+
+      const record: HostTaskCompletionRecord = {
+        type: 'host_task_completion',
+        id: randomUUID(),
+        parentId: state.leafId,
+        timestamp: this.nowIso(),
+        turnId: input.turnId,
+        completion: { ...input.completion },
+      };
+      await this.appendAsyncToolRecord(sessionId, state, record);
+      return record.id;
+    });
+  }
+
+  async appendTurnAborted(sessionId: string, turnId: string): Promise<string> {
+    return this.withTranscriptWrite(sessionId, async () => {
+      const state = this.ensureTranscriptLoaded(sessionId);
+      const existing = this.asyncToolRecords(state).find(
+        (record): record is TurnAbortedRecord => (
+          record.type === 'turn_aborted' && record.turnId === turnId
+        ),
+      );
+      if (existing) return existing.id;
+
+      const record: TurnAbortedRecord = {
+        type: 'turn_aborted',
+        id: randomUUID(),
+        parentId: state.leafId,
+        timestamp: this.nowIso(),
+        turnId,
+      };
+      await this.appendAsyncToolRecord(sessionId, state, record);
+      return record.id;
+    });
+  }
+
+  getAsyncToolRecords(sessionId: string): readonly AsyncToolTranscriptRecord[] {
+    const records = this.asyncToolRecords(this.ensureTranscriptLoaded(sessionId));
+    return records.map((record) => (
+      record.type === 'host_task_completion'
+        ? { ...record, completion: { ...record.completion } }
+        : { ...record }
+    ));
+  }
+
+  // Compaction record operations.
+
   /**
-   * 获取最近一次压缩的摘要文本。
-   *
-   * 供 loadHistory() 判断是否需要在历史消息前注入摘要。
-   * 若 session 从未压缩过，返回 null。
-   *
-   * @returns 摘要字符串，或 null（未压缩）
+   * Appends a Compaction marker without moving the active message leaf.
+   * parentId records the leaf at Compaction time, while firstKeptEntryId marks
+   * the retained-history boundary used by loadHistory().
    */
+  async appendCompactionRecord(
+    sessionId: string,
+    record: Omit<CompactionRecord, 'parentId' | 'firstKeptEntryId'>,
+    firstKeptEntryId: string,
+  ): Promise<void> {
+    await this.withTranscriptWrite(sessionId, async () => {
+      const state = this.ensureTranscriptLoaded(sessionId);
+      const filePath = this.resolveTranscriptPath(sessionId);
+
+      const fullRecord: CompactionRecord = {
+        ...record,
+        parentId: state.leafId,
+        firstKeptEntryId,
+      };
+
+      await appendToTranscript(filePath, fullRecord);
+
+      state.byId.set(fullRecord.id, fullRecord);
+
+      // Compaction statistics remain authoritative in the Transcript record.
+      await this.touchSession(sessionId);
+    });
+  }
+
+  /** Returns the latest Compaction summary, or null when none exists. */
   getLastCompactionSummary(key: string): string | null {
     const state = this.ensureTranscriptLoaded(key);
     const record = findLastCompaction(state);
     return record?.summary ?? null;
   }
 
-  /**
-   * 获取最近一次压缩记录的完整信息。
-   *
-   * 供 loadHistory() 读取 firstKeptEntryId，用于截断历史消息列表。
-   * 若 session 从未压缩过，返回 null。
-   */
+  /** Returns the latest Compaction record used to rebuild model history. */
   getLastCompactionRecord(key: string): CompactionRecord | null {
     const state = this.ensureTranscriptLoaded(key);
     return findLastCompaction(state);
   }
 
-  // ── 内部方法 ──────────────────────────────────────────
+  // Internal helpers.
 
-  /**
-   * 对 toolResult 消息的每个 block 做硬上限裁剪（写盘专用）。
-   *
-   * 仅当 options.toolResultHeadChars 和 toolResultTailChars 均已设置时生效。
-   * 裁剪格式与 Layer 1 pruneToolResults 一致（head + "..." + tail + 标记行），
-   * 保证裁剪后内容对 LLM 可读，且不会在未来加载时被再次误裁剪。
-   */
+  private async withTranscriptWrite<T>(
+    sessionId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const prior = this.transcriptWriteTails.get(sessionId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = prior.catch(() => undefined).then(() => current);
+    this.transcriptWriteTails.set(sessionId, tail);
+    await prior.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.transcriptWriteTails.get(sessionId) === tail) {
+        this.transcriptWriteTails.delete(sessionId);
+      }
+    }
+  }
+
+  private async appendAsyncToolRecord(
+    sessionId: string,
+    state: TranscriptState,
+    record: AsyncToolTranscriptRecord,
+  ): Promise<void> {
+    await appendToTranscript(this.resolveTranscriptPath(sessionId), record);
+    state.byId.set(record.id, record);
+    await this.touchSession(sessionId);
+  }
+
+  private async touchSession(sessionId: string): Promise<void> {
+    await updateStore(this.storePath, (store) => {
+      const entry = store.sessions[sessionId];
+      if (entry) entry.updatedAt = this.nextTimestamp(entry.updatedAt);
+    });
+  }
+
+  private asyncToolRecords(state: TranscriptState): AsyncToolTranscriptRecord[] {
+    return [...state.byId.values()].filter(
+      (record): record is AsyncToolTranscriptRecord => (
+        record.type === 'tool_execution_accepted'
+        || record.type === 'tool_execution_terminal'
+        || record.type === 'host_task_completion'
+        || record.type === 'turn_aborted'
+      ),
+    );
+  }
+
+  private hostCompletionStatus(
+    outcome: ToolExecutionTerminalRecord['outcome'],
+  ): HostTaskCompletion['status'] {
+    if (outcome === 'success' || outcome === 'failed') return outcome;
+    return 'aborted';
+  }
+
+  private lifecycleConflict(message: string): SessionError {
+    return new SessionError('SESSION_DATA_INVALID', message);
+  }
+
+  private nowIso(): string {
+    return new Date(this.now()).toISOString();
+  }
+
+  /** Caps persisted tool-result blocks when both head and tail limits are set. */
   private capToolResults(blocks: ContentBlock[]): ContentBlock[] {
     const { toolResultHeadChars, toolResultTailChars } = this.options;
     if (!toolResultHeadChars || !toolResultTailChars) {
-      return blocks; // 未配置则不裁剪
+      return blocks;
     }
 
     const maxChars = toolResultHeadChars + toolResultTailChars;
@@ -349,31 +819,197 @@ export class SessionManager {
     });
   }
 
-  /**
-   * 确保 Transcript 已加载到内存。
-   * 首次访问时从 JSONL 文件加载，后续使用内存缓存。
-   */
-  private ensureTranscriptLoaded(key: string): TranscriptState {
-    let state = this.transcripts.get(key);
+  private projectHistoryMessage(
+    record: MessageRecord,
+    lifecycle: readonly AsyncToolTranscriptRecord[],
+  ): import('./types.js').SessionHistoryMessage {
+    const content = typeof record.message.content === 'string'
+      ? record.message.content
+      : record.message.content.flatMap((block): SessionHistoryContentBlock[] => {
+          if (block.type === 'thinking') {
+            const text = projectThinkingText(block);
+            return text
+              ? [{
+                  type: 'thinking',
+                  id: block.id,
+                  text,
+                  status: block.status,
+                }]
+              : [];
+          }
+          if (block.type !== 'tool_use') return [block];
+          const accepted = lifecycle.find(
+            (candidate): candidate is ToolExecutionAcceptedRecord => (
+              candidate.type === 'tool_execution_accepted'
+              && candidate.parentId === record.id
+              && candidate.callId === block.id
+            ),
+          );
+          if (!accepted) return [block];
+          const terminal = lifecycle.find(
+            (candidate): candidate is ToolExecutionTerminalRecord => (
+              candidate.type === 'tool_execution_terminal'
+              && candidate.executionId === accepted.executionId
+            ),
+          );
+          return [{
+            ...block,
+            execution_id: accepted.executionId,
+            ...(terminal === undefined
+              ? {}
+              : {
+                  status: terminal.outcome === 'success'
+                    ? 'success' as const
+                    : terminal.outcome === 'failed'
+                      ? 'error' as const
+                      : 'aborted' as const,
+                  result_content: terminal.content,
+                }),
+          }];
+        });
+    return {
+      entryId: record.id,
+      turnId: record.turnId,
+      timestamp: record.timestamp,
+      role: record.message.role,
+      content,
+      ...(record.message.reasoning === undefined
+        ? {}
+        : { reasoning: record.message.reasoning }),
+      ...(record.message.abortMeta === undefined ? {} : { abortMeta: record.message.abortMeta }),
+    };
+  }
+
+  /** Loads and caches a persisted Transcript on first access. */
+  private ensureTranscriptLoaded(sessionId: string): TranscriptState {
+    let state = this.transcripts.get(sessionId);
     if (state) return state;
 
-    const entry = this.getSession(key);
-    if (!entry) {
-      throw new Error(`Session key "${key}" not found`);
-    }
+    this.requireTranscript(sessionId);
 
-    const filePath = join(this.sessionsDir, entry.sessionFile);
+    const filePath = this.resolveTranscriptPathUnchecked(sessionId);
     state = loadTranscript(filePath);
-    this.transcripts.set(key, state);
+    this.transcripts.set(sessionId, state);
     return state;
   }
 
-  /** 解析 JSONL 文件的完整路径 */
-  private resolveTranscriptPath(key: string): string {
-    const entry = this.getSession(key);
+  /** Resolves the Transcript path from a validated Session ID. */
+  private resolveTranscriptPath(sessionId: string): string {
+    this.requireTranscript(sessionId);
+    return this.resolveTranscriptPathUnchecked(sessionId);
+  }
+
+  private resolveTranscriptPathUnchecked(sessionId: string): string {
+    this.assertSessionId(sessionId);
+    return join(this.sessionsDir, `${sessionId}.jsonl`);
+  }
+
+  private requireExistingSession(sessionId: string): SessionEntry {
+    const entry = this.getSession(sessionId);
     if (!entry) {
-      throw new Error(`Session key "${key}" not found`);
+      throw new SessionError('SESSION_NOT_FOUND', `Session "${sessionId}" was not found.`);
     }
-    return join(this.sessionsDir, entry.sessionFile);
+    return entry;
+  }
+
+  private requireTranscript(sessionId: string): void {
+    this.assertSessionId(sessionId);
+    if (!this.transientTranscriptIds.has(sessionId)) {
+      this.requireExistingSession(sessionId);
+    }
+  }
+
+  private requireSession(
+    sessions: Record<string, SessionEntry>,
+    sessionId: string,
+  ): SessionEntry {
+    this.assertSessionId(sessionId);
+    const entry = sessions[sessionId];
+    if (!entry) {
+      throw new SessionError('SESSION_NOT_FOUND', `Session "${sessionId}" was not found.`);
+    }
+    return entry;
+  }
+
+  private assertSessionId(sessionId: string): void {
+    if (!isCanonicalSessionId(sessionId)) {
+      throw new SessionError('SESSION_NOT_FOUND', `Session "${sessionId}" was not found.`);
+    }
+  }
+
+  private nextTimestamp(previous: number): number {
+    return Math.max(this.now(), previous + 1);
+  }
+
+  private now(): number {
+    return this.options.now?.() ?? Date.now();
+  }
+
+  private async persistNewSession(
+    entry: SessionEntry,
+    records: TranscriptEntry[],
+  ): Promise<void> {
+    const finalPath = this.resolveTranscriptPathUnchecked(entry.sessionId);
+    let state: TranscriptState;
+
+    try {
+      state = await this.writeNewTranscript(entry.sessionId, records);
+      await updateStore(this.storePath, (store) => {
+        if (store.sessions[entry.sessionId]) {
+          throw new SessionError(
+            'SESSION_PERSISTENCE_FAILED',
+            `Session "${entry.sessionId}" is already materialized.`,
+          );
+        }
+        store.sessions[entry.sessionId] = entry;
+      });
+    } catch (error) {
+      await unlink(finalPath).catch(() => undefined);
+      this.transcripts.delete(entry.sessionId);
+      if (error instanceof SessionError) throw error;
+      throw new SessionError(
+        'SESSION_PERSISTENCE_FAILED',
+        `Session "${entry.sessionId}" could not be persisted.`,
+        { cause: error },
+      );
+    }
+
+    this.transcripts.set(entry.sessionId, state);
+  }
+
+  private async writeNewTranscript(
+    sessionId: string,
+    records: TranscriptEntry[],
+  ): Promise<TranscriptState> {
+    const finalPath = this.resolveTranscriptPathUnchecked(sessionId);
+    const temporaryPath = join(this.sessionsDir, `${sessionId}.${randomUUID()}.tmp`);
+    const serialized = records.map((record) => JSON.stringify(record)).join('\n') + '\n';
+
+    try {
+      await unlink(finalPath).catch((error: unknown) => {
+        if ((error as { code?: string }).code !== 'ENOENT') throw error;
+      });
+      await writeFile(temporaryPath, serialized, { encoding: 'utf-8', flag: 'wx' });
+      await rename(temporaryPath, finalPath);
+    } catch (error) {
+      await Promise.all([
+        unlink(temporaryPath).catch(() => undefined),
+        unlink(finalPath).catch(() => undefined),
+      ]);
+      throw error;
+    }
+
+    let leafId: string | null = null;
+    for (const record of records) {
+      if (record.type === 'session' || record.type === 'message') {
+        leafId = record.id;
+      }
+    }
+
+    return {
+      version: TRANSCRIPT_VERSION,
+      byId: new Map(records.map((record) => [record.id, record])),
+      leafId,
+    };
   }
 }

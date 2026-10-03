@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile, readFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { loadTranscript, resolveLinearPath, appendToTranscript, findLastCompaction } from './transcript.js';
+import { SessionDataError } from './store.js';
 import type { MessageRecord, SessionRecord, CompactionRecord, TranscriptEntry } from './types.js';
 
 describe('transcript', () => {
@@ -17,43 +18,12 @@ describe('transcript', () => {
   });
 
   describe('loadTranscript', () => {
-    it('returns empty state when file does not exist', () => {
-      const state = loadTranscript(join(dir, 'nonexistent.jsonl'));
-      expect(state.byId.size).toBe(0);
-      expect(state.leafId).toBeNull();
+    it('rejects a missing persisted Transcript', () => {
+      expect(() => loadTranscript(join(dir, 'nonexistent.jsonl')))
+        .toThrowError(SessionDataError);
     });
 
-    it('loads linear messages correctly', async () => {
-      const filePath = join(dir, 'test.jsonl');
-      const lines = [
-        JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-04-02T00:00:00Z', version: 1 }),
-        JSON.stringify({ type: 'message', id: 'm1', parentId: 's1', timestamp: '2026-04-02T00:00:01Z', message: { role: 'user', content: 'hi' } }),
-        JSON.stringify({ type: 'message', id: 'm2', parentId: 'm1', timestamp: '2026-04-02T00:00:02Z', message: { role: 'assistant', content: 'hello' } }),
-      ];
-      await writeFile(filePath, lines.join('\n') + '\n', 'utf-8');
-
-      const state = loadTranscript(filePath);
-      expect(state.byId.size).toBe(3);
-      expect(state.leafId).toBe('m2');
-    });
-
-    it('loads branched messages correctly', async () => {
-      const filePath = join(dir, 'branch.jsonl');
-      const lines = [
-        JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-04-02T00:00:00Z', version: 1 }),
-        JSON.stringify({ type: 'message', id: 'm1', parentId: 's1', timestamp: '2026-04-02T00:00:01Z', message: { role: 'user', content: 'hi' } }),
-        JSON.stringify({ type: 'message', id: 'm2', parentId: 'm1', timestamp: '2026-04-02T00:00:02Z', message: { role: 'assistant', content: 'branch A' } }),
-        JSON.stringify({ type: 'message', id: 'm3', parentId: 'm1', timestamp: '2026-04-02T00:00:03Z', message: { role: 'assistant', content: 'branch B' } }),
-      ];
-      await writeFile(filePath, lines.join('\n') + '\n', 'utf-8');
-
-      const state = loadTranscript(filePath);
-      expect(state.byId.size).toBe(4);
-      // leafId 是最后一条记录
-      expect(state.leafId).toBe('m3');
-    });
-
-    it('skips empty lines and malformed JSON', async () => {
+    it('rejects malformed JSON instead of silently dropping records', async () => {
       const filePath = join(dir, 'messy.jsonl');
       const content = [
         JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-04-02T00:00:00Z', version: 1 }),
@@ -64,9 +34,305 @@ describe('transcript', () => {
       ].join('\n');
       await writeFile(filePath, content, 'utf-8');
 
+      expect(() => loadTranscript(filePath)).toThrowError(SessionDataError);
+    });
+
+    it.each([
+      ['missing', undefined],
+      ['empty', ''],
+      ['blank', '   '],
+    ])('rejects a message with a %s Turn identity', async (_case, turnId) => {
+      const filePath = join(dir, `invalid-turn-${_case}.jsonl`);
+      const message = {
+        type: 'message',
+        id: 'm1',
+        parentId: 's1',
+        timestamp: '2026-04-02T00:00:01Z',
+        ...(turnId === undefined ? {} : { turnId }),
+        message: { role: 'user', content: 'hi' },
+      };
+      await writeFile(filePath, [
+        JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-04-02T00:00:00Z', version: 1 }),
+        JSON.stringify(message),
+      ].join('\n'), 'utf-8');
+
+      expect(() => loadTranscript(filePath))
+        .toThrowError(new SessionDataError('Session Transcript message "m1" has an invalid Turn identity.'));
+    });
+
+    it.each([
+      ['user message', 2, 'user'],
+      ['v1 assistant message', 1, 'assistant'],
+    ])('rejects invocation metadata on a %s with string content', async (_label, version, role) => {
+      const filePath = join(dir, `invalid-invocation-${version}-${role}.jsonl`);
+      await writeFile(filePath, [
+        JSON.stringify({
+          type: 'session',
+          id: 's1',
+          parentId: null,
+          timestamp: '2026-04-02T00:00:00Z',
+          version,
+        }),
+        JSON.stringify({
+          type: 'message',
+          id: 'm1',
+          parentId: 's1',
+          timestamp: '2026-04-02T00:00:01Z',
+          turnId: 'turn-1',
+          message: {
+            role,
+            content: 'text',
+            invocation: {
+              id: 'invocation-1',
+              source: {
+                providerId: 'provider',
+                connectionId: 'connection',
+                requestModelId: 'model',
+                wireProtocol: 'openai-responses',
+              },
+              completion: {
+                status: 'complete',
+                stopReason: 'end_turn',
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            },
+          },
+        }),
+      ].join('\n'), 'utf8');
+
+      expect(() => loadTranscript(filePath)).toThrow(
+        'message "m1" has invalid invocation metadata',
+      );
+    });
+
+    it('loads the async Tool lifecycle record shapes', async () => {
+      const filePath = join(dir, 'async-tool-records.jsonl');
+      const records = [
+        { type: 'session', id: 's1', parentId: null, timestamp: '2026-10-01T00:00:00Z', version: 1 },
+        {
+          type: 'tool_execution_accepted',
+          id: 'accepted',
+          parentId: 's1',
+          timestamp: '2026-10-01T00:00:01Z',
+          turnId: 'turn-1',
+          callId: 'call-1',
+          executionId: 'execution-1',
+          toolName: 'demo',
+        },
+        {
+          type: 'tool_execution_terminal',
+          id: 'terminal',
+          parentId: 'accepted',
+          timestamp: '2026-10-01T00:00:02Z',
+          executionId: 'execution-1',
+          outcome: 'success',
+          content: 'done',
+        },
+        {
+          type: 'host_task_completion',
+          id: 'completion',
+          parentId: 'terminal',
+          timestamp: '2026-10-01T00:00:03Z',
+          turnId: 'turn-1',
+          completion: {
+            executionId: 'execution-1',
+            toolName: 'demo',
+            status: 'success',
+            content: 'done',
+          },
+        },
+        {
+          type: 'turn_aborted',
+          id: 'aborted',
+          parentId: 'completion',
+          timestamp: '2026-10-01T00:00:04Z',
+          turnId: 'turn-1',
+        },
+      ];
+      await writeFile(filePath, records.map((record) => JSON.stringify(record)).join('\n'), 'utf-8');
+
       const state = loadTranscript(filePath);
-      expect(state.byId.size).toBe(2);
-      expect(state.leafId).toBe('m1');
+
+      expect([...state.byId.keys()]).toEqual([
+        's1',
+        'accepted',
+        'terminal',
+        'completion',
+        'aborted',
+      ]);
+      expect(state.leafId).toBe('s1');
+    });
+
+    it('rejects an accepted record without an execution identity', async () => {
+      const filePath = join(dir, 'invalid-accepted.jsonl');
+      await writeFile(filePath, [
+        JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-10-01T00:00:00Z', version: 1 }),
+        JSON.stringify({
+          type: 'tool_execution_accepted',
+          id: 'accepted',
+          parentId: 's1',
+          timestamp: '2026-10-01T00:00:01Z',
+          turnId: 'turn-1',
+          callId: 'call-1',
+          toolName: 'demo',
+        }),
+      ].join('\n'), 'utf-8');
+
+      expect(() => loadTranscript(filePath)).toThrow(
+        'accepted execution "accepted" execution identity is invalid',
+      );
+    });
+
+    it('accepts max_llm_calls only on an Assistant message', async () => {
+      const assistantPath = join(dir, 'assistant-stop.jsonl');
+      const userPath = join(dir, 'user-stop.jsonl');
+      const root = JSON.stringify({
+        type: 'session',
+        id: 's1',
+        parentId: null,
+        timestamp: '2026-10-01T00:00:00Z',
+        version: 1,
+      });
+      await writeFile(assistantPath, [
+        root,
+        JSON.stringify({
+          type: 'message',
+          id: 'assistant',
+          parentId: 's1',
+          timestamp: '2026-10-01T00:00:01Z',
+          turnId: 'turn-1',
+          turnStopReason: 'max_llm_calls',
+          message: { role: 'assistant', content: '' },
+        }),
+      ].join('\n'), 'utf-8');
+      await writeFile(userPath, [
+        root,
+        JSON.stringify({
+          type: 'message',
+          id: 'user',
+          parentId: 's1',
+          timestamp: '2026-10-01T00:00:01Z',
+          turnId: 'turn-1',
+          turnStopReason: 'max_llm_calls',
+          message: { role: 'user', content: 'continue' },
+        }),
+      ].join('\n'), 'utf-8');
+
+      expect(loadTranscript(assistantPath).byId.get('assistant')).toMatchObject({
+        turnStopReason: 'max_llm_calls',
+      });
+      expect(() => loadTranscript(userPath)).toThrow(
+        'message "user" has an invalid Turn stop reason',
+      );
+    });
+
+    it('rejects an invalid Host completion status', async () => {
+      const filePath = join(dir, 'invalid-host-completion.jsonl');
+      await writeFile(filePath, [
+        JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-10-01T00:00:00Z', version: 1 }),
+        JSON.stringify({
+          type: 'host_task_completion',
+          id: 'completion',
+          parentId: 's1',
+          timestamp: '2026-10-01T00:00:01Z',
+          turnId: 'turn-1',
+          completion: {
+            executionId: 'execution-1',
+            toolName: 'demo',
+            status: 'outcome_unknown',
+            content: 'unknown',
+          },
+        }),
+      ].join('\n'), 'utf-8');
+
+      expect(() => loadTranscript(filePath)).toThrow(
+        'Host completion "completion" has an invalid status',
+      );
+    });
+
+    it('rejects a terminal fact without a prior accepted record', async () => {
+      const filePath = join(dir, 'terminal-without-accepted.jsonl');
+      await writeFile(filePath, [
+        JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-10-01T00:00:00Z', version: 1 }),
+        JSON.stringify({
+          type: 'tool_execution_terminal',
+          id: 'terminal',
+          parentId: 's1',
+          timestamp: '2026-10-01T00:00:01Z',
+          executionId: 'execution-1',
+          outcome: 'success',
+          content: 'done',
+        }),
+      ].join('\n'), 'utf-8');
+
+      expect(() => loadTranscript(filePath)).toThrow(
+        'terminal execution "terminal" has no accepted record',
+      );
+    });
+
+    it('rejects duplicate accepted identity mappings', async () => {
+      const filePath = join(dir, 'duplicate-accepted.jsonl');
+      const accepted = {
+        type: 'tool_execution_accepted',
+        parentId: 's1',
+        timestamp: '2026-10-01T00:00:01Z',
+        turnId: 'turn-1',
+        callId: 'call-1',
+        executionId: 'execution-1',
+        toolName: 'demo',
+      };
+      await writeFile(filePath, [
+        JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-10-01T00:00:00Z', version: 1 }),
+        JSON.stringify({ ...accepted, id: 'accepted-1' }),
+        JSON.stringify({ ...accepted, id: 'accepted-2', parentId: 'accepted-1' }),
+      ].join('\n'), 'utf-8');
+
+      expect(() => loadTranscript(filePath)).toThrow(
+        'accepted execution "accepted-2" conflicts with an existing mapping',
+      );
+    });
+
+    it('rejects a Host completion that conflicts with its terminal fact', async () => {
+      const filePath = join(dir, 'conflicting-host-completion.jsonl');
+      await writeFile(filePath, [
+        JSON.stringify({ type: 'session', id: 's1', parentId: null, timestamp: '2026-10-01T00:00:00Z', version: 1 }),
+        JSON.stringify({
+          type: 'tool_execution_accepted',
+          id: 'accepted',
+          parentId: 's1',
+          timestamp: '2026-10-01T00:00:01Z',
+          turnId: 'turn-1',
+          callId: 'call-1',
+          executionId: 'execution-1',
+          toolName: 'demo',
+        }),
+        JSON.stringify({
+          type: 'tool_execution_terminal',
+          id: 'terminal',
+          parentId: 'accepted',
+          timestamp: '2026-10-01T00:00:02Z',
+          executionId: 'execution-1',
+          outcome: 'success',
+          content: 'done',
+        }),
+        JSON.stringify({
+          type: 'host_task_completion',
+          id: 'completion',
+          parentId: 'terminal',
+          timestamp: '2026-10-01T00:00:03Z',
+          turnId: 'turn-1',
+          completion: {
+            executionId: 'execution-1',
+            toolName: 'demo',
+            status: 'failed',
+            content: 'done',
+          },
+        }),
+      ].join('\n'), 'utf-8');
+
+      expect(() => loadTranscript(filePath)).toThrow(
+        'Host completion "completion" conflicts with its execution facts',
+      );
     });
   });
 
@@ -79,8 +345,8 @@ describe('transcript', () => {
 
     it('returns linear path from leaf to root (messages only)', () => {
       const session: SessionRecord = { type: 'session', id: 's1', parentId: null, timestamp: '2026-04-02T00:00:00Z', version: 1 };
-      const m1: MessageRecord = { type: 'message', id: 'm1', parentId: 's1', timestamp: '2026-04-02T00:00:01Z', message: { role: 'user', content: 'hi' } };
-      const m2: MessageRecord = { type: 'message', id: 'm2', parentId: 'm1', timestamp: '2026-04-02T00:00:02Z', message: { role: 'assistant', content: 'hello' } };
+      const m1: MessageRecord = { type: 'message', id: 'm1', parentId: 's1', timestamp: '2026-04-02T00:00:01Z', turnId: 'turn-1', message: { role: 'user', content: 'hi' } };
+      const m2: MessageRecord = { type: 'message', id: 'm2', parentId: 'm1', timestamp: '2026-04-02T00:00:02Z', turnId: 'turn-1', message: { role: 'assistant', content: 'hello' } };
 
       const byId = new Map<string, any>([['s1', session], ['m1', m1], ['m2', m2]]);
       const path = resolveLinearPath({ byId, leafId: 'm2' }, 'm2');
@@ -92,18 +358,16 @@ describe('transcript', () => {
 
     it('resolves correct branch when there are multiple branches', () => {
       const session: SessionRecord = { type: 'session', id: 's1', parentId: null, timestamp: '2026-04-02T00:00:00Z', version: 1 };
-      const m1: MessageRecord = { type: 'message', id: 'm1', parentId: 's1', timestamp: '2026-04-02T00:00:01Z', message: { role: 'user', content: 'hi' } };
-      const m2a: MessageRecord = { type: 'message', id: 'm2a', parentId: 'm1', timestamp: '2026-04-02T00:00:02Z', message: { role: 'assistant', content: 'branch A' } };
-      const m2b: MessageRecord = { type: 'message', id: 'm2b', parentId: 'm1', timestamp: '2026-04-02T00:00:03Z', message: { role: 'assistant', content: 'branch B' } };
+      const m1: MessageRecord = { type: 'message', id: 'm1', parentId: 's1', timestamp: '2026-04-02T00:00:01Z', turnId: 'turn-1', message: { role: 'user', content: 'hi' } };
+      const m2a: MessageRecord = { type: 'message', id: 'm2a', parentId: 'm1', timestamp: '2026-04-02T00:00:02Z', turnId: 'turn-a', message: { role: 'assistant', content: 'branch A' } };
+      const m2b: MessageRecord = { type: 'message', id: 'm2b', parentId: 'm1', timestamp: '2026-04-02T00:00:03Z', turnId: 'turn-b', message: { role: 'assistant', content: 'branch B' } };
 
       const byId = new Map<string, any>([['s1', session], ['m1', m1], ['m2a', m2a], ['m2b', m2b]]);
 
-      // 从分支 A 的末端回溯
       const pathA = resolveLinearPath({ byId, leafId: 'm2a' }, 'm2a');
       expect(pathA).toHaveLength(2);
       expect((pathA[1] as MessageRecord).message.content).toBe('branch A');
 
-      // 从分支 B 的末端回溯
       const pathB = resolveLinearPath({ byId, leafId: 'm2b' }, 'm2b');
       expect(pathB).toHaveLength(2);
       expect((pathB[1] as MessageRecord).message.content).toBe('branch B');
@@ -120,6 +384,7 @@ describe('transcript', () => {
         id: 'm1',
         parentId: null,
         timestamp: '2026-04-02T00:00:00Z',
+        turnId: 'turn-1',
         message: { role: 'user', content: 'hello' },
       };
 
@@ -140,6 +405,7 @@ describe('transcript', () => {
         id: `m${i}`,
         parentId: i === 0 ? null : `m${i - 1}`,
         timestamp: new Date().toISOString(),
+        turnId: `turn-${i}`,
         message: { role: 'user' as const, content: `msg-${i}` },
       }));
 
@@ -154,7 +420,6 @@ describe('transcript', () => {
   // ── findLastCompaction ────────────────────────────────────
 
   describe('findLastCompaction', () => {
-    /** 构造一条 CompactionRecord（parentId 可选） */
     function makeCompactionRecord(id: string, timestamp: string): CompactionRecord {
       return {
         type: 'compaction',
@@ -178,6 +443,7 @@ describe('transcript', () => {
       const m1: MessageRecord = {
         type: 'message', id: 'm1', parentId: 's1',
         timestamp: '2026-04-01T00:00:01Z',
+        turnId: 'turn-1',
         message: { role: 'user', content: 'hi' },
       };
       const state = {
@@ -199,7 +465,6 @@ describe('transcript', () => {
     });
 
     it('returns the most recent compaction record when multiple exist', () => {
-      // c2 的 timestamp 晚于 c1，应该返回 c2
       const c1 = makeCompactionRecord('c1', '2026-04-01T08:00:00Z');
       const c2 = makeCompactionRecord('c2', '2026-04-01T12:00:00Z');
       const state = { byId: new Map([['c1', c1], ['c2', c2]]), leafId: null };
@@ -209,12 +474,10 @@ describe('transcript', () => {
     });
 
     it('uses ISO 8601 string comparison (lexicographic order)', () => {
-      // 两条记录同一天，不同时间
       const c1 = makeCompactionRecord('c1', '2026-04-01T23:59:59Z');
       const c2 = makeCompactionRecord('c2', '2026-04-02T00:00:01Z');
       const state = { byId: new Map([['c1', c1], ['c2', c2]]), leafId: null };
 
-      // c2 的字典序更大（"2026-04-02..." > "2026-04-01..."）
       expect(findLastCompaction(state)!.id).toBe('c2');
     });
 
@@ -226,6 +489,7 @@ describe('transcript', () => {
       const m1: MessageRecord = {
         type: 'message', id: 'm1', parentId: 's1',
         timestamp: '2026-04-01T00:00:01Z',
+        turnId: 'turn-1',
         message: { role: 'user', content: 'hi' },
       };
       const c1 = makeCompactionRecord('c1', '2026-04-01T10:00:00Z');
@@ -245,12 +509,14 @@ describe('transcript', () => {
         type: 'session', id: 's1', parentId: null,
         timestamp: '2026-04-01T00:00:00Z', version: 1,
       };
-      const c1 = makeCompactionRecord('c1', '2026-04-01T10:00:00Z');
+      const c1 = {
+        ...makeCompactionRecord('c1', '2026-04-01T10:00:00Z'),
+        parentId: 's1',
+      };
 
       await appendToTranscript(filePath, session);
       await appendToTranscript(filePath, c1);
 
-      // 重新从磁盘加载，验证持久化后仍可查询
       const loaded = loadTranscript(filePath);
       const result = findLastCompaction(loaded);
       expect(result).not.toBeNull();

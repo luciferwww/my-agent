@@ -1,0 +1,128 @@
+import type {
+  ChannelCompletion,
+  ModelCatalogSnapshot,
+} from '../core/channel/index.js';
+import type { AvailableSubagentEntry } from '../core/subagent/index.js';
+import type { ContextFile } from '../core/agent-context/index.js';
+import type {
+  SessionEntry,
+  SessionHistoryPage,
+  SessionHistoryQuery,
+} from '../core/session/index.js';
+import type {
+  RuntimeLifecycleState,
+  RuntimeShutdownReport,
+} from './types.js';
+import type {
+  SessionPermissionMode,
+  SessionPermissionState,
+} from '../core/approval/index.js';
+
+export type {
+  DefaultModelSelection,
+  ModelCatalogEntry,
+  ModelCatalogSnapshot,
+  ProviderCatalogEntry,
+} from '../core/channel/index.js';
+
+export interface RuntimeApplication {
+  createSession(input?: {
+    permissionMode?: SessionPermissionMode;
+    originClientId?: string;
+  }): Promise<{ sessionId: string; permission: SessionPermissionState }>;
+  listSessions(input?: { archived?: boolean }): Promise<SessionEntry[]>;
+  getSession(sessionId: string): Promise<SessionEntry>;
+  getSessionHistory(query: SessionHistoryQuery): Promise<SessionHistoryPage>;
+  renameSession(sessionId: string, title: string | null): Promise<SessionEntry>;
+  archiveSession(sessionId: string): Promise<SessionEntry>;
+  unarchiveSession(sessionId: string): Promise<SessionEntry>;
+  deleteSession(sessionId: string): Promise<void>;
+  forkSession(sessionId: string, entryId?: string): Promise<SessionEntry>;
+  getSessionPermissionMode(sessionId: string): SessionPermissionState;
+  setSessionPermissionMode(input: {
+    sessionId: string;
+    mode: SessionPermissionMode;
+    originClientId?: string;
+  }): SessionPermissionState;
+  onSessionPermissionModeChanged(
+    handler: (state: SessionPermissionState) => void,
+  ): () => void;
+  getModelCatalog(): ModelCatalogSnapshot;
+  abortTurn(sessionId: string): { aborted: boolean; dropped: number };
+  getState(): RuntimeLifecycleState;
+  getToolNames(): string[];
+  getContextFiles(): ContextFile[];
+  getAvailableSubagents(): AvailableSubagentEntry[];
+  reloadContextFiles(): Promise<ContextFile[]>;
+  waitForChannelCompletion(id: string): Promise<ChannelCompletion>;
+}
+
+export type RuntimeReloadChange = Readonly<{
+  operation: 'enable' | 'disable';
+  unitId: string;
+}>;
+
+export type RuntimeReloadWarning = Readonly<{
+  code: string;
+  message: string;
+  unitId?: string;
+}>;
+
+interface RuntimeReloadResultBase {
+  readonly requestId: string;
+  readonly change: RuntimeReloadChange;
+  readonly warnings: readonly RuntimeReloadWarning[];
+}
+
+export type RuntimeReloadResult =
+  | (RuntimeReloadResultBase & {
+      readonly outcome: 'published';
+      readonly previousGeneration: number;
+      readonly generation: number;
+      readonly retiredUnitIds: readonly string[];
+    })
+  | (RuntimeReloadResultBase & {
+      readonly outcome: 'no-op';
+      readonly generation: number;
+    })
+  | (RuntimeReloadResultBase & {
+      readonly outcome: 'rejected';
+      readonly generation: number;
+      readonly category: string;
+      readonly message: string;
+    })
+  | (RuntimeReloadResultBase & {
+      readonly outcome: 'superseded';
+      readonly generation: number;
+      readonly supersededByRequestId: string;
+    })
+  | (RuntimeReloadResultBase & {
+      readonly outcome: 'blocked';
+      readonly generation: number;
+      readonly blocker: RuntimeCompositionResidual;
+    })
+  | (RuntimeReloadResultBase & {
+      readonly outcome: 'shutdown/cancelled';
+      readonly generation: number;
+    });
+
+export interface RuntimeCompositionResidual {
+  readonly phase: string;
+  readonly message: string;
+  readonly unitId?: string;
+  readonly instanceId?: string;
+  readonly generation?: number;
+  readonly requestId?: string;
+  readonly blockingTurnIds?: readonly string[];
+}
+
+export interface RuntimeCompositionControl {
+  enableUnit(unitId: string): Promise<RuntimeReloadResult>;
+  disableUnit(unitId: string): Promise<RuntimeReloadResult>;
+}
+
+export interface RuntimeHandle {
+  readonly application: RuntimeApplication;
+  readonly composition: RuntimeCompositionControl;
+  close(reason?: string): Promise<RuntimeShutdownReport>;
+}

@@ -1,63 +1,124 @@
 /**
  * Tool execution context, passed to every tool invocation.
  *
- * Required fields (`sessionKey`, `turnId`, `toolUseId`) identify the run-time
+ * Required fields (`sessionId`, `turnId`, `callId`) identify the run-time
  * origin of the call and are used by approval hooks, audit logs, and the
- * `task` subagent tool (which sets `parentToolUseId = ctx.toolUseId`).
+ * `task` subagent tool (which sets `parentToolUseId = ctx.callId`).
  *
- * `signal` is reserved for the future abort subsystem (subagent spec §6.1
- * decision 1). v1 always sets it to `undefined`; the only current consumer
- * is the `exec` builtin tool, which degrades to no-abort behavior when the
- * signal is missing.
+ * `signal` carries user abort / turn timeout / shutdown interrupts. Whether
+ * a tool actually responds is decided per tool (see field JSDoc). Abort's
+ * invariant is "stop the LOOP (no next tool starts)"; in-flight tool calls
+ * are NOT guaranteed to terminate immediately. See core-abort-spec.md §6.2.
  */
-export interface ToolContext {
-  /** Tool run's owning sessionKey; used by approval hooks / routing / logs. */
-  sessionKey: string;
-  /** Tool run's owning turnId; same purpose as `sessionKey`. */
-  turnId: string;
+export interface ToolExecutionContext {
+  /** Tool run's owning sessionId; used by approval hooks / routing / logs. */
+  readonly sessionId: string;
+  /** Owning agent's explicit Subagent nesting depth. */
+  readonly subagentDepth: number;
+  /** Tool run's owning turnId; same purpose as `sessionId`. */
+  readonly turnId: string;
   /**
    * The id of the LLM `tool_use` block that triggered this invocation.
-   * The `task` tool reads this to populate `SubagentRunInput.trigger.parentToolUseId`.
+  * The `task` tool reads this to populate Parent correlation on delegation.
    */
-  toolUseId: string;
-  /** Reserved for the future abort subsystem; v1 is always `undefined`. */
-  signal?: AbortSignal;
+  readonly callId: string;
+  /** Host execution identity allocated after admission. */
+  readonly executionId: string;
+  /** Reports real implementation activity to refresh the idle deadline. */
+  readonly reportActivity: () => void;
+  /**
+   * User abort / turn timeout / shutdown interrupt signal.
+   *
+   * Contract: my-agent guarantees a valid signal is passed, but whether the
+   * tool responds is **decided by each tool**. Abort's invariant is "stop the
+   * LOOP (no next tool starts)"; it does **not** guarantee in-flight calls
+   * terminate. Reason: MCP / third-party tools are heterogeneous and cannot
+   * be forced to implement signal handling.
+   *
+   * v1 actual behavior:
+   *  - `exec` tool: reads `ctx.signal` and forwards to `child_process` → killed
+   *  - other builtins (`web_fetch` / `search` / `fs` / `apply_patch`): v1 does
+   *    not respond; runs to completion
+   *  - MCP / third-party tools: response is up to the implementation
+   *
+   * Third-party tool authors: for long operations (>500ms) please check
+   * `if (ctx.signal?.aborted)` around await points and throw `AbortError`.
+   */
+  readonly signal: AbortSignal;
 }
 
-/** Tool execution result. */
+export type ToolResultStatus = 'success' | 'error' | 'denied' | 'aborted';
+
+/** Public terminal event/presentation result shape. */
 export interface ToolResult {
-  content: string;
-  isError?: boolean;
+  readonly content: string;
+  readonly status: ToolResultStatus;
 }
 
-/**
- * Tool execution callback.
- * agent-runner uses this type as a constructor dependency.
- */
-export type ToolExecutor = (
-  toolName: string,
-  input: Record<string, unknown>,
-  ctx: ToolContext,
-) => Promise<ToolResult>;
+/** Canonical output reported by a Tool implementation. */
+export interface ToolExecutionOutput {
+  readonly outcome: 'success' | 'failed';
+  readonly content: string;
+}
+
+export type ToolResultOutcome =
+  | 'success'
+  | 'unknown_tool'
+  | 'denied'
+  | 'invalid_input'
+  | 'unavailable'
+  | 'failed'
+  | 'aborted'
+  | 'not_executed'
+  | 'outcome_unknown';
+
+export type ToolCallInput =
+  | { readonly state: 'ready'; readonly value: Readonly<Record<string, unknown>> }
+  | { readonly state: 'invalid'; readonly reason: 'malformed_json' | 'not_an_object' };
+
+export interface ToolCall {
+  readonly callId: string;
+  readonly name: string;
+  readonly input: ToolCallInput;
+}
+
+export interface CanonicalToolResult {
+  readonly callId: string;
+  readonly outcome: ToolResultOutcome;
+  readonly content: string;
+}
 
 /** Tool definition. */
 export interface Tool {
   /** Tool name, used as the unique identifier exposed to the LLM. */
-  name: string;
+  readonly name: string;
   /** Tool description, used to help the LLM decide when to call it. */
-  description: string;
+  readonly description: string;
   /** JSON Schema for the tool input, exposed to the LLM. */
-  inputSchema: Record<string, unknown>;
+  readonly inputSchema: Readonly<Record<string, unknown>>;
   /** Tool implementation. */
   execute: (
-    params: Record<string, unknown>,
-    context: ToolContext,
-  ) => Promise<ToolResult>;
+    params: Readonly<Record<string, unknown>>,
+    context: ToolExecutionContext,
+  ) => Promise<ToolExecutionOutput>;
 }
 
 /** Tool definition sent to the LLM, without the execute function. */
 export interface ToolDefinition {
-  name: string;
-  description: string;
-  input_schema: Record<string, unknown>;
+  readonly name: string;
+  readonly description: string;
+  readonly inputSchema: Readonly<Record<string, unknown>>;
+}
+
+export type ToolPolicyDecision = 'allow' | 'deny' | 'requires_approval';
+export type { SessionPermissionMode } from '../approval/index.js';
+
+export interface ApplicationToolPolicy {
+  isDenied(toolName: string): boolean;
+  decide(
+    toolName: string,
+    input: Readonly<Record<string, unknown>>,
+    hasApprovalCapability: boolean,
+    permissionMode?: import('../approval/index.js').SessionPermissionMode,
+  ): ToolPolicyDecision;
 }

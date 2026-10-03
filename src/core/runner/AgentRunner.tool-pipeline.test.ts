@@ -1,0 +1,789 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import type { ModelInvocationPort, ModelInvocationRequest } from '../model-invocation/index.js';
+import type { CurrentCallApprovalCapability } from '../approval/index.js';
+import type { RuntimeContributionUnit } from '../registry/index.js';
+import { SessionManager } from '../session/index.js';
+import type {
+  ApplicationToolPolicy,
+  CanonicalToolResult,
+  ToolCall,
+  ToolExecutionOutput,
+} from '../tools/index.js';
+import {
+  finalizeRegistrySnapshot,
+  resolveStagedRegistryCandidate,
+  stageRegistryUnit,
+} from '../../runtime/registry-builder.js';
+import { AgentRunner } from './AgentRunner.js';
+import type { AgentEvent } from './types.js';
+
+const MAIN_SESSION_ID = '00000000-0000-4000-8000-000000000201';
+
+async function createEmptyTestSession(
+  sessionManager: SessionManager,
+  sessionId: string,
+): Promise<void> {
+  await sessionManager.materializeSession({
+    sessionId,
+    createdAt: Date.now(),
+  });
+}
+
+function invocationPort(call: ToolCall, requests: ModelInvocationRequest[]): ModelInvocationPort {
+  let round = 0;
+  return {
+    async *chatStream(request) {
+      requests.push(request);
+      round++;
+      yield { type: 'message_start' as const };
+      if (round === 1) {
+        yield { type: 'tool_call' as const, call };
+        yield {
+          type: 'message_end' as const,
+          stopReason: 'tool_use',
+          usage: { inputTokens: 2, outputTokens: 1 },
+        };
+        return;
+      }
+      yield { type: 'text_delta' as const, text: 'done' };
+      yield {
+        type: 'message_end' as const,
+        stopReason: 'end_turn',
+        usage: { inputTokens: 2, outputTokens: 1 },
+      };
+    },
+    async chat() {
+      throw new Error('not used');
+    },
+  };
+}
+
+function resolvedModel(port: ModelInvocationPort, outputTokenLimit?: number) {
+  return {
+    identity: { providerId: 'test', modelId: 'test' },
+    referenceSource: 'native' as const,
+    protocol: 'test',
+    endpointId: 'test',
+    invocationPort: port,
+    invocationDefaults: {
+      ...(outputTokenLimit === undefined ? {} : { outputTokenLimit }),
+    },
+    facts: {
+      effectiveContextLimit: 200_000,
+      maximumOutputTokens: 4096,
+      toolUse: true,
+    },
+  };
+}
+
+const allowPolicy: ApplicationToolPolicy = Object.freeze({
+  isDenied: () => false,
+  decide: () => 'allow' as const,
+});
+
+describe('AgentRunner canonical Tool pipeline', () => {
+  let agentHome: string;
+  let sessionManager: SessionManager;
+
+  beforeEach(async () => {
+    agentHome = await mkdtemp(join(tmpdir(), 'tool-pipeline-'));
+    sessionManager = new SessionManager(agentHome);
+    await createEmptyTestSession(sessionManager, MAIN_SESSION_ID);
+  });
+
+  afterEach(async () => {
+    await rm(agentHome, { recursive: true, force: true });
+  });
+
+  it('pairs malformed input without invoking Hook, policy, approval, or Tool', async () => {
+    const before = vi.fn(() => ({ action: 'allow' as const }));
+    const afterResults: CanonicalToolResult[] = [];
+    const execute = vi.fn(async (): Promise<ToolExecutionOutput> => ({ outcome: 'success', content: 'executed' }));
+    const policyDecision = vi.fn(() => 'allow' as const);
+    const approvalRequest = vi.fn(async () => ({ outcome: 'approved' as const }));
+    const snapshot = snapshotWithTool({ before, afterResults, execute });
+    const requests: ModelInvocationRequest[] = [];
+    const port = invocationPort({
+      callId: 'malformed-call',
+      name: 'demo',
+      input: { state: 'invalid', reason: 'malformed_json' },
+    }, requests);
+
+    await new AgentRunner({ sessionManager }).run({
+      sessionId: MAIN_SESSION_ID,
+      message: 'go',
+      systemPrompt: '',
+      turnId: 'turn',
+      resolvedModel: resolvedModel(port, 8192),
+      toolProjection: snapshot.tools,
+      hookProjection: snapshot.hooks,
+      toolPolicy: { isDenied: () => false, decide: policyDecision },
+      approvalCapability: { request: approvalRequest },
+    });
+
+    expect(before).not.toHaveBeenCalled();
+    expect(policyDecision).not.toHaveBeenCalled();
+    expect(approvalRequest).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(afterResults).toEqual([{
+      callId: 'malformed-call',
+      outcome: 'invalid_input',
+      content: 'Invalid input for tool "demo": malformed_json.',
+    }]);
+    expect(requests).toHaveLength(2);
+    expect(requests.every((value) => value.outputTokenLimit === 8192)).toBe(true);
+  });
+
+  it('validates only the final transformed input before policy and execution', async () => {
+    const policyDecision = vi.fn(() => 'allow' as const);
+    const execute = vi.fn(async (): Promise<ToolExecutionOutput> => ({ outcome: 'success', content: 'executed' }));
+    const afterResults: CanonicalToolResult[] = [];
+    const snapshot = snapshotWithTool({
+      before: () => ({ action: 'allow', input: { count: 'not-a-number' } }),
+      afterResults,
+      execute,
+    });
+    const port = invocationPort({
+      callId: 'transformed-call',
+      name: 'demo',
+      input: { state: 'ready', value: { count: 2 } },
+    }, []);
+
+    await new AgentRunner({ sessionManager }).run({
+      sessionId: MAIN_SESSION_ID,
+      message: 'go',
+      systemPrompt: '',
+      turnId: 'turn',
+      resolvedModel: resolvedModel(port),
+      toolProjection: snapshot.tools,
+      hookProjection: snapshot.hooks,
+      toolPolicy: { isDenied: () => false, decide: policyDecision },
+    });
+
+    expect(policyDecision).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(afterResults[0]).toEqual(expect.objectContaining({
+      callId: 'transformed-call',
+      outcome: 'invalid_input',
+    }));
+  });
+
+  it('passes final transformed schema-valid input to policy and execution', async () => {
+    const policyDecision = vi.fn(() => 'allow' as const);
+    const execute = vi.fn(async (): Promise<ToolExecutionOutput> => ({
+      outcome: 'success',
+      content: 'executed',
+    }));
+    const snapshot = snapshotWithTool({
+      before: () => ({ action: 'allow', input: { count: 3 } }),
+      afterResults: [],
+      execute,
+    });
+    const port = invocationPort({
+      callId: 'valid-transformed-call',
+      name: 'demo',
+      input: { state: 'ready', value: { count: 2 } },
+    }, []);
+
+    await new AgentRunner({ sessionManager }).run({
+      sessionId: MAIN_SESSION_ID,
+      message: 'go',
+      systemPrompt: '',
+      turnId: 'turn',
+      resolvedModel: resolvedModel(port),
+      toolProjection: snapshot.tools,
+      hookProjection: snapshot.hooks,
+      toolPolicy: { isDenied: () => false, decide: policyDecision },
+    });
+
+    expect(policyDecision).toHaveBeenCalledWith('demo', { count: 3 }, false, 'manual');
+    expect(execute).toHaveBeenCalledWith({ count: 3 }, expect.any(Object));
+  });
+
+  it('reads the live Session permission mode for every Tool authorization', async () => {
+    const permissionMode = vi.fn()
+      .mockReturnValueOnce('allow_all')
+      .mockReturnValueOnce('manual');
+    const policyDecision = vi.fn(() => 'allow' as const);
+    const execute = vi.fn(async (): Promise<ToolExecutionOutput> => ({
+      outcome: 'success',
+      content: 'executed',
+    }));
+    const snapshot = snapshotWithTool({
+      before: () => ({ action: 'allow' }),
+      afterResults: [],
+      execute,
+    });
+    let round = 0;
+    const port: ModelInvocationPort = {
+      async *chatStream() {
+        round++;
+        yield { type: 'message_start' as const };
+        if (round === 1) {
+          yield {
+            type: 'tool_call' as const,
+            call: {
+              callId: 'first-call',
+              name: 'demo',
+              input: { state: 'ready' as const, value: { count: 1 } },
+            },
+          };
+          yield {
+            type: 'tool_call' as const,
+            call: {
+              callId: 'second-call',
+              name: 'demo',
+              input: { state: 'ready' as const, value: { count: 2 } },
+            },
+          };
+          yield {
+            type: 'message_end' as const,
+            stopReason: 'tool_use',
+            usage: { inputTokens: 2, outputTokens: 1 },
+          };
+          return;
+        }
+        yield { type: 'text_delta' as const, text: 'done' };
+        yield {
+          type: 'message_end' as const,
+          stopReason: 'end_turn',
+          usage: { inputTokens: 2, outputTokens: 1 },
+        };
+      },
+      async chat() {
+        throw new Error('not used');
+      },
+    };
+
+    await new AgentRunner({ sessionManager }).run({
+      sessionId: MAIN_SESSION_ID,
+      message: 'go',
+      systemPrompt: '',
+      turnId: 'turn',
+      resolvedModel: resolvedModel(port),
+      toolProjection: snapshot.tools,
+      hookProjection: snapshot.hooks,
+      toolPolicy: { isDenied: () => false, decide: policyDecision },
+      getSessionPermissionMode: permissionMode,
+    });
+
+    expect(permissionMode).toHaveBeenCalledTimes(2);
+    expect(policyDecision).toHaveBeenNthCalledWith(
+      1,
+      'demo',
+      { count: 1 },
+      false,
+      'allow_all',
+    );
+    expect(policyDecision).toHaveBeenNthCalledWith(
+      2,
+      'demo',
+      { count: 2 },
+      false,
+      'manual',
+    );
+  });
+
+  it('hides an explicit-deny definition and still denies a stale Provider call at runtime', async () => {
+    const afterResults: CanonicalToolResult[] = [];
+    const execute = vi.fn(async (): Promise<ToolExecutionOutput> => ({ outcome: 'success', content: 'executed' }));
+    const snapshot = snapshotWithTool({
+      before: () => ({ action: 'allow' }),
+      afterResults,
+      execute,
+    });
+    const policy: ApplicationToolPolicy = Object.freeze({
+      isDenied: (name: string) => name === 'demo',
+      decide: () => 'deny',
+    });
+    const requests: ModelInvocationRequest[] = [];
+    const port = invocationPort({
+      callId: 'stale-call',
+      name: 'demo',
+      input: { state: 'ready', value: { count: 1 } },
+    }, requests);
+
+    await new AgentRunner({ sessionManager }).run({
+      sessionId: MAIN_SESSION_ID,
+      message: 'go',
+      systemPrompt: '',
+      turnId: 'turn',
+      resolvedModel: resolvedModel(port),
+      toolProjection: snapshot.tools,
+      hookProjection: snapshot.hooks,
+      toolPolicy: policy,
+    });
+
+    expect(requests[0]?.tools).toEqual([]);
+    expect(execute).not.toHaveBeenCalled();
+    expect(afterResults[0]).toEqual(expect.objectContaining({
+      callId: 'stale-call',
+      outcome: 'denied',
+    }));
+  });
+
+  it.each([
+    [{ outcome: 'denied', reason: 'user' } as const, 'denied'],
+    [{ outcome: 'unavailable', reason: 'origin_disconnected' } as const, 'unavailable'],
+    [{ outcome: 'failed', message: 'transport failed' } as const, 'failed'],
+  ])('preserves approval outcome %j as canonical %s', async (approval, expectedOutcome) => {
+    const afterResults: CanonicalToolResult[] = [];
+    const execute = vi.fn(async (): Promise<ToolExecutionOutput> => ({ outcome: 'success', content: 'executed' }));
+    const snapshot = snapshotWithTool({
+      before: () => ({ action: 'allow' }),
+      afterResults,
+      execute,
+    });
+    const capability: CurrentCallApprovalCapability = {
+      request: vi.fn(async () => approval),
+    };
+    const port = invocationPort({
+      callId: 'approval-call',
+      name: 'demo',
+      input: { state: 'ready', value: { count: 1 } },
+    }, []);
+
+    await new AgentRunner({ sessionManager }).run({
+      sessionId: MAIN_SESSION_ID,
+      message: 'go',
+      systemPrompt: '',
+      turnId: 'turn',
+      resolvedModel: resolvedModel(port),
+      toolProjection: snapshot.tools,
+      hookProjection: snapshot.hooks,
+      toolPolicy: { isDenied: () => false, decide: () => 'requires_approval' },
+      approvalCapability: capability,
+    });
+
+    expect(capability.request).toHaveBeenCalledWith(expect.objectContaining({
+      callId: 'approval-call',
+      toolName: 'demo',
+      input: { count: 1 },
+    }), expect.anything());
+    expect(execute).not.toHaveBeenCalled();
+    expect(afterResults[0]).toEqual(expect.objectContaining({
+      callId: 'approval-call',
+      outcome: expectedOutcome,
+    }));
+  });
+
+  it('publishes an accepted call while a sibling approval remains pending', async () => {
+    let releaseApproval!: (value: { outcome: 'denied'; reason: 'user' }) => void;
+    const approval = new Promise<{ outcome: 'denied'; reason: 'user' }>((resolve) => {
+      releaseApproval = resolve;
+    });
+    let releaseExecution!: (value: ToolExecutionOutput) => void;
+    const execution = new Promise<ToolExecutionOutput>((resolve) => {
+      releaseExecution = resolve;
+    });
+    const snapshot = snapshotWithTool({
+      before: () => ({ action: 'allow' }),
+      afterResults: [],
+      execute: async () => execution,
+    });
+    const events: AgentEvent[] = [];
+    let round = 0;
+    const port: ModelInvocationPort = {
+      async *chatStream() {
+        round++;
+        yield { type: 'message_start' as const };
+        if (round === 1) {
+          for (let index = 1; index <= 2; index++) {
+            yield {
+              type: 'tool_call' as const,
+              call: {
+                callId: `call-${index}`,
+                name: 'demo',
+                input: { state: 'ready' as const, value: { count: index } },
+              },
+            };
+          }
+          yield {
+            type: 'message_end' as const,
+            stopReason: 'tool_use',
+            usage: { inputTokens: 2, outputTokens: 1 },
+          };
+          return;
+        }
+        yield { type: 'text_delta' as const, text: 'done' };
+        yield {
+          type: 'message_end' as const,
+          stopReason: 'end_turn',
+          usage: { inputTokens: 2, outputTokens: 1 },
+        };
+      },
+      async chat() {
+        throw new Error('not used');
+      },
+    };
+    const runner = new AgentRunner({
+      sessionManager,
+      onEvent: (event) => events.push(event),
+    });
+    const run = runner.run({
+      sessionId: MAIN_SESSION_ID,
+      message: 'go',
+      systemPrompt: '',
+      turnId: 'turn',
+      resolvedModel: resolvedModel(port),
+      toolProjection: snapshot.tools,
+      hookProjection: snapshot.hooks,
+      toolPolicy: {
+        isDenied: () => false,
+        decide: (_name, input) => input.count === 2 ? 'requires_approval' : 'allow',
+      },
+      approvalCapability: {
+        request: vi.fn(async () => approval),
+      },
+    });
+
+    await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({
+      type: 'tool_use',
+      callId: 'call-1',
+    })));
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: 'tool_result',
+      callId: 'call-2',
+    }));
+
+    releaseApproval({ outcome: 'denied', reason: 'user' });
+    releaseExecution({ outcome: 'success', content: 'done' });
+    await run;
+  });
+
+  it('persists the complete Tool exchange before after observers settle', async () => {
+    let releaseObserver!: () => void;
+    const observerBarrier = new Promise<void>((resolve) => {
+      releaseObserver = resolve;
+    });
+    const observerEntered = vi.fn();
+    const snapshot = snapshotWithTool({
+      before: () => ({ action: 'allow' }),
+      afterResults: [],
+      execute: async () => ({ outcome: 'success', content: 'executed' }),
+      after: async () => {
+        observerEntered();
+        await observerBarrier;
+      },
+    });
+    const appendMessage = vi.spyOn(sessionManager, 'appendMessage');
+    const requests: ModelInvocationRequest[] = [];
+    const port = invocationPort({
+      callId: 'observed-call',
+      name: 'demo',
+      input: { state: 'ready', value: { count: 1 } },
+    }, requests);
+
+    const runPromise = new AgentRunner({ sessionManager }).run({
+      sessionId: MAIN_SESSION_ID,
+      message: 'go',
+      systemPrompt: '',
+      turnId: 'turn',
+      resolvedModel: resolvedModel(port),
+      toolProjection: snapshot.tools,
+      hookProjection: snapshot.hooks,
+      toolPolicy: allowPolicy,
+    });
+
+    await vi.waitFor(() => expect(observerEntered).toHaveBeenCalledTimes(1));
+    expect(sessionManager.getAsyncToolRecords(MAIN_SESSION_ID)).toEqual([
+      expect.objectContaining({ type: 'tool_execution_accepted' }),
+      expect.objectContaining({ type: 'tool_execution_terminal' }),
+    ]);
+    expect(appendMessage).not.toHaveBeenCalledWith(MAIN_SESSION_ID, expect.objectContaining({
+      role: 'toolResult',
+    }));
+    expect(requests).toHaveLength(1);
+
+    releaseObserver();
+    await runPromise;
+    expect(requests).toHaveLength(2);
+  });
+
+  it('uses one shared completion reserve for concurrent Tools and preserves queued steering', async () => {
+    const pending = [0, 1, 2].map(() => {
+      let resolve!: (value: ToolExecutionOutput) => void;
+      const promise = new Promise<ToolExecutionOutput>((settle) => {
+        resolve = settle;
+      });
+      return { promise, resolve };
+    });
+    const beforeOrder: number[] = [];
+    const started: number[] = [];
+    let activeBeforeHooks = 0;
+    let maxActiveBeforeHooks = 0;
+    const afterResults: CanonicalToolResult[] = [];
+    const snapshot = snapshotWithTool({
+      before: async ({ input }: { input: { count: number } }) => {
+        activeBeforeHooks++;
+        maxActiveBeforeHooks = Math.max(maxActiveBeforeHooks, activeBeforeHooks);
+        beforeOrder.push(input.count);
+        await Promise.resolve();
+        activeBeforeHooks--;
+        return { action: 'allow' as const };
+      },
+      afterResults,
+      execute: async (input) => {
+        const index = Number(input.count) - 1;
+        started.push(index + 1);
+        return pending[index]!.promise;
+      },
+    });
+    const requests: ModelInvocationRequest[] = [];
+    const claimReady = vi.fn(() => [{ role: 'user' as const, content: 'queued steering' }]);
+    const waitUntilPotentiallyReady = vi.fn(async () => {});
+    let round = 0;
+    const port: ModelInvocationPort = {
+      async *chatStream(request) {
+        requests.push(request);
+        round++;
+        yield { type: 'message_start' as const };
+        if (round === 1) {
+          for (let index = 1; index <= 3; index++) {
+            yield {
+              type: 'tool_call' as const,
+              call: {
+                callId: `call-${index}`,
+                name: 'demo',
+                input: { state: 'ready' as const, value: { count: index } },
+              },
+            };
+          }
+          yield {
+            type: 'message_end' as const,
+            stopReason: 'tool_use',
+            usage: { inputTokens: 2, outputTokens: 1 },
+          };
+          return;
+        }
+        yield { type: 'text_delta' as const, text: 'done' };
+        yield {
+          type: 'message_end' as const,
+          stopReason: 'end_turn',
+          usage: { inputTokens: 2, outputTokens: 1 },
+        };
+      },
+      async chat() {
+        throw new Error('not used');
+      },
+    };
+
+    const runPromise = new AgentRunner({ sessionManager }).run({
+      sessionId: MAIN_SESSION_ID,
+      message: 'go',
+      systemPrompt: '',
+      turnId: 'turn',
+      resolvedModel: resolvedModel(port),
+      toolProjection: snapshot.tools,
+      hookProjection: snapshot.hooks,
+      toolPolicy: allowPolicy,
+      maxLlmCalls: 2,
+      steeringSource: {
+        claimReady,
+        waitUntilPotentiallyReady,
+      },
+    });
+
+    await vi.waitFor(() => expect(started).toEqual([1, 2, 3]));
+    expect(beforeOrder).toEqual([1, 2, 3]);
+    expect(maxActiveBeforeHooks).toBe(1);
+    expect(requests).toHaveLength(1);
+    expect(claimReady).not.toHaveBeenCalled();
+    expect(waitUntilPotentiallyReady).not.toHaveBeenCalled();
+
+    pending[2]!.resolve({ outcome: 'success', content: 'third' });
+    pending[0]!.resolve({ outcome: 'success', content: 'first' });
+    pending[1]!.resolve({ outcome: 'success', content: 'second' });
+    await runPromise;
+    expect(requests).toHaveLength(2);
+    expect(claimReady).not.toHaveBeenCalled();
+
+    const paired = requests[1]!.messages.find((message) => (
+      message.role === 'user'
+      && Array.isArray(message.content)
+      && message.content.some((block) => block.type === 'execution_accepted')
+    ));
+    expect(paired?.content).toEqual([
+      { type: 'execution_accepted', tool_use_id: 'call-1', execution_id: expect.any(String) },
+      { type: 'execution_accepted', tool_use_id: 'call-2', execution_id: expect.any(String) },
+      { type: 'execution_accepted', tool_use_id: 'call-3', execution_id: expect.any(String) },
+    ]);
+    const hostCompletion = requests[1]!.messages.find((message) => message.origin === 'host');
+    expect(hostCompletion?.content).toEqual(expect.stringContaining('third'));
+    expect(hostCompletion?.content).toEqual(expect.stringContaining('first'));
+    expect(hostCompletion?.content).toEqual(expect.stringContaining('second'));
+  });
+
+  it('runs observers before reporting Host-completion persistence failure', async () => {
+    const observerEntered = vi.fn();
+    const snapshot = snapshotWithTool({
+      before: () => ({ action: 'allow' }),
+      afterResults: [],
+      execute: async () => ({ outcome: 'success', content: 'executed' }),
+      after: () => observerEntered(),
+    });
+
+    vi.spyOn(sessionManager, 'appendHostTaskCompletion')
+      .mockRejectedValueOnce(new Error('persistence failed'));
+    const port = invocationPort({
+      callId: 'persistence-call',
+      name: 'demo',
+      input: { state: 'ready', value: { count: 1 } },
+    }, []);
+
+    const runPromise = new AgentRunner({ sessionManager }).run({
+      sessionId: MAIN_SESSION_ID,
+      message: 'go',
+      systemPrompt: '',
+      turnId: 'turn',
+      resolvedModel: resolvedModel(port),
+      toolProjection: snapshot.tools,
+      hookProjection: snapshot.hooks,
+      toolPolicy: allowPolicy,
+    });
+    await expect(runPromise).rejects.toThrow('persistence failed');
+    expect(observerEntered).toHaveBeenCalledTimes(1);
+  });
+
+  it('converges active execution before surfacing a steering Model failure', async () => {
+    let settleTool!: (value: ToolExecutionOutput) => void;
+    const pendingTool = new Promise<ToolExecutionOutput>((resolve) => {
+      settleTool = resolve;
+    });
+    const snapshot = snapshotWithTool({
+      before: () => ({ action: 'allow' }),
+      afterResults: [],
+      execute: () => pendingTool,
+    });
+    let round = 0;
+    const requests: ModelInvocationRequest[] = [];
+    const port: ModelInvocationPort = {
+      async *chatStream(request) {
+        requests.push(request);
+        round++;
+        if (round === 2) throw new Error('steering invocation failed');
+        yield { type: 'message_start' as const };
+        yield {
+          type: 'tool_call' as const,
+          call: {
+            callId: 'failure-call',
+            name: 'demo',
+            input: { state: 'ready' as const, value: { count: 1 } },
+          },
+        };
+        yield {
+          type: 'message_end' as const,
+          stopReason: 'tool_use',
+          usage: { inputTokens: 2, outputTokens: 1 },
+        };
+      },
+      async chat() {
+        throw new Error('not used');
+      },
+    };
+    let claimed = false;
+    const runOutcome = new AgentRunner({ sessionManager }).run({
+      sessionId: MAIN_SESSION_ID,
+      message: 'go',
+      systemPrompt: '',
+      turnId: 'turn',
+      resolvedModel: resolvedModel(port),
+      toolProjection: snapshot.tools,
+      hookProjection: snapshot.hooks,
+      toolPolicy: allowPolicy,
+      steeringSource: {
+        claimReady: () => {
+          if (claimed) return [];
+          claimed = true;
+          return [{ role: 'user', content: 'status?' }];
+        },
+        waitUntilPotentiallyReady: async () => {},
+      },
+    }).then(
+      () => ({ status: 'fulfilled' as const }),
+      (error: unknown) => ({ status: 'rejected' as const, error }),
+    );
+
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    let settled = false;
+    void runOutcome.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    settleTool({ outcome: 'success', content: 'completed after failure' });
+    const outcome = await runOutcome;
+
+    expect(outcome.status).toBe('rejected');
+    if (outcome.status === 'rejected') {
+      expect(outcome.error).toEqual(expect.objectContaining({
+        message: 'steering invocation failed',
+      }));
+    }
+    expect(sessionManager.getAsyncToolRecords(MAIN_SESSION_ID)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'tool_execution_terminal',
+          outcome: 'success',
+          content: 'completed after failure',
+        }),
+        expect.objectContaining({
+          type: 'host_task_completion',
+          completion: expect.objectContaining({ content: 'completed after failure' }),
+        }),
+      ]),
+    );
+  });
+});
+
+function snapshotWithTool(options: {
+  before: (...args: never[]) => unknown;
+  afterResults: CanonicalToolResult[];
+  execute: (input: Record<string, unknown>) => Promise<ToolExecutionOutput>;
+  after?: () => void | Promise<void>;
+}) {
+  const unit: RuntimeContributionUnit = {
+    id: 'builtin-test-tool',
+    source: 'builtin',
+    register(api) {
+      api.registerTool({
+        name: 'demo',
+        description: 'Demo tool',
+        inputSchema: {
+          type: 'object',
+          properties: { count: { type: 'integer' } },
+          required: ['count'],
+          additionalProperties: false,
+        },
+        execute: options.execute,
+      });
+      api.registerHook({
+        id: 'before-demo',
+        hookName: 'before_tool_call',
+        handler: options.before as never,
+      });
+      api.registerHook({
+        id: 'after-demo',
+        hookName: 'after_tool_call',
+        handler: async ({ result }) => {
+          options.afterResults.push(result);
+          await options.after?.();
+        },
+      });
+    },
+  };
+  const candidate = resolveStagedRegistryCandidate({
+    providers: [],
+    units: [stageRegistryUnit(unit)],
+  });
+  return finalizeRegistrySnapshot({
+    candidate,
+    acceptedUnits: candidate.units,
+    channelBindings: [],
+    generation: 1,
+  });
+}

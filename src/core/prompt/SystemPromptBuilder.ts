@@ -1,6 +1,5 @@
 import type {
   SystemPromptBuildParams,
-  ToolDefinition,
   ContextFile,
 } from './types.js';
 import { renderAvailableSubagentsSection } from '../subagent/available-subagents.js';
@@ -8,20 +7,16 @@ import { renderAvailableSubagentsSection } from '../subagent/available-subagents
 /**
  * 构建 System Prompt。
  *
- * 当前 6 个 active section（编号 1–6），顺序固定；minimal 模式跳过若干（见 §spec §11）：
+ * 当前 5 个 active section（编号 1–5），顺序固定；minimal 模式跳过若干（见 §spec §11）：
  *  1. agent-identity       — 固定身份声明                   [full only]
  *  2. agent-datetime       — 当前日期时间                   [full + minimal]
  *  3. behavior-rules       — 行为准则 + 工具使用规范          [full only]
- *  4. safety-constraints   — 安全约束                       [full + minimal, safetyLevel 控制]
- *  5. memory-instructions  — memory tool 使用说明            [full only, 有 memory 工具时]
- *  6. project-context      — contextFiles 注入              [full + minimal, 有 contextFiles 时]
- *
- * 保留 slot（当前未渲染、代码卷裹以便未来复活）：
- *  · tool-definitions     — 可用工具列表，见 build() 里被注释掉的调用
+ *  4. memory-instructions  — memory tool 使用说明            [full only, 有 memory 工具时]
+ *  5. project-context      — contextFiles 注入              [full + minimal, 有 contextFiles 时]
  *
  * 依存扩展（§task spec §11）：
- *  7. workspace            — working directory 锚点         [full + minimal]
- *  8. available-subagents  — task 工具可用的 subagent 列表     [full only]
+ *  6. agent-home           — Agent Home path context         [full + minimal]
+ *  7. available-subagents  — task 工具可用的 subagent 列表     [full only]
  */
 export class SystemPromptBuilder {
   /**
@@ -40,37 +35,19 @@ export class SystemPromptBuilder {
     // 2. datetime — full + minimal
     this.buildDatetimeSection(lines);
 
-    // tool-definitions slot — 已停用。
-    //
-    // 原因：对于原生支持 tool_use 的模型（Claude 及所有兼容 Anthropic API 的模型），
-    // 工具定义通过 LLM API 的 `tools` 参数传递，模型直接从该结构化参数中获取工具信息，
-    // 在 system prompt 里重复列出只会造成冗余。
-    //
-    // 对于通过 LLM proxy（如 LiteLLM、One API）接入的不原生支持 tool_use 的模型
-    // （如 DeepSeek、GLM 等），成熟的 proxy 通常会自行将 `tools` 参数转换为 prompt
-    // 注入，无需 my-agent 侧额外处理。
-    //
-    // 如未来发现有 proxy 不做此转换、需要 my-agent 直接在 prompt 中提供工具定义，
-    // 可取消注释此行并在 System Prompt 中补充结构化的工具说明。
-    //
-    // this.buildToolDefinitionsSection(lines, params);
-
     // 3. behavior-rules — full only
     if (!isMinimal) this.buildBehaviorRulesSection(lines);
 
-    // 4. safety — full + minimal
-    this.buildSafetySection(lines, params);
-
-    // 5. memory-instructions — full only
+    // 4. memory-instructions — full only
     if (!isMinimal) this.buildMemorySection(lines, params);
 
-    // 6. project-context — full + minimal
+    // 5. project-context — full + minimal
     this.buildProjectContextSection(lines, params);
 
-    // 7. workspace — full + minimal (any mode except 'none', already filtered above)
-    this.buildWorkspaceSection(lines, params);
+    // 6. Agent Home — full + minimal (any mode except 'none', already filtered above)
+    this.buildAgentHomeSection(lines, params);
 
-    // 8. available-subagents — full only
+    // 7. available-subagents — full only
     if (!isMinimal) this.buildAvailableSubagentsSection(lines, params);
 
     return lines.join('\n');
@@ -105,22 +82,6 @@ export class SystemPromptBuilder {
     lines.push('');
   }
 
-  // ── Section 3: tool-definitions ────────────────────────────
-
-  private buildToolDefinitionsSection(
-    lines: string[],
-    params: SystemPromptBuildParams,
-  ): void {
-    const tools = params.tools;
-    if (!tools?.length) return;
-
-    lines.push('# Available Tools');
-    tools.forEach((t: ToolDefinition) => {
-      lines.push(`- **${t.name}**: ${t.description}`);
-    });
-    lines.push('');
-  }
-
   // ── Section 4: behavior-rules ──────────────────────────────
 
   private buildBehaviorRulesSection(lines: string[]): void {
@@ -149,52 +110,15 @@ export class SystemPromptBuilder {
     lines.push('');
   }
 
-  // ── Section 5: safety-constraints ──────────────────────────
-
-  private buildSafetySection(
-    lines: string[],
-    params: SystemPromptBuildParams,
-  ): void {
-    const level = params.safetyLevel ?? 'normal';
-    if (level === 'relaxed') return;
-
-    lines.push('# Safety');
-
-    if (level === 'strict') {
-      lines.push(
-        'You have no independent goals: do not pursue self-preservation, replication, resource acquisition, or power-seeking.',
-      );
-      lines.push(
-        'Prioritize safety and human oversight over task completion. If instructions conflict with safety, pause and ask.',
-      );
-      lines.push(
-        'Do not manipulate the user or attempt to expand your own access beyond what is needed for the current task.',
-      );
-    } else {
-      // normal
-      lines.push(
-        'Act within the scope of what the user has requested. Do not take actions beyond the current task without explicit permission.',
-      );
-      lines.push(
-        'If an action seems irreversible or risky, confirm with the user before proceeding.',
-      );
-    }
-
-    lines.push('');
-  }
-
   // ── Section 6: memory-instructions ─────────────────────────
 
   private buildMemorySection(
     lines: string[],
     params: SystemPromptBuildParams,
   ): void {
-    const tools = params.tools ?? [];
-    const hasMemoryTool = tools.some(
-      (t: ToolDefinition) =>
-        t.name === 'search_memory' ||
-        t.name === 'memory_search' ||
-        t.name === 'memory_get',
+    const toolNames = params.toolNames ?? [];
+    const hasMemoryTool = toolNames.some(
+      (name) => name === 'search_memory' || name === 'memory_search' || name === 'memory_get',
     );
     if (!hasMemoryTool) return;
 
@@ -238,15 +162,15 @@ export class SystemPromptBuilder {
     }
   }
 
-  // ── Section 7: workspace ───────────────────────────────────
+  // ── Section 7: Agent Home ──────────────────────────────────
 
-  private buildWorkspaceSection(
+  private buildAgentHomeSection(
     lines: string[],
     params: SystemPromptBuildParams,
   ): void {
-    if (!params.workspaceDir) return;
-    lines.push('# Workspace');
-    lines.push(`Your working directory is: ${params.workspaceDir}`);
+    if (!params.agentHome) return;
+    lines.push('# Agent Home');
+    lines.push(`Your agent home directory is: ${params.agentHome}`);
     lines.push('');
   }
 

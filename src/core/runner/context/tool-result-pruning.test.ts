@@ -1,12 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import type { ChatMessage } from '../../../adapters/llm/types.js';
+import type { ChatMessage } from '../../model-invocation/index.js';
 import { pruneToolResults, type PruneInfo } from './tool-result-pruning.js';
 
 /** 创建包含 tool_result 的 user 消息（Anthropic API 格式） */
 function makeToolResultMessage(content: string, toolUseId = 'tu_1'): ChatMessage {
   return {
     role: 'user',
-    content: [{ type: 'tool_result', tool_use_id: toolUseId, content }],
+    content: [{
+      type: 'tool_result',
+      tool_use_id: toolUseId,
+      content,
+      status: 'success',
+    }],
   };
 }
 

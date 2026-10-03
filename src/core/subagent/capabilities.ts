@@ -1,8 +1,7 @@
-import { getSubagentDepth } from './session-key.js';
 import type { SubagentCapabilities, SubagentRole } from './types.js';
 
 /**
- * Resolve role + spawn capability from a session-key's depth.
+ * Resolve role + spawn capability from an explicit subagent depth.
  *
  * | depth        | role           | canSpawn |
  * |--------------|----------------|----------|
@@ -16,10 +15,9 @@ import type { SubagentCapabilities, SubagentRole } from './types.js';
  * See spec §6 (depth model) and §13 (overflow protection).
  */
 export function resolveSubagentCapabilities(
-  sessionKey: string,
+  depth: number,
   maxDepth: number,
 ): SubagentCapabilities {
-  const depth = getSubagentDepth(sessionKey);
   let role: SubagentRole;
   if (depth >= maxDepth) {
     role = 'leaf';

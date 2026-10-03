@@ -1,0 +1,26 @@
+{
+  "manifestVersion": 1,
+  "id": "copilot-relay-provider",
+  "version": "0.1.0",
+  "entry": "entry.ts",
+  "configSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "baseURL": {
+        "type": "string",
+        "default": "http://127.0.0.1:5000"
+      },
+      "apiKey": {
+        "type": "string"
+      },
+      "discoveryTimeoutMs": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991,
+        "default": 5000
+      }
+    }
+  }
+}

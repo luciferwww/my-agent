@@ -1,4 +1,5 @@
 import type { RuntimeErrorCode, RuntimeErrorInfo, RuntimeErrorScope, RuntimeErrorSeverity } from './types.js';
+import { ModelResolutionError } from '../core/model-resolution/index.js';
 
 export class RuntimeAppError extends Error {
   readonly info: RuntimeErrorInfo;
@@ -14,20 +15,50 @@ export function createRuntimeError(info: RuntimeErrorInfo): RuntimeAppError {
   return new RuntimeAppError(info);
 }
 
+const unitCreationAttribution = new WeakMap<Error, { readonly unitId: string }>();
+
+export function attributeRuntimeUnitCreationError(cause: unknown, unitId: string): Error {
+  const error = cause instanceof Error ? cause : new Error(String(cause));
+  unitCreationAttribution.set(error, Object.freeze({ unitId }));
+  return error;
+}
+
 export function classifyRuntimeError(scope: RuntimeErrorScope, error: unknown): RuntimeErrorInfo {
   if (error instanceof RuntimeAppError) {
-    return error.info;
+    const creationAttribution = unitCreationAttribution.get(error);
+    return creationAttribution
+      ? {
+          ...error.info,
+          unitId: creationAttribution.unitId,
+          phase: 'create',
+        }
+      : error.info;
   }
 
   const cause = error instanceof Error ? error : new Error(String(error));
   const message = cause.message;
 
+  if (scope === 'run' && cause instanceof ModelResolutionError) {
+    return {
+      scope,
+      severity: 'recoverable',
+      code: cause.category === 'reference_invalid' ? 'MODEL_MISSING' : 'RUN_FAILED',
+      message,
+      resolutionCategory: cause.category,
+      cause,
+    };
+  }
+
   const mapping = getDefaultMapping(scope, message);
+  const creationAttribution = unitCreationAttribution.get(cause);
   return {
     scope,
     severity: mapping.severity,
     code: mapping.code,
     message,
+    ...(creationAttribution
+      ? { unitId: creationAttribution.unitId, phase: 'create' as const }
+      : {}),
     cause,
   };
 }
@@ -38,8 +69,8 @@ function getDefaultMapping(
 ): { code: RuntimeErrorCode; severity: RuntimeErrorSeverity } {
   switch (scope) {
     case 'startup':
-      if (message.toLowerCase().includes('workspace')) {
-        return { code: 'WORKSPACE_INIT_FAILED', severity: 'fatal' };
+      if (message.toLowerCase().includes('agent context')) {
+        return { code: 'AGENT_CONTEXT_INIT_FAILED', severity: 'fatal' };
       }
       if (message.toLowerCase().includes('tool')) {
         return { code: 'TOOL_ASSEMBLY_FAILED', severity: 'fatal' };
@@ -51,9 +82,6 @@ function getDefaultMapping(
       return { code: 'SHUTDOWN_FAILED', severity: 'recoverable' };
     case 'run':
     default:
-      if (message.toLowerCase().includes('model')) {
-        return { code: 'MODEL_MISSING', severity: 'recoverable' };
-      }
       if (message.toLowerCase().includes('cannot run')) {
         return { code: 'RUN_REJECTED', severity: 'recoverable' };
       }

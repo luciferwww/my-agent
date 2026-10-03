@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import type { SubagentConfigEntry } from '../../platform/config/types.js';
+import type { SubagentConfigEntry } from './config.js';
 import type { SubagentProfile } from './types.js';
 
 // ── Constants ────────────────────────────────────────────────
@@ -11,8 +11,8 @@ const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
  *  built-in anonymous subagent (built by {@link buildGeneralPurposeProfile}). */
 const RESERVED_IDS = new Set<string>(['general-purpose']);
 
-/** Path segments appended to `workspaceDir` to derive a subagent's `agentDir`. */
-const SUBAGENT_DIR_SEGMENTS = ['.agent', 'subagents'] as const;
+/** Path segments appended to `agentHome` to derive a subagent's `agentDir`. */
+const SUBAGENT_DIR_SEGMENTS = ['subagents'] as const;
 
 /** Built into v1 capabilities; subagents cannot grant themselves `task`
  *  to spawn further subagents (spec §13 overflow protection). */
@@ -20,14 +20,46 @@ const TASK_TOOL_NAME = 'task';
 
 // ── Helpers ──────────────────────────────────────────────────
 
-function deriveAgentDir(workspaceDir: string, id: string): string {
-  return join(workspaceDir, ...SUBAGENT_DIR_SEGMENTS, id);
+function deriveAgentDir(agentHome: string, id: string): string {
+  return join(agentHome, ...SUBAGENT_DIR_SEGMENTS, id);
 }
 
 /** A glob entry contains `*` or `?`. Glob lookups bypass the registered-name
  *  check because expansion happens later at tool-registration time. */
 function isGlob(name: string): boolean {
   return /[*?]/.test(name);
+}
+
+function resolveModelSelection(
+  model: SubagentConfigEntry['model'] | unknown,
+  profileId: string,
+): SubagentProfile['model'] {
+  if (model === 'inherit') {
+    return model;
+  }
+  if (!model || typeof model !== 'object' || Array.isArray(model)) {
+    throw new Error(
+      `subagents.list["${profileId}"]: model must be "inherit" or a native Model Reference`,
+    );
+  }
+
+  const candidate = model as Record<string, unknown>;
+  const allowedKeys = new Set(['providerId', 'modelId']);
+  const unknownKey = Object.keys(candidate).find((key) => !allowedKeys.has(key));
+  if (unknownKey) {
+    throw new Error(`subagents.list["${profileId}"].model: unknown field "${unknownKey}"`);
+  }
+  if (typeof candidate.modelId !== 'string') {
+    throw new Error(`subagents.list["${profileId}"].model: modelId must be a string`);
+  }
+  if (typeof candidate.providerId !== 'string' || candidate.providerId.trim() === '') {
+    throw new Error(`subagents.list["${profileId}"].model: providerId must be nonblank`);
+  }
+
+  return Object.freeze({
+    providerId: candidate.providerId.trim(),
+    modelId: candidate.modelId,
+  });
 }
 
 // ── Public API ───────────────────────────────────────────────
@@ -47,12 +79,12 @@ function isGlob(name: string): boolean {
  * - Every exact name (non-glob) in `tools.allow` must be a registered tool.
  *   Glob entries (`*` / `?`) are passed through without name checking.
  *
- * `agentDir` is ALWAYS derived from `workspaceDir + id` (spec §8.1). Whether
- * the directory actually exists is probed later by the SubagentRunner.
+ * `agentDir` is ALWAYS derived from `agentHome + id` (spec §8.1). Whether
+ * the directory actually exists is probed later by the Child executor.
  */
 export function loadSubagentProfiles(
   list: SubagentConfigEntry[],
-  workspaceDir: string,
+  agentHome: string,
   registeredToolNames: ReadonlySet<string>,
 ): SubagentProfile[] {
   const seen = new Set<string>();
@@ -71,6 +103,7 @@ export function loadSubagentProfiles(
     if (!entry.description) {
       throw new Error(`subagents.list["${entry.id}"]: description is required`);
     }
+    const model = resolveModelSelection(entry.model, entry.id);
     if (entry.tools?.allow?.includes(TASK_TOOL_NAME)) {
       throw new Error(
         `subagents.list["${entry.id}"]: allow cannot contain "${TASK_TOOL_NAME}" in v1`,
@@ -90,8 +123,8 @@ export function loadSubagentProfiles(
     profiles.push({
       id: entry.id,
       description: entry.description,
-      agentDir: deriveAgentDir(workspaceDir, entry.id),
-      model: entry.model,
+      agentDir: deriveAgentDir(agentHome, entry.id),
+      model,
       tools: entry.tools,
       maxLlmCalls: entry.maxLlmCalls,
     });
@@ -105,18 +138,19 @@ export function loadSubagentProfiles(
  *
  * `agentDir` is derived by the same rule as named profiles (keeps the
  * type invariant `agentDir: string`). The directory normally does not
- * exist on disk; the SubagentRunner detects that at run time and falls
+ * exist on disk; the Child executor detects that at run time and falls
  * back to the parent's contextFiles (spec §6 decision 10 — anonymous
  * subagent behavior).
  *
- * `model` / `tools` / `maxLlmCalls` are left unset so the runner
- * inherits them all from the parent.
+ * The built-in profile explicitly inherits the Parent effective Model
+ * Reference. Other optional execution settings remain unset.
  */
-export function buildGeneralPurposeProfile(workspaceDir: string): SubagentProfile {
+export function buildGeneralPurposeProfile(agentHome: string): SubagentProfile {
   return {
     id: 'general-purpose',
     description:
       'General-purpose task executor. Use when no named subagent matches the request.',
-    agentDir: deriveAgentDir(workspaceDir, 'general-purpose'),
+    agentDir: deriveAgentDir(agentHome, 'general-purpose'),
+    model: 'inherit',
   };
 }

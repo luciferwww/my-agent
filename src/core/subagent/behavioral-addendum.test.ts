@@ -48,13 +48,13 @@ describe('buildSubagentBehavioralAddendum', () => {
     expect(out).toContain('cannot spawn subagents (task tool is not available)');
   });
 
-  it('does NOT echo sessionKey or prompt-like content', () => {
+  it('does NOT echo sessionId or prompt-like content', () => {
     const out = buildSubagentBehavioralAddendum({
       taskDescription: 'do thing',
       depth: 1,
       canSpawn: false,
     });
-    expect(out.toLowerCase()).not.toContain('sessionkey');
+    expect(out.toLowerCase()).not.toContain('sessionid');
     expect(out).not.toContain('Prompt:');
   });
 

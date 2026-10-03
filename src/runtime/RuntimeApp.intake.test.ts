@@ -4,25 +4,37 @@ import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   Channel,
+  ChannelCompletion,
   ChannelRunRequest,
   InboundContentBlock,
-} from '../adapters/channel/types.js';
-import type { ChatContentBlock, ChatMessage } from '../adapters/llm/types.js';
-import type { RunResult } from '../core/runner/types.js';
-import type { Tool } from '../core/tools/types.js';
+} from '../core/channel/index.js';
+import { ChannelOperationError } from '../core/channel/index.js';
+import type { ChatContentBlock, ChatMessage } from '../core/model-invocation/index.js';
 import type {
-  AgentEvent,
+  ProviderProjectionEntry,
+  ReasoningCapabilities,
+} from '../core/model-resolution/index.js';
+import type { RunParams, RunResult } from '../core/runner/types.js';
+import { SessionManager } from '../core/session/SessionManager.js';
+import type { RuntimeContributionUnit } from '../core/registry/index.js';
+import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
+import type { Tool } from '../core/tools/types.js';
+import {
   AgentRunner,
-  AgentRunnerConfig,
+  type AgentEvent,
+  type AgentRunnerConfig,
 } from '../core/runner/index.js';
 import type {
   DroppedAttachment,
   ProcessInboundResult,
 } from '../core/media/attachment-pipeline.js';
 import { RuntimeApp } from './RuntimeApp.js';
+import type { RuntimeHandle } from './runtime-composition.js';
 import type { RuntimeDependencies, RuntimeEvent } from './types.js';
+import { createDefaultAgentConfig } from '../platform/config/default-composition.js';
+import { DEFAULT_LOGGER_CONFIG } from '../platform/logger/index.js';
 
-// 单元测试用 mock：跳过真实 sharp 解码，直接受控注入 normalized + dropped
+// Bypass image decoding so tests can inject normalized and dropped results.
 const processInboundMock = vi.fn<
   (msg: string | InboundContentBlock[]) => Promise<ProcessInboundResult>
 >();
@@ -33,25 +45,25 @@ vi.mock('../core/media/attachment-pipeline.js', () => ({
 }));
 
 describe('RuntimeApp intake (PR-6 spec matrix)', () => {
-  let workspaceDir: string;
+  let agentHome: string;
 
   beforeEach(async () => {
-    workspaceDir = await mkdtemp(join(tmpdir(), 'runtime-intake-test-'));
+    agentHome = await mkdtemp(join(tmpdir(), 'runtime-intake-test-'));
     processInboundMock.mockReset();
   });
 
   afterEach(async () => {
-    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(agentHome, { recursive: true, force: true });
   });
 
   it('text-only message passes through untouched', async () => {
     processInboundMock.mockResolvedValue({ normalized: 'hello', dropped: [] });
 
     const { app, runnerRun, testChannel, agentEvents, runtimeEvents } =
-      await buildApp(workspaceDir);
+      await buildApp(agentHome);
 
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'hello',
       clientId: 'c1',
     });
@@ -59,6 +71,71 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     expect(runnerRun).toHaveBeenCalledTimes(1);
     expect(runnerRun.mock.calls[0]?.[0]?.message).toBe('hello');
     assertNoAttachmentEvents(runtimeEvents, agentEvents);
+    await app.close();
+  });
+
+  it('normalizes and snapshots a supported reasoning preference before enqueue', async () => {
+    processInboundMock.mockResolvedValue({ normalized: 'reason', dropped: [] });
+    const { app, runnerRun, testChannel, agentEvents } = await buildApp(agentHome, {
+      reasoning: { thinking: ['on'], efforts: ['high'] },
+    });
+
+    const reasoning = { thinking: 'on', effort: 'high' } as const;
+    await testChannel.dispatch({
+      sessionId: 'main',
+      message: 'reason',
+      reasoning,
+      clientId: 'c1',
+    });
+
+    expect(runnerRun).toHaveBeenCalledWith(expect.objectContaining({
+      reasoningPreference: reasoning,
+      reasoningPolicy: reasoning,
+    }));
+    expect(agentEvents).toContainEqual(expect.objectContaining({
+      type: 'user_message',
+      reasoning,
+    }));
+    await app.close();
+  });
+
+  it.each([
+    { effrot: 'high' },
+    { thinking: 'on', effort: 'none' },
+    { thinking: 'off', effort: 'high' },
+  ])('rejects invalid reasoning before media processing and enqueue: %j', async (reasoning) => {
+    const { app, runnerRun, testChannel, agentEvents } = await buildApp(agentHome);
+
+    await expect(testChannel.dispatch({
+      sessionId: 'main',
+      message: 'invalid reasoning',
+      reasoning: reasoning as never,
+      clientId: 'c1',
+    })).rejects.toMatchObject({
+      name: 'ChannelOperationError',
+      code: 'REQUEST_INVALID',
+    });
+
+    expect(processInboundMock).not.toHaveBeenCalled();
+    expect(runnerRun).not.toHaveBeenCalled();
+    expect(agentEvents).toEqual([]);
+    await app.close();
+  });
+
+  it('rejects an unsupported explicit reasoning option before Runner execution', async () => {
+    processInboundMock.mockResolvedValue({ normalized: 'unsupported', dropped: [] });
+    const { app, runnerRun, testChannel } = await buildApp(agentHome, {
+      reasoning: { efforts: ['low'] },
+    });
+
+    await expect(testChannel.dispatch({
+      sessionId: 'main',
+      message: 'unsupported',
+      reasoning: { effort: 'high' },
+      clientId: 'c1',
+    })).rejects.toThrow('does not support the requested reasoning policy');
+
+    expect(runnerRun).not.toHaveBeenCalled();
     await app.close();
   });
 
@@ -73,10 +150,10 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     ];
     processInboundMock.mockResolvedValue({ normalized, dropped: [] });
 
-    const { app, runnerRun, testChannel } = await buildApp(workspaceDir);
+    const { app, runnerRun, testChannel } = await buildApp(agentHome);
 
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: [{ type: 'text', text: 'see image' }] as InboundContentBlock[],
       clientId: 'c1',
     });
@@ -95,63 +172,105 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     await app.close();
   });
 
-  it('appends drop notice to existing text when ATTACHMENT_DROP_NOTICE_DEFAULT=true and a block dropped', async () => {
-    // Default constant is true, so notice should be appended
+  it('does not invoke the provider path when image capability is explicitly unsupported', async () => {
+    const normalized: ChatContentBlock[] = [{
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'aaaa' },
+      dimensions: { width: 10, height: 10 },
+    }];
+    processInboundMock.mockResolvedValue({ normalized, dropped: [] });
+
+    const { app, runnerRun, testChannel } = await buildApp(agentHome, { mediaKinds: [] });
+    await expect(testChannel.dispatch({
+      sessionId: 'main',
+      message: [{
+        type: 'image',
+        source: { type: 'base64', mediaType: 'image/png', data: 'aaaa' },
+      }],
+      clientId: 'c1',
+    })).rejects.toThrow('does not support all requested media kinds');
+
+    expect(runnerRun).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('attempts an image request when media capability is unknown', async () => {
+    const normalized: ChatContentBlock[] = [{
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'aaaa' },
+      dimensions: { width: 10, height: 10 },
+    }];
+    processInboundMock.mockResolvedValue({ normalized, dropped: [] });
+
+    const { app, runnerRun, testChannel } = await buildApp(agentHome, { mediaKinds: null });
+    await testChannel.dispatch({
+      sessionId: 'main',
+      message: [{
+        type: 'image',
+        source: { type: 'base64', mediaType: 'image/png', data: 'aaaa' },
+      }],
+      clientId: 'c1',
+    });
+
+    expect(runnerRun).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('rejects text and attachments atomically when one attachment fails', async () => {
     processInboundMock.mockResolvedValue({
       normalized: 'hello world',
       dropped: [{ blockIndex: 1, reason: 'too_large' }] satisfies DroppedAttachment[],
     });
 
     const { app, runnerRun, testChannel, agentEvents, runtimeEvents } =
-      await buildApp(workspaceDir);
+      await buildApp(agentHome);
 
-    await testChannel.dispatch({
-      sessionKey: 'main',
+    await expect(testChannel.dispatch({
+      sessionId: 'main',
       message: 'hello world',
       clientId: 'c1',
-    });
+    })).rejects.toEqual(expect.objectContaining({
+      name: ChannelOperationError.name,
+      code: 'ATTACHMENT_REJECTED',
+      message: expect.stringContaining('attachment validation failure'),
+    }));
 
-    const got = runnerRun.mock.calls[0]?.[0]?.message;
-    expect(typeof got).toBe('string');
-    expect(got).toContain('hello world');
-    expect(got).toContain('1 个附件');
+    expect(runnerRun).not.toHaveBeenCalled();
+    expect(agentEvents).toEqual([]);
     assertNoAttachmentEvents(runtimeEvents, agentEvents);
     await app.close();
   });
 
-  it('pure-bad-attachments with empty text falls back to notice text (notice enabled)', async () => {
+  it('rejects a pure bad attachment before enqueue', async () => {
     processInboundMock.mockResolvedValue({
       normalized: [],
       dropped: [{ blockIndex: 0, reason: 'unsupported_mime' }],
     });
 
-    const { app, runnerRun, testChannel } = await buildApp(workspaceDir);
+    const { app, runnerRun, testChannel } = await buildApp(agentHome);
 
-    await testChannel.dispatch({
-      sessionKey: 'main',
+    await expect(testChannel.dispatch({
+      sessionId: 'main',
       message: [
         {
           type: 'image',
-          source: { type: 'base64', media_type: 'image/png', data: 'x' },
+          source: { type: 'base64', mediaType: 'image/png', data: 'x' },
         },
       ] satisfies InboundContentBlock[],
       clientId: 'c1',
-    });
+    })).rejects.toThrow('attachment validation failure');
 
-    expect(runnerRun).toHaveBeenCalledTimes(1);
-    const got = runnerRun.mock.calls[0]?.[0]?.message;
-    expect(typeof got).toBe('string');
-    expect(got).toContain('1 个附件');
+    expect(runnerRun).not.toHaveBeenCalled();
     await app.close();
   });
 
   it('degenerate input (no text, no successful attachments, no drops) skips enqueue', async () => {
     processInboundMock.mockResolvedValue({ normalized: '', dropped: [] });
 
-    const { app, runnerRun, testChannel } = await buildApp(workspaceDir);
+    const { app, runnerRun, testChannel } = await buildApp(agentHome);
 
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: '',
       clientId: 'c1',
     });
@@ -160,7 +279,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     await app.close();
   });
 
-  it('steering: image-bearing message in steer mode strips non-text and routes only text', async () => {
+  it('steering: image-bearing message remains multimodal when active capability is unknown', async () => {
     const normalized: ChatContentBlock[] = [
       { type: 'text', text: 'steer me' },
       {
@@ -174,14 +293,18 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     let drainedSteering: ChatMessage[] = [];
 
     const runnerRun = vi.fn(async (params: {
-      getSteeringMessages?: () => Promise<ChatMessage[]>;
+      steeringSource?: { claimReady(): ChatMessage[] };
+      prepareSteeringMessages?: (messages: ChatMessage[]) => Promise<ChatMessage[]>;
     }): Promise<RunResult> => {
       await releaseRun.promise;
-      drainedSteering = (await params.getSteeringMessages?.()) ?? [];
+      const claimed = params.steeringSource?.claimReady() ?? [];
+      drainedSteering = params.prepareSteeringMessages
+        ? await params.prepareSteeringMessages(claimed)
+        : claimed;
       return defaultRunResult('done');
     });
 
-    const { app, testChannel } = await buildApp(workspaceDir, {
+    const { app, testChannel } = await buildApp(agentHome, {
       steerMode: true,
       runnerRun,
     });
@@ -192,16 +315,16 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
       dropped: [],
     });
     const firstDispatch = testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'first',
       clientId: 'c1',
     });
     await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(1));
 
-    // 2) Steering dispatch: text + image; image must be stripped
+    // 2) Steering dispatch: text + image is retained in the canonical FIFO.
     processInboundMock.mockResolvedValueOnce({ normalized, dropped: [] });
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: [{ type: 'text', text: 'steer me' }] as InboundContentBlock[],
       clientId: 'c2',
     });
@@ -210,25 +333,31 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     await firstDispatch;
 
     expect(drainedSteering).toHaveLength(1);
-    expect(typeof drainedSteering[0]?.content).toBe('string');
-    expect(drainedSteering[0]?.content).toContain('steer me');
+    expect(drainedSteering[0]?.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'text', text: expect.stringContaining('steer me') }),
+      expect.objectContaining({ type: 'image' }),
+    ]));
 
     await app.close();
   });
 
-  it('steering: empty post-strip text is skipped (no inbox push)', async () => {
+  it('steering: a pure image can be claimed when active capability is unknown', async () => {
     const releaseRun = createDeferred<void>();
     let drainedSteering: ChatMessage[] = [];
 
     const runnerRun = vi.fn(async (params: {
-      getSteeringMessages?: () => Promise<ChatMessage[]>;
+      steeringSource?: { claimReady(): ChatMessage[] };
+      prepareSteeringMessages?: (messages: ChatMessage[]) => Promise<ChatMessage[]>;
     }): Promise<RunResult> => {
       await releaseRun.promise;
-      drainedSteering = (await params.getSteeringMessages?.()) ?? [];
+      const claimed = params.steeringSource?.claimReady() ?? [];
+      drainedSteering = params.prepareSteeringMessages
+        ? await params.prepareSteeringMessages(claimed)
+        : claimed;
       return defaultRunResult('done');
     });
 
-    const { app, testChannel } = await buildApp(workspaceDir, {
+    const { app, testChannel } = await buildApp(agentHome, {
       steerMode: true,
       runnerRun,
     });
@@ -238,7 +367,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
       dropped: [],
     });
     const firstDispatch = testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'first',
       clientId: 'c1',
     });
@@ -256,11 +385,11 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
       dropped: [],
     });
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: [
         {
           type: 'image',
-          source: { type: 'base64', media_type: 'image/png', data: 'aaaa' },
+          source: { type: 'base64', mediaType: 'image/png', data: 'aaaa' },
         },
       ] satisfies InboundContentBlock[],
       clientId: 'c2',
@@ -269,25 +398,29 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     releaseRun.resolve();
     await firstDispatch;
 
-    expect(drainedSteering).toHaveLength(0);
+    expect(drainedSteering).toHaveLength(1);
+    expect(drainedSteering[0]?.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'image' }),
+    ]));
     await app.close();
   });
 
-  it('no attachment-related RuntimeEvent / AgentEvent / channel_error emitted on any path', async () => {
+  it('does not emit user or turn events for a rejected attachment message', async () => {
     processInboundMock.mockResolvedValue({
       normalized: 'hello',
       dropped: [{ blockIndex: 0, reason: 'unsupported_mime' }],
     });
 
     const { app, testChannel, runtimeEvents, agentEvents } =
-      await buildApp(workspaceDir);
+      await buildApp(agentHome);
 
-    await testChannel.dispatch({
-      sessionKey: 'main',
+    await expect(testChannel.dispatch({
+      sessionId: 'main',
       message: 'hello',
       clientId: 'c1',
-    });
+    })).rejects.toThrow('attachment validation failure');
 
+    expect(agentEvents).toEqual([]);
     assertNoAttachmentEvents(runtimeEvents, agentEvents);
     await app.close();
   });
@@ -296,25 +429,25 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
 // ── user_message emit tests ─────────────────────────────────────
 // channel-multi-client-user-message-spec §7 unit tests
 describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
-  let workspaceDir: string;
+  let agentHome: string;
 
   beforeEach(async () => {
-    workspaceDir = await mkdtemp(join(tmpdir(), 'runtime-usermsg-test-'));
+    agentHome = await mkdtemp(join(tmpdir(), 'runtime-usermsg-test-'));
     processInboundMock.mockReset();
   });
 
   afterEach(async () => {
-    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(agentHome, { recursive: true, force: true });
   });
 
-  it('queued path: emits exactly one user_message with correct fields', async () => {
+  it('CH-02 threads the queued user_message ID to the runner', async () => {
     processInboundMock.mockResolvedValue({ normalized: 'hello world', dropped: [] });
 
-    const { app, testChannel, agentEvents, runnerRun } = await buildApp(workspaceDir);
+    const { app, testChannel, agentEvents, runnerRun } = await buildApp(agentHome);
 
     const before = Date.now();
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'hello world',
       clientId: 'client-A',
     });
@@ -323,10 +456,9 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     const userMsgs = agentEvents.filter((e) => e.type === 'user_message');
     expect(userMsgs).toHaveLength(1);
     const evt = userMsgs[0]! as Extract<AgentEvent, { type: 'user_message' }>;
-    expect(evt.sessionKey).toBe('main');
+    expect(evt.sessionId).toBe('main');
     expect(evt.content).toBe('hello world');
     expect(evt.originClientId).toBe('client-A');
-    expect(evt.deliveryMode).toBe('queued');
     expect(evt.messageId).toMatch(/^[0-9a-f-]{36}$/i);
     expect(evt.timestamp).toBeGreaterThanOrEqual(before);
     expect(evt.timestamp).toBeLessThanOrEqual(after);
@@ -334,8 +466,9 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
 
     // originMessageId threaded to runner
     expect(runnerRun).toHaveBeenCalledTimes(1);
-    const runParams = runnerRun.mock.calls[0]?.[0] as { originMessageId?: string };
+    const runParams = runnerRun.mock.calls[0]?.[0] as { originMessageId?: string; turnId?: string };
     expect(runParams.originMessageId).toBe(evt.messageId);
+    expect(runParams.turnId).toMatch(/^[0-9a-f-]{36}$/i);
 
     await app.close();
   });
@@ -343,10 +476,10 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
   it('queued path: originClientId is null when clientId absent (CLI / library entry)', async () => {
     processInboundMock.mockResolvedValue({ normalized: 'from cli', dropped: [] });
 
-    const { app, testChannel, agentEvents } = await buildApp(workspaceDir);
+    const { app, testChannel, agentEvents } = await buildApp(agentHome);
 
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'from cli',
     });
 
@@ -370,10 +503,10 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     ];
     processInboundMock.mockResolvedValue({ normalized, dropped: [] });
 
-    const { app, testChannel, agentEvents } = await buildApp(workspaceDir);
+    const { app, testChannel, agentEvents } = await buildApp(agentHome);
 
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: [{ type: 'text', text: 'look' }] as InboundContentBlock[],
       clientId: 'c1',
     });
@@ -396,13 +529,77 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     await app.close();
   });
 
+  it('claims only the contiguous model-compatible prefix and delays queued gates', async () => {
+    const releaseRun = createDeferred<void>();
+    let claimed: ChatMessage[] = [];
+    const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      if (params.message === 'first') {
+        await releaseRun.promise;
+        claimed = params.steeringSource?.claimReady() ?? [];
+      }
+      return defaultRunResult(String(params.message));
+    });
+    const { app, testChannel, agentEvents } = await buildApp(agentHome, {
+      steerMode: true,
+      runnerRun,
+    });
+
+    processInboundMock.mockResolvedValueOnce({ normalized: 'first', dropped: [] });
+    const first = testChannel.dispatch({ sessionId: 'main', message: 'first' });
+    await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(1));
+
+    processInboundMock.mockResolvedValueOnce({ normalized: 'same', dropped: [] });
+    await testChannel.dispatch({ sessionId: 'main', message: 'same' });
+    processInboundMock.mockResolvedValueOnce({ normalized: 'other', dropped: [] });
+    await testChannel.dispatch({
+      sessionId: 'main',
+      message: 'other',
+      modelReference: { providerId: ' test ', modelId: 'other-model' },
+    });
+    processInboundMock.mockResolvedValueOnce({ normalized: 'later', dropped: [] });
+    await testChannel.dispatch({ sessionId: 'main', message: 'later' });
+
+    const runtime = app.application as unknown as {
+      messageQueueBySession: Map<string, unknown[]>;
+      requestGates: Map<string, unknown>;
+    };
+    expect(runtime.messageQueueBySession.get('main')).toHaveLength(3);
+    expect(runtime.requestGates.size).toBe(1);
+
+    releaseRun.resolve();
+    await first;
+    await vi.waitFor(() => {
+      expect(runnerRun).toHaveBeenCalledTimes(3);
+      expect(app.application.getState().activeRunCount).toBe(0);
+    });
+
+    expect(claimed).toEqual([{ role: 'user', content: 'same' }]);
+    expect(runnerRun.mock.calls.map(([params]) => params.message)).toEqual([
+      'first',
+      'other',
+      'later',
+    ]);
+    const messages = agentEvents.filter(
+      (event): event is Extract<AgentEvent, { type: 'user_message' }> =>
+        event.type === 'user_message',
+    );
+    expect(agentEvents.filter((event) => event.type === 'user_message_bound')).toEqual([
+      expect.objectContaining({
+        messageId: messages[1]!.messageId,
+        binding: 'steering',
+      }),
+    ]);
+
+    await app.close();
+  });
+
   it('degenerate input (assembled === undefined): does not emit user_message', async () => {
     processInboundMock.mockResolvedValue({ normalized: '', dropped: [] });
 
-    const { app, testChannel, agentEvents, runnerRun } = await buildApp(workspaceDir);
+    const { app, testChannel, agentEvents, runnerRun } = await buildApp(agentHome);
 
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: '',
       clientId: 'c1',
     });
@@ -414,14 +611,19 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     await app.close();
   });
 
-  it('steering path: emits deliveryMode=steering and does not spawn a new run', async () => {
+  it('leaves unclaimed FIFO messages for distinct Turns without duplicate intake events', async () => {
     const releaseRun = createDeferred<void>();
-    const runnerRun = vi.fn(async (): Promise<RunResult> => {
-      await releaseRun.promise;
-      return defaultRunResult('done');
+    const releasePromotedRun = createDeferred<void>();
+    const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      if (params.message === 'first') {
+        await releaseRun.promise;
+      } else if (params.message === 'steer one') {
+        await releasePromotedRun.promise;
+      }
+      return defaultRunResult(String(params.message));
     });
 
-    const { app, testChannel, agentEvents } = await buildApp(workspaceDir, {
+    const { app, testChannel, agentEvents, runtimeEvents } = await buildApp(agentHome, {
       steerMode: true,
       runnerRun,
     });
@@ -429,58 +631,187 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     // First dispatch: starts and blocks the runner
     processInboundMock.mockResolvedValueOnce({ normalized: 'first', dropped: [] });
     const first = testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: 'first',
       clientId: 'client-A',
     });
     await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(1));
 
     // Second dispatch: routes to steering (active turn present)
-    processInboundMock.mockResolvedValueOnce({ normalized: 'steer me', dropped: [] });
+    processInboundMock.mockResolvedValueOnce({ normalized: 'steer one', dropped: [] });
     await testChannel.dispatch({
-      sessionKey: 'main',
-      message: 'steer me',
+      sessionId: 'main',
+      message: 'steer one',
       clientId: 'client-B',
+      modelReference: { providerId: 'test', modelId: 'test-model' },
+    });
+    processInboundMock.mockResolvedValueOnce({ normalized: 'steer two', dropped: [] });
+    await testChannel.dispatch({
+      sessionId: 'main',
+      message: 'steer two',
+      clientId: 'client-C',
     });
 
     const userMsgs = agentEvents.filter((e) => e.type === 'user_message') as Array<
       Extract<AgentEvent, { type: 'user_message' }>
     >;
-    expect(userMsgs).toHaveLength(2);
-    expect(userMsgs[0]!.deliveryMode).toBe('queued');
+    expect(userMsgs).toHaveLength(3);
     expect(userMsgs[0]!.originClientId).toBe('client-A');
-    expect(userMsgs[1]!.deliveryMode).toBe('steering');
     expect(userMsgs[1]!.originClientId).toBe('client-B');
-    expect(userMsgs[1]!.content).toBe('steer me');
+    expect(userMsgs[1]!.content).toBe('steer one');
+    expect(userMsgs[2]!.originClientId).toBe('client-C');
 
-    // Only one runner run — steering does not spawn a new turn
+    // Steering does not interrupt or spawn a Turn before normal completion.
     expect(runnerRun).toHaveBeenCalledTimes(1);
 
     releaseRun.resolve();
     await first;
+    await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(2));
+
+    expect(runnerRun.mock.calls[1]![0]).toEqual(expect.objectContaining({
+      originMessageId: userMsgs[1]!.messageId,
+      resolvedModel: expect.objectContaining({
+        identity: { providerId: 'test', modelId: 'test-model' },
+      }),
+    }));
+    const promotedTurnId = runnerRun.mock.calls[1]![0].turnId;
+    const routeMap = (
+      app.application as unknown as {
+        routeContextByTurn: Map<string, { originClientId?: string; originChannel?: Channel }>;
+      }
+    ).routeContextByTurn;
+    expect(routeMap.get(promotedTurnId)).toEqual(expect.objectContaining({
+      originClientId: 'client-B',
+      originChannel: expect.objectContaining({ id: 'intake-test' }),
+    }));
+
+    releasePromotedRun.resolve();
+    await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(3));
+    expect(runnerRun.mock.calls.map(([params]) => params.message)).toEqual([
+      'first',
+      'steer one',
+      'steer two',
+    ]);
+    const starts = runtimeEvents.filter((event) => event.type === 'turn_start');
+    expect(starts.map((event) => event.originMessageId)).toEqual([
+      userMsgs[0]!.messageId,
+      userMsgs[1]!.messageId,
+      userMsgs[2]!.messageId,
+    ]);
+    expect(agentEvents.filter((event) => event.type === 'user_message')).toHaveLength(3);
     await app.close();
   });
 
-  it('steering pure-attachment (R1\'): emits user_message but does not enqueue steering input', async () => {
+  it.each([
+    { stopReason: 'max_llm_calls' },
+    { stopReason: 'aborted' },
+    { stopReason: 'error' },
+  ])(
+    'schedules unclaimed FIFO input after $stopReason',
+    async ({ stopReason }) => {
+      const releaseRun = createDeferred<void>();
+      const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
+        if (params.message === 'first') {
+          await releaseRun.promise;
+          return {
+            ...defaultRunResult('first result'),
+            stopReason,
+          };
+        }
+        return defaultRunResult('promoted result');
+      });
+      const { app, testChannel } = await buildApp(agentHome, {
+        steerMode: true,
+        runnerRun,
+      });
+
+      processInboundMock.mockResolvedValueOnce({ normalized: 'first', dropped: [] });
+      const first = testChannel.dispatch({
+        sessionId: 'main',
+        message: 'first',
+      });
+      await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(1));
+
+      processInboundMock.mockResolvedValueOnce({ normalized: 'late', dropped: [] });
+      await testChannel.dispatch({
+        sessionId: 'main',
+        message: 'late',
+      });
+
+      releaseRun.resolve();
+      await first;
+      await vi.waitFor(() => {
+        expect(runnerRun).toHaveBeenCalledTimes(2);
+        expect(app.application.getState().activeRunCount).toBe(0);
+      });
+      expect(runnerRun.mock.calls[1]![0].message).toBe('late');
+
+      await app.close();
+    },
+  );
+
+  it('schedules unclaimed FIFO input when the active Turn throws', async () => {
     const releaseRun = createDeferred<void>();
-    let drainedSteering: ChatMessage[] = [];
-
-    const runnerRun = vi.fn(async (params: {
-      getSteeringMessages?: () => Promise<ChatMessage[]>;
-    }): Promise<RunResult> => {
-      await releaseRun.promise;
-      drainedSteering = (await params.getSteeringMessages?.()) ?? [];
-      return defaultRunResult('done');
+    const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      if (params.message === 'first') {
+        await releaseRun.promise;
+        throw new Error('test failure');
+      }
+      return defaultRunResult('late');
     });
-
-    const { app, testChannel, agentEvents } = await buildApp(workspaceDir, {
+    const { app, testChannel } = await buildApp(agentHome, {
       steerMode: true,
       runnerRun,
     });
 
     processInboundMock.mockResolvedValueOnce({ normalized: 'first', dropped: [] });
     const first = testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
+      message: 'first',
+    });
+    await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(1));
+
+    processInboundMock.mockResolvedValueOnce({ normalized: 'late', dropped: [] });
+    await testChannel.dispatch({
+      sessionId: 'main',
+      message: 'late',
+    });
+
+    releaseRun.resolve();
+    await expect(first).rejects.toThrow('test failure');
+    await vi.waitFor(() => {
+      expect(runnerRun).toHaveBeenCalledTimes(2);
+      expect(app.application.getState().activeRunCount).toBe(0);
+    });
+    expect(runnerRun.mock.calls[1]![0].message).toBe('late');
+
+    await app.close();
+  });
+
+  it('pure-attachment input stays in FIFO and can be claimed', async () => {
+    const releaseRun = createDeferred<void>();
+    let drainedSteering: ChatMessage[] = [];
+
+    const runnerRun = vi.fn(async (params: {
+      steeringSource?: { claimReady(): ChatMessage[] };
+      prepareSteeringMessages?: (messages: ChatMessage[]) => Promise<ChatMessage[]>;
+    }): Promise<RunResult> => {
+      await releaseRun.promise;
+      const claimed = params.steeringSource?.claimReady() ?? [];
+      drainedSteering = params.prepareSteeringMessages
+        ? await params.prepareSteeringMessages(claimed)
+        : claimed;
+      return defaultRunResult('done');
+    });
+
+    const { app, testChannel, agentEvents } = await buildApp(agentHome, {
+      steerMode: true,
+      runnerRun,
+    });
+
+    processInboundMock.mockResolvedValueOnce({ normalized: 'first', dropped: [] });
+    const first = testChannel.dispatch({
+      sessionId: 'main',
       message: 'first',
       clientId: 'client-A',
     });
@@ -498,11 +829,11 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
       dropped: [],
     });
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId: 'main',
       message: [
         {
           type: 'image',
-          source: { type: 'base64', media_type: 'image/png', data: 'aaaa' },
+          source: { type: 'base64', mediaType: 'image/png', data: 'aaaa' },
         },
       ] satisfies InboundContentBlock[],
       clientId: 'client-B',
@@ -516,47 +847,47 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     >;
     expect(userMsgs).toHaveLength(2);
     const steeringEvt = userMsgs[1]!;
-    expect(steeringEvt.deliveryMode).toBe('steering');
     expect(steeringEvt.content).toBe('');
     expect(steeringEvt.attachmentSummaries).toHaveLength(1);
 
-    // Steering inbox stayed empty — runner saw nothing to inject
-    expect(drainedSteering).toHaveLength(0);
+    expect(drainedSteering).toHaveLength(1);
+    expect(drainedSteering[0]?.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'image' }),
+    ]));
 
     await app.close();
   });
 
-  it('regression: event order is user_message before subsequent run events', async () => {
+  it('CH-02 correlates a runtime-generated message ID through real runner events', async () => {
     processInboundMock.mockResolvedValue({ normalized: 'go', dropped: [] });
-
-    const emittedEvents: AgentEvent[] = [];
-    const runnerRun = vi.fn(async (params: {
-      turnId: string;
-      sessionKey: string;
-    }): Promise<RunResult> => {
-      // Simulate runner emitting run_start via the same fanout path the test observes.
-      // We can't reach the real emit chain from a mock, so we just note that
-      // handleInboundChannelMessage returns before invoking runner — which
-      // implies user_message was fanned out first (synchronous emit vs async run).
-      return defaultRunResult('ok');
+    const sessionId = '00000000-0000-4000-8000-000000000001';
+    await new SessionManager(agentHome).materializeSession({
+      sessionId,
+      createdAt: 1,
     });
 
-    const { app, testChannel, agentEvents } = await buildApp(workspaceDir, {
-      runnerRun,
+    const { app, testChannel, agentEvents } = await buildApp(agentHome, {
+      useRealRunner: true,
     });
 
     await testChannel.dispatch({
-      sessionKey: 'main',
+      sessionId,
       message: 'go',
       clientId: 'c1',
     });
 
-    // Push a marker after dispatch settles — user_message must precede it
-    emittedEvents.push(...agentEvents);
-    const firstEvent = emittedEvents[0];
-    expect(firstEvent?.type).toBe('user_message');
-    // runner was invoked exactly once and its call is after user_message emit
-    expect(runnerRun).toHaveBeenCalledTimes(1);
+    const correlatedEvents = agentEvents.filter((event) =>
+      event.type === 'user_message' || event.type === 'run_start' || event.type === 'run_end');
+    expect(correlatedEvents.map((event) => event.type)).toEqual([
+      'user_message',
+      'run_start',
+      'run_end',
+    ]);
+    const userMessage = correlatedEvents[0] as Extract<AgentEvent, { type: 'user_message' }>;
+    const runStart = correlatedEvents[1] as Extract<AgentEvent, { type: 'run_start' }>;
+    const runEnd = correlatedEvents[2] as Extract<AgentEvent, { type: 'run_end' }>;
+    expect(runStart.originMessageId).toBe(userMessage.messageId);
+    expect(runEnd.turnId).toBe(runStart.turnId);
 
     await app.close();
   });
@@ -587,19 +918,35 @@ function defaultRunResult(text: string): RunResult {
 
 function createTestChannel(id: string): {
   channel: Channel;
+  unit: LoadedRuntimeUnit;
   dispatch(req: ChannelRunRequest): Promise<void>;
 } {
   let handler: ((req: ChannelRunRequest) => Promise<void>) | undefined;
-  return {
-    channel: {
-      id,
-      send() {},
-      onMessage(next) {
-        handler = next;
-      },
-      async start() {},
-      async stop() {},
+  const completion = createDeferred<ChannelCompletion>();
+  const channel: Channel = {
+    id,
+    completion: completion.promise,
+    send() {},
+    onMessage(next) {
+      handler = next;
     },
+    async start() {},
+    async stop() {
+      completion.resolve({ outcome: 'closed', reason: 'stopped' });
+    },
+  };
+  return {
+    channel,
+    unit: createLoadedRuntimeUnit({
+      registration: {
+      id: `builtin-test-channel-${id}`,
+      source: 'builtin',
+      register(api) {
+        api.registerChannel({ id, create: () => channel });
+      },
+      },
+      required: false,
+    }),
     async dispatch(req) {
       if (!handler) throw new Error('handler not registered');
       await handler(req);
@@ -608,13 +955,16 @@ function createTestChannel(id: string): {
 }
 
 async function buildApp(
-  workspaceDir: string,
+  agentHome: string,
   options: {
     steerMode?: boolean;
     runnerRun?: ReturnType<typeof vi.fn>;
+    useRealRunner?: boolean;
+    mediaKinds?: readonly ['image'] | readonly [] | null;
+    reasoning?: ReasoningCapabilities | null;
   } = {},
 ): Promise<{
-  app: RuntimeApp;
+  app: RuntimeHandle;
   runnerRun: ReturnType<typeof vi.fn>;
   testChannel: ReturnType<typeof createTestChannel>;
   runtimeEvents: RuntimeEvent[];
@@ -629,46 +979,142 @@ async function buildApp(
     description: 'Demo tool',
     inputSchema: { type: 'object', properties: {} },
     async execute() {
-      return { content: 'ok' };
+      return { outcome: 'success', content: 'ok' };
     },
   };
 
   const deps: Partial<RuntimeDependencies> = {
-    createLLMClient: () => ({}) as never,
-    createSessionManager: () =>
-      ({ resolveSession: vi.fn(async () => ({ entry: {}, isNew: true })) }) as never,
+    createBuiltinProviderUnit: () => {
+      const invocationPort = options.useRealRunner
+        ? ({
+          async *chatStream() {
+            yield { type: 'message_start' };
+            yield { type: 'text_delta', text: 'ok' };
+            yield {
+              type: 'message_end',
+              stopReason: 'end_turn',
+              usage: { inputTokens: 1, outputTokens: 1 },
+            };
+          },
+          async chat() { throw new Error('Not used in tests'); },
+        }) as never
+        : ({}) as never;
+      return createTestProviderUnit({
+        id: 'test',
+        protocol: 'test',
+        models: [
+          {
+            modelId: 'test-model',
+            ...(options.reasoning
+              ? { capabilities: { reasoning: options.reasoning } }
+              : {}),
+          },
+          {
+            modelId: 'other-model',
+            ...(options.reasoning
+              ? { capabilities: { reasoning: options.reasoning } }
+              : {}),
+          },
+        ],
+        invocationPort,
+        resolveConnection: () => ({ ok: true, connection: { endpointId: 'test' } }),
+        resolveModel: (modelId, connection) => ({
+          ok: true,
+          descriptor: {
+            identity: { providerId: 'test', modelId },
+            protocol: 'test',
+            connection,
+            facts: {
+              effectiveContextLimit: 200_000,
+              maximumOutputTokens: 8192,
+              toolUse: true,
+              ...(options.mediaKinds === null
+                ? {}
+                : { mediaKinds: options.mediaKinds ?? ['image'] }),
+              ...(options.reasoning ? { reasoning: options.reasoning } : {}),
+            },
+          },
+        }),
+      });
+    },
+    ...(options.useRealRunner
+      ? {}
+      : {
+          createSessionManager: () => ({
+            initialize: vi.fn(async () => undefined),
+            getSession: vi.fn((sessionId: string) => ({
+              sessionId,
+              createdAt: 1,
+              updatedAt: 1,
+            })),
+          }) as never,
+        }),
     createMemoryManager: async () => null,
     createSystemPromptBuilder: () => ({ build: () => 'SYSTEM_PROMPT' }) as never,
-    createAgentRunner: (_config: AgentRunnerConfig) =>
-      ({
-        run: runnerRun,
-        on: vi.fn(),
-        setToolExecutor: vi.fn(),
-      }) as unknown as AgentRunner,
-    getBuiltinTools: () => [builtinTool],
+    createAgentRunner: (config: AgentRunnerConfig) => options.useRealRunner
+      ? new AgentRunner(config)
+      : ({
+          run: runnerRun,
+          on: vi.fn(),
+        }) as unknown as AgentRunner,
+    getBuiltinContributionUnits: () => [builtinUnit(builtinTool)],
   };
 
   const runtimeEvents: RuntimeEvent[] = [];
   const agentEvents: AgentEvent[] = [];
+  const testChannel = createTestChannel('intake-test');
 
   const app = await RuntimeApp.create({
-    workspaceDir,
+    agentHome: agentHome,
+    loadedUnits: [testChannel.unit],
+    applicationConfig: {
+      llm: {
+        defaultModel: { providerId: 'test', modelId: 'test-model' },
+        builtin: {
+          baseURL: 'https://example.test/v1',
+          models: [
+            { modelId: 'test-model', protocol: 'openai-responses' },
+            { modelId: 'other-model', protocol: 'openai-responses' },
+          ],
+        },
+      },
+      runner: { steeringEnabled: options.steerMode ?? false },
+      agents: {
+        defaults: createDefaultAgentConfig(),
+        list: [],
+      },
+      logger: structuredClone(DEFAULT_LOGGER_CONFIG),
+    },
     cliOverrides: {
-      llm: { apiKey: 'test-key', model: 'test-model' },
       memory: { enabled: false },
-      ...(options.steerMode
-        ? { runner: { inTurnMessageMode: 'steer' as const } }
-        : {}),
     },
     dependencies: deps,
     onEvent: (e) => runtimeEvents.push(e),
     onAgentEvent: (e) => agentEvents.push(e),
   });
 
-  const testChannel = createTestChannel('intake-test');
-  app.registerChannel(testChannel.channel);
-
   return { app, runnerRun, testChannel, runtimeEvents, agentEvents };
+}
+
+function createTestProviderUnit(provider: ProviderProjectionEntry): LoadedRuntimeUnit {
+  return createLoadedRuntimeUnit({
+    registration: {
+      id: 'builtin-test-provider',
+      source: 'builtin',
+      register(api) { api.registerProvider(provider); },
+    },
+    required: true,
+  });
+}
+
+function builtinUnit(tool: Tool): RuntimeContributionUnit {
+  return {
+    id: `builtin-test-${tool.name}`,
+    source: 'builtin',
+    register(api) {
+      api.registerTool(tool);
+    },
+  };
 }
 
 function assertNoAttachmentEvents(

@@ -1,61 +1,91 @@
 import { randomUUID } from 'node:crypto';
-import type { AgentEvent } from '../core/runner/index.js';
-import type { ChatContentBlock, ChatMessage } from '../adapters/llm/types.js';
-import { TurnInteractionManager } from '../adapters/channel/TurnInteractionManager.js';
+import type { AgentEvent, SteeringMessage } from '../core/runner/index.js';
+import {
+  normalizeReasoningPreference,
+  ReasoningPreferenceValidationError,
+  toModelInvocationError,
+} from '../core/model-invocation/index.js';
+import type {
+  ChatContentBlock,
+  ModelInvocationDiagnostics,
+  ModelInvocationError,
+  ResolvedReasoningPolicy,
+} from '../core/model-invocation/index.js';
+import type {
+  SessionEntry,
+  SessionHistoryPage,
+  SessionHistoryQuery,
+} from '../core/session/index.js';
+import type {
+  ModelReference,
+  ReasoningCapabilities,
+  ResolvedModel,
+} from '../core/model-resolution/index.js';
+import {
+  ModelResolutionError,
+  ModelResolver,
+  normalizeModelReference,
+} from '../core/model-resolution/index.js';
+import { TurnInteractionManager } from './turn-interaction/index.js';
 import type {
   ApprovalInteractionRequest,
-  Channel,
   ChannelRunRequest,
+  ChannelCompletion,
+  ChannelCompletionObserver,
+  ChannelRuntimeBinding,
   TurnInteractionResponse,
-} from '../adapters/channel/types.js';
+} from '../core/channel/index.js';
+import { ChannelOperationError } from '../core/channel/index.js';
 import { Logger } from '../platform/logger/index.js';
-import { loadContextFiles, loadContextFilesFromDir } from '../core/workspace/index.js';
-import type { ContextFile } from '../core/workspace/types.js';
-import {
-  processInboundMessage,
-  type DroppedAttachment,
-} from '../core/media/attachment-pipeline.js';
-import { ATTACHMENT_DROP_NOTICE_DEFAULT } from '../core/media/constants.js';
-import { bootstrapRuntime } from './bootstrap.js';
+import { loadContextFiles } from '../core/agent-context/index.js';
+import type { ContextFile } from '../core/agent-context/types.js';
+import { processInboundMessage } from '../core/media/attachment-pipeline.js';
 import { classifyRuntimeError, createRuntimeError } from './errors.js';
+import {
+  buildRuntimeHandle,
+  type RuntimeApplicationKernel,
+  type RuntimeApplicationKernelInput,
+} from './runtime-builder.js';
+import type { ModelCatalogSnapshot, RuntimeHandle } from './runtime-composition.js';
+import type {
+  RuntimeGenerationPin,
+  RuntimeSnapshotAccess,
+} from './composition-coordinator.js';
 import { buildSystemPromptParams } from './prompt-factory.js';
 import { summarizeAssembled } from './summarize-assembled.js';
-import { resolveToolPolicy } from './tool-approval-policy.js';
 import {
-  applyDenyFilter,
-  buildTaskToolIfEnabled,
-  toLlmToolDefinitions,
-  toPromptToolDefinitions,
-} from './tool-registry.js';
-import { createToolExecutor } from '../core/tools/index.js';
+  RequestCompletionGate,
+  type RequestTerminal,
+} from './request-completion-gate.js';
 import {
-  createSubagentHostBindings,
-  runSubagentTurn as runSubagentTurnImpl,
-} from './subagent-orchestration.js';
-import { SubagentRunner } from '../core/subagent/SubagentRunner.js';
+  RuntimeDeadlineBudget,
+  createSystemRuntimeDeadlineDriver,
+  resolveRuntimeDeadlinePolicy,
+} from './runtime-deadline.js';
+import type { CurrentCallApprovalCapability } from '../core/approval/index.js';
+import type {
+  SessionPermissionMode,
+  SessionPermissionState,
+} from '../core/approval/index.js';
+import { SessionCoordinator } from './session/SessionCoordinator.js';
+import { SessionPermissionRegistry } from './session/SessionPermissionRegistry.js';
+import { PendingSessionRegistry } from './session/PendingSessionRegistry.js';
+import type { ActiveParentTurn } from './subagent-orchestration.js';
 import {
-  buildGeneralPurposeProfile,
-  loadSubagentProfiles,
-  resolveSubagentCapabilities,
   collectAvailableSubagents,
 } from '../core/subagent/index.js';
 import type {
   SubagentProfile,
-  SubagentRunInput,
-  SubagentRunResult,
 } from '../core/subagent/types.js';
 import type { AvailableSubagentEntry } from '../core/subagent/index.js';
 import type {
   MessageRouteContext,
-  PendingSteeringInput,
-  QueuedChannelTurn,
-  TurnLaunchContext,
+  QueuedUserMessage,
 } from './queue-types.js';
 import type {
   RunTurnParams,
   RunTurnResult,
   RuntimeAppOptions,
-  RuntimeDisposable,
   RuntimeErrorInfo,
   RuntimeErrorScope,
   RuntimeEvent,
@@ -66,185 +96,311 @@ import type {
 } from './types.js';
 
 const log = Logger.get('RuntimeApp');
+const interactionLog = Logger.get('TurnInteractionManager');
+
+function findModelInvocationError(error: unknown): ModelInvocationError | undefined {
+  const seen = new Set<Error>();
+  let current = asSameRealmError(error);
+  for (let depth = 0; depth < 8 && current; depth += 1) {
+    const canonical = toModelInvocationError(current);
+    if (canonical) return canonical;
+    if (seen.has(current)) return undefined;
+    seen.add(current);
+    current = readOwnErrorCause(current);
+  }
+  return undefined;
+}
+
+function asSameRealmError(value: unknown): Error | undefined {
+  try {
+    return value instanceof Error ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readOwnErrorCause(error: Error): Error | undefined {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(error, 'cause');
+    return descriptor && 'value' in descriptor
+      ? asSameRealmError(descriptor.value)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+interface ModelInvocationOperatorDiagnostics {
+  readonly providerId: string;
+  readonly httpStatus?: number;
+  readonly providerErrorType?: string;
+  readonly providerErrorCode?: string;
+  readonly providerMessage?: string;
+  readonly requestId?: string;
+  readonly request: Readonly<
+    Omit<ModelInvocationDiagnostics['request'], 'model'>
+    & { readonly model: string }
+  >;
+}
+
+function projectModelInvocationDiagnostics(
+  diagnostics: ModelInvocationDiagnostics | undefined,
+): ModelInvocationOperatorDiagnostics | undefined {
+  if (!diagnostics) return undefined;
+  return Object.freeze({
+    providerId: diagnostics.providerId,
+    ...(diagnostics.httpStatus === undefined ? {} : { httpStatus: diagnostics.httpStatus }),
+    ...(diagnostics.providerErrorType === undefined
+      ? {}
+      : { providerErrorType: diagnostics.providerErrorType }),
+    ...(diagnostics.providerErrorCode === undefined
+      ? {}
+      : { providerErrorCode: diagnostics.providerErrorCode }),
+    ...(diagnostics.providerMessage === undefined
+      ? {}
+      : { providerMessage: diagnostics.providerMessage }),
+    ...(diagnostics.requestId === undefined ? {} : { requestId: diagnostics.requestId }),
+    request: Object.freeze({
+      ...diagnostics.request,
+      model: formatModelIdForOperator(diagnostics.request.model),
+    }),
+  });
+}
+
+function formatModelIdForOperator(modelId: string): string {
+  const preview = modelId.length > 200 ? `${modelId.slice(0, 200)}…` : modelId;
+  return JSON.stringify(preview);
+}
+
+function assertSessionPermissionMode(value: unknown): asserts value is SessionPermissionMode {
+  if (value !== 'manual' && value !== 'allow_all') {
+    throw new TypeError('Session permission mode must be "manual" or "allow_all".');
+  }
+}
+
+interface ActiveRootTree {
+  readonly requestId: string;
+  readonly generation: number;
+  readonly sessionId: string;
+  readonly channels: readonly ChannelRuntimeBinding[];
+  readonly pin: RuntimeGenerationPin;
+  members: number;
+  released: boolean;
+}
 
 export class RuntimeApp {
   private readonly onEvent?: RuntimeAppOptions['onEvent'];
+  private readonly sessionCoordinator: SessionCoordinator;
+  private readonly sessionPermissions = new SessionPermissionRegistry();
   private readonly inFlightRuns = new Set<Promise<unknown>>();
-  /** Per-session 串行 gate：同一 sessionKey 同时只允许一个 turn。跨 session 可并发 */
+  /** Per-Session gate: one Turn per sessionId, with concurrency across Sessions. */
   private readonly inFlightSessions = new Set<string>();
-  /** 每个 session 的普通消息队列；消息在真正启动 turn 前先进入这里。 */
-  private readonly messageQueueBySession = new Map<string, QueuedChannelTurn[]>();
-  /** 当前活动 run-turn 的 steering inbox；由 runner 在执行过程中的注入点拉取并清空。 */
-  private readonly steeringInboxBySession = new Map<string, PendingSteeringInput[]>();
-  /**
-   * 仅跟踪当前正在运行的 run-turn；steering 路由依赖这个最小运行态。
-   * 它和 inFlightSessions 的区别是：前者表达“是否 busy”，这里表达“是否存在可接 steering 的活动 run-turn”。
-   */
-  private readonly activeTurnIdBySession = new Map<string, string>();
+  /** Canonical FIFO for accepted Channel user messages in each Session. */
+  private readonly messageQueueBySession = new Map<string, QueuedUserMessage[]>();
+  /** Wake-only steering listeners; queue ownership remains with claimSteeringMessages(). */
+  private readonly steeringWaiters = new Map<string, Set<() => void>>();
 
-  // ── Channel 层 ──────────────────────────────────────────────────
-  /** 与 bootstrap fanout 闭包共享引用：registerChannel 后注册的新 channel 实时可见 */
-  private readonly channels: Channel[];
+  /**
+  * AbortController for each active Session Turn, used by abortTurn and shutdown.
+  * runTurnInternal installs and removes its own controller; abortTurn, close,
+  * and querySessionsNeedingAbort read it. See core-abort-spec.md section 8.1.
+   */
+  private readonly activeAborts = new Map<string, AbortController>();
+  private readonly activeRootGenerations = new Map<string, ActiveRootTree>();
+  private readonly requestGates = new Map<string, RequestCompletionGate<RunTurnResult>>();
+  /** Active resolved Parent Turns eligible to delegate a tracked Child. */
+  private readonly activeParentTurns: Map<string, ActiveParentTurn>;
+
+  // ── Channel layer ───────────────────────────────────────────────
   private readonly turnInteractionManager: TurnInteractionManager;
-  /** turnId → 交互路由上下文；当前最小实现仍用 channel 引用加 originClientId 做定向。 */
-  private readonly routeContextByTurn = new Map<string, MessageRouteContext>();
+  /** Turn-to-interaction route using the Channel reference and originClientId. */
+  private readonly routeContextByTurn: Map<string, MessageRouteContext>;
   private approvalRoutingWired = false;
-  private channelsStarted = false;
 
   private closePromise?: Promise<RuntimeShutdownReport>;
   private shutdownReport?: RuntimeShutdownReport;
 
   /**
-   * Fanout entry for AgentEvent broadcasts. Set inside `create()` after the
-   * bootstrap closure builds it; instance methods (notably
+    * Fanout entry for AgentEvent broadcasts. Injected by the Runtime Builder
+    * when it constructs the application kernel; instance methods (notably
    * `handleInboundChannelMessage`) call this to emit `user_message` events
    * without needing to import the fanout closure.
-   * 见 channel-multi-client-user-message-spec §5.3。
+  * See channel-multi-client-user-message-spec section 5.3.
    */
-  private fanoutAgentEvent!: (event: AgentEvent) => void;
+  private fanoutAgentEvent!: (event: AgentEvent) => void | Promise<void>;
 
   /**
-   * Profile registry including the built-in `general-purpose` entry. Filled
-   * by `create()` after `bootstrapRuntime()` returns; not part of
+    * Profile registry including the built-in `general-purpose` entry. Built
+    * by the Runtime Builder before kernel construction; not part of
    * RuntimeResourceSet because it is consumed only by RuntimeApp itself
-   * (the public surface is `runSubagentTurn()`).
+  * (the public surface is the available-profile projection).
    */
   private subagentProfiles!: ReadonlyMap<string, SubagentProfile>;
-  /**
-   * SubagentRunner instance. Depends on `routeContextByTurn` (RuntimeApp
-   * instance field) via the host bindings, so it can only be constructed
-   * after `new RuntimeApp(...)` returns. Definite-assignment (`!`) is
-   * scoped to the two lines in `create()` that fill it.
-   */
-  private subagentRunner!: SubagentRunner;
 
   private constructor(
     private readonly resources: RuntimeResourceSet,
     private state: RuntimeLifecycleState,
-    channels: Channel[],
+    private readonly channelCompletionObserver: ChannelCompletionObserver,
+    private readonly snapshotAccess: RuntimeSnapshotAccess,
+    subagentProfiles: ReadonlyMap<string, SubagentProfile>,
+    activeParentTurns: Map<string, ActiveParentTurn>,
+    routeContextByTurn: Map<string, MessageRouteContext>,
     onEvent?: RuntimeAppOptions['onEvent'],
   ) {
-    this.channels = channels;
+    this.subagentProfiles = subagentProfiles;
+    this.activeParentTurns = activeParentTurns;
+    this.routeContextByTurn = routeContextByTurn;
     this.onEvent = onEvent;
-    this.turnInteractionManager = new TurnInteractionManager();
-  }
-
-  static async create(options: RuntimeAppOptions): Promise<RuntimeApp> {
-    // 与未来 RuntimeApp 实例共享的可变数组：registerChannel 后填充，fanout 实时读取
-    const channels: Channel[] = [];
-    const userObserver = options.onAgentEvent;
-
-    const fanout = (event: AgentEvent) => {
-      for (const channel of channels) {
-        try {
-          channel.send(event);
-        } catch (err) {
-          // channel.send 抛错不应中断事件分发
-          log.warn('channel.send failed', {
-            channelId: channel.id,
-            eventType: event.type,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-      userObserver?.(event);
-    };
-
-    const { resources, state } = await bootstrapRuntime({
-      ...options,
-      onAgentEvent: fanout,
-    });
-
-    const app = new RuntimeApp(resources, state, channels, options.onEvent);
-    app.fanoutAgentEvent = fanout;
-
-    // ── Subagent post-bootstrap wiring ───────────────────────────────
-    //
-    // SubagentRunner + task tool need RuntimeApp instance state
-    // (routeContextByTurn) and a live getter over resources.contextFiles,
-    // so they cannot be built inside bootstrapRuntime. They are assembled
-    // here, then the agentRunner's toolExecutor is swapped to include the
-    // task tool.
-
-    // 1. Profile registry: built-in general-purpose first (Map insertion
-    //    order drives <available-subagents> ordering downstream), then
-    //    user-defined entries from config.
-    const registeredToolNames = new Set(resources.toolBundle.tools.map((t) => t.name));
-    const userProfiles = loadSubagentProfiles(
-      resources.resolvedConfig.subagents?.list ?? [],
-      options.workspaceDir,
-      registeredToolNames,
-    );
-    const generalPurpose = buildGeneralPurposeProfile(options.workspaceDir);
-    const subagentProfilesMap = new Map<string, SubagentProfile>();
-    subagentProfilesMap.set(generalPurpose.id, generalPurpose);
-    for (const p of userProfiles) {
-      subagentProfilesMap.set(p.id, p);
-    }
-    const subagentProfiles: ReadonlyMap<string, SubagentProfile> = subagentProfilesMap;
-
-    // 2. Host bindings — share app.routeContextByTurn map by reference.
-    //    Dot access to a private field is legal from a static method on
-    //    the same class (TS class-private is class-level, not instance-level).
-    const host = createSubagentHostBindings({
-      getParentContextFiles: () => resources.contextFiles,
-      routeContextByTurn: app.routeContextByTurn,
-      resolvedConfig: resources.resolvedConfig,
-      workspaceDir: options.workspaceDir,
-    });
-
-    // 3. SubagentRunner — reuses the SAME AgentRunner instance used by the
-    //    parent. Per-call isolation is provided by RunParams.sessionKey /
-    //    turnId, not by separate runner instances (spec §10).
-    const subagentRunner = new SubagentRunner({
-      agentRunner: resources.agentRunner,
+    this.turnInteractionManager = new TurnInteractionManager(interactionLog);
+    this.sessionCoordinator = new SessionCoordinator({
       sessionManager: resources.sessionManager,
-      systemPromptBuilder: resources.systemPromptBuilder,
-      onEvent: fanout,
-      host,
-      loadContextFilesFromDir: (absDir) =>
-        loadContextFilesFromDir(absDir, {
-          maxFileChars: resources.resolvedConfig.workspace.maxFileChars,
-          maxTotalChars: resources.resolvedConfig.workspace.maxTotalChars,
-        }),
+      pendingSessions: new PendingSessionRegistry({
+        onExpire: (sessionId) => this.sessionPermissions.delete(sessionId),
+      }),
+      isBusy: (sessionId) => this.inFlightSessions.has(sessionId)
+        || (this.messageQueueBySession.get(sessionId)?.length ?? 0) > 0,
     });
-
-    // 4. Task tool: append to toolBundle when enabled, then rebuild the
-    //    derived executor / definitions and swap them onto the
-    //    AgentRunner. Re-applies the deny filter so a config that listed
-    //    'task' in deny still drops it (defensive).
-    const taskTool = buildTaskToolIfEnabled({
-      enabled: resources.resolvedConfig.subagents?.enabled !== false,
-      subagentRunner,
-      profileRegistry: subagentProfiles,
-      getCapabilities: (sessionKey) =>
-        resolveSubagentCapabilities(sessionKey, host.maxDepth),
-      maxDepth: host.maxDepth,
-    });
-
-    if (taskTool) {
-      const merged = applyDenyFilter(
-        [...resources.toolBundle.tools, taskTool],
-        resources.resolvedConfig.tools?.deny ?? [],
-      );
-      const newExecutor = createToolExecutor(merged);
-      resources.toolBundle = {
-        tools: merged,
-        executor: newExecutor,
-        llmDefinitions: toLlmToolDefinitions(merged),
-        promptDefinitions: toPromptToolDefinitions(merged),
-      };
-      resources.agentRunner.setToolExecutor(newExecutor);
-    }
-
-    // 5. Fill in the definite-assignment private fields.
-    app.subagentProfiles = subagentProfiles;
-    app.subagentRunner = subagentRunner;
-
-    return app;
   }
 
-  // ── 状态查询 ──────────────────────────────────────────────────────
+  static async create(options: RuntimeAppOptions): Promise<RuntimeHandle> {
+    return buildRuntimeHandle(options, RuntimeApp.createKernel);
+  }
+
+  private static createKernel(input: RuntimeApplicationKernelInput): RuntimeApplicationKernel {
+    const app = new RuntimeApp(
+      input.resources,
+      input.state,
+      input.channelCompletionObserver,
+      input.snapshotAccess,
+      input.subagentProfiles,
+      input.activeParentTurns,
+      input.routeContextByTurn,
+      input.onEvent,
+    );
+    app.fanoutAgentEvent = input.fanoutAgentEvent;
+    app.wireApprovalRouting();
+
+    return {
+      application: app,
+      onChannelMessage: (binding, request) =>
+        app.handleInboundChannelMessage(binding, request),
+      onInteractionResponse: (response) => app.handleInteractionResponse(response),
+      onInteractionUnavailable: (id, reason) => {
+        app.turnInteractionManager.settle(id, { outcome: 'unavailable', reason });
+      },
+      querySessionsNeedingAbort: () => {
+        const sessions = new Set<string>(app.activeAborts.keys());
+        for (const [sessionKey, queue] of app.messageQueueBySession) {
+          if (queue.length > 0) sessions.add(sessionKey);
+        }
+        return [...sessions];
+      },
+      abortTurn: (sessionId) => app.abortTurn(sessionId),
+      blockingTurnIds: (generation) => app.blockingTurnIds(generation),
+      abortGeneration: (generation) => app.abortGeneration(generation),
+      channelBindingsForTurn: (turnId) => app.channelBindingsForTurn(turnId),
+      shouldDeliverAgentEvent: (event) => app.shouldDeliverAgentEvent(event),
+      close: (reason, budget) => app.close(reason, budget),
+    };
+  }
+
+  // ── State queries ────────────────────────────────────────────────
+
+  async createSession(input?: {
+    permissionMode?: SessionPermissionMode;
+    originClientId?: string;
+  }): Promise<{ sessionId: string; permission: SessionPermissionState }> {
+    if (input?.permissionMode !== undefined) {
+      assertSessionPermissionMode(input.permissionMode);
+    }
+    const { sessionId } = await this.sessionCoordinator.createSession();
+    const permission = this.sessionPermissions.initialize(
+      sessionId,
+      input?.permissionMode ?? 'manual',
+      input?.originClientId,
+    );
+    return { sessionId, permission };
+  }
+
+  listSessions(input?: { archived?: boolean }): Promise<SessionEntry[]> {
+    return this.sessionCoordinator.listSessions(input);
+  }
+
+  getSession(sessionId: string): Promise<SessionEntry> {
+    return this.sessionCoordinator.getSession(sessionId);
+  }
+
+  getSessionHistory(query: SessionHistoryQuery): Promise<SessionHistoryPage> {
+    return Promise.resolve(this.sessionCoordinator.getHistory(query));
+  }
+
+  renameSession(sessionId: string, title: string | null): Promise<SessionEntry> {
+    return this.sessionCoordinator.renameSession(sessionId, title);
+  }
+
+  async archiveSession(sessionId: string): Promise<SessionEntry> {
+    const entry = await this.sessionCoordinator.archiveSession(sessionId);
+    this.resetSessionPermissionMode(sessionId);
+    return entry;
+  }
+
+  async unarchiveSession(sessionId: string): Promise<SessionEntry> {
+    const entry = await this.sessionCoordinator.unarchiveSession(sessionId);
+    this.sessionPermissions.initialize(sessionId);
+    return entry;
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.sessionCoordinator.deleteSession(
+      sessionId,
+      () => this.resources.managedProcessLifecycle.cleanupSession(sessionId),
+    );
+    this.resetSessionPermissionMode(sessionId);
+  }
+
+  async forkSession(sessionId: string, entryId?: string): Promise<SessionEntry> {
+    const entry = await this.sessionCoordinator.forkSession(sessionId, entryId);
+    this.sessionPermissions.initialize(entry.sessionId);
+    return entry;
+  }
+
+  getSessionPermissionMode(sessionId: string): SessionPermissionState {
+    this.sessionCoordinator.assertLiveSession(sessionId);
+    return this.sessionPermissions.get(sessionId);
+  }
+
+  setSessionPermissionMode(input: {
+    sessionId: string;
+    mode: SessionPermissionMode;
+    originClientId?: string;
+  }): SessionPermissionState {
+    this.sessionCoordinator.assertLiveSession(input.sessionId);
+    assertSessionPermissionMode(input.mode);
+    const previous = this.sessionPermissions.get(input.sessionId);
+    const state = this.sessionPermissions.set(
+      input.sessionId,
+      input.mode,
+      input.originClientId,
+    );
+    if (previous.mode !== 'allow_all' && state.mode === 'allow_all') {
+      this.turnInteractionManager.authorizeSession(input.sessionId);
+    }
+    return state;
+  }
+
+  onSessionPermissionModeChanged(
+    handler: (state: SessionPermissionState) => void,
+  ): () => void {
+    return this.sessionPermissions.onChange(handler);
+  }
+
+  private resetSessionPermissionMode(sessionId: string): void {
+    const existing = this.sessionPermissions.peek(sessionId);
+    if (existing?.mode === 'allow_all') {
+      this.sessionPermissions.set(sessionId, 'manual');
+    }
+    this.sessionPermissions.delete(sessionId);
+  }
 
   getState(): RuntimeLifecycleState {
     return {
@@ -258,113 +414,203 @@ export class RuntimeApp {
   }
 
   getToolNames(): string[] {
-    return this.resources.toolBundle.tools.map((tool) => tool.name);
+    return this.snapshotAccess.currentSnapshot().tools.definitions.map((tool) => tool.name);
   }
 
-  // ── Channel 注册与生命周期 ────────────────────────────────────────
-
-  /**
-   * 注册 channel，绑定 onMessage 与（如有）interaction / approval 响应处理器。
-   * 须在 startChannels() 前调用；多次调用支持注册多个 channel。
-   */
-  registerChannel(channel: Channel): void {
-    this.assertNotClosed();
-    this.channels.push(channel);
-    channel.onMessage(this.makeMessageHandler(channel));
-    channel.interaction?.onInteractionResponse((response) => {
-      this.handleInteractionResponse(response);
-    });
-    channel.approval?.onApprovalDecision((id, decision) => {
-      this.turnInteractionManager.resolve(id, decision);
-    });
-    log.info('channel registered', {
-      channelId: channel.id,
-      hasInteraction: !!channel.interaction,
-      hasApproval: !!channel.approval,
-      total: this.channels.length,
+  getModelCatalog(): ModelCatalogSnapshot {
+    const snapshot = this.snapshotAccess.currentSnapshot();
+    const providers = Object.freeze(snapshot.providers.map((provider) => Object.freeze({
+      providerId: provider.id,
+      displayName: provider.displayName ?? provider.id,
+      models: Object.freeze(provider.models.map((model) => Object.freeze({
+        modelId: model.modelId,
+        displayName: model.displayName ?? model.modelId,
+        ...(model.capabilities
+          ? {
+              capabilities: Object.freeze({
+                ...(model.capabilities.toolUse !== undefined
+                  ? { toolUse: model.capabilities.toolUse }
+                  : {}),
+                ...(model.capabilities.mediaKinds !== undefined
+                  ? { mediaKinds: Object.freeze([...model.capabilities.mediaKinds]) }
+                  : {}),
+                ...(model.capabilities.reasoning !== undefined
+                  ? {
+                      reasoning: Object.freeze({
+                        ...(model.capabilities.reasoning.thinking === undefined
+                          ? {}
+                          : {
+                              thinking: Object.freeze([
+                                ...model.capabilities.reasoning.thinking,
+                              ]),
+                            }),
+                        ...(model.capabilities.reasoning.efforts === undefined
+                          ? {}
+                          : {
+                              efforts: Object.freeze([
+                                ...model.capabilities.reasoning.efforts,
+                              ]),
+                            }),
+                      }),
+                    }
+                  : {}),
+              }),
+            }
+          : {}),
+      }))),
+    })));
+    const configured = this.resources.appConfig.llm.defaultModel;
+    let defaultSelection: ModelCatalogSnapshot['defaultSelection'];
+    if (!configured) {
+      defaultSelection = Object.freeze({ state: 'unset' });
+    } else {
+      const reference = Object.freeze({
+        providerId: configured.providerId,
+        modelId: configured.modelId,
+      });
+      const provider = snapshot.providers.find((entry) => entry.id === reference.providerId);
+      defaultSelection = provider?.models.some((model) => model.modelId === reference.modelId)
+        ? Object.freeze({ state: 'available', reference })
+        : Object.freeze({
+            state: 'unavailable',
+            reference,
+            reason: provider ? 'model_rejected' : 'provider_unregistered',
+          });
+    }
+    return Object.freeze({
+      generation: snapshot.generation,
+      defaultSelection,
+      providers,
     });
   }
 
+  waitForChannelCompletion(id: string): Promise<ChannelCompletion> {
+    return this.channelCompletionObserver.waitForChannelCompletion(id);
+  }
+
+  private blockingTurnIds(generation: number): readonly string[] {
+    return Object.freeze([...this.activeRootGenerations]
+      .filter(([, root]) => root.generation === generation)
+      .map(([turnId]) => turnId)
+      .sort());
+  }
+
+  private abortGeneration(generation: number): readonly string[] {
+    const aborted: string[] = [];
+    for (const [turnId, root] of this.activeRootGenerations) {
+      if (root.generation !== generation) continue;
+      this.activeAborts.get(root.sessionId)?.abort('generation-retirement');
+      aborted.push(turnId);
+    }
+    return Object.freeze(aborted.sort());
+  }
+
+  private channelBindingsForTurn(
+    turnId: string,
+  ): readonly ChannelRuntimeBinding[] | undefined {
+    return this.activeRootGenerations.get(turnId)?.channels;
+  }
+
+  private shouldDeliverAgentEvent(event: AgentEvent): boolean {
+    if (event.type !== 'run_end' && event.type !== 'error') return true;
+    const outcome = this.requestGates.get(event.requestId)?.terminalOutcome;
+    return outcome !== 'shutdown_nonconverged';
+  }
+
+  private registerChild(turnId: string, tree: ActiveRootTree): () => void {
+    if (tree.released || this.activeRootGenerations.get(turnId) !== tree) {
+      throw new Error(`Root tree "${turnId}" no longer accepts Child members.`);
+    }
+    tree.members += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.releaseTreeMember(turnId, tree);
+    };
+  }
+
+  private releaseTreeMember(turnId: string, tree: ActiveRootTree): void {
+    if (tree.released) return;
+    tree.members -= 1;
+    if (tree.members > 0) return;
+    if (tree.members < 0) {
+      throw new Error(`Root tree "${turnId}" member accounting underflow.`);
+    }
+    tree.released = true;
+    tree.pin.release();
+    if (this.activeRootGenerations.get(turnId) === tree) {
+      this.activeRootGenerations.delete(turnId);
+    }
+  }
+
   /**
-   * 依次启动所有已注册 channel。先调 wireApprovalRouting() 把 hook 装上，
-   * 再依次调 channel.start()。
+  * Abort the active turn on `sessionId` AND drop any queued (followup)
+   * messages for that session. See core-abort-spec.md §0.3 D3 — single-step
+   * "stop everything for this session" semantics.
    *
-   * 注意：CliChannel.start() 是阻塞的（readline 循环），多 channel 启动应并行；
-   * 这里使用 Promise.all 让阻塞 channel 不阻塞其他 channel 的启动。
+   * Returns independent `{ aborted, dropped }` values: whether an active Turn
+   * was aborted and how many queued messages were removed.
+   *
+   * When both are empty, no event is emitted.
+   *
+   * Never throws; safeEmit reduces subscriber failures to warnings.
+   *
+   * AbortSignal propagation also aborts active Child Agents.
+   *
+   * The messages_dropped event mirrors the returned dropped count for library
+   * and telemetry consumers. Channels use the return value to avoid subscription ordering.
+   *
+   * Claimed messages already belong to the active Turn and are not counted as
+   * queued drops.
    */
-  async startChannels(): Promise<void> {
-    if (this.channelsStarted) return;
-    this.channelsStarted = true;
-    this.wireApprovalRouting();
-    log.info('starting channels', {
-      count: this.channels.length,
-      approvalWired: this.approvalRoutingWired,
-      channelIds: this.channels.map((channel) => channel.id),
-    });
-    await Promise.all(this.channels.map((c) => c.start()));
+  abortTurn(sessionId: string): { aborted: boolean; dropped: number } {
+    const controller = this.activeAborts.get(sessionId);
+    const queue = this.messageQueueBySession.get(sessionId);
+    const dropped = queue?.length ?? 0;
+    const aborted = !!controller;
+
+    if (!aborted && dropped === 0) return { aborted: false, dropped: 0 };
+
+    if (controller) controller.abort();
+    if (dropped > 0) {
+      this.messageQueueBySession.delete(sessionId);
+      for (const item of queue ?? []) {
+        void this.settleQueuedRequest(item, 'abort_queue_drop');
+      }
+      this.safeEmit({
+        type: 'messages_dropped',
+        sessionId,
+        reason: 'abort',
+        dropped,
+      });
+    }
+    log.info('turn aborted by user', { sessionId, aborted, dropped });
+    return { aborted, dropped };
   }
-
-  /** 依次调用所有已注册 channel 的 stop()；幂等 */
-  async stopChannels(): Promise<void> {
-    log.info('stopping channels', {
-      count: this.channels.length,
-      channelIds: this.channels.map((channel) => channel.id),
-    });
-
-    const results = await Promise.allSettled(this.channels.map((c) => c.stop()));
-    const failed = results.filter((result) => result.status === 'rejected').length;
-
-    log.info('channels stopped', {
-      count: this.channels.length,
-      failed,
-    });
-  }
-
-  // ── Approval 路由（详见 channel-design.md §4.3）────────────────────
 
   /**
-   * 启动时调用一次。始终注册 before_tool_call hook，通过配置和 origin channel 能力执行三档审批策略。
+  * Convert subscriber exceptions to warnings to preserve the never-throws contract.
    */
+  private safeEmit(event: RuntimeEvent): void {
+    try {
+      this.emit(event);
+    } catch (err) {
+      log.warn('RuntimeEvent subscriber threw; swallowed', {
+        eventType: event.type,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // ── Approval routing (channel-design.md section 4.3) ─────────────
+
+  /** Configure interaction transport once; Tool authorization stays in Runner policy flow. */
   private wireApprovalRouting(): void {
     if (this.approvalRoutingWired) return;
     this.approvalRoutingWired = true;
 
-    // ① hook → 三档审批策略
-    this.resources.agentRunner.on(
-      'before_tool_call',
-      async ({ toolName, input, turnId, sessionKey }) => {
-        const originChannel = this.routeContextByTurn.get(turnId)?.originChannel;
-        const hasApprovalCapability = !!(originChannel?.interaction || originChannel?.approval);
-        const toolsConfig = this.resources.resolvedConfig.tools;
-
-        const action = resolveToolPolicy(toolName, toolsConfig, hasApprovalCapability);
-
-        if (action === 'allow') return { action: 'allow' as const };
-        if (action === 'deny') {
-          return {
-            action: 'deny' as const,
-            reason: hasApprovalCapability ? 'Tool denied by policy' : 'Tool not in allowlist (no approval channel)',
-          };
-        }
-
-        // action === 'prompt': 交给 TurnInteractionManager 等待用户决策
-        const result = await this.turnInteractionManager.request({
-          toolName,
-          input,
-          sessionKey,
-          turnId,
-          originClientId: this.routeContextByTurn.get(turnId)?.originClientId,
-        });
-        return result.decision === 'allow'
-          ? { action: 'allow' as const }
-          : {
-              action: 'deny' as const,
-              reason: result.reason === 'timeout' ? 'Denied by timeout' : 'Denied by user',
-            };
-      },
-    );
-
-    // ② TurnInteractionManager → 起源 channel
+    // TurnInteractionManager → origin channel
     this.turnInteractionManager.onRequest((request) => {
       const originChannel = this.routeContextByTurn.get(request.turnId)?.originChannel;
       if (!originChannel) {
@@ -372,20 +618,52 @@ export class RuntimeApp {
           interactionId: request.id,
           toolName: request.toolName,
           turnId: request.turnId,
-          sessionKey: request.sessionKey,
+          sessionId: request.sessionId,
           originClientId: request.originClientId,
         });
-        return;  // 起源不可达：让 TurnInteractionManager 走超时
+        return { status: 'unavailable', reason: 'origin_missing' };
       }
 
       log.info('routing interaction request to origin channel', {
         interactionId: request.id,
         toolName: request.toolName,
         turnId: request.turnId,
-        sessionKey: request.sessionKey,
+        sessionId: request.sessionId,
         originClientId: request.originClientId,
         channelId: originChannel.id,
-        route: originChannel.interaction ? 'interaction' : 'approval',
+        route: 'interaction',
+      });
+      if (!originChannel.interaction) {
+        return { status: 'unavailable', reason: 'origin_missing' };
+      }
+      const interactionRequest: ApprovalInteractionRequest = {
+        ...request,
+        kind: 'approval',
+      };
+      return originChannel.interaction.sendInteractionRequest(interactionRequest);
+    });
+
+    this.turnInteractionManager.onClose((request, result) => {
+      const originChannel = this.routeContextByTurn.get(request.turnId)?.originChannel;
+      if (!originChannel) {
+        log.warn('interaction closure has no origin channel', {
+          interactionId: request.id,
+          toolName: request.toolName,
+          turnId: request.turnId,
+          sessionId: request.sessionId,
+          originClientId: request.originClientId,
+        });
+        return;
+      }
+
+      log.info('routing interaction closure to origin channel', {
+        interactionId: request.id,
+        toolName: request.toolName,
+        turnId: request.turnId,
+        sessionId: request.sessionId,
+        originClientId: request.originClientId,
+        channelId: originChannel.id,
+        route: 'interaction',
       });
 
       if (originChannel.interaction) {
@@ -393,47 +671,30 @@ export class RuntimeApp {
           ...request,
           kind: 'approval',
         };
-        originChannel.interaction.sendInteractionRequest(interactionRequest);
-        return;
+        originChannel.interaction.sendInteractionClosed(interactionRequest, result);
       }
-
-      originChannel.approval?.sendApprovalRequest(request);
     });
+  }
 
-    this.turnInteractionManager.onExpire((request) => {
-      const originChannel = this.routeContextByTurn.get(request.turnId)?.originChannel;
-      if (!originChannel) {
-        log.warn('interaction expiry has no origin channel', {
-          interactionId: request.id,
+  private getApprovalCapability(turnId: string): CurrentCallApprovalCapability | undefined {
+    const route = this.routeContextByTurn.get(turnId);
+    const originChannel = route?.originChannel;
+    if (!originChannel?.interaction) return undefined;
+
+    const capability: CurrentCallApprovalCapability = {
+      request: async (request, signal) => this.turnInteractionManager.request({
+        request: {
+          callId: request.callId,
           toolName: request.toolName,
+          input: { ...request.input },
+          sessionId: request.sessionId,
           turnId: request.turnId,
-          sessionKey: request.sessionKey,
-          originClientId: request.originClientId,
-        });
-        return;
-      }
-
-      log.info('routing interaction expiry to origin channel', {
-        interactionId: request.id,
-        toolName: request.toolName,
-        turnId: request.turnId,
-        sessionKey: request.sessionKey,
-        originClientId: request.originClientId,
-        channelId: originChannel.id,
-        route: originChannel.interaction ? 'interaction' : 'approval',
-      });
-
-      if (originChannel?.interaction) {
-        const interactionRequest: ApprovalInteractionRequest = {
-          ...request,
-          kind: 'approval',
-        };
-        originChannel.interaction.sendInteractionExpired(interactionRequest);
-        return;
-      }
-
-      originChannel?.approval?.sendApprovalExpired(request);
-    });
+          originClientId: this.routeContextByTurn.get(request.turnId)?.originClientId,
+        },
+        signal,
+      }),
+    };
+    return Object.freeze(capability);
   }
 
   private handleInteractionResponse(response: TurnInteractionResponse): void {
@@ -458,218 +719,181 @@ export class RuntimeApp {
       return;
     }
 
-    this.turnInteractionManager.resolve(response.id, 'deny');
-  }
-
-  /** 每个 channel 一份消息处理器，闭包绑定 channel 自身用于路由表登记 */
-  private makeMessageHandler(channel: Channel) {
-    return async (req: ChannelRunRequest) => {
-      log.info('channel message received', {
-        channelId: channel.id,
-        clientId: req.clientId,
-        sessionKey: req.sessionKey,
-        hasModelOverride: req.model !== undefined,
-        hasMaxTokens: req.maxTokens !== undefined,
-        hasMaxLlmCalls: req.maxLlmCalls !== undefined,
-        messageChars: typeof req.message === 'string' ? req.message.length : undefined,
-        attachmentCount: Array.isArray(req.message) ? req.message.length : 0,
+    if (response.outcome === 'cancelled') {
+      this.turnInteractionManager.settle(response.id, {
+        outcome: 'denied',
+        reason: 'user_cancelled',
       });
+      return;
+    }
 
-      await this.handleInboundChannelMessage(channel, req);
-    };
+    this.turnInteractionManager.settle(response.id, {
+      outcome: 'aborted',
+      reason: 'turn',
+    });
   }
 
   /**
-   * Channel 入站统一先过 runtime intake。
-   * 顺序：media 处理 → 占位装配 → user_message 广播 → steering 剥离 → 普通队列。
-   * 决策 8：失败即丢弃 + 可选文本占位；不发任何事件 / 拒收。
-   * user_message emit 时机对齐 channel-multi-client-user-message-spec §5.3
-   * （assemble 后、route 分歧前，覆盖 queued+steering 两条路径）。
+  * All inbound Channel messages pass through Runtime intake: media processing,
+  * atomic validation, user_message broadcast, then one Session FIFO.
    */
   private async handleInboundChannelMessage(
-    channel: Channel,
+    channel: ChannelRuntimeBinding,
     req: ChannelRunRequest,
   ): Promise<void> {
-    // ① Media 处理：永不整体失败，失败 / 超限的附件已进 dropped[]
+    let normalizedReasoning;
+    try {
+      normalizedReasoning = normalizeReasoningPreference(req.reasoning);
+    } catch (error) {
+      if (!(error instanceof ReasoningPreferenceValidationError)) throw error;
+      throw new ChannelOperationError(
+        'REQUEST_INVALID',
+        'Inbound message contains an invalid reasoning preference.',
+        { cause: error },
+      );
+    }
+    log.info('channel message received', {
+      channelId: channel.id,
+      clientId: req.clientId,
+      sessionKey: req.sessionId,
+      hasModelOverride: req.modelReference !== undefined,
+      hasReasoningOverride: normalizedReasoning.preference !== undefined,
+      messageChars: typeof req.message === 'string' ? req.message.length : undefined,
+      attachmentCount: Array.isArray(req.message) ? req.message.length : 0,
+    });
     const { normalized, dropped } = await processInboundMessage(req.message);
+    if (dropped.length > 0) {
+      throw new ChannelOperationError(
+        'ATTACHMENT_REJECTED',
+        `Inbound message rejected because ${dropped.length} attachment validation failure(s) occurred.`,
+      );
+    }
 
-    // ② 占位装配：失败提示 + 空消息回落 + 退化输入 skip
-    const assembled = this.assembleInboundMessage(normalized, dropped);
+    const assembled = this.assembleInboundMessage(normalized);
     if (assembled === undefined) return;
 
     const assembledMessageChars =
       typeof assembled === 'string' ? assembled.length : undefined;
     const assembledAttachmentCount = Array.isArray(assembled) ? assembled.length : 0;
 
-    // ③ 路由分歧前先广播 user_message（spec §5.3）
-    const routeToSteering = this.shouldRouteMessageToSteering(req.sessionKey);
-    const deliveryMode: 'queued' | 'steering' = routeToSteering ? 'steering' : 'queued';
     const { text: broadcastText, attachmentSummaries } = summarizeAssembled(assembled);
     const messageId = randomUUID();
-
-    this.fanoutAgentEvent({
-      type: 'user_message',
-      sessionKey: req.sessionKey,
-      messageId,
-      content: broadcastText,
-      attachmentSummaries: attachmentSummaries.length ? attachmentSummaries : undefined,
-      originClientId: req.clientId ?? null,
-      deliveryMode,
-      timestamp: Date.now(),
-    });
-
-    // ④ Steering 剥离：steering 路径只接文本（R1）；纯附件消息不入队（R1'）
-    if (routeToSteering) {
-      if (broadcastText.trim() === '') {
-        log.info('steering message has no text after summarize; skipping enqueue', {
-          channelId: channel.id,
-          clientId: req.clientId,
-          sessionKey: req.sessionKey,
-          attachmentCount: attachmentSummaries.length,
-        });
-        return;
-      }
-      this.enqueueSteeringInput(
-        req.sessionKey,
-        broadcastText,
-        this.buildMessageRouteContext(channel, req),
-      );
-      log.info('channel message routed to steering', {
-        channelId: channel.id,
-        clientId: req.clientId,
-        sessionKey: req.sessionKey,
-        messageChars: broadcastText.length,
-        droppedAttachments: dropped.length,
-      });
-      return;
-    }
-
-    // ⑤ 普通队列
-    const queuedTurn: QueuedChannelTurn = {
-      sessionKey: req.sessionKey,
+    const queuedMessage: QueuedUserMessage = {
+      requestId: randomUUID(),
+      sessionId: req.sessionId,
       message: assembled,
-      launchContext: this.buildTurnLaunchContext(req),
+      ...(req.modelReference
+        ? { modelReference: normalizeModelReference(req.modelReference) }
+        : {}),
+      ...(normalizedReasoning.preference === undefined
+        ? {}
+        : { reasoningPreference: normalizedReasoning.preference }),
+      reasoningPolicy: normalizedReasoning.policy,
       routeContext: this.buildMessageRouteContext(channel, req),
       originMessageId: messageId,
     };
 
-    this.enqueueQueuedTurn(queuedTurn);
+    this.assertAcceptsIntake();
+    this.fanoutAgentEvent({
+      type: 'user_message',
+      sessionId: req.sessionId,
+      messageId,
+      content: broadcastText,
+      attachmentSummaries: attachmentSummaries.length ? attachmentSummaries : undefined,
+      ...(normalizedReasoning.preference === undefined
+        ? {}
+        : { reasoning: normalizedReasoning.preference }),
+      originClientId: req.clientId ?? null,
+      timestamp: Date.now(),
+    });
+
+    this.enqueueQueuedTurn(queuedMessage);
     log.info('channel message enqueued', {
       channelId: channel.id,
       clientId: req.clientId,
-      sessionKey: req.sessionKey,
-      queueLength: this.messageQueueBySession.get(req.sessionKey)?.length ?? 0,
+      sessionKey: req.sessionId,
+      queueLength: this.messageQueueBySession.get(req.sessionId)?.length ?? 0,
       messageChars: assembledMessageChars,
       attachmentCount: assembledAttachmentCount,
       droppedAttachments: dropped.length,
     });
 
-    const started = this.scheduleNextQueuedTurn(req.sessionKey);
+    const started = this.scheduleNextQueuedTurn(req.sessionId);
     if (started) {
       await started;
     }
   }
 
   /**
-   * 占位装配（决策 8）：把 media 输出 + dropped 列表组装成可入队的消息。
+   * Reject degenerate normalized input before it reaches the Session queue.
    *
-   * 返回值语义：
-   *   string | ChatContentBlock[] → 正常入队
-   *   undefined                   → 退化输入（无文本、无成功附件、占位也空），调用方 skip
+   * undefined means there is no text, successful attachment, or placeholder to queue.
    */
   private assembleInboundMessage(
     normalized: string | ChatContentBlock[],
-    dropped: DroppedAttachment[],
   ): string | ChatContentBlock[] | undefined {
-    const notice = dropped.length > 0 && ATTACHMENT_DROP_NOTICE_DEFAULT
-      ? `[系统提示：${dropped.length} 个附件因无法处理已忽略]`
-      : '';
-
     if (typeof normalized === 'string') {
-      const body = notice ? (normalized ? `${normalized}\n\n${notice}` : notice) : normalized;
-      return body.trim() === '' ? undefined : body;
+      return normalized.trim() === '' ? undefined : normalized;
     }
 
-    // 数组：是否含「有意义内容」= 任一非 text block，或任一 trim 后非空的 text。
+    // Meaningful arrays contain a non-text block or non-empty trimmed text.
     const hasContent = normalized.some(
       (b) => b.type !== 'text' || (b as { type: 'text'; text: string }).text.trim() !== '',
     );
     if (!hasContent) {
-      return notice ? notice : undefined;
-    }
-    if (!notice) return normalized;
-
-    // 追加提示行：并入首个 text block，无则在末尾插一个 text block
-    const hostIndex = normalized.findIndex((b) => b.type === 'text');
-    if (hostIndex >= 0) {
-      return normalized.map((b, i) =>
-        i === hostIndex
-          ? { type: 'text', text: `${(b as { type: 'text'; text: string }).text}\n\n${notice}` }
-          : b,
-      );
-    }
-    return [...normalized, { type: 'text', text: notice }];
-  }
-
-  /**
-   * steering 只在配置开启 steer 模式且当前 session 确实有活动 run-turn 时接收。
-   * 这样可以保证“没有活动 turn 的消息默认回到普通排队路径”。
-   */
-  private shouldRouteMessageToSteering(sessionKey: string): boolean {
-    return this.resources.resolvedConfig.runner.inTurnMessageMode === 'steer'
-      && this.activeTurnIdBySession.has(sessionKey);
-  }
-
-  private buildTurnLaunchContext(req: ChannelRunRequest): TurnLaunchContext | undefined {
-    if (
-      req.model === undefined
-      && req.maxTokens === undefined
-      && req.maxLlmCalls === undefined
-    ) {
       return undefined;
     }
-
-    return {
-      model: req.model,
-      maxTokens: req.maxTokens,
-      maxLlmCalls: req.maxLlmCalls,
-    };
+    return normalized;
   }
 
-  private buildMessageRouteContext(channel: Channel, req: ChannelRunRequest): MessageRouteContext {
+  private buildMessageRouteContext(
+    channel: ChannelRuntimeBinding,
+    req: ChannelRunRequest,
+  ): MessageRouteContext {
     return {
       originChannel: channel,
       originClientId: req.clientId,
     };
   }
 
-  /** 普通消息入队只修改局部 queue state；真正何时启动 turn 交给 scheduleNextQueuedTurn 决定。 */
-  private enqueueQueuedTurn(item: QueuedChannelTurn): void {
-    const queue = this.messageQueueBySession.get(item.sessionKey) ?? [];
+  /** Queueing mutates only local state; scheduleNextQueuedTurn decides when to start. */
+  private enqueueQueuedTurn(item: QueuedUserMessage): void {
+    const queue = this.messageQueueBySession.get(item.sessionId) ?? [];
     queue.push(item);
-    this.messageQueueBySession.set(item.sessionKey, queue);
+    this.messageQueueBySession.set(item.sessionId, queue);
+    this.notifySteeringWaiters(item.sessionId);
+  }
+
+  private settleQueuedRequest(
+    item: QueuedUserMessage,
+    reason: 'abort_queue_drop' | 'shutdown',
+  ): Promise<void> | undefined {
+    const gate = this.requestGates.get(item.requestId);
+    if (gate && !gate.seal({ outcome: 'cancelled', reason })) return undefined;
+    const event = Object.freeze({
+      type: 'request_end' as const,
+      requestId: item.requestId,
+      ...(item.originMessageId ? { originMessageId: item.originMessageId } : {}),
+      outcome: 'cancelled' as const,
+      reason,
+    });
+    this.safeEmit(event);
+    const fanout = Promise.resolve(this.fanoutAgentEvent(event)).catch((error) => {
+      log.warn('request_end Fanout failed', {
+        requestId: item.requestId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    this.requestGates.delete(item.requestId);
+    return fanout;
   }
 
   /**
-   * 活动 turn 的 steering inbox 采用追加写入；
-   * 当前 runner 只消费文本，但这里仍保留 routeContext 以对齐统一消息模型，便于后续审计或扩展站内交互路由。
-   */
-  private enqueueSteeringInput(
-    sessionKey: string,
-    message: string,
-    routeContext?: MessageRouteContext,
-  ): void {
-    const inbox = this.steeringInboxBySession.get(sessionKey) ?? [];
-    inbox.push({ message, routeContext });
-    this.steeringInboxBySession.set(sessionKey, inbox);
-  }
-
-  /**
-   * 最小调度器：同 session 只拉起一条队头消息。
-   * 如果该 session 当前仍 busy，就保持队列静止，等当前 turn 释放后再续跑下一条。
+  * Start at most one queued message for a Session. A busy Session remains
+  * queued until the current Turn releases it.
    */
   private scheduleNextQueuedTurn(sessionKey: string): Promise<RunTurnResult> | undefined {
-    if (this.inFlightSessions.has(sessionKey)) {
+    if (this.inFlightSessions.has(sessionKey) || !this.acceptsNewTurns()) {
       return undefined;
     }
 
@@ -691,108 +915,207 @@ export class RuntimeApp {
   }
 
   /**
-   * 队列项真正启动时才生成 turnId 并登记 origin 路由。
-   * 这样排队阶段不占用 turn 级资源，同时仍能把审批/交互回到原始 channel/client。
+  * Allocate turnId and origin routing only when a queued item starts, avoiding
+  * Turn resources while queued while preserving approval and interaction routing.
    */
-  private async startQueuedTurn(item: QueuedChannelTurn): Promise<RunTurnResult> {
+  private async startQueuedTurn(item: QueuedUserMessage): Promise<RunTurnResult> {
     const turnId = randomUUID();
     if (item.routeContext) {
       this.routeContextByTurn.set(turnId, item.routeContext);
     }
 
     try {
-      return await this.runTurn({
-        sessionKey: item.sessionKey,
+      return await this.startRootTurn({
+        requestId: item.requestId,
+        sessionId: item.sessionId,
         message: item.message,
         promptMode: 'full',
-        model: item.launchContext?.model,
-        maxTokens: item.launchContext?.maxTokens,
-        maxLlmCalls: item.launchContext?.maxLlmCalls,
+        modelReference: item.modelReference,
+        reasoningPreference: item.reasoningPreference,
+        reasoningPolicy: item.reasoningPolicy,
         turnId,
         originMessageId: item.originMessageId,
       });
     } finally {
       this.routeContextByTurn.delete(turnId);
       log.debug('queued turn routing cleared', {
-        sessionKey: item.sessionKey,
+        sessionKey: item.sessionId,
         turnId,
       });
     }
   }
 
-  // ── runTurn ───────────────────────────────────────────────────────
+  private startRootTurn(params: RunTurnParams): Promise<RunTurnResult> {
+    try {
+      this.assertCanRunForSession(params.sessionId);
+    } catch (error) {
+      return Promise.reject(error);
+    }
 
-  async runTurn(params: RunTurnParams): Promise<RunTurnResult> {
-    this.assertCanRunForSession(params.sessionKey);
+    const gate = new RequestCompletionGate<RunTurnResult>(
+      params.requestId,
+      params.originMessageId,
+    );
+    this.requestGates.set(params.requestId, gate);
 
-    this.inFlightSessions.add(params.sessionKey);
+    if (!gate.start(params.turnId)) {
+      return Promise.reject(new Error(`Runtime request "${params.requestId}" is already started or terminal.`));
+    }
+
+    const worker = this.executeRootRequest(
+      params,
+      gate,
+    );
+    this.inFlightRuns.add(worker);
+    void worker.then(
+      () => this.inFlightRuns.delete(worker),
+      (error: unknown) => {
+        this.inFlightRuns.delete(worker);
+        const runtimeError = error instanceof Error ? error : new Error(String(error));
+        gate.seal({ outcome: 'failed', error: runtimeError });
+        this.requestGates.delete(params.requestId);
+      },
+    );
+
+    return gate.terminal.then((terminal) => this.callerResult(terminal));
+  }
+
+  private async executeRootRequest(
+    params: RunTurnParams & { requestId: string; turnId: string },
+    gate: RequestCompletionGate<RunTurnResult>,
+  ): Promise<void> {
+    const generationPin = this.snapshotAccess.captureRootGeneration();
+    const tree: ActiveRootTree = {
+      requestId: params.requestId,
+      generation: generationPin.generation,
+      sessionId: params.sessionId,
+      channels: generationPin.snapshot.channels.bindings,
+      pin: generationPin,
+      members: 1,
+      released: false,
+    };
+    this.activeRootGenerations.set(params.turnId, tree);
+    this.inFlightSessions.add(params.sessionId);
     this.state.activeRunCount += 1;
     this.state.lastRunStartedAt = Date.now();
-    this.emit({
+    this.safeEmit({
       type: 'turn_start',
-      sessionKey: params.sessionKey,
+      requestId: params.requestId,
+      ...(params.originMessageId ? { originMessageId: params.originMessageId } : {}),
+      turnId: params.turnId,
+      sessionId: params.sessionId,
       contextVersion: this.state.contextVersion,
     });
 
-    const turnId = params.turnId ?? randomUUID();
     const turnStartedAt = Date.now();
-    this.activeTurnIdBySession.set(params.sessionKey, turnId);
     log.debug('turn start', {
-      sessionKey: params.sessionKey,
-      turnId,
+      requestId: params.requestId,
+      sessionKey: params.sessionId,
+      turnId: params.turnId,
+      generation: generationPin.generation,
       messageChars: typeof params.message === 'string' ? params.message.length : undefined,
       attachmentCount: Array.isArray(params.message) ? params.message.length : 0,
       activeRuns: this.state.activeRunCount,
     });
 
-    const runPromise = this.runTurnInternal({ ...params, turnId });
-    this.inFlightRuns.add(runPromise);
-
     try {
-      const result = await runPromise;
-      this.emit({
-        type: 'turn_end',
-        sessionKey: params.sessionKey,
-        result,
-      });
+      const result = await this.runTurnInternal(params, generationPin, tree);
+      const outcome = result.stopReason === 'aborted' ? 'aborted' : 'completed';
+      if (gate.seal({ outcome, value: result })) {
+        this.safeEmit({
+          type: 'turn_end',
+          requestId: params.requestId,
+          ...(params.originMessageId ? { originMessageId: params.originMessageId } : {}),
+          turnId: params.turnId,
+          sessionId: params.sessionId,
+          outcome,
+          result,
+        });
+      } else {
+        log.info('late Root completion ignored by public gate', {
+          requestId: params.requestId,
+          turnId: params.turnId,
+          outcome,
+        });
+      }
       log.info('turn end', {
-        sessionKey: params.sessionKey,
-        turnId,
+        requestId: params.requestId,
+        sessionKey: params.sessionId,
+        turnId: params.turnId,
         durationMs: Date.now() - turnStartedAt,
         toolRounds: result.toolRounds,
         stopReason: result.stopReason,
         inputTokens: result.usage.inputTokens,
         outputTokens: result.usage.outputTokens,
       });
-      return result;
     } catch (error) {
-      const info = classifyRuntimeError('run', error);
+      const classifiedInfo = classifyRuntimeError('run', error);
+      const modelInvocationError = findModelInvocationError(classifiedInfo.cause);
+      const info = modelInvocationError
+        ? {
+            ...classifiedInfo,
+            message: modelInvocationError.message,
+            cause: modelInvocationError,
+          }
+        : classifiedInfo;
+      const runtimeError = createRuntimeError(info);
+      if (gate.seal({ outcome: 'failed', error: runtimeError })) {
+        this.safeEmit({
+          type: 'turn_end',
+          requestId: params.requestId,
+          ...(params.originMessageId ? { originMessageId: params.originMessageId } : {}),
+          turnId: params.turnId,
+          sessionId: params.sessionId,
+          outcome: 'failed',
+          failure: Object.freeze({ code: info.code, message: info.message }),
+        });
+      } else {
+        log.info('late Root failure ignored by public gate', {
+          requestId: params.requestId,
+          turnId: params.turnId,
+          code: info.code,
+        });
+      }
+      if (params.originMessageId && error instanceof ModelResolutionError) {
+        void Promise.resolve(this.fanoutAgentEvent({
+          type: 'error',
+          requestId: params.requestId,
+          sessionId: params.sessionId,
+          turnId: params.turnId,
+          error,
+          category: error.category,
+          originMessageId: params.originMessageId,
+        })).catch(() => undefined);
+      }
       log.error('turn failed', {
-        sessionKey: params.sessionKey,
-        turnId,
+        requestId: params.requestId,
+        sessionKey: params.sessionId,
+        turnId: params.turnId,
         durationMs: Date.now() - turnStartedAt,
         code: info.code,
         message: info.message,
+        ...(modelInvocationError
+          ? {
+              modelInvocation: Object.freeze({
+                category: modelInvocationError.category,
+                diagnostics: projectModelInvocationDiagnostics(modelInvocationError.diagnostics),
+              }),
+            }
+          : {}),
       });
       this.recordError('run', info);
-      throw createRuntimeError(info);
     } finally {
-      this.inFlightRuns.delete(runPromise);
-      this.inFlightSessions.delete(params.sessionKey);
-      if (this.activeTurnIdBySession.get(params.sessionKey) === turnId) {
-        this.activeTurnIdBySession.delete(params.sessionKey);
-      }
-      // steering 只服务当前这一轮活动 turn；turn 结束后整包丢弃，避免泄漏到下一轮。
-      this.steeringInboxBySession.delete(params.sessionKey);
+      this.inFlightSessions.delete(params.sessionId);
       this.state.activeRunCount = Math.max(0, this.state.activeRunCount - 1);
       this.state.lastRunEndedAt = Date.now();
+      this.releaseTreeMember(params.turnId, tree);
+      this.requestGates.delete(params.requestId);
 
-      // 当前 turn 释放后，再尝试推进同 session 队头下一条消息，保持 session 内串行执行。
-      const next = this.scheduleNextQueuedTurn(params.sessionKey);
+      const next = this.scheduleNextQueuedTurn(params.sessionId);
       if (next) {
         void next.catch((error) => {
           log.warn('queued turn failed after scheduling', {
-            sessionKey: params.sessionKey,
+            sessionKey: params.sessionId,
             error: error instanceof Error ? error.message : String(error),
           });
         });
@@ -800,21 +1123,12 @@ export class RuntimeApp {
     }
   }
 
-  /**
-   * Library entry point: spawn a subagent run outside any LLM tool call.
-   *
-   * Resolves `input.subagentType` against the registered profiles
-   * (fail-fast on unknown ids — unlike the LLM `task` tool which falls
-   * back to general-purpose), then delegates to the SubagentRunner.
-   *
-   * The returned `SubagentRunResult` always exists — the runner never
-   * rethrows; failures surface as `outcome: 'error'`.
-   */
-  async runSubagentTurn(input: SubagentRunInput): Promise<SubagentRunResult> {
-    return runSubagentTurnImpl(input, {
-      subagentRunner: this.subagentRunner,
-      profileRegistry: this.subagentProfiles,
-    });
+  private callerResult(terminal: RequestTerminal<RunTurnResult>): RunTurnResult {
+    if (terminal.outcome === 'completed' || terminal.outcome === 'aborted') return terminal.value;
+    if (terminal.outcome === 'cancelled') {
+      throw new Error(`Runtime request cancelled: ${terminal.reason}`);
+    }
+    throw terminal.error;
   }
 
   /**
@@ -831,10 +1145,10 @@ export class RuntimeApp {
     this.assertCanReload();
 
     try {
-      const nextFiles = await loadContextFiles(this.resources.workspaceDir, {
+      const nextFiles = await loadContextFiles(this.resources.agentHome, {
         mode: 'full',
-        maxFileChars: this.resources.resolvedConfig.workspace.maxFileChars,
-        maxTotalChars: this.resources.resolvedConfig.workspace.maxTotalChars,
+        maxFileChars: this.resources.resolvedConfig.context.maxFileChars,
+        maxTotalChars: this.resources.resolvedConfig.context.maxTotalChars,
       });
 
       this.resources.contextFiles = nextFiles;
@@ -852,7 +1166,10 @@ export class RuntimeApp {
     }
   }
 
-  async close(reason?: string): Promise<RuntimeShutdownReport> {
+  async close(
+    reason?: string,
+    sharedBudget?: RuntimeDeadlineBudget,
+  ): Promise<RuntimeShutdownReport> {
     if (this.shutdownReport) {
       return this.shutdownReport;
     }
@@ -864,55 +1181,172 @@ export class RuntimeApp {
     log.info('shutdown start', {
       reason,
       inFlightTurns: this.inFlightRuns.size,
-      channels: this.channels.length,
+      channels: this.snapshotAccess.currentSnapshot().channels.bindings.length,
     });
     this.emit({ type: 'shutdown_start', reason });
     this.setPhase('closing');
 
     this.closePromise = (async () => {
       const startedAt = Date.now();
+      const budget = sharedBudget ?? new RuntimeDeadlineBudget(
+        createSystemRuntimeDeadlineDriver(),
+        resolveRuntimeDeadlinePolicy(undefined),
+      );
       const completed: string[] = [];
       const failed: Array<{ resource: string; message: string }> = [];
+      const residuals: import('./types.js').RuntimeShutdownResidual[] = [];
+      const queuedCancelledRequestIds: string[] = [];
+      const terminalFanout: Promise<void>[] = [];
+      const activeAtAdmission = [...this.activeRootGenerations.entries()]
+        .sort(([left], [right]) => left.localeCompare(right));
+      const terminals = new Map(activeAtAdmission.map(([, tree]) => [
+        tree.requestId,
+        this.requestGates.get(tree.requestId)?.terminal,
+      ]));
 
       try {
-        await Promise.allSettled([...this.inFlightRuns]);
-
-        // 先停 channel（阻塞循环退出），再关 turnInteractionManager 和其他 disposable
-        await this.stopChannels();
-        completed.push('channels');
-
+        for (const [sessionKey, queue] of [...this.messageQueueBySession]
+          .sort(([left], [right]) => left.localeCompare(right))) {
+          this.messageQueueBySession.delete(sessionKey);
+          for (const item of queue) {
+            queuedCancelledRequestIds.push(item.requestId);
+            const delivery = this.settleQueuedRequest(item, 'shutdown');
+            if (delivery) terminalFanout.push(delivery);
+          }
+        }
         this.turnInteractionManager.close();
         completed.push('turnInteractionManager');
 
-        for (const [name, disposable] of this.collectDisposables()) {
-          try {
-            await Promise.resolve(disposable.close());
-            completed.push(name);
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            failed.push({ resource: name, message });
-            log.warn('disposable close failed', { resource: name, error: message });
-            this.recordError('shutdown', {
-              scope: 'shutdown',
-              severity: 'warning',
-              code: 'SHUTDOWN_FAILED',
-              message,
-              cause: error instanceof Error ? error : new Error(String(error)),
-            }, 'warning');
+        const convergence = () => Promise.allSettled([...this.inFlightRuns]);
+        const graceful = await budget.race(
+          convergence(),
+          budget.policy.shutdownGracefulDrainMs,
+        );
+        if (graceful.outcome === 'failed') {
+          failed.push({ resource: 'turns', message: graceful.message });
+        }
+
+        if (graceful.outcome === 'deadline-exhausted') {
+          for (const [turnId, tree] of activeAtAdmission) {
+            if (this.activeRootGenerations.get(turnId) !== tree) continue;
+            this.activeAborts.get(tree.sessionId)?.abort('shutdown');
           }
+        }
+
+        const abortConvergence = graceful.outcome === 'deadline-exhausted'
+          ? await budget.race(convergence(), budget.policy.shutdownAbortConvergenceMs)
+          : graceful;
+        if (abortConvergence.outcome === 'failed') {
+          failed.push({ resource: 'turns', message: abortConvergence.message });
+        }
+
+        const nonconvergedRequestIds: string[] = [];
+        if (abortConvergence.outcome === 'deadline-exhausted') {
+          for (const [turnId, tree] of [...this.activeRootGenerations.entries()]
+            .sort(([left], [right]) => left.localeCompare(right))) {
+            const gate = this.requestGates.get(tree.requestId);
+            const error = new Error(`Runtime request "${tree.requestId}" did not converge during shutdown.`);
+            if (gate?.seal({ outcome: 'shutdown_nonconverged', error })) {
+              nonconvergedRequestIds.push(tree.requestId);
+              this.safeEmit({
+                type: 'turn_end',
+                requestId: tree.requestId,
+                ...(gate.originMessageId ? { originMessageId: gate.originMessageId } : {}),
+                turnId,
+                sessionId: tree.sessionId,
+                outcome: 'shutdown_nonconverged',
+                failure: Object.freeze({
+                  code: 'SHUTDOWN_NONCONVERGED',
+                  message: error.message,
+                }),
+              });
+            }
+            residuals.push({
+              owner: 'runtime',
+              phase: 'shutdown-abort-convergence',
+              generation: tree.generation,
+              requestId: tree.requestId,
+              turnId,
+              blockingTurnIds: Object.freeze([turnId]),
+              message: error.message,
+            });
+          }
+        }
+
+        if (terminalFanout.length > 0) {
+          const fanout = await budget.raceRemaining(Promise.allSettled(terminalFanout));
+          if (fanout.outcome === 'deadline-exhausted') {
+            residuals.push({
+              owner: 'fanout',
+              phase: 'terminal-fanout',
+              message: 'Terminal Fanout did not converge before the shutdown deadline.',
+            });
+          } else if (fanout.outcome === 'failed') {
+            failed.push({ resource: 'terminalFanout', message: fanout.message });
+          }
+        }
+
+        const terminalOutcomes = await Promise.all([...terminals.entries()].map(async ([requestId, terminal]) => [
+          requestId,
+          terminal ? await terminal : undefined,
+        ] as const));
+        const completedRequestIds = terminalOutcomes
+          .filter(([, terminal]) => terminal?.outcome === 'completed')
+          .map(([requestId]) => requestId)
+          .sort();
+        const actualAbortedRequestIds = terminalOutcomes
+          .filter(([, terminal]) => terminal?.outcome === 'aborted')
+          .map(([requestId]) => requestId);
+        actualAbortedRequestIds.sort();
+        nonconvergedRequestIds.sort();
+        queuedCancelledRequestIds.sort();
+        const protectedGenerations = [...new Set(
+          [...this.activeRootGenerations.values()].map((tree) => tree.generation),
+        )].sort((left, right) => left - right);
+
+        const processCleanup = await budget.raceRemainingLazy(
+          () => this.resources.managedProcessLifecycle.shutdown(),
+        );
+        if (processCleanup.outcome === 'completed') {
+          completed.push('managedProcesses');
+        } else if (processCleanup.outcome === 'failed') {
+          failed.push({ resource: 'managedProcesses', message: processCleanup.message });
+        } else {
+          residuals.push({
+            owner: 'resource',
+            phase: 'managed-process-cleanup',
+            message: 'Managed process cleanup did not converge before the shutdown deadline.',
+          });
         }
 
         this.resources.contextFiles = [];
         this.state.closedAt = Date.now();
         this.setPhase('closed');
 
-        const report = {
+        const report = freezeShutdownReport({
+          outcome: residuals.length > 0 || budget.remaining() <= 0
+            ? 'deadline-exhausted'
+            : 'completed',
           reason,
           startedAt,
           finishedAt: Date.now(),
           completed,
           failed,
-        } satisfies RuntimeShutdownReport;
+          turns: {
+            completedRequestIds,
+            abortedRequestIds: actualAbortedRequestIds,
+            nonconvergedRequestIds,
+            queuedCancelledRequestIds,
+            protectedGenerations,
+          },
+          instanceStops: {
+            completedInstanceIds: [],
+            failedInstanceIds: [],
+            pendingInstanceIds: [],
+            skippedProtectedInstanceIds: [],
+          },
+          residuals,
+        });
 
         this.shutdownReport = report;
         log.info('shutdown complete', {
@@ -928,148 +1362,336 @@ export class RuntimeApp {
         this.recordError('shutdown', info);
         this.setPhase('failed');
         throw createRuntimeError(info);
+      } finally {
+        this.sessionPermissions.clear();
       }
     })();
 
     return this.closePromise;
   }
 
-  // ── 内部辅助 ──────────────────────────────────────────────────────
+  // ── Internal helpers ─────────────────────────────────────────────
 
   /**
-   * turn 一旦真正开始执行后，就进入既有的 turn body bridge：
-   * resolve session、按需 reload context、构建 prompts，然后把一次完整 turn 委托给 agentRunner。
+  * Admit the message, optionally reload context, build prompts, and delegate
+  * the Turn to AgentRunner.
    */
-  private async runTurnInternal(params: RunTurnParams & { turnId: string }): Promise<RunTurnResult> {
-    await this.resources.sessionManager.resolveSession(params.sessionKey);
-
-    if (params.reloadContextFiles) {
-      await this.reloadContextFiles();
+  private async runTurnInternal(
+    params: RunTurnParams & { requestId: string; turnId: string },
+    generationPin: RuntimeGenerationPin,
+    tree: ActiveRootTree,
+  ): Promise<RunTurnResult> {
+    // Defensive stale cleanup for unexpected paths that bypassed normal finally cleanup.
+    const stale = this.activeAborts.get(params.sessionId);
+    if (stale) {
+      log.warn('stale abort controller cleared (defensive)', { sessionKey: params.sessionId });
+      this.activeAborts.delete(params.sessionId);
     }
 
-    const systemPrompt = this.resources.systemPromptBuilder.build(
-      buildSystemPromptParams({
-        config: this.resources.resolvedConfig,
-        contextFiles: this.resources.contextFiles,
-        promptDefinitions: this.resources.toolBundle.promptDefinitions,
-        overrides: params,
-        workspaceDir: this.resources.workspaceDir,
-        // Only inject the <available-subagents> section when the feature is
-        // on. SystemPromptBuilder additionally suppresses it in minimal mode
-        // (which is what subagents themselves get).
-        availableSubagents:
-          this.resources.resolvedConfig.subagents?.enabled !== false
-            ? this.getAvailableSubagents()
-            : undefined,
-      }),
-    );
+    // Register this Turn's controller for abortTurn and shutdown.
+    const controller = new AbortController();
+    this.activeAborts.set(params.sessionId, controller);
+    let parentRecord: ActiveParentTurn | undefined;
 
-    // context-hook prepend 只作用于文本部分：数组消息保持图文混排顺序与原始内容
-    let runnerMessage: string | ChatContentBlock[];
-    if (typeof params.message === 'string') {
-      runnerMessage = (await this.resources.userPromptBuilder.build({
-        text: params.message,
-      })).text;
-    } else {
-      // 用首个 text block 作为 prepend 宿主；其余 block 保持原序原值
-      const hostIndex = params.message.findIndex((b) => b.type === 'text');
-      const hostText = hostIndex >= 0
-        ? (params.message[hostIndex] as { type: 'text'; text: string }).text
-        : '';
-      const prepended = (await this.resources.userPromptBuilder.build({
-        text: hostText,
-      })).text;
+    try {
+      await this.sessionCoordinator.admitMessage(
+        params.sessionId,
+        params.message,
+      );
 
-      runnerMessage = hostIndex >= 0
-        ? params.message.map((b, i) =>
-            i === hostIndex ? { type: 'text', text: prepended } : b,
-          )
-        : [{ type: 'text', text: prepended }, ...params.message];
-    }
+      if (params.reloadContextFiles) {
+        await this.reloadContextFiles();
+      }
 
-    const result = await this.resources.agentRunner.run({
-      sessionKey: params.sessionKey,
-      message: runnerMessage,
-      model: this.requireModel(params.model),
-      systemPrompt,
-      turnId: params.turnId,
-      tools: this.resources.toolBundle.llmDefinitions,
-      maxTokens: params.maxTokens ?? this.resources.resolvedConfig.llm.maxTokens,
-      maxLlmCalls: params.maxLlmCalls ?? this.resources.resolvedConfig.runner.maxLlmCalls,
-      // runtime 只提供“读取并清空当前 steering inbox”的能力，具体消费时机仍由 runner 控制。
-      getSteeringMessages: async () => this.drainSteeringMessages(params.sessionKey),
-      compaction: this.resources.resolvedConfig.compaction,
-      contextWindowTokens: this.resources.resolvedConfig.llm.contextWindowTokens,
-      originMessageId: params.originMessageId,
-    });
+      const snapshot = generationPin.snapshot;
+      const visibleToolDefinitions = snapshot.tools.visibleDefinitions(
+        this.resources.toolPolicy,
+      );
 
-    return {
-      sessionKey: params.sessionKey,
-      text: result.text,
-      content: result.content,
-      stopReason: result.stopReason,
-      usage: result.usage,
-      toolRounds: result.toolRounds,
-    };
-  }
+      const resolvedModel = new ModelResolver(snapshot.providers).resolve({
+        reference: params.modelReference ?? this.resources.appConfig.llm.defaultModel,
+        referenceSource: params.modelReference === undefined ? 'config-default' : 'turn-explicit',
+        request: {
+          tools: visibleToolDefinitions.length > 0,
+          mediaKinds: Array.isArray(params.message)
+            && params.message.some((block) => block.type === 'image')
+            ? ['image']
+            : [],
+        },
+        policy: {},
+      });
+      const normalizedReasoning = normalizeReasoningPreference(params.reasoningPreference);
+      const reasoningPolicy = params.reasoningPolicy ?? normalizedReasoning.policy;
+      if (!supportsReasoningPolicy(reasoningPolicy, resolvedModel.facts.reasoning)) {
+        throw new ModelResolutionError(
+          'capability_unsupported',
+          'The selected model does not support the requested reasoning policy.',
+        );
+      }
 
-  /**
-   * steering 输入在被 runner 读取后立即从 inbox 删除，避免同一条输入在多个注入点重复消费。
-   */
-  private async drainSteeringMessages(sessionKey: string): Promise<ChatMessage[]> {
-    const inbox = this.steeringInboxBySession.get(sessionKey);
-    if (!inbox || inbox.length === 0) {
-      return [];
-    }
+      const systemPrompt = this.resources.systemPromptBuilder.build(
+        buildSystemPromptParams({
+          contextFiles: this.resources.contextFiles,
+          toolNames: visibleToolDefinitions.map(({ name }) => name),
+          overrides: params,
+          agentHome: this.resources.agentHome,
+          // Only inject the <available-subagents> section when the feature is
+          // on. SystemPromptBuilder additionally suppresses it in minimal mode
+          // (which is what subagents themselves get).
+          availableSubagents:
+            this.resources.resolvedConfig.subagents.enabled
+              ? this.getAvailableSubagents()
+              : undefined,
+        }),
+      );
 
-    this.steeringInboxBySession.delete(sessionKey);
+      const runnerMessage = await this.prepareUserMessage(params.message);
 
-    const messages = await Promise.all(inbox.map(async (item) => {
-      // 当前 runner 只消费文本；routeContext 仍保留在 inbox 项里，用于后续扩展统一消息路由模型。
-      const builtUserPrompt = await this.resources.userPromptBuilder.build({ text: item.message });
+      const effectiveReference: ModelReference = Object.freeze({
+        providerId: resolvedModel.identity.providerId,
+        modelId: resolvedModel.identity.modelId,
+      });
+      const effectiveMaxLlmCalls =
+        params.maxLlmCalls ?? this.resources.runnerConfig.maxLlmCalls;
+      parentRecord = Object.freeze({
+        requestId: params.requestId,
+        sessionId: params.sessionId,
+        depth: 0,
+        turnId: params.turnId,
+        signal: controller.signal,
+        effectiveReference,
+        effectiveMaxLlmCalls,
+        contextFiles: Object.freeze([...this.resources.contextFiles]),
+        registrySnapshot: snapshot,
+        getSessionPermissionMode: () =>
+          this.sessionPermissions.get(params.sessionId).mode,
+        registerChild: () => this.registerChild(params.turnId, tree),
+      });
+      this.activeParentTurns.set(params.turnId, parentRecord);
+
+      const result = await this.resources.agentRunner.run({
+        requestId: params.requestId,
+        sessionId: params.sessionId,
+        message: runnerMessage,
+        resolvedModel,
+        ...(normalizedReasoning.preference === undefined
+          ? {}
+          : { reasoningPreference: normalizedReasoning.preference }),
+        reasoningPolicy,
+        systemPrompt,
+        turnId: params.turnId,
+        toolProjection: snapshot.tools,
+        hookProjection: snapshot.hooks,
+        toolPolicy: this.resources.toolPolicy,
+        getSessionPermissionMode: () =>
+          this.sessionPermissions.get(params.sessionId).mode,
+        approvalCapability: this.getApprovalCapability(params.turnId),
+        maxLlmCalls: effectiveMaxLlmCalls,
+        ...(this.resources.runnerConfig.steeringEnabled
+          ? {
+              steeringSource: {
+                claimReady: () => this.claimSteeringMessages(
+                  params.sessionId,
+                  params.turnId,
+                  resolvedModel,
+                  reasoningPolicy,
+                ),
+                waitUntilPotentiallyReady: (signal: AbortSignal) =>
+                  this.waitUntilSteeringPotentiallyReady(params.sessionId, signal),
+              },
+              prepareSteeringMessages: async (messages: SteeringMessage[]) =>
+                Promise.all(messages.map(async (message) => ({
+                  ...message,
+                  content: await this.prepareUserMessage(message.content),
+                }))),
+            }
+          : {}),
+        compaction: this.resources.resolvedConfig.compaction,
+        originMessageId: params.originMessageId,
+        signal: controller.signal, // core-abort-spec.md §8.2
+      });
+
       return {
-        role: 'user' as const,
-        content: builtUserPrompt.text,
-      } satisfies ChatMessage;
-    }));
-
-    return messages;
+        sessionId: params.sessionId,
+        text: result.text,
+        content: result.content,
+        stopReason: result.stopReason,
+        usage: result.usage,
+        toolRounds: result.toolRounds,
+      };
+    } finally {
+      if (parentRecord && this.activeParentTurns.get(params.turnId) === parentRecord) {
+        this.activeParentTurns.delete(params.turnId);
+      }
+      // Remove only the controller registered by this Turn.
+      if (this.activeAborts.get(params.sessionId) === controller) {
+        this.activeAborts.delete(params.sessionId);
+      }
+    }
   }
 
-  private collectDisposables(): Array<[string, RuntimeDisposable]> {
-    const candidates: Array<[string, unknown]> = [
-      ['memoryManager', this.resources.memoryManager],
-    ];
+  private async prepareUserMessage(
+    message: string | ChatContentBlock[],
+  ): Promise<string | ChatContentBlock[]> {
+    if (typeof message === 'string') {
+      return (await this.resources.userPromptBuilder.build({ text: message })).text;
+    }
 
-    return candidates.filter((candidate): candidate is [string, RuntimeDisposable] => {
-      const resource = candidate[1] as Partial<RuntimeDisposable> | null;
-      return typeof resource?.close === 'function';
+    const hostIndex = message.findIndex((block) => block.type === 'text');
+    const hostText = hostIndex >= 0
+      ? (message[hostIndex] as { type: 'text'; text: string }).text
+      : '';
+    const prepended = (await this.resources.userPromptBuilder.build({
+      text: hostText,
+    })).text;
+
+    return hostIndex >= 0
+      ? message.map((block, index) =>
+          index === hostIndex ? { type: 'text', text: prepended } : block,
+        )
+      : [{ type: 'text', text: prepended }, ...message];
+  }
+
+  private claimSteeringMessages(
+    sessionKey: string,
+    turnId: string,
+    resolvedModel: ResolvedModel,
+    reasoningPolicy: ResolvedReasoningPolicy,
+  ): SteeringMessage[] {
+    const queue = this.messageQueueBySession.get(sessionKey);
+    if (!queue || queue.length === 0) return [];
+
+    let claimCount = 0;
+    while (
+      claimCount < queue.length
+      && this.isSteeringCompatible(queue[claimCount]!, resolvedModel, reasoningPolicy)
+    ) {
+      claimCount++;
+    }
+    if (claimCount === 0) return [];
+
+    const claimed = queue.splice(0, claimCount);
+    if (queue.length === 0) {
+      this.messageQueueBySession.delete(sessionKey);
+    }
+
+    for (const item of claimed) {
+      const event: AgentEvent = {
+        type: 'user_message_bound',
+        messageId: item.originMessageId,
+        sessionId: sessionKey,
+        turnId,
+        binding: 'steering',
+      };
+      void Promise.resolve(this.fanoutAgentEvent(event)).catch((error) => {
+        log.warn('user_message_bound Fanout failed', {
+          messageId: item.originMessageId,
+          sessionKey,
+          turnId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+
+    return claimed.map((item) => ({
+      role: 'user',
+      content: item.message,
+      ...(item.reasoningPreference === undefined
+        ? {}
+        : { reasoning: item.reasoningPreference }),
+    }));
+  }
+
+  private waitUntilSteeringPotentiallyReady(
+    sessionId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if ((this.messageQueueBySession.get(sessionId)?.length ?? 0) > 0) {
+      return Promise.resolve();
+    }
+    if (signal.aborted) {
+      return Promise.reject(new DOMException('Aborted', 'AbortError'));
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      const waiters = this.steeringWaiters.get(sessionId) ?? new Set<() => void>();
+      const settle = () => {
+        signal.removeEventListener('abort', onAbort);
+        waiters.delete(settle);
+        if (waiters.size === 0) this.steeringWaiters.delete(sessionId);
+        resolve();
+      };
+      const onAbort = () => {
+        waiters.delete(settle);
+        if (waiters.size === 0) this.steeringWaiters.delete(sessionId);
+        reject(new DOMException('Aborted', 'AbortError'));
+      };
+      waiters.add(settle);
+      this.steeringWaiters.set(sessionId, waiters);
+      signal.addEventListener('abort', onAbort, { once: true });
     });
   }
 
-  private requireModel(explicitModel?: string): string {
-    const model = explicitModel ?? this.resources.resolvedConfig.llm.model;
-    if (!model) {
+  private notifySteeringWaiters(sessionId: string): void {
+    const waiters = this.steeringWaiters.get(sessionId);
+    if (!waiters) return;
+    this.steeringWaiters.delete(sessionId);
+    for (const settle of waiters) settle();
+  }
+
+  private isSteeringCompatible(
+    item: QueuedUserMessage,
+    resolvedModel: ResolvedModel,
+    reasoningPolicy: ResolvedReasoningPolicy,
+  ): boolean {
+    if (
+      item.modelReference
+      && (
+        item.modelReference.providerId !== resolvedModel.identity.providerId
+        || item.modelReference.modelId !== resolvedModel.identity.modelId
+      )
+    ) {
+      return false;
+    }
+    if (
+      item.reasoningPolicy.thinking !== reasoningPolicy.thinking
+      || item.reasoningPolicy.effort !== reasoningPolicy.effort
+    ) {
+      return false;
+    }
+
+    const mediaKinds = Array.isArray(item.message)
+      && item.message.some((block) => block.type === 'image')
+      ? ['image']
+      : [];
+    const supportedMediaKinds = resolvedModel.facts.mediaKinds;
+    return supportedMediaKinds === undefined
+      || mediaKinds.every((kind) => supportedMediaKinds.includes(kind));
+  }
+
+  private acceptsNewTurns(): boolean {
+    return this.state.phase !== 'closing'
+      && this.state.phase !== 'closed'
+      && this.state.phase !== 'failed';
+  }
+
+  private assertAcceptsIntake(): void {
+    if (!this.acceptsNewTurns()) {
       throw createRuntimeError({
         scope: 'run',
         severity: 'recoverable',
-        code: 'MODEL_MISSING',
-        message: 'No model was provided for this turn and no default model is configured.',
+        code: 'RUN_REJECTED',
+        message: `Cannot accept input when runtime phase is ${this.state.phase}.`,
       });
     }
-    return model;
   }
 
   /**
-   * Per-session 并发控制：同 session 串行（消息历史一致性），跨 session 可并发。
-   * runtime 关闭后任何 turn 都拒绝。
+  * Serialize Turns within a Session while allowing cross-Session concurrency.
+  * Reject all Turns after Runtime shutdown begins.
    */
   private assertCanRunForSession(sessionKey: string): void {
-    if (
-      this.state.phase === 'closing' ||
-      this.state.phase === 'closed' ||
-      this.state.phase === 'failed'
-    ) {
+    if (!this.acceptsNewTurns()) {
       throw createRuntimeError({
         scope: 'run',
         severity: 'recoverable',
@@ -1094,17 +1716,6 @@ export class RuntimeApp {
         severity: 'recoverable',
         code: 'CONTEXT_LOAD_FAILED',
         message: `Cannot reload context files when runtime phase is ${this.state.phase}.`,
-      });
-    }
-  }
-
-  private assertNotClosed(): void {
-    if (this.state.phase === 'closing' || this.state.phase === 'closed' || this.state.phase === 'failed') {
-      throw createRuntimeError({
-        scope: 'startup',
-        severity: 'recoverable',
-        code: 'RUN_REJECTED',
-        message: `Cannot register channel when runtime phase is ${this.state.phase}.`,
       });
     }
   }
@@ -1134,4 +1745,49 @@ export class RuntimeApp {
   private emit(event: RuntimeEvent): void {
     this.onEvent?.(event);
   }
+}
+
+function supportsReasoningPolicy(
+  policy: ResolvedReasoningPolicy,
+  capabilities: ReasoningCapabilities | undefined,
+): boolean {
+  if (
+    policy.thinking !== undefined
+    && !capabilities?.thinking?.includes(policy.thinking)
+  ) {
+    return false;
+  }
+  return policy.effort === 'default'
+    || capabilities?.efforts?.includes(policy.effort) === true;
+}
+
+function freezeShutdownReport(report: RuntimeShutdownReport): RuntimeShutdownReport {
+  const turns = Object.freeze({
+    completedRequestIds: Object.freeze([...report.turns.completedRequestIds]),
+    abortedRequestIds: Object.freeze([...report.turns.abortedRequestIds]),
+    nonconvergedRequestIds: Object.freeze([...report.turns.nonconvergedRequestIds]),
+    queuedCancelledRequestIds: Object.freeze([...report.turns.queuedCancelledRequestIds]),
+    protectedGenerations: Object.freeze([...report.turns.protectedGenerations]),
+  });
+  const instanceStops = Object.freeze({
+    completedInstanceIds: Object.freeze([...report.instanceStops.completedInstanceIds]),
+    failedInstanceIds: Object.freeze([...report.instanceStops.failedInstanceIds]),
+    pendingInstanceIds: Object.freeze([...report.instanceStops.pendingInstanceIds]),
+    skippedProtectedInstanceIds: Object.freeze([
+      ...report.instanceStops.skippedProtectedInstanceIds,
+    ]),
+  });
+  return Object.freeze({
+    ...report,
+    completed: Object.freeze([...report.completed]),
+    failed: Object.freeze(report.failed.map((entry) => Object.freeze({ ...entry }))),
+    turns,
+    instanceStops,
+    residuals: Object.freeze(report.residuals.map((entry) => Object.freeze({
+      ...entry,
+      ...(entry.blockingTurnIds
+        ? { blockingTurnIds: Object.freeze([...entry.blockingTurnIds]) }
+        : {}),
+    }))),
+  });
 }

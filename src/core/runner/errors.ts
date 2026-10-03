@@ -13,14 +13,19 @@
  *   2. 内层 90% 阈值检查：tool result 追加后 estimatedTokens > contextWindow × 0.9
  *   3. LLM API 被动兜底：callLLMStream 收到 context overflow 类型的 API 错误
  */
-export class ContextOverflowError extends Error {
-  readonly trigger: 'preemptive' | 'overflow';
+export { ContextOverflowError } from '../model-invocation/index.js';
 
-  constructor(message: string, trigger: 'preemptive' | 'overflow' = 'overflow') {
-    super(message);
-    this.name = 'ContextOverflowError';
-    this.trigger = trigger;
-  }
+import type { TokenUsage } from '../model-invocation/index.js';
+
+export class AgentExecutionFailure extends Error {
+	readonly kind = 'agent_execution_failure' as const;
+	readonly usage: TokenUsage;
+
+	constructor(message: string, usage: TokenUsage, options?: ErrorOptions) {
+		super(message, options);
+		this.name = 'AgentExecutionFailure';
+		this.usage = { ...usage };
+	}
 }
 
 /**
@@ -35,12 +40,3 @@ export class ContextOverflowError extends Error {
  *   - OpenAI / 兼容接口: 'context_length_exceeded'
  *   - 通用描述: 'prompt is too long', 'maximum context length'
  */
-export function isContextOverflowError(error: Error): boolean {
-  const msg = error.message.toLowerCase();
-  return (
-    msg.includes('request_too_large') ||
-    msg.includes('context_length_exceeded') ||
-    msg.includes('prompt is too long') ||
-    msg.includes('maximum context length')
-  );
-}

@@ -1,105 +1,130 @@
 import type { AppConfig, AgentDefaults, DeepPartial } from '../platform/config/types.js';
-import type { ChatContentBlock, ChatToolDefinition, LLMClient, TokenUsage } from '../adapters/llm/types.js';
+import type { ApplicationConfigProjection } from '../platform/config/types.js';
+import type { AgentConfigSnapshot } from '../platform/config/agent-config-loader.js';
+import type {
+  ChatContentBlock,
+  PresentationContentBlock,
+  ReasoningPreference,
+  ResolvedReasoningPolicy,
+  TokenUsage,
+} from '../core/model-invocation/index.js';
+import type { ModelReference } from '../core/model-resolution/index.js';
+import type { BuiltinLlmProviderConfig } from '../builtins/providers/builtin/index.js';
 import type { MemoryManager } from '../core/memory/MemoryManager.js';
 import type { SystemPromptBuilder } from '../core/prompt/SystemPromptBuilder.js';
-import type { ToolDefinition as PromptToolDefinition } from '../core/prompt/types.js';
 import type { SessionManager, SessionManagerOptions } from '../core/session/SessionManager.js';
-import type { Tool, ToolExecutor } from '../core/tools/types.js';
-import type { ContextFile } from '../core/workspace/types.js';
+import type { RuntimeContributionUnit } from '../core/registry/index.js';
+import type { ApplicationToolPolicy } from '../core/tools/types.js';
+import type { ContextFile } from '../core/agent-context/types.js';
 import type { AgentEvent, AgentRunner, AgentRunnerConfig } from '../core/runner/index.js';
-
-export interface RuntimeToolBundle {
-  tools: Tool[];
-  executor: ToolExecutor;
-  llmDefinitions: ChatToolDefinition[];
-  promptDefinitions: PromptToolDefinition[];
-}
-
+import type { RunnerConfig } from '../core/runner/config.js';
 import type { UserPromptBuilder } from '../core/prompt/UserPromptBuilder.js';
+import type {
+  ExtensionAcquisitionOptions,
+  ExtensionAcquisitionResult,
+} from '../extension/acquisition/index.js';
+import type { LoadedRuntimeUnit } from './runtime-unit.js';
+import type { RuntimeDeadlineDriver, RuntimeDeadlinePolicy } from './runtime-deadline.js';
 
 export interface RuntimeResourceSet {
-  appConfig: AppConfig;
-  resolvedConfig: AgentDefaults;
-  workspaceDir: string;
-  sessionManager: SessionManager;
-  llmClient: LLMClient;
-  memoryManager: MemoryManager | null;
-  systemPromptBuilder: SystemPromptBuilder;
-  userPromptBuilder: UserPromptBuilder;
-  toolBundle: RuntimeToolBundle;
+  readonly appConfig: AppConfig;
+  readonly runnerConfig: RunnerConfig;
+  readonly resolvedConfig: AgentDefaults;
+  readonly agentHome: string;
+  readonly sessionManager: SessionManager;
+  readonly toolPolicy: ApplicationToolPolicy;
+  readonly memoryManager: MemoryManager | null;
+  readonly systemPromptBuilder: SystemPromptBuilder;
+  readonly userPromptBuilder: UserPromptBuilder;
   contextFiles: ContextFile[];
-  agentRunner: AgentRunner;
+  readonly agentRunner: AgentRunner;
+  readonly managedProcessLifecycle: ManagedProcessLifecycle;
 }
 
-export interface RuntimeLLMClientOptions {
-  apiKey?: string;
-  baseURL?: string;
-  defaultModel?: string;
-  maxTokens?: number;
+export interface ManagedProcessLifecycle {
+  cleanupSession(sessionId: string): Promise<void>;
+  shutdown(): Promise<void>;
 }
 
 export interface RuntimeMemoryOptions {
-  workspaceDir: string;
+  agentHome: string;
   enabled: boolean;
   embedding?: AgentDefaults['memory']['embedding'];
+  chunking?: AgentDefaults['memory']['chunking'];
   search?: AgentDefaults['memory']['search'];
 }
 
 export interface RuntimeBuiltinToolOptions {
-  workspaceDir: string;
-  fsWorkspaceOnly?: boolean;
+  agentHome: string;
   webFetchEnabled?: boolean;
   execEnabled?: boolean;
   processEnabled?: boolean;
 }
 
 export interface RuntimeDependencies {
-  createLLMClient(options: RuntimeLLMClientOptions): LLMClient;
-  createSessionManager(workspaceDir: string, options?: SessionManagerOptions): SessionManager;
+  acquireExtensions(options: ExtensionAcquisitionOptions): Promise<ExtensionAcquisitionResult>;
+  createBuiltinProviderUnit(config: BuiltinLlmProviderConfig): LoadedRuntimeUnit;
+  createSessionManager(agentHome: string, options?: SessionManagerOptions): SessionManager;
   createMemoryManager(options: RuntimeMemoryOptions): Promise<MemoryManager | null>;
   createSystemPromptBuilder(): SystemPromptBuilder;
   createAgentRunner(config: AgentRunnerConfig): AgentRunner;
-  getBuiltinTools(options: RuntimeBuiltinToolOptions): Tool[];
+  readonly managedProcessLifecycle: ManagedProcessLifecycle;
+  getBuiltinContributionUnits(
+    options: RuntimeBuiltinToolOptions,
+    memoryManager: MemoryManager | null,
+  ): readonly RuntimeContributionUnit[];
 }
 
 export interface RuntimeAppOptions {
-  workspaceDir: string;
+  readonly agentHome: string;
+  /** Generic Host startup facts consumed only during Runtime Bootstrap. */
+  readonly startupContext?: Readonly<{
+    installDir: string;
+    configuration: AgentConfigSnapshot;
+    environment: Readonly<Record<string, string | undefined>>;
+  }>;
+  /** Validated application projection. Omission uses hardcoded defaults without filesystem loading. */
+  readonly applicationConfig?: ApplicationConfigProjection;
+  readonly loadedUnits?: readonly LoadedRuntimeUnit[];
+  readonly deadlinePolicy?: Partial<RuntimeDeadlinePolicy>;
+  readonly deadlineDriver?: RuntimeDeadlineDriver;
   agentId?: string;
   envOverrides?: DeepPartial<AgentDefaults>;
   cliOverrides?: DeepPartial<AgentDefaults>;
   dependencies?: Partial<RuntimeDependencies>;
   onEvent?: (event: RuntimeEvent) => void;
   /**
-   * 可选的 AgentEvent 观察者（telemetry/调试日志用）。
-   * RuntimeApp 在 fanout 闭包末尾调用此回调，与 channel.send 并行触发。
+   * Optional AgentEvent observer for telemetry and diagnostics.
+   * RuntimeApp invokes it from the fanout closure alongside channel.send.
    */
-  onAgentEvent?: (event: AgentEvent) => void;
+  onAgentEvent?: (event: AgentEvent) => unknown;
 }
 
 export interface RunTurnParams {
-  sessionKey: string;
+  /** Root request identity allocated by Channel intake. */
+  requestId: string;
+  sessionId: string;
   message: string | ChatContentBlock[];
-  model?: string;
-  maxTokens?: number;
+  modelReference?: ModelReference;
+  reasoningPreference?: ReasoningPreference;
+  reasoningPolicy?: ResolvedReasoningPolicy;
   maxLlmCalls?: number;
-  /** v1.0 必填；调用方明确传入，不再回退 config。交互式场景传 'full'，sub-agent / 定时任务传 'minimal' 或 'none' */
+  /** Root Channel Turns use full prompts. */
   promptMode: 'full' | 'minimal' | 'none';
-  safetyLevel?: AgentDefaults['prompt']['safetyLevel'];
   reloadContextFiles?: boolean;
-  /** 可选 turn 标识；不提供则由 RuntimeApp 自动生成 UUID */
-  turnId?: string;
+  /** Turn identity allocated when the queued message starts. */
+  turnId: string;
   /**
-   * 触发本 turn 的 `user_message.messageId`。仅由 handleInboundChannelMessage → startQueuedTurn
-   * 内部透传；直接调用 runTurn 一般不需要。
-   * 见 channel-multi-client-user-message-spec §5.1 D6。
+   * `user_message.messageId` that triggered this Turn, passed internally from
+   * handleInboundChannelMessage through startQueuedTurn.
    */
-  originMessageId?: string;
+  originMessageId: string;
 }
 
 export interface RunTurnResult {
-  sessionKey: string;
+  sessionId: string;
   text: string;
-  content: ChatContentBlock[];
+  content: PresentationContentBlock[];
   stopReason: string;
   usage: TokenUsage;
   toolRounds: number;
@@ -135,10 +160,15 @@ export type RuntimeErrorSeverity = 'warning' | 'recoverable' | 'fatal';
 export type RuntimeErrorCode =
   | 'CONFIG_INVALID'
   | 'MODEL_MISSING'
-  | 'WORKSPACE_INIT_FAILED'
+  | 'AGENT_CONTEXT_INIT_FAILED'
   | 'CONTEXT_LOAD_FAILED'
   | 'MEMORY_INIT_FAILED'
   | 'TOOL_ASSEMBLY_FAILED'
+  | 'UNIT_INVALID'
+  | 'UNIT_CONFLICT'
+  | 'CHANNEL_CREATE_FAILED'
+  | 'CHANNEL_START_FAILED'
+  | 'CHANNEL_ROLLBACK_FAILED'
   | 'RUN_REJECTED'
   | 'RUN_FAILED'
   | 'SHUTDOWN_FAILED';
@@ -148,38 +178,89 @@ export interface RuntimeErrorInfo {
   severity: RuntimeErrorSeverity;
   code: RuntimeErrorCode;
   message: string;
+  unitId?: string;
+  contributionId?: string;
+  phase?: 'create' | 'start' | 'rollback';
+  resolutionCategory?: import('../core/model-resolution/index.js').ResolutionFailureCategory;
   cause?: Error;
 }
 
+export interface RuntimeShutdownResidual {
+  readonly owner: 'runtime' | 'reload' | 'retirement' | 'instance' | 'resource' | 'fanout';
+  readonly phase: string;
+  readonly message: string;
+  readonly generation?: number;
+  readonly requestId?: string;
+  readonly turnId?: string;
+  readonly unitId?: string;
+  readonly instanceId?: string;
+  readonly blockingTurnIds?: readonly string[];
+}
+
+export interface RuntimeTurnConvergenceReport {
+  readonly completedRequestIds: readonly string[];
+  readonly abortedRequestIds: readonly string[];
+  readonly nonconvergedRequestIds: readonly string[];
+  readonly queuedCancelledRequestIds: readonly string[];
+  readonly protectedGenerations: readonly number[];
+}
+
+export interface RuntimeInstanceStopReport {
+  readonly completedInstanceIds: readonly string[];
+  readonly failedInstanceIds: readonly string[];
+  readonly pendingInstanceIds: readonly string[];
+  readonly skippedProtectedInstanceIds: readonly string[];
+}
+
 export interface RuntimeShutdownReport {
-  reason?: string;
-  startedAt: number;
-  finishedAt: number;
-  completed: string[];
-  failed: Array<{ resource: string; message: string }>;
+  readonly outcome: 'completed' | 'deadline-exhausted';
+  readonly reason?: string;
+  readonly startedAt: number;
+  readonly finishedAt: number;
+  readonly completed: readonly string[];
+  readonly failed: readonly { readonly resource: string; readonly message: string }[];
+  readonly turns: RuntimeTurnConvergenceReport;
+  readonly instanceStops: RuntimeInstanceStopReport;
+  readonly residuals: readonly RuntimeShutdownResidual[];
 }
 
 export type RuntimeEvent =
   | {
       type: 'app_start';
-      workspaceDir: string;
+      agentHome: string;
     }
   | {
       type: 'app_ready';
-      workspaceDir: string;
+      agentHome: string;
       contextVersion: number;
       toolNames: string[];
+      channelIds: string[];
       memoryEnabled: boolean;
     }
   | {
       type: 'turn_start';
-      sessionKey: string;
+      requestId: string;
+      originMessageId?: string;
+      turnId: string;
+      sessionId: string;
       contextVersion: number;
     }
   | {
       type: 'turn_end';
-      sessionKey: string;
-      result: RunTurnResult;
+      requestId: string;
+      originMessageId?: string;
+      turnId: string;
+      sessionId: string;
+      outcome: 'completed' | 'failed' | 'aborted' | 'shutdown_nonconverged';
+      result?: RunTurnResult;
+      failure?: { readonly code: string; readonly message: string };
+    }
+  | {
+      type: 'request_end';
+      requestId: string;
+      originMessageId?: string;
+      outcome: 'cancelled';
+      reason: 'abort_queue_drop' | 'shutdown';
     }
   | {
       type: 'context_reload';
@@ -201,6 +282,13 @@ export type RuntimeEvent =
   | {
       type: 'shutdown_end';
       report: RuntimeShutdownReport;
+    }
+  /** Reports unclaimed FIFO messages removed by Abort. */
+  | {
+      type: 'messages_dropped';
+      sessionId: string;
+      reason: 'abort';
+      dropped: number;
     };
 
 export interface RuntimeDisposable {
@@ -208,6 +296,8 @@ export interface RuntimeDisposable {
 }
 
 export interface RuntimeBootstrapResult {
-  resources: RuntimeResourceSet;
-  state: RuntimeLifecycleState;
+  readonly resources: RuntimeResourceSet;
+  readonly state: RuntimeLifecycleState;
+  readonly dependencies: RuntimeDependencies;
+  readonly acquiredUnits: readonly LoadedRuntimeUnit[];
 }

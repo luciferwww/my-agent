@@ -1,149 +1,252 @@
-import type { AgentDefaults } from '../platform/config/types.js';
-import type { ContextFile } from '../core/workspace/types.js';
-import type { TokenUsage } from '../adapters/llm/types.js';
-import type { SubagentRunner } from '../core/subagent/SubagentRunner.js';
+import { randomUUID } from 'node:crypto';
+import { AgentExecutionFailure } from '../core/runner/index.js';
+import type { AgentEvent } from '../core/runner/index.js';
+import { ModelResolutionError } from '../core/model-resolution/index.js';
+import { ModelResolver, type ModelReference } from '../core/model-resolution/index.js';
+import type { RegistrySnapshot } from '../core/registry/index.js';
+import type { SessionManager } from '../core/session/SessionManager.js';
+import { resolveSubagentCapabilities } from '../core/subagent/capabilities.js';
+import { deriveSubagentRequestRequirements } from '../core/subagent/request-requirements.js';
 import type {
-  SubagentProfile,
-  SubagentRunInput,
-  SubagentRunResult,
-  SubagentHostBindings,
+  SubagentDelegationPort,
+  SubagentTerminalFailure,
+  SubagentTerminalResult,
 } from '../core/subagent/types.js';
+import type { SubagentExecutor } from '../core/subagent/SubagentExecutor.js';
+import type { ContextFile } from '../core/agent-context/types.js';
+import { Logger } from '../platform/logger/index.js';
 import type { MessageRouteContext } from './queue-types.js';
+import type { SessionPermissionMode } from '../core/approval/index.js';
 
-// ────────────────────────────────────────────────────────────────
-// (A) SubagentHostBindings 实现工厂
-// ────────────────────────────────────────────────────────────────
+const log = Logger.get('SubagentOrchestration');
 
-export interface CreateSubagentHostBindingsParams {
-  /**
-   * 父 contextFiles 的 getter。共享 RuntimeApp.resources 引用——
-   * RuntimeApp 在 `reloadContextFiles()` 内部用 `this.resources.contextFiles = next`
-   * 替换数组，host 通过 getter 自动看到最新值。
-   */
-  getParentContextFiles: () => ContextFile[];
-  /**
-   * RuntimeApp 的 routeContextByTurn map（共享引用）。
-   * `registerTurnContext(child, parent)` 把父 ctx 复制到子 turnId，
-   * 这样审批 hook 在子 turn 触发时能查到原始 channel 路由。
-   */
-  routeContextByTurn: Map<string, MessageRouteContext>;
-  /**
-   * resolvedConfig 快照——v1 启动后不变；hot-reload 时 RuntimeApp 须重建 host
-   * 实例（§spec §8.5）。
-   */
-  resolvedConfig: AgentDefaults;
-  /** 工作区绝对路径，来源 RuntimeAppOptions.workspaceDir */
-  workspaceDir: string;
+export interface ActiveParentTurn {
+  readonly requestId: string;
+  readonly sessionId: string;
+  readonly depth: number;
+  readonly turnId: string;
+  readonly signal: AbortSignal;
+  readonly effectiveReference: ModelReference;
+  readonly effectiveMaxLlmCalls?: number;
+  readonly contextFiles: readonly ContextFile[];
+  readonly registrySnapshot: RegistrySnapshot;
+  readonly getSessionPermissionMode: () => SessionPermissionMode;
+  registerChild(): () => void;
 }
 
-/**
- * Build a `SubagentHostBindings` adapter over the runtime's mutable state.
- *
- * The returned object is pure adapter glue — every mutating method targets
- * the shared `routeContextByTurn` map, and `getParentContextFiles` is a
- * thin getter over the caller-provided closure so context reloads are
- * visible without rebuilding the bindings.
- */
-export function createSubagentHostBindings(
-  params: CreateSubagentHostBindingsParams,
-): SubagentHostBindings {
-  const tools = params.resolvedConfig.tools;
-  const llm = params.resolvedConfig.llm;
-  const subagents = params.resolvedConfig.subagents;
-  const prompt = params.resolvedConfig.prompt;
+export interface CreateSubagentDelegationPortParams {
+  readonly activeParents: ReadonlyMap<string, ActiveParentTurn>;
+  readonly routeContextByTurn: Map<string, MessageRouteContext>;
+  readonly sessionManager: SessionManager;
+  readonly maxDepth: number;
+  readonly executor: SubagentExecutor;
+  readonly onEvent: (event: AgentEvent) => void;
+}
 
+export class SubagentDelegationRejected extends Error {
+  readonly kind = 'subagent_delegation_rejected' as const;
+}
+
+export function createSubagentDelegationPort(
+  params: CreateSubagentDelegationPortParams,
+): SubagentDelegationPort {
   return {
-    registerTurnContext(childTurnId, parentTurnId) {
-      const parentCtx = params.routeContextByTurn.get(parentTurnId);
-      if (parentCtx) {
-        params.routeContextByTurn.set(childTurnId, parentCtx);
+    async delegate(request): Promise<SubagentTerminalResult> {
+      const parent = params.activeParents.get(request.parent.turnId);
+      if (
+        !parent
+        || parent.sessionId !== request.parent.sessionId
+        || parent.signal !== request.parentSignal
+        || parent.signal.aborted
+        || request.signal.aborted
+      ) {
+        throw new SubagentDelegationRejected('Subagent requires an active matching Parent Turn.');
       }
-      // Parent ctx not found (library entry or routing not registered) → no-op.
-      // Downstream approval hooks will fail-closed when no route exists.
+
+      const startedAt = Date.now();
+      const releaseChild = parent.registerChild();
+      const runId = randomUUID();
+      const childTurnId = randomUUID();
+      const childDepth = parent.depth + 1;
+      const childSessionId = randomUUID();
+      const eventIdentity = {
+        requestId: parent.requestId,
+        runId,
+        sessionId: childSessionId,
+        turnId: childTurnId,
+        depth: childDepth,
+        subagentType: request.profile.id,
+        lifecycle: 'blocking' as const,
+        callerSessionId: parent.sessionId,
+        parentTurnId: parent.turnId,
+        parentToolUseId: request.parent.toolUseId,
+      };
+
+      let routeRegistered = false;
+      let transcriptAcquired = false;
+      let result: SubagentTerminalResult | undefined;
+
+      try {
+        params.onEvent({ type: 'subagent_start', ...eventIdentity });
+        request.reportActivity();
+
+        const parentRoute = params.routeContextByTurn.get(parent.turnId);
+        if (parentRoute) {
+          params.routeContextByTurn.set(childTurnId, parentRoute);
+          routeRegistered = true;
+        }
+
+        await params.sessionManager.createTransientSubagentTranscript({
+          sessionId: childSessionId,
+          callerSessionId: parent.sessionId,
+          createdAt: startedAt,
+        });
+        transcriptAcquired = true;
+        throwIfAborted(request.signal);
+
+        const capabilities = resolveSubagentCapabilities(childDepth, params.maxDepth);
+        const prepared = await params.executor.prepare({
+          requestId: parent.requestId,
+          profile: request.profile,
+          description: request.description,
+          prompt: request.prompt,
+          parentContextFiles: parent.contextFiles,
+          childDepth,
+          canSpawn: capabilities.canSpawn,
+          childSessionId,
+          childTurnId,
+          parentMaxLlmCalls: parent.effectiveMaxLlmCalls,
+          signal: request.signal,
+          toolProjection: parent.registrySnapshot.tools,
+          hookProjection: parent.registrySnapshot.hooks,
+          getSessionPermissionMode: parent.getSessionPermissionMode,
+        });
+        throwIfAborted(request.signal);
+
+        const requirements = deriveSubagentRequestRequirements({
+          message: prepared.message,
+          tools: prepared.tools,
+        });
+        const reference = request.profile.model === 'inherit'
+          ? parent.effectiveReference
+          : request.profile.model;
+        const resolvedModel = new ModelResolver(parent.registrySnapshot.providers).resolve({
+          reference,
+          referenceSource: 'native',
+          request: requirements,
+          policy: {},
+        });
+        throwIfAborted(request.signal);
+
+        const runResult = await params.executor.execute(prepared, resolvedModel);
+        const outcome: SubagentTerminalResult['outcome'] = runResult.stopReason === 'aborted'
+          ? 'aborted'
+          : runResult.stopReason === 'max_llm_calls'
+            ? 'max_llm_calls'
+            : 'ok';
+        result = {
+          runId,
+          sessionId: childSessionId,
+          turnId: childTurnId,
+          text: runResult.text,
+          outcome,
+          usage: runResult.usage,
+          durationMs: Date.now() - startedAt,
+        };
+      } catch (error) {
+        const aborted = isAbortError(error, request.signal);
+        const failure = aborted ? undefined : classifyFailure(error);
+        result = {
+          runId,
+          sessionId: childSessionId,
+          turnId: childTurnId,
+          text: '',
+          outcome: aborted ? 'aborted' : 'error',
+          ...(failure ? { failure } : {}),
+          usage: error instanceof AgentExecutionFailure
+            ? error.usage
+            : { inputTokens: 0, outputTokens: 0 },
+          durationMs: Date.now() - startedAt,
+        };
+      } finally {
+        const terminal = result ?? {
+          runId,
+          sessionId: childSessionId,
+          turnId: childTurnId,
+          text: '',
+          outcome: 'error' as const,
+          failure: { phase: 'setup' as const, message: 'Subagent failed before completion.' },
+          usage: { inputTokens: 0, outputTokens: 0 },
+          durationMs: Date.now() - startedAt,
+        };
+        try {
+          params.onEvent({
+            type: 'subagent_end',
+            ...eventIdentity,
+            outcome: terminal.outcome,
+            ...(terminal.failure ? { failure: terminal.failure } : {}),
+            usage: terminal.usage,
+            durationMs: terminal.durationMs,
+          });
+          request.reportActivity();
+        } catch (error) {
+          log.warn('child terminal event delivery failed', {
+            sessionId: childSessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+
+        if (routeRegistered) {
+          try {
+            params.routeContextByTurn.delete(childTurnId);
+          } catch (error) {
+            log.warn('child route cleanup failed', {
+              sessionId: childSessionId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+        if (transcriptAcquired) {
+          try {
+            await params.sessionManager.deleteTransientSubagentTranscript(childSessionId);
+          } catch (error) {
+            log.warn('child Transcript cleanup failed', {
+              sessionId: childSessionId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+        releaseChild();
+      }
+
+      return result;
     },
-    releaseTurnContext(childTurnId) {
-      params.routeContextByTurn.delete(childTurnId);
-    },
-    getParentContextFiles: params.getParentContextFiles,
-    mainAgentTools: {
-      allow: tools?.allow ?? [],
-      deny: tools?.deny ?? [],
-    },
-    llmDefaults: {
-      model: llm.model ?? '',
-      maxTokens: llm.maxTokens ?? 4096,
-      contextWindowTokens: llm.contextWindowTokens ?? 200_000,
-    },
-    maxDepth: subagents?.maxDepth ?? 1,
-    workspaceDir: params.workspaceDir,
-    promptSafetyLevel: prompt?.safetyLevel ?? 'normal',
   };
 }
 
-// ────────────────────────────────────────────────────────────────
-// (B) Library API: runSubagentTurn(input)
-// ────────────────────────────────────────────────────────────────
-
-export interface RunSubagentTurnDeps {
-  subagentRunner: SubagentRunner;
-  profileRegistry: ReadonlyMap<string, SubagentProfile>;
-}
-
-/**
- * Library entry point for spawning a subagent.
- *
- * Differs from the LLM `task` tool in one important way: when
- * `input.subagentType` does not match a registered profile, this throws
- * a hard error instead of silently falling back to `general-purpose`
- * (spec §6 decision 10 — library callers should know exactly what they
- * are invoking; the LLM gets the leniency).
- *
- * For `trigger.source === 'library'`, synthesizes a `parentSessionKey`
- * and `parentTurnId` from `callerLabel` so the child gets a stable
- * `rootLabel` for its session-key derivation.
- */
-export async function runSubagentTurn(
-  input: SubagentRunInput,
-  deps: RunSubagentTurnDeps,
-): Promise<SubagentRunResult> {
-  const profile = deps.profileRegistry.get(input.subagentType);
-  if (!profile) {
-    throw new Error(
-      `Unknown subagent type: "${input.subagentType}". ` +
-        'Library API requires a registered profile id (the LLM `task` tool can ' +
-        'fall back to general-purpose, but the library API does not).',
-    );
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
   }
-
-  const parentSessionKey =
-    input.trigger.source === 'library'
-      ? (input.trigger.callerLabel ?? 'library')
-      : input.trigger.parentSessionKey;
-  const parentTurnId =
-    input.trigger.source === 'library'
-      ? `library-synthetic-${input.trigger.callerLabel ?? 'caller'}`
-      : input.trigger.parentTurnId;
-
-  return deps.subagentRunner.run({
-    profile,
-    description: input.description,
-    prompt: input.prompt,
-    trigger: input.trigger,
-    lifecycle: input.lifecycle,
-    signal: input.signal,
-    parentSessionKey,
-    parentTurnId,
-  });
 }
 
-// ────────────────────────────────────────────────────────────────
-// (C) usage 累加 helper
-// ────────────────────────────────────────────────────────────────
+function isAbortError(error: unknown, signal: AbortSignal): boolean {
+  return signal.aborted || (error instanceof Error && error.name === 'AbortError');
+}
 
-/** Component-wise add two TokenUsage values. */
-export function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+function classifyFailure(error: unknown): SubagentTerminalFailure {
+  if (error instanceof ModelResolutionError) {
+    return {
+      phase: 'resolution',
+      category: error.category,
+      message: error.message,
+    };
+  }
+  if (error instanceof AgentExecutionFailure) {
+    return { phase: 'execution', message: error.message };
+  }
   return {
-    inputTokens: a.inputTokens + b.inputTokens,
-    outputTokens: a.outputTokens + b.outputTokens,
+    phase: 'setup',
+    message: error instanceof Error ? error.message : String(error),
   };
 }

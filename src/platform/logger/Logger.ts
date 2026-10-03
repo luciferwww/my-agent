@@ -1,4 +1,5 @@
-import type { LogAdapter, LogEntry, LoggerConfig, LogLevel } from './types.js';
+import type { LogAdapter, LogEntry, LoggerRuntimeConfig, LogLevel } from './types.js';
+import { DEFAULT_LOGGER_CONFIG } from './config.js';
 
 // ── 级别顺序 ──────────────────────────────────────────────
 
@@ -84,7 +85,7 @@ export class Logger {
   //   再次 configure()   → buf 已为 null，跳过 drain，仅交换 adapters
   //
   // 为什么 head + tail 双段：
-  //   - head 保启动初期"why are we here"上下文（workspaceDir、agentId 等）
+  //   - head 保启动初期"why are we here"上下文（agentHome、agentId 等）
   //   - tail 保"出事前最后一帧"，调试启动 hang 时最关键
   //   - dropped 让回放插 sentinel 警告"中间丢了 N 条"，避免读者困惑时间戳跳变
   private static startupBuffer: StartupBuffer | null = {
@@ -101,10 +102,10 @@ export class Logger {
    *
    * 二次及以上调用：仅交换 adapters / minLevel，不重新启用 buffer。
    */
-  static async configure(config: LoggerConfig): Promise<void> {
+  static async configure(config: LoggerRuntimeConfig): Promise<void> {
     await Logger.closeAdapters(Logger.adapters);
     Logger.adapters = config.adapters;
-    Logger.minLevel = config.minLevel ?? 'info';
+    Logger.minLevel = config.minLevel ?? DEFAULT_LOGGER_CONFIG.minLevel;
     for (const adapter of Logger.adapters) {
       await adapter.start?.();
     }

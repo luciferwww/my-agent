@@ -6,7 +6,8 @@ function profile(overrides: Partial<SubagentProfile> = {}): SubagentProfile {
   return {
     id: 'reviewer',
     description: 'reviews code',
-    agentDir: '/tmp/ws/.agent/subagents/reviewer',
+    agentDir: '/tmp/ws/subagents/reviewer',
+    model: 'inherit',
     ...overrides,
   };
 }
@@ -101,8 +102,7 @@ describe('resolveSubagentTools — deny', () => {
 
 describe('resolveSubagentTools — no cross-filter', () => {
   it('does NOT strip names that appear in both allow and deny', () => {
-    // Per spec decision 5, deny precedence is enforced by applyDenyFilter
-    // at tool-registration time AND resolveToolPolicy at run time.
+    // Deny precedence is enforced by the Application Tool Policy.
     // This function must NOT duplicate that filter.
     const result = resolveSubagentTools(
       profile({ tools: { allow: ['read_file', 'exec'], deny: ['exec'] } }),

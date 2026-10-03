@@ -1,0 +1,62 @@
+# Subagent Specification
+
+> Status: Stable Authority
+> Contract status: Implemented and Validated
+> Verified: 2026-10-02
+> Authority: Stable base Subagent contract
+
+## Scope
+
+The `task` Tool delegates one same-process, blocking Child subtask. This specification owns base profile/context behavior, depth capability, isolated Session/prompt assembly, blocking execution, Parent-facing Tool output, and best-effort terminal cleanup.
+
+Model selection, Parent validation, independent Child resolution, identity, route/generation inheritance, and terminal failure categories belong to [Subagent Model Resolution](subagent-model-resolution.md). Sibling Tool-call concurrency belongs to [Tools and Hooks](tools-and-hooks.md). Batch, background, detached, handoff, and team behavior are excluded and remain deferred.
+
+## Profile and capability
+
+```ts
+interface SubagentProfile {
+  id: string;
+  description: string;
+  agentDir: string;
+  model: 'inherit' | ModelReference;
+  tools?: { allow?: string[]; deny?: string[] };
+  maxLlmCalls?: number;
+}
+```
+
+Child profile identity and role come from configuration plus context files. Each Child context file replaces the corresponding Parent file; missing Child files fall back to Parent. A missing Child directory behaves as an anonymous/general-purpose Child using Parent context.
+
+Unknown LLM-supplied profile names fall back to `general-purpose` with a warning. Invalid configured profiles fail configuration/startup validation.
+
+Depth and capability derive from explicit Parent/Child execution context rather than Session identity. Each accepted Child receives a fresh canonical `sessionId` and a root-only transient Transcript with caller provenance. It has no Session Store entry, never appears in get/list, and is removed at terminal cleanup or subsequent startup recovery. Default policy prevents recursive `task` use beyond the allowed depth.
+
+## Execution contract
+
+```text
+Parent task Tool
+  -> profile lookup/fallback
+  -> depth check
+  -> Runtime delegation
+  -> isolated transient Child Transcript and prompt setup
+  -> blocking Child execution
+  -> normalized Tool Result
+  -> terminal cleanup
+```
+
+The Child does not inherit Parent conversation history. Each `task` execution blocks only its own Tool Call. Independent sibling `task` calls in one Runner response execute concurrently under the process-wide Async Tool Execution Framework; the Parent's next Model call still waits for every accepted sibling to terminalize or be isolated. Each sibling has an independent execution signal, Child identity, route, tree membership, terminal events, and cleanup.
+
+Terminal outcomes are `ok`, `error`, `aborted`, and `max_llm_calls`. Parent-facing Tool content carries Child text or a normalized failure, not internal IDs or raw Usage. `max_llm_calls` may include partial text. Parent Abort reaches every Child through its Framework-derived execution signal, while execution-local cancellation affects only the corresponding Child.
+
+Cleanup after terminalization is best-effort and does not change the selected terminal outcome. Child events use the common Agent-event/Fanout plane with explicit correlation.
+
+## Tool policy
+
+An explicit Child allow list replaces the Parent allow list; Child deny adds to Parent deny. Depth capability can remove `task` regardless of profile policy. All Tool execution still follows [Tools and Hooks](tools-and-hooks.md).
+
+## Acceptance scenarios
+
+Cover general-purpose and named profiles; partial Child context with Parent fallback; missing Child directory; unknown profile fallback; invalid profile; depth limit; blocking return; concurrent sibling execution; isolated Sessions; independent cancellation and cleanup; Parent Abort; normalized Child failures; distinct event correlation; and no detached work.
+
+## Related authority
+
+Current implementation boundaries are described by [Runtime](../architecture/runtime.md) and [Runner](../architecture/runner.md). [Subagent Model Resolution](subagent-model-resolution.md) owns Child resolution and terminalization.

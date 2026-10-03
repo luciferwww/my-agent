@@ -1,93 +1,43 @@
 # Documentation
 
-This directory is grouped by document purpose rather than by module.
+> Status: Active authority index
+> Authority: Documentation roles, precedence, and navigation
 
-## Conventions
+This index separates current authority from active work and historical or non-authoritative supporting material.
 
-- Manual integration and smoke scripts live under `scripts/`.
-- These scripts are intended to be run directly via `npx tsx scripts/<name>.ts` when needed.
-- They are not exposed as `package.json` scripts unless they become stable, frequently used project workflows.
+## User guides
 
-## Recommended Reading Order
+- [Configuration Guide](guides/configuration.md) — Agent Home setup, supported fields, Providers, Extensions, examples, and troubleshooting
 
-For a high-level understanding of the current design, start with the runtime assembly view and then drill down into the main runtime modules.
+## Default reading path
 
-1. [Runtime / App Assembly Design](architecture/runtime-design.md)
-2. [Agent Runner Design](architecture/core-runner-design.md)
-3. [Prompt Builder Design](architecture/core-prompt-design.md)
-4. [Workspace Design](architecture/core-workspace-design.md)
-5. [Tools Design](architecture/core-tools-design.md)
-6. [Session Design](architecture/core-session-design.md)
+For ordinary implementation work, start from source and focused tests, then read only the smallest applicable authority set:
 
-Examples:
+1. [Current Architecture](architecture/README.md) for implemented ownership and dependency direction;
+2. [Stable Specifications](specifications/README.md) when public behavior, lifecycle, or failure contracts matter;
+3. [Decisions](decisions/README.md) only when rationale or a durable design constraint matters;
+4. the relevant active entry under [Changes](changes/README.md) when work is part of an approved delivery;
+5. [Governance](governance/README.md) when classifying, approving, validating, or reviewing work.
 
-```bash
-npx tsx scripts/test-exec-platform-shell.ts
-npx tsx scripts/test-exec-background.ts
-npx tsx scripts/test-exec-yield.ts
-npx tsx scripts/test-exec-timeout-tree.ts
-npx tsx scripts/test-exec-abort-tree.ts
-npx tsx scripts/test-process-kill.ts
-npx tsx scripts/test-process-kill-no-output.ts
-npx tsx scripts/test-process-kill-after-exit.ts
-npx tsx scripts/test-process-kill-race.ts
-npx tsx scripts/test-process-kill-tree.ts
-npx tsx scripts/test-process-kill-yield-tree.ts
-npx tsx scripts/test-process-list-lifecycle.ts
-```
+Do not routinely read or search archived Changes, Evidence, Deferred inputs, Research, superseded decisions, or Git history. Use them only for provenance, prior alternatives, migration reconstruction, or unresolved authority transfer.
 
-## Architecture
+## Current authority and work
 
-Design baselines for the current implementation, including module boundaries, data flow, and behavior contracts.
+- [Governance](governance/README.md) — project workflow, principles, terminology, and coding conventions
+- [Current Architecture](architecture/README.md) — verified implementation topics and ownership
+- [Decisions](decisions/README.md) — accepted durable architectural decisions
+- [Stable Specifications](specifications/README.md) — durable behavioral and structural contracts
+- [Changes](changes/README.md) — active work under the Development Workflow; its archive is historical
 
-- [Agent Runner Design](architecture/core-runner-design.md)
-- [Runtime / App Assembly Design](architecture/runtime-design.md)
-- [Config Design](architecture/platform-config-design.md)
-- [LLM Client Design](architecture/adapters-llm-design.md)
-- [Prompt Builder Design](architecture/core-prompt-design.md)
-- [Session Design](architecture/core-session-design.md)
-- [Compaction Design](architecture/core-runner-context-design.md)
-- [Memory Design](architecture/core-memory-design.md)
-- [Tools Design](architecture/core-tools-design.md)
-- [Builtin Tools Design](architecture/core-tools-builtin-design.md)
-- [Workspace Design](architecture/core-workspace-design.md)
-- [Exec / Process Flow Design](architecture/core-tools-builtin-exec-flow-design.md)
-- [Exec / Process Platform Runtime Design](architecture/core-tools-builtin-exec-runtime-design.md)
-- [Coding Standards](architecture/coding-standards.md)
+## Opt-in supporting material
 
-## Roadmap
+- [Evidence](evidence/README.md) — dated observations and execution records; non-authoritative
+- [Deferred](deferred/README.md) — frozen future inputs; non-authorizing
+- [Research](research/README.md) — external and exploratory material; non-authoritative
+- [Templates](templates/README.md) — ADR, Module Specification, Spike Specification, and Spike Results starting points
 
-Planned evolution documents, adoption sequencing, and regression checklists for larger refactors.
+## Authority order
 
-- [Exec Evolution Roadmap](roadmap/exec-evolution-roadmap.md)
-- [Exec / Process Platform Adoption Plan](roadmap/exec-process-platform-adoption-plan.md)
-- [Exec / Process Platform Regression Checklist](roadmap/exec-process-platform-regression-checklist.md)
+Source and tests provide implementation evidence. Current Architecture owns implemented boundaries; Stable Specifications own long-lived contracts; Accepted Decisions own durable rationale; Active Changes own approved unfinished work. Evidence, Deferred, Research, superseded Decisions, and archived Changes cannot override those surfaces.
 
-## OpenClaw Analysis
-
-Reference analysis of OpenClaw for comparison and design input; these docs are not the source of truth for this repository's implementation.
-
-- [OpenClaw Analysis](analysis/openclaw/openclaw-analysis.md)
-- [OpenClaw Agent Command Flow](analysis/openclaw/openclaw-agent-command-flow.md)
-- [OpenClaw Agent Runner Analysis](analysis/openclaw/openclaw-agent-runner-analysis.md)
-- [OpenClaw Context Files Flow](analysis/openclaw/openclaw-contextfiles-flow.md)
-- [OpenClaw Exec / Process Platform Analysis](analysis/openclaw/openclaw-exec-process-platform-analysis.md)
-- [OpenClaw Memory Module Analysis](analysis/openclaw/openclaw-memory-module-analysis.md)
-- [OpenClaw Message Flow](analysis/openclaw/openclaw-message-flow.md)
-- [OpenClaw PI Builtin Tools Memo](analysis/openclaw/openclaw-pi-builtin-tools-memo.md)
-- [OpenClaw Prompt System Deep Dive](analysis/openclaw/openclaw-prompt-system-deep-dive.md)
-- [OpenClaw Session Analysis](analysis/openclaw/openclaw-session-analysis.md)
-- [OpenClaw Tool System Analysis (Current)](analysis/openclaw/openclaw-tool-system-analysis-current.md)
-- [OpenClaw Tool System Analysis](analysis/openclaw/openclaw-tool-system-analysis.md)
-
-
-## Collaboration Principles
-- Spec-driven development — write and confirm design docs before writing code.
-- Confirm before changes — discuss any modification first and only proceed after approval.
-- Coding standards — follow `coding-standards.md` when it exists in the current workspace.
-- Collaboration style — when you disagree, state your reasoning explicitly instead of agreeing just to accommodate.
-
-NOTE: These can be added to the user-level memory file, for example at: 
-```
-%HOMEPATH%\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\memory-tool\memories\collaboration-preferences.md
-```
+The [Development Workflow](governance/development-workflow.md) is the sole development-process authority. Templates define artifact structure only and do not create another workflow.

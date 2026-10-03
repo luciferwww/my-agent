@@ -12,4 +12,11 @@ export type {
   HookHandlerMap,
   HookRegistration,
 } from './types.js';
-export { runBeforeToolCall, runAfterToolCall, runBeforeCompaction, runAfterCompaction } from './runner.js';
+export {
+  OBSERVER_HOOK_DEADLINE_MS,
+  runBeforeToolCall,
+  runAfterToolCall,
+  runBeforeCompaction,
+  runAfterCompaction,
+} from './runner.js';
+export type { HookSettlement, HookSettlementOutcome } from './runner.js';

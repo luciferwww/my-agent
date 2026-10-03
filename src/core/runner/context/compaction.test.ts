@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { ChatMessage } from '../../../adapters/llm/types.js';
+import type { ChatMessage } from '../../model-invocation/index.js';
 import { splitForCompaction, compactMessages } from './compaction.js';
-import type { CompactionConfig } from '../../../platform/config/types.js';
+import type { CompactionConfig } from '../compaction-config.js';
 
 // ── 测试用常量 ────────────────────────────────────────────
 
@@ -37,7 +37,7 @@ function assistantToolUseMsg(toolId: string, toolName: string): ChatMessage {
 function toolResultMsg(toolUseId: string, content: string): ChatMessage {
   return {
     role: 'user',
-    content: [{ type: 'tool_result', tool_use_id: toolUseId, content }],
+    content: [{ type: 'tool_result', tool_use_id: toolUseId, content, status: 'success' }],
   };
 }
 
@@ -108,6 +108,35 @@ describe('splitForCompaction', () => {
     expect(toCompress).toHaveLength(3); // turn 1 + tool_use + tool_result
   });
 
+  it('does not count trusted Host completions as user turns', () => {
+    const accepted: ChatMessage = {
+      role: 'user',
+      content: [{
+        type: 'execution_accepted',
+        tool_use_id: 'tu_1',
+        execution_id: 'execution-1',
+      }],
+    };
+    const completion: ChatMessage = {
+      role: 'user',
+      origin: 'host',
+      content: '<host_task_completion>done</host_task_completion>',
+    };
+    const messages: ChatMessage[] = [
+      userMsg('old turn'),
+      assistantMsg('old reply'),
+      userMsg('pending turn'),
+      assistantToolUseMsg('tu_1', 'read_file'),
+      accepted,
+      completion,
+    ];
+
+    const { toCompress, toKeep } = splitForCompaction(messages, 1);
+
+    expect(toCompress).toEqual(messages.slice(0, 2));
+    expect(toKeep).toEqual(messages.slice(2));
+  });
+
   it('moves split point before assistant(tool_use) to protect tool_use/tool_result pairing', () => {
     // 如果拆分点落在 assistant(tool_use) 之后、tool_result 之前，
     // 应向前移动到 assistant 之前，避免配对被拆散
@@ -121,7 +150,7 @@ describe('splitForCompaction', () => {
       assistantMsg('reply 2'),
     ];
 
-    const { toCompress, toKeep } = splitForCompaction(messages, 1);
+    const { toKeep } = splitForCompaction(messages, 1);
 
     // toKeep 应该包含 turn 2 及其之前（保护 tool_use/tool_result 配对）
     // turn 2 之前的 tool_result 不算用户轮次，所以保留区起点还是 turn 2
@@ -167,7 +196,6 @@ describe('compactMessages', () => {
     return {
       chatStream: vi.fn().mockImplementation(async function* () {
         throw new Error('LLM service unavailable');
-        // eslint-disable-next-line no-unreachable
         yield; // TypeScript 需要 generator 函数有 yield
       }),
     };
@@ -193,6 +221,9 @@ describe('compactMessages', () => {
     expect(result.messages).toHaveLength(5);
     expect((result.messages[0] as any).content).toContain('[Previous conversation summary]');
     expect((result.messages[0] as any).content).toContain('Summary of turns 1 and 2.');
+    expect(llmClient.chatStream).toHaveBeenCalledWith(
+      expect.not.objectContaining({ maxTokens: expect.anything() }),
+    );
   });
 
   it('stats reflect tokensBefore > tokensAfter after compression', async () => {
@@ -232,6 +263,31 @@ describe('compactMessages', () => {
     });
 
     expect(result.stats.droppedMessages).toBe(2); // turn 1 + reply 1
+  });
+
+  it('passes the output-token limit to summary generation', async () => {
+    const messages: ChatMessage[] = [
+      userMsg('turn 1'), assistantMsg('reply 1'),
+      userMsg('turn 2'), assistantMsg('reply 2'),
+    ];
+    let capturedLimit: number | undefined;
+    const llmClient = {
+      async *chatStream(request: { outputTokenLimit?: number }) {
+        capturedLimit = request.outputTokenLimit;
+        yield { type: 'text_delta', text: 'Summary.' };
+      },
+    };
+
+    await compactMessages({
+      messages,
+      config: { ...BASE_CONFIG, keepRecentTurns: 1 },
+      llmClient: llmClient as any,
+      model: 'claude-test',
+      outputTokenLimit: 8192,
+      trigger: 'preemptive',
+    });
+
+    expect(capturedLimit).toBe(8192);
   });
 
   it('falls back to placeholder summary when LLM fails', async () => {

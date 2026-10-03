@@ -1,4 +1,4 @@
-import type { ContextFile } from '../workspace/types.js';
+import type { ContextFile } from '../agent-context/types.js';
 import type { AvailableSubagentEntry } from '../subagent/available-subagents.js';
 
 export type { ContextFile };
@@ -60,14 +60,6 @@ export interface ContextHookMetadata {
   [key: string]: unknown;
 }
 
-/** 工具定义 */
-export interface ToolDefinition {
-  name: string;
-  description: string;
-  /** JSON Schema 格式的参数定义（可选） */
-  parameters?: Record<string, unknown>;
-}
-
 /**
  * SystemPromptBuilder.build() 的参数。
  * 所有字段均为可选，未传入时各 Section 使用默认值或跳过。
@@ -75,22 +67,12 @@ export interface ToolDefinition {
 export interface SystemPromptBuildParams {
   /** 构建模式，默认 'full' */
   mode?: PromptMode;
-  /** 可用工具列表，不传或空数组则跳过工具相关 Section */
-  tools?: ToolDefinition[];
-  /** 安全约束级别，默认 'normal'，'relaxed' 跳过安全 Section */
-  safetyLevel?: 'strict' | 'normal' | 'relaxed';
+  /** Narrow Tool-name projection used only for capability-conditional prompt sections. */
+  toolNames?: readonly string[];
   /** 注入的上下文文件（IDENTITY.md、SOUL.md 等） */
   contextFiles?: ContextFile[];
-  /**
-   * 工作目录绝对路径。
-   *
-   * 主 agent 由 prompt-factory 注入；subagent 由 SubagentRunner 从
-   * `SubagentHostBindings.workspaceDir` 注入。任何 mode（除 `'none'`）
-   * 都注入对应的 `# Workspace` section（spec §11 Section 7）。
-   *
-   * v1 PR-3 接受字段但未渲染；实际渲染逻辑由 PR-5 添加。
-   */
-  workspaceDir?: string;
+  /** Agent Home absolute path rendered in every mode except `'none'`. */
+  agentHome?: string;
   /**
    * `<available-subagents>` section 的条目列表（spec §11 Section 8）。
    *

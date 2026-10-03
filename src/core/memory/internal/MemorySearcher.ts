@@ -1,9 +1,8 @@
 import type { MemoryStore, MemorySearchResult, SearchOptions, EmbeddingProvider } from '../types.js';
-
-const DEFAULT_MAX_RESULTS = 6;
-const DEFAULT_MIN_SCORE = 0.25;
-const DEFAULT_VECTOR_WEIGHT = 0.7;
-const DEFAULT_TEXT_WEIGHT = 0.3;
+import {
+  DEFAULT_MEMORY_CONFIG,
+  type MemorySearchConfig,
+} from '../config.js';
 
 /**
  * 混合搜索器。
@@ -14,17 +13,23 @@ const DEFAULT_TEXT_WEIGHT = 0.3;
 export class MemorySearcher {
   private store: MemoryStore;
   private embeddingProvider: EmbeddingProvider | null;
+  private defaults: MemorySearchConfig;
 
-  constructor(store: MemoryStore, embeddingProvider: EmbeddingProvider | null) {
+  constructor(
+    store: MemoryStore,
+    embeddingProvider: EmbeddingProvider | null,
+    defaults: MemorySearchConfig = DEFAULT_MEMORY_CONFIG.search,
+  ) {
     this.store = store;
     this.embeddingProvider = embeddingProvider;
+    this.defaults = defaults;
   }
 
   async search(query: string, options?: SearchOptions): Promise<MemorySearchResult[]> {
-    const maxResults = options?.maxResults ?? DEFAULT_MAX_RESULTS;
-    const minScore = options?.minScore ?? DEFAULT_MIN_SCORE;
-    const vectorWeight = options?.hybrid?.vectorWeight ?? DEFAULT_VECTOR_WEIGHT;
-    const textWeight = options?.hybrid?.textWeight ?? DEFAULT_TEXT_WEIGHT;
+    const maxResults = options?.maxResults ?? this.defaults.maxResults;
+    const minScore = options?.minScore ?? this.defaults.minScore;
+    const vectorWeight = options?.hybrid?.vectorWeight ?? this.defaults.vectorWeight;
+    const textWeight = options?.hybrid?.textWeight ?? this.defaults.textWeight;
 
     if (!this.embeddingProvider) {
       // 降级：纯关键词搜索

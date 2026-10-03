@@ -1,10 +1,4 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { DEFAULT_AGENT_CONFIG, DEFAULT_LOGGER_CONFIG } from './defaults.js';
-import type { AppConfig, AgentDefaults, AgentEntry, ConfigFile, DeepPartial, LoggerModuleConfig } from './types.js';
-
-const CONFIG_FILE_NAME = 'config.json';
-const AGENT_DIR = '.agent';   // 与 workspace/init.ts 保持一致；spec §4.1 约定路径
+import type { AppConfig, AgentDefaults, DeepPartial } from './types.js';
 
 // ── 深度合并 ──────────────────────────────────────────────
 
@@ -50,88 +44,6 @@ export function deepMerge<T extends MergeableObject<T>>(
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-// ── 环境变量映射 ──────────────────────────────────────────
-
-/** 从环境变量中提取配置覆盖 */
-export function getEnvOverrides(): DeepPartial<AgentDefaults> {
-  const overrides: DeepPartial<AgentDefaults> = {};
-
-  const apiKey = process.env['ANTHROPIC_API_KEY'];
-  const baseURL = process.env['ANTHROPIC_BASE_URL'];
-  const model = process.env['MY_AGENT_MODEL'];
-
-  if (apiKey || baseURL || model) {
-    overrides.llm = {};
-    if (apiKey) overrides.llm.apiKey = apiKey;
-    if (baseURL) overrides.llm.baseURL = baseURL;
-    if (model) overrides.llm.model = model;
-  }
-
-  return overrides;
-}
-
-// ── 配置文件加载 ──────────────────────────────────────────
-
-/** 从 .agent/config.json 读取配置。文件不存在或格式错误返回空对象。 */
-function readConfigFile(workspaceDir: string): ConfigFile {
-  const configPath = join(workspaceDir, AGENT_DIR, CONFIG_FILE_NAME);
-
-  try {
-    const raw = readFileSync(configPath, 'utf-8');
-    const parsed = JSON.parse(raw);
-
-    // 基本类型校验：顶层必须是对象
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      return {};
-    }
-
-    return parsed as ConfigFile;
-  } catch {
-    // 文件不存在、权限不足、JSON 语法错误 → 降级为空配置
-    return {};
-  }
-}
-
-// ── loadConfig ───────────────────────────────────────────
-
-export interface LoadConfigOptions {
-  /** 工作区根目录 */
-  workspaceDir: string;
-}
-
-/**
- * 加载配置。
- *
- * 合并硬编码默认值和 config.json 文件，返回 AppConfig。
- * 环境变量和 CLI 覆盖不在此处合并——由 resolveAgentConfig() 负责。
- */
-export function loadConfig(options: LoadConfigOptions): AppConfig {
-  const { workspaceDir } = options;
-
-  // 1. 起点：硬编码默认值
-  let defaults: AgentDefaults = { ...DEFAULT_AGENT_CONFIG };
-
-  // 2. 合并配置文件中的 agents.defaults
-  const file = readConfigFile(workspaceDir);
-  if (file.agents?.defaults) {
-    defaults = deepMerge(defaults, file.agents.defaults);
-  }
-
-  // 3. 合并 logger 配置（默认值 + 文件覆盖）
-  const logger: LoggerModuleConfig = file.logger
-    ? deepMerge(DEFAULT_LOGGER_CONFIG, file.logger)
-    : { ...DEFAULT_LOGGER_CONFIG };
-
-  return {
-    workspaceDir,
-    agents: {
-      defaults,
-      list: file.agents?.list ?? [],
-    },
-    logger,
-  };
 }
 
 // ── resolveAgentConfig ───────────────────────────────────

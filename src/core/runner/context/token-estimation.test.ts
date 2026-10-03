@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { ChatMessage } from '../../../adapters/llm/types.js';
+import type { ChatMessage } from '../../model-invocation/index.js';
 import {
   estimateMessageTokens,
   estimatePromptTokens,
@@ -51,7 +51,7 @@ describe('token-estimation', () => {
       const content = 'a'.repeat(1000);
       const msg: ChatMessage = {
         role: 'user',
-        content: [{ type: 'tool_result', tool_use_id: 'tu_1', content }],
+        content: [{ type: 'tool_result', tool_use_id: 'tu_1', content, status: 'success' }],
       };
       const tokens = estimateMessageTokens(msg);
       // 1000 chars → 250 + 4 overhead = 254

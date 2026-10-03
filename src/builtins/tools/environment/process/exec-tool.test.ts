@@ -1,0 +1,156 @@
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { createExecTool } from './exec-tool.js';
+import { processTool } from './process-tool.js';
+import { processRegistry } from './process-registry.js';
+import { TEST_TOOL_CONTEXT } from '../../../../core/tools/test-utils.js';
+
+const execTool = createExecTool(process.cwd());
+
+function extractRunId(content: string): string {
+  const match = content.match(/runId:\s*(\S+)/);
+  if (!match) {
+    throw new Error(`runId not found in content: ${content}`);
+  }
+
+  return match[1]!;
+}
+
+async function waitFor(predicate: () => Promise<boolean> | boolean, timeoutMs = 1000): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await predicate()) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  throw new Error('Timed out waiting for condition');
+}
+
+afterEach(() => {
+  processRegistry.reset();
+});
+
+describe('execTool', () => {
+  it('defaults to the injected Agent Home', async () => {
+    const agentHome = await mkdtemp(join(tmpdir(), 'exec-agent-home-'));
+    try {
+      const result = await createExecTool(agentHome).execute({
+        command: 'node -e "console.log(process.cwd())"',
+      }, TEST_TOOL_CONTEXT);
+
+      expect(result.outcome).toBe('success');
+      expect(result.content).toContain(agentHome);
+    } finally {
+      await rm(agentHome, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves relative cwd from Agent Home as execution context', async () => {
+    const agentHome = await mkdtemp(join(tmpdir(), 'exec-agent-home-'));
+    try {
+      await mkdir(join(agentHome, 'child'));
+      const result = await createExecTool(agentHome).execute({
+        command: 'node -e "console.log(process.cwd())"',
+        cwd: 'child',
+      }, TEST_TOOL_CONTEXT);
+
+      expect(result.outcome).toBe('success');
+      expect(result.content).toContain(join(agentHome, 'child'));
+    } finally {
+      await rm(agentHome, { recursive: true, force: true });
+    }
+  });
+
+  it('returns stdout for a simple command', async () => {
+    const result = await execTool.execute({ command: 'node -e "console.log(\'hello\')"' }, TEST_TOOL_CONTEXT);
+    expect(result.outcome).toBe('success');
+    expect(result.content).toContain('hello');
+  });
+
+  it('returns an error when the process exits non-zero', async () => {
+    const result = await execTool.execute({ command: 'node -e "process.exit(1)"' }, TEST_TOOL_CONTEXT);
+    expect(result.outcome).toBe('failed');
+    expect(result.content).toContain('Process exited with code 1');
+  });
+
+  it('returns timeout errors', async () => {
+    const result = await execTool.execute({
+      command: 'node -e "setTimeout(() => console.log(\'late\'), 2000)"',
+      timeout: 1,
+    }, TEST_TOOL_CONTEXT);
+    expect(result.outcome).toBe('failed');
+    expect(result.content).toContain('Process timed out after 1 seconds');
+  });
+
+  it('runs in a custom cwd', async () => {
+    const result = await execTool.execute({
+      command: 'node -e "console.log(process.cwd())"',
+      cwd: process.cwd(),
+    }, TEST_TOOL_CONTEXT);
+    expect(result.outcome).toBe('success');
+    expect(result.content).toContain(process.cwd());
+  });
+
+  it('passes custom environment variables', async () => {
+    const result = await execTool.execute({
+      command: 'node -e "console.log(process.env.TEST_EXEC_VALUE)"',
+      env: { TEST_EXEC_VALUE: 'from-test' },
+    }, TEST_TOOL_CONTEXT);
+    expect(result.outcome).toBe('success');
+    expect(result.content).toContain('from-test');
+  });
+
+  it('combines stdout and stderr output', async () => {
+    const result = await execTool.execute({
+      command: 'node -e "console.log(\'out\'); console.error(\'err\')"',
+    }, TEST_TOOL_CONTEXT);
+    expect(result.outcome).toBe('success');
+    expect(result.content).toContain('out');
+    expect(result.content).toContain('err');
+  });
+
+  it('returns a runId when background=true', async () => {
+    const result = await execTool.execute({
+      command: 'node -e "setTimeout(() => console.log(\'done\'), 150)"',
+      background: true,
+    }, TEST_TOOL_CONTEXT);
+
+    expect(result.outcome).toBe('success');
+    const runId = extractRunId(result.content);
+    const status = await processTool.execute({ action: 'status', runId }, TEST_TOOL_CONTEXT);
+    expect(status.content).toContain(`runId: ${runId}`);
+  });
+
+  it('yields long-running commands into process management', async () => {
+    const result = await execTool.execute({
+      command: 'node -e "setTimeout(() => console.log(\'yielded\'), 150)"',
+      yieldMs: 25,
+    }, TEST_TOOL_CONTEXT);
+
+    const runId = extractRunId(result.content);
+    await waitFor(async () => {
+      const status = await processTool.execute({ action: 'status', runId }, TEST_TOOL_CONTEXT);
+      return status.content.includes(`runId: ${runId}`);
+    });
+  });
+
+  it('does not leak short yield commands into process.list', async () => {
+    const result = await execTool.execute({
+      command: 'node -e "console.log(\'fast\')"',
+      // 给 Node 冷启动留足窗口（Windows 上 node -e 启动常 >100ms），
+      // 否则进程会被错误判定为长运行并进入 process management，导致断言失败。
+      yieldMs: 5000,
+    }, TEST_TOOL_CONTEXT);
+
+    expect(result.content).toContain('fast');
+
+    const list = await processTool.execute({ action: 'list' }, TEST_TOOL_CONTEXT);
+    expect(list.content).toBe('No background processes.');
+  });
+});

@@ -1,6 +1,30 @@
 export { RuntimeApp } from './RuntimeApp.js';
-export { bootstrapRuntime, createDefaultRuntimeDependencies } from './bootstrap.js';
-export { assembleRuntimeTools, getDefaultBuiltinTools, toLlmToolDefinitions, toPromptToolDefinitions } from './tool-registry.js';
+export type {
+  DefaultModelSelection,
+  ModelCatalogEntry,
+  ModelCatalogSnapshot,
+  ProviderCatalogEntry,
+  RuntimeApplication,
+  RuntimeCompositionControl,
+  RuntimeCompositionResidual,
+  RuntimeHandle,
+  RuntimeReloadChange,
+  RuntimeReloadResult,
+  RuntimeReloadWarning,
+} from './runtime-composition.js';
+export { RuntimeUnitCatalog, createLoadedRuntimeUnit } from './runtime-unit.js';
+export type {
+  LoadedRuntimeUnit,
+  RuntimeUnitChangePlan,
+  RuntimeUnitInstance,
+} from './runtime-unit.js';
+export {
+  DEFAULT_RUNTIME_DEADLINE_POLICY,
+  RuntimeDeadlineBudget,
+  createSystemRuntimeDeadlineDriver,
+  resolveRuntimeDeadlinePolicy,
+} from './runtime-deadline.js';
+export type { RuntimeDeadlineDriver, RuntimeDeadlinePolicy } from './runtime-deadline.js';
 export { buildSystemPromptParams, resolveContextLoadMode } from './prompt-factory.js';
 export { RuntimeAppError, classifyRuntimeError, createRuntimeError } from './errors.js';
 export type {
@@ -18,9 +42,10 @@ export type {
   RuntimeEvent,
   RuntimeLifecyclePhase,
   RuntimeLifecycleState,
-  RuntimeLLMClientOptions,
   RuntimeMemoryOptions,
   RuntimeResourceSet,
   RuntimeShutdownReport,
-  RuntimeToolBundle,
+  RuntimeShutdownResidual,
+  RuntimeTurnConvergenceReport,
+  RuntimeInstanceStopReport,
 } from './types.js';

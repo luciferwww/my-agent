@@ -1,83 +1,65 @@
 import { join } from 'node:path';
-import { AgentRunner } from '../core/runner/index.js';
-import { loadConfig, resolveAgentConfig } from '../platform/config/index.js';
-import { AnthropicClient } from '../adapters/llm/index.js';
-import { ConsoleAdapter, FileAdapter, Logger } from '../platform/logger/index.js';
+import {
+  createDefaultAgentConfig,
+  resolveAgentConfig,
+} from '../platform/config/index.js';
+import { DEFAULT_RUNNER_CONFIG } from '../core/runner/config.js';
+import type { AppConfig } from '../platform/config/types.js';
+import {
+  ConsoleAdapter,
+  DEFAULT_LOGGER_CONFIG,
+  FileAdapter,
+  Logger,
+} from '../platform/logger/index.js';
 import type { LogAdapter } from '../platform/logger/index.js';
-import { MemoryManager } from '../core/memory/index.js';
-import { SystemPromptBuilder, UserPromptBuilder } from '../core/prompt/index.js';
-import { SessionManager } from '../core/session/index.js';
-import { ensureWorkspace, loadContextFiles } from '../core/workspace/index.js';
+import type { MemoryManager } from '../core/memory/index.js';
+import { UserPromptBuilder } from '../core/prompt/index.js';
+import { ensureAgentContext, loadContextFiles } from '../core/agent-context/index.js';
 import { classifyRuntimeError } from './errors.js';
-import { assembleRuntimeTools, getDefaultBuiltinTools } from './tool-registry.js';
+import { createApplicationToolPolicy } from './tool-approval-policy.js';
 import type { RuntimeAppOptions, RuntimeBootstrapResult, RuntimeDependencies, RuntimeEvent } from './types.js';
+import type { RuntimeDeadlineDriver } from './runtime-deadline.js';
 
 const log = Logger.get('RuntimeBootstrap');
 
-export function createDefaultRuntimeDependencies(
-  overrides?: Partial<RuntimeDependencies>,
-): RuntimeDependencies {
-  const defaults: RuntimeDependencies = {
-    createLLMClient(options) {
-      if (!options.apiKey) {
-        throw new Error('LLM API key is required to create the runtime client.');
-      }
-
-      return new AnthropicClient({
-        apiKey: options.apiKey,
-        baseURL: options.baseURL,
-      });
-    },
-
-    createSessionManager(workspaceDir, options) {
-      return new SessionManager(workspaceDir, options);
-    },
-
-    async createMemoryManager(options) {
-      if (!options.enabled) {
-        return null;
-      }
-
-      return MemoryManager.create({
-        workspaceDir: options.workspaceDir,
-        embedding: options.embedding,
-        search: options.search,
-        enabled: options.enabled,
-      });
-    },
-
-    createSystemPromptBuilder() {
-      return new SystemPromptBuilder();
-    },
-
-    createAgentRunner(config) {
-      return new AgentRunner(config);
-    },
-
-    getBuiltinTools(options) {
-      return getDefaultBuiltinTools(options);
-    },
-  };
-
-  return {
-    ...defaults,
-    ...overrides,
-  };
-}
-
-export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<RuntimeBootstrapResult> {
+export async function bootstrapRuntime(
+  options: RuntimeAppOptions,
+  deps: RuntimeDependencies,
+  cleanupDeadline: { readonly driver: RuntimeDeadlineDriver; readonly timeoutMs: number },
+): Promise<RuntimeBootstrapResult> {
   const startedAt = Date.now();
+  let loggerConfigured = false;
+  let memoryManager: MemoryManager | null = null;
   log.info('bootstrap start', {
-    workspaceDir: options.workspaceDir,
+    agentHome: options.agentHome,
     agentId: options.agentId,
   });
   emit(options.onEvent, {
     type: 'app_start',
-    workspaceDir: options.workspaceDir,
+    agentHome: options.agentHome,
   });
 
   try {
-    const appConfig = loadConfig({ workspaceDir: options.workspaceDir });
+    const applicationConfig = deepFreeze(structuredClone(
+      options.startupContext?.configuration.application
+      ?? options.applicationConfig
+      ?? {
+        llm: {},
+        runner: DEFAULT_RUNNER_CONFIG,
+        agents: {
+          defaults: createDefaultAgentConfig(),
+          list: [],
+        },
+        logger: DEFAULT_LOGGER_CONFIG,
+      },
+    ));
+    const appConfig: AppConfig = {
+      agentHome: options.agentHome,
+      llm: applicationConfig.llm,
+      runner: applicationConfig.runner,
+      agents: applicationConfig.agents,
+      logger: applicationConfig.logger,
+    };
 
     const adapters: LogAdapter[] = [];
     if (appConfig.logger.console?.enabled !== false) {
@@ -87,17 +69,18 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
     if (appConfig.logger.file?.enabled) {
       const fileCfg = appConfig.logger.file;
       adapters.push(new FileAdapter({
-        // 路径固定为 <workspaceDir>/logs/；prefix / maxQueueSize 走 FileAdapter 内部默认
-        dir: join(options.workspaceDir, 'logs'),
+        // Agent Home owns the log directory; FileAdapter owns the remaining defaults.
+        dir: join(options.agentHome, 'logs'),
         ...(fileCfg.minLevel !== undefined ? { minLevel: fileCfg.minLevel } : {}),
       }));
     }
     await Logger.configure({
       adapters,
-      minLevel: appConfig.logger.minLevel ?? 'info',
+      minLevel: appConfig.logger.minLevel ?? DEFAULT_LOGGER_CONFIG.minLevel,
     });
+    loggerConfigured = true;
     log.debug('logger configured', {
-      minLevel: appConfig.logger.minLevel ?? 'info',
+      minLevel: appConfig.logger.minLevel ?? DEFAULT_LOGGER_CONFIG.minLevel,
       adapters: adapters.map((a) => a.constructor.name),
     });
 
@@ -107,41 +90,43 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
       cliOverrides: options.cliOverrides,
     });
 
-    await ensureWorkspace(options.workspaceDir);
+    const acquiredUnits = options.startupContext === undefined
+      ? Object.freeze([])
+      : (await deps.acquireExtensions({
+          extensionsDir: join(options.startupContext.installDir, 'extensions'),
+          extensionsConfig: options.startupContext.configuration.extensions,
+          environment: options.startupContext.environment,
+        })).loadedUnits;
 
-    const contextFiles = await loadContextFiles(options.workspaceDir, {
+    await ensureAgentContext(options.agentHome);
+
+    const contextFiles = await loadContextFiles(options.agentHome, {
       mode: 'full',
-      maxFileChars: resolvedConfig.workspace.maxFileChars,
-      maxTotalChars: resolvedConfig.workspace.maxTotalChars,
+      maxFileChars: resolvedConfig.context.maxFileChars,
+      maxTotalChars: resolvedConfig.context.maxTotalChars,
     });
     log.debug('context files loaded', {
       fileCount: contextFiles.length,
     });
 
-    const deps = createDefaultRuntimeDependencies(options.dependencies);
-    const sessionManager = deps.createSessionManager(options.workspaceDir, {
+    const sessionManager = deps.createSessionManager(options.agentHome, {
       toolResultHeadChars: resolvedConfig.compaction.toolResultHeadChars,
       toolResultTailChars: resolvedConfig.compaction.toolResultTailChars,
     });
-    const llmClient = deps.createLLMClient({
-      apiKey: resolvedConfig.llm.apiKey,
-      baseURL: resolvedConfig.llm.baseURL,
-      defaultModel: resolvedConfig.llm.model,
-      maxTokens: resolvedConfig.llm.maxTokens,
-    });
+    await sessionManager.initialize();
     const systemPromptBuilder = deps.createSystemPromptBuilder();
     const userPromptBuilder = new UserPromptBuilder();
 
-    let memoryManager = null;
     try {
       memoryManager = await deps.createMemoryManager({
-        workspaceDir: options.workspaceDir,
+        agentHome: options.agentHome,
         enabled: resolvedConfig.memory.enabled,
         embedding: resolvedConfig.memory.embedding,
+        chunking: resolvedConfig.memory.chunking,
         search: resolvedConfig.memory.search,
       });
       if (memoryManager) {
-        log.info('memory manager ready', { workspaceDir: options.workspaceDir });
+        log.info('memory manager ready', { agentHome: options.agentHome });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -156,22 +141,10 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
       });
     }
 
-    const toolBundle = assembleRuntimeTools({
-      builtinTools: deps.getBuiltinTools({
-        workspaceDir: options.workspaceDir,
-        fsWorkspaceOnly: resolvedConfig.tools.fs?.workspaceOnly ?? true,
-        webFetchEnabled: true,
-        execEnabled: true,
-        processEnabled: true,
-      }),
-      memoryManager,
-      deny: resolvedConfig.tools.deny ?? [],
-    });
+    const toolPolicy = createApplicationToolPolicy(resolvedConfig.tools, options.agentHome);
 
     const agentRunner = deps.createAgentRunner({
-      llmClient,
       sessionManager,
-      toolExecutor: toolBundle.executor,
       onEvent: options.onAgentEvent,
     });
 
@@ -185,33 +158,28 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
 
     log.info('bootstrap complete', {
       durationMs: Date.now() - startedAt,
-      tools: toolBundle.tools.length,
       memoryEnabled: memoryManager !== null,
       contextFiles: contextFiles.length,
-    });
-    emit(options.onEvent, {
-      type: 'app_ready',
-      workspaceDir: options.workspaceDir,
-      contextVersion: state.contextVersion,
-      toolNames: toolBundle.tools.map((tool) => tool.name),
-      memoryEnabled: memoryManager !== null,
     });
 
     return {
       resources: {
         appConfig,
+        runnerConfig: appConfig.runner,
         resolvedConfig,
-        workspaceDir: options.workspaceDir,
+        agentHome: options.agentHome,
         sessionManager,
-        llmClient,
+        toolPolicy,
         memoryManager,
         systemPromptBuilder,
         userPromptBuilder,
-        toolBundle,
         contextFiles,
         agentRunner,
+        managedProcessLifecycle: deps.managedProcessLifecycle,
       },
       state,
+      dependencies: deps,
+      acquiredUnits,
     };
   } catch (error) {
     const info = classifyRuntimeError('startup', error);
@@ -220,10 +188,35 @@ export async function bootstrapRuntime(options: RuntimeAppOptions): Promise<Runt
       message: info.message,
     });
     emit(options.onEvent, { type: 'error', info });
+    if (memoryManager) {
+      const cleanup = await cleanupDeadline.driver.race(
+        Promise.resolve().then(() => memoryManager!.close()),
+        cleanupDeadline.driver.now() + cleanupDeadline.timeoutMs,
+      );
+      if (cleanup.outcome === 'failed') {
+        log.warn('Memory cleanup after bootstrap failure failed', {
+          error: cleanup.message,
+        });
+      } else if (cleanup.outcome === 'deadline-exhausted') {
+        log.warn('Memory cleanup after bootstrap failure timed out');
+      }
+    }
+    if (loggerConfigured) {
+      await cleanupDeadline.driver.race(
+        Logger.close(),
+        cleanupDeadline.driver.now() + cleanupDeadline.timeoutMs,
+      );
+    }
     throw error;
   }
 }
 
 function emit(onEvent: RuntimeAppOptions['onEvent'], event: RuntimeEvent): void {
   onEvent?.(event);
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
 }

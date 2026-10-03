@@ -34,6 +34,22 @@ describe('ConsoleAdapter', () => {
       expect(stderrSpy).not.toHaveBeenCalled();
     });
 
+    it('uses the terminal default color for info', () => {
+      const adapter = new ConsoleAdapter({ colors: true });
+      adapter.write(makeEntry({ level: 'info' }));
+      expect(stdoutSpy).toHaveBeenCalledWith(
+        '[2026-04-24T10:00:00.000Z] [INFO ] [TestModule] test message\n',
+      );
+    });
+
+    it('uses gray for debug', () => {
+      const adapter = new ConsoleAdapter({ colors: true });
+      adapter.write(makeEntry({ level: 'debug' }));
+      expect(stdoutSpy).toHaveBeenCalledWith(
+        '\x1b[90m[2026-04-24T10:00:00.000Z] [DEBUG] [TestModule] test message\x1b[0m\n',
+      );
+    });
+
     it('writes error to stderr', () => {
       const adapter = new ConsoleAdapter({ colors: false });
       adapter.write(makeEntry({ level: 'error' }));

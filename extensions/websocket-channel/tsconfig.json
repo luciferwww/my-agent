@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "../..",
+    "paths": {
+      "my-agent/extension-api": ["../../src/extension/api/index.ts"]
+    }
+  },
+  "include": ["**/*.ts"]
+}

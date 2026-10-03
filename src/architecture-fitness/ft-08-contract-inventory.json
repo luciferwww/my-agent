@@ -1,0 +1,408 @@
+[
+  {
+    "contract": "AgentEvent",
+    "source": "src/core/runner/types.ts",
+    "kind": "event",
+    "positive": ["src/core/runner/AgentRunner.test.ts", "src/runtime/RuntimeApp.test.ts", "extensions/websocket-channel/WebSocketChannel.test.ts"],
+    "negative": ["src/core/runner/AgentRunner.test.ts", "src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "RuntimeEvent",
+    "source": "src/runtime/types.ts",
+    "kind": "event",
+    "positive": ["src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "RuntimeErrorInfo",
+    "source": "src/runtime/types.ts",
+    "kind": "error",
+    "positive": ["src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "RuntimeShutdownReport",
+    "source": "src/runtime/types.ts",
+    "kind": "lifecycle",
+    "positive": ["src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "RuntimeDeadlinePolicy",
+    "source": "src/runtime/runtime-deadline.ts",
+    "kind": "config",
+    "positive": ["src/runtime/runtime-deadline.test.ts"],
+    "negative": ["src/runtime/runtime-deadline.test.ts"]
+  },
+  {
+    "contract": "RuntimeDeadlineDriver",
+    "source": "src/runtime/runtime-deadline.ts",
+    "kind": "deadline-port",
+    "positive": ["src/runtime/runtime-deadline.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/runtime-deadline.test.ts"]
+  },
+  {
+    "contract": "RuntimeDeadlineBudget",
+    "source": "src/runtime/runtime-deadline.ts",
+    "kind": "deadline-budget",
+    "positive": ["src/runtime/runtime-deadline.test.ts", "src/runtime/runtime-builder.test.ts"],
+    "negative": ["src/runtime/runtime-deadline.test.ts"]
+  },
+  {
+    "contract": "RuntimeLifecycleState",
+    "source": "src/runtime/types.ts",
+    "kind": "lifecycle",
+    "positive": ["src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "RunTurnParams",
+    "source": "src/runtime/types.ts",
+    "kind": "request",
+    "positive": ["src/runtime/RuntimeApp.test.ts", "src/runtime/RuntimeApp.intake.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.intake.test.ts"]
+  },
+  {
+    "contract": "RuntimeApplication",
+    "source": "src/runtime/runtime-composition.ts",
+    "kind": "application-port",
+    "positive": ["src/runtime/runtime-builder.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/runtime-builder.test.ts"]
+  },
+  {
+    "contract": "RuntimeCompositionControl",
+    "source": "src/runtime/runtime-composition.ts",
+    "kind": "composition-port",
+    "positive": ["src/runtime/runtime-builder.test.ts", "src/runtime/runtime-composition-manager.test.ts"],
+    "negative": ["src/runtime/runtime-composition-manager.test.ts"]
+  },
+  {
+    "contract": "RuntimeCompositionResidual",
+    "source": "src/runtime/runtime-composition.ts",
+    "kind": "lifecycle-residual",
+    "positive": ["src/runtime/reload-coordinator.test.ts", "src/runtime/runtime-composition-manager.test.ts"],
+    "negative": ["src/runtime/reload-coordinator.test.ts"]
+  },
+  {
+    "contract": "RuntimeHandle",
+    "source": "src/runtime/runtime-composition.ts",
+    "kind": "lifecycle-handle",
+    "positive": ["src/runtime/runtime-builder.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/runtime-builder.test.ts"]
+  },
+  {
+    "contract": "RuntimeReloadChange",
+    "source": "src/runtime/runtime-composition.ts",
+    "kind": "reload-request",
+    "positive": ["src/runtime/reload-coordinator.test.ts", "src/runtime/runtime-composition-manager.test.ts"],
+    "negative": ["src/runtime/runtime-composition-manager.test.ts"]
+  },
+  {
+    "contract": "RuntimeReloadResult",
+    "source": "src/runtime/runtime-composition.ts",
+    "kind": "reload-result",
+    "positive": ["src/runtime/reload-coordinator.test.ts", "src/runtime/runtime-composition-manager.test.ts"],
+    "negative": ["src/runtime/reload-coordinator.test.ts"]
+  },
+  {
+    "contract": "LoadedRuntimeUnit",
+    "source": "src/runtime/runtime-unit.ts",
+    "kind": "unit-factory",
+    "positive": ["src/runtime/runtime-unit.test.ts", "src/runtime/runtime-composition-manager.test.ts"],
+    "negative": ["src/runtime/runtime-unit.test.ts"]
+  },
+  {
+    "contract": "RuntimeUnitInstance",
+    "source": "src/runtime/runtime-unit.ts",
+    "kind": "unit-lifecycle",
+    "positive": ["src/runtime/runtime-unit.test.ts", "src/runtime/runtime-lifecycle.test.ts"],
+    "negative": ["src/runtime/runtime-unit.test.ts"]
+  },
+  {
+    "contract": "AgentPathContext",
+    "source": "src/hosts/path-context.ts",
+    "kind": "path-context",
+    "positive": ["src/hosts/standalone/path-context.test.ts", "src/hosts/standalone/standalone-host.test.ts"],
+    "negative": ["src/hosts/standalone/path-context.test.ts"]
+  },
+  {
+    "contract": "resolveStandaloneHostPathContext",
+    "source": "src/hosts/standalone/path-context.ts",
+    "kind": "host-path-resolution",
+    "positive": ["src/hosts/standalone/path-context.test.ts"],
+    "negative": ["src/hosts/standalone/path-context.test.ts"]
+  },
+  {
+    "contract": "ApplicationConfigProjection",
+    "source": "src/platform/config/types.ts",
+    "kind": "config-projection",
+    "positive": ["src/platform/config/agent-config-loader.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/platform/config/agent-config-loader.test.ts", "src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "AgentConfigSnapshot",
+    "source": "src/platform/config/agent-config-loader.ts",
+    "kind": "config-snapshot",
+    "positive": ["src/platform/config/agent-config-loader.test.ts"],
+    "negative": ["src/platform/config/agent-config-loader.test.ts"]
+  },
+  {
+    "contract": "AgentConfigError",
+    "source": "src/platform/config/agent-config-errors.ts",
+    "kind": "error",
+    "positive": ["src/platform/config/agent-config-loader.test.ts"],
+    "negative": ["src/platform/config/agent-config-loader.test.ts"]
+  },
+  {
+    "contract": "loadAgentConfig",
+    "source": "src/platform/config/agent-config-loader.ts",
+    "kind": "agent-config-reader",
+    "positive": ["src/platform/config/agent-config-loader.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/platform/config/agent-config-loader.test.ts"]
+  },
+  {
+    "contract": "ExtensionDescriptorV1",
+    "source": "src/extension/acquisition/types.ts",
+    "kind": "extension-descriptor",
+    "positive": ["src/extension/acquisition/discovery.test.ts"],
+    "negative": ["src/extension/acquisition/discovery.test.ts"]
+  },
+  {
+    "contract": "ExtensionDiscoveryResult",
+    "source": "src/extension/acquisition/types.ts",
+    "kind": "extension-discovery-result",
+    "positive": ["src/extension/acquisition/discovery.test.ts"],
+    "negative": ["src/extension/acquisition/discovery.test.ts"]
+  },
+  {
+    "contract": "ExtensionAcquisitionFatalError",
+    "source": "src/extension/acquisition/errors.ts",
+    "kind": "error",
+    "positive": ["src/extension/acquisition/discovery.test.ts"],
+    "negative": ["src/extension/acquisition/discovery.test.ts"]
+  },
+  {
+    "contract": "discoverExtensionDescriptors",
+    "source": "src/extension/acquisition/discovery.ts",
+    "kind": "extension-discovery",
+    "positive": ["src/extension/acquisition/discovery.test.ts"],
+    "negative": ["src/extension/acquisition/discovery.test.ts"]
+  },
+  {
+    "contract": "ExtensionLoadContext",
+    "source": "src/extension/api/contracts.ts",
+    "kind": "extension-load-context",
+    "positive": ["src/extension/acquisition/loader.test.ts"],
+    "negative": ["src/extension/acquisition/loader.test.ts"]
+  },
+  {
+    "contract": "ExternalExtensionModule",
+    "source": "src/extension/api/contracts.ts",
+    "kind": "extension-entry-module",
+    "positive": ["src/extension/acquisition/loader.test.ts"],
+    "negative": ["src/extension/acquisition/loader.test.ts"]
+  },
+  {
+    "contract": "ExtensionAcquisitionResult",
+    "source": "src/extension/acquisition/types.ts",
+    "kind": "extension-acquisition-result",
+    "positive": ["src/extension/acquisition/loader.test.ts"],
+    "negative": ["src/extension/acquisition/loader.test.ts"]
+  },
+  {
+    "contract": "acquireExtensions",
+    "source": "src/extension/acquisition/loader.ts",
+    "kind": "extension-acquisition",
+    "positive": ["src/extension/acquisition/loader.test.ts"],
+    "negative": ["src/extension/acquisition/loader.test.ts"]
+  },
+  {
+    "contract": "createExtension",
+    "source": "extensions/copilot-relay-provider/entry.ts",
+    "kind": "extension-entry-factory",
+    "positive": ["extensions/copilot-relay-provider/entry.test.ts"],
+    "negative": ["extensions/copilot-relay-provider/entry.test.ts"]
+  },
+  {
+    "contract": "RegistrySnapshot",
+    "source": "src/core/registry/types.ts",
+    "kind": "registry-snapshot",
+    "positive": ["src/runtime/registry-builder.test.ts", "src/runtime/composition-coordinator.test.ts"],
+    "negative": ["src/runtime/composition-coordinator.test.ts"]
+  },
+  {
+    "contract": "Channel",
+    "source": "src/core/channel/types.ts",
+    "kind": "port-lifecycle",
+    "positive": ["extensions/websocket-channel/WebSocketChannel.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "ChannelInstance",
+    "source": "src/core/channel/types.ts",
+    "kind": "port-lifecycle",
+    "positive": ["src/runtime/channel-lifecycle.test.ts"],
+    "negative": ["src/runtime/channel-lifecycle.test.ts"]
+  },
+  {
+    "contract": "ChannelCompletion",
+    "source": "src/core/channel/types.ts",
+    "kind": "lifecycle",
+    "positive": ["src/runtime/channel-lifecycle.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "ChannelRunRequest",
+    "source": "src/core/channel/types.ts",
+    "kind": "request",
+    "positive": ["extensions/websocket-channel/WebSocketChannel.test.ts", "src/runtime/RuntimeApp.intake.test.ts"],
+    "negative": ["extensions/websocket-channel/WebSocketChannel.test.ts"]
+  },
+  {
+    "contract": "ChannelRuntimeCapabilities",
+    "source": "src/core/channel/types.ts",
+    "kind": "runtime-capabilities-port",
+    "positive": ["src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "ChannelInteractionAdapter",
+    "source": "src/core/channel/types.ts",
+    "kind": "interaction-port",
+    "positive": ["extensions/websocket-channel/WebSocketChannel.test.ts"],
+    "negative": ["src/runtime/turn-interaction/TurnInteractionManager.test.ts"]
+  },
+  {
+    "contract": "ChannelInteractionTransport",
+    "source": "src/core/channel/types.ts",
+    "kind": "interaction-port",
+    "positive": ["extensions/websocket-channel/WebSocketChannel.test.ts"],
+    "negative": ["src/runtime/turn-interaction/TurnInteractionManager.test.ts"]
+  },
+  {
+    "contract": "ChannelContribution",
+    "source": "src/core/channel/types.ts",
+    "kind": "extension-contribution",
+    "positive": ["src/runtime/channel-lifecycle.test.ts"],
+    "negative": ["src/runtime/registry-builder.test.ts"]
+  },
+  {
+    "contract": "ChannelRuntimeBinding",
+    "source": "src/core/channel/types.ts",
+    "kind": "runtime-binding",
+    "positive": ["src/runtime/channel-lifecycle.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "ChannelProjection",
+    "source": "src/core/channel/types.ts",
+    "kind": "registry-projection",
+    "positive": ["src/runtime/channel-lifecycle.test.ts"],
+    "negative": ["src/runtime/channel-lifecycle.test.ts"]
+  },
+  {
+    "contract": "ChannelCompletionObserver",
+    "source": "src/core/channel/types.ts",
+    "kind": "lifecycle-port",
+    "positive": ["src/runtime/channel-lifecycle.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "ModelInvocationPort",
+    "source": "src/core/model-invocation/types.ts",
+    "kind": "provider-port",
+    "positive": ["src/builtins/providers/builtin/protocol-clients.test.ts"],
+    "negative": ["src/core/runner/AgentRunner.test.ts"]
+  },
+  {
+    "contract": "ModelStreamEvent",
+    "source": "src/core/model-invocation/types.ts",
+    "kind": "event",
+    "positive": ["src/builtins/providers/builtin/protocol-clients.test.ts"],
+    "negative": ["src/builtins/providers/builtin/protocol-clients.test.ts"]
+  },
+  {
+    "contract": "ModelInvocationError",
+    "source": "src/core/model-invocation/errors.ts",
+    "kind": "error",
+    "positive": ["src/core/model-invocation/errors.test.ts", "src/builtins/providers/builtin/protocol-clients.test.ts"],
+    "negative": ["src/core/model-invocation/errors.test.ts", "src/builtins/providers/builtin/protocol-clients.test.ts"]
+  },
+  {
+    "contract": "ModelInvocationStructuralErrorV1",
+    "source": "src/core/model-invocation/errors.ts",
+    "kind": "structural-error",
+    "positive": ["src/core/model-invocation/errors.test.ts", "extensions/copilot-relay-provider/responses-client.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/core/model-invocation/errors.test.ts", "src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "ModelInvocationDiagnostics",
+    "source": "src/core/model-invocation/errors.ts",
+    "kind": "error-diagnostics",
+    "positive": ["src/core/model-invocation/errors.test.ts", "extensions/copilot-relay-provider/responses-client.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/core/model-invocation/errors.test.ts", "src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "toModelInvocationError",
+    "source": "src/core/model-invocation/errors.ts",
+    "kind": "error-canonicalization",
+    "positive": ["src/core/model-invocation/errors.test.ts", "extensions/copilot-relay-provider/responses-client.test.ts", "src/runtime/RuntimeApp.test.ts"],
+    "negative": ["src/core/model-invocation/errors.test.ts", "src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "ResolvedModel",
+    "source": "src/core/model-resolution/types.ts",
+    "kind": "provider-model-binding",
+    "positive": ["src/core/model-resolution/ModelResolver.test.ts"],
+    "negative": ["src/core/model-resolution/ModelResolver.test.ts"]
+  },
+  {
+    "contract": "ModelResolutionError",
+    "source": "src/core/model-resolution/ModelResolver.ts",
+    "kind": "error",
+    "positive": ["src/core/model-resolution/ModelResolver.test.ts"],
+    "negative": ["src/runtime/RuntimeApp.test.ts"]
+  },
+  {
+    "contract": "AgentExecutionFailure",
+    "source": "src/core/runner/errors.ts",
+    "kind": "error",
+    "positive": ["src/core/runner/AgentRunner.test.ts"],
+    "negative": ["src/core/runner/AgentRunner.test.ts"]
+  },
+  {
+    "contract": "SubagentDelegationPort",
+    "source": "src/core/subagent/types.ts",
+    "kind": "delegation-port",
+    "positive": ["src/runtime/subagent-orchestration.test.ts"],
+    "negative": ["src/runtime/subagent-orchestration.test.ts"]
+  },
+  {
+    "contract": "SubagentTerminalResult",
+    "source": "src/core/subagent/types.ts",
+    "kind": "lifecycle",
+    "positive": ["src/runtime/subagent-orchestration.test.ts"],
+    "negative": ["src/runtime/subagent-orchestration.test.ts"]
+  },
+  {
+    "contract": "ToolExecutionContext",
+    "source": "src/core/tools/types.ts",
+    "kind": "abort-context",
+    "positive": ["src/core/runner/AgentRunner.test.ts"],
+    "negative": ["src/core/runner/AgentRunner.test.ts"]
+  },
+  {
+    "contract": "MemoryStore",
+    "source": "src/core/memory/types.ts",
+    "kind": "store-port-lifecycle",
+    "positive": ["src/core/memory/MemoryManager.test.ts"],
+    "negative": []
+  },
+  {
+    "contract": "LogAdapter",
+    "source": "src/platform/logger/types.ts",
+    "kind": "adapter-port-lifecycle",
+    "positive": ["src/platform/logger/Logger.test.ts"],
+    "negative": []
+  }
+]

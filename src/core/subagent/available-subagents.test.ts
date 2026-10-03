@@ -10,7 +10,8 @@ function profile(id: string, description: string): SubagentProfile {
   return {
     id,
     description,
-    agentDir: `/tmp/ws/.agent/subagents/${id}`,
+    agentDir: `/tmp/ws/subagents/${id}`,
+    model: 'inherit',
   };
 }
 
@@ -35,8 +36,8 @@ describe('collectAvailableSubagents', () => {
         {
           id: 'a',
           description: 'A',
-          agentDir: '/tmp/ws/.agent/subagents/a',
-          model: 'gpt-5',
+          agentDir: '/tmp/ws/subagents/a',
+          model: { providerId: 'openai', modelId: 'gpt-5' },
           tools: { allow: ['read_file'] },
           maxLlmCalls: 8,
         },

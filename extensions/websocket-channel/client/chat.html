@@ -1,0 +1,3792 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>my-agent WebSocket Chat</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://unpkg.com/marked@18.0.4/lib/marked.umd.js"></script>
+    <style>
+      /* Base */
+      :root {
+        --bg: #f6efe6; --panel: rgba(255, 251, 246, 0.94); --panel-strong: #fffaf4; --surface: #fffdf9;
+        --surface-soft: #fbf5ee; --border: rgba(191, 160, 128, 0.24); --border-strong: rgba(220, 184, 149, 0.5);
+        --text: #33271e; --muted: #8a7763; --accent: #e7a47d; --accent-strong: #d8895c; --accent-2: #f3c5ad;
+        --success: #b9ddd2; --danger: #b42318; --shadow: 0 20px 50px rgba(132, 97, 57, 0.08); --radius: 24px;
+        --message-min-width: min(320px, 100%); --message-max-width: 80%;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0; min-height: 100vh; height: 100vh; overflow: hidden;
+        font-family: "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif; color: var(--text);
+        background: radial-gradient(circle at top left, rgba(231, 164, 125, 0.22), transparent 24%),
+          linear-gradient(180deg, #fbf7f1 0%, #f5ece1 48%, #f1e3d2 100%);
+      }
+      body::before {
+        content: ""; position: fixed; inset: 0; pointer-events: none;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.42), transparent 28%);
+      }
+      /* Layout */
+      #app {
+        position: relative; display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 18px;
+        width: min(1480px, calc(100vw - 28px)); height: calc(100vh - 28px); margin: 14px auto;
+      }
+      .panel {
+        min-height: 0; backdrop-filter: blur(12px); background: var(--panel); border: 1px solid var(--border);
+        border-radius: var(--radius); box-shadow: var(--shadow);
+      }
+      .sidebar {
+        position: relative; padding: 20px; display: flex; flex-direction: column; gap: 16px; overflow: auto;
+      }
+      .icon-button.mobile-sidebar-trigger, .icon-button.mobile-sidebar-close, .mobile-sidebar-scrim {
+        display: none;
+      }
+      /* Sidebar */
+      .brand {
+        display: flex; flex-direction: column; gap: 8px;
+      }
+      .eyebrow {
+        letter-spacing: 0.18em; text-transform: uppercase; font-size: 11px; color: var(--muted); font-weight: 700;
+      }
+      .brand-title {
+        margin: 0; font-size: 24px; line-height: 1; font-weight: 700;
+      }
+      .status-pill {
+        display: inline-flex; align-items: center; gap: 8px; font-size: 13px; padding: 7px 10px; border-radius: 999px;
+        background: rgba(255, 255, 255, 0.88); color: var(--muted);
+      }
+      .status-pill::before {
+        content: ""; width: 9px; height: 9px; border-radius: 999px; background: #9aa29b;
+      }
+      .status-pill.connected::before {
+        background: #6bb39c; box-shadow: 0 0 0 4px rgba(107, 179, 156, 0.16);
+      }
+      .status-pill.connecting::before {
+        background: var(--accent-strong); box-shadow: 0 0 0 4px rgba(216, 137, 92, 0.14);
+      }
+      .section {
+        display: flex; flex-direction: column; gap: 12px;
+      }
+      .section-title {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      }
+      .section-title h2 {
+        margin: 0; font-size: 14px; font-weight: 600;
+      }
+      .section-note {
+        margin: -4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5;
+      }
+      .section-title small {
+        color: var(--muted);
+      }
+      .field-grid {
+        display: grid; gap: 10px;
+      }
+      label {
+        display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--muted);
+      }
+      .field-label-text {
+        color: var(--text); font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
+      }
+      input, select, textarea, button {
+        font: inherit;
+      }
+      input, select, textarea {
+        width: 100%; padding: 12px 14px; color: var(--text); background: rgba(255, 255, 255, 0.9);
+        border: 1px solid rgba(191, 160, 128, 0.25); border-radius: 14px; outline: none;
+        transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+      }
+      input:focus, select:focus, textarea:focus {
+        border-color: rgba(216, 137, 92, 0.42); box-shadow: 0 0 0 4px rgba(231, 164, 125, 0.14);
+      }
+      .model-picker {
+        position: relative; display: flex; flex-direction: column; gap: 8px;
+      }
+      .reasoning-controls {
+        display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;
+      }
+      .reasoning-control {
+        min-width: 0;
+      }
+      .reasoning-picker-trigger {
+        min-height: 45px;
+      }
+      .reasoning-picker-panel {
+        padding: 6px;
+      }
+      .reasoning-picker-option {
+        grid-template-columns: 18px minmax(0, 1fr); padding: 9px;
+      }
+      .reasoning-notice {
+        color: var(--muted); font-size: 12px; line-height: 1.45;
+      }
+      .model-picker-trigger {
+        position: relative; z-index: 32; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        width: 100%; min-width: 0; padding: 11px 13px; color: var(--text); text-align: left;
+        background: rgba(255, 255, 255, 0.9); border: 1px solid rgba(191, 160, 128, 0.25); border-radius: 14px;
+      }
+      .model-picker-trigger:hover:not(:disabled) {
+        transform: none; border-color: rgba(216, 137, 92, 0.42);
+      }
+      .model-picker.open .model-picker-trigger {
+        border-color: rgba(216, 137, 92, 0.42); box-shadow: 0 0 0 4px rgba(231, 164, 125, 0.14);
+      }
+      .model-picker-trigger-copy {
+        min-width: 0; display: grid; gap: 2px;
+      }
+      .model-picker-trigger-name, .model-picker-trigger-provider {
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .model-picker-trigger-name {
+        color: var(--text); font-weight: 600;
+      }
+      .model-picker-trigger-provider {
+        color: var(--muted); font-size: 11px;
+      }
+      .model-picker-chevron {
+        flex: none; color: var(--muted); transition: transform 140ms ease;
+      }
+      .model-picker.open .model-picker-chevron {
+        transform: rotate(180deg);
+      }
+      .model-picker-scrim {
+        position: fixed; z-index: 30; inset: 0;
+      }
+      .model-picker-panel {
+        position: absolute; z-index: 33; top: calc(100% + 8px); left: 0; width: 100%; overflow: hidden; padding: 8px;
+        color: var(--text); background: rgba(255, 253, 249, 0.99); border: 1px solid var(--border-strong);
+        border-radius: 16px; box-shadow: 0 18px 44px rgba(75, 52, 31, 0.18);
+      }
+      .model-picker-search {
+        padding: 10px 12px; border-radius: 11px;
+      }
+      .model-picker-list {
+        max-height: 300px; margin-top: 7px; overflow-y: auto; scrollbar-width: thin;
+        scrollbar-color: rgba(122, 103, 80, 0.45) transparent;
+      }
+      .model-provider-group + .model-provider-group {
+        margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--border);
+      }
+      .model-provider-heading {
+        display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 8px 9px 5px;
+        color: var(--muted); font-size: 11px; font-weight: 700;
+      }
+      .model-provider-id {
+        overflow: hidden; font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .model-picker-option {
+        display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 7px; width: 100%;
+        padding: 8px 9px; color: var(--text); text-align: left; background: transparent; border-radius: 10px;
+      }
+      .model-picker-option:hover, .model-picker-option.active {
+        transform: none; background: rgba(231, 164, 125, 0.13);
+      }
+      .model-picker-option.selected {
+        background: rgba(216, 137, 92, 0.16);
+      }
+      .model-picker-check {
+        color: var(--accent-strong); font-weight: 800;
+      }
+      .model-picker-option-copy {
+        min-width: 0; display: grid; gap: 1px;
+      }
+      .model-picker-option-name, .model-picker-option-id {
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .model-picker-option-name {
+        font-size: 12px; font-weight: 600;
+      }
+      .model-picker-option-id {
+        color: var(--muted); font-size: 10px;
+      }
+      .model-picker-default-badge {
+        padding: 3px 6px; color: #9d562e; font-size: 9px; font-weight: 700; background: rgba(231, 164, 125, 0.2);
+        border-radius: 999px; text-transform: uppercase;
+      }
+      .model-picker-empty {
+        padding: 22px 12px; color: var(--muted); font-size: 12px; text-align: center;
+      }
+      textarea {
+        min-height: 108px; resize: vertical;
+      }
+      .button-row {
+        display: flex; gap: 10px; flex-wrap: wrap;
+      }
+      button {
+        border: 0; border-radius: 999px; padding: 11px 16px; cursor: pointer;
+        transition: transform 140ms ease, opacity 140ms ease, box-shadow 140ms ease;
+      }
+      button:hover:not(:disabled) {
+        transform: translateY(-1px);
+      }
+      button:disabled {
+        opacity: 0.5; cursor: not-allowed;
+      }
+      .primary {
+        color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+        box-shadow: 0 12px 24px rgba(216, 137, 92, 0.24);
+      }
+      .secondary {
+        color: var(--text); background: rgba(255, 255, 255, 0.88); border: 1px solid rgba(191, 160, 128, 0.22);
+      }
+      .ghost {
+        color: var(--muted); background: rgba(122, 103, 80, 0.08);
+      }
+      .connection-meta {
+        min-width: 0; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .icon-button {
+        display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; color: var(--muted);
+        background: rgba(122, 103, 80, 0.08); border: 1px solid transparent; border-radius: 8px; font-size: 17px;
+        line-height: 1;
+      }
+      .icon-button:hover:not(:disabled) {
+        transform: none; color: var(--text); border-color: var(--border-strong);
+      }
+      .section-actions {
+        display: flex; align-items: center; gap: 6px;
+      }
+      .session-list {
+        display: flex; flex-direction: column; gap: 6px; min-height: 92px; max-height: min(34vh, 320px);
+        overflow-y: auto;
+      }
+      .session-list-state {
+        padding: 16px 12px; color: var(--muted); font-size: 12px; text-align: center;
+        border: 1px dashed var(--border-strong); border-radius: 8px;
+      }
+      .session-list-state.error {
+        color: var(--danger);
+      }
+      .session-list-state.error .secondary {
+        margin-top: 10px;
+      }
+      .session-item {
+        position: relative; display: flex; align-items: center; width: 100%; min-height: 54px; padding: 4px;
+        color: var(--text); background: rgba(255, 255, 255, 0.72); border: 1px solid var(--border); border-radius: 8px;
+      }
+      .session-item:hover, .session-item:focus-within {
+        border-color: var(--border-strong); background: rgba(255, 255, 255, 0.94);
+      }
+      .session-item.selected {
+        border-color: rgba(216, 137, 92, 0.55); background: rgba(231, 164, 125, 0.14);
+      }
+      .session-select-button {
+        min-width: 0; min-height: 44px; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center; gap: 10px; padding: 5px 6px; color: inherit; text-align: left; background: transparent;
+        border-radius: 6px;
+      }
+      .session-select-button:hover:not(:disabled) {
+        transform: none; background: transparent;
+      }
+      .session-item-copy {
+        min-width: 0; display: grid; gap: 3px;
+      }
+      .session-item-title {
+        overflow: hidden; color: var(--text); font-size: 13px; font-weight: 650; text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .session-item-id, .session-item-time {
+        color: var(--muted); font-size: 10px;
+      }
+      .session-item-time {
+        white-space: nowrap;
+      }
+      .session-action-trigger {
+        width: 32px; height: 32px; flex: none; display: grid; place-items: center; padding: 0; color: var(--muted);
+        font-size: 19px; line-height: 1; background: transparent; border-radius: 7px; opacity: 0;
+      }
+      .session-item:hover .session-action-trigger, .session-item:focus-within .session-action-trigger, .session-item.selected .session-action-trigger, .session-action-trigger[aria-expanded="true"] {
+        opacity: 1;
+      }
+      .session-action-trigger:hover:not(:disabled) {
+        transform: none; color: var(--text); background: rgba(122, 103, 80, 0.1);
+      }
+      .session-action-scrim {
+        position: fixed; z-index: 40; inset: 0; background: transparent;
+      }
+      .session-action-menu {
+        position: fixed; z-index: 41; width: 148px; padding: 6px; background: rgba(255, 253, 249, 0.99);
+        border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: 0 16px 34px rgba(75, 52, 31, 0.2);
+      }
+      .session-action-menu-item {
+        display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 8px; width: 100%;
+        padding: 9px 10px; color: var(--text); text-align: left; background: transparent; border-radius: 7px;
+      }
+      .session-action-menu-item:hover:not(:disabled), .session-action-menu-item:focus-visible {
+        transform: none; background: rgba(122, 103, 80, 0.1);
+      }
+      .session-action-menu-item.danger {
+        color: var(--danger);
+      }
+      .session-action-icon {
+        font-size: 15px; text-align: center;
+      }
+      .event-feed-toggle {
+        width: 100%; padding: 0; color: inherit; text-align: left; background: transparent; border-radius: 0;
+      }
+      .event-feed-toggle:hover:not(:disabled) {
+        transform: none;
+      }
+      .event-feed-toggle-copy {
+        display: flex; align-items: center; gap: 8px;
+      }
+      .event-feed-chevron {
+        color: var(--muted); font-size: 12px; transition: transform 140ms ease;
+      }
+      .event-feed-chevron.expanded {
+        transform: rotate(90deg);
+      }
+      /* Conversation */
+      .chat-shell {
+        display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; overflow: hidden;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 251, 247, 0.92));
+      }
+      .chat-header {
+        padding: 22px 24px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center;
+        justify-content: space-between; gap: 18px;
+      }
+      .chat-title {
+        margin: 0; font-size: 24px; font-weight: 700;
+      }
+      .chat-subtitle {
+        margin: 6px 0 0; color: var(--muted); font-size: 15px;
+      }
+      .chat-header-actions {
+        display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end;
+      }
+      .waiting-badge {
+        display: inline-flex; align-items: center; gap: 8px; padding: 14px 18px; border-radius: 999px;
+        border: 1px solid rgba(231, 164, 125, 0.42); background: rgba(255, 246, 239, 0.92); color: #9d562e;
+        font-size: 16px; font-weight: 700;
+      }
+      .chat-log {
+        overflow: auto; min-height: 0; padding: 22px 24px 30px; display: flex; flex-direction: column; gap: 22px;
+      }
+      .empty-state {
+        margin: auto; max-width: 560px; padding: 24px 28px; border-radius: 24px; border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.72); text-align: left; color: var(--muted); line-height: 1.6; display: grid;
+        gap: 12px;
+      }
+      .empty-state h3 {
+        margin: 0; color: var(--text); font-size: 20px;
+      }
+      .empty-state p {
+        margin: 0;
+      }
+      .empty-state-list {
+        margin: 0; padding-left: 18px; display: grid; gap: 8px;
+      }
+      .message {
+        display: flex; flex-direction: column; gap: 10px; animation: rise 220ms ease;
+      }
+      .message.user {
+        align-items: flex-end;
+      }
+      .message.assistant, .message.system, .message.tool, .message.approval, .message.error {
+        align-items: flex-start;
+      }
+      .message-meta {
+        font-size: 13px; color: var(--muted); display: flex; gap: 8px; align-items: center; font-weight: 600;
+      }
+      .message.user .message-meta {
+        justify-content: flex-end;
+      }
+      .bubble {
+        max-width: var(--message-max-width); padding: 18px 26px; border-radius: 28px; line-height: 1.68;
+        white-space: pre-wrap; word-break: break-word; border: 1px solid rgba(191, 160, 128, 0.18);
+        background: rgba(255, 255, 255, 0.92);
+      }
+      .message.user .bubble {
+        background: linear-gradient(180deg, #f7e6d9, #f4dccd); color: var(--text);
+        border-color: rgba(231, 164, 125, 0.24); border-top-right-radius: 12px;
+      }
+      .message.assistant .bubble {
+        background: rgba(255, 255, 255, 0.96); border-top-left-radius: 12px;
+      }
+      .thinking-card {
+        max-width: var(--message-max-width);
+        border: 1px solid rgba(191, 160, 128, 0.22);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.72);
+        overflow: hidden;
+      }
+      .thinking-header {
+        width: 100%; border: 0; background: transparent; color: var(--muted);
+        padding: 9px 12px; display: flex; justify-content: space-between;
+        cursor: pointer; font: inherit;
+      }
+      .thinking-text {
+        margin: 0; padding: 0 12px 12px; color: var(--muted);
+        white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit;
+      }
+      .rich-text {
+        display: grid; gap: 14px; white-space: normal; overflow-x: auto;
+      }
+      .rich-text table {
+        border-collapse: collapse; width: max-content; min-width: 100%; font-size: 0.95em;
+      }
+      .rich-text th, .rich-text td {
+        padding: 7px 14px; border: 1px solid rgba(191, 160, 128, 0.3); text-align: left; white-space: nowrap;
+      }
+      .rich-text th {
+        background: rgba(231, 164, 125, 0.12); font-weight: 600;
+      }
+      .rich-text tr:nth-child(even) td {
+        background: rgba(231, 164, 125, 0.04);
+      }
+      .rich-text > :first-child {
+        margin-top: 0;
+      }
+      .rich-text > :last-child {
+        margin-bottom: 0;
+      }
+      .rich-text p, .rich-text ul, .rich-text ol, .rich-text pre, .rich-text h1, .rich-text h2, .rich-text h3, .rich-text h4, .rich-text h5, .rich-text h6, .rich-text hr {
+        margin: 0;
+      }
+      .rich-text h1, .rich-text h2, .rich-text h3, .rich-text h4, .rich-text h5, .rich-text h6 {
+        color: #241810; line-height: 1.3;
+      }
+      .rich-text h1 {
+        font-size: 1.5em;
+      }
+      .rich-text h2 {
+        font-size: 1.32em;
+      }
+      .rich-text h3 {
+        font-size: 1.18em;
+      }
+      .rich-text hr {
+        border: 0; border-top: 1px solid rgba(191, 160, 128, 0.35);
+      }
+      .rich-text ul, .rich-text ol {
+        padding-left: 24px;
+      }
+      .rich-text li + li {
+        margin-top: 6px;
+      }
+      .rich-text a {
+        color: #9d562e; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
+      }
+      .rich-text strong {
+        font-weight: 700;
+      }
+      .rich-text code {
+        display: inline; padding: 2px 8px; border-radius: 999px; background: rgba(47, 36, 30, 0.08); color: #6c3f21;
+        font-family: Consolas, "Courier New", monospace; font-size: 0.95em;
+      }
+      .rich-text pre {
+        max-width: 100%; overflow-x: auto; padding: 14px 16px; border-radius: 18px; background: #2f241e; color: #f8efe4;
+        font-family: Consolas, "Courier New", monospace; font-size: 13px; line-height: 1.55;
+      }
+      .rich-text pre code {
+        display: block; padding: 0; border-radius: 0; background: transparent; color: inherit; font-size: inherit;
+      }
+      .message.system .bubble, .message.tool .bubble {
+        background: rgba(255, 249, 242, 0.9); color: #54422c;
+      }
+      .message.error .bubble {
+        color: var(--danger); background: rgba(180, 35, 24, 0.08); border-color: rgba(180, 35, 24, 0.18);
+      }
+      .message.approval .bubble {
+        padding: 0; background: transparent; border: 0; box-shadow: none;
+      }
+      /* Tool call toggle button */
+      .turn-tools-toggle {
+        align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px;
+        border-radius: 999px; background: rgba(255, 255, 255, 0.72); border: 1px solid rgba(191, 160, 128, 0.28);
+        color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer;
+        transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+      }
+      .turn-tools-toggle:hover {
+        background: rgba(255, 255, 255, 0.96); color: var(--text); transform: translateY(-1px);
+      }
+      .composer {
+        padding: 18px 24px 24px; border-top: 1px solid var(--border); display: grid; gap: 12px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.48), rgba(255,255,255,0.84));
+      }
+      .composer textarea {
+        min-height: 94px;
+      }
+      .composer-row {
+        display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+      }
+      .composer-hint {
+        display: grid; gap: 4px; color: var(--muted); font-size: 13px;
+      }
+      /* Approval and tool cards */
+      .approval-card {
+        width: fit-content; min-width: var(--message-min-width); max-width: var(--message-max-width); padding: 22px;
+        background: #fff7ef; border: 1px solid rgba(231, 164, 125, 0.26); border-radius: 26px; box-shadow: none;
+        display: flex; flex-direction: column; gap: 16px;
+      }
+      .approval-card.pending {
+        border-color: rgba(239, 131, 84, 0.28);
+      }
+      .approval-card.collapsed {
+        padding: 14px 16px; gap: 10px; border-radius: 18px;
+      }
+      .approval-card.resolved {
+        border-color: rgba(107, 179, 156, 0.32); background: #f5fbf9;
+      }
+      .approval-card.aborted, .approval-card.unavailable, .approval-card.failed, .approval-card.denied {
+        background: #fff7f4;
+      }
+      .approval-card h3 {
+        margin: 0; font-size: 18px; font-weight: 700;
+      }
+      .approval-title-row {
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      }
+      .approval-code {
+        margin: 0; padding: 14px; border-radius: 22px; background: #2f241e; color: #f8efe4;
+        border: 1px solid rgba(47, 36, 30, 0.16); max-width: 100%; overflow-x: auto; overflow-y: hidden;
+        white-space: pre; word-break: normal; font-family: Consolas, "Courier New", monospace; font-size: 13px;
+        line-height: 1.55;
+      }
+      .approval-code, .tool-result-scroll {
+        scrollbar-width: thin; scrollbar-color: rgba(122, 103, 80, 0.72) rgba(47, 36, 30, 0.08);
+      }
+      .approval-code::-webkit-scrollbar, .tool-result-scroll::-webkit-scrollbar {
+        height: 12px; width: 12px;
+      }
+      .approval-code::-webkit-scrollbar-track, .tool-result-scroll::-webkit-scrollbar-track {
+        background: rgba(47, 36, 30, 0.08); border-radius: 999px;
+      }
+      .approval-code::-webkit-scrollbar-thumb, .tool-result-scroll::-webkit-scrollbar-thumb {
+        background: rgba(122, 103, 80, 0.72); border-radius: 999px; border: 2px solid rgba(47, 36, 30, 0.08);
+      }
+      .approval-code::-webkit-scrollbar-thumb:hover, .tool-result-scroll::-webkit-scrollbar-thumb:hover {
+        background: rgba(122, 103, 80, 0.9);
+      }
+      .approval-meta {
+        display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 13px;
+      }
+      .meta-tag {
+        display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;
+        background: rgba(231, 164, 125, 0.2); color: #9d562e; font-size: 10.5px; font-weight: 700;
+        letter-spacing: 0.06em; text-transform: uppercase;
+      }
+      .meta-tag-warn {
+        background: rgba(180, 35, 24, 0.1); color: var(--danger);
+      }
+      .meta-tag-muted {
+        background: rgba(122, 103, 80, 0.12); color: var(--muted);
+      }
+      .reasoning-summary {
+        margin-top: 9px; color: var(--muted); font-size: 11px;
+      }
+      .message.assistant.is-interrupted .bubble, .message.assistant.is-interrupted .tool-result-card {
+        opacity: 0.82;
+      }
+      .message.assistant.is-interrupted::after {
+        content: ""; margin-top: 2px; width: 48px; height: 2px; border-radius: 999px;
+        background: repeating-linear-gradient(
+          90deg,
+          rgba(180, 35, 24, 0.45) 0 6px,
+          transparent 6px 10px
+        );
+      }
+      .approval-actions {
+        display: flex; justify-content: flex-start; gap: 10px;
+      }
+      .tool-card-toggle {
+        width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent;
+        color: var(--muted); font-size: 18px; cursor: pointer;
+      }
+      .tool-card-toggle:hover {
+        background: rgba(47, 36, 30, 0.08); color: var(--text);
+      }
+      .tool-card-summary {
+        min-width: 0; color: var(--muted); font-family: Consolas, "Courier New", monospace; font-size: 12px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .tool-card-section-label {
+        color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+      }
+      .tool-result-card {
+        width: fit-content; min-width: var(--message-min-width); max-width: var(--message-max-width); display: grid;
+        gap: 12px; padding: 18px 20px; border-radius: 22px; border: 1px solid rgba(191, 160, 128, 0.2);
+        background: rgba(255, 250, 244, 0.92);
+      }
+      .tool-result-card.is-error {
+        border-color: rgba(180, 35, 24, 0.18); background: rgba(180, 35, 24, 0.06);
+      }
+      .tool-result-header {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+      }
+      .tool-result-title {
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      }
+      .tool-result-name {
+        font-weight: 700;
+      }
+      .tool-result-badge {
+        display: inline-flex; align-items: center; padding: 5px 10px; border-radius: 999px;
+        background: rgba(47, 36, 30, 0.08); color: var(--muted); font-size: 12px; font-weight: 700;
+      }
+      .tool-result-card.is-error .tool-result-badge {
+        background: rgba(180, 35, 24, 0.1); color: var(--danger);
+      }
+      .tool-result-preview {
+        max-width: 100%; border-radius: 16px; overflow: hidden; padding: 8px; background: rgba(47, 36, 30, 0.05);
+        color: #5c4a36;
+      }
+      .tool-result-body {
+        max-width: 100%; border-radius: 18px; overflow: hidden; padding: 8px; background: #2f241e; color: #f8efe4;
+      }
+      .tool-result-scroll {
+        display: block; margin: 0; max-width: 100%; overflow: auto; border-radius: 12px;
+        font-family: Consolas, "Courier New", monospace; font-size: 13px; line-height: 1.55; white-space: pre;
+      }
+      .tool-result-preview .tool-result-scroll {
+        padding: 4px 6px 6px;
+      }
+      .tool-result-body .tool-result-scroll {
+        padding: 6px 8px 8px; font-family: Consolas, "Courier New", monospace; max-height: min(60vh, 720px);
+      }
+      .approval-code {
+        max-height: min(50vh, 560px); overflow: auto;
+      }
+      .approval-status {
+        display: inline-flex; align-items: center; gap: 8px; width: fit-content; padding: 7px 10px;
+        border-radius: 999px; font-size: 12px; color: var(--muted); background: rgba(114, 86, 48, 0.08);
+      }
+      .approval-status.pending {
+        color: #8c4d24; background: rgba(231, 164, 125, 0.2);
+      }
+      .approval-status.allowed {
+        color: #0f5b52; background: rgba(107, 179, 156, 0.18);
+      }
+      .approval-status.denied, .approval-status.aborted, .approval-status.unavailable, .approval-status.failed {
+        color: var(--danger); background: rgba(180, 35, 24, 0.1);
+      }
+      /* Event feed */
+      .event-list {
+        display: flex; flex-direction: column; gap: 8px; max-height: 190px; overflow: auto;
+      }
+      .event-item {
+        font-size: 12px; line-height: 1.5; color: var(--muted); padding: 10px 12px;
+        background: rgba(255, 255, 255, 0.82); border-radius: 12px; border: 1px solid rgba(191, 160, 128, 0.16);
+      }
+      /* Motion and responsive */
+      @keyframes rise {
+        from {
+          opacity: 0; transform: translateY(8px);
+        }
+        to {
+          opacity: 1; transform: translateY(0);
+        }
+      }
+      @media (max-width: 980px) {
+        body {
+          height: 100dvh; overflow: hidden;
+        }
+        #app {
+          grid-template-columns: 1fr; gap: 0; width: 100%; height: 100dvh; min-height: 0; margin: 0;
+        }
+        .sidebar {
+          position: fixed; z-index: 31; inset: 0 auto 0 0; width: min(340px, calc(100vw - 48px)); height: 100dvh;
+          padding: max(20px, env(safe-area-inset-top))
+            20px
+            max(20px, env(safe-area-inset-bottom));
+          border-radius: 0 var(--radius) var(--radius) 0; visibility: hidden; pointer-events: none;
+          transform: translateX(calc(-100% - 24px)); transition: transform 180ms ease, visibility 0s linear 180ms;
+        }
+        .sidebar.is-open {
+          visibility: visible; pointer-events: auto; transform: translateX(0); transition-delay: 0s;
+        }
+        .icon-button.mobile-sidebar-trigger, .icon-button.mobile-sidebar-close {
+          display: inline-grid;
+        }
+        .mobile-sidebar-close {
+          position: absolute; top: max(16px, env(safe-area-inset-top)); right: 16px;
+        }
+        .mobile-sidebar-scrim {
+          position: fixed; z-index: 30; inset: 0; display: block; padding: 0; background: rgba(47, 36, 30, 0.28);
+          border: 0; border-radius: 0; backdrop-filter: blur(2px);
+        }
+        .mobile-sidebar-scrim:hover:not(:disabled) {
+          transform: none;
+        }
+        .chat-shell {
+          height: 100dvh; min-height: 0; border-radius: 0;
+        }
+        .chat-header {
+          padding-top: max(18px, env(safe-area-inset-top));
+        }
+        .composer {
+          padding-bottom: max(20px, env(safe-area-inset-bottom));
+        }
+      }
+      /* ── Attachments ───────────────────────────────────────── */
+      .composer.is-dragging {
+        outline: 2px dashed var(--accent); outline-offset: -8px;
+      }
+      .composer-attachments {
+        display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px;
+      }
+      .composer-attach-error {
+        color: var(--danger, #c0382b); font-size: 12px;
+      }
+      .attachment-chip-row {
+        display: flex; flex-wrap: wrap; gap: 8px;
+      }
+      .attachment-chip {
+        display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border, #2a2a2a);
+        border-radius: 8px; background: var(--panel-muted, rgba(255,255,255,0.03));
+      }
+      .attachment-chip img {
+        width: 36px; height: 36px; object-fit: cover; border-radius: 4px;
+      }
+      .attachment-chip-meta {
+        display: flex; flex-direction: column; font-size: 11px; line-height: 1.3;
+      }
+      .attachment-chip-name {
+        color: var(--fg, #e5e5e5); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .attachment-chip-size {
+        color: var(--fg-muted, #888);
+      }
+      .attachment-chip-badge {
+        display: inline-block; margin-top: 2px; padding: 0 6px; border-radius: 999px;
+        background: var(--accent-soft, rgba(100,180,255,0.15)); color: var(--accent, #6cb6ff); font-size: 10px;
+      }
+      .attachment-chip-remove {
+        appearance: none; background: transparent; border: none; cursor: pointer; color: var(--fg-muted, #888);
+        font-size: 16px; padding: 0 4px;
+      }
+      .attachment-chip-remove:hover {
+        color: var(--danger, #c0382b);
+      }
+      .bubble-text + .bubble-attachments {
+        margin-top: 8px;
+      }
+      .bubble-attachments {
+        display: flex; flex-wrap: wrap; gap: 8px;
+      }
+      .bubble-attachment {
+        display: flex; flex-direction: column; gap: 4px; max-width: 240px;
+      }
+      .bubble-attachment img {
+        width: 100%; max-height: 240px; object-fit: contain; border-radius: 6px; background: rgba(0,0,0,0.2);
+      }
+      .bubble-attachment-meta {
+        display: flex; justify-content: space-between; font-size: 11px; color: var(--fg-muted, #888);
+      }
+      .permission-panel {
+        display: grid; gap: 8px;
+      }
+      .permission-indicator {
+        padding: 8px 10px; border-radius: 8px; font-size: 12px; font-weight: 700;
+        border: 1px solid var(--border, #2a2a2a);
+      }
+      .permission-indicator.allow-all {
+        color: var(--danger, #c0382b); background: rgba(192, 56, 43, 0.1);
+      }
+      .permission-warning {
+        margin: 0; color: var(--danger, #c0382b); font-size: 12px;
+      }
+      </style>
+  </head>
+  <body>
+    <div id="app">
+      <aside
+        id="sidebar-panel"
+        ref="sidebarPanel"
+        class="panel sidebar"
+        :class="{ 'is-open': sidebarOpen }"
+        :inert="isMobileLayout && !sidebarOpen"
+        :aria-hidden="isMobileLayout && !sidebarOpen ? 'true' : null"
+        @keydown.escape.stop="closeMobileSidebar"
+      >
+        <header class="brand">
+          <div class="eyebrow">WebSocket Client</div>
+          <h1 class="brand-title">my-agent chat</h1>
+          <button
+            ref="mobileSidebarCloseButton"
+            class="icon-button mobile-sidebar-close"
+            type="button"
+            title="Close navigation"
+            aria-label="Close navigation"
+            @click="closeMobileSidebar"
+          >×</button>
+        </header>
+
+        <section class="section">
+          <div class="section-title">
+            <h2>Connection</h2>
+            <div class="status-pill" :class="statusClass">{{ connectionStatus }}</div>
+          </div>
+          <div class="field-grid">
+            <label>
+              <span class="field-label-text">WebSocket URL</span>
+              <input v-model.trim="form.url" placeholder="WebSocket URL" />
+            </label>
+          </div>
+          <div class="button-row">
+            <button class="primary" @click="connect" :disabled="isConnecting || isConnected">
+              {{ isConnected ? 'Connected' : isConnecting ? 'Connecting…' : 'Connect' }}
+            </button>
+            <button class="secondary" @click="disconnect" :disabled="!socket">Disconnect</button>
+          </div>
+          <div class="connection-meta" :title="form.clientId">
+            {{ lastStatusMessage }} · {{ form.clientId }}
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">
+            <h2>Model</h2>
+          </div>
+          <div class="model-picker" :class="{ open: modelPickerOpen }">
+            <button
+              class="model-picker-trigger"
+              type="button"
+              :disabled="!modelCatalog || availableModels.length === 0"
+              :aria-expanded="String(modelPickerOpen)"
+              aria-haspopup="listbox"
+              @click="toggleModelPicker"
+            >
+                <span class="model-picker-trigger-copy">
+                  <span class="model-picker-trigger-name">{{ modelPickerLabel }}</span>
+                  <span v-if="selectedModelDetails" class="model-picker-trigger-provider">
+                    {{ selectedModelDetails.provider.displayName }}
+                  </span>
+                </span>
+                <span class="model-picker-chevron">⌄</span>
+            </button>
+            <div v-if="modelPickerOpen" class="model-picker-scrim" @click="closeModelPicker"></div>
+            <div
+              v-if="modelPickerOpen"
+              class="model-picker-panel"
+              role="dialog"
+              aria-label="Select model"
+              @keydown.esc.stop="closeModelPicker"
+            >
+                <input
+                  ref="modelSearchEl"
+                  v-model="modelSearch"
+                  class="model-picker-search"
+                  type="search"
+                  role="combobox"
+                  aria-label="Search models or providers"
+                  aria-autocomplete="list"
+                  aria-controls="model-picker-options"
+                  aria-expanded="true"
+                  :aria-activedescendant="activeModelOptionId"
+                  placeholder="Search models or providers"
+                  @input="onModelSearchInput"
+                  @keydown="onModelSearchKeydown"
+                />
+                <div id="model-picker-options" class="model-picker-list" role="listbox">
+                  <div v-if="filteredModelProviders.length === 0" class="model-picker-empty">
+                    {{ availableModels.length === 0 ? 'No models available' : 'No matching models' }}
+                  </div>
+                  <section
+                    v-for="provider in filteredModelProviders"
+                    :key="provider.providerId"
+                    class="model-provider-group"
+                  >
+                    <div class="model-provider-heading">
+                      <span>{{ provider.displayName }}</span>
+                      <span class="model-provider-id">{{ provider.providerId }}</span>
+                    </div>
+                    <button
+                      v-for="model in provider.models"
+                      :key="modelOptionToken(provider.providerId, model.modelId)"
+                      class="model-picker-option"
+                      :class="{
+                        selected: isSelectedModel(provider.providerId, model.modelId),
+                        active: activeModelOptionIndex === modelOptionIndex(provider.providerId, model.modelId),
+                      }"
+                      type="button"
+                      role="option"
+                      :id="modelOptionId(provider.providerId, model.modelId)"
+                      :aria-selected="String(isSelectedModel(provider.providerId, model.modelId))"
+                      @mouseenter="activeModelOptionIndex = modelOptionIndex(provider.providerId, model.modelId)"
+                      @click="selectModel(provider.providerId, model.modelId)"
+                    >
+                      <span class="model-picker-check">
+                        {{ isSelectedModel(provider.providerId, model.modelId) ? '✓' : '' }}
+                      </span>
+                      <span class="model-picker-option-copy">
+                        <span class="model-picker-option-name">{{ model.displayName }}</span>
+                        <span class="model-picker-option-id">{{ model.modelId }}</span>
+                      </span>
+                      <span
+                        v-if="isRuntimeDefaultModel(provider.providerId, model.modelId)"
+                        class="model-picker-default-badge"
+                      >Default</span>
+                    </button>
+                  </section>
+                </div>
+            </div>
+          </div>
+          <div v-if="showThinkingControl || showEffortControl" class="reasoning-controls">
+            <div
+              v-if="showThinkingControl"
+              class="reasoning-control model-picker"
+              :class="{ open: reasoningPickerOpen === 'thinking' }"
+            >
+              <span class="field-label-text">Thinking</span>
+              <button
+                class="model-picker-trigger reasoning-picker-trigger"
+                type="button"
+                :aria-label="`Thinking: ${formatReasoningOption(reasoningSelection.thinking)}`"
+                :aria-expanded="String(reasoningPickerOpen === 'thinking')"
+                aria-haspopup="listbox"
+                @click="toggleReasoningPicker('thinking')"
+              >
+                <span class="model-picker-trigger-copy">
+                  <span class="model-picker-trigger-name">
+                    {{ formatReasoningOption(reasoningSelection.thinking) }}
+                  </span>
+                </span>
+                <span class="model-picker-chevron">⌄</span>
+              </button>
+              <div
+                v-if="reasoningPickerOpen === 'thinking'"
+                class="model-picker-scrim"
+                @click="closeReasoningPicker"
+              ></div>
+              <div
+                v-if="reasoningPickerOpen === 'thinking'"
+                class="model-picker-panel reasoning-picker-panel"
+                role="listbox"
+                aria-label="Thinking options"
+                @keydown.esc.stop="closeReasoningPicker"
+              >
+                <button
+                  v-for="value in reasoningPickerOptions('thinking')"
+                  :key="value"
+                  class="model-picker-option reasoning-picker-option"
+                  :class="{ selected: reasoningSelection.thinking === value }"
+                  type="button"
+                  role="option"
+                  :aria-selected="String(reasoningSelection.thinking === value)"
+                  :disabled="isReasoningPickerOptionDisabled('thinking', value)"
+                  @click="selectReasoningOption('thinking', value)"
+                >
+                  <span class="model-picker-check">
+                    {{ reasoningSelection.thinking === value ? '✓' : '' }}
+                  </span>
+                  <span class="model-picker-option-copy">
+                    <span class="model-picker-option-name">{{ formatReasoningOption(value) }}</span>
+                  </span>
+                </button>
+              </div>
+            </div>
+            <div
+              v-if="showEffortControl"
+              class="reasoning-control model-picker"
+              :class="{ open: reasoningPickerOpen === 'effort' }"
+            >
+              <span class="field-label-text">Effort</span>
+              <button
+                class="model-picker-trigger reasoning-picker-trigger"
+                type="button"
+                :aria-label="`Reasoning effort: ${formatReasoningOption(reasoningSelection.effort)}`"
+                :aria-expanded="String(reasoningPickerOpen === 'effort')"
+                aria-haspopup="listbox"
+                @click="toggleReasoningPicker('effort')"
+              >
+                <span class="model-picker-trigger-copy">
+                  <span class="model-picker-trigger-name">
+                    {{ formatReasoningOption(reasoningSelection.effort) }}
+                  </span>
+                </span>
+                <span class="model-picker-chevron">⌄</span>
+              </button>
+              <div
+                v-if="reasoningPickerOpen === 'effort'"
+                class="model-picker-scrim"
+                @click="closeReasoningPicker"
+              ></div>
+              <div
+                v-if="reasoningPickerOpen === 'effort'"
+                class="model-picker-panel reasoning-picker-panel"
+                role="listbox"
+                aria-label="Reasoning effort options"
+                @keydown.esc.stop="closeReasoningPicker"
+              >
+                <button
+                  v-for="value in reasoningPickerOptions('effort')"
+                  :key="value"
+                  class="model-picker-option reasoning-picker-option"
+                  :class="{ selected: reasoningSelection.effort === value }"
+                  type="button"
+                  role="option"
+                  :aria-selected="String(reasoningSelection.effort === value)"
+                  :disabled="isReasoningPickerOptionDisabled('effort', value)"
+                  @click="selectReasoningOption('effort', value)"
+                >
+                  <span class="model-picker-check">
+                    {{ reasoningSelection.effort === value ? '✓' : '' }}
+                  </span>
+                  <span class="model-picker-option-copy">
+                    <span class="model-picker-option-name">{{ formatReasoningOption(value) }}</span>
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div v-if="reasoningNotice" class="reasoning-notice" role="status">
+            {{ reasoningNotice }}
+          </div>
+          <div v-if="reasoningConstraintNotice" class="reasoning-notice">
+            {{ reasoningConstraintNotice }}
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">
+            <h2>Sessions</h2>
+            <div class="section-actions">
+              <button
+                class="icon-button"
+                type="button"
+                title="Refresh Sessions"
+                aria-label="Refresh Sessions"
+                :disabled="!isConnected || pendingSessionsRequestId !== null"
+                @click="requestSessionList"
+              >↻</button>
+              <button
+                class="icon-button"
+                type="button"
+                title="New Session"
+                aria-label="New Session"
+                @click="startNewSession"
+                :disabled="pendingSessionRequestId !== null || (!form.sessionId && chatItems.length === 0)"
+              >＋</button>
+            </div>
+          </div>
+          <div class="session-list" aria-live="polite">
+            <div v-if="pendingSessionsRequestId !== null && sessions.length === 0" class="session-list-state">
+              Loading Sessions…
+            </div>
+            <div v-else-if="sessionsError" class="session-list-state error">{{ sessionsError }}</div>
+            <div v-else-if="sessions.length === 0" class="session-list-state">
+              {{ isConnected ? 'No persisted Sessions.' : 'Connect to load Sessions.' }}
+            </div>
+            <div
+              v-for="session in sessions"
+              :key="session.sessionId"
+              class="session-item"
+              :class="{ selected: session.sessionId === form.sessionId }"
+            >
+              <button
+                class="session-select-button"
+                type="button"
+                :disabled="pendingSessionRequestId !== null || pendingSessionOperation !== null"
+                @click="selectSession(session)"
+              >
+                <span class="session-item-copy">
+                  <span class="session-item-title">{{ session.title || 'Untitled' }}</span>
+                  <span class="session-item-id">{{ shortSessionId(session.sessionId) }}</span>
+                </span>
+                <span class="session-item-time">{{ formatSessionTime(session.updatedAt) }}</span>
+              </button>
+              <button
+                class="session-action-trigger"
+                type="button"
+                title="Session actions"
+                :aria-label="`Actions for ${session.title || 'Untitled Session'}`"
+                aria-haspopup="menu"
+                :aria-expanded="sessionActionMenu?.sessionId === session.sessionId"
+                :data-session-id="session.sessionId"
+                :disabled="!isConnected || pendingSessionRequestId !== null || pendingSessionOperation !== null"
+                @click.stop="toggleSessionActionMenu(session, $event)"
+                @keydown.escape.stop="closeSessionActionMenu"
+              >⋯</button>
+            </div>
+          </div>
+          <Teleport to="body">
+            <button
+              v-if="sessionActionMenu"
+              class="session-action-scrim"
+              type="button"
+              tabindex="-1"
+              aria-label="Close Session actions"
+              @click="closeSessionActionMenu"
+            ></button>
+            <div
+              v-if="sessionActionMenuEntry"
+              class="session-action-menu"
+              role="menu"
+              :style="{ top: `${sessionActionMenu.top}px`, left: `${sessionActionMenu.left}px` }"
+              @keydown.escape.stop="closeSessionActionMenu"
+            >
+              <button
+                ref="sessionActionFirstItem"
+                class="session-action-menu-item"
+                type="button"
+                role="menuitem"
+                @click="renameSessionFromMenu"
+              >
+                <span class="session-action-icon" aria-hidden="true">✎</span>
+                <span>Rename</span>
+              </button>
+              <button
+                class="session-action-menu-item danger"
+                type="button"
+                role="menuitem"
+                @click="deleteSessionFromMenu"
+              >
+                <span class="session-action-icon" aria-hidden="true">⌫</span>
+                <span>Delete</span>
+              </button>
+            </div>
+          </Teleport>
+        </section>
+
+        <section class="section permission-panel">
+          <div class="section-title">
+            <h2>Session permissions</h2>
+          </div>
+          <div class="model-picker" :class="{ open: permissionPickerOpen }">
+            <span class="field-label-text">Permission mode</span>
+            <button
+              class="model-picker-trigger"
+              type="button"
+              :disabled="!isConnected || pendingPermissionRequestId !== null"
+              :aria-expanded="String(permissionPickerOpen)"
+              aria-haspopup="listbox"
+              @click="togglePermissionPicker"
+            >
+              <span class="model-picker-trigger-copy">
+                <span class="model-picker-trigger-name">
+                  {{ permissionMode === 'allow_all' ? 'Allow all for this Session' : 'Manual permissions' }}
+                </span>
+              </span>
+              <span class="model-picker-chevron">⌄</span>
+            </button>
+            <div v-if="permissionPickerOpen" class="model-picker-scrim" @click="closePermissionPicker"></div>
+            <div
+              v-if="permissionPickerOpen"
+              class="model-picker-panel"
+              role="listbox"
+              aria-label="Permission mode"
+              @keydown.esc.stop="closePermissionPicker"
+            >
+              <button
+                class="model-picker-option"
+                :class="{ selected: permissionMode === 'manual' }"
+                type="button"
+                role="option"
+                :aria-selected="String(permissionMode === 'manual')"
+                @click="selectPermissionMode('manual')"
+              >
+                <span class="model-picker-check">{{ permissionMode === 'manual' ? '✓' : '' }}</span>
+                <span class="model-picker-option-copy">
+                  <span class="model-picker-option-name">Manual permissions</span>
+                  <span class="model-picker-option-id">Ask before protected tool calls</span>
+                </span>
+              </button>
+              <button
+                class="model-picker-option"
+                :class="{ selected: permissionMode === 'allow_all' }"
+                type="button"
+                role="option"
+                :aria-selected="String(permissionMode === 'allow_all')"
+                @click="selectPermissionMode('allow_all')"
+              >
+                <span class="model-picker-check">{{ permissionMode === 'allow_all' ? '✓' : '' }}</span>
+                <span class="model-picker-option-copy">
+                  <span class="model-picker-option-name">Allow all for this Session</span>
+                  <span class="model-picker-option-id">Run every non-denied tool without asking</span>
+                </span>
+              </button>
+            </div>
+          </div>
+          <div
+            class="permission-indicator"
+            :class="{ 'allow-all': permissionMode === 'allow_all' }"
+            aria-live="polite"
+          >
+            Active: {{ permissionMode === 'allow_all' ? 'Allow all for this Session' : 'Manual permissions' }}
+          </div>
+          <p v-if="permissionMode === 'allow_all'" class="permission-warning">
+            Warning: every non-denied tool can run without asking, including Shell commands
+            and external filesystem changes. Executable and dependency integrity is not
+            verified. This remains active after disconnect until revoked, archived, deleted,
+            or the Runtime restarts.
+          </p>
+        </section>
+
+        <section class="section">
+          <button
+            class="section-title event-feed-toggle"
+            type="button"
+            :aria-expanded="String(eventFeedExpanded)"
+            @click="eventFeedExpanded = !eventFeedExpanded"
+          >
+            <span class="event-feed-toggle-copy">
+              <span class="event-feed-chevron" :class="{ expanded: eventFeedExpanded }">›</span>
+              <h2>Event Feed</h2>
+            </span>
+            <small>{{ eventFeed.length }} items</small>
+          </button>
+          <div v-if="eventFeedExpanded" class="event-list">
+            <div v-if="eventFeed.length === 0" class="event-item">No events yet.</div>
+            <div v-for="item in eventFeed" :key="item.id" class="event-item">
+              <strong>{{ item.title }}</strong><br />
+              <span>{{ item.detail }}</span>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <button
+        v-if="isMobileLayout && sidebarOpen"
+        class="mobile-sidebar-scrim"
+        type="button"
+        tabindex="-1"
+        aria-label="Close navigation"
+        @click="closeMobileSidebar"
+      ></button>
+
+      <main class="panel chat-shell">
+        <header class="chat-header">
+          <div>
+            <h2 class="chat-title">Conversation</h2>
+            <p class="chat-subtitle">{{ currentSessionLabel }} · {{ headerEndpoint }}</p>
+          </div>
+          <div class="chat-header-actions">
+            <button
+              ref="mobileSidebarTrigger"
+              class="icon-button mobile-sidebar-trigger"
+              type="button"
+              title="Open navigation"
+              aria-label="Open navigation"
+              aria-controls="sidebar-panel"
+              :aria-expanded="sidebarOpen"
+              @click="openMobileSidebar"
+            >☰</button>
+            <div v-if="pendingApprovalCount > 0" class="waiting-badge">
+              {{ pendingApprovalCount }} approval request waiting
+            </div>
+          </div>
+        </header>
+
+        <section ref="chatLogEl" class="chat-log">
+          <div v-if="historyStatus === 'loading' && displayedChatItems.length === 0" class="empty-state">
+            <h3>Loading history…</h3>
+          </div>
+          <div v-else-if="displayedChatItems.length === 0" class="empty-state">
+            <h3>{{ form.sessionId ? 'Session selected' : 'New Session' }}</h3>
+            <p>{{ form.sessionId ? 'Send a message to continue this Session.' : 'Send the first message to create this Session.' }}</p>
+          </div>
+
+          <div v-if="historyHasMore" class="button-row">
+            <button
+              class="secondary"
+              :disabled="historyStatus === 'loading' || historyStatus === 'error'"
+              @click="loadEarlierHistory"
+            >
+              {{ historyStatus === 'loading' ? 'Loading…' : 'Load earlier messages' }}
+            </button>
+          </div>
+
+          <div v-if="historyError" class="session-list-state error">
+            <div>{{ historyError }}</div>
+            <button
+              v-if="activeSessionState.failedHistoryRequest"
+              class="secondary"
+              :disabled="historyStatus === 'loading'"
+              @click="retryHistory"
+            >
+              {{ historyStatus === 'loading' ? 'Retrying…' : 'Retry history' }}
+            </button>
+          </div>
+
+          <article
+            v-for="item in displayedChatItems"
+            :key="item.id"
+            :data-chat-item-id="item.id"
+            class="message"
+            :class="[itemRoleClass(item), { 'is-interrupted': item.kind === 'turn' && item.interrupted }]"
+          >
+            <div class="message-meta">
+              <span>{{ item.label }}</span>
+              <span v-if="item.kind === 'user' && item.isSteer" class="meta-tag">steer</span>
+              <span v-if="item.kind === 'turn' && item.isContinuation" class="meta-tag meta-tag-muted">continued</span>
+              <span v-if="item.kind === 'turn' && item.interrupted" class="meta-tag meta-tag-warn">steered</span>
+              <span v-if="item.turnId">turn {{ item.turnId.slice(0, 8) }}</span>
+              <span>{{ formatTime(item.timestamp) }}</span>
+            </div>
+
+            <!-- ── Assistant turn: segments ── -->
+            <template v-if="item.kind === 'turn'">
+              <template v-for="seg in item.segments" :key="seg.id">
+
+                <!-- Text bubble -->
+                <div v-if="seg.type === 'text'" class="bubble">
+                  <div class="rich-text" v-html="renderAssistantText(seg.text)"></div>
+                </div>
+
+                <section v-if="seg.type === 'thinking'" class="thinking-card">
+                  <button
+                    class="thinking-header"
+                    type="button"
+                    :aria-expanded="String(seg.expanded)"
+                    @click="seg.expanded = !seg.expanded"
+                  >
+                    <span>{{ seg.status === 'running' ? 'Thinking…' : 'Thinking' }}</span>
+                    <span>{{ seg.expanded ? '⌃' : '⌄' }}</span>
+                  </button>
+                  <pre v-if="seg.expanded" class="thinking-text">{{ seg.text }}</pre>
+                </section>
+
+                <!-- Tool call card -->
+                <section
+                  v-if="seg.type === 'tool_call'"
+                  class="tool-result-card"
+                  :class="{ 'is-error': seg.isError }"
+                >
+                  <div class="tool-result-header">
+                    <div class="tool-result-title">
+                      <span class="tool-result-name">{{ seg.name }}</span>
+                      <span class="tool-result-badge">{{ toolStatusLabel(seg.status) }}</span>
+                    </div>
+                    <button
+                      class="tool-card-toggle"
+                      type="button"
+                      :aria-label="seg.expanded ? 'Collapse tool call' : 'Expand tool call'"
+                      :aria-expanded="String(seg.expanded)"
+                      @click="seg.expanded = !seg.expanded"
+                    >{{ seg.expanded ? '⌃' : '⌄' }}</button>
+                  </div>
+                  <div v-if="!seg.expanded" class="tool-card-summary" :title="toolInputSummary(seg.input)">
+                    {{ toolInputSummary(seg.input) }}
+                  </div>
+                  <template v-else>
+                    <div class="tool-card-section-label">Input</div>
+                    <div class="tool-result-preview">
+                      <pre class="tool-result-scroll">{{ prettyJson(seg.input) }}</pre>
+                    </div>
+                    <template v-if="seg.resultContent">
+                      <div class="tool-card-section-label">{{ seg.isError ? 'Error' : 'Result' }}</div>
+                      <div v-if="!seg.resultExpanded" class="tool-result-preview">
+                        <pre class="tool-result-scroll">{{ segResultPreview(seg).text }}</pre>
+                      </div>
+                      <div v-else class="tool-result-body">
+                        <pre class="tool-result-scroll">{{ seg.resultContent }}</pre>
+                      </div>
+                      <button
+                        v-if="segResultTruncated(seg)"
+                        class="secondary"
+                        @click="seg.resultExpanded = !seg.resultExpanded"
+                      >{{ seg.resultExpanded ? 'Show preview' : 'Show full result' }}</button>
+                    </template>
+                  </template>
+                  <div v-if="seg.approval?.status === 'pending'" class="approval-actions">
+                    <button
+                      class="secondary"
+                      @click="resolveApproval(seg, 'deny')"
+                    >Deny</button>
+                    <button
+                      class="primary"
+                      @click="resolveApproval(seg, 'allow')"
+                    >Allow</button>
+                  </div>
+                </section>
+
+                <!-- Approval card -->
+                <section
+                  v-if="seg.type === 'approval'"
+                  class="approval-card"
+                  :class="[seg.approval.status, { collapsed: !seg.expanded }]"
+                >
+                  <div class="tool-result-header">
+                    <div>
+                      <div class="eyebrow">Approval Required</div>
+                      <div class="approval-title-row">
+                        <h3>{{ seg.approval.toolName }}</h3>
+                        <div class="approval-status" :class="approvalStatusClass(seg.approval.status)">
+                          {{ approvalStatusLabel(seg.approval.status) }}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      class="tool-card-toggle"
+                      type="button"
+                      :aria-label="seg.expanded ? 'Collapse approval details' : 'Expand approval details'"
+                      :aria-expanded="String(seg.expanded)"
+                      @click="seg.expanded = !seg.expanded"
+                    >{{ seg.expanded ? '⌃' : '⌄' }}</button>
+                  </div>
+                  <div v-if="!seg.expanded" class="tool-card-summary" :title="toolInputSummary(seg.approval.input)">
+                    {{ toolInputSummary(seg.approval.input) }}
+                  </div>
+                  <template v-else>
+                    <div class="approval-meta">
+                      <span>ID: {{ seg.approval.id }}</span>
+                    </div>
+                    <div class="tool-card-section-label">Input</div>
+                    <pre class="approval-code">{{ prettyJson(seg.approval.input) }}</pre>
+                  </template>
+                  <div v-if="seg.approval.status === 'pending'" class="approval-actions">
+                    <button
+                      class="secondary"
+                      @click="resolveApproval(seg, 'deny')"
+                    >Deny</button>
+                    <button
+                      class="primary"
+                      @click="resolveApproval(seg, 'allow')"
+                    >Allow</button>
+                  </div>
+                </section>
+
+              </template>
+            </template>
+
+            <!-- ── User / error / system plain bubble ── -->
+            <template v-else>
+              <div class="bubble">
+                <div v-if="item.text" class="bubble-text">{{ item.text }}</div>
+                <div v-if="item.attachments && item.attachments.length > 0" class="bubble-attachments">
+                  <div v-for="att in item.attachments" :key="att.id" class="bubble-attachment">
+                    <img :src="att.previewUrl" :alt="att.name" />
+                    <div class="bubble-attachment-meta">
+                      <span>{{ att.name }}</span>
+                      <span>{{ formatBytes(att.sizeBytes) }}{{ att.willResize ? ' · compressed' : '' }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="item.attachmentSummaries && item.attachmentSummaries.length > 0" class="bubble-attachments">
+                  <div v-for="(s, i) in item.attachmentSummaries" :key="i" class="attachment-chip">
+                    <div class="attachment-chip-meta">
+                      <span class="attachment-chip-name">{{ s.type }}{{ s.mime ? ' · ' + s.mime : '' }}</span>
+                      <span v-if="s.bytes != null" class="attachment-chip-size">{{ formatBytes(s.bytes) }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="item.kind === 'user'" class="reasoning-summary">
+                  {{ formatReasoningSummary(item.reasoning) }}
+                </div>
+              </div>
+            </template>
+
+          </article>
+        </section>
+
+        <footer
+          class="composer"
+          :class="{ 'is-dragging': dragHover }"
+          @dragenter="onComposerDragEnter"
+          @dragover="onComposerDragOver"
+          @dragleave="onComposerDragLeave"
+          @drop="onComposerDrop"
+        >
+          <div v-if="attachments.length > 0 || attachError || !selectedModelSupportsImages" class="composer-attachments">
+            <div v-if="attachError" class="composer-attach-error">{{ attachError }}</div>
+            <div v-if="!selectedModelSupportsImages" class="composer-attach-error">
+              {{ attachmentCapabilityExplanation }}
+            </div>
+            <div v-if="attachments.length > 0" class="attachment-chip-row">
+              <div v-for="a in attachments" :key="a.id" class="attachment-chip">
+                <img :src="a.previewUrl" :alt="a.name" />
+                <div class="attachment-chip-meta">
+                  <span class="attachment-chip-name">{{ a.name }}</span>
+                  <span class="attachment-chip-size">{{ formatBytes(a.sizeBytes) }}</span>
+                  <span v-if="a.willResize" class="attachment-chip-badge">Compressed</span>
+                </div>
+                <button class="attachment-chip-remove" @click="removeAttachment(a.id)" aria-label="Remove attachment">×</button>
+              </div>
+            </div>
+            <div v-if="isWaitingForReply && attachments.length > 0" class="composer-attach-error">
+              Steering messages cannot include attachments. Remove them before sending.
+            </div>
+          </div>
+
+          <label>
+            Message
+            <textarea
+              v-model="draft"
+              placeholder="Send a message to the agent…"
+              @keydown.enter.exact.prevent="sendMessage"
+              @paste="onPaste"
+            ></textarea>
+          </label>
+
+          <input
+            ref="fileInput"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            multiple
+            hidden
+            @change="onFileInputChange"
+          />
+
+          <div class="composer-row">
+            <div class="composer-hint">
+              <span>Press Enter to send or Shift+Enter for a new line. Attach up to {{ maxAttachmentsPerMessage }} images (10 MB total) by button, drop, or paste.</span>
+              <span>A new Session requests its ID on first send and joins event broadcasts after <code>run_turn</code> is sent.</span>
+            </div>
+            <div class="button-row">
+              <button
+                class="secondary"
+                @click="onAttachClick"
+                :disabled="!isConnected || isWaitingForReply || !selectedModelSupportsImages"
+                :title="isWaitingForReply ? 'Steering does not support attachments' : attachmentCapabilityExplanation"
+              >📎 Images</button>
+              <button class="secondary" @click="resetComposer" :disabled="!draft && attachments.length === 0">Reset</button>
+              <button
+                v-if="isWaitingForReply"
+                class="secondary abort-btn"
+                @click="abortTurn"
+                :disabled="!isConnected"
+                title="Abort the current turn and discard queued messages (core-abort-spec.md §13.1)"
+              >⏹ Stop</button>
+              <button class="primary" @click="sendMessage" :disabled="!canSend">
+                {{ pendingApprovalCount > 0 ? 'Approval pending…' : isWaitingForReply ? 'Steer' : 'Send' }}
+              </button>
+            </div>
+          </div>
+        </footer>
+      </main>
+
+    </div>
+
+    <script>
+      const { createApp, nextTick } = Vue;
+      const DEFAULT_SOCKET_PATH = __MY_AGENT_WEBSOCKET_PATH__;
+      const DEFAULT_SOCKET_PROTOCOL = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const DEFAULT_SOCKET_URL = `${DEFAULT_SOCKET_PROTOCOL}//${window.location.host}${DEFAULT_SOCKET_PATH}`;
+      const MAX_EVENT_FEED_ITEMS = 40;
+      const TOOL_RESULT_PREVIEW_HEAD_LINES = 6;
+      const TOOL_RESULT_PREVIEW_TAIL_LINES = 4;
+      // Attachment constants — must stay aligned with server src/core/media/constants.ts.
+      const SUPPORTED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+      const ATTACHMENT_INLINE_THRESHOLD_BYTES = 2 * 1024 * 1024;
+      const ATTACHMENT_RAW_MAX_BYTES = 10 * 1024 * 1024;
+      const ATTACHMENT_TOTAL_MAX_BYTES = 10 * 1024 * 1024;
+      const MAX_ATTACHMENTS_PER_MESSAGE = 20;
+      const THINKING_OPTION_ORDER = Object.freeze(['on', 'off']);
+      const EFFORT_OPTION_ORDER = Object.freeze([
+        'none',
+        'minimal',
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max',
+      ]);
+
+      function createClientId() {
+        return `browser-${Math.random().toString(36).slice(2, 8)}`;
+      }
+
+      function appendUnique(target, values) {
+        for (const value of values) {
+          if (value && !target.includes(value)) target.push(value);
+        }
+        return target;
+      }
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      function focusAfterRender(resolveElement) {
+        nextTick(() => {
+          requestAnimationFrame(() => resolveElement()?.focus());
+        });
+      }
+
+      function stringifySafely(value, space) {
+        try {
+          return JSON.stringify(value, null, space);
+        } catch {
+          return String(value);
+        }
+      }
+
+      function base64DecodedSize(value) {
+        const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+        return Math.max(0, Math.floor(value.length * 3 / 4) - padding);
+      }
+
+      function takeFirstMatching(items, predicate) {
+        const index = items.findIndex(predicate);
+        return index < 0 ? null : items.splice(index, 1)[0];
+      }
+
+      function preserveRealtimePresentationIdentity(historyItems, chatItems, turnIds) {
+        for (const turnId of turnIds) {
+          const candidates = chatItems.filter(
+            item => item.turnId === turnId && item.kind !== 'system' && item.kind !== 'error',
+          );
+          for (const historyItem of historyItems.filter(item => item.turnId === turnId)) {
+            const realtimeItem = takeFirstMatching(
+              candidates,
+              item => item.kind === historyItem.kind,
+            );
+            if (!realtimeItem) continue;
+            historyItem.id = realtimeItem.id;
+
+            if (historyItem.kind !== 'turn') continue;
+            const segments = [...(realtimeItem.segments ?? [])];
+            for (const historySegment of historyItem.segments) {
+              const realtimeSegment = takeFirstMatching(
+                segments,
+                segment => segment.type === historySegment.type,
+              );
+              if (realtimeSegment) historySegment.id = realtimeSegment.id;
+            }
+          }
+        }
+      }
+
+      function createSessionUiState() {
+        return {
+          draft: '',
+          chatItems: [],
+          turnMap: {},
+          activeTurnId: null,
+          historyRecords: [],
+          historyItems: [],
+          historyStatus: 'notLoaded',
+          historyError: '',
+          historyNextCursor: null,
+          historyHasMore: false,
+          pendingHistoryRequest: null,
+          failedHistoryRequest: null,
+          pendingLatestHistoryRefresh: false,
+          pendingLatestHistoryTurnIds: [],
+          isWaitingForReply: false,
+          permissionMode: 'manual',
+          permissionChangedAt: 0,
+          pendingPermissionRequestId: null,
+          attachments: [],
+          attachError: '',
+        };
+      }
+
+      createApp({
+        data() {
+          return {
+            form: {
+              url: DEFAULT_SOCKET_URL,
+              clientId: createClientId(),
+              sessionId: '',
+            },
+            socket: null,
+            connectionStatus: 'disconnected',
+            helloAcknowledged: false,
+            modelCatalog: null,
+            pendingCatalogRequestId: null,
+            nextCatalogRequestId: 1,
+            pendingSessionRequestId: null,
+            nextSessionRequestId: 1,
+            pendingFirstTurn: null,
+            nextPermissionRequestId: 1,
+            sessions: [],
+            pendingSessionsRequestId: null,
+            nextSessionsRequestId: 1,
+            sessionActionMenu: null,
+            isMobileLayout: window.innerWidth <= 980,
+            sidebarOpen: false,
+            pendingSessionOperation: null,
+            nextSessionOperationRequestId: 1,
+            nextHistoryRequestId: 1,
+            sessionsError: '',
+            eventFeedExpanded: false,
+            modelSelection: null,
+            modelSelectionSource: 'none',
+            reasoningSelection: {
+              thinking: 'default',
+              effort: 'default',
+            },
+            reasoningNotice: '',
+            modelPickerOpen: false,
+            reasoningPickerOpen: null,
+            permissionPickerOpen: false,
+            modelSearch: '',
+            activeModelOptionIndex: -1,
+            sessionStates: { '': createSessionUiState() },
+            nextId: 1,
+            eventFeed: [],
+            nextEventId: 1,
+            lastStatusMessage: 'Not connected.',
+            dragHover: false,
+            dragDepth: 0,
+          };
+        },
+        mounted() {
+          window.addEventListener('resize', this.syncResponsiveLayout);
+          window.addEventListener('scroll', this.repositionSessionActionMenu, true);
+          window.addEventListener('keydown', this.handleGlobalKeydown);
+        },
+        beforeUnmount() {
+          window.removeEventListener('resize', this.syncResponsiveLayout);
+          window.removeEventListener('scroll', this.repositionSessionActionMenu, true);
+          window.removeEventListener('keydown', this.handleGlobalKeydown);
+        },
+        computed: {
+          activeSessionState() {
+            return this.ensureSessionState(this.form.sessionId);
+          },
+          draft: {
+            get() { return this.activeSessionState.draft; },
+            set(value) { this.activeSessionState.draft = value; },
+          },
+          chatItems: {
+            get() { return this.activeSessionState.chatItems; },
+            set(value) { this.activeSessionState.chatItems = value; },
+          },
+          displayedChatItems() {
+            return [...this.activeSessionState.historyItems, ...this.chatItems];
+          },
+          historyStatus() { return this.activeSessionState.historyStatus; },
+          historyError() { return this.activeSessionState.historyError; },
+          historyHasMore() { return this.activeSessionState.historyHasMore; },
+          turnMap: {
+            get() { return this.activeSessionState.turnMap; },
+            set(value) { this.activeSessionState.turnMap = value; },
+          },
+          isWaitingForReply: {
+            get() { return this.activeSessionState.isWaitingForReply; },
+            set(value) { this.activeSessionState.isWaitingForReply = value; },
+          },
+          permissionMode: {
+            get() { return this.activeSessionState.permissionMode; },
+            set(value) { this.activeSessionState.permissionMode = value; },
+          },
+          permissionChangedAt: {
+            get() { return this.activeSessionState.permissionChangedAt; },
+            set(value) { this.activeSessionState.permissionChangedAt = value; },
+          },
+          pendingPermissionRequestId: {
+            get() { return this.activeSessionState.pendingPermissionRequestId; },
+            set(value) { this.activeSessionState.pendingPermissionRequestId = value; },
+          },
+          attachments: {
+            get() { return this.activeSessionState.attachments; },
+            set(value) { this.activeSessionState.attachments = value; },
+          },
+          attachError: {
+            get() { return this.activeSessionState.attachError; },
+            set(value) { this.activeSessionState.attachError = value; },
+          },
+          isConnected() { return this.connectionStatus === 'connected'; },
+          isConnecting() { return this.connectionStatus === 'connecting'; },
+          canSend() {
+            if (!this.isConnected || !this.helloAcknowledged) return false;
+            if (!this.modelSelectionValid) return false;
+            if (!this.reasoningSelectionValid) return false;
+            if (this.pendingSessionRequestId !== null) return false;
+            if (this.pendingApprovalCount > 0) return false;
+            if (this.attachError) return false;
+            if (this.isWaitingForReply && this.attachments.length > 0) return false;
+            if (!this.selectedModelSupportsImages && this.attachments.length > 0) return false;
+            const hasText = this.draft.trim().length > 0;
+            const hasAttachments = this.attachments.length > 0;
+            return hasText || hasAttachments;
+          },
+          statusClass() {
+            if (this.connectionStatus === 'connected') return 'connected';
+            if (this.connectionStatus === 'connecting') return 'connecting';
+            return '';
+          },
+          headerEndpoint() { return this.form.url || DEFAULT_SOCKET_URL; },
+          currentSession() {
+            return this.sessions.find(session => session.sessionId === this.form.sessionId) ?? null;
+          },
+          currentSessionLabel() {
+            if (!this.form.sessionId) return 'New Session';
+            return this.currentSession?.title || `Session ${this.shortSessionId(this.form.sessionId)}`;
+          },
+          availableModelProviders() {
+            return (this.modelCatalog?.providers ?? []).filter(
+              provider => provider
+                && Array.isArray(provider.models)
+                && provider.models.length > 0,
+            );
+          },
+          availableModels() {
+            return this.availableModelProviders.flatMap(provider => provider.models.map(model => ({
+              provider,
+              model,
+              reference: {
+                providerId: provider.providerId,
+                modelId: model.modelId,
+              },
+            })));
+          },
+          filteredModelProviders() {
+            const query = this.modelSearch.trim().toLocaleLowerCase();
+            if (!query) return this.availableModelProviders;
+            return this.availableModelProviders.flatMap(provider => {
+              const providerMatches = `${provider.displayName} ${provider.providerId}`
+                .toLocaleLowerCase()
+                .includes(query);
+              const models = providerMatches
+                ? provider.models
+                : provider.models.filter(model => `${model.displayName} ${model.modelId}`
+                    .toLocaleLowerCase()
+                    .includes(query));
+              return models.length > 0 ? [{ ...provider, models }] : [];
+            });
+          },
+          filteredModelOptions() {
+            return this.filteredModelProviders.flatMap(provider => provider.models.map(model => ({
+              providerId: provider.providerId,
+              modelId: model.modelId,
+            })));
+          },
+          activeModelOptionId() {
+            return this.activeModelOptionIndex >= 0
+              && this.activeModelOptionIndex < this.filteredModelOptions.length
+              ? `model-picker-option-${this.activeModelOptionIndex}`
+              : null;
+          },
+          selectedModelReference() {
+            if (!this.modelSelection) return null;
+            return this.availableModels.some(({ reference }) => this.sameModelReference(
+              reference,
+              this.modelSelection,
+            )) ? this.modelSelection : null;
+          },
+          selectedModelDetails() {
+            if (!this.selectedModelReference) return null;
+            return this.availableModels.find(({ reference }) => this.sameModelReference(
+              reference,
+              this.selectedModelReference,
+            )) ?? null;
+          },
+          selectedModelSupportsImages() {
+            const mediaKinds = this.selectedModelDetails?.model?.capabilities?.mediaKinds;
+            return !Array.isArray(mediaKinds) || mediaKinds.includes('image');
+          },
+          thinkingOptions() {
+            const declared = this.selectedModelDetails?.model?.capabilities?.reasoning?.thinking;
+            if (!Array.isArray(declared)) return [];
+            return THINKING_OPTION_ORDER.filter(value => declared.includes(value));
+          },
+          effortOptions() {
+            const declared = this.selectedModelDetails?.model?.capabilities?.reasoning?.efforts;
+            if (!Array.isArray(declared)) return [];
+            return EFFORT_OPTION_ORDER.filter(value => declared.includes(value));
+          },
+          showThinkingControl() {
+            return this.thinkingOptions.length > 0;
+          },
+          showEffortControl() {
+            return this.effortOptions.length > 0;
+          },
+          reasoningSelectionValid() {
+            const thinking = this.reasoningSelection.thinking;
+            const effort = this.reasoningSelection.effort;
+            if (thinking !== 'default' && !this.thinkingOptions.includes(thinking)) return false;
+            if (effort !== 'default' && !this.effortOptions.includes(effort)) return false;
+            if (thinking === 'on' && effort === 'none') return false;
+            return thinking !== 'off'
+              || effort === 'default'
+              || effort === 'none';
+          },
+          reasoningConstraintNotice() {
+            if (this.reasoningSelection.effort === 'none') {
+              return 'Thinking On is unavailable while Effort is None.';
+            }
+            if (this.reasoningSelection.thinking === 'off') {
+              return 'Choose Default or None effort while Thinking is Off.';
+            }
+            return '';
+          },
+          attachmentCapabilityExplanation() {
+            if (!this.selectedModelSupportsImages) {
+              return 'The selected model explicitly does not support image attachments.';
+            }
+            const mediaKinds = this.selectedModelDetails?.model?.capabilities?.mediaKinds;
+            return Array.isArray(mediaKinds)
+              ? 'Add images'
+              : 'Add images (model capability is unknown; the server will validate the request)';
+          },
+          requestModelReference() {
+            if (this.modelSelectionSource === 'default') return null;
+            return this.selectedModelReference;
+          },
+          modelSelectionValid() {
+            return this.selectedModelReference !== null;
+          },
+          modelPickerLabel() {
+            if (!this.modelCatalog) return 'Loading models…';
+            return this.selectedModelDetails?.model.displayName ?? 'No models available';
+          },
+          pendingApprovalCount() {
+            let count = 0;
+            for (const item of this.chatItems) {
+              if (item.kind === 'turn') {
+                for (const seg of item.segments) {
+                  if (seg.type === 'tool_call' && seg.approval?.status === 'pending') count++;
+                }
+              }
+            }
+            return count;
+          },
+          sessionActionMenuEntry() {
+            if (!this.sessionActionMenu) return null;
+            return this.sessions.find(
+              session => session.sessionId === this.sessionActionMenu.sessionId,
+            ) ?? null;
+          },
+          maxAttachmentsPerMessage() { return MAX_ATTACHMENTS_PER_MESSAGE; },
+        },
+
+        methods: {
+          ensureSessionState(sessionId) {
+            const key = sessionId || '';
+            if (!this.sessionStates[key]) {
+              this.sessionStates[key] = createSessionUiState();
+            }
+            return this.sessionStates[key];
+          },
+          // ── Connection ────────────────────────────────────────
+          clearTransientState() {
+            this.helloAcknowledged = false;
+            this.modelCatalog = null;
+            this.pendingCatalogRequestId = null;
+            this.pendingSessionRequestId = null;
+            this.pendingFirstTurn = null;
+            this.pendingSessionsRequestId = null;
+            this.pendingSessionOperation = null;
+            this.closeSessionActionMenu();
+            this.closePermissionPicker();
+            this.closeReasoningPicker();
+            this.sessions = [];
+            this.sessionsError = '';
+            this.clearModelSelection();
+            this.closePendingApprovalsForDisconnect();
+            for (const state of Object.values(this.sessionStates)) {
+              state.permissionMode = 'manual';
+              state.permissionChangedAt = 0;
+              state.pendingPermissionRequestId = null;
+              state.isWaitingForReply = false;
+              if (state.pendingHistoryRequest) {
+                state.failedHistoryRequest = {
+                  beforeEntryId: state.pendingHistoryRequest.beforeEntryId,
+                  terminalTurnIds: [...state.pendingHistoryRequest.terminalTurnIds],
+                };
+              }
+              state.pendingHistoryRequest = null;
+              state.pendingLatestHistoryRefresh = false;
+              state.pendingLatestHistoryTurnIds = [];
+              if (state.historyStatus === 'loading') state.historyStatus = 'notLoaded';
+            }
+          },
+          closePendingApprovalsForDisconnect() {
+            for (const state of Object.values(this.sessionStates)) {
+              for (const item of state.chatItems) {
+                if (item.kind !== 'turn') continue;
+                for (const seg of item.segments) {
+                  if (seg.type !== 'tool_call' || seg.approval?.status !== 'pending') continue;
+                  seg.approval.status = 'unavailable';
+                  seg.approval.closeReason = 'origin_disconnected';
+                  seg.status = 'approval_unavailable';
+                  seg.isError = true;
+                }
+              }
+            }
+          },
+          attachSocketListeners(socket) {
+            socket.addEventListener('open', () => {
+              if (this.socket !== socket) return;
+              this.lastStatusMessage = 'Socket opened. Sending hello…';
+              this.sendJson({ type: 'hello', clientId: this.form.clientId });
+            });
+            socket.addEventListener('message', (event) => {
+              if (this.socket !== socket) return;
+              this.handleServerMessage(event.data);
+            });
+            socket.addEventListener('close', (event) => {
+              if (this.socket !== socket) return;
+              const detail = event.wasClean
+                ? `Socket closed (${event.code || 'no-code'})`
+                : `Socket closed unexpectedly (${event.code || 'no-code'})`;
+              this.socket = null;
+              this.connectionStatus = 'disconnected';
+              this.clearTransientState();
+              this.lastStatusMessage = detail;
+              this.pushEvent('close', detail);
+            });
+            socket.addEventListener('error', () => {
+              if (this.socket !== socket) return;
+              this.lastStatusMessage = 'WebSocket error.';
+              this.pushEvent('error', 'WebSocket transport error');
+            });
+          },
+          connect() {
+            if (this.isConnecting || this.isConnected) return;
+            try {
+              this.disconnect({ silent: true });
+              const socket = new WebSocket(this.form.url);
+              this.socket = socket;
+              this.connectionStatus = 'connecting';
+              this.clearTransientState();
+              this.lastStatusMessage = 'Opening websocket…';
+              this.pushEvent('socket', `Connecting to ${this.form.url}`);
+              this.attachSocketListeners(socket);
+            } catch (error) {
+              this.connectionStatus = 'disconnected';
+              this.clearTransientState();
+              this.lastStatusMessage = error instanceof Error ? error.message : String(error);
+              this.pushEvent('error', this.lastStatusMessage);
+            }
+          },
+          disconnect(options = {}) {
+            if (!this.socket) return;
+            const current = this.socket;
+            this.socket = null;
+            this.connectionStatus = 'disconnected';
+            this.clearTransientState();
+            if (!options.silent) {
+              this.lastStatusMessage = 'Disconnected by client.';
+              this.pushEvent('socket', 'Disconnected by client');
+            }
+            current.close(1000, 'client disconnect');
+          },
+
+          // ── Sending ───────────────────────────────────────────
+          sendJson(payload) {
+            if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+              throw new Error('Socket is not open.');
+            }
+            this.socket.send(JSON.stringify(payload));
+          },
+          requestModelCatalog() {
+            if (this.pendingCatalogRequestId !== null) return;
+            const requestId = `catalog-${this.nextCatalogRequestId++}`;
+            this.pendingCatalogRequestId = requestId;
+            this.sendJson({ type: 'get_model_catalog', requestId });
+          },
+          requestSessionList() {
+            if (!this.isConnected || this.pendingSessionsRequestId !== null) return;
+            this.closeSessionActionMenu();
+            const requestId = `sessions-${this.nextSessionsRequestId++}`;
+            this.pendingSessionsRequestId = requestId;
+            this.sessionsError = '';
+            this.sendJson({ type: 'list_sessions', requestId });
+          },
+          requestSessionHistory(sessionId, options = {}) {
+            if (!this.isConnected || !sessionId) return;
+            const state = this.ensureSessionState(sessionId);
+            const terminalTurnIds = appendUnique(
+              [],
+              options.terminalTurnIds ?? [options.terminalTurnId],
+            );
+            if (!options.beforeEntryId && state.failedHistoryRequest?.beforeEntryId === null) {
+              appendUnique(terminalTurnIds, state.failedHistoryRequest.terminalTurnIds);
+            }
+            if (state.pendingHistoryRequest) {
+              if (options.latest) {
+                state.pendingLatestHistoryRefresh = true;
+                appendUnique(state.pendingLatestHistoryTurnIds, terminalTurnIds);
+              }
+              return;
+            }
+            const requestId = `history-${this.nextHistoryRequestId++}`;
+            state.pendingHistoryRequest = {
+              requestId,
+              beforeEntryId: options.beforeEntryId ?? null,
+              terminalTurnIds,
+            };
+            state.historyStatus = 'loading';
+            state.historyError = '';
+            this.sendJson({
+              type: 'get_session_history',
+              requestId,
+              sessionId,
+              ...(options.beforeEntryId ? { beforeEntryId: options.beforeEntryId } : {}),
+              limit: 50,
+            });
+          },
+          loadEarlierHistory() {
+            const state = this.activeSessionState;
+            if (!state.historyHasMore || !state.historyNextCursor) return;
+            this.requestSessionHistory(this.form.sessionId, {
+              beforeEntryId: state.historyNextCursor,
+            });
+          },
+          retryHistory() {
+            const failed = this.activeSessionState.failedHistoryRequest;
+            if (!failed) return;
+            this.requestSessionHistory(this.form.sessionId, {
+              ...(failed.beforeEntryId ? { beforeEntryId: failed.beforeEntryId } : { latest: true }),
+              terminalTurnIds: [...failed.terminalTurnIds],
+            });
+          },
+          settleHistoryRequest(sessionId) {
+            const state = this.ensureSessionState(sessionId);
+            state.pendingHistoryRequest = null;
+            state.historyStatus = state.historyError ? 'error' : 'loaded';
+            if (state.pendingLatestHistoryRefresh) {
+              state.pendingLatestHistoryRefresh = false;
+              const terminalTurnIds = [...state.pendingLatestHistoryTurnIds];
+              state.pendingLatestHistoryTurnIds = [];
+              this.requestSessionHistory(sessionId, { latest: true, terminalTurnIds });
+            }
+          },
+          mergeHistoryPage(sessionId, message) {
+            const state = this.ensureSessionState(sessionId);
+            const pending = state.pendingHistoryRequest;
+            const incoming = Array.isArray(message.items) ? message.items : [];
+            const hadHistory = state.historyRecords.length > 0;
+            const recordsById = new Map(state.historyRecords.map(record => [record.entryId, record]));
+            for (const record of incoming) {
+              if (record?.entryId) recordsById.set(record.entryId, record);
+            }
+            let merged;
+            let replacedPersistedWindow = false;
+            if (pending?.beforeEntryId) {
+              merged = [...incoming, ...state.historyRecords];
+            } else {
+              const firstIncomingId = incoming[0]?.entryId;
+              const overlapIndex = firstIncomingId
+                ? state.historyRecords.findIndex(record => record.entryId === firstIncomingId)
+                : -1;
+              merged = overlapIndex >= 0
+                ? [...state.historyRecords.slice(0, overlapIndex), ...incoming]
+                : incoming;
+              replacedPersistedWindow = overlapIndex < 0 && hadHistory;
+            }
+            const seen = new Set();
+            state.historyRecords = merged.filter(record => {
+              if (!record?.entryId || seen.has(record.entryId)) return false;
+              seen.add(record.entryId);
+              return recordsById.has(record.entryId);
+            });
+            if (pending?.beforeEntryId || !hadHistory || replacedPersistedWindow) {
+              state.historyNextCursor = message.nextCursor ?? null;
+              state.historyHasMore = message.hasMore === true;
+            }
+            const settledTurnIds = (pending?.terminalTurnIds ?? []).filter(
+              turnId => incoming.some(record => record.turnId === turnId),
+            );
+            const historyItems = this.buildHistoryItems(state.historyRecords);
+            preserveRealtimePresentationIdentity(historyItems, state.chatItems, settledTurnIds);
+            state.historyItems = historyItems;
+            for (const turnId of settledTurnIds) {
+              state.chatItems = state.chatItems.filter(
+                item => item.turnId !== turnId || item.kind === 'system' || item.kind === 'error',
+              );
+              delete state.turnMap[turnId];
+            }
+          },
+          buildHistoryItems(records) {
+            const items = [];
+            const toolCalls = new Map();
+            const unmatchedResults = new Map();
+            for (const record of records) {
+              const content = typeof record.content === 'string'
+                ? [{ type: 'text', text: record.content }]
+                : Array.isArray(record.content) ? record.content : [];
+              if (record.role === 'toolResult') {
+                for (const block of content) {
+                  if (block.type !== 'tool_result') continue;
+                  const segment = toolCalls.get(block.tool_use_id);
+                  if (segment) {
+                    segment.status = block.status;
+                    segment.resultContent = String(block.content ?? '');
+                    segment.isError = block.status === 'error';
+                  } else {
+                    unmatchedResults.set(block.tool_use_id, {
+                      content: String(block.content ?? ''),
+                      status: block.status,
+                    });
+                  }
+                }
+                continue;
+              }
+              if (record.role === 'user') {
+                const attachments = content
+                  .filter(block =>
+                    block.type === 'image'
+                    && block.source?.type === 'base64'
+                    && SUPPORTED_IMAGE_MIME.has(block.source.media_type)
+                    && typeof block.source.data === 'string')
+                  .map((block, index) => ({
+                    id: `${record.entryId}-image-${index}`,
+                    previewUrl: `data:${block.source.media_type};base64,${block.source.data}`,
+                    name: `Image ${index + 1} (${block.dimensions?.width ?? '?'}×${block.dimensions?.height ?? '?'})`,
+                    sizeBytes: base64DecodedSize(block.source.data),
+                    willResize: false,
+                  }));
+                items.push({
+                  kind: 'user',
+                  id: `history-${record.entryId}`,
+                  entryId: record.entryId,
+                  turnId: record.turnId,
+                  label: 'You',
+                  timestamp: Date.parse(record.timestamp) || Date.now(),
+                  text: content.filter(block => block.type === 'text').map(block => block.text).join('\n'),
+                  attachments,
+                  reasoning: record.reasoning,
+                });
+                continue;
+              }
+              const turn = {
+                kind: 'turn',
+                id: `history-${record.entryId}`,
+                entryId: record.entryId,
+                turnId: record.turnId,
+                label: 'Assistant',
+                timestamp: Date.parse(record.timestamp) || Date.now(),
+                segments: [],
+              };
+              for (const block of content) {
+                if (block.type === 'text') {
+                  turn.segments.push({ type: 'text', id: `${record.entryId}-text-${turn.segments.length}`, text: block.text });
+                } else if (block.type === 'thinking' && typeof block.text === 'string' && block.text) {
+                  turn.segments.push({
+                    type: 'thinking',
+                    id: block.id,
+                    thinkingId: block.id,
+                    text: block.text,
+                    status: block.status,
+                    expanded: false,
+                  });
+                } else if (block.type === 'tool_use') {
+                  const segment = {
+                    type: 'tool_call',
+                    id: `${record.entryId}-tool-${block.id}`,
+                    callId: block.id,
+                    executionId: block.execution_id,
+                    name: block.name,
+                    input: block.input,
+                    status: block.status ?? unmatchedResults.get(block.id)?.status ?? 'running',
+                    resultContent: block.result_content ?? unmatchedResults.get(block.id)?.content ?? '',
+                    isError: (block.status ?? unmatchedResults.get(block.id)?.status) === 'error',
+                    expanded: false,
+                    resultExpanded: false,
+                  };
+                  toolCalls.set(block.id, segment);
+                  turn.segments.push(segment);
+                }
+              }
+              items.push(turn);
+            }
+            return items;
+          },
+          toggleSessionActionMenu(session, event) {
+            if (!session?.sessionId || !this.isConnected || this.pendingSessionOperation !== null) {
+              return;
+            }
+            if (this.sessionActionMenu?.sessionId === session.sessionId) {
+              this.closeSessionActionMenu();
+              return;
+            }
+            this.positionSessionActionMenu(session.sessionId, event.currentTarget);
+            nextTick(() => this.$refs.sessionActionFirstItem?.focus());
+          },
+          positionSessionActionMenu(sessionId, trigger) {
+            const rect = trigger.getBoundingClientRect();
+            const listRect = trigger.closest('.session-list')?.getBoundingClientRect();
+            if (
+              listRect
+              && (rect.bottom <= Math.max(0, listRect.top)
+                || rect.top >= Math.min(window.innerHeight, listRect.bottom))
+            ) {
+              this.closeSessionActionMenu();
+              return;
+            }
+            const menuWidth = 148;
+            const menuHeight = 92;
+            const gap = 5;
+            const left = clamp(rect.right - menuWidth, 8, window.innerWidth - menuWidth - 8);
+            const below = rect.bottom + gap;
+            const top = below + menuHeight <= window.innerHeight - 8
+              ? below
+              : Math.max(8, rect.top - menuHeight - gap);
+            this.sessionActionMenu = {
+              sessionId,
+              top,
+              left,
+            };
+          },
+          repositionSessionActionMenu() {
+            const sessionId = this.sessionActionMenu?.sessionId;
+            if (!sessionId) return;
+            const trigger = [...document.querySelectorAll('.session-action-trigger')]
+              .find(element => element.dataset.sessionId === sessionId);
+            if (!trigger) {
+              this.closeSessionActionMenu();
+              return;
+            }
+            this.positionSessionActionMenu(sessionId, trigger);
+          },
+          closeSessionActionMenu() {
+            this.sessionActionMenu = null;
+          },
+          syncResponsiveLayout() {
+            this.isMobileLayout = window.innerWidth <= 980;
+            if (!this.isMobileLayout) this.sidebarOpen = false;
+            this.repositionSessionActionMenu();
+          },
+          openMobileSidebar() {
+            if (!this.isMobileLayout || this.sidebarOpen) return;
+            this.sidebarOpen = true;
+            focusAfterRender(() => this.$refs.mobileSidebarCloseButton);
+          },
+          closeMobileSidebar() {
+            if (!this.sidebarOpen) return;
+            this.closeSessionActionMenu();
+            this.sidebarOpen = false;
+            focusAfterRender(() => this.$refs.mobileSidebarTrigger);
+          },
+          handleGlobalKeydown(event) {
+            if (event.key === 'Escape' && this.sidebarOpen) {
+              event.preventDefault();
+              this.closeMobileSidebar();
+              return;
+            }
+            if (event.key === 'Tab' && this.sidebarOpen && !this.sessionActionMenu) {
+              this.trapMobileSidebarFocus(event);
+            }
+          },
+          trapMobileSidebarFocus(event) {
+            const sidebar = this.$refs.sidebarPanel;
+            if (!sidebar) return;
+            const focusable = [...sidebar.querySelectorAll(
+              'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])',
+            )].filter(element => element.offsetParent !== null);
+            if (focusable.length === 0) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && (document.activeElement === first || !sidebar.contains(document.activeElement))) {
+              event.preventDefault();
+              last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+              event.preventDefault();
+              first.focus();
+            }
+          },
+          beginSessionOperation(type, sessionId, payload = {}) {
+            if (!this.isConnected || this.pendingSessionOperation !== null) return;
+            const requestId = `session-${type}-${this.nextSessionOperationRequestId++}`;
+            this.pendingSessionOperation = { type, requestId, sessionId };
+            this.sessionsError = '';
+            try {
+              this.sendJson({
+                type: `${type}_session`,
+                requestId,
+                sessionId,
+                ...payload,
+              });
+            } catch (error) {
+              this.pendingSessionOperation = null;
+              this.sessionsError = error instanceof Error ? error.message : String(error);
+              this.pushEvent('error', `Failed to ${type} Session ${sessionId}`);
+            }
+          },
+          renameSessionFromMenu() {
+            const session = this.sessionActionMenuEntry;
+            if (!session) return;
+            this.closeSessionActionMenu();
+            const title = window.prompt(
+              'Rename Session\n\nLeave blank to clear the custom name.',
+              session.title || '',
+            );
+            if (title === null) return;
+            const normalizedTitle = title.trim();
+            this.beginSessionOperation(
+              'rename',
+              session.sessionId,
+              { title: normalizedTitle || null },
+            );
+          },
+          deleteSessionFromMenu() {
+            const session = this.sessionActionMenuEntry;
+            if (!session) return;
+            this.closeSessionActionMenu();
+            const label = session.title || this.shortSessionId(session.sessionId);
+            if (!window.confirm(
+              `Delete Session "${label}"?\n\n`
+                + 'Its conversation history will be permanently removed. This cannot be undone.',
+            )) {
+              return;
+            }
+            this.beginSessionOperation('delete', session.sessionId);
+          },
+          upsertSession(session) {
+            if (!session?.sessionId) return;
+            const existingIndex = this.sessions.findIndex(
+              entry => entry.sessionId === session.sessionId,
+            );
+            const next = [...this.sessions];
+            if (existingIndex >= 0) next.splice(existingIndex, 1, session);
+            else next.push(session);
+            next.sort((left, right) =>
+              (Number(right.updatedAt) || 0) - (Number(left.updatedAt) || 0)
+                || String(left.sessionId).localeCompare(String(right.sessionId)));
+            this.sessions = next;
+          },
+          requestPermissionMode() {
+            if (!this.isConnected || !this.form.sessionId || this.pendingPermissionRequestId !== null) return;
+            const requestId = `permission-${this.nextPermissionRequestId++}`;
+            this.pendingPermissionRequestId = requestId;
+            this.sendJson({
+              type: 'get_session_permission_mode',
+              sessionId: this.form.sessionId,
+            });
+          },
+          changePermissionMode(mode) {
+            if (mode !== 'manual' && mode !== 'allow_all') return;
+            if (mode === this.permissionMode) return;
+            if (mode === 'allow_all' && !window.confirm(
+              'Allow all tools for this Session?\n\n'
+                + 'Every non-denied tool will run without asking. Arbitrary Shell commands and '
+                + 'external filesystem changes are possible. Executable and dependency integrity '
+                + 'is not verified. This mode remains active after disconnect and ends only when '
+                + 'you revoke it, archive/delete the Session, or restart the Runtime.',
+            )) {
+              return;
+            }
+            if (!this.form.sessionId) {
+              this.permissionMode = mode;
+              return;
+            }
+            const requestId = `permission-${this.nextPermissionRequestId++}`;
+            this.pendingPermissionRequestId = requestId;
+            this.sendJson({
+              type: 'set_session_permission_mode',
+              sessionId: this.form.sessionId,
+              mode,
+            });
+          },
+          togglePermissionPicker() {
+            if (this.permissionPickerOpen) {
+              this.closePermissionPicker();
+              return;
+            }
+            if (!this.isConnected || this.pendingPermissionRequestId !== null) return;
+            this.closeModelPicker();
+            this.closeReasoningPicker();
+            this.permissionPickerOpen = true;
+          },
+          closePermissionPicker() {
+            this.permissionPickerOpen = false;
+          },
+          selectPermissionMode(mode) {
+            this.closePermissionPicker();
+            this.changePermissionMode(mode);
+          },
+          toggleModelPicker() {
+            if (this.modelPickerOpen) {
+              this.closeModelPicker();
+              return;
+            }
+            if (!this.modelCatalog || this.availableModels.length === 0) return;
+            this.closePermissionPicker();
+            this.closeReasoningPicker();
+            this.modelSearch = '';
+            this.modelPickerOpen = true;
+            this.activeModelOptionIndex = this.modelOptionIndex(
+              this.selectedModelReference?.providerId,
+              this.selectedModelReference?.modelId,
+            );
+            nextTick(() => {
+              this.$refs.modelSearchEl?.focus();
+              this.scrollActiveModelOptionIntoView();
+            });
+          },
+          closeModelPicker() {
+            this.modelPickerOpen = false;
+            this.modelSearch = '';
+            this.activeModelOptionIndex = -1;
+          },
+          reasoningPickerOptions(kind) {
+            return [
+              'default',
+              ...(kind === 'thinking' ? this.thinkingOptions : this.effortOptions),
+            ];
+          },
+          isReasoningPickerOptionDisabled(kind, value) {
+            if (value === 'default') return false;
+            return kind === 'thinking'
+              ? this.isThinkingOptionDisabled(value)
+              : this.isEffortOptionDisabled(value);
+          },
+          toggleReasoningPicker(kind) {
+            if (this.reasoningPickerOpen === kind) {
+              this.closeReasoningPicker();
+              return;
+            }
+            if (
+              (kind === 'thinking' && !this.showThinkingControl)
+              || (kind === 'effort' && !this.showEffortControl)
+            ) {
+              return;
+            }
+            this.closeModelPicker();
+            this.closePermissionPicker();
+            this.reasoningPickerOpen = kind;
+          },
+          closeReasoningPicker() {
+            this.reasoningPickerOpen = null;
+          },
+          selectReasoningOption(kind, value) {
+            if (this.isReasoningPickerOptionDisabled(kind, value)) return;
+            this.reasoningSelection[kind] = value;
+            this.closeReasoningPicker();
+          },
+          onModelSearchInput() {
+            nextTick(() => {
+              this.activeModelOptionIndex = this.filteredModelOptions.length > 0 ? 0 : -1;
+              this.scrollActiveModelOptionIntoView();
+            });
+          },
+          onModelSearchKeydown(event) {
+            const options = this.filteredModelOptions;
+            if (event.key === 'ArrowDown') {
+              event.preventDefault();
+              this.activeModelOptionIndex = options.length === 0
+                ? -1
+                : Math.min(this.activeModelOptionIndex + 1, options.length - 1);
+              this.scrollActiveModelOptionIntoView();
+              return;
+            }
+            if (event.key === 'ArrowUp') {
+              event.preventDefault();
+              this.activeModelOptionIndex = options.length === 0
+                ? -1
+                : Math.max(this.activeModelOptionIndex - 1, 0);
+              this.scrollActiveModelOptionIntoView();
+              return;
+            }
+            if (event.key === 'Enter' && options.length > 0) {
+              event.preventDefault();
+              const optionIndex = Math.min(
+                Math.max(this.activeModelOptionIndex, 0),
+                options.length - 1,
+              );
+              const option = options[optionIndex];
+              this.selectModel(option.providerId, option.modelId);
+            }
+          },
+          selectModel(providerId, modelId) {
+            const reference = Object.freeze({ providerId, modelId });
+            this.modelSelection = reference;
+            this.modelSelectionSource = 'user';
+            this.reconcileReasoningSelection();
+            this.closeModelPicker();
+          },
+          clearModelSelection() {
+            this.modelSelection = null;
+            this.modelSelectionSource = 'none';
+            this.reasoningSelection.thinking = 'default';
+            this.reasoningSelection.effort = 'default';
+            this.reasoningNotice = '';
+            this.closeModelPicker();
+            this.closeReasoningPicker();
+          },
+          sameModelReference(left, right) {
+            return left !== null
+              && left !== undefined
+              && right !== null
+              && right !== undefined
+              && left.providerId === right.providerId
+              && left.modelId === right.modelId;
+          },
+          modelOptionToken(providerId, modelId) {
+            return JSON.stringify([providerId, modelId]);
+          },
+          modelOptionIndex(providerId, modelId) {
+            return this.filteredModelOptions.findIndex(option =>
+              option.providerId === providerId && option.modelId === modelId);
+          },
+          modelOptionId(providerId, modelId) {
+            const index = this.modelOptionIndex(providerId, modelId);
+            return index >= 0 ? `model-picker-option-${index}` : undefined;
+          },
+          scrollActiveModelOptionIntoView() {
+            nextTick(() => {
+              this.$refs.modelSearchEl
+                ?.closest('.model-picker-panel')
+                ?.querySelector('.model-picker-option.active')
+                ?.scrollIntoView({ block: 'nearest' });
+            });
+          },
+          isSelectedModel(providerId, modelId) {
+            return this.sameModelReference(
+              { providerId, modelId },
+              this.selectedModelReference,
+            );
+          },
+          isRuntimeDefaultModel(providerId, modelId) {
+            return this.sameModelReference(
+              { providerId, modelId },
+              this.availableRuntimeDefault(this.modelCatalog),
+            );
+          },
+          catalogHasModel(catalog, reference) {
+            if (!reference || !Array.isArray(catalog?.providers)) return false;
+            return catalog.providers.some(provider =>
+              provider?.providerId === reference.providerId
+              && Array.isArray(provider.models)
+              && provider.models.some(model => model?.modelId === reference.modelId));
+          },
+          availableRuntimeDefault(catalog) {
+            const selection = catalog?.defaultSelection;
+            if (selection?.state !== 'available' || !selection.reference) return null;
+            return this.catalogHasModel(catalog, selection.reference)
+              ? {
+                  providerId: selection.reference.providerId,
+                  modelId: selection.reference.modelId,
+                }
+              : null;
+          },
+          firstAvailableModel(catalog) {
+            if (!Array.isArray(catalog?.providers)) return null;
+            for (const provider of catalog.providers) {
+              if (!provider || !Array.isArray(provider.models) || provider.models.length === 0) {
+                continue;
+              }
+              const model = provider.models[0];
+              if (model) {
+                return { providerId: provider.providerId, modelId: model.modelId };
+              }
+            }
+            return null;
+          },
+          applyModelCatalog(catalog) {
+            if (!catalog || typeof catalog !== 'object' || !Array.isArray(catalog.providers)) {
+              this.pushEvent('model_catalog', 'Ignored malformed Model Catalog response');
+              return;
+            }
+            const previousSelection = this.modelSelection
+              ? { ...this.modelSelection }
+              : null;
+            const preserveUserSelection = this.modelSelectionSource === 'user'
+              && this.catalogHasModel(catalog, previousSelection);
+            this.modelCatalog = catalog;
+            if (preserveUserSelection) {
+              this.modelSelection = Object.freeze(previousSelection);
+              this.modelSelectionSource = 'user';
+            } else {
+              const runtimeDefault = this.availableRuntimeDefault(catalog);
+              const fallback = this.firstAvailableModel(catalog);
+              if (runtimeDefault) {
+                this.modelSelection = Object.freeze(runtimeDefault);
+                this.modelSelectionSource = 'default';
+              } else if (fallback) {
+                this.modelSelection = Object.freeze(fallback);
+                this.modelSelectionSource = 'fallback';
+              } else {
+                this.clearModelSelection();
+              }
+            }
+            this.reconcileReasoningSelection();
+            this.closeModelPicker();
+            this.pushEvent(
+              'model_catalog',
+              `Loaded generation ${catalog.generation} with ${catalog.providers.length} provider(s)`,
+            );
+          },
+          sendMessage() {
+            if (!this.canSend) return;
+            const text = this.draft.trim();
+            const isSteer = this.isWaitingForReply;
+            const hasAttachments = this.attachments.length > 0;
+
+            let wireMessage;
+            if (!hasAttachments) {
+              wireMessage = text;
+            } else {
+              const blocks = [];
+              if (text) blocks.push({ type: 'text', text });
+              for (const a of this.attachments) {
+                blocks.push({
+                  type: 'image',
+                  source: { type: 'base64', mediaType: a.mediaType, data: a.base64 },
+                });
+              }
+              wireMessage = blocks;
+            }
+
+            this.appendChatItem({
+              kind: 'user',
+              label: 'You',
+              text,
+              isSteer,
+              reasoning: this.currentReasoningPreference(),
+              attachments: hasAttachments
+                ? this.attachments.map(a => ({
+                    id: a.id,
+                    previewUrl: a.previewUrl,
+                    name: a.name,
+                    sizeBytes: a.sizeBytes,
+                    willResize: a.willResize,
+                  }))
+                : [],
+            });
+
+            const pendingTurn = {
+              message: wireMessage,
+              modelReference: this.requestModelReference,
+              reasoning: this.currentReasoningPreference(),
+              isSteer,
+              attachmentCount: this.attachments.length,
+            };
+            if (this.form.sessionId) {
+              this.dispatchRunTurn(pendingTurn);
+            } else {
+              // A new Session is local empty-ID state until the first message requests an ID.
+              const requestId = `session-${this.nextSessionRequestId++}`;
+              this.pendingSessionRequestId = requestId;
+              this.pendingFirstTurn = pendingTurn;
+              this.sendJson({
+                type: 'create_session',
+                requestId,
+                permissionMode: this.permissionMode,
+              });
+              this.pushEvent('create_session', 'Requested a Session for the first message');
+            }
+            this.draft = '';
+            // Do NOT revoke previewUrl here — the bubble still references it.
+            this.attachments = [];
+            this.attachError = '';
+          },
+
+          dispatchRunTurn(turn) {
+            this.sendJson({
+              type: 'run_turn',
+              sessionId: this.form.sessionId,
+              message: turn.message,
+              ...(turn.modelReference ? { modelReference: turn.modelReference } : {}),
+              reasoning: turn.reasoning,
+            });
+            this.pushEvent(
+              turn.isSteer ? 'steer' : 'run_turn',
+              `Sent ${turn.isSteer ? 'steer ' : ''}message to session ${this.form.sessionId}`
+                + (turn.attachmentCount ? ` (${turn.attachmentCount} attachment${turn.attachmentCount !== 1 ? 's' : ''})` : ''),
+            );
+            this.isWaitingForReply = true;
+          },
+
+          // ── Attachments ───────────────────────────────────────
+          async ingestFiles(fileList) {
+            const incoming = Array.from(fileList ?? []);
+            if (incoming.length === 0) return;
+            if (!this.selectedModelSupportsImages) {
+              this.attachError = this.attachmentCapabilityExplanation;
+              return;
+            }
+            const errors = [];
+            let runningTotal = this.attachments.reduce((sum, a) => sum + a.sizeBytes, 0);
+            let runningCount = this.attachments.length;
+
+            for (const file of incoming) {
+              if (!SUPPORTED_IMAGE_MIME.has(file.type)) {
+                errors.push(`${file.name || 'Unnamed file'}: type ${file.type || 'unknown'} is not supported`);
+              }
+              if (file.size > ATTACHMENT_RAW_MAX_BYTES) {
+                errors.push(`${file.name}: exceeds the ${ATTACHMENT_RAW_MAX_BYTES / 1024 / 1024} MB per-image limit`);
+              }
+              if (runningCount + 1 > MAX_ATTACHMENTS_PER_MESSAGE) {
+                errors.push(`Maximum ${MAX_ATTACHMENTS_PER_MESSAGE} images`);
+                break;
+              }
+              if (runningTotal + file.size > ATTACHMENT_TOTAL_MAX_BYTES) {
+                errors.push(`Total size exceeds ${ATTACHMENT_TOTAL_MAX_BYTES / 1024 / 1024} MB`);
+                break;
+              }
+              runningTotal += file.size;
+              runningCount += 1;
+            }
+            if (errors.length > 0) {
+              this.attachError = `${errors.join('; ')}. No files from this selection were added.`;
+              return;
+            }
+
+            try {
+              const encoded = await Promise.all(incoming.map(async file => ({
+                file,
+                base64: await this.readAsBase64(file),
+              })));
+              if (!this.selectedModelSupportsImages) {
+                this.attachError = this.attachmentCapabilityExplanation;
+                return;
+              }
+              const prepared = encoded.map(({ file, base64 }) => ({
+                  id: this.nextId++,
+                  file,
+                  name: file.name,
+                  mediaType: file.type,
+                  sizeBytes: file.size,
+                  base64,
+                  willResize: file.size > ATTACHMENT_INLINE_THRESHOLD_BYTES,
+                  previewUrl: URL.createObjectURL(file),
+                }));
+              this.attachments.push(...prepared);
+              this.attachError = '';
+            } catch (err) {
+              this.attachError = `Failed to read the selected files (${err?.message || err}). No files were added.`;
+            }
+          },
+          readAsBase64(file) {
+            return new Promise((resolve, reject) => {
+              const r = new FileReader();
+              r.onerror = () => reject(r.error ?? new Error('FileReader failed'));
+              r.onload = () => {
+                const s = String(r.result ?? '');
+                const i = s.indexOf(',');
+                resolve(i >= 0 ? s.slice(i + 1) : s);
+              };
+              r.readAsDataURL(file);
+            });
+          },
+          removeAttachment(id) {
+            const idx = this.attachments.findIndex(a => a.id === id);
+            if (idx >= 0) {
+              URL.revokeObjectURL(this.attachments[idx].previewUrl);
+              this.attachments.splice(idx, 1);
+            }
+          },
+          clearAttachments() {
+            for (const a of this.attachments) URL.revokeObjectURL(a.previewUrl);
+            this.attachments = [];
+          },
+          resetComposer() {
+            this.draft = '';
+            this.clearAttachments();
+            this.attachError = '';
+          },
+
+          // Send inbound `abort_turn`; server-side stops the current turn
+          // and drops queued/followup messages for this session
+          // (core-abort-spec.md §8.3 / §13). No inline ack — completion
+          // is observed via run_end{stopReason:'aborted'} (special-cased
+          // below in handleServerMessage's run_end branch).
+          abortTurn() {
+            if (!this.isConnected || !this.form.sessionId) return;
+            try {
+              this.sendJson({ type: 'abort_turn', sessionId: this.form.sessionId });
+              this.pushEvent('abort_turn', `Sent abort_turn for session ${this.form.sessionId}`);
+            } catch (err) {
+              this.pushEvent('error', `Failed to send abort_turn: ${err?.message ?? err}`);
+            }
+          },
+          onAttachClick() {
+            if (!this.selectedModelSupportsImages) {
+              this.attachError = this.attachmentCapabilityExplanation;
+              return;
+            }
+            this.$refs.fileInput?.click();
+          },
+          onFileInputChange(e) {
+            this.ingestFiles(e.target.files);
+            e.target.value = '';
+          },
+          onPaste(e) {
+            const files = [];
+            for (const it of e.clipboardData?.items ?? []) {
+              if (it.kind === 'file') {
+                const f = it.getAsFile();
+                if (f) files.push(f);
+              }
+            }
+            if (files.length) {
+              e.preventDefault();
+              this.ingestFiles(files);
+            }
+          },
+          onComposerDragEnter(e) {
+            e.preventDefault();
+            this.dragDepth++;
+            this.dragHover = true;
+          },
+          onComposerDragOver(e) { e.preventDefault(); },
+          onComposerDragLeave() {
+            this.dragDepth = Math.max(0, this.dragDepth - 1);
+            if (this.dragDepth === 0) this.dragHover = false;
+          },
+          onComposerDrop(e) {
+            e.preventDefault();
+            this.dragDepth = 0;
+            this.dragHover = false;
+            this.ingestFiles(e.dataTransfer?.files);
+          },
+          formatBytes(n) {
+            if (n < 1024) return `${n} B`;
+            if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+            return `${(n / 1024 / 1024).toFixed(1)} MB`;
+          },
+          resolveApproval(seg, decision) {
+            if (!seg?.approval || seg.approval.status !== 'pending') return;
+            this.sendJson({ type: 'approval_resolve', id: seg.approval.id, decision });
+            seg.approval.status = decision === 'allow' ? 'resolved' : 'denied';
+            this.pushEvent('approval', `${decision === 'allow' ? 'Allowed' : 'Denied'} ${seg.approval.toolName}`);
+          },
+
+          // ── Message handling ──────────────────────────────────
+          handleServerMessage(raw) {
+            let message;
+            try {
+              message = JSON.parse(raw);
+            } catch {
+              this.pushEvent('parse', `Received non-JSON payload: ${String(raw).slice(0, 120)}`);
+              return;
+            }
+            if (!message || typeof message !== 'object') {
+              this.pushEvent('parse', 'Ignored non-object server payload');
+              return;
+            }
+            switch (message.type) {
+              case 'hello_ack':
+                this.connectionStatus = 'connected';
+                this.helloAcknowledged = true;
+                this.lastStatusMessage = `Hello acknowledged as ${message.clientId}`;
+                this.pushEvent('hello', `Server acknowledged client ${message.clientId}`);
+                this.requestModelCatalog();
+                this.requestSessionList();
+                this.requestPermissionMode();
+                return;
+              case 'model_catalog':
+                if (message.requestId !== this.pendingCatalogRequestId) {
+                  this.pushEvent('model_catalog', `Ignored unexpected response ${message.requestId ?? '(missing id)'}`);
+                  return;
+                }
+                this.pendingCatalogRequestId = null;
+                this.applyModelCatalog(message.catalog);
+                return;
+              case 'session_created': {
+                if (message.requestId !== this.pendingSessionRequestId || !this.pendingFirstTurn) {
+                  this.pushEvent('session_created', `Ignored unexpected response ${message.requestId ?? '(missing id)'}`);
+                  return;
+                }
+                const pendingTurn = this.pendingFirstTurn;
+                this.pendingSessionRequestId = null;
+                this.pendingFirstTurn = null;
+                this.sessionStates[message.sessionId] = this.ensureSessionState('');
+                delete this.sessionStates[''];
+                this.form.sessionId = message.sessionId;
+                if (message.permission?.sessionId === message.sessionId) {
+                  this.permissionMode = message.permission.mode;
+                  this.permissionChangedAt = message.permission.changedAt;
+                }
+                this.pushEvent('session_created', `Created session ${message.sessionId}`);
+                this.dispatchRunTurn(pendingTurn);
+                return;
+              }
+              case 'session_permission_mode_changed': {
+                if (typeof message.sessionId !== 'string' || message.sessionId.length === 0) {
+                  this.pushEvent('permission', 'Ignored permission update without a Session ID');
+                  return;
+                }
+                const state = this.ensureSessionState(message.sessionId);
+                if ((message.mode !== 'manual' && message.mode !== 'allow_all')
+                  || !Number.isFinite(message.changedAt)
+                  || message.changedAt < state.permissionChangedAt) {
+                  this.pushEvent('permission', 'Ignored invalid or unrelated permission update');
+                  return;
+                }
+                state.pendingPermissionRequestId = null;
+                state.permissionMode = message.mode;
+                state.permissionChangedAt = message.changedAt;
+                this.pushEvent('permission', `Session permission mode is ${message.mode}`);
+                return;
+              }
+              case 'sessions_listed':
+                if (message.requestId !== this.pendingSessionsRequestId) {
+                  this.pushEvent('sessions_listed', `Ignored unexpected response ${message.requestId ?? '(missing id)'}`);
+                  return;
+                }
+                this.pendingSessionsRequestId = null;
+                if (!Array.isArray(message.sessions)) {
+                  this.sessionsError = 'Invalid Session list response.';
+                  this.pushEvent('sessions_listed', this.sessionsError);
+                  return;
+                }
+                this.sessions = message.sessions;
+                if (this.sessionActionMenu && !this.sessionActionMenuEntry) {
+                  this.closeSessionActionMenu();
+                }
+                this.sessionsError = '';
+                this.pushEvent('sessions_listed', `Loaded ${message.sessions.length} Session(s)`);
+                return;
+              case 'session_history': {
+                const state = this.ensureSessionState(message.sessionId);
+                if (message.requestId !== state.pendingHistoryRequest?.requestId) {
+                  this.pushEvent('session_history', `Ignored unexpected response ${message.requestId ?? '(missing id)'}`);
+                  return;
+                }
+                const pending = state.pendingHistoryRequest;
+                const pendingWasEarlier = Boolean(pending.beforeEntryId);
+                const scrollAnchor = pendingWasEarlier
+                  ? this.captureHistoryScrollAnchor(message.sessionId)
+                  : null;
+                this.mergeHistoryPage(message.sessionId, message);
+                if (state.failedHistoryRequest?.beforeEntryId === pending.beforeEntryId) {
+                  state.failedHistoryRequest = null;
+                }
+                this.settleHistoryRequest(message.sessionId);
+                if (message.sessionId === this.form.sessionId) {
+                  if (pendingWasEarlier) {
+                    this.restoreHistoryScrollAnchor(message.sessionId, scrollAnchor);
+                  } else {
+                    this.scrollChatToBottom(message.sessionId);
+                  }
+                }
+                this.pushEvent('session_history', `Loaded ${message.items?.length ?? 0} message record(s)`);
+                return;
+              }
+              case 'session_history_error': {
+                const state = this.ensureSessionState(message.sessionId);
+                if (message.requestId !== state.pendingHistoryRequest?.requestId) {
+                  this.pushEvent('session_history', `Ignored unexpected error ${message.requestId ?? '(missing id)'}`);
+                  return;
+                }
+                state.failedHistoryRequest = {
+                  beforeEntryId: state.pendingHistoryRequest.beforeEntryId,
+                  terminalTurnIds: [...state.pendingHistoryRequest.terminalTurnIds],
+                };
+                state.historyError = `${message.code}: ${message.message}`;
+                this.settleHistoryRequest(message.sessionId);
+                this.pushEvent('session_history', state.historyError);
+                return;
+              }
+              case 'session_renamed': {
+                const pending = this.pendingSessionOperation;
+                if (
+                  pending?.type !== 'rename'
+                  || message.requestId !== pending.requestId
+                  || message.session?.sessionId !== pending.sessionId
+                ) {
+                  this.pushEvent('session_renamed', `Ignored unexpected response ${message.requestId ?? '(missing id)'}`);
+                  return;
+                }
+                this.pendingSessionOperation = null;
+                this.upsertSession(message.session);
+                this.sessionsError = '';
+                this.pushEvent('session_renamed', `Renamed Session ${pending.sessionId}`);
+                return;
+              }
+              case 'session_deleted': {
+                const pending = this.pendingSessionOperation;
+                if (
+                  pending?.type !== 'delete'
+                  || message.requestId !== pending.requestId
+                  || message.sessionId !== pending.sessionId
+                ) {
+                  this.pushEvent('session_deleted', `Ignored unexpected response ${message.requestId ?? '(missing id)'}`);
+                  return;
+                }
+                this.pendingSessionOperation = null;
+                this.sessions = this.sessions.filter(
+                  session => session.sessionId !== pending.sessionId,
+                );
+                delete this.sessionStates[pending.sessionId];
+                if (this.form.sessionId === pending.sessionId) {
+                  const replacement = this.sessions[0];
+                  if (replacement) {
+                    this.form.sessionId = replacement.sessionId;
+                    this.ensureSessionState(replacement.sessionId);
+                    this.requestPermissionMode();
+                    this.requestSessionHistory(replacement.sessionId, { latest: true });
+                  } else {
+                    this.startNewSession();
+                  }
+                }
+                this.sessionsError = '';
+                this.pushEvent('session_deleted', `Deleted Session ${pending.sessionId}`);
+                return;
+              }
+              case 'approval_requested': {
+                const state = this.ensureSessionState(message.sessionId);
+                const toolCall = this.findToolCall(message.turnId, message.callId, message.sessionId);
+                if (!toolCall) {
+                  this.pushEvent(
+                    'client_protocol_error',
+                    `Approval ${message.id} has no Tool Call ${message.callId}`,
+                  );
+                  return;
+                }
+                toolCall.input = message.input;
+                toolCall.status = 'approval';
+                toolCall.approval = { ...message, status: 'pending' };
+                this.scrollChatToBottom(message.sessionId);
+                this.pushEvent(
+                  'approval',
+                  `Approval requested for ${message.toolName} in ${this.shortSessionId(message.sessionId)}`,
+                );
+                return;
+              }
+              case 'approval_closed':
+                this.markApprovalClosed(
+                  message.id,
+                  message.outcome,
+                  message.reason,
+                  message.sessionId,
+                );
+                this.pushEvent('approval', `Approval ${message.outcome}: ${message.id}`);
+                return;
+              case 'channel_error':
+                this.pendingSessionRequestId = null;
+                this.pendingFirstTurn = null;
+                this.pendingPermissionRequestId = null;
+                if (this.pendingSessionOperation !== null) {
+                  this.pendingSessionOperation = null;
+                  this.closeSessionActionMenu();
+                  this.sessionsError = `${message.code}: ${message.message}`;
+                }
+                if (this.pendingSessionsRequestId !== null) {
+                  this.pendingSessionsRequestId = null;
+                  this.sessionsError = `${message.code}: ${message.message}`;
+                }
+                if (message.code === 'ATTACHMENT_REJECTED') {
+                  this.isWaitingForReply = false;
+                }
+                this.pushEvent('channel_error', `${message.code}: ${message.message}`);
+                this.appendChatItem({ kind: 'error', label: 'Channel', text: `${message.code}: ${message.message}` });
+                return;
+            }
+            this.handleAgentEvent(message);
+          },
+
+          handleAgentEvent(event) {
+            const sessionId = event.callerSessionId || event.sessionId || this.form.sessionId;
+            const state = this.ensureSessionState(sessionId);
+            switch (event.type) {
+              case 'run_start':
+                state.activeTurnId = event.turnId;
+                if (event.originMessageId) {
+                  const userItem = state.chatItems.find(
+                    item => item.kind === 'user' && item.messageId === event.originMessageId,
+                  );
+                  if (userItem) userItem.turnId = event.turnId;
+                }
+                this.pushEvent('run_start', `Turn ${event.turnId} started`);
+                return;
+
+              case 'text_delta':
+                this.bindActiveTurn(state, event.turnId);
+                this.collapseCompletedThinking(event.turnId, sessionId);
+                this.appendTextToTurn(event.turnId, event.text, sessionId);
+                return;
+
+              case 'thinking_start': {
+                this.bindActiveTurn(state, event.turnId);
+                const turn = this.getOrCreateTurn(event.turnId, sessionId);
+                if (turn.segments.some(seg => seg.thinkingId === event.thinkingId)) {
+                  this.pushEvent('client_protocol_error', `Duplicate Thinking ${event.thinkingId}`);
+                  return;
+                }
+                turn.segments.push({
+                  type: 'thinking',
+                  id: event.thinkingId,
+                  thinkingId: event.thinkingId,
+                  text: '',
+                  status: 'running',
+                  expanded: true,
+                });
+                this.scrollChatToBottom(sessionId);
+                return;
+              }
+
+              case 'thinking_delta': {
+                const segment = this.findThinking(event.turnId, event.thinkingId, sessionId);
+                if (!segment) {
+                  this.pushEvent('client_protocol_error', `Thinking delta has no start ${event.thinkingId}`);
+                  return;
+                }
+                segment.text += event.text;
+                this.scrollChatToBottom(sessionId);
+                return;
+              }
+
+              case 'thinking_end': {
+                const turn = this.getOrCreateTurn(event.turnId, sessionId);
+                const segment = this.findThinking(event.turnId, event.thinkingId, sessionId);
+                if (!segment) {
+                  this.pushEvent('client_protocol_error', `Thinking end has no start ${event.thinkingId}`);
+                  return;
+                }
+                if (!event.text) {
+                  turn.segments = turn.segments.filter(seg => seg !== segment);
+                } else {
+                  segment.text = event.text;
+                  segment.status = event.status;
+                }
+                this.scrollChatToBottom(sessionId);
+                return;
+              }
+
+              case 'tool_call_requested': {
+                this.bindActiveTurn(state, event.turnId);
+                this.collapseCompletedThinking(event.turnId, sessionId);
+                const turn = this.getOrCreateTurn(event.turnId, sessionId);
+                turn.segments.push({
+                  type: 'tool_call',
+                  id: this.nextId++,
+                  callId: event.callId,
+                  name: event.name,
+                  input: event.input,
+                  status: 'requested',
+                  resultContent: '',
+                  isError: false,
+                  expanded: false,
+                  resultExpanded: false,
+                });
+                this.pushEvent('tool_call_requested', event.name);
+                this.scrollChatToBottom(sessionId);
+                return;
+              }
+
+              case 'tool_use': {
+                this.bindActiveTurn(state, event.turnId);
+                const toolCall = this.findToolCall(event.turnId, event.callId, sessionId);
+                if (!toolCall) {
+                  this.pushEvent(
+                    'client_protocol_error',
+                    `Accepted execution ${event.executionId} has no Tool Call ${event.callId}`,
+                  );
+                  return;
+                }
+                toolCall.executionId = event.executionId;
+                toolCall.status = 'running';
+                if (toolCall.approval) toolCall.approval.status = 'resolved';
+                this.pushEvent('tool_use', event.name);
+                this.scrollChatToBottom(sessionId);
+                return;
+              }
+
+              case 'tool_result': {
+                this.bindActiveTurn(state, event.turnId);
+                const toolCall = this.findToolCall(event.turnId, event.callId, sessionId);
+                if (!toolCall) {
+                  this.pushEvent(
+                    'client_protocol_error',
+                    `Tool Result has no Tool Call ${event.callId}`,
+                  );
+                  return;
+                }
+                toolCall.status = event.result?.status;
+                toolCall.resultContent = this.normalizeToolResultContent(event.result?.content);
+                toolCall.isError = event.result?.status === 'error';
+                if (event.executionId) toolCall.executionId = event.executionId;
+                this.scrollChatToBottom(sessionId);
+                return;
+              }
+
+              case 'llm_call':
+                this.bindActiveTurn(state, event.turnId);
+                this.pushEvent('llm_call', `Round ${event.round} for turn ${event.turnId}`);
+                return;
+
+              case 'run_end':
+                this.closeActiveThinking(event.turnId, sessionId);
+                state.isWaitingForReply = false;
+                state.activeTurnId = null;
+                this.requestSessionList();
+                this.requestSessionHistory(sessionId, {
+                  latest: true,
+                  terminalTurnId: event.turnId,
+                });
+                // spec §13.1: special-case aborted so users can distinguish
+                // it from a normal end_turn. Rendered as a system bubble
+                // rather than reused text bubble to make the interruption
+                // visually distinct.
+                if (event.result?.stopReason === 'aborted') {
+                  this.appendChatItem({
+                    kind: 'system',
+                    label: 'Aborted',
+                    turnId: event.turnId,
+                    text: '⚠ Turn aborted',
+                  }, sessionId);
+                  this.pushEvent('run_end', `Turn ${event.turnId} aborted`);
+                } else if (event.result?.stopReason === 'max_llm_calls') {
+                  this.appendChatItem({
+                    kind: 'system',
+                    label: 'Limit reached',
+                    turnId: event.turnId,
+                    text: 'Configured model call limit reached',
+                  }, sessionId);
+                  this.pushEvent('run_end', `Turn ${event.turnId} reached the configured model call limit`);
+                } else {
+                  this.pushEvent('run_end', `Turn ${event.turnId} finished with ${event.result.stopReason}`);
+                }
+                return;
+
+              case 'request_end':
+                state.isWaitingForReply = false;
+                this.appendChatItem({
+                  kind: 'system',
+                  label: 'Cancelled',
+                  text: event.reason === 'shutdown'
+                    ? 'Queued request cancelled during shutdown'
+                    : 'Queued request cancelled',
+                }, sessionId);
+                this.pushEvent('request_end', `Request ${event.requestId} cancelled`);
+                return;
+
+              case 'error':
+                this.closeActiveThinking(event.turnId, sessionId);
+                state.isWaitingForReply = false;
+                state.activeTurnId = null;
+                this.appendChatItem({
+                  kind: 'error',
+                  label: 'Runtime',
+                  turnId: event.turnId,
+                  text: event.error || 'Unknown runtime error',
+                }, sessionId);
+                if (event.category === 'provider_unregistered' || event.category === 'model_rejected') {
+                  this.clearModelSelection();
+                  this.pushEvent('model_catalog', 'Selected model is unavailable; refreshing the Catalog for reselection');
+                  this.requestModelCatalog();
+                }
+                this.pushEvent('error', `Turn ${event.turnId} failed${event.category ? ` (${event.category})` : ''}`);
+                this.requestSessionHistory(sessionId, {
+                  latest: true,
+                  terminalTurnId: event.turnId,
+                });
+                return;
+
+              case 'compaction_start':
+                this.appendChatItem({
+                  kind: 'system',
+                  label: 'Compaction',
+                  turnId: event.turnId,
+                  text: `Compaction started (${event.trigger}), tokens before: ${event.estimatedTokens}`,
+                }, sessionId);
+                return;
+
+              case 'compaction_end':
+                this.appendChatItem({
+                  kind: 'system',
+                  label: 'Compaction',
+                  turnId: event.turnId,
+                  text: `Compaction finished: ${event.tokensBefore} → ${event.tokensAfter}, dropped ${event.droppedMessages} messages`,
+                }, sessionId);
+                return;
+
+              case 'tool_result_pruned':
+                this.pushEvent('tool_result_pruned', `${event.toolUseId}: ${event.originalChars} → ${event.prunedChars}`);
+                return;
+
+              case 'user_message': {
+                // Dedup: origin client already rendered a local "You" bubble in sendMessage().
+                if (event.originClientId === this.form.clientId) {
+                  const pendingLocal = state.chatItems.find(
+                    item => item.kind === 'user' && !item.messageId,
+                  );
+                  if (pendingLocal) {
+                    pendingLocal.messageId = event.messageId;
+                  }
+                  return;
+                }
+                const label = event.originClientId
+                  ? `user @${event.originClientId.slice(0, 6)}`
+                  : 'user (external)';
+                this.appendChatItem({
+                  kind: 'user',
+                  label,
+                  text: event.content ?? '',
+                  isSteer: false,
+                  messageId: event.messageId,
+                  turnId: null,
+                  attachmentSummaries: event.attachmentSummaries ?? [],
+                  reasoning: event.reasoning,
+                }, sessionId);
+                return;
+              }
+
+              case 'user_message_bound': {
+                const userItem = state.chatItems.find(
+                  item => item.kind === 'user' && item.messageId === event.messageId,
+                );
+                if (userItem) {
+                  userItem.turnId = event.turnId;
+                  userItem.isSteer = event.binding === 'steering';
+                }
+                return;
+              }
+
+              default:
+                this.pushEvent('event', `Unhandled event: ${event.type || 'unknown'}`);
+            }
+          },
+
+          // ── Turn / segment helpers ────────────────────────────
+
+          bindActiveTurn(state, turnId) {
+            if (!turnId) return;
+            state.activeTurnId = turnId;
+            for (const item of state.chatItems) {
+              if (item.kind === 'user' && item.isSteer && item.messageId && !item.turnId) {
+                item.turnId = turnId;
+              }
+            }
+          },
+
+          // Find or lazily create the turn entry for a given turnId.
+          // If the existing turn entry is no longer the last chat item (e.g. the
+          // user inserted a steer message mid-turn), mark the old entry as
+          // interrupted and start a fresh continuation entry so subsequent
+          // text/tool events render *after* the interrupting messages.
+          getOrCreateTurn(turnId, sessionId = this.form.sessionId) {
+            const state = this.ensureSessionState(sessionId);
+            state.activeTurnId = turnId;
+            for (const item of state.chatItems) {
+              if (item.kind === 'user' && item.isSteer && item.messageId && !item.turnId) {
+                item.turnId = turnId;
+              }
+            }
+            const existing = state.turnMap[turnId];
+            if (existing) {
+              const lastItem = state.chatItems[state.chatItems.length - 1];
+              if (lastItem === existing) return existing;
+              existing.interrupted = true;
+              const continuation = {
+                kind: 'turn',
+                id: this.nextId++,
+                turnId,
+                label: 'Assistant',
+                timestamp: Date.now(),
+                segments: [],
+                isContinuation: true,
+              };
+              state.chatItems.push(continuation);
+              state.turnMap[turnId] = continuation;
+              return continuation;
+            }
+            const turn = {
+              kind: 'turn',
+              id: this.nextId++,
+              turnId,
+              label: 'Assistant',
+              timestamp: Date.now(),
+              segments: [],
+            };
+            state.chatItems.push(turn);
+            state.turnMap[turnId] = turn;
+            return turn;
+          },
+
+          // Append text to the last text segment of a turn,
+          // or create a new text segment if the last segment is a tool segment.
+          appendTextToTurn(turnId, delta, sessionId = this.form.sessionId) {
+            const turn = this.getOrCreateTurn(turnId, sessionId);
+            const last = turn.segments[turn.segments.length - 1];
+            if (last && last.type === 'text') {
+              last.text += delta;
+            } else {
+              turn.segments.push({ type: 'text', id: this.nextId++, text: delta });
+            }
+            turn.timestamp = Date.now();
+            this.scrollChatToBottom(sessionId);
+          },
+
+          findThinking(turnId, thinkingId, sessionId) {
+            const state = this.ensureSessionState(sessionId);
+            for (let itemIndex = state.chatItems.length - 1; itemIndex >= 0; itemIndex--) {
+              const item = state.chatItems[itemIndex];
+              if (item.kind !== 'turn' || item.turnId !== turnId) continue;
+              const segment = item.segments.find(
+                candidate => candidate.type === 'thinking' && candidate.thinkingId === thinkingId,
+              );
+              if (segment) return segment;
+            }
+            return null;
+          },
+
+          collapseCompletedThinking(turnId, sessionId) {
+            const state = this.ensureSessionState(sessionId);
+            for (const item of state.chatItems) {
+              if (item.kind !== 'turn' || item.turnId !== turnId) continue;
+              for (const segment of item.segments) {
+                if (segment.type === 'thinking' && segment.status !== 'running') {
+                  segment.expanded = false;
+                }
+              }
+            }
+          },
+
+          closeActiveThinking(turnId, sessionId) {
+            const state = this.ensureSessionState(sessionId);
+            for (const item of state.chatItems) {
+              if (item.kind !== 'turn' || item.turnId !== turnId) continue;
+              for (const segment of item.segments) {
+                if (segment.type === 'thinking' && segment.status === 'running') {
+                  segment.status = 'partial';
+                }
+              }
+            }
+          },
+
+          findToolCall(turnId, callId, sessionId) {
+            const state = this.ensureSessionState(sessionId);
+            for (let itemIndex = state.chatItems.length - 1; itemIndex >= 0; itemIndex--) {
+              const item = state.chatItems[itemIndex];
+              if (item.kind !== 'turn' || item.turnId !== turnId) continue;
+              const matches = item.segments.filter(
+                segment => segment.type === 'tool_call' && segment.callId === callId,
+              );
+              if (matches.length === 1) return matches[0];
+              if (matches.length > 1) return null;
+            }
+            return null;
+          },
+
+          // ── Chat item helpers ─────────────────────────────────
+          appendChatItem(fields, sessionId = this.form.sessionId) {
+            const state = this.ensureSessionState(sessionId);
+            const item = {
+              id: this.nextId++,
+              timestamp: Date.now(),
+              text: '',
+              turnId: null,
+              ...fields,
+            };
+            state.chatItems.push(item);
+            this.scrollChatToBottom(sessionId);
+            return item;
+          },
+
+          markApprovalClosed(approvalId, outcome, reason, sessionId = this.form.sessionId) {
+            const state = this.ensureSessionState(sessionId);
+            for (const item of state.chatItems) {
+              if (item.kind !== 'turn') continue;
+              const seg = item.segments.find(s => s.approval?.id === approvalId);
+              if (seg) {
+                seg.approval.status = outcome;
+                seg.approval.closeReason = reason;
+                return;
+              }
+            }
+          },
+
+          itemRoleClass(item) {
+            if (item.kind === 'turn') return 'assistant';
+            if (item.kind === 'user') return 'user';
+            if (item.kind === 'approval') return 'approval';
+            if (item.kind === 'error') return 'error';
+            if (item.kind === 'system') return 'system';
+            return item.kind;
+          },
+
+          startNewSession() {
+            this.closeSessionActionMenu();
+            this.sessionStates[''] = createSessionUiState();
+            this.form.sessionId = '';
+            this.closeMobileSidebar();
+          },
+          selectSession(session) {
+            if (!session?.sessionId || this.pendingSessionRequestId !== null) {
+              return;
+            }
+            if (session.sessionId === this.form.sessionId) {
+              this.closeMobileSidebar();
+              return;
+            }
+            this.closeSessionActionMenu();
+            this.form.sessionId = session.sessionId;
+            this.ensureSessionState(session.sessionId);
+            this.pushEvent('session_selected', `Selected Session ${session.sessionId}`);
+            this.requestPermissionMode();
+            this.requestSessionHistory(session.sessionId, { latest: true });
+            this.closeMobileSidebar();
+          },
+          shortSessionId(sessionId) {
+            return typeof sessionId === 'string' ? sessionId.slice(0, 8) : '';
+          },
+          formatSessionTime(timestamp) {
+            if (!Number.isFinite(timestamp)) return '';
+            return new Date(timestamp).toLocaleDateString([], {
+              month: 'short',
+              day: 'numeric',
+            });
+          },
+
+          // ── Tool result preview ───────────────────────────────
+          previewLines(content) {
+            const lines = String(content || '').split('\n');
+            const lineNumberWidth = String(lines.length).length;
+            const previewLineCount = TOOL_RESULT_PREVIEW_HEAD_LINES + TOOL_RESULT_PREVIEW_TAIL_LINES;
+            if (lines.length <= previewLineCount) {
+              return {
+                text: lines.map((l, i) => this.formatLine(i + 1, l, lineNumberWidth)).join('\n'),
+                omittedCount: 0,
+              };
+            }
+            const head = lines.slice(0, TOOL_RESULT_PREVIEW_HEAD_LINES)
+              .map((l, i) => this.formatLine(i + 1, l, lineNumberWidth));
+            const tailStart = lines.length - TOOL_RESULT_PREVIEW_TAIL_LINES + 1;
+            const tail = lines.slice(-TOOL_RESULT_PREVIEW_TAIL_LINES)
+              .map((l, i) => this.formatLine(tailStart + i, l, lineNumberWidth));
+            const omittedCount = lines.length - previewLineCount;
+            return {
+              text: [...head, `...  ${omittedCount} more lines`, ...tail].join('\n'),
+              omittedCount,
+            };
+          },
+          formatLine(lineNumber, line, width) {
+            return `${String(lineNumber).padStart(width, ' ')} ${line}`;
+          },
+          segResultPreview(seg) {
+            return this.previewLines(seg.resultContent);
+          },
+          segResultTruncated(seg) {
+            return this.segResultPreview(seg).omittedCount > 0;
+          },
+
+          toolInputSummary(input) {
+            if (!input || typeof input !== 'object' || Array.isArray(input)) return '';
+            const entries = Object.entries(input).slice(0, 3);
+            const summary = entries.map(([key, value]) => `${key}=${this.singleLineValue(value)}`).join(', ');
+            return Object.keys(input).length > entries.length ? `${summary}, …` : summary;
+          },
+          reconcileReasoningSelection() {
+            this.closeReasoningPicker();
+            const reset = [];
+            if (
+              this.reasoningSelection.thinking !== 'default'
+              && !this.thinkingOptions.includes(this.reasoningSelection.thinking)
+            ) {
+              this.reasoningSelection.thinking = 'default';
+              reset.push('Thinking');
+            }
+            if (
+              this.reasoningSelection.effort !== 'default'
+              && !this.effortOptions.includes(this.reasoningSelection.effort)
+            ) {
+              this.reasoningSelection.effort = 'default';
+              reset.push('Effort');
+            }
+            this.reasoningNotice = reset.length > 0
+              ? `${reset.join(' and ')} reset to Default because the selected model does not support the previous value.`
+              : '';
+          },
+          isThinkingOptionDisabled(value) {
+            return value === 'on' && this.reasoningSelection.effort === 'none';
+          },
+          isEffortOptionDisabled(value) {
+            return this.reasoningSelection.thinking === 'off'
+              && value !== 'none';
+          },
+          currentReasoningPreference() {
+            return Object.freeze({
+              ...(this.reasoningSelection.thinking !== 'default'
+                ? { thinking: this.reasoningSelection.thinking }
+                : {}),
+              effort: this.reasoningSelection.effort,
+            });
+          },
+          formatReasoningOption(value) {
+            return value === 'xhigh'
+              ? 'Extra high'
+              : value.charAt(0).toUpperCase() + value.slice(1);
+          },
+          formatReasoningSummary(preference) {
+            const thinking = preference?.thinking ?? 'default';
+            const effort = preference?.effort ?? 'default';
+            return `Thinking ${this.formatReasoningOption(thinking)} · Effort ${this.formatReasoningOption(effort)}`;
+          },
+          singleLineValue(value) {
+            const text = typeof value === 'string'
+              ? JSON.stringify(value)
+              : stringifySafely(value);
+            const singleLine = String(text ?? '').replace(/\r?\n/g, '\\n').replace(/\t/g, '\\t');
+            return singleLine.length > 120 ? `${singleLine.slice(0, 117)}...` : singleLine;
+          },
+
+          // ── Misc helpers ──────────────────────────────────────
+          normalizeToolResultContent(value) {
+            if (typeof value === 'string') return value;
+            if (value == null) return '';
+            if (typeof value === 'object') return this.prettyJson(value);
+            return String(value);
+          },
+          prettyJson(value) {
+            return stringifySafely(value, 2);
+          },
+          pushEvent(title, detail) {
+            this.eventFeed.unshift({ id: this.nextEventId++, title, detail });
+            if (this.eventFeed.length > MAX_EVENT_FEED_ITEMS) {
+              this.eventFeed.length = MAX_EVENT_FEED_ITEMS;
+            }
+          },
+          scrollChatToBottom(sessionId = this.form.sessionId) {
+            if (sessionId !== this.form.sessionId) return;
+            nextTick(() => {
+              const el = this.$refs.chatLogEl;
+              if (el) el.scrollTop = el.scrollHeight;
+            });
+          },
+          captureHistoryScrollAnchor(sessionId) {
+            if (sessionId !== this.form.sessionId) return null;
+            const el = this.$refs.chatLogEl;
+            if (!el) return null;
+            const containerRect = el.getBoundingClientRect();
+            const anchor = [...el.querySelectorAll('[data-chat-item-id]')].find(element => {
+              const rect = element.getBoundingClientRect();
+              return rect.bottom > containerRect.top && rect.top < containerRect.bottom;
+            });
+            if (!anchor) return null;
+            return {
+              itemId: anchor.dataset.chatItemId,
+              viewportOffset: anchor.getBoundingClientRect().top - containerRect.top,
+            };
+          },
+          restoreHistoryScrollAnchor(sessionId, anchor) {
+            if (!anchor || sessionId !== this.form.sessionId) return;
+            nextTick(() => {
+              if (sessionId !== this.form.sessionId) return;
+              const el = this.$refs.chatLogEl;
+              if (!el) return;
+              const element = [...el.querySelectorAll('[data-chat-item-id]')]
+                .find(candidate => candidate.dataset.chatItemId === anchor.itemId);
+              if (!element) return;
+              const containerTop = el.getBoundingClientRect().top;
+              const viewportOffset = element.getBoundingClientRect().top - containerTop;
+              el.scrollTop += viewportOffset - anchor.viewportOffset;
+            });
+          },
+          approvalStatusClass(status) {
+            if (status === 'resolved') return 'allowed';
+            return status;
+          },
+          approvalStatusLabel(status) {
+            switch (status) {
+              case 'pending':  return 'Awaiting decision';
+              case 'resolved': return 'Allowed';
+              case 'denied':   return 'Denied';
+              case 'aborted':  return 'Turn stopped';
+              case 'unavailable': return 'Approval unavailable';
+              case 'failed':   return 'Approval failed';
+              default:         return status;
+            }
+          },
+          toolStatusLabel(status) {
+            switch (status) {
+              case 'requested': return 'Requested';
+              case 'approval': return 'Approval required';
+              case 'approval_unavailable': return 'Approval unavailable';
+              case 'running': return 'Running';
+              case 'success': return 'Succeeded';
+              case 'error': return 'Failed';
+              case 'denied': return 'Denied';
+              case 'aborted': return 'Aborted';
+              default: return String(status || 'Unknown');
+            }
+          },
+          formatTime(ts) {
+            return new Date(ts).toLocaleTimeString([], {
+              hour: '2-digit', minute: '2-digit', second: '2-digit',
+            });
+          },
+
+          // ── Markdown renderer ─────────────────────────────────
+          renderAssistantText(text) {
+            const normalized = String(text || '').replace(/\r\n?/g, '\n');
+            if (!normalized.trim()) return '';
+            return marked.parse(normalized);
+          },
+        },
+      }).mount('#app');
+    </script>
+  </body>
+</html>

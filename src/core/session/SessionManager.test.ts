@@ -1,447 +1,543 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, mkdir } from 'fs/promises';
-import { join } from 'path';
-import { tmpdir } from 'os';
+import { randomUUID } from 'node:crypto';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SessionManager } from './SessionManager.js';
+import type { SessionMessageInput } from './SessionManager.js';
 
-describe('SessionManager', () => {
-  let workspaceDir: string;
+describe('SessionManager transcript behavior', () => {
+  let agentHome: string;
   let manager: SessionManager;
 
   beforeEach(async () => {
-    workspaceDir = await mkdtemp(join(tmpdir(), 'session-mgr-test-'));
-    manager = new SessionManager(workspaceDir);
+    agentHome = await mkdtemp(join(tmpdir(), 'session-manager-test-'));
+    manager = new SessionManager(agentHome);
   });
 
   afterEach(async () => {
-    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(agentHome, { recursive: true, force: true });
   });
 
-  // ── Session CRUD ────────────────────────────────────
+  function appendMessage(
+    sessionId: string,
+    message: Omit<SessionMessageInput, 'turnId'>,
+    target: SessionManager = manager,
+  ) {
+    return target.appendMessage(sessionId, { turnId: 'test-turn', ...message })
+      .then((record) => record.id);
+  }
 
-  describe('createSession', () => {
-    it('creates a session with UUID and JSONL file', async () => {
-      const entry = await manager.createSession('main');
-      expect(entry.sessionId).toBeDefined();
-      expect(entry.sessionKey).toBe('main');
-      expect(entry.sessionFile).toContain('.jsonl');
-      expect(entry.createdAt).toBeGreaterThan(0);
+  async function materialize(
+    target: SessionManager = manager,
+    content = 'initial message',
+  ): Promise<string> {
+    const sessionId = randomUUID();
+    await target.materializeSession({
+      sessionId,
+      createdAt: Date.now(),
     });
+    await appendMessage(sessionId, { role: 'user', content }, target);
+    return sessionId;
+  }
 
-    it('throws on duplicate key', async () => {
-      await manager.createSession('main');
-      await expect(manager.createSession('main')).rejects.toThrow('already exists');
-    });
+  function makeCompactionInput(overrides?: Record<string, unknown>) {
+    return {
+      type: 'compaction' as const,
+      id: randomUUID(),
+      timestamp: new Date().toISOString(),
+      summary: 'Test summary.',
+      tokensBefore: 2000,
+      tokensAfter: 400,
+      trigger: 'overflow' as const,
+      droppedMessages: 4,
+      ...overrides,
+    };
+  }
 
-    it('sets spawnedBy when provided', async () => {
-      await manager.createSession('main');
-      const sub = await manager.createSession('sub', { spawnedBy: 'main' });
-      expect(sub.spawnedBy).toBe('main');
+  it('appends and reloads a linear message chain', async () => {
+    const sessionId = await materialize(manager, 'first');
+    const assistantId = await appendMessage(sessionId, {
+      role: 'assistant',
+      content: 'second',
     });
+    await appendMessage(sessionId, { role: 'user', content: 'third' });
+
+    const reloaded = new SessionManager(agentHome);
+    const messages = reloaded.getMessages(sessionId);
+    expect(messages.map((message) => message.message.content)).toEqual([
+      'first',
+      'second',
+      'third',
+    ]);
+    expect(messages[1]?.id).toBe(assistantId);
+    expect(messages[2]?.parentId).toBe(assistantId);
+    expect(messages.every((message) => message.turnId === 'test-turn')).toBe(true);
+    expect(messages.every((message) => !Object.hasOwn(message.message, 'turnId'))).toBe(true);
   });
 
-  describe('getSession', () => {
-    it('returns entry when exists', async () => {
-      await manager.createSession('main');
-      const entry = manager.getSession('main');
-      expect(entry).toBeDefined();
-      expect(entry!.sessionKey).toBe('main');
+  it('preserves abort metadata across reload', async () => {
+    const sessionId = await materialize();
+    await appendMessage(sessionId, {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'partial…' }],
+      abortMeta: { partial: true, stopReason: 'aborted' },
     });
 
-    it('returns undefined when not exists', () => {
-      const entry = manager.getSession('nonexistent');
-      expect(entry).toBeUndefined();
-    });
-  });
-
-  describe('listSessions', () => {
-    it('returns all sessions', async () => {
-      await manager.createSession('a');
-      await manager.createSession('b');
-      const list = manager.listSessions();
-      expect(list).toHaveLength(2);
-    });
-
-    it('returns empty array when no sessions', () => {
-      const list = manager.listSessions();
-      expect(list).toHaveLength(0);
-    });
-  });
-
-  describe('updateSession', () => {
-    it('updates specified fields', async () => {
-      await manager.createSession('main');
-      await manager.updateSession('main', { totalTokens: 1500, status: 'done' });
-
-      const entry = manager.getSession('main');
-      expect(entry!.totalTokens).toBe(1500);
-      expect(entry!.status).toBe('done');
-    });
-
-    it('updates updatedAt automatically', async () => {
-      const entry = await manager.createSession('main');
-      const originalUpdatedAt = entry.updatedAt;
-
-      await new Promise((r) => setTimeout(r, 10));
-      await manager.updateSession('main', { totalTokens: 100 });
-
-      const updated = manager.getSession('main');
-      expect(updated!.updatedAt).toBeGreaterThan(originalUpdatedAt);
-    });
-
-    it('throws when session not found', async () => {
-      await expect(manager.updateSession('nonexistent', {})).rejects.toThrow('not found');
+    const messages = new SessionManager(agentHome).getMessages(sessionId);
+    expect(messages.at(-1)?.message.abortMeta).toEqual({
+      partial: true,
+      stopReason: 'aborted',
     });
   });
 
-  describe('deleteSession', () => {
-    it('removes store entry and JSONL file', async () => {
-      await manager.createSession('main');
-      await manager.deleteSession('main');
-
-      const entry = manager.getSession('main');
-      expect(entry).toBeUndefined();
+  it('preserves omitted, empty, and explicit-default reasoning shapes in History and reload', async () => {
+    const sessionId = await materialize(manager, 'omitted');
+    await appendMessage(sessionId, {
+      role: 'user',
+      content: 'empty',
+      reasoning: {},
+    });
+    await appendMessage(sessionId, {
+      role: 'user',
+      content: 'explicit',
+      reasoning: { effort: 'default' },
     });
 
-    it('does not throw when session does not exist', async () => {
-      await expect(manager.deleteSession('nonexistent')).resolves.not.toThrow();
-    });
+    const reloaded = new SessionManager(agentHome);
+    const messages = reloaded.getMessages(sessionId);
+    expect(messages.map((message) => message.message.reasoning)).toEqual([
+      undefined,
+      {},
+      { effort: 'default' },
+    ]);
+    expect(reloaded.getHistory({ sessionId }).items.map((message) => message.reasoning))
+      .toEqual([undefined, {}, { effort: 'default' }]);
+    expect(messages[0]?.message).not.toHaveProperty('reasoning');
+    expect(messages[1]?.message).toHaveProperty('reasoning');
   });
 
-  // ── 消息操作（线性） ──────────────────────────────────
+  it('rejects reasoning metadata on non-user messages', async () => {
+    const sessionId = await materialize();
+    await expect(appendMessage(sessionId, {
+      role: 'assistant',
+      content: 'invalid',
+      reasoning: { effort: 'high' },
+    } as never)).rejects.toThrow('reasoning can only be set on a User message');
+  });
 
-  describe('appendMessage', () => {
-    it('appends message and returns id', async () => {
-      await manager.createSession('main');
-      const id = await manager.appendMessage('main', {
-        role: 'user',
-        content: 'Hello',
-      });
-      expect(id).toBeDefined();
-      expect(typeof id).toBe('string');
+  it('persists Provider replay state while projecting only safe Thinking history', async () => {
+    const sessionId = await materialize();
+    await appendMessage(sessionId, {
+      role: 'assistant',
+      content: [{
+        type: 'thinking',
+        id: 'invocation-1:thinking-0',
+        status: 'complete',
+        text: 'visible summary',
+        replay: {
+          format: 'provider.reasoning.v1',
+          payload: { opaque: 'private replay state' },
+        },
+      }],
+      invocation: {
+        id: 'invocation-1',
+        source: {
+          providerId: 'provider',
+          connectionId: 'connection',
+          requestModelId: 'model',
+          wireProtocol: 'openai-responses',
+        },
+        completion: {
+          status: 'complete',
+          stopReason: 'end_turn',
+          usage: { inputTokens: 1, outputTokens: 2 },
+        },
+      },
     });
 
-    it('chains messages with parentId', async () => {
-      await manager.createSession('main');
-      await manager.appendMessage('main', { role: 'user', content: 'Hello' });
-      await manager.appendMessage('main', {
+    const reloaded = new SessionManager(agentHome);
+    expect(reloaded.getMessages(sessionId).at(-1)?.message.content).toEqual([{
+      type: 'thinking',
+      id: 'invocation-1:thinking-0',
+      status: 'complete',
+      text: 'visible summary',
+      replay: {
+        format: 'provider.reasoning.v1',
+        payload: { opaque: 'private replay state' },
+      },
+    }]);
+    expect(reloaded.getHistory({ sessionId }).items.at(-1)?.content).toEqual([{
+      type: 'thinking',
+      id: 'invocation-1:thinking-0',
+      status: 'complete',
+      text: 'visible summary',
+    }]);
+    expect(JSON.stringify(reloaded.getHistory({ sessionId }))).not.toContain('private replay state');
+  });
+
+  it('atomically upgrades a v1 Transcript before appending Thinking state', async () => {
+    const sessionId = await materialize();
+    const transcriptPath = join(agentHome, 'sessions', `${sessionId}.jsonl`);
+    const lines = (await readFile(transcriptPath, 'utf8')).trimEnd().split('\n');
+    const root = JSON.parse(lines[0]!) as { version: number };
+    root.version = 1;
+    lines[0] = JSON.stringify(root);
+    await writeFile(transcriptPath, `${lines.join('\n')}\n`, 'utf8');
+
+    const reloaded = new SessionManager(agentHome);
+    await appendMessage(sessionId, {
+      role: 'assistant',
+      content: [{
+        type: 'thinking',
+        id: 'invocation-1:thinking-0',
+        status: 'partial',
+        text: 'partial summary',
+      }],
+      invocation: {
+        id: 'invocation-1',
+        source: {
+          providerId: 'provider',
+          connectionId: 'connection',
+          requestModelId: 'model',
+          wireProtocol: 'openai-responses',
+        },
+        completion: { status: 'partial', stopReason: 'aborted' },
+      },
+    }, reloaded);
+
+    const upgraded = (await readFile(transcriptPath, 'utf8'))
+      .trimEnd()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(upgraded[0]?.version).toBe(2);
+    expect(upgraded.at(-1)).toMatchObject({
+      type: 'message',
+      message: {
         role: 'assistant',
-        content: [{ type: 'text', text: 'Hi!' }],
-      });
-
-      const messages = manager.getMessages('main');
-      expect(messages).toHaveLength(2);
-      expect(messages[0]!.message.role).toBe('user');
-      expect(messages[1]!.message.role).toBe('assistant');
-      // 第二条消息的 parentId 应该是第一条的 id
-      expect(messages[1]!.parentId).toBe(messages[0]!.id);
-    });
-
-    it('updates leafId after append', async () => {
-      await manager.createSession('main');
-      const id = await manager.appendMessage('main', { role: 'user', content: 'Hello' });
-      expect(manager.getLeafId('main')).toBe(id);
+        content: [{ type: 'thinking', status: 'partial', text: 'partial summary' }],
+      },
     });
   });
 
-  describe('getMessages', () => {
-    it('returns messages in correct order', async () => {
-      await manager.createSession('main');
-      await manager.appendMessage('main', { role: 'user', content: 'first' });
-      await manager.appendMessage('main', { role: 'assistant', content: 'second' });
-      await manager.appendMessage('main', { role: 'user', content: 'third' });
+  it('rejects max_llm_calls metadata on a non-Assistant message before persistence', async () => {
+    const sessionId = await materialize();
 
-      const messages = manager.getMessages('main');
-      expect(messages).toHaveLength(3);
-      expect(messages[0]!.message.content).toBe('first');
-      expect(messages[1]!.message.content).toBe('second');
-      expect(messages[2]!.message.content).toBe('third');
-    });
+    await expect(manager.appendMessage(sessionId, {
+      turnId: 'test-turn',
+      role: 'user',
+      content: 'continue',
+      turnStopReason: 'max_llm_calls',
+    })).rejects.toThrow('turnStopReason can only be set on an Assistant message');
 
-    it('returns empty array for new session', async () => {
-      await manager.createSession('main');
-      const messages = manager.getMessages('main');
-      expect(messages).toHaveLength(0);
-    });
+    expect(manager.getMessages(sessionId)).toHaveLength(1);
   });
 
-  // ── 分支操作 ──────────────────────────────────────────
+  it('persists async Tool lifecycle facts idempotently across reload', async () => {
+    const sessionId = await materialize();
+    const accepted = {
+      turnId: 'test-turn',
+      callId: 'call-1',
+      executionId: 'execution-1',
+      toolName: 'demo',
+    };
 
-  describe('branch', () => {
-    it('moves leafId to specified entry', async () => {
-      await manager.createSession('main');
-      const id1 = await manager.appendMessage('main', { role: 'user', content: 'msg-1' });
-      const id2 = await manager.appendMessage('main', { role: 'assistant', content: 'msg-2' });
-      await manager.appendMessage('main', { role: 'user', content: 'msg-3' });
+    const [firstAcceptedId, duplicateAcceptedId] = await Promise.all([
+      manager.appendToolExecutionAccepted(sessionId, accepted),
+      manager.appendToolExecutionAccepted(sessionId, accepted),
+    ]);
+    expect(duplicateAcceptedId).toBe(firstAcceptedId);
 
-      // 回退到 msg-1
-      manager.branch('main', id1);
-      expect(manager.getLeafId('main')).toBe(id1);
-    });
+    const terminal = {
+      executionId: 'execution-1',
+      outcome: 'success' as const,
+      content: 'done',
+    };
+    const firstTerminalId = await manager.appendToolExecutionTerminal(sessionId, terminal);
+    const duplicateTerminalId = await manager.appendToolExecutionTerminal(sessionId, terminal);
+    expect(duplicateTerminalId).toBe(firstTerminalId);
 
-    it('getMessages returns path to branch point after branch', async () => {
-      await manager.createSession('main');
-      const id1 = await manager.appendMessage('main', { role: 'user', content: 'shared' });
-      await manager.appendMessage('main', { role: 'assistant', content: 'branch-A' });
+    const completion = {
+      turnId: 'test-turn',
+      completion: {
+        executionId: 'execution-1',
+        toolName: 'demo',
+        status: 'success' as const,
+        content: 'done',
+      },
+    };
+    const firstCompletionId = await manager.appendHostTaskCompletion(sessionId, completion);
+    const duplicateCompletionId = await manager.appendHostTaskCompletion(sessionId, completion);
+    expect(duplicateCompletionId).toBe(firstCompletionId);
 
-      // 回退到 shared，展开新分支
-      manager.branch('main', id1);
-      await manager.appendMessage('main', { role: 'assistant', content: 'branch-B' });
+    const firstAbortedId = await manager.appendTurnAborted(sessionId, 'aborted-turn');
+    const duplicateAbortedId = await manager.appendTurnAborted(sessionId, 'aborted-turn');
+    expect(duplicateAbortedId).toBe(firstAbortedId);
 
-      const messages = manager.getMessages('main');
-      expect(messages).toHaveLength(2);
-      expect(messages[0]!.message.content).toBe('shared');
-      expect(messages[1]!.message.content).toBe('branch-B');
-    });
-
-    it('new messages after branch have correct parentId', async () => {
-      await manager.createSession('main');
-      const id1 = await manager.appendMessage('main', { role: 'user', content: 'shared' });
-      await manager.appendMessage('main', { role: 'assistant', content: 'old' });
-
-      manager.branch('main', id1);
-      await manager.appendMessage('main', { role: 'assistant', content: 'new' });
-
-      const messages = manager.getMessages('main');
-      const newMsg = messages[messages.length - 1]!;
-      expect(newMsg.parentId).toBe(id1);
-    });
-
-    it('throws when entryId does not exist', async () => {
-      await manager.createSession('main');
-      expect(() => manager.branch('main', 'nonexistent')).toThrow('not found');
-    });
-
-    it('supports multiple branches from same point', async () => {
-      await manager.createSession('main');
-      const id1 = await manager.appendMessage('main', { role: 'user', content: 'root' });
-
-      // 分支 A
-      await manager.appendMessage('main', { role: 'assistant', content: 'A' });
-
-      // 回退，分支 B
-      manager.branch('main', id1);
-      await manager.appendMessage('main', { role: 'assistant', content: 'B' });
-
-      // 回退，分支 C
-      manager.branch('main', id1);
-      await manager.appendMessage('main', { role: 'assistant', content: 'C' });
-
-      const messages = manager.getMessages('main');
-      expect(messages).toHaveLength(2);
-      expect(messages[0]!.message.content).toBe('root');
-      expect(messages[1]!.message.content).toBe('C'); // 最后一个分支
-    });
+    const reloaded = new SessionManager(agentHome);
+    expect(reloaded.getAsyncToolRecords(sessionId)).toEqual([
+      expect.objectContaining({ type: 'tool_execution_accepted', executionId: 'execution-1' }),
+      expect.objectContaining({ type: 'tool_execution_terminal', outcome: 'success' }),
+      expect.objectContaining({
+        type: 'host_task_completion',
+        completion: expect.objectContaining({ status: 'success' }),
+      }),
+      expect.objectContaining({ type: 'turn_aborted', turnId: 'aborted-turn' }),
+    ]);
   });
 
-  // ── 持久化 ────────────────────────────────────────────
+  it('fails closed on missing or conflicting async Tool lifecycle facts', async () => {
+    const sessionId = await materialize();
 
-  describe('persistence', () => {
-    it('messages survive reload from disk', async () => {
-      await manager.createSession('main');
-      await manager.appendMessage('main', { role: 'user', content: 'persisted' });
+    await expect(manager.appendToolExecutionTerminal(sessionId, {
+      executionId: 'execution-1',
+      outcome: 'failed',
+      content: 'failed',
+    })).rejects.toMatchObject({ code: 'SESSION_DATA_INVALID' });
 
-      // 创建新 manager 实例（模拟重启）
-      const manager2 = new SessionManager(workspaceDir);
-      const messages = manager2.getMessages('main');
-      expect(messages).toHaveLength(1);
-      expect(messages[0]!.message.content).toBe('persisted');
+    await manager.appendToolExecutionAccepted(sessionId, {
+      turnId: 'test-turn',
+      callId: 'call-1',
+      executionId: 'execution-1',
+      toolName: 'demo',
     });
+    await expect(manager.appendToolExecutionAccepted(sessionId, {
+      turnId: 'test-turn',
+      callId: 'call-2',
+      executionId: 'execution-1',
+      toolName: 'other',
+    })).rejects.toMatchObject({ code: 'SESSION_DATA_INVALID' });
+
+    await manager.appendToolExecutionTerminal(sessionId, {
+      executionId: 'execution-1',
+      outcome: 'success',
+      content: 'done',
+    });
+    await expect(manager.appendToolExecutionTerminal(sessionId, {
+      executionId: 'execution-1',
+      outcome: 'failed',
+      content: 'different',
+    })).rejects.toMatchObject({ code: 'SESSION_DATA_INVALID' });
+
+    await expect(manager.appendHostTaskCompletion(sessionId, {
+      turnId: 'test-turn',
+      completion: {
+        executionId: 'execution-1',
+        toolName: 'other',
+        status: 'success',
+        content: 'done',
+      },
+    })).rejects.toMatchObject({ code: 'SESSION_DATA_INVALID' });
+
+    expect(manager.getAsyncToolRecords(sessionId)).toHaveLength(2);
   });
 
-  // ── 压缩记录操作 ──────────────────────────────────────
-
-  describe('appendCompactionRecord', () => {
-    /**
-     * 构建 appendCompactionRecord 所需的最小记录（不含 parentId / firstKeptEntryId，
-     * 这两个字段由 appendCompactionRecord 内部填入）
-     */
-    function makeCompactionInput(overrides?: Record<string, unknown>) {
-      return {
-        type: 'compaction' as const,
-        id: 'c1',
-        timestamp: new Date().toISOString(),
-        summary: 'Test summary.',
-        tokensBefore: 2000,
-        tokensAfter: 400,
-        trigger: 'overflow' as const,
-        droppedMessages: 4,
-        ...overrides,
-      };
-    }
-
-    it('writes the record so getLastCompactionRecord returns it', async () => {
-      await manager.createSession('main');
-      const id1 = await manager.appendMessage('main', { role: 'user', content: 'msg 1' });
-      await manager.appendMessage('main', { role: 'assistant', content: 'reply 1' });
-
-      // 记录保留区第一条消息的 ID
-      await manager.appendCompactionRecord('main', makeCompactionInput(), id1);
-
-      const record = manager.getLastCompactionRecord('main');
-      expect(record).not.toBeNull();
-      expect(record!.id).toBe('c1');
-      expect(record!.summary).toBe('Test summary.');
-      expect(record!.firstKeptEntryId).toBe(id1);
+  it('maps outcome_unknown only to an aborted Host completion', async () => {
+    const sessionId = await materialize();
+    await manager.appendToolExecutionAccepted(sessionId, {
+      turnId: 'test-turn',
+      callId: 'call-1',
+      executionId: 'execution-1',
+      toolName: 'demo',
+    });
+    await manager.appendToolExecutionTerminal(sessionId, {
+      executionId: 'execution-1',
+      outcome: 'outcome_unknown',
+      reason: 'host_recovery',
+      content: 'Supervision was lost.',
     });
 
-    it('does NOT update leafId after writing compaction record', async () => {
-      await manager.createSession('main');
-      await manager.appendMessage('main', { role: 'user', content: 'msg' });
-      const leafBefore = manager.getLeafId('main');
+    await expect(manager.appendHostTaskCompletion(sessionId, {
+      turnId: 'test-turn',
+      completion: {
+        executionId: 'execution-1',
+        toolName: 'demo',
+        status: 'failed',
+        content: 'Supervision was lost.',
+      },
+    })).rejects.toMatchObject({ code: 'SESSION_DATA_INVALID' });
 
-      await manager.appendCompactionRecord('main', makeCompactionInput(), 'some-id');
-
-      // leafId 仍应保持不变——压缩记录是"标记节点"，不加入消息链
-      expect(manager.getLeafId('main')).toBe(leafBefore);
-    });
-
-    it('increments compactionCount in session store', async () => {
-      await manager.createSession('main');
-      const before = manager.getSession('main')!.compactionCount ?? 0;
-
-      await manager.appendCompactionRecord('main', makeCompactionInput(), 'some-id');
-
-      const after = manager.getSession('main')!.compactionCount ?? 0;
-      expect(after).toBe(before + 1);
-    });
-
-    it('sets parentId to current leafId at time of compaction', async () => {
-      await manager.createSession('main');
-      const leafId = await manager.appendMessage('main', { role: 'user', content: 'msg' });
-
-      await manager.appendCompactionRecord('main', makeCompactionInput(), leafId);
-
-      const record = manager.getLastCompactionRecord('main');
-      // parentId 应该等于写入时的 leafId
-      expect(record!.parentId).toBe(leafId);
-    });
-
-    it('compaction record survives session reload from disk', async () => {
-      await manager.createSession('main');
-      const id1 = await manager.appendMessage('main', { role: 'user', content: 'msg 1' });
-
-      await manager.appendCompactionRecord('main', makeCompactionInput({ id: 'c-persist' }), id1);
-
-      // 模拟重启：新 manager 实例从磁盘加载
-      const manager2 = new SessionManager(workspaceDir);
-      const record = manager2.getLastCompactionRecord('main');
-      expect(record).not.toBeNull();
-      expect(record!.id).toBe('c-persist');
-      expect(record!.trigger).toBe('overflow');
-      expect(record!.droppedMessages).toBe(4);
-    });
-
-    it('getLastCompactionRecord returns the most recent when multiple records exist', async () => {
-      await manager.createSession('main');
-      const id1 = await manager.appendMessage('main', { role: 'user', content: 'msg 1' });
-
-      // 写入两条压缩记录，c2 的 timestamp 更晚
-      await manager.appendCompactionRecord(
-        'main',
-        makeCompactionInput({ id: 'c1', timestamp: '2026-04-01T08:00:00Z' }),
-        id1,
-      );
-      await manager.appendCompactionRecord(
-        'main',
-        makeCompactionInput({ id: 'c2', timestamp: '2026-04-01T12:00:00Z' }),
-        id1,
-      );
-
-      const record = manager.getLastCompactionRecord('main');
-      expect(record!.id).toBe('c2');
-    });
+    await expect(manager.appendHostTaskCompletion(sessionId, {
+      turnId: 'test-turn',
+      completion: {
+        executionId: 'execution-1',
+        toolName: 'demo',
+        status: 'aborted',
+        content: 'Supervision was lost.',
+      },
+    })).resolves.toEqual(expect.any(String));
   });
 
-  describe('getLastCompactionRecord', () => {
-    it('returns null when session has never been compacted', async () => {
-      await manager.createSession('main');
-      await manager.appendMessage('main', { role: 'user', content: 'hi' });
+  it('moves the active leaf to form an alternate branch', async () => {
+    const sessionId = await materialize(manager, 'shared');
+    const sharedId = manager.getMessages(sessionId)[0]!.id;
+    await appendMessage(sessionId, { role: 'assistant', content: 'branch A' });
 
-      expect(manager.getLastCompactionRecord('main')).toBeNull();
-    });
+    manager.branch(sessionId, sharedId);
+    await appendMessage(sessionId, { role: 'assistant', content: 'branch B' });
+
+    expect(manager.getMessages(sessionId).map((message) => message.message.content)).toEqual([
+      'shared',
+      'branch B',
+    ]);
+    expect(() => manager.branch(sessionId, 'missing')).toThrow('not found');
   });
 
-  // ── capToolResults（写盘截断）────────────────────────
+  it('returns chronological active-branch History pages with exclusive cursors', async () => {
+    const sessionId = await materialize(manager, 'first');
+    await appendMessage(sessionId, { role: 'assistant', content: 'second' });
+    await appendMessage(sessionId, { role: 'user', content: 'third' });
 
-  describe('capToolResults (SessionManagerOptions)', () => {
-    it('does not cap when options not provided (default constructor)', async () => {
-      // manager 由 beforeEach 创建，未传 options
-      await manager.createSession('main');
-      const longContent = 'A'.repeat(50_000);
-      const msgId = await manager.appendMessage('main', {
-        role: 'toolResult',
-        content: [{ type: 'tool_result', tool_use_id: 'tu_test', content: longContent }],
-      });
+    const latest = manager.getHistory({ sessionId, limit: 2 });
+    expect(latest.items.map((item) => item.content)).toEqual(['second', 'third']);
+    expect(latest.items.every((item) => item.turnId === 'test-turn')).toBe(true);
+    expect(latest.hasMore).toBe(true);
+    expect(latest.nextCursor).toBe(latest.items[0]?.entryId);
 
-      // 重新加载后内容应原样保留
-      const manager2 = new SessionManager(workspaceDir);
-      const msgs = manager2.getMessages('main');
-      const record = msgs.find((m) => m.id === msgId);
-      const block = (record!.message.content as Array<{ type: string; content: string }>)[0]!;
-      expect(block.content).toBe(longContent);
+    const earlier = manager.getHistory({
+      sessionId,
+      beforeEntryId: latest.nextCursor!,
+      limit: 2,
+    });
+    expect(earlier.items.map((item) => item.content)).toEqual(['first']);
+    expect(earlier).toMatchObject({ hasMore: false, nextCursor: null });
+  });
+
+  it('rejects off-branch History cursors and preserves images', async () => {
+    const sessionId = await materialize(manager, 'shared');
+    const sharedId = manager.getMessages(sessionId)[0]!.id;
+    const abandonedId = await appendMessage(sessionId, {
+      role: 'assistant',
+      content: 'abandoned',
+    });
+    manager.branch(sessionId, sharedId);
+    await appendMessage(sessionId, {
+      role: 'user',
+      content: [{
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/png', data: 'secret' },
+        dimensions: { width: 1280, height: 720 },
+      }],
     });
 
-    it('caps tool result content when toolResultHeadChars + toolResultTailChars configured', async () => {
-      const cappedManager = new SessionManager(workspaceDir, {
-        toolResultHeadChars: 100,
-        toolResultTailChars: 50,
-      });
-      await cappedManager.createSession('capped');
-      const longContent = 'H'.repeat(100) + 'M'.repeat(200) + 'T'.repeat(50);
+    expect(() => manager.getHistory({ sessionId, beforeEntryId: abandonedId }))
+      .toThrowError(expect.objectContaining({ code: 'SESSION_HISTORY_CURSOR_INVALID' }));
+    expect(manager.getHistory({ sessionId }).items.at(-1)?.content).toEqual([
+      {
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/png', data: 'secret' },
+        dimensions: { width: 1280, height: 720 },
+      },
+    ]);
+  });
 
-      await cappedManager.appendMessage('capped', {
-        role: 'toolResult',
-        content: [{ type: 'tool_result', tool_use_id: 'tu_test', content: longContent }],
-      });
+  it('persists Compaction records without storing summary counters', async () => {
+    const sessionId = await materialize();
+    const firstMessageId = manager.getMessages(sessionId)[0]!.id;
+    const leafBefore = manager.getLeafId(sessionId);
+    await manager.appendCompactionRecord(
+      sessionId,
+      makeCompactionInput({ id: 'compaction-one' }),
+      firstMessageId,
+    );
 
-      // 重新加载，验证磁盘上已经是裁剪后的数据
-      const manager2 = new SessionManager(workspaceDir);
-      const msgs = manager2.getMessages('capped');
-      const block = (msgs[0]!.message.content as Array<{ type: string; content: string }>)[0]!;
-      expect(block.content).toContain('[Tool result trimmed:');
-      expect(block.content).toContain('H'.repeat(100));      // head
-      expect(block.content).toContain('T'.repeat(50));       // tail
-      expect(block.content).not.toContain('M'.repeat(200));  // middle dropped
+    expect(manager.getLeafId(sessionId)).toBe(leafBefore);
+    const reloaded = new SessionManager(agentHome);
+    expect(reloaded.getLastCompactionRecord(sessionId)).toMatchObject({
+      id: 'compaction-one',
+      firstKeptEntryId: firstMessageId,
+    });
+    expect(reloaded.getLeafId(sessionId)).toBe(leafBefore);
+
+    const store = JSON.parse(await readFile(
+      join(agentHome, 'sessions', 'sessions.json'),
+      'utf8',
+    )) as { sessions: Record<string, Record<string, unknown>> };
+    expect(store.sessions[sessionId]).not.toHaveProperty('compactionCount');
+  });
+
+  it('returns the most recent Compaction record', async () => {
+    const sessionId = await materialize();
+    const firstMessageId = manager.getMessages(sessionId)[0]!.id;
+    await manager.appendCompactionRecord(
+      sessionId,
+      makeCompactionInput({ id: 'c1', timestamp: '2026-04-01T08:00:00Z' }),
+      firstMessageId,
+    );
+    await manager.appendCompactionRecord(
+      sessionId,
+      makeCompactionInput({ id: 'c2', timestamp: '2026-04-01T12:00:00Z' }),
+      firstMessageId,
+    );
+
+    expect(manager.getLastCompactionSummary(sessionId)).toBe('Test summary.');
+    expect(manager.getLastCompactionRecord(sessionId)?.id).toBe('c2');
+  });
+
+  it('does not cap tool results when limits are absent', async () => {
+    const sessionId = await materialize();
+    const longContent = 'A'.repeat(50_000);
+    const messageId = await appendMessage(sessionId, {
+      role: 'toolResult',
+      content: [{
+        type: 'tool_result',
+        tool_use_id: 'tool',
+        content: longContent,
+        status: 'success',
+      }],
     });
 
-    it('does not cap when content length <= head + tail', async () => {
-      const cappedManager = new SessionManager(workspaceDir, {
-        toolResultHeadChars: 100,
-        toolResultTailChars: 50,
-      });
-      await cappedManager.createSession('small');
-      const shortContent = 'X'.repeat(149); // exactly at maxChars threshold
+    const record = new SessionManager(agentHome)
+      .getMessages(sessionId)
+      .find((message) => message.id === messageId);
+    const block = (record!.message.content as Array<{ content: string }>)[0]!;
+    expect(block.content).toBe(longContent);
+  });
 
-      await cappedManager.appendMessage('small', {
-        role: 'toolResult',
-        content: [{ type: 'tool_result', tool_use_id: 'tu_test', content: shortContent }],
-      });
-
-      const manager2 = new SessionManager(workspaceDir);
-      const msgs = manager2.getMessages('small');
-      const block = (msgs[0]!.message.content as Array<{ type: string; content: string }>)[0]!;
-      expect(block.content).toBe(shortContent);
+  it('caps configured tool results but leaves other blocks unchanged', async () => {
+    const capped = new SessionManager(agentHome, {
+      toolResultHeadChars: 100,
+      toolResultTailChars: 50,
     });
+    const sessionId = await materialize(capped);
+    const longContent = 'H'.repeat(100) + 'M'.repeat(200) + 'T'.repeat(50);
+    const longText = 'Z'.repeat(1000);
+    await appendMessage(sessionId, {
+      role: 'toolResult',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'tool',
+          content: longContent,
+          status: 'success',
+        },
+        { type: 'text', text: longText },
+      ],
+    }, capped);
 
-    it('passes through non-tool_result blocks unchanged', async () => {
-      const cappedManager = new SessionManager(workspaceDir, {
-        toolResultHeadChars: 10,
-        toolResultTailChars: 5,
-      });
-      await cappedManager.createSession('mixed');
-      const longText = 'Z'.repeat(1000);
+    const blocks = new SessionManager(agentHome).getMessages(sessionId).at(-1)!
+      .message.content as Array<{ type: string; content?: string; text?: string }>;
+    expect(blocks[0]?.content).toContain('[Tool result trimmed:');
+    expect(blocks[0]?.content).toContain('H'.repeat(100));
+    expect(blocks[0]?.content).toContain('T'.repeat(50));
+    expect(blocks[0]?.content).not.toContain('M'.repeat(200));
+    expect(blocks[1]?.text).toBe(longText);
+  });
 
-      await cappedManager.appendMessage('mixed', {
-        role: 'toolResult',
-        content: [{ type: 'text', text: longText }],
-      });
-
-      const manager2 = new SessionManager(workspaceDir);
-      const msgs = manager2.getMessages('mixed');
-      const block = (msgs[0]!.message.content as Array<{ type: string; text: string }>)[0]!;
-      // type !== 'tool_result' → not capped
-      expect(block.text).toBe(longText);
+  it('does not cap tool results at or below the configured threshold', async () => {
+    const capped = new SessionManager(agentHome, {
+      toolResultHeadChars: 100,
+      toolResultTailChars: 50,
     });
+    const sessionId = await materialize(capped);
+    const content = 'X'.repeat(150);
+    await appendMessage(sessionId, {
+      role: 'toolResult',
+      content: [{ type: 'tool_result', tool_use_id: 'tool', content, status: 'success' }],
+    }, capped);
+
+    const block = new SessionManager(agentHome).getMessages(sessionId).at(-1)!
+      .message.content as Array<{ content: string }>;
+    expect(block[0]?.content).toBe(content);
   });
 });

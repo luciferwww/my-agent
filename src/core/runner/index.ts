@@ -1,13 +1,26 @@
 export { AgentRunner } from './AgentRunner.js';
+export { AgentExecutionFailure } from './errors.js';
+export {
+  DEFAULT_RUNNER_CONFIG,
+  RunnerConfigValidationError,
+  validateRunnerConfig,
+} from './config.js';
+export type { RunnerConfig } from './config.js';
+export {
+  DEFAULT_COMPACTION_CONFIG,
+  CompactionConfigValidationError,
+  validateCompactionConfig,
+} from './compaction-config.js';
+export type { CompactionConfig } from './compaction-config.js';
 export type {
   AgentRunnerConfig,
   RunParams,
   RunResult,
   AgentEvent,
   AttachmentSummary,
-  ToolDefinition,
+  SteeringMessage,
+  SteeringMessageSource,
   ToolResult,
-  ToolExecutor,
 } from './types.js';
 export type {
   HookName,
@@ -23,3 +36,15 @@ export type {
   AfterCompactionHook,
   AfterCompactionPayload,
 } from './hooks/index.js';
+export type {
+  AdmittedToolCall,
+  AsyncToolExecutionFramework,
+  TurnExecutionContext,
+  TurnExecutionEvent,
+} from './async-tools/index.js';
+export {
+  DefaultAsyncToolExecutionFramework,
+  ToolExecutionRuntimeState,
+  ToolExecutionUnavailableError,
+  processToolExecutionRuntimeState,
+} from './async-tools/index.js';

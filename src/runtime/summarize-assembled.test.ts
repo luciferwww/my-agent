@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { describe, expect, it } from 'vitest';
-import type { ChatContentBlock } from '../adapters/llm/types.js';
+import type { ChatContentBlock } from '../core/model-invocation/index.js';
 import { summarizeAssembled } from './summarize-assembled.js';
 
 describe('summarizeAssembled', () => {

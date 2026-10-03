@@ -1,31 +1,41 @@
 // ── Types ─────────────────────────────────────────────────
 export type {
   AppConfig,
+  ApplicationConfigProjection,
   AgentsConfig,
   AgentDefaults,
   AgentEntry,
-  LLMConfig,
-  RunnerConfig,
   MemoryModuleConfig,
   EmbeddingConfig,
   ChunkingConfig,
   SearchConfig,
-  PromptConfig,
   ToolsConfig,
-  FsToolsConfig,
-  WorkspaceConfig,
+  AgentContextConfig,
   SubagentsConfig,
   SubagentConfigEntry,
   SubagentToolsConfig,
-  ConfigFile,
   DeepPartial,
   EmbeddingProviderType,
-  SafetyLevel,
 } from './types.js';
+export type { RunnerConfig } from '../../core/runner/config.js';
+export type {
+  BuiltinLlmProviderConfig,
+  BuiltinModelRegistration,
+  BuiltinProtocol,
+  LLMConfig,
+} from '../../builtins/providers/builtin/index.js';
 
 // ── Defaults ──────────────────────────────────────────────
-export { DEFAULT_AGENT_CONFIG } from './defaults.js';
+export { createDefaultAgentConfig } from './default-composition.js';
+export { DEFAULT_LOGGER_CONFIG } from '../logger/index.js';
 
-// ── Loader ────────────────────────────────────────────────
-export { loadConfig, resolveAgentConfig, getEnvOverrides, deepMerge } from './loader.js';
-export type { LoadConfigOptions, ResolveOptions } from './loader.js';
+// ── Resolution ────────────────────────────────────────────
+export { resolveAgentConfig, deepMerge } from './loader.js';
+export type { ResolveOptions } from './loader.js';
+
+// ── Agent configuration loader ───────────────────────────
+export { ensureAgentConfigDocument } from './agent-config-bootstrap.js';
+export { loadAgentConfig } from './agent-config-loader.js';
+export type { AgentConfigSnapshot } from './agent-config-loader.js';
+export { AgentConfigError } from './agent-config-errors.js';
+export type { AgentConfigErrorCode } from './agent-config-errors.js';

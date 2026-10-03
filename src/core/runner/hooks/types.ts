@@ -1,4 +1,4 @@
-import type { ToolResult } from '../../tools/types.js';
+import type { CanonicalToolResult } from '../../tools/types.js';
 
 // ── before_tool_call ─────────────────────────────────────────────────────────
 
@@ -8,7 +8,9 @@ export interface BeforeToolCallPayload {
   /** 本次 turn 的唯一 id，由 RuntimeApp.runTurn 生成 */
   turnId: string;
   /** 本次 turn 所属 session */
-  sessionKey: string;
+  sessionId: string;
+  /** 本次执行 turn 的生命周期 signal；approval 等阻塞式 hook 必须观察 */
+  signal: AbortSignal;
 }
 
 export type BeforeToolCallResult =
@@ -25,12 +27,15 @@ export type BeforeToolCallHook = (
 export interface AfterToolCallPayload {
   toolName: string;
   input: Record<string, unknown>;
-  result: ToolResult;
-  durationMs: number;
+  result: CanonicalToolResult;
+  durationMs?: number;
+  implementationStarted: boolean;
   /** 本次 turn 的唯一 id，由 RuntimeApp.runTurn 生成 */
   turnId: string;
   /** 本次 turn 所属 session */
-  sessionKey: string;
+  sessionId: string;
+  /** Observer-local lifecycle signal, linked to the Turn and Hook deadline. */
+  signal: AbortSignal;
 }
 
 export type AfterToolCallHook = (
@@ -45,7 +50,9 @@ export interface BeforeCompactionPayload {
   /** 本次 turn 的唯一 id，由 RuntimeApp.runTurn 生成 */
   turnId: string;
   /** 本次 turn 所属 session */
-  sessionKey: string;
+  sessionId: string;
+  /** Observer-local lifecycle signal, linked to the Turn and Hook deadline. */
+  signal: AbortSignal;
 }
 
 export type BeforeCompactionHook = (
@@ -60,7 +67,9 @@ export interface AfterCompactionPayload {
   /** 本次 turn 的唯一 id，由 RuntimeApp.runTurn 生成 */
   turnId: string;
   /** 本次 turn 所属 session */
-  sessionKey: string;
+  sessionId: string;
+  /** Observer-local lifecycle signal, linked to the Turn and Hook deadline. */
+  signal: AbortSignal;
 }
 
 export type AfterCompactionHook = (

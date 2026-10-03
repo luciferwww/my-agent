@@ -1,0 +1,47 @@
+{
+  "manifestVersion": 1,
+  "id": "websocket-channel",
+  "version": "0.1.0",
+  "entry": "entry.ts",
+  "configSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "host": {
+        "type": "string",
+        "minLength": 1,
+        "default": "127.0.0.1"
+      },
+      "port": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 65535,
+        "default": 8787
+      },
+      "webSocketPath": {
+        "type": "string",
+        "pattern": "^/(?!/)(?:[A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-Fa-f]{2})*$",
+        "default": "/ws"
+      },
+      "clientPath": {
+        "type": "string",
+        "pattern": "^/(?!/)(?:[A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-Fa-f]{2})*$",
+        "default": "/"
+      },
+      "maxClients": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "approval": {
+        "type": "boolean",
+        "default": true
+      },
+      "openBrowser": {
+        "type": "boolean",
+        "default": false
+      }
+    }
+  }
+}

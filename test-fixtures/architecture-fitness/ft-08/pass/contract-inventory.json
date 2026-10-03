@@ -1,0 +1,9 @@
+[
+  {
+    "contract": "FixtureLifecycle",
+    "source": "src/contracts.ts",
+    "kind": "lifecycle",
+    "positive": ["src/contracts.positive.test.ts"],
+    "negative": ["src/contracts.negative.test.ts"]
+  }
+]

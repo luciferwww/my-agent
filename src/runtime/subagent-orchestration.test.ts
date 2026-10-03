@@ -1,377 +1,409 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { AgentExecutionFailure } from '../core/runner/index.js';
+import type { AgentEvent } from '../core/runner/index.js';
+import type { ModelInvocationPort } from '../core/model-invocation/index.js';
+import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
+import { finalizeRegistrySnapshot } from './registry-builder.js';
+import type { SubagentProfile } from '../core/subagent/types.js';
 import {
-  createSubagentHostBindings,
-  runSubagentTurn,
-  addUsage,
-  type CreateSubagentHostBindingsParams,
+  createSubagentDelegationPort,
+  SubagentDelegationRejected,
+  type ActiveParentTurn,
 } from './subagent-orchestration.js';
-import type { AgentDefaults } from '../platform/config/types.js';
-import type { ContextFile } from '../core/workspace/types.js';
-import type {
-  SubagentProfile,
-  SubagentRunInput,
-  SubagentRunResult,
-  SubagentRunRequest,
-} from '../core/subagent/types.js';
-import type { SubagentRunner } from '../core/subagent/SubagentRunner.js';
-import type { MessageRouteContext } from './queue-types.js';
 
-// ── Fixtures ────────────────────────────────────────────────
+const invocationPorts: Record<string, ModelInvocationPort> = {
+  parent: {
+    chatStream: vi.fn(async function* () { throw new Error('not called'); }),
+    chat: vi.fn(async () => { throw new Error('not called'); }),
+  },
+  child: {
+    chatStream: vi.fn(async function* () { throw new Error('not called'); }),
+    chat: vi.fn(async () => { throw new Error('not called'); }),
+  },
+};
 
-function profile(id: string, overrides: Partial<SubagentProfile> = {}): SubagentProfile {
+function provider(id: string): ProviderProjectionEntry {
   return {
     id,
-    description: `${id} subagent`,
-    agentDir: `/ws/.agent/subagents/${id}`,
-    ...overrides,
-  };
-}
-
-function makeConfig(overrides?: Partial<AgentDefaults>): AgentDefaults {
-  const base: AgentDefaults = {
-    llm: {
-      model: 'claude-default',
-      maxTokens: 4096,
-      contextWindowTokens: 200_000,
-    },
-    runner: { maxLlmCalls: 12, inTurnMessageMode: 'followup' },
-    memory: {
-      enabled: false,
-      embedding: { provider: 'local', model: 'x' },
-      chunking: { chunkChars: 100, overlapChars: 10 },
-      search: { maxResults: 6, minScore: 0.25, vectorWeight: 0.7, textWeight: 0.3 },
-    },
-    prompt: { safetyLevel: 'normal' },
-    tools: {
-      fs: { workspaceOnly: true },
-      allow: ['read_file', 'grep_search'],
-      deny: ['rm'],
-    },
-    workspace: { maxFileChars: 20_000, maxTotalChars: 150_000 },
-    compaction: {
-      enabled: true,
-      reserveTokens: 20_000,
-      keepRecentTurns: 3,
-      toolResultContextShare: 0.5,
-      toolResultHeadChars: 10_000,
-      toolResultTailChars: 5_000,
-      timeoutSeconds: 300,
-    },
-    subagents: { enabled: true, maxDepth: 2 },
-  };
-  return { ...base, ...overrides };
-}
-
-function makeRouteContext(
-  channelId: string,
-  clientId?: string,
-): MessageRouteContext {
-  return {
-    originChannel: { id: channelId } as unknown as MessageRouteContext['originChannel'],
-    originClientId: clientId,
-  };
-}
-
-// ── createSubagentHostBindings ───────────────────────────────
-
-describe('createSubagentHostBindings', () => {
-  function buildParams(
-    overrides: Partial<CreateSubagentHostBindingsParams> = {},
-  ): CreateSubagentHostBindingsParams {
-    return {
-      getParentContextFiles: () => [],
-      routeContextByTurn: new Map(),
-      resolvedConfig: makeConfig(),
-      workspaceDir: '/work/space',
-      ...overrides,
-    };
-  }
-
-  // ── projection of resolvedConfig snapshot ─────────────────
-
-  it('projects mainAgentTools allow/deny from resolvedConfig.tools', () => {
-    const host = createSubagentHostBindings(buildParams());
-    expect(host.mainAgentTools.allow).toEqual(['read_file', 'grep_search']);
-    expect(host.mainAgentTools.deny).toEqual(['rm']);
-  });
-
-  it('falls back to empty arrays when resolvedConfig.tools is undefined', () => {
-    const host = createSubagentHostBindings(
-      buildParams({ resolvedConfig: makeConfig({ tools: undefined as never }) }),
-    );
-    expect(host.mainAgentTools.allow).toEqual([]);
-    expect(host.mainAgentTools.deny).toEqual([]);
-  });
-
-  it('projects llmDefaults from resolvedConfig.llm', () => {
-    const host = createSubagentHostBindings(buildParams());
-    expect(host.llmDefaults).toEqual({
-      model: 'claude-default',
-      maxTokens: 4096,
-      contextWindowTokens: 200_000,
-    });
-  });
-
-  it('uses workspaceDir verbatim', () => {
-    const host = createSubagentHostBindings(buildParams({ workspaceDir: '/abs/path' }));
-    expect(host.workspaceDir).toBe('/abs/path');
-  });
-
-  it('uses subagents.maxDepth from resolvedConfig (default 1 when omitted)', () => {
-    const withDepth = createSubagentHostBindings(
-      buildParams({ resolvedConfig: makeConfig({ subagents: { enabled: true, maxDepth: 3 } }) }),
-    );
-    expect(withDepth.maxDepth).toBe(3);
-
-    const noSubagentsBlock = createSubagentHostBindings(
-      buildParams({ resolvedConfig: makeConfig({ subagents: undefined }) }),
-    );
-    expect(noSubagentsBlock.maxDepth).toBe(1);
-  });
-
-  it('passes promptSafetyLevel through (defaults to "normal")', () => {
-    const strict = createSubagentHostBindings(
-      buildParams({
-        resolvedConfig: makeConfig({ prompt: { safetyLevel: 'strict' } }),
-      }),
-    );
-    expect(strict.promptSafetyLevel).toBe('strict');
-
-    const fallback = createSubagentHostBindings(
-      buildParams({ resolvedConfig: makeConfig({ prompt: undefined as never }) }),
-    );
-    expect(fallback.promptSafetyLevel).toBe('normal');
-  });
-
-  // ── (d) registerTurnContext ───────────────────────────────
-
-  describe('(d) registerTurnContext', () => {
-    it('copies the parent route context onto the child turnId when present', () => {
-      const route = new Map<string, MessageRouteContext>();
-      const parentCtx = makeRouteContext('cli-1', 'client-A');
-      route.set('parent-turn', parentCtx);
-
-      const host = createSubagentHostBindings(
-        buildParams({ routeContextByTurn: route }),
-      );
-      host.registerTurnContext('child-turn', 'parent-turn');
-
-      expect(route.get('child-turn')).toBe(parentCtx);
-    });
-
-    it('does NOT throw when the parent route context is missing', () => {
-      const route = new Map<string, MessageRouteContext>();
-      const host = createSubagentHostBindings(
-        buildParams({ routeContextByTurn: route }),
-      );
-      expect(() => host.registerTurnContext('child-turn', 'unknown-parent')).not.toThrow();
-      expect(route.has('child-turn')).toBe(false);
-    });
-  });
-
-  // ── (e) releaseTurnContext ────────────────────────────────
-
-  describe('(e) releaseTurnContext', () => {
-    it('removes the entry for the child turnId', () => {
-      const route = new Map<string, MessageRouteContext>();
-      const ctx = makeRouteContext('cli-1');
-      route.set('child-turn', ctx);
-
-      const host = createSubagentHostBindings(
-        buildParams({ routeContextByTurn: route }),
-      );
-      host.releaseTurnContext('child-turn');
-      expect(route.has('child-turn')).toBe(false);
-    });
-
-    it('is a no-op when the turnId is not present', () => {
-      const route = new Map<string, MessageRouteContext>();
-      const host = createSubagentHostBindings(
-        buildParams({ routeContextByTurn: route }),
-      );
-      expect(() => host.releaseTurnContext('missing-turn')).not.toThrow();
-    });
-  });
-
-  // ── (f) getParentContextFiles is a live getter ────────────
-
-  describe('(f) getParentContextFiles', () => {
-    it('returns whatever the getter returns at call time (sees later replacements)', () => {
-      const slot: { files: ContextFile[] } = {
-        files: [{ path: 'IDENTITY.md', content: 'v1' }],
-      };
-      const host = createSubagentHostBindings(
-        buildParams({ getParentContextFiles: () => slot.files }),
-      );
-      expect(host.getParentContextFiles()).toEqual([{ path: 'IDENTITY.md', content: 'v1' }]);
-
-      slot.files = [{ path: 'IDENTITY.md', content: 'v2' }];
-      expect(host.getParentContextFiles()).toEqual([{ path: 'IDENTITY.md', content: 'v2' }]);
-    });
-  });
-});
-
-// ── runSubagentTurn ─────────────────────────────────────────
-
-describe('runSubagentTurn', () => {
-  function makeDeps(opts: {
-    registry?: Map<string, SubagentProfile>;
-    runResult?: SubagentRunResult;
-  } = {}) {
-    const registry =
-      opts.registry ??
-      new Map<string, SubagentProfile>([
-        ['general-purpose', profile('general-purpose')],
-        ['reviewer', profile('reviewer')],
-      ]);
-    const runResult =
-      opts.runResult ??
-      ({
-        runId: 'run-1',
-        sessionKey: 'library:subagent:run-1:1',
-        turnId: 'child-turn',
-        text: 'done',
-        outcome: 'ok',
-        usage: { inputTokens: 10, outputTokens: 5 },
-        durationMs: 100,
-      } satisfies SubagentRunResult);
-
-    const run = vi.fn(async (_req: SubagentRunRequest) => runResult);
-    const subagentRunner = { run } as unknown as SubagentRunner;
-
-    return { run, subagentRunner, profileRegistry: registry };
-  }
-
-  function makeInput(overrides: Partial<SubagentRunInput> = {}): SubagentRunInput {
-    return {
-      subagentType: 'reviewer',
-      description: 'review code',
-      prompt: 'please review',
-      trigger: { source: 'library', callerLabel: 'integration-test' },
-      lifecycle: 'blocking',
-      ...overrides,
-    };
-  }
-
-  // (c) unknown profile → fail-fast
-
-  it('(c) throws when subagentType is not registered (library API fail-fast)', async () => {
-    const { subagentRunner, profileRegistry, run } = makeDeps();
-    await expect(
-      runSubagentTurn(makeInput({ subagentType: 'nonexistent' }), {
-        subagentRunner,
-        profileRegistry,
-      }),
-    ).rejects.toThrow(/Unknown subagent type/);
-    expect(run).not.toHaveBeenCalled();
-  });
-
-  it('(c-contrast) LLM tool fallback wording does NOT leak: error mentions "library API"', async () => {
-    const { subagentRunner, profileRegistry } = makeDeps();
-    await expect(
-      runSubagentTurn(makeInput({ subagentType: 'nonexistent' }), {
-        subagentRunner,
-        profileRegistry,
-      }),
-    ).rejects.toThrow(/library API/i);
-  });
-
-  // library trigger synthesizes parent identifiers
-
-  it('synthesizes parentSessionKey from callerLabel for library trigger', async () => {
-    const { subagentRunner, profileRegistry, run } = makeDeps();
-    await runSubagentTurn(
-      makeInput({ trigger: { source: 'library', callerLabel: 'integration-test' } }),
-      { subagentRunner, profileRegistry },
-    );
-    const req = run.mock.calls[0]![0];
-    expect(req.parentSessionKey).toBe('integration-test');
-    expect(req.parentTurnId).toBe('library-synthetic-integration-test');
-  });
-
-  it('falls back to "library" / "library-synthetic-caller" when callerLabel is omitted', async () => {
-    const { subagentRunner, profileRegistry, run } = makeDeps();
-    await runSubagentTurn(makeInput({ trigger: { source: 'library' } }), {
-      subagentRunner,
-      profileRegistry,
-    });
-    const req = run.mock.calls[0]![0];
-    expect(req.parentSessionKey).toBe('library');
-    expect(req.parentTurnId).toBe('library-synthetic-caller');
-  });
-
-  // llm-tool trigger preserves identifiers
-
-  it('uses parentSessionKey / parentTurnId from llm-tool trigger verbatim', async () => {
-    const { subagentRunner, profileRegistry, run } = makeDeps();
-    await runSubagentTurn(
-      makeInput({
-        trigger: {
-          source: 'llm-tool',
-          parentSessionKey: 'main',
-          parentTurnId: 'turn-7',
-          parentToolUseId: 'tu-99',
+    protocol: `${id}-protocol`,
+    models: [{ modelId: `${id}-model` }],
+    invocationPort: invocationPorts[id]!,
+    resolveConnection: () => ({ ok: true, connection: { endpointId: `${id}-endpoint` } }),
+    resolveModel: (modelId, connection) => ({
+      ok: true,
+      descriptor: {
+        identity: { providerId: id, modelId },
+        protocol: `${id}-protocol`,
+        connection,
+        facts: {
+          effectiveContextLimit: id === 'parent' ? 1000 : 2000,
+          maximumOutputTokens: 100,
         },
-      }),
-      { subagentRunner, profileRegistry },
-    );
-    const req = run.mock.calls[0]![0];
-    expect(req.parentSessionKey).toBe('main');
-    expect(req.parentTurnId).toBe('turn-7');
+      },
+    }),
+  };
+}
+
+function profile(model: SubagentProfile['model'] = 'inherit'): SubagentProfile {
+  return {
+    id: 'reviewer',
+    description: 'review',
+    agentDir: '/missing-profile-dir',
+    model,
+  };
+}
+
+function setup(options: {
+  executeError?: Error;
+  executeGate?: Promise<void>;
+  prepareError?: Error;
+  routeSetError?: Error;
+  routeDeleteError?: Error;
+  abortDuringPrepare?: boolean;
+} = {}) {
+  const controller = new AbortController();
+  const executionController = new AbortController();
+  const registrySnapshot = finalizeRegistrySnapshot({
+    generation: 1,
+    candidate: {
+      providers: [provider('parent'), provider('child')],
+      units: [],
+      diagnostics: [],
+    },
+    acceptedUnits: [],
+    channelBindings: [],
   });
-
-  // forwards description / prompt / lifecycle / signal
-
-  it('forwards description / prompt / lifecycle / signal verbatim', async () => {
-    const { subagentRunner, profileRegistry, run } = makeDeps();
-    const signal = new AbortController().signal;
-    await runSubagentTurn(
-      makeInput({
-        description: 'd',
-        prompt: 'p',
-        lifecycle: 'blocking',
-        signal,
-      }),
-      { subagentRunner, profileRegistry },
-    );
-    const req = run.mock.calls[0]![0];
-    expect(req.description).toBe('d');
-    expect(req.prompt).toBe('p');
-    expect(req.lifecycle).toBe('blocking');
-    expect(req.signal).toBe(signal);
-  });
-
-  it('passes the resolved profile (by id) into the runner', async () => {
-    const { subagentRunner, profileRegistry, run } = makeDeps();
-    await runSubagentTurn(makeInput({ subagentType: 'reviewer' }), {
-      subagentRunner,
-      profileRegistry,
+  const releaseChild = vi.fn();
+  const registerChild = vi.fn(() => releaseChild);
+  const parent: ActiveParentTurn = {
+    requestId: 'request-parent',
+    sessionId: '5cb8b687-f263-4355-9d09-7749064e3318',
+    depth: 0,
+    turnId: 'parent-turn',
+    signal: controller.signal,
+    effectiveReference: { providerId: 'parent', modelId: 'parent-model' },
+    effectiveMaxLlmCalls: 6,
+    contextFiles: [],
+    registrySnapshot,
+    getSessionPermissionMode: () => 'manual',
+    registerChild,
+  };
+  const activeParents = new Map([[parent.turnId, parent]]);
+  const routeContextByTurn = new Map([['parent-turn', { originClientId: 'client-1' }]]);
+  if (options.routeSetError) {
+    vi.spyOn(routeContextByTurn, 'set').mockImplementationOnce(() => {
+      throw options.routeSetError;
     });
-    expect(run.mock.calls[0]![0].profile.id).toBe('reviewer');
+  }
+  if (options.routeDeleteError) {
+    vi.spyOn(routeContextByTurn, 'delete').mockImplementationOnce(() => {
+      throw options.routeDeleteError;
+    });
+  }
+  const events: AgentEvent[] = [];
+  const createTransientSubagentTranscript = vi.fn(async () => {});
+  const deleteTransientSubagentTranscript = vi.fn(async () => {});
+  const prepare = vi.fn(async (params: { signal: AbortSignal }) => {
+    if (options.prepareError) throw options.prepareError;
+    if (options.abortDuringPrepare) executionController.abort();
+    return {
+      sessionId: 'ignored-by-test',
+      subagentDepth: 1,
+      turnId: 'ignored-by-test',
+      message: 'child prompt',
+      systemPrompt: 'child system',
+      signal: params.signal,
+    };
   });
-});
+  const execute = vi.fn(async (_prepared, resolvedModel) => {
+    if (options.executeGate) await options.executeGate;
+    if (options.executeError) throw options.executeError;
+    return {
+      text: `${resolvedModel.identity.providerId}/${resolvedModel.identity.modelId}`,
+      content: [],
+      stopReason: 'end_turn',
+      usage: { inputTokens: 4, outputTokens: 2 },
+      toolRounds: 0,
+    };
+  });
+  const port = createSubagentDelegationPort({
+    activeParents,
+    routeContextByTurn,
+    sessionManager: {
+      createTransientSubagentTranscript,
+      deleteTransientSubagentTranscript,
+    } as never,
+    maxDepth: 1,
+    executor: { prepare, execute } as never,
+    onEvent: (event) => events.push(event),
+  });
+  const request = {
+    profile: profile(),
+    description: 'review',
+    prompt: 'child prompt',
+    parent: {
+      sessionId: '5cb8b687-f263-4355-9d09-7749064e3318',
+      turnId: 'parent-turn',
+      toolUseId: 'tool-1',
+    },
+    parentSignal: controller.signal,
+    signal: executionController.signal,
+    reportActivity: vi.fn(),
+  };
+  return {
+    port,
+    request,
+    events,
+    execute,
+    createTransientSubagentTranscript,
+    deleteTransientSubagentTranscript,
+    controller,
+    executionController,
+    activeParents,
+    routeContextByTurn,
+    registerChild,
+    releaseChild,
+    prepare,
+    parent,
+  };
+}
 
-// ── addUsage ────────────────────────────────────────────────
+describe('Runtime Subagent delegation', () => {
+  it('inherits the Parent effective reference but resolves a fresh Child model', async () => {
+    const {
+      port,
+      request,
+      events,
+      execute,
+      deleteTransientSubagentTranscript,
+      createTransientSubagentTranscript,
+      routeContextByTurn,
+      registerChild,
+      releaseChild,
+    } = setup();
+    const result = await port.delegate(request);
 
-describe('addUsage', () => {
-  it('component-wise adds two TokenUsage values', () => {
-    expect(
-      addUsage(
-        { inputTokens: 10, outputTokens: 5 },
-        { inputTokens: 3, outputTokens: 7 },
-      ),
-    ).toEqual({ inputTokens: 13, outputTokens: 12 });
+    expect(result.text).toBe('parent/parent-model');
+    expect(request.reportActivity).toHaveBeenCalledTimes(2);
+    expect(execute.mock.calls[0]![1].identity).toEqual({
+      providerId: 'parent',
+      modelId: 'parent-model',
+    });
+
+    expect(events.map((event) => event.type)).toEqual(['subagent_start', 'subagent_end']);
+    expect(events[0]).toEqual(expect.objectContaining({
+      sessionId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      callerSessionId: '5cb8b687-f263-4355-9d09-7749064e3318',
+      parentTurnId: 'parent-turn',
+      parentToolUseId: 'tool-1',
+    }));
+    expect(createTransientSubagentTranscript).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      callerSessionId: '5cb8b687-f263-4355-9d09-7749064e3318',
+    }));
+    expect(deleteTransientSubagentTranscript).toHaveBeenCalledTimes(1);
+    expect(registerChild).toHaveBeenCalledTimes(1);
+    expect(releaseChild).toHaveBeenCalledTimes(1);
+    expect([...routeContextByTurn.keys()]).toEqual(['parent-turn']);
   });
 
-  it('(a) parent + child usage tree accumulation works for the happy path', () => {
-    const parent = { inputTokens: 100, outputTokens: 50 };
-    const child = { inputTokens: 80, outputTokens: 40 };
-    expect(addUsage(parent, child)).toEqual({ inputTokens: 180, outputTokens: 90 });
+  it('validates Parent authority while using execution-local cancellation for the Child', async () => {
+    const {
+      port,
+      request,
+      parent,
+      executionController,
+      prepare,
+    } = setup();
+
+    await expect(port.delegate(request)).resolves.toMatchObject({ outcome: 'ok' });
+    expect(request.parentSignal).toBe(parent.signal);
+    expect(request.signal).toBe(executionController.signal);
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
+      signal: executionController.signal,
+    }));
   });
 
-  it('(b) child usage={0,0} does not pollute the parent (error path per spec §13.2)', () => {
-    const parent = { inputTokens: 100, outputTokens: 50 };
-    const child = { inputTokens: 0, outputTokens: 0 };
-    expect(addUsage(parent, child)).toEqual(parent);
+  it('runs sibling delegations concurrently with independent Child lifecycles', async () => {
+    let releaseExecution!: () => void;
+    const executeGate = new Promise<void>((resolve) => {
+      releaseExecution = resolve;
+    });
+    const subject = setup({ executeGate });
+    const siblingController = new AbortController();
+
+    const first = subject.port.delegate(subject.request);
+    const second = subject.port.delegate({
+      ...subject.request,
+      parent: {
+        ...subject.request.parent,
+        toolUseId: 'tool-2',
+      },
+      signal: siblingController.signal,
+    });
+
+    await vi.waitFor(() => {
+      expect(subject.execute).toHaveBeenCalledTimes(2);
+    });
+    expect(subject.events.filter((event) => event.type === 'subagent_start')).toHaveLength(2);
+    expect(subject.registerChild).toHaveBeenCalledTimes(2);
+    expect(new Set(subject.execute.mock.calls.map(([prepared]) => prepared.signal)).size).toBe(2);
+
+    releaseExecution();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ outcome: 'ok' }),
+      expect.objectContaining({ outcome: 'ok' }),
+    ]);
+
+    const starts = subject.events.filter((event) => event.type === 'subagent_start');
+    expect(new Set(starts.map((event) => event.sessionId)).size).toBe(2);
+    expect(subject.releaseChild).toHaveBeenCalledTimes(2);
+    expect(subject.deleteTransientSubagentTranscript).toHaveBeenCalledTimes(2);
+    expect([...subject.routeContextByTurn.keys()]).toEqual(['parent-turn']);
+  });
+
+  it('uses a concrete Child Provider/Model independently of Parent selection', async () => {
+    const { port, request, execute } = setup();
+    const result = await port.delegate({
+      ...request,
+      profile: profile({ providerId: 'child', modelId: 'child-model' }),
+    });
+
+    expect(result.text).toBe('child/child-model');
+    expect(execute.mock.calls[0]![1].identity).toEqual({
+      providerId: 'child',
+      modelId: 'child-model',
+    });
+    expect(execute.mock.calls[0]![1]).toEqual(expect.objectContaining({
+      protocol: 'child-protocol',
+      endpointId: 'child-endpoint',
+      invocationPort: invocationPorts.child,
+      facts: expect.objectContaining({
+        effectiveContextLimit: 2000,
+      }),
+    }));
+  });
+
+  it('terminalizes resolution failure with its category and never executes the Child', async () => {
+    const { port, request, events, execute, deleteTransientSubagentTranscript } = setup();
+    const result = await port.delegate({
+      ...request,
+      profile: profile({ providerId: 'missing', modelId: 'child-model' }),
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      outcome: 'error',
+      failure: expect.objectContaining({
+        phase: 'resolution',
+        category: 'provider_unregistered',
+      }),
+      usage: { inputTokens: 0, outputTokens: 0 },
+    }));
+    expect(execute).not.toHaveBeenCalled();
+    expect(invocationPorts.parent!.chatStream).not.toHaveBeenCalled();
+    expect(invocationPorts.parent!.chat).not.toHaveBeenCalled();
+    expect(invocationPorts.child!.chatStream).not.toHaveBeenCalled();
+    expect(invocationPorts.child!.chat).not.toHaveBeenCalled();
+    expect(events.map((event) => event.type)).toEqual(['subagent_start', 'subagent_end']);
+    expect(deleteTransientSubagentTranscript).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a missing Parent before allocating Child lifecycle events', async () => {
+    const { port, request, events, execute, activeParents } = setup();
+    activeParents.clear();
+
+    await expect(port.delegate(request)).rejects.toBeInstanceOf(SubagentDelegationRejected);
+    expect(events).toEqual([]);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects a mismatched Parent authority signal before allocating Child lifecycle', async () => {
+    const { port, request, events, execute } = setup();
+
+    await expect(port.delegate({
+      ...request,
+      parentSignal: new AbortController().signal,
+    })).rejects.toBeInstanceOf(SubagentDelegationRejected);
+    expect(events).toEqual([]);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('terminalizes setup and typed execution failures exactly once with acquired cleanup', async () => {
+    const setupCase = setup({ prepareError: new Error('prompt failed') });
+    const setupResult = await setupCase.port.delegate(setupCase.request);
+    expect(setupResult).toEqual(expect.objectContaining({
+      outcome: 'error',
+      failure: { phase: 'setup', message: 'prompt failed' },
+      usage: { inputTokens: 0, outputTokens: 0 },
+    }));
+    expect(setupCase.events.filter((event) => event.type === 'subagent_end')).toHaveLength(1);
+    expect(setupCase.deleteTransientSubagentTranscript).toHaveBeenCalledTimes(1);
+
+    const executionCase = setup({
+      executeError: new AgentExecutionFailure('provider failed', {
+        inputTokens: 9,
+        outputTokens: 3,
+      }),
+    });
+    const executionResult = await executionCase.port.delegate(executionCase.request);
+    expect(executionResult).toEqual(expect.objectContaining({
+      outcome: 'error',
+      failure: { phase: 'execution', message: 'provider failed' },
+      usage: { inputTokens: 9, outputTokens: 3 },
+    }));
+    expect(executionCase.events.filter((event) => event.type === 'subagent_end')).toHaveLength(1);
+  });
+
+  it('terminalizes route registration failure without allocating a session', async () => {
+    const routeCase = setup({ routeSetError: new Error('route failed') });
+    const result = await routeCase.port.delegate(routeCase.request);
+
+    expect(result).toEqual(expect.objectContaining({
+      outcome: 'error',
+      failure: { phase: 'setup', message: 'route failed' },
+      usage: { inputTokens: 0, outputTokens: 0 },
+    }));
+    expect(routeCase.events.map((event) => event.type)).toEqual([
+      'subagent_start',
+      'subagent_end',
+    ]);
+    expect(routeCase.deleteTransientSubagentTranscript).not.toHaveBeenCalled();
+    expect(routeCase.execute).not.toHaveBeenCalled();
+  });
+
+  it('continues session cleanup when route cleanup fails', async () => {
+    const cleanupCase = setup({ routeDeleteError: new Error('route cleanup failed') });
+    const result = await cleanupCase.port.delegate(cleanupCase.request);
+
+    expect(result.outcome).toBe('ok');
+    expect(cleanupCase.deleteTransientSubagentTranscript).toHaveBeenCalledTimes(1);
+    expect(cleanupCase.events.filter((event) => event.type === 'subagent_end')).toHaveLength(1);
+  });
+
+  it('uses the Parent signal and reports Abort without execution failure', async () => {
+    const { port, request, controller, events } = setup({
+      prepareError: new DOMException('Aborted', 'AbortError'),
+    });
+    controller.abort();
+    await expect(port.delegate(request)).rejects.toBeInstanceOf(SubagentDelegationRejected);
+    expect(events).toEqual([]);
+  });
+
+  it('terminalizes Abort during accepted Child setup and cleans acquired resources', async () => {
+    const abortCase = setup({ abortDuringPrepare: true });
+    const result = await abortCase.port.delegate(abortCase.request);
+
+    expect(result).toEqual(expect.objectContaining({
+      outcome: 'aborted',
+      usage: { inputTokens: 0, outputTokens: 0 },
+    }));
+    expect(result.failure).toBeUndefined();
+    expect(abortCase.events.map((event) => event.type)).toEqual([
+      'subagent_start',
+      'subagent_end',
+    ]);
+    expect(abortCase.execute).not.toHaveBeenCalled();
+    expect(abortCase.deleteTransientSubagentTranscript).toHaveBeenCalledTimes(1);
+    expect([...abortCase.routeContextByTurn.keys()]).toEqual(['parent-turn']);
   });
 });

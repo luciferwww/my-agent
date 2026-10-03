@@ -1,9 +1,8 @@
 import type { EmbeddingProvider } from '../types.js';
+import { DEFAULT_MEMORY_CONFIG } from '../config.js';
 import { Logger } from '../../../platform/logger/index.js';
 
 const log = Logger.get('LocalEmbeddingProvider');
-
-const DEFAULT_MODEL = 'Xenova/all-MiniLM-L6-v2';
 
 /**
  * 常见 Xenova 模型的向量维度静态映射表。
@@ -33,7 +32,6 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
   readonly dimensions: number;
 
   // 用 any 避免 @xenova/transformers 的复杂泛型
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private pipelinePromise: Promise<any> | null = null;
 
   constructor(modelId: string, dimensions: number) {
@@ -69,7 +67,6 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
    * 懒加载 pipeline。首次调用时初始化，后续复用同一个 Promise。
    * 多个并发调用不会重复初始化。
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private ensurePipeline(): Promise<any> {
     if (!this.pipelinePromise) {
       this.pipelinePromise = this.initPipeline();
@@ -77,7 +74,6 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
     return this.pipelinePromise;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async initPipeline(): Promise<any> {
     log.info('Loading embedding model', { modelId: this.modelId });
     // 动态 import，避免未安装 @xenova/transformers 时模块加载失败
@@ -94,7 +90,6 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
  */
 async function detectDimensions(modelId: string): Promise<number> {
   const { pipeline } = await import('@xenova/transformers');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pipe: any = await pipeline('feature-extraction', modelId);
   const output = await pipe('', { pooling: 'mean', normalize: true });
   return (output.data as Float32Array).length;
@@ -116,7 +111,7 @@ export async function createEmbeddingProvider(
   const providerType = config?.provider ?? 'local';
   if (providerType !== 'local') return null;
 
-  const model = config?.model ?? DEFAULT_MODEL;
+  const model = config?.model ?? DEFAULT_MEMORY_CONFIG.embedding.model;
 
   let dimensions = KNOWN_DIMENSIONS[model];
   if (dimensions === undefined) {

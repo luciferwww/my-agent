@@ -13,20 +13,20 @@ const hasBetterSqlite3 = canResolveBetterSqlite3();
 const describeSqlite = hasBetterSqlite3 ? describe : describe.skip;
 
 describeSqlite('SqliteMemoryStore', () => {
-  let workspaceDir = '';
+  let agentHome = '';
   let SqliteMemoryStore: SqliteMemoryStoreClass;
   let store: SqliteMemoryStoreInstance;
 
   beforeEach(async () => {
     ({ SqliteMemoryStore } = await import('./sqlite-store.js'));
-    workspaceDir = await mkdtemp(join(tmpdir(), 'sqlite-memory-store-'));
-    store = new SqliteMemoryStore(join(workspaceDir, 'memory.sqlite'));
+    agentHome = await mkdtemp(join(tmpdir(), 'sqlite-memory-store-'));
+    store = new SqliteMemoryStore(join(agentHome, 'memory.sqlite'));
   });
 
   afterEach(async () => {
     store.close();
-    if (workspaceDir) {
-      await rm(workspaceDir, { recursive: true, force: true });
+    if (agentHome) {
+      await rm(agentHome, { recursive: true, force: true });
     }
   });
 
@@ -169,6 +169,33 @@ describeSqlite('SqliteMemoryStore', () => {
     expect(matches).toHaveLength(1);
     expect(matches[0]?.content).toBe('new content');
     expect(store.searchByKeyword('old', 5)).toEqual([]);
+  });
+
+  it('preserves keyword, vector, and metadata data after reopening', () => {
+    const databasePath = join(agentHome, 'memory.sqlite');
+    store.upsertChunks([{
+      id: 'memory:memory/persist.md:1-1',
+      path: 'memory/persist.md',
+      source: 'memory',
+      content: 'persistent memory content',
+      startLine: 1,
+      endLine: 1,
+      embedding: [1, 0],
+      model: 'persist-model',
+      updatedAt: 1,
+    }]);
+    store.setMeta('persist-key', 'persist-value');
+
+    store.close();
+    store = new SqliteMemoryStore(databasePath);
+
+    expect(store.searchByKeyword('persistent', 5)).toEqual([
+      expect.objectContaining({ id: 'memory:memory/persist.md:1-1' }),
+    ]);
+    expect(store.searchByVector([1, 0], 5, 'persist-model')).toEqual([
+      expect.objectContaining({ id: 'memory:memory/persist.md:1-1', score: 1 }),
+    ]);
+    expect(store.getMeta('persist-key')).toBe('persist-value');
   });
 });
 

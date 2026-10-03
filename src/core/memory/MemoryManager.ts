@@ -1,12 +1,16 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type {
-  MemoryConfig,
   MemoryStore,
   MemorySearchResult,
   SearchOptions,
-  EmbeddingProvider,
 } from './types.js';
+import {
+  DEFAULT_MEMORY_CONFIG,
+  type ChunkingConfig,
+  type EmbeddingConfig,
+  type MemorySearchConfig,
+} from './config.js';
 import { SqliteMemoryStore } from './internal/sqlite-store.js';
 import { createEmbeddingProvider } from './internal/LocalEmbeddingProvider.js';
 import { MemoryIndexer } from './internal/MemoryIndexer.js';
@@ -17,8 +21,15 @@ import { Logger } from '../../platform/logger/index.js';
 const log = Logger.get('MemoryManager');
 
 const DB_FILE = 'memory.sqlite';
-const AGENT_DIR = '.agent';
-const RECALL_DIR = '.agent/memory/.recalls';
+const RECALL_DIR = 'memory-recalls';
+
+export interface MemoryManagerConfig {
+  readonly agentHome: string;
+  readonly enabled?: boolean;
+  readonly embedding?: Partial<EmbeddingConfig>;
+  readonly chunking?: ChunkingConfig;
+  readonly search?: MemorySearchConfig;
+}
 
 /**
  * Memory 模块统一入口。
@@ -27,61 +38,67 @@ const RECALL_DIR = '.agent/memory/.recalls';
  * 对外提供简洁的 search / readFile / writeFile API。
  */
 export class MemoryManager {
-  private workspaceDir: string;
+  private agentHome: string;
   private store: MemoryStore;
   private indexer: MemoryIndexer;
   private searcher: MemorySearcher;
   private recallTracker: RecallTracker;
-  private embeddingProvider: EmbeddingProvider | null;
 
   private constructor(
-    workspaceDir: string,
+    agentHome: string,
     store: MemoryStore,
     indexer: MemoryIndexer,
     searcher: MemorySearcher,
     recallTracker: RecallTracker,
-    embeddingProvider: EmbeddingProvider | null,
   ) {
-    this.workspaceDir = workspaceDir;
+    this.agentHome = agentHome;
     this.store = store;
     this.indexer = indexer;
     this.searcher = searcher;
     this.recallTracker = recallTracker;
-    this.embeddingProvider = embeddingProvider;
   }
 
   /**
    * 异步工厂方法：初始化所有组件 + 首次索引。
    */
-  static async create(config: MemoryConfig): Promise<MemoryManager> {
-    const { workspaceDir } = config;
+  static async create(config: MemoryManagerConfig): Promise<MemoryManager> {
+    const { agentHome } = config;
 
     // 1. 嵌入提供者（失败则为 null → 降级搜索）
-    const embeddingProvider = await createEmbeddingProvider(config.embedding);
+    const embeddingProvider = await createEmbeddingProvider(
+      config.embedding ?? DEFAULT_MEMORY_CONFIG.embedding,
+    );
     log.info('Embedding provider', { provider: embeddingProvider ? embeddingProvider.modelId : 'none (keyword-only)' });
 
-    // 2. SQLite 存储（路径固定在 <workspaceDir>/.agent/memory.sqlite，不可配）
-    const dbPath = join(workspaceDir, AGENT_DIR, DB_FILE);
+    // 2. SQLite 存储（路径固定在 <agentHome>/memory.sqlite，不可配）
+    const dbPath = join(agentHome, DB_FILE);
     await mkdir(dirname(dbPath), { recursive: true });
     const store = new SqliteMemoryStore(dbPath);
     log.info('MemoryManager init', { dbPath });
 
     // 3. 组件
-    const indexer = new MemoryIndexer(store, embeddingProvider);
-    const searcher = new MemorySearcher(store, embeddingProvider);
-    const recallTracker = new RecallTracker(join(workspaceDir, RECALL_DIR));
+    const indexer = new MemoryIndexer(
+      store,
+      embeddingProvider,
+      config.chunking ?? DEFAULT_MEMORY_CONFIG.chunking,
+    );
+    const searcher = new MemorySearcher(
+      store,
+      embeddingProvider,
+      config.search ?? DEFAULT_MEMORY_CONFIG.search,
+    );
+    const recallTracker = new RecallTracker(join(agentHome, RECALL_DIR));
 
     const manager = new MemoryManager(
-      workspaceDir,
+      agentHome,
       store,
       indexer,
       searcher,
       recallTracker,
-      embeddingProvider,
     );
 
     // 4. 首次索引
-    await indexer.indexAll(workspaceDir);
+    await indexer.indexAll(agentHome);
     log.info('MemoryManager ready');
 
     return manager;
@@ -116,7 +133,7 @@ export class MemoryManager {
    * 读取记忆文件，可指定行范围。
    */
   async readFile(path: string, from?: number, lines?: number): Promise<string> {
-    const fullPath = join(this.workspaceDir, path);
+    const fullPath = resolveAgentHomePath(this.agentHome, path);
     const content = await readFile(fullPath, 'utf-8');
 
     if (from === undefined) return content;
@@ -132,7 +149,7 @@ export class MemoryManager {
    */
   async writeFile(path: string, content: string, mode: 'append' | 'overwrite'): Promise<void> {
     log.debug('writeFile', { path, mode });
-    const fullPath = join(this.workspaceDir, path);
+    const fullPath = resolveAgentHomePath(this.agentHome, path);
     await mkdir(dirname(fullPath), { recursive: true });
 
     if (mode === 'append') {
@@ -153,7 +170,7 @@ export class MemoryManager {
    */
   async reindex(): Promise<void> {
     log.info('reindex triggered');
-    await this.indexer.indexAll(this.workspaceDir);
+    await this.indexer.indexAll(this.agentHome);
   }
 
   /**
@@ -165,6 +182,21 @@ export class MemoryManager {
 }
 
 // ── 工具函数 ──────────────────────────────────────────────
+
+function resolveAgentHomePath(agentHome: string, path: string): string {
+  const root = resolve(agentHome);
+  const candidate = resolve(root, path);
+  const relativePath = relative(root, candidate);
+  if (
+    relativePath === ''
+    || (!isAbsolute(relativePath)
+      && relativePath !== '..'
+      && !relativePath.startsWith(`..${sep}`))
+  ) {
+    return candidate;
+  }
+  throw new Error(`Memory path must stay within Agent Home: ${path}`);
+}
 
 async function readFileSafe(filePath: string): Promise<string | null> {
   try {

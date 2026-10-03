@@ -1,0 +1,54 @@
+# Standalone Service Host Specification
+
+> Status: Stable Authority
+> Contract status: Implemented and Validated
+> Verified: 2026-09-24
+> Authority: Canonical standalone process Host contract
+
+## Scope
+
+Own one service-first executable and composition root around `RuntimeApp.create()`: installed-package derivation and Agent Home selection; one Agent configuration snapshot; generic Runtime startup facts; optional Host-local CLI selection; output compatibility; process liveness; shutdown; fatal entry diagnostics; and exit status.
+
+CLI is an optional Host-local Channel, not the architecture. Runtime remains the sole owner of Unit composition and lifecycle.
+
+## Entry and path selection
+
+The canonical package command is `my-agent`; repository development uses `npm run agent`. The standalone entry accepts at most one Agent Home option across `-ah <path>`, `--agent-home <path>`, and `--agent-home=<path>`, plus the optional boolean `--cli` flag. Short equals forms are unsupported. Missing Agent Home values, blank values, duplicate `--agent-home`, duplicate `--cli`, and unknown arguments fail with one `HOST_ARGUMENT_INVALID` diagnostic. The retired `-bc` and `--builtin-channels` forms are rejected as unknown arguments.
+
+Standalone derives `installDir` from the nearest containing npm package named `my-agent`. Agent Home defaults to `<user-home>/.my-agent`; an explicit absolute value is normalized, while an explicit relative value resolves once against startup `process.cwd()`. No custom environment or configuration source selects either path. `installDir` owns immutable program content and pre-provisioned Extensions; `agentHome` owns configuration and mutable Agent state and is the Runtime path context. Startup CWD has no architectural role after resolving a relative CLI value.
+
+After path resolution, standalone ensures Agent Home exists and exclusively creates a missing `<agentHome>/config.json` with exact UTF-8 bytes `{}\n`. Existing configuration is preserved byte-for-byte. The Host then performs one strict document-content read; a document missing at read time is fatal `FILE_MISSING`. Generating `{}` materializes physical default content but does not select a Provider/Model, provision credentials or Extensions, or guarantee a successful Turn.
+
+## Host-local Channel selection
+
+Standalone supplies no Host-local Channel when `--cli` is omitted. When
+`--cli` is present, it supplies exactly one CLI Runtime Unit.
+
+WebSocket is not a Host-local Channel. It is an independently installed
+Extension and is enabled only through
+`extensions.entries.websocket-channel`. Standalone does not import, configure,
+identify, or observe that concrete Extension.
+
+Standalone supplies fixed CLI values prompt `> ` and approval enabled. The CLI starts in a new-conversation state without a Session ID; its first ordinary message obtains a server-issued `sessionId`, and later messages reuse it until the user selects another or new Session. These values are not configurable in the global Agent document. The only top-level configuration namespaces are `agents`, `logger`, and `extensions`; retired `host` content is rejected directly. CLI selection and enabled Console Logger are incompatible because both own terminal presentation. The Host rejects the combination with `HOST_OUTPUT_CONFLICT`; File Logger is compatible.
+
+## Composition and liveness
+
+The Host follows `arguments -> paths -> configuration bootstrap -> one strict configuration read -> validation -> Runtime`. It passes generic `installDir`, the complete immutable configuration snapshot, and environment startup facts plus zero or one Host-local CLI Unit to `RuntimeApp.create()`. Runtime Bootstrap derives and invokes Extension Acquisition after Logger configuration; Runtime Builder combines acquired and Host-provided Units into the sole composition path. A configuration bootstrap or load failure prevents Runtime creation, while a Runtime Bootstrap or acquisition failure prevents composition. Core Agent Context retains its independent Runtime-owned initialization.
+
+CLI completion controls Host lifetime only when `--cli` is present. Its normal
+or failed completion initiates shared Runtime shutdown, and failure sets process
+exit status 1. Without `--cli`, the Host remains alive until a process signal
+or explicit Host shutdown. Arbitrary Extension Channel completion is never a
+Standalone lifetime trigger. Runtime Composition records a bounded ID/phase
+warning for any successfully published Channel completion failure; Standalone
+does not duplicate that warning. First signal starts cooperative shutdown; a
+second signal forces the conventional signal status; the Host deadline forces
+status 1. Runtime library code never exits the process.
+
+Startup failures set process exit status 1 and emit bounded `stderr` diagnostics. Candidate-local acquisition failures remain isolated, bounded warnings. Diagnostics never expose secrets or raw configuration.
+
+## Build and compatibility
+
+The thin executable bootstrap is `src/hosts/standalone/entry.ts`; testable composition is owned by `src/hosts/standalone/standalone-host.ts`. The Host build emits `dist/host/hosts/standalone/entry.js` and audits a closed generic Extension boundary plus required Agent Context templates. The npm `bin` maps `my-agent` directly to that entry, and the package allowlist contains only `dist/host` besides npm-standard root metadata/README inclusion. Removed scripts-based, WebSocket-only, and prototype entries are not forwarding composition roots.
+
+`prepack` rebuilds and audits the Host closure. Package verification must exercise the generated command from an installed tarball, preserve installation and startup-CWD trees, and cover default and explicit Agent Home first-start behavior. External registry publication, a cross-platform release matrix, a root wrapper, and a native/single-file executable are not part of this contract.

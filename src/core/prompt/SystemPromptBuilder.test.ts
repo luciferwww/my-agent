@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { SystemPromptBuilder } from './SystemPromptBuilder.js';
 
 describe('SystemPromptBuilder', () => {
@@ -10,7 +10,7 @@ describe('SystemPromptBuilder', () => {
       const prompt = new SystemPromptBuilder().build();
       expect(prompt).toContain('# Identity');
       expect(prompt).toContain('# Behavior Rules');
-      expect(prompt).toContain('# Safety');
+      expect(prompt).not.toContain('# Safety');
     });
 
     it('full mode includes all sections', () => {
@@ -18,13 +18,12 @@ describe('SystemPromptBuilder', () => {
       expect(prompt).toContain('# Identity');
       expect(prompt).toContain('# Current Date & Time');
       expect(prompt).toContain('# Behavior Rules');
-      expect(prompt).toContain('# Safety');
     });
 
     it('minimal mode skips memory-instructions', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
-        tools: [{ name: 'memory_search', description: 'search' }],
+        toolNames: ['memory_search'],
       });
       expect(prompt).not.toContain('# Memory Recall');
     });
@@ -32,7 +31,7 @@ describe('SystemPromptBuilder', () => {
     it('minimal mode skips identity / behavior-rules / memory / available-subagents (spec §11)', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
-        tools: [{ name: 'memory_search', description: 'search' }],
+        toolNames: ['memory_search'],
         contextFiles: [{ path: 'IDENTITY.md', content: '# test' }],
         availableSubagents: [{ id: 'a', description: 'desc' }],
       });
@@ -42,19 +41,18 @@ describe('SystemPromptBuilder', () => {
       expect(prompt).not.toContain('<available-subagents>');
     });
 
-    it('minimal mode keeps datetime / safety / project-context / workspace', () => {
+    it('minimal mode keeps datetime / project-context / Agent Home', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
         contextFiles: [{ path: 'IDENTITY.md', content: '# test' }],
-        workspaceDir: '/work',
+        agentHome: '/work',
       });
       expect(prompt).toContain('# Current Date & Time');
       // tool-definitions section is disabled; tools are passed via LLM API
       expect(prompt).not.toContain('# Available Tools');
-      expect(prompt).toContain('# Safety');
       expect(prompt).toContain('# Project Context');
-      expect(prompt).toContain('# Workspace');
-      expect(prompt).toContain('Your working directory is: /work');
+      expect(prompt).toContain('# Agent Home');
+      expect(prompt).toContain('Your agent home directory is: /work');
     });
 
     it('none mode returns empty string', () => {
@@ -83,13 +81,6 @@ describe('SystemPromptBuilder', () => {
     });
   });
 
-  // ── tool-definitions ──────────────────────────────────────
-  //
-  // 该 section 已在 SystemPromptBuilder 中停用（buildToolDefinitionsSection
-  // 被注释掉）。工具定义现由 LLM API 的 `tools` 参数传递，在 system
-  // prompt 里重复列为冗余。原有测试（断言 # Available Tools 出现 /
-  // **search_web** 等）随代码一同移除。
-
   // ── behavior-rules ────────────────────────────────────────
 
   describe('behavior-rules', () => {
@@ -101,54 +92,34 @@ describe('SystemPromptBuilder', () => {
     });
   });
 
-  // ── safety-constraints ────────────────────────────────────
-
-  describe('safety-constraints', () => {
-    it('includes normal safety by default', () => {
-      const prompt = new SystemPromptBuilder().build();
-      expect(prompt).toContain('# Safety');
-      expect(prompt).toContain('Act within the scope');
-    });
-
-    it('includes strict safety when safetyLevel is strict', () => {
-      const prompt = new SystemPromptBuilder().build({ safetyLevel: 'strict' });
-      expect(prompt).toContain('# Safety');
-      expect(prompt).toContain('no independent goals');
-    });
-
-    it('skips safety section when safetyLevel is relaxed', () => {
-      const prompt = new SystemPromptBuilder().build({ safetyLevel: 'relaxed' });
-      expect(prompt).not.toContain('# Safety');
-    });
-  });
-
   // ── memory-instructions ───────────────────────────────────
 
   describe('memory-instructions', () => {
     it('shows when tools contain memory_search', () => {
       const prompt = new SystemPromptBuilder().build({
-        tools: [{ name: 'memory_search', description: 'search' }],
+        toolNames: ['memory_search'],
       });
       expect(prompt).toContain('# Memory Recall');
     });
 
     it('keeps legacy compatibility for search_memory', () => {
       const prompt = new SystemPromptBuilder().build({
-        tools: [{ name: 'search_memory', description: 'search' }],
+        toolNames: ['search_memory'],
       });
       expect(prompt).toContain('# Memory Recall');
     });
 
     it('shows when tools contain memory_get', () => {
       const prompt = new SystemPromptBuilder().build({
-        tools: [{ name: 'memory_get', description: 'get' }],
+        toolNames: ['memory_get'],
       });
       expect(prompt).toContain('# Memory Recall');
     });
 
-    it('skips when no memory tools', () => {
+    it('uses exact Tool names rather than matching nearby capability text', () => {
       const prompt = new SystemPromptBuilder().build({
-        tools: [{ name: 'read_file', description: 'read' }],
+        mode: 'full',
+        toolNames: ['read_file', 'memory_search_extended'],
       });
       expect(prompt).not.toContain('# Memory Recall');
     });
@@ -161,7 +132,7 @@ describe('SystemPromptBuilder', () => {
     it('skips in minimal mode even with memory tools', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
-        tools: [{ name: 'memory_search', description: 'search' }],
+        toolNames: ['memory_search'],
       });
       expect(prompt).not.toContain('# Memory Recall');
     });
@@ -223,32 +194,32 @@ describe('SystemPromptBuilder', () => {
     });
   });
 
-  // ── workspace (Section 7) ────────────────────────────────
+  // ── Agent Home (Section 7) ───────────────────────────────
 
-  describe('workspace section (Section 7)', () => {
-    it('renders "# Workspace" with workingDir when workspaceDir is set', () => {
-      const prompt = new SystemPromptBuilder().build({ workspaceDir: '/work/space' });
-      expect(prompt).toContain('# Workspace');
-      expect(prompt).toContain('Your working directory is: /work/space');
+  describe('Agent Home section (Section 7)', () => {
+    it('renders "# Agent Home" when agentHome is set', () => {
+      const prompt = new SystemPromptBuilder().build({ agentHome: '/agent/home' });
+      expect(prompt).toContain('# Agent Home');
+      expect(prompt).toContain('Your agent home directory is: /agent/home');
     });
 
-    it('renders workspace section in minimal mode too', () => {
+    it('renders Agent Home section in minimal mode too', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
-        workspaceDir: '/work/space',
+        agentHome: '/agent/home',
       });
-      expect(prompt).toContain('# Workspace');
+      expect(prompt).toContain('# Agent Home');
     });
 
-    it('skips workspace section when workspaceDir is not provided', () => {
+    it('skips Agent Home section when agentHome is not provided', () => {
       const prompt = new SystemPromptBuilder().build();
-      expect(prompt).not.toContain('# Workspace');
+      expect(prompt).not.toContain('# Agent Home');
     });
 
-    it('returns empty string in none mode regardless of workspaceDir', () => {
+    it('returns empty string in none mode regardless of agentHome', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'none',
-        workspaceDir: '/work/space',
+        agentHome: '/agent/home',
       });
       expect(prompt).toBe('');
     });
