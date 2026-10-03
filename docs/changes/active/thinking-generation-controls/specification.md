@@ -20,13 +20,13 @@
 | Owner | 职责 |
 |---|---|
 | Core Model契约 | 公共能力/策略类型、解析后的调用策略、canonical Thinking与opaque envelope |
-| Provider | 不可变模型快照、Catalog/Facts一致投影、私有能力/adapter及模型路由 |
+| Provider | 不可变模型快照、Catalog/Facts一致投影及模型路由 |
 | Protocol Client | wire参数、事件、signature/redacted/opaque codec、目标历史投影及来源校验 |
 | Runtime/Runner | 入口校验与队列快照、模型能力检查、Turn固定策略、Steering与调用类型隔离 |
 | Session | 保存合法原始消息策略与已有Thinking块，History安全投影、恢复/Fork |
 | Channel/Web | 提交结构化策略，按能力展示选项和摘要，不替代Runtime校验 |
 
-Core不认识summary/adaptive/budget wire字段，不读取Provider私有配置。
+Core不认识summary/adaptive等wire字段，不读取Protocol Client实现细节。
 Relay不能导入Built-in私有Client模块；共享内容只通过现有公共Extension API提供。
 沿用[Model Resolution](../../../specifications/model-resolution.md)的membership顺序、
 Provider快照义务及immutable per-Turn binding，不增加snapshot handle。
@@ -124,7 +124,7 @@ Built-in可选位置为`llm.builtin.models[n].reasoning`，仅声明能力。
 ```
 
 - 配置加载校验字段结构、值、重复项，错误指向models[index]的具体字段。
-- Provider创建/generation staging验证静态能力、私有adapter、路由及codec可用性；
+- Provider创建/generation staging验证静态能力、路由及codec可用性；
   未实现或没有有效映射的能力不能发布。
 - 候选失败不发布新Catalog，reload保留旧generation；首次启动按现有Unit失败策略处理。
 - Catalog/descriptor来自同一深冻快照；Host在staging校验可观察Catalog，在解析时
@@ -185,38 +185,21 @@ Responses在独立`on`时附加`reasoning.summary="detailed"`，包括`on + defa
 ### 6.2 Anthropic
 
 新增anthropic-messages Thinking codec，采集有序thinking/signature/redacted块，
-沿用canonical生命周期和Provider-owned replay envelope。
-私有模型字段`anthropicThinking`仅用于anthropic-messages，不投影Core/Catalog：
-
-```ts
-type AnthropicThinkingAdapter =
-  | { readonly mode: 'adaptive' }
-  | {
-      readonly mode: 'budget';
-      readonly defaultBudgetTokens?: number;
-      readonly budgets?: Partial<
-        Record<Exclude<ExplicitThinkingEffort, 'none'>, number>
-      >;
-    };
-```
+沿用canonical生命周期和Provider-owned replay envelope。用户配置只声明公共
+`reasoning.thinking`与`reasoning.efforts`；Anthropic协议映射完全由Client拥有，不增加
+adaptive、budget或budget_tokens私有模型字段。
 
 | Policy | Wire |
 |---|---|
 | 开关省略 + default | 不新增thinking/output_config.effort |
 | 支持的off或none | thinking.type=disabled，不发送effort；off+none只映射一次 |
-| on + default，adaptive | thinking.type=adaptive，不补effort |
-| on + default，budget | thinking.type=enabled + 明确defaultBudgetTokens |
-| on或开关省略 + adaptive支持的等级 | adaptive + output_config.effort精确值 |
-| on或开关省略 + budget已配置等级 | enabled + 对应budget_tokens |
+| on + default | thinking.type=adaptive，不补effort |
+| on或开关省略 + 支持的显式等级 | adaptive + output_config.effort精确值 |
 
-不发送thinking.type=none或output_config.effort=none，不猜mode或数字，不将minimal/xhigh
-换成相邻等级。预算须为安全整数并满足目标API最低预算及有效max_tokens约束；
-静态不一致在配置/staging失败，实际输出预算冲突在preflight失败，不自动调整上限或预算。
-budget独立on要求defaultBudgetTokens；只有等级预算时可提供efforts但不提供on。
-关闭与各等级分别声明支持。fixture必须覆盖请求、签名、redacted、流错误和工具续轮；
-模型/version接受性依据在对应步骤补证，示例或竞品默认不证明所有模型支持。
-Anthropic发布独立`on`表示对应adapter会发送adaptive或enabled Thinking配置，并将返回的
-thinking block采集、投影和展示；不能产生可读Thinking block的部署不得发布`on`。
+不发送thinking.type=none或output_config.effort=none，不将minimal/xhigh换成相邻等级，
+不要求用户配置Client wire细节。只有确认部署接受adaptive及所声明等级时才发布相应公共
+能力。fixture必须覆盖请求、签名、redacted、流错误和工具续轮。Anthropic发布独立`on`
+表示Client会发送adaptive Thinking，并将返回的thinking block采集、投影和展示。
 
 ### 6.3 Relay
 
@@ -277,5 +260,5 @@ Abort/流错误沿用已有终态和partial保存，不新增自动协议重试�
 按Plan执行；文档创建不算生产行为验证，不自动调用计费模型。
 
 当前无新增公共语义待决策。Delivery前仍需所有者接受本Draft及对应步骤授权；
-Anthropic目标协议fixture、有效预算约束、Relay Router实际标识与包清单接线在实施中
+Anthropic目标协议fixture和adaptive映射、Relay Router实际标识与包清单接线在实施中
 核实并记录，不据此增加公共配置层。若证据要求改变语义则回到Plan停止条件。

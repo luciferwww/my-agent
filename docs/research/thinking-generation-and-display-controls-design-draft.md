@@ -27,7 +27,7 @@ Responses，本地 Relay 服务则同时提供 Responses 和 Chat Completions。
 - 用户在模型支持时选择Thinking开启/关闭，也可选择effort；
 - 用户可见正常Turn中实际返回的合法可读Thinking采集、展示并保存；内部调用见§6；
 - 不提供独立 Display 控件，也不增加隐藏或丢弃可读文本的持久化规则；
-- summary 请求、Anthropic 生成模式和预算属于 Provider 私有适配；
+- summary请求和Anthropic wire映射由各自Protocol Client内部处理，不进入用户配置；
 - Core 保留统一事件、History 外壳和 opaque replay envelope。
 
 OpenClaw 用作协议实现参考，不复制其所有默认值、模型名判断或覆盖层级。
@@ -52,7 +52,7 @@ OpenClaw 用作协议实现参考，不复制其所有默认值、模型名判�
 - 根据模型名称猜能力或 Anthropic 生成模式；
 - 跨 Provider/protocol 转换 opaque state；
 - 从普通正文中的`<think>`标签猜测 Thinking；
-- 为未配置的 Anthropic budget 等级猜数字；
+- 暴露Anthropic专用生成配置或要求用户理解wire字段；
 - 服务端 conversation、`previous_response_id`或新重试机制。
 
 ## 3. 公共能力 schema
@@ -273,7 +273,7 @@ Provider model snapshot
 - 复制并深度冻结 schema 及数组，不只浅冻结 registration；
 - Catalog 与 Resolver 来自同一不可变模型快照；
 - Host 校验 schema 结构及可观察的一致性，不能读取 Provider 私有配置；
-- Runtime DTO 只包含公共 schema，不包含适配器私有模式和 budget；
+- Runtime DTO 只包含公共schema，不包含Protocol Client wire细节；
 - 同协议下不同模型可以有不同 schema；
 - 模型 schema 不是`invocationDefaults`。
 
@@ -282,7 +282,7 @@ Provider model snapshot
 沿用现有generation staging、rollback和immutable per-Turn binding，不增加snapshot handle：
 
 - 配置解析先校验Built-in字段类型、值和数组结构，错误在配置加载期报告；
-- Provider创建及generation staging期间验证静态模型schema、私有adapter、已实现codec
+- Provider创建及generation staging期间验证静态模型schema、已实现codec
   和路由能力的一致性，包括声明开关/等级是否有可兑现的映射；
 - 静态配置错误不得等到用户发送才发现，不发布错误候选Catalog；
 - reload/staging失败保留现有generation；首次启动失败按现有Unit失败策略处理，不假装
@@ -428,56 +428,28 @@ OpenAI-compatible服务统一支持的字段。逐模型发布独立`on`表示�
 
 ### 7.3 Anthropic Messages
 
-当前Client未实现原生Thinking，本设计将捕获、signature/redacted replay和生成适配一起
-纳入Built-in闭环。公共schema不暴露adaptive或budget模式。
+当前Client未实现原生Thinking，本设计将捕获、signature/redacted replay和生成映射一起
+纳入Built-in闭环。用户配置只声明公共thinking/effort能力，Client拥有Anthropic wire映射，
+不暴露adaptive、budget或budget_tokens私有模型字段。
 
-Provider私有模型配置必须选择一种适配机制：
-
-```ts
-type AnthropicThinkingAdapter =
-  | {
-      readonly mode: 'adaptive';
-    }
-  | {
-      readonly mode: 'budget';
-      readonly defaultBudgetTokens?: number;
-      readonly budgets?: Partial<
-        Record<Exclude<ExplicitThinkingEffort, 'none'>, number>
-      >;
-    };
-```
-
-建议配置落点为Built-in registration的私有`anthropicThinking`字段，仅允许用于
-`anthropic-messages`，不投影到Core/Catalog。
-
-| Reasoning policy / adapter | Wire |
+| Reasoning policy | Wire |
 |---|---|
 | 开关省略且effort为`default` | 不新增`thinking`或`output_config.effort` |
 | `off`或开关省略且effort为`none`，相应选项支持 | `thinking: { type: "disabled" }`，不发送effort |
-| `on`+默认effort，adaptive模式 | 仅`thinking: { type: "adaptive" }`，不补effort |
-| `on`+默认effort，budget模式 | `thinking: { type: "enabled", budget_tokens: defaultBudgetTokens }` |
-| `on`或开关省略+adaptive允许等级 | `thinking: { type: "adaptive" }` + `output_config.effort=<value>` |
-| `on`或开关省略+budget已配置等级 | `thinking: { type: "enabled", budget_tokens: B }` |
+| `on`+默认effort | 仅`thinking: { type: "adaptive" }`，不补effort |
+| `on`或开关省略+允许等级 | `thinking: { type: "adaptive" }` + `output_config.effort=<value>` |
 
 约束：
 
 - Anthropic没有`thinking.type="none"`，也不发送`output_config.effort="none"`；
-- adaptive等级以模型真实允许值为准，不把`minimal/xhigh`静默换成`low/high`；
-- budget只使用显式配置的数值，未映射等级不能进入公共`efforts`；
-- 数值必须是安全整数并满足对应API的最小预算及有效`max_tokens`约束；
-- 不为“成功”静默提高输出上限或缩减Thinking budget；
-- 如果输出限制不允许已配置预算，在发送前明确失败；
-- 对公共schema、私有mode、budget和可用等级进行一致性验证；
+- 等级以模型真实允许值为准，不把`minimal/xhigh`静默换成`low/high`；
 - 只有关闭映射已实现并经模型验证时，才可发布开关`off`或effort=`none`，二者各自声明；
-- 独立`on`要求模型支持该模式，budget模式还必须有明确的`defaultBudgetTokens`；
-- 独立开启预算与各等级预算使用相同的数值及有效输出限制校验；
-- budget只有等级预算而没有开启默认预算时，可发布efforts但不发布`on`；
+- 独立`on`要求模型支持adaptive模式；
 - 没有等级映射时可只发布`thinking=["on","off"]`，前提是两个独立路径都能兑现；
-- 未配置预算或模式支持时不发布相应选项，不使用隐式1024等猜测fallback。
 - 发布独立`on`还表示Client会采集、投影并展示返回的可读thinking block；无法产生可读
   block的模型/endpoint不能发布`on`。
 
-对于后续已验证支持独立开关的adaptive模型，配置形态如下；示例不是当前实现或实测声明：
+对于已验证支持独立开关和等级的模型，配置只包含公共能力：
 
 ```json
 {
@@ -486,14 +458,10 @@ type AnthropicThinkingAdapter =
   "reasoning": {
     "thinking": ["on", "off"],
     "efforts": ["low", "medium", "high"]
-  },
-  "anthropicThinking": {
-    "mode": "adaptive"
   }
 }
 ```
 
-OpenClaw的默认预算表和模型名判断只作为参考，不能当成我们的已验证默认。
 Anthropic fixture需覆盖有序Thinking、signature、redacted block及Tool continuation。
 
 ### 7.4 Copilot Relay双协议
@@ -558,7 +526,7 @@ metadata、模型binding、Catalog、Resolved Facts和私有路由都来自同�
 - 正常Turn无论开关是否为`off`或effort是否为`none`，实际返回的合法可读内容仍展示和保存；
 - 不新增可见性字段、隐藏历史重投影或文本丢弃规则。
 
-实现Anthropic时扩展`ThinkingWireProtocol`，不向Core增加signature/budget等wire字段。
+实现Anthropic时扩展`ThinkingWireProtocol`，不向Core增加signature等wire字段。
 Anthropic完整thinking/signature和redacted block由其Client编码及恢复。
 
 模型切换时：
@@ -614,7 +582,7 @@ Web只对模型已声明的选项排序：Thinking按`on → off`，effort按
 
 1. 契约：schema严格校验、Model Facts/Catalog一致投影及Built-in配置。
 2. Turn：队列快照、开关/等级/组合校验、Runner请求和Steering兼容。
-3. Built-in：Responses/Chat effort、Thinking On展示语义、Anthropic独立开关/mode/budget及完整replay。
+3. Built-in：Responses/Chat effort、Thinking On展示语义、Anthropic公共策略映射及完整replay。
 4. Relay：双协议Client/Router、discovery等级和不可变模型快照。
 5. Web：能力驱动的开关及effort控件、组合约束、明确重选及历史回归。
 
@@ -635,8 +603,8 @@ Web只对模型已声明的选项排序：Thinking按`on → off`，effort按
 | TGC-08 | Responses none | 发送none，不主动请求summary；返回文本仍正常展示 |
 | TGC-09 | Chat high/none | 仅发送模型允许的reasoning_effort |
 | TGC-10 | Anthropic adaptive on/high/off/none | 独立on不补effort，high构造adaptive+effort，关闭用disabled |
-| TGC-11 | Anthropic budget等级 | 使用已配置预算，不发送output_config.effort |
-| TGC-12 | Anthropic adapter/预算冲突 | 静态不一致在配置/staging失败；实际调用输出预算冲突在preflight失败，不擅自调整 |
+| TGC-11 | Anthropic显式等级 | 发送adaptive及精确output_config.effort，不做等级替换 |
+| TGC-12 | Anthropic配置边界 | 拒绝协议私有模型字段；公共能力结构错误在配置/staging失败 |
 | TGC-13 | Anthropic redacted block | 有序保存replay-only block，无空卡片 |
 | TGC-14 | Anthropic同源工具续轮 | thinking/signature/redacted块按验证过的协议顺序恢复 |
 | TGC-15 | 三协议互切 | 不兼容replay省略，普通正文和Tool关联保留 |
@@ -655,7 +623,7 @@ Web只对模型已声明的选项排序：Thinking按`on → off`，effort按
 | TGC-28 | 正常Turn展示路径 | 无Display控件或隐藏持久化，实际可读Thinking正常显示；内部调用按TGC-22隔离 |
 | TGC-29 | off+high或on+none | 发送前invalid request，不忽略任一字段 |
 | TGC-30 | off+none且两者支持 | 两种选择顺序均允许；关闭只映射一次，不发送冲突effort |
-| TGC-31 | Anthropic budget独立on | 需要明确默认预算且满足max_tokens，缺失时不发布on |
+| TGC-31 | Anthropic统一配置边界 | 只配置thinking/effort，Client内部映射adaptive/disabled及精确effort |
 | TGC-32 | Relay等级控制但无独立开关 | 只提交effort仍能正确调用，不强制增加thinking字段 |
 | TGC-33 | Built-in可选reasoning配置 | 无非默认选项则省略控件，语义为Default + Default；有选项才显示，不创建调用默认 |
 | TGC-34 | UI返回Default | 已显示控件的Default是首项；Thinking字段省略、effort解析为default，无Relay默认值依赖 |

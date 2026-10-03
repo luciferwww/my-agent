@@ -26,7 +26,7 @@ Plan接受不表示对应Gate已经通过。
 范围：
 
 - 公共模型reasoning能力、消息级策略、组合校验、不可变Turn绑定。
-- Built-in逐模型可选能力、私有summary及Anthropic模式/预算适配。
+- Built-in逐模型可选能力、私有summary及Anthropic Client内部策略映射。
 - 原始消息策略持久化、History投影、Steering兼容判断。
 - Responses/Chat effort映射、Anthropic原生Thinking/signature/redacted回放。
 - Relay双协议Client/Router与discovery能力投影。
@@ -40,7 +40,7 @@ Plan接受不表示对应Gate已经通过。
 
 | Plan Item | 状态 | 工作与owner边界 | 退出条件 |
 |---|---|---|---|
-| TGC-P0 契约准备 | Completed | 建立Plan/Spec/验收；核实私有adapter配置及协议证据边界 | 文档校验通过；所有者已接受Spec并批准TGC-P1 |
+| TGC-P0 契约准备 | Completed | 建立Plan/Spec/验收；核实协议映射及证据边界 | 文档校验通过；所有者已接受Spec并批准TGC-P1 |
 | TGC-P1 类型与能力校验 | Completed | Core类型及Extension导出；Provider Facts/Catalog/Runtime DTO；Built-in配置、深冻与静态一致性校验 | 聚焦、Unit、Integration、lint及build通过；所有者已确认完成 |
 | TGC-P2 消息与Turn链路 | Completed | Channel/WebSocket入口、Runtime队列与解析、Runner正常调用与Steering；Session元数据及History | 原始选择与resolved策略分离；intake、不可变Turn、Steering、Compaction及恢复测试通过 |
 | TGC-P3 Built-in协议闭环 | Completed | Responses/Chat映射与私有summary；Anthropic生成、事件与replay codec | 默认wire不变；三协议请求、恢复、过滤、错误及配置fixture通过 |
@@ -79,7 +79,7 @@ P1不把尚未完成codec的能力发布为可用；P3开始前固化Anthropic�
 - 新证据要求改变公共语义、来源owner或恢复边界时，暂停受影响步骤并重新确认。
 - 没有已验证映射的能力不能仅凭配置或模型名称发布；不得静默降级。
 - staging失败沿用现有rollback，保持旧generation；不新增恢复平台。
-- Anthropic签名或预算假设被推翻时记录具体路径，不以删除必要块或猜数字掩盖。
+- Anthropic签名或adaptive映射假设被推翻时记录具体路径，不以删除必要块或增加用户配置掩盖。
 - 若实施需要新的覆盖层、任意模板或通用适配框架，先回到范围边界，不直接扩建。
 
 ## 6. 当前状态

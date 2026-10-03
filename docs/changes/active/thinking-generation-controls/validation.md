@@ -26,8 +26,8 @@
 | TGC-08 | Responses none：精确发送none，不请求summary，实际文本仍展示 | 自动；请求、采集与投影 | Passed |
 | TGC-09 | Chat high/none：仅发送允许的reasoning_effort | 自动；Client请求fixture | Passed |
 | TGC-10 | Anthropic adaptive on/high/off/none：on不补effort，high用adaptive+effort，关闭用disabled | 自动；请求fixture、能力校验 | Passed |
-| TGC-11 | Anthropic budget等级：用配置预算，不发送output_config.effort | 自动；配置、请求fixture | Passed |
-| TGC-12 | Anthropic静态adapter/预算不一致在配置/staging失败；动态输出冲突preflight失败，不自动调整 | 自动；配置、有效输出上限与请求计数 | Passed |
+| TGC-11 | Anthropic显式等级：发送adaptive及精确output_config.effort，不做等级替换 | 自动；请求fixture | Passed |
+| TGC-12 | Anthropic不接受协议私有模型字段；公共能力结构错误在配置/staging失败 | 自动；配置与Catalog staging | Passed |
 | TGC-13 | Anthropic redacted：有序保存replay-only块，不生成空卡片 | 自动；事件、Collector、公开投影 | Passed |
 | TGC-14 | Anthropic同源工具续轮：thinking/signature/redacted按验证协议顺序恢复 | 自动；多次调用与工具关联fixture | Passed |
 | TGC-15 | 三协议互切：不兼容replay省略，正文/Tool关联保留 | 自动；目标Client请求、源Transcript不变 | Passed |
@@ -46,7 +46,7 @@
 | TGC-28 | 正常Turn无Display隐藏控制；实际可读Thinking显示；内部调用按TGC-22隔离 | 自动＋Web手工；实时/历史/CLI回归 | Passed |
 | TGC-29 | off+high或on+none等通用冲突在Runtime intake拒绝，不入队、不保存MessageRecord、不调用LLM | 自动；入口/组合校验 | Passed |
 | TGC-30 | off+none且各自支持：两种选择顺序可用，关闭只映射一次，无冲突effort | 自动＋Web手工；组合与请求fixture | Passed |
-| TGC-31 | Anthropic budget独立on需要defaultBudgetTokens并满足max_tokens；缺失时不发布on | 自动；配置、staging与调用限制 | Passed |
+| TGC-31 | Anthropic只配置thinking/effort；Client映射adaptive/disabled及精确effort，不暴露私有adapter或预算字段 | 自动；配置与请求fixture | Passed |
 | TGC-32 | Relay只有effort：只提交effort即可调用，不强制thinking字段 | 自动；消息、能力、Client请求 | Passed |
 | TGC-33 | Built-in无选项隐藏控件，语义Default；有选项才显示，不创建调用默认 | 自动＋Web手工；配置、Catalog、控件 | Passed |
 | TGC-34 | 显示控件的Default是首项且初始选中；隐藏维度也按Default；thinking省略、effort解析default，不依赖Relay默认metadata | 自动＋Web手工；初始化、提交与规范化 | Passed |
@@ -187,11 +187,10 @@ TGC-01–05、TGC-26和TGC-33只取得P1结构/投影部分证据，矩阵仍保
   - `builtin/gpt-5.6-sol`使用Thinking On、Effort Low时成功显示可读Thinking；
   - `builtin/gemini-3.8-flash`使用Thinking On、Effort Medium时成功显示可读Thinking。
   由此覆盖Responses与Chat Completions两条实际Built-in展示路径，且显示行为不依赖High等级。
-- Built-in逐模型校验Anthropic adaptive/budget adapter；Responses/Chat不发布
-  未实现的独立开关；Responses发布独立on即承诺可读summary请求路径；Anthropic budget值、
-  独立on和默认/等级预算在配置与Provider staging时
-  一致，动态`max_tokens`冲突在fetch前失败。
-- Anthropic映射disabled/adaptive/enabled+budget_tokens，采集thinking/signature及
+- Built-in三个协议统一只配置公共thinking/effort能力；Responses/Chat不发布未实现的独立
+  开关，Responses发布独立on即承诺可读summary请求路径，Anthropic Client内部映射
+  disabled/adaptive及精确output_config.effort，不暴露私有adapter或预算字段。
+- Anthropic采集thinking/signature及
   redacted_thinking为Provider replay；公开投影隐藏空redacted卡片。
 - Anthropic工具续轮按原顺序恢复thinking/signature/redacted；跨协议只过滤不兼容replay，
   保留正文和Tool，并验证Anthropic→OpenAI→Anthropic不修改源消息。
@@ -286,6 +285,6 @@ TGC-01–38均有对应阶段自动证据；TGC-06、21、27–28、30、33–34
 - 两个本地Relay-backed Built-in模型确认并配置`thinking: ["on", "off"]`。
 - Responses与Chat Client只为逐模型声明该能力的模型启用映射：
   `on + default`省略effort，`off + default/none`精确发送一次`none`；未声明模型fetch前拒绝。
-- Built-in配置校验不再错误拒绝OpenAI模型的合法Thinking能力；Anthropic私有adapter约束不变。
+- Built-in配置校验统一接受三个协议的合法公共Thinking能力，不要求Anthropic私有配置。
 - 真实`test-workspace/config.json`通过Built-in配置校验；未执行真实模型调用。
 - 聚焦配置/Provider/Client测试80/80、Unit 1360/1360、Integration 22/22、build/Relay及lint通过。

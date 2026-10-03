@@ -122,6 +122,10 @@ describe('Built-in Protocol Clients', () => {
       { thinking: { type: 'adaptive' } },
     ],
     [
+      { thinking: 'on' as const, effort: 'high' as const },
+      { thinking: { type: 'adaptive' }, output_config: { effort: 'high' } },
+    ],
+    [
       { effort: 'high' as const },
       { thinking: { type: 'adaptive' }, output_config: { effort: 'high' } },
     ],
@@ -133,12 +137,15 @@ describe('Built-in Protocol Clients', () => {
       { thinking: 'off' as const, effort: 'none' as const },
       { thinking: { type: 'disabled' } },
     ],
+    [
+      { effort: 'none' as const },
+      { thinking: { type: 'disabled' } },
+    ],
   ])('maps Anthropic adaptive reasoning policy %j', async (reasoning, expected) => {
     const fetchImpl = vi.fn(async () => anthropicTerminal()) as unknown as typeof fetch;
     const client = new AnthropicMessagesClient({
       baseURL: 'https://example.test',
       fetch: fetchImpl,
-      thinkingAdapters: new Map([['opaque/model:1', { mode: 'adaptive' }]]),
     });
 
     await client.chat({ ...request, reasoning });
@@ -148,44 +155,6 @@ describe('Built-in Protocol Clients', () => {
     if (!('output_config' in expected)) {
       expect(body).not.toHaveProperty('output_config');
     }
-  });
-
-  it('maps configured Anthropic budgets and rejects a dynamic max_tokens conflict before fetch', async () => {
-    const fetchImpl = vi.fn(async () => anthropicTerminal()) as unknown as typeof fetch;
-    const client = new AnthropicMessagesClient({
-      baseURL: 'https://example.test',
-      fetch: fetchImpl,
-      thinkingAdapters: new Map([[
-        'opaque/model:1',
-        {
-          mode: 'budget',
-          defaultBudgetTokens: 1_024,
-          budgets: { high: 2_048 },
-        },
-      ]]),
-    });
-
-    await client.chat({
-      ...request,
-      outputTokenLimit: 4_096,
-      reasoning: { effort: 'high' },
-    });
-    expect(requestBody(fetchImpl)).toMatchObject({
-      max_tokens: 4_096,
-      thinking: { type: 'enabled', budget_tokens: 2_048 },
-    });
-
-    await expect(client.chat({
-      ...request,
-      outputTokenLimit: 2_048,
-      reasoning: { effort: 'high' },
-    })).rejects.toMatchObject({
-      category: 'invalid_request',
-      diagnostics: {
-        providerMessage: 'Anthropic Thinking budget must be lower than max_tokens.',
-      },
-    });
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -373,7 +342,6 @@ describe('Built-in Protocol Clients', () => {
     const client = new AnthropicMessagesClient({
       baseURL: 'https://example.test',
       fetch: fetchImpl as unknown as typeof fetch,
-      thinkingAdapters: new Map([['opaque/model:1', { mode: 'adaptive' }]]),
     });
 
     const first = await client.chat({

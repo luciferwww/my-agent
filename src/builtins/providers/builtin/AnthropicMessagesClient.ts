@@ -12,12 +12,10 @@ import type {
 import { renderExecutionAcceptedReceipt } from '../../../core/model-invocation/index.js';
 import type { ToolCall } from '../../../core/tools/index.js';
 import { DEFAULT_ANTHROPIC_MAX_TOKENS } from './config.js';
-import type { AnthropicThinkingAdapter } from './config.js';
 import {
   asRecord,
   collectChat,
   createHttpError,
-  createInvalidRequestError,
   createStreamError,
   normalizeError,
   parseRecord,
@@ -29,9 +27,7 @@ import {
   type ProtocolClientOptions,
 } from './client-common.js';
 
-export type AnthropicMessagesClientOptions = ProtocolClientOptions & {
-  readonly thinkingAdapters?: ReadonlyMap<string, AnthropicThinkingAdapter>;
-};
+export type AnthropicMessagesClientOptions = ProtocolClientOptions;
 
 const ANTHROPIC_THINKING_REPLAY_FORMAT = 'anthropic-messages.thinking-block.v1';
 
@@ -59,7 +55,6 @@ export class AnthropicMessagesClient implements ModelInvocationPort {
           request,
           maxTokens,
           this.options.baseURL,
-          this.options.thinkingAdapters?.get(request.model),
         )),
         signal: request.signal,
       });
@@ -302,9 +297,8 @@ function buildRequest(
   request: ModelInvocationRequest,
   maxTokens: number,
   connectionId: string,
-  adapter: AnthropicThinkingAdapter | undefined,
 ): Record<string, unknown> {
-  const reasoning = buildAnthropicReasoning(request, maxTokens, adapter);
+  const reasoning = buildAnthropicReasoning(request);
   return {
     model: request.model,
     max_tokens: maxTokens,
@@ -321,54 +315,21 @@ function buildRequest(
 
 function buildAnthropicReasoning(
   request: ModelInvocationRequest,
-  maxTokens: number,
-  adapter: AnthropicThinkingAdapter | undefined,
 ): {
   thinking?: Record<string, unknown>;
   effort?: string;
 } {
   const policy = request.reasoning;
-  if (!policy || (policy.thinking === undefined && policy.effort === 'default')) {
+  const effort = policy?.effort ?? 'default';
+  if (!policy || (policy.thinking === undefined && effort === 'default')) {
     return {};
   }
-  if (!adapter) {
-    throw createInvalidRequestError(
-      request,
-      'Anthropic Messages has no adapter for the requested reasoning policy.',
-      maxTokens,
-    );
-  }
-  if (policy.thinking === 'off' || policy.effort === 'none') {
+  if (policy.thinking === 'off' || effort === 'none') {
     return { thinking: { type: 'disabled' } };
   }
-  if (adapter.mode === 'adaptive') {
-    return {
-      thinking: { type: 'adaptive' },
-      ...(policy.effort === 'default' ? {} : { effort: policy.effort }),
-    };
-  }
-  const budgetTokens = policy.effort === 'default'
-    ? adapter.defaultBudgetTokens
-    : adapter.budgets?.[policy.effort];
-  if (budgetTokens === undefined) {
-    throw createInvalidRequestError(
-      request,
-      'Anthropic Messages has no budget for the requested reasoning policy.',
-      maxTokens,
-    );
-  }
-  if (budgetTokens >= maxTokens) {
-    throw createInvalidRequestError(
-      request,
-      'Anthropic Thinking budget must be lower than max_tokens.',
-      maxTokens,
-    );
-  }
   return {
-    thinking: {
-      type: 'enabled',
-      budget_tokens: budgetTokens,
-    },
+    thinking: { type: 'adaptive' },
+    ...(effort === 'default' ? {} : { effort }),
   };
 }
 

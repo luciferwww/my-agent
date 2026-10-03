@@ -182,7 +182,7 @@ describe('Built-in LLM configuration', () => {
     expect(Object.isFrozen(result.models[0]?.reasoning?.efforts)).toBe(true);
   });
 
-  it('validates and freezes protocol-private reasoning adapters', () => {
+  it('accepts the same public reasoning capability shape for every protocol', () => {
     const result = validateBuiltinLlmProviderConfig({
       baseURL: 'https://example.test',
       models: [
@@ -197,78 +197,31 @@ describe('Built-in LLM configuration', () => {
           reasoning: { thinking: ['on', 'off'], efforts: ['none', 'high'] },
         },
         {
-          modelId: 'adaptive',
+          modelId: 'anthropic',
           protocol: 'anthropic-messages',
           reasoning: { thinking: ['on', 'off'], efforts: ['none', 'high'] },
-          anthropicThinking: { mode: 'adaptive' },
-        },
-        {
-          modelId: 'budget',
-          protocol: 'anthropic-messages',
-          outputTokenLimit: 8_192,
-          reasoning: { thinking: ['on'], efforts: ['low', 'high'] },
-          anthropicThinking: {
-            mode: 'budget',
-            defaultBudgetTokens: 1_024,
-            budgets: { low: 1_024, high: 4_096 },
-          },
         },
       ],
     });
 
-    expect(result.models[0]?.reasoning).toEqual({
-      thinking: ['on', 'off'],
-      efforts: ['high'],
-    });
-    expect(result.models[2]?.anthropicThinking).toEqual({ mode: 'adaptive' });
-    expect(result.models[3]?.anthropicThinking).toEqual({
-      mode: 'budget',
-      defaultBudgetTokens: 1_024,
-      budgets: { low: 1_024, high: 4_096 },
-    });
-    expect(Object.isFrozen(result.models[3]?.anthropicThinking)).toBe(true);
-    expect(Object.isFrozen(
-      result.models[3]?.anthropicThinking?.mode === 'budget'
-        ? result.models[3].anthropicThinking.budgets
-        : undefined,
-    )).toBe(true);
+    expect(result.models.map((model) => model.reasoning)).toEqual([
+      { thinking: ['on', 'off'], efforts: ['high'] },
+      { thinking: ['on', 'off'], efforts: ['none', 'high'] },
+      { thinking: ['on', 'off'], efforts: ['none', 'high'] },
+    ]);
   });
 
-  it.each([
-    [{
-      modelId: 'anthropic',
-      protocol: 'anthropic-messages',
-      reasoning: { efforts: ['high'] },
-    }, 'models[0].anthropicThinking'],
-    [{
-      modelId: 'anthropic',
-      protocol: 'anthropic-messages',
-      reasoning: { thinking: ['on'] },
-      anthropicThinking: { mode: 'budget' },
-    }, 'models[0].anthropicThinking.defaultBudgetTokens'],
-    [{
-      modelId: 'anthropic',
-      protocol: 'anthropic-messages',
-      reasoning: { efforts: ['high'] },
-      anthropicThinking: { mode: 'budget', budgets: { low: 1024 } },
-    }, 'models[0].reasoning.efforts[0]'],
-    [{
-      modelId: 'anthropic',
-      protocol: 'anthropic-messages',
-      outputTokenLimit: 4096,
-      reasoning: { efforts: ['high'] },
-      anthropicThinking: { mode: 'budget', budgets: { high: 4096 } },
-    }, 'models[0].anthropicThinking'],
-    [{
-      modelId: 'anthropic',
-      protocol: 'anthropic-messages',
-      reasoning: { efforts: ['high'] },
-      anthropicThinking: { mode: 'budget', budgets: { high: 512 } },
-    }, 'models[0].anthropicThinking.budgets.high'],
-  ])('rejects inconsistent reasoning adapter configuration %#', (model, fieldPath) => {
+  it('rejects removed protocol-private model fields', () => {
     expect(() => validateBuiltinLlmProviderConfig({
       baseURL: 'https://example.test',
-      models: [model],
-    })).toThrow(expect.objectContaining({ fieldPath }));
+      models: [{
+        modelId: 'anthropic',
+        protocol: 'anthropic-messages',
+        reasoning: { efforts: ['high'] },
+        anthropicThinking: { mode: 'adaptive' },
+      }],
+    })).toThrow(expect.objectContaining({
+      fieldPath: 'models[0].anthropicThinking',
+    }));
   });
 });

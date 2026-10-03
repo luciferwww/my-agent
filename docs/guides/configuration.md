@@ -202,7 +202,6 @@ Each model registration supports:
 | `maximumOutputTokens` | No | Published output limit; cannot exceed Context |
 | `outputTokenLimit` | No | Per-invocation output cap |
 | `reasoning` | No | Verified Thinking and Effort capabilities |
-| `anthropicThinking` | Anthropic only | Anthropic adaptive or budget adapter |
 
 Token limits must be positive safe integers. Effective Context budgeting uses
 `maximumPromptTokens` first, then `maximumContextTokens`, and finally the
@@ -245,57 +244,34 @@ Protocol behavior:
 |---|---|
 | `openai-responses` | `on` requests a detailed readable reasoning summary; `off` maps to effort `none` |
 | `openai-chat-completions` | `on` uses the deployment's verified default enable path and displays returned `reasoning_text`; `off` maps to `reasoning_effort: "none"` |
-| `anthropic-messages` | `on` uses the configured adaptive or budget adapter and displays returned Thinking blocks |
+| `anthropic-messages` | `on` maps to adaptive Thinking, explicit Effort maps to `output_config.effort`, and returned Thinking blocks are displayed |
 
 There is no separate `readableSummary` configuration field.
 
 ### 3.4 Anthropic Thinking
 
-Anthropic models that publish Thinking or Effort capabilities must also select
-an adapter.
-
-Adaptive example:
+Anthropic uses the same `reasoning` capability shape as the other protocols:
 
 ```json
 {
-  "modelId": "claude-adaptive",
+  "modelId": "claude-reasoning",
   "protocol": "anthropic-messages",
   "reasoning": {
     "thinking": ["on", "off"],
     "efforts": ["none", "low", "medium", "high"]
-  },
-  "anthropicThinking": {
-    "mode": "adaptive"
   }
 }
 ```
 
-Budget example:
+The Anthropic Client owns the protocol mapping:
 
-```json
-{
-  "modelId": "claude-budget",
-  "protocol": "anthropic-messages",
-  "maximumOutputTokens": 16384,
-  "reasoning": {
-    "thinking": ["on", "off"],
-    "efforts": ["none", "low", "high"]
-  },
-  "anthropicThinking": {
-    "mode": "budget",
-    "defaultBudgetTokens": 2048,
-    "budgets": {
-      "low": 1024,
-      "high": 8192
-    }
-  }
-}
-```
+- On with Default Effort sends `thinking: { "type": "adaptive" }`.
+- A non-`none` Effort also sends its exact value in `output_config.effort`.
+- Off or Effort None sends `thinking: { "type": "disabled" }`.
 
-Budget values must be safe integers of at least `1024`, lower than the
-effective output limit, and present for every declared non-`none` Effort.
-Publishing `thinking: ["on"]` in budget mode requires
-`defaultBudgetTokens`.
+There is no Anthropic-specific model configuration field. Deployments that
+cannot support this adaptive mapping must not declare the corresponding
+Thinking or Effort capabilities.
 
 ## 4. Runtime and Runner
 

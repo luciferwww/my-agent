@@ -193,13 +193,6 @@ function createProtocolClient(
     case 'anthropic-messages':
       return new AnthropicMessagesClient({
         ...options,
-        thinkingAdapters: new Map(
-          models.flatMap((model) => (
-            model.protocol === protocol && model.anthropicThinking
-              ? [[model.modelId, model.anthropicThinking] as const]
-              : []
-          )),
-        ),
       });
     case 'openai-responses':
       return new OpenAIResponsesClient({
