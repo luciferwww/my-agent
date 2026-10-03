@@ -183,6 +183,10 @@ TGC-01–05、TGC-26和TGC-33只取得P1结构/投影部分证据，矩阵仍保
   固定使用`detailed`，不把Provider可选择省略摘要的`auto`用于显示语义。
 - 2026-10-03人工验收：重启Runtime后使用`builtin/gpt-5.6-sol`、Thinking On、
   Effort High，Web成功显示可读Thinking信息。
+- 2026-10-03补充人工验收：
+  - `builtin/gpt-5.6-sol`使用Thinking On、Effort Low时成功显示可读Thinking；
+  - `builtin/gemini-3.8-flash`使用Thinking On、Effort Medium时成功显示可读Thinking。
+  由此覆盖Responses与Chat Completions两条实际Built-in展示路径，且显示行为不依赖High等级。
 - Built-in逐模型校验Anthropic adaptive/budget adapter；Responses/Chat不发布
   未实现的独立开关；Responses发布独立on即承诺可读summary请求路径；Anthropic budget值、
   独立on和默认/等级预算在配置与Provider staging时
