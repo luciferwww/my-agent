@@ -190,7 +190,6 @@ describe('Built-in LLM configuration', () => {
           modelId: 'responses',
           protocol: 'openai-responses',
           reasoning: { thinking: ['on', 'off'], efforts: ['high'] },
-          readableSummary: 'auto-on-explicit-reasoning',
         },
         {
           modelId: 'chat',
@@ -217,8 +216,9 @@ describe('Built-in LLM configuration', () => {
       ],
     });
 
-    expect(result.models[0]).toMatchObject({
-      readableSummary: 'auto-on-explicit-reasoning',
+    expect(result.models[0]?.reasoning).toEqual({
+      thinking: ['on', 'off'],
+      efforts: ['high'],
     });
     expect(result.models[2]?.anthropicThinking).toEqual({ mode: 'adaptive' });
     expect(result.models[3]?.anthropicThinking).toEqual({
@@ -235,11 +235,6 @@ describe('Built-in LLM configuration', () => {
   });
 
   it.each([
-    [{
-      modelId: 'chat',
-      protocol: 'openai-chat-completions',
-      readableSummary: 'auto-on-explicit-reasoning',
-    }, 'models[0].readableSummary'],
     [{
       modelId: 'anthropic',
       protocol: 'anthropic-messages',

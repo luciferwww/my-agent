@@ -28,7 +28,6 @@ import {
 } from './client-common.js';
 
 export type OpenAIResponsesClientOptions = ProtocolClientOptions & {
-  readonly readableSummaryModels?: readonly string[];
   readonly thinkingSwitchModels?: readonly string[];
 };
 
@@ -74,7 +73,6 @@ export class OpenAIResponsesClient implements ModelInvocationPort {
         body: JSON.stringify(buildRequest(
           request,
           this.options.baseURL,
-          this.options.readableSummaryModels?.includes(request.model) === true,
           this.options.thinkingSwitchModels?.includes(request.model) === true,
         )),
         signal: request.signal,
@@ -299,12 +297,10 @@ export class OpenAIResponsesClient implements ModelInvocationPort {
 function buildRequest(
   request: ModelInvocationRequest,
   connectionId: string,
-  readableSummary: boolean,
   supportsThinkingSwitch: boolean,
 ): Record<string, unknown> {
   const reasoning = buildReasoningRequest(
     request,
-    readableSummary,
     supportsThinkingSwitch,
   );
   return {
@@ -331,7 +327,6 @@ function buildRequest(
 
 function buildReasoningRequest(
   request: ModelInvocationRequest,
-  readableSummary: boolean,
   supportsThinkingSwitch: boolean,
 ): Record<string, string> | undefined {
   const policy = request.reasoning;
@@ -345,14 +340,11 @@ function buildReasoningRequest(
   const explicitEffort = policy.thinking === 'off'
     ? 'none'
     : policy.effort === 'default' ? undefined : policy.effort;
-  const requestSummary = readableSummary
-    && policy.thinking !== 'off'
-    && explicitEffort !== undefined
-    && explicitEffort !== 'none';
+  const requestSummary = policy.thinking === 'on';
   if (explicitEffort === undefined && !requestSummary) return undefined;
   return {
     ...(explicitEffort === undefined ? {} : { effort: explicitEffort }),
-    ...(requestSummary ? { summary: 'auto' } : {}),
+    ...(requestSummary ? { summary: 'detailed' } : {}),
   };
 }
 

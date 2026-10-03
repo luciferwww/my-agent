@@ -171,13 +171,21 @@ TGC-01–05、TGC-26和TGC-33只取得P1结构/投影部分证据，矩阵仍保
 
 实现范围：
 
-- Responses精确映射显式effort；仅配置`readableSummary`的模型在显式非none effort时请求
-  `summary=auto`，不能用summary冒充独立on。Chat Completions只映射`reasoning_effort`，
-  两个协议的Default wire均不变。
+- Responses精确映射显式effort；独立`on`在Default或显式effort下均请求`summary=detailed`，
+  使Thinking On直接表达开启并显示。Chat Completions只映射`reasoning_effort`，
+  未选择独立开关时两个协议的Default wire均不变。
 - 后续实机配置确认两个Relay-backed Built-in模型提供独立开关；逐模型声明后，Responses和
   Chat均以省略effort表达`on + default`、以单个`none`表达`off`，未声明模型仍在fetch前拒绝。
-- Built-in逐模型校验私有summary及Anthropic adaptive/budget adapter；Responses/Chat不发布
-  未实现的独立开关；Anthropic budget值、独立on和默认/等级预算在配置与Provider staging时
+- 三个Built-in协议统一把独立`on`定义为开启并显示：Responses请求并采集summary，Chat使用
+  经验证的默认开启路径并采集reasoning_text，Anthropic发送原生Thinking配置并采集thinking block。
+- 2026-10-03本机Copilot Relay受控探测：`summary=detailed`返回1段528字符摘要及512个
+  reasoning tokens；同日真实`summary=auto`会话返回空summary，因此Responses独立`on`
+  固定使用`detailed`，不把Provider可选择省略摘要的`auto`用于显示语义。
+- 2026-10-03人工验收：重启Runtime后使用`builtin/gpt-5.6-sol`、Thinking On、
+  Effort High，Web成功显示可读Thinking信息。
+- Built-in逐模型校验Anthropic adaptive/budget adapter；Responses/Chat不发布
+  未实现的独立开关；Responses发布独立on即承诺可读summary请求路径；Anthropic budget值、
+  独立on和默认/等级预算在配置与Provider staging时
   一致，动态`max_tokens`冲突在fetch前失败。
 - Anthropic映射disabled/adaptive/enabled+budget_tokens，采集thinking/signature及
   redacted_thinking为Provider replay；公开投影隐藏空redacted卡片。

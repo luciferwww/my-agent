@@ -54,7 +54,8 @@ interface ResolvedReasoningPolicy {
 }
 ```
 
-- 能力只列模型/endpoint/Client可兑现的值，不是内部是否推理的boolean，也不保证可读输出。
+- 能力只列模型/endpoint/Client可兑现的值，不是内部是否推理的boolean。独立`on`表示
+  Client既能开启推理，也会请求并展示协议可提供的可读Thinking；只声明effort不承诺展示。
 - `thinking`只接受无重复on/off数组；`efforts`只接受无重复已知显式等级数组。
 - schema或数组省略/为空表示没有该维度已确认的选项，不表示模型不会推理。
 - Default由Host提供，不进入能力数组；`none`与独立开关`off`各自声明。
@@ -166,17 +167,20 @@ RunResult或History；不因此额外删除原会话已有Thinking。
 |---|---|---|
 | 开关省略 + default | 不增加reasoning | 不增加推理参数 |
 | 开关省略 + 显式effort（含none） | reasoning.effort精确值 | reasoning_effort精确值 |
-| 配置声明的独立开关 | on+default省略effort，off映射reasoning.effort=none | on+default省略effort，off映射reasoning_effort=none |
+| 配置声明的独立开关 | on请求reasoning.summary=detailed，显式effort仍原样发送；off映射reasoning.effort=none | on+default省略effort，off映射reasoning_effort=none |
 
 OpenAI两协议只在逐模型配置声明thinking能力时启用该映射；该声明表示部署保证省略effort
-使用开启的默认推理行为，`none`关闭推理。未声明模型继续拒绝独立开关。实现不发送
-`enable_thinking`、不通过summary冒充开启，也不偷偷补medium。
-Chat现有reasoning_text/reasoning_opaque不是所有兼容服务的统一协议。
+使用开启的默认推理行为，`none`关闭推理。对于Responses，独立`on`还表示该部署支持
+`reasoning.summary="detailed"`，Client必须明确请求可读摘要。未声明模型继续拒绝独立开关。
+实现不发送`enable_thinking`，也不偷偷补medium。
+对于Chat，独立`on`表示已验证该部署在省略effort时开启推理并通过Client支持的
+`reasoning_text`返回可读Thinking；Client采集并投影该文本。需要其他私有开启或可读输出
+参数的部署不能使用通用Chat adapter发布`on`。这些字段不是所有兼容服务的统一协议。
 
-Built-in模型私有可选`readableSummary: "auto-on-explicit-reasoning"`仅用于已验证的
-Responses summary路径；省略就不主动请求，不公开到能力schema。
-正常用户调用显式非none等级或已验证独立on时附加`reasoning.summary="auto"`。
-Default、关闭/none、内部调用不请求；未返回可读summary正常结束，不造空卡片。
+Responses在独立`on`时附加`reasoning.summary="detailed"`，包括`on + default`；独立`off`
+不请求。只提交effort控制强度，不自动等同于显示请求。Provider不得为未验证可读summary
+路径的Responses模型发布独立`on`。本机Copilot Relay实测`auto`可选择不返回摘要，而
+`detailed`稳定表达显示意图。上游未返回可读summary时不伪造内容或展示空卡片。
 
 ### 6.2 Anthropic
 
@@ -211,6 +215,8 @@ type AnthropicThinkingAdapter =
 budget独立on要求defaultBudgetTokens；只有等级预算时可提供efforts但不提供on。
 关闭与各等级分别声明支持。fixture必须覆盖请求、签名、redacted、流错误和工具续轮；
 模型/version接受性依据在对应步骤补证，示例或竞品默认不证明所有模型支持。
+Anthropic发布独立`on`表示对应adapter会发送adaptive或enabled Thinking配置，并将返回的
+thinking block采集、投影和展示；不能产生可读Thinking block的部署不得发布`on`。
 
 ### 6.3 Relay
 

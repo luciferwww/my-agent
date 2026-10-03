@@ -189,7 +189,7 @@ describe('BuiltinLlmProvider', () => {
     expect(requests[0]?.reasoning).toEqual({ effort: 'high' });
   });
 
-  it('keeps private Responses summary behavior scoped to its configured model', async () => {
+  it('requests a Responses summary only when Thinking is on', async () => {
     const fetchImpl = vi.fn(async () => new Response(
       [
         `data: ${JSON.stringify({ type: 'response.created' })}\n\n`,
@@ -205,26 +205,20 @@ describe('BuiltinLlmProvider', () => {
       baseURL: 'https://example.test',
       models: [
         {
-          modelId: 'summary',
+          modelId: 'responses',
           protocol: 'openai-responses',
-          reasoning: { efforts: ['high'] },
-          readableSummary: 'auto-on-explicit-reasoning',
-        },
-        {
-          modelId: 'plain',
-          protocol: 'openai-responses',
-          reasoning: { efforts: ['high'] },
+          reasoning: { thinking: ['on', 'off'], efforts: ['high'] },
         },
       ],
     }, { fetch: fetchImpl });
 
     await provider.entry.invocationPort.chat({
-      model: 'summary',
+      model: 'responses',
       messages: [],
-      reasoning: { effort: 'high' },
+      reasoning: { thinking: 'on', effort: 'high' },
     });
     await provider.entry.invocationPort.chat({
-      model: 'plain',
+      model: 'responses',
       messages: [],
       reasoning: { effort: 'high' },
     });
@@ -232,7 +226,7 @@ describe('BuiltinLlmProvider', () => {
     const bodies = vi.mocked(fetchImpl).mock.calls.map((call) =>
       JSON.parse(String(call[1]?.body)) as Record<string, unknown>);
     expect(bodies.map((body) => body.reasoning)).toEqual([
-      { effort: 'high', summary: 'auto' },
+      { effort: 'high', summary: 'detailed' },
       { effort: 'high' },
     ]);
   });

@@ -189,17 +189,20 @@ describe('Built-in Protocol Clients', () => {
   });
 
   it.each([
-    ['high', { effort: 'high', summary: 'auto' }],
-    ['none', { effort: 'none' }],
-  ] as const)('maps Responses effort %s and summary policy', async (effort, expected) => {
+    ['default', { summary: 'detailed' }],
+    ['high', { effort: 'high', summary: 'detailed' }],
+  ] as const)('requests a readable Responses summary for Thinking on with effort %s', async (
+    effort,
+    expected,
+  ) => {
     const fetchImpl = vi.fn(async () => responsesTerminal()) as unknown as typeof fetch;
     const client = new OpenAIResponsesClient({
       baseURL: 'https://example.test',
       fetch: fetchImpl,
-      readableSummaryModels: ['opaque/model:1'],
+      thinkingSwitchModels: ['opaque/model:1'],
     });
 
-    await client.chat({ ...request, reasoning: { effort } });
+    await client.chat({ ...request, reasoning: { thinking: 'on', effort } });
     expect(requestBody(fetchImpl).reasoning).toEqual(expected);
   });
 
@@ -208,14 +211,13 @@ describe('Built-in Protocol Clients', () => {
     const client = new OpenAIResponsesClient({
       baseURL: 'https://example.test',
       fetch: fetchImpl,
-      readableSummaryModels: ['opaque/model:1'],
       thinkingSwitchModels: ['opaque/model:1'],
     });
     await client.chat({
       ...request,
       reasoning: { thinking: 'on', effort: 'default' },
     });
-    expect(requestBody(fetchImpl)).not.toHaveProperty('reasoning');
+    expect(requestBody(fetchImpl).reasoning).toEqual({ summary: 'detailed' });
 
     vi.mocked(fetchImpl).mockClear();
     await client.chat({
@@ -251,7 +253,7 @@ describe('Built-in Protocol Clients', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('sends Responses effort without guessing summary when no private adapter exists', async () => {
+  it('does not treat Responses effort alone as a display request', async () => {
     const fetchImpl = vi.fn(async () => responsesTerminal()) as unknown as typeof fetch;
     const client = new OpenAIResponsesClient({
       baseURL: 'https://example.test',
@@ -326,7 +328,7 @@ describe('Built-in Protocol Clients', () => {
     expect(requestBody(fetchImpl).reasoning_effort).toBe('none');
   });
 
-  it('captures, hides, and replays ordered Anthropic Thinking blocks', async () => {
+  it('opens, displays, and replays ordered Anthropic Thinking blocks', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(sse([
         frame({
@@ -371,9 +373,15 @@ describe('Built-in Protocol Clients', () => {
     const client = new AnthropicMessagesClient({
       baseURL: 'https://example.test',
       fetch: fetchImpl as unknown as typeof fetch,
+      thinkingAdapters: new Map([['opaque/model:1', { mode: 'adaptive' }]]),
     });
 
-    const first = await client.chat({ ...request, invocationId: 'anthropic-invocation' });
+    const first = await client.chat({
+      ...request,
+      invocationId: 'anthropic-invocation',
+      reasoning: { thinking: 'on', effort: 'default' },
+    });
+    expect(requestBody(fetchImpl).thinking).toEqual({ type: 'adaptive' });
     expect(first.invocation?.source).toMatchObject({
       wireProtocol: 'anthropic-messages',
       responseModelId: 'claude-test',
@@ -548,7 +556,7 @@ describe('Built-in Protocol Clients', () => {
     expect(body).not.toHaveProperty('reasoning_effort');
   });
 
-  it('captures and replays Chat Completions reasoning inside the Client boundary', async () => {
+  it('opens, displays, and replays Chat Completions reasoning inside the Client boundary', async () => {
     const captureFetch = vi.fn(async () => sse(
       frame({
         model: 'response-model',
@@ -564,8 +572,13 @@ describe('Built-in Protocol Clients', () => {
     const captureClient = new OpenAIChatCompletionsClient({
       baseURL: 'https://example.test',
       fetch: captureFetch,
+      thinkingSwitchModels: ['opaque/model:1'],
     });
-    const result = await captureClient.chat({ ...request, invocationId: 'invocation-1' });
+    const result = await captureClient.chat({
+      ...request,
+      invocationId: 'invocation-1',
+      reasoning: { thinking: 'on', effort: 'default' },
+    });
 
     expect(result.content).toEqual([{
       type: 'thinking',
@@ -577,6 +590,7 @@ describe('Built-in Protocol Clients', () => {
         payload: { reasoning_text: 'why', reasoning_opaque: 'opaque-state' },
       },
     }]);
+    expect(requestBody(captureFetch)).not.toHaveProperty('reasoning_effort');
 
     const replayFetch = vi.fn(async () => sse(
       frame({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })

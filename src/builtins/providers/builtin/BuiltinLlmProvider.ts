@@ -204,11 +204,6 @@ function createProtocolClient(
     case 'openai-responses':
       return new OpenAIResponsesClient({
         ...options,
-        readableSummaryModels: Object.freeze(models.flatMap((model) => (
-          model.protocol === protocol && model.readableSummary
-            ? [model.modelId]
-            : []
-        ))),
         thinkingSwitchModels: thinkingSwitchModels(models, protocol),
       });
     case 'openai-chat-completions':

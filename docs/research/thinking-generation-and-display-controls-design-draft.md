@@ -15,7 +15,8 @@ Responses，本地 Relay 服务则同时提供 Responses 和 Chat Completions。
 受控实测确认：
 
 - GPT Responses 默认可能只返回 encrypted reasoning，没有可读 summary；
-- `reasoning: { effort: "high", summary: "auto" }`可得到可读 summary；
+- Responses的`summary: "auto"`可选择不返回摘要；需要兑现Thinking On展示语义时使用
+  已验证的`reasoning: { effort: "high", summary: "detailed" }`；
 - Gemini Chat 默认可以返回`reasoning_text`；
 - Relay `/v1/models`逐模型提供`reasoning_effort`和`supported_endpoints`；
 - 可读文本和 Provider continuation state 不是同一类数据。
@@ -84,14 +85,14 @@ interface ReasoningCapabilities {
 | 整个schema缺失 | 没有已确认的控制能力，只允许省略开关和默认effort |
 | `thinking`省略 | 不提供已确认的独立开关，不表示模型不会推理 |
 | `thinking=[]` | 明确没有可供用户选择的独立开关 |
-| `thinking=["on","off"]` | Client能够兑现独立开启和关闭 |
+| `thinking=["on","off"]` | Client能够兑现独立开启、可读Thinking请求和关闭 |
 | `thinking=["off"]` | 只确认独立关闭路径，不承诺独立开启 |
 | `efforts`省略或为空 | 不提供显式等级，只允许默认effort |
 | `efforts=[...]` | 允许列出的显式等级 |
 
 模型可以只声明effort而不声明开关，或只声明开关而不声明等级。
-数组表达的是模型/endpoint与Client组合能够兑现的控制，不保证返回可读Thinking或支持
-summary。独立`on`必须能在不指定effort的情况下构造有效请求，否则不能声明。
+数组表达的是模型/endpoint与Client组合能够兑现的控制。effort本身不保证返回可读
+Thinking；独立`on`必须能在不指定effort的情况下开启推理并请求可读Thinking，否则不能声明。
 
 schema缺失或空数组不能成为丢弃合法上游Thinking的理由。实际收到的结构化事件仍按已
 实现的codec校验、采集和投影。
@@ -393,26 +394,23 @@ Transcript、RunResult或公开History；仅摘要正文沿现有Compaction记�
 | 开关省略且effort为`default` | 不增加`reasoning`对象 |
 | 开关省略且effort为`none`，模型声明支持 | `reasoning.effort="none"` |
 | 开关省略且effort为其他允许等级 | 原样发送`reasoning.effort` |
-| 独立开关 | 只有Provider明确实现相应启用/关闭路径后才发布，不从effort数组猜测 |
+| 独立开关 | on请求summary=detailed并展示返回文本，off映射effort=none；不从effort数组猜测 |
 
-若实现的独立`off`通过`reasoning.effort="none"`兑现，必须验证模型接受该值；
-独立`on`不能通过summary字段冒充启用，也不能偷偷选一个effort。首期通用Responses
-映射仅提供effort，不发布未经验证的独立开关。
-
-summary能力不是公共开关数组能够证明的事实。Built-in可以在Provider私有
-模型配置中声明`readableSummary: "auto-on-explicit-reasoning"`；省略该声明即不主动请求。
-只有经对应endpoint/model验证的声明才能启用。
+若实现的独立`off`通过`reasoning.effort="none"`兑现，必须验证模型接受该值。
+独立`on`表示该模型/endpoint既能以默认或显式effort开启推理，也能通过
+`reasoning.summary="detailed"`请求可读Thinking；Provider不得为未验证此路径的模型发布`on`。
 
 其固定语义：
 
-- 正常用户调用选择显式非`none`等级或经验证的独立`on`时，附加`reasoning.summary="auto"`；
-- 开关省略且effort为`default`、显式关闭/none及内部调用不主动请求summary；
+- 正常用户调用选择独立`on`时附加`reasoning.summary="detailed"`；
+- 开关省略时只精确映射effort，不把强度控制自动等同于显示请求；
+- 显式关闭/none及内部调用不主动请求summary；
 - Client不补隐式`medium`，不根据模型名猜测；
 - 上游未返回summary时正常结束，不生成空卡片；
 - 所有实际返回的合法summary和complete replay照常采集。
 
-这保留GPT显式推理时获取可读摘要的路径，同时不改变默认请求。公共schema没有summary
-字段，Provider私有支持声明和请求策略仍必须有测试覆盖。
+这让Thinking On直接表达“开启并显示”，同时不改变Default或仅effort请求。公共schema
+不增加第二个summary开关，Provider声明独立`on`及其请求策略必须有测试覆盖。
 
 ### 7.2 OpenAI-compatible Chat Completions
 
@@ -420,13 +418,13 @@ summary能力不是公共开关数组能够证明的事实。Built-in可以在Pr
 |---|---|
 | 开关省略且effort为`default` | 省略推理参数 |
 | 开关省略且effort为允许的显式等级，包括`none` | 顶层`reasoning_effort=<value>` |
-| 独立开关 | 只有具体adapter明确支持才发布；不能由effort元数据推导 |
+| 独立开关 | on使用经验证的默认开启路径并展示reasoning_text，off映射已验证的reasoning_effort=none |
 
 当前网关的`reasoning_text`和`reasoning_opaque`由Chat Client处理，不宣称它们是所有
-OpenAI-compatible服务统一支持的字段。未来不同返回格式需增加明确Client适配。
-首期通用Chat映射不发送`enable_thinking`或任意私有请求模板，也不发布独立`on`。
-若未来某adapter用支持的`reasoning_effort=none`兑现独立`off`，需明确验证，而不是补出
-`on/off`整组能力。
+OpenAI-compatible服务统一支持的字段。逐模型发布独立`on`表示该部署已验证省略effort
+会开启推理且返回可读`reasoning_text`；Client采集并展示。需要其他私有开启或输出参数的
+部署不能通过通用Chat adapter发布`on`。独立`off`使用已验证的`reasoning_effort=none`，
+不能从effort元数据自动补出`on/off`整组能力。
 
 ### 7.3 Anthropic Messages
 
@@ -476,6 +474,8 @@ type AnthropicThinkingAdapter =
 - budget只有等级预算而没有开启默认预算时，可发布efforts但不发布`on`；
 - 没有等级映射时可只发布`thinking=["on","off"]`，前提是两个独立路径都能兑现；
 - 未配置预算或模式支持时不发布相应选项，不使用隐式1024等猜测fallback。
+- 发布独立`on`还表示Client会采集、投影并展示返回的可读thinking block；无法产生可读
+  block的模型/endpoint不能发布`on`。
 
 对于后续已验证支持独立开关的adaptive模型，配置形态如下；示例不是当前实现或实测声明：
 
@@ -614,7 +614,7 @@ Web只对模型已声明的选项排序：Thinking按`on → off`，effort按
 
 1. 契约：schema严格校验、Model Facts/Catalog一致投影及Built-in配置。
 2. Turn：队列快照、开关/等级/组合校验、Runner请求和Steering兼容。
-3. Built-in：Responses/Chat effort、私有summary策略、Anthropic独立开关/mode/budget及完整replay。
+3. Built-in：Responses/Chat effort、Thinking On展示语义、Anthropic独立开关/mode/budget及完整replay。
 4. Relay：双协议Client/Router、discovery等级和不可变模型快照。
 5. Web：能力驱动的开关及effort控件、组合约束、明确重选及历史回归。
 

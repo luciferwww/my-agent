@@ -20,7 +20,6 @@ export interface BuiltinModelRegistration {
   readonly maximumOutputTokens?: number;
   readonly outputTokenLimit?: number;
   readonly reasoning?: ReasoningCapabilities;
-  readonly readableSummary?: 'auto-on-explicit-reasoning';
   readonly anthropicThinking?: AnthropicThinkingAdapter;
 }
 
@@ -172,7 +171,6 @@ function validateModels(value: unknown): readonly BuiltinModelRegistration[] {
     const reasoningConfig = normalizeBuiltinReasoningConfig({
       protocol: protocol as BuiltinProtocol,
       reasoning: entry['reasoning'],
-      readableSummary: entry['readableSummary'],
       anthropicThinking: entry['anthropicThinking'],
       outputTokenLimit: limits.outputTokenLimit,
       maximumOutputTokens: limits.maximumOutputTokens,
@@ -191,7 +189,6 @@ export function normalizeBuiltinReasoningConfig(
   model: {
     readonly protocol: BuiltinProtocol;
     readonly reasoning?: unknown;
-    readonly readableSummary?: unknown;
     readonly anthropicThinking?: unknown;
     readonly outputTokenLimit?: unknown;
     readonly maximumOutputTokens?: unknown;
@@ -199,20 +196,10 @@ export function normalizeBuiltinReasoningConfig(
   index: number,
 ): Pick<
   BuiltinModelRegistration,
-  'reasoning' | 'readableSummary' | 'anthropicThinking'
+  'reasoning' | 'anthropicThinking'
 > {
   const path = `models[${index}]`;
   const reasoning = validateReasoningCapabilities(model.reasoning, path);
-  const readableSummary = model.readableSummary;
-  if (
-    readableSummary !== undefined
-    && readableSummary !== 'auto-on-explicit-reasoning'
-  ) {
-    throw new BuiltinLlmConfigError(`${path}.readableSummary`);
-  }
-  if (readableSummary !== undefined && model.protocol !== 'openai-responses') {
-    throw new BuiltinLlmConfigError(`${path}.readableSummary`);
-  }
 
   const anthropicThinking = validateAnthropicThinkingAdapter(
     model.anthropicThinking,
@@ -263,7 +250,6 @@ export function normalizeBuiltinReasoningConfig(
 
   return {
     ...(reasoning === undefined ? {} : { reasoning }),
-    ...(readableSummary === undefined ? {} : { readableSummary }),
     ...(anthropicThinking === undefined ? {} : { anthropicThinking }),
   };
 }
