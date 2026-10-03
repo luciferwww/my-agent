@@ -236,9 +236,11 @@ Common global settings:
 `MY_AGENT_PROVIDER` and `MY_AGENT_MODEL` may be supplied together to override
 the default Model Reference for a run. Supplying only one is an error.
 
-See [Configuration](docs/architecture/configuration.md) for the full schema,
-defaults, precedence, Agent overrides, Subagent profiles, credential
-references, and strict validation behavior.
+See the [Configuration Guide](docs/guides/configuration.md) for setup examples,
+the user-facing field reference, Thinking/Effort capabilities, Extension
+configuration, defaults, credentials, and troubleshooting.
+Implementation ownership and merge behavior remain documented in
+[Configuration Architecture](docs/architecture/configuration.md).
 
 ## Tool permissions and security
 
@@ -306,7 +308,8 @@ from a source checkout.
 ## Documentation
 
 - [Current Architecture](docs/architecture/overview.md) — verified boundaries and flows
-- [Configuration](docs/architecture/configuration.md) — schema, defaults, and precedence
+- [Configuration Guide](docs/guides/configuration.md) — user setup, fields, examples, and troubleshooting
+- [Configuration Architecture](docs/architecture/configuration.md) — ownership, defaults, and precedence
 - [Channels](docs/architecture/channels.md) — WebSocket, CLI, routing, and interactions
 - [Tools](docs/architecture/tools.md) — Tool pipeline and policy
 - [Session](docs/architecture/session.md) — persistence and lifecycle

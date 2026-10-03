@@ -5,6 +5,10 @@
 
 This index separates current authority from active work and historical or non-authoritative supporting material.
 
+## User guides
+
+- [Configuration Guide](guides/configuration.md) — Agent Home setup, supported fields, Providers, Extensions, examples, and troubleshooting
+
 ## Default reading path
 
 For ordinary implementation work, start from source and focused tests, then read only the smallest applicable authority set:
