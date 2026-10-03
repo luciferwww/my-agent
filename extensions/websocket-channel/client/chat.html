@@ -107,6 +107,23 @@
       .reasoning-controls {
         display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;
       }
+      .reasoning-control {
+        position: relative;
+      }
+      .reasoning-control::after {
+        content: "⌄"; position: absolute; right: 13px; bottom: 13px; color: var(--muted);
+        line-height: 1; pointer-events: none;
+      }
+      .reasoning-select {
+        min-height: 45px; padding: 11px 34px 11px 13px; border-radius: 14px; font-size: 16px;
+        line-height: 22px; appearance: none; cursor: pointer;
+      }
+      .reasoning-select:hover:not(:disabled) {
+        border-color: rgba(216, 137, 92, 0.42);
+      }
+      .reasoning-select:disabled {
+        opacity: 0.5; cursor: not-allowed;
+      }
       .reasoning-notice {
         color: var(--muted); font-size: 12px; line-height: 1.45;
       }
@@ -914,9 +931,13 @@
             </div>
           </div>
           <div v-if="showThinkingControl || showEffortControl" class="reasoning-controls">
-            <label v-if="showThinkingControl">
+            <label v-if="showThinkingControl" class="reasoning-control">
               <span class="field-label-text">Thinking</span>
-              <select v-model="reasoningSelection.thinking" aria-label="Thinking">
+              <select
+                v-model="reasoningSelection.thinking"
+                class="reasoning-select"
+                aria-label="Thinking"
+              >
                 <option value="default">Default</option>
                 <option
                   v-for="value in thinkingOptions"
@@ -926,9 +947,13 @@
                 >{{ formatReasoningOption(value) }}</option>
               </select>
             </label>
-            <label v-if="showEffortControl">
+            <label v-if="showEffortControl" class="reasoning-control">
               <span class="field-label-text">Effort</span>
-              <select v-model="reasoningSelection.effort" aria-label="Reasoning effort">
+              <select
+                v-model="reasoningSelection.effort"
+                class="reasoning-select"
+                aria-label="Reasoning effort"
+              >
                 <option value="default">Default</option>
                 <option
                   v-for="value in effortOptions"
