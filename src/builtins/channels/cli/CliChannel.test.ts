@@ -204,6 +204,66 @@ describe('CliChannel run completion rendering', () => {
 });
 
 describe('CliChannel lifecycle', () => {
+  it('waits for the configured input readiness gate before opening the prompt', async () => {
+    const existingSigIntListeners = process.listeners('SIGINT');
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on('data', (chunk: Buffer) => chunks.push(chunk));
+    let releaseInput!: () => void;
+    const interactionReady = new Promise<void>((resolve) => {
+      releaseInput = resolve;
+    });
+    const channel = new CliChannel({ input, output, interactionReady });
+    channel.onMessage(async () => undefined);
+
+    try {
+      await channel.start();
+      await Promise.resolve();
+      expect(stripAnsi(Buffer.concat(chunks).toString('utf8'))).not.toContain('> ');
+
+      releaseInput();
+      await vi.waitFor(() => {
+        expect(stripAnsi(Buffer.concat(chunks).toString('utf8'))).toContain('> ');
+      });
+    } finally {
+      await channel.stop();
+      process.removeAllListeners('SIGINT');
+      for (const listener of existingSigIntListeners) {
+        process.on('SIGINT', listener);
+      }
+    }
+  });
+
+  it('stops cleanly while waiting for input readiness', async () => {
+    const existingSigIntListeners = process.listeners('SIGINT');
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on('data', (chunk: Buffer) => chunks.push(chunk));
+    const channel = new CliChannel({
+      input: new PassThrough(),
+      output,
+      interactionReady: new Promise<void>(() => undefined),
+    });
+    channel.onMessage(async () => undefined);
+
+    try {
+      await channel.start();
+      await channel.stop();
+
+      await expect(channel.completion).resolves.toEqual({
+        outcome: 'closed',
+        reason: 'stopped',
+      });
+      expect(stripAnsi(Buffer.concat(chunks).toString('utf8'))).not.toContain('> ');
+    } finally {
+      process.removeAllListeners('SIGINT');
+      for (const listener of existingSigIntListeners) {
+        process.on('SIGINT', listener);
+      }
+    }
+  });
+
   it('reports readiness before natural input closure settles completion', async () => {
     const existingSigIntListeners = process.listeners('SIGINT');
     const input = new PassThrough();

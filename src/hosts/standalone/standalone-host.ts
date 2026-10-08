@@ -1,6 +1,9 @@
 import { homedir } from 'node:os';
 
-import { createCliChannelUnit } from '../../builtins/channels/cli/index.js';
+import {
+  createCliChannelUnit,
+  type CliChannelConfig,
+} from '../../builtins/channels/cli/index.js';
 import {
   ensureAgentConfigDocument,
   loadAgentConfig,
@@ -38,6 +41,7 @@ export interface StandaloneHostRunOptions {
   readonly loadConfig?: typeof loadAgentConfig;
   readonly createRuntime?: typeof RuntimeApp.create;
   readonly createHost?: typeof createRuntimeHost;
+  readonly cliOutput?: NodeJS.WritableStream;
 }
 
 export function parseStandaloneHostArguments(
@@ -108,8 +112,9 @@ export function validateStandaloneHostComposition(
 
 export function createStandaloneHostUnits(
   cliEnabled: boolean,
+  cliConfig: CliChannelConfig = CLI_CHANNEL_CONFIG,
 ): readonly LoadedRuntimeUnit[] {
-  return Object.freeze(cliEnabled ? [createCliChannelUnit(CLI_CHANNEL_CONFIG)] : []);
+  return Object.freeze(cliEnabled ? [createCliChannelUnit(cliConfig)] : []);
 }
 
 export async function runStandaloneHost(
@@ -117,6 +122,15 @@ export async function runStandaloneHost(
 ): Promise<void> {
   const env = options.env ?? process.env;
   const parsedArguments = parseStandaloneHostArguments(options.argv ?? process.argv.slice(2));
+  const cliOutput = options.cliOutput ?? process.stdout;
+  const startupStartedAt = Date.now();
+  let activateCliInteraction: (() => void) | undefined;
+  const cliInteractionReady = new Promise<void>((resolve) => {
+    activateCliInteraction = resolve;
+  });
+  if (parsedArguments.cli) {
+    cliOutput.write('Starting my-agent...\n');
+  }
   const pathOptions: StandaloneHostPathResolutionOptions = {
     moduleUrl: options.moduleUrl ?? import.meta.url,
     homeDirectory: options.homeDirectory ?? homedir(),
@@ -137,7 +151,11 @@ export async function runStandaloneHost(
   });
   validateStandaloneHostComposition(snapshot, parsedArguments.cli);
 
-  const hostUnits = createStandaloneHostUnits(parsedArguments.cli);
+  const hostUnits = createStandaloneHostUnits(parsedArguments.cli, {
+    ...CLI_CHANNEL_CONFIG,
+    output: cliOutput,
+    interactionReady: cliInteractionReady,
+  });
   const runtime = await (options.createRuntime ?? RuntimeApp.create)({
     agentHome: pathContext.agentHome,
     startupContext: {
@@ -147,11 +165,23 @@ export async function runStandaloneHost(
     },
     loadedUnits: hostUnits,
   });
+  if (parsedArguments.cli) {
+    cliOutput.write(
+      `Ready in ${formatStartupDuration(Date.now() - startupStartedAt)} · /help for commands\n`,
+    );
+    activateCliInteraction?.();
+  }
   await awaitHostLifetime(
     runtime,
     parsedArguments.cli,
     options.createHost ?? createRuntimeHost,
   );
+}
+
+function formatStartupDuration(durationMs: number): string {
+  return durationMs < 1_000
+    ? `${durationMs}ms`
+    : `${(durationMs / 1_000).toFixed(1)}s`;
 }
 
 async function awaitHostLifetime(

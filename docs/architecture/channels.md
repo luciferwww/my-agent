@@ -133,6 +133,7 @@ CliChannelConfig {
   input?: NodeJS.ReadableStream   # default process.stdin
   output?: NodeJS.WritableStream  # default process.stdout
   prompt?: string                 # default "> "
+  interactionReady?: Promise<void> # default allows immediate interaction
   approval?: boolean              # default false
 }
 ```
@@ -152,6 +153,13 @@ Result preview limits affect presentation only, never the result passed to the
 Model.
 
 ### 6.2 Commands, input gate, and lifecycle
+
+When `--cli` is present, the standalone Host writes an immediate startup
+notice, passes an input-readiness gate to `CliChannel`, and releases that gate
+only after `RuntimeApp.create()` has completed. It writes the elapsed-time
+`Ready` notice before releasing the gate, so the first ordinary prompt cannot
+precede Runtime readiness. Direct `CliChannel` construction defaults to an
+already-resolved gate.
 
 `/help` groups Model, reasoning, Session, permission, and process controls.
 `/model`, `/session`, `/permission`, `/thinking`, and `/effort` open numbered

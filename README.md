@@ -174,6 +174,10 @@ Keep the LLM configuration from the Quick Start and run:
 npm run agent -- --agent-home ./agent-home --cli
 ```
 
+The standalone Host immediately prints `Starting my-agent...`. After Runtime
+startup completes, it prints a `Ready` line with elapsed time and then opens
+the CLI prompt.
+
 Useful CLI commands include:
 
 ```text

@@ -271,6 +271,7 @@ export interface CliChannelConfig {
   input?: NodeJS.ReadableStream;
   output?: NodeJS.WritableStream;
   prompt?: string;
+  interactionReady?: Promise<void>;
   /** 启用审批交互；启用时收到审批请求会阻塞 readline 等待 y/n */
   approval?: boolean;
 }
@@ -283,6 +284,7 @@ export class CliChannel implements Channel {
   private readonly input: NodeJS.ReadableStream;
   private readonly output: NodeJS.WritableStream;
   private readonly promptText: string;
+  private readonly interactionReady?: Promise<void>;
   private sessionId?: string;
   private rl?: readline.Interface;
 
@@ -318,6 +320,7 @@ export class CliChannel implements Channel {
     this.input = config.input ?? process.stdin;
     this.output = config.output ?? process.stdout;
     this.promptText = config.prompt ?? '> ';
+    this.interactionReady = config.interactionReady;
     this.completion = new Promise<ChannelCompletion>((resolve) => {
       this.settleCompletion = (result) => {
         if (this.completionSettled) return;
@@ -526,6 +529,14 @@ export class CliChannel implements Channel {
     const messageHandler = this.messageHandler;
     if (!messageHandler) return;
     try {
+      if (this.interactionReady) {
+        await Promise.race([
+          this.interactionReady,
+          this.completion.then(() => undefined),
+        ]);
+        if (this.stopped) return;
+      }
+
       while (!this.stopped) {
         await this.waitUntilIdle();
         if (this.stopped) break;

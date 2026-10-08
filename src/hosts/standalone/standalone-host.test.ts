@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -102,6 +103,81 @@ describe('standalone Host composition', () => {
       .toThrow('HOST_OUTPUT_CONFLICT');
     expect(() => validateStandaloneHostComposition(snapshot(false), true)).not.toThrow();
     expect(() => validateStandaloneHostComposition(snapshot(true), false)).not.toThrow();
+  });
+
+  it('reports CLI startup immediately and readiness after Runtime creation', async () => {
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on('data', (chunk: Buffer) => chunks.push(chunk));
+    const captured = () => Buffer.concat(chunks).toString('utf8');
+    let releaseRuntime!: () => void;
+    const runtimeReady = new Promise<void>((resolve) => {
+      releaseRuntime = resolve;
+    });
+    const waitForChannelCompletion = vi.fn(async () => ({
+      outcome: 'closed' as const,
+      reason: 'input_closed' as const,
+    }));
+    const shutdown = vi.fn(async () => ({ outcome: 'completed' } as never));
+    const run = runStandaloneHost({
+      argv: ['--cli'],
+      env: {},
+      cliOutput: output,
+      resolvePathContext: async () => createPathContext(),
+      ensureConfig: async () => undefined,
+      loadConfig: async () => createSnapshot(false),
+      createRuntime: async () => {
+        expect(captured()).toBe('Starting my-agent...\n');
+        await runtimeReady;
+        return {
+          application: { waitForChannelCompletion },
+          close: vi.fn(),
+        } as never;
+      },
+      createHost: (() => ({
+        shutdown,
+        completion: new Promise<never>(() => undefined),
+        dispose: vi.fn(),
+      })) as never,
+    });
+
+    await vi.waitFor(() => {
+      expect(captured()).toBe('Starting my-agent...\n');
+    });
+    releaseRuntime();
+    await run;
+
+    expect(captured()).toMatch(
+      /^Starting my-agent\.\.\.\nReady in (?:\d+ms|\d+\.\ds) · \/help for commands\n$/u,
+    );
+    expect(waitForChannelCompletion).toHaveBeenCalledWith('cli');
+    expect(shutdown).toHaveBeenCalledWith('cli channel completed');
+  });
+
+  it('does not print CLI startup feedback without --cli', async () => {
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+    await runStandaloneHost({
+      argv: [],
+      env: {},
+      cliOutput: output,
+      resolvePathContext: async () => createPathContext(),
+      ensureConfig: async () => undefined,
+      loadConfig: async () => createSnapshot(),
+      createRuntime: async () => ({
+        application: { waitForChannelCompletion: vi.fn() },
+        close: vi.fn(),
+      }) as never,
+      createHost: (() => ({
+        shutdown: vi.fn(),
+        completion: Promise.resolve({ outcome: 'completed' } as never),
+        dispose: vi.fn(),
+      })) as never,
+    });
+
+    expect(Buffer.concat(chunks).toString('utf8')).toBe('');
   });
 
   it('rejects a CLI output conflict before Runtime creation', async () => {
