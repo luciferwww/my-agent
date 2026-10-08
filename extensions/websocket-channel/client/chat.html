@@ -1518,6 +1518,7 @@
       const DEFAULT_SOCKET_URL = `${DEFAULT_SOCKET_PROTOCOL}//${window.location.host}${DEFAULT_SOCKET_PATH}`;
       const RECONNECT_BASE_DELAY_MS = 750;
       const RECONNECT_MAX_DELAY_MS = 12_000;
+      const CHAT_FOLLOW_THRESHOLD_PX = 80;
       const MAX_EVENT_FEED_ITEMS = 40;
       const TOOL_RESULT_PREVIEW_HEAD_LINES = 6;
       const TOOL_RESULT_PREVIEW_TAIL_LINES = 4;
@@ -2721,7 +2722,7 @@
                     willResize: a.willResize,
                   }))
                 : [],
-            });
+            }, this.form.sessionId, { forceScroll: true });
 
             const pendingTurn = {
               message: wireMessage,
@@ -3532,7 +3533,7 @@
           },
 
           // ── Chat item helpers ─────────────────────────────────
-          appendChatItem(fields, sessionId = this.form.sessionId) {
+          appendChatItem(fields, sessionId = this.form.sessionId, options = {}) {
             const state = this.ensureSessionState(sessionId);
             const item = {
               id: this.nextId++,
@@ -3542,7 +3543,7 @@
               ...fields,
             };
             state.chatItems.push(item);
-            this.scrollChatToBottom(sessionId);
+            this.scrollChatToBottom(sessionId, { force: options.forceScroll === true });
             return item;
           },
 
@@ -3585,6 +3586,7 @@
             this.closeSessionActionMenu();
             this.form.sessionId = session.sessionId;
             this.ensureSessionState(session.sessionId);
+            this.scrollChatToBottom(session.sessionId, { force: true });
             this.pushEvent('session_selected', `Selected Session ${session.sessionId}`);
             this.requestPermissionMode();
             this.requestSessionHistory(session.sessionId, { latest: true });
@@ -3709,11 +3711,18 @@
               this.eventFeed.length = MAX_EVENT_FEED_ITEMS;
             }
           },
-          scrollChatToBottom(sessionId = this.form.sessionId) {
+          scrollChatToBottom(sessionId = this.form.sessionId, options = {}) {
             if (sessionId !== this.form.sessionId) return;
+            const el = this.$refs.chatLogEl;
+            if (!el) return;
+            const initialScrollTop = el.scrollTop;
+            const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+            if (!options.force && distanceFromBottom > CHAT_FOLLOW_THRESHOLD_PX) return;
             nextTick(() => {
-              const el = this.$refs.chatLogEl;
-              if (el) el.scrollTop = el.scrollHeight;
+              if (sessionId !== this.form.sessionId) return;
+              const currentEl = this.$refs.chatLogEl;
+              if (!currentEl || (!options.force && currentEl.scrollTop < initialScrollTop)) return;
+              currentEl.scrollTop = currentEl.scrollHeight;
             });
           },
           captureHistoryScrollAnchor(sessionId) {
@@ -3783,7 +3792,13 @@
           renderAssistantText(text) {
             const normalized = String(text || '').replace(/\r\n?/g, '\n');
             if (!normalized.trim()) return '';
-            return marked.parse(normalized);
+            const template = document.createElement('template');
+            template.innerHTML = marked.parse(normalized);
+            for (const anchor of template.content.querySelectorAll('a[href]')) {
+              anchor.target = '_blank';
+              anchor.rel = 'noopener noreferrer';
+            }
+            return template.innerHTML;
           },
         },
       }).mount('#app');

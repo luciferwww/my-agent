@@ -124,6 +124,8 @@ describe('WebSocketChannel', () => {
     expect(html).toContain('this.connect();');
     expect(html).not.toContain('WebSocket URL');
     expect(html).not.toContain('>Disconnect</button>');
+    expect(html).toContain("anchor.target = '_blank';");
+    expect(html).toContain("anchor.rel = 'noopener noreferrer';");
     expect(html).toContain('aria-label="Thinking options"');
     expect(html).toContain('aria-label="Reasoning effort options"');
     expect(html).toContain("@click=\"toggleReasoningPicker('thinking')\"");
