@@ -119,6 +119,11 @@ describe('WebSocketChannel', () => {
     const html = await response.text();
     expect(html).toContain("const DEFAULT_SOCKET_PATH = \"/ws\";");
     expect(html).not.toContain('__MY_AGENT_WEBSOCKET_PATH__');
+    expect(html).toContain('const socket = new WebSocket(DEFAULT_SOCKET_URL);');
+    expect(html).toContain('this.scheduleReconnect();');
+    expect(html).toContain('this.connect();');
+    expect(html).not.toContain('WebSocket URL');
+    expect(html).not.toContain('>Disconnect</button>');
     expect(html).toContain('aria-label="Thinking options"');
     expect(html).toContain('aria-label="Reasoning effort options"');
     expect(html).toContain("@click=\"toggleReasoningPicker('thinking')\"");

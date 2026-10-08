@@ -3,103 +3,120 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>my-agent WebSocket Chat</title>
+    <title>my-agent</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="https://unpkg.com/marked@18.0.4/lib/marked.umd.js"></script>
     <style>
       /* Base */
       :root {
-        --bg: #f6efe6; --panel: rgba(255, 251, 246, 0.94); --panel-strong: #fffaf4; --surface: #fffdf9;
-        --surface-soft: #fbf5ee; --border: rgba(191, 160, 128, 0.24); --border-strong: rgba(220, 184, 149, 0.5);
-        --text: #33271e; --muted: #8a7763; --accent: #e7a47d; --accent-strong: #d8895c; --accent-2: #f3c5ad;
-        --success: #b9ddd2; --danger: #b42318; --shadow: 0 20px 50px rgba(132, 97, 57, 0.08); --radius: 24px;
-        --message-min-width: min(320px, 100%); --message-max-width: 80%;
+        --bg: #f5f2eb; --panel: #fbfaf7; --panel-strong: #fff; --surface: #f7f7f3;
+        --surface-soft: #f0f3ee; --border: #dcded8; --border-strong: #c8d0cb;
+        --text: #152223; --muted: #697475; --accent: #153f3c; --accent-strong: #0b2c2b; --accent-2: #b9f2dc;
+        --success: #42a579; --danger: #b53f31; --shadow: 0 18px 50px rgba(20, 48, 46, 0.055); --radius: 8px;
+        --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+        --message-min-width: min(320px, 100%); --message-max-width: min(1100px, 92%);
+        --user-message-max-width: min(760px, 82%);
       }
       * {
         box-sizing: border-box;
       }
       body {
         margin: 0; min-height: 100vh; height: 100vh; overflow: hidden;
-        font-family: "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif; color: var(--text);
-        background: radial-gradient(circle at top left, rgba(231, 164, 125, 0.22), transparent 24%),
-          linear-gradient(180deg, #fbf7f1 0%, #f5ece1 48%, #f1e3d2 100%);
-      }
-      body::before {
-        content: ""; position: fixed; inset: 0; pointer-events: none;
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.42), transparent 28%);
+        font-family: "Segoe UI", "Helvetica Neue", Arial, "PingFang SC", sans-serif; font-size: 14px; color: var(--text);
+        background: radial-gradient(circle at 7% 4%, rgba(185, 242, 220, 0.34), transparent 23rem), var(--bg);
+        text-rendering: optimizeLegibility;
       }
       /* Layout */
       #app {
-        position: relative; display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 18px;
-        width: min(1480px, calc(100vw - 28px)); height: calc(100vh - 28px); margin: 14px auto;
+        position: relative; display: grid; grid-template-columns: 286px minmax(0, 1fr); gap: 12px;
+        width: min(1440px, calc(100vw - 24px)); height: calc(100vh - 24px); margin: 12px auto;
       }
       .panel {
-        min-height: 0; backdrop-filter: blur(12px); background: var(--panel); border: 1px solid var(--border);
+        min-height: 0; background: var(--panel); border: 1px solid rgba(21, 34, 35, 0.13);
         border-radius: var(--radius); box-shadow: var(--shadow);
       }
       .sidebar {
-        position: relative; padding: 20px; display: flex; flex-direction: column; gap: 16px; overflow: auto;
+        position: relative; padding: 22px; display: flex; flex-direction: column; gap: 22px; overflow: auto;
       }
       .icon-button.mobile-sidebar-trigger, .icon-button.mobile-sidebar-close, .mobile-sidebar-scrim {
         display: none;
       }
       /* Sidebar */
       .brand {
-        display: flex; flex-direction: column; gap: 8px;
+        display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding-bottom: 2px;
       }
-      .eyebrow {
-        letter-spacing: 0.18em; text-transform: uppercase; font-size: 11px; color: var(--muted); font-weight: 700;
+      .brand-copy {
+        min-width: 0; display: grid; gap: 6px;
+      }
+      .brand-identity {
+        display: flex; align-items: center; gap: 10px;
+      }
+      .brand-mark {
+        position: relative; flex: none; width: 26px; height: 26px; border: 2px solid var(--accent); border-radius: 50%;
+      }
+      .brand-mark::before {
+        content: ""; position: absolute; top: 10px; left: 5px; width: 12px; height: 2px;
+        background: var(--accent); transform: rotate(-45deg);
+      }
+      .brand-mark::after {
+        content: ""; position: absolute; top: 3px; right: 3px; width: 4px; height: 4px;
+        background: var(--accent); border-radius: 50%;
       }
       .brand-title {
-        margin: 0; font-size: 24px; line-height: 1; font-weight: 700;
+        margin: 0; color: var(--accent-strong); font-size: 20px; line-height: 1; font-weight: 700; letter-spacing: -0.05em;
+      }
+      .brand-subtitle {
+        margin: 0; color: var(--muted); font-size: 11px;
       }
       .status-pill {
-        display: inline-flex; align-items: center; gap: 8px; font-size: 13px; padding: 7px 10px; border-radius: 999px;
-        background: rgba(255, 255, 255, 0.88); color: var(--muted);
+        flex: none; display: inline-flex; align-items: center; gap: 7px; padding: 5px 7px;
+        color: var(--muted); font-family: var(--mono); font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase;
       }
       .status-pill::before {
-        content: ""; width: 9px; height: 9px; border-radius: 999px; background: #9aa29b;
+        content: ""; width: 7px; height: 7px; border-radius: 50%; background: #9aa29b;
       }
       .status-pill.connected::before {
-        background: #6bb39c; box-shadow: 0 0 0 4px rgba(107, 179, 156, 0.16);
+        background: var(--success); box-shadow: 0 0 0 4px rgba(66, 165, 121, 0.12);
       }
       .status-pill.connecting::before {
-        background: var(--accent-strong); box-shadow: 0 0 0 4px rgba(216, 137, 92, 0.14);
+        background: #d5a044; box-shadow: 0 0 0 4px rgba(213, 160, 68, 0.12);
+        animation: status-pulse 1.4s ease-in-out infinite;
+      }
+      .status-pill.disconnected::before {
+        background: var(--danger); box-shadow: 0 0 0 4px rgba(180, 35, 24, 0.1);
       }
       .section {
-        display: flex; flex-direction: column; gap: 12px;
+        display: flex; flex-direction: column; gap: 10px;
       }
       .section-title {
         display: flex; align-items: center; justify-content: space-between; gap: 12px;
       }
       .section-title h2 {
-        margin: 0; font-size: 14px; font-weight: 600;
+        margin: 0; color: #374c4b; font-size: 12px; font-weight: 600;
       }
-      .section-note {
-        margin: -4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5;
+      .eyebrow {
+        color: #4d7771; font-family: var(--mono); font-size: 9px; font-weight: 500;
+        letter-spacing: 0.1em; text-transform: uppercase;
       }
       .section-title small {
         color: var(--muted);
       }
-      .field-grid {
-        display: grid; gap: 10px;
-      }
       label {
-        display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--muted);
+        display: flex; flex-direction: column; gap: 7px; font-size: 12px; color: var(--muted);
       }
       .field-label-text {
-        color: var(--text); font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
+        color: #374c4b; font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
       }
       input, select, textarea, button {
         font: inherit;
       }
       input, select, textarea {
-        width: 100%; padding: 12px 14px; color: var(--text); background: rgba(255, 255, 255, 0.9);
-        border: 1px solid rgba(191, 160, 128, 0.25); border-radius: 14px; outline: none;
+        width: 100%; padding: 11px 12px; color: var(--text); background: var(--surface);
+        border: 1px solid #d3d9d5; border-radius: 4px; outline: none;
         transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
       }
       input:focus, select:focus, textarea:focus {
-        border-color: rgba(216, 137, 92, 0.42); box-shadow: 0 0 0 4px rgba(231, 164, 125, 0.14);
+        border-color: var(--accent); box-shadow: 0 0 0 3px rgba(232, 101, 77, 0.22);
       }
       .model-picker {
         position: relative; display: flex; flex-direction: column; gap: 8px;
@@ -120,18 +137,18 @@
         grid-template-columns: 18px minmax(0, 1fr); padding: 9px;
       }
       .reasoning-notice {
-        color: var(--muted); font-size: 12px; line-height: 1.45;
+        color: var(--muted); font-size: 10px; line-height: 1.45;
       }
       .model-picker-trigger {
         position: relative; z-index: 32; display: flex; align-items: center; justify-content: space-between; gap: 12px;
-        width: 100%; min-width: 0; padding: 11px 13px; color: var(--text); text-align: left;
-        background: rgba(255, 255, 255, 0.9); border: 1px solid rgba(191, 160, 128, 0.25); border-radius: 14px;
+        width: 100%; min-width: 0; min-height: 43px; padding: 10px 12px; color: var(--text); text-align: left;
+        background: var(--surface); border: 1px solid #d3d9d5; border-radius: 4px;
       }
       .model-picker-trigger:hover:not(:disabled) {
-        transform: none; border-color: rgba(216, 137, 92, 0.42);
+        transform: none; border-color: var(--accent);
       }
       .model-picker.open .model-picker-trigger {
-        border-color: rgba(216, 137, 92, 0.42); box-shadow: 0 0 0 4px rgba(231, 164, 125, 0.14);
+        border-color: var(--accent); box-shadow: 0 0 0 3px rgba(232, 101, 77, 0.18);
       }
       .model-picker-trigger-copy {
         min-width: 0; display: grid; gap: 2px;
@@ -140,10 +157,10 @@
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
       .model-picker-trigger-name {
-        color: var(--text); font-weight: 600;
+        color: var(--text); font-size: 12px; font-weight: 600;
       }
       .model-picker-trigger-provider {
-        color: var(--muted); font-size: 11px;
+        color: var(--muted); font-size: 10px;
       }
       .model-picker-chevron {
         flex: none; color: var(--muted); transition: transform 140ms ease;
@@ -155,12 +172,12 @@
         position: fixed; z-index: 30; inset: 0;
       }
       .model-picker-panel {
-        position: absolute; z-index: 33; top: calc(100% + 8px); left: 0; width: 100%; overflow: hidden; padding: 8px;
-        color: var(--text); background: rgba(255, 253, 249, 0.99); border: 1px solid var(--border-strong);
-        border-radius: 16px; box-shadow: 0 18px 44px rgba(75, 52, 31, 0.18);
+        position: absolute; z-index: 33; top: calc(100% + 8px); left: 0; width: 100%; overflow: hidden; padding: 6px;
+        color: var(--text); background: #fff; border: 1px solid var(--border-strong);
+        border-radius: 6px; box-shadow: 0 14px 32px rgba(20, 48, 46, 0.14);
       }
       .model-picker-search {
-        padding: 10px 12px; border-radius: 11px;
+        padding: 10px 12px; border-radius: 4px;
       }
       .model-picker-list {
         max-height: 300px; margin-top: 7px; overflow-y: auto; scrollbar-width: thin;
@@ -171,20 +188,18 @@
       }
       .model-provider-heading {
         display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 8px 9px 5px;
-        color: var(--muted); font-size: 11px; font-weight: 700;
-      }
-      .model-provider-id {
-        overflow: hidden; font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap;
+        color: #4d7771; font-family: var(--mono); font-size: 9px; font-weight: 500;
+        letter-spacing: 0.08em; text-transform: uppercase;
       }
       .model-picker-option {
         display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 7px; width: 100%;
-        padding: 8px 9px; color: var(--text); text-align: left; background: transparent; border-radius: 10px;
+        padding: 8px 9px; color: var(--text); text-align: left; background: transparent; border-radius: 3px; font-size: 12px;
       }
       .model-picker-option:hover, .model-picker-option.active {
-        transform: none; background: rgba(231, 164, 125, 0.13);
+        transform: none; background: #edf5ef;
       }
       .model-picker-option.selected {
-        background: rgba(216, 137, 92, 0.16);
+        color: var(--accent-strong); background: var(--accent-2);
       }
       .model-picker-check {
         color: var(--accent-strong); font-weight: 800;
@@ -215,7 +230,7 @@
         display: flex; gap: 10px; flex-wrap: wrap;
       }
       button {
-        border: 0; border-radius: 999px; padding: 11px 16px; cursor: pointer;
+        border: 0; border-radius: 4px; padding: 11px 16px; cursor: pointer;
         transition: transform 140ms ease, opacity 140ms ease, box-shadow 140ms ease;
       }
       button:hover:not(:disabled) {
@@ -225,22 +240,20 @@
         opacity: 0.5; cursor: not-allowed;
       }
       .primary {
-        color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-        box-shadow: 0 12px 24px rgba(216, 137, 92, 0.24);
+        color: #fff; background: var(--accent);
+      }
+      .primary:hover:not(:disabled) {
+        background: var(--accent-strong);
       }
       .secondary {
-        color: var(--text); background: rgba(255, 255, 255, 0.88); border: 1px solid rgba(191, 160, 128, 0.22);
+        color: var(--accent); background: transparent; border: 1px solid #afbfba;
       }
-      .ghost {
-        color: var(--muted); background: rgba(122, 103, 80, 0.08);
-      }
-      .connection-meta {
-        min-width: 0; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis;
-        white-space: nowrap;
+      .secondary:hover:not(:disabled) {
+        background: #f1f5f1;
       }
       .icon-button {
-        display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; color: var(--muted);
-        background: rgba(122, 103, 80, 0.08); border: 1px solid transparent; border-radius: 8px; font-size: 17px;
+        display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; color: #58706d;
+        background: transparent; border: 1px solid transparent; border-radius: 4px; font-size: 17px;
         line-height: 1;
       }
       .icon-button:hover:not(:disabled) {
@@ -250,12 +263,12 @@
         display: flex; align-items: center; gap: 6px;
       }
       .session-list {
-        display: flex; flex-direction: column; gap: 6px; min-height: 92px; max-height: min(34vh, 320px);
+        display: flex; flex-direction: column; gap: 3px; min-height: 92px; max-height: min(34vh, 320px);
         overflow-y: auto;
       }
       .session-list-state {
-        padding: 16px 12px; color: var(--muted); font-size: 12px; text-align: center;
-        border: 1px dashed var(--border-strong); border-radius: 8px;
+        padding: 16px 12px; color: var(--muted); font-size: 11px; text-align: center;
+        border: 1px dashed var(--border-strong); border-radius: 4px;
       }
       .session-list-state.error {
         color: var(--danger);
@@ -265,13 +278,13 @@
       }
       .session-item {
         position: relative; display: flex; align-items: center; width: 100%; min-height: 54px; padding: 4px;
-        color: var(--text); background: rgba(255, 255, 255, 0.72); border: 1px solid var(--border); border-radius: 8px;
+        color: var(--text); background: transparent; border: 1px solid transparent; border-radius: 4px;
       }
       .session-item:hover, .session-item:focus-within {
-        border-color: var(--border-strong); background: rgba(255, 255, 255, 0.94);
+        border-color: var(--border); background: #f0f3ee;
       }
       .session-item.selected {
-        border-color: rgba(216, 137, 92, 0.55); background: rgba(231, 164, 125, 0.14);
+        border-color: transparent; background: #e0eee6;
       }
       .session-select-button {
         min-width: 0; min-height: 44px; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto;
@@ -285,11 +298,11 @@
         min-width: 0; display: grid; gap: 3px;
       }
       .session-item-title {
-        overflow: hidden; color: var(--text); font-size: 13px; font-weight: 650; text-overflow: ellipsis;
+        overflow: hidden; color: var(--text); font-size: 12px; font-weight: 600; text-overflow: ellipsis;
         white-space: nowrap;
       }
-      .session-item-id, .session-item-time {
-        color: var(--muted); font-size: 10px;
+      .session-item-time {
+        color: var(--muted); font-family: var(--mono); font-size: 8px;
       }
       .session-item-time {
         white-space: nowrap;
@@ -308,12 +321,12 @@
         position: fixed; z-index: 40; inset: 0; background: transparent;
       }
       .session-action-menu {
-        position: fixed; z-index: 41; width: 148px; padding: 6px; background: rgba(255, 253, 249, 0.99);
-        border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: 0 16px 34px rgba(75, 52, 31, 0.2);
+        position: fixed; z-index: 41; width: 148px; padding: 6px; background: #fff;
+        border: 1px solid var(--border-strong); border-radius: 5px; box-shadow: 0 12px 28px rgba(20, 48, 46, 0.14);
       }
       .session-action-menu-item {
         display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 8px; width: 100%;
-        padding: 9px 10px; color: var(--text); text-align: left; background: transparent; border-radius: 7px;
+        padding: 9px 10px; color: var(--text); text-align: left; background: transparent; border-radius: 3px; font-size: 12px;
       }
       .session-action-menu-item:hover:not(:disabled), .session-action-menu-item:focus-visible {
         transform: none; background: rgba(122, 103, 80, 0.1);
@@ -324,63 +337,52 @@
       .session-action-icon {
         font-size: 15px; text-align: center;
       }
-      .event-feed-toggle {
-        width: 100%; padding: 0; color: inherit; text-align: left; background: transparent; border-radius: 0;
-      }
-      .event-feed-toggle:hover:not(:disabled) {
-        transform: none;
-      }
-      .event-feed-toggle-copy {
-        display: flex; align-items: center; gap: 8px;
-      }
-      .event-feed-chevron {
-        color: var(--muted); font-size: 12px; transition: transform 140ms ease;
-      }
-      .event-feed-chevron.expanded {
-        transform: rotate(90deg);
-      }
       /* Conversation */
       .chat-shell {
         display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; overflow: hidden;
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 251, 247, 0.92));
+        background: var(--panel);
       }
       .chat-header {
-        padding: 22px 24px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center;
+        padding: 19px 22px 17px; border-bottom: 1px solid var(--border); display: flex; align-items: center;
         justify-content: space-between; gap: 18px;
       }
       .chat-title {
-        margin: 0; font-size: 24px; font-weight: 700;
+        margin: 0; color: var(--accent-strong); font-size: 22px; font-weight: 600; letter-spacing: -0.045em;
       }
       .chat-subtitle {
-        margin: 6px 0 0; color: var(--muted); font-size: 15px;
+        margin: 4px 0 0; color: var(--muted); font-size: 11px;
       }
       .chat-header-actions {
         display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end;
       }
+      .connection-banner {
+        display: flex; align-items: center; justify-content: center; gap: 9px; padding: 8px 14px;
+        color: #596866; background: #fffaf1; border-bottom: 1px solid #ece3cc; font-size: 11px;
+      }
+      .connection-banner::before {
+        content: ""; width: 7px; height: 7px; border-radius: 50%; background: #d5a044;
+        animation: status-pulse 1.4s ease-in-out infinite;
+      }
       .waiting-badge {
-        display: inline-flex; align-items: center; gap: 8px; padding: 14px 18px; border-radius: 999px;
-        border: 1px solid rgba(231, 164, 125, 0.42); background: rgba(255, 246, 239, 0.92); color: #9d562e;
-        font-size: 16px; font-weight: 700;
+        display: inline-flex; align-items: center; gap: 8px; padding: 8px 11px; border-radius: 4px;
+        border: 1px solid #efd0c6; background: #fff3ee; color: #8c4b3d; font-size: 11px; font-weight: 700;
       }
       .chat-log {
-        overflow: auto; min-height: 0; padding: 22px 24px 30px; display: flex; flex-direction: column; gap: 22px;
+        overflow: auto; min-height: 0; padding: 24px 28px 30px; display: flex; flex-direction: column; gap: 18px;
       }
       .empty-state {
-        margin: auto; max-width: 560px; padding: 24px 28px; border-radius: 24px; border: 1px solid var(--border);
-        background: rgba(255, 255, 255, 0.72); text-align: left; color: var(--muted); line-height: 1.6; display: grid;
+        margin: auto; max-width: 480px; padding: 24px; border-radius: 6px; border: 1px solid var(--border);
+        background: #f7f8f4; text-align: left; color: var(--muted); line-height: 1.6; display: grid;
         gap: 12px;
       }
       .empty-state h3 {
-        margin: 0; color: var(--text); font-size: 20px;
+        margin: 0; color: var(--accent-strong); font-size: 17px; font-weight: 600; letter-spacing: -0.02em;
       }
       .empty-state p {
         margin: 0;
       }
-      .empty-state-list {
-        margin: 0; padding-left: 18px; display: grid; gap: 8px;
-      }
       .message {
-        display: flex; flex-direction: column; gap: 10px; animation: rise 220ms ease;
+        display: flex; flex-direction: column; gap: 7px; animation: rise 220ms ease;
       }
       .message.user {
         align-items: flex-end;
@@ -389,53 +391,51 @@
         align-items: flex-start;
       }
       .message-meta {
-        font-size: 13px; color: var(--muted); display: flex; gap: 8px; align-items: center; font-weight: 600;
+        color: #788482; display: flex; gap: 8px; align-items: center; font-family: var(--mono);
+        font-size: 9px; font-weight: 500; letter-spacing: 0.03em; text-transform: uppercase;
       }
       .message.user .message-meta {
         justify-content: flex-end;
       }
       .bubble {
-        max-width: var(--message-max-width); padding: 18px 26px; border-radius: 28px; line-height: 1.68;
-        white-space: pre-wrap; word-break: break-word; border: 1px solid rgba(191, 160, 128, 0.18);
-        background: rgba(255, 255, 255, 0.92);
+        max-width: var(--message-max-width); padding: 13px 16px; border-radius: 6px; line-height: 1.65;
+        white-space: pre-wrap; word-break: break-word; border: 1px solid var(--border); background: #fff;
       }
       .message.user .bubble {
-        background: linear-gradient(180deg, #f7e6d9, #f4dccd); color: var(--text);
-        border-color: rgba(231, 164, 125, 0.24); border-top-right-radius: 12px;
+        max-width: var(--user-message-max-width); color: #fff; background: var(--accent);
+        border-color: var(--accent); border-top-right-radius: 2px;
       }
       .message.assistant .bubble {
-        background: rgba(255, 255, 255, 0.96); border-top-left-radius: 12px;
+        background: #fff; border-top-left-radius: 2px;
       }
       .thinking-card {
         max-width: var(--message-max-width);
-        border: 1px solid rgba(191, 160, 128, 0.22);
-        border-radius: 12px;
-        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid var(--border); border-radius: 5px; background: #f5f6f2;
         overflow: hidden;
       }
       .thinking-header {
         width: 100%; border: 0; background: transparent; color: var(--muted);
-        padding: 9px 12px; display: flex; justify-content: space-between;
+        padding: 8px 10px; display: flex; justify-content: space-between; font-size: 11px;
         cursor: pointer; font: inherit;
       }
       .thinking-text {
-        margin: 0; padding: 0 12px 12px; color: var(--muted);
+        margin: 0; padding: 0 10px 10px; color: var(--muted); font-size: 12px;
         white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit;
       }
       .rich-text {
-        display: grid; gap: 14px; white-space: normal; overflow-x: auto;
+        display: grid; gap: 11px; white-space: normal; overflow-x: auto;
       }
       .rich-text table {
         border-collapse: collapse; width: max-content; min-width: 100%; font-size: 0.95em;
       }
       .rich-text th, .rich-text td {
-        padding: 7px 14px; border: 1px solid rgba(191, 160, 128, 0.3); text-align: left; white-space: nowrap;
+        padding: 7px 14px; border: 1px solid var(--border); text-align: left; white-space: nowrap;
       }
       .rich-text th {
-        background: rgba(231, 164, 125, 0.12); font-weight: 600;
+        background: #edf5ef; font-weight: 600;
       }
       .rich-text tr:nth-child(even) td {
-        background: rgba(231, 164, 125, 0.04);
+        background: #f7f8f4;
       }
       .rich-text > :first-child {
         margin-top: 0;
@@ -447,7 +447,7 @@
         margin: 0;
       }
       .rich-text h1, .rich-text h2, .rich-text h3, .rich-text h4, .rich-text h5, .rich-text h6 {
-        color: #241810; line-height: 1.3;
+        color: var(--accent-strong); line-height: 1.3;
       }
       .rich-text h1 {
         font-size: 1.5em;
@@ -459,7 +459,7 @@
         font-size: 1.18em;
       }
       .rich-text hr {
-        border: 0; border-top: 1px solid rgba(191, 160, 128, 0.35);
+        border: 0; border-top: 1px solid var(--border);
       }
       .rich-text ul, .rich-text ol {
         padding-left: 24px;
@@ -468,82 +468,81 @@
         margin-top: 6px;
       }
       .rich-text a {
-        color: #9d562e; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
+        color: #b84d38; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
       }
       .rich-text strong {
         font-weight: 700;
       }
       .rich-text code {
-        display: inline; padding: 2px 8px; border-radius: 999px; background: rgba(47, 36, 30, 0.08); color: #6c3f21;
-        font-family: Consolas, "Courier New", monospace; font-size: 0.95em;
+        display: inline; padding: 2px 5px; border-radius: 3px; background: #edf0ec; color: #28504b;
+        font-family: var(--mono); font-size: 0.9em;
       }
       .rich-text pre {
-        max-width: 100%; overflow-x: auto; padding: 14px 16px; border-radius: 18px; background: #2f241e; color: #f8efe4;
-        font-family: Consolas, "Courier New", monospace; font-size: 13px; line-height: 1.55;
+        max-width: 100%; overflow-x: auto; padding: 14px 16px; border-radius: 5px; background: #182321; color: #eef7f1;
+        font-family: var(--mono); font-size: 13px; line-height: 1.55;
       }
       .rich-text pre code {
         display: block; padding: 0; border-radius: 0; background: transparent; color: inherit; font-size: inherit;
       }
       .message.system .bubble, .message.tool .bubble {
-        background: rgba(255, 249, 242, 0.9); color: #54422c;
+        background: #f1f2ee; color: #445957;
       }
       .message.error .bubble {
-        color: var(--danger); background: rgba(180, 35, 24, 0.08); border-color: rgba(180, 35, 24, 0.18);
+        color: #a94335; background: #fff2ee; border-color: #efd0c6;
       }
       .message.approval .bubble {
         padding: 0; background: transparent; border: 0; box-shadow: none;
       }
       /* Tool call toggle button */
       .turn-tools-toggle {
-        align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px;
-        border-radius: 999px; background: rgba(255, 255, 255, 0.72); border: 1px solid rgba(191, 160, 128, 0.28);
-        color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer;
+        align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px;
+        border-radius: 4px; background: #f5f6f2; border: 1px solid var(--border);
+        color: #61716f; font-size: 10px; font-weight: 600; cursor: pointer;
         transition: background 140ms ease, color 140ms ease, transform 140ms ease;
       }
       .turn-tools-toggle:hover {
         background: rgba(255, 255, 255, 0.96); color: var(--text); transform: translateY(-1px);
       }
       .composer {
-        padding: 18px 24px 24px; border-top: 1px solid var(--border); display: grid; gap: 12px;
-        background: linear-gradient(180deg, rgba(255,255,255,0.48), rgba(255,255,255,0.84));
+        padding: 16px 22px 20px; border-top: 1px solid var(--border); display: grid; gap: 10px; background: #f7f8f4;
       }
       .composer textarea {
-        min-height: 94px;
+        min-height: 78px;
       }
       .composer-row {
         display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
       }
       .composer-hint {
-        display: grid; gap: 4px; color: var(--muted); font-size: 13px;
+        display: grid; gap: 4px; color: #82908e; font-size: 10px;
       }
       /* Approval and tool cards */
       .approval-card {
-        width: fit-content; min-width: var(--message-min-width); max-width: var(--message-max-width); padding: 22px;
-        background: #fff7ef; border: 1px solid rgba(231, 164, 125, 0.26); border-radius: 26px; box-shadow: none;
-        display: flex; flex-direction: column; gap: 16px;
+        width: fit-content; min-width: var(--message-min-width); max-width: var(--message-max-width); padding: 17px;
+        background: #fffaf1; border: 1px solid #ece3cc; border-radius: 6px; box-shadow: none;
+        display: flex; flex-direction: column; gap: 12px;
       }
       .approval-card.pending {
         border-color: rgba(239, 131, 84, 0.28);
       }
       .approval-card.collapsed {
-        padding: 14px 16px; gap: 10px; border-radius: 18px;
+        padding: 14px 16px; gap: 10px; border-radius: 5px;
       }
       .approval-card.resolved {
-        border-color: rgba(107, 179, 156, 0.32); background: #f5fbf9;
+        border-color: #cfe0d6; background: #edf5ef;
       }
       .approval-card.aborted, .approval-card.unavailable, .approval-card.failed, .approval-card.denied {
         background: #fff7f4;
       }
       .approval-card h3 {
-        margin: 0; font-size: 18px; font-weight: 700;
+        margin: 0; color: var(--accent-strong); font-size: 15px; font-weight: 700;
       }
       .approval-title-row {
         display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
       }
       .approval-code {
-        margin: 0; padding: 14px; border-radius: 22px; background: #2f241e; color: #f8efe4;
+        margin: 0; padding: 14px; border-radius: 5px; background: #182321; color: #eef7f1;
         border: 1px solid rgba(47, 36, 30, 0.16); max-width: 100%; overflow-x: auto; overflow-y: hidden;
-        white-space: pre; word-break: normal; font-family: Consolas, "Courier New", monospace; font-size: 13px;
+        white-space: pre; word-break: normal; font-family: var(--mono); font-size: 13px;
         line-height: 1.55;
       }
       .approval-code, .tool-result-scroll {
@@ -562,11 +561,11 @@
         background: rgba(122, 103, 80, 0.9);
       }
       .approval-meta {
-        display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 13px;
+        display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 10px;
       }
       .meta-tag {
-        display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;
-        background: rgba(231, 164, 125, 0.2); color: #9d562e; font-size: 10.5px; font-weight: 700;
+        display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 3px;
+        background: #e0eee6; color: #4d7771; font-family: var(--mono); font-size: 8px; font-weight: 700;
         letter-spacing: 0.06em; text-transform: uppercase;
       }
       .meta-tag-warn {
@@ -593,23 +592,22 @@
         display: flex; justify-content: flex-start; gap: 10px;
       }
       .tool-card-toggle {
-        width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent;
+        width: 32px; height: 32px; padding: 0; border: 0; border-radius: 4px; background: transparent;
         color: var(--muted); font-size: 18px; cursor: pointer;
       }
       .tool-card-toggle:hover {
         background: rgba(47, 36, 30, 0.08); color: var(--text);
       }
       .tool-card-summary {
-        min-width: 0; color: var(--muted); font-family: Consolas, "Courier New", monospace; font-size: 12px;
+        min-width: 0; color: var(--muted); font-family: var(--mono); font-size: 12px;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
       .tool-card-section-label {
-        color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+        color: #4d7771; font-family: var(--mono); font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
       }
       .tool-result-card {
         width: fit-content; min-width: var(--message-min-width); max-width: var(--message-max-width); display: grid;
-        gap: 12px; padding: 18px 20px; border-radius: 22px; border: 1px solid rgba(191, 160, 128, 0.2);
-        background: rgba(255, 250, 244, 0.92);
+        gap: 12px; padding: 18px 20px; border-radius: 6px; border: 1px solid #ece3cc; background: #fffaf1;
       }
       .tool-result-card.is-error {
         border-color: rgba(180, 35, 24, 0.18); background: rgba(180, 35, 24, 0.06);
@@ -624,35 +622,34 @@
         font-weight: 700;
       }
       .tool-result-badge {
-        display: inline-flex; align-items: center; padding: 5px 10px; border-radius: 999px;
-        background: rgba(47, 36, 30, 0.08); color: var(--muted); font-size: 12px; font-weight: 700;
+        display: inline-flex; align-items: center; padding: 5px 10px; border-radius: 3px;
+        background: #e0eee6; color: #4d7771; font-family: var(--mono); font-size: 9px; font-weight: 700;
       }
       .tool-result-card.is-error .tool-result-badge {
         background: rgba(180, 35, 24, 0.1); color: var(--danger);
       }
       .tool-result-preview {
-        max-width: 100%; border-radius: 16px; overflow: hidden; padding: 8px; background: rgba(47, 36, 30, 0.05);
-        color: #5c4a36;
+        max-width: 100%; border-radius: 4px; overflow: hidden; padding: 8px; background: #f1f2ee; color: #445957;
       }
       .tool-result-body {
-        max-width: 100%; border-radius: 18px; overflow: hidden; padding: 8px; background: #2f241e; color: #f8efe4;
+        max-width: 100%; border-radius: 5px; overflow: hidden; padding: 8px; background: #182321; color: #eef7f1;
       }
       .tool-result-scroll {
-        display: block; margin: 0; max-width: 100%; overflow: auto; border-radius: 12px;
-        font-family: Consolas, "Courier New", monospace; font-size: 13px; line-height: 1.55; white-space: pre;
+        display: block; margin: 0; max-width: 100%; overflow: auto; border-radius: 3px;
+        font-family: var(--mono); font-size: 13px; line-height: 1.55; white-space: pre;
       }
       .tool-result-preview .tool-result-scroll {
         padding: 4px 6px 6px;
       }
       .tool-result-body .tool-result-scroll {
-        padding: 6px 8px 8px; font-family: Consolas, "Courier New", monospace; max-height: min(60vh, 720px);
+        padding: 6px 8px 8px; font-family: var(--mono); max-height: min(60vh, 720px);
       }
       .approval-code {
         max-height: min(50vh, 560px); overflow: auto;
       }
       .approval-status {
         display: inline-flex; align-items: center; gap: 8px; width: fit-content; padding: 7px 10px;
-        border-radius: 999px; font-size: 12px; color: var(--muted); background: rgba(114, 86, 48, 0.08);
+        border-radius: 3px; font-size: 10px; color: var(--muted); background: #f1f2ee;
       }
       .approval-status.pending {
         color: #8c4d24; background: rgba(231, 164, 125, 0.2);
@@ -663,14 +660,6 @@
       .approval-status.denied, .approval-status.aborted, .approval-status.unavailable, .approval-status.failed {
         color: var(--danger); background: rgba(180, 35, 24, 0.1);
       }
-      /* Event feed */
-      .event-list {
-        display: flex; flex-direction: column; gap: 8px; max-height: 190px; overflow: auto;
-      }
-      .event-item {
-        font-size: 12px; line-height: 1.5; color: var(--muted); padding: 10px 12px;
-        background: rgba(255, 255, 255, 0.82); border-radius: 12px; border: 1px solid rgba(191, 160, 128, 0.16);
-      }
       /* Motion and responsive */
       @keyframes rise {
         from {
@@ -679,6 +668,10 @@
         to {
           opacity: 1; transform: translateY(0);
         }
+      }
+      @keyframes status-pulse {
+        0%, 100% { opacity: 0.55; }
+        50% { opacity: 1; }
       }
       @media (max-width: 980px) {
         body {
@@ -736,7 +729,7 @@
       }
       .attachment-chip {
         display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border, #2a2a2a);
-        border-radius: 8px; background: var(--panel-muted, rgba(255,255,255,0.03));
+        border-radius: 4px; background: #f1f2ee;
       }
       .attachment-chip img {
         width: 36px; height: 36px; object-fit: cover; border-radius: 4px;
@@ -745,10 +738,10 @@
         display: flex; flex-direction: column; font-size: 11px; line-height: 1.3;
       }
       .attachment-chip-name {
-        color: var(--fg, #e5e5e5); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        color: var(--text); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
       .attachment-chip-size {
-        color: var(--fg-muted, #888);
+        color: var(--muted);
       }
       .attachment-chip-badge {
         display: inline-block; margin-top: 2px; padding: 0 6px; border-radius: 999px;
@@ -771,7 +764,7 @@
         display: flex; flex-direction: column; gap: 4px; max-width: 240px;
       }
       .bubble-attachment img {
-        width: 100%; max-height: 240px; object-fit: contain; border-radius: 6px; background: rgba(0,0,0,0.2);
+        width: 100%; max-height: 240px; object-fit: contain; border-radius: 3px; background: #edf0ec;
       }
       .bubble-attachment-meta {
         display: flex; justify-content: space-between; font-size: 11px; color: var(--fg-muted, #888);
@@ -780,14 +773,14 @@
         display: grid; gap: 8px;
       }
       .permission-indicator {
-        padding: 8px 10px; border-radius: 8px; font-size: 12px; font-weight: 700;
-        border: 1px solid var(--border, #2a2a2a);
+        padding: 8px 10px; color: #2b4b48; background: #f0f5f1; border: 0;
+        border-left: 3px solid #56b488; border-radius: 3px; font-size: 10px; font-weight: 700;
       }
       .permission-indicator.allow-all {
-        color: var(--danger, #c0382b); background: rgba(192, 56, 43, 0.1);
+        color: #765147; background: #fff3ee; border-left-color: var(--danger);
       }
       .permission-warning {
-        margin: 0; color: var(--danger, #c0382b); font-size: 12px;
+        margin: 0; color: #765147; font-size: 10px; line-height: 1.55;
       }
       </style>
   </head>
@@ -803,8 +796,19 @@
         @keydown.escape.stop="closeMobileSidebar"
       >
         <header class="brand">
-          <div class="eyebrow">WebSocket Client</div>
-          <h1 class="brand-title">my-agent chat</h1>
+          <div class="brand-copy">
+            <div class="brand-identity">
+              <span class="brand-mark" aria-hidden="true"></span>
+              <h1 class="brand-title">my-agent</h1>
+            </div>
+            <p class="brand-subtitle">Workspace assistant</p>
+          </div>
+          <div
+            class="status-pill"
+            :class="statusClass"
+            :title="lastStatusMessage"
+            role="status"
+          >{{ connectionStatusLabel }}</div>
           <button
             ref="mobileSidebarCloseButton"
             class="icon-button mobile-sidebar-close"
@@ -814,28 +818,6 @@
             @click="closeMobileSidebar"
           >×</button>
         </header>
-
-        <section class="section">
-          <div class="section-title">
-            <h2>Connection</h2>
-            <div class="status-pill" :class="statusClass">{{ connectionStatus }}</div>
-          </div>
-          <div class="field-grid">
-            <label>
-              <span class="field-label-text">WebSocket URL</span>
-              <input v-model.trim="form.url" placeholder="WebSocket URL" />
-            </label>
-          </div>
-          <div class="button-row">
-            <button class="primary" @click="connect" :disabled="isConnecting || isConnected">
-              {{ isConnected ? 'Connected' : isConnecting ? 'Connecting…' : 'Connect' }}
-            </button>
-            <button class="secondary" @click="disconnect" :disabled="!socket">Disconnect</button>
-          </div>
-          <div class="connection-meta" :title="form.clientId">
-            {{ lastStatusMessage }} · {{ form.clientId }}
-          </div>
-        </section>
 
         <section class="section">
           <div class="section-title">
@@ -892,7 +874,6 @@
                   >
                     <div class="model-provider-heading">
                       <span>{{ provider.displayName }}</span>
-                      <span class="model-provider-id">{{ provider.providerId }}</span>
                     </div>
                     <button
                       v-for="model in provider.models"
@@ -914,7 +895,6 @@
                       </span>
                       <span class="model-picker-option-copy">
                         <span class="model-picker-option-name">{{ model.displayName }}</span>
-                        <span class="model-picker-option-id">{{ model.modelId }}</span>
                       </span>
                       <span
                         v-if="isRuntimeDefaultModel(provider.providerId, model.modelId)"
@@ -1069,7 +1049,7 @@
             </div>
             <div v-else-if="sessionsError" class="session-list-state error">{{ sessionsError }}</div>
             <div v-else-if="sessions.length === 0" class="session-list-state">
-              {{ isConnected ? 'No persisted Sessions.' : 'Connect to load Sessions.' }}
+              {{ isConnected ? 'No previous conversations.' : 'Connecting…' }}
             </div>
             <div
               v-for="session in sessions"
@@ -1085,7 +1065,6 @@
               >
                 <span class="session-item-copy">
                   <span class="session-item-title">{{ session.title || 'Untitled' }}</span>
-                  <span class="session-item-id">{{ shortSessionId(session.sessionId) }}</span>
                 </span>
                 <span class="session-item-time">{{ formatSessionTime(session.updatedAt) }}</span>
               </button>
@@ -1209,33 +1188,9 @@
             Active: {{ permissionMode === 'allow_all' ? 'Allow all for this Session' : 'Manual permissions' }}
           </div>
           <p v-if="permissionMode === 'allow_all'" class="permission-warning">
-            Warning: every non-denied tool can run without asking, including Shell commands
-            and external filesystem changes. Executable and dependency integrity is not
-            verified. This remains active after disconnect until revoked, archived, deleted,
-            or the Runtime restarts.
+            Tools can run without asking and may change files or execute commands. This stays
+            active for the Session until you switch it off.
           </p>
-        </section>
-
-        <section class="section">
-          <button
-            class="section-title event-feed-toggle"
-            type="button"
-            :aria-expanded="String(eventFeedExpanded)"
-            @click="eventFeedExpanded = !eventFeedExpanded"
-          >
-            <span class="event-feed-toggle-copy">
-              <span class="event-feed-chevron" :class="{ expanded: eventFeedExpanded }">›</span>
-              <h2>Event Feed</h2>
-            </span>
-            <small>{{ eventFeed.length }} items</small>
-          </button>
-          <div v-if="eventFeedExpanded" class="event-list">
-            <div v-if="eventFeed.length === 0" class="event-item">No events yet.</div>
-            <div v-for="item in eventFeed" :key="item.id" class="event-item">
-              <strong>{{ item.title }}</strong><br />
-              <span>{{ item.detail }}</span>
-            </div>
-          </div>
         </section>
       </aside>
 
@@ -1249,27 +1204,33 @@
       ></button>
 
       <main class="panel chat-shell">
-        <header class="chat-header">
-          <div>
-            <h2 class="chat-title">Conversation</h2>
-            <p class="chat-subtitle">{{ currentSessionLabel }} · {{ headerEndpoint }}</p>
-          </div>
-          <div class="chat-header-actions">
-            <button
-              ref="mobileSidebarTrigger"
-              class="icon-button mobile-sidebar-trigger"
-              type="button"
-              title="Open navigation"
-              aria-label="Open navigation"
-              aria-controls="sidebar-panel"
-              :aria-expanded="sidebarOpen"
-              @click="openMobileSidebar"
-            >☰</button>
-            <div v-if="pendingApprovalCount > 0" class="waiting-badge">
-              {{ pendingApprovalCount }} approval request waiting
+        <div class="chat-top">
+          <header class="chat-header">
+            <div>
+              <h2 class="chat-title">Conversation</h2>
+              <p class="chat-subtitle">{{ currentSessionLabel }}</p>
             </div>
+            <div class="chat-header-actions">
+              <button
+                ref="mobileSidebarTrigger"
+                class="icon-button mobile-sidebar-trigger"
+                type="button"
+                title="Open navigation"
+                aria-label="Open navigation"
+                aria-controls="sidebar-panel"
+                :aria-expanded="sidebarOpen"
+                @click="openMobileSidebar"
+              >☰</button>
+              <div v-if="pendingApprovalCount > 0" class="waiting-badge">
+                {{ pendingApprovalCount }} approval request waiting
+              </div>
+            </div>
+          </header>
+
+          <div v-if="!isConnected" class="connection-banner" role="status">
+            {{ connectionStatus === 'disconnected' ? 'Agent unavailable. Retrying automatically…' : 'Connecting to your agent…' }}
           </div>
-        </header>
+        </div>
 
         <section ref="chatLogEl" class="chat-log">
           <div v-if="historyStatus === 'loading' && displayedChatItems.length === 0" class="empty-state">
@@ -1524,7 +1485,6 @@
           <div class="composer-row">
             <div class="composer-hint">
               <span>Press Enter to send or Shift+Enter for a new line. Attach up to {{ maxAttachmentsPerMessage }} images (10 MB total) by button, drop, or paste.</span>
-              <span>A new Session requests its ID on first send and joins event broadcasts after <code>run_turn</code> is sent.</span>
             </div>
             <div class="button-row">
               <button
@@ -1556,6 +1516,8 @@
       const DEFAULT_SOCKET_PATH = __MY_AGENT_WEBSOCKET_PATH__;
       const DEFAULT_SOCKET_PROTOCOL = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const DEFAULT_SOCKET_URL = `${DEFAULT_SOCKET_PROTOCOL}//${window.location.host}${DEFAULT_SOCKET_PATH}`;
+      const RECONNECT_BASE_DELAY_MS = 750;
+      const RECONNECT_MAX_DELAY_MS = 12_000;
       const MAX_EVENT_FEED_ITEMS = 40;
       const TOOL_RESULT_PREVIEW_HEAD_LINES = 6;
       const TOOL_RESULT_PREVIEW_TAIL_LINES = 4;
@@ -1670,12 +1632,14 @@
         data() {
           return {
             form: {
-              url: DEFAULT_SOCKET_URL,
               clientId: createClientId(),
               sessionId: '',
             },
             socket: null,
             connectionStatus: 'disconnected',
+            reconnectTimer: null,
+            reconnectAttempt: 0,
+            isShuttingDown: false,
             helloAcknowledged: false,
             modelCatalog: null,
             pendingCatalogRequestId: null,
@@ -1694,7 +1658,6 @@
             nextSessionOperationRequestId: 1,
             nextHistoryRequestId: 1,
             sessionsError: '',
-            eventFeedExpanded: false,
             modelSelection: null,
             modelSelectionSource: 'none',
             reasoningSelection: {
@@ -1720,11 +1683,17 @@
           window.addEventListener('resize', this.syncResponsiveLayout);
           window.addEventListener('scroll', this.repositionSessionActionMenu, true);
           window.addEventListener('keydown', this.handleGlobalKeydown);
+          window.addEventListener('online', this.handleBrowserOnline);
+          window.addEventListener('pagehide', this.stopConnection);
+          this.connect();
         },
         beforeUnmount() {
           window.removeEventListener('resize', this.syncResponsiveLayout);
           window.removeEventListener('scroll', this.repositionSessionActionMenu, true);
           window.removeEventListener('keydown', this.handleGlobalKeydown);
+          window.removeEventListener('online', this.handleBrowserOnline);
+          window.removeEventListener('pagehide', this.stopConnection);
+          this.stopConnection();
         },
         computed: {
           activeSessionState() {
@@ -1773,7 +1742,9 @@
             set(value) { this.activeSessionState.attachError = value; },
           },
           isConnected() { return this.connectionStatus === 'connected'; },
-          isConnecting() { return this.connectionStatus === 'connecting'; },
+          isConnecting() {
+            return this.connectionStatus === 'connecting' || this.connectionStatus === 'reconnecting';
+          },
           canSend() {
             if (!this.isConnected || !this.helloAcknowledged) return false;
             if (!this.modelSelectionValid) return false;
@@ -1789,10 +1760,17 @@
           },
           statusClass() {
             if (this.connectionStatus === 'connected') return 'connected';
-            if (this.connectionStatus === 'connecting') return 'connecting';
-            return '';
+            if (this.connectionStatus === 'connecting' || this.connectionStatus === 'reconnecting') {
+              return 'connecting';
+            }
+            return 'disconnected';
           },
-          headerEndpoint() { return this.form.url || DEFAULT_SOCKET_URL; },
+          connectionStatusLabel() {
+            if (this.connectionStatus === 'connected') return 'Online';
+            if (this.connectionStatus === 'reconnecting') return 'Retrying';
+            if (this.connectionStatus === 'connecting') return 'Connecting';
+            return 'Offline';
+          },
           currentSession() {
             return this.sessions.find(session => session.sessionId === this.form.sessionId) ?? null;
           },
@@ -2012,6 +1990,7 @@
               this.clearTransientState();
               this.lastStatusMessage = detail;
               this.pushEvent('close', detail);
+              this.scheduleReconnect();
             });
             socket.addEventListener('error', () => {
               if (this.socket !== socket) return;
@@ -2019,35 +1998,55 @@
               this.pushEvent('error', 'WebSocket transport error');
             });
           },
-          connect() {
-            if (this.isConnecting || this.isConnected) return;
+          connect(options = {}) {
+            if (this.socket || this.isConnected) return;
+            this.cancelReconnect();
             try {
-              this.disconnect({ silent: true });
-              const socket = new WebSocket(this.form.url);
+              const socket = new WebSocket(DEFAULT_SOCKET_URL);
               this.socket = socket;
-              this.connectionStatus = 'connecting';
+              this.connectionStatus = options.isRetry ? 'reconnecting' : 'connecting';
               this.clearTransientState();
-              this.lastStatusMessage = 'Opening websocket…';
-              this.pushEvent('socket', `Connecting to ${this.form.url}`);
+              this.lastStatusMessage = options.isRetry ? 'Reconnecting to agent…' : 'Connecting to agent…';
+              this.pushEvent('socket', `Connecting to ${DEFAULT_SOCKET_URL}`);
               this.attachSocketListeners(socket);
             } catch (error) {
               this.connectionStatus = 'disconnected';
               this.clearTransientState();
               this.lastStatusMessage = error instanceof Error ? error.message : String(error);
               this.pushEvent('error', this.lastStatusMessage);
+              this.scheduleReconnect();
             }
           },
-          disconnect(options = {}) {
+          scheduleReconnect() {
+            if (this.isShuttingDown || this.reconnectTimer !== null) return;
+            const exponent = Math.min(this.reconnectAttempt, 4);
+            const delay = Math.min(RECONNECT_BASE_DELAY_MS * (2 ** exponent), RECONNECT_MAX_DELAY_MS);
+            this.reconnectAttempt += 1;
+            this.connectionStatus = 'reconnecting';
+            this.lastStatusMessage = `Connection lost. Retrying in ${Math.ceil(delay / 1000)}s…`;
+            this.reconnectTimer = window.setTimeout(() => {
+              this.reconnectTimer = null;
+              this.connect({ isRetry: true });
+            }, delay);
+          },
+          cancelReconnect() {
+            if (this.reconnectTimer === null) return;
+            window.clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+          },
+          handleBrowserOnline() {
+            if (this.socket || this.isConnected) return;
+            this.cancelReconnect();
+            this.connect({ isRetry: true });
+          },
+          stopConnection() {
+            this.isShuttingDown = true;
+            this.cancelReconnect();
             if (!this.socket) return;
             const current = this.socket;
             this.socket = null;
             this.connectionStatus = 'disconnected';
-            this.clearTransientState();
-            if (!options.silent) {
-              this.lastStatusMessage = 'Disconnected by client.';
-              this.pushEvent('socket', 'Disconnected by client');
-            }
-            current.close(1000, 'client disconnect');
+            current.close(1000, 'page closed');
           },
 
           // ── Sending ───────────────────────────────────────────
@@ -2938,6 +2937,7 @@
             switch (message.type) {
               case 'hello_ack':
                 this.connectionStatus = 'connected';
+                this.reconnectAttempt = 0;
                 this.helloAcknowledged = true;
                 this.lastStatusMessage = `Hello acknowledged as ${message.clientId}`;
                 this.pushEvent('hello', `Server acknowledged client ${message.clientId}`);
