@@ -1,7 +1,7 @@
 # Thinking Generation Controls Specification
 
-> Status: Accepted
-> Date: 2026-10-03
+> Status: Implemented, validated and archived
+> Date: 2026-10-08
 > Owner: Project owner
 > Related: [Plan](plan.md), [Validation](validation.md), [Research source](../../../research/thinking-generation-and-display-controls-design-draft.md)
 
@@ -259,6 +259,6 @@ Abort/流错误沿用已有终态和partial保存，不新增自动协议重试�
 每步聚焦Unit/契约验证，跨边界集成、相关Fitness及最终lint/build/Relay/浏览器验证
 按Plan执行；文档创建不算生产行为验证，不自动调用计费模型。
 
-当前无新增公共语义待决策。Delivery前仍需所有者接受本Draft及对应步骤授权；
-Anthropic目标协议fixture和adaptive映射、Relay Router实际标识与包清单接线在实施中
-核实并记录，不据此增加公共配置层。若证据要求改变语义则回到Plan停止条件。
+当前无新增公共语义待决策。Anthropic目标协议fixture和adaptive映射、Relay Router
+实际标识与包清单接线均已在实施中核实并记录，未增加公共配置层。交付已由所有者于
+2026-10-08接受并归档。

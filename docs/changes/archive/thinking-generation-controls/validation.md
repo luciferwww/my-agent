@@ -1,7 +1,7 @@
 # Thinking Generation Controls Validation
 
-> Status: Technical validation complete — owner acceptance pending
-> Date: 2026-10-03
+> Status: Accepted and Archived
+> Date: 2026-10-08
 > Authority: Acceptance matrix, evidence and gate tracking only
 > Related: [Plan](plan.md), [Specification](specification.md)
 
@@ -91,7 +91,7 @@ verify:websocket-host。
 | G0 Spec与Delivery接受 | Passed（2026-10-03） | 所有者接受Spec、确认TGC-P1，并授权继续至完整实施 |
 | 协议fixture准备 | Passed | 三协议请求/事件/工具续轮、预算及Relay双协议fixture |
 | 各Plan Item聚焦验证 | TGC-P1–P5 Completed | 命令、执行结果、关联TGC及具体失败/限制 |
-| G1完整验收 | Technical gate passed；owner acceptance pending | 自动/浏览器/集成/构建证据、独立评审、文档同步已完成；等待所有者接受 |
+| G1完整验收 | Passed（2026-10-08） | 自动/浏览器/集成/构建证据、独立评审和文档同步已完成；所有者接受完整交付并批准归档 |
 
 文档结构检查、后续测试命令和Gate结果追加在本节，不将Pending改为Passed而没有证据。
 后续P1结果记录如下；仍没有真实协议接受性结论。
@@ -277,8 +277,8 @@ TGC-23–26、32及35取得P4范围证据；UI排序、选择和摘要仍由P5�
 | 独立评审 | 发现并修复2项中优先级契约偏差：Responses summary冒充独立on、Relay重复已知effort静默去重；相关测试94/94及最终全量Gate通过 |
 
 TGC-01–38均有对应阶段自动证据；TGC-06、21、27–28、30、33–34、38另有浏览器证据。
-没有真实模型调用或费用。技术Gate完成，保留已知FT-12日期基线和Node版本环境限制，等待
-所有者接受后归档。
+没有真实模型调用或费用。技术Gate完成，保留已知FT-12日期基线和Node版本环境限制。
+所有者于2026-10-08接受完整交付，Change已归档。
 
 ### 2026-10-03 Built-in OpenAI独立开关补齐
 

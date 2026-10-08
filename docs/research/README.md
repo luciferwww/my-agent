@@ -16,4 +16,4 @@ This directory is reserved for external comparisons and exploratory analysis. Re
 - [New Session Model Draft](session-model-design-draft.md) - non-authorizing clean-format proposal derived from the comparison and current implementation.
 - [Runtime Steering 与 Runner 配置设计草稿](runner-configuration-and-steering-design-draft.md) - 不授权实现的四个候选事项：Runtime steering 全局开关、Runtime/Runner 配置与默认值所有权、pending steering 批处理、可选 Model 调用预算。
 - [Thinking 采集与展示设计草稿](thinking-capture-and-display-design-draft.md) - 非权威研究与Spike证据；Chat Completions/Responses实现已由完成并归档的[Thinking Change](../changes/archive/thinking-capture-and-display/plan.md)承接，Anthropic仍暂缓。
-- [Thinking 生成与展示控制设计草稿](thinking-generation-and-display-controls-design-draft.md) - 非授权讨论来源；每模型reasoning能力、消息级选择、默认兼容、三协议映射与Relay双协议路由已由[Thinking Generation Controls Active Change](../changes/active/thinking-generation-controls/plan.md)承接契约及验收准备；生产Delivery未开始。
+- [Thinking 生成与展示控制设计草稿](thinking-generation-and-display-controls-design-draft.md) - 非授权讨论来源；每模型reasoning能力、消息级选择、默认兼容、三协议映射与Relay双协议路由已由完成并归档的[Thinking Generation Controls Change](../changes/archive/thinking-generation-controls/plan.md)交付。
