@@ -177,14 +177,35 @@ npm run agent -- --agent-home ./agent-home --cli
 Useful CLI commands include:
 
 ```text
-/sessions
-/session
+/help
+
 /models
 /model
+/model default
+/model <providerId> <JSON-string-modelId>
+
+/sessions
+/session
+/session new
+/session use <sessionId>
+/session rename <JSON-string|null>
+/session delete
+
 /permission
-/permission manual
-/permission allow_all
+/permission manual|allow_all
+
+/reasoning
+/thinking
+/thinking default|on|off
+/effort
+/effort default|none|minimal|low|medium|high|xhigh|max
 ```
+
+Selection commands (`/model`, `/session`, `/permission`, `/thinking`, and
+`/effort`) open a numbered selector when used without arguments and retain
+their direct forms for repeatable input. Selecting an existing Session shows a
+bounded preview of its recent persisted history before returning to the
+prompt.
 
 Standalone Host-local Channel selection:
 

@@ -257,8 +257,26 @@ describe('CliChannel model commands', () => {
             providerId: 'relay',
             displayName: 'Relay <Local>',
             models: [
-              { modelId: 'model-a', displayName: 'Model A' },
-              { modelId: 'model-b', displayName: 'Model B' },
+              {
+                modelId: 'model-a',
+                displayName: 'Model A',
+                capabilities: {
+                  reasoning: {
+                    thinking: ['on', 'off'],
+                    efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+                  },
+                },
+              },
+              {
+                modelId: 'model-b',
+                displayName: 'Model B',
+                capabilities: {
+                  reasoning: {
+                    thinking: ['off'],
+                    efforts: ['none', 'low'],
+                  },
+                },
+              },
               { modelId: ' model/vendor:v1?x=1\n\u0000 ', displayName: 'Opaque\nModel' },
               { modelId: '', displayName: 'Empty ID' },
             ],
@@ -310,6 +328,7 @@ describe('CliChannel model commands', () => {
   async function startInteractive(
     defaultSelection?: DefaultModelSelection,
     capabilityOverride?: ChannelRuntimeCapabilities,
+    approval = false,
   ) {
     const existingSigIntListeners = process.listeners('SIGINT');
     const input = new PassThrough();
@@ -317,7 +336,7 @@ describe('CliChannel model commands', () => {
     const chunks: Buffer[] = [];
     output.on('data', (chunk: Buffer) => chunks.push(chunk));
     const handler = vi.fn(async () => undefined);
-    const channel = new CliChannel({ input, output });
+    const channel = new CliChannel({ input, output, approval });
     channel.bindRuntimeCapabilities(capabilityOverride ?? catalogCapabilities(defaultSelection));
     channel.onMessage(handler);
     await channel.start();
@@ -405,9 +424,10 @@ describe('CliChannel model commands', () => {
     try {
       fixture.input.write('/model\n');
       await vi.waitFor(() => expect(fixture.captured()).toContain(
-        'default: missing/gone (unavailable: provider_unregistered)',
+        'Runtime default (missing/gone, unavailable) [current]',
       ));
-      expect(fixture.captured()).toContain('effective: none');
+      fixture.input.write('\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[model] unchanged.'));
 
       fixture.input.write('/model relay "missing"\n');
       await vi.waitFor(() => expect(fixture.captured()).toContain('is not in generation 7'));
@@ -442,11 +462,12 @@ describe('CliChannel model commands', () => {
     }
   });
 
-  it('reports local unavailability when capabilities are not bound', () => {
+  it('reports local unavailability when capabilities are not bound', async () => {
     const { channel, captured } = makeChannel();
-    const handled = (channel as unknown as { handleModelCommand(input: string): boolean })
-      .handleModelCommand('/models');
-    expect(handled).toBe(true);
+    const handled = (channel as unknown as {
+      handleModelCommand(input: string): Promise<boolean>;
+    }).handleModelCommand('/models');
+    await expect(handled).resolves.toBe(true);
     expect(captured()).toContain('Runtime Model Catalog is not bound');
   });
 
@@ -500,12 +521,14 @@ describe('CliChannel model commands', () => {
     });
     const deleteSession = vi.fn(async () => undefined);
     const baseCapabilities = catalogCapabilities(undefined, createSession);
+    const getHistory = vi.fn(baseCapabilities.sessions.getHistory);
     const runtimeCapabilities: ChannelRuntimeCapabilities = {
       ...baseCapabilities,
       sessions: {
         ...baseCapabilities.sessions,
         listSessions,
         getSession,
+        getHistory,
         renameSession,
         deleteSession,
       },
@@ -527,13 +550,16 @@ describe('CliChannel model commands', () => {
         '[session] new; the first message will create it.',
       ));
       expect(createSession).toHaveBeenCalledTimes(1);
+      expect(getHistory).not.toHaveBeenCalled();
 
       fixture.input.write(`/session use ${CLI_SESSION_ID}\n`);
       await vi.waitFor(() => expect(fixture.captured()).toContain(
-        `[session] current ${CLI_SESSION_ID}.`,
+        `[session] current ${CLI_SESSION_ID} First message.`,
       ));
       fixture.input.write('/session\n');
-      await vi.waitFor(() => expect(getSession).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[select session]'));
+      fixture.input.write('\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[session] unchanged.'));
       fixture.input.write('/session rename "Renamed"\n');
       await vi.waitFor(() => expect(fixture.captured()).toContain(
         `[session] renamed ${CLI_SESSION_ID} Renamed.`,
@@ -543,7 +569,8 @@ describe('CliChannel model commands', () => {
         `[session] deleted ${CLI_SESSION_ID}.`,
       ));
 
-      expect(listSessions).toHaveBeenCalledTimes(1);
+      expect(listSessions).toHaveBeenCalledTimes(2);
+      expect(getHistory).toHaveBeenCalledTimes(1);
       expect(renameSession).toHaveBeenCalledWith(CLI_SESSION_ID, 'Renamed');
       expect(deleteSession).toHaveBeenCalledWith(CLI_SESSION_ID);
       expect(fixture.handler).toHaveBeenCalledTimes(1);
@@ -575,7 +602,10 @@ describe('CliChannel model commands', () => {
       await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledTimes(1));
 
       fixture.input.write('/permission\n');
-      await vi.waitFor(() => expect(fixture.captured()).toContain('[permission] manual'));
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[select permission]'));
+      expect(fixture.captured()).toContain('manual (individual approvals required) [current]');
+      fixture.input.write('\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[permission] unchanged.'));
 
       fixture.input.write('/permission allow_all\n');
       await vi.waitFor(() => expect(fixture.captured()).toContain(
@@ -595,6 +625,362 @@ describe('CliChannel model commands', () => {
         mode: 'manual',
       }));
       expect(fixture.captured()).toContain('individual approvals required');
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('renders grouped help without dispatching a message', async () => {
+    const fixture = await startInteractive();
+    try {
+      fixture.input.write('/help\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[help]'));
+      expect(fixture.captured()).toContain('Model');
+      expect(fixture.captured()).toContain('Reasoning');
+      expect(fixture.captured()).toContain('Sessions');
+      expect(fixture.captured()).toContain('Permissions');
+      expect(fixture.captured()).toContain('Ctrl+C');
+      expect(fixture.handler).not.toHaveBeenCalled();
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('supports numbered Model, Thinking, and effort selectors', async () => {
+    const fixture = await startInteractive();
+    try {
+      fixture.input.write('/model\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[select model]'));
+      fixture.input.write('2\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain(
+        'override set to relay/model-a',
+      ));
+
+      fixture.input.write('/thinking\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[select thinking]'));
+      fixture.input.write('2\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[thinking] on'));
+
+      fixture.input.write('/effort\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[select effort]'));
+      fixture.input.write('6\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[effort] high'));
+
+      fixture.input.write('hello\n');
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
+        sessionId: CLI_SESSION_ID,
+        message: 'hello',
+        modelReference: { providerId: 'relay', modelId: 'model-a' },
+        reasoning: { thinking: 'on', effort: 'high' },
+      }));
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('supports direct reasoning commands and reports combined status', async () => {
+    const fixture = await startInteractive();
+    try {
+      fixture.input.write('/thinking off\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[thinking] off'));
+      fixture.input.write('/effort none\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[effort] none'));
+      fixture.input.write('/reasoning\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[reasoning]'));
+      expect(fixture.captured()).toContain('Model: relay/model-a');
+      expect(fixture.captured()).toContain('Thinking: off');
+      expect(fixture.captured()).toContain('Effort: none');
+
+      fixture.input.write('hello\n');
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
+        sessionId: CLI_SESSION_ID,
+        message: 'hello',
+        reasoning: { thinking: 'off', effort: 'none' },
+      }));
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('rejects invalid and unsupported reasoning selections without mutation', async () => {
+    const fixture = await startInteractive();
+    try {
+      fixture.input.write('/effort none\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[effort] none'));
+      fixture.input.write('/thinking on\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain(
+        'thinking=on cannot be combined with effort=none',
+      ));
+
+      fixture.input.write('/model relay "model-b"\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain(
+        'override set to relay/model-b',
+      ));
+      fixture.input.write('/thinking on\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain(
+        'on is not supported by the effective Model',
+      ));
+
+      fixture.input.write('/reasoning\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('Model: relay/model-b'));
+      expect(fixture.captured()).toContain('Thinking: default');
+      expect(fixture.captured()).toContain('Effort: none');
+      expect(fixture.handler).not.toHaveBeenCalled();
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('reconciles stale reasoning selections before dispatch', async () => {
+    const capabilities = catalogCapabilities();
+    let snapshot = capabilities.modelCatalog.getSnapshot();
+    capabilities.modelCatalog.getSnapshot = () => snapshot;
+    const fixture = await startInteractive(undefined, capabilities);
+    try {
+      fixture.input.write('/thinking on\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[thinking] on'));
+      fixture.input.write('/effort high\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[effort] high'));
+
+      snapshot = {
+        ...snapshot,
+        generation: 8,
+        providers: snapshot.providers.map((provider) => ({
+          ...provider,
+          models: provider.models.map((model) => ({
+            ...model,
+            capabilities: undefined,
+          })),
+        })),
+      };
+      fixture.input.write('after catalog change\n');
+
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
+        sessionId: CLI_SESSION_ID,
+        message: 'after catalog change',
+      }));
+      expect(fixture.captured()).toContain('thinking reset from on to default');
+      expect(fixture.captured()).toContain('effort reset from high to default');
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('cancels or rejects numbered selection without changing the Model', async () => {
+    const fixture = await startInteractive();
+    try {
+      fixture.input.write('/model\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[select model]'));
+      fixture.input.write('\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[model] unchanged.'));
+
+      fixture.input.write('/model\n');
+      await vi.waitFor(() => {
+        const matches = fixture.captured().match(/\[select model\]/g) ?? [];
+        expect(matches).toHaveLength(2);
+      });
+      fixture.input.write('99\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain(
+        '[model error] Selection is out of range.',
+      ));
+
+      fixture.input.write('/model\n');
+      await vi.waitFor(() => {
+        const matches = fixture.captured().match(/\[select model\]/g) ?? [];
+        expect(matches).toHaveLength(3);
+      });
+      fixture.input.write('not-a-number\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain(
+        '[model error] Selection must be a listed number.',
+      ));
+
+      fixture.input.write('hello\n');
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
+        sessionId: CLI_SESSION_ID,
+        message: 'hello',
+      }));
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('lets an Approval preempt a selector and resumes ordinary input afterward', async () => {
+    const fixture = await startInteractive(undefined, undefined, true);
+    const responseHandler = vi.fn();
+    fixture.channel.interaction?.onInteractionResponse(responseHandler);
+    try {
+      fixture.input.write('/model\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[select model]'));
+
+      expect(fixture.channel.interaction?.sendInteractionRequest({
+        id: 'approval-selector',
+        kind: 'approval',
+        callId: 'call-selector',
+        toolName: 'write_file',
+        input: { path: 'example.txt' },
+        sessionId: CLI_SESSION_ID,
+        turnId: 'turn-selector',
+      })).toEqual({ status: 'accepted' });
+      await vi.waitFor(() => expect(fixture.captured()).toContain('approve? (y/n)>'));
+      fixture.input.write('y\n');
+
+      await vi.waitFor(() => expect(responseHandler).toHaveBeenCalledWith({
+        id: 'approval-selector',
+        kind: 'approval',
+        outcome: 'submitted',
+        decision: 'allow',
+      }));
+      fixture.input.write('hello\n');
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
+        sessionId: CLI_SESSION_ID,
+        message: 'hello',
+      }));
+      expect(fixture.captured()).not.toContain('[error]');
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('selects a Session from the picker and renders safe bounded recent history', async () => {
+    const baseCapabilities = catalogCapabilities();
+    const getHistory = vi.fn(async ({ sessionId }: { sessionId: string }) => ({
+      sessionId,
+      items: [
+        {
+          entryId: 'entry-1',
+          turnId: 'turn-1',
+          timestamp: '2026-10-08T00:00:00.000Z',
+          role: 'user' as const,
+          content: 'first user message',
+        },
+        {
+          entryId: 'entry-2',
+          turnId: 'turn-1',
+          timestamp: '2026-10-08T00:00:01.000Z',
+          role: 'assistant' as const,
+          content: [
+            { type: 'text' as const, text: 'assistant answer' },
+            {
+              type: 'thinking' as const,
+              id: 'thinking-1',
+              text: 'private reasoning',
+              status: 'complete' as const,
+            },
+            {
+              type: 'image' as const,
+              source: {
+                type: 'base64' as const,
+                media_type: 'image/png',
+                data: 'SECRET_BASE64',
+              },
+              dimensions: { width: 640, height: 480 },
+            },
+          ],
+        },
+      ],
+      nextCursor: 'entry-1',
+      hasMore: true,
+    }));
+    const fixture = await startInteractive(undefined, {
+      ...baseCapabilities,
+      sessions: {
+        ...baseCapabilities.sessions,
+        listSessions: async () => [{
+          sessionId: CLI_SESSION_ID,
+          createdAt: 1,
+          updatedAt: 2,
+          title: 'Existing',
+        }],
+        getSession: async (sessionId) => ({
+          sessionId,
+          createdAt: 1,
+          updatedAt: 2,
+          title: 'Existing',
+        }),
+        getHistory,
+      },
+    });
+    try {
+      fixture.input.write('/session\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[select session]'));
+      fixture.input.write('2\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[Recent session history]'));
+
+      const output = fixture.captured();
+      expect(getHistory).toHaveBeenCalledWith({
+        sessionId: CLI_SESSION_ID,
+        limit: 20,
+      });
+      expect(output.indexOf('first user message')).toBeLessThan(
+        output.indexOf('assistant answer'),
+      );
+      expect(output).toContain('[Earlier session history not shown]');
+      expect(output).toContain('[thinking: complete] private reasoning');
+      expect(output).toContain('[image: image/png 640x480]');
+      expect(output).not.toContain('SECRET_BASE64');
+      expect(fixture.handler).not.toHaveBeenCalled();
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('bounds history output and preserves the newest records', async () => {
+    const baseCapabilities = catalogCapabilities();
+    const items = Array.from({ length: 20 }, (_, index) => ({
+      entryId: `entry-${index}`,
+      turnId: `turn-${index}`,
+      timestamp: '2026-10-08T00:00:00.000Z',
+      role: 'assistant' as const,
+      content: Array.from(
+        { length: 20 },
+        (_line, line) => `record-${index}-line-${line}`,
+      ).join('\n'),
+    }));
+    const fixture = await startInteractive(undefined, {
+      ...baseCapabilities,
+      sessions: {
+        ...baseCapabilities.sessions,
+        getHistory: async ({ sessionId }) => ({
+          sessionId,
+          items,
+          nextCursor: null,
+          hasMore: false,
+        }),
+      },
+    });
+    try {
+      fixture.input.write(`/session use ${CLI_SESSION_ID}\n`);
+      await vi.waitFor(() => expect(fixture.captured()).toContain('record-19-line-19'));
+      const output = fixture.captured();
+      expect(output).toContain('[Earlier session history not shown]');
+      expect(output).toContain('record-19-line-0');
+      expect(output).not.toContain('record-0-line-0');
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('keeps a selected Session active when recent history cannot be displayed', async () => {
+    const baseCapabilities = catalogCapabilities();
+    const fixture = await startInteractive(undefined, {
+      ...baseCapabilities,
+      sessions: {
+        ...baseCapabilities.sessions,
+        getHistory: async () => {
+          throw new Error('history offline');
+        },
+      },
+    });
+    try {
+      fixture.input.write(`/session use ${CLI_SESSION_ID}\n`);
+      await vi.waitFor(() => expect(fixture.captured()).toContain(
+        'Unable to display recent history: history offline',
+      ));
+      fixture.input.write('continue here\n');
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
+        sessionId: CLI_SESSION_ID,
+        message: 'continue here',
+      }));
     } finally {
       await fixture.close();
     }

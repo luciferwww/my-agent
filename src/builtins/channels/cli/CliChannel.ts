@@ -10,9 +10,20 @@ import type {
   ChannelInteractionAdapter,
   ChannelRunRequest,
   ChannelRuntimeCapabilities,
+  ModelCatalogEntry,
   ModelCatalogSnapshot,
+  SessionCapability,
+  SessionHistoryMessage,
+  SessionHistoryPage,
   TurnInteractionResponse,
 } from '../../../core/channel/index.js';
+import {
+  normalizeReasoningPreference,
+  ReasoningPreferenceValidationError,
+  type ReasoningPreference,
+  type ThinkingEffort,
+  type ThinkingSwitch,
+} from '../../../core/model-invocation/index.js';
 import type { ModelReference } from '../../../core/model-resolution/index.js';
 
 // Tool result preview budget: head + tail lines visible, middle elided.
@@ -22,6 +33,33 @@ const PREVIEW_HEAD_LINES = 10;
 const PREVIEW_TAIL_LINES = 6;
 // Per-line cap so a single very long line can't blow up the preview format.
 const PREVIEW_LINE_MAX_CHARS = 200;
+const SESSION_HISTORY_LIMIT = 20;
+const SESSION_HISTORY_MAX_LINES = 80;
+const SESSION_HISTORY_MAX_CHARS = 16_384;
+const PROMPT_PREEMPTED_BY_APPROVAL = Symbol('prompt-preempted-by-approval');
+const THINKING_SELECTIONS = ['default', 'on', 'off'] as const;
+const EFFORT_SELECTIONS = [
+  'default',
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] as const satisfies readonly ThinkingEffort[];
+
+type ThinkingSelection = 'default' | ThinkingSwitch;
+
+interface CliSelectionOption<T> {
+  readonly value: T;
+  readonly label: string;
+  readonly current?: boolean;
+}
+
+type CliSelectionResult<T> =
+  | { readonly selected: true; readonly value: T }
+  | { readonly selected: false };
 
 /**
  * Ctrl+C 双击关闭窗口。进程级 force policy 由 Host 独占。
@@ -63,9 +101,27 @@ function hasCatalogModel(
   snapshot: ModelCatalogSnapshot,
   reference: ModelReference,
 ): boolean {
-  return snapshot.providers.some((provider) =>
-    provider.providerId === reference.providerId
-    && provider.models.some((model) => model.modelId === reference.modelId));
+  return findCatalogModel(snapshot, reference) !== undefined;
+}
+
+function findCatalogModel(
+  snapshot: ModelCatalogSnapshot,
+  reference: ModelReference,
+): ModelCatalogEntry | undefined {
+  const provider = snapshot.providers.find(
+    (candidate) => candidate.providerId === reference.providerId,
+  );
+  return provider?.models.find((model) => model.modelId === reference.modelId);
+}
+
+function getEffectiveModelReference(
+  snapshot: ModelCatalogSnapshot,
+  override: ModelReference | undefined,
+): ModelReference | undefined {
+  return override
+    ?? (snapshot.defaultSelection.state === 'available'
+      ? snapshot.defaultSelection.reference
+      : undefined);
 }
 
 function truncateLine(line: string): string {
@@ -108,6 +164,108 @@ function formatToolResultPreview(content: string): string[] {
   return [...head, `... [${omitted} lines omitted]`, ...tail];
 }
 
+function formatHistoryText(label: string, content: string, compact: boolean): string[] {
+  const lines = compact
+    ? formatToolResultPreview(content)
+    : collapseEmptyLines(content.replace(/\n+$/, '').split('\n')).map(truncateLine);
+  if (lines.length === 0) return [truncateLine(label)];
+  return lines.map((line, index) =>
+    truncateLine(index === 0 ? `${label} ${line}` : `  ${line}`));
+}
+
+function formatHistoryMessage(message: SessionHistoryMessage): string[] {
+  const roleLabel = message.role === 'user'
+    ? '[you]'
+    : message.role === 'assistant'
+      ? '[assistant]'
+      : '[tool result]';
+  if (typeof message.content === 'string') {
+    return formatHistoryText(roleLabel, message.content, message.role === 'toolResult');
+  }
+
+  const lines: string[] = [];
+  let labeledText = false;
+  for (const block of message.content) {
+    switch (block.type) {
+      case 'text':
+        lines.push(...formatHistoryText(labeledText ? '[text]' : roleLabel, block.text, false));
+        labeledText = true;
+        break;
+      case 'thinking':
+        lines.push(...formatHistoryText(`[thinking: ${block.status}]`, block.text, true));
+        break;
+      case 'tool_use': {
+        const status = block.status ? ` status=${block.status}` : '';
+        lines.push(truncateLine(`[tool: ${formatTerminalText(block.name)}${status}]`));
+        lines.push(truncateLine(`  input: ${JSON.stringify(block.input)}`));
+        if (block.result_content !== undefined) {
+          lines.push(...formatHistoryText('  result:', block.result_content, true));
+        }
+        break;
+      }
+      case 'tool_result':
+        lines.push(...formatHistoryText(
+          `[tool result: ${block.status}]`,
+          block.content,
+          true,
+        ));
+        break;
+      case 'execution_accepted':
+        lines.push(truncateLine(
+          `[tool accepted: ${formatTerminalText(block.execution_id)}]`,
+        ));
+        break;
+      case 'image':
+        lines.push(truncateLine(
+          `[image: ${formatTerminalText(block.source.media_type)} `
+            + `${block.dimensions.width}x${block.dimensions.height}]`,
+        ));
+        break;
+    }
+  }
+  return lines.length > 0 ? lines : [roleLabel];
+}
+
+function formatSessionHistory(page: SessionHistoryPage): string[] {
+  const recordLines = page.items.map(formatHistoryMessage);
+  const maxContentLines = SESSION_HISTORY_MAX_LINES - 3;
+  const selected: string[][] = [];
+  let selectedLineCount = 0;
+  let earlierOmitted = page.hasMore;
+  let contentOmitted = false;
+
+  for (let index = recordLines.length - 1; index >= 0; index -= 1) {
+    const lines = recordLines[index]!;
+    const remaining = maxContentLines - selectedLineCount;
+    if (lines.length <= remaining) {
+      selected.unshift(lines);
+      selectedLineCount += lines.length;
+      continue;
+    }
+    earlierOmitted = earlierOmitted || index > 0;
+    if (selected.length === 0 && remaining > 0) {
+      selected.unshift(lines.slice(0, remaining));
+      selectedLineCount += remaining;
+      contentOmitted = true;
+    } else {
+      earlierOmitted = true;
+    }
+    break;
+  }
+
+  const lines = ['[Recent session history]'];
+  if (earlierOmitted) lines.push('[Earlier session history not shown]');
+  for (const record of selected) lines.push(...record);
+  if (contentOmitted) lines.push('[Some recent session history content omitted]');
+  if (page.items.length === 0) lines.push('  No persisted history.');
+
+  const charCount = lines.reduce((total, line) => total + line.length + 1, 0);
+  if (lines.length > SESSION_HISTORY_MAX_LINES || charCount > SESSION_HISTORY_MAX_CHARS) {
+    throw new Error('CLI Session history formatter exceeded its output budget.');
+  }
+  return lines;
+}
+
 export interface CliChannelConfig {
   input?: NodeJS.ReadableStream;
   output?: NodeJS.WritableStream;
@@ -140,12 +298,18 @@ export class CliChannel implements Channel {
   private completionSettled = false;
   /** 当前 readline.question 的 AbortController，用于 closure/stop 时取消底层读操作 */
   private pendingPromptAbort?: AbortController;
+  private approvalPromptAbort?: AbortController;
+  private approvalPromptCompletion?: Promise<void>;
+  private cancelApprovalPrompt?: () => void;
   // ── Abort / Ctrl+C 状态（core-abort-spec.md §12）─────────────
   /** 上次 Ctrl+C 时间戳（epoch ms）；0 = 没有近期按键。用于双击检测。 */
   private lastCtrlCAt = 0;
   /** Runtime Composition 在 start 前注入；未绑定时模型查询和首次 Session 创建不可用。 */
   private runtimeCapabilities?: ChannelRuntimeCapabilities;
   private selectedModelOverride?: ModelReference;
+  private thinkingSelection: ThinkingSelection = 'default';
+  private effortSelection: ThinkingEffort = 'default';
+
   constructor(config: CliChannelConfig = {}) {
     this.input = config.input ?? process.stdin;
     this.output = config.output ?? process.stdout;
@@ -356,7 +520,11 @@ export class CliChannel implements Channel {
         let line: string;
         try {
           line = await this.question(this.promptText);
-        } catch {
+        } catch (error) {
+          if (error === PROMPT_PREEMPTED_BY_APPROVAL) {
+            await this.approvalPromptCompletion;
+            continue;
+          }
           // rl.close() 引发 question reject → 退出循环
           break;
         }
@@ -373,11 +541,13 @@ export class CliChannel implements Channel {
         });
 
         try {
+          if (this.handleHelpCommand(line)) continue;
+          if (await this.handleReasoningCommand(line)) continue;
           if (await this.handleSessionCommand(line)) continue;
           if (await this.handlePermissionCommand(line)) continue;
-          if (this.handleModelCommand(line)) continue;
+          if (await this.handleModelCommand(line)) continue;
+          const snapshot = this.getModelCatalog();
           if (this.selectedModelOverride) {
-            const snapshot = this.getModelCatalog();
             if (!snapshot || !hasCatalogModel(snapshot, this.selectedModelOverride)) {
               this.breakStream();
               this.output.write(red(
@@ -386,19 +556,26 @@ export class CliChannel implements Channel {
               continue;
             }
           }
+          this.reconcileReasoningSelections(snapshot, 'the effective Model changed');
           const sessionId = await this.getOrCreateSessionId();
+          const reasoning = this.getReasoningPreference();
           await messageHandler({
             sessionId,
             message: trimmed,
             ...(this.selectedModelOverride
               ? { modelReference: { ...this.selectedModelOverride } }
               : {}),
+            ...(reasoning === undefined ? {} : { reasoning }),
           });
           log.debug('cli input dispatched', {
             channelId: this.id,
             sessionId,
           });
         } catch (err) {
+          if (err === PROMPT_PREEMPTED_BY_APPROVAL) {
+            await this.approvalPromptCompletion;
+            continue;
+          }
           const message = err instanceof Error ? err.message : String(err);
           this.breakStream();
           this.output.write(red(`[error] ${message}\n`));
@@ -425,6 +602,274 @@ export class CliChannel implements Channel {
         error: error instanceof Error ? error : new Error(String(error)),
       });
     }
+  }
+
+  private handleHelpCommand(input: string): boolean {
+    if (input !== '/help') return false;
+    this.breakStream();
+    this.output.write(cyan('[help]\n'));
+    this.output.write([
+      '  Model',
+      '    /models                                      List available Models',
+      '    /model                                       Select a Model',
+      '    /model default                               Use the Runtime default',
+      '    /model <providerId> <JSON-string-modelId>    Select a Model directly',
+      '  Reasoning',
+      '    /reasoning                                   Show Model and reasoning status',
+      '    /thinking                                    Select Thinking behavior',
+      '    /thinking default|on|off                     Set Thinking directly',
+      '    /effort                                      Select reasoning effort',
+      '    /effort default|none|minimal|low|medium|high|xhigh|max',
+      '  Sessions',
+      '    /sessions                                    List persisted Sessions',
+      '    /session                                     Select a Session',
+      '    /session new                                 Start a new Session',
+      '    /session use <sessionId>                     Select a Session directly',
+      '    /session rename <JSON-string|null>           Rename the current Session',
+      '    /session delete                              Delete the current Session',
+      '  Permissions',
+      '    /permission                                  Select a permission mode',
+      '    /permission manual|allow_all                 Set permission mode directly',
+      '  Process control',
+      '    Ctrl+C                                       Abort work; press twice to exit',
+      '',
+    ].join('\n'));
+    return true;
+  }
+
+  private async handleReasoningCommand(input: string): Promise<boolean> {
+    if (
+      input !== '/reasoning'
+      && input !== '/thinking'
+      && !input.startsWith('/thinking ')
+      && input !== '/effort'
+      && !input.startsWith('/effort ')
+    ) {
+      return false;
+    }
+    this.breakStream();
+
+    if (input === '/reasoning') {
+      const snapshot = this.getModelCatalog();
+      this.renderReasoningStatus(snapshot);
+      return true;
+    }
+
+    if (input === '/thinking') {
+      const snapshot = this.getModelCatalog();
+      if (!snapshot) return true;
+      const supported = this.getSupportedThinking(snapshot);
+      const result = await this.promptSelection(
+        'thinking',
+        THINKING_SELECTIONS
+          .filter((value) => value === 'default' || supported.includes(value))
+          .map((value) => ({
+            value,
+            label: value,
+            current: value === this.thinkingSelection,
+          })),
+      );
+      if (result.selected) this.applyThinkingSelection(result.value, snapshot);
+      return true;
+    }
+
+    if (input.startsWith('/thinking ')) {
+      const value = input.slice('/thinking '.length);
+      if (!THINKING_SELECTIONS.includes(value as ThinkingSelection)) {
+        this.renderThinkingUsage();
+        return true;
+      }
+      if (value === 'default') {
+        this.applyThinkingSelection('default');
+        return true;
+      }
+      const snapshot = this.getModelCatalog();
+      if (!snapshot) return true;
+      this.applyThinkingSelection(value as ThinkingSelection, snapshot);
+      return true;
+    }
+
+    if (input === '/effort') {
+      const snapshot = this.getModelCatalog();
+      if (!snapshot) return true;
+      const supported = this.getSupportedEfforts(snapshot);
+      const result = await this.promptSelection(
+        'effort',
+        EFFORT_SELECTIONS
+          .filter((value) => value === 'default' || supported.includes(value))
+          .map((value) => ({
+            value,
+            label: value,
+            current: value === this.effortSelection,
+          })),
+      );
+      if (result.selected) this.applyEffortSelection(result.value, snapshot);
+      return true;
+    }
+
+    const value = input.slice('/effort '.length);
+    if (!EFFORT_SELECTIONS.includes(value as ThinkingEffort)) {
+      this.renderEffortUsage();
+      return true;
+    }
+    if (value === 'default') {
+      this.applyEffortSelection('default');
+      return true;
+    }
+    const snapshot = this.getModelCatalog();
+    if (!snapshot) return true;
+    this.applyEffortSelection(value as ThinkingEffort, snapshot);
+    return true;
+  }
+
+  private renderReasoningStatus(snapshot: ModelCatalogSnapshot | undefined): void {
+    const effective = snapshot
+      ? getEffectiveModelReference(snapshot, this.selectedModelOverride)
+      : undefined;
+    this.output.write(cyan('[reasoning]\n'));
+    this.output.write(`  Model: ${effective ? formatReference(effective) : 'unavailable'}\n`);
+    this.output.write(`  Thinking: ${this.thinkingSelection}\n`);
+    this.output.write(`  Effort: ${this.effortSelection}\n`);
+    if (!snapshot) {
+      this.output.write('  Supported Thinking: unavailable\n');
+      this.output.write('  Supported effort: unavailable\n');
+      return;
+    }
+    const thinking = this.getSupportedThinking(snapshot);
+    const efforts = this.getSupportedEfforts(snapshot);
+    this.output.write(`  Supported Thinking: ${thinking.join(', ') || 'none'}\n`);
+    this.output.write(`  Supported effort: ${efforts.join(', ') || 'none'}\n`);
+  }
+
+  private getSupportedThinking(snapshot: ModelCatalogSnapshot): readonly ThinkingSwitch[] {
+    const model = this.getEffectiveCatalogModel(snapshot);
+    return model?.capabilities?.reasoning?.thinking ?? [];
+  }
+
+  private getSupportedEfforts(snapshot: ModelCatalogSnapshot): readonly Exclude<
+    ThinkingEffort,
+    'default'
+  >[] {
+    const model = this.getEffectiveCatalogModel(snapshot);
+    return model?.capabilities?.reasoning?.efforts ?? [];
+  }
+
+  private getEffectiveCatalogModel(snapshot: ModelCatalogSnapshot): ModelCatalogEntry | undefined {
+    const reference = getEffectiveModelReference(snapshot, this.selectedModelOverride);
+    return reference ? findCatalogModel(snapshot, reference) : undefined;
+  }
+
+  private applyThinkingSelection(
+    value: ThinkingSelection,
+    snapshot?: ModelCatalogSnapshot,
+  ): void {
+    if (
+      value !== 'default'
+      && (!snapshot || !this.getSupportedThinking(snapshot).includes(value))
+    ) {
+      this.output.write(red(`[thinking error] ${value} is not supported by the effective Model.\n`));
+      return;
+    }
+    if (!this.isReasoningCombinationValid(value, this.effortSelection)) {
+      this.output.write(red(
+        `[thinking error] thinking=${value} cannot be combined with effort=${this.effortSelection}.\n`,
+      ));
+      return;
+    }
+    this.thinkingSelection = value;
+    this.output.write(cyan(`[thinking] ${value}\n`));
+  }
+
+  private applyEffortSelection(
+    value: ThinkingEffort,
+    snapshot?: ModelCatalogSnapshot,
+  ): void {
+    if (
+      value !== 'default'
+      && (!snapshot || !this.getSupportedEfforts(snapshot).includes(value))
+    ) {
+      this.output.write(red(`[effort error] ${value} is not supported by the effective Model.\n`));
+      return;
+    }
+    if (!this.isReasoningCombinationValid(this.thinkingSelection, value)) {
+      this.output.write(red(
+        `[effort error] thinking=${this.thinkingSelection} cannot be combined with effort=${value}.\n`,
+      ));
+      return;
+    }
+    this.effortSelection = value;
+    this.output.write(cyan(`[effort] ${value}\n`));
+  }
+
+  private isReasoningCombinationValid(
+    thinking: ThinkingSelection,
+    effort: ThinkingEffort,
+  ): boolean {
+    try {
+      normalizeReasoningPreference({
+        ...(thinking === 'default' ? {} : { thinking }),
+        effort,
+      });
+      return true;
+    } catch (error) {
+      if (!(error instanceof ReasoningPreferenceValidationError)) throw error;
+      return false;
+    }
+  }
+
+  private reconcileReasoningSelections(
+    snapshot: ModelCatalogSnapshot | undefined,
+    reason: string,
+  ): void {
+    const effective = snapshot
+      ? getEffectiveModelReference(snapshot, this.selectedModelOverride)
+      : undefined;
+    const modelLabel = effective ? formatReference(effective) : 'no effective Model';
+    const supportedThinking = snapshot ? this.getSupportedThinking(snapshot) : [];
+    const supportedEfforts = snapshot ? this.getSupportedEfforts(snapshot) : [];
+
+    if (
+      this.thinkingSelection !== 'default'
+      && !supportedThinking.includes(this.thinkingSelection)
+    ) {
+      const previous = this.thinkingSelection;
+      this.thinkingSelection = 'default';
+      this.output.write(yellow(
+        `[reasoning] thinking reset from ${previous} to default for ${modelLabel}: ${reason}.\n`,
+      ));
+    }
+    if (
+      this.effortSelection !== 'default'
+      && !supportedEfforts.includes(this.effortSelection)
+    ) {
+      const previous = this.effortSelection;
+      this.effortSelection = 'default';
+      this.output.write(yellow(
+        `[reasoning] effort reset from ${previous} to default for ${modelLabel}: ${reason}.\n`,
+      ));
+    }
+  }
+
+  private getReasoningPreference(): ReasoningPreference | undefined {
+    if (this.thinkingSelection === 'default' && this.effortSelection === 'default') {
+      return undefined;
+    }
+    return normalizeReasoningPreference({
+      ...(this.thinkingSelection === 'default'
+        ? {}
+        : { thinking: this.thinkingSelection }),
+      effort: this.effortSelection,
+    }).preference;
+  }
+
+  private renderThinkingUsage(): void {
+    this.output.write(red('[thinking error] usage: /thinking | /thinking default|on|off\n'));
+  }
+
+  private renderEffortUsage(): void {
+    this.output.write(red(
+      '[effort error] usage: /effort | /effort default|none|minimal|low|medium|high|xhigh|max\n',
+    ));
   }
 
   private async handleSessionCommand(input: string): Promise<boolean> {
@@ -454,21 +899,37 @@ export class CliChannel implements Channel {
     }
 
     if (input === '/session') {
-      if (!this.sessionId) {
-        this.output.write('[session] new (not yet created)\n');
-        return true;
+      const sessions = await capability.listSessions();
+      const options: CliSelectionOption<
+        { readonly kind: 'new' }
+        | { readonly kind: 'persisted'; readonly sessionId: string }
+      >[] = [{
+        value: { kind: 'new' },
+        label: 'New Session',
+        current: this.sessionId === undefined,
+      }];
+      for (const session of sessions) {
+        options.push({
+          value: { kind: 'persisted', sessionId: session.sessionId },
+          label: `${session.sessionId}${session.title
+            ? ` ${formatTerminalText(session.title)}`
+            : ''}`,
+          current: session.sessionId === this.sessionId,
+        });
       }
-      const session = await capability.getSession(this.sessionId);
-      this.output.write(
-        `[session] ${session.sessionId}${session.title ? ` ${formatTerminalText(session.title)}` : ''}\n`,
-      );
+      const result = await this.promptSelection('session', options);
+      if (!result.selected) return true;
+      if (result.value.kind === 'new') {
+        this.selectNewSession();
+      } else {
+        await this.selectPersistedSession(result.value.sessionId, capability);
+      }
       return true;
     }
 
     const payload = input.slice('/session '.length);
     if (payload === 'new') {
-      this.sessionId = undefined;
-      this.output.write(cyan('[session] new; the first message will create it.\n'));
+      this.selectNewSession();
       return true;
     }
     if (payload.startsWith('use ')) {
@@ -477,9 +938,7 @@ export class CliChannel implements Channel {
         this.renderSessionUsage();
         return true;
       }
-      const session = await capability.getSession(sessionId);
-      this.sessionId = session.sessionId;
-      this.output.write(cyan(`[session] current ${session.sessionId}.\n`));
+      await this.selectPersistedSession(sessionId, capability);
       return true;
     }
     if (payload.startsWith('rename ')) {
@@ -519,6 +978,38 @@ export class CliChannel implements Channel {
     return true;
   }
 
+  private selectNewSession(): void {
+    this.sessionId = undefined;
+    this.output.write(cyan('[session] new; the first message will create it.\n'));
+  }
+
+  private async selectPersistedSession(
+    sessionId: string,
+    capability: SessionCapability,
+  ): Promise<void> {
+    const session = await capability.getSession(sessionId);
+    this.sessionId = session.sessionId;
+    this.output.write(cyan(
+      `[session] current ${session.sessionId}${session.title
+        ? ` ${formatTerminalText(session.title)}`
+        : ''}.\n`,
+    ));
+    try {
+      const page = await capability.getHistory({
+        sessionId: session.sessionId,
+        limit: SESSION_HISTORY_LIMIT,
+      });
+      for (const line of formatSessionHistory(page)) {
+        this.output.write(dim(line) + '\n');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.output.write(red(
+        `[session history error] Unable to display recent history: ${formatTerminalText(message)}\n`,
+      ));
+    }
+  }
+
   private renderSessionUsage(): void {
     this.output.write(red(
       '[session error] usage: /sessions | /session | /session new | /session use <sessionId> | /session rename <JSON-string|null> | /session delete\n',
@@ -543,12 +1034,41 @@ export class CliChannel implements Channel {
     const mode = input.slice('/permission'.length).trim();
     if (!mode) {
       const permission = capability.getPermissionMode(this.sessionId);
-      this.output.write(cyan(`[permission] ${permission.mode}\n`));
+      const result = await this.promptSelection<'manual' | 'allow_all'>(
+        'permission',
+        [
+          {
+            value: 'manual',
+            label: 'manual (individual approvals required)',
+            current: permission.mode === 'manual',
+          },
+          {
+            value: 'allow_all',
+            label: 'allow_all (Allow all for this Session)',
+            current: permission.mode === 'allow_all',
+          },
+        ],
+      );
+      if (result.selected) {
+        await this.applyPermissionMode(result.value, capability);
+      }
       return true;
     }
     if (mode !== 'manual' && mode !== 'allow_all') {
       this.renderPermissionUsage();
       return true;
+    }
+    await this.applyPermissionMode(mode, capability);
+    return true;
+  }
+
+  private async applyPermissionMode(
+    mode: 'manual' | 'allow_all',
+    capability: SessionCapability,
+  ): Promise<void> {
+    const sessionId = this.sessionId;
+    if (!sessionId) {
+      throw new Error('Cannot set permission mode without a persisted Session.');
     }
     if (mode === 'allow_all') {
       this.output.write(yellow(
@@ -560,11 +1080,11 @@ export class CliChannel implements Channel {
       const answer = await this.question(yellow('Type ALLOW ALL to confirm> '));
       if (answer.trim() !== 'ALLOW ALL') {
         this.output.write(yellow('[permission] unchanged; Allow All was not confirmed.\n'));
-        return true;
+        return;
       }
     }
     const permission = capability.setPermissionMode({
-      sessionId: this.sessionId,
+      sessionId,
       mode,
     });
     this.output.write(cyan(
@@ -572,14 +1092,13 @@ export class CliChannel implements Channel {
         ? 'allow_all (Allow all for this Session)'
         : 'manual (individual approvals required)'}\n`,
     ));
-    return true;
   }
 
   private renderPermissionUsage(): void {
     this.output.write(red('[permission error] usage: /permission | /permission manual | /permission allow_all\n'));
   }
 
-  private handleModelCommand(input: string): boolean {
+  private async handleModelCommand(input: string): Promise<boolean> {
     if (input !== '/models' && input !== '/model' && !input.startsWith('/model ')) {
       return false;
     }
@@ -592,15 +1111,42 @@ export class CliChannel implements Channel {
       return true;
     }
     if (input === '/model') {
-      this.renderModelStatus(snapshot);
+      const defaultLabel = snapshot.defaultSelection.state === 'available'
+        ? `Runtime default (${formatReference(snapshot.defaultSelection.reference)})`
+        : snapshot.defaultSelection.state === 'unavailable'
+          ? `Runtime default (${formatReference(snapshot.defaultSelection.reference)}, unavailable)`
+          : 'Runtime default (unset)';
+      const options: CliSelectionOption<
+        { readonly kind: 'default' }
+        | { readonly kind: 'model'; readonly reference: ModelReference }
+      >[] = [{
+        value: { kind: 'default' },
+        label: defaultLabel,
+        current: this.selectedModelOverride === undefined,
+      }];
+      for (const provider of snapshot.providers) {
+        for (const model of provider.models) {
+          const reference = { providerId: provider.providerId, modelId: model.modelId };
+          options.push({
+            value: { kind: 'model', reference },
+            label: `${formatTerminalText(model.displayName)} (${formatReference(reference)})`,
+            current: sameReference(reference, this.selectedModelOverride),
+          });
+        }
+      }
+      const result = await this.promptSelection('model', options);
+      if (!result.selected) return true;
+      if (result.value.kind === 'default') {
+        this.applyModelSelection(undefined, snapshot);
+      } else {
+        this.applyModelSelection(result.value.reference, snapshot);
+      }
       return true;
     }
 
     const payload = input.slice('/model '.length);
     if (payload === 'default') {
-      this.selectedModelOverride = undefined;
-      this.output.write(cyan('[model] override cleared; using Runtime default.\n'));
-      this.renderModelStatus(snapshot);
+      this.applyModelSelection(undefined, snapshot);
       return true;
     }
     const separator = payload.indexOf(' ');
@@ -626,9 +1172,22 @@ export class CliChannel implements Channel {
       ));
       return true;
     }
-    this.selectedModelOverride = reference;
-    this.output.write(cyan(`[model] override set to ${formatReference(reference)}.\n`));
+    this.applyModelSelection(reference, snapshot);
     return true;
+  }
+
+  private applyModelSelection(
+    reference: ModelReference | undefined,
+    snapshot: ModelCatalogSnapshot,
+  ): void {
+    this.selectedModelOverride = reference;
+    if (reference) {
+      this.output.write(cyan(`[model] override set to ${formatReference(reference)}.\n`));
+    } else {
+      this.output.write(cyan('[model] override cleared; using Runtime default.\n'));
+      this.renderModelStatus(snapshot);
+    }
+    this.reconcileReasoningSelections(snapshot, 'the Model selection changed');
   }
 
   private async getOrCreateSessionId(): Promise<string> {
@@ -799,7 +1358,7 @@ export class CliChannel implements Channel {
     }
   }
 
-  private question(prompt: string): Promise<string> {
+  private question(prompt: string, kind: 'ordinary' | 'approval' = 'ordinary'): Promise<string> {
     return new Promise((resolve, reject) => {
       if (!this.rl) {
         reject(new Error('readline not initialized'));
@@ -810,6 +1369,9 @@ export class CliChannel implements Channel {
         if (this.pendingPromptAbort === controller) {
           this.pendingPromptAbort = undefined;
         }
+        if (this.approvalPromptAbort === controller) {
+          this.approvalPromptAbort = undefined;
+        }
         controller.signal.removeEventListener('abort', onAbort);
       };
       const onAbort = () => {
@@ -817,12 +1379,47 @@ export class CliChannel implements Channel {
         reject(controller.signal.reason);
       };
       this.pendingPromptAbort = controller;
+      if (kind === 'approval') this.approvalPromptAbort = controller;
       controller.signal.addEventListener('abort', onAbort, { once: true });
       this.rl.question(prompt, { signal: controller.signal }, (answer) => {
         clear();
         resolve(answer);
       });
     });
+  }
+
+  private async promptSelection<T>(
+    name: string,
+    options: readonly CliSelectionOption<T>[],
+  ): Promise<CliSelectionResult<T>> {
+    if (options.length === 0) {
+      this.output.write(red(`[${name} error] No selectable options are available.\n`));
+      return { selected: false };
+    }
+    this.output.write(cyan(`[select ${name}]\n`));
+    options.forEach((option, index) => {
+      this.output.write(
+        `  ${index + 1}. ${option.label}${option.current ? ' [current]' : ''}\n`,
+      );
+    });
+    const answer = await this.question(
+      cyan(`Select ${name} [1-${options.length}, blank to cancel]> `),
+    );
+    const value = answer.trim();
+    if (!value) {
+      this.output.write(dim(`[${name}] unchanged.\n`));
+      return { selected: false };
+    }
+    if (!/^[1-9]\d*$/u.test(value)) {
+      this.output.write(red(`[${name} error] Selection must be a listed number.\n`));
+      return { selected: false };
+    }
+    const option = options[Number(value) - 1];
+    if (!option) {
+      this.output.write(red(`[${name} error] Selection is out of range.\n`));
+      return { selected: false };
+    }
+    return { selected: true, value: option.value };
   }
 
   private makeInteractionAdapter(): ChannelInteractionAdapter {
@@ -875,38 +1472,69 @@ export class CliChannel implements Channel {
     if (!this.rl) {
       return { status: 'unavailable', reason: 'delivery_failed' };
     }
+    if (this.approvalPromptCompletion) {
+      return { status: 'unavailable', reason: 'delivery_failed' };
+    }
     this.breakStream();
     this.output.write(
       yellow(
         `[approval] tool: ${request.toolName}\n           input: ${JSON.stringify(request.input)}\n`,
       ),
     );
-    // 在 messageHandler 阻塞期间另起一个 question 读 y/n。
-    // readline 的主 prompt 此时已 resolved，未在 listen，可安全复用。
-    this.question(yellow('approve? (y/n)> ')).then(
-      (answer) => {
-        const decision: ApprovalDecision =
-          answer.trim().toLowerCase() === 'y' ? 'allow' : 'deny';
-        log.debug('cli approval answer captured', {
-          channelId: this.id,
-          approvalId: request.id,
-          decision,
-        });
-        onDecision(decision);
-      },
-      () => {
-        // stop() 引发 reject，忽略
-        log.debug('cli approval prompt aborted', {
-          channelId: this.id,
-          approvalId: request.id,
-        });
-      },
-    );
+    let settleApprovalPrompt!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      settleApprovalPrompt = resolve;
+    });
+    this.approvalPromptCompletion = completion;
+    let finished = false;
+    const finishApprovalPrompt = () => {
+      if (finished) return;
+      finished = true;
+      if (this.approvalPromptCompletion === completion) {
+        this.approvalPromptCompletion = undefined;
+        this.cancelApprovalPrompt = undefined;
+      }
+      settleApprovalPrompt();
+    };
+    this.cancelApprovalPrompt = () => {
+      if (this.approvalPromptAbort) {
+        this.approvalPromptAbort.abort(new Error('Approval closed'));
+      } else {
+        finishApprovalPrompt();
+      }
+    };
+    const startApprovalPrompt = () => {
+      if (finished) return;
+      void this.question(yellow('approve? (y/n)> '), 'approval').then(
+        (answer) => {
+          const decision: ApprovalDecision =
+            answer.trim().toLowerCase() === 'y' ? 'allow' : 'deny';
+          log.debug('cli approval answer captured', {
+            channelId: this.id,
+            approvalId: request.id,
+            decision,
+          });
+          onDecision(decision);
+        },
+        () => {
+          log.debug('cli approval prompt aborted', {
+            channelId: this.id,
+            approvalId: request.id,
+          });
+        },
+      ).finally(finishApprovalPrompt);
+    };
+    if (this.pendingPromptAbort) {
+      this.pendingPromptAbort.abort(PROMPT_PREEMPTED_BY_APPROVAL);
+      queueMicrotask(startApprovalPrompt);
+    } else {
+      startApprovalPrompt();
+    }
     return { status: 'accepted' };
   }
 
   private closeApproval(id: string, result: ApprovalClosedResult): void {
-    this.pendingPromptAbort?.abort(new Error('Approval closed'));
+    this.cancelApprovalPrompt?.();
     this.output.write(yellow(`\n[approval] closed (${result.outcome})\n`));
     log.info('cli approval closed', {
       channelId: this.id,
