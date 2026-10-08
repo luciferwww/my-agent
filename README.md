@@ -207,6 +207,12 @@ their direct forms for repeatable input. Selecting an existing Session shows a
 bounded preview of its recent persisted history before returning to the
 prompt.
 
+The readline CLI is turn-at-a-time. While any visible Turn is running, ordinary
+messages, slash commands, and selectors are paused; Runtime output remains
+live, Ctrl+C remains available for Abort, and a requested Approval can still
+accept y/n input. A fresh prompt returns after all visible Turns end. CLI input
+is not submitted as Steering during an active Turn.
+
 Standalone Host-local Channel selection:
 
 ```bash

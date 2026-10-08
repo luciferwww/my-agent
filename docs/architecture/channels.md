@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Channel behavior
-> Verified: 2026-09-18
+> Verified: 2026-10-08
 > Ownership: Channel contracts, Host-local CLI, Extension-delivered WebSocket protocol, interaction, attachment ingress, and client routing
 > Ownership key: channel-transport-and-ingress
 
@@ -124,7 +124,9 @@ owns the stable contract.
 
 ## 6. CLI Channel
 
-`CliChannel` is a single-session readline transport.
+`CliChannel` is a single-session, turn-at-a-time readline transport. Runtime
+supports Steering independently, but the CLI does not submit local Steering
+messages while a Turn is active.
 
 ```text
 CliChannelConfig {
@@ -149,9 +151,36 @@ cards, and converges unfinished cards to partial on terminal failure. Tool
 Result preview limits affect presentation only, never the result passed to the
 Model.
 
-### 6.2 Model commands and lifecycle
+### 6.2 Commands, input gate, and lifecycle
 
-`/models` and `/model` query and select exact current-Catalog references; display escaping never changes opaque Model identity. `/permission` shows the current Session mode, while `/permission manual` and `/permission allow_all` change it. Allow All requires typing an explicit confirmation after a warning about Shell, external filesystem, integrity, and disconnect behavior. A new CLI conversation initially has no Session ID. The first ordinary message calls the Runtime Session capability and immediately submits the message with the returned server-issued UUID; later messages reuse that ID. Merely entering a new-conversation state does not create a Pending Session. CLI approval uses its readline interaction, Ctrl+C delegates active/queued Abort through Runtime capabilities before closing the Channel, and process exit policy remains Host-owned.
+`/help` groups Model, reasoning, Session, permission, and process controls.
+`/model`, `/session`, `/permission`, `/thinking`, and `/effort` open numbered
+selectors without arguments and retain direct command forms. Model and
+reasoning selection uses the current Catalog, rejects unsupported or
+conflicting values locally, reconciles stale selections after Model/Catalog
+changes, and omits default reasoning from `ChannelRunRequest`. Display escaping
+never changes opaque Model identity.
+
+Selecting a persisted Session displays up to 20 recent records in chronological
+order within a bounded terminal budget; older or truncated content is marked,
+and a presentation failure does not roll back the Session selection. A new CLI
+conversation initially has no Session ID. Its first ordinary message calls the
+Runtime Session capability and immediately submits the message with the
+returned server-issued UUID; merely selecting new-Session state does not create
+a Pending Session.
+
+The CLI tracks paired `run_start`/`run_end` events across all visible Sessions.
+While any Turn is active, it cancels an outstanding ordinary question, discards
+its partial line, keeps Runtime presentation live, and does not open another
+message, command, selector, or command-confirmation prompt. The final
+`run_end` restores a fresh prompt. Runtime-requested Approval remains an input
+exception because the Turn is waiting for that decision. Ctrl+C continues to
+delegate active/queued Abort through Runtime capabilities before the existing
+double-press Channel close path; process exit policy remains Host-owned.
+
+`/permission manual` and `/permission allow_all` change the current Session
+mode. Allow All requires an explicit confirmation after a warning about Shell,
+external filesystem, integrity, and disconnect behavior.
 
 ## 7. WebSocket Channel
 

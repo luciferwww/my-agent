@@ -355,6 +355,12 @@ describe('CliChannel model commands', () => {
     };
   }
 
+  async function waitForOrdinaryPrompt(channel: CliChannel): Promise<void> {
+    await vi.waitFor(() => expect(
+      (channel as unknown as { pendingPromptKind?: string }).pendingPromptKind,
+    ).toBe('ordinary'));
+  }
+
   it('lists grouped models, marks default/override, and keeps commands out of Runtime', async () => {
     const fixture = await startInteractive();
     try {
@@ -984,6 +990,213 @@ describe('CliChannel model commands', () => {
     } finally {
       await fixture.close();
     }
+  });
+
+  it('suspends ordinary input during a Turn and resumes with a fresh prompt', async () => {
+    const fixture = await startInteractive();
+    try {
+      fixture.input.write('partial input');
+      fixture.channel.send({
+        type: 'run_start',
+        sessionId: CLI_SESSION_ID,
+        turnId: 'external-turn',
+        requestId: 'external-request',
+      });
+      await vi.waitFor(() => expect(fixture.captured()).toContain(
+        '[input paused while a Turn is running; Ctrl+C to abort]',
+      ));
+
+      fixture.input.write('must not dispatch\n');
+      fixture.channel.send({
+        type: 'text_delta',
+        sessionId: CLI_SESSION_ID,
+        turnId: 'external-turn',
+        text: 'streaming answer',
+      });
+      await vi.waitFor(() => expect(fixture.captured()).toContain('streaming answer'));
+      expect(fixture.handler).not.toHaveBeenCalled();
+
+      fixture.channel.send({
+        type: 'run_end',
+        sessionId: CLI_SESSION_ID,
+        turnId: 'external-turn',
+        requestId: 'external-request',
+        result: {
+          text: 'streaming answer',
+          content: [{ type: 'text', text: 'streaming answer' }],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 1, outputTokens: 1 },
+          toolRounds: 0,
+        },
+      });
+      await waitForOrdinaryPrompt(fixture.channel);
+      fixture.input.write('after idle\n');
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
+        sessionId: CLI_SESSION_ID,
+        message: 'after idle',
+      }));
+      expect(fixture.handler).toHaveBeenCalledTimes(1);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('waits for the final unique Turn to end before accepting input', async () => {
+    const fixture = await startInteractive();
+    const start = (turnId: string) => fixture.channel.send({
+      type: 'run_start' as const,
+      sessionId: CLI_SESSION_ID,
+      turnId,
+      requestId: `request-${turnId}`,
+    });
+    const end = (turnId: string) => fixture.channel.send({
+      type: 'run_end' as const,
+      sessionId: CLI_SESSION_ID,
+      turnId,
+      requestId: `request-${turnId}`,
+      result: {
+        text: '',
+        content: [],
+        stopReason: 'end_turn',
+        usage: { inputTokens: 0, outputTokens: 0 },
+        toolRounds: 0,
+      },
+    });
+    try {
+      start('turn-a');
+      start('turn-a');
+      start('turn-b');
+      end('missing-turn');
+      end('turn-a');
+      fixture.input.write('too early\n');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(fixture.handler).not.toHaveBeenCalled();
+
+      end('turn-b');
+      await waitForOrdinaryPrompt(fixture.channel);
+      fixture.input.write('after all turns\n');
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
+        sessionId: CLI_SESSION_ID,
+        message: 'after all turns',
+      }));
+      expect(fixture.handler).toHaveBeenCalledTimes(1);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('does not apply a selector choice after a Turn suspends it', async () => {
+    const fixture = await startInteractive();
+    try {
+      fixture.input.write('/model\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('[select model]'));
+      fixture.channel.send({
+        type: 'run_start',
+        sessionId: CLI_SESSION_ID,
+        turnId: 'selector-turn',
+        requestId: 'selector-request',
+      });
+      fixture.input.write('3\n');
+      fixture.channel.send({
+        type: 'run_end',
+        sessionId: CLI_SESSION_ID,
+        turnId: 'selector-turn',
+        requestId: 'selector-request',
+        result: {
+          text: '',
+          content: [],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 0, outputTokens: 0 },
+          toolRounds: 0,
+        },
+      });
+      await waitForOrdinaryPrompt(fixture.channel);
+      fixture.input.write('after selector\n');
+
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
+        sessionId: CLI_SESSION_ID,
+        message: 'after selector',
+      }));
+      expect(fixture.handler).not.toHaveBeenCalledWith(expect.objectContaining({
+        modelReference: { providerId: 'relay', modelId: 'model-b' },
+      }));
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('allows Approval while busy without reopening ordinary input early', async () => {
+    const fixture = await startInteractive(undefined, undefined, true);
+    const responseHandler = vi.fn();
+    fixture.channel.interaction?.onInteractionResponse(responseHandler);
+    try {
+      fixture.channel.send({
+        type: 'run_start',
+        sessionId: CLI_SESSION_ID,
+        turnId: 'approval-turn',
+        requestId: 'approval-request',
+      });
+      expect(fixture.channel.interaction?.sendInteractionRequest({
+        id: 'approval-busy',
+        kind: 'approval',
+        callId: 'call-busy',
+        toolName: 'write_file',
+        input: { path: 'busy.txt' },
+        sessionId: CLI_SESSION_ID,
+        turnId: 'approval-turn',
+      })).toEqual({ status: 'accepted' });
+      await vi.waitFor(() => expect(fixture.captured()).toContain('approve? (y/n)>'));
+      fixture.input.write('y\n');
+      await vi.waitFor(() => expect(responseHandler).toHaveBeenCalledWith({
+        id: 'approval-busy',
+        kind: 'approval',
+        outcome: 'submitted',
+        decision: 'allow',
+      }));
+
+      fixture.input.write('still busy\n');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(fixture.handler).not.toHaveBeenCalled();
+
+      fixture.channel.send({
+        type: 'run_end',
+        sessionId: CLI_SESSION_ID,
+        turnId: 'approval-turn',
+        requestId: 'approval-request',
+        result: {
+          text: '',
+          content: [],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 0, outputTokens: 0 },
+          toolRounds: 0,
+        },
+      });
+      await waitForOrdinaryPrompt(fixture.channel);
+      fixture.input.write('after approval turn\n');
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
+        sessionId: CLI_SESSION_ID,
+        message: 'after approval turn',
+      }));
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('releases an idle waiter when the Channel stops', async () => {
+    const fixture = await startInteractive();
+    fixture.channel.send({
+      type: 'run_start',
+      sessionId: CLI_SESSION_ID,
+      turnId: 'never-finishes',
+      requestId: 'never-finishes-request',
+    });
+
+    await fixture.channel.stop();
+    await expect(fixture.channel.completion).resolves.toEqual({
+      outcome: 'closed',
+      reason: 'stopped',
+    });
+    fixture.input.end();
   });
 });
 

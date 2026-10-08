@@ -37,6 +37,7 @@ const SESSION_HISTORY_LIMIT = 20;
 const SESSION_HISTORY_MAX_LINES = 80;
 const SESSION_HISTORY_MAX_CHARS = 16_384;
 const PROMPT_PREEMPTED_BY_APPROVAL = Symbol('prompt-preempted-by-approval');
+const PROMPT_SUSPENDED_BY_RUN = Symbol('prompt-suspended-by-run');
 const THINKING_SELECTIONS = ['default', 'on', 'off'] as const;
 const EFFORT_SELECTIONS = [
   'default',
@@ -298,9 +299,12 @@ export class CliChannel implements Channel {
   private completionSettled = false;
   /** 当前 readline.question 的 AbortController，用于 closure/stop 时取消底层读操作 */
   private pendingPromptAbort?: AbortController;
+  private pendingPromptKind?: 'ordinary' | 'approval';
   private approvalPromptAbort?: AbortController;
   private approvalPromptCompletion?: Promise<void>;
   private cancelApprovalPrompt?: () => void;
+  private readonly activeTurnIds = new Set<string>();
+  private readonly idleWaiters = new Set<() => void>();
   // ── Abort / Ctrl+C 状态（core-abort-spec.md §12）─────────────
   /** 上次 Ctrl+C 时间戳（epoch ms）；0 = 没有近期按键。用于双击检测。 */
   private lastCtrlCAt = 0;
@@ -331,6 +335,10 @@ export class CliChannel implements Channel {
 
   send(event: AgentEvent): void {
     switch (event.type) {
+      case 'run_start':
+        this.handleRunStarted(event.turnId);
+        break;
+
       case 'text_delta':
         if (this.thinkingStream) {
           this.breakStream();
@@ -426,6 +434,7 @@ export class CliChannel implements Channel {
         if (event.result.stopReason === 'max_llm_calls') {
           this.output.write(yellow('[configured model call limit reached]\n'));
         }
+        this.handleRunEnded(event.turnId);
         break;
 
       case 'request_end':
@@ -453,7 +462,7 @@ export class CliChannel implements Channel {
         break;
       }
 
-      // run_start / llm_call / tool_result_pruned 默认忽略
+      // llm_call / tool_result_pruned 默认忽略
     }
   }
 
@@ -487,6 +496,7 @@ export class CliChannel implements Channel {
     // readline 关闭时也视作 stop
     this.rl.on('close', () => {
       this.stopped = true;
+      this.releaseIdleWaiters();
       this.settleCompletion({
         outcome: 'closed',
         reason: this.stopRequested ? 'stopped' : 'input_closed',
@@ -517,6 +527,9 @@ export class CliChannel implements Channel {
     if (!messageHandler) return;
     try {
       while (!this.stopped) {
+        await this.waitUntilIdle();
+        if (this.stopped) break;
+
         let line: string;
         try {
           line = await this.question(this.promptText);
@@ -525,11 +538,19 @@ export class CliChannel implements Channel {
             await this.approvalPromptCompletion;
             continue;
           }
+          if (error === PROMPT_SUSPENDED_BY_RUN) {
+            await this.waitUntilIdle();
+            continue;
+          }
           // rl.close() 引发 question reject → 退出循环
           break;
         }
 
         if (this.stopped) break;
+        if (this.activeTurnIds.size > 0) {
+          this.output.write(dim('[input discarded because a Turn started]\n'));
+          continue;
+        }
 
         const trimmed = line.trim();
         if (!trimmed) continue;
@@ -574,6 +595,10 @@ export class CliChannel implements Channel {
         } catch (err) {
           if (err === PROMPT_PREEMPTED_BY_APPROVAL) {
             await this.approvalPromptCompletion;
+            continue;
+          }
+          if (err === PROMPT_SUSPENDED_BY_RUN) {
+            await this.waitUntilIdle();
             continue;
           }
           const message = err instanceof Error ? err.message : String(err);
@@ -631,6 +656,7 @@ export class CliChannel implements Channel {
       '    /permission                                  Select a permission mode',
       '    /permission manual|allow_all                 Set permission mode directly',
       '  Process control',
+      '    Input                                        Available only while no Turn is running',
       '    Ctrl+C                                       Abort work; press twice to exit',
       '',
     ].join('\n'));
@@ -1273,6 +1299,7 @@ export class CliChannel implements Channel {
       sessionId: this.sessionId,
     });
     this.pendingPromptAbort?.abort(new Error('CliChannel stopped'));
+    this.releaseIdleWaiters();
     this.rl?.close();
     this.rl = undefined;
     this.settleCompletion({ outcome: 'closed', reason: 'stopped' });
@@ -1358,6 +1385,34 @@ export class CliChannel implements Channel {
     }
   }
 
+  private handleRunStarted(turnId: string): void {
+    const wasIdle = this.activeTurnIds.size === 0;
+    this.activeTurnIds.add(turnId);
+    if (!wasIdle || this.activeTurnIds.size === 0) return;
+    if (this.pendingPromptKind !== 'ordinary' || !this.pendingPromptAbort) return;
+
+    this.rl?.write(null, { ctrl: true, name: 'u' });
+    this.pendingPromptAbort.abort(PROMPT_SUSPENDED_BY_RUN);
+    this.output.write(dim('\n[input paused while a Turn is running; Ctrl+C to abort]\n'));
+  }
+
+  private handleRunEnded(turnId: string): void {
+    if (!this.activeTurnIds.delete(turnId)) return;
+    if (this.activeTurnIds.size === 0) this.releaseIdleWaiters();
+  }
+
+  private waitUntilIdle(): Promise<void> {
+    if (this.stopped || this.activeTurnIds.size === 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      this.idleWaiters.add(resolve);
+    });
+  }
+
+  private releaseIdleWaiters(): void {
+    for (const resolve of this.idleWaiters) resolve();
+    this.idleWaiters.clear();
+  }
+
   private question(prompt: string, kind: 'ordinary' | 'approval' = 'ordinary'): Promise<string> {
     return new Promise((resolve, reject) => {
       if (!this.rl) {
@@ -1368,6 +1423,7 @@ export class CliChannel implements Channel {
       const clear = () => {
         if (this.pendingPromptAbort === controller) {
           this.pendingPromptAbort = undefined;
+          this.pendingPromptKind = undefined;
         }
         if (this.approvalPromptAbort === controller) {
           this.approvalPromptAbort = undefined;
@@ -1379,6 +1435,7 @@ export class CliChannel implements Channel {
         reject(controller.signal.reason);
       };
       this.pendingPromptAbort = controller;
+      this.pendingPromptKind = kind;
       if (kind === 'approval') this.approvalPromptAbort = controller;
       controller.signal.addEventListener('abort', onAbort, { once: true });
       this.rl.question(prompt, { signal: controller.signal }, (answer) => {

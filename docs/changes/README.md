@@ -6,10 +6,13 @@ Changes retain the repository's existing Plan/Specification/validation workflow.
 
 ## Active
 
+No active changes.
+
 ## Archived
 
 Archived changes preserve bounded delivery and acceptance provenance. They are neither Current Architecture nor stable contract authority.
 
+- [CLI Idle Input Policy](archive/cli-idle-input-policy/plan.md), with its [implemented and validated Specification](archive/cli-idle-input-policy/specification.md) and [validation record](archive/cli-idle-input-policy/validation.md) — turn-at-a-time readline input gate with Approval and Abort exceptions completed, validated, owner-accepted, and archived on 2026-10-08
 - [CLI Channel Interaction Parity](archive/cli-channel-interaction-parity/plan.md), with its [implemented and validated Specification](archive/cli-channel-interaction-parity/specification.md) and [validation record](archive/cli-channel-interaction-parity/validation.md) — uniform selectors, additive CLI reasoning controls, bounded recent history after Session switching, Approval-safe prompt ownership, and discoverability completed, validated, owner-accepted, and archived on 2026-10-08
 - [Thinking Generation Controls](archive/thinking-generation-controls/plan.md), with its [implemented and validated Specification](archive/thinking-generation-controls/specification.md) and [validation record](archive/thinking-generation-controls/validation.md) — per-model reasoning capabilities, message-level Thinking/effort selection, immutable Turn policy, Built-in and Relay protocol mapping, persistence, Steering compatibility, and Web controls completed, validated, owner-accepted, and archived on 2026-10-08
 - [Thinking Capture and Display](archive/thinking-capture-and-display/plan.md), with its [implemented and validated Specification](archive/thinking-capture-and-display/thinking-capture-and-display-specification.md) and [validation record](archive/thinking-capture-and-display/validation.md) — Chat Completions and Responses Thinking capture, Provider-owned replay, Transcript v2 recovery, safe History/RunResult projection, CLI/Web presentation, unavailable-budget handling, regression/build/browser validation completed, owner-accepted, and archived on 2026-10-02; Anthropic remains deferred
