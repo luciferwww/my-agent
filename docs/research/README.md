@@ -6,6 +6,8 @@ This directory is reserved for external comparisons and exploratory analysis. Re
 
 ## Current research
 
+- [Automation 系统设计草稿](automation-system-design-draft.md) - 基于 OpenClaw 与主流计划 Agent 的非权威中文设计草稿，讨论持久 Job/Run、Scheduler 边界、Detached Root Agent、Fresh Session、无人值守权限、恢复和本地常驻 Host；不授权实现。
+- [Session-addressed Approval 设计草稿](session-addressed-approval-design-draft.md) - 面向 Automation 的非权威 Approval 演进草稿，讨论 Origin 与无 Origin 路由、多 Channel first-settlement-wins、WebSocket Session replay、Session 列表提醒和 process-local 边界；不授权实现。
 - [主流浏览器 AI Agent 技术实现与特色调研](mainstream-browser-ai-agents-technical-research-2026-10-04.md) - 对 OpenAI、Anthropic、Google、Manus、Browser Use 与 Playwright 的浏览器控制架构、SPA/AJAX 处理、安全边界和技术选型进行非权威比较。
 - [Agent Session Management Comparison](agent-session-management-comparison.md) - external comparison of Claude Code, GitHub Copilot CLI, OpenAI Codex CLI, and OpenCode.
 - [Tool Activity Presentation Draft](tool-activity-presentation-design-draft.md) - non-authorizing design for independent Tool Call and Approval cards, per-card disclosure, and realtime/history presentation boundaries.
