@@ -309,6 +309,7 @@ describe('CliChannel model commands', () => {
     }),
   ): ChannelRuntimeCapabilities {
     return {
+      approvals: { getPending: () => [] },
       modelCatalog: {
         getSnapshot: () => ({
           generation: 7,
@@ -1261,8 +1262,8 @@ describe('CliChannel model commands', () => {
 });
 
 describe('CliChannel approval lifecycle', () => {
-  it('cancels the underlying readline question when approval closes', async () => {
-    const { channel } = makeChannel(true);
+  function approvalFixture(enabled = true) {
+    const { channel, captured } = makeChannel(enabled);
     let questionSignal: AbortSignal | undefined;
     let answerQuestion: ((answer: string) => void) | undefined;
     (channel as unknown as {
@@ -1280,7 +1281,7 @@ describe('CliChannel approval lifecycle', () => {
       },
     };
     const responseHandler = vi.fn();
-    channel.interaction?.onInteractionResponse(responseHandler);
+    channel.interaction.onInteractionResponse(responseHandler);
     const request = {
       id: 'approval-1',
       kind: 'approval' as const,
@@ -1290,16 +1291,93 @@ describe('CliChannel approval lifecycle', () => {
       sessionId: 'main',
       turnId: 'turn-1',
     };
+    return {
+      channel,
+      captured,
+      request,
+      responseHandler,
+      signal: () => questionSignal,
+      answer: (value: string) => answerQuestion?.(value),
+    };
+  }
 
-    expect(channel.interaction?.sendInteractionRequest(request)).toEqual({ status: 'accepted' });
-    expect(questionSignal?.aborted).toBe(false);
+  it('cancels the underlying readline question when approval closes', async () => {
+    const { channel, request, responseHandler, signal, answer } = approvalFixture();
 
-    channel.interaction?.sendInteractionClosed(request, {
+    expect(channel.interaction.sendInteractionRequest(request)).toEqual({ status: 'accepted' });
+    expect(signal()?.aborted).toBe(false);
+
+    channel.interaction.sendInteractionClosed(request, {
       outcome: 'aborted',
       reason: 'turn',
     });
-    expect(questionSignal?.aborted).toBe(true);
-    answerQuestion?.('y');
+    expect(signal()?.aborted).toBe(true);
+    answer('y');
+    await Promise.resolve();
+    expect(responseHandler).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {},
+    { originChannelId: 'cli' },
+    { originChannelId: 'cli', originClientId: 'disconnected-client' },
+    { originClientId: 'other-client' },
+  ])('accepts eligible approval source context without requiring an Origin Client: %j', (origin) => {
+    const { channel, request, signal } = approvalFixture();
+    expect(channel.interaction.sendInteractionRequest({ ...request, ...origin }))
+      .toEqual({ status: 'accepted' });
+    channel.interaction.sendInteractionClosed(request, { outcome: 'approved' });
+    expect(signal()?.aborted).toBe(true);
+  });
+
+  it('rejects other Origin Channels and disabled Approval without opening a prompt', () => {
+    const enabled = approvalFixture();
+    const disabled = approvalFixture(false);
+    expect(enabled.channel.interaction.sendInteractionRequest({
+      ...enabled.request, originChannelId: 'websocket',
+    })).toEqual({ status: 'unavailable', reason: 'delivery_failed' });
+    expect(disabled.channel.interaction.sendInteractionRequest(disabled.request))
+      .toEqual({ status: 'unavailable', reason: 'delivery_failed' });
+    expect(enabled.signal()).toBeUndefined();
+    expect(disabled.signal()).toBeUndefined();
+    expect(enabled.captured()).toBe('');
+    expect(disabled.captured()).toBe('');
+  });
+
+  it('explicitly rejects unsupported interaction kinds without presenting closure', () => {
+    const { channel, captured } = approvalFixture(false);
+    const request = {
+      id: 'select-1', kind: 'select' as const,
+      sessionId: 'main', turnId: 'turn-1', options: [],
+    };
+    expect(channel.interaction.sendInteractionRequest(request))
+      .toEqual({ status: 'unavailable', reason: 'delivery_failed' });
+    channel.interaction.sendInteractionClosed(request, {
+      outcome: 'unavailable', reason: 'delivery_failed',
+    });
+    expect(captured()).toBe('');
+  });
+
+  it('keeps the active prompt when a rejected concurrent Approval closes, then closes its matching ID while busy', async () => {
+    const { channel, request, signal, answer, responseHandler, captured } = approvalFixture();
+    const concurrent = { ...request, id: 'approval-2' };
+    expect(channel.interaction.sendInteractionRequest(request)).toEqual({ status: 'accepted' });
+    expect(channel.interaction.sendInteractionRequest(concurrent))
+      .toEqual({ status: 'unavailable', reason: 'delivery_failed' });
+    channel.interaction.sendInteractionClosed(concurrent, {
+      outcome: 'unavailable', reason: 'delivery_failed',
+    });
+    expect(signal()?.aborted).toBe(false);
+    expect(captured()).not.toContain('closed');
+
+    channel.send({
+      type: 'run_start', sessionId: request.sessionId,
+      turnId: request.turnId, requestId: 'busy-turn',
+    });
+    channel.interaction.sendInteractionClosed(request, { outcome: 'denied', reason: 'user' });
+    expect(signal()?.aborted).toBe(true);
+    expect(captured()).toContain('[approval] closed (denied)');
+    answer('y');
     await Promise.resolve();
     expect(responseHandler).not.toHaveBeenCalled();
   });
@@ -1329,6 +1407,7 @@ describe('CliChannel Ctrl+C / abort handling', () => {
     const query = vi.fn(partial.querySessionsNeedingAbort ?? (() => []));
     return {
       capabilities: {
+        approvals: { getPending: () => [] },
         modelCatalog: {
           getSnapshot: () => ({
             generation: 1,

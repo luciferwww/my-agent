@@ -766,6 +766,8 @@ export class SessionManager {
   }
 
   private async touchSession(sessionId: string): Promise<void> {
+    if (this.transientTranscriptIds.has(sessionId)) return;
+
     await updateStore(this.storePath, (store) => {
       const entry = store.sessions[sessionId];
       if (entry) entry.updatedAt = this.nextTimestamp(entry.updatedAt);

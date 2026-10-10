@@ -9,6 +9,9 @@ export function createExtension(context: ExtensionLoadContext): LoadedRuntimeUni
   return createWebSocketChannelUnit({
     config: readWebSocketExtensionConfig(context.config),
     clientFilePath: fileURLToPath(new URL('./client/chat.html', import.meta.url)),
+    clientVariants: Object.freeze({
+      '/chat2.html': fileURLToPath(new URL('./client/chat2.html', import.meta.url)),
+    }),
     logger: context.logger,
   });
 }

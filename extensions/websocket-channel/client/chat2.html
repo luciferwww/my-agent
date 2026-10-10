@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>my-agent</title>
+    <title>my-agent · Command Center</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="https://unpkg.com/marked@18.0.4/lib/marked.umd.js"></script>
     <style>
@@ -1087,6 +1087,257 @@
         }
       }
       */
+      /* Agent Command Center */
+      :root {
+        --bg: #f4f3ef;
+        --panel: #faf9f6;
+        --panel-strong: #fff;
+        --surface: #f5f4f1;
+        --surface-soft: #ebeae5;
+        --border: #d8d9d3;
+        --border-strong: #c9cbc4;
+        --text: #242520;
+        --muted: #7d7f78;
+        --accent: #344035;
+        --accent-strong: #20231f;
+        --accent-2: #e9f0e5;
+        --success: #789d6c;
+        --danger: #bf5c55;
+        --shadow: 0 1px 2px rgba(25, 27, 23, 0.05);
+        --radius: 0;
+      }
+      body {
+        font-family: Inter, "Segoe UI Variable", "Segoe UI", "PingFang SC", sans-serif;
+        background: var(--bg);
+      }
+      #app {
+        grid-template-columns: 276px minmax(0, 1fr);
+        gap: 0; width: 100vw; height: 100vh; margin: 0;
+      }
+      .panel {
+        border: 0; border-radius: 0; box-shadow: none;
+      }
+      .sidebar {
+        padding: 18px 14px 15px; gap: 20px;
+        background: #ebeae5; border-right: 1px solid var(--border);
+      }
+      .brand {
+        align-items: center; padding: 0 2px 14px; border-bottom: 1px solid #d5d6cf;
+      }
+      .brand-copy { gap: 5px; }
+      .brand-identity { gap: 8px; }
+      .brand-mark {
+        width: 26px; height: 26px; border: 0; border-radius: 8px;
+        background: #b8cda0;
+      }
+      .brand-mark::before {
+        top: 12px; left: 6px; width: 14px; height: 2px; border-radius: 99px; background: #344035;
+      }
+      .brand-mark::after {
+        top: 5px; right: 5px; width: 4px; height: 4px; background: #344035;
+      }
+      .brand-title { color: #242520; font-size: 15px; font-weight: 750; letter-spacing: -.03em; }
+      .brand-subtitle { color: #8f918a; font-size: 9px; }
+      .status-pill {
+        padding: 6px 8px; color: #677364; background: #f0f3ed;
+        border: 1px solid #dce4d8; border-radius: 999px; font-size: 8px;
+      }
+      .status-pill::before { width: 6px; height: 6px; }
+      .section { gap: 8px; }
+      .section-title { padding: 0 4px; }
+      .section-title h2, .field-label-text {
+        color: #868881; font-size: 9px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase;
+      }
+      .reasoning-controls { gap: 6px; }
+      input, select, textarea, .model-picker-trigger {
+        color: #353731; background: #f8f7f4; border-color: #d4d5ce; border-radius: 7px;
+      }
+      input:focus, select:focus, textarea:focus,
+      .model-picker.open .model-picker-trigger {
+        border-color: #9aab92; box-shadow: 0 0 0 3px rgba(120, 157, 108, .12);
+      }
+      .model-picker-trigger { min-height: 39px; padding: 8px 10px; }
+      .model-picker-trigger-name { font-size: 10px; }
+      .model-picker-trigger-provider, .reasoning-notice { font-size: 8px; }
+      .model-picker-panel, .session-action-menu {
+        background: #fff; border-color: #d2d3cc; border-radius: 9px;
+        box-shadow: 0 14px 35px rgba(30, 33, 27, .15);
+      }
+      .permission-picker-panel {
+        max-height: min(280px, calc(100vh - 24px)); overflow-y: auto;
+      }
+      .permission-picker-panel.placement-top {
+        top: auto; bottom: calc(100% + 8px);
+      }
+      .model-picker-option { border-radius: 6px; }
+      .model-picker-option:hover, .model-picker-option.active { background: #f0f1ec; }
+      .model-picker-option.selected { color: #445941; background: #e9f0e5; }
+      .model-provider-heading { color: #85877f; }
+      .model-picker-default-badge { color: #6c765b; background: #edf0df; }
+      .session-list {
+        gap: 3px; max-height: min(31vh, 295px); padding-right: 2px;
+        scrollbar-width: thin; scrollbar-color: rgba(86, 90, 82, .16) transparent;
+      }
+      .session-list::-webkit-scrollbar { width: 6px; }
+      .session-list::-webkit-scrollbar-track { background: transparent; }
+      .session-list::-webkit-scrollbar-thumb {
+        min-height: 36px; background: rgba(86, 90, 82, .14);
+        border-radius: 999px;
+      }
+      .session-list:hover::-webkit-scrollbar-thumb { background: rgba(86, 90, 82, .3); }
+      .session-list::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+      .session-item {
+        min-height: 49px; padding: 3px; border-radius: 7px;
+      }
+      .session-item:hover, .session-item:focus-within {
+        border-color: #dadbd4; background: #f1f0ec;
+      }
+      .session-item.selected {
+        border-color: #d9dad3; background: #fff; box-shadow: var(--shadow);
+      }
+      .session-item-title { font-size: 10px; }
+      .session-item-time { color: #9a9c95; font-size: 7px; }
+      .session-action-trigger { border-radius: 6px; }
+      .session-action-trigger:hover:not(:disabled),
+      .session-action-menu-item:hover:not(:disabled),
+      .session-action-menu-item:focus-visible { background: #eeeee9; }
+      .permission-panel {
+        margin-top: auto; padding-top: 13px; border-top: 1px solid #d4d5ce;
+      }
+      .permission-indicator {
+        color: #5e6b59; background: #eef3eb; border: 1px solid #d4e0cf;
+        border-left: 1px solid #d4e0cf; border-radius: 7px;
+      }
+      .permission-indicator.allow-all {
+        color: #94524d; background: #faecea; border-color: #ebcfcc;
+      }
+      .permission-warning { color: #9a5b55; }
+      button { border-radius: 7px; font-weight: 600; }
+      button:hover:not(:disabled) { transform: none; }
+      .primary {
+        color: #fff; background: #20231f; box-shadow: none;
+      }
+      .primary:hover:not(:disabled) { background: #30342e; }
+      .secondary {
+        color: #5f625a; background: #f8f7f4; border-color: #d3d4cd;
+      }
+      .secondary:hover:not(:disabled) { background: #efefeb; }
+      .icon-button { color: #7f817a; border-radius: 7px; }
+      .icon-button:hover:not(:disabled) { color: #34362f; border-color: #d4d5ce; background: #f3f2ee; }
+      .chat-shell {
+        background: #faf9f6;
+      }
+      .chat-header {
+        min-height: 60px; padding: 13px 22px;
+        background: #fbfaf7; border-bottom-color: var(--border);
+      }
+      .chat-title { color: #242520; font-size: 16px; font-weight: 720; letter-spacing: -.03em; }
+      .chat-subtitle { color: #8e9089; font-size: 9px; }
+      .chat-header-actions { gap: 7px; }
+      .waiting-badge {
+        padding: 7px 9px; color: #8f681e; background: #fff6e4;
+        border-color: #e8d6b3; border-radius: 7px; font-size: 8px;
+      }
+      .connection-banner {
+        color: #8b682a; background: #fff9ea; border-color: #ebdfc3; font-size: 9px;
+      }
+      .chat-log {
+        padding: 28px max(34px, calc((100% - 930px) / 2)) 38px;
+        gap: 22px; scrollbar-width: thin; scrollbar-color: #c7c8c1 transparent;
+      }
+      .empty-state {
+        max-width: 530px; padding: 28px; color: #777972; background: #fff;
+        border-color: #dedfd8; border-radius: 10px; box-shadow: var(--shadow);
+      }
+      .empty-state h3 { color: #292a25; font-size: 18px; }
+      .message { gap: 7px; }
+      .message-meta { color: #92948d; font-size: 8px; }
+      .bubble {
+        padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none;
+        line-height: 1.7;
+      }
+      .message.user .bubble {
+        padding: 11px 14px; color: #2d2e29; background: #ecece7;
+        border: 1px solid #deded8; border-radius: 10px 10px 4px 10px; box-shadow: none;
+      }
+      .message.assistant .bubble { background: transparent; border-radius: 0; }
+      .thinking-card {
+        border-color: #e0e1da; border-radius: 7px; background: #f1f1ed;
+      }
+      .thinking-header { padding: 7px 9px; font-size: 9px; }
+      .thinking-text { padding: 0 9px 9px; font-size: 10px; }
+      .rich-text { gap: 10px; }
+      .rich-text h1, .rich-text h2, .rich-text h3,
+      .rich-text h4, .rich-text h5, .rich-text h6 { color: #282923; }
+      .rich-text a { color: #537397; }
+      .rich-text th { background: #efefeb; }
+      .rich-text tr:nth-child(even) td { background: #f7f6f3; }
+      .rich-text code { color: #4d6548; background: #edf1ea; border-radius: 4px; }
+      .rich-text pre, .approval-code, .tool-result-body {
+        color: #c9d0c5; background: #1f221e; border-radius: 8px;
+      }
+      .message.system .bubble, .message.tool .bubble {
+        padding: 9px 11px; color: #666960; background: #f1f1ed;
+        border: 1px solid #e0e1da; border-radius: 7px;
+      }
+      .message.error .bubble {
+        padding: 9px 11px; color: #a84e48; background: #faecea;
+        border: 1px solid #ebcfcc; border-radius: 7px;
+      }
+      .turn-tools-toggle {
+        padding: 6px 9px; color: #72756d; background: #f1f1ed;
+        border-color: #e0e1da; border-radius: 7px;
+      }
+      .turn-tools-toggle:hover { background: #fff; color: #34362f; }
+      .approval-card, .tool-result-card {
+        padding: 13px; background: #fff; border-color: #dfe0d9;
+        border-radius: 9px; box-shadow: var(--shadow);
+      }
+      .approval-card.pending {
+        background: #fffaf0; border-color: #e6d6b7;
+      }
+      .approval-card.resolved {
+        background: #eef4eb; border-color: #d3e0ce;
+      }
+      .approval-card.aborted, .approval-card.unavailable,
+      .approval-card.failed, .approval-card.denied {
+        background: #faecea; border-color: #ebcfcc;
+      }
+      .approval-card h3 { color: #2b2c27; font-size: 13px; }
+      .approval-card.collapsed { border-radius: 8px; }
+      .meta-tag, .tool-result-badge {
+        color: #62745d; background: #e9f0e5; border-radius: 5px;
+      }
+      .meta-tag-warn { color: #a4524c; background: #fae8e6; }
+      .meta-tag-muted { color: #7d7f78; background: #eeeee9; }
+      .tool-card-section-label { color: #7f8179; }
+      .tool-result-card { gap: 9px; }
+      .tool-result-preview, .approval-status {
+        color: #65685f; background: #f1f1ed; border-radius: 7px;
+      }
+      .tool-result-badge { padding: 4px 7px; }
+      .composer {
+        margin: 0 max(22px, calc((100% - 930px) / 2)) 18px;
+        padding: 12px; gap: 9px;
+        background: #fff; border: 1px solid #ced0c8; border-radius: 11px;
+        box-shadow: 0 9px 28px rgba(31, 34, 28, .11);
+      }
+      .composer textarea {
+        min-height: 70px; padding: 7px 8px; background: transparent; border: 0; border-radius: 0;
+      }
+      .composer textarea:hover, .composer textarea:focus { background: transparent; box-shadow: none; }
+      .composer-hint { color: #9a9c95; font-size: 8px; }
+      .attachment-chip {
+        background: #f2f2ee; border-color: #e0e1da; border-radius: 7px;
+      }
+      .attachment-chip img, .bubble-attachment img { border-radius: 5px; }
+      @media (max-width: 980px) {
+        #app { grid-template-columns: 1fr; }
+        .sidebar { border-right: 1px solid var(--border); }
+        .chat-shell { border-radius: 0; }
+        .chat-log { padding-left: 20px; padding-right: 20px; }
+        .composer { margin-left: 14px; margin-right: 14px; }
+      }
       </style>
   </head>
   <body>
@@ -1426,6 +1677,7 @@
           <div class="model-picker" :class="{ open: permissionPickerOpen }">
             <span class="field-label-text">Permission mode</span>
             <button
+              ref="permissionPickerTrigger"
               class="model-picker-trigger"
               type="button"
               :disabled="!isConnected || pendingPermissionRequestId !== null"
@@ -1443,7 +1695,9 @@
             <div v-if="permissionPickerOpen" class="model-picker-scrim" @click="closePermissionPicker"></div>
             <div
               v-if="permissionPickerOpen"
-              class="model-picker-panel"
+              ref="permissionPickerPanel"
+              class="model-picker-panel permission-picker-panel"
+              :class="{ 'placement-top': permissionPickerPlacement === 'top' }"
               role="listbox"
               aria-label="Permission mode"
               @keydown.esc.stop="closePermissionPicker"
@@ -2036,6 +2290,7 @@
             modelPickerOpen: false,
             reasoningPickerOpen: null,
             permissionPickerOpen: false,
+            permissionPickerPlacement: 'bottom',
             modelSearch: '',
             activeModelOptionIndex: -1,
             sessionStates: { '': createSessionUiState() },
@@ -2906,10 +3161,28 @@
             if (!this.isConnected || this.pendingPermissionRequestId !== null) return;
             this.closeModelPicker();
             this.closeReasoningPicker();
+            this.updatePermissionPickerPlacement(120);
             this.permissionPickerOpen = true;
+            nextTick(() => this.updatePermissionPickerPlacement());
           },
           closePermissionPicker() {
             this.permissionPickerOpen = false;
+          },
+          updatePermissionPickerPlacement(estimatedPanelHeight = 120) {
+            const trigger = this.$refs.permissionPickerTrigger;
+            const panel = this.$refs.permissionPickerPanel;
+            const boundary = this.$refs.sidebarPanel;
+            if (!trigger || !boundary) return;
+
+            const triggerRect = trigger.getBoundingClientRect();
+            const boundaryRect = boundary.getBoundingClientRect();
+            const panelHeight = panel?.offsetHeight || estimatedPanelHeight;
+            const gap = 8;
+            const spaceAbove = triggerRect.top - boundaryRect.top - gap;
+            const spaceBelow = boundaryRect.bottom - triggerRect.bottom - gap;
+            this.permissionPickerPlacement = (
+              spaceBelow < panelHeight && spaceAbove > spaceBelow
+            ) ? 'top' : 'bottom';
           },
           selectPermissionMode(mode) {
             this.closePermissionPicker();

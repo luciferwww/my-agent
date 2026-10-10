@@ -4,6 +4,26 @@
 > Date: 2026-10-09
 > Authorization: 仅记录调研结论与候选设计，不授权实现，不覆盖 Current Architecture、Accepted Decisions、Stable Specifications、已批准的 Active Change 或源代码
 
+## 草稿与当前 Change 的边界
+
+普通 Turn 的候选契约和模块改动已提炼到
+[Accepted Plan](../changes/active/session-scoped-approval-delivery/plan.md) 与
+[Accepted Specification](../changes/active/session-scoped-approval-delivery/specification.md)。
+评审普通 Turn 时以这些 Change 文档为提案入口，不从本草稿另推导实现要求；
+所有者已于 2026-10-10 接受这些文档并明确授权 Delivery；
+当前 Stable Authority 的同步仍以实现和验证结果为准。
+
+下文 Automation fanout、Run 状态、Child Session 和多 Channel 聚合均为未来
+Automation Change 的研究输入，不属于当前 Approval Change 的“第一版”交付范围。
+WebSocket 消息与浏览器展示步骤只是模块候选适配，不是共享 Approval 数据契约。
+
+2026-10-10 范围收敛：当前 Change 只包含 Client-independent delivery（包括
+无 Origin Channel 时取消 Channel 限制）、全量或按 Session 的 pending query，
+以及 chat 自有的定期刷新和本地 Session 提示。共享 Session 类型不增加全局
+待处理标识；此前的共享标识候选已撤出当前范围。下文关于 per-binding query、
+WebSocket 专属 count/attention 协议和 Automation delivery 聚合的细节属于
+历史研究候选，不能作为额外实施要求；以当前 Change 为准。
+
 ## 1. 问题
 
 当前 Approval 是 current-call、origin-bound、process-local：
@@ -15,15 +35,28 @@ Tool 需要 Approval
 -> Origin Client 断开时 Approval 以 unavailable/origin_disconnected 结束
 ```
 
-这个模型适合由在线 Client 发起的交互 Turn，但不能直接满足 Automation：
+这个模型不仅不能直接满足 Automation，也把普通 WebSocket Turn 绑定到短暂页面连接：
 
 - Automation Run 没有 Origin Channel 或 Origin Client；
 - Automation 可能在没有 Client 在线时触发；
+- 普通浏览器页面误关后，当前 pending Approval 会立即 unavailable，重新打开同一 Session 也无法继续；
+- 如果把所有 Approval 无条件转移到任意 Interaction Channel，不支持 Approval 的 Origin UI 又可能在无提示的情况下长期等待后台 Client；
 - 用户需要从 Session/Automation 列表发现等待审批的 Run；
 - 用户稍后打开对应 Session 时，需要看到仍在等待的真实 Tool Call 和参数；
 - 不应为 Automation 另建一套 Tool policy、Approval result 或 AgentRunner 流程。
 
-本草稿讨论一种最小扩展：保留现有 Origin 路由，同时允许没有 Origin route 的 Automation Approval 通过 Session 被多个现有 Interaction Channel 处理。
+本草稿选择 Channel + Session 投递范围：
+
+```text
+普通 Turn：
+  Origin Channel 不支持 interaction -> fail closed
+  Origin Channel 支持 interaction   -> 只在该 Channel 内按 Session 投递和恢复
+
+Automation Turn：
+  没有 Origin Channel -> 按 Session 投递到当前所有 Interaction Channel
+```
+
+普通 Turn 不离开发起它的 Channel，但不再绑定某个短暂 Client；Automation 没有 Origin，才使用跨 Channel 的 Session Approval。
 
 ## 2. 当前实现事实
 
@@ -44,7 +77,7 @@ Tool 需要 Approval
 
 ## 3. 设计结论
 
-### 3.1 统一 Approval 生命周期，不统一为单一投递方式
+### 3.1 Channel 决定入口，Session 决定 Channel 内的归属
 
 保留同一套：
 
@@ -55,17 +88,23 @@ Tool 需要 Approval
 - first-settlement-wins；
 - Abort 和 Shutdown 语义。
 
-只扩展 Runtime 的投递选择：
+Runtime 的投递选择是：
 
 ```text
 Turn 有 Origin Channel route
--> 只发送给该 Origin Channel
+-> Origin Channel 有 interaction
+   -> 只发送给该 Origin Channel
+   -> Channel 按用户可见 Session 投递
+-> Origin Channel 无 interaction
+   -> 不提供 Approval capability
+   -> Tool policy fail closed
 
 Turn 没有 Origin Channel route
 -> 发送给当前所有带 interaction 的 Channel
+-> 每个 Channel 按用户可见 Session 投递
 ```
 
-判断依据是 Runtime 是否保存了 Origin Channel route，不是单独检查 `originClientId`。CLI 的正常交互 Turn 可以没有 Client ID，但仍有 Origin Channel，因此继续只在 CLI 中提示。
+判断依据是 Runtime 是否保存了 Origin Channel route，不是单独检查 `originClientId`。CLI 的正常交互 Turn 可以没有 Client ID，但仍有 Origin Channel，因此继续只在 CLI 中提示。普通 WebSocket request 以 Session 标识业务归属；其 audience 是 Channel 的传输策略，不代表当前视图或审批权限。
 
 Automation Run 没有 Origin Channel route，因此使用第二条路径。
 
@@ -88,47 +127,42 @@ readonly interaction?: ChannelInteractionTransport;
 
 ```text
 有 interaction
+-> 可以为本 Channel 发起的普通 Turn 提供 Approval
 -> 可以接收没有固定 Origin 的 Automation Approval
 
 没有 interaction
--> 不参与 Approval
+-> 由该 Channel 发起的普通 Turn 无 Approval capability
+-> 不参与 Automation Approval
 ```
 
 因此 Automation Approval 可以同时交给 CLI、WebSocket 和未来其他 Interaction Channel。任意一个合法响应先到达 Runtime 即可结算。
 
 如果未来出现“支持 Origin Interaction，但明确不能接收 Automation Interaction”的真实 Channel，再基于实际需求增加能力细分；第一版不提前建模。
 
-### 3.3 不新增 Runtime pending-list API
+### 3.3 Runtime 保持唯一 pending registry
 
-第一版不增加：
+Runtime 提供只读、按绑定 Channel 过滤的 pending snapshot：
 
 ```ts
-listPending(sessionId: string): readonly ApprovalRequest[]
+getPending(sessionId?: string): readonly ApprovalRequest[]
 ```
 
-Runtime 继续拥有 canonical pending interaction；各 Channel 只保存自己已经接受的 delivery projection。
+查询复用现有 `ApprovalRequest`，不新增 Snapshot、QueryResult 或 Closure 包装类型。
+返回请求和嵌套 input 不共享 canonical pending 的可变引用。
 
-WebSocket Channel 收到 Session-addressed Approval 后保存完整 request：
+Runtime 继续拥有唯一 canonical pending interaction。WebSocket 不保存第二份完整 request registry，而是基于 Runtime snapshot 计算 Session count、响应显式 Session query，并校验 response。
 
-```text
-approvalId
-sessionId
-turnId
-callId
-toolName
-input
-```
-
-当前 Session audience 为空时，WebSocket 仍返回 `accepted` 并保留 projection。Client 稍后打开该 Session 时，WebSocket 从本地 projection 重放 `approval_requested`。
+没有 Client 连接时，WebSocket 仍返回 `accepted`。Client 稍后打开该 Session 时，显式查询该 Channel、该 Session 仍 pending 的完整 requests。
 
 这个方案只保证：
 
 ```text
-Approval 创建时已经存在并接受 request 的 Channel
--> 可以向后来连接的 Client replay
+Runtime 仍存活并保留 canonical pending
+且原 Origin Channel binding 仍有效
+-> 后来连接的 Client 可以按 Session replay
 ```
 
-第一版不保证 Interaction Channel 被动态卸载、重新创建后恢复旧 projection。若未来要求 Channel 热重载后重新发现 pending interaction，再引入 Runtime snapshot/query，而不是现在提前增加。
+第一版不保证 Interaction Channel 被动态卸载、重新创建后恢复原 Origin route；Runtime query 本身不改变已捕获的 Channel binding。
 
 ### 3.4 不建立全局 Approval Inbox
 
@@ -150,7 +184,7 @@ Client 已在线但未打开相关 Session 时，通过轻量事件更新：
 }
 ```
 
-完整 Tool 名称、input 和决策按钮只在用户打开对应 Session 后展示。
+何时获取和展示完整请求由对应 Channel/Client 决定；不作为 Approval 路由约束。
 
 ## 4. Runtime 路由
 
@@ -162,7 +196,9 @@ Client 已在线但未打开相关 Session 时，通过轻量事件更新：
 Tool 请求 Approval
 -> Runtime 找到 Origin Channel
 -> Origin Channel 有 interaction
-   -> 提供 Approval capability 并向该 Channel 投递
+   -> 提供 Approval capability
+   -> 只向该 Channel 投递
+   -> Channel 按用户可见 Session 展示和恢复
 -> Origin Channel 无 interaction
    -> 不提供 Approval capability
    -> Tool policy fail closed
@@ -170,7 +206,9 @@ Tool 请求 Approval
 
 这保持当前安全边界。系统不能因为另一个 Channel 有 Interaction 能力，就替一个不支持 Approval 的 Origin Channel 批准 Tool。
 
-Subagent 继续继承 Parent Turn 的 Origin route。
+Origin Client 只记录来源，不再是 pending Approval 的生命周期 owner。WebSocket Client 断开不结束 Approval；重新连接后可以查询仍 pending 的请求。
+
+Subagent 继续继承 Parent Turn 的 Origin Channel 和用户可见 Root Session。
 
 ### 4.2 Automation Turn
 
@@ -228,40 +266,39 @@ CLI 已提供 `interaction`：
 -> 当前 CLI prompt
 ```
 
-CLI 同一时刻不能承载第二个 Approval prompt 时，可以返回 `delivery_failed`。只要另一个 Channel accepted，整体 Approval 仍可等待。
+普通 CLI Turn 的 Approval 不广播到 WebSocket。CLI 同一时刻不能承载第二个 Approval prompt 时，可以返回 `delivery_failed`。对于 Automation，只要另一个 Channel accepted，整体 Approval 仍可等待。
 
 如果 WebSocket Client 先完成决定，Runtime 向 CLI 发送 closure，CLI 取消尚未完成的 prompt。
 
-### 5.2 WebSocket Origin Approval
+### 5.2 WebSocket Channel + Session Approval
 
-普通 WebSocket Turn 保持现有语义：
-
-```text
-request.originClientId 有值
--> 只发给该 Client
--> 当前 Origin Client 断开
--> unavailable/origin_disconnected
-```
-
-本草稿不顺带修改普通浏览器 Turn 的断线恢复行为。
-
-### 5.3 WebSocket Session-addressed Approval
-
-Automation request 到达 WebSocket 时没有 `originClientId`：
+普通 WebSocket Turn 仍只投递到 Origin WebSocket Channel，但在该 Channel 内改为 Session-addressed：
 
 ```text
-保存完整 pending delivery projection
--> 向当前 sessionId audience 广播 approval_requested
--> audience 为空也返回 accepted
+Runtime 保存 canonical pending request
+-> WebSocket 向所有 Client 广播轻量 Session attention
+-> 保留现有 realtime approval_requested，按现有 Session audience 投递
+-> 没有 Client 也返回 accepted
+-> Client 断开不结算 Approval
+-> 后来打开同一 Session 的 Client 可以 query 并处理
 ```
 
-Client 断开只移除 Session audience membership，不结束 Approval。
+`originClientId` 可以继续作为 provenance、日志和 UI 信息，但不再限制谁可以处理该 WebSocket Session 中的 Approval。
 
-同一 Session 的任意当前 Client 都可以提交决定。WebSocket 校验：
+### 5.3 WebSocket Automation Approval
 
-1. Approval ID 仍在本地 pending projection；
-2. Request 没有固定 Origin Client；
-3. 提交 Client 属于 request.sessionId 的当前 audience。
+Automation request 没有 Origin Channel。Runtime 将它发送给 WebSocket 后，WebSocket 使用与普通 WebSocket Turn 相同的 Session-addressed presentation：
+
+```text
+Runtime 保存 canonical pending request
+-> WebSocket 向所有 Client 广播轻量 Session attention
+-> 没有 Client 也返回 accepted
+```
+
+普通 WebSocket Turn 允许初始化完成的 Client 对该 binding 内仍 pending 的请求提交决定，不要求它先登记当前视图或查询记录。Automation 的 binding 可见范围须由未来 fanout 设计确定。WebSocket 校验：
+
+1. Approval ID 仍在该 Channel 可见的 Runtime canonical pending snapshot；
+2. request 仍属于该 WebSocket Channel binding。
 
 满足后把 response 交给 Runtime；Runtime first-settlement-wins。
 
@@ -271,14 +308,13 @@ Client 断开只移除 Session audience membership，不结束 Approval。
 
 ```text
 加载 Session history
--> 注册/确认该 Client 的 Session audience
--> WebSocket replay 该 Session 当前 pending Approval requests
--> 后续 request/closure 继续实时接收
+-> 显式查询该 Session 当前 pending Approval requests
+-> 后续 attention 是否触发查询由 Channel/Client 自己的展示策略决定
 ```
 
-第一版可以复用现有 Session audience 注册时机，不强制增加独立 `attach_session` 协议。若隐式注册导致 UI 生命周期不清晰，再单独设计 attach/detach。
+Approval delivery 不定义 Channel/Client 的 Session 展示拓扑或导航策略。
 
-Client 应按 Approval ID 幂等合并实时消息与 replay，避免重复卡片。
+Client 应按 Approval ID 幂等合并查询结果，并消费权威 closure。
 
 ## 6. Session 列表提醒
 
@@ -292,9 +328,7 @@ WebSocket 返回 Session 列表时，为每项附加：
 pendingApprovalCount: number
 ```
 
-该值来自 WebSocket 当前保存的 Session-addressed pending delivery projection，不写入持久化 Session metadata。
-
-普通 Origin-directed Approval 不必计入其他 Client 可见的 Session badge。
+该值来自 Runtime 向该 Channel 暴露的 canonical pending snapshot，不写入持久化 Session metadata。普通 WebSocket Turn 和 Automation 的 pending Approval 都计入对应 Session。
 
 ### 6.2 实时变化
 
@@ -316,19 +350,19 @@ Session-addressed Approval 从零变为非零、数量增加或结算后减少�
 
 ### 6.3 完整请求
 
-完整 request 仍只发送给对应 Session audience：
+显式 Session query 补充现有 realtime request，支持稍后发现和重连：
 
 ```text
 列表 badge
 -> 用户打开 Session
--> replay approval_requested
+-> get_session_approvals(sessionId)
 -> 用户核对 Tool 和 input
 -> Allow / Deny
 ```
 
 ## 7. Settlement 与 closure
 
-多 Channel 和多 Client 场景下，提交方本地知道决定已不够。第一版候选设计要求所有终态都产生 closure：
+同一 Channel 的多 Client 以及 Automation 的多 Channel 场景下，提交方本地知道决定已不够。第一版候选设计要求所有终态都产生 closure：
 
 ```text
 approved/user
@@ -343,19 +377,18 @@ failed/*
 时序：
 
 ```text
-任意 Channel/Client 提交决定
+任意合格 Channel/Client 提交决定
 -> Runtime first-settlement-wins
 -> 清理 canonical pending entry
 -> resolve AgentRunner waiting Promise
 -> 向接受过 request 的 Channel 发送 closure
--> Channel 清理本地 projection
 -> WebSocket 更新 pendingApprovalCount
--> Session audience 关闭 Approval card
+-> Channel/Client 更新已有 Approval presentation
 ```
 
 迟到响应不得改变已经结算的结果。
 
-若第一版不记录精确 accepted Channel set，Runtime 可以向当前全部 Interaction Channel 幂等广播 closure；正式 Specification 需要在“精确 delivery set”和“幂等全广播”之间选定一种。
+普通 Turn 的 closure 只返回 Origin Channel。Automation 若不记录精确 accepted Channel set，Runtime 可以向当前全部 Interaction Channel 幂等广播 closure；正式 Specification 需要在“精确 delivery set”和“幂等全广播”之间选定一种。
 
 ## 8. Run 状态
 
@@ -392,22 +425,23 @@ Automation Run 列表可以复用 `waiting_approval` 作为提醒，但完整 re
 第一版保持 process-local：
 
 - canonical pending interaction 不写入 Automation SQLite；
-- Channel delivery projection 不写入 Session Transcript；
+- Runtime pending snapshot 不写入 Session Transcript；
 - `pendingApprovalCount` 不写入 Session metadata；
 - 没有 Approval timeout；
-- Client disconnect 不结束 Session-addressed Approval；
+- WebSocket Client disconnect 不结束该 Channel 内的 Session-addressed Approval；
+- 不支持 Interaction 的 Origin Channel 不创建 Approval；
 - Turn Abort 或 Automation Run Cancel 结束对应 Approval；
 - Runtime Shutdown 以 `aborted/shutdown` 结算；
+- 普通 Turn 的 Origin Channel 永久停止时，以 `unavailable/origin_channel_stopped` 结算，避免永久等待；
 - Runtime 重启后旧 Automation Run 标记为 `interrupted`，不恢复 suspended Tool Call。
 
 只持久化 Approval request 不能恢复 AgentRunner Promise、Model loop、Abort tree 和执行栈，因此第一版不设计跨重启 Approval recovery。
 
 ## 10. 不做的事项
 
-第一版不做：
+当前 Approval Change 不做以下扩展；Automation 相关授权也不由本草稿产生：
 
 - 全局 Approval Inbox；
-- Runtime `listPending(sessionId)` API；
 - `ChannelInteractionCapabilities`；
 - Approval 持久化和跨重启恢复；
 - 永久允许某个 Automation Job；
@@ -415,18 +449,23 @@ Automation Run 列表可以复用 `waiting_approval` 作为提醒，但完整 re
 - quorum/consensus；
 - 风险等级和权限预测；
 - 为 Automation 新建专用 Approval manager 或协议；
-- 普通 WebSocket Origin Approval 的断线恢复；
-- Interaction Channel 热重载后的 pending projection 恢复。
+- 普通 Turn 跨 Origin Channel 转移 Approval；
 
 ## 11. 预计改动面
 
-核心改动集中在：
+共享 Approval 数据和查询契约归 `core/approval`；`core/channel` 负责集成接口。
+WebSocket wire message、CLI prompt 和浏览器适配是各模块的实施改动，
+不构成共享 Approval 协议。当前 Change 的具体划分见
+[Specification](../changes/active/session-scoped-approval-delivery/specification.md)。
 
-- `core/channel`：扩展 closure result，使用户主动 Allow/Deny 也可通知其他 Channel；
-- `runtime/turn-interaction`：所有 settlement 产生 closure，保持 first-settlement-wins；
-- `runtime/RuntimeApp`：Origin route 与无 Origin route 的投递选择及多 Channel delivery 聚合；
-- WebSocket Channel：保存完整 pending projection、Session 广播、Session 列表 count、attention event、Session 切换 replay 和 Session audience response 校验；
-- CLI Channel：接收来自其他 Channel settlement 的 closure 并取消 prompt；
+当前 Approval Change 的改动面以链接的 Plan/Specification 为准。下列包含
+Automation 的项目仅描述未来研究范围：
+
+- `core/approval` 与 `core/channel`：统一 Approval domain request/result，定义 per-binding 只读 pending snapshot capability，并扩展 closure result，使用户主动 Allow/Deny 也可通知 Channel；
+- Runtime：提供按 Channel binding 隔离的 canonical pending query，校验 response 来源，所有 settlement 产生 closure，保持 first-settlement-wins；
+- `runtime/RuntimeApp`：普通 Turn 的 Origin Channel gate、Automation 的多 Channel delivery 聚合，以及用户可见 Root Session 继承；
+- WebSocket Channel：基于 Runtime pending query 完成 Session 列表 count、attention event、显式 Session query 和 response 校验，不复制完整 pending registry；
+- CLI Channel：保持普通 Turn 本地 prompt，以 active Approval ID 限制 closure，并在 Automation 被其他 Channel 结算时取消匹配 prompt；
 - Automation Runtime：创建没有 Origin route 的顶层 Turn，并将 Root Run Session identity 传给 Child Approval。
 
 第一版不需要修改 AgentRunner Tool pipeline、Tool policy ordering、Platform Config 默认值或 Session 持久格式。
@@ -435,13 +474,9 @@ Automation Run 列表可以复用 `waiting_approval` 作为提醒，但完整 re
 
 实现前仍需明确：
 
-1. Runtime 是否记录精确 accepted Channel set；
-2. 多 Channel delivery 中全部失败时的规范化 reason；
-3. WebSocket Session audience 的现有隐式注册时机是否足够；
-4. Session 列表字段是固定 `pendingApprovalCount`，还是更通用的 attention projection；
-5. Channel 动态卸载时，已接受的 Session-addressed Approval 如何避免永久 orphan；
-6. Automation Root Session identity 如何通过现有 route context 传给 Child；
-7. `approval_closed` 的最终 wire shape 是否继续使用 `reason`，或改为结构化 source/reason。
+1. Automation delivery 是否记录精确 accepted Channel set；
+2. Automation 多 Channel delivery 中全部失败时的规范化 reason；
+3. Automation Root Session identity 如何通过现有 route context 传给 Child。
 
 ## 13. 与其他设计的关系
 

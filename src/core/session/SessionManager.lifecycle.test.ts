@@ -115,6 +115,26 @@ describe('SessionManager lifecycle persistence', () => {
     expect(() => manager.getMessages(childSessionId)).toThrowError(SessionError);
   });
 
+  it('does not touch the Session Store when appending to a transient Transcript', async () => {
+    const callerSessionId = await materialize('Caller');
+    const childSessionId = randomUUID();
+    await manager.createTransientSubagentTranscript({
+      sessionId: childSessionId,
+      callerSessionId,
+      createdAt: 250,
+    });
+
+    await writeFile(join(agentHome, 'sessions', 'sessions.json'), '{invalid');
+    await manager.appendMessage(childSessionId, {
+      turnId: 'child-turn',
+      role: 'user',
+      content: 'delegated work',
+    });
+
+    expect(manager.getMessages(childSessionId)[0]?.message.content).toBe('delegated work');
+    await manager.deleteTransientSubagentTranscript(childSessionId);
+  });
+
   it('renames and clears a title without exposing arbitrary metadata updates', async () => {
     const sessionId = await materialize();
     now = 300;

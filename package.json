@@ -29,6 +29,7 @@
     "extensions/copilot-relay-provider/types.ts",
     "extensions/websocket-channel/WebSocketChannel.ts",
     "extensions/websocket-channel/client/chat.html",
+    "extensions/websocket-channel/client/chat2.html",
     "extensions/websocket-channel/config.ts",
     "extensions/websocket-channel/entry.ts",
     "extensions/websocket-channel/extension.json",

@@ -303,40 +303,32 @@ function bindInstance(
   const binding: ChannelRuntimeBinding = Object.freeze({
     id: instance.id,
     send: (event: AgentEvent) => instance.send(event),
-    ...(interaction ? { interaction } : {}),
+    interaction,
   });
 
   instance.onMessage((request) => ingressGate.active
     ? host.onMessage(binding, request)
     : Promise.reject(new Error(`Channel "${instance.id}" ingress is not published.`)));
-  if (instance.interaction) {
-    instance.interaction.onInteractionResponse((response) => {
-      if (ingressGate.active) host.onInteractionResponse(response);
-    });
-    instance.interaction.onInteractionUnavailable((id, reason) => {
-      if (ingressGate.active) host.onInteractionUnavailable(id, reason);
-    });
-  }
+  instance.interaction.onInteractionResponse((response) => {
+    if (ingressGate.active) host.onInteractionResponse(binding, response);
+  });
   instance.bindRuntimeCapabilities?.(host.capabilities);
   return binding;
 }
 
 function normalizeInteraction(
   instance: ChannelInstance,
-): ChannelRuntimeInteraction | undefined {
-  if (instance.interaction) {
-    return Object.freeze({
-      sendInteractionRequest: (request: TurnInteractionRequest) =>
-        instance.interaction!.sendInteractionRequest(request),
-      sendInteractionClosed: (
-        request: TurnInteractionRequest,
-        result: ApprovalClosedResult,
-      ) => {
-        instance.interaction!.sendInteractionClosed(request, result);
-      },
-    });
-  }
-  return undefined;
+): ChannelRuntimeInteraction {
+  return Object.freeze({
+    sendInteractionRequest: (request: TurnInteractionRequest) =>
+      instance.interaction.sendInteractionRequest(request),
+    sendInteractionClosed: (
+      request: TurnInteractionRequest,
+      result: ApprovalClosedResult,
+    ) => {
+      instance.interaction.sendInteractionClosed(request, result);
+    },
+  });
 }
 
 async function settledValue(
@@ -373,6 +365,10 @@ function assertChannelInstance(
     || typeof instance.stop !== 'function'
     || !instance.completion
     || typeof instance.completion.then !== 'function'
+    || !instance.interaction
+    || typeof instance.interaction.sendInteractionRequest !== 'function'
+    || typeof instance.interaction.sendInteractionClosed !== 'function'
+    || typeof instance.interaction.onInteractionResponse !== 'function'
   ) {
     throw new Error(`Channel factory "${contributionId}" returned an invalid instance.`);
   }

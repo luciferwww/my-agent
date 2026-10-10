@@ -19,6 +19,11 @@ interface ExternalSentinelResource {
 
 class ExternalTestChannel implements ChannelInstance {
   readonly id = 'external-test-channel';
+  readonly interaction = {
+    sendInteractionRequest: () => ({ status: 'unavailable' as const, reason: 'delivery_failed' as const }),
+    sendInteractionClosed: () => {},
+    onInteractionResponse: () => {},
+  };
   readonly completion: Promise<ChannelCompletion>;
   readonly sentEvents: AgentEvent[] = [];
   private messageHandler?: (request: ChannelRunRequest) => Promise<void>;
@@ -73,8 +78,8 @@ function host(): ChannelRuntimeHost {
   return {
     onMessage: vi.fn(async () => {}),
     onInteractionResponse: vi.fn(),
-    onInteractionUnavailable: vi.fn(),
     capabilities: {
+      approvals: { getPending: () => [] },
       modelCatalog: {
         getSnapshot: () => ({
           generation: 1,

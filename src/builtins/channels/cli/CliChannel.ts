@@ -7,7 +7,7 @@ import type {
   ApprovalRequest,
   Channel,
   ChannelCompletion,
-  ChannelInteractionAdapter,
+  ChannelInteractionTransport,
   ChannelRunRequest,
   ChannelRuntimeCapabilities,
   ModelCatalogEntry,
@@ -279,7 +279,7 @@ export interface CliChannelConfig {
 export class CliChannel implements Channel {
   readonly id = 'cli';
   readonly completion: Promise<ChannelCompletion>;
-  readonly interaction?: ChannelInteractionAdapter;
+  readonly interaction: ChannelInteractionTransport;
 
   private readonly input: NodeJS.ReadableStream;
   private readonly output: NodeJS.WritableStream;
@@ -304,6 +304,8 @@ export class CliChannel implements Channel {
   private pendingPromptKind?: 'ordinary' | 'approval';
   private approvalPromptAbort?: AbortController;
   private approvalPromptCompletion?: Promise<void>;
+  private approvalPromptId?: string;
+  private readonly approvalEnabled: boolean;
   private cancelApprovalPrompt?: () => void;
   private readonly activeTurnIds = new Set<string>();
   private readonly idleWaiters = new Set<() => void>();
@@ -329,9 +331,8 @@ export class CliChannel implements Channel {
       };
     });
 
-    if (config.approval) {
-      this.interaction = this.makeInteractionAdapter();
-    }
+    this.approvalEnabled = config.approval ?? false;
+    this.interaction = this.makeInteractionAdapter();
   }
 
   // ── Channel.send 实现 ───────────────────────────────────────────────
@@ -519,7 +520,7 @@ export class CliChannel implements Channel {
 
     log.info('cli channel started', {
       channelId: this.id,
-      approvalEnabled: !!this.interaction,
+      approvalEnabled: this.approvalEnabled,
     });
 
     void this.runInputLoop();
@@ -1490,27 +1491,29 @@ export class CliChannel implements Channel {
     return { selected: true, value: option.value };
   }
 
-  private makeInteractionAdapter(): ChannelInteractionAdapter {
+  private isAcceptableRequest(request: ApprovalRequest): boolean {
+    return this.approvalEnabled
+      && (request.originChannelId === undefined || request.originChannelId === this.id)
+      && !!this.rl
+      && !this.approvalPromptCompletion;
+  }
+
+  private makeInteractionAdapter(): ChannelInteractionTransport {
     return {
       sendInteractionRequest: (request) => {
-        if (request.kind !== 'approval') {
-          throw new Error(`CliChannel does not support interaction kind: ${request.kind}`);
+        if (request.kind !== 'approval' || !this.isAcceptableRequest(request)) {
+          return { status: 'unavailable', reason: 'delivery_failed' };
         }
         return this.promptApproval(request, (decision) => {
           this.dispatchApprovalSubmission(request.id, decision);
         });
       },
       sendInteractionClosed: (request, result) => {
-        if (request.kind !== 'approval') {
-          throw new Error(`CliChannel does not support interaction kind: ${request.kind}`);
-        }
+        if (request.kind !== 'approval') return;
         this.closeApproval(request.id, result);
       },
       onInteractionResponse: (handler) => {
         this.interactionResponseHandler = handler;
-      },
-      onInteractionUnavailable: () => {
-        // CLI approval origin shares the channel process lifecycle.
       },
     };
   }
@@ -1554,12 +1557,14 @@ export class CliChannel implements Channel {
       settleApprovalPrompt = resolve;
     });
     this.approvalPromptCompletion = completion;
+    this.approvalPromptId = request.id;
     let finished = false;
     const finishApprovalPrompt = () => {
       if (finished) return;
       finished = true;
       if (this.approvalPromptCompletion === completion) {
         this.approvalPromptCompletion = undefined;
+        this.approvalPromptId = undefined;
         this.cancelApprovalPrompt = undefined;
       }
       settleApprovalPrompt();
@@ -1602,6 +1607,7 @@ export class CliChannel implements Channel {
   }
 
   private closeApproval(id: string, result: ApprovalClosedResult): void {
+    if (this.approvalPromptId !== id) return;
     this.cancelApprovalPrompt?.();
     this.output.write(yellow(`\n[approval] closed (${result.outcome})\n`));
     log.info('cli approval closed', {

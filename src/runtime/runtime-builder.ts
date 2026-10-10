@@ -4,6 +4,7 @@ import {
   ChannelRunRequest,
   ChannelRuntimeBinding,
   ChannelRuntimeHost,
+  ApprovalRequest,
   TurnInteractionResponse,
 } from '../core/channel/index.js';
 import type { AgentEvent } from '../core/runner/index.js';
@@ -70,14 +71,18 @@ import {
   createSystemRuntimeDeadlineDriver,
   resolveRuntimeDeadlinePolicy,
 } from './runtime-deadline.js';
+import {
+  acquireAgentHomeLock,
+  type AgentHomeLock,
+} from './agent-home-lock.js';
 
 const log = Logger.get('RuntimeBuilder');
 
 export interface RuntimeApplicationKernel {
   readonly application: RuntimeApplication;
   onChannelMessage(binding: ChannelRuntimeBinding, request: ChannelRunRequest): Promise<void>;
-  onInteractionResponse(response: TurnInteractionResponse): void;
-  onInteractionUnavailable(id: string, reason: 'origin_disconnected'): void;
+  onInteractionResponse(binding: ChannelRuntimeBinding, response: TurnInteractionResponse): void;
+  getPendingApprovals(sessionId?: string): readonly ApprovalRequest[];
   querySessionsNeedingAbort(): string[];
   abortTurn(sessionId: string): { aborted: boolean; dropped: number };
   blockingTurnIds(generation: number): readonly string[];
@@ -107,6 +112,7 @@ export async function buildRuntimeHandle(
   options: RuntimeAppOptions,
   createApplication: RuntimeApplicationKernelFactory,
 ): Promise<RuntimeHandle> {
+  const agentHomeLock = await acquireAgentHomeLock(options.agentHome);
   const lifecycleLedger = new RuntimeLifecycleLedger();
   const coordinator = new CompositionCoordinator(lifecycleLedger);
   let kernel: RuntimeApplicationKernel | undefined;
@@ -184,11 +190,9 @@ export async function buildRuntimeHandle(
       }
       return kernel.onChannelMessage(binding, request);
     },
-    onInteractionResponse(response: TurnInteractionResponse) {
-      kernel?.onInteractionResponse(response);
-    },
-    onInteractionUnavailable(id: string, reason: 'origin_disconnected') {
-      kernel?.onInteractionUnavailable(id, reason);
+    onInteractionResponse(binding: ChannelRuntimeBinding, response: TurnInteractionResponse) {
+      if (!kernel) throw new Error('Runtime Approval ingress is not ready.');
+      kernel.onInteractionResponse(binding, response);
     },
     capabilities: Object.freeze({
       modelCatalog: Object.freeze({
@@ -203,6 +207,12 @@ export async function buildRuntimeHandle(
         },
         abortTurn(sessionId: string) {
           return kernel?.abortTurn(sessionId) ?? { aborted: false, dropped: 0 };
+        },
+      }),
+      approvals: Object.freeze({
+        getPending(sessionId?: string) {
+          if (!kernel) throw new Error('Runtime Approval capability is not ready.');
+          return kernel.getPendingApprovals(sessionId);
         },
       }),
       sessions: Object.freeze({
@@ -298,13 +308,18 @@ export async function buildRuntimeHandle(
     }),
   });
 
-  const bootstrap = await bootstrapRuntime({
-    ...options,
-    onAgentEvent: fanoutAgentEvent,
-  }, dependencies, {
-    driver: deadlineDriver,
-    timeoutMs: deadlinePolicy.candidateCleanupMs,
-  });
+  let bootstrap!: Awaited<ReturnType<typeof bootstrapRuntime>>;
+  try {
+    bootstrap = await bootstrapRuntime({
+      ...options,
+      onAgentEvent: fanoutAgentEvent,
+    }, dependencies, {
+      driver: deadlineDriver,
+      timeoutMs: deadlinePolicy.candidateCleanupMs,
+    });
+  } catch (error) {
+    await releaseAgentHomeLockAfterFailure(agentHomeLock, error);
+  }
 
   try {
     const activeParentTurns = new Map<string, ActiveParentTurn>();
@@ -414,7 +429,7 @@ export async function buildRuntimeHandle(
       Logger.close(),
       deadlineDriver.now() + deadlinePolicy.candidateCleanupMs,
     );
-    throw error;
+    await releaseAgentHomeLockAfterFailure(agentHomeLock, error);
   }
 
   let closePromise: Promise<RuntimeShutdownReport> | undefined;
@@ -422,6 +437,7 @@ export async function buildRuntimeHandle(
     if (closePromise) return closePromise;
     const budget = new RuntimeDeadlineBudget(deadlineDriver, deadlinePolicy);
     compositionManager!.beginShutdown(budget);
+    let releaseAttempted = false;
     closePromise = (async () => {
       const applicationReport = await kernel!.close(reason, budget);
       const completed = [...applicationReport.completed];
@@ -508,6 +524,14 @@ export async function buildRuntimeHandle(
         });
       }
 
+      try {
+        releaseAttempted = true;
+        await agentHomeLock.release();
+        completed.push('agentHomeLock');
+      } catch (error) {
+        failed.push({ resource: 'agentHomeLock', message: messageOf(error) });
+      }
+
       return sealShutdownReport({
         outcome: residuals.length > 0 || budget.remaining() <= 0
           ? 'deadline-exhausted'
@@ -526,15 +550,32 @@ export async function buildRuntimeHandle(
         },
         residuals,
       });
-    })();
+    })().finally(async () => {
+      if (!releaseAttempted) await agentHomeLock.release();
+    });
     return closePromise;
   };
 
   return Object.freeze({
-    application: kernel.application,
-    composition: compositionManager.compositionControl(),
+    application: kernel!.application,
+    composition: compositionManager!.compositionControl(),
     close,
   });
+}
+
+async function releaseAgentHomeLockAfterFailure(
+  lock: AgentHomeLock,
+  startupError: unknown,
+): Promise<never> {
+  try {
+    await lock.release();
+  } catch (releaseError) {
+    throw new AggregateError(
+      [startupError, releaseError],
+      'Runtime startup failed and the agent home lock could not be released.',
+    );
+  }
+  throw startupError;
 }
 
 async function invokeSessionCapability<T>(operation: () => Promise<T>): Promise<T> {

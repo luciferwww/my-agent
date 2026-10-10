@@ -6,7 +6,7 @@ Changes retain the repository's existing Plan/Specification/validation workflow.
 
 ## Active
 
-No active changes.
+- [Accepted Origin-Channel and Session-scoped Approval Delivery](active/session-scoped-approval-delivery/plan.md), with its [Implemented Specification](active/session-scoped-approval-delivery/specification.md) and [Accepted ADR-019](../decisions/adr-019-origin-channel-and-session-scoped-approval-delivery.md) — Delivery authorized and implemented on 2026-10-10; removes Origin Client eligibility, retains an existing Origin Channel boundary and permits no-Origin fanout, adds global or Session-filtered pending query, and adapts chat refresh and locally derived Session indicators; shared Session entries stay unchanged. Validation closeout remains in review due to existing Fitness gate failures; Automation execution remains out of scope.
 
 ## Archived
 

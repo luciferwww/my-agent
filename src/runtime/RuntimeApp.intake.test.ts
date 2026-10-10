@@ -926,6 +926,11 @@ function createTestChannel(id: string): {
   const channel: Channel = {
     id,
     completion: completion.promise,
+    interaction: {
+      sendInteractionRequest: () => ({ status: 'unavailable', reason: 'delivery_failed' }),
+      sendInteractionClosed: () => {},
+      onInteractionResponse: () => {},
+    },
     send() {},
     onMessage(next) {
       handler = next;

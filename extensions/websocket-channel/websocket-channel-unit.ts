@@ -11,6 +11,7 @@ import type { WebSocketExtensionConfig } from './config.js';
 export interface WebSocketChannelUnitOptions {
   readonly config: WebSocketExtensionConfig;
   readonly clientFilePath: string;
+  readonly clientVariants?: Readonly<Record<string, string>>;
   readonly logger: ExtensionLogger;
   readonly browserLauncher?: BrowserLauncher;
 }

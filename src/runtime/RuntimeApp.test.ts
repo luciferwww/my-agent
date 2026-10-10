@@ -11,6 +11,7 @@ import type {
   ChannelCompletion,
   ChannelRunRequest,
   ChannelRuntimeCapabilities,
+  TurnInteractionResponse,
 } from '../core/channel/index.js';
 import type {
   AgentEvent,
@@ -2072,9 +2073,11 @@ describe('RuntimeApp', () => {
     }
   });
 
-  it('fails closed without an origin approval capability independently of Channel startup history', async () => {
+  it('provides Approval capability but fails closed when an origin Channel cannot accept', async () => {
     const decisions: unknown[] = [];
     const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      const capability = params.approvalCapability;
+      if (!capability || !params.signal) throw new Error('Approval capability is missing.');
       decisions.push({
         decision: params.toolPolicy.decide(
           'unmatched_tool',
@@ -2082,6 +2085,13 @@ describe('RuntimeApp', () => {
           params.approvalCapability !== undefined,
         ),
         hasApprovalCapability: params.approvalCapability !== undefined,
+        result: await capability.request({
+          callId: 'unmatched-call',
+          toolName: 'unmatched_tool',
+          input: {},
+          sessionId: params.sessionId,
+          turnId: params.turnId,
+        }, params.signal),
       });
       return {
         text: 'done',
@@ -2110,14 +2120,187 @@ describe('RuntimeApp', () => {
       dependencies: deps,
     });
     await testChannel.dispatch({ sessionId: 'main', message: 'first request' });
-    expect(decisions).toEqual([{ decision: 'deny', hasApprovalCapability: false }]);
+    const expected = {
+      decision: 'requires_approval',
+      hasApprovalCapability: true,
+      result: { outcome: 'unavailable', reason: 'delivery_failed' },
+    };
+    expect(decisions).toEqual([expected]);
 
     await testChannel.dispatch({ sessionId: 'main', message: 'second request' });
 
-    expect(decisions).toEqual([
-      { decision: 'deny', hasApprovalCapability: false },
-      { decision: 'deny', hasApprovalCapability: false },
-    ]);
+    expect(decisions).toEqual([expected, expected]);
+  });
+
+  it('fans out no-Origin approvals past delivery and closure failures to an accepting Channel', async () => {
+    const requests: ApprovalRequest[] = [];
+    const closures: Array<{ request: ApprovalRequest; result: ApprovalClosedResult }> = [];
+    const broken = createApprovalTestChannel('broken-approval', { approvalRequests: [] });
+    broken.channel.interaction.sendInteractionRequest = () => { throw new Error('delivery failed'); };
+    broken.channel.interaction.sendInteractionClosed = () => { throw new Error('closure failed'); };
+    const accepting = createApprovalTestChannel('accepting-approval', {
+      approvalRequests: requests,
+      approvalClosures: closures,
+      autoDecision: null,
+    });
+    let capabilities: ChannelRuntimeCapabilities | undefined;
+    accepting.channel.bindRuntimeCapabilities = (value) => { capabilities = value; };
+    let outcome: unknown;
+    const run = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      if (!params.approvalCapability || !params.signal) throw new Error('Missing Approval capability.');
+      outcome = await params.approvalCapability.request({
+        callId: 'fanout-call',
+        toolName: 'demo_tool',
+        input: { nested: { value: 1 } },
+        sessionId: params.sessionId,
+        turnId: params.turnId,
+      }, params.signal);
+      return {
+        text: 'done',
+        content: [{ type: 'text', text: 'done' }],
+        stopReason: 'end_turn',
+        usage: { inputTokens: 1, outputTokens: 1 },
+        toolRounds: 0,
+      };
+    });
+    const app = await RuntimeApp.create({
+      agentHome,
+      loadedUnits: [broken.unit, accepting.unit],
+      applicationConfig: testApplicationConfig(),
+      dependencies: createTestDependencies({
+        createAgentRunner: () => ({ run }) as never,
+        createMemoryManager: async () => null,
+      }),
+    });
+    const pendingTurn = runRootTurnForTest(app, { sessionId: 'main', message: 'no origin', promptMode: 'full' });
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    expect(outcome).toBeUndefined();
+    expect(capabilities!.approvals.getPending()).toHaveLength(1);
+    expect(capabilities!.approvals.getPending('main')).toMatchObject([{ id: requests[0].id }]);
+    expect(requests[0].originChannelId).toBeUndefined();
+    expect(requests[0].originClientId).toBeUndefined();
+    accepting.respond({
+      id: requests[0].id, kind: 'approval', outcome: 'submitted', decision: 'allow',
+    });
+    await pendingTurn;
+    expect(outcome).toEqual({ outcome: 'approved' });
+    expect(closures).toMatchObject([{ request: { id: requests[0].id }, result: { outcome: 'approved' } }]);
+    expect(capabilities!.approvals.getPending()).toEqual([]);
+    await app.close();
+  });
+
+  it('limits origin delivery and decisions to its Channel while preserving both origin fields', async () => {
+    const requests: ApprovalRequest[] = [];
+    const otherRequests: ApprovalRequest[] = [];
+    const origin = createApprovalTestChannel('origin-approval', {
+      approvalRequests: requests,
+      autoDecision: null,
+    });
+    const other = createApprovalTestChannel('other-approval', { approvalRequests: otherRequests });
+    let capabilities: ChannelRuntimeCapabilities | undefined;
+    other.channel.bindRuntimeCapabilities = (value) => { capabilities = value; };
+    let outcome: unknown;
+    const run = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      if (!params.approvalCapability || !params.signal) throw new Error('Missing Approval capability.');
+      outcome = await params.approvalCapability.request({
+        callId: 'origin-call', toolName: 'demo_tool', input: {},
+        sessionId: params.sessionId, turnId: params.turnId,
+      }, params.signal);
+      return {
+        text: 'done', content: [{ type: 'text', text: 'done' }], stopReason: 'end_turn',
+        usage: { inputTokens: 1, outputTokens: 1 }, toolRounds: 0,
+      };
+    });
+    const app = await RuntimeApp.create({
+      agentHome,
+      loadedUnits: [origin.unit, other.unit],
+      applicationConfig: testApplicationConfig(),
+      dependencies: createTestDependencies({
+        createAgentRunner: () => ({ run }) as never,
+        createMemoryManager: async () => null,
+      }),
+    });
+    const pendingTurn = origin.dispatch({ sessionId: 'main', message: 'approve', clientId: 'client-a' });
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    expect(otherRequests).toEqual([]);
+    expect(capabilities!.approvals.getPending()).toMatchObject([{
+      originChannelId: 'origin-approval', originClientId: 'client-a',
+    }]);
+    other.respond({ id: requests[0].id, kind: 'approval', outcome: 'submitted', decision: 'deny' });
+    await Promise.resolve();
+    expect(outcome).toBeUndefined();
+    expect(capabilities!.approvals.getPending()).toHaveLength(1);
+    origin.respond({ id: requests[0].id, kind: 'approval', outcome: 'submitted', decision: 'allow' });
+    await pendingTurn;
+    other.respond({ id: requests[0].id, kind: 'approval', outcome: 'submitted', decision: 'deny' });
+    expect(outcome).toEqual({ outcome: 'approved' });
+    expect(capabilities!.approvals.getPending()).toEqual([]);
+    await app.close();
+  });
+
+  it.each(['none', 'unavailable', 'throwing'] as const)(
+    'fails closed for no-Origin Approval when candidates are %s',
+    async (candidate) => {
+      const unavailable = createTestChannel('unavailable-approval');
+      if (candidate === 'throwing') {
+        unavailable.channel.interaction.sendInteractionRequest = () => { throw new Error('adapter failure'); };
+      }
+      let outcome: unknown;
+      const run = vi.fn(async (params: RunParams): Promise<RunResult> => {
+        if (!params.approvalCapability || !params.signal) throw new Error('Missing Approval capability.');
+        outcome = await params.approvalCapability.request({
+          callId: 'unavailable-call', toolName: 'demo_tool', input: {},
+          sessionId: params.sessionId, turnId: params.turnId,
+        }, params.signal);
+        return {
+          text: 'done', content: [{ type: 'text', text: 'done' }], stopReason: 'end_turn',
+          usage: { inputTokens: 1, outputTokens: 1 }, toolRounds: 0,
+        };
+      });
+      const app = await RuntimeApp.create({
+        agentHome,
+        loadedUnits: candidate === 'none' ? [] : [unavailable.unit],
+        applicationConfig: testApplicationConfig(),
+        dependencies: createTestDependencies({
+          createAgentRunner: () => ({ run }) as never,
+          createMemoryManager: async () => null,
+        }),
+      });
+      await runRootTurnForTest(app, { sessionId: 'main', message: 'no origin', promptMode: 'full' });
+      expect(outcome).toEqual({ outcome: 'unavailable', reason: 'delivery_failed' });
+      await app.close();
+    },
+  );
+
+  it('does not deliver an already-settled no-Origin request after a synchronous decision', async () => {
+    const firstRequests: ApprovalRequest[] = [];
+    const secondRequests: ApprovalRequest[] = [];
+    const first = createApprovalTestChannel('first-approval', { approvalRequests: firstRequests });
+    const second = createApprovalTestChannel('second-approval', { approvalRequests: secondRequests });
+    const run = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      if (!params.approvalCapability || !params.signal) throw new Error('Missing Approval capability.');
+      const result = await params.approvalCapability.request({
+        callId: 'sync-call', toolName: 'demo_tool', input: {},
+        sessionId: params.sessionId, turnId: params.turnId,
+      }, params.signal);
+      expect(result).toEqual({ outcome: 'approved' });
+      return {
+        text: 'done', content: [{ type: 'text', text: 'done' }], stopReason: 'end_turn',
+        usage: { inputTokens: 1, outputTokens: 1 }, toolRounds: 0,
+      };
+    });
+    const app = await RuntimeApp.create({
+      agentHome, loadedUnits: [first.unit, second.unit],
+      applicationConfig: testApplicationConfig(),
+      dependencies: createTestDependencies({
+        createAgentRunner: () => ({ run }) as never,
+        createMemoryManager: async () => null,
+      }),
+    });
+    await runRootTurnForTest(app, { sessionId: 'main', message: 'sync approval', promptMode: 'full' });
+    expect(firstRequests).toHaveLength(1);
+    expect(secondRequests).toEqual([]);
+    await app.close();
   });
 
   it('CH-06 shutdown closes a pending approval before waiting for Turn convergence', async () => {
@@ -2221,6 +2404,7 @@ describe('RuntimeApp', () => {
         usage: { inputTokens: 1, outputTokens: 1 },
         toolRounds: 0,
       }));
+      await app.close();
       // Recreate the app to install the event collector through onEvent.
       const app2 = await RuntimeApp.create({
         agentHome: agentHome,
@@ -2233,7 +2417,6 @@ describe('RuntimeApp', () => {
       const result = app2.application.abortTurn('no-such-session');
       expect(result).toEqual({ aborted: false, dropped: 0 });
       expect(events.find((e) => e.type === 'messages_dropped')).toBeUndefined();
-      await app.close();
       await app2.close();
     });
 
@@ -2958,6 +3141,11 @@ function createTestChannel(id: string): {
   const channel: Channel = {
     id,
     completion: completion.promise,
+    interaction: {
+      sendInteractionRequest: () => ({ status: 'unavailable', reason: 'delivery_failed' }),
+      sendInteractionClosed() {},
+      onInteractionResponse() {},
+    },
     send() {
       // no-op for tests
     },
@@ -2998,6 +3186,7 @@ function createApprovalTestChannel(
   channel: Channel;
   unit: LoadedRuntimeUnit;
   dispatch(req: ChannelRunRequest): Promise<void>;
+  respond(response: TurnInteractionResponse): void;
 } {
   let handler: ((req: ChannelRunRequest) => Promise<void>) | undefined;
   let interactionResponseHandler: Parameters<NonNullable<Channel['interaction']>['onInteractionResponse']>[0] | undefined;
@@ -3041,15 +3230,16 @@ function createApprovalTestChannel(
       onInteractionResponse(nextHandler) {
         interactionResponseHandler = nextHandler;
       },
-      onInteractionUnavailable() {
-        // This test channel remains available for its full lifetime.
-      },
     },
   };
 
   return {
     channel,
     unit: channelUnit(channel),
+    respond(response) {
+      if (!interactionResponseHandler) throw new Error('interaction handler was not registered');
+      interactionResponseHandler(response);
+    },
     async dispatch(req: ChannelRunRequest) {
       if (!handler) {
         throw new Error('message handler was not registered');

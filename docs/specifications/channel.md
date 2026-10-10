@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-10-02
+> Verified: 2026-10-10
 > Authority: Stable Channel contract
 
 ## Scope
@@ -19,7 +19,7 @@ interface ChannelInstance {
   onMessage(handler: (request: ChannelRunRequest) => Promise<void>): void;
   start(): Promise<void>;
   stop(): Promise<void>;
-  readonly interaction?: ChannelInteractionTransport;
+  readonly interaction: ChannelInteractionTransport;
   bindRuntimeCapabilities?(capabilities: ChannelRuntimeCapabilities): void;
 }
 
@@ -28,7 +28,11 @@ type ChannelCompletion =
   | { outcome: 'failed'; phase: 'startup'|'runtime'|'shutdown'; error: Error };
 ```
 
-A `ChannelContribution` creates one instance per generation. Publication exposes immutable narrow bindings with `id`, `send`, and optional interaction capability; it never exposes the factory, concrete instance, or stop authority.
+A `ChannelContribution` creates one instance per generation. Publication exposes
+immutable narrow bindings with `id`, `send`, and required interaction; it never
+exposes the factory, concrete instance, or stop authority. Unsupported Channels
+explicitly return `unavailable/delivery_failed`. Missing interaction methods
+are startup validation failures, not an implicitly accepting fallback.
 
 `ChannelRunRequest` carries the server-issued `sessionId`, text or structured blocks, optional `modelReference`, optional `requestOverride`, optional LLM-call limit, and optional client ID. A Channel never treats an omitted or unknown ID as an implicit Session create.
 
@@ -64,6 +68,20 @@ and read-only paginated active-branch History while Runtime remains the
 lifecycle policy owner. History queries are socket-local and do not join a
 Session audience.
 
+The shared capabilities also expose
+`approvals.getPending(sessionId?): readonly ApprovalRequest[]`. Omission returns
+Runtime-global pending state; Channels filter with their own side-effect-free
+acceptance logic. Requests carry Runtime-supplied optional `originChannelId`
+and `originClientId`. Runtime response ingress retains the actual source
+binding and validates Origin Channel scope. `onInteractionUnavailable` and its
+Client-disconnect settlement forwarding no longer exist. Shared Session entries
+are unchanged; Client polling/caching is not a Runtime capability contract.
+
+Request delivery returns `accepted` or `unavailable`; closure accepts the full
+`ApprovalResult`, including user choices. A changed acceptance state must not
+prevent clearing an existing presentation. [Approval Lifecycle](approval-lifecycle.md)
+owns the detailed delivery, query, and settlement rules.
+
 Channel input may include a raw message-level reasoning preference containing
 only `thinking` and `effort`. Channel and Runtime both reject unknown fields,
 invalid values, non-plain objects, and universal conflicts before enqueue.
@@ -81,6 +99,10 @@ Selecting a new conversation is client-local state. CLI creates a Pending Sessio
 Completing WebSocket `hello` does not select a Session or trigger History.
 The bundled client sends `get_session_history` only after selecting a persisted
 Session, and prepends persisted History before page-local realtime state.
+At handshake/reconnect it also fetches the Session list and all locally
+acceptable pending approvals, then refreshes both periodically. Switching
+Sessions loads History and filters the local pending collection. These are
+bundled chat UX choices, not requirements on other Channels.
 It derives reasoning controls from the selected model's Catalog facts, orders
 known values by the public UI order, hides dimensions with no explicit values,
 and treats Default as no Provider-wire override. Model changes preserve each
@@ -97,7 +119,7 @@ There is no Channel-specific wall-clock timeout. Bounded aggregate deadlines bel
 
 ## Acceptance scenarios
 
-Cover identical Builtin/External staging; invalid/duplicate IDs; staging without creation; mixed contribution atomicity; immutable narrow projections; readiness vs completion; create/start rollback; zero-Channel readiness; close-once; sibling failure isolation; completion-before-readiness; post-start failure; origin-bound approval; Fanout isolation; and no direct script-owned Channel lifecycle.
+Cover identical Builtin/External staging; invalid/duplicate IDs; staging without creation; mixed contribution atomicity; immutable narrow projections; readiness vs completion; create/start rollback; zero-Channel readiness; close-once; sibling failure isolation; completion-before-readiness; post-start failure; Origin Channel/no-Origin approval; Fanout isolation; and no direct script-owned Channel lifecycle.
 
 ## Related authority
 

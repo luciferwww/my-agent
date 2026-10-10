@@ -8,6 +8,7 @@ import {
   ChannelOperationError,
   type ExtensionLogger,
   type ApprovalInteractionRequest,
+  type ApprovalClosedResult,
   type ChannelRuntimeCapabilities,
   type ModelCatalogSnapshot,
 } from 'my-agent/extension-api';
@@ -19,6 +20,7 @@ import {
 import type { WebSocketExtensionConfig } from './config.js';
 
 const CLIENT_FILE_PATH = fileURLToPath(new URL('./client/chat.html', import.meta.url));
+const CLIENT_VARIANT_FILE_PATH = fileURLToPath(new URL('./client/chat2.html', import.meta.url));
 const logger: ExtensionLogger = {
   debug: vi.fn(),
   info: vi.fn(),
@@ -38,20 +40,236 @@ describe('WebSocketChannel', () => {
     channel = undefined;
   });
 
-  it('tracks pending and disconnected approvals on inline Tool Call segments', async () => {
-    const source = await readFile(CLIENT_FILE_PATH, 'utf8');
+  it.each([CLIENT_FILE_PATH, CLIENT_VARIANT_FILE_PATH])('keeps bundled chat scripts valid and pending independent of History: %s', async (path) => {
+    const source = await readFile(path, 'utf8');
+    const script = source.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    expect(script).toBeDefined();
+    expect(() => new Function(script!)).not.toThrow();
+    expect(source).toContain('pendingApprovals: new Map()');
+    expect(source).toContain("type: 'get_session_approvals', requestId");
+    expect(source).toContain('window.setInterval(refresh, 10000)');
+    expect(source).toContain('hasSessionApprovals(session.sessionId)');
+    expect(source).not.toContain('Refresh Sessions');
+    expect(source).not.toContain('origin_disconnected');
+  });
 
-    expect(source).toContain(
-      "seg.type === 'tool_call' && seg.approval?.status === 'pending'",
+  it.each([CLIENT_FILE_PATH, CLIENT_VARIANT_FILE_PATH])('smokes pending recovery, exact closure identity and snapshot reconciliation: %s', async (path) => {
+    const source = await readFile(path, 'utf8');
+    const capture = vi.fn();
+    const browser = {
+      location: { protocol: 'http:', host: 'localhost' }, innerWidth: 1200,
+      clearTimeout: vi.fn(), clearInterval: vi.fn(),
+      setTimeout: vi.fn((_callback: () => void, _delay: number) => 1),
+      setInterval: vi.fn((_callback: () => void, _delay: number) => 2),
+    };
+    new Function('Vue', 'window', '__MY_AGENT_WEBSOCKET_PATH__',
+      source.match(/<script>([\s\S]*?)<\/script>/)![1])({
+      createApp: (options: unknown) => { capture(options); return { mount: () => undefined }; },
+      nextTick: () => undefined,
+    }, browser, '/ws');
+    const options = capture.mock.calls[0][0];
+    const chat = options.data();
+    for (const [name, method] of Object.entries(options.methods)) {
+      chat[name] = (method as Function).bind(chat);
+    }
+    for (const [name, computed] of Object.entries(options.computed)) {
+      Object.defineProperty(chat, name, typeof computed === 'function'
+        ? { get: computed.bind(chat) }
+        : {
+            get: (computed as { get: Function }).get.bind(chat),
+            set: (computed as { set: Function }).set.bind(chat),
+          });
+    }
+    chat.pushEvent = vi.fn();
+    chat.scrollChatToBottom = vi.fn();
+    chat.form.sessionId = 'main';
+    const request = approvalRequest();
+    const receive = (message: Record<string, unknown>) => chat.handleServerMessage(JSON.stringify(message));
+    receive({ type: 'approval_requested', ...request });
+    expect(chat.pendingApprovalCount).toBe(1);
+    expect(chat.displayedChatItems[0].segments[0].approval.id).toBe(request.id);
+    chat.form.sessionId = 'other';
+    expect(chat.pendingApprovalCount).toBe(0);
+    expect(chat.hasSessionApprovals('main')).toBe(true);
+    chat.form.sessionId = 'main';
+    const state = chat.ensureSessionState('main');
+    state.historyItems = [{
+      kind: 'turn', turnId: request.turnId, segments: [
+        { type: 'tool_call', callId: request.callId, status: 'requested' },
+      ],
+    }];
+    chat.syncApprovalCards();
+    expect(chat.displayedChatItems).toHaveLength(1);
+    expect(state.historyItems[0].segments[0].approval.status).toBe('pending');
+    receive({ type: 'approval_closed', ...request, callId: 'wrong', outcome: 'denied', reason: 'user' });
+    expect(chat.pendingApprovalCount).toBe(1);
+    receive({ type: 'approval_closed', ...request, outcome: 'approved', reason: 'user' });
+    expect(chat.pendingApprovalCount).toBe(0);
+    expect(state.historyItems[0].segments[0].approval.status).toBe('approved');
+    receive({ type: 'session_approvals', requestId: 'stale', approvals: [request] });
+    expect(chat.pendingApprovalCount).toBe(0);
+    chat.pendingApprovalsRequestId = 'fresh';
+    receive({ type: 'session_approvals', requestId: 'fresh', approvals: [request] });
+    expect(chat.pendingApprovalCount).toBe(1);
+    state.historyItems[0].segments[0].status = 'success';
+    chat.syncApprovalCards();
+    expect(state.historyItems[0].segments[0].approval.status).not.toBe('pending');
+    chat.pendingApprovalsRequestId = 'failure';
+    receive({ type: 'session_approvals_error', requestId: 'failure', code: 'SERVER_NOT_READY', message: 'not ready' });
+    expect(chat.pendingApprovalCount).toBe(1);
+    chat.pendingApprovalsRequestId = 'empty';
+    receive({ type: 'session_approvals', requestId: 'empty', approvals: [] });
+    expect(chat.pendingApprovalCount).toBe(0);
+    chat.connectionStatus = 'connected';
+    chat.sendJson = vi.fn();
+    chat.sessionActionMenu = { sessionId: 'main' };
+    chat.startSessionRefresh();
+    expect(chat.sendJson.mock.calls.map(([message]: [{ type: string }]) => message.type))
+      .toEqual(['list_sessions', 'get_session_approvals']);
+    chat.requestSessionList();
+    chat.requestPendingApprovals();
+    expect(chat.sendJson).toHaveBeenCalledTimes(2);
+    expect(chat.sessionActionMenu.sessionId).toBe('main');
+    for (const [timeout] of browser.setTimeout.mock.calls) timeout();
+    expect(chat.pendingSessionsRequestId).toBeNull();
+    expect(chat.pendingApprovalsRequestId).toBeNull();
+    browser.setInterval.mock.calls[0][0]();
+    expect(chat.sendJson).toHaveBeenCalledTimes(4);
+    chat.stopSessionRefresh();
+    expect(chat.refreshTimer).toBeNull();
+    expect(browser.clearInterval).toHaveBeenCalledWith(2);
+    const otherState = chat.ensureSessionState('other');
+    chat.appendChatItem({ kind: 'system', text: 'Turn aborted' }, 'main');
+    chat.appendChatItem({ kind: 'error', text: 'Runtime failed' }, 'main');
+    chat.appendChatItem({ kind: 'system', text: 'Other Session notice' }, 'other');
+    chat.appendChatItem({ kind: 'user', text: 'Try again' }, 'main');
+    expect(state.chatItems.map((item: { kind: string }) => item.kind)).toEqual(['user']);
+    expect(otherState.chatItems).toHaveLength(1);
+    expect(state.historyItems).toHaveLength(1);
+    chat.appendChatItem({ kind: 'system', text: 'Compaction finished' }, 'main');
+    chat.appendTextToTurn('new-turn', 'New content', 'main');
+    expect(state.chatItems.map((item: { kind: string }) => item.kind)).toEqual(['user', 'turn']);
+    chat.appendChatItem({ kind: 'system', text: 'Configured model call limit reached' }, 'main');
+    chat.handleAgentEvent({ type: 'run_start', sessionId: 'main', turnId: 'next-turn' });
+    expect(state.chatItems.some((item: { kind: string }) => item.kind === 'system')).toBe(false);
+
+    state.chatItems = [];
+    state.turnMap = {};
+    state.historyItems = [];
+    const localUser = chat.appendChatItem({
+      kind: 'user', turnId: request.turnId, text: 'List directories', attachments: [],
+    }, 'main');
+    chat.appendTextToTurn(request.turnId, 'Checking directories.', 'main');
+    chat.handleAgentEvent({
+      type: 'tool_call_requested', sessionId: 'main', turnId: request.turnId,
+      callId: request.callId, name: request.toolName, input: request.input,
+    });
+    receive({ type: 'approval_requested', ...request });
+    const realtimeTurn = state.turnMap[request.turnId];
+    const liveTool = realtimeTurn.segments[1];
+    const records = [
+      { entryId: 'persisted-user', role: 'user', turnId: request.turnId,
+        timestamp: '2026-10-10T08:00:00Z', content: [{ type: 'text', text: 'List directories' }] },
+      { entryId: 'persisted-call', role: 'assistant', turnId: request.turnId,
+        timestamp: '2026-10-10T08:00:01Z', content: [
+          { type: 'text', text: 'Checking directories.' },
+          { type: 'tool_use', id: request.callId, name: request.toolName, input: request.input },
+        ] },
+    ];
+    for (let index = 0; index < 3; index++) {
+      chat.form.sessionId = 'other';
+      chat.form.sessionId = 'main';
+      state.pendingHistoryRequest = { terminalTurnIds: [] };
+      chat.mergeHistoryPage('main', { items: records, hasMore: false });
+      expect(chat.displayedChatItems).toHaveLength(2);
+      expect(chat.displayedChatItems[0]).toBe(localUser);
+      expect(chat.displayedChatItems[1].id).toBe(realtimeTurn.id);
+      expect(chat.displayedChatItems[1].segments[1]).toBe(liveTool);
+      expect(chat.displayedChatItems[1].segments[1].approval.status).toBe('pending');
+    }
+    receive({ type: 'approval_closed', ...request, outcome: 'approved', reason: 'user' });
+    chat.handleAgentEvent({
+      type: 'tool_result', sessionId: 'main', turnId: request.turnId, callId: request.callId,
+      result: { status: 'success', content: [{ type: 'text', text: 'Done' }] },
+    });
+    expect(chat.displayedChatItems[1].segments[1].status).toBe('success');
+    chat.appendTextToTurn(request.turnId, 'Directories listed.', 'main');
+    expect(chat.displayedChatItems.flatMap((item: { segments?: { text?: string }[] }) =>
+      item.segments ?? []).map((segment: { text?: string }) => segment.text))
+      .toContain('Directories listed.');
+    expect(chat.displayedChatItems.flatMap((item: { segments?: { callId?: string }[] }) =>
+      item.segments ?? []).filter((segment: { callId?: string }) => segment.callId === request.callId))
+      .toHaveLength(1);
+    expect(state.chatItems).toHaveLength(2);
+    expect(state.historyItems).toHaveLength(2);
+    const remainingText = realtimeTurn.segments[2];
+    remainingText.text += ' More details.';
+    expect(chat.displayedChatItems.flatMap((item: { segments?: { text?: string }[] }) =>
+      item.segments ?? []).filter((segment: { text?: string }) =>
+      segment.text === 'Directories listed. More details.')).toHaveLength(1);
+    const completedRecords = [
+      records[0],
+      { ...records[1], content: [...records[1].content, {
+        type: 'tool_use', id: 'other-call', name: 'other_tool', input: {},
+      }] },
+      { entryId: 'persisted-result', role: 'toolResult', turnId: request.turnId,
+        content: [{ type: 'tool_result', tool_use_id: request.callId, status: 'success', content: 'Done' }] },
+      { entryId: 'persisted-reply', role: 'assistant', turnId: request.turnId,
+        content: [{ type: 'text', text: 'Directories listed. More details.' }] },
+    ];
+    liveTool.status = 'running';
+    state.pendingHistoryRequest = { terminalTurnIds: [] };
+    chat.mergeHistoryPage('main', { items: completedRecords, hasMore: false });
+    const displayedSegments = chat.displayedChatItems.flatMap(
+      (item: { segments?: { callId?: string; status?: string }[] }) => item.segments ?? [],
     );
-    expect(source).toContain(
-      "seg.type !== 'tool_call' || seg.approval?.status !== 'pending'",
-    );
-    expect(source).toContain("seg.status = 'approval_unavailable'");
-    expect(source).toContain("case 'approval_unavailable': return 'Approval unavailable'");
-    expect(source).not.toContain(
-      "seg.type === 'approval' && seg.approval?.status === 'pending'",
-    );
+    expect(displayedSegments.find((segment: { callId?: string }) => segment.callId === request.callId).status)
+      .toBe('success');
+    expect(displayedSegments.filter((segment: { callId?: string }) => segment.callId === 'other-call'))
+      .toHaveLength(1);
+    expect(new Set(chat.displayedChatItems.map((item: { id: number | string }) => item.id)).size)
+      .toBe(chat.displayedChatItems.length);
+    state.pendingHistoryRequest = { terminalTurnIds: [request.turnId] };
+    chat.mergeHistoryPage('main', { items: completedRecords, hasMore: false });
+    expect(state.chatItems).toEqual([]);
+    expect(chat.displayedChatItems[0].id).toBe(localUser.id);
+    expect(chat.pendingApprovalCount).toBe(0);
+    state.activeTurnId = null;
+    chat.dispatchRunTurn({ message: 'Start a Turn', reasoning: {} });
+    expect(state.isSending).toBe(true);
+    expect(chat.canSend).toBe(false);
+    expect(chat.isWaitingForReply).toBe(false);
+    chat.handleAgentEvent({
+      type: 'user_message', sessionId: 'main', originClientId: chat.form.clientId,
+      messageId: 'accepted-message', content: 'Start a Turn',
+    });
+    expect(state.isSending).toBe(false);
+    expect(chat.isWaitingForReply).toBe(false);
+    chat.handleAgentEvent({ type: 'run_start', sessionId: 'main', turnId: 'observed-turn' });
+    expect(chat.isWaitingForReply).toBe(true);
+    chat.handleAgentEvent({
+      type: 'run_end', sessionId: 'main', turnId: 'old-turn', result: { stopReason: 'end_turn' },
+    });
+    expect(state.activeTurnId).toBe('observed-turn');
+    chat.handleAgentEvent({ type: 'request_end', sessionId: 'main', requestId: 'old-request' });
+    expect(chat.isWaitingForReply).toBe(true);
+    chat.handleAgentEvent({ type: 'error', sessionId: 'main', turnId: 'old-turn', error: 'Old error' });
+    expect(chat.isWaitingForReply).toBe(true);
+    chat.handleAgentEvent({
+      type: 'run_end', sessionId: 'main', turnId: 'observed-turn', result: { stopReason: 'end_turn' },
+    });
+    expect(chat.isWaitingForReply).toBe(false);
+    chat.handleAgentEvent({ type: 'run_start', sessionId: 'other', turnId: 'other-running-turn' });
+    expect(chat.isWaitingForReply).toBe(false);
+    chat.form.sessionId = 'other';
+    expect(chat.isWaitingForReply).toBe(true);
+    chat.form.sessionId = 'main';
+    chat.appendTextToTurn('missed-start-turn', 'Content only', 'main');
+    expect(chat.isWaitingForReply).toBe(false);
+    chat.sendJson = () => { throw new Error('Socket is not open.'); };
+    expect(() => chat.dispatchRunTurn({ message: 'Fail', reasoning: {} })).toThrow('Socket is not open.');
+    expect(state.isSending).toBe(false);
+    expect(state.chatItems.at(-1).kind).toBe('error');
   });
 
   it('requires an onMessage handler before start', async () => {
@@ -131,6 +349,15 @@ describe('WebSocketChannel', () => {
     expect(html).toContain("@click=\"toggleReasoningPicker('thinking')\"");
     expect(html).toContain("@click=\"toggleReasoningPicker('effort')\"");
     expect(html).toContain('reasoning: turn.reasoning');
+    const variantResponse = await fetch(`${clientUrl(channel)}chat2.html`);
+    expect(variantResponse.status).toBe(200);
+    expect(variantResponse.headers.get('content-type')).toContain('text/html');
+    const variantHtml = await variantResponse.text();
+    expect(variantHtml).toContain('<title>my-agent · Command Center</title>');
+    expect(variantHtml).toContain("const DEFAULT_SOCKET_PATH = \"/ws\";");
+    expect(variantHtml).not.toContain('__MY_AGENT_WEBSOCKET_PATH__');
+    expect(variantHtml).toContain('updatePermissionPickerPlacement()');
+    expect(variantHtml).toContain("'placement-top': permissionPickerPlacement === 'top'");
     await expect(fetch(`${clientUrl(channel)}missing`)).resolves.toMatchObject({ status: 404 });
   });
 
@@ -1005,12 +1232,16 @@ describe('WebSocketChannel', () => {
       sessionId: 'main',
       turnId: 'turn-1',
       originClientId: 'client-1',
+      originChannelId: 'websocket',
     };
+    subscribe(channel, 'client-1', 'main');
     expect(channel.interaction?.sendInteractionRequest(request)).toEqual({ status: 'accepted' });
 
     await expectMessage(client, {
       type: 'approval_requested',
       id: 'apr-1',
+      originClientId: 'client-1',
+      originChannelId: 'websocket',
       callId: 'call-1',
       sessionId: 'main',
       turnId: 'turn-1',
@@ -1030,7 +1261,7 @@ describe('WebSocketChannel', () => {
     });
   });
 
-  it('rejects approval responses from a different connected client', async () => {
+  it('allows another connected client to decide and closes all bound clients', async () => {
     const interactionResponse = vi.fn();
     channel = createChannel({ port: 0, approval: true });
     channel.onMessage(async () => undefined);
@@ -1044,6 +1275,7 @@ describe('WebSocketChannel', () => {
     foreign.send(JSON.stringify({ type: 'hello', clientId: 'approval-foreign' }));
     await expectMessage(origin, { type: 'hello_ack', clientId: 'approval-origin' });
     await expectMessage(foreign, { type: 'hello_ack', clientId: 'approval-foreign' });
+    subscribe(channel, 'approval-origin', 'main');
 
     const request: ApprovalInteractionRequest = {
       id: 'apr-foreign',
@@ -1059,6 +1291,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(origin, {
       type: 'approval_requested',
       id: 'apr-foreign',
+      originClientId: 'approval-origin',
       callId: 'call-foreign',
       sessionId: 'main',
       turnId: 'turn-foreign',
@@ -1071,13 +1304,18 @@ describe('WebSocketChannel', () => {
       id: 'apr-foreign',
       decision: 'allow',
     }));
-    await expectMessage(foreign, {
-      type: 'channel_error',
-      code: 'INVALID_MESSAGE',
-      message: 'Approval response does not belong to this client.',
-    });
-    expect(interactionResponse).not.toHaveBeenCalled();
-
+    await vi.waitFor(() => expect(interactionResponse).toHaveBeenCalledWith({
+      id: request.id, kind: 'approval', outcome: 'submitted', decision: 'allow',
+    }));
+    const originClosed = nextMessage(origin);
+    const foreignClosed = nextMessage(foreign);
+    channel.interaction.sendInteractionClosed(request, { outcome: 'approved' });
+    for (const message of await Promise.all([originClosed, foreignClosed])) {
+      expect(message).toEqual({
+        type: 'approval_closed', id: request.id, sessionId: 'main',
+        turnId: request.turnId, callId: request.callId, outcome: 'approved', reason: 'user',
+      });
+    }
     origin.send(JSON.stringify({
       type: 'approval_resolve',
       id: 'apr-foreign',
@@ -1104,6 +1342,7 @@ describe('WebSocketChannel', () => {
     clients.push(client);
     client.send(JSON.stringify({ type: 'hello', clientId: 'multi-session-client' }));
     await expectMessage(client, { type: 'hello_ack', clientId: 'multi-session-client' });
+    subscribe(channel, 'multi-session-client', 'session-a', 'session-b');
 
     const requests: ApprovalInteractionRequest[] = [
       {
@@ -1133,6 +1372,7 @@ describe('WebSocketChannel', () => {
       await expectMessage(client, {
         type: 'approval_requested',
         id: request.id,
+        originClientId: request.originClientId,
         callId: request.callId,
         sessionId: request.sessionId,
         turnId: request.turnId,
@@ -1169,12 +1409,12 @@ describe('WebSocketChannel', () => {
     });
   });
 
-  it('returns unavailable when an approval origin cannot receive the request', async () => {
+  it('accepts pending delivery without connected or origin clients and restricts Origin Channel', async () => {
     channel = createChannel({ port: 0, approval: true });
     channel.onMessage(async () => undefined);
     await channel.start();
 
-    expect(channel.interaction?.sendInteractionRequest({
+    const request: ApprovalInteractionRequest = {
       id: 'apr-missing',
       kind: 'approval',
       callId: 'call-missing',
@@ -1183,7 +1423,12 @@ describe('WebSocketChannel', () => {
       sessionId: 'main',
       turnId: 'turn-missing',
       originClientId: 'missing-client',
-    })).toEqual({ status: 'unavailable', reason: 'delivery_failed' });
+    };
+    expect(channel.interaction.sendInteractionRequest(request)).toEqual({ status: 'accepted' });
+    expect(channel.interaction.sendInteractionRequest({ ...request, originClientId: undefined })).toEqual({ status: 'accepted' });
+    expect(channel.interaction.sendInteractionRequest({ ...request, originChannelId: 'cli' })).toEqual({ status: 'unavailable', reason: 'delivery_failed' });
+    await channel.stop();
+    expect(channel.interaction.sendInteractionRequest(request)).toEqual({ status: 'unavailable', reason: 'delivery_failed' });
   });
 
   it('sends approval_closed for a non-user terminal outcome', async () => {
@@ -1195,6 +1440,7 @@ describe('WebSocketChannel', () => {
     clients.push(client);
     client.send(JSON.stringify({ type: 'hello', clientId: 'client-close' }));
     await expectMessage(client, { type: 'hello_ack', clientId: 'client-close' });
+    subscribe(channel, 'client-close', 'main');
 
     const request: ApprovalInteractionRequest = {
       id: 'apr-close',
@@ -1210,6 +1456,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'approval_requested',
       id: 'apr-close',
+      originClientId: 'client-close',
       callId: 'call-close',
       sessionId: 'main',
       turnId: 'turn-close',
@@ -1224,6 +1471,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'approval_closed',
       id: 'apr-close',
+      callId: 'call-close',
       sessionId: 'main',
       turnId: 'turn-close',
       outcome: 'aborted',
@@ -1237,6 +1485,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'approval_closed',
       id: 'apr-close',
+      callId: 'call-close',
       sessionId: 'main',
       turnId: 'turn-close',
       outcome: 'approved',
@@ -1246,17 +1495,16 @@ describe('WebSocketChannel', () => {
 
   it('keeps pending approval bound across same-client socket replacement', async () => {
     const interactionResponse = vi.fn();
-    const interactionUnavailable = vi.fn();
     channel = createChannel({ port: 0, approval: true });
     channel.onMessage(async () => undefined);
     channel.interaction?.onInteractionResponse(interactionResponse);
-    channel.interaction?.onInteractionUnavailable(interactionUnavailable);
     await channel.start();
 
     const firstClient = await connectClient(channel);
     clients.push(firstClient);
     firstClient.send(JSON.stringify({ type: 'hello', clientId: 'client-replace' }));
     await expectMessage(firstClient, { type: 'hello_ack', clientId: 'client-replace' });
+    subscribe(channel, 'client-replace', 'main');
 
     const request: ApprovalInteractionRequest = {
       id: 'apr-replace',
@@ -1272,6 +1520,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(firstClient, {
       type: 'approval_requested',
       id: 'apr-replace',
+      originClientId: 'client-replace',
       callId: 'call-replace',
       sessionId: 'main',
       turnId: 'turn-replace',
@@ -1303,7 +1552,6 @@ describe('WebSocketChannel', () => {
     closeSpy.mockRestore();
     serverSocket.close();
     await firstClosed;
-    expect(interactionUnavailable).not.toHaveBeenCalled();
 
     replacementClient.send(JSON.stringify({
       type: 'approval_resolve',
@@ -1320,19 +1568,173 @@ describe('WebSocketChannel', () => {
     });
   });
 
-  it('reports unavailable when the current approval origin disconnects', async () => {
-    const interactionUnavailable = vi.fn();
+  it('queries all acceptable pending requests or validates only the supplied Session', async () => {
+    channel = createChannel({ approval: true });
+    channel.onMessage(async () => undefined);
+    const requests = [
+      approvalRequest({ id: 'local', originChannelId: 'websocket', originClientId: 'disconnected' }),
+      approvalRequest({ id: 'global', sessionId: 'other-session' }),
+      approvalRequest({ id: 'foreign', originChannelId: 'cli' }),
+    ];
+    const getPending = vi.fn((sessionId?: string) => requests.filter(
+      request => sessionId === undefined || request.sessionId === sessionId,
+    ));
+    const getSession = vi.fn(async (sessionId: string) => ({ sessionId, createdAt: 1, updatedAt: 1 }));
+    channel.bindRuntimeCapabilities({
+      ...capabilities(undefined, undefined, sessionCapabilities({ getSession })),
+      approvals: { getPending },
+    });
+    await channel.start();
+    const client = await connectClient(channel);
+    clients.push(client);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'query-client' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'query-client' });
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'all' }));
+    await expectMessage(client, { type: 'session_approvals', requestId: 'all', approvals: requests.slice(0, 2) });
+    expect(getSession).not.toHaveBeenCalled();
+    expect(getPending).toHaveBeenCalledWith(undefined);
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'one', sessionId: 'main' }));
+    await expectMessage(client, { type: 'session_approvals', requestId: 'one', sessionId: 'main', approvals: [requests[0]] });
+    expect(getSession).toHaveBeenCalledWith('main');
+    expect(getPending).toHaveBeenCalledWith('main');
+  });
+
+  it('returns explicit pending-query errors and keeps unsupported interaction unavailable', async () => {
+    channel = createChannel();
+    channel.onMessage(async () => undefined);
+    await channel.start();
+    const client = await connectClient(channel);
+    clients.push(client);
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'unauthenticated' }));
+    await expectMessage(client, { type: 'channel_error', code: 'SERVER_NOT_READY', message: 'hello must complete before business messages.' });
+    client.send(JSON.stringify({ type: 'hello', clientId: 'query-errors' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'query-errors' });
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'unbound' }));
+    await expectMessage(client, {
+      type: 'session_approvals_error', requestId: 'unbound',
+      code: 'SERVER_NOT_READY', message: 'Runtime Approvals are not bound.',
+    });
+    const getPending = vi.fn(() => [approvalRequest()]);
+    const getSession = vi.fn(async () => { throw new ChannelOperationError('SESSION_NOT_FOUND', 'Missing Session'); });
+    channel.bindRuntimeCapabilities({
+      ...capabilities(undefined, undefined, sessionCapabilities({ getSession })),
+      approvals: { getPending },
+    });
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'missing', sessionId: 'missing' }));
+    await expectMessage(client, {
+      type: 'session_approvals_error', requestId: 'missing', sessionId: 'missing',
+      code: 'SESSION_NOT_FOUND', message: 'Missing Session',
+    });
+    expect(getPending).not.toHaveBeenCalled();
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'disabled' }));
+    await expectMessage(client, { type: 'session_approvals', requestId: 'disabled', approvals: [] });
+    expect(channel.interaction.sendInteractionRequest(approvalRequest())).toEqual({ status: 'unavailable', reason: 'delivery_failed' });
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'invalid', sessionId: '' }));
+    await expectMessage(client, { type: 'channel_error', code: 'INVALID_MESSAGE', message: 'sessionId must be a non-empty string.' });
+  });
+
+  it('takes the pending snapshot after async Session validation and sends it before subsequent closure', async () => {
+    channel = createChannel({ approval: true });
+    channel.onMessage(async () => undefined);
+    let release!: () => void;
+    const validation = new Promise<void>(resolve => { release = resolve; });
+    const getSession = vi.fn(async (sessionId: string) => {
+      await validation;
+      return { sessionId, createdAt: 1, updatedAt: 1 };
+    });
+    const request = approvalRequest();
+    let pending = [request];
+    const getPending = vi.fn(() => pending);
+    channel.bindRuntimeCapabilities({
+      ...capabilities(undefined, undefined, sessionCapabilities({ getSession })),
+      approvals: { getPending },
+    });
+    await channel.start();
+    const client = await connectClient(channel);
+    clients.push(client);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'ordered-client' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'ordered-client' });
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'ordered', sessionId: 'main' }));
+    await vi.waitFor(() => expect(getSession).toHaveBeenCalledOnce());
+    expect(getPending).not.toHaveBeenCalled();
+    const messages: Record<string, unknown>[] = [];
+    client.on('message', raw => messages.push(JSON.parse(raw.toString())));
+    release();
+    await vi.waitFor(() => expect(messages).toHaveLength(1));
+    pending = [];
+    channel.interaction.sendInteractionClosed(request, { outcome: 'denied', reason: 'user' });
+    await vi.waitFor(() => expect(messages).toHaveLength(2));
+    expect(messages[0]).toEqual({
+      type: 'session_approvals', requestId: 'ordered', sessionId: 'main', approvals: [request],
+    });
+    expect(messages[1]).toMatchObject({ type: 'approval_closed', id: request.id, outcome: 'denied' });
+  });
+
+  it('does not read a pending snapshot when the validated socket disconnected', async () => {
+    channel = createChannel({ approval: true });
+    channel.onMessage(async () => undefined);
+    let release!: () => void;
+    const validation = new Promise<void>(resolve => { release = resolve; });
+    const getSession = vi.fn(async (sessionId: string) => {
+      await validation;
+      return { sessionId, createdAt: 1, updatedAt: 1 };
+    });
+    const getPending = vi.fn(() => []);
+    channel.bindRuntimeCapabilities({
+      ...capabilities(undefined, undefined, sessionCapabilities({ getSession })),
+      approvals: { getPending },
+    });
+    await channel.start();
+    const client = await connectClient(channel);
+    clients.push(client);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'closing-query' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'closing-query' });
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'closing', sessionId: 'main' }));
+    await vi.waitFor(() => expect(getSession).toHaveBeenCalledOnce());
+    const closed = once(client, 'close');
+    client.close();
+    await closed;
+    release();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(getPending).not.toHaveBeenCalled();
+  });
+
+  it.each<[ApprovalClosedResult, string]>([
+    [{ outcome: 'approved' }, 'user'],
+    [{ outcome: 'denied', reason: 'user' }, 'user'],
+    [{ outcome: 'aborted', reason: 'turn' }, 'turn'],
+    [{ outcome: 'unavailable', reason: 'delivery_failed' }, 'delivery_failed'],
+    [{ outcome: 'failed', message: 'adapter failed' }, 'adapter failed'],
+  ])('broadcasts terminal closure %j without an origin Client or opened Session', async (result, reason) => {
+    channel = createChannel({ approval: true });
+    channel.onMessage(async () => undefined);
+    await channel.start();
+    const client = await connectClient(channel);
+    clients.push(client);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'closure-only' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'closure-only' });
+    const request = approvalRequest();
+    channel.interaction.sendInteractionClosed(request, result);
+    await expectMessage(client, {
+      type: 'approval_closed', id: request.id, sessionId: request.sessionId,
+      turnId: request.turnId, callId: request.callId, outcome: result.outcome, reason,
+    });
+  });
+
+  it('retains canonical pending after client disconnect and exposes it to another client', async () => {
+    const interactionResponse = vi.fn();
     channel = createChannel({ port: 0, approval: true });
     channel.onMessage(async () => undefined);
-    channel.interaction?.onInteractionUnavailable(interactionUnavailable);
+    channel.interaction.onInteractionResponse(interactionResponse);
     await channel.start();
 
     const client = await connectClient(channel);
     clients.push(client);
     client.send(JSON.stringify({ type: 'hello', clientId: 'client-disconnect' }));
     await expectMessage(client, { type: 'hello_ack', clientId: 'client-disconnect' });
+    subscribe(channel, 'client-disconnect', 'main');
 
-    channel.interaction?.sendInteractionRequest({
+    const request: ApprovalInteractionRequest = {
       id: 'apr-disconnect',
       kind: 'approval',
       callId: 'call-disconnect',
@@ -1341,10 +1743,14 @@ describe('WebSocketChannel', () => {
       sessionId: 'main',
       turnId: 'turn-disconnect',
       originClientId: 'client-disconnect',
-    });
+    };
+    const getPending = vi.fn(() => [request]);
+    channel.bindRuntimeCapabilities({ ...capabilities(), approvals: { getPending } });
+    channel.interaction.sendInteractionRequest(request);
     await expectMessage(client, {
       type: 'approval_requested',
       id: 'apr-disconnect',
+      originClientId: 'client-disconnect',
       callId: 'call-disconnect',
       sessionId: 'main',
       turnId: 'turn-disconnect',
@@ -1354,12 +1760,18 @@ describe('WebSocketChannel', () => {
 
     client.close();
     await once(client, 'close');
-    await vi.waitFor(() => {
-      expect(interactionUnavailable).toHaveBeenCalledWith(
-        'apr-disconnect',
-        'origin_disconnected',
-      );
+    const replacement = await connectClient(channel);
+    clients.push(replacement);
+    replacement.send(JSON.stringify({ type: 'hello', clientId: 'another-client' }));
+    await expectMessage(replacement, { type: 'hello_ack', clientId: 'another-client' });
+    replacement.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'pending-1' }));
+    await expectMessage(replacement, {
+      type: 'session_approvals', requestId: 'pending-1', approvals: [request],
     });
+    replacement.send(JSON.stringify({ type: 'approval_resolve', id: request.id, decision: 'allow' }));
+    await vi.waitFor(() => expect(interactionResponse).toHaveBeenCalledWith({
+      id: request.id, kind: 'approval', outcome: 'submitted', decision: 'allow',
+    }));
   });
 
   it('serializes resolution failure category and queued correlation', async () => {
@@ -1708,6 +2120,22 @@ function capabilities(
     modelCatalog: { getSnapshot },
     abort,
     sessions,
+    approvals: { getPending: () => [] },
+  };
+}
+
+function subscribe(channel: WebSocketChannel, clientId: string, ...sessionIds: string[]): void {
+  for (const sessionId of sessionIds) {
+    (channel as unknown as { registerSessionAudience(clientId: string, sessionId: string): void })
+      .registerSessionAudience(clientId, sessionId);
+  }
+
+}
+
+function approvalRequest(overrides: Partial<ApprovalInteractionRequest> = {}): ApprovalInteractionRequest {
+  return {
+    id: 'pending-query', kind: 'approval', sessionId: 'main', turnId: 'turn-query',
+    callId: 'call-query', toolName: 'write_file', input: {}, ...overrides,
   };
 }
 
@@ -1769,6 +2197,7 @@ function createChannel(
   const options: WebSocketChannelOptions = {
     config: completeConfig,
     clientFilePath: CLIENT_FILE_PATH,
+    clientVariants: Object.freeze({ '/chat2.html': CLIENT_VARIANT_FILE_PATH }),
     logger,
     ...(browserLauncher === undefined ? {} : { browserLauncher }),
   };

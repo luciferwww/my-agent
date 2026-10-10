@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Channel behavior
-> Verified: 2026-10-08
+> Verified: 2026-10-10
 > Ownership: Channel contracts, Host-local CLI, Extension-delivered WebSocket protocol, interaction, attachment ingress, and client routing
 > Ownership key: channel-transport-and-ingress
 
@@ -94,7 +94,7 @@ Most events route by `sessionId`. Subagent events carry a child `sessionId` plus
 Before `start()`, candidate activation may call:
 
 ```text
-bindRuntimeCapabilities({ modelCatalog, abort, sessions })
+bindRuntimeCapabilities({ modelCatalog, abort, sessions, approvals })
 ```
 
 `modelCatalog.getSnapshot()` is a live query over the current published
@@ -105,6 +105,12 @@ exposes Session lifecycle, permission, and read-only paginated History
 operations without exposing Transcript internals. Channel model selection
 consumes the Catalog for presentation and early checks, but Model Resolution
 remains the final authority.
+
+`approvals.getPending(sessionId?)` reads detached canonical pending requests,
+globally or by exact Session ID. Channels filter using local side-effect-free
+acceptance logic; Runtime does not create per-Channel query wrappers. Both
+Origin Channel and Origin Client source fields are preserved. Shared Session
+entries are unchanged; Session indicators and refresh cycles are Client UX.
 
 ## 4. Canonical contracts
 
@@ -120,7 +126,20 @@ owns the stable contract.
 
 ## 5. Approval and interaction lifecycle
 
-`TurnInteractionManager` is the Runtime-owned in-memory Promise bus. It routes a Tool interaction, including its canonical `callId`, to the Turn's captured Channel/client origin and reports responses or terminal unavailability back to Runner. Elevating a Session to `allow_all` closes its already-pending requests as mode-authorized so clients can remove stale approval UI. Channel implementations provide approval interactions and user-facing Session permission controls; [Approval Lifecycle](../specifications/approval-lifecycle.md) owns settlement and failure semantics.
+`TurnInteractionManager` is the Runtime-owned in-memory Promise bus. Requests
+carry canonical `callId`, Session/Turn correlation, and optional Runtime-supplied
+Origin Channel/Client IDs. Runtime targets an existing Origin Channel only;
+absent one, all Channels are candidates. The interaction adapter is required;
+unsupported Channels explicitly return unavailable. Each Channel decides
+whether it can make a request actionable, and at least one must accept.
+Response ingress preserves the source binding for Runtime validation.
+
+Origin Client is not a Runtime eligibility or disconnect-settlement condition.
+The dedicated unavailable callback chain is removed. Every settlement sends
+closure, including user Allow/Deny and Session elevation to `allow_all`.
+Channels clean existing presentations by Approval ID even if currently unable
+to accept new requests. [Approval Lifecycle](../specifications/approval-lifecycle.md)
+owns settlement and failure semantics.
 
 ## 6. CLI Channel
 
@@ -218,7 +237,8 @@ Channel and belong to the operational proxy/gateway boundary.
 
 After `hello`, WebSocket accepts Session creation and management, explicit
 single-Session History queries, permission query/change, Turn submission,
-approval resolution, Abort, and Catalog queries. History is never sent merely
+approval resolution, global or Session-filtered pending Approval queries,
+Abort, and Catalog queries. History is never sent merely
 because `hello` completed; the bundled client requests it only after selecting
 a persisted Session. `get_session_history` is socket-local, request-correlated,
 and does not join a Session audience. All JSON property names use camelCase;
@@ -255,13 +275,52 @@ waiting state for each Session, so switching the visible Session does not
 cancel or hide another Session's active work. This state is page-local and is
 not replayed after a refresh or reconnect.
 
+Pending Approval data is recovered separately: the bundled clients fetch the
+Session list and full locally acceptable pending collection after handshake
+and reconnect, then every 10 seconds while connected. Each query has 8-second
+timeout recovery, retains last-successful data on error, and is deduplicated.
+Refreshing does not close menus, switch Sessions, reload History, or interrupt
+composition. Session switching loads History and filters the local collection;
+Session indicators derive from that collection, not a shared Runtime flag.
+Realtime request/closure updates reconcile by Approval ID and exact
+Session/Turn/Call identity even when historical Tool cards are not loaded.
+Manual and `run_end` list refresh are removed; `run_end` History refresh stays.
+This polling policy is bundled chat UX, not a Channel-wide requirement.
+Page-local system/error bubbles (including aborted, call-limit, and compaction
+notices) are transient. New user or assistant content, a new Turn, or a Tool
+result clears them only in that Session; persisted History is unchanged.
+During active/pending Turns, History and realtime content are reconciled for
+display rather than concatenated: matching user content in the same Turn,
+Tool Call IDs, Thinking IDs, and streamed text prefixes appear once. Matching
+segments retain live objects and presentation IDs so decisions, Tool results,
+and later deltas still update them. Unmatched History and realtime content stay
+visible; displaying History does not prematurely discard an active Turn.
+Stop/Steer presentation derives from the Session's active Turn ID, set by
+`run_start` and cleared only by matching `run_end` or Turn error. Sending uses
+a separate local in-flight flag cleared by the originating Client's echoed
+`user_message`, start, or send failure; queued cancellation does not clear a
+running Turn. Disconnect clears both. Ordinary content does not infer running
+state, and missed-start recovery remains outside this Client behavior.
+
 A newer socket using the same `clientId` supersedes and closes the old socket;
-the old socket's late close cannot remove the replacement. A pending approval
-route carries `clientId`, `sessionId`, and `turnId`. Both `approval_requested`
-and `approval_closed` expose the Session and Turn correlation on the wire.
-Only that logical client may resolve the pending approval; foreign and unknown
-approval IDs fail without consuming the pending route. A disconnect of the
-current socket reports `origin_disconnected`. For the queued terminal event
+the old socket's late close cannot remove the replacement. Approval is no
+longer indexed or authorized by Origin Client. Authenticated Clients submit
+decisions for canonical Runtime validation; a different Client in the eligible
+Channel may decide the same request. Disconnect only cleans transport/audience
+state and leaves Runtime pending requests intact.
+
+`get_session_approvals { requestId, sessionId? }` returns
+`session_approvals { requestId, sessionId?, approvals }`, preserving both origin
+fields. Errors use a correlated `session_approvals_error`. Supplied Session
+validation precedes a synchronous snapshot read/send. Realtime
+`approval_requested` retains existing Session audience routing.
+`approval_closed` carries Session, Turn, and `callId` correlation, covers every
+outcome, and broadcasts to all bound Clients so queried but unopened Sessions
+also receive closure. User approval maps its reason to `user`; Session policy
+approval maps to `session_allow_all`. No additional canonical Channel registry
+or notification subsystem is introduced.
+
+For the queued terminal event
 whose canonical `AgentEvent` has no Session ID, the Channel resolves the
 Session from `originMessageId` and adds that Session correlation to the
 WebSocket payload.
