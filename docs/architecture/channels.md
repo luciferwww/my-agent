@@ -38,7 +38,9 @@ extensions/websocket-channel/
 ├── WebSocketChannel.ts       # HTTP and WebSocket transport
 ├── websocket-channel-unit.ts
 ├── entry.ts                  # Extension factory
-└── client/chat.html
+└── client/
+    ├── src/                  # Vue 3 + TypeScript source
+    └── dist/                 # Prebuilt packaged Client
 
 src/runtime/turn-interaction/
 ├── TurnInteractionManager.ts # Runtime-owned Promise bus
@@ -47,7 +49,28 @@ src/runtime/turn-interaction/
 
 ## 3. Inbound, outbound, and capability flows
 
-### 3.1 Client to Runtime
+### 3.1 Bundled WebSocket Client delivery
+
+The WebSocket Extension owns one Vue 3 and TypeScript Client source tree and
+ships its prebuilt Vite output under `client/dist`. Source-loaded development
+and installed packages serve the same bounded asset inventory. Runtime
+Extension load/start never installs Client dependencies, invokes Vite, or
+writes installation files.
+
+Generated HTML contains one runtime configuration token. The Extension
+replaces it per request with the configured WebSocket path, serves HTML with
+`no-store`, and serves hashed assets with immutable caching. Relative asset
+URLs preserve configured nested Client paths. Published packages include
+`client/dist` and exclude Client source, build configuration, source maps, and
+build-only scripts.
+
+The bundled Client has one component tree. Classic and Botanical are
+presentation-only Themes selected in the Sidebar and persisted origin-locally;
+Theme changes do not reconnect transport or clear Session state. The retired
+`/chat2.html` entry has no alias or redirect and returns 404 unless an operator
+explicitly configures that exact path as the primary `clientPath`.
+
+### 3.2 Client to Runtime
 
 ```text
 CLI or WebSocket input
@@ -75,7 +98,7 @@ RuntimeApp.handleInboundChannelMessage
 - Text and multimodal input use the same FIFO. Claim compatibility uses the active resolved Model's media facts.
 - Root user messages are submitted through Channels. `RuntimeApplication` does not expose a direct `runTurn()` bypass.
 
-### 3.2 Runtime to clients
+### 3.3 Runtime to clients
 
 ```text
 AgentEvent
@@ -89,7 +112,7 @@ Fanout selects captured-generation Channel bindings for events with a live `turn
 
 Most events route by `sessionId`. Subagent events carry a child `sessionId` plus `callerSessionId`, and WebSocket routes them to the caller Session audience. A queued `request_end` has no Session ID, so WebSocket resolves its audience from the earlier `user_message` through `originMessageId`; an uncorrelated event is not sent. `user_message.attachmentSummaries` may expose type, MIME, byte count, and dimensions, but never raw base64.
 
-### 3.3 Runtime capabilities
+### 3.4 Runtime capabilities
 
 Before `start()`, candidate activation may call:
 

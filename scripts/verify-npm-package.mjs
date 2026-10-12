@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { access, mkdir, mkdtemp, readdir, readFile, readlink, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import WebSocket from 'ws';
@@ -87,6 +87,7 @@ async function main() {
     );
 
     const installDir = join(installationProject, 'node_modules', 'my-agent');
+    await verifyInstalledClientDist(installDir);
     const firstStartInstallationBefore = await snapshotTree(installDir);
     const firstStartStartupCwdBefore = await snapshotTree(startupCwd);
     host = startInstalledCommand(
@@ -213,12 +214,19 @@ async function main() {
       );
       const clientHtml = await clientResponse.text();
       assert(
-        clientHtml.includes('const DEFAULT_SOCKET_PATH = "/ws";'),
+        clientHtml.includes('{"webSocketPath":"/ws"}'),
         'Installed WebSocket client did not receive its configured socket path.',
       );
       assert(
-        !clientHtml.includes('__MY_AGENT_WEBSOCKET_PATH__'),
-        'Installed WebSocket client retained its build-time path token.',
+        !clientHtml.includes('__MY_AGENT_CLIENT_CONFIG_JSON__'),
+        'Installed WebSocket client retained its runtime configuration token.',
+      );
+      const retiredClientResponse = await fetch(
+        `http://127.0.0.1:${webSocketPort}/chat2.html`,
+      );
+      assert(
+        retiredClientResponse.status === 404,
+        'Installed WebSocket client retained the retired /chat2.html route.',
       );
     } finally {
       client.close();
@@ -298,6 +306,38 @@ async function verifyInstalledExtensionAcquisition(installationProject) {
       && result.loadedUnits[1]?.unitId === 'websocket-channel',
     'Installed official Extensions did not load through Host acquisition.',
   );
+}
+
+async function verifyInstalledClientDist(installDir) {
+  const distRoot = join(
+    installDir,
+    'extensions',
+    'websocket-channel',
+    'client',
+    'dist',
+  );
+  const indexPath = join(distRoot, 'index.html');
+  const indexHtml = await readFile(indexPath, 'utf8');
+  assert(
+    indexHtml.split('__MY_AGENT_CLIENT_CONFIG_JSON__').length - 1 === 1,
+    'Installed WebSocket Client HTML must contain exactly one config token.',
+  );
+  const references = [...indexHtml.matchAll(/\b(?:src|href)="([^"]+)"/gu)]
+    .map(match => match[1])
+    .filter(reference => !reference.startsWith('data:') && !reference.startsWith('#'));
+  assert(references.length > 0, 'Installed WebSocket Client HTML references no assets.');
+  for (const reference of references) {
+    assert(!URL.canParse(reference), `Installed WebSocket Client has external asset ${reference}.`);
+    const assetPath = resolve(dirname(indexPath), reference);
+    const relativePath = relative(distRoot, assetPath);
+    assert(
+      relativePath !== ''
+        && relativePath !== '..'
+        && !relativePath.startsWith(`..${sep}`),
+      `Installed WebSocket Client asset escapes dist: ${reference}.`,
+    );
+    await access(assetPath);
+  }
 }
 
 async function findAvailableLoopbackPort() {

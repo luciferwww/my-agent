@@ -40,6 +40,19 @@ describe('npm package audit', () => {
       dependencies: { 'example-runtime': '^1.0.0' },
     }])).toThrow(/Extension dependency example-runtime@\^1\.0\.0/u);
   });
+
+  it('rejects an incomplete or debug WebSocket Client dist', () => {
+    const result = packResult();
+    result[0].files = result[0].files.filter(
+      ({ path }) => !path.endsWith('.js'),
+    );
+    result[0].files.push({
+      path: 'extensions/websocket-channel/client/dist/assets/index-abc.js.map',
+    });
+
+    expect(() => auditNpmPackage(result, manifest(), lockfile()))
+      .toThrow(/contains no JavaScript asset|contains a source map/u);
+  });
 });
 
 function packResult() {
@@ -60,8 +73,10 @@ function packResult() {
       { path: 'extensions/copilot-relay-provider/extension.json' },
       { path: 'extensions/copilot-relay-provider/package.json' },
       { path: 'extensions/websocket-channel/WebSocketChannel.ts' },
-      { path: 'extensions/websocket-channel/client/chat.html' },
-      { path: 'extensions/websocket-channel/client/chat2.html' },
+      { path: 'extensions/websocket-channel/client-assets.ts' },
+      { path: 'extensions/websocket-channel/client/dist/assets/index-abc.css' },
+      { path: 'extensions/websocket-channel/client/dist/assets/index-abc.js' },
+      { path: 'extensions/websocket-channel/client/dist/index.html' },
       { path: 'extensions/websocket-channel/entry.ts' },
       { path: 'extensions/websocket-channel/extension.json' },
       { path: 'extensions/websocket-channel/package.json' },
@@ -85,8 +100,8 @@ function manifest() {
       'extensions/copilot-relay-provider/responses-client.ts',
       'extensions/copilot-relay-provider/types.ts',
       'extensions/websocket-channel/WebSocketChannel.ts',
-      'extensions/websocket-channel/client/chat.html',
-      'extensions/websocket-channel/client/chat2.html',
+      'extensions/websocket-channel/client-assets.ts',
+      'extensions/websocket-channel/client/dist',
       'extensions/websocket-channel/config.ts',
       'extensions/websocket-channel/entry.ts',
       'extensions/websocket-channel/extension.json',

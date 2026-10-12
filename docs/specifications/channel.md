@@ -109,6 +109,21 @@ and treats Default as no Provider-wire override. Model changes preserve each
 still-supported explicit dimension and reset only unsupported dimensions.
 Message and History summaries are rendered from structured preferences.
 
+The Extension-delivered reference client is one prebuilt Vue 3 application.
+Development and installed-package runtime both serve the same bounded
+`client/dist` inventory; Extension load/start performs no Client dependency
+installation or build. Generated HTML receives runtime WebSocket-path
+configuration from the Extension, uses relative hashed assets so nested
+`clientPath` values remain valid, and is not a second protocol authority.
+Published packages include the generated inventory and exclude Client source,
+source maps, Vite configuration, and build-only scripts.
+
+Classic and Botanical are presentation-only Themes in the same component
+tree. A valid origin-local preference is applied before Vue mount; otherwise
+Classic is used. Only explicit selection writes preference. Theme changes do
+not reconnect WebSocket or clear Session state. The retired `/chat2.html`
+entry has no alias or redirect.
+
 When Runtime reports `provider_unregistered` or `model_rejected`, Channel presentation preserves the classified failure. A catalog-capable interactive client refreshes the current Catalog for explicit reselection; it does not substitute a Provider/Model or resubmit the failed Turn. Other resolution and invocation failures remain ordinary reported failures and retain the user's selection for an explicit retry.
 
 ## Failure semantics

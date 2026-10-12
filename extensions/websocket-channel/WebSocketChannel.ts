@@ -25,6 +25,10 @@ import {
 } from 'my-agent/extension-api';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 
+import {
+  type ClientHttpResource,
+  loadBuiltClientResources,
+} from './client-assets.js';
 import type { WebSocketExtensionConfig } from './config.js';
 import { WS_MAX_PAYLOAD_BYTES } from './websocket-constants.js';
 
@@ -148,13 +152,24 @@ type OutboundMessage =
 
 export type BrowserLauncher = (url: string) => Promise<void>;
 
-export interface WebSocketChannelOptions {
+interface WebSocketChannelSharedOptions {
   readonly config: WebSocketExtensionConfig;
-  readonly clientFilePath: string;
-  readonly clientVariants?: Readonly<Record<string, string>>;
   readonly logger: ExtensionLogger;
   readonly browserLauncher?: BrowserLauncher;
 }
+
+export type WebSocketChannelOptions = WebSocketChannelSharedOptions & (
+  | {
+      readonly clientFilePath: string;
+      readonly clientVariants?: Readonly<Record<string, string>>;
+      readonly clientAssetDirectoryPath?: never;
+    }
+  | {
+      readonly clientAssetDirectoryPath: string;
+      readonly clientFilePath?: never;
+      readonly clientVariants?: never;
+    }
+);
 
 class ProtocolError extends Error {
   constructor(readonly code: ChannelErrorCode, message: string) {
@@ -173,8 +188,9 @@ export class WebSocketChannel implements Channel {
   private readonly clientPath: string;
   private readonly maxClients?: number;
   private readonly logger: ExtensionLogger;
-  private readonly clientFilePath: string;
+  private readonly clientFilePath?: string;
   private readonly clientVariants: Readonly<Record<string, string>>;
+  private readonly clientAssetDirectoryPath?: string;
   private readonly openBrowser: boolean;
   private readonly browserLauncher: BrowserLauncher;
 
@@ -210,6 +226,7 @@ export class WebSocketChannel implements Channel {
     this.logger = options.logger;
     this.clientFilePath = options.clientFilePath;
     this.clientVariants = options.clientVariants ?? {};
+    this.clientAssetDirectoryPath = options.clientAssetDirectoryPath;
     this.openBrowser = options.config.openBrowser;
     this.browserLauncher = options.browserLauncher ?? launchBrowser;
     this.completion = new Promise<ChannelCompletion>((resolve) => {
@@ -275,9 +292,9 @@ export class WebSocketChannel implements Channel {
     }
 
     this.stopRequested = false;
-    let clientsByPath: ReadonlyMap<string, string>;
+    let clientsByPath: ReadonlyMap<string, ClientHttpResource>;
     try {
-      clientsByPath = await this.loadClientsByPath();
+      clientsByPath = await this.loadClientResources();
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
       this.settleCompletion({ outcome: 'failed', phase: 'startup', error: failure });
@@ -289,17 +306,17 @@ export class WebSocketChannel implements Channel {
 
     const httpServer = createServer((request, response) => {
       const requestPath = new URL(request.url ?? '/', 'http://localhost').pathname;
-      const clientHtml = clientsByPath.get(requestPath);
-      if (clientHtml === undefined || (request.method !== 'GET' && request.method !== 'HEAD')) {
+      const resource = clientsByPath.get(requestPath);
+      if (resource === undefined || (request.method !== 'GET' && request.method !== 'HEAD')) {
         response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
         response.end('Not found');
         return;
       }
       response.writeHead(200, {
-        'cache-control': 'no-store',
-        'content-type': 'text/html; charset=utf-8',
+        'cache-control': resource.cacheControl,
+        'content-type': resource.contentType,
       });
-      response.end(request.method === 'HEAD' ? undefined : clientHtml);
+      response.end(request.method === 'HEAD' ? undefined : resource.body);
     });
     this.httpServer = httpServer;
 
@@ -450,7 +467,21 @@ export class WebSocketChannel implements Channel {
     this.logger.info('websocket channel stopped', { channelId: this.id });
   }
 
-  private async loadClientsByPath(): Promise<ReadonlyMap<string, string>> {
+  private async loadClientResources(): Promise<ReadonlyMap<string, ClientHttpResource>> {
+    if (this.clientAssetDirectoryPath !== undefined) {
+      return loadBuiltClientResources({
+        directoryPath: this.clientAssetDirectoryPath,
+        clientPath: this.clientPath,
+        webSocketPath: this.path,
+      });
+    }
+    return this.loadLegacyClientResources();
+  }
+
+  private async loadLegacyClientResources(): Promise<ReadonlyMap<string, ClientHttpResource>> {
+    if (this.clientFilePath === undefined) {
+      throw new Error('WebSocketChannel.start: client source is not configured');
+    }
     const clientFilesByPath = new Map<string, string>([[this.clientPath, this.clientFilePath]]);
     for (const [clientPath, clientFilePath] of Object.entries(this.clientVariants)) {
       if (clientFilesByPath.has(clientPath)) {
@@ -459,10 +490,14 @@ export class WebSocketChannel implements Channel {
       clientFilesByPath.set(clientPath, clientFilePath);
     }
 
-    const clientsByPath = new Map<string, string>();
+    const clientsByPath = new Map<string, ClientHttpResource>();
     await Promise.all(
       Array.from(clientFilesByPath, async ([clientPath, clientFilePath]) => {
-        clientsByPath.set(clientPath, await this.loadClientHtml(clientFilePath));
+        clientsByPath.set(clientPath, Object.freeze({
+          body: Buffer.from(await this.loadClientHtml(clientFilePath)),
+          cacheControl: 'no-store',
+          contentType: 'text/html; charset=utf-8',
+        }));
       }),
     );
     return clientsByPath;

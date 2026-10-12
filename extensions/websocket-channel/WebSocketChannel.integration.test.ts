@@ -11,7 +11,9 @@ import { WebSocketChannel } from './WebSocketChannel.js';
 import type { WebSocketExtensionConfig } from './config.js';
 import { WS_MAX_PAYLOAD_BYTES } from './websocket-constants.js';
 
-const CLIENT_FILE_PATH = fileURLToPath(new URL('./client/chat.html', import.meta.url));
+const CLIENT_FILE_PATH = fileURLToPath(
+  new URL('./test-fixtures/legacy-client.html', import.meta.url),
+);
 const logger: ExtensionLogger = {
   debug: vi.fn(),
   info: vi.fn(),

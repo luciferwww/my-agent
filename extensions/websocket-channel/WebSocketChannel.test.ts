@@ -1,6 +1,8 @@
 import { once } from 'node:events';
-import { readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
@@ -19,14 +21,19 @@ import {
 } from './WebSocketChannel.js';
 import type { WebSocketExtensionConfig } from './config.js';
 
-const CLIENT_FILE_PATH = fileURLToPath(new URL('./client/chat.html', import.meta.url));
-const CLIENT_VARIANT_FILE_PATH = fileURLToPath(new URL('./client/chat2.html', import.meta.url));
+const CLIENT_FILE_PATH = fileURLToPath(
+  new URL('./test-fixtures/legacy-client.html', import.meta.url),
+);
+const CLIENT_VARIANT_FILE_PATH = fileURLToPath(
+  new URL('./test-fixtures/legacy-client-variant.html', import.meta.url),
+);
 const logger: ExtensionLogger = {
   debug: vi.fn(),
   info: vi.fn(),
   warn: vi.fn(),
   error: vi.fn(),
 };
+const temporaryDirectories: string[] = [];
 
 describe('WebSocketChannel', () => {
   let channel: WebSocketChannel | undefined;
@@ -38,238 +45,9 @@ describe('WebSocketChannel', () => {
     }
     await channel?.stop();
     channel = undefined;
-  });
-
-  it.each([CLIENT_FILE_PATH, CLIENT_VARIANT_FILE_PATH])('keeps bundled chat scripts valid and pending independent of History: %s', async (path) => {
-    const source = await readFile(path, 'utf8');
-    const script = source.match(/<script>([\s\S]*?)<\/script>/)?.[1];
-    expect(script).toBeDefined();
-    expect(() => new Function(script!)).not.toThrow();
-    expect(source).toContain('pendingApprovals: new Map()');
-    expect(source).toContain("type: 'get_session_approvals', requestId");
-    expect(source).toContain('window.setInterval(refresh, 10000)');
-    expect(source).toContain('hasSessionApprovals(session.sessionId)');
-    expect(source).not.toContain('Refresh Sessions');
-    expect(source).not.toContain('origin_disconnected');
-  });
-
-  it.each([CLIENT_FILE_PATH, CLIENT_VARIANT_FILE_PATH])('smokes pending recovery, exact closure identity and snapshot reconciliation: %s', async (path) => {
-    const source = await readFile(path, 'utf8');
-    const capture = vi.fn();
-    const browser = {
-      location: { protocol: 'http:', host: 'localhost' }, innerWidth: 1200,
-      clearTimeout: vi.fn(), clearInterval: vi.fn(),
-      setTimeout: vi.fn((_callback: () => void, _delay: number) => 1),
-      setInterval: vi.fn((_callback: () => void, _delay: number) => 2),
-    };
-    new Function('Vue', 'window', '__MY_AGENT_WEBSOCKET_PATH__',
-      source.match(/<script>([\s\S]*?)<\/script>/)![1])({
-      createApp: (options: unknown) => { capture(options); return { mount: () => undefined }; },
-      nextTick: () => undefined,
-    }, browser, '/ws');
-    const options = capture.mock.calls[0][0];
-    const chat = options.data();
-    for (const [name, method] of Object.entries(options.methods)) {
-      chat[name] = (method as Function).bind(chat);
-    }
-    for (const [name, computed] of Object.entries(options.computed)) {
-      Object.defineProperty(chat, name, typeof computed === 'function'
-        ? { get: computed.bind(chat) }
-        : {
-            get: (computed as { get: Function }).get.bind(chat),
-            set: (computed as { set: Function }).set.bind(chat),
-          });
-    }
-    chat.pushEvent = vi.fn();
-    chat.scrollChatToBottom = vi.fn();
-    chat.form.sessionId = 'main';
-    const request = approvalRequest();
-    const receive = (message: Record<string, unknown>) => chat.handleServerMessage(JSON.stringify(message));
-    receive({ type: 'approval_requested', ...request });
-    expect(chat.pendingApprovalCount).toBe(1);
-    expect(chat.displayedChatItems[0].segments[0].approval.id).toBe(request.id);
-    chat.form.sessionId = 'other';
-    expect(chat.pendingApprovalCount).toBe(0);
-    expect(chat.hasSessionApprovals('main')).toBe(true);
-    chat.form.sessionId = 'main';
-    const state = chat.ensureSessionState('main');
-    state.historyItems = [{
-      kind: 'turn', turnId: request.turnId, segments: [
-        { type: 'tool_call', callId: request.callId, status: 'requested' },
-      ],
-    }];
-    chat.syncApprovalCards();
-    expect(chat.displayedChatItems).toHaveLength(1);
-    expect(state.historyItems[0].segments[0].approval.status).toBe('pending');
-    receive({ type: 'approval_closed', ...request, callId: 'wrong', outcome: 'denied', reason: 'user' });
-    expect(chat.pendingApprovalCount).toBe(1);
-    receive({ type: 'approval_closed', ...request, outcome: 'approved', reason: 'user' });
-    expect(chat.pendingApprovalCount).toBe(0);
-    expect(state.historyItems[0].segments[0].approval.status).toBe('approved');
-    receive({ type: 'session_approvals', requestId: 'stale', approvals: [request] });
-    expect(chat.pendingApprovalCount).toBe(0);
-    chat.pendingApprovalsRequestId = 'fresh';
-    receive({ type: 'session_approvals', requestId: 'fresh', approvals: [request] });
-    expect(chat.pendingApprovalCount).toBe(1);
-    state.historyItems[0].segments[0].status = 'success';
-    chat.syncApprovalCards();
-    expect(state.historyItems[0].segments[0].approval.status).not.toBe('pending');
-    chat.pendingApprovalsRequestId = 'failure';
-    receive({ type: 'session_approvals_error', requestId: 'failure', code: 'SERVER_NOT_READY', message: 'not ready' });
-    expect(chat.pendingApprovalCount).toBe(1);
-    chat.pendingApprovalsRequestId = 'empty';
-    receive({ type: 'session_approvals', requestId: 'empty', approvals: [] });
-    expect(chat.pendingApprovalCount).toBe(0);
-    chat.connectionStatus = 'connected';
-    chat.sendJson = vi.fn();
-    chat.sessionActionMenu = { sessionId: 'main' };
-    chat.startSessionRefresh();
-    expect(chat.sendJson.mock.calls.map(([message]: [{ type: string }]) => message.type))
-      .toEqual(['list_sessions', 'get_session_approvals']);
-    chat.requestSessionList();
-    chat.requestPendingApprovals();
-    expect(chat.sendJson).toHaveBeenCalledTimes(2);
-    expect(chat.sessionActionMenu.sessionId).toBe('main');
-    for (const [timeout] of browser.setTimeout.mock.calls) timeout();
-    expect(chat.pendingSessionsRequestId).toBeNull();
-    expect(chat.pendingApprovalsRequestId).toBeNull();
-    browser.setInterval.mock.calls[0][0]();
-    expect(chat.sendJson).toHaveBeenCalledTimes(4);
-    chat.stopSessionRefresh();
-    expect(chat.refreshTimer).toBeNull();
-    expect(browser.clearInterval).toHaveBeenCalledWith(2);
-    const otherState = chat.ensureSessionState('other');
-    chat.appendChatItem({ kind: 'system', text: 'Turn aborted' }, 'main');
-    chat.appendChatItem({ kind: 'error', text: 'Runtime failed' }, 'main');
-    chat.appendChatItem({ kind: 'system', text: 'Other Session notice' }, 'other');
-    chat.appendChatItem({ kind: 'user', text: 'Try again' }, 'main');
-    expect(state.chatItems.map((item: { kind: string }) => item.kind)).toEqual(['user']);
-    expect(otherState.chatItems).toHaveLength(1);
-    expect(state.historyItems).toHaveLength(1);
-    chat.appendChatItem({ kind: 'system', text: 'Compaction finished' }, 'main');
-    chat.appendTextToTurn('new-turn', 'New content', 'main');
-    expect(state.chatItems.map((item: { kind: string }) => item.kind)).toEqual(['user', 'turn']);
-    chat.appendChatItem({ kind: 'system', text: 'Configured model call limit reached' }, 'main');
-    chat.handleAgentEvent({ type: 'run_start', sessionId: 'main', turnId: 'next-turn' });
-    expect(state.chatItems.some((item: { kind: string }) => item.kind === 'system')).toBe(false);
-
-    state.chatItems = [];
-    state.turnMap = {};
-    state.historyItems = [];
-    const localUser = chat.appendChatItem({
-      kind: 'user', turnId: request.turnId, text: 'List directories', attachments: [],
-    }, 'main');
-    chat.appendTextToTurn(request.turnId, 'Checking directories.', 'main');
-    chat.handleAgentEvent({
-      type: 'tool_call_requested', sessionId: 'main', turnId: request.turnId,
-      callId: request.callId, name: request.toolName, input: request.input,
-    });
-    receive({ type: 'approval_requested', ...request });
-    const realtimeTurn = state.turnMap[request.turnId];
-    const liveTool = realtimeTurn.segments[1];
-    const records = [
-      { entryId: 'persisted-user', role: 'user', turnId: request.turnId,
-        timestamp: '2026-10-10T08:00:00Z', content: [{ type: 'text', text: 'List directories' }] },
-      { entryId: 'persisted-call', role: 'assistant', turnId: request.turnId,
-        timestamp: '2026-10-10T08:00:01Z', content: [
-          { type: 'text', text: 'Checking directories.' },
-          { type: 'tool_use', id: request.callId, name: request.toolName, input: request.input },
-        ] },
-    ];
-    for (let index = 0; index < 3; index++) {
-      chat.form.sessionId = 'other';
-      chat.form.sessionId = 'main';
-      state.pendingHistoryRequest = { terminalTurnIds: [] };
-      chat.mergeHistoryPage('main', { items: records, hasMore: false });
-      expect(chat.displayedChatItems).toHaveLength(2);
-      expect(chat.displayedChatItems[0]).toBe(localUser);
-      expect(chat.displayedChatItems[1].id).toBe(realtimeTurn.id);
-      expect(chat.displayedChatItems[1].segments[1]).toBe(liveTool);
-      expect(chat.displayedChatItems[1].segments[1].approval.status).toBe('pending');
-    }
-    receive({ type: 'approval_closed', ...request, outcome: 'approved', reason: 'user' });
-    chat.handleAgentEvent({
-      type: 'tool_result', sessionId: 'main', turnId: request.turnId, callId: request.callId,
-      result: { status: 'success', content: [{ type: 'text', text: 'Done' }] },
-    });
-    expect(chat.displayedChatItems[1].segments[1].status).toBe('success');
-    chat.appendTextToTurn(request.turnId, 'Directories listed.', 'main');
-    expect(chat.displayedChatItems.flatMap((item: { segments?: { text?: string }[] }) =>
-      item.segments ?? []).map((segment: { text?: string }) => segment.text))
-      .toContain('Directories listed.');
-    expect(chat.displayedChatItems.flatMap((item: { segments?: { callId?: string }[] }) =>
-      item.segments ?? []).filter((segment: { callId?: string }) => segment.callId === request.callId))
-      .toHaveLength(1);
-    expect(state.chatItems).toHaveLength(2);
-    expect(state.historyItems).toHaveLength(2);
-    const remainingText = realtimeTurn.segments[2];
-    remainingText.text += ' More details.';
-    expect(chat.displayedChatItems.flatMap((item: { segments?: { text?: string }[] }) =>
-      item.segments ?? []).filter((segment: { text?: string }) =>
-      segment.text === 'Directories listed. More details.')).toHaveLength(1);
-    const completedRecords = [
-      records[0],
-      { ...records[1], content: [...records[1].content, {
-        type: 'tool_use', id: 'other-call', name: 'other_tool', input: {},
-      }] },
-      { entryId: 'persisted-result', role: 'toolResult', turnId: request.turnId,
-        content: [{ type: 'tool_result', tool_use_id: request.callId, status: 'success', content: 'Done' }] },
-      { entryId: 'persisted-reply', role: 'assistant', turnId: request.turnId,
-        content: [{ type: 'text', text: 'Directories listed. More details.' }] },
-    ];
-    liveTool.status = 'running';
-    state.pendingHistoryRequest = { terminalTurnIds: [] };
-    chat.mergeHistoryPage('main', { items: completedRecords, hasMore: false });
-    const displayedSegments = chat.displayedChatItems.flatMap(
-      (item: { segments?: { callId?: string; status?: string }[] }) => item.segments ?? [],
-    );
-    expect(displayedSegments.find((segment: { callId?: string }) => segment.callId === request.callId).status)
-      .toBe('success');
-    expect(displayedSegments.filter((segment: { callId?: string }) => segment.callId === 'other-call'))
-      .toHaveLength(1);
-    expect(new Set(chat.displayedChatItems.map((item: { id: number | string }) => item.id)).size)
-      .toBe(chat.displayedChatItems.length);
-    state.pendingHistoryRequest = { terminalTurnIds: [request.turnId] };
-    chat.mergeHistoryPage('main', { items: completedRecords, hasMore: false });
-    expect(state.chatItems).toEqual([]);
-    expect(chat.displayedChatItems[0].id).toBe(localUser.id);
-    expect(chat.pendingApprovalCount).toBe(0);
-    state.activeTurnId = null;
-    chat.dispatchRunTurn({ message: 'Start a Turn', reasoning: {} });
-    expect(state.isSending).toBe(true);
-    expect(chat.canSend).toBe(false);
-    expect(chat.isWaitingForReply).toBe(false);
-    chat.handleAgentEvent({
-      type: 'user_message', sessionId: 'main', originClientId: chat.form.clientId,
-      messageId: 'accepted-message', content: 'Start a Turn',
-    });
-    expect(state.isSending).toBe(false);
-    expect(chat.isWaitingForReply).toBe(false);
-    chat.handleAgentEvent({ type: 'run_start', sessionId: 'main', turnId: 'observed-turn' });
-    expect(chat.isWaitingForReply).toBe(true);
-    chat.handleAgentEvent({
-      type: 'run_end', sessionId: 'main', turnId: 'old-turn', result: { stopReason: 'end_turn' },
-    });
-    expect(state.activeTurnId).toBe('observed-turn');
-    chat.handleAgentEvent({ type: 'request_end', sessionId: 'main', requestId: 'old-request' });
-    expect(chat.isWaitingForReply).toBe(true);
-    chat.handleAgentEvent({ type: 'error', sessionId: 'main', turnId: 'old-turn', error: 'Old error' });
-    expect(chat.isWaitingForReply).toBe(true);
-    chat.handleAgentEvent({
-      type: 'run_end', sessionId: 'main', turnId: 'observed-turn', result: { stopReason: 'end_turn' },
-    });
-    expect(chat.isWaitingForReply).toBe(false);
-    chat.handleAgentEvent({ type: 'run_start', sessionId: 'other', turnId: 'other-running-turn' });
-    expect(chat.isWaitingForReply).toBe(false);
-    chat.form.sessionId = 'other';
-    expect(chat.isWaitingForReply).toBe(true);
-    chat.form.sessionId = 'main';
-    chat.appendTextToTurn('missed-start-turn', 'Content only', 'main');
-    expect(chat.isWaitingForReply).toBe(false);
-    chat.sendJson = () => { throw new Error('Socket is not open.'); };
-    expect(() => chat.dispatchRunTurn({ message: 'Fail', reasoning: {} })).toThrow('Socket is not open.');
-    expect(state.isSending).toBe(false);
-    expect(state.chatItems.at(-1).kind).toBe('error');
+    await Promise.all(temporaryDirectories.splice(0).map(
+      path => rm(path, { recursive: true, force: true }),
+    ));
   });
 
   it('requires an onMessage handler before start', async () => {
@@ -335,30 +113,105 @@ describe('WebSocketChannel', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toContain('text/html');
     const html = await response.text();
-    expect(html).toContain("const DEFAULT_SOCKET_PATH = \"/ws\";");
+    expect(html).toContain('const SOCKET_PATH = "/ws";');
     expect(html).not.toContain('__MY_AGENT_WEBSOCKET_PATH__');
-    expect(html).toContain('const socket = new WebSocket(DEFAULT_SOCKET_URL);');
-    expect(html).toContain('this.scheduleReconnect();');
-    expect(html).toContain('this.connect();');
-    expect(html).not.toContain('WebSocket URL');
-    expect(html).not.toContain('>Disconnect</button>');
-    expect(html).toContain("anchor.target = '_blank';");
-    expect(html).toContain("anchor.rel = 'noopener noreferrer';");
-    expect(html).toContain('aria-label="Thinking options"');
-    expect(html).toContain('aria-label="Reasoning effort options"');
-    expect(html).toContain("@click=\"toggleReasoningPicker('thinking')\"");
-    expect(html).toContain("@click=\"toggleReasoningPicker('effort')\"");
-    expect(html).toContain('reasoning: turn.reasoning');
     const variantResponse = await fetch(`${clientUrl(channel)}chat2.html`);
     expect(variantResponse.status).toBe(200);
     expect(variantResponse.headers.get('content-type')).toContain('text/html');
     const variantHtml = await variantResponse.text();
-    expect(variantHtml).toContain('<title>my-agent · Command Center</title>');
-    expect(variantHtml).toContain("const DEFAULT_SOCKET_PATH = \"/ws\";");
+    expect(variantHtml).toContain('<title>Legacy Client Variant Fixture</title>');
+    expect(variantHtml).toContain('const SOCKET_PATH = "/ws";');
     expect(variantHtml).not.toContain('__MY_AGENT_WEBSOCKET_PATH__');
-    expect(variantHtml).toContain('updatePermissionPickerPlacement()');
-    expect(variantHtml).toContain("'placement-top': permissionPickerPlacement === 'top'");
     await expect(fetch(`${clientUrl(channel)}missing`)).resolves.toMatchObject({ status: 404 });
+  });
+
+  it('serves a built Client asset inventory from a nested Client path', async () => {
+    const directoryPath = await createBuiltClientFixture();
+    channel = createBuiltClientChannel(directoryPath, { clientPath: '/nested/chat' });
+    channel.onMessage(async () => undefined);
+    await channel.start();
+
+    const builtClientUrl = new URL('/nested/chat', clientUrl(channel));
+    const htmlResponse = await fetch(builtClientUrl);
+    expect(htmlResponse.status).toBe(200);
+    expect(htmlResponse.headers.get('cache-control')).toBe('no-store');
+    expect(htmlResponse.headers.get('content-type')).toContain('text/html');
+    const html = await htmlResponse.text();
+    expect(html).not.toContain('__MY_AGENT_CLIENT_CONFIG_JSON__');
+    expect(html).toContain('{"webSocketPath":"/ws"}');
+
+    const scriptUrl = new URL('./assets/app-123.js', builtClientUrl);
+    const scriptResponse = await fetch(scriptUrl);
+    expect(scriptResponse.status).toBe(200);
+    expect(scriptResponse.headers.get('cache-control')).toContain('immutable');
+    expect(scriptResponse.headers.get('content-type')).toContain('text/javascript');
+    expect(await scriptResponse.text()).toBe('console.log("client");');
+
+    const styleUrl = new URL('./assets/app-123.css', builtClientUrl);
+    const styleResponse = await fetch(styleUrl);
+    expect(styleResponse.status).toBe(200);
+    expect(styleResponse.headers.get('content-type')).toContain('text/css');
+    expect(await styleResponse.text()).toBe(':root { color: black; }');
+
+    const headResponse = await fetch(scriptUrl, { method: 'HEAD' });
+    expect(headResponse.status).toBe(200);
+    expect(await headResponse.text()).toBe('');
+    await expect(fetch(new URL('/chat2.html', builtClientUrl)))
+      .resolves.toMatchObject({ status: 404 });
+    await expect(fetch(new URL('/nested/missing.js', builtClientUrl)))
+      .resolves.toMatchObject({ status: 404 });
+    await expect(fetch(new URL('/nested/%2e%2e/package.json', builtClientUrl)))
+      .resolves.toMatchObject({ status: 404 });
+  });
+
+  it('rejects built Client assets that collide with the WebSocket path', async () => {
+    const directoryPath = await createBuiltClientFixture();
+    channel = createBuiltClientChannel(directoryPath, {
+      clientPath: '/nested/chat',
+      webSocketPath: '/nested/assets/app-123.js',
+    });
+    channel.onMessage(async () => undefined);
+
+    await expect(channel.start()).rejects.toThrow(
+      'duplicate client resource path "/nested/assets/app-123.js"',
+    );
+  });
+
+  it('rejects source maps in the built Client inventory', async () => {
+    const directoryPath = await createBuiltClientFixture();
+    await writeFile(join(directoryPath, 'assets', 'app-123.js.map'), '{}');
+    channel = createBuiltClientChannel(directoryPath);
+    channel.onMessage(async () => undefined);
+
+    await expect(channel.start()).rejects.toThrow('client dist contains a source map');
+  });
+
+  it('escapes runtime configuration injected into the built Client', async () => {
+    const directoryPath = await createBuiltClientFixture();
+    channel = createBuiltClientChannel(directoryPath, {
+      webSocketPath: '/</script><script>alert(1)</script>',
+    });
+    channel.onMessage(async () => undefined);
+    await channel.start();
+
+    const html = await (await fetch(clientUrl(channel))).text();
+
+    expect(html).toContain('\\u003c/script>');
+    expect(html).not.toContain('"</script><script>alert(1)</script>"');
+  });
+
+  it('requires exactly one runtime configuration token in the built Client', async () => {
+    const directoryPath = await createBuiltClientFixture();
+    await writeFile(
+      join(directoryPath, 'index.html'),
+      '__MY_AGENT_CLIENT_CONFIG_JSON____MY_AGENT_CLIENT_CONFIG_JSON__',
+    );
+    channel = createBuiltClientChannel(directoryPath);
+    channel.onMessage(async () => undefined);
+
+    await expect(channel.start()).rejects.toThrow(
+      'client asset must contain exactly one config token',
+    );
   });
 
   it('escapes the configured WebSocket path before embedding it in the client script', async () => {
@@ -2202,4 +2055,45 @@ function createChannel(
     ...(browserLauncher === undefined ? {} : { browserLauncher }),
   };
   return new WebSocketChannel(options);
+}
+
+function createBuiltClientChannel(
+  clientAssetDirectoryPath: string,
+  config: Partial<WebSocketExtensionConfig> = {},
+): WebSocketChannel {
+  return new WebSocketChannel({
+    config: {
+      host: '127.0.0.1',
+      port: 0,
+      webSocketPath: '/ws',
+      clientPath: '/',
+      approval: false,
+      openBrowser: false,
+      ...config,
+    },
+    clientAssetDirectoryPath,
+    logger,
+  });
+}
+
+async function createBuiltClientFixture(): Promise<string> {
+  const directoryPath = await mkdtemp(join(tmpdir(), 'websocket-client-assets-'));
+  temporaryDirectories.push(directoryPath);
+  await mkdir(join(directoryPath, 'assets'));
+  await Promise.all([
+    writeFile(
+      join(directoryPath, 'index.html'),
+      [
+        '<!doctype html>',
+        '<script id="my-agent-client-config" type="application/json">',
+        '__MY_AGENT_CLIENT_CONFIG_JSON__',
+        '</script>',
+        '<script type="module" src="./assets/app-123.js"></script>',
+        '<link rel="stylesheet" href="./assets/app-123.css">',
+      ].join('\n'),
+    ),
+    writeFile(join(directoryPath, 'assets', 'app-123.js'), 'console.log("client");'),
+    writeFile(join(directoryPath, 'assets', 'app-123.css'), ':root { color: black; }'),
+  ]);
+  return directoryPath;
 }

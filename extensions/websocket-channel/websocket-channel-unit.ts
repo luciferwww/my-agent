@@ -1,20 +1,15 @@
 import {
   createLoadedRuntimeUnit,
-  type ExtensionLogger,
   type ExtensionRegistrationApi,
   type LoadedRuntimeUnit,
 } from 'my-agent/extension-api';
 
-import { WebSocketChannel, type BrowserLauncher } from './WebSocketChannel.js';
-import type { WebSocketExtensionConfig } from './config.js';
+import {
+  WebSocketChannel,
+  type WebSocketChannelOptions,
+} from './WebSocketChannel.js';
 
-export interface WebSocketChannelUnitOptions {
-  readonly config: WebSocketExtensionConfig;
-  readonly clientFilePath: string;
-  readonly clientVariants?: Readonly<Record<string, string>>;
-  readonly logger: ExtensionLogger;
-  readonly browserLauncher?: BrowserLauncher;
-}
+export type WebSocketChannelUnitOptions = WebSocketChannelOptions;
 
 export function createWebSocketChannelUnit(
   options: WebSocketChannelUnitOptions,

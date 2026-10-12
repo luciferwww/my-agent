@@ -127,21 +127,24 @@ describe('FT-10 Runtime composition deletion', () => {
     const host = source('src/hosts/standalone/runtime-host.ts').content;
     const entry = source('src/hosts/standalone/entry.ts').content;
     const composition = source('src/hosts/standalone/standalone-host.ts').content;
-    const html = await readFile(
-      `${REPOSITORY_ROOT}/extensions/websocket-channel/client/chat.html`,
+    const clientSource = await readFile(
+      `${REPOSITORY_ROOT}/extensions/websocket-channel/client/src/App.vue`,
       'utf8',
     );
+    const conversationSource = source(
+      'extensions/websocket-channel/client/src/client/conversation.ts',
+    ).content;
 
     expect(objectTypeBody(runtimeTypes, 'RunTurnParams')).not.toMatch(/\b(?:model|maxTokens)\??\s*:/);
     expect(objectTypeBody(queueTypes, 'QueuedUserMessage')).not.toMatch(/\b(?:model|maxTokens|maxLlmCalls)\??\s*:/);
     expect(websocket).toContain('model_reference');
     expect(websocket).toContain('request_override');
-    expect(html).toContain('modelReference');
-    expect(html).not.toContain('model_reference');
-    expect(html).not.toContain('request_override');
-    expect(html).toContain("event.category === 'provider_unregistered'");
-    expect(html).toContain("event.category === 'model_rejected'");
-    expect(html).toContain('this.requestModelCatalog()');
+    expect(clientSource).toContain('modelReference');
+    expect(clientSource).not.toContain('model_reference');
+    expect(clientSource).not.toContain('request_override');
+    expect(conversationSource).toContain("event.category === 'provider_unregistered'");
+    expect(conversationSource).toContain("event.category === 'model_rejected'");
+    expect(clientSource).toContain('this.requestModelCatalog()');
     expect(entry).not.toContain('process.exit(');
     expect(composition).not.toContain('process.exit(');
     expect(host).toContain('process.exit(code)');

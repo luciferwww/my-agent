@@ -51,7 +51,7 @@ describe('WebSocket Extension entry', () => {
       id: 'websocket',
       create: expect.any(Function),
     }));
-    expect(fileURLToPath(new URL('./client/chat.html', import.meta.url))).toContain(
+    expect(fileURLToPath(new URL('./client/dist', import.meta.url))).toContain(
       'extensions',
     );
   });
