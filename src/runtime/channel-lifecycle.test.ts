@@ -38,16 +38,12 @@ function host(): ChannelRuntimeHost {
         querySessionsNeedingAbort: vi.fn(() => []),
         abortTurn: vi.fn(() => ({ aborted: false, dropped: 0 })),
       },
-      sessions: {
+      chatSessions: {
         createSession: vi.fn(async () => ({
           sessionId: 'session',
           permission: { sessionId: 'session', mode: 'manual' as const, changedAt: 1 },
         })),
         listSessions: vi.fn(async () => []),
-        getSession: vi.fn(async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 })),
-        getHistory: vi.fn(async ({ sessionId }) => ({
-          sessionId, items: [], nextCursor: null, hasMore: false,
-        })),
         renameSession: vi.fn(async (sessionId, title) => ({
           sessionId,
           createdAt: 1,
@@ -74,6 +70,16 @@ function host(): ChannelRuntimeHost {
           changedAt: 1,
         })),
         onPermissionModeChanged: vi.fn(() => () => {}),
+      },
+      sessionObservation: {
+        resolveSession: vi.fn(async (sessionId) => ({
+          kind: 'chat' as const,
+          sessionId,
+          entry: { sessionId, createdAt: 1, updatedAt: 1 },
+        })),
+        getHistory: vi.fn(async ({ sessionId }) => ({
+          sessionId, items: [], nextCursor: null, hasMore: false,
+        })),
       },
     },
   };

@@ -15,6 +15,7 @@ import type {
   SessionEntry,
   SessionHistoryPage,
   SessionHistoryQuery,
+  ResolvedSession,
 } from '../core/session/index.js';
 import type {
   ModelReference,
@@ -325,8 +326,8 @@ export class RuntimeApp {
     return this.sessionCoordinator.listSessions(input);
   }
 
-  getSession(sessionId: string): Promise<SessionEntry> {
-    return this.sessionCoordinator.getSession(sessionId);
+  resolveSession(sessionId: string): Promise<ResolvedSession> {
+    return this.sessionCoordinator.resolveSession(sessionId);
   }
 
   getSessionHistory(query: SessionHistoryQuery): Promise<SessionHistoryPage> {
@@ -667,14 +668,17 @@ export class RuntimeApp {
     return channels.filter((channel) => channel.id === request.originChannelId);
   }
 
-  private getApprovalCapability(turnId: string): CurrentCallApprovalCapability {
+  private getApprovalCapability(
+    turnId: string,
+    audienceSessionId: string,
+  ): CurrentCallApprovalCapability {
     const capability: CurrentCallApprovalCapability = {
       request: async (request, signal) => this.turnInteractionManager.request({
         request: {
           callId: request.callId,
           toolName: request.toolName,
           input: { ...request.input },
-          sessionId: request.sessionId,
+          sessionId: audienceSessionId,
           turnId: request.turnId,
           originChannelId: this.routeContextByTurn.get(turnId)?.originChannel?.id,
           originClientId: this.routeContextByTurn.get(turnId)?.originClientId,
@@ -801,6 +805,7 @@ export class RuntimeApp {
       originMessageId: messageId,
     };
 
+    this.sessionCoordinator.assertLiveSession(req.sessionId);
     this.assertAcceptsIntake();
     this.fanoutAgentEvent({
       type: 'user_message',
@@ -1312,21 +1317,6 @@ export class RuntimeApp {
           [...this.activeRootGenerations.values()].map((tree) => tree.generation),
         )].sort((left, right) => left - right);
 
-        const processCleanup = await budget.raceRemainingLazy(
-          () => this.resources.managedProcessLifecycle.shutdown(),
-        );
-        if (processCleanup.outcome === 'completed') {
-          completed.push('managedProcesses');
-        } else if (processCleanup.outcome === 'failed') {
-          failed.push({ resource: 'managedProcesses', message: processCleanup.message });
-        } else {
-          residuals.push({
-            owner: 'resource',
-            phase: 'managed-process-cleanup',
-            message: 'Managed process cleanup did not converge before the shutdown deadline.',
-          });
-        }
-
         this.resources.contextFiles = [];
         this.state.closedAt = Date.now();
         this.setPhase('closed');
@@ -1461,6 +1451,7 @@ export class RuntimeApp {
       });
       const effectiveMaxLlmCalls =
         params.maxLlmCalls ?? this.resources.runnerConfig.maxLlmCalls;
+      const approvalCapability = this.getApprovalCapability(params.turnId, params.sessionId);
       parentRecord = Object.freeze({
         requestId: params.requestId,
         sessionId: params.sessionId,
@@ -1471,6 +1462,7 @@ export class RuntimeApp {
         effectiveMaxLlmCalls,
         contextFiles: Object.freeze([...this.resources.contextFiles]),
         registrySnapshot: snapshot,
+        approvalCapability,
         getSessionPermissionMode: () =>
           this.sessionPermissions.get(params.sessionId).mode,
         registerChild: () => this.registerChild(params.turnId, tree),
@@ -1493,7 +1485,7 @@ export class RuntimeApp {
         toolPolicy: this.resources.toolPolicy,
         getSessionPermissionMode: () =>
           this.sessionPermissions.get(params.sessionId).mode,
-        approvalCapability: this.getApprovalCapability(params.turnId),
+        approvalCapability,
         maxLlmCalls: effectiveMaxLlmCalls,
         ...(this.resources.runnerConfig.steeringEnabled
           ? {

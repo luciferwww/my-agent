@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Channel behavior
-> Verified: 2026-10-10
+> Verified: 2026-09-18
 > Ownership: Channel contracts, Host-local CLI, Extension-delivered WebSocket protocol, interaction, attachment ingress, and client routing
 > Ownership key: channel-transport-and-ingress
 
@@ -110,7 +110,16 @@ Runtime Builder Fanout
 
 Fanout selects captured-generation Channel bindings for events with a live `turnId`; events without Turn correlation use current bindings. Each synchronous throw or asynchronous rejection is contained and logged so one Channel or observer failure does not stop other deliveries or alter Turn execution. Terminal Fanout promises are tracked for bounded Shutdown convergence.
 
-Most events route by `sessionId`. Subagent events carry a child `sessionId` plus `callerSessionId`, and WebSocket routes them to the caller Session audience. A queued `request_end` has no Session ID, so WebSocket resolves its audience from the earlier `user_message` through `originMessageId`; an uncorrelated event is not sent. `user_message.attachmentSummaries` may expose type, MIME, byte count, and dimensions, but never raw base64.
+Most events route by `sessionId`. WebSocket audience membership is explicit per
+connection and Session: subscribe validates a Runtime-known ordinary Pending
+or persisted Session, unsubscribe removes only that membership, and disconnect
+or same-client socket replacement clears the displaced connection's
+memberships. Session creation joins its creating connection before
+acknowledgement, including while the Session is still Pending. `run_turn`
+requires existing membership and does not change it. History, permission,
+metadata, and pending-state operations do not join an audience.
+
+Subagent events carry a child `sessionId` plus `callerSessionId`, and WebSocket routes them to the caller Session audience. A queued `request_end` has no Session ID, so WebSocket resolves its audience from the earlier `user_message` through `originMessageId`; an uncorrelated event is not sent. `user_message.attachmentSummaries` may expose type, MIME, byte count, and dimensions, but never raw base64.
 
 ### 3.4 Runtime capabilities
 
@@ -268,14 +277,45 @@ and does not join a Session audience. All JSON property names use camelCase;
 snake_case is reserved for `type` discriminator values such as
 `create_session` and `run_turn`. `create_session` carries a `requestId` and
 optional `permissionMode`; `session_created` returns the same `requestId`,
-server-issued `sessionId`, and authoritative permission state. Strict `get_session_permission_mode` and `set_session_permission_mode` messages use `sessionId`; the setter additionally requires `mode: 'manual' | 'allow_all'`.
+server-issued `sessionId`, and authoritative permission state after the
+creating connection has joined its audience. Strict
+Strict `get_session_permission_mode` and `set_session_permission_mode` messages
+use `sessionId`; the setter additionally requires
+`mode: 'manual' | 'allow_all'`.
 Successful queries and changes produce `session_permission_mode_changed`, and
 changes are broadcast to the connected audience observing that Session.
+Runtime capabilities keep these concerns separate: `chatSessions` contains
+ordinary Chat creation, lifecycle, discovery, and permission operations;
+`sessionObservation` contains cross-kind `resolveSession` and History reads
+for Chat, Subagent, and future observable Session kinds.
+`get_session` returns the Runtime `resolveSession` result. Its stable `kind`
+identifies the Session domain (`chat` or `subagent` today), while an omitted
+kind-specific `entry` explicitly means the identity is Pending and its
+Transcript has not materialized. Materialized results carry the corresponding
+`SessionEntry` or `SubagentSessionEntry`. Pending Chat Sessions remain absent
+from `list_sessions` and have empty History.
 `run_turn` continues to require `sessionId`, so the Channel never treats an
 omitted ID as an implicit create. It also emits acknowledgements, Catalog and
 History responses, correlated `AgentEvent` values, approval lifecycle
 messages, and requesting-socket errors. Wire validation owns JSON and
 transport shape; Media owns decoded attachment validation.
+
+The bundled client keeps at most one read-only Subagent detail open alongside
+the focused Chat Session. Running Children are discovered from
+`subagent_start`; completed Children are recovered from the fixed Host header
+at the start of a `task` Tool Result. Selecting an addressable `task` card opens
+the detail and gives that otherwise ordinary Tool card a selected treatment;
+closing the detail removes it. Opening the detail subscribes the Child and
+waits for acknowledgement before loading History. Replacing or closing the
+detail unsubscribes only the Child, while changing the focused Chat closes the
+Child before switching the Parent subscription. Reconnect restores Parent and
+Child memberships independently. The detail reuses ordinary message, Thinking,
+and Tool presentation without exposing send, permission, Abort, Approval, or
+other control operations. Layouts with enough spare space to preserve the
+Theme's existing Chat working width shift the centered content left and dock a
+right-side panel; other layouts use a modal without changing the open Child
+identity. A deleted retained Child keeps its detail container and reports that
+its content is unavailable.
 
 `run_turn.reasoning` accepts only own `thinking` and `effort` fields with the
 public enum values; unknown fields, inherited/non-plain objects, and conflicting
@@ -288,15 +328,17 @@ reasoning fields. Dimensions with no explicit capability are hidden.
 
 Clients should treat “new Session” as local state only. When the user submits the first message, the client issues `create_session` with the selected initial permission mode, waits for `session_created`, and immediately issues `run_turn` with the returned ID. This makes initial elevation atomic and avoids abandoned UI create actions producing even a Pending registration. For an existing Session, the HTML client queries Runtime truth on selection/reconnect, stores no grant locally, requires confirmation before Allow All, shows a persistent warning while elevated, and can revoke to Manual for future calls.
 
-A successful `run_turn` registers the client in that session's audience. The
-relationship is many-to-many: one logical `clientId` may work in multiple
-Sessions concurrently, and one Session may have multiple connected clients.
+A successful `create_session` registers the creating client in that Session's
+audience. Other existing Sessions require `subscribe_session` before
+`run_turn`. The relationship is many-to-many: one logical `clientId` may work
+in multiple Sessions concurrently, and one Session may have multiple connected clients.
 The Channel maintains forward and reverse audience maps so disconnect cleanup
 is proportional to that client's sessions. The bundled reference client keeps
 independent in-memory draft, attachment, Turn, Approval, permission, and
 waiting state for each Session, so switching the visible Session does not
 cancel or hide another Session's active work. This state is page-local and is
-not replayed after a refresh or reconnect.
+not replayed after a refresh or reconnect. A non-empty focused Session remains
+send-disabled until its subscription acknowledgement succeeds.
 
 Pending Approval data is recovered separately: the bundled clients fetch the
 Session list and full locally acceptable pending collection after handshake
@@ -364,6 +406,6 @@ configuration has no general Channel-selection namespace.
 
 | Kind | Evidence |
 |---|---|
-| Source | [Core Channel types](../../src/core/channel/types.ts), [Runtime intake](../../src/runtime/RuntimeApp.ts), [WebSocket Extension](../../extensions/websocket-channel/WebSocketChannel.ts) |
-| Tests | [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [WebSocket Extension tests](../../extensions/websocket-channel/WebSocketChannel.test.ts) |
-| Controlling authority | [Channel Specification](../specifications/channel.md), [Approval Lifecycle Specification](../specifications/approval-lifecycle.md), [Multi-client User Messages Specification](../specifications/multi-client-user-messages.md) |
+| Source | [Core Channel types](../../src/core/channel/types.ts), [Runtime intake](../../src/runtime/RuntimeApp.ts), [WebSocket Extension](../../extensions/websocket-channel/WebSocketChannel.ts), [Bundled client](../../extensions/websocket-channel/client/src/App.vue) |
+| Tests | [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [WebSocket Extension tests](../../extensions/websocket-channel/WebSocketChannel.test.ts), [Client core tests](../../extensions/websocket-channel/client/src/client/client-core.test.ts) |
+| Controlling authority | [Channel Specification](../specifications/channel.md), [Session-addressed Subagent Observation Specification](../changes/active/session-addressed-subagent-observation/specification.md), [Approval Lifecycle Specification](../specifications/approval-lifecycle.md), [Multi-client User Messages Specification](../specifications/multi-client-user-messages.md) |

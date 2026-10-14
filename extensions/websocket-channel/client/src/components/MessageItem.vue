@@ -18,11 +18,26 @@ import { renderAssistantMarkdown } from '../client/markdown';
 defineProps<{
   item: ConversationItem;
   isConnected: boolean;
+  openedChildSessionId: string;
 }>();
 
 const emit = defineEmits<{
   resolveApproval: [segment: ConversationSegment, decision: 'allow' | 'deny'];
+  openSubagent: [sessionId: string];
 }>();
+
+function openSubagentFromCard(
+  event: MouseEvent | KeyboardEvent,
+  segment: ConversationSegment,
+): void {
+  if (!segment.subagentSessionId) return;
+  if (event.target !== event.currentTarget && event.target instanceof Element) {
+    if (event.target.closest('button')) return;
+  }
+  if (event instanceof KeyboardEvent && event.key !== 'Enter' && event.key !== ' ') return;
+  if (event instanceof KeyboardEvent) event.preventDefault();
+  emit('openSubagent', segment.subagentSessionId);
+}
 </script>
 
 <template>
@@ -62,7 +77,15 @@ const emit = defineEmits<{
         <section
           v-if="segment.type === 'tool_call'"
           class="tool-result-card"
-          :class="{ 'is-error': segment.isError }"
+          :class="{
+            'is-error': segment.isError,
+            'has-subagent-detail': Boolean(segment.subagentSessionId),
+            'is-subagent-selected': segment.subagentSessionId === openedChildSessionId,
+          }"
+          :tabindex="segment.subagentSessionId ? 0 : undefined"
+          :aria-label="segment.subagentSessionId ? `Open ${segment.name} Subagent detail` : undefined"
+          @click="openSubagentFromCard($event, segment)"
+          @keydown="openSubagentFromCard($event, segment)"
         >
           <div class="tool-result-header">
             <div class="tool-result-title">

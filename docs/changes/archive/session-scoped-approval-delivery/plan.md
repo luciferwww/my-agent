@@ -1,12 +1,13 @@
 # Origin-Channel and Session-scoped Approval Delivery Plan
 
-> Status: Accepted
+> Status: Completed, validated, owner-accepted, and archived
 > Date: 2026-10-10
 > Owner: Project owner
 > Type: Architecture Slice
 > Specification: [Specification](specification.md)
 > Decision: [ADR-019](../../../decisions/adr-019-origin-channel-and-session-scoped-approval-delivery.md)
 > Acceptance: Owner accepted the design and explicitly authorized Delivery on 2026-10-10.
+> Closeout: Owner accepted completed Delivery and validation, including the documented pre-existing Fitness exceptions, and authorized archive on 2026-10-13.
 
 ## 1. Outcome and scope
 
@@ -66,19 +67,22 @@ cycles, caches, or navigation.
 | Slice | Status | Outcome |
 |---|---|---|
 | SAD-0 Review | Completed | Owner accepted Plan, ADR, Specification and explicitly authorized Delivery on 2026-10-10 |
-| SAD-1 Routing and query | In Review | Implemented and focused tests passed: Client-independent delivery, no-Origin fanout, canonical query, all-outcome closure; awaiting owner completion confirmation |
-| SAD-2 Adapters and chat UX | In Review | Implemented and focused tests passed: WebSocket/CLI adaptations, bundled chat refresh, local pending collection and indicator; awaiting owner completion confirmation |
-| SAD-3 Validation and closeout | In Review | Functional tests, lint/build, and stable docs complete; existing Fitness gate failures and owner validation acceptance remain outstanding |
+| SAD-1 Routing and query | Completed | Client-independent delivery, no-Origin fanout, canonical query, all-outcome closure implemented, tested, and owner-accepted |
+| SAD-2 Adapters and chat UX | Completed | WebSocket/CLI adaptations, bundled chat refresh, local pending collection and indicator implemented, tested, and owner-accepted |
+| SAD-3 Validation and closeout | Completed | Functional tests, lint/build, and stable docs complete; owner accepted validation with documented pre-existing Fitness exceptions and authorized archive on 2026-10-13 |
 
-Delivery is authorized within this Accepted Plan's scope. Validation and
-closeout remain outstanding; acceptance does not imply implementation completion.
+Delivery and validation are owner-accepted. The Change is closed and archived;
+stable Approval, Runtime, and Channel documents remain the current authority.
 
 Delivery evidence is recorded in [Specification section 8](specification.md#8-delivery-evidence).
 On 2026-10-10, 250 focused Unit tests, WebSocket integration, lint/build, Host
 audit, and Relay verification passed. Selected Fitness checks had 18 passes
 and 2 pre-existing failures (removed `clients` scan root and hard-coded
 architecture verification date). No unrelated gate repair, commit, or archive
-was included.
+was included in the initial Delivery. Implementation was subsequently committed
+and pushed in `5a87474`. On 2026-10-13, the owner authorized closeout and archive.
+The two pre-existing Fitness failures are accepted exceptions for this Change,
+not passing checks; unrelated gate repair remains outside its scope.
 
 ## 5. Validation
 

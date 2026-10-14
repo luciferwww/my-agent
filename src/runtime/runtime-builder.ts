@@ -215,75 +215,61 @@ export async function buildRuntimeHandle(
           return kernel.getPendingApprovals(sessionId);
         },
       }),
-      sessions: Object.freeze({
+      chatSessions: Object.freeze({
         createSession(input?: {
           permissionMode?: SessionPermissionMode;
           originClientId?: string;
         }) {
           if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+            return Promise.reject(new Error('Runtime Chat Session capability is not ready.'));
           }
           const { application } = kernel;
           return invokeSessionCapability(() => application.createSession(input));
         },
         listSessions(input?: { archived?: boolean }) {
           if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+            return Promise.reject(new Error('Runtime Chat Session capability is not ready.'));
           }
           const { application } = kernel;
           return invokeSessionCapability(() => application.listSessions(input));
         },
-        getSession(sessionId: string) {
-          if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
-          }
-          const { application } = kernel;
-          return invokeSessionCapability(() => application.getSession(sessionId));
-        },
-        getHistory(query: SessionHistoryQuery) {
-          if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
-          }
-          const { application } = kernel;
-          return invokeSessionCapability(() => application.getSessionHistory(query));
-        },
         renameSession(sessionId: string, title: string | null) {
           if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+            return Promise.reject(new Error('Runtime Chat Session capability is not ready.'));
           }
           const { application } = kernel;
           return invokeSessionCapability(() => application.renameSession(sessionId, title));
         },
         archiveSession(sessionId: string) {
           if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+            return Promise.reject(new Error('Runtime Chat Session capability is not ready.'));
           }
           const { application } = kernel;
           return invokeSessionCapability(() => application.archiveSession(sessionId));
         },
         unarchiveSession(sessionId: string) {
           if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+            return Promise.reject(new Error('Runtime Chat Session capability is not ready.'));
           }
           const { application } = kernel;
           return invokeSessionCapability(() => application.unarchiveSession(sessionId));
         },
         deleteSession(sessionId: string) {
           if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+            return Promise.reject(new Error('Runtime Chat Session capability is not ready.'));
           }
           const { application } = kernel;
           return invokeSessionCapability(() => application.deleteSession(sessionId));
         },
         forkSession(sessionId: string, entryId?: string) {
           if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+            return Promise.reject(new Error('Runtime Chat Session capability is not ready.'));
           }
           const { application } = kernel;
           return invokeSessionCapability(() => application.forkSession(sessionId, entryId));
         },
         getPermissionMode(sessionId: string) {
-          if (!kernel) throw new Error('Runtime Session capability is not ready.');
+          if (!kernel) throw new Error('Runtime Chat Session capability is not ready.');
           const { application } = kernel;
           return invokeSessionCapabilitySync(
             () => application.getSessionPermissionMode(sessionId),
@@ -294,7 +280,7 @@ export async function buildRuntimeHandle(
           mode: SessionPermissionMode;
           originClientId?: string;
         }) {
-          if (!kernel) throw new Error('Runtime Session capability is not ready.');
+          if (!kernel) throw new Error('Runtime Chat Session capability is not ready.');
           const { application } = kernel;
           return invokeSessionCapabilitySync(
             () => application.setSessionPermissionMode(input),
@@ -303,6 +289,22 @@ export async function buildRuntimeHandle(
         onPermissionModeChanged(handler: (state: SessionPermissionState) => void) {
           sessionPermissionListeners.add(handler);
           return () => sessionPermissionListeners.delete(handler);
+        },
+      }),
+      sessionObservation: Object.freeze({
+        resolveSession(sessionId: string) {
+          if (!kernel) {
+            return Promise.reject(new Error('Runtime Session observation capability is not ready.'));
+          }
+          const { application } = kernel;
+          return invokeSessionCapability(() => application.resolveSession(sessionId));
+        },
+        getHistory(query: SessionHistoryQuery) {
+          if (!kernel) {
+            return Promise.reject(new Error('Runtime Session observation capability is not ready.'));
+          }
+          const { application } = kernel;
+          return invokeSessionCapability(() => application.getSessionHistory(query));
         },
       }),
     }),
@@ -443,6 +445,36 @@ export async function buildRuntimeHandle(
       const completed = [...applicationReport.completed];
       const failed = [...applicationReport.failed];
       const residuals = [...applicationReport.residuals];
+
+      const sessionCleanup = await budget.raceRemainingLazy(
+        () => bootstrap.resources.sessionManager.close(),
+      );
+      if (sessionCleanup.outcome === 'completed') {
+        completed.push('sessionManager');
+      } else if (sessionCleanup.outcome === 'failed') {
+        failed.push({ resource: 'sessionManager', message: sessionCleanup.message });
+      } else {
+        residuals.push({
+          owner: 'resource',
+          phase: 'session-cleanup',
+          message: 'Session cleanup did not converge before the shutdown deadline.',
+        });
+      }
+
+      const processCleanup = await budget.raceRemainingLazy(
+        () => bootstrap.resources.managedProcessLifecycle.shutdown(),
+      );
+      if (processCleanup.outcome === 'completed') {
+        completed.push('managedProcesses');
+      } else if (processCleanup.outcome === 'failed') {
+        failed.push({ resource: 'managedProcesses', message: processCleanup.message });
+      } else {
+        residuals.push({
+          owner: 'resource',
+          phase: 'managed-process-cleanup',
+          message: 'Managed process cleanup did not converge before the shutdown deadline.',
+        });
+      }
 
       const pendingFanouts = [...pendingTerminalFanouts.values()];
       if (pendingFanouts.length > 0) {

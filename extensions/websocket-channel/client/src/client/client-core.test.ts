@@ -8,10 +8,13 @@ import {
 } from '../attachments';
 import {
   applyAgentEvent,
+  parseTaskSubagentSessionId,
+  resolveEventSessionId,
 } from './conversation';
 import {
   applyHistoryPage,
   beginHistoryRequest,
+  buildHistoryItems,
   mergeRealtimeWithHistory,
   preserveRealtimePresentationIdentity,
   type PresentationItem,
@@ -156,6 +159,87 @@ describe('WebSocket Client core', () => {
     expect(second.chatItems).toEqual([]);
     expect(second.permissionMode).toBe('manual');
     expect(second.historyStatus).toBe('notLoaded');
+  });
+
+  it('discovers a running Child from Parent lifecycle events', () => {
+    const state = createSessionUiState();
+    let nextId = 1;
+    const context = { clientId: 'browser-1', nextId: () => nextId++ };
+    applyAgentEvent(state, {
+      type: 'tool_call_requested',
+      turnId: 'parent-turn',
+      callId: 'task-call',
+      name: 'task',
+      input: { prompt: 'review' },
+    }, context);
+
+    applyAgentEvent(state, {
+      type: 'subagent_start',
+      sessionId: '5cb8b687-f263-4355-9d09-7749064e3319',
+      parentTurnId: 'parent-turn',
+      parentToolUseId: 'task-call',
+      subagentType: 'reviewer',
+    }, context);
+
+    const segment = state.turnMap['parent-turn']?.segments?.[0];
+    expect(segment).toMatchObject({
+      subagentSessionId: '5cb8b687-f263-4355-9d09-7749064e3319',
+      subagentStatus: 'running',
+    });
+
+    applyAgentEvent(state, {
+      type: 'subagent_end',
+      sessionId: '5cb8b687-f263-4355-9d09-7749064e3319',
+      parentTurnId: 'parent-turn',
+      parentToolUseId: 'task-call',
+      outcome: 'ok',
+    }, context);
+    expect(segment).toMatchObject({
+      subagentStatus: 'terminal',
+      subagentOutcome: 'ok',
+    });
+  });
+
+  it('recovers a Child handle only from the stable task Result header', () => {
+    const sessionId = '5cb8b687-f263-4355-9d09-7749064e3319';
+    const result = `Subagent completed.\nsessionId: ${sessionId}\nResult:\nreviewed`;
+
+    expect(parseTaskSubagentSessionId('task', result)).toBe(sessionId);
+    expect(parseTaskSubagentSessionId('other', result)).toBeNull();
+    expect(parseTaskSubagentSessionId('task', `prefix\n${result}`)).toBeNull();
+
+    const items = buildHistoryItems([{
+      entryId: 'assistant-entry',
+      turnId: 'parent-turn',
+      role: 'assistant',
+      content: [{
+        type: 'tool_use',
+        id: 'task-call',
+        name: 'task',
+        input: { prompt: 'review' },
+        status: 'success',
+        result_content: result,
+      }],
+    }]);
+    expect(items[0]?.segments?.[0]).toMatchObject({
+      subagentSessionId: sessionId,
+      subagentStatus: 'terminal',
+    });
+
+  });
+
+  it('routes lifecycle discovery to the Parent and ordinary events to the Child', () => {
+    const childSessionId = '5cb8b687-f263-4355-9d09-7749064e3319';
+    expect(resolveEventSessionId({
+      type: 'subagent_start',
+      sessionId: childSessionId,
+      callerSessionId: 'parent',
+    }, 'focused')).toBe('parent');
+    expect(resolveEventSessionId({
+      type: 'text_delta',
+      sessionId: childSessionId,
+      callerSessionId: 'parent',
+    }, 'focused')).toBe(childSessionId);
   });
 
   it('keeps protocol parsing and socket derivation bounded', () => {

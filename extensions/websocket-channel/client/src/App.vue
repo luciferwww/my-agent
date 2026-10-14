@@ -11,6 +11,7 @@ import {
   appendConversationItem,
   applyAgentEvent,
   markApprovalClosed as applyApprovalClosed,
+  resolveEventSessionId,
   syncApprovalCards as syncConversationApprovalCards,
 } from './client/conversation';
 import {
@@ -33,6 +34,7 @@ import {
 } from './client/theme';
 import ComposerPanel from './components/ComposerPanel.vue';
 import ConversationPanel from './components/ConversationPanel.vue';
+import ChildDetailPanel from './components/ChildDetailPanel.vue';
 import SidebarPanel from './components/SidebarPanel.vue';
 
 const CLIENT_SOCKET_URL = configuredWebSocketUrl();
@@ -56,6 +58,7 @@ function createClientId() {
         components: {
           ComposerPanel,
           ConversationPanel,
+          ChildDetailPanel,
           SidebarPanel,
         },
         data() {
@@ -73,6 +76,13 @@ function createClientId() {
             pendingSessionRequestId: null,
             nextSessionRequestId: 1,
             pendingFirstTurn: null,
+            focusedSessionSubscribed: false,
+            pendingSessionSubscription: null,
+            openedChildSessionId: '',
+            childSubscriptionStatus: 'closed',
+            childUnavailable: false,
+            childPendingAction: null,
+            nextSessionSubscriptionRequestId: 1,
             nextPermissionRequestId: 1,
             sessions: [],
             pendingSessionsRequestId: null,
@@ -167,6 +177,18 @@ function createClientId() {
             }
             return items;
           },
+          childSessionState() {
+            return this.openedChildSessionId
+              ? this.ensureSessionState(this.openedChildSessionId)
+              : null;
+          },
+          childDisplayedItems() {
+            if (!this.childSessionState) return [];
+            return mergeRealtimeWithHistory(
+              this.childSessionState.historyItems,
+              this.childSessionState.chatItems,
+            );
+          },
           historyStatus() { return this.activeSessionState.historyStatus; },
           historyError() { return this.activeSessionState.historyError; },
           historyHasMore() { return this.activeSessionState.historyHasMore; },
@@ -201,9 +223,11 @@ function createClientId() {
           },
           canSend() {
             if (!this.isConnected || !this.helloAcknowledged) return false;
+            if (this.form.sessionId && !this.focusedSessionSubscribed) return false;
             if (!this.modelSelectionValid) return false;
             if (!this.reasoningSelectionValid) return false;
             if (this.pendingSessionRequestId !== null) return false;
+            if (this.pendingSessionSubscription !== null) return false;
             if (this.activeSessionState.isSending) return false;
             if (this.pendingApprovalCount > 0) return false;
             if (this.attachError) return false;
@@ -342,6 +366,13 @@ function createClientId() {
             this.pendingCatalogRequestId = null;
             this.pendingSessionRequestId = null;
             this.pendingFirstTurn = null;
+            this.focusedSessionSubscribed = false;
+            this.pendingSessionSubscription = null;
+            this.childSubscriptionStatus = this.openedChildSessionId
+              ? 'disconnected'
+              : 'closed';
+            this.childUnavailable = false;
+            this.childPendingAction = null;
             this.pendingSessionsRequestId = null;
             this.pendingSessionOperation = null;
             this.closeSidebarTransientUi();
@@ -398,6 +429,143 @@ function createClientId() {
             window.clearTimeout(this.approvalsRequestTimer);
             this.approvalsRequestTimer = null;
             this.pendingApprovalsRequestId = null;
+          },
+          requestSessionSubscription(
+            type,
+            sessionId,
+            targetSessionId = sessionId,
+            owner = 'parent',
+          ) {
+            if (!this.isConnected || !sessionId || this.pendingSessionSubscription !== null) {
+              return false;
+            }
+            const requestId = `subscription-${this.nextSessionSubscriptionRequestId++}`;
+            this.pendingSessionSubscription = {
+              type,
+              requestId,
+              sessionId,
+              targetSessionId,
+              owner,
+            };
+            try {
+              this.sendJson({ type, requestId, sessionId });
+              return true;
+            } catch (error) {
+              this.pendingSessionSubscription = null;
+              this.pushEvent('subscription_error', String(error.message ?? error));
+              return false;
+            }
+          },
+          activateFocusedSession(sessionId) {
+            this.form.sessionId = sessionId;
+            this.focusedSessionSubscribed = false;
+            this.ensureSessionState(sessionId);
+            if (!sessionId) {
+              this.$refs.sidebarPanel?.closeMobileSidebar();
+              return;
+            }
+            this.scrollChatToBottom(sessionId, { force: true });
+            this.pushEvent('session_selected', `Selected Session ${sessionId}`);
+            if (!this.isConnected) {
+              this.$refs.sidebarPanel?.closeMobileSidebar();
+              return;
+            }
+            if (!this.requestSessionSubscription('subscribe_session', sessionId)) {
+              this.$refs.sidebarPanel?.closeMobileSidebar();
+            }
+          },
+          switchFocusedSession(sessionId) {
+            if (this.pendingSessionSubscription?.owner === 'parent') return;
+            const previousSessionId = this.form.sessionId;
+            if (previousSessionId === sessionId) {
+              this.$refs.sidebarPanel?.closeMobileSidebar();
+              return;
+            }
+            if (this.openedChildSessionId) {
+              this.beginChildTransition({ type: 'switch-parent', targetSessionId: sessionId });
+              return;
+            }
+            if (
+              previousSessionId
+              && this.isConnected
+              && this.requestSessionSubscription(
+                'unsubscribe_session',
+                previousSessionId,
+                sessionId,
+              )
+            ) {
+              return;
+            }
+            this.activateFocusedSession(sessionId);
+          },
+          activateChildDetail(sessionId) {
+            this.openedChildSessionId = sessionId;
+            this.childUnavailable = false;
+            this.ensureSessionState(sessionId);
+            if (!this.isConnected) {
+              this.childSubscriptionStatus = 'disconnected';
+              return;
+            }
+            this.childSubscriptionStatus = 'subscribing';
+            if (!this.requestSessionSubscription(
+              'subscribe_session',
+              sessionId,
+              sessionId,
+              'child',
+            )) {
+              this.childSubscriptionStatus = 'disconnected';
+            }
+          },
+          openChildDetail(sessionId) {
+            if (!sessionId || this.pendingSessionSubscription?.owner === 'parent') return;
+            if (sessionId === this.openedChildSessionId) {
+              if (this.childUnavailable && this.pendingSessionSubscription === null) {
+                this.activateChildDetail(sessionId);
+              }
+              return;
+            }
+            if (this.openedChildSessionId) {
+              this.beginChildTransition({ type: 'replace', targetSessionId: sessionId });
+              return;
+            }
+            this.activateChildDetail(sessionId);
+          },
+          closeChildDetail() {
+            if (!this.openedChildSessionId) return;
+            this.beginChildTransition({ type: 'close' });
+          },
+          beginChildTransition(action) {
+            if (!this.openedChildSessionId) {
+              this.completeChildTransition(action);
+              return;
+            }
+            this.childPendingAction = action;
+            const pending = this.pendingSessionSubscription;
+            if (pending?.owner === 'child') return;
+            if (this.childSubscriptionStatus !== 'subscribed' || !this.isConnected) {
+              this.completeChildTransition(action);
+              return;
+            }
+            this.childSubscriptionStatus = 'unsubscribing';
+            if (!this.requestSessionSubscription(
+              'unsubscribe_session',
+              this.openedChildSessionId,
+              this.openedChildSessionId,
+              'child',
+            )) {
+              this.childSubscriptionStatus = 'subscribed';
+            }
+          },
+          completeChildTransition(action = this.childPendingAction) {
+            this.childPendingAction = null;
+            this.childSubscriptionStatus = 'closed';
+            this.childUnavailable = false;
+            this.openedChildSessionId = '';
+            if (action?.type === 'replace') {
+              this.activateChildDetail(action.targetSessionId);
+            } else if (action?.type === 'switch-parent') {
+              this.switchFocusedSession(action.targetSessionId);
+            }
           },
           requestPendingApprovals() {
             if (!this.isConnected || this.pendingApprovalsRequestId !== null) return;
@@ -467,6 +635,18 @@ function createClientId() {
           retryHistory() {
             const options = historyRetryOptions(this.activeSessionState);
             if (options) this.requestSessionHistory(this.form.sessionId, options);
+          },
+          loadEarlierChildHistory() {
+            const state = this.childSessionState;
+            if (!state?.historyHasMore || !state.historyNextCursor) return;
+            this.requestSessionHistory(this.openedChildSessionId, {
+              beforeEntryId: state.historyNextCursor,
+            });
+          },
+          retryChildHistory() {
+            if (!this.childSessionState) return;
+            const options = historyRetryOptions(this.childSessionState);
+            if (options) this.requestSessionHistory(this.openedChildSessionId, options);
           },
           openMobileSidebar() {
             this.$refs.sidebarPanel?.openMobileSidebar();
@@ -879,8 +1059,11 @@ function createClientId() {
                 this.pushEvent('hello', `Server acknowledged client ${message.clientId}`);
                 this.requestModelCatalog();
                 this.startSessionRefresh();
-                this.requestPermissionMode();
-                if (this.form.sessionId) this.requestSessionHistory(this.form.sessionId, { latest: true });
+                if (this.form.sessionId) {
+                  this.requestSessionSubscription('subscribe_session', this.form.sessionId);
+                } else if (this.openedChildSessionId) {
+                  this.activateChildDetail(this.openedChildSessionId);
+                }
                 return;
               case 'model_catalog':
                 if (message.requestId !== this.pendingCatalogRequestId) {
@@ -901,12 +1084,90 @@ function createClientId() {
                 this.sessionStates[message.sessionId] = this.ensureSessionState('');
                 delete this.sessionStates[''];
                 this.form.sessionId = message.sessionId;
+                this.focusedSessionSubscribed = true;
                 if (message.permission?.sessionId === message.sessionId) {
                   this.permissionMode = message.permission.mode;
                   this.permissionChangedAt = message.permission.changedAt;
                 }
                 this.pushEvent('session_created', `Created session ${message.sessionId}`);
                 this.dispatchRunTurn(pendingTurn);
+                return;
+              }
+              case 'session_subscribed': {
+                const pending = this.pendingSessionSubscription;
+                if (
+                  pending?.type !== 'subscribe_session'
+                  || message.requestId !== pending.requestId
+                  || message.sessionId !== pending.sessionId
+                ) {
+                  this.pushEvent('session_subscribed', `Ignored unexpected response ${message.requestId ?? '(missing id)'}`);
+                  return;
+                }
+                this.pendingSessionSubscription = null;
+                if (pending.owner === 'child') {
+                  this.childSubscriptionStatus = 'subscribed';
+                  this.childUnavailable = false;
+                  this.requestSessionHistory(message.sessionId, { latest: true });
+                  this.scrollChatToBottom(message.sessionId, { force: true });
+                  if (this.childPendingAction) {
+                    this.beginChildTransition(this.childPendingAction);
+                  }
+                } else {
+                  this.focusedSessionSubscribed = true;
+                  this.requestPermissionMode();
+                  this.requestSessionHistory(message.sessionId, { latest: true });
+                  this.$refs.sidebarPanel?.closeMobileSidebar();
+                  if (this.openedChildSessionId) {
+                    this.activateChildDetail(this.openedChildSessionId);
+                  }
+                }
+                this.pushEvent('session_subscribed', `Subscribed to Session ${message.sessionId}`);
+                return;
+              }
+              case 'session_unsubscribed': {
+                const pending = this.pendingSessionSubscription;
+                if (
+                  pending?.type !== 'unsubscribe_session'
+                  || message.requestId !== pending.requestId
+                  || message.sessionId !== pending.sessionId
+                ) {
+                  this.pushEvent('session_unsubscribed', `Ignored unexpected response ${message.requestId ?? '(missing id)'}`);
+                  return;
+                }
+                this.pendingSessionSubscription = null;
+                if (pending.owner === 'child') {
+                  this.completeChildTransition();
+                } else {
+                  this.activateFocusedSession(pending.targetSessionId);
+                }
+                return;
+              }
+              case 'session_subscription_error': {
+                const pending = this.pendingSessionSubscription;
+                if (
+                  pending?.type !== 'subscribe_session'
+                  || message.requestId !== pending.requestId
+                  || message.sessionId !== pending.sessionId
+                ) {
+                  this.pushEvent('session_subscription_error', `Ignored unexpected response ${message.requestId ?? '(missing id)'}`);
+                  return;
+                }
+                this.pendingSessionSubscription = null;
+                if (pending.owner === 'child') {
+                  this.childSubscriptionStatus = 'unavailable';
+                  this.childUnavailable = true;
+                  this.pushEvent(
+                    'session_subscription_error',
+                    `${message.code}: Child Session subscription failed.`,
+                  );
+                  if (this.childPendingAction) {
+                    this.completeChildTransition();
+                  }
+                } else {
+                  this.sessionsError = `${message.code}: Session subscription failed.`;
+                  this.pushEvent('session_subscription_error', this.sessionsError);
+                  this.$refs.sidebarPanel?.closeMobileSidebar();
+                }
                 return;
               }
               case 'session_permission_mode_changed': {
@@ -961,7 +1222,10 @@ function createClientId() {
                     terminalTurnIds: settlement.deferredTerminalTurnIds,
                   });
                 }
-                if (message.sessionId === this.form.sessionId) {
+                if (
+                  message.sessionId === this.form.sessionId
+                  || message.sessionId === this.openedChildSessionId
+                ) {
                   if (settlement.pendingWasEarlier) {
                     this.restoreHistoryScrollAnchor(message.sessionId, scrollAnchor);
                   } else {
@@ -979,6 +1243,13 @@ function createClientId() {
                 }
                 const error = `${message.code}: ${message.message}`;
                 const settlement = failHistoryRequest(state, error);
+                if (
+                  message.sessionId === this.openedChildSessionId
+                  && message.code === 'SESSION_NOT_FOUND'
+                ) {
+                  this.childUnavailable = true;
+                  this.childSubscriptionStatus = 'unavailable';
+                }
                 if (settlement.deferredTerminalTurnIds.length > 0) {
                   this.requestSessionHistory(message.sessionId, {
                     latest: true,
@@ -1021,14 +1292,7 @@ function createClientId() {
                 delete this.sessionStates[pending.sessionId];
                 if (this.form.sessionId === pending.sessionId) {
                   const replacement = this.sessions[0];
-                  if (replacement) {
-                    this.form.sessionId = replacement.sessionId;
-                    this.ensureSessionState(replacement.sessionId);
-                    this.requestPermissionMode();
-                    this.requestSessionHistory(replacement.sessionId, { latest: true });
-                  } else {
-                    this.startNewSession();
-                  }
+                  this.switchFocusedSession(replacement?.sessionId ?? '');
                 }
                 this.sessionsError = '';
                 this.pushEvent('session_deleted', `Deleted Session ${pending.sessionId}`);
@@ -1101,7 +1365,7 @@ function createClientId() {
           },
 
           handleAgentEvent(event) {
-            const sessionId = event.callerSessionId || event.sessionId || this.form.sessionId;
+            const sessionId = resolveEventSessionId(event, this.form.sessionId);
             const state = this.ensureSessionState(sessionId);
             const effects = applyAgentEvent(state, event, {
               clientId: this.form.clientId,
@@ -1155,24 +1419,17 @@ function createClientId() {
 
           startNewSession() {
             this.sessionStates[''] = createSessionUiState();
-            this.form.sessionId = '';
-            this.$refs.sidebarPanel?.closeMobileSidebar();
+            this.switchFocusedSession('');
           },
           selectSession(session) {
-            if (!session?.sessionId || this.pendingSessionRequestId !== null) {
+            if (
+              !session?.sessionId
+              || this.pendingSessionRequestId !== null
+              || this.pendingSessionSubscription?.owner === 'parent'
+            ) {
               return;
             }
-            if (session.sessionId === this.form.sessionId) {
-              this.$refs.sidebarPanel?.closeMobileSidebar();
-              return;
-            }
-            this.form.sessionId = session.sessionId;
-            this.ensureSessionState(session.sessionId);
-            this.scrollChatToBottom(session.sessionId, { force: true });
-            this.pushEvent('session_selected', `Selected Session ${session.sessionId}`);
-            this.requestPermissionMode();
-            this.requestSessionHistory(session.sessionId, { latest: true });
-            this.$refs.sidebarPanel?.closeMobileSidebar();
+            this.switchFocusedSession(session.sessionId);
           },
           shortSessionId(sessionId) {
             return typeof sessionId === 'string' ? sessionId.slice(0, 8) : '';
@@ -1234,15 +1491,29 @@ function createClientId() {
             }
           },
           scrollChatToBottom(sessionId = this.form.sessionId, options = {}) {
+            if (sessionId === this.openedChildSessionId) {
+              this.$refs.childDetailPanel?.scrollToBottom(
+                sessionId,
+                options.force === true,
+              );
+              return;
+            }
             this.$refs.conversationPanel?.scrollToBottom(
               sessionId,
               options.force === true,
             );
           },
           captureHistoryScrollAnchor(sessionId) {
+            if (sessionId === this.openedChildSessionId) {
+              return this.$refs.childDetailPanel?.captureHistoryScrollAnchor(sessionId) ?? null;
+            }
             return this.$refs.conversationPanel?.captureHistoryScrollAnchor(sessionId) ?? null;
           },
           restoreHistoryScrollAnchor(sessionId, anchor) {
+            if (sessionId === this.openedChildSessionId) {
+              this.$refs.childDetailPanel?.restoreHistoryScrollAnchor(sessionId, anchor);
+              return;
+            }
             this.$refs.conversationPanel?.restoreHistoryScrollAnchor(sessionId, anchor);
           },
         },
@@ -1297,41 +1568,61 @@ function createClientId() {
   @select-theme="selectTheme"
 />
 
-<main class="panel chat-shell">
-  <ConversationPanel
-    ref="conversationPanel"
-    :current-session-label="currentSessionLabel"
-    :pending-approval-count="pendingApprovalCount"
-    :is-connected="isConnected"
-    :connection-status="connectionStatus"
-    :history-status="historyStatus"
-    :displayed-chat-items="displayedChatItems"
-    :session-id="form.sessionId"
-    :history-has-more="historyHasMore"
-    :history-error="historyError"
-    :can-retry-history="Boolean(activeSessionState.failedHistoryRequest)"
-    @open-sidebar="openMobileSidebar"
-    @load-earlier-history="loadEarlierHistory"
-    @retry-history="retryHistory"
-    @resolve-approval="resolveApproval"
-  />
+<main class="panel chat-shell" :class="{ 'has-child-detail': openedChildSessionId }">
+  <div class="conversation-column">
+    <ConversationPanel
+      ref="conversationPanel"
+      :current-session-label="currentSessionLabel"
+      :pending-approval-count="pendingApprovalCount"
+      :is-connected="isConnected"
+      :connection-status="connectionStatus"
+      :history-status="historyStatus"
+      :displayed-chat-items="displayedChatItems"
+      :session-id="form.sessionId"
+      :opened-child-session-id="openedChildSessionId"
+      :history-has-more="historyHasMore"
+      :history-error="historyError"
+      :can-retry-history="Boolean(activeSessionState.failedHistoryRequest)"
+      @open-sidebar="openMobileSidebar"
+      @load-earlier-history="loadEarlierHistory"
+      @retry-history="retryHistory"
+      @resolve-approval="resolveApproval"
+      @open-subagent="openChildDetail"
+    />
 
-  <ComposerPanel
-    v-model="draft"
-    :attachments="attachments"
-    :attach-error="attachError"
-    :selected-model-supports-images="selectedModelSupportsImages"
-    :attachment-capability-explanation="attachmentCapabilityExplanation"
-    :is-waiting-for-reply="isWaitingForReply"
-    :max-attachments-per-message="maxAttachmentsPerMessage"
-    :is-connected="isConnected"
-    :can-send="canSend"
-    :pending-approval-count="pendingApprovalCount"
-    @files="ingestFiles"
-    @remove-attachment="removeAttachment"
-    @reset="resetComposer"
-    @abort="abortTurn"
-    @send="sendMessage"
+    <ComposerPanel
+      v-model="draft"
+      :attachments="attachments"
+      :attach-error="attachError"
+      :selected-model-supports-images="selectedModelSupportsImages"
+      :attachment-capability-explanation="attachmentCapabilityExplanation"
+      :is-waiting-for-reply="isWaitingForReply"
+      :max-attachments-per-message="maxAttachmentsPerMessage"
+      :is-connected="isConnected"
+      :can-send="canSend"
+      :pending-approval-count="pendingApprovalCount"
+      @files="ingestFiles"
+      @remove-attachment="removeAttachment"
+      @reset="resetComposer"
+      @abort="abortTurn"
+      @send="sendMessage"
+    />
+  </div>
+
+  <ChildDetailPanel
+    v-if="openedChildSessionId && childSessionState"
+    ref="childDetailPanel"
+    :session-id="openedChildSessionId"
+    :subscription-status="childSubscriptionStatus"
+    :unavailable="childUnavailable"
+    :history-status="childSessionState.historyStatus"
+    :history-error="childSessionState.historyError"
+    :history-has-more="childSessionState.historyHasMore"
+    :can-retry-history="Boolean(childSessionState.failedHistoryRequest)"
+    :displayed-items="childDisplayedItems"
+    @close="closeChildDetail"
+    @load-earlier-history="loadEarlierChildHistory"
+    @retry-history="retryChildHistory"
   />
 </main>
 </template>

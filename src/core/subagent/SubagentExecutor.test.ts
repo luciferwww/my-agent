@@ -49,6 +49,7 @@ describe('SubagentExecutor', () => {
       }),
     });
     const signal = new AbortController().signal;
+    const approvalCapability = { request: vi.fn() };
 
     const prepared = await executor.prepare({
       requestId: 'request-1',
@@ -70,6 +71,7 @@ describe('SubagentExecutor', () => {
       signal,
       toolProjection,
       hookProjection,
+      approvalCapability,
       getSessionPermissionMode: () => 'manual',
     });
     await executor.execute(prepared, resolvedModel);
@@ -103,6 +105,7 @@ describe('SubagentExecutor', () => {
       toolProjection: expect.any(Object),
       hookProjection: expect.any(Object),
       toolPolicy: expect.any(Object),
+      approvalCapability,
     }));
   });
 
@@ -137,6 +140,7 @@ describe('SubagentExecutor', () => {
       signal: new AbortController().signal,
       toolProjection,
       hookProjection,
+      approvalCapability: { request: vi.fn() },
       getSessionPermissionMode: () => 'manual',
     });
 

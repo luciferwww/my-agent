@@ -1047,7 +1047,8 @@ async function buildApp(
       : {
           createSessionManager: () => ({
             initialize: vi.fn(async () => undefined),
-            getSession: vi.fn((sessionId: string) => ({
+            close: vi.fn(async () => undefined),
+            getPersistedSession: vi.fn((sessionId: string) => ({
               sessionId,
               createdAt: 1,
               updatedAt: 1,

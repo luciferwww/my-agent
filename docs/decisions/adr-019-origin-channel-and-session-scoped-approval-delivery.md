@@ -3,7 +3,7 @@
 > Status: Accepted
 > Decision date: 2026-10-10
 > Owner: Project owner
-> Related Plan/Specification: [Plan](../changes/active/session-scoped-approval-delivery/plan.md) and [Specification](../changes/active/session-scoped-approval-delivery/specification.md)
+> Related Plan/Specification: [Plan](../changes/archive/session-scoped-approval-delivery/plan.md) and [Specification](../changes/archive/session-scoped-approval-delivery/specification.md)
 > Supersedes: none
 
 ## Context

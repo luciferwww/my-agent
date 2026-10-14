@@ -99,7 +99,7 @@ Subagent 与 Automation 的执行 Envelope 仍然分开：
 - 不隐式继承旧 Transcript；
 - Run 非终态时，用户可以从 Scheduled 组打开该 Session；
 - 跨 Run 状态通过 Git、Workspace、Memory 或未来的结构化 Job State 延续。
-- Run 进入终态后，保存该 Job 的最近运行时间、状态和必要错误，再删除该 Session 和 Transcript。
+- Run 进入终态后，先保存该 Job 的最近运行时间、状态和必要错误；Session/Transcript 进入短期只读 retention，TTL 或容量上限到达后再删除。
 
 Automation Session 与普通 Session 并列，没有 parent Session。客户端按来源分组展示：
 
@@ -127,7 +127,9 @@ automation {
 
 `Scheduled` 只是展示分组。Job 不绑定创建 Job 的普通 Session；删除普通 Session 不影响 Job。Job 保存 `agentId` 并在每次 Run admission 时从 `agents.list[]` 解析对应 Role。Job 不复制 Role 配置，因此后续 Run 使用当前有效配置；若 Role 已删除，Run 必须明确失败，不能静默回退到其他 Role。
 
-`Scheduled` 只显示运行中和等待审批的 Automation Session。已结束 Run 不保留长期 Session；Job 详情只显示最近运行时间、状态和必要错误。Automation Session 是运行期交互载体，第一版不提供完整 Run History。
+`Scheduled` 显示运行中和等待审批的 Automation Session。最近终态 Run 可在 retention 期内从 Job/Run 入口只读查看详情，但不成为可继续的普通 Session；TTL 到期后只保留 Job 的最近运行时间、状态和必要错误。第一版不提供长期完整 Run History。
+
+Subagent 与 Automation Run 共用的 Session-addressed single-Turn 观察、terminal retention、TTL 和最终清理候选见[临时单 Turn Agent Session 观察与保留设计调研](ephemeral-single-turn-agent-session-design-draft.md)。Automation Store 仍是 Run terminal summary 的唯一 owner，共享观察层不持久化 Job/Run 事实。
 
 暂不支持继续任意现有 Session，也暂不引入独立 `sessionKey`。
 
@@ -394,7 +396,7 @@ Standalone Host 仍只负责 process signal 和 exit policy。
 - `at`、`every`、`cron`；
 - Job 通过 `agentId` 选择 Subagent 与 Automation 共用的 `agents.list[]` Role；
 - Job/Run 持久化；
-- 每个 Run 使用新的 Session，终态保存最近运行状态后删除；
+- 每个 Run 使用新的 Session，终态保存最近运行状态并短期只读保留 detail，TTL 后删除；
 - Tool 调用按现有策略等待用户审批；
 - enable、disable、delete、run now；
 - 每个 Job 的最近一次运行状态；

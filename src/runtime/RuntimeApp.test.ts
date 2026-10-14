@@ -146,7 +146,8 @@ describe('RuntimeApp', () => {
     const selectedAgentHome = join(agentHome, 'agent-home');
     const createSessionManager = vi.fn(() => ({
       initialize: vi.fn(async () => undefined),
-      getSession: vi.fn(() => sessionEntry('main')),
+      close: vi.fn(async () => undefined),
+      getPersistedSession: vi.fn(() => sessionEntry('main')),
     }) as never);
     const createMemoryManager = vi.fn(async () => null);
     const getBuiltinContributionUnits = vi.fn(() => []);
@@ -189,6 +190,72 @@ describe('RuntimeApp', () => {
     await app.close();
   });
 
+  it('closes SessionManager before managed processes and reports both resources', async () => {
+    const cleanupOrder: string[] = [];
+    const closeSessionManager = vi.fn(async () => {
+      cleanupOrder.push('sessionManager');
+    });
+    const shutdownManagedProcesses = vi.fn(async () => {
+      cleanupOrder.push('managedProcesses');
+    });
+    const app = await RuntimeApp.create({
+      agentHome,
+      applicationConfig: testApplicationConfig(),
+      cliOverrides: { memory: { enabled: false } },
+      dependencies: createTestDependencies({
+        createSessionManager: () => ({
+          initialize: vi.fn(async () => undefined),
+          close: closeSessionManager,
+          getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
+        }) as never,
+        createMemoryManager: async () => null,
+        managedProcessLifecycle: {
+          cleanupSession: vi.fn(async () => undefined),
+          shutdown: shutdownManagedProcesses,
+        },
+      }),
+    });
+
+    const report = await app.close();
+
+    expect(cleanupOrder).toEqual(['sessionManager', 'managedProcesses']);
+    expect(report.completed).toEqual(expect.arrayContaining([
+      'sessionManager',
+      'managedProcesses',
+    ]));
+  });
+
+  it('reports SessionManager cleanup failure without skipping managed processes', async () => {
+    const shutdownManagedProcesses = vi.fn(async () => undefined);
+    const app = await RuntimeApp.create({
+      agentHome,
+      applicationConfig: testApplicationConfig(),
+      cliOverrides: { memory: { enabled: false } },
+      dependencies: createTestDependencies({
+        createSessionManager: () => ({
+          initialize: vi.fn(async () => undefined),
+          close: vi.fn(async () => {
+            throw new Error('session cleanup failed');
+          }),
+          getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
+        }) as never,
+        createMemoryManager: async () => null,
+        managedProcessLifecycle: {
+          cleanupSession: vi.fn(async () => undefined),
+          shutdown: shutdownManagedProcesses,
+        },
+      }),
+    });
+
+    const report = await app.close();
+
+    expect(report.failed).toContainEqual({
+      resource: 'sessionManager',
+      message: 'session cleanup failed',
+    });
+    expect(shutdownManagedProcesses).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects archive, delete, and fork while a Session is active or queued', async () => {
     const releaseRun = createDeferred<void>();
     const archiveSession = vi.fn(async (sessionId: string) => ({
@@ -216,7 +283,8 @@ describe('RuntimeApp', () => {
       dependencies: createTestDependencies({
         createSessionManager: () => ({
           initialize: vi.fn(async () => undefined),
-          getSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
+          close: vi.fn(async () => undefined),
+          getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
           archiveSession,
           deleteSession,
           forkSession,
@@ -282,7 +350,8 @@ describe('RuntimeApp', () => {
       dependencies: createTestDependencies({
         createSessionManager: () => ({
           initialize: vi.fn(async () => undefined),
-          getSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
+          close: vi.fn(async () => undefined),
+          getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
           assertSessionDeletable,
           deleteSession,
         }) as never,
@@ -312,7 +381,8 @@ describe('RuntimeApp', () => {
       dependencies: createTestDependencies({
         createSessionManager: () => ({
           initialize: vi.fn(async () => undefined),
-          getSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
+          close: vi.fn(async () => undefined),
+          getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
           assertSessionDeletable: vi.fn(),
           deleteSession,
         }) as never,
@@ -382,7 +452,7 @@ describe('RuntimeApp', () => {
 
   it('admits an existing canonical session and rejects an unknown identity', async () => {
     const sessionId = '00000000-0000-4000-8000-000000000001';
-    const getSession = vi.fn((candidate: string) =>
+    const getPersistedSession = vi.fn((candidate: string) =>
       candidate === sessionId ? sessionEntry(sessionId) : undefined,
     );
     const build = vi.fn(() => 'SYSTEM_PROMPT');
@@ -397,7 +467,8 @@ describe('RuntimeApp', () => {
     const deps = createTestDependencies({
       createSessionManager: () => ({
         initialize: vi.fn(async () => undefined),
-        getSession,
+        close: vi.fn(async () => undefined),
+        getPersistedSession,
       }) as never,
       createSystemPromptBuilder: () => ({ build } as never),
       createAgentRunner: () => ({ run: runnerRun } as never),
@@ -419,7 +490,7 @@ describe('RuntimeApp', () => {
       promptMode: 'full',
     });
 
-    expect(getSession).toHaveBeenCalledWith(sessionId);
+    expect(getPersistedSession).toHaveBeenCalledWith(sessionId);
     expect(build).toHaveBeenCalled();
     expect(runnerRun).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -723,10 +794,13 @@ describe('RuntimeApp', () => {
   }) => {
     let parentModel: ResolvedModel | undefined;
     let childModel: ResolvedModel | undefined;
-    const deleteTransientSubagentTranscript = vi.fn(async () => {});
+    let parentApprovalCapability: RunParams['approvalCapability'];
+    const approvalRequests: ApprovalRequest[] = [];
+    const retainTransientSubagentTranscript = vi.fn(async () => {});
     const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
       if (params.sessionId === 'main') {
         parentModel = params.resolvedModel;
+        parentApprovalCapability = params.approvalCapability;
         const taskTool = params.toolProjection.resolve('task');
         if (!taskTool || !params.signal) throw new Error('Parent task wiring is incomplete.');
         const taskResult = await taskTool.execute({
@@ -751,6 +825,18 @@ describe('RuntimeApp', () => {
         };
       }
       childModel = params.resolvedModel;
+      expect(params.approvalCapability).toBe(parentApprovalCapability);
+      if (!params.approvalCapability || !params.signal) {
+        throw new Error('Child Approval capability is missing.');
+      }
+      const approval = await params.approvalCapability.request({
+        callId: 'child-tool-call',
+        toolName: 'child_tool',
+        input: {},
+        sessionId: params.sessionId,
+        turnId: params.turnId,
+      }, params.signal);
+      expect(approval).toEqual({ outcome: 'approved' });
       return {
         text: 'child result',
         content: [{ type: 'text', text: 'child result' }],
@@ -780,8 +866,13 @@ describe('RuntimeApp', () => {
       }),
     });
     const events: AgentEvent[] = [];
+    const approvalChannel = createApprovalTestChannel('subagent-approval', {
+      approvalRequests,
+      autoDecision: 'allow',
+    });
     const app = await RuntimeApp.create({
       agentHome: agentHome,
+      loadedUnits: [approvalChannel.unit],
       applicationConfig: testApplicationConfig({
         providerId: 'test',
         modelId: 'parent-model',
@@ -805,9 +896,12 @@ describe('RuntimeApp', () => {
         ]),
         createSessionManager: () => ({
           initialize: vi.fn(async () => undefined),
-          getSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
+          close: vi.fn(async () => undefined),
+          getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
+          registerPreparingSubagentSession: vi.fn(),
+          clearPreparingSubagentSession: vi.fn(),
           createTransientSubagentTranscript: vi.fn(async () => {}),
-          deleteTransientSubagentTranscript,
+          retainTransientSubagentTranscript,
         }) as never,
         createAgentRunner: () => ({
           run: runnerRun,
@@ -823,13 +917,25 @@ describe('RuntimeApp', () => {
       promptMode: 'full',
     });
 
-    expect(result.text).toBe('child result');
+    const start = events.find((event) => event.type === 'subagent_start');
+    expect(start).toBeDefined();
+    expect(result.text).toBe(
+      `Subagent completed.\nsessionId: ${start?.sessionId}\nResult:\nchild result`,
+    );
     expect(parentModel?.identity).toEqual({ providerId: 'test', modelId: 'parent-model' });
     expect(childModel?.identity).toEqual(expectedIdentity);
     expect(childModel).not.toBe(parentModel);
     expect(events.filter((event) => event.type === 'subagent_start')).toHaveLength(1);
     expect(events.filter((event) => event.type === 'subagent_end')).toHaveLength(1);
-    expect(deleteTransientSubagentTranscript).toHaveBeenCalledTimes(1);
+    expect(retainTransientSubagentTranscript).toHaveBeenCalledTimes(1);
+    expect(approvalRequests).toEqual([
+      expect.objectContaining({
+        sessionId: 'main',
+        turnId: start?.turnId,
+        callId: 'child-tool-call',
+        toolName: 'child_tool',
+      }),
+    ]);
 
     await app.close();
   });
@@ -957,9 +1063,12 @@ describe('RuntimeApp', () => {
         createAgentRunner: () => ({ run: runnerRun }) as never,
         createSessionManager: () => ({
           initialize: vi.fn(async () => undefined),
-          getSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
+          close: vi.fn(async () => undefined),
+          getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
+          registerPreparingSubagentSession: vi.fn(),
+          clearPreparingSubagentSession: vi.fn(),
           createTransientSubagentTranscript: vi.fn(async () => {}),
-          deleteTransientSubagentTranscript: vi.fn(async () => {}),
+          retainTransientSubagentTranscript: vi.fn(async () => {}),
         }) as never,
         createMemoryManager: async () => null,
       }),
@@ -3034,9 +3143,10 @@ describe('RuntimeApp', () => {
       expect(Object.isFrozen(capturedCapabilities)).toBe(true);
       expect(Object.isFrozen(capturedCapabilities!.modelCatalog)).toBe(true);
       expect(Object.isFrozen(capturedCapabilities!.abort)).toBe(true);
-      expect(Object.isFrozen(capturedCapabilities!.sessions)).toBe(true);
+      expect(Object.isFrozen(capturedCapabilities!.chatSessions)).toBe(true);
+      expect(Object.isFrozen(capturedCapabilities!.sessionObservation)).toBe(true);
 
-      const created = await capturedCapabilities!.sessions.createSession();
+      const created = await capturedCapabilities!.chatSessions.createSession();
       expect(created.sessionId).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
       );
@@ -3044,14 +3154,14 @@ describe('RuntimeApp', () => {
         sessionId: created.sessionId,
         mode: 'manual',
       });
-      expect(capturedCapabilities!.sessions.getPermissionMode(created.sessionId))
+      expect(capturedCapabilities!.chatSessions.getPermissionMode(created.sessionId))
         .toEqual(created.permission);
 
       const permissionChanges: unknown[] = [];
-      const unsubscribe = capturedCapabilities!.sessions.onPermissionModeChanged((state) => {
+      const unsubscribe = capturedCapabilities!.chatSessions.onPermissionModeChanged((state) => {
         permissionChanges.push(state);
       });
-      const elevated = capturedCapabilities!.sessions.setPermissionMode({
+      const elevated = capturedCapabilities!.chatSessions.setPermissionMode({
         sessionId: created.sessionId,
         mode: 'allow_all',
         originClientId: 'test-client',
@@ -3063,13 +3173,13 @@ describe('RuntimeApp', () => {
       });
       expect(permissionChanges).toEqual([elevated]);
       unsubscribe();
-      capturedCapabilities!.sessions.setPermissionMode({
+      capturedCapabilities!.chatSessions.setPermissionMode({
         sessionId: created.sessionId,
         mode: 'manual',
       });
       expect(permissionChanges).toEqual([elevated]);
 
-      const elevatedAtCreation = await capturedCapabilities!.sessions.createSession({
+      const elevatedAtCreation = await capturedCapabilities!.chatSessions.createSession({
         permissionMode: 'allow_all',
         originClientId: 'test-client',
       });
@@ -3079,10 +3189,10 @@ describe('RuntimeApp', () => {
         changedByClientId: 'test-client',
       });
       const deletionChanges: unknown[] = [];
-      const unsubscribeDeletion = capturedCapabilities!.sessions.onPermissionModeChanged((state) => {
+      const unsubscribeDeletion = capturedCapabilities!.chatSessions.onPermissionModeChanged((state) => {
         deletionChanges.push(state);
       });
-      await capturedCapabilities!.sessions.deleteSession(elevatedAtCreation.sessionId);
+      await capturedCapabilities!.chatSessions.deleteSession(elevatedAtCreation.sessionId);
       expect(deletionChanges).toEqual([
         expect.objectContaining({
           sessionId: elevatedAtCreation.sessionId,
@@ -3104,12 +3214,12 @@ describe('RuntimeApp', () => {
       expect(result).toEqual({ aborted: false, dropped: 2 });
       expect(queueMap.has('sk-with-queue')).toBe(false);
 
-      capturedCapabilities!.sessions.setPermissionMode({
+      capturedCapabilities!.chatSessions.setPermissionMode({
         sessionId: created.sessionId,
         mode: 'allow_all',
       });
       await app.close();
-      expect(capturedCapabilities!.sessions.getPermissionMode(created.sessionId)).toMatchObject({
+      expect(capturedCapabilities!.chatSessions.getPermissionMode(created.sessionId)).toMatchObject({
         sessionId: created.sessionId,
         mode: 'manual',
       });
@@ -3314,9 +3424,12 @@ function createTestDependencies(
     }]),
     createSessionManager: () => ({
       initialize: vi.fn(async () => undefined),
-      getSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
+      close: vi.fn(async () => undefined),
+      getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
+      registerPreparingSubagentSession: vi.fn(),
+      clearPreparingSubagentSession: vi.fn(),
       createTransientSubagentTranscript: vi.fn(async () => {}),
-      deleteTransientSubagentTranscript: vi.fn(async () => {}),
+      retainTransientSubagentTranscript: vi.fn(async () => {}),
     }) as never,
     createMemoryManager: async () => null,
     createSystemPromptBuilder: () => ({ build: () => 'SYSTEM_PROMPT' }) as never,

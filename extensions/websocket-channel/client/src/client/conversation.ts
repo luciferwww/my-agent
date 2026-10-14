@@ -15,6 +15,9 @@ export interface ConversationSegment {
   thinkingId?: string;
   executionId?: string;
   isError?: boolean;
+  subagentSessionId?: string;
+  subagentStatus?: 'running' | 'terminal';
+  subagentOutcome?: string;
   approval?: {
     id: string;
     toolName: string;
@@ -103,6 +106,10 @@ export interface AgentEvent {
   readonly tokensAfter?: number;
   readonly droppedMessages?: number;
   readonly toolUseId?: string;
+  readonly parentTurnId?: string;
+  readonly parentToolUseId?: string;
+  readonly outcome?: string;
+  readonly subagentType?: string;
   readonly originalChars?: number;
   readonly prunedChars?: number;
   readonly attachmentSummaries?: ConversationItem['attachmentSummaries'];
@@ -131,6 +138,16 @@ export interface ConversationContext {
   readonly clientId: string;
   readonly nextId: () => number;
   readonly now?: () => number;
+}
+
+export function resolveEventSessionId(
+  event: AgentEvent,
+  focusedSessionId: string,
+): string {
+  if (event.type === 'subagent_start' || event.type === 'subagent_end') {
+    return event.callerSessionId || focusedSessionId;
+  }
+  return event.sessionId || event.callerSessionId || focusedSessionId;
 }
 
 export function appendConversationItem(
@@ -284,8 +301,36 @@ export function applyAgentEvent(
       toolCall.status = event.result?.status;
       toolCall.resultContent = normalizeToolResultContent(event.result?.content);
       toolCall.isError = event.result?.status === 'error';
+      const subagentSessionId = parseTaskSubagentSessionId(
+        toolCall.name,
+        toolCall.resultContent,
+      );
+      if (subagentSessionId) {
+        toolCall.subagentSessionId = subagentSessionId;
+        toolCall.subagentStatus = 'terminal';
+      }
       if (event.executionId) toolCall.executionId = event.executionId;
       if (toolCall.approval) toolCall.approval.status = 'resolved';
+      scroll();
+      break;
+    }
+
+    case 'subagent_start':
+    case 'subagent_end': {
+      const toolCall = findToolCall(state, event.parentTurnId, event.parentToolUseId);
+      if (!toolCall || !event.sessionId) {
+        protocolError(
+          `${event.type} has no Parent Tool Call ${event.parentToolUseId ?? ''}`,
+        );
+        break;
+      }
+      toolCall.subagentSessionId = event.sessionId;
+      toolCall.subagentStatus = event.type === 'subagent_start' ? 'running' : 'terminal';
+      if (event.type === 'subagent_end') toolCall.subagentOutcome = event.outcome;
+      pushEvent(
+        event.type,
+        `${event.subagentType ?? 'Subagent'} ${event.sessionId}`,
+      );
       scroll();
       break;
     }
@@ -605,6 +650,16 @@ function normalizeToolResultContent(value: unknown): string {
   if (typeof value === 'string') return value;
   if (typeof value === 'object') return prettyJson(value);
   return String(value);
+}
+
+export function parseTaskSubagentSessionId(
+  toolName: string | undefined,
+  content: string,
+): string | null {
+  if (toolName !== 'task') return null;
+  const match = /^Subagent completed\.\r?\nsessionId: ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\r?\nResult:\r?\n/i
+    .exec(content);
+  return match?.[1]?.toLowerCase() ?? null;
 }
 
 export function itemRoleClass(item: ConversationItem): string {

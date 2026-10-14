@@ -31,12 +31,19 @@ describe('SessionCoordinator', () => {
     await rm(agentHome, { recursive: true, force: true });
   });
 
-  it('keeps a newly created Session pending and invisible', async () => {
+  it('keeps a newly created Session pending, addressable, and out of discovery', async () => {
     const { sessionId } = await coordinator.createSession();
 
     expect(await coordinator.listSessions()).toEqual([]);
-    await expect(coordinator.getSession(sessionId)).rejects.toMatchObject({
-      code: 'SESSION_NOT_FOUND',
+    await expect(coordinator.resolveSession(sessionId)).resolves.toEqual({
+      kind: 'chat',
+      sessionId,
+    });
+    expect(coordinator.getHistory({ sessionId })).toEqual({
+      sessionId,
+      items: [],
+      nextCursor: null,
+      hasMore: false,
     });
   });
 
@@ -54,10 +61,57 @@ describe('SessionCoordinator', () => {
         updatedAt: 200,
       },
     });
+    await expect(coordinator.resolveSession(sessionId)).resolves.toMatchObject({
+      kind: 'chat',
+      sessionId,
+      entry: {
+        title: 'hello world',
+        createdAt: 100,
+        updatedAt: 200,
+      },
+    });
     expect(sessionManager.getMessages(sessionId)).toHaveLength(0);
 
     expect(await coordinator.admitMessage(sessionId, 'second')).toMatchObject({ entry: { sessionId } });
     expect(sessionManager.getMessages(sessionId)).toHaveLength(0);
+  });
+
+  it('resolves preparing and materialized Subagent Sessions through the same History API', async () => {
+    const { sessionId: callerSessionId } = await coordinator.createSession();
+    await coordinator.admitMessage(callerSessionId, 'caller');
+    const childSessionId = '00000000-0000-4000-8000-000000000099';
+    const child = { sessionId: childSessionId, callerSessionId, createdAt: 150 };
+
+    sessionManager.registerPreparingSubagentSession(child);
+    await expect(coordinator.resolveSession(childSessionId)).resolves.toEqual({
+      kind: 'subagent',
+      sessionId: childSessionId,
+    });
+    expect(coordinator.getHistory({ sessionId: childSessionId })).toEqual({
+      sessionId: childSessionId,
+      items: [],
+      nextCursor: null,
+      hasMore: false,
+    });
+
+    await sessionManager.createTransientSubagentTranscript(child);
+    await sessionManager.appendMessage(childSessionId, {
+      turnId: 'child-turn',
+      role: 'user',
+      content: 'delegated work',
+    });
+    await expect(coordinator.resolveSession(childSessionId)).resolves.toEqual({
+      kind: 'subagent',
+      sessionId: childSessionId,
+      entry: child,
+    });
+    expect(coordinator.getHistory({ sessionId: childSessionId }).items)
+      .toEqual([expect.objectContaining({ role: 'user', content: 'delegated work' })]);
+
+    await sessionManager.deleteTransientSubagentTranscript(childSessionId);
+    await expect(coordinator.resolveSession(childSessionId)).rejects.toMatchObject({
+      code: 'SESSION_NOT_FOUND',
+    });
   });
 
   it('serializes concurrent first admissions and materializes at most once', async () => {
@@ -80,12 +134,13 @@ describe('SessionCoordinator', () => {
       deleteSession: sessionManager.deleteSession.bind(sessionManager),
       forkSession: sessionManager.forkSession.bind(sessionManager),
       getHistory: sessionManager.getHistory.bind(sessionManager),
-      getSession: sessionManager.getSession.bind(sessionManager),
+      getPersistedSession: sessionManager.getPersistedSession.bind(sessionManager),
       listSessions: sessionManager.listSessions.bind(sessionManager),
       materializeSession: async () => {
         throw new Error('disk failure');
       },
       renameSession: sessionManager.renameSession.bind(sessionManager),
+      resolveSession: sessionManager.resolveSession.bind(sessionManager),
       unarchiveSession: sessionManager.unarchiveSession.bind(sessionManager),
     };
     const retryableCoordinator = new SessionCoordinator({

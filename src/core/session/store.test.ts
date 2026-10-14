@@ -20,11 +20,11 @@ describe('Session Store', () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it('returns an empty versioned Store when the file is absent', () => {
-    expect(loadStore(storePath)).toEqual({ version: 1, sessions: {} });
+  it('returns an empty Store when the file is absent', () => {
+    expect(loadStore(storePath)).toEqual({ sessions: {} });
   });
 
-  it('atomically persists the versioned Store wrapper', async () => {
+  it('atomically persists the Store wrapper', async () => {
     const sessionId = randomUUID();
     await updateStore(storePath, (store) => {
       store.sessions[sessionId] = {
@@ -41,10 +41,54 @@ describe('Session Store', () => {
       createdAt: 10,
       updatedAt: 10,
     });
-    expect(JSON.parse(await readFile(storePath, 'utf8'))).toHaveProperty('version', 1);
+    expect(JSON.parse(await readFile(storePath, 'utf8'))).toEqual({
+      sessions: {
+        [sessionId]: {
+          sessionId,
+          title: 'First session',
+          createdAt: 10,
+          updatedAt: 10,
+        },
+      },
+    });
   });
 
-  it('rejects the prior unversioned Store format', async () => {
+  it('validates active and terminal Subagent entries', async () => {
+    const callerSessionId = randomUUID();
+    const activeSessionId = randomUUID();
+    const terminalSessionId = randomUUID();
+    await updateStore(storePath, (store) => {
+      store.sessions[callerSessionId] = {
+        sessionId: callerSessionId,
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      store.sessions[activeSessionId] = {
+        kind: 'subagent',
+        sessionId: activeSessionId,
+        callerSessionId,
+        createdAt: 2,
+        updatedAt: 2,
+      };
+      store.sessions[terminalSessionId] = {
+        kind: 'subagent',
+        sessionId: terminalSessionId,
+        callerSessionId,
+        createdAt: 3,
+        updatedAt: 4,
+        completedAt: 4,
+        expiresAt: 5,
+        outcome: 'ok',
+      };
+    });
+
+    expect(loadStore(storePath).sessions).toMatchObject({
+      [activeSessionId]: { kind: 'subagent' },
+      [terminalSessionId]: { kind: 'subagent', outcome: 'ok' },
+    });
+  });
+
+  it('rejects the legacy Store shape', async () => {
     const sessionId = randomUUID();
     await writeFile(storePath, JSON.stringify({
       main: { sessionId, sessionKey: 'main', sessionFile: `${sessionId}.jsonl` },
@@ -57,7 +101,6 @@ describe('Session Store', () => {
     const sessionId = randomUUID();
     const otherId = randomUUID();
     await writeFile(storePath, JSON.stringify({
-      version: 1,
       sessions: {
         [sessionId]: {
           sessionId: otherId,
@@ -67,9 +110,7 @@ describe('Session Store', () => {
       },
     }));
     expect(() => loadStore(storePath)).toThrowError(SessionDataError);
-
     await writeFile(storePath, JSON.stringify({
-      version: 1,
       sessions: {
         [sessionId]: {
           sessionId,

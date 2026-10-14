@@ -95,6 +95,8 @@ function testProvider(id: string): ProviderProjectionEntry {
 
 function createHarness(options: {
   memoryClose?: () => void | Promise<void>;
+  sessionClose?: () => void | Promise<void>;
+  processShutdown?: () => Promise<void>;
   providerUnit?: LoadedRuntimeUnit;
   providerFactory?: () => LoadedRuntimeUnit;
   builtinConfigured?: boolean;
@@ -102,6 +104,10 @@ function createHarness(options: {
   additionalLoadedUnits?: readonly LoadedRuntimeUnit[];
 } = {}) {
   const baseStop = vi.fn(options.baseStop ?? (() => {}));
+  const sessionClose = vi.fn(async () => {
+    await options.sessionClose?.();
+  });
+  const processShutdown = vi.fn(options.processShutdown ?? (async () => {}));
   const optionalStop = vi.fn();
   const events: NonNullable<RuntimeAppOptions['onEvent']> extends (event: infer T) => void ? T[] : never[] = [];
   const loadedUnits = [
@@ -126,6 +132,11 @@ function createHarness(options: {
   vi.mocked(bootstrapRuntime).mockResolvedValue({
     resources: {
       memoryManager: options.memoryClose ? { close: options.memoryClose } : null,
+      sessionManager: { close: sessionClose },
+      managedProcessLifecycle: {
+        cleanupSession: vi.fn(async () => undefined),
+        shutdown: processShutdown,
+      },
       appConfig: {
         llm: options.builtinConfigured === false
           ? {}
@@ -185,7 +196,11 @@ function createHarness(options: {
       permission: { sessionId: 'session', mode: 'manual' as const, changedAt: 1 },
     })),
     listSessions: vi.fn(async () => []),
-    getSession: vi.fn(async (sessionId: string) => ({ sessionId, createdAt: 1, updatedAt: 1 })),
+    resolveSession: vi.fn(async (sessionId: string) => ({
+      kind: 'chat' as const,
+      sessionId,
+      entry: { sessionId, createdAt: 1, updatedAt: 1 },
+    })),
     getSessionHistory: vi.fn(async (query: { sessionId: string }) => ({
       sessionId: query.sessionId,
       items: [],
@@ -254,6 +269,8 @@ function createHarness(options: {
   return {
     application,
     close,
+    sessionClose,
+    processShutdown,
     channelBindingsForTurn,
     createApplication,
     getInput: () => input,
@@ -321,7 +338,7 @@ describe('Runtime Builder', () => {
       required: false,
     });
     const harness = createHarness({ additionalLoadedUnits: [channelUnit] });
-    harness.application.getSession.mockRejectedValueOnce(
+    harness.application.resolveSession.mockRejectedValueOnce(
       new SessionError('SESSION_NOT_FOUND', 'Session does not exist.'),
     );
     harness.application.getSessionPermissionMode.mockImplementationOnce(() => {
@@ -329,7 +346,7 @@ describe('Runtime Builder', () => {
     });
     const handle = await buildRuntimeHandle(harness.runtimeOptions, harness.createApplication);
 
-    await expect(capabilities?.sessions.getSession('missing')).rejects.toEqual(
+    await expect(capabilities?.sessionObservation.resolveSession('missing')).rejects.toEqual(
       expect.objectContaining({
         name: ChannelOperationError.name,
         code: 'SESSION_NOT_FOUND',
@@ -338,7 +355,7 @@ describe('Runtime Builder', () => {
     );
     let permissionError: unknown;
     try {
-      capabilities?.sessions.getPermissionMode('archived');
+      capabilities?.chatSessions.getPermissionMode('archived');
     } catch (error) {
       permissionError = error;
     }
@@ -603,6 +620,10 @@ describe('Runtime Builder', () => {
     }));
     expect(harness.close).toHaveBeenCalledTimes(1);
     expect(harness.close).toHaveBeenCalledWith('first', expect.anything());
+    expect(harness.sessionClose).toHaveBeenCalledTimes(1);
+    expect(harness.processShutdown).toHaveBeenCalledTimes(1);
+    expect(harness.sessionClose.mock.invocationCallOrder[0])
+      .toBeLessThan(harness.processShutdown.mock.invocationCallOrder[0]!);
     expect(harness.baseStop).toHaveBeenCalledTimes(1);
     const lock = await vi.mocked(acquireAgentHomeLock).mock.results[0]?.value;
     expect(lock?.release).toHaveBeenCalledTimes(1);

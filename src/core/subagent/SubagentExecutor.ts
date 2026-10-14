@@ -8,7 +8,10 @@ import type { SystemPromptBuilder } from '../prompt/SystemPromptBuilder.js';
 import type { ContextFile } from '../agent-context/types.js';
 import { buildSubagentBehavioralAddendum } from './behavioral-addendum.js';
 import type { SubagentProfile } from './types.js';
-import type { SessionPermissionMode } from '../approval/index.js';
+import type {
+  CurrentCallApprovalCapability,
+  SessionPermissionMode,
+} from '../approval/index.js';
 
 export interface SubagentExecutorDeps {
   readonly agentRunner: AgentRunner;
@@ -32,6 +35,7 @@ export interface SubagentExecutionRequest {
   readonly signal: AbortSignal;
   readonly toolProjection: ToolProjection;
   readonly hookProjection: HookProjection;
+  readonly approvalCapability: CurrentCallApprovalCapability;
   readonly getSessionPermissionMode: () => SessionPermissionMode;
 }
 
@@ -49,6 +53,7 @@ export interface PreparedSubagentExecution {
   readonly toolPolicy: ApplicationToolPolicy;
   readonly toolProjection: ToolProjection;
   readonly hookProjection: HookProjection;
+  readonly approvalCapability: CurrentCallApprovalCapability;
   readonly getSessionPermissionMode: () => SessionPermissionMode;
 }
 
@@ -87,6 +92,7 @@ export class SubagentExecutor {
       toolPolicy,
       toolProjection: request.toolProjection,
       hookProjection: request.hookProjection,
+      approvalCapability: request.approvalCapability,
       getSessionPermissionMode: request.getSessionPermissionMode,
     };
   }
@@ -99,6 +105,7 @@ export class SubagentExecutor {
       toolPolicy,
       toolProjection,
       hookProjection,
+      approvalCapability,
       getSessionPermissionMode,
       ...runRequest
     } = request;
@@ -109,6 +116,7 @@ export class SubagentExecutor {
       toolProjection,
       hookProjection,
       toolPolicy,
+      approvalCapability,
       getSessionPermissionMode,
     });
   }

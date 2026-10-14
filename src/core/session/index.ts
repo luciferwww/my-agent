@@ -12,7 +12,9 @@ export type { SessionErrorCode } from './errors.js';
 export { deriveInitialSessionTitle } from './title.js';
 
 export type {
+  ResolvedSession,
   SessionEntry,
+  SubagentSessionEntry,
   UpdateSessionInput,
   SessionStore,
   TranscriptEntryBase,

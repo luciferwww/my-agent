@@ -48,6 +48,9 @@ describe('WebSocketChannel payload integration', () => {
     client = await connectClient(channel);
     client.send(JSON.stringify({ type: 'hello', clientId: 'payload-client' }));
     await expectMessage(client, { type: 'hello_ack', clientId: 'payload-client' });
+    (channel as unknown as {
+      registerSessionAudience(clientId: string, sessionId: string): void;
+    }).registerSessionAudience('payload-client', 'payload-limit');
     client.send(frame);
 
     await vi.waitFor(() => {

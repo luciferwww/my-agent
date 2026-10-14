@@ -14,6 +14,8 @@ This directory is reserved for external comparisons and exploratory analysis. Re
 - [Tool Result 结果状态持久化设计草稿](tool-result-outcome-persistence-design-draft.md) - 四态 status 与内嵌审批的讨论来源，已由完成并归档的 [Unified Async Tool Execution Framework Change](../changes/archive/async-tool-use/plan.md) 承接；本文不再作为实现权威。
 - [Turn 内统一异步 Tool Use 设计草稿](async-tool-use-design-draft.md) - 所有 Tool 共用的非阻塞控制流程、调用级活动计时与取消、宿主期限和 steering/结果交付边界；不授权实现，协议与取消收敛仍待决策。
 - [Subagent Structured Tool Execution 隔离草稿](subagent-identity-event-routing-design-draft.md) - 保留上下文隔离、Child 身份/路由、并发汇总等专项分析；通用异步监督转入上一份草稿，不维护 Subagent-only 平行机制。
+- [临时单 Turn Agent Session 观察与保留设计调研](ephemeral-single-turn-agent-session-design-draft.md) - 研究普通 Session 显式 subscribe/unsubscribe，以及 Subagent 与 Automation Run 共用的 Session-addressed 只读观察、terminal retention、TTL 清理和 Turn viewer；不授权实现。
+- [REST 状态管理与实时事件传输边界调研](rest-and-realtime-transport-boundary-design-draft.md) - 研究 REST 状态/管理平面、Chat WebSocket 实时平面和可选 Observation WebSocket 的职责划分，提出 snapshot + delta、一致性、迁移与安全边界；不授权实现。
 - [WebSocket Client Vue 3 + Vite 迁移设计草稿](websocket-client-vite-migration-design-draft.md) - 研究 bundled reference client 的 Vue 3 SFC、TypeScript、Vite build、Built/Source-loaded Extension 部署、预构建 `client/dist`、受控静态资源服务和渐进迁移边界；不授权实现。
 - [Built-in LLM Provider Design Draft](builtin-llm-providers-design-draft.md) - non-authorizing Chinese design draft for one Built-in Provider, one upstream connection, multiple Protocol Clients, and manually registered models.
 - [New Session Model Draft](session-model-design-draft.md) - non-authorizing clean-format proposal derived from the comparison and current implementation.

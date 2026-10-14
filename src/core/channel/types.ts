@@ -10,10 +10,7 @@ import type {
 import type { AgentEvent } from '../runner/types.js';
 import type { ReasoningPreference } from '../model-invocation/index.js';
 import type { SessionErrorCode } from '../session/index.js';
-import type {
-  SessionHistoryPage,
-  SessionHistoryQuery,
-} from '../session/index.js';
+import type { ResolvedSession, SessionHistoryPage, SessionHistoryQuery } from '../session/index.js';
 
 export type { ApprovalResult } from '../approval/index.js';
 
@@ -179,7 +176,7 @@ export interface TurnAbortCapability {
 }
 
 /** Channel capability for allocating a server Session ID without persisting it. */
-export interface SessionCapabilityEntry {
+export interface ChatSessionEntry {
   readonly sessionId: string;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -188,19 +185,17 @@ export interface SessionCapabilityEntry {
   readonly forkedFromSessionId?: string;
 }
 
-export interface SessionCapability {
+export interface ChatSessionCapability {
   createSession(input?: {
     permissionMode?: SessionPermissionMode;
     originClientId?: string;
   }): Promise<{ sessionId: string; permission: SessionPermissionState }>;
-  listSessions(input?: { archived?: boolean }): Promise<SessionCapabilityEntry[]>;
-  getSession(sessionId: string): Promise<SessionCapabilityEntry>;
-  getHistory(query: SessionHistoryQuery): Promise<SessionHistoryPage>;
-  renameSession(sessionId: string, title: string | null): Promise<SessionCapabilityEntry>;
-  archiveSession(sessionId: string): Promise<SessionCapabilityEntry>;
-  unarchiveSession(sessionId: string): Promise<SessionCapabilityEntry>;
+  listSessions(input?: { archived?: boolean }): Promise<ChatSessionEntry[]>;
+  renameSession(sessionId: string, title: string | null): Promise<ChatSessionEntry>;
+  archiveSession(sessionId: string): Promise<ChatSessionEntry>;
+  unarchiveSession(sessionId: string): Promise<ChatSessionEntry>;
   deleteSession(sessionId: string): Promise<void>;
-  forkSession(sessionId: string, entryId?: string): Promise<SessionCapabilityEntry>;
+  forkSession(sessionId: string, entryId?: string): Promise<ChatSessionEntry>;
   getPermissionMode(sessionId: string): SessionPermissionState;
   setPermissionMode(input: {
     sessionId: string;
@@ -212,10 +207,16 @@ export interface SessionCapability {
   ): () => void;
 }
 
+export interface SessionObservationCapability {
+  resolveSession(sessionId: string): Promise<ResolvedSession>;
+  getHistory(query: SessionHistoryQuery): Promise<SessionHistoryPage>;
+}
+
 export interface ChannelRuntimeCapabilities {
   readonly modelCatalog: ModelCatalogQuery;
   readonly abort: TurnAbortCapability;
-  readonly sessions: SessionCapability;
+  readonly chatSessions: ChatSessionCapability;
+  readonly sessionObservation: SessionObservationCapability;
   readonly approvals: {
     getPending(sessionId?: string): readonly ApprovalRequest[];
   };

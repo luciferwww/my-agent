@@ -1,11 +1,12 @@
 # Origin-Channel and Session-scoped Approval Delivery Specification
 
-> Status: Implemented
+> Status: Validated
 > Date: 2026-10-10
 > Owner: Project owner
 > Related Plan: [Plan](plan.md)
 > Related Decision: [ADR-019](../../../decisions/adr-019-origin-channel-and-session-scoped-approval-delivery.md)
 > Acceptance: Owner accepted the design and explicitly authorized Delivery on 2026-10-10.
+> Closeout: Owner accepted completed Delivery and validation with documented pre-existing Fitness exceptions and authorized archive on 2026-10-13.
 
 ## 1. Purpose and scope
 
@@ -364,6 +365,12 @@ Validation:
   page's Verified date to equal `2026-09-18`, while HEAD's Channels page already
   has `2026-10-08`. Neither gate was modified by this Change.
 
-Functional validation passed, but overall closeout remains In Review pending
-owner acceptance of validation and disposition of the existing Fitness
-failures. The Change is not archived or marked Validated.
+Functional validation passed. Implementation was committed and pushed in
+`5a87474`; before that commit, 263 affected Unit tests and 4 package audit tests
+passed, including subsequent chat lifecycle fixes.
+
+On 2026-10-13, the owner accepted completed Delivery and validation and
+authorized closeout and archive. The two pre-existing Fitness failures above
+are accepted exceptions for this Change, not passing checks; their repair is
+outside this scope. This Specification is Validated and archived. Current
+contracts remain owned by the stable Approval, Runtime, and Channel documents.

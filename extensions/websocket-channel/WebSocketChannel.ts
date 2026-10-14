@@ -77,6 +77,11 @@ type ClientMessage =
       permissionMode?: SessionPermissionMode;
     }
   | {
+      type: 'subscribe_session' | 'unsubscribe_session';
+      requestId: string;
+      sessionId: string;
+    }
+  | {
       type: 'get_session_permission_mode';
       sessionId: string;
     }
@@ -398,7 +403,7 @@ export class WebSocketChannel implements Channel {
 
     this.started = true;
     this.unsubscribePermissionModeChanged =
-      this.runtimeCapabilities?.sessions.onPermissionModeChanged((permission) => {
+      this.runtimeCapabilities?.chatSessions.onPermissionModeChanged((permission) => {
         this.broadcastPermissionMode(permission);
       });
     this.logger.info('websocket channel started', {
@@ -554,6 +559,10 @@ export class WebSocketChannel implements Channel {
         case 'create_session':
           await this.handleCreateSession(socket, message);
           return;
+        case 'subscribe_session':
+        case 'unsubscribe_session':
+          await this.handleSessionSubscriptionRequest(socket, message);
+          return;
         case 'get_session_permission_mode':
         case 'set_session_permission_mode':
           await this.handlePermissionModeRequest(socket, message);
@@ -667,6 +676,14 @@ export class WebSocketChannel implements Channel {
           requestId: readNonEmptyString(parsed.requestId, 'requestId'),
           permissionMode: readOptionalPermissionMode(parsed.permissionMode, 'permissionMode'),
         };
+      case 'subscribe_session':
+      case 'unsubscribe_session':
+        assertOnlyKeys(parsed, ['type', 'requestId', 'sessionId'], type);
+        return {
+          type,
+          requestId: readNonEmptyString(parsed.requestId, 'requestId'),
+          sessionId: readNonEmptyString(parsed.sessionId, 'sessionId'),
+        };
       case 'get_session_permission_mode':
         assertOnlyKeys(parsed, ['type', 'sessionId'], type);
         return {
@@ -741,6 +758,9 @@ export class WebSocketChannel implements Channel {
     }
 
     const previousSocket = this.clients.get(message.clientId);
+    if (previousSocket && previousSocket !== socket) {
+      this.clearClientSessionAudiences(message.clientId);
+    }
     this.clients.set(message.clientId, socket);
     this.socketClientIds.set(socket, message.clientId);
 
@@ -774,8 +794,13 @@ export class WebSocketChannel implements Channel {
     if (!handler) {
       throw new ProtocolError('SERVER_NOT_READY', 'Message handler is not ready.');
     }
+    if (!this.clientSessions.get(clientId)?.has(message.sessionId)) {
+      throw new ProtocolError(
+        'INVALID_MESSAGE',
+        'run_turn requires an active subscription for the Session.',
+      );
+    }
 
-    this.registerSessionAudience(clientId, message.sessionId);
     this.logger.info('run_turn received', {
       channelId: this.id,
       clientId,
@@ -848,6 +873,7 @@ export class WebSocketChannel implements Channel {
         ...(message.permissionMode === undefined ? {} : { permissionMode: message.permissionMode }),
         originClientId: clientId,
       }));
+    this.requireBoundClientId(socket);
     this.registerSessionAudience(clientId, sessionId);
     this.sendJson(socket, {
       type: 'session_created',
@@ -874,7 +900,6 @@ export class WebSocketChannel implements Channel {
             mode: message.mode,
             originClientId: clientId,
           }));
-    this.registerSessionAudience(clientId, message.sessionId);
     this.sendJson(socket, {
       type: 'session_permission_mode_changed',
       ...toWirePermissionMode(permission),
@@ -896,13 +921,54 @@ export class WebSocketChannel implements Channel {
     }
   }
 
+  private async handleSessionSubscriptionRequest(
+    socket: WebSocket,
+    message: Extract<
+      ClientMessage,
+      { type: 'subscribe_session' | 'unsubscribe_session' }
+    >,
+  ): Promise<void> {
+    const clientId = this.requireBoundClientId(socket);
+    if (message.type === 'unsubscribe_session') {
+      this.unregisterSessionAudience(clientId, message.sessionId);
+      this.sendJson(socket, {
+        type: 'session_unsubscribed',
+        requestId: message.requestId,
+        sessionId: message.sessionId,
+      });
+      return;
+    }
+
+    try {
+      await this.invokeSessionObservation((capability) =>
+        capability.resolveSession(message.sessionId));
+    } catch (error) {
+      const code = error instanceof ProtocolError || error instanceof ChannelOperationError
+        ? error.code : 'SERVER_NOT_READY';
+      this.sendJson(socket, {
+        type: 'session_subscription_error',
+        requestId: message.requestId,
+        sessionId: message.sessionId,
+        code,
+      });
+      return;
+    }
+    this.requireBoundClientId(socket);
+    this.registerSessionAudience(clientId, message.sessionId);
+    this.sendJson(socket, {
+      type: 'session_subscribed',
+      requestId: message.requestId,
+      sessionId: message.sessionId,
+    });
+  }
+
   private async handleSessionHistoryRequest(
     socket: WebSocket,
     message: Extract<ClientMessage, { type: 'get_session_history' }>,
   ): Promise<void> {
     this.requireBoundClientId(socket);
     try {
-      const page = await this.invokeSessionOperation((capability) => capability.getHistory({
+      const page = await this.invokeSessionObservation((capability) => capability.getHistory({
         sessionId: message.sessionId,
         ...(message.beforeEntryId === undefined
           ? {}
@@ -938,7 +1004,7 @@ export class WebSocketChannel implements Channel {
     try {
       const sessionId = message.sessionId;
       if (sessionId !== undefined) {
-        await this.invokeSessionOperation((capability) => capability.getSession(sessionId));
+        await this.invokeSessionObservation((capability) => capability.resolveSession(sessionId));
       }
       // Read and send synchronously after validation: later closures cannot be overtaken.
       this.requireBoundClientId(socket);
@@ -971,7 +1037,7 @@ export class WebSocketChannel implements Channel {
     socket: WebSocket,
     message: Exclude<
       ClientMessage,
-      { type: 'hello' | 'run_turn' | 'approval_resolve' | 'abort_turn' | 'get_model_catalog' | 'create_session' | 'get_session_permission_mode' | 'set_session_permission_mode' | 'get_session_approvals' }
+      { type: 'hello' | 'run_turn' | 'approval_resolve' | 'abort_turn' | 'get_model_catalog' | 'create_session' | 'subscribe_session' | 'unsubscribe_session' | 'get_session_permission_mode' | 'set_session_permission_mode' | 'get_session_approvals' }
     >,
   ): Promise<void> {
     this.requireBoundClientId(socket);
@@ -985,8 +1051,8 @@ export class WebSocketChannel implements Channel {
         return;
       }
       case 'get_session': {
-        const session = await this.invokeSessionOperation((capability) =>
-          capability.getSession(message.sessionId));
+        const session = await this.invokeSessionObservation((capability) =>
+          capability.resolveSession(message.sessionId));
         this.sendJson(socket, { type: 'session_retrieved', requestId: message.requestId, session });
         return;
       }
@@ -1027,11 +1093,11 @@ export class WebSocketChannel implements Channel {
   }
 
   private async invokeSessionOperation<T>(
-    operation: (capability: ChannelRuntimeCapabilities['sessions']) => Promise<T> | T,
+    operation: (capability: ChannelRuntimeCapabilities['chatSessions']) => Promise<T> | T,
   ): Promise<T> {
-    const capability = this.runtimeCapabilities?.sessions;
+    const capability = this.runtimeCapabilities?.chatSessions;
     if (!capability) {
-      throw new ProtocolError('SERVER_NOT_READY', 'Runtime Session capability is not bound.');
+      throw new ProtocolError('SERVER_NOT_READY', 'Runtime Chat Session capability is not bound.');
     }
     try {
       return await operation(capability);
@@ -1039,7 +1105,30 @@ export class WebSocketChannel implements Channel {
       if (error instanceof ChannelOperationError) {
         throw new ProtocolError(error.code, error.message);
       }
-      throw new ProtocolError('SERVER_NOT_READY', 'Runtime Session capability is not ready.');
+      throw new ProtocolError('SERVER_NOT_READY', 'Runtime Chat Session capability is not ready.');
+    }
+  }
+
+  private async invokeSessionObservation<T>(
+    operation: (capability: ChannelRuntimeCapabilities['sessionObservation']) => Promise<T> | T,
+  ): Promise<T> {
+    const capability = this.runtimeCapabilities?.sessionObservation;
+    if (!capability) {
+      throw new ProtocolError(
+        'SERVER_NOT_READY',
+        'Runtime Session observation capability is not bound.',
+      );
+    }
+    try {
+      return await operation(capability);
+    } catch (error) {
+      if (error instanceof ChannelOperationError) {
+        throw new ProtocolError(error.code, error.message);
+      }
+      throw new ProtocolError(
+        'SERVER_NOT_READY',
+        'Runtime Session observation capability is not ready.',
+      );
     }
   }
 
@@ -1087,18 +1176,7 @@ export class WebSocketChannel implements Channel {
 
     this.clients.delete(clientId);
 
-    const sessionAudienceKeys = this.clientSessions.get(clientId);
-    if (sessionAudienceKeys) {
-      for (const sessionId of sessionAudienceKeys) {
-        const clientIds = this.sessions.get(sessionId);
-        if (!clientIds) continue;
-        clientIds.delete(clientId);
-        if (clientIds.size === 0) {
-          this.sessions.delete(sessionId);
-        }
-      }
-      this.clientSessions.delete(clientId);
-    }
+    this.clearClientSessionAudiences(clientId);
 
     this.logger.info('client disconnected', {
       channelId: this.id,
@@ -1107,6 +1185,9 @@ export class WebSocketChannel implements Channel {
   }
 
   private requireBoundClientId(socket: WebSocket): string {
+    if (socket.readyState !== WebSocket.OPEN) {
+      throw new ProtocolError('SERVER_NOT_READY', 'Connection is no longer open.');
+    }
     const clientId = this.socketClientIds.get(socket);
     if (!clientId) {
       throw new ProtocolError('SERVER_NOT_READY', 'hello must complete before business messages.');
@@ -1141,6 +1222,36 @@ export class WebSocketChannel implements Channel {
       sessionAudienceSize: clientIds.size,
       clientSessionCount: sessionIds.size,
     });
+  }
+
+  private unregisterSessionAudience(clientId: string, sessionId: string): void {
+    const clientIds = this.sessions.get(sessionId);
+    clientIds?.delete(clientId);
+    if (clientIds?.size === 0) {
+      this.sessions.delete(sessionId);
+    }
+
+    const sessionIds = this.clientSessions.get(clientId);
+    sessionIds?.delete(sessionId);
+    if (sessionIds?.size === 0) {
+      this.clientSessions.delete(clientId);
+    }
+
+    this.logger.debug('session audience unregistered', {
+      channelId: this.id,
+      clientId,
+      sessionId,
+      sessionAudienceSize: clientIds?.size ?? 0,
+      clientSessionCount: sessionIds?.size ?? 0,
+    });
+  }
+
+  private clearClientSessionAudiences(clientId: string): void {
+    const sessionIds = this.clientSessions.get(clientId);
+    if (!sessionIds) return;
+    for (const sessionId of [...sessionIds]) {
+      this.unregisterSessionAudience(clientId, sessionId);
+    }
   }
 
   private makeInteractionAdapter(): ChannelInteractionAdapter {

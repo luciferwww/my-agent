@@ -6,6 +6,7 @@ import type {
   ConversationItem,
   ConversationSegment,
 } from './conversation';
+import { parseTaskSubagentSessionId } from './conversation';
 
 export type HistoryStatus = 'notLoaded' | 'loading' | 'loaded' | 'error';
 
@@ -272,6 +273,7 @@ export function buildHistoryItems(records: readonly HistoryRecord[]): Presentati
           segment.status = block.status;
           segment.resultContent = String(block.content ?? '');
           segment.isError = block.status === 'error';
+          attachSubagentHandle(segment);
         } else {
           unmatchedResults.set(block.tool_use_id, {
             content: String(block.content ?? ''),
@@ -354,13 +356,25 @@ export function buildHistoryItems(records: readonly HistoryRecord[]): Presentati
           expanded: false,
           resultExpanded: false,
         };
+        attachSubagentHandle(segment);
         toolCalls.set(block.id, segment);
         turn.segments!.push(segment);
       }
+
     }
     items.push(turn);
   }
   return items;
+}
+
+function attachSubagentHandle(segment: PresentationSegment): void {
+  const sessionId = parseTaskSubagentSessionId(
+    segment.name,
+    segment.resultContent ?? '',
+  );
+  if (!sessionId) return;
+  segment.subagentSessionId = sessionId;
+  segment.subagentStatus = 'terminal';
 }
 
 export function mergeRealtimeWithHistory(

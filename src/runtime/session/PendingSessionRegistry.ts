@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { SessionError } from '../../core/session/errors.js';
 
-export interface PendingSessionRegistration {
-  sessionId: string;
-  createdAt: number;
+interface PendingChatSession {
+  readonly sessionId: string;
+  readonly createdAt: number;
 }
 
 export interface PendingSessionRegistryOptions {
@@ -18,7 +18,7 @@ const DEFAULT_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_CAPACITY = 4096;
 
 export class PendingSessionRegistry {
-  private readonly registrations = new Map<string, PendingSessionRegistration>();
+  private readonly registrations = new Map<string, PendingChatSession>();
   private readonly ttlMs: number;
   private readonly capacity: number;
   private readonly now: () => number;
@@ -40,7 +40,7 @@ export class PendingSessionRegistry {
     }
   }
 
-  create(): PendingSessionRegistration {
+  create(): PendingChatSession {
     const now = this.now();
     this.removeExpired(now);
     if (this.registrations.size >= this.capacity) {
@@ -58,7 +58,7 @@ export class PendingSessionRegistry {
     return registration;
   }
 
-  get(sessionId: string): PendingSessionRegistration | undefined {
+  get(sessionId: string): PendingChatSession | undefined {
     this.removeExpired(this.now());
     return this.registrations.get(sessionId);
   }

@@ -303,7 +303,7 @@ describe('CliChannel model commands', () => {
       state: 'available',
       reference: { providerId: 'relay', modelId: 'model-a' },
     },
-    createSession: ChannelRuntimeCapabilities['sessions']['createSession'] = async () => ({
+    createSession: ChannelRuntimeCapabilities['chatSessions']['createSession'] = async () => ({
       sessionId: CLI_SESSION_ID,
       permission: MANUAL_PERMISSION,
     }),
@@ -348,13 +348,9 @@ describe('CliChannel model commands', () => {
         querySessionsNeedingAbort: () => [],
         abortTurn: () => ({ aborted: false, dropped: 0 }),
       },
-      sessions: {
+      chatSessions: {
         createSession,
         listSessions: async () => [],
-        getSession: async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 }),
-        getHistory: async ({ sessionId }) => ({
-          sessionId, items: [], nextCursor: null, hasMore: false,
-        }),
         renameSession: async (sessionId, title) => ({
           sessionId,
           createdAt: 1,
@@ -382,6 +378,16 @@ describe('CliChannel model commands', () => {
           ...(originClientId ? { changedByClientId: originClientId } : {}),
         }),
         onPermissionModeChanged: () => () => undefined,
+      },
+      sessionObservation: {
+        resolveSession: async (sessionId) => ({
+          kind: 'chat',
+          sessionId,
+          entry: { sessionId, createdAt: 1, updatedAt: 1 },
+        }),
+        getHistory: async ({ sessionId }) => ({
+          sessionId, items: [], nextCursor: null, hasMore: false,
+        }),
       },
     };
   }
@@ -577,7 +583,11 @@ describe('CliChannel model commands', () => {
       permission: MANUAL_PERMISSION,
     }));
     const listSessions = vi.fn(async () => [entry]);
-    const getSession = vi.fn(async () => entry);
+    const resolveSession = vi.fn(async () => ({
+      kind: 'chat' as const,
+      sessionId: entry.sessionId,
+      entry,
+    }));
     const renameSession = vi.fn(async (_sessionId: string, title: string | null) => {
       entry = {
         ...entry,
@@ -588,16 +598,19 @@ describe('CliChannel model commands', () => {
     });
     const deleteSession = vi.fn(async () => undefined);
     const baseCapabilities = catalogCapabilities(undefined, createSession);
-    const getHistory = vi.fn(baseCapabilities.sessions.getHistory);
+    const getHistory = vi.fn(baseCapabilities.sessionObservation.getHistory);
     const runtimeCapabilities: ChannelRuntimeCapabilities = {
       ...baseCapabilities,
-      sessions: {
-        ...baseCapabilities.sessions,
+      chatSessions: {
+        ...baseCapabilities.chatSessions,
         listSessions,
-        getSession,
-        getHistory,
         renameSession,
         deleteSession,
+      },
+      sessionObservation: {
+        ...baseCapabilities.sessionObservation,
+        resolveSession,
+        getHistory,
       },
     };
     const fixture = await startInteractive(undefined, runtimeCapabilities);
@@ -658,8 +671,8 @@ describe('CliChannel model commands', () => {
     });
     const fixture = await startInteractive(undefined, {
       ...baseCapabilities,
-      sessions: {
-        ...baseCapabilities.sessions,
+      chatSessions: {
+        ...baseCapabilities.chatSessions,
         getPermissionMode: (sessionId) => ({ sessionId, mode, changedAt: 1 }),
         setPermissionMode,
       },
@@ -950,19 +963,21 @@ describe('CliChannel model commands', () => {
     }));
     const fixture = await startInteractive(undefined, {
       ...baseCapabilities,
-      sessions: {
-        ...baseCapabilities.sessions,
+      chatSessions: {
+        ...baseCapabilities.chatSessions,
         listSessions: async () => [{
           sessionId: CLI_SESSION_ID,
           createdAt: 1,
           updatedAt: 2,
           title: 'Existing',
         }],
-        getSession: async (sessionId) => ({
+      },
+      sessionObservation: {
+        ...baseCapabilities.sessionObservation,
+        resolveSession: async (sessionId) => ({
+          kind: 'chat',
           sessionId,
-          createdAt: 1,
-          updatedAt: 2,
-          title: 'Existing',
+          entry: { sessionId, createdAt: 1, updatedAt: 2, title: 'Existing' },
         }),
         getHistory,
       },
@@ -1005,8 +1020,8 @@ describe('CliChannel model commands', () => {
     }));
     const fixture = await startInteractive(undefined, {
       ...baseCapabilities,
-      sessions: {
-        ...baseCapabilities.sessions,
+      sessionObservation: {
+        ...baseCapabilities.sessionObservation,
         getHistory: async ({ sessionId }) => ({
           sessionId,
           items,
@@ -1031,8 +1046,8 @@ describe('CliChannel model commands', () => {
     const baseCapabilities = catalogCapabilities();
     const fixture = await startInteractive(undefined, {
       ...baseCapabilities,
-      sessions: {
-        ...baseCapabilities.sessions,
+      sessionObservation: {
+        ...baseCapabilities.sessionObservation,
         getHistory: async () => {
           throw new Error('history offline');
         },
@@ -1416,16 +1431,12 @@ describe('CliChannel Ctrl+C / abort handling', () => {
           }),
         },
         abort: { querySessionsNeedingAbort: query, abortTurn },
-        sessions: {
+        chatSessions: {
           createSession: async () => ({
             sessionId: CLI_SESSION_ID,
             permission: MANUAL_PERMISSION,
           }),
           listSessions: async () => [],
-          getSession: async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 }),
-          getHistory: async ({ sessionId }) => ({
-            sessionId, items: [], nextCursor: null, hasMore: false,
-          }),
           renameSession: async (sessionId, title) => ({
             sessionId,
             createdAt: 1,
@@ -1448,6 +1459,16 @@ describe('CliChannel Ctrl+C / abort handling', () => {
           getPermissionMode: () => MANUAL_PERMISSION,
           setPermissionMode: ({ sessionId, mode }) => ({ sessionId, mode, changedAt: 2 }),
           onPermissionModeChanged: () => () => undefined,
+        },
+        sessionObservation: {
+          resolveSession: async (sessionId) => ({
+            kind: 'chat',
+            sessionId,
+            entry: { sessionId, createdAt: 1, updatedAt: 1 },
+          }),
+          getHistory: async ({ sessionId }) => ({
+            sessionId, items: [], nextCursor: null, hasMore: false,
+          }),
         },
       },
       abortTurn,

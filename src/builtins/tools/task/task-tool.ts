@@ -148,7 +148,7 @@ export function createTaskTool(deps: TaskToolDeps): Tool {
 /**
  * Map `SubagentTerminalResult.outcome` to a canonical Tool output.
  *
- * - `'ok'`             → success + plain text
+ * - `'ok'`             → success + Child handle + plain text
  * - `'max_llm_calls'`  → failed + partial-text hint
  * - `'aborted'`        → failed + "aborted" message. Produced when the parent
  *                        turn's AbortController fires while the child is still
@@ -158,22 +158,28 @@ export function createTaskTool(deps: TaskToolDeps): Tool {
  * - `'error'`          → failed + the failure reason
  */
 function formatSubagentResult(result: SubagentTerminalResult): ToolExecutionOutput {
+  const format = (content: string): string =>
+    `Subagent completed.\nsessionId: ${result.sessionId}\nResult:\n${content}`;
   switch (result.outcome) {
     case 'ok':
-      return { outcome: 'success', content: result.text };
+      return { outcome: 'success', content: format(result.text) };
     case 'max_llm_calls':
       return {
         outcome: 'failed',
-        content:
+        content: format(
           'Subagent stopped after reaching the LLM call limit before completing. ' +
           `Partial output:\n${result.text}`,
+        ),
       };
     case 'aborted':
-      return { outcome: 'failed', content: 'Subagent was aborted before completing.' };
+      return {
+        outcome: 'failed',
+        content: format('Subagent was aborted before completing.'),
+      };
     case 'error':
       return {
         outcome: 'failed',
-        content: `Subagent failed: ${result.failure?.message ?? 'unknown error'}`,
+        content: format(`Subagent failed: ${result.failure?.message ?? 'unknown error'}`),
       };
   }
 }

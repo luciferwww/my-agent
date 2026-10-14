@@ -7,11 +7,12 @@
 ## 草稿与当前 Change 的边界
 
 普通 Turn 的候选契约和模块改动已提炼到
-[Accepted Plan](../changes/active/session-scoped-approval-delivery/plan.md) 与
-[Accepted Specification](../changes/active/session-scoped-approval-delivery/specification.md)。
+[Completed Plan](../changes/archive/session-scoped-approval-delivery/plan.md) 与
+[Validated Specification](../changes/archive/session-scoped-approval-delivery/specification.md)。
 评审普通 Turn 时以这些 Change 文档为提案入口，不从本草稿另推导实现要求；
 所有者已于 2026-10-10 接受这些文档并明确授权 Delivery；
-当前 Stable Authority 的同步仍以实现和验证结果为准。
+该 Change 已于 2026-10-13 经所有者确认完成、接受验证并归档；
+当前契约以已同步的 Stable Authority 为准，归档文档仅保留交付依据。
 
 下文 Automation fanout、Run 状态、Child Session 和多 Channel 聚合均为未来
 Automation Change 的研究输入，不属于当前 Approval Change 的“第一版”交付范围。
@@ -456,7 +457,7 @@ Automation Run 列表可以复用 `waiting_approval` 作为提醒，但完整 re
 共享 Approval 数据和查询契约归 `core/approval`；`core/channel` 负责集成接口。
 WebSocket wire message、CLI prompt 和浏览器适配是各模块的实施改动，
 不构成共享 Approval 协议。当前 Change 的具体划分见
-[Specification](../changes/active/session-scoped-approval-delivery/specification.md)。
+[Specification](../changes/archive/session-scoped-approval-delivery/specification.md)。
 
 当前 Approval Change 的改动面以链接的 Plan/Specification 为准。下列包含
 Automation 的项目仅描述未来研究范围：

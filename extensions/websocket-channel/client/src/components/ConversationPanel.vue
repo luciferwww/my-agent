@@ -22,6 +22,7 @@ const props = defineProps<{
   historyStatus: string;
   displayedChatItems: ConversationItem[];
   sessionId: string;
+  openedChildSessionId: string;
   historyHasMore: boolean;
   historyError: string;
   canRetryHistory: boolean;
@@ -32,6 +33,7 @@ const emit = defineEmits<{
   loadEarlierHistory: [];
   retryHistory: [];
   resolveApproval: [segment: ConversationSegment, decision: 'allow' | 'deny'];
+  openSubagent: [sessionId: string];
 }>();
 
 const chatLogElement = ref<HTMLElement>();
@@ -180,7 +182,9 @@ defineExpose({
       :key="item.id"
       :item="item"
       :is-connected="isConnected"
+      :opened-child-session-id="openedChildSessionId"
       @resolve-approval="(segment, decision) => emit('resolveApproval', segment, decision)"
+      @open-subagent="sessionId => emit('openSubagent', sessionId)"
     />
   </section>
 </template>

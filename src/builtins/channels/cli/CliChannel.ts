@@ -12,9 +12,10 @@ import type {
   ChannelRuntimeCapabilities,
   ModelCatalogEntry,
   ModelCatalogSnapshot,
-  SessionCapability,
+  ChatSessionCapability,
   SessionHistoryMessage,
   SessionHistoryPage,
+  SessionObservationCapability,
   TurnInteractionResponse,
 } from '../../../core/channel/index.js';
 import {
@@ -915,8 +916,9 @@ export class CliChannel implements Channel {
       return false;
     }
     this.breakStream();
-    const capability = this.runtimeCapabilities?.sessions;
-    if (!capability) {
+    const capability = this.runtimeCapabilities?.chatSessions;
+    const observation = this.runtimeCapabilities?.sessionObservation;
+    if (!capability || !observation) {
       this.output.write(red('[session unavailable] Runtime Session capability is not bound.\n'));
       return true;
     }
@@ -960,7 +962,7 @@ export class CliChannel implements Channel {
       if (result.value.kind === 'new') {
         this.selectNewSession();
       } else {
-        await this.selectPersistedSession(result.value.sessionId, capability);
+        await this.selectPersistedSession(result.value.sessionId, observation);
       }
       return true;
     }
@@ -976,7 +978,7 @@ export class CliChannel implements Channel {
         this.renderSessionUsage();
         return true;
       }
-      await this.selectPersistedSession(sessionId, capability);
+      await this.selectPersistedSession(sessionId, observation);
       return true;
     }
     if (payload.startsWith('rename ')) {
@@ -1023,13 +1025,17 @@ export class CliChannel implements Channel {
 
   private async selectPersistedSession(
     sessionId: string,
-    capability: SessionCapability,
+    capability: SessionObservationCapability,
   ): Promise<void> {
-    const session = await capability.getSession(sessionId);
+    const session = await capability.resolveSession(sessionId);
+    if (session.kind !== 'chat') {
+      throw new Error(`Session "${sessionId}" is not a Chat Session.`);
+    }
     this.sessionId = session.sessionId;
+    const title = session.entry?.title;
     this.output.write(cyan(
-      `[session] current ${session.sessionId}${session.title
-        ? ` ${formatTerminalText(session.title)}`
+      `[session] current ${session.sessionId}${title
+        ? ` ${formatTerminalText(title)}`
         : ''}.\n`,
     ));
     try {
@@ -1057,7 +1063,7 @@ export class CliChannel implements Channel {
   private async handlePermissionCommand(input: string): Promise<boolean> {
     if (input !== '/permission' && !input.startsWith('/permission ')) return false;
     this.breakStream();
-    const capability = this.runtimeCapabilities?.sessions;
+    const capability = this.runtimeCapabilities?.chatSessions;
     if (!capability) {
       this.output.write(red('[permission unavailable] Runtime Session capability is not bound.\n'));
       return true;
@@ -1102,7 +1108,7 @@ export class CliChannel implements Channel {
 
   private async applyPermissionMode(
     mode: 'manual' | 'allow_all',
-    capability: SessionCapability,
+    capability: ChatSessionCapability,
   ): Promise<void> {
     const sessionId = this.sessionId;
     if (!sessionId) {
@@ -1231,7 +1237,7 @@ export class CliChannel implements Channel {
   private async getOrCreateSessionId(): Promise<string> {
     if (this.sessionId) return this.sessionId;
     // Entering the new-Session state does not allocate an ID; the first message does.
-    const capability = this.runtimeCapabilities?.sessions;
+    const capability = this.runtimeCapabilities?.chatSessions;
     if (!capability) {
       throw new Error('Runtime Session capability is not bound.');
     }

@@ -2,6 +2,7 @@ import { SessionError } from '../../core/session/errors.js';
 import type { SessionManager } from '../../core/session/SessionManager.js';
 import type {
   ContentBlock,
+  ResolvedSession,
   SessionEntry,
   SessionHistoryPage,
   SessionHistoryQuery,
@@ -16,10 +17,11 @@ export type SessionPersistence = Pick<
   | 'deleteSession'
   | 'forkSession'
   | 'getHistory'
-  | 'getSession'
+  | 'getPersistedSession'
   | 'listSessions'
   | 'materializeSession'
   | 'renameSession'
+  | 'resolveSession'
   | 'unarchiveSession'
 >;
 
@@ -54,17 +56,29 @@ export class SessionCoordinator {
     return this.sessionManager.listSessions(input);
   }
 
-  async getSession(sessionId: string): Promise<SessionEntry> {
-    return this.requirePersistedSession(sessionId);
+  async resolveSession(sessionId: string): Promise<ResolvedSession> {
+    const resolved = this.sessionManager.resolveSession(sessionId);
+    if (resolved) return resolved;
+    const pending = this.pendingSessions.get(sessionId);
+    if (pending) return { kind: 'chat', sessionId };
+
+    throw new SessionError('SESSION_NOT_FOUND', `Session "${sessionId}" was not found.`);
   }
 
   getHistory(query: SessionHistoryQuery): SessionHistoryPage {
-    this.requirePersistedSession(query.sessionId);
-    return this.sessionManager.getHistory(query);
+    const resolved = this.sessionManager.resolveSession(query.sessionId);
+    if (resolved) {
+      if (resolved.entry) return this.sessionManager.getHistory(query);
+      return this.emptyHistory(query.sessionId);
+    }
+    if (this.pendingSessions.get(query.sessionId)) {
+      return this.emptyHistory(query.sessionId);
+    }
+    throw new SessionError('SESSION_NOT_FOUND', `Session "${query.sessionId}" was not found.`);
   }
 
   assertLiveSession(sessionId: string): void {
-    const persisted = this.sessionManager.getSession(sessionId);
+    const persisted = this.sessionManager.getPersistedSession(sessionId);
     if (persisted) {
       if (persisted.archivedAt !== undefined) {
         throw new SessionError('SESSION_ARCHIVED', `Session "${sessionId}" is archived.`);
@@ -111,7 +125,7 @@ export class SessionCoordinator {
     content: string | ContentBlock[],
   ): Promise<SessionMessageAdmission> {
     return this.withAdmissionGate(sessionId, async () => {
-      const persisted = this.sessionManager.getSession(sessionId);
+      const persisted = this.sessionManager.getPersistedSession(sessionId);
       if (persisted) {
         if (persisted.archivedAt !== undefined) {
           throw new SessionError('SESSION_ARCHIVED', `Session "${sessionId}" is archived.`);
@@ -136,7 +150,7 @@ export class SessionCoordinator {
   }
 
   private requirePersistedSession(sessionId: string): SessionEntry {
-    const entry = this.sessionManager.getSession(sessionId);
+    const entry = this.sessionManager.getPersistedSession(sessionId);
     if (!entry) {
       throw new SessionError('SESSION_NOT_FOUND', `Session "${sessionId}" was not found.`);
     }
@@ -148,6 +162,15 @@ export class SessionCoordinator {
     if (this.isBusy(sessionId)) {
       throw new SessionError('SESSION_BUSY', `Session "${sessionId}" is busy.`);
     }
+  }
+
+  private emptyHistory(sessionId: string): SessionHistoryPage {
+    return {
+      sessionId,
+      items: [],
+      nextCursor: null,
+      hasMore: false,
+    };
   }
 
   private async withAdmissionGate<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
