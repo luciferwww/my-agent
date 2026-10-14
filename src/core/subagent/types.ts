@@ -7,7 +7,7 @@ import type { ModelReference, ResolutionFailureCategory } from '../model-resolut
  * Static configuration for a named subagent profile.
  *
  * `agentDir` is the **absolute path** to the role-personality directory
- * (`<agentHome>/subagents/<id>/`). The config-loader always
+ * (`<agentHome>/agents/<id>/`). The config-loader always
  * derives it from `id` + `agentHome`; users do not set it directly.
  * Whether the directory actually exists is probed at run time by the
  * internal Child executor (deciding anonymous vs named context-files behavior).
@@ -24,8 +24,6 @@ export interface SubagentProfile {
     /** Additive semantics: listed tools are removed on top of `allow`. */
     deny?: string[];
   };
-  /** LLM-call budget for one subagent run. Inherits from parent when omitted. */
-  maxLlmCalls?: number;
 }
 
 export type SubagentRole = 'main' | 'orchestrator' | 'leaf';

@@ -19,6 +19,7 @@ import { classifyRuntimeError } from './errors.js';
 import { createApplicationToolPolicy } from './tool-approval-policy.js';
 import type { RuntimeAppOptions, RuntimeBootstrapResult, RuntimeDependencies, RuntimeEvent } from './types.js';
 import type { RuntimeDeadlineDriver } from './runtime-deadline.js';
+import { DEFAULT_MAX_SUBAGENT_DEPTH } from '../core/subagent/index.js';
 
 const log = Logger.get('RuntimeBootstrap');
 
@@ -45,8 +46,9 @@ export async function bootstrapRuntime(
       ?? options.applicationConfig
       ?? {
         llm: {},
-        runner: DEFAULT_RUNNER_CONFIG,
         agents: {
+          ...DEFAULT_RUNNER_CONFIG,
+          maxSubagentDepth: DEFAULT_MAX_SUBAGENT_DEPTH,
           defaults: createDefaultAgentConfig(),
           list: [],
         },
@@ -56,7 +58,6 @@ export async function bootstrapRuntime(
     const appConfig: AppConfig = {
       agentHome: options.agentHome,
       llm: applicationConfig.llm,
-      runner: applicationConfig.runner,
       agents: applicationConfig.agents,
       logger: applicationConfig.logger,
     };
@@ -141,7 +142,13 @@ export async function bootstrapRuntime(
       });
     }
 
-    const toolPolicy = createApplicationToolPolicy(resolvedConfig.tools, options.agentHome);
+    const rootTools = appConfig.agents.maxSubagentDepth === 0
+      ? {
+          allow: resolvedConfig.tools.allow,
+          deny: [...(resolvedConfig.tools.deny ?? []), 'task'],
+        }
+      : resolvedConfig.tools;
+    const toolPolicy = createApplicationToolPolicy(rootTools, options.agentHome);
 
     const agentRunner = deps.createAgentRunner({
       sessionManager,
@@ -165,7 +172,12 @@ export async function bootstrapRuntime(
     return {
       resources: {
         appConfig,
-        runnerConfig: appConfig.runner,
+        runnerConfig: {
+          steeringEnabled: appConfig.agents.steeringEnabled,
+          ...(appConfig.agents.maxLlmCallsPerTurn === undefined
+            ? {}
+            : { maxLlmCallsPerTurn: appConfig.agents.maxLlmCallsPerTurn }),
+        },
         resolvedConfig,
         agentHome: options.agentHome,
         sessionManager,

@@ -1,16 +1,9 @@
 import type { ModelReference } from '../../core/model-resolution/index.js';
 import type { LLMConfig } from '../../builtins/providers/builtin/index.js';
-import type { RunnerConfig } from '../../core/runner/config.js';
 import type { MemoryConfig } from '../../core/memory/index.js';
 import type { ToolPolicyConfig } from '../../core/tools/index.js';
 import type { AgentContextConfig } from '../../core/agent-context/index.js';
 import type { CompactionConfig } from '../../core/runner/index.js';
-import type {
-  SubagentConfig,
-  SubagentConfigEntry,
-  SubagentModelSelection,
-  SubagentToolsConfig,
-} from '../../core/subagent/index.js';
 import type { LoggerConfig } from '../logger/index.js';
 
 export type DeepPartial<T> = {
@@ -24,11 +17,6 @@ export type {
   ToolPolicyConfig as ToolsConfig,
   AgentContextConfig,
   CompactionConfig,
-  SubagentConfig,
-  SubagentConfig as SubagentsConfig,
-  SubagentConfigEntry,
-  SubagentModelSelection,
-  SubagentToolsConfig,
   LoggerConfig,
   LoggerConfig as LoggerModuleConfig,
 };
@@ -45,15 +33,19 @@ export interface AgentDefaults {
   readonly tools: ToolPolicyConfig;
   readonly context: AgentContextConfig;
   readonly compaction: CompactionConfig;
-  readonly subagents: SubagentConfig;
 }
 
 export interface AgentEntry extends DeepPartial<AgentDefaults> {
   readonly id: string;
+  readonly description: string;
   readonly default?: boolean;
+  readonly model?: ModelReference;
 }
 
 export interface AgentsConfig {
+  readonly steeringEnabled: boolean;
+  readonly maxLlmCallsPerTurn?: number;
+  readonly maxSubagentDepth: number;
   readonly defaults: AgentDefaults;
   readonly list: readonly AgentEntry[];
 }
@@ -61,14 +53,12 @@ export interface AgentsConfig {
 export interface AppConfig {
   readonly agentHome: string;
   readonly llm: LLMConfig;
-  readonly runner: RunnerConfig;
   readonly agents: AgentsConfig;
   readonly logger: LoggerConfig;
 }
 
 export interface ApplicationConfigProjection {
   readonly llm: LLMConfig;
-  readonly runner: RunnerConfig;
   readonly agents: AgentsConfig;
   readonly logger: LoggerConfig;
 }
@@ -78,8 +68,10 @@ interface AgentApplicationDocument {
     readonly defaultModel?: ModelReference;
     readonly builtin?: unknown;
   };
-  readonly runner?: Partial<RunnerConfig>;
   readonly agents?: {
+    readonly steeringEnabled?: boolean;
+    readonly maxLlmCallsPerTurn?: number;
+    readonly maxSubagentDepth?: number;
     readonly defaults?: DeepPartial<AgentDefaults>;
     readonly list?: readonly AgentEntry[];
   };

@@ -30,7 +30,6 @@ export interface ActiveParentTurn {
   readonly turnId: string;
   readonly signal: AbortSignal;
   readonly effectiveReference: ModelReference;
-  readonly effectiveMaxLlmCalls?: number;
   readonly contextFiles: readonly ContextFile[];
   readonly registrySnapshot: RegistrySnapshot;
   readonly approvalCapability: CurrentCallApprovalCapability;
@@ -43,6 +42,7 @@ export interface CreateSubagentDelegationPortParams {
   readonly routeContextByTurn: Map<string, MessageRouteContext>;
   readonly sessionManager: SessionManager;
   readonly maxDepth: number;
+  readonly maxLlmCallsPerTurn?: number;
   readonly executor: SubagentExecutor;
   readonly onEvent: (event: AgentEvent) => void;
 }
@@ -127,7 +127,7 @@ export function createSubagentDelegationPort(
           canSpawn: capabilities.canSpawn,
           childSessionId,
           childTurnId,
-          parentMaxLlmCalls: parent.effectiveMaxLlmCalls,
+          maxLlmCallsPerTurn: params.maxLlmCallsPerTurn,
           signal: request.signal,
           toolProjection: parent.registrySnapshot.tools,
           hookProjection: parent.registrySnapshot.hooks,

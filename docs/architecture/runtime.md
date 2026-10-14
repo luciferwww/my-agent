@@ -87,7 +87,7 @@ interface RuntimeAppOptions {
 }
 ```
 
-`agentHome` is the sole required architecture path input. Agent Context, Sessions, Memory and recall, Subagent profiles, logs, temporary state, prompt path context, Environment Tool relative paths, default Search roots, and default Exec `cwd` use `agentHome`. Startup CWD is used only by the standalone Host to resolve a relative Agent Home CLI value before Runtime creation. A supported Host supplies generic `startupContext`; Runtime Bootstrap owns application projection selection, environment override derivation, and Extension Acquisition. Direct library callers may omit it and use explicit `applicationConfig`, `envOverrides`, and `loadedUnits`. `dependencies` is a narrow construction seam used by tests and embedding.
+`agentHome` is the sole required architecture path input. Root Agent Context, configured-Agent Context under `agents/<agentId>/`, Sessions, Memory and recall, logs, temporary state, prompt path context, Environment Tool relative paths, default Search roots, and default Exec `cwd` use `agentHome`. Startup CWD is used only by the standalone Host to resolve a relative Agent Home CLI value before Runtime creation. A supported Host supplies generic `startupContext`; Runtime Bootstrap owns application projection selection, environment override derivation, and Extension Acquisition. Direct library callers may omit it and use explicit `applicationConfig`, `envOverrides`, and `loadedUnits`. `dependencies` is a narrow construction seam used by tests and embedding.
 
 Runtime Builder exclusively claims `<agentHome>/.my-agent.pid` before Bootstrap. A live owner causes startup to fail; a lock whose PID no longer exists is reclaimed once. Startup failure and completed shutdown release only the lock instance they acquired. This enforces one Runtime process per Agent Home while the Session Store's in-process queue and temporary-file replacement continue to own concurrent mutation and file integrity.
 
@@ -192,7 +192,7 @@ Media intake is atomic. Any attachment validation or optimization failure reject
 
 `inFlightSessions` is the per-session serialization gate. Sessions are serialized independently, so different Sessions can run concurrently.
 
-When `runner.steeringEnabled` is true, Runner may request a claim at a safe point after persistence and before another permitted Model call. Runtime synchronously peeks from the FIFO head and splices the largest contiguous compatible prefix:
+When `agents.steeringEnabled` is true, Runner may request a claim at a safe point after persistence and before another permitted Model call. Runtime synchronously peeks from the FIFO head and splices the largest contiguous compatible prefix:
 
 - an omitted Model reference is compatible;
 - an explicit reference must match the active canonical Provider and Model IDs;

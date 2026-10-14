@@ -1,6 +1,6 @@
 export interface RunnerConfig {
   readonly steeringEnabled: boolean;
-  readonly maxLlmCalls?: number;
+  readonly maxLlmCallsPerTurn?: number;
 }
 
 export const DEFAULT_RUNNER_CONFIG: RunnerConfig = Object.freeze({
@@ -25,7 +25,7 @@ export function validateRunnerConfig(
   }
 
   for (const field of Object.keys(value)) {
-    if (field !== 'steeringEnabled' && field !== 'maxLlmCalls') {
+    if (field !== 'steeringEnabled' && field !== 'maxLlmCallsPerTurn') {
       throw new RunnerConfigValidationError(field);
     }
   }
@@ -37,12 +37,15 @@ export function validateRunnerConfig(
     throw new RunnerConfigValidationError('steeringEnabled');
   }
 
-  const maxLlmCalls = value['maxLlmCalls'];
+  const maxLlmCallsPerTurn = value['maxLlmCallsPerTurn'];
   if (
-    maxLlmCalls !== undefined
-    && (!Number.isInteger(maxLlmCalls) || (maxLlmCalls as number) <= 0)
+    maxLlmCallsPerTurn !== undefined
+    && (
+      !Number.isSafeInteger(maxLlmCallsPerTurn)
+      || (maxLlmCallsPerTurn as number) <= 0
+    )
   ) {
-    throw new RunnerConfigValidationError('maxLlmCalls');
+    throw new RunnerConfigValidationError('maxLlmCallsPerTurn');
   }
 }
 

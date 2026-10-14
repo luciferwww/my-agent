@@ -51,12 +51,12 @@ describe('FT-03 Runner input boundary', () => {
     expect(defaultComposition).not.toContain('DEFAULT_RUNTIME_CONFIG');
     expect(defaultComposition).not.toContain('DEFAULT_RUNNER_CONFIG');
     expect(defaultComposition).not.toContain('maxLlmCalls: 12');
-    expect(configLoader).toContain('validateRunnerConfigSection(document.runner');
+    expect(configLoader).toContain('validateRunnerConfigSection({');
     expect(configLoader).toContain("rejectGlobalPolicyConfig(value.defaults, 'agents.defaults')");
     expect(runnerConfig).toContain('export interface RunnerConfig');
     expect(runnerConfig).toContain('readonly steeringEnabled: boolean');
     expect(runnerConfig).toContain('steeringEnabled: false');
-    expect(runnerConfig).toContain('readonly maxLlmCalls?: number');
+    expect(runnerConfig).toContain('readonly maxLlmCallsPerTurn?: number');
     expect(runner).not.toContain('DEFAULT_MAX_LLM_CALLS');
     expect(
       productionSources.filter((source) => source.content.includes('inTurnMessageMode')),

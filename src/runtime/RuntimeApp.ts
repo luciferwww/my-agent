@@ -1146,9 +1146,7 @@ export class RuntimeApp {
 
   /**
    * Snapshot the projection of `subagentProfiles` used for the
-   * `<available-subagents>` system prompt section. Caller (typically
-   * the prompt-factory layer) decides whether to inject it based on
-   * `subagents.enabled` and the prompt mode.
+   * `<available-subagents>` system prompt section.
    */
   getAvailableSubagents(): AvailableSubagentEntry[] {
     return collectAvailableSubagents(this.subagentProfiles);
@@ -1433,13 +1431,10 @@ export class RuntimeApp {
           toolNames: visibleToolDefinitions.map(({ name }) => name),
           overrides: params,
           agentHome: this.resources.agentHome,
-          // Only inject the <available-subagents> section when the feature is
-          // on. SystemPromptBuilder additionally suppresses it in minimal mode
-          // (which is what subagents themselves get).
-          availableSubagents:
-            this.resources.resolvedConfig.subagents.enabled
-              ? this.getAvailableSubagents()
-              : undefined,
+          // Tool policy is the public delegation enablement control.
+          availableSubagents: visibleToolDefinitions.some(({ name }) => name === 'task')
+            ? this.getAvailableSubagents()
+            : undefined,
         }),
       );
 
@@ -1450,7 +1445,7 @@ export class RuntimeApp {
         modelId: resolvedModel.identity.modelId,
       });
       const effectiveMaxLlmCalls =
-        params.maxLlmCalls ?? this.resources.runnerConfig.maxLlmCalls;
+        params.maxLlmCalls ?? this.resources.runnerConfig.maxLlmCallsPerTurn;
       const approvalCapability = this.getApprovalCapability(params.turnId, params.sessionId);
       parentRecord = Object.freeze({
         requestId: params.requestId,
@@ -1459,7 +1454,6 @@ export class RuntimeApp {
         turnId: params.turnId,
         signal: controller.signal,
         effectiveReference,
-        effectiveMaxLlmCalls,
         contextFiles: Object.freeze([...this.resources.contextFiles]),
         registrySnapshot: snapshot,
         approvalCapability,

@@ -146,11 +146,15 @@ function createHarness(options: {
             models: [{ modelId: 'test-model', protocol: 'openai-responses' }],
               },
             },
+        agents: {
+          maxSubagentDepth: 1,
+          defaults: {} as never,
+          list: [],
+        },
       },
       resolvedConfig: {
         tools: {},
         context: { maxFileChars: 1, maxTotalChars: 1 },
-        subagents: { enabled: false, list: [] },
       },
     },
     state: { phase: 'ready', startedAt: 1, activeRunCount: 0, contextVersion: 1 },

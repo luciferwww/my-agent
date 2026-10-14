@@ -92,8 +92,12 @@ describe('standalone Host composition', () => {
     const snapshot = (consoleEnabled: boolean): AgentConfigSnapshot => ({
       application: {
         llm: {},
-        runner: { steeringEnabled: false },
-        agents: { defaults: {} as never, list: [] },
+        agents: {
+          steeringEnabled: false,
+          maxSubagentDepth: 1,
+          defaults: {} as never,
+          list: [],
+        },
         logger: { console: { enabled: consoleEnabled }, file: { enabled: true } },
       },
       extensions: { enabled: true, entries: {} },
@@ -287,11 +291,11 @@ describe('standalone Host composition', () => {
     await mkdir(agentHome);
     await mkdir(startupCwd);
     await writeFile(join(agentHome, 'config.json'), JSON.stringify({
-      runner: { maxLlmCalls: 8 },
+      agents: { maxLlmCallsPerTurn: 8 },
       extensions: { enabled: false },
     }), 'utf8');
     await writeFile(join(startupCwd, 'config.json'), JSON.stringify({
-      runner: { maxLlmCalls: 1 },
+      agents: { maxLlmCallsPerTurn: 1 },
       extensions: { enabled: true },
     }), 'utf8');
     const readTextFile = vi.fn((path: string) => readFile(path, 'utf8'));
@@ -326,15 +330,15 @@ describe('standalone Host composition', () => {
           installDir: join(temporaryRoot, 'installation'),
           configuration: expect.objectContaining({
             application: expect.objectContaining({
-              runner: expect.objectContaining({ maxLlmCalls: 8 }),
+              agents: expect.objectContaining({ maxLlmCallsPerTurn: 8 }),
             }),
           }),
         }),
       }));
       await expect(readFile(join(startupCwd, 'config.json'), 'utf8'))
-        .resolves.toContain('"maxLlmCalls":1');
+        .resolves.toContain('"maxLlmCallsPerTurn":1');
       await expect(readFile(join(agentHome, 'config.json'), 'utf8'))
-        .resolves.toContain('"maxLlmCalls":8');
+        .resolves.toContain('"maxLlmCallsPerTurn":8');
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
@@ -528,8 +532,12 @@ function createSnapshot(consoleEnabled = true): AgentConfigSnapshot {
   return {
     application: {
       llm: {},
-      runner: { steeringEnabled: false },
-      agents: { defaults: {} as never, list: [] },
+      agents: {
+        steeringEnabled: false,
+        maxSubagentDepth: 1,
+        defaults: {} as never,
+        list: [],
+      },
       logger: { console: { enabled: consoleEnabled } },
     },
     extensions: { enabled: true, entries: {} },

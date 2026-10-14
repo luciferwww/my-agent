@@ -19,10 +19,6 @@ import {
   CompactionConfigValidationError,
   validateCompactionConfig,
 } from '../../core/runner/index.js';
-import {
-  SubagentConfigValidationError,
-  validateSubagentConfig,
-} from '../../core/subagent/index.js';
 
 export function validateRunnerConfigSection(
   value: unknown,
@@ -40,7 +36,6 @@ export function validateAgentLeafConfig(
   validateLeaf(leaves['tools'], joinFieldPath(fieldPath, 'tools'), validateToolPolicyConfig, ToolPolicyConfigValidationError);
   validateLeaf(leaves['context'], joinFieldPath(fieldPath, 'context'), validateAgentContextConfig, AgentContextConfigValidationError);
   validateLeaf(leaves['compaction'], joinFieldPath(fieldPath, 'compaction'), validateCompactionConfig, CompactionConfigValidationError);
-  validateLeaf(leaves['subagents'], joinFieldPath(fieldPath, 'subagents'), validateSubagentConfig, SubagentConfigValidationError);
 }
 
 function joinFieldPath(parent: string, field: string): string {

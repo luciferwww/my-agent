@@ -21,9 +21,15 @@ import type { RunParams, RunResult } from '../core/runner/types.js';
 import type { Tool } from '../core/tools/types.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
-import type { ProviderProjectionEntry, ResolvedModel } from '../core/model-resolution/index.js';
-import type { SubagentModelSelection } from '../platform/config/types.js';
-import type { ApplicationConfigProjection } from '../platform/config/types.js';
+import type {
+  ModelReference,
+  ProviderProjectionEntry,
+  ResolvedModel,
+} from '../core/model-resolution/index.js';
+import type {
+  AgentEntry,
+  ApplicationConfigProjection,
+} from '../platform/config/types.js';
 import { createDefaultAgentConfig } from '../platform/config/default-composition.js';
 import { DEFAULT_LOGGER_CONFIG } from '../platform/logger/index.js';
 import { loadAgentConfig } from '../platform/config/agent-config-loader.js';
@@ -37,13 +43,18 @@ import type {
 } from './types.js';
 import type { RuntimeDeadlineDriver, RuntimeDeadlineRaceResult } from './runtime-deadline.js';
 import { Logger } from '../platform/logger/index.js';
-import { DEFAULT_RUNNER_CONFIG } from '../core/runner/config.js';
 
 function testApplicationConfig(
   defaultModel: { readonly providerId: string; readonly modelId: string } | null = {
     providerId: 'test',
     modelId: 'test-model',
   },
+  configuredAgents: {
+    readonly steeringEnabled?: boolean;
+    readonly maxLlmCallsPerTurn?: number;
+    readonly maxSubagentDepth?: number;
+    readonly list?: readonly AgentEntry[];
+  } = {},
 ): ApplicationConfigProjection {
   return {
     llm: {
@@ -53,10 +64,14 @@ function testApplicationConfig(
         models: [{ modelId: 'test-model', protocol: 'openai-responses' }],
       },
     },
-    runner: structuredClone(DEFAULT_RUNNER_CONFIG),
     agents: {
+      steeringEnabled: configuredAgents.steeringEnabled ?? false,
+      ...(configuredAgents.maxLlmCallsPerTurn === undefined
+        ? {}
+        : { maxLlmCallsPerTurn: configuredAgents.maxLlmCallsPerTurn }),
+      maxSubagentDepth: configuredAgents.maxSubagentDepth ?? 1,
       defaults: createDefaultAgentConfig(),
-      list: [],
+      list: configuredAgents.list ?? [],
     },
     logger: structuredClone(DEFAULT_LOGGER_CONFIG),
   };
@@ -158,7 +173,7 @@ describe('RuntimeApp', () => {
       applicationConfig: testApplicationConfig(),
       cliOverrides: {
         memory: { enabled: true },
-        subagents: { enabled: false, maxDepth: 1 },
+        tools: { deny: ['task'] },
       },
       dependencies: createTestDependencies({
         createSessionManager,
@@ -582,10 +597,9 @@ describe('RuntimeApp', () => {
     }));
     const app = await RuntimeApp.create({
       agentHome,
-      applicationConfig: {
-        ...testApplicationConfig(),
-        runner: { steeringEnabled: false, maxLlmCalls: 7 },
-      },
+      applicationConfig: testApplicationConfig(undefined, {
+        maxLlmCallsPerTurn: 7,
+      }),
       cliOverrides: { memory: { enabled: false } },
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: runnerRun }) as never,
@@ -672,8 +686,9 @@ describe('RuntimeApp', () => {
           defaultModel: { providerId: 'builtin', modelId: 'staged-model' },
           builtin: { baseURL: 'https://example.test/v1', models: [] },
         },
-        runner: structuredClone(DEFAULT_RUNNER_CONFIG),
         agents: {
+          steeringEnabled: false,
+          maxSubagentDepth: 1,
           defaults: createDefaultAgentConfig(),
           list: [],
         },
@@ -681,7 +696,7 @@ describe('RuntimeApp', () => {
       },
       cliOverrides: {
         memory: { enabled: false },
-        subagents: { enabled: false, maxDepth: 1 },
+        tools: { deny: ['task'] },
       },
       dependencies: { createMemoryManager: async () => null },
     });
@@ -777,7 +792,7 @@ describe('RuntimeApp', () => {
   it.each([
     {
       label: 'inherited',
-      selection: 'inherit' as const,
+      selection: undefined,
       expectedIdentity: { providerId: 'test', modelId: 'parent-model' },
     },
     {
@@ -789,7 +804,7 @@ describe('RuntimeApp', () => {
     selection,
     expectedIdentity,
   }: {
-    selection: SubagentModelSelection;
+    selection: ModelReference | undefined;
     expectedIdentity: { providerId: string; modelId: string };
   }) => {
     let parentModel: ResolvedModel | undefined;
@@ -873,21 +888,21 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [approvalChannel.unit],
-      applicationConfig: testApplicationConfig({
-        providerId: 'test',
-        modelId: 'parent-model',
-      }),
-      cliOverrides: {
-        memory: { enabled: false },
-        subagents: {
-          enabled: true,
-          maxDepth: 1,
+      applicationConfig: testApplicationConfig(
+        {
+          providerId: 'test',
+          modelId: 'parent-model',
+        },
+        {
           list: [{
             id: 'reviewer',
             description: 'reviews code',
             model: selection,
           }],
         },
+      ),
+      cliOverrides: {
+        memory: { enabled: false },
       },
       dependencies: createTestDependencies({
         createBuiltinProviderUnit: () => createTestProviderUnit([
@@ -1043,21 +1058,20 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [generationOneUnit, nextProviderUnit],
-      applicationConfig: testApplicationConfig({
-        providerId: 'next-provider',
-        modelId: 'root-model',
-      }),
-      cliOverrides: {
-        memory: { enabled: false },
-        subagents: {
-          enabled: true,
-          maxDepth: 1,
+      applicationConfig: testApplicationConfig(
+        {
+          providerId: 'next-provider',
+          modelId: 'root-model',
+        },
+        {
           list: [{
             id: 'next-generation',
             description: 'inherits the Parent Provider',
-            model: 'inherit',
           }],
         },
+      ),
+      cliOverrides: {
+        memory: { enabled: false },
       },
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: runnerRun }) as never,
@@ -1500,11 +1514,10 @@ describe('RuntimeApp', () => {
   });
 
   it.each([
-    { subagentsEnabled: true, taskExpected: true },
-    { subagentsEnabled: false, taskExpected: false },
-  ])('publishes one final Snapshot before app_ready when subagents enabled=$subagentsEnabled', async ({
+    { subagentsEnabled: true },
+    { subagentsEnabled: false },
+  ])('publishes the registered task Tool before app_ready when delegation enabled=$subagentsEnabled', async ({
     subagentsEnabled,
-    taskExpected,
   }) => {
     const events: RuntimeEvent[] = [];
     const app = await RuntimeApp.create({
@@ -1512,7 +1525,7 @@ describe('RuntimeApp', () => {
       applicationConfig: testApplicationConfig(),
       cliOverrides: {
         memory: { enabled: false },
-        subagents: { enabled: subagentsEnabled, maxDepth: 1 },
+        ...(subagentsEnabled ? {} : { tools: { deny: ['task'] } }),
       },
       dependencies: createTestDependencies(),
       onEvent: (event) => events.push(event),
@@ -1521,7 +1534,7 @@ describe('RuntimeApp', () => {
     const readyEvents = events.filter((event) => event.type === 'app_ready');
     expect(readyEvents).toHaveLength(1);
     expect(readyEvents[0]?.toolNames).toEqual(app.application.getToolNames());
-    expect(readyEvents[0]?.toolNames.includes('task')).toBe(taskExpected);
+    expect(readyEvents[0]?.toolNames).toContain('task');
 
     await app.close();
   });
@@ -1943,10 +1956,9 @@ describe('RuntimeApp', () => {
     await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
-      applicationConfig: {
-        ...testApplicationConfig(),
-        runner: { steeringEnabled: true },
-      },
+      applicationConfig: testApplicationConfig(undefined, {
+        steeringEnabled: true,
+      }),
       cliOverrides: {
         memory: { enabled: false },
       },
@@ -2010,10 +2022,9 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
-      applicationConfig: {
-        ...testApplicationConfig(),
-        runner: { steeringEnabled: true },
-      },
+      applicationConfig: testApplicationConfig(undefined, {
+        steeringEnabled: true,
+      }),
       cliOverrides: { memory: { enabled: false } },
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: runnerRun } as never),
@@ -2702,10 +2713,9 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
         loadedUnits: [testChannel.unit],
-        applicationConfig: {
-          ...testApplicationConfig(),
-          runner: { steeringEnabled: true },
-        },
+        applicationConfig: testApplicationConfig(undefined, {
+          steeringEnabled: true,
+        }),
         cliOverrides: {
           memory: { enabled: false },
         },

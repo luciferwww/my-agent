@@ -84,7 +84,6 @@ function setup(options: {
     turnId: 'parent-turn',
     signal: controller.signal,
     effectiveReference: { providerId: 'parent', modelId: 'parent-model' },
-    effectiveMaxLlmCalls: 6,
     contextFiles: [],
     registrySnapshot,
     approvalCapability,
@@ -151,6 +150,7 @@ function setup(options: {
       retainTransientSubagentTranscript,
     } as never,
     maxDepth: 1,
+    maxLlmCallsPerTurn: 6,
     executor: { prepare, execute } as never,
     onEvent: (event) => {
       lifecycleOperations.push(event.type);
@@ -241,6 +241,7 @@ describe('Runtime Subagent delegation', () => {
     }));
     expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
       approvalCapability: parent.approvalCapability,
+      maxLlmCallsPerTurn: 6,
     }));
     expect(retainTransientSubagentTranscript).toHaveBeenCalledWith(
       expect.stringMatching(/^[0-9a-f-]{36}$/),

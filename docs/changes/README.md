@@ -6,12 +6,13 @@ Changes retain the repository's existing Plan/Specification/validation workflow.
 
 ## Active
 
-No Change is currently active.
+- [Agent Home Initialization](active/agent-home-initialization/plan.md), with its [Draft Specification](active/agent-home-initialization/specification.md) and [Proposed ADR-022](../decisions/adr-022-explicit-standalone-agent-home-initialization.md) — Proposed Standalone-only terminal initialization that depends on Shared Configured Agents and does not modify other production modules; not authorized for Delivery.
 
 ## Archived
 
 Archived changes preserve bounded delivery and acceptance provenance. They are neither Current Architecture nor stable contract authority.
 
+- [Shared Configured Agents](archive/shared-configured-agents/plan.md), with its [implemented and validated Specification](archive/shared-configured-agents/specification.md) and [Accepted ADR-021](../decisions/adr-021-shared-configured-agent-registry.md) — direct cutover from deprecated public `subagents` profiles and `runner` configuration to shared `agents.list[]`, global Agent execution policy, effective `task` policy, and `agents/<agentId>/`, completed, independently reviewed, owner-accepted, and archived on 2026-10-14.
 - [Restart-stable Child Session Retention](archive/restart-stable-child-session-retention/plan.md), with its [validated Specification](archive/restart-stable-child-session-retention/specification.md) — typed Child entries in the existing Session Store, absolute terminal TTL across restart, interrupted-Child recovery, expired and missing-file cleanup, unchanged Chat lifecycle behavior, and manual restart acceptance completed and archived on 2026-10-14.
 - [Session-addressed Subagent Observation](archive/session-addressed-subagent-observation/plan.md), with its [validated Specification](archive/session-addressed-subagent-observation/specification.md) and [Accepted ADR-020](../decisions/adr-020-session-addressed-presentation-subscription-and-ephemeral-child-observation.md) — explicit Session audience membership, preparing/active/retained Child History, stable Parent result discovery, read-only bundled-client detail, responsive presentation, and validation completed and archived on 2026-10-14.
 - [Origin-Channel and Session-scoped Approval Delivery](archive/session-scoped-approval-delivery/plan.md), with its [validated Specification](archive/session-scoped-approval-delivery/specification.md) and [Accepted ADR-019](../decisions/adr-019-origin-channel-and-session-scoped-approval-delivery.md) — Client-independent delivery, Origin Channel boundary/no-Origin fanout, global or Session-filtered pending query, closure synchronization, and local chat indicators completed, validated, owner-accepted, and archived on 2026-10-13 with two documented pre-existing Fitness exceptions; shared Session entries stay unchanged and Automation execution remains out of scope.

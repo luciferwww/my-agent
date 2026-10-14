@@ -47,7 +47,7 @@ import {
 } from './runtime-unit.js';
 import {
   buildGeneralPurposeProfile,
-  loadSubagentProfiles,
+  loadConfiguredAgentProfiles,
   resolveSubagentCapabilities,
   resolveSubagentTools,
 } from '../core/subagent/index.js';
@@ -355,8 +355,8 @@ export async function buildRuntimeHandle(
     const registeredToolNames = new Set(
       registrySnapshot.tools.definitions.map((tool) => tool.name),
     );
-    for (const profile of loadSubagentProfiles(
-      bootstrap.resources.resolvedConfig.subagents?.list ?? [],
+    for (const profile of loadConfiguredAgentProfiles(
+      bootstrap.resources.appConfig.agents.list,
       options.agentHome,
       registeredToolNames,
     )) {
@@ -661,43 +661,45 @@ function assembleLoadedRuntimeUnits(params: {
     ...(options.loadedUnits ?? []),
   ];
 
-  if (resources.resolvedConfig.subagents.enabled) {
-    const maxDepth = resources.resolvedConfig.subagents.maxDepth;
-    const executor = new SubagentExecutor({
-      agentRunner: resources.agentRunner,
-      systemPromptBuilder: resources.systemPromptBuilder,
-      loadContextFilesFromDir: (absDir) => loadContextFilesFromDir(absDir, {
-        maxFileChars: resources.resolvedConfig.context.maxFileChars,
-        maxTotalChars: resources.resolvedConfig.context.maxTotalChars,
-      }),
-      agentHome: options.agentHome,
-      resolveToolPolicy: (profile) => createApplicationToolPolicy(
-        resolveSubagentTools(
-          profile,
-          resources.resolvedConfig.tools.allow ?? [],
-          resources.resolvedConfig.tools.deny ?? [],
-        ),
-        options.agentHome,
-      ),
-    });
-    const delegationPort = createSubagentDelegationPort({
-      activeParents: params.activeParentTurns,
-      routeContextByTurn: params.routeContextByTurn,
-      sessionManager: resources.sessionManager,
+  const maxDepth = resources.appConfig.agents.maxSubagentDepth;
+  const executor = new SubagentExecutor({
+    agentRunner: resources.agentRunner,
+    systemPromptBuilder: resources.systemPromptBuilder,
+    loadContextFilesFromDir: (absDir) => loadContextFilesFromDir(absDir, {
+      maxFileChars: resources.resolvedConfig.context.maxFileChars,
+      maxTotalChars: resources.resolvedConfig.context.maxTotalChars,
+    }),
+    agentHome: options.agentHome,
+    resolveToolPolicy: (profile, canSpawn) => {
+      const tools = resolveSubagentTools(
+        profile,
+        resources.resolvedConfig.tools.allow ?? [],
+        resources.resolvedConfig.tools.deny ?? [],
+      );
+      return createApplicationToolPolicy({
+        allow: tools.allow,
+        deny: canSpawn ? tools.deny : [...tools.deny, 'task'],
+      }, options.agentHome);
+    },
+  });
+  const delegationPort = createSubagentDelegationPort({
+    activeParents: params.activeParentTurns,
+    routeContextByTurn: params.routeContextByTurn,
+    sessionManager: resources.sessionManager,
+    maxDepth,
+    maxLlmCallsPerTurn: resources.appConfig.agents.maxLlmCallsPerTurn,
+    executor,
+    onEvent: params.onAgentEvent,
+  });
+  loadedUnits.push(createLoadedRuntimeUnit({
+    registration: createTaskToolContribution({
+      delegationPort,
+      profileRegistry: params.subagentProfiles,
+      getCapabilities: (depth) => resolveSubagentCapabilities(depth, maxDepth),
       maxDepth,
-      executor,
-      onEvent: params.onAgentEvent,
-    });
-    loadedUnits.push(createLoadedRuntimeUnit({
-      registration: createTaskToolContribution({
-        delegationPort,
-        profileRegistry: params.subagentProfiles,
-        getCapabilities: (depth) => resolveSubagentCapabilities(depth, maxDepth),
-        maxDepth,
-      }),
-      required: true,
-    }));
-  }
+    }),
+    required: true,
+  }));
 
   return Object.freeze(loadedUnits);
 }

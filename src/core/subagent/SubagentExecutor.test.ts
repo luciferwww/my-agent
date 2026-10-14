@@ -58,7 +58,6 @@ describe('SubagentExecutor', () => {
         description: 'review',
         agentDir: '/missing-profile-dir',
         model: 'inherit',
-        maxLlmCalls: 4,
       },
       description: 'Review code',
       prompt: 'Inspect the patch',
@@ -67,7 +66,7 @@ describe('SubagentExecutor', () => {
       canSpawn: false,
       childSessionId: '5a848f00-b15f-4a5e-a4cc-3e6aa47342b1',
       childTurnId: 'child-turn',
-      parentMaxLlmCalls: 9,
+      maxLlmCallsPerTurn: 9,
       signal,
       toolProjection,
       hookProjection,
@@ -81,7 +80,7 @@ describe('SubagentExecutor', () => {
       subagentDepth: 1,
       turnId: 'child-turn',
       message: 'Inspect the patch',
-      maxLlmCalls: 4,
+      maxLlmCalls: 9,
       signal,
     }));
     expect(prepared.systemPrompt).toContain('base');
@@ -109,7 +108,7 @@ describe('SubagentExecutor', () => {
     }));
   });
 
-  it('inherits the Parent limit when the Child profile omits one', async () => {
+  it('inherits the Parent effective limit', async () => {
     const executor = new SubagentExecutor({
       agentRunner: { run: vi.fn() } as never,
       systemPromptBuilder: { build: () => 'base' } as never,
@@ -136,7 +135,7 @@ describe('SubagentExecutor', () => {
       canSpawn: false,
       childSessionId: '5a848f00-b15f-4a5e-a4cc-3e6aa47342b2',
       childTurnId: 'child-turn-2',
-      parentMaxLlmCalls: 6,
+      maxLlmCallsPerTurn: 6,
       signal: new AbortController().signal,
       toolProjection,
       hookProjection,

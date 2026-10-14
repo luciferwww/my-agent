@@ -37,7 +37,6 @@ The accepted top-level sections are:
 
 ```text
 llm
-runner
 agents
 logger
 extensions
@@ -85,11 +84,10 @@ The following example configures:
       ]
     }
   },
-  "runner": {
-    "steeringEnabled": true,
-    "maxLlmCalls": 12
-  },
   "agents": {
+    "steeringEnabled": true,
+    "maxLlmCallsPerTurn": 12,
+    "maxSubagentDepth": 1,
     "defaults": {
       "memory": {
         "enabled": false
@@ -270,27 +268,27 @@ There is no Anthropic-specific model configuration field. Deployments that
 cannot support this adaptive mapping must not declare the corresponding
 Thinking or Effort capabilities.
 
-## 4. Runner
+## 4. Global Agent execution policy
 
-This section is global. It cannot be placed under `agents.defaults` or an
+These fields are global. They cannot be placed under `agents.defaults` or an
 individual Agent entry.
 
 ```json
 {
-  "runner": {
+  "agents": {
     "steeringEnabled": true,
-    "maxLlmCalls": 12
+    "maxLlmCallsPerTurn": 12
   }
 }
 ```
 
 | Field | Default | Meaning |
 |---|---:|---|
-| `runner.steeringEnabled` | `false` | Allow the Runner to claim compatible queued user messages at steering-safe points |
-| `runner.maxLlmCalls` | omitted | Maximum Model calls in one Turn; omission means no count limit |
+| `agents.steeringEnabled` | `false` | Allow the Runner to claim compatible queued user messages at steering-safe points |
+| `agents.maxLlmCallsPerTurn` | omitted | Maximum Model calls in each Root or Child Turn; every Turn counts independently |
 
-`steeringEnabled` must be a boolean. `maxLlmCalls`, when present, must be a
-positive integer.
+`steeringEnabled` must be a boolean. `maxLlmCallsPerTurn`, when present, must
+be a positive integer.
 
 ## 5. Agent defaults and per-Agent overrides
 
@@ -312,6 +310,7 @@ override the same Agent-scoped sections:
     "list": [
       {
         "id": "research",
+        "description": "Researches a bounded question.",
         "tools": {
           "allow": ["read_file", "file_search", "grep_search"]
         }
@@ -322,7 +321,10 @@ override the same Agent-scoped sections:
 ```
 
 Arrays replace lower-precedence arrays; they are not appended. Runtime,
-Runner, Model, LLM, and workspace settings are not valid inside Agent entries.
+Runner, LLM, and workspace settings are not valid inside Agent entries.
+`model` is configured-Agent metadata and does not participate in the normal
+capability merge. `maxLlmCallsPerTurn` remains global policy and is not valid
+inside an Agent entry.
 
 ### 5.1 Memory
 
@@ -407,19 +409,16 @@ All fields except `customInstructions` have the values above by default.
 `timeoutSeconds` must be positive. Token, Turn, and character counts must be
 non-negative safe integers.
 
-### 5.5 Subagents
+### 5.5 Configured Agents and delegation
 
 ```json
 {
-  "subagents": {
-    "enabled": true,
-    "maxDepth": 1,
+  "agents": {
+    "maxSubagentDepth": 1,
     "list": [
       {
         "id": "reviewer",
         "description": "Reviews a bounded implementation change.",
-        "model": "inherit",
-        "maxLlmCalls": 6,
         "tools": {
           "allow": ["read_file", "file_search", "grep_search"],
           "deny": ["write_file", "exec"]
@@ -430,7 +429,10 @@ non-negative safe integers.
 }
 ```
 
-`model` is either `"inherit"` or:
+`agents.list[]` is shared by Child delegation and other Agent entry points.
+Each entry requires a unique ID and nonblank description. Omitting `model`
+inherits the Model selected at the execution entry point. To select a
+different Model, use:
 
 ```json
 {
@@ -439,8 +441,13 @@ non-negative safe integers.
 }
 ```
 
-Subagent IDs must be non-empty and unique. `maxDepth` is a non-negative safe
-integer. `maxLlmCalls`, when present, is positive.
+`maxSubagentDepth` is a non-negative safe integer. A value of `0` prevents
+Root delegation. To disable delegation for one Agent, include `"task"` in
+that Agent's effective `tools.deny`; there is no separate enablement flag.
+Every Root and Child Turn applies `agents.maxLlmCallsPerTurn` independently;
+Roles cannot override it and Child counters do not inherit Parent remaining
+capacity. Context files for a configured
+Agent belong under `<agentHome>/agents/<agentId>/`.
 
 ## 6. Logger
 
@@ -606,8 +613,8 @@ Agent-scoped settings resolve from lowest to highest precedence:
 Arrays and scalar values replace the lower-precedence value. Plain objects are
 merged recursively.
 
-Global `runner` settings use only module defaults followed by the top-level
-file value.
+Global Agent execution settings use only module defaults followed by the
+`agents` top-level field.
 
 ## 9. Common failures
 

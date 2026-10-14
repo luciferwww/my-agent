@@ -33,9 +33,9 @@ describe('loadAgentConfig', () => {
   it('reads only the Agent Home document once and ignores project-local config', async () => {
     const startupCwd = join(agentHome, 'project');
     await mkdir(startupCwd);
-    await writeConfig({ runner: { maxLlmCalls: 8 } });
+    await writeConfig({ agents: { maxLlmCallsPerTurn: 8 } });
     await writeFile(join(startupCwd, 'config.json'), JSON.stringify({
-      runner: { maxLlmCalls: 1 },
+      agents: { maxLlmCallsPerTurn: 1 },
     }), 'utf8');
     const readTextFile = vi.fn((path: string) => readFile(path, 'utf8'));
 
@@ -43,9 +43,9 @@ describe('loadAgentConfig', () => {
 
     expect(readTextFile).toHaveBeenCalledTimes(1);
     expect(readTextFile).toHaveBeenCalledWith(join(agentHome, 'config.json'));
-    expect(snapshot.application.runner.maxLlmCalls).toBe(8);
+    expect(snapshot.application.agents.maxLlmCallsPerTurn).toBe(8);
     await expect(readFile(join(startupCwd, 'config.json'), 'utf8'))
-      .resolves.toContain('"maxLlmCalls":1');
+      .resolves.toContain('"maxLlmCallsPerTurn":1');
   });
 
   it('projects Agent Context budgets from agents.defaults.context', async () => {
@@ -61,19 +61,22 @@ describe('loadAgentConfig', () => {
     });
   });
 
-  it('defaults Runner steering off and leaves the call budget absent', async () => {
+  it('defaults global Agent steering off and leaves the call budget absent', async () => {
     await writeConfig({});
 
     const snapshot = await loadAgentConfig({ agentHome });
 
-    expect(snapshot.application.runner).toEqual({
-      steeringEnabled: false,
-    });
+    expect(snapshot.application.agents).toMatchObject({ steeringEnabled: false });
+    expect(snapshot.application.agents).not.toHaveProperty('maxLlmCallsPerTurn');
   });
 
   it.each([
     [{ agents: { defaults: { workspace: { maxFileChars: 1 } } } }, 'agents.defaults.workspace'],
-    [{ agents: { list: [{ id: 'legacy', workspace: { maxFileChars: 1 } }] } }, 'agents.list[0].workspace'],
+    [{
+      agents: {
+        list: [{ id: 'legacy', description: 'Legacy Agent', workspace: { maxFileChars: 1 } }],
+      },
+    }, 'agents.list[0].workspace'],
   ])('rejects the retired Workspace Context key %#', async (document, fieldPath) => {
     await writeConfig(document);
 
@@ -85,6 +88,7 @@ describe('loadAgentConfig', () => {
 
   it.each([
     ['runtime', { steeringEnabled: true }],
+    ['runner', { maxLlmCalls: 12 }],
     ['host', { mode: 'websocket' }],
   ])('rejects the retired %s namespace directly', async (fieldPath, value) => {
     await writeConfig({ [fieldPath]: value });
@@ -106,10 +110,18 @@ describe('loadAgentConfig', () => {
   it('projects all known namespaces from one root document', async () => {
     await writeConfig({
       agents: {
+        steeringEnabled: true,
+        maxLlmCallsPerTurn: 3,
+        maxSubagentDepth: 2,
         defaults: {},
-        list: [{ id: 'reviewer', default: true, memory: { enabled: false } }],
+        list: [{
+          id: 'reviewer',
+          description: 'Reviews code',
+          default: true,
+          model: { providerId: 'builtin', modelId: 'model-a' },
+          memory: { enabled: false },
+        }],
       },
-      runner: { steeringEnabled: true, maxLlmCalls: 3 },
       llm: {
         defaultModel: { providerId: 'builtin', modelId: 'model-a' },
         builtin: {
@@ -145,12 +157,19 @@ describe('loadAgentConfig', () => {
         models: [{ modelId: 'model-a', protocol: 'openai-responses' }],
       },
     });
-    expect(snapshot.application.runner).toEqual({
+    expect(snapshot.application.agents).toMatchObject({
       steeringEnabled: true,
-      maxLlmCalls: 3,
+      maxLlmCallsPerTurn: 3,
     });
+    expect(snapshot.application.agents.maxSubagentDepth).toBe(2);
     expect(snapshot.application.agents.list).toEqual([
-      { id: 'reviewer', default: true, memory: { enabled: false } },
+      {
+        id: 'reviewer',
+        description: 'Reviews code',
+        default: true,
+        model: { providerId: 'builtin', modelId: 'model-a' },
+        memory: { enabled: false },
+      },
     ]);
     expect(snapshot.application.logger).toEqual({
       minLevel: 'warn',
@@ -181,8 +200,9 @@ describe('loadAgentConfig', () => {
   it.each([
     [{ agents: { defaults: { model: { providerId: 'a', modelId: 'b' } } } }, 'agents.defaults.model'],
     [{ agents: { defaults: { llm: {} } } }, 'agents.defaults.llm'],
-    [{ agents: { list: [{ id: 'a', model: { providerId: 'a', modelId: 'b' } }] } }, 'agents.list[0].model'],
-    [{ agents: { list: [{ id: 'a', llm: {} }] } }, 'agents.list[0].llm'],
+    [{
+      agents: { list: [{ id: 'a', description: 'Agent A', llm: {} }] },
+    }, 'agents.list[0].llm'],
   ])('rejects legacy Agent-level LLM configuration %#', async (document, fieldPath) => {
     await writeConfig(document);
 
@@ -279,50 +299,75 @@ describe('loadAgentConfig', () => {
     [{ agents: { list: {} } }, 'agents.list'],
     [{ agents: { list: [null] } }, 'agents.list[0]'],
     [{ agents: { list: [{ id: '  ' }] } }, 'agents.list[0].id'],
-    [{ agents: { list: [{ id: 'a', default: 'yes' }] } }, 'agents.list[0].default'],
+    [{
+      agents: { list: [{ id: 'a', description: 'Agent A', default: 'yes' }] },
+    }, 'agents.list[0].default'],
+    [{ agents: { maxSubagentDepth: -1 } }, 'agents.maxSubagentDepth'],
+    [{ agents: { maxSubagentDepth: 1.5 } }, 'agents.maxSubagentDepth'],
     [{ llm: [] }, 'llm'],
     [{ llm: { defaultModel: 'unstructured' } }, 'llm.defaultModel'],
     [{ llm: { builtin: {} } }, 'llm.builtin.baseURL'],
     [{ llm: { builtin: { baseURL: 'https://example.test', models: {} } } }, 'llm.builtin.models'],
     [{ agents: { defaults: { tools: { fs: {} } } } }, 'agents.defaults.tools.fs'],
-    [{ agents: { list: [{ id: 'a', tools: { fs: {} } }] } }, 'agents.list[0].tools.fs'],
-    [{ runner: [] }, 'runner'],
-    [{ runner: { steeringEnabled: 'yes' } }, 'runner.steeringEnabled'],
-    [{ runner: { maxLlmCalls: 0 } }, 'runner.maxLlmCalls'],
-    [{ runner: { maxLlmCalls: 1.5 } }, 'runner.maxLlmCalls'],
-    [{ runner: { maxLlmCalls: '12' } }, 'runner.maxLlmCalls'],
-    [{ runner: { inTurnMessageMode: 'steer' } }, 'runner.inTurnMessageMode'],
+    [{
+      agents: { list: [{ id: 'a', description: 'Agent A', tools: { fs: {} } }] },
+    }, 'agents.list[0].tools.fs'],
+    [{ agents: { steeringEnabled: 'yes' } }, 'agents.steeringEnabled'],
+    [{ agents: { maxLlmCallsPerTurn: 0 } }, 'agents.maxLlmCallsPerTurn'],
+    [{ agents: { maxLlmCallsPerTurn: 1.5 } }, 'agents.maxLlmCallsPerTurn'],
+    [{ agents: { maxLlmCallsPerTurn: '12' } }, 'agents.maxLlmCallsPerTurn'],
+    [{ agents: { inTurnMessageMode: 'steer' } }, 'agents.inTurnMessageMode'],
     [{ agents: { defaults: { runtime: { steeringEnabled: true } } } }, 'agents.defaults.runtime'],
     [{ agents: { defaults: { runner: { maxLlmCalls: 1 } } } }, 'agents.defaults.runner'],
-    [{ agents: { list: [{ id: 'a', runtime: { steeringEnabled: true } }] } }, 'agents.list[0].runtime'],
-    [{ agents: { list: [{ id: 'a', runner: { maxLlmCalls: 1 } }] } }, 'agents.list[0].runner'],
+    [{
+      agents: {
+        list: [{ id: 'a', description: 'Agent A', runtime: { steeringEnabled: true } }],
+      },
+    }, 'agents.list[0].runtime'],
+    [{
+      agents: { list: [{ id: 'a', description: 'Agent A', runner: { maxLlmCalls: 1 } }] },
+    }, 'agents.list[0].runner'],
+    [{
+      agents: { list: [{ id: 'a', description: 'Agent A', maxLlmCalls: 1 }] },
+    }, 'agents.list[0].maxLlmCalls'],
+    [{
+      agents: { list: [{ id: 'a', description: 'Agent A', maxLlmCallsPerTurn: 1 }] },
+    }, 'agents.list[0].maxLlmCallsPerTurn'],
+    [{
+      agents: { list: [{ id: 'a', description: 'Agent A', steeringEnabled: true }] },
+    }, 'agents.list[0].steeringEnabled'],
+    [{
+      agents: { list: [{ id: 'a', description: 'Agent A', maxSubagentDepth: 1 }] },
+    }, 'agents.list[0].maxSubagentDepth'],
+    [{
+      agents: { list: [{ id: 'a', description: 'Agent A', misspelled: true }] },
+    }, 'agents.list[0].misspelled'],
+    [{ agents: { defaults: { misspelled: true } } }, 'agents.defaults.misspelled'],
     [{ agents: { defaults: { memory: { chunking: { chunkChars: 0 } } } } }, 'agents.defaults.memory.chunking.chunkChars'],
     [{ agents: { defaults: { memory: { bogus: true } } } }, 'agents.defaults.memory.bogus'],
     [{ agents: { defaults: { memory: { chunking: { bogus: true } } } } }, 'agents.defaults.memory.chunking.bogus'],
     [{ agents: { defaults: { memory: { chunking: { overlapChars: 1600 } } } } }, 'agents.defaults.memory.chunking.overlapChars'],
-    [{ agents: { list: [{ id: 'a', memory: { chunking: { chunkChars: 100, overlapChars: 100 } } }] } }, 'agents.list[0].memory.chunking.overlapChars'],
+    [{
+      agents: {
+        list: [{
+          id: 'a',
+          description: 'Agent A',
+          memory: { chunking: { chunkChars: 100, overlapChars: 100 } },
+        }],
+      },
+    }, 'agents.list[0].memory.chunking.overlapChars'],
     [{ agents: { defaults: { prompt: { safetyLevel: 'normal' } } } }, 'agents.defaults.prompt'],
-    [{ agents: { list: [{ id: 'a', prompt: { safetyLevel: 'normal' } }] } }, 'agents.list[0].prompt'],
+    [{
+      agents: {
+        list: [{ id: 'a', description: 'Agent A', prompt: { safetyLevel: 'normal' } }],
+      },
+    }, 'agents.list[0].prompt'],
     [{ agents: { defaults: { tools: { bogus: true } } } }, 'agents.defaults.tools.bogus'],
     [{ agents: { defaults: { context: { maxFileChars: -1 } } } }, 'agents.defaults.context.maxFileChars'],
     [{ agents: { defaults: { context: { bogus: true } } } }, 'agents.defaults.context.bogus'],
     [{ agents: { defaults: { compaction: { timeoutSeconds: 0 } } } }, 'agents.defaults.compaction.timeoutSeconds'],
     [{ agents: { defaults: { compaction: { bogus: true } } } }, 'agents.defaults.compaction.bogus'],
-    [{ agents: { defaults: { subagents: { maxDepth: -1 } } } }, 'agents.defaults.subagents.maxDepth'],
-    [{ agents: { defaults: { subagents: { bogus: true } } } }, 'agents.defaults.subagents.bogus'],
-    [{
-      agents: {
-        defaults: {
-          subagents: {
-            list: [{
-              id: 'worker',
-              description: 'Worker',
-              model: { providerId: 'provider', modelId: 'model', bogus: true },
-            }],
-          },
-        },
-      },
-    }, 'agents.defaults.subagents.list[0].model.bogus'],
+    [{ agents: { defaults: { subagents: {} } } }, 'agents.defaults.subagents'],
     [{ logger: [] }, 'logger'],
     [{ logger: { bogus: true } }, 'logger.bogus'],
     [{ logger: { minLevel: 'verbose' } }, 'logger.minLevel'],

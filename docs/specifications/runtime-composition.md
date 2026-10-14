@@ -27,7 +27,7 @@ Reload results distinguish publication, no-op, rejection, supersession, blocking
 
 ## Runtime path ownership
 
-`RuntimeApp.create()` requires `agentHome` as its sole architecture path input. Agent Home owns Agent Context, Sessions, Memory and recall state, Subagent profiles, logs, and temporary Runtime state. It is also the relative-path anchor for Environment filesystem Tools, the default Search root, the default Exec `cwd`, prompt path rendering, and project-oriented Subagent execution.
+`RuntimeApp.create()` requires `agentHome` as its sole architecture path input. Agent Home owns Root Agent Context, configured-Agent Context under `agents/<agentId>/`, Sessions, Memory and recall state, logs, and temporary Runtime state. It is also the relative-path anchor for Environment filesystem Tools, the default Search root, the default Exec `cwd`, prompt path rendering, and project-oriented Subagent execution.
 
 Runtime does not infer this path from process globals and never reads configuration files. A supported or embedding Host injects one immutable Application projection. Embedding construction may omit that projection to use hardcoded defaults, but may not omit or alias Agent Home. Root user messages still enter through a registered Channel; `RuntimeApplication` exposes no direct Turn execution method.
 

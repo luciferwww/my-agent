@@ -20,15 +20,20 @@ interface SubagentProfile {
   agentDir: string;
   model: 'inherit' | ModelReference;
   tools?: { allow?: string[]; deny?: string[] };
-  maxLlmCalls?: number;
 }
 ```
 
-Child profile identity and role come from configuration plus context files. Each Child context file replaces the corresponding Parent file; missing Child files fall back to Parent. A missing Child directory behaves as an anonymous/general-purpose Child using Parent context.
+Configured Child profile identity and role come from `agents.list[]`; Runtime
+projects the supported configured-Agent fields into the internal
+`SubagentProfile`. An omitted public `model` becomes internal `"inherit"`.
+Configured Agent Context belongs under `<agentHome>/agents/<agentId>/`. Each
+Child context file replaces the corresponding Parent file; missing Child files
+fall back to Parent. A missing Child directory behaves as an
+anonymous/general-purpose Child using Parent context.
 
 Unknown LLM-supplied profile names fall back to `general-purpose` with a warning. Invalid configured profiles fail configuration/startup validation.
 
-Depth and capability derive from explicit Parent/Child execution context rather than Session identity. Each accepted Child receives a fresh canonical `sessionId` and a root-only transient Transcript with caller provenance. It has no Session Store entry, never appears in get/list, and is removed at terminal cleanup or subsequent startup recovery. Default policy prevents recursive `task` use beyond the allowed depth.
+Depth and capability derive from explicit Parent/Child execution context rather than Session identity. `agents.maxSubagentDepth` is global, while effective `task` Tool policy controls whether an individual Agent can delegate. Every Child Turn independently applies global `agents.maxLlmCallsPerTurn`; profiles cannot override Runner policy and do not inherit Parent remaining capacity. Each accepted Child receives a fresh canonical `sessionId` and a root-only transient Transcript with caller provenance. It has no Session Store entry, never appears in get/list, and is removed at terminal cleanup or subsequent startup recovery. Runtime removes `task` beyond the allowed depth.
 
 ## Execution contract
 
