@@ -1,6 +1,6 @@
 # Session-addressed Subagent Observation Plan
 
-> Status: Accepted
+> Status: Completed, validated, owner-accepted, and archived
 > Date: 2026-10-13
 > Owner: Project owner
 > Type: Architecture Slice
@@ -8,6 +8,7 @@
 > Decision: [ADR-020: Session-addressed Presentation Subscription and Ephemeral Child Observation](../../../decisions/adr-020-session-addressed-presentation-subscription-and-ephemeral-child-observation.md)
 > Research input: [Ephemeral Single-Turn Agent Session Observation and Retention Research](../../../research/ephemeral-single-turn-agent-session-design-draft.md)
 > Authorization: Plan, Specification, and ADR accepted by the project owner on 2026-10-13. The project owner authorized delivery through SSO-5 on 2026-10-13.
+> Closeout: Owner accepted completed Delivery and validation and authorized archive on 2026-10-14.
 
 ## 1. Outcome
 
@@ -175,3 +176,5 @@ Validated on 2026-10-13:
   focused Parent and a still-open Child by its preserved
   `openedChildSessionId`; unopened running-Child discovery remains page-local
   and terminal Parent `task` History provides the persistent recovery handle.
+- The project owner accepted the completed Change and authorized archive on
+  2026-10-14.

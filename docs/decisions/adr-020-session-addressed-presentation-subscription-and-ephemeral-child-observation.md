@@ -3,7 +3,7 @@
 > Status: Accepted
 > Decision date: 2026-10-13
 > Owner: Project owner
-> Related Plan/Specification: [Plan](../changes/active/session-addressed-subagent-observation/plan.md) and [Specification](../changes/active/session-addressed-subagent-observation/specification.md)
+> Related Plan/Specification: [Plan](../changes/archive/session-addressed-subagent-observation/plan.md) and [Specification](../changes/archive/session-addressed-subagent-observation/specification.md)
 > Supersedes: none
 
 ## Context

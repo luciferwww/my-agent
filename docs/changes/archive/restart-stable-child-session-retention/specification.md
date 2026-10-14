@@ -1,9 +1,10 @@
 # Restart-stable Child Session Retention Specification
 
-> Status: Accepted
+> Status: Validated
 > Date: 2026-10-13
 > Owner: Project owner
 > Plan: [Restart-stable Child Session Retention Plan](plan.md)
+> Closeout: Owner accepted completed Delivery and validation and authorized archive on 2026-10-14.
 
 ## 1. Store contract
 

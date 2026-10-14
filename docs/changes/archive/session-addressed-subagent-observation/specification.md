@@ -1,10 +1,11 @@
 # Session-addressed Subagent Observation Specification
 
-> Status: Accepted
+> Status: Validated
 > Date: 2026-10-13
 > Owner: Project owner
 > Related Plan: [Session-addressed Subagent Observation Plan](plan.md)
 > Related Decision: [ADR-020: Session-addressed Presentation Subscription and Ephemeral Child Observation](../../../decisions/adr-020-session-addressed-presentation-subscription-and-ephemeral-child-observation.md)
+> Closeout: Owner accepted completed Delivery and validation and authorized archive on 2026-10-14.
 
 ## 1. Purpose and observable outcome
 
@@ -405,5 +406,5 @@ valid and render normally but have no recoverable detail action.
 ## 14. Open questions
 
 No contract question remains open. The project owner accepted this
-Specification, its Plan, and ADR-020 on 2026-10-13 and authorized delivery
-through SSO-4 on the same date.
+Specification, its Plan, and ADR-020 on 2026-10-13, authorized delivery
+through SSO-5, and accepted completed Delivery and validation on 2026-10-14.

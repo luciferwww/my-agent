@@ -1,11 +1,12 @@
 # Restart-stable Child Session Retention Plan
 
-> Status: Accepted
+> Status: Completed, validated, owner-accepted, and archived
 > Date: 2026-10-13
 > Owner: Project owner
 > Type: Architecture Slice
 > Specification: [Restart-stable Child Session Retention Specification](specification.md)
 > Authorization: The project owner accepted the bounded behavior and authorized implementation on 2026-10-13.
+> Closeout: Owner accepted completed Delivery, automated validation, and manual restart behavior and authorized archive on 2026-10-14.
 
 ## 1. Outcome
 
@@ -80,5 +81,5 @@ Validated on 2026-10-13:
 - The production build emitted the existing environment warning that Node.js
   20.16.0 is below Vite's recommended 20.19 minimum; the build completed
   successfully.
-- Automated implementation validation is complete. Project-owner manual
-  restart acceptance remains the final Change exit gate.
+- The project owner accepted the completed Change, including manual restart
+  behavior, and authorized archive on 2026-10-14.
