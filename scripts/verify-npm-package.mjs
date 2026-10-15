@@ -90,23 +90,22 @@ async function main() {
     await verifyInstalledClientDist(installDir);
     const firstStartInstallationBefore = await snapshotTree(installDir);
     const firstStartStartupCwdBefore = await snapshotTree(startupCwd);
-    host = startInstalledCommand(
+    const firstStart = await runInstalledCommand(
       installationProject,
       startupCwd,
       [],
+      PROCESS_TIMEOUT_MS,
       createIsolatedHomeEnvironment(firstStartHomeDirectory),
     );
-    await waitForFileContent(
-      join(firstStartAgentHome, 'config.json'),
-      '{}\n',
-      host,
-      PROCESS_TIMEOUT_MS,
-    );
-    await stopChild(host);
-    host = undefined;
+    assert(firstStart.code === 1, 'Installed command accepted a missing Agent configuration.');
+    assert(firstStart.stdout === '', 'Missing configuration emitted unexpected standard output.');
     assert(
-      await readFile(join(firstStartAgentHome, 'config.json'), 'utf8') === '{}\n',
-      'First-start Agent configuration bytes changed after bootstrap.',
+      firstStart.stderr === `Agent configuration file is missing. Run my-agent --initialize --agent-home ${JSON.stringify(firstStartAgentHome)}.\n`,
+      'Installed command emitted unexpected missing-configuration guidance.',
+    );
+    assert(
+      !await pathExists(firstStartHomeDirectory),
+      'First start modified the default home while reporting a missing configuration.',
     );
     assertTreeUnchanged(
       firstStartInstallationBefore,
@@ -122,23 +121,25 @@ async function main() {
     const explicitInstallationBefore = await snapshotTree(installDir);
     const explicitStartupCwdBefore = await snapshotTree(startupCwd);
     const explicitFallbackHomeBefore = await snapshotTree(explicitHomeDirectory);
-    host = startInstalledCommand(
+    const explicitStart = await runInstalledCommand(
       installationProject,
       startupCwd,
       ['--agent-home', explicitAgentHome],
+      PROCESS_TIMEOUT_MS,
       createIsolatedHomeEnvironment(explicitHomeDirectory),
     );
-    await waitForFileContent(
-      join(explicitAgentHome, 'config.json'),
-      '{}\n',
-      host,
-      PROCESS_TIMEOUT_MS,
-    );
-    await stopChild(host);
-    host = undefined;
+    assert(explicitStart.code === 1, 'Installed command accepted a missing explicit configuration.');
     assert(
-      await readFile(join(explicitAgentHome, 'config.json'), 'utf8') === '{}\n',
-      'Explicit Agent Home configuration bytes changed after bootstrap.',
+      explicitStart.stdout === '',
+      'Missing explicit configuration emitted unexpected standard output.',
+    );
+    assert(
+      explicitStart.stderr === `Agent configuration file is missing. Run my-agent --initialize --agent-home ${JSON.stringify(explicitAgentHome)}.\n`,
+      'Installed command emitted unexpected explicit missing-configuration guidance.',
+    );
+    assert(
+      !await pathExists(explicitAgentHome),
+      'Missing explicit configuration modified the Agent Home.',
     );
     assertTreeUnchanged(
       explicitInstallationBefore,
@@ -399,20 +400,14 @@ async function verifyInstalledExtensionApiTypes(installationProject) {
   }
 }
 
-async function waitForFileContent(path, expectedContent, child, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      if (await readFile(path, 'utf8') === expectedContent) return;
-    } catch (error) {
-      if (!error || typeof error !== 'object' || error.code !== 'ENOENT') throw error;
-    }
-    if (child.exitCode !== null || child.signalCode !== null) {
-      throw new Error(`Installed Host exited before first-start bootstrap with ${String(child.exitCode)}.`);
-    }
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+async function pathExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch (error) {
+    if (error && typeof error === 'object' && error.code === 'ENOENT') return false;
+    throw error;
   }
-  throw new Error('Installed Host first-start configuration bootstrap timed out.');
 }
 
 function parsePackResult(stdout) {

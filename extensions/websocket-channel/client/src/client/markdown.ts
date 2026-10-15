@@ -1,4 +1,5 @@
-import { Marked } from 'marked';
+import katex from 'katex';
+import { Marked, type MarkedExtension, type Tokens } from 'marked';
 
 const renderer = {
   html({ text }: { text: string }): string {
@@ -23,6 +24,7 @@ const renderer = {
 };
 
 const markdown = new Marked({ renderer });
+markdown.use(canonicalLatexExtension());
 
 export function renderAssistantMarkdown(value: unknown): string {
   const normalized = String(value || '').replace(/\r\n?/g, '\n');
@@ -39,6 +41,45 @@ function isSafeLink(href: string): boolean {
   } catch {
     return false;
   }
+}
+
+function canonicalLatexExtension(): MarkedExtension {
+  return {
+    extensions: [
+      {
+        name: 'inlineCanonicalKatex',
+        level: 'inline',
+        start: source => source.indexOf('\\('),
+        tokenizer(source) {
+          const match = /^\\\((.+?)\\\)/u.exec(source);
+          return match
+            ? { type: 'inlineCanonicalKatex', raw: match[0], text: match[1] }
+            : undefined;
+        },
+        renderer: token => renderCanonicalLatex(token, false),
+      },
+      {
+        name: 'blockCanonicalKatex',
+        level: 'block',
+        tokenizer(source) {
+          const match = /^\\\[\s*\n?([\s\S]+?)\n?\s*\\\](?:\n|$)/u.exec(source);
+          return match
+            ? { type: 'blockCanonicalKatex', raw: match[0], text: match[1].trim() }
+            : undefined;
+        },
+        renderer: token => `${renderCanonicalLatex(token, true)}\n`,
+      },
+    ],
+  };
+}
+
+function renderCanonicalLatex(token: Tokens.Generic, displayMode: boolean): string {
+  return katex.renderToString(String(token['text'] ?? ''), {
+    displayMode,
+    throwOnError: false,
+    trust: false,
+    strict: 'ignore',
+  });
 }
 
 function escapeHtml(value: string): string {

@@ -1319,6 +1319,57 @@ describe('Built-in Protocol Clients', () => {
     expect(requestBody(anthropicFetch)).toMatchObject({ max_tokens: 12_345 });
   });
 
+  it('learns max_completion_tokens after a max_tokens HTTP 400 retry succeeds', async () => {
+    const fetchImpl = vi.fn(async (
+      _input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return 'max_completion_tokens' in body
+        ? chatTerminal()
+        : new Response('Bad Request', { status: 400 });
+    }) as unknown as typeof fetch;
+    const client = new OpenAIChatCompletionsClient({
+      baseURL: 'https://example.test',
+      fetch: fetchImpl,
+    });
+    const limitedRequest = { ...request, outputTokenLimit: 16 };
+
+    await expect(client.chat(limitedRequest)).resolves.toMatchObject({
+      stopReason: 'end_turn',
+    });
+    await expect(client.chat(limitedRequest)).resolves.toMatchObject({
+      stopReason: 'end_turn',
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(requestBody(fetchImpl, 0)).toMatchObject({ max_tokens: 16 });
+    expect(requestBody(fetchImpl, 0)).not.toHaveProperty('max_completion_tokens');
+    expect(requestBody(fetchImpl, 1)).toMatchObject({ max_completion_tokens: 16 });
+    expect(requestBody(fetchImpl, 1)).not.toHaveProperty('max_tokens');
+    expect(requestBody(fetchImpl, 2)).toMatchObject({ max_completion_tokens: 16 });
+  });
+
+  it('does not learn max_completion_tokens when the HTTP 400 retry fails', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      error: { type: 'invalid_request_error', message: 'Bad Request' },
+    }), { status: 400 })) as unknown as typeof fetch;
+    const client = new OpenAIChatCompletionsClient({
+      baseURL: 'https://example.test',
+      fetch: fetchImpl,
+    });
+    const limitedRequest = { ...request, outputTokenLimit: 16 };
+
+    await collect(client, limitedRequest);
+    await collect(client, limitedRequest);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(requestBody(fetchImpl, 0)).toHaveProperty('max_tokens', 16);
+    expect(requestBody(fetchImpl, 1)).toHaveProperty('max_completion_tokens', 16);
+    expect(requestBody(fetchImpl, 2)).toHaveProperty('max_tokens', 16);
+    expect(requestBody(fetchImpl, 3)).toHaveProperty('max_completion_tokens', 16);
+  });
+
   it('projects accepted receipts and trusted Host messages for all protocols', async () => {
     const lifecycleRequest: ModelInvocationRequest = {
       model: 'test',

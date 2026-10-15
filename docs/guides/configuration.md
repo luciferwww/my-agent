@@ -25,11 +25,16 @@ If `--agent-home` is omitted, the default is:
 <user-home>/.my-agent
 ```
 
-On first startup, a missing `config.json` is created as:
+Initialize a new Agent Home explicitly before first startup:
 
-```json
-{}
+```bash
+npm run agent -- --initialize --agent-home ./agent-home
 ```
+
+The interactive initializer verifies at least one real Provider/Model call,
+lets you select one verified Default Model, installs Root and fixed named-Agent
+Context, and publishes `config.json` last. Ordinary startup never creates a
+missing configuration; it reports the initialization command instead.
 
 The file is read at startup. Restart the Runtime after changing it.
 
@@ -199,8 +204,8 @@ Each model registration supports:
 | `reasoning` | No | Verified Thinking and Effort capabilities |
 
 Token limits must be positive safe integers. Effective Context budgeting uses
-`maximumPromptTokens` first, then `maximumContextTokens`, and finally the
-conservative `32768` fallback. `outputTokenLimit` is invocation policy, not a
+`maximumPromptTokens` first, then `maximumContextTokens`, and finally a
+conservative `131072` fallback. `outputTokenLimit` is invocation policy, not a
 published model fact, and is clamped to a known `maximumOutputTokens`.
 
 ### 3.3 Thinking and Effort capabilities

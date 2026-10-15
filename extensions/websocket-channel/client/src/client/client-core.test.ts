@@ -282,6 +282,40 @@ describe('WebSocket Client core', () => {
     );
   });
 
+  it('renders complete math while preserving incomplete and invalid formulas', () => {
+    expect(renderAssistantMarkdown('PID chooses \\(f\\).')).toContain('class="katex"');
+    expect(renderAssistantMarkdown(
+      'Before\n\n\\[\n\\text{error}=\\text{target}-\\text{measurement}\n\\]\n\nAfter',
+    )).toContain('class="katex-display"');
+
+    const incompleteStages = [
+      ['PID chooses \\(f', '(f'],
+      ['Before\n\n\\[\n\\text{error}=', '[\n\\text{error}='],
+    ];
+    for (const [source, expectedSource] of incompleteStages) {
+      const rendered = renderAssistantMarkdown(source);
+      expect(rendered).not.toContain('class="katex"');
+      expect(rendered).toContain(expectedSource);
+    }
+
+    const invalid = renderAssistantMarkdown('Invalid \\(\\frac{x\\).');
+    expect(invalid).toContain('class="katex-error"');
+    expect(invalid).toContain('\\frac{x');
+  });
+
+  it('leaves dollar syntax and code spans untouched and rejects trusted KaTeX links', () => {
+    const dollarSyntax = renderAssistantMarkdown(
+      'Price $20$ and formula $e = mc^2$ stay literal.',
+    );
+    expect(dollarSyntax).not.toContain('class="katex"');
+    expect(dollarSyntax).toContain('$e = mc^2$');
+    expect(renderAssistantMarkdown('`\\(x\\)`')).not.toContain('class="katex"');
+    const untrusted = renderAssistantMarkdown(
+      'Unsafe \\(\\href{javascript:alert(1)}{click}\\).',
+    );
+    expect(untrusted).not.toContain('href="javascript:');
+  });
+
   it('validates an attachment selection atomically', () => {
     const valid = file('diagram.png', 'image/png', 1024);
     expect(validateAttachmentSelection([], [valid])).toEqual([]);

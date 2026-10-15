@@ -1,13 +1,13 @@
 # Agent Home Initialization Plan
 
-> Status: Proposed
+> Status: Accepted
 > Date: 2026-10-14
 > Owner: Project owner
 > Type: Architecture Slice
 > Specification: [Agent Home Initialization Specification](specification.md)
 > Decision: [ADR-022: Explicit Standalone Agent Home Initialization](../../../decisions/adr-022-explicit-standalone-agent-home-initialization.md)
 > Depends on: [Shared Configured Agents](../../archive/shared-configured-agents/plan.md) and [Extension Initialization Metadata](../../archive/extension-initialization-metadata/plan.md)
-> Authorization: Not authorized for Delivery. Plan, Specification, and ADR require project-owner acceptance.
+> Authorization: Authorized for Delivery by the project owner on 2026-10-15.
 
 ## 1. Outcome
 
@@ -44,17 +44,32 @@ Subagent production code.
   `agents.steeringEnabled`, `agents.maxLlmCallsPerTurn`, and
   `agents.maxSubagentDepth`; do not generate a `runner` section or Role-level
   execution limits.
-- Offer the Built-in Provider and installed Extensions whose Descriptor
-  statically declares `provider`.
-- Configure the Built-in Provider through one selected protocol, or configure
-  one selected Provider Extension from its bounded Draft-07 scalar Schema.
+- Show all statically discovered installed Extensions. Allow bounded
+  Schema-driven configuration for each; apply Provider live verification only
+  when its Descriptor statically declares `provider`.
+- Configure one Built-in connection with one or more explicit
+  protocol/Model-ID pairs and configure multiple selected Provider Extensions
+  from their bounded Draft-07 scalar Schemas.
 - Accept masked literals, existing environment-variable references, or
   omission for Schema-declared sensitive strings.
-- Load only the selected Provider Extension and verify its actual registration.
-- Select one exact Provider and Model from the candidate's effective Catalog.
-- Verify the candidate with one real minimal tool-free inference.
+- Load only explicitly selected Provider Extensions and require each to
+  register exactly one logical Provider.
+- Verify every retained Provider/Model pair with one real minimal tool-free
+  inference.
+- Select one Default Model only from the successfully verified pairs.
+- Invalidate prior Model successes when their Provider configuration changes,
+  and reject combined Registry contribution conflicts before publication.
 - Validate the candidate with existing public APIs.
-- Write one authoritative `config.json`.
+- Complete prompting, confirmation, validation, readiness, and candidate
+  cleanup before changing Agent Home files.
+- Enter Edit mode only after explicit confirmation when `config.json` exists.
+- Preserve untouched supported configuration and replace only accepted
+  modified functional sections or exact Extension entries.
+- Use one Extension configuration Draft across all contributed capabilities.
+- Require source-independent verification evidence for every new or modified
+  capability whose policy requires it.
+- Atomically create or concurrency-protected replace one authoritative
+  `config.json`.
 - Stop ordinary standalone startup from creating a missing empty config;
   report bounded initialization guidance instead.
 - Exit without constructing `RuntimeApp`.
@@ -66,9 +81,9 @@ sections:
 
 | Section | Generated content |
 |---|---|
-| `llm` | the exact selected Provider/Model as `defaultModel`, plus Built-in configuration only for the Built-in route |
+| `llm` | one verified pair as `defaultModel`, plus only successfully verified Built-in Model registrations when present |
 | `agents` | fixed global execution policy and the `reviewer`, `explorer`, and `researcher` entries |
-| `extensions` | only for an Extension route: one entry containing only authored non-default configuration |
+| `extensions` | Schema-configured Extension entries, with Provider Extension entries retained only after at least one verified Model |
 
 The generated shape is:
 
@@ -103,11 +118,12 @@ The generated shape is:
 }
 ```
 
-For a Provider Extension, `llm.builtin` is omitted, `defaultModel.providerId`
-uses the actual registered Provider ID, and one
-`extensions.entries.<extensionId>.config` object contains only values authored
-by the user. `extensions.enabled` and entry `enabled` are omitted because their
-effective value is already true.
+`llm.builtin` and `extensions` may coexist. `llm.builtin` is omitted when no
+Built-in Model succeeded. Each retained
+`extensions.entries.<extensionId>.config` contains only values authored by the
+user and has at least one successfully verified Model in the in-memory
+verification result. `extensions.enabled` and entry `enabled` are omitted
+because their effective value is already true.
 
 Placeholders are explanatory and are not written literally. Sensitive fields
 are omitted when permitted and declined; `maxLlmCallsPerTurn` is omitted when
@@ -129,10 +145,9 @@ behavior are defined in the
 - Changes to any non-Standalone production module.
 - Web setup, setup server, or browser lifecycle.
 - Non-interactive initialization.
-- Configure, repair, upgrade, merge, or reset commands.
+- Destructive reset, migration, repair, or upgrade commands.
 - A Provider onboarding SDK or generic adapter framework.
-- Extension installation, update, or configuration outside the selected
-  Provider route.
+- Extension installation or update.
 - A template system or Role marketplace.
 - A secret store.
 - Automation implementation.
@@ -142,11 +157,11 @@ behavior are defined in the
 
 | Item | Status | Exit condition |
 |---|---|---|
-| AHI-1 Standalone mode | Not Started | argument and routing tests prove initialization does not start Runtime |
-| AHI-2 Terminal wizard | Not Started | supported Provider, credential, and Model choices are collected and cancel safely |
-| AHI-3 File publication | Not Started | Context, fixed Agent profiles, and valid config are created without overwrite |
-| AHI-4 Startup cutover | Not Started | missing config fails with initialization guidance instead of creating `{}` |
-| AHI-5 Validation | Not Started | focused, package, manual terminal, regression, lint, build, and review gates pass |
+| AHI-1 Standalone mode | Completed | argument and routing tests prove initialization does not start Runtime |
+| AHI-2 Terminal wizard | Completed | supported Provider, credential, and Model choices are collected and cancel safely |
+| AHI-3 File publication | Completed | Initialize creates config last; Edit concurrency-checks and atomically replaces config |
+| AHI-4 Startup cutover | Completed | missing config fails with initialization guidance instead of creating `{}` |
+| AHI-5 Validation | In Progress | automated gates pass except the latest package verification is blocked by its fixed npm subprocess timeout; manual terminal acceptance remains |
 
 Only one item may be `In Progress`.
 
@@ -164,20 +179,26 @@ Delivery requires:
 
 The design review verified that `discoverExtensionDescriptors()`,
 `acquireExtensions()`, selected `LoadedRuntimeUnit.create()`,
-`stageRegistryUnit()`, `loadAgentConfig()`, `BuiltinLlmProvider`,
-`ModelResolver`, and `ModelInvocationPort.chat()` provide that path. If
-implementation evidence disproves it, this Change stops for a separate
-decision. It does not expand into other modules.
+`stageRegistryUnit()`, `resolveStagedRegistryCandidate()`, `loadAgentConfig()`,
+`BuiltinLlmProvider`, `ModelResolver`, and `ModelInvocationPort.chat()` provide
+that path. If implementation evidence disproves it, this Change stops for a
+separate decision. It does not expand into other modules.
 
 ## 8. Validation
 
 - Standalone argument and mode-routing tests.
 - Fake-prompt wizard tests.
-- Built-in and discovered Provider Extension route tests.
-- Supported/unsupported Schema prompt projection, sensitive input, static
-  claim, actual registration, and selected-candidate cleanup tests.
+- Built-in, multiple Provider Extension, multiple Model, and verified Default
+  Model selection tests.
+- Supported/unsupported Schema prompt projection, optional unset choices,
+  sensitive input, static claim, zero/multiple actual Provider registration,
+  per-Model readiness, partial Model success, Provider reconfiguration
+  invalidation, combined Registry conflicts, and exact-once candidate
+  start/cleanup tests.
 - Missing, empty, cancelled, conflicting, failed, and successful filesystem
   cases.
+- Zero Agent Home writes before Publication and `config.json`-last partial
+  Publication recovery.
 - Initialization followed by ordinary standalone startup.
 - Package-content verification for terminal and profile assets.
 - Manual Windows terminal validation.

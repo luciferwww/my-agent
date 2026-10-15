@@ -220,9 +220,13 @@ is not submitted as Steering during an active Turn.
 Standalone Host-local Channel selection:
 
 ```bash
+npm run agent -- --initialize --agent-home ./agent-home # Initialize and exit
 npm run agent -- --agent-home ./agent-home       # No Host-local Channel
 npm run agent -- --agent-home ./agent-home --cli # CLI only
 ```
+
+Ordinary startup does not create a missing `config.json`; run the interactive
+initializer first.
 
 Reusable Channels such as WebSocket are enabled through their Extension
 entries, independently of `--cli`.

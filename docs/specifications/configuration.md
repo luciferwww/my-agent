@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-23
+> Verified: 2026-10-15
 > Authority: Stable Agent configuration contract
 
 ## Scope
@@ -13,7 +13,7 @@ Owner validators reject unknown fields at every leaf and nested-leaf level. Plat
 
 ## Loading and precedence
 
-Standalone startup ensures Agent Home exists and exclusively creates a missing configuration document with exact UTF-8 bytes `{}\n` before loading it. Existing configuration paths are never opened for writing, overwritten, reformatted, merged, migrated, repaired, or rolled back. The physical loader is globally strict: a document still missing at read time is `FILE_MISSING`; an unreadable file, malformed JSON, non-object root, unknown namespace, or invalid known namespace is another classified fatal error. The Host reads document content exactly once per startup attempt, and bootstrap does not read it. Runtime receives a defensively copied/frozen Application projection and never reads configuration files.
+Ordinary Standalone startup never creates a missing configuration document. A missing `<agentHome>/config.json` fails before Runtime creation with guidance to run `my-agent --initialize --agent-home <path>`. Explicit Standalone initialization verifies Provider/Model access and publishes `config.json` last. Existing configuration paths are never opened for writing, overwritten, reformatted, merged, migrated, repaired, or rolled back. The physical loader remains globally strict: a document missing at read time is `FILE_MISSING`; an unreadable file, malformed JSON, non-object root, unknown namespace, or invalid known namespace is another classified fatal error. The Host reads document content exactly once per ordinary startup attempt. Runtime receives a defensively copied/frozen Application projection and never reads configuration files. `ensureAgentConfigDocument()` remains an explicit Platform API for other callers but is not used by ordinary Standalone startup.
 
 Agent-scoped precedence is:
 
@@ -24,7 +24,7 @@ Global Agent execution policy precedence is `module default -> agents top-level 
 ## Stable shape and ownership
 
 - `llm.defaultModel?: { providerId, modelId }` is the optional preferred reference for a Root Turn without an explicit selection and the client Catalog default, not resolved facts, a mandatory startup model, a Child default, or a fallback list.
-- `llm.builtin?: { baseURL, apiKey?, models[] }` configures one optional Built-in Provider. Each model declares an opaque `modelId`, one of the three supported protocols, optional `displayName`, optional positive safe-integer capability facts `maximumContextTokens`, `maximumPromptTokens`, and `maximumOutputTokens`, and separate optional positive safe-integer invocation policy `outputTokenLimit`; an empty list is valid. Omitting Prompt and Context limits uses the Built-in Provider's conservative `32,768` effective fallback.
+- `llm.builtin?: { baseURL, apiKey?, models[] }` configures one optional Built-in Provider. Each model declares an opaque `modelId`, one of the three supported protocols, optional `displayName`, optional positive safe-integer capability facts `maximumContextTokens`, `maximumPromptTokens`, and `maximumOutputTokens`, and separate optional positive safe-integer invocation policy `outputTokenLimit`; an empty list is valid. Omitting Prompt and Context limits uses the Built-in Provider's conservative `131,072` effective fallback.
 - Built-in `apiKey` accepts a literal or one exact `${ENV_VAR}` reference. Platform materializes it once and fails safely when the referenced value is missing or blank. Arbitrary interpolation is not supported.
 - The legacy global `llm.maxTokens` is removed. Built-in output control is per-model `outputTokenLimit`; there is no global, Agent-level, Channel-level, or compatibility alias.
 - `agents.steeringEnabled` is a global Runner-owned boolean and defaults to `false`.

@@ -9,7 +9,7 @@ import {
 
 describe('Built-in LLM configuration', () => {
   it('owns its operational defaults', () => {
-    expect(DEFAULT_BUILTIN_CONTEXT_LIMIT).toBe(32_768);
+    expect(DEFAULT_BUILTIN_CONTEXT_LIMIT).toBe(131_072);
     expect(DEFAULT_ANTHROPIC_MAX_TOKENS).toBe(4_096);
   });
 

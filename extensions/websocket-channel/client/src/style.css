@@ -519,6 +519,12 @@
       .rich-text pre code {
         display: block; padding: 0; border-radius: 0; background: transparent; color: inherit; font-size: inherit;
       }
+      .rich-text .katex-display {
+        max-width: 100%; margin: 0; overflow-x: auto; overflow-y: hidden;
+      }
+      .rich-text .katex-error {
+        white-space: pre-wrap;
+      }
       .message.system .bubble, .message.tool .bubble {
         background: #f1f2ee; color: #445957;
       }

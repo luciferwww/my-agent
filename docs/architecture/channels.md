@@ -70,6 +70,13 @@ Theme changes do not reconnect transport or clear Session state. The retired
 `/chat2.html` entry has no alias or redirect and returns 404 unless an operator
 explicitly configures that exact path as the primary `clientPath`.
 
+Assistant text is rendered as escaped Markdown with safe external links.
+Complete `\(...\)` and `\[...\]` expressions render through KaTeX with trusted
+commands disabled. Dollar-delimited expressions remain ordinary Markdown text.
+Streaming expressions remain source text until their closing delimiter
+arrives, and invalid expressions remain visible rather than interrupting
+message rendering.
+
 ### 3.2 Client to Runtime
 
 ```text

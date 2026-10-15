@@ -83,7 +83,7 @@ describe('BuiltinLlmProvider', () => {
         identity: { providerId: 'builtin', modelId: 'beta' },
         protocol: 'builtin-model-router',
         connection: { endpointId: 'https://example.test/v1' },
-        facts: { effectiveContextLimit: 32_768 },
+        facts: { effectiveContextLimit: 131_072 },
       },
     });
     expect(provider.entry.resolveModel('missing', connection.connection)).toMatchObject({

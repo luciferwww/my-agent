@@ -32,7 +32,7 @@ export interface LLMConfig {
   readonly builtin?: BuiltinLlmProviderConfig;
 }
 
-export const DEFAULT_BUILTIN_CONTEXT_LIMIT = 32_768;
+export const DEFAULT_BUILTIN_CONTEXT_LIMIT = 131_072;
 export const DEFAULT_ANTHROPIC_MAX_TOKENS = 4_096;
 
 const SUPPORTED_PROTOCOLS = new Set<BuiltinProtocol>([
