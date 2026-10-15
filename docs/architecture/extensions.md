@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Extension acquisition behavior
-> Verified: 2026-09-18
+> Verified: 2026-10-15
 > Ownership: Extension packages, public API, Runtime-Bootstrap-derived Extension root, configuration, discovery, Jiti loading, acquisition diagnostics, and Runtime handoff
 > Ownership key: extension-acquisition
 
@@ -42,15 +42,26 @@ Configuration failures are classified before acquisition.
 When global `extensions.enabled` is `false`, acquisition returns an empty result without discovery. An installed Extension without a matching configured entry remains disabled. For an existing entry, omitted `enabled` defaults to `true` and explicit `false` disables it. Before a factory receives its configuration, acquisition:
 
 1. selects the Descriptor-owned namespace;
-2. materializes a root `apiKey` when it is one exact `${ENV_VAR}` credential reference;
+2. materializes an exact `${ENV_VAR}` reference only for a direct root Schema
+   property with `type: "string"` and `writeOnly: true`;
 3. validates the materialized value against the Descriptor-owned Draft-07 schema;
 4. defensively freezes the validated scoped value.
 
-Other Extension fields have no generic environment-reference syntax and remain ordinary values defined by the Descriptor-owned schema. A disabled or invalid candidate gains no execution or lifecycle authority.
+Field names have no sensitive meaning, so an unannotated `apiKey` remains an
+ordinary literal string. Nested, referenced, composed, non-string, and
+dynamically named properties have no generic environment-reference syntax. A
+disabled or invalid candidate gains no execution or lifecycle authority.
 
 ## 4. Discovery and loading
 
-Discovery considers direct children of the injected install-owned `extensionsDir`. It enforces canonical containment, validates Descriptor shape, isolates all candidates participating in a duplicate Descriptor ID, and orders valid candidates deterministically by Descriptor ID.
+Discovery considers direct children of the injected install-owned
+`extensionsDir`. It enforces canonical containment, validates Descriptor shape,
+isolates all candidates participating in a duplicate Descriptor ID, and orders
+valid candidates deterministically by Descriptor ID. A Descriptor may expose a
+nonblank Extension-level `name` and may statically claim `provider` through
+`contributes`. Both are returned without importing the entry; omitted `name`
+falls back to `id` for presentation. The contribution claim is discovery
+metadata, not a permission or loading instruction.
 
 Controlled loading passes the declared module entry to the single Jiti Loader only after enablement, containment, and configuration checks. The entry is a contained relative regular file; its source or output suffix is not a public constraint. `my-agent/extension-api` owns the supported Extension-facing contract surface; acquisition data shapes remain private in `types.ts`.
 

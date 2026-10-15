@@ -12,6 +12,7 @@ export type {
   ExtensionAcquisitionOptions,
   ExtensionAcquisitionResult,
   ExtensionCandidate,
+  ExtensionContributionKind,
   ExtensionDescriptorV1,
   ExtensionDiscoveryDiagnostic,
   ExtensionDiscoveryDiagnosticCode,

@@ -117,7 +117,7 @@ describe('acquireExtensions', () => {
     await installFixture(extensionsDir, 'missing-value', 'missing-value', 'never-execute.js',
       objectSchema({ endpoint: { type: 'string' } }, ['endpoint']));
     await installFixture(extensionsDir, 'missing-secret', 'missing-secret', 'never-execute.js',
-      objectSchema({ apiKey: { type: 'string' } }, ['apiKey']));
+      objectSchema({ apiKey: { type: 'string', writeOnly: true } }, ['apiKey']));
 
     const result = await acquireExtensions({
       extensionsDir: extensionsDir,
@@ -318,7 +318,7 @@ describe('acquireExtensions', () => {
     const secret = 'sentinel-secret-value';
     const warn = vi.spyOn(Logger.get('ExtensionAcquisition'), 'warn');
     await installFixture(extensionsDir, 'factory-throws', 'factory-throws', 'factory-throws.js',
-      objectSchema({ apiKey: { type: 'string' } }, ['apiKey']));
+      objectSchema({ apiKey: { type: 'string', writeOnly: true } }, ['apiKey']));
 
     const result = await acquireExtensions({
       extensionsDir: extensionsDir,

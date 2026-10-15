@@ -42,7 +42,10 @@ describe('discoverExtensionDescriptors', () => {
   });
 
   it('discovers direct children and orders candidates by Descriptor ID', async () => {
-    await installCandidate(extensionsDir, 'first-created', descriptor('zeta'));
+    await installCandidate(extensionsDir, 'first-created', descriptor('zeta', {
+      name: 'Zeta Provider',
+      contributes: ['provider'],
+    }));
     await installCandidate(extensionsDir, 'renamed-locator', descriptor('alpha'));
     await mkdir(join(extensionsDir, 'container', 'nested'), { recursive: true });
     await writeFile(join(extensionsDir, 'ordinary-file'), 'ignored');
@@ -55,6 +58,20 @@ describe('discoverExtensionDescriptors', () => {
       expect.objectContaining({ code: 'descriptor_missing', locator: '"container"' }),
     ]);
     expect(Object.isFrozen(result.candidates[0]!.descriptor.configSchema)).toBe(true);
+    expect(result.candidates[1]!.descriptor).toMatchObject({
+      name: 'Zeta Provider',
+      contributes: ['provider'],
+    });
+    expect(Object.isFrozen(result.candidates[1]!.descriptor.contributes)).toBe(true);
+  });
+
+  it('keeps optional presentation and contribution metadata omitted', async () => {
+    await installCandidate(extensionsDir, 'minimal', descriptor('minimal'));
+
+    const result = await discoverExtensionDescriptors(extensionsDir);
+
+    expect(result.candidates[0]!.descriptor).not.toHaveProperty('name');
+    expect(result.candidates[0]!.descriptor).not.toHaveProperty('contributes');
   });
 
   it('isolates every candidate sharing a Descriptor ID with no winner', async () => {
@@ -85,6 +102,11 @@ describe('discoverExtensionDescriptors', () => {
     ['invalid identity', { id: 'invalid/id' }, 'descriptor_invalid'],
     ['empty version', { version: '' }, 'descriptor_invalid'],
     ['wrong manifest version', { manifestVersion: 2 }, 'descriptor_invalid'],
+    ['blank name', { name: '   ' }, 'descriptor_invalid'],
+    ['non-string name', { name: 1 }, 'descriptor_invalid'],
+    ['non-array contributions', { contributes: 'provider' }, 'descriptor_invalid'],
+    ['unknown contribution', { contributes: ['channel'] }, 'descriptor_invalid'],
+    ['duplicate contribution', { contributes: ['provider', 'provider'] }, 'descriptor_invalid'],
     ['absolute entry', {
       entry: process.platform === 'win32' ? 'C:\\outside\\entry.js' : '/outside/entry.js',
     }, 'descriptor_invalid'],

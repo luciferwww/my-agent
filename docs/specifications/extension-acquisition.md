@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-17
+> Verified: 2026-10-15
 > Authority: Stable Runtime Bootstrap acquisition contract
 
 ## Scope
@@ -17,8 +17,10 @@ Excluded: marketplace/install/update/signing; watchers/hot reload; sandboxing; R
 interface ExtensionDescriptorV1 {
   readonly manifestVersion: 1;
   readonly id: string;
+  readonly name?: string;
   readonly version: string;
   readonly entry: string;
+  readonly contributes?: readonly 'provider'[];
   readonly configSchema: Readonly<Record<string, unknown>>;
 }
 interface ExtensionLoadContext { readonly config: Readonly<Record<string, unknown>> }
@@ -33,7 +35,7 @@ interface ExtensionAcquisitionResult {
 
 Runtime Bootstrap derives exactly `<installDir>/extensions` from generic Host startup facts and passes that explicit root to Acquisition. Acquisition does not receive or derive `installDir`, `agentHome`, process Home, startup CWD, CLI input, or environment path precedence.
 
-Discover only direct package directories of the injected `extensionsDir`. A missing directory is a non-creating empty state. An existing root and every candidate/entry must remain canonically contained in the installation-owned location. Descriptor ID matches `[A-Za-z0-9_-]{1,64}`; directory name is a locator only. Entry is a contained relative regular file and may not be a symlink/reparse point; no filename suffix is part of the contract. All duplicate-ID candidates are isolated; no winner is chosen. Valid candidates sort deterministically by ID.
+Discover only direct package directories of the injected `extensionsDir`. A missing directory is a non-creating empty state. An existing root and every candidate/entry must remain canonically contained in the installation-owned location. Descriptor ID matches `[A-Za-z0-9_-]{1,64}`; directory name is a locator only. Optional `name` is a nonblank Extension-level presentation value and falls back to `id` for consumers. Optional, duplicate-free `contributes` accepts only `provider`; it is import-free discovery metadata, not a permission or loading instruction. Entry is a contained relative regular file and may not be a symlink/reparse point; no filename suffix is part of the contract. All duplicate-ID candidates are isolated; no winner is chosen. Valid candidates sort deterministically by ID.
 
 Each Extension package owns its `package.json`, source or build output, and runtime dependencies. `extension.json` owns only Host loading metadata and configuration Schema. Deployment prepares package dependencies before startup; Acquisition never installs them.
 
@@ -43,7 +45,7 @@ Descriptor schema is Draft-07, root object, `additionalProperties: false`, with 
 
 Global `extensions.enabled` defaults true and short-circuits discovery when false. An installed candidate requires a matching `entries.<id>` object. Within that object, omitted `enabled` defaults to true and explicit `false` disables it.
 
-The root `apiKey` field may be a literal string or one exact `${ENV_VAR}` credential reference. That reference is materialized before strict Ajv validation; no generic environment-reference syntax is supported for other fields. Defaults are allowed; coercion and unknown-property removal are not. The synchronous factory receives only defensively frozen scoped config and must not create resources. After all static checks, one Host-owned Jiti Loader loads source and built entries through the same path.
+A direct root Schema property with exact `type: "string"` and `writeOnly: true` may contain a literal string or one exact `${ENV_VAR}` credential reference. That reference is materialized before strict Ajv validation. Field names have no sensitive meaning; a root `apiKey` without this annotation remains literal. Nested, referenced, composed, non-string, and dynamically named properties receive no generic environment-reference syntax. Defaults are allowed; coercion and unknown-property removal are not. The synchronous factory receives only defensively frozen scoped config and must not create resources. After all static checks, one Host-owned Jiti Loader loads source and built entries through the same path.
 
 The returned Unit must match Descriptor ID, use source `external`, be optional and initially enabled, have no dependencies, and expose callable `create`. Loader never invokes `create`, `start`, `stop`, or registration.
 
@@ -65,7 +67,7 @@ Acquisition ends at `LoadedRuntimeUnit[]`. [Runtime Composition](runtime-composi
 
 ## Acceptance scenarios
 
-Cover explicit-root handoff, missing/invalid roots, installation containment and immutability, reparse rejection, Descriptor/schema validation, renamed-directory invariance, duplicate isolation, explicit/global enablement, exact `apiKey` credential materialization and redaction, import/export/factory failure, Unit normalization, deterministic frozen output, bounded secret-free logs, bad-neighbor isolation, and Runtime publication integration.
+Cover explicit-root handoff, missing/invalid roots, installation containment and immutability, reparse rejection, Descriptor/schema validation, optional name and Provider contribution metadata, renamed-directory invariance, duplicate isolation, explicit/global enablement, direct-root write-only string credential materialization and redaction, unannotated `apiKey` literal behavior, import/export/factory failure, Unit normalization, deterministic frozen output, bounded secret-free logs, bad-neighbor isolation, and Runtime publication integration.
 
 ## Related authority
 

@@ -1,10 +1,14 @@
 import type { LoadedRuntimeUnit } from '../../runtime/runtime-unit.js';
 
+export type ExtensionContributionKind = 'provider';
+
 export interface ExtensionDescriptorV1 {
   readonly manifestVersion: 1;
   readonly id: string;
+  readonly name?: string;
   readonly version: string;
   readonly entry: string;
+  readonly contributes?: readonly ExtensionContributionKind[];
   readonly configSchema: Readonly<Record<string, unknown>>;
 }
 

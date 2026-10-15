@@ -21,6 +21,8 @@ bootstrap pending a separately accepted setup workflow.
 - Initialization must remain independent from Runtime lifecycle.
 - The first version should use a terminal wizard and existing module APIs.
 - Scope must remain inside the Standalone Host.
+- Initialization must not assume every usable LLM environment fits the
+  Built-in Provider.
 
 ## Options considered
 
@@ -46,19 +48,30 @@ module APIs and does not modify non-Standalone production modules.
 Ordinary Standalone startup stops creating a missing empty configuration and
 instead gives bounded initialization guidance.
 
-The first version uses `@clack/prompts`, configures only the Built-in Provider,
-supports its current OpenAI Responses, OpenAI Chat Completions, and Anthropic
-Messages protocols, installs fixed Root/named Agent content, writes one valid
+The first version uses `@clack/prompts` and offers both the Built-in Provider
+and installed Extensions statically discovered through the separately accepted
+Extension Initialization Metadata contract. It imports only the Provider
+Extension explicitly selected by the user and verifies actual Provider
+registration before readiness and publication.
+
+The Built-in route supports its current OpenAI Responses, OpenAI Chat
+Completions, and Anthropic Messages protocols. An Extension route derives a
+bounded scalar prompt flow from its Draft-07 Schema, using optional `title` and
+`description`, Schema defaults, and explicit `writeOnly: true` sensitive
+strings. It does not infer sensitivity from property names.
+
+Initialization installs fixed Root/named Agent content, writes one valid
 configuration using `agents.list[]` plus the global
 `agents.steeringEnabled`, `agents.maxLlmCallsPerTurn`, and
 `agents.maxSubagentDepth` fields, and adds no Web, non-interactive, repair,
-migration, version, secret-store, or generic setup framework. It writes no
+migration, Manifest version, secret-store, or generic setup framework. It writes no
 top-level `runner` namespace or Role-level Model-call limit.
 
-Credential input is an explicit choice between a masked literal, an existing
-environment-variable reference, and no credential. Literal is the default
-highlighted path and carries a plaintext-storage warning. The initializer does
-not create `.env`, Keychain, or Secret Store state.
+Sensitive input is an explicit choice between a masked literal, an existing
+environment-variable reference, and omission when its Schema permits it.
+Literal is the default highlighted path and carries a plaintext-storage
+warning. The initializer does not create `.env`, Keychain, or Secret Store
+state.
 
 Success requires one real minimal tool-free inference using the exact
 candidate endpoint, protocol, credential, and Model. This probe carries no
@@ -73,20 +86,24 @@ persisted.
 - A fresh startup cannot silently create an unusable config.
 - Implementation remains localized and independently testable.
 - No setup server or cross-module framework is introduced.
+- Installed custom Provider environments can initialize without being forced
+  through the Built-in protocol configuration.
 
 ### Negative
 
 - Fresh Agent Homes require an explicit command.
-- The first wizard supports only a bounded Provider route.
+- Provider Extension prompting supports only a bounded scalar Schema subset.
 - Existing public APIs constrain readiness verification.
 - Existing Agent Homes are not upgraded.
 
 ## Validation
 
 Standalone routing, prompt, filesystem, candidate validation, publication,
-ordinary-start cutover, package, and manual terminal tests must pass. The
-production diff must not modify non-Standalone modules except dependency
-manifests, lockfile, documentation, tests, and packaged assets.
+ordinary-start cutover, package, and manual terminal tests must pass. The Agent
+Home Initialization production diff must not modify non-Standalone modules
+except dependency manifests, lockfile, documentation, tests, and packaged
+assets. Its separately accepted Extension Initialization Metadata prerequisite
+owns the Extension contract changes.
 
 ## Migration and rollback
 
@@ -95,7 +112,8 @@ removes the explicit initializer as one unit.
 
 ## Follow-up
 
-Additional Provider routes, configuration editing, non-interactive setup, and
-Web setup each require separate evidence and scope confirmation.
+Richer Schema forms, Extension installation, configuration editing,
+non-interactive setup, and Web setup each require separate evidence and scope
+confirmation.
 
 Process authority: [Development Workflow](../governance/development-workflow.md).

@@ -206,21 +206,39 @@ function parseDescriptor(value: unknown): ExtensionDescriptorV1 | undefined {
     || value['manifestVersion'] !== 1
     || typeof value['id'] !== 'string'
     || !EXTENSION_ID.test(value['id'])
+    || !isValidOptionalName(value['name'])
     || typeof value['version'] !== 'string'
     || value['version'].length === 0
     || typeof value['entry'] !== 'string'
     || !isValidEntrySpecifier(value['entry'])
+    || !isValidContributions(value['contributes'])
     || !isValidConfigSchema(value['configSchema'])) {
     return undefined;
   }
 
+  const contributions = value['contributes'] as readonly 'provider'[] | undefined;
   return Object.freeze({
     manifestVersion: 1,
     id: value['id'],
+    ...(value['name'] === undefined ? {} : { name: value['name'] as string }),
     version: value['version'],
     entry: value['entry'],
+    ...(contributions === undefined
+      ? {}
+      : { contributes: Object.freeze([...contributions]) }),
     configSchema: freezeJsonObject(value['configSchema']),
   });
+}
+
+function isValidOptionalName(value: unknown): value is string | undefined {
+  return value === undefined || (typeof value === 'string' && value.trim().length > 0);
+}
+
+function isValidContributions(value: unknown): value is readonly 'provider'[] | undefined {
+  if (value === undefined) return true;
+  if (!Array.isArray(value)) return false;
+  return value.every((contribution) => contribution === 'provider')
+    && new Set(value).size === value.length;
 }
 
 function isValidEntrySpecifier(value: string): boolean {
