@@ -12,6 +12,7 @@ import { auditNpmPackage } from './audit-npm-package.mjs';
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PROCESS_TIMEOUT_MS = 60_000;
+const PACKAGE_MANAGER_TIMEOUT_MS = 180_000;
 
 async function main() {
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'my-agent-package-'));
@@ -47,6 +48,7 @@ async function main() {
     const packResult = await runNpm(
       ['pack', '--json', '--pack-destination', temporaryRoot],
       REPOSITORY_ROOT,
+      PACKAGE_MANAGER_TIMEOUT_MS,
     );
     const packed = parsePackResult(packResult.stdout);
     const files = auditNpmPackage(
@@ -61,7 +63,7 @@ async function main() {
     await runNpm(
       ['install', '--no-audit', '--no-fund', tarball],
       installationProject,
-      PROCESS_TIMEOUT_MS,
+      PACKAGE_MANAGER_TIMEOUT_MS,
     );
     await access(join(installationProject, 'node_modules', '.bin', executableName('my-agent')));
     await verifyInstalledExtensionApiTypes(installationProject);

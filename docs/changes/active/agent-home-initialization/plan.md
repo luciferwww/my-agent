@@ -109,6 +109,12 @@ The generated shape is:
     "steeringEnabled": false,
     "maxLlmCallsPerTurn": "<optional positive integer>",
     "maxSubagentDepth": 1,
+    "defaults": {
+      "tools": {
+        "allow": ["<recommended Root Agent Tools>"],
+        "deny": []
+      }
+    },
     "list": [
       { "id": "reviewer", "...": "fixed read-only tools" },
       { "id": "explorer", "...": "fixed read-only tools" },
@@ -127,8 +133,9 @@ because their effective value is already true.
 
 Placeholders are explanatory and are not written literally. Sensitive fields
 are omitted when permitted and declined; `maxLlmCallsPerTurn` is omitted when
-its prompt is blank. `agents.defaults`, `logger`, top-level `runner`, and all
-other default or unused sections are omitted.
+its prompt is blank. `agents.defaults` contains only the recommended Root Tool
+policy; `logger`, top-level `runner`, other Agent defaults, and all other
+default or unused sections are omitted.
 
 The authoritative field values, fixed Tool allow-lists, omission rules,
 terminal prompts, credential handling, readiness request, and publication
@@ -161,7 +168,7 @@ behavior are defined in the
 | AHI-2 Terminal wizard | Completed | supported Provider, credential, and Model choices are collected and cancel safely |
 | AHI-3 File publication | Completed | Initialize creates config last; Edit concurrency-checks and atomically replaces config |
 | AHI-4 Startup cutover | Completed | missing config fails with initialization guidance instead of creating `{}` |
-| AHI-5 Validation | In Progress | automated gates pass except the latest package verification is blocked by its fixed npm subprocess timeout; manual terminal acceptance remains |
+| AHI-5 Validation | In Progress | package, Unit, integration, lint, build, link, and diff gates pass on Node 22; manual Windows terminal acceptance and independent review remain |
 
 Only one item may be `In Progress`.
 

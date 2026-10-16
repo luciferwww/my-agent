@@ -265,7 +265,9 @@ agents.maxSubagentDepth
 The generated document contains no top-level `runner` namespace.
 `steeringEnabled` is fixed to `false`, `maxSubagentDepth` is fixed to `1`, and
 `maxLlmCallsPerTurn` is omitted when the optional prompt is blank.
-`agents.defaults` is omitted so module-owned defaults remain authoritative.
+`agents.defaults.tools` contains the recommended Root Agent Tool allow-list
+with an empty deny-list. Other `agents.defaults` fields are omitted so their
+module-owned defaults remain authoritative.
 
 The fixed Role Tool allow-lists are:
 
