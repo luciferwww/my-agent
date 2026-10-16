@@ -19,6 +19,11 @@ interface ExternalSentinelResource {
 
 class ExternalTestChannel implements ChannelInstance {
   readonly id = 'external-test-channel';
+  readonly interaction = {
+    sendInteractionRequest: () => ({ status: 'unavailable' as const, reason: 'delivery_failed' as const }),
+    sendInteractionClosed: () => {},
+    onInteractionResponse: () => {},
+  };
   readonly completion: Promise<ChannelCompletion>;
   readonly sentEvents: AgentEvent[] = [];
   private messageHandler?: (request: ChannelRunRequest) => Promise<void>;
@@ -73,8 +78,8 @@ function host(): ChannelRuntimeHost {
   return {
     onMessage: vi.fn(async () => {}),
     onInteractionResponse: vi.fn(),
-    onInteractionUnavailable: vi.fn(),
     capabilities: {
+      approvals: { getPending: () => [] },
       modelCatalog: {
         getSnapshot: () => ({
           generation: 1,
@@ -86,16 +91,12 @@ function host(): ChannelRuntimeHost {
         querySessionsNeedingAbort: () => [],
         abortTurn: () => ({ aborted: false, dropped: 0 }),
       },
-      sessions: {
+      chatSessions: {
         createSession: async () => ({
           sessionId: 'session',
           permission: { sessionId: 'session', mode: 'manual' as const, changedAt: 1 },
         }),
         listSessions: async () => [],
-        getSession: async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 }),
-        getHistory: async ({ sessionId }) => ({
-          sessionId, items: [], nextCursor: null, hasMore: false,
-        }),
         renameSession: async (sessionId, title) => ({
           sessionId,
           createdAt: 1,
@@ -122,6 +123,16 @@ function host(): ChannelRuntimeHost {
           changedAt: 1,
         }),
         onPermissionModeChanged: () => () => {},
+      },
+      sessionObservation: {
+        resolveSession: async (sessionId) => ({
+          kind: 'chat',
+          sessionId,
+          entry: { sessionId, createdAt: 1, updatedAt: 1 },
+        }),
+        getHistory: async ({ sessionId }) => ({
+          sessionId, items: [], nextCursor: null, hasMore: false,
+        }),
       },
     },
   };

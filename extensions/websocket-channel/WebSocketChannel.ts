@@ -25,6 +25,10 @@ import {
 } from 'my-agent/extension-api';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 
+import {
+  type ClientHttpResource,
+  loadBuiltClientResources,
+} from './client-assets.js';
 import type { WebSocketExtensionConfig } from './config.js';
 import { WS_MAX_PAYLOAD_BYTES } from './websocket-constants.js';
 
@@ -73,6 +77,11 @@ type ClientMessage =
       permissionMode?: SessionPermissionMode;
     }
   | {
+      type: 'subscribe_session' | 'unsubscribe_session';
+      requestId: string;
+      sessionId: string;
+    }
+  | {
       type: 'get_session_permission_mode';
       sessionId: string;
     }
@@ -85,6 +94,11 @@ type ClientMessage =
       type: 'list_sessions';
       requestId: string;
       archived?: boolean;
+    }
+  | {
+      type: 'get_session_approvals';
+      requestId: string;
+      sessionId?: string;
     }
   | {
       type: 'get_session';
@@ -126,12 +140,15 @@ type OutboundMessage =
       callId: string;
       toolName: string;
       input: Record<string, unknown>;
+      originChannelId?: string;
+      originClientId?: string;
     }
   | {
       type: 'approval_closed';
       id: string;
       sessionId: string;
       turnId: string;
+      callId: string;
       outcome: ApprovalClosedResult['outcome'];
       reason: string;
     }
@@ -140,18 +157,24 @@ type OutboundMessage =
 
 export type BrowserLauncher = (url: string) => Promise<void>;
 
-export interface WebSocketChannelOptions {
+interface WebSocketChannelSharedOptions {
   readonly config: WebSocketExtensionConfig;
-  readonly clientFilePath: string;
   readonly logger: ExtensionLogger;
   readonly browserLauncher?: BrowserLauncher;
 }
 
-interface PendingApprovalRoute {
-  readonly clientId: string;
-  readonly sessionId: string;
-  readonly turnId: string;
-}
+export type WebSocketChannelOptions = WebSocketChannelSharedOptions & (
+  | {
+      readonly clientFilePath: string;
+      readonly clientVariants?: Readonly<Record<string, string>>;
+      readonly clientAssetDirectoryPath?: never;
+    }
+  | {
+      readonly clientAssetDirectoryPath: string;
+      readonly clientFilePath?: never;
+      readonly clientVariants?: never;
+    }
+);
 
 class ProtocolError extends Error {
   constructor(readonly code: ChannelErrorCode, message: string) {
@@ -163,14 +186,16 @@ class ProtocolError extends Error {
 export class WebSocketChannel implements Channel {
   readonly id = 'websocket';
   readonly completion: Promise<ChannelCompletion>;
-  readonly interaction?: ChannelInteractionAdapter;
+  readonly interaction: ChannelInteractionAdapter;
 
   private readonly host: string;
   private readonly path: string;
   private readonly clientPath: string;
   private readonly maxClients?: number;
   private readonly logger: ExtensionLogger;
-  private readonly clientFilePath: string;
+  private readonly clientFilePath?: string;
+  private readonly clientVariants: Readonly<Record<string, string>>;
+  private readonly clientAssetDirectoryPath?: string;
   private readonly openBrowser: boolean;
   private readonly browserLauncher: BrowserLauncher;
 
@@ -178,13 +203,11 @@ export class WebSocketChannel implements Channel {
   private httpServer?: HttpServer;
   private messageHandler?: (req: ChannelRunRequest) => Promise<void>;
   private interactionResponseHandler?: (response: TurnInteractionResponse) => void;
-  private interactionUnavailableHandler?: (id: string, reason: 'origin_disconnected') => void;
 
   private readonly clients = new Map<string, WebSocket>();
   private readonly sessions = new Map<string, Set<string>>();
   private readonly clientSessions = new Map<string, Set<string>>();
   private readonly socketClientIds = new WeakMap<WebSocket, string>();
-  private readonly pendingApprovals = new Map<string, PendingApprovalRoute>();
 
   /**
    * Runtime capabilities are bound synchronously before Channel start.
@@ -207,6 +230,8 @@ export class WebSocketChannel implements Channel {
     this.maxClients = options.config.maxClients;
     this.logger = options.logger;
     this.clientFilePath = options.clientFilePath;
+    this.clientVariants = options.clientVariants ?? {};
+    this.clientAssetDirectoryPath = options.clientAssetDirectoryPath;
     this.openBrowser = options.config.openBrowser;
     this.browserLauncher = options.browserLauncher ?? launchBrowser;
     this.completion = new Promise<ChannelCompletion>((resolve) => {
@@ -217,9 +242,7 @@ export class WebSocketChannel implements Channel {
       };
     });
 
-    if (options.config.approval) {
-      this.interaction = this.makeInteractionAdapter();
-    }
+    this.interaction = this.makeInteractionAdapter();
   }
 
   send(event: AgentEvent): void {
@@ -274,9 +297,9 @@ export class WebSocketChannel implements Channel {
     }
 
     this.stopRequested = false;
-    let clientHtml: string;
+    let clientsByPath: ReadonlyMap<string, ClientHttpResource>;
     try {
-      clientHtml = await this.loadClientHtml();
+      clientsByPath = await this.loadClientResources();
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
       this.settleCompletion({ outcome: 'failed', phase: 'startup', error: failure });
@@ -288,19 +311,17 @@ export class WebSocketChannel implements Channel {
 
     const httpServer = createServer((request, response) => {
       const requestPath = new URL(request.url ?? '/', 'http://localhost').pathname;
-      if (
-        requestPath !== this.clientPath
-        || (request.method !== 'GET' && request.method !== 'HEAD')
-      ) {
+      const resource = clientsByPath.get(requestPath);
+      if (resource === undefined || (request.method !== 'GET' && request.method !== 'HEAD')) {
         response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
         response.end('Not found');
         return;
       }
       response.writeHead(200, {
-        'cache-control': 'no-store',
-        'content-type': 'text/html; charset=utf-8',
+        'cache-control': resource.cacheControl,
+        'content-type': resource.contentType,
       });
-      response.end(request.method === 'HEAD' ? undefined : clientHtml);
+      response.end(request.method === 'HEAD' ? undefined : resource.body);
     });
     this.httpServer = httpServer;
 
@@ -382,7 +403,7 @@ export class WebSocketChannel implements Channel {
 
     this.started = true;
     this.unsubscribePermissionModeChanged =
-      this.runtimeCapabilities?.sessions.onPermissionModeChanged((permission) => {
+      this.runtimeCapabilities?.chatSessions.onPermissionModeChanged((permission) => {
         this.broadcastPermissionMode(permission);
       });
     this.logger.info('websocket channel started', {
@@ -451,8 +472,44 @@ export class WebSocketChannel implements Channel {
     this.logger.info('websocket channel stopped', { channelId: this.id });
   }
 
-  private async loadClientHtml(): Promise<string> {
-    const source = await readFile(this.clientFilePath, 'utf8');
+  private async loadClientResources(): Promise<ReadonlyMap<string, ClientHttpResource>> {
+    if (this.clientAssetDirectoryPath !== undefined) {
+      return loadBuiltClientResources({
+        directoryPath: this.clientAssetDirectoryPath,
+        clientPath: this.clientPath,
+        webSocketPath: this.path,
+      });
+    }
+    return this.loadLegacyClientResources();
+  }
+
+  private async loadLegacyClientResources(): Promise<ReadonlyMap<string, ClientHttpResource>> {
+    if (this.clientFilePath === undefined) {
+      throw new Error('WebSocketChannel.start: client source is not configured');
+    }
+    const clientFilesByPath = new Map<string, string>([[this.clientPath, this.clientFilePath]]);
+    for (const [clientPath, clientFilePath] of Object.entries(this.clientVariants)) {
+      if (clientFilesByPath.has(clientPath)) {
+        throw new Error(`WebSocketChannel.start: duplicate client path "${clientPath}"`);
+      }
+      clientFilesByPath.set(clientPath, clientFilePath);
+    }
+
+    const clientsByPath = new Map<string, ClientHttpResource>();
+    await Promise.all(
+      Array.from(clientFilesByPath, async ([clientPath, clientFilePath]) => {
+        clientsByPath.set(clientPath, Object.freeze({
+          body: Buffer.from(await this.loadClientHtml(clientFilePath)),
+          cacheControl: 'no-store',
+          contentType: 'text/html; charset=utf-8',
+        }));
+      }),
+    );
+    return clientsByPath;
+  }
+
+  private async loadClientHtml(clientFilePath: string): Promise<string> {
+    const source = await readFile(clientFilePath, 'utf8');
     if (!source.includes(CLIENT_PATH_TOKEN)) {
       throw new Error('WebSocketChannel.start: client asset is missing its path token');
     }
@@ -502,12 +559,19 @@ export class WebSocketChannel implements Channel {
         case 'create_session':
           await this.handleCreateSession(socket, message);
           return;
+        case 'subscribe_session':
+        case 'unsubscribe_session':
+          await this.handleSessionSubscriptionRequest(socket, message);
+          return;
         case 'get_session_permission_mode':
         case 'set_session_permission_mode':
           await this.handlePermissionModeRequest(socket, message);
           return;
         case 'get_session_history':
           await this.handleSessionHistoryRequest(socket, message);
+          return;
+        case 'get_session_approvals':
+          await this.handleSessionApprovalsRequest(socket, message);
           return;
         case 'list_sessions':
         case 'get_session':
@@ -612,6 +676,14 @@ export class WebSocketChannel implements Channel {
           requestId: readNonEmptyString(parsed.requestId, 'requestId'),
           permissionMode: readOptionalPermissionMode(parsed.permissionMode, 'permissionMode'),
         };
+      case 'subscribe_session':
+      case 'unsubscribe_session':
+        assertOnlyKeys(parsed, ['type', 'requestId', 'sessionId'], type);
+        return {
+          type,
+          requestId: readNonEmptyString(parsed.requestId, 'requestId'),
+          sessionId: readNonEmptyString(parsed.sessionId, 'sessionId'),
+        };
       case 'get_session_permission_mode':
         assertOnlyKeys(parsed, ['type', 'sessionId'], type);
         return {
@@ -630,6 +702,13 @@ export class WebSocketChannel implements Channel {
           type,
           requestId: readNonEmptyString(parsed.requestId, 'requestId'),
           archived: readOptionalBoolean(parsed.archived, 'archived'),
+        };
+      case 'get_session_approvals':
+        assertOnlyKeys(parsed, ['type', 'requestId', 'sessionId'], type);
+        return {
+          type,
+          requestId: readNonEmptyString(parsed.requestId, 'requestId'),
+          sessionId: readOptionalNonEmptyString(parsed.sessionId, 'sessionId'),
         };
       case 'get_session':
       case 'archive_session':
@@ -679,6 +758,9 @@ export class WebSocketChannel implements Channel {
     }
 
     const previousSocket = this.clients.get(message.clientId);
+    if (previousSocket && previousSocket !== socket) {
+      this.clearClientSessionAudiences(message.clientId);
+    }
     this.clients.set(message.clientId, socket);
     this.socketClientIds.set(socket, message.clientId);
 
@@ -712,8 +794,13 @@ export class WebSocketChannel implements Channel {
     if (!handler) {
       throw new ProtocolError('SERVER_NOT_READY', 'Message handler is not ready.');
     }
+    if (!this.clientSessions.get(clientId)?.has(message.sessionId)) {
+      throw new ProtocolError(
+        'INVALID_MESSAGE',
+        'run_turn requires an active subscription for the Session.',
+      );
+    }
 
-    this.registerSessionAudience(clientId, message.sessionId);
     this.logger.info('run_turn received', {
       channelId: this.id,
       clientId,
@@ -736,11 +823,8 @@ export class WebSocketChannel implements Channel {
     message: Extract<ClientMessage, { type: 'approval_resolve' }>,
   ): void {
     const clientId = this.requireBoundClientId(socket);
-    if (this.pendingApprovals.get(message.id)?.clientId !== clientId) {
-      throw new ProtocolError(
-        'INVALID_MESSAGE',
-        'Approval response does not belong to this client.',
-      );
+    if (!this.options.config.approval) {
+      throw new ProtocolError('UNSUPPORTED_MESSAGE', 'Approval is not enabled for this channel.');
     }
     this.logger.info('approval response received', {
       channelId: this.id,
@@ -789,6 +873,7 @@ export class WebSocketChannel implements Channel {
         ...(message.permissionMode === undefined ? {} : { permissionMode: message.permissionMode }),
         originClientId: clientId,
       }));
+    this.requireBoundClientId(socket);
     this.registerSessionAudience(clientId, sessionId);
     this.sendJson(socket, {
       type: 'session_created',
@@ -815,7 +900,6 @@ export class WebSocketChannel implements Channel {
             mode: message.mode,
             originClientId: clientId,
           }));
-    this.registerSessionAudience(clientId, message.sessionId);
     this.sendJson(socket, {
       type: 'session_permission_mode_changed',
       ...toWirePermissionMode(permission),
@@ -837,13 +921,54 @@ export class WebSocketChannel implements Channel {
     }
   }
 
+  private async handleSessionSubscriptionRequest(
+    socket: WebSocket,
+    message: Extract<
+      ClientMessage,
+      { type: 'subscribe_session' | 'unsubscribe_session' }
+    >,
+  ): Promise<void> {
+    const clientId = this.requireBoundClientId(socket);
+    if (message.type === 'unsubscribe_session') {
+      this.unregisterSessionAudience(clientId, message.sessionId);
+      this.sendJson(socket, {
+        type: 'session_unsubscribed',
+        requestId: message.requestId,
+        sessionId: message.sessionId,
+      });
+      return;
+    }
+
+    try {
+      await this.invokeSessionObservation((capability) =>
+        capability.resolveSession(message.sessionId));
+    } catch (error) {
+      const code = error instanceof ProtocolError || error instanceof ChannelOperationError
+        ? error.code : 'SERVER_NOT_READY';
+      this.sendJson(socket, {
+        type: 'session_subscription_error',
+        requestId: message.requestId,
+        sessionId: message.sessionId,
+        code,
+      });
+      return;
+    }
+    this.requireBoundClientId(socket);
+    this.registerSessionAudience(clientId, message.sessionId);
+    this.sendJson(socket, {
+      type: 'session_subscribed',
+      requestId: message.requestId,
+      sessionId: message.sessionId,
+    });
+  }
+
   private async handleSessionHistoryRequest(
     socket: WebSocket,
     message: Extract<ClientMessage, { type: 'get_session_history' }>,
   ): Promise<void> {
     this.requireBoundClientId(socket);
     try {
-      const page = await this.invokeSessionOperation((capability) => capability.getHistory({
+      const page = await this.invokeSessionObservation((capability) => capability.getHistory({
         sessionId: message.sessionId,
         ...(message.beforeEntryId === undefined
           ? {}
@@ -866,7 +991,45 @@ export class WebSocketChannel implements Channel {
         });
         return;
       }
+
       throw error;
+    }
+  }
+
+  private async handleSessionApprovalsRequest(
+    socket: WebSocket,
+    message: Extract<ClientMessage, { type: 'get_session_approvals' }>,
+  ): Promise<void> {
+    this.requireBoundClientId(socket);
+    try {
+      const sessionId = message.sessionId;
+      if (sessionId !== undefined) {
+        await this.invokeSessionObservation((capability) => capability.resolveSession(sessionId));
+      }
+      // Read and send synchronously after validation: later closures cannot be overtaken.
+      this.requireBoundClientId(socket);
+      if (socket.readyState !== WebSocket.OPEN) return;
+      if (!this.runtimeCapabilities) {
+        throw new ProtocolError('SERVER_NOT_READY', 'Runtime Approvals are not bound.');
+      }
+      const approvals = this.runtimeCapabilities.approvals.getPending(sessionId)
+        .filter((request) => this.isAcceptableApproval(request));
+      this.sendJson(socket, {
+        type: 'session_approvals',
+        requestId: message.requestId,
+        ...(sessionId === undefined ? {} : { sessionId }),
+        approvals,
+      });
+    } catch (error) {
+      const code = error instanceof ProtocolError || error instanceof ChannelOperationError
+        ? error.code : 'SERVER_NOT_READY';
+      this.sendJson(socket, {
+        type: 'session_approvals_error',
+        requestId: message.requestId,
+        ...(message.sessionId === undefined ? {} : { sessionId: message.sessionId }),
+        code,
+        message: error instanceof Error ? error.message : 'Runtime Approvals are not ready.',
+      });
     }
   }
 
@@ -874,7 +1037,7 @@ export class WebSocketChannel implements Channel {
     socket: WebSocket,
     message: Exclude<
       ClientMessage,
-      { type: 'hello' | 'run_turn' | 'approval_resolve' | 'abort_turn' | 'get_model_catalog' | 'create_session' | 'get_session_permission_mode' | 'set_session_permission_mode' }
+      { type: 'hello' | 'run_turn' | 'approval_resolve' | 'abort_turn' | 'get_model_catalog' | 'create_session' | 'subscribe_session' | 'unsubscribe_session' | 'get_session_permission_mode' | 'set_session_permission_mode' | 'get_session_approvals' }
     >,
   ): Promise<void> {
     this.requireBoundClientId(socket);
@@ -888,8 +1051,8 @@ export class WebSocketChannel implements Channel {
         return;
       }
       case 'get_session': {
-        const session = await this.invokeSessionOperation((capability) =>
-          capability.getSession(message.sessionId));
+        const session = await this.invokeSessionObservation((capability) =>
+          capability.resolveSession(message.sessionId));
         this.sendJson(socket, { type: 'session_retrieved', requestId: message.requestId, session });
         return;
       }
@@ -930,11 +1093,11 @@ export class WebSocketChannel implements Channel {
   }
 
   private async invokeSessionOperation<T>(
-    operation: (capability: ChannelRuntimeCapabilities['sessions']) => Promise<T> | T,
+    operation: (capability: ChannelRuntimeCapabilities['chatSessions']) => Promise<T> | T,
   ): Promise<T> {
-    const capability = this.runtimeCapabilities?.sessions;
+    const capability = this.runtimeCapabilities?.chatSessions;
     if (!capability) {
-      throw new ProtocolError('SERVER_NOT_READY', 'Runtime Session capability is not bound.');
+      throw new ProtocolError('SERVER_NOT_READY', 'Runtime Chat Session capability is not bound.');
     }
     try {
       return await operation(capability);
@@ -942,7 +1105,30 @@ export class WebSocketChannel implements Channel {
       if (error instanceof ChannelOperationError) {
         throw new ProtocolError(error.code, error.message);
       }
-      throw new ProtocolError('SERVER_NOT_READY', 'Runtime Session capability is not ready.');
+      throw new ProtocolError('SERVER_NOT_READY', 'Runtime Chat Session capability is not ready.');
+    }
+  }
+
+  private async invokeSessionObservation<T>(
+    operation: (capability: ChannelRuntimeCapabilities['sessionObservation']) => Promise<T> | T,
+  ): Promise<T> {
+    const capability = this.runtimeCapabilities?.sessionObservation;
+    if (!capability) {
+      throw new ProtocolError(
+        'SERVER_NOT_READY',
+        'Runtime Session observation capability is not bound.',
+      );
+    }
+    try {
+      return await operation(capability);
+    } catch (error) {
+      if (error instanceof ChannelOperationError) {
+        throw new ProtocolError(error.code, error.message);
+      }
+      throw new ProtocolError(
+        'SERVER_NOT_READY',
+        'Runtime Session observation capability is not ready.',
+      );
     }
   }
 
@@ -990,24 +1176,7 @@ export class WebSocketChannel implements Channel {
 
     this.clients.delete(clientId);
 
-    for (const [approvalId, route] of this.pendingApprovals) {
-      if (route.clientId !== clientId) continue;
-      this.pendingApprovals.delete(approvalId);
-      this.dispatchApprovalUnavailable(approvalId, 'origin_disconnected');
-    }
-
-    const sessionAudienceKeys = this.clientSessions.get(clientId);
-    if (sessionAudienceKeys) {
-      for (const sessionId of sessionAudienceKeys) {
-        const clientIds = this.sessions.get(sessionId);
-        if (!clientIds) continue;
-        clientIds.delete(clientId);
-        if (clientIds.size === 0) {
-          this.sessions.delete(sessionId);
-        }
-      }
-      this.clientSessions.delete(clientId);
-    }
+    this.clearClientSessionAudiences(clientId);
 
     this.logger.info('client disconnected', {
       channelId: this.id,
@@ -1016,6 +1185,9 @@ export class WebSocketChannel implements Channel {
   }
 
   private requireBoundClientId(socket: WebSocket): string {
+    if (socket.readyState !== WebSocket.OPEN) {
+      throw new ProtocolError('SERVER_NOT_READY', 'Connection is no longer open.');
+    }
     const clientId = this.socketClientIds.get(socket);
     if (!clientId) {
       throw new ProtocolError('SERVER_NOT_READY', 'hello must complete before business messages.');
@@ -1026,7 +1198,7 @@ export class WebSocketChannel implements Channel {
     return clientId;
   }
 
-  // This table controls AgentEvent audience only; it does not imply shared UI or history.
+  // Session audiences route realtime events and requests, not decision authority or UI state.
   private registerSessionAudience(clientId: string, sessionId: string): void {
     let clientIds = this.sessions.get(sessionId);
     if (!clientIds) {
@@ -1052,6 +1224,36 @@ export class WebSocketChannel implements Channel {
     });
   }
 
+  private unregisterSessionAudience(clientId: string, sessionId: string): void {
+    const clientIds = this.sessions.get(sessionId);
+    clientIds?.delete(clientId);
+    if (clientIds?.size === 0) {
+      this.sessions.delete(sessionId);
+    }
+
+    const sessionIds = this.clientSessions.get(clientId);
+    sessionIds?.delete(sessionId);
+    if (sessionIds?.size === 0) {
+      this.clientSessions.delete(clientId);
+    }
+
+    this.logger.debug('session audience unregistered', {
+      channelId: this.id,
+      clientId,
+      sessionId,
+      sessionAudienceSize: clientIds?.size ?? 0,
+      clientSessionCount: sessionIds?.size ?? 0,
+    });
+  }
+
+  private clearClientSessionAudiences(clientId: string): void {
+    const sessionIds = this.clientSessions.get(clientId);
+    if (!sessionIds) return;
+    for (const sessionId of [...sessionIds]) {
+      this.unregisterSessionAudience(clientId, sessionId);
+    }
+  }
+
   private makeInteractionAdapter(): ChannelInteractionAdapter {
     return {
       sendInteractionRequest: (request) => {
@@ -1069,14 +1271,10 @@ export class WebSocketChannel implements Channel {
       onInteractionResponse: (handler) => {
         this.interactionResponseHandler = handler;
       },
-      onInteractionUnavailable: (handler) => {
-        this.interactionUnavailableHandler = handler;
-      },
     };
   }
 
   private dispatchApprovalSubmission(id: string, decision: ApprovalDecision): void {
-    this.pendingApprovals.delete(id);
     if (this.interactionResponseHandler) {
       this.logger.debug('routing approval submission through interaction adapter', {
         channelId: this.id,
@@ -1095,96 +1293,52 @@ export class WebSocketChannel implements Channel {
     throw new ProtocolError('UNSUPPORTED_MESSAGE', 'Approval is not enabled for this channel.');
   }
 
-  private dispatchApprovalUnavailable(
-    id: string,
-    reason: 'origin_disconnected',
-  ): void {
-    if (this.interactionUnavailableHandler) {
-      this.interactionUnavailableHandler(id, reason);
-    }
+  private isAcceptableApproval(request: Pick<ApprovalRequest, 'originChannelId'>): boolean {
+    return this.options.config.approval && this.started && !this.stopRequested
+      && (request.originChannelId === undefined || request.originChannelId === this.id);
   }
 
   private sendApprovalRequestMessage(
     request: Pick<
       ApprovalRequest,
-      'id' | 'sessionId' | 'turnId' | 'callId' | 'toolName' | 'input' | 'originClientId'
+      'id' | 'sessionId' | 'turnId' | 'callId' | 'toolName' | 'input' | 'originClientId' | 'originChannelId'
     >,
-  ): { status: 'accepted' } | { status: 'unavailable'; reason: 'origin_missing' | 'delivery_failed' } {
-    if (!request.originClientId) {
-      this.logger.debug('skipping approval request without origin client', {
-        channelId: this.id,
-        approvalId: request.id,
-        toolName: request.toolName,
-      });
-      return { status: 'unavailable', reason: 'origin_missing' };
-    }
-    const socket = this.clients.get(request.originClientId);
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      this.logger.warn('unable to deliver approval request to client', {
-        channelId: this.id,
-        approvalId: request.id,
-        toolName: request.toolName,
-        originClientId: request.originClientId,
-      });
+  ): { status: 'accepted' } | { status: 'unavailable'; reason: 'delivery_failed' } {
+    if (!this.isAcceptableApproval(request)) {
       return { status: 'unavailable', reason: 'delivery_failed' };
     }
-    this.logger.info('delivering approval request to client', {
-      channelId: this.id,
-      approvalId: request.id,
-      toolName: request.toolName,
-      originClientId: request.originClientId,
-    });
-    this.pendingApprovals.set(request.id, {
-      clientId: request.originClientId,
-      sessionId: request.sessionId,
-      turnId: request.turnId,
-    });
-    this.sendJson(socket, {
-      type: 'approval_requested',
-      id: request.id,
-      sessionId: request.sessionId,
-      turnId: request.turnId,
-      callId: request.callId,
-      toolName: request.toolName,
-      input: request.input,
-    });
+    for (const clientId of this.sessions.get(request.sessionId) ?? []) {
+      const socket = this.clients.get(clientId);
+      if (socket) this.sendJson(socket, {
+        type: 'approval_requested',
+        id: request.id,
+        sessionId: request.sessionId,
+        turnId: request.turnId,
+        callId: request.callId,
+        toolName: request.toolName,
+        input: request.input,
+        ...(request.originChannelId === undefined ? {} : { originChannelId: request.originChannelId }),
+        ...(request.originClientId === undefined ? {} : { originClientId: request.originClientId }),
+      });
+    }
     return { status: 'accepted' };
   }
 
   private sendApprovalClosedMessage(
-    request: Pick<ApprovalRequest, 'id' | 'sessionId' | 'turnId' | 'originClientId'>,
+    request: Pick<ApprovalRequest, 'id' | 'sessionId' | 'turnId' | 'callId' | 'originChannelId'>,
     result: ApprovalClosedResult,
   ): void {
-    this.pendingApprovals.delete(request.id);
-    if (!request.originClientId) {
-      this.logger.debug('skipping approval closure without origin client', {
-        channelId: this.id,
-        approvalId: request.id,
-      });
-      return;
-    }
-    const socket = this.clients.get(request.originClientId);
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      this.logger.warn('unable to deliver approval closure to client', {
-        channelId: this.id,
-        approvalId: request.id,
-        originClientId: request.originClientId,
-      });
-      return;
-    }
-    this.logger.info('delivering approval closure to client', {
-      channelId: this.id,
-      approvalId: request.id,
-      originClientId: request.originClientId,
-    });
-    this.sendJson(socket, {
+    if (!this.options.config.approval) return;
+    if (request.originChannelId !== undefined && request.originChannelId !== this.id) return;
+    for (const socket of this.clients.values()) this.sendJson(socket, {
       type: 'approval_closed',
       id: request.id,
       sessionId: request.sessionId,
       turnId: request.turnId,
+      callId: request.callId,
       outcome: result.outcome,
       reason: result.outcome === 'approved'
-        ? result.source
+        ? ('source' in result ? result.source : 'user')
         : 'reason' in result
           ? result.reason
           : result.message,

@@ -33,6 +33,11 @@ describe('TurnInteractionManager approval lifecycle', () => {
   ] as const)('settles %s exactly once and ignores a late competing result', async (decision, expected) => {
     const manager = createManager();
     const controller = new AbortController();
+    const closed = vi.fn();
+    manager.onClose((value, outcome) => {
+      expect(manager.getPending()).toEqual([]);
+      closed(value, outcome);
+    });
     let request: ApprovalRequest | undefined;
     manager.onRequest((value) => {
       request = value;
@@ -43,6 +48,52 @@ describe('TurnInteractionManager approval lifecycle', () => {
     manager.resolve(request!.id, decision);
     expect(manager.settle(request!.id, { outcome: 'aborted', reason: 'turn' })).toBe(false);
     await expect(result).resolves.toEqual(expected);
+    expect(closed).toHaveBeenCalledExactlyOnceWith(request, expected);
+  });
+
+  it('queries global or exact Session pending state with isolated nested inputs and origin context', async () => {
+    const manager = createManager();
+    const controller = new AbortController();
+    manager.onRequest(() => ({ status: 'accepted' }));
+    const first = manager.request({
+      request: {
+        callId: 'first-call',
+        toolName: 'demo_tool',
+        input: { nested: { value: 1 } },
+        sessionId: 'main',
+        turnId: 'first-turn',
+        originChannelId: 'websocket',
+        originClientId: 'client-a',
+      },
+      signal: controller.signal,
+    });
+    const second = manager.request({
+      request: {
+        callId: 'second-call',
+        toolName: 'demo_tool',
+        input: {},
+        sessionId: 'other',
+        turnId: 'second-turn',
+      },
+      signal: controller.signal,
+    });
+    expect(manager.getPending()).toHaveLength(2);
+    expect(manager.getPending('missing')).toEqual([]);
+    const [snapshot] = manager.getPending('main');
+    expect(snapshot).toMatchObject({
+      originChannelId: 'websocket',
+      originClientId: 'client-a',
+    });
+    expect(snapshot.input.nested).not.toBe(manager.getPending('main')[0].input.nested);
+    snapshot.input.nested = { value: 99 };
+    snapshot.sessionId = 'changed';
+    expect(manager.getPending('main')[0].input).toEqual({ nested: { value: 1 } });
+    manager.resolve(snapshot.id, 'allow');
+    expect(manager.getPending('main')).toEqual([]);
+    await expect(first).resolves.toEqual({ outcome: 'approved' });
+    manager.close();
+    expect(manager.getPending()).toEqual([]);
+    await expect(second).resolves.toEqual({ outcome: 'aborted', reason: 'shutdown' });
   });
 
   it('keeps unanswered approval pending after 120 seconds', async () => {

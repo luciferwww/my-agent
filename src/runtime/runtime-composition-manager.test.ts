@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
   Channel,
   ChannelCompletion,
+  ChannelInteractionTransport,
   ChannelRunRequest,
   ChannelRuntimeHost,
 } from '../core/channel/index.js';
@@ -20,8 +21,8 @@ function host(): ChannelRuntimeHost {
   return {
     onMessage: vi.fn(async () => {}),
     onInteractionResponse: vi.fn(),
-    onInteractionUnavailable: vi.fn(),
     capabilities: {
+      approvals: { getPending: vi.fn(() => []) },
       modelCatalog: {
         getSnapshot: vi.fn(() => ({
           generation: 1,
@@ -33,16 +34,12 @@ function host(): ChannelRuntimeHost {
         querySessionsNeedingAbort: vi.fn(() => []),
         abortTurn: vi.fn(() => ({ aborted: false, dropped: 0 })),
       },
-      sessions: {
+      chatSessions: {
         createSession: vi.fn(async () => ({
           sessionId: 'session',
           permission: { sessionId: 'session', mode: 'manual' as const, changedAt: 1 },
         })),
         listSessions: vi.fn(async () => []),
-        getSession: vi.fn(async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 })),
-        getHistory: vi.fn(async ({ sessionId }) => ({
-          sessionId, items: [], nextCursor: null, hasMore: false,
-        })),
         renameSession: vi.fn(async (sessionId, title) => ({
           sessionId,
           createdAt: 1,
@@ -70,7 +67,25 @@ function host(): ChannelRuntimeHost {
         })),
         onPermissionModeChanged: vi.fn(() => () => {}),
       },
+      sessionObservation: {
+        resolveSession: vi.fn(async (sessionId) => ({
+          kind: 'chat' as const,
+          sessionId,
+          entry: { sessionId, createdAt: 1, updatedAt: 1 },
+        })),
+        getHistory: vi.fn(async ({ sessionId }) => ({
+          sessionId, items: [], nextCursor: null, hasMore: false,
+        })),
+      },
     },
+  };
+}
+
+function unavailableInteraction(): ChannelInteractionTransport {
+  return {
+    sendInteractionRequest: vi.fn(() => ({ status: 'unavailable' as const, reason: 'delivery_failed' as const })),
+    sendInteractionClosed: vi.fn(),
+    onInteractionResponse: vi.fn(),
   };
 }
 
@@ -182,6 +197,7 @@ describe('RuntimeCompositionManager', () => {
     const earlyUnitStop = vi.fn(async () => {});
     const earlyChannel: Channel = {
       id: 'early-channel',
+      interaction: unavailableInteraction(),
       completion: earlyCompletion.promise,
       send: vi.fn(),
       onMessage: vi.fn(),
@@ -190,6 +206,7 @@ describe('RuntimeCompositionManager', () => {
     };
     const slowChannel: Channel = {
       id: 'slow-channel',
+      interaction: unavailableInteraction(),
       completion: new Promise(() => undefined),
       send: vi.fn(),
       onMessage: vi.fn(),
@@ -245,6 +262,7 @@ describe('RuntimeCompositionManager', () => {
     const warningLog = vi.spyOn(Logger.get('RuntimeCompositionManager'), 'warn');
     const channel: Channel = {
       id: 'observed-channel',
+      interaction: unavailableInteraction(),
       completion: completion.promise,
       send: vi.fn(),
       onMessage: vi.fn(),
@@ -294,6 +312,7 @@ describe('RuntimeCompositionManager', () => {
     const warningLog = vi.spyOn(Logger.get('RuntimeCompositionManager'), 'warn');
     const channel: Channel = {
       id: 'reused-channel',
+      interaction: unavailableInteraction(),
       completion: completion.promise,
       send: vi.fn(),
       onMessage: vi.fn(),
@@ -367,6 +386,7 @@ describe('RuntimeCompositionManager', () => {
     const completion = deferred<ChannelCompletion>();
     const channel: Channel = {
       id: 'stable-channel',
+      interaction: unavailableInteraction(),
       completion: completion.promise,
       send: vi.fn(),
       onMessage: vi.fn(),
@@ -503,6 +523,7 @@ describe('RuntimeCompositionManager', () => {
         stops.push(stop);
         const channel: Channel = {
           id: 'reload-channel',
+          interaction: unavailableInteraction(),
           completion: completion.promise,
           send: vi.fn(),
           onMessage(handler) { handlers.push(handler); },

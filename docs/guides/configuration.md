@@ -25,11 +25,16 @@ If `--agent-home` is omitted, the default is:
 <user-home>/.my-agent
 ```
 
-On first startup, a missing `config.json` is created as:
+Initialize a new Agent Home explicitly before first startup:
 
-```json
-{}
+```bash
+npm run agent -- --initialize --agent-home ./agent-home
 ```
+
+The interactive initializer verifies at least one real Provider/Model call,
+lets you select one verified Default Model, installs Root and fixed named-Agent
+Context, and publishes `config.json` last. Ordinary startup never creates a
+missing configuration; it reports the initialization command instead.
 
 The file is read at startup. Restart the Runtime after changing it.
 
@@ -37,7 +42,6 @@ The accepted top-level sections are:
 
 ```text
 llm
-runner
 agents
 logger
 extensions
@@ -85,11 +89,10 @@ The following example configures:
       ]
     }
   },
-  "runner": {
-    "steeringEnabled": true,
-    "maxLlmCalls": 12
-  },
   "agents": {
+    "steeringEnabled": true,
+    "maxLlmCallsPerTurn": 12,
+    "maxSubagentDepth": 1,
     "defaults": {
       "memory": {
         "enabled": false
@@ -164,7 +167,7 @@ override this reference for a run. Supply both or neither.
 
 ### 3.2 Built-in Provider
 
-`llm.builtin` configures one endpoint:
+`llm.builtin` configures one shared base URL and credential:
 
 ```json
 {
@@ -193,6 +196,7 @@ Each model registration supports:
 |---|---:|---|
 | `modelId` | Yes | Exact model ID sent to the endpoint |
 | `protocol` | Yes | `openai-responses`, `openai-chat-completions`, or `anthropic-messages` |
+| `endpoint` | No | Relative operation path, including version if needed; overrides the protocol-default path |
 | `displayName` | No | Name shown to clients |
 | `maximumContextTokens` | No | Published total Context limit |
 | `maximumPromptTokens` | No | Published Prompt limit; cannot exceed Context |
@@ -201,9 +205,62 @@ Each model registration supports:
 | `reasoning` | No | Verified Thinking and Effort capabilities |
 
 Token limits must be positive safe integers. Effective Context budgeting uses
-`maximumPromptTokens` first, then `maximumContextTokens`, and finally the
-conservative `32768` fallback. `outputTokenLimit` is invocation policy, not a
+`maximumPromptTokens` first, then `maximumContextTokens`, and finally a
+conservative `131072` fallback. `outputTokenLimit` is invocation policy, not a
 published model fact, and is clamped to a known `maximumOutputTokens`.
+
+Without `endpoint`, Clients append `/responses`, `/chat/completions`, or
+`/messages` as before. With it, the final URL is the shared `baseURL` plus the
+model path, joined with one slash. No protocol suffix is added again.
+For example, `baseURL: "https://gateway.example"` with `endpoint: "responses"`
+and `endpoint: "v1/responses"` selects two different paths using the same
+Responses protocol. Endpoints cannot change the host or credentials.
+
+All three Built-in Clients send `User-Agent: my-agent/0.1.0` and
+`x-opencode-session`. Runner supplies the conversation's existing Session ID,
+including Compaction calls. Calls without one use a fresh UUID per invocation;
+an existing HTTP compatibility retry reuses that ID. These headers are sent
+without vendor checks. They support routing/cache affinity, not server-side
+conversation history or guaranteed cache hits.
+
+### OpenCode Go example
+
+Go requires an active Go or Go Plus subscription and a process environment
+containing `OPENCODE_API_KEY`:
+
+```json
+{
+  "llm": {
+    "defaultModel": { "providerId": "builtin", "modelId": "glm-5.2" },
+    "builtin": {
+      "baseURL": "https://opencode.ai/inference/go",
+      "apiKey": "${OPENCODE_API_KEY}",
+      "models": [
+        {
+          "modelId": "glm-5.2",
+          "protocol": "openai-chat-completions",
+          "endpoint": "openai/v1/chat/completions"
+        },
+        {
+          "modelId": "gpt-5.6-luna",
+          "protocol": "openai-responses",
+          "endpoint": "openai/v1/responses"
+        },
+        {
+          "modelId": "claude-haiku-5-5",
+          "protocol": "anthropic-messages",
+          "endpoint": "anthropic/v1/messages"
+        }
+      ]
+    }
+  }
+}
+```
+
+Model paths and IDs should be checked against the current upstream service.
+The transport support is covered by mocked regression tests; this is not a
+claim that every model or Thinking/effort setting has been live-tested.
+See [OpenCode Go Model Capabilities](opencode-model-capabilities.md).
 
 ### 3.3 Thinking and Effort capabilities
 
@@ -270,27 +327,27 @@ There is no Anthropic-specific model configuration field. Deployments that
 cannot support this adaptive mapping must not declare the corresponding
 Thinking or Effort capabilities.
 
-## 4. Runner
+## 4. Global Agent execution policy
 
-This section is global. It cannot be placed under `agents.defaults` or an
+These fields are global. They cannot be placed under `agents.defaults` or an
 individual Agent entry.
 
 ```json
 {
-  "runner": {
+  "agents": {
     "steeringEnabled": true,
-    "maxLlmCalls": 12
+    "maxLlmCallsPerTurn": 12
   }
 }
 ```
 
 | Field | Default | Meaning |
 |---|---:|---|
-| `runner.steeringEnabled` | `false` | Allow the Runner to claim compatible queued user messages at steering-safe points |
-| `runner.maxLlmCalls` | omitted | Maximum Model calls in one Turn; omission means no count limit |
+| `agents.steeringEnabled` | `false` | Allow the Runner to claim compatible queued user messages at steering-safe points |
+| `agents.maxLlmCallsPerTurn` | omitted | Maximum Model calls in each Root or Child Turn; every Turn counts independently |
 
-`steeringEnabled` must be a boolean. `maxLlmCalls`, when present, must be a
-positive integer.
+`steeringEnabled` must be a boolean. `maxLlmCallsPerTurn`, when present, must
+be a positive integer.
 
 ## 5. Agent defaults and per-Agent overrides
 
@@ -312,6 +369,7 @@ override the same Agent-scoped sections:
     "list": [
       {
         "id": "research",
+        "description": "Researches a bounded question.",
         "tools": {
           "allow": ["read_file", "file_search", "grep_search"]
         }
@@ -322,7 +380,10 @@ override the same Agent-scoped sections:
 ```
 
 Arrays replace lower-precedence arrays; they are not appended. Runtime,
-Runner, Model, LLM, and workspace settings are not valid inside Agent entries.
+Runner, LLM, and workspace settings are not valid inside Agent entries.
+`model` is configured-Agent metadata and does not participate in the normal
+capability merge. `maxLlmCallsPerTurn` remains global policy and is not valid
+inside an Agent entry.
 
 ### 5.1 Memory
 
@@ -407,19 +468,16 @@ All fields except `customInstructions` have the values above by default.
 `timeoutSeconds` must be positive. Token, Turn, and character counts must be
 non-negative safe integers.
 
-### 5.5 Subagents
+### 5.5 Configured Agents and delegation
 
 ```json
 {
-  "subagents": {
-    "enabled": true,
-    "maxDepth": 1,
+  "agents": {
+    "maxSubagentDepth": 1,
     "list": [
       {
         "id": "reviewer",
         "description": "Reviews a bounded implementation change.",
-        "model": "inherit",
-        "maxLlmCalls": 6,
         "tools": {
           "allow": ["read_file", "file_search", "grep_search"],
           "deny": ["write_file", "exec"]
@@ -430,7 +488,10 @@ non-negative safe integers.
 }
 ```
 
-`model` is either `"inherit"` or:
+`agents.list[]` is shared by Child delegation and other Agent entry points.
+Each entry requires a unique ID and nonblank description. Omitting `model`
+inherits the Model selected at the execution entry point. To select a
+different Model, use:
 
 ```json
 {
@@ -439,8 +500,13 @@ non-negative safe integers.
 }
 ```
 
-Subagent IDs must be non-empty and unique. `maxDepth` is a non-negative safe
-integer. `maxLlmCalls`, when present, is positive.
+`maxSubagentDepth` is a non-negative safe integer. A value of `0` prevents
+Root delegation. To disable delegation for one Agent, include `"task"` in
+that Agent's effective `tools.deny`; there is no separate enablement flag.
+Every Root and Child Turn applies `agents.maxLlmCallsPerTurn` independently;
+Roles cannot override it and Child counters do not inherit Parent remaining
+capacity. Context files for a configured
+Agent belong under `<agentHome>/agents/<agentId>/`.
 
 ## 6. Logger
 
@@ -606,8 +672,8 @@ Agent-scoped settings resolve from lowest to highest precedence:
 Arrays and scalar values replace the lower-precedence value. Plain objects are
 merged recursively.
 
-Global `runner` settings use only module defaults followed by the top-level
-file value.
+Global Agent execution settings use only module defaults followed by the
+`agents` top-level field.
 
 ## 9. Common failures
 

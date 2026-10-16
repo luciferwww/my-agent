@@ -16,7 +16,12 @@ import type {
 } from '../tools/execution.js';
 import type {
   AsyncToolTranscriptRecord,
+  ResolvedSession,
   SessionEntry,
+  SessionStoreEntry,
+  SubagentSessionEntry,
+  SubagentSessionOutcome,
+  SubagentSessionStoreEntry,
   TranscriptState,
   MessageRecord,
   SessionRecord,
@@ -37,12 +42,15 @@ import {
   projectThinkingText,
   type ReasoningPreference,
 } from '../model-invocation/index.js';
+import { Logger } from '../../platform/logger/index.js';
 
 const SESSIONS_DIR = 'sessions';
 const STORE_FILE = 'sessions.json';
 const TRANSCRIPT_VERSION = 2;
 const DEFAULT_HISTORY_LIMIT = 50;
 const MAX_HISTORY_LIMIT = 100;
+const SUBAGENT_RETENTION_MS = 24 * 60 * 60 * 1000;
+const log = Logger.get('SessionManager');
 
 /** SessionManager construction options. */
 export interface SessionManagerOptions {
@@ -103,8 +111,11 @@ export class SessionManager {
 
   /** In-memory Transcript state keyed by canonical Session ID. */
   private transcripts = new Map<string, TranscriptState>();
-  private transientTranscriptIds = new Set<string>();
+  private preparingSubagentSessions = new Map<string, SubagentSessionEntry>();
+  private transientSubagentSessions = new Map<string, SubagentSessionEntry>();
+  private retainedSubagentTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private transcriptWriteTails = new Map<string, Promise<void>>();
+  private closed = false;
 
   constructor(agentHome: string, options: SessionManagerOptions = {}) {
     this.sessionsDir = join(agentHome, SESSIONS_DIR);
@@ -121,17 +132,79 @@ export class SessionManager {
       throw error;
     }
 
-    const store = loadStore(this.storePath);
+    const transcriptSessionIds = new Set<string>();
     await Promise.all(fileNames.map(async (fileName) => {
       if (fileName.endsWith('.tmp')) {
         await unlink(join(this.sessionsDir, fileName));
         return;
       }
       const match = /^([0-9a-f-]+)\.jsonl$/.exec(fileName);
-      if (match && isCanonicalSessionId(match[1]) && !store.sessions[match[1]]) {
-        await unlink(join(this.sessionsDir, fileName));
+      if (match && isCanonicalSessionId(match[1])) {
+        transcriptSessionIds.add(match[1]);
       }
     }));
+
+    const now = this.now();
+    const deleteTranscriptIds = new Set<string>();
+    const recovered: SubagentSessionStoreEntry[] = [];
+    await updateStore(this.storePath, (store) => {
+      for (const [sessionId, entry] of Object.entries(store.sessions)) {
+        if (!this.isSubagentStoreEntry(entry)) continue;
+        if (!transcriptSessionIds.has(sessionId)) {
+          delete store.sessions[sessionId];
+          continue;
+        }
+        let retained = entry;
+        if (retained.expiresAt === undefined) {
+          const completedAt = Math.max(now, retained.createdAt);
+          retained = {
+            ...retained,
+            updatedAt: completedAt,
+            completedAt,
+            expiresAt: completedAt + SUBAGENT_RETENTION_MS,
+            outcome: 'interrupted',
+          };
+          store.sessions[sessionId] = retained;
+        }
+        const expiresAt = retained.expiresAt;
+        if (expiresAt === undefined) {
+          throw new SessionError(
+            'SESSION_DATA_INVALID',
+            `Subagent Session "${sessionId}" has no expiration.`,
+          );
+        }
+        if (expiresAt <= now) {
+          delete store.sessions[sessionId];
+          deleteTranscriptIds.add(sessionId);
+          continue;
+        }
+        recovered.push(retained);
+      }
+
+      for (const sessionId of transcriptSessionIds) {
+        if (!store.sessions[sessionId]) {
+          deleteTranscriptIds.add(sessionId);
+        }
+      }
+    });
+
+    await Promise.all([...deleteTranscriptIds].map((sessionId) =>
+      unlink(this.resolveTranscriptPathUnchecked(sessionId))));
+
+    for (const entry of recovered) {
+      this.transientSubagentSessions.set(entry.sessionId, this.toSubagentSessionEntry(entry));
+      this.scheduleTransientSubagentDeletion(entry.sessionId, entry.expiresAt!);
+    }
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    for (const timer of this.retainedSubagentTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.retainedSubagentTimers.clear();
+    this.preparingSubagentSessions.clear();
+    this.transientSubagentSessions.clear();
   }
 
   // ── Session CRUD ─────────────────────────────────────
@@ -140,7 +213,7 @@ export class SessionManager {
     this.assertSessionId(input.sessionId);
     await mkdir(this.sessionsDir, { recursive: true });
 
-    if (this.getSession(input.sessionId)) {
+    if (this.getSessionStoreEntry(input.sessionId)) {
       throw new SessionError(
         'SESSION_PERSISTENCE_FAILED',
         `Session "${input.sessionId}" is already materialized.`,
@@ -176,7 +249,21 @@ export class SessionManager {
     this.requireTranscript(input.callerSessionId);
     await mkdir(this.sessionsDir, { recursive: true });
 
-    if (this.getSession(input.sessionId) || this.transientTranscriptIds.has(input.sessionId)) {
+    const preparing = this.preparingSubagentSessions.get(input.sessionId);
+    if (
+      !preparing
+      || preparing.callerSessionId !== input.callerSessionId
+      || preparing.createdAt !== input.createdAt
+    ) {
+      throw new SessionError(
+        'SESSION_PERSISTENCE_FAILED',
+        `Subagent Session "${input.sessionId}" is not preparing.`,
+      );
+    }
+    if (
+      this.getSessionStoreEntry(input.sessionId)
+      || this.transientSubagentSessions.has(input.sessionId)
+    ) {
       throw new SessionError(
         'SESSION_PERSISTENCE_FAILED',
         `Transcript "${input.sessionId}" already exists.`,
@@ -196,41 +283,153 @@ export class SessionManager {
     };
 
     let state: TranscriptState;
+    let transcriptCreated = false;
     try {
       state = await this.writeNewTranscript(input.sessionId, [sessionRecord]);
+      transcriptCreated = true;
+      await updateStore(this.storePath, (store) => {
+        if (store.sessions[input.sessionId]) {
+          throw new SessionError(
+            'SESSION_PERSISTENCE_FAILED',
+            `Session "${input.sessionId}" already exists.`,
+          );
+        }
+        store.sessions[input.sessionId] = {
+          kind: 'subagent',
+          sessionId: input.sessionId,
+          callerSessionId: input.callerSessionId,
+          createdAt: input.createdAt,
+          updatedAt: input.createdAt,
+        };
+      });
     } catch (error) {
+      if (transcriptCreated) {
+        await unlink(this.resolveTranscriptPathUnchecked(input.sessionId)).catch(() => undefined);
+      }
       throw new SessionError(
         'SESSION_PERSISTENCE_FAILED',
         `Transcript "${input.sessionId}" could not be persisted.`,
         { cause: error },
       );
     }
-    this.transientTranscriptIds.add(input.sessionId);
+    this.transientSubagentSessions.set(input.sessionId, preparing);
+    this.preparingSubagentSessions.delete(input.sessionId);
     this.transcripts.set(input.sessionId, state);
+  }
+
+  registerPreparingSubagentSession(input: CreateTransientSubagentTranscriptInput): void {
+    this.assertSessionId(input.sessionId);
+    this.requireTranscript(input.callerSessionId);
+    if (
+      this.getSessionStoreEntry(input.sessionId)
+      || this.preparingSubagentSessions.has(input.sessionId)
+      || this.transientSubagentSessions.has(input.sessionId)
+    ) {
+      throw new SessionError(
+        'SESSION_PERSISTENCE_FAILED',
+        `Subagent Session "${input.sessionId}" already exists.`,
+      );
+    }
+    this.preparingSubagentSessions.set(input.sessionId, Object.freeze({ ...input }));
+  }
+
+  clearPreparingSubagentSession(sessionId: string): void {
+    this.assertSessionId(sessionId);
+    this.preparingSubagentSessions.delete(sessionId);
+  }
+
+  async retainTransientSubagentTranscript(
+    sessionId: string,
+    outcome: SubagentSessionOutcome = 'error',
+  ): Promise<void> {
+    this.assertSessionId(sessionId);
+    if (!this.transientSubagentSessions.has(sessionId)) {
+      throw new SessionError('SESSION_NOT_FOUND', `Transcript "${sessionId}" was not found.`);
+    }
+    if (this.retainedSubagentTimers.has(sessionId)) return;
+    let expiresAt!: number;
+    await updateStore(this.storePath, (store) => {
+      const entry = store.sessions[sessionId];
+      if (!this.isSubagentStoreEntry(entry)) {
+        throw new SessionError('SESSION_NOT_FOUND', `Transcript "${sessionId}" was not found.`);
+      }
+      const completedAt = Math.max(this.now(), entry.createdAt);
+      expiresAt = completedAt + SUBAGENT_RETENTION_MS;
+      store.sessions[sessionId] = {
+        ...entry,
+        updatedAt: completedAt,
+        completedAt,
+        expiresAt,
+        outcome,
+      };
+    });
+    if (!this.closed) {
+      this.scheduleTransientSubagentDeletion(sessionId, expiresAt);
+    }
+  }
+
+  private scheduleTransientSubagentDeletion(sessionId: string, expiresAt: number): void {
+    const timer = setTimeout(() => {
+      void this.deleteTransientSubagentTranscript(sessionId).catch((error: unknown) => {
+        log.warn('retained Subagent Transcript cleanup failed', {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }, Math.max(0, expiresAt - this.now()));
+    timer.unref?.();
+    this.retainedSubagentTimers.set(sessionId, timer);
   }
 
   async deleteTransientSubagentTranscript(sessionId: string): Promise<void> {
     this.assertSessionId(sessionId);
-    if (!this.transientTranscriptIds.has(sessionId)) {
+    if (!this.transientSubagentSessions.has(sessionId)) {
       throw new SessionError('SESSION_NOT_FOUND', `Transcript "${sessionId}" was not found.`);
     }
 
+    const retentionTimer = this.retainedSubagentTimers.get(sessionId);
+    if (retentionTimer) {
+      clearTimeout(retentionTimer);
+    }
     await unlink(this.resolveTranscriptPathUnchecked(sessionId)).catch((error: unknown) => {
       if ((error as { code?: string }).code !== 'ENOENT') throw error;
     });
+    this.retainedSubagentTimers.delete(sessionId);
     this.transcripts.delete(sessionId);
-    this.transientTranscriptIds.delete(sessionId);
+    this.transientSubagentSessions.delete(sessionId);
+    await updateStore(this.storePath, (store) => {
+      const entry = store.sessions[sessionId];
+      if (this.isSubagentStoreEntry(entry)) {
+        delete store.sessions[sessionId];
+      }
+    });
   }
 
-  getSession(sessionId: string): SessionEntry | undefined {
-    const store = loadStore(this.storePath);
-    return store.sessions[sessionId];
+  getPersistedSession(sessionId: string): SessionEntry | undefined {
+    const entry = this.getSessionStoreEntry(sessionId);
+    return this.isSubagentStoreEntry(entry) ? undefined : entry;
+  }
+
+  resolveSession(sessionId: string): ResolvedSession | undefined {
+    const persisted = this.getPersistedSession(sessionId);
+    if (persisted) {
+      return { kind: 'chat', sessionId, entry: persisted };
+    }
+    const subagent = this.transientSubagentSessions.get(sessionId);
+    if (subagent) {
+      return { kind: 'subagent', sessionId, entry: subagent };
+    }
+    if (this.preparingSubagentSessions.has(sessionId)) {
+      return { kind: 'subagent', sessionId };
+    }
+    return undefined;
   }
 
   listSessions(input: { archived?: boolean } = {}): SessionEntry[] {
     const store = loadStore(this.storePath);
     const archived = input.archived ?? false;
     return Object.values(store.sessions)
+      .filter((entry): entry is SessionEntry => !this.isSubagentStoreEntry(entry))
       .filter((entry) => (entry.archivedAt !== undefined) === archived)
       .sort((left, right) => right.updatedAt - left.updatedAt
         || left.sessionId.localeCompare(right.sessionId));
@@ -280,7 +479,7 @@ export class SessionManager {
     const sessions = loadStore(this.storePath).sessions;
     this.requireSession(sessions, sessionId);
     if (Object.values(sessions).some(
-      (entry) => entry.forkedFromSessionId === sessionId,
+      (entry) => !this.isSubagentStoreEntry(entry) && entry.forkedFromSessionId === sessionId,
     )) {
       throw new SessionError(
         'SESSION_HAS_DESCENDANTS',
@@ -293,7 +492,7 @@ export class SessionManager {
     await updateStore(this.storePath, (store) => {
       this.requireSession(store.sessions, sessionId);
       if (Object.values(store.sessions).some(
-        (entry) => entry.forkedFromSessionId === sessionId,
+        (entry) => !this.isSubagentStoreEntry(entry) && entry.forkedFromSessionId === sessionId,
       )) {
         throw new SessionError(
           'SESSION_HAS_DESCENDANTS',
@@ -766,6 +965,8 @@ export class SessionManager {
   }
 
   private async touchSession(sessionId: string): Promise<void> {
+    if (this.transientSubagentSessions.has(sessionId)) return;
+
     await updateStore(this.storePath, (store) => {
       const entry = store.sessions[sessionId];
       if (entry) entry.updatedAt = this.nextTimestamp(entry.updatedAt);
@@ -905,7 +1106,7 @@ export class SessionManager {
   }
 
   private requireExistingSession(sessionId: string): SessionEntry {
-    const entry = this.getSession(sessionId);
+    const entry = this.getPersistedSession(sessionId);
     if (!entry) {
       throw new SessionError('SESSION_NOT_FOUND', `Session "${sessionId}" was not found.`);
     }
@@ -914,21 +1115,39 @@ export class SessionManager {
 
   private requireTranscript(sessionId: string): void {
     this.assertSessionId(sessionId);
-    if (!this.transientTranscriptIds.has(sessionId)) {
+    if (!this.transientSubagentSessions.has(sessionId)) {
       this.requireExistingSession(sessionId);
     }
   }
 
   private requireSession(
-    sessions: Record<string, SessionEntry>,
+    sessions: Record<string, SessionStoreEntry>,
     sessionId: string,
   ): SessionEntry {
     this.assertSessionId(sessionId);
     const entry = sessions[sessionId];
-    if (!entry) {
+    if (!entry || this.isSubagentStoreEntry(entry)) {
       throw new SessionError('SESSION_NOT_FOUND', `Session "${sessionId}" was not found.`);
     }
     return entry;
+  }
+
+  private getSessionStoreEntry(sessionId: string): SessionStoreEntry | undefined {
+    return loadStore(this.storePath).sessions[sessionId];
+  }
+
+  private isSubagentStoreEntry(
+    entry: SessionStoreEntry | undefined,
+  ): entry is SubagentSessionStoreEntry {
+    return entry !== undefined && 'kind' in entry && entry.kind === 'subagent';
+  }
+
+  private toSubagentSessionEntry(entry: SubagentSessionStoreEntry): SubagentSessionEntry {
+    return Object.freeze({
+      sessionId: entry.sessionId,
+      callerSessionId: entry.callerSessionId,
+      createdAt: entry.createdAt,
+    });
   }
 
   private assertSessionId(sessionId: string): void {

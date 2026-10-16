@@ -10,10 +10,7 @@ import type {
 import type { AgentEvent } from '../runner/types.js';
 import type { ReasoningPreference } from '../model-invocation/index.js';
 import type { SessionErrorCode } from '../session/index.js';
-import type {
-  SessionHistoryPage,
-  SessionHistoryQuery,
-} from '../session/index.js';
+import type { ResolvedSession, SessionHistoryPage, SessionHistoryQuery } from '../session/index.js';
 
 export type { ApprovalResult } from '../approval/index.js';
 
@@ -71,6 +68,7 @@ interface TurnInteractionRequestBase<K extends TurnInteractionKind> {
 
 export interface ApprovalInteractionRequest
   extends TurnInteractionRequestBase<'approval'> {
+  originChannelId?: string;
   callId: string;
   toolName: string;
   input: Record<string, unknown>;
@@ -120,6 +118,7 @@ export interface ApprovalRequest {
   input: Record<string, unknown>;
   sessionId: string;
   turnId: string;
+  originChannelId?: string;
   originClientId?: string;
 }
 
@@ -130,11 +129,7 @@ export interface ApprovalRequestOptions {
   signal: AbortSignal;
 }
 
-export type ApprovalClosedResult = Extract<
-  ApprovalResult,
-  { outcome: 'aborted' | 'unavailable' | 'failed' }
-  | { outcome: 'approved'; source: 'session_allow_all' }
->;
+export type ApprovalClosedResult = ApprovalResult;
 
 export type ApprovalDeliveryResult =
   | { status: 'accepted' }
@@ -181,7 +176,7 @@ export interface TurnAbortCapability {
 }
 
 /** Channel capability for allocating a server Session ID without persisting it. */
-export interface SessionCapabilityEntry {
+export interface ChatSessionEntry {
   readonly sessionId: string;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -190,19 +185,17 @@ export interface SessionCapabilityEntry {
   readonly forkedFromSessionId?: string;
 }
 
-export interface SessionCapability {
+export interface ChatSessionCapability {
   createSession(input?: {
     permissionMode?: SessionPermissionMode;
     originClientId?: string;
   }): Promise<{ sessionId: string; permission: SessionPermissionState }>;
-  listSessions(input?: { archived?: boolean }): Promise<SessionCapabilityEntry[]>;
-  getSession(sessionId: string): Promise<SessionCapabilityEntry>;
-  getHistory(query: SessionHistoryQuery): Promise<SessionHistoryPage>;
-  renameSession(sessionId: string, title: string | null): Promise<SessionCapabilityEntry>;
-  archiveSession(sessionId: string): Promise<SessionCapabilityEntry>;
-  unarchiveSession(sessionId: string): Promise<SessionCapabilityEntry>;
+  listSessions(input?: { archived?: boolean }): Promise<ChatSessionEntry[]>;
+  renameSession(sessionId: string, title: string | null): Promise<ChatSessionEntry>;
+  archiveSession(sessionId: string): Promise<ChatSessionEntry>;
+  unarchiveSession(sessionId: string): Promise<ChatSessionEntry>;
   deleteSession(sessionId: string): Promise<void>;
-  forkSession(sessionId: string, entryId?: string): Promise<SessionCapabilityEntry>;
+  forkSession(sessionId: string, entryId?: string): Promise<ChatSessionEntry>;
   getPermissionMode(sessionId: string): SessionPermissionState;
   setPermissionMode(input: {
     sessionId: string;
@@ -214,19 +207,25 @@ export interface SessionCapability {
   ): () => void;
 }
 
+export interface SessionObservationCapability {
+  resolveSession(sessionId: string): Promise<ResolvedSession>;
+  getHistory(query: SessionHistoryQuery): Promise<SessionHistoryPage>;
+}
+
 export interface ChannelRuntimeCapabilities {
   readonly modelCatalog: ModelCatalogQuery;
   readonly abort: TurnAbortCapability;
-  readonly sessions: SessionCapability;
+  readonly chatSessions: ChatSessionCapability;
+  readonly sessionObservation: SessionObservationCapability;
+  readonly approvals: {
+    getPending(sessionId?: string): readonly ApprovalRequest[];
+  };
 }
 
 export interface ChannelInteractionTransport {
   sendInteractionRequest(request: TurnInteractionRequest): ApprovalDeliveryResult;
   sendInteractionClosed(request: TurnInteractionRequest, result: ApprovalClosedResult): void;
   onInteractionResponse(handler: (response: TurnInteractionResponse) => void): void;
-  onInteractionUnavailable(
-    handler: (id: string, reason: 'origin_disconnected') => void,
-  ): void;
 }
 
 export type ChannelCompletion =
@@ -247,7 +246,7 @@ export interface ChannelInstance {
   onMessage(handler: (request: ChannelRunRequest) => Promise<void>): void;
   start(): Promise<void>;
   stop(): Promise<void>;
-  readonly interaction?: ChannelInteractionTransport;
+  readonly interaction: ChannelInteractionTransport;
   bindRuntimeCapabilities?(capabilities: ChannelRuntimeCapabilities): void;
 }
 
@@ -268,7 +267,7 @@ export interface ChannelRuntimeInteraction {
 export interface ChannelRuntimeBinding {
   readonly id: string;
   send(event: AgentEvent): void | Promise<void>;
-  readonly interaction?: ChannelRuntimeInteraction;
+  readonly interaction: ChannelRuntimeInteraction;
 }
 
 export interface ChannelProjection {
@@ -282,7 +281,6 @@ export interface ChannelCompletionObserver {
 
 export interface ChannelRuntimeHost {
   onMessage(binding: ChannelRuntimeBinding, request: ChannelRunRequest): Promise<void>;
-  onInteractionResponse(response: TurnInteractionResponse): void;
-  onInteractionUnavailable(id: string, reason: 'origin_disconnected'): void;
+  onInteractionResponse(binding: ChannelRuntimeBinding, response: TurnInteractionResponse): void;
   readonly capabilities: ChannelRuntimeCapabilities;
 }

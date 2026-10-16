@@ -1,16 +1,25 @@
 import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
-import { loadSubagentProfiles, buildGeneralPurposeProfile } from './config-loader.js';
-import type { SubagentConfigEntry } from './config.js';
+import {
+  loadConfiguredAgentProfiles as loadSubagentProfiles,
+  buildGeneralPurposeProfile,
+} from './config-loader.js';
 
 const WS = '/tmp/ws';
-const REGISTERED = new Set<string>(['read_file', 'write_file', 'exec', 'grep_search']);
+const REGISTERED = new Set<string>([
+  'read_file',
+  'write_file',
+  'exec',
+  'grep_search',
+  'task',
+]);
 
-function entry(overrides: Partial<SubagentConfigEntry>): SubagentConfigEntry {
+type ConfiguredAgentEntry = Parameters<typeof loadSubagentProfiles>[0][number];
+
+function entry(overrides: Partial<ConfiguredAgentEntry>): ConfiguredAgentEntry {
   return {
     id: 'reviewer',
     description: 'reviews code',
-    model: 'inherit',
     ...overrides,
   };
 }
@@ -108,14 +117,13 @@ describe('loadSubagentProfiles — description', () => {
 // ── tools.allow ──────────────────────────────────────────────
 
 describe('loadSubagentProfiles — tools.allow', () => {
-  it('rejects allow containing "task"', () => {
-    expect(() =>
-      loadSubagentProfiles(
-        [entry({ tools: { allow: ['read_file', 'task'] } })],
-        WS,
-        REGISTERED,
-      ),
-    ).toThrow(/cannot contain "task"/i);
+  it('accepts the registered task Tool and leaves depth enforcement to execution', () => {
+    const profiles = loadSubagentProfiles(
+      [entry({ tools: { allow: ['read_file', 'task'] } })],
+      WS,
+      REGISTERED,
+    );
+    expect(profiles[0]!.tools?.allow).toEqual(['read_file', 'task']);
   });
 
   it('rejects an exact name that is not in registeredToolNames', () => {
@@ -159,22 +167,21 @@ describe('loadSubagentProfiles — tools.allow', () => {
 // ── projection to SubagentProfile ────────────────────────────
 
 describe('loadSubagentProfiles — projection', () => {
-  it('derives agentDir as <agentHome>/subagents/<id>/', () => {
+  it('derives agentDir as <agentHome>/agents/<id>/', () => {
     const profiles = loadSubagentProfiles(
       [entry({ id: 'reviewer' })],
       '/work/space',
       REGISTERED,
     );
-    expect(profiles[0]!.agentDir).toBe(join('/work/space', 'subagents', 'reviewer'));
+    expect(profiles[0]!.agentDir).toBe(join('/work/space', 'agents', 'reviewer'));
   });
 
-  it('preserves model / maxLlmCalls / tools verbatim', () => {
+  it('preserves model and tools verbatim', () => {
     const profiles = loadSubagentProfiles(
       [
         entry({
           id: 'reviewer',
           model: { providerId: 'openai', modelId: 'gpt-5' },
-          maxLlmCalls: 8,
           tools: { allow: ['read_file'], deny: ['exec'] },
         }),
       ],
@@ -182,7 +189,6 @@ describe('loadSubagentProfiles — projection', () => {
       REGISTERED,
     );
     expect(profiles[0]!.model).toEqual({ providerId: 'openai', modelId: 'gpt-5' });
-    expect(profiles[0]!.maxLlmCalls).toBe(8);
     expect(profiles[0]!.tools).toEqual({ allow: ['read_file'], deny: ['exec'] });
   });
 
@@ -212,13 +218,12 @@ describe('buildGeneralPurposeProfile', () => {
     const profile = buildGeneralPurposeProfile('/work/space');
     expect(profile.model).toBe('inherit');
     expect(profile.tools).toBeUndefined();
-    expect(profile.maxLlmCalls).toBeUndefined();
   });
 
   it('derives agentDir via the same rule as named profiles', () => {
     const profile = buildGeneralPurposeProfile('/work/space');
     expect(profile.agentDir).toBe(
-      join('/work/space', 'subagents', 'general-purpose'),
+      join('/work/space', 'agents', 'general-purpose'),
     );
   });
 
@@ -229,30 +234,28 @@ describe('buildGeneralPurposeProfile', () => {
 });
 
 describe('loadSubagentProfiles — model selection', () => {
-  it('rejects omitted and legacy raw-string model values', () => {
+  it('maps omitted Model to Parent inheritance and rejects legacy raw strings', () => {
+    expect(loadSubagentProfiles([
+      { id: 'missing', description: 'missing model' },
+    ], WS, REGISTERED)[0]!.model).toBe('inherit');
     expect(() => loadSubagentProfiles([
-      { id: 'missing', description: 'missing model' } as SubagentConfigEntry,
-    ], WS, REGISTERED)).toThrow(/model must/i);
-    expect(() => loadSubagentProfiles([
-      { id: 'legacy', description: 'legacy model', model: 'gpt-5' } as unknown as SubagentConfigEntry,
+      { id: 'legacy', description: 'legacy model', model: 'gpt-5' as never },
     ], WS, REGISTERED)).toThrow(/model must/i);
   });
 
-  it('accepts inherit, normalizes Provider ID, and preserves opaque Model ID', () => {
-    expect(loadSubagentProfiles([entry({ model: 'inherit' })], WS, REGISTERED)[0]!.model)
-      .toBe('inherit');
+  it('normalizes Provider ID and preserves opaque Model ID', () => {
     expect(loadSubagentProfiles([entry({
       model: { providerId: ' provider ', modelId: ' model ' },
     })], WS, REGISTERED)[0]!.model).toEqual({ providerId: 'provider', modelId: ' model ' });
   });
 
-  it('accepts an empty Model ID but rejects non-string IDs, blank Provider IDs, and unknown fields', () => {
-    expect(loadSubagentProfiles([entry({
+  it('rejects blank or non-string Model IDs, blank Provider IDs, and unknown fields', () => {
+    expect(() => loadSubagentProfiles([entry({
       model: { providerId: 'provider', modelId: '' },
-    })], WS, REGISTERED)[0]!.model).toEqual({ providerId: 'provider', modelId: '' });
+    })], WS, REGISTERED)).toThrow(/modelId must be nonblank/i);
     expect(() => loadSubagentProfiles([entry({
       model: { providerId: 'provider', modelId: 42 } as never,
-    })], WS, REGISTERED)).toThrow(/modelId must be a string/i);
+    })], WS, REGISTERED)).toThrow(/modelId must be nonblank/i);
     expect(() => loadSubagentProfiles([entry({
       model: { modelId: 'model' } as never,
     })], WS, REGISTERED)).toThrow(/providerId must be nonblank/i);

@@ -1,11 +1,11 @@
 # Thinking Generation Controls Plan
 
-> Status: Delivery complete — owner acceptance pending
-> Date: 2026-10-03
+> Status: Archived — completed and owner-accepted
+> Date: 2026-10-08
 > Owner: Project owner
 > Classification: Architecture Slice
-> Authorization: 所有者于2026-10-03接受Specification，确认TGC-P1，并批准继续至实施完毕
-> Current phase: G1 owner acceptance
+> Authorization: 所有者于2026-10-08确认完整交付并批准归档
+> Current phase: Archived
 
 ## 1. 目标与来源
 
@@ -13,13 +13,12 @@
 实际可读Thinking沿用已有采集、展示和历史机制。
 
 - [Specification](specification.md)：本Change已接受的交付契约。
-- [验收矩阵与Gate记录](validation.md)：承接38项验收，目前均未验证。
+- [验收矩阵与Gate记录](validation.md)：38项验收全部通过并记录最终Gate证据。
 - [研究草稿](../../../research/thinking-generation-and-display-controls-design-draft.md)：讨论与来源，不再作为交付契约owner。
 - [Development Workflow](../../../governance/development-workflow.md)：流程唯一权威。
 - [既有采集与展示交付](../../archive/thinking-capture-and-display/plan.md)：实现基线，不重做或改写归档结论。
 
-当前授权覆盖剩余Plan Item，但每步仍须满足自己的退出条件并提交后再进入下一步。
-Plan接受不表示对应Gate已经通过。
+所有Plan Item及对应Gate均已完成；阶段性限制和执行证据保留在Validation中。
 
 ## 2. 范围与非目标
 
@@ -84,5 +83,5 @@ P1不把尚未完成codec的能力发布为可用；P3开始前固化Anthropic�
 
 ## 6. 当前状态
 
-Specification已接受，TGC-P1至TGC-P5均已实现并通过技术Gate。Change保留在Active，
-等待所有者接受完整交付后归档。
+Specification已接受，TGC-P1至TGC-P5均已实现并通过技术Gate。所有者于2026-10-08
+接受完整交付，Change已归档。

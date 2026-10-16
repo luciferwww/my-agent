@@ -17,6 +17,56 @@ const request: ModelInvocationRequest = {
 };
 
 describe('BuiltinLlmProvider', () => {
+  it('routes captured per-model paths across protocols and same-protocol concurrent calls', async () => {
+    const first = { modelId: 'responses', protocol: 'openai-responses' as const, endpoint: 'responses' };
+    const fetchImpl = vi.fn<typeof fetch>(async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { model: string };
+      const events = body.model === 'messages'
+        ? [
+            { type: 'message_start', message: { usage: { input_tokens: 1 } } },
+            { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } },
+            { type: 'message_stop' },
+          ]
+        : body.model === 'chat'
+          ? [
+              { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+              { choices: [], usage: { prompt_tokens: 1, completion_tokens: 1 } },
+            ]
+          : [
+              { type: 'response.created' },
+              { type: 'response.completed', response: { usage: { input_tokens: 1, output_tokens: 1 } } },
+            ];
+      return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''), {
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    });
+    const provider = new BuiltinLlmProvider({
+      baseURL: 'https://example.test/api',
+      models: [
+        first,
+        { modelId: 'versioned', protocol: 'openai-responses', endpoint: 'v1/responses' },
+        { modelId: 'chat', protocol: 'openai-chat-completions', endpoint: 'openai/v1/chat/completions' },
+        { modelId: 'messages', protocol: 'anthropic-messages', endpoint: 'anthropic/v1/messages' },
+        { modelId: 'legacy', protocol: 'openai-responses' },
+      ],
+    }, { fetch: fetchImpl });
+    first.endpoint = 'must-not-replace-the-captured-path';
+
+    await Promise.all(['responses', 'versioned', 'chat', 'messages', 'legacy'].map((model) =>
+      provider.entry.invocationPort.chat({ model, messages: [], sessionId: model })));
+
+    expect(fetchImpl.mock.calls.map((call) => call[0])).toEqual([
+      'https://example.test/api/responses',
+      'https://example.test/api/v1/responses',
+      'https://example.test/api/openai/v1/chat/completions',
+      'https://example.test/api/anthropic/v1/messages',
+      'https://example.test/api/responses',
+    ]);
+    expect(fetchImpl.mock.calls.map((call) =>
+      new Headers(call[1]?.headers).get('x-opencode-session')))
+      .toEqual(['responses', 'versioned', 'chat', 'messages', 'legacy']);
+  });
+
   it('publishes one immutable Provider entry and routes exact model IDs', async () => {
     const calls: string[] = [];
     const created: BuiltinProtocol[] = [];
@@ -83,7 +133,7 @@ describe('BuiltinLlmProvider', () => {
         identity: { providerId: 'builtin', modelId: 'beta' },
         protocol: 'builtin-model-router',
         connection: { endpointId: 'https://example.test/v1' },
-        facts: { effectiveContextLimit: 32_768 },
+        facts: { effectiveContextLimit: 131_072 },
       },
     });
     expect(provider.entry.resolveModel('missing', connection.connection)).toMatchObject({

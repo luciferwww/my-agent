@@ -7,5 +7,6 @@
       "my-agent/extension-api": ["../../src/extension/api/index.ts"]
     }
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts"],
+  "exclude": ["client/src"]
 }

@@ -64,7 +64,7 @@ describe('Extension acquisition to Runtime integration', () => {
       loadedUnits: acquisition.loadedUnits,
       cliOverrides: {
         memory: { enabled: false },
-        subagents: { enabled: false, maxDepth: 1 },
+        tools: { deny: ['task'] },
       },
     });
     try {
@@ -118,7 +118,7 @@ describe('Extension acquisition to Runtime integration', () => {
       loadedUnits: acquisition.loadedUnits,
       cliOverrides: {
         memory: { enabled: false },
-        subagents: { enabled: false, maxDepth: 1 },
+        tools: { deny: ['task'] },
       },
     });
     try {

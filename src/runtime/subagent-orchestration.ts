@@ -16,7 +16,10 @@ import type { SubagentExecutor } from '../core/subagent/SubagentExecutor.js';
 import type { ContextFile } from '../core/agent-context/types.js';
 import { Logger } from '../platform/logger/index.js';
 import type { MessageRouteContext } from './queue-types.js';
-import type { SessionPermissionMode } from '../core/approval/index.js';
+import type {
+  CurrentCallApprovalCapability,
+  SessionPermissionMode,
+} from '../core/approval/index.js';
 
 const log = Logger.get('SubagentOrchestration');
 
@@ -27,9 +30,9 @@ export interface ActiveParentTurn {
   readonly turnId: string;
   readonly signal: AbortSignal;
   readonly effectiveReference: ModelReference;
-  readonly effectiveMaxLlmCalls?: number;
   readonly contextFiles: readonly ContextFile[];
   readonly registrySnapshot: RegistrySnapshot;
+  readonly approvalCapability: CurrentCallApprovalCapability;
   readonly getSessionPermissionMode: () => SessionPermissionMode;
   registerChild(): () => void;
 }
@@ -39,6 +42,7 @@ export interface CreateSubagentDelegationPortParams {
   readonly routeContextByTurn: Map<string, MessageRouteContext>;
   readonly sessionManager: SessionManager;
   readonly maxDepth: number;
+  readonly maxLlmCallsPerTurn?: number;
   readonly executor: SubagentExecutor;
   readonly onEvent: (event: AgentEvent) => void;
 }
@@ -83,10 +87,17 @@ export function createSubagentDelegationPort(
       };
 
       let routeRegistered = false;
+      let preparingRegistered = false;
       let transcriptAcquired = false;
       let result: SubagentTerminalResult | undefined;
 
       try {
+        params.sessionManager.registerPreparingSubagentSession({
+          sessionId: childSessionId,
+          callerSessionId: parent.sessionId,
+          createdAt: startedAt,
+        });
+        preparingRegistered = true;
         params.onEvent({ type: 'subagent_start', ...eventIdentity });
         request.reportActivity();
 
@@ -101,6 +112,7 @@ export function createSubagentDelegationPort(
           callerSessionId: parent.sessionId,
           createdAt: startedAt,
         });
+        preparingRegistered = false;
         transcriptAcquired = true;
         throwIfAborted(request.signal);
 
@@ -115,10 +127,11 @@ export function createSubagentDelegationPort(
           canSpawn: capabilities.canSpawn,
           childSessionId,
           childTurnId,
-          parentMaxLlmCalls: parent.effectiveMaxLlmCalls,
+          maxLlmCallsPerTurn: params.maxLlmCallsPerTurn,
           signal: request.signal,
           toolProjection: parent.registrySnapshot.tools,
           hookProjection: parent.registrySnapshot.hooks,
+          approvalCapability: parent.approvalCapability,
           getSessionPermissionMode: parent.getSessionPermissionMode,
         });
         throwIfAborted(request.signal);
@@ -206,11 +219,17 @@ export function createSubagentDelegationPort(
             });
           }
         }
+        if (preparingRegistered) {
+          params.sessionManager.clearPreparingSubagentSession(childSessionId);
+        }
         if (transcriptAcquired) {
           try {
-            await params.sessionManager.deleteTransientSubagentTranscript(childSessionId);
+            await params.sessionManager.retainTransientSubagentTranscript(
+              childSessionId,
+              terminal.outcome,
+            );
           } catch (error) {
-            log.warn('child Transcript cleanup failed', {
+            log.warn('child Transcript retention failed', {
               sessionId: childSessionId,
               error: error instanceof Error ? error.message : String(error),
             });

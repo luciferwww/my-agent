@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { bootstrapRuntime } from './bootstrap.js';
+import { acquireAgentHomeLock } from './agent-home-lock.js';
 import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
 import { Logger } from '../platform/logger/index.js';
 import {
@@ -19,6 +20,9 @@ import {
 
 vi.mock('./bootstrap.js', () => ({
   bootstrapRuntime: vi.fn(),
+}));
+vi.mock('./agent-home-lock.js', () => ({
+  acquireAgentHomeLock: vi.fn(),
 }));
 
 class ManualDeadlineDriver implements RuntimeDeadlineDriver {
@@ -91,6 +95,8 @@ function testProvider(id: string): ProviderProjectionEntry {
 
 function createHarness(options: {
   memoryClose?: () => void | Promise<void>;
+  sessionClose?: () => void | Promise<void>;
+  processShutdown?: () => Promise<void>;
   providerUnit?: LoadedRuntimeUnit;
   providerFactory?: () => LoadedRuntimeUnit;
   builtinConfigured?: boolean;
@@ -98,6 +104,10 @@ function createHarness(options: {
   additionalLoadedUnits?: readonly LoadedRuntimeUnit[];
 } = {}) {
   const baseStop = vi.fn(options.baseStop ?? (() => {}));
+  const sessionClose = vi.fn(async () => {
+    await options.sessionClose?.();
+  });
+  const processShutdown = vi.fn(options.processShutdown ?? (async () => {}));
   const optionalStop = vi.fn();
   const events: NonNullable<RuntimeAppOptions['onEvent']> extends (event: infer T) => void ? T[] : never[] = [];
   const loadedUnits = [
@@ -122,6 +132,11 @@ function createHarness(options: {
   vi.mocked(bootstrapRuntime).mockResolvedValue({
     resources: {
       memoryManager: options.memoryClose ? { close: options.memoryClose } : null,
+      sessionManager: { close: sessionClose },
+      managedProcessLifecycle: {
+        cleanupSession: vi.fn(async () => undefined),
+        shutdown: processShutdown,
+      },
       appConfig: {
         llm: options.builtinConfigured === false
           ? {}
@@ -131,11 +146,15 @@ function createHarness(options: {
             models: [{ modelId: 'test-model', protocol: 'openai-responses' }],
               },
             },
+        agents: {
+          maxSubagentDepth: 1,
+          defaults: {} as never,
+          list: [],
+        },
       },
       resolvedConfig: {
         tools: {},
         context: { maxFileChars: 1, maxTotalChars: 1 },
-        subagents: { enabled: false, list: [] },
       },
     },
     state: { phase: 'ready', startedAt: 1, activeRunCount: 0, contextVersion: 1 },
@@ -181,7 +200,11 @@ function createHarness(options: {
       permission: { sessionId: 'session', mode: 'manual' as const, changedAt: 1 },
     })),
     listSessions: vi.fn(async () => []),
-    getSession: vi.fn(async (sessionId: string) => ({ sessionId, createdAt: 1, updatedAt: 1 })),
+    resolveSession: vi.fn(async (sessionId: string) => ({
+      kind: 'chat' as const,
+      sessionId,
+      entry: { sessionId, createdAt: 1, updatedAt: 1 },
+    })),
     getSessionHistory: vi.fn(async (query: { sessionId: string }) => ({
       sessionId: query.sessionId,
       items: [],
@@ -235,8 +258,8 @@ function createHarness(options: {
     return {
       application,
       onChannelMessage: vi.fn(),
-      onInteractionResponse: vi.fn(),
-      onInteractionUnavailable: vi.fn(),
+      onInteractionResponse: vi.fn<RuntimeApplicationKernel['onInteractionResponse']>(),
+      getPendingApprovals: vi.fn<RuntimeApplicationKernel['getPendingApprovals']>(() => []),
       querySessionsNeedingAbort: vi.fn(() => []),
       abortTurn: vi.fn(() => ({ aborted: false, dropped: 0 })),
       blockingTurnIds: vi.fn(() => []),
@@ -250,6 +273,8 @@ function createHarness(options: {
   return {
     application,
     close,
+    sessionClose,
+    processShutdown,
     channelBindingsForTurn,
     createApplication,
     getInput: () => input,
@@ -264,6 +289,9 @@ function createHarness(options: {
 describe('Runtime Builder', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(acquireAgentHomeLock).mockResolvedValue({
+      release: vi.fn().mockResolvedValue(undefined),
+    });
   });
 
   it('delegates bootstrap and application creation once and publishes generation 1', async () => {
@@ -272,6 +300,7 @@ describe('Runtime Builder', () => {
     const handle = await buildRuntimeHandle(harness.runtimeOptions, harness.createApplication);
 
     expect(bootstrapRuntime).toHaveBeenCalledTimes(1);
+    expect(acquireAgentHomeLock).toHaveBeenCalledWith('/agent-home');
     expect(harness.createApplication).toHaveBeenCalledTimes(1);
     expect(handle.application).toBe(harness.application);
     const access = harness.getInput()?.snapshotAccess;
@@ -284,6 +313,11 @@ describe('Runtime Builder', () => {
   it('normalizes internal Session errors at the Channel capability boundary', async () => {
     let capabilities: ChannelRuntimeCapabilities | undefined;
     const channel: Channel = {
+      interaction: {
+        sendInteractionRequest: vi.fn(() => ({ status: 'unavailable' as const, reason: 'delivery_failed' as const })),
+        sendInteractionClosed: vi.fn(),
+        onInteractionResponse: vi.fn(),
+      },
       id: 'capability-probe',
       completion: new Promise(() => undefined),
       send() {},
@@ -308,7 +342,7 @@ describe('Runtime Builder', () => {
       required: false,
     });
     const harness = createHarness({ additionalLoadedUnits: [channelUnit] });
-    harness.application.getSession.mockRejectedValueOnce(
+    harness.application.resolveSession.mockRejectedValueOnce(
       new SessionError('SESSION_NOT_FOUND', 'Session does not exist.'),
     );
     harness.application.getSessionPermissionMode.mockImplementationOnce(() => {
@@ -316,7 +350,7 @@ describe('Runtime Builder', () => {
     });
     const handle = await buildRuntimeHandle(harness.runtimeOptions, harness.createApplication);
 
-    await expect(capabilities?.sessions.getSession('missing')).rejects.toEqual(
+    await expect(capabilities?.sessionObservation.resolveSession('missing')).rejects.toEqual(
       expect.objectContaining({
         name: ChannelOperationError.name,
         code: 'SESSION_NOT_FOUND',
@@ -325,7 +359,7 @@ describe('Runtime Builder', () => {
     );
     let permissionError: unknown;
     try {
-      capabilities?.sessions.getPermissionMode('archived');
+      capabilities?.chatSessions.getPermissionMode('archived');
     } catch (error) {
       permissionError = error;
     }
@@ -518,6 +552,18 @@ describe('Runtime Builder', () => {
     expect(harness.baseStop).toHaveBeenCalledTimes(1);
   });
 
+  it('releases the agent home lock when bootstrap fails', async () => {
+    const release = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(acquireAgentHomeLock).mockResolvedValueOnce({ release });
+    vi.mocked(bootstrapRuntime).mockRejectedValueOnce(new Error('bootstrap failed'));
+    const harness = createHarness();
+
+    await expect(buildRuntimeHandle(harness.runtimeOptions, harness.createApplication))
+      .rejects.toThrow('bootstrap failed');
+
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
   it('fails closed when earlier candidate cleanup fails after Provider create failure', async () => {
     const failingProviderUnit: LoadedRuntimeUnit = {
       unitId: 'builtin-llm-provider',
@@ -545,6 +591,8 @@ describe('Runtime Builder', () => {
     expect(harness.createApplication).not.toHaveBeenCalled();
     expect(harness.events.some((event) => event.type === 'app_ready')).toBe(false);
     expect(harness.baseStop).toHaveBeenCalledTimes(1);
+    const lock = await vi.mocked(acquireAgentHomeLock).mock.results[0]?.value;
+    expect(lock?.release).toHaveBeenCalledTimes(1);
   });
 
   it('cleans up startup resources when application creation fails', async () => {
@@ -576,7 +624,13 @@ describe('Runtime Builder', () => {
     }));
     expect(harness.close).toHaveBeenCalledTimes(1);
     expect(harness.close).toHaveBeenCalledWith('first', expect.anything());
+    expect(harness.sessionClose).toHaveBeenCalledTimes(1);
+    expect(harness.processShutdown).toHaveBeenCalledTimes(1);
+    expect(harness.sessionClose.mock.invocationCallOrder[0])
+      .toBeLessThan(harness.processShutdown.mock.invocationCallOrder[0]!);
     expect(harness.baseStop).toHaveBeenCalledTimes(1);
+    const lock = await vi.mocked(acquireAgentHomeLock).mock.results[0]?.value;
+    expect(lock?.release).toHaveBeenCalledTimes(1);
   });
 
   it('returns a frozen residual report when Memory close never settles', async () => {
@@ -632,6 +686,10 @@ describe('Runtime Builder', () => {
     const send = vi.fn();
     harness.channelBindingsForTurn.mockReturnValue(Object.freeze([{
       id: 'old-generation-channel',
+      interaction: {
+        sendInteractionRequest: () => ({ status: 'unavailable' as const, reason: 'delivery_failed' as const }),
+        sendInteractionClosed: () => {},
+      },
       send,
     }]));
     await buildRuntimeHandle(harness.runtimeOptions, harness.createApplication);

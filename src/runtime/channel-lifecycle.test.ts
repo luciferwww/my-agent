@@ -25,8 +25,8 @@ function host(): ChannelRuntimeHost {
   return {
     onMessage: vi.fn(async () => {}),
     onInteractionResponse: vi.fn(),
-    onInteractionUnavailable: vi.fn(),
     capabilities: {
+      approvals: { getPending: vi.fn(() => []) },
       modelCatalog: {
         getSnapshot: vi.fn(() => ({
           generation: 1,
@@ -38,16 +38,12 @@ function host(): ChannelRuntimeHost {
         querySessionsNeedingAbort: vi.fn(() => []),
         abortTurn: vi.fn(() => ({ aborted: false, dropped: 0 })),
       },
-      sessions: {
+      chatSessions: {
         createSession: vi.fn(async () => ({
           sessionId: 'session',
           permission: { sessionId: 'session', mode: 'manual' as const, changedAt: 1 },
         })),
         listSessions: vi.fn(async () => []),
-        getSession: vi.fn(async (sessionId) => ({ sessionId, createdAt: 1, updatedAt: 1 })),
-        getHistory: vi.fn(async ({ sessionId }) => ({
-          sessionId, items: [], nextCursor: null, hasMore: false,
-        })),
         renameSession: vi.fn(async (sessionId, title) => ({
           sessionId,
           createdAt: 1,
@@ -75,6 +71,16 @@ function host(): ChannelRuntimeHost {
         })),
         onPermissionModeChanged: vi.fn(() => () => {}),
       },
+      sessionObservation: {
+        resolveSession: vi.fn(async (sessionId) => ({
+          kind: 'chat' as const,
+          sessionId,
+          entry: { sessionId, createdAt: 1, updatedAt: 1 },
+        })),
+        getHistory: vi.fn(async ({ sessionId }) => ({
+          sessionId, items: [], nextCursor: null, hasMore: false,
+        })),
+      },
     },
   };
 }
@@ -84,6 +90,11 @@ function channel(id: string, overrides: Partial<ChannelInstance> = {}) {
   const instance: ChannelInstance = {
     id,
     completion: completion.promise,
+    interaction: {
+      sendInteractionRequest: vi.fn(() => ({ status: 'unavailable' as const, reason: 'delivery_failed' as const })),
+      sendInteractionClosed: vi.fn(),
+      onInteractionResponse: vi.fn(),
+    },
     send: vi.fn(),
     onMessage: vi.fn(),
     start: vi.fn(async () => {}),
@@ -107,6 +118,38 @@ function unit(
 }
 
 describe('Channel candidate preparation', () => {
+  it.each([
+    'interaction',
+    'sendInteractionRequest',
+    'sendInteractionClosed',
+    'onInteractionResponse',
+  ])('rejects a dynamically invalid Channel missing %s before startup', async (missing) => {
+    const fixture = channel('invalid-interaction');
+    if (missing === 'interaction') {
+      Reflect.deleteProperty(fixture.instance, missing);
+    } else {
+      Reflect.deleteProperty(fixture.instance.interaction, missing);
+    }
+
+    const prepared = await prepareStagedUnitChannels({
+      unit: stageRegistryUnit(unit('invalid-interaction', [{
+        id: fixture.instance.id,
+        create: () => fixture.instance,
+      }])),
+      host: host(),
+    });
+
+    expect(prepared.accepted).toBe(false);
+    expect(prepared.bindings).toEqual([]);
+    expect(prepared.diagnostics).toEqual([
+      expect.objectContaining({
+        code: 'CHANNEL_CREATE_FAILED',
+        message: 'Channel factory "invalid-interaction" returned an invalid instance.',
+      }),
+    ]);
+    expect(fixture.instance.start).not.toHaveBeenCalled();
+  });
+
   it('keeps ingress closed until publication and closes it again on removal', async () => {
     let dispatch: ((request: { sessionId: string; message: string }) => Promise<void>) | undefined;
     const fixture = channel('gated', {

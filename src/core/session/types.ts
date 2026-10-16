@@ -20,6 +20,41 @@ export interface SessionEntry {
   forkedFromSessionId?: string;
 }
 
+export interface SubagentSessionEntry {
+  readonly sessionId: string;
+  readonly callerSessionId: string;
+  readonly createdAt: number;
+}
+
+export type SubagentSessionOutcome =
+  | 'ok'
+  | 'max_llm_calls'
+  | 'aborted'
+  | 'error'
+  | 'interrupted';
+
+export interface SubagentSessionStoreEntry extends SubagentSessionEntry {
+  readonly kind: 'subagent';
+  updatedAt: number;
+  completedAt?: number;
+  expiresAt?: number;
+  outcome?: SubagentSessionOutcome;
+}
+
+export type SessionStoreEntry = SessionEntry | SubagentSessionStoreEntry;
+
+export type ResolvedSession =
+  | {
+      readonly sessionId: string;
+      readonly kind: 'chat';
+      readonly entry?: SessionEntry;
+    }
+  | {
+      readonly sessionId: string;
+      readonly kind: 'subagent';
+      readonly entry?: SubagentSessionEntry;
+    };
+
 export interface UpdateSessionInput {
   title?: string | null;
 }
@@ -174,11 +209,10 @@ export interface SessionHistoryPage {
   readonly hasMore: boolean;
 }
 
-// Versioned Session Store.
+// Session Store.
 
 export interface SessionStore {
-  version: 1;
-  sessions: Record<string, SessionEntry>;
+  sessions: Record<string, SessionStoreEntry>;
 }
 
 // In-memory Transcript state.

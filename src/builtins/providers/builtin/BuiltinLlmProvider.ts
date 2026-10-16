@@ -45,6 +45,11 @@ export class BuiltinLlmProvider {
     for (const protocol of protocols) {
       const clientOptions = Object.freeze({
         baseURL: capturedConfig.baseURL,
+        modelEndpoints: new Map(capturedConfig.models.flatMap((model) => (
+          model.protocol === protocol && model.endpoint !== undefined
+            ? [[model.modelId, model.endpoint] as const]
+            : []
+        ))),
         ...(capturedConfig.apiKey === undefined ? {} : { apiKey: capturedConfig.apiKey }),
         ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
       });

@@ -59,6 +59,7 @@ function setup(options: {
   prepareError?: Error;
   routeSetError?: Error;
   routeDeleteError?: Error;
+  retainError?: Error;
   abortDuringPrepare?: boolean;
 } = {}) {
   const controller = new AbortController();
@@ -75,6 +76,7 @@ function setup(options: {
   });
   const releaseChild = vi.fn();
   const registerChild = vi.fn(() => releaseChild);
+  const approvalCapability = { request: vi.fn() };
   const parent: ActiveParentTurn = {
     requestId: 'request-parent',
     sessionId: '5cb8b687-f263-4355-9d09-7749064e3318',
@@ -82,9 +84,9 @@ function setup(options: {
     turnId: 'parent-turn',
     signal: controller.signal,
     effectiveReference: { providerId: 'parent', modelId: 'parent-model' },
-    effectiveMaxLlmCalls: 6,
     contextFiles: [],
     registrySnapshot,
+    approvalCapability,
     getSessionPermissionMode: () => 'manual',
     registerChild,
   };
@@ -100,9 +102,21 @@ function setup(options: {
       throw options.routeDeleteError;
     });
   }
+  const lifecycleOperations: string[] = [];
   const events: AgentEvent[] = [];
-  const createTransientSubagentTranscript = vi.fn(async () => {});
-  const deleteTransientSubagentTranscript = vi.fn(async () => {});
+  const registerPreparingSubagentSession = vi.fn(() => {
+    lifecycleOperations.push('register-preparing');
+  });
+  const clearPreparingSubagentSession = vi.fn(() => {
+    lifecycleOperations.push('clear-preparing');
+  });
+  const createTransientSubagentTranscript = vi.fn(async () => {
+    lifecycleOperations.push('create-transcript');
+  });
+  const retainTransientSubagentTranscript = vi.fn(async () => {
+    lifecycleOperations.push('retain-transcript');
+    if (options.retainError) throw options.retainError;
+  });
   const prepare = vi.fn(async (params: { signal: AbortSignal }) => {
     if (options.prepareError) throw options.prepareError;
     if (options.abortDuringPrepare) executionController.abort();
@@ -130,12 +144,18 @@ function setup(options: {
     activeParents,
     routeContextByTurn,
     sessionManager: {
+      registerPreparingSubagentSession,
+      clearPreparingSubagentSession,
       createTransientSubagentTranscript,
-      deleteTransientSubagentTranscript,
+      retainTransientSubagentTranscript,
     } as never,
     maxDepth: 1,
+    maxLlmCallsPerTurn: 6,
     executor: { prepare, execute } as never,
-    onEvent: (event) => events.push(event),
+    onEvent: (event) => {
+      lifecycleOperations.push(event.type);
+      events.push(event);
+    },
   });
   const request = {
     profile: profile(),
@@ -155,14 +175,17 @@ function setup(options: {
     request,
     events,
     execute,
+    registerPreparingSubagentSession,
+    clearPreparingSubagentSession,
     createTransientSubagentTranscript,
-    deleteTransientSubagentTranscript,
+    retainTransientSubagentTranscript,
     controller,
     executionController,
     activeParents,
     routeContextByTurn,
     registerChild,
     releaseChild,
+    lifecycleOperations,
     prepare,
     parent,
   };
@@ -175,11 +198,15 @@ describe('Runtime Subagent delegation', () => {
       request,
       events,
       execute,
-      deleteTransientSubagentTranscript,
+      retainTransientSubagentTranscript,
       createTransientSubagentTranscript,
+      registerPreparingSubagentSession,
+      lifecycleOperations,
       routeContextByTurn,
       registerChild,
       releaseChild,
+      prepare,
+      parent,
     } = setup();
     const result = await port.delegate(request);
 
@@ -197,11 +224,32 @@ describe('Runtime Subagent delegation', () => {
       parentTurnId: 'parent-turn',
       parentToolUseId: 'tool-1',
     }));
+    expect(registerPreparingSubagentSession).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      callerSessionId: '5cb8b687-f263-4355-9d09-7749064e3318',
+    }));
+    expect(registerPreparingSubagentSession.mock.invocationCallOrder[0])
+      .toBeLessThan(createTransientSubagentTranscript.mock.invocationCallOrder[0]!);
+    expect(lifecycleOperations.slice(0, 3)).toEqual([
+      'register-preparing',
+      'subagent_start',
+      'create-transcript',
+    ]);
     expect(createTransientSubagentTranscript).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: expect.stringMatching(/^[0-9a-f-]{36}$/),
       callerSessionId: '5cb8b687-f263-4355-9d09-7749064e3318',
     }));
-    expect(deleteTransientSubagentTranscript).toHaveBeenCalledTimes(1);
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
+      approvalCapability: parent.approvalCapability,
+      maxLlmCallsPerTurn: 6,
+    }));
+    expect(retainTransientSubagentTranscript).toHaveBeenCalledWith(
+      expect.stringMatching(/^[0-9a-f-]{36}$/),
+      'ok',
+    );
+    expect(events.at(-1)?.type).toBe('subagent_end');
+    expect(lifecycleOperations.indexOf('subagent_end'))
+      .toBeLessThan(lifecycleOperations.indexOf('retain-transcript'));
     expect(registerChild).toHaveBeenCalledTimes(1);
     expect(releaseChild).toHaveBeenCalledTimes(1);
     expect([...routeContextByTurn.keys()]).toEqual(['parent-turn']);
@@ -258,7 +306,7 @@ describe('Runtime Subagent delegation', () => {
     const starts = subject.events.filter((event) => event.type === 'subagent_start');
     expect(new Set(starts.map((event) => event.sessionId)).size).toBe(2);
     expect(subject.releaseChild).toHaveBeenCalledTimes(2);
-    expect(subject.deleteTransientSubagentTranscript).toHaveBeenCalledTimes(2);
+    expect(subject.retainTransientSubagentTranscript).toHaveBeenCalledTimes(2);
     expect([...subject.routeContextByTurn.keys()]).toEqual(['parent-turn']);
   });
 
@@ -285,7 +333,7 @@ describe('Runtime Subagent delegation', () => {
   });
 
   it('terminalizes resolution failure with its category and never executes the Child', async () => {
-    const { port, request, events, execute, deleteTransientSubagentTranscript } = setup();
+    const { port, request, events, execute, retainTransientSubagentTranscript } = setup();
     const result = await port.delegate({
       ...request,
       profile: profile({ providerId: 'missing', modelId: 'child-model' }),
@@ -305,7 +353,7 @@ describe('Runtime Subagent delegation', () => {
     expect(invocationPorts.child!.chatStream).not.toHaveBeenCalled();
     expect(invocationPorts.child!.chat).not.toHaveBeenCalled();
     expect(events.map((event) => event.type)).toEqual(['subagent_start', 'subagent_end']);
-    expect(deleteTransientSubagentTranscript).toHaveBeenCalledTimes(1);
+    expect(retainTransientSubagentTranscript).toHaveBeenCalledTimes(1);
   });
 
   it('rejects a missing Parent before allocating Child lifecycle events', async () => {
@@ -337,7 +385,7 @@ describe('Runtime Subagent delegation', () => {
       usage: { inputTokens: 0, outputTokens: 0 },
     }));
     expect(setupCase.events.filter((event) => event.type === 'subagent_end')).toHaveLength(1);
-    expect(setupCase.deleteTransientSubagentTranscript).toHaveBeenCalledTimes(1);
+    expect(setupCase.retainTransientSubagentTranscript).toHaveBeenCalledTimes(1);
 
     const executionCase = setup({
       executeError: new AgentExecutionFailure('provider failed', {
@@ -367,7 +415,8 @@ describe('Runtime Subagent delegation', () => {
       'subagent_start',
       'subagent_end',
     ]);
-    expect(routeCase.deleteTransientSubagentTranscript).not.toHaveBeenCalled();
+    expect(routeCase.retainTransientSubagentTranscript).not.toHaveBeenCalled();
+    expect(routeCase.clearPreparingSubagentSession).toHaveBeenCalledTimes(1);
     expect(routeCase.execute).not.toHaveBeenCalled();
   });
 
@@ -376,8 +425,21 @@ describe('Runtime Subagent delegation', () => {
     const result = await cleanupCase.port.delegate(cleanupCase.request);
 
     expect(result.outcome).toBe('ok');
-    expect(cleanupCase.deleteTransientSubagentTranscript).toHaveBeenCalledTimes(1);
+    expect(cleanupCase.retainTransientSubagentTranscript).toHaveBeenCalledTimes(1);
     expect(cleanupCase.events.filter((event) => event.type === 'subagent_end')).toHaveLength(1);
+  });
+
+  it('preserves the terminal result when Transcript retention fails', async () => {
+    const retentionCase = setup({ retainError: new Error('retention failed') });
+
+    const result = await retentionCase.port.delegate(retentionCase.request);
+
+    expect(result).toEqual(expect.objectContaining({
+      outcome: 'ok',
+      text: 'parent/parent-model',
+    }));
+    expect(retentionCase.events.filter((event) => event.type === 'subagent_end')).toHaveLength(1);
+    expect(retentionCase.retainTransientSubagentTranscript).toHaveBeenCalledTimes(1);
   });
 
   it('uses the Parent signal and reports Abort without execution failure', async () => {
@@ -403,7 +465,7 @@ describe('Runtime Subagent delegation', () => {
       'subagent_end',
     ]);
     expect(abortCase.execute).not.toHaveBeenCalled();
-    expect(abortCase.deleteTransientSubagentTranscript).toHaveBeenCalledTimes(1);
+    expect(abortCase.retainTransientSubagentTranscript).toHaveBeenCalledTimes(1);
     expect([...abortCase.routeContextByTurn.keys()]).toEqual(['parent-turn']);
   });
 });

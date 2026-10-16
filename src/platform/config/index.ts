@@ -11,9 +11,6 @@ export type {
   SearchConfig,
   ToolsConfig,
   AgentContextConfig,
-  SubagentsConfig,
-  SubagentConfigEntry,
-  SubagentToolsConfig,
   DeepPartial,
   EmbeddingProviderType,
 } from './types.js';

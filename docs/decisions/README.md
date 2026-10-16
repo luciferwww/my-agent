@@ -26,6 +26,8 @@ This directory contains durable architectural decisions. It does not own current
 | [ADR-016](adr-016-unified-builtin-llm-provider.md) | Accepted | One optional Built-in Provider with private per-model Protocol routing and explicit model registration |
 | [ADR-017](adr-017-session-message-queue-and-steering-claim.md) | Accepted | One per-Session user-message FIFO with active-Turn safe-point claim |
 | [ADR-018](adr-018-unified-async-tool-execution-and-completion-delivery.md) | Accepted | Unified Async Tool Execution Framework replacing Runner direct-await invocation |
+| [ADR-020](adr-020-session-addressed-presentation-subscription-and-ephemeral-child-observation.md) | Accepted | Explicit Session presentation subscription, read-only transient Child observation, and bounded terminal retention |
+| [ADR-021](adr-021-shared-configured-agent-registry.md) | Accepted | Shared `agents.list[]` registry, `agents/<agentId>/` Context, and removal of public `subagents` profile configuration |
 
 ## Authority rules
 

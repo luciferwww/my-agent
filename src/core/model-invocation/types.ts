@@ -136,6 +136,7 @@ export interface ResolvedReasoningPolicy {
 
 export interface ModelInvocationRequest {
   model: string;
+  sessionId?: string;
   /** Core-generated identity for this actual invocation. */
   invocationId?: string;
   system?: string;

@@ -8,7 +8,7 @@ import { createWebSocketChannelUnit } from './websocket-channel-unit.js';
 export function createExtension(context: ExtensionLoadContext): LoadedRuntimeUnit {
   return createWebSocketChannelUnit({
     config: readWebSocketExtensionConfig(context.config),
-    clientFilePath: fileURLToPath(new URL('./client/chat.html', import.meta.url)),
+    clientAssetDirectoryPath: fileURLToPath(new URL('./client/dist', import.meta.url)),
     logger: context.logger,
   });
 }

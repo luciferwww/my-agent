@@ -1,0 +1,108 @@
+{
+	"llm": {
+		"defaultModel": {
+			"providerId": "builtin",
+			"modelId": "gpt-5.6-sol"
+		},
+		"builtin": {
+			"baseURL": "http://127.0.0.1:5000/v1",
+			"models": [
+				{
+					"modelId": "gpt-5.6-sol",
+					"protocol": "openai-responses",
+					"displayName": "GPT-5.6 Sol",
+					"maximumContextTokens": 1050000,
+					"maximumPromptTokens": 272000,
+					"maximumOutputTokens": 128000,
+					"reasoning": {
+						"thinking": [
+							"on",
+							"off"
+						],
+						"efforts": [
+							"none",
+							"low",
+							"medium",
+							"high",
+							"xhigh",
+							"max"
+						]
+					}
+				},
+				{
+					"modelId": "gemini-3.8-flash",
+					"protocol": "openai-chat-completions",
+					"displayName": "Gemini 3.8 Flash",
+					"maximumContextTokens": 1048576,
+					"maximumPromptTokens": 983040,
+					"maximumOutputTokens": 65536,
+					"reasoning": {
+						"thinking": [
+							"on",
+							"off"
+						],
+						"efforts": [
+							"low",
+							"medium",
+							"high"
+						]
+					}
+				}
+			]
+		}
+	},
+	"runner": {
+		"steeringEnabled": true,
+		"maxLlmCalls": 12
+	},
+	"agents": {
+		"defaults": {
+			"memory": {
+				"enabled": false
+			},
+			"tools": {
+				"allow": [
+					"list_dir",
+					"read_file",
+					"file_search",
+					"grep_search",
+					"write_file",
+					"edit_file",
+					"apply_patch"
+				],
+				"deny": []
+			}
+		}
+	},
+	"extensions": {
+		"enabled": true,
+		"entries": {
+			"copilot-relay-provider": {
+				"enabled": true,
+				"config": {
+					"baseURL": "http://127.0.0.1:5000"
+				}
+			},
+			"websocket-channel": {
+				"enabled": true,
+				"config": {
+					"host": "127.0.0.1",
+					"port": 8787,
+					"webSocketPath": "/ws",
+					"clientPath": "/",
+					"approval": true,
+					"openBrowser": false
+				}
+			}
+		}
+	},
+	"logger": {
+		"minLevel": "info",
+		"console": {
+			"enabled": true
+		},
+		"file": {
+			"enabled": false
+		}
+	}
+}

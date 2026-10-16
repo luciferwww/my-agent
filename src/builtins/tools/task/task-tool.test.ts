@@ -254,7 +254,12 @@ describe('(d) outcome → ToolExecutionOutput mapping (spec §13.2 failure matri
     const { deps } = makeDeps({ runResult: okResult({ text: 'hello' }) });
     const tool = createTaskTool(deps);
     const res = await exec(tool, { description: 'x', prompt: 'y' }, makeCtx());
-    expect(res.content).toBe('hello');
+    expect(res.content).toBe(
+      'Subagent completed.\n'
+      + 'sessionId: 5a848f00-b15f-4a5e-a4cc-3e6aa47342b1\n'
+      + 'Result:\n'
+      + 'hello',
+    );
     expect(res.outcome).toBe('success');
   });
 
@@ -265,6 +270,9 @@ describe('(d) outcome → ToolExecutionOutput mapping (spec §13.2 failure matri
     const tool = createTaskTool(deps);
     const res = await exec(tool, { description: 'x', prompt: 'y' }, makeCtx());
     expect(res.outcome).toBe('failed');
+    expect(res.content).toContain(
+      'Subagent completed.\nsessionId: 5a848f00-b15f-4a5e-a4cc-3e6aa47342b1\nResult:\n',
+    );
     expect(res.content).toMatch(/LLM call limit/);
     expect(res.content).toContain('halfway through...');
   });
@@ -280,6 +288,9 @@ describe('(d) outcome → ToolExecutionOutput mapping (spec §13.2 failure matri
     const tool = createTaskTool(deps);
     const res = await exec(tool, { description: 'x', prompt: 'y' }, makeCtx());
     expect(res.outcome).toBe('failed');
+    expect(res.content).toContain(
+      'Subagent completed.\nsessionId: 5a848f00-b15f-4a5e-a4cc-3e6aa47342b1\nResult:\n',
+    );
     expect(res.content).toContain('LLM exploded');
   });
 
@@ -296,6 +307,9 @@ describe('(d) outcome → ToolExecutionOutput mapping (spec §13.2 failure matri
     const tool = createTaskTool(deps);
     const res = await exec(tool, { description: 'x', prompt: 'y' }, makeCtx());
     expect(res.outcome).toBe('failed');
+    expect(res.content).toContain(
+      'Subagent completed.\nsessionId: 5a848f00-b15f-4a5e-a4cc-3e6aa47342b1\nResult:\n',
+    );
     expect(res.content).toMatch(/aborted/i);
   });
 });

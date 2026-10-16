@@ -38,7 +38,9 @@ extensions/websocket-channel/
 ├── WebSocketChannel.ts       # HTTP and WebSocket transport
 ├── websocket-channel-unit.ts
 ├── entry.ts                  # Extension factory
-└── client/chat.html
+└── client/
+    ├── src/                  # Vue 3 + TypeScript source
+    └── dist/                 # Prebuilt packaged Client
 
 src/runtime/turn-interaction/
 ├── TurnInteractionManager.ts # Runtime-owned Promise bus
@@ -47,7 +49,35 @@ src/runtime/turn-interaction/
 
 ## 3. Inbound, outbound, and capability flows
 
-### 3.1 Client to Runtime
+### 3.1 Bundled WebSocket Client delivery
+
+The WebSocket Extension owns one Vue 3 and TypeScript Client source tree and
+ships its prebuilt Vite output under `client/dist`. Source-loaded development
+and installed packages serve the same bounded asset inventory. Runtime
+Extension load/start never installs Client dependencies, invokes Vite, or
+writes installation files.
+
+Generated HTML contains one runtime configuration token. The Extension
+replaces it per request with the configured WebSocket path, serves HTML with
+`no-store`, and serves hashed assets with immutable caching. Relative asset
+URLs preserve configured nested Client paths. Published packages include
+`client/dist` and exclude Client source, build configuration, source maps, and
+build-only scripts.
+
+The bundled Client has one component tree. Classic and Botanical are
+presentation-only Themes selected in the Sidebar and persisted origin-locally;
+Theme changes do not reconnect transport or clear Session state. The retired
+`/chat2.html` entry has no alias or redirect and returns 404 unless an operator
+explicitly configures that exact path as the primary `clientPath`.
+
+Assistant text is rendered as escaped Markdown with safe external links.
+Complete `\(...\)` and `\[...\]` expressions render through KaTeX with trusted
+commands disabled. Dollar-delimited expressions remain ordinary Markdown text.
+Streaming expressions remain source text until their closing delimiter
+arrives, and invalid expressions remain visible rather than interrupting
+message rendering.
+
+### 3.2 Client to Runtime
 
 ```text
 CLI or WebSocket input
@@ -75,7 +105,7 @@ RuntimeApp.handleInboundChannelMessage
 - Text and multimodal input use the same FIFO. Claim compatibility uses the active resolved Model's media facts.
 - Root user messages are submitted through Channels. `RuntimeApplication` does not expose a direct `runTurn()` bypass.
 
-### 3.2 Runtime to clients
+### 3.3 Runtime to clients
 
 ```text
 AgentEvent
@@ -87,14 +117,23 @@ Runtime Builder Fanout
 
 Fanout selects captured-generation Channel bindings for events with a live `turnId`; events without Turn correlation use current bindings. Each synchronous throw or asynchronous rejection is contained and logged so one Channel or observer failure does not stop other deliveries or alter Turn execution. Terminal Fanout promises are tracked for bounded Shutdown convergence.
 
-Most events route by `sessionId`. Subagent events carry a child `sessionId` plus `callerSessionId`, and WebSocket routes them to the caller Session audience. A queued `request_end` has no Session ID, so WebSocket resolves its audience from the earlier `user_message` through `originMessageId`; an uncorrelated event is not sent. `user_message.attachmentSummaries` may expose type, MIME, byte count, and dimensions, but never raw base64.
+Most events route by `sessionId`. WebSocket audience membership is explicit per
+connection and Session: subscribe validates a Runtime-known ordinary Pending
+or persisted Session, unsubscribe removes only that membership, and disconnect
+or same-client socket replacement clears the displaced connection's
+memberships. Session creation joins its creating connection before
+acknowledgement, including while the Session is still Pending. `run_turn`
+requires existing membership and does not change it. History, permission,
+metadata, and pending-state operations do not join an audience.
 
-### 3.3 Runtime capabilities
+Subagent events carry a child `sessionId` plus `callerSessionId`, and WebSocket routes them to the caller Session audience. A queued `request_end` has no Session ID, so WebSocket resolves its audience from the earlier `user_message` through `originMessageId`; an uncorrelated event is not sent. `user_message.attachmentSummaries` may expose type, MIME, byte count, and dimensions, but never raw base64.
+
+### 3.4 Runtime capabilities
 
 Before `start()`, candidate activation may call:
 
 ```text
-bindRuntimeCapabilities({ modelCatalog, abort, sessions })
+bindRuntimeCapabilities({ modelCatalog, abort, sessions, approvals })
 ```
 
 `modelCatalog.getSnapshot()` is a live query over the current published
@@ -105,6 +144,12 @@ exposes Session lifecycle, permission, and read-only paginated History
 operations without exposing Transcript internals. Channel model selection
 consumes the Catalog for presentation and early checks, but Model Resolution
 remains the final authority.
+
+`approvals.getPending(sessionId?)` reads detached canonical pending requests,
+globally or by exact Session ID. Channels filter using local side-effect-free
+acceptance logic; Runtime does not create per-Channel query wrappers. Both
+Origin Channel and Origin Client source fields are preserved. Shared Session
+entries are unchanged; Session indicators and refresh cycles are Client UX.
 
 ## 4. Canonical contracts
 
@@ -120,17 +165,33 @@ owns the stable contract.
 
 ## 5. Approval and interaction lifecycle
 
-`TurnInteractionManager` is the Runtime-owned in-memory Promise bus. It routes a Tool interaction, including its canonical `callId`, to the Turn's captured Channel/client origin and reports responses or terminal unavailability back to Runner. Elevating a Session to `allow_all` closes its already-pending requests as mode-authorized so clients can remove stale approval UI. Channel implementations provide approval interactions and user-facing Session permission controls; [Approval Lifecycle](../specifications/approval-lifecycle.md) owns settlement and failure semantics.
+`TurnInteractionManager` is the Runtime-owned in-memory Promise bus. Requests
+carry canonical `callId`, Session/Turn correlation, and optional Runtime-supplied
+Origin Channel/Client IDs. Runtime targets an existing Origin Channel only;
+absent one, all Channels are candidates. The interaction adapter is required;
+unsupported Channels explicitly return unavailable. Each Channel decides
+whether it can make a request actionable, and at least one must accept.
+Response ingress preserves the source binding for Runtime validation.
+
+Origin Client is not a Runtime eligibility or disconnect-settlement condition.
+The dedicated unavailable callback chain is removed. Every settlement sends
+closure, including user Allow/Deny and Session elevation to `allow_all`.
+Channels clean existing presentations by Approval ID even if currently unable
+to accept new requests. [Approval Lifecycle](../specifications/approval-lifecycle.md)
+owns settlement and failure semantics.
 
 ## 6. CLI Channel
 
-`CliChannel` is a single-session readline transport.
+`CliChannel` is a single-session, turn-at-a-time readline transport. Runtime
+supports Steering independently, but the CLI does not submit local Steering
+messages while a Turn is active.
 
 ```text
 CliChannelConfig {
   input?: NodeJS.ReadableStream   # default process.stdin
   output?: NodeJS.WritableStream  # default process.stdout
   prompt?: string                 # default "> "
+  interactionReady?: Promise<void> # default allows immediate interaction
   approval?: boolean              # default false
 }
 ```
@@ -149,9 +210,43 @@ cards, and converges unfinished cards to partial on terminal failure. Tool
 Result preview limits affect presentation only, never the result passed to the
 Model.
 
-### 6.2 Model commands and lifecycle
+### 6.2 Commands, input gate, and lifecycle
 
-`/models` and `/model` query and select exact current-Catalog references; display escaping never changes opaque Model identity. `/permission` shows the current Session mode, while `/permission manual` and `/permission allow_all` change it. Allow All requires typing an explicit confirmation after a warning about Shell, external filesystem, integrity, and disconnect behavior. A new CLI conversation initially has no Session ID. The first ordinary message calls the Runtime Session capability and immediately submits the message with the returned server-issued UUID; later messages reuse that ID. Merely entering a new-conversation state does not create a Pending Session. CLI approval uses its readline interaction, Ctrl+C delegates active/queued Abort through Runtime capabilities before closing the Channel, and process exit policy remains Host-owned.
+When `--cli` is present, the standalone Host writes an immediate startup
+notice, passes an input-readiness gate to `CliChannel`, and releases that gate
+only after `RuntimeApp.create()` has completed. It writes the elapsed-time
+`Ready` notice before releasing the gate, so the first ordinary prompt cannot
+precede Runtime readiness. Direct `CliChannel` construction defaults to an
+already-resolved gate.
+
+`/help` groups Model, reasoning, Session, permission, and process controls.
+`/model`, `/session`, `/permission`, `/thinking`, and `/effort` open numbered
+selectors without arguments and retain direct command forms. Model and
+reasoning selection uses the current Catalog, rejects unsupported or
+conflicting values locally, reconciles stale selections after Model/Catalog
+changes, and omits default reasoning from `ChannelRunRequest`. Display escaping
+never changes opaque Model identity.
+
+Selecting a persisted Session displays up to 20 recent records in chronological
+order within a bounded terminal budget; older or truncated content is marked,
+and a presentation failure does not roll back the Session selection. A new CLI
+conversation initially has no Session ID. Its first ordinary message calls the
+Runtime Session capability and immediately submits the message with the
+returned server-issued UUID; merely selecting new-Session state does not create
+a Pending Session.
+
+The CLI tracks paired `run_start`/`run_end` events across all visible Sessions.
+While any Turn is active, it cancels an outstanding ordinary question, discards
+its partial line, keeps Runtime presentation live, and does not open another
+message, command, selector, or command-confirmation prompt. The final
+`run_end` restores a fresh prompt. Runtime-requested Approval remains an input
+exception because the Turn is waiting for that decision. Ctrl+C continues to
+delegate active/queued Abort through Runtime capabilities before the existing
+double-press Channel close path; process exit policy remains Host-owned.
+
+`/permission manual` and `/permission allow_all` change the current Session
+mode. Allow All requires an explicit confirmation after a warning about Shell,
+external filesystem, integrity, and disconnect behavior.
 
 ## 7. WebSocket Channel
 
@@ -181,21 +276,53 @@ Channel and belong to the operational proxy/gateway boundary.
 
 After `hello`, WebSocket accepts Session creation and management, explicit
 single-Session History queries, permission query/change, Turn submission,
-approval resolution, Abort, and Catalog queries. History is never sent merely
+approval resolution, global or Session-filtered pending Approval queries,
+Abort, and Catalog queries. History is never sent merely
 because `hello` completed; the bundled client requests it only after selecting
 a persisted Session. `get_session_history` is socket-local, request-correlated,
 and does not join a Session audience. All JSON property names use camelCase;
 snake_case is reserved for `type` discriminator values such as
 `create_session` and `run_turn`. `create_session` carries a `requestId` and
 optional `permissionMode`; `session_created` returns the same `requestId`,
-server-issued `sessionId`, and authoritative permission state. Strict `get_session_permission_mode` and `set_session_permission_mode` messages use `sessionId`; the setter additionally requires `mode: 'manual' | 'allow_all'`.
+server-issued `sessionId`, and authoritative permission state after the
+creating connection has joined its audience. Strict
+Strict `get_session_permission_mode` and `set_session_permission_mode` messages
+use `sessionId`; the setter additionally requires
+`mode: 'manual' | 'allow_all'`.
 Successful queries and changes produce `session_permission_mode_changed`, and
 changes are broadcast to the connected audience observing that Session.
+Runtime capabilities keep these concerns separate: `chatSessions` contains
+ordinary Chat creation, lifecycle, discovery, and permission operations;
+`sessionObservation` contains cross-kind `resolveSession` and History reads
+for Chat, Subagent, and future observable Session kinds.
+`get_session` returns the Runtime `resolveSession` result. Its stable `kind`
+identifies the Session domain (`chat` or `subagent` today), while an omitted
+kind-specific `entry` explicitly means the identity is Pending and its
+Transcript has not materialized. Materialized results carry the corresponding
+`SessionEntry` or `SubagentSessionEntry`. Pending Chat Sessions remain absent
+from `list_sessions` and have empty History.
 `run_turn` continues to require `sessionId`, so the Channel never treats an
 omitted ID as an implicit create. It also emits acknowledgements, Catalog and
 History responses, correlated `AgentEvent` values, approval lifecycle
 messages, and requesting-socket errors. Wire validation owns JSON and
 transport shape; Media owns decoded attachment validation.
+
+The bundled client keeps at most one read-only Subagent detail open alongside
+the focused Chat Session. Running Children are discovered from
+`subagent_start`; completed Children are recovered from the fixed Host header
+at the start of a `task` Tool Result. Selecting an addressable `task` card opens
+the detail and gives that otherwise ordinary Tool card a selected treatment;
+closing the detail removes it. Opening the detail subscribes the Child and
+waits for acknowledgement before loading History. Replacing or closing the
+detail unsubscribes only the Child, while changing the focused Chat closes the
+Child before switching the Parent subscription. Reconnect restores Parent and
+Child memberships independently. The detail reuses ordinary message, Thinking,
+and Tool presentation without exposing send, permission, Abort, Approval, or
+other control operations. Layouts with enough spare space to preserve the
+Theme's existing Chat working width shift the centered content left and dock a
+right-side panel; other layouts use a modal without changing the open Child
+identity. A deleted retained Child keeps its detail container and reports that
+its content is unavailable.
 
 `run_turn.reasoning` accepts only own `thinking` and `effort` fields with the
 public enum values; unknown fields, inherited/non-plain objects, and conflicting
@@ -208,23 +335,64 @@ reasoning fields. Dimensions with no explicit capability are hidden.
 
 Clients should treat “new Session” as local state only. When the user submits the first message, the client issues `create_session` with the selected initial permission mode, waits for `session_created`, and immediately issues `run_turn` with the returned ID. This makes initial elevation atomic and avoids abandoned UI create actions producing even a Pending registration. For an existing Session, the HTML client queries Runtime truth on selection/reconnect, stores no grant locally, requires confirmation before Allow All, shows a persistent warning while elevated, and can revoke to Manual for future calls.
 
-A successful `run_turn` registers the client in that session's audience. The
-relationship is many-to-many: one logical `clientId` may work in multiple
-Sessions concurrently, and one Session may have multiple connected clients.
+A successful `create_session` registers the creating client in that Session's
+audience. Other existing Sessions require `subscribe_session` before
+`run_turn`. The relationship is many-to-many: one logical `clientId` may work
+in multiple Sessions concurrently, and one Session may have multiple connected clients.
 The Channel maintains forward and reverse audience maps so disconnect cleanup
 is proportional to that client's sessions. The bundled reference client keeps
 independent in-memory draft, attachment, Turn, Approval, permission, and
 waiting state for each Session, so switching the visible Session does not
 cancel or hide another Session's active work. This state is page-local and is
-not replayed after a refresh or reconnect.
+not replayed after a refresh or reconnect. A non-empty focused Session remains
+send-disabled until its subscription acknowledgement succeeds.
+
+Pending Approval data is recovered separately: the bundled clients fetch the
+Session list and full locally acceptable pending collection after handshake
+and reconnect, then every 10 seconds while connected. Each query has 8-second
+timeout recovery, retains last-successful data on error, and is deduplicated.
+Refreshing does not close menus, switch Sessions, reload History, or interrupt
+composition. Session switching loads History and filters the local collection;
+Session indicators derive from that collection, not a shared Runtime flag.
+Realtime request/closure updates reconcile by Approval ID and exact
+Session/Turn/Call identity even when historical Tool cards are not loaded.
+Manual and `run_end` list refresh are removed; `run_end` History refresh stays.
+This polling policy is bundled chat UX, not a Channel-wide requirement.
+Page-local system/error bubbles (including aborted, call-limit, and compaction
+notices) are transient. New user or assistant content, a new Turn, or a Tool
+result clears them only in that Session; persisted History is unchanged.
+During active/pending Turns, History and realtime content are reconciled for
+display rather than concatenated: matching user content in the same Turn,
+Tool Call IDs, Thinking IDs, and streamed text prefixes appear once. Matching
+segments retain live objects and presentation IDs so decisions, Tool results,
+and later deltas still update them. Unmatched History and realtime content stay
+visible; displaying History does not prematurely discard an active Turn.
+Stop/Steer presentation derives from the Session's active Turn ID, set by
+`run_start` and cleared only by matching `run_end` or Turn error. Sending uses
+a separate local in-flight flag cleared by the originating Client's echoed
+`user_message`, start, or send failure; queued cancellation does not clear a
+running Turn. Disconnect clears both. Ordinary content does not infer running
+state, and missed-start recovery remains outside this Client behavior.
 
 A newer socket using the same `clientId` supersedes and closes the old socket;
-the old socket's late close cannot remove the replacement. A pending approval
-route carries `clientId`, `sessionId`, and `turnId`. Both `approval_requested`
-and `approval_closed` expose the Session and Turn correlation on the wire.
-Only that logical client may resolve the pending approval; foreign and unknown
-approval IDs fail without consuming the pending route. A disconnect of the
-current socket reports `origin_disconnected`. For the queued terminal event
+the old socket's late close cannot remove the replacement. Approval is no
+longer indexed or authorized by Origin Client. Authenticated Clients submit
+decisions for canonical Runtime validation; a different Client in the eligible
+Channel may decide the same request. Disconnect only cleans transport/audience
+state and leaves Runtime pending requests intact.
+
+`get_session_approvals { requestId, sessionId? }` returns
+`session_approvals { requestId, sessionId?, approvals }`, preserving both origin
+fields. Errors use a correlated `session_approvals_error`. Supplied Session
+validation precedes a synchronous snapshot read/send. Realtime
+`approval_requested` retains existing Session audience routing.
+`approval_closed` carries Session, Turn, and `callId` correlation, covers every
+outcome, and broadcasts to all bound Clients so queried but unopened Sessions
+also receive closure. User approval maps its reason to `user`; Session policy
+approval maps to `session_allow_all`. No additional canonical Channel registry
+or notification subsystem is introduced.
+
+For the queued terminal event
 whose canonical `AgentEvent` has no Session ID, the Channel resolves the
 Session from `originMessageId` and adds that Session correlation to the
 WebSocket payload.
@@ -245,6 +413,6 @@ configuration has no general Channel-selection namespace.
 
 | Kind | Evidence |
 |---|---|
-| Source | [Core Channel types](../../src/core/channel/types.ts), [Runtime intake](../../src/runtime/RuntimeApp.ts), [WebSocket Extension](../../extensions/websocket-channel/WebSocketChannel.ts) |
-| Tests | [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [WebSocket Extension tests](../../extensions/websocket-channel/WebSocketChannel.test.ts) |
-| Controlling authority | [Channel Specification](../specifications/channel.md), [Approval Lifecycle Specification](../specifications/approval-lifecycle.md), [Multi-client User Messages Specification](../specifications/multi-client-user-messages.md) |
+| Source | [Core Channel types](../../src/core/channel/types.ts), [Runtime intake](../../src/runtime/RuntimeApp.ts), [WebSocket Extension](../../extensions/websocket-channel/WebSocketChannel.ts), [Bundled client](../../extensions/websocket-channel/client/src/App.vue) |
+| Tests | [Runtime intake tests](../../src/runtime/RuntimeApp.intake.test.ts), [WebSocket Extension tests](../../extensions/websocket-channel/WebSocketChannel.test.ts), [Client core tests](../../extensions/websocket-channel/client/src/client/client-core.test.ts) |
+| Controlling authority | [Channel Specification](../specifications/channel.md), [ADR-020: Session-addressed Presentation Subscription and Ephemeral Child Observation](../decisions/adr-020-session-addressed-presentation-subscription-and-ephemeral-child-observation.md), [Approval Lifecycle Specification](../specifications/approval-lifecycle.md), [Multi-client User Messages Specification](../specifications/multi-client-user-messages.md) |

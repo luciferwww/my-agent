@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Provider behavior
-> Verified: 2026-09-18
+> Verified: 2026-10-16
 > Ownership: Provider-neutral invocation, normalized invocation failures, and concrete Built-in and Copilot Relay integrations
 > Ownership key: provider-protocol-and-builtin-adapter
 
@@ -52,6 +52,7 @@ ModelInvocationPort {
 
 ModelInvocationRequest {
   model: string
+  sessionId?: string
   invocationId?: string
   system?: string
   messages: ChatMessage[]
@@ -85,6 +86,10 @@ Thinking switch and an effort value. `default` means the Client leaves its wire
 request unchanged; it is not a model capability. Model capabilities publish
 only explicitly supported `on`/`off` switches and non-default effort values.
 
+`sessionId` is optional conversation identity for routing/cache affinity, not
+the per-call `invocationId`. Runner supplies the existing Session ID for normal
+and Compaction calls. Independent Provider implementations may ignore it.
+
 Provider fragments, indexes, SDK objects, Anthropic `input_schema`, and Responses `function.parameters` remain inside adapter/test boundaries. Complete canonical Tool Calls preserve Provider call identity, name, order, and either ready object input or explicit invalid input state.
 
 Each actual invocation has a local identity and source facts. Concrete Clients
@@ -93,8 +98,17 @@ and source compatibility before sending, and restore wire fields only inside the
 Client boundary. When a Built-in request switches wire protocols, the target
 Chat Completions, Responses, or Anthropic Client omits Thinking blocks it cannot
 consume from its wire projection while preserving ordinary assistant text and
-Tool history; the internal Transcript remains unchanged. Same-protocol replay
-with an incompatible source still fails before sending. Chat Completions
+Tool history; the internal Transcript remains unchanged. At `runAttempt` entry,
+Runner applies `filterIncompatibleThinking` to loaded history before pruning
+and budget checks. Historical Thinking is retained only when its invocation
+source matches the bound Provider ID, request model ID, and connection endpoint.
+Missing or mismatched sources lose only their Thinking blocks; assistant
+messages emptied by that filtering are omitted from the request context.
+The stored Transcript is unchanged, and current-Turn Thinking remains available
+throughout the tool loop. This is a conservative source policy, not a claim
+about upstream cross-model compatibility. Clients still validate replay formats
+and protocol compatibility; Runner does not interpret replay payloads or treat
+a model router's protocol as the wire protocol. Chat Completions
 reasoning fields and Responses reasoning item shapes do not enter Runner,
 Session, Runtime, or Channel protocol branches.
 
@@ -113,11 +127,48 @@ Core defines six categories:
 
 Only allowlisted diagnostics are copied: Provider ID, bounded Provider status/type/code/message/request ID, and a content-free request summary. The summary preserves the opaque model string exactly and counts roles/content block types/Tool definitions without retaining prompts, image data, Tool input, schema, foreign message, stack, cause, or unknown fields. Invalid diagnostics are discarded while a valid category remains usable. Canonical diagnostics and the nested request summary are frozen.
 
+Copilot Relay includes bounded, single-line local adapter error messages in
+`providerMessage`, including replay validation failures before HTTP is sent.
+Absent optional diagnostic fields are omitted rather than emitted as
+`undefined`, so partial HTTP error details survive Host structural validation.
+HTTP errors accept message/type details from the nested `error` object or the
+top-level response object.
+Thinking blocks are not counted as Tool Results. Runner filters historical
+Thinking from another Provider, model, or connection before budget checks and
+invocation, so normal model switching does not require a new session.
+Direct Client callers remain responsible for supplying source-compatible replay.
+
+Relay Clients encode `execution_accepted` as a correlated tool output containing
+`{"status":"accepted","executionId":"..."}`, matching Built-in receipt content.
+Later Host completion notifications remain separate context, not a second
+output for the original tool call.
+
 ## 5. Unified Built-in Provider
 
 ### 5.1 Protocol conversion
 
-The three fetch-based Protocol Clients directly implement the Core `ModelInvocationPort`. Each appends only its operation path to the configured API prefix, uses only the materialized credential, performs one HTTP attempt, converts canonical text/image/Tool history, streams canonical events, preserves Abort, and normalizes failures through Model Invocation Error V1. A configured effective policy maps to Anthropic `max_tokens`, Responses `max_output_tokens`, or Chat Completions `max_tokens`. Without one, OpenAI requests omit output limits and Anthropic Messages supplies its private required `4,096` fallback.
+The three fetch-based Protocol Clients directly implement the Core
+`ModelInvocationPort`. Each uses the model's optional relative `endpoint` as
+the complete operation path, or appends its existing protocol-default path when
+the field is absent. Explicit endpoints join the configured `baseURL` with one
+boundary slash; they do not discard its path or receive another protocol suffix.
+The Provider captures a per-protocol model-to-endpoint map once; concurrent
+requests select their own model path without mutating shared client state.
+Protocol conversion, credential source, and shared connection identity remain
+unchanged. Chat Completions retains its existing `max_tokens` HTTP 400
+compatibility retry; other calls make one HTTP attempt.
+
+All three Clients send `User-Agent: my-agent/0.1.0` and `x-opencode-session`
+without hostname checks. The latter uses the request's Session ID, or a UUID
+generated once per logical invocation when absent; HTTP compatibility retries
+reuse it. Streaming and collected calls share this behavior. Independent
+Extension transports are unchanged.
+
+Clients convert canonical text/image/Tool history, preserve Abort, and normalize
+failures through Model Invocation Error V1. A configured effective policy maps
+to Anthropic `max_tokens`, Responses `max_output_tokens`, or Chat Completions
+`max_tokens`. Without one, OpenAI requests omit output limits and Anthropic
+Messages supplies its private required `4,096` fallback.
 
 Responses maps explicit effort to `reasoning.effort` and requests readable
 summary only when the model registration declares that private adapter. Chat

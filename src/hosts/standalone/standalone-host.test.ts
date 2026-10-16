@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -10,14 +11,14 @@ import {
   validateStandaloneHostComposition,
 } from './standalone-host.js';
 import type { AgentConfigSnapshot } from '../../platform/config/index.js';
-import { ensureAgentConfigDocument, loadAgentConfig } from '../../platform/config/index.js';
+import { loadAgentConfig } from '../../platform/config/index.js';
 import type { RuntimeAppOptions } from '../../runtime/index.js';
 
 describe('standalone Host arguments', () => {
   it('accepts startup without arguments', () => {
     const parsed = parseStandaloneHostArguments([]);
 
-    expect(parsed).toEqual({ cli: false });
+    expect(parsed).toEqual({ cli: false, initialize: false });
     expect(Object.isFrozen(parsed)).toBe(true);
   });
 
@@ -30,6 +31,7 @@ describe('standalone Host arguments', () => {
     expect(parseStandaloneHostArguments(argv)).toEqual({
       agentHomeArgument,
       cli: false,
+      initialize: false,
     });
   });
 
@@ -41,6 +43,19 @@ describe('standalone Host arguments', () => {
     expect(parseStandaloneHostArguments(argv)).toEqual({
       ...(agentHomeArgument === undefined ? {} : { agentHomeArgument }),
       cli: true,
+      initialize: false,
+    });
+  });
+
+  it.each([
+    [['--initialize'], undefined],
+    [['--initialize', '--agent-home=C:/agent-home'], 'C:/agent-home'],
+    [['--agent-home', 'C:/agent-home', '--initialize'], 'C:/agent-home'],
+  ] as const)('accepts initialization mode: %j', (argv, agentHomeArgument) => {
+    expect(parseStandaloneHostArguments(argv)).toEqual({
+      ...(agentHomeArgument === undefined ? {} : { agentHomeArgument }),
+      cli: false,
+      initialize: true,
     });
   });
 
@@ -58,6 +73,10 @@ describe('standalone Host arguments', () => {
     ['--unknown'],
     ['--cli', '--cli'],
     ['--cli=true'],
+    ['--initialize', '--initialize'],
+    ['--initialize=true'],
+    ['--initialize', '--cli'],
+    ['--cli', '--initialize'],
     ['-c'],
     ['-bc'],
     ['--builtin-channels'],
@@ -91,8 +110,12 @@ describe('standalone Host composition', () => {
     const snapshot = (consoleEnabled: boolean): AgentConfigSnapshot => ({
       application: {
         llm: {},
-        runner: { steeringEnabled: false },
-        agents: { defaults: {} as never, list: [] },
+        agents: {
+          steeringEnabled: false,
+          maxSubagentDepth: 1,
+          defaults: {} as never,
+          list: [],
+        },
         logger: { console: { enabled: consoleEnabled }, file: { enabled: true } },
       },
       extensions: { enabled: true, entries: {} },
@@ -104,6 +127,79 @@ describe('standalone Host composition', () => {
     expect(() => validateStandaloneHostComposition(snapshot(true), false)).not.toThrow();
   });
 
+  it('reports CLI startup immediately and readiness after Runtime creation', async () => {
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on('data', (chunk: Buffer) => chunks.push(chunk));
+    const captured = () => Buffer.concat(chunks).toString('utf8');
+    let releaseRuntime!: () => void;
+    const runtimeReady = new Promise<void>((resolve) => {
+      releaseRuntime = resolve;
+    });
+    const waitForChannelCompletion = vi.fn(async () => ({
+      outcome: 'closed' as const,
+      reason: 'input_closed' as const,
+    }));
+    const shutdown = vi.fn(async () => ({ outcome: 'completed' } as never));
+    const run = runStandaloneHost({
+      argv: ['--cli'],
+      env: {},
+      cliOutput: output,
+      resolvePathContext: async () => createPathContext(),
+      loadConfig: async () => createSnapshot(false),
+      createRuntime: async () => {
+        expect(captured()).toBe('Starting my-agent...\n');
+        await runtimeReady;
+        return {
+          application: { waitForChannelCompletion },
+          close: vi.fn(),
+        } as never;
+      },
+      createHost: (() => ({
+        shutdown,
+        completion: new Promise<never>(() => undefined),
+        dispose: vi.fn(),
+      })) as never,
+    });
+
+    await vi.waitFor(() => {
+      expect(captured()).toBe('Starting my-agent...\n');
+    });
+    releaseRuntime();
+    await run;
+
+    expect(captured()).toMatch(
+      /^Starting my-agent\.\.\.\nReady in (?:\d+ms|\d+\.\ds) · \/help for commands\n$/u,
+    );
+    expect(waitForChannelCompletion).toHaveBeenCalledWith('cli');
+    expect(shutdown).toHaveBeenCalledWith('cli channel completed');
+  });
+
+  it('does not print CLI startup feedback without --cli', async () => {
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+    await runStandaloneHost({
+      argv: [],
+      env: {},
+      cliOutput: output,
+      resolvePathContext: async () => createPathContext(),
+      loadConfig: async () => createSnapshot(),
+      createRuntime: async () => ({
+        application: { waitForChannelCompletion: vi.fn() },
+        close: vi.fn(),
+      }) as never,
+      createHost: (() => ({
+        shutdown: vi.fn(),
+        completion: Promise.resolve({ outcome: 'completed' } as never),
+        dispose: vi.fn(),
+      })) as never,
+    });
+
+    expect(Buffer.concat(chunks).toString('utf8')).toBe('');
+  });
+
   it('rejects a CLI output conflict before Runtime creation', async () => {
     const createRuntime = vi.fn();
 
@@ -111,7 +207,6 @@ describe('standalone Host composition', () => {
       argv: ['--cli'],
       env: {},
       resolvePathContext: async () => createPathContext(),
-      ensureConfig: async () => undefined,
       loadConfig: async () => createSnapshot(true),
       createRuntime,
     })).rejects.toThrow('HOST_OUTPUT_CONFLICT');
@@ -121,16 +216,16 @@ describe('standalone Host composition', () => {
 
   it('rejects invalid arguments before path and configuration side effects', async () => {
     const resolvePathContext = vi.fn();
-    const ensureConfig = vi.fn();
+    const initializeAgentHome = vi.fn();
 
     await expect(runStandaloneHost({
       argv: ['--builtin-channels=websocket'],
       resolvePathContext,
-      ensureConfig,
+      initializeAgentHome,
     })).rejects.toThrow('HOST_ARGUMENT_INVALID');
 
     expect(resolvePathContext).not.toHaveBeenCalled();
-    expect(ensureConfig).not.toHaveBeenCalled();
+    expect(initializeAgentHome).not.toHaveBeenCalled();
   });
 
   it('hands one snapshot and one injected environment through acquisition and Runtime', async () => {
@@ -150,7 +245,6 @@ describe('standalone Host composition', () => {
       events.push('paths');
       return pathContext;
     });
-    const ensureConfig = vi.fn(async () => { events.push('bootstrap'); });
     const loadConfig = vi.fn(async () => {
       events.push('load');
       return snapshot;
@@ -178,19 +272,17 @@ describe('standalone Host composition', () => {
       argv: [],
       env: environment,
       resolvePathContext,
-      ensureConfig,
       loadConfig,
       createRuntime,
       createHost: createHost as never,
     });
 
     expect(resolvePathContext).toHaveBeenCalledOnce();
-    expect(ensureConfig).toHaveBeenCalledWith({ agentHome: pathContext.agentHome });
     expect(loadConfig).toHaveBeenCalledWith({
       agentHome: pathContext.agentHome,
       environment,
     });
-    expect(events).toEqual(['paths', 'bootstrap', 'load', 'Runtime']);
+    expect(events).toEqual(['paths', 'load', 'Runtime']);
     expect(createRuntime).toHaveBeenCalledWith(expect.objectContaining({
       agentHome: pathContext.agentHome,
       startupContext: {
@@ -211,11 +303,11 @@ describe('standalone Host composition', () => {
     await mkdir(agentHome);
     await mkdir(startupCwd);
     await writeFile(join(agentHome, 'config.json'), JSON.stringify({
-      runner: { maxLlmCalls: 8 },
+      agents: { maxLlmCallsPerTurn: 8 },
       extensions: { enabled: false },
     }), 'utf8');
     await writeFile(join(startupCwd, 'config.json'), JSON.stringify({
-      runner: { maxLlmCalls: 1 },
+      agents: { maxLlmCallsPerTurn: 1 },
       extensions: { enabled: true },
     }), 'utf8');
     const readTextFile = vi.fn((path: string) => readFile(path, 'utf8'));
@@ -232,7 +324,6 @@ describe('standalone Host composition', () => {
           installDir: join(temporaryRoot, 'installation'),
           agentHome,
         }),
-        ensureConfig: (options) => ensureAgentConfigDocument(options),
         loadConfig: (options) => loadAgentConfig(options, { readTextFile }),
         createRuntime,
         createHost: (() => ({
@@ -250,42 +341,46 @@ describe('standalone Host composition', () => {
           installDir: join(temporaryRoot, 'installation'),
           configuration: expect.objectContaining({
             application: expect.objectContaining({
-              runner: expect.objectContaining({ maxLlmCalls: 8 }),
+              agents: expect.objectContaining({ maxLlmCallsPerTurn: 8 }),
             }),
           }),
         }),
       }));
       await expect(readFile(join(startupCwd, 'config.json'), 'utf8'))
-        .resolves.toContain('"maxLlmCalls":1');
+        .resolves.toContain('"maxLlmCallsPerTurn":1');
       await expect(readFile(join(agentHome, 'config.json'), 'utf8'))
-        .resolves.toContain('"maxLlmCalls":8');
+        .resolves.toContain('"maxLlmCallsPerTurn":8');
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
-  it('stops before configuration loading and Runtime when bootstrap fails', async () => {
-    const failure = new Error('bootstrap failed');
+  it('routes initialization after path resolution without loading config or Runtime', async () => {
+    const pathContext = createPathContext();
+    const initializeAgentHome = vi.fn(async () => undefined);
     const loadConfig = vi.fn();
     const createRuntime = vi.fn();
 
-    await expect(runStandaloneHost({
-      argv: [],
+    await runStandaloneHost({
+      argv: ['--initialize'],
       env: {},
-      resolvePathContext: async () => createPathContext(),
-      ensureConfig: async () => { throw failure; },
+      resolvePathContext: async () => pathContext,
+      initializeAgentHome,
       loadConfig,
       createRuntime,
-    })).rejects.toBe(failure);
+    });
 
+    expect(initializeAgentHome).toHaveBeenCalledWith({
+      pathContext,
+      environment: {},
+    });
     expect(loadConfig).not.toHaveBeenCalled();
     expect(createRuntime).not.toHaveBeenCalled();
   });
 
-  it('keeps generated config but creates no Runtime-owned state when Runtime creation fails', async () => {
-    const temporaryRoot = await mkdtemp(join(tmpdir(), 'standalone-host-bootstrap-failure-'));
+  it('guides missing configuration to initialization without creating config or Runtime', async () => {
+    const temporaryRoot = await mkdtemp(join(tmpdir(), 'standalone-host-missing-config-'));
     const agentHome = join(temporaryRoot, 'agent-home');
-    const failure = new Error('acquisition failed');
     const createRuntime = vi.fn();
 
     try {
@@ -296,20 +391,15 @@ describe('standalone Host composition', () => {
           installDir: join(temporaryRoot, 'installation'),
           agentHome,
         }),
-        createRuntime: async () => {
-          createRuntime();
-          throw failure;
-        },
-      })).rejects.toBe(failure);
+        createRuntime,
+      })).rejects.toThrow(
+        `my-agent --initialize --agent-home ${JSON.stringify(agentHome)}`,
+      );
 
-      await expect(readFile(join(agentHome, 'config.json'), 'utf8')).resolves.toBe('{}\n');
-      await expect(readFile(join(agentHome, 'IDENTITY.md'), 'utf8')).rejects.toMatchObject({
+      await expect(readFile(join(agentHome, 'config.json'), 'utf8')).rejects.toMatchObject({
         code: 'ENOENT',
       });
-      await expect(readFile(join(agentHome, 'memory.sqlite'))).rejects.toMatchObject({
-        code: 'ENOENT',
-      });
-      expect(createRuntime).toHaveBeenCalledOnce();
+      expect(createRuntime).not.toHaveBeenCalled();
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
@@ -323,7 +413,6 @@ describe('standalone Host composition', () => {
       argv: [],
       env: {},
       resolvePathContext: async () => createPathContext(),
-      ensureConfig: async () => undefined,
       loadConfig: async () => { throw failure; },
       createRuntime,
     })).rejects.toBe(failure);
@@ -349,7 +438,6 @@ describe('standalone Host composition', () => {
       argv: [],
       env: {},
       resolvePathContext: async () => createPathContext(),
-      ensureConfig: async () => undefined,
       loadConfig: async () => snapshot,
       createRuntime,
       createHost: createHost as never,
@@ -368,7 +456,6 @@ describe('standalone Host composition', () => {
         argv: ['--cli'],
         env: {},
         resolvePathContext: async () => createPathContext(),
-        ensureConfig: async () => undefined,
         loadConfig: async () => createSnapshot(false),
         createRuntime: async () => ({
           application: {
@@ -402,7 +489,6 @@ describe('standalone Host composition', () => {
       argv: ['--cli'],
       env: {},
       resolvePathContext: async () => createPathContext(),
-      ensureConfig: async () => undefined,
       loadConfig: async () => createSnapshot(false),
       createRuntime: async () => ({
         application: { waitForChannelCompletion: async () => { throw failure; } },
@@ -429,7 +515,6 @@ describe('standalone Host composition', () => {
       argv: ['--cli'],
       env: {},
       resolvePathContext: async () => createPathContext(),
-      ensureConfig: async () => undefined,
       loadConfig: async () => createSnapshot(false),
       createRuntime: async () => ({
         application: { waitForChannelCompletion },
@@ -452,8 +537,12 @@ function createSnapshot(consoleEnabled = true): AgentConfigSnapshot {
   return {
     application: {
       llm: {},
-      runner: { steeringEnabled: false },
-      agents: { defaults: {} as never, list: [] },
+      agents: {
+        steeringEnabled: false,
+        maxSubagentDepth: 1,
+        defaults: {} as never,
+        list: [],
+      },
       logger: { console: { enabled: consoleEnabled } },
     },
     extensions: { enabled: true, entries: {} },

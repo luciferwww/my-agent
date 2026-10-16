@@ -9,7 +9,7 @@ import {
 
 describe('Built-in LLM configuration', () => {
   it('owns its operational defaults', () => {
-    expect(DEFAULT_BUILTIN_CONTEXT_LIMIT).toBe(32_768);
+    expect(DEFAULT_BUILTIN_CONTEXT_LIMIT).toBe(131_072);
     expect(DEFAULT_ANTHROPIC_MAX_TOKENS).toBe(4_096);
   });
 
@@ -35,6 +35,29 @@ describe('Built-in LLM configuration', () => {
   ])('rejects invalid base URL %s', (baseURL) => {
     expect(() => validateBuiltinLlmProviderConfig({ baseURL, models: [] }))
       .toThrow(BuiltinLlmConfigError);
+  });
+
+  it.each(['responses', 'v1/responses', '/anthropic/v1/messages/'])(
+    'preserves an explicit relative endpoint %s',
+    (endpoint) => {
+      const config = validateBuiltinLlmProviderConfig({
+        baseURL: 'https://example.test/api',
+        models: [{ modelId: 'a', protocol: 'openai-responses', endpoint }],
+      });
+      expect(config.models[0]?.endpoint).toBe(endpoint);
+    },
+  );
+
+  it.each([
+    null, 1, '', ' ', '/', '///', 'https://other.test/responses',
+    '//other.test/responses', 'responses?q=1', 'responses#part',
+    'v1\\responses', 'v1/../responses', './responses', 'v1/%2e%2e/responses',
+    'v1/.%2E/responses', 'v1/with space',
+  ])('rejects an invalid endpoint at its model field: %s', (endpoint) => {
+    expect(() => validateBuiltinLlmProviderConfig({
+      baseURL: 'https://example.test',
+      models: [{ modelId: 'a', protocol: 'openai-responses', endpoint }],
+    })).toThrow(expect.objectContaining({ fieldPath: 'models[0].endpoint' }));
   });
 
   it('validates models and all supported protocols', () => {

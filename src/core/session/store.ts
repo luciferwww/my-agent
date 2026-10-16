@@ -3,15 +3,36 @@ import { rename, unlink, writeFile } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { SessionError } from './errors.js';
 import { withFileLock } from './lock.js';
-import type { SessionEntry, SessionStore } from './types.js';
+import type {
+  SessionEntry,
+  SessionStore,
+  SessionStoreEntry,
+} from './types.js';
 
-const SESSION_ENTRY_FIELDS = new Set([
+const CHAT_SESSION_ENTRY_FIELDS = new Set([
   'sessionId',
   'title',
   'createdAt',
   'updatedAt',
   'archivedAt',
   'forkedFromSessionId',
+]);
+const SUBAGENT_SESSION_ENTRY_FIELDS = new Set([
+  'kind',
+  'sessionId',
+  'callerSessionId',
+  'createdAt',
+  'updatedAt',
+  'completedAt',
+  'expiresAt',
+  'outcome',
+]);
+const SUBAGENT_OUTCOMES = new Set([
+  'ok',
+  'max_llm_calls',
+  'aborted',
+  'error',
+  'interrupted',
 ]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -23,16 +44,15 @@ export class SessionDataError extends SessionError {
 }
 
 export function createEmptyStore(): SessionStore {
-  return { version: 1, sessions: {} };
+  return { sessions: {} };
 }
 
-/** Loads sessions.json, returning a new versioned Store when it is absent. */
+/** Loads sessions.json, returning a new Store when it is absent. */
 export function loadStore(storePath: string): SessionStore {
   try {
     const raw = readFileSync(storePath, 'utf-8');
     const parsed: unknown = JSON.parse(raw);
-    assertValidStore(parsed);
-    return parsed;
+    return normalizeStore(parsed);
   } catch (err: unknown) {
     const error = err as { code?: string };
     if (error?.code === 'ENOENT') {
@@ -71,27 +91,51 @@ export async function updateStore<T>(
   });
 }
 
-function assertValidStore(value: unknown): asserts value is SessionStore {
-  if (!isRecord(value) || value.version !== 1 || !isRecord(value.sessions)) {
-    throw new SessionDataError('Session Store must use schema version 1.');
+function normalizeStore(value: unknown): SessionStore {
+  if (
+    !isRecord(value)
+    || !isRecord(value.sessions)
+  ) {
+    throw new SessionDataError('Session Store must contain a sessions object.');
   }
-  if (Object.keys(value).some((key) => key !== 'version' && key !== 'sessions')) {
+  if (Object.keys(value).some((key) => key !== 'sessions')) {
     throw new SessionDataError('Session Store contains unsupported fields.');
   }
 
   for (const [sessionId, entry] of Object.entries(value.sessions)) {
     assertValidEntry(sessionId, entry);
-    if (entry.forkedFromSessionId && !value.sessions[entry.forkedFromSessionId]) {
+  }
+  for (const entry of Object.values(value.sessions)) {
+    if (
+      isChatSessionEntry(entry)
+      && entry.forkedFromSessionId
+      && !isChatSessionEntry(value.sessions[entry.forkedFromSessionId])
+    ) {
       throw new SessionDataError(`Session "${entry.sessionId}" has an unknown fork source.`);
     }
   }
+  return {
+    sessions: value.sessions as Record<string, SessionStoreEntry>,
+  };
 }
 
-function assertValidEntry(sessionId: string, value: unknown): asserts value is SessionEntry {
+function assertValidStore(value: unknown): asserts value is SessionStore {
+  normalizeStore(value);
+}
+
+function assertValidEntry(sessionId: string, value: unknown): asserts value is SessionStoreEntry {
+  if (isRecord(value) && value.kind === 'subagent') {
+    assertValidSubagentEntry(sessionId, value);
+    return;
+  }
+  assertValidChatEntry(sessionId, value);
+}
+
+function assertValidChatEntry(sessionId: string, value: unknown): asserts value is SessionEntry {
   if (!isCanonicalSessionId(sessionId) || !isRecord(value) || value.sessionId !== sessionId) {
     throw new SessionDataError('Session Store key and entry identity must be matching UUIDs.');
   }
-  if (Object.keys(value).some((key) => !SESSION_ENTRY_FIELDS.has(key))) {
+  if (Object.keys(value).some((key) => !CHAT_SESSION_ENTRY_FIELDS.has(key))) {
     throw new SessionDataError(`Session "${sessionId}" contains unsupported metadata.`);
   }
   if (!isTimestamp(value.createdAt) || !isTimestamp(value.updatedAt)) {
@@ -111,6 +155,48 @@ function assertValidEntry(sessionId: string, value: unknown): asserts value is S
       throw new SessionDataError(`Session "${sessionId}" contains an invalid fork source.`);
     }
   }
+}
+
+function assertValidSubagentEntry(
+  sessionId: string,
+  value: Record<string, unknown>,
+): void {
+  if (!isCanonicalSessionId(sessionId) || value.sessionId !== sessionId) {
+    throw new SessionDataError('Session Store key and entry identity must be matching UUIDs.');
+  }
+  if (Object.keys(value).some((key) => !SUBAGENT_SESSION_ENTRY_FIELDS.has(key))) {
+    throw new SessionDataError(`Session "${sessionId}" contains unsupported metadata.`);
+  }
+  if (!isCanonicalSessionId(value.callerSessionId)) {
+    throw new SessionDataError(`Session "${sessionId}" contains an invalid caller identity.`);
+  }
+  if (!isTimestamp(value.createdAt) || !isTimestamp(value.updatedAt)) {
+    throw new SessionDataError(`Session "${sessionId}" contains invalid timestamps.`);
+  }
+  const hasTerminalField = value.completedAt !== undefined
+    || value.expiresAt !== undefined
+    || value.outcome !== undefined;
+  const hasCompleteTerminal = isTimestamp(value.completedAt)
+    && isTimestamp(value.expiresAt)
+    && typeof value.outcome === 'string'
+    && SUBAGENT_OUTCOMES.has(value.outcome);
+  if (hasTerminalField !== hasCompleteTerminal) {
+    throw new SessionDataError(`Session "${sessionId}" contains incomplete terminal metadata.`);
+  }
+  if (
+    hasCompleteTerminal
+    && (
+      (value.completedAt as number) < (value.createdAt as number)
+      || (value.expiresAt as number) <= (value.completedAt as number)
+      || (value.updatedAt as number) < (value.completedAt as number)
+    )
+  ) {
+    throw new SessionDataError(`Session "${sessionId}" contains invalid terminal timestamps.`);
+  }
+}
+
+function isChatSessionEntry(value: unknown): value is SessionEntry {
+  return isRecord(value) && value.kind !== 'subagent';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

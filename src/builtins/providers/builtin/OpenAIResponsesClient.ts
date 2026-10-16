@@ -15,6 +15,7 @@ import {
   collectChat,
   createHttpError,
   createInvalidRequestError,
+  createSessionHeaders,
   createStreamError,
   normalizeError,
   parseRecord,
@@ -23,6 +24,7 @@ import {
   readNonNegativeInteger,
   readSseData,
   readString,
+  resolveRequestURL,
   type ProtocolClientOptions,
   type Terminal,
 } from './client-common.js';
@@ -63,9 +65,10 @@ export class OpenAIResponsesClient implements ModelInvocationPort {
     }>();
     try {
       const apiKey = this.options.apiKey?.trim();
-      const response = await this.fetchImpl(`${this.options.baseURL}/responses`, {
+      const response = await this.fetchImpl(resolveRequestURL(this.options, request.model, '/responses'), {
         method: 'POST',
         headers: {
+          ...createSessionHeaders(request),
           'content-type': 'application/json',
           accept: 'text/event-stream',
           ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),

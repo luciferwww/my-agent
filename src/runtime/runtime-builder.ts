@@ -4,6 +4,7 @@ import {
   ChannelRunRequest,
   ChannelRuntimeBinding,
   ChannelRuntimeHost,
+  ApprovalRequest,
   TurnInteractionResponse,
 } from '../core/channel/index.js';
 import type { AgentEvent } from '../core/runner/index.js';
@@ -46,7 +47,7 @@ import {
 } from './runtime-unit.js';
 import {
   buildGeneralPurposeProfile,
-  loadSubagentProfiles,
+  loadConfiguredAgentProfiles,
   resolveSubagentCapabilities,
   resolveSubagentTools,
 } from '../core/subagent/index.js';
@@ -70,14 +71,18 @@ import {
   createSystemRuntimeDeadlineDriver,
   resolveRuntimeDeadlinePolicy,
 } from './runtime-deadline.js';
+import {
+  acquireAgentHomeLock,
+  type AgentHomeLock,
+} from './agent-home-lock.js';
 
 const log = Logger.get('RuntimeBuilder');
 
 export interface RuntimeApplicationKernel {
   readonly application: RuntimeApplication;
   onChannelMessage(binding: ChannelRuntimeBinding, request: ChannelRunRequest): Promise<void>;
-  onInteractionResponse(response: TurnInteractionResponse): void;
-  onInteractionUnavailable(id: string, reason: 'origin_disconnected'): void;
+  onInteractionResponse(binding: ChannelRuntimeBinding, response: TurnInteractionResponse): void;
+  getPendingApprovals(sessionId?: string): readonly ApprovalRequest[];
   querySessionsNeedingAbort(): string[];
   abortTurn(sessionId: string): { aborted: boolean; dropped: number };
   blockingTurnIds(generation: number): readonly string[];
@@ -107,6 +112,7 @@ export async function buildRuntimeHandle(
   options: RuntimeAppOptions,
   createApplication: RuntimeApplicationKernelFactory,
 ): Promise<RuntimeHandle> {
+  const agentHomeLock = await acquireAgentHomeLock(options.agentHome);
   const lifecycleLedger = new RuntimeLifecycleLedger();
   const coordinator = new CompositionCoordinator(lifecycleLedger);
   let kernel: RuntimeApplicationKernel | undefined;
@@ -184,11 +190,9 @@ export async function buildRuntimeHandle(
       }
       return kernel.onChannelMessage(binding, request);
     },
-    onInteractionResponse(response: TurnInteractionResponse) {
-      kernel?.onInteractionResponse(response);
-    },
-    onInteractionUnavailable(id: string, reason: 'origin_disconnected') {
-      kernel?.onInteractionUnavailable(id, reason);
+    onInteractionResponse(binding: ChannelRuntimeBinding, response: TurnInteractionResponse) {
+      if (!kernel) throw new Error('Runtime Approval ingress is not ready.');
+      kernel.onInteractionResponse(binding, response);
     },
     capabilities: Object.freeze({
       modelCatalog: Object.freeze({
@@ -205,75 +209,67 @@ export async function buildRuntimeHandle(
           return kernel?.abortTurn(sessionId) ?? { aborted: false, dropped: 0 };
         },
       }),
-      sessions: Object.freeze({
+      approvals: Object.freeze({
+        getPending(sessionId?: string) {
+          if (!kernel) throw new Error('Runtime Approval capability is not ready.');
+          return kernel.getPendingApprovals(sessionId);
+        },
+      }),
+      chatSessions: Object.freeze({
         createSession(input?: {
           permissionMode?: SessionPermissionMode;
           originClientId?: string;
         }) {
           if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+            return Promise.reject(new Error('Runtime Chat Session capability is not ready.'));
           }
           const { application } = kernel;
           return invokeSessionCapability(() => application.createSession(input));
         },
         listSessions(input?: { archived?: boolean }) {
           if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+            return Promise.reject(new Error('Runtime Chat Session capability is not ready.'));
           }
           const { application } = kernel;
           return invokeSessionCapability(() => application.listSessions(input));
         },
-        getSession(sessionId: string) {
-          if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
-          }
-          const { application } = kernel;
-          return invokeSessionCapability(() => application.getSession(sessionId));
-        },
-        getHistory(query: SessionHistoryQuery) {
-          if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
-          }
-          const { application } = kernel;
-          return invokeSessionCapability(() => application.getSessionHistory(query));
-        },
         renameSession(sessionId: string, title: string | null) {
           if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+            return Promise.reject(new Error('Runtime Chat Session capability is not ready.'));
           }
           const { application } = kernel;
           return invokeSessionCapability(() => application.renameSession(sessionId, title));
         },
         archiveSession(sessionId: string) {
           if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+            return Promise.reject(new Error('Runtime Chat Session capability is not ready.'));
           }
           const { application } = kernel;
           return invokeSessionCapability(() => application.archiveSession(sessionId));
         },
         unarchiveSession(sessionId: string) {
           if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+            return Promise.reject(new Error('Runtime Chat Session capability is not ready.'));
           }
           const { application } = kernel;
           return invokeSessionCapability(() => application.unarchiveSession(sessionId));
         },
         deleteSession(sessionId: string) {
           if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+            return Promise.reject(new Error('Runtime Chat Session capability is not ready.'));
           }
           const { application } = kernel;
           return invokeSessionCapability(() => application.deleteSession(sessionId));
         },
         forkSession(sessionId: string, entryId?: string) {
           if (!kernel) {
-            return Promise.reject(new Error('Runtime Session capability is not ready.'));
+            return Promise.reject(new Error('Runtime Chat Session capability is not ready.'));
           }
           const { application } = kernel;
           return invokeSessionCapability(() => application.forkSession(sessionId, entryId));
         },
         getPermissionMode(sessionId: string) {
-          if (!kernel) throw new Error('Runtime Session capability is not ready.');
+          if (!kernel) throw new Error('Runtime Chat Session capability is not ready.');
           const { application } = kernel;
           return invokeSessionCapabilitySync(
             () => application.getSessionPermissionMode(sessionId),
@@ -284,7 +280,7 @@ export async function buildRuntimeHandle(
           mode: SessionPermissionMode;
           originClientId?: string;
         }) {
-          if (!kernel) throw new Error('Runtime Session capability is not ready.');
+          if (!kernel) throw new Error('Runtime Chat Session capability is not ready.');
           const { application } = kernel;
           return invokeSessionCapabilitySync(
             () => application.setSessionPermissionMode(input),
@@ -295,16 +291,37 @@ export async function buildRuntimeHandle(
           return () => sessionPermissionListeners.delete(handler);
         },
       }),
+      sessionObservation: Object.freeze({
+        resolveSession(sessionId: string) {
+          if (!kernel) {
+            return Promise.reject(new Error('Runtime Session observation capability is not ready.'));
+          }
+          const { application } = kernel;
+          return invokeSessionCapability(() => application.resolveSession(sessionId));
+        },
+        getHistory(query: SessionHistoryQuery) {
+          if (!kernel) {
+            return Promise.reject(new Error('Runtime Session observation capability is not ready.'));
+          }
+          const { application } = kernel;
+          return invokeSessionCapability(() => application.getSessionHistory(query));
+        },
+      }),
     }),
   });
 
-  const bootstrap = await bootstrapRuntime({
-    ...options,
-    onAgentEvent: fanoutAgentEvent,
-  }, dependencies, {
-    driver: deadlineDriver,
-    timeoutMs: deadlinePolicy.candidateCleanupMs,
-  });
+  let bootstrap!: Awaited<ReturnType<typeof bootstrapRuntime>>;
+  try {
+    bootstrap = await bootstrapRuntime({
+      ...options,
+      onAgentEvent: fanoutAgentEvent,
+    }, dependencies, {
+      driver: deadlineDriver,
+      timeoutMs: deadlinePolicy.candidateCleanupMs,
+    });
+  } catch (error) {
+    await releaseAgentHomeLockAfterFailure(agentHomeLock, error);
+  }
 
   try {
     const activeParentTurns = new Map<string, ActiveParentTurn>();
@@ -338,8 +355,8 @@ export async function buildRuntimeHandle(
     const registeredToolNames = new Set(
       registrySnapshot.tools.definitions.map((tool) => tool.name),
     );
-    for (const profile of loadSubagentProfiles(
-      bootstrap.resources.resolvedConfig.subagents?.list ?? [],
+    for (const profile of loadConfiguredAgentProfiles(
+      bootstrap.resources.appConfig.agents.list,
       options.agentHome,
       registeredToolNames,
     )) {
@@ -414,7 +431,7 @@ export async function buildRuntimeHandle(
       Logger.close(),
       deadlineDriver.now() + deadlinePolicy.candidateCleanupMs,
     );
-    throw error;
+    await releaseAgentHomeLockAfterFailure(agentHomeLock, error);
   }
 
   let closePromise: Promise<RuntimeShutdownReport> | undefined;
@@ -422,11 +439,42 @@ export async function buildRuntimeHandle(
     if (closePromise) return closePromise;
     const budget = new RuntimeDeadlineBudget(deadlineDriver, deadlinePolicy);
     compositionManager!.beginShutdown(budget);
+    let releaseAttempted = false;
     closePromise = (async () => {
       const applicationReport = await kernel!.close(reason, budget);
       const completed = [...applicationReport.completed];
       const failed = [...applicationReport.failed];
       const residuals = [...applicationReport.residuals];
+
+      const sessionCleanup = await budget.raceRemainingLazy(
+        () => bootstrap.resources.sessionManager.close(),
+      );
+      if (sessionCleanup.outcome === 'completed') {
+        completed.push('sessionManager');
+      } else if (sessionCleanup.outcome === 'failed') {
+        failed.push({ resource: 'sessionManager', message: sessionCleanup.message });
+      } else {
+        residuals.push({
+          owner: 'resource',
+          phase: 'session-cleanup',
+          message: 'Session cleanup did not converge before the shutdown deadline.',
+        });
+      }
+
+      const processCleanup = await budget.raceRemainingLazy(
+        () => bootstrap.resources.managedProcessLifecycle.shutdown(),
+      );
+      if (processCleanup.outcome === 'completed') {
+        completed.push('managedProcesses');
+      } else if (processCleanup.outcome === 'failed') {
+        failed.push({ resource: 'managedProcesses', message: processCleanup.message });
+      } else {
+        residuals.push({
+          owner: 'resource',
+          phase: 'managed-process-cleanup',
+          message: 'Managed process cleanup did not converge before the shutdown deadline.',
+        });
+      }
 
       const pendingFanouts = [...pendingTerminalFanouts.values()];
       if (pendingFanouts.length > 0) {
@@ -508,6 +556,14 @@ export async function buildRuntimeHandle(
         });
       }
 
+      try {
+        releaseAttempted = true;
+        await agentHomeLock.release();
+        completed.push('agentHomeLock');
+      } catch (error) {
+        failed.push({ resource: 'agentHomeLock', message: messageOf(error) });
+      }
+
       return sealShutdownReport({
         outcome: residuals.length > 0 || budget.remaining() <= 0
           ? 'deadline-exhausted'
@@ -526,15 +582,32 @@ export async function buildRuntimeHandle(
         },
         residuals,
       });
-    })();
+    })().finally(async () => {
+      if (!releaseAttempted) await agentHomeLock.release();
+    });
     return closePromise;
   };
 
   return Object.freeze({
-    application: kernel.application,
-    composition: compositionManager.compositionControl(),
+    application: kernel!.application,
+    composition: compositionManager!.compositionControl(),
     close,
   });
+}
+
+async function releaseAgentHomeLockAfterFailure(
+  lock: AgentHomeLock,
+  startupError: unknown,
+): Promise<never> {
+  try {
+    await lock.release();
+  } catch (releaseError) {
+    throw new AggregateError(
+      [startupError, releaseError],
+      'Runtime startup failed and the agent home lock could not be released.',
+    );
+  }
+  throw startupError;
 }
 
 async function invokeSessionCapability<T>(operation: () => Promise<T>): Promise<T> {
@@ -588,43 +661,45 @@ function assembleLoadedRuntimeUnits(params: {
     ...(options.loadedUnits ?? []),
   ];
 
-  if (resources.resolvedConfig.subagents.enabled) {
-    const maxDepth = resources.resolvedConfig.subagents.maxDepth;
-    const executor = new SubagentExecutor({
-      agentRunner: resources.agentRunner,
-      systemPromptBuilder: resources.systemPromptBuilder,
-      loadContextFilesFromDir: (absDir) => loadContextFilesFromDir(absDir, {
-        maxFileChars: resources.resolvedConfig.context.maxFileChars,
-        maxTotalChars: resources.resolvedConfig.context.maxTotalChars,
-      }),
-      agentHome: options.agentHome,
-      resolveToolPolicy: (profile) => createApplicationToolPolicy(
-        resolveSubagentTools(
-          profile,
-          resources.resolvedConfig.tools.allow ?? [],
-          resources.resolvedConfig.tools.deny ?? [],
-        ),
-        options.agentHome,
-      ),
-    });
-    const delegationPort = createSubagentDelegationPort({
-      activeParents: params.activeParentTurns,
-      routeContextByTurn: params.routeContextByTurn,
-      sessionManager: resources.sessionManager,
+  const maxDepth = resources.appConfig.agents.maxSubagentDepth;
+  const executor = new SubagentExecutor({
+    agentRunner: resources.agentRunner,
+    systemPromptBuilder: resources.systemPromptBuilder,
+    loadContextFilesFromDir: (absDir) => loadContextFilesFromDir(absDir, {
+      maxFileChars: resources.resolvedConfig.context.maxFileChars,
+      maxTotalChars: resources.resolvedConfig.context.maxTotalChars,
+    }),
+    agentHome: options.agentHome,
+    resolveToolPolicy: (profile, canSpawn) => {
+      const tools = resolveSubagentTools(
+        profile,
+        resources.resolvedConfig.tools.allow ?? [],
+        resources.resolvedConfig.tools.deny ?? [],
+      );
+      return createApplicationToolPolicy({
+        allow: tools.allow,
+        deny: canSpawn ? tools.deny : [...tools.deny, 'task'],
+      }, options.agentHome);
+    },
+  });
+  const delegationPort = createSubagentDelegationPort({
+    activeParents: params.activeParentTurns,
+    routeContextByTurn: params.routeContextByTurn,
+    sessionManager: resources.sessionManager,
+    maxDepth,
+    maxLlmCallsPerTurn: resources.appConfig.agents.maxLlmCallsPerTurn,
+    executor,
+    onEvent: params.onAgentEvent,
+  });
+  loadedUnits.push(createLoadedRuntimeUnit({
+    registration: createTaskToolContribution({
+      delegationPort,
+      profileRegistry: params.subagentProfiles,
+      getCapabilities: (depth) => resolveSubagentCapabilities(depth, maxDepth),
       maxDepth,
-      executor,
-      onEvent: params.onAgentEvent,
-    });
-    loadedUnits.push(createLoadedRuntimeUnit({
-      registration: createTaskToolContribution({
-        delegationPort,
-        profileRegistry: params.subagentProfiles,
-        getCapabilities: (depth) => resolveSubagentCapabilities(depth, maxDepth),
-        maxDepth,
-      }),
-      required: true,
-    }));
-  }
+    }),
+    required: true,
+  }));
 
   return Object.freeze(loadedUnits);
 }

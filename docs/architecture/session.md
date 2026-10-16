@@ -117,7 +117,7 @@ SessionCoordinator.admitMessage(sessionId, content)
   -> { entry: SessionEntry }       # materializes on first accepted message
 
 SessionCoordinator.listSessions({ archived? })
-SessionCoordinator.getSession(sessionId)
+SessionCoordinator.resolveSession(sessionId)
 SessionCoordinator.renameSession(sessionId, title)
 SessionCoordinator.archiveSession(sessionId)
 SessionCoordinator.unarchiveSession(sessionId)
@@ -131,7 +131,9 @@ SessionPermissionRegistry.delete(sessionId)
 
 SessionManager.materializeSession(input)
 SessionManager.createTransientSubagentTranscript(input)
+SessionManager.retainTransientSubagentTranscript(sessionId)
 SessionManager.deleteTransientSubagentTranscript(sessionId)
+SessionManager.close()
 
 SessionManager.appendMessage(sessionId, message)
   -> persisted MessageRecord
@@ -158,7 +160,14 @@ First-message admission is serialized per `sessionId`. A live Pending ID materia
 
 List returns non-archived Sessions by default and archived Sessions only when requested. Rename trims non-null titles and allows `null` to clear them. Archive, delete, and fork require an idle persisted Session; unarchive and rename do not. Delete rejects a Session with persisted fork descendants and has no cascade. Runtime validates deletion, cleans Session-owned managed processes, revalidates, and only then commits deletion so cleanup failure remains retryable. Fork copies the selected linear message path plus related lifecycle records into a new persisted Session with a fresh UUID; managed processes are not inherited.
 
-Subagent setup creates a root-only transient Transcript with `{ type: 'subagent', callerSessionId }` provenance and no Store entry. Runner appends the Child prompt. Runtime deletes the Transcript at terminal cleanup, and startup removes orphaned transient files after interruption.
+Subagent setup creates a root-only transient Transcript with
+`{ type: 'subagent', callerSessionId }` provenance and no Store entry. Runner
+appends the Child prompt. After `subagent_end`, SessionManager keeps the
+terminal Transcript resolvable and readable for 24 hours using an unreferenced
+timer; observation does not extend the deadline. Runtime Builder shutdown
+calls `SessionManager.close()` to delete retained Transcripts early, before
+managed-process cleanup; startup removes orphaned transient files after
+interruption.
 
 History pages count persisted messages, default to 50, and reject limits above
 100. `beforeEntryId` is an exclusive cursor on the resolved active branch.
@@ -208,4 +217,4 @@ This is process-local serialization, not an inter-process filesystem lock. Trans
 |---|---|
 | Source | [SessionManager.ts](../../src/core/session/SessionManager.ts), [SessionCoordinator.ts](../../src/runtime/session/SessionCoordinator.ts), [PendingSessionRegistry.ts](../../src/runtime/session/PendingSessionRegistry.ts), [types.ts](../../src/core/session/types.ts), [transcript.ts](../../src/core/session/transcript.ts), [store.ts](../../src/core/session/store.ts), [lock.ts](../../src/core/session/lock.ts) |
 | Tests | [SessionManager.lifecycle.test.ts](../../src/core/session/SessionManager.lifecycle.test.ts), [SessionCoordinator.test.ts](../../src/runtime/session/SessionCoordinator.test.ts), [PendingSessionRegistry.test.ts](../../src/runtime/session/PendingSessionRegistry.test.ts), [title.test.ts](../../src/core/session/title.test.ts), [transcript.test.ts](../../src/core/session/transcript.test.ts), [store.test.ts](../../src/core/session/store.test.ts), [AgentRunner.test.ts](../../src/core/runner/AgentRunner.test.ts) |
-| Controlling authority | [ADR-015: Session Identity and Materialization](../decisions/adr-015-session-identity-and-materialization.md), [Runner Turn Flow](../specifications/runner-turn-flow.md), [Abort](../specifications/abort.md) |
+| Controlling authority | [ADR-015: Session Identity and Materialization](../decisions/adr-015-session-identity-and-materialization.md), [ADR-020: Session-addressed Presentation Subscription and Ephemeral Child Observation](../decisions/adr-020-session-addressed-presentation-subscription-and-ephemeral-child-observation.md), [Channel Specification](../specifications/channel.md), [Subagent Specification](../specifications/subagent.md), [Runner Turn Flow](../specifications/runner-turn-flow.md), [Abort](../specifications/abort.md) |

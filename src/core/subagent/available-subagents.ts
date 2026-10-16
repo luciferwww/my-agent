@@ -5,7 +5,7 @@ import type { SubagentProfile } from './types.js';
  *
  * Exposed only `id` + `description`: those are the two fields the parent
  * agent's LLM needs to decide which subagent to delegate to. Implementation
- * details (`agentDir`, `model`, `tools`, `maxLlmCalls`) stay private.
+ * details (`agentDir`, `model`, and `tools`) stay private.
  */
 export interface AvailableSubagentEntry {
   id: string;

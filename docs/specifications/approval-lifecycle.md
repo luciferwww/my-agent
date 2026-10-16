@@ -2,12 +2,18 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-10-01
+> Verified: 2026-10-10
 > Authority: Stable approval lifecycle contract
 
 ## Scope
 
-This contract defines current-call, origin-bound Tool approval from request delivery through user decision, Turn Abort, Shutdown, origin failure, or elevation of the live Session to `allow_all`. It also defines the process-local Session permission switch. It does not define persistent authorization, approval expiry, retry, or cross-process recovery.
+This contract defines current-call Tool approval scoped to an existing Origin
+Channel, or delivered to all candidate Channels when no Origin Channel exists.
+It covers user decision, Turn Abort, Shutdown, delivery failure, and elevation
+of the live Session to `allow_all`. Origin Client is source context, not Runtime
+decision authority or a disconnect-settlement condition. It does not define
+Automation scheduling, persistent authorization, approval expiry, retry, or
+cross-process recovery.
 
 ## Result contract
 
@@ -23,13 +29,42 @@ type ApprovalResult =
 
 Only `approved` authorizes execution. `source: 'session_allow_all'` records policy authorization and must not be represented as a user review of the specific Tool input. Every other outcome fails closed and retains its own classification; Abort or unavailability is not represented as user denial.
 
-`approval_requested` carries the canonical Tool `callId` and no timeout. Clients attach the interaction to that exact Tool card; they do not infer association by Tool name or latest pending position. A non-user terminal outcome sends:
+`ApprovalRequest` and realtime interaction requests carry optional
+`originChannelId` and `originClientId`, populated by Runtime from the Turn route.
+`approval_requested` carries canonical Session, Turn, and Tool `callId`
+correlation and no timeout. Clients do not infer association by Tool name or
+latest pending position. Every settlement, including user Allow/Deny, notifies
+Channel closure. WebSocket uses its existing event:
 
 ```ts
-{ type: 'approval_closed'; id: string; outcome: 'approved' | 'aborted' | 'unavailable' | 'failed'; reason: string }
+{ type: 'approval_closed'; id: string; sessionId: string; turnId: string; callId: string; outcome: ApprovalResult['outcome']; reason: string }
 ```
 
-For an `approved` closure, `reason` is `session_allow_all`; otherwise it carries the existing terminal reason or bounded failure message. An `approved` closure is emitted only when a pending request is settled by a Session changing to `allow_all`. Approved and denied current-call choices are already visible to the submitting UI and do not emit `approval_closed`.
+For an `approved` closure, `reason` is `session_allow_all` for policy elevation
+or `user` for a current-call choice; other outcomes carry their terminal reason
+or failure message. `ApprovalClosedResult` is the existing `ApprovalResult`.
+Closure cleans up an already-exposed request even if the Channel cannot
+currently accept new requests; CLI closes only its matching Approval ID.
+
+## Delivery and pending query
+
+Channel interaction is required. A Channel without interaction support returns
+`unavailable/delivery_failed`, not user Deny. Runtime provides the Approval
+capability without a separate static support check. At least one candidate
+must accept delivery; per-adapter failures are logged without defeating a
+sibling's accepted delivery. Only `approved` allows Tool execution.
+
+`TurnInteractionManager.getPending(sessionId?)` returns detached current
+requests, globally or filtered by exact Session ID, through shared Channel
+capabilities. The manager is the only canonical registry. Each Channel reuses
+its side-effect-free acceptance logic for realtime delivery and query results,
+excluding a different Origin Channel. Querying does not create prompts or
+deliver requests. Runtime validates responding Channel provenance against
+canonical pending state; neither querying nor audience membership grants
+additional decision authority.
+
+Client caches and Session indicators are presentation state only. Shared
+Session entries contain no pending flag.
 
 ## Session permission mode
 
@@ -46,17 +81,22 @@ Root and Child executions read the root live Session mode at every Tool authoriz
 ## Lifecycle invariants
 
 - Approval remains pending without a timer until a user choice or terminal lifecycle event.
-- One pending entry has one origin binding and one Abort listener.
+- One pending entry retains source context and one Abort listener.
 - Settlement removes the entry and cleans listeners before resolving or notifying.
-- The first user decision, Abort, disconnect, or delivery/adapter failure wins exactly once.
+- The first legal decision, Abort, Shutdown, or terminal delivery failure wins exactly once.
 - Late responses are ignored and may be logged.
-- Turns and origins are isolated.
+- Origin Channel scope is enforced for requests, responses, and closure;
+  no-Origin requests permit decisions from candidate Channels.
 - The active execution Turn's `AbortSignal` is passed directly; cancellation is not reconstructed from an ID lookup.
 - Shutdown settles pending approvals as `aborted/shutdown` before Channels stop.
 - Closure notification failure is contained after Promise settlement.
-- A same-client socket replacement preserves the logical client route; a stale socket cannot decide, while loss of the current socket produces `origin_disconnected`.
+- A same-client socket replacement preserves the logical client route; a stale
+  socket cannot decide. Client disconnection does not settle pending Approval.
+  The dedicated unavailable callback/forwarding path is removed; another
+  eligible Client or a reconnecting Client can query and decide the request.
 - Tool-name deny remains final in both Session modes and never creates an approval request.
-- Pending-count, composer gating, decision controls, and disconnect cleanup operate on the inline approval attached to the correlated Tool Call.
+- Bundled chat stores pending data independently of loaded Tool cards and
+  associates controls by exact Session, Turn, Call, and Approval identity.
 
 ## Failure mapping
 
@@ -64,16 +104,22 @@ Root and Child executions read the root live Session mode at every Tool authoriz
 |---|---|
 | Turn Abort | `aborted/turn` |
 | Runtime Shutdown | `aborted/shutdown` |
-| Missing route/capability | `unavailable/origin_missing` |
-| Request delivery rejection | `unavailable/delivery_failed` |
-| Current origin disconnects | `unavailable/origin_disconnected` |
-| Adapter exception | `failed` |
+| No delivery handler registered on the manager | `unavailable/origin_missing` |
+| No candidate accepts, including zero Channels or all adapter failures | `unavailable/delivery_failed` |
+| Individual Client disconnects | No settlement; request stays pending |
+| Unhandled manager delivery-handler exception | `failed` |
 
 Elapsed time alone has no state-transition meaning. Approval does not use Tool/Hook observer deadlines.
+The existing result union retains `origin_disconnected`; Runtime no longer
+produces it from Client connection loss.
 
 ## Acceptance scenarios
 
-Validation must cover indefinite waiting, allow/deny exactly once, late-response suppression, root and Child Abort, bounded Shutdown, missing capability, delivery failure, disconnect, same-client replacement, CLI cancellation, WebSocket `approval_closed`, and absence of timeout/expiry behavior.
+Validation covers indefinite waiting, all-outcome closure, legal competing
+decisions, Origin Channel/no-Origin fanout, detached global/Session queries,
+root and Child Abort, Shutdown, no accepting Channel, partial adapter failure,
+disconnect retention, cross-client recovery, CLI matching-ID cancellation,
+and WebSocket closure convergence. Chat validation remains small.
 
 ## Related authority
 

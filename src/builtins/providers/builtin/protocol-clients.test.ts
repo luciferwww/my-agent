@@ -36,6 +36,69 @@ function replayState(
 }
 
 describe('Built-in Protocol Clients', () => {
+  describe.each([
+    { Client: AnthropicMessagesClient, terminal: anthropicTerminal, path: '/messages' },
+    { Client: OpenAIResponsesClient, terminal: responsesTerminal, path: '/responses' },
+    { Client: OpenAIChatCompletionsClient, terminal: chatTerminal, path: '/chat/completions' },
+  ])('$path endpoint and session headers', ({ Client, terminal, path }) => {
+    it('preserves supplied session IDs across collected and streaming calls', async () => {
+      const fetchImpl = vi.fn<typeof fetch>(async () => terminal());
+      const client = new Client({
+        baseURL: 'https://example.test/api',
+        apiKey: 'test-key',
+        fetch: fetchImpl,
+      });
+      await Promise.all([
+        client.chat({ ...request, sessionId: 'session-a', invocationId: 'call-1' }),
+        client.chat({ ...request, sessionId: 'session-b', invocationId: 'call-2' }),
+      ]);
+      await collect(client, { ...request, sessionId: 'session-a', invocationId: 'call-3' });
+
+      expect(fetchImpl.mock.calls.map((call) => String(call[0])))
+        .toEqual(Array(3).fill(`https://example.test/api${path}`));
+      const headers = fetchImpl.mock.calls.map((call) => new Headers(call[1]?.headers));
+      expect(headers.map((value) => value.get('x-opencode-session')))
+        .toEqual(['session-a', 'session-b', 'session-a']);
+      for (const value of headers) {
+        expect(value.get('user-agent')).toBe('my-agent/0.1.0');
+        expect(value.get('authorization') ?? value.get('x-api-key'))
+          .toBe(path === '/messages' ? 'test-key' : 'Bearer test-key');
+      }
+    });
+
+    it('generates a new UUID per invocation when sessionId is absent', async () => {
+      const fetchImpl = vi.fn<typeof fetch>(async () => terminal());
+      const client = new Client({ baseURL: 'https://example.test', fetch: fetchImpl });
+      await client.chat({ ...request, invocationId: 'not-a-session' });
+      await client.chat(request);
+      const ids = fetchImpl.mock.calls.map((call) =>
+        new Headers(call[1]?.headers).get('x-opencode-session'));
+      for (const id of ids) {
+        expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+      }
+      expect(ids[0]).not.toBe(ids[1]);
+    });
+
+    it.each([
+      ['https://example.test/api', 'v1/custom-operation', 'https://example.test/api/v1/custom-operation'],
+      ['https://example.test/api/', 'v1/custom-operation', 'https://example.test/api/v1/custom-operation'],
+      ['https://example.test/api', '/v1/custom-operation', 'https://example.test/api/v1/custom-operation'],
+      ['https://example.test/api/', '/v1/custom-operation', 'https://example.test/api/v1/custom-operation'],
+      ['https://example.test/api///', 'v1/custom-operation', 'https://example.test/api/v1/custom-operation'],
+      ['https://example.test/api///', '/v1/custom-operation', 'https://example.test/api/v1/custom-operation'],
+      ['https://example.test/api/', '/v1/custom-operation/', 'https://example.test/api/v1/custom-operation/'],
+    ])('joins %s and %s without adding a protocol suffix', async (baseURL, endpoint, expectedURL) => {
+      const fetchImpl = vi.fn<typeof fetch>(async () => terminal());
+      const client = new Client({
+        baseURL,
+        modelEndpoints: new Map([[request.model, endpoint]]),
+        fetch: fetchImpl,
+      });
+      await client.chat(request);
+      expect(fetchImpl.mock.calls[0]?.[0]).toBe(expectedURL);
+    });
+  });
+
   it('parses CR-only SSE framing', async () => {
     const client = new OpenAIResponsesClient({
       baseURL: 'https://example.test',
@@ -1317,6 +1380,65 @@ describe('Built-in Protocol Clients', () => {
     expect(requestBody(responsesFetch)).toMatchObject({ max_output_tokens: 12_345 });
     expect(requestBody(chatFetch)).toMatchObject({ max_tokens: 12_345 });
     expect(requestBody(anthropicFetch)).toMatchObject({ max_tokens: 12_345 });
+  });
+
+  it('learns max_completion_tokens after a max_tokens HTTP 400 retry succeeds', async () => {
+    const fetchImpl = vi.fn(async (
+      _input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return 'max_completion_tokens' in body
+        ? chatTerminal()
+        : new Response('Bad Request', { status: 400 });
+    }) as unknown as typeof fetch;
+    const client = new OpenAIChatCompletionsClient({
+      baseURL: 'https://example.test',
+      modelEndpoints: new Map([[request.model, 'v1/chat/completions']]),
+      fetch: fetchImpl,
+    });
+    const limitedRequest = { ...request, outputTokenLimit: 16 };
+
+    await expect(client.chat(limitedRequest)).resolves.toMatchObject({
+      stopReason: 'end_turn',
+    });
+    await expect(client.chat(limitedRequest)).resolves.toMatchObject({
+      stopReason: 'end_turn',
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(fetchImpl).mock.calls.map((call) => call[0]))
+      .toEqual(Array(3).fill('https://example.test/v1/chat/completions'));
+    const sessionIds = vi.mocked(fetchImpl).mock.calls.map((call) =>
+      new Headers(call[1]?.headers).get('x-opencode-session'));
+    expect(sessionIds[0]).toBeTruthy();
+    expect(sessionIds[0]).toBe(sessionIds[1]);
+    expect(sessionIds[2]).not.toBe(sessionIds[0]);
+    expect(requestBody(fetchImpl, 0)).toMatchObject({ max_tokens: 16 });
+    expect(requestBody(fetchImpl, 0)).not.toHaveProperty('max_completion_tokens');
+    expect(requestBody(fetchImpl, 1)).toMatchObject({ max_completion_tokens: 16 });
+    expect(requestBody(fetchImpl, 1)).not.toHaveProperty('max_tokens');
+    expect(requestBody(fetchImpl, 2)).toMatchObject({ max_completion_tokens: 16 });
+  });
+
+  it('does not learn max_completion_tokens when the HTTP 400 retry fails', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      error: { type: 'invalid_request_error', message: 'Bad Request' },
+    }), { status: 400 })) as unknown as typeof fetch;
+    const client = new OpenAIChatCompletionsClient({
+      baseURL: 'https://example.test',
+      fetch: fetchImpl,
+    });
+    const limitedRequest = { ...request, outputTokenLimit: 16 };
+
+    await collect(client, limitedRequest);
+    await collect(client, limitedRequest);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(requestBody(fetchImpl, 0)).toHaveProperty('max_tokens', 16);
+    expect(requestBody(fetchImpl, 1)).toHaveProperty('max_completion_tokens', 16);
+    expect(requestBody(fetchImpl, 2)).toHaveProperty('max_tokens', 16);
+    expect(requestBody(fetchImpl, 3)).toHaveProperty('max_completion_tokens', 16);
   });
 
   it('projects accepted receipts and trusted Host messages for all protocols', async () => {

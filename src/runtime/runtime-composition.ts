@@ -8,6 +8,7 @@ import type {
   SessionEntry,
   SessionHistoryPage,
   SessionHistoryQuery,
+  ResolvedSession,
 } from '../core/session/index.js';
 import type {
   RuntimeLifecycleState,
@@ -31,7 +32,7 @@ export interface RuntimeApplication {
     originClientId?: string;
   }): Promise<{ sessionId: string; permission: SessionPermissionState }>;
   listSessions(input?: { archived?: boolean }): Promise<SessionEntry[]>;
-  getSession(sessionId: string): Promise<SessionEntry>;
+  resolveSession(sessionId: string): Promise<ResolvedSession>;
   getSessionHistory(query: SessionHistoryQuery): Promise<SessionHistoryPage>;
   renameSession(sessionId: string, title: string | null): Promise<SessionEntry>;
   archiveSession(sessionId: string): Promise<SessionEntry>;

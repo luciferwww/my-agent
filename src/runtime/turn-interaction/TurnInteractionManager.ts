@@ -22,13 +22,6 @@ type PendingEntry = {
   abortHandler: () => void;
 };
 
-function requiresCloseNotification(result: ApprovalResult): result is ApprovalClosedResult {
-  return (
-    (result.outcome === 'approved' && 'source' in result)
-    || (result.outcome !== 'approved' && result.outcome !== 'denied')
-  );
-}
-
 /** Manages the lifecycle of blocking interactions within a Turn. */
 export class TurnInteractionManager {
   private pending = new Map<string, PendingEntry>();
@@ -93,6 +86,12 @@ export class TurnInteractionManager {
     );
   }
 
+  getPending(sessionId?: string): readonly ApprovalRequest[] {
+    return [...this.pending.values()]
+      .filter(({ request }) => sessionId === undefined || request.sessionId === sessionId)
+      .map(({ request }) => structuredClone(request));
+  }
+
   authorizeSession(sessionId: string): number {
     const matchingIds = [...this.pending]
       .filter(([, entry]) => entry.request.sessionId === sessionId)
@@ -124,16 +123,14 @@ export class TurnInteractionManager {
       pendingCount: this.pending.size,
     });
     entry.resolve(result);
-    if (requiresCloseNotification(result)) {
-      try {
-        this.closeHandler?.(entry.request, result);
-      } catch (error) {
-        this.log.error('interaction close handler failed', {
-          interactionId: id,
-          outcome: result.outcome,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+    try {
+      this.closeHandler?.(entry.request, result);
+    } catch (error) {
+      this.log.error('interaction close handler failed', {
+        interactionId: id,
+        outcome: result.outcome,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
     return true;
   }

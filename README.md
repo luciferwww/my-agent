@@ -174,24 +174,59 @@ Keep the LLM configuration from the Quick Start and run:
 npm run agent -- --agent-home ./agent-home --cli
 ```
 
+The standalone Host immediately prints `Starting my-agent...`. After Runtime
+startup completes, it prints a `Ready` line with elapsed time and then opens
+the CLI prompt.
+
 Useful CLI commands include:
 
 ```text
-/sessions
-/session
+/help
+
 /models
 /model
+/model default
+/model <providerId> <JSON-string-modelId>
+
+/sessions
+/session
+/session new
+/session use <sessionId>
+/session rename <JSON-string|null>
+/session delete
+
 /permission
-/permission manual
-/permission allow_all
+/permission manual|allow_all
+
+/reasoning
+/thinking
+/thinking default|on|off
+/effort
+/effort default|none|minimal|low|medium|high|xhigh|max
 ```
+
+Selection commands (`/model`, `/session`, `/permission`, `/thinking`, and
+`/effort`) open a numbered selector when used without arguments and retain
+their direct forms for repeatable input. Selecting an existing Session shows a
+bounded preview of its recent persisted history before returning to the
+prompt.
+
+The readline CLI is turn-at-a-time. While any visible Turn is running, ordinary
+messages, slash commands, and selectors are paused; Runtime output remains
+live, Ctrl+C remains available for Abort, and a requested Approval can still
+accept y/n input. A fresh prompt returns after all visible Turns end. CLI input
+is not submitted as Steering during an active Turn.
 
 Standalone Host-local Channel selection:
 
 ```bash
+npm run agent -- --initialize --agent-home ./agent-home # Initialize and exit
 npm run agent -- --agent-home ./agent-home       # No Host-local Channel
 npm run agent -- --agent-home ./agent-home --cli # CLI only
 ```
+
+Ordinary startup does not create a missing `config.json`; run the interactive
+initializer first.
 
 Reusable Channels such as WebSocket are enabled through their Extension
 entries, independently of `--cli`.

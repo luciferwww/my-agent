@@ -15,6 +15,7 @@ import {
   collectChat,
   createHttpError,
   createInvalidRequestError,
+  createSessionHeaders,
   createStreamError,
   normalizeError,
   parseRecord,
@@ -22,6 +23,7 @@ import {
   readNonNegativeInteger,
   readSseData,
   readString,
+  resolveRequestURL,
   type ProtocolClientOptions,
 } from './client-common.js';
 
@@ -31,6 +33,8 @@ export type OpenAIChatCompletionsClientOptions = ProtocolClientOptions & {
 
 const CHAT_REASONING_REPLAY_FORMAT = 'openai-chat-completions.reasoning.v1';
 
+type OutputTokenLimitParameter = 'max_tokens' | 'max_completion_tokens';
+
 interface PendingTool {
   id: string;
   name: string;
@@ -39,6 +43,7 @@ interface PendingTool {
 
 export class OpenAIChatCompletionsClient implements ModelInvocationPort {
   private readonly fetchImpl: typeof fetch;
+  private readonly outputTokenLimitParameters = new Map<string, OutputTokenLimitParameter>();
 
   constructor(private readonly options: OpenAIChatCompletionsClientOptions) {
     this.fetchImpl = options.fetch ?? globalThis.fetch;
@@ -52,20 +57,40 @@ export class OpenAIChatCompletionsClient implements ModelInvocationPort {
     let reasoningOpaque: string | undefined;
     try {
       const apiKey = this.options.apiKey?.trim();
-      const response = await this.fetchImpl(`${this.options.baseURL}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          accept: 'text/event-stream',
-          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-        },
-        body: JSON.stringify(buildRequest(
-          request,
-          this.options.baseURL,
-          this.options.thinkingSwitchModels?.includes(request.model) === true,
-        )),
-        signal: request.signal,
-      });
+      const sessionHeaders = createSessionHeaders(request);
+      const send = (outputTokenLimitParameter: OutputTokenLimitParameter): Promise<Response> => (
+        this.fetchImpl(resolveRequestURL(this.options, request.model, '/chat/completions'), {
+          method: 'POST',
+          headers: {
+            ...sessionHeaders,
+            'content-type': 'application/json',
+            accept: 'text/event-stream',
+            ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+          },
+          body: JSON.stringify(buildRequest(
+            request,
+            this.options.baseURL,
+            this.options.thinkingSwitchModels?.includes(request.model) === true,
+            outputTokenLimitParameter,
+          )),
+          signal: request.signal,
+        })
+      );
+      const outputTokenLimitParameter = this.outputTokenLimitParameters.get(request.model)
+        ?? 'max_tokens';
+      let response = await send(outputTokenLimitParameter);
+      if (
+        request.outputTokenLimit !== undefined
+        && outputTokenLimitParameter === 'max_tokens'
+        && response.status === 400
+      ) {
+        await response.body?.cancel();
+        response = await send('max_completion_tokens');
+        if (response.ok) {
+          // Temporary compatibility for endpoints whose model dialect rejects legacy max_tokens.
+          this.outputTokenLimitParameters.set(request.model, 'max_completion_tokens');
+        }
+      }
       if (!response.ok) {
         throw await createHttpError(response, request, request.outputTokenLimit);
       }
@@ -247,6 +272,7 @@ function buildRequest(
   request: ModelInvocationRequest,
   connectionId: string,
   supportsThinkingSwitch: boolean,
+  outputTokenLimitParameter: OutputTokenLimitParameter,
 ): Record<string, unknown> {
   if (request.reasoning?.thinking !== undefined && !supportsThinkingSwitch) {
     throw createInvalidRequestError(
@@ -265,7 +291,7 @@ function buildRequest(
     stream_options: { include_usage: true },
     ...(request.outputTokenLimit === undefined
       ? {}
-      : { max_tokens: request.outputTokenLimit }),
+      : { [outputTokenLimitParameter]: request.outputTokenLimit }),
     ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort }),
     messages: [
       ...(request.system ? [{ role: 'system', content: request.system }] : []),

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { SystemPromptBuilder } from './SystemPromptBuilder.js';
 
 describe('SystemPromptBuilder', () => {
@@ -16,7 +16,7 @@ describe('SystemPromptBuilder', () => {
     it('full mode includes all sections', () => {
       const prompt = new SystemPromptBuilder().build({ mode: 'full' });
       expect(prompt).toContain('# Identity');
-      expect(prompt).toContain('# Current Date & Time');
+      expect(prompt).not.toContain('# Current Date & Time');
       expect(prompt).toContain('# Behavior Rules');
     });
 
@@ -41,13 +41,13 @@ describe('SystemPromptBuilder', () => {
       expect(prompt).not.toContain('<available-subagents>');
     });
 
-    it('minimal mode keeps datetime / project-context / Agent Home', () => {
+    it('minimal mode keeps project-context / Agent Home without datetime', () => {
       const prompt = new SystemPromptBuilder().build({
         mode: 'minimal',
         contextFiles: [{ path: 'IDENTITY.md', content: '# test' }],
         agentHome: '/work',
       });
-      expect(prompt).toContain('# Current Date & Time');
+      expect(prompt).not.toContain('# Current Date & Time');
       // tool-definitions section is disabled; tools are passed via LLM API
       expect(prompt).not.toContain('# Available Tools');
       expect(prompt).toContain('# Project Context');
@@ -73,11 +73,20 @@ describe('SystemPromptBuilder', () => {
   // ── agent-datetime ────────────────────────────────────────
 
   describe('agent-datetime', () => {
-    it('includes current date and time', () => {
-      const prompt = new SystemPromptBuilder().build();
-      expect(prompt).toContain('# Current Date & Time');
-      // Should contain current year
-      expect(prompt).toContain(String(new Date().getFullYear()));
+    it('keeps system prompts unchanged across time changes', () => {
+      vi.useFakeTimers();
+      try {
+        for (const mode of ['full', 'minimal', 'none'] as const) {
+          vi.setSystemTime(new Date('2026-10-16T09:30:00.000Z'));
+          const builder = new SystemPromptBuilder();
+          const prompt = builder.build({ mode });
+          vi.setSystemTime(new Date('2026-10-17T10:31:00.000Z'));
+          expect(builder.build({ mode })).toBe(prompt);
+          expect(prompt).not.toContain('# Current Date & Time');
+        }
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

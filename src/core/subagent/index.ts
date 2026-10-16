@@ -16,7 +16,7 @@ export type {
 
 export { resolveSubagentCapabilities } from './capabilities.js';
 
-export { loadSubagentProfiles, buildGeneralPurposeProfile } from './config-loader.js';
+export { loadConfiguredAgentProfiles, buildGeneralPurposeProfile } from './config-loader.js';
 
 export { resolveSubagentTools } from './profile-tools.js';
 export type { ResolvedSubagentTools } from './profile-tools.js';
@@ -30,13 +30,7 @@ export {
 } from './available-subagents.js';
 export type { AvailableSubagentEntry } from './available-subagents.js';
 export {
-  DEFAULT_SUBAGENT_CONFIG,
-  SubagentConfigValidationError,
-  validateSubagentConfig,
-} from './config.js';
-export type {
-  SubagentConfig,
-  SubagentConfigEntry,
-  SubagentToolsConfig,
-  SubagentModelSelection,
+  DEFAULT_MAX_SUBAGENT_DEPTH,
+  SubagentDepthValidationError,
+  validateMaxSubagentDepth,
 } from './config.js';

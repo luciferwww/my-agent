@@ -4,7 +4,7 @@
 > Date: 2026-10-03
 > Scope: Per-model reasoning controls, Thinking on/off and effort preference, Turn snapshot, three Built-in protocols, and dual-protocol Copilot Relay
 > Related: [Thinking 采集与展示归档 Change](../changes/archive/thinking-capture-and-display/plan.md), [Model-Aware Output Control](../changes/archive/model-aware-output-control/model-aware-output-control-specification.md), [Providers Current Architecture](../architecture/providers.md), [Runner Turn Flow](../specifications/runner-turn-flow.md)
-> Handoff: [Thinking Generation Controls Active Change](../changes/active/thinking-generation-controls/plan.md)及其[Draft Specification](../changes/active/thinking-generation-controls/specification.md)承接契约准备；[validation](../changes/active/thinking-generation-controls/validation.md)承接38项正式验收。本研究保留讨论来源，不独立授权Delivery。
+> Handoff: 已完成并归档的[Thinking Generation Controls Change](../changes/archive/thinking-generation-controls/plan.md)及其[Specification](../changes/archive/thinking-generation-controls/specification.md)承接交付契约；[validation](../changes/archive/thinking-generation-controls/validation.md)记录38项正式验收。本研究保留讨论来源，不再作为交付权威。
 
 ## 1. 背景与决策
 
@@ -31,7 +31,7 @@ Responses，本地 Relay 服务则同时提供 Responses 和 Chat Completions。
 - Core 保留统一事件、History 外壳和 opaque replay envelope。
 
 OpenClaw 用作协议实现参考，不复制其所有默认值、模型名判断或覆盖层级。
-本草稿不授权生产代码实现；已建立Active Change，生产Delivery仍需按其Gate获准。
+本草稿不授权生产代码实现；后续交付已由顶部Handoff所列归档Change完成。
 
 ## 2. 目标与非目标
 
@@ -642,5 +642,5 @@ Web只对模型已声明的选项排序：Thinking按`on → off`，effort按
 - 后续本地源码检查：OpenClaw的copilot-proxy插件固定Chat Completions和reasoning=false，
   Anthropic扩展定义默认adaptive/native output/replay hooks，通用transport实现预算换算。
 
-这些只验证设计模式，不构成所有模型支持某参数的证明。当前my-agent尚未实现本草稿的
-能力schema、独立开关/effort控制、Anthropic原生Thinking及Relay双协议路由。
+这些只验证设计模式，不构成所有模型支持某参数的证明。这里保留设计阶段的差距判断；
+当前实现和验证状态以顶部Handoff所列归档Change为准。

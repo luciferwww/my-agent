@@ -1,6 +1,8 @@
 import { once } from 'node:events';
-import { readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
@@ -8,6 +10,7 @@ import {
   ChannelOperationError,
   type ExtensionLogger,
   type ApprovalInteractionRequest,
+  type ApprovalClosedResult,
   type ChannelRuntimeCapabilities,
   type ModelCatalogSnapshot,
 } from 'my-agent/extension-api';
@@ -18,13 +21,19 @@ import {
 } from './WebSocketChannel.js';
 import type { WebSocketExtensionConfig } from './config.js';
 
-const CLIENT_FILE_PATH = fileURLToPath(new URL('./client/chat.html', import.meta.url));
+const CLIENT_FILE_PATH = fileURLToPath(
+  new URL('./test-fixtures/legacy-client.html', import.meta.url),
+);
+const CLIENT_VARIANT_FILE_PATH = fileURLToPath(
+  new URL('./test-fixtures/legacy-client-variant.html', import.meta.url),
+);
 const logger: ExtensionLogger = {
   debug: vi.fn(),
   info: vi.fn(),
   warn: vi.fn(),
   error: vi.fn(),
 };
+const temporaryDirectories: string[] = [];
 
 describe('WebSocketChannel', () => {
   let channel: WebSocketChannel | undefined;
@@ -36,22 +45,9 @@ describe('WebSocketChannel', () => {
     }
     await channel?.stop();
     channel = undefined;
-  });
-
-  it('tracks pending and disconnected approvals on inline Tool Call segments', async () => {
-    const source = await readFile(CLIENT_FILE_PATH, 'utf8');
-
-    expect(source).toContain(
-      "seg.type === 'tool_call' && seg.approval?.status === 'pending'",
-    );
-    expect(source).toContain(
-      "seg.type !== 'tool_call' || seg.approval?.status !== 'pending'",
-    );
-    expect(source).toContain("seg.status = 'approval_unavailable'");
-    expect(source).toContain("case 'approval_unavailable': return 'Approval unavailable'");
-    expect(source).not.toContain(
-      "seg.type === 'approval' && seg.approval?.status === 'pending'",
-    );
+    await Promise.all(temporaryDirectories.splice(0).map(
+      path => rm(path, { recursive: true, force: true }),
+    ));
   });
 
   it('requires an onMessage handler before start', async () => {
@@ -117,14 +113,105 @@ describe('WebSocketChannel', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toContain('text/html');
     const html = await response.text();
-    expect(html).toContain("const DEFAULT_SOCKET_PATH = \"/ws\";");
+    expect(html).toContain('const SOCKET_PATH = "/ws";');
     expect(html).not.toContain('__MY_AGENT_WEBSOCKET_PATH__');
-    expect(html).toContain('aria-label="Thinking options"');
-    expect(html).toContain('aria-label="Reasoning effort options"');
-    expect(html).toContain("@click=\"toggleReasoningPicker('thinking')\"");
-    expect(html).toContain("@click=\"toggleReasoningPicker('effort')\"");
-    expect(html).toContain('reasoning: turn.reasoning');
+    const variantResponse = await fetch(`${clientUrl(channel)}chat2.html`);
+    expect(variantResponse.status).toBe(200);
+    expect(variantResponse.headers.get('content-type')).toContain('text/html');
+    const variantHtml = await variantResponse.text();
+    expect(variantHtml).toContain('<title>Legacy Client Variant Fixture</title>');
+    expect(variantHtml).toContain('const SOCKET_PATH = "/ws";');
+    expect(variantHtml).not.toContain('__MY_AGENT_WEBSOCKET_PATH__');
     await expect(fetch(`${clientUrl(channel)}missing`)).resolves.toMatchObject({ status: 404 });
+  });
+
+  it('serves a built Client asset inventory from a nested Client path', async () => {
+    const directoryPath = await createBuiltClientFixture();
+    channel = createBuiltClientChannel(directoryPath, { clientPath: '/nested/chat' });
+    channel.onMessage(async () => undefined);
+    await channel.start();
+
+    const builtClientUrl = new URL('/nested/chat', clientUrl(channel));
+    const htmlResponse = await fetch(builtClientUrl);
+    expect(htmlResponse.status).toBe(200);
+    expect(htmlResponse.headers.get('cache-control')).toBe('no-store');
+    expect(htmlResponse.headers.get('content-type')).toContain('text/html');
+    const html = await htmlResponse.text();
+    expect(html).not.toContain('__MY_AGENT_CLIENT_CONFIG_JSON__');
+    expect(html).toContain('{"webSocketPath":"/ws"}');
+
+    const scriptUrl = new URL('./assets/app-123.js', builtClientUrl);
+    const scriptResponse = await fetch(scriptUrl);
+    expect(scriptResponse.status).toBe(200);
+    expect(scriptResponse.headers.get('cache-control')).toContain('immutable');
+    expect(scriptResponse.headers.get('content-type')).toContain('text/javascript');
+    expect(await scriptResponse.text()).toBe('console.log("client");');
+
+    const styleUrl = new URL('./assets/app-123.css', builtClientUrl);
+    const styleResponse = await fetch(styleUrl);
+    expect(styleResponse.status).toBe(200);
+    expect(styleResponse.headers.get('content-type')).toContain('text/css');
+    expect(await styleResponse.text()).toBe(':root { color: black; }');
+
+    const headResponse = await fetch(scriptUrl, { method: 'HEAD' });
+    expect(headResponse.status).toBe(200);
+    expect(await headResponse.text()).toBe('');
+    await expect(fetch(new URL('/chat2.html', builtClientUrl)))
+      .resolves.toMatchObject({ status: 404 });
+    await expect(fetch(new URL('/nested/missing.js', builtClientUrl)))
+      .resolves.toMatchObject({ status: 404 });
+    await expect(fetch(new URL('/nested/%2e%2e/package.json', builtClientUrl)))
+      .resolves.toMatchObject({ status: 404 });
+  });
+
+  it('rejects built Client assets that collide with the WebSocket path', async () => {
+    const directoryPath = await createBuiltClientFixture();
+    channel = createBuiltClientChannel(directoryPath, {
+      clientPath: '/nested/chat',
+      webSocketPath: '/nested/assets/app-123.js',
+    });
+    channel.onMessage(async () => undefined);
+
+    await expect(channel.start()).rejects.toThrow(
+      'duplicate client resource path "/nested/assets/app-123.js"',
+    );
+  });
+
+  it('rejects source maps in the built Client inventory', async () => {
+    const directoryPath = await createBuiltClientFixture();
+    await writeFile(join(directoryPath, 'assets', 'app-123.js.map'), '{}');
+    channel = createBuiltClientChannel(directoryPath);
+    channel.onMessage(async () => undefined);
+
+    await expect(channel.start()).rejects.toThrow('client dist contains a source map');
+  });
+
+  it('escapes runtime configuration injected into the built Client', async () => {
+    const directoryPath = await createBuiltClientFixture();
+    channel = createBuiltClientChannel(directoryPath, {
+      webSocketPath: '/</script><script>alert(1)</script>',
+    });
+    channel.onMessage(async () => undefined);
+    await channel.start();
+
+    const html = await (await fetch(clientUrl(channel))).text();
+
+    expect(html).toContain('\\u003c/script>');
+    expect(html).not.toContain('"</script><script>alert(1)</script>"');
+  });
+
+  it('requires exactly one runtime configuration token in the built Client', async () => {
+    const directoryPath = await createBuiltClientFixture();
+    await writeFile(
+      join(directoryPath, 'index.html'),
+      '__MY_AGENT_CLIENT_CONFIG_JSON____MY_AGENT_CLIENT_CONFIG_JSON__',
+    );
+    channel = createBuiltClientChannel(directoryPath);
+    channel.onMessage(async () => undefined);
+
+    await expect(channel.start()).rejects.toThrow(
+      'client asset must contain exactly one config token',
+    );
   });
 
   it('escapes the configured WebSocket path before embedding it in the client script', async () => {
@@ -176,6 +263,7 @@ describe('WebSocketChannel', () => {
     const client = await connectClient(channel);
     client.send(JSON.stringify({ type: 'hello', clientId: 'client-1' }));
     await expectMessage(client, { type: 'hello_ack', clientId: 'client-1' });
+    subscribe(channel, 'client-1', 'main');
 
     client.send(JSON.stringify({
       type: 'run_turn',
@@ -194,6 +282,8 @@ describe('WebSocketChannel', () => {
         reasoning: { thinking: 'on', effort: 'high' },
       });
     });
+    expect(sessionAudience(channel, 'main')).toEqual(['client-1']);
+    expect(clientSessionAudiences(channel, 'client-1')).toEqual(['main']);
   });
 
   it('returns an attachment rejection to the originating client', async () => {
@@ -210,6 +300,7 @@ describe('WebSocketChannel', () => {
     clients.push(client);
     client.send(JSON.stringify({ type: 'hello', clientId: 'client-1' }));
     await expectMessage(client, { type: 'hello_ack', clientId: 'client-1' });
+    subscribe(channel, 'client-1', 'main');
     client.send(JSON.stringify({
       type: 'run_turn',
       sessionId: 'main',
@@ -239,6 +330,7 @@ describe('WebSocketChannel', () => {
     clients.push(client);
     client.send(JSON.stringify({ type: 'hello', clientId: 'empty-model-client' }));
     await expectMessage(client, { type: 'hello_ack', clientId: 'empty-model-client' });
+    subscribe(channel, 'empty-model-client', 'main');
     client.send(JSON.stringify({
       type: 'run_turn',
       sessionId: 'main',
@@ -264,6 +356,7 @@ describe('WebSocketChannel', () => {
     clients.push(client);
     client.send(JSON.stringify({ type: 'hello', clientId: 'image-client' }));
     await expectMessage(client, { type: 'hello_ack', clientId: 'image-client' });
+    subscribe(channel, 'image-client', 'main');
     client.send(JSON.stringify({
       type: 'run_turn',
       sessionId: 'main',
@@ -637,17 +730,19 @@ describe('WebSocketChannel', () => {
       });
     });
 
-    it('returns a request-correlated server-issued sessionId after hello', async () => {
+    it('creates and re-subscribes a Pending Session before its first run', async () => {
+      const sessionId = '123e4567-e89b-42d3-a456-426614174000';
       const createSession = vi.fn(async () => ({
-        sessionId: '123e4567-e89b-42d3-a456-426614174000',
+        sessionId,
         permission: {
-          sessionId: '123e4567-e89b-42d3-a456-426614174000',
+          sessionId,
           mode: 'manual' as const,
           changedAt: 1,
         },
       }));
+      const handler = vi.fn(async () => undefined);
       channel = createChannel({ port: 0 });
-      channel.onMessage(async () => undefined);
+      channel.onMessage(handler);
       channel.bindRuntimeCapabilities(capabilities(
         () => ({
           generation: 1,
@@ -655,7 +750,10 @@ describe('WebSocketChannel', () => {
           providers: [],
         }),
         undefined,
-        sessionCapabilities({ createSession }),
+        sessionCapabilities({
+          createSession,
+          resolveSession: async () => ({ kind: 'chat', sessionId }),
+        }),
       ));
       await channel.start();
 
@@ -668,14 +766,344 @@ describe('WebSocketChannel', () => {
       await expectMessage(client, {
         type: 'session_created',
         requestId: 'create-1',
-        sessionId: '123e4567-e89b-42d3-a456-426614174000',
+        sessionId,
         permission: {
-          sessionId: '123e4567-e89b-42d3-a456-426614174000',
+          sessionId,
           mode: 'manual',
           changedAt: 1,
         },
       });
       expect(createSession).toHaveBeenCalledTimes(1);
+      expect(sessionAudience(channel, sessionId)).toEqual(['session-client']);
+      expect(clientSessionAudiences(channel, 'session-client')).toEqual([sessionId]);
+
+      client.send(JSON.stringify({ type: 'get_session', requestId: 'get-created', sessionId }));
+      await expectMessage(client, {
+        type: 'session_retrieved',
+        requestId: 'get-created',
+        session: { kind: 'chat', sessionId },
+      });
+
+      client.send(JSON.stringify({
+        type: 'unsubscribe_session',
+        requestId: 'unsubscribe-created',
+        sessionId,
+      }));
+      await expectMessage(client, {
+        type: 'session_unsubscribed',
+        requestId: 'unsubscribe-created',
+        sessionId,
+      });
+      expect(sessionAudience(channel, sessionId)).toEqual([]);
+      expect(clientSessionAudiences(channel, 'session-client')).toEqual([]);
+
+      client.send(JSON.stringify({
+        type: 'subscribe_session',
+        requestId: 'subscribe-created',
+        sessionId,
+      }));
+      await expectMessage(client, {
+        type: 'session_subscribed',
+        requestId: 'subscribe-created',
+        sessionId,
+      });
+      client.send(JSON.stringify({ type: 'run_turn', sessionId, message: 'First message' }));
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledWith({
+        clientId: 'session-client',
+        sessionId,
+        message: 'First message',
+      }));
+    });
+
+    it('explicitly subscribes and idempotently unsubscribes a persisted Session', async () => {
+      const sessionId = '123e4567-e89b-42d3-a456-426614174000';
+      const resolveSession = vi.fn(async (requestedSessionId: string) => {
+        if (requestedSessionId !== sessionId) {
+          throw new ChannelOperationError('SESSION_NOT_FOUND', 'Session does not exist.');
+        }
+        return {
+          kind: 'chat' as const,
+          sessionId,
+          entry: { sessionId, createdAt: 1, updatedAt: 1 },
+        };
+      });
+      channel = createChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      channel.bindRuntimeCapabilities(capabilities(
+        undefined,
+        undefined,
+        sessionCapabilities({ resolveSession }),
+      ));
+      await channel.start();
+
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'subscriber' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'subscriber' });
+
+      for (const requestId of ['subscribe-1', 'subscribe-2']) {
+        client.send(JSON.stringify({
+          type: 'subscribe_session',
+          requestId,
+          sessionId,
+        }));
+        await expectMessage(client, {
+          type: 'session_subscribed',
+          requestId,
+          sessionId,
+        });
+      }
+      expect(resolveSession).toHaveBeenCalledTimes(2);
+      expect(sessionAudience(channel, sessionId)).toEqual(['subscriber']);
+      expect(clientSessionAudiences(channel, 'subscriber')).toEqual([sessionId]);
+
+      for (const requestId of ['unsubscribe-1', 'unsubscribe-2']) {
+        client.send(JSON.stringify({
+          type: 'unsubscribe_session',
+          requestId,
+          sessionId,
+        }));
+        await expectMessage(client, {
+          type: 'session_unsubscribed',
+          requestId,
+          sessionId,
+        });
+      }
+      expect(sessionAudience(channel, sessionId)).toEqual([]);
+      expect(clientSessionAudiences(channel, 'subscriber')).toEqual([]);
+    });
+
+    it('rejects an unknown subscription without creating membership', async () => {
+      const sessionId = '323e4567-e89b-42d3-a456-426614174000';
+      channel = createChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      channel.bindRuntimeCapabilities(capabilities(
+        undefined,
+        undefined,
+        sessionCapabilities({
+          resolveSession: async () => {
+            throw new ChannelOperationError('SESSION_NOT_FOUND', 'Session does not exist.');
+          },
+        }),
+      ));
+      await channel.start();
+
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'unknown-subscriber' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'unknown-subscriber' });
+      client.send(JSON.stringify({
+        type: 'subscribe_session',
+        requestId: 'subscribe-missing',
+        sessionId,
+      }));
+
+      await expectMessage(client, {
+        type: 'session_subscription_error',
+        requestId: 'subscribe-missing',
+        sessionId,
+        code: 'SESSION_NOT_FOUND',
+      });
+      expect(sessionAudience(channel, sessionId)).toEqual([]);
+      expect(clientSessionAudiences(channel, 'unknown-subscriber')).toEqual([]);
+    });
+
+    it('subscribes Parent and preparing Child concurrently and routes each audience', async () => {
+      const parentSessionId = '423e4567-e89b-42d3-a456-426614174001';
+      const childSessionId = '423e4567-e89b-42d3-a456-426614174002';
+      channel = createChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      channel.bindRuntimeCapabilities(capabilities(
+        undefined,
+        undefined,
+        sessionCapabilities({
+          resolveSession: async (sessionId) => sessionId === parentSessionId
+            ? {
+                kind: 'chat',
+                sessionId,
+                entry: { sessionId, createdAt: 1, updatedAt: 1 },
+              }
+            : { kind: 'subagent', sessionId },
+        }),
+      ));
+      await channel.start();
+
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'observer' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'observer' });
+      for (const [requestId, sessionId] of [
+        ['subscribe-parent', parentSessionId],
+        ['subscribe-child', childSessionId],
+      ]) {
+        client.send(JSON.stringify({ type: 'subscribe_session', requestId, sessionId }));
+        await expectMessage(client, { type: 'session_subscribed', requestId, sessionId });
+      }
+
+      channel.send({
+        type: 'subagent_start',
+        requestId: 'request-1',
+        runId: 'run-1',
+        sessionId: childSessionId,
+        turnId: 'child-turn',
+        depth: 1,
+        subagentType: 'general-purpose',
+        lifecycle: 'blocking',
+        callerSessionId: parentSessionId,
+        parentTurnId: 'parent-turn',
+        parentToolUseId: 'tool-use',
+      });
+      await expectMessage(client, expect.objectContaining({
+        type: 'subagent_start',
+        sessionId: childSessionId,
+        callerSessionId: parentSessionId,
+      }));
+
+      channel.send({
+        type: 'user_message',
+        sessionId: childSessionId,
+        messageId: 'child-message',
+        content: 'delegated work',
+        originClientId: null,
+        timestamp: 1,
+      });
+      await expectMessage(client, {
+        type: 'user_message',
+        sessionId: childSessionId,
+        messageId: 'child-message',
+        content: 'delegated work',
+        originClientId: null,
+        timestamp: 1,
+      });
+      expect(clientSessionAudiences(channel, 'observer')).toEqual([
+        parentSessionId,
+        childSessionId,
+      ]);
+    });
+
+    it('rejects run_turn without an active Session subscription', async () => {
+      const sessionId = '423e4567-e89b-42d3-a456-426614174000';
+      const handler = vi.fn(async () => undefined);
+      channel = createChannel({ port: 0 });
+      channel.onMessage(handler);
+      await channel.start();
+
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'run-client' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'run-client' });
+      client.send(JSON.stringify({ type: 'run_turn', sessionId, message: 'hello' }));
+
+      await expectMessage(client, {
+        type: 'channel_error',
+        code: 'INVALID_MESSAGE',
+        message: 'run_turn requires an active subscription for the Session.',
+      });
+      expect(handler).not.toHaveBeenCalled();
+      expect(sessionAudience(channel, sessionId)).toEqual([]);
+      expect(clientSessionAudiences(channel, 'run-client')).toEqual([]);
+    });
+
+    it('keeps an existing subscription when run_turn admission fails', async () => {
+      const sessionId = '523e4567-e89b-42d3-a456-426614174000';
+      const handler = vi.fn(async () => {
+        throw new ChannelOperationError('REQUEST_INVALID', 'Run admission rejected.');
+      });
+      channel = createChannel({ port: 0 });
+      channel.onMessage(handler);
+      await channel.start();
+
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'concurrent-client' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'concurrent-client' });
+      subscribe(channel, 'concurrent-client', sessionId);
+      client.send(JSON.stringify({ type: 'run_turn', sessionId, message: 'hello' }));
+      await expectMessage(client, {
+        type: 'channel_error',
+        code: 'REQUEST_INVALID',
+        message: 'Run admission rejected.',
+      });
+
+      expect(sessionAudience(channel, sessionId)).toEqual(['concurrent-client']);
+      expect(clientSessionAudiences(channel, 'concurrent-client')).toEqual([sessionId]);
+    });
+
+    it('does not register a created Session after its socket disconnects', async () => {
+      const sessionId = '623e4567-e89b-42d3-a456-426614174000';
+      let releaseCreate!: () => void;
+      const createReady = new Promise<void>(resolve => { releaseCreate = resolve; });
+      const createSession = vi.fn(async () => {
+        await createReady;
+        return {
+          sessionId,
+          permission: { sessionId, mode: 'manual' as const, changedAt: 1 },
+        };
+      });
+      channel = createChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      channel.bindRuntimeCapabilities(capabilities(
+        undefined,
+        undefined,
+        sessionCapabilities({ createSession }),
+      ));
+      await channel.start();
+
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'disconnected-creator' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'disconnected-creator' });
+      client.send(JSON.stringify({ type: 'create_session', requestId: 'delayed-create' }));
+      await vi.waitFor(() => expect(createSession).toHaveBeenCalledTimes(1));
+
+      client.close();
+      await once(client, 'close');
+      releaseCreate();
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      expect(sessionAudience(channel, sessionId)).toEqual([]);
+      expect(clientSessionAudiences(channel, 'disconnected-creator')).toEqual([]);
+    });
+
+    it('does not register a subscription after its socket disconnects', async () => {
+      const sessionId = '723e4567-e89b-42d3-a456-426614174000';
+      let releaseValidation!: () => void;
+      const validationReady = new Promise<void>(resolve => { releaseValidation = resolve; });
+      const resolveSession = vi.fn(async () => {
+        await validationReady;
+        return {
+          kind: 'chat' as const,
+          sessionId,
+          entry: { sessionId, createdAt: 1, updatedAt: 1 },
+        };
+      });
+      channel = createChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      channel.bindRuntimeCapabilities(capabilities(
+        undefined,
+        undefined,
+        sessionCapabilities({ resolveSession }),
+      ));
+      await channel.start();
+
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'disconnected-subscriber' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'disconnected-subscriber' });
+      client.send(JSON.stringify({
+        type: 'subscribe_session',
+        requestId: 'delayed-subscribe',
+        sessionId,
+      }));
+      await vi.waitFor(() => expect(resolveSession).toHaveBeenCalledTimes(1));
+
+      client.close();
+      await once(client, 'close');
+      releaseValidation();
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      expect(sessionAudience(channel, sessionId)).toEqual([]);
+      expect(clientSessionAudiences(channel, 'disconnected-subscriber')).toEqual([]);
     });
 
     it('supports create, first send, list, get, rename, and delete', async () => {
@@ -688,7 +1116,11 @@ describe('WebSocketChannel', () => {
           permission: { sessionId, mode: 'manual' as const, changedAt: 1 },
         })),
         listSessions: vi.fn(async () => [entry]),
-        getSession: vi.fn(async () => entry),
+        resolveSession: vi.fn(async () => ({
+          kind: 'chat' as const,
+          sessionId: entry.sessionId,
+          entry,
+        })),
         renameSession: vi.fn(async () => renamed),
         deleteSession: vi.fn(async () => undefined),
       });
@@ -789,6 +1221,19 @@ describe('WebSocketChannel', () => {
           mode: 'manual',
           originClientId: 'permission-client',
         });
+        expect(sessionAudience(channel, sessionId)).toEqual(['permission-client']);
+        expect(clientSessionAudiences(channel, 'permission-client')).toEqual([sessionId]);
+
+        client.send(JSON.stringify({
+          type: 'subscribe_session',
+          requestId: 'subscribe-permission',
+          sessionId,
+        }));
+        await expectMessage(client, {
+          type: 'session_subscribed',
+          requestId: 'subscribe-permission',
+          sessionId,
+        });
 
         changedHandler?.({ sessionId, mode: 'allow_all', changedAt: 4 });
         await expectMessage(client, {
@@ -873,7 +1318,11 @@ describe('WebSocketChannel', () => {
       client.send(JSON.stringify({ type: 'list_sessions', requestId: 'list-1' }));
       await expectMessage(client, { type: 'sessions_listed', requestId: 'list-1', sessions: [entry] });
       client.send(JSON.stringify({ type: 'get_session', requestId: 'get-1', sessionId }));
-      await expectMessage(client, { type: 'session_retrieved', requestId: 'get-1', session: entry });
+      await expectMessage(client, {
+        type: 'session_retrieved',
+        requestId: 'get-1',
+        session: { kind: 'chat', sessionId: entry.sessionId, entry },
+      });
       client.send(JSON.stringify({
         type: 'rename_session',
         requestId: 'rename-1',
@@ -905,7 +1354,7 @@ describe('WebSocketChannel', () => {
         archiveSession: vi.fn(async () => entry),
         unarchiveSession: vi.fn(async () => unarchived),
         forkSession: vi.fn(async () => forked),
-        getSession: vi.fn(async () => {
+        resolveSession: vi.fn(async () => {
           throw new ChannelOperationError('SESSION_NOT_FOUND', 'Session does not exist.');
         }),
       });
@@ -973,7 +1422,7 @@ describe('WebSocketChannel', () => {
       await expectMessage(client, {
         type: 'channel_error',
         code: 'SERVER_NOT_READY',
-        message: 'Runtime Session capability is not bound.',
+        message: 'Runtime Chat Session capability is not bound.',
       });
     });
   });
@@ -998,12 +1447,16 @@ describe('WebSocketChannel', () => {
       sessionId: 'main',
       turnId: 'turn-1',
       originClientId: 'client-1',
+      originChannelId: 'websocket',
     };
+    subscribe(channel, 'client-1', 'main');
     expect(channel.interaction?.sendInteractionRequest(request)).toEqual({ status: 'accepted' });
 
     await expectMessage(client, {
       type: 'approval_requested',
       id: 'apr-1',
+      originClientId: 'client-1',
+      originChannelId: 'websocket',
       callId: 'call-1',
       sessionId: 'main',
       turnId: 'turn-1',
@@ -1023,7 +1476,7 @@ describe('WebSocketChannel', () => {
     });
   });
 
-  it('rejects approval responses from a different connected client', async () => {
+  it('allows another connected client to decide and closes all bound clients', async () => {
     const interactionResponse = vi.fn();
     channel = createChannel({ port: 0, approval: true });
     channel.onMessage(async () => undefined);
@@ -1037,6 +1490,7 @@ describe('WebSocketChannel', () => {
     foreign.send(JSON.stringify({ type: 'hello', clientId: 'approval-foreign' }));
     await expectMessage(origin, { type: 'hello_ack', clientId: 'approval-origin' });
     await expectMessage(foreign, { type: 'hello_ack', clientId: 'approval-foreign' });
+    subscribe(channel, 'approval-origin', 'main');
 
     const request: ApprovalInteractionRequest = {
       id: 'apr-foreign',
@@ -1052,6 +1506,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(origin, {
       type: 'approval_requested',
       id: 'apr-foreign',
+      originClientId: 'approval-origin',
       callId: 'call-foreign',
       sessionId: 'main',
       turnId: 'turn-foreign',
@@ -1064,13 +1519,18 @@ describe('WebSocketChannel', () => {
       id: 'apr-foreign',
       decision: 'allow',
     }));
-    await expectMessage(foreign, {
-      type: 'channel_error',
-      code: 'INVALID_MESSAGE',
-      message: 'Approval response does not belong to this client.',
-    });
-    expect(interactionResponse).not.toHaveBeenCalled();
-
+    await vi.waitFor(() => expect(interactionResponse).toHaveBeenCalledWith({
+      id: request.id, kind: 'approval', outcome: 'submitted', decision: 'allow',
+    }));
+    const originClosed = nextMessage(origin);
+    const foreignClosed = nextMessage(foreign);
+    channel.interaction.sendInteractionClosed(request, { outcome: 'approved' });
+    for (const message of await Promise.all([originClosed, foreignClosed])) {
+      expect(message).toEqual({
+        type: 'approval_closed', id: request.id, sessionId: 'main',
+        turnId: request.turnId, callId: request.callId, outcome: 'approved', reason: 'user',
+      });
+    }
     origin.send(JSON.stringify({
       type: 'approval_resolve',
       id: 'apr-foreign',
@@ -1097,6 +1557,7 @@ describe('WebSocketChannel', () => {
     clients.push(client);
     client.send(JSON.stringify({ type: 'hello', clientId: 'multi-session-client' }));
     await expectMessage(client, { type: 'hello_ack', clientId: 'multi-session-client' });
+    subscribe(channel, 'multi-session-client', 'session-a', 'session-b');
 
     const requests: ApprovalInteractionRequest[] = [
       {
@@ -1126,6 +1587,7 @@ describe('WebSocketChannel', () => {
       await expectMessage(client, {
         type: 'approval_requested',
         id: request.id,
+        originClientId: request.originClientId,
         callId: request.callId,
         sessionId: request.sessionId,
         turnId: request.turnId,
@@ -1162,12 +1624,12 @@ describe('WebSocketChannel', () => {
     });
   });
 
-  it('returns unavailable when an approval origin cannot receive the request', async () => {
+  it('accepts pending delivery without connected or origin clients and restricts Origin Channel', async () => {
     channel = createChannel({ port: 0, approval: true });
     channel.onMessage(async () => undefined);
     await channel.start();
 
-    expect(channel.interaction?.sendInteractionRequest({
+    const request: ApprovalInteractionRequest = {
       id: 'apr-missing',
       kind: 'approval',
       callId: 'call-missing',
@@ -1176,7 +1638,12 @@ describe('WebSocketChannel', () => {
       sessionId: 'main',
       turnId: 'turn-missing',
       originClientId: 'missing-client',
-    })).toEqual({ status: 'unavailable', reason: 'delivery_failed' });
+    };
+    expect(channel.interaction.sendInteractionRequest(request)).toEqual({ status: 'accepted' });
+    expect(channel.interaction.sendInteractionRequest({ ...request, originClientId: undefined })).toEqual({ status: 'accepted' });
+    expect(channel.interaction.sendInteractionRequest({ ...request, originChannelId: 'cli' })).toEqual({ status: 'unavailable', reason: 'delivery_failed' });
+    await channel.stop();
+    expect(channel.interaction.sendInteractionRequest(request)).toEqual({ status: 'unavailable', reason: 'delivery_failed' });
   });
 
   it('sends approval_closed for a non-user terminal outcome', async () => {
@@ -1188,6 +1655,7 @@ describe('WebSocketChannel', () => {
     clients.push(client);
     client.send(JSON.stringify({ type: 'hello', clientId: 'client-close' }));
     await expectMessage(client, { type: 'hello_ack', clientId: 'client-close' });
+    subscribe(channel, 'client-close', 'main');
 
     const request: ApprovalInteractionRequest = {
       id: 'apr-close',
@@ -1203,6 +1671,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'approval_requested',
       id: 'apr-close',
+      originClientId: 'client-close',
       callId: 'call-close',
       sessionId: 'main',
       turnId: 'turn-close',
@@ -1217,6 +1686,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'approval_closed',
       id: 'apr-close',
+      callId: 'call-close',
       sessionId: 'main',
       turnId: 'turn-close',
       outcome: 'aborted',
@@ -1230,6 +1700,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(client, {
       type: 'approval_closed',
       id: 'apr-close',
+      callId: 'call-close',
       sessionId: 'main',
       turnId: 'turn-close',
       outcome: 'approved',
@@ -1239,17 +1710,16 @@ describe('WebSocketChannel', () => {
 
   it('keeps pending approval bound across same-client socket replacement', async () => {
     const interactionResponse = vi.fn();
-    const interactionUnavailable = vi.fn();
     channel = createChannel({ port: 0, approval: true });
     channel.onMessage(async () => undefined);
     channel.interaction?.onInteractionResponse(interactionResponse);
-    channel.interaction?.onInteractionUnavailable(interactionUnavailable);
     await channel.start();
 
     const firstClient = await connectClient(channel);
     clients.push(firstClient);
     firstClient.send(JSON.stringify({ type: 'hello', clientId: 'client-replace' }));
     await expectMessage(firstClient, { type: 'hello_ack', clientId: 'client-replace' });
+    subscribe(channel, 'client-replace', 'main');
 
     const request: ApprovalInteractionRequest = {
       id: 'apr-replace',
@@ -1265,6 +1735,7 @@ describe('WebSocketChannel', () => {
     await expectMessage(firstClient, {
       type: 'approval_requested',
       id: 'apr-replace',
+      originClientId: 'client-replace',
       callId: 'call-replace',
       sessionId: 'main',
       turnId: 'turn-replace',
@@ -1279,6 +1750,8 @@ describe('WebSocketChannel', () => {
     clients.push(replacementClient);
     replacementClient.send(JSON.stringify({ type: 'hello', clientId: 'client-replace' }));
     await expectMessage(replacementClient, { type: 'hello_ack', clientId: 'client-replace' });
+    expect(sessionAudience(channel, 'main')).toEqual([]);
+    expect(clientSessionAudiences(channel, 'client-replace')).toEqual([]);
 
     firstClient.send(JSON.stringify({
       type: 'approval_resolve',
@@ -1296,7 +1769,6 @@ describe('WebSocketChannel', () => {
     closeSpy.mockRestore();
     serverSocket.close();
     await firstClosed;
-    expect(interactionUnavailable).not.toHaveBeenCalled();
 
     replacementClient.send(JSON.stringify({
       type: 'approval_resolve',
@@ -1313,19 +1785,185 @@ describe('WebSocketChannel', () => {
     });
   });
 
-  it('reports unavailable when the current approval origin disconnects', async () => {
-    const interactionUnavailable = vi.fn();
+  it('queries all acceptable pending requests or validates only the supplied Session', async () => {
+    channel = createChannel({ approval: true });
+    channel.onMessage(async () => undefined);
+    const requests = [
+      approvalRequest({ id: 'local', originChannelId: 'websocket', originClientId: 'disconnected' }),
+      approvalRequest({ id: 'global', sessionId: 'other-session' }),
+      approvalRequest({ id: 'foreign', originChannelId: 'cli' }),
+    ];
+    const getPending = vi.fn((sessionId?: string) => requests.filter(
+      request => sessionId === undefined || request.sessionId === sessionId,
+    ));
+    const resolveSession = vi.fn(async (sessionId: string) => ({
+      kind: 'chat' as const,
+      sessionId,
+      entry: { sessionId, createdAt: 1, updatedAt: 1 },
+    }));
+    channel.bindRuntimeCapabilities({
+      ...capabilities(undefined, undefined, sessionCapabilities({ resolveSession })),
+      approvals: { getPending },
+    });
+    await channel.start();
+    const client = await connectClient(channel);
+    clients.push(client);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'query-client' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'query-client' });
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'all' }));
+    await expectMessage(client, { type: 'session_approvals', requestId: 'all', approvals: requests.slice(0, 2) });
+    expect(resolveSession).not.toHaveBeenCalled();
+    expect(getPending).toHaveBeenCalledWith(undefined);
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'one', sessionId: 'main' }));
+    await expectMessage(client, { type: 'session_approvals', requestId: 'one', sessionId: 'main', approvals: [requests[0]] });
+    expect(resolveSession).toHaveBeenCalledWith('main');
+    expect(getPending).toHaveBeenCalledWith('main');
+  });
+
+  it('returns explicit pending-query errors and keeps unsupported interaction unavailable', async () => {
+    channel = createChannel();
+    channel.onMessage(async () => undefined);
+    await channel.start();
+    const client = await connectClient(channel);
+    clients.push(client);
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'unauthenticated' }));
+    await expectMessage(client, { type: 'channel_error', code: 'SERVER_NOT_READY', message: 'hello must complete before business messages.' });
+    client.send(JSON.stringify({ type: 'hello', clientId: 'query-errors' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'query-errors' });
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'unbound' }));
+    await expectMessage(client, {
+      type: 'session_approvals_error', requestId: 'unbound',
+      code: 'SERVER_NOT_READY', message: 'Runtime Approvals are not bound.',
+    });
+    const getPending = vi.fn(() => [approvalRequest()]);
+    const resolveSession = vi.fn(async () => { throw new ChannelOperationError('SESSION_NOT_FOUND', 'Missing Session'); });
+    channel.bindRuntimeCapabilities({
+      ...capabilities(undefined, undefined, sessionCapabilities({ resolveSession })),
+      approvals: { getPending },
+    });
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'missing', sessionId: 'missing' }));
+    await expectMessage(client, {
+      type: 'session_approvals_error', requestId: 'missing', sessionId: 'missing',
+      code: 'SESSION_NOT_FOUND', message: 'Missing Session',
+    });
+    expect(getPending).not.toHaveBeenCalled();
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'disabled' }));
+    await expectMessage(client, { type: 'session_approvals', requestId: 'disabled', approvals: [] });
+    expect(channel.interaction.sendInteractionRequest(approvalRequest())).toEqual({ status: 'unavailable', reason: 'delivery_failed' });
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'invalid', sessionId: '' }));
+    await expectMessage(client, { type: 'channel_error', code: 'INVALID_MESSAGE', message: 'sessionId must be a non-empty string.' });
+  });
+
+  it('takes the pending snapshot after async Session validation and sends it before subsequent closure', async () => {
+    channel = createChannel({ approval: true });
+    channel.onMessage(async () => undefined);
+    let release!: () => void;
+    const validation = new Promise<void>(resolve => { release = resolve; });
+    const resolveSession = vi.fn(async (sessionId: string) => {
+      await validation;
+      return {
+        kind: 'chat' as const,
+        sessionId,
+        entry: { sessionId, createdAt: 1, updatedAt: 1 },
+      };
+    });
+    const request = approvalRequest();
+    let pending = [request];
+    const getPending = vi.fn(() => pending);
+    channel.bindRuntimeCapabilities({
+      ...capabilities(undefined, undefined, sessionCapabilities({ resolveSession })),
+      approvals: { getPending },
+    });
+    await channel.start();
+    const client = await connectClient(channel);
+    clients.push(client);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'ordered-client' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'ordered-client' });
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'ordered', sessionId: 'main' }));
+    await vi.waitFor(() => expect(resolveSession).toHaveBeenCalledOnce());
+    expect(getPending).not.toHaveBeenCalled();
+    const messages: Record<string, unknown>[] = [];
+    client.on('message', raw => messages.push(JSON.parse(raw.toString())));
+    release();
+    await vi.waitFor(() => expect(messages).toHaveLength(1));
+    pending = [];
+    channel.interaction.sendInteractionClosed(request, { outcome: 'denied', reason: 'user' });
+    await vi.waitFor(() => expect(messages).toHaveLength(2));
+    expect(messages[0]).toEqual({
+      type: 'session_approvals', requestId: 'ordered', sessionId: 'main', approvals: [request],
+    });
+    expect(messages[1]).toMatchObject({ type: 'approval_closed', id: request.id, outcome: 'denied' });
+  });
+
+  it('does not read a pending snapshot when the validated socket disconnected', async () => {
+    channel = createChannel({ approval: true });
+    channel.onMessage(async () => undefined);
+    let release!: () => void;
+    const validation = new Promise<void>(resolve => { release = resolve; });
+    const resolveSession = vi.fn(async (sessionId: string) => {
+      await validation;
+      return {
+        kind: 'chat' as const,
+        sessionId,
+        entry: { sessionId, createdAt: 1, updatedAt: 1 },
+      };
+    });
+    const getPending = vi.fn(() => []);
+    channel.bindRuntimeCapabilities({
+      ...capabilities(undefined, undefined, sessionCapabilities({ resolveSession })),
+      approvals: { getPending },
+    });
+    await channel.start();
+    const client = await connectClient(channel);
+    clients.push(client);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'closing-query' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'closing-query' });
+    client.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'closing', sessionId: 'main' }));
+    await vi.waitFor(() => expect(resolveSession).toHaveBeenCalledOnce());
+    const closed = once(client, 'close');
+    client.close();
+    await closed;
+    release();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(getPending).not.toHaveBeenCalled();
+  });
+
+  it.each<[ApprovalClosedResult, string]>([
+    [{ outcome: 'approved' }, 'user'],
+    [{ outcome: 'denied', reason: 'user' }, 'user'],
+    [{ outcome: 'aborted', reason: 'turn' }, 'turn'],
+    [{ outcome: 'unavailable', reason: 'delivery_failed' }, 'delivery_failed'],
+    [{ outcome: 'failed', message: 'adapter failed' }, 'adapter failed'],
+  ])('broadcasts terminal closure %j without an origin Client or opened Session', async (result, reason) => {
+    channel = createChannel({ approval: true });
+    channel.onMessage(async () => undefined);
+    await channel.start();
+    const client = await connectClient(channel);
+    clients.push(client);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'closure-only' }));
+    await expectMessage(client, { type: 'hello_ack', clientId: 'closure-only' });
+    const request = approvalRequest();
+    channel.interaction.sendInteractionClosed(request, result);
+    await expectMessage(client, {
+      type: 'approval_closed', id: request.id, sessionId: request.sessionId,
+      turnId: request.turnId, callId: request.callId, outcome: result.outcome, reason,
+    });
+  });
+
+  it('retains canonical pending after client disconnect and exposes it to another client', async () => {
+    const interactionResponse = vi.fn();
     channel = createChannel({ port: 0, approval: true });
     channel.onMessage(async () => undefined);
-    channel.interaction?.onInteractionUnavailable(interactionUnavailable);
+    channel.interaction.onInteractionResponse(interactionResponse);
     await channel.start();
 
     const client = await connectClient(channel);
     clients.push(client);
     client.send(JSON.stringify({ type: 'hello', clientId: 'client-disconnect' }));
     await expectMessage(client, { type: 'hello_ack', clientId: 'client-disconnect' });
+    subscribe(channel, 'client-disconnect', 'main');
 
-    channel.interaction?.sendInteractionRequest({
+    const request: ApprovalInteractionRequest = {
       id: 'apr-disconnect',
       kind: 'approval',
       callId: 'call-disconnect',
@@ -1334,10 +1972,14 @@ describe('WebSocketChannel', () => {
       sessionId: 'main',
       turnId: 'turn-disconnect',
       originClientId: 'client-disconnect',
-    });
+    };
+    const getPending = vi.fn(() => [request]);
+    channel.bindRuntimeCapabilities({ ...capabilities(), approvals: { getPending } });
+    channel.interaction.sendInteractionRequest(request);
     await expectMessage(client, {
       type: 'approval_requested',
       id: 'apr-disconnect',
+      originClientId: 'client-disconnect',
       callId: 'call-disconnect',
       sessionId: 'main',
       turnId: 'turn-disconnect',
@@ -1347,12 +1989,18 @@ describe('WebSocketChannel', () => {
 
     client.close();
     await once(client, 'close');
-    await vi.waitFor(() => {
-      expect(interactionUnavailable).toHaveBeenCalledWith(
-        'apr-disconnect',
-        'origin_disconnected',
-      );
+    const replacement = await connectClient(channel);
+    clients.push(replacement);
+    replacement.send(JSON.stringify({ type: 'hello', clientId: 'another-client' }));
+    await expectMessage(replacement, { type: 'hello_ack', clientId: 'another-client' });
+    replacement.send(JSON.stringify({ type: 'get_session_approvals', requestId: 'pending-1' }));
+    await expectMessage(replacement, {
+      type: 'session_approvals', requestId: 'pending-1', approvals: [request],
     });
+    replacement.send(JSON.stringify({ type: 'approval_resolve', id: request.id, decision: 'allow' }));
+    await vi.waitFor(() => expect(interactionResponse).toHaveBeenCalledWith({
+      id: request.id, kind: 'approval', outcome: 'submitted', decision: 'allow',
+    }));
   });
 
   it('serializes resolution failure category and queued correlation', async () => {
@@ -1364,6 +2012,7 @@ describe('WebSocketChannel', () => {
     const client = await connectClient(channel);
     client.send(JSON.stringify({ type: 'hello', clientId: 'client-resolution' }));
     await expectMessage(client, { type: 'hello_ack', clientId: 'client-resolution' });
+    subscribe(channel, 'client-resolution', 'main');
     client.send(JSON.stringify({ type: 'run_turn', sessionId: 'main', message: 'hi' }));
     await vi.waitFor(() => expect(handler).toHaveBeenCalled());
 
@@ -1397,6 +2046,7 @@ describe('WebSocketChannel', () => {
     const client = await connectClient(channel);
     client.send(JSON.stringify({ type: 'hello', clientId: 'client-request-end' }));
     await expectMessage(client, { type: 'hello_ack', clientId: 'client-request-end' });
+    subscribe(channel, 'client-request-end', 'main');
     client.send(JSON.stringify({ type: 'run_turn', sessionId: 'main', message: 'hi' }));
     await vi.waitFor(() => expect(handler).toHaveBeenCalled());
 
@@ -1447,7 +2097,7 @@ describe('WebSocketChannel', () => {
       client.send(JSON.stringify({ type: 'hello', clientId: 'client-1' }));
       await expectMessage(client, { type: 'hello_ack', clientId: 'client-1' });
 
-      // Subscribe to 'main' by running a turn against it.
+      subscribe(channel, 'client-1', 'main');
       client.send(JSON.stringify({ type: 'run_turn', sessionId: 'main', message: 'hi' }));
       await vi.waitFor(() => expect(handler).toHaveBeenCalled());
 
@@ -1497,7 +2147,8 @@ describe('WebSocketChannel', () => {
       clientB.send(JSON.stringify({ type: 'hello', clientId: 'client-B' }));
       await expectMessage(clientB, { type: 'hello_ack', clientId: 'client-B' });
 
-      // Both subscribe to 'main' via run_turn
+      subscribe(channel, 'client-A', 'main');
+      subscribe(channel, 'client-B', 'main');
       clientA.send(JSON.stringify({ type: 'run_turn', sessionId: 'main', message: 'first' }));
       clientB.send(JSON.stringify({ type: 'run_turn', sessionId: 'main', message: 'second' }));
       await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(2));
@@ -1537,6 +2188,7 @@ describe('WebSocketChannel', () => {
       client.send(JSON.stringify({ type: 'hello', clientId: 'client-1' }));
       await expectMessage(client, { type: 'hello_ack', clientId: 'client-1' });
 
+      subscribe(channel, 'client-1', 'main');
       client.send(JSON.stringify({ type: 'run_turn', sessionId: 'main', message: 'hi' }));
       await vi.waitFor(() => expect(handler).toHaveBeenCalled());
 
@@ -1617,7 +2269,7 @@ describe('WebSocketChannel', () => {
       client.send(JSON.stringify({ type: 'hello', clientId: 'client-observer' }));
       await expectMessage(client, { type: 'hello_ack', clientId: 'client-observer' });
 
-      // Subscribe to the session audience so send() will fan to this client.
+      subscribe(channel, 'client-observer', 'main');
       client.send(JSON.stringify({ type: 'run_turn', sessionId: 'main', message: 'anything' }));
       await vi.waitFor(() => expect(handler).toHaveBeenCalled());
 
@@ -1695,18 +2347,54 @@ function capabilities(
     querySessionsNeedingAbort: () => [],
     abortTurn: () => ({ aborted: false, dropped: 0 }),
   },
-  sessions: ChannelRuntimeCapabilities['sessions'] = sessionCapabilities(),
+  sessions: CombinedSessionCapabilities = sessionCapabilities(),
 ): ChannelRuntimeCapabilities {
+  const { resolveSession, getHistory, ...chatSessions } = sessions;
   return {
     modelCatalog: { getSnapshot },
     abort,
-    sessions,
+    chatSessions,
+    sessionObservation: { resolveSession, getHistory },
+    approvals: { getPending: () => [] },
   };
 }
 
+function subscribe(channel: WebSocketChannel, clientId: string, ...sessionIds: string[]): void {
+  for (const sessionId of sessionIds) {
+    (channel as unknown as { registerSessionAudience(clientId: string, sessionId: string): void })
+      .registerSessionAudience(clientId, sessionId);
+  }
+
+}
+
+function sessionAudience(channel: WebSocketChannel, sessionId: string): string[] {
+  const sessions = (channel as unknown as {
+    sessions: Map<string, Set<string>>;
+  }).sessions;
+  return [...(sessions.get(sessionId) ?? [])].sort();
+}
+
+function clientSessionAudiences(channel: WebSocketChannel, clientId: string): string[] {
+  const clientSessions = (channel as unknown as {
+    clientSessions: Map<string, Set<string>>;
+  }).clientSessions;
+  return [...(clientSessions.get(clientId) ?? [])].sort();
+}
+
+function approvalRequest(overrides: Partial<ApprovalInteractionRequest> = {}): ApprovalInteractionRequest {
+  return {
+    id: 'pending-query', kind: 'approval', sessionId: 'main', turnId: 'turn-query',
+    callId: 'call-query', toolName: 'write_file', input: {}, ...overrides,
+  };
+}
+
+type CombinedSessionCapabilities =
+  & ChannelRuntimeCapabilities['chatSessions']
+  & ChannelRuntimeCapabilities['sessionObservation'];
+
 function sessionCapabilities(
-  overrides: Partial<ChannelRuntimeCapabilities['sessions']> = {},
-): ChannelRuntimeCapabilities['sessions'] {
+  overrides: Partial<CombinedSessionCapabilities> = {},
+): CombinedSessionCapabilities {
   const sessionId = '123e4567-e89b-42d3-a456-426614174000';
   const entry = { sessionId, createdAt: 1, updatedAt: 1 };
   return {
@@ -1715,7 +2403,11 @@ function sessionCapabilities(
       permission: { sessionId, mode: 'manual', changedAt: 1 },
     }),
     listSessions: async () => [],
-    getSession: async () => entry,
+    resolveSession: async () => ({
+      kind: 'chat',
+      sessionId: entry.sessionId,
+      entry,
+    }),
     getHistory: async ({ sessionId: requestedSessionId }) => ({
       sessionId: requestedSessionId,
       items: [],
@@ -1762,8 +2454,50 @@ function createChannel(
   const options: WebSocketChannelOptions = {
     config: completeConfig,
     clientFilePath: CLIENT_FILE_PATH,
+    clientVariants: Object.freeze({ '/chat2.html': CLIENT_VARIANT_FILE_PATH }),
     logger,
     ...(browserLauncher === undefined ? {} : { browserLauncher }),
   };
   return new WebSocketChannel(options);
+}
+
+function createBuiltClientChannel(
+  clientAssetDirectoryPath: string,
+  config: Partial<WebSocketExtensionConfig> = {},
+): WebSocketChannel {
+  return new WebSocketChannel({
+    config: {
+      host: '127.0.0.1',
+      port: 0,
+      webSocketPath: '/ws',
+      clientPath: '/',
+      approval: false,
+      openBrowser: false,
+      ...config,
+    },
+    clientAssetDirectoryPath,
+    logger,
+  });
+}
+
+async function createBuiltClientFixture(): Promise<string> {
+  const directoryPath = await mkdtemp(join(tmpdir(), 'websocket-client-assets-'));
+  temporaryDirectories.push(directoryPath);
+  await mkdir(join(directoryPath, 'assets'));
+  await Promise.all([
+    writeFile(
+      join(directoryPath, 'index.html'),
+      [
+        '<!doctype html>',
+        '<script id="my-agent-client-config" type="application/json">',
+        '__MY_AGENT_CLIENT_CONFIG_JSON__',
+        '</script>',
+        '<script type="module" src="./assets/app-123.js"></script>',
+        '<link rel="stylesheet" href="./assets/app-123.css">',
+      ].join('\n'),
+    ),
+    writeFile(join(directoryPath, 'assets', 'app-123.js'), 'console.log("client");'),
+    writeFile(join(directoryPath, 'assets', 'app-123.css'), ':root { color: black; }'),
+  ]);
+  return directoryPath;
 }

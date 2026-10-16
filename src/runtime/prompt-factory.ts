@@ -11,7 +11,7 @@ export interface BuildSystemPromptParamsInput {
   agentHome?: string;
   /**
    * `<available-subagents>` section 条目列表（spec §11 Section 8）。
-   * RuntimeApp 仅在 `subagents.enabled === true` 时传入；否则不渲染。
+   * RuntimeApp 仅在 `task` Tool 对当前 Agent 可见时传入。
    */
   availableSubagents?: AvailableSubagentEntry[];
 }

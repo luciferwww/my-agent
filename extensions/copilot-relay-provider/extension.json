@@ -1,8 +1,10 @@
 {
   "manifestVersion": 1,
   "id": "copilot-relay-provider",
+  "name": "Copilot Relay Provider",
   "version": "0.1.0",
   "entry": "entry.ts",
+  "contributes": ["provider"],
   "configSchema": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",
@@ -13,7 +15,8 @@
         "default": "http://127.0.0.1:5000"
       },
       "apiKey": {
-        "type": "string"
+        "type": "string",
+        "writeOnly": true
       },
       "discoveryTimeoutMs": {
         "type": "integer",

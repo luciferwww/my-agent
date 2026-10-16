@@ -29,7 +29,7 @@ export type ExtensionConfigPreparationResult =
       environmentVariable?: string;
     }>;
 
-interface ApiKeyMaterializationFailure {
+interface SensitiveMaterializationFailure {
   readonly category: Extract<ExtensionLoaderDiagnosticCategory, 'config_invalid' | 'secret_unavailable'>;
   readonly code: Extract<ExtensionLoaderDiagnosticCode, 'environment_secret_unavailable'>;
   readonly referencePath: string;
@@ -48,8 +48,10 @@ export function prepareExtensionConfig(
     return configFailure('config_invalid', 'config_validation_failed');
   }
 
-  const apiKeyFailure = materializeApiKey(config, environment);
-  if (apiKeyFailure !== undefined) return Object.freeze({ ok: false, ...apiKeyFailure });
+  const sensitiveFailure = materializeSensitiveStrings(config, schema, environment);
+  if (sensitiveFailure !== undefined) {
+    return Object.freeze({ ok: false, ...sensitiveFailure });
+  }
 
   let validate: ValidateFunction;
   try {
@@ -75,39 +77,94 @@ export function prepareExtensionConfig(
   });
 }
 
-function materializeApiKey(
+function materializeSensitiveStrings(
   config: Record<string, unknown>,
+  schema: Readonly<Record<string, unknown>>,
   environment: Readonly<Record<string, string | undefined>>,
-): ApiKeyMaterializationFailure | Readonly<{
+): SensitiveMaterializationFailure | Readonly<{
   category: 'config_invalid';
   code: 'config_validation_failed';
   referencePath: string;
 }> | undefined {
-  if (typeof config['apiKey'] !== 'string') return undefined;
-  try {
-    const apiKey = materializeExactStringCredential(config['apiKey'], environment);
-    if (apiKey === undefined) delete config['apiKey'];
-    else config['apiKey'] = apiKey;
-    return undefined;
-  } catch (error) {
-    if (
-      error instanceof CredentialMaterializationError
-      && error.secretUnavailable
-      && error.environmentVariable !== undefined
-    ) {
-      return Object.freeze({
-        category: 'secret_unavailable',
-        code: 'environment_secret_unavailable',
-        referencePath: '/apiKey',
-        environmentVariable: boundField(error.environmentVariable),
-      });
+  const properties = schema['properties'];
+  if (!isPlainObject(properties)) return undefined;
+
+  for (const [propertyName, propertySchema] of Object.entries(properties)) {
+    if (!isSensitiveRootString(propertySchema) || typeof config[propertyName] !== 'string') {
+      continue;
     }
-    return {
-      category: 'config_invalid',
-      code: 'config_validation_failed',
-      referencePath: '/apiKey',
-    };
+    const referencePath = boundedPropertyReferencePath(propertyName);
+    try {
+      const materialized = materializeExactStringCredential(
+        config[propertyName],
+        environment,
+      );
+      if (materialized === undefined) delete config[propertyName];
+      else config[propertyName] = materialized;
+    } catch (error) {
+      if (
+        error instanceof CredentialMaterializationError
+        && error.secretUnavailable
+        && error.environmentVariable !== undefined
+      ) {
+        return Object.freeze({
+          category: 'secret_unavailable',
+          code: 'environment_secret_unavailable',
+          referencePath,
+          environmentVariable: boundField(error.environmentVariable),
+        });
+      }
+      return {
+        category: 'config_invalid',
+        code: 'config_validation_failed',
+        referencePath,
+      };
+    }
   }
+  return undefined;
+}
+
+function isSensitiveRootString(value: unknown): boolean {
+  return isPlainObject(value)
+    && value['type'] === 'string'
+    && value['writeOnly'] === true
+    && !hasReferenceOrComposition(value);
+}
+
+function hasReferenceOrComposition(value: Readonly<Record<string, unknown>>): boolean {
+  return [
+    '$ref',
+    'allOf',
+    'anyOf',
+    'oneOf',
+    'not',
+    'if',
+    'then',
+    'else',
+  ].some((keyword) => keyword in value);
+}
+
+function boundedPropertyReferencePath(propertyName: string): string {
+  const fullPath = `/${escapeJsonPointerSegment(propertyName)}`;
+  if (fullPath.length <= MAX_DIAGNOSTIC_FIELD_LENGTH) return fullPath;
+
+  const suffix = '...';
+  let escapedPreview = '';
+  for (const codePoint of propertyName) {
+    const escapedCodePoint = escapeJsonPointerSegment(codePoint);
+    if (
+      1 + escapedPreview.length + escapedCodePoint.length + suffix.length
+      > MAX_DIAGNOSTIC_FIELD_LENGTH
+    ) {
+      break;
+    }
+    escapedPreview += escapedCodePoint;
+  }
+  return `/${escapedPreview}${suffix}`;
+}
+
+function escapeJsonPointerSegment(value: string): string {
+  return value.replace(/~/g, '~0').replace(/\//g, '~1');
 }
 
 function configFailure(

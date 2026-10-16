@@ -56,7 +56,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     await rm(agentHome, { recursive: true, force: true });
   });
 
-  it('text-only message passes through untouched', async () => {
+  it('text-only message receives a timestamp before Runner execution', async () => {
     processInboundMock.mockResolvedValue({ normalized: 'hello', dropped: [] });
 
     const { app, runnerRun, testChannel, agentEvents, runtimeEvents } =
@@ -69,7 +69,9 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     });
 
     expect(runnerRun).toHaveBeenCalledTimes(1);
-    expect(runnerRun.mock.calls[0]?.[0]?.message).toBe('hello');
+    expect(runnerRun.mock.calls[0]?.[0]?.message).toMatch(
+      /^<turn_start>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z<\/turn_start>\n\nhello$/,
+    );
     assertNoAttachmentEvents(runtimeEvents, agentEvents);
     await app.close();
   });
@@ -533,7 +535,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     const releaseRun = createDeferred<void>();
     let claimed: ChatMessage[] = [];
     const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
-      if (params.message === 'first') {
+      if (typeof params.message === 'string' && params.message.endsWith('\n\nfirst')) {
         await releaseRun.promise;
         claimed = params.steeringSource?.claimReady() ?? [];
       }
@@ -575,9 +577,9 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
 
     expect(claimed).toEqual([{ role: 'user', content: 'same' }]);
     expect(runnerRun.mock.calls.map(([params]) => params.message)).toEqual([
-      'first',
-      'other',
-      'later',
+      expect.stringContaining('</turn_start>\n\nfirst'),
+      expect.stringContaining('</turn_start>\n\nother'),
+      expect.stringContaining('</turn_start>\n\nlater'),
     ]);
     const messages = agentEvents.filter(
       (event): event is Extract<AgentEvent, { type: 'user_message' }> =>
@@ -615,9 +617,9 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     const releaseRun = createDeferred<void>();
     const releasePromotedRun = createDeferred<void>();
     const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
-      if (params.message === 'first') {
+      if (typeof params.message === 'string' && params.message.endsWith('\n\nfirst')) {
         await releaseRun.promise;
-      } else if (params.message === 'steer one') {
+      } else if (typeof params.message === 'string' && params.message.endsWith('\n\nsteer one')) {
         await releasePromotedRun.promise;
       }
       return defaultRunResult(String(params.message));
@@ -688,9 +690,9 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     releasePromotedRun.resolve();
     await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(3));
     expect(runnerRun.mock.calls.map(([params]) => params.message)).toEqual([
-      'first',
-      'steer one',
-      'steer two',
+      expect.stringContaining('</turn_start>\n\nfirst'),
+      expect.stringContaining('</turn_start>\n\nsteer one'),
+      expect.stringContaining('</turn_start>\n\nsteer two'),
     ]);
     const starts = runtimeEvents.filter((event) => event.type === 'turn_start');
     expect(starts.map((event) => event.originMessageId)).toEqual([
@@ -711,7 +713,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     async ({ stopReason }) => {
       const releaseRun = createDeferred<void>();
       const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
-        if (params.message === 'first') {
+        if (typeof params.message === 'string' && params.message.endsWith('\n\nfirst')) {
           await releaseRun.promise;
           return {
             ...defaultRunResult('first result'),
@@ -744,7 +746,9 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
         expect(runnerRun).toHaveBeenCalledTimes(2);
         expect(app.application.getState().activeRunCount).toBe(0);
       });
-      expect(runnerRun.mock.calls[1]![0].message).toBe('late');
+      expect(runnerRun.mock.calls[1]![0].message).toEqual(
+        expect.stringContaining('</turn_start>\n\nlate'),
+      );
 
       await app.close();
     },
@@ -753,7 +757,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
   it('schedules unclaimed FIFO input when the active Turn throws', async () => {
     const releaseRun = createDeferred<void>();
     const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
-      if (params.message === 'first') {
+      if (typeof params.message === 'string' && params.message.endsWith('\n\nfirst')) {
         await releaseRun.promise;
         throw new Error('test failure');
       }
@@ -783,7 +787,9 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
       expect(runnerRun).toHaveBeenCalledTimes(2);
       expect(app.application.getState().activeRunCount).toBe(0);
     });
-    expect(runnerRun.mock.calls[1]![0].message).toBe('late');
+    expect(runnerRun.mock.calls[1]![0].message).toEqual(
+      expect.stringContaining('</turn_start>\n\nlate'),
+    );
 
     await app.close();
   });
@@ -926,6 +932,11 @@ function createTestChannel(id: string): {
   const channel: Channel = {
     id,
     completion: completion.promise,
+    interaction: {
+      sendInteractionRequest: () => ({ status: 'unavailable', reason: 'delivery_failed' }),
+      sendInteractionClosed: () => {},
+      onInteractionResponse: () => {},
+    },
     send() {},
     onMessage(next) {
       handler = next;
@@ -1042,7 +1053,8 @@ async function buildApp(
       : {
           createSessionManager: () => ({
             initialize: vi.fn(async () => undefined),
-            getSession: vi.fn((sessionId: string) => ({
+            close: vi.fn(async () => undefined),
+            getPersistedSession: vi.fn((sessionId: string) => ({
               sessionId,
               createdAt: 1,
               updatedAt: 1,
@@ -1078,8 +1090,9 @@ async function buildApp(
           ],
         },
       },
-      runner: { steeringEnabled: options.steerMode ?? false },
       agents: {
+        steeringEnabled: options.steerMode ?? false,
+        maxSubagentDepth: 1,
         defaults: createDefaultAgentConfig(),
         list: [],
       },

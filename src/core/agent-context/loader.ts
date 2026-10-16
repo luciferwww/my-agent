@@ -174,7 +174,7 @@ export async function loadContextFiles(
  *
  * 与 `loadContextFiles(agentHome, opts)` 的区别：
  *  - 直接读 `<absDir>/<filename>`
- *  - 调用方负责传完整路径（例如 Child executor 传 `<agentHome>/subagents/<id>/`）
+ *  - 调用方负责传完整路径（例如 Child executor 传 `<agentHome>/agents/<id>/`）
  *
  * 截断 / 预算 / mode 行为与 `loadContextFiles` 完全一致。
  *

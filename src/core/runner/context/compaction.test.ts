@@ -265,15 +265,17 @@ describe('compactMessages', () => {
     expect(result.stats.droppedMessages).toBe(2); // turn 1 + reply 1
   });
 
-  it('passes the output-token limit to summary generation', async () => {
+  it('passes the session ID and output-token limit to summary generation', async () => {
     const messages: ChatMessage[] = [
       userMsg('turn 1'), assistantMsg('reply 1'),
       userMsg('turn 2'), assistantMsg('reply 2'),
     ];
     let capturedLimit: number | undefined;
+    let capturedSession: string | undefined;
     const llmClient = {
-      async *chatStream(request: { outputTokenLimit?: number }) {
+      async *chatStream(request: { outputTokenLimit?: number; sessionId?: string }) {
         capturedLimit = request.outputTokenLimit;
+        capturedSession = request.sessionId;
         yield { type: 'text_delta', text: 'Summary.' };
       },
     };
@@ -284,10 +286,12 @@ describe('compactMessages', () => {
       llmClient: llmClient as any,
       model: 'claude-test',
       outputTokenLimit: 8192,
+      sessionId: 'summary-session',
       trigger: 'preemptive',
     });
 
     expect(capturedLimit).toBe(8192);
+    expect(capturedSession).toBe('summary-session');
   });
 
   it('falls back to placeholder summary when LLM fails', async () => {

@@ -4,7 +4,10 @@ import {
   toModelInvocationError,
   type ModelInvocationRequest,
 } from 'my-agent/extension-api';
-import { CopilotRelayResponsesClient } from './responses-client.js';
+import {
+  CopilotRelayResponsesClient,
+  normalizeError,
+} from './responses-client.js';
 
 const request: ModelInvocationRequest = {
   model: 'gpt-5.6-sol',
@@ -191,7 +194,13 @@ describe('Copilot Relay Responses client', () => {
     expect(body.input).toEqual([reasoningItem]);
   });
 
-  it('rejects replay from another connection before sending a request', async () => {
+  it.each([
+    ['another connection', 'copilot-relay', 'http://127.0.0.1:6000'],
+    ['the builtin provider', 'builtin', 'http://127.0.0.1:5000/v1'],
+    ['another provider at the same connection', 'builtin', 'http://127.0.0.1:5000'],
+  ])('rejects replay from %s with actionable diagnostics before fetch', async (
+    _label, providerId, connectionId,
+  ) => {
     const fetchImpl = vi.fn(async () => {
       throw new Error('fetch must not be called');
     }) as unknown as typeof fetch;
@@ -224,8 +233,8 @@ describe('Copilot Relay Responses client', () => {
         invocation: {
           id: 'invocation-1',
           source: {
-            providerId: 'copilot-relay',
-            connectionId: 'http://127.0.0.1:6000',
+            providerId,
+            connectionId,
             requestModelId: request.model,
             wireProtocol: 'openai-responses',
           },
@@ -239,8 +248,56 @@ describe('Copilot Relay Responses client', () => {
     })).rejects.toMatchObject({
       name: 'ModelInvocationError',
       category: 'provider_failure',
+      diagnostics: {
+        providerMessage: 'Copilot Relay replay source is unsupported.',
+        request: { toolUseBlockCount: 0, toolResultBlockCount: 0 },
+      },
     });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('keeps accepted receipts paired with calls alongside ordinary tool results', async () => {
+    const fetchImpl = vi.fn(async () => sseResponse(
+      event('response.created') + terminal(),
+    )) as unknown as typeof fetch;
+    const client = new CopilotRelayResponsesClient({
+      baseURL: 'http://127.0.0.1:5000',
+      fetch: fetchImpl,
+    });
+    await client.chat({
+      ...request,
+      messages: [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'call-1', name: 'lookup', input: {} },
+            { type: 'tool_use', id: 'call-2', name: 'lookup', input: {} },
+          ],
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Receipt follows' },
+            { type: 'execution_accepted', tool_use_id: 'call-1', execution_id: 'execution-1' },
+            { type: 'tool_result', tool_use_id: 'call-2', content: 'immediate', status: 'success' },
+          ],
+        },
+        { role: 'user', origin: 'host', content: 'Host completion notification' },
+      ],
+    });
+    const body = JSON.parse(String(vi.mocked(fetchImpl).mock.calls[0]?.[1]?.body));
+    expect(body.input).toEqual([
+      { type: 'function_call', call_id: 'call-1', name: 'lookup', arguments: '{}' },
+      { type: 'function_call', call_id: 'call-2', name: 'lookup', arguments: '{}' },
+      { role: 'user', content: [{ type: 'input_text', text: 'Receipt follows' }] },
+      {
+        type: 'function_call_output',
+        call_id: 'call-1',
+        output: '{"status":"accepted","executionId":"execution-1"}',
+      },
+      { type: 'function_call_output', call_id: 'call-2', output: 'immediate' },
+      { role: 'user', content: [{ type: 'input_text', text: 'Host completion notification' }] },
+    ]);
   });
 
   it('uses complete function_call items and call_id for stateless tool replay', async () => {
@@ -612,5 +669,52 @@ describe('Copilot Relay Responses client', () => {
     expect(canonical).toBeInstanceOf(ModelInvocationError);
     expect(canonical?.diagnostics?.providerErrorCode).toBe('invalid_model');
     expect(JSON.stringify(canonical?.diagnostics)).not.toContain('Be concise.');
+  });
+
+  it.each([
+    [{ error: { message: 'Unsupported request field.' } }, 'Unsupported request field.'],
+    [{ error: { type: 'invalid_request_error', message: 'Invalid tool history.' } }, 'Invalid tool history.'],
+    [{ type: 'invalid_request_error', message: 'Unsupported reasoning option.' }, 'Unsupported reasoning option.'],
+    [{}, undefined],
+  ])('preserves HTTP diagnostics across the Host boundary with optional fields missing: %j', async (
+    body, providerMessage,
+  ) => {
+    const client = new CopilotRelayResponsesClient({
+      baseURL: 'http://127.0.0.1:5000',
+      fetch: vi.fn(async () => Response.json(body, { status: 400 })) as unknown as typeof fetch,
+    });
+    const events = await collect(client);
+    const last = events.at(-1);
+    if (last?.type !== 'error') throw new Error('Expected an invocation error.');
+    const canonical = toModelInvocationError(last.error);
+    expect(canonical?.category).toBe('invalid_request');
+    expect(canonical?.diagnostics).toMatchObject({
+      providerId: 'copilot-relay',
+      httpStatus: 400,
+      request: { model: request.model },
+    });
+    expect(canonical?.diagnostics?.providerMessage).toBe(providerMessage);
+    expect(canonical?.diagnostics).not.toHaveProperty('providerErrorCode');
+    expect(canonical?.diagnostics).not.toHaveProperty('requestId');
+    expect(JSON.stringify(canonical?.diagnostics)).not.toContain('Be concise.');
+  });
+
+  it.each([
+    [new Error('Protocol failure.\nRetry.\t' + 'x'.repeat(600)), 'provider_failure'],
+    [new TypeError('fetch failed'), 'transport'],
+  ])('preserves bounded local diagnostics for %s', (error, category) => {
+    const normalized = toModelInvocationError(normalizeError(error, request));
+    expect(normalized?.category).toBe(category);
+    const message = normalized?.diagnostics?.providerMessage;
+    expect(message).toBe(error.message.replace(/[\r\n\t]+/gu, ' ').trim().slice(0, 500));
+    expect(message).not.toMatch(/[\r\n\t]/u);
+    expect(JSON.stringify(normalized?.diagnostics)).not.toContain('Be concise.');
+  });
+
+  it('preserves abort and normalized errors without wrapping them again', () => {
+    const abort = new DOMException('Cancelled', 'AbortError');
+    expect(normalizeError(abort, request)).toBe(abort);
+    const normalized = normalizeError(new Error('Protocol failure.'), request);
+    expect(normalizeError(normalized, request)).toBe(normalized);
   });
 });

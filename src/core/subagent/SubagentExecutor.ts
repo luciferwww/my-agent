@@ -8,14 +8,20 @@ import type { SystemPromptBuilder } from '../prompt/SystemPromptBuilder.js';
 import type { ContextFile } from '../agent-context/types.js';
 import { buildSubagentBehavioralAddendum } from './behavioral-addendum.js';
 import type { SubagentProfile } from './types.js';
-import type { SessionPermissionMode } from '../approval/index.js';
+import type {
+  CurrentCallApprovalCapability,
+  SessionPermissionMode,
+} from '../approval/index.js';
 
 export interface SubagentExecutorDeps {
   readonly agentRunner: AgentRunner;
   readonly systemPromptBuilder: SystemPromptBuilder;
   readonly loadContextFilesFromDir: (absDir: string) => Promise<ContextFile[]>;
   readonly agentHome: string;
-  readonly resolveToolPolicy: (profile: SubagentProfile) => ApplicationToolPolicy;
+  readonly resolveToolPolicy: (
+    profile: SubagentProfile,
+    canSpawn: boolean,
+  ) => ApplicationToolPolicy;
 }
 
 export interface SubagentExecutionRequest {
@@ -28,10 +34,11 @@ export interface SubagentExecutionRequest {
   readonly canSpawn: boolean;
   readonly childSessionId: string;
   readonly childTurnId: string;
-  readonly parentMaxLlmCalls?: number;
+  readonly maxLlmCallsPerTurn?: number;
   readonly signal: AbortSignal;
   readonly toolProjection: ToolProjection;
   readonly hookProjection: HookProjection;
+  readonly approvalCapability: CurrentCallApprovalCapability;
   readonly getSessionPermissionMode: () => SessionPermissionMode;
 }
 
@@ -49,6 +56,7 @@ export interface PreparedSubagentExecution {
   readonly toolPolicy: ApplicationToolPolicy;
   readonly toolProjection: ToolProjection;
   readonly hookProjection: HookProjection;
+  readonly approvalCapability: CurrentCallApprovalCapability;
   readonly getSessionPermissionMode: () => SessionPermissionMode;
 }
 
@@ -64,7 +72,7 @@ export class SubagentExecutor {
       depth: request.childDepth,
       canSpawn: request.canSpawn,
     });
-    const toolPolicy = this.deps.resolveToolPolicy(request.profile);
+    const toolPolicy = this.deps.resolveToolPolicy(request.profile, request.canSpawn);
     const tools = request.toolProjection.visibleDefinitions(toolPolicy);
     const basePrompt = this.deps.systemPromptBuilder.build({
       mode: 'minimal',
@@ -80,13 +88,14 @@ export class SubagentExecutor {
       message: request.prompt,
       systemPrompt: basePrompt ? `${basePrompt}\n\n${addendum}` : addendum,
       turnId: request.childTurnId,
-      maxLlmCalls: request.profile.maxLlmCalls ?? request.parentMaxLlmCalls,
+      maxLlmCalls: request.maxLlmCallsPerTurn,
       signal: request.signal,
       profile: request.profile,
       tools,
       toolPolicy,
       toolProjection: request.toolProjection,
       hookProjection: request.hookProjection,
+      approvalCapability: request.approvalCapability,
       getSessionPermissionMode: request.getSessionPermissionMode,
     };
   }
@@ -99,6 +108,7 @@ export class SubagentExecutor {
       toolPolicy,
       toolProjection,
       hookProjection,
+      approvalCapability,
       getSessionPermissionMode,
       ...runRequest
     } = request;
@@ -109,6 +119,7 @@ export class SubagentExecutor {
       toolProjection,
       hookProjection,
       toolPolicy,
+      approvalCapability,
       getSessionPermissionMode,
     });
   }

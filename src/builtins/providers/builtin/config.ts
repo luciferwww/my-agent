@@ -13,6 +13,7 @@ export type BuiltinProtocol =
 export interface BuiltinModelRegistration {
   readonly modelId: string;
   readonly protocol: BuiltinProtocol;
+  readonly endpoint?: string;
   readonly displayName?: string;
   readonly maximumContextTokens?: number;
   readonly maximumPromptTokens?: number;
@@ -32,7 +33,7 @@ export interface LLMConfig {
   readonly builtin?: BuiltinLlmProviderConfig;
 }
 
-export const DEFAULT_BUILTIN_CONTEXT_LIMIT = 32_768;
+export const DEFAULT_BUILTIN_CONTEXT_LIMIT = 131_072;
 export const DEFAULT_ANTHROPIC_MAX_TOKENS = 4_096;
 
 const SUPPORTED_PROTOCOLS = new Set<BuiltinProtocol>([
@@ -43,6 +44,7 @@ const SUPPORTED_PROTOCOLS = new Set<BuiltinProtocol>([
 const MODEL_REGISTRATION_FIELDS = new Set([
   'modelId',
   'protocol',
+  'endpoint',
   'displayName',
   'maximumContextTokens',
   'maximumPromptTokens',
@@ -143,6 +145,9 @@ function validateModels(value: unknown): readonly BuiltinModelRegistration[] {
     ) {
       throw new BuiltinLlmConfigError(`${path}.displayName`);
     }
+    const endpoint = entry['endpoint'] === undefined
+      ? undefined
+      : validateEndpoint(entry['endpoint'], `${path}.endpoint`);
 
     const limits = {
       maximumContextTokens: entry['maximumContextTokens'],
@@ -176,11 +181,26 @@ function validateModels(value: unknown): readonly BuiltinModelRegistration[] {
     return {
       modelId,
       protocol: protocol as BuiltinProtocol,
+      ...(endpoint === undefined ? {} : { endpoint }),
       ...(displayName === undefined ? {} : { displayName }),
       ...copyConfiguredLimits(limits),
       ...reasoningConfig,
     };
   });
+}
+
+function validateEndpoint(value: unknown, fieldPath: string): string {
+  if (typeof value !== 'string') throw new BuiltinLlmConfigError(fieldPath);
+  const endpoint = value.trim();
+  if (
+    endpoint.replace(/^\/+|\/+$/gu, '').length === 0
+    || /^(?:[a-z][a-z0-9+.-]*:|\/\/)/iu.test(endpoint)
+    || /[\s\\?#]/u.test(endpoint)
+    || endpoint.split('/').some((part) => /^(?:\.|%2e){1,2}$/iu.test(part))
+  ) {
+    throw new BuiltinLlmConfigError(fieldPath);
+  }
+  return endpoint;
 }
 
 export function normalizeBuiltinReasoningConfig(

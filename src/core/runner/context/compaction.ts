@@ -162,6 +162,7 @@ function serializeMessagesForSummary(messages: ChatMessage[]): string {
  * 避免因摘要失败导致整个压缩流程中断。
  */
 async function generateSummary(params: {
+  sessionId?: string;
   messages: ChatMessage[];
   llmClient: ModelInvocationPort;
   model: string;
@@ -191,6 +192,7 @@ async function generateSummary(params: {
     // 使用非流式风格：收集所有 text_delta 拼成完整摘要
     let summary = '';
     for await (const event of llmClient.chatStream({
+      ...(params.sessionId === undefined ? {} : { sessionId: params.sessionId }),
       model,
       messages: [{ role: 'user', content: summaryPrompt }],
       ...(outputTokenLimit === undefined ? {} : { outputTokenLimit }),
@@ -233,6 +235,7 @@ function buildFallbackSummary(messageCount: number): string {
  *   7. 返回 CompactionResult（不写持久化，由调用方决定）
  */
 export async function compactMessages(params: {
+  sessionId?: string;
   messages: ChatMessage[];
   config: CompactionConfig;
   llmClient: ModelInvocationPort;
@@ -258,6 +261,7 @@ export async function compactMessages(params: {
 
   // 生成摘要（LLM 调用，失败时降级为兜底文本）
   const summary = await generateSummary({
+    ...(params.sessionId === undefined ? {} : { sessionId: params.sessionId }),
     messages: toCompress,
     llmClient,
     model,

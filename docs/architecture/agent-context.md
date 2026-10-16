@@ -52,7 +52,7 @@ Both public loaders share one fixed allowlist and order:
 | `full` or omitted | `IDENTITY.md` → `SOUL.md` → `AGENTS.md` → `TOOLS.md` |
 | `minimal` | `IDENTITY.md` → `SOUL.md` |
 
-Missing, unreadable, and whitespace-only files are skipped. Files outside the allowlist are never loaded. `loadContextFilesFromDir()` supports explicitly located Subagent Context while retaining the same allowlist and loading behavior.
+Missing, unreadable, and whitespace-only files are skipped. Files outside the allowlist are never loaded. `loadContextFilesFromDir()` supports explicitly located configured-Agent Context under `<agentHome>/agents/<agentId>/` while retaining the same allowlist and loading behavior.
 
 ### 4.2 Truncation and total budget
 

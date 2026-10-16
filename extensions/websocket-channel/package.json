@@ -4,10 +4,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "lint": "tsc --noEmit -p tsconfig.json",
+    "build": "npm run build:client",
+    "build:client": "vite build --config vite.config.ts",
+    "verify:client": "node scripts/verify-client-assets.mjs",
+    "lint": "tsc --noEmit -p tsconfig.json && npm run lint:client",
+    "lint:client": "vue-tsc --noEmit -p client/tsconfig.json",
     "test": "vitest run --root ../.. --config vitest.unit.config.ts extensions/websocket-channel"
   },
   "dependencies": {
     "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.9",
+    "katex": "^0.18.10",
+    "marked": "^18.0.14",
+    "vite": "^8.3.2",
+    "vue": "^3.5.43",
+    "vue-tsc": "^3.3.12"
   }
 }

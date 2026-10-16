@@ -381,6 +381,17 @@ function convertMessages(
             output: block.content,
           });
           break;
+        case 'execution_accepted':
+          flush();
+          input.push({
+            type: 'function_call_output',
+            call_id: block.tool_use_id,
+            output: JSON.stringify({
+              status: 'accepted',
+              executionId: block.execution_id,
+            }),
+          });
+          break;
         case 'thinking':
           if (message.role !== 'assistant') {
             throw new Error('Copilot Relay cannot project Thinking on a user message.');
@@ -645,9 +656,9 @@ export async function createHttpError(
   const nested = asRecord(payload?.error);
   const diagnostics = invocationDiagnostics(request, {
     httpStatus: response.status,
-    providerErrorType: sanitize(readString(nested?.type)),
+    providerErrorType: sanitize(readString(nested?.type) ?? readString(payload?.type)),
     providerErrorCode: sanitize(readString(nested?.code)),
-    providerMessage: sanitize(readString(nested?.message)),
+    providerMessage: sanitize(readString(nested?.message) ?? readString(payload?.message)),
     requestId: sanitize(
       response.headers.get('x-request-id')
         ?? response.headers.get('x-github-request-id')
@@ -671,7 +682,9 @@ export function normalizeError(error: unknown, request: ModelInvocationRequest):
   if (error instanceof Error && error.name === 'AbortError') return error;
   return new CopilotRelayInvocationError(
     error instanceof TypeError ? 'transport' : 'provider_failure',
-    invocationDiagnostics(request, {}),
+    invocationDiagnostics(request, {
+      ...(error instanceof Error ? { providerMessage: sanitize(error.message) } : {}),
+    }),
   );
 }
 
@@ -703,12 +716,19 @@ export function invocationDiagnostics(
       if (block.type === 'text') textBlockCount += 1;
       else if (block.type === 'image') imageBlockCount += 1;
       else if (block.type === 'tool_use') toolUseBlockCount += 1;
-      else toolResultBlockCount += 1;
+      else if (block.type === 'tool_result') toolResultBlockCount += 1;
     }
   }
   return {
     providerId: COPILOT_RELAY_PROVIDER_ID,
-    ...provider,
+    ...(provider.httpStatus === undefined ? {} : { httpStatus: provider.httpStatus }),
+    ...(provider.providerErrorType === undefined
+      ? {} : { providerErrorType: provider.providerErrorType }),
+    ...(provider.providerErrorCode === undefined
+      ? {} : { providerErrorCode: provider.providerErrorCode }),
+    ...(provider.providerMessage === undefined
+      ? {} : { providerMessage: provider.providerMessage }),
+    ...(provider.requestId === undefined ? {} : { requestId: provider.requestId }),
     request: Object.freeze({
       model: request.model,
       hasSystem: Boolean(request.system),

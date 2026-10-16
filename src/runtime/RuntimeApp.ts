@@ -15,6 +15,7 @@ import type {
   SessionEntry,
   SessionHistoryPage,
   SessionHistoryQuery,
+  ResolvedSession,
 } from '../core/session/index.js';
 import type {
   ModelReference,
@@ -29,6 +30,7 @@ import {
 import { TurnInteractionManager } from './turn-interaction/index.js';
 import type {
   ApprovalInteractionRequest,
+  ApprovalRequest,
   ChannelRunRequest,
   ChannelCompletion,
   ChannelCompletionObserver,
@@ -284,10 +286,8 @@ export class RuntimeApp {
       application: app,
       onChannelMessage: (binding, request) =>
         app.handleInboundChannelMessage(binding, request),
-      onInteractionResponse: (response) => app.handleInteractionResponse(response),
-      onInteractionUnavailable: (id, reason) => {
-        app.turnInteractionManager.settle(id, { outcome: 'unavailable', reason });
-      },
+      onInteractionResponse: (binding, response) => app.handleInteractionResponse(binding, response),
+      getPendingApprovals: (sessionId) => app.turnInteractionManager.getPending(sessionId),
       querySessionsNeedingAbort: () => {
         const sessions = new Set<string>(app.activeAborts.keys());
         for (const [sessionKey, queue] of app.messageQueueBySession) {
@@ -326,8 +326,8 @@ export class RuntimeApp {
     return this.sessionCoordinator.listSessions(input);
   }
 
-  getSession(sessionId: string): Promise<SessionEntry> {
-    return this.sessionCoordinator.getSession(sessionId);
+  resolveSession(sessionId: string): Promise<ResolvedSession> {
+    return this.sessionCoordinator.resolveSession(sessionId);
   }
 
   getSessionHistory(query: SessionHistoryQuery): Promise<SessionHistoryPage> {
@@ -610,86 +610,78 @@ export class RuntimeApp {
     if (this.approvalRoutingWired) return;
     this.approvalRoutingWired = true;
 
-    // TurnInteractionManager → origin channel
     this.turnInteractionManager.onRequest((request) => {
-      const originChannel = this.routeContextByTurn.get(request.turnId)?.originChannel;
-      if (!originChannel) {
-        log.warn('interaction request has no origin channel', {
-          interactionId: request.id,
-          toolName: request.toolName,
-          turnId: request.turnId,
-          sessionId: request.sessionId,
-          originClientId: request.originClientId,
-        });
-        return { status: 'unavailable', reason: 'origin_missing' };
-      }
-
-      log.info('routing interaction request to origin channel', {
-        interactionId: request.id,
-        toolName: request.toolName,
-        turnId: request.turnId,
-        sessionId: request.sessionId,
-        originClientId: request.originClientId,
-        channelId: originChannel.id,
-        route: 'interaction',
-      });
-      if (!originChannel.interaction) {
-        return { status: 'unavailable', reason: 'origin_missing' };
-      }
       const interactionRequest: ApprovalInteractionRequest = {
         ...request,
         kind: 'approval',
       };
-      return originChannel.interaction.sendInteractionRequest(interactionRequest);
+      let accepted = false;
+      for (const channel of this.approvalTargets(request)) {
+        // An adapter can decide synchronously while receiving the request.
+        if (!this.turnInteractionManager.getPending().some((pending) => pending.id === request.id)) {
+          break;
+        }
+        try {
+          const delivery = channel.interaction.sendInteractionRequest(interactionRequest);
+          accepted ||= delivery.status === 'accepted';
+        } catch (error) {
+          log.error('interaction delivery adapter failed', {
+            interactionId: request.id,
+            channelId: channel.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      if (!accepted) {
+        log.warn('no channel accepted interaction delivery', {
+          interactionId: request.id,
+          originChannelId: request.originChannelId,
+        });
+      }
+      return accepted
+        ? { status: 'accepted' }
+        : { status: 'unavailable', reason: 'delivery_failed' };
     });
 
     this.turnInteractionManager.onClose((request, result) => {
-      const originChannel = this.routeContextByTurn.get(request.turnId)?.originChannel;
-      if (!originChannel) {
-        log.warn('interaction closure has no origin channel', {
-          interactionId: request.id,
-          toolName: request.toolName,
-          turnId: request.turnId,
-          sessionId: request.sessionId,
-          originClientId: request.originClientId,
-        });
-        return;
-      }
-
-      log.info('routing interaction closure to origin channel', {
-        interactionId: request.id,
-        toolName: request.toolName,
-        turnId: request.turnId,
-        sessionId: request.sessionId,
-        originClientId: request.originClientId,
-        channelId: originChannel.id,
-        route: 'interaction',
-      });
-
-      if (originChannel.interaction) {
-        const interactionRequest: ApprovalInteractionRequest = {
-          ...request,
-          kind: 'approval',
-        };
-        originChannel.interaction.sendInteractionClosed(interactionRequest, result);
+      const interactionRequest: ApprovalInteractionRequest = { ...request, kind: 'approval' };
+      for (const channel of this.approvalTargets(request)) {
+        try {
+          channel.interaction.sendInteractionClosed(interactionRequest, result);
+        } catch (error) {
+          log.error('interaction closure adapter failed', {
+            interactionId: request.id,
+            channelId: channel.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     });
   }
 
-  private getApprovalCapability(turnId: string): CurrentCallApprovalCapability | undefined {
-    const route = this.routeContextByTurn.get(turnId);
-    const originChannel = route?.originChannel;
-    if (!originChannel?.interaction) return undefined;
+  private approvalTargets(request: ApprovalRequest): readonly ChannelRuntimeBinding[] {
+    const channels = this.channelBindingsForTurn(request.turnId)
+      ?? this.snapshotAccess.currentSnapshot().channels.bindings;
+    if (request.originChannelId === undefined) return channels;
+    const origin = this.routeContextByTurn.get(request.turnId)?.originChannel;
+    if (origin?.id === request.originChannelId) return [origin];
+    return channels.filter((channel) => channel.id === request.originChannelId);
+  }
 
+  private getApprovalCapability(
+    turnId: string,
+    audienceSessionId: string,
+  ): CurrentCallApprovalCapability {
     const capability: CurrentCallApprovalCapability = {
       request: async (request, signal) => this.turnInteractionManager.request({
         request: {
           callId: request.callId,
           toolName: request.toolName,
           input: { ...request.input },
-          sessionId: request.sessionId,
+          sessionId: audienceSessionId,
           turnId: request.turnId,
-          originClientId: this.routeContextByTurn.get(request.turnId)?.originClientId,
+          originChannelId: this.routeContextByTurn.get(turnId)?.originChannel?.id,
+          originClientId: this.routeContextByTurn.get(turnId)?.originClientId,
         },
         signal,
       }),
@@ -697,7 +689,10 @@ export class RuntimeApp {
     return Object.freeze(capability);
   }
 
-  private handleInteractionResponse(response: TurnInteractionResponse): void {
+  private handleInteractionResponse(
+    binding: ChannelRuntimeBinding,
+    response: TurnInteractionResponse,
+  ): void {
     log.info('interaction response received from channel', {
       interactionId: response.id,
       kind: response.kind,
@@ -710,6 +705,23 @@ export class RuntimeApp {
         interactionId: response.id,
         kind: response.kind,
         outcome: response.outcome,
+      });
+      return;
+    }
+
+    const pending = this.turnInteractionManager.getPending().find((request) => request.id === response.id);
+    if (!pending) {
+      log.warn('interaction response ignored for unknown id', {
+        interactionId: response.id,
+        channelId: binding.id,
+      });
+      return;
+    }
+    if (pending.originChannelId !== undefined && pending.originChannelId !== binding.id) {
+      log.warn('interaction response ignored from non-origin channel', {
+        interactionId: response.id,
+        channelId: binding.id,
+        originChannelId: pending.originChannelId,
       });
       return;
     }
@@ -793,6 +805,7 @@ export class RuntimeApp {
       originMessageId: messageId,
     };
 
+    this.sessionCoordinator.assertLiveSession(req.sessionId);
     this.assertAcceptsIntake();
     this.fanoutAgentEvent({
       type: 'user_message',
@@ -1133,9 +1146,7 @@ export class RuntimeApp {
 
   /**
    * Snapshot the projection of `subagentProfiles` used for the
-   * `<available-subagents>` system prompt section. Caller (typically
-   * the prompt-factory layer) decides whether to inject it based on
-   * `subagents.enabled` and the prompt mode.
+   * `<available-subagents>` system prompt section.
    */
   getAvailableSubagents(): AvailableSubagentEntry[] {
     return collectAvailableSubagents(this.subagentProfiles);
@@ -1304,21 +1315,6 @@ export class RuntimeApp {
           [...this.activeRootGenerations.values()].map((tree) => tree.generation),
         )].sort((left, right) => left - right);
 
-        const processCleanup = await budget.raceRemainingLazy(
-          () => this.resources.managedProcessLifecycle.shutdown(),
-        );
-        if (processCleanup.outcome === 'completed') {
-          completed.push('managedProcesses');
-        } else if (processCleanup.outcome === 'failed') {
-          failed.push({ resource: 'managedProcesses', message: processCleanup.message });
-        } else {
-          residuals.push({
-            owner: 'resource',
-            phase: 'managed-process-cleanup',
-            message: 'Managed process cleanup did not converge before the shutdown deadline.',
-          });
-        }
-
         this.resources.contextFiles = [];
         this.state.closedAt = Date.now();
         this.setPhase('closed');
@@ -1435,13 +1431,10 @@ export class RuntimeApp {
           toolNames: visibleToolDefinitions.map(({ name }) => name),
           overrides: params,
           agentHome: this.resources.agentHome,
-          // Only inject the <available-subagents> section when the feature is
-          // on. SystemPromptBuilder additionally suppresses it in minimal mode
-          // (which is what subagents themselves get).
-          availableSubagents:
-            this.resources.resolvedConfig.subagents.enabled
-              ? this.getAvailableSubagents()
-              : undefined,
+          // Tool policy is the public delegation enablement control.
+          availableSubagents: visibleToolDefinitions.some(({ name }) => name === 'task')
+            ? this.getAvailableSubagents()
+            : undefined,
         }),
       );
 
@@ -1452,7 +1445,8 @@ export class RuntimeApp {
         modelId: resolvedModel.identity.modelId,
       });
       const effectiveMaxLlmCalls =
-        params.maxLlmCalls ?? this.resources.runnerConfig.maxLlmCalls;
+        params.maxLlmCalls ?? this.resources.runnerConfig.maxLlmCallsPerTurn;
+      const approvalCapability = this.getApprovalCapability(params.turnId, params.sessionId);
       parentRecord = Object.freeze({
         requestId: params.requestId,
         sessionId: params.sessionId,
@@ -1460,9 +1454,9 @@ export class RuntimeApp {
         turnId: params.turnId,
         signal: controller.signal,
         effectiveReference,
-        effectiveMaxLlmCalls,
         contextFiles: Object.freeze([...this.resources.contextFiles]),
         registrySnapshot: snapshot,
+        approvalCapability,
         getSessionPermissionMode: () =>
           this.sessionPermissions.get(params.sessionId).mode,
         registerChild: () => this.registerChild(params.turnId, tree),
@@ -1485,7 +1479,7 @@ export class RuntimeApp {
         toolPolicy: this.resources.toolPolicy,
         getSessionPermissionMode: () =>
           this.sessionPermissions.get(params.sessionId).mode,
-        approvalCapability: this.getApprovalCapability(params.turnId),
+        approvalCapability,
         maxLlmCalls: effectiveMaxLlmCalls,
         ...(this.resources.runnerConfig.steeringEnabled
           ? {

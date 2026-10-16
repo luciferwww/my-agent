@@ -119,7 +119,8 @@ interface SessionStore {
 ### 3.3 Pending Session ID 登记
 
 ```ts
-interface PendingSessionRegistration {
+interface PendingSessionEntry {
+  kind: 'pending';
   sessionId: string;
   createdAt: number;
 }
@@ -159,7 +160,7 @@ type SessionRuntimeStatus =
 |---|---|
 | `createSession()` | 生成并登记 pending ID，返回 `{ sessionId }`；不持久化、不进入列表 |
 | `listSessions({ scope?, archived? })` | 默认返回当前作用域内未归档 Session，按 `updatedAt` 倒序 |
-| `getSession(sessionId)` | 按稳定 ID 精确获取 |
+| `getSession(sessionId)` | 按稳定 ID 精确获取 Pending 或持久化 Session，并以 `kind` 区分 |
 | `renameSession(sessionId, title?)` | 只更新标题；允许清空为未命名 |
 | `archiveSession(sessionId)` | 停止接受新 Turn，并从默认列表隐藏；保留 Transcript |
 | `unarchiveSession(sessionId)` | 恢复到默认列表 |

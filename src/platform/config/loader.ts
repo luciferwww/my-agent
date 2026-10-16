@@ -78,8 +78,14 @@ export function resolveAgentConfig(
   if (options?.agentId) {
     const entry = config.agents.list.find((e) => e.id === options.agentId);
     if (entry) {
-      // 从 AgentEntry 中提取覆盖字段（排除 id 和 default）
-      const { id: _id, default: _default, ...overrides } = entry;
+      // 从 AgentEntry 中提取能力覆盖字段（排除共享 Agent 元数据）
+      const {
+        id: _id,
+        description: _description,
+        default: _default,
+        model: _model,
+        ...overrides
+      } = entry;
       resolved = deepMerge(resolved, overrides as DeepPartial<AgentDefaults>);
     }
   }

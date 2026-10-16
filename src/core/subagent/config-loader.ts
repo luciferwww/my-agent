@@ -1,6 +1,16 @@
 import { join } from 'node:path';
-import type { SubagentConfigEntry } from './config.js';
+import type { ModelReference } from '../model-resolution/index.js';
 import type { SubagentProfile } from './types.js';
+
+interface ConfiguredAgentProfileEntry {
+  readonly id: string;
+  readonly description: string;
+  readonly model?: ModelReference;
+  readonly tools?: {
+    readonly allow?: readonly string[];
+    readonly deny?: readonly string[];
+  };
+}
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -11,17 +21,13 @@ const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
  *  built-in anonymous subagent (built by {@link buildGeneralPurposeProfile}). */
 const RESERVED_IDS = new Set<string>(['general-purpose']);
 
-/** Path segments appended to `agentHome` to derive a subagent's `agentDir`. */
-const SUBAGENT_DIR_SEGMENTS = ['subagents'] as const;
-
-/** Built into v1 capabilities; subagents cannot grant themselves `task`
- *  to spawn further subagents (spec §13 overflow protection). */
-const TASK_TOOL_NAME = 'task';
+/** Path segments appended to `agentHome` to derive a configured Agent's directory. */
+const AGENT_DIR_SEGMENTS = ['agents'] as const;
 
 // ── Helpers ──────────────────────────────────────────────────
 
 function deriveAgentDir(agentHome: string, id: string): string {
-  return join(agentHome, ...SUBAGENT_DIR_SEGMENTS, id);
+  return join(agentHome, ...AGENT_DIR_SEGMENTS, id);
 }
 
 /** A glob entry contains `*` or `?`. Glob lookups bypass the registered-name
@@ -31,15 +37,15 @@ function isGlob(name: string): boolean {
 }
 
 function resolveModelSelection(
-  model: SubagentConfigEntry['model'] | unknown,
+  model: ModelReference | undefined | unknown,
   profileId: string,
 ): SubagentProfile['model'] {
-  if (model === 'inherit') {
-    return model;
+  if (model === undefined) {
+    return 'inherit';
   }
   if (!model || typeof model !== 'object' || Array.isArray(model)) {
     throw new Error(
-      `subagents.list["${profileId}"]: model must be "inherit" or a native Model Reference`,
+      `agents.list["${profileId}"]: model must be a native Model Reference`,
     );
   }
 
@@ -47,13 +53,13 @@ function resolveModelSelection(
   const allowedKeys = new Set(['providerId', 'modelId']);
   const unknownKey = Object.keys(candidate).find((key) => !allowedKeys.has(key));
   if (unknownKey) {
-    throw new Error(`subagents.list["${profileId}"].model: unknown field "${unknownKey}"`);
+    throw new Error(`agents.list["${profileId}"].model: unknown field "${unknownKey}"`);
   }
-  if (typeof candidate.modelId !== 'string') {
-    throw new Error(`subagents.list["${profileId}"].model: modelId must be a string`);
+  if (typeof candidate.modelId !== 'string' || candidate.modelId.trim() === '') {
+    throw new Error(`agents.list["${profileId}"].model: modelId must be nonblank`);
   }
   if (typeof candidate.providerId !== 'string' || candidate.providerId.trim() === '') {
-    throw new Error(`subagents.list["${profileId}"].model: providerId must be nonblank`);
+    throw new Error(`agents.list["${profileId}"].model: providerId must be nonblank`);
   }
 
   return Object.freeze({
@@ -65,7 +71,8 @@ function resolveModelSelection(
 // ── Public API ───────────────────────────────────────────────
 
 /**
- * Validate user-provided `SubagentConfigEntry[]` and project them into
+ * Validate configured Agent entries and project their Subagent-supported
+ * fields into
  * `SubagentProfile[]`.
  *
  * Validation rules (each violation throws — bootstrap.ts converts the
@@ -75,15 +82,14 @@ function resolveModelSelection(
  * - `id` cannot be in {@link RESERVED_IDS} (e.g. `general-purpose`).
  * - `id` must be unique across the list.
  * - `description` is required.
- * - `tools.allow` cannot contain `'task'` in v1 (no nested spawning).
  * - Every exact name (non-glob) in `tools.allow` must be a registered tool.
  *   Glob entries (`*` / `?`) are passed through without name checking.
  *
  * `agentDir` is ALWAYS derived from `agentHome + id` (spec §8.1). Whether
  * the directory actually exists is probed later by the Child executor.
  */
-export function loadSubagentProfiles(
-  list: SubagentConfigEntry[],
+export function loadConfiguredAgentProfiles(
+  list: readonly ConfiguredAgentProfileEntry[],
   agentHome: string,
   registeredToolNames: ReadonlySet<string>,
 ): SubagentProfile[] {
@@ -92,28 +98,23 @@ export function loadSubagentProfiles(
 
   for (const entry of list) {
     if (!entry.id || !ID_PATTERN.test(entry.id)) {
-      throw new Error(`subagents.list[]: invalid id "${entry.id}"`);
+      throw new Error(`agents.list[]: invalid id "${entry.id}"`);
     }
     if (RESERVED_IDS.has(entry.id)) {
-      throw new Error(`subagents.list["${entry.id}"]: reserved id, cannot be used`);
+      throw new Error(`agents.list["${entry.id}"]: reserved id, cannot be used`);
     }
     if (seen.has(entry.id)) {
-      throw new Error(`subagents.list: duplicate id "${entry.id}"`);
+      throw new Error(`agents.list: duplicate id "${entry.id}"`);
     }
     if (!entry.description) {
-      throw new Error(`subagents.list["${entry.id}"]: description is required`);
+      throw new Error(`agents.list["${entry.id}"]: description is required`);
     }
     const model = resolveModelSelection(entry.model, entry.id);
-    if (entry.tools?.allow?.includes(TASK_TOOL_NAME)) {
-      throw new Error(
-        `subagents.list["${entry.id}"]: allow cannot contain "${TASK_TOOL_NAME}" in v1`,
-      );
-    }
     if (entry.tools?.allow) {
       for (const name of entry.tools.allow) {
         if (!isGlob(name) && !registeredToolNames.has(name)) {
           throw new Error(
-            `subagents.list["${entry.id}"]: allow references unknown tool "${name}"`,
+            `agents.list["${entry.id}"]: allow references unknown tool "${name}"`,
           );
         }
       }
@@ -125,8 +126,12 @@ export function loadSubagentProfiles(
       description: entry.description,
       agentDir: deriveAgentDir(agentHome, entry.id),
       model,
-      tools: entry.tools,
-      maxLlmCalls: entry.maxLlmCalls,
+      tools: entry.tools === undefined
+        ? undefined
+        : {
+            ...(entry.tools.allow === undefined ? {} : { allow: [...entry.tools.allow] }),
+            ...(entry.tools.deny === undefined ? {} : { deny: [...entry.tools.deny] }),
+          },
     });
   }
 
@@ -136,11 +141,8 @@ export function loadSubagentProfiles(
 /**
  * Build the built-in anonymous subagent profile.
  *
- * `agentDir` is derived by the same rule as named profiles (keeps the
- * type invariant `agentDir: string`). The directory normally does not
- * exist on disk; the Child executor detects that at run time and falls
- * back to the parent's contextFiles (spec §6 decision 10 — anonymous
- * subagent behavior).
+ * `agentDir` is derived by the same rule as named Agents. The directory
+ * normally does not exist; the Child executor falls back to Root Context.
  *
  * The built-in profile explicitly inherits the Parent effective Model
  * Reference. Other optional execution settings remain unset.

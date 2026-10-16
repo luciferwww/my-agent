@@ -31,7 +31,7 @@ describe('prepareExtensionConfig', () => {
     ['literal', 'relay-secret', {}, 'relay-secret'],
     ['exact reference', '${RELAY_API_KEY}', { RELAY_API_KEY: 'resolved-secret' }, 'resolved-secret'],
     ['embedded non-reference', 'prefix-${RELAY_API_KEY}', { RELAY_API_KEY: 'ignored' }, 'prefix-${RELAY_API_KEY}'],
-  ])('materializes an extension apiKey %s before schema validation', (
+  ])('materializes a write-only root string %s before schema validation', (
     _label,
     apiKey,
     environment,
@@ -39,7 +39,7 @@ describe('prepareExtensionConfig', () => {
   ) => {
     const result = prepareExtensionConfig(
       { apiKey },
-      objectSchema({ apiKey: { type: 'string' } }, ['apiKey']),
+      objectSchema({ apiKey: { type: 'string', writeOnly: true } }, ['apiKey']),
       environment,
     );
 
@@ -47,11 +47,11 @@ describe('prepareExtensionConfig', () => {
   });
 
   it.each([undefined, '   '])(
-    'rejects a missing or blank exact apiKey reference safely',
+    'rejects a missing or blank exact write-only reference safely',
     (value) => {
       const result = prepareExtensionConfig(
         { apiKey: '${RELAY_API_KEY}' },
-        objectSchema({ apiKey: { type: 'string' } }, ['apiKey']),
+        objectSchema({ apiKey: { type: 'string', writeOnly: true } }, ['apiKey']),
         { RELAY_API_KEY: value },
       );
 
@@ -65,6 +65,91 @@ describe('prepareExtensionConfig', () => {
       expect(JSON.stringify(result)).not.toContain('   ');
     },
   );
+
+  it('does not infer sensitive behavior from the apiKey property name', () => {
+    const result = prepareExtensionConfig(
+      { apiKey: '${RELAY_API_KEY}' },
+      objectSchema({ apiKey: { type: 'string' } }, ['apiKey']),
+      { RELAY_API_KEY: 'resolved-secret' },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      config: { apiKey: '${RELAY_API_KEY}' },
+    });
+  });
+
+  it('materializes any direct root string explicitly marked write-only', () => {
+    const result = prepareExtensionConfig(
+      { accessToken: '${PROVIDER_TOKEN}' },
+      objectSchema({
+        accessToken: { type: 'string', writeOnly: true },
+      }, ['accessToken']),
+      { PROVIDER_TOKEN: 'resolved-token' },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      config: { accessToken: 'resolved-token' },
+    });
+  });
+
+  it.each([
+    ['non-string', { type: 'number', writeOnly: true }, false],
+    ['not write-only', { type: 'string', writeOnly: false }, true],
+    ['referenced', {
+      type: 'string',
+      writeOnly: true,
+      $ref: '#/definitions/secret',
+    }, true],
+    ['composed', {
+      type: 'string',
+      writeOnly: true,
+      allOf: [{ minLength: 1 }],
+    }, true],
+  ])('does not materialize an unsupported %s property shape', (
+    _label,
+    propertySchema,
+    remainsValid,
+  ) => {
+    const schema = {
+      ...objectSchema({ value: propertySchema }, ['value']),
+      definitions: {
+        secret: { type: 'string', writeOnly: true },
+      },
+    };
+    const result = prepareExtensionConfig(
+      { value: '${PROVIDER_TOKEN}' },
+      schema,
+      { PROVIDER_TOKEN: 'resolved-token' },
+    );
+
+    expect(result).toMatchObject(
+      remainsValid
+        ? { ok: true, config: { value: '${PROVIDER_TOKEN}' } }
+        : { ok: false, code: 'config_validation_failed' },
+    );
+  });
+
+  it('escapes and bounds sensitive-property diagnostic paths', () => {
+    const propertyName = `${'a'.repeat(195)}~`;
+    const result = prepareExtensionConfig(
+      { [propertyName]: '${MISSING_TOKEN}' },
+      objectSchema({
+        [propertyName]: { type: 'string', writeOnly: true },
+      }, [propertyName]),
+      {},
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      referencePath: expect.stringMatching(/^\//),
+    });
+    if (!result.ok) {
+      expect(result.referencePath!.length).toBeLessThanOrEqual(200);
+      expect(result.referencePath).not.toMatch(/~(?:[^01]|$)/);
+    }
+  });
 
   it('applies static defaults only to the cloned config', () => {
     const input = {};

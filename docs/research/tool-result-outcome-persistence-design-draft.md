@@ -36,7 +36,7 @@
 | Runner | 持有 `{ callId, outcome, content }`，实时结果由 `outcome !== 'success'` 派生 `isError` | [AgentRunner](../../src/core/runner/AgentRunner.ts) |
 | Transcript 写入 | 同一个 Runner 构造 `tool_result` 时只保留关联 ID 和 content，没有保留 outcome | [AgentRunner](../../src/core/runner/AgentRunner.ts)、[Session types](../../src/core/session/types.ts) |
 | History | 从持久化消息生成展示页，没有额外执行状态来源 | [SessionManager](../../src/core/session/SessionManager.ts) |
-| Web 客户端 | 实时使用 `isError`；History 重建默认 `isError: false`，收到结果便标记 completed | [chat.html](../../extensions/websocket-channel/client/chat.html) |
+| Web 客户端 | 实时使用 `isError`；History 重建默认 `isError: false`，收到结果便标记 completed | [conversation.ts](../../extensions/websocket-channel/client/src/client/conversation.ts)、[history.ts](../../extensions/websocket-channel/client/src/client/history.ts) |
 
 因此失败 Tool 的错误文本已经保存，但机器可判断的失败状态被丢弃。Turn 终态后使用 History 替换实时内容时，卡片可能由 Failed 变成 Succeeded。
 
@@ -198,7 +198,7 @@ Tool Call 卡片
 | WebSocket 断开 | 清除或禁用待审批按钮，沿用连接状态提示 | 不伪造执行结果、不自动重发决定 |
 | History 重建 | 不恢复按钮 | 从持久化 Tool Result 恢复状态 |
 
-“发送后隐藏”是乐观 UI，不等于服务端确认接受。当前普通用户 Allow / Deny 不触发 `approval_closed`，因此不能等待该消息才移除按钮。现有事实见 [客户端 resolveApproval](../../extensions/websocket-channel/client/chat.html)、[WebSocket Approval 路由](../../extensions/websocket-channel/WebSocketChannel.ts)及 [TurnInteractionManager](../../src/runtime/turn-interaction/TurnInteractionManager.ts) 的关闭通知条件。本期不新增 ack、请求超时或重试机制。
+“发送后隐藏”是乐观 UI，不等于服务端确认接受。当前普通用户 Allow / Deny 不触发 `approval_closed`，因此不能等待该消息才移除按钮。现有事实见 [客户端 Approval transitions](../../extensions/websocket-channel/client/src/client/conversation.ts)、[WebSocket Approval 路由](../../extensions/websocket-channel/WebSocketChannel.ts)及 [TurnInteractionManager](../../src/runtime/turn-interaction/TurnInteractionManager.ts) 的关闭通知条件。本期不新增 ack、请求超时或重试机制。
 
 若发送同步失败，不应把决定视为已提交；沿用现有错误/连接提示处理。已有 `channel_error` 也不能因隐藏按钮而被吞掉。当前没有独立审批过期计时器，但 Abort、关闭或 Session Allow All 可以在连接仍正常时结束待审批请求；沿用这些已有路径，不另造“过期”生命周期。
 

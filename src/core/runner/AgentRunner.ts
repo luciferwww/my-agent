@@ -43,6 +43,7 @@ import { pruneToolResults, pruneToolResultsAggregate } from './context/tool-resu
 import { checkContextBudget } from './context/context-budget.js';
 import { resolveInputTokenBudget } from './context/input-budget.js';
 import { estimatePromptTokens } from './context/token-estimation.js';
+import { filterIncompatibleThinking } from './context/filter-incompatible-thinking.js';
 import { ContextOverflowError } from './errors.js';
 import { compactMessages } from './context/compaction.js';
 import { Logger } from '../../platform/logger/index.js';
@@ -499,7 +500,7 @@ export class AgentRunner {
     // Repair missing tool results from persisted state before loading history.
     await this.repairOrphanToolUses(turnCtx);
 
-    let messages: ChatMessage[] = this.loadHistory(params.sessionId);
+    let messages = filterIncompatibleThinking(this.loadHistory(params.sessionId), params.resolvedModel);
 
     // Layer 1 prunes individual historical tool results, not the current message.
     if (compaction.enabled) {
@@ -985,6 +986,7 @@ export class AgentRunner {
 
     // Generate the LLM summary.
     const compactResult = await compactMessages({
+      sessionId: turnCtx.sessionId,
       messages,
       config: compaction,
       llmClient: params.resolvedModel.invocationPort,
@@ -1214,6 +1216,7 @@ export class AgentRunner {
 
     try {
       for await (const event of resolvedModel.invocationPort.chatStream({
+        sessionId: turnCtx.sessionId,
         model: resolvedModel.identity.modelId,
         invocationId: randomUUID(),
         system: params.system,

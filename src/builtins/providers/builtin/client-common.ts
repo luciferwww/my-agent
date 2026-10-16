@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import {
   ContextOverflowError,
   ModelInvocationError,
@@ -14,8 +15,27 @@ import type { ToolCall } from '../../../core/tools/index.js';
 
 export interface ProtocolClientOptions {
   readonly baseURL: string;
+  readonly modelEndpoints?: ReadonlyMap<string, string>;
   readonly apiKey?: string;
   readonly fetch?: typeof fetch;
+}
+
+export function resolveRequestURL(
+  options: ProtocolClientOptions,
+  model: string,
+  defaultPath: string,
+): string {
+  const endpoint = options.modelEndpoints?.get(model);
+  return endpoint === undefined
+    ? `${options.baseURL}${defaultPath}`
+    : `${options.baseURL.replace(/\/+$/u, '')}/${endpoint.replace(/^\/+/u, '')}`;
+}
+
+export function createSessionHeaders(request: ModelInvocationRequest): Record<string, string> {
+  return {
+    'user-agent': 'my-agent/0.1.0',
+    'x-opencode-session': request.sessionId ?? randomUUID(),
+  };
 }
 
 export interface Terminal {

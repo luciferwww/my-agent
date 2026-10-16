@@ -1,8 +1,11 @@
 import { homedir } from 'node:os';
 
-import { createCliChannelUnit } from '../../builtins/channels/cli/index.js';
 import {
-  ensureAgentConfigDocument,
+  createCliChannelUnit,
+  type CliChannelConfig,
+} from '../../builtins/channels/cli/index.js';
+import {
+  AgentConfigError,
   loadAgentConfig,
   type AgentConfigSnapshot,
 } from '../../platform/config/index.js';
@@ -18,6 +21,7 @@ import { createRuntimeHost } from './runtime-host.js';
 export interface StandaloneHostArguments {
   readonly agentHomeArgument?: string;
   readonly cli: boolean;
+  readonly initialize: boolean;
 }
 
 const CLI_CHANNEL_CONFIG = Object.freeze({
@@ -34,10 +38,14 @@ export interface StandaloneHostRunOptions {
   readonly resolvePathContext?: (
     options: StandaloneHostPathResolutionOptions,
   ) => Promise<AgentPathContext>;
-  readonly ensureConfig?: typeof ensureAgentConfigDocument;
   readonly loadConfig?: typeof loadAgentConfig;
+  readonly initializeAgentHome?: (options: {
+    readonly pathContext: AgentPathContext;
+    readonly environment: Readonly<Record<string, string | undefined>>;
+  }) => Promise<void>;
   readonly createRuntime?: typeof RuntimeApp.create;
   readonly createHost?: typeof createRuntimeHost;
+  readonly cliOutput?: NodeJS.WritableStream;
 }
 
 export function parseStandaloneHostArguments(
@@ -46,6 +54,8 @@ export function parseStandaloneHostArguments(
   let agentHomeArgument: string | undefined;
   let cli = false;
   let cliSeen = false;
+  let initialize = false;
+  let initializeSeen = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index]!;
@@ -83,12 +93,26 @@ export function parseStandaloneHostArguments(
       continue;
     }
 
+    if (token === '--initialize') {
+      if (initializeSeen) {
+        throw new Error('HOST_ARGUMENT_INVALID: Duplicate argument --initialize.');
+      }
+      initialize = true;
+      initializeSeen = true;
+      continue;
+    }
+
     throw new Error(`HOST_ARGUMENT_INVALID: Unknown argument ${token}.`);
+  }
+
+  if (cli && initialize) {
+    throw new Error('HOST_ARGUMENT_INVALID: --initialize and --cli are mutually exclusive.');
   }
 
   return Object.freeze({
     ...(agentHomeArgument === undefined ? {} : { agentHomeArgument }),
     cli,
+    initialize,
   });
 }
 
@@ -108,8 +132,9 @@ export function validateStandaloneHostComposition(
 
 export function createStandaloneHostUnits(
   cliEnabled: boolean,
+  cliConfig: CliChannelConfig = CLI_CHANNEL_CONFIG,
 ): readonly LoadedRuntimeUnit[] {
-  return Object.freeze(cliEnabled ? [createCliChannelUnit(CLI_CHANNEL_CONFIG)] : []);
+  return Object.freeze(cliEnabled ? [createCliChannelUnit(cliConfig)] : []);
 }
 
 export async function runStandaloneHost(
@@ -117,6 +142,15 @@ export async function runStandaloneHost(
 ): Promise<void> {
   const env = options.env ?? process.env;
   const parsedArguments = parseStandaloneHostArguments(options.argv ?? process.argv.slice(2));
+  const cliOutput = options.cliOutput ?? process.stdout;
+  const startupStartedAt = Date.now();
+  let activateCliInteraction: (() => void) | undefined;
+  const cliInteractionReady = new Promise<void>((resolve) => {
+    activateCliInteraction = resolve;
+  });
+  if (parsedArguments.cli) {
+    cliOutput.write('Starting my-agent...\n');
+  }
   const pathOptions: StandaloneHostPathResolutionOptions = {
     moduleUrl: options.moduleUrl ?? import.meta.url,
     homeDirectory: options.homeDirectory ?? homedir(),
@@ -128,16 +162,35 @@ export async function runStandaloneHost(
   const pathContext = await (options.resolvePathContext ?? resolveStandaloneHostPathContext)(
     pathOptions,
   );
-  await (options.ensureConfig ?? ensureAgentConfigDocument)({
-    agentHome: pathContext.agentHome,
-  });
-  const snapshot = await (options.loadConfig ?? loadAgentConfig)({
-    agentHome: pathContext.agentHome,
-    environment: env,
-  });
+  if (parsedArguments.initialize) {
+    const initializeAgentHome = options.initializeAgentHome
+      ?? (await import('./agent-home-initialization/index.js')).runAgentHomeInitialization;
+    await initializeAgentHome({ pathContext, environment: env });
+    return;
+  }
+
+  let snapshot: AgentConfigSnapshot;
+  try {
+    snapshot = await (options.loadConfig ?? loadAgentConfig)({
+      agentHome: pathContext.agentHome,
+      environment: env,
+    });
+  } catch (error) {
+    if (error instanceof AgentConfigError && error.code === 'FILE_MISSING') {
+      throw new Error(
+        `Agent configuration file is missing. Run my-agent --initialize --agent-home ${JSON.stringify(pathContext.agentHome)}.`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
   validateStandaloneHostComposition(snapshot, parsedArguments.cli);
 
-  const hostUnits = createStandaloneHostUnits(parsedArguments.cli);
+  const hostUnits = createStandaloneHostUnits(parsedArguments.cli, {
+    ...CLI_CHANNEL_CONFIG,
+    output: cliOutput,
+    interactionReady: cliInteractionReady,
+  });
   const runtime = await (options.createRuntime ?? RuntimeApp.create)({
     agentHome: pathContext.agentHome,
     startupContext: {
@@ -147,11 +200,23 @@ export async function runStandaloneHost(
     },
     loadedUnits: hostUnits,
   });
+  if (parsedArguments.cli) {
+    cliOutput.write(
+      `Ready in ${formatStartupDuration(Date.now() - startupStartedAt)} · /help for commands\n`,
+    );
+    activateCliInteraction?.();
+  }
   await awaitHostLifetime(
     runtime,
     parsedArguments.cli,
     options.createHost ?? createRuntimeHost,
   );
+}
+
+function formatStartupDuration(durationMs: number): string {
+  return durationMs < 1_000
+    ? `${durationMs}ms`
+    : `${(durationMs / 1_000).toFixed(1)}s`;
 }
 
 async function awaitHostLifetime(

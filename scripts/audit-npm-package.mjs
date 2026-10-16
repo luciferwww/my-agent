@@ -1,4 +1,5 @@
 const EXPECTED_BIN = 'dist/host/hosts/standalone/entry.js';
+const CLIENT_DIST_PREFIX = 'extensions/websocket-channel/client/dist/';
 const EXPECTED_FILES_ALLOWLIST = Object.freeze([
   'dist/host',
   'extensions/copilot-relay-provider/chat-client.ts',
@@ -12,7 +13,8 @@ const EXPECTED_FILES_ALLOWLIST = Object.freeze([
   'extensions/copilot-relay-provider/responses-client.ts',
   'extensions/copilot-relay-provider/types.ts',
   'extensions/websocket-channel/WebSocketChannel.ts',
-  'extensions/websocket-channel/client/chat.html',
+  'extensions/websocket-channel/client-assets.ts',
+  'extensions/websocket-channel/client/dist',
   'extensions/websocket-channel/config.ts',
   'extensions/websocket-channel/entry.ts',
   'extensions/websocket-channel/extension.json',
@@ -31,7 +33,8 @@ const REQUIRED_PACKAGE_FILES = Object.freeze([
   'extensions/copilot-relay-provider/extension.json',
   'extensions/copilot-relay-provider/package.json',
   'extensions/websocket-channel/WebSocketChannel.ts',
-  'extensions/websocket-channel/client/chat.html',
+  'extensions/websocket-channel/client-assets.ts',
+  `${CLIENT_DIST_PREFIX}index.html`,
   'extensions/websocket-channel/entry.ts',
   'extensions/websocket-channel/extension.json',
   'extensions/websocket-channel/package.json',
@@ -65,6 +68,16 @@ export function auditNpmPackage(packResult, manifest, lockfile, extensionManifes
       continue;
     }
     diagnostics.push(`unexpected package file: ${path}`);
+  }
+  const clientDistFiles = uniqueFiles.filter(path => path.startsWith(CLIENT_DIST_PREFIX));
+  if (!clientDistFiles.some(path => path.endsWith('.js'))) {
+    diagnostics.push('WebSocket Client dist contains no JavaScript asset');
+  }
+  if (!clientDistFiles.some(path => path.endsWith('.css'))) {
+    diagnostics.push('WebSocket Client dist contains no CSS asset');
+  }
+  if (clientDistFiles.some(path => path.endsWith('.map'))) {
+    diagnostics.push('WebSocket Client dist contains a source map');
   }
 
   if (JSON.stringify(manifest.files) !== JSON.stringify(EXPECTED_FILES_ALLOWLIST)) {

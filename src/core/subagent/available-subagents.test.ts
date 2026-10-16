@@ -39,7 +39,6 @@ describe('collectAvailableSubagents', () => {
           agentDir: '/tmp/ws/subagents/a',
           model: { providerId: 'openai', modelId: 'gpt-5' },
           tools: { allow: ['read_file'] },
-          maxLlmCalls: 8,
         },
       ],
     ]);

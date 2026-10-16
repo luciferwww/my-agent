@@ -8,8 +8,14 @@ describe('PendingSessionRegistry', () => {
       generateSessionId: () => 'session-one',
     });
 
-    expect(registry.create()).toEqual({ sessionId: 'session-one', createdAt: 100 });
-    expect(registry.get('session-one')).toEqual({ sessionId: 'session-one', createdAt: 100 });
+    expect(registry.create()).toEqual({
+      sessionId: 'session-one',
+      createdAt: 100,
+    });
+    expect(registry.get('session-one')).toEqual({
+      sessionId: 'session-one',
+      createdAt: 100,
+    });
   });
 
   it('lazily expires registrations at the TTL boundary', () => {
@@ -55,7 +61,10 @@ describe('PendingSessionRegistry', () => {
     registry.create();
 
     now = 10;
-    expect(registry.create()).toEqual({ sessionId: 'session-2', createdAt: 10 });
+    expect(registry.create()).toEqual({
+      sessionId: 'session-2',
+      createdAt: 10,
+    });
   });
 
   it('reports expired Session IDs for coupled Runtime cleanup', () => {

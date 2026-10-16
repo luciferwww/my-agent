@@ -52,7 +52,7 @@ describe('resolveInputTokenBudget', () => {
 
   it('uses the Provider effective fallback when raw limits are unknown', () => {
     expect(resolveInputTokenBudget({
-      effectiveContextLimit: 32_768,
-    }, 20_000)).toBe(32_768);
+      effectiveContextLimit: 131_072,
+    }, 20_000)).toBe(131_072);
   });
 });

@@ -1,11 +1,22 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { UserPromptBuilder } from './UserPromptBuilder.js';
 
 describe('UserPromptBuilder', () => {
-  it('returns raw text when no hooks', async () => {
+  const timestamp = '<turn_start>2026-10-16T09:30:00.000Z</turn_start>';
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-16T09:30:00.000Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('prepends the timestamp before raw text when no hooks', async () => {
     const builder = new UserPromptBuilder();
     const result = await builder.build({ text: 'hello' });
-    expect(result.text).toBe('hello');
+    expect(result.text).toBe(`${timestamp}\n\nhello`);
   });
 
   it('prepends hook chunks before raw text', async () => {
@@ -16,7 +27,7 @@ describe('UserPromptBuilder', () => {
       });
 
     const result = await builder.build({ text: 'hello' });
-    expect(result.text).toBe('context info\n\nhello');
+    expect(result.text).toBe(`${timestamp}\n\ncontext info\n\nhello`);
   });
 
   it('prepends multiple hooks in registration order', async () => {
@@ -25,7 +36,7 @@ describe('UserPromptBuilder', () => {
       .useContextHook({ id: 'second', provider: () => 'chunk-2' });
 
     const result = await builder.build({ text: 'hello' });
-    expect(result.text).toBe('chunk-1\n\nchunk-2\n\nhello');
+    expect(result.text).toBe(`${timestamp}\n\nchunk-1\n\nchunk-2\n\nhello`);
   });
 
   it('skips null hooks', async () => {
@@ -34,7 +45,7 @@ describe('UserPromptBuilder', () => {
       .useContextHook({ id: 'valid', provider: () => 'context' });
 
     const result = await builder.build({ text: 'hello' });
-    expect(result.text).toBe('context\n\nhello');
+    expect(result.text).toBe(`${timestamp}\n\ncontext\n\nhello`);
   });
 
   it('passes attachments through without embedding in text', async () => {
@@ -44,7 +55,7 @@ describe('UserPromptBuilder', () => {
     ];
 
     const result = await builder.build({ text: 'look at this', attachments });
-    expect(result.text).toBe('look at this');
+    expect(result.text).toBe(`${timestamp}\n\nlook at this`);
     expect(result.attachments).toEqual(attachments);
   });
 
@@ -72,7 +83,7 @@ describe('UserPromptBuilder', () => {
       .removeContextHook('remove');
 
     const result = await builder.build({ text: 'hello' });
-    expect(result.text).toBe('kept\n\nhello');
+    expect(result.text).toBe(`${timestamp}\n\nkept\n\nhello`);
   });
 
   it('useContextHook returns this for chaining', () => {
@@ -85,5 +96,21 @@ describe('UserPromptBuilder', () => {
     const builder = new UserPromptBuilder();
     const returned = builder.removeContextHook('nonexistent');
     expect(returned).toBe(builder);
+  });
+
+  it('captures time before async hooks and does not change earlier prompts', async () => {
+    const builder = new UserPromptBuilder().useContextHook({
+      id: 'advance-time',
+      provider: async () => {
+        vi.setSystemTime(new Date('2026-10-16T09:31:00.000Z'));
+        return 'context';
+      },
+    });
+    const first = await builder.build({ text: 'first' });
+    const second = await builder.build({ text: 'second' });
+    expect(first.text).toBe(`${timestamp}\n\ncontext\n\nfirst`);
+    expect(second.text).toBe(
+      '<turn_start>2026-10-16T09:31:00.000Z</turn_start>\n\ncontext\n\nsecond',
+    );
   });
 });

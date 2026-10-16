@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { createDefaultAgentConfig } from './default-composition.js';
-import { DEFAULT_RUNNER_CONFIG } from '../../core/runner/config.js';
 import { deepMerge, resolveAgentConfig } from './loader.js';
 import type { AppConfig, AgentEntry } from './types.js';
 
@@ -9,8 +8,9 @@ function appConfig(list: AgentEntry[] = []): AppConfig {
   return {
     agentHome: '/tmp',
     llm: {},
-    runner: structuredClone(DEFAULT_RUNNER_CONFIG),
     agents: {
+      steeringEnabled: false,
+      maxSubagentDepth: 1,
       defaults: createDefaultAgentConfig(),
       list,
     },
@@ -51,6 +51,7 @@ describe('resolveAgentConfig', () => {
   it('applies matching Agent, environment, then caller overrides to Agent-scoped fields', () => {
     const config = appConfig([{
       id: 'coding',
+      description: 'coding agent',
       memory: { enabled: false },
     }]);
 
