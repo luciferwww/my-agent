@@ -537,6 +537,136 @@ describe('AgentRunner', () => {
       expect(assistantMsg).toBeDefined();
     });
 
+    it.each([
+      ['another Provider', 'other', 'test', 'test'],
+      ['another model', 'test', 'other', 'test'],
+      ['another connection', 'test', 'test', 'other'],
+      ['the same source', 'test', 'test', 'test'],
+    ])('projects Thinking from %s without changing persisted history', async (
+      _label, providerId, requestModelId, connectionId,
+    ) => {
+      await appendPersistedMessage(sessionManager, { role: 'user', content: 'Previous question' });
+      const previous = await appendPersistedMessage(sessionManager, {
+        role: 'assistant',
+        content: [
+          {
+            type: 'thinking',
+            id: 'previous:thinking-0',
+            status: 'complete',
+            text: '',
+            replay: { format: 'provider.reasoning.v1', payload: { opaque: 'private history' } },
+          },
+          { type: 'text', text: 'Previous answer' },
+        ],
+        invocation: {
+          id: 'previous',
+          source: { providerId, requestModelId, connectionId, wireProtocol: 'openai-responses' },
+          completion: {
+            status: 'complete',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 1, outputTokens: 1 },
+          },
+        },
+      });
+      let capturedMessages: ChatMessage[] = [];
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(request) {
+          capturedMessages = structuredClone(request.messages);
+          yield { type: 'message_start' };
+          yield { type: 'text_delta', text: 'Next answer' };
+          yield {
+            type: 'message_end',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 1, outputTokens: 1 },
+          };
+        },
+        async chat() { throw new Error('Not used'); },
+      };
+      await new AgentRunner({ llmClient, sessionManager }).run({
+        sessionId: MAIN_SESSION_ID,
+        message: 'Next question',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'next-turn',
+      });
+      const projected = capturedMessages.find((message) => message.role === 'assistant');
+      const compatible = providerId === 'test' && requestModelId === 'test' && connectionId === 'test';
+      expect(projected?.content).toEqual(
+        compatible ? previous.message.content : [{ type: 'text', text: 'Previous answer' }],
+      );
+      const reloaded = new SessionManager(agentHome);
+      expect(reloaded.getMessages(MAIN_SESSION_ID).find((record) => record.id === previous.id))
+        .toEqual(previous);
+    });
+
+    it('keeps newly generated Thinking in the current Turn tool loop', async () => {
+      const requests: ChatMessage[][] = [];
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(request) {
+          requests.push(structuredClone(request.messages));
+          yield {
+            type: 'message_start',
+            invocation: {
+              id: request.invocationId!,
+              source: {
+                providerId: 'test',
+                requestModelId: request.model,
+                connectionId: 'test',
+                wireProtocol: 'openai-responses',
+              },
+            },
+          };
+          if (requests.length === 1) {
+            yield { type: 'thinking_start', blockId: 'thinking-0' };
+            yield {
+              type: 'thinking_end',
+              blockId: 'thinking-0',
+              completion: {
+                status: 'complete',
+                text: '',
+                replay: { format: 'provider.reasoning.v1', payload: { opaque: 'current state' } },
+              },
+            };
+            yield {
+              type: 'tool_call',
+              call: { callId: 'lookup-1', name: 'lookup', input: { state: 'ready', value: {} } },
+            };
+          } else {
+            yield { type: 'text_delta', text: 'Done' };
+          }
+          yield {
+            type: 'message_end',
+            stopReason: requests.length === 1 ? 'tool_use' : 'end_turn',
+            usage: { inputTokens: 1, outputTokens: 1 },
+          };
+        },
+        async chat() { throw new Error('Not used'); },
+      };
+      const runner = new AgentRunner({
+        llmClient,
+        sessionManager,
+        toolExecutor: async () => ({ content: 'Found' }),
+      });
+      const result = await runner.run({
+        sessionId: MAIN_SESSION_ID,
+        message: 'Look up a value',
+        model: 'test',
+        systemPrompt: '',
+        turnId: 'tool-turn',
+        tools: [{ name: 'lookup', description: 'Lookup', inputSchema: { type: 'object' } }],
+      });
+      expect(result.text).toBe('Done');
+      expect(requests).toHaveLength(2);
+      expect(requests[1]?.find((message) => message.role === 'assistant')?.content)
+        .toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            type: 'thinking',
+            replay: { format: 'provider.reasoning.v1', payload: { opaque: 'current state' } },
+          }),
+          expect.objectContaining({ type: 'tool_use', id: 'lookup-1' }),
+        ]));
+    });
+
     it('handles empty response', async () => {
       const llmClient = createMockLLMClient([
         [

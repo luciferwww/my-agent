@@ -81,6 +81,56 @@ describe('Copilot Relay Chat Completions client', () => {
     });
   });
 
+  it('keeps accepted receipts paired with calls alongside ordinary tool results', async () => {
+    const fetchImpl = vi.fn(async () => chatResponse([
+      chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
+      chunk({ choices: [], usage: { prompt_tokens: 1, completion_tokens: 1 } }),
+      'data: [DONE]\n\n',
+    ])) as unknown as typeof fetch;
+    const client = new CopilotRelayChatCompletionsClient({
+      baseURL: 'http://127.0.0.1:5000',
+      fetch: fetchImpl,
+    });
+    await client.chat({
+      ...request,
+      messages: [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'call-1', name: 'lookup', input: {} },
+            { type: 'tool_use', id: 'call-2', name: 'lookup', input: {} },
+          ],
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Receipt follows' },
+            { type: 'execution_accepted', tool_use_id: 'call-1', execution_id: 'execution-1' },
+            { type: 'tool_result', tool_use_id: 'call-2', content: 'immediate', status: 'success' },
+          ],
+        },
+        { role: 'user', origin: 'host', content: 'Host completion notification' },
+      ],
+    });
+    expect(requestBody(fetchImpl).messages).toEqual([
+      { role: 'system', content: 'Be concise.' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: ['call-1', 'call-2'].map((id) => ({
+          id, type: 'function', function: { name: 'lookup', arguments: '{}' },
+        })),
+      },
+      { role: 'user', content: [{ type: 'text', text: 'Receipt follows' }] },
+      {
+        role: 'tool', tool_call_id: 'call-1',
+        content: '{"status":"accepted","executionId":"execution-1"}',
+      },
+      { role: 'tool', tool_call_id: 'call-2', content: 'immediate' },
+      { role: 'user', content: 'Host completion notification' },
+    ]);
+  });
+
   it('captures and replays Chat reasoning and Tool calls', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(chatResponse([
@@ -225,6 +275,51 @@ describe('Copilot Relay Chat Completions client', () => {
         content: [{ type: 'text', text: 'ordinary answer' }],
       },
     ]);
+  });
+
+  it('reports incompatible same-protocol replay before fetch', async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const client = new CopilotRelayChatCompletionsClient({
+      baseURL: 'http://127.0.0.1:5000',
+      fetch: fetchImpl,
+    });
+    await expect(client.chat({
+      ...request,
+      messages: [{
+        role: 'assistant',
+        content: [{
+          type: 'thinking',
+          id: 'builtin-invocation:thinking-0',
+          status: 'complete',
+          text: '',
+          replay: {
+            format: 'openai-chat-completions.reasoning.v1',
+            payload: { reasoning_opaque: 'private-replay-state' },
+          },
+        }],
+        invocation: {
+          id: 'builtin-invocation',
+          source: {
+            providerId: 'builtin',
+            connectionId: 'http://127.0.0.1:5000/v1',
+            requestModelId: request.model,
+            wireProtocol: 'openai-chat-completions',
+          },
+          completion: {
+            status: 'complete',
+            stopReason: 'end_turn',
+            usage: { inputTokens: 1, outputTokens: 1 },
+          },
+        },
+      }],
+    })).rejects.toMatchObject({
+      category: 'provider_failure',
+      diagnostics: {
+        providerMessage: 'Copilot Relay Chat replay source is unsupported.',
+        request: { toolUseBlockCount: 0, toolResultBlockCount: 0 },
+      },
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('keeps Default wire unchanged and rejects a Thinking switch before fetch', async () => {

@@ -93,8 +93,17 @@ and source compatibility before sending, and restore wire fields only inside the
 Client boundary. When a Built-in request switches wire protocols, the target
 Chat Completions, Responses, or Anthropic Client omits Thinking blocks it cannot
 consume from its wire projection while preserving ordinary assistant text and
-Tool history; the internal Transcript remains unchanged. Same-protocol replay
-with an incompatible source still fails before sending. Chat Completions
+Tool history; the internal Transcript remains unchanged. At `runAttempt` entry,
+Runner applies `filterIncompatibleThinking` to loaded history before pruning
+and budget checks. Historical Thinking is retained only when its invocation
+source matches the bound Provider ID, request model ID, and connection endpoint.
+Missing or mismatched sources lose only their Thinking blocks; assistant
+messages emptied by that filtering are omitted from the request context.
+The stored Transcript is unchanged, and current-Turn Thinking remains available
+throughout the tool loop. This is a conservative source policy, not a claim
+about upstream cross-model compatibility. Clients still validate replay formats
+and protocol compatibility; Runner does not interpret replay payloads or treat
+a model router's protocol as the wire protocol. Chat Completions
 reasoning fields and Responses reasoning item shapes do not enter Runner,
 Session, Runtime, or Channel protocol branches.
 
@@ -112,6 +121,22 @@ Core defines six categories:
 `ModelInvocationError` carries the structural identity `protocol: 'my-agent.model-invocation-error'` and `version: 1`. `toModelInvocationError(value)` is the Runtime canonicalization entry: it passes through a Host-local instance or accepts an `Error` with valid own data discriminator fields, then creates a Host-local error.
 
 Only allowlisted diagnostics are copied: Provider ID, bounded Provider status/type/code/message/request ID, and a content-free request summary. The summary preserves the opaque model string exactly and counts roles/content block types/Tool definitions without retaining prompts, image data, Tool input, schema, foreign message, stack, cause, or unknown fields. Invalid diagnostics are discarded while a valid category remains usable. Canonical diagnostics and the nested request summary are frozen.
+
+Copilot Relay includes bounded, single-line local adapter error messages in
+`providerMessage`, including replay validation failures before HTTP is sent.
+Absent optional diagnostic fields are omitted rather than emitted as
+`undefined`, so partial HTTP error details survive Host structural validation.
+HTTP errors accept message/type details from the nested `error` object or the
+top-level response object.
+Thinking blocks are not counted as Tool Results. Runner filters historical
+Thinking from another Provider, model, or connection before budget checks and
+invocation, so normal model switching does not require a new session.
+Direct Client callers remain responsible for supplying source-compatible replay.
+
+Relay Clients encode `execution_accepted` as a correlated tool output containing
+`{"status":"accepted","executionId":"..."}`, matching Built-in receipt content.
+Later Host completion notifications remain separate context, not a second
+output for the original tool call.
 
 ## 5. Unified Built-in Provider
 

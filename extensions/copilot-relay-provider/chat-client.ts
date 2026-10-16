@@ -329,6 +329,16 @@ function convertMessages(
           tool_call_id: block.tool_use_id,
           content: block.content,
         });
+      } else if (block.type === 'execution_accepted') {
+        flushContent();
+        output.push({
+          role: 'tool',
+          tool_call_id: block.tool_use_id,
+          content: JSON.stringify({
+            status: 'accepted',
+            executionId: block.execution_id,
+          }),
+        });
       } else if (block.type === 'thinking') {
         if (message.role !== 'assistant') {
           throw new Error('Copilot Relay Chat cannot project Thinking on a user message.');
