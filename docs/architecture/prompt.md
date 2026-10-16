@@ -2,13 +2,13 @@
 
 > Status: Current Authority
 > Authority: Current implemented prompt behavior
-> Verified: 2026-09-18
+> Verified: 2026-10-16
 > Ownership: System and User prompt composition, Context Hook prepending, and normalized media placement
 > Ownership key: prompt-and-context-hooks
 
 ## 1. Boundary
 
-`src/core/prompt/` owns deterministic System and User prompt construction and the library-level Context Hook prepender. Runtime supplies the prompt mode, current Context files, visible Tool names, Agent Home, available Subagent summaries, and already normalized media blocks.
+`src/core/prompt/` owns System and User prompt construction and the library-level Context Hook prepender. Runtime supplies the prompt mode, current Context files, visible Tool names, Agent Home, available Subagent summaries, and already normalized media blocks.
 
 Prompt does not own configuration precedence, canonical Tool schemas, Channel wire delivery, [media validation and normalization](media.md), [Model Resolution](model-resolution.md), [Provider conversion](providers.md), or [Agent Context file loading](agent-context.md).
 
@@ -19,7 +19,6 @@ Prompt does not own configuration precedence, canonical Tool schemas, Channel wi
 | Order | Section | Full | Minimal |
 |---:|---|:---:|:---:|
 | 1 | Identity | yes | no |
-| 2 | Current Date & Time | yes | yes |
 | 3 | Behavior Rules | yes | no |
 | 4 | Memory Recall | when an exact supported Memory Tool name is visible | no |
 | 5 | Project Context | when non-empty Context files exist | when non-empty Context files exist |
@@ -27,6 +26,8 @@ Prompt does not own configuration precedence, canonical Tool schemas, Channel wi
 | 7 | Available Subagents | when entries are supplied | no |
 
 `mode: 'none'` returns an empty string regardless of the other inputs.
+
+Dynamic date and time are carried in the User prompt, not the System prompt.
 
 Tool names are a narrow capability projection used only for conditional prompt text. The Memory Recall section recognizes the exact names `memory_search`, `memory_get`, and the retained compatibility name `search_memory`; nearby names do not match. Tool definitions themselves travel through the Model Invocation request rather than being duplicated in the System prompt.
 
@@ -36,14 +37,16 @@ Project Context omits files whose path or content is blank. Each retained file i
 
 ```text
 UserPromptBuilder.build(input)
-  1. invoke registered Context Hooks sequentially in registration order
+  1. capture the current UTC timestamp, then invoke registered Context Hooks sequentially in registration order
   2. omit null, empty, and whitespace-only results
-  3. join accepted chunks with blank lines
+  3. prepend <turn_start>ISO timestamp</turn_start> and join accepted chunks with blank lines
   4. append the original user text last
   5. return the text, unchanged attachments, and optional debug data
 ```
 
 `ContextPrepender` owns registration and removal. For every `prepend()` call it passes the raw input, caller metadata, and a zero-based monotonically increasing `turnIndex` to each provider. Hook provider errors propagate to the caller; this layer does not add an error-isolation policy.
+
+The timestamp is part of the built User message for every protocol. Runner persists that message and replays its original timestamp rather than rebuilding historical prompts.
 
 On the library Builder surface, attachments default to an empty array and otherwise pass through unchanged. The Builder neither embeds them in text nor converts them to Provider wire objects.
 

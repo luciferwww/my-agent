@@ -229,7 +229,7 @@ describe('Agent Home initialization', () => {
         defaultModel: { providerId: 'builtin', modelId: 'existing-model' },
         builtin: {
           baseURL: 'https://existing.test/v1',
-          models: [{ modelId: 'existing-model', protocol: 'openai-responses' }],
+          models: [{ modelId: 'existing-model', protocol: 'openai-responses', endpoint: 'responses' }],
         },
       },
       agents: {
@@ -335,7 +335,7 @@ describe('Agent Home initialization', () => {
     );
   });
 
-  it('replaces the LLM section and Provider Extension entries while preserving other content', async () => {
+  it('replaces the LLM section while preserving untouched Provider Extension entries', async () => {
     const fixture = await createFixture();
     await installProviderExtension(fixture.options.pathContext.installDir, 'fixture-provider');
     const existing = {
@@ -395,13 +395,155 @@ describe('Agent Home initialization', () => {
     });
     expect(saved.agents).toEqual(existing.agents);
     expect(saved.logger).toEqual(existing.logger);
-    expect(saved.extensions).toEqual({
-      enabled: true,
-      entries: {
-        'websocket-channel': { config: { port: 9000 } },
-      },
-    });
+    expect(saved.extensions).toEqual(existing.extensions);
   });
+
+  it.each(['providers', 'extensions'])(
+    'confirms global enablement before verifying an Extension through %s',
+    async (action) => {
+      const fixture = await createFixture();
+      await installProviderExtension(fixture.options.pathContext.installDir, 'fixture-provider');
+      await writeFile(join(fixture.agentHome, 'config.json'), JSON.stringify({
+        extensions: { enabled: false },
+      }));
+      const lifecycle = { factory: 0, create: 0, start: 0, chat: 0, stop: 0 };
+      (globalThis as Record<string, unknown>)['__ahiFixtureLifecycle'] = lifecycle;
+      const prompter = fakePrompter({
+        select: [action, 'extension:fixture-provider', 'save', 'initialize'],
+        text: ['model-a'],
+        confirm: [true, true, true, false, true],
+      });
+      try {
+        await runAgentHomeInitialization({
+          ...fixture.options, interactive: true, prompter,
+        });
+      } finally {
+        delete (globalThis as Record<string, unknown>)['__ahiFixtureLifecycle'];
+      }
+      const saved = JSON.parse(await readFile(join(fixture.agentHome, 'config.json'), 'utf8'));
+      expect(saved.extensions.enabled).toBe(true);
+      expect(saved.llm.defaultModel).toEqual({ providerId: 'fixture', modelId: 'model-a' });
+      expect(lifecycle.chat).toBe(1);
+      expect(prompter.confirm).toHaveBeenCalledWith(
+        'Extensions are globally disabled. Enable Extensions when saving this Provider?',
+        false,
+      );
+    },
+  );
+
+  it('leaves globally disabled Extensions unchanged when enablement is declined', async () => {
+    const fixture = await createFixture();
+    await installProviderExtension(fixture.options.pathContext.installDir, 'fixture-provider');
+    const original = JSON.stringify({ extensions: { enabled: false } });
+    await writeFile(join(fixture.agentHome, 'config.json'), original);
+    const prompter = fakePrompter({
+      select: ['providers', 'extension:fixture-provider', 'cancel'],
+      confirm: [true, true, false],
+    });
+    await runAgentHomeInitialization({ ...fixture.options, interactive: true, prompter });
+    expect(await readFile(join(fixture.agentHome, 'config.json'), 'utf8')).toBe(original);
+    expect(prompter.text).not.toHaveBeenCalled();
+  });
+
+  it('does not publish global enablement after discarding verified Extension changes', async () => {
+    const fixture = await createFixture();
+    await installProviderExtension(fixture.options.pathContext.installDir, 'fixture-provider');
+    await writeFile(join(fixture.agentHome, 'config.json'), JSON.stringify({
+      extensions: { enabled: false },
+    }));
+    const lifecycle = { factory: 0, create: 0, start: 0, chat: 0, stop: 0 };
+    (globalThis as Record<string, unknown>)['__ahiFixtureLifecycle'] = lifecycle;
+    const prompter = fakePrompter({
+      select: [
+        'providers', 'extension:fixture-provider', 'discard-llm',
+        'runtime', 'save', 'initialize',
+      ],
+      text: ['model-a', '5'],
+      confirm: [true, true, true, false, true],
+    });
+    try {
+      await runAgentHomeInitialization({ ...fixture.options, interactive: true, prompter });
+    } finally {
+      delete (globalThis as Record<string, unknown>)['__ahiFixtureLifecycle'];
+    }
+    const saved = JSON.parse(await readFile(join(fixture.agentHome, 'config.json'), 'utf8'));
+    expect(saved.extensions).toEqual({ enabled: false });
+    expect(saved).not.toHaveProperty('llm');
+  });
+
+  it.each([
+    ['provider', 'literal'], ['provider', 'environment'], ['provider', 'none'],
+    ['channel', 'literal'], ['channel', 'environment'], ['channel', 'none'],
+  ])('summarizes %s Extension credentials from %s without exposing values', async (kind, source) => {
+    const fixture = await createFixture();
+    const id = `fixture-${kind}`;
+    const properties = { token: { type: 'string', writeOnly: true } };
+    if (kind === 'provider') {
+      await installProviderExtension(fixture.options.pathContext.installDir, id, properties);
+    } else {
+      await installUnsupportedExtension(fixture.options.pathContext.installDir, id, properties);
+    }
+    await writeFile(join(fixture.agentHome, 'config.json'), '{}');
+    const secret = 'private-extension-credential';
+    const lifecycle = { factory: 0, create: 0, start: 0, chat: 0, stop: 0 };
+    (globalThis as Record<string, unknown>)['__ahiFixtureLifecycle'] = lifecycle;
+    const prompter = fakePrompter({
+      select: ['extensions', `extension:${id}`, source, 'save', 'initialize'],
+      text: [
+        ...(source === 'none' ? [] : [source === 'literal' ? secret : 'EXT_TOKEN']),
+        ...(kind === 'provider' ? ['model-a'] : []),
+      ],
+      confirm: kind === 'provider' ? [true, true, false, true] : [true],
+    });
+    try {
+      await runAgentHomeInitialization({
+        ...fixture.options, environment: { EXT_TOKEN: secret }, interactive: true, prompter,
+      });
+    } finally {
+      delete (globalThis as Record<string, unknown>)['__ahiFixtureLifecycle'];
+    }
+    const summary = prompter.note.mock.calls.find((call) =>
+      call[1] === 'Initialization summary')?.[0];
+    expect(summary).toContain(`${id} / token: ${source === 'literal'
+      ? 'entered directly'
+      : source === 'environment' ? 'environment variable EXT_TOKEN' : 'not configured'}`);
+    expect(summary).not.toContain(secret);
+    expect(summary.includes('stored as plaintext in config.json')).toBe(source === 'literal');
+  });
+
+  it.each(['literal', 'environment', 'none'])(
+    'summarizes Built-in credential source %s without exposing its value',
+    async (source) => {
+      const fixture = await createFixture();
+      vi.stubGlobal('fetch', vi.fn(async () => successfulResponsesCall()));
+      const secret = 'private-fixture-credential';
+      const prompter = fakePrompter({
+        select: ['providers', 'builtin', source, 'openai-responses', 'save', 'initialize'],
+        text: [
+          'https://example.test/v1',
+          ...(source === 'none' ? [] : [source === 'literal' ? secret : 'API_TOKEN']),
+          'model-a',
+        ],
+        confirm: [false, true],
+      });
+      await runAgentHomeInitialization({
+        ...fixture.options, environment: { API_TOKEN: secret }, interactive: true, prompter,
+      });
+      const summary = prompter.note.mock.calls.find((call) =>
+        call[1] === 'Initialization summary')?.[0];
+      expect(summary).toContain(source === 'literal'
+        ? 'Built-in API key: entered directly'
+        : source === 'environment'
+          ? 'Built-in API key: environment variable API_TOKEN'
+          : 'Built-in API key: not configured');
+      expect(summary).not.toContain(secret);
+      if (source === 'literal') {
+        expect(summary).toContain('stored as plaintext in config.json');
+      } else {
+        expect(summary).not.toContain('stored as plaintext');
+      }
+    },
+  );
 
   it('starts only the selected Provider Extension and stops it after verification', async () => {
     const fixture = await createFixture();
@@ -643,7 +785,11 @@ async function createFixture(): Promise<Readonly<{
   });
 }
 
-async function installProviderExtension(installDir: string, extensionId: string): Promise<void> {
+async function installProviderExtension(
+  installDir: string,
+  extensionId: string,
+  properties: Record<string, unknown> = {},
+): Promise<void> {
   const directory = join(installDir, 'extensions', extensionId);
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, 'extension.json'), JSON.stringify({
@@ -657,7 +803,7 @@ async function installProviderExtension(installDir: string, extensionId: string)
       $schema: 'http://json-schema.org/draft-07/schema#',
       type: 'object',
       additionalProperties: false,
-      properties: {},
+      properties,
     },
   }), 'utf8');
   await writeFile(join(directory, 'entry.js'), `
@@ -727,6 +873,7 @@ export function createExtension() {
 async function installUnsupportedExtension(
   installDir: string,
   extensionId: string,
+  properties: Record<string, unknown> = {},
 ): Promise<void> {
   const directory = join(installDir, 'extensions', extensionId);
   await mkdir(directory, { recursive: true });
@@ -740,7 +887,7 @@ async function installUnsupportedExtension(
       $schema: 'http://json-schema.org/draft-07/schema#',
       type: 'object',
       additionalProperties: false,
-      properties: {},
+      properties,
     },
   }), 'utf8');
   await writeFile(join(directory, 'entry.js'), 'export function createExtension() {}\n', 'utf8');

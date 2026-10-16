@@ -7,9 +7,8 @@ import { renderAvailableSubagentsSection } from '../subagent/available-subagents
 /**
  * 构建 System Prompt。
  *
- * 当前 5 个 active section（编号 1–5），顺序固定；minimal 模式跳过若干（见 §spec §11）：
+ * 当前 4 个 active section（保留原编号），顺序固定；minimal 模式跳过若干（见 §spec §11）：
  *  1. agent-identity       — 固定身份声明                   [full only]
- *  2. agent-datetime       — 当前日期时间                   [full + minimal]
  *  3. behavior-rules       — 行为准则 + 工具使用规范          [full only]
  *  4. memory-instructions  — memory tool 使用说明            [full only, 有 memory 工具时]
  *  5. project-context      — contextFiles 注入              [full + minimal, 有 contextFiles 时]
@@ -31,9 +30,6 @@ export class SystemPromptBuilder {
 
     // 1. identity — full only
     if (!isMinimal) this.buildIdentitySection(lines);
-
-    // 2. datetime — full + minimal
-    this.buildDatetimeSection(lines);
 
     // 3. behavior-rules — full only
     if (!isMinimal) this.buildBehaviorRulesSection(lines);
@@ -58,27 +54,6 @@ export class SystemPromptBuilder {
   private buildIdentitySection(lines: string[]): void {
     lines.push('# Identity');
     lines.push('You are an AI assistant.');
-    lines.push('');
-  }
-
-  // ── Section 2: agent-datetime ──────────────────────────────
-
-  private buildDatetimeSection(lines: string[]): void {
-    const now = new Date();
-    const dateStr = now.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      weekday: 'long',
-    });
-    const timeStr = now.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    });
-
-    lines.push('# Current Date & Time');
-    lines.push(`${dateStr} ${timeStr}`);
     lines.push('');
   }
 

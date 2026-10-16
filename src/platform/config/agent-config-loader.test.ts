@@ -127,7 +127,7 @@ describe('loadAgentConfig', () => {
         builtin: {
           baseURL: 'https://example.test/v1///',
           apiKey: '${BUILTIN_API_KEY}',
-          models: [{ modelId: 'model-a', protocol: 'openai-responses' }],
+          models: [{ modelId: 'model-a', protocol: 'openai-responses', endpoint: 'responses' }],
         },
       },
       logger: {
@@ -154,7 +154,7 @@ describe('loadAgentConfig', () => {
       builtin: {
         baseURL: 'https://example.test/v1',
         apiKey: 'secret',
-        models: [{ modelId: 'model-a', protocol: 'openai-responses' }],
+        models: [{ modelId: 'model-a', protocol: 'openai-responses', endpoint: 'responses' }],
       },
     });
     expect(snapshot.application.agents).toMatchObject({
@@ -308,6 +308,14 @@ describe('loadAgentConfig', () => {
     [{ llm: { defaultModel: 'unstructured' } }, 'llm.defaultModel'],
     [{ llm: { builtin: {} } }, 'llm.builtin.baseURL'],
     [{ llm: { builtin: { baseURL: 'https://example.test', models: {} } } }, 'llm.builtin.models'],
+    [{
+      llm: {
+        builtin: {
+          baseURL: 'https://example.test',
+          models: [{ modelId: 'a', protocol: 'openai-responses', endpoint: '../responses' }],
+        },
+      },
+    }, 'llm.builtin.models[0].endpoint'],
     [{ agents: { defaults: { tools: { fs: {} } } } }, 'agents.defaults.tools.fs'],
     [{
       agents: { list: [{ id: 'a', description: 'Agent A', tools: { fs: {} } }] },

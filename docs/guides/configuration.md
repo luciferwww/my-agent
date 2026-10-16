@@ -167,7 +167,7 @@ override this reference for a run. Supply both or neither.
 
 ### 3.2 Built-in Provider
 
-`llm.builtin` configures one endpoint:
+`llm.builtin` configures one shared base URL and credential:
 
 ```json
 {
@@ -196,6 +196,7 @@ Each model registration supports:
 |---|---:|---|
 | `modelId` | Yes | Exact model ID sent to the endpoint |
 | `protocol` | Yes | `openai-responses`, `openai-chat-completions`, or `anthropic-messages` |
+| `endpoint` | No | Relative operation path, including version if needed; overrides the protocol-default path |
 | `displayName` | No | Name shown to clients |
 | `maximumContextTokens` | No | Published total Context limit |
 | `maximumPromptTokens` | No | Published Prompt limit; cannot exceed Context |
@@ -207,6 +208,59 @@ Token limits must be positive safe integers. Effective Context budgeting uses
 `maximumPromptTokens` first, then `maximumContextTokens`, and finally a
 conservative `131072` fallback. `outputTokenLimit` is invocation policy, not a
 published model fact, and is clamped to a known `maximumOutputTokens`.
+
+Without `endpoint`, Clients append `/responses`, `/chat/completions`, or
+`/messages` as before. With it, the final URL is the shared `baseURL` plus the
+model path, joined with one slash. No protocol suffix is added again.
+For example, `baseURL: "https://gateway.example"` with `endpoint: "responses"`
+and `endpoint: "v1/responses"` selects two different paths using the same
+Responses protocol. Endpoints cannot change the host or credentials.
+
+All three Built-in Clients send `User-Agent: my-agent/0.1.0` and
+`x-opencode-session`. Runner supplies the conversation's existing Session ID,
+including Compaction calls. Calls without one use a fresh UUID per invocation;
+an existing HTTP compatibility retry reuses that ID. These headers are sent
+without vendor checks. They support routing/cache affinity, not server-side
+conversation history or guaranteed cache hits.
+
+### OpenCode Go example
+
+Go requires an active Go or Go Plus subscription and a process environment
+containing `OPENCODE_API_KEY`:
+
+```json
+{
+  "llm": {
+    "defaultModel": { "providerId": "builtin", "modelId": "glm-5.2" },
+    "builtin": {
+      "baseURL": "https://opencode.ai/inference/go",
+      "apiKey": "${OPENCODE_API_KEY}",
+      "models": [
+        {
+          "modelId": "glm-5.2",
+          "protocol": "openai-chat-completions",
+          "endpoint": "openai/v1/chat/completions"
+        },
+        {
+          "modelId": "gpt-5.6-luna",
+          "protocol": "openai-responses",
+          "endpoint": "openai/v1/responses"
+        },
+        {
+          "modelId": "claude-haiku-5-5",
+          "protocol": "anthropic-messages",
+          "endpoint": "anthropic/v1/messages"
+        }
+      ]
+    }
+  }
+}
+```
+
+Model paths and IDs should be checked against the current upstream service.
+The transport support is covered by mocked regression tests; this is not a
+claim that every model or Thinking/effort setting has been live-tested.
+See [OpenCode Go Model Capabilities](opencode-model-capabilities.md).
 
 ### 3.3 Thinking and Effort capabilities
 

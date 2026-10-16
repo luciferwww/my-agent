@@ -37,6 +37,29 @@ describe('Built-in LLM configuration', () => {
       .toThrow(BuiltinLlmConfigError);
   });
 
+  it.each(['responses', 'v1/responses', '/anthropic/v1/messages/'])(
+    'preserves an explicit relative endpoint %s',
+    (endpoint) => {
+      const config = validateBuiltinLlmProviderConfig({
+        baseURL: 'https://example.test/api',
+        models: [{ modelId: 'a', protocol: 'openai-responses', endpoint }],
+      });
+      expect(config.models[0]?.endpoint).toBe(endpoint);
+    },
+  );
+
+  it.each([
+    null, 1, '', ' ', '/', '///', 'https://other.test/responses',
+    '//other.test/responses', 'responses?q=1', 'responses#part',
+    'v1\\responses', 'v1/../responses', './responses', 'v1/%2e%2e/responses',
+    'v1/.%2E/responses', 'v1/with space',
+  ])('rejects an invalid endpoint at its model field: %s', (endpoint) => {
+    expect(() => validateBuiltinLlmProviderConfig({
+      baseURL: 'https://example.test',
+      models: [{ modelId: 'a', protocol: 'openai-responses', endpoint }],
+    })).toThrow(expect.objectContaining({ fieldPath: 'models[0].endpoint' }));
+  });
+
   it('validates models and all supported protocols', () => {
     expect(validateBuiltinLlmProviderConfig({
       baseURL: 'http://localhost:5000/v1',

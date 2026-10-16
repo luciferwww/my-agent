@@ -3,7 +3,7 @@
 > Status: Accepted
 > Decision date: 2026-10-15
 > Owner: Project owner
-> Related Plan/Specification: [Plan](../changes/active/agent-home-initialization/plan.md) and [Specification](../changes/active/agent-home-initialization/specification.md)
+> Related Plan/Specification: [Plan](../changes/archive/agent-home-initialization/plan.md) and [Specification](../changes/archive/agent-home-initialization/specification.md)
 > Supersedes on acceptance: ADR-011 ordinary Standalone missing-config bootstrap
 > Preserves: ADR-011 Platform Configuration ownership and strict loading; ADR-012 path roles
 

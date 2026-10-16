@@ -15,6 +15,7 @@ import {
   collectChat,
   createHttpError,
   createInvalidRequestError,
+  createSessionHeaders,
   createStreamError,
   normalizeError,
   parseRecord,
@@ -22,6 +23,7 @@ import {
   readNonNegativeInteger,
   readSseData,
   readString,
+  resolveRequestURL,
   type ProtocolClientOptions,
 } from './client-common.js';
 
@@ -55,10 +57,12 @@ export class OpenAIChatCompletionsClient implements ModelInvocationPort {
     let reasoningOpaque: string | undefined;
     try {
       const apiKey = this.options.apiKey?.trim();
+      const sessionHeaders = createSessionHeaders(request);
       const send = (outputTokenLimitParameter: OutputTokenLimitParameter): Promise<Response> => (
-        this.fetchImpl(`${this.options.baseURL}/chat/completions`, {
+        this.fetchImpl(resolveRequestURL(this.options, request.model, '/chat/completions'), {
           method: 'POST',
           headers: {
+            ...sessionHeaders,
             'content-type': 'application/json',
             accept: 'text/event-stream',
             ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),

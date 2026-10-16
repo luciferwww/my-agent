@@ -8,6 +8,7 @@
 > Decision: [ADR-022: Explicit Standalone Agent Home Initialization](../../../decisions/adr-022-explicit-standalone-agent-home-initialization.md)
 > Depends on: [Shared Configured Agents](../../archive/shared-configured-agents/plan.md) and [Extension Initialization Metadata](../../archive/extension-initialization-metadata/plan.md)
 > Authorization: Authorized for Delivery by the project owner on 2026-10-15.
+> Closeout: Owner-authorized closeout completed and archived on 2026-10-16, with the explicitly deferred Schema constraint limitation below.
 
 ## 1. Outcome
 
@@ -168,7 +169,7 @@ behavior are defined in the
 | AHI-2 Terminal wizard | Completed | supported Provider, credential, and Model choices are collected and cancel safely |
 | AHI-3 File publication | Completed | Initialize creates config last; Edit concurrency-checks and atomically replaces config |
 | AHI-4 Startup cutover | Completed | missing config fails with initialization guidance instead of creating `{}` |
-| AHI-5 Validation | In Progress | package, Unit, integration, lint, build, link, and diff gates pass on Node 22; manual Windows terminal acceptance and independent review remain |
+| AHI-5 Validation | Completed | final Node 22 package/build, Unit, integration, lint, link, and diff gates passed; owner manual acceptance and independent fix review passed; Schema constraint gap explicitly deferred by owner |
 
 Only one item may be `In Progress`.
 
@@ -210,6 +211,57 @@ separate decision. It does not expand into other modules.
 - Package-content verification for terminal and profile assets.
 - Manual Windows terminal validation.
 - Affected Unit, integration, lint, build, link, and diff checks.
+
+### Acceptance record
+
+- 2026-10-16: The project owner confirmed that manual Windows terminal
+  acceptance passed and the implementation itself has no issues. Independent
+  review remains pending; this confirmation does not close the Change.
+- 2026-10-16: Independent review completed with four unresolved findings:
+  LLM edits delete untouched Provider Extension entries; a verified Extension
+  default can remain globally disabled at publication; non-Provider sensitive
+  configuration can bypass Descriptor Schema constraints; and literal
+  credentials lack the required plaintext-storage warning and credential-source
+  summary. Closeout remains blocked pending disposition, focused regression
+  coverage, and validation. The review was read-only and did not rerun the
+  historical Node 22 gates.
+- 2026-10-16: The project owner authorized local fixes for Edit preservation,
+  global enablement consistency, and credential disclosure, and explicitly
+  deferred the non-Provider sensitive-field Schema constraint gap. That gap
+  remains a known limitation: the Wizard can save values that Extension
+  acquisition later rejects. No expanded Schema validation mechanism is
+  authorized by this disposition.
+- 2026-10-16: Fixes preserve untouched Extension entries, confirm global
+  enablement before Extension Provider configuration, and publish enablement
+  only with retained verified Extension changes. Final review lists credential
+  sources without values and warns before plaintext credential publication.
+  Seven focused regressions failed before the fixes; all 91 initializer and
+  Standalone routing tests now pass, as do `npm run lint` and
+  `npm run build:host`, on Node 20.16.0. This does not re-establish the final
+  Node 22 package/integration gates for the modified implementation.
+- 2026-10-16: Independent narrow re-review accepted the fixes for findings
+  1, 2, and 4 with no blocking flaw identified. Finding 3 remains explicitly
+  owner-deferred. The re-review was read-only and did not independently rerun
+  tests or Node 22 gates.
+- 2026-10-16: Final validation of the modified implementation passed using
+  the existing cached Node 22.23.3 runtime: `npm test` (119 files, 1517 tests),
+  `npm run test:integration` (7 files, 23 tests), `npm run lint`, and
+  `npm run verify:package` (449 packaged files, including prepack build,
+  clean installation, installed command, and Host/Extension smoke checks).
+  Relative documentation file links and `git diff --check` also passed.
+  Owner-authorized closeout proceeds with the Schema limitation explicitly
+  deferred, not represented as fixed or fully validated.
+
+### Authority transfer
+
+Current Standalone entry routing, explicit Initialize/Edit publication, and
+ordinary missing-config behavior are recorded in the
+[Standalone Service Host Specification](../../../specifications/standalone-service-host.md).
+The [Configuration Specification](../../../specifications/configuration.md)
+distinguishes strict ordinary loading from confirmed Edit replacement.
+[Current Configuration Architecture](../../../architecture/configuration.md)
+records the existing ownership boundary. This archived Plan and its
+Specification retain delivery evidence, not stable contract authority.
 
 ## 9. Exit gate
 

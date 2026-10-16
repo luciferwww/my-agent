@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Provider behavior
-> Verified: 2026-09-18
+> Verified: 2026-10-16
 > Ownership: Provider-neutral invocation, normalized invocation failures, and concrete Built-in and Copilot Relay integrations
 > Ownership key: provider-protocol-and-builtin-adapter
 
@@ -52,6 +52,7 @@ ModelInvocationPort {
 
 ModelInvocationRequest {
   model: string
+  sessionId?: string
   invocationId?: string
   system?: string
   messages: ChatMessage[]
@@ -84,6 +85,10 @@ An invocation may also carry a resolved reasoning policy with an optional
 Thinking switch and an effort value. `default` means the Client leaves its wire
 request unchanged; it is not a model capability. Model capabilities publish
 only explicitly supported `on`/`off` switches and non-default effort values.
+
+`sessionId` is optional conversation identity for routing/cache affinity, not
+the per-call `invocationId`. Runner supplies the existing Session ID for normal
+and Compaction calls. Independent Provider implementations may ignore it.
 
 Provider fragments, indexes, SDK objects, Anthropic `input_schema`, and Responses `function.parameters` remain inside adapter/test boundaries. Complete canonical Tool Calls preserve Provider call identity, name, order, and either ready object input or explicit invalid input state.
 
@@ -142,7 +147,28 @@ output for the original tool call.
 
 ### 5.1 Protocol conversion
 
-The three fetch-based Protocol Clients directly implement the Core `ModelInvocationPort`. Each appends only its operation path to the configured API prefix, uses only the materialized credential, performs one HTTP attempt, converts canonical text/image/Tool history, streams canonical events, preserves Abort, and normalizes failures through Model Invocation Error V1. A configured effective policy maps to Anthropic `max_tokens`, Responses `max_output_tokens`, or Chat Completions `max_tokens`. Without one, OpenAI requests omit output limits and Anthropic Messages supplies its private required `4,096` fallback.
+The three fetch-based Protocol Clients directly implement the Core
+`ModelInvocationPort`. Each uses the model's optional relative `endpoint` as
+the complete operation path, or appends its existing protocol-default path when
+the field is absent. Explicit endpoints join the configured `baseURL` with one
+boundary slash; they do not discard its path or receive another protocol suffix.
+The Provider captures a per-protocol model-to-endpoint map once; concurrent
+requests select their own model path without mutating shared client state.
+Protocol conversion, credential source, and shared connection identity remain
+unchanged. Chat Completions retains its existing `max_tokens` HTTP 400
+compatibility retry; other calls make one HTTP attempt.
+
+All three Clients send `User-Agent: my-agent/0.1.0` and `x-opencode-session`
+without hostname checks. The latter uses the request's Session ID, or a UUID
+generated once per logical invocation when absent; HTTP compatibility retries
+reuse it. Streaming and collected calls share this behavior. Independent
+Extension transports are unchanged.
+
+Clients convert canonical text/image/Tool history, preserve Abort, and normalize
+failures through Model Invocation Error V1. A configured effective policy maps
+to Anthropic `max_tokens`, Responses `max_output_tokens`, or Chat Completions
+`max_tokens`. Without one, OpenAI requests omit output limits and Anthropic
+Messages supplies its private required `4,096` fallback.
 
 Responses maps explicit effort to `reasoning.effort` and requests readable
 summary only when the model registration declares that private adapter. Chat

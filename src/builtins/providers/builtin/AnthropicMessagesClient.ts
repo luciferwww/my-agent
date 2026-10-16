@@ -16,6 +16,7 @@ import {
   asRecord,
   collectChat,
   createHttpError,
+  createSessionHeaders,
   createStreamError,
   normalizeError,
   parseRecord,
@@ -24,6 +25,7 @@ import {
   readNonNegativeInteger,
   readSseData,
   readString,
+  resolveRequestURL,
   type ProtocolClientOptions,
 } from './client-common.js';
 
@@ -43,9 +45,10 @@ export class AnthropicMessagesClient implements ModelInvocationPort {
     const maxTokens = request.outputTokenLimit ?? DEFAULT_ANTHROPIC_MAX_TOKENS;
     try {
       const apiKey = this.options.apiKey?.trim();
-      const response = await this.fetchImpl(`${this.options.baseURL}/messages`, {
+      const response = await this.fetchImpl(resolveRequestURL(this.options, request.model, '/messages'), {
         method: 'POST',
         headers: {
+          ...createSessionHeaders(request),
           'content-type': 'application/json',
           accept: 'text/event-stream',
           'anthropic-version': '2023-06-01',

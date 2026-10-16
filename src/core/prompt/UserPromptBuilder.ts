@@ -9,6 +9,7 @@ import type {
  * 构建 User Prompt。
  *
  * 拼接顺序（参考 OpenClaw prepend 模式）：
+ *   本轮开始时间（UTC）
  *   hooks 前置文本块（按注册顺序）
  *   用户原始消息（永远在最后）
  *
@@ -31,13 +32,14 @@ export class UserPromptBuilder {
 
   /** 构建 User Prompt */
   async build(input: UserPromptInput): Promise<BuiltUserPrompt> {
+    const timestamp = `<turn_start>${new Date().toISOString()}</turn_start>`;
     const { text: rawInput, attachments = [], metadata = {} } = input;
 
     // 收集前置上下文
     const prependedChunks = await this.prepender.prepend(rawInput, metadata);
 
-    // 拼接：hooks → 原始消息
-    const parts = [...prependedChunks, rawInput].filter(Boolean);
+    // 拼接：时间 → hooks → 原始消息
+    const parts = [timestamp, ...prependedChunks, rawInput].filter(Boolean);
     const text = parts.join('\n\n');
 
     return {

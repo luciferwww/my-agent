@@ -82,7 +82,9 @@ The returned Units have not been created. Runtime combines them with required an
 
 ## 6. Supported Host and build boundary
 
-`src/hosts/standalone/standalone-host.ts` is the supported service-first Host composition root. The thin executable bootstrap is `src/hosts/standalone/entry.ts`. The composition root:
+`src/hosts/standalone/standalone-host.ts` is the supported service-first Host composition root. The thin executable bootstrap is `src/hosts/standalone/entry.ts`.
+
+`--initialize` is a separate interactive Standalone path that returns before Runtime creation; its Initialize/Edit and publication contract is owned by the [Standalone Service Host Specification](../specifications/standalone-service-host.md). Ordinary startup follows the composition steps below.
 
 1. derives `installDir` and selects `agentHome`;
 2. passes generic `installDir`, configuration snapshot, and environment startup facts to Runtime;

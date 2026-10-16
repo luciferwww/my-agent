@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-10-15
+> Verified: 2026-10-16
 > Authority: Stable Agent configuration contract
 
 ## Scope
@@ -13,7 +13,7 @@ Owner validators reject unknown fields at every leaf and nested-leaf level. Plat
 
 ## Loading and precedence
 
-Ordinary Standalone startup never creates a missing configuration document. A missing `<agentHome>/config.json` fails before Runtime creation with guidance to run `my-agent --initialize --agent-home <path>`. Explicit Standalone initialization verifies Provider/Model access and publishes `config.json` last. Existing configuration paths are never opened for writing, overwritten, reformatted, merged, migrated, repaired, or rolled back. The physical loader remains globally strict: a document missing at read time is `FILE_MISSING`; an unreadable file, malformed JSON, non-object root, unknown namespace, or invalid known namespace is another classified fatal error. The Host reads document content exactly once per ordinary startup attempt. Runtime receives a defensively copied/frozen Application projection and never reads configuration files. `ensureAgentConfigDocument()` remains an explicit Platform API for other callers but is not used by ordinary Standalone startup.
+Ordinary Standalone startup never creates a missing configuration document. A missing `<agentHome>/config.json` fails before Runtime creation with guidance to run `my-agent --initialize --agent-home <path>`. Explicit Standalone initialization verifies Provider/Model access and publishes `config.json` last. Ordinary startup and Initialize mode do not overwrite existing configuration. Explicitly confirmed Edit mode preserves untouched supported content, checks for concurrent changes, and atomically replaces the configuration with accepted changes. The physical loader remains globally strict: a document missing at read time is `FILE_MISSING`; an unreadable file, malformed JSON, non-object root, unknown namespace, or invalid known namespace is another classified fatal error. The Host reads document content exactly once per ordinary startup attempt. Runtime receives a defensively copied/frozen Application projection and never reads configuration files. `ensureAgentConfigDocument()` remains an explicit Platform API for other callers but is not used by ordinary Standalone startup.
 
 Agent-scoped precedence is:
 
@@ -26,6 +26,15 @@ Global Agent execution policy precedence is `module default -> agents top-level 
 - `llm.defaultModel?: { providerId, modelId }` is the optional preferred reference for a Root Turn without an explicit selection and the client Catalog default, not resolved facts, a mandatory startup model, a Child default, or a fallback list.
 - `llm.builtin?: { baseURL, apiKey?, models[] }` configures one optional Built-in Provider. Each model declares an opaque `modelId`, one of the three supported protocols, optional `displayName`, optional positive safe-integer capability facts `maximumContextTokens`, `maximumPromptTokens`, and `maximumOutputTokens`, and separate optional positive safe-integer invocation policy `outputTokenLimit`; an empty list is valid. Omitting Prompt and Context limits uses the Built-in Provider's conservative `131,072` effective fallback.
 - Built-in `apiKey` accepts a literal or one exact `${ENV_VAR}` reference. Platform materializes it once and fails safely when the referenced value is missing or blank. Arbitrary interpolation is not supported.
+- A Built-in model may declare `endpoint?: string`, a nonblank relative operation
+  path including any version and operation suffix. It is joined to the shared
+  `baseURL` with one boundary slash and replaces, rather than extends, the
+  protocol-default path. Omission preserves existing URL construction.
+  Absolute URLs, scheme-relative authorities, queries, fragments, backslashes,
+  whitespace within the path, and dot-segment traversal are invalid and report
+  the exact `llm.builtin.models[index].endpoint` field. Accepted endpoints survive
+  immutable configuration capture and supported model round trips. Credentials
+  and host remain provider-wide; no protocol or vendor inference is performed.
 - The legacy global `llm.maxTokens` is removed. Built-in output control is per-model `outputTokenLimit`; there is no global, Agent-level, Channel-level, or compatibility alias.
 - `agents.steeringEnabled` is a global Runner-owned boolean and defaults to `false`.
 - `agents.maxLlmCallsPerTurn` is a global Runner-owned optional positive integer. Omission means no Model-call count limit. Every Root and Child Turn applies the same configured limit independently.

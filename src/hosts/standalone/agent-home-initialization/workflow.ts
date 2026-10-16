@@ -201,6 +201,7 @@ export async function runAgentHomeInitialization(
           signal: options.signal,
           includeBuiltin: false,
           selectedSourceId: extensionStateKey(selectedExtension.descriptor.id),
+          extensionsDisabled: asMutableRecord(originalDocument?.['extensions'])?.['enabled'] === false,
         });
         if (verifiedModels(states).length > verifiedBefore) llmModified = true;
         continue;
@@ -221,6 +222,7 @@ export async function runAgentHomeInitialization(
           prompter,
           signal: options.signal,
           includeBuiltin: true,
+          extensionsDisabled: asMutableRecord(originalDocument?.['extensions'])?.['enabled'] === false,
         });
         if (verifiedModels(states).length > verifiedBefore) llmModified = true;
         continue;
@@ -270,7 +272,6 @@ export async function runAgentHomeInitialization(
             states,
             defaultModel,
             maxLlmCallsPerTurn,
-            providerExtensions,
             extensionConfigurations,
             modifiedExtensionIds,
             llmModified,
@@ -290,6 +291,8 @@ export async function runAgentHomeInitialization(
         mode,
         originalDocument,
         rootToolsReset,
+        discovery.candidates,
+        extensionConfigurations,
       ), 'Initialization summary');
       const reviewAction = await prompter.select(
         mode === 'initialize' ? 'Review initialization' : 'Review changes',
@@ -492,6 +495,7 @@ async function collectProviderCandidate(params: {
   readonly signal?: AbortSignal;
   readonly includeBuiltin?: boolean;
   readonly selectedSourceId?: string;
+  readonly extensionsDisabled?: boolean;
 }): Promise<void> {
   const options: PromptOption[] = [
     ...(params.includeBuiltin === false
@@ -543,6 +547,14 @@ async function collectProviderCandidate(params: {
     : undefined;
   const candidate = params.providerExtensions.find((item) => item.descriptor.id === extensionId);
   if (!candidate) throw new Error('The selected Provider Extension is no longer available.');
+  if (params.extensionsDisabled
+    && ![...params.states.values()].some((state) => state.source === 'extension')
+    && !(await params.prompter.confirm(
+      'Extensions are globally disabled. Enable Extensions when saving this Provider?',
+      false,
+    ))) {
+    return;
+  }
   const result = await configureExtension({
     candidate,
     existing: replace ? undefined : asExtension(existing),
@@ -957,7 +969,6 @@ function mergeEditedConfig(
   states: ReadonlyMap<string, ProviderCandidateState>,
   defaultModel: VerifiedModel | undefined,
   maxLlmCallsPerTurn: number | undefined,
-  providerExtensions: readonly ExtensionCandidate[],
   extensionConfigurations: ReadonlyMap<string, Readonly<Record<string, unknown>>>,
   modifiedExtensionIds: ReadonlySet<string>,
   llmModified: boolean,
@@ -980,10 +991,10 @@ function mergeEditedConfig(
     );
     document['llm'] = generated['llm'];
 
-    for (const candidate of providerExtensions) delete entries[candidate.descriptor.id];
     for (const state of states.values()) {
       if (state.source !== 'extension') continue;
       entries[state.candidate.descriptor.id] = { config: state.authoredConfig };
+      if (extensions['enabled'] === false) extensions['enabled'] = true;
     }
   }
   for (const extensionId of modifiedExtensionIds) {
@@ -1072,8 +1083,44 @@ function renderFinalSummary(
   mode: WorkflowMode,
   originalDocument: Record<string, unknown> | undefined,
   rootToolsReset: boolean,
+  candidates: readonly ExtensionCandidate[],
+  extensionConfigurations: ReadonlyMap<string, Readonly<Record<string, unknown>>>,
 ): string {
   const models = verifiedModels(states);
+  const credentialSources: string[] = [];
+  let hasLiteralCredential = false;
+  const summarizeCredential = (label: string, value: unknown): void => {
+    if (typeof value !== 'string' || value.length === 0) {
+      credentialSources.push(`${label}: not configured`);
+      return;
+    }
+    const reference = /^\$\{([A-Z_][A-Z0-9_]*)\}$/u.exec(value);
+    if (reference) {
+      credentialSources.push(`${label}: environment variable ${reference[1]}`);
+    } else {
+      hasLiteralCredential = true;
+      credentialSources.push(`${label}: entered directly`);
+    }
+  };
+  const configurations = new Map(extensionConfigurations);
+  for (const state of states.values()) {
+    if (state.source === 'builtin') {
+      summarizeCredential('Built-in API key', state.authored.apiKey);
+    } else {
+      configurations.set(state.candidate.descriptor.id, state.authoredConfig);
+    }
+  }
+  for (const candidate of candidates) {
+    const config = configurations.get(candidate.descriptor.id);
+    if (config === undefined) continue;
+    const properties = asMutableRecord(candidate.descriptor.configSchema['properties']) ?? {};
+    for (const [name, property] of Object.entries(properties)) {
+      const schema = asMutableRecord(property);
+      if (schema?.['type'] === 'string' && schema['writeOnly'] === true) {
+        summarizeCredential(`${candidate.descriptor.id} / ${name}`, config[name]);
+      }
+    }
+  }
   const existingDefault = asMutableRecord(
     asMutableRecord(originalDocument?.['llm'])?.['defaultModel'],
   );
@@ -1092,6 +1139,13 @@ function renderFinalSummary(
             : [`Default Model: ${String(existingDefault['providerId'])} / ${String(existingDefault['modelId'])}`]),
         ]),
     `Maximum LLM calls per Turn: ${maxLlmCallsPerTurn ?? 'unlimited'}`,
+    ...credentialSources,
+    ...(hasLiteralCredential
+      ? [
+          'The sensitive value will be stored as plaintext in config.json and may be accessible\n'
+          + 'to processes and Tools running with your user permissions.',
+        ]
+      : []),
     ...(rootToolsReset ? ['Root Tool permissions: recommended defaults restored'] : []),
   ].join('\n');
 }

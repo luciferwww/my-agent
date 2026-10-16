@@ -510,7 +510,7 @@ describe('RuntimeApp', () => {
     expect(runnerRun).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId,
-        message: 'Hello runtime',
+        message: expect.stringContaining('</turn_start>\n\nHello runtime'),
         resolvedModel: expect.objectContaining({
           identity: { providerId: 'test', modelId: 'test-model' },
           referenceSource: 'config-default',
@@ -1838,7 +1838,7 @@ describe('RuntimeApp', () => {
     const secondRun = createDeferred<RunResult>();
     const otherRun = createDeferred<RunResult>();
     const runnerRun = vi.fn(async (params: { sessionId: string; message: string }): Promise<RunResult> => {
-      if (params.sessionId === 'main' && params.message === 'first') {
+      if (params.sessionId === 'main' && params.message.endsWith('\n\nfirst')) {
         return firstRun.promise;
       }
       if (params.sessionId === 'other') {
@@ -1899,8 +1899,8 @@ describe('RuntimeApp', () => {
       expect(runnerRun).toHaveBeenCalledTimes(2);
     });
     expect(runnerRun.mock.calls.map(([params]) => [params.sessionId, params.message])).toEqual([
-      ['main', 'first'],
-      ['other', 'parallel'],
+      ['main', expect.stringContaining('</turn_start>\n\nfirst')],
+      ['other', expect.stringContaining('</turn_start>\n\nparallel')],
     ]);
 
     firstRun.resolve(result('first'));
@@ -1912,7 +1912,7 @@ describe('RuntimeApp', () => {
     expect(runnerRun.mock.calls[2]?.[0]).toEqual(
       expect.objectContaining({
         sessionId: 'main',
-        message: 'second',
+        message: expect.stringContaining('</turn_start>\n\nsecond'),
       }),
     );
 
@@ -1991,7 +1991,7 @@ describe('RuntimeApp', () => {
     expect(drainedSteering).toEqual([
       {
         role: 'user',
-        content: 'steer now',
+        content: expect.stringContaining('</turn_start>\n\nsteer now'),
         reasoning: { effort: 'high' },
       },
     ]);
@@ -2051,7 +2051,7 @@ describe('RuntimeApp', () => {
 
     expect(firstClaims).toEqual([[]]);
     expect(runnerRun.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
-      message: 'second',
+      message: expect.stringContaining('</turn_start>\n\nsecond'),
       reasoningPreference: { effort: 'low' },
       reasoningPolicy: { effort: 'low' },
     }));
@@ -2688,7 +2688,7 @@ describe('RuntimeApp', () => {
         message: string;
         signal?: AbortSignal;
       }): Promise<RunResult> => {
-        if (params.message === 'active') {
+        if (params.message.endsWith('\n\nactive')) {
           capturedSignal = params.signal;
           await releaseRun.promise;
           return {

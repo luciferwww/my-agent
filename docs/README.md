@@ -8,6 +8,7 @@ This index separates current authority from active work and historical or non-au
 ## User guides
 
 - [Configuration Guide](guides/configuration.md) — Agent Home setup, supported fields, Providers, Extensions, examples, and troubleshooting
+- [OpenCode Go Model Capabilities](guides/opencode-model-capabilities.md) — dated model/protocol/reasoning reference, candidate Built-in configuration, and verification limits; not an implemented support guarantee
 
 ## Default reading path
 

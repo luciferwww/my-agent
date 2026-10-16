@@ -262,6 +262,7 @@ describe('newly materialized Session', () => {
       let providerMessages: ModelInvocationRequest['messages'] = [];
       const llmClient: ModelInvocationPort = {
         async *chatStream(request: ModelInvocationRequest) {
+          expect(request.sessionId).toBe(sessionId);
           providerMessages = request.messages.map((message) => ({ ...message }));
           yield { type: 'message_start' } as ModelStreamEvent;
           yield { type: 'text_delta', text: 'done' } as ModelStreamEvent;
@@ -2356,6 +2357,8 @@ describe('AgentRunner', () => {
         },
       });
       expect(firstResult.compacted).toBe(true);
+      expect(compactionRequests.length).toBeGreaterThanOrEqual(2);
+      expect(compactionRequests.every((request) => request.sessionId === MAIN_SESSION_ID)).toBe(true);
       const summaryRequest = JSON.stringify(compactionRequests[0]?.messages);
       expect(summaryRequest).toContain('[Image]: media_type=image/png, ~64 tokens');
       expect(summaryRequest).not.toContain(persistedImageData);
@@ -2365,6 +2368,7 @@ describe('AgentRunner', () => {
       expect(JSON.stringify(reloadedSessionManager.getMessages(MAIN_SESSION_ID))).toContain(persistedImageData);
       const nextTurnClient: ModelInvocationPort = {
         async *chatStream(params: ModelInvocationRequest) {
+          expect(params.sessionId).toBe(MAIN_SESSION_ID);
           nextTurnMessages = params.messages.map((message) => ({ ...message }));
           yield { type: 'message_start' } as ModelStreamEvent;
           yield { type: 'text_delta', text: 'Second result.' } as ModelStreamEvent;

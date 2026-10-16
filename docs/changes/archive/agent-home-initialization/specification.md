@@ -1,11 +1,13 @@
 # Agent Home Initialization Specification
 
-> Status: Accepted
+> Status: Validated with owner-deferred limitation
 > Date: 2026-10-15
 > Owner: Project owner
 > Related Plan: [Agent Home Initialization Plan](plan.md)
 > Related Decision: [ADR-022](../../../decisions/adr-022-explicit-standalone-agent-home-initialization.md)
 > Prerequisites: [Shared Configured Agents Specification](../../archive/shared-configured-agents/specification.md) and [Extension Initialization Metadata Specification](../../archive/extension-initialization-metadata/specification.md)
+> Closeout: 2026-10-16; archived delivery specification, not stable contract authority.
+> Current authority: [Standalone Service Host](../../../specifications/standalone-service-host.md) and [Configuration](../../../specifications/configuration.md).
 
 ## 1. Purpose
 
@@ -573,6 +575,14 @@ preserved. A section becomes modified only after a candidate is accepted:
 - `logger`, untouched Agents, untouched Extensions, and other untouched
   supported content remain unchanged.
 
+Editing LLM does not remove unselected Provider Extension entries. If
+`extensions.enabled` is `false`, configuring an Extension Provider first asks
+whether to enable Extensions when saving that Provider, defaulting to no.
+Declining leaves the Draft unchanged. Acceptance permits verification; global
+enablement is published only when the verified Extension configuration is
+retained in the saved LLM changes. Discarding those changes preserves the
+original global setting. The Wizard does not add a global toggle.
+
 Initialize mode creates the fixed named Agent entries and assets. Edit mode
 does not replace custom Agent entries merely because another section changed.
 
@@ -754,8 +764,17 @@ Platform Configuration ownership and strict loading decisions remain.
 - package, Unit, integration, lint, build, link, diff, manual terminal, and
   independent review checks pass as affected.
 
-## 17. Open questions
+## 17. Closeout and deferred limitation
 
-No product-behavior question remains open. Delivery remains gated on evidence
-that implementation tests preserve the verified public-API path without
-modifying non-Standalone production modules.
+The owner confirmed manual Windows acceptance and authorized closeout.
+Independent review accepted the fixes for untouched Extension preservation,
+global enablement consistency, and credential disclosure. Final Node 22.23.3
+Unit, integration, lint, package/build, link, and diff validation passed; the
+[Plan](plan.md#acceptance-record) retains the validation provenance.
+
+The owner explicitly deferred the non-Provider sensitive-field Schema
+constraint gap on 2026-10-16. Sensitive input can pass the Wizard's nonblank
+check while violating constraints such as `minLength`, and be rejected later
+by Extension acquisition. Full constraint validation for that path is not
+claimed by this closeout. No expanded Schema mechanism or public API change
+was authorized.

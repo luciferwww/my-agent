@@ -986,6 +986,7 @@ export class AgentRunner {
 
     // Generate the LLM summary.
     const compactResult = await compactMessages({
+      sessionId: turnCtx.sessionId,
       messages,
       config: compaction,
       llmClient: params.resolvedModel.invocationPort,
@@ -1215,6 +1216,7 @@ export class AgentRunner {
 
     try {
       for await (const event of resolvedModel.invocationPort.chatStream({
+        sessionId: turnCtx.sessionId,
         model: resolvedModel.identity.modelId,
         invocationId: randomUUID(),
         system: params.system,

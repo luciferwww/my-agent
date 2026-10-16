@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-24
+> Verified: 2026-10-16
 > Authority: Canonical standalone process Host contract
 
 ## Scope
@@ -13,11 +13,17 @@ CLI is an optional Host-local Channel, not the architecture. Runtime remains the
 
 ## Entry and path selection
 
-The canonical package command is `my-agent`; repository development uses `npm run agent`. The standalone entry accepts at most one Agent Home option across `-ah <path>`, `--agent-home <path>`, and `--agent-home=<path>`, plus the optional boolean `--cli` flag. Short equals forms are unsupported. Missing Agent Home values, blank values, duplicate `--agent-home`, duplicate `--cli`, and unknown arguments fail with one `HOST_ARGUMENT_INVALID` diagnostic. The retired `-bc` and `--builtin-channels` forms are rejected as unknown arguments.
+The canonical package command is `my-agent`; repository development uses `npm run agent`. The standalone entry accepts at most one Agent Home option across `-ah <path>`, `--agent-home <path>`, and `--agent-home=<path>`, plus the optional boolean `--cli` or `--initialize` flag. These flags are mutually exclusive and each may occur only once. Short equals forms are unsupported. Missing Agent Home values, blank values, duplicate options, conflicting flags, and unknown arguments fail with one `HOST_ARGUMENT_INVALID` diagnostic. The retired `-bc` and `--builtin-channels` forms are rejected as unknown arguments.
 
 Standalone derives `installDir` from the nearest containing npm package named `my-agent`. Agent Home defaults to `<user-home>/.my-agent`; an explicit absolute value is normalized, while an explicit relative value resolves once against startup `process.cwd()`. No custom environment or configuration source selects either path. `installDir` owns immutable program content and pre-provisioned Extensions; `agentHome` owns configuration and mutable Agent state and is the Runtime path context. Startup CWD has no architectural role after resolving a relative CLI value.
 
-After path resolution, standalone ensures Agent Home exists and exclusively creates a missing `<agentHome>/config.json` with exact UTF-8 bytes `{}\n`. Existing configuration is preserved byte-for-byte. The Host then performs one strict document-content read; a document missing at read time is fatal `FILE_MISSING`. Generating `{}` materializes physical default content but does not select a Provider/Model, provision credentials or Extensions, or guarantee a successful Turn.
+After path resolution, ordinary startup performs one strict document-content read and never bootstraps an empty configuration. A missing `<agentHome>/config.json` fails before Runtime creation with guidance to run `my-agent --initialize --agent-home "<resolved path>"`. Other strict-loading failures propagate unchanged.
+
+`--initialize` routes to an interactive Standalone-owned Wizard and returns before ordinary configuration loading, Runtime creation, or Host lifetime. Missing configuration enters Initialize mode; existing valid configuration requires explicit Edit confirmation, defaulting to no. Cancellation publishes nothing. Initialize preserves existing Root Context, installs compatible fixed Agent Profile assets without overwrite, and exclusively creates `config.json` last after validation, live Model verification, candidate cleanup, and confirmation. A failed publication may leave compatible Context/Profile files. Edit preserves untouched supported configuration and does not install Profile assets; it checks the original configuration before and after writing an exclusive same-directory temporary file, then atomically replaces `config.json`. Temporary-file cleanup is attempted on failure.
+
+Changing LLM configuration preserves untouched Provider Extension entries. If Extensions are globally disabled, configuring an Extension Provider first requires explicit consent to enable them when saving that Provider. Declining leaves configuration unchanged; discarding verified LLM changes does not enable Extensions. The Wizard does not expose a global Extensions toggle. Before publication, the summary identifies authored credential sources without exposing secret values; literal credentials require a plaintext-storage warning. Environment-reference summaries show only the variable name.
+
+Known owner-deferred limitation: sensitive fields in non-Provider Extension configuration are checked for nonblank input but are not fully validated against Descriptor Schema constraints before saving; ordinary Extension acquisition may subsequently reject them.
 
 ## Host-local Channel selection
 
@@ -33,7 +39,7 @@ Standalone supplies fixed CLI values prompt `> ` and approval enabled. The CLI s
 
 ## Composition and liveness
 
-The Host follows `arguments -> paths -> configuration bootstrap -> one strict configuration read -> validation -> Runtime`. It passes generic `installDir`, the complete immutable configuration snapshot, and environment startup facts plus zero or one Host-local CLI Unit to `RuntimeApp.create()`. Runtime Bootstrap derives and invokes Extension Acquisition after Logger configuration; Runtime Builder combines acquired and Host-provided Units into the sole composition path. A configuration bootstrap or load failure prevents Runtime creation, while a Runtime Bootstrap or acquisition failure prevents composition. Core Agent Context retains its independent Runtime-owned initialization.
+The ordinary Host follows `arguments -> paths -> one strict configuration read -> validation -> Runtime`. It passes generic `installDir`, the complete immutable configuration snapshot, and environment startup facts plus zero or one Host-local CLI Unit to `RuntimeApp.create()`. Runtime Bootstrap derives and invokes Extension Acquisition after Logger configuration; Runtime Builder combines acquired and Host-provided Units into the sole composition path. A configuration load failure prevents Runtime creation, while a Runtime Bootstrap or acquisition failure prevents composition. Explicit initialization is a separate terminal path, not an alternative Runtime composition root. Core Agent Context retains its independent Runtime-owned initialization.
 
 CLI completion controls Host lifetime only when `--cli` is present. Its normal
 or failed completion initiates shared Runtime shutdown, and failure sets process
