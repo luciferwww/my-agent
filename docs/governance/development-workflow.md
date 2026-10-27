@@ -1,121 +1,121 @@
 # Development Workflow
 
-## 1. 文档状态
+## 1. Document Status
 
-- **状态：** Accepted
-- **版本：** 1.4
-- **日期：** 2026-09-17
-- **所有者：** 项目所有者
-- **适用范围：** my-agent 的代码、测试、架构、文档和实验性变更
+- **Status:** Accepted
+- **Version:** 1.4
+- **Date:** 2026-09-17
+- **Owner:** Project owner
+- **Scope:** Code, tests, architecture, documentation, and experimental changes in my-agent
 
-本文档是开发流程的唯一权威来源。`CONTRIBUTING.md` 只提供贡献入口，模板只定义工件结构；发生冲突时以本文档和已 `Accepted` 的 ADR、Spec 为准。
+This document is the single source of truth for the development workflow. `CONTRIBUTING.md` only provides the contribution entry point, and templates only define artifact structure. In the event of a conflict, this document and `Accepted` ADRs and Specs take precedence.
 
-## 2. 基本原则
+## 2. Core Principles
 
-1. 先分类工作，再决定是否需要 Plan、Spec、ADR 或 Spike；
-2. 修改前确认范围，未经批准不扩大目标或改变架构；
-3. 架构文档在实现阶段是设计依据，代码证据推翻设计时暂停并重新决策；
-4. 第一处实质修改后立即运行最小、可证伪的聚焦验证；
-5. 修复根因，保持变更局部，不顺带重构无关代码；
-6. Reviewer 意见先核实和分级，再决定采纳、修改采纳或拒绝；
-7. 新权威路径建立后及时删除被替代路径，Compatibility 必须有到期日；
-8. 文档、测试和实现共同构成完成证据；
-9. 可以通过代码、测试、运行证据或权威文档消除的局部不确定性，应优先自行取证，不因普通事实问题中断工作；
-10. 每个实质修改必须可追溯到已确认需求、验收条件、缺陷证据，或由本次修改直接产生的必要清理；不引入未经当前证据证明的抽象、配置或运行路径。
+1. Classify the work before deciding whether a Plan, Spec, ADR, or Spike is required.
+2. Confirm the scope before making changes; do not expand objectives or change the architecture without approval.
+3. Use architecture documents as the design basis during implementation. If code evidence disproves the design, pause and revisit the decision.
+4. Immediately after the first substantive change, run the smallest focused check capable of falsifying the hypothesis.
+5. Fix root causes, keep changes local, and do not refactor unrelated code along the way.
+6. Verify and classify reviewer feedback before deciding whether to accept it, accept it with modifications, or reject it.
+7. Promptly remove superseded paths once the new authoritative path is established. Compatibility must have an expiration date.
+8. Documentation, tests, and implementation together provide evidence of completion.
+9. Investigate local uncertainties independently when code, tests, runtime evidence, or authoritative documentation can resolve them. Do not interrupt work for routine factual questions.
+10. Every substantive change must be traceable to a confirmed requirement, acceptance criterion, defect evidence, or necessary cleanup directly resulting from the current change. Do not introduce abstractions, configuration, or runtime paths that are not justified by current evidence.
 
-## 3. 工作分类
+## 3. Work Classification
 
-| 类型 | 适用场景 | 最低工件 | 批准要求 |
+| Type | When to Use | Minimum Artifacts | Approval Requirements |
 |---|---|---|---|
-| Small Change | 局部、低风险、行为边界不变的维护 | 明确需求或 Issue | 范围确认 |
-| Defect | 已有行为偏离已确认契约或预期 | 复现证据和回归测试 | 修复范围确认 |
-| Documentation | 不改变生产行为的文档修正 | 文档变更说明 | 权威事实变化时需所有者确认 |
-| Architecture Slice | 改变模块边界、依赖方向、公共契约或生产权威路径 | Plan Item + Accepted ADR/Spec | 项目所有者批准进入 Delivery |
-| Architecture Spike | 关键未知无法由静态分析或小型测试消除 | Accepted Spike Spec | 项目所有者批准实验 |
+| Small Change | Local, low-risk maintenance that preserves behavioral boundaries | Clear requirement or Issue | Scope confirmation |
+| Defect | Existing behavior deviates from a confirmed contract or expectation | Reproduction evidence and regression tests | Confirmation of the fix scope |
+| Documentation | Documentation corrections that do not change production behavior | Description of the documentation change | Owner confirmation when authoritative facts change |
+| Architecture Slice | Changes to module boundaries, dependency direction, public contracts, or authoritative production paths | Plan Item + Accepted ADR/Spec | Project owner approval to enter Delivery |
+| Architecture Spike | Critical unknowns that cannot be resolved through static analysis or small tests | Accepted Spike Spec | Project owner approval of the experiment |
 
-工作分类不由改动行数决定。一个很小的公共契约变化仍可能是 Architecture Slice；大批机械文档修正也可能只是 Documentation。
+Work classification is not determined by the number of changed lines. A small public contract change may still be an Architecture Slice, while a large set of mechanical documentation corrections may only be Documentation.
 
-## 4. 工件选择
+## 4. Artifact Selection
 
 ### Plan
 
-用于跨阶段目标、顺序、Gate、风险和退出条件。Plan `Accepted` 表示批准执行，不表示实现完成或 Gate 已通过。
+Use a Plan for cross-phase objectives, sequencing, Gates, risks, and exit criteria. An `Accepted` Plan authorizes execution; it does not mean implementation is complete or that any Gate has passed.
 
 ### ADR
 
-满足任一条件时需要 ADR：
+An ADR is required when any of the following applies:
 
-- 决策长期有效且难以回退；
-- 改变依赖方向、权威事实来源或公共架构边界；
-- 多个可行方案存在重要取舍；
-- 替代已 `Accepted` 的架构决策。
+- The decision has long-term implications and is difficult to reverse.
+- It changes dependency direction, the authoritative source of facts, or public architectural boundaries.
+- Multiple viable options involve significant trade-offs.
+- It supersedes an `Accepted` architecture decision.
 
 ### Module Spec
 
-公共 API、Event、并发、生命周期、错误语义、资源所有权或跨模块契约变化时需要 Module Spec。
+A Module Spec is required for changes to public APIs, Events, concurrency, lifecycle, error semantics, resource ownership, or cross-module contracts.
 
 ### Spike
 
-以下未知会影响架构结论时，先执行 Spike：
+Run a Spike first when unknowns in any of the following areas could affect architectural conclusions:
 
-- 外部 SDK、Provider Metadata 或协议行为；
-- 并发、取消、排空、关闭或资源释放；
-- 无法仅靠设计证明的扩展边界；
-- 失败会迫使架构或迁移顺序改变的假设。
+- External SDKs, Provider Metadata, or protocol behavior.
+- Concurrency, cancellation, draining, shutdown, or resource release.
+- Extension boundaries that cannot be validated through design alone.
+- Assumptions whose failure would force changes to the architecture or migration sequence.
 
-Spike 代码默认可丢弃。结论记录在 Spike Results，只有证据支持的结论才可进入 ADR 或 Spec。
+Spike code is disposable by default. Record conclusions in Spike Results; only evidence-backed conclusions may be incorporated into an ADR or Spec.
 
-## 5. 状态与责任
+## 5. States and Responsibilities
 
-| 工件 | 状态流 | 批准者 |
+| Artifact | State Flow | Approver |
 |---|---|---|
-| Plan | `Proposed -> Accepted -> Superseded | Cancelled` | 项目所有者 |
-| Plan Item | `Not Started -> In Progress -> In Review -> Completed` | 项目所有者确认完成 |
-| ADR | `Proposed -> Accepted -> Superseded` | 项目所有者 |
-| Module Spec | `Draft -> In Review -> Accepted -> Implemented -> Validated` | 项目所有者接受设计和验证结果 |
-| Spike | `Draft -> Accepted -> Executing -> Provisional Pass | Failed -> Completed` | 项目所有者批准执行并确认 Results |
+| Plan | `Proposed -> Accepted -> Superseded | Cancelled` | Project owner |
+| Plan Item | `Not Started -> In Progress -> In Review -> Completed` | Project owner confirms completion |
+| ADR | `Proposed -> Accepted -> Superseded` | Project owner |
+| Module Spec | `Draft -> In Review -> Accepted -> Implemented -> Validated` | Project owner accepts the design and validation results |
+| Spike | `Draft -> Accepted -> Executing -> Provisional Pass | Failed -> Completed` | Project owner approves execution and confirms Results |
 
-Plan Item 可使用 `Blocked`、`Deferred`、`Cancelled`。ADR 可使用 `Rejected`、`Deprecated`。状态必须写在对应工件中；评审结论和批准通过文档变更及 Git 历史留证。
+Plan Items may also use `Blocked`, `Deferred`, and `Cancelled`. ADRs may also use `Rejected` and `Deprecated`. Record each state in the corresponding artifact; preserve review conclusions and approvals through documentation changes and Git history.
 
 ## 6. Definition of Ready
 
-Small Change 和 Documentation 只需明确范围、事实来源和验证方式。Architecture Slice 进入实现前必须满足：
+Small Change and Documentation work only require a clear scope, sources of facts, and a validation approach. Before implementation begins, an Architecture Slice must satisfy the following:
 
-- [ ] 关联 Plan Item 和用户可观察结果明确；
-- [ ] 非目标和变更边界明确；
-- [ ] 关联 ADR、Spec 已 `Accepted`；
-- [ ] 外部 SDK、Metadata、生命周期或并发未知已完成 Spike；
-- [ ] 模块所有权和依赖方向明确；
-- [ ] Compatibility、Feature Flag 和旧路径删除条件明确；
-- [ ] 聚焦测试、契约测试和更广验证范围明确；
-- [ ] 不存在会使结论失真的未解决 Blocker。
+- [ ] The associated Plan Item and user-observable outcomes are clear.
+- [ ] Non-goals and change boundaries are clear.
+- [ ] Associated ADRs and Specs are `Accepted`.
+- [ ] Spikes addressing unknowns in external SDKs, Metadata, lifecycle, or concurrency are complete.
+- [ ] Module ownership and dependency direction are clear.
+- [ ] Compatibility, Feature Flags, and conditions for removing old paths are clear.
+- [ ] The scope of focused tests, contract tests, and broader validation is clear.
+- [ ] No unresolved Blocker could invalidate the conclusions.
 
-未达到 Ready 的 Architecture Slice 不进入 Delivery，也不通过在旧路径增加特例规避未知。
+An Architecture Slice that is not Ready must not enter Delivery. Do not work around unknowns by adding special cases to old paths.
 
-## 7. 实施流程
+## 7. Implementation Workflow
 
-1. **确认事实：** 从失败行为、测试、目标文件或权威文档开始，形成一个可证伪的局部假设。可以由现有证据消除的不确定性应先自行调查；不得把可以直接核实的事实问题转交给项目所有者决策；
-2. **确认范围与决策边界：** 说明拟修改内容、非目标和最低验证。多步骤工作应简要列出目标、验证方式和退出条件。若新证据会改变已接受的公共行为、架构边界、事实所有权、依赖方向或 Compatibility 策略，要求 undocumented/private dependency，产生多条生产运行路径，或实质增加复杂度和维护范围，必须列出证据、影响和可选方案，并在获得确认前暂停相关修改；
-3. **执行首个小改动：** 使用最小、可逆、符合现有模式的修改验证假设；
-4. **立即聚焦验证：** 首个实质修改后，不扩大范围，先运行最便宜的行为测试、相关测试或类型检查；
-5. **局部迭代：** 验证失败时先修复同一范围；假设被推翻时回到最近的控制边界重新判断；
-6. **更广验证：** 聚焦检查通过后，根据风险运行 Contract、Integration、Regression 和 Build；
-7. **删除和同步：** 删除被替代路径，更新 Spec、ADR、Current Architecture、Plan Item 和文档索引；
-8. **评审完成：** 核对验收、风险、Deferred 项和无关差异，再进入提交或合并。
+1. **Establish the facts:** Start with failing behavior, tests, target files, or authoritative documentation, and form a falsifiable local hypothesis. Independently investigate uncertainties that existing evidence can resolve; do not refer directly verifiable factual questions to the project owner for a decision.
+2. **Confirm scope and decision boundaries:** Describe the intended changes, non-goals, and minimum validation. For multi-step work, briefly list objectives, validation methods, and exit criteria. If new evidence would change accepted public behavior, architectural boundaries, ownership of facts, dependency direction, or Compatibility policy; require an undocumented/private dependency; introduce multiple production runtime paths; or materially increase complexity and maintenance scope, list the evidence, impact, and options, and pause the affected changes until confirmation is obtained.
+3. **Make the first small change:** Test the hypothesis with the smallest reversible change that follows existing patterns.
+4. **Run focused validation immediately:** After the first substantive change, run the cheapest behavioral test, relevant tests, or type check before expanding the scope.
+5. **Iterate locally:** If validation fails, first fix the issue within the same scope. If the hypothesis is disproved, return to the nearest control boundary and reassess.
+6. **Run broader validation:** Once focused checks pass, run Contract, Integration, Regression, and Build checks according to risk.
+7. **Remove and synchronize:** Remove superseded paths and update the Spec, ADR, Current Architecture, Plan Item, and documentation index.
+8. **Complete the review:** Check acceptance criteria, risks, Deferred items, and unrelated changes before proceeding to commit or merge.
 
-实现发现已 `Accepted` 文档错误、依赖方向不成立或迁移顺序需要改变时，暂停实现并列出证据与选项。架构文档修订需单独确认；不得在代码提交中静默改变架构。
+If implementation reveals errors in `Accepted` documents, an invalid dependency direction, or a need to change the migration sequence, pause implementation and list the evidence and options. Architecture document revisions require separate confirmation; do not silently change the architecture in a code commit.
 
-### 文档查找与同步
+### Documentation Lookup and Synchronization
 
-普通实现工作按以下顺序取证：源码与聚焦测试、一个 owning Current Architecture topic、一个 owning Stable Specification（仅当公共行为或生命周期契约相关）、一个 Accepted ADR（仅当决策理由相关）、当前 Active Change（仅当属于已批准交付）。
+For routine implementation work, gather evidence in this order: source code and focused tests; one Current Architecture topic that owns the subject; one Stable Specification that owns the subject (only when public behavior or lifecycle contracts are relevant); one Accepted ADR (only when decision rationale is relevant); and the current Active Change (only when the work belongs to an approved delivery).
 
-`docs/changes/archive/`、`docs/evidence/`、`docs/research/`、Deferred、superseded 决策和 Git 历史默认不读取、不搜索。只有任务要求追溯来源、比较旧方案、重建迁移过程或解决未完成权威转移时才进入这些路径。
+Do not read or search `docs/changes/archive/`, `docs/evidence/`, `docs/research/`, Deferred items, superseded decisions, or Git history by default. Consult these sources only when the task requires tracing origins, comparing previous approaches, reconstructing a migration, or resolving an incomplete transfer of authority.
 
-文档同步遵循单一 prose owner：Current Architecture 记录当前边界，Stable Specification 记录当前契约，ADR 记录长期决策理由，Active Change 记录临时交付细节和验证。局部实现修改不例行同步 ADR、Archive 或 Evidence；没有改变对应权威内容时，也不为保持措辞相似而修改其它文档。
+Documentation synchronization follows the single prose owner principle: Current Architecture records current boundaries, Stable Specifications record current contracts, ADRs record long-term decision rationale, and Active Changes record temporary delivery details and validation. Local implementation changes do not routinely require updates to ADRs, Archive, or Evidence. Do not change other documents merely to keep wording similar when their authoritative content has not changed.
 
-## 8. 验证要求
+## 8. Validation Requirements
 
-稳定命令以 `package.json` 为准。`npm test` 是日常 Unit 层；Integration 和 Fitness 按变更影响触发；`test:all`、lint 和 build 是最终或跨边界 Gate，不是每次编辑后的固定组合：
+`package.json` is the authoritative source for established commands. `npm test` is the routine Unit layer; run Integration and Fitness checks according to change impact. `test:all`, lint, and build are final or cross-boundary Gates, not a fixed sequence to run after every edit:
 
 ```bash
 npm test
@@ -126,71 +126,71 @@ npm run lint
 npm run build
 ```
 
-Host、Relay Artifact、真实 WebSocket 和其它环境性验证继续使用各自的显式命令，只在对应边界变化、正式评审或发布 Gate 运行。同一源码状态即将执行完整 build 时，不重复运行等价的全量 TypeScript no-emit 检查，除非验收条件明确要求两份独立证据。
+Host, Relay Artifact, real WebSocket, and other environment-dependent validations continue to use their own explicit commands. Run them only when the corresponding boundary changes, during formal review, or at a release Gate. When a full build is about to run against the same source state, do not also run an equivalent full TypeScript no-emit check unless the acceptance criteria explicitly require two independent pieces of evidence.
 
-| 变更类型 | 最低验证 |
+| Change Type | Minimum Validation |
 |---|---|
-| Documentation | 文档诊断、链接检查、`git diff --check` |
-| Small Change | 相关测试或聚焦行为检查 + `npm run lint` |
-| Defect | 失败复现或回归测试 + 相关测试 + `npm run lint` |
-| Public Contract | Unit/Contract Tests + 相关 Integration Tests + `npm run build` |
-| Architecture Slice | Spec 中定义的聚焦、契约、集成和回归检查 + lint + build |
-| Spike | Spike Spec 中定义的证据采集；不以生产测试全绿代替假设验证 |
+| Documentation | Documentation diagnostics, link checks, `git diff --check` |
+| Small Change | Relevant tests or focused behavioral checks + `npm run lint` |
+| Defect | Failure reproduction or regression tests + relevant tests + `npm run lint` |
+| Public Contract | Unit/Contract Tests + relevant Integration Tests + `npm run build` |
+| Architecture Slice | Focused, contract, integration, and regression checks defined in the Spec + lint + build |
+| Spike | Evidence collection defined in the Spike Spec; passing all production tests is not a substitute for validating the hypothesis |
 
-不能运行某项检查时，必须记录原因、未覆盖风险和可执行的后续验证方式。不得用宽松重试或扩大超时掩盖确定性失败。
+If a check cannot be run, record the reason, uncovered risks, and an actionable follow-up validation method. Do not mask deterministic failures with permissive retry policies or increased timeouts.
 
 ## 9. Definition of Done
 
-适用项全部满足后，工作才可完成：
+Work is complete only when all applicable items are satisfied:
 
-- [ ] 已确认的验收场景通过；
-- [ ] 首个实质修改后已运行聚焦验证；
-- [ ] 新增或变化的公共契约有测试；
-- [ ] 该变更要求的 lint、测试和 build 通过；
-- [ ] 至少一个真实调用方已迁移；
-- [ ] 被替代生产路径已删除，或降级为有负责人和到期日的 Compatibility；
-- [ ] 新代码不依赖 Legacy 或 Compatibility；
-- [ ] ADR、Spec、Results、Current Architecture 和对应 Plan Item 状态已同步；
-- [ ] 文档索引和适用的 Change、Evidence 或迁移控制记录已更新；
-- [ ] 没有未解释的 Diagnostics、无关重构或生成噪音；
-- [ ] 每个实质修改都可追溯到已确认需求、验收条件、缺陷证据或本次修改直接产生的必要清理；没有预先抽象、无关优化或既有 dead code 清理；
-- [ ] 剩余风险和 Deferred 项可追踪。
+- [ ] Confirmed acceptance scenarios pass.
+- [ ] Focused validation was run after the first substantive change.
+- [ ] New or changed public contracts have tests.
+- [ ] The lint, tests, and build required for the change pass.
+- [ ] At least one real caller has been migrated.
+- [ ] Superseded production paths have been removed or reduced to Compatibility with an owner and expiration date.
+- [ ] New code does not depend on Legacy or Compatibility.
+- [ ] The ADR, Spec, Results, Current Architecture, and corresponding Plan Item status are synchronized.
+- [ ] The documentation index and applicable Change, Evidence, or migration control records are updated.
+- [ ] There are no unexplained Diagnostics, unrelated refactoring, or generated noise.
+- [ ] Every substantive change is traceable to a confirmed requirement, acceptance criterion, defect evidence, or necessary cleanup directly resulting from the current change; there are no premature abstractions, unrelated optimizations, or cleanup of pre-existing dead code.
+- [ ] Remaining risks and Deferred items are traceable.
 
-Documentation、Small Change 等不涉及真实调用方或 Compatibility 的工作按“适用项”执行，不需要人为制造对应产物。
+For Documentation, Small Change, and other work that does not involve real callers or Compatibility, apply only the relevant items. Do not create artificial artifacts to satisfy inapplicable requirements.
 
-## 10. Review 处理
+## 10. Handling Reviews
 
-每条 Reviewer 意见按以下方式处理：
+Handle each reviewer comment as follows:
 
-1. 回到代码、测试或权威文档核实事实；
-2. 标记为接受、修改后接受或拒绝；
-3. 说明严重度、影响和理由；
-4. 只实施已接受的最小修正；
-5. 修正后重新运行能验证该意见的检查。
+1. Verify the facts against code, tests, or authoritative documentation.
+2. Mark it as accepted, accepted with modifications, or rejected.
+3. Explain the severity, impact, and rationale.
+4. Implement only the accepted minimal correction.
+5. After the correction, rerun checks that can validate the concern.
 
-Reviewer 意见不是自动指令。Critical/High 问题通常阻断完成；Medium/Low 是否阻断由实际风险和当前 Gate 决定。
+Reviewer comments are not automatic instructions. Critical/High issues normally block completion; whether Medium/Low issues block completion depends on actual risk and the current Gate.
 
-## 11. 文档与 Legacy
+## 11. Documentation and Legacy
 
-- `docs/architecture/` 只存放经代码、测试或运行证据验证的当前实现事实；目标设计、契约和实施记录不得进入该目录；
-- `docs/decisions/` 存放已接受的长期 ADR，`docs/specifications/` 存放交付后仍有效的稳定契约；
-- `docs/changes/active/` 存放当前 Plan、设计/Spec 和验证状态，`docs/changes/archive/` 存放完成且已完成权威分流的 Change；`active` 与 `archive` 只是物理组织，不增加新的工件状态或工作流；
-- `docs/evidence/` 存放值得长期保留的已执行内部证据，`docs/deferred/` 存放明确不授权实施的冻结输入，`docs/research/` 存放不能覆盖已接受权威的外部研究；
-- ADR、Module Spec、Spike Spec 和 Results 使用 `docs/templates/` 中的模板；
-- 旧文档先标记和迁移，再在独有信息、入站链接和替代文档确认后删除；
-- Git 保存历史，不在 `src/legacy/` 或活跃文档中长期保留旧实现副本；
-- 文档与代码可以分开提交，但对应工作在两者同步前不算完成。
+- `docs/architecture/` contains only facts about the current implementation verified by code, tests, or runtime evidence. Target designs, contracts, and implementation records must not be placed in this directory.
+- `docs/decisions/` contains accepted long-term ADRs; `docs/specifications/` contains stable contracts that remain valid after delivery.
+- `docs/changes/active/` contains current Plans, designs/Specs, and validation status; `docs/changes/archive/` contains completed Changes whose authoritative content has been routed to the appropriate owning documents. `active` and `archive` are only physical organization and do not introduce new artifact states or workflows.
+- `docs/evidence/` contains evidence from completed internal work worth retaining long-term; `docs/deferred/` contains frozen inputs that explicitly do not authorize implementation; `docs/research/` contains external research that cannot override accepted authority.
+- ADRs, Module Specs, Spike Specs, and Results use the templates in `docs/templates/`.
+- Mark and migrate old documents first. Delete them only after checking unique information, inbound links, and replacement documentation.
+- Git preserves history; do not retain copies of old implementations long-term in `src/legacy/` or active documentation.
+- Documentation and code may be committed separately, but the corresponding work is not complete until both are synchronized.
 
-## 12. Commit 与范围纪律
+## 12. Commit and Scope Discipline
 
-- Commit subject 和 body 只能使用英文；
-- 一个提交只包含一个可解释的变更范围，不混入无关格式化或生成文件；
-- 未经用户或项目所有者明确批准，不创建提交；
-- 提交前检查 staged 文件，避免纳入工作树中的其他修改；
-- 不重写、回退或覆盖不属于当前工作的用户改动；
-- Architecture Foundation 等阶段里程碑应建立检查点，但不要求每个小改动单独提交。
+- Commit subjects and bodies must be in English.
+- Each commit contains a single explainable scope of change, without unrelated formatting or generated files.
+- Do not create commits without explicit approval from the user or project owner.
+- Inspect staged files before committing to avoid including other worktree changes.
+- Do not rewrite, revert, or overwrite user changes outside the current work.
+- Establish checkpoints at phase milestones such as Architecture Foundation, but a separate commit is not required for every small change.
 
-## 13. 模板
+## 13. Templates
 
 - [ADR Template](../templates/adr-template.md)
 - [Module Spec Template](../templates/module-spec-template.md)

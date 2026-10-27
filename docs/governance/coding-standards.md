@@ -1,27 +1,27 @@
-# 编码规范
+# Coding Standards
 
-> 创建日期：2026-04-07  
-> 适用范围：my-agent 项目所有 TypeScript 代码
+> Created: 2026-04-07\
+> Scope: All TypeScript code in the my-agent project
 
-本文档总结自现有代码库的实际风格，新代码应保持一致。
+This document summarizes the conventions used in the existing codebase. New code should follow them consistently.
 
 ---
 
-## 1. 文件命名
+## 1. File Naming
 
-| 类型 | 命名风格 | 示例 |
+| Type | Naming Style | Examples |
 |------|---------|------|
-| 类/主模块 | PascalCase | `AgentRunner.ts`, `SessionManager.ts` |
-| 工具/辅助函数 | kebab-case | `read-file.ts`, `run-command.ts`, `path-policy.ts` |
-| 类型定义 | `types.ts` | 每个模块一个，或 `types/` 子目录 |
-| 模块入口 | `index.ts` | 只做 re-export，不含实现 |
-| 测试 | 与源文件同名 + `.test.ts` | `AgentRunner.test.ts`, `lock.test.ts` |
+| Classes/main modules | PascalCase | `AgentRunner.ts`, `SessionManager.ts` |
+| Tools/helper functions | kebab-case | `read-file.ts`, `run-command.ts`, `path-policy.ts` |
+| Type definitions | `types.ts` | One per module, or a `types/` subdirectory |
+| Module entry points | `index.ts` | Re-exports only; no implementation |
+| Tests | Source file name + `.test.ts` | `AgentRunner.test.ts`, `lock.test.ts` |
 
 ---
 
-## 2. 目录命名
+## 2. Directory Naming
 
-一律 **kebab-case**：
+Always use **kebab-case**:
 
 ```
 agent-runner/    llm-client/    prompt-builder/    session/    tools/
@@ -29,130 +29,130 @@ agent-runner/    llm-client/    prompt-builder/    session/    tools/
 
 ---
 
-## 3. 命名规则
+## 3. Naming Rules
 
-| 类别 | 风格 | 示例 |
+| Category | Style | Examples |
 |------|------|------|
-| 类 | PascalCase，无前后缀 | `AgentRunner`, `SessionManager` |
-| 接口 | PascalCase，无 `I` 前缀 | `RunParams`, `ToolResult`, `SessionEntry` |
-| 函数 | camelCase | `loadStore()`, `extractText()`, `createMemoryTools()` |
-| 变量 | camelCase | `sessionManager`, `currentText`, `workspaceDir` |
-| 常量 | UPPER_SNAKE_CASE | `DEFAULT_MAX_TOKENS`, `SESSIONS_DIR` |
-| 私有成员 | `private` 关键字 + camelCase | `private invocationPort`, `private transcripts` |
+| Classes | PascalCase, without prefixes or suffixes | `AgentRunner`, `SessionManager` |
+| Interfaces | PascalCase, without an `I` prefix | `RunParams`, `ToolResult`, `SessionEntry` |
+| Functions | camelCase | `loadStore()`, `extractText()`, `createMemoryTools()` |
+| Variables | camelCase | `sessionManager`, `currentText`, `workspaceDir` |
+| Constants | UPPER_SNAKE_CASE | `DEFAULT_MAX_TOKENS`, `SESSIONS_DIR` |
+| Private members | `private` keyword + camelCase | `private invocationPort`, `private transcripts` |
 
-### 接口命名后缀惯例
+### Interface Naming Suffix Conventions
 
-| 后缀 | 用途 | 示例 |
+| Suffix | Purpose | Examples |
 |------|------|------|
-| `Config` / `Options` | 构造参数、配置 | `AgentRunnerConfig`, `LoadContextFilesOptions` |
-| `Params` / `Input` / `Request` | 方法参数 | `RunParams`, `ModelInvocationRequest`, `UserPromptInput` |
-| `Result` / `Response` | 返回值 | `RunResult`, `ModelInvocationResponse`, `ToolResult` |
-| `Entry` / `Record` | 数据条目 | `SessionEntry`, `MessageRecord` |
-| `Event` | 事件 | `AgentEvent`, `ModelStreamEvent` |
-| `Definition` | 定义/描述 | `ToolDefinition`, `ChatToolDefinition` |
+| `Config` / `Options` | Constructor parameters and configuration | `AgentRunnerConfig`, `LoadContextFilesOptions` |
+| `Params` / `Input` / `Request` | Method parameters | `RunParams`, `ModelInvocationRequest`, `UserPromptInput` |
+| `Result` / `Response` | Return values | `RunResult`, `ModelInvocationResponse`, `ToolResult` |
+| `Entry` / `Record` | Data entries | `SessionEntry`, `MessageRecord` |
+| `Event` | Events | `AgentEvent`, `ModelStreamEvent` |
+| `Definition` | Definitions/descriptions | `ToolDefinition`, `ChatToolDefinition` |
 
 ---
 
-## 4. 模块结构
+## 4. Module Structure
 
-典型模块组织：
+Typical module organization:
 
 ```
 module-name/
-├── ClassName.ts           # 主类（PascalCase）
-├── helper-name.ts         # 辅助函数（kebab-case）
-├── types.ts               # 接口和类型
-├── index.ts               # re-export 公共 API
-├── ClassName.test.ts      # 主类测试
-└── helper-name.test.ts    # 辅助函数测试
+├── ClassName.ts           # Main class (PascalCase)
+├── helper-name.ts         # Helper functions (kebab-case)
+├── types.ts               # Interfaces and types
+├── index.ts               # Public API re-exports
+├── ClassName.test.ts      # Main class tests
+└── helper-name.test.ts    # Helper function tests
 ```
 
-- 接口统一放在 `types.ts`（或 `types/` 子目录），不为单个接口建文件
-- `index.ts` 只做 re-export，不含实现逻辑
-- 辅助函数文件用 kebab-case（如 `store.ts`, `lock.ts`, `transcript.ts`）
+- Keep interfaces in `types.ts` (or a `types/` subdirectory); do not create a separate file for each interface.
+- Use `index.ts` only for re-exports, without implementation logic.
+- Use kebab-case for helper function files (such as `store.ts`, `lock.ts`, and `transcript.ts`).
 
 ---
 
-## 5. 导入导出
+## 5. Imports and Exports
 
-### 导入
+### Imports
 
 ```typescript
-// 值导入
+// Value imports
 import { SessionManager } from './SessionManager.js';
 import { readFile } from 'fs/promises';
 import { join } from 'node:path';
 
-// 类型导入（单独的 import type）
+// Type imports (separate import type statements)
 import type { SessionEntry, MessageRecord } from './types.js';
 import type { ModelInvocationPort, ChatMessage } from '../model-invocation/types.js';
 ```
 
-规则：
-- 相对路径始终带 `.js` 后缀
-- 类型导入使用 `import type` 分开写
-- Node.js 内置模块可用 `node:` 前缀或不带
+Rules:
+- Always include the `.js` extension in relative paths.
+- Use separate `import type` statements for type imports.
+- Node.js built-in modules may be imported with or without the `node:` prefix.
 
-### 导出
+### Exports
 
 ```typescript
-// 类和函数：命名导出
+// Classes and functions: named exports
 export class AgentRunner { }
 export function loadStore() { }
 export const execTool: Tool = { };
 
-// index.ts 中的 re-export
+// Re-exports in index.ts
 export { AgentRunner } from './AgentRunner.js';
 export type { RunParams, RunResult, AgentEvent } from './types.js';
 ```
 
-规则：
-- 使用命名导出，不用 default export
-- `export type` 用于纯类型的 re-export
+Rules:
+- Use named exports, not default exports.
+- Use `export type` for type-only re-exports.
 
 ---
 
-## 6. 注释
+## 6. Comments
 
-### JSDoc — 公共 API
+### JSDoc — Public APIs
 
 ```typescript
 /**
- * Agent 执行引擎，串联所有模块完成一次完整的对话循环。
+ * Agent execution engine that coordinates all modules for a complete conversation loop.
  *
- * 两层循环结构：
- * - 外层：处理 followUp 消息
- * - 内层：LLM 调用 + tool use 循环
+ * Two nested loops:
+ * - Outer loop: handles followUp messages
+ * - Inner loop: LLM calls + tool use loop
  */
 export class AgentRunner { }
 ```
 
-### 行内注释 — 逻辑说明
+### Inline Comments — Explaining Logic
 
 ```typescript
-// 从 session 加载历史消息，转换为 ChatMessage[]
+// Load session history and convert it to ChatMessage[].
 const history = this.loadHistory(params.sessionId);
 ```
 
-### 分隔线 — 文件内分区
+### Separators — Sections Within a File
 
 ```typescript
 // ── Section 1: agent-identity ──────────────────────────────
-// ── 内部方法 ──────────────────────────────────────────
+// ── Internal methods ──────────────────────────────────────
 ```
 
-- 中英文均可，保持同一文件内风格统一
-- 不写多余的 `@param` / `@returns`，TypeScript 类型已经表达了
+- Comments may be in Chinese or English; keep the style consistent within each file.
+- Avoid redundant `@param` / `@returns` tags when TypeScript types already convey the information.
 
 ---
 
-## 7. 错误处理
+## 7. Error Handling
 
 ```typescript
-// 抛出错误：明确的错误消息
+// Throw errors with explicit messages.
 throw new Error(`Session "${sessionId}" not found`);
 
-// 捕获错误：类型守卫
+// Catch errors using a type guard.
 try {
   await operation();
 } catch (err) {
@@ -160,47 +160,47 @@ try {
   throw error;
 }
 
-// 工具返回错误：isError 标记
+// Return tool errors with the isError flag.
 return {
   content: `Error: ${message}`,
   isError: true,
 };
 
-// 文件不存在等预期错误：静默跳过
+// Silently skip expected errors, such as a missing file.
 try {
   rawContent = await readFile(filePath, 'utf-8');
 } catch {
-  continue; // 文件不存在，跳过
+  continue; // File does not exist; skip it.
 }
 ```
 
 ---
 
-## 8. 异步模式
+## 8. Asynchronous Patterns
 
 ```typescript
-// 标准：async/await
+// Standard: async/await
 async run(params: RunParams): Promise<RunResult> {
   const result = await this.callLLM(params);
   return result;
 }
 
-// 流式：AsyncIterable
+// Streaming: AsyncIterable
 async *chatStream(request: ModelInvocationRequest): AsyncIterable<ModelStreamEvent> {
   for await (const event of stream) {
     yield event;
   }
 }
 
-// 回调：简单场景用可选回调
+// Callbacks: use optional callbacks for simple cases.
 onEvent?: (event: AgentEvent) => void;
 ```
 
 ---
 
-## 9. 测试
+## 9. Testing
 
-框架：**Vitest**
+Framework: **Vitest**
 
 ```typescript
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -227,21 +227,21 @@ describe('SessionManager', () => {
 });
 ```
 
-规则：
-- 临时目录用 `mkdtemp()`，`afterEach` 清理
-- `describe` 按功能分组，`it` 描述具体行为
-- 每个测试独立，不共享可变状态
-- Mock 对象内联创建
+Rules:
+- Create temporary directories with `mkdtemp()` and clean them up in `afterEach`.
+- Group tests by feature with `describe`; describe specific behavior with `it`.
+- Keep each test independent; do not share mutable state.
+- Create mock objects inline.
 
 ---
 
-## 10. 其他约定
+## 10. Other Conventions
 
-| 约定 | 说明 |
+| Convention | Description |
 |------|------|
-| 文件编码 | UTF-8，文件读写显式指定 `'utf-8'` |
-| 模块系统 | ES Modules（`"type": "module"`） |
-| TypeScript | `strict: true`，ES2022 target |
-| 日志 | 不用第三方日志库，用事件发射（`this.emit()`）或 `warn` 回调 |
-| 平台 | `process.platform` 检测，避免硬编码路径分隔符 |
-| 内存状态 | 用 `Map` 管理（如 `Map<string, TranscriptState>`） |
+| File encoding | UTF-8; explicitly specify `'utf-8'` when reading and writing files |
+| Module system | ES Modules (`"type": "module"`) |
+| TypeScript | `strict: true`, ES2022 target |
+| Logging | Do not use third-party logging libraries; emit events (`this.emit()`) or use a `warn` callback |
+| Platform | Detect with `process.platform`; avoid hard-coded path separators |
+| In-memory state | Manage with `Map` (such as `Map<string, TranscriptState>`) |

@@ -1,31 +1,31 @@
 # Architecture Principles
 
-## 1. 文档状态
+## 1. Document Status
 
-- **状态：** Accepted
-- **版本：** 1.2
-- **日期：** 2026-09-15
-- **所有者：** 项目所有者
-- **来源计划：** [Archived Architecture Foundation Plan](../changes/archive/architecture-foundation/plan.md) AF-02
-- **规范词汇：** [Domain Glossary](domain-glossary.md)
+- **Status:** Accepted
+- **Version:** 1.2
+- **Date:** 2026-09-15
+- **Owner:** Project owner
+- **Source Plan:** [Archived Architecture Foundation Plan](../changes/archive/architecture-foundation/plan.md) AF-02
+- **Canonical Terminology:** [Domain Glossary](domain-glossary.md)
 
-本文档定义 ADR、Spec、Current Architecture 和 Architecture Slice 必须遵守的稳定约束。原则描述依赖方向、所有权和可验证结果；当前目录、类和接口形状由 Current Architecture 记录，长期 ownership 决策由 Accepted ADR 持有。
+This document defines stable constraints that ADRs, Specs, Current Architecture, and Architecture Slices must follow. The principles describe dependency direction, ownership, and verifiable outcomes. Current Architecture records the current directory, class, and interface structure; Accepted ADRs own long-term ownership decisions.
 
-**v1.1 修订：** 项目所有者确认 AP-10 在 Extension Framework 中以 Extension/Module/Adapter instance 为编排单元；Extension 内部对象仍由 Extension 自行管理。
+**v1.1 revision:** The project owner confirmed that AP-10 uses Extension/Module/Adapter instances as orchestration units within the Extension Framework. Each Extension continues to manage its own internal objects.
 
-**v1.2 修订：** Architecture Foundation 完成后，将 AF-03 的未完成映射表述收敛为 Current Architecture 与 Accepted ADR 的既有权威分工；不改变依赖方向原则。
+**v1.2 revision:** Following completion of Architecture Foundation, references to the unfinished AF-03 mapping were updated to reflect the established division of authority between Current Architecture and Accepted ADRs. The dependency direction principles are unchanged.
 
-## 2. 适用与变更规则
+## 2. Applicability and Change Rules
 
-1. 本文中的 `MUST`、`MUST NOT` 和“必须”表示架构约束，不是建议；
-2. Target Architecture 和 Module Spec 必须说明适用原则及验证方式；
-3. 临时例外必须由 `Accepted` ADR 记录范围、理由、负责人、到期日和删除条件；
-4. 实现证据表明原则不可行时，暂停相关 Slice，先更新 ADR 或本原则，不在生产代码中静默绕过；
-5. 原则变更由项目所有者接受，并通过版本和 Git 历史留证。
+1. `MUST`, `MUST NOT`, and "must" in this document express architectural constraints, not recommendations.
+2. Target Architecture and Module Specs must identify applicable principles and validation methods.
+3. Temporary exceptions must be documented in an `Accepted` ADR with their scope, rationale, owner, expiration date, and removal conditions.
+4. If implementation evidence shows that a principle is not viable, pause the affected Slice and update the ADR or these principles first. Do not silently bypass the constraint in production code.
+5. Changes to these principles require acceptance by the project owner and must be recorded through versions and Git history.
 
-## 3. 依赖方向
+## 3. Dependency Direction
 
-架构使用四个逻辑边界；[Current Architecture](../architecture/overview.md) 记录当前目录映射，[ADR-007](../decisions/adr-007-builtin-capability-source-ownership.md) 持有 builtin source ownership 的长期决策。
+The architecture uses four logical boundaries. [Current Architecture](../architecture/overview.md) records the current directory mapping, and [ADR-007](../decisions/adr-007-builtin-capability-source-ownership.md) owns the long-term decision on builtin source ownership.
 
 ```mermaid
 flowchart LR
@@ -46,209 +46,209 @@ Infrastructure ─────────────────────�
 Domain/Application MUST NOT depend on Infrastructure or Composition.
 ```
 
-箭头表示源码依赖方向，不表示运行时调用一定同向。Application 可以通过自身拥有的 Port 调用 Infrastructure Adapter；Adapter 依赖 Port，而不是 Application 依赖具体 SDK。
+Arrows indicate source code dependency direction, not necessarily runtime call direction. Application may call an Infrastructure Adapter through a Port that Application owns. The Adapter depends on the Port; Application does not depend on a concrete SDK.
 
 ## 4. Principles
 
-### AP-01：Stable Core 不依赖具体集成
+### AP-01: Stable Core Does Not Depend on Concrete Integrations
 
-**原则：** Domain 和 Application 必须独立于 Provider SDK、Channel SDK、具体 Store、CLI/WebSocket Transport 和 Composition Root。
+**Principle:** Domain and Application must remain independent of Provider SDKs, Channel SDKs, concrete Stores, CLI/WebSocket Transports, and the Composition Root.
 
-**含义：**
+**Implications:**
 
-- 核心边界拥有所需 Port 和领域类型；
-- Infrastructure Adapter 实现 Port 并映射外部语义；
-- 新 Provider、Channel 或 Store 不要求在 Runner、Session 或领域消息中增加具体 SDK 分支；
-- 外部 SDK 类型不得成为核心公共契约的一部分。
+- Core boundaries own the Ports and domain types they need.
+- Infrastructure Adapters implement Ports and map external semantics.
+- Adding a Provider, Channel, or Store must not require SDK-specific branches in the Runner, Session, or domain messages.
+- External SDK types must not become part of core public contracts.
 
-**验证：** 依赖扫描、公共导出检查、Fake Adapter Contract Tests，以及“增加第二实现不修改核心”的变更测试。
+**Validation:** Dependency scans, public export checks, Fake Adapter Contract Tests, and change tests demonstrating that a second implementation can be added without modifying the core.
 
-### AP-02：配置输入、事实和策略必须分离
+### AP-02: Configuration Inputs, Facts, and Policy Must Be Separate
 
-**原则：** Provider Connection、Model Descriptor、Model Policy 和 per-turn Request Override 必须具有不同所有者和合并阶段。
+**Principle:** Provider Connection, Model Descriptor, Model Policy, and per-turn Request Override must have distinct owners and merge stages.
 
-**含义：**
+**Implications:**
 
-- Connection 描述如何连接，不声明 Model 能力；
-- Descriptor 描述 Provider/Model Facts，不包含用户偏好；
-- Policy 表达允许、选择和 fallback，不伪装成事实；
-- Request Override 只能覆盖明确允许的请求参数；
-- 每个最终值必须能追踪来源和优先级。
+- Connection describes how to connect; it does not declare Model capabilities.
+- Descriptor describes Provider/Model Facts; it does not include user preferences.
+- Policy expresses permissions, selection, and fallback; it must not masquerade as facts.
+- Request Override may override only explicitly permitted request parameters.
+- Every final value must have a traceable source and precedence.
 
-**验证：** Resolver Unit Tests 覆盖来源优先级、冲突、缺失事实和保守 fallback；类型和 Schema 不复用同一字段表达多种语义。
+**Validation:** Resolver Unit Tests cover source precedence, conflicts, missing facts, and conservative fallback. Types and Schemas do not reuse a single field for multiple meanings.
 
-### AP-03：每个 Turn 只消费一个 Resolved Model
+### AP-03: Each Turn Consumes Exactly One Resolved Model
 
-**原则：** Runner 必须消费已解析、不可变的 Resolved Model，不得在执行过程中重新推断 Model Facts 或从全局配置拼装默认值。
+**Principle:** The Runner must consume an already resolved, immutable Resolved Model. It must not infer Model Facts again or assemble defaults from global configuration during execution.
 
-**含义：**
+**Implications:**
 
-- Resolved Model 同时绑定 Provider 身份、用于模型调用的 core-owned Port、Protocol、Endpoint 和 Model Capability facts；
-- Model 切换必须原子地切换上述执行事实；
-- 一个 Turn 开始后不因 Catalog、Policy 或全局配置变化而改变 Resolved Model；
-- Parent Turn 和 Subagent Turn 可以解析为不同 Model，但各自保持内部一致。
+- Resolved Model binds Provider identity, the core-owned Port for model invocation, Protocol, Endpoint, and Model Capability facts together.
+- Switching Models must switch all of these execution facts atomically.
+- Once a Turn begins, changes to the Catalog, Policy, or global configuration must not change its Resolved Model.
+- Parent Turns and Subagent Turns may resolve to different Models, but each must remain internally consistent.
 
-**验证：** Resolver/Runner Contract Tests；进行中 Turn 配置变化测试；Parent/Subagent 选择不同 Provider/Model 的 Integration Test。
+**Validation:** Resolver/Runner Contract Tests; configuration-change tests during an active Turn; and an Integration Test in which the Parent and Subagent select different Providers/Models.
 
-### AP-04：Builtin 与 External 使用同一扩展机制
+### AP-04: Builtin and External Capabilities Use the Same Extension Mechanism
 
-**原则：** Runtime Module 和 External Extension 必须通过相同的 Contribution、Registry 和 Lifecycle Contract 提供 Tool、Hook、Channel 或其他扩展能力。
+**Principle:** Runtime Modules and External Extensions must provide Tools, Hooks, Channels, or other extension capabilities through the same Contribution, Registry, and Lifecycle Contracts.
 
-**含义：**
+**Implications:**
 
-- Builtin 不得依赖中央特例列表绕过 Registry；
-- 一个 Extension 可以组合多类 Contribution，并在自身边界内共享私有资源；
-- 新 Extension 不要求修改 Runtime、Runner、Bootstrap 或中央类型联合；
-- Extension 身份、配置和资源不能被简化为单个 Tool 注册函数。
+- Builtin capabilities must not bypass the Registry through a central list of special cases.
+- An Extension may combine multiple Contribution kinds and share private resources within its own boundary.
+- Adding an Extension must not require changes to Runtime, Runner, Bootstrap, or a central type union.
+- Extension identity, configuration, and resources must not be reduced to a single Tool registration function.
 
-**验证：** 使用一个同时贡献 Channel、Tool 和 Hook 的外部测试 Extension；Builtin/External Contract Tests 使用同一测试套件。
+**Validation:** Use an external test Extension that contributes a Channel, Tool, and Hook together. Builtin/External Contract Tests use the same test suite.
 
-### AP-05：Registry 只发布版本化不可变 Snapshot
+### AP-05: Registry Publishes Only Versioned, Immutable Snapshots
 
-**原则：** Registry 的消费者必须读取不可变 Snapshot；Contribution 变更必须通过受控的 pre-publish 校验/失败清理、原子切换和 post-publish retirement。
+**Principle:** Registry consumers must read immutable Snapshots. Contribution changes must go through controlled pre-publish validation/failure cleanup, an atomic switch, and post-publish retirement.
 
-**含义：**
+**Implications:**
 
-- Turn 启动时捕获一个 Registry Snapshot，并在整个执行期间保持不变；
-- 新 Turn 只看到完整切换后的新版本；
-- 消费者不得持有或修改 Registry 内部可变集合；
-- pre-publish 失败不得污染 current Snapshot；candidate 清理失败必须可归属并阻断后续变更；post-publish retirement 失败不得回滚已提交 Snapshot，受 pin 保护的残留必须可观测并由唯一 Owner 持有；
-- Slice 3/4 的生产接入只使用启动期只读 Snapshot，Slice 5 完成事务闭环后才开放生产运行时变更。
+- A Turn captures a Registry Snapshot at startup and retains it unchanged throughout execution.
+- New Turns see only the new version after the switch is complete.
+- Consumers must not hold or modify the Registry's internal mutable collections.
+- Pre-publish failures must not contaminate the current Snapshot. Candidate cleanup failures must be attributable and block subsequent changes. Post-publish retirement failures must not roll back a committed Snapshot; residual resources protected by pins must be observable and have a single Owner.
+- Production integration in Slices 3/4 uses only a startup-time read-only Snapshot. Production runtime changes are enabled only after Slice 5 completes the full transaction lifecycle.
 
-**验证：** Snapshot immutability tests、旧 Turn/新 Turn 并行测试、失败注入、排空和资源泄漏检查。
+**Validation:** Snapshot immutability tests, concurrent old/new Turn tests, failure injection, draining checks, and resource leak checks.
 
-### AP-06：一个概念只有一个权威来源
+### AP-06: Each Concept Has a Single Source of Truth
 
-**原则：** 每个领域概念必须只有一个权威类型、一个事实所有者和一个生产运行路径。
+**Principle:** Each domain concept must have exactly one authoritative type, one owner of facts, and one production runtime path.
 
-**含义：**
+**Implications:**
 
-- 相同事实不得在 Config、Runtime、Runner 和 Adapter 中分别维护可变副本；
-- 派生视图必须从权威来源生成，并明确生命周期；
-- 迁移期间的双路径只能通过有期限的 Compatibility 存在；
-- 重复类型不能仅靠相同字段名假定语义等价。
+- Do not maintain separate mutable copies of the same facts in Config, Runtime, Runner, and Adapter.
+- Derived views must be generated from the authoritative source and have an explicit lifecycle.
+- Dual paths during migration may exist only through time-limited Compatibility.
+- Duplicate types must not be assumed semantically equivalent merely because their field names match.
 
-**验证：** 类型/导出审计、调用路径 Characterization Tests、Compatibility 清单和 Architecture Fitness Tests。
+**Validation:** Type/export audits, call-path Characterization Tests, a Compatibility inventory, and Architecture Fitness Tests.
 
-### AP-07：Compatibility 只能单向进入新核心
+### AP-07: Compatibility Must Flow One Way into the New Core
 
-**原则：** Compatibility Adapter 只能将 Legacy 输入或公共 API 映射到新权威核心；新代码不得反向依赖 Compat 或 Legacy。
+**Principle:** Compatibility Adapters may only map Legacy inputs or public APIs into the new authoritative core. New code must not depend back on Compat or Legacy.
 
-**含义：**
+**Implications:**
 
-- Compat 只处理参数、默认值和错误映射，不继续拥有业务事实；
-- Compat 不从主 Barrel 导出为推荐 API；
-- 每个 Compat 必须有负责人、到期日、Feature Flag/发布回滚策略和删除条件；
-- Slice 完成时 Legacy 必须净减少，不能用永久双实现换取迁移表面完成。
+- Compat handles only parameters, defaults, and error mapping; it must not retain ownership of business facts.
+- Compat must not be exported from the main Barrel as a recommended API.
+- Each Compat must have an owner, expiration date, Feature Flag/release rollback strategy, and removal conditions.
+- Completing a Slice must produce a net reduction in Legacy. Permanent dual implementations must not be used to claim that migration is complete.
 
-**验证：** 禁止反向依赖的 Fitness Test、公共导出检查、Slice 删除清单和到期 Compatibility Review。
+**Validation:** Fitness Tests prohibiting reverse dependencies, public export checks, Slice removal checklists, and Compatibility Reviews at expiration.
 
-### AP-08：Extension Capability 必须最小、显式且类型化
+### AP-08: Extension Capabilities Must Be Minimal, Explicit, and Typed
 
-**原则：** Extension 只能获得完成已声明职责所需的最小 Extension Capability，不得访问 Runtime 私有状态或通用 Service Locator；Runtime Module 和 Adapter 使用显式依赖或 core-owned Port。
+**Principle:** An Extension may receive only the minimum Extension Capabilities needed for its declared responsibilities. It must not access Runtime private state or a general-purpose Service Locator. Runtime Modules and Adapters use explicit dependencies or core-owned Ports.
 
-**含义：**
+**Implications:**
 
-- Extension Capability 由提供边界定义，由 Composition/Policy 显式授予；
-- 平台专有 Tool 通过受限消息上下文或对应 Extension Capability 工作；
-- Extension 私有资源留在 Extension 边界内，不注册为任意代码可取用的全局服务；
-- 缺少所需 Extension Capability 时必须显式拒绝、降级或不注册对应 Contribution。
+- Extension Capabilities are defined by the providing boundary and explicitly granted by Composition/Policy.
+- Platform-specific Tools operate through a restricted message context or the corresponding Extension Capability.
+- Private Extension resources remain within the Extension boundary; do not register them as global services accessible to arbitrary code.
+- If a required Extension Capability is unavailable, explicitly reject the operation, degrade functionality, or leave the corresponding Contribution unregistered.
 
-**验证：** 类型级上下文限制、Extension Capability denial tests、Extension Contract Tests，以及禁止访问 RuntimeApp 私有状态的依赖检查。
+**Validation:** Type-level context restrictions, Extension Capability denial tests, Extension Contract Tests, and dependency checks prohibiting access to RuntimeApp private state.
 
-### AP-09：公共行为必须由显式契约保护
+### AP-09: Public Behavior Must Be Protected by Explicit Contracts
 
-**原则：** 公共 API、Event、Error、并发、取消和 Lifecycle 行为必须在 Spec 中明确，并由确定性的 Contract Tests 保护。
+**Principle:** Public API, Event, Error, concurrency, cancellation, and Lifecycle behavior must be explicit in Specs and protected by deterministic Contract Tests.
 
-**含义：**
+**Implications:**
 
-- “实现碰巧如此”不构成公共契约；
-- Event 顺序、Tool Use/Result 配对、Abort、Shutdown 和资源释放必须有明确所有者；
-- Contract Test 优先验证可观察行为，不锁定无关内部结构；
-- 外部 SDK 行为未知时先执行 Spike，不用 Mock 假设代替证据。
+- Incidental implementation behavior does not constitute a public contract.
+- Event ordering, Tool Use/Result pairing, Abort, Shutdown, and resource release must have explicit owners.
+- Contract Tests prioritize observable behavior without locking in unrelated internal structure.
+- When external SDK behavior is unknown, run a Spike first. Do not substitute Mock assumptions for evidence.
 
-**验证：** Module Spec 验收矩阵、Contract/Integration Tests、真实 Provider 或协议 Spike Results。
+**Validation:** Module Spec acceptance matrices, Contract/Integration Tests, and Spike Results from real Providers or protocols.
 
-### AP-10：资源必须有唯一 Lifecycle Owner
+### AP-10: Resources Must Have a Single Lifecycle Owner
 
-**原则：** 每个长生命周期资源必须有唯一创建和释放责任。Runtime Composition 只按依赖顺序启动、按逆序停止 Extension/Module/Adapter lifecycle unit；每个 unit 自行管理和清理其内部对象。
+**Principle:** Each long-lived resource must have a single owner responsible for creation and release. Runtime Composition only starts Extension/Module/Adapter lifecycle units in dependency order and stops them in reverse order. Each unit manages and cleans up its own internal objects.
 
-**含义：**
+**Implications:**
 
-- Spec 必须说明 lifecycle unit 的作用域、排空策略和幂等停止；Extension 内部对象的共享与清理由 Extension 自己负责；
-- 消费者不能因为持有引用就获得关闭资源的权力；
-- Extension 停用必须等待无使用者或按已定义策略取消旧工作；
-- Shutdown 尽量停止所有可安全停止的已启动 lifecycle unit，但不能隐藏失败或检查其内部对象。
+- Specs must define each lifecycle unit's scope, draining policy, and idempotent stop behavior. Each Extension is responsible for sharing and cleaning up its internal objects.
+- Holding a reference does not grant a consumer the right to close a resource.
+- Disabling an Extension must wait until it has no users or cancel existing work according to a defined policy.
+- Shutdown attempts to stop every started lifecycle unit that can be stopped safely, but must not hide failures or inspect internal objects.
 
-**验证：** Lifecycle Contract Tests、部分启动失败注入、重复 stop、并发 drain/abort 和 lifecycle unit 停止顺序测试。
+**Validation:** Lifecycle Contract Tests, partial startup failure injection, repeated stop tests, concurrent drain/abort tests, and lifecycle unit stop-order tests.
 
-### AP-11：Runtime 编排执行，Composition 构建系统
+### AP-11: Runtime Orchestrates Execution; Composition Builds the System
 
-**原则：** Runtime 负责队列、Turn、路由、Snapshot 捕获、取消和 Shutdown 编排；Runtime Builder/Composition 负责发现、创建、连接和启动 Module、Extension、Registry 与 Adapter。
+**Principle:** Runtime orchestrates queues, Turns, routing, Snapshot capture, cancellation, and Shutdown. Runtime Builder/Composition discovers, creates, connects, and starts Modules, Extensions, Registries, and Adapters.
 
-**含义：**
+**Implications:**
 
-- RuntimeApp 不解析 Model Facts，不识别具体 Channel/Provider 类型；
-- Runner 不加载配置、发现 Module 或管理进程级资源；
-- Composition 可以依赖具体实现，但不得把具体实现泄漏回 Stable Core；
-- 不使用通用 DI Container 或 Service Locator 隐藏依赖关系。
+- RuntimeApp does not resolve Model Facts or recognize concrete Channel/Provider types.
+- The Runner does not load configuration, discover Modules, or manage process-level resources.
+- Composition may depend on concrete implementations but must not leak them back into Stable Core.
+- Do not hide dependencies behind a general-purpose DI Container or Service Locator.
 
-**验证：** RuntimeApp/Runner 职责测试、构造依赖检查、增加 Provider/Extension 的变更局部性测试。
+**Validation:** RuntimeApp/Runner responsibility tests, constructor dependency checks, and change-locality tests for adding Providers/Extensions.
 
-### AP-12：抽象必须由当前证据证明
+### AP-12: Abstractions Must Be Justified by Current Evidence
 
-**原则：** 只在抽象消除真实复杂度、支持已确认的第二实现或建立可测试边界时引入抽象。
+**Principle:** Introduce an abstraction only when it removes real complexity, supports a confirmed second implementation, or establishes a testable boundary.
 
-**含义：**
+**Implications:**
 
-- Port/Registry 至少有两个实现，或一个真实实现加一个用于独立验证的 Fake；
-- Spike 原型不自动成为生产抽象；
-- 简单调用链不增加无业务价值的机械转换层；
-- 不为 Marketplace、分布式 Event Bus、任意热加载等非目标预建框架。
+- A Port/Registry has at least two implementations, or one real implementation and a Fake for independent validation.
+- A Spike prototype does not automatically become a production abstraction.
+- Do not add mechanical conversion layers without business value to simple call chains.
+- Do not prebuild frameworks for non-goals such as a Marketplace, distributed Event Bus, or arbitrary hot loading.
 
-**验证：** ADR 的 options/consequences、调用流审查、实现数量和变更局部性证据、删除未使用抽象的 review。
+**Validation:** ADR options/consequences, call-flow reviews, evidence of implementation counts and change locality, and reviews for removing unused abstractions.
 
-### AP-13：架构事实、目标和历史必须可区分
+### AP-13: Architectural Facts, Targets, and History Must Be Distinguishable
 
-**原则：** Current Architecture、Target Architecture、Spec、Plan、Spike Results 和 Legacy 文档必须通过状态和链接明确区分。
+**Principle:** Current Architecture, Target Architecture, Specs, Plans, Spike Results, and Legacy documents must be clearly distinguished through status and links.
 
-**含义：**
+**Implications:**
 
-- 目标设计不得写成当前实现事实；
-- Current Architecture 必须由代码、测试或运行证据支持；
-- 被替代文档必须指向后继，并退出活跃权威入口；
-- ADR 和有长期价值的 Results 通过状态保留历史，不因年代较久自动成为 Legacy。
+- Do not present target designs as facts about the current implementation.
+- Current Architecture must be supported by code, tests, or runtime evidence.
+- Superseded documents must point to their successors and be removed from active authoritative entry points.
+- ADRs and Results with long-term value preserve history through status; age alone does not make them Legacy.
 
-**验证：** 文档索引检查、状态字段检查、失效链接检查和 Legacy 迁移表。
+**Validation:** Documentation index checks, status field checks, broken-link checks, and Legacy migration tables.
 
-## 5. Fitness Test 候选
+## 5. Fitness Test Candidates
 
-AF-04 应优先把以下规则自动化；具体工具由 AF-01 治理决策和 AF-04 实现约束确定。
+AF-04 should prioritize automating the following rules. Specific tools are determined by AF-01 governance decisions and AF-04 implementation constraints.
 
-| ID | 自动化规则 | 对应原则 |
+| ID | Automated Rule | Related Principles |
 |---|---|---|
-| FT-01 | Domain/Application 不导入 Infrastructure 或 Composition | AP-01 |
-| FT-02 | Provider/Channel SDK 只出现在对应 Integration Adapter | AP-01 |
-| FT-03 | Runner 不依赖全局 Config loader、Provider SDK 或可变 Registry | AP-02、AP-03、AP-05 |
-| FT-04 | 新核心不依赖 Compat/Legacy 路径 | AP-06、AP-07 |
-| FT-05 | Extension/Module 不访问 RuntimeApp 私有状态或 Service Locator | AP-08、AP-11 |
-| FT-06 | 新 Provider 不要求修改 Runner；新 Extension 不要求修改 Runtime/Runner 中央分支 | AP-01、AP-04 |
-| FT-07 | Registry 消费者只接收 Snapshot，不接收内部可变集合 | AP-05 |
-| FT-08 | 公共 Event、Lifecycle 和 Port 具有对应 Contract Test | AP-09、AP-10 |
-| FT-09 | 活跃架构文档具有状态，Legacy 文档不作为新实现依赖 | AP-13 |
+| FT-01 | Domain/Application do not import Infrastructure or Composition | AP-01 |
+| FT-02 | Provider/Channel SDKs appear only in their corresponding Integration Adapters | AP-01 |
+| FT-03 | Runner does not depend on a global Config loader, Provider SDK, or mutable Registry | AP-02, AP-03, AP-05 |
+| FT-04 | The new core does not depend on Compat/Legacy paths | AP-06, AP-07 |
+| FT-05 | Extensions/Modules do not access RuntimeApp private state or a Service Locator | AP-08, AP-11 |
+| FT-06 | Adding a Provider does not require Runner changes; adding an Extension does not require changes to central Runtime/Runner branches | AP-01, AP-04 |
+| FT-07 | Registry consumers receive only Snapshots, not internal mutable collections | AP-05 |
+| FT-08 | Public Events, Lifecycles, and Ports have corresponding Contract Tests | AP-09, AP-10 |
+| FT-09 | Active architecture documents have a status; Legacy documents are not dependencies of new implementations | AP-13 |
 
-Fitness Tests 防止已知退化，不取代行为测试、架构评审或 Spike 证据。
+Fitness Tests prevent known regressions; they do not replace behavioral tests, architecture reviews, or Spike evidence.
 
-## 6. 设计评审检查表
+## 6. Design Review Checklist
 
-新的 ADR、Spec 或 Architecture Slice 至少回答：
+Every new ADR, Spec, or Architecture Slice must address at least the following:
 
-- [ ] 使用了 [Domain Glossary](domain-glossary.md) 中的规范词汇；
-- [ ] 标明涉及的原则和验证证据；
-- [ ] 依赖方向没有从 Stable Core 指向具体集成；
-- [ ] Facts、Policy、Connection 和 per-turn 输入没有混用；
-- [ ] 公共契约、并发、Lifecycle 和 Resource Ownership 已明确；
-- [ ] Extension 只获得显式 Extension Capability，未引入 Service Locator；
-- [ ] 新旧权威路径、Compatibility、回滚和删除条件已明确；
-- [ ] 抽象由真实实现、Fake 或 Spike 证据支持；
-- [ ] 文档状态明确区分 Current、Target、Active Work 和 Legacy。
+- [ ] Uses canonical terminology from the [Domain Glossary](domain-glossary.md).
+- [ ] Identifies the applicable principles and validation evidence.
+- [ ] Dependency direction does not point from Stable Core to concrete integrations.
+- [ ] Facts, Policy, Connection, and per-turn inputs are not conflated.
+- [ ] Public contracts, concurrency, Lifecycle, and Resource Ownership are explicit.
+- [ ] Extensions receive only explicit Extension Capabilities; no Service Locator is introduced.
+- [ ] Old and new authoritative paths, Compatibility, rollback, and removal conditions are explicit.
+- [ ] Abstractions are supported by real implementations, Fakes, or Spike evidence.
+- [ ] Document status clearly distinguishes Current, Target, Active Work, and Legacy.

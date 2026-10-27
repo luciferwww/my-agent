@@ -1,110 +1,110 @@
 # Domain Glossary
 
-## 1. 文档状态
+## 1. Document Status
 
-- **状态：** Accepted
-- **版本：** 1.6
-- **日期：** 2026-09-15
-- **所有者：** 项目所有者
-- **来源计划：** [Archived Architecture Foundation Plan](../changes/archive/architecture-foundation/plan.md) AF-02
+- **Status:** Accepted
+- **Version:** 1.6
+- **Date:** 2026-09-15
+- **Owner:** Project owner
+- **Source Plan:** [Archived Architecture Foundation Plan](../changes/archive/architecture-foundation/plan.md) AF-02
 
-本文档定义 my-agent 目标架构使用的规范词义。定义表达目标语义，不表示当前实现已经完成对应边界；当前实现事实仍按各文档自身状态判断。
+This document defines the canonical terminology used in the my-agent target architecture. The definitions express target semantics; they do not imply that the current implementation has completed the corresponding boundaries. Facts about the current implementation must still be assessed according to each document's own status.
 
-**v1.5 修订：** 项目所有者确认 Reload Transaction 的 AF-06 最小范围仅含 enable/disable，Runtime Builder 只编排 instance lifecycle，Extension 自行管理内部对象。
+**v1.5 revision:** The project owner confirmed that the minimum AF-06 scope of Reload Transaction covers only enable/disable operations. Runtime Builder orchestrates only instance lifecycles; each Extension manages its own internal objects.
 
-**v1.6 修订：** Architecture Foundation 完成后，将 AF-03 待定映射转为 Current Architecture、Accepted ADR 和 stable Specification 的既有权威分工；不改变规范词义。
+**v1.6 revision:** Following completion of Architecture Foundation, the pending AF-03 mapping was replaced with the established division of authority among Current Architecture, Accepted ADRs, and stable Specifications. Canonical meanings are unchanged.
 
-本文所称“所有者”是对概念语义和不变量负责的逻辑责任域，不由词汇表决定目录、文件、类或接口名称。中英文名称均出现时，英文名称是代码和架构文档中的规范术语。
+In this document, "owner" means the logical area of responsibility accountable for a concept's semantics and invariants. The glossary does not determine directory, file, class, or interface names. Where both Chinese and English names appear, the English name is the canonical term for code and architecture documents.
 
-## 2. 使用规则
+## 2. Usage Rules
 
-1. 一个名称只表达一种职责，不同时表示配置输入、运行事实和执行策略；
-2. 新 ADR、Spec 和 Target Architecture 必须使用本文术语；
-3. 当前实现使用同名词但语义不同时，应标记为 Current/Legacy 含义，不反向修改规范定义；
-4. 新概念必须补充职责、所有者和非含义后才能成为架构术语；
-5. `Reference` 表示稳定引用，`Descriptor` 表示事实描述，`Policy` 表示选择规则，`Resolved` 表示一次解析的不可变结果；
-6. `Adapter` 连接外部协议或兼容边界，`Registry` 管理可发现项，`Runtime` 编排执行和生命周期；三者不可互相代称。
+1. A name expresses a single responsibility; it must not simultaneously mean configuration input, runtime facts, and execution policy.
+2. New ADRs, Specs, and Target Architecture documents must use the terminology in this document.
+3. If the current implementation uses the same term with different semantics, label that meaning as Current/Legacy rather than changing the canonical definition to match it.
+4. Before a new concept becomes an architectural term, document its responsibilities, owner, and what it does not mean.
+5. `Reference` denotes a stable reference, `Descriptor` describes facts, `Policy` defines selection rules, and `Resolved` denotes the immutable result of a single resolution.
+6. `Adapter` connects external protocols or compatibility boundaries, `Registry` manages discoverable items, and `Runtime` orchestrates execution and lifecycle. These terms are not interchangeable.
 
 ## 3. Model Resolution
 
 ### Provider
 
-- **定义：** 提供模型调用能力的服务或协议族的稳定身份，例如 Anthropic 或一个 OpenAI-compatible 服务。
-- **职责：** 标识模型从哪里获得、由哪个集成模块解析和创建客户端。
-- **所有者：** Model Resolution 负责身份语义；Provider Integration 负责具体接入。
-- **不表示：** API Key、Endpoint、已连接客户端、单个 Model，或用户选择策略。
+- **Definition:** The stable identity of a service or protocol family that provides model invocation, such as Anthropic or an OpenAI-compatible service.
+- **Responsibilities:** Identify where models are obtained and which integration module resolves and creates clients.
+- **Owner:** Model Resolution owns identity semantics; Provider Integration owns concrete integration.
+- **Does not mean:** An API Key, Endpoint, connected client, individual Model, or user selection policy.
 
 ### Provider Connection
 
-- **定义：** 访问某个 Provider 实例所需的部署级连接信息，包括凭据引用、Endpoint、租户或代理设置。
-- **职责：** 让 Provider Adapter 建立可用连接，并隔离部署环境差异；Configuration 只加载并做格式/Schema 校验。
-- **所有者：** Provider Integration。
-- **不表示：** Provider 身份、Model 能力事实、Model 选择，或 per-turn 参数。
+- **Definition:** Deployment-level connection information needed to access a Provider instance, including credential references, Endpoint, tenant, or proxy settings.
+- **Responsibilities:** Enable a Provider Adapter to establish a usable connection and isolate deployment differences. Configuration only loads the information and validates its format/Schema.
+- **Owner:** Provider Integration.
+- **Does not mean:** Provider identity, Model capability facts, Model selection, or per-turn parameters.
 
 ### Provider Integration Binding
 
-- **定义：** 由 Composition 选择并提供、供 Model Resolution 和 Model Invocation 使用的 contract-visible Provider 集成绑定。
-- **职责：** 将所选 Provider Contribution 的核心可见契约能力交给解析和调用流程，而不泄漏具体集成实现。
-- **所有者：** Provider Extension Contract 定义语义；Runtime Composition 选择并提供具体绑定。
-- **不表示：** Provider Connection、Provider Adapter、SDK Client、RuntimeApp 状态、Registry replacement，或 Service Locator。
+- **Definition:** A contract-visible Provider integration binding selected and supplied by Composition for Model Resolution and Model Invocation.
+- **Responsibilities:** Expose the selected Provider Contribution's core-visible contract capabilities to resolution and invocation without leaking the concrete integration implementation.
+- **Owner:** Provider Extension Contract defines the semantics; Runtime Composition selects and supplies the concrete binding.
+- **Does not mean:** Provider Connection, Provider Adapter, SDK Client, RuntimeApp state, Registry replacement, or a Service Locator.
 
 ### Protocol
 
-- **定义：** Provider Adapter 与模型服务交换请求、流事件、Tool Use 和错误的线协议及语义约定。
-- **职责：** 决定消息编码、流式事件解释、工具调用格式和协议错误映射。
-- **所有者：** Provider Integration。
-- **不表示：** 网络传输库、Endpoint、Provider 品牌名称，或通用领域消息类型。
+- **Definition:** The wire protocol and semantic conventions used by a Provider Adapter and model service to exchange requests, stream events, Tool Use, and errors.
+- **Responsibilities:** Determine message encoding, stream event interpretation, tool call format, and protocol error mapping.
+- **Owner:** Provider Integration.
+- **Does not mean:** A network transport library, Endpoint, Provider brand name, or generic domain message type.
 
 ### Model Reference
 
-- **定义：** 用户、Agent Profile 或调用方用于请求模型的稳定、可序列化引用。
-- **职责：** 表达“想使用哪个模型”，并作为 Model Resolver 的输入。
-- **所有者：** Model Resolution。
-- **不表示：** 完整 Model Facts、已创建 Client、最终 Endpoint，或一次 Turn 的解析结果。
+- **Definition:** A stable, serializable reference used by a user, Agent Profile, or caller to request a model.
+- **Responsibilities:** Express which model is requested and serve as input to Model Resolver.
+- **Owner:** Model Resolution.
+- **Does not mean:** Complete Model Facts, a created Client, the final Endpoint, or the resolution result for a Turn.
 
 ### Model Descriptor
 
-- **定义：** 特定 Provider Model 的权威或保守事实集合，例如协议、上下文上限、最大输出、媒体类型和能力。
-- **职责：** 提供解析和执行预算所需的 Model Facts，并记录事实来源。
-- **所有者：** Model Catalog / Model Resolution。
-- **不表示：** 用户偏好、默认选择、请求覆盖、API Key，或可变运行状态。
+- **Definition:** A set of authoritative or conservative facts about a specific Provider Model, such as protocol, context limit, maximum output, media types, and capabilities.
+- **Responsibilities:** Supply the Model Facts needed for resolution and execution budgeting, and record their sources.
+- **Owner:** Model Catalog / Model Resolution.
+- **Does not mean:** User preferences, default selection, request overrides, an API Key, or mutable runtime state.
 
 ### Model Policy
 
-- **定义：** 在候选 Model、调用上下文和用户约束之间做选择或限制的显式规则。
-- **职责：** 表达允许、偏好、fallback 和约束，而不伪装成 Model Facts。
-- **所有者：** Application Policy。
-- **不表示：** Model Descriptor、Provider Connection，或最终执行配置。
+- **Definition:** Explicit rules for selecting or restricting candidate Models based on invocation context and user constraints.
+- **Responsibilities:** Express permissions, preferences, fallback, and constraints without masquerading as Model Facts.
+- **Owner:** Application Policy.
+- **Does not mean:** Model Descriptor, Provider Connection, or the final execution configuration.
 
 ### Request Override
 
-- **定义：** 调用方针对单个 Turn 提供、且仅能作用于明确允许字段的临时模型请求覆盖。
-- **职责：** 在 Model Policy 允许范围内调整本次请求参数，并保留覆盖来源。
-- **所有者：** Turn 输入提供者声明；Model Resolution 校验和应用。
-- **不表示：** 全局配置、Model Facts、Provider Connection、Model 选择策略，或跨 Turn 持久状态。
+- **Definition:** A temporary model request override supplied by a caller for a single Turn, restricted to explicitly permitted fields.
+- **Responsibilities:** Adjust parameters for the current request within Model Policy limits and preserve the override's source.
+- **Owner:** The Turn input provider declares it; Model Resolution validates and applies it.
+- **Does not mean:** Global configuration, Model Facts, Provider Connection, Model selection policy, or state persisted across Turns.
 
 ### Resolved Model
 
-- **定义：** Model Resolver 针对一次 Turn 生成的权威、不可变执行快照，绑定 Provider 身份、用于模型调用的 core-owned Port、Protocol、Endpoint、Model Capability facts 和已应用的请求限制。
-- **职责：** 为 Runner 提供不再需要二次推断的完整模型执行输入。
-- **所有者：** Model Resolution 生成；Turn Execution 消费。
-- **不表示：** Provider SDK Client、全局默认配置、可变 Client 单例、Model Catalog 条目，或跨 Turn 自动更新的引用。
+- **Definition:** An authoritative, immutable execution snapshot produced by Model Resolver for a Turn, binding Provider identity, the core-owned Port for model invocation, Protocol, Endpoint, Model Capability facts, and applied request limits.
+- **Responsibilities:** Provide the Runner with complete model execution input that requires no further inference.
+- **Owner:** Model Resolution produces it; Turn Execution consumes it.
+- **Does not mean:** A Provider SDK Client, global default configuration, mutable Client singleton, Model Catalog entry, or reference that updates automatically across Turns.
 
 ### Model Resolver
 
-- **定义：** 将 Model Reference、Provider/Model Facts、Model Policy 和允许的请求覆盖合并为 Resolved Model 的应用服务。
-- **职责：** 校验来源、应用优先级、产生保守结果并报告不可解析状态。
-- **所有者：** Model Resolution。
-- **不表示：** Provider SDK Adapter、Catalog 本身、Runner，或配置加载器。
+- **Definition:** An application service that merges Model Reference, Provider/Model Facts, Model Policy, and permitted request overrides into a Resolved Model.
+- **Responsibilities:** Validate sources, apply precedence, produce conservative results, and report unresolvable states.
+- **Owner:** Model Resolution.
+- **Does not mean:** A Provider SDK Adapter, the Catalog itself, the Runner, or a configuration loader.
 
 ### Model Catalog
 
-- **定义：** 按 Provider 和 Model 身份组织 Model Descriptor 及其事实来源的可查询集合。
-- **职责：** 向 Model Resolver 提供可追踪的 Model Facts。
-- **所有者：** Model Resolution。
-- **不表示：** Provider Connection Store、用户可选策略、运行中 Client Pool，或未经标注来源的默认值集合。
+- **Definition:** A queryable collection of Model Descriptors and their fact sources, organized by Provider and Model identity.
+- **Responsibilities:** Supply traceable Model Facts to Model Resolver.
+- **Owner:** Model Resolution.
+- **Does not mean:** A Provider Connection Store, user selection policy, active Client Pool, or collection of defaults without attributed sources.
 
-### Model Resolution 关系
+### Model Resolution Relationships
 
 ```mermaid
 flowchart LR
@@ -129,68 +129,68 @@ Request Override ────┘
 
 ### Agent Profile
 
-- **定义：** 可序列化引用一个 Agent 的身份、行为指令、Model Reference、默认策略和能力约束的配置描述。
-- **职责：** 让调用方和 Runtime Composition 选择 Agent 角色，而不把运行事实写回静态配置。
-- **所有者：** Agent Application / Configuration。
-- **不表示：** 正在运行的 Agent、Session、Turn、Resolved Model，或 Provider Connection。
+- **Definition:** A configuration description that serializably references an Agent's identity, behavioral instructions, Model Reference, default policy, and capability constraints.
+- **Responsibilities:** Allow callers and Runtime Composition to select an Agent role without writing runtime facts back into static configuration.
+- **Owner:** Agent Application / Configuration.
+- **Does not mean:** A running Agent, Session, Turn, Resolved Model, or Provider Connection.
 
 ### Subagent Profile
 
-- **定义：** 用于受委派执行的 Agent Profile，额外约束子任务角色、工具策略、预算和允许的嵌套深度。
-- **职责：** 让父 Agent 通过稳定引用选择 Subagent 行为和限制。
-- **所有者：** Subagent Orchestration / Configuration。
-- **不表示：** 活跃 Subagent 执行、Child Turn、后台任务、并发承诺，或父 Session 副本。
+- **Definition:** An Agent Profile for delegated execution that additionally constrains the subtask role, tool policy, budget, and permitted nesting depth.
+- **Responsibilities:** Allow a parent Agent to select Subagent behavior and limits through a stable reference.
+- **Owner:** Subagent Orchestration / Configuration.
+- **Does not mean:** An active Subagent execution, Child Turn, background task, concurrency commitment, or copy of the parent Session.
 
 ### Agent
 
-- **定义：** 具有身份、行为指令、默认策略和可用能力边界的执行角色。
-- **职责：** 为 Turn 提供稳定的角色上下文和执行约束。
-- **所有者：** Agent Application。
-- **不表示：** OS 进程、RuntimeApp 实例、Session、单次 Turn，或 LLM Provider。
+- **Definition:** An execution role with an identity, behavioral instructions, default policy, and boundaries on available capabilities.
+- **Responsibilities:** Provide stable role context and execution constraints for a Turn.
+- **Owner:** Agent Application.
+- **Does not mean:** An OS process, RuntimeApp instance, Session, individual Turn, or LLM Provider.
 
 ### Subagent
 
-- **定义：** 由父 Agent 委派、使用独立角色配置和执行上下文完成受限任务的 Agent 执行。
-- **职责：** 隔离子任务上下文、工具策略、预算和结果，并保持父子追踪关系。
-- **所有者：** Agent Application / Subagent Orchestration。
-- **不表示：** 后台任务、独立服务、并发保证、父 Session 的副本，或任意递归 Agent Team。
+- **Definition:** An Agent execution delegated by a parent Agent to complete a bounded task using a separate role configuration and execution context.
+- **Responsibilities:** Isolate subtask context, tool policy, budget, and results while preserving parent-child traceability.
+- **Owner:** Agent Application / Subagent Orchestration.
+- **Does not mean:** A background task, independent service, concurrency guarantee, copy of the parent Session, or arbitrarily recursive Agent Team.
 
 ### Session
 
-- **定义：** 跨多个 Turn 持续存在的对话身份、历史和持久化边界。
-- **职责：** 关联消息历史、分支、压缩记录和同一会话的执行串行化策略。
-- **所有者：** Session Domain。
-- **不表示：** 网络连接、Client、单次请求、Agent 身份，或正在运行的 Turn。
+- **Definition:** A conversation identity, history, and persistence boundary that lasts across multiple Turns.
+- **Responsibilities:** Associate message history, branches, compaction records, and execution serialization policy for the same conversation.
+- **Owner:** Session Domain.
+- **Does not mean:** A network connection, Client, individual request, Agent identity, or running Turn.
 
 ### Accepted Request
 
-- **定义：** RuntimeApp 已接受并分配稳定 `requestId`、但尚未开始 Root Turn 的 caller request。
-- **职责：** 在 Turn 创建前承载排队、correlation 和 caller settlement，并在开始执行时原子转换为对应 Root Turn。
-- **所有者：** Runtime Application。
-- **不表示：** Turn、`turnId`、Registry Snapshot 或 generation pin、Resolved Model、Provider invocation，或 Runner 已启动的证明。
+- **Definition:** A caller request that RuntimeApp has accepted and assigned a stable `requestId`, but whose Root Turn has not yet started.
+- **Responsibilities:** Support queuing, correlation, and caller settlement before Turn creation, and atomically transition to the corresponding Root Turn when execution begins.
+- **Owner:** Runtime Application.
+- **Does not mean:** A Turn, `turnId`, Registry Snapshot or generation pin, Resolved Model, Provider invocation, or proof that the Runner has started.
 
 ### Turn
 
-- **定义：** 从一个已接收用户输入开始，到该输入对应的 Agent 执行完成、失败或中止为止的一次可追踪执行单元。
-- **职责：** 固定 Resolved Model、Registry Snapshot、取消信号、事件关联和本次执行结果。
-- **所有者：** Turn Execution。
-- **不表示：** 单次 LLM 调用、单条消息、整个 Session，或一个 Channel 连接。
+- **Definition:** A traceable execution unit that begins with an accepted user input and ends when the corresponding Agent execution completes, fails, or is aborted.
+- **Responsibilities:** Bind the Resolved Model, Registry Snapshot, cancellation signal, event correlation, and result for this execution.
+- **Owner:** Turn Execution.
+- **Does not mean:** An individual LLM call, individual message, entire Session, or Channel connection.
 
 ### Run
 
-- **定义：** Runner 执行一个 Turn 的内部过程，可包含多次 LLM 调用、Tool 调用和上下文压缩。
-- **职责：** 描述执行引擎的运行过程和结果。
-- **所有者：** Turn Execution。
-- **不表示：** Session 生命周期、Runtime 生命周期，或 Subagent 的后台持久化记录。
+- **Definition:** The internal process by which the Runner executes a Turn, potentially including multiple LLM calls, Tool calls, and context compaction.
+- **Responsibilities:** Describe the execution engine's process and result.
+- **Owner:** Turn Execution.
+- **Does not mean:** A Session lifecycle, Runtime lifecycle, or persisted background record for a Subagent.
 
 ### LLM Call
 
-- **定义：** Turn 内通过 Resolved Model 向模型服务发起并消费一次请求、流或响应的执行步骤。
-- **职责：** 表达一次模型协议交互及其 Usage、Stop Reason 和错误结果。
-- **所有者：** Turn Execution 发起；Provider Adapter 执行协议映射。
-- **不表示：** Turn、Session、Model Resolution，或完整 Tool Use Loop。
+- **Definition:** An execution step within a Turn that uses the Resolved Model to issue a request to a model service and consume the resulting stream or response.
+- **Responsibilities:** Represent one model protocol interaction and its Usage, Stop Reason, and error result.
+- **Owner:** Turn Execution initiates it; Provider Adapter performs protocol mapping.
+- **Does not mean:** A Turn, Session, Model Resolution, or complete Tool Use Loop.
 
-### Agent Execution 关系
+### Agent Execution Relationships
 
 ```mermaid
 flowchart LR
@@ -210,138 +210,138 @@ Agent ─executes─> Turn <─contained by─ Session
 
 ### Agent Home
 
-- **定义：** my-agent 管理本机运行数据、配置引用和已安装 External Extension 的规范根目录。
-- **职责：** 为不同部署提供一个可解析的持久位置，并作为 `<agent-home>/extensions` 的父边界。
-- **所有者：** Runtime Composition / Configuration。
-- **不表示：** Workspace、当前工作目录、Extension Registry、任意可扫描目录，或进程内全局状态。
+- **Definition:** The canonical root directory where my-agent manages local runtime data, configuration references, and installed External Extensions.
+- **Responsibilities:** Provide a resolvable persistent location across deployments and serve as the parent boundary of `<agent-home>/extensions`.
+- **Owner:** Runtime Composition / Configuration.
+- **Does not mean:** A Workspace, current working directory, Extension Registry, arbitrary scannable directory, or process-global state.
 
 ### Extension Discovery
 
-- **定义：** 在执行 Extension 代码前，从规范安装根目录枚举并静态校验 Extension Descriptor 候选的启动期过程。
-- **职责：** 识别直接子目录中的候选、产生确定顺序，并报告不执行代码即可发现的安装诊断。
-- **所有者：** Runtime Composition。
-- **不表示：** Extension Loader、Contribution 注册、运行中 reload、Marketplace 搜索，或 `node_modules` 扫描。
+- **Definition:** A startup process that enumerates and statically validates candidate Extension Descriptors from the canonical installation root before executing Extension code.
+- **Responsibilities:** Identify candidates in immediate subdirectories, produce deterministic ordering, and report installation diagnostics discoverable without executing code.
+- **Owner:** Runtime Composition.
+- **Does not mean:** Extension Loader, Contribution registration, runtime reload, Marketplace search, or scanning `node_modules`.
 
 ### Extension Descriptor
 
-- **定义：** External Extension 安装目录中由 `extension.json` 表达的静态身份和加载描述。
-- **职责：** 在代码执行前提供 Extension 身份、版本和入口等加载所需事实，并支持静态校验。
-- **所有者：** Extension Framework 定义契约；Extension 作者提供具体描述。
-- **不表示：** Extension 运行配置、Contribution 集合、已加载代码、私有资源，或 Registry Snapshot。
+- **Definition:** The static identity and loading description expressed by `extension.json` in an External Extension's installation directory.
+- **Responsibilities:** Supply loading facts such as Extension identity, version, and entry point before code execution, and support static validation.
+- **Owner:** Extension Framework defines the contract; the Extension author supplies the concrete description.
+- **Does not mean:** Extension runtime configuration, a Contribution collection, loaded code, private resources, or a Registry Snapshot.
 
 ### Extension Loader
 
-- **定义：** 根据已验证 Extension Descriptor 加载 External Extension 入口，并将其转换为可调用统一注册入口的 Composition 组件。
-- **职责：** 隔离模块加载机制和加载错误，将成功结果交给 Extension 注册阶段。
-- **所有者：** Runtime Composition。
-- **不表示：** Extension Discovery、Registry mutation、Service Locator、Contribution 消费者，或运行中热替换器。
+- **Definition:** A Composition component that loads an External Extension entry point from a validated Extension Descriptor and adapts it so the unified registration entry point can be invoked.
+- **Responsibilities:** Isolate module loading mechanisms and errors, and pass successful results to the Extension registration stage.
+- **Owner:** Runtime Composition.
+- **Does not mean:** Extension Discovery, Registry mutation, a Service Locator, a Contribution consumer, or a runtime hot-swap mechanism.
 
 ### Tool
 
-- **定义：** 可由 Agent 请求执行、具有名称、输入契约、结果语义和明确副作用边界的能力。
-- **职责：** 将受控操作暴露给 Turn Execution，并返回结构化成功或错误结果。
-- **所有者：** Tool Domain；具体实现由对应 Module 或 Extension 所有。
-- **不表示：** 任意函数、Provider API、Hook、Channel，或未经声明的 Runtime 访问权。
+- **Definition:** A capability that an Agent may request to execute, with a name, input contract, result semantics, and explicit side-effect boundaries.
+- **Responsibilities:** Expose controlled operations to Turn Execution and return structured success or error results.
+- **Owner:** Tool Domain; the corresponding Module or Extension owns the concrete implementation.
+- **Does not mean:** An arbitrary function, Provider API, Hook, Channel, or undeclared Runtime access.
 
 ### Application Tool Policy
 
-- **定义：** 对 normalized、schema-valid effective Tool Call 返回 `deny`、`allow` 或 `requiresApproval` 决策的 Application Policy；显式 deny 高于 allowlist。
-- **职责：** 根据显式部署和 Agent Policy 输入决定 Tool Call 是否可执行或需要审批，不执行审批交互或 Tool implementation。
-- **所有者：** Application Policy。
-- **不表示：** Tool Contract、schema validator、Hook、Channel Capability 或 approval transport、Registry，或 Tool executor。
+- **Definition:** An Application Policy that returns a `deny`, `allow`, or `requiresApproval` decision for a normalized, schema-valid effective Tool Call. An explicit deny takes precedence over an allowlist.
+- **Responsibilities:** Determine whether a Tool Call may execute or requires approval based on explicit deployment and Agent Policy inputs, without performing approval interactions or executing the Tool implementation.
+- **Owner:** Application Policy.
+- **Does not mean:** A Tool Contract, schema validator, Hook, Channel Capability or approval transport, Registry, or Tool executor.
 
 ### Channel
 
-- **定义：** 在外部 Client/Transport 与 Runtime 之间接收用户意图、发送事件并提供可选交互能力的 I/O Adapter。
-- **职责：** 处理传输、连接、路由标识和呈现，不实现 Agent 决策或 Tool Use Loop。
-- **所有者：** Channel Integration。
-- **不表示：** Session、Client 身份本身、Agent Runner、业务策略，或通用 Event Bus。
+- **Definition:** An I/O Adapter that receives user intent, sends events, and provides optional interaction capabilities between an external Client/Transport and Runtime.
+- **Responsibilities:** Handle transport, connections, routing identifiers, and presentation, without implementing Agent decisions or the Tool Use Loop.
+- **Owner:** Channel Integration.
+- **Does not mean:** A Session, Client identity itself, Agent Runner, business policy, or general-purpose Event Bus.
 
 ### Hook
 
-- **定义：** 在已命名的 Runtime 或 Turn 生命周期点观察、补充或按契约影响执行的扩展点。
-- **职责：** 在不替换核心 Runner 的前提下执行受限横切逻辑。
-- **所有者：** Hook Contract 由 Stable Core 所有；实现由 Module 或 Extension 所有。
-- **不表示：** 任意中间件、全局事件监听、Runner Factory 替换，或访问 Runtime 私有状态的后门。
+- **Definition:** An extension point that observes, supplements, or contractually influences execution at a named Runtime or Turn lifecycle point.
+- **Responsibilities:** Execute bounded cross-cutting logic without replacing the core Runner.
+- **Owner:** Stable Core owns the Hook Contract; a Module or Extension owns the implementation.
+- **Does not mean:** Arbitrary middleware, global event listening, Runner Factory replacement, or a backdoor into Runtime private state.
 
 ### Extension
 
-- **定义：** 可安装和加载的扩展代码单元，拥有独立身份、配置命名空间、私有资源和一组 Contribution。
-- **职责：** 在受限 Extension Capability 和统一 Lifecycle 下向 Runtime 提供一个或多个扩展能力。
-- **所有者：** Extension Framework 管理契约；Extension 作者拥有具体实现和私有资源。
-- **不表示：** 单个 Tool、Contribution、远程下载包、运行时任意代码热加载，或 Runtime Module 的同义词。
+- **Definition:** An installable, loadable unit of extension code with its own identity, configuration namespace, private resources, and set of Contributions.
+- **Responsibilities:** Provide one or more extension capabilities to Runtime under bounded Extension Capabilities and a unified Lifecycle.
+- **Owner:** Extension Framework governs the contract; the Extension author owns the concrete implementation and private resources.
+- **Does not mean:** An individual Tool, Contribution, remotely downloaded package, arbitrary runtime code hot loading, or a synonym for Runtime Module.
 
 ### Runtime Module
 
-- **定义：** 与 Extension 使用相同 Contribution 和 Lifecycle 机制、但由应用构建和部署直接提供的内置功能单元。
-- **职责：** 将 Builtin Tool、Channel、Hook 或其他能力按统一方式注册到 Runtime。
-- **所有者：** Runtime Composition；具体 Module 拥有自身实现。
-- **不表示：** Node.js module、任意源码目录、外部 Extension，或 Composition Root 本身。
+- **Definition:** A builtin functional unit supplied directly by the application build and deployment that uses the same Contribution and Lifecycle mechanisms as an Extension.
+- **Responsibilities:** Register Builtin Tools, Channels, Hooks, or other capabilities with Runtime in a uniform way.
+- **Owner:** Runtime Composition; each concrete Module owns its implementation.
+- **Does not mean:** A Node.js module, arbitrary source directory, External Extension, or the Composition Root itself.
 
 ### Contribution
 
-- **定义：** Extension 或 Runtime Module 向 Registry 提交的类型化、可校验能力声明及其实现绑定。
-- **职责：** 描述“贡献什么”，使 Registry 可在不识别具体 Extension 类型的情况下构建 Snapshot。
-- **所有者：** Extension Framework 定义契约；贡献方提供实例。
-- **不表示：** Extension 本体、已发布 Snapshot、直接修改 Registry 集合，或不受治理的启动副作用。
+- **Definition:** A typed, validatable capability declaration and implementation binding submitted to Registry by an Extension or Runtime Module.
+- **Responsibilities:** Describe what is contributed so Registry can build a Snapshot without recognizing concrete Extension types.
+- **Owner:** Extension Framework defines the contract; the contributor supplies the instance.
+- **Does not mean:** The Extension itself, a published Snapshot, direct mutation of Registry collections, or ungoverned startup side effects.
 
 ### Capability
 
-- **定义：** 对显式授权或受支持功能的统称；在架构文档和代码中必须使用下列限定术语之一。
-- **职责：** 建立授权边界和支持事实的共同词根，不直接作为接口或字段类型。
-- **所有者：** Domain Glossary 管理统称；具体所有权由限定术语定义。
-- **不表示：** 一个统一 Capability 类型、通用 Service Locator、任意对象访问权，或隐含权限。
+- **Definition:** An umbrella term for explicit authorization or supported functionality. Architecture documents and code must use one of the qualified terms below.
+- **Responsibilities:** Provide a shared root term for authorization boundaries and support facts, not serve directly as an interface or field type.
+- **Owner:** Domain Glossary governs the umbrella term; qualified terms define concrete ownership.
+- **Does not mean:** A unified Capability type, general-purpose Service Locator, access to arbitrary objects, or implicit permission.
 
 ### Extension Capability
 
-- **定义：** Extension 被显式授予、用于访问受限 Runtime 服务或平台上下文的类型化权限。
-- **职责：** 将 Extension 的可访问面限制到已声明且获准的最小集合。
-- **所有者：** 提供服务的边界定义；Runtime Composition / Policy 授权。
-- **不表示：** Model 支持事实、Channel 功能、Tool 列表、Extension 私有资源，或 Service Locator。
+- **Definition:** A typed permission explicitly granted to an Extension for access to bounded Runtime services or platform context.
+- **Responsibilities:** Restrict the Extension's accessible surface to the minimum declared and authorized set.
+- **Owner:** The service-providing boundary defines it; Runtime Composition / Policy grants it.
+- **Does not mean:** Model support facts, Channel functionality, a Tool list, private Extension resources, or a Service Locator.
 
 ### Model Capability
 
-- **定义：** Model Descriptor 记录的模型支持事实，例如 Tool Use、图像输入或特定协议功能。
-- **职责：** 让 Model Resolution 和调用方基于已知事实校验请求并采用保守 fallback。
-- **所有者：** Model Catalog / Model Resolution。
-- **不表示：** Extension 权限、Channel 功能、用户 Policy，或可调用的 Runtime 服务。
+- **Definition:** A model support fact recorded in Model Descriptor, such as Tool Use, image input, or a specific protocol feature.
+- **Responsibilities:** Allow Model Resolution and callers to validate requests against known facts and use conservative fallback.
+- **Owner:** Model Catalog / Model Resolution.
+- **Does not mean:** Extension permissions, Channel functionality, user Policy, or callable Runtime services.
 
 ### Channel Capability
 
-- **定义：** Channel 可向 Runtime 提供的可选交互或传输功能，例如审批、结构化选择或附件输入。
-- **职责：** 允许 Runtime 显式检测和使用 Channel 支持的功能，而不识别具体 Channel 类型。
-- **所有者：** Channel Contract 定义；具体 Channel Adapter 声明支持。
-- **不表示：** Extension 权限、Model 支持事实、Transport 身份，或 Runtime 的通用访问权。
+- **Definition:** An optional interaction or transport feature a Channel may provide to Runtime, such as approvals, structured choices, or attachment input.
+- **Responsibilities:** Allow Runtime to explicitly detect and use supported Channel features without recognizing concrete Channel types.
+- **Owner:** Channel Contract defines it; the concrete Channel Adapter declares support.
+- **Does not mean:** Extension permissions, Model support facts, Transport identity, or general Runtime access.
 
 ### Registry
 
-- **定义：** 校验、索引并发布已接受的跨类型 Contribution 集合的唯一权威管理器。
-- **职责：** 生成一个版本化、内部一致且不可变的 Registry Snapshot；按类型的访问只通过 Snapshot 的 narrow typed projection 暴露，并通过受控事务改变后续可见集合。
-- **所有者：** Extension Framework / Runtime Composition。
-- **不表示：** 每个 Contribution Kind 各自发布的独立 Registry、可由消费者修改的 `Map`、依赖注入容器、Service Locator、Extension Loader，或 Marketplace。
+- **Definition:** The single authoritative manager that validates, indexes, and publishes accepted Contributions across kinds.
+- **Responsibilities:** Produce a versioned, internally consistent, immutable Registry Snapshot. Expose kind-specific access only through narrow typed projections of the Snapshot, and change the subsequently visible set through controlled transactions.
+- **Owner:** Extension Framework / Runtime Composition.
+- **Does not mean:** Independent Registries publishing separately for each Contribution Kind, a consumer-mutable `Map`, dependency injection container, Service Locator, Extension Loader, or Marketplace.
 
 ### Registry Snapshot
 
-- **定义：** Registry 在一个进程内唯一 generation 上的不可变、内部一致的 Contribution 视图。
-- **职责：** 保证一个 Root/Child Turn tree 在整个执行期间观察到固定能力集合；generation 只表达当前进程内的发布顺序。
-- **所有者：** Registry 生成；Turn 捕获和消费。
-- **不表示：** Registry 本身、Extension 版本、跨重启持久 ID、分布式一致性编号、深复制全部 Extension 状态，或对进行中 Turn 的实时更新。
+- **Definition:** An immutable, internally consistent view of Contributions for a Registry generation unique within a process.
+- **Responsibilities:** Ensure that a Root/Child Turn tree observes a fixed capability set throughout execution. A generation expresses only publication order within the current process.
+- **Owner:** Registry produces it; Turns capture and consume it.
+- **Does not mean:** Registry itself, an Extension version, an ID persisted across restarts, a distributed consistency number, a deep copy of all Extension state, or live updates to active Turns.
 
 ### Reload Transaction
 
-- **定义：** 对已加载 Extension 的 enable 或 disable 从候选准备到 Registry Snapshot 原子发布的进程内状态变更过程。
-- **职责：** 在 publish 前隔离并校验 candidate，在失败或 superseded 时清理候选，并以一次原子 publish 作为成功完成点。
-- **所有者：** Runtime Composition / Runtime Builder。
-- **不表示：** 同一 Extension 的运行中版本替换或多 instance 并存、重新扫描或加载 Extension 代码、Generation Retirement、文件 watcher、分布式事务，或包含旧 instance 排空的长事务。
+- **Definition:** An in-process state change that enables or disables an already loaded Extension, from candidate preparation through atomic publication of a Registry Snapshot.
+- **Responsibilities:** Isolate and validate the candidate before publication, clean up candidates on failure or when superseded, and use one atomic publication as the successful completion point.
+- **Owner:** Runtime Composition / Runtime Builder.
+- **Does not mean:** Runtime version replacement or coexisting instances of the same Extension, rescanning or loading Extension code, Generation Retirement, a file watcher, a distributed transaction, or a long transaction that includes draining old instances.
 
 ### Generation Retirement
 
-- **定义：** 新 Registry Snapshot 发布后，对旧 generation 独立执行 ingress 关闭、Turn tree 排空、必要 Abort 和 eligible Extension/Module instance stop 的生命周期过程。
-- **职责：** 在不回滚已发布 Snapshot 的前提下，让旧 generation 安全退出，并停止不再受 generation pin 保护的 instances。
-- **所有者：** Runtime Builder 编排；各 instance Lifecycle Owner 执行 `stop()` 并自行清理内部对象。
-- **不表示：** Reload Transaction 的未完成阶段、已发布 Snapshot 的回滚、Extension 代码卸载，或允许多代并行排空的通用任务系统。
+- **Definition:** A lifecycle process that independently closes ingress, drains the Turn tree, performs necessary Aborts, and stops eligible Extension/Module instances for an old generation after a new Registry Snapshot is published.
+- **Responsibilities:** Retire the old generation safely without rolling back the published Snapshot, and stop instances no longer protected by generation pins.
+- **Owner:** Runtime Builder orchestrates it; each instance's Lifecycle Owner executes `stop()` and cleans up its own internal objects.
+- **Does not mean:** An unfinished phase of Reload Transaction, rollback of a published Snapshot, unloading Extension code, or a general-purpose task system permitting concurrent draining of multiple generations.
 
-### Extension Framework 关系
+### Extension Framework Relationships
 
 ```mermaid
 flowchart LR
@@ -365,156 +365,156 @@ Extension Capability ─grants bounded access─> Extension
 
 ### Domain
 
-- **定义：** 表达核心概念、值、不变量和与具体集成无关行为的最内层逻辑边界。
-- **职责：** 拥有稳定领域语义，并保持可在无 Provider SDK、Channel SDK、Store 或 Runtime 的情况下验证。
-- **所有者：** Stable Core。
-- **不表示：** 所有共享类型、数据访问层、Application 用例、Infrastructure Adapter，或一个预定源码目录。
+- **Definition:** The innermost logical boundary expressing core concepts, values, invariants, and behavior independent of concrete integrations.
+- **Responsibilities:** Own stable domain semantics and remain verifiable without a Provider SDK, Channel SDK, Store, or Runtime.
+- **Owner:** Stable Core.
+- **Does not mean:** All shared types, a data access layer, Application use cases, an Infrastructure Adapter, or a predetermined source directory.
 
 ### Application
 
-- **定义：** 编排 Domain 概念、应用策略和 core-owned Port 以完成用例的逻辑边界。
-- **职责：** 协调 Model Resolution、Turn Execution 等应用流程，而不依赖具体 Infrastructure 实现。
-- **所有者：** Stable Core。
-- **不表示：** UI/Channel、Composition Root、Provider SDK Adapter、配置文件，或整个 Runtime 进程。
+- **Definition:** The logical boundary that orchestrates Domain concepts, application policies, and core-owned Ports to fulfill use cases.
+- **Responsibilities:** Coordinate application flows such as Model Resolution and Turn Execution without depending on concrete Infrastructure implementations.
+- **Owner:** Stable Core.
+- **Does not mean:** UI/Channel, Composition Root, a Provider SDK Adapter, a configuration file, or the entire Runtime process.
 
 ### Infrastructure
 
-- **定义：** 实现 core-owned Port，并连接 Provider SDK、Channel Transport、Store、文件系统或其他外部机制的逻辑边界。
-- **职责：** 隔离外部协议、SDK、I/O 和部署变化，映射为 Stable Core 契约。
-- **所有者：** 对应 Integration Adapter。
-- **不表示：** 业务策略、Application 用例、Composition Root，或所有技术辅助代码的统称。
+- **Definition:** The logical boundary that implements core-owned Ports and connects Provider SDKs, Channel Transports, Stores, file systems, or other external mechanisms.
+- **Responsibilities:** Isolate external protocol, SDK, I/O, and deployment changes and map them to Stable Core contracts.
+- **Owner:** The corresponding Integration Adapter.
+- **Does not mean:** Business policy, Application use cases, Composition Root, or an umbrella term for all technical helper code.
 
 ### Composition
 
-- **定义：** 选择具体实现、验证配置、构建依赖图并编排进程级启动和关闭的最外层逻辑边界。
-- **职责：** 将 Stable Core、Infrastructure Adapter、Runtime Module 和 Extension 组装为可运行系统。
-- **所有者：** Runtime Composition。
-- **不表示：** Runtime 的 Turn/队列逻辑、业务规则、通用 DI Container，或任意模块都可访问的服务集合。
+- **Definition:** The outermost logical boundary that selects concrete implementations, validates configuration, builds the dependency graph, and orchestrates process-level startup and shutdown.
+- **Responsibilities:** Assemble Stable Core, Infrastructure Adapters, Runtime Modules, and Extensions into a runnable system.
+- **Owner:** Runtime Composition.
+- **Does not mean:** Runtime Turn/queue logic, business rules, a general-purpose DI Container, or a service collection accessible to any module.
 
 ### Stable Core
 
-- **定义：** Domain、Application 及其拥有的公共契约的统称，强调不依赖具体 Infrastructure 和 Composition。
-- **职责：** 提供可独立验证、可由不同 Adapter 驱动的稳定行为边界。
-- **所有者：** Domain/Application 维护者。
-- **不表示：** 单个包、永不变化的代码、RuntimeApp，或包含具体 SDK 的共享层。
+- **Definition:** The collective term for Domain, Application, and their public contracts, emphasizing independence from concrete Infrastructure and Composition.
+- **Responsibilities:** Provide stable behavioral boundaries that can be verified independently and driven by different Adapters.
+- **Owner:** Domain/Application maintainers.
+- **Does not mean:** A single package, code that never changes, RuntimeApp, or a shared layer containing concrete SDKs.
 
 ### Composition Root
 
-- **定义：** Composition 中实际选择具体实现并创建、连接和启动顶层对象图的唯一入口。
-- **职责：** 将显式依赖传给消费者，并把构建后的运行责任交给 Runtime。
-- **所有者：** Runtime Composition。
-- **不表示：** Service Locator、全局容器、Runtime 执行循环，或可在任意模块重复出现的工厂集合。
+- **Definition:** The single entry point within Composition that actually selects concrete implementations and creates, connects, and starts the top-level object graph.
+- **Responsibilities:** Pass explicit dependencies to consumers and hand execution responsibility to Runtime after construction.
+- **Owner:** Runtime Composition.
+- **Does not mean:** A Service Locator, global container, Runtime execution loop, or collection of factories repeated across arbitrary modules.
 
 ## 7. Runtime and Integration
 
 ### Port
 
-- **定义：** 由 Stable Core 拥有、用于表达其需要外部边界完成何种操作的契约。
-- **职责：** 允许 Application 依赖抽象行为，并由 Infrastructure Adapter 实现外部协议、SDK 或存储集成。
-- **所有者：** 需要该行为的 Domain/Application 边界。
-- **不表示：** 具体 Adapter、SDK Client、网络端口、通用接口集合，或为每个类机械创建的抽象。
+- **Definition:** A contract owned by Stable Core that expresses which operations it needs an external boundary to perform.
+- **Responsibilities:** Allow Application to depend on abstract behavior, with Infrastructure Adapters implementing external protocol, SDK, or storage integrations.
+- **Owner:** The Domain/Application boundary that needs the behavior.
+- **Does not mean:** A concrete Adapter, SDK Client, network port, generic interface collection, or abstraction mechanically created for every class.
 
 ### Adapter
 
-- **定义：** 在核心 Port/Contract 与外部 SDK、协议、存储或 Legacy API 之间做语义转换的边界实现。
-- **职责：** 隔离外部变化，完成类型、错误、事件和协议映射。
-- **所有者：** 对应 Infrastructure Integration；核心拥有被实现的 Port。
-- **不表示：** 业务策略、Composition Root、通用包装层，或为隐藏循环依赖而增加的转发对象。
+- **Definition:** A boundary implementation that translates semantics between a core Port/Contract and an external SDK, protocol, storage system, or Legacy API.
+- **Responsibilities:** Isolate external changes and map types, errors, events, and protocols.
+- **Owner:** The corresponding Infrastructure Integration; the core owns the implemented Port.
+- **Does not mean:** Business policy, Composition Root, a generic wrapper layer, or a forwarding object added to hide circular dependencies.
 
 ### Compatibility Adapter / Compat
 
-- **定义：** 迁移期间将 Legacy Public API 或旧输入单向映射到新权威核心的临时 Adapter。
-- **职责：** 保持已确认兼容行为，并提供负责人、到期日和删除条件。
-- **所有者：** 拥有迁移 Slice 的团队或模块。
-- **不表示：** 长期双实现、新核心可依赖的抽象、旧逻辑备份，或推荐公共 API。
+- **Definition:** A temporary Adapter that maps a Legacy Public API or old inputs one way into the new authoritative core during migration.
+- **Responsibilities:** Preserve confirmed compatibility behavior and specify an owner, expiration date, and removal conditions.
+- **Owner:** The team or module that owns the migration Slice.
+- **Does not mean:** Long-term dual implementations, an abstraction the new core may depend on, a backup of old logic, or a recommended public API.
 
-`Compat` 只作为 `Compatibility Adapter` 的简称使用，不表示一般兼容性目标。
+`Compat` is used only as shorthand for `Compatibility Adapter`; it does not mean a general compatibility objective.
 
 ### Runtime
 
-- **定义：** 承载 Session/Turn 请求，协调队列、路由、Snapshot、取消和进程级生命周期的运行环境。
-- **职责：** 编排已解析依赖和运行资源，不拥有 Provider、Tool、Channel 或 Session 的内部业务规则。
-- **所有者：** Runtime Application。
-- **不表示：** Composition Root、Agent Runner、Node.js 进程本身，或全局 Service Locator。
+- **Definition:** The execution environment that hosts Session/Turn requests and coordinates queues, routing, Snapshots, cancellation, and process-level lifecycle.
+- **Responsibilities:** Orchestrate resolved dependencies and runtime resources without owning the internal business rules of Providers, Tools, Channels, or Sessions.
+- **Owner:** Runtime Application.
+- **Does not mean:** Composition Root, Agent Runner, the Node.js process itself, or a global Service Locator.
 
 ### Runtime Builder
 
-- **定义：** 根据已验证配置和已加载 Module/Extension 构建 Runtime 依赖、Registry 和 instance 启动依赖的 Composition 服务。
-- **职责：** 创建、连接和启动 lifecycle units，并在失败时按所有权规则请求对应 instance 自行清理。
-- **所有者：** Runtime Composition。
-- **不表示：** Extension 内部对象管理器、Runtime 执行循环、配置加载器、Extension Marketplace，或可从任意位置访问的容器。
+- **Definition:** A Composition service that builds Runtime dependencies, the Registry, and instance startup dependencies from validated configuration and loaded Modules/Extensions.
+- **Responsibilities:** Create, connect, and start lifecycle units, and request that the corresponding instances clean themselves up on failure according to ownership rules.
+- **Owner:** Runtime Composition.
+- **Does not mean:** A manager of internal Extension objects, Runtime execution loop, configuration loader, Extension Marketplace, or container accessible from anywhere.
 
 ### Lifecycle
 
-- **定义：** 一个 Module、Extension、Adapter 或 Runtime 从创建、校验、启动、可用、排空到停止和释放的状态与顺序契约。
-- **职责：** 明确 lifecycle unit 的创建者、使用者、停止责任、失败清理和幂等要求；Extension 内部对象由 Extension 自行管理。
-- **所有者：** Stable Core 定义公共 Lifecycle Contract；instance Owner 实现具体行为；Runtime Composition 只编排 unit 顺序。
-- **不表示：** 只有 `start()`/`stop()` 两个方法、垃圾回收、进程信号处理本身，或隐式注册副作用。
+- **Definition:** The contract governing the states and ordering of a Module, Extension, Adapter, or Runtime through creation, validation, startup, availability, draining, stopping, and release.
+- **Responsibilities:** Specify a lifecycle unit's creator, users, stop responsibility, failure cleanup, and idempotency requirements. Each Extension manages its own internal objects.
+- **Owner:** Stable Core defines the public Lifecycle Contract; the instance Owner implements concrete behavior; Runtime Composition only orchestrates unit ordering.
+- **Does not mean:** Merely two methods named `start()`/`stop()`, garbage collection, process signal handling itself, or implicit registration side effects.
 
 ### Resource Ownership
 
-- **定义：** 对资源创建、共享范围、使用计数、排空、释放和失败清理承担唯一责任的规则。
-- **职责：** 防止重复关闭、资源泄漏和关闭顺序不确定。
-- **所有者：** 创建资源的 Module、Extension 或 Adapter；Runtime Builder 只拥有明确由其直接创建的 Composition 资源，不取得 Extension 内部对象所有权。
-- **不表示：** Framework 跟踪 Extension 内部对象 membership/引用计数、JavaScript 对象引用、任意消费者都能关闭资源，或仅靠 Garbage Collection。
+- **Definition:** Rules assigning sole responsibility for resource creation, sharing scope, usage counts, draining, release, and failure cleanup.
+- **Responsibilities:** Prevent duplicate closes, resource leaks, and indeterminate shutdown order.
+- **Owner:** The Module, Extension, or Adapter that creates the resource. Runtime Builder owns only Composition resources it explicitly creates directly; it does not acquire ownership of internal Extension objects.
+- **Does not mean:** The Framework tracking membership/reference counts of internal Extension objects, JavaScript object references, permission for any consumer to close a resource, or reliance on Garbage Collection alone.
 
 ## 8. Governance and Documentation
 
 ### Current Architecture
 
-- **定义：** 经代码、测试和运行证据验证的当前生产结构、调用流和行为事实。
-- **职责：** 回答系统现在如何工作，并链接验证证据。
-- **所有者：** 实现对应模块的维护者；项目所有者确认权威入口。
-- **不表示：** 目标设计、未实现 Spec、Change、Evidence、Deferred 输入或过期设计记录。
+- **Definition:** Facts about current production structure, call flows, and behavior verified by code, tests, and runtime evidence.
+- **Responsibilities:** Explain how the system works now and link to validation evidence.
+- **Owner:** Maintainers of the corresponding implementation modules; the project owner confirms authoritative entry points.
+- **Does not mean:** Target designs, unimplemented Specs, Changes, Evidence, Deferred inputs, or outdated design records.
 
 ### Target Architecture
 
-- **定义：** 已接受的目标模块、依赖、契约、生命周期和迁移边界。
-- **职责：** 约束 Architecture Slice 和后续 Spec，不伪装成当前实现。
-- **所有者：** 项目所有者。
-- **不表示：** Current Architecture、实现进度、愿景清单，或无需证据即可固定的接口细节。
+- **Definition:** Accepted target modules, dependencies, contracts, lifecycles, and migration boundaries.
+- **Responsibilities:** Constrain Architecture Slices and subsequent Specs without masquerading as the current implementation.
+- **Owner:** Project owner.
+- **Does not mean:** Current Architecture, implementation progress, a vision checklist, or interface details that can be fixed without evidence.
 
 ### Plan
 
-- **定义：** 描述跨阶段目标、顺序、Gate、风险和退出条件的治理工件。
-- **职责：** 决定“为什么、按什么顺序、满足什么条件后推进”。
-- **所有者：** 项目所有者。
-- **不表示：** Module Contract、实现说明，或 `Accepted` 即代表完成。
+- **Definition:** A governance artifact describing cross-phase objectives, sequencing, Gates, risks, and exit criteria.
+- **Responsibilities:** Determine why work is needed, in what order it proceeds, and which conditions must be met before advancing.
+- **Owner:** Project owner.
+- **Does not mean:** A Module Contract, implementation guide, or that `Accepted` means complete.
 
 ### Spec
 
-- **定义：** 对一个模块或行为边界的公共契约、状态、错误、并发、Lifecycle 和验收条件的可实施说明。
-- **职责：** 决定实现必须满足什么，不要求预写内部代码结构。
-- **所有者：** 对应模块或行为边界的维护者；项目所有者接受。
-- **不表示：** 调研笔记、Roadmap、Current Architecture，或未经接受即可实施的想法。
+- **Definition:** An implementable description of a module or behavioral boundary's public contracts, states, errors, concurrency, Lifecycle, and acceptance criteria.
+- **Responsibilities:** Determine what the implementation must satisfy, without requiring the internal code structure to be prescribed in advance.
+- **Owner:** Maintainers of the corresponding module or behavioral boundary; the project owner accepts it.
+- **Does not mean:** Research notes, a Roadmap, Current Architecture, or an idea that may be implemented without acceptance.
 
 ### ADR
 
-- **定义：** 记录长期且难回退的架构决策、背景、备选方案、证据和后果的工件。
-- **职责：** 解释为什么选择某个架构方向，并允许后续通过 Supersede 演进。
-- **所有者：** 项目所有者。
-- **不表示：** 所有小型实现选择、会议纪要、Spec，或不可改变的永久真理。
+- **Definition:** An artifact recording a long-term, difficult-to-reverse architecture decision, its context, alternatives, evidence, and consequences.
+- **Responsibilities:** Explain why an architectural direction was chosen and allow later evolution by superseding the decision.
+- **Owner:** Project owner.
+- **Does not mean:** Every small implementation choice, meeting minutes, a Spec, or an immutable permanent truth.
 
 ### Spike
 
-- **定义：** 在时间盒内验证一个可证伪架构假设的实验性工作及其 Spec/Results。
-- **职责：** 用执行证据减少会改变架构结论的未知。
-- **所有者：** Spike 执行者负责证据；项目所有者接受实验和确认结果。
-- **不表示：** 生产实现、无边界探索、证明预设结论，或自动进入生产的原型。
+- **Definition:** Time-boxed experimental work that tests a falsifiable architectural hypothesis, together with its Spec/Results.
+- **Responsibilities:** Use execution evidence to reduce unknowns that could change architectural conclusions.
+- **Owner:** The Spike executor is responsible for evidence; the project owner accepts the experiment and confirms the results.
+- **Does not mean:** Production implementation, unbounded exploration, proving a predetermined conclusion, or a prototype that automatically enters production.
 
 ### Legacy
 
-- **定义：** 已被新权威事实或生产路径替代、但尚未完成迁移或删除的文档、API 或实现。
-- **职责：** 作为有明确退出路径的迁移对象被追踪。
-- **所有者：** 替代它的 Architecture Slice 或文档迁移项。
-- **不表示：** 单纯年代较久、仍是权威的稳定代码，或需要长期复制保存的历史。
+- **Definition:** Documentation, APIs, or implementations superseded by new authoritative facts or production paths but not yet fully migrated or removed.
+- **Responsibilities:** Be tracked as migration targets with explicit exit paths.
+- **Owner:** The Architecture Slice or documentation migration item replacing them.
+- **Does not mean:** Something merely old, stable code that remains authoritative, or history that must be preserved through long-term copies.
 
 ### Architecture Slice
 
-- **定义：** 在已接受 Target Architecture、ADR 和 Spec 约束下，迁移一个真实生产调用方或权威路径的最小可验收交付单元。
-- **职责：** 以用户可观察结果、聚焦与更广验证、Compatibility 和旧路径删除条件推动目标架构落地。
-- **所有者：** 对应 Plan Item 的实施者负责交付；项目所有者确认完成。
-- **不表示：** 任意 Sprint、只增加抽象的分层重构、Spike、单个 Commit，或无需删除条件的代码批次。
+- **Definition:** The smallest acceptable delivery unit that migrates a real production caller or authoritative path under the constraints of accepted Target Architecture, ADRs, and Specs.
+- **Responsibilities:** Deliver the target architecture through user-observable outcomes, focused and broader validation, Compatibility, and conditions for removing old paths.
+- **Owner:** The implementer of the corresponding Plan Item is responsible for delivery; the project owner confirms completion.
+- **Does not mean:** An arbitrary Sprint, layered refactoring that only adds abstractions, a Spike, an individual Commit, or a batch of code without removal conditions.
 
 ### Governing Relationships
 
@@ -537,29 +537,29 @@ Spike ─evidence─> ADR ────────────────┘   
                                                                       └─retires─> Legacy
 ```
 
-## 9. 禁止混用
+## 9. Terms That Must Not Be Conflated
 
-| 不使用 | 规范表达 |
+| Avoid | Canonical Expression |
 |---|---|
-| “model config” 同时指模型名、连接和能力 | Model Reference + Provider Connection + Model Descriptor |
-| “resolved config” 表示本 Turn 模型事实 | Resolved Model |
-| “provider” 表示已创建 SDK Client | 具体 Provider Adapter 内部的 SDK Client |
-| “session” 表示一次执行 | Turn |
-| “turn” 表示一次 LLM API 请求 | LLM Call |
-| “extension” 表示单个 Tool | Tool Contribution |
-| “module” 表示任意源码文件夹 | Runtime Module 或具体代码模块名称 |
-| “registry” 表示可变全局 `Map` | Mutable collection；目标 Registry 只发布不可变 Snapshot |
-| “capability” 表示任意依赖 | 使用 Extension Capability；Module/Adapter 使用显式依赖或 Port |
-| “adapter” 表示无语义的转发层 | 只有外部/兼容语义转换边界使用 Adapter |
-| “legacy” 表示所有旧代码 | 只指已被替代且待退出的路径 |
-| “current architecture” 表示设计目录 | 只指经证据验证的当前事实 |
+| "model config" for model name, connection, and capabilities together | Model Reference + Provider Connection + Model Descriptor |
+| "resolved config" for this Turn's model facts | Resolved Model |
+| "provider" for a created SDK Client | SDK Client inside a concrete Provider Adapter |
+| "session" for one execution | Turn |
+| "turn" for one LLM API request | LLM Call |
+| "extension" for a single Tool | Tool Contribution |
+| "module" for an arbitrary source folder | Runtime Module or the specific code module name |
+| "registry" for a mutable global `Map` | Mutable collection; the target Registry publishes only immutable Snapshots |
+| "capability" for an arbitrary dependency | Use Extension Capability; Modules/Adapters use explicit dependencies or Ports |
+| "adapter" for a forwarding layer without semantic translation | Use Adapter only for external/compatibility semantic translation boundaries |
+| "legacy" for all old code | Only superseded paths awaiting retirement |
+| "current architecture" for a design directory | Only current facts verified by evidence |
 
-## 10. 已解析的权威映射
+## 10. Established Authority Mapping
 
-词汇表只定义概念语义；具体权威已分流：
+The glossary defines only conceptual semantics. Specific authority is assigned as follows:
 
-- [Current Architecture](../architecture/README.md) 记录当前目录、模块、公共入口和已实现接口；
-- [Architecture Principles](architecture-principles.md) 定义 Domain、Application、Infrastructure 和 Composition 的依赖约束；
-- [Decisions](../decisions/README.md) 持有 Provider/Model、Registry/Runtime lifecycle、Compatibility 和 builtin ownership 的长期选择；
-- [Specifications](../specifications/README.md) 持有 Config、Schema、Extension Capability、Resource Ownership、Registry transaction、Snapshot、排空、回滚和关闭的稳定契约；
-- [Changes](../changes/README.md) 与 [Evidence](../evidence/README.md) 仅保留迁移、删除和验证记录，不反向定义规范词义。
+- [Current Architecture](../architecture/README.md) records current directories, modules, public entry points, and implemented interfaces.
+- [Architecture Principles](architecture-principles.md) defines dependency constraints for Domain, Application, Infrastructure, and Composition.
+- [Decisions](../decisions/README.md) owns long-term choices about Provider/Model, Registry/Runtime lifecycle, Compatibility, and builtin ownership.
+- [Specifications](../specifications/README.md) owns stable contracts for Config, Schema, Extension Capability, Resource Ownership, Registry transactions, Snapshots, draining, rollback, and shutdown.
+- [Changes](../changes/README.md) and [Evidence](../evidence/README.md) retain only migration, removal, and validation records; they do not redefine canonical terminology.
