@@ -1488,7 +1488,6 @@ export class RuntimeApp {
                   params.sessionId,
                   params.turnId,
                   resolvedModel,
-                  reasoningPolicy,
                 ),
                 waitUntilPotentiallyReady: (signal: AbortSignal) =>
                   this.waitUntilSteeringPotentiallyReady(params.sessionId, signal),
@@ -1550,7 +1549,6 @@ export class RuntimeApp {
     sessionKey: string,
     turnId: string,
     resolvedModel: ResolvedModel,
-    reasoningPolicy: ResolvedReasoningPolicy,
   ): SteeringMessage[] {
     const queue = this.messageQueueBySession.get(sessionKey);
     if (!queue || queue.length === 0) return [];
@@ -1558,7 +1556,7 @@ export class RuntimeApp {
     let claimCount = 0;
     while (
       claimCount < queue.length
-      && this.isSteeringCompatible(queue[claimCount]!, resolvedModel, reasoningPolicy)
+      && this.isSteeringCompatible(queue[claimCount]!, resolvedModel)
     ) {
       claimCount++;
     }
@@ -1636,24 +1634,7 @@ export class RuntimeApp {
   private isSteeringCompatible(
     item: QueuedUserMessage,
     resolvedModel: ResolvedModel,
-    reasoningPolicy: ResolvedReasoningPolicy,
   ): boolean {
-    if (
-      item.modelReference
-      && (
-        item.modelReference.providerId !== resolvedModel.identity.providerId
-        || item.modelReference.modelId !== resolvedModel.identity.modelId
-      )
-    ) {
-      return false;
-    }
-    if (
-      item.reasoningPolicy.thinking !== reasoningPolicy.thinking
-      || item.reasoningPolicy.effort !== reasoningPolicy.effort
-    ) {
-      return false;
-    }
-
     const mediaKinds = Array.isArray(item.message)
       && item.message.some((block) => block.type === 'image')
       ? ['image']

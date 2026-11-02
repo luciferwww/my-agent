@@ -1997,7 +1997,27 @@ describe('RuntimeApp', () => {
     ]);
   });
 
-  it('keeps a different reasoning policy in FIFO for the next Turn', async () => {
+  it.each<{
+    name: string;
+    overrides: Pick<ChannelRunRequest, 'modelReference' | 'reasoning'>;
+  }>([
+    { name: 'omitted settings', overrides: {} },
+    {
+      name: 'a different model',
+      overrides: {
+        modelReference: { providerId: 'other', modelId: 'other-model' },
+        reasoning: { effort: 'high' },
+      },
+    },
+    { name: 'different reasoning', overrides: { reasoning: { effort: 'low' } } },
+    {
+      name: 'a different model and reasoning',
+      overrides: {
+        modelReference: { providerId: 'other', modelId: 'other-model' },
+        reasoning: { effort: 'low' },
+      },
+    },
+  ])('steering with $name does not affect the active Turn settings', async ({ overrides }) => {
     const firstClaims: SteeringMessage[][] = [];
     const makeResult = (text: string): RunResult => ({
       text,
@@ -2014,6 +2034,11 @@ describe('RuntimeApp', () => {
           new AbortController().signal,
         );
         firstClaims.push(params.steeringSource?.claimReady() ?? []);
+        expect(params.resolvedModel.identity).toEqual({
+          providerId: 'test',
+          modelId: 'test-model',
+        });
+        expect(params.reasoningPolicy).toEqual({ effort: 'high' });
       }
       return makeResult(currentRun === 0 ? 'first' : 'second');
     });
@@ -2043,18 +2068,19 @@ describe('RuntimeApp', () => {
     await testChannel.dispatch({
       sessionId: 'main',
       message: 'second',
-      reasoning: { effort: 'low' },
+      ...overrides,
       clientId: 'client-2',
     });
     await firstDispatch;
-    await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(2));
 
-    expect(firstClaims).toEqual([[]]);
-    expect(runnerRun.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
-      message: expect.stringContaining('</turn_start>\n\nsecond'),
-      reasoningPreference: { effort: 'low' },
-      reasoningPolicy: { effort: 'low' },
-    }));
+    expect(firstClaims).toEqual([[
+      {
+        role: 'user',
+        content: 'second',
+        ...(overrides.reasoning === undefined ? {} : { reasoning: overrides.reasoning }),
+      },
+    ]]);
+    expect(runnerRun).toHaveBeenCalledTimes(1);
     await app.close();
   });
 

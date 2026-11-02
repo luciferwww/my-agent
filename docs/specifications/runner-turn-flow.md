@@ -37,10 +37,11 @@ On normalized context overflow, Runner performs blocking Compaction, commits thr
 - `sanitizeSessionTail()` runs at attempt and Compaction entry; a trailing Tool Result is preserved because side effects may have occurred.
 - Persistence metadata such as `abortMeta` is omitted from Provider history.
 - One Turn uses one Resolved Model binding through Tool rounds and Compaction retries; Runner never selects Providers or infers facts.
-- One Turn also uses one resolved reasoning policy. Runtime snapshots it before
-  enqueue; steering may join the active Turn only when its resolved policy
-  matches. Compaction omits user reasoning controls and does not request
-  readable Thinking.
+- One Turn also uses one resolved reasoning policy. Runtime snapshots the
+  initiating message's policy before enqueue. Message `modelReference` and
+  `reasoning` apply only when that message starts a new Turn; steering neither
+  compares them with nor changes the active Turn's Model or reasoning policy.
+  Compaction omits user reasoning controls and does not request readable Thinking.
 - Every actual Model call receives a fresh invocation identity. Runner uses the
   shared stream collector to preserve text/Tool/Thinking order, persists the
   internal replay envelope, and projects only safe Thinking text/status in

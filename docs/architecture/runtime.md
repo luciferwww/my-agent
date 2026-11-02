@@ -194,8 +194,7 @@ Media intake is atomic. Any attachment validation or optimization failure reject
 
 When `agents.steeringEnabled` is true, Runner may request a claim at a safe point after persistence and before another permitted Model call. Runtime synchronously peeks from the FIFO head and splices the largest contiguous compatible prefix:
 
-- an omitted Model reference is compatible;
-- an explicit reference must match the active canonical Provider and Model IDs;
+- message `modelReference` and `reasoning` apply only when that message starts a new Turn; they neither restrict steering eligibility nor change the active Turn's Model or reasoning policy;
 - clearly unsupported media stops claim, while unknown capability is fail-open.
 
 Runtime never skips, dequeues, or requeues an incompatible item. Claimed messages remain separate user messages, are persisted immediately, and produce one continuation Model call. `user_message_bound` associates each claimed message with the active Turn without changing the active origin route.

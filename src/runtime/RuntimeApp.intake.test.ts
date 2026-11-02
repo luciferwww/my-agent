@@ -531,7 +531,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     await app.close();
   });
 
-  it('claims only the contiguous model-compatible prefix and delays queued gates', async () => {
+  it('claims FIFO input regardless of model selection without allocating queued gates', async () => {
     const releaseRun = createDeferred<void>();
     let claimed: ChatMessage[] = [];
     const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
@@ -571,26 +571,30 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     releaseRun.resolve();
     await first;
     await vi.waitFor(() => {
-      expect(runnerRun).toHaveBeenCalledTimes(3);
+      expect(runnerRun).toHaveBeenCalledTimes(1);
       expect(app.application.getState().activeRunCount).toBe(0);
     });
 
-    expect(claimed).toEqual([{ role: 'user', content: 'same' }]);
+    expect(claimed).toEqual([
+      { role: 'user', content: 'same' },
+      { role: 'user', content: 'other' },
+      { role: 'user', content: 'later' },
+    ]);
     expect(runnerRun.mock.calls.map(([params]) => params.message)).toEqual([
       expect.stringContaining('</turn_start>\n\nfirst'),
-      expect.stringContaining('</turn_start>\n\nother'),
-      expect.stringContaining('</turn_start>\n\nlater'),
     ]);
+    expect(runtime.messageQueueBySession.has('main')).toBe(false);
+    expect(runtime.requestGates.size).toBe(0);
     const messages = agentEvents.filter(
       (event): event is Extract<AgentEvent, { type: 'user_message' }> =>
         event.type === 'user_message',
     );
-    expect(agentEvents.filter((event) => event.type === 'user_message_bound')).toEqual([
-      expect.objectContaining({
-        messageId: messages[1]!.messageId,
+    expect(agentEvents.filter((event) => event.type === 'user_message_bound')).toEqual(
+      messages.slice(1).map((message) => expect.objectContaining({
+        messageId: message.messageId,
         binding: 'steering',
-      }),
-    ]);
+      })),
+    );
 
     await app.close();
   });

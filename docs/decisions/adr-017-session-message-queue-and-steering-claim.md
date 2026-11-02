@@ -3,6 +3,7 @@
 > Status: Accepted
 > Decision date: 2026-09-28
 > Configuration ownership updated: 2026-10-03
+> Steering setting semantics updated: 2026-11-02
 > Owner: Project owner
 > Related Plan/Specification: [Runner Steering Simplification Plan](../changes/archive/runner-steering-simplification/plan.md), [Runner Steering Simplification Specification](../changes/archive/runner-steering-simplification/runner-steering-simplification-specification.md)
 > Supersedes: the dual normal-queue/steering-inbox and terminal-promotion decisions in the accepted Runtime Steering and Runner Configuration design
@@ -24,7 +25,8 @@ authority.
 - One FIFO acceptance order per Session.
 - No accepted-message loss at Turn terminal boundaries or explicit call limits.
 - Runner-owned Model/Tool safe points without Runner ownership of scheduling.
-- FIFO-preserving Model and media compatibility without dequeue/requeue.
+- FIFO-preserving media compatibility without dequeue/requeue.
+- Turn-bound Model and reasoning settings unaffected by steering input.
 - Removal of promotion and duplicated lifecycle branches.
 - No new scheduler module, compatibility layer, or policy matrix.
 
@@ -48,11 +50,11 @@ Adopt option 2.
 4. Runtime synchronously peeks from the FIFO head and atomically splices only
    the largest contiguous compatible prefix. It never dequeues and requeues an
    incompatible suffix or skips a blocking item.
-5. An omitted Model reference is compatible. An explicit reference must match
-   the active canonical `providerId` and `modelId`; clearly unsupported media
-   also stops claim, while unknown capability remains fail-open.
-   Explicit references are normalized at intake through the shared
-   Model-resolution rule before storage and comparison.
+5. Message `modelReference` and `reasoning` apply only when that message starts
+   a new Turn. They do not restrict steering eligibility or change the active
+   Turn's Model or reasoning policy. Clearly unsupported media stops claim,
+   while unknown capability remains fail-open. Explicit Model references
+   remain normalized at intake through the shared Model-resolution rule.
 6. Runner persists and injects the batch immediately; it keeps no pending batch
    across iterations and performs one continuation Model call.
 7. An empty claim is the final steering boundary for that Turn. Later input
@@ -94,8 +96,9 @@ Adopt option 2.
   point.
 - Tests describe observable queue/claim behavior rather than internal handoff
   compensation.
-- Different explicit Model selections preserve FIFO order and start their own
-  Turns instead of changing Model inside an active Turn.
+- Steering preserves the active Turn's Model and reasoning policy regardless
+  of settings carried by claimed messages. Unclaimed messages retain their
+  settings for a later standalone Turn.
 
 ### Negative
 
