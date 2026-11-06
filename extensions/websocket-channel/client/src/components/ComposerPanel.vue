@@ -84,6 +84,7 @@ function formatBytes(value: number): string {
     @dragleave="onDragLeave"
     @drop="onDrop"
   >
+    <slot />
     <div
       v-if="attachments.length > 0 || attachError || !selectedModelSupportsImages"
       class="composer-attachments"

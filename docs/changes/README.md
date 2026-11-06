@@ -6,6 +6,7 @@ Changes retain the repository's existing Plan/Specification/validation workflow.
 
 ## Active
 
+- [Session Execution Presentation](active/session-execution-presentation/plan.md), with its [Accepted Specification](active/session-execution-presentation/specification.md) and [validation record](active/session-execution-presentation/validation.md) — Implemented and owner-accepted on 2026-11-06 after multiple manual test and correction rounds. Message identity, ancestor retention/routing, whole-Turn History, recursive inline Child UI, Tool grouping and the single composer Approval deck are delivered. Existing automated, controlled-browser and review evidence is retained in Validation; manual acceptance does not imply live Provider E2E coverage. Functional commits are being organized without including unrelated governance or model-only User prompt changes.
 - [Built-in Endpoint and Session Affinity Support](active/llm-session-affinity/plan.md), with its [validated Specification](active/llm-session-affinity/specification.md) — implemented generic Built-in support through two HTTP headers, Session ID propagation, and optional model-relative operation paths; 292 focused tests and TypeScript checks passed; OpenCode Go is the first integration example; owner delivery acceptance pending.
 
 ## Archived

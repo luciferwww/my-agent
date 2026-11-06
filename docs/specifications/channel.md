@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-10-13
+> Verified: 2026-11-04
 > Authority: Stable Channel contract
 
 ## Scope
@@ -15,7 +15,7 @@ This contract defines Channel contribution, instance, Runtime binding, lifecycle
 interface ChannelInstance {
   readonly id: string;
   readonly completion: Promise<ChannelCompletion>;
-  send(event: AgentEvent): void | Promise<void>;
+  send(event: AgentEvent, routing?: ChannelEventRouting): void | Promise<void>;
   onMessage(handler: (request: ChannelRunRequest) => Promise<void>): void;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -55,6 +55,14 @@ are startup validation failures, not an implicitly accepting fallback.
 
 Runtime owns session queueing, origin routes, Abort, and target selection. Channel owns transport framing, connected-client audience, and presentation. Fanout failure is isolated per Channel/client and cannot change Runner outcome or sibling delivery.
 
+`ChannelInstance.send` and its Runtime binding accept optional
+`ChannelEventRouting { rootTurnId, ancestorSessionIds }`. Runtime derives this
+immutable metadata from the existing live delegation route; the AgentEvent
+retains its real source session/turn/message identities. Descendant events use
+the captured Root Turn's Channel projection, not the current generation.
+The optional observer still receives the original event, without a second
+event stream or extra observer identity.
+
 The WebSocket Channel uses explicit per-connection Session audience
 membership. `subscribe_session` validates a Runtime-known ordinary Pending or
 persisted Session before returning its correlated `session_subscribed`
@@ -62,6 +70,16 @@ acknowledgement. `unsubscribe_session` is idempotent, removes only that
 connection's named membership, and does not control execution or Session
 lifecycle. Disconnect and same-client socket replacement clear all memberships
 owned by the displaced connection.
+
+An explicit Session subscription also observes all its live descendants.
+WebSocket sends each event to the union of its source and ancestor Session
+audiences, once per connected client, and includes `rootTurnId` and
+`ancestorSessionIds` when Runtime supplied them. Subagent start/end use the
+same source-plus-ancestors rule as ordinary Child content. Delivery does not
+add any memberships or grant Child send, approval or cancellation authority.
+Unsubscribe and reconnect use the current explicit memberships, not a cached
+recipient list. Events without a source session, such as request_end, retain
+the existing origin-message routing path.
 
 `create_session` adds the creating connection's membership before returning
 `session_created`; the Runtime Session may still be Pending and need not have
@@ -80,9 +98,21 @@ subscription succeeds.
 
 Thinking presentation uses the canonical `thinking_start`, `thinking_delta`,
 and `thinking_end` Agent events. These events carry only local block identity,
-readable text, and partial/complete status; Provider replay payload and
+message identity, readable text, and partial/complete status; Provider replay payload and
 invocation source never cross the Channel boundary. Opaque-only internal blocks
 produce no empty presentation lifecycle.
+
+Current Runner Assistant events carry the messageId shared with the stored
+message and History: llm_call, text_delta, Thinking lifecycle, and
+tool_call_requested. The field is optional in the event contract for
+compatibility, but generated Assistant presentation uses it throughout.
+Input messageId remains unchanged through persistence. The bundled client
+uses message identity to reconcile committed History with incomplete live
+text/Thinking, keeps uncommitted messages, and retains per-message boundaries
+inside a Turn. Legacy records without identity retain compatible best-effort
+presentation rather than an invented mapping. Tool execution updates still
+use callId/executionId; a history-only card can receive a live overlay so
+later results remain visible across History rebuilds.
 
 Model Catalog query, Abort, and Session management are narrow Runtime
 capabilities; Channel does not own model facts or lifecycle state.
@@ -92,6 +122,49 @@ Sessions. `sessionObservation` separately exposes cross-kind Session
 resolution and read-only paginated active-branch History for Chat, Subagent,
 and future observable Session kinds. Runtime remains the lifecycle policy
 owner. History queries are socket-local and do not join a Session audience.
+
+History `limit` remains an input threshold of 1–100 (default 50), not a
+response-size cap. Pages accumulate complete local Turns, including retained
+descendant messages; output may exceed 100. `beforeEntryId` names a Turn's
+first candidate, never an interior record. Descendant items carry
+`sourceSessionId`/`sourceEntryId`, while `scopes` supplies their lifecycle links
+and known terminal state. These fields survive WebSocket History responses.
+
+The bundled client renders descendant content recursively inside the actual
+Parent Tool Call, in the Parent's Tool Call order. Native per-Session live
+states are reused; copied History messages are projected by source before
+messageId reconciliation. A lifecycle link may wait for its real Parent card;
+the client does not invent a call or flatten Child content into Parent text.
+The independent Child viewer and its extra subscriptions are removed; the
+read-only Child History API and lifecycle policy remain.
+
+Running snapshots preserve uncommitted live messages. Terminal Root takeover
+requires a post-terminal snapshot with all involved descendant scopes terminal;
+Child run_end alone cannot retire Root content. Explicit expansion choices
+survive running refresh and terminal takeover. Whole-Turn pages are not sliced
+again in the client, and loading earlier Turns preserves the reading anchor.
+Tools are grouped by actual per-source LLM-call boundaries, expanded by default
+and never automatically collapsed on completion. Every realtime `llm_call`
+starts a new group; History uses each Assistant entry marked with `llmRound`.
+Round is only a display hint and may repeat after retries. Missing historical
+call facts are not guessed. Adjacent Tools in the same group share a wrapper
+without moving text or Thinking, and explicit group expansion survives History
+refresh and terminal takeover.
+
+Root-addressed pending approvals use the actual Child turnId/callId and
+delegation links to update their nested Tool status. Approval actions appear only
+in a non-modal deck above the composer, independently of whether the nested card
+is loaded. Multiple requests show one at a time with previous/next navigation
+and a position/count. New requests do not replace the current selection or
+force conversation scrolling. Closure updates all matching presentations and
+advances the deck without reactivating historical requests; an empty deck is
+hidden and disconnected actions are disabled. Submissions still use approvalId
+and the existing Channel authority.
+
+The CLI's bounded recent-history view renders local messages only; it does not
+discard the retained source facts from the History API.
+The CLI does not use a routed Child run_start/run_end to lock or unlock Root
+input, or to display a Root Model-call-limit notice.
 
 The shared capabilities also expose
 `approvals.getPending(sessionId?): readonly ApprovalRequest[]`. Omission returns

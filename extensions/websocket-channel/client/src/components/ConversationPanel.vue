@@ -3,9 +3,9 @@ import { nextTick, ref } from 'vue';
 
 import type {
   ConversationItem,
-  ConversationSegment,
 } from '../client/conversation';
 import MessageItem from './MessageItem.vue';
+import type { SubagentScope } from '../client/history';
 
 const CHAT_FOLLOW_THRESHOLD_PX = 80;
 
@@ -22,7 +22,8 @@ const props = defineProps<{
   historyStatus: string;
   displayedChatItems: ConversationItem[];
   sessionId: string;
-  openedChildSessionId: string;
+  itemsBySession: Record<string, ConversationItem[]>;
+  scopes: SubagentScope[];
   historyHasMore: boolean;
   historyError: string;
   canRetryHistory: boolean;
@@ -32,8 +33,6 @@ const emit = defineEmits<{
   openSidebar: [];
   loadEarlierHistory: [];
   retryHistory: [];
-  resolveApproval: [segment: ConversationSegment, decision: 'allow' | 'deny'];
-  openSubagent: [sessionId: string];
 }>();
 
 const chatLogElement = ref<HTMLElement>();
@@ -182,9 +181,9 @@ defineExpose({
       :key="item.id"
       :item="item"
       :is-connected="isConnected"
-      :opened-child-session-id="openedChildSessionId"
-      @resolve-approval="(segment, decision) => emit('resolveApproval', segment, decision)"
-      @open-subagent="sessionId => emit('openSubagent', sessionId)"
+      :source-session-id="sessionId"
+      :items-by-session="itemsBySession"
+      :scopes="scopes"
     />
   </section>
 </template>

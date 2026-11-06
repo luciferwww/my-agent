@@ -5,8 +5,9 @@ import {
 import type {
   ConversationItem,
   ConversationSegment,
+  ToolCallGroup,
 } from './conversation';
-import { parseTaskSubagentSessionId } from './conversation';
+import { isToolGroupComplete, parseTaskSubagentSessionId } from './conversation';
 
 export type HistoryStatus = 'notLoaded' | 'loading' | 'loaded' | 'error';
 
@@ -45,11 +46,26 @@ export interface HistoryContentBlock {
 
 export interface HistoryRecord {
   readonly entryId?: string;
+  readonly messageId?: string;
+  readonly llmRound?: number;
+  readonly sourceSessionId?: string;
+  readonly sourceEntryId?: string;
   readonly turnId?: string;
   readonly role?: string;
   readonly timestamp?: string;
-  readonly content?: string | HistoryContentBlock[];
+  readonly content?: string | readonly HistoryContentBlock[];
   readonly reasoning?: ConversationItem['reasoning'];
+}
+
+export interface SubagentScope {
+  readonly sessionId: string;
+  readonly turnId: string;
+  readonly callerSessionId: string;
+  readonly parentTurnId: string;
+  readonly parentToolUseId: string;
+  readonly subagentType?: string;
+  readonly status: 'running' | 'terminal' | 'unknown';
+  readonly outcome?: string;
 }
 
 export type PresentationSegment = ConversationSegment;
@@ -58,6 +74,7 @@ export type PresentationItem = ConversationItem;
 export interface HistoryState {
   historyRecords: HistoryRecord[];
   historyItems: PresentationItem[];
+  historyScopes?: SubagentScope[];
   historyStatus: HistoryStatus;
   historyError: string;
   historyNextCursor: string | null;
@@ -78,14 +95,29 @@ export interface HistoryRequestOptions {
 }
 
 export interface HistoryPage {
-  readonly items?: HistoryRecord[];
+  readonly items?: readonly HistoryRecord[];
   readonly nextCursor?: string | null;
   readonly hasMore?: boolean;
+  readonly scopes?: readonly SubagentScope[];
 }
 
 export interface HistorySettlement {
   readonly pendingWasEarlier: boolean;
   readonly deferredTerminalTurnIds: string[];
+  readonly settledTurnIds?: string[];
+  readonly refreshLatest?: boolean;
+}
+
+export function scopeRootTurnId(scope: SubagentScope, scopes: readonly SubagentScope[]): string {
+  const visited = new Set([scope.sessionId]);
+  let current = scope;
+  for (;;) {
+    const parent = scopes.find(candidate => candidate.sessionId === current.callerSessionId);
+    if (!parent) return current.parentTurnId;
+    if (visited.has(parent.sessionId)) throw new Error('Cyclic Subagent History scopes');
+    visited.add(parent.sessionId);
+    current = parent;
+  }
 }
 
 const TERMINAL_TOOL_STATUSES = new Set(['success', 'error', 'denied', 'aborted']);
@@ -201,7 +233,7 @@ export function applyHistoryPage(
       : -1;
     merged = overlapIndex >= 0
       ? [...state.historyRecords.slice(0, overlapIndex), ...incoming]
-      : incoming;
+      : [...incoming];
     replacedPersistedWindow = overlapIndex < 0 && hadHistory;
   }
 
@@ -216,10 +248,27 @@ export function applyHistoryPage(
     state.historyHasMore = page.hasMore === true;
   }
 
-  const settledTurnIds = pending.terminalTurnIds.filter(
-    turnId => incoming.some(record => record.turnId === turnId),
+  const incomingTurnIds = new Set(incoming
+    .filter(record => !record.sourceSessionId).map(record => record.turnId));
+  const retainedTurnIds = new Set(state.historyRecords
+    .filter(record => !record.sourceSessionId).map(record => record.turnId));
+  const previousScopes = state.historyScopes ?? [];
+  const scopes = new Map(previousScopes.filter(scope => {
+    const turnId = scopeRootTurnId(scope, previousScopes);
+    return retainedTurnIds.has(turnId)
+      && (pending.beforeEntryId || !incomingTurnIds.has(turnId));
+  }).map(scope => [scope.sessionId, scope]));
+  for (const scope of page.scopes ?? []) scopes.set(scope.sessionId, scope);
+  state.historyScopes = [...scopes.values()];
+  const settledTurnIds = pending.terminalTurnIds.filter(turnId =>
+    incoming.some(record => !record.sourceSessionId && record.turnId === turnId)
+    && state.historyScopes!.every(scope =>
+      scopeRootTurnId(scope, state.historyScopes!) !== turnId || scope.status === 'terminal'));
+  const historyItems = buildHistoryItems(state.historyRecords, undefined, state.historyScopes);
+  preserveRealtimePresentationIdentity(
+    historyItems, state.historyItems,
+    [...new Set(historyItems.flatMap(item => item.turnId ? [item.turnId] : []))],
   );
-  const historyItems = buildHistoryItems(state.historyRecords);
   preserveRealtimePresentationIdentity(historyItems, state.chatItems, settledTurnIds);
   state.historyItems = historyItems;
   for (const turnId of settledTurnIds) {
@@ -231,9 +280,12 @@ export function applyHistoryPage(
   if (state.failedHistoryRequest?.beforeEntryId === pending.beforeEntryId) {
     state.failedHistoryRequest = null;
   }
+  const refreshLatest = state.pendingLatestHistoryRefresh;
   return {
     pendingWasEarlier: Boolean(pending.beforeEntryId),
     deferredTerminalTurnIds: settleHistoryRequest(state),
+    settledTurnIds,
+    refreshLatest,
   };
 }
 
@@ -250,17 +302,24 @@ export function failHistoryRequest(
     terminalTurnIds: [...pending.terminalTurnIds],
   };
   state.historyError = error;
+  const refreshLatest = state.pendingLatestHistoryRefresh;
   return {
     pendingWasEarlier: Boolean(pending.beforeEntryId),
     deferredTerminalTurnIds: settleHistoryRequest(state),
+    refreshLatest,
   };
 }
 
-export function buildHistoryItems(records: readonly HistoryRecord[]): PresentationItem[] {
+export function buildHistoryItems(
+  records: readonly HistoryRecord[],
+  sourceSessionId?: string,
+  scopes: readonly SubagentScope[] = [],
+): PresentationItem[] {
   const items: PresentationItem[] = [];
   const toolCalls = new Map<string, PresentationSegment>();
   const unmatchedResults = new Map<string, { content: string; status?: string }>();
   for (const record of records) {
+    if (record.sourceSessionId !== sourceSessionId) continue;
     if (!record.entryId) continue;
     const content = typeof record.content === 'string'
       ? [{ type: 'text', text: record.content }]
@@ -268,14 +327,15 @@ export function buildHistoryItems(records: readonly HistoryRecord[]): Presentati
     if (record.role === 'toolResult') {
       for (const block of content) {
         if (block.type !== 'tool_result' || !block.tool_use_id) continue;
-        const segment = toolCalls.get(block.tool_use_id);
+        const key = `${record.turnId ?? ''}\0${block.tool_use_id}`;
+        const segment = toolCalls.get(key);
         if (segment) {
           segment.status = block.status;
           segment.resultContent = String(block.content ?? '');
           segment.isError = block.status === 'error';
           attachSubagentHandle(segment);
         } else {
-          unmatchedResults.set(block.tool_use_id, {
+          unmatchedResults.set(key, {
             content: String(block.content ?? ''),
             status: block.status,
           });
@@ -302,6 +362,7 @@ export function buildHistoryItems(records: readonly HistoryRecord[]): Presentati
         kind: 'user',
         id: `history-${record.entryId}`,
         entryId: record.entryId,
+        ...(record.messageId === undefined ? {} : { messageId: record.messageId }),
         turnId: record.turnId,
         label: 'You',
         timestamp: Date.parse(record.timestamp ?? '') || Date.now(),
@@ -318,21 +379,27 @@ export function buildHistoryItems(records: readonly HistoryRecord[]): Presentati
       kind: 'turn',
       id: `history-${record.entryId}`,
       entryId: record.entryId,
+      ...(record.messageId === undefined ? {} : { messageId: record.messageId }),
       turnId: record.turnId,
       label: 'Assistant',
       timestamp: Date.parse(record.timestamp ?? '') || Date.now(),
       segments: [],
     };
+    const toolGroup: ToolCallGroup | undefined = record.llmRound === undefined
+      ? undefined
+      : { id: `llm-${record.entryId}`, round: record.llmRound, expanded: true };
     for (const block of content) {
       if (block.type === 'text') {
         turn.segments!.push({
           type: 'text',
+          ...(record.messageId === undefined ? {} : { messageId: record.messageId }),
           id: `${record.entryId}-text-${turn.segments!.length}`,
           text: block.text,
         });
       } else if (block.type === 'thinking' && block.text) {
         turn.segments!.push({
           type: 'thinking',
+          ...(record.messageId === undefined ? {} : { messageId: record.messageId }),
           id: block.id ?? `${record.entryId}-thinking-${turn.segments!.length}`,
           thinkingId: block.id,
           text: block.text,
@@ -340,9 +407,12 @@ export function buildHistoryItems(records: readonly HistoryRecord[]): Presentati
           expanded: false,
         });
       } else if (block.type === 'tool_use' && block.id) {
-        const unmatched = unmatchedResults.get(block.id);
+        const key = `${record.turnId ?? ''}\0${block.id}`;
+        const unmatched = unmatchedResults.get(key);
         const segment: PresentationSegment = {
           type: 'tool_call',
+          ...(toolGroup ? { toolGroup } : {}),
+          ...(record.messageId === undefined ? {} : { messageId: record.messageId }),
           id: `${record.entryId}-tool-${block.id}`,
           callId: block.id,
           executionId: block.execution_id,
@@ -357,12 +427,28 @@ export function buildHistoryItems(records: readonly HistoryRecord[]): Presentati
           resultExpanded: false,
         };
         attachSubagentHandle(segment);
-        toolCalls.set(block.id, segment);
+        toolCalls.set(key, segment);
         turn.segments!.push(segment);
       }
 
     }
     items.push(turn);
+  }
+  for (const item of items) {
+    const group = item.segments?.find(segment => segment.toolGroup)?.toolGroup;
+    if (group && isToolGroupComplete(item.segments ?? [], group)) group.expanded = false;
+    for (const segment of item.segments ?? []) {
+      if (segment.type !== 'tool_call') continue;
+      const scope = scopes.find(candidate =>
+        candidate.parentTurnId === item.turnId
+        && candidate.parentToolUseId === segment.callId
+        && (sourceSessionId === undefined || candidate.callerSessionId === sourceSessionId));
+      if (!scope) continue;
+      segment.subagentSessionId = scope.sessionId;
+      segment.subagentStatus = scope.status === 'unknown' ? undefined : scope.status;
+      segment.subagentOutcome = scope.outcome;
+      segment.subagentExpanded = scope.status !== 'terminal';
+    }
   }
   return items;
 }
@@ -375,13 +461,31 @@ function attachSubagentHandle(segment: PresentationSegment): void {
   if (!sessionId) return;
   segment.subagentSessionId = sessionId;
   segment.subagentStatus = 'terminal';
+  segment.subagentExpanded = false;
+}
+
+function preservedExpansion(
+  current: PresentationSegment,
+  previous: PresentationSegment,
+): Pick<PresentationSegment,
+  'expanded' | 'resultExpanded' | 'subagentExpanded'> {
+  return {
+    expanded: current.type === 'tool_call'
+      && (current.status === 'success' || current.status === 'error')
+      && !TERMINAL_TOOL_STATUSES.has(previous.status ?? '')
+      ? false : previous.expanded ?? current.expanded,
+    resultExpanded: previous.resultExpanded ?? current.resultExpanded,
+    subagentExpanded: current.subagentStatus === 'terminal'
+      && previous.subagentStatus !== 'terminal'
+      ? false : previous.subagentExpanded ?? current.subagentExpanded,
+  };
 }
 
 export function mergeRealtimeWithHistory(
   historyItems: PresentationItem[],
   chatItems: PresentationItem[],
 ): PresentationItem[] {
-  const users = chatItems.filter(item => item.kind === 'user' && item.turnId);
+  const users = chatItems.filter(item => item.kind === 'user');
   const segments = chatItems.flatMap(item =>
     item.kind === 'turn' && item.turnId
       ? (item.segments ?? []).map(segment => ({ item, segment }))
@@ -393,18 +497,55 @@ export function mergeRealtimeWithHistory(
     if (!historyItem.turnId) return historyItem;
     if (historyItem.kind === 'user') {
       const realtime = takeFirstMatching(users, item =>
-        item.turnId === historyItem.turnId
-        && item.text === historyItem.text
-        && (item.attachments?.length ?? item.attachmentSummaries?.length ?? 0)
-          === (historyItem.attachments?.length ?? 0));
+        historyItem.messageId
+          ? item.messageId === historyItem.messageId
+          : !item.messageId
+            && item.turnId === historyItem.turnId
+            && item.text === historyItem.text
+            && (item.attachments?.length ?? item.attachmentSummaries?.length ?? 0)
+              === (historyItem.attachments?.length ?? 0));
       if (!realtime) return historyItem;
       usedUsers.add(realtime);
-      return realtime;
+      return historyItem.messageId
+        ? { ...realtime, turnId: historyItem.turnId, entryId: historyItem.entryId }
+        : realtime;
     }
     if (historyItem.kind !== 'turn') return historyItem;
 
+    const historyGroup = historyItem.segments?.find(segment => segment.toolGroup)?.toolGroup;
+    const toolGroup = historyGroup && (segments.find(({ item, segment }) =>
+      item.turnId === historyItem.turnId && segment.type === 'tool_call' && segment.toolGroup
+      && historyItem.segments?.some(candidate =>
+        candidate.type === 'tool_call' && candidate.callId === segment.callId))?.segment.toolGroup
+      ?? historyGroup);
+    const groupWasComplete = toolGroup && isToolGroupComplete(
+      toolGroup === historyGroup ? historyItem.segments ?? [] : segments.map(({ segment }) => segment),
+      toolGroup,
+    );
     let id = historyItem.id;
+    const committedSegments = historyItem.messageId
+      ? segments.filter(({ item, segment }) =>
+          item.turnId === historyItem.turnId
+          && segment.messageId === historyItem.messageId
+          && (segment.type === 'text' || segment.type === 'thinking'))
+      : [];
+    for (const realtime of committedSegments) usedSegments.add(realtime.segment);
     const mergedSegments = (historyItem.segments ?? []).map(historySegment => {
+      if (
+        historyItem.messageId
+        && (historySegment.type === 'text' || historySegment.type === 'thinking')
+      ) {
+        const realtime = takeFirstMatching(committedSegments, ({ segment }) =>
+          segment.type === historySegment.type
+          && (segment.type !== 'thinking' || segment.thinkingId === historySegment.thinkingId));
+        if (!realtime) return historySegment;
+        if (id === historyItem.id && !usedIds.has(realtime.item.id)) id = realtime.item.id;
+        return {
+          ...historySegment,
+          id: realtime.segment.id,
+          expanded: realtime.segment.expanded,
+        };
+      }
       const realtime = takeFirstMatching(segments, ({ item, segment }) => {
         if (item.turnId !== historyItem.turnId || segment.type !== historySegment.type) {
           return false;
@@ -418,6 +559,8 @@ export function mergeRealtimeWithHistory(
           );
         }
         return segment.type === 'text'
+          && !segment.messageId
+          && !historySegment.messageId
           && Boolean(historySegment.text)
           && Boolean(segment.text)
           && (segment.text!.startsWith(historySegment.text!)
@@ -428,6 +571,13 @@ export function mergeRealtimeWithHistory(
       usedSegments.add(realtime.segment);
       if (id === historyItem.id && !usedIds.has(realtime.item.id)) {
         id = realtime.item.id;
+      }
+      if (historySegment.subagentStatus === 'terminal'
+        && realtime.segment.subagentStatus !== 'terminal') {
+        realtime.segment.subagentSessionId = historySegment.subagentSessionId;
+        realtime.segment.subagentStatus = 'terminal';
+        realtime.segment.subagentOutcome = historySegment.subagentOutcome;
+        realtime.segment.subagentExpanded = false;
       }
       if (
         (
@@ -440,15 +590,24 @@ export function mergeRealtimeWithHistory(
           && (historySegment.text?.length ?? 0) > (realtime.segment.text?.length ?? 0)
         )
       ) {
-        return {
+        const merged = {
           ...historySegment,
           id: realtime.segment.id,
-          expanded: realtime.segment.expanded,
-          resultExpanded: realtime.segment.resultExpanded,
+          ...preservedExpansion(historySegment, realtime.segment),
         };
+        return historySegment.type === 'tool_call'
+          ? Object.assign(realtime.segment, merged) : merged;
       }
       return realtime.segment;
     });
+    if (toolGroup) {
+      for (const segment of mergedSegments) {
+        if (segment.type === 'tool_call') segment.toolGroup = toolGroup;
+      }
+      if (!groupWasComplete && isToolGroupComplete(mergedSegments, toolGroup)) {
+        toolGroup.expanded = false;
+      }
+    }
     usedIds.add(id);
     return { ...historyItem, id, segments: mergedSegments };
   });
@@ -479,22 +638,41 @@ export function preserveRealtimePresentationIdentity(
     const candidates = chatItems.filter(
       item => item.turnId === turnId && item.kind !== 'system' && item.kind !== 'error',
     );
+    const realtimeSegments = candidates.flatMap(item => item.segments ?? []);
     for (const historyItem of historyItems.filter(item => item.turnId === turnId)) {
       const realtimeItem = takeFirstMatching(
         candidates,
-        item => item.kind === historyItem.kind,
+        item => item.kind === historyItem.kind
+          && (!historyItem.messageId
+            || item.messageId === historyItem.messageId
+            || item.segments?.some(segment => segment.messageId === historyItem.messageId) === true),
       );
-      if (!realtimeItem) continue;
-      historyItem.id = realtimeItem.id;
+      if (realtimeItem) historyItem.id = realtimeItem.id;
 
       if (historyItem.kind !== 'turn') continue;
-      const segments = [...(realtimeItem.segments ?? [])];
+      const group = historyItem.segments?.find(segment => segment.toolGroup)?.toolGroup;
+      const previousGroup = group && realtimeSegments.find(segment =>
+        segment.toolGroup && historyItem.segments?.some(candidate =>
+          candidate.type === 'tool_call' && candidate.callId === segment.callId))?.toolGroup;
+      if (group && previousGroup) {
+        const newlyComplete = isToolGroupComplete(historyItem.segments ?? [], group)
+          && !isToolGroupComplete(realtimeSegments, previousGroup);
+        group.id = previousGroup.id;
+        group.expanded = newlyComplete ? false : previousGroup.expanded;
+      }
       for (const historySegment of historyItem.segments ?? []) {
         const realtimeSegment = takeFirstMatching(
-          segments,
-          segment => segment.type === historySegment.type,
+          realtimeSegments,
+          segment => segment.type === historySegment.type
+            && (segment.type === 'tool_call'
+              || !historySegment.messageId || segment.messageId === historySegment.messageId)
+            && (segment.type !== 'tool_call' || segment.callId === historySegment.callId)
+            && (segment.type !== 'thinking' || segment.thinkingId === historySegment.thinkingId),
         );
-        if (realtimeSegment) historySegment.id = realtimeSegment.id;
+        if (realtimeSegment) {
+          historySegment.id = realtimeSegment.id;
+          Object.assign(historySegment, preservedExpansion(historySegment, realtimeSegment));
+        }
       }
     }
   }

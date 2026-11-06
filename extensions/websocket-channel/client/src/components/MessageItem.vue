@@ -5,6 +5,7 @@ import {
   formatBytes,
   formatReasoningSummary,
   formatTime,
+  groupConversationSegments,
   itemRoleClass,
   prettyJson,
   segmentResultPreview,
@@ -14,29 +15,25 @@ import {
   type ConversationSegment,
 } from '../client/conversation';
 import { renderAssistantMarkdown } from '../client/markdown';
+import type { SubagentScope } from '../client/history';
 
-defineProps<{
+const props = defineProps<{
   item: ConversationItem;
   isConnected: boolean;
-  openedChildSessionId: string;
+  sourceSessionId: string;
+  itemsBySession: Record<string, ConversationItem[]>;
+  scopes: SubagentScope[];
 }>();
 
-const emit = defineEmits<{
-  resolveApproval: [segment: ConversationSegment, decision: 'allow' | 'deny'];
-  openSubagent: [sessionId: string];
-}>();
+function childScope(segment: ConversationSegment): SubagentScope | undefined {
+  return props.scopes.find(scope =>
+    scope.callerSessionId === props.sourceSessionId
+    && scope.parentTurnId === props.item.turnId
+    && scope.parentToolUseId === segment.callId);
+}
 
-function openSubagentFromCard(
-  event: MouseEvent | KeyboardEvent,
-  segment: ConversationSegment,
-): void {
-  if (!segment.subagentSessionId) return;
-  if (event.target !== event.currentTarget && event.target instanceof Element) {
-    if (event.target.closest('button')) return;
-  }
-  if (event instanceof KeyboardEvent && event.key !== 'Enter' && event.key !== ' ') return;
-  if (event instanceof KeyboardEvent) event.preventDefault();
-  emit('openSubagent', segment.subagentSessionId);
+function childSessionId(segment: ConversationSegment): string | undefined {
+  return childScope(segment)?.sessionId ?? segment.subagentSessionId;
 }
 </script>
 
@@ -56,7 +53,31 @@ function openSubagentFromCard(
     </div>
 
     <template v-if="item.kind === 'turn'">
-      <template v-for="segment in item.segments" :key="segment.id">
+      <section
+        v-for="block in groupConversationSegments(item.segments ?? [])"
+        :key="block.id"
+        :class="block.group ? 'tool-call-group' : 'message-segment'"
+        :data-tool-group-id="block.group?.id"
+        :data-llm-round="block.group?.round"
+      >
+        <button
+          v-if="block.group"
+          class="tool-group-header"
+          type="button"
+          :aria-expanded="block.group.expanded"
+          @click="block.group.expanded = !block.group.expanded"
+        >
+          <span class="tool-group-title">LLM call {{ block.group.round + 1 }}</span>
+          <span>{{ block.segments.length }} tool{{ block.segments.length === 1 ? '' : 's' }}</span>
+          <span v-if="block.segments.some(segment => segment.approval?.status === 'pending')">
+            Approval required
+          </span>
+          <span>{{ block.group.expanded ? '⌃' : '⌄' }}</span>
+        </button>
+        <template
+          v-for="segment in block.group?.expanded === false ? [] : block.segments"
+          :key="segment.id"
+        >
         <div v-if="segment.type === 'text'" class="bubble">
           <div class="rich-text" v-html="renderAssistantMarkdown(segment.text)"></div>
         </div>
@@ -77,20 +98,15 @@ function openSubagentFromCard(
         <section
           v-if="segment.type === 'tool_call'"
           class="tool-result-card"
-          :class="{
-            'is-error': segment.isError,
-            'has-subagent-detail': Boolean(segment.subagentSessionId),
-            'is-subagent-selected': segment.subagentSessionId === openedChildSessionId,
-          }"
-          :tabindex="segment.subagentSessionId ? 0 : undefined"
-          :aria-label="segment.subagentSessionId ? `Open ${segment.name} Subagent detail` : undefined"
-          @click="openSubagentFromCard($event, segment)"
-          @keydown="openSubagentFromCard($event, segment)"
+          :class="{ 'is-error': segment.isError }"
+          :data-tool-call-id="segment.callId"
         >
           <div class="tool-result-header">
             <div class="tool-result-title">
               <span class="tool-result-name">{{ segment.name }}</span>
-              <span class="tool-result-badge">{{ toolStatusLabel(segment.status) }}</span>
+              <span class="tool-result-badge">
+                {{ toolStatusLabel(segment.status) }}
+              </span>
             </div>
             <button
               class="tool-card-toggle"
@@ -124,13 +140,45 @@ function openSubagentFromCard(
               >{{ segment.resultExpanded ? 'Show preview' : 'Show full result' }}</button>
             </template>
           </template>
-          <div
-            v-if="isConnected && segment.approval?.status === 'pending'"
-            class="approval-actions"
+          <section
+            v-if="childSessionId(segment)"
+            class="subagent-execution"
+            :data-subagent-session-id="childSessionId(segment)"
+            :data-subagent-status="childScope(segment)?.status ?? segment.subagentStatus ?? 'unknown'"
           >
-            <button class="secondary" @click="emit('resolveApproval', segment, 'deny')">Deny</button>
-            <button class="primary" @click="emit('resolveApproval', segment, 'allow')">Allow</button>
-          </div>
+            <button
+              class="subagent-header"
+              type="button"
+              :aria-expanded="segment.subagentExpanded !== false"
+              @click="segment.subagentExpanded = segment.subagentExpanded === false"
+            >
+              <span>{{ childScope(segment)?.subagentType ?? 'Subagent' }}</span>
+              <span
+                class="tool-result-badge"
+              >
+                {{ childScope(segment)?.outcome ?? segment.subagentOutcome
+                  ?? childScope(segment)?.status ?? segment.subagentStatus ?? 'unknown' }}
+              </span>
+              <span>{{ segment.subagentExpanded === false ? '⌄' : '⌃' }}</span>
+            </button>
+            <div v-if="segment.subagentExpanded !== false" class="subagent-content">
+              <MessageItem
+                v-for="childItem in itemsBySession[childSessionId(segment)!] ?? []"
+                :key="childItem.id"
+                :item="childItem"
+                :source-session-id="childSessionId(segment)!"
+                :items-by-session="itemsBySession"
+                :scopes="scopes"
+                :is-connected="isConnected"
+              />
+              <p
+                v-if="!itemsBySession[childSessionId(segment)!]?.length"
+                class="subagent-empty"
+              >{{ childScope(segment)?.status === 'running'
+                ? 'Waiting for Subagent output…'
+                : 'No retained Subagent output.' }}</p>
+            </div>
+          </section>
         </section>
 
         <section
@@ -168,15 +216,9 @@ function openSubagentFromCard(
             <div class="tool-card-section-label">Input</div>
             <pre class="approval-code">{{ prettyJson(segment.approval.input) }}</pre>
           </template>
-          <div
-            v-if="isConnected && segment.approval.status === 'pending'"
-            class="approval-actions"
-          >
-            <button class="secondary" @click="emit('resolveApproval', segment, 'deny')">Deny</button>
-            <button class="primary" @click="emit('resolveApproval', segment, 'allow')">Allow</button>
-          </div>
         </section>
-      </template>
+        </template>
+      </section>
     </template>
 
     <template v-else>

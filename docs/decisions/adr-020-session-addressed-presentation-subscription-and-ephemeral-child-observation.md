@@ -5,6 +5,7 @@
 > Owner: Project owner
 > Related Plan/Specification: [Plan](../changes/archive/session-addressed-subagent-observation/plan.md) and [Specification](../changes/archive/session-addressed-subagent-observation/specification.md)
 > Supersedes: none
+> Partial successor: [Ancestor execution presentation decision](../changes/active/session-execution-presentation/decision.md), accepted 2026-11-03, replaces descendant delivery and the bundled independent viewer design. Ancestor retention, realtime delivery and inline viewer replacement are implemented as of 2026-11-04. Explicit membership, control, read-only Child and TTL ownership remain in force.
 
 ## Context
 

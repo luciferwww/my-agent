@@ -1,8 +1,21 @@
 const TOOL_RESULT_PREVIEW_HEAD_LINES = 6;
 const TOOL_RESULT_PREVIEW_TAIL_LINES = 4;
 
+export interface ToolCallGroup {
+  id: string | number;
+  readonly round: number;
+  expanded: boolean;
+}
+
+export interface LlmCallBoundary {
+  readonly turnId: string;
+  readonly messageId?: string;
+  readonly group: ToolCallGroup;
+}
+
 export interface ConversationSegment {
   id: string | number;
+  messageId?: string;
   type: string;
   text?: string;
   status?: string;
@@ -18,6 +31,8 @@ export interface ConversationSegment {
   subagentSessionId?: string;
   subagentStatus?: 'running' | 'terminal';
   subagentOutcome?: string;
+  subagentExpanded?: boolean;
+  toolGroup?: ToolCallGroup;
   approval?: {
     id: string;
     toolName: string;
@@ -60,9 +75,14 @@ export interface ConversationItem {
 
 export interface ConversationState {
   chatItems: ConversationItem[];
+  historyItems?: ConversationItem[];
   turnMap: Record<string, ConversationItem>;
   activeTurnId: string | null;
+  terminalTurnId?: string | null;
   isSending: boolean;
+  subagentScopes?: Record<string, SubagentScope>;
+  historyScopes?: SubagentScope[];
+  llmCall?: LlmCallBoundary | null;
 }
 
 export interface ConversationPresentationState extends ConversationState {
@@ -110,6 +130,8 @@ export interface AgentEvent {
   readonly parentToolUseId?: string;
   readonly outcome?: string;
   readonly subagentType?: string;
+  readonly rootTurnId?: string;
+  readonly ancestorSessionIds?: readonly string[];
   readonly originalChars?: number;
   readonly prunedChars?: number;
   readonly attachmentSummaries?: ConversationItem['attachmentSummaries'];
@@ -182,9 +204,19 @@ export function applyAgentEvent(
   const scroll = (): void => { effects.push({ type: 'scroll' }); };
   const now = context.now ?? Date.now;
 
+  if (
+    event.messageId !== undefined
+    && (typeof event.messageId !== 'string' || !event.messageId.trim())
+  ) {
+    protocolError('Message identity must be a non-empty string');
+    return effects;
+  }
+
   switch (event.type) {
     case 'run_start':
       clearTransientChatItems(state);
+      state.llmCall = null;
+      state.terminalTurnId = null;
       state.isSending = false;
       state.activeTurnId = event.turnId ?? null;
       if (event.originMessageId) {
@@ -200,7 +232,7 @@ export function applyAgentEvent(
     case 'text_delta':
       bindActiveTurn(state, event.turnId);
       collapseCompletedThinking(state, event.turnId);
-      appendTextToTurn(state, event.turnId, event.text ?? '', context.nextId, now);
+      appendTextToTurn(state, event.turnId, event.text ?? '', context.nextId, now, event.messageId);
       scroll();
       break;
 
@@ -213,6 +245,7 @@ export function applyAgentEvent(
       }
       turn.segments!.push({
         type: 'thinking',
+        ...(event.messageId === undefined ? {} : { messageId: event.messageId }),
         id: event.thinkingId ?? context.nextId(),
         thinkingId: event.thinkingId,
         text: '',
@@ -224,7 +257,15 @@ export function applyAgentEvent(
     }
 
     case 'thinking_delta': {
-      const segment = findThinking(state, event.turnId, event.thinkingId);
+      let segment = findThinking(state, event.turnId, event.thinkingId);
+      if (!segment && event.messageId && event.thinkingId) {
+        const turn = getOrCreateTurn(state, event.turnId, context.nextId, now);
+        segment = {
+          type: 'thinking', id: event.thinkingId, thinkingId: event.thinkingId,
+          messageId: event.messageId, text: '', status: 'running', expanded: true,
+        };
+        turn.segments!.push(segment);
+      }
       if (!segment) {
         protocolError(`Thinking delta has no start ${event.thinkingId}`);
         break;
@@ -236,7 +277,14 @@ export function applyAgentEvent(
 
     case 'thinking_end': {
       const turn = getOrCreateTurn(state, event.turnId, context.nextId, now);
-      const segment = findThinking(state, event.turnId, event.thinkingId);
+      let segment = findThinking(state, event.turnId, event.thinkingId);
+      if (!segment && event.messageId && event.thinkingId) {
+        segment = {
+          type: 'thinking', id: event.thinkingId, thinkingId: event.thinkingId,
+          messageId: event.messageId, text: '', expanded: true,
+        };
+        turn.segments!.push(segment);
+      }
       if (!segment) {
         protocolError(`Thinking end has no start ${event.thinkingId}`);
         break;
@@ -257,6 +305,10 @@ export function applyAgentEvent(
       const turn = getOrCreateTurn(state, event.turnId, context.nextId, now);
       turn.segments!.push({
         type: 'tool_call',
+        ...(state.llmCall && state.llmCall.turnId === event.turnId
+          && state.llmCall.messageId === event.messageId
+          ? { toolGroup: state.llmCall.group } : {}),
+        ...(event.messageId === undefined ? {} : { messageId: event.messageId }),
         id: context.nextId(),
         callId: event.callId,
         name: event.name,
@@ -275,7 +327,7 @@ export function applyAgentEvent(
 
     case 'tool_use': {
       bindActiveTurn(state, event.turnId);
-      const toolCall = findToolCall(state, event.turnId, event.callId);
+      const toolCall = findToolCall(state, event.turnId, event.callId, context);
       if (!toolCall) {
         protocolError(
           `Accepted execution ${event.executionId} has no Tool Call ${event.callId}`,
@@ -293,12 +345,28 @@ export function applyAgentEvent(
     case 'tool_result': {
       clearTransientChatItems(state);
       bindActiveTurn(state, event.turnId);
-      const toolCall = findToolCall(state, event.turnId, event.callId);
+      const toolCall = findToolCall(state, event.turnId, event.callId, context);
       if (!toolCall) {
         protocolError(`Tool Result has no Tool Call ${event.callId}`);
         break;
       }
+      const group = toolCall.toolGroup;
+      const groupSegments = [...new Map(
+        [...(state.historyItems ?? []), ...state.chatItems]
+          .filter(item => item.turnId === event.turnId)
+          .flatMap(item => item.segments ?? [])
+          .filter(segment => segment.type === 'tool_call')
+          .map(segment => [segment.callId, segment] as const),
+      ).values()];
+      const groupWasComplete = group && isToolGroupComplete(groupSegments, group);
+      if ((event.result?.status === 'success' || event.result?.status === 'error')
+        && toolCall.status !== event.result.status) {
+        toolCall.expanded = false;
+      }
       toolCall.status = event.result?.status;
+      if (group && !groupWasComplete && isToolGroupComplete(groupSegments, group)) {
+        group.expanded = false;
+      }
       toolCall.resultContent = normalizeToolResultContent(event.result?.content);
       toolCall.isError = event.result?.status === 'error';
       const subagentSessionId = parseTaskSubagentSessionId(
@@ -307,6 +375,7 @@ export function applyAgentEvent(
       );
       if (subagentSessionId) {
         toolCall.subagentSessionId = subagentSessionId;
+        if (toolCall.subagentStatus !== 'terminal') toolCall.subagentExpanded = false;
         toolCall.subagentStatus = 'terminal';
       }
       if (event.executionId) toolCall.executionId = event.executionId;
@@ -317,16 +386,35 @@ export function applyAgentEvent(
 
     case 'subagent_start':
     case 'subagent_end': {
-      const toolCall = findToolCall(state, event.parentTurnId, event.parentToolUseId);
-      if (!toolCall || !event.sessionId) {
+      const hasScopeIdentity = Boolean(event.sessionId && event.turnId && event.callerSessionId
+        && event.parentTurnId && event.parentToolUseId);
+      if (event.sessionId && event.turnId && event.callerSessionId
+        && event.parentTurnId && event.parentToolUseId) {
+        state.subagentScopes ??= {};
+        state.subagentScopes[event.sessionId] = {
+          sessionId: event.sessionId, turnId: event.turnId,
+          callerSessionId: event.callerSessionId,
+          parentTurnId: event.parentTurnId, parentToolUseId: event.parentToolUseId,
+          subagentType: event.subagentType,
+          status: event.type === 'subagent_start' ? 'running' : 'terminal',
+          outcome: event.outcome,
+        };
+      }
+      const toolCall = findToolCall(state, event.parentTurnId, event.parentToolUseId, context);
+      if (!event.sessionId || (!toolCall && !hasScopeIdentity)) {
         protocolError(
           `${event.type} has no Parent Tool Call ${event.parentToolUseId ?? ''}`,
         );
         break;
       }
-      toolCall.subagentSessionId = event.sessionId;
-      toolCall.subagentStatus = event.type === 'subagent_start' ? 'running' : 'terminal';
-      if (event.type === 'subagent_end') toolCall.subagentOutcome = event.outcome;
+      if (toolCall) {
+        toolCall.subagentSessionId = event.sessionId;
+        if (event.type === 'subagent_end' && toolCall.subagentStatus !== 'terminal') {
+          toolCall.subagentExpanded = false;
+        }
+        toolCall.subagentStatus = event.type === 'subagent_start' ? 'running' : 'terminal';
+        if (event.type === 'subagent_end') toolCall.subagentOutcome = event.outcome;
+      }
       pushEvent(
         event.type,
         `${event.subagentType ?? 'Subagent'} ${event.sessionId}`,
@@ -336,11 +424,22 @@ export function applyAgentEvent(
     }
 
     case 'llm_call':
+      if (!event.turnId || typeof event.round !== 'number'
+        || !Number.isSafeInteger(event.round) || event.round < 0) {
+        protocolError('LLM call requires a Turn and a non-negative safe integer round');
+        break;
+      }
+      state.llmCall = {
+        turnId: event.turnId, messageId: event.messageId,
+        group: { id: context.nextId(), round: event.round, expanded: true },
+      };
       bindActiveTurn(state, event.turnId);
       pushEvent('llm_call', `Round ${event.round} for turn ${event.turnId}`);
       break;
 
     case 'run_end': {
+      if (state.llmCall?.turnId === event.turnId) state.llmCall = null;
+      state.terminalTurnId = event.turnId ?? null;
       closeActiveThinking(state, event.turnId);
       if (state.activeTurnId === event.turnId) state.activeTurnId = null;
       effects.push({ type: 'refresh_history', turnId: event.turnId });
@@ -379,6 +478,8 @@ export function applyAgentEvent(
       break;
 
     case 'error':
+      if (state.llmCall?.turnId === event.turnId) state.llmCall = null;
+      if (event.turnId) state.terminalTurnId = event.turnId;
       closeActiveThinking(state, event.turnId);
       if (state.activeTurnId === event.turnId) state.activeTurnId = null;
       if (!event.turnId || !state.activeTurnId) state.isSending = false;
@@ -465,17 +566,63 @@ export function applyAgentEvent(
   return effects;
 }
 
+export interface ConversationSegmentBlock {
+  readonly id: ConversationSegment['id'];
+  readonly group?: ToolCallGroup;
+  readonly segments: ConversationSegment[];
+}
+
+export function isToolGroupComplete(
+  segments: readonly ConversationSegment[],
+  group: ToolCallGroup,
+): boolean {
+  const tools = segments.filter(segment =>
+    segment.type === 'tool_call' && segment.toolGroup?.id === group.id);
+  return tools.length > 0
+    && tools.every(segment => segment.status === 'success' || segment.status === 'error');
+}
+
+export function groupConversationSegments(
+  segments: readonly ConversationSegment[],
+): ConversationSegmentBlock[] {
+  const blocks: ConversationSegmentBlock[] = [];
+  for (const segment of segments) {
+    const group = segment.type === 'tool_call' ? segment.toolGroup : undefined;
+    const previous = blocks[blocks.length - 1];
+    if (group && previous?.group?.id === group.id) {
+      previous.segments.push(segment);
+    } else {
+      blocks.push({ id: segment.id, group, segments: [segment] });
+    }
+  }
+  return blocks;
+}
+
 export function syncApprovalCards(
   sessionStates: Record<string, ConversationPresentationState>,
   pendingApprovals: ReadonlyMap<string, PendingApproval>,
 ): void {
+  const scopes = Object.values(sessionStates).flatMap(state =>
+    [...state.historyScopes ?? [], ...Object.values(state.subagentScopes ?? {})]);
+  const isAudience = (sourceSessionId: string, audienceSessionId: string): boolean => {
+    const visited = new Set<string>();
+    let current = sourceSessionId;
+    while (!visited.has(current)) {
+      if (current === audienceSessionId) return true;
+      visited.add(current);
+      const scope = scopes.find(candidate => candidate.sessionId === current);
+      if (!scope) return false;
+      current = scope.callerSessionId;
+    }
+    return false;
+  };
   for (const [sessionId, state] of Object.entries(sessionStates)) {
     for (const item of [...state.historyItems, ...state.chatItems]) {
       if (item.kind !== 'turn') continue;
       for (const segment of item.segments ?? []) {
         if (segment.type !== 'tool_call') continue;
         const request = [...pendingApprovals.values()].find(candidate =>
-          candidate.sessionId === sessionId
+          isAudience(sessionId, candidate.sessionId)
           && candidate.turnId === item.turnId
           && candidate.callId === segment.callId);
         const completed = segment.executionId
@@ -507,8 +654,13 @@ export function markApprovalClosed(
       candidate => candidate.callId === callId && candidate.approval?.id === approvalId,
     );
     if (!segment?.approval) continue;
-    segment.approval.status = outcome;
+    segment.approval.status = outcome === 'approved' ? 'resolved' : outcome;
     segment.approval.closeReason = reason;
+    if (segment.status === 'approval') {
+      segment.status = outcome === 'approved' ? 'requested'
+        : outcome === 'unavailable' ? 'approval_unavailable'
+        : outcome === 'failed' ? 'error' : outcome;
+    }
   }
 }
 
@@ -573,13 +725,17 @@ function appendTextToTurn(
   delta: string,
   nextId: () => number,
   now: () => number,
+  messageId?: string,
 ): void {
   const turn = getOrCreateTurn(state, turnId, nextId, now);
   const last = turn.segments![turn.segments!.length - 1];
-  if (last?.type === 'text') {
+  if (last?.type === 'text' && last.messageId === messageId) {
     last.text = `${last.text ?? ''}${delta}`;
   } else {
-    turn.segments!.push({ type: 'text', id: nextId(), text: delta });
+    turn.segments!.push({
+      type: 'text', id: nextId(), text: delta,
+      ...(messageId === undefined ? {} : { messageId }),
+    });
   }
   turn.timestamp = now();
 }
@@ -632,6 +788,7 @@ function findToolCall(
   state: ConversationState,
   turnId: string | undefined,
   callId: string | undefined,
+  context: ConversationContext,
 ): ConversationSegment | null {
   for (let index = state.chatItems.length - 1; index >= 0; index -= 1) {
     const item = state.chatItems[index];
@@ -641,6 +798,16 @@ function findToolCall(
     );
     if (matches.length === 1) return matches[0];
     if (matches.length > 1) return null;
+  }
+  const historyMatches = (state.historyItems ?? [])
+    .filter(item => item.kind === 'turn' && item.turnId === turnId)
+    .flatMap(item => item.segments ?? [])
+    .filter(segment => segment.type === 'tool_call' && segment.callId === callId);
+  if (historyMatches.length === 1) {
+    const segment = { ...historyMatches[0] };
+    const turn = getOrCreateTurn(state, turnId, context.nextId, context.now ?? Date.now);
+    turn.segments!.push(segment);
+    return segment;
   }
   return null;
 }
@@ -783,3 +950,4 @@ function formatReasoningOption(value: string): string {
     ? 'Extra high'
     : value.charAt(0).toUpperCase() + value.slice(1);
 }
+import type { SubagentScope } from './history';

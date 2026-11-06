@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Channel behavior
-> Verified: 2026-09-18
+> Verified: 2026-11-04 (ancestor routing, recursive presentation and History reconciliation)
 > Ownership: Channel contracts, Host-local CLI, Extension-delivered WebSocket protocol, interaction, attachment ingress, and client routing
 > Ownership key: channel-transport-and-ingress
 
@@ -126,7 +126,16 @@ acknowledgement, including while the Session is still Pending. `run_turn`
 requires existing membership and does not change it. History, permission,
 metadata, and pending-state operations do not join an audience.
 
-Subagent events carry a child `sessionId` plus `callerSessionId`, and WebSocket routes them to the caller Session audience. A queued `request_end` has no Session ID, so WebSocket resolves its audience from the earlier `user_message` through `originMessageId`; an uncorrelated event is not sent. `user_message.attachmentSummaries` may expose type, MIME, byte count, and dimensions, but never raw base64.
+Runtime reuses the active Subagent presentation route to supply frozen ancestor
+Session IDs and the owning Root Turn ID alongside native Child events. Child
+delivery uses the Root Turn's captured Channel generation. WebSocket sends once
+to the union of explicit source and ancestor audiences, including recursive
+descendants; this does not add membership or grant Child control. The route
+remains until terminal ancestor persistence and accepted Fanout settle.
+A queued `request_end` has no Session ID, so WebSocket resolves its audience
+from the earlier `user_message` through `originMessageId`; an uncorrelated
+event is not sent. `user_message.attachmentSummaries` may expose type, MIME,
+byte count, and dimensions, but never raw base64.
 
 ### 3.4 Runtime capabilities
 
@@ -307,22 +316,33 @@ History responses, correlated `AgentEvent` values, approval lifecycle
 messages, and requesting-socket errors. Wire validation owns JSON and
 transport shape; Media owns decoded attachment validation.
 
-The bundled client keeps at most one read-only Subagent detail open alongside
-the focused Chat Session. Running Children are discovered from
-`subagent_start`; completed Children are recovered from the fixed Host header
-at the start of a `task` Tool Result. Selecting an addressable `task` card opens
-the detail and gives that otherwise ordinary Tool card a selected treatment;
-closing the detail removes it. Opening the detail subscribes the Child and
-waits for acknowledgement before loading History. Replacing or closing the
-detail unsubscribes only the Child, while changing the focused Chat closes the
-Child before switching the Parent subscription. Reconnect restores Parent and
-Child memberships independently. The detail reuses ordinary message, Thinking,
-and Tool presentation without exposing send, permission, Abort, Approval, or
-other control operations. Layouts with enough spare space to preserve the
-Theme's existing Chat working width shift the centered content left and dock a
-right-side panel; other layouts use a modal without changing the open Child
-identity. A deleted retained Child keeps its detail container and reports that
-its content is unavailable.
+The bundled client renders Child content recursively inside the actual Parent
+Tool Call, in the Parent's call order, reusing native per-source message,
+Thinking, Tool and Approval state. Complete lifecycle links can wait for the
+real Parent card instead of inventing one. The independent Child panel/modal
+and its extra subscriptions are removed: the focused ancestor subscription and
+its retained History `items`/`scopes` restore the tree even after Child cleanup.
+The read-only Child History API, explicit membership and lifecycle/TTL policy
+remain unchanged.
+
+Each actual `llm_call` starts a source-local Tool group; each Assistant History
+entry marked with `llmRound` independently restores a group. Round is a display
+hint, not a unique key, so retry resets do not merge calls. Adjacent grouped
+Tools share a wrapper without moving text or Thinking. Groups default to
+expanded, completion does not collapse them, and explicit choices survive
+running refresh and terminal History takeover. Missing call facts are not
+guessed. Root-addressed Child Approvals attach by delegation plus Child
+Turn/Call identity and continue submitting only the existing Approval ID.
+
+The bundled client's only Allow/Deny controls live in a non-modal approval deck
+at the top of the fixed composer, outside the scrolling conversation. The deck
+shows one pending request for the focused audience Session, with previous/next
+navigation, position/count, source context, Tool name, and scroll-bounded input.
+Tool slots retain status but no duplicate decision buttons. New requests do not
+replace a selected request, steal focus, or scroll the conversation. Canonical
+closure removes a request and advances the deck; no pending requests means no
+deck. Disconnection disables decisions, and recovery uses the existing pending
+query independently of whether the corresponding Tool slot is loaded.
 
 `run_turn.reasoning` accepts only own `thinking` and `effort` fields with the
 public enum values; unknown fields, inherited/non-plain objects, and conflicting
@@ -361,12 +381,20 @@ This polling policy is bundled chat UX, not a Channel-wide requirement.
 Page-local system/error bubbles (including aborted, call-limit, and compaction
 notices) are transient. New user or assistant content, a new Turn, or a Tool
 result clears them only in that Session; persisted History is unchanged.
-During active/pending Turns, History and realtime content are reconciled for
-display rather than concatenated: matching user content in the same Turn,
-Tool Call IDs, Thinking IDs, and streamed text prefixes appear once. Matching
-segments retain live objects and presentation IDs so decisions, Tool results,
-and later deltas still update them. Unmatched History and realtime content stay
-visible; displaying History does not prematurely discard an active Turn.
+During active/pending Turns, History and realtime content are reconciled by
+messageId within the source Session, not by equal text or streamed prefixes.
+Committed message bodies/Thinking replace their live duplicates; Tool
+Call/execution identities retain later status and Approval overlays.
+Uncommitted messages remain visible. Legacy records without identities are
+not assigned fabricated mappings. Retained descendant records are projected
+by source before merging.
+
+Terminal Root takeover requires an actual Root terminal event followed by a
+fresh History response with all descendant scopes converged; Child run_end or
+an earlier in-flight snapshot cannot retire the Root. Queued latest refreshes
+drain after either History success or error. Complete-Turn pages remain intact,
+may exceed the requested threshold, and loading older Turns preserves the
+reading anchor.
 Stop/Steer presentation derives from the Session's active Turn ID, set by
 `run_start` and cleared only by matching `run_end` or Turn error. Sending uses
 a separate local in-flight flag cleared by the originating Client's echoed
