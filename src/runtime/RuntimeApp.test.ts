@@ -519,7 +519,8 @@ describe('RuntimeApp', () => {
     expect(runnerRun).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId,
-        message: expect.stringContaining('</turn_start>\n\nHello runtime'),
+        message: 'Hello runtime',
+        userPrompt: expect.stringContaining('</turn_start>\n\nHello runtime'),
         resolvedModel: expect.objectContaining({
           identity: { providerId: 'test', modelId: 'test-model' },
           referenceSource: 'config-default',
@@ -1972,7 +1973,7 @@ describe('RuntimeApp', () => {
     const secondRun = createDeferred<RunResult>();
     const otherRun = createDeferred<RunResult>();
     const runnerRun = vi.fn(async (params: { sessionId: string; message: string }): Promise<RunResult> => {
-      if (params.sessionId === 'main' && params.message.endsWith('\n\nfirst')) {
+      if (params.sessionId === 'main' && params.message === 'first') {
         return firstRun.promise;
       }
       if (params.sessionId === 'other') {
@@ -2033,8 +2034,8 @@ describe('RuntimeApp', () => {
       expect(runnerRun).toHaveBeenCalledTimes(2);
     });
     expect(runnerRun.mock.calls.map(([params]) => [params.sessionId, params.message])).toEqual([
-      ['main', expect.stringContaining('</turn_start>\n\nfirst')],
-      ['other', expect.stringContaining('</turn_start>\n\nparallel')],
+      ['main', 'first'],
+      ['other', 'parallel'],
     ]);
 
     firstRun.resolve(result('first'));
@@ -2046,7 +2047,8 @@ describe('RuntimeApp', () => {
     expect(runnerRun.mock.calls[2]?.[0]).toEqual(
       expect.objectContaining({
         sessionId: 'main',
-        message: expect.stringContaining('</turn_start>\n\nsecond'),
+        message: 'second',
+        userPrompt: expect.stringContaining('</turn_start>\n\nsecond'),
       }),
     );
 
@@ -2125,7 +2127,8 @@ describe('RuntimeApp', () => {
     expect(drainedSteering).toEqual([
       {
         role: 'user',
-        content: expect.stringContaining('</turn_start>\n\nsteer now'),
+        content: 'steer now',
+        userPrompt: expect.stringContaining('</turn_start>\n\nsteer now'),
         messageId: expect.any(String),
         reasoning: { effort: 'high' },
       },
@@ -2850,7 +2853,7 @@ describe('RuntimeApp', () => {
         message: string;
         signal?: AbortSignal;
       }): Promise<RunResult> => {
-        if (params.message.endsWith('\n\nactive')) {
+        if (params.message === 'active') {
           capturedSignal = params.signal;
           await releaseRun.promise;
           return {

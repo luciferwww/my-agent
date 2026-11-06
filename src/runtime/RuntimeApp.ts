@@ -1441,7 +1441,7 @@ export class RuntimeApp {
         }),
       );
 
-      const runnerMessage = await this.prepareUserMessage(params.message);
+      const userPrompt = await this.buildUserPrompt(params.message);
 
       const effectiveReference: ModelReference = Object.freeze({
         providerId: resolvedModel.identity.providerId,
@@ -1469,7 +1469,8 @@ export class RuntimeApp {
       const result = await this.resources.agentRunner.run({
         requestId: params.requestId,
         sessionId: params.sessionId,
-        message: runnerMessage,
+        message: params.message,
+        userPrompt,
         resolvedModel,
         ...(normalizedReasoning.preference === undefined
           ? {}
@@ -1498,7 +1499,7 @@ export class RuntimeApp {
               prepareSteeringMessages: async (messages: SteeringMessage[]) =>
                 Promise.all(messages.map(async (message) => ({
                   ...message,
-                  content: await this.prepareUserMessage(message.content),
+                  userPrompt: await this.buildUserPrompt(message.content),
                 }))),
             }
           : {}),
@@ -1526,7 +1527,7 @@ export class RuntimeApp {
     }
   }
 
-  private async prepareUserMessage(
+  private async buildUserPrompt(
     message: string | ChatContentBlock[],
   ): Promise<string | ChatContentBlock[]> {
     if (typeof message === 'string') {

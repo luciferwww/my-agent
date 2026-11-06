@@ -16,6 +16,8 @@ import type { CompactionConfig } from './compaction-config.js';
 export type { ToolResult };
 
 export interface SteeringMessage extends ChatMessage {
+  /** Model-only input; content remains the original message saved in Session. */
+  readonly userPrompt?: string | ChatContentBlock[];
   readonly messageId?: string;
   readonly reasoning?: ReasoningPreference;
 }
@@ -61,6 +63,8 @@ export interface RunParams {
   subagentDepth?: number;
   /** User text or multimodal content blocks. */
   message: string | ChatContentBlock[];
+  /** Model-only input built by the caller; defaults to message and is not persisted. */
+  userPrompt?: string | ChatContentBlock[];
   /** Model, invocation port, facts, and limits fixed for this Turn. */
   resolvedModel: ResolvedModel;
   /** Original message-level selection, persisted on the user message when present. */
@@ -85,7 +89,7 @@ export interface RunParams {
   maxLlmCalls?: number;
   /** Wakes without claiming, then atomically claims at a steering safe point. */
   steeringSource?: SteeringMessageSource;
-  /** Applies the normal user-prompt pipeline after messages are claimed. */
+  /** Builds userPrompt after claiming, preserving original content and identity. */
   prepareSteeringMessages?: SteeringMessagePreparer;
   /** Compaction configuration supplied by RuntimeApp. */
   compaction?: CompactionConfig;

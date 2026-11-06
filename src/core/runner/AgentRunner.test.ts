@@ -316,6 +316,49 @@ describe('AgentRunner', () => {
   // ── Basic conversation ──────────────────────────────
 
   describe('basic conversation', () => {
+    it('persists raw multimodal input and replays it without model-only sections on the next run', async () => {
+      const requests: ModelInvocationRequest[] = [];
+      const llmClient: ModelInvocationPort = {
+        async *chatStream(request) {
+          requests.push(structuredClone(request));
+          yield { type: 'message_start' };
+          yield { type: 'text_delta', text: 'answer' };
+          yield {
+            type: 'message_end', stopReason: 'end_turn',
+            usage: { inputTokens: 1, outputTokens: 1 },
+          };
+        },
+        async chat() { throw new Error('Not used'); },
+      };
+      const message: ChatContentBlock[] = [
+        { type: 'text', text: '<turn_start>user literal</turn_start>\n\nlook' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aaaa' },
+          dimensions: { width: 10, height: 10 } },
+      ];
+      const userPrompt: ChatContentBlock[] = [
+        { type: 'text', text: 'time section\n\nfuture section\n\n<turn_start>user literal</turn_start>\n\nlook' },
+        message[1]!,
+      ];
+      const runner = new AgentRunner({ sessionManager, llmClient });
+      await runner.run({
+        sessionId: MAIN_SESSION_ID, turnId: 'first', message, userPrompt,
+        model: 'test', systemPrompt: '',
+      });
+      expect(requests[0]!.messages).toEqual([{ role: 'user', content: userPrompt }]);
+      expect(sessionManager.getMessages(MAIN_SESSION_ID)[0]!.message.content).toEqual(message);
+      expect(sessionManager.getHistory({ sessionId: MAIN_SESSION_ID }).items[0]!.content)
+        .toEqual(message);
+      await runner.run({
+        sessionId: MAIN_SESSION_ID, turnId: 'second', message: 'next',
+        model: 'test', systemPrompt: '',
+      });
+      expect(requests[1]!.messages[0]).toEqual({ role: 'user', content: message });
+      expect(requests[1]!.messages.at(-1)).toEqual({ role: 'user', content: 'next' });
+      expect(message[0]).toEqual({
+        type: 'text', text: '<turn_start>user literal</turn_start>\n\nlook',
+      });
+    });
+
     it('assigns distinct initial input identities to separate runs without mutating caller params', async () => {
       const llmClient = createMockLLMClient([
         [{ type: 'message_start' }, { type: 'text_delta', text: 'first' },
@@ -381,6 +424,7 @@ describe('AgentRunner', () => {
         const params: LegacyTestRunParams = {
           sessionId, turnId: 'retry-turn', message: 'one submitted input', model: 'test',
           systemPrompt: '',
+          userPrompt: 'model-only context\n\none submitted input',
           ...(kind === 'root' ? { originMessageId: 'root-input-id' } : {}),
           compaction: {
             enabled: true, reserveTokens: 0, keepRecentTurns: 1,
@@ -395,7 +439,7 @@ describe('AgentRunner', () => {
         expect(requests).toHaveLength(3);
         for (const request of [requests[0]!, requests[2]!]) {
           expect(request.messages).toContainEqual({
-            role: 'user', content: 'one submitted input',
+            role: 'user', content: 'model-only context\n\none submitted input',
           });
         }
         const starts = events.filter(event => event.type === 'run_start');
@@ -1370,11 +1414,15 @@ describe('AgentRunner', () => {
         systemPrompt: '',
         turnId: 'test-turn',
         steeringSource: testSteeringSource(claimSteeringMessages),
+        prepareSteeringMessages: async messages => messages.map(message => ({
+          ...message, userPrompt: `model context\n\n${message.content}`,
+        })),
       });
 
       expect(result.text).toBe('done');
       expect(capturedCalls).toHaveLength(3);
-      expect(capturedCalls[1]!.some((m) => m.role === 'user' && m.content === 'interrupt now')).toBe(true);
+      expect(capturedCalls[1]!.some((m) =>
+        m.role === 'user' && m.content === 'model context\n\ninterrupt now')).toBe(true);
       expect(capturedCalls[2]!).toContainEqual(expect.objectContaining({
         role: 'user',
         origin: 'host',
@@ -1510,6 +1558,9 @@ describe('AgentRunner', () => {
           },
         ],
         steeringSource: testSteeringSource(claimSteeringMessages),
+        prepareSteeringMessages: async messages => messages.map(message => ({
+          ...message, userPrompt: `model context\n\n${message.content}`,
+        })),
       });
 
       await taskStarted.promise;
@@ -1546,10 +1597,12 @@ describe('AgentRunner', () => {
         && typeof message.content === 'string'
         && message.content.includes('scope_state=running'));
       const steeringIndex = secondCall.findIndex((message) =>
-        message.role === 'user' && message.content === 'What is the current progress?');
+        message.role === 'user' && message.content === 'model context\n\nWhat is the current progress?');
       expect(taskAcceptedIndex).toBeGreaterThanOrEqual(0);
       expect(taskCompletionIndex).toBe(-1);
       expect(steeringIndex).toBeGreaterThan(taskAcceptedIndex);
+      expect(sessionManager.getMessages(MAIN_SESSION_ID)
+        .some(record => record.message.content === 'What is the current progress?')).toBe(true);
 
       const thirdCall = capturedCalls[2]!;
       expect(thirdCall).toContainEqual(expect.objectContaining({

@@ -520,7 +520,7 @@ export class AgentRunner {
       const budget = checkContextBudget({
         messages,
         systemPrompt: params.systemPrompt,
-        currentPrompt: params.message,
+        currentPrompt: params.userPrompt ?? params.message,
         inputBudgetTokens,
         config: compaction,
       });
@@ -565,7 +565,7 @@ export class AgentRunner {
         ? {}
         : { reasoning: params.reasoningPreference }),
     });
-    messages = [...messages, { role: 'user', content: params.message }];
+    messages = [...messages, { role: 'user', content: params.userPrompt ?? params.message }];
 
     // Main LLM and tool-use loop.
     let totalUsage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
@@ -1896,11 +1896,11 @@ export class AgentRunner {
     injectedMessages: import('./types.js').SteeringMessage[],
   ): Promise<void> {
     for (const injected of injectedMessages) {
-      const { reasoning, messageId, ...message } = injected;
+      const { reasoning, messageId, userPrompt, ...message } = injected;
       if (message.origin === 'host') {
         throw new TypeError('Trusted Host messages cannot enter through steering injection.');
       }
-      targetMessages.push(message);
+      targetMessages.push({ ...message, content: userPrompt ?? message.content });
       await this.sessionManager.appendMessage(sessionKey, {
         turnId,
         ...(messageId === undefined ? {} : { messageId }),

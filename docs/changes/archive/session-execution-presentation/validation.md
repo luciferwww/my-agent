@@ -427,6 +427,33 @@ passed: client build and 62-asset verification
 
 owner 另反馈用户气泡显示 `<turn_start>…</turn_start>`。已追踪：`UserPromptBuilder` 在原始输入前附加模型用时间标记，Runtime 将增强后的内容交给 Runner，Runner 将其作为 user content 持久化；History 直接投影该文本。实时副本可暂时保留原始文字，但纯 History 恢复会暴露增强内容。此展示缺陷尚未修复，不能把本节单 Tool 修正当作该问题已解决，也不能标记最终验收完成。
 
+## 16. 原始 message 与模型 User prompt 分离（2026-11-05）
+
+owner 确认与 System prompt 一致：Prompt section 只供模型输入，不作为用户消息事实落盘；不新增快照、存储字段、版本或旧数据迁移，也不使用前端正则过滤。
+
+- Runtime 的 `prepareUserMessage()` 改为 `buildUserPrompt()`，局部变量 `runnerMessage` 改为 `userPrompt`。共享 Runner 同时接收原始 `message` 和可选模型输入 `userPrompt`。
+- Session 保存原始 message；当前输入预算和 LLM 使用 `userPrompt ?? message`。未提供增强内容的 Child／直接 Runner 调用保持原行为。
+- Steering 保留原始 content，在已有准备回调中另附 userPrompt；两条注入路径只将增强内容放入内存模型消息，身份、reasoning 和 userPrompt 字段不会泄漏到 Provider payload。
+- 同一 run 的 overflow retry 复用已构建 Prompt；后续 Turn 从 Session 重放原始消息，不重新生成历史 section。已有污染记录保持原样。
+
+回归覆盖真实 Runner 落盘／History、多模态块、用户字面输入的同名标签、后续原始历史回放、Root／Child／direct 实际 overflow→compact→retry，以及两条 steering 注入路径。Runtime 测试严格区分原始 message 和 timestamped userPrompt，队列替身改为按原始消息判定，不放宽 FIFO 行为断言。
+
+```text
+npm exec --yes --package=node@22 -- node node_modules\vitest\vitest.mjs run --config vitest.unit.config.ts
+  src\core\runner src\core\prompt src\core\subagent
+  src\core\session\SessionManager.presentation.test.ts
+  src\runtime\RuntimeApp.test.ts src\runtime\RuntimeApp.intake.test.ts
+  extensions\websocket-channel\client\src\client\message-identity.test.ts
+passed: 406 tests, 25 files
+
+npm exec --yes --package=node@22 -- npm run lint
+passed
+```
+
+首轮测试暴露旧替身依赖增强后的输入及一处新增测试参数放错位置，已修正；随后新增 image fixture 缺 dimensions 导致执行／类型检查失败，补齐后上述最终回归和 lint 通过。不新增 fitness，不涉及审批面板、前端行为或附件处理算法；未执行线上 Provider E2E、全量单元／集成或清理实际 sessions，未 commit/push／归档。新消息实机恢复验收仍待 owner 执行。
+
+2026-11-05 owner 实机反馈：已发送的旧消息保持不变，新发送的消息已不再包含错误的时间标签。该反馈确认新旧数据表现符合本次修复边界；未明确确认刷新／重载场景，不将其扩写为完整 History 恢复或整体 Change 验收通过。
+
 ## 17. Composer 上方单入口审批卡组（2026-11-05）
 
 owner 确认并发多 Subagent／Tool 时不应到处寻找审批，要求移除 slot 内决策按钮，在输入框上方固定位置显示一张审批卡，多项用左右按钮切换。
