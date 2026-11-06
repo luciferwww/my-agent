@@ -6,6 +6,7 @@ This directory is reserved for external comparisons and exploratory analysis. Re
 
 ## Current research
 
+- [Tool Use 可读性设计草稿](tool-use-readability-design-draft.md) - Group 操作类型计数、Single Tool 参数模式标题和统一宽度约束的非权威讨论来源；2026-11-06 已由 [Tool Use Readability Change](../changes/archive/tool-use-readability/plan.md) 交付、人工验收并归档，长期规则见 [Channel Specification](../specifications/channel.md#bundled-websocket-tool-readability)。
 - [Automation 系统设计草稿](automation-system-design-draft.md) - 基于 OpenClaw 与主流计划 Agent 的非权威中文设计草稿，讨论持久 Job/Run、Scheduler 边界、Detached Root Agent、Fresh Session、无人值守权限、恢复和本地常驻 Host；不授权实现。
 - [Session-addressed Approval 设计草稿](session-addressed-approval-design-draft.md) - 面向 Automation 的非权威 Approval 演进草稿，讨论 Origin 与无 Origin 路由、多 Channel first-settlement-wins、WebSocket Session replay、Session 列表提醒和 process-local 边界；不授权实现。
 - [主流浏览器 AI Agent 技术实现与特色调研](mainstream-browser-ai-agents-technical-research-2026-10-04.md) - 对 OpenAI、Anthropic、Google、Manus、Browser Use 与 Playwright 的浏览器控制架构、SPA/AJAX 处理、安全边界和技术选型进行非权威比较。

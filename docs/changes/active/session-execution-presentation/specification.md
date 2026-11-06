@@ -155,6 +155,7 @@ History 首次加载时，已完成 Tool 的详情、全部 Tool 均为 success�
 
 只要相邻展示块具有明确的 LLM call 分组归属，无论包含一个还是多个 Tool，均显示分组外框和标题，并遵循组折叠状态。实时、History 及递归 Child 使用同一规则；缺少调用归属的旧记录仍不猜测分组。
 
+标题可读性的长期规则见 [Channel Specification](../../../specifications/channel.md#bundled-websocket-tool-readability)，交付和验收记录见已归档的 [Tool Use Readability Change](../../archive/tool-use-readability/plan.md)。Group 显示中性操作类型计数而非 `LLM call N`，不再重复显示总数量徽标；Single Tool 按语义和关键参数提炼标题，Task 类型与描述分离，标题展开前后保持一致并限制宽度。这是确定性客户端格式化，不是模型生成的智能摘要，不改变此处的分组及折叠契约。
 
 实时按每次 llm_call 事件到达形成新的调用边界，round 仅作提示而不是唯一键：overflow 重试可能在同一 Turn 重置 round。真实 Assistant 消息以顶层可选 llmRound 留存该提示（含 abort partial），经安全 History 和祖先展示副本透传，不进入模型消息。历史以各消息 entryId 和同一内容中的 tool_use 顺序形成组，不能将重复 round 合并。没有实际 LLM 调用的合成消息不伪造 round。无需新增 invocation UUID，也不要求所有 delta 携带 round。
 

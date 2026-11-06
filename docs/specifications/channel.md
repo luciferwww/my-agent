@@ -226,6 +226,118 @@ entry has no alias or redirect.
 
 When Runtime reports `provider_unregistered` or `model_rejected`, Channel presentation preserves the classified failure. A catalog-capable interactive client refreshes the current Catalog for explicit reselection; it does not substitute a Provider/Model or resubmit the failed Turn. Other resolution and invocation failures remain ordinary reported failures and retain the user's selection for an explicit retry.
 
+## Bundled WebSocket tool readability
+
+These are presentation rules for the bundled WebSocket client, not requirements
+on other Channels or changes to Tool, AgentEvent, or Transcript contracts.
+Titles are deterministic projections of existing Tool Calls. Root, recursive
+Child, realtime, and History use the same rules; titles never replace call
+identity, change execution, or reorder content. No model-generated summaries,
+Tool registration metadata, or new configuration is required.
+
+### Group titles
+
+Replace `LLM call N` with neutral operation counts, such as
+`5 file reads, 1 command, 2 searches, 2 other operations`.
+
+| Tool names | Singular / plural count unit |
+|---|---|
+| `read_file`, `memory_get` | `file read` / `file reads` |
+| `file_search`, `grep_search`, `memory_search` | `search` / `searches` |
+| `exec` | `command` / `commands` |
+| `write_file`, `edit_file`, `apply_patch`, `memory_write` | `file change` / `file changes` |
+| `web_fetch` | `web fetch` / `web fetches` |
+| `list_dir` | `directory listing` / `directory listings` |
+| `process` | `process operation` / `process operations` |
+| `task` | `subagent task` / `subagent tasks` |
+
+Count calls in the existing reconciled group, not distinct resources, returned
+matches, command fragments, or Child-internal calls. Keep the first three known
+operation types in first-occurrence order. Combine all remaining calls and
+unknown tools into one `N other operation(s)` phrase, omitted when zero.
+An unknown-only group shows just that phrase. Counts account for every call
+once. New calls update counts without changing group identity or disclosure.
+
+Do not vary tense with execution state or imply success. Remove the redundant
+`N tools` badge; retain approval notices and disclosure controls. Do not invent
+group membership for old records lacking it.
+
+### Single Tool titles
+
+Select meaningful parameters before applying width truncation. File and
+directory operations use the basename, supporting both path separators and
+preserving a recognizable root. Full paths remain in details. Search titles
+use the query, not all filters; commands exclude separately supplied cwd and
+environment fields.
+
+| Tool / mode | Title |
+|---|---|
+| `read_file` | `Read <filename>`, optionally followed by a range |
+| `list_dir` | `List <directory name>` |
+| `file_search` | `Find files matching "<query>"` |
+| `grep_search` | `Search for "<query>"` |
+| `write_file` | `Write <filename>`, without inferring creation versus replacement |
+| `edit_file` | `Edit <filename>` |
+| `apply_patch` | `Apply patch`, without parsing the patch body |
+| `web_fetch` | `Fetch <host><short path>` |
+| `exec` | `Run <command>` |
+| `process:list` | `List background processes` |
+| `process:status` | `Check process status · <runId>` |
+| `process:log` | `Read process logs · <runId>` |
+| `process:kill` | `Stop process · <runId>` |
+| `memory_search` | `Search memory for "<query>"` |
+| `memory_get` | `Read memory <filename>`, optionally followed by a range |
+| `memory_write:append` or omitted mode | `Append to memory <filename>` |
+| `memory_write:overwrite` | `Write memory <filename>` |
+| `task` | Original `description` as the main title, with a separate Agent-type label |
+
+URL titles accept HTTP(S) only and show host plus the first two non-empty path
+segments, adding `/...` when more remain. Omit protocol, user information,
+query, and fragment from the title; preserve the original URL in details.
+Do not translate or rewrite Task descriptions or promote the full prompt to
+the title. Prefer the actual type from the existing Subagent scope, then the
+requested type, then General purpose. This is display selection, not a change
+to Agent resolution. Status remains a separate badge.
+
+For `read_file`, two bounds produce `lines 10–20`; a start alone produces
+`from line 10`; an end alone produces `lines 1–20`; equal bounds produce
+`line 10`. No explicit range means no range suffix, not a claim to have read
+the entire file. For `memory_get`, `from=10, lines=5` produces `lines 10–14`;
+from alone produces `from line 10`. Without from, omit the suffix even if
+lines was supplied, matching current memory-read semantics.
+
+Only valid positive safe-integer ranges are formatted, including safe
+calculated ends. Titles describe the input range, not EOF-clipped results.
+Missing, empty, or wrongly typed title parameters, invalid or reversed ranges,
+unknown action/mode values, and invalid or non-HTTP(S) URLs fall back to the
+original tool name. Non-list process actions require a non-empty runId.
+Unknown tools keep their original names. Optional missing fields follow
+existing tool defaults; presentation fallback does not hide execution errors
+or replace execution validation.
+
+### Width and status
+
+Titles remain the same short summary when collapsed and expanded. Use one
+line with ellipsis, constrained by both the available container and a uniform
+maximum; semantic selection is not fixed-character truncation of raw input.
+Current title and Agent-label maxima are `32ch` and `14ch`. Titles may shrink,
+while Agent labels, status badges, and disclosure controls remain visible.
+Long content must not cause horizontal overflow in narrow or nested cards.
+Expansion exposes complete description/input details, not a longer title.
+Original input is unchanged, and all generated text is rendered as text.
+
+Tool and Subagent badges use the existing status facts. `aborted` is amber,
+visually distinct from the existing green success treatment in Classic and
+Botanical; no success or cancellation state is inferred from color.
+
+When adding a tool, explicitly select a verified operation category and title
+parameter pattern, with singular/plural and fallback tests. Until mapped, its
+group contribution is `other operations` and its single title is the raw name;
+never guess semantics from name substrings.
+
+Delivery, checks, and owner acceptance are retained in the archived
+[Tool Use Readability Change](../changes/archive/tool-use-readability/plan.md).
+
 ## Failure semantics
 
 Create failure means no instance. Start rejection or pre-readiness completion is `failed/startup`. Unexpected post-handoff transport failure is `failed/runtime` and does not mutate the published Snapshot. Runtime Composition observes each successfully published Channel completion once and records failed outcomes with bounded Channel ID/phase fields rather than raw Error content. A rejected completion Promise is normalized at the Runtime boundary to `failed/runtime`; it does not reject Host or embedded-caller completion observation. Concrete Hosts do not duplicate that failure log. Explicit stop produces `closed/stopped` unless another terminal result won; stop rejection is `failed/shutdown`. Cleanup errors do not erase the root failure.

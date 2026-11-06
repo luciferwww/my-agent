@@ -16,6 +16,7 @@ import {
 } from '../client/conversation';
 import { renderAssistantMarkdown } from '../client/markdown';
 import type { SubagentScope } from '../client/history';
+import { taskAgentLabel, toolDisplayTitle, toolGroupTitle } from '../client/tool-presentation';
 
 const props = defineProps<{
   item: ConversationItem;
@@ -67,8 +68,7 @@ function childSessionId(segment: ConversationSegment): string | undefined {
           :aria-expanded="block.group.expanded"
           @click="block.group.expanded = !block.group.expanded"
         >
-          <span class="tool-group-title">LLM call {{ block.group.round + 1 }}</span>
-          <span>{{ block.segments.length }} tool{{ block.segments.length === 1 ? '' : 's' }}</span>
+          <span class="tool-group-title">{{ toolGroupTitle(block.segments) }}</span>
           <span v-if="block.segments.some(segment => segment.approval?.status === 'pending')">
             Approval required
           </span>
@@ -103,7 +103,12 @@ function childSessionId(segment: ConversationSegment): string | undefined {
         >
           <div class="tool-result-header">
             <div class="tool-result-title">
-              <span class="tool-result-name">{{ segment.name }}</span>
+              <span v-if="segment.name === 'task'" class="tool-agent-label">
+                {{ taskAgentLabel(segment, childScope(segment)?.subagentType) }}
+              </span>
+              <span class="tool-result-name" :title="toolDisplayTitle(segment)">
+                {{ toolDisplayTitle(segment) }}
+              </span>
               <span class="tool-result-badge" :data-status="segment.status">
                 {{ toolStatusLabel(segment.status) }}
               </span>

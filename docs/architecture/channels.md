@@ -389,6 +389,17 @@ Uncommitted messages remain visible. Legacy records without identities are
 not assigned fabricated mappings. Retained descendant records are projected
 by source before merging.
 
+Tool group titles are deterministic English operation counts, capped at three
+known categories plus other operations, without a repeated total-count badge.
+Single Tool titles select the meaningful object or range; Task shows a separate
+Agent-type label and description. Titles keep the same compact width when open
+or closed, and aborted badges are amber rather than success green. Current
+formatting lives in the client
+[tool-presentation.ts](../../extensions/websocket-channel/client/src/client/tool-presentation.ts);
+durable rules are in the
+[Channel Specification](../specifications/channel.md#bundled-websocket-tool-readability).
+These projections do not change execution, History identity, or folding.
+
 Terminal Root takeover requires an actual Root terminal event followed by a
 fresh History response with all descendant scopes converged; Child run_end or
 an earlier in-flight snapshot cannot retire the Root. Queued latest refreshes

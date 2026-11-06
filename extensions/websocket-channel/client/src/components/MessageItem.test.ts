@@ -10,6 +10,7 @@ import * as conversation from '../client/conversation';
 import type { ConversationItem } from '../client/conversation';
 import { buildHistoryItems } from '../client/history';
 import * as markdown from '../client/markdown';
+import * as toolPresentation from '../client/tool-presentation';
 import { createSessionUiState } from '../client/session-state';
 
 let MessageItem: Component;
@@ -35,6 +36,7 @@ async function loadComponent(path: string): Promise<Component> {
     (specifier: string) => {
       if (specifier === '../client/conversation') return conversation;
       if (specifier === '../client/markdown') return markdown;
+      if (specifier === '../client/tool-presentation') return toolPresentation;
       return require(specifier);
     },
     module,
@@ -77,6 +79,33 @@ describe('Tool group presentation', () => {
     expect(html).toContain(status === 'success' ? 'Succeeded' : 'Aborted');
   });
 
+  it('keeps the same filename title when closed and open, with complete input in details', async () => {
+    const item = history(1);
+    const segment = item.segments![0];
+    segment.input = { path: 'C:\\full\\path\\a.ts', startLine: 10, endLine: 20 };
+    segment.expanded = false;
+    const closed = await render(item);
+    segment.expanded = true;
+    const open = await render(item);
+    const title = /<span class="tool-result-name"[^>]*>.*?<\/span>/su;
+    expect(closed.match(title)?.[0]).toBe(open.match(title)?.[0]);
+    expect(open).toContain('Read a.ts, lines 10–20');
+    expect(open).toContain('C:\\\\full\\\\path\\\\a.ts');
+    expect(open).not.toContain('>read_file</span>');
+  });
+
+  it('renders task description and agent type separately without promoting its prompt', async () => {
+    const item = history(1);
+    item.segments![0].name = 'task';
+    item.segments![0].input = {
+      subagent_type: 'researcher', description: 'Find & compare references', prompt: 'Full task instructions',
+    };
+    const html = await render(item);
+    expect(html).toContain('class="tool-agent-label">Researcher</span>');
+    expect(html).toContain('Find &amp; compare references');
+    expect(html).not.toMatch(/class="tool-result-name"[^>]*>[^<]*Full task instructions/u);
+  });
+
   it('renders one approval at the composer independently of loaded slots and disables disconnected actions', async () => {
     const approvals = ['a', 'b'].map(id => ({
       id, sessionId: 'root', turnId: id, callId: id, toolName: `tool-${id}`, input: { command: id },
@@ -114,7 +143,8 @@ describe('Tool group presentation', () => {
     expect(html).toContain('data-tool-call-id="first"');
     expect(html).toContain('class="tool-call-group"');
     expect(html).toContain('class="tool-group-header"');
-    expect(html).toContain('LLM call 1');
+    expect(html).toContain('1 file read');
+    expect(html).not.toContain('LLM call');
 
     addTool('second');
     html = await render(item);
@@ -122,7 +152,7 @@ describe('Tool group presentation', () => {
     expect(html).toContain('class="tool-group-header"');
     expect(html).toContain('data-tool-call-id="first"');
     expect(html).toContain('data-tool-call-id="second"');
-    expect(html).toContain('LLM call 1');
+    expect(html).toContain('2 file reads');
     expect(item.segments!.every(segment => segment.toolGroup === group)).toBe(true);
 
     if (!group) throw new Error('Observed LLM group is missing');
@@ -147,8 +177,8 @@ describe('Tool group presentation', () => {
     expect(html).not.toContain('Allow</button>');
     expect(html).not.toContain('Deny</button>');
     expect(html).toContain('Approval required');
-    expect(html).toContain('LLM call 1');
-    expect(html).toContain('1 tool');
+    expect(html).toContain('1 file read');
+    expect(html).not.toContain('1 tool');
     expect(segment.toolGroup.expanded).toBe(false);
   });
 
@@ -168,7 +198,7 @@ describe('Tool group presentation', () => {
     expect(html.match(/class="tool-call-group"/gu)).toHaveLength(2);
     expect(html.match(/class="tool-group-header"/gu)).toHaveLength(2);
     expect(html.match(/class="tool-result-card"/gu)).toHaveLength(3);
-    expect(html).toContain('LLM call 1');
-    expect(html).toContain('LLM call 1');
+    expect(html).toContain('1 file read');
+    expect(html).toContain('2 file reads');
   });
 });

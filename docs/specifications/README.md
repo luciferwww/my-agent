@@ -9,7 +9,7 @@ These documents define durable contracts that must remain true across implementa
 
 - [Approval Lifecycle](approval-lifecycle.md)
 - [Attachments Support](attachments-support.md)
-- [Channel](channel.md)
+- [Channel](channel.md), including [bundled WebSocket tool readability](channel.md#bundled-websocket-tool-readability)
 - [Multi-client User Messages](multi-client-user-messages.md)
 
 ## Execution and delegation
