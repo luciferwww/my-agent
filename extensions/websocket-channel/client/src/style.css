@@ -681,6 +681,9 @@
       .tool-result-card.is-error > .tool-result-header > .tool-result-title > .tool-result-badge {
         background: rgba(180, 35, 24, 0.1); color: var(--danger);
       }
+      .tool-result-badge[data-status='aborted'] {
+        background: rgba(213, 160, 68, 0.18); color: #8c4d24;
+      }
       .tool-result-preview {
         max-width: 100%; border-radius: 4px; overflow: hidden; padding: 8px; background: #f1f2ee; color: #445957;
       }

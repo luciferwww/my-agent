@@ -104,7 +104,7 @@ function childSessionId(segment: ConversationSegment): string | undefined {
           <div class="tool-result-header">
             <div class="tool-result-title">
               <span class="tool-result-name">{{ segment.name }}</span>
-              <span class="tool-result-badge">
+              <span class="tool-result-badge" :data-status="segment.status">
                 {{ toolStatusLabel(segment.status) }}
               </span>
             </div>
@@ -155,6 +155,8 @@ function childSessionId(segment: ConversationSegment): string | undefined {
               <span>{{ childScope(segment)?.subagentType ?? 'Subagent' }}</span>
               <span
                 class="tool-result-badge"
+                :data-status="childScope(segment)?.outcome ?? segment.subagentOutcome
+                  ?? childScope(segment)?.status ?? segment.subagentStatus"
               >
                 {{ childScope(segment)?.outcome ?? segment.subagentOutcome
                   ?? childScope(segment)?.status ?? segment.subagentStatus ?? 'unknown' }}

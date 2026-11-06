@@ -61,6 +61,22 @@ function history(toolCount: number): ConversationItem {
 }
 
 describe('Tool group presentation', () => {
+  it.each(['success', 'aborted'])('exposes the %s status on historical Tool and Subagent badges', async status => {
+    const item = buildHistoryItems([{
+      entryId: 'message', turnId: 'turn', role: 'assistant',
+      content: [{
+        type: 'tool_use', id: 'tool', name: 'task', input: { description: 'Check references' },
+        status, result_content: status === 'aborted' ? 'Tool approval aborted: shutdown.' : 'done',
+      }],
+    }])[0];
+    item.segments![0].subagentSessionId = 'child';
+    item.segments![0].subagentOutcome = status === 'success' ? 'ok' : 'aborted';
+    const html = await render(item);
+    expect(html).toContain(`class="tool-result-badge" data-status="${status}"`);
+    expect(html).toContain(`class="tool-result-badge" data-status="${status === 'success' ? 'ok' : 'aborted'}"`);
+    expect(html).toContain(status === 'success' ? 'Succeeded' : 'Aborted');
+  });
+
   it('renders one approval at the composer independently of loaded slots and disables disconnected actions', async () => {
     const approvals = ['a', 'b'].map(id => ({
       id, sessionId: 'root', turnId: id, callId: id, toolName: `tool-${id}`, input: { command: id },
