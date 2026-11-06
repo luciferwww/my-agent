@@ -1,65 +1,38 @@
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { beforeAll, describe, expect, it } from 'vitest';
-import {
-  compileTypeScriptFixture,
-  findFt07MutableRegistryMembers,
-  loadProductionSources,
-  loadTypeScriptSources,
-} from './rules.js';
-import type { SourceInput } from './rules.js';
+import ts from 'typescript';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+import type { HookProjection, RegistrySnapshot, ToolProjection } from '../core/registry/index.js';
 
-const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url));
-const FIXTURE_ROOT = fileURLToPath(new URL('../../test-fixtures/architecture-fitness/ft-07', import.meta.url));
-let productionSources: SourceInput[];
+type ReadonlyCollections<T> = {
+  readonly [Key in keyof T]: T[Key] extends readonly unknown[] ? Readonly<T[Key]> : T[Key];
+};
 
-describe('FT-07 immutable Registry Snapshot boundary', () => {
-  beforeAll(async () => {
-    productionSources = await loadProductionSources(REPOSITORY_ROOT);
-  });
+describe('FT-07 immutable Registry Snapshot contract', () => {
+  it('exposes readonly production Snapshot fields and projection collections', () => {
+    expectTypeOf<RegistrySnapshot>().toEqualTypeOf<ReadonlyCollections<RegistrySnapshot>>();
+    expectTypeOf<HookProjection>().toEqualTypeOf<ReadonlyCollections<HookProjection>>();
+    expectTypeOf<Pick<ToolProjection, 'definitions'>>()
+      .toEqualTypeOf<ReadonlyCollections<Pick<ToolProjection, 'definitions'>>>();
 
-  it('compiles a readonly Snapshot and rejects mutation and Builder injection', async () => {
-    const passSources = await loadTypeScriptSources(`${FIXTURE_ROOT}/pass`);
-    const failSources = await loadTypeScriptSources(`${FIXTURE_ROOT}/fail`);
-
-    expect(findFt07MutableRegistryMembers(passSources, ['RegistrySnapshot'])).toEqual([]);
-    expect(await compileTypeScriptFixture(`${FIXTURE_ROOT}/pass`)).toEqual([]);
-    expect(findFt07MutableRegistryMembers(failSources, ['RegistryBuilder'])).toEqual([
-      'FT-07 source=src/runtime/RuntimeApp.ts type=RegistryBuilder mutableMember=tools violation=mutable-registry-input',
-    ]);
-    expect(await compileTypeScriptFixture(`${FIXTURE_ROOT}/fail`)).toEqual([
-      { code: 2339, file: 'src/runtime/RuntimeApp.ts' },
-      { code: 2345, file: 'src/runtime/RuntimeApp.ts' },
-    ]);
-  });
-
-  it('finds no mutable members in production Registry Snapshot projections', async () => {
-    expect(findFt07MutableRegistryMembers(productionSources, [
-      'RegistrySnapshot',
-      'ToolProjection',
-      'HookProjection',
-    ])).toEqual([]);
-  });
-
-  it('finds no legacy Tool assembly, executor setter, or RuntimeApp Task post-assembly', async () => {
-    const forbiddenEverywhere = [
-      'setToolExecutor',
-      'getDefaultBuiltinTools',
-      'assembleRuntimeTools',
-      'RuntimeToolBundle',
-      'hookRegistrations',
-      'createToolExecutor',
+    // Vitest erases type assertions; check this file against the real production types.
+    const sourcePath = fileURLToPath(import.meta.url);
+    const configPath = fileURLToPath(new URL('../../tsconfig.json', import.meta.url));
+    const config = ts.readConfigFile(configPath, ts.sys.readFile);
+    if (config.error) {
+      throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, '\n'));
+    }
+    const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, dirname(configPath));
+    expect(parsed.errors.map((error) => ts.flattenDiagnosticMessageText(error.messageText, '\n')))
+      .toEqual([]);
+    const program = ts.createProgram([sourcePath], parsed.options);
+    const source = program.getSourceFile(sourcePath);
+    if (!source) throw new Error(`Missing Registry contract test source: ${sourcePath}`);
+    const diagnostics = [
+      ...program.getSyntacticDiagnostics(source),
+      ...program.getSemanticDiagnostics(source),
     ];
-    const violations = productionSources.flatMap((source) => [
-      ...forbiddenEverywhere
-        .filter((symbol) => source.content.includes(symbol))
-        .map((symbol) => `${source.path}: ${symbol}`),
-      ...(source.path === 'src/runtime/RuntimeApp.ts'
-        ? ['createTaskToolContribution', 'buildRegistrySnapshot']
-          .filter((symbol) => source.content.includes(symbol))
-          .map((symbol) => `${source.path}: ${symbol}`)
-        : []),
-    ]);
-
-    expect(violations).toEqual([]);
+    expect(diagnostics.map((error) => ts.flattenDiagnosticMessageText(error.messageText, '\n')))
+      .toEqual([]);
   });
 });

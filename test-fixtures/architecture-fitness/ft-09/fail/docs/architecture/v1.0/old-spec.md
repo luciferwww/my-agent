@@ -1,3 +1,0 @@
-# Old Spec
-
-- **Status:** Superseded

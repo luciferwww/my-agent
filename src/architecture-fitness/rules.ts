@@ -7,7 +7,7 @@ export interface SourceInput {
   content: string;
 }
 
-interface ModuleReference {
+export interface ModuleReference {
   specifier: string;
   symbols: string[];
   namespaceImport?: string;
@@ -17,27 +17,6 @@ interface NamedDeclaration {
   node: ts.InterfaceDeclaration | ts.TypeAliasDeclaration | ts.ClassDeclaration;
   sourceFile: ts.SourceFile;
   sourcePath: string;
-}
-
-export interface Ft06FixtureManifest {
-  identities: string[];
-  corePaths: string[];
-}
-
-export interface TypeScriptFixtureDiagnostic {
-  code: number;
-  file?: string;
-}
-
-export interface ContractSurfaceEntry {
-  contract: string;
-  source: string;
-  kind: string;
-}
-
-export interface ContractInventoryEntry extends ContractSurfaceEntry {
-  positive: string[];
-  negative: string[];
 }
 
 type Boundary = 'Application' | 'Domain/Application' | 'Infrastructure' | 'Composition' | 'Mixed';
@@ -83,16 +62,8 @@ const MIXED_PRODUCTION_PATHS = new Set([
 ]);
 
 const SDK_ALLOWLIST = new Map([
-  ['@anthropic-ai/sdk', []],
   ['ws', ['extensions/websocket-channel/']],
 ]);
-
-const LEGACY_DOCUMENT_ROOTS = [
-  'docs/architecture/current/',
-  'docs/architecture/v1.0/',
-  'docs/legacy/',
-  'docs_old/',
-] as const;
 
 export async function loadTypeScriptSources(
   rootDir: string,
@@ -105,18 +76,19 @@ export async function loadTypeScriptSources(
     const entries = await readdir(directory, { withFileTypes: true });
     for (const entry of entries) {
       const absolutePath = join(directory, entry.name);
-      if (entry.isDirectory()) {
-        await walk(absolutePath);
-        continue;
-      }
-      if (!entry.isFile() || !entry.name.endsWith('.ts')) {
-        continue;
-      }
-
       const sourcePath = posix.join(pathPrefix, normalizePath(relative(rootDir, absolutePath)));
       if (excludedPrefixes.some((prefix) => sourcePath.startsWith(prefix))) {
         continue;
       }
+      if (entry.isDirectory()) {
+        if (['node_modules', 'dist', '.git', 'coverage'].includes(entry.name)) continue;
+        await walk(absolutePath);
+        continue;
+      }
+      if (!entry.isFile() || !/\.tsx?$/u.test(entry.name) || entry.name.endsWith('.d.ts')) {
+        continue;
+      }
+
       sources.push({ path: sourcePath, content: await readFile(absolutePath, 'utf8') });
     }
   }
@@ -135,52 +107,8 @@ export async function loadProductionSources(repositoryRoot: string): Promise<Sou
     loadTypeScriptSources(join(repositoryRoot, 'extensions'), [], 'extensions'),
   ]);
   return sources.flat()
-    .filter((source) => !source.path.endsWith('.test.ts'))
+    .filter((source) => !/\.(?:test|spec)\.tsx?$/u.test(source.path))
     .sort((left, right) => left.path.localeCompare(right.path));
-}
-
-export async function loadFt09GovernedSources(repositoryRoot: string): Promise<SourceInput[]> {
-  const sources: SourceInput[] = [];
-  const roots = [
-    { directory: join(repositoryRoot, 'docs'), pathPrefix: 'docs' },
-    { directory: join(repositoryRoot, 'src'), pathPrefix: 'src' },
-    { directory: join(repositoryRoot, 'scripts'), pathPrefix: 'scripts' },
-    { directory: join(repositoryRoot, 'clients'), pathPrefix: 'clients' },
-  ];
-  const rootFiles = ['README.md', 'CONTRIBUTING.md'];
-  const textExtension = /\.(?:cjs|css|html|js|json|jsonc|md|mjs|ts|tsx)$/iu;
-  const historicalControlPaths = new Set([
-    'docs/changes/archive/documentation-reorganization/port-audit.json',
-    'docs/changes/archive/documentation-reorganization/proposal.md',
-    'docs/changes/archive/slice-6-closeout/document-disposition-manifest.json',
-    'docs/decisions/adr-006-legacy-and-compatibility-exit.md',
-  ]);
-
-  async function walk(directory: string, rootDir: string, pathPrefix: string): Promise<void> {
-    const entries = await readdir(directory, { withFileTypes: true });
-    for (const entry of entries) {
-      const absolutePath = join(directory, entry.name);
-      if (entry.isDirectory()) {
-        await walk(absolutePath, rootDir, pathPrefix);
-        continue;
-      }
-      if (!entry.isFile() || !textExtension.test(entry.name)) continue;
-      const sourcePath = posix.join(pathPrefix, normalizePath(relative(rootDir, absolutePath)));
-      if (historicalControlPaths.has(sourcePath)) continue;
-      if (sourcePath.startsWith('src/architecture-fitness/')
-        || sourcePath === 'src/test-setup.ts'
-        || /\.(?:test|spec)\.[cm]?[jt]sx?$/iu.test(sourcePath)) {
-        continue;
-      }
-      sources.push({ path: sourcePath, content: await readFile(absolutePath, 'utf8') });
-    }
-  }
-
-  for (const root of roots) await walk(root.directory, root.directory, root.pathPrefix);
-  for (const path of rootFiles) {
-    sources.push({ path, content: await readFile(join(repositoryRoot, path), 'utf8') });
-  }
-  return sources.sort((left, right) => left.path.localeCompare(right.path));
 }
 
 export function findFt01BoundaryViolations(sources: SourceInput[]): string[] {
@@ -264,9 +192,7 @@ export function findFt03RunnerBoundaryViolations(sources: SourceInput[]): string
       }
 
       let violation: string | undefined;
-      if (target.startsWith('src/adapters/provider/')) {
-        violation = 'provider-adapter-import';
-      } else if (target.startsWith('src/platform/config/')) {
+      if (target.startsWith('src/platform/config/')) {
         violation = target === 'src/platform/config/loader.ts' ? 'config-loader-import' : 'config-import';
       } else if (target.startsWith('src/platform/logger/')) {
         violation = 'global-service-import';
@@ -316,29 +242,6 @@ export function findFt03RunnerBoundaryViolations(sources: SourceInput[]): string
   return [...new Set(diagnostics)].sort();
 }
 
-export function findFt04LegacyDirectionViolations(
-  sources: SourceInput[],
-  newCoreRoots: string[],
-  forbiddenRoots: string[],
-): string[] {
-  const diagnostics: string[] = [];
-
-  for (const source of sources) {
-    if (!newCoreRoots.some((root) => source.path.startsWith(root))) {
-      continue;
-    }
-    for (const reference of collectModuleReferences(source)) {
-      const target = resolveRelativeModule(source.path, reference.specifier);
-      if (!target || !forbiddenRoots.some((root) => target.startsWith(root))) {
-        continue;
-      }
-      diagnostics.push(`FT-04 source=${source.path} forbiddenTarget=${target}`);
-    }
-  }
-
-  return [...new Set(diagnostics)].sort();
-}
-
 export function findFt05ExtensionCapabilityViolations(
   sources: SourceInput[],
   extensionRoots: string[],
@@ -356,272 +259,9 @@ export function findFt05ExtensionCapabilityViolations(
         );
       }
     }
-
-    const sourceFile = createSourceFile(source);
-    const visit = (node: ts.Node): void => {
-      if (
-        ts.isCallExpression(node)
-        && ts.isPropertyAccessExpression(node.expression)
-        && node.expression.name.text === 'get'
-        && ts.isIdentifier(node.expression.expression)
-        && ['container', 'serviceLocator', 'services'].includes(node.expression.expression.text)
-      ) {
-        diagnostics.push(
-          `FT-05 source=${source.path} symbol=${node.expression.getText(sourceFile)} capability=none violation=service-locator-get`,
-        );
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(sourceFile);
   }
 
   return [...new Set(diagnostics)].sort();
-}
-
-export function findFt06ChangeLocalityViolations(
-  sources: SourceInput[],
-  manifest: Ft06FixtureManifest,
-): string[] {
-  const diagnostics: string[] = [];
-  const identities = new Set(manifest.identities);
-
-  for (const source of sources.filter((candidate) => (
-    manifest.corePaths.some((corePath) => (
-      corePath.endsWith('/') ? candidate.path.startsWith(corePath) : candidate.path === corePath
-    ))
-  ))) {
-    const sourceFile = createSourceFile(source);
-    const visit = (node: ts.Node): void => {
-      let identity: string | undefined;
-      let matchedBranch: string | undefined;
-      if (
-        ts.isBinaryExpression(node)
-        && [
-          ts.SyntaxKind.EqualsEqualsEqualsToken,
-          ts.SyntaxKind.EqualsEqualsToken,
-          ts.SyntaxKind.ExclamationEqualsEqualsToken,
-          ts.SyntaxKind.ExclamationEqualsToken,
-        ].includes(node.operatorToken.kind)
-      ) {
-        identity = findManifestIdentity(node, identities);
-        matchedBranch = identity ? 'binary-expression' : undefined;
-      } else if (ts.isCaseClause(node) && ts.isStringLiteral(node.expression)) {
-        identity = identities.has(node.expression.text) ? node.expression.text : undefined;
-        matchedBranch = identity ? 'switch-case' : undefined;
-      } else if (ts.isLiteralTypeNode(node) && ts.isStringLiteral(node.literal)) {
-        identity = identities.has(node.literal.text) ? node.literal.text : undefined;
-        matchedBranch = identity ? 'string-union' : undefined;
-      }
-
-      if (identity && matchedBranch) {
-        diagnostics.push(
-          `FT-06 fixture=${identity} coreFile=${source.path} matchedBranch=${matchedBranch}`,
-        );
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(sourceFile);
-  }
-
-  return [...new Set(diagnostics)].sort();
-}
-
-export function findFt07MutableRegistryMembers(
-  sources: SourceInput[],
-  mutableTypeNames: string[],
-): string[] {
-  const declarations = collectNamedDeclarations(sources);
-  const diagnostics: string[] = [];
-
-  for (const typeName of mutableTypeNames) {
-    const declaration = declarations.get(typeName);
-    if (!declaration) {
-      continue;
-    }
-    for (const mutableMember of findMutableCollectionMembers(declaration)) {
-      diagnostics.push(
-        `FT-07 source=${declaration.sourcePath} type=${typeName} mutableMember=${mutableMember} violation=mutable-registry-input`,
-      );
-    }
-  }
-
-  return diagnostics.sort();
-}
-
-export async function compileTypeScriptFixture(rootDir: string): Promise<TypeScriptFixtureDiagnostic[]> {
-  const sources = await loadTypeScriptSources(rootDir);
-  const rootNames = sources.map((source) => join(rootDir, source.path));
-  const program = ts.createProgram({
-    rootNames,
-    options: {
-      target: ts.ScriptTarget.ES2022,
-      module: ts.ModuleKind.NodeNext,
-      moduleResolution: ts.ModuleResolutionKind.NodeNext,
-      strict: true,
-      skipLibCheck: true,
-      lib: ['lib.es2022.d.ts'],
-      types: [],
-      noEmit: true,
-    },
-  });
-
-  return ts.getPreEmitDiagnostics(program).map((diagnostic) => ({
-    code: diagnostic.code,
-    file: diagnostic.file ? normalizePath(relative(rootDir, diagnostic.file.fileName)) : undefined,
-  }));
-}
-
-export function findFt08ContractInventoryViolations(
-  sources: SourceInput[],
-  surface: ContractSurfaceEntry[],
-  inventory: ContractInventoryEntry[],
-  availableTestPaths: Set<string>,
-): string[] {
-  const diagnostics: string[] = [];
-  const sourcesByPath = new Map(sources.map((source) => [source.path, source]));
-  const inventoryByKey = new Map<string, ContractInventoryEntry[]>();
-
-  for (const entry of inventory) {
-    const key = `${entry.source}#${entry.contract}`;
-    const entries = inventoryByKey.get(key) ?? [];
-    entries.push(entry);
-    inventoryByKey.set(key, entries);
-  }
-
-  const surfaceKeys = new Set(surface.map((entry) => `${entry.source}#${entry.contract}`));
-  for (const entry of inventory) {
-    const key = `${entry.source}#${entry.contract}`;
-    if (!surfaceKeys.has(key)) {
-      diagnostics.push(
-        `FT-08 contract=${entry.contract} source=${entry.source} kind=${entry.kind} violation=inventory-outside-surface`,
-      );
-    }
-  }
-
-  for (const expected of surface) {
-    const source = sourcesByPath.get(expected.source);
-    if (!source || !collectExportedDeclarations(source).has(expected.contract)) {
-      diagnostics.push(
-        `FT-08 contract=${expected.contract} source=${expected.source} kind=${expected.kind} violation=missing-export`,
-      );
-      continue;
-    }
-
-    const key = `${expected.source}#${expected.contract}`;
-    const entries = inventoryByKey.get(key) ?? [];
-    if (entries.length === 0) {
-      diagnostics.push(
-        `FT-08 contract=${expected.contract} source=${expected.source} kind=${expected.kind} violation=missing-inventory-entry`,
-      );
-      continue;
-    }
-    if (entries.length > 1) {
-      diagnostics.push(
-        `FT-08 contract=${expected.contract} source=${expected.source} kind=${expected.kind} violation=duplicate-inventory-entry`,
-      );
-      continue;
-    }
-
-    const entry = entries[0];
-    if (entry.positive.length === 0) {
-      diagnostics.push(
-        `FT-08 contract=${expected.contract} source=${expected.source} kind=${expected.kind} violation=missing-positive-coverage`,
-      );
-    }
-    if (entry.negative.length === 0) {
-      diagnostics.push(
-        `FT-08 contract=${expected.contract} source=${expected.source} kind=${expected.kind} violation=missing-negative-coverage`,
-      );
-    }
-    for (const testPath of [...entry.positive, ...entry.negative]) {
-      if (!availableTestPaths.has(testPath)) {
-        diagnostics.push(
-          `FT-08 contract=${expected.contract} source=${expected.source} test=${testPath} violation=missing-test-file`,
-        );
-      }
-    }
-  }
-
-  return diagnostics.sort();
-}
-
-export function findFt09LegacySourceReferences(
-  sources: SourceInput[],
-  legacyRoots: readonly string[] = LEGACY_DOCUMENT_ROOTS,
-): string[] {
-  const diagnostics: string[] = [];
-
-  for (const source of sources) {
-    const commentRanges = collectCommentRanges(source.content);
-    const legacyReference = /(?:docs_old|docs[\\/](?:architecture[\\/](?:current|v1\.0)|legacy))[\\/][^\s"'`)\]]+/g;
-    for (const match of source.content.matchAll(legacyReference)) {
-      const target = match[0].replaceAll('\\', '/');
-      const commentRange = commentRanges.find((range) => (
-        match.index >= range.start && match.index < range.end
-      ));
-      if (commentRange && isExplicitNonAuthoritativeHistoryComment(
-        source.content.slice(commentRange.start, commentRange.end),
-      )) {
-        continue;
-      }
-      if (legacyRoots.some((root) => target.startsWith(root))) {
-        diagnostics.push(`FT-09 source=${source.path} target=${target} violation=legacy-source-reference`);
-      }
-    }
-  }
-
-  return [...new Set(diagnostics)].sort();
-}
-
-function isExplicitNonAuthoritativeHistoryComment(rawComment: string): boolean {
-  const comment = rawComment
-    .replace(/^(?:\/\/|\/\*+|<!--)\s*/u, '')
-    .replace(/(?:\*\/|-->)\s*$/u, '')
-    .split(/\r?\n/u)
-    .map((line) => line.replace(/^\s*\*?\s?/u, ''))
-    .join(' ')
-    .trim();
-  return /^(?:historical|history|migration\s+note|历史|迁移记录)/iu.test(comment)
-    && /(?:not\s+authoritative|non-authoritative|不是?权威|非权威|不作为.*权威)/iu.test(comment);
-}
-
-function collectCommentRanges(content: string): Array<{ start: number; end: number }> {
-  const ranges: Array<{ start: number; end: number }> = [];
-  let quote: '"' | "'" | '`' | undefined;
-  let escaped = false;
-  for (let index = 0; index < content.length; index += 1) {
-    const character = content[index];
-    if (quote) {
-      if (escaped) {
-        escaped = false;
-      } else if (character === '\\') {
-        escaped = true;
-      } else if (character === quote) {
-        quote = undefined;
-      }
-      continue;
-    }
-    if (character === '"' || character === "'" || character === '`') {
-      quote = character;
-      continue;
-    }
-    if (content.startsWith('//', index)) {
-      const newlineIndex = content.indexOf('\n', index + 2);
-      const end = newlineIndex < 0 ? content.length : newlineIndex;
-      ranges.push({ start: index, end });
-      index = end - 1;
-      continue;
-    }
-    for (const [opening, closing] of [['/*', '*/'], ['<!--', '-->']] as const) {
-      if (!content.startsWith(opening, index)) continue;
-      const closingIndex = content.indexOf(closing, index + opening.length);
-      const end = closingIndex < 0 ? content.length : closingIndex + closing.length;
-      ranges.push({ start: index, end });
-      index = end - 1;
-      break;
-    }
-  }
-  return ranges;
 }
 
 function normalizePath(filePath: string): string {
@@ -637,7 +277,8 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
       ? 'Composition'
       : 'Infrastructure';
   }
-  if (sourcePath.startsWith('src/core/memory/internal/')) {
+  if (sourcePath.startsWith('src/core/memory/internal/')
+    || sourcePath === 'src/runtime/agent-home-lock.ts') {
     return 'Infrastructure';
   }
   if (
@@ -701,10 +342,16 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
 }
 
 function createSourceFile(source: SourceInput): ts.SourceFile {
-  return ts.createSourceFile(source.path, source.content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  return ts.createSourceFile(
+    source.path,
+    source.content,
+    ts.ScriptTarget.Latest,
+    true,
+    source.path.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
 }
 
-function collectModuleReferences(source: SourceInput): ModuleReference[] {
+export function collectModuleReferences(source: SourceInput): ModuleReference[] {
   const sourceFile = createSourceFile(source);
   const references = new Map<string, { symbols: Set<string>; namespaceImport?: string }>();
 
@@ -779,38 +426,6 @@ function collectNamedDeclarations(sources: SourceInput[]): Map<string, NamedDecl
   return declarations;
 }
 
-function collectExportedDeclarations(source: SourceInput): Set<string> {
-  const sourceFile = createSourceFile(source);
-  const exported = new Set<string>();
-  for (const statement of sourceFile.statements) {
-    if (
-      hasExportModifier(statement)
-      && (ts.isInterfaceDeclaration(statement)
-        || ts.isTypeAliasDeclaration(statement)
-        || ts.isClassDeclaration(statement)
-        || ts.isFunctionDeclaration(statement)
-        || ts.isEnumDeclaration(statement))
-      && statement.name
-    ) {
-      exported.add(statement.name.text);
-    }
-  }
-  return exported;
-}
-
-function findManifestIdentity(node: ts.Node, identities: Set<string>): string | undefined {
-  let match: string | undefined;
-  const visit = (candidate: ts.Node): void => {
-    if (!match && ts.isStringLiteral(candidate) && identities.has(candidate.text)) {
-      match = candidate.text;
-      return;
-    }
-    ts.forEachChild(candidate, visit);
-  };
-  visit(node);
-  return match;
-}
-
 function referencesRuntimeApp(
   source: SourceInput,
   reference: ModuleReference,
@@ -865,33 +480,6 @@ function sourceUsesNamespaceRuntimeApp(source: SourceInput, namespaceImport: str
   return found;
 }
 
-function findMutableCollectionMembers(declaration: NamedDeclaration): string[] {
-  const members = ts.isTypeAliasDeclaration(declaration.node) && ts.isTypeLiteralNode(declaration.node.type)
-    ? declaration.node.type.members
-    : ts.isInterfaceDeclaration(declaration.node) || ts.isClassDeclaration(declaration.node)
-      ? declaration.node.members
-      : [];
-
-  return members.flatMap((member) => {
-    if (!ts.isPropertySignature(member) && !ts.isPropertyDeclaration(member)) {
-      return [];
-    }
-    const memberName = member.name?.getText(declaration.sourceFile);
-    if (!memberName) {
-      return [];
-    }
-    const collectionText = member.type?.getText(declaration.sourceFile)
-      ?? (ts.isPropertyDeclaration(member) ? member.initializer?.getText(declaration.sourceFile) : undefined)
-      ?? '';
-    return isMutableCollectionText(collectionText) ? [memberName] : [];
-  }).sort();
-}
-
-function isMutableCollectionText(typeText: string): boolean {
-  return /(?:^|\W)(?:Array|Map|Set|WeakMap|WeakSet)<|\[\]|new\s+(?:Map|Set|WeakMap|WeakSet)\b/.test(typeText)
-    && !/(?:ReadonlyArray|ReadonlyMap|ReadonlySet|readonly\s)/.test(typeText);
-}
-
 function findMutableRegistrySymbol(
   boundaryNode: ts.Node,
   declarations: Map<string, NamedDeclaration>,
@@ -925,7 +513,7 @@ function inspectRegistryDeclaration(
   }
   visited.add(typeName);
 
-  const isRegistry = registryContext || /Registry|RuntimeToolBundle/.test(typeName);
+  const isRegistry = registryContext || /Registry/.test(typeName);
   const declaration = declarations.get(typeName);
   if (!declaration) {
     return isRegistry && !/Snapshot|Projection|Readonly/.test(typeName) ? typeName : undefined;
@@ -1007,7 +595,7 @@ function hasNonPublicModifier(node: ts.Node): boolean {
     )) ?? false);
 }
 
-function resolveRelativeModule(sourcePath: string, specifier: string): string | undefined {
+export function resolveRelativeModule(sourcePath: string, specifier: string): string | undefined {
   if (!specifier.startsWith('.')) {
     return undefined;
   }

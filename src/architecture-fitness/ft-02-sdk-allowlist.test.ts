@@ -20,15 +20,6 @@ describe('FT-02 integration SDK allowlist', () => {
     ]);
   });
 
-  it('rejects the retired Anthropic SDK from every production root', () => {
-    expect(findFt02SdkAllowlistViolations([{
-      path: 'src/builtins/providers/builtin/AnthropicMessagesClient.ts',
-      content: "import Anthropic from '@anthropic-ai/sdk';",
-    }])).toEqual([
-      'FT-02 package=@anthropic-ai/sdk source=src/builtins/providers/builtin/AnthropicMessagesClient.ts allowedRoots=',
-    ]);
-  });
-
   it('keeps Provider and Channel SDK imports inside their builtin capability roots', async () => {
     const productionSources = await loadProductionSources(REPOSITORY_ROOT);
 

@@ -128,6 +128,18 @@ npm run build
 
 Host, Relay Artifact, real WebSocket, and other environment-dependent validations continue to use their own explicit commands. Run them only when the corresponding boundary changes, during formal review, or at a release Gate. When a full build is about to run against the same source state, do not also run an equivalent full TypeScript no-emit check unless the acceptance criteria explicitly require two independent pieces of evidence.
 
+Fitness checks should protect durable architectural constraints with actionable
+failures, not freeze incidental dates or implementation text. Do not add them
+by default or duplicate behavior already covered by focused tests; remove or
+simplify low-value checks rather than maintaining brittle snapshots.
+
+Migration deletion lists and manually declared coverage inventories are not
+permanent architecture gates. Keep behavior in executable behavioral tests and
+type contracts tied to production types. Existing dependency exceptions may
+allow known debt, but checks must allow that debt to be removed. Current
+documentation checks validate navigation and links, not prescribed prose or
+one-to-one module ownership inventories.
+
 | Change Type | Minimum Validation |
 |---|---|
 | Documentation | Documentation diagnostics, link checks, `git diff --check` |

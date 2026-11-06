@@ -22,7 +22,7 @@ describe('FT-01 stable core boundaries', () => {
     ]);
   });
 
-  it('locks the exact current production violations and path classification', async () => {
+  it('rejects new production violations and unclassified paths', async () => {
     const productionSources = await loadProductionSources(REPOSITORY_ROOT);
 
     expect(findUnclassifiedProductionFiles(productionSources)).toEqual([]);
@@ -30,7 +30,7 @@ describe('FT-01 stable core boundaries', () => {
     expect(findFt01MixedInventoryDrift(
       productionSources.filter((source) => source.path !== 'src/runtime/errors.ts'),
     )).toContain('FT-01 inventory=missing path=src/runtime/errors.ts');
-    expect(findFt01BoundaryViolations(productionSources)).toEqual([
+    const allowedViolations = new Set([
       'FT-01 source=src/core/memory/MemoryManager.ts boundary=Application import=../../platform/logger/index.js target=src/platform/logger/index.ts targetBoundary=Infrastructure',
       'FT-01 source=src/core/memory/MemoryManager.ts boundary=Application import=./internal/LocalEmbeddingProvider.js target=src/core/memory/internal/LocalEmbeddingProvider.ts targetBoundary=Infrastructure',
       'FT-01 source=src/core/memory/MemoryManager.ts boundary=Application import=./internal/MemoryIndexer.js target=src/core/memory/internal/MemoryIndexer.ts targetBoundary=Infrastructure',
@@ -45,5 +45,7 @@ describe('FT-01 stable core boundaries', () => {
       'FT-01 source=src/core/runner/AgentRunner.ts boundary=Application import=../../platform/logger/index.js target=src/platform/logger/index.ts targetBoundary=Infrastructure',
       'FT-01 source=src/core/runner/hooks/runner.ts boundary=Application import=../../../platform/logger/index.js target=src/platform/logger/index.ts targetBoundary=Infrastructure',
     ]);
+    expect(findFt01BoundaryViolations(productionSources)
+      .filter((violation) => !allowedViolations.has(violation))).toEqual([]);
   });
 });

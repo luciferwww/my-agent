@@ -399,6 +399,88 @@ passed: 90 tests, 2 files
 
 独立复审的 fork 归属已修正；“输入随模型分支失效须撤回”的建议经 owner 语义澄清后撤回，retry 单份展示已按统一输入身份实现并验证。未新增已确认的功能阻塞项；既有四项 fitness 的验收处置及 owner 最终确认仍未完成，Change 不归档。
 
+## 13. 既有 fitness 漂移的局部处置（2026-11-04）
+
+owner 授权顺手修复简单问题，并明确不应随意新增低价值 fitness。第 10 节的四项旧失败已按实际职责和已有行为保障处置；保留原始失败记录，不改生产实现来迎合检查：
+
+- FT-01：将执行真实文件锁 I/O 的 `src/runtime/agent-home-lock.ts` 明确归入 Infrastructure，不加入 Mixed 或依赖违规豁免。
+- FT-09：将已不存在的顶层 `clients` 扫描入口改为实际 `extensions`，包含 Vue 源文件；跳过 `node_modules`、`dist`、`.git`，不扫描第三方依赖和构建产物，不吞掉读取错误。
+- FT-12 日期：移除所有 Current Architecture 必须等于同一个固定 Verified 日期的断言；保留所有权、模块覆盖、证据与导航检查。
+- FT-12 协议输出限制：删除整条重复的源码字符串测试，不用另一条动态键字符串断言替换。已有 Provider 单元测试验证各协议实际请求参数，以及 `max_tokens` 到 `max_completion_tokens` 的成功学习和失败不学习行为。
+
+没有新增 fitness；总数从 43 减至 42。相关 [Development Workflow](../../../governance/development-workflow.md) 补充只为长期架构约束增加可操作检查、不固定偶然日期／实现文字、不重复已有行为测试的原则。
+
+在同一隔离 Node 22 环境执行：
+
+```text
+npm exec --yes --package=node@22 -- node node_modules\vitest\vitest.mjs run --config vitest.fitness.config.ts
+  src\architecture-fitness\ft-01-boundaries.test.ts
+  src\architecture-fitness\ft-09-doc-governance.test.ts
+  src\architecture-fitness\ft-12-current-architecture.test.ts
+passed: 9 tests, 3 files
+
+npm exec --yes --package=node@22 -- node node_modules\vitest\vitest.mjs run --config vitest.fitness.config.ts
+passed: 42 tests, 13 files
+
+npm exec --yes --package=node@22 -- node node_modules\vitest\vitest.mjs run --config vitest.unit.config.ts
+  src\builtins\providers\builtin\protocol-clients.test.ts
+  src\builtins\providers\builtin\BuiltinLlmProvider.test.ts
+passed: 78 tests, 2 files
+
+npm exec --yes --package=node@22 -- npm run lint
+passed
+```
+
+本轮只改既有检查和直接相关文档，没有生产行为变更、依赖变更或实际 Agent Home sessions 清理；没有重跑全量单元／集成、生产 build、浏览器或线上 Provider E2E。四项 fitness 处置已完成；最终 owner 验收仍待确认，Change 保持 active，未 commit/push 或归档。
+
+## 14. Owner 批准的 fitness 价值收敛（2026-11-04）
+
+第 13 节只是修复旧检查的运行漂移，不代表所有检查都值得长期存在。owner 指出旧文档已删除，目录黑名单既不能验证文档权威性，也无法拦截其他任意名称；随后审阅整个 fitness 目录，并批准按“保留真实边界、删除迁移包袱和文字快照”收敛。
+
+处置：
+
+- 删除 FT-04、FT-08、FT-09、契约测试覆盖人工清单、文档模块归属人工清单，以及 20 个不再使用的 fixture 文件和专用 helper。
+- FT-01／03 从“精确冻结全部旧违规”改为只拒绝未豁免的新违规，允许旧债被消除；没有扩大豁免。
+- FT-02 保留实际 SDK 使用范围约束，删除退役 Anthropic SDK 的永久名称禁令。
+- FT-05 保留 RuntimeApp 导入边界及 barrel 检查，删除按变量名猜 Service Locator、固定构造位置与旧方法名检查。
+- FT-06 只检查 Host／Runtime／acquisition 对具体 Extension 的实际导入，不再用两个虚构 fixture 名声称证明所有未来变更的局部性。
+- FT-07 不再编译自定义的玩具 Snapshot；直接检查真实生产 Snapshot 和 projection 的 readonly 类型，并在 fitness 内编译该类型测试文件，避免 Vitest 转译抹除类型断言后出现假通过。
+- FT-10 只保留真实 `process.exit()` 调用的 Host 所有权检查，移除历史符号禁令、精确函数体、构造语句、默认超时和源码位置检查。
+- FT-12 保留动态页面导航、状态字段和本地链接／fragment 有效性；删除固定文档数量、全模块唯一归属清单、指定英文原句、源码片段和测试标题检查。
+- FT-13 沿用已有公开模块入口限制及禁止生产导入 fixture 的规则，检查实际模块引用；删除新旧文件位置快照和固定 export 语句。
+- FT-14 只保留模块不得反向导入 Platform Configuration，删除数字黑名单和 Memory chunking 接线／测试标题文字检查。
+- 复用已有 TypeScript AST 引用解析，生产扫描排除依赖、构建产物、声明文件及测试；不声称覆盖 Vue 或任意动态依赖。没有新建门禁框架或新增 fitness 文件。
+
+总量由第 13 节的 42 例／13 文件收敛为 15 例／10 文件；数量不是验收指标。行为保障仍由原有测试承担，没有删除生产模块行为测试。治理文档同步实际检查边界，不改归档历史记录。
+
+已执行的相关行为回归：
+
+```text
+npm exec --yes --package=node@22 -- node node_modules\vitest\vitest.mjs run --config vitest.unit.config.ts
+  src\builtins\providers\builtin\protocol-clients.test.ts
+  src\builtins\providers\builtin\BuiltinLlmProvider.test.ts
+  src\runtime\runtime-builder.test.ts src\runtime\reload-coordinator.test.ts
+  src\runtime\composition-coordinator.test.ts
+  src\hosts\standalone\runtime-host.test.ts
+  src\core\memory\internal\MemoryIndexer.test.ts
+  src\extension\acquisition\loader.test.ts
+  src\platform\config\agent-config-loader.test.ts
+passed: 221 tests, 9 files
+
+npm exec --yes --package=node@22 -- node node_modules\vitest\vitest.mjs run --config vitest.fitness.config.ts
+passed: 15 tests, 10 files (final state, including actual Registry type compilation)
+
+npm exec --yes --package=node@22 -- npm run lint
+passed (final state)
+
+git diff --check
+passed
+```
+
+使用 TypeScript compiler host 仅在内存替换真实生产类型，验证正常类型通过，而 Snapshot 字段去掉 readonly、Provider 数组改为可变、Tool 数组改为可变三种反例均触发实际类型测试错误。没有写入或短暂修改生产类型文件，也没有新增永久 mutation 测试。
+
+本轮只改变检查、废弃 fixture 和直接相关文档，没有生产行为或依赖变更；未执行全量单元／集成、生产 build、浏览器或线上 Provider E2E，也未清理实际 Agent Home sessions。owner 批准的是 fitness 收敛，不等于展示功能最终验收；Change 仍 active，不自动 commit/push 或归档。
+
 ## 15. 单 Tool 展示简化与实机验收反馈（2026-11-04）
 
 owner 实机反馈单个 Tool 外再套 LLM call 分组占用空间，确认单 Tool 直接显示、同块出现第二个 Tool 后再显示 Group。只调整 `MessageItem` 的分组外观、标题和折叠可见性，不改调用归属、数据记录或多 Tool 折叠状态。
