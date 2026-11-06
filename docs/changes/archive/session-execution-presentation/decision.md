@@ -1,6 +1,7 @@
 # Decision: Ancestor Execution Presentation in Session Transcripts
 
 > Status: Accepted
+> Archived: 2026-11-06; implemented and owner-accepted
 > Decision date: 2026-11-03
 > Proposal date: 2026-11-03
 > Owner: Project owner
@@ -67,12 +68,12 @@ The prior independent draft review corrected Approval field semantics. The concr
 
 ## Migration and rollback
 
-Only the affected target-design scope of ADR-020 is superseded; explicit membership, transient read-only Child and retention ownership remain unchanged. Current source still uses the previous observation/viewer path until those delivery stages replace it; acceptance is not evidence that routing has already changed.
+Only the affected target-design scope of ADR-020 is superseded; explicit membership, transient read-only Child and retention ownership remain unchanged. Ancestor delivery and inline execution presentation have replaced the previous bundled observation/viewer path; implementation and validation evidence is retained in the Plan and Validation Record.
 
 Ship Channel/client/schema together. Do not retain both bundled viewer paths or add an observation switch. Preserve old message identities on upgrade. Rollback after writing v3 needs a compatible reader or explicit offline data migration, not silent record dropping.
 
 ## Follow-up
 
-Owner accepted the reviewed design by confirming staged implementation. Message identity foundations are implemented; descendant persistence/routing and viewer replacement remain pending. Synchronize Current Architecture and stable Specifications only for behavior actually delivered.
+Message identity, descendant persistence/routing and inline viewer replacement are implemented. Current Architecture and stable Specifications reflect the delivered behavior. The owner confirmed acceptance after multiple manual test and correction rounds on 2026-11-06; this decision and its delivery records are archived as provenance.
 
 Process authority: [Development Workflow](../../../governance/development-workflow.md).

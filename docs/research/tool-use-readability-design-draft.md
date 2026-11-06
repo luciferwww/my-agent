@@ -25,7 +25,7 @@
 - [MessageItem.vue](../../extensions/websocket-channel/client/src/components/MessageItem.vue) 显示 `LLM call N`、工具数量，以及单个工具与递归 Child 内容。
 - [conversation.ts](../../extensions/websocket-channel/client/src/client/conversation.ts) 定义工具 segment 与 group，保留工具名称、输入和调用身份。
 - [history.ts](../../extensions/websocket-channel/client/src/client/history.ts) 还原历史展示并与实时内容合并。
-- 分组边界和折叠规则以 [Session Execution Presentation Specification](../changes/active/session-execution-presentation/specification.md) 为准；本草稿不修改它们。
+- 分组边界和折叠规则的已接受设计及交付来源见归档的 [Session Execution Presentation Specification](../changes/archive/session-execution-presentation/specification.md)；当前行为以 [Channel Specification](../specifications/channel.md) 为准，本草稿不修改它们。
 
 ### 2.1 已有工具清单
 

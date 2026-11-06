@@ -8,7 +8,7 @@
 > Authorization: 2026-11-06 owner 确认 go，按 Group、Single 两步进入 Delivery；不自动 commit/push
 > Input: [Tool Use 可读性设计草稿](../../../research/tool-use-readability-design-draft.md)
 > Stable authority: [Channel Specification: Tool readability](../../../specifications/channel.md#bundled-websocket-tool-readability)
-> Related: [Session Execution Presentation Specification](../../active/session-execution-presentation/specification.md)
+> Related: [Session Execution Presentation Specification](../session-execution-presentation/specification.md)
 
 ## 1. Outcome and scope
 

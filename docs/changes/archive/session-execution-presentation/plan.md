@@ -4,6 +4,8 @@
 > Date: 2026-11-03
 > Owner: Project owner
 > Classification: Architecture Slice
+> Archived: 2026-11-06，owner 多轮人工测试后确认审核通过
+> Stable authority: [Session architecture](../../../architecture/session.md), [Channels architecture](../../../architecture/channels.md), [Channel Specification](../../../specifications/channel.md), [Subagent Specification](../../../specifications/subagent.md)
 > Authorization: 2026-11-03 owner 在独立复审后确认继续，分阶段实施消息身份关联与祖先留存，不自动 commit/push
 > Specification: [Accepted Specification](specification.md)
 > Decision: [Accepted ancestor presentation decision](decision.md)
@@ -14,7 +16,7 @@
 
 在父聊天中内嵌 Child 的实时执行过程，并在所有祖先 Transcript 中留存展示专用记录。每个 Session 可独立恢复自身及后代过程，不依赖临时 Child 文件仍然存在；展示内容不进入祖先模型 Context。
 
-消息身份关联、祖先展示留存／History 投影／完整 Turn 累计分页、祖先实时投递、递归内嵌 UI 及工具分组已实现。2026-11-06 owner 确认经过多轮人工测试和修正，暂未发现还需修改的事项，人工审核通过；本轮按功能整理提交，不扩大实现范围。
+消息身份关联、祖先展示留存／History 投影／完整 Turn 累计分页、祖先实时投递、递归内嵌 UI 及工具分组已实现。2026-11-06 owner 确认经过多轮人工测试和修正，暂未发现还需修改的事项，人工审核通过；相关功能已按依赖拆分提交，文档完成收尾归档，不扩大实现范围。
 
 ## 2. Confirmed direction
 
@@ -99,3 +101,9 @@
 ## 8. Owner acceptance
 
 2026-11-06 owner 确认：“做过多轮人工测试也修改过一些东西。暂时没发现还有什么需要改的。可以看成人工审核已过。”据此标记本 Change 的人工审核通过，不据此补写未执行的线上 Provider E2E。按 owner 授权分功能提交，不推送；无关治理调整及独立的原始 message／模型 User prompt 分离改动保留在工作区。
+
+## 9. Closeout
+
+2026-11-06 相关功能已分为五个提交：`afa69c0` 展示留存与路由、`99dffb2` 递归客户端与工具分组／审批卡组、`fd9b37e` Subagent 终态折叠修复、`ef15682` Aborted 徽标和 `111620f` 工具标题与操作摘要。最终提交快照的聚焦测试、类型检查和构建结果见 Validation §19。
+
+本 Change 归档保存交付与验收来源；长期行为以现有架构文档和稳定契约为准。无关治理／fitness 和模型 User prompt 改动不纳入本次归档提交，原有未提交内容保留；未推送。

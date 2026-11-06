@@ -1,6 +1,7 @@
 # Session Execution Presentation Specification
 
 > Status: Accepted
+> Archived: 2026-11-06，已实现并通过 owner 人工审核；本文件保留已接受设计及验收来源，不替代现有稳定契约
 > Date: 2026-11-03
 > Owner: Project owner
 > Related Plan: [Plan](plan.md)
@@ -15,7 +16,7 @@
 
 包括所有祖先观察与展示留存、按目标条数累计的完整 Turn History 分页、bundled client 固定 slot、现有 Approval 挂载、LLM call 工具分组及独立 Child 窗口替代。
 
-不新增控制权限、观察开关、独立展示数据库或通用身份框架，不变更模型消息语义、Child 清理期限或执行监督规则。以下为已接受的目标设计；消息身份、祖先留存／History／实时投递、递归内嵌 UI 和 LLM call 工具分组已分阶段实现。整体目标验收仍待推进，不表示整个 Change 已完成。
+不新增控制权限、观察开关、独立展示数据库或通用身份框架，不变更模型消息语义、Child 清理期限或执行监督规则。以下为已接受并交付的设计；消息身份、祖先留存／History／实时投递、递归内嵌 UI 和工具分组已实现，2026-11-06 owner 人工审核通过并完成归档。
 
 ## Boundaries and dependency direction
 

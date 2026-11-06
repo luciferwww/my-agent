@@ -1,7 +1,7 @@
 # Session Execution Presentation: Validation Record
 
 > Date: 2026-11-04
-> Status: SEP-ID through SEP-4 implemented; SEP-5 overall validation recorded, implementation review and owner acceptance pending
+> Status: Implemented, owner manual review accepted; archived 2026-11-06
 > Related: [Plan](plan.md), [Accepted Specification](specification.md)
 
 ## 1. Design-stage scope and method
@@ -465,3 +465,15 @@ passed: client build and 62-asset verification
 owner 确认本 Change 已经过多轮人工测试和修正，暂未发现还需修改的事项，可以视为人工审核通过。本记录补齐整体功能的人工验收结论，不将既有受控组件验证扩写为线上 Provider E2E，也不追加实现范围。
 
 owner 授权按功能提交本次对话相关改动及其必要基础，不推送。无关架构治理／fitness 调整及独立的原始 message／模型 User prompt 分离改动不纳入本批提交。
+
+## 19. Functional commit verification and archival（2026-11-06）
+
+五个功能提交已完成，具体边界见 Plan §9。验证使用实际暂存集合导出的独立快照，而非含有未提交依赖的工作区：
+
+- 已缓存的 Node 22.23.3；未安装依赖或切换全局 Node。
+- 39 个相关测试文件、775 项测试通过。
+- `npm run lint` 通过。
+- `npm run prepare:websocket-client` 及 62 项构建资源校验通过。
+- 当时 234 个相关文档本地链接均有效；归档移动后另行核对引用。
+
+这些结果记录实际执行情况，不以测试数量代表完整行为覆盖，也不宣称线上 Provider E2E。owner 已确认多轮人工测试后审核通过，相关架构和稳定契约已同步，本 Change 完成文档收尾并归档；无关未提交改动保留，未推送。

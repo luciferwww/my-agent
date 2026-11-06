@@ -4,7 +4,7 @@
 > Authorization: 仅用于讨论，不授权实现，不覆盖 Current Architecture、Accepted Decisions、Stable Specifications 或源代码
 > Date: 2026-11-02
 > Discussion update: 2026-11-03，收敛祖先留存、现有身份复用与实施边界；仍不授权实现
-> Follow-up: [Session Execution Presentation Change](../changes/active/session-execution-presentation/plan.md) 的 Plan／Spec 已接受并分阶段实施；消息关联基础已实现，后续阶段尚未交付。具体契约与进度以 Change 为准。
+> Follow-up: [Session Execution Presentation Change](../changes/archive/session-execution-presentation/plan.md) 已交付，2026-11-06 owner 经多轮人工测试确认审核通过，按功能提交后归档。本文保留讨论来源；长期行为以现有架构文档和稳定契约为准，验收及限制见归档 Change。
 > Scope: Child 事件向 Parent 投递、父 Transcript 中的展示专用记录、Tool 分组与递归执行展示、实时与历史恢复边界
 
 ## 1. 背景与讨论方向
@@ -252,7 +252,7 @@ Root Transcript：Root 自身记录 + A、B 的展示记录
 
 运行中的 Turn 没有最终完整内容，只能返回查询时已持久化的快照；不能因为纳入了整个可见 Turn，就把它当作执行已结束并清除实时内容。
 
-保留“先订阅、后加载历史”的流程。当前客户端已按工具 callId、Thinking ID 和文本前缀合并，并非完全没有去重；受控真实 socket 检查进一步复现首次打开的后缀重叠及重连的缺段重叠，详见 [验证记录](../changes/active/session-execution-presentation/validation.md)。检查未挂载完整 Vue 页面或真实 Provider，不代表完整端到端验收。
+保留“先订阅、后加载历史”的流程。当前客户端已按工具 callId、Thinking ID 和文本前缀合并，并非完全没有去重；受控真实 socket 检查进一步复现首次打开的后缀重叠及重连的缺段重叠，详见 [验证记录](../changes/archive/session-execution-presentation/validation.md)。检查未挂载完整 Vue 页面或真实 Provider，不代表完整端到端验收。
 
 2026-11-03 owner 确认：在消息记录上保存可选 messageId 引用，不改变 entry ID 或已有实时 message ID，也不增加独立映射表。用户输入与 steering 原样传递已有身份；Assistant 消息需在首个可展示事件前确定消息级身份并贯穿到正常／abort partial 落盘。祖先展示副本保留来源 messageId，History 安全投影该字段。invocation ID 不覆盖各种消息，排除为通用关联方案。
 

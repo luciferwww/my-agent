@@ -12,7 +12,7 @@ This directory is reserved for external comparisons and exploratory analysis. Re
 - [主流浏览器 AI Agent 技术实现与特色调研](mainstream-browser-ai-agents-technical-research-2026-10-04.md) - 对 OpenAI、Anthropic、Google、Manus、Browser Use 与 Playwright 的浏览器控制架构、SPA/AJAX 处理、安全边界和技术选型进行非权威比较。
 - [Agent Session Management Comparison](agent-session-management-comparison.md) - external comparison of Claude Code, GitHub Copilot CLI, OpenAI Codex CLI, and OpenCode.
 - [Tool Activity Presentation Draft](tool-activity-presentation-design-draft.md) - non-authorizing design for independent Tool Call and Approval cards, per-card disclosure, and realtime/history presentation boundaries.
-- [Session 执行展示与 Transcript 设计草稿](session-execution-presentation-design-draft.md) - 讨论 Child 事件向 Parent 投递、父 Transcript 的展示专用记录、LLM call 分组、递归 task 与实时／历史恢复；记录 task in/out 与完整过程留存的取舍，不授权实现。
+- [Session 执行展示与 Transcript 设计草稿](session-execution-presentation-design-draft.md) - 非权威讨论来源；已由 [Session Execution Presentation Change](../changes/archive/session-execution-presentation/plan.md) 交付，2026-11-06 owner 人工审核通过、按功能提交后归档。长期行为以现有架构和稳定契约为准。
 - [Tool Result 结果状态持久化设计草稿](tool-result-outcome-persistence-design-draft.md) - 四态 status 与内嵌审批的讨论来源，已由完成并归档的 [Unified Async Tool Execution Framework Change](../changes/archive/async-tool-use/plan.md) 承接；本文不再作为实现权威。
 - [Turn 内统一异步 Tool Use 设计草稿](async-tool-use-design-draft.md) - 所有 Tool 共用的非阻塞控制流程、调用级活动计时与取消、宿主期限和 steering/结果交付边界；不授权实现，协议与取消收敛仍待决策。
 - [Subagent Structured Tool Execution 隔离草稿](subagent-identity-event-routing-design-draft.md) - 保留上下文隔离、Child 身份/路由、并发汇总等专项分析；通用异步监督转入上一份草稿，不维护 Subagent-only 平行机制。
