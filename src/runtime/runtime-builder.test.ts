@@ -192,6 +192,9 @@ function createHarness(options: {
   const channelBindingsForTurn = vi.fn<RuntimeApplicationKernel['channelBindingsForTurn']>(
     () => undefined,
   );
+  const presentationRouteForEvent = vi.fn<RuntimeApplicationKernel['presentationRouteForEvent']>(
+    () => undefined,
+  );
   let input: RuntimeApplicationKernelInput | undefined;
   const application = Object.freeze({
     runTurn: vi.fn(),
@@ -265,6 +268,7 @@ function createHarness(options: {
       blockingTurnIds: vi.fn(() => []),
       abortGeneration: vi.fn(() => []),
       channelBindingsForTurn,
+      presentationRouteForEvent,
       shouldDeliverAgentEvent: vi.fn(() => true),
       close,
     } satisfies RuntimeApplicationKernel;
@@ -276,6 +280,7 @@ function createHarness(options: {
     sessionClose,
     processShutdown,
     channelBindingsForTurn,
+    presentationRouteForEvent,
     createApplication,
     getInput: () => input,
     runtimeOptions,
@@ -703,6 +708,27 @@ describe('Runtime Builder', () => {
 
     expect(harness.channelBindingsForTurn).toHaveBeenCalledWith('turn-old');
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the captured Root projection for Child events without changing their source', async () => {
+    const harness = createHarness();
+    const send = vi.fn();
+    const routing = { rootTurnId: 'root-turn', ancestorSessionIds: ['parent', 'root'] };
+    harness.presentationRouteForEvent.mockReturnValue(routing);
+    harness.channelBindingsForTurn.mockImplementation(turnId => turnId === 'root-turn' ? [{
+      id: 'pinned-root-channel', send,
+      interaction: {
+        sendInteractionRequest: () => ({ status: 'unavailable', reason: 'delivery_failed' }),
+        sendInteractionClosed() {},
+      },
+    }] : undefined);
+    const handle = await buildRuntimeHandle(harness.runtimeOptions, harness.createApplication);
+    const event = { type: 'text_delta' as const, sessionId: 'child', turnId: 'child-turn', text: 'child' };
+    await harness.getInput()!.fanoutAgentEvent(event);
+    expect(harness.channelBindingsForTurn).toHaveBeenCalledWith('root-turn');
+    expect(harness.channelBindingsForTurn).not.toHaveBeenCalledWith('child-turn');
+    expect(send).toHaveBeenCalledExactlyOnceWith(event, routing);
+    await handle.close();
   });
 
   it('publishes loaded Unit enable and disable changes through composition control', async () => {

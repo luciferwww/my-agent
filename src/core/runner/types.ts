@@ -16,6 +16,7 @@ import type { CompactionConfig } from './compaction-config.js';
 export type { ToolResult };
 
 export interface SteeringMessage extends ChatMessage {
+  readonly messageId?: string;
   readonly reasoning?: ReasoningPreference;
 }
 
@@ -89,9 +90,9 @@ export interface RunParams {
   /** Compaction configuration supplied by RuntimeApp. */
   compaction?: CompactionConfig;
   /**
-  * `user_message.messageId` that triggered this Turn. RuntimeApp passes it
-  * from the queued path and run_start exposes it as originMessageId.
-  * See channel-multi-client-user-message-spec section 5.1 D6.
+   * Identity of the initial input, independent of Agent kind. Runtime passes
+   * user_message.messageId when available; Runner otherwise assigns one before
+   * run_start and reuses it across every compaction retry of this run.
    */
   originMessageId?: string;
   /**
@@ -141,7 +142,7 @@ export type AgentEvent =
       sessionId: string;
       turnId: string;
       requestId: string;
-      /** Correlates this Turn to its triggering `user_message.messageId`. */
+      /** Initial input identity, preserved from intake or assigned by Runner. */
       originMessageId?: string;
     }
   /**
@@ -174,15 +175,17 @@ export type AgentEvent =
       turnId: string;
       binding: 'steering';
     }
-  | { type: 'text_delta'; sessionId: string; turnId: string; text: string }
+  | { type: 'text_delta'; sessionId: string; turnId: string; messageId?: string; text: string }
   | {
       type: 'thinking_start';
+      messageId?: string;
       sessionId: string;
       turnId: string;
       thinkingId: string;
     }
   | {
       type: 'thinking_delta';
+      messageId?: string;
       sessionId: string;
       turnId: string;
       thinkingId: string;
@@ -190,6 +193,7 @@ export type AgentEvent =
     }
   | {
       type: 'thinking_end';
+      messageId?: string;
       sessionId: string;
       turnId: string;
       thinkingId: string;
@@ -198,6 +202,7 @@ export type AgentEvent =
     }
   | {
       type: 'tool_call_requested';
+      messageId?: string;
       sessionId: string;
       turnId: string;
       callId: string;
@@ -222,7 +227,7 @@ export type AgentEvent =
       name: string;
       result: ToolResult;
     }
-  | { type: 'llm_call'; sessionId: string; turnId: string; round: number }
+  | { type: 'llm_call'; sessionId: string; turnId: string; messageId?: string; round: number }
     | { type: 'run_end'; sessionId: string; turnId: string; requestId: string; result: RunResult }
   | {
       type: 'error';

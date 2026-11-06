@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Runner behavior
-> Verified: 2026-09-18
+> Verified: 2026-11-04 (Assistant message identity and LLM-call presentation metadata)
 > Ownership: Turn loop, context budgeting, Compaction, Tool and Hook invocation, recovery, and Runner events
 > Ownership key: runner-execution-and-context
 
@@ -53,6 +53,27 @@ Missing IDs receive `[tool call interrupted; session recovered]`. The event sour
 ## 5. Model and Tool loop
 
 Each loop iteration must check Abort before quota, steering injection, event emission, and invocation. `AgentRunner` streams through the bound invocation Port and persists Assistant blocks before emitting `tool_call_requested`. Complete before-hook chains run serially in Provider order; validation, policy, Approval, and Framework submission then progress independently per call. The original response remains a pairing barrier: accepted receipts or immediate results are projected in Provider order before the next Model invocation even though accepted Tool Promises execute concurrently.
+
+Runner assigns each Assistant message a presentation messageId before its
+llm_call event. The same ID accompanies text/Thinking events, the persisted
+normal or abort-partial message, and tool_call_requested for that response.
+It is not the Transcript entry ID, invocation ID, Turn ID or round. Runtime
+input IDs are persisted unchanged, including claimed steering; steering
+identity is removed before constructing Provider messages. At the shared
+`run()` entry, Runner preserves a supplied `originMessageId` or generates one
+before `run_start`, without mutating caller parameters. The same initial-input
+identity is reused by every compaction attempt, including Child and direct
+execution; future Agent kinds use this same contract. No synthetic
+`user_message` event is emitted for retry or for inputs without Channel intake.
+Each post-preflight attempt still appends its own Transcript entry, while
+sanitation removes the earlier trailing input from the source active branch.
+
+For a real Model response, Runner also persists the call's zero-based round as
+top-level `llmRound` on both normal and abort-partial Assistant records.
+It is presentation metadata, not Provider content or a unique call identity:
+an overflow retry may reset the round. Synthetic Assistant messages do not
+invent this field. Clients use each actual `llm_call` boundary in realtime
+and each marked Assistant entry in History, never round equality, to group Tools.
 
 The Async Tool Execution Framework exclusively owns admitted implementation Promises, process-global execution slots, activity/deadline clocks, cancellation grace, terminal persistence, quarantine transfer, and late-settlement isolation. Runner waits on Framework events and wakeable steering rather than directly awaiting a Tool implementation. Accepted ownership closes the original Provider Tool Call with `execution_accepted`; real terminal facts are delivered later through trusted Host completion messages and one serialized continuation.
 

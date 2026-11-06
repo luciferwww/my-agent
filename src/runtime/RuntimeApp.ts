@@ -299,6 +299,9 @@ export class RuntimeApp {
       blockingTurnIds: (generation) => app.blockingTurnIds(generation),
       abortGeneration: (generation) => app.abortGeneration(generation),
       channelBindingsForTurn: (turnId) => app.channelBindingsForTurn(turnId),
+      presentationRouteForEvent: (event) => 'sessionId' in event && event.sessionId !== undefined
+        ? app.resources.sessionManager.getSubagentPresentationRoute(event.sessionId)
+        : undefined,
       shouldDeliverAgentEvent: (event) => app.shouldDeliverAgentEvent(event),
       close: (reason, budget) => app.close(reason, budget),
     };
@@ -1588,6 +1591,7 @@ export class RuntimeApp {
     return claimed.map((item) => ({
       role: 'user',
       content: item.message,
+      messageId: item.originMessageId,
       ...(item.reasoningPreference === undefined
         ? {}
         : { reasoning: item.reasoningPreference }),

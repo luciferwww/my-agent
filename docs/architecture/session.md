@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Session behavior
-> Verified: 2026-09-18
+> Verified: 2026-11-04 (message identity, ancestor retention, whole-Turn History and LLM-call metadata)
 > Ownership: Session metadata, Transcript JSONL, message trees, branching, and persistence behavior
 > Ownership key: session-and-transcript-persistence
 
@@ -63,7 +63,16 @@ SessionEntry {
 
 Every record has an `id`, `parentId`, and ISO-8601 `timestamp`. Every
 `MessageRecord` also has the required `turnId` of its owning Turn. Message
-content is either text or canonical content blocks. Persisted Tool Result blocks
+records may carry a top-level `messageId` correlating realtime presentation
+with History. It is separate from the record `id` and is never part of the
+model message payload. Existing entry IDs and parent links are unchanged.
+Internal Tool execution facts keep their call/execution identities and do
+not acquire message IDs merely because History projects their state.
+Real Assistant responses may also carry top-level `llmRound`, a non-negative
+safe integer recording the zero-based Model-call round. It is not a unique
+identity and never enters the model message payload. Other roles cannot carry
+it, and legacy or synthetic messages do not receive a fabricated round.
+Message content is either text or canonical content blocks. Persisted Tool Result blocks
 require `status: success | error | denied | aborted`; legacy missing-status
 records fail closed. `toolResult` is an internal
 persisted role; Runner projects it as a `user` role for Provider-neutral
@@ -96,14 +105,52 @@ Transcript v2 Assistant messages may also carry invocation identity, Provider
 source facts, completion state, and ordered Thinking blocks. Complete Thinking
 stores normalized display text plus an opaque Provider-owned JSON replay
 envelope; partial Thinking stores text only. A v2 Thinking block requires its
-Assistant invocation. Valid v1 Transcripts remain readable and are atomically
-rewritten to v2 before the first invocation/Thinking append. Fork preserves the
-selected path's invocation and internal replay state.
+Assistant invocation. Valid v1/v2 Transcripts remain readable. New Transcripts
+use v3; an existing file is atomically upgraded before its first messageId,
+llmRound or presentation append, preserving existing record IDs and leaving old records without a
+fabricated mapping. Invocation/Thinking without messageId requires at least
+v2 and never downgrades v3. Fork preserves the selected path's messageId,
+invocation and internal replay state. Older binaries that only accept v1/v2
+reject v3; rollback requires a compatible reader or explicit migration.
 
 Paginated History is a presentation projection. It exposes Thinking
 `id/text/status` but never invocation source or replay payload. User History
 also exposes the original structured reasoning preference so clients can
-rebuild a summary without persisting display text.
+rebuild a summary without persisting display text. A stored messageId is
+projected unchanged; no invocation metadata is exposed to provide it.
+Stored llmRound is also projected unchanged; each marked Assistant entry is
+an independent call group even when another entry has the same round.
+
+`PresentationRecord` retains a descendant fact in every ancestor, with its
+real `sourceSessionId`, `sourceEntryId` and a whitelisted `body`. Message
+bodies retain messageId, llmRound and safe Thinking, never invocation/replay metadata.
+Tool accepted/terminal facts and Subagent start/end links are separate body
+variants. Each copy is parented to the captured delegating Assistant message;
+steering cannot move that anchor. Copies never advance the active message
+leaf, enter model Context, or become new propagation sources.
+
+Orchestration awaits start retention before publishing `subagent_start`,
+registers resolved Children as recursive Parents, and awaits end retention
+before publishing `subagent_end` or releasing tree membership. Source message
+and Tool writes release their own lock before awaiting ancestor writes.
+Copies are idempotent by source fact (lifecycle by Child and phase). User input
+copies additionally match source Session, Turn and nonempty messageId within
+the target's existing write lock: an identical retry retains the first copy
+and its sourceEntryId, while conflicting bodies or anchors fail explicitly.
+This does not merge other roles, Turns, sources, different IDs or legacy inputs
+without IDs. Source JSONL attempt entries remain unchanged. A submitted input
+remains an ancestor display fact after source-tail cleanup; model branch
+rollback is not input retraction. Target IO failures propagate explicitly.
+This is not a cross-file
+transaction or a crash-repair queue. Ancestor History remains readable after
+the original Child files are removed.
+
+Ancestor copy failures log source/target identities, the failing phase
+(`validate_target`, `append_transcript`, or `update_metadata`), and the underlying
+error message/name and available filesystem code/syscall, without message or
+Tool-result payloads. The thrown `SESSION_PERSISTENCE_FAILED` retains its original
+cause. A metadata update failure can occur after the presentation is already
+durable; the diagnostic does not imply rollback or change retry behavior.
 
 A `CompactionRecord` stores `summary`, `firstKeptEntryId`, `tokensBefore`, `tokensAfter`, `trigger`, and `droppedMessages`. Its trigger is `preemptive`, `overflow`, or `manual`.
 
@@ -169,17 +216,36 @@ calls `SessionManager.close()` to delete retained Transcripts early, before
 managed-process cleanup; startup removes orphaned transient files after
 interruption.
 
-History pages count persisted messages, default to 50, and reject limits above
-100. `beforeEntryId` is an exclusive cursor on the resolved active branch.
+History uses a default threshold of 50 and accepts limits from 1 through 100.
+It accumulates whole local Turns, newest first, until the candidate message
+count reaches the threshold, then returns chronological Turns and target-file
+append order within each Turn. Native messages and anchored descendant
+message copies count; lifecycle facts only enrich the projection. Output may
+exceed 100. `beforeEntryId` must name the first candidate of an active Turn,
+and excludes that entire Turn; interior and off-branch cursors are rejected.
+Copied items expose their real source identity; `scopes` carries recursive
+Child links and terminal state. A missing end is running only when this target
+still has a live route, otherwise unknown. A running snapshot is not a
+terminal replacement.
 History projection removes image base64 and emits a MIME/dimensions text
 placeholder while preserving persisted text, Tool Use input, folded execution
 identity/status/result content, and Assistant abort metadata.
 
 ## 5. Message tree and branching
 
-Each Transcript entry points to its parent. `resolveLinearPath(state, leafId)` follows parents back to the root, retains only message records, and reverses the result into conversation order.
+Each Transcript entry points to its parent. `resolveLinearPath(state, leafId)` follows parents back to the root, retains only native message records, and reverses the result into conversation order.
 
-`branch()` changes only the in-memory `leafId`; it does not rewrite JSONL. Later appends form a new branch from that point, while abandoned records remain auditable. Lifecycle and Compaction records never become the active message leaf; both initial serialization and reload select the last Session/message record so in-process and restarted fork behavior is identical.
+`branch()` changes only the in-memory `leafId`; it does not rewrite JSONL. Later appends form a new branch from that point, while abandoned records remain auditable. Lifecycle, Compaction and presentation records never become the active message leaf; both initial serialization and reload select the last Session/message record so in-process and restarted fork behavior is identical.
+
+History includes presentation only when its anchor remains on that active
+path. Fork preserves native IDs and copies the selected path's visible
+presentation facts in original append order. An explicit message cut excludes
+later copies; an omitted cut snapshots current retained facts. A fork needs
+neither the source nor Child files to read those facts, and does not inherit
+live presentation routes.
+Within that existing copy pass, direct `subagent_start/end` bodies whose
+`callerSessionId` equals the source Session are rebound to the fork Session.
+Other fields, descendant relationships and source records remain unchanged.
 
 ```text
 session root

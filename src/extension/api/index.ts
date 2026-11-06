@@ -16,6 +16,7 @@ export type {
   ChannelOperationErrorCode,
   ChannelRunRequest,
   ChannelRuntimeCapabilities,
+  ChannelEventRouting,
   InboundContentBlock,
   ModelCatalogSnapshot,
   SessionPermissionMode,

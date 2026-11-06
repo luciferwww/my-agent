@@ -2,6 +2,7 @@ import type {
   ApprovalClosedResult,
   ChannelCompletion,
   ChannelInstance,
+  ChannelEventRouting,
   ChannelRuntimeBinding,
   ChannelRuntimeHost,
   ChannelRuntimeInteraction,
@@ -302,7 +303,7 @@ function bindInstance(
   const interaction = normalizeInteraction(instance);
   const binding: ChannelRuntimeBinding = Object.freeze({
     id: instance.id,
-    send: (event: AgentEvent) => instance.send(event),
+    send: (event: AgentEvent, routing?: ChannelEventRouting) => instance.send(event, routing),
     interaction,
   });
 

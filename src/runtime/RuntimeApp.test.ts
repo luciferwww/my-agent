@@ -43,6 +43,8 @@ import type {
 } from './types.js';
 import type { RuntimeDeadlineDriver, RuntimeDeadlineRaceResult } from './runtime-deadline.js';
 import { Logger } from '../platform/logger/index.js';
+import { randomUUID } from 'node:crypto';
+import { SessionManager } from '../core/session/SessionManager.js';
 
 function testApplicationConfig(
   defaultModel: { readonly providerId: string; readonly modelId: string } | null = {
@@ -160,6 +162,7 @@ describe('RuntimeApp', () => {
   it('routes Agent state, Environment Tools, and prompts to agentHome', async () => {
     const selectedAgentHome = join(agentHome, 'agent-home');
     const createSessionManager = vi.fn(() => ({
+      getSubagentPresentationRoute: vi.fn(),
       initialize: vi.fn(async () => undefined),
       close: vi.fn(async () => undefined),
       getPersistedSession: vi.fn(() => sessionEntry('main')),
@@ -219,6 +222,7 @@ describe('RuntimeApp', () => {
       cliOverrides: { memory: { enabled: false } },
       dependencies: createTestDependencies({
         createSessionManager: () => ({
+          getSubagentPresentationRoute: vi.fn(),
           initialize: vi.fn(async () => undefined),
           close: closeSessionManager,
           getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
@@ -248,6 +252,7 @@ describe('RuntimeApp', () => {
       cliOverrides: { memory: { enabled: false } },
       dependencies: createTestDependencies({
         createSessionManager: () => ({
+          getSubagentPresentationRoute: vi.fn(),
           initialize: vi.fn(async () => undefined),
           close: vi.fn(async () => {
             throw new Error('session cleanup failed');
@@ -297,6 +302,7 @@ describe('RuntimeApp', () => {
       },
       dependencies: createTestDependencies({
         createSessionManager: () => ({
+          getSubagentPresentationRoute: vi.fn(),
           initialize: vi.fn(async () => undefined),
           close: vi.fn(async () => undefined),
           getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
@@ -364,6 +370,7 @@ describe('RuntimeApp', () => {
       },
       dependencies: createTestDependencies({
         createSessionManager: () => ({
+          getSubagentPresentationRoute: vi.fn(),
           initialize: vi.fn(async () => undefined),
           close: vi.fn(async () => undefined),
           getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
@@ -395,6 +402,7 @@ describe('RuntimeApp', () => {
       },
       dependencies: createTestDependencies({
         createSessionManager: () => ({
+          getSubagentPresentationRoute: vi.fn(),
           initialize: vi.fn(async () => undefined),
           close: vi.fn(async () => undefined),
           getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
@@ -481,6 +489,7 @@ describe('RuntimeApp', () => {
 
     const deps = createTestDependencies({
       createSessionManager: () => ({
+        getSubagentPresentationRoute: vi.fn(),
         initialize: vi.fn(async () => undefined),
         close: vi.fn(async () => undefined),
         getPersistedSession,
@@ -910,6 +919,7 @@ describe('RuntimeApp', () => {
           makeProvider('child'),
         ]),
         createSessionManager: () => ({
+          getSubagentPresentationRoute: vi.fn(),
           initialize: vi.fn(async () => undefined),
           close: vi.fn(async () => undefined),
           getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
@@ -917,6 +927,9 @@ describe('RuntimeApp', () => {
           clearPreparingSubagentSession: vi.fn(),
           createTransientSubagentTranscript: vi.fn(async () => {}),
           retainTransientSubagentTranscript,
+          beginSubagentPresentation: vi.fn(async () => {}),
+          endSubagentPresentation: vi.fn(async () => {}),
+          clearSubagentPresentation: vi.fn(),
         }) as never,
         createAgentRunner: () => ({
           run: runnerRun,
@@ -953,6 +966,122 @@ describe('RuntimeApp', () => {
     ]);
 
     await app.close();
+  });
+
+  it('retains a recursive execution in the Root using real Session persistence', async () => {
+    const sessions = new SessionManager(agentHome);
+    const rootEntered = createDeferred<void>();
+    const continueRoot = createDeferred<void>();
+    const oldChannel = createTestChannel('old-observer');
+    const nextChannel = createTestChannel('next-observer');
+    const oldSend = vi.spyOn(oldChannel.channel, 'send');
+    const nextSend = vi.spyOn(nextChannel.channel, 'send');
+    let emit: ((event: AgentEvent) => void) | undefined;
+    const sessionId = randomUUID();
+    await sessions.materializeSession({ sessionId, createdAt: 1 });
+    const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      const depth = params.subagentDepth ?? 0;
+      if (depth === 0) {
+        rootEntered.resolve();
+        await continueRoot.promise;
+      }
+      await sessions.appendMessage(params.sessionId, {
+        turnId: params.turnId, role: 'user', messageId: randomUUID(), content: params.message,
+      });
+      emit?.({
+        type: 'text_delta', sessionId: params.sessionId, turnId: params.turnId,
+        messageId: `native-${depth}`, text: `depth-${depth}`,
+      });
+      if (depth < 2) {
+        const callId = `task-${depth}`;
+        await sessions.appendMessage(params.sessionId, {
+          turnId: params.turnId, role: 'assistant', messageId: randomUUID(),
+          content: [{ type: 'tool_use', id: callId, name: 'task', input: {} }],
+        });
+        const task = params.toolProjection.resolve('task');
+        if (!task || !params.signal) throw new Error('Recursive task wiring is incomplete.');
+        const result = await task.execute({
+          subagent_type: 'reviewer', description: 'nested task', prompt: 'continue',
+        }, {
+          sessionId: params.sessionId, turnId: params.turnId, callId,
+          executionId: `execution-${depth}`, reportActivity: () => {},
+          subagentDepth: depth, signal: params.signal,
+        });
+        expect(result.outcome).toBe('success');
+      }
+      const text = `completed-${depth}`;
+      await sessions.appendMessage(params.sessionId, {
+        turnId: params.turnId, role: 'assistant', messageId: randomUUID(), content: text,
+      });
+      return {
+        text, content: [{ type: 'text', text }], stopReason: 'end_turn',
+        usage: { inputTokens: 1, outputTokens: 1 }, toolRounds: depth < 2 ? 1 : 0,
+      };
+    });
+    const app = await RuntimeApp.create({
+      agentHome,
+      loadedUnits: [
+        oldChannel.unit,
+        createLoadedRuntimeUnit({
+          registration: {
+            id: 'next-observer-unit', source: 'external',
+            register(api) {
+              api.registerChannel({ id: nextChannel.channel.id, create: () => nextChannel.channel });
+            },
+          },
+          required: false, initiallyEnabled: false,
+        }),
+      ],
+      applicationConfig: testApplicationConfig(undefined, {
+        maxSubagentDepth: 2, list: [{ id: 'reviewer', description: 'recursive reviewer' }],
+      }),
+      cliOverrides: { memory: { enabled: false } },
+      dependencies: createTestDependencies({
+        createSessionManager: () => sessions,
+        createAgentRunner: config => {
+          emit = config.onEvent;
+          return { run: runnerRun } as never;
+        },
+      }),
+    });
+    try {
+      const running = runRootTurnForTest(app, {
+        sessionId, turnId: 'retention-root-turn', message: 'delegate', promptMode: 'full',
+      });
+      await rootEntered.promise;
+      await expect(app.composition.enableUnit('next-observer-unit')).resolves.toMatchObject({
+        outcome: 'published', generation: 2,
+      });
+      continueRoot.resolve();
+      await expect(running).resolves.toMatchObject({ text: 'completed-0' });
+      const page = sessions.getHistory({ sessionId, limit: 1 });
+      expect(page.scopes).toHaveLength(2);
+      expect(page.scopes?.every(scope => scope.status === 'terminal' && scope.outcome === 'ok')).toBe(true);
+      expect(page.items.filter(item => item.sourceSessionId).every(item => item.messageId)).toBe(true);
+      expect(page.items.filter(item => item.content === 'completed-2')).toHaveLength(1);
+      expect(sessions.getMessages(sessionId)).toHaveLength(3);
+      const a = page.scopes?.find(scope => scope.depth === 1);
+      const b = page.scopes?.find(scope => scope.depth === 2);
+      expect(oldSend).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'text_delta', sessionId: b?.sessionId }),
+        { rootTurnId: 'retention-root-turn', ancestorSessionIds: [a?.sessionId, sessionId] },
+      );
+      const descendants = new Set(page.scopes?.map(scope => scope.sessionId));
+      const descendantCalls = oldSend.mock.calls.filter(([event]) =>
+        'sessionId' in event && event.sessionId !== undefined && descendants.has(event.sessionId));
+      expect(descendantCalls).toHaveLength(6);
+      expect(descendantCalls.every(([, routing]) => routing?.rootTurnId === 'retention-root-turn')).toBe(true);
+      expect(nextSend.mock.calls.filter(([event]) =>
+        'sessionId' in event && event.sessionId !== undefined && descendants.has(event.sessionId))).toHaveLength(0);
+      for (const scope of page.scopes ?? []) {
+        await sessions.deleteTransientSubagentTranscript(scope.sessionId);
+      }
+      const reloaded = new SessionManager(agentHome);
+      expect(reloaded.getHistory({ sessionId }).items).toEqual(page.items);
+      await reloaded.close();
+    } finally {
+      await app.close();
+    }
   });
 
   it('keeps a Parent tree on N while Catalog/default recover on N+1', async () => {
@@ -1076,6 +1205,7 @@ describe('RuntimeApp', () => {
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: runnerRun }) as never,
         createSessionManager: () => ({
+          getSubagentPresentationRoute: vi.fn(),
           initialize: vi.fn(async () => undefined),
           close: vi.fn(async () => undefined),
           getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
@@ -1083,6 +1213,9 @@ describe('RuntimeApp', () => {
           clearPreparingSubagentSession: vi.fn(),
           createTransientSubagentTranscript: vi.fn(async () => {}),
           retainTransientSubagentTranscript: vi.fn(async () => {}),
+          beginSubagentPresentation: vi.fn(async () => {}),
+          endSubagentPresentation: vi.fn(async () => {}),
+          clearSubagentPresentation: vi.fn(),
         }) as never,
         createMemoryManager: async () => null,
       }),
@@ -1449,6 +1582,7 @@ describe('RuntimeApp', () => {
         sessionId: 'main',
         content: 'fan out',
       }),
+      undefined,
     );
     expect(observedEvents).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'user_message', sessionId: 'main' }),
@@ -1992,6 +2126,7 @@ describe('RuntimeApp', () => {
       {
         role: 'user',
         content: expect.stringContaining('</turn_start>\n\nsteer now'),
+        messageId: expect.any(String),
         reasoning: { effort: 'high' },
       },
     ]);
@@ -2077,6 +2212,7 @@ describe('RuntimeApp', () => {
       {
         role: 'user',
         content: 'second',
+        messageId: expect.any(String),
         ...(overrides.reasoning === undefined ? {} : { reasoning: overrides.reasoning }),
       },
     ]]);
@@ -3459,6 +3595,7 @@ function createTestDependencies(
       }),
     }]),
     createSessionManager: () => ({
+      getSubagentPresentationRoute: vi.fn(),
       initialize: vi.fn(async () => undefined),
       close: vi.fn(async () => undefined),
       getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),

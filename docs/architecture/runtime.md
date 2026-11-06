@@ -255,14 +255,24 @@ The Task Tool can delegate only from an active matching Parent Turn. Runtime rej
 An accepted Child:
 
 1. registers a Root-tree member before asynchronous setup;
-2. receives a new canonical `sessionId`, Turn ID, and root-only transient Transcript that is absent from Session Store/get/list;
-3. inherits the Parent route, context snapshot, Registry Snapshot, and Root Abort through its execution-local cancellation signal;
-4. prepares the Child prompt/tools;
-5. resolves either the Parent's effective Model Reference or the profile's concrete reference against the Parent generation;
-6. emits `subagent_start` and exactly one `subagent_end` terminal event;
-7. releases route, deletes the transient Transcript, and releases tree membership in `finally`.
+2. receives a new canonical `sessionId` and Turn ID, registers preparing state, and captures the existing presentation anchors and ancestor route;
+3. awaits ancestor start retention before emitting `subagent_start`;
+4. creates the isolated transient Transcript and prepares prompt/tools from inherited context, Registry Snapshot and execution-local cancellation;
+5. resolves the effective Child model against the Parent generation and registers the Child as a recursive active Parent;
+6. executes the Child, awaits ancestor terminal retention, and delivers `subagent_end`;
+7. waits for terminal Fanout to settle before clearing the route, applying existing Child retention/cleanup and releasing tree membership in `finally`.
 
 A Child never recaptures the latest generation. Independent sibling Task calls may run concurrently, with distinct execution signals, Child identities, routes, tree memberships, terminal events, and cleanup. Root pin release waits until the Parent and all registered Child members finish. Setup, resolution, execution, and Abort outcomes are classified separately; cleanup continues where possible if one cleanup step fails.
+
+Event routing reuses SessionManager's existing live presentation route, not a
+second execution-tree registry. It supplies optional `ChannelEventRouting`
+with `rootTurnId` and `ancestorSessionIds` through the Channel binding.
+Fanout selects the Root's captured Channel projection even for a Child
+turnId; the original event and source identity remain unchanged.
+`subagent_end` delivery is tracked as terminal Fanout for bounded Shutdown.
+WebSocket resolves the union of source and ancestor memberships per event,
+without changing membership or control authority. UI recursion remains
+outside Runtime.
 
 Detailed Child execution remains owned by [Runner](runner.md), while Runtime owns membership, inheritance, routing, and lifecycle convergence.
 

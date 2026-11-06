@@ -5,6 +5,7 @@ import type { ModelInvocationPort } from '../core/model-invocation/index.js';
 import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
 import { finalizeRegistrySnapshot } from './registry-builder.js';
 import type { SubagentProfile } from '../core/subagent/types.js';
+import type { SubagentExecutionRequest } from '../core/subagent/SubagentExecutor.js';
 import {
   createSubagentDelegationPort,
   SubagentDelegationRejected,
@@ -60,6 +61,9 @@ function setup(options: {
   routeSetError?: Error;
   routeDeleteError?: Error;
   retainError?: Error;
+  beginPresentationError?: Error;
+  endPresentationError?: Error;
+  terminalDelivery?: Promise<void>;
   abortDuringPrepare?: boolean;
 } = {}) {
   const controller = new AbortController();
@@ -104,6 +108,17 @@ function setup(options: {
   }
   const lifecycleOperations: string[] = [];
   const events: AgentEvent[] = [];
+  const beginSubagentPresentation = vi.fn(async () => {
+    lifecycleOperations.push('persist-start');
+    if (options.beginPresentationError) throw options.beginPresentationError;
+  });
+  const endSubagentPresentation = vi.fn(async () => {
+    lifecycleOperations.push('persist-end');
+    if (options.endPresentationError) throw options.endPresentationError;
+  });
+  const clearSubagentPresentation = vi.fn(() => {
+    lifecycleOperations.push('clear-presentation');
+  });
   const registerPreparingSubagentSession = vi.fn(() => {
     lifecycleOperations.push('register-preparing');
   });
@@ -117,16 +132,18 @@ function setup(options: {
     lifecycleOperations.push('retain-transcript');
     if (options.retainError) throw options.retainError;
   });
-  const prepare = vi.fn(async (params: { signal: AbortSignal }) => {
+  const prepare = vi.fn(async (params: SubagentExecutionRequest) => {
     if (options.prepareError) throw options.prepareError;
     if (options.abortDuringPrepare) executionController.abort();
     return {
-      sessionId: 'ignored-by-test',
+      sessionId: params.childSessionId,
       subagentDepth: 1,
-      turnId: 'ignored-by-test',
+      turnId: params.childTurnId,
       message: 'child prompt',
       systemPrompt: 'child system',
       signal: params.signal,
+      contextFiles: [],
+      tools: [],
     };
   });
   const execute = vi.fn(async (_prepared, resolvedModel) => {
@@ -148,6 +165,9 @@ function setup(options: {
       clearPreparingSubagentSession,
       createTransientSubagentTranscript,
       retainTransientSubagentTranscript,
+      beginSubagentPresentation,
+      endSubagentPresentation,
+      clearSubagentPresentation,
     } as never,
     maxDepth: 1,
     maxLlmCallsPerTurn: 6,
@@ -155,6 +175,7 @@ function setup(options: {
     onEvent: (event) => {
       lifecycleOperations.push(event.type);
       events.push(event);
+      if (event.type === 'subagent_end') return options.terminalDelivery;
     },
   });
   const request = {
@@ -188,10 +209,99 @@ function setup(options: {
     lifecycleOperations,
     prepare,
     parent,
+    beginSubagentPresentation,
+    endSubagentPresentation,
+    clearSubagentPresentation,
   };
 }
 
 describe('Runtime Subagent delegation', () => {
+  it('keeps the presentation route and tree membership until terminal delivery settles', async () => {
+    let finish!: () => void;
+    const pendingDelivery = new Promise<void>(resolve => { finish = resolve; });
+    const subject = setup({ terminalDelivery: pendingDelivery });
+    const pending = subject.port.delegate(subject.request);
+    await vi.waitFor(() => expect(subject.events.at(-1)?.type).toBe('subagent_end'));
+    expect(subject.endSubagentPresentation).toHaveBeenCalledTimes(1);
+    expect(subject.clearSubagentPresentation).not.toHaveBeenCalled();
+    expect(subject.releaseChild).not.toHaveBeenCalled();
+    expect(subject.activeParents.size).toBe(2);
+    finish();
+    await expect(pending).resolves.toMatchObject({ outcome: 'ok' });
+    expect(subject.clearSubagentPresentation).toHaveBeenCalledTimes(1);
+    expect(subject.releaseChild).toHaveBeenCalledTimes(1);
+  });
+  it('propagates start persistence failure without publishing a successful lifecycle', async () => {
+    const failure = new Error('ancestor start write failed');
+    const subject = setup({ beginPresentationError: failure });
+    await expect(subject.port.delegate(subject.request)).rejects.toBe(failure);
+    expect(subject.events).toEqual([]);
+    expect(subject.execute).not.toHaveBeenCalled();
+    expect(subject.clearPreparingSubagentSession).toHaveBeenCalledTimes(1);
+    expect(subject.clearSubagentPresentation).toHaveBeenCalledTimes(1);
+    expect(subject.endSubagentPresentation).not.toHaveBeenCalled();
+    expect(subject.releaseChild).toHaveBeenCalledTimes(1);
+  });
+
+  it('propagates end persistence failure while still cleaning acquired resources', async () => {
+    const failure = new Error('ancestor end write failed');
+    const subject = setup({ endPresentationError: failure });
+    await expect(subject.port.delegate(subject.request)).rejects.toBe(failure);
+    expect(subject.events.map(event => event.type)).toEqual(['subagent_start']);
+    expect(subject.retainTransientSubagentTranscript).toHaveBeenCalledTimes(1);
+    expect(subject.clearSubagentPresentation).toHaveBeenCalledTimes(1);
+    expect(subject.activeParents.size).toBe(1);
+    expect(subject.routeContextByTurn.size).toBe(1);
+    expect(subject.releaseChild).toHaveBeenCalledTimes(1);
+  });
+
+  it('publishes the terminal event and releases the tree only after ancestor writes finish', async () => {
+    const subject = setup();
+    let finish!: () => void;
+    subject.endSubagentPresentation.mockImplementationOnce(() => new Promise<void>(resolve => {
+      finish = resolve;
+    }));
+    const pending = subject.port.delegate(subject.request);
+    await vi.waitFor(() => expect(subject.endSubagentPresentation).toHaveBeenCalledTimes(1));
+    expect(subject.events.map(event => event.type)).toEqual(['subagent_start']);
+    expect(subject.releaseChild).not.toHaveBeenCalled();
+    finish();
+    await expect(pending).resolves.toMatchObject({ outcome: 'ok' });
+    expect(subject.events.map(event => event.type)).toEqual(['subagent_start', 'subagent_end']);
+    expect(subject.releaseChild).toHaveBeenCalledTimes(1);
+  });
+
+  it('registers a resolved Child as a recursive Parent with inherited root supervision', async () => {
+    const subject = setup();
+    subject.execute.mockImplementationOnce(async (prepared, resolvedModel) => {
+      const child = subject.activeParents.get(prepared.turnId);
+      expect(child).toMatchObject({
+        sessionId: prepared.sessionId, depth: 1, signal: subject.request.signal,
+        effectiveReference: resolvedModel.identity, registrySnapshot: subject.parent.registrySnapshot,
+        approvalCapability: subject.parent.approvalCapability,
+      });
+      expect(child?.contextFiles).toBe(prepared.contextFiles);
+      const nested = await subject.port.delegate({
+        ...subject.request,
+        parent: { sessionId: prepared.sessionId, turnId: prepared.turnId, toolUseId: 'nested-task' },
+        parentSignal: subject.request.signal,
+        signal: new AbortController().signal,
+      });
+      expect(nested.outcome).toBe('ok');
+      return {
+        text: 'parent/parent-model', content: [], stopReason: 'end_turn',
+        usage: { inputTokens: 4, outputTokens: 2 }, toolRounds: 0,
+      };
+    });
+    await expect(subject.port.delegate(subject.request)).resolves.toMatchObject({ outcome: 'ok' });
+    expect(subject.registerChild).toHaveBeenCalledTimes(2);
+    expect(subject.releaseChild).toHaveBeenCalledTimes(2);
+    expect(subject.activeParents.size).toBe(1);
+    expect(subject.events.map(event => event.type)).toEqual([
+      'subagent_start', 'subagent_start', 'subagent_end', 'subagent_end',
+    ]);
+  });
+
   it('inherits the Parent effective reference but resolves a fresh Child model', async () => {
     const {
       port,
@@ -230,8 +340,9 @@ describe('Runtime Subagent delegation', () => {
     }));
     expect(registerPreparingSubagentSession.mock.invocationCallOrder[0])
       .toBeLessThan(createTransientSubagentTranscript.mock.invocationCallOrder[0]!);
-    expect(lifecycleOperations.slice(0, 3)).toEqual([
+    expect(lifecycleOperations.slice(0, 4)).toEqual([
       'register-preparing',
+      'persist-start',
       'subagent_start',
       'create-transcript',
     ]);

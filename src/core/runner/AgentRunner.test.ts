@@ -3,9 +3,10 @@ import { mkdtemp, rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { AgentRunner as ProductionAgentRunner } from './AgentRunner.js';
-import { AgentExecutionFailure } from './errors.js';
+import { AgentExecutionFailure, ContextOverflowError } from './errors.js';
 import { SessionManager } from '../session/SessionManager.js';
 import type { SessionMessageInput } from '../session/SessionManager.js';
+import { loadTranscript } from '../session/transcript.js';
 import type {
   ChatContentBlock,
   ChatMessage,
@@ -315,6 +316,114 @@ describe('AgentRunner', () => {
   // ── Basic conversation ──────────────────────────────
 
   describe('basic conversation', () => {
+    it('assigns distinct initial input identities to separate runs without mutating caller params', async () => {
+      const llmClient = createMockLLMClient([
+        [{ type: 'message_start' }, { type: 'text_delta', text: 'first' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 1, outputTokens: 1 } }],
+        [{ type: 'message_start' }, { type: 'text_delta', text: 'second' },
+          { type: 'message_end', stopReason: 'end_turn', usage: { inputTokens: 1, outputTokens: 1 } }],
+      ]);
+      const runner = new AgentRunner({ sessionManager, llmClient });
+      for (const turnId of ['first', 'second']) {
+        const params = {
+          sessionId: MAIN_SESSION_ID, turnId, message: 'same text', model: 'test', systemPrompt: '',
+        };
+        await runner.run(params);
+        expect(params).not.toHaveProperty('originMessageId');
+      }
+      const users = sessionManager.getMessages(MAIN_SESSION_ID)
+        .filter(record => record.message.role === 'user');
+      expect(users).toHaveLength(2);
+      expect(users.every(record => typeof record.messageId === 'string' && record.messageId.length > 0))
+        .toBe(true);
+      expect(new Set(users.map(record => record.messageId)).size).toBe(2);
+    });
+
+    it.each(['root', 'child', 'direct'] as const)(
+      'keeps one input identity across actual compaction and retry for %s execution',
+      async kind => {
+        const sessionId = kind === 'child' ? CHILD_SESSION_ID : MAIN_SESSION_ID;
+        if (kind === 'child') {
+          await appendPersistedMessage(sessionManager, {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'task', name: 'task', input: {} }],
+          }, 'parent-turn');
+          const identity = {
+            sessionId, callerSessionId: MAIN_SESSION_ID, turnId: 'retry-turn',
+            parentTurnId: 'parent-turn', parentToolUseId: 'task',
+            runId: 'run', depth: 1, subagentType: 'test',
+          };
+          const registration = { sessionId, callerSessionId: MAIN_SESSION_ID, createdAt: 1 };
+          sessionManager.registerPreparingSubagentSession(registration);
+          await sessionManager.beginSubagentPresentation(identity);
+          await sessionManager.createTransientSubagentTranscript(registration);
+        }
+        for (const [index, role] of (['user', 'assistant', 'user', 'assistant'] as const).entries()) {
+          await sessionManager.appendMessage(sessionId, {
+            turnId: `seed-${Math.floor(index / 2)}`, role, content: `seed-${index}`,
+          });
+        }
+        const events: AgentEvent[] = [];
+        const requests: ModelInvocationRequest[] = [];
+        const llmClient: ModelInvocationPort = {
+          async *chatStream(request) {
+            requests.push(structuredClone(request));
+            if (requests.length === 1) throw new ContextOverflowError('controlled overflow', 'overflow');
+            yield { type: 'message_start' };
+            yield { type: 'text_delta', text: requests.length === 2 ? 'summary' : 'answer' };
+            yield {
+              type: 'message_end', stopReason: 'end_turn',
+              usage: { inputTokens: 10, outputTokens: 2 },
+            };
+          },
+          async chat() { throw new Error('Not used'); },
+        };
+        const params: LegacyTestRunParams = {
+          sessionId, turnId: 'retry-turn', message: 'one submitted input', model: 'test',
+          systemPrompt: '',
+          ...(kind === 'root' ? { originMessageId: 'root-input-id' } : {}),
+          compaction: {
+            enabled: true, reserveTokens: 0, keepRecentTurns: 1,
+            toolResultContextShare: 0.5, toolResultHeadChars: 100,
+            toolResultTailChars: 100, timeoutSeconds: 30,
+          },
+        };
+        const result = await new AgentRunner({
+          sessionManager, llmClient, onEvent: event => events.push(event),
+        }).run(params);
+        expect(result.compacted).toBe(true);
+        expect(requests).toHaveLength(3);
+        for (const request of [requests[0]!, requests[2]!]) {
+          expect(request.messages).toContainEqual({
+            role: 'user', content: 'one submitted input',
+          });
+        }
+        const starts = events.filter(event => event.type === 'run_start');
+        expect(starts).toHaveLength(1);
+        const messageId = starts[0]?.originMessageId;
+        expect(messageId).toEqual(expect.any(String));
+        if (kind === 'root') expect(messageId).toBe('root-input-id');
+        else expect(params).not.toHaveProperty('originMessageId');
+        const attempts = [...loadTranscript(join(agentHome, 'sessions', `${sessionId}.jsonl`))
+          .byId.values()].filter(record => record.type === 'message')
+          .filter(record => record.message.content === 'one submitted input');
+        expect(attempts).toHaveLength(2);
+        expect(new Set(attempts.map(record => record.id)).size).toBe(2);
+        expect(attempts.map(record => record.messageId)).toEqual([messageId, messageId]);
+        expect(sessionManager.getHistory({ sessionId }).items
+          .filter(item => item.content === 'one submitted input')).toHaveLength(1);
+        expect(requests.flatMap(request => request.messages)
+          .some(message => 'messageId' in message || 'originMessageId' in message)).toBe(false);
+        if (kind === 'child') {
+          const copies = sessionManager.getHistory({ sessionId: MAIN_SESSION_ID }).items
+            .filter(item => item.sourceSessionId === sessionId && item.content === 'one submitted input');
+          expect(copies).toEqual([expect.objectContaining({
+            messageId, sourceEntryId: attempts[0]?.id,
+          })]);
+        }
+      },
+    );
+
     it('handles simple text response', async () => {
       const llmClient = createMockLLMClient([
         [
@@ -324,19 +433,35 @@ describe('AgentRunner', () => {
         ],
       ]);
 
-      const runner = new AgentRunner({ llmClient, sessionManager });
+      const events: AgentEvent[] = [];
+      const runner = new AgentRunner({
+        llmClient, sessionManager, onEvent: event => events.push(event),
+      });
       const result = await runner.run({
         sessionId: MAIN_SESSION_ID,
         message: 'Hi',
         model: 'test',
         systemPrompt: 'You are helpful.',
         turnId: 'test-turn',
+        originMessageId: 'user-message',
       });
 
       expect(result.text).toBe('Hello!');
       expect(result.stopReason).toBe('end_turn');
       expect(result.usage.inputTokens).toBe(10);
       expect(result.toolRounds).toBe(0);
+      const records = sessionManager.getMessages(MAIN_SESSION_ID);
+      expect(records[0]?.messageId).toBe('user-message');
+      const assistant = records.find(record => record.message.role === 'assistant');
+      expect(assistant?.messageId).toEqual(expect.any(String));
+      expect(assistant?.messageId).not.toBe(assistant?.id);
+      expect(assistant?.llmRound).toBe(0);
+      expect(assistant?.message).not.toHaveProperty('llmRound');
+      expect(events.filter(event => event.type === 'text_delta' || event.type === 'llm_call'))
+        .toEqual([
+          expect.objectContaining({ type: 'llm_call', messageId: assistant?.messageId }),
+          expect.objectContaining({ type: 'text_delta', messageId: assistant?.messageId }),
+        ]);
     });
 
     it('passes one resolved reasoning policy to normal calls and persists the raw preference', async () => {
@@ -434,6 +559,11 @@ describe('AgentRunner', () => {
       });
 
       const thinkingEvents = events.filter((event) => event.type.startsWith('thinking_'));
+      const persistedAssistant = sessionManager.getMessages(MAIN_SESSION_ID)
+        .find(record => record.message.role === 'assistant');
+      for (const event of thinkingEvents) {
+        expect(event).toHaveProperty('messageId', persistedAssistant?.messageId);
+      }
       expect(thinkingEvents).toEqual([
         expect.objectContaining({ type: 'thinking_start', thinkingId: expect.any(String) }),
         expect.objectContaining({ type: 'thinking_delta', text: 'working' }),
@@ -694,6 +824,7 @@ describe('AgentRunner', () => {
 
   describe('tool use loop', () => {
     it('executes single tool call and continues', async () => {
+      const events: AgentEvent[] = [];
       const llmClient = createMockLLMClient([
         // First round: the LLM requests a tool.
         [
@@ -713,6 +844,7 @@ describe('AgentRunner', () => {
         llmClient,
         sessionManager,
         toolExecutor: async () => ({ content: 'Sunny, 25°C' }),
+        onEvent: event => events.push(event),
       });
 
       const result = await runner.run({
@@ -728,6 +860,16 @@ describe('AgentRunner', () => {
       expect(result.toolRounds).toBe(1);
       expect(result.usage.inputTokens).toBe(50);
       expect(result.usage.outputTokens).toBe(25);
+      const assistants = sessionManager.getMessages(MAIN_SESSION_ID)
+        .filter(record => record.message.role === 'assistant');
+      expect(assistants).toHaveLength(2);
+      expect(assistants.map(record => record.llmRound)).toEqual([0, 1]);
+      expect(new Set(assistants.map(record => record.messageId)).size).toBe(2);
+      const callIds = events.filter(event => event.type === 'llm_call')
+        .map(event => event.messageId);
+      expect(callIds).toEqual(assistants.map(record => record.messageId));
+      expect(events.find(event => event.type === 'tool_call_requested'))
+        .toHaveProperty('messageId', assistants[0]?.messageId);
     });
 
     it('handles multiple tool rounds', async () => {
@@ -1216,6 +1358,7 @@ describe('AgentRunner', () => {
         return [{
           role: 'user' as const,
           content: 'interrupt now',
+          messageId: 'steering-message',
           reasoning: { effort: 'high' as const },
         }];
       });
@@ -1237,6 +1380,12 @@ describe('AgentRunner', () => {
         origin: 'host',
       }));
       expect(capturedCalls.flat().some((message) => 'reasoning' in message)).toBe(false);
+      expect(capturedCalls.flat().some((message) => 'messageId' in message)).toBe(false);
+      expect(capturedCalls.flat().some((message) => 'llmRound' in message)).toBe(false);
+      expect(capturedCalls.flat().some((message) => 'userPrompt' in message)).toBe(false);
+      expect(sessionManager.getMessages(MAIN_SESSION_ID)
+        .find(({ message }) => message.content === 'interrupt now')?.messageId)
+        .toBe('steering-message');
       expect(sessionManager.getMessages(MAIN_SESSION_ID)
         .find(({ message }) => message.role === 'user' && message.content === 'interrupt now')
         ?.message.reasoning).toEqual({ effort: 'high' });
@@ -2670,6 +2819,7 @@ describe('AgentRunner', () => {
     // Abort during streaming persists a partial assistant with abort metadata.
     it('abort during LLM stream → stopReason=aborted, partial assistant 带 abortMeta 写入', async () => {
       const controller = new AbortController();
+      const events: AgentEvent[] = [];
 
       const llmClient: ModelInvocationPort = {
         async *chatStream(params: ModelInvocationRequest) {
@@ -2687,7 +2837,9 @@ describe('AgentRunner', () => {
         async chat() { throw new Error('Not used'); },
       };
 
-      const runner = new AgentRunner({ llmClient, sessionManager });
+      const runner = new AgentRunner({
+        llmClient, sessionManager, onEvent: event => events.push(event),
+      });
       const result = await runner.run({
         sessionId: MAIN_SESSION_ID,
         message: 'Hi',
@@ -2705,6 +2857,10 @@ describe('AgentRunner', () => {
       const last = records[records.length - 1]!;
       expect(last.message.role).toBe('assistant');
       expect(last.message.abortMeta).toEqual({ partial: true, stopReason: 'aborted' });
+      expect(last.llmRound).toBe(0);
+      expect(last.messageId).toEqual(expect.any(String));
+      expect(events.find(event => event.type === 'text_delta'))
+        .toHaveProperty('messageId', last.messageId);
     });
 
     it('abort before first model content → 不持久化空 assistant', async () => {

@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { mkdir, readdir, rename, unlink, writeFile } from 'fs/promises';
 import { join } from 'path';
+import { isDeepStrictEqual } from 'node:util';
 import { SessionError } from './errors.js';
 import { isCanonicalSessionId, loadStore, updateStore } from './store.js';
 import {
@@ -9,6 +10,7 @@ import {
   appendToTranscript,
   findLastCompaction,
   replaceTranscript,
+  assertPresentationBody,
 } from './transcript.js';
 import type {
   ExecutionTerminalFact,
@@ -36,6 +38,11 @@ import type {
   HostTaskCompletionRecord,
   TurnAbortedRecord,
   UpdateSessionInput,
+  PresentationBody,
+  PresentationRecord,
+  SubagentPresentationIdentity,
+  SubagentPresentationEnd,
+  SessionHistoryScope,
 } from './types.js';
 import {
   normalizeReasoningPreference,
@@ -46,7 +53,7 @@ import { Logger } from '../../platform/logger/index.js';
 
 const SESSIONS_DIR = 'sessions';
 const STORE_FILE = 'sessions.json';
-const TRANSCRIPT_VERSION = 2;
+const TRANSCRIPT_VERSION = 3;
 const DEFAULT_HISTORY_LIMIT = 50;
 const MAX_HISTORY_LIMIT = 100;
 const SUBAGENT_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -63,6 +70,8 @@ export interface SessionManagerOptions {
 
 export interface SessionMessageInput {
   turnId: string;
+  messageId?: string;
+  llmRound?: number;
   role: 'user' | 'assistant' | 'toolResult';
   content: string | ContentBlock[];
   invocation?: import('../model-invocation/index.js').AssistantInvocation;
@@ -115,6 +124,16 @@ export class SessionManager {
   private transientSubagentSessions = new Map<string, SubagentSessionEntry>();
   private retainedSubagentTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private transcriptWriteTails = new Map<string, Promise<void>>();
+  private presentationRoutes = new Map<string, {
+    identity: SubagentPresentationIdentity;
+    routing: {
+      readonly rootTurnId: string;
+      readonly ancestorSessionIds: readonly string[];
+    };
+    startEntryId: string;
+    endEntryId: string;
+    targets: readonly { sessionId: string; anchorId: string }[];
+  }>();
   private closed = false;
 
   constructor(agentHome: string, options: SessionManagerOptions = {}) {
@@ -205,6 +224,7 @@ export class SessionManager {
     this.retainedSubagentTimers.clear();
     this.preparingSubagentSessions.clear();
     this.transientSubagentSessions.clear();
+    this.presentationRoutes.clear();
   }
 
   // ── Session CRUD ─────────────────────────────────────
@@ -397,6 +417,7 @@ export class SessionManager {
     this.retainedSubagentTimers.delete(sessionId);
     this.transcripts.delete(sessionId);
     this.transientSubagentSessions.delete(sessionId);
+    this.presentationRoutes.delete(sessionId);
     await updateStore(this.storePath, (store) => {
       const entry = store.sessions[sessionId];
       if (this.isSubagentStoreEntry(entry)) {
@@ -557,21 +578,91 @@ export class SessionManager {
       ...(source.title === undefined ? {} : { title: source.title }),
     };
 
-    await this.persistNewSession(entry, [root, ...messages, ...lifecycle]);
+    const sourceEntries = [...sourceState.byId.values()];
+    const cut = entryId === undefined ? sourceEntries.length - 1
+      : sourceEntries.findIndex(record => record.id === selected.id);
+    const copiesById = new Map(messages.map(record => [record.id, record]));
+    const lifecycleIds = new Set(lifecycle.map(record => record.id));
+    const records = sourceEntries.flatMap((record, index): TranscriptEntry[] => {
+      const message = copiesById.get(record.id);
+      if (message) return [message];
+      if (lifecycleIds.has(record.id)) return [record];
+      if (index > cut || record.type !== 'presentation'
+        || record.parentId === null || !copiedMessageIds.has(record.parentId)) return [];
+      if ((record.body.type === 'subagent_start' || record.body.type === 'subagent_end')
+        && record.body.callerSessionId === sourceSessionId) {
+        return [{ ...record, body: { ...record.body, callerSessionId: sessionId } }];
+      }
+      return [record];
+    });
+    await this.persistNewSession(entry, [root, ...records]);
     return entry;
   }
 
   // Tree-structured message operations.
+
+  async beginSubagentPresentation(input: SubagentPresentationIdentity): Promise<void> {
+    const identity = this.presentationIdentity(input);
+    assertPresentationBody({ type: 'subagent_start', ...identity }, identity.runId);
+    if (this.presentationRoutes.has(identity.sessionId)
+      || identity.sessionId === identity.callerSessionId) {
+      throw this.lifecycleConflict(`Subagent "${identity.sessionId}" already has a presentation route.`);
+    }
+    const anchor = this.getMessages(identity.callerSessionId).reverse().find(record =>
+      record.turnId === identity.parentTurnId && record.message.role === 'assistant'
+      && Array.isArray(record.message.content)
+      && record.message.content.some(block =>
+        block.type === 'tool_use' && block.id === identity.parentToolUseId));
+    if (!anchor) {
+      throw this.lifecycleConflict(`Subagent "${identity.sessionId}" has no delegating message anchor.`);
+    }
+    const targets = [
+      { sessionId: identity.callerSessionId, anchorId: anchor.id },
+      ...(this.presentationRoutes.get(identity.callerSessionId)?.targets ?? []),
+    ];
+    const routing = Object.freeze({
+      rootTurnId: this.presentationRoutes.get(identity.callerSessionId)?.routing.rootTurnId
+        ?? identity.parentTurnId,
+      ancestorSessionIds: Object.freeze(targets.map(target => target.sessionId)),
+    });
+    const route = { identity, targets, routing, startEntryId: randomUUID(), endEntryId: randomUUID() };
+    this.presentationRoutes.set(identity.sessionId, route);
+    await this.copyPresentationFact(identity.sessionId, route.startEntryId, {
+      type: 'subagent_start', ...identity,
+    });
+  }
+
+  async endSubagentPresentation(input: SubagentPresentationEnd): Promise<void> {
+    const route = this.presentationRoutes.get(input.sessionId);
+    if (!route || !isDeepStrictEqual(route.identity, this.presentationIdentity(input))) {
+      throw this.lifecycleConflict(`Subagent "${input.sessionId}" has no matching presentation route.`);
+    }
+    await this.copyPresentationFact(input.sessionId, route.endEntryId, {
+      type: 'subagent_end', ...route.identity, outcome: input.outcome,
+      ...(input.failure === undefined ? {} : { failure: input.failure }),
+      usage: input.usage, durationMs: input.durationMs,
+    });
+  }
+
+  clearSubagentPresentation(sessionId: string): void {
+    this.presentationRoutes.delete(sessionId);
+  }
+
+  getSubagentPresentationRoute(sessionId: string) {
+    return this.presentationRoutes.get(sessionId)?.routing;
+  }
 
   /** Appends a message to the active branch and returns the persisted record. */
   async appendMessage(
     sessionId: string,
     message: SessionMessageInput,
   ): Promise<MessageRecord> {
-    return this.withTranscriptWrite(
+    const record = await this.withTranscriptWrite(
       sessionId,
       () => this.appendMessageUnlocked(sessionId, message),
     );
+    await this.copySourceRecord(sessionId, record);
+    return record;
   }
 
   private async appendMessageUnlocked(
@@ -580,7 +671,15 @@ export class SessionManager {
   ): Promise<MessageRecord> {
     const state = this.ensureTranscriptLoaded(sessionId);
     const filePath = this.resolveTranscriptPath(sessionId);
-    const { turnId, turnStopReason, ...messagePayload } = message;
+    const { turnId, turnStopReason, messageId, llmRound, ...messagePayload } = message;
+    if (messageId !== undefined && (typeof messageId !== 'string' || !messageId.trim())) {
+      throw new TypeError('messageId must be a non-empty string.');
+    }
+    if (llmRound !== undefined && (
+      !Number.isSafeInteger(llmRound) || llmRound < 0 || messagePayload.role !== 'assistant'
+    )) {
+      throw new TypeError('llmRound must be a non-negative safe integer on an Assistant message.');
+    }
     if (turnStopReason !== undefined && messagePayload.role !== 'assistant') {
       throw new TypeError('turnStopReason can only be set on an Assistant message.');
     }
@@ -608,6 +707,8 @@ export class SessionManager {
       parentId: state.leafId,
       timestamp: new Date().toISOString(),
       turnId,
+      ...(messageId === undefined ? {} : { messageId }),
+      ...(llmRound === undefined ? {} : { llmRound }),
       ...(turnStopReason === undefined ? {} : { turnStopReason }),
       message: persistedMessage,
     };
@@ -618,24 +719,8 @@ export class SessionManager {
         Array.isArray(normalizedMessagePayload.content)
         && normalizedMessagePayload.content.some((block) => block.type === 'thinking')
       );
-    if (state.version !== 2 && requiresV2) {
-      const entries = [...state.byId.values()];
-      const root = entries[0];
-      if (!root || root.type !== 'session') {
-        throw new SessionError(
-          'SESSION_DATA_INVALID',
-          `Session "${sessionId}" has no Transcript root.`,
-        );
-      }
-      const upgradedRoot: SessionRecord = { ...root, version: 2 };
-      await replaceTranscript(filePath, [upgradedRoot, ...entries.slice(1), record]);
-      state.byId.set(upgradedRoot.id, upgradedRoot);
-      state.version = 2;
-    } else {
-      await appendToTranscript(filePath, record);
-    }
-
-    state.byId.set(record.id, record);
+    const requiredVersion = messageId !== undefined || llmRound !== undefined ? 3 : requiresV2 ? 2 : 1;
+    await this.appendVersionedRecord(filePath, state, record, requiredVersion);
     state.leafId = record.id;
     await this.touchSession(sessionId);
 
@@ -654,28 +739,80 @@ export class SessionManager {
       throw new TypeError(`Session history limit must be an integer from 1 through ${MAX_HISTORY_LIMIT}.`);
     }
 
+    const state = this.ensureTranscriptLoaded(query.sessionId);
     const messages = this.getMessages(query.sessionId);
-    let end = messages.length;
+    const activeIds = new Set(messages.map(record => record.id));
+    const presentation = [...state.byId.values()].filter(
+      (record): record is PresentationRecord => record.type === 'presentation'
+        && record.parentId !== null && activeIds.has(record.parentId),
+    );
+    const candidates = [...state.byId.values()].flatMap((record): {
+      record: MessageRecord | PresentationRecord;
+      localTurnId: string;
+    }[] => {
+      if (record.type === 'message' && activeIds.has(record.id)) {
+        return [{ record, localTurnId: record.turnId }];
+      }
+      if (record.type === 'presentation' && record.body.type === 'message'
+        && record.parentId !== null && activeIds.has(record.parentId)) {
+        const anchor = state.byId.get(record.parentId);
+        if (anchor?.type === 'message') return [{ record, localTurnId: anchor.turnId }];
+      }
+      return [];
+    });
+    const turnIds = [...new Set(messages.map(record => record.turnId))];
+    let end = turnIds.length;
     if (query.beforeEntryId !== undefined) {
-      end = messages.findIndex((message) => message.id === query.beforeEntryId);
-      if (end < 0) {
+      const cursor = candidates.find(item => item.record.id === query.beforeEntryId);
+      if (!cursor || candidates.find(item => item.localTurnId === cursor.localTurnId) !== cursor) {
         throw new SessionError(
           'SESSION_HISTORY_CURSOR_INVALID',
-          'The history cursor is not on the active branch.',
+          'The history cursor is not an active Turn boundary.',
         );
       }
+      end = turnIds.indexOf(cursor.localTurnId);
     }
-
-    const start = Math.max(0, end - limit);
-    const selected = messages.slice(start, end);
+    let start = end;
+    let count = 0;
+    const counts = new Map<string, number>();
+    for (const candidate of candidates) {
+      counts.set(candidate.localTurnId, (counts.get(candidate.localTurnId) ?? 0) + 1);
+    }
+    while (start > 0 && count < limit) {
+      count += counts.get(turnIds[--start]!) ?? 0;
+    }
+    const selectedTurns = new Set(turnIds.slice(start, end));
+    const selected = [...selectedTurns].flatMap(turnId =>
+      candidates.filter(item => item.localTurnId === turnId));
     const lifecycle = this.getAsyncToolRecords(query.sessionId);
-    const items = selected.map((record) => this.projectHistoryMessage(record, lifecycle));
+    const items = selected.map(({ record }) => record.type === 'message'
+      ? this.projectHistoryMessage(record, lifecycle)
+      : this.projectPresentationMessage(record, presentation));
+    const scopes = new Map<string, SessionHistoryScope>();
+    for (const record of presentation) {
+      const anchor = record.parentId === null ? undefined : state.byId.get(record.parentId);
+      if (anchor?.type !== 'message' || !selectedTurns.has(anchor.turnId)) continue;
+      const body = record.body;
+      if (body.type === 'subagent_start') {
+        const { type: _type, ...identity } = body;
+        scopes.set(body.sessionId, {
+          ...identity,
+          status: this.presentationRoutes.get(body.sessionId)?.targets.some(target =>
+            target.sessionId === query.sessionId && target.anchorId === record.parentId)
+            ? 'running' : 'unknown',
+        });
+      } else if (body.type === 'subagent_end') {
+        const { type: _type, usage: _usage, durationMs: _duration, ...scope } = body;
+        scopes.set(body.sessionId, { ...scope, status: 'terminal' });
+      }
+    }
     const hasMore = start > 0;
     return {
       sessionId: query.sessionId,
       items,
       nextCursor: hasMore ? (items[0]?.entryId ?? null) : null,
       hasMore,
+      ...(scopes.size === 0 ? {} : { scopes: [...scopes.values()] }),
     };
   }
 
@@ -698,7 +835,7 @@ export class SessionManager {
     sessionId: string,
     input: ToolExecutionAcceptedInput,
   ): Promise<string> {
-    return this.withTranscriptWrite(sessionId, async () => {
+    const id = await this.withTranscriptWrite(sessionId, async () => {
       const state = this.ensureTranscriptLoaded(sessionId);
       const acceptedRecords = this.asyncToolRecords(state)
         .filter((record): record is ToolExecutionAcceptedRecord => (
@@ -735,13 +872,15 @@ export class SessionManager {
       await this.appendAsyncToolRecord(sessionId, state, record);
       return record.id;
     });
+    await this.copySourceRecord(sessionId, this.ensureTranscriptLoaded(sessionId).byId.get(id));
+    return id;
   }
 
   async appendToolExecutionTerminal(
     sessionId: string,
     input: ToolExecutionTerminalInput,
   ): Promise<string> {
-    return this.withTranscriptWrite(sessionId, async () => {
+    const id = await this.withTranscriptWrite(sessionId, async () => {
       const state = this.ensureTranscriptLoaded(sessionId);
       const records = this.asyncToolRecords(state);
       const accepted = records.find(
@@ -785,6 +924,8 @@ export class SessionManager {
       await this.appendAsyncToolRecord(sessionId, state, record);
       return record.id;
     });
+    await this.copySourceRecord(sessionId, this.ensureTranscriptLoaded(sessionId).byId.get(id));
+    return id;
   }
 
   async appendHostTaskCompletion(
@@ -932,6 +1073,107 @@ export class SessionManager {
 
   // Internal helpers.
 
+  private presentationIdentity(input: SubagentPresentationIdentity): SubagentPresentationIdentity {
+    return {
+      sessionId: input.sessionId, turnId: input.turnId, callerSessionId: input.callerSessionId,
+      parentTurnId: input.parentTurnId, parentToolUseId: input.parentToolUseId,
+      runId: input.runId, depth: input.depth, subagentType: input.subagentType,
+    };
+  }
+
+  private async copySourceRecord(sessionId: string, record: TranscriptEntry | undefined): Promise<void> {
+    if (!this.presentationRoutes.has(sessionId)) return;
+    if (!record) throw this.lifecycleConflict(`Presentation source record is missing in "${sessionId}".`);
+    if (record.type === 'message') {
+      const { entryId: _entryId, timestamp: _timestamp, ...message } = this.projectHistoryMessage(record, []);
+      await this.copyPresentationFact(sessionId, record.id, { type: 'message', ...message });
+    } else if (record.type === 'tool_execution_accepted' || record.type === 'tool_execution_terminal') {
+      const { id, parentId: _parentId, timestamp: _timestamp, ...body } = record;
+      await this.copyPresentationFact(sessionId, id, body);
+    }
+  }
+
+  private async copyPresentationFact(
+    sourceSessionId: string,
+    sourceEntryId: string,
+    body: PresentationBody,
+  ): Promise<void> {
+    assertPresentationBody(body, sourceEntryId);
+    const targets = this.presentationRoutes.get(sourceSessionId)?.targets;
+    if (!targets) throw this.lifecycleConflict(`Presentation route is missing for "${sourceSessionId}".`);
+    for (const target of targets) {
+      let phase: 'validate_target' | 'append_transcript' | 'update_metadata' = 'validate_target';
+      try {
+        await this.withTranscriptWrite(target.sessionId, async () => {
+          const state = this.ensureTranscriptLoaded(target.sessionId);
+          const existing = [...state.byId.values()].find(record =>
+            record.type === 'presentation' && record.sourceSessionId === sourceSessionId
+            && (record.sourceEntryId === sourceEntryId
+              || (body.type === 'message' && body.role === 'user' && body.messageId !== undefined
+                && record.body.type === 'message' && record.body.role === 'user'
+                && record.body.turnId === body.turnId && record.body.messageId === body.messageId)
+              || (record.body.type === body.type
+                && (body.type === 'subagent_start' || body.type === 'subagent_end'))));
+          if (existing) {
+            if (existing.type !== 'presentation' || existing.parentId !== target.anchorId
+              || !isDeepStrictEqual(existing.body, body)) {
+              throw this.lifecycleConflict(`Presentation fact "${sourceEntryId}" conflicts with its copy.`);
+            }
+            return;
+          }
+          const anchor = state.byId.get(target.anchorId);
+          if (anchor?.type !== 'message') {
+            throw this.lifecycleConflict(`Presentation anchor "${target.anchorId}" is missing.`);
+          }
+          const record: PresentationRecord = {
+            type: 'presentation', id: randomUUID(), parentId: target.anchorId,
+            timestamp: this.nowIso(), sourceSessionId, sourceEntryId, body,
+          };
+          phase = 'append_transcript';
+          await this.appendVersionedRecord(this.resolveTranscriptPath(target.sessionId), state, record, 3);
+          phase = 'update_metadata';
+          await this.touchSession(target.sessionId);
+        });
+      } catch (error) {
+        log.error('ancestor presentation persistence failed', {
+          sourceSessionId,
+          sourceEntryId,
+          targetSessionId: target.sessionId,
+          phase,
+          error: error instanceof Error ? error.message : 'Non-Error value thrown.',
+          ...(error instanceof Error ? { errorName: error.name } : {}),
+          ...(error instanceof Error && 'code' in error && typeof error.code === 'string'
+            ? { errorCode: error.code } : {}),
+          ...(error instanceof Error && 'syscall' in error && typeof error.syscall === 'string'
+            ? { syscall: error.syscall } : {}),
+        });
+        throw new SessionError('SESSION_PERSISTENCE_FAILED',
+          `Presentation "${sourceSessionId}/${sourceEntryId}" could not be saved to "${target.sessionId}".`,
+          { cause: error });
+      }
+    }
+  }
+
+  private async appendVersionedRecord(
+    filePath: string,
+    state: TranscriptState,
+    record: TranscriptEntry,
+    requiredVersion: 1 | 2 | 3,
+  ): Promise<void> {
+    if ((state.version ?? 1) < requiredVersion) {
+      const entries = [...state.byId.values()];
+      const root = entries[0];
+      if (root?.type !== 'session') throw this.lifecycleConflict('Transcript has no root.');
+      const upgradedRoot: SessionRecord = { ...root, version: requiredVersion };
+      await replaceTranscript(filePath, [upgradedRoot, ...entries.slice(1), record]);
+      state.byId.set(root.id, upgradedRoot);
+      state.version = requiredVersion;
+    } else {
+      await appendToTranscript(filePath, record);
+    }
+    state.byId.set(record.id, record);
+  }
+
   private async withTranscriptWrite<T>(
     sessionId: string,
     operation: () => Promise<T>,
@@ -1038,7 +1280,29 @@ export class SessionManager {
                 }]
               : [];
           }
-          if (block.type !== 'tool_use') return [block];
+          switch (block.type) {
+            case 'text':
+              return [{ type: 'text', text: block.text }];
+            case 'tool_result':
+              return [{
+                type: 'tool_result', tool_use_id: block.tool_use_id,
+                content: block.content, status: block.status,
+              }];
+            case 'execution_accepted':
+              return [{
+                type: 'execution_accepted', tool_use_id: block.tool_use_id,
+                execution_id: block.execution_id,
+              }];
+            case 'image':
+              return [{
+                type: 'image',
+                source: { type: 'base64', media_type: block.source.media_type, data: block.source.data },
+                dimensions: { width: block.dimensions.width, height: block.dimensions.height },
+              }];
+          }
+          const tool: Extract<SessionHistoryContentBlock, { type: 'tool_use' }> = {
+            type: 'tool_use', id: block.id, name: block.name, input: block.input,
+          };
           const accepted = lifecycle.find(
             (candidate): candidate is ToolExecutionAcceptedRecord => (
               candidate.type === 'tool_execution_accepted'
@@ -1046,30 +1310,19 @@ export class SessionManager {
               && candidate.callId === block.id
             ),
           );
-          if (!accepted) return [block];
+          if (!accepted) return [tool];
           const terminal = lifecycle.find(
             (candidate): candidate is ToolExecutionTerminalRecord => (
               candidate.type === 'tool_execution_terminal'
               && candidate.executionId === accepted.executionId
             ),
           );
-          return [{
-            ...block,
-            execution_id: accepted.executionId,
-            ...(terminal === undefined
-              ? {}
-              : {
-                  status: terminal.outcome === 'success'
-                    ? 'success' as const
-                    : terminal.outcome === 'failed'
-                      ? 'error' as const
-                      : 'aborted' as const,
-                  result_content: terminal.content,
-                }),
-          }];
+          return [this.projectToolHistory(tool, accepted, terminal)];
         });
     return {
       entryId: record.id,
+      ...(record.messageId === undefined ? {} : { messageId: record.messageId }),
+      ...(record.llmRound === undefined ? {} : { llmRound: record.llmRound }),
       turnId: record.turnId,
       timestamp: record.timestamp,
       role: record.message.role,
@@ -1077,7 +1330,51 @@ export class SessionManager {
       ...(record.message.reasoning === undefined
         ? {}
         : { reasoning: record.message.reasoning }),
-      ...(record.message.abortMeta === undefined ? {} : { abortMeta: record.message.abortMeta }),
+      ...(record.message.abortMeta === undefined ? {} : {
+        abortMeta: {
+          partial: record.message.abortMeta.partial, stopReason: record.message.abortMeta.stopReason,
+        },
+      }),
+    };
+  }
+
+  private projectPresentationMessage(
+    record: PresentationRecord,
+    facts: readonly PresentationRecord[],
+  ): import('./types.js').SessionHistoryMessage {
+    const body = record.body;
+    if (body.type !== 'message') throw this.lifecycleConflict('History candidate is not a message.');
+    const content = typeof body.content === 'string' ? body.content : body.content.map(block => {
+      if (block.type !== 'tool_use') return block;
+      const accepted = facts.find(fact => fact.sourceSessionId === record.sourceSessionId
+        && fact.body.type === 'tool_execution_accepted'
+        && fact.body.turnId === body.turnId && fact.body.callId === block.id)?.body;
+      if (accepted?.type !== 'tool_execution_accepted') return block;
+      const terminal = facts.find(fact => fact.sourceSessionId === record.sourceSessionId
+        && fact.body.type === 'tool_execution_terminal'
+        && fact.body.executionId === accepted.executionId)?.body;
+      return this.projectToolHistory(block, accepted,
+        terminal?.type === 'tool_execution_terminal' ? terminal : undefined);
+    });
+    const { type: _type, ...message } = body;
+    return {
+      ...message, content, entryId: record.id, timestamp: record.timestamp,
+      sourceSessionId: record.sourceSessionId, sourceEntryId: record.sourceEntryId,
+    };
+  }
+
+  private projectToolHistory(
+    block: Extract<SessionHistoryContentBlock, { type: 'tool_use' }>,
+    accepted: { executionId: string },
+    terminal: Pick<ToolExecutionTerminalRecord, 'outcome' | 'content'> | undefined,
+  ): SessionHistoryContentBlock {
+    return {
+      ...block, execution_id: accepted.executionId,
+      ...(terminal === undefined ? {} : {
+        status: terminal.outcome === 'success' ? 'success' as const
+          : terminal.outcome === 'failed' ? 'error' as const : 'aborted' as const,
+        result_content: terminal.content,
+      }),
     };
   }
 

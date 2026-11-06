@@ -10,6 +10,7 @@ import type {
   ChannelInteractionTransport,
   ChannelRunRequest,
   ChannelRuntimeCapabilities,
+  ChannelEventRouting,
   ModelCatalogEntry,
   ModelCatalogSnapshot,
   ChatSessionCapability,
@@ -229,7 +230,8 @@ function formatHistoryMessage(message: SessionHistoryMessage): string[] {
 }
 
 function formatSessionHistory(page: SessionHistoryPage): string[] {
-  const recordLines = page.items.map(formatHistoryMessage);
+  const localItems = page.items.filter(message => !message.sourceSessionId);
+  const recordLines = localItems.map(formatHistoryMessage);
   const maxContentLines = SESSION_HISTORY_MAX_LINES - 3;
   const selected: string[][] = [];
   let selectedLineCount = 0;
@@ -259,7 +261,7 @@ function formatSessionHistory(page: SessionHistoryPage): string[] {
   if (earlierOmitted) lines.push('[Earlier session history not shown]');
   for (const record of selected) lines.push(...record);
   if (contentOmitted) lines.push('[Some recent session history content omitted]');
-  if (page.items.length === 0) lines.push('  No persisted history.');
+  if (localItems.length === 0) lines.push('  No persisted history.');
 
   const charCount = lines.reduce((total, line) => total + line.length + 1, 0);
   if (lines.length > SESSION_HISTORY_MAX_LINES || charCount > SESSION_HISTORY_MAX_CHARS) {
@@ -338,9 +340,10 @@ export class CliChannel implements Channel {
 
   // ── Channel.send 实现 ───────────────────────────────────────────────
 
-  send(event: AgentEvent): void {
+  send(event: AgentEvent, routing?: ChannelEventRouting): void {
     switch (event.type) {
       case 'run_start':
+        if (routing) break;
         this.handleRunStarted(event.turnId);
         break;
 
@@ -436,6 +439,7 @@ export class CliChannel implements Channel {
       case 'run_end':
         this.breakStream();
         this.thinkingStream = false;
+        if (routing) break;
         if (event.result.stopReason === 'max_llm_calls') {
           this.output.write(yellow('[configured model call limit reached]\n'));
         }

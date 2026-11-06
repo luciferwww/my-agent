@@ -3,6 +3,7 @@ import {
   ChannelCompletionObserver,
   ChannelRunRequest,
   ChannelRuntimeBinding,
+  ChannelEventRouting,
   ChannelRuntimeHost,
   ApprovalRequest,
   TurnInteractionResponse,
@@ -88,6 +89,7 @@ export interface RuntimeApplicationKernel {
   blockingTurnIds(generation: number): readonly string[];
   abortGeneration(generation: number): readonly string[];
   channelBindingsForTurn(turnId: string): readonly ChannelRuntimeBinding[] | undefined;
+  presentationRouteForEvent(event: AgentEvent): ChannelEventRouting | undefined;
   shouldDeliverAgentEvent(event: AgentEvent): boolean;
   close(reason?: string, budget?: RuntimeDeadlineBudget): Promise<RuntimeShutdownReport>;
 }
@@ -141,11 +143,14 @@ export async function buildRuntimeHandle(
     const turnId = 'turnId' in event && typeof event.turnId === 'string'
       ? event.turnId
       : undefined;
-    const channels = turnId
-      ? kernel?.channelBindingsForTurn(turnId) ?? compositionManager?.currentChannelBindings() ?? []
+    const routing = kernel?.presentationRouteForEvent(event);
+    const ownerTurnId = routing?.rootTurnId ?? turnId;
+    const channels = ownerTurnId
+      ? kernel?.channelBindingsForTurn(ownerTurnId) ?? compositionManager?.currentChannelBindings() ?? []
       : compositionManager?.currentChannelBindings() ?? [];
     const deliveries: Promise<void>[] = [];
-    const terminal = event.type === 'run_end' || event.type === 'request_end';
+    const terminal = event.type === 'run_end' || event.type === 'request_end'
+      || event.type === 'subagent_end';
     const track = (
       owner: string,
       invoke: () => unknown,
@@ -175,7 +180,7 @@ export async function buildRuntimeHandle(
       deliveries.push(settled);
     };
     for (const channel of channels) {
-      track(`channel:${channel.id}`, () => channel.send(event));
+      track(`channel:${channel.id}`, () => channel.send(event, routing));
     }
     if (userObserver) {
       track('observer:onAgentEvent', () => userObserver(event));

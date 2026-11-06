@@ -386,7 +386,8 @@ export class AgentRunner {
 
   // ── Public entry point ────────────────────────────────────
 
-  async run(params: RunParams): Promise<RunResult> {
+  async run(input: RunParams): Promise<RunResult> {
+    const params = { ...input, originMessageId: input.originMessageId ?? randomUUID() };
     const compaction = params.compaction ?? DEFAULT_COMPACTION_CONFIG;
     const inputBudgetTokens = resolveInputTokenBudget(
       params.resolvedModel.facts,
@@ -411,8 +412,8 @@ export class AgentRunner {
       return finalResult;
     }
 
-    // runAttempt persists the user message only after Layer 2 preflight, keeping
-    // it out of history being compacted and avoiding duplicate writes on retry.
+    // Each attempt persists after preflight; retries reuse the input identity
+    // while sanitation excludes the earlier attempt from the active branch.
 
     let compactionAttempts = 0;
     let compacted = false;
@@ -559,6 +560,7 @@ export class AgentRunner {
       turnId: params.turnId,
       role: 'user',
       content: params.message,
+      ...(params.originMessageId ? { messageId: params.originMessageId } : {}),
       ...(params.reasoningPreference === undefined
         ? {}
         : { reasoning: params.reasoningPreference }),
@@ -599,13 +601,18 @@ export class AgentRunner {
           };
         }
 
-        this.emit(turnCtx, { type: 'llm_call', round: llmCallCount });
+        const assistantMessageId = randomUUID();
+        const llmRound = llmCallCount;
+        this.emit(turnCtx, {
+          type: 'llm_call', round: llmRound, messageId: assistantMessageId,
+        });
         llmCallCount++;
         const consumesCompletionReserve = nextCallConsumesReserve;
         nextCallConsumesReserve = false;
 
         // Stream the LLM response, normalizing API overflow and abort behavior.
         const llmResult = await this.callLLMStream(turnCtx, {
+          messageId: assistantMessageId,
           system: params.systemPrompt,
           messages,
           tools: [...params.toolProjection.visibleDefinitions(params.toolPolicy)],
@@ -646,6 +653,8 @@ export class AgentRunner {
             await this.sessionManager.appendMessage(params.sessionId, {
               turnId: params.turnId,
               role: 'assistant',
+              messageId: assistantMessageId,
+              llmRound,
               content: llmResult.content,
               ...(llmResult.invocation === undefined
                 ? {}
@@ -672,6 +681,8 @@ export class AgentRunner {
         await this.sessionManager.appendMessage(params.sessionId, {
           turnId: params.turnId,
           role: 'assistant',
+          messageId: assistantMessageId,
+          llmRound,
           content: llmResult.content,
           ...(llmResult.invocation === undefined
             ? {}
@@ -689,6 +700,7 @@ export class AgentRunner {
           const eventInput = toolUse.input.state === 'ready' ? toolUse.input.value : {};
           this.emit(turnCtx, {
             type: 'tool_call_requested',
+            messageId: assistantMessageId,
             callId: toolUse.callId,
             name: toolUse.name,
             input: eventInput,
@@ -1193,6 +1205,7 @@ export class AgentRunner {
   private async callLLMStream(
     turnCtx: TurnContext,
     params: {
+      messageId: string;
       system?: string;
       messages: ChatMessage[];
       tools?: ToolDefinition[];
@@ -1253,10 +1266,14 @@ export class AgentRunner {
             const thinkingId = `${streamInvocationId}:${event.blockId}`;
             if (event.text && !visibleThinking.has(thinkingId)) {
               visibleThinking.add(thinkingId);
-              this.emit(turnCtx, { type: 'thinking_start', thinkingId });
+              this.emit(turnCtx, {
+                type: 'thinking_start', thinkingId, messageId: params.messageId,
+              });
             }
             if (event.text) {
-              this.emit(turnCtx, { type: 'thinking_delta', thinkingId, text: event.text });
+              this.emit(turnCtx, {
+                type: 'thinking_delta', thinkingId, text: event.text, messageId: params.messageId,
+              });
             }
             break;
           }
@@ -1269,11 +1286,14 @@ export class AgentRunner {
             const text = this.projectThinkingCompletion(event.completion);
             if (text && !visibleThinking.has(thinkingId)) {
               visibleThinking.add(thinkingId);
-              this.emit(turnCtx, { type: 'thinking_start', thinkingId });
+              this.emit(turnCtx, {
+                type: 'thinking_start', thinkingId, messageId: params.messageId,
+              });
             }
             if (visibleThinking.has(thinkingId)) {
               this.emit(turnCtx, {
                 type: 'thinking_end',
+                messageId: params.messageId,
                 thinkingId,
                 text,
                 status: event.completion.status,
@@ -1283,7 +1303,9 @@ export class AgentRunner {
           }
 
           case 'text_delta':
-            this.emit(turnCtx, { type: 'text_delta', text: event.text });
+            this.emit(turnCtx, {
+              type: 'text_delta', text: event.text, messageId: params.messageId,
+            });
             break;
 
           case 'tool_call':
@@ -1874,13 +1896,14 @@ export class AgentRunner {
     injectedMessages: import('./types.js').SteeringMessage[],
   ): Promise<void> {
     for (const injected of injectedMessages) {
-      const { reasoning, ...message } = injected;
+      const { reasoning, messageId, ...message } = injected;
       if (message.origin === 'host') {
         throw new TypeError('Trusted Host messages cannot enter through steering injection.');
       }
       targetMessages.push(message);
       await this.sessionManager.appendMessage(sessionKey, {
         turnId,
+        ...(messageId === undefined ? {} : { messageId }),
         role: message.role,
         content: message.content,
         ...(reasoning === undefined ? {} : { reasoning }),

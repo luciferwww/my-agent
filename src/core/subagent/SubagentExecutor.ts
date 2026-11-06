@@ -43,6 +43,7 @@ export interface SubagentExecutionRequest {
 }
 
 export interface PreparedSubagentExecution {
+  readonly contextFiles: readonly ContextFile[];
   readonly requestId: string;
   readonly sessionId: string;
   readonly subagentDepth: number;
@@ -82,6 +83,7 @@ export class SubagentExecutor {
     });
 
     return {
+      contextFiles: mergedFiles,
       requestId: request.requestId,
       sessionId: request.childSessionId,
       subagentDepth: request.childDepth,
@@ -104,6 +106,7 @@ export class SubagentExecutor {
     const {
       sessionId,
       profile: _profile,
+      contextFiles: _contextFiles,
       tools: _tools,
       toolPolicy,
       toolProjection,

@@ -575,20 +575,19 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
       expect(app.application.getState().activeRunCount).toBe(0);
     });
 
-    expect(claimed).toEqual([
-      { role: 'user', content: 'same' },
-      { role: 'user', content: 'other' },
-      { role: 'user', content: 'later' },
-    ]);
+    const messages = agentEvents.filter(
+      (event): event is Extract<AgentEvent, { type: 'user_message' }> =>
+        event.type === 'user_message',
+    );
+    expect(messages).toHaveLength(4);
+    expect(claimed).toEqual(['same', 'other', 'later'].map((content, index) => ({
+      role: 'user', content, messageId: messages[index + 1]?.messageId,
+    })));
     expect(runnerRun.mock.calls.map(([params]) => params.message)).toEqual([
       expect.stringContaining('</turn_start>\n\nfirst'),
     ]);
     expect(runtime.messageQueueBySession.has('main')).toBe(false);
     expect(runtime.requestGates.size).toBe(0);
-    const messages = agentEvents.filter(
-      (event): event is Extract<AgentEvent, { type: 'user_message' }> =>
-        event.type === 'user_message',
-    );
     expect(agentEvents.filter((event) => event.type === 'user_message_bound')).toEqual(
       messages.slice(1).map((message) => expect.objectContaining({
         messageId: message.messageId,
@@ -1058,6 +1057,7 @@ async function buildApp(
           createSessionManager: () => ({
             initialize: vi.fn(async () => undefined),
             close: vi.fn(async () => undefined),
+            getSubagentPresentationRoute: vi.fn(() => undefined),
             getPersistedSession: vi.fn((sessionId: string) => ({
               sessionId,
               createdAt: 1,

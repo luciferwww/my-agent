@@ -239,10 +239,15 @@ export type ChannelCompletion =
       readonly error: Error;
     };
 
+export interface ChannelEventRouting {
+  readonly rootTurnId: string;
+  readonly ancestorSessionIds: readonly string[];
+}
+
 export interface ChannelInstance {
   readonly id: string;
   readonly completion: Promise<ChannelCompletion>;
-  send(event: AgentEvent): void | Promise<void>;
+  send(event: AgentEvent, routing?: ChannelEventRouting): void | Promise<void>;
   onMessage(handler: (request: ChannelRunRequest) => Promise<void>): void;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -266,7 +271,7 @@ export interface ChannelRuntimeInteraction {
 
 export interface ChannelRuntimeBinding {
   readonly id: string;
-  send(event: AgentEvent): void | Promise<void>;
+  send(event: AgentEvent, routing?: ChannelEventRouting): void | Promise<void>;
   readonly interaction: ChannelRuntimeInteraction;
 }
 

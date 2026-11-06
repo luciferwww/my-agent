@@ -934,6 +934,11 @@ describe('CliChannel model commands', () => {
           content: 'first user message',
         },
         {
+          entryId: 'child-copy', sourceSessionId: 'child', sourceEntryId: 'child-source',
+          turnId: 'child-turn', timestamp: '2026-10-08T00:00:00.500Z',
+          role: 'assistant' as const, content: 'descendant content must not impersonate the parent',
+        },
+        {
           entryId: 'entry-2',
           turnId: 'turn-1',
           timestamp: '2026-10-08T00:00:01.000Z',
@@ -1000,6 +1005,7 @@ describe('CliChannel model commands', () => {
       expect(output).toContain('[thinking: complete] private reasoning');
       expect(output).toContain('[image: image/png 640x480]');
       expect(output).not.toContain('SECRET_BASE64');
+      expect(output).not.toContain('descendant content must not impersonate the parent');
       expect(fixture.handler).not.toHaveBeenCalled();
     } finally {
       await fixture.close();
@@ -1125,6 +1131,7 @@ describe('CliChannel model commands', () => {
       turnId,
       requestId: `request-${turnId}`,
     });
+
     const end = (turnId: string) => fixture.channel.send({
       type: 'run_end' as const,
       sessionId: CLI_SESSION_ID,
@@ -1156,6 +1163,29 @@ describe('CliChannel model commands', () => {
         message: 'after all turns',
       }));
       expect(fixture.handler).toHaveBeenCalledTimes(1);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('does not use descendant run lifecycle to lock root input or show a root call-limit warning', async () => {
+    const fixture = await startInteractive();
+    const routing = { rootTurnId: 'root-turn', ancestorSessionIds: [CLI_SESSION_ID] };
+    try {
+      fixture.channel.send({
+        type: 'run_start', sessionId: 'child', turnId: 'child-turn', requestId: 'request',
+      }, routing);
+      await waitForOrdinaryPrompt(fixture.channel);
+      fixture.input.write('root remains usable\n');
+      await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
+        sessionId: CLI_SESSION_ID, message: 'root remains usable',
+      }));
+      fixture.channel.send({
+        type: 'run_end', sessionId: 'child', turnId: 'child-turn', requestId: 'request',
+        result: { text: '', content: [], stopReason: 'max_llm_calls',
+          usage: { inputTokens: 0, outputTokens: 0 }, toolRounds: 0 },
+      }, routing);
+      expect(fixture.captured()).not.toContain('[configured model call limit reached]');
     } finally {
       await fixture.close();
     }

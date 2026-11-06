@@ -12,6 +12,7 @@ import {
   type ApprovalInteractionRequest,
   type ApprovalClosedResult,
   type ChannelRuntimeCapabilities,
+  type AgentEvent,
   type ModelCatalogSnapshot,
 } from 'my-agent/extension-api';
 import {
@@ -2087,6 +2088,98 @@ describe('WebSocketChannel', () => {
   // Subagent events carry the Child UUID; WebSocketChannel must
   // route them to the parent's audience so subscribers actually see them.
   describe('subagent event audience routing', () => {
+    it('unions source and recursive ancestor audiences once without granting membership', async () => {
+      channel = createChannel({ port: 0 });
+      const handler = vi.fn(async () => undefined);
+      channel.onMessage(handler);
+      channel.bindRuntimeCapabilities(capabilities());
+      await channel.start();
+      const ids = ['root-only', 'parent-only', 'source-only', 'multiple', 'unrelated'];
+      const sockets: WebSocket[] = [];
+      const received: Record<string, unknown>[][] = ids.map(() => []);
+      for (const [index, id] of ids.entries()) {
+        const client = await connectClient(channel);
+        clients.push(client);
+        sockets.push(client);
+        client.send(JSON.stringify({ type: 'hello', clientId: id }));
+        await expectMessage(client, { type: 'hello_ack', clientId: id });
+        client.on('message', raw => received[index]!.push(JSON.parse(raw.toString())));
+      }
+      subscribe(channel, ids[0]!, 'root');
+      subscribe(channel, ids[1]!, 'A');
+      subscribe(channel, ids[2]!, 'B');
+      subscribe(channel, ids[3]!, 'root', 'A', 'B');
+      subscribe(channel, ids[4]!, 'other');
+      const routing = { rootTurnId: 'root-turn', ancestorSessionIds: ['A', 'root'] };
+      const identity = {
+        requestId: 'request', sessionId: 'B', turnId: 'b-turn', runId: 'run',
+        depth: 2, subagentType: 'test', lifecycle: 'blocking' as const,
+        callerSessionId: 'A', parentTurnId: 'a-turn', parentToolUseId: 'task',
+      };
+      const events: AgentEvent[] = [
+        { type: 'subagent_start', ...identity },
+        { type: 'run_start', sessionId: 'B', turnId: 'b-turn', requestId: 'request' },
+        { type: 'thinking_delta', sessionId: 'B', turnId: 'b-turn', messageId: 'message',
+          thinkingId: 'thought', text: 'thinking' },
+        { type: 'text_delta', sessionId: 'B', turnId: 'b-turn', messageId: 'message', text: 'B text' },
+        { type: 'tool_call_requested', sessionId: 'B', turnId: 'b-turn',
+          callId: 'call', name: 'work', input: {} },
+        { type: 'run_end', sessionId: 'B', turnId: 'b-turn', requestId: 'request',
+          result: { text: 'B text', content: [], stopReason: 'end_turn',
+            usage: { inputTokens: 1, outputTokens: 1 }, toolRounds: 0 } },
+        { type: 'subagent_end', ...identity, outcome: 'ok',
+          usage: { inputTokens: 1, outputTokens: 1 }, durationMs: 1 },
+      ];
+      for (const event of events) channel.send(event, routing);
+      for (const client of sockets) {
+        client.send(JSON.stringify({ type: 'get_model_catalog', requestId: 'barrier' }));
+      }
+      await vi.waitFor(() => {
+        for (const messages of received) expect(messages.at(-1)?.type).toBe('model_catalog');
+      });
+      const expected = events.map(event => ({ ...event, ...routing }));
+      for (const messages of received.slice(0, 4)) expect(messages.slice(0, -1)).toEqual(expected);
+      expect(received[4]).toHaveLength(1);
+      expect(clientSessionAudiences(channel, ids[0]!)).toEqual(['root']);
+      expect(sessionAudience(channel, 'B')).toEqual(['multiple', 'source-only']);
+      sockets[0]!.send(JSON.stringify({ type: 'run_turn', sessionId: 'B', message: 'not authorized' }));
+      await vi.waitFor(() => expect(received[0]!.at(-1)).toMatchObject({
+        type: 'channel_error', code: 'INVALID_MESSAGE',
+        message: 'run_turn requires an active subscription for the Session.',
+      }));
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('uses current subscriptions after unsubscribe and reconnect, not cached ancestor audiences', async () => {
+      channel = createChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      channel.bindRuntimeCapabilities(capabilities());
+      await channel.start();
+      const first = await connectClient(channel);
+      clients.push(first);
+      first.send(JSON.stringify({ type: 'hello', clientId: 'root-observer' }));
+      await expectMessage(first, { type: 'hello_ack', clientId: 'root-observer' });
+      subscribe(channel, 'root-observer', 'root');
+      const routing = { rootTurnId: 'root-turn', ancestorSessionIds: ['A', 'root'] };
+      const event: AgentEvent = { type: 'text_delta', sessionId: 'B', turnId: 'b-turn', text: 'text' };
+      channel.send(event, routing);
+      await expectMessage(first, { ...event, ...routing });
+      first.send(JSON.stringify({ type: 'unsubscribe_session', requestId: 'leave', sessionId: 'root' }));
+      await expectMessage(first, { type: 'session_unsubscribed', requestId: 'leave', sessionId: 'root' });
+      channel.send(event, routing);
+      first.send(JSON.stringify({ type: 'get_model_catalog', requestId: 'barrier' }));
+      expect(await nextMessage(first)).toMatchObject({ type: 'model_catalog', requestId: 'barrier' });
+      first.close();
+      await once(first, 'close');
+      const reconnected = await connectClient(channel);
+      clients.push(reconnected);
+      reconnected.send(JSON.stringify({ type: 'hello', clientId: 'root-observer' }));
+      await expectMessage(reconnected, { type: 'hello_ack', clientId: 'root-observer' });
+      subscribe(channel, 'root-observer', 'root');
+      channel.send(event, routing);
+      await expectMessage(reconnected, { ...event, ...routing });
+    });
+
     it('routes subagent_start to the caller Session audience', async () => {
       const handler = vi.fn(async () => undefined);
       channel = createChannel({ port: 0 });

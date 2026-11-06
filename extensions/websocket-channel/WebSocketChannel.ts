@@ -15,6 +15,7 @@ import {
   type ChannelOperationErrorCode,
   type ChannelRunRequest,
   type ChannelRuntimeCapabilities,
+  type ChannelEventRouting,
   type ExtensionLogger,
   type InboundContentBlock,
   type ModelCatalogSnapshot,
@@ -245,13 +246,12 @@ export class WebSocketChannel implements Channel {
     this.interaction = this.makeInteractionAdapter();
   }
 
-  send(event: AgentEvent): void {
+  send(event: AgentEvent, routing?: ChannelEventRouting): void {
     if (event.type === 'user_message') {
       this.sessionByOriginMessageId.set(event.messageId, event.sessionId);
     } else if (event.type === 'run_start' && event.originMessageId) {
       this.sessionByOriginMessageId.delete(event.originMessageId);
     }
-    // Subagent events carry the Child UUID, while clients subscribe to the caller Session.
     const requestAudience = event.type === 'request_end' && event.originMessageId
       ? this.sessionByOriginMessageId.get(event.originMessageId)
       : undefined;
@@ -260,23 +260,32 @@ export class WebSocketChannel implements Channel {
     }
     const eventSessionId = 'sessionId' in event ? event.sessionId : requestAudience;
     if (!eventSessionId) return;
-    const audienceKey = event.type === 'subagent_start' || event.type === 'subagent_end'
-      ? event.callerSessionId
-      : eventSessionId;
-    const sessionAudience = this.sessions.get(audienceKey);
-    if (!sessionAudience || sessionAudience.size === 0) return;
+    const ancestorSessionIds = routing?.ancestorSessionIds
+      ?? (event.type === 'subagent_start' || event.type === 'subagent_end'
+        ? [event.callerSessionId] : []);
+    const audienceKeys = [eventSessionId, ...ancestorSessionIds];
+    const sessionAudience = new Set<string>();
+    for (const key of audienceKeys) {
+      for (const clientId of this.sessions.get(key) ?? []) sessionAudience.add(clientId);
+    }
+    if (sessionAudience.size === 0) return;
 
     if (event.type !== 'text_delta' && event.type !== 'thinking_delta') {
       this.logger.debug('broadcasting event to session audience', {
         channelId: this.id,
         eventType: event.type,
         sessionId: eventSessionId,
-        audienceKey,
+        audienceKeys,
         audienceSize: sessionAudience.size,
       });
     }
 
-    const payload = this.serializeEvent(event, eventSessionId);
+    const payload = {
+      ...this.serializeEvent(event, eventSessionId),
+      ...(routing === undefined ? {} : {
+        rootTurnId: routing.rootTurnId, ancestorSessionIds: routing.ancestorSessionIds,
+      }),
+    };
     for (const clientId of sessionAudience) {
       const socket = this.clients.get(clientId);
       if (!socket || socket.readyState !== WebSocket.OPEN) continue;

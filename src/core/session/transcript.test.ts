@@ -18,6 +18,93 @@ describe('transcript', () => {
   });
 
   describe('loadTranscript', () => {
+    it.each([
+      { version: 1, role: 'assistant', llmRound: 0 },
+      { version: 2, role: 'assistant', llmRound: 0 },
+      { version: 3, role: 'user', llmRound: 0 },
+      { version: 3, role: 'toolResult', llmRound: 0 },
+      { version: 3, role: 'assistant', llmRound: -1 },
+      { version: 3, role: 'assistant', llmRound: 0.5 },
+      { version: 3, role: 'assistant', llmRound: '0' },
+      { version: 3, role: 'assistant', llmRound: null },
+    ])('rejects invalid native LLM hints %j', async ({ version, role, llmRound }) => {
+      const path = join(dir, 'invalid-llm-round.jsonl');
+      await writeFile(path, [
+        { type: 'session', id: 's1', parentId: null, version },
+        { type: 'message', id: 'm1', parentId: 's1', turnId: 't1', llmRound,
+          message: { role, content: '' } },
+      ].map(record => JSON.stringify(record)).join('\n'));
+      expect(() => loadTranscript(path)).toThrow('invalid llmRound');
+    });
+
+    it.each([
+      { version: 2 },
+      { parentId: 's1' },
+      { sourceSessionId: 'not-canonical' },
+      { sourceEntryId: '' },
+      { body: { type: 'unsupported' } },
+      { body: { type: 'message', turnId: 't1', role: 'assistant', content: '', llmRound: -1 } },
+      { body: { type: 'message', turnId: 't1', role: 'user', content: '', llmRound: 0 } },
+      { body: { type: 'message', turnId: 't1', role: 'assistant',
+        content: [{ type: 'text', text: 'text', replay: {} }] } },
+      { body: { type: 'message', turnId: 't1', role: 'assistant', content: 'text', invocation: {} } },
+      { body: { type: 'message', turnId: 't1', role: 'assistant', content: [
+        { type: 'thinking', id: 'thought', text: 'text', status: 'complete', replay: {} },
+      ] } },
+    ])('rejects invalid presentation envelopes or non-presentation payloads %j', async changes => {
+      const { version = 3, ...overrides } = changes;
+      const path = join(dir, 'invalid-presentation.jsonl');
+      await writeFile(path, [
+        { type: 'session', id: 's1', parentId: null, version },
+        { type: 'message', id: 'm1', parentId: 's1', turnId: 't1',
+          message: { role: 'assistant', content: 'parent' } },
+        { type: 'presentation', id: 'p1', parentId: 'm1',
+          sourceSessionId: '11111111-1111-4111-8111-111111111111', sourceEntryId: 'source',
+          body: { type: 'message', turnId: 'child-turn', role: 'assistant', content: 'child' },
+          ...overrides },
+      ].map(record => JSON.stringify(record)).join('\n'));
+      expect(() => loadTranscript(path)).toThrow(SessionDataError);
+    });
+
+    it('rejects duplicate source facts even when their local record IDs differ', async () => {
+      const path = join(dir, 'duplicate-presentation.jsonl');
+      const copy = {
+        type: 'presentation', parentId: 'm1',
+        sourceSessionId: '11111111-1111-4111-8111-111111111111', sourceEntryId: 'source',
+        body: { type: 'message', turnId: 'child-turn', role: 'assistant', content: 'child' },
+      };
+      await writeFile(path, [
+        { type: 'session', id: 's1', parentId: null, version: 3 },
+        { type: 'message', id: 'm1', parentId: 's1', turnId: 't1',
+          message: { role: 'assistant', content: 'parent' } },
+        { ...copy, id: 'p1' }, { ...copy, id: 'p2' },
+      ].map(record => JSON.stringify(record)).join('\n'));
+      expect(() => loadTranscript(path)).toThrow(/duplicates a source fact/);
+    });
+
+    it.each([
+      [3, 'live-message', true],
+      [3, '', false],
+      [3, '   ', false],
+      [3, 42, false],
+      [2, 'live-message', false],
+      [1, 'live-message', false],
+    ])('validates messageId %j/%j in persisted data', async (version, messageId, valid) => {
+      const filePath = join(dir, 'message-identity.jsonl');
+      await writeFile(filePath, [
+        { type: 'session', id: 's1', parentId: null, version },
+        {
+          type: 'message', id: 'm1', parentId: 's1', turnId: 't1', messageId,
+          message: { role: 'assistant', content: 'answer' },
+        },
+      ].map(record => JSON.stringify(record)).join('\n'));
+      if (valid) {
+        expect(loadTranscript(filePath).byId.get('m1')).toMatchObject({ messageId });
+      } else {
+        expect(() => loadTranscript(filePath)).toThrow(SessionDataError);
+      }
+    });
+
     it('rejects a missing persisted Transcript', () => {
       expect(() => loadTranscript(join(dir, 'nonexistent.jsonl')))
         .toThrowError(SessionDataError);

@@ -8,11 +8,13 @@ export type {
   SessionHistoryContentBlock,
   SessionHistoryMessage,
   SessionHistoryPage,
+  SessionHistoryScope,
   SessionHistoryQuery,
 } from '../session/index.js';
 export type {
   ChannelOperationErrorCode,
   ChannelRuntimeCapabilities,
+  ChannelEventRouting,
   ApprovalClosedResult,
   ApprovalDecision,
   ApprovalDeliveryResult,
