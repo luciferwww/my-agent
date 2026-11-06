@@ -464,11 +464,12 @@ function attachSubagentHandle(segment: PresentationSegment): void {
   segment.subagentExpanded = false;
 }
 
-function preservedExpansion(
+function preservedSegmentState(
   current: PresentationSegment,
   previous: PresentationSegment,
 ): Pick<PresentationSegment,
-  'expanded' | 'resultExpanded' | 'subagentExpanded'> {
+  'expanded' | 'resultExpanded' | 'subagentExpanded'
+  | 'subagentSessionId' | 'subagentStatus' | 'subagentOutcome'> {
   return {
     expanded: current.type === 'tool_call'
       && (current.status === 'success' || current.status === 'error')
@@ -478,6 +479,12 @@ function preservedExpansion(
     subagentExpanded: current.subagentStatus === 'terminal'
       && previous.subagentStatus !== 'terminal'
       ? false : previous.subagentExpanded ?? current.subagentExpanded,
+    ...(previous.subagentStatus === 'terminal' && current.subagentStatus !== 'terminal'
+      ? {
+          subagentSessionId: previous.subagentSessionId,
+          subagentStatus: previous.subagentStatus,
+          subagentOutcome: previous.subagentOutcome,
+        } : {}),
   };
 }
 
@@ -593,7 +600,7 @@ export function mergeRealtimeWithHistory(
         const merged = {
           ...historySegment,
           id: realtime.segment.id,
-          ...preservedExpansion(historySegment, realtime.segment),
+          ...preservedSegmentState(historySegment, realtime.segment),
         };
         return historySegment.type === 'tool_call'
           ? Object.assign(realtime.segment, merged) : merged;
@@ -671,7 +678,7 @@ export function preserveRealtimePresentationIdentity(
         );
         if (realtimeSegment) {
           historySegment.id = realtimeSegment.id;
-          Object.assign(historySegment, preservedExpansion(historySegment, realtimeSegment));
+          Object.assign(historySegment, preservedSegmentState(historySegment, realtimeSegment));
         }
       }
     }

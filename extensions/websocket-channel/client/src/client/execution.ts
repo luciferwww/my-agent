@@ -101,6 +101,12 @@ export function buildExecutionPresentation(
           candidate.callerSessionId === source
           && candidate.parentTurnId === item.turnId
           && candidate.parentToolUseId === segment.callId);
+        if (scope?.status === 'terminal') {
+          if (segment.subagentStatus !== 'terminal') segment.subagentExpanded = false;
+          segment.subagentSessionId = scope.sessionId;
+          segment.subagentStatus = 'terminal';
+          segment.subagentOutcome = scope.outcome ?? segment.subagentOutcome;
+        }
         const child = scope?.sessionId ?? segment.subagentSessionId;
         if (child) inspect(child);
       }

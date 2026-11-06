@@ -401,6 +401,53 @@ describe('recursive execution presentation', () => {
     expect(states.a.historyItems[0].segments![0].subagentExpanded).toBe(false);
   });
 
+  it.each(['running', 'unknown'] as const)('does not regress a live terminal scope when an older %s snapshot returns', status => {
+    const { event, history, view } = setup();
+    event({ type: 'subagent_end', ...scope('a'), outcome: 'failed' });
+    const records = [assistant('parent', 'root', [task('a')])];
+    history(records, [{ ...scope('a'), status }]);
+    expect(view().scopes.find(candidate => candidate.sessionId === 'a'))
+      .toMatchObject({ status: 'terminal', outcome: 'failed' });
+    expect(view().items[0].segments![0])
+      .toMatchObject({ subagentStatus: 'terminal', subagentExpanded: false });
+    history(records, [{ ...scope('a'), status }]);
+    expect(view().items[0].segments![0].subagentExpanded).toBe(false);
+    view().items[0].segments![0].subagentExpanded = true;
+    history(records, [{ ...scope('a'), status }]);
+    expect(view().items[0].segments![0].subagentExpanded).toBe(true);
+    history(records, [{ ...scope('a'), status: 'terminal', outcome: 'failed' }], true);
+    expect(view().items[0].segments![0].subagentExpanded).toBe(true);
+  });
+
+  it('keeps a completed card closed when its Tool Call arrives after the lifecycle event', () => {
+    const { event, history, view } = setup();
+    event({ type: 'subagent_end', ...scope('a'), outcome: 'ok' });
+    event({ type: 'tool_call_requested', sessionId: 'root', turnId: 'root-turn', callId: 'a', name: 'task' });
+    expect(view().items[0].segments![0])
+      .toMatchObject({ subagentStatus: 'terminal', subagentExpanded: false });
+    history([assistant('parent', 'root', [task('a')])], [scope('a')]);
+    expect(view().items[0].segments![0])
+      .toMatchObject({ subagentStatus: 'terminal', subagentExpanded: false });
+  });
+
+  it('preserves completed lifecycle facts when stale History completes the parent Tool', () => {
+    const { root, event, history, view } = setup();
+    event({ type: 'tool_call_requested', sessionId: 'root', turnId: 'root-turn', callId: 'a', name: 'task' });
+    event({ type: 'subagent_end', ...scope('a'), outcome: 'ok' });
+    const parent = root.chatItems[0].segments![0];
+    parent.subagentExpanded = true;
+    history([assistant('parent', 'root', [{ ...task('a'), status: 'success' }])], [scope('a')]);
+    expect(view().items[0].segments![0]).toMatchObject({
+      subagentStatus: 'terminal', subagentOutcome: 'ok', subagentExpanded: true,
+    });
+    history([assistant('parent', 'root', [{ ...task('a'), status: 'success' }])], [
+      { ...scope('a'), status: 'terminal', outcome: 'ok' },
+    ], true);
+    expect(view().items[0].segments![0]).toMatchObject({
+      subagentStatus: 'terminal', subagentExpanded: true,
+    });
+  });
+
   it('matches Tool results within their source and Turn rather than globally by callId', () => {
     const { history, view } = setup();
     history([
