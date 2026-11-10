@@ -79,6 +79,7 @@ function host(): ChannelRuntimeHost {
     onMessage: vi.fn(async () => {}),
     onInteractionResponse: vi.fn(),
     capabilities: {
+      settings: { execute: async () => { throw new Error('Unexpected Settings action.'); } },
       approvals: { getPending: () => [] },
       modelCatalog: {
         getSnapshot: () => ({

@@ -30,6 +30,7 @@ export interface RuntimeInstanceView {
   readonly state: RuntimeInstanceState;
   readonly generationMemberships: readonly number[];
   readonly stopAttempts: number;
+  readonly ownerRetained: boolean;
   readonly stopError?: string;
 }
 
@@ -50,7 +51,7 @@ interface RuntimeInstanceRecord {
   readonly unitId: string;
   readonly source: ContributionSource;
   readonly dependencies: readonly string[];
-  readonly owner?: RuntimeLifecycleOwner;
+  owner?: RuntimeLifecycleOwner;
   readonly generationMemberships: Set<number>;
   state: RuntimeInstanceState;
   stopAttempts: number;
@@ -128,6 +129,7 @@ export class RuntimeLifecycleLedger {
       state: record.state,
       generationMemberships: Object.freeze([...record.generationMemberships].sort((a, b) => a - b)),
       stopAttempts: record.stopAttempts,
+      ownerRetained: record.owner !== undefined,
       ...(record.stopError ? { stopError: record.stopError } : {}),
     });
   }
@@ -174,6 +176,7 @@ export class RuntimeLifecycleLedger {
           );
       if (settled.outcome === 'completed') {
         record.state = 'stopped';
+        record.owner = undefined;
         record.stopError = undefined;
         completed.push(instanceId);
       } else if (settled.outcome === 'failed') {
@@ -186,6 +189,7 @@ export class RuntimeLifecycleLedger {
         void stop.then(
           () => {
             record.state = 'stopped';
+            record.owner = undefined;
             record.stopError = undefined;
           },
           (error: unknown) => {

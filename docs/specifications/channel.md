@@ -116,6 +116,69 @@ later results remain visible across History rebuilds.
 
 Model Catalog query, Abort, and Session management are narrow Runtime
 capabilities; Channel does not own model facts or lifecycle state.
+`settings.execute({ requestId, action, input })` is a transport-neutral Runtime
+capability with unknown domain input/output and correlated success/error results.
+RuntimeApplication exposes the same capability for embedding. SettingsManager,
+not Channel, owns section parsing, credentials, revisions, saving and rollback.
+Current actions are `load`, `update` and `test_llm_model`. Bundled WebSocket uses
+`settings_action` / `settings_action_result` with the same correlated generic
+envelope; only its request discriminator is transport-owned. Hello is required,
+results are unicast to the originating socket, and the existing 15 MiB frame
+bound applies. Input validation/application remain Runtime-owned. Unexpected
+capability failures produce a safe correlated error without logging input or
+upstream messages. Tests use candidate Built-in settings or a protected
+loaded Provider, have a fixed 30,000 ms total deadline, and do not create Sessions
+or Agent execution events. Test is an action on this capability, not a separate
+Channel interface or a generic section-testing framework.
+Runtime without persisted startup editing input returns `settings_unavailable`.
+
+The Settings-only `modelCatalog` projection adds optional
+`configurationSectionId` to each Provider: `llm` for Built-in, or a discovered
+`extension:<id>` section determined by the actual registered owning Runtime Unit.
+Missing ownership/editable metadata leaves the link absent, never guessed from
+Provider IDs. This does not change the shared Model Catalog contract, duplicate
+configuration, scan or load Extensions again. Load, save and confirmed rollback
+results use the same projection.
+
+The bundled Settings editor saves sections independently and replaces only the
+confirmed target view after success or rollback, including its new revision.
+Other drafts remain intact. Explicit secret intents do not expose saved values;
+submitted replacement buffers are cleared. Default selection remains local until
+LLM save. Extension restart state comes from confirmed server sections, survives
+editor closure and clears on a saved reversal. Model Test source and possible
+billing are explained before its controls.
+Its navigation groups presentation into LLM and Extensions without changing
+section revisions or save boundaries. LLM shows the default selector and Provider
+list; every Provider opens its own detail view under LLM. Built-in details expose
+connection/model editing. Other Provider details expose loaded model actions and
+a separate link to the owning Extension's single shared configuration draft.
+Extensions has its own list/detail view, including disabled discovered Extensions;
+those detail pages contain only enablement and configuration, not model actions.
+Setting a default in Provider details still requires Save LLM. Providers without
+a configuration link remain viewable. Buttons and navigation reuse the main
+client's theme styles.
+
+Built-in model rows start compact and expand one inline editor; draft edits survive
+collapse and Add opens the new row. There is no Built-in enable/configure checkbox:
+an untouched absent Built-in stays absent, and deleting all models retains its
+connection/credential configuration. All Provider model lists mark the draft
+default immediately, without saving it. Model actions are grouped on the right.
+
+A fixed footer outside the sidebar grid exposes the relevant section's Save action,
+including Save LLM from Provider details. Save stays right-aligned; feedback aligns
+with the content column on desktop and narrow screens. One latest-operation
+message replaces prior pending/success/error results for load, save, model Test
+and local model/default actions. Newer disconnect messages cannot be overwritten
+by late responses. Success/error/pending use theme success/danger/accent colors;
+informational feedback is muted. Persistent stale/restart state remains separate.
+
+Connection loss or a missing response does not imply server cancellation.
+Pending requests settle explicitly without automatic replay; unconfirmed editors
+require an explicit reload after reconnect. The browser's 60-second response wait
+is separate from Runtime's fixed 30-second Test deadline. Confirmed rollback uses
+the returned section/revision directly; failed rollback with a returned revision
+retains an explicitly unconfirmed draft and permits a later explicit save.
+
 `chatSessions` exposes creation, persisted discovery, rename,
 archive/unarchive, delete, fork, and permission mode for ordinary Chat
 Sessions. `sessionObservation` separately exposes cross-kind Session

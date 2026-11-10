@@ -213,6 +213,7 @@ export interface SessionObservationCapability {
 }
 
 export interface ChannelRuntimeCapabilities {
+  readonly settings: SettingsCapability;
   readonly modelCatalog: ModelCatalogQuery;
   readonly abort: TurnAbortCapability;
   readonly chatSessions: ChatSessionCapability;
@@ -220,6 +221,26 @@ export interface ChannelRuntimeCapabilities {
   readonly approvals: {
     getPending(sessionId?: string): readonly ApprovalRequest[];
   };
+}
+
+export interface SettingsActionRequest {
+  readonly requestId: string;
+  readonly action: string;
+  readonly input: unknown;
+}
+
+export type SettingsActionResult =
+  | { readonly requestId: string; readonly action: string; readonly ok: true; readonly output: unknown }
+  | {
+      readonly requestId: string;
+      readonly action: string;
+      readonly ok: false;
+      readonly error: { readonly code: string; readonly message: string; readonly fieldPath?: string };
+      readonly output?: unknown;
+    };
+
+export interface SettingsCapability {
+  execute(request: SettingsActionRequest): Promise<SettingsActionResult>;
 }
 
 export interface ChannelInteractionTransport {

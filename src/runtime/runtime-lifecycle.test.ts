@@ -79,6 +79,7 @@ describe('RuntimeLifecycleLedger', () => {
       skippedProtected: ['external-1'],
     });
     expect(stop).not.toHaveBeenCalled();
+    expect(ledger.view('external-1')).toMatchObject({ ownerRetained: true });
 
     ledger.removeGenerationMembership('external-1', 1);
     expect(await ledger.stopEligible(['external-1'])).toEqual({
@@ -91,6 +92,7 @@ describe('RuntimeLifecycleLedger', () => {
       state: 'stop-failed',
       stopAttempts: 1,
       stopError: 'first stop failed',
+      ownerRetained: true,
     });
 
     expect(await ledger.stopEligible(['external-1'], { retryFailed: true })).toEqual({
@@ -99,7 +101,11 @@ describe('RuntimeLifecycleLedger', () => {
       pending: [],
       skippedProtected: [],
     });
-    expect(ledger.view('external-1')).toMatchObject({ state: 'stopped', stopAttempts: 2 });
+    expect(ledger.view('external-1')).toMatchObject({
+      state: 'stopped',
+      stopAttempts: 2,
+      ownerRetained: false,
+    });
   });
 
   it('bounds persistent stop failure to one later retry', async () => {
@@ -202,4 +208,68 @@ describe('RuntimeLifecycleLedger', () => {
     expect(new Set(report.completed)).toEqual(new Set(['channel:a', 'channel:b']));
     expect(new Set(stopped)).toEqual(new Set(['channel:a', 'channel:b']));
   });
+
+  it('does not retain successfully stopped owners across repeated generations', async () => {
+    const ledger = new RuntimeLifecycleLedger();
+    const instanceIds: string[] = [];
+    for (let generation = 1; generation <= 50; generation += 1) {
+      const instanceId = `instance-${generation}`;
+      instanceIds.push(instanceId);
+      ledger.create({
+        instanceId,
+        unitId: 'changing-unit',
+        source: 'external',
+        owner: { stop: vi.fn() },
+      });
+      ledger.markStarting(instanceId);
+      ledger.markReady(instanceId);
+      ledger.handoff(instanceId);
+      ledger.addGenerationMembership(instanceId, generation);
+      expect(ledger.view(instanceId)).toMatchObject({ ownerRetained: true });
+      ledger.removeGenerationMembership(instanceId, generation);
+      await ledger.stopEligible([instanceId]);
+      expect(instanceIds.filter((id) => ledger.view(id).ownerRetained)).toHaveLength(0);
+    }
+  });
+
+  it.each(['completed', 'failed'] as const)(
+    'retains a pending owner until its late stop has %s',
+    async (outcome) => {
+      let resolveStop!: () => void;
+      let rejectStop!: (reason: Error) => void;
+      const stop = new Promise<void>((resolve, reject) => {
+        resolveStop = resolve;
+        rejectStop = reject;
+      });
+      const ledger = new RuntimeLifecycleLedger();
+      ledger.create({
+        instanceId: 'late-instance',
+        unitId: 'late-unit',
+        source: 'external',
+        owner: { stop: () => stop },
+      });
+      ledger.markStarting('late-instance');
+      ledger.markReady('late-instance');
+      ledger.handoff('late-instance');
+      const budget = new RuntimeDeadlineBudget({
+        now: () => 0,
+        race: async () => ({ outcome: 'deadline-exhausted' }),
+      }, resolveRuntimeDeadlinePolicy(undefined));
+
+      await ledger.stopEligible(['late-instance'], { budget });
+      expect(ledger.view('late-instance')).toMatchObject({
+        state: 'stop-pending',
+        ownerRetained: true,
+      });
+
+      if (outcome === 'completed') resolveStop();
+      else rejectStop(new Error('late stop failed'));
+      await stop.catch(() => undefined);
+      await Promise.resolve();
+      expect(ledger.view('late-instance')).toMatchObject({
+        state: outcome === 'completed' ? 'stopped' : 'stop-failed',
+        ownerRetained: outcome !== 'completed',
+      });
+    },
+  );
 });

@@ -4,6 +4,7 @@ import {
   ReasoningCapabilitiesValidationError,
   type ProviderCatalogModel,
   type ProviderProjectionEntry,
+  type ModelReference,
 } from '../core/model-resolution/index.js';
 import type {
   ExtensionRegistrationApi,
@@ -101,6 +102,7 @@ export function resolveStagedRegistryCandidate(
 }
 
 export function finalizeRegistrySnapshot(params: {
+  readonly defaultModel?: ModelReference;
   readonly candidate: RegistryCandidate;
   readonly acceptedUnits: readonly StagedRegistryUnit[];
   readonly channelBindings: readonly ChannelRuntimeBinding[];
@@ -160,6 +162,9 @@ export function finalizeRegistrySnapshot(params: {
 
   return Object.freeze({
     generation: params.generation,
+    ...(params.defaultModel === undefined
+      ? {}
+      : { defaultModel: Object.freeze({ ...params.defaultModel }) }),
     units: Object.freeze(provenance.map((entry) => Object.freeze({
         ...entry,
         dependencies: Object.freeze([...entry.dependencies]),

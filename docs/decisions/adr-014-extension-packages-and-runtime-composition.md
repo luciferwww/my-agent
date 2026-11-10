@@ -7,6 +7,7 @@
 > 权威：长期架构决策
 > 替代：原 ADR-005 Extension、Registry、Composition 与 Runtime Lifecycle 决策
 > 修订：ADR-013 中由 Standalone 观察 secondary Channel failure 并输出 warning 的条款
+> 2026-11-10 修订已实施：移除全局 Extension 开关，默认发现加载所有未显式禁用的 Extension；见已交付验证的 [Dynamic Settings Specification](../changes/archive/dynamic-settings/specification.md)，owner 已授权收尾提交
 
 ## 背景
 
@@ -54,7 +55,9 @@ Host 通过 `my-agent/extension-api` 暴露 Extension 实现所需的最小类�
 
 ### Acquisition 与配置
 
-Host 向 Runtime 提供通用 `installDir`、完整配置快照和环境启动事实。Runtime Bootstrap 派生并向 Acquisition 注入明确的 `<installDir>/extensions`、Extension 配置投影和环境。Discovery 只检查该目录的直接子目录。全局 `extensions.enabled` 默认启用；已配置的 Extension entry 缺少 `enabled` 时默认启用，显式 `false` 才禁用。未配置的已安装 Extension 不执行。
+Host 向 Runtime 提供通用 `installDir`、完整配置快照和环境启动事实。Runtime Bootstrap 派生并向 Acquisition 注入明确的 `<installDir>/extensions`、Extension 配置投影和环境。Discovery 只检查该目录的直接子目录。2026-11-10 owner 明确恢复启动时发现并尝试加载所有已安装 Extension 的预期：entry 缺失也默认启用，以空 scoped config 应用 Schema 默认值；显式 `enabled: false` 才禁用。单项失败记录诊断并隔离，不阻止健康邻居。
+
+2026-11-10 Dynamic Settings 已实施上述全局开关修订：移除 `extensions.enabled`，拒绝遗留字段并给出逐项配置及移除指导，不把旧全局 `false` 静默解释为启用。保留逐项 enablement；同日 owner 后续修订取代“未配置不执行”，采用上述默认加载规则。Acquisition 返回原始只读 Discovery 与诊断，Runtime Bootstrap 保留启动元数据供 SettingsManager 的安全 load/update 复用，不增加第二条扫描／加载路径。参数及逐项开关保存仍需手动重启，重启标记按当前保存值与启动基线的差异计算，撤回修改可清除标记。SettingsManager 服务端能力及模型 Test 已实施；Test 复用当前已加载 Provider 或临时 Built-in Unit，不重新加载 Extension。WebSocket 通用 Settings 消息及内置编辑器亦已实施，第一轮人工测试通过，owner 已授权整体收尾提交。
 
 Acquisition 在执行模块前完成 Descriptor、路径、配置引用和 Schema 验证。单个候选项的依赖、导入、导出、factory 或 Unit 元数据错误保持局部诊断，不阻止有效邻居。
 

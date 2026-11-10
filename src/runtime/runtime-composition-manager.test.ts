@@ -1,4 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import { getEventListeners } from 'node:events';
+import {
+  BUILTIN_LLM_PROVIDER_UNIT_ID,
+  createBuiltinLlmProviderUnit,
+  type LLMConfig,
+} from '../builtins/providers/builtin/index.js';
 import type {
   Channel,
   ChannelCompletion,
@@ -15,6 +21,7 @@ import { RuntimeCompositionManager } from './runtime-composition-manager.js';
 import type { RuntimeCompositionManagerOptions } from './runtime-composition-manager.js';
 import type { RuntimeReloadDeadlineDriver } from './reload-coordinator.js';
 import { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
+import { RuntimeDeadlineBudget, resolveRuntimeDeadlinePolicy } from './runtime-deadline.js';
 import { RuntimeUnitCatalog, type LoadedRuntimeUnit } from './runtime-unit.js';
 
 function host(): ChannelRuntimeHost {
@@ -22,6 +29,7 @@ function host(): ChannelRuntimeHost {
     onMessage: vi.fn(async () => {}),
     onInteractionResponse: vi.fn(),
     capabilities: {
+      settings: { execute: async () => { throw new Error('Unexpected Settings action.'); } },
       approvals: { getPending: vi.fn(() => []) },
       modelCatalog: {
         getSnapshot: vi.fn(() => ({
@@ -152,6 +160,179 @@ function harness(
 }
 
 describe('RuntimeCompositionManager', () => {
+  function llm(modelId: string): LLMConfig {
+    return {
+      builtin: {
+        baseURL: 'https://example.test',
+        apiKey: 'not-for-client-results',
+        models: [{ modelId, protocol: 'openai-responses' }],
+      },
+      defaultModel: { providerId: 'builtin', modelId },
+    };
+  }
+
+  it('adds and replaces Built-in without aborting pinned older trees or recreating unchanged Units', async () => {
+    const unchangedCreate = vi.fn();
+    const unchangedStop = vi.fn();
+    const abortGeneration = vi.fn(() => []);
+    const wait = vi.fn(async () => ({ outcome: 'timed-out' as const }));
+    const { coordinator, ledger, manager } = harness([
+      loadedUnit({
+        id: 'unchanged',
+        initiallyEnabled: true,
+        create: unchangedCreate,
+        stop: unchangedStop,
+      }),
+    ], { deadlineDriver: { wait } });
+    manager.setGenerationConvergence({ abortGeneration, blockingTurnIds: () => ['old-root'] });
+    await manager.start();
+    const first = await manager.applyLlmConfiguration(llm('first'));
+    expect(first).toMatchObject({ outcome: 'published', generation: 2 });
+    expect(JSON.stringify(first)).not.toContain('not-for-client-results');
+    const oldTree = coordinator.captureRootGeneration();
+    const oldInstanceId = oldTree.snapshot.units.find(
+      (unit) => unit.unitId === BUILTIN_LLM_PROVIDER_UNIT_ID,
+    )!.instanceId;
+    const second = await manager.applyLlmConfiguration(llm('second'));
+    const third = await manager.applyLlmConfiguration(llm('third'));
+    expect(second).toMatchObject({ outcome: 'published', generation: 3 });
+    expect(third).toMatchObject({ outcome: 'published', generation: 4 });
+    expect(oldTree.snapshot.defaultModel?.modelId).toBe('first');
+    expect(oldTree.snapshot.providers[0]?.models[0]?.modelId).toBe('first');
+    expect(manager.currentSnapshot().defaultModel?.modelId).toBe('third');
+    expect(coordinator.generationState(2)).toBe('retiring');
+    expect(ledger.view(oldInstanceId)).toMatchObject({
+      state: 'handed-off', ownerRetained: true,
+    });
+    expect(abortGeneration).not.toHaveBeenCalled();
+    expect(wait).not.toHaveBeenCalled();
+    expect(unchangedCreate).toHaveBeenCalledTimes(1);
+    expect(unchangedStop).not.toHaveBeenCalled();
+
+    oldTree.release();
+    await vi.waitFor(() => expect(coordinator.generationState(2)).toBe('retired'));
+    expect(ledger.view(oldInstanceId)).toMatchObject({
+      state: 'stopped', ownerRetained: false,
+    });
+    await vi.waitFor(() => expect(Reflect.get(manager, 'activeRetirements').size).toBe(0));
+    expect(getEventListeners(Reflect.get(manager, 'shutdownController').signal, 'abort'))
+      .toHaveLength(0);
+    await manager.shutdown();
+  });
+
+  it('captures changed defaults while reusing an unchanged Built-in instance', async () => {
+    const initial: LLMConfig = {
+      builtin: {
+        baseURL: 'https://example.test',
+        models: [
+          { modelId: 'first', protocol: 'openai-responses' },
+          { modelId: 'second', protocol: 'openai-responses' },
+        ],
+      },
+      defaultModel: { providerId: 'builtin', modelId: 'first' },
+    };
+    const createBuiltinProviderUnit = vi.fn(createBuiltinLlmProviderUnit);
+    const { coordinator, manager } = harness([], { createBuiltinProviderUnit });
+    await manager.start();
+    await manager.applyLlmConfiguration(initial);
+    const tree = coordinator.captureRootGeneration();
+    const instanceId = tree.snapshot.units[0]!.instanceId;
+    await manager.applyLlmConfiguration({
+      ...initial, defaultModel: { providerId: 'builtin', modelId: 'second' },
+    });
+    expect(manager.currentSnapshot().units[0]!.instanceId).toBe(instanceId);
+    expect(tree.snapshot.defaultModel?.modelId).toBe('first');
+    expect(manager.currentSnapshot().defaultModel?.modelId).toBe('second');
+    expect(createBuiltinProviderUnit).toHaveBeenCalledTimes(1);
+    tree.release();
+    await manager.shutdown();
+  });
+
+  it('compares later candidates with applied configuration after preparation fails', async () => {
+    const createBuiltinProviderUnit = vi.fn(createBuiltinLlmProviderUnit);
+    const { manager } = harness([], { createBuiltinProviderUnit });
+    await manager.start();
+    const configuration = llm('candidate');
+    createBuiltinProviderUnit.mockImplementationOnce(() => {
+      throw new Error('injected preparation failure');
+    });
+    await expect(manager.applyLlmConfiguration(configuration)).resolves.toMatchObject({
+      outcome: 'rejected', generation: 1,
+    });
+    await expect(manager.applyLlmConfiguration(configuration)).resolves.toMatchObject({
+      outcome: 'published', generation: 2,
+    });
+    expect(createBuiltinProviderUnit).toHaveBeenCalledTimes(2);
+    expect(manager.currentSnapshot().defaultModel?.modelId).toBe('candidate');
+    await manager.shutdown();
+  });
+
+  it('releases completed retirement tasks and stopped owners across repeated LLM updates', async () => {
+    const { coordinator, ledger, manager } = harness([]);
+    await manager.start();
+    for (let index = 0; index < 25; index += 1) {
+      await manager.applyLlmConfiguration(llm(`model-${index}`));
+      await vi.waitFor(() => expect(Reflect.get(manager, 'activeRetirements').size).toBe(0));
+      const historicalInstances = coordinator.generationViews()
+        .filter((generation) => generation.state === 'retired')
+        .flatMap((generation) => generation.instanceIds);
+      expect(historicalInstances.filter((instanceId) => ledger.view(instanceId).ownerRetained))
+        .toHaveLength(0);
+    }
+    await manager.shutdown();
+  });
+
+  it('removes Built-in and its default together while the old tree retains them', async () => {
+    const { coordinator, manager } = harness([]);
+    await manager.start();
+    await manager.applyLlmConfiguration(llm('first'));
+    const tree = coordinator.captureRootGeneration();
+    await expect(manager.applyLlmConfiguration({})).resolves.toMatchObject({
+      outcome: 'published', generation: 3,
+    });
+    expect(manager.currentSnapshot().providers).toEqual([]);
+    expect(manager.currentSnapshot().defaultModel).toBeUndefined();
+    expect(tree.snapshot.providers[0]?.models[0]?.modelId).toBe('first');
+    expect(tree.snapshot.defaultModel?.modelId).toBe('first');
+    tree.release();
+    await manager.shutdown();
+  });
+
+  it('accounts for multiple protected Settings retirements in the shared shutdown budget', async () => {
+    const { coordinator, ledger, manager } = harness([]);
+    const abortGeneration = vi.fn(() => []);
+    manager.setGenerationConvergence({ abortGeneration, blockingTurnIds: () => ['old-root'] });
+    await manager.start();
+    await manager.applyLlmConfiguration(llm('first'));
+    const first = coordinator.captureRootGeneration();
+    await manager.applyLlmConfiguration(llm('second'));
+    const second = coordinator.captureRootGeneration();
+    await manager.applyLlmConfiguration(llm('third'));
+    const budget = new RuntimeDeadlineBudget({
+      now: () => 0,
+      race: async () => ({ outcome: 'deadline-exhausted' }),
+    }, resolveRuntimeDeadlinePolicy(undefined));
+
+    const report = await manager.shutdown(budget);
+
+    for (const tree of [first, second]) {
+      expect(report.residuals).toContainEqual(expect.objectContaining({
+        generation: tree.generation,
+        phase: 'shutdown-protected-generation',
+      }));
+      const instanceId = tree.snapshot.units[0]!.instanceId;
+      expect(ledger.view(instanceId)).toMatchObject({
+        state: 'handed-off', ownerRetained: true,
+      });
+    }
+    expect(abortGeneration).not.toHaveBeenCalled();
+    await expect(manager.applyLlmConfiguration(llm('after-close'))).resolves.toMatchObject({
+      outcome: 'shutdown/cancelled',
+    });
+    first.release();
+    second.release();
+  });
+
   it('isolates an invalid optional external Unit during startup', async () => {
     const invalid = loadedUnit({
       id: 'invalid-external',
@@ -408,6 +589,7 @@ describe('RuntimeCompositionManager', () => {
             source: 'builtin',
             register(api) {
               api.registerProvider(provider);
+              api.registerProvider({ ...provider, id: 'another-provider' });
               api.registerTool(tool('stable-tool'));
               api.registerHook({
                 id: 'stable-hook',
@@ -433,6 +615,9 @@ describe('RuntimeCompositionManager', () => {
       loadedUnit({ id: 'new-unit', initiallyEnabled: false, toolName: 'new_tool' }),
     ]);
     const startup = await manager.start();
+    expect(manager.getProviderUnitId('stable-provider')).toBe('unchanged');
+    expect(manager.getProviderUnitId('another-provider')).toBe('unchanged');
+    expect(manager.getProviderUnitId('missing')).toBeUndefined();
     const providerBinding = startup.providers[0];
     const channelBinding = startup.channels.bindings[0];
     const toolBinding = startup.tools.resolve('stable-tool');
@@ -444,6 +629,7 @@ describe('RuntimeCompositionManager', () => {
     await vi.waitFor(() => expect(coordinator.generationState(1)).toBe('retired'));
 
     expect(manager.currentSnapshot().providers[0]).toBe(providerBinding);
+    expect(manager.getProviderUnitId('stable-provider')).toBe('unchanged');
     expect(manager.currentSnapshot().channels.bindings[0]).toBe(channelBinding);
     expect(manager.currentSnapshot().tools.resolve('stable-tool')?.execute).toBe(toolBinding?.execute);
     expect(manager.currentSnapshot().hooks.beforeToolCall[0]?.handler).toBe(hookBinding?.handler);
@@ -709,7 +895,7 @@ describe('RuntimeCompositionManager', () => {
     await manager.shutdown();
   });
 
-  it('aborts only the retiring generation then blocks on pin nonconvergence', async () => {
+  it('reports toggle retirement pin nonconvergence without blocking later publication', async () => {
     const deadlineDriver: RuntimeReloadDeadlineDriver = {
       wait: vi.fn(async () => ({ outcome: 'timed-out' })) as RuntimeReloadDeadlineDriver['wait'],
     };
@@ -734,16 +920,12 @@ describe('RuntimeCompositionManager', () => {
     );
     await expect(manager.compositionControl().disableUnit('optional')).resolves.toEqual(
       expect.objectContaining({
-        outcome: 'blocked',
-        blocker: expect.objectContaining({
-          phase: 'retirement-abort-convergence',
-          generation: 1,
-          blockingTurnIds: ['turn-old'],
-        }),
+        outcome: 'published',
+        generation: 3,
       }),
     );
     expect(abortGeneration).toHaveBeenCalledWith(1);
-    expect(coordinator.generationState(1)).toBe('failed-residual');
+    await vi.waitFor(() => expect(coordinator.generationState(1)).toBe('failed-residual'));
   });
 
   it('returns no-op and rejected preflight results without creating instances', async () => {
@@ -813,7 +995,7 @@ describe('RuntimeCompositionManager', () => {
     );
   });
 
-  it('blocks future reload when retirement stop fails without rolling back publication', async () => {
+  it('permits future reload when retirement stop fails without rolling back publication', async () => {
     const { manager } = harness([
       loadedUnit({ id: 'base', initiallyEnabled: true, required: true }),
       loadedUnit({
@@ -830,11 +1012,11 @@ describe('RuntimeCompositionManager', () => {
 
     await expect(manager.compositionControl().enableUnit('failing')).resolves.toEqual(
       expect.objectContaining({
-        outcome: 'blocked',
-        blocker: expect.objectContaining({ phase: 'retirement-stop', message: 'stop failed' }),
+        outcome: 'published',
+        generation: 3,
       }),
     );
-    expect(manager.currentSnapshot().generation).toBe(2);
+    expect(manager.currentSnapshot().generation).toBe(3);
   });
 
   it('retries an old-generation stop failure once during shutdown', async () => {

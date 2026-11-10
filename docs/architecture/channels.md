@@ -310,6 +310,18 @@ kind-specific `entry` explicitly means the identity is Pending and its
 Transcript has not materialized. Materialized results carry the corresponding
 `SessionEntry` or `SubagentSessionEntry`. Pending Chat Sessions remain absent
 from `list_sessions` and have empty History.
+
+Settings uses the same acknowledged socket through `settings_action` and
+`settings_action_result`. Channel validates only the envelope, delegates generic
+action/input to Runtime Settings and unicasts its result, never importing
+SettingsManager or publishing an Agent event. Existing frame limits apply.
+Unexpected failures return safe correlated errors without input/upstream dumps.
+The bundled editor owns section drafts and explicit credential intents, with
+independent saves, model/default actions and server-derived restart indicators.
+It preserves returned rollback revisions and distinguishes unconfirmed file or
+application outcomes. Disconnect/missing replies are not replayed; stale views
+require explicit reload. See the [Configuration Guide](../guides/configuration.md#browser-settings).
+
 `run_turn` continues to require `sessionId`, so the Channel never treats an
 omitted ID as an implicit create. It also emits acknowledgements, Catalog and
 History responses, correlated `AgentEvent` values, approval lifecycle

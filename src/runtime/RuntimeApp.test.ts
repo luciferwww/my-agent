@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, writeFile } from 'fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -34,6 +34,9 @@ import { createDefaultAgentConfig } from '../platform/config/default-composition
 import { DEFAULT_LOGGER_CONFIG } from '../platform/logger/index.js';
 import { loadAgentConfig } from '../platform/config/agent-config-loader.js';
 import { RuntimeApp } from './RuntimeApp.js';
+import * as runtimeBootstrap from './bootstrap.js';
+import { RuntimeCompositionManager } from './runtime-composition-manager.js';
+import { createBuiltinLlmProviderUnit } from '../builtins/providers/builtin/index.js';
 import type { RuntimeHandle } from './runtime-composition.js';
 import type {
   RunTurnParams,
@@ -443,34 +446,153 @@ describe('RuntimeApp', () => {
       dependencies: Object.freeze([]),
       create,
     });
-    const acquireExtensions = vi.fn(async () => Object.freeze({
-      loadedUnits: Object.freeze([acquiredUnit]),
+    const discovery = Object.freeze({
+      candidates: Object.freeze([Object.freeze({
+        descriptor: Object.freeze({
+          manifestVersion: 1 as const,
+          id: 'disabled-extension',
+          version: '1.0.0',
+          entry: 'entry.js',
+          configSchema: Object.freeze({ type: 'object' }),
+        }),
+        installationPath: join(installDir, 'extensions', 'disabled-extension'),
+        entryPath: join(installDir, 'extensions', 'disabled-extension', 'entry.js'),
+      })]),
       diagnostics: Object.freeze([]),
+    });
+    const diagnostics = Object.freeze([Object.freeze({
+      category: 'disabled' as const,
+      code: 'extension_disabled' as const,
+      extensionId: 'disabled-extension',
+    })]);
+    const acquireExtensions = vi.fn(async () => Object.freeze({
+      discovery,
+      loadedUnits: Object.freeze([acquiredUnit]),
+      diagnostics,
     }));
+    const bootstrap = vi.spyOn(runtimeBootstrap, 'bootstrapRuntime');
+    let app: RuntimeHandle | undefined;
+    try {
+      app = await RuntimeApp.create({
+        agentHome,
+        applicationConfig: testApplicationConfig(),
+        startupContext: {
+          installDir,
+          configuration: snapshot,
+          environment,
+        },
+        cliOverrides: {
+          memory: { enabled: false },
+        },
+        dependencies: createTestDependencies({ acquireExtensions }),
+      });
 
+      expect(acquireExtensions).toHaveBeenCalledOnce();
+      expect(acquireExtensions).toHaveBeenCalledWith({
+        extensionsDir: join(installDir, 'extensions'),
+        extensionsConfig: snapshot.extensions,
+        environment,
+      });
+      expect(create).toHaveBeenCalledOnce();
+      expect(acquireExtensions.mock.invocationCallOrder[0])
+        .toBeLessThan(create.mock.invocationCallOrder[0]!);
+      const result = await bootstrap.mock.results[0]?.value;
+      expect(result?.extensionMetadata?.discovery).toBe(discovery);
+      expect(result?.extensionMetadata?.diagnostics).toBe(diagnostics);
+      expect(Object.isFrozen(result?.extensionMetadata)).toBe(true);
+      expect(result?.extensionMetadata).not.toHaveProperty('loadedUnits');
+    } finally {
+      bootstrap.mockRestore();
+      await app?.close();
+    }
+  });
+
+  it('shares Settings with Channels and embedding, publishing saved LLM updates and restoring failed drafts', async () => {
+    const chat = vi.fn(async () => ({
+      content: [], toolCalls: [], stopReason: 'end_turn', usage: { inputTokens: 1, outputTokens: 1 },
+    }));
+    const builtin = {
+      baseURL: 'https://settings.example/v1',
+      models: [{ modelId: 'one', protocol: 'openai-responses' }],
+    };
+    await writeFile(join(agentHome, 'config.json'), JSON.stringify({
+      llm: { builtin, defaultModel: { providerId: 'builtin', modelId: 'one' } },
+    }));
+    const configuration = await loadAgentConfig({ agentHome, environment: {} });
+    const testChannel = createTestChannel('settings-channel');
+    let capabilities: ChannelRuntimeCapabilities | undefined;
+    testChannel.channel.bindRuntimeCapabilities = (value) => { capabilities = value; };
     const app = await RuntimeApp.create({
       agentHome,
-      applicationConfig: testApplicationConfig(),
-      startupContext: {
-        installDir,
-        configuration: snapshot,
-        environment,
-      },
-      cliOverrides: {
-        memory: { enabled: false },
-      },
-      dependencies: createTestDependencies({ acquireExtensions }),
+      startupContext: { installDir: join(agentHome, 'installation'), configuration, environment: {} },
+      loadedUnits: [testChannel.unit],
+      cliOverrides: { memory: { enabled: false } },
+      dependencies: createTestDependencies({
+        createBuiltinProviderUnit: (config) => createBuiltinLlmProviderUnit(config, {
+          createClient: () => ({ chat, chatStream: () => { throw new Error('Unexpected stream.'); } }),
+        }),
+        createMemoryManager: async () => null,
+      }),
     });
-
-    expect(acquireExtensions).toHaveBeenCalledWith({
-      extensionsDir: join(installDir, 'extensions'),
-      extensionsConfig: snapshot.extensions,
-      environment,
-    });
-    expect(create).toHaveBeenCalledOnce();
-    expect(acquireExtensions.mock.invocationCallOrder[0])
-      .toBeLessThan(create.mock.invocationCallOrder[0]!);
-    await app.close();
+    function revisionOf(output: unknown): string {
+      if (output === null || typeof output !== 'object') throw new Error('Expected Settings output.');
+      const value: unknown = 'section' in output ? output.section
+        : 'sections' in output && Array.isArray(output.sections) ? output.sections[0] : undefined;
+      if (value === null || typeof value !== 'object' || !('revision' in value) || typeof value.revision !== 'string') {
+        throw new Error('Expected section revision.');
+      }
+      return value.revision;
+    }
+    try {
+      expect(capabilities?.settings).toBe(app.application.settings);
+      const loaded = await app.application.settings.execute({ requestId: 'load', action: 'load', input: {} });
+      expect(loaded).toMatchObject({ ok: true, output: { modelCatalog: { providers: [
+        expect.objectContaining({ providerId: 'builtin', configurationSectionId: 'llm' }),
+      ] } } });
+      const beforeTest = await readFile(join(agentHome, 'config.json'), 'utf8');
+      const beforeCatalog = app.application.getModelCatalog();
+      expect(await app.application.settings.execute({
+        requestId: 'test-draft', action: 'test_llm_model',
+        input: {
+          reference: { providerId: 'builtin', modelId: 'one' },
+          builtin: { settings: builtin },
+        },
+      })).toMatchObject({ ok: true, output: { outcome: 'completed' } });
+      expect(chat).toHaveBeenCalledOnce();
+      expect(app.application.getModelCatalog()).toEqual(beforeCatalog);
+      expect(await readFile(join(agentHome, 'config.json'), 'utf8')).toBe(beforeTest);
+      const draft = {
+        builtin: { ...builtin, models: [...builtin.models, { modelId: 'two', protocol: 'openai-responses' }] },
+        defaultModel: { providerId: 'builtin', modelId: 'two' },
+      };
+      const saved = await app.application.settings.execute({
+        requestId: 'save', action: 'update',
+        input: { sectionId: 'llm', expectedRevision: revisionOf(loaded.output), settings: draft },
+      });
+      expect(saved).toMatchObject({ ok: true });
+      const catalog = app.application.getModelCatalog();
+      expect(catalog).toMatchObject({
+        generation: 2,
+        defaultSelection: { state: 'available', reference: { providerId: 'builtin', modelId: 'two' } },
+      });
+      const failed = await app.application.settings.execute({
+        requestId: 'failed-draft', action: 'update',
+        input: {
+          sectionId: 'llm', expectedRevision: revisionOf(saved.output), settings: draft,
+          credentials: { '/builtin/apiKey': { operation: 'replace', value: '${UNAVAILABLE_KEY}' } },
+        },
+      });
+      expect(failed).toMatchObject({ ok: false, error: { code: 'application_failed_rolled_back' } });
+      expect(app.application.getModelCatalog()).toEqual(catalog);
+      expect(JSON.parse(await readFile(join(agentHome, 'config.json'), 'utf8')).llm).toEqual(draft);
+      expect(revisionOf(failed.output)).not.toBe(revisionOf(saved.output));
+    } finally {
+      const report = await app.close();
+      expect(report.failed).toEqual([]);
+      expect(report.residuals).toEqual([]);
+    }
+    expect(await app.application.settings.execute({ requestId: 'closed', action: 'update', input: {} }))
+      .toMatchObject({ ok: false, error: { code: 'runtime_closing' } });
   });
 
   it('admits an existing canonical session and rejects an unknown identity', async () => {
@@ -1082,6 +1204,81 @@ describe('RuntimeApp', () => {
       await reloaded.close();
     } finally {
       await app.close();
+    }
+  });
+
+  it('uses the captured default for an old Root and the published default for a new Root', async () => {
+    const entered = createDeferred<void>();
+    const release = createDeferred<void>();
+    const observed = new Map<string, string>();
+    const llm = {
+      builtin: {
+        baseURL: 'https://example.test',
+        models: [
+          { modelId: 'first', protocol: 'openai-responses' as const },
+          { modelId: 'second', protocol: 'openai-responses' as const },
+        ],
+      },
+      defaultModel: { providerId: 'builtin', modelId: 'first' },
+    };
+    const start = vi.spyOn(RuntimeCompositionManager.prototype, 'start');
+    let app: RuntimeHandle | undefined;
+    try {
+      app = await RuntimeApp.create({
+        agentHome,
+        applicationConfig: { ...testApplicationConfig(), llm },
+        cliOverrides: { memory: { enabled: false } },
+        dependencies: createTestDependencies({
+          createBuiltinProviderUnit: createBuiltinLlmProviderUnit,
+          createSessionManager: () => ({
+            getSubagentPresentationRoute: vi.fn(),
+            initialize: vi.fn(async () => undefined),
+            close: vi.fn(async () => undefined),
+            getPersistedSession: vi.fn((id: string) => sessionEntry(id)),
+          }) as never,
+          createAgentRunner: () => ({
+            async run(params: RunParams): Promise<RunResult> {
+              if (params.sessionId === 'old-root') {
+                entered.resolve();
+                await release.promise;
+              }
+              observed.set(params.sessionId, params.resolvedModel.identity.modelId);
+              return {
+                text: 'done',
+                content: [{ type: 'text', text: 'done' }],
+                stopReason: 'end_turn',
+                usage: { inputTokens: 1, outputTokens: 1 },
+                toolRounds: 0,
+              };
+            },
+          }) as never,
+        }),
+      });
+      const manager = start.mock.contexts[0];
+      if (!(manager instanceof RuntimeCompositionManager)) {
+        throw new Error('Runtime composition manager was not created.');
+      }
+      const old = runRootTurnForTest(app, {
+        sessionId: 'old-root', message: 'hold', promptMode: 'full',
+      });
+      await entered.promise;
+      await expect(manager.applyLlmConfiguration({
+        ...llm, defaultModel: { providerId: 'builtin', modelId: 'second' },
+      })).resolves.toMatchObject({ outcome: 'published', generation: 2 });
+      expect(app.application.getModelCatalog().defaultSelection).toEqual({
+        state: 'available', reference: { providerId: 'builtin', modelId: 'second' },
+      });
+      await runRootTurnForTest(app, {
+        sessionId: 'new-root', message: 'new default', promptMode: 'full',
+      });
+      release.resolve();
+      await old;
+      expect(observed.get('old-root')).toBe('first');
+      expect(observed.get('new-root')).toBe('second');
+    } finally {
+      release.resolve();
+      await app?.close();
+      start.mockRestore();
     }
   });
 
@@ -3320,6 +3517,9 @@ describe('RuntimeApp', () => {
       expect(Object.isFrozen(capturedCapabilities!.abort)).toBe(true);
       expect(Object.isFrozen(capturedCapabilities!.chatSessions)).toBe(true);
       expect(Object.isFrozen(capturedCapabilities!.sessionObservation)).toBe(true);
+      expect(capturedCapabilities!.settings).toBe(app.application.settings);
+      expect(await capturedCapabilities!.settings.execute({ requestId: 'load', action: 'load', input: {} }))
+        .toMatchObject({ ok: false, error: { code: 'settings_unavailable' } });
 
       const created = await capturedCapabilities!.chatSessions.createSession();
       expect(created.sessionId).toMatch(

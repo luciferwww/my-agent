@@ -83,12 +83,16 @@ export class RuntimeUnitCatalog {
     return this.startupIds;
   }
 
+  allUnits(): readonly LoadedRuntimeUnit[] {
+    return this.orderedUnits([...this.byId.keys()]);
+  }
+
   orderedUnits(unitIds: readonly string[]): readonly LoadedRuntimeUnit[] {
     return Object.freeze(this.orderUnitIds(unitIds).map((unitId) => this.byId.get(unitId)!));
   }
 
   planChange(
-    change: RuntimeReloadChange,
+    change: Extract<RuntimeReloadChange, { operation: 'enable' | 'disable' }>,
     activeUnitIds: ReadonlySet<string>,
   ): RuntimeUnitChangePlan {
     const unit = this.byId.get(change.unitId);

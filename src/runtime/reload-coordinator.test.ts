@@ -125,7 +125,7 @@ describe('RuntimeReloadStateMachine', () => {
     expect(harness.hooks.publish).not.toHaveBeenCalled();
   });
 
-  it('publishes one generation then runs the sole pending request after retirement', async () => {
+  it('publishes another generation without waiting for earlier retirement', async () => {
     const harness = createHarness();
     const first = harness.coordinator.submit(change('enable', 'external-a'));
     await vi.waitFor(() => expect(harness.preparations).toHaveLength(1));
@@ -140,10 +140,7 @@ describe('RuntimeReloadStateMachine', () => {
     await vi.waitFor(() => expect(harness.retirements).toHaveLength(1));
 
     const pending = harness.coordinator.submit(change('disable', 'external-a'));
-    expect(harness.coordinator.pendingRequestId).toBe('reload-2');
-    expect(harness.preparations).toHaveLength(1);
-
-    harness.retirements[0]!.deferred.resolve({ outcome: 'retired' });
+    expect(harness.coordinator.pendingRequestId).toBeUndefined();
     await vi.waitFor(() => expect(harness.preparations).toHaveLength(2));
     harness.resolvePreparation(1);
     await expect(pending).resolves.toEqual(expect.objectContaining({
@@ -153,9 +150,13 @@ describe('RuntimeReloadStateMachine', () => {
       generation: 3,
       retiredUnitIds: ['external-a'],
     }));
+    expect(harness.coordinator.hasRetiringGeneration).toBe(true);
+    harness.retirements[0]!.deferred.resolve({ outcome: 'retired' });
+    harness.retirements[1]!.deferred.resolve({ outcome: 'retired' });
+    await vi.waitFor(() => expect(harness.coordinator.hasRetiringGeneration).toBe(false));
   });
 
-  it('settles D/E/F latest-wins while D is retiring and starts only F', async () => {
+  it('keeps active-candidate latest-wins independent of an older retirement', async () => {
     const harness = createHarness();
     const d = harness.coordinator.submit(change('enable', 'd'));
     await vi.waitFor(() => expect(harness.preparations).toHaveLength(1));
@@ -174,9 +175,6 @@ describe('RuntimeReloadStateMachine', () => {
       outcome: 'superseded',
       supersededByRequestId: 'reload-3',
     }));
-    expect(harness.preparations).toHaveLength(1);
-
-    harness.retirements[0]!.deferred.resolve({ outcome: 'retired' });
     await vi.waitFor(() => expect(harness.preparations).toHaveLength(2));
     expect(harness.preparations[1]?.request.change.unitId).toBe('f');
     harness.resolvePreparation(1);
@@ -186,6 +184,7 @@ describe('RuntimeReloadStateMachine', () => {
       generation: 3,
     }));
     expect(harness.hooks.publish).toHaveBeenCalledTimes(2);
+    harness.retirements[0]!.deferred.resolve({ outcome: 'retired' });
   });
 
   it('settles A/B/C latest-wins and starts only C after A cleanup', async () => {
@@ -304,7 +303,7 @@ describe('RuntimeReloadStateMachine', () => {
     );
   });
 
-  it('blocks pending and future requests after retirement failure without rewriting publish', async () => {
+  it('reports retirement failure without blocking another publication', async () => {
     const harness = createHarness();
     const published = harness.coordinator.submit(change('enable', 'a'));
     await vi.waitFor(() => expect(harness.preparations).toHaveLength(1));
@@ -323,13 +322,13 @@ describe('RuntimeReloadStateMachine', () => {
       }),
     });
 
+    await vi.waitFor(() => expect(harness.preparations).toHaveLength(2));
+    harness.resolvePreparation(1);
     await expect(pending).resolves.toEqual(expect.objectContaining({
-      outcome: 'blocked',
-      blocker: expect.objectContaining({ phase: 'retirement-stop' }),
+      outcome: 'published',
+      generation: 3,
     }));
-    await expect(harness.coordinator.submit(change('disable', 'a'))).resolves.toEqual(
-      expect.objectContaining({ outcome: 'blocked' }),
-    );
+    expect(harness.coordinator.blocker).toBeUndefined();
   });
 
   it('settles active and pending requests as shutdown/cancelled', async () => {

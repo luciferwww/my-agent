@@ -1,6 +1,7 @@
 import type {
   ChannelCompletion,
   ModelCatalogSnapshot,
+  SettingsCapability,
 } from '../core/channel/index.js';
 import type { AvailableSubagentEntry } from '../core/subagent/index.js';
 import type { ContextFile } from '../core/agent-context/index.js';
@@ -27,6 +28,7 @@ export type {
 } from '../core/channel/index.js';
 
 export interface RuntimeApplication {
+  readonly settings: SettingsCapability;
   createSession(input?: {
     permissionMode?: SessionPermissionMode;
     originClientId?: string;
@@ -58,10 +60,9 @@ export interface RuntimeApplication {
   waitForChannelCompletion(id: string): Promise<ChannelCompletion>;
 }
 
-export type RuntimeReloadChange = Readonly<{
-  operation: 'enable' | 'disable';
-  unitId: string;
-}>;
+export type RuntimeReloadChange =
+  | Readonly<{ operation: 'enable' | 'disable'; unitId: string }>
+  | Readonly<{ operation: 'configure-llm'; unitId: string }>;
 
 export type RuntimeReloadWarning = Readonly<{
   code: string;

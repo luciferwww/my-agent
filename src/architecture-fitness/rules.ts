@@ -299,6 +299,7 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
   }
   if (
     sourcePath === 'src/runtime/registry-builder.ts'
+    || sourcePath === 'src/runtime/settings-manager.ts'
     || sourcePath === 'src/runtime/channel-lifecycle.ts'
     || sourcePath === 'src/runtime/composition-coordinator.ts'
     || sourcePath === 'src/runtime/reload-coordinator.ts'

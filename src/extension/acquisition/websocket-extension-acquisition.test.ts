@@ -7,30 +7,16 @@ import { acquireExtensions } from './loader.js';
 const EXTENSIONS_DIR = fileURLToPath(new URL('../../../extensions/', import.meta.url));
 
 describe('WebSocket Extension acquisition', () => {
-  it('applies Descriptor defaults only after an explicit entry enables the Extension', async () => {
-    const absent = await acquireExtensions({
+  it('loads an unconfigured WebSocket Extension using Descriptor defaults', async () => {
+    const enabled = await acquireExtensions({
       extensionsDir: EXTENSIONS_DIR,
       extensionsConfig: {
-        enabled: true,
         entries: {},
       },
       environment: {},
     });
-    expect(absent.loadedUnits).toEqual([]);
-
-    const enabled = await acquireExtensions({
-      extensionsDir: EXTENSIONS_DIR,
-      extensionsConfig: {
-        enabled: true,
-        entries: {
-          'websocket-channel': {},
-        },
-      },
-      environment: {},
-    });
-
-    expect(enabled.loadedUnits).toHaveLength(1);
-    expect(enabled.loadedUnits[0]).toMatchObject({
+    const unit = enabled.loadedUnits.find((unit) => unit.unitId === 'websocket-channel');
+    expect(unit).toMatchObject({
       unitId: 'websocket-channel',
       source: 'external',
       required: false,
@@ -39,7 +25,8 @@ describe('WebSocket Extension acquisition', () => {
     expect(enabled.diagnostics.filter((diagnostic) =>
       diagnostic.extensionId === 'websocket-channel')).toEqual([]);
 
-    const instance = await enabled.loadedUnits[0]!.create(new AbortController().signal);
+    if (!unit) throw new Error('Expected WebSocket Extension.');
+    const instance = await unit.create(new AbortController().signal);
     let createChannel: (() => unknown) | undefined;
     instance.registration.register({
       registerProvider: () => undefined,
@@ -69,7 +56,6 @@ describe('WebSocket Extension acquisition', () => {
     const schemaFailure = await acquireExtensions({
       extensionsDir: EXTENSIONS_DIR,
       extensionsConfig: {
-        enabled: true,
         entries: {
           'websocket-channel': {
             config: { unknown: true },
@@ -78,7 +64,7 @@ describe('WebSocket Extension acquisition', () => {
       },
       environment: {},
     });
-    expect(schemaFailure.loadedUnits).toEqual([]);
+    expect(schemaFailure.loadedUnits.every((unit) => unit.unitId !== 'websocket-channel')).toBe(true);
     expect(schemaFailure.diagnostics).toContainEqual(expect.objectContaining({
       extensionId: 'websocket-channel',
       code: 'config_validation_failed',
@@ -87,7 +73,6 @@ describe('WebSocket Extension acquisition', () => {
     const unsafePathFailure = await acquireExtensions({
       extensionsDir: EXTENSIONS_DIR,
       extensionsConfig: {
-        enabled: true,
         entries: {
           'websocket-channel': {
             config: { webSocketPath: '/</script>' },
@@ -96,7 +81,7 @@ describe('WebSocket Extension acquisition', () => {
       },
       environment: {},
     });
-    expect(unsafePathFailure.loadedUnits).toEqual([]);
+    expect(unsafePathFailure.loadedUnits.every((unit) => unit.unitId !== 'websocket-channel')).toBe(true);
     expect(unsafePathFailure.diagnostics).toContainEqual(expect.objectContaining({
       extensionId: 'websocket-channel',
       code: 'config_validation_failed',
@@ -105,7 +90,6 @@ describe('WebSocket Extension acquisition', () => {
     const semanticFailure = await acquireExtensions({
       extensionsDir: EXTENSIONS_DIR,
       extensionsConfig: {
-        enabled: true,
         entries: {
           'websocket-channel': {
             config: {
@@ -117,7 +101,7 @@ describe('WebSocket Extension acquisition', () => {
       },
       environment: {},
     });
-    expect(semanticFailure.loadedUnits).toEqual([]);
+    expect(semanticFailure.loadedUnits.every((unit) => unit.unitId !== 'websocket-channel')).toBe(true);
     expect(semanticFailure.diagnostics).toContainEqual(expect.objectContaining({
       extensionId: 'websocket-channel',
       code: 'factory_failed',

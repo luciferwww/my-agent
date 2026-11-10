@@ -244,6 +244,7 @@ export class RuntimeApp {
     private state: RuntimeLifecycleState,
     private readonly channelCompletionObserver: ChannelCompletionObserver,
     private readonly snapshotAccess: RuntimeSnapshotAccess,
+    readonly settings: RuntimeApplicationKernelInput['settings'],
     subagentProfiles: ReadonlyMap<string, SubagentProfile>,
     activeParentTurns: Map<string, ActiveParentTurn>,
     routeContextByTurn: Map<string, MessageRouteContext>,
@@ -274,6 +275,7 @@ export class RuntimeApp {
       input.state,
       input.channelCompletionObserver,
       input.snapshotAccess,
+      input.settings,
       input.subagentProfiles,
       input.activeParentTurns,
       input.routeContextByTurn,
@@ -462,7 +464,7 @@ export class RuntimeApp {
           : {}),
       }))),
     })));
-    const configured = this.resources.appConfig.llm.defaultModel;
+    const configured = snapshot.defaultModel;
     let defaultSelection: ModelCatalogSnapshot['defaultSelection'];
     if (!configured) {
       defaultSelection = Object.freeze({ state: 'unset' });
@@ -1408,7 +1410,7 @@ export class RuntimeApp {
       );
 
       const resolvedModel = new ModelResolver(snapshot.providers).resolve({
-        reference: params.modelReference ?? this.resources.appConfig.llm.defaultModel,
+        reference: params.modelReference ?? snapshot.defaultModel,
         referenceSource: params.modelReference === undefined ? 'config-default' : 'turn-explicit',
         request: {
           tools: visibleToolDefinitions.length > 0,

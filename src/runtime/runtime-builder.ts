@@ -7,6 +7,8 @@ import {
   ChannelRuntimeHost,
   ApprovalRequest,
   TurnInteractionResponse,
+  SettingsActionRequest,
+  SettingsCapability,
 } from '../core/channel/index.js';
 import type { AgentEvent } from '../core/runner/index.js';
 import type {
@@ -41,6 +43,7 @@ import type {
 } from './types.js';
 import { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
 import { RuntimeCompositionManager } from './runtime-composition-manager.js';
+import { SettingsManager, settingsFailure } from './settings-manager.js';
 import {
   RuntimeUnitCatalog,
   createLoadedRuntimeUnit,
@@ -95,6 +98,7 @@ export interface RuntimeApplicationKernel {
 }
 
 export interface RuntimeApplicationKernelInput {
+  readonly settings: SettingsCapability;
   readonly resources: RuntimeResourceSet;
   readonly state: RuntimeLifecycleState;
   readonly subagentProfiles: ReadonlyMap<string, SubagentProfile>;
@@ -119,6 +123,16 @@ export async function buildRuntimeHandle(
   const coordinator = new CompositionCoordinator(lifecycleLedger);
   let kernel: RuntimeApplicationKernel | undefined;
   let compositionManager: RuntimeCompositionManager | undefined;
+  let settingsManager: SettingsManager | undefined;
+  const settings: SettingsCapability = Object.freeze({
+    execute(request: SettingsActionRequest) {
+      if (kernel && settingsManager) return settingsManager.execute(request);
+      return Promise.resolve(settingsFailure(
+        request, kernel ? 'settings_unavailable' : 'settings_not_ready',
+        kernel ? 'Settings require a persisted startup configuration.' : 'Runtime Settings are not ready.',
+      ));
+    },
+  });
   const userObserver = options.onAgentEvent;
   const deadlinePolicy = resolveRuntimeDeadlinePolicy(options.deadlinePolicy);
   const deadlineDriver = options.deadlineDriver ?? createSystemRuntimeDeadlineDriver();
@@ -200,6 +214,7 @@ export async function buildRuntimeHandle(
       kernel.onInteractionResponse(binding, response);
     },
     capabilities: Object.freeze({
+      settings,
       modelCatalog: Object.freeze({
         getSnapshot() {
           if (!kernel) throw new Error('Runtime Model Catalog is not ready.');
@@ -351,6 +366,8 @@ export async function buildRuntimeHandle(
       lifecycleLedger,
       channelHost,
       {
+        llmConfiguration: bootstrap.resources.appConfig.llm,
+        createBuiltinProviderUnit: bootstrap.dependencies.createBuiltinProviderUnit,
         candidateCleanupTimeoutMs: deadlinePolicy.candidateCleanupMs,
         retirementDrainTimeoutMs: deadlinePolicy.retirementGracefulDrainMs,
         retirementAbortTimeoutMs: deadlinePolicy.retirementAbortConvergenceMs,
@@ -368,7 +385,27 @@ export async function buildRuntimeHandle(
       subagentProfiles.set(profile.id, profile);
     }
 
+    const startupContext = options.startupContext;
+    const editingDocument = startupContext?.configuration.document;
+    if (startupContext && editingDocument !== undefined) {
+      settingsManager = new SettingsManager({
+        agentHome: options.agentHome,
+        document: editingDocument,
+        environment: startupContext.environment,
+        extensionMetadata: bootstrap.extensionMetadata,
+        snapshotAccess: coordinator.createSnapshotAccess(),
+        createBuiltinProviderUnit: bootstrap.dependencies.createBuiltinProviderUnit,
+        deadlineDriver,
+        getProviderUnitId: (providerId) => compositionManager!.getProviderUnitId(providerId),
+        getModelCatalog: () => {
+          if (!kernel) throw new Error('Runtime Model Catalog is not ready.');
+          return kernel.application.getModelCatalog();
+        },
+        applyLlmConfiguration: (configuration) => compositionManager!.applyLlmConfiguration(configuration),
+      });
+    }
     kernel = createApplication({
+      settings,
       resources: bootstrap.resources,
       state: bootstrap.state,
       subagentProfiles,
@@ -409,7 +446,17 @@ export async function buildRuntimeHandle(
   } catch (error) {
     unsubscribeSessionPermissionBridge?.();
     options.onEvent?.({ type: 'error', info: classifyRuntimeError('startup', error) });
-    const report = await compositionManager?.shutdown();
+    const cleanupBudget = new RuntimeDeadlineBudget(deadlineDriver, deadlinePolicy);
+    settingsManager?.beginShutdown(cleanupBudget);
+    compositionManager?.beginShutdown(cleanupBudget);
+    const settingsCleanup = await settingsManager?.shutdown(cleanupBudget);
+    for (const failure of settingsCleanup?.failed ?? []) {
+      log.error('Settings cleanup after Runtime application creation failure failed', { resource: failure.resource });
+    }
+    for (const residual of settingsCleanup?.residuals ?? []) {
+      log.error('Settings cleanup after Runtime application creation failure did not converge', { phase: residual.phase });
+    }
+    const report = await compositionManager?.shutdown(cleanupBudget);
     for (const failure of report?.failed ?? []) {
       log.warn('Unit cleanup after Runtime application creation failure failed', {
         instanceId: failure.instanceId,
@@ -443,6 +490,7 @@ export async function buildRuntimeHandle(
   const close = (reason?: string): Promise<RuntimeShutdownReport> => {
     if (closePromise) return closePromise;
     const budget = new RuntimeDeadlineBudget(deadlineDriver, deadlinePolicy);
+    settingsManager?.beginShutdown(budget);
     compositionManager!.beginShutdown(budget);
     let releaseAttempted = false;
     closePromise = (async () => {
@@ -450,6 +498,12 @@ export async function buildRuntimeHandle(
       const completed = [...applicationReport.completed];
       const failed = [...applicationReport.failed];
       const residuals = [...applicationReport.residuals];
+      if (settingsManager) {
+        const settingsReport = await settingsManager.shutdown(budget);
+        residuals.push(...settingsReport.residuals);
+        failed.push(...settingsReport.failed);
+        if (settingsReport.residuals.length === 0 && settingsReport.failed.length === 0) completed.push('settings');
+      }
 
       const sessionCleanup = await budget.raceRemainingLazy(
         () => bootstrap.resources.sessionManager.close(),

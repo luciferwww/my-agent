@@ -25,18 +25,21 @@ If `--agent-home` is omitted, the default is:
 <user-home>/.my-agent
 ```
 
-Initialize a new Agent Home explicitly before first startup:
+Start normally with a new or empty Agent Home. The Host creates a missing Home
+and exclusively creates `config.json` containing `{}`; existing files are never
+overwritten. Existing malformed or zero-byte files still fail validation.
+The old `--initialize` wizard and its fixed named-Agent profile installer are removed.
 
-```bash
-npm run agent -- --initialize --agent-home ./agent-home
-```
+Startup discovers all installed Extensions and attempts to load each unless its
+entry explicitly sets `enabled: false`. Schema defaults apply without a saved
+entry. A failed Extension is reported and skipped without suppressing healthy
+neighbors. The bundled WebSocket client defaults to `http://127.0.0.1:8787/`;
+automatic browser opening is off. Open Settings there to configure the first
+Provider, models and default selection. Startup itself requires no Model call.
 
-The interactive initializer verifies at least one real Provider/Model call,
-lets you select one verified Default Model, installs Root and fixed named-Agent
-Context, and publishes `config.json` last. Ordinary startup never creates a
-missing configuration; it reports the initialization command instead.
-
-The file is read at startup. Restart the Runtime after changing it.
+Manual file edits are read at startup; restart the Runtime after editing the file
+directly. Browser Settings can apply Built-in/default changes to new execution
+trees without restarting, as described below. No external file watcher is added.
 
 The accepted top-level sections are:
 
@@ -51,6 +54,84 @@ Configuration is JSON, not JSONC: comments and trailing commas are invalid.
 Field names and values are case-sensitive. Unknown namespaces and invalid
 known fields normally fail startup or disable the affected Extension rather
 than being silently corrected.
+
+### Browser Settings
+
+Open **Settings** in the bundled WebSocket client's navigation. This requires a
+running, connected Channel; the automatically created empty configuration is valid.
+
+- The left navigation has **LLM** and **Extensions**; narrow screens use a top
+  category selector. Navigation summarizes unsaved changes, restart requirements
+  and unconfirmed state. Lists and detail pages preserve the same independent drafts.
+- **LLM** starts with a default-model selector and Provider list, not all Provider
+  forms expanded together. Built-in is always an entry, even before configuration;
+  its model count describes the draft. Other entries and model counts come from
+  the loaded Runtime catalog, not saved Extension candidates.
+- **Details** opens a Provider detail page under LLM. Built-in details contain
+  connection and editable models; other Provider details contain their loaded
+  model list, Test and Set default. **Configure Extension** is a separate link to
+  the owning Extension's configuration. Ownership is supplied by Runtime, not
+  inferred from Provider IDs. Multiple Providers can link to the same Extension
+  and share its one configuration draft. Missing configuration links do not
+  prevent viewing a Provider's models.
+  **Extensions** lists all discovered editable Extensions, including disabled ones.
+- Default selection and Built-in details share **Save LLM**. **Set default** in
+  Provider details changes the LLM draft; use the fixed footer's Save LLM to
+  apply it. An Extension detail contains only enablement/configuration and saves
+  only that Extension, never model actions or the LLM default.
+- Built-in details always show the configuration form, without an enable/configure
+  checkbox. Deleting all models preserves the saved URL and key. Leaving a never
+  configured Built-in form empty does not create it when saving other LLM settings.
+- Save each section independently. Closing the editor preserves noncredential
+  drafts, not an automatic save. **Reload saved settings** explicitly discards
+  drafts. Replacement credential inputs are cleared on submission, close and
+  disconnect; submitting one section does not clear another section's inputs.
+- One fixed footer reports the latest operation's pending, successful or failed
+  outcome. Loading, saving and model Test use the same area; starting another
+  operation replaces the old message. Late responses cannot overwrite a newer
+  message such as a disconnect warning.
+  Feedback aligns with the content column; Save stays right-aligned. Success is
+  green, errors red, pending operations use the theme accent and informational
+  messages use muted text. The footer remains visible while scrolling.
+- Credential password inputs show a fixed `******` mask when already configured.
+  Leave the mask unchanged to retain the saved value, replace it with a literal
+  or exact `${ENV}`, or delete it to remove the credential on section save.
+  The mask is reserved as the keep marker for already-configured credentials.
+  The eye icon only reveals newly entered text, never the saved credential.
+  Credential controls do not display saved values or environment-reference names.
+  References resolve from the environment captured at startup when applying or
+  testing; save-time validation does not require the variable to be available.
+- Built-in models have add/edit/delete controls, protocol, relative endpoint and
+  optional display name. Advanced JSON retains limits and reasoning capabilities.
+  Models start as compact rows; Edit expands one inline form, preserving drafts
+  when collapsed. New models open for editing immediately. Test, Set default and
+  Delete align right. Built-in and Extension model lists show Default for the
+  current LLM draft selection; the existing unsaved indicator means Save LLM is
+  still required.
+  Omitted existing limit/reasoning fields on retained model IDs are preserved.
+- **Set default** changes only the default selection in the LLM
+  draft. **Save LLM** applies Built-in/default changes to new execution trees;
+  already-running trees keep their version. An existing Provider-free
+  configuration uses this same editor for its first Provider.
+- **Test** makes a real model request and may incur charges. Built-in tests use
+  the draft; other Providers use currently loaded instances, not saved Extension
+  parameters. Test does not save or change the default and has a fixed 30-second
+  total deadline including preparation. It never creates a conversation.
+- Extension sections expose supported scalar fields and explicit credential
+  intents. Unsupported/read-only values remain server-owned and are not exposed
+  or silently overwritten. Extension changes require a manual restart. Saving
+  the startup values again clears that Extension's restart flag, without clearing
+  outstanding differences in other Extensions. Closing the editor does not erase
+  restart requirements.
+- A known pre-publication LLM failure restores the file and the confirmed editor
+  values with a fresh revision, without reloading other sections. Failed rollback
+  reports unknown file state and retains the draft/latest revision for another
+  explicit save; it does not claim successful recovery. Saved-but-unconfirmed
+  Runtime application is shown separately from file-save success.
+- A disconnected or missing response may hide a completed save. The client never
+  retries it automatically: reconnect, then explicitly reload before saving again.
+  Its 60-second response-wait bound is not cancellation of server work and does
+  not replace the server's 30-second model Test deadline.
 
 ## 2. Practical starting configuration
 
@@ -545,13 +626,11 @@ The CLI owns terminal output, so disable Console Logger when using `--cli`:
 
 ## 7. Extensions
 
-Extensions are globally enabled by default, but an installed Extension is
-loaded only when it has a matching entry:
+An installed Extension is loaded only when it has a matching enabled entry:
 
 ```json
 {
   "extensions": {
-    "enabled": true,
     "entries": {
       "extension-id": {
         "enabled": true,
@@ -564,6 +643,12 @@ loaded only when it has a matching entry:
 
 An entry defaults to enabled when present. Setting its `enabled` field to
 `false` disables that Extension.
+
+The old global `extensions.enabled` field is no longer accepted, even when it is
+`false`. Startup reports the field and leaves the file unchanged. Before removing
+an old global `false`, set `"enabled": false` on each existing entry that should
+remain disabled. Simply removing the global field would enable entries whose
+per-entry `enabled` is omitted. There is no automatic migration.
 
 ### 7.1 WebSocket browser client
 

@@ -136,7 +136,6 @@ describe('loadAgentConfig', () => {
         file: { enabled: true, minLevel: 'info' },
       },
       extensions: {
-        enabled: false,
         entries: {
           relay: { enabled: true, config: { baseURL: 'https://relay.invalid' } },
         },
@@ -148,7 +147,9 @@ describe('loadAgentConfig', () => {
       environment: { BUILTIN_API_KEY: 'secret' },
     });
 
-    expect(Object.keys(snapshot)).toEqual(['application', 'extensions']);
+    expect(Object.keys(snapshot)).toEqual(['document', 'application', 'extensions']);
+    expect(snapshot.document?.llm?.builtin).toMatchObject({ apiKey: '${BUILTIN_API_KEY}' });
+    expect(Object.isFrozen(snapshot.document)).toBe(true);
     expect(snapshot.application.llm).toEqual({
       defaultModel: { providerId: 'builtin', modelId: 'model-a' },
       builtin: {
@@ -177,7 +178,6 @@ describe('loadAgentConfig', () => {
       file: { enabled: true, minLevel: 'info' },
     });
     expect(snapshot.extensions).toEqual({
-      enabled: false,
       entries: {
         relay: { enabled: true, config: { baseURL: 'https://relay.invalid' } },
       },

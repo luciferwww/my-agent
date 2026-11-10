@@ -6,10 +6,13 @@ import type {
   RuntimeReloadWarning,
 } from './runtime-composition.js';
 import type { CompositionCoordinator } from './composition-coordinator.js';
+import { Logger } from '../platform/logger/index.js';
+import type { LLMConfig } from '../builtins/providers/builtin/index.js';
 
 export interface RuntimeReloadRequest {
   readonly requestId: string;
   readonly change: RuntimeReloadChange;
+  readonly llmConfiguration?: LLMConfig;
 }
 
 export type RuntimeReloadPreflight =
@@ -109,7 +112,7 @@ export class RuntimeReloadStateMachine<TPrepared extends PreparedRuntimeReload> 
   private readonly cleanupTimeoutMs: number;
   private readonly deadlineDriver: RuntimeReloadDeadlineDriver;
   private active?: ActiveCandidate<TPrepared>;
-  private retiring?: TPrepared;
+  private retirementCount = 0;
   private pending?: PendingRequest;
   private blockedResidual?: RuntimeCompositionResidual;
   private closing = false;
@@ -128,8 +131,8 @@ export class RuntimeReloadStateMachine<TPrepared extends PreparedRuntimeReload> 
     this.deadlineDriver = options.deadlineDriver ?? createSystemDeadlineDriver();
   }
 
-  submit(change: RuntimeReloadChange): Promise<RuntimeReloadResult> {
-    const pending = this.createPending(change);
+  submit(change: RuntimeReloadChange, llmConfiguration?: LLMConfig): Promise<RuntimeReloadResult> {
+    const pending = this.createPending(change, llmConfiguration);
     const generation = this.hooks.currentGeneration();
     this.transition('admission', () => {
       const effects: TransitionEffect[] = [];
@@ -141,7 +144,7 @@ export class RuntimeReloadStateMachine<TPrepared extends PreparedRuntimeReload> 
           pending.deferred,
           this.blockedResult(pending.request, this.blockedResidual, generation),
         );
-      } else if (this.active || this.retiring) {
+      } else if (this.active) {
         this.replacePending(pending, generation, effects);
         if (this.active && !this.active.terminal) {
           const active = this.active;
@@ -197,7 +200,7 @@ export class RuntimeReloadStateMachine<TPrepared extends PreparedRuntimeReload> 
   }
 
   get hasRetiringGeneration(): boolean {
-    return this.retiring !== undefined;
+    return this.retirementCount > 0;
   }
 
   get pendingRequestId(): string | undefined {
@@ -268,7 +271,7 @@ export class RuntimeReloadStateMachine<TPrepared extends PreparedRuntimeReload> 
       this.transition('publish-complete', () => {
         const effects: TransitionEffect[] = [];
         this.active = undefined;
-        this.retiring = prepared;
+        this.retirementCount += 1;
         this.settle(effects, active.deferred, Object.freeze({
           requestId: active.request.requestId,
           outcome: 'published',
@@ -362,10 +365,14 @@ export class RuntimeReloadStateMachine<TPrepared extends PreparedRuntimeReload> 
     const generation = this.hooks.currentGeneration();
     this.transition('retirement-complete', () => {
       const effects: TransitionEffect[] = [];
-      if (this.retiring !== prepared) return { value: undefined, effects };
-      this.retiring = undefined;
-      if (result.outcome === 'failed-residual') this.block(result.blocker, generation, effects);
-      else this.startPendingIfAvailable(generation, effects);
+      this.retirementCount -= 1;
+      if (result.outcome === 'failed-residual') {
+        const blocker = result.blocker;
+        effects.push(() => Logger.get('RuntimeReload').warn('generation retirement failed', {
+          ...blocker,
+        }));
+      }
+      this.startPendingIfAvailable(generation, effects);
       return { value: undefined, effects };
     });
   }
@@ -402,17 +409,18 @@ export class RuntimeReloadStateMachine<TPrepared extends PreparedRuntimeReload> 
   }
 
   private startPendingIfAvailable(generation: number, effects: TransitionEffect[]): void {
-    if (this.active || this.retiring || !this.pending) return;
+    if (this.active || !this.pending) return;
     const pending = this.pending;
     this.pending = undefined;
     this.activate(pending, generation, effects);
   }
 
-  private createPending(change: RuntimeReloadChange): PendingRequest {
+  private createPending(change: RuntimeReloadChange, llmConfiguration?: LLMConfig): PendingRequest {
     return {
       request: Object.freeze({
         requestId: this.createRequestId(),
         change: Object.freeze({ ...change }),
+        ...(llmConfiguration === undefined ? {} : { llmConfiguration }),
       }),
       deferred: createDeferred(),
       abortController: new AbortController(),

@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,6 +21,11 @@ import {
   type WebSocketChannelOptions,
 } from './WebSocketChannel.js';
 import type { WebSocketExtensionConfig } from './config.js';
+import { SettingsManager } from '../../src/runtime/settings-manager.js';
+import type { RuntimeReloadResult } from '../../src/runtime/runtime-composition.js';
+import { createBuiltinLlmProviderUnit } from '../../src/builtins/providers/builtin/index.js';
+import { RuntimeDeadlineBudget, DEFAULT_RUNTIME_DEADLINE_POLICY, createSystemRuntimeDeadlineDriver } from '../../src/runtime/runtime-deadline.js';
+import { object, parseSection } from './client/src/client/settings.js';
 
 const CLIENT_FILE_PATH = fileURLToPath(
   new URL('./test-fixtures/legacy-client.html', import.meta.url),
@@ -489,6 +494,155 @@ describe('WebSocketChannel', () => {
       message,
     });
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  describe('Settings protocol', () => {
+    it('runs real Settings save, rollback and model Test through the socket without exposing credentials', async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'settings-wire-'));
+      temporaryDirectories.push(directory);
+      const builtin = { baseURL: 'https://fake.example/v1', models: [{ modelId: 'one', protocol: 'openai-responses' }] };
+      const document = { llm: { builtin: { ...builtin, apiKey: '${WIRE_KEY}' } } };
+      await writeFile(join(directory, 'config.json'), JSON.stringify(document));
+      const chat = vi.fn(async () => ({
+        content: [], toolCalls: [], stopReason: 'end_turn', usage: { inputTokens: 1, outputTokens: 1 },
+      }));
+      let generation = 1;
+      let rejectNext = true;
+      const manager = new SettingsManager({
+        agentHome: directory, document, environment: { WIRE_KEY: 'fake-wire-secret' },
+        getModelCatalog: () => ({ generation, defaultSelection: { state: 'unset' }, providers: [] }),
+        createBuiltinProviderUnit: (config) => createBuiltinLlmProviderUnit(config, {
+          createClient: () => ({ chat, chatStream: () => { throw new Error('Unexpected stream.'); } }),
+        }),
+        applyLlmConfiguration: async (): Promise<RuntimeReloadResult> => {
+          const common = { requestId: 'apply', change: { operation: 'configure-llm' as const, unitId: 'builtin-llm-provider' }, warnings: [] };
+          if (rejectNext) {
+            rejectNext = false;
+            return { ...common, outcome: 'rejected', generation: 1, category: 'preparation_failed', message: 'Rejected.' };
+          }
+          generation = 2;
+          return { ...common, outcome: 'published', previousGeneration: 1, generation: 2, retiredUnitIds: [] };
+        },
+      });
+      try {
+        channel = createChannel({ port: 0 });
+        channel.onMessage(async () => undefined);
+        channel.bindRuntimeCapabilities({ ...capabilities(), settings: manager });
+        await channel.start();
+        const client = await connectClient(channel);
+        clients.push(client);
+        client.send(JSON.stringify({ type: 'hello', clientId: 'real-settings' }));
+        await expectMessage(client, { type: 'hello_ack', clientId: 'real-settings' });
+        const execute = async (action: string, input: unknown) => {
+          client.send(JSON.stringify({ type: 'settings_action', requestId: action, action, input }));
+          return nextMessage(client);
+        };
+        const loaded = await execute('load', {});
+        const sections = object(loaded.output)['sections'];
+        if (!Array.isArray(sections)) throw new Error('Expected Settings sections.');
+        const initial = parseSection(sections[0]);
+        const tested = await execute('test_llm_model', {
+          reference: { providerId: 'builtin', modelId: 'one' },
+          builtin: { settings: builtin, expectedRevision: initial.revision },
+        });
+        expect(tested).toMatchObject({ ok: true, output: { outcome: 'completed' } });
+        expect(chat).toHaveBeenCalledOnce();
+        expect(JSON.parse(await readFile(join(directory, 'config.json'), 'utf8'))).toEqual(document);
+        const draft = { builtin: { ...builtin, baseURL: 'https://changed.example/v1' } };
+        const rolledBack = await execute('update', { sectionId: 'llm', expectedRevision: initial.revision, settings: draft });
+        expect(rolledBack).toMatchObject({ ok: false, output: { rollback: 'completed', fileState: 'restored', modelCatalog: { generation: 1 } } });
+        const restored = parseSection(object(rolledBack.output)['section']);
+        expect(restored.revision).not.toBe(initial.revision);
+        expect(JSON.parse(await readFile(join(directory, 'config.json'), 'utf8'))).toEqual(document);
+        expect(await execute('update', { sectionId: 'llm', expectedRevision: restored.revision, settings: draft }))
+          .toMatchObject({ ok: true });
+        const saved = JSON.parse(await readFile(join(directory, 'config.json'), 'utf8'));
+        expect(saved.llm.builtin).toMatchObject({ baseURL: draft.builtin.baseURL, apiKey: '${WIRE_KEY}' });
+        for (const result of [loaded, tested, rolledBack]) {
+          expect(JSON.stringify(result)).not.toContain('WIRE_KEY');
+          expect(JSON.stringify(result)).not.toContain('fake-wire-secret');
+        }
+      } finally {
+        expect(await manager.shutdown(new RuntimeDeadlineBudget(createSystemRuntimeDeadlineDriver(), DEFAULT_RUNTIME_DEADLINE_POLICY)))
+          .toEqual({ failed: [], residuals: [] });
+      }
+    });
+
+    it('forwards generic actions without transport fields and unicasts correlated domain failures', async () => {
+      channel = createChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      const execute = vi.fn<ChannelRuntimeCapabilities['settings']['execute']>(async (request) => ({
+        requestId: request.requestId, action: request.action, ok: false,
+        error: { code: 'application_failed_rolled_back', message: 'Restored.' },
+        output: { rollback: 'completed', section: { revision: 'fresh' } },
+      }));
+      channel.bindRuntimeCapabilities({ ...capabilities(), settings: { execute } });
+      await channel.start();
+      const requester = await connectClient(channel);
+      const observer = await connectClient(channel);
+      clients.push(requester, observer);
+      requester.send(JSON.stringify({ type: 'hello', clientId: 'settings-requester' }));
+      observer.send(JSON.stringify({ type: 'hello', clientId: 'settings-observer' }));
+      await expectMessage(requester, { type: 'hello_ack', clientId: 'settings-requester' });
+      await expectMessage(observer, { type: 'hello_ack', clientId: 'settings-observer' });
+      const observed = vi.fn();
+      observer.on('message', observed);
+      for (const action of ['load', 'update', 'test_llm_model', 'future_action']) {
+        const request = { requestId: `settings-${action}`, action, input: { sentinel: true } };
+        requester.send(JSON.stringify({ type: 'settings_action', ...request }));
+        expect(await nextMessage(requester)).toEqual({
+          type: 'settings_action_result', requestId: request.requestId, action, ok: false,
+          error: { code: 'application_failed_rolled_back', message: 'Restored.' },
+          output: { rollback: 'completed', section: { revision: 'fresh' } },
+        });
+        expect(execute).toHaveBeenLastCalledWith(request);
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(observed).not.toHaveBeenCalled();
+    });
+
+    it('requires hello, returns correlated unavailable errors and hides unexpected upstream failures', async () => {
+      channel = createChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      await channel.start();
+      const client = await connectClient(channel);
+      clients.push(client);
+      const request = { type: 'settings_action', requestId: 'settings-1', action: 'load', input: {} };
+      client.send(JSON.stringify(request));
+      expect(await nextMessage(client)).toMatchObject({ type: 'channel_error', code: 'SERVER_NOT_READY' });
+      client.send(JSON.stringify({ type: 'hello', clientId: 'settings-client' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'settings-client' });
+      client.send(JSON.stringify(request));
+      expect(await nextMessage(client)).toMatchObject({
+        type: 'settings_action_result', requestId: 'settings-1', action: 'load', ok: false,
+        error: { code: 'settings_not_ready' },
+      });
+      channel.bindRuntimeCapabilities({
+        ...capabilities(), settings: { execute: async () => { throw new Error('private-upstream-credential'); } },
+      });
+      client.send(JSON.stringify(request));
+      const failed = await nextMessage(client);
+      expect(failed).toMatchObject({ type: 'settings_action_result', ok: false, error: { code: 'settings_failed' } });
+      expect(JSON.stringify(failed)).not.toContain('private-upstream-credential');
+      expect(logger.error).toHaveBeenCalledWith('Runtime Settings request failed', { channelId: 'websocket' });
+    });
+
+    it('validates the envelope while leaving domain input to Runtime', async () => {
+      channel = createChannel({ port: 0 });
+      channel.onMessage(async () => undefined);
+      const execute = vi.fn<ChannelRuntimeCapabilities['settings']['execute']>();
+      channel.bindRuntimeCapabilities({ ...capabilities(), settings: { execute } });
+      await channel.start();
+      const client = await connectClient(channel);
+      clients.push(client);
+      client.send(JSON.stringify({ type: 'hello', clientId: 'settings-client' }));
+      await expectMessage(client, { type: 'hello_ack', clientId: 'settings-client' });
+      for (const invalid of [{ requestId: '' }, { action: '' }, { input: undefined }, { extra: true }]) {
+        client.send(JSON.stringify({ type: 'settings_action', requestId: 'request', action: 'load', input: {}, ...invalid }));
+        expect(await nextMessage(client)).toMatchObject({ type: 'channel_error', code: 'INVALID_MESSAGE' });
+      }
+      expect(execute).not.toHaveBeenCalled();
+    });
   });
 
   describe('model catalog protocol', () => {
@@ -2444,6 +2598,7 @@ function capabilities(
 ): ChannelRuntimeCapabilities {
   const { resolveSession, getHistory, ...chatSessions } = sessions;
   return {
+    settings: { execute: async () => { throw new Error('Unexpected Settings action.'); } },
     modelCatalog: { getSnapshot },
     abort,
     chatSessions,

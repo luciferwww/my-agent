@@ -23,6 +23,7 @@ import {
 import { applyExecutionHistoryPage, buildExecutionPresentation } from './client/execution';
 import { parseServerMessage } from './client/protocol';
 import { configuredWebSocketUrl, SocketClient } from './client/socket';
+import { SettingsRequests } from './client/settings';
 import {
   createSessionUiState,
   ensureSessionUiState,
@@ -35,6 +36,7 @@ import ComposerPanel from './components/ComposerPanel.vue';
 import ApprovalPanel from './components/ApprovalPanel.vue';
 import ConversationPanel from './components/ConversationPanel.vue';
 import SidebarPanel from './components/SidebarPanel.vue';
+import SettingsPanel from './components/SettingsPanel.vue';
 
 const CLIENT_SOCKET_URL = configuredWebSocketUrl();
 const MAX_EVENT_FEED_ITEMS = 40;
@@ -59,6 +61,7 @@ function createClientId() {
           ApprovalPanel,
           ConversationPanel,
           SidebarPanel,
+          SettingsPanel,
         },
         data() {
           return {
@@ -67,6 +70,8 @@ function createClientId() {
               sessionId: '',
             },
             transport: null,
+            settingsRequests: null,
+            settingsOpen: false,
             connectionStatus: 'disconnected',
             helloAcknowledged: false,
             modelCatalog: null,
@@ -108,6 +113,7 @@ function createClientId() {
           };
         },
         mounted() {
+          this.settingsRequests = new SettingsRequests(payload => this.sendJson(payload));
           this.transport = new SocketClient(CLIENT_SOCKET_URL, {
             onStatusChange: status => { this.connectionStatus = status; },
             onConnecting: (url, isRetry) => {
@@ -316,7 +322,9 @@ function createClientId() {
           },
           modelPickerLabel() {
             if (!this.modelCatalog) return 'Loading models…';
-            return this.selectedModelDetails?.model.displayName ?? 'No models available';
+            return this.selectedModelDetails?.model.displayName
+              ?? this.selectedModelDetails?.model.modelId
+              ?? 'No models available';
           },
           pendingApprovalCount() {
             return this.focusedApprovals.length;
@@ -344,6 +352,7 @@ function createClientId() {
           },
           // ── Connection ────────────────────────────────────────
           clearTransientState() {
+            this.settingsRequests?.interrupt();
             this.stopSessionRefresh();
             this.helloAcknowledged = false;
             this.modelCatalog = null;
@@ -367,6 +376,7 @@ function createClientId() {
             }
           },
           stopConnection() {
+            this.settingsRequests?.interrupt();
             this.stopSessionRefresh();
             this.transport?.stop();
           },
@@ -375,6 +385,16 @@ function createClientId() {
           sendJson(payload) {
             if (!this.transport) throw new Error('Socket Client is not initialized.');
             this.transport.sendJson(payload);
+          },
+          openSettings() {
+            this.$refs.sidebarPanel?.closeMobileSidebar();
+            this.settingsOpen = true;
+          },
+          executeSettings(action, input) {
+            if (!this.isConnected || !this.helloAcknowledged || !this.settingsRequests) {
+              return Promise.reject(new Error('Settings requires a connected, acknowledged socket.'));
+            }
+            return this.settingsRequests.execute(action, input);
           },
           requestModelCatalog() {
             if (this.pendingCatalogRequestId !== null) return;
@@ -945,6 +965,14 @@ function createClientId() {
             }
             const message = parsed.message;
             switch (message.type) {
+              case 'settings_action_result':
+                try {
+                  if (!this.settingsRequests?.receive(message)) this.pushEvent('settings', 'Ignored an unmatched Settings result.');
+                } catch {
+                  this.settingsRequests?.interrupt('invalid_response');
+                  this.pushEvent('error', 'Malformed Settings result; reload saved settings before saving again.');
+                }
+                return;
               case 'hello_ack':
                 this.transport?.markConnected();
                 this.helloAcknowledged = true;
@@ -1421,6 +1449,15 @@ function createClientId() {
   @delete-session="deleteSessionFromMenu"
   @select-permission-mode="selectPermissionMode"
   @select-theme="selectTheme"
+  @open-settings="openSettings"
+/>
+
+<SettingsPanel
+  :open="settingsOpen"
+  :connected="isConnected && helloAcknowledged"
+  :execute="executeSettings"
+  @close="settingsOpen = false"
+  @catalog="applyModelCatalog"
 />
 
 <main class="panel chat-shell">

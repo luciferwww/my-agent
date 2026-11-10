@@ -19,12 +19,14 @@ import { deepMerge } from './loader.js';
 import {
   AgentConfigError,
   invalidAgentConfigField,
+  removedGlobalExtensionsSwitch,
   unavailableConfigSecret,
   unknownAgentConfigNamespace,
 } from './agent-config-errors.js';
 import {
   CredentialMaterializationError,
   materializeExactStringCredential,
+  parseCredentialEnvironmentReference,
 } from './credential-materialization.js';
 import { validateAgentLeafConfig, validateRunnerConfigSection } from './agent-leaf-validation.js';
 import type {
@@ -42,6 +44,8 @@ const TOP_LEVEL_NAMESPACES = new Set([
 ]);
 
 export interface AgentConfigSnapshot {
+  /** Server-only editing source; contains raw credentials, not a Channel projection. */
+  readonly document?: AgentConfigDocument;
   readonly application: ApplicationConfigProjection;
   readonly extensions: ResolvedHostExtensionsConfig;
 }
@@ -105,19 +109,19 @@ export async function loadAgentConfig(options: {
         structuredClone(document.logger),
       );
   const extensions: ResolvedHostExtensionsConfig = {
-    enabled: document.extensions?.enabled ?? true,
     entries: structuredClone(document.extensions?.entries ?? {}),
   };
 
   return deepFreeze({
+    document: structuredClone(document),
     application: { llm, agents, logger },
     extensions,
   });
 }
 
-async function readAgentConfigDocument(
+export async function readAgentConfigDocument(
   agentHome: string,
-  dependencies: AgentConfigLoaderDependencies,
+  dependencies: AgentConfigLoaderDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<AgentConfigDocument> {
   let raw: string;
   try {
@@ -153,7 +157,7 @@ async function readAgentConfigDocument(
   return parsed as AgentConfigDocument;
 }
 
-function validateAgentConfigDocument(document: AgentConfigDocument): void {
+export function validateAgentConfigDocument(document: AgentConfigDocument): void {
   for (const namespace of Object.keys(document)) {
     if (!TOP_LEVEL_NAMESPACES.has(namespace)) {
       throw unknownAgentConfigNamespace(namespace);
@@ -165,9 +169,9 @@ function validateAgentConfigDocument(document: AgentConfigDocument): void {
   validateExtensions(document.extensions);
 }
 
-function validateLlm(
+export function validateLlm(
   value: AgentConfigDocument['llm'],
-  environment: Readonly<Record<string, string | undefined>>,
+  environment?: Readonly<Record<string, string | undefined>>,
 ): LLMConfig {
   if (value === undefined) return {};
   if (!isPlainObject(value)) throw invalidAgentConfigField('llm');
@@ -189,7 +193,10 @@ function validateLlm(
   }
   if (builtin?.apiKey !== undefined) {
     try {
-      const apiKey = materializeExactStringCredential(builtin.apiKey, environment);
+      parseCredentialEnvironmentReference(builtin.apiKey);
+      const apiKey = environment === undefined
+        ? builtin.apiKey
+        : materializeExactStringCredential(builtin.apiKey, environment);
       builtin = {
         ...builtin,
         ...(apiKey === undefined ? {} : { apiKey }),
@@ -353,9 +360,7 @@ function validateLogger(value: AgentConfigDocument['logger']): void {
 function validateExtensions(value: AgentConfigDocument['extensions']): void {
   if (value === undefined) return;
   if (!isPlainObject(value)) throw invalidAgentConfigField('extensions');
-  if (value.enabled !== undefined && typeof value.enabled !== 'boolean') {
-    throw invalidAgentConfigField('extensions.enabled');
-  }
+  if (Object.hasOwn(value, 'enabled')) throw removedGlobalExtensionsSwitch();
   if (value.entries !== undefined && !isPlainObject(value.entries)) {
     throw invalidAgentConfigField('extensions.entries');
   }

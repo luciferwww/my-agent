@@ -1,4 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import {
+  BUILTIN_LLM_PROVIDER_UNIT_ID,
+  createBuiltinLlmProviderUnit,
+  validateBuiltinLlmProviderConfig,
+  type BuiltinLlmProviderConfig,
+  type LLMConfig,
+} from '../builtins/providers/builtin/index.js';
 import type {
   ChannelCompletion,
   ChannelCompletionObserver,
@@ -36,6 +44,7 @@ import type {
   RuntimeCompositionControl,
   RuntimeCompositionResidual,
   RuntimeReloadChange,
+  RuntimeReloadResult,
 } from './runtime-composition.js';
 import {
   RuntimeLifecycleLedger,
@@ -68,6 +77,8 @@ interface PublishedRuntimeComposition {
 }
 
 interface PreparedCompositionReload extends PreparedRuntimeReload {
+  readonly catalog: RuntimeUnitCatalog;
+  readonly llmConfiguration: LLMConfig;
   readonly composition: PublishedRuntimeComposition;
   readonly createdUnits: readonly ActiveRuntimeUnit[];
   readonly removedUnits: readonly ActiveRuntimeUnit[];
@@ -75,6 +86,8 @@ interface PreparedCompositionReload extends PreparedRuntimeReload {
 }
 
 export interface RuntimeCompositionManagerOptions {
+  readonly llmConfiguration?: LLMConfig;
+  readonly createBuiltinProviderUnit?: (config: BuiltinLlmProviderConfig) => LoadedRuntimeUnit;
   readonly createInstanceId?: (unitId: string) => string;
   readonly candidateCleanupTimeoutMs?: number;
   readonly retirementDrainTimeoutMs?: number;
@@ -101,21 +114,21 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
   private currentComposition?: PublishedRuntimeComposition;
   private readonly failedChannelCompletions = new Map<string, Promise<ChannelCompletion>>();
   private readonly knownInstanceIds = new Set<string>();
-  private activeRetirement?: Promise<RuntimeRetirementResult>;
+  private readonly activeRetirements = new Set<Promise<RuntimeRetirementResult>>();
   private shutdownBudget?: RuntimeDeadlineBudget;
-  private readonly shutdownAdmission: Promise<RuntimeDeadlineBudget>;
-  private admitShutdown!: (budget: RuntimeDeadlineBudget) => void;
+  private readonly shutdownController = new AbortController();
+  private appliedLlmConfiguration: LLMConfig;
+  private readonly createBuiltinProviderUnit: (config: BuiltinLlmProviderConfig) => LoadedRuntimeUnit;
 
   constructor(
-    private readonly catalog: RuntimeUnitCatalog,
+    private catalog: RuntimeUnitCatalog,
     private readonly coordinator: CompositionCoordinator,
     private readonly lifecycleLedger: RuntimeLifecycleLedger,
     private readonly channelHost: ChannelRuntimeHost,
     options: RuntimeCompositionManagerOptions = {},
   ) {
-    this.shutdownAdmission = new Promise((resolve) => {
-      this.admitShutdown = resolve;
-    });
+    this.appliedLlmConfiguration = Object.freeze(structuredClone(options.llmConfiguration ?? {}));
+    this.createBuiltinProviderUnit = options.createBuiltinProviderUnit ?? createBuiltinLlmProviderUnit;
     const createInstanceId = options.createInstanceId
       ?? ((unitId: string) => `unit:${unitId}:${randomUUID()}`);
     this.createInstanceId = createInstanceId;
@@ -132,10 +145,9 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
       publish: (prepared) => this.publishPrepared(prepared),
       retire: (prepared) => {
         const retirement = this.retirePublished(prepared);
-        this.activeRetirement = retirement;
-        void retirement.finally(() => {
-          if (this.activeRetirement === retirement) this.activeRetirement = undefined;
-        });
+        this.activeRetirements.add(retirement);
+        const forget = () => { this.activeRetirements.delete(retirement); };
+        void retirement.then(forget, forget);
         return retirement;
       },
     };
@@ -177,6 +189,17 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
     return this.currentSnapshot().channels.bindings;
   }
 
+  getProviderUnitId(providerId: string): string | undefined {
+    const current = this.currentComposition;
+    if (!current) throw new Error('Runtime composition has not started.');
+    for (const unit of current.units.values()) {
+      if (unit.staged.providers.some((provider) => provider.id === providerId)) {
+        return unit.loaded.unitId;
+      }
+    }
+    return undefined;
+  }
+
   waitForChannelCompletion(id: string): Promise<ChannelCompletion> {
     for (const unit of this.currentComposition?.units.values() ?? []) {
       const record = unit.channels.records.find((candidate) => candidate.id === id);
@@ -196,6 +219,21 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
     });
   }
 
+  applyLlmConfiguration(configuration: LLMConfig): Promise<RuntimeReloadResult> {
+    const candidate: LLMConfig = Object.freeze({
+      ...(configuration.defaultModel === undefined
+        ? {}
+        : { defaultModel: Object.freeze({ ...configuration.defaultModel }) }),
+      ...(configuration.builtin === undefined
+        ? {}
+        : { builtin: validateBuiltinLlmProviderConfig(structuredClone(configuration.builtin)) }),
+    });
+    return this.reload.submit(
+      { operation: 'configure-llm', unitId: BUILTIN_LLM_PROVIDER_UNIT_ID },
+      candidate,
+    );
+  }
+
   setGenerationConvergence(convergence: RuntimeGenerationConvergence): void {
     if (this.generationConvergence) {
       throw new Error('Runtime generation convergence is already configured.');
@@ -206,7 +244,7 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
   beginShutdown(budget?: RuntimeDeadlineBudget): void {
     if (budget && !this.shutdownBudget) {
       this.shutdownBudget = budget;
-      this.admitShutdown(budget);
+      this.shutdownController.abort('shutdown');
     }
     this.reload.beginShutdown();
   }
@@ -238,8 +276,7 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
         });
       }
 
-      const retirement = this.activeRetirement;
-      if (retirement) {
+      for (const retirement of [...this.activeRetirements]) {
         const settled = await budget.raceRemaining(retirement);
         if (settled.outcome !== 'completed') {
           residuals.push({
@@ -309,6 +346,7 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
   }
 
   private preflight(change: RuntimeReloadChange): RuntimeReloadPreflight {
+    if (change.operation === 'configure-llm') return { outcome: 'proceed' };
     const plan = this.catalog.planChange(change, this.activeUnitIds());
     if (plan.outcome === 'no-op') {
       return {
@@ -327,6 +365,27 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
     signal: AbortSignal,
     createInstanceId: (unitId: string) => string,
   ): Promise<PreparedCompositionReload> {
+    if (request.change.operation === 'configure-llm') {
+      const configuration = request.llmConfiguration;
+      if (!configuration) throw new Error('Missing LLM configuration candidate.');
+      const units = this.catalog.allUnits().filter(
+        (unit) => unit.unitId !== BUILTIN_LLM_PROVIDER_UNIT_ID,
+      );
+      if (configuration.builtin) {
+        const existing = this.catalog.get(BUILTIN_LLM_PROVIDER_UNIT_ID);
+        units.push(existing && isDeepStrictEqual(
+          configuration.builtin, this.appliedLlmConfiguration.builtin,
+        ) ? existing : this.createBuiltinProviderUnit(configuration.builtin));
+      }
+      const catalog = new RuntimeUnitCatalog(units);
+      const desired = [...this.activeUnitIds()].filter(
+        (unitId) => unitId !== BUILTIN_LLM_PROVIDER_UNIT_ID,
+      );
+      if (configuration.builtin) desired.push(BUILTIN_LLM_PROVIDER_UNIT_ID);
+      return this.prepareDesired(
+        request, desired, signal, createInstanceId, false, catalog, configuration,
+      );
+    }
     const plan = this.catalog.planChange(request.change, this.activeUnitIds());
     if (plan.outcome !== 'proceed') {
       throw new Error(`Reload preflight changed after admission for "${request.change.unitId}".`);
@@ -340,6 +399,8 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
     signal: AbortSignal,
     createInstanceId: (unitId: string) => string,
     startup: boolean,
+    catalog = this.catalog,
+    llmConfiguration = this.appliedLlmConfiguration,
   ): Promise<PreparedCompositionReload> {
     const currentUnits = this.currentComposition?.units ?? new Map<string, ActiveRuntimeUnit>();
     const desired = new Map<string, ActiveRuntimeUnit>();
@@ -349,9 +410,9 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
     const startupDiagnostics: RegistryStartupDiagnostic[] = [];
 
     try {
-      for (const loaded of this.catalog.orderedUnits(desiredUnitIds)) {
+      for (const loaded of catalog.orderedUnits(desiredUnitIds)) {
         const existing = currentUnits.get(loaded.unitId);
-        if (existing) {
+        if (existing && existing.loaded.create === loaded.create) {
           desired.set(loaded.unitId, existing);
           continue;
         }
@@ -400,6 +461,7 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
       const acceptedIds = new Set(resolved.units.map((unit) => unit.unit.id));
       const requestedAccepted = request.requestId === 'startup'
         || request.change.operation === 'disable'
+        || request.change.operation === 'configure-llm'
         || acceptedIds.has(request.change.unitId);
       if (!requestedAccepted) {
         throw new Error(`Runtime Unit "${request.change.unitId}" lost deterministic conflict resolution.`);
@@ -433,6 +495,7 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
       const generation = (this.currentComposition?.snapshot.generation ?? 0) + 1;
       const bindings = [...acceptedUnits.values()].flatMap((unit) => [...unit.channels.bindings]);
       const snapshot = finalizeRegistrySnapshot({
+        defaultModel: llmConfiguration.defaultModel,
         candidate: resolved,
         acceptedUnits: resolved.units,
         channelBindings: bindings,
@@ -449,8 +512,10 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
         [...acceptedUnits.values()].flatMap((unit) => [...unit.instanceIds]),
       );
       const removedUnits = [...currentUnits.values()]
-        .filter((unit) => !acceptedUnits.has(unit.loaded.unitId));
+        .filter((unit) => acceptedUnits.get(unit.loaded.unitId) !== unit);
       return Object.freeze({
+        catalog,
+        llmConfiguration,
         request,
         composition: Object.freeze({ snapshot, units: acceptedUnits, instanceIds }),
         createdUnits: Object.freeze(createdAccepted),
@@ -593,6 +658,8 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
     for (const unit of prepared.removedUnits) unit.channels.deactivateIngress();
     for (const unit of prepared.createdUnits) unit.channels.activateIngress();
     this.currentComposition = prepared.composition;
+    this.catalog = prepared.catalog;
+    this.appliedLlmConfiguration = prepared.llmConfiguration;
     for (const unit of prepared.createdUnits) {
       for (const record of unit.channels.records) {
         void record.runtimeCompletion.then((completion) => {
@@ -627,11 +694,23 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
     prepared: PreparedCompositionReload,
   ): Promise<RuntimeRetirementResult> {
     const generation = prepared.composition.snapshot.generation - 1;
+    const settingsUpdate = prepared.request.change.operation === 'configure-llm';
     const graceful = await this.waitForPins(
       this.coordinator.waitForZeroPins(generation),
-      this.retirementDrainTimeoutMs,
+      settingsUpdate ? undefined : this.retirementDrainTimeoutMs,
     );
     if (graceful.outcome === 'timed-out') {
+      if (settingsUpdate) {
+        const blocker = Object.freeze({
+          phase: 'shutdown-protected-generation',
+          requestId: prepared.request.requestId,
+          generation,
+          blockingTurnIds: this.generationConvergence?.blockingTurnIds(generation),
+          message: `Registry generation ${generation} remains pinned at shutdown deadline.`,
+        });
+        this.coordinator.failRetirement(generation, blocker.message);
+        return { outcome: 'failed-residual', blocker };
+      }
       this.generationConvergence?.abortGeneration(generation);
       const aborted = await this.waitForPins(
         this.coordinator.waitForZeroPins(generation),
@@ -697,20 +776,46 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
 
   private async waitForPins(
     operation: Promise<void>,
-    standaloneTimeoutMs: number,
+    standaloneTimeoutMs?: number,
   ): Promise<{ readonly outcome: 'completed' | 'timed-out' }> {
     if (this.shutdownBudget) {
-      const settled = await this.shutdownBudget.race(operation, standaloneTimeoutMs);
+      const settled = standaloneTimeoutMs === undefined
+        ? await this.shutdownBudget.raceRemaining(operation)
+        : await this.shutdownBudget.race(operation, standaloneTimeoutMs);
       return { outcome: settled.outcome === 'completed' ? 'completed' : 'timed-out' };
     }
-    const standalone = this.deadlineDriver.wait(operation, standaloneTimeoutMs);
-    const first = await Promise.race([
-      standalone.then((result) => ({ source: 'standalone' as const, result })),
-      this.shutdownAdmission.then((budget) => ({ source: 'shutdown' as const, budget })),
-    ]);
-    if (first.source === 'standalone') return first.result;
-    const settled = await first.budget.race(operation, standaloneTimeoutMs);
-    return { outcome: settled.outcome === 'completed' ? 'completed' : 'timed-out' };
+    const standalone = standaloneTimeoutMs === undefined
+      ? operation.then(() => ({ outcome: 'completed' as const }))
+      : this.deadlineDriver.wait(operation, standaloneTimeoutMs);
+    let onShutdown!: () => void;
+    const shutdown = new Promise<{
+      source: 'shutdown';
+      budget: RuntimeDeadlineBudget;
+    }>((resolve, reject) => {
+      onShutdown = () => {
+        const budget = this.shutdownBudget;
+        if (!budget) {
+          reject(new Error('Shutdown admitted without its deadline budget.'));
+          return;
+        }
+        resolve({ source: 'shutdown', budget });
+      };
+      this.shutdownController.signal.addEventListener('abort', onShutdown, { once: true });
+    });
+    try {
+      const first = await Promise.race([
+        standalone.then((result) => ({ source: 'standalone' as const, result })),
+        shutdown,
+      ]);
+      if (first.source === 'standalone') return first.result;
+      const { budget } = first;
+      const settled = standaloneTimeoutMs === undefined
+        ? await budget.raceRemaining(operation)
+        : await budget.race(operation, standaloneTimeoutMs);
+      return { outcome: settled.outcome === 'completed' ? 'completed' : 'timed-out' };
+    } finally {
+      this.shutdownController.signal.removeEventListener('abort', onShutdown);
+    }
   }
 
   private async cleanupCreatedUnit(unit: ActiveRuntimeUnit): Promise<void> {

@@ -197,6 +197,10 @@ function createHarness(options: {
   );
   let input: RuntimeApplicationKernelInput | undefined;
   const application = Object.freeze({
+    get settings() {
+      if (!input) throw new Error('Runtime Settings are not ready.');
+      return input.settings;
+    },
     runTurn: vi.fn(),
     createSession: vi.fn(async () => ({
       sessionId: 'session',

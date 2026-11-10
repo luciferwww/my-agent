@@ -80,7 +80,6 @@ interface AgentApplicationDocument {
 
 export interface AgentConfigDocument extends AgentApplicationDocument {
   readonly extensions?: {
-    readonly enabled?: boolean;
     readonly entries?: Record<string, unknown>;
   };
 }

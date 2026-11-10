@@ -309,6 +309,7 @@ describe('CliChannel model commands', () => {
     }),
   ): ChannelRuntimeCapabilities {
     return {
+      settings: { execute: async () => { throw new Error('Unexpected Settings action.'); } },
       approvals: { getPending: () => [] },
       modelCatalog: {
         getSnapshot: () => ({
@@ -1452,6 +1453,7 @@ describe('CliChannel Ctrl+C / abort handling', () => {
     const query = vi.fn(partial.querySessionsNeedingAbort ?? (() => []));
     return {
       capabilities: {
+        settings: { execute: async () => { throw new Error('Unexpected Settings action.'); } },
         approvals: { getPending: () => [] },
         modelCatalog: {
           getSnapshot: () => ({

@@ -17,7 +17,6 @@ export interface ExtensionDescriptorV1 {
  * malformed Extension namespace can be isolated without rejecting other IDs.
  */
 export interface ResolvedHostExtensionsConfig {
-  readonly enabled: boolean;
   readonly entries: Readonly<Record<string, unknown>>;
 }
 
@@ -89,6 +88,7 @@ export type ExtensionAcquisitionDiagnostic =
   | ExtensionLoaderDiagnostic;
 
 export interface ExtensionAcquisitionResult {
+  readonly discovery: ExtensionDiscoveryResult;
   readonly loadedUnits: readonly LoadedRuntimeUnit[];
   readonly diagnostics: readonly ExtensionAcquisitionDiagnostic[];
 }

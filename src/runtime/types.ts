@@ -300,4 +300,5 @@ export interface RuntimeBootstrapResult {
   readonly state: RuntimeLifecycleState;
   readonly dependencies: RuntimeDependencies;
   readonly acquiredUnits: readonly LoadedRuntimeUnit[];
+  readonly extensionMetadata?: Readonly<Pick<ExtensionAcquisitionResult, 'discovery' | 'diagnostics'>>;
 }

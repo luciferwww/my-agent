@@ -102,7 +102,7 @@ describe('CompositionCoordinator', () => {
     expect(() => coordinator.commitPublish(snapshot(3))).toThrow('must be 2');
   });
 
-  it('opens one retirement after publish and waits for pinned Roots without polling', async () => {
+  it('waits for pinned Roots without polling', async () => {
     const coordinator = new CompositionCoordinator();
     coordinator.commitPublish(snapshot(1));
     const pin = coordinator.captureRootGeneration();
@@ -112,7 +112,6 @@ describe('CompositionCoordinator', () => {
     }));
     expect(coordinator.generationState(1)).toBe('retiring');
     expect(coordinator.generationState(2)).toBe('current');
-    expect(() => coordinator.commitPublish(snapshot(3))).toThrow('still retiring');
 
     let converged = false;
     const convergence = coordinator.waitForZeroPins(1).then(() => { converged = true; });
@@ -130,6 +129,27 @@ describe('CompositionCoordinator', () => {
     expect(coordinator.current?.generation).toBe(3);
   });
 
+  it('publishes while older generations are pinned and retires them independently', () => {
+    const coordinator = new CompositionCoordinator();
+    coordinator.commitPublish(snapshot(1));
+    const first = coordinator.captureRootGeneration();
+    coordinator.commitPublish(snapshot(2));
+    const second = coordinator.captureRootGeneration();
+    coordinator.commitPublish(snapshot(3));
+
+    expect(first.snapshot.generation).toBe(1);
+    expect(second.snapshot.generation).toBe(2);
+    expect(coordinator.current?.generation).toBe(3);
+    expect(coordinator.retiring).toBe(1);
+    second.release();
+    coordinator.completeRetirement(2);
+    expect(coordinator.retiring).toBe(1);
+    expect(() => coordinator.completeRetirement(1)).toThrow('active pins');
+    first.release();
+    coordinator.completeRetirement(1);
+    expect(coordinator.retiring).toBeUndefined();
+  });
+
   it('preserves an attributable failed-residual retirement state', () => {
     const coordinator = new CompositionCoordinator();
     coordinator.commitPublish(snapshot(1));
@@ -140,5 +160,25 @@ describe('CompositionCoordinator', () => {
     expect(coordinator.generationState(1)).toBe('failed-residual');
     expect(coordinator.retirementFailure(1)).toBe('unit stop failed');
     expect(coordinator.current?.generation).toBe(2);
+  });
+
+  it('keeps only lightweight historical generation records after repeated retirement', () => {
+    const coordinator = new CompositionCoordinator();
+    coordinator.commitPublish(snapshot(1));
+    const expectedRecords = new Map<number, {
+      instanceIds: readonly string[];
+      state: 'current' | 'retired';
+    }>();
+    for (let generation = 2; generation <= 50; generation += 1) {
+      const pin = coordinator.captureRootGeneration();
+      coordinator.commitPublish(snapshot(generation));
+      expect(pin.snapshot.generation).toBe(generation - 1);
+      pin.release();
+      coordinator.completeRetirement(generation - 1);
+      expectedRecords.set(generation - 1, { instanceIds: [], state: 'retired' });
+      expectedRecords.set(generation, { instanceIds: [], state: 'current' });
+      expect(Reflect.get(coordinator, 'generations')).toEqual(expectedRecords);
+    }
+    expect(coordinator.current?.generation).toBe(50);
   });
 });

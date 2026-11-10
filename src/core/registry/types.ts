@@ -1,4 +1,4 @@
-import type { ProviderProjectionEntry } from '../model-resolution/index.js';
+import type { ModelReference, ProviderProjectionEntry } from '../model-resolution/index.js';
 import type { ChannelContribution, ChannelProjection } from '../channel/index.js';
 import type {
   ApplicationToolPolicy,
@@ -87,6 +87,7 @@ export interface RegistryUnitProvenance {
 
 export interface RegistrySnapshot {
   readonly generation: number;
+  readonly defaultModel?: ModelReference;
   readonly units: readonly RegistryUnitProvenance[];
   readonly providers: readonly ProviderProjectionEntry[];
   readonly tools: ToolProjection;

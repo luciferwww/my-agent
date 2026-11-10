@@ -91,13 +91,13 @@ export async function bootstrapRuntime(
       cliOverrides: options.cliOverrides,
     });
 
-    const acquiredUnits = options.startupContext === undefined
-      ? Object.freeze([])
-      : (await deps.acquireExtensions({
+    const acquisition = options.startupContext === undefined
+      ? undefined
+      : await deps.acquireExtensions({
           extensionsDir: join(options.startupContext.installDir, 'extensions'),
           extensionsConfig: options.startupContext.configuration.extensions,
           environment: options.startupContext.environment,
-        })).loadedUnits;
+        });
 
     await ensureAgentContext(options.agentHome);
 
@@ -191,7 +191,13 @@ export async function bootstrapRuntime(
       },
       state,
       dependencies: deps,
-      acquiredUnits,
+      acquiredUnits: acquisition?.loadedUnits ?? Object.freeze([]),
+      ...(acquisition === undefined ? {} : {
+        extensionMetadata: Object.freeze({
+          discovery: acquisition.discovery,
+          diagnostics: acquisition.diagnostics,
+        }),
+      }),
     };
   } catch (error) {
     const info = classifyRuntimeError('startup', error);

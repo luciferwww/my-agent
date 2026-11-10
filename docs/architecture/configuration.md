@@ -10,13 +10,13 @@
 
 ## 1. Boundary
 
-`src/platform/config/` owns application-document composition, its explicit bootstrap API, one strict Agent Home file read, credential materialization, immutable consumer projections, Agent merge precedence, configured-Agent metadata, and environment extraction. Modules own their leaf contracts, semantic validation, and behavioral defaults: Built-in LLM, Runner/Compaction, Memory, Tool Policy, Agent Context, Subagent depth, and Logger each export their own contract/default/validator. Platform imports those leaves and maps owner validation failures to document field paths; leaf modules never import Platform Configuration. After resolving paths, ordinary Standalone startup reads `<agentHome>/config.json` once and passes the complete immutable snapshot to `RuntimeApp.create()` as a generic startup fact. A missing document instead produces bounded `--initialize` guidance before Runtime creation. Explicit Standalone initialization owns its interactive verification and config-last publication path. Runtime Bootstrap selects the Application and Extension projections without rereading document content; Runtime never reads configuration files.
+`src/platform/config/` owns application-document composition, its bootstrap API, strict Agent Home loading, credential materialization, immutable consumer projections, Agent merge precedence, configured-Agent metadata, and environment extraction. Modules own their leaf contracts, semantic validation, and behavioral defaults: Built-in LLM, Runner/Compaction, Memory, Tool Policy, Agent Context, Subagent depth, and Logger each export their own contract/default/validator. Platform imports those leaves and maps owner validation failures to document field paths; leaf modules never import Platform Configuration. After resolving paths, ordinary Standalone startup reads `<agentHome>/config.json` and passes the complete immutable snapshot to `RuntimeApp.create()` as a generic startup fact. Only a missing document invokes Platform bootstrap before retrying strict loading. The old initialization wizard is removed. Runtime Bootstrap selects the Application and Extension projections without rereading document content; Runtime never reads configuration files.
 
 Agent Home owns the configuration document and mutable Agent state. Platform Configuration owns configuration bootstrap and loading; Core Agent Context independently owns Context files even though both may ensure their shared parent exists. `installDir` owns executable Extensions; Extension enablement and scoped configuration remain a namespace in the Agent document. Configuration may carry `llm.defaultModel` and one optional Built-in Provider deployment, but [Model Resolution](model-resolution.md) owns canonical identity, Catalog membership, effective limits, and Model Facts.
 
 ## 2. Agent configuration
 
-`ensureAgentConfigDocument({ agentHome })` remains an explicit Platform API that creates the parent recursively and uses exclusive creation for a missing document; ordinary Standalone startup does not call it. `loadAgentConfig({ agentHome })` reads `<agentHome>/config.json` exactly once. Missing at read time is fatal `FILE_MISSING`, not an in-memory default path. An unreadable file, malformed JSON, non-object root, unknown top-level namespace, or invalid known namespace is another classified fatal error. The document may contain:
+`ensureAgentConfigDocument({ agentHome })` creates the parent recursively and exclusively writes `{}\n` for a missing document. Ordinary Standalone startup invokes it only after strict loading returns `FILE_MISSING`, then loads again. `loadAgentConfig({ agentHome })` itself still reads once and throws on missing files. An unreadable file, malformed JSON, non-object root, unknown top-level namespace, or invalid known namespace remains a classified fatal error. Existing configuration is never overwritten by bootstrap. The document may contain:
 
 ```text
 AgentConfigDocument
@@ -32,6 +32,12 @@ AgentConfigDocument
 ```
 
 These are the only valid top-level namespaces. Agent execution policy is global Application policy under `agents` and cannot appear in `agents.defaults` or `agents.list[]`. Retired `runtime`, `runner`, `host`, and every other unknown namespace fail directly. Retired Agent-level `model`/`llm` fields are also rejected. The returned Application/Extension snapshot and all nested projections are defensively copied and frozen. Startup CWD is not a configuration source, and there is no multi-file merge.
+
+The snapshot also retains the frozen raw editing document on the server; it is
+not a safe Channel view. Extension enablement exists only per entry. Any legacy
+`extensions.enabled` field fails with explicit per-entry/removal guidance on load
+or section save, rather than silently activating entries previously covered by
+global `false`.
 
 ## 3. Precedence and merge
 

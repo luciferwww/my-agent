@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Runtime behavior
-> Verified: 2026-10-02
+> Verified: 2026-11-10
 > Ownership: Runtime composition, publication, generations, Turn orchestration, queues, routing, Fanout, Abort, Shutdown, and Subagent Parent/Child lifecycle
 > Ownership key: runtime-composition-and-lifecycle
 
@@ -15,6 +15,8 @@
 Runtime owns:
 
 - bootstrap coordination and narrow configuration projection;
+- SettingsManager admission, saved editing views/revisions, serialized section
+  updates and bounded pre-publication file rollback through Platform Configuration;
 - the loaded Runtime Unit catalog and Unit-instance lifecycle;
 - Registry candidate staging, validation, immutable Snapshot publication, generation capture, retirement, and reload admission;
 - per-session Turn admission and queueing;
@@ -33,6 +35,7 @@ src/runtime/
 ├── RuntimeApp.ts
 ├── config.ts
 ├── bootstrap.ts
+├── settings-manager.ts
 ├── runtime-builder.ts
 ├── runtime-composition.ts
 ├── runtime-composition-manager.ts
@@ -128,6 +131,49 @@ interface RuntimeHandle {
 
 `RuntimeApplication` owns Turn execution and queries. Composition control owns Unit enable/disable requests. `close()` caches and returns its first Promise.
 
+### 3.4 Settings capability
+
+Runtime Builder supplies the same frozen `settings` capability to Channels and
+`RuntimeApplication.settings`. SettingsManager implements transport-neutral `load`,
+`update` and `test_llm_model`; it does not own file I/O or instantiate Extensions. Startup must
+provide the retained raw editing document to enable persistence. Embedding without
+that document remains supported and receives explicit `settings_unavailable`
+results, without an implicit file read or initialization.
+
+Load uses the saved server-side document and startup discovery metadata, omits
+credentials and unexposed values, and returns current Runtime model facts.
+Updates serialize revision checking, current-file preparation, write, application
+and any required rollback. Preparing work rechecks shutdown admission immediately
+before file commit. Loads wait for in-flight updates instead of presenting a
+transient candidate as completed.
+
+Known pre-publication LLM failures restore the request's raw target preimage and
+return a fresh revision. A thrown application error without a confirmed publication
+outcome does not authorize rollback. Rollback failure reports unknown file state
+and both failures without blocking later updates; a later save rereads the file.
+Published retirement warnings never roll back the file. Extension restart state
+compares current saved values with the startup baseline and clears on reversal.
+
+Shutdown closes admission synchronously, cancels queued updates and converges
+admitted work before Unit stop under the existing budget. Unfinished file work is
+reported as a residual, not assumed cancelled; settled file/application divergence
+is a reported resource failure rather than a false deadline claim.
+Model Test either creates an unpublished temporary Built-in Unit from a candidate,
+or pins the current Registry generation to use a loaded Provider. It reuses model
+resolution and invocation without a Runner, Session or Transcript. Retaining a saved
+draft credential requires the matching LLM revision. Replacement/clear are explicit;
+environment references use the captured startup environment. Test neither saves
+nor publishes, and returns no model response body or upstream error payload.
+
+The fixed 30,000 ms total Test deadline starts before preparation. Timeout and
+shutdown abort its signal and settle the request, but pending creation/invocation/
+cleanup retains its resources and generation pin until actual convergence.
+Shutdown waits within its existing budget and reports nonconvergence or failed
+temporary cleanup, never stopping a still-pinned composition instance.
+Bundled WebSocket exposes these actions through its generic Settings messages and
+section editor; neither the Channel nor client owns configuration transactions.
+Unsupported actions return explicit errors rather than simulated success.
+
 ## 4. Bootstrap, staging, and publication
 
 ```mermaid
@@ -161,13 +207,16 @@ Memory is optional. Disabled Memory contributes no tools. Initialization failure
 
 Each Root Turn captures the current immutable Snapshot before execution. Runtime passes the captured Provider projection and the requested reference to [Model Resolution](model-resolution.md). The selected model is a full structured reference; Provider order is deterministic projection order, not default-selection policy.
 
-When the Turn omits `modelReference`, Runtime uses the configured full Model Reference. It does not infer a Provider from Snapshot order and does not fall back when the configured reference is absent from the captured Catalog. Resolution failure occurs before Runner invocation.
+When the Turn omits `modelReference`, Runtime uses the default full Model Reference
+from its captured Registry Snapshot, not mutable/latest or startup-only configuration.
+It does not infer a Provider from Snapshot order and does not fall back when that
+reference is absent from the captured Catalog. Resolution failure occurs before Runner invocation.
 
 `RuntimeApplication.getModelCatalog()` synchronously reads the single current Snapshot pointer and returns a deeply frozen transport-safe DTO containing:
 
 - the current generation;
 - Provider and Model IDs/display names;
-- configured-default membership as `unset`, `available`, or `unavailable` with `provider_unregistered` or `model_rejected` reason.
+- current-Snapshot default membership as `unset`, `available`, or `unavailable` with `provider_unregistered` or `model_rejected` reason.
 
 The query does not capture a generation pin, call Provider code, or perform I/O. A previously started Turn continues on its pinned generation even after a later Catalog is published.
 
@@ -241,12 +290,24 @@ The request completion gate seals exactly one public terminal outcome. A run or 
 - Generations are process-local positive integers and publish monotonically from 1.
 - Capture before publication pins the old Snapshot; capture after publication sees the new Snapshot.
 - Publication requires every instance to be handed off and atomically installs the new current pointer and lifecycle memberships.
-- A published previous generation enters `retiring`; another publication waits until that retirement reaches a terminal state.
+- A published previous generation enters `retiring`; later publication does not wait for it. Multiple generations can retire independently.
 - Reload uses latest-wins reduction before publication. A committed publication is not rolled back because later retirement fails.
-- Retirement waits for old-generation pins, then aborts only blocking trees after its graceful deadline. Nonconvergence or stop failure is retained as an attributable failed residual.
+- Unit-toggle retirement retains bounded drain/Abort behavior. LLM configuration retirement waits for old-generation pins without ordinary-operation timeout Abort. Nonconvergence or stop failure remains attributable and logged, but does not block later publication.
 - Shutdown admission rejects new capture, publication, and reload work.
 
 `RegistrySnapshot`, Provider, Tool, Hook, and Channel projections are immutable. RuntimeApp never mutates a captured projection or rebuilds a partial Snapshot.
+
+The internal composition manager's `applyLlmConfiguration` stages only the changed
+Built-in Unit and default selection, reusing unchanged active Units. A default-only
+update keeps the same Provider instance. Candidate failure preserves current
+applied input; same-ID replacement retires the old instance by identity.
+This seam does not yet expose Settings or load/reconfigure Extensions.
+
+Historical generation records contain no full Snapshot; live pins/current
+composition retain the versions they need. Lifecycle stop success, including
+late success after a deadline, clears owner references. Pending/protected/failed
+owners remain retained. Completed retirement tasks and shutdown listeners are
+removed; shutdown accounts for all outstanding retirements within its shared budget.
 
 ## 9. Subagent Parent/Child lifecycle
 

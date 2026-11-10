@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { prepareExtensionConfig } from './configuration.js';
+import { extensionSettingsFields, prepareExtensionConfig } from './configuration.js';
 
 const DRAFT_07 = 'http://json-schema.org/draft-07/schema#';
 
@@ -215,6 +215,61 @@ describe('prepareExtensionConfig', () => {
       category: 'config_invalid',
       code: 'config_validation_failed',
     });
+  });
+
+  it('validates save-time literals but defers exact-reference value constraints without resolving them', () => {
+    const schema = objectSchema({
+      token: { type: 'string', writeOnly: true, minLength: 4, maxLength: 8, pattern: '^key-', enum: ['key-good'] },
+    }, ['token']);
+    expect(prepareExtensionConfig({ token: '${KEY}' }, schema, {}, 'save'))
+      .toEqual({ ok: true, config: { token: '${KEY}' } });
+    expect(prepareExtensionConfig({ token: 'key-good' }, schema, {}, 'save'))
+      .toEqual({ ok: true, config: { token: 'key-good' } });
+    expect(prepareExtensionConfig({ token: 'bad' }, schema, {}, 'save'))
+      .toMatchObject({ ok: false, code: 'config_validation_failed' });
+    expect(prepareExtensionConfig({ token: '${lowercase}' }, schema, {}, 'save'))
+      .toEqual({ ok: false, category: 'config_invalid', code: 'config_validation_failed', referencePath: '/token' });
+  });
+
+  it('validates raw reference defaults without requiring an environment value during save', () => {
+    const schema = objectSchema({
+      token: { type: 'string', writeOnly: true, default: '${KEY}', pattern: '^key-' },
+    }, ['token']);
+    const input = {};
+    expect(prepareExtensionConfig(input, schema, {}, 'save'))
+      .toEqual({ ok: true, config: { token: '${KEY}' } });
+    expect(input).toEqual({});
+  });
+
+  it('does not add format support or bypass invalid Schema compilation for raw references', () => {
+    expect(prepareExtensionConfig(
+      { token: '${KEY}' },
+      objectSchema({ token: { type: 'string', writeOnly: true, format: 'undeclared-format' } }),
+      {},
+      'save',
+    )).toMatchObject({ ok: false, code: 'config_schema_invalid' });
+  });
+
+  it('explicitly marks unsupported and read-only form fields, omitting sensitive defaults', () => {
+    const fields = extensionSettingsFields(objectSchema({
+      token: { type: 'string', writeOnly: true, default: 'never-render-this-secret' },
+      readonly: { type: 'string', readOnly: true },
+      nested: { type: 'object', properties: { secret: { type: 'string', writeOnly: true } } },
+      composed: { type: 'string', writeOnly: true, anyOf: [{ minLength: 4 }] },
+      'a/b~c': { type: 'string', writeOnly: true },
+    }));
+    expect(fields.map(({ name, editable, sensitive }) => ({ name, editable, sensitive }))).toEqual([
+      { name: 'token', editable: true, sensitive: true },
+      { name: 'readonly', editable: false, sensitive: false },
+      { name: 'nested', editable: false, sensitive: false },
+      { name: 'composed', editable: false, sensitive: true },
+      { name: 'a/b~c', editable: true, sensitive: true },
+    ]);
+    expect(fields.find((field) => field.name === 'a/b~c')?.path).toBe('/a~1b~0c');
+    expect(fields.find((field) => field.name === 'composed')?.schema).toBeUndefined();
+    expect(fields.find((field) => field.name === 'composed')?.supported).toBe(false);
+    expect(fields.find((field) => field.name === 'readonly')?.supported).toBe(true);
+    expect(JSON.stringify(fields)).not.toContain('never-render-this-secret');
   });
 });
 

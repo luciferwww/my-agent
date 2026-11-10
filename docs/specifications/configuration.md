@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-10-16
+> Verified: 2026-11-10
 > Authority: Stable Agent configuration contract
 
 ## Scope
@@ -13,7 +13,7 @@ Owner validators reject unknown fields at every leaf and nested-leaf level. Plat
 
 ## Loading and precedence
 
-Ordinary Standalone startup never creates a missing configuration document. A missing `<agentHome>/config.json` fails before Runtime creation with guidance to run `my-agent --initialize --agent-home <path>`. Explicit Standalone initialization verifies Provider/Model access and publishes `config.json` last. Ordinary startup and Initialize mode do not overwrite existing configuration. Explicitly confirmed Edit mode preserves untouched supported content, checks for concurrent changes, and atomically replaces the configuration with accepted changes. The physical loader remains globally strict: a document missing at read time is `FILE_MISSING`; an unreadable file, malformed JSON, non-object root, unknown namespace, or invalid known namespace is another classified fatal error. The Host reads document content exactly once per ordinary startup attempt. Runtime receives a defensively copied/frozen Application projection and never reads configuration files. `ensureAgentConfigDocument()` remains an explicit Platform API for other callers but is not used by ordinary Standalone startup.
+The physical loader remains globally strict: a document missing at read time is `FILE_MISSING`; an unreadable file, malformed JSON, non-object root, unknown namespace, or invalid known namespace is another classified fatal error. Only `FILE_MISSING` causes the Standalone Host to call Platform's `ensureAgentConfigDocument()`, which recursively creates the Home and exclusively writes `{}\n`, then load again. Existing or concurrently created files are never overwritten. Existing document content is read once per startup. The initialization wizard is removed; an empty object needs no Provider or default Model to start. Runtime receives a defensively copied/frozen Application projection and never reads configuration files.
 
 Agent-scoped precedence is:
 
@@ -54,13 +54,56 @@ Global Agent execution policy precedence is `module default -> agents top-level 
   removes `task` at the configured depth boundary.
 - Platform Logger owns Logger contracts/defaults/validation; Platform Configuration only composes the `logger` namespace.
 - Configuration does not own Catalog membership, canonical Model identity, effective facts, Provider semantics, or Runtime lifecycle.
-- The only top-level namespaces are `llm`, `agents`, `logger`, and `extensions`; the physical-load snapshot contains only immutable `application` and `extensions` projections.
+- The only top-level namespaces are `llm`, `agents`, `logger`, and `extensions`.
+  The physical-load snapshot contains immutable `application` and `extensions`
+  projections plus the frozen raw `document` for server-side editing. The raw
+  document contains unresolved credentials and must never be sent as a Channel view.
+  Existing embedding snapshots may omit this editing source.
+- Extension enablement is per `extensions.entries.<id>.enabled`. The retired
+  `extensions.enabled` field is rejected on load and section save for every value,
+  with guidance to configure per-entry enablement and remove the global field.
+  An old global `false` is not silently discarded or interpreted as enabled.
 
 Unknown fields are rejected rather than ignored or treated as aliases. Top-level `runtime`/`host`, `agents.defaults.model`, Agent-level `llm`/`prompt`, nested/per-Agent `runtime`/`runner` or `maxLlmCalls`, `agents.defaults.subagents`, and `agents.defaults.workspace` or per-agent `workspace` are explicitly invalid. `agents.list[].model` is configured-Agent metadata rather than an Agent-default capability override.
 
 Tool deny hides matching definitions and remains final at execution. Session permission mode is Runtime state, not configuration. In `manual`, lexically external structured targets and all Exec calls require current-call Approval even when the Tool name is allowed; internal allowed targets bypass Approval, while other unmatched Tools require Approval. Missing required Approval fails closed. In `allow_all`, every non-denied registered Tool is automatically authorized. Exact names and `*`/`?` globs are supported; `group:*` is not.
 
 Agent Home is the relative path anchor, not a confinement boundary. Approval is current-call only. Canonical/symlink-aware authorization, persistent grants, command patterns, and sandboxing are outside this contract.
+
+## Section editing primitives
+
+Platform Configuration owns `saveAgentConfigSection` and
+`restoreAgentConfigSection`. A save reads the current document, edits only the
+identified LLM or Extension section, validates without environment resolution,
+then exclusively creates a same-directory temporary file and renames it over
+`config.json`. It returns the committed raw document and target preimage without
+rereading after publication. This does not provide external-write CAS protection.
+The shared file-publication primitive remains owned by Platform Configuration;
+the removed Standalone wizard is not a consumer.
+A Runtime-owned pre-commit callback can validate candidate model facts and recheck
+shutdown admission after preparation but before file writing starts. The
+configuration layer does not own admission policy or revisions.
+
+Credential changes are explicit keep/replace/clear intents. Omission keeps the raw
+value, including an exact environment reference; credential values cannot be sent
+as ordinary editable settings. Literal Extension credentials satisfy declared
+constraints; legal exact references defer resolved-value constraints until startup.
+Unknown credential paths and read-only/unsupported field edits are rejected.
+Existing unsupported/read-only Extension values remain intact. Deleted model rows
+are not restored; retained model IDs preserve omitted limit/reasoning fields.
+
+Restoration reads the current file and restores only the captured target, including
+an originally absent LLM section. Unrelated current values remain untouched.
+File-publication and temporary-file cleanup failures propagate explicitly.
+These persistence primitives are wired through Runtime SettingsManager, which owns
+revision checks, serialization, Runtime application/rollback decisions, safe views
+and shutdown coordination. The same Settings capability is available to Channels
+and embedding. Model Test uses the in-memory section editor and explicit credential
+intents without file I/O; saved-credential revision checks remain Runtime-owned.
+The bundled WebSocket editor uses this capability for independent section saves;
+it never reads files directly. The
+[Dynamic Settings Change](../changes/archive/dynamic-settings/plan.md) records
+validated delivery and owner-authorized closeout.
 
 ## Acceptance scenarios
 

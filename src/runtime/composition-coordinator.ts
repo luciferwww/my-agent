@@ -34,7 +34,6 @@ export type RuntimeGenerationState =
   | 'failed-residual';
 
 interface RuntimeGenerationRecord {
-  readonly snapshot: RegistrySnapshot;
   readonly instanceIds: readonly string[];
   state: RuntimeGenerationState;
   failure?: string;
@@ -46,7 +45,6 @@ export class CompositionCoordinator {
   private readonly pinCounts = new Map<number, number>();
   private readonly generations = new Map<number, RuntimeGenerationRecord>();
   private readonly zeroPinWaiters = new Map<number, Set<() => void>>();
-  private retiringGeneration?: number;
   private criticalOperation?: string;
 
   constructor(private readonly lifecycleLedger?: RuntimeLifecycleLedger) {}
@@ -60,7 +58,10 @@ export class CompositionCoordinator {
   }
 
   get retiring(): number | undefined {
-    return this.retiringGeneration;
+    for (const [generation, record] of this.generations) {
+      if (record.state === 'retiring') return generation;
+    }
+    return undefined;
   }
 
   commitPublish(
@@ -70,9 +71,6 @@ export class CompositionCoordinator {
     return this.runCritical('publish', () => {
       if (this.closing) {
         throw new Error('Runtime composition is closing.');
-      }
-      if (this.retiringGeneration !== undefined) {
-        throw new Error(`Registry generation ${this.retiringGeneration} is still retiring.`);
       }
       const previous = this.currentSnapshot;
       const expectedGeneration = previous ? previous.generation + 1 : 1;
@@ -88,13 +86,11 @@ export class CompositionCoordinator {
       if (previous) {
         const previousRecord = this.requireGeneration(previous.generation);
         previousRecord.state = 'retiring';
-        this.retiringGeneration = previous.generation;
       }
       this.lifecycleLedger?.addGenerationMemberships(frozenInstanceIds, snapshot.generation);
       this.currentSnapshot = snapshot;
       this.pinCounts.set(snapshot.generation, this.pinCounts.get(snapshot.generation) ?? 0);
       this.generations.set(snapshot.generation, {
-        snapshot,
         instanceIds: frozenInstanceIds,
         state: 'current',
       });
@@ -179,7 +175,6 @@ export class CompositionCoordinator {
         throw new Error(`Registry generation ${generation} still has active pins.`);
       }
       record.state = 'retired';
-      this.retiringGeneration = undefined;
     });
   }
 
@@ -188,7 +183,6 @@ export class CompositionCoordinator {
       const record = this.requireRetiringGeneration(generation);
       record.state = 'failed-residual';
       record.failure = message;
-      this.retiringGeneration = undefined;
     });
   }
 
@@ -247,7 +241,7 @@ export class CompositionCoordinator {
 
   private requireRetiringGeneration(generation: number): RuntimeGenerationRecord {
     const record = this.requireGeneration(generation);
-    if (record.state !== 'retiring' || this.retiringGeneration !== generation) {
+    if (record.state !== 'retiring') {
       throw new Error(`Registry generation ${generation} is not retiring.`);
     }
     return record;

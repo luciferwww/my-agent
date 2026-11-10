@@ -33,6 +33,14 @@ export function invalidAgentConfigField(fieldPath: string): AgentConfigError {
   );
 }
 
+export function removedGlobalExtensionsSwitch(): AgentConfigError {
+  return new AgentConfigError(
+    'NAMESPACE_INVALID',
+    'The global extensions.enabled switch has been removed. Set extensions.entries.<id>.enabled for each Extension, then remove extensions.enabled.',
+    'extensions.enabled',
+  );
+}
+
 export function unknownAgentConfigNamespace(namespace: string): AgentConfigError {
   const boundedNamespace = boundFieldPath(namespace);
   return new AgentConfigError(
