@@ -28,7 +28,8 @@ import {
   materializeExactStringCredential,
   parseCredentialEnvironmentReference,
 } from './credential-materialization.js';
-import { validateAgentLeafConfig, validateRunnerConfigSection } from './agent-leaf-validation.js';
+import { projectAgentCapabilities, validateAgentLeafConfig, validateRunnerConfigSection } from './agent-leaf-validation.js';
+import { isNamedAgentId } from '../../core/agent-context/index.js';
 import type {
   AgentConfigDocument,
   AgentsConfig,
@@ -75,23 +76,26 @@ export async function loadAgentConfig(options: {
   };
 
   const defaultAgentConfig = createDefaultAgentConfig();
+  const projectedDefaults = document.agents?.defaults === undefined
+    ? undefined : projectAgentCapabilities(document.agents.defaults, 'agents.defaults');
+  const list = (document.agents?.list ?? []).map((entry, index) => ({
+    id: entry.id,
+    ...(entry.enabled === undefined ? {} : { enabled: entry.enabled }),
+    ...(entry.description === undefined ? {} : { description: entry.description }),
+    ...(entry.model === undefined ? {} : { model: entry.model === 'inherit'
+      ? 'inherit' as const : { providerId: entry.model.providerId.trim(), modelId: entry.model.modelId } }),
+    ...projectAgentCapabilities(entry, `agents.list[${index}]`),
+  }));
   const defaults = document.agents?.defaults === undefined
     ? defaultAgentConfig
     : deepMerge(
         defaultAgentConfig,
-        structuredClone(document.agents.defaults),
+        projectedDefaults ?? {},
       );
   validateAgentLeafConfig(defaults, 'agents.defaults');
-  for (const [index, entry] of (document.agents?.list ?? []).entries()) {
-    const {
-      id: _id,
-      description: _description,
-      default: _default,
-      model: _model,
-      ...overrides
-    } = entry;
+  for (const [index, entry] of list.entries()) {
     validateAgentLeafConfig(
-      deepMerge(structuredClone(defaults), structuredClone(overrides)),
+      deepMerge(structuredClone(defaults), projectAgentCapabilities(entry, `agents.list[${index}]`)),
       `agents.list[${index}]`,
     );
   }
@@ -100,7 +104,7 @@ export async function loadAgentConfig(options: {
     maxSubagentDepth:
       document.agents?.maxSubagentDepth ?? DEFAULT_MAX_SUBAGENT_DEPTH,
     defaults,
-    list: structuredClone(document.agents?.list ?? []),
+    list,
   };
   const logger = document.logger === undefined
     ? structuredClone(DEFAULT_LOGGER_CONFIG)
@@ -220,17 +224,6 @@ export function validateLlm(
 function validateAgents(value: AgentConfigDocument['agents']): void {
   if (value === undefined) return;
   if (!isPlainObject(value)) throw invalidAgentConfigField('agents');
-  for (const field of Object.keys(value)) {
-    if (
-      field !== 'steeringEnabled'
-      && field !== 'maxLlmCallsPerTurn'
-      && field !== 'maxSubagentDepth'
-      && field !== 'defaults'
-      && field !== 'list'
-    ) {
-      throw invalidAgentConfigField(`agents.${field}`);
-    }
-  }
   validateRunnerConfigSection({
     ...(value.steeringEnabled === undefined
       ? {}
@@ -251,97 +244,31 @@ function validateAgents(value: AgentConfigDocument['agents']): void {
     throw invalidAgentConfigField('agents.defaults');
   }
   if (value.defaults !== undefined) {
-    if ('model' in value.defaults) {
-      throw invalidAgentConfigField('agents.defaults.model');
-    }
-    if ('llm' in value.defaults) {
-      throw invalidAgentConfigField('agents.defaults.llm');
-    }
-    if ('workspace' in value.defaults) {
-      throw invalidAgentConfigField('agents.defaults.workspace');
-    }
-    if ('prompt' in value.defaults) {
-      throw invalidAgentConfigField('agents.defaults.prompt');
-    }
-    if ('subagents' in value.defaults) {
-      throw invalidAgentConfigField('agents.defaults.subagents');
-    }
-    rejectGlobalPolicyConfig(value.defaults, 'agents.defaults');
-    rejectRetiredToolsConfig(value.defaults, 'agents.defaults');
-    rejectUnknownFields(
-      value.defaults,
-      new Set(['memory', 'tools', 'context', 'compaction']),
-      'agents.defaults',
-    );
-    validateAgentLeafConfig(value.defaults, 'agents.defaults');
+    projectAgentCapabilities(value.defaults, 'agents.defaults');
   }
   if (value.list === undefined) return;
   if (!Array.isArray(value.list)) throw invalidAgentConfigField('agents.list');
+  const seen = new Set<string>();
   for (const [index, entry] of value.list.entries()) {
     const entryPath = `agents.list[${index}]`;
     if (!isPlainObject(entry)) throw invalidAgentConfigField(entryPath);
-    if (typeof entry['id'] !== 'string' || entry['id'].trim().length === 0) {
+    if (!isNamedAgentId(entry['id']) || seen.has(entry['id'])) {
       throw invalidAgentConfigField(`${entryPath}.id`);
     }
-    if (
+    seen.add(entry['id']);
+    if (entry['description'] !== undefined && (
       typeof entry['description'] !== 'string'
       || entry['description'].trim().length === 0
-    ) {
+    )) {
       throw invalidAgentConfigField(`${entryPath}.description`);
     }
-    if (entry['default'] !== undefined && typeof entry['default'] !== 'boolean') {
-      throw invalidAgentConfigField(`${entryPath}.default`);
+    if (entry['enabled'] !== undefined && typeof entry['enabled'] !== 'boolean') {
+      throw invalidAgentConfigField(`${entryPath}.enabled`);
     }
-    if ('workspace' in entry) {
-      throw invalidAgentConfigField(`${entryPath}.workspace`);
-    }
-    if (entry['model'] !== undefined) {
+    if (entry['model'] !== undefined && entry['model'] !== 'inherit') {
       validateModelReference(entry['model'], `${entryPath}.model`);
-      const model = entry['model'] as Readonly<Record<string, unknown>>;
-      const unknownModelField = Object.keys(model).find(
-        (field) => field !== 'providerId' && field !== 'modelId',
-      );
-      if (unknownModelField !== undefined) {
-        throw invalidAgentConfigField(`${entryPath}.model.${unknownModelField}`);
-      }
     }
-    if ('maxLlmCalls' in entry) {
-      throw invalidAgentConfigField(`${entryPath}.maxLlmCalls`);
-    }
-    if ('llm' in entry) {
-      throw invalidAgentConfigField(`${entryPath}.llm`);
-    }
-    if ('prompt' in entry) {
-      throw invalidAgentConfigField(`${entryPath}.prompt`);
-    }
-    if ('subagents' in entry) {
-      throw invalidAgentConfigField(`${entryPath}.subagents`);
-    }
-    rejectGlobalPolicyConfig(entry, entryPath);
-    rejectRetiredToolsConfig(entry, entryPath);
-    rejectUnknownFields(
-      entry,
-      new Set([
-        'id',
-        'description',
-        'default',
-        'model',
-        'memory',
-        'tools',
-        'context',
-        'compaction',
-      ]),
-      entryPath,
-    );
-    validateAgentLeafConfig(entry, entryPath);
-  }
-
-  function rejectGlobalPolicyConfig(
-    value: Readonly<Record<string, unknown>>,
-    fieldPath: string,
-  ): void {
-    if ('runtime' in value) throw invalidAgentConfigField(`${fieldPath}.runtime`);
-    if ('runner' in value) throw invalidAgentConfigField(`${fieldPath}.runner`);
+    projectAgentCapabilities(entry, entryPath);
   }
 }
 
@@ -393,25 +320,4 @@ function hasErrorCode(value: unknown, code: string): boolean {
     && value !== null
     && 'code' in value
     && (value as { readonly code?: unknown }).code === code;
-}
-
-function rejectRetiredToolsConfig(
-  value: Readonly<Record<string, unknown>>,
-  fieldPath: string,
-): void {
-  const tools = value['tools'];
-  if (isPlainObject(tools) && 'fs' in tools) {
-    throw invalidAgentConfigField(`${fieldPath}.tools.fs`);
-  }
-}
-
-function rejectUnknownFields(
-  value: Readonly<Record<string, unknown>>,
-  allowedFields: ReadonlySet<string>,
-  fieldPath: string,
-): void {
-  const unknownField = Object.keys(value).find((field) => !allowedFields.has(field));
-  if (unknownField !== undefined) {
-    throw invalidAgentConfigField(`${fieldPath}.${unknownField}`);
-  }
 }

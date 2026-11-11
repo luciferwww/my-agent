@@ -3,6 +3,7 @@ import { bootstrapRuntime } from './bootstrap.js';
 import { acquireAgentHomeLock } from './agent-home-lock.js';
 import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
 import { Logger } from '../platform/logger/index.js';
+import { createDefaultAgentConfig } from '../platform/config/index.js';
 import {
   ChannelOperationError,
   type Channel,
@@ -138,6 +139,7 @@ function createHarness(options: {
         shutdown: processShutdown,
       },
       appConfig: {
+        agentHome: runtimeOptions.agentHome,
         llm: options.builtinConfigured === false
           ? {}
           : {
@@ -148,7 +150,7 @@ function createHarness(options: {
             },
         agents: {
           maxSubagentDepth: 1,
-          defaults: {} as never,
+          defaults: createDefaultAgentConfig(),
           list: [],
         },
       },
@@ -156,6 +158,7 @@ function createHarness(options: {
         tools: {},
         context: { maxFileChars: 1, maxTotalChars: 1 },
       },
+      agentDefinitions: { definitions: [], diagnostics: [] },
     },
     state: { phase: 'ready', startedAt: 1, activeRunCount: 0, contextVersion: 1 },
     acquiredUnits: Object.freeze([]),

@@ -24,12 +24,14 @@ import type { RuntimeSnapshotAccess, RuntimeGenerationPin } from './composition-
 import type { RuntimeUnitInstance } from './runtime-unit.js';
 import { stageRegistryUnit } from './registry-builder.js';
 import type { RuntimeShutdownReport } from './types.js';
+import { SHARED_AGENT_TOOLS_SECTION, type AgentPolicyState } from './agent-policy-state.js';
 
 const log = Logger.get('SettingsManager');
 
 interface SettingsManagerOptions {
   readonly agentHome: string;
   readonly document: AgentConfigDocument;
+  readonly agentPolicies?: AgentPolicyState;
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly extensionMetadata?: Readonly<Pick<ExtensionAcquisitionResult, 'discovery' | 'diagnostics'>>;
   readonly getModelCatalog: () => ModelCatalogSnapshot;
@@ -85,6 +87,7 @@ export class SettingsManager implements SettingsCapability {
     this.environment = Object.freeze({ ...options.environment });
     this.deadlineDriver = options.deadlineDriver ?? createSystemRuntimeDeadlineDriver();
     this.revisions.set('llm', randomUUID());
+    for (const id of options.agentPolicies?.sectionIds ?? []) this.revisions.set(id, randomUUID());
     for (const candidate of options.extensionMetadata?.discovery.candidates ?? []) {
       this.descriptors.set(`extension:${candidate.descriptor.id}`, candidate.descriptor);
       this.revisions.set(`extension:${candidate.descriptor.id}`, randomUUID());
@@ -103,7 +106,10 @@ export class SettingsManager implements SettingsCapability {
         return success(request, {
           sections: [...this.revisions.keys()].map((id) => this.section(id)),
           modelCatalog: this.modelCatalog(),
+          toolCatalog: (this.options.snapshotAccess?.currentSnapshot().tools.definitions ?? [])
+            .map(tool => ({ name: tool.name, description: tool.description })),
           diagnostics: this.options.extensionMetadata?.diagnostics ?? [],
+          agentDiagnostics: this.options.agentPolicies?.diagnostics() ?? [],
         });
       } catch (error) {
         return this.failure(request, error);
@@ -358,9 +364,17 @@ export class SettingsManager implements SettingsCapability {
       return settingsFailure(request, 'revision_conflict', 'Reload and re-edit this section before saving.');
     }
     const descriptor = this.descriptors.get(id);
-    const edit: ConfigSectionEdit = descriptor
+    const agentSection = id === SHARED_AGENT_TOOLS_SECTION || id.startsWith('agent:');
+    if (agentSection && input['credentials'] !== undefined) throw new ConfigEditError('/credentials');
+    const edit: ConfigSectionEdit = agentSection
+      ? id === SHARED_AGENT_TOOLS_SECTION
+        ? { kind: 'agent-defaults', settings: input['settings'] }
+        : { kind: 'agent', agentId: id.slice('agent:'.length), settings: input['settings'] }
+      : descriptor
       ? { kind: 'extension', extensionId: descriptor.id, schema: descriptor.configSchema, settings: input['settings'], credentials: input['credentials'] }
       : { kind: 'llm', settings: input['settings'], credentials: input['credentials'] };
+    const publishAgentPolicy = edit.kind === 'agent' || edit.kind === 'agent-defaults'
+      ? this.options.agentPolicies!.prepare(edit) : undefined;
     const previousApplicationState = this.applicationState;
     const committed = await (this.options.saveSection ?? saveAgentConfigSection)(
       this.options.agentHome, edit, (candidate) => {
@@ -369,10 +383,17 @@ export class SettingsManager implements SettingsCapability {
         this.active = { requestId: request.requestId, phase: 'settings-writing' };
       },
     );
+    publishAgentPolicy?.();
     this.document = committed.document;
     this.fileStateUnknown = false;
     this.revisions.set(id, randomUUID());
-    if (id !== 'llm') return success(request, { section: this.section(id) });
+    if (id !== 'llm') return success(request, {
+      section: this.section(id),
+      ...(agentSection ? {
+        agentSections: this.options.agentPolicies!.sectionIds.map(sectionId => this.section(sectionId)),
+        agentDiagnostics: this.options.agentPolicies!.diagnostics(),
+      } : {}),
+    });
     this.applicationState = 'not_applied';
     let configuration: LLMConfig;
     try {
@@ -468,6 +489,20 @@ export class SettingsManager implements SettingsCapability {
   }
 
   private section(id: string) {
+    if (id === SHARED_AGENT_TOOLS_SECTION || id.startsWith('agent:')) {
+      const section = this.options.agentPolicies!.section(id, this.document);
+      const model = 'model' in section ? section.model : undefined;
+      return {
+        ...section,
+        revision: this.revisions.get(id),
+        form: { credentials: {} },
+        ...(typeof model !== 'object' ? {} : {
+          modelAvailable: this.options.getModelCatalog().providers
+            .some(provider => provider.providerId === model.providerId
+              && provider.models.some(candidate => candidate.modelId === model.modelId)),
+        }),
+      };
+    }
     const descriptor = this.descriptors.get(id);
     if (!descriptor) {
       const llm = validateLlmConfiguration(this.document.llm);

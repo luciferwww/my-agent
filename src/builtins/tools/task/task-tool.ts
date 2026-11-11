@@ -3,9 +3,9 @@ import type { Tool, ToolExecutionContext, ToolExecutionOutput } from '../../../c
 import { getToolTurnAuthority } from '../../../core/tools/execution.js';
 import type {
   SubagentDelegationPort,
-  SubagentProfile,
   SubagentCapabilities,
   SubagentTerminalResult,
+  SubagentProfileRegistry,
 } from '../../../core/subagent/types.js';
 
 const log = Logger.get('task');
@@ -22,8 +22,8 @@ const GENERAL_PURPOSE_ID = 'general-purpose';
  */
 export interface TaskToolDeps {
   delegationPort: SubagentDelegationPort;
-  /** All registered profiles, keyed by id. Must include `'general-purpose'`. */
-  profileRegistry: ReadonlyMap<string, SubagentProfile>;
+  /** One current selection, including the permanent general-purpose fallback. */
+  captureProfiles: () => SubagentProfileRegistry;
   /** Computes role/depth/canSpawn from an explicit Subagent depth. */
   getCapabilities: (depth: number) => SubagentCapabilities;
   /** Used only for the user-facing error message when depth is exceeded. */
@@ -93,12 +93,18 @@ export function createTaskTool(deps: TaskToolDeps): Tool {
 
       // Profile lookup with fallback. The general-purpose profile is
       // always registered (RuntimeApp guarantees it in PR-6).
-      let profile = deps.profileRegistry.get(subagentType);
+      const registry = deps.captureProfiles();
+      if (registry.disabledIds.has(subagentType)) {
+        log.warn('disabled subagent_type rejected', { subagentType });
+        return { outcome: 'failed', content: `Subagent "${subagentType}" is disabled.` };
+      }
+      let profile = registry.profiles.get(subagentType);
       if (!profile) {
-        log.warn('unknown subagent_type, falling back to general-purpose', {
+        log.warn('subagent definition unavailable, falling back to general-purpose', {
           subagentType,
+          reason: 'no_executable_definition',
         });
-        profile = deps.profileRegistry.get(GENERAL_PURPOSE_ID);
+        profile = registry.profiles.get(GENERAL_PURPOSE_ID);
         if (!profile) {
           // Defensive: only reachable if bootstrap forgot to register the
           // default profile, which is a programming error.

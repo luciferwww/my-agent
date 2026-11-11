@@ -184,6 +184,9 @@ Reviewer comments are not automatic instructions. Critical/High issues normally 
 
 ## 11. Documentation and Legacy
 
+- Authority documents must be self-contained: write the latest accepted decisions and applicable status into their owning ADRs and stable Specifications, and verified delivered behavior into Current Architecture and user guidance. Distinguish accepted-but-not-implemented decisions from implemented and validated behavior.
+- Authority document content must not link to non-authoritative drafts, Research, Evidence, Deferred inputs, or historical Change records. Keep provenance and execution evidence in supporting documents, which may link to authority documents. When removing a reverse link, transfer any required authoritative content first rather than merely deleting the reference.
+- Documentation directory indexes are navigation, not decision or behavior authority. Separate authority destinations from active work and non-authoritative supporting material; a navigation link does not confer authority on its target.
 - `docs/architecture/` contains only facts about the current implementation verified by code, tests, or runtime evidence. Target designs, contracts, and implementation records must not be placed in this directory.
 - `docs/decisions/` contains accepted long-term ADRs; `docs/specifications/` contains stable contracts that remain valid after delivery.
 - `docs/changes/active/` contains current Plans, designs/Specs, and validation status; `docs/changes/archive/` contains completed Changes whose authoritative content has been routed to the appropriate owning documents. `active` and `archive` are only physical organization and do not introduce new artifact states or workflows.

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -48,6 +48,8 @@ import type { RuntimeDeadlineDriver, RuntimeDeadlineRaceResult } from './runtime
 import { Logger } from '../platform/logger/index.js';
 import { randomUUID } from 'node:crypto';
 import { SessionManager } from '../core/session/SessionManager.js';
+import { SystemPromptBuilder } from '../core/prompt/SystemPromptBuilder.js';
+import { ensureAgentContext } from '../core/agent-context/index.js';
 
 function testApplicationConfig(
   defaultModel: { readonly providerId: string; readonly modelId: string } | null = {
@@ -209,6 +211,35 @@ describe('RuntimeApp', () => {
       'TOOLS.md',
     ]));
     await app.close();
+  });
+
+  it('captures named Agent metadata and bodies during bootstrap without refreshing them on Root reload', async () => {
+    const bootstrap = vi.spyOn(runtimeBootstrap, 'bootstrapRuntime');
+    let app: RuntimeHandle | undefined;
+    try {
+      app = await RuntimeApp.create({
+        agentHome,
+        applicationConfig: testApplicationConfig(),
+        dependencies: createTestDependencies(),
+      });
+      const result: Awaited<ReturnType<typeof runtimeBootstrap.bootstrapRuntime>> | undefined
+        = await bootstrap.mock.results[0]?.value;
+      const snapshot = result?.resources.agentDefinitions;
+      expect(snapshot?.definitions.map(definition => definition.id))
+        .toEqual(['explorer', 'researcher', 'reviewer']);
+      const reviewer = snapshot?.definitions.find(definition => definition.id === 'reviewer');
+      expect(reviewer?.contextFiles).toHaveLength(4);
+      expect(reviewer?.contextFiles[0].content).not.toContain('description:');
+      await writeFile(join(agentHome, 'agents', 'reviewer', 'IDENTITY.md'),
+        '---\ndescription: Changed on disk\n---\nChanged body');
+      await app.application.reloadContextFiles();
+      expect(result?.resources.agentDefinitions).toBe(snapshot);
+      expect(reviewer?.description).not.toBe('Changed on disk');
+      expect(reviewer?.contextFiles[0].content).not.toContain('Changed body');
+    } finally {
+      await app?.close();
+      bootstrap.mockRestore();
+    }
   });
 
   it('closes SessionManager before managed processes and reports both resources', async () => {
@@ -939,6 +970,9 @@ describe('RuntimeApp', () => {
     selection: ModelReference | undefined;
     expectedIdentity: { providerId: string; modelId: string };
   }) => {
+    const identityPath = join(agentHome, 'agents', 'reviewer', 'IDENTITY.md');
+    await mkdir(join(agentHome, 'agents', 'reviewer'), { recursive: true });
+    await writeFile(identityPath, '---\ndescription: Startup reviewer metadata\n---\nSTARTUP_REVIEWER_BODY');
     let parentModel: ResolvedModel | undefined;
     let childModel: ResolvedModel | undefined;
     let parentApprovalCapability: RunParams['approvalCapability'];
@@ -972,6 +1006,9 @@ describe('RuntimeApp', () => {
         };
       }
       childModel = params.resolvedModel;
+      expect(params.systemPrompt).toContain('STARTUP_REVIEWER_BODY');
+      expect(params.systemPrompt).not.toContain('Startup reviewer metadata');
+      expect(params.systemPrompt).not.toContain('EDITED_REVIEWER_BODY');
       expect(params.approvalCapability).toBe(parentApprovalCapability);
       if (!params.approvalCapability || !params.signal) {
         throw new Error('Child Approval capability is missing.');
@@ -1037,6 +1074,7 @@ describe('RuntimeApp', () => {
         memory: { enabled: false },
       },
       dependencies: createTestDependencies({
+        createSystemPromptBuilder: () => new SystemPromptBuilder(),
         createBuiltinProviderUnit: () => createTestProviderUnit([
           makeProvider('test'),
           makeProvider('child'),
@@ -1062,6 +1100,7 @@ describe('RuntimeApp', () => {
       onAgentEvent: (event) => events.push(event),
     });
 
+    await writeFile(identityPath, '---\ndescription: Edited metadata\n---\nEDITED_REVIEWER_BODY');
     const result = await runRootTurnForTest(app, {
       sessionId: 'main',
       message: 'delegate',
@@ -1089,6 +1128,119 @@ describe('RuntimeApp', () => {
     ]);
 
     await app.close();
+  });
+
+  it('uses latest shared and own Child policies from old and recursive Parents while keeping admitted Root policies', async () => {
+    await ensureAgentContext(agentHome);
+    await writeFile(join(agentHome, 'agents', 'explorer', 'IDENTITY.md'), '# Invalid specialist');
+    await writeFile(join(agentHome, 'config.json'), JSON.stringify({
+      llm: testApplicationConfig().llm,
+      agents: {
+        maxSubagentDepth: 3,
+        defaults: { tools: { allow: ['demo_tool'], deny: ['write_file'] } },
+        list: [{ id: 'reviewer', tools: { deny: ['exec'] } }, { id: 'missing', enabled: false }],
+      },
+    }));
+    const configuration = await loadAgentConfig({ agentHome });
+    const entered = createDeferred<void>();
+    const proceed = createDeferred<void>();
+    const events: AgentEvent[] = [];
+    let roots = 0;
+    const result: RunResult = {
+      text: 'done', content: [{ type: 'text', text: 'done' }], stopReason: 'end_turn',
+      usage: { inputTokens: 1, outputTokens: 1 }, toolRounds: 0,
+    };
+    async function delegate(params: RunParams, id: string, prompt: string) {
+      const task = params.toolProjection.resolve('task');
+      if (!task || !params.signal) throw new Error('Task wiring is incomplete.');
+      expect(params.toolPolicy.isDenied('task')).toBe(false);
+      return task.execute({ subagent_type: id, description: prompt, prompt }, {
+        sessionId: params.sessionId, turnId: params.turnId, callId: `task-${prompt}`,
+        executionId: `execution-${prompt}`, reportActivity: () => {},
+        subagentDepth: params.subagentDepth ?? 0, signal: params.signal,
+      });
+    }
+    const run = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      const policy = params.toolPolicy;
+      if ((params.subagentDepth ?? 0) === 0) {
+        roots++;
+        if (roots === 1) {
+          entered.resolve();
+          await proceed.promise;
+          expect(policy.isDenied('write_file')).toBe(true);
+          expect(policy.isDenied('edit_file')).toBe(false);
+          expect(params.systemPrompt).toContain('- reviewer:');
+          expect(params.systemPrompt).not.toContain('- explorer:');
+          expect(await delegate(params, 'reviewer', 'review')).toMatchObject({ outcome: 'success' });
+          expect(await delegate(params, 'explorer', 'invalid-fallback')).toMatchObject({ outcome: 'success' });
+          expect(await delegate(params, 'unknown', 'unknown-fallback')).toMatchObject({ outcome: 'success' });
+          expect(await delegate(params, 'missing', 'disabled')).toMatchObject({
+            outcome: 'failed', content: expect.stringContaining('disabled'),
+          });
+        } else {
+          expect(policy.isDenied('write_file')).toBe(false);
+          expect(policy.isDenied('edit_file')).toBe(true);
+          expect(params.systemPrompt).not.toContain('- reviewer:');
+        }
+      } else {
+        expect(policy.isDenied('write_file')).toBe(false);
+        expect(policy.isDenied('edit_file')).toBe(true);
+        expect(policy.decide('demo_tool', {}, true)).toBe('allow');
+        if (params.message === 'review') {
+          expect(policy.isDenied('exec')).toBe(true);
+          expect(await delegate(params, 'researcher', 'recursive')).toMatchObject({ outcome: 'success' });
+          expect(policy.isDenied('exec')).toBe(true);
+        } else {
+          expect(policy.isDenied('exec')).toBe(false);
+        }
+      }
+      return result;
+    });
+    const app = await RuntimeApp.create({
+      agentHome,
+      startupContext: { installDir: agentHome, configuration, environment: {} },
+      dependencies: createTestDependencies({
+        acquireExtensions: async () => ({
+          loadedUnits: [], discovery: { candidates: [], diagnostics: [] }, diagnostics: [],
+        }),
+        createSystemPromptBuilder: () => new SystemPromptBuilder(),
+        createAgentRunner: () => ({ run }) as never,
+      }),
+      onAgentEvent: event => { events.push(event); },
+    });
+    async function update(sectionId: string, settings: unknown) {
+      const loaded = await app.application.settings.execute({ requestId: 'load', action: 'load', input: {} });
+      const output = loaded.output;
+      if (output === null || typeof output !== 'object' || !('sections' in output) || !Array.isArray(output.sections)) {
+        throw new Error('Expected Settings sections.');
+      }
+      const section: unknown = output.sections.find((value: unknown) =>
+        value !== null && typeof value === 'object' && 'id' in value && value.id === sectionId);
+      if (section === null || typeof section !== 'object' || !('revision' in section)) throw new Error('Missing revision.');
+      expect(await app.application.settings.execute({
+        requestId: `save-${sectionId}`, action: 'update',
+        input: { sectionId, expectedRevision: section.revision, settings },
+      })).toMatchObject({ ok: true });
+    }
+    try {
+      expect(app.application.getAvailableSubagents().map(entry => entry.id))
+        .toEqual(['general-purpose', 'researcher', 'reviewer']);
+      const running = runRootTurnForTest(app, { sessionId: 'main', message: 'delegate', promptMode: 'full' });
+      await entered.promise;
+      await update('agents:defaults', { tools: { allow: ['demo_tool'], deny: ['edit_file'] } });
+      proceed.resolve();
+      await expect(running).resolves.toMatchObject({ text: 'done' });
+      expect(events.filter(event => event.type === 'subagent_start').map(event => event.subagentType))
+        .toEqual(['reviewer', 'researcher', 'general-purpose', 'general-purpose']);
+      await update('agent:reviewer', { enabled: false });
+      expect(app.application.getAvailableSubagents().map(entry => entry.id))
+        .toEqual(['general-purpose', 'researcher']);
+      await runRootTurnForTest(app, { sessionId: 'main', message: 'next prompt', promptMode: 'full' });
+      expect(roots).toBe(2);
+    } finally {
+      proceed.resolve();
+      await app.close();
+    }
   });
 
   it('retains a recursive execution in the Root using real Session persistence', async () => {
@@ -3806,6 +3958,9 @@ function createTestDependencies(
       clearPreparingSubagentSession: vi.fn(),
       createTransientSubagentTranscript: vi.fn(async () => {}),
       retainTransientSubagentTranscript: vi.fn(async () => {}),
+      beginSubagentPresentation: vi.fn(async () => {}),
+      endSubagentPresentation: vi.fn(async () => {}),
+      clearSubagentPresentation: vi.fn(),
     }) as never,
     createMemoryManager: async () => null,
     createSystemPromptBuilder: () => ({ build: () => 'SYSTEM_PROMPT' }) as never,

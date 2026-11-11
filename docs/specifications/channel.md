@@ -140,23 +140,54 @@ Provider IDs. This does not change the shared Model Catalog contract, duplicate
 configuration, scan or load Extensions again. Load, save and confirmed rollback
 results use the same projection.
 
+Settings load also includes a `toolCatalog` projection of registered Tool names
+and descriptions only, without schemas or implementations. It is not filtered
+by Agent Tool policy: denied Tools remain visible for policy editing. Runtime
+owns this projection and the Agent views' current shared allow, shared deny and
+wildcard-matched shared-denied names; the client does not infer execution
+permissions from catalog membership.
+
 The bundled Settings editor saves sections independently and replaces only the
 confirmed target view after success or rollback, including its new revision.
-Other drafts remain intact. Explicit secret intents do not expose saved values;
+Other drafts remain intact. Agent saves additionally refresh read-only shared
+policy/metadata projections without replacing other drafts or their revisions.
+Agent section requests omit credential intents. Explicit secret intents do not expose saved values;
 submitted replacement buffers are cleared. Default selection remains local until
 LLM save. Extension restart state comes from confirmed server sections, survives
 editor closure and clears on a saved reversal. Model Test source and possible
 billing are explained before its controls.
-Its navigation groups presentation into LLM and Extensions without changing
+Its navigation groups presentation into LLM, Agents and Extensions without changing
 section revisions or save boundaries. LLM shows the default selector and Provider
 list; every Provider opens its own detail view under LLM. Built-in details expose
 connection/model editing. Other Provider details expose loaded model actions and
 a separate link to the owning Extension's single shared configuration draft.
 Extensions has its own list/detail view, including disabled discovered Extensions;
 those detail pages contain only enablement and configuration, not model actions.
+Agents shows discovered definitions and unmatched saved overrides. Named controls
+edit only enabled and Tool allow/deny; description/model are read-only, and Context
+tabs show bounded startup snapshots with metadata/body separation and missing-file
+markers. The permanent `general-purpose` editor changes shared Tool defaults,
+without disablement or dedicated Context. Agent saves apply to subsequent Turns,
+while manual MD changes require restart.
+Tool policy uses named checkbox multiselects with descriptions, locked shared
+deny entries and preserved read-only wildcard/unavailable-name rules. Inherited
+allow disables the local selector and shows the current shared value. The
+[Agent Management specification](agent-management.md) owns these policy-editor
+semantics.
 Setting a default in Provider details still requires Save LLM. Providers without
 a configuration link remain viewable. Buttons and navigation reuse the main
 client's theme styles.
+
+Settings single-choice selectors reuse the main client's themed dropdown styles
+instead of native select menus. Typed enum values and omitted/default values
+remain distinct. Tool multiselects use top-layer floating popups that do not
+grow or get clipped by scrolling content. Popup frames preserve rounded corners
+with inner scrolling; available viewport space determines placement. Keyboard
+navigation and Escape are supported by single-choice menus; Tool popovers close
+on Escape, outer scroll, resize or dialog closure but remain open for inner
+scrolling. Booleans consistently use checkbox-first inline labels, while wide
+controls keep labels above. Extension enablement states that saving requires a
+service restart, not an immediate toggle of the running Extension.
 
 Built-in model rows start compact and expand one inline editor; draft edits survive
 collapse and Add opens the new row. There is no Built-in enable/configure checkbox:
@@ -397,9 +428,6 @@ When adding a tool, explicitly select a verified operation category and title
 parameter pattern, with singular/plural and fallback tests. Until mapped, its
 group contribution is `other operations` and its single title is the raw name;
 never guess semantics from name substrings.
-
-Delivery, checks, and owner acceptance are retained in the archived
-[Tool Use Readability Change](../changes/archive/tool-use-readability/plan.md).
 
 ## Failure semantics
 

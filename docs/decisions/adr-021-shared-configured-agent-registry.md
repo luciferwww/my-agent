@@ -1,9 +1,10 @@
 # ADR-021: Shared Configured Agent Registry
 
-> Status: Accepted
+> Status: Accepted; configuration-only registration superseded by ADR-023
 > Decision date: 2026-10-14
 > Owner: Project owner
-> Related Plan/Specification: [Plan](../changes/archive/shared-configured-agents/plan.md) and [Specification](../changes/archive/shared-configured-agents/specification.md)
+> Contracts: [Configuration](../specifications/configuration.md), [Subagent](../specifications/subagent.md)
+> Amendment: [ADR-023](adr-023-agent-definition-discovery-and-settings.md) and [Agent Management](../specifications/agent-management.md) define accepted directory discovery and Settings behavior; implementation pending
 > Supersedes on acceptance: the named-profile and public `subagents` configuration portions of the current Configuration and Subagent contracts
 > Acceptance: The project owner accepted this decision and authorized Delivery on 2026-10-14.
 
@@ -31,6 +32,10 @@ identity cannot belong exclusively to the Child execution envelope.
    `agents/<agentId>/`.
 
 ## Decision
+
+The configuration-only registration portions below describe the earlier accepted
+decision. ADR-023 supersedes those portions for the next delivery; shared Agent
+identity, Home layout and unchanged Child execution ownership remain valid.
 
 Choose option 3.
 

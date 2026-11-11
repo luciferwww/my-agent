@@ -1,8 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, readFile, writeFile, mkdir } from 'fs/promises';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as fs from 'fs/promises';
+import { mkdtemp, rm, readFile, writeFile, mkdir, readdir } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { ensureAgentContext } from './init.js';
+
+vi.mock('fs/promises', async importOriginal => ({
+  ...await importOriginal<typeof import('fs/promises')>(),
+}));
 
 describe('ensureAgentContext', () => {
   let agentHome: string;
@@ -12,6 +17,7 @@ describe('ensureAgentContext', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await rm(agentHome, { recursive: true, force: true });
   });
 
@@ -81,5 +87,63 @@ describe('ensureAgentContext', () => {
 
     expect(await readFile(join(obsoleteDir, 'IDENTITY.md'), 'utf-8')).toBe('# Obsolete Identity');
     expect(await readFile(join(agentHome, 'IDENTITY.md'), 'utf-8')).toContain('# Identity');
+  });
+
+  it('seeds complete named Agent templates only once', async () => {
+    await ensureAgentContext(agentHome);
+    const agentsDir = join(agentHome, 'agents');
+    expect((await readdir(agentsDir)).sort()).toEqual(['explorer', 'researcher', 'reviewer']);
+    for (const id of await readdir(agentsDir)) {
+      expect((await readdir(join(agentsDir, id))).sort())
+        .toEqual(['AGENTS.md', 'IDENTITY.md', 'SOUL.md', 'TOOLS.md']);
+      expect(await readFile(join(agentsDir, id, 'IDENTITY.md'), 'utf8'))
+        .toMatch(/^---\r?\ndescription: /u);
+    }
+
+    await writeFile(join(agentsDir, 'reviewer', 'IDENTITY.md'), 'user content');
+    await rm(join(agentsDir, 'explorer'), { recursive: true });
+    await ensureAgentContext(agentHome);
+    expect(await readFile(join(agentsDir, 'reviewer', 'IDENTITY.md'), 'utf8')).toBe('user content');
+    expect((await readdir(agentsDir)).sort()).toEqual(['researcher', 'reviewer']);
+    expect((await readdir(agentHome)).filter(name => name.startsWith('.agents-'))).toEqual([]);
+  });
+
+  it('preserves an existing empty agents directory', async () => {
+    await mkdir(join(agentHome, 'agents'));
+    await ensureAgentContext(agentHome);
+    expect(await readdir(join(agentHome, 'agents'))).toEqual([]);
+  });
+
+  it('rejects a non-directory agents path without modifying it', async () => {
+    await writeFile(join(agentHome, 'agents'), 'not a directory');
+    await expect(ensureAgentContext(agentHome)).rejects.toThrow('must be a directory');
+    expect(await readFile(join(agentHome, 'agents'), 'utf8')).toBe('not a directory');
+  });
+
+  it('does not publish a partial template directory after a copy failure', async () => {
+    const failure = Object.assign(new Error('copy failed'), { code: 'EIO' });
+    vi.spyOn(fs, 'cp').mockImplementationOnce(async (_source, target) => {
+      await mkdir(join(String(target), 'partial'));
+      await writeFile(join(String(target), 'partial', 'IDENTITY.md'), 'partial copy');
+      throw failure;
+    });
+    await expect(ensureAgentContext(agentHome)).rejects.toBe(failure);
+    expect(await readdir(agentHome)).not.toContain('agents');
+    expect((await readdir(agentHome)).filter(name => name.startsWith('.agents-'))).toEqual([]);
+
+    await ensureAgentContext(agentHome);
+    expect((await readdir(join(agentHome, 'agents'))).sort())
+      .toEqual(['explorer', 'researcher', 'reviewer']);
+  });
+
+  it('reports both publication and temporary-directory cleanup failures', async () => {
+    const publicationFailure = new Error('publication failed');
+    const cleanupFailure = new Error('cleanup failed');
+    vi.spyOn(fs, 'rename').mockRejectedValueOnce(publicationFailure);
+    vi.spyOn(fs, 'rm').mockRejectedValueOnce(cleanupFailure);
+    await expect(ensureAgentContext(agentHome)).rejects.toMatchObject({
+      errors: [publicationFailure, cleanupFailure],
+    });
+    expect(await readdir(agentHome)).not.toContain('agents');
   });
 });

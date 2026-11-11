@@ -17,7 +17,9 @@ type SubagentModelSelection =
   | { readonly providerId?: string; readonly modelId: string };
 ```
 
-User profiles explicitly provide `model`; built-in `general-purpose` explicitly uses `inherit`.
+Resolved profiles explicitly provide `model`; sparse config selects a concrete
+reference or explicit `inherit` ahead of the MD recommendation, with omission
+ultimately inheriting the Parent. Built-in `general-purpose` always uses `inherit`.
 
 Delegation supplies profile, description, prompt, real Parent session/Turn/Tool-call identity, the original Parent-authority signal, and a Framework-owned execution cancellation signal. Runtime validates the authority signal by object identity against an active non-aborted Parent. The execution signal drives Child setup and execution so one Task cancellation cannot cancel a sibling. `inherit` means the Parent's canonical effective Model Reference, not a global default and not the Parent Resolved Model object.
 

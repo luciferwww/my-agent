@@ -18,6 +18,7 @@ These documents define durable contracts that must remain true across implementa
 - [Runner Turn Flow](runner-turn-flow.md)
 - [Subagent](subagent.md)
 - [Subagent Model Resolution](subagent-model-resolution.md)
+- [Agent Management](agent-management.md) — implemented, validated and owner-accepted discovery, sparse overrides, dynamic Tool policy and Settings
 - [Tools and Hooks](tools-and-hooks.md)
 
 ## Host, configuration, and composition

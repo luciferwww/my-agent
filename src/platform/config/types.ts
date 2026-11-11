@@ -37,9 +37,9 @@ export interface AgentDefaults {
 
 export interface AgentEntry extends DeepPartial<AgentDefaults> {
   readonly id: string;
-  readonly description: string;
-  readonly default?: boolean;
-  readonly model?: ModelReference;
+  readonly description?: string;
+  readonly enabled?: boolean;
+  readonly model?: 'inherit' | ModelReference;
 }
 
 export interface AgentsConfig {

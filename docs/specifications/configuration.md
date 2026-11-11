@@ -2,14 +2,20 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-11-10
+> Verified: 2026-11-11
 > Authority: Stable Agent configuration contract
+> Implemented amendment: [Agent Management](agent-management.md) owns named-Agent
+> discovery, sparse overrides and subsequent-Turn shared/named Tool policy.
 
 ## Scope
 
 Own the sole `<agentHome>/config.json` document, application composition, one-read immutable Application/Extension projections, deep merge, five-stage Agent precedence, configured-Agent metadata, credential materialization, environment/caller overrides, and validation-error field attribution. Every configurable behavioral module owns its leaf contract, semantic validation, and immutable default: Built-in LLM, Runner/Compaction, Memory, Tool Policy, Agent Context, Subagent depth, and Logger. Platform Configuration imports and assembles those leaves without redefining their structures or literals. Extension projection semantics belong to [Extension Acquisition](extension-acquisition.md). Host-private process and Channel selection are not configuration namespaces.
 
-Owner validators reject unknown fields at every leaf and nested-leaf level. Platform preserves the exact composed field path in the resulting `NAMESPACE_INVALID` error.
+Owner validators validate recognized leaf values. Platform first projects supported
+Agent fields, ignoring unknown Agent/default/entry/nested-leaf content rather than
+interpreting it as a legacy form. Recognized invalid values still fail with the
+exact composed field path in `NAMESPACE_INVALID`; other namespaces retain their
+own strict contracts.
 
 ## Loading and precedence
 
@@ -44,11 +50,13 @@ Global Agent execution policy precedence is `module default -> agents top-level 
 - Tool policy includes only allow and deny; there is no `tools.fs` subtree.
 - Agent Context owns the contract/defaults for per-file and total loading budgets; `AgentDefaults.context` composes that leaf.
 - Memory owns embedding, chunking, and search contracts/defaults. Resolved chunking values control actual indexing boundaries and require positive safe integers with overlap smaller than chunk size.
-- `agents.list[]` is the single configured-Agent registry. Every entry requires
-  a unique ID and nonblank description and may declare an optional Model
-  Reference and Agent-scoped capability overrides.
-  An omitted Model means inheritance when the entry is used for Child
-  execution.
+- `agents.list[]` contains sparse named-Agent overrides, not registrations.
+  Each entry requires a unique valid nonreserved ID and may provide `enabled`,
+  nonblank `description`, `"inherit"` or a native Model Reference, and supported
+  Agent-scoped capability overrides. Valid Home definitions default enabled.
+  Configuration-only entries remain saved and diagnosed but are not executable
+  specialist definitions. Model precedence is concrete config, explicit config
+  `"inherit"`, MD recommendation, then Parent canonical Model.
 - `agents.maxSubagentDepth` is a global non-negative safe integer and defaults
   to `1`. Effective `task` Tool policy controls delegation enablement; Runtime
   removes `task` at the configured depth boundary.
@@ -64,7 +72,12 @@ Global Agent execution policy precedence is `module default -> agents top-level 
   with guidance to configure per-entry enablement and remove the global field.
   An old global `false` is not silently discarded or interpreted as enabled.
 
-Unknown fields are rejected rather than ignored or treated as aliases. Top-level `runtime`/`host`, `agents.defaults.model`, Agent-level `llm`/`prompt`, nested/per-Agent `runtime`/`runner` or `maxLlmCalls`, `agents.defaults.subagents`, and `agents.defaults.workspace` or per-agent `workspace` are explicitly invalid. `agents.list[].model` is configured-Agent metadata rather than an Agent-default capability override.
+Unknown top-level namespaces, including `runtime` and `host`, are rejected.
+Unknown Agent content is omitted from the applied projection without detection,
+conversion or repair. The raw editing document remains intact. `agents.list[]`
+identity, enablement, description and model are metadata, not capability leaves.
+Only shared Tool defaults and named enabled/Tool overrides support dynamic
+publication; other defaults and global execution fields remain startup-only.
 
 Tool deny hides matching definitions and remains final at execution. Session permission mode is Runtime state, not configuration. In `manual`, lexically external structured targets and all Exec calls require current-call Approval even when the Tool name is allowed; internal allowed targets bypass Approval, while other unmatched Tools require Approval. Missing required Approval fails closed. In `allow_all`, every non-denied registered Tool is automatically authorized. Exact names and `*`/`?` globs are supported; `group:*` is not.
 
@@ -74,7 +87,7 @@ Agent Home is the relative path anchor, not a confinement boundary. Approval is 
 
 Platform Configuration owns `saveAgentConfigSection` and
 `restoreAgentConfigSection`. A save reads the current document, edits only the
-identified LLM or Extension section, validates without environment resolution,
+identified LLM, Extension, named Agent or shared Tool-default section, validates without environment resolution,
 then exclusively creates a same-directory temporary file and renames it over
 `config.json`. It returns the committed raw document and target preimage without
 rereading after publication. This does not provide external-write CAS protection.
@@ -83,6 +96,10 @@ the removed Standalone wizard is not a consumer.
 A Runtime-owned pre-commit callback can validate candidate model facts and recheck
 shutdown admission after preparation but before file writing starts. The
 configuration layer does not own admission policy or revisions.
+Agent saves preserve sibling overrides, metadata, unsupported raw values and other
+defaults; unchanged edits do not rewrite the document or materialize defaults.
+Omitted allow restores shared inheritance; explicit `[]` replaces inherited allow.
+Shared deny always remains final alongside local deny.
 
 Credential changes are explicit keep/replace/clear intents. Omission keeps the raw
 value, including an exact environment reference; credential values cannot be sent
@@ -101,13 +118,21 @@ and shutdown coordination. The same Settings capability is available to Channels
 and embedding. Model Test uses the in-memory section editor and explicit credential
 intents without file I/O; saved-credential revision checks remain Runtime-owned.
 The bundled WebSocket editor uses this capability for independent section saves;
-it never reads files directly. The
-[Dynamic Settings Change](../changes/archive/dynamic-settings/plan.md) records
-validated delivery and owner-authorized closeout.
+it never reads files directly.
+Agent saves prepare a complete next policy from currently applied Agent state
+before persistence, then synchronously publish after confirmed persistence.
+They do not apply unrelated pending-restart fields from the reread document.
 
 ## Acceptance scenarios
 
-Cover each Agent precedence stage, global Agent execution-policy precedence, object/array/scalar merge, partial model environment override, absent/invalid files, one-read immutable Application/Extension projections, owner-module defaults and validation with exact field attribution, configured-Agent metadata and depth validation, rejection of the retired nested Subagent path, rejection of nested/per-Agent placement, absence of retired steering fields and hidden Runner limits, Built-in endpoint/model validation, exact credential reference materialization, per-agent metadata exclusion, direct rejection of `runtime`, `host`, and other retired fields, effective Memory chunking, Context budget projection, Tool glob policy, fresh default composition, and the absence of centralized leaf contracts/default literals.
+Cover Agent and global execution-policy precedence, object/array/scalar merge,
+partial model environment overrides, absent/invalid documents, immutable startup
+projections, supported-field projection with precise invalid-value attribution,
+sparse overrides and reserved/duplicate IDs, model metadata exclusion, Root/Child
+policy capture and subsequent-Turn saves, no-op persistence, pending-restart
+isolation, Built-in endpoint/model validation, credential references, unknown
+top-level rejection, effective Memory/Context budgets, Tool globs and fresh
+owner-module default composition.
 
 ## Related authority
 

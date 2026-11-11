@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import type { ResolvedModel } from '../model-resolution/index.js';
 import type { ChatToolDefinition } from '../model-invocation/index.js';
 import type { AgentRunner, RunResult } from '../runner/index.js';
@@ -16,7 +15,7 @@ import type {
 export interface SubagentExecutorDeps {
   readonly agentRunner: AgentRunner;
   readonly systemPromptBuilder: SystemPromptBuilder;
-  readonly loadContextFilesFromDir: (absDir: string) => Promise<ContextFile[]>;
+  readonly getContextFiles: (agentId: string) => readonly Readonly<ContextFile>[];
   readonly agentHome: string;
   readonly resolveToolPolicy: (
     profile: SubagentProfile,
@@ -66,7 +65,7 @@ export class SubagentExecutor {
   constructor(private readonly deps: SubagentExecutorDeps) {}
 
   async prepare(request: SubagentExecutionRequest): Promise<PreparedSubagentExecution> {
-    const childFiles = await this.loadChildContextFiles(request.profile);
+    const childFiles = this.deps.getContextFiles(request.profile.id);
     const mergedFiles = mergeContextFilesByName(childFiles, request.parentContextFiles);
     const addendum = buildSubagentBehavioralAddendum({
       taskDescription: request.description,
@@ -127,14 +126,10 @@ export class SubagentExecutor {
     });
   }
 
-  private async loadChildContextFiles(profile: SubagentProfile): Promise<ContextFile[]> {
-    if (!existsSync(profile.agentDir)) return [];
-    return this.deps.loadContextFilesFromDir(profile.agentDir);
-  }
 }
 
 export function mergeContextFilesByName(
-  childFiles: ReadonlyArray<ContextFile>,
+  childFiles: readonly Readonly<ContextFile>[],
   parentFiles: ReadonlyArray<ContextFile>,
 ): ContextFile[] {
   const childByName = new Map<string, ContextFile>();

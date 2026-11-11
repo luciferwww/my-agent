@@ -14,8 +14,8 @@ import type { MemoryManager } from '../core/memory/MemoryManager.js';
 import type { SystemPromptBuilder } from '../core/prompt/SystemPromptBuilder.js';
 import type { SessionManager, SessionManagerOptions } from '../core/session/SessionManager.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
-import type { ApplicationToolPolicy } from '../core/tools/types.js';
 import type { ContextFile } from '../core/agent-context/types.js';
+import type { AgentDefinitionSnapshot } from '../core/agent-context/index.js';
 import type { AgentEvent, AgentRunner, AgentRunnerConfig } from '../core/runner/index.js';
 import type { RunnerConfig } from '../core/runner/config.js';
 import type { UserPromptBuilder } from '../core/prompt/UserPromptBuilder.js';
@@ -32,11 +32,11 @@ export interface RuntimeResourceSet {
   readonly resolvedConfig: AgentDefaults;
   readonly agentHome: string;
   readonly sessionManager: SessionManager;
-  readonly toolPolicy: ApplicationToolPolicy;
   readonly memoryManager: MemoryManager | null;
   readonly systemPromptBuilder: SystemPromptBuilder;
   readonly userPromptBuilder: UserPromptBuilder;
   contextFiles: ContextFile[];
+  readonly agentDefinitions: AgentDefinitionSnapshot;
   readonly agentRunner: AgentRunner;
   readonly managedProcessLifecycle: ManagedProcessLifecycle;
 }

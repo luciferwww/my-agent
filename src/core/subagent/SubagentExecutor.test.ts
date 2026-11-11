@@ -37,11 +37,13 @@ describe('SubagentExecutor', () => {
       toolRounds: 0,
     }));
     const build = vi.fn(() => 'base');
-    const loadContextFilesFromDir = vi.fn(async () => []);
+    const getContextFiles = vi.fn(() => Object.freeze([
+      Object.freeze({ path: 'IDENTITY.md', content: 'startup child identity' }),
+    ]));
     const executor = new SubagentExecutor({
       agentRunner: { run } as never,
       systemPromptBuilder: { build } as never,
-      loadContextFilesFromDir,
+      getContextFiles,
       agentHome: '/agent-home',
       resolveToolPolicy: () => ({
         isDenied: () => true,
@@ -61,7 +63,10 @@ describe('SubagentExecutor', () => {
       },
       description: 'Review code',
       prompt: 'Inspect the patch',
-      parentContextFiles: [],
+      parentContextFiles: [
+        { path: 'IDENTITY.md', content: 'parent identity' },
+        { path: 'SOUL.md', content: 'parent soul' },
+      ],
       childDepth: 1,
       canSpawn: false,
       childSessionId: '5a848f00-b15f-4a5e-a4cc-3e6aa47342b1',
@@ -85,10 +90,14 @@ describe('SubagentExecutor', () => {
     }));
     expect(prepared.systemPrompt).toContain('base');
     expect(prepared.systemPrompt).toContain('Review code');
-    expect(loadContextFilesFromDir).not.toHaveBeenCalled();
+    expect(getContextFiles).toHaveBeenCalledExactlyOnceWith('reviewer');
+    expect(prepared.contextFiles).toEqual([
+      { path: 'IDENTITY.md', content: 'startup child identity' },
+      { path: 'SOUL.md', content: 'parent soul' },
+    ]);
     expect(build).toHaveBeenCalledWith({
       mode: 'minimal',
-      contextFiles: [],
+      contextFiles: prepared.contextFiles,
       toolNames: [],
       agentHome: '/agent-home',
     });
@@ -112,7 +121,7 @@ describe('SubagentExecutor', () => {
     const executor = new SubagentExecutor({
       agentRunner: { run: vi.fn() } as never,
       systemPromptBuilder: { build: () => 'base' } as never,
-      loadContextFilesFromDir: vi.fn(async () => []),
+      getContextFiles: vi.fn(() => []),
       agentHome: '/agent-home',
       resolveToolPolicy: () => ({
         isDenied: () => true,

@@ -1,9 +1,51 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SettingsRequests, credentialDraft, SAVED_CREDENTIAL_MASK, modelDraft, modelSettings, parseSection, settingsProviders } from './settings';
+import { SettingsRequests, agentPolicySettings, credentialDraft, SAVED_CREDENTIAL_MASK, modelDraft, modelSettings, parseSection, settingsProviders, settingsTools } from './settings';
 
 afterEach(() => vi.useRealTimers());
 
 describe('Settings client', () => {
+  it('parses read-only Agent views and preserves explicit empty allow and untouched sparse tools', () => {
+    const raw = {
+      id: 'agent:reviewer', revision: 'revision', kind: 'agent', restartRequired: false,
+      enabled: true, definitionAvailable: true, model: { providerId: 'relay', modelId: 'opaque/model' },
+      form: { credentials: {} }, settings: { tools: { allow: [], deny: [] } },
+      contextFiles: [], instructionFiles: [], metadata: { description: 'Review code' },
+      missingFiles: ['SOUL.md'], sharedAllow: ['read_file'], sharedDeny: ['exec'], sharedDeniedTools: ['exec'],
+    };
+    const section = parseSection(raw);
+    expect(section.agent).toMatchObject({
+      builtIn: false, enabled: true, missingFiles: ['SOUL.md'],
+      sharedAllow: ['read_file'], sharedDeny: ['exec'], sharedDeniedTools: ['exec'],
+      model: { providerId: 'relay', modelId: 'opaque/model' },
+    });
+    expect(agentPolicySettings(section, { enabled: true, allowMode: 'explicit', allow: '', deny: '' }))
+      .toEqual(raw.settings);
+    expect(agentPolicySettings(parseSection({ ...raw, settings: {} }), {
+      enabled: true, allowMode: 'inherit', allow: '', deny: '',
+    })).toEqual({});
+    expect(() => parseSection({ ...raw, sharedDeny: [false] })).toThrow();
+    expect(() => parseSection({ ...raw, sharedAllow: undefined })).toThrow();
+    expect(() => parseSection({ ...raw, sharedAllow: [false] })).toThrow();
+    expect(() => parseSection({ ...raw, sharedDeniedTools: [false] })).toThrow();
+    expect(() => parseSection({ ...raw, instructionFiles: [{}] })).toThrow();
+    expect(() => parseSection({ ...raw, settings: { tools: { allow: 'exec' } } })).toThrow();
+    expect(() => parseSection({ ...raw, model: { modelId: 'model' } })).toThrow();
+  });
+
+  it('parses only safe Tool catalog fields and rejects malformed entries', () => {
+    expect(settingsTools([
+      { name: 'exec', description: 'Run commands.', inputSchema: { private: true } },
+      { name: 'read_file', description: 'Read a file.' },
+    ])).toEqual([
+      { name: 'exec', description: 'Run commands.' },
+      { name: 'read_file', description: 'Read a file.' },
+    ]);
+    expect(settingsTools([])).toEqual([]);
+    for (const value of [undefined, {}, [null], [{ name: 'exec' }], [{ name: 1, description: '' }]]) {
+      expect(() => settingsTools(value)).toThrow();
+    }
+  });
+
   it('preserves explicit Provider configuration links without inferring them from IDs', () => {
     expect(settingsProviders({ providers: [
       { providerId: 'provider-one', configurationSectionId: 'extension:relay', models: [{ modelId: 'one' }] },

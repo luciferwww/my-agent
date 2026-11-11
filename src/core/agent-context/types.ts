@@ -1,7 +1,7 @@
-/** 注入到 agent-context Section 的文件 */
+/** A file injected into the agent-context section. */
 export interface ContextFile {
-  /** 文件名，如 'SOUL.md'，用作 Section 标题 */
+  /** File name, such as 'SOUL.md', used as the section heading. */
   path: string;
-  /** 文件内容 */
+  /** File content. */
   content: string;
 }

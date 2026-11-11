@@ -71,22 +71,6 @@ describe('loadAgentConfig', () => {
   });
 
   it.each([
-    [{ agents: { defaults: { workspace: { maxFileChars: 1 } } } }, 'agents.defaults.workspace'],
-    [{
-      agents: {
-        list: [{ id: 'legacy', description: 'Legacy Agent', workspace: { maxFileChars: 1 } }],
-      },
-    }, 'agents.list[0].workspace'],
-  ])('rejects the retired Workspace Context key %#', async (document, fieldPath) => {
-    await writeConfig(document);
-
-    await expect(loadAgentConfig({ agentHome })).rejects.toMatchObject({
-      code: 'NAMESPACE_INVALID',
-      fieldPath,
-    });
-  });
-
-  it.each([
     ['runtime', { steeringEnabled: true }],
     ['runner', { maxLlmCalls: 12 }],
     ['host', { mode: 'websocket' }],
@@ -117,7 +101,6 @@ describe('loadAgentConfig', () => {
         list: [{
           id: 'reviewer',
           description: 'Reviews code',
-          default: true,
           model: { providerId: 'builtin', modelId: 'model-a' },
           memory: { enabled: false },
         }],
@@ -167,7 +150,6 @@ describe('loadAgentConfig', () => {
       {
         id: 'reviewer',
         description: 'Reviews code',
-        default: true,
         model: { providerId: 'builtin', modelId: 'model-a' },
         memory: { enabled: false },
       },
@@ -197,19 +179,19 @@ describe('loadAgentConfig', () => {
     expect(snapshot.application.llm).toEqual({});
   });
 
-  it.each([
-    [{ agents: { defaults: { model: { providerId: 'a', modelId: 'b' } } } }, 'agents.defaults.model'],
-    [{ agents: { defaults: { llm: {} } } }, 'agents.defaults.llm'],
-    [{
-      agents: { list: [{ id: 'a', description: 'Agent A', llm: {} }] },
-    }, 'agents.list[0].llm'],
-  ])('rejects legacy Agent-level LLM configuration %#', async (document, fieldPath) => {
+  it('consumes sparse overrides and only supported Agent fields without modifying the source document', async () => {
+    const document = { agents: {
+      unrelated: { anything: true },
+      defaults: { surprise: true, memory: { extra: true }, tools: { extra: true, allow: ['read_file'] } },
+      list: [{ id: 'reviewer', enabled: false, model: 'inherit', surprise: true }],
+    } };
     await writeConfig(document);
-
-    await expect(loadAgentConfig({ agentHome })).rejects.toMatchObject({
-      code: 'NAMESPACE_INVALID',
-      fieldPath,
-    });
+    const snapshot = await loadAgentConfig({ agentHome });
+    expect(snapshot.document).toEqual(document);
+    expect(snapshot.application.agents.list).toEqual([{ id: 'reviewer', enabled: false, model: 'inherit' }]);
+    expect(snapshot.application.agents.defaults.tools).toEqual({ allow: ['read_file'], deny: [] });
+    expect(snapshot.application.agents.defaults.memory).toEqual(createDefaultAgentConfig().memory);
+    expect(snapshot.application.agents).not.toHaveProperty('unrelated');
   });
 
   it('reports unavailable API-key references without exposing secret values', async () => {
@@ -300,8 +282,12 @@ describe('loadAgentConfig', () => {
     [{ agents: { list: [null] } }, 'agents.list[0]'],
     [{ agents: { list: [{ id: '  ' }] } }, 'agents.list[0].id'],
     [{
-      agents: { list: [{ id: 'a', description: 'Agent A', default: 'yes' }] },
-    }, 'agents.list[0].default'],
+      agents: { list: [{ id: 'a', enabled: 'yes' }] },
+    }, 'agents.list[0].enabled'],
+    [{ agents: { list: [{ id: 'a', description: ' ' }] } }, 'agents.list[0].description'],
+    [{ agents: { list: [{ id: 'a' }, { id: 'a' }] } }, 'agents.list[1].id'],
+    [{ agents: { list: [{ id: 'general-purpose' }] } }, 'agents.list[0].id'],
+    [{ agents: { list: [{ id: 'a', model: 'invalid' }] } }, 'agents.list[0].model'],
     [{ agents: { maxSubagentDepth: -1 } }, 'agents.maxSubagentDepth'],
     [{ agents: { maxSubagentDepth: 1.5 } }, 'agents.maxSubagentDepth'],
     [{ llm: [] }, 'llm'],
@@ -316,44 +302,11 @@ describe('loadAgentConfig', () => {
         },
       },
     }, 'llm.builtin.models[0].endpoint'],
-    [{ agents: { defaults: { tools: { fs: {} } } } }, 'agents.defaults.tools.fs'],
-    [{
-      agents: { list: [{ id: 'a', description: 'Agent A', tools: { fs: {} } }] },
-    }, 'agents.list[0].tools.fs'],
     [{ agents: { steeringEnabled: 'yes' } }, 'agents.steeringEnabled'],
     [{ agents: { maxLlmCallsPerTurn: 0 } }, 'agents.maxLlmCallsPerTurn'],
     [{ agents: { maxLlmCallsPerTurn: 1.5 } }, 'agents.maxLlmCallsPerTurn'],
     [{ agents: { maxLlmCallsPerTurn: '12' } }, 'agents.maxLlmCallsPerTurn'],
-    [{ agents: { inTurnMessageMode: 'steer' } }, 'agents.inTurnMessageMode'],
-    [{ agents: { defaults: { runtime: { steeringEnabled: true } } } }, 'agents.defaults.runtime'],
-    [{ agents: { defaults: { runner: { maxLlmCalls: 1 } } } }, 'agents.defaults.runner'],
-    [{
-      agents: {
-        list: [{ id: 'a', description: 'Agent A', runtime: { steeringEnabled: true } }],
-      },
-    }, 'agents.list[0].runtime'],
-    [{
-      agents: { list: [{ id: 'a', description: 'Agent A', runner: { maxLlmCalls: 1 } }] },
-    }, 'agents.list[0].runner'],
-    [{
-      agents: { list: [{ id: 'a', description: 'Agent A', maxLlmCalls: 1 }] },
-    }, 'agents.list[0].maxLlmCalls'],
-    [{
-      agents: { list: [{ id: 'a', description: 'Agent A', maxLlmCallsPerTurn: 1 }] },
-    }, 'agents.list[0].maxLlmCallsPerTurn'],
-    [{
-      agents: { list: [{ id: 'a', description: 'Agent A', steeringEnabled: true }] },
-    }, 'agents.list[0].steeringEnabled'],
-    [{
-      agents: { list: [{ id: 'a', description: 'Agent A', maxSubagentDepth: 1 }] },
-    }, 'agents.list[0].maxSubagentDepth'],
-    [{
-      agents: { list: [{ id: 'a', description: 'Agent A', misspelled: true }] },
-    }, 'agents.list[0].misspelled'],
-    [{ agents: { defaults: { misspelled: true } } }, 'agents.defaults.misspelled'],
     [{ agents: { defaults: { memory: { chunking: { chunkChars: 0 } } } } }, 'agents.defaults.memory.chunking.chunkChars'],
-    [{ agents: { defaults: { memory: { bogus: true } } } }, 'agents.defaults.memory.bogus'],
-    [{ agents: { defaults: { memory: { chunking: { bogus: true } } } } }, 'agents.defaults.memory.chunking.bogus'],
     [{ agents: { defaults: { memory: { chunking: { overlapChars: 1600 } } } } }, 'agents.defaults.memory.chunking.overlapChars'],
     [{
       agents: {
@@ -364,18 +317,9 @@ describe('loadAgentConfig', () => {
         }],
       },
     }, 'agents.list[0].memory.chunking.overlapChars'],
-    [{ agents: { defaults: { prompt: { safetyLevel: 'normal' } } } }, 'agents.defaults.prompt'],
-    [{
-      agents: {
-        list: [{ id: 'a', description: 'Agent A', prompt: { safetyLevel: 'normal' } }],
-      },
-    }, 'agents.list[0].prompt'],
-    [{ agents: { defaults: { tools: { bogus: true } } } }, 'agents.defaults.tools.bogus'],
+    [{ agents: { defaults: { tools: { allow: [1] } } } }, 'agents.defaults.tools.allow'],
     [{ agents: { defaults: { context: { maxFileChars: -1 } } } }, 'agents.defaults.context.maxFileChars'],
-    [{ agents: { defaults: { context: { bogus: true } } } }, 'agents.defaults.context.bogus'],
     [{ agents: { defaults: { compaction: { timeoutSeconds: 0 } } } }, 'agents.defaults.compaction.timeoutSeconds'],
-    [{ agents: { defaults: { compaction: { bogus: true } } } }, 'agents.defaults.compaction.bogus'],
-    [{ agents: { defaults: { subagents: {} } } }, 'agents.defaults.subagents'],
     [{ logger: [] }, 'logger'],
     [{ logger: { bogus: true } }, 'logger.bogus'],
     [{ logger: { minLevel: 'verbose' } }, 'logger.minLevel'],

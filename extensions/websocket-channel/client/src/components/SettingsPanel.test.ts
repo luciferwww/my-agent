@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, h, nextTick, reactive, type App } from 'vue';
 import type { SettingsActionResult } from 'my-agent/extension-api';
 import { object } from '../client/settings';
@@ -8,17 +8,51 @@ import SettingsPanel from './SettingsPanel.vue';
 
 let app: App | undefined;
 let host: HTMLDivElement;
+const openPopovers = new Set<HTMLElement>();
+const nativeMatches = HTMLElement.prototype.matches;
+const popoverDescriptors = {
+  showPopover: Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'showPopover'),
+  hidePopover: Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'hidePopover'),
+};
+
+beforeEach(() => {
+  for (const name of ['showPopover', 'hidePopover'] as const) {
+    Object.defineProperty(HTMLElement.prototype, name, {
+      configurable: true,
+      value: function (this: HTMLElement) {
+        if (name === 'showPopover') openPopovers.add(this);
+        else openPopovers.delete(this);
+        this.dispatchEvent(new Event('toggle'));
+      },
+    });
+  }
+  vi.spyOn(HTMLElement.prototype, 'matches').mockImplementation(function (this: HTMLElement, selector) {
+    return selector === ':popover-open' ? openPopovers.has(this) : nativeMatches.call(this, selector);
+  });
+});
 
 afterEach(() => {
   app?.unmount();
   app = undefined;
   host?.remove();
   vi.restoreAllMocks();
+  openPopovers.clear();
+  for (const name of ['showPopover', 'hidePopover'] as const) {
+    const descriptor = popoverDescriptors[name];
+    if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor);
+    else Reflect.deleteProperty(HTMLElement.prototype, name);
+  }
 });
 
 const catalog = {
   providers: [{ providerId: 'relay', displayName: 'Relay', models: [{ modelId: 'remote', displayName: 'Remote model' }] }],
 };
+const toolCatalog = [
+  { name: 'read_file', description: 'Read file contents.' },
+  { name: 'write_file', description: 'Write file contents.' },
+  { name: 'edit_file', description: 'Edit file contents.' },
+  { name: 'exec', description: 'Execute a command.' },
+];
 
 function initialSettings(): Record<string, unknown> {
   return {
@@ -65,7 +99,45 @@ async function fill(name: string, value: string) {
   await flush();
 }
 
-async function mount(settings = initialSettings()) {
+function agentSection(id: string, settings: Record<string, unknown> = {}) {
+  const builtIn = id === 'general-purpose';
+  return {
+    id: builtIn ? 'agents:defaults' : `agent:${id}`, name: id, revision: `${id}-revision`,
+    kind: builtIn ? 'agent-defaults' : 'agent', settings, restartRequired: false,
+    form: { credentials: {} }, enabled: settings['enabled'] !== false, builtIn,
+    description: 'Startup description', definitionAvailable: true, model: 'inherit',
+    sharedAllow: ['read_file'], sharedDeny: builtIn ? [] : ['exec'],
+    sharedDeniedTools: builtIn ? [] : ['exec'], missingFiles: ['SOUL.md', 'AGENTS.md', 'TOOLS.md'],
+    metadata: { description: 'Startup description' },
+    contextFiles: [{ path: 'IDENTITY.md', content: '---\ndescription: Startup description\n---\nStartup instructions' }],
+    instructionFiles: [{ path: 'IDENTITY.md', content: 'Startup instructions' }],
+  };
+}
+
+async function category(name: string) {
+  const label = [...host.querySelectorAll('.settings-nav-name')].find(item => item.textContent === name);
+  if (!label?.parentElement) throw new Error(`Missing Settings category: ${name}`);
+  label.parentElement.click();
+  await flush();
+}
+
+async function checkbox(name: string, root: ParentNode = host) {
+  const input = [...root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
+    .find(input => input.getAttribute('aria-label') === name || input.closest('label')?.textContent?.trim() === name);
+  if (!input || input.disabled) throw new Error(`Missing or disabled checkbox: ${name}`);
+  input.click();
+  await flush();
+}
+
+async function tool(name: string, selector: string) {
+  await click(selector);
+  await checkbox(name, element('.tool-select-options[aria-label="' + selector + ' options"]'));
+  element<HTMLButtonElement>(`button[aria-label="${selector}"]`)
+    .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush();
+}
+
+async function mount(settings = initialSettings(), extraSections: Record<string, unknown>[] = []) {
   host = document.createElement('div');
   document.body.append(host);
   vi.spyOn(HTMLDialogElement.prototype, 'showModal').mockImplementation(function (this: HTMLDialogElement) {
@@ -73,16 +145,35 @@ async function mount(settings = initialSettings()) {
   });
   vi.spyOn(HTMLDialogElement.prototype, 'close').mockImplementation(function (this: HTMLDialogElement) {
     this.open = false;
+    this.dispatchEvent(new Event('close'));
   });
   const state = reactive({ open: false, connected: true });
   let saved = settings;
   const reply = (action: string, input: unknown = {}): SettingsActionResult => {
-    if (action === 'update') saved = object(object(input)['settings']);
+    const sectionId = object(input)['sectionId'] ?? 'llm';
+    const extra = extraSections.find(section => section['id'] === sectionId);
+    if (action === 'update') {
+      if (sectionId === 'llm') saved = object(object(input)['settings']);
+      else {
+        if (!extra) throw new Error(`Unknown fixture section: ${sectionId}`);
+        extra['settings'] = object(object(input)['settings']);
+        extra['enabled'] = object(extra['settings'])['enabled'] !== false;
+        if (sectionId === 'agents:defaults') {
+          const tools = object(object(input)['settings'])['tools'];
+          const policy = tools === undefined ? {} : object(tools);
+          for (const section of extraSections.filter(section => !section['builtIn'])) {
+            section['sharedAllow'] = policy['allow'] ?? [];
+            section['sharedDeny'] = policy['deny'] ?? [];
+            section['sharedDeniedTools'] = policy['deny'] ?? [];
+          }
+        }
+      }
+    }
     return {
       requestId: action, action, ok: true,
-      output: action === 'load' ? { sections: [section(saved)], modelCatalog: catalog, diagnostics: [] }
+      output: action === 'load' ? { sections: [section(saved), ...extraSections], modelCatalog: catalog, toolCatalog, diagnostics: [] }
         : action === 'test_llm_model' ? { outcome: 'completed' }
-          : { section: section(saved), modelCatalog: catalog },
+          : { section: extra ?? section(saved), agentSections: extraSections, modelCatalog: catalog },
     };
   };
   const execute = vi.fn<(action: string, input: unknown) => Promise<SettingsActionResult>>(
@@ -112,6 +203,205 @@ function deferredResult() {
 }
 
 describe('SettingsPanel', () => {
+  it('separates Agents from Extensions and preserves an untouched sparse override without credentials', async () => {
+    const f = await mount({}, [agentSection('general-purpose'), agentSection('reviewer'), {
+      id: 'extension:test', name: 'Test Extension', revision: 'ext', restartRequired: false,
+      settings: { enabled: true }, form: { credentials: {} },
+    }]);
+    await category('Extensions');
+    expect(host.textContent).toContain('Test Extension');
+    expect(host.textContent).not.toContain('Startup description');
+    await category('Agents');
+    expect(host.textContent).not.toContain('Test Extension');
+    await click('Configure reviewer');
+    expect(host.textContent).toContain('Shared deny (read-only): exec');
+    await click('Save reviewer');
+    expect(latestUpdate(f.execute)).toEqual({
+      sectionId: 'agent:reviewer', expectedRevision: 'reviewer-revision', settings: {},
+    });
+    expect(host.textContent).toContain('Applied to subsequent Turns.');
+    expect(element<HTMLButtonElement>('button[aria-label="Approval bypass tools"]').disabled).toBe(true);
+    await checkbox('Inherit shared approval bypass');
+    await tool('edit_file', 'Additional prohibited tools');
+    await checkbox('Enabled');
+    await click('Save reviewer');
+    expect(latestUpdate(f.execute)['settings']).toEqual({
+      enabled: false, tools: { allow: [], deny: ['edit_file'] },
+    });
+    await checkbox('Inherit shared approval bypass');
+    await tool('edit_file', 'Additional prohibited tools');
+    await checkbox('Enabled');
+    await click('Save reviewer');
+    expect(latestUpdate(f.execute)['settings']).toEqual({});
+  });
+
+  it('renders read-only startup Context, separating frontmatter from instructions and marking missing files', async () => {
+    await mount({}, [agentSection('reviewer')]);
+    await category('Agents');
+    await click('Configure reviewer');
+    await click('Context');
+    expect(host.textContent).toContain('Manual MD edits, additions and deletions require restart');
+    expect(host.textContent).toContain('Frontmatter metadata (not child instructions)');
+    expect(host.textContent).toContain('Body (running Context)');
+    expect(host.textContent).toContain('Startup instructions');
+    expect(host.querySelector('textarea')).toBeNull();
+    expect(host.querySelector('.settings-savebar')).toBeNull();
+    await click('SOUL.md');
+    expect(host.textContent).toContain('Missing SOUL.md at startup');
+    expect(host.textContent).toContain('inherits the corresponding Parent file');
+  });
+
+  it('edits shared defaults without disablement and refreshes shared deny without losing another dirty draft', async () => {
+    const f = await mount({}, [agentSection('general-purpose'), agentSection('reviewer')]);
+    await category('Agents');
+    await click('Configure reviewer');
+    await tool('write_file', 'Additional prohibited tools');
+    await click('Back to Agents');
+    await click('Configure general-purpose');
+    expect([...host.querySelectorAll('.settings-checkbox')].map(label => label.textContent?.trim()))
+      .toEqual(['Use default approval rules (no bypass)']);
+    expect(host.querySelector('[aria-label="Context files"]')).toBeNull();
+    await tool('edit_file', 'Shared prohibited tools');
+    await click('Save general-purpose');
+    expect(latestUpdate(f.execute)).toEqual({
+      sectionId: 'agents:defaults', expectedRevision: 'general-purpose-revision',
+      settings: { tools: { deny: ['edit_file'] } },
+    });
+    await click('Back to Agents');
+    await click('Configure reviewer');
+    expect(host.textContent).toContain('Shared deny (read-only): edit_file');
+    const deny = element('.tool-select-options[aria-label="Additional prohibited tools options"]');
+    expect(element<HTMLInputElement>('input[aria-label="write_file"]', deny).checked).toBe(true);
+    expect(element<HTMLInputElement>('input[aria-label="edit_file"]', deny).disabled).toBe(true);
+    expect(host.textContent).toContain('Unsaved');
+    await click('Save reviewer');
+    expect(latestUpdate(f.execute)['expectedRevision']).toBe('reviewer-revision');
+    expect(latestUpdate(f.execute)['settings']).toEqual({ tools: { deny: ['write_file'] } });
+  });
+
+  it('preserves Agent drafts on revision conflicts and reports unavailable definitions and models', async () => {
+    const f = await mount({}, [{
+      ...agentSection('reviewer'), definitionAvailable: false,
+      model: { providerId: 'absent', modelId: 'model' }, modelAvailable: false,
+    }]);
+    await category('Agents');
+    await click('Configure reviewer');
+    expect(host.textContent).toContain('No valid startup definition');
+    expect(host.textContent).toContain('no silent model fallback');
+    await tool('write_file', 'Additional prohibited tools');
+    f.execute.mockResolvedValueOnce({
+      requestId: 'conflict', action: 'update', ok: false,
+      error: { code: 'revision_conflict', message: 'Reload saved Agent settings.' },
+    });
+    await click('Save reviewer');
+    expect(element<HTMLInputElement>('.tool-select-options[aria-label="Additional prohibited tools options"] input[aria-label="write_file"]').checked).toBe(true);
+    expect(element('.settings-feedback').textContent).toContain('Reload saved Agent settings.');
+    expect(element<HTMLButtonElement>('.settings-savebar button')).toBeDefined();
+  });
+
+  it('preserves saved patterns and unavailable names while editing exact Tool selections', async () => {
+    const saved = { tools: { allow: ['read_*', 'retired_tool', ' spaced_rule '], deny: ['write_*', 'old_deny'] } };
+    const f = await mount({}, [agentSection('reviewer', saved)]);
+    await category('Agents');
+    await click('Configure reviewer');
+    expect(host.textContent).toContain('Saved patterns or unavailable names (read-only)');
+    expect([...host.querySelectorAll('.tool-select-note code')].map(item => item.textContent))
+      .toEqual(['read_*', 'retired_tool', ' spaced_rule ', 'write_*', 'old_deny']);
+    await tool('read_file', 'Approval bypass tools');
+    await tool('edit_file', 'Additional prohibited tools');
+    await click('Save reviewer');
+    expect(latestUpdate(f.execute)['settings']).toEqual({
+      tools: {
+        allow: [...saved.tools.allow, 'read_file'],
+        deny: [...saved.tools.deny, 'edit_file'],
+      },
+    });
+    expect(latestUpdate(f.execute)).not.toHaveProperty('credentials');
+  });
+
+  it('uses top-layer Tool popovers, locks shared denies and closes only on outer scrolling or dismissal', async () => {
+    const f = await mount({}, [agentSection('reviewer')]);
+    await category('Agents');
+    await click('Configure reviewer');
+    await click('Additional prohibited tools');
+    const panel = element<HTMLElement>('.tool-select-options[aria-label="Additional prohibited tools options"]');
+    const trigger = element<HTMLButtonElement>('button[aria-label="Additional prohibited tools"]');
+    expect(panel.getAttribute('popover')).toBe('auto');
+    expect(panel.matches(':popover-open')).toBe(true);
+    expect(element<HTMLInputElement>('input[aria-label="exec"]', panel)).toMatchObject({ checked: true, disabled: true });
+    expect(panel.querySelectorAll('input')).toHaveLength(toolCatalog.length);
+    expect(panel.textContent).toContain('Execute a command.');
+    element('.tool-select-scroll', panel).dispatchEvent(new Event('scroll'));
+    expect(panel.matches(':popover-open')).toBe(true);
+    element('.settings-content').dispatchEvent(new Event('scroll'));
+    expect(panel.matches(':popover-open')).toBe(false);
+    await click('Additional prohibited tools');
+    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flush();
+    expect(panel.matches(':popover-open')).toBe(false);
+    expect(document.activeElement).toBe(trigger);
+    await click('Additional prohibited tools');
+    window.dispatchEvent(new Event('resize'));
+    expect(panel.matches(':popover-open')).toBe(false);
+    await click('Additional prohibited tools');
+    panel.hidePopover();
+    await flush();
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    await click('Additional prohibited tools');
+    const dialog = element<HTMLDialogElement>('dialog');
+    dialog.dispatchEvent(new Event('close'));
+    expect(panel.matches(':popover-open')).toBe(false);
+    await click('Additional prohibited tools');
+    f.state.open = false;
+    await flush();
+    expect(panel.matches(':popover-open')).toBe(false);
+  });
+
+  it('uses themed typed selectors and preserves enum omission and checkbox-first Extension labels', async () => {
+    const extension = {
+      id: 'extension:test', name: 'Test Extension', revision: 'ext', restartRequired: false,
+      settings: { enabled: true, config: {} },
+      form: {
+        credentials: {},
+        fields: [
+          { name: 'level', path: '/level', editable: true, supported: true, sensitive: false, schema: { type: 'number', enum: [0, 1] } },
+          { name: 'approval', path: '/approval', editable: true, supported: true, sensitive: false, schema: { type: 'boolean' } },
+        ],
+      },
+    };
+    const f = await mount(initialSettings(), [extension]);
+    await click('Default model');
+    await click('Relay / Remote model');
+    await click('Built-in details');
+    await click('Edit first');
+    await click('Protocol');
+    await click('openai-chat-completions');
+    await click('Save LLM');
+    expect(latestUpdate(f.execute)['settings']).toMatchObject({
+      defaultModel: { providerId: 'relay', modelId: 'remote' },
+      builtin: { models: [
+        { modelId: 'first', protocol: 'openai-chat-completions' },
+        { modelId: 'second', protocol: 'openai-responses' },
+      ] },
+    });
+    await category('Extensions');
+    await click('Configure Test Extension');
+    expect(element('.settings-checkbox').textContent).toContain('Enabled (requires service restart after saving)');
+    for (const label of host.querySelectorAll('.settings-checkbox')) {
+      expect(label.firstElementChild?.tagName).toBe('INPUT');
+    }
+    await click('level');
+    await click('0');
+    await checkbox('approval');
+    await click('Save Test Extension');
+    expect(latestUpdate(f.execute)['settings']).toEqual({ enabled: true, config: { level: 0, approval: true } });
+    await click('level');
+    await click('Omit / use declared default');
+    await click('Save Test Extension');
+    expect(latestUpdate(f.execute)['settings']).toEqual({ enabled: true, config: { approval: true } });
+    expect(host.querySelector('select')).toBeNull();
+  });
+
   it('shows the Built-in form without a checkbox and leaves untouched absent configuration absent', async () => {
     const f = await mount({});
     await click('Built-in details');

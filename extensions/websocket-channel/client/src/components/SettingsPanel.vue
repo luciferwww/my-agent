@@ -2,10 +2,12 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import type { SettingsActionResult } from 'my-agent/extension-api';
 import {
-  modelDraft, modelSettings, object, parseSection, settingsProviders,
-  type ModelDraft, type SettingsSection, type SettingsProvider,
+  agentPolicySettings, modelDraft, modelSettings, object, parseSection, settingsProviders, settingsTools,
+  type ModelDraft, type SettingsSection, type SettingsProvider, type SettingsTool, type SettingsField,
 } from '../client/settings';
 import SettingsCredential, { type SecretDraft } from './SettingsCredential.vue';
+import SettingsToolSelect from './SettingsToolSelect.vue';
+import SettingsSelect from './SettingsSelect.vue';
 
 const props = defineProps<{
   open: boolean;
@@ -24,6 +26,9 @@ interface Draft {
   secrets: Record<string, SecretDraft>;
   stale: boolean;
   fileUnknown: boolean;
+  allowMode: 'inherit' | 'explicit';
+  allow: string;
+  deny: string;
 }
 const dialog = ref<HTMLDialogElement>();
 const drafts = ref<Draft[]>([]);
@@ -31,23 +36,36 @@ const selectedSection = ref('llm');
 const selectedProviderId = ref('');
 const visibleDrafts = computed(() => drafts.value.filter((draft) =>
   draft.section.id === (selectedSection.value === 'builtin' ? 'llm' : selectedSection.value)));
-const extensions = computed(() => drafts.value.filter((draft) => draft.section.id !== 'llm'));
-const selectedCategory = computed(() => ['llm', 'builtin', 'provider'].includes(selectedSection.value) ? 'llm' : 'extensions');
+const extensions = computed(() => drafts.value.filter((draft) => draft.section.id.startsWith('extension:')));
+const agents = computed(() => drafts.value.filter(draft => draft.section.agent));
+const selectedCategory = computed(() => ['llm', 'builtin', 'provider'].includes(selectedSection.value) ? 'llm'
+  : selectedSection.value === 'agents' || visibleDrafts.value[0]?.section.agent ? 'agents' : 'extensions');
 const categories = computed(() => [
   { id: 'llm', name: 'LLM', description: 'Models & providers', drafts: drafts.value.filter((draft) => draft.section.id === 'llm') },
+  { id: 'agents', name: 'Agents', description: 'Enablement & Tool policy', drafts: agents.value },
   { id: 'extensions', name: 'Extensions', description: 'Installed extensions', drafts: extensions.value },
 ]);
+const categoryOptions = computed(() => categories.value.map(category => ({
+  value: category.id,
+  label: `${category.name}${category.drafts.some(isDirty) ? ' (unsaved)' : ''}${category.drafts.some(draft => draft.section.restartRequired) ? ' (restart required)' : ''}${category.drafts.some(draft => draft.stale || draft.fileUnknown) ? ' (unconfirmed)' : ''}`,
+})));
 const busy = ref(false);
 type FeedbackKind = 'pending' | 'success' | 'error' | 'info';
 const feedback = ref<{ kind: FeedbackKind; message: string }>();
 let feedbackVersion = 0;
 const editingModel = ref<ModelDraft>();
 const diagnostics = ref<unknown[]>([]);
+const agentDiagnostics = ref<unknown[]>([]);
+const agentTab = ref<'configuration' | 'context'>('configuration');
+const contextFile = ref('IDENTITY.md');
+const contextNames = ['IDENTITY.md', 'SOUL.md', 'AGENTS.md', 'TOOLS.md'];
 const providers = ref<SettingsProvider[]>([]);
+const tools = ref<SettingsTool[]>([]);
 const selectedProvider = computed(() => providers.value.find((provider) => provider.providerId === selectedProviderId.value));
 const restartRequired = computed(() => drafts.value.some((draft) => draft.section.restartRequired));
 const llm = computed(() => drafts.value.find((draft) => draft.section.id === 'llm'));
-const saveDraft = computed(() => selectedSection.value === 'provider' ? llm.value : visibleDrafts.value[0]);
+const saveDraft = computed(() => selectedSection.value === 'provider' ? llm.value
+  : visibleDrafts.value[0]?.section.agent && agentTab.value === 'context' ? undefined : visibleDrafts.value[0]);
 const modelChoices = computed(() => [
   ...(llm.value?.models ?? []).filter((model) => model.modelId).map((model) => ({
     providerId: 'builtin', modelId: model.modelId, label: `Built-in / ${model.displayName || model.modelId}`,
@@ -68,6 +86,15 @@ const defaultSelection = computed({
   },
 });
 const defaultAvailable = computed(() => modelChoices.value.some((model) => modelToken(model) === defaultSelection.value));
+const defaultModelOptions = computed(() => [
+  { value: '', label: 'None' },
+  ...(llm.value?.defaultModel && !defaultAvailable.value ? [{
+    value: defaultSelection.value,
+    label: `${llm.value.defaultModel.providerId} / ${llm.value.defaultModel.modelId} (unavailable)`,
+    disabled: true,
+  }] : []),
+  ...modelChoices.value.map(model => ({ value: modelToken(model), label: model.label })),
+]);
 function isDefault(providerId: string, modelId: string): boolean {
   return !!modelId && llm.value?.defaultModel?.providerId === providerId && llm.value.defaultModel.modelId === modelId;
 }
@@ -81,14 +108,20 @@ function finishFeedback(version: number, kind: FeedbackKind, message: string) {
 function providerTarget(provider: SettingsProvider): string | undefined {
   return extensions.value.find((draft) => draft.section.id === provider.configurationSectionId)?.section.id;
 }
-function changeCategory(event: Event) {
-  if (event.target instanceof HTMLSelectElement) selectedSection.value = event.target.value;
+function enumOptions(field: SettingsField) {
+  const values = field.schema?.['enum'];
+  if (!Array.isArray(values)) throw new Error('Malformed Extension enum.');
+  return [
+    { value: undefined, label: 'Omit / use declared default' },
+    ...values.map((value: unknown) => ({ value, label: typeof value === 'string' ? value : JSON.stringify(value) })),
+  ];
 }
 
 function draftSignature(draft: Draft): string {
   return JSON.stringify([
     draft.baseURL, draft.models, draft.defaultModel,
     draft.enabled, draft.config, draft.secrets,
+    draft.allowMode, draft.allow, draft.deny,
   ]);
 }
 function isDirty(draft: Draft): boolean {
@@ -98,6 +131,7 @@ function makeDraft(section: SettingsSection): Draft {
   const builtin = section.settings['builtin'] === undefined ? undefined : object(section.settings['builtin']);
   const reference = section.settings['defaultModel'] === undefined ? undefined : object(section.settings['defaultModel']);
   const savedConfig = section.settings['config'] === undefined ? {} : object(section.settings['config']);
+  const tools = section.agent && section.settings['tools'] !== undefined ? object(section.settings['tools']) : {};
   if (builtin && (!Array.isArray(builtin['models']) || typeof builtin['baseURL'] !== 'string')) {
     throw new Error('Malformed Built-in settings.');
   }
@@ -108,7 +142,10 @@ function makeDraft(section: SettingsSection): Draft {
     section, baseline: '', baseURL: String(builtin?.['baseURL'] ?? ''),
     models: Array.isArray(builtin?.['models']) ? builtin['models'].map(modelDraft) : [],
     defaultModel: reference ? { providerId: String(reference['providerId']), modelId: String(reference['modelId']) } : undefined,
-    enabled: section.settings['enabled'] === true,
+    enabled: section.agent ? section.agent.enabled : section.settings['enabled'] === true,
+    allowMode: tools['allow'] === undefined ? 'inherit' : 'explicit',
+    allow: Array.isArray(tools['allow']) ? tools['allow'].join('\n') : '',
+    deny: Array.isArray(tools['deny']) ? tools['deny'].join('\n') : '',
     config: Object.fromEntries(section.fields.filter((field) => field.editable && !field.sensitive)
       .map((field) => [field.name, Object.hasOwn(savedConfig, field.name) ? savedConfig[field.name] : undefined])),
     secrets: Object.fromEntries(Object.keys(section.credentials).map((path) => [path, { operation: 'keep', value: '' }])),
@@ -133,16 +170,18 @@ async function load() {
     if (!result.ok) throw new Error(result.error.message);
     const output = object(result.output);
     if (!Array.isArray(output['sections'])) throw new Error('Malformed Settings view.');
+    tools.value = settingsTools(output['toolCatalog']);
     const loaded = output['sections'].map((section: unknown) => makeDraft(parseSection(section)));
     applyCatalog(output['modelCatalog']);
     clearSecretValues();
     drafts.value = loaded;
     editingModel.value = undefined;
-    if (!['llm', 'builtin', 'provider', 'extensions'].includes(selectedSection.value)
+    if (!['llm', 'builtin', 'provider', 'extensions', 'agents'].includes(selectedSection.value)
       && !loaded.some((draft) => draft.section.id === selectedSection.value)) {
       selectedSection.value = 'extensions';
     }
     diagnostics.value = Array.isArray(output['diagnostics']) ? output['diagnostics'] : [];
+    agentDiagnostics.value = Array.isArray(output['agentDiagnostics']) ? output['agentDiagnostics'] : [];
     finishFeedback(version, 'success', 'Settings loaded.');
   } catch (failure) {
     finishFeedback(version, 'error', failure instanceof Error ? `Settings load failed: ${failure.message}` : 'Settings could not be loaded.');
@@ -161,6 +200,7 @@ function builtin(draft: Draft) {
   return { baseURL: draft.baseURL, models: draft.models.map(modelSettings) };
 }
 function settings(draft: Draft) {
+  if (draft.section.agent) return agentPolicySettings(draft.section, draft);
   if (draft.section.id === 'llm') return {
     ...(draft.section.settings['builtin'] !== undefined || draft.baseURL !== '' || draft.models.length > 0
       || draft.secrets['/builtin/apiKey']?.operation === 'replace' ? { builtin: builtin(draft) } : {}),
@@ -181,7 +221,8 @@ async function save(draft: Draft) {
   try {
     const input = {
       sectionId: draft.section.id, expectedRevision: draft.section.revision,
-      settings: settings(draft), credentials: credentials(draft),
+      settings: settings(draft),
+      ...(draft.section.agent ? {} : { credentials: credentials(draft) }),
     };
     const response = props.execute('update', input);
     clearSecretValues(draft);
@@ -194,6 +235,17 @@ async function save(draft: Draft) {
       editingModel.value = undefined;
     }
     if (output?.['modelCatalog'] !== undefined) applyCatalog(output['modelCatalog']);
+    if (Array.isArray(output?.['agentSections'])) {
+      for (const raw of output['agentSections']) {
+        const view = parseSection(raw);
+        const existing = drafts.value.find(item => item.section.id === view.id);
+        if (existing) {
+          existing.section.agent = view.agent;
+          existing.section.applicationStatus = view.applicationStatus;
+        }
+      }
+    }
+    if (Array.isArray(output?.['agentDiagnostics'])) agentDiagnostics.value = output['agentDiagnostics'];
     if (!result.ok) {
       if (result.error.code === 'rollback_failed' && typeof output?.['revision'] === 'string') {
         draft.section.revision = output['revision'];
@@ -208,7 +260,7 @@ async function save(draft: Draft) {
       throw new Error('Save returned no confirmed section. Reload before saving again.');
     }
     const warnings = output['warnings'];
-    finishFeedback(version, 'success', `${draft.section.name}: saved.${Array.isArray(warnings) && warnings.length ? ' Runtime reported retirement warnings; check service logs.' : ''}`);
+    finishFeedback(version, 'success', `${draft.section.name}: saved.${draft.section.agent ? ' Applied to subsequent Turns.' : ''}${Array.isArray(warnings) && warnings.length ? ' Runtime reported retirement warnings; check service logs.' : ''}`);
   } catch (failure) {
     finishFeedback(version, 'error', `${draft.section.name}: ${failure instanceof Error ? failure.message : 'Save outcome could not be confirmed.'}`);
   } finally { busy.value = false; }
@@ -276,6 +328,7 @@ watch(() => props.connected, (connected) => {
   for (const draft of drafts.value) draft.stale = true;
   reportFeedback('error', 'Disconnected. Reload saved settings after reconnecting; unsaved drafts have not been retried.');
 });
+watch(selectedSection, () => { agentTab.value = 'configuration'; contextFile.value = 'IDENTITY.md'; });
 </script>
 
 <template>
@@ -284,7 +337,7 @@ watch(() => props.connected, (connected) => {
     <header class="settings-header">
       <div>
         <h2 id="settings-heading">Settings</h2>
-        <p>Configure models and installed Extensions. Save each section independently.</p>
+        <p>Configure models, Agents and installed Extensions. Save each section independently.</p>
       </div>
       <div class="settings-header-actions">
         <div class="settings-reload">
@@ -309,13 +362,8 @@ watch(() => props.connected, (connected) => {
             <span v-if="category.drafts.some(draft => draft.stale || draft.fileUnknown)" class="settings-badge">Unconfirmed</span>
           </button>
         </div>
-        <label class="settings-mobile-select">Section
-          <select :value="selectedCategory" @change="changeCategory">
-            <option v-for="category in categories" :key="category.id" :value="category.id">
-              {{ category.name }}{{ category.drafts.some(isDirty) ? ' (unsaved)' : '' }}{{ category.drafts.some(draft => draft.section.restartRequired) ? ' (restart required)' : '' }}{{ category.drafts.some(draft => draft.stale || draft.fileUnknown) ? ' (unconfirmed)' : '' }}
-            </option>
-          </select>
-        </label>
+        <SettingsSelect class="settings-mobile-select" label="Section" :model-value="selectedCategory"
+          :options="categoryOptions" @update:model-value="selectedSection = $event" />
       </nav>
       <div class="settings-content" :key="selectedSection">
     <p v-if="restartRequired" class="settings-warning" role="status">Saved Extension changes require a manual service restart. Reverting to startup values clears the corresponding requirement.</p>
@@ -347,6 +395,26 @@ watch(() => props.connected, (connected) => {
       </template>
       <p v-else class="settings-warning">This Provider is no longer in the loaded catalog. Return to Providers to select an available one.</p>
     </section>
+    <section v-if="selectedSection === 'agents'" class="settings-section">
+      <h3>Agents</h3>
+      <p class="settings-description">Enablement and Tool policy apply to subsequent Turns. MD changes require restart.</p>
+      <details v-if="agentDiagnostics.length"><summary>Agent definition diagnostics</summary><pre>{{ JSON.stringify(agentDiagnostics, null, 2) }}</pre></details>
+      <div class="settings-list">
+        <div v-for="draft in agents" :key="draft.section.id" class="settings-list-row">
+          <div class="settings-list-copy">
+            <strong>{{ draft.section.name }}</strong>
+            <span>{{ draft.section.agent?.description || 'No valid startup definition.' }}</span>
+            <span>{{ draft.section.agent?.builtIn ? 'Built-in - Shared Tool defaults' : draft.section.agent?.enabled ? 'Enabled' : 'Disabled' }}</span>
+            <div class="settings-markers">
+              <span v-if="!draft.section.agent?.definitionAvailable" class="settings-badge">Definition unavailable</span>
+              <span v-if="isDirty(draft)" class="settings-badge">Unsaved</span>
+              <span v-if="draft.stale" class="settings-badge">Unconfirmed</span>
+            </div>
+          </div>
+          <button type="button" class="secondary" :aria-label="`Configure ${draft.section.name}`" @click="selectedSection = draft.section.id">Configure</button>
+        </div>
+      </div>
+    </section>
     <section v-if="selectedSection === 'extensions'" class="settings-section">
       <h3>Extensions</h3>
       <p class="settings-description">Configure installed extensions individually. Saved changes require a manual restart.</p>
@@ -368,8 +436,8 @@ watch(() => props.connected, (connected) => {
     </section>
     <section v-for="draft in visibleDrafts" :key="draft.section.id" class="settings-section">
       <button v-if="selectedSection !== 'llm'" type="button" class="secondary settings-back"
-        @click="selectedSection = draft.section.id === 'llm' ? 'llm' : 'extensions'">
-        {{ draft.section.id === 'llm' ? 'Back to Providers' : 'Back to Extensions' }}
+        @click="selectedSection = draft.section.id === 'llm' ? 'llm' : draft.section.agent ? 'agents' : 'extensions'">
+        {{ draft.section.id === 'llm' ? 'Back to Providers' : draft.section.agent ? 'Back to Agents' : 'Back to Extensions' }}
       </button>
       <h3>{{ selectedSection === 'builtin' ? 'Built-in Provider' : draft.section.id === 'llm' ? 'LLM' : draft.section.name }}</h3>
       <p v-if="draft.section.restartRequired" class="settings-warning">Saved, not applied: restart required.</p>
@@ -383,15 +451,7 @@ watch(() => props.connected, (connected) => {
         <template v-if="draft.section.id === 'llm'">
           <template v-if="selectedSection === 'llm'">
             <div class="settings-default">
-              <label>Default model
-                <select v-model="defaultSelection">
-                  <option value="">None</option>
-                  <option v-if="draft.defaultModel && !defaultAvailable" :value="defaultSelection" disabled>
-                    {{ draft.defaultModel.providerId }} / {{ draft.defaultModel.modelId }} (unavailable)
-                  </option>
-                  <option v-for="model in modelChoices" :key="modelToken(model)" :value="modelToken(model)">{{ model.label }}</option>
-                </select>
-              </label>
+              <SettingsSelect v-model="defaultSelection" label="Default model" :options="defaultModelOptions" />
               <button type="button" class="secondary" :disabled="!defaultAvailable || !draft.defaultModel"
                 @click="draft.defaultModel && testModel(draft.defaultModel.providerId, draft.defaultModel.modelId)">Test selected model</button>
             </div>
@@ -448,9 +508,8 @@ watch(() => props.connected, (connected) => {
               <div v-if="editingModel === model" class="settings-model">
               <label>Model ID<input v-model="model.modelId"></label>
               <label>Display name (optional)<input v-model="model.displayName"></label>
-              <label>Protocol<select v-model="model.protocol">
-                <option>openai-responses</option><option>openai-chat-completions</option><option>anthropic-messages</option>
-              </select></label>
+              <SettingsSelect v-model="model.protocol" label="Protocol"
+                :options="['openai-responses', 'openai-chat-completions', 'anthropic-messages'].map(value => ({ value, label: value }))" />
               <label>Relative endpoint (optional)<input v-model="model.endpoint" placeholder="/v1/responses"></label>
               <details><summary>Advanced model limits and reasoning</summary>
                 <p>JSON fields: maximumContextTokens, maximumPromptTokens, maximumOutputTokens, outputTokenLimit, reasoning (thinking / efforts). Existing values are preserved.</p>
@@ -463,20 +522,76 @@ watch(() => props.connected, (connected) => {
           <p class="settings-description">Save LLM also saves the default model selected on the Providers page.</p>
           </template>
         </template>
+        <template v-else-if="draft.section.agent">
+          <div v-if="!draft.section.agent.builtIn" class="settings-actions settings-tabs" role="tablist" aria-label="Agent settings">
+            <button type="button" role="tab" :aria-selected="agentTab === 'configuration'" @click="agentTab = 'configuration'">Configuration</button>
+            <button type="button" role="tab" :aria-selected="agentTab === 'context'" @click="agentTab = 'context'">Context</button>
+          </div>
+          <template v-if="agentTab === 'configuration' || draft.section.agent.builtIn">
+            <p class="settings-description">{{ draft.section.agent.description }}</p>
+            <p v-if="draft.section.agent.builtIn" class="settings-help">Shared Tool defaults for subsequent Root and Child Turns, not an independent general-purpose profile. This built-in type cannot be disabled.</p>
+            <template v-else>
+              <label class="settings-checkbox"><input v-model="draft.enabled" type="checkbox"><span>Enabled</span></label>
+              <p v-if="!draft.section.agent.definitionAvailable" class="settings-warning">No valid startup definition. This override cannot register an Agent. A requested specialist falls back to general-purpose unless explicitly disabled.</p>
+              <p class="settings-description">Model: {{ draft.section.agent.model === 'inherit' || !draft.section.agent.model ? 'Inherit Parent model' : `${draft.section.agent.model.providerId} / ${draft.section.agent.model.modelId}` }} (read-only)</p>
+              <p v-if="draft.section.agent.modelAvailable === false" class="settings-warning">The configured or recommended model is not in the loaded catalog. Task-time resolution will report unavailable models; no silent model fallback.</p>
+            </template>
+            <p class="settings-help">Tools selected for approval bypass skip ordinary approval, not access restrictions. Prohibited Tools cannot be used and take precedence. Manual Exec and external-path approval rules still apply.</p>
+            <label class="settings-checkbox">
+              <input type="checkbox" :checked="draft.allowMode === 'inherit'"
+                @change="draft.allowMode = draft.allowMode === 'inherit' ? 'explicit' : 'inherit'">
+              <span>{{ draft.section.agent.builtIn ? 'Use default approval rules (no bypass)' : 'Inherit shared approval bypass' }}</span>
+            </label>
+            <SettingsToolSelect label="Approval bypass tools" :tools="tools"
+              :model-value="draft.allowMode === 'inherit' ? draft.section.agent.sharedAllow.join('\n') : draft.allow"
+              :disabled="draft.allowMode === 'inherit'" @update:model-value="draft.allow = $event" />
+            <p v-if="draft.allowMode === 'inherit'" class="settings-description">
+              {{ draft.section.agent.builtIn ? 'Default approval bypass' : 'Shared approval bypass (read-only)' }}:
+              {{ draft.section.agent.sharedAllow.join(', ') || '(none)' }}
+            </p>
+            <p v-else-if="!draft.allow" class="settings-description">No Tools bypass approval through this list. This does not disable Tools.</p>
+            <p v-if="!draft.section.agent.builtIn" class="settings-help">Shared deny (read-only): {{ draft.section.agent.sharedDeny.join(', ') || '(none)' }}. Local settings cannot remove these entries.</p>
+            <SettingsToolSelect v-model="draft.deny" :label="draft.section.agent.builtIn ? 'Shared prohibited tools' : 'Additional prohibited tools'"
+              :tools="tools" :locked-tools="draft.section.agent.sharedDeniedTools" />
+          </template>
+          <template v-else>
+            <p class="settings-help">Read-only startup snapshot. Manual MD edits, additions and deletions require restart. Reload saved settings does not reread MD.</p>
+            <div class="settings-actions settings-tabs" role="tablist" aria-label="Context files">
+              <button v-for="name in contextNames" :key="name" type="button" role="tab" :aria-selected="contextFile === name" @click="contextFile = name">{{ name }}</button>
+            </div>
+            <p v-if="draft.section.agent.missingFiles.includes(contextFile)" class="settings-warning">Missing {{ contextFile }} at startup. Child Context inherits the corresponding Parent file.</p>
+            <template v-else-if="contextFile === 'IDENTITY.md'">
+              <h4>Frontmatter metadata (not child instructions)</h4>
+              <pre class="settings-context">{{ JSON.stringify(draft.section.agent.metadata, null, 2) }}</pre>
+              <h4>Body (running Context)</h4>
+              <pre class="settings-context">{{ draft.section.agent.instructionFiles.find(file => file.path === contextFile)?.content || '(empty or omitted by Context budget)' }}</pre>
+              <details><summary>Raw startup snapshot</summary><pre class="settings-context">{{ draft.section.agent.contextFiles.find(file => file.path === contextFile)?.content }}</pre></details>
+            </template>
+            <pre v-else class="settings-context">{{ draft.section.agent.contextFiles.find(file => file.path === contextFile)?.content || '(empty or omitted by Context budget)' }}</pre>
+          </template>
+        </template>
         <template v-else>
           <p>Extension parameters and enablement take effect only after a manual restart.</p>
-          <label class="settings-checkbox"><input v-model="draft.enabled" type="checkbox">Enable after restart</label>
+          <label class="settings-checkbox">
+            <input v-model="draft.enabled" type="checkbox">
+            <span>Enabled <small class="settings-description">(requires service restart after saving)</small></span>
+          </label>
           <template v-for="field in draft.section.fields" :key="field.path">
             <p v-if="!field.editable">{{ field.name }}: {{ field.supported ? 'read-only' : 'unsupported Schema form' }}; retained by the server, value not exposed.</p>
+            <SettingsSelect v-else-if="!field.sensitive && Array.isArray(field.schema?.['enum'])"
+              v-model="draft.config[field.name]" :label="String(field.schema?.['title'] || field.name)"
+              :description="String(field.schema?.['description'] ?? '')" :options="enumOptions(field)" />
+            <label v-else-if="!field.sensitive && field.schema?.['type'] === 'boolean'" class="settings-checkbox">
+              <input v-model="draft.config[field.name]" type="checkbox">
+              <span class="settings-checkbox-copy">
+                <span>{{ field.schema?.['title'] || field.name }}</span>
+                <small v-if="field.schema?.['description']">{{ field.schema['description'] }}</small>
+              </span>
+            </label>
             <label v-else-if="!field.sensitive">
               {{ field.schema?.['title'] || field.name }}
               <span v-if="field.schema?.['description']">{{ field.schema['description'] }}</span>
-              <select v-if="Array.isArray(field.schema?.['enum'])" v-model="draft.config[field.name]">
-                <option :value="undefined">Omit / use declared default</option>
-                <option v-for="(value, index) in field.schema['enum']" :key="index" :value="value">{{ value }}</option>
-              </select>
-              <input v-else-if="field.schema?.['type'] === 'boolean'" v-model="draft.config[field.name]" type="checkbox">
-              <input v-else-if="field.schema?.['type'] === 'number' || field.schema?.['type'] === 'integer'"
+              <input v-if="field.schema?.['type'] === 'number' || field.schema?.['type'] === 'integer'"
                 v-model.number="draft.config[field.name]" type="number" :step="field.schema['type'] === 'integer' ? 1 : 'any'">
               <input v-else v-model="draft.config[field.name]" :placeholder="String(field.schema?.['default'] ?? '')">
             </label>
@@ -541,6 +656,9 @@ watch(() => props.connected, (connected) => {
 .settings-default { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; }
 .settings-group { display: grid; gap: 16px; }
 .settings-help { margin: 0; padding: 12px 14px; color: var(--muted); background: var(--surface-soft); border-radius: 6px; font-size: 12px; }
+.settings-tabs { justify-content: flex-start; }
+.settings-tabs [aria-selected="true"] { color: var(--accent); outline: 1px solid var(--border-strong); }
+.settings-context { max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: var(--surface-soft); font-size: 12px; }
 fieldset { display: grid; gap: 14px; padding: 0; border: 0; min-width: 0; }
 .settings-model-item { border-bottom: 1px solid var(--border); }
 .settings-model { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding: 14px 0; }
@@ -564,9 +682,12 @@ fieldset { display: grid; gap: 14px; padding: 0; border: 0; min-width: 0; }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 fieldset:disabled { opacity: .6; }
 .settings-content :deep(label) { min-width: 0; line-height: 1.5; }
-.settings-checkbox { display: flex; flex-direction: row; align-items: center; }
-.settings-checkbox input { width: auto; }
 input[type='checkbox'] { width: auto; align-self: start; }
+.settings-checkbox { display: flex; flex-direction: row; align-items: flex-start; gap: 8px; cursor: pointer; }
+.settings-checkbox > span { min-width: 0; overflow-wrap: anywhere; }
+.settings-checkbox-copy { display: grid; gap: 4px; }
+.settings-checkbox-copy small { color: var(--muted); font-size: 11px; }
+.settings-checkbox input { width: auto; flex: none; align-self: start; margin: 3px 0 0; }
 .settings-warning { border-left: 3px solid var(--accent); padding-left: 10px; }
 pre { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 textarea { width: 100%; font-family: var(--mono); }
@@ -578,7 +699,7 @@ summary { color: var(--muted); cursor: pointer; font-size: 12px; }
   .settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .settings-nav { padding: 12px 18px; border-right: 0; border-bottom: 1px solid var(--border); }
   .settings-nav-heading, .settings-nav-list { display: none; }
-  .settings-mobile-select { display: flex; }
+  .settings-mobile-select { display: block; }
   .settings-content { padding: 20px 18px; }
   .settings-footer { padding: 12px 18px; }
   .settings-default, .settings-model { grid-template-columns: minmax(0, 1fr); }

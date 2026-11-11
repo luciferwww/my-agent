@@ -44,20 +44,16 @@ import type {
 import { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
 import { RuntimeCompositionManager } from './runtime-composition-manager.js';
 import { SettingsManager, settingsFailure } from './settings-manager.js';
+import { AgentPolicyState, type AppliedAgentState } from './agent-policy-state.js';
 import {
   RuntimeUnitCatalog,
   createLoadedRuntimeUnit,
   type LoadedRuntimeUnit,
 } from './runtime-unit.js';
 import {
-  buildGeneralPurposeProfile,
-  loadConfiguredAgentProfiles,
   resolveSubagentCapabilities,
-  resolveSubagentTools,
 } from '../core/subagent/index.js';
-import type { SubagentProfile } from '../core/subagent/types.js';
 import { SubagentExecutor } from '../core/subagent/SubagentExecutor.js';
-import { loadContextFilesFromDir } from '../core/agent-context/index.js';
 import { createApplicationToolPolicy } from './tool-approval-policy.js';
 import { createBuiltinLlmProviderUnit } from '../builtins/providers/builtin/index.js';
 import { createMemoryToolsContribution } from '../builtins/tools/memory/index.js';
@@ -101,7 +97,7 @@ export interface RuntimeApplicationKernelInput {
   readonly settings: SettingsCapability;
   readonly resources: RuntimeResourceSet;
   readonly state: RuntimeLifecycleState;
-  readonly subagentProfiles: ReadonlyMap<string, SubagentProfile>;
+  readonly captureAgentState: () => AppliedAgentState;
   readonly activeParentTurns: Map<string, ActiveParentTurn>;
   readonly routeContextByTurn: Map<string, MessageRouteContext>;
   readonly onEvent?: RuntimeAppOptions['onEvent'];
@@ -346,10 +342,7 @@ export async function buildRuntimeHandle(
   try {
     const activeParentTurns = new Map<string, ActiveParentTurn>();
     const routeContextByTurn = new Map<string, MessageRouteContext>();
-    const generalPurpose = buildGeneralPurposeProfile(options.agentHome);
-    const subagentProfiles = new Map<string, SubagentProfile>([
-      [generalPurpose.id, generalPurpose],
-    ]);
+    let agentPolicies!: AgentPolicyState;
     const assembly = assembleLoadedRuntimeUnits({
       options,
       acquiredUnits: bootstrap.acquiredUnits,
@@ -357,7 +350,7 @@ export async function buildRuntimeHandle(
       dependencies: bootstrap.dependencies,
       activeParentTurns,
       routeContextByTurn,
-      subagentProfiles,
+      captureAgentState: () => agentPolicies.capture(),
       onAgentEvent: fanoutAgentEvent,
     });
     compositionManager = new RuntimeCompositionManager(
@@ -377,12 +370,14 @@ export async function buildRuntimeHandle(
     const registeredToolNames = new Set(
       registrySnapshot.tools.definitions.map((tool) => tool.name),
     );
-    for (const profile of loadConfiguredAgentProfiles(
-      bootstrap.resources.appConfig.agents.list,
-      options.agentHome,
-      registeredToolNames,
-    )) {
-      subagentProfiles.set(profile.id, profile);
+    agentPolicies = new AgentPolicyState(
+      bootstrap.resources.appConfig,
+      bootstrap.resources.agentDefinitions,
+      () => kernel ? new Set(kernel.application.getToolNames()) : registeredToolNames,
+      { agentId: options.agentId, envOverrides: options.envOverrides, cliOverrides: options.cliOverrides },
+    );
+    for (const diagnostic of agentPolicies.diagnostics()) {
+      if (diagnostic.code === 'definition_unavailable') log.warn('Agent override diagnostic', diagnostic);
     }
 
     const startupContext = options.startupContext;
@@ -391,6 +386,7 @@ export async function buildRuntimeHandle(
       settingsManager = new SettingsManager({
         agentHome: options.agentHome,
         document: editingDocument,
+        agentPolicies,
         environment: startupContext.environment,
         extensionMetadata: bootstrap.extensionMetadata,
         snapshotAccess: coordinator.createSnapshotAccess(),
@@ -408,7 +404,7 @@ export async function buildRuntimeHandle(
       settings,
       resources: bootstrap.resources,
       state: bootstrap.state,
-      subagentProfiles,
+      captureAgentState: () => agentPolicies.capture(),
       activeParentTurns,
       routeContextByTurn,
       onEvent: options.onEvent,
@@ -699,7 +695,7 @@ function assembleLoadedRuntimeUnits(params: {
   readonly dependencies: RuntimeDependencies;
   readonly activeParentTurns: Map<string, ActiveParentTurn>;
   readonly routeContextByTurn: Map<string, MessageRouteContext>;
-  readonly subagentProfiles: Map<string, SubagentProfile>;
+  readonly captureAgentState: () => AppliedAgentState;
   readonly onAgentEvent: (event: AgentEvent) => Promise<void>;
 }): readonly LoadedRuntimeUnit[] {
   const { options, resources, dependencies } = params;
@@ -724,20 +720,13 @@ function assembleLoadedRuntimeUnits(params: {
   const executor = new SubagentExecutor({
     agentRunner: resources.agentRunner,
     systemPromptBuilder: resources.systemPromptBuilder,
-    loadContextFilesFromDir: (absDir) => loadContextFilesFromDir(absDir, {
-      maxFileChars: resources.resolvedConfig.context.maxFileChars,
-      maxTotalChars: resources.resolvedConfig.context.maxTotalChars,
-    }),
+    getContextFiles: id => resources.agentDefinitions.definitions
+      .find(definition => definition.id === id)?.contextFiles ?? [],
     agentHome: options.agentHome,
     resolveToolPolicy: (profile, canSpawn) => {
-      const tools = resolveSubagentTools(
-        profile,
-        resources.resolvedConfig.tools.allow ?? [],
-        resources.resolvedConfig.tools.deny ?? [],
-      );
       return createApplicationToolPolicy({
-        allow: tools.allow,
-        deny: canSpawn ? tools.deny : [...tools.deny, 'task'],
+        allow: [...profile.tools?.allow ?? []],
+        deny: [...profile.tools?.deny ?? [], ...canSpawn ? [] : ['task']],
       }, options.agentHome);
     },
   });
@@ -753,7 +742,7 @@ function assembleLoadedRuntimeUnits(params: {
   loadedUnits.push(createLoadedRuntimeUnit({
     registration: createTaskToolContribution({
       delegationPort,
-      profileRegistry: params.subagentProfiles,
+      captureProfiles: params.captureAgentState,
       getCapabilities: (depth) => resolveSubagentCapabilities(depth, maxDepth),
       maxDepth,
     }),

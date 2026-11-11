@@ -2,8 +2,10 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-11-04 (ancestor retention, recursive Parents and event routing)
+> Verified: 2026-11-11 (Agent discovery, policy capture and Settings); ancestor retention, recursive Parents and event routing verified 2026-11-04
 > Authority: Stable base Subagent contract
+> Implemented amendment: [Agent Management](agent-management.md) owns profile
+> discovery, startup Context snapshots and subsequent-Turn Tool-policy updates.
 
 ## Scope
 
@@ -23,15 +25,36 @@ interface SubagentProfile {
 }
 ```
 
-Configured Child profile identity and role come from `agents.list[]`; Runtime
-projects the supported configured-Agent fields into the internal
-`SubagentProfile`. An omitted public `model` becomes internal `"inherit"`.
-Configured Agent Context belongs under `<agentHome>/agents/<agentId>/`. Each
-Child context file replaces the corresponding Parent file; missing Child files
-fall back to Parent. A missing Child directory behaves as an
-anonymous/general-purpose Child using Parent context.
+Named Child profiles come from valid Home definitions plus sparse `agents.list[]`
+overrides, not from configuration-only registration. Description defaults to MD
+metadata. Model selection uses concrete config, explicit config `"inherit"`,
+MD recommendation, then Parent canonical Model. The permanent built-in
+`general-purpose` has no definition or named override and always inherits Model.
+Configured Agent Context belongs under `<agentHome>/agents/<agentId>/`. Runtime
+seeds that Home directory once when absent, then discovers immediate definitions
+and snapshots their validated metadata and supported MD files at startup.
+`IDENTITY.md` requires YAML frontmatter containing a nonblank description and
+an optional native model recommendation. Machine metadata is excluded from
+Child instructions; Context budgets apply to the body after parsing.
+Child preparation uses the immutable startup bodies, never per-task disk reads.
+Each Child context file replaces the corresponding Parent file; missing Child
+files fall back to Parent. Missing/invalid definitions have startup diagnostics
+and no Child-specific Context. Root Context reload does not refresh named files;
+manual named-file changes require restart.
 
-Unknown LLM-supplied profile names fall back to `general-purpose` with a warning. Invalid configured profiles fail configuration/startup validation.
+Parent discovery and task lookup consume one current applied registry. Unknown,
+missing or invalid specialist definitions fall back to `general-purpose` with a
+warning. Explicitly disabled IDs fail even without a valid definition; unavailable
+Models fail resolution rather than falling back. Recognized invalid override
+values fail startup validation; unknown Agent fields are ignored.
+
+Each task selects current shared Tool defaults plus only its own Agent override:
+missing allow inherits shared allow, explicit allow (including `[]`) replaces it,
+and shared/local deny combine. Recursive delegation does not inherit the named
+Parent's extra denies or its earlier Tool-policy snapshot. Root admission captures
+its own current policy; already admitted Root/Child Turns retain their selections.
+Settings persistence precedes synchronous publication, and unrelated startup-only
+fields are never applied by a Tool-policy save.
 
 Depth and capability derive from explicit Parent/Child execution context rather than Session identity. `agents.maxSubagentDepth` is global, while effective `task` Tool policy controls whether an individual Agent can delegate. Every Child Turn independently applies global `agents.maxLlmCallsPerTurn`; profiles cannot override Runner policy and do not inherit Parent remaining capacity. Each accepted Child receives a fresh canonical `sessionId` and a root-only transient Transcript with caller provenance. It has no Session Store entry, never appears in get/list, and is removed at terminal cleanup or subsequent startup recovery. Runtime removes `task` beyond the allowed depth.
 

@@ -8,3 +8,7 @@ export {
   validateAgentContextConfig,
 } from './config.js';
 export type { AgentContextConfig } from './config.js';
+export { loadAgentDefinitions, isNamedAgentId } from './agent-definitions.js';
+export type {
+  AgentDefinition, AgentDefinitionDiagnostic, AgentDefinitionSnapshot,
+} from './agent-definitions.js';

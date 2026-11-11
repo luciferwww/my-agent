@@ -76,9 +76,6 @@ import type { ActiveParentTurn } from './subagent-orchestration.js';
 import {
   collectAvailableSubagents,
 } from '../core/subagent/index.js';
-import type {
-  SubagentProfile,
-} from '../core/subagent/types.js';
 import type { AvailableSubagentEntry } from '../core/subagent/index.js';
 import type {
   MessageRouteContext,
@@ -232,12 +229,9 @@ export class RuntimeApp {
   private fanoutAgentEvent!: (event: AgentEvent) => void | Promise<void>;
 
   /**
-    * Profile registry including the built-in `general-purpose` entry. Built
-    * by the Runtime Builder before kernel construction; not part of
-   * RuntimeResourceSet because it is consumed only by RuntimeApp itself
-  * (the public surface is the available-profile projection).
+   * Capture current Agent policies once per Root admission or discovery query.
    */
-  private subagentProfiles!: ReadonlyMap<string, SubagentProfile>;
+  private readonly captureAgentState: RuntimeApplicationKernelInput['captureAgentState'];
 
   private constructor(
     private readonly resources: RuntimeResourceSet,
@@ -245,12 +239,12 @@ export class RuntimeApp {
     private readonly channelCompletionObserver: ChannelCompletionObserver,
     private readonly snapshotAccess: RuntimeSnapshotAccess,
     readonly settings: RuntimeApplicationKernelInput['settings'],
-    subagentProfiles: ReadonlyMap<string, SubagentProfile>,
+    captureAgentState: RuntimeApplicationKernelInput['captureAgentState'],
     activeParentTurns: Map<string, ActiveParentTurn>,
     routeContextByTurn: Map<string, MessageRouteContext>,
     onEvent?: RuntimeAppOptions['onEvent'],
   ) {
-    this.subagentProfiles = subagentProfiles;
+    this.captureAgentState = captureAgentState;
     this.activeParentTurns = activeParentTurns;
     this.routeContextByTurn = routeContextByTurn;
     this.onEvent = onEvent;
@@ -276,7 +270,7 @@ export class RuntimeApp {
       input.channelCompletionObserver,
       input.snapshotAccess,
       input.settings,
-      input.subagentProfiles,
+      input.captureAgentState,
       input.activeParentTurns,
       input.routeContextByTurn,
       input.onEvent,
@@ -1150,11 +1144,11 @@ export class RuntimeApp {
   }
 
   /**
-   * Snapshot the projection of `subagentProfiles` used for the
+   * Snapshot the current profile projection used for the
    * `<available-subagents>` system prompt section.
    */
   getAvailableSubagents(): AvailableSubagentEntry[] {
-    return collectAvailableSubagents(this.subagentProfiles);
+    return collectAvailableSubagents(this.captureAgentState().profiles);
   }
 
   async reloadContextFiles(): Promise<ContextFile[]> {
@@ -1382,6 +1376,8 @@ export class RuntimeApp {
     generationPin: RuntimeGenerationPin,
     tree: ActiveRootTree,
   ): Promise<RunTurnResult> {
+    const agentState = this.captureAgentState();
+    const toolPolicy = agentState.rootToolPolicy;
     // Defensive stale cleanup for unexpected paths that bypassed normal finally cleanup.
     const stale = this.activeAborts.get(params.sessionId);
     if (stale) {
@@ -1406,7 +1402,7 @@ export class RuntimeApp {
 
       const snapshot = generationPin.snapshot;
       const visibleToolDefinitions = snapshot.tools.visibleDefinitions(
-        this.resources.toolPolicy,
+        toolPolicy,
       );
 
       const resolvedModel = new ModelResolver(snapshot.providers).resolve({
@@ -1438,7 +1434,7 @@ export class RuntimeApp {
           agentHome: this.resources.agentHome,
           // Tool policy is the public delegation enablement control.
           availableSubagents: visibleToolDefinitions.some(({ name }) => name === 'task')
-            ? this.getAvailableSubagents()
+            ? collectAvailableSubagents(agentState.profiles)
             : undefined,
         }),
       );
@@ -1482,7 +1478,7 @@ export class RuntimeApp {
         turnId: params.turnId,
         toolProjection: snapshot.tools,
         hookProjection: snapshot.hooks,
-        toolPolicy: this.resources.toolPolicy,
+        toolPolicy,
         getSessionPermissionMode: () =>
           this.sessionPermissions.get(params.sessionId).mode,
         approvalCapability,

@@ -101,12 +101,12 @@
       input, select, textarea, button {
         font: inherit;
       }
-      input, select, textarea {
+      input, select, textarea, .tool-select-trigger {
         width: 100%; padding: 11px 12px; color: var(--text); background: var(--surface);
         border: 1px solid #d3d9d5; border-radius: 4px; outline: none;
         transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
       }
-      input:focus, select:focus, textarea:focus {
+      input:focus, select:focus, textarea:focus, .tool-select-trigger:focus-visible {
         border-color: var(--accent); box-shadow: 0 0 0 3px rgba(232, 101, 77, 0.22);
       }
       .model-picker {
@@ -1090,15 +1090,15 @@ html[data-theme='botanical'] .composer textarea {
       .eyebrow, .model-provider-heading, .tool-card-section-label {
         color: #6265ba;
       }
-      input, select, textarea {
+      input, select, textarea, .tool-select-trigger {
         padding: 11px 13px; background: rgba(248, 249, 253, 0.94);
         border-color: var(--border); border-radius: 11px;
         transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
       }
-      input:hover, select:hover, textarea:hover {
+      input:hover, select:hover, textarea:hover, .tool-select-trigger:hover:not(:disabled) {
         border-color: #c8cce0; background: #fff;
       }
-      input:focus, select:focus, textarea:focus {
+      input:focus, select:focus, textarea:focus, .tool-select-trigger:focus-visible {
         border-color: rgba(91, 92, 240, 0.72);
         background: #fff;
         box-shadow: 0 0 0 4px rgba(91, 92, 240, 0.12);

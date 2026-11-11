@@ -16,7 +16,8 @@ export type {
 
 export { resolveSubagentCapabilities } from './capabilities.js';
 
-export { loadConfiguredAgentProfiles, buildGeneralPurposeProfile } from './config-loader.js';
+export { loadAgentProfiles, buildGeneralPurposeProfile } from './config-loader.js';
+export type { AgentProfileOverride } from './config-loader.js';
 
 export { resolveSubagentTools } from './profile-tools.js';
 export type { ResolvedSubagentTools } from './profile-tools.js';

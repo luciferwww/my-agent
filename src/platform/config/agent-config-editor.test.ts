@@ -46,6 +46,88 @@ describe('Agent Home section editing', () => {
     return JSON.parse(await readFile(join(agentHome, 'config.json'), 'utf8'));
   }
 
+  it('saves only named Agent controls while preserving other fields and list ordering', async () => {
+    const document: AgentConfigDocument = {
+      llm: { builtin: { ...settings.builtin, apiKey: '${UNCHANGED_KEY}' } },
+      agents: {
+        steeringEnabled: true, maxLlmCallsPerTurn: 7,
+        defaults: { memory: { enabled: false }, tools: { allow: ['read_file'] } },
+        list: [
+          { id: 'a', tools: { deny: ['exec'] } },
+          { id: 'reviewer', description: 'Keep', model: 'inherit', memory: { enabled: true }, tools: { allow: ['read_file'] } },
+          { id: 'z', enabled: false },
+        ],
+      },
+      extensions: { entries: { example: { enabled: false } } },
+    };
+    await write(document);
+    const saved = await saveAgentConfigSection(agentHome, {
+      kind: 'agent', agentId: 'reviewer', settings: { enabled: false, tools: { allow: [], deny: ['exec'] } },
+    });
+    expect(await read()).toEqual({
+      ...document,
+      agents: { ...document.agents, list: [
+        document.agents?.list?.[0],
+        { ...document.agents?.list?.[1], enabled: false, tools: { allow: [], deny: ['exec'] } },
+        document.agents?.list?.[2],
+      ] },
+    });
+    const restored = await restoreAgentConfigSection(agentHome, saved.previous);
+    expect(restored).toEqual(document);
+  });
+
+  it('edits shared tools without replacing other defaults or named overrides', async () => {
+    const document: AgentConfigDocument = { agents: {
+      maxSubagentDepth: 2,
+      defaults: { memory: { enabled: false }, context: { maxFileChars: 2000 }, tools: { deny: ['exec'] } },
+      list: [{ id: 'reviewer', enabled: false }],
+    } };
+    await write(document);
+    const saved = await saveAgentConfigSection(agentHome, {
+      kind: 'agent-defaults', settings: { tools: { allow: [], deny: ['write_file'] } },
+    });
+    expect(saved.document).toEqual({
+      agents: { ...document.agents, defaults: { ...document.agents?.defaults, tools: { allow: [], deny: ['write_file'] } } },
+    });
+    expect(await restoreAgentConfigSection(agentHome, saved.previous)).toEqual(document);
+  });
+
+  it('preserves unrecognized saved fields and removes only admitted overrides', () => {
+    const document = { agents: { list: [{
+      id: 'reviewer', description: 'Keep', extra: { retain: true },
+      tools: { allow: ['read_file'], deny: ['exec'], extra: true },
+    }] } };
+    const edited = editAgentConfigSection(document, { kind: 'agent', agentId: 'reviewer', settings: {} });
+    expect(edited.document).toEqual({ agents: { list: [{
+      id: 'reviewer', description: 'Keep', extra: { retain: true }, tools: { extra: true },
+    }] } });
+  });
+
+  it('does not materialize defaults or rewrite the file on an unchanged Agent section', async () => {
+    for (const document of [{}, { agents: { list: [{ id: 'reviewer', tools: {} }] } }]) {
+      await write(document);
+      const before = await readFile(join(agentHome, 'config.json'), 'utf8');
+      await saveAgentConfigSection(agentHome, {
+        kind: 'agent', agentId: 'reviewer',
+        settings: 'agents' in document ? { tools: {} } : {},
+      });
+      expect(await readFile(join(agentHome, 'config.json'), 'utf8')).toBe(before);
+    }
+  });
+
+  it.each([
+    { kind: 'agent' as const, agentId: 'general-purpose', settings: {} },
+    { kind: 'agent' as const, agentId: 'reviewer', settings: { description: 'Not editable' } },
+    { kind: 'agent' as const, agentId: 'reviewer', settings: { model: 'inherit' } },
+    { kind: 'agent' as const, agentId: 'reviewer', settings: { enabled: 0 } },
+    { kind: 'agent' as const, agentId: 'reviewer', settings: { tools: { allow: [1] } } },
+    { kind: 'agent-defaults' as const, settings: { enabled: false } },
+  ])('does not persist unsupported or invalid Agent controls %#', async edit => {
+    await write({});
+    await expect(saveAgentConfigSection(agentHome, edit)).rejects.toBeInstanceOf(ConfigEditError);
+    expect(await read()).toEqual({});
+  });
+
   it('reads the current file, preserves other sections and keeps an unresolved raw credential', async () => {
     const document: AgentConfigDocument = {
       llm: { builtin: { baseURL: 'https://old.example', apiKey: '${SETTINGS_UNAVAILABLE_KEY}', models: [model] } },

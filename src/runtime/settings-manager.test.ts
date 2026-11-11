@@ -14,7 +14,7 @@ import { ModelInvocationError, type ModelInvocationPort, type ModelInvocationRes
 import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
 import type { RuntimeUnitInstance } from './runtime-unit.js';
 import { CompositionCoordinator } from './composition-coordinator.js';
-import { finalizeRegistrySnapshot } from './registry-builder.js';
+import { finalizeRegistrySnapshot, resolveStagedRegistryCandidate, stageRegistryUnit } from './registry-builder.js';
 
 const model = { modelId: 'one', protocol: 'openai-responses' };
 const settings = { builtin: { baseURL: 'https://updated.example/v1', models: [model] } };
@@ -180,6 +180,36 @@ describe('SettingsManager', () => {
     expect(f.save).not.toHaveBeenCalled();
     expect(await f.manager.execute({ requestId: 'unknown', action: 'unknown', input: {} }))
       .toMatchObject({ ok: false, error: { code: 'unsupported_action' } });
+  });
+
+  it('loads safe Tool names and descriptions from the current registry without filtering denied Tools', async () => {
+    document = { ...document, agents: { defaults: { tools: { deny: ['exec'] } } } };
+    await write(document);
+    const coordinator = new CompositionCoordinator();
+    const candidate = resolveStagedRegistryCandidate({
+      providers: [],
+      units: [stageRegistryUnit({
+        id: 'catalog-tools', source: 'builtin', orderKey: 'catalog-tools',
+        register(api) {
+          for (const name of ['read_file', 'exec']) api.registerTool({
+            name, description: `${name} description`,
+            inputSchema: { type: 'object', properties: { privateSchemaField: { type: 'string' } } },
+            execute: async () => ({ outcome: 'success', content: '' }),
+          });
+        },
+      })],
+    });
+    coordinator.commitPublish(finalizeRegistrySnapshot({
+      candidate, acceptedUnits: candidate.units, channelBindings: [], generation: 1,
+    }));
+    const f = fixture({ snapshotAccess: coordinator.createSnapshotAccess() });
+    expect(record((await f.load()).output)['toolCatalog']).toEqual([
+      { name: 'read_file', description: 'read_file description' },
+      { name: 'exec', description: 'exec description' },
+    ]);
+    expect(record((await fixture().load()).output)['toolCatalog']).toEqual([]);
+    expect(f.apply).not.toHaveBeenCalled();
+    expect(f.save).not.toHaveBeenCalled();
   });
 
   it('treats an absent Extension entry as enabled and compares restart state against that default', async () => {

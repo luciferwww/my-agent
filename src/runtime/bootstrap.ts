@@ -14,9 +14,8 @@ import {
 import type { LogAdapter } from '../platform/logger/index.js';
 import type { MemoryManager } from '../core/memory/index.js';
 import { UserPromptBuilder } from '../core/prompt/index.js';
-import { ensureAgentContext, loadContextFiles } from '../core/agent-context/index.js';
+import { ensureAgentContext, loadAgentDefinitions, loadContextFiles } from '../core/agent-context/index.js';
 import { classifyRuntimeError } from './errors.js';
-import { createApplicationToolPolicy } from './tool-approval-policy.js';
 import type { RuntimeAppOptions, RuntimeBootstrapResult, RuntimeDependencies, RuntimeEvent } from './types.js';
 import type { RuntimeDeadlineDriver } from './runtime-deadline.js';
 import { DEFAULT_MAX_SUBAGENT_DEPTH } from '../core/subagent/index.js';
@@ -101,6 +100,14 @@ export async function bootstrapRuntime(
 
     await ensureAgentContext(options.agentHome);
 
+    const agentDefinitions = await loadAgentDefinitions(options.agentHome, {
+      maxFileChars: resolvedConfig.context.maxFileChars,
+      maxTotalChars: resolvedConfig.context.maxTotalChars,
+    });
+    for (const diagnostic of agentDefinitions.diagnostics) {
+      log.warn('Agent definition diagnostic', { ...diagnostic });
+    }
+
     const contextFiles = await loadContextFiles(options.agentHome, {
       mode: 'full',
       maxFileChars: resolvedConfig.context.maxFileChars,
@@ -142,14 +149,6 @@ export async function bootstrapRuntime(
       });
     }
 
-    const rootTools = appConfig.agents.maxSubagentDepth === 0
-      ? {
-          allow: resolvedConfig.tools.allow,
-          deny: [...(resolvedConfig.tools.deny ?? []), 'task'],
-        }
-      : resolvedConfig.tools;
-    const toolPolicy = createApplicationToolPolicy(rootTools, options.agentHome);
-
     const agentRunner = deps.createAgentRunner({
       sessionManager,
       onEvent: options.onAgentEvent,
@@ -181,11 +180,11 @@ export async function bootstrapRuntime(
         resolvedConfig,
         agentHome: options.agentHome,
         sessionManager,
-        toolPolicy,
         memoryManager,
         systemPromptBuilder,
         userPromptBuilder,
         contextFiles,
+        agentDefinitions,
         agentRunner,
         managedProcessLifecycle: deps.managedProcessLifecycle,
       },

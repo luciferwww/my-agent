@@ -115,6 +115,63 @@ export interface SettingsSection {
   fields: SettingsField[];
   credentials: Record<string, CredentialMetadata>;
   diagnostics: unknown[];
+  agent?: AgentSettingsView;
+}
+
+export interface AgentSettingsView {
+  builtIn: boolean;
+  enabled: boolean;
+  description?: string;
+  model?: 'inherit' | { providerId: string; modelId: string };
+  modelAvailable?: boolean;
+  definitionAvailable: boolean;
+  sharedAllow: string[];
+  sharedDeny: string[];
+  sharedDeniedTools: string[];
+  contextFiles: { path: string; content: string }[];
+  instructionFiles: { path: string; content: string }[];
+  missingFiles: string[];
+  metadata: Record<string, unknown>;
+}
+
+export function agentPolicySettings(
+  section: SettingsSection,
+  draft: { enabled: boolean; allowMode: 'inherit' | 'explicit'; allow: string; deny: string },
+): Record<string, unknown> {
+  if (!section.agent) throw new Error('Expected Agent settings.');
+  const saved = section.settings['tools'] === undefined ? {} : object(section.settings['tools']);
+  const tools = { ...saved };
+  if (draft.allowMode === 'inherit') delete tools['allow'];
+  else tools['allow'] = toolPatterns(draft.allow);
+  const deny = toolPatterns(draft.deny);
+  if (JSON.stringify(deny) !== JSON.stringify(saved['deny'] ?? [])) {
+    if (deny.length) tools['deny'] = deny;
+    else delete tools['deny'];
+  }
+  return {
+    ...(!section.agent.builtIn && !draft.enabled ? { enabled: false } : {}),
+    ...(Object.keys(tools).length ? { tools } : {}),
+  };
+}
+
+function toolPatterns(value: string): string[] {
+  return value.split(/\r?\n/u).filter(Boolean);
+}
+
+export interface SettingsTool {
+  name: string;
+  description: string;
+}
+
+export function settingsTools(value: unknown): SettingsTool[] {
+  if (!Array.isArray(value)) throw new Error('Malformed Tool Catalog.');
+  return value.map(value => {
+    const tool = object(value);
+    if (typeof tool['name'] !== 'string' || typeof tool['description'] !== 'string') {
+      throw new Error('Malformed Tool Catalog entry.');
+    }
+    return { name: tool['name'], description: tool['description'] };
+  });
 }
 
 export interface SettingsProvider {
@@ -191,6 +248,56 @@ export function parseSection(value: unknown): SettingsSection {
     ...(typeof section['applicationStatus'] === 'string' ? { applicationStatus: section['applicationStatus'] } : {}),
     fields, credentials,
     diagnostics: Array.isArray(section['diagnostics']) ? section['diagnostics'] : [],
+    ...(section['kind'] === 'agent' || section['kind'] === 'agent-defaults'
+      ? { agent: parseAgentView(section) } : {}),
+  };
+}
+
+function parseAgentView(section: Record<string, unknown>): AgentSettingsView {
+  const builtIn = section['kind'] === 'agent-defaults';
+  if (typeof section['enabled'] !== 'boolean'
+    || (!builtIn && typeof section['definitionAvailable'] !== 'boolean')) {
+    throw new Error('Malformed Agent settings.');
+  }
+  const strings = (value: unknown): string[] => {
+    if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) throw new Error('Malformed Agent Tool or file list.');
+    return value;
+  };
+  const files = (value: unknown) => {
+    if (!Array.isArray(value)) throw new Error('Malformed Agent Context.');
+    return value.map(value => {
+      const file = object(value);
+      if (typeof file['path'] !== 'string' || typeof file['content'] !== 'string') throw new Error('Malformed Agent Context file.');
+      return { path: file['path'], content: file['content'] };
+    });
+  };
+  const reference = section['model'] === undefined || section['model'] === 'inherit'
+    ? section['model'] : object(section['model']);
+  if (reference !== undefined && reference !== 'inherit'
+    && (typeof reference['providerId'] !== 'string' || typeof reference['modelId'] !== 'string')) {
+    throw new Error('Malformed Agent model reference.');
+  }
+  const model = reference === undefined || reference === 'inherit' ? reference
+    : { providerId: String(reference['providerId']), modelId: String(reference['modelId']) };
+  const settings = object(section['settings']);
+  if (settings['tools'] !== undefined) {
+    const tools = object(settings['tools']);
+    if (tools['allow'] !== undefined) strings(tools['allow']);
+    if (tools['deny'] !== undefined) strings(tools['deny']);
+  }
+  return {
+    builtIn, enabled: section['enabled'],
+    definitionAvailable: builtIn || section['definitionAvailable'] === true,
+    description: typeof section['description'] === 'string' ? section['description'] : undefined,
+    model,
+    modelAvailable: typeof section['modelAvailable'] === 'boolean' ? section['modelAvailable'] : undefined,
+    sharedAllow: builtIn ? [] : strings(section['sharedAllow']),
+    sharedDeny: builtIn ? [] : strings(section['sharedDeny']),
+    sharedDeniedTools: builtIn ? [] : strings(section['sharedDeniedTools']),
+    contextFiles: builtIn ? [] : files(section['contextFiles']),
+    instructionFiles: builtIn ? [] : files(section['instructionFiles']),
+    missingFiles: builtIn ? [] : strings(section['missingFiles']),
+    metadata: builtIn ? {} : object(section['metadata']),
   };
 }
 

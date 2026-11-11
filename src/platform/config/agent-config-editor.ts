@@ -1,4 +1,7 @@
-import type { AgentConfigDocument } from './types.js';
+import type { AgentConfigDocument, AgentEntry, ToolsConfig } from './types.js';
+import { isDeepStrictEqual } from 'node:util';
+import { isNamedAgentId } from '../../core/agent-context/index.js';
+import { validateToolPolicyConfig, ToolPolicyConfigValidationError } from '../../core/tools/config.js';
 import { readAgentConfigDocument, validateAgentConfigDocument, validateLlm } from './agent-config-loader.js';
 import { parseCredentialEnvironmentReference } from './credential-materialization.js';
 import { replaceAgentConfigFile } from './file-publication.js';
@@ -10,6 +13,7 @@ export type CredentialChange =
   | { readonly operation: 'clear' };
 
 export type ConfigSectionEdit =
+  | AgentPolicyEdit
   | {
       readonly kind: 'llm';
       readonly settings: unknown;
@@ -23,7 +27,12 @@ export type ConfigSectionEdit =
       readonly credentials?: unknown;
     };
 
+export type AgentPolicyEdit =
+  | { readonly kind: 'agent'; readonly agentId: string; readonly settings: unknown }
+  | { readonly kind: 'agent-defaults'; readonly settings: unknown };
+
 export type ConfigSectionPreimage =
+  | { readonly kind: 'agent-policy'; readonly edit: AgentPolicyEdit }
   | { readonly kind: 'llm'; readonly value: AgentConfigDocument['llm'] }
   | { readonly kind: 'extension'; readonly extensionId: string; readonly value: unknown; readonly present: boolean };
 
@@ -39,6 +48,9 @@ export function editAgentConfigSection(
   edit: ConfigSectionEdit,
 ): { document: AgentConfigDocument; previous: ConfigSectionPreimage } {
   const settings = object(edit.settings, '/settings');
+  if (edit.kind === 'agent' || edit.kind === 'agent-defaults') {
+    return editAgentPolicy(document, edit, settings);
+  }
   if (edit.kind === 'llm') {
     onlyKeys(settings, ['builtin', 'defaultModel'], '/settings');
     const previous: ConfigSectionPreimage = { kind: 'llm', value: document.llm };
@@ -132,7 +144,9 @@ export async function saveAgentConfigSection(
   const current = await readAgentConfigDocument(agentHome);
   const committed = editAgentConfigSection(current, edit);
   beforeCommit?.(committed.document);
-  await replaceAgentConfigFile(agentHome, `${JSON.stringify(committed.document, null, 2)}\n`);
+  if ((edit.kind !== 'agent' && edit.kind !== 'agent-defaults') || !isDeepStrictEqual(committed.document, current)) {
+    await replaceAgentConfigFile(agentHome, `${JSON.stringify(committed.document, null, 2)}\n`);
+  }
   return committed;
 }
 
@@ -142,7 +156,9 @@ export async function restoreAgentConfigSection(
 ): Promise<AgentConfigDocument> {
   const current = await readAgentConfigDocument(agentHome);
   let restored: AgentConfigDocument;
-  if (previous.kind === 'llm') {
+  if (previous.kind === 'agent-policy') {
+    restored = editAgentConfigSection(current, previous.edit).document;
+  } else if (previous.kind === 'llm') {
     const document = { ...current };
     if (previous.value === undefined) delete document.llm;
     else document.llm = previous.value;
@@ -155,6 +171,81 @@ export async function restoreAgentConfigSection(
   }
   await replaceAgentConfigFile(agentHome, `${JSON.stringify(restored, null, 2)}\n`);
   return restored;
+}
+
+function editAgentPolicy(
+  document: AgentConfigDocument,
+  edit: AgentPolicyEdit,
+  settings: Record<string, unknown>,
+): { document: AgentConfigDocument; previous: ConfigSectionPreimage } {
+  onlyKeys(settings, edit.kind === 'agent' ? ['enabled', 'tools'] : ['tools'], '/settings');
+  if (settings['enabled'] !== undefined && typeof settings['enabled'] !== 'boolean') {
+    throw new ConfigEditError('/settings/enabled');
+  }
+  const incomingTools = settings['tools'];
+  if (incomingTools !== undefined) {
+    try {
+      validateToolPolicyConfig(incomingTools);
+    } catch (error) {
+      if (!(error instanceof ToolPolicyConfigValidationError)) throw error;
+      throw new ConfigEditError(`/settings/tools${error.fieldPath ? `/${error.fieldPath}` : ''}`);
+    }
+  }
+  const tools: ToolsConfig | undefined = incomingTools === undefined ? undefined : structuredClone(incomingTools);
+  if (edit.kind === 'agent' && !isNamedAgentId(edit.agentId)) throw new ConfigEditError('/sectionId');
+  const agents = document.agents;
+  const savedSettings = getAgentPolicySettings(document, edit.kind === 'agent' ? edit.agentId : undefined);
+  const previousEdit: AgentPolicyEdit = { ...edit, settings: savedSettings };
+  if (isDeepStrictEqual(savedSettings, settings)) {
+    return { document, previous: { kind: 'agent-policy', edit: previousEdit } };
+  }
+  let candidate: AgentConfigDocument;
+  if (edit.kind === 'agent-defaults') {
+    const defaults = { ...agents?.defaults };
+    const updated = replaceTools(defaults.tools, tools);
+    if (updated === undefined) delete defaults.tools;
+    else defaults.tools = updated;
+    candidate = Object.keys(defaults).length === 0 && agents?.defaults === undefined
+      ? document : { ...document, agents: { ...agents, defaults } };
+  } else {
+    const old = agents?.list?.find(entry => entry.id === edit.agentId);
+    const entry: { -readonly [K in keyof AgentEntry]: AgentEntry[K] } = { ...old, id: edit.agentId };
+    delete entry.enabled;
+    if (settings['enabled'] === false) entry.enabled = false;
+    const updated = replaceTools(entry.tools, tools);
+    if (updated === undefined) delete entry.tools;
+    else entry.tools = updated;
+    const list = [...agents?.list ?? []].filter(item => item.id !== edit.agentId);
+    if (Object.keys(entry).some(key => key !== 'id')) {
+      const index = old === undefined ? list.length : agents!.list!.indexOf(old);
+      list.splice(index, 0, entry);
+    }
+    candidate = list.length === 0 && agents?.list === undefined ? document
+      : { ...document, agents: { ...agents, list } };
+  }
+  validateAgentConfigDocument(candidate);
+  return { document: candidate, previous: { kind: 'agent-policy', edit: previousEdit } };
+}
+
+export function getAgentPolicySettings(document: AgentConfigDocument, agentId?: string) {
+  const entry = agentId === undefined ? undefined : document.agents?.list?.find(item => item.id === agentId);
+  const tools = agentId === undefined ? document.agents?.defaults?.tools : entry?.tools;
+  return {
+    ...(entry?.enabled === undefined ? {} : { enabled: entry.enabled }),
+    ...(tools === undefined ? {} : { tools: {
+      ...(tools.allow === undefined ? {} : { allow: [...tools.allow] }),
+      ...(tools.deny === undefined ? {} : { deny: [...tools.deny] }),
+    } }),
+  };
+}
+
+function replaceTools(previous: ToolsConfig | undefined, incoming: ToolsConfig | undefined): ToolsConfig | undefined {
+  const next = { ...previous };
+  delete next.allow;
+  delete next.deny;
+  if (incoming?.allow !== undefined) next.allow = [...incoming.allow];
+  if (incoming?.deny !== undefined) next.deny = [...incoming.deny];
+  return Object.keys(next).length === 0 ? undefined : next;
 }
 
 function credentialChanges(input: unknown, paths: readonly string[]): Record<string, CredentialChange> {

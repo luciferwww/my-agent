@@ -83,7 +83,7 @@ function makeDeps(opts: BuildDepsOpts = {}) {
 
   const deps: TaskToolDeps = {
     delegationPort: { delegate },
-    profileRegistry: registry,
+    captureProfiles: () => ({ profiles: registry, disabledIds: new Set<string>() }),
     getCapabilities,
     maxDepth: opts.maxDepth ?? 2,
   };
@@ -101,6 +101,36 @@ async function exec(
 }
 
 // ── Tool shape ──────────────────────────────────────────────
+
+describe('current profile selection', () => {
+  it.each(['reviewer', 'missing'])('rejects explicitly disabled %s without fallback', async id => {
+    const { deps, delegate, registry } = makeDeps();
+    const capture = vi.fn(() => ({ profiles: registry, disabledIds: new Set([id]) }));
+    deps.captureProfiles = capture;
+    const result = await exec(createTaskTool(deps), {
+      subagent_type: id, description: 'disabled', prompt: 'do not execute',
+    }, makeCtx());
+    expect(result).toMatchObject({ outcome: 'failed', content: expect.stringContaining('disabled') });
+    expect(delegate).not.toHaveBeenCalled();
+    expect(capture).toHaveBeenCalledOnce();
+  });
+
+  it('reads current registration once for each task even when the Tool instance predates publication', async () => {
+    const { deps, delegate, registry } = makeDeps();
+    let disabledIds = new Set<string>();
+    deps.captureProfiles = vi.fn(() => ({ profiles: registry, disabledIds }));
+    const tool = createTaskTool(deps);
+    disabledIds = new Set(['reviewer']);
+    expect(await exec(tool, { subagent_type: 'reviewer', description: 'x', prompt: 'y' }, makeCtx()))
+      .toMatchObject({ outcome: 'failed' });
+    disabledIds = new Set();
+    expect(await exec(tool, { subagent_type: 'reviewer', description: 'x', prompt: 'y' }, makeCtx()))
+      .toMatchObject({ outcome: 'success' });
+    expect(delegate).toHaveBeenCalledOnce();
+    expect(delegate.mock.calls[0][0].profile.id).toBe('reviewer');
+    expect(deps.captureProfiles).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe('createTaskTool — Tool shape', () => {
   it('returns a tool named "task" with an object inputSchema', () => {
