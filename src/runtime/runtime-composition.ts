@@ -1,8 +1,8 @@
 import type {
   ChannelCompletion,
   ModelCatalogSnapshot,
-  SettingsCapability,
 } from '../core/channel/index.js';
+import type { SettingsCapability } from '../core/settings/index.js';
 import type { AvailableSubagentEntry } from '../core/subagent/index.js';
 import type { ContextFile } from '../core/agent-context/index.js';
 import type {

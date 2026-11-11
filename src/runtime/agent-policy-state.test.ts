@@ -6,7 +6,7 @@ import { AgentPolicyState, SHARED_AGENT_TOOLS_SECTION } from './agent-policy-sta
 import { SettingsManager } from './settings-manager.js';
 import { createDefaultAgentConfig, loadAgentConfig, saveAgentConfigSection } from '../platform/config/index.js';
 import type { AgentConfigDocument, AppConfig } from '../platform/config/types.js';
-import type { SettingsActionResult } from '../core/channel/index.js';
+import type { SettingsActionResult } from '../core/settings/index.js';
 import type { AgentDefinitionSnapshot } from '../core/agent-context/index.js';
 
 function record(value: unknown): Record<string, unknown> {

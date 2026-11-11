@@ -19,13 +19,15 @@ export type {
   ChannelEventRouting,
   InboundContentBlock,
   ModelCatalogSnapshot,
-  SettingsActionRequest,
-  SettingsActionResult,
-  SettingsCapability,
   SessionPermissionMode,
   SessionPermissionState,
   TurnInteractionResponse,
 } from '../../core/channel/index.js';
+export type {
+  SettingsActionRequest,
+  SettingsActionResult,
+  SettingsCapability,
+} from '../../core/settings/index.js';
 export type {
   ProviderConnection,
   ProviderModelFacts,

@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Runtime behavior
-> Verified: 2026-11-10
+> Verified: 2026-11-11
 > Ownership: Runtime composition, publication, generations, Turn orchestration, queues, routing, Fanout, Abort, Shutdown, and Subagent Parent/Child lifecycle
 > Ownership key: runtime-composition-and-lifecycle
 
@@ -36,6 +36,10 @@ src/runtime/
 ├── config.ts
 ├── bootstrap.ts
 ├── settings-manager.ts
+├── settings/
+│   ├── model-test.ts
+│   ├── helpers.ts
+│   └── index.ts
 ├── runtime-builder.ts
 ├── runtime-composition.ts
 ├── runtime-composition-manager.ts
@@ -135,10 +139,17 @@ interface RuntimeHandle {
 
 Runtime Builder supplies the same frozen `settings` capability to Channels and
 `RuntimeApplication.settings`. SettingsManager implements transport-neutral `load`,
-`update` and `test_llm_model`; it does not own file I/O or instantiate Extensions. Startup must
+`update` and dispatches `test_llm_model` to the Runtime-owned ModelTestRunner; it
+does not own file I/O or instantiate Extensions. Startup must
 provide the retained raw editing document to enable persistence. Embedding without
 that document remains supported and receives explicit `settings_unavailable`
 results, without an implicit file read or initialization.
+
+The request, result and capability contracts belong to `src/core/settings/`.
+Channel imports and composes that capability; Runtime implements it, and
+`my-agent/extension-api` re-exports the same types under its unchanged public names.
+Model Catalog contracts remain in Channel. [ADR-024](../decisions/adr-024-settings-contract-and-model-test-ownership.md)
+owns this boundary decision.
 
 Load uses the saved server-side document and startup discovery metadata, omits
 credentials and unexposed values, and returns current Runtime model facts.
@@ -158,6 +169,14 @@ Shutdown closes admission synchronously, cancels queued updates and converges
 admitted work before Unit stop under the existing budget. Unfinished file work is
 reported as a residual, not assumed cancelled; settled file/application divergence
 is a reported resource failure rather than a false deadline claim.
+ModelTestRunner exclusively owns active Tests, their cancellation, temporary
+Units and generation pins. SettingsManager supplies current saved-state facts at
+Test preparation without duplicating them in the Test module. Shared validation
+and safe result/error mapping live in private Settings helpers; the Test module
+does not depend on SettingsManager. Update and Test shutdown convergence begin
+together against the same remaining budget, and SettingsManager aggregates their
+reports without inspecting the Test collection.
+
 Model Test either creates an unpublished temporary Built-in Unit from a candidate,
 or pins the current Registry generation to use a loaded Provider. It reuses model
 resolution and invocation without a Runner, Session or Transcript. Retaining a saved
@@ -399,6 +418,6 @@ Registry startup diagnostics are logged locally by Runtime with bounded identity
 
 | Kind | Evidence |
 |---|---|
-| Source | [RuntimeApp](../../src/runtime/RuntimeApp.ts), [queue types](../../src/runtime/queue-types.ts), [composition manager](../../src/runtime/runtime-composition-manager.ts) |
-| Tests | [RuntimeApp tests](../../src/runtime/RuntimeApp.test.ts), [composition manager tests](../../src/runtime/runtime-composition-manager.test.ts) |
+| Source | [RuntimeApp](../../src/runtime/RuntimeApp.ts), [queue types](../../src/runtime/queue-types.ts), [composition manager](../../src/runtime/runtime-composition-manager.ts), [SettingsManager](../../src/runtime/settings-manager.ts), [model Tests](../../src/runtime/settings/model-test.ts), [Settings contracts](../../src/core/settings/index.ts) |
+| Tests | [RuntimeApp tests](../../src/runtime/RuntimeApp.test.ts), [composition manager tests](../../src/runtime/runtime-composition-manager.test.ts), [SettingsManager tests](../../src/runtime/settings-manager.test.ts), [independent model Test tests](../../src/runtime/settings/model-test.test.ts) |
 | Controlling authority | [Runtime Composition Specification](../specifications/runtime-composition.md) |

@@ -28,6 +28,10 @@ src/core/channel/
 ├── types.ts                  # canonical Channel, interaction, Catalog, and capability contracts
 └── index.ts
 
+src/core/settings/
+├── types.ts                  # Settings request/result and capability, composed by Channel
+└── index.ts
+
 src/builtins/channels/
 └── cli/
     ├── CliChannel.ts         # readline transport

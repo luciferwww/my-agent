@@ -278,6 +278,7 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
       : 'Infrastructure';
   }
   if (sourcePath.startsWith('src/core/memory/internal/')
+    || sourcePath === 'src/core/agent-context/agent-definitions.ts'
     || sourcePath === 'src/runtime/agent-home-lock.ts') {
     return 'Infrastructure';
   }
@@ -298,7 +299,9 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
     return 'Composition';
   }
   if (
-    sourcePath === 'src/runtime/registry-builder.ts'
+    sourcePath.startsWith('src/runtime/settings/')
+    || sourcePath === 'src/runtime/agent-policy-state.ts'
+    || sourcePath === 'src/runtime/registry-builder.ts'
     || sourcePath === 'src/runtime/settings-manager.ts'
     || sourcePath === 'src/runtime/channel-lifecycle.ts'
     || sourcePath === 'src/runtime/composition-coordinator.ts'
@@ -332,6 +335,7 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
     || sourcePath.startsWith('src/core/subagent/')
     || sourcePath.startsWith('src/core/approval/')
     || sourcePath.startsWith('src/core/channel/')
+    || sourcePath.startsWith('src/core/settings/')
     || sourcePath.startsWith('src/core/memory/')
   ) {
     return 'Application';

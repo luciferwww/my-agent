@@ -29,6 +29,7 @@ This directory contains durable architectural decisions. It does not own current
 | [ADR-020](adr-020-session-addressed-presentation-subscription-and-ephemeral-child-observation.md) | Accepted | Explicit Session presentation subscription, read-only transient Child observation, and bounded terminal retention |
 | [ADR-021](adr-021-shared-configured-agent-registry.md) | Accepted; configuration-only registration superseded by ADR-023 | Shared Agent identity, `agents/<agentId>/` Context, and removal of public `subagents` profile configuration |
 | [ADR-023](adr-023-agent-definition-discovery-and-settings.md) | Accepted; implemented and validated | Directory-discovered definitions, startup MD snapshots, sparse config overrides and subsequent-Turn shared/named Tool-policy updates |
+| [ADR-024](adr-024-settings-contract-and-model-test-ownership.md) | Accepted | Transport-neutral Settings contract ownership and Runtime-owned model Test lifecycle extraction |
 
 ## Authority rules
 

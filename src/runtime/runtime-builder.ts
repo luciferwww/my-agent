@@ -7,9 +7,8 @@ import {
   ChannelRuntimeHost,
   ApprovalRequest,
   TurnInteractionResponse,
-  SettingsActionRequest,
-  SettingsCapability,
 } from '../core/channel/index.js';
+import type { SettingsActionRequest, SettingsCapability } from '../core/settings/index.js';
 import type { AgentEvent } from '../core/runner/index.js';
 import type {
   SessionPermissionMode,
@@ -43,7 +42,8 @@ import type {
 } from './types.js';
 import { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
 import { RuntimeCompositionManager } from './runtime-composition-manager.js';
-import { SettingsManager, settingsFailure } from './settings-manager.js';
+import { SettingsManager } from './settings-manager.js';
+import { settingsFailure } from './settings/index.js';
 import { AgentPolicyState, type AppliedAgentState } from './agent-policy-state.js';
 import {
   RuntimeUnitCatalog,

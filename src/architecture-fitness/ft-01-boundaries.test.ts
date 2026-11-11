@@ -22,6 +22,24 @@ describe('FT-01 stable core boundaries', () => {
     ]);
   });
 
+  it('rejects stable-core imports of definition loading and Agent policy composition', () => {
+    const sources = [{
+      path: 'src/core/runner/AgentRunner.ts',
+      content: [
+        "import { loadAgentDefinitions } from '../agent-context/agent-definitions.js';",
+        "import { AgentPolicyState } from '../../runtime/agent-policy-state.js';",
+      ].join('\n'),
+    }];
+    expect(findUnclassifiedProductionFiles([
+      { path: 'src/core/agent-context/agent-definitions.ts', content: '' },
+      { path: 'src/runtime/agent-policy-state.ts', content: '' },
+    ])).toEqual([]);
+    expect(findFt01BoundaryViolations(sources)).toEqual([
+      'FT-01 source=src/core/runner/AgentRunner.ts boundary=Application import=../../runtime/agent-policy-state.js target=src/runtime/agent-policy-state.ts targetBoundary=Composition',
+      'FT-01 source=src/core/runner/AgentRunner.ts boundary=Application import=../agent-context/agent-definitions.js target=src/core/agent-context/agent-definitions.ts targetBoundary=Infrastructure',
+    ]);
+  });
+
   it('rejects new production violations and unclassified paths', async () => {
     const productionSources = await loadProductionSources(REPOSITORY_ROOT);
 

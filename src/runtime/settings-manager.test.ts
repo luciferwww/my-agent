@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SettingsActionResult } from '../core/channel/index.js';
+import type { SettingsActionResult } from '../core/settings/index.js';
 import { restoreAgentConfigSection, saveAgentConfigSection } from '../platform/config/index.js';
 import type { AgentConfigDocument } from '../platform/config/types.js';
 import type { ExtensionAcquisitionResult } from '../extension/acquisition/types.js';
@@ -10,7 +10,7 @@ import type { RuntimeReloadResult } from './runtime-composition.js';
 import { RuntimeDeadlineBudget, DEFAULT_RUNTIME_DEADLINE_POLICY, createSystemRuntimeDeadlineDriver, type RuntimeDeadlineDriver } from './runtime-deadline.js';
 import { SettingsManager } from './settings-manager.js';
 import { createBuiltinLlmProviderUnit, type BuiltinLlmProviderConfig } from '../builtins/providers/builtin/index.js';
-import { ModelInvocationError, type ModelInvocationPort, type ModelInvocationResponse } from '../core/model-invocation/index.js';
+import type { ModelInvocationPort, ModelInvocationResponse } from '../core/model-invocation/index.js';
 import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
 import type { RuntimeUnitInstance } from './runtime-unit.js';
 import { CompositionCoordinator } from './composition-coordinator.js';
@@ -112,14 +112,6 @@ function publishProvider(coordinator: CompositionCoordinator, chat: ModelInvocat
     candidate: { providers: [provider], units: [], diagnostics: [] },
     acceptedUnits: [], channelBindings: [], generation,
   }));
-}
-
-function fakeClockDriver(): RuntimeDeadlineDriver {
-  const system = createSystemRuntimeDeadlineDriver();
-  return {
-    now: () => Date.now(),
-    race: (operation, deadline) => system.race(operation, system.now() + Math.max(0, deadline - Date.now())),
-  };
 }
 
 describe('SettingsManager', () => {
@@ -499,101 +491,6 @@ describe('SettingsManager', () => {
     expect(f.apply).not.toHaveBeenCalled();
   });
 
-  it('returns safe invocation and incomplete-call failures and releases resources after resolution errors', async () => {
-    const chat = vi.fn<ModelInvocationPort['chat']>();
-    chat.mockRejectedValueOnce(new ModelInvocationError('authentication'));
-    chat.mockResolvedValueOnce({ ...modelResponse(), stopReason: 'aborted' });
-    const unit = testUnit(chat);
-    const f = fixture({ createBuiltinProviderUnit: unit.factory });
-    const candidate = { settings: settings.builtin, expectedRevision: revision(await f.load()) };
-    const test = (modelId: string) => f.manager.execute({
-      requestId: 'failing-test', action: 'test_llm_model',
-      input: { reference: { providerId: 'builtin', modelId }, builtin: candidate },
-    });
-    expect(await test('one')).toMatchObject({
-      ok: false, error: { code: 'test_invocation_failed', message: 'Model Test invocation failed: authentication.' },
-      output: { reference: { providerId: 'builtin', modelId: 'one' } },
-    });
-    expect(await test('one')).toMatchObject({ ok: false, error: { code: 'test_incomplete' } });
-    expect(await test('not-registered')).toMatchObject({ ok: false, error: { code: 'model_resolution_failed' } });
-    expect(unit.stop).toHaveBeenCalledTimes(3);
-    expect(chat).toHaveBeenCalledTimes(2);
-    chat.mockRejectedValueOnce(new Error('private-upstream-error'));
-    const unknown = await test('one');
-    expect(unknown.ok).toBe(false);
-    expect(JSON.stringify(unknown)).not.toContain('private-upstream-error');
-    expect(unit.stop).toHaveBeenCalledTimes(4);
-  });
-
-  it('times out at exactly 30000 ms and protects a noncooperative invocation until it actually settles', async () => {
-    vi.useFakeTimers();
-    const call = deferred<ModelInvocationResponse>();
-    const entered = deferred<void>();
-    let signal: AbortSignal | undefined;
-    const chat = vi.fn<ModelInvocationPort['chat']>(async (request) => {
-      signal = request.signal; entered.resolve(); return call.promise;
-    });
-    const coordinator = new CompositionCoordinator();
-    publishProvider(coordinator, chat);
-    const driver = fakeClockDriver();
-    const f = fixture({ snapshotAccess: coordinator.createSnapshotAccess(), deadlineDriver: driver });
-    let settled = false;
-    const running = f.manager.execute({
-      requestId: 'timeout-test', action: 'test_llm_model', input: { reference: { providerId: 'relay', modelId: 'one' } },
-    }).then((result) => { settled = true; return result; });
-    await entered.promise;
-    await vi.advanceTimersByTimeAsync(29_999);
-    expect(settled).toBe(false);
-    expect(signal?.aborted).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(await running).toMatchObject({ ok: false, error: { code: 'test_timeout' } });
-    expect(signal?.aborted).toBe(true);
-    expect(vi.getTimerCount()).toBe(0);
-    expect(coordinator.pinCount(1)).toBe(1);
-    const expired = new RuntimeDeadlineBudget(driver, DEFAULT_RUNTIME_DEADLINE_POLICY, driver.now());
-    expect(await f.manager.shutdown(expired)).toMatchObject({
-      failed: [], residuals: [{ requestId: 'timeout-test', phase: 'settings-test-invoking' }],
-    });
-    expect(coordinator.pinCount(1)).toBe(1);
-    call.resolve(modelResponse());
-    await vi.advanceTimersByTimeAsync(0);
-    expect(coordinator.pinCount(1)).toBe(0);
-    expect(chat).toHaveBeenCalledOnce();
-    expect(await f.manager.shutdown(expired)).toEqual({ failed: [], residuals: [] });
-  });
-
-  it.each(['timeout', 'shutdown'] as const)('does not start invocation when preparation outlives %s cancellation', async (cancellation) => {
-    vi.useFakeTimers();
-    const created = deferred<RuntimeUnitInstance>();
-    const chat = vi.fn(async () => modelResponse());
-    const unit = testUnit(chat);
-    const start = vi.fn();
-    const stop = vi.fn();
-    const driver = fakeClockDriver();
-    const f = fixture({
-      deadlineDriver: driver,
-      createBuiltinProviderUnit: (config) => ({ ...unit.factory(config), create: () => created.promise }),
-    });
-    const running = f.manager.execute({
-      requestId: 'preparing-test', action: 'test_llm_model',
-      input: { reference: { providerId: 'builtin', modelId: 'one' }, builtin: { settings: settings.builtin, expectedRevision: revision(await f.load()) } },
-    });
-    if (cancellation === 'timeout') await vi.advanceTimersByTimeAsync(30_000);
-    else f.manager.beginShutdown(new RuntimeDeadlineBudget(driver, DEFAULT_RUNTIME_DEADLINE_POLICY));
-    expect(await running).toMatchObject({
-      ok: false, error: { code: cancellation === 'timeout' ? 'test_timeout' : 'runtime_closing' },
-    });
-    const instance = await unit.factory.mock.results[0]!.value.create(new AbortController().signal);
-    created.resolve({ ...instance, start, stop });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(start).not.toHaveBeenCalled();
-    expect(chat).not.toHaveBeenCalled();
-    expect(stop).toHaveBeenCalledOnce();
-    expect(vi.getTimerCount()).toBe(0);
-    expect(await f.manager.shutdown(new RuntimeDeadlineBudget(driver, DEFAULT_RUNTIME_DEADLINE_POLICY)))
-      .toEqual({ failed: [], residuals: [] });
-  });
-
   it('aborts cooperative loaded Tests at shutdown and releases pins before shutdown completes', async () => {
     const entered = deferred<void>();
     const chat = vi.fn<ModelInvocationPort['chat']>((request) => new Promise((_resolve, reject) => {
@@ -614,35 +511,52 @@ describe('SettingsManager', () => {
     expect(chat).toHaveBeenCalledOnce();
   });
 
-  it('charges temporary Provider preparation to the same deadline and retains it through noncooperative invocation cleanup', async () => {
+  it('aborts Tests immediately while an update shares the remaining shutdown budget', async () => {
     vi.useFakeTimers();
-    const created = deferred<RuntimeUnitInstance>();
-    const call = deferred<ModelInvocationResponse>();
-    const entered = deferred<void>();
-    const chat = vi.fn<ModelInvocationPort['chat']>(async () => { entered.resolve(); return call.promise; });
+    const application = deferred<RuntimeReloadResult>();
+    const updatingEntered = deferred<void>();
+    const invocation = deferred<ModelInvocationResponse>();
+    const testEntered = deferred<void>();
+    const chat = vi.fn<ModelInvocationPort['chat']>(async () => {
+      testEntered.resolve();
+      return invocation.promise;
+    });
     const unit = testUnit(chat);
-    const driver = fakeClockDriver();
     const f = fixture({
-      deadlineDriver: driver,
-      createBuiltinProviderUnit: (config) => ({ ...unit.factory(config), create: () => created.promise }),
+      createBuiltinProviderUnit: unit.factory,
+      applyLlmConfiguration: async () => { updatingEntered.resolve(); return application.promise; },
     });
-    const running = f.manager.execute({
-      requestId: 'preparation-budget-test', action: 'test_llm_model',
-      input: { reference: { providerId: 'builtin', modelId: 'one' }, builtin: { settings: settings.builtin, expectedRevision: revision(await f.load()) } },
+    const initial = revision(await f.load());
+    const testing = f.manager.execute({
+      requestId: 'mixed-test', action: 'test_llm_model',
+      input: { reference: { providerId: 'builtin', modelId: 'one' }, builtin: { settings: settings.builtin, expectedRevision: initial } },
     });
-    await vi.advanceTimersByTimeAsync(29_999);
-    created.resolve(await unit.factory.mock.results[0]!.value.create(new AbortController().signal));
-    await entered.promise;
-    await vi.advanceTimersByTimeAsync(1);
-    expect(await running).toMatchObject({ ok: false, error: { code: 'test_timeout' } });
+    await testEntered.promise;
+    const updating = f.update(initial);
+    await updatingEntered.promise;
+    const driver = createSystemRuntimeDeadlineDriver();
+    const budget = new RuntimeDeadlineBudget(driver, { ...DEFAULT_RUNTIME_DEADLINE_POLICY, shutdownOverallMs: 20 });
+    const closing = f.manager.shutdown(budget);
+    expect(await testing).toMatchObject({ ok: false, error: { code: 'runtime_closing' } });
     expect(chat.mock.calls[0]?.[0].signal?.aborted).toBe(true);
     expect(unit.stop).not.toHaveBeenCalled();
-    call.resolve(modelResponse());
+    await vi.advanceTimersByTimeAsync(20);
+    expect(await closing).toMatchObject({
+      failed: [], residuals: [
+        { requestId: 'update', phase: 'settings-applying' },
+        { requestId: 'mixed-test', phase: 'settings-test-invoking' },
+      ],
+    });
+    application.resolve({
+      requestId: 'reload', change: { operation: 'configure-llm', unitId: 'builtin-llm-provider' },
+      warnings: [], outcome: 'published', previousGeneration: 1, generation: 2, retiredUnitIds: [],
+    });
+    expect(await updating).toMatchObject({ ok: true });
+    invocation.resolve(modelResponse());
     await vi.advanceTimersByTimeAsync(0);
     expect(unit.stop).toHaveBeenCalledOnce();
-    expect(vi.getTimerCount()).toBe(0);
+    expect(await f.manager.shutdown(budget)).toEqual({ failed: [], residuals: [] });
   });
-
   it('reports temporary cleanup failures to the caller and shutdown without blocking subsequent updates', async () => {
     const unit = testUnit(async () => modelResponse(), vi.fn(async () => { throw new Error('private-stop-error'); }));
     const f = fixture({ createBuiltinProviderUnit: unit.factory });

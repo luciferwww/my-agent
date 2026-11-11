@@ -14,9 +14,6 @@ export type {
 export type {
   ChannelOperationErrorCode,
   ChannelRuntimeCapabilities,
-  SettingsActionRequest,
-  SettingsActionResult,
-  SettingsCapability,
   ChannelEventRouting,
   ApprovalClosedResult,
   ApprovalDecision,

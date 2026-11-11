@@ -31,6 +31,7 @@ src/
 │   ├── model-resolution/  identity, Provider facts, limits and capability validation
 │   ├── registry/          immutable Provider, Tool, Hook and Channel projections
 │   ├── channel/           transport-neutral Channel and interaction contracts
+│   ├── settings/          transport-neutral Settings capability contracts
 │   ├── approval/          approval request/result contract
 │   ├── runner/            one Turn execution loop and context recovery
 │   ├── session/           JSONL transcript persistence

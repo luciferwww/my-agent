@@ -23,12 +23,22 @@ describe('FT-13 public module entry boundaries', () => {
       'src/builtins/tools/memory',
       'src/builtins/tools/task',
       'src/runtime/turn-interaction',
+      'src/runtime/settings',
+      'src/core/settings',
     ];
     const violations: string[] = [];
     for (const source of sources) {
       for (const reference of collectModuleReferences(source)) {
         const target = resolveRelativeModule(source.path, reference.specifier);
         if (!target) continue;
+        if (source.path.startsWith('src/core/settings/')
+          && /^(?:src\/(?:runtime|platform|builtins|extension|hosts|core\/channel)\/|extensions\/)/u.test(target)) {
+          violations.push(`${source.path}: Settings contract depends on ${target}`);
+        }
+        if (source.path.startsWith('src/runtime/settings/')
+          && target === 'src/runtime/settings-manager.ts') {
+          violations.push(`${source.path}: Test implementation depends on SettingsManager`);
+        }
         for (const root of publicRoots) {
           if (!source.path.startsWith(`${root}/`)
             && target.startsWith(`${root}/`)
