@@ -208,13 +208,20 @@ First-message admission is serialized per `sessionId`. A live Pending ID materia
 List returns non-archived Sessions by default and archived Sessions only when requested. Rename trims non-null titles and allows `null` to clear them. Archive, delete, and fork require an idle persisted Session; unarchive and rename do not. Delete rejects a Session with persisted fork descendants and has no cascade. Runtime validates deletion, cleans Session-owned managed processes, revalidates, and only then commits deletion so cleanup failure remains retryable. Fork copies the selected linear message path plus related lifecycle records into a new persisted Session with a fresh UUID; managed processes are not inherited.
 
 Subagent setup creates a root-only transient Transcript with
-`{ type: 'subagent', callerSessionId }` provenance and no Store entry. Runner
+`{ type: 'subagent', callerSessionId }` provenance and a Subagent Store entry. Runner
 appends the Child prompt. After `subagent_end`, SessionManager keeps the
 terminal Transcript resolvable and readable for 24 hours using an unreferenced
-timer; observation does not extend the deadline. Runtime Builder shutdown
-calls `SessionManager.close()` to delete retained Transcripts early, before
-managed-process cleanup; startup removes orphaned transient files after
-interruption.
+timer; observation does not extend the deadline. `SessionManager.close()`
+cancels timers without deleting retained files; startup recovers unexpired
+Subagents and removes expired entries and orphaned files.
+
+Subagent deletion shares the Transcript write queue. Atomic Store replacement
+is the logical deletion commit point: a failed Store update leaves the file,
+cache, route and retention timer unchanged. After commit, in-memory visibility
+is cleared before file removal, so a failed unlink leaves only an inaccessible
+orphan for startup recovery. Errors still propagate; cleanup does not
+automatically retry. This is recoverable logical deletion, not a cross-file
+transaction.
 
 History uses a default threshold of 50 and accepts limits from 1 through 100.
 It accumulates whole local Turns, newest first, until the candidate message

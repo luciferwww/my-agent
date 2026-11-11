@@ -403,26 +403,28 @@ export class SessionManager {
 
   async deleteTransientSubagentTranscript(sessionId: string): Promise<void> {
     this.assertSessionId(sessionId);
-    if (!this.transientSubagentSessions.has(sessionId)) {
-      throw new SessionError('SESSION_NOT_FOUND', `Transcript "${sessionId}" was not found.`);
-    }
-
-    const retentionTimer = this.retainedSubagentTimers.get(sessionId);
-    if (retentionTimer) {
-      clearTimeout(retentionTimer);
-    }
-    await unlink(this.resolveTranscriptPathUnchecked(sessionId)).catch((error: unknown) => {
-      if ((error as { code?: string }).code !== 'ENOENT') throw error;
-    });
-    this.retainedSubagentTimers.delete(sessionId);
-    this.transcripts.delete(sessionId);
-    this.transientSubagentSessions.delete(sessionId);
-    this.presentationRoutes.delete(sessionId);
-    await updateStore(this.storePath, (store) => {
-      const entry = store.sessions[sessionId];
-      if (this.isSubagentStoreEntry(entry)) {
-        delete store.sessions[sessionId];
+    await this.withTranscriptWrite(sessionId, async () => {
+      if (!this.transientSubagentSessions.has(sessionId)) {
+        throw new SessionError('SESSION_NOT_FOUND', `Transcript "${sessionId}" was not found.`);
       }
+
+      await updateStore(this.storePath, (store) => {
+        const entry = store.sessions[sessionId];
+        if (this.isSubagentStoreEntry(entry)) {
+          delete store.sessions[sessionId];
+        }
+      });
+
+      // The Store commits logical deletion; leftover files are recovered at startup.
+      const retentionTimer = this.retainedSubagentTimers.get(sessionId);
+      if (retentionTimer) clearTimeout(retentionTimer);
+      this.retainedSubagentTimers.delete(sessionId);
+      this.transcripts.delete(sessionId);
+      this.transientSubagentSessions.delete(sessionId);
+      this.presentationRoutes.delete(sessionId);
+      await unlink(this.resolveTranscriptPathUnchecked(sessionId)).catch((error: unknown) => {
+        if ((error as { code?: string }).code !== 'ENOENT') throw error;
+      });
     });
   }
 

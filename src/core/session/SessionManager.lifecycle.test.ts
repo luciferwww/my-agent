@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, rename, rm, rmdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionError } from './errors.js';
 import { withFileLock } from './lock.js';
 import { SessionManager } from './SessionManager.js';
+import * as sessionStore from './store.js';
 
 describe('SessionManager lifecycle persistence', () => {
   let agentHome: string;
@@ -19,6 +20,7 @@ describe('SessionManager lifecycle persistence', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
     await manager.close().catch(() => undefined);
     await rm(agentHome, { recursive: true, force: true });
@@ -38,6 +40,93 @@ describe('SessionManager lifecycle persistence', () => {
     });
     return sessionId;
   }
+
+  async function createChild(): Promise<string> {
+    const callerSessionId = await materialize('Caller');
+    const input = { sessionId: randomUUID(), callerSessionId, createdAt: 250 };
+    manager.registerPreparingSubagentSession(input);
+    await manager.createTransientSubagentTranscript(input);
+    return input.sessionId;
+  }
+
+  it('preserves a Subagent file, cache and retention timer when deletion cannot commit', async () => {
+    vi.useFakeTimers();
+    const sessionId = await createChild();
+    await manager.appendMessage(sessionId, { turnId: 'child-turn', role: 'assistant', content: 'result' });
+    await manager.retainTransientSubagentTranscript(sessionId, 'ok');
+    const transcriptPath = join(agentHome, 'sessions', `${sessionId}.jsonl`);
+    const storePath = join(agentHome, 'sessions', 'sessions.json');
+    const before = await readFile(storePath, 'utf8');
+    const failure = Object.assign(new Error('rename failed'), { code: 'EPERM' });
+    vi.spyOn(sessionStore, 'updateStore').mockRejectedValueOnce(failure);
+
+    await expect(manager.deleteTransientSubagentTranscript(sessionId)).rejects.toBe(failure);
+    expect(await readFile(storePath, 'utf8')).toBe(before);
+    await expect(access(transcriptPath)).resolves.toBeUndefined();
+    expect(manager.resolveSession(sessionId)?.kind).toBe('subagent');
+    expect(manager.getMessages(sessionId)[0]?.message.content).toBe('result');
+    expect(vi.getTimerCount()).toBe(1);
+
+    await manager.deleteTransientSubagentTranscript(sessionId);
+    expect(manager.resolveSession(sessionId)).toBeUndefined();
+    expect(vi.getTimerCount()).toBe(0);
+    await expect(access(transcriptPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('keeps deletion committed when file cleanup fails and reclaims the orphan on restart', async () => {
+    const sessionId = await createChild();
+    const transcriptPath = join(agentHome, 'sessions', `${sessionId}.jsonl`);
+    const backup = `${transcriptPath}.backup`;
+    await rename(transcriptPath, backup);
+    await mkdir(transcriptPath);
+    try {
+      await expect(manager.deleteTransientSubagentTranscript(sessionId)).rejects.toMatchObject({
+        syscall: 'unlink',
+      });
+      expect(sessionStore.loadStore(join(agentHome, 'sessions', 'sessions.json')).sessions[sessionId])
+        .toBeUndefined();
+      expect(manager.resolveSession(sessionId)).toBeUndefined();
+      expect(() => manager.getMessages(sessionId)).toThrowError(SessionError);
+      await expect(manager.appendMessage(sessionId, {
+        turnId: 'late-turn', role: 'user', content: 'must not resurrect',
+      })).rejects.toMatchObject({ code: 'SESSION_NOT_FOUND' });
+    } finally {
+      await rmdir(transcriptPath);
+      await rename(backup, transcriptPath);
+    }
+
+    await manager.close();
+    manager = new SessionManager(agentHome, { now: () => now });
+    await manager.initialize();
+    await expect(access(transcriptPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(manager.resolveSession(sessionId)).toBeUndefined();
+  });
+
+  it('queues writes behind deletion and rejects them after the Store commit', async () => {
+    const sessionId = await createChild();
+    const updateStore = sessionStore.updateStore;
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(sessionStore, 'updateStore').mockImplementationOnce(async (...args) => {
+      entered();
+      await blocked;
+      return updateStore(...args);
+    });
+
+    const deletion = manager.deleteTransientSubagentTranscript(sessionId);
+    await started;
+    const write = manager.appendMessage(sessionId, {
+      turnId: 'late-turn', role: 'user', content: 'must not resurrect',
+    });
+    const rejected = expect(write).rejects.toMatchObject({ code: 'SESSION_NOT_FOUND' });
+    release();
+    await deletion;
+    await rejected;
+    await expect(access(join(agentHome, 'sessions', `${sessionId}.jsonl`)))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+  });
 
   it('materializes metadata and a Transcript root without writing a user message', async () => {
     const sessionId = randomUUID();
