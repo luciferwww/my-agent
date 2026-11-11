@@ -124,6 +124,6 @@ Registry startup diagnostics are Runtime-owned. Runtime includes the original op
 
 | Kind | Evidence |
 |---|---|
-| Source | [Logger](../../src/platform/logger/Logger.ts), [logging types](../../src/platform/logger/types.ts), [console adapter](../../src/platform/logger/ConsoleAdapter.ts), [file adapter](../../src/platform/logger/FileAdapter.ts), [Runtime bootstrap](../../src/runtime/bootstrap.ts), [Runtime Builder](../../src/runtime/runtime-builder.ts) |
-| Tests | [Logger tests](../../src/platform/logger/Logger.test.ts), [console adapter tests](../../src/platform/logger/ConsoleAdapter.test.ts), [file adapter tests](../../src/platform/logger/FileAdapter.test.ts), [Runtime Builder tests](../../src/runtime/runtime-builder.test.ts) |
+| Source | [Logger](../../src/platform/logger/Logger.ts), [logging types](../../src/platform/logger/types.ts), [console adapter](../../src/platform/logger/ConsoleAdapter.ts), [file adapter](../../src/platform/logger/FileAdapter.ts), [Runtime bootstrap](../../src/runtime/composition/bootstrap.ts), [Runtime Builder](../../src/runtime/composition/runtime-builder.ts) |
+| Tests | [Logger tests](../../src/platform/logger/Logger.test.ts), [console adapter tests](../../src/platform/logger/ConsoleAdapter.test.ts), [file adapter tests](../../src/platform/logger/FileAdapter.test.ts), [Runtime Builder tests](../../src/runtime/composition/runtime-builder.test.ts) |
 | Controlling authority | [ADR-014](../decisions/adr-014-extension-packages-and-runtime-composition.md), [Runtime Composition](../specifications/runtime-composition.md) |

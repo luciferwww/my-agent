@@ -24,9 +24,9 @@ type Boundary = 'Application' | 'Domain/Application' | 'Infrastructure' | 'Compo
 const MIXED_PRODUCTION_PATHS = new Set([
   'src/extension/api/contracts.ts',
   'src/extension/api/index.ts',
-  'src/runtime/bootstrap.ts',
+  'src/runtime/composition/bootstrap.ts',
   'src/runtime/errors.ts',
-  'src/runtime/glob-match.ts',
+  'src/runtime/policy/glob-match.ts',
   'src/runtime/index.ts',
   'src/runtime/prompt-factory.ts',
   'src/runtime/scheduling/queue-types.ts',
@@ -34,7 +34,7 @@ const MIXED_PRODUCTION_PATHS = new Set([
   'src/runtime/RuntimeApp.ts',
   'src/runtime/subagent-orchestration.ts',
   'src/runtime/summarize-assembled.ts',
-  'src/runtime/tool-approval-policy.ts',
+  'src/runtime/policy/tool-approval-policy.ts',
   'src/runtime/types.ts',
   'src/core/session/errors.ts',
   'src/core/session/index.ts',
@@ -279,7 +279,7 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
   }
   if (sourcePath.startsWith('src/core/memory/internal/')
     || sourcePath === 'src/core/agent-context/agent-definitions.ts'
-    || sourcePath === 'src/runtime/agent-home-lock.ts') {
+    || sourcePath === 'src/runtime/composition/agent-home-lock.ts') {
     return 'Infrastructure';
   }
   if (
@@ -295,18 +295,18 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
   if (sourcePath.startsWith('src/platform/logger/')) {
     return 'Infrastructure';
   }
-  if (sourcePath.startsWith('src/platform/config/') || sourcePath === 'src/runtime/bootstrap.ts') {
+  if (sourcePath.startsWith('src/platform/config/') || sourcePath === 'src/runtime/composition/bootstrap.ts') {
     return 'Composition';
   }
   if (
     sourcePath.startsWith('src/runtime/settings/')
-    || sourcePath === 'src/runtime/agent-policy-state.ts'
+    || sourcePath === 'src/runtime/policy/agent-policy-state.ts'
     || sourcePath === 'src/runtime/composition/registry-builder.ts'
-    || sourcePath === 'src/runtime/channel-lifecycle.ts'
+    || sourcePath === 'src/runtime/composition/channel-lifecycle.ts'
     || sourcePath === 'src/runtime/composition/composition-coordinator.ts'
     || sourcePath === 'src/runtime/composition/reload-coordinator.ts'
     || sourcePath === 'src/runtime/runtime-deadline.ts'
-    || sourcePath === 'src/runtime/runtime-builder.ts'
+    || sourcePath === 'src/runtime/composition/runtime-builder.ts'
     || sourcePath === 'src/runtime/composition/runtime-composition-manager.ts'
     || sourcePath === 'src/runtime/composition/runtime-composition.ts'
     || sourcePath === 'src/runtime/composition/runtime-lifecycle.ts'

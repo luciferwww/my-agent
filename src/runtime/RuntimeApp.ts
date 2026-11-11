@@ -47,7 +47,7 @@ import {
   buildRuntimeHandle,
   type RuntimeApplicationKernel,
   type RuntimeApplicationKernelInput,
-} from './runtime-builder.js';
+} from './composition/runtime-builder.js';
 import type { ModelCatalogSnapshot, RuntimeHandle } from './composition/runtime-composition.js';
 import type {
   RuntimeGenerationPin,

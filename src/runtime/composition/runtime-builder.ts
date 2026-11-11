@@ -7,69 +7,69 @@ import {
   ChannelRuntimeHost,
   ApprovalRequest,
   TurnInteractionResponse,
-} from '../core/channel/index.js';
-import type { SettingsActionRequest, SettingsCapability } from '../core/settings/index.js';
-import type { AgentEvent } from '../core/runner/index.js';
+} from '../../core/channel/index.js';
+import type { SettingsActionRequest, SettingsCapability } from '../../core/settings/index.js';
+import type { AgentEvent } from '../../core/runner/index.js';
 import type {
   SessionPermissionMode,
   SessionPermissionState,
-} from '../core/approval/index.js';
-import { AgentRunner } from '../core/runner/index.js';
-import { Logger } from '../platform/logger/index.js';
-import { MemoryManager } from '../core/memory/index.js';
-import { SystemPromptBuilder } from '../core/prompt/index.js';
+} from '../../core/approval/index.js';
+import { AgentRunner } from '../../core/runner/index.js';
+import { Logger } from '../../platform/logger/index.js';
+import { MemoryManager } from '../../core/memory/index.js';
+import { SystemPromptBuilder } from '../../core/prompt/index.js';
 import {
   SessionError,
   SessionManager,
   type SessionHistoryQuery,
-} from '../core/session/index.js';
+} from '../../core/session/index.js';
 import { bootstrapRuntime } from './bootstrap.js';
-import { acquireExtensions } from '../extension/acquisition/index.js';
+import { acquireExtensions } from '../../extension/acquisition/index.js';
 import {
   CompositionCoordinator,
   type RuntimeSnapshotAccess,
-} from './composition/composition-coordinator.js';
+} from './composition-coordinator.js';
 import type {
   RuntimeApplication,
   RuntimeHandle,
-} from './composition/runtime-composition.js';
+} from './runtime-composition.js';
 import type {
   RuntimeAppOptions,
   RuntimeDependencies,
   RuntimeLifecycleState,
   RuntimeResourceSet,
   RuntimeShutdownReport,
-} from './types.js';
-import { RuntimeLifecycleLedger } from './composition/runtime-lifecycle.js';
-import { RuntimeCompositionManager } from './composition/runtime-composition-manager.js';
-import { SettingsManager, settingsFailure } from './settings/index.js';
-import { AgentPolicyState, type AppliedAgentState } from './agent-policy-state.js';
+} from '../types.js';
+import { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
+import { RuntimeCompositionManager } from './runtime-composition-manager.js';
+import { SettingsManager, settingsFailure } from '../settings/index.js';
+import { AgentPolicyState, type AppliedAgentState } from '../policy/agent-policy-state.js';
 import {
   RuntimeUnitCatalog,
   createLoadedRuntimeUnit,
   type LoadedRuntimeUnit,
-} from './composition/runtime-unit.js';
+} from './runtime-unit.js';
 import {
   resolveSubagentCapabilities,
-} from '../core/subagent/index.js';
-import { SubagentExecutor } from '../core/subagent/SubagentExecutor.js';
-import { createApplicationToolPolicy } from './tool-approval-policy.js';
-import { createBuiltinLlmProviderUnit } from '../builtins/providers/builtin/index.js';
-import { createMemoryToolsContribution } from '../builtins/tools/memory/index.js';
-import { createTaskToolContribution } from '../builtins/tools/task/index.js';
+} from '../../core/subagent/index.js';
+import { SubagentExecutor } from '../../core/subagent/SubagentExecutor.js';
+import { createApplicationToolPolicy } from '../policy/tool-approval-policy.js';
+import { createBuiltinLlmProviderUnit } from '../../builtins/providers/builtin/index.js';
+import { createMemoryToolsContribution } from '../../builtins/tools/memory/index.js';
+import { createTaskToolContribution } from '../../builtins/tools/task/index.js';
 import {
   createEnvironmentContribution,
   processRegistry,
-} from '../builtins/tools/environment/index.js';
-import { createSubagentDelegationPort } from './subagent-orchestration.js';
-import type { ActiveParentTurn } from './subagent-orchestration.js';
-import type { MessageRouteContext } from './scheduling/queue-types.js';
-import { classifyRuntimeError } from './errors.js';
+} from '../../builtins/tools/environment/index.js';
+import { createSubagentDelegationPort } from '../subagent-orchestration.js';
+import type { ActiveParentTurn } from '../subagent-orchestration.js';
+import type { MessageRouteContext } from '../scheduling/queue-types.js';
+import { classifyRuntimeError } from '../errors.js';
 import {
   RuntimeDeadlineBudget,
   createSystemRuntimeDeadlineDriver,
   resolveRuntimeDeadlinePolicy,
-} from './runtime-deadline.js';
+} from '../runtime-deadline.js';
 import {
   acquireAgentHomeLock,
   type AgentHomeLock,
@@ -796,7 +796,7 @@ function createRuntimeDependencies(
 
 function emitStartupDiagnostics(
   options: RuntimeAppOptions,
-  snapshot: import('../core/registry/index.js').RegistrySnapshot,
+  snapshot: import('../../core/registry/index.js').RegistrySnapshot,
 ): void {
   for (const diagnostic of snapshot.diagnostics) {
     log.warn('runtime startup warning', {
@@ -824,7 +824,7 @@ function emitStartupDiagnostics(
 }
 
 function startupDiagnosticMessage(
-  code: import('../core/registry/index.js').RegistryStartupDiagnostic['code'],
+  code: import('../../core/registry/index.js').RegistryStartupDiagnostic['code'],
 ): string {
   switch (code) {
     case 'UNIT_INVALID':

@@ -194,7 +194,7 @@ their combined delivery. Do not mark checks passed before execution.
   revisioned saves and restart-based Extension settings.
 - [Task lookup](../../../../src/builtins/tools/task/task-tool.ts) currently reads a
   shared profile map and falls back for unknown names.
-  [Child preparation](../../../../src/runtime/runtime-builder.ts) derives a Tool
+  [Child preparation](../../../../src/runtime/composition/runtime-builder.ts) derives a Tool
   policy from the selected profile. Updating only parent prompt text would leave
   these execution surfaces unchanged.
 - The owner's [configuration](../../../../test-workspace/config.json) has

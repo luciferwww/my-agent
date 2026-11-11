@@ -3,13 +3,13 @@ import type {
   ChannelCompletion,
   ChannelInstance,
   ChannelRuntimeHost,
-} from '../core/channel/index.js';
-import type { RuntimeContributionUnit } from '../core/registry/index.js';
+} from '../../core/channel/index.js';
+import type { RuntimeContributionUnit } from '../../core/registry/index.js';
 import {
   prepareStagedUnitChannels,
   recheckPreparedUnitChannels,
 } from './channel-lifecycle.js';
-import { stageRegistryUnit } from './composition/registry-builder.js';
+import { stageRegistryUnit } from './registry-builder.js';
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;

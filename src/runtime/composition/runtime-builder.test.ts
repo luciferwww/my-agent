@@ -1,18 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { bootstrapRuntime } from './bootstrap.js';
 import { acquireAgentHomeLock } from './agent-home-lock.js';
-import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './composition/runtime-unit.js';
-import { Logger } from '../platform/logger/index.js';
-import { createDefaultAgentConfig } from '../platform/config/index.js';
+import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
+import { Logger } from '../../platform/logger/index.js';
+import { createDefaultAgentConfig } from '../../platform/config/index.js';
 import {
   ChannelOperationError,
   type Channel,
   type ChannelRuntimeCapabilities,
-} from '../core/channel/index.js';
-import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
-import { SessionError } from '../core/session/index.js';
-import type { RuntimeDeadlineDriver, RuntimeDeadlineRaceResult } from './runtime-deadline.js';
-import type { RuntimeAppOptions } from './types.js';
+} from '../../core/channel/index.js';
+import type { ProviderProjectionEntry } from '../../core/model-resolution/index.js';
+import { SessionError } from '../../core/session/index.js';
+import type { RuntimeDeadlineDriver, RuntimeDeadlineRaceResult } from '../runtime-deadline.js';
+import type { RuntimeAppOptions } from '../types.js';
 import {
   buildRuntimeHandle,
   type RuntimeApplicationKernel,

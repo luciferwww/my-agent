@@ -34,8 +34,11 @@ Runtime also does not discover or load Extension files. [Extensions](extensions.
 src/runtime/
 ├── RuntimeApp.ts
 ├── config.ts
-├── bootstrap.ts
 ├── composition/
+│   ├── runtime-builder.ts
+│   ├── bootstrap.ts
+│   ├── agent-home-lock.ts
+│   ├── channel-lifecycle.ts
 │   ├── composition-coordinator.ts
 │   ├── registry-builder.ts
 │   ├── reload-coordinator.ts
@@ -49,16 +52,17 @@ src/runtime/
 │   ├── section-views.ts
 │   ├── helpers.ts
 │   └── index.ts
-├── runtime-builder.ts
+├── policy/
+│   ├── agent-policy-state.ts
+│   ├── tool-approval-policy.ts
+│   └── glob-match.ts
 ├── runtime-deadline.ts
-├── channel-lifecycle.ts
 ├── scheduling/
 │   ├── session-message-scheduler.ts
 │   ├── queue-types.ts
 │   └── request-completion-gate.ts
 ├── subagent-orchestration.ts
 ├── prompt-factory.ts
-├── tool-approval-policy.ts
 ├── turn-interaction/
 │   └── TurnInteractionManager.ts
 └── types.ts
@@ -73,13 +77,22 @@ The converged integration layout keeps concrete builtin capabilities and their H
 
 The public Runtime barrel exposes `RuntimeApp`, the frozen-handle contracts, Unit loading contracts, selected deadline/prompt/error helpers, and public types. Internal managers remain implementation details.
 
-Composition and scheduling directories group established responsibilities
-without introducing another API layer. The existing private Settings entry is
-the entry for SettingsManager and its helpers; internal Settings files import
-their siblings directly. Tests remain colocated. RuntimeApp still owns request
-gates and execution even though their related source files are grouped under
-scheduling. Shared deadlines, bootstrap/builders and cross-cutting orchestration
-remain at the Runtime root rather than being forced into a group.
+Composition groups overall Runtime assembly, startup and component lifecycle,
+including Builder/bootstrap, the Agent Home process lock, Channel preparation
+and Unit/generation publication. Policy groups the existing applied Agent
+execution policy, Tool authorization decisions and their glob matching helper;
+it does not own Settings persistence transactions, Session permission state or
+approval interaction lifecycle. Physical grouping does not change logical
+layering: the process lock remains Infrastructure, AgentPolicyState remains
+Composition, and Tool policy/glob retain their existing Mixed classifications.
+
+These directories and scheduling group established responsibilities without
+introducing another API layer or new barrels. The existing private Settings
+entry is the entry for SettingsManager and its helpers; internal Settings files
+import their siblings directly. Tests remain colocated. RuntimeApp still owns
+request gates and execution even though their related source files are grouped
+under scheduling. Shared deadlines, public types/errors, prompt/message helpers
+and Parent/Child execution orchestration remain at the Runtime root.
 
 ## 3. Public composition surfaces
 

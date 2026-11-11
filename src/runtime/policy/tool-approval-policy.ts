@@ -1,7 +1,7 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
-import type { ToolPolicyConfig } from '../core/tools/index.js';
-import type { ApplicationToolPolicy } from '../core/tools/types.js';
+import type { ToolPolicyConfig } from '../../core/tools/index.js';
+import type { ApplicationToolPolicy } from '../../core/tools/types.js';
 import { matchesAny } from './glob-match.js';
 
 const DIRECT_PATH_TOOLS = new Set([

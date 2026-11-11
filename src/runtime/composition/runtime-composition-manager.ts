@@ -22,7 +22,7 @@ import {
   prepareStagedUnitChannels,
   recheckPreparedUnitChannels,
   type PreparedUnitChannels,
-} from '../channel-lifecycle.js';
+} from './channel-lifecycle.js';
 import { CompositionCoordinator } from './composition-coordinator.js';
 import {
   finalizeRegistrySnapshot,

@@ -1,8 +1,8 @@
 /**
- * glob 匹配：`*` 匹配任意字符序列，`?` 匹配单字符。大小写敏感。
+ * Case-sensitive glob matching: `*` matches any sequence, `?` a single character.
  *
- * 给工具策略字段 `tools.allow / deny` 使用（精确名 + glob 两用），
- * 用于 Application Tool Policy 的 visibility 与 runtime authorization。
+ * Supports exact names and glob patterns in `tools.allow / deny` for
+ * Application Tool Policy visibility and runtime authorization.
  */
 export function globMatch(name: string, pattern: string): boolean {
   const regex = pattern
@@ -12,7 +12,7 @@ export function globMatch(name: string, pattern: string): boolean {
   return new RegExp(`^${regex}$`).test(name);
 }
 
-/** 任一 pattern 命中即返回 true；patterns 空数组返回 false。 */
+/** Returns true if any pattern matches; an empty pattern list returns false. */
 export function matchesAny(name: string, patterns: readonly string[]): boolean {
   return patterns.some((p) => globMatch(name, p));
 }

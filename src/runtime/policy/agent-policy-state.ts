@@ -1,17 +1,17 @@
 import { isDeepStrictEqual } from 'node:util';
-import type { AgentDefinitionSnapshot } from '../core/agent-context/index.js';
+import type { AgentDefinitionSnapshot } from '../../core/agent-context/index.js';
 import {
   buildGeneralPurposeProfile, loadAgentProfiles, resolveSubagentTools,
-} from '../core/subagent/index.js';
-import type { SubagentProfile, SubagentProfileRegistry } from '../core/subagent/types.js';
-import type { ApplicationToolPolicy } from '../core/tools/index.js';
-import { DEFAULT_TOOL_POLICY_CONFIG } from '../core/tools/config.js';
+} from '../../core/subagent/index.js';
+import type { SubagentProfile, SubagentProfileRegistry } from '../../core/subagent/types.js';
+import type { ApplicationToolPolicy } from '../../core/tools/index.js';
+import { DEFAULT_TOOL_POLICY_CONFIG } from '../../core/tools/config.js';
 import {
   editAgentConfigSection, resolveAgentConfig, type AgentPolicyEdit, type ResolveOptions,
-} from '../platform/config/index.js';
-import type { AgentConfigDocument, AgentsConfig, AppConfig } from '../platform/config/types.js';
+} from '../../platform/config/index.js';
+import type { AgentConfigDocument, AgentsConfig, AppConfig } from '../../platform/config/types.js';
 import { createApplicationToolPolicy } from './tool-approval-policy.js';
-import { getAgentPolicySettings, ConfigEditError } from '../platform/config/agent-config-editor.js';
+import { getAgentPolicySettings, ConfigEditError } from '../../platform/config/agent-config-editor.js';
 import { matchesAny } from './glob-match.js';
 
 export const SHARED_AGENT_TOOLS_SECTION = 'agents:defaults';

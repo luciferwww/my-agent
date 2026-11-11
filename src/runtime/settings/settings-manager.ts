@@ -14,7 +14,7 @@ import type { RuntimeReloadResult } from '../composition/runtime-composition.js'
 import type { RuntimeDeadlineBudget, RuntimeDeadlineDriver } from '../runtime-deadline.js';
 import type { RuntimeSnapshotAccess } from '../composition/composition-coordinator.js';
 import type { RuntimeShutdownReport } from '../types.js';
-import { SHARED_AGENT_TOOLS_SECTION, type AgentPolicyState } from '../agent-policy-state.js';
+import { SHARED_AGENT_TOOLS_SECTION, type AgentPolicyState } from '../policy/agent-policy-state.js';
 import { ModelTestRunner } from './model-test.js';
 import {
   buildLlmSectionView, buildExtensionSectionView, type SettingsApplicationState,

@@ -2,23 +2,23 @@ import { join } from 'node:path';
 import {
   createDefaultAgentConfig,
   resolveAgentConfig,
-} from '../platform/config/index.js';
-import { DEFAULT_RUNNER_CONFIG } from '../core/runner/config.js';
-import type { AppConfig } from '../platform/config/types.js';
+} from '../../platform/config/index.js';
+import { DEFAULT_RUNNER_CONFIG } from '../../core/runner/config.js';
+import type { AppConfig } from '../../platform/config/types.js';
 import {
   ConsoleAdapter,
   DEFAULT_LOGGER_CONFIG,
   FileAdapter,
   Logger,
-} from '../platform/logger/index.js';
-import type { LogAdapter } from '../platform/logger/index.js';
-import type { MemoryManager } from '../core/memory/index.js';
-import { UserPromptBuilder } from '../core/prompt/index.js';
-import { ensureAgentContext, loadAgentDefinitions, loadContextFiles } from '../core/agent-context/index.js';
-import { classifyRuntimeError } from './errors.js';
-import type { RuntimeAppOptions, RuntimeBootstrapResult, RuntimeDependencies, RuntimeEvent } from './types.js';
-import type { RuntimeDeadlineDriver } from './runtime-deadline.js';
-import { DEFAULT_MAX_SUBAGENT_DEPTH } from '../core/subagent/index.js';
+} from '../../platform/logger/index.js';
+import type { LogAdapter } from '../../platform/logger/index.js';
+import type { MemoryManager } from '../../core/memory/index.js';
+import { UserPromptBuilder } from '../../core/prompt/index.js';
+import { ensureAgentContext, loadAgentDefinitions, loadContextFiles } from '../../core/agent-context/index.js';
+import { classifyRuntimeError } from '../errors.js';
+import type { RuntimeAppOptions, RuntimeBootstrapResult, RuntimeDependencies, RuntimeEvent } from '../types.js';
+import type { RuntimeDeadlineDriver } from '../runtime-deadline.js';
+import { DEFAULT_MAX_SUBAGENT_DEPTH } from '../../core/subagent/index.js';
 
 const log = Logger.get('RuntimeBootstrap');
 

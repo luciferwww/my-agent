@@ -3,11 +3,11 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentPolicyState, SHARED_AGENT_TOOLS_SECTION } from './agent-policy-state.js';
-import { SettingsManager } from './settings/index.js';
-import { createDefaultAgentConfig, loadAgentConfig, saveAgentConfigSection } from '../platform/config/index.js';
-import type { AgentConfigDocument, AppConfig } from '../platform/config/types.js';
-import type { SettingsActionResult } from '../core/settings/index.js';
-import type { AgentDefinitionSnapshot } from '../core/agent-context/index.js';
+import { SettingsManager } from '../settings/index.js';
+import { createDefaultAgentConfig, loadAgentConfig, saveAgentConfigSection } from '../../platform/config/index.js';
+import type { AgentConfigDocument, AppConfig } from '../../platform/config/types.js';
+import type { SettingsActionResult } from '../../core/settings/index.js';
+import type { AgentDefinitionSnapshot } from '../../core/agent-context/index.js';
 
 function record(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected object.');

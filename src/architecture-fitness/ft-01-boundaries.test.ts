@@ -18,7 +18,7 @@ describe('FT-01 stable core boundaries', () => {
 
     expect(findFt01BoundaryViolations(passSources)).toEqual([]);
     expect(findFt01BoundaryViolations(failSources)).toEqual([
-      'FT-01 source=src/core/runner/AgentRunner.ts boundary=Application import=../../runtime/bootstrap.js target=src/runtime/bootstrap.ts targetBoundary=Composition',
+      'FT-01 source=src/core/runner/AgentRunner.ts boundary=Application import=../../runtime/composition/bootstrap.js target=src/runtime/composition/bootstrap.ts targetBoundary=Composition',
     ]);
   });
 
@@ -27,15 +27,15 @@ describe('FT-01 stable core boundaries', () => {
       path: 'src/core/runner/AgentRunner.ts',
       content: [
         "import { loadAgentDefinitions } from '../agent-context/agent-definitions.js';",
-        "import { AgentPolicyState } from '../../runtime/agent-policy-state.js';",
+        "import { AgentPolicyState } from '../../runtime/policy/agent-policy-state.js';",
       ].join('\n'),
     }];
     expect(findUnclassifiedProductionFiles([
       { path: 'src/core/agent-context/agent-definitions.ts', content: '' },
-      { path: 'src/runtime/agent-policy-state.ts', content: '' },
+      { path: 'src/runtime/policy/agent-policy-state.ts', content: '' },
     ])).toEqual([]);
     expect(findFt01BoundaryViolations(sources)).toEqual([
-      'FT-01 source=src/core/runner/AgentRunner.ts boundary=Application import=../../runtime/agent-policy-state.js target=src/runtime/agent-policy-state.ts targetBoundary=Composition',
+      'FT-01 source=src/core/runner/AgentRunner.ts boundary=Application import=../../runtime/policy/agent-policy-state.js target=src/runtime/policy/agent-policy-state.ts targetBoundary=Composition',
       'FT-01 source=src/core/runner/AgentRunner.ts boundary=Application import=../agent-context/agent-definitions.js target=src/core/agent-context/agent-definitions.ts targetBoundary=Infrastructure',
     ]);
   });

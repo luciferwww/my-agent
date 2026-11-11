@@ -36,7 +36,7 @@ import { loadAgentConfig } from '../platform/config/agent-config-loader.js';
 import { RuntimeApp } from './RuntimeApp.js';
 import { SessionMessageScheduler } from './scheduling/session-message-scheduler.js';
 import { CompositionCoordinator } from './composition/composition-coordinator.js';
-import * as runtimeBootstrap from './bootstrap.js';
+import * as runtimeBootstrap from './composition/bootstrap.js';
 import { RuntimeCompositionManager } from './composition/runtime-composition-manager.js';
 import { createBuiltinLlmProviderUnit } from '../builtins/providers/builtin/index.js';
 import type { RuntimeHandle } from './composition/runtime-composition.js';

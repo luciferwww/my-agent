@@ -48,7 +48,7 @@ Spike是当前行为表征，不是未来回归目标；实现时替换丢数据
 
 - [Runtime用户输入与System构建](../../../../src/runtime/RuntimeApp.ts)：已准备的user内容进入Runner；system按Turn构建。
 - [Runner](../../../../src/core/runner/AgentRunner.ts)：保存user/assistant/toolResult，内存工具结果与Session持久化相互独立；循环内另有prune，重载历史另有Compaction摘要注入。
-- [SessionManager](../../../../src/core/session/SessionManager.ts)及[bootstrap](../../../../src/runtime/bootstrap.ts)：head/tail上限由配置传入，落盘时可截短工具结果；该上限传入不取决于Compaction enabled。
+- [SessionManager](../../../../src/core/session/SessionManager.ts)及[bootstrap](../../../../src/runtime/composition/bootstrap.ts)：head/tail上限由配置传入，落盘时可截短工具结果；该上限传入不取决于Compaction enabled。
 - [Transcript类型](../../../../src/core/session/types.ts)与[加载器](../../../../src/core/session/transcript.ts)：没有调用级实际system/tools及Thinking来源；version 1有限结构校验不等于新块校验。
 - [工具结果裁剪](../../../../src/core/runner/context/tool-result-pruning.ts)、[预算](../../../../src/core/runner/context/context-budget.ts)和[估算](../../../../src/core/runner/context/token-estimation.ts)：投影可随输入预算改变；新未知块当前默认估算为0，目标实现需避免延续该路径。
 - [Extension API](../../../../src/extension/api/index.ts)已有Core调用类型出口；不需要新增平行Extension协议。

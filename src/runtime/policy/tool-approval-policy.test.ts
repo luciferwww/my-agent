@@ -1,8 +1,8 @@
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createApplicationToolPolicy } from './tool-approval-policy.js';
-import type { ToolPolicyConfig as ToolsConfig } from '../core/tools/index.js';
-import type { SessionPermissionMode } from '../core/approval/index.js';
+import type { ToolPolicyConfig as ToolsConfig } from '../../core/tools/index.js';
+import type { SessionPermissionMode } from '../../core/approval/index.js';
 
 const empty: ToolsConfig = { allow: [], deny: [] };
 const agentHome = resolve('agent-home');
@@ -39,18 +39,18 @@ describe('CH-06 resolveToolPolicy — no approval channel', () => {
   });
 
   it('deny takes priority over allow even when no channel (behavior reversal vs old)', () => {
-    // spec §5.3: deny 优先于 allow，与有 channel 一致。旧实现无 channel 时只看 allow，
-    // 现在统一为 deny-first。
+    // Spec §5.3: deny takes precedence with or without a Channel.
+    // Previously, the no-Channel path checked only allow; both are now deny-first.
     const config: ToolsConfig = { allow: ['exec'], deny: ['exec'] };
     expect(decide('exec', config, false)).toBe('deny');
   });
 
   it('treats "group:fs" as a literal pattern (group:* removed)', () => {
-    // spec §6: group:* 不再展开；当作字面名处理，不匹配任何工具
+    // Spec §6: group:* is no longer expanded; it is a literal name matching no Tool here.
     const config: ToolsConfig = { allow: ['group:fs'], deny: [] };
     expect(decide('read_file', config, false)).toBe('deny');
     expect(decide('write_file', config, false)).toBe('deny');
-    // 只有同名 "group:fs" 工具会命中（虚构例子）
+    // Only a Tool literally named "group:fs" would match (a hypothetical example).
     expect(decide('group:fs', config, false)).toBe('allow');
   });
 });
@@ -102,7 +102,7 @@ describe('CH-06 resolveToolPolicy — with approval channel', () => {
 
   it('treats "group:fs" as a literal pattern (group:* removed)', () => {
     const config: ToolsConfig = { allow: ['group:fs'], deny: [] };
-    // group:fs 不展开 → read_file 不在 allow，走 prompt
+    // group:fs is not expanded, so read_file is not allowed and requires approval.
     expect(decide('read_file', config, true)).toBe('requires_approval');
   });
 });

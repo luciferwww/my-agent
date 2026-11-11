@@ -7,15 +7,15 @@ import type {
   ChannelRuntimeHost,
   ChannelRuntimeInteraction,
   TurnInteractionRequest,
-} from '../core/channel/index.js';
-import type { AgentEvent } from '../core/runner/index.js';
+} from '../../core/channel/index.js';
+import type { AgentEvent } from '../../core/runner/index.js';
 import type {
   ContributionSource,
   RegistryStartupDiagnostic,
-} from '../core/registry/index.js';
+} from '../../core/registry/index.js';
 import {
   type StagedRegistryUnit,
-} from './composition/registry-builder.js';
+} from './registry-builder.js';
 
 export interface PreparedChannelRecord {
   readonly id: string;
