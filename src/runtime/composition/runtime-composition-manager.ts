@@ -6,23 +6,23 @@ import {
   validateBuiltinLlmProviderConfig,
   type BuiltinLlmProviderConfig,
   type LLMConfig,
-} from '../builtins/providers/builtin/index.js';
+} from '../../builtins/providers/builtin/index.js';
 import type {
   ChannelCompletion,
   ChannelCompletionObserver,
   ChannelRuntimeBinding,
   ChannelRuntimeHost,
-} from '../core/channel/index.js';
+} from '../../core/channel/index.js';
 import type {
   RegistrySnapshot,
   RegistryStartupDiagnostic,
-} from '../core/registry/index.js';
-import { Logger } from '../platform/logger/index.js';
+} from '../../core/registry/index.js';
+import { Logger } from '../../platform/logger/index.js';
 import {
   prepareStagedUnitChannels,
   recheckPreparedUnitChannels,
   type PreparedUnitChannels,
-} from './channel-lifecycle.js';
+} from '../channel-lifecycle.js';
 import { CompositionCoordinator } from './composition-coordinator.js';
 import {
   finalizeRegistrySnapshot,
@@ -55,9 +55,9 @@ import {
   type LoadedRuntimeUnit,
   type RuntimeUnitInstance,
 } from './runtime-unit.js';
-import type { RuntimeDeadlineBudget } from './runtime-deadline.js';
-import type { RuntimeShutdownResidual } from './types.js';
-import { attributeRuntimeUnitCreationError, classifyRuntimeError } from './errors.js';
+import type { RuntimeDeadlineBudget } from '../runtime-deadline.js';
+import type { RuntimeShutdownResidual } from '../types.js';
+import { attributeRuntimeUnitCreationError, classifyRuntimeError } from '../errors.js';
 
 const log = Logger.get('RuntimeCompositionManager');
 

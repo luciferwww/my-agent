@@ -4,24 +4,24 @@ import {
   BUILTIN_LLM_PROVIDER_UNIT_ID,
   createBuiltinLlmProviderUnit,
   type LLMConfig,
-} from '../builtins/providers/builtin/index.js';
+} from '../../builtins/providers/builtin/index.js';
 import type {
   Channel,
   ChannelCompletion,
   ChannelInteractionTransport,
   ChannelRunRequest,
   ChannelRuntimeHost,
-} from '../core/channel/index.js';
-import type { RuntimeContributionUnit } from '../core/registry/index.js';
-import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
-import type { Tool } from '../core/tools/index.js';
-import { Logger } from '../platform/logger/index.js';
+} from '../../core/channel/index.js';
+import type { RuntimeContributionUnit } from '../../core/registry/index.js';
+import type { ProviderProjectionEntry } from '../../core/model-resolution/index.js';
+import type { Tool } from '../../core/tools/index.js';
+import { Logger } from '../../platform/logger/index.js';
 import { CompositionCoordinator } from './composition-coordinator.js';
 import { RuntimeCompositionManager } from './runtime-composition-manager.js';
 import type { RuntimeCompositionManagerOptions } from './runtime-composition-manager.js';
 import type { RuntimeReloadDeadlineDriver } from './reload-coordinator.js';
 import { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
-import { RuntimeDeadlineBudget, resolveRuntimeDeadlinePolicy } from './runtime-deadline.js';
+import { RuntimeDeadlineBudget, resolveRuntimeDeadlinePolicy } from '../runtime-deadline.js';
 import { RuntimeUnitCatalog, type LoadedRuntimeUnit } from './runtime-unit.js';
 
 function host(): ChannelRuntimeHost {

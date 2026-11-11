@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { RegistrySnapshot } from '../core/registry/index.js';
+import type { RegistrySnapshot } from '../../core/registry/index.js';
 import { CompositionCoordinator } from './composition-coordinator.js';
 import { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
 

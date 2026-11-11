@@ -3,7 +3,7 @@ import {
   finalizeRegistrySnapshot,
   resolveStagedRegistryCandidate,
   stageRegistryUnit,
-} from '../../../runtime/registry-builder.js';
+} from '../../../runtime/composition/registry-builder.js';
 import { createTaskToolContribution } from './contribution.js';
 
 describe('Task Tool Runtime Contribution', () => {

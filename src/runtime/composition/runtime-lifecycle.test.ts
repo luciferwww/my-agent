@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
-import { RuntimeDeadlineBudget, resolveRuntimeDeadlinePolicy } from './runtime-deadline.js';
+import { RuntimeDeadlineBudget, resolveRuntimeDeadlinePolicy } from '../runtime-deadline.js';
 
 describe('RuntimeLifecycleLedger', () => {
   it('requires ownership handoff before generation publication', () => {

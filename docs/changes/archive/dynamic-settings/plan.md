@@ -120,8 +120,8 @@ On 2026-11-10, the existing unit runner under cached Node 22 completed **8 files
 
 | Test files | Existing evidence |
 |---|---|
-| [Composition coordinator](../../../../src/runtime/composition-coordinator.test.ts), [composition manager](../../../../src/runtime/runtime-composition-manager.test.ts), [reload coordinator](../../../../src/runtime/reload-coordinator.test.ts) | Capture/publication ordering, unchanged-instance reuse, candidate failure cleanup and shutdown admission; also confirms the current single-retirement behavior that Delivery must change |
-| [Lifecycle ledger](../../../../src/runtime/runtime-lifecycle.test.ts), [deadline budget](../../../../src/runtime/runtime-deadline.test.ts) | Shared-generation protection, stop outcomes and bounded shutdown waiting |
+| [Composition coordinator](../../../../src/runtime/composition/composition-coordinator.test.ts), [composition manager](../../../../src/runtime/composition/runtime-composition-manager.test.ts), [reload coordinator](../../../../src/runtime/composition/reload-coordinator.test.ts) | Capture/publication ordering, unchanged-instance reuse, candidate failure cleanup and shutdown admission; also confirms the current single-retirement behavior that Delivery must change |
+| [Lifecycle ledger](../../../../src/runtime/composition/runtime-lifecycle.test.ts), [deadline budget](../../../../src/runtime/runtime-deadline.test.ts) | Shared-generation protection, stop outcomes and bounded shutdown waiting |
 | [Runtime Builder](../../../../src/runtime/runtime-builder.test.ts), [configuration loader](../../../../src/platform/config/agent-config-loader.test.ts) | Empty Provider startup, required-candidate cleanup, missing-document rejection and single raw-document read |
 | [Protocol clients](../../../../src/builtins/providers/builtin/protocol-clients.test.ts) | Mocked invocation, signal/error behavior and no need for a live paid model call |
 

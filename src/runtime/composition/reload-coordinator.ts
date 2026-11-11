@@ -6,8 +6,8 @@ import type {
   RuntimeReloadWarning,
 } from './runtime-composition.js';
 import type { CompositionCoordinator } from './composition-coordinator.js';
-import { Logger } from '../platform/logger/index.js';
-import type { LLMConfig } from '../builtins/providers/builtin/index.js';
+import { Logger } from '../../platform/logger/index.js';
+import type { LLMConfig } from '../../builtins/providers/builtin/index.js';
 
 export interface RuntimeReloadRequest {
   readonly requestId: string;

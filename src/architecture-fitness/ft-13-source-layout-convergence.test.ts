@@ -36,8 +36,9 @@ describe('FT-13 public module entry boundaries', () => {
           violations.push(`${source.path}: Settings contract depends on ${target}`);
         }
         if (source.path.startsWith('src/runtime/settings/')
-          && target === 'src/runtime/settings-manager.ts') {
-          violations.push(`${source.path}: Test implementation depends on SettingsManager`);
+          && source.path !== 'src/runtime/settings/index.ts'
+          && target === 'src/runtime/settings/settings-manager.ts') {
+          violations.push(`${source.path}: Settings implementation depends on SettingsManager`);
         }
         for (const root of publicRoots) {
           if (!source.path.startsWith(`${root}/`)

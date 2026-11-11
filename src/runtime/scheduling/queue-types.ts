@@ -1,10 +1,10 @@
-import type { ChannelRuntimeBinding } from '../core/channel/index.js';
+import type { ChannelRuntimeBinding } from '../../core/channel/index.js';
 import type {
   ChatContentBlock,
   ReasoningPreference,
   ResolvedReasoningPolicy,
-} from '../core/model-invocation/index.js';
-import type { CanonicalModelIdentity } from '../core/model-resolution/index.js';
+} from '../../core/model-invocation/index.js';
+import type { CanonicalModelIdentity } from '../../core/model-resolution/index.js';
 
 export type MessageRouteContext = {
   originChannel?: ChannelRuntimeBinding;

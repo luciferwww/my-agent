@@ -15,7 +15,7 @@ import type {
 import type { SubagentExecutor } from '../core/subagent/SubagentExecutor.js';
 import type { ContextFile } from '../core/agent-context/types.js';
 import { Logger } from '../platform/logger/index.js';
-import type { MessageRouteContext } from './queue-types.js';
+import type { MessageRouteContext } from './scheduling/queue-types.js';
 import type {
   CurrentCallApprovalCapability,
   SessionPermissionMode,

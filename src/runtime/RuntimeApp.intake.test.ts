@@ -17,7 +17,7 @@ import type {
 import type { RunParams, RunResult } from '../core/runner/types.js';
 import { SessionManager } from '../core/session/SessionManager.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
-import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
+import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './composition/runtime-unit.js';
 import type { Tool } from '../core/tools/types.js';
 import {
   AgentRunner,
@@ -29,8 +29,8 @@ import type {
   ProcessInboundResult,
 } from '../core/media/attachment-pipeline.js';
 import { RuntimeApp } from './RuntimeApp.js';
-import type { SessionMessageScheduler } from './session-message-scheduler.js';
-import type { RuntimeHandle } from './runtime-composition.js';
+import type { SessionMessageScheduler } from './scheduling/session-message-scheduler.js';
+import type { RuntimeHandle } from './composition/runtime-composition.js';
 import type { RuntimeDependencies, RuntimeEvent } from './types.js';
 import { createDefaultAgentConfig } from '../platform/config/default-composition.js';
 import { DEFAULT_LOGGER_CONFIG } from '../platform/logger/index.js';

@@ -21,8 +21,8 @@ import {
   type WebSocketChannelOptions,
 } from './WebSocketChannel.js';
 import type { WebSocketExtensionConfig } from './config.js';
-import { SettingsManager } from '../../src/runtime/settings-manager.js';
-import type { RuntimeReloadResult } from '../../src/runtime/runtime-composition.js';
+import { SettingsManager } from '../../src/runtime/settings/index.js';
+import type { RuntimeReloadResult } from '../../src/runtime/composition/runtime-composition.js';
 import { createBuiltinLlmProviderUnit } from '../../src/builtins/providers/builtin/index.js';
 import { RuntimeDeadlineBudget, DEFAULT_RUNTIME_DEADLINE_POLICY, createSystemRuntimeDeadlineDriver } from '../../src/runtime/runtime-deadline.js';
 import { object, parseSection } from './client/src/client/settings.js';

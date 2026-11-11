@@ -1,4 +1,4 @@
-import type { ContributionSource, RuntimeContributionUnit } from '../core/registry/index.js';
+import type { ContributionSource, RuntimeContributionUnit } from '../../core/registry/index.js';
 import type { RuntimeReloadChange } from './runtime-composition.js';
 
 const UNIT_ID = /^[A-Za-z0-9_-]{1,64}$/;

@@ -1,31 +1,31 @@
 import type {
   ChannelCompletion,
   ModelCatalogSnapshot,
-} from '../core/channel/index.js';
-import type { SettingsCapability } from '../core/settings/index.js';
-import type { AvailableSubagentEntry } from '../core/subagent/index.js';
-import type { ContextFile } from '../core/agent-context/index.js';
+} from '../../core/channel/index.js';
+import type { SettingsCapability } from '../../core/settings/index.js';
+import type { AvailableSubagentEntry } from '../../core/subagent/index.js';
+import type { ContextFile } from '../../core/agent-context/index.js';
 import type {
   SessionEntry,
   SessionHistoryPage,
   SessionHistoryQuery,
   ResolvedSession,
-} from '../core/session/index.js';
+} from '../../core/session/index.js';
 import type {
   RuntimeLifecycleState,
   RuntimeShutdownReport,
-} from './types.js';
+} from '../types.js';
 import type {
   SessionPermissionMode,
   SessionPermissionState,
-} from '../core/approval/index.js';
+} from '../../core/approval/index.js';
 
 export type {
   DefaultModelSelection,
   ModelCatalogEntry,
   ModelCatalogSnapshot,
   ProviderCatalogEntry,
-} from '../core/channel/index.js';
+} from '../../core/channel/index.js';
 
 export interface RuntimeApplication {
   readonly settings: SettingsCapability;

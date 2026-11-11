@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { RuntimeContributionUnit } from '../core/registry/index.js';
+import type { RuntimeContributionUnit } from '../../core/registry/index.js';
 import {
   RuntimeUnitCatalog,
   createLoadedRuntimeUnit,

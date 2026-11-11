@@ -9,7 +9,7 @@ import {
   prepareStagedUnitChannels,
   recheckPreparedUnitChannels,
 } from './channel-lifecycle.js';
-import { stageRegistryUnit } from './registry-builder.js';
+import { stageRegistryUnit } from './composition/registry-builder.js';
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;

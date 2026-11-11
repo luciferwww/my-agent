@@ -23,7 +23,7 @@ import type {
   ExtensionAcquisitionOptions,
   ExtensionAcquisitionResult,
 } from '../extension/acquisition/index.js';
-import type { LoadedRuntimeUnit } from './runtime-unit.js';
+import type { LoadedRuntimeUnit } from './composition/runtime-unit.js';
 import type { RuntimeDeadlineDriver, RuntimeDeadlinePolicy } from './runtime-deadline.js';
 
 export interface RuntimeResourceSet {

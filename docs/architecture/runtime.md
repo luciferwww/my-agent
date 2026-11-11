@@ -35,27 +35,29 @@ src/runtime/
 ├── RuntimeApp.ts
 ├── config.ts
 ├── bootstrap.ts
-├── settings-manager.ts
+├── composition/
+│   ├── composition-coordinator.ts
+│   ├── registry-builder.ts
+│   ├── reload-coordinator.ts
+│   ├── runtime-composition-manager.ts
+│   ├── runtime-composition.ts
+│   ├── runtime-lifecycle.ts
+│   └── runtime-unit.ts
 ├── settings/
+│   ├── settings-manager.ts
 │   ├── model-test.ts
 │   ├── section-views.ts
 │   ├── helpers.ts
 │   └── index.ts
 ├── runtime-builder.ts
-├── runtime-composition.ts
-├── runtime-composition-manager.ts
-├── composition-coordinator.ts
-├── reload-coordinator.ts
-├── registry-builder.ts
-├── runtime-unit.ts
-├── runtime-lifecycle.ts
 ├── runtime-deadline.ts
 ├── channel-lifecycle.ts
-├── request-completion-gate.ts
+├── scheduling/
+│   ├── session-message-scheduler.ts
+│   ├── queue-types.ts
+│   └── request-completion-gate.ts
 ├── subagent-orchestration.ts
 ├── prompt-factory.ts
-├── queue-types.ts
-├── session-message-scheduler.ts
 ├── tool-approval-policy.ts
 ├── turn-interaction/
 │   └── TurnInteractionManager.ts
@@ -70,6 +72,14 @@ src/builtins/
 The converged integration layout keeps concrete builtin capabilities and their Host entries under `src/builtins/`, Runtime-owned interaction state under `src/runtime/turn-interaction/`, generic Host acquisition under `src/extension/acquisition/`, and independently owned concrete Extension packages under repository-root `extensions/`. Runtime and its Builder do not import a concrete External Extension or the acquisition implementation.
 
 The public Runtime barrel exposes `RuntimeApp`, the frozen-handle contracts, Unit loading contracts, selected deadline/prompt/error helpers, and public types. Internal managers remain implementation details.
+
+Composition and scheduling directories group established responsibilities
+without introducing another API layer. The existing private Settings entry is
+the entry for SettingsManager and its helpers; internal Settings files import
+their siblings directly. Tests remain colocated. RuntimeApp still owns request
+gates and execution even though their related source files are grouped under
+scheduling. Shared deadlines, bootstrap/builders and cross-cutting orchestration
+remain at the Runtime root rather than being forced into a group.
 
 ## 3. Public composition surfaces
 
@@ -447,6 +457,6 @@ Registry startup diagnostics are logged locally by Runtime with bounded identity
 
 | Kind | Evidence |
 |---|---|
-| Source | [RuntimeApp](../../src/runtime/RuntimeApp.ts), [queue types](../../src/runtime/queue-types.ts), [composition manager](../../src/runtime/runtime-composition-manager.ts), [SettingsManager](../../src/runtime/settings-manager.ts), [model Tests](../../src/runtime/settings/model-test.ts), [Settings contracts](../../src/core/settings/index.ts) |
-| Tests | [RuntimeApp tests](../../src/runtime/RuntimeApp.test.ts), [composition manager tests](../../src/runtime/runtime-composition-manager.test.ts), [SettingsManager tests](../../src/runtime/settings-manager.test.ts), [independent model Test tests](../../src/runtime/settings/model-test.test.ts) |
+| Source | [RuntimeApp](../../src/runtime/RuntimeApp.ts), [queue types](../../src/runtime/scheduling/queue-types.ts), [composition manager](../../src/runtime/composition/runtime-composition-manager.ts), [SettingsManager](../../src/runtime/settings/settings-manager.ts), [model Tests](../../src/runtime/settings/model-test.ts), [Settings contracts](../../src/core/settings/index.ts) |
+| Tests | [RuntimeApp tests](../../src/runtime/RuntimeApp.test.ts), [composition manager tests](../../src/runtime/composition/runtime-composition-manager.test.ts), [SettingsManager tests](../../src/runtime/settings/settings-manager.test.ts), [independent model Test tests](../../src/runtime/settings/model-test.test.ts) |
 | Controlling authority | [Runtime Composition Specification](../specifications/runtime-composition.md) |

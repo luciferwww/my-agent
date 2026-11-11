@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
   ProviderCatalogModel,
   ProviderProjectionEntry,
-} from '../core/model-resolution/index.js';
-import type { RuntimeContributionUnit } from '../core/registry/index.js';
-import type { ApplicationToolPolicy, Tool } from '../core/tools/types.js';
+} from '../../core/model-resolution/index.js';
+import type { RuntimeContributionUnit } from '../../core/registry/index.js';
+import type { ApplicationToolPolicy, Tool } from '../../core/tools/types.js';
 import {
   finalizeRegistrySnapshot,
   resolveStagedRegistryCandidate,

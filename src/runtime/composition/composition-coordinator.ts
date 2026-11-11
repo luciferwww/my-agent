@@ -1,4 +1,4 @@
-import type { RegistrySnapshot } from '../core/registry/index.js';
+import type { RegistrySnapshot } from '../../core/registry/index.js';
 import type { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
 
 export interface RuntimeGenerationPin {

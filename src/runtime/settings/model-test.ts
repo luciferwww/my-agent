@@ -8,10 +8,10 @@ import { BUILTIN_PROVIDER_ID, createBuiltinLlmProviderUnit } from '../../builtin
 import { Logger } from '../../platform/logger/index.js';
 import { createSystemRuntimeDeadlineDriver } from '../runtime-deadline.js';
 import type { RuntimeDeadlineBudget, RuntimeDeadlineDriver } from '../runtime-deadline.js';
-import type { RuntimeSnapshotAccess, RuntimeGenerationPin } from '../composition-coordinator.js';
-import type { RuntimeUnitInstance } from '../runtime-unit.js';
+import type { RuntimeSnapshotAccess, RuntimeGenerationPin } from '../composition/composition-coordinator.js';
+import type { RuntimeUnitInstance } from '../composition/runtime-unit.js';
 import type { RuntimeShutdownReport } from '../types.js';
-import { stageRegistryUnit } from '../registry-builder.js';
+import { stageRegistryUnit } from '../composition/registry-builder.js';
 import {
   SettingsClosingError, closingFailure, failure, isObject, object, onlyKeys, settingsFailure, success,
 } from './helpers.js';

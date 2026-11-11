@@ -20,7 +20,7 @@ import type {
 import type { RunParams, RunResult } from '../core/runner/types.js';
 import type { Tool } from '../core/tools/types.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
-import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
+import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './composition/runtime-unit.js';
 import type {
   ModelReference,
   ProviderProjectionEntry,
@@ -34,12 +34,12 @@ import { createDefaultAgentConfig } from '../platform/config/default-composition
 import { DEFAULT_LOGGER_CONFIG } from '../platform/logger/index.js';
 import { loadAgentConfig } from '../platform/config/agent-config-loader.js';
 import { RuntimeApp } from './RuntimeApp.js';
-import { SessionMessageScheduler } from './session-message-scheduler.js';
-import { CompositionCoordinator } from './composition-coordinator.js';
+import { SessionMessageScheduler } from './scheduling/session-message-scheduler.js';
+import { CompositionCoordinator } from './composition/composition-coordinator.js';
 import * as runtimeBootstrap from './bootstrap.js';
-import { RuntimeCompositionManager } from './runtime-composition-manager.js';
+import { RuntimeCompositionManager } from './composition/runtime-composition-manager.js';
 import { createBuiltinLlmProviderUnit } from '../builtins/providers/builtin/index.js';
-import type { RuntimeHandle } from './runtime-composition.js';
+import type { RuntimeHandle } from './composition/runtime-composition.js';
 import type {
   RunTurnParams,
   RunTurnResult,

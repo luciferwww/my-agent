@@ -29,8 +29,8 @@ const MIXED_PRODUCTION_PATHS = new Set([
   'src/runtime/glob-match.ts',
   'src/runtime/index.ts',
   'src/runtime/prompt-factory.ts',
-  'src/runtime/queue-types.ts',
-  'src/runtime/request-completion-gate.ts',
+  'src/runtime/scheduling/queue-types.ts',
+  'src/runtime/scheduling/request-completion-gate.ts',
   'src/runtime/RuntimeApp.ts',
   'src/runtime/subagent-orchestration.ts',
   'src/runtime/summarize-assembled.ts',
@@ -301,17 +301,16 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
   if (
     sourcePath.startsWith('src/runtime/settings/')
     || sourcePath === 'src/runtime/agent-policy-state.ts'
-    || sourcePath === 'src/runtime/registry-builder.ts'
-    || sourcePath === 'src/runtime/settings-manager.ts'
+    || sourcePath === 'src/runtime/composition/registry-builder.ts'
     || sourcePath === 'src/runtime/channel-lifecycle.ts'
-    || sourcePath === 'src/runtime/composition-coordinator.ts'
-    || sourcePath === 'src/runtime/reload-coordinator.ts'
+    || sourcePath === 'src/runtime/composition/composition-coordinator.ts'
+    || sourcePath === 'src/runtime/composition/reload-coordinator.ts'
     || sourcePath === 'src/runtime/runtime-deadline.ts'
     || sourcePath === 'src/runtime/runtime-builder.ts'
-    || sourcePath === 'src/runtime/runtime-composition-manager.ts'
-    || sourcePath === 'src/runtime/runtime-composition.ts'
-    || sourcePath === 'src/runtime/runtime-lifecycle.ts'
-    || sourcePath === 'src/runtime/runtime-unit.ts'
+    || sourcePath === 'src/runtime/composition/runtime-composition-manager.ts'
+    || sourcePath === 'src/runtime/composition/runtime-composition.ts'
+    || sourcePath === 'src/runtime/composition/runtime-lifecycle.ts'
+    || sourcePath === 'src/runtime/composition/runtime-unit.ts'
   ) {
     return 'Composition';
   }
@@ -320,7 +319,7 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
   }
   if (
     sourcePath.startsWith('src/runtime/session/')
-    || sourcePath === 'src/runtime/session-message-scheduler.ts'
+    || sourcePath === 'src/runtime/scheduling/session-message-scheduler.ts'
     || sourcePath.startsWith('src/runtime/turn-interaction/')
   ) {
     return 'Application';

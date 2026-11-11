@@ -1,11 +1,11 @@
-import type { ChannelContribution, ChannelRuntimeBinding } from '../core/channel/index.js';
+import type { ChannelContribution, ChannelRuntimeBinding } from '../../core/channel/index.js';
 import {
   normalizeReasoningCapabilities,
   ReasoningCapabilitiesValidationError,
   type ProviderCatalogModel,
   type ProviderProjectionEntry,
   type ModelReference,
-} from '../core/model-resolution/index.js';
+} from '../../core/model-resolution/index.js';
 import type {
   ExtensionRegistrationApi,
   HookBinding,
@@ -17,10 +17,10 @@ import type {
   ResolvedTool,
   RuntimeContributionUnit,
   ToolProjection,
-} from '../core/registry/index.js';
-import type { HookName } from '../core/runner/hooks/types.js';
-import { compilePortableToolSchema } from '../core/tools/portable-schema.js';
-import type { ApplicationToolPolicy, Tool, ToolDefinition } from '../core/tools/types.js';
+} from '../../core/registry/index.js';
+import type { HookName } from '../../core/runner/hooks/types.js';
+import { compilePortableToolSchema } from '../../core/tools/portable-schema.js';
+import type { ApplicationToolPolicy, Tool, ToolDefinition } from '../../core/tools/types.js';
 
 const CONTRIBUTION_ID = /^[A-Za-z0-9_-]{1,64}$/;
 

@@ -3,7 +3,7 @@ import { AgentExecutionFailure } from '../core/runner/index.js';
 import type { AgentEvent } from '../core/runner/index.js';
 import type { ModelInvocationPort } from '../core/model-invocation/index.js';
 import type { ProviderProjectionEntry } from '../core/model-resolution/index.js';
-import { finalizeRegistrySnapshot } from './registry-builder.js';
+import { finalizeRegistrySnapshot } from './composition/registry-builder.js';
 import type { SubagentProfile } from '../core/subagent/types.js';
 import type { SubagentExecutionRequest } from '../core/subagent/SubagentExecutor.js';
 import {

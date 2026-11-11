@@ -10,7 +10,7 @@ import type {
   ExtensionLoadContext,
   ExtensionLogger,
 } from '../api/contracts.js';
-import type { LoadedRuntimeUnit } from '../../runtime/runtime-unit.js';
+import type { LoadedRuntimeUnit } from '../../runtime/composition/runtime-unit.js';
 import { prepareExtensionConfig } from './configuration.js';
 import { discoverExtensionDescriptors } from './discovery.js';
 import type {

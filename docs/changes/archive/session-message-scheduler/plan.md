@@ -19,7 +19,7 @@ Current source ownership is concentrated in
 `messageQueueBySession`, `inFlightSessions`, and `steeringWaiters` jointly serve
 intake, standalone launch, steering, Session busy checks, Abort, and Shutdown.
 The existing queued payload lives in
-[`queue-types.ts`](../../../../src/runtime/queue-types.ts).
+[`queue-types.ts`](../../../../src/runtime/scheduling/queue-types.ts).
 
 [ADR-017](../../../decisions/adr-017-session-message-queue-and-steering-claim.md)
 originally explicitly rejected a new scheduler module. This extraction needed

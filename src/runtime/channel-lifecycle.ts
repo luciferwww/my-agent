@@ -15,7 +15,7 @@ import type {
 } from '../core/registry/index.js';
 import {
   type StagedRegistryUnit,
-} from './registry-builder.js';
+} from './composition/registry-builder.js';
 
 export interface PreparedChannelRecord {
   readonly id: string;

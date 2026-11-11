@@ -1,5 +1,5 @@
 import type { ExtensionRegistrationApi } from '../../../core/registry/index.js';
-import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from '../../../runtime/runtime-unit.js';
+import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from '../../../runtime/composition/runtime-unit.js';
 import { CliChannel, type CliChannelConfig } from './CliChannel.js';
 
 export function createCliChannelUnit(

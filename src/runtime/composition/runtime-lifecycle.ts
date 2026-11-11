@@ -1,5 +1,5 @@
-import type { ContributionSource } from '../core/registry/index.js';
-import type { RuntimeDeadlineBudget } from './runtime-deadline.js';
+import type { ContributionSource } from '../../core/registry/index.js';
+import type { RuntimeDeadlineBudget } from '../runtime-deadline.js';
 
 export type RuntimeInstanceState =
   | 'created'

@@ -28,11 +28,11 @@ import { acquireExtensions } from '../extension/acquisition/index.js';
 import {
   CompositionCoordinator,
   type RuntimeSnapshotAccess,
-} from './composition-coordinator.js';
+} from './composition/composition-coordinator.js';
 import type {
   RuntimeApplication,
   RuntimeHandle,
-} from './runtime-composition.js';
+} from './composition/runtime-composition.js';
 import type {
   RuntimeAppOptions,
   RuntimeDependencies,
@@ -40,16 +40,15 @@ import type {
   RuntimeResourceSet,
   RuntimeShutdownReport,
 } from './types.js';
-import { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
-import { RuntimeCompositionManager } from './runtime-composition-manager.js';
-import { SettingsManager } from './settings-manager.js';
-import { settingsFailure } from './settings/index.js';
+import { RuntimeLifecycleLedger } from './composition/runtime-lifecycle.js';
+import { RuntimeCompositionManager } from './composition/runtime-composition-manager.js';
+import { SettingsManager, settingsFailure } from './settings/index.js';
 import { AgentPolicyState, type AppliedAgentState } from './agent-policy-state.js';
 import {
   RuntimeUnitCatalog,
   createLoadedRuntimeUnit,
   type LoadedRuntimeUnit,
-} from './runtime-unit.js';
+} from './composition/runtime-unit.js';
 import {
   resolveSubagentCapabilities,
 } from '../core/subagent/index.js';
@@ -64,7 +63,7 @@ import {
 } from '../builtins/tools/environment/index.js';
 import { createSubagentDelegationPort } from './subagent-orchestration.js';
 import type { ActiveParentTurn } from './subagent-orchestration.js';
-import type { MessageRouteContext } from './queue-types.js';
+import type { MessageRouteContext } from './scheduling/queue-types.js';
 import { classifyRuntimeError } from './errors.js';
 import {
   RuntimeDeadlineBudget,

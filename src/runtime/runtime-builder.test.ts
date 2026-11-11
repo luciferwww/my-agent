@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { bootstrapRuntime } from './bootstrap.js';
 import { acquireAgentHomeLock } from './agent-home-lock.js';
-import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
+import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './composition/runtime-unit.js';
 import { Logger } from '../platform/logger/index.js';
 import { createDefaultAgentConfig } from '../platform/config/index.js';
 import {

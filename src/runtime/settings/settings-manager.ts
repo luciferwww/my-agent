@@ -1,25 +1,28 @@
 import { randomUUID } from 'node:crypto';
-import type { ModelCatalogSnapshot } from '../core/channel/index.js';
-import type { SettingsActionRequest, SettingsActionResult, SettingsCapability } from '../core/settings/index.js';
+import type { ModelCatalogSnapshot } from '../../core/channel/index.js';
+import type { SettingsActionRequest, SettingsActionResult, SettingsCapability } from '../../core/settings/index.js';
 import {
   ConfigEditError, validateLlmConfiguration,
   saveAgentConfigSection, restoreAgentConfigSection,
   type ConfigSectionEdit,
-} from '../platform/config/index.js';
-import type { AgentConfigDocument } from '../platform/config/types.js';
-import type { ExtensionAcquisitionResult, ExtensionDescriptorV1 } from '../extension/acquisition/types.js';
-import { BUILTIN_PROVIDER_ID, createBuiltinLlmProviderUnit, type LLMConfig } from '../builtins/providers/builtin/index.js';
-import { Logger } from '../platform/logger/index.js';
-import type { RuntimeReloadResult } from './runtime-composition.js';
-import type { RuntimeDeadlineBudget, RuntimeDeadlineDriver } from './runtime-deadline.js';
-import type { RuntimeSnapshotAccess } from './composition-coordinator.js';
-import type { RuntimeShutdownReport } from './types.js';
-import { SHARED_AGENT_TOOLS_SECTION, type AgentPolicyState } from './agent-policy-state.js';
+} from '../../platform/config/index.js';
+import type { AgentConfigDocument } from '../../platform/config/types.js';
+import type { ExtensionAcquisitionResult, ExtensionDescriptorV1 } from '../../extension/acquisition/types.js';
+import { BUILTIN_PROVIDER_ID, createBuiltinLlmProviderUnit, type LLMConfig } from '../../builtins/providers/builtin/index.js';
+import { Logger } from '../../platform/logger/index.js';
+import type { RuntimeReloadResult } from '../composition/runtime-composition.js';
+import type { RuntimeDeadlineBudget, RuntimeDeadlineDriver } from '../runtime-deadline.js';
+import type { RuntimeSnapshotAccess } from '../composition/composition-coordinator.js';
+import type { RuntimeShutdownReport } from '../types.js';
+import { SHARED_AGENT_TOOLS_SECTION, type AgentPolicyState } from '../agent-policy-state.js';
+import { ModelTestRunner } from './model-test.js';
 import {
-  ModelTestRunner, SettingsClosingError, buildLlmSectionView, buildExtensionSectionView,
+  buildLlmSectionView, buildExtensionSectionView, type SettingsApplicationState,
+} from './section-views.js';
+import {
+  SettingsClosingError,
   closingFailure, errorCode, failure, object, onlyKeys, settingsFailure, success,
-  type SettingsApplicationState,
-} from './settings/index.js';
+} from './helpers.js';
 
 const log = Logger.get('SettingsManager');
 

@@ -6,11 +6,11 @@ import type { ProviderProjectionEntry } from '../../core/model-resolution/index.
 import { createBuiltinLlmProviderUnit } from '../../builtins/providers/builtin/index.js';
 import type { BuiltinLlmProviderConfig } from '../../builtins/providers/builtin/index.js';
 import type { AgentConfigDocument } from '../../platform/config/types.js';
-import { CompositionCoordinator } from '../composition-coordinator.js';
-import { finalizeRegistrySnapshot } from '../registry-builder.js';
+import { CompositionCoordinator } from '../composition/composition-coordinator.js';
+import { finalizeRegistrySnapshot } from '../composition/registry-builder.js';
 import { DEFAULT_RUNTIME_DEADLINE_POLICY, RuntimeDeadlineBudget, createSystemRuntimeDeadlineDriver } from '../runtime-deadline.js';
 import type { RuntimeDeadlineDriver } from '../runtime-deadline.js';
-import type { RuntimeUnitInstance } from '../runtime-unit.js';
+import type { RuntimeUnitInstance } from '../composition/runtime-unit.js';
 import { ModelTestRunner } from './model-test.js';
 
 const settings = {

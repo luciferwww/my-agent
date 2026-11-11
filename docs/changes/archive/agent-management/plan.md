@@ -190,7 +190,7 @@ their combined delivery. Do not mark checks passed before execution.
   same-name Context files; that merge behavior is not being redesigned.
 - [Tool policy resolution](../../../../src/core/subagent/profile-tools.ts)
   replaces inherited allow only when explicitly supplied and appends child deny.
-- [SettingsManager](../../../../src/runtime/settings-manager.ts) already owns
+- [SettingsManager](../../../../src/runtime/settings/settings-manager.ts) already owns
   revisioned saves and restart-based Extension settings.
 - [Task lookup](../../../../src/builtins/tools/task/task-tool.ts) currently reads a
   shared profile map and falls back for unknown names.

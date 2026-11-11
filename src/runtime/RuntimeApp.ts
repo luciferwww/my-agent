@@ -48,17 +48,17 @@ import {
   type RuntimeApplicationKernel,
   type RuntimeApplicationKernelInput,
 } from './runtime-builder.js';
-import type { ModelCatalogSnapshot, RuntimeHandle } from './runtime-composition.js';
+import type { ModelCatalogSnapshot, RuntimeHandle } from './composition/runtime-composition.js';
 import type {
   RuntimeGenerationPin,
   RuntimeSnapshotAccess,
-} from './composition-coordinator.js';
+} from './composition/composition-coordinator.js';
 import { buildSystemPromptParams } from './prompt-factory.js';
 import { summarizeAssembled } from './summarize-assembled.js';
 import {
   RequestCompletionGate,
   type RequestTerminal,
-} from './request-completion-gate.js';
+} from './scheduling/request-completion-gate.js';
 import {
   RuntimeDeadlineBudget,
   createSystemRuntimeDeadlineDriver,
@@ -72,7 +72,7 @@ import type {
 import { SessionCoordinator } from './session/SessionCoordinator.js';
 import { SessionPermissionRegistry } from './session/SessionPermissionRegistry.js';
 import { PendingSessionRegistry } from './session/PendingSessionRegistry.js';
-import { SessionMessageScheduler } from './session-message-scheduler.js';
+import { SessionMessageScheduler } from './scheduling/session-message-scheduler.js';
 import type { ActiveParentTurn } from './subagent-orchestration.js';
 import {
   collectAvailableSubagents,
@@ -81,7 +81,7 @@ import type { AvailableSubagentEntry } from '../core/subagent/index.js';
 import type {
   MessageRouteContext,
   QueuedUserMessage,
-} from './queue-types.js';
+} from './scheduling/queue-types.js';
 import type {
   RunTurnParams,
   RunTurnResult,

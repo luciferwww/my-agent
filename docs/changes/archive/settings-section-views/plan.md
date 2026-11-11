@@ -16,11 +16,11 @@ redaction and Extension restart comparison, not merely a smaller manager file.
 
 Current evidence:
 
-- [`SettingsManager.section()`](../../../../src/runtime/settings-manager.ts)
+- [`SettingsManager.section()`](../../../../src/runtime/settings/settings-manager.ts)
   contains Agent decoration followed by LLM and Extension projections.
   `credentialMetadata`, `comparisonEntry`, and `isScalar` are used for these
   projections; none owns asynchronous work or resources.
-- [`settings-manager.test.ts`](../../../../src/runtime/settings-manager.test.ts)
+- [`settings-manager.test.ts`](../../../../src/runtime/settings/settings-manager.test.ts)
   already tests safe views, stable revisions, Extension enablement defaults,
   restart reversal, and transaction/application behavior, but its shared
   fixture creates a temporary Home and writes a config file even for view tests.

@@ -7,10 +7,10 @@ import type {
 } from '../core/channel/index.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
 import type { AgentEvent } from '../core/runner/index.js';
-import { CompositionCoordinator } from './composition-coordinator.js';
-import { RuntimeCompositionManager } from './runtime-composition-manager.js';
-import { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
-import { RuntimeUnitCatalog, createLoadedRuntimeUnit } from './runtime-unit.js';
+import { CompositionCoordinator } from './composition/composition-coordinator.js';
+import { RuntimeCompositionManager } from './composition/runtime-composition-manager.js';
+import { RuntimeLifecycleLedger } from './composition/runtime-lifecycle.js';
+import { RuntimeUnitCatalog, createLoadedRuntimeUnit } from './composition/runtime-unit.js';
 
 interface ExternalSentinelResource {
   readonly marker: symbol;

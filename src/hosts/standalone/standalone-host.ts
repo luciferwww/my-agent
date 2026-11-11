@@ -11,7 +11,7 @@ import {
   type AgentConfigSnapshot,
 } from '../../platform/config/index.js';
 import { RuntimeApp, type RuntimeHandle } from '../../runtime/index.js';
-import type { LoadedRuntimeUnit } from '../../runtime/runtime-unit.js';
+import type { LoadedRuntimeUnit } from '../../runtime/composition/runtime-unit.js';
 import type { AgentPathContext } from '../path-context.js';
 import {
   resolveStandaloneHostPathContext,
