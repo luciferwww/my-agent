@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { isDeepStrictEqual } from 'node:util';
 import type { ModelCatalogSnapshot } from '../core/channel/index.js';
 import type { SettingsActionRequest, SettingsActionResult, SettingsCapability } from '../core/settings/index.js';
 import {
@@ -8,10 +7,6 @@ import {
   type ConfigSectionEdit,
 } from '../platform/config/index.js';
 import type { AgentConfigDocument } from '../platform/config/types.js';
-import { CredentialMaterializationError, parseCredentialEnvironmentReference } from '../platform/config/credential-materialization.js';
-import {
-  extensionSettingsFields, prepareExtensionConfig,
-} from '../extension/acquisition/configuration.js';
 import type { ExtensionAcquisitionResult, ExtensionDescriptorV1 } from '../extension/acquisition/types.js';
 import { BUILTIN_PROVIDER_ID, createBuiltinLlmProviderUnit, type LLMConfig } from '../builtins/providers/builtin/index.js';
 import { Logger } from '../platform/logger/index.js';
@@ -21,7 +16,9 @@ import type { RuntimeSnapshotAccess } from './composition-coordinator.js';
 import type { RuntimeShutdownReport } from './types.js';
 import { SHARED_AGENT_TOOLS_SECTION, type AgentPolicyState } from './agent-policy-state.js';
 import {
-  ModelTestRunner, SettingsClosingError, closingFailure, errorCode, failure, isObject, object, onlyKeys, settingsFailure, success,
+  ModelTestRunner, SettingsClosingError, buildLlmSectionView, buildExtensionSectionView,
+  closingFailure, errorCode, failure, object, onlyKeys, settingsFailure, success,
+  type SettingsApplicationState,
 } from './settings/index.js';
 
 const log = Logger.get('SettingsManager');
@@ -47,8 +44,6 @@ interface QueuedUpdate {
   readonly resolve: (result: SettingsActionResult) => void;
 }
 
-type ApplicationState = 'current' | 'not_applied' | 'unknown';
-
 export class SettingsManager implements SettingsCapability {
   private document: AgentConfigDocument;
   private readonly baseline: AgentConfigDocument;
@@ -60,7 +55,7 @@ export class SettingsManager implements SettingsCapability {
   private budget?: RuntimeDeadlineBudget;
   private active?: { requestId: string; phase: string };
   private fileStateUnknown = false;
-  private applicationState: ApplicationState = 'current';
+  private applicationState: SettingsApplicationState = 'current';
   private readonly environment: Readonly<Record<string, string | undefined>>;
   private readonly modelTests: ModelTestRunner;
 
@@ -258,7 +253,7 @@ export class SettingsManager implements SettingsCapability {
   private async rollback(
     request: SettingsActionRequest,
     previous: Awaited<ReturnType<typeof saveAgentConfigSection>>['previous'],
-    previousApplicationState: ApplicationState,
+    previousApplicationState: SettingsApplicationState,
     applicationFailure: string,
   ): Promise<SettingsActionResult> {
     if (this.budget && this.budget.remaining() <= 0) {
@@ -331,61 +326,16 @@ export class SettingsManager implements SettingsCapability {
     }
     const descriptor = this.descriptors.get(id);
     if (!descriptor) {
-      const llm = validateLlmConfiguration(this.document.llm);
-      const { apiKey, ...builtin } = llm.builtin ?? {};
-      return {
-        id, revision: this.revisions.get(id), restartRequired: false,
+      return buildLlmSectionView({
+        id, revision: this.revisions.get(id), llm: this.document.llm,
         applicationStatus: this.applicationState,
-        settings: {
-          ...(llm.defaultModel === undefined ? {} : { defaultModel: llm.defaultModel }),
-          ...(llm.builtin === undefined ? {} : { builtin }),
-        },
-        form: { credentials: { '/builtin/apiKey': credentialMetadata(apiKey) } },
-      };
+      });
     }
-    const entry = this.document.extensions?.entries?.[descriptor.id];
-    const config = isObject(entry) && isObject(entry['config']) ? entry['config'] : {};
-    const fields = extensionSettingsFields(descriptor.configSchema);
-    const settings = Object.fromEntries(fields.filter((field) => field.editable && !field.sensitive
-      && Object.hasOwn(config, field.name) && isScalar(config[field.name]))
-      .map((field) => [field.name, config[field.name]]));
-    const credentials = Object.fromEntries(fields.filter((field) => field.editable && field.sensitive)
-      .map((field) => [field.path, credentialMetadata(Object.hasOwn(config, field.name) ? config[field.name] : undefined)]));
-    const baseline = this.baseline.extensions?.entries?.[descriptor.id];
-    const restartRequired = !isDeepStrictEqual(
-      comparisonEntry(entry, descriptor), comparisonEntry(baseline, descriptor),
-    );
-    return {
-      id, name: descriptor.name ?? descriptor.id, revision: this.revisions.get(id), restartRequired,
-      applicationStatus: restartRequired ? 'restart_required' : 'current',
-      settings: { enabled: !isObject(entry) || entry['enabled'] !== false, config: settings },
-      form: { fields, credentials },
-      diagnostics: this.options.extensionMetadata?.diagnostics.filter((diagnostic) => diagnostic.extensionId === descriptor.id) ?? [],
-    };
+    return buildExtensionSectionView({
+      id, revision: this.revisions.get(id), descriptor,
+      entry: this.document.extensions?.entries?.[descriptor.id],
+      baseline: this.baseline.extensions?.entries?.[descriptor.id],
+      diagnostics: this.options.extensionMetadata?.diagnostics ?? [],
+    });
   }
-
-}
-
-function credentialMetadata(value: unknown) {
-  if (value === undefined || typeof value === 'string' && value.trim().length === 0) return { configured: false };
-  try {
-    return { configured: true, source: parseCredentialEnvironmentReference(value) === undefined ? 'literal' : 'environment' };
-  } catch (error) {
-    if (!(error instanceof CredentialMaterializationError)) throw error;
-    return { configured: true, error: 'invalid_credential' };
-  }
-}
-
-function comparisonEntry(entry: unknown, descriptor: ExtensionDescriptorV1): unknown {
-  if (entry !== undefined && !isObject(entry)) return { invalid: true, value: entry };
-  const config = entry?.['config'] ?? {};
-  const validation = isObject(config) ? prepareExtensionConfig(config, descriptor.configSchema, {}, 'save') : undefined;
-  return {
-    enabled: entry?.['enabled'] !== false,
-    config: validation?.ok ? validation.config : { invalid: true, value: config },
-  };
-}
-
-function isScalar(value: unknown): boolean {
-  return typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value);
 }

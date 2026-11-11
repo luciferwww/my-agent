@@ -38,6 +38,7 @@ src/runtime/
 ├── settings-manager.ts
 ├── settings/
 │   ├── model-test.ts
+│   ├── section-views.ts
 │   ├── helpers.ts
 │   └── index.ts
 ├── runtime-builder.ts
@@ -177,6 +178,14 @@ and safe result/error mapping live in private Settings helpers; the Test module
 does not depend on SettingsManager. Update and Test shutdown convergence begin
 together against the same remaining budget, and SettingsManager aggregates their
 reports without inspecting the Test collection.
+
+Private stateless section-view functions build LLM and Extension responses,
+including credential metadata and startup-baseline restart comparison, using
+explicit facts supplied by SettingsManager. They do not read files, materialize
+credentials, retain state, or own transactions. SettingsManager still owns the
+document, baseline, revisions and application status and invokes these helpers
+after serialized work; AgentPolicyState retains Agent projection ownership.
+Model Catalog decoration and Agent view decoration remain in SettingsManager.
 
 Model Test either creates an unpublished temporary Built-in Unit from a candidate,
 or pins the current Registry generation to use a loaded Provider. It reuses model
