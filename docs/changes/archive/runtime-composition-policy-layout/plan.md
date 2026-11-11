@@ -141,4 +141,16 @@ and follow-up Runtime comment translations, fast-forward integration into
 Research documents remain excluded from both commits, preserving all worktree
 edits and source-link repairs. No push or merge into `main` is authorized.
 
+## Follow-up comment cleanup
+
+After layout acceptance, the owner requested English translations of remaining
+Chinese comments across Runtime source and tests, without changing code or test
+names. The follow-up translates comments in `prompt-factory.ts` and
+`summarize-assembled.ts`; the layout commit already translates the moved policy
+comments. A scan of 62 Runtime TypeScript files and 99 parsed comment ranges
+found no remaining Chinese comments. Three existing Chinese-containing test
+names were intentionally retained. The message-summary executable-syntax
+fingerprint is unchanged; 13 prompt/summary unit tests and whitespace checks
+passed. This cleanup is committed separately from the directory migration.
+
 Process authority: [Development Workflow](../../../governance/development-workflow.md).

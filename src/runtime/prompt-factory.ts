@@ -10,8 +10,8 @@ export interface BuildSystemPromptParamsInput {
   /** Agent Home absolute path injected by RuntimeApp for the prompt path section. */
   agentHome?: string;
   /**
-   * `<available-subagents>` section 条目列表（spec §11 Section 8）。
-   * RuntimeApp 仅在 `task` Tool 对当前 Agent 可见时传入。
+   * Entries for the `<available-subagents>` section (spec §11 Section 8).
+   * RuntimeApp supplies them only when the `task` Tool is visible to the current Agent.
    */
   availableSubagents?: AvailableSubagentEntry[];
 }
