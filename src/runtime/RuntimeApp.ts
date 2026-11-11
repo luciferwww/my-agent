@@ -72,6 +72,7 @@ import type {
 import { SessionCoordinator } from './session/SessionCoordinator.js';
 import { SessionPermissionRegistry } from './session/SessionPermissionRegistry.js';
 import { PendingSessionRegistry } from './session/PendingSessionRegistry.js';
+import { SessionMessageScheduler } from './session-message-scheduler.js';
 import type { ActiveParentTurn } from './subagent-orchestration.js';
 import {
   collectAvailableSubagents,
@@ -192,12 +193,7 @@ export class RuntimeApp {
   private readonly sessionCoordinator: SessionCoordinator;
   private readonly sessionPermissions = new SessionPermissionRegistry();
   private readonly inFlightRuns = new Set<Promise<unknown>>();
-  /** Per-Session gate: one Turn per sessionId, with concurrency across Sessions. */
-  private readonly inFlightSessions = new Set<string>();
-  /** Canonical FIFO for accepted Channel user messages in each Session. */
-  private readonly messageQueueBySession = new Map<string, QueuedUserMessage[]>();
-  /** Wake-only steering listeners; queue ownership remains with claimSteeringMessages(). */
-  private readonly steeringWaiters = new Map<string, Set<() => void>>();
+  private readonly messageScheduler = new SessionMessageScheduler();
 
   /**
   * AbortController for each active Session Turn, used by abortTurn and shutdown.
@@ -254,8 +250,7 @@ export class RuntimeApp {
       pendingSessions: new PendingSessionRegistry({
         onExpire: (sessionId) => this.sessionPermissions.delete(sessionId),
       }),
-      isBusy: (sessionId) => this.inFlightSessions.has(sessionId)
-        || (this.messageQueueBySession.get(sessionId)?.length ?? 0) > 0,
+      isBusy: (sessionId) => this.messageScheduler.isBusy(sessionId),
     });
   }
 
@@ -286,9 +281,7 @@ export class RuntimeApp {
       getPendingApprovals: (sessionId) => app.turnInteractionManager.getPending(sessionId),
       querySessionsNeedingAbort: () => {
         const sessions = new Set<string>(app.activeAborts.keys());
-        for (const [sessionKey, queue] of app.messageQueueBySession) {
-          if (queue.length > 0) sessions.add(sessionKey);
-        }
+        for (const sessionKey of app.messageScheduler.pendingSessionIds()) sessions.add(sessionKey);
         return [...sessions];
       },
       abortTurn: (sessionId) => app.abortTurn(sessionId),
@@ -565,16 +558,14 @@ export class RuntimeApp {
    */
   abortTurn(sessionId: string): { aborted: boolean; dropped: number } {
     const controller = this.activeAborts.get(sessionId);
-    const queue = this.messageQueueBySession.get(sessionId);
-    const dropped = queue?.length ?? 0;
+    const dropped = this.messageScheduler.pendingCount(sessionId);
     const aborted = !!controller;
 
     if (!aborted && dropped === 0) return { aborted: false, dropped: 0 };
 
     if (controller) controller.abort();
     if (dropped > 0) {
-      this.messageQueueBySession.delete(sessionId);
-      for (const item of queue ?? []) {
+      for (const item of this.messageScheduler.dropPending(sessionId)) {
         void this.settleQueuedRequest(item, 'abort_queue_drop');
       }
       this.safeEmit({
@@ -819,12 +810,12 @@ export class RuntimeApp {
       timestamp: Date.now(),
     });
 
-    this.enqueueQueuedTurn(queuedMessage);
+    this.messageScheduler.enqueue(queuedMessage);
     log.info('channel message enqueued', {
       channelId: channel.id,
       clientId: req.clientId,
       sessionKey: req.sessionId,
-      queueLength: this.messageQueueBySession.get(req.sessionId)?.length ?? 0,
+      queueLength: this.messageScheduler.pendingCount(req.sessionId),
       messageChars: assembledMessageChars,
       attachmentCount: assembledAttachmentCount,
       droppedAttachments: dropped.length,
@@ -868,14 +859,6 @@ export class RuntimeApp {
     };
   }
 
-  /** Queueing mutates only local state; scheduleNextQueuedTurn decides when to start. */
-  private enqueueQueuedTurn(item: QueuedUserMessage): void {
-    const queue = this.messageQueueBySession.get(item.sessionId) ?? [];
-    queue.push(item);
-    this.messageQueueBySession.set(item.sessionId, queue);
-    this.notifySteeringWaiters(item.sessionId);
-  }
-
   private settleQueuedRequest(
     item: QueuedUserMessage,
     reason: 'abort_queue_drop' | 'shutdown',
@@ -905,25 +888,9 @@ export class RuntimeApp {
   * queued until the current Turn releases it.
    */
   private scheduleNextQueuedTurn(sessionKey: string): Promise<RunTurnResult> | undefined {
-    if (this.inFlightSessions.has(sessionKey) || !this.acceptsNewTurns()) {
-      return undefined;
-    }
-
-    const queue = this.messageQueueBySession.get(sessionKey);
-    if (!queue || queue.length === 0) {
-      return undefined;
-    }
-
-    const next = queue.shift();
-    if (!next) {
-      return undefined;
-    }
-
-    if (queue.length === 0) {
-      this.messageQueueBySession.delete(sessionKey);
-    }
-
-    return this.startQueuedTurn(next);
+    if (!this.acceptsNewTurns()) return undefined;
+    const next = this.messageScheduler.takeNext(sessionKey);
+    return next ? this.startQueuedTurn(next) : undefined;
   }
 
   /**
@@ -959,8 +926,9 @@ export class RuntimeApp {
 
   private startRootTurn(params: RunTurnParams): Promise<RunTurnResult> {
     try {
-      this.assertCanRunForSession(params.sessionId);
+      this.assertCanStartTurn();
     } catch (error) {
+      this.releaseScheduledSession(params.sessionId);
       return Promise.reject(error);
     }
 
@@ -971,6 +939,8 @@ export class RuntimeApp {
     this.requestGates.set(params.requestId, gate);
 
     if (!gate.start(params.turnId)) {
+      this.requestGates.delete(params.requestId);
+      this.releaseScheduledSession(params.sessionId);
       return Promise.reject(new Error(`Runtime request "${params.requestId}" is already started or terminal.`));
     }
 
@@ -979,17 +949,35 @@ export class RuntimeApp {
       gate,
     );
     this.inFlightRuns.add(worker);
+    // A public terminal outcome may precede actual worker convergence.
     void worker.then(
-      () => this.inFlightRuns.delete(worker),
+      () => {
+        this.inFlightRuns.delete(worker);
+        this.releaseScheduledSession(params.sessionId);
+      },
       (error: unknown) => {
         this.inFlightRuns.delete(worker);
         const runtimeError = error instanceof Error ? error : new Error(String(error));
         gate.seal({ outcome: 'failed', error: runtimeError });
         this.requestGates.delete(params.requestId);
+        this.releaseScheduledSession(params.sessionId);
       },
     );
 
     return gate.terminal.then((terminal) => this.callerResult(terminal));
+  }
+
+  private releaseScheduledSession(sessionId: string): void {
+    this.messageScheduler.release(sessionId);
+    const next = this.scheduleNextQueuedTurn(sessionId);
+    if (next) {
+      void next.catch((error) => {
+        log.warn('queued turn failed after scheduling', {
+          sessionKey: sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
   }
 
   private async executeRootRequest(
@@ -1007,7 +995,6 @@ export class RuntimeApp {
       released: false,
     };
     this.activeRootGenerations.set(params.turnId, tree);
-    this.inFlightSessions.add(params.sessionId);
     this.state.activeRunCount += 1;
     this.state.lastRunStartedAt = Date.now();
     this.safeEmit({
@@ -1117,21 +1104,10 @@ export class RuntimeApp {
       });
       this.recordError('run', info);
     } finally {
-      this.inFlightSessions.delete(params.sessionId);
       this.state.activeRunCount = Math.max(0, this.state.activeRunCount - 1);
       this.state.lastRunEndedAt = Date.now();
       this.releaseTreeMember(params.turnId, tree);
       this.requestGates.delete(params.requestId);
-
-      const next = this.scheduleNextQueuedTurn(params.sessionId);
-      if (next) {
-        void next.catch((error) => {
-          log.warn('queued turn failed after scheduling', {
-            sessionKey: params.sessionId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        });
-      }
     }
   }
 
@@ -1215,10 +1191,9 @@ export class RuntimeApp {
       ]));
 
       try {
-        for (const [sessionKey, queue] of [...this.messageQueueBySession]
-          .sort(([left], [right]) => left.localeCompare(right))) {
-          this.messageQueueBySession.delete(sessionKey);
-          for (const item of queue) {
+        for (const sessionKey of this.messageScheduler.pendingSessionIds()
+          .sort((left, right) => left.localeCompare(right))) {
+          for (const item of this.messageScheduler.dropPending(sessionKey)) {
             queuedCancelledRequestIds.push(item.requestId);
             const delivery = this.settleQueuedRequest(item, 'shutdown');
             if (delivery) terminalFanout.push(delivery);
@@ -1492,7 +1467,7 @@ export class RuntimeApp {
                   resolvedModel,
                 ),
                 waitUntilPotentiallyReady: (signal: AbortSignal) =>
-                  this.waitUntilSteeringPotentiallyReady(params.sessionId, signal),
+                  this.messageScheduler.waitUntilReady(params.sessionId, signal),
               },
               prepareSteeringMessages: async (messages: SteeringMessage[]) =>
                 Promise.all(messages.map(async (message) => ({
@@ -1552,22 +1527,10 @@ export class RuntimeApp {
     turnId: string,
     resolvedModel: ResolvedModel,
   ): SteeringMessage[] {
-    const queue = this.messageQueueBySession.get(sessionKey);
-    if (!queue || queue.length === 0) return [];
-
-    let claimCount = 0;
-    while (
-      claimCount < queue.length
-      && this.isSteeringCompatible(queue[claimCount]!, resolvedModel)
-    ) {
-      claimCount++;
-    }
-    if (claimCount === 0) return [];
-
-    const claimed = queue.splice(0, claimCount);
-    if (queue.length === 0) {
-      this.messageQueueBySession.delete(sessionKey);
-    }
+    const claimed = this.messageScheduler.claimReady(
+      sessionKey,
+      (item) => this.isSteeringCompatible(item, resolvedModel),
+    );
 
     for (const item of claimed) {
       const event: AgentEvent = {
@@ -1595,43 +1558,6 @@ export class RuntimeApp {
         ? {}
         : { reasoning: item.reasoningPreference }),
     }));
-  }
-
-  private waitUntilSteeringPotentiallyReady(
-    sessionId: string,
-    signal: AbortSignal,
-  ): Promise<void> {
-    if ((this.messageQueueBySession.get(sessionId)?.length ?? 0) > 0) {
-      return Promise.resolve();
-    }
-    if (signal.aborted) {
-      return Promise.reject(new DOMException('Aborted', 'AbortError'));
-    }
-
-    return new Promise<void>((resolve, reject) => {
-      const waiters = this.steeringWaiters.get(sessionId) ?? new Set<() => void>();
-      const settle = () => {
-        signal.removeEventListener('abort', onAbort);
-        waiters.delete(settle);
-        if (waiters.size === 0) this.steeringWaiters.delete(sessionId);
-        resolve();
-      };
-      const onAbort = () => {
-        waiters.delete(settle);
-        if (waiters.size === 0) this.steeringWaiters.delete(sessionId);
-        reject(new DOMException('Aborted', 'AbortError'));
-      };
-      waiters.add(settle);
-      this.steeringWaiters.set(sessionId, waiters);
-      signal.addEventListener('abort', onAbort, { once: true });
-    });
-  }
-
-  private notifySteeringWaiters(sessionId: string): void {
-    const waiters = this.steeringWaiters.get(sessionId);
-    if (!waiters) return;
-    this.steeringWaiters.delete(sessionId);
-    for (const settle of waiters) settle();
   }
 
   private isSteeringCompatible(
@@ -1664,25 +1590,13 @@ export class RuntimeApp {
     }
   }
 
-  /**
-  * Serialize Turns within a Session while allowing cross-Session concurrency.
-  * Reject all Turns after Runtime shutdown begins.
-   */
-  private assertCanRunForSession(sessionKey: string): void {
+  private assertCanStartTurn(): void {
     if (!this.acceptsNewTurns()) {
       throw createRuntimeError({
         scope: 'run',
         severity: 'recoverable',
         code: 'RUN_REJECTED',
         message: `Cannot run when runtime phase is ${this.state.phase}.`,
-      });
-    }
-    if (this.inFlightSessions.has(sessionKey)) {
-      throw createRuntimeError({
-        scope: 'run',
-        severity: 'recoverable',
-        code: 'RUN_REJECTED',
-        message: `Session ${sessionKey} already has a turn in flight.`,
       });
     }
   }

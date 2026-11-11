@@ -54,6 +54,7 @@ src/runtime/
 ├── subagent-orchestration.ts
 ├── prompt-factory.ts
 ├── queue-types.ts
+├── session-message-scheduler.ts
 ├── tool-approval-policy.ts
 ├── turn-interaction/
 │   └── TurnInteractionManager.ts
@@ -258,7 +259,19 @@ Media intake is atomic. Any attachment validation or optimization failure reject
 
 `handleInboundChannelMessage()` never calls the Turn body directly. The per-session scheduler starts only a queue head when that Session is idle. The request gate and Turn ID are generated when the item leaves the queue, then its origin Channel/client route is registered for that Turn. `RuntimeApplication` exposes no direct Root user-message execution API.
 
-`inFlightSessions` is the per-session serialization gate. Sessions are serialized independently, so different Sessions can run concurrently.
+The private `SessionMessageScheduler` owns the FIFO, Root busy/reservation
+state, and wake-only steering waiters. Standalone selection removes a queue
+head and reserves its Session synchronously before launch. RuntimeApp uses
+read-only work queries for Session operations and pending Abort discovery; it
+retains phase admission, actual execution, request gates, routing/events,
+generation pins, and cancellation controllers. There is no second scheduling
+state owner or public scheduler export.
+
+Sessions serialize independently, so different Sessions can run concurrently.
+RuntimeApp releases the scheduler reservation and checks the next head when
+the actual Root worker settles, not when its public request gate becomes
+terminal. Failed startup also releases its reservation without replaying the
+selected message.
 
 When `agents.steeringEnabled` is true, Runner may request a claim at a safe point after persistence and before another permitted Model call. Runtime synchronously peeks from the FIFO head and splices the largest contiguous compatible prefix:
 
@@ -300,7 +313,14 @@ Internal `RunTurnParams` carries the allocated request/Turn identities, Session 
 
 Before Runner starts, Runtime admits the message through the Session coordinator, materializing a live Pending `sessionId` when needed. It then optionally reloads context, computes policy-visible Tool definitions from the captured Snapshot, resolves the model, builds prompts, creates the per-session `AbortController`, and registers the active Parent record. Admission persists only Session metadata and a root record; Runner remains the sole user-message writer. Runtime passes the captured Tool and Hook projections unchanged; Provider wire conversion remains owned by [Providers](providers.md), and generic Tool execution remains owned by [Tools](tools.md).
 
-The request completion gate seals exactly one public terminal outcome. A run or resolution failure is contained to that request; Runtime records and emits the failure but the application remains usable. `finally` closes steering admission, promotes or discards the unread inbox according to terminal disposition, clears session/Turn/Abort/Parent state, decrements the active count, releases the Root member, and schedules the next queued item.
+The request completion gate seals exactly one public terminal outcome. A run
+or resolution failure is contained to that request; Runtime records and emits
+the failure but the application remains usable. Execution cleanup clears
+Session/Turn/Abort/Parent state, decrements the active count, and releases the
+Root member. Actual worker settlement releases the scheduler reservation and
+schedules the next unclaimed FIFO head. There is no unread inbox to promote
+or discard; only explicit Abort or Shutdown removes unclaimed queued input
+without running it.
 
 ## 8. Generations, reload, and retirement
 

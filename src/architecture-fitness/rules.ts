@@ -320,6 +320,7 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
   }
   if (
     sourcePath.startsWith('src/runtime/session/')
+    || sourcePath === 'src/runtime/session-message-scheduler.ts'
     || sourcePath.startsWith('src/runtime/turn-interaction/')
   ) {
     return 'Application';

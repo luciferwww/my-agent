@@ -29,6 +29,7 @@ import type {
   ProcessInboundResult,
 } from '../core/media/attachment-pipeline.js';
 import { RuntimeApp } from './RuntimeApp.js';
+import type { SessionMessageScheduler } from './session-message-scheduler.js';
 import type { RuntimeHandle } from './runtime-composition.js';
 import type { RuntimeDependencies, RuntimeEvent } from './types.js';
 import { createDefaultAgentConfig } from '../platform/config/default-composition.js';
@@ -568,10 +569,10 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     await testChannel.dispatch({ sessionId: 'main', message: 'later' });
 
     const runtime = app.application as unknown as {
-      messageQueueBySession: Map<string, unknown[]>;
+      messageScheduler: SessionMessageScheduler;
       requestGates: Map<string, unknown>;
     };
-    expect(runtime.messageQueueBySession.get('main')).toHaveLength(3);
+    expect(runtime.messageScheduler.pendingCount('main')).toBe(3);
     expect(runtime.requestGates.size).toBe(1);
 
     releaseRun.resolve();
@@ -592,7 +593,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     expect(runnerRun.mock.calls.map(([params]) => params.message)).toEqual([
       'first',
     ]);
-    expect(runtime.messageQueueBySession.has('main')).toBe(false);
+    expect(runtime.messageScheduler.pendingCount('main')).toBe(0);
     expect(runtime.requestGates.size).toBe(0);
     expect(agentEvents.filter((event) => event.type === 'user_message_bound')).toEqual(
       messages.slice(1).map((message) => expect.objectContaining({

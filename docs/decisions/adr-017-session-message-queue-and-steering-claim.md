@@ -4,6 +4,7 @@
 > Decision date: 2026-09-28
 > Configuration ownership updated: 2026-10-03
 > Steering setting semantics updated: 2026-11-02
+> Private scheduler ownership amended: 2026-11-11 by [ADR-025](adr-025-private-session-message-scheduler.md)
 > Owner: Project owner
 > Related Plan/Specification: [Runner Steering Simplification Plan](../changes/archive/runner-steering-simplification/plan.md), [Runner Steering Simplification Specification](../changes/archive/runner-steering-simplification/runner-steering-simplification-specification.md)
 > Supersedes: the dual normal-queue/steering-inbox and terminal-promotion decisions in the accepted Runtime Steering and Runner Configuration design
@@ -28,7 +29,9 @@ authority.
 - FIFO-preserving media compatibility without dequeue/requeue.
 - Turn-bound Model and reasoning settings unaffected by steering input.
 - Removal of promotion and duplicated lifecycle branches.
-- No new scheduler module, compatibility layer, or policy matrix.
+- No additional scheduling layer, compatibility layer, or policy matrix.
+  [ADR-025](adr-025-private-session-message-scheduler.md) permits extraction of
+  the existing state into one private Runtime scheduler owner.
 
 ## Options considered
 
@@ -120,4 +123,6 @@ Adopt option 2.
 - No new steering modes or priority.
 - No steering batch-size setting.
 - No compatibility alias for the old event field.
-- No coordinator abstraction beyond the existing Runtime scheduler.
+- No coordinator abstraction beyond the existing Runtime scheduler; its
+  private ownership extraction is bounded by
+  [ADR-025](adr-025-private-session-message-scheduler.md).

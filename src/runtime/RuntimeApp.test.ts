@@ -34,6 +34,8 @@ import { createDefaultAgentConfig } from '../platform/config/default-composition
 import { DEFAULT_LOGGER_CONFIG } from '../platform/logger/index.js';
 import { loadAgentConfig } from '../platform/config/agent-config-loader.js';
 import { RuntimeApp } from './RuntimeApp.js';
+import { SessionMessageScheduler } from './session-message-scheduler.js';
+import { CompositionCoordinator } from './composition-coordinator.js';
 import * as runtimeBootstrap from './bootstrap.js';
 import { RuntimeCompositionManager } from './runtime-composition-manager.js';
 import { createBuiltinLlmProviderUnit } from '../builtins/providers/builtin/index.js';
@@ -86,7 +88,33 @@ function testApplicationConfig(
 
 let rootTurnSequence = 0;
 
-function runRootTurnForTest(
+function messageSchedulerForTest(handle: RuntimeHandle): SessionMessageScheduler {
+  const scheduler: unknown = Reflect.get(handle.application, 'messageScheduler');
+  if (!(scheduler instanceof SessionMessageScheduler)) {
+    throw new Error('Expected the Runtime Session scheduler.');
+  }
+  return scheduler;
+}
+
+function queueMessagesForTest(
+  handle: RuntimeHandle,
+  sessionId: string,
+  requestIds: readonly string[],
+): SessionMessageScheduler {
+  const scheduler = messageSchedulerForTest(handle);
+  for (const requestId of requestIds) {
+    scheduler.enqueue({
+      sessionId,
+      requestId,
+      originMessageId: `message-${requestId}`,
+      message: requestId,
+      reasoningPolicy: { effort: 'medium' },
+    });
+  }
+  return scheduler;
+}
+
+async function runRootTurnForTest(
   handle: RuntimeHandle,
   params: Omit<RunTurnParams, 'requestId' | 'turnId' | 'originMessageId'> & {
     requestId?: string;
@@ -98,6 +126,7 @@ function runRootTurnForTest(
   const application = handle.application as unknown as {
     startRootTurn(input: RunTurnParams): Promise<RunTurnResult>;
   };
+  messageSchedulerForTest(handle).reserve(params.sessionId);
   return application.startRootTurn({
     ...params,
     requestId: params.requestId ?? `test-request-${rootTurnSequence}`,
@@ -371,12 +400,9 @@ describe('RuntimeApp', () => {
     releaseRun.resolve();
     await activeTurn;
 
-    const queueMap = (app.application as unknown as {
-      messageQueueBySession: Map<string, unknown[]>;
-    }).messageQueueBySession;
-    queueMap.set('main', [{ queued: true }]);
+    const scheduler = queueMessagesForTest(app, 'main', ['queued']);
     await assertBusy();
-    queueMap.delete('main');
+    scheduler.dropPending('main');
 
     expect(archiveSession).not.toHaveBeenCalled();
     expect(deleteSession).not.toHaveBeenCalled();
@@ -2409,6 +2435,46 @@ describe('RuntimeApp', () => {
     });
   });
 
+  it('releases the Session reservation after generation capture fails without replaying input', async () => {
+    const testChannel = createTestChannel('failed-root-start');
+    const runnerRun = vi.fn(async (): Promise<RunResult> => ({
+      text: 'next',
+      content: [],
+      stopReason: 'end_turn',
+      usage: { inputTokens: 0, outputTokens: 0 },
+      toolRounds: 0,
+    }));
+    const app = await RuntimeApp.create({
+      agentHome,
+      loadedUnits: [testChannel.unit],
+      applicationConfig: testApplicationConfig(),
+      cliOverrides: { memory: { enabled: false } },
+      dependencies: createTestDependencies({
+        createAgentRunner: () => ({ run: runnerRun }) as never,
+        createMemoryManager: async () => null,
+      }),
+    });
+    const capture = vi.spyOn(CompositionCoordinator.prototype, 'captureRootGeneration');
+    try {
+      capture.mockImplementationOnce(() => {
+        throw new Error('capture failed before execution');
+      });
+      await expect(testChannel.dispatch({ sessionId: 'main', message: 'failed' }))
+        .rejects.toThrow('capture failed before execution');
+      expect(messageSchedulerForTest(app).isBusy('main')).toBe(false);
+      expect(app.application.getState().activeRunCount).toBe(0);
+      expect(runnerRun).not.toHaveBeenCalled();
+
+      await testChannel.dispatch({ sessionId: 'main', message: 'next' });
+      expect(runnerRun).toHaveBeenCalledTimes(1);
+      expect(runnerRun).toHaveBeenCalledWith(expect.objectContaining({ message: 'next' }));
+      expect(messageSchedulerForTest(app).isBusy('main')).toBe(false);
+    } finally {
+      capture.mockRestore();
+      await app.close();
+    }
+  });
+
   it('wakes an active Turn before it claims busy-session FIFO input', async () => {
     let drainedSteering: SteeringMessage[] = [];
     const runnerRun = vi.fn(async (params: {
@@ -3110,15 +3176,13 @@ describe('RuntimeApp', () => {
         onEvent: (e) => events.push(e),
       });
 
-      // Seed three queued messages directly.
-      const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
-      queueMap.set('main', [{ dummy: 1 }, { dummy: 2 }, { dummy: 3 }]);
+      const scheduler = queueMessagesForTest(app, 'main', ['one', 'two', 'three']);
 
       const result = app.application.abortTurn('main');
       expect(result).toEqual({ aborted: false, dropped: 3 });
 
       // The queue is empty.
-      expect(queueMap.has('main')).toBe(false);
+      expect(scheduler.pendingCount('main')).toBe(0);
 
       // A messages_dropped event was emitted.
       const dropEvent = events.find((e) => e.type === 'messages_dropped');
@@ -3290,14 +3354,13 @@ describe('RuntimeApp', () => {
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
       });
 
-      const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
-      queueMap.set('sk1', [{ x: 1 }]);
-      queueMap.set('sk2', [{ y: 1 }, { y: 2 }]);
+      const scheduler = queueMessagesForTest(app, 'sk1', ['one']);
+      queueMessagesForTest(app, 'sk2', ['two', 'three']);
 
       const result = app.application.abortTurn('sk1');
       expect(result).toEqual({ aborted: false, dropped: 1 });
-      expect(queueMap.has('sk1')).toBe(false);
-      expect(queueMap.get('sk2')?.length).toBe(2);
+      expect(scheduler.pendingCount('sk1')).toBe(0);
+      expect(scheduler.pendingCount('sk2')).toBe(2);
 
       await app.close();
     });
@@ -3352,13 +3415,12 @@ describe('RuntimeApp', () => {
       });
       armed = true;
 
-      const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
-      queueMap.set('main', [{ dummy: 1 }]);
+      const scheduler = queueMessagesForTest(app, 'main', ['one']);
 
       // The API does not throw and returns the actual state.
       const result = app.application.abortTurn('main');
       expect(result).toEqual({ aborted: false, dropped: 1 });
-      expect(queueMap.has('main')).toBe(false);
+      expect(scheduler.pendingCount('main')).toBe(0);
 
       await app.close();
     });
@@ -3576,12 +3638,16 @@ describe('RuntimeApp', () => {
       expect(report.turns.protectedGenerations).toEqual([1]);
       expect(report.instanceStops.skippedProtectedInstanceIds.length).toBeGreaterThan(0);
       expect(stop).not.toHaveBeenCalled();
+      expect(messageSchedulerForTest(app).isRunning('main')).toBe(true);
       expect(Object.isFrozen(report)).toBe(true);
       expect(Object.isFrozen(report.residuals)).toBe(true);
       const sealedResidualCount = report.residuals.length;
 
       releaseRun.resolve();
-      await vi.waitFor(() => expect(app.application.getState().activeRunCount).toBe(0));
+      await vi.waitFor(() => {
+        expect(app.application.getState().activeRunCount).toBe(0);
+        expect(messageSchedulerForTest(app).isRunning('main')).toBe(false);
+      });
       expect(runtimeEvents.filter((event) =>
         event.type === 'turn_end' && event.requestId === 'request-nonconverged')).toHaveLength(1);
       expect(report.residuals).toHaveLength(sealedResidualCount);
@@ -3728,9 +3794,7 @@ describe('RuntimeApp', () => {
       ]);
       unsubscribeDeletion();
 
-      // Seed a queued message for one Session.
-      const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
-      queueMap.set('sk-with-queue', [{ x: 1 }, { x: 2 }]);
+      const scheduler = queueMessagesForTest(app, 'sk-with-queue', ['one', 'two']);
 
       // querySessionsNeedingAbort includes the queued Session.
       const sessions = capturedCapabilities!.abort.querySessionsNeedingAbort();
@@ -3739,7 +3803,7 @@ describe('RuntimeApp', () => {
       // Triggering abort through the hook clears the queue and returns the count.
       const result = capturedCapabilities!.abort.abortTurn('sk-with-queue');
       expect(result).toEqual({ aborted: false, dropped: 2 });
-      expect(queueMap.has('sk-with-queue')).toBe(false);
+      expect(scheduler.pendingCount('sk-with-queue')).toBe(0);
 
       capturedCapabilities!.chatSessions.setPermissionMode({
         sessionId: created.sessionId,
