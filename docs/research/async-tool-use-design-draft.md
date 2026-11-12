@@ -241,11 +241,11 @@ Turn cancellation
 | 证据 | 可以确认的事实 | 不能推导的保证 |
 |---|---|---|
 | [ToolExecutionContext.signal](../../src/core/tools/types.ts) | 当前契约明确工具是否响应 signal 由实现决定 | 任意工具都能在有限时间内停止 |
-| [Registry snapshot 构造](../../src/runtime/registry-builder.ts) | ResolvedTool 直接保留 `execute: tool.execute`；当前注册边界没有为每次执行提供 worker/process 隔离 | 为 Promise 增加超时即可强制终止 Extension |
+| [Registry snapshot 构造](../../src/runtime/composition/registry-builder.ts) | ResolvedTool 直接保留 `execute: tool.execute`；当前注册边界没有为每次执行提供 worker/process 隔离 | 为 Promise 增加超时即可强制终止 Extension |
 | [web_fetch](../../src/builtins/tools/environment/web/web-fetch-tool.ts) | 请求使用工具自建 Controller 和计时器，不联动传入的 Tool signal | 加入上层 Tool Use Controller 后所有 builtin 会自动响应 |
 | [runCommand](../../src/builtins/tools/environment/process/run-command.ts)、[killProcessTree](../../src/builtins/tools/environment/process/kill-process-tree.ts) | 命令可请求进程树终止/升级信号；completion 仍依赖实际 error/close。终止 helper 的返回值未在 runCommand 中用来生成独立的取消失败结果 | 调用 abort 就已证明整个执行树和所有远端副作用停止 |
 | [Observer settlement](../../src/core/runner/hooks/runner.ts) | 可以借鉴本地 Controller、监听清理和有界逻辑结算 | Promise.race 本身可停止工具；observer 结算规则不能直接当作 Tool 的副作用隔离 |
-| [Runtime shutdown](../../src/runtime/RuntimeApp.ts)、[RequestCompletionGate](../../src/runtime/request-completion-gate.ts) | 当前 shutdown 可以密封非收敛请求为失败、报告 residual，并保留仍被执行引用的 generation | 返回失败报告代表 worker 已停止，或可以立即释放资源后安全重试 |
+| [Runtime shutdown](../../src/runtime/RuntimeApp.ts)、[RequestCompletionGate](../../src/runtime/scheduling/request-completion-gate.ts) | 当前 shutdown 可以密封非收敛请求为失败、报告 residual，并保留仍被执行引用的 generation | 返回失败报告代表 worker 已停止，或可以立即释放资源后安全重试 |
 | [RuntimeDeadlineBudget](../../src/runtime/runtime-deadline.ts) | 已有单调时钟、总 deadline 下阶段预算和可注入 driver | 现有 shutdown 数值就是新 Tool Use 的默认期限 |
 
 已有测试 [nonresponsive Root](../../src/runtime/RuntimeApp.test.ts) 明确使用未返回的 Runner 替身，验证 shutdown 报告 `deadline-exhausted`、保留 pin、不停止受保护实例，随后人工释放 Promise；它证明“显式失败与保留资源”，不是强杀。

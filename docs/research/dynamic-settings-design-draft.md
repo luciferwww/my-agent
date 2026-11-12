@@ -30,8 +30,8 @@
 | [Built-in 配置](../../src/builtins/providers/builtin/config.ts) | 已定义连接、模型协议、endpoint、限制和 reasoning 等字段及校验；当前 Built-in 为一个上游连接、多个模型 |
 | [Extension acquisition 类型](../../src/extension/acquisition/types.ts) | Descriptor 已有 `contributes`、`configSchema`；现有发现结果可用于识别 Provider 扩展 |
 | [Relay Descriptor](../../extensions/copilot-relay-provider/extension.json) | 已有 Provider 标记、Draft-07 Schema、`writeOnly` 密钥属性 |
-| [Runtime composition 契约](../../src/runtime/runtime-composition.ts) | 当前只支持按 Unit ID enable/disable，不支持同一 Unit 的配置替换 |
-| [Composition manager](../../src/runtime/runtime-composition-manager.ts) | 已有 generation、准备／发布／退休路径；现存 Unit 会复用，不能将参数替换视为已有能力 |
+| [Runtime composition 契约](../../src/runtime/composition/runtime-composition.ts) | 当前只支持按 Unit ID enable/disable，不支持同一 Unit 的配置替换 |
+| [Composition manager](../../src/runtime/composition/runtime-composition-manager.ts) | 已有 generation、准备／发布／退休路径；现存 Unit 会复用，不能将参数替换视为已有能力 |
 | [Sidebar](../../extensions/websocket-channel/client/src/components/SidebarPanel.vue) | 已有模型选择入口，但无 Provider 配置维护页面 |
 
 目标是复用配置格式、校验、扩展发现及生命周期。不能以“已有 reload”推断配置替换零改动，也不能用 disable 后 enable 的两次独立操作代替安全替换。
@@ -296,10 +296,10 @@ owner 明确：若动态应用不方便，可以采用 service restart；先查�
 
 ### 11.1 已具备的基础
 
-- [CompositionCoordinator](../../src/runtime/composition-coordinator.ts:112) 在 Root 启动时捕获 generation 和 RegistrySnapshot，旧 Turn 不随新 snapshot 发布而换 Provider。
+- [CompositionCoordinator](../../src/runtime/composition/composition-coordinator.ts:112) 在 Root 启动时捕获 generation 和 RegistrySnapshot，旧 Turn 不随新 snapshot 发布而换 Provider。
 - [RuntimeApp](../../src/runtime/RuntimeApp.ts:1405) 使用捕获的 snapshot 解析模型；[Child 委派](../../src/runtime/subagent-orchestration.ts:150) 使用 Parent 的 RegistrySnapshot，并为后代继承该归属。
 - [Root tree 引用释放](../../src/runtime/RuntimeApp.ts:532) 在 Root／Child 成员全部完成后释放 pin，已有生命周期账本可以保留仍被使用的旧实例。
-- [Composition manager](../../src/runtime/runtime-composition-manager.ts:357) 能复用未变化的 Unit；已有测试覆盖跨 generation 保留 Provider／Channel bindings。因此仅替换 Provider 不必重建所有 Channel。
+- [Composition manager](../../src/runtime/composition/runtime-composition-manager.ts:357) 能复用未变化的 Unit；已有测试覆盖跨 generation 保留 Provider／Channel bindings。因此仅替换 Provider 不必重建所有 Channel。
 
 这说明旧 Turn 隔离的核心机制已经存在，通常无需修改 Provider 的每次调用或 Runner 主循环；不是从零建设动态配置架构。
 
@@ -307,15 +307,15 @@ owner 明确：若动态应用不方便，可以采用 service restart；先查�
 
 | 具体限制 | 证据 | Settings 动态应用需要的局部变化 |
 |---|---|---|
-| Reload 只有 enable/disable | [RuntimeReloadChange](../../src/runtime/runtime-composition.ts:60) | 增加或提供明确的配置替换路径，不能只复用开关操作 |
-| Unit catalog 固定，现存同 ID Unit 被复用 | [RuntimeUnitCatalog](../../src/runtime/runtime-unit.ts:42)、[prepareDesired](../../src/runtime/runtime-composition-manager.ts:353) | 允许提供新配置对应的候选 factory，并识别同 ID 的新旧实例 |
-| 退休名单只按 Unit ID 是否消失判断 | [removedUnits](../../src/runtime/runtime-composition-manager.ts:450) | 同 ID 替换也必须正确退休旧实例，不能漏清理或停错新实例 |
+| Reload 只有 enable/disable | [RuntimeReloadChange](../../src/runtime/composition/runtime-composition.ts:60) | 增加或提供明确的配置替换路径，不能只复用开关操作 |
+| Unit catalog 固定，现存同 ID Unit 被复用 | [RuntimeUnitCatalog](../../src/runtime/composition/runtime-unit.ts:42)、[prepareDesired](../../src/runtime/composition/runtime-composition-manager.ts:353) | 允许提供新配置对应的候选 factory，并识别同 ID 的新旧实例 |
+| 退休名单只按 Unit ID 是否消失判断 | [removedUnits](../../src/runtime/composition/runtime-composition-manager.ts:450) | 同 ID 替换也必须正确退休旧实例，不能漏清理或停错新实例 |
 | Built-in factory 捕获原始配置，且 Unit required | [Built-in Unit](../../src/builtins/providers/builtin/runtime-unit.ts:11) | 用新配置创建候选 factory；disable/enable 既无法禁用 required Unit，也不会更新捕获值 |
 | Extension factory 接收已经处理的固定配置 | [Extension loader](../../src/extension/acquisition/loader.ts:171) | 针对目标扩展重新准备配置及 factory，复用原校验，不重新获取全部扩展 |
-| acquisition 返回值未保留 Descriptor，且全局关闭会跳过 discovery | [acquireExtensions](../../src/extension/acquisition/loader.ts:40)、[bootstrap](../../src/runtime/bootstrap.ts:94) | 移除遗留全局开关短路，复用既有 import-free discovery 并保留元数据；不新增扫描器 |
+| acquisition 返回值未保留 Descriptor，且全局关闭会跳过 discovery | [acquireExtensions](../../src/extension/acquisition/loader.ts:40)、[bootstrap](../../src/runtime/composition/bootstrap.ts:94) | 移除遗留全局开关短路，复用既有 import-free discovery 并保留元数据；不新增扫描器 |
 | 默认模型来自启动资源，不在 RegistrySnapshot 中 | [默认目录投影](../../src/runtime/RuntimeApp.ts:464)、[Turn 模型选择](../../src/runtime/RuntimeApp.ts:1410) | 若允许动态修改 defaultModel，要让新旧 Turn 分别取得一致的默认配置，不能原地改共享对象 |
-| 现有退休超时主动 abort generation | [retirePublished](../../src/runtime/runtime-composition-manager.ts:621) | Settings 更新不能走会 abort 旧 Turn 的退休策略；不能仅增大超时声称解决 |
-| 同时只允许一个旧 generation 退休 | [commitPublish](../../src/runtime/composition-coordinator.ts:69)、[reload retirement](../../src/runtime/reload-coordinator.ts:354) | 首版必须允许退休期间连续修改并应用动态设置，解除退休对后续发布的阻塞；复用现有机制，见 §11.5 |
+| 现有退休超时主动 abort generation | [retirePublished](../../src/runtime/composition/runtime-composition-manager.ts:621) | Settings 更新不能走会 abort 旧 Turn 的退休策略；不能仅增大超时声称解决 |
+| 同时只允许一个旧 generation 退休 | [commitPublish](../../src/runtime/composition/composition-coordinator.ts:69)、[reload retirement](../../src/runtime/composition/reload-coordinator.ts:354) | 首版必须允许退休期间连续修改并应用动态设置，解除退休对后续发布的阻塞；复用现有机制，见 §11.5 |
 
 Settings 保存所需的配置文件更新和 Runtime 发布一致性仍未实现；以上生命周期复用不能替代该问题的处理。
 
@@ -374,9 +374,9 @@ owner 再次明确本项重要，纳入首版要求：旧 generation 正在退�
 - owner 确认退休后仍保留无用对象强引用是必须在实施阶段修复的资源释放缺陷，不作为可选优化或独立内存治理项目。当前 completeRetirement 仍保留完整 snapshot，生命周期账本在 stopped 后仍可经 owner 闭包持有实例；连续更新前必须补齐释放。
 - 旧 generation 无执行树引用且完成退休后，解除对完整 snapshot 的强引用；实例停止成功且无其他 generation 归属后，解除 owner／实例强引用；完成的退休任务同样移出跟踪集合。可保留必要的轻量诊断，不保留完整历史实例；仍被使用或清理失败待处理的资源不能提前丢弃。
 - 验收覆盖无活动旧执行树时反复更新并完成清理后，完整历史 snapshot、已停止实例 owner 和已完成任务的内部保留数量不持续增长；不依赖强制 GC 或进程内存阈值作为唯一证据。
-- 当前 [CompositionCoordinator](../../src/runtime/composition-coordinator.ts:49) 的单个 retiringGeneration 改为支持多个待清理 generation；按各自 pin 独立完成退休，不能仅删除拒绝条件。
-- [Reload coordinator](../../src/runtime/reload-coordinator.ts:112) 不再以旧版本正在退休作为后续更新的等待条件；发布后释放提交入口，仍保留更新之间及 shutdown 所需的协调。
-- [Composition manager](../../src/runtime/runtime-composition-manager.ts:104) 跟踪多个退休任务，并在 shutdown 正确收尾。旧实例仅在没有执行树引用和其他 generation 归属后停止，不能误停共享 Extension／Channel；Settings 更新退休不超时 abort 旧 Turn。
+- 当前 [CompositionCoordinator](../../src/runtime/composition/composition-coordinator.ts:49) 的单个 retiringGeneration 改为支持多个待清理 generation；按各自 pin 独立完成退休，不能仅删除拒绝条件。
+- [Reload coordinator](../../src/runtime/composition/reload-coordinator.ts:112) 不再以旧版本正在退休作为后续更新的等待条件；发布后释放提交入口，仍保留更新之间及 shutdown 所需的协调。
+- [Composition manager](../../src/runtime/composition/runtime-composition-manager.ts:104) 跟踪多个退休任务，并在 shutdown 正确收尾。旧实例仅在没有执行树引用和其他 generation 归属后停止，不能误停共享 Extension／Channel；Settings 更新退休不超时 abort 旧 Turn。
 - 默认模型及后续执行参数遵守 §7 的执行树捕获边界；不是将整份 config.json 直接塞进 RegistrySnapshot。
 
 ```mermaid
