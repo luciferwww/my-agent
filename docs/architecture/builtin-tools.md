@@ -110,5 +110,13 @@ Pure foreground processes are not registered. Yield records start as `internal`;
 | Kind | Evidence |
 |---|---|
 | Source | [Environment contribution](../../src/builtins/tools/environment/contribution.ts), [process registry](../../src/builtins/tools/environment/process/process-registry.ts) |
-| Tests | [Environment contribution tests](../../src/builtins/tools/environment/contribution.test.ts), [process registry tests](../../src/builtins/tools/environment/process/process-registry.test.ts) |
+| Tests | [Environment contribution tests](../../src/builtins/tools/environment/contribution.test.ts), [process registry tests](../../src/builtins/tools/environment/process/process-registry.test.ts), [Process Tool unit tests](../../src/builtins/tools/environment/process/process-tool.test.ts), [command lifecycle unit tests](../../src/builtins/tools/environment/process/run-command.test.ts), [managed-process OS integration](../../src/builtins/tools/environment/process/managed-process.integration.test.ts), [parent/descendant termination integration](../../src/builtins/tools/environment/process/kill-process-tree.integration.test.ts) |
 | Controlling authority | [Tools and Hooks Specification](../specifications/tools-and-hooks.md) |
+
+Process Tool and command-lifecycle unit tests use controlled registry records,
+child-process events and termination results to verify state mapping without
+depending on operating-system termination latency. Integration tests exercise
+real background kill, Abort, deadline termination and parent/descendant cleanup.
+The managed-process integration cases use the existing process-tree integration
+layer's explicit 10-second test budget; the default unit timeout and production
+termination policy are unchanged.
