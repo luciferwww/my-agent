@@ -6,6 +6,7 @@ This directory is reserved for external comparisons and exploratory analysis. Re
 
 ## Current research
 
+- [代码结构调整建议](code-structure-recommendations.md) - 面向维护者的非权威结构分析，讨论 Settings 职责提取、Session 消息调度、应用能力契约归属、Core 基础设施边界与 Runtime 目录收敛；不授权实现。
 - [Dynamic Settings 设计草稿](dynamic-settings-design-draft.md) - 非权威讨论来源；[已归档 Change](../changes/archive/dynamic-settings/plan.md) 记录已交付的 Runtime Settings、WebSocket 编辑器与新 Home 启动行为。第一轮人工测试通过，2026-11-10 owner 授权收尾提交；联合回归及受控验证证据见 Plan。不加入 Extension 动态加载或 Agent 管理。
 - [Tool Use 可读性设计草稿](tool-use-readability-design-draft.md) - Group 操作类型计数、Single Tool 参数模式标题和统一宽度约束的非权威讨论来源；2026-11-06 已由 [Tool Use Readability Change](../changes/archive/tool-use-readability/plan.md) 交付、人工验收并归档，长期规则见 [Channel Specification](../specifications/channel.md#bundled-websocket-tool-readability)。
 - [Automation 系统设计草稿](automation-system-design-draft.md) - 基于 OpenClaw 与主流计划 Agent 的非权威中文设计草稿，讨论持久 Job/Run、Scheduler 边界、Detached Root Agent、Fresh Session、无人值守权限、恢复和本地常驻 Host；不授权实现。
