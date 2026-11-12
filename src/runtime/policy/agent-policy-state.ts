@@ -7,7 +7,8 @@ import type { SubagentProfile, SubagentProfileRegistry } from '../../core/subage
 import type { ApplicationToolPolicy } from '../../core/tools/index.js';
 import { DEFAULT_TOOL_POLICY_CONFIG } from '../../core/tools/config.js';
 import {
-  editAgentConfigSection, resolveAgentConfig, type AgentPolicyEdit, type ResolveOptions,
+  editAgentConfigSection, resolveAgentConfig, resolveAgentExecutionConfig,
+  type AgentPolicyEdit, type AgentExecutionEdit, type ResolveOptions,
 } from '../../platform/config/index.js';
 import type { AgentConfigDocument, AgentsConfig, AppConfig } from '../../platform/config/types.js';
 import { createApplicationToolPolicy } from './tool-approval-policy.js';
@@ -37,6 +38,7 @@ export class AgentPolicyState {
     this.rootOptions = structuredClone(rootOptions);
     this.applied = this.build(this.config.agents);
     this.sectionIds = Object.freeze([
+      'agents:execution',
       SHARED_AGENT_TOOLS_SECTION,
       ...[...new Set([
         ...definitions.definitions.map(definition => definition.id),
@@ -47,7 +49,7 @@ export class AgentPolicyState {
 
   capture(): AppliedAgentState { return this.applied; }
 
-  prepare(edit: AgentPolicyEdit): () => void {
+  prepare(edit: AgentPolicyEdit | AgentExecutionEdit): () => void {
     const candidate = editAgentConfigSection({ agents: this.applied.agents }, edit).document.agents;
     if (edit.kind === 'agent') {
       const tools = candidate?.list?.find(entry => entry.id === edit.agentId)?.tools;
@@ -57,14 +59,18 @@ export class AgentPolicyState {
         }
       }
     }
-    const agents: AgentsConfig = {
+    const agents = {
       ...this.applied.agents,
+      ...(edit.kind === 'agent-execution' ? resolveAgentExecutionConfig(candidate) : {}),
       defaults: {
         ...this.applied.agents.defaults,
         tools: candidate?.defaults?.tools ?? DEFAULT_TOOL_POLICY_CONFIG,
       },
       list: candidate?.list ?? [],
     };
+    if (edit.kind === 'agent-execution' && candidate?.maxLlmCallsPerTurn === undefined) {
+      delete agents.maxLlmCallsPerTurn;
+    }
     const prepared = this.build(agents);
     return () => { this.applied = prepared; };
   }
@@ -74,7 +80,7 @@ export class AgentPolicyState {
     if (id === SHARED_AGENT_TOOLS_SECTION) {
       return {
         id, kind: 'agent-defaults', agentId: 'general-purpose', builtIn: true,
-        name: 'general-purpose', description: 'Shared Tool defaults for subsequent Root and Child Turns.',
+        name: 'Default Tool permissions', description: 'Shared Tool defaults for subsequent Root and Child Turns.',
         enabled: true, settings: getAgentPolicySettings(document),
         effectiveTools: applied.agents.defaults.tools,
         restartRequired: false, applicationStatus: isDeepStrictEqual(

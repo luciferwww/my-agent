@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ModelCatalogSnapshot, ProviderCatalogEntry } from '../../core/channel/index.js';
 import { RuntimeApp } from '../../runtime/RuntimeApp.js';
 import { runStandaloneHost } from '../../hosts/standalone/standalone-host.js';
+import { loadAgentConfig } from '../../platform/config/index.js';
 import { acquireExtensions } from './loader.js';
 import type { ResolvedHostExtensionsConfig } from './types.js';
 
@@ -99,6 +100,48 @@ describe('Extension acquisition to Runtime integration', () => {
               },
             });
             const llm = loaded.output.sections.find((section: { id: string }) => section.id === 'llm');
+            const execution = loaded.output.sections.find((section: { id: string }) => section.id === 'agents:execution');
+            const executionDefaults = { steeringEnabled: true, maxSubagentDepth: 1 };
+            expect(execution).toMatchObject({
+              settings: {}, defaults: executionDefaults, resolvedSettings: executionDefaults, restartRequired: false,
+            });
+            expect(execution).not.toHaveProperty('runningSettings');
+            const savedExecution = await request({
+              type: 'settings_action', requestId: 'save-execution', action: 'update',
+              input: {
+                sectionId: 'agents:execution', expectedRevision: execution.revision,
+                settings: { steeringEnabled: false, maxSubagentDepth: 0, maxLlmCallsPerTurn: 3 },
+              },
+            });
+            expect(savedExecution).toMatchObject({ ok: true, output: { section: {
+              resolvedSettings: { steeringEnabled: false, maxSubagentDepth: 0, maxLlmCallsPerTurn: 3 },
+              restartRequired: false, applicationStatus: 'current',
+            } } });
+            const defaults = loaded.output.sections.find((section: { id: string }) => section.id === 'agents:defaults');
+            expect(await request({
+              type: 'settings_action', requestId: 'save-tools', action: 'update',
+              input: {
+                sectionId: 'agents:defaults', expectedRevision: defaults.revision,
+                settings: { tools: { allow: ['read_file'], deny: ['exec'] } },
+              },
+            })).toMatchObject({ ok: true, output: { section: {
+              restartRequired: false, effectiveTools: { allow: ['read_file'], deny: ['exec'] },
+            } } });
+            const reloaded = await request({ type: 'settings_action', requestId: 'reload', action: 'load', input: {} });
+            expect(reloaded.output.sections.find((section: { id: string }) => section.id === 'agents:execution'))
+              .toMatchObject({ revision: savedExecution.output.section.revision, restartRequired: false, applicationStatus: 'current' });
+            const restartProjection = await loadAgentConfig({ agentHome: freshHome, environment: {} });
+            expect(restartProjection.application.agents).toMatchObject({
+              steeringEnabled: false, maxSubagentDepth: 0, maxLlmCallsPerTurn: 3,
+              defaults: { tools: { allow: ['read_file'], deny: ['exec'] } },
+            });
+            expect(await request({
+              type: 'settings_action', requestId: 'reset-execution', action: 'update',
+              input: { sectionId: 'agents:execution', expectedRevision: savedExecution.output.section.revision, settings: {} },
+            })).toMatchObject({ ok: true, output: { section: {
+              settings: {}, restartRequired: false, resolvedSettings: executionDefaults, applicationStatus: 'current',
+            } } });
+            const beforeLlm = JSON.parse(await readFile(join(freshHome, 'config.json'), 'utf8'));
             const settings = {
               builtin: { baseURL: 'http://127.0.0.1:9', models: [{ modelId: 'first', protocol: 'openai-responses' }] },
               defaultModel: { providerId: 'builtin', modelId: 'first' },
@@ -109,7 +152,7 @@ describe('Extension acquisition to Runtime integration', () => {
             })).toMatchObject({ ok: true, output: { modelCatalog: { providers: [
               expect.objectContaining({ providerId: 'builtin', configurationSectionId: 'llm' }),
             ] } } });
-            expect(JSON.parse(await readFile(join(freshHome, 'config.json'), 'utf8'))).toEqual({ llm: settings });
+            expect(JSON.parse(await readFile(join(freshHome, 'config.json'), 'utf8'))).toEqual({ ...beforeLlm, llm: settings });
           } finally {
             client.terminate();
             await runtime.close('fresh Home validation complete');

@@ -715,7 +715,6 @@ function assembleLoadedRuntimeUnits(params: {
     ...(options.loadedUnits ?? []),
   ];
 
-  const maxDepth = resources.appConfig.agents.maxSubagentDepth;
   const executor = new SubagentExecutor({
     agentRunner: resources.agentRunner,
     systemPromptBuilder: resources.systemPromptBuilder,
@@ -733,8 +732,7 @@ function assembleLoadedRuntimeUnits(params: {
     activeParents: params.activeParentTurns,
     routeContextByTurn: params.routeContextByTurn,
     sessionManager: resources.sessionManager,
-    maxDepth,
-    maxLlmCallsPerTurn: resources.appConfig.agents.maxLlmCallsPerTurn,
+    captureExecutionPolicy: () => params.captureAgentState().agents,
     executor,
     onEvent: params.onAgentEvent,
   });
@@ -742,8 +740,8 @@ function assembleLoadedRuntimeUnits(params: {
     registration: createTaskToolContribution({
       delegationPort,
       captureProfiles: params.captureAgentState,
-      getCapabilities: (depth) => resolveSubagentCapabilities(depth, maxDepth),
-      maxDepth,
+      getCapabilities: (depth) => resolveSubagentCapabilities(depth, params.captureAgentState().agents.maxSubagentDepth),
+      get maxDepth() { return params.captureAgentState().agents.maxSubagentDepth; },
     }),
     required: true,
   }));

@@ -41,8 +41,10 @@ export interface CreateSubagentDelegationPortParams {
   readonly activeParents: Map<string, ActiveParentTurn>;
   readonly routeContextByTurn: Map<string, MessageRouteContext>;
   readonly sessionManager: SessionManager;
-  readonly maxDepth: number;
-  readonly maxLlmCallsPerTurn?: number;
+  readonly captureExecutionPolicy: () => {
+    readonly maxSubagentDepth: number;
+    readonly maxLlmCallsPerTurn?: number;
+  };
   readonly executor: SubagentExecutor;
   readonly onEvent: (event: AgentEvent) => void | Promise<void>;
 }
@@ -67,11 +69,16 @@ export function createSubagentDelegationPort(
         throw new SubagentDelegationRejected('Subagent requires an active matching Parent Turn.');
       }
 
+      const executionPolicy = params.captureExecutionPolicy();
+      const childDepth = parent.depth + 1;
+      if (childDepth > executionPolicy.maxSubagentDepth) {
+        throw new SubagentDelegationRejected(`Cannot spawn subagent: depth limit (maxDepth=${executionPolicy.maxSubagentDepth}) reached.`);
+      }
+      const capabilities = resolveSubagentCapabilities(childDepth, executionPolicy.maxSubagentDepth);
       const startedAt = Date.now();
       const releaseChild = parent.registerChild();
       const runId = randomUUID();
       const childTurnId = randomUUID();
-      const childDepth = parent.depth + 1;
       const childSessionId = randomUUID();
       const eventIdentity = {
         requestId: parent.requestId,
@@ -122,7 +129,6 @@ export function createSubagentDelegationPort(
         transcriptAcquired = true;
         throwIfAborted(request.signal);
 
-        const capabilities = resolveSubagentCapabilities(childDepth, params.maxDepth);
         const prepared = await params.executor.prepare({
           requestId: parent.requestId,
           profile: request.profile,
@@ -133,7 +139,7 @@ export function createSubagentDelegationPort(
           canSpawn: capabilities.canSpawn,
           childSessionId,
           childTurnId,
-          maxLlmCallsPerTurn: params.maxLlmCallsPerTurn,
+          maxLlmCallsPerTurn: executionPolicy.maxLlmCallsPerTurn,
           signal: request.signal,
           toolProjection: parent.registrySnapshot.tools,
           hookProjection: parent.registrySnapshot.hooks,

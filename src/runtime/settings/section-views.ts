@@ -1,6 +1,8 @@
 import { isDeepStrictEqual } from 'node:util';
-import { validateLlmConfiguration } from '../../platform/config/index.js';
-import type { AgentConfigDocument } from '../../platform/config/types.js';
+import {
+  getAgentExecutionSettings, resolveAgentExecutionConfig, validateLlmConfiguration,
+} from '../../platform/config/index.js';
+import type { AgentConfigDocument, AgentExecutionConfig } from '../../platform/config/types.js';
 import {
   CredentialMaterializationError,
   parseCredentialEnvironmentReference,
@@ -16,6 +18,23 @@ import type {
 import { isObject } from './helpers.js';
 
 export type SettingsApplicationState = 'current' | 'not_applied' | 'unknown';
+
+export function buildExecutionSectionView(input: {
+  readonly revision: string | undefined;
+  readonly document: AgentConfigDocument;
+  readonly applied: AgentExecutionConfig;
+}) {
+  const settings = getAgentExecutionSettings(input.document);
+  const resolvedSettings = resolveAgentExecutionConfig(settings);
+  return {
+    id: 'agents:execution', kind: 'agent-execution', name: 'Execution policy',
+    revision: input.revision, settings, defaults: resolveAgentExecutionConfig(),
+    resolvedSettings, restartRequired: false,
+    applicationStatus: isDeepStrictEqual(resolvedSettings, resolveAgentExecutionConfig(input.applied))
+      ? 'current' : 'not_applied',
+    form: { credentials: {} },
+  };
+}
 
 export function buildLlmSectionView(input: {
   readonly id: string;

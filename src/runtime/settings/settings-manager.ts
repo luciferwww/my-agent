@@ -17,7 +17,7 @@ import type { RuntimeShutdownReport } from '../types.js';
 import { SHARED_AGENT_TOOLS_SECTION, type AgentPolicyState } from '../policy/agent-policy-state.js';
 import { ModelTestRunner } from './model-test.js';
 import {
-  buildLlmSectionView, buildExtensionSectionView, type SettingsApplicationState,
+  buildExecutionSectionView, buildLlmSectionView, buildExtensionSectionView, type SettingsApplicationState,
 } from './section-views.js';
 import {
   SettingsClosingError,
@@ -189,15 +189,18 @@ export class SettingsManager implements SettingsCapability {
     }
     const descriptor = this.descriptors.get(id);
     const agentSection = id === SHARED_AGENT_TOOLS_SECTION || id.startsWith('agent:');
-    if (agentSection && input['credentials'] !== undefined) throw new ConfigEditError('/credentials');
-    const edit: ConfigSectionEdit = agentSection
+    const executionSection = id === 'agents:execution';
+    if ((agentSection || executionSection) && input['credentials'] !== undefined) throw new ConfigEditError('/credentials');
+    const edit: ConfigSectionEdit = executionSection
+      ? { kind: 'agent-execution', settings: input['settings'] }
+      : agentSection
       ? id === SHARED_AGENT_TOOLS_SECTION
         ? { kind: 'agent-defaults', settings: input['settings'] }
         : { kind: 'agent', agentId: id.slice('agent:'.length), settings: input['settings'] }
       : descriptor
       ? { kind: 'extension', extensionId: descriptor.id, schema: descriptor.configSchema, settings: input['settings'], credentials: input['credentials'] }
       : { kind: 'llm', settings: input['settings'], credentials: input['credentials'] };
-    const publishAgentPolicy = edit.kind === 'agent' || edit.kind === 'agent-defaults'
+    const publishAgentPolicy = edit.kind === 'agent' || edit.kind === 'agent-defaults' || edit.kind === 'agent-execution'
       ? this.options.agentPolicies!.prepare(edit) : undefined;
     const previousApplicationState = this.applicationState;
     const committed = await (this.options.saveSection ?? saveAgentConfigSection)(
@@ -213,7 +216,7 @@ export class SettingsManager implements SettingsCapability {
     this.revisions.set(id, randomUUID());
     if (id !== 'llm') return success(request, {
       section: this.section(id),
-      ...(agentSection ? {
+      ...(agentSection || executionSection ? {
         agentSections: this.options.agentPolicies!.sectionIds.map(sectionId => this.section(sectionId)),
         agentDiagnostics: this.options.agentPolicies!.diagnostics(),
       } : {}),
@@ -313,6 +316,12 @@ export class SettingsManager implements SettingsCapability {
   }
 
   private section(id: string) {
+    if (id === 'agents:execution' && this.options.agentPolicies) {
+      return buildExecutionSectionView({
+        revision: this.revisions.get(id), document: this.document,
+        applied: this.options.agentPolicies.capture().agents,
+      });
+    }
     if (id === SHARED_AGENT_TOOLS_SECTION || id.startsWith('agent:')) {
       const section = this.options.agentPolicies!.section(id, this.document);
       const model = 'model' in section ? section.model : undefined;

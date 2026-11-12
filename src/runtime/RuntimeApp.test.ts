@@ -1156,12 +1156,13 @@ describe('RuntimeApp', () => {
     await app.close();
   });
 
-  it('uses latest shared and own Child policies from old and recursive Parents while keeping admitted Root policies', async () => {
+  it('uses latest global execution and Child Tool policies while keeping admitted Root parameters', async () => {
     await ensureAgentContext(agentHome);
     await writeFile(join(agentHome, 'agents', 'explorer', 'IDENTITY.md'), '# Invalid specialist');
     await writeFile(join(agentHome, 'config.json'), JSON.stringify({
       llm: testApplicationConfig().llm,
       agents: {
+        steeringEnabled: false, maxLlmCallsPerTurn: 7,
         maxSubagentDepth: 3,
         defaults: { tools: { allow: ['demo_tool'], deny: ['write_file'] } },
         list: [{ id: 'reviewer', tools: { deny: ['exec'] } }, { id: 'missing', enabled: false }],
@@ -1191,8 +1192,12 @@ describe('RuntimeApp', () => {
       if ((params.subagentDepth ?? 0) === 0) {
         roots++;
         if (roots === 1) {
+          expect(params.maxLlmCalls).toBe(7);
+          expect(params.steeringSource).toBeUndefined();
           entered.resolve();
           await proceed.promise;
+          expect(params.maxLlmCalls).toBe(7);
+          expect(params.steeringSource).toBeUndefined();
           expect(policy.isDenied('write_file')).toBe(true);
           expect(policy.isDenied('edit_file')).toBe(false);
           expect(params.systemPrompt).toContain('- reviewer:');
@@ -1204,11 +1209,16 @@ describe('RuntimeApp', () => {
             outcome: 'failed', content: expect.stringContaining('disabled'),
           });
         } else {
+          expect(params.maxLlmCalls).toBe(roots === 2 ? 2 : 4);
+          expect(params.steeringSource !== undefined).toBe(roots === 2);
+          expect(policy.isDenied('task')).toBe(roots === 3);
           expect(policy.isDenied('write_file')).toBe(false);
           expect(policy.isDenied('edit_file')).toBe(true);
           expect(params.systemPrompt).not.toContain('- reviewer:');
         }
       } else {
+        expect(params.maxLlmCalls).toBe(2);
+        expect(policy.isDenied('task')).toBe(params.subagentDepth === 2);
         expect(policy.isDenied('write_file')).toBe(false);
         expect(policy.isDenied('edit_file')).toBe(true);
         expect(policy.decide('demo_tool', {}, true)).toBe('allow');
@@ -1253,6 +1263,7 @@ describe('RuntimeApp', () => {
         .toEqual(['general-purpose', 'researcher', 'reviewer']);
       const running = runRootTurnForTest(app, { sessionId: 'main', message: 'delegate', promptMode: 'full' });
       await entered.promise;
+      await update('agents:execution', { steeringEnabled: true, maxSubagentDepth: 2, maxLlmCallsPerTurn: 2 });
       await update('agents:defaults', { tools: { allow: ['demo_tool'], deny: ['edit_file'] } });
       proceed.resolve();
       await expect(running).resolves.toMatchObject({ text: 'done' });
@@ -1263,6 +1274,9 @@ describe('RuntimeApp', () => {
         .toEqual(['general-purpose', 'researcher']);
       await runRootTurnForTest(app, { sessionId: 'main', message: 'next prompt', promptMode: 'full' });
       expect(roots).toBe(2);
+      await update('agents:execution', { steeringEnabled: false, maxSubagentDepth: 0, maxLlmCallsPerTurn: 4 });
+      await runRootTurnForTest(app, { sessionId: 'main', message: 'delegation disabled', promptMode: 'full' });
+      expect(roots).toBe(3);
     } finally {
       proceed.resolve();
       await app.close();

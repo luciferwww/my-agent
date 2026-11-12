@@ -157,6 +157,10 @@ function setup(options: {
       toolRounds: 0,
     };
   });
+  let executionPolicy: { maxSubagentDepth: number; maxLlmCallsPerTurn?: number } = {
+    maxSubagentDepth: 1, maxLlmCallsPerTurn: 6,
+  };
+  const captureExecutionPolicy = vi.fn(() => executionPolicy);
   const port = createSubagentDelegationPort({
     activeParents,
     routeContextByTurn,
@@ -169,8 +173,7 @@ function setup(options: {
       endSubagentPresentation,
       clearSubagentPresentation,
     } as never,
-    maxDepth: 1,
-    maxLlmCallsPerTurn: 6,
+    captureExecutionPolicy,
     executor: { prepare, execute } as never,
     onEvent: (event) => {
       lifecycleOperations.push(event.type);
@@ -192,6 +195,8 @@ function setup(options: {
     reportActivity: vi.fn(),
   };
   return {
+    setExecutionPolicy: (value: typeof executionPolicy) => { executionPolicy = value; },
+    captureExecutionPolicy,
     port,
     request,
     events,
@@ -216,6 +221,20 @@ function setup(options: {
 }
 
 describe('Runtime Subagent delegation', () => {
+  it('captures latest execution limits for each Child and retains the snapshot across async preparation', async () => {
+    const subject = setup();
+    const first = subject.port.delegate(subject.request);
+    subject.setExecutionPolicy({ maxSubagentDepth: 2, maxLlmCallsPerTurn: 3 });
+    await expect(first).resolves.toMatchObject({ outcome: 'ok' });
+    expect(subject.prepare.mock.calls[0]?.[0]).toMatchObject({ canSpawn: false, maxLlmCallsPerTurn: 6 });
+    await expect(subject.port.delegate(subject.request)).resolves.toMatchObject({ outcome: 'ok' });
+    expect(subject.prepare.mock.calls[1]?.[0]).toMatchObject({ canSpawn: true, maxLlmCallsPerTurn: 3 });
+    subject.setExecutionPolicy({ maxSubagentDepth: 0 });
+    await expect(subject.port.delegate(subject.request)).rejects.toThrow('maxDepth=0');
+    expect(subject.registerChild).toHaveBeenCalledTimes(2);
+    expect(subject.captureExecutionPolicy).toHaveBeenCalledTimes(3);
+  });
+
   it('keeps the presentation route and tree membership until terminal delivery settles', async () => {
     let finish!: () => void;
     const pendingDelivery = new Promise<void>(resolve => { finish = resolve; });
@@ -273,6 +292,7 @@ describe('Runtime Subagent delegation', () => {
 
   it('registers a resolved Child as a recursive Parent with inherited root supervision', async () => {
     const subject = setup();
+    subject.setExecutionPolicy({ maxSubagentDepth: 2, maxLlmCallsPerTurn: 6 });
     subject.execute.mockImplementationOnce(async (prepared, resolvedModel) => {
       const child = subject.activeParents.get(prepared.turnId);
       expect(child).toMatchObject({

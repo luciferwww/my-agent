@@ -151,7 +151,7 @@ The bundled Settings editor saves sections independently and replaces only the
 confirmed target view after success or rollback, including its new revision.
 Other drafts remain intact. Agent saves additionally refresh read-only shared
 policy/metadata projections without replacing other drafts or their revisions.
-Agent section requests omit credential intents. Explicit secret intents do not expose saved values;
+Agent and execution-policy section requests omit credential intents. Explicit secret intents do not expose saved values;
 submitted replacement buffers are cleared. Default selection remains local until
 LLM save. Extension restart state comes from confirmed server sections, survives
 editor closure and clears on a saved reversal. Model Test source and possible
@@ -163,12 +163,19 @@ connection/model editing. Other Provider details expose loaded model actions and
 a separate link to the owning Extension's single shared configuration draft.
 Extensions has its own list/detail view, including disabled discovered Extensions;
 those detail pages contain only enablement and configuration, not model actions.
-Agents shows discovered definitions and unmatched saved overrides. Named controls
+Agents separates Global settings from Agent list. Global settings has independent
+Execution policy and Default Tool permissions
+editors. Execution views preserve sparse overrides and show module defaults and
+resolved saved values, including no count limit when omitted.
+Agent list shows discovered definitions and unmatched saved overrides. Named controls
 edit only enabled and Tool allow/deny; description/model are read-only, and Context
 tabs show bounded startup snapshots with metadata/body separation and missing-file
-markers. The permanent `general-purpose` editor changes shared Tool defaults,
-without disablement or dedicated Context. Agent saves apply to subsequent Turns,
-while manual MD changes require restart.
+markers. The permanent `general-purpose` view is read-only and links to the sole
+shared Tool-default editor, without disablement or dedicated Context. Tool and
+enablement and global execution saves apply to new Turns without restart;
+execution feedback is ordinary saved confirmation, without a running-policy
+duplicate or redundant subsequent-Turn notice. Manual MD changes require
+restart. Navigation preserves independent dirty drafts.
 Tool policy uses named checkbox multiselects with descriptions, locked shared
 deny entries and preserved read-only wildcard/unavailable-name rules. Inherited
 allow disables the local selector and shows the current shared value. The

@@ -1,8 +1,10 @@
-import type { AgentConfigDocument, AgentEntry, ToolsConfig } from './types.js';
+import type { AgentConfigDocument, AgentEntry, AgentExecutionConfig, ToolsConfig } from './types.js';
 import { isDeepStrictEqual } from 'node:util';
 import { isNamedAgentId } from '../../core/agent-context/index.js';
 import { validateToolPolicyConfig, ToolPolicyConfigValidationError } from '../../core/tools/config.js';
-import { readAgentConfigDocument, validateAgentConfigDocument, validateLlm } from './agent-config-loader.js';
+import { getAgentExecutionSettings, readAgentConfigDocument, validateAgentConfigDocument, validateLlm } from './agent-config-loader.js';
+import { RunnerConfigValidationError, validateRunnerConfig } from '../../core/runner/config.js';
+import { SubagentDepthValidationError, validateMaxSubagentDepth } from '../../core/subagent/config.js';
 import { parseCredentialEnvironmentReference } from './credential-materialization.js';
 import { replaceAgentConfigFile } from './file-publication.js';
 import { extensionSettingsFields, prepareExtensionConfig } from '../../extension/acquisition/configuration.js';
@@ -14,6 +16,7 @@ export type CredentialChange =
 
 export type ConfigSectionEdit =
   | AgentPolicyEdit
+  | AgentExecutionEdit
   | {
       readonly kind: 'llm';
       readonly settings: unknown;
@@ -31,8 +34,14 @@ export type AgentPolicyEdit =
   | { readonly kind: 'agent'; readonly agentId: string; readonly settings: unknown }
   | { readonly kind: 'agent-defaults'; readonly settings: unknown };
 
+export interface AgentExecutionEdit {
+  readonly kind: 'agent-execution';
+  readonly settings: unknown;
+}
+
 export type ConfigSectionPreimage =
   | { readonly kind: 'agent-policy'; readonly edit: AgentPolicyEdit }
+  | { readonly kind: 'agent-execution'; readonly settings: Partial<AgentExecutionConfig> }
   | { readonly kind: 'llm'; readonly value: AgentConfigDocument['llm'] }
   | { readonly kind: 'extension'; readonly extensionId: string; readonly value: unknown; readonly present: boolean };
 
@@ -48,6 +57,38 @@ export function editAgentConfigSection(
   edit: ConfigSectionEdit,
 ): { document: AgentConfigDocument; previous: ConfigSectionPreimage } {
   const settings = object(edit.settings, '/settings');
+  if (edit.kind === 'agent-execution') {
+    onlyKeys(settings, ['steeringEnabled', 'maxSubagentDepth', 'maxLlmCallsPerTurn'], '/settings');
+    const runner = {
+      ...(settings['steeringEnabled'] === undefined ? {} : { steeringEnabled: settings['steeringEnabled'] }),
+      ...(settings['maxLlmCallsPerTurn'] === undefined ? {} : { maxLlmCallsPerTurn: settings['maxLlmCallsPerTurn'] }),
+    };
+    try {
+      validateRunnerConfig(runner);
+    } catch (error) {
+      if (!(error instanceof RunnerConfigValidationError)) throw error;
+      throw new ConfigEditError(`/settings/${error.fieldPath}`);
+    }
+    const depth = settings['maxSubagentDepth'];
+    if (depth !== undefined) {
+      try {
+        validateMaxSubagentDepth(depth);
+      } catch (error) {
+        if (!(error instanceof SubagentDepthValidationError)) throw error;
+        throw new ConfigEditError('/settings/maxSubagentDepth');
+      }
+    }
+    const previous: ConfigSectionPreimage = { kind: 'agent-execution', settings: getAgentExecutionSettings(document) };
+    const agents = { ...document.agents };
+    delete agents.steeringEnabled;
+    delete agents.maxLlmCallsPerTurn;
+    delete agents.maxSubagentDepth;
+    Object.assign(agents, runner, depth === undefined ? {} : { maxSubagentDepth: depth });
+    const candidate = Object.keys(agents).length === 0 && document.agents === undefined
+      ? document : { ...document, agents };
+    validateAgentConfigDocument(candidate);
+    return { document: candidate, previous };
+  }
   if (edit.kind === 'agent' || edit.kind === 'agent-defaults') {
     return editAgentPolicy(document, edit, settings);
   }
@@ -144,7 +185,8 @@ export async function saveAgentConfigSection(
   const current = await readAgentConfigDocument(agentHome);
   const committed = editAgentConfigSection(current, edit);
   beforeCommit?.(committed.document);
-  if ((edit.kind !== 'agent' && edit.kind !== 'agent-defaults') || !isDeepStrictEqual(committed.document, current)) {
+  if ((edit.kind !== 'agent' && edit.kind !== 'agent-defaults' && edit.kind !== 'agent-execution')
+    || !isDeepStrictEqual(committed.document, current)) {
     await replaceAgentConfigFile(agentHome, `${JSON.stringify(committed.document, null, 2)}\n`);
   }
   return committed;
@@ -156,7 +198,9 @@ export async function restoreAgentConfigSection(
 ): Promise<AgentConfigDocument> {
   const current = await readAgentConfigDocument(agentHome);
   let restored: AgentConfigDocument;
-  if (previous.kind === 'agent-policy') {
+  if (previous.kind === 'agent-execution') {
+    restored = editAgentConfigSection(current, { kind: 'agent-execution', settings: previous.settings }).document;
+  } else if (previous.kind === 'agent-policy') {
     restored = editAgentConfigSection(current, previous.edit).document;
   } else if (previous.kind === 'llm') {
     const document = { ...current };

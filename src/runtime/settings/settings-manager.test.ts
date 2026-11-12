@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SettingsActionResult } from '../../core/settings/index.js';
-import { restoreAgentConfigSection, saveAgentConfigSection } from '../../platform/config/index.js';
+import { createDefaultAgentConfig, resolveAgentExecutionConfig, restoreAgentConfigSection, saveAgentConfigSection } from '../../platform/config/index.js';
+import { AgentPolicyState } from '../policy/agent-policy-state.js';
 import type { AgentConfigDocument } from '../../platform/config/types.js';
 import type { ExtensionAcquisitionResult } from '../../extension/acquisition/types.js';
 import type { RuntimeReloadResult } from '../composition/runtime-composition.js';
@@ -59,7 +60,7 @@ function section(result: SettingsActionResult, id = 'llm'): Record<string, unkno
   const output = record(result.output);
   if (output['section']) return record(output['section']);
   if (!Array.isArray(output['sections'])) throw new Error('Expected sections.');
-  const sectionId = id === 'llm' || id.startsWith('extension:') ? id : `extension:${id}`;
+  const sectionId = id === 'llm' || id.includes(':') ? id : `extension:${id}`;
   return record(output['sections'].find((value: unknown) => record(value)['id'] === sectionId));
 }
 
@@ -140,6 +141,10 @@ describe('SettingsManager', () => {
     return JSON.parse(await readFile(join(agentHome, 'config.json'), 'utf8'));
   }
   function fixture(overrides: Partial<ConstructorParameters<typeof SettingsManager>[0]> = {}) {
+    const policies = new AgentPolicyState({
+      agentHome, llm: {}, logger: {},
+      agents: { ...resolveAgentExecutionConfig(document.agents), defaults: createDefaultAgentConfig(), list: [] },
+    }, { definitions: [], diagnostics: [] }, () => new Set(['read_file', 'exec', 'task']));
     const apply = vi.fn(async (): Promise<RuntimeReloadResult> => ({
       requestId: 'reload', change: { operation: 'configure-llm', unitId: 'builtin-llm-provider' },
       warnings: [], outcome: 'published', previousGeneration: 1, generation: 2, retiredUnitIds: [],
@@ -147,15 +152,64 @@ describe('SettingsManager', () => {
     const save = vi.fn(saveAgentConfigSection);
     const restore = vi.fn(restoreAgentConfigSection);
     const manager = new SettingsManager({
-      agentHome, document, environment: { SAVED_KEY: 'runtime-secret' }, extensionMetadata: metadata,
+      agentHome, document, agentPolicies: policies, environment: { SAVED_KEY: 'runtime-secret' }, extensionMetadata: metadata,
       getModelCatalog: () => ({ generation: 1, defaultSelection: { state: 'unset' }, providers: [] }),
       applyLlmConfiguration: apply, saveSection: save, restoreSection: restore, ...overrides,
     });
     const load = () => manager.execute({ requestId: 'load', action: 'load', input: {} });
     const update = (expectedRevision: string, value: unknown = settings, sectionId = 'llm', credentials?: unknown) =>
       manager.execute({ requestId: 'update', action: 'update', input: { sectionId, expectedRevision, settings: value, credentials } });
-    return { manager, apply, save, restore, load, update };
+    return { manager, policies, apply, save, restore, load, update };
   }
+
+  it('publishes execution policy after saving and preserves captured policies and independent revisions', async () => {
+    const f = fixture();
+    const captured = f.policies.capture();
+    const loaded = await f.load();
+    const llmRevision = revision(loaded);
+    const initial = revision(loaded, 'agents:execution');
+    const pending = await f.update(initial, {
+      steeringEnabled: false, maxSubagentDepth: 0, maxLlmCallsPerTurn: 3,
+    }, 'agents:execution');
+    expect(pending).toMatchObject({ ok: true, output: { section: {
+      restartRequired: false, applicationStatus: 'current',
+    } } });
+    expect(f.policies.capture().agents).toMatchObject({
+      steeringEnabled: false, maxSubagentDepth: 0, maxLlmCallsPerTurn: 3,
+    });
+    expect(captured.agents.steeringEnabled).toBe(true);
+    expect(captured.agents.maxSubagentDepth).toBe(1);
+    expect(f.apply).not.toHaveBeenCalled();
+    expect(f.restore).not.toHaveBeenCalled();
+    expect(revision(await f.load())).toBe(llmRevision);
+    expect(await f.update(initial, {}, 'agents:execution')).toMatchObject({
+      ok: false, error: { code: 'revision_conflict' },
+    });
+    const reversed = await f.update(revision(pending, 'agents:execution'), {}, 'agents:execution');
+    expect(reversed).toMatchObject({ ok: true, output: { section: {
+      settings: {}, restartRequired: false, applicationStatus: 'current',
+    } } });
+    expect(f.policies.capture().agents).toMatchObject({ steeringEnabled: true, maxSubagentDepth: 1 });
+    expect(f.policies.capture().agents).not.toHaveProperty('maxLlmCallsPerTurn');
+    expect((await read()).llm).toEqual(document.llm);
+  });
+
+  it('rejects execution credentials and preserves the confirmed state after a failed execution save', async () => {
+    const saveSection = vi.fn(async () => { throw new Error('write failed'); });
+    const f = fixture({ saveSection });
+    const captured = f.policies.capture();
+    const initial = await f.load();
+    const rev = revision(initial, 'agents:execution');
+    expect(await f.update(rev, {}, 'agents:execution', {})).toMatchObject({
+      ok: false, error: { fieldPath: '/credentials' },
+    });
+    expect(saveSection).not.toHaveBeenCalled();
+    expect(await f.update(rev, { steeringEnabled: true }, 'agents:execution')).toMatchObject({ ok: false });
+    expect(section(await f.load(), 'agents:execution')).toEqual(section(initial, 'agents:execution'));
+    expect(f.policies.capture()).toBe(captured);
+    expect(f.apply).not.toHaveBeenCalled();
+    expect(await read()).toEqual(document);
+  });
 
   it('loads safe saved views with stable revisions, credentials metadata and existing diagnostics', async () => {
     const f = fixture();

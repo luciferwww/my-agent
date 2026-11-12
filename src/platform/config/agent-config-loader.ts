@@ -32,6 +32,7 @@ import { projectAgentCapabilities, validateAgentLeafConfig, validateRunnerConfig
 import { isNamedAgentId } from '../../core/agent-context/index.js';
 import type {
   AgentConfigDocument,
+  AgentExecutionConfig,
   AgentsConfig,
   ApplicationConfigProjection,
 } from './types.js';
@@ -59,6 +60,25 @@ const DEFAULT_DEPENDENCIES: AgentConfigLoaderDependencies = {
   readTextFile: (path) => readFile(path, 'utf8'),
 };
 
+export function getAgentExecutionSettings(document: AgentConfigDocument): Partial<AgentExecutionConfig> {
+  const agents = document.agents;
+  return {
+    ...(agents?.steeringEnabled === undefined ? {} : { steeringEnabled: agents.steeringEnabled }),
+    ...(agents?.maxSubagentDepth === undefined ? {} : { maxSubagentDepth: agents.maxSubagentDepth }),
+    ...(agents?.maxLlmCallsPerTurn === undefined ? {} : { maxLlmCallsPerTurn: agents.maxLlmCallsPerTurn }),
+  };
+}
+
+export function resolveAgentExecutionConfig(
+  settings: Partial<AgentExecutionConfig> = {},
+): AgentExecutionConfig {
+  return {
+    steeringEnabled: settings.steeringEnabled ?? DEFAULT_RUNNER_CONFIG.steeringEnabled,
+    maxSubagentDepth: settings.maxSubagentDepth ?? DEFAULT_MAX_SUBAGENT_DEPTH,
+    ...(settings.maxLlmCallsPerTurn === undefined ? {} : { maxLlmCallsPerTurn: settings.maxLlmCallsPerTurn }),
+  };
+}
+
 /** Reads `<agentHome>/config.json` once and returns immutable consumer projections. */
 export async function loadAgentConfig(options: {
   readonly agentHome: string;
@@ -67,14 +87,6 @@ export async function loadAgentConfig(options: {
   const document = await readAgentConfigDocument(options.agentHome, dependencies);
   const llm = validateLlm(document.llm, options.environment ?? process.env);
   validateAgentConfigDocument(document);
-  const runner = {
-    steeringEnabled:
-      document.agents?.steeringEnabled ?? DEFAULT_RUNNER_CONFIG.steeringEnabled,
-    ...(document.agents?.maxLlmCallsPerTurn === undefined
-      ? {}
-      : { maxLlmCallsPerTurn: document.agents.maxLlmCallsPerTurn }),
-  };
-
   const defaultAgentConfig = createDefaultAgentConfig();
   const projectedDefaults = document.agents?.defaults === undefined
     ? undefined : projectAgentCapabilities(document.agents.defaults, 'agents.defaults');
@@ -100,9 +112,7 @@ export async function loadAgentConfig(options: {
     );
   }
   const agents: AgentsConfig = {
-    ...runner,
-    maxSubagentDepth:
-      document.agents?.maxSubagentDepth ?? DEFAULT_MAX_SUBAGENT_DEPTH,
+    ...resolveAgentExecutionConfig(document.agents),
     defaults,
     list,
   };

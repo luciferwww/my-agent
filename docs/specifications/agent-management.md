@@ -333,14 +333,26 @@ local deny still cannot remove an entry that remains in current shared deny.
 
 ### Global execution policy
 
-The owner chose restart-required behavior for `agents.steeringEnabled`,
-`agents.maxLlmCallsPerTurn` and `agents.maxSubagentDepth` in this delivery.
-Keep their existing startup capture; do not dynamically change the running
-execution policy. Settings must label these fields as restart-required wherever
-they are editable and distinguish saved values from the running startup values.
-After a save, report restart required only while the saved policy differs from
-startup; restoring startup values clears that requirement. This does not expand
-the per-Agent editor's scope or make all Agent changes restart-required.
+`agents.steeringEnabled`, `agents.maxLlmCallsPerTurn` and
+`agents.maxSubagentDepth` publish dynamically after a confirmed Settings save.
+Each new Root captures the current applied policy; each new Child captures the
+latest global limits independently of its Parent's older parameters, before
+asynchronous preparation. Existing Turn parameters remain unchanged.
+Child depth admission and canSpawn use the same snapshot. A reduced global
+depth limit can reject a new delegation from an already running Parent before
+allocating Child resources; depth zero hides task from new Root Turns.
+This does not add interactive Child steering or change Child message ingress.
+
+Settings exposes these three fields through independent revisioned section
+`agents:execution`. Its sparse `settings`, module-owned `defaults`,
+and `resolvedSettings` distinguish explicit overrides and default behavior
+without exposing the raw document.
+Omitted `maxLlmCallsPerTurn` means no count limit, not zero. Resetting a field
+removes its override; unchanged views do not materialize defaults. Execution
+saves preserve other fields and prepare/persist/publish through the existing
+AgentPolicyState. Failed persistence leaves applied policy unchanged.
+Successful saves return current status with no restart requirement. Use ordinary
+saved feedback, with no duplicate running-policy view or subsequent-Turn notice.
 
 ### Shared Tool defaults
 
@@ -355,14 +367,21 @@ selecting a Child Turn's profile. Pass that immutable policy to AgentRunner;
 Agent execution does not read `config.json` or query changing shared defaults.
 Already admitted Turns retain their selected policies.
 
-Only the Tool defaults are dynamic in this delivery. Other `agents.defaults`
+Only the Tool defaults under `agents.defaults` are dynamic. Other `agents.defaults`
 fields retain startup-only application; this does not add memory, Context or
 compaction editors or change their existing Child support.
 
 ### Per-Agent settings
 
-Add an Agents group alongside LLM and Extensions, with compact rows showing ID,
-effective description and enabled state. Selecting a row opens:
+The Agents group alongside LLM and Extensions contains Global settings and
+Agent list. Global settings opens independent Execution policy and Default Tool
+permissions editors. The former has steering, non-negative delegation depth and
+an optional positive Model-call limit and per-field reset. Each editor saves
+independently, without restart.
+
+Agent list contains the built-in general-purpose type, discovered definitions
+and unmatched saved overrides, with compact rows showing ID, effective
+description and enabled state. Selecting a named Agent opens:
 
 - **Configuration:** only enabled and approval allow/deny controls. Label allow
   as approval bypass, not exclusive Tool availability; explain deny precedence.
@@ -374,11 +393,11 @@ effective description and enabled state. Selecting a row opens:
   information. Do not add description/model editing or MD save controls.
 
 Show `general-purpose` as a fixed built-in entry, with no disable control or
-dedicated MD tabs. Its Tool allow/deny controls edit `agents.defaults.tools` and
-are labeled as shared Tool defaults, applying to subsequent Turns without
-restart. This is the shared-default editor, not an `agent:general-purpose`
-override. Preserve other `defaults` fields when saving it; do not imply this
-editor configures an independent built-in profile.
+dedicated MD tabs. Its read-only shared Tool summary links to Default Tool
+permissions, the sole editor for `agents.defaults.tools`. There is no independent
+`agent:general-purpose` override or second writable default editor. Shared saves
+apply to subsequent Turns without restart and preserve other `defaults` fields.
+Navigation between groups preserves unsaved drafts.
 
 Tool allow/deny editors use checkbox multiselects rather than requiring users to
 know Tool names. Settings load supplies a safe `toolCatalog` containing only name
@@ -424,16 +443,16 @@ existing generic `settings.execute` load/update flow and serialized persistence;
 shared Tool defaults have a separate revisioned section. Channel code must not
 parse MD or own Agent policy.
 
-For enablement, shared Tool defaults and named-Agent Tool policy saves:
+For execution policy, enablement, shared Tool defaults and named-Agent Tool policy saves:
 
 1. Validate and prepare the complete resulting effective profile state before
    writing. Use the currently applied shared Tool defaults and named overrides,
    changing only the fields admitted by this save. Keep all other defaults and
-   global execution policy at their startup values; never adopt pending-restart
-   fields from the complete saved document. Reuse section persistence and its
+   global execution policy at their currently applied values; never adopt
+   unrelated fields from the complete saved document. Reuse section persistence and its
    existing failure/rollback contract.
 2. After confirmed persistence, publish the prepared state through one current
-   policy-state reference containing shared Tool defaults and the registry.
+   policy-state reference containing global execution policy, shared Tool defaults and the registry.
    Success means both saved and applied; never report
    success while parent discovery and task lookup use different registries.
 3. New task admissions select the current profile/policy. A disabled Agent is
@@ -537,8 +556,8 @@ alter the owner's Home/config as a side effect of design or tests.
     parent prompt lists the current enabled Agents. Already prepared/running
     children retain their selected profile/policy. Save failure leaves the
     previous effective state and reports the persistence/application outcome.
-    The three global execution-policy fields retain startup behavior and
-    accurately report restart-required differences, including reverting them.
+    The three global execution-policy fields publish for new Root/Child Turns
+    without restart; existing captured limits/steering remain unchanged.
     Save a pending-restart non-Tool default, then alternate shared Tool-default
     and named-Agent saves: none may apply the pending field early. Use a paused
     persistence operation to verify old/new policy selection across publication

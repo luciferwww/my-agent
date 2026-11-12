@@ -1421,7 +1421,7 @@ export class RuntimeApp {
         modelId: resolvedModel.identity.modelId,
       });
       const effectiveMaxLlmCalls =
-        params.maxLlmCalls ?? this.resources.runnerConfig.maxLlmCallsPerTurn;
+        params.maxLlmCalls ?? agentState.agents.maxLlmCallsPerTurn;
       const approvalCapability = this.getApprovalCapability(params.turnId, params.sessionId);
       parentRecord = Object.freeze({
         requestId: params.requestId,
@@ -1458,7 +1458,7 @@ export class RuntimeApp {
           this.sessionPermissions.get(params.sessionId).mode,
         approvalCapability,
         maxLlmCalls: effectiveMaxLlmCalls,
-        ...(this.resources.runnerConfig.steeringEnabled
+        ...(agentState.agents.steeringEnabled
           ? {
               steeringSource: {
                 claimReady: () => this.claimSteeringMessages(

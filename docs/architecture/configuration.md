@@ -64,7 +64,7 @@ Stages 3–5 apply only to Agent-scoped configuration. Global Agent execution po
 |---|---|
 | `llm.defaultModel` | Optional preferred Root-Turn `{ providerId, modelId }`; also projected to clients as `unset`, `available`, or `unavailable`; never a fallback list |
 | `llm.builtin` | Optional `{ baseURL, apiKey?, models[] }`; each model has `modelId`, `protocol`, optional `displayName`, optional positive safe-integer capability facts `maximumContextTokens`, `maximumPromptTokens`, and `maximumOutputTokens`, plus separate optional invocation policy `outputTokenLimit`; omitting Prompt and Context limits uses `131072`; an empty model list is valid |
-| `agents.steeringEnabled` | Global boolean; defaults to `false` |
+| `agents.steeringEnabled` | Global boolean; defaults to `true`; explicit `false` disables steering |
 | `agents.maxLlmCallsPerTurn` | Global optional positive integer applied independently to each Root or Child Turn; omitted means no Model-call count limit |
 | `memory` | Enabled; local `Xenova/all-MiniLM-L6-v2`; chunk `1600/320`; search `6`, `0.25`, weights `0.7/0.3` |
 | `tools` | `allow=[]`; `deny=[]` |
@@ -95,8 +95,11 @@ selects current shared Tool defaults plus only its own override: explicit allow
 replaces shared allow, while shared/local deny combine. It does not merge a named
 Parent's own denies or previously captured tools. Root/Child captures are immutable
 for admitted Turns; Runtime owns delegation and Provider-generation inheritance.
-Settings publishes shared/named Tool changes only after persistence, based on
-current applied state rather than unrelated pending-restart fields.
+Settings publishes global execution and shared/named Tool changes only after
+persistence, based on current applied state rather than unrelated file edits.
+Each new Root/Child captures the latest global execution policy; already
+captured parameters remain stable. Child depth admission and canSpawn use the
+same pre-setup snapshot, independently of the Parent's captured limits.
 
 ## 5. Core APIs
 

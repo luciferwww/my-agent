@@ -102,7 +102,7 @@ async function fill(name: string, value: string) {
 function agentSection(id: string, settings: Record<string, unknown> = {}) {
   const builtIn = id === 'general-purpose';
   return {
-    id: builtIn ? 'agents:defaults' : `agent:${id}`, name: id, revision: `${id}-revision`,
+    id: builtIn ? 'agents:defaults' : `agent:${id}`, name: builtIn ? 'Default Tool permissions' : id, revision: `${id}-revision`,
     kind: builtIn ? 'agent-defaults' : 'agent', settings, restartRequired: false,
     form: { credentials: {} }, enabled: settings['enabled'] !== false, builtIn,
     description: 'Startup description', definitionAvailable: true, model: 'inherit',
@@ -111,6 +111,16 @@ function agentSection(id: string, settings: Record<string, unknown> = {}) {
     metadata: { description: 'Startup description' },
     contextFiles: [{ path: 'IDENTITY.md', content: '---\ndescription: Startup description\n---\nStartup instructions' }],
     instructionFiles: [{ path: 'IDENTITY.md', content: 'Startup instructions' }],
+  };
+}
+
+function executionSection(settings: Record<string, unknown> = {}) {
+  const defaults = { steeringEnabled: true, maxSubagentDepth: 1 };
+  return {
+    id: 'agents:execution', kind: 'agent-execution', name: 'Execution policy',
+    revision: 'execution-revision', settings, form: { credentials: {} },
+    defaults, resolvedSettings: { ...defaults, ...settings },
+    restartRequired: false,
   };
 }
 
@@ -158,6 +168,11 @@ async function mount(settings = initialSettings(), extraSections: Record<string,
         if (!extra) throw new Error(`Unknown fixture section: ${sectionId}`);
         extra['settings'] = object(object(input)['settings']);
         extra['enabled'] = object(extra['settings'])['enabled'] !== false;
+        if (sectionId === 'agents:execution') {
+          extra['resolvedSettings'] = { ...object(extra['defaults']), ...object(extra['settings']) };
+          extra['restartRequired'] = false;
+          extra['applicationStatus'] = 'current';
+        }
         if (sectionId === 'agents:defaults') {
           const tools = object(object(input)['settings'])['tools'];
           const policy = tools === undefined ? {} : object(tools);
@@ -173,7 +188,7 @@ async function mount(settings = initialSettings(), extraSections: Record<string,
       requestId: action, action, ok: true,
       output: action === 'load' ? { sections: [section(saved), ...extraSections], modelCatalog: catalog, toolCatalog, diagnostics: [] }
         : action === 'test_llm_model' ? { outcome: 'completed' }
-          : { section: extra ?? section(saved), agentSections: extraSections, modelCatalog: catalog },
+          : { section: extra ?? section(saved), agentSections: extraSections.filter(item => item['kind'] !== 'agent-execution'), modelCatalog: catalog },
     };
   };
   const execute = vi.fn<(action: string, input: unknown) => Promise<SettingsActionResult>>(
@@ -203,6 +218,88 @@ function deferredResult() {
 }
 
 describe('SettingsPanel', () => {
+  it('groups globals and Agents, and exposes only one shared permission editor', async () => {
+    const f = await mount({}, [executionSection(), agentSection('general-purpose', {
+      tools: { allow: ['read_file'], deny: ['exec'] },
+    }), agentSection('reviewer')]);
+    await category('Agents');
+    expect(host.querySelector('[aria-label="Configure reviewer"]')).toBeNull();
+    await click('Agent list');
+    await click('View general-purpose');
+    expect(host.textContent).toContain('Shared approval bypass (read-only): read_file');
+    expect(host.textContent).toContain('Shared deny (read-only): exec');
+    expect(host.querySelector('input')).toBeNull();
+    expect(host.querySelector('.settings-savebar')).toBeNull();
+    await click('Edit default Tool permissions');
+    expect(host.textContent).toContain('Default Tool permissions');
+    expect(host.querySelector('[aria-label="Approval bypass tools"]')).not.toBeNull();
+    await click('Back to Global settings');
+    await click('Configure Execution policy');
+    await click('Save Execution policy');
+    expect(latestUpdate(f.execute)).toEqual({
+      sectionId: 'agents:execution', expectedRevision: 'execution-revision', settings: {},
+    });
+    expect(element('[role="status"]').textContent).toBe('Execution policy: saved.');
+    expect(host.textContent).not.toContain('Current running policy');
+  });
+
+  it('validates call limits, preserves execution drafts across navigation and resets fields sparsely', async () => {
+    const f = await mount({}, [executionSection(), agentSection('general-purpose')]);
+    await category('Agents');
+    await click('Global settings');
+    await click('Configure Execution policy');
+    await checkbox('Enable steering');
+    await fill('Maximum Subagent depth', '0');
+    await checkbox('Limit Model calls per Turn');
+    await click('Save Execution policy');
+    expect(f.execute.mock.calls.filter(([action]) => action === 'update')).toHaveLength(0);
+    expect(host.textContent).toContain('requires an integer');
+    await fill('Maximum Model calls per Turn', '3');
+    await click('Back to Global settings');
+    await click('Configure Default Tool permissions');
+    await click('Save Default Tool permissions');
+    expect(latestUpdate(f.execute)['sectionId']).toBe('agents:defaults');
+    await click('Back to Global settings');
+    await click('Configure Execution policy');
+    expect(host.textContent).toContain('Unsaved');
+    await click('Save Execution policy');
+    expect(latestUpdate(f.execute)['settings']).toEqual({
+      steeringEnabled: false, maxSubagentDepth: 0, maxLlmCallsPerTurn: 3,
+    });
+    expect(element('[role="status"]').textContent).toBe('Execution policy: saved.');
+    expect(host.textContent).not.toContain('Current running policy');
+    expect(host.textContent).not.toContain('Restart required');
+    expect(host.textContent).not.toContain('subsequent Turns');
+    for (const field of ['steeringEnabled', 'maxSubagentDepth', 'maxLlmCallsPerTurn']) await click(`Reset ${field}`);
+    await click('Save Execution policy');
+    expect(latestUpdate(f.execute)['settings']).toEqual({});
+    expect(element('[role="status"]').textContent).toBe('Execution policy: saved.');
+    expect(host.textContent).not.toContain('Saved, not applied: restart required.');
+  });
+
+  it.each(['revision_conflict', 'request_timeout', 'malformed'])(
+    'retains the execution draft and requires reload after an unconfirmed %s save',
+    async reason => {
+      const f = await mount({}, [executionSection()]);
+      await category('Agents');
+      await click('Global settings');
+      await click('Configure Execution policy');
+      await checkbox('Enable steering');
+      f.execute.mockImplementationOnce(async () => reason === 'malformed'
+        ? { requestId: 'update', action: 'update', ok: true, output: {
+          section: { ...executionSection(), resolvedSettings: undefined },
+        } }
+        : { requestId: 'update', action: 'update', ok: false, error: {
+          code: reason, message: 'Reload before saving again.',
+        } });
+      await click('Save Execution policy');
+      expect(element<HTMLInputElement>('input[type="checkbox"]').checked).toBe(false);
+      expect(host.textContent).toContain('Unsaved');
+      expect(host.textContent).toContain('Reload');
+      expect(element<HTMLButtonElement>('.settings-savebar button').disabled).toBe(true);
+    },
+  );
+
   it('separates Agents from Extensions and preserves an untouched sparse override without credentials', async () => {
     const f = await mount({}, [agentSection('general-purpose'), agentSection('reviewer'), {
       id: 'extension:test', name: 'Test Extension', revision: 'ext', restartRequired: false,
@@ -213,6 +310,7 @@ describe('SettingsPanel', () => {
     expect(host.textContent).not.toContain('Startup description');
     await category('Agents');
     expect(host.textContent).not.toContain('Test Extension');
+    await click('Agent list');
     await click('Configure reviewer');
     expect(host.textContent).toContain('Shared deny (read-only): exec');
     await click('Save reviewer');
@@ -238,6 +336,7 @@ describe('SettingsPanel', () => {
   it('renders read-only startup Context, separating frontmatter from instructions and marking missing files', async () => {
     await mount({}, [agentSection('reviewer')]);
     await category('Agents');
+    await click('Agent list');
     await click('Configure reviewer');
     await click('Context');
     expect(host.textContent).toContain('Manual MD edits, additions and deletions require restart');
@@ -254,20 +353,25 @@ describe('SettingsPanel', () => {
   it('edits shared defaults without disablement and refreshes shared deny without losing another dirty draft', async () => {
     const f = await mount({}, [agentSection('general-purpose'), agentSection('reviewer')]);
     await category('Agents');
+    await click('Agent list');
     await click('Configure reviewer');
     await tool('write_file', 'Additional prohibited tools');
+    await click('Back to Agent list');
     await click('Back to Agents');
-    await click('Configure general-purpose');
+    await click('Global settings');
+    await click('Configure Default Tool permissions');
     expect([...host.querySelectorAll('.settings-checkbox')].map(label => label.textContent?.trim()))
       .toEqual(['Use default approval rules (no bypass)']);
     expect(host.querySelector('[aria-label="Context files"]')).toBeNull();
     await tool('edit_file', 'Shared prohibited tools');
-    await click('Save general-purpose');
+    await click('Save Default Tool permissions');
     expect(latestUpdate(f.execute)).toEqual({
       sectionId: 'agents:defaults', expectedRevision: 'general-purpose-revision',
       settings: { tools: { deny: ['edit_file'] } },
     });
+    await click('Back to Global settings');
     await click('Back to Agents');
+    await click('Agent list');
     await click('Configure reviewer');
     expect(host.textContent).toContain('Shared deny (read-only): edit_file');
     const deny = element('.tool-select-options[aria-label="Additional prohibited tools options"]');
@@ -285,6 +389,7 @@ describe('SettingsPanel', () => {
       model: { providerId: 'absent', modelId: 'model' }, modelAvailable: false,
     }]);
     await category('Agents');
+    await click('Agent list');
     await click('Configure reviewer');
     expect(host.textContent).toContain('No valid startup definition');
     expect(host.textContent).toContain('no silent model fallback');
@@ -303,6 +408,7 @@ describe('SettingsPanel', () => {
     const saved = { tools: { allow: ['read_*', 'retired_tool', ' spaced_rule '], deny: ['write_*', 'old_deny'] } };
     const f = await mount({}, [agentSection('reviewer', saved)]);
     await category('Agents');
+    await click('Agent list');
     await click('Configure reviewer');
     expect(host.textContent).toContain('Saved patterns or unavailable names (read-only)');
     expect([...host.querySelectorAll('.tool-select-note code')].map(item => item.textContent))
@@ -322,6 +428,7 @@ describe('SettingsPanel', () => {
   it('uses top-layer Tool popovers, locks shared denies and closes only on outer scrolling or dismissal', async () => {
     const f = await mount({}, [agentSection('reviewer')]);
     await category('Agents');
+    await click('Agent list');
     await click('Configure reviewer');
     await click('Additional prohibited tools');
     const panel = element<HTMLElement>('.tool-select-options[aria-label="Additional prohibited tools options"]');

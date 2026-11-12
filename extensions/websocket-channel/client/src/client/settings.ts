@@ -116,6 +116,49 @@ export interface SettingsSection {
   credentials: Record<string, CredentialMetadata>;
   diagnostics: unknown[];
   agent?: AgentSettingsView;
+  execution?: {
+    defaults: ExecutionSettings;
+    resolved: ExecutionSettings;
+  };
+}
+
+export interface ExecutionSettings {
+  steeringEnabled: boolean;
+  maxSubagentDepth: number;
+  maxLlmCallsPerTurn?: number;
+}
+
+function parseExecutionSettings(value: unknown, complete: true): ExecutionSettings;
+function parseExecutionSettings(value: unknown, complete?: false): Partial<ExecutionSettings>;
+function parseExecutionSettings(value: unknown, complete = false): Partial<ExecutionSettings> {
+  const settings = object(value);
+  const steering = settings['steeringEnabled'];
+  const depth = settings['maxSubagentDepth'];
+  const calls = settings['maxLlmCallsPerTurn'];
+  if (Object.keys(settings).some(key => !['steeringEnabled', 'maxSubagentDepth', 'maxLlmCallsPerTurn'].includes(key))
+    || (steering !== undefined && typeof steering !== 'boolean')
+    || (complete && typeof steering !== 'boolean')
+    || (depth !== undefined && (typeof depth !== 'number' || !Number.isSafeInteger(depth) || depth < 0))
+    || (complete && typeof depth !== 'number')
+    || (calls !== undefined && (typeof calls !== 'number' || !Number.isSafeInteger(calls) || calls <= 0))) {
+    throw new Error('Invalid execution policy: expected a boolean, a non-negative integer depth and an optional positive integer call limit.');
+  }
+  return {
+    ...(typeof steering === 'boolean' ? { steeringEnabled: steering } : {}),
+    ...(typeof depth === 'number' ? { maxSubagentDepth: depth } : {}),
+    ...(typeof calls === 'number' ? { maxLlmCallsPerTurn: calls } : {}),
+  };
+}
+
+export function executionPolicySettings(draft: Record<string, unknown>): Partial<ExecutionSettings> {
+  const values = { ...draft };
+  for (const key of ['maxSubagentDepth', 'maxLlmCallsPerTurn']) {
+    const value = values[key];
+    if (typeof value !== 'string') continue;
+    if (!value.trim()) throw new Error(`${key} requires an integer.`);
+    values[key] = Number(value);
+  }
+  return parseExecutionSettings(values);
 }
 
 export interface AgentSettingsView {
@@ -241,13 +284,20 @@ export function parseSection(value: unknown): SettingsSection {
       ...(field['schema'] === undefined ? {} : { schema: object(field['schema']) }),
     };
   });
+  const execution = section['id'] === 'agents:execution';
+  if (execution && section['kind'] !== 'agent-execution') throw new Error('Malformed execution Settings section.');
   return {
     id: section['id'], revision: section['revision'],
     name: typeof section['name'] === 'string' ? section['name'] : section['id'],
-    settings: object(section['settings']), restartRequired: section['restartRequired'],
+    settings: execution ? parseExecutionSettings(section['settings']) : object(section['settings']),
+    restartRequired: section['restartRequired'],
     ...(typeof section['applicationStatus'] === 'string' ? { applicationStatus: section['applicationStatus'] } : {}),
     fields, credentials,
     diagnostics: Array.isArray(section['diagnostics']) ? section['diagnostics'] : [],
+    ...(execution ? { execution: {
+      defaults: parseExecutionSettings(section['defaults'], true),
+      resolved: parseExecutionSettings(section['resolvedSettings'], true),
+    } } : {}),
     ...(section['kind'] === 'agent' || section['kind'] === 'agent-defaults'
       ? { agent: parseAgentView(section) } : {}),
   };

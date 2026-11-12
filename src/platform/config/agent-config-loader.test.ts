@@ -61,13 +61,18 @@ describe('loadAgentConfig', () => {
     });
   });
 
-  it('defaults global Agent steering off and leaves the call budget absent', async () => {
+  it('defaults global Agent steering on and leaves the call budget absent', async () => {
     await writeConfig({});
 
     const snapshot = await loadAgentConfig({ agentHome });
 
-    expect(snapshot.application.agents).toMatchObject({ steeringEnabled: false });
+    expect(snapshot.application.agents).toMatchObject({ steeringEnabled: true });
     expect(snapshot.application.agents).not.toHaveProperty('maxLlmCallsPerTurn');
+  });
+
+  it('preserves an explicit steering opt-out instead of replacing it with the default', async () => {
+    await writeConfig({ agents: { steeringEnabled: false } });
+    expect((await loadAgentConfig({ agentHome })).application.agents.steeringEnabled).toBe(false);
   });
 
   it.each([

@@ -2,10 +2,47 @@ import { describe, expect, it } from 'vitest';
 import type { AgentConfigDocument } from '../../platform/config/types.js';
 import type { ExtensionAcquisitionDiagnostic, ExtensionDescriptorV1 } from '../../extension/acquisition/types.js';
 import {
+  buildExecutionSectionView,
   buildExtensionSectionView,
   buildLlmSectionView,
   type SettingsApplicationState,
 } from './section-views.js';
+import { resolveAgentExecutionConfig } from '../../platform/config/index.js';
+
+describe('execution section projection', () => {
+  it('reuses owner defaults without materializing saved settings or leaking other configuration', () => {
+    const running = resolveAgentExecutionConfig();
+    const view = buildExecutionSectionView({
+      revision: 'execution-revision', applied: running,
+      document: { llm: { builtin: { apiKey: 'secret-sentinel' } } },
+    });
+    expect(view).toMatchObject({
+      id: 'agents:execution', settings: {}, defaults: running,
+      resolvedSettings: running,
+      restartRequired: false, applicationStatus: 'current',
+    });
+    expect(view.defaults).toEqual({ steeringEnabled: true, maxSubagentDepth: 1 });
+    expect(JSON.stringify(view)).not.toContain('secret-sentinel');
+    expect(view.resolvedSettings).not.toHaveProperty('maxLlmCallsPerTurn');
+  });
+
+  it('reports publication consistency without a restart or running-policy duplicate', () => {
+    const running = { steeringEnabled: true, maxSubagentDepth: 0, maxLlmCallsPerTurn: 9 };
+    const pending = buildExecutionSectionView({ revision: 'one', applied: running, document: {} });
+    expect(pending).toMatchObject({
+      restartRequired: false, applicationStatus: 'not_applied',
+    });
+    expect(pending).not.toHaveProperty('runningSettings');
+    const restored = buildExecutionSectionView({ revision: 'two', applied: running, document: { agents: running } });
+    expect(restored).toMatchObject({ restartRequired: false, applicationStatus: 'current' });
+    const explicitDefaults = buildExecutionSectionView({
+      revision: 'three', applied: resolveAgentExecutionConfig(),
+      document: { agents: { steeringEnabled: true, maxSubagentDepth: 1 } },
+    });
+    expect(explicitDefaults.restartRequired).toBe(false);
+    expect(running).toEqual({ steeringEnabled: true, maxSubagentDepth: 0, maxLlmCallsPerTurn: 9 });
+  });
+});
 
 const descriptor: ExtensionDescriptorV1 = {
   manifestVersion: 1, id: 'relay', version: '1.0.0', entry: 'entry.js',

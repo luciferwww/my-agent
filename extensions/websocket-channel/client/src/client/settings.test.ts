@@ -1,9 +1,46 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SettingsRequests, agentPolicySettings, credentialDraft, SAVED_CREDENTIAL_MASK, modelDraft, modelSettings, parseSection, settingsProviders, settingsTools } from './settings';
+import { SettingsRequests, agentPolicySettings, executionPolicySettings, credentialDraft, SAVED_CREDENTIAL_MASK, modelDraft, modelSettings, parseSection, settingsProviders, settingsTools } from './settings';
 
 afterEach(() => vi.useRealTimers());
 
 describe('Settings client', () => {
+  const execution = {
+    id: 'agents:execution', kind: 'agent-execution', revision: 'execution-revision',
+    restartRequired: false, settings: {}, form: { credentials: {} },
+    defaults: { steeringEnabled: false, maxSubagentDepth: 1 },
+    resolvedSettings: { steeringEnabled: false, maxSubagentDepth: 1 },
+  };
+
+  it('parses execution defaults and sparse saved values without inventing a call limit', () => {
+    const section = parseSection(execution);
+    expect(section.settings).toEqual({});
+    expect(section.execution).toEqual({
+      defaults: execution.defaults, resolved: execution.resolvedSettings,
+    });
+    expect(executionPolicySettings({})).toEqual({});
+    expect(executionPolicySettings({ steeringEnabled: false, maxSubagentDepth: '0', maxLlmCallsPerTurn: '3' }))
+      .toEqual({ steeringEnabled: false, maxSubagentDepth: 0, maxLlmCallsPerTurn: 3 });
+  });
+
+  it.each([
+    { resolvedSettings: undefined }, { kind: 'extension' },
+    { defaults: { maxSubagentDepth: 1 } },
+    { resolvedSettings: { steeringEnabled: false, maxSubagentDepth: -1 } },
+    { resolvedSettings: { steeringEnabled: true, maxSubagentDepth: 1, maxLlmCallsPerTurn: 0 } },
+    { settings: { steeringEnabled: null } }, { settings: { other: true } },
+  ])('rejects malformed execution view %#', patch => {
+    expect(() => parseSection({ ...execution, ...patch })).toThrow();
+  });
+
+  it.each([
+    { maxSubagentDepth: '' }, { maxSubagentDepth: ' ' }, { maxSubagentDepth: '-1' },
+    { maxSubagentDepth: '1.5' }, { maxLlmCallsPerTurn: '' }, { maxLlmCallsPerTurn: '0' },
+    { maxLlmCallsPerTurn: 'Infinity' }, { maxLlmCallsPerTurn: 'invalid' },
+    { maxLlmCallsPerTurn: '9007199254740992' },
+  ])('rejects blank or invalid execution draft %# instead of silently coercing it', draft => {
+    expect(() => executionPolicySettings(draft)).toThrow();
+  });
+
   it('parses read-only Agent views and preserves explicit empty allow and untouched sparse tools', () => {
     const raw = {
       id: 'agent:reviewer', revision: 'revision', kind: 'agent', restartRequired: false,

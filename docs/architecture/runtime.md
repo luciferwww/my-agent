@@ -202,13 +202,24 @@ does not depend on SettingsManager. Update and Test shutdown convergence begin
 together against the same remaining budget, and SettingsManager aggregates their
 reports without inspecting the Test collection.
 
-Private stateless section-view functions build LLM and Extension responses,
-including credential metadata and startup-baseline restart comparison, using
+Private stateless section-view functions build LLM, Extension and global execution responses,
+including credential metadata, Extension startup-baseline restart comparison
+and global execution saved/applied consistency, using
 explicit facts supplied by SettingsManager. They do not read files, materialize
 credentials, retain state, or own transactions. SettingsManager still owns the
 document, baseline, revisions and application status and invokes these helpers
 after serialized work; AgentPolicyState retains Agent projection ownership.
 Model Catalog decoration and Agent view decoration remain in SettingsManager.
+
+`agents:execution` reuses AgentPolicyState's prepare/persist/publish flow.
+Execution and Tool sections save independently from current applied state,
+without adopting unrelated external file edits. Settings compares resolved saved
+execution values to the current applied snapshot, never requiring restart.
+Each new Root captures the published global policy alongside its Tool policy.
+Each new Child captures the latest execution limits before asynchronous setup;
+depth admission and canSpawn use that same snapshot. Already captured parameters
+remain stable, even if a Parent's later Child uses newer limits. No watcher,
+additional policy manager or Child steering/message-ingress path is introduced.
 
 Model Test either creates an unpublished temporary Built-in Unit from a candidate,
 or pins the current Registry generation to use a loaded Provider. It reuses model

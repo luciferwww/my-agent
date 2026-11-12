@@ -46,6 +46,49 @@ describe('Agent Home section editing', () => {
     return JSON.parse(await readFile(join(agentHome, 'config.json'), 'utf8'));
   }
 
+  it('saves and resets only execution fields while preserving sparse defaults and unrelated content', async () => {
+    const document = {
+      agents: {
+        steeringEnabled: true, maxLlmCallsPerTurn: 7, extra: 'preserve',
+        defaults: { tools: { allow: ['read_file'] }, extra: true },
+        list: [{ id: 'reviewer', enabled: false }],
+      },
+      llm: { builtin: { ...settings.builtin, apiKey: '${UNCHANGED_KEY}' } },
+      extensions: { entries: { example: { enabled: false } } },
+    };
+    await write(document);
+    const saved = await saveAgentConfigSection(agentHome, {
+      kind: 'agent-execution', settings: { steeringEnabled: false, maxSubagentDepth: 0 },
+    });
+    expect(await read()).toEqual({
+      ...document, agents: {
+        extra: 'preserve', defaults: document.agents.defaults, list: document.agents.list,
+        steeringEnabled: false, maxSubagentDepth: 0,
+      },
+    });
+    expect(await restoreAgentConfigSection(agentHome, saved.previous)).toEqual(document);
+  });
+
+  it('does not materialize execution defaults or rewrite an unchanged empty document', async () => {
+    await writeFile(join(agentHome, 'config.json'), '{ }\n');
+    await saveAgentConfigSection(agentHome, { kind: 'agent-execution', settings: {} });
+    expect(await readFile(join(agentHome, 'config.json'), 'utf8')).toBe('{ }\n');
+  });
+
+  it.each([
+    ['steeringEnabled', null], ['steeringEnabled', 0],
+    ['maxSubagentDepth', -1], ['maxSubagentDepth', 1.5], ['maxSubagentDepth', null],
+    ['maxSubagentDepth', Number.MAX_SAFE_INTEGER + 1],
+    ['maxLlmCallsPerTurn', 0], ['maxLlmCallsPerTurn', -1], ['maxLlmCallsPerTurn', 2.5],
+    ['maxLlmCallsPerTurn', '12'], ['maxLlmCallsPerTurn', Infinity],
+    ['maxLlmCallsPerTurn', Number.MAX_SAFE_INTEGER + 1], ['maxLlmCallsPerTurn', null],
+    ['tools', {}],
+  ])('rejects invalid execution %s=%s with exact Settings field attribution', (field, value) => {
+    expect(() => editAgentConfigSection({}, {
+      kind: 'agent-execution', settings: { [field]: value },
+    })).toThrow(expect.objectContaining({ fieldPath: field === 'tools' ? '/settings' : `/settings/${field}` }));
+  });
+
   it('saves only named Agent controls while preserving other fields and list ordering', async () => {
     const document: AgentConfigDocument = {
       llm: { builtin: { ...settings.builtin, apiKey: '${UNCHANGED_KEY}' } },

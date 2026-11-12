@@ -42,10 +42,13 @@ export interface AgentEntry extends DeepPartial<AgentDefaults> {
   readonly model?: 'inherit' | ModelReference;
 }
 
-export interface AgentsConfig {
+export interface AgentExecutionConfig {
   readonly steeringEnabled: boolean;
   readonly maxLlmCallsPerTurn?: number;
   readonly maxSubagentDepth: number;
+}
+
+export interface AgentsConfig extends AgentExecutionConfig {
   readonly defaults: AgentDefaults;
   readonly list: readonly AgentEntry[];
 }

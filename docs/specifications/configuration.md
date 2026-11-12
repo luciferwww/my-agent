@@ -42,7 +42,7 @@ Global Agent execution policy precedence is `module default -> agents top-level 
   immutable configuration capture and supported model round trips. Credentials
   and host remain provider-wide; no protocol or vendor inference is performed.
 - The legacy global `llm.maxTokens` is removed. Built-in output control is per-model `outputTokenLimit`; there is no global, Agent-level, Channel-level, or compatibility alias.
-- `agents.steeringEnabled` is a global Runner-owned boolean and defaults to `false`.
+- `agents.steeringEnabled` is a global Runner-owned boolean and defaults to `true`; explicit `false` disables steering.
 - `agents.maxLlmCallsPerTurn` is a global Runner-owned optional positive integer. Omission means no Model-call count limit. Every Root and Child Turn applies the same configured limit independently.
 - Global Agent execution fields are frozen. `agents.defaults`, `agents.list[]`, Agent environment overrides, and Agent caller overrides cannot contain or override them.
 - An explicit internal `RunTurnParams.maxLlmCalls` may override the configured value for that Root Turn. Child Turns still apply the global `agents.maxLlmCallsPerTurn`; Role-level limits and Parent remaining-budget inheritance are not supported.
@@ -76,8 +76,16 @@ Unknown top-level namespaces, including `runtime` and `host`, are rejected.
 Unknown Agent content is omitted from the applied projection without detection,
 conversion or repair. The raw editing document remains intact. `agents.list[]`
 identity, enablement, description and model are metadata, not capability leaves.
-Only shared Tool defaults and named enabled/Tool overrides support dynamic
-publication; other defaults and global execution fields remain startup-only.
+Global execution fields, shared Tool defaults and named enabled/Tool overrides
+support dynamic publication; other Agent defaults remain startup-only.
+Settings may save/reset the three global execution fields independently through
+`agents:execution`, preserving all other document content. Module-composed
+defaults and resolved saved values are projected without a duplicate startup
+view. Execution saves prepare/persist/publish through AgentPolicyState; new Root
+and Child Turns capture the latest global policy while already captured Turn
+parameters remain unchanged. No execution-policy restart notice is needed. The shared pure
+execution-policy resolver is reused for startup and Settings, without copying
+default literals into the client or persisting defaults merely on inspection.
 
 Tool deny hides matching definitions and remains final at execution. Session permission mode is Runtime state, not configuration. In `manual`, lexically external structured targets and all Exec calls require current-call Approval even when the Tool name is allowed; internal allowed targets bypass Approval, while other unmatched Tools require Approval. Missing required Approval fails closed. In `allow_all`, every non-denied registered Tool is automatically authorized. Exact names and `*`/`?` globs are supported; `group:*` is not.
 

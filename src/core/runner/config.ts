@@ -4,7 +4,7 @@ export interface RunnerConfig {
 }
 
 export const DEFAULT_RUNNER_CONFIG: RunnerConfig = Object.freeze({
-  steeringEnabled: false,
+  steeringEnabled: true,
 });
 
 export class RunnerConfigValidationError extends Error {

@@ -72,6 +72,31 @@ describe('applied Agent policies', () => {
   }
   const read = async (path: string): Promise<unknown> => JSON.parse(await readFile(path, 'utf8'));
 
+  it('publishes execution and Tool settings independently while preserving previously captured state', async () => {
+    const f = await fixture({});
+    const original = f.policies.capture();
+    const execution = await f.update('agents:execution', {
+      steeringEnabled: false, maxSubagentDepth: 0, maxLlmCallsPerTurn: 2,
+    });
+    expect(execution.ok).toBe(true);
+    expect(f.policies.capture()).not.toBe(original);
+    expect(original.agents).toMatchObject({ steeringEnabled: true, maxSubagentDepth: 1 });
+    expect(original.rootToolPolicy.isDenied('task')).toBe(false);
+    await f.update('agents:defaults', { tools: { allow: ['read_file'], deny: ['exec'] } });
+    const applied = f.policies.capture();
+    expect(applied.agents).toMatchObject({ steeringEnabled: false, maxSubagentDepth: 0, maxLlmCallsPerTurn: 2 });
+    expect(applied.rootToolPolicy.isDenied('task')).toBe(true);
+    expect(applied.profiles.get('general-purpose')?.tools).toEqual({ allow: ['read_file'], deny: ['exec'] });
+    await f.update('agents:execution', {});
+    expect(f.policies.capture()).not.toBe(applied);
+    expect(f.policies.capture().agents).toMatchObject({ steeringEnabled: true, maxSubagentDepth: 1 });
+    expect(f.policies.capture().agents).not.toHaveProperty('maxLlmCallsPerTurn');
+    expect(applied.agents).toMatchObject({ steeringEnabled: false, maxSubagentDepth: 0, maxLlmCallsPerTurn: 2 });
+    expect(section(await f.load(), 'agents:execution')['restartRequired']).toBe(false);
+    const restarted = await loadAgentConfig({ agentHome: home });
+    expect(restarted.application.agents.defaults.tools).toEqual({ allow: ['read_file'], deny: ['exec'] });
+  });
+
   it('uses shared defaults plus only the selected Agent override, including the permanent fallback', () => {
     const policies = new AgentPolicyState(config(), definitions, () => names);
     const snapshot = policies.capture();

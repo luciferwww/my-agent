@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import type { SettingsActionResult } from 'my-agent/extension-api';
 import {
-  agentPolicySettings, modelDraft, modelSettings, object, parseSection, settingsProviders, settingsTools,
+  agentPolicySettings, executionPolicySettings, modelDraft, modelSettings, object, parseSection, settingsProviders, settingsTools,
   type ModelDraft, type SettingsSection, type SettingsProvider, type SettingsTool, type SettingsField,
 } from '../client/settings';
 import SettingsCredential, { type SecretDraft } from './SettingsCredential.vue';
@@ -38,11 +38,16 @@ const visibleDrafts = computed(() => drafts.value.filter((draft) =>
   draft.section.id === (selectedSection.value === 'builtin' ? 'llm' : selectedSection.value)));
 const extensions = computed(() => drafts.value.filter((draft) => draft.section.id.startsWith('extension:')));
 const agents = computed(() => drafts.value.filter(draft => draft.section.agent));
+const sharedDefaults = computed(() => drafts.value.find(draft => draft.section.id === 'agents:defaults'));
+const globalSettings = computed(() => drafts.value.filter(draft =>
+  draft.section.id === 'agents:execution' || draft.section.id === 'agents:defaults'));
+const agentSettings = computed(() => drafts.value.filter(draft => draft.section.agent || draft.section.execution));
 const selectedCategory = computed(() => ['llm', 'builtin', 'provider'].includes(selectedSection.value) ? 'llm'
-  : selectedSection.value === 'agents' || visibleDrafts.value[0]?.section.agent ? 'agents' : 'extensions');
+  : ['agents', 'agent-global', 'agent-list', 'general-purpose'].includes(selectedSection.value)
+    || visibleDrafts.value[0]?.section.agent || visibleDrafts.value[0]?.section.execution ? 'agents' : 'extensions');
 const categories = computed(() => [
   { id: 'llm', name: 'LLM', description: 'Models & providers', drafts: drafts.value.filter((draft) => draft.section.id === 'llm') },
-  { id: 'agents', name: 'Agents', description: 'Enablement & Tool policy', drafts: agents.value },
+  { id: 'agents', name: 'Agents', description: 'Global settings & Agent list', drafts: agentSettings.value },
   { id: 'extensions', name: 'Extensions', description: 'Installed extensions', drafts: extensions.value },
 ]);
 const categoryOptions = computed(() => categories.value.map(category => ({
@@ -146,7 +151,7 @@ function makeDraft(section: SettingsSection): Draft {
     allowMode: tools['allow'] === undefined ? 'inherit' : 'explicit',
     allow: Array.isArray(tools['allow']) ? tools['allow'].join('\n') : '',
     deny: Array.isArray(tools['deny']) ? tools['deny'].join('\n') : '',
-    config: Object.fromEntries(section.fields.filter((field) => field.editable && !field.sensitive)
+    config: section.execution ? { ...section.settings } : Object.fromEntries(section.fields.filter((field) => field.editable && !field.sensitive)
       .map((field) => [field.name, Object.hasOwn(savedConfig, field.name) ? savedConfig[field.name] : undefined])),
     secrets: Object.fromEntries(Object.keys(section.credentials).map((path) => [path, { operation: 'keep', value: '' }])),
     stale: false, fileUnknown: false,
@@ -176,7 +181,7 @@ async function load() {
     clearSecretValues();
     drafts.value = loaded;
     editingModel.value = undefined;
-    if (!['llm', 'builtin', 'provider', 'extensions', 'agents'].includes(selectedSection.value)
+    if (!['llm', 'builtin', 'provider', 'extensions', 'agents', 'agent-global', 'agent-list', 'general-purpose'].includes(selectedSection.value)
       && !loaded.some((draft) => draft.section.id === selectedSection.value)) {
       selectedSection.value = 'extensions';
     }
@@ -200,6 +205,7 @@ function builtin(draft: Draft) {
   return { baseURL: draft.baseURL, models: draft.models.map(modelSettings) };
 }
 function settings(draft: Draft) {
+  if (draft.section.execution) return executionPolicySettings(draft.config);
   if (draft.section.agent) return agentPolicySettings(draft.section, draft);
   if (draft.section.id === 'llm') return {
     ...(draft.section.settings['builtin'] !== undefined || draft.baseURL !== '' || draft.models.length > 0
@@ -222,14 +228,20 @@ async function save(draft: Draft) {
     const input = {
       sectionId: draft.section.id, expectedRevision: draft.section.revision,
       settings: settings(draft),
-      ...(draft.section.agent ? {} : { credentials: credentials(draft) }),
+      ...(draft.section.agent || draft.section.execution ? {} : { credentials: credentials(draft) }),
     };
     const response = props.execute('update', input);
     clearSecretValues(draft);
     const result = await response;
     const output = result.output === undefined ? undefined : object(result.output);
     if (output?.['section'] !== undefined) {
-      const confirmed = makeDraft(parseSection(output['section']));
+      let confirmed: Draft;
+      try {
+        confirmed = makeDraft(parseSection(output['section']));
+      } catch (error) {
+        draft.stale = true;
+        throw error;
+      }
       const index = drafts.value.indexOf(draft);
       if (index >= 0) drafts.value[index] = confirmed;
       editingModel.value = undefined;
@@ -264,6 +276,25 @@ async function save(draft: Draft) {
   } catch (failure) {
     finishFeedback(version, 'error', `${draft.section.name}: ${failure instanceof Error ? failure.message : 'Save outcome could not be confirmed.'}`);
   } finally { busy.value = false; }
+}
+function editExecutionNumber(draft: Draft, field: string, event: Event) {
+  if (!(event.target instanceof HTMLInputElement)) throw new Error('Expected execution policy input.');
+  draft.config[field] = event.target.value;
+}
+function sharedToolSummary(field: 'allow' | 'deny'): string {
+  const saved = sharedDefaults.value?.section.settings['tools'];
+  const values = saved === undefined ? undefined : object(saved)[field];
+  return Array.isArray(values) && values.length ? values.join(', ') : '(none)';
+}
+function backTarget(draft: Draft): string {
+  if (draft.section.id === 'llm') return 'llm';
+  if (draft.section.execution || draft.section.id === 'agents:defaults') return 'agent-global';
+  return draft.section.agent ? 'agent-list' : 'extensions';
+}
+function backLabel(draft: Draft): string {
+  const target = backTarget(draft);
+  return target === 'llm' ? 'Providers' : target === 'agent-global' ? 'Global settings'
+    : target === 'agent-list' ? 'Agent list' : 'Extensions';
 }
 async function testModel(providerId: string, modelId: string) {
   if (busy.value || !props.connected) return;
@@ -366,7 +397,7 @@ watch(selectedSection, () => { agentTab.value = 'configuration'; contextFile.val
           :options="categoryOptions" @update:model-value="selectedSection = $event" />
       </nav>
       <div class="settings-content" :key="selectedSection">
-    <p v-if="restartRequired" class="settings-warning" role="status">Saved Extension changes require a manual service restart. Reverting to startup values clears the corresponding requirement.</p>
+    <p v-if="restartRequired" class="settings-warning" role="status">Saved settings require a manual service restart. Reverting to startup values clears the corresponding requirement.</p>
     <details v-if="diagnostics.length"><summary>Startup diagnostics</summary><pre>{{ JSON.stringify(diagnostics, null, 2) }}</pre></details>
     <section v-if="selectedSection === 'provider'" class="settings-section">
       <button type="button" class="secondary settings-back" @click="selectedSection = 'llm'">Back to Providers</button>
@@ -397,14 +428,58 @@ watch(selectedSection, () => { agentTab.value = 'configuration'; contextFile.val
     </section>
     <section v-if="selectedSection === 'agents'" class="settings-section">
       <h3>Agents</h3>
+      <div class="settings-list">
+        <div v-for="group in [
+          { id: 'agent-global', name: 'Global settings', description: 'Execution policy and default Tool permissions', drafts: globalSettings },
+          { id: 'agent-list', name: 'Agent list', description: 'Built-in and named Agents', drafts: agents.filter(item => !item.section.agent?.builtIn) },
+        ]" :key="group.id" class="settings-list-row">
+          <div class="settings-list-copy">
+            <strong>{{ group.name }}</strong>
+            <span>{{ group.description }}</span>
+            <div class="settings-markers">
+              <span v-if="group.drafts.some(isDirty)" class="settings-badge">Unsaved</span>
+              <span v-if="group.drafts.some(item => item.section.restartRequired)" class="settings-badge">Restart required</span>
+              <span v-if="group.drafts.some(item => item.stale || item.fileUnknown)" class="settings-badge">Unconfirmed</span>
+            </div>
+          </div>
+          <button type="button" class="secondary" @click="selectedSection = group.id">{{ group.name }}</button>
+        </div>
+      </div>
+    </section>
+    <section v-if="selectedSection === 'agent-global'" class="settings-section">
+      <button type="button" class="secondary settings-back" @click="selectedSection = 'agents'">Back to Agents</button>
+      <h3>Global settings</h3>
+      <p class="settings-description">Configure execution policy and default Tool permissions. Save each section independently.</p>
+      <div class="settings-list">
+        <div v-for="draft in globalSettings" :key="draft.section.id" class="settings-list-row">
+          <div class="settings-list-copy">
+            <strong>{{ draft.section.name }}</strong>
+            <span>{{ draft.section.execution ? 'Global execution controls' : 'Shared approval bypass and prohibited Tools.' }}</span>
+            <div class="settings-markers">
+              <span v-if="isDirty(draft)" class="settings-badge">Unsaved</span>
+              <span v-if="draft.section.restartRequired" class="settings-badge">Restart required</span>
+              <span v-if="draft.stale || draft.fileUnknown" class="settings-badge">Unconfirmed</span>
+            </div>
+          </div>
+          <button type="button" class="secondary" :aria-label="`Configure ${draft.section.name}`" @click="selectedSection = draft.section.id">Configure</button>
+        </div>
+      </div>
+    </section>
+    <section v-if="selectedSection === 'agent-list'" class="settings-section">
+      <button type="button" class="secondary settings-back" @click="selectedSection = 'agents'">Back to Agents</button>
+      <h3>Agent list</h3>
       <p class="settings-description">Enablement and Tool policy apply to subsequent Turns. MD changes require restart.</p>
       <details v-if="agentDiagnostics.length"><summary>Agent definition diagnostics</summary><pre>{{ JSON.stringify(agentDiagnostics, null, 2) }}</pre></details>
       <div class="settings-list">
-        <div v-for="draft in agents" :key="draft.section.id" class="settings-list-row">
+        <div v-if="sharedDefaults" class="settings-list-row">
+          <div class="settings-list-copy"><strong>general-purpose</strong><span>Built-in - inherits default Tool permissions; cannot be disabled.</span></div>
+          <button type="button" class="secondary" aria-label="View general-purpose" @click="selectedSection = 'general-purpose'">View</button>
+        </div>
+        <div v-for="draft in agents.filter(item => !item.section.agent?.builtIn)" :key="draft.section.id" class="settings-list-row">
           <div class="settings-list-copy">
             <strong>{{ draft.section.name }}</strong>
             <span>{{ draft.section.agent?.description || 'No valid startup definition.' }}</span>
-            <span>{{ draft.section.agent?.builtIn ? 'Built-in - Shared Tool defaults' : draft.section.agent?.enabled ? 'Enabled' : 'Disabled' }}</span>
+            <span>{{ draft.section.agent?.enabled ? 'Enabled' : 'Disabled' }}</span>
             <div class="settings-markers">
               <span v-if="!draft.section.agent?.definitionAvailable" class="settings-badge">Definition unavailable</span>
               <span v-if="isDirty(draft)" class="settings-badge">Unsaved</span>
@@ -414,6 +489,14 @@ watch(selectedSection, () => { agentTab.value = 'configuration'; contextFile.val
           <button type="button" class="secondary" :aria-label="`Configure ${draft.section.name}`" @click="selectedSection = draft.section.id">Configure</button>
         </div>
       </div>
+    </section>
+    <section v-if="selectedSection === 'general-purpose' && sharedDefaults" class="settings-section">
+      <button type="button" class="secondary settings-back" @click="selectedSection = 'agent-list'">Back to Agent list</button>
+      <h3>general-purpose</h3>
+      <p class="settings-help">Built-in Agent. Uses global default Tool permissions, with no independent override. This type cannot be disabled.</p>
+      <p>Shared approval bypass (read-only): {{ sharedToolSummary('allow') }}</p>
+      <p>Shared deny (read-only): {{ sharedToolSummary('deny') }}</p>
+      <button type="button" class="secondary" @click="selectedSection = 'agents:defaults'">Edit default Tool permissions</button>
     </section>
     <section v-if="selectedSection === 'extensions'" class="settings-section">
       <h3>Extensions</h3>
@@ -436,8 +519,8 @@ watch(selectedSection, () => { agentTab.value = 'configuration'; contextFile.val
     </section>
     <section v-for="draft in visibleDrafts" :key="draft.section.id" class="settings-section">
       <button v-if="selectedSection !== 'llm'" type="button" class="secondary settings-back"
-        @click="selectedSection = draft.section.id === 'llm' ? 'llm' : draft.section.agent ? 'agents' : 'extensions'">
-        {{ draft.section.id === 'llm' ? 'Back to Providers' : draft.section.agent ? 'Back to Agents' : 'Back to Extensions' }}
+        @click="selectedSection = backTarget(draft)">
+        Back to {{ backLabel(draft) }}
       </button>
       <h3>{{ selectedSection === 'builtin' ? 'Built-in Provider' : draft.section.id === 'llm' ? 'LLM' : draft.section.name }}</h3>
       <p v-if="draft.section.restartRequired" class="settings-warning">Saved, not applied: restart required.</p>
@@ -522,6 +605,38 @@ watch(selectedSection, () => { agentTab.value = 'configuration'; contextFile.val
           <p class="settings-description">Save LLM also saves the default model selected on the Providers page.</p>
           </template>
         </template>
+        <template v-else-if="draft.section.execution">
+          <label class="settings-checkbox">
+            <input type="checkbox" :checked="(draft.config['steeringEnabled'] ?? draft.section.execution.defaults.steeringEnabled) === true"
+              @change="draft.config['steeringEnabled'] = !(draft.config['steeringEnabled'] ?? draft.section.execution.defaults.steeringEnabled)">
+            <span>Enable steering</span>
+          </label>
+          <div class="settings-reset">
+            <small>Default: {{ draft.section.execution.defaults.steeringEnabled }}. {{ Object.hasOwn(draft.config, 'steeringEnabled') ? 'Explicit override' : 'Using default' }}.</small>
+            <button type="button" class="secondary" aria-label="Reset steeringEnabled" :disabled="!Object.hasOwn(draft.config, 'steeringEnabled')" @click="delete draft.config['steeringEnabled']">Reset to default</button>
+          </div>
+          <label>Maximum Subagent depth
+            <input type="number" min="0" step="1" :value="draft.config['maxSubagentDepth'] ?? draft.section.execution.defaults.maxSubagentDepth"
+              @input="editExecutionNumber(draft, 'maxSubagentDepth', $event)">
+          </label>
+          <div class="settings-reset">
+            <small>0 disables delegation. Default: {{ draft.section.execution.defaults.maxSubagentDepth }}. {{ Object.hasOwn(draft.config, 'maxSubagentDepth') ? 'Explicit override' : 'Using default' }}.</small>
+            <button type="button" class="secondary" aria-label="Reset maxSubagentDepth" :disabled="!Object.hasOwn(draft.config, 'maxSubagentDepth')" @click="delete draft.config['maxSubagentDepth']">Reset to default</button>
+          </div>
+          <label class="settings-checkbox">
+            <input type="checkbox" :checked="draft.config['maxLlmCallsPerTurn'] !== undefined"
+              @change="draft.config['maxLlmCallsPerTurn'] === undefined ? draft.config['maxLlmCallsPerTurn'] = '' : delete draft.config['maxLlmCallsPerTurn']">
+            <span>Limit Model calls per Turn</span>
+          </label>
+          <label v-if="draft.config['maxLlmCallsPerTurn'] !== undefined">Maximum Model calls per Turn
+            <input type="number" min="1" step="1" :value="draft.config['maxLlmCallsPerTurn']"
+              @input="editExecutionNumber(draft, 'maxLlmCallsPerTurn', $event)">
+          </label>
+          <div class="settings-reset">
+            <small>Default: {{ draft.section.execution.defaults.maxLlmCallsPerTurn ?? 'No count limit' }}. Applies independently to each Root and Child Turn.</small>
+            <button type="button" class="secondary" aria-label="Reset maxLlmCallsPerTurn" :disabled="!Object.hasOwn(draft.config, 'maxLlmCallsPerTurn')" @click="delete draft.config['maxLlmCallsPerTurn']">Reset to default</button>
+          </div>
+        </template>
         <template v-else-if="draft.section.agent">
           <div v-if="!draft.section.agent.builtIn" class="settings-actions settings-tabs" role="tablist" aria-label="Agent settings">
             <button type="button" role="tab" :aria-selected="agentTab === 'configuration'" @click="agentTab = 'configuration'">Configuration</button>
@@ -529,7 +644,7 @@ watch(selectedSection, () => { agentTab.value = 'configuration'; contextFile.val
           </div>
           <template v-if="agentTab === 'configuration' || draft.section.agent.builtIn">
             <p class="settings-description">{{ draft.section.agent.description }}</p>
-            <p v-if="draft.section.agent.builtIn" class="settings-help">Shared Tool defaults for subsequent Root and Child Turns, not an independent general-purpose profile. This built-in type cannot be disabled.</p>
+            <p v-if="draft.section.agent.builtIn" class="settings-help">Shared Tool defaults for subsequent Root and Child Turns, including general-purpose and named Agents that inherit them. Already admitted Turns retain their captured policy.</p>
             <template v-else>
               <label class="settings-checkbox"><input v-model="draft.enabled" type="checkbox"><span>Enabled</span></label>
               <p v-if="!draft.section.agent.definitionAvailable" class="settings-warning">No valid startup definition. This override cannot register an Agent. A requested specialist falls back to general-purpose unless explicitly disabled.</p>
@@ -651,6 +766,7 @@ watch(selectedSection, () => { agentTab.value = 'configuration'; contextFile.val
 .settings-markers:empty { display: none; }
 .settings-list-row > button { flex: none; }
 .settings-actions, .settings-savebar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.settings-reset { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; color: var(--muted); }
 .settings-actions { justify-content: flex-end; }
 .settings-savebar { justify-content: space-between; }
 .settings-default { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; }
