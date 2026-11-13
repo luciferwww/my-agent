@@ -5,6 +5,7 @@ import type { HookProjection, ToolProjection } from '../registry/index.js';
 import type { ApplicationToolPolicy } from '../tools/index.js';
 import type { SystemPromptBuilder } from '../prompt/SystemPromptBuilder.js';
 import type { ContextFile } from '../agent-context/types.js';
+import type { SkillSummary } from '../skills/types.js';
 import { buildSubagentBehavioralAddendum } from './behavioral-addendum.js';
 import type { SubagentProfile } from './types.js';
 import type {
@@ -34,6 +35,7 @@ export interface SubagentExecutionRequest {
   readonly childSessionId: string;
   readonly childTurnId: string;
   readonly maxLlmCallsPerTurn?: number;
+  readonly getAvailableSkills?: () => Promise<readonly SkillSummary[]>;
   readonly signal: AbortSignal;
   readonly toolProjection: ToolProjection;
   readonly hookProjection: HookProjection;
@@ -74,11 +76,14 @@ export class SubagentExecutor {
     });
     const toolPolicy = this.deps.resolveToolPolicy(request.profile, request.canSpawn);
     const tools = request.toolProjection.visibleDefinitions(toolPolicy);
+    const availableSkills = tools.some(({ name }) => name === 'skill')
+      ? await request.getAvailableSkills?.() ?? [] : [];
     const basePrompt = this.deps.systemPromptBuilder.build({
       mode: 'minimal',
       contextFiles: mergedFiles,
       toolNames: tools.map(({ name }) => name),
       agentHome: this.deps.agentHome,
+      availableSkills,
     });
 
     return {

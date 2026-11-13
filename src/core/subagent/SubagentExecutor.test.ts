@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SubagentExecutor, mergeContextFilesByName } from './SubagentExecutor.js';
+import type { SubagentExecutionRequest } from './SubagentExecutor.js';
 import type { ResolvedModel } from '../model-resolution/index.js';
 
 const resolvedModel = {
@@ -100,6 +101,7 @@ describe('SubagentExecutor', () => {
       contextFiles: prepared.contextFiles,
       toolNames: [],
       agentHome: '/agent-home',
+      availableSkills: [],
     });
     expect(run).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: prepared.sessionId,
@@ -153,6 +155,43 @@ describe('SubagentExecutor', () => {
     });
 
     expect(prepared.maxLlmCalls).toBe(6);
+  });
+
+  it.each([true, false])('reads the Skills catalog only when the loader is visible: %s', async visible => {
+    const summaries = [{ name: 'review', description: 'Review changes.', relativeDirectory: 'review' }];
+    const getAvailableSkills = vi.fn(async () => summaries);
+    const build = vi.fn(() => 'base');
+    const executor = new SubagentExecutor({
+      agentRunner: { run: vi.fn() } as never,
+      systemPromptBuilder: { build } as never,
+      getContextFiles: () => [],
+      agentHome: '/agent-home',
+      resolveToolPolicy: () => ({
+        isDenied: () => !visible,
+        decide: () => visible ? 'allow' : 'deny',
+      }),
+    });
+    const request: SubagentExecutionRequest = {
+      requestId: 'request',
+      profile: { id: 'reviewer', description: 'Review', agentDir: '/agent-home', model: 'inherit' },
+      description: 'Review', prompt: 'Review changes', parentContextFiles: [],
+      childDepth: 1, canSpawn: false, childSessionId: 'child', childTurnId: 'child-turn',
+      signal: new AbortController().signal,
+      toolProjection: {
+        ...toolProjection,
+        visibleDefinitions: () => visible ? [{ name: 'skill', description: 'Load Skill', inputSchema: {} }] : [],
+      },
+      hookProjection,
+      approvalCapability: { request: vi.fn() },
+      getSessionPermissionMode: () => 'manual',
+      getAvailableSkills,
+    };
+    await executor.prepare(request);
+    expect(getAvailableSkills).toHaveBeenCalledTimes(visible ? 1 : 0);
+    expect(build).toHaveBeenCalledWith(expect.objectContaining({ availableSkills: visible ? summaries : [] }));
+    getAvailableSkills.mockRejectedValueOnce(new Error('Skills root is invalid.'));
+    if (visible) await expect(executor.prepare(request)).rejects.toThrow('Skills root is invalid.');
+    else await expect(executor.prepare(request)).resolves.toMatchObject({ tools: [] });
   });
 
   it('prefers Child context files by path and preserves Parent ordering', () => {

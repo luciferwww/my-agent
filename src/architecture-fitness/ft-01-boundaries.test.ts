@@ -28,15 +28,21 @@ describe('FT-01 stable core boundaries', () => {
       content: [
         "import { loadAgentDefinitions } from '../agent-context/agent-definitions.js';",
         "import { AgentPolicyState } from '../../runtime/policy/agent-policy-state.js';",
+        "import { loadSkill } from '../skills/library.js';",
       ].join('\n'),
     }];
     expect(findUnclassifiedProductionFiles([
       { path: 'src/core/agent-context/agent-definitions.ts', content: '' },
       { path: 'src/runtime/policy/agent-policy-state.ts', content: '' },
+      { path: 'src/core/skills/config.ts', content: '' },
+      { path: 'src/core/skills/types.ts', content: '' },
+      { path: 'src/core/skills/library.ts', content: '' },
+      { path: 'src/core/skills/index.ts', content: '' },
     ])).toEqual([]);
     expect(findFt01BoundaryViolations(sources)).toEqual([
       'FT-01 source=src/core/runner/AgentRunner.ts boundary=Application import=../../runtime/policy/agent-policy-state.js target=src/runtime/policy/agent-policy-state.ts targetBoundary=Composition',
       'FT-01 source=src/core/runner/AgentRunner.ts boundary=Application import=../agent-context/agent-definitions.js target=src/core/agent-context/agent-definitions.ts targetBoundary=Infrastructure',
+      'FT-01 source=src/core/runner/AgentRunner.ts boundary=Application import=../skills/library.js target=src/core/skills/library.ts targetBoundary=Infrastructure',
     ]);
   });
 

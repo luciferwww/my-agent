@@ -279,6 +279,8 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
   }
   if (sourcePath.startsWith('src/core/memory/internal/')
     || sourcePath === 'src/core/agent-context/agent-definitions.ts'
+    || sourcePath === 'src/core/skills/library.ts'
+    || sourcePath === 'src/core/skills/index.ts'
     || sourcePath === 'src/runtime/composition/agent-home-lock.ts') {
     return 'Infrastructure';
   }
@@ -336,6 +338,7 @@ function classifyBoundary(sourcePath: string): Boundary | undefined {
     || sourcePath.startsWith('src/core/approval/')
     || sourcePath.startsWith('src/core/channel/')
     || sourcePath.startsWith('src/core/settings/')
+    || sourcePath.startsWith('src/core/skills/')
     || sourcePath.startsWith('src/core/memory/')
   ) {
     return 'Application';

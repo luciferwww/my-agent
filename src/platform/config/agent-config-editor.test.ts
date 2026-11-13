@@ -46,6 +46,37 @@ describe('Agent Home section editing', () => {
     return JSON.parse(await readFile(join(agentHome, 'config.json'), 'utf8'));
   }
 
+  it('saves and resets Skills independently, preserving Tools and unavailable references', async () => {
+    const document = {
+      agents: {
+        defaults: { tools: { allow: ['read_file'] } },
+        list: [{ id: 'reviewer', enabled: false, tools: { deny: ['exec'] } }],
+      },
+    };
+    await write(document);
+    const saved = await saveAgentConfigSection(agentHome, {
+      kind: 'agent-skills', settings: { skills: ['missing-but-valid'] },
+    });
+    expect((await read()).agents?.defaults).toEqual({ tools: { allow: ['read_file'] }, skills: ['missing-but-valid'] });
+    await saveAgentConfigSection(agentHome, {
+      kind: 'agent', agentId: 'reviewer',
+      settings: { enabled: false, tools: { deny: ['exec'] }, skills: [] },
+    });
+    expect((await read()).agents?.list?.[0]).toEqual({ ...document.agents.list[0], skills: [] });
+    await restoreAgentConfigSection(agentHome, saved.previous);
+    expect((await read()).agents?.defaults).toEqual(document.agents.defaults);
+    expect((await read()).agents?.list?.[0].skills).toEqual([]);
+    await saveAgentConfigSection(agentHome, {
+      kind: 'agent', agentId: 'reviewer', settings: { enabled: false, tools: { deny: ['exec'] } },
+    });
+    expect((await read()).agents?.list?.[0]).not.toHaveProperty('skills');
+  });
+
+  it.each([null, 'review', ['review', 'review'], ['bad/name']])('rejects invalid Skills selections %j', skills => {
+    expect(() => editAgentConfigSection({}, { kind: 'agent-skills', settings: { skills } }))
+      .toThrow(expect.objectContaining({ fieldPath: '/settings/skills' }));
+  });
+
   it('saves and resets only execution fields while preserving sparse defaults and unrelated content', async () => {
     const document = {
       agents: {

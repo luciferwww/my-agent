@@ -1156,6 +1156,137 @@ describe('RuntimeApp', () => {
     await app.close();
   });
 
+  it('captures independent Root/Child Skills and loads current instructions without retaining stale paths', async () => {
+    await ensureAgentContext(agentHome);
+    for (const name of ['root-skill', 'child-skill']) {
+      await mkdir(join(agentHome, 'skills', name), { recursive: true });
+      await writeFile(join(agentHome, 'skills', name, 'SKILL.md'),
+        `---\nname: ${name}\ndescription: ${name} summary\n---\n${name} instructions`);
+    }
+    await writeFile(join(agentHome, 'config.json'), JSON.stringify({
+      llm: testApplicationConfig().llm,
+      agents: { defaults: { skills: ['root-skill'] } },
+    }));
+    const configuration = await loadAgentConfig({ agentHome });
+    const entered = createDeferred<void>();
+    const proceed = createDeferred<void>();
+    let roots = 0;
+    const run = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      const loader = params.toolProjection.resolve('skill');
+      if (!loader || !params.signal) throw new Error('Missing Skill Tool wiring.');
+      const context = {
+        sessionId: params.sessionId, turnId: params.turnId, callId: 'load-skill',
+        executionId: 'execution', reportActivity: () => {},
+        subagentDepth: params.subagentDepth ?? 0, signal: params.signal,
+      };
+      if ((params.subagentDepth ?? 0) === 0 && ++roots === 1) {
+        expect(params.systemPrompt).toContain('- root-skill: root-skill summary');
+        expect(params.systemPrompt).not.toContain('root-skill instructions');
+        entered.resolve();
+        await proceed.promise;
+        expect((await loader.execute({ name: 'root-skill' }, context)).content).toContain('CURRENT instructions');
+        expect((await loader.execute({ name: 'child-skill' }, context)).outcome).toBe('failed');
+        const task = params.toolProjection.resolve('task');
+        if (!task) throw new Error('Missing Task Tool.');
+        expect((await task.execute({
+          subagent_type: 'reviewer', description: 'review', prompt: 'Use child-skill to review.',
+        }, context)).outcome).toBe('success');
+      } else {
+        expect(params.systemPrompt).toContain('- child-skill: child-skill summary');
+        expect(params.systemPrompt).not.toContain('- root-skill:');
+        expect((await loader.execute({ name: 'child-skill' }, context)).outcome).toBe('success');
+        expect((await loader.execute({ name: 'root-skill' }, context)).outcome).toBe('failed');
+      }
+      return {
+        text: 'done', content: [{ type: 'text', text: 'done' }], stopReason: 'end_turn',
+        usage: { inputTokens: 1, outputTokens: 1 }, toolRounds: 0,
+      };
+    });
+    const app = await RuntimeApp.create({
+      agentHome, startupContext: { installDir: agentHome, configuration, environment: {} },
+      dependencies: createTestDependencies({
+        acquireExtensions: async () => ({
+          loadedUnits: [], discovery: { candidates: [], diagnostics: [] }, diagnostics: [],
+        }),
+        createSystemPromptBuilder: () => new SystemPromptBuilder(),
+        createAgentRunner: () => ({ run }) as never,
+      }),
+    });
+    try {
+      const running = runRootTurnForTest(app, { sessionId: 'main', message: '/skill root-skill task', promptMode: 'full' });
+      await entered.promise;
+      const loaded = await app.application.settings.execute({ requestId: 'load', action: 'load', input: {} });
+      const output = loaded.output;
+      if (!output || typeof output !== 'object' || !('sections' in output) || !Array.isArray(output.sections)) {
+        throw new Error('Missing Settings sections.');
+      }
+      const section: unknown = output.sections.find((value: unknown) =>
+        value !== null && typeof value === 'object' && 'id' in value && value.id === 'agents:skills');
+      if (!section || typeof section !== 'object' || !('revision' in section)) throw new Error('Missing Skills revision.');
+      expect(await app.application.settings.execute({
+        requestId: 'update', action: 'update', input: {
+          sectionId: 'agents:skills', expectedRevision: section.revision, settings: { skills: ['child-skill'] },
+        },
+      })).toMatchObject({ ok: true });
+      await writeFile(join(agentHome, 'skills', 'root-skill', 'SKILL.md'),
+        '---\nname: root-skill\ndescription: root-skill summary\n---\nCURRENT instructions');
+      proceed.resolve();
+      await expect(running).resolves.toMatchObject({ text: 'done' });
+      await runRootTurnForTest(app, { sessionId: 'main', message: 'next', promptMode: 'full' });
+      expect(run).toHaveBeenCalledTimes(3);
+    } finally {
+      proceed.resolve();
+      await app.close();
+    }
+  });
+
+  it('runs a Child with a denied Skill Tool without scanning an invalid Skills root', async () => {
+    await ensureAgentContext(agentHome);
+    await writeFile(join(agentHome, 'skills'), 'Not a directory');
+    await writeFile(join(agentHome, 'config.json'), JSON.stringify({
+      llm: testApplicationConfig().llm,
+      agents: { list: [{ id: 'reviewer', skills: ['review'], tools: { deny: ['skill'] } }] },
+    }));
+    const configuration = await loadAgentConfig({ agentHome });
+    const run = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      if ((params.subagentDepth ?? 0) === 0) {
+        const task = params.toolProjection.resolve('task');
+        if (!task || !params.signal) throw new Error('Missing Task Tool or Turn signal.');
+        expect(await task.execute({
+          subagent_type: 'reviewer', description: 'review', prompt: 'Review without Skills.',
+        }, {
+          sessionId: params.sessionId, turnId: params.turnId, callId: 'delegate',
+          executionId: 'execution', reportActivity: () => {},
+          subagentDepth: 0, signal: params.signal,
+        })).toMatchObject({ outcome: 'success' });
+      } else {
+        if (!params.toolPolicy) throw new Error('Missing Child Tool policy.');
+        expect(params.toolProjection.visibleDefinitions(params.toolPolicy).map(tool => tool.name)).not.toContain('skill');
+        expect(params.systemPrompt).not.toContain('# Available Skills');
+      }
+      return {
+        text: 'done', content: [{ type: 'text', text: 'done' }], stopReason: 'end_turn',
+        usage: { inputTokens: 1, outputTokens: 1 }, toolRounds: 0,
+      };
+    });
+    const app = await RuntimeApp.create({
+      agentHome, startupContext: { installDir: agentHome, configuration, environment: {} },
+      dependencies: createTestDependencies({
+        acquireExtensions: async () => ({
+          loadedUnits: [], discovery: { candidates: [], diagnostics: [] }, diagnostics: [],
+        }),
+        createSystemPromptBuilder: () => new SystemPromptBuilder(),
+        createAgentRunner: () => ({ run }) as never,
+      }),
+    });
+    try {
+      await runRootTurnForTest(app, { sessionId: 'main', message: 'Delegate a review', promptMode: 'full' });
+      expect(run).toHaveBeenCalledTimes(2);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('uses latest global execution and Child Tool policies while keeping admitted Root parameters', async () => {
     await ensureAgentContext(agentHome);
     await writeFile(join(agentHome, 'agents', 'explorer', 'IDENTITY.md'), '# Invalid specialist');
@@ -3109,7 +3240,7 @@ describe('RuntimeApp', () => {
     }
 
     // With no active Turn or queue, abortTurn reports no work and emits nothing.
-    it('abortTurn: 无 active + 无 queue → returns { false, 0 }, no emit', async () => {
+    it('abortTurn: no active turn or queue returns { false, 0 } without emitting', async () => {
       const events: RuntimeEvent[] = [];
       const app = await makeAppWithRunner(async () => ({
         text: 'ok',
@@ -3135,7 +3266,7 @@ describe('RuntimeApp', () => {
     });
 
     // An active Turn with an empty queue reports aborted without a drop event.
-    it('abortTurn: 有 active turn + queue 空 → aborts turn, no emit', async () => {
+    it('abortTurn: active turn with empty queue aborts the turn without emitting', async () => {
       const events: RuntimeEvent[] = [];
       const releaseRun = createDeferred<void>();
       let capturedSignal: AbortSignal | undefined;
@@ -3180,7 +3311,7 @@ describe('RuntimeApp', () => {
     });
 
     // With no active Turn, abortTurn clears the queue and emits messages_dropped.
-    it('abortTurn: 无 active turn + queue 有 N → clears queue, emits messages_dropped', async () => {
+    it('abortTurn: queued messages without an active turn clears the queue and emits messages_dropped', async () => {
       const events: RuntimeEvent[] = [];
       const app = await RuntimeApp.create({
         agentHome: agentHome,

@@ -2,6 +2,7 @@ import type { SystemPromptBuildParams } from '../core/prompt/types.js';
 import type { ContextFile } from '../core/agent-context/types.js';
 import type { AvailableSubagentEntry } from '../core/subagent/available-subagents.js';
 import type { RunTurnParams } from './types.js';
+import type { SkillSummary } from '../core/skills/index.js';
 
 export interface BuildSystemPromptParamsInput {
   contextFiles: ContextFile[];
@@ -14,6 +15,7 @@ export interface BuildSystemPromptParamsInput {
    * RuntimeApp supplies them only when the `task` Tool is visible to the current Agent.
    */
   availableSubagents?: AvailableSubagentEntry[];
+  availableSkills?: readonly SkillSummary[];
 }
 
 export function buildSystemPromptParams(
@@ -25,6 +27,7 @@ export function buildSystemPromptParams(
     toolNames: input.toolNames,
     agentHome: input.agentHome,
     availableSubagents: input.availableSubagents,
+    availableSkills: input.availableSkills,
   };
 }
 

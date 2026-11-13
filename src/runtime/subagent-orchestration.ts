@@ -15,6 +15,7 @@ import type {
 import type { SubagentExecutor } from '../core/subagent/SubagentExecutor.js';
 import type { ContextFile } from '../core/agent-context/types.js';
 import { Logger } from '../platform/logger/index.js';
+import type { SkillSummary } from '../core/skills/index.js';
 import type { MessageRouteContext } from './scheduling/queue-types.js';
 import type {
   CurrentCallApprovalCapability,
@@ -29,6 +30,7 @@ export interface ActiveParentTurn {
   readonly depth: number;
   readonly turnId: string;
   readonly signal: AbortSignal;
+  readonly skills: readonly string[];
   readonly effectiveReference: ModelReference;
   readonly contextFiles: readonly ContextFile[];
   readonly registrySnapshot: RegistrySnapshot;
@@ -46,6 +48,8 @@ export interface CreateSubagentDelegationPortParams {
     readonly maxLlmCallsPerTurn?: number;
   };
   readonly executor: SubagentExecutor;
+  readonly captureSkills?: (agentId: string) => readonly string[];
+  readonly getSkillsCatalog?: (names: readonly string[]) => Promise<readonly SkillSummary[]>;
   readonly onEvent: (event: AgentEvent) => void | Promise<void>;
 }
 
@@ -70,6 +74,7 @@ export function createSubagentDelegationPort(
       }
 
       const executionPolicy = params.captureExecutionPolicy();
+      const skills = Object.freeze([...(params.captureSkills?.(request.profile.id) ?? [])]);
       const childDepth = parent.depth + 1;
       if (childDepth > executionPolicy.maxSubagentDepth) {
         throw new SubagentDelegationRejected(`Cannot spawn subagent: depth limit (maxDepth=${executionPolicy.maxSubagentDepth}) reached.`);
@@ -145,6 +150,7 @@ export function createSubagentDelegationPort(
           hookProjection: parent.registrySnapshot.hooks,
           approvalCapability: parent.approvalCapability,
           getSessionPermissionMode: parent.getSessionPermissionMode,
+          getAvailableSkills: async () => skills.length ? await params.getSkillsCatalog?.(skills) ?? [] : [],
         });
         throwIfAborted(request.signal);
 
@@ -169,6 +175,7 @@ export function createSubagentDelegationPort(
           turnId: childTurnId,
           depth: childDepth,
           signal: request.signal,
+          skills,
           effectiveReference: resolvedModel.identity,
           contextFiles: prepared.contextFiles,
           registerChild: () => parent.registerChild(),

@@ -74,6 +74,7 @@ import { SessionPermissionRegistry } from './session/SessionPermissionRegistry.j
 import { PendingSessionRegistry } from './session/PendingSessionRegistry.js';
 import { SessionMessageScheduler } from './scheduling/session-message-scheduler.js';
 import type { ActiveParentTurn } from './subagent-orchestration.js';
+import { discoverSkills } from '../core/skills/index.js';
 import {
   collectAvailableSubagents,
 } from '../core/subagent/index.js';
@@ -1401,12 +1402,19 @@ export class RuntimeApp {
         );
       }
 
+      const availableSkills = params.promptMode !== 'none'
+        && agentState.rootSkills.length > 0
+        && visibleToolDefinitions.some(({ name }) => name === 'skill')
+        ? (await discoverSkills(this.resources.agentHome)).entries
+          .filter(entry => agentState.rootSkills.includes(entry.name))
+        : [];
       const systemPrompt = this.resources.systemPromptBuilder.build(
         buildSystemPromptParams({
           contextFiles: this.resources.contextFiles,
           toolNames: visibleToolDefinitions.map(({ name }) => name),
           overrides: params,
           agentHome: this.resources.agentHome,
+          availableSkills,
           // Tool policy is the public delegation enablement control.
           availableSubagents: visibleToolDefinitions.some(({ name }) => name === 'task')
             ? collectAvailableSubagents(agentState.profiles)
@@ -1429,6 +1437,7 @@ export class RuntimeApp {
         depth: 0,
         turnId: params.turnId,
         signal: controller.signal,
+        skills: agentState.rootSkills,
         effectiveReference,
         contextFiles: Object.freeze([...this.resources.contextFiles]),
         registrySnapshot: snapshot,

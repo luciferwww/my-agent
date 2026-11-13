@@ -116,6 +116,7 @@ export interface SettingsSection {
   credentials: Record<string, CredentialMetadata>;
   diagnostics: unknown[];
   agent?: AgentSettingsView;
+  skills?: { shared: string[]; effective: string[] };
   execution?: {
     defaults: ExecutionSettings;
     resolved: ExecutionSettings;
@@ -193,6 +194,7 @@ export function agentPolicySettings(
   }
   return {
     ...(!section.agent.builtIn && !draft.enabled ? { enabled: false } : {}),
+    ...(section.settings['skills'] === undefined ? {} : { skills: stringList(section.settings['skills']) }),
     ...(Object.keys(tools).length ? { tools } : {}),
   };
 }
@@ -204,6 +206,35 @@ function toolPatterns(value: string): string[] {
 export interface SettingsTool {
   name: string;
   description: string;
+}
+
+export interface SettingsSkill {
+  name: string;
+  description: string;
+  relativeDirectory: string;
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) {
+    throw new Error('Malformed Skills selection.');
+  }
+  return value;
+}
+
+export function settingsSkills(value: unknown): { entries: SettingsSkill[]; diagnostics: unknown[] } {
+  const catalog = object(value);
+  if (!Array.isArray(catalog['entries']) || !Array.isArray(catalog['diagnostics'])) {
+    throw new Error('Malformed Skill Catalog.');
+  }
+  return {
+    entries: catalog['entries'].map(value => {
+      const entry = object(value);
+      if (typeof entry['name'] !== 'string' || typeof entry['description'] !== 'string'
+        || typeof entry['relativeDirectory'] !== 'string') throw new Error('Malformed Skill Catalog entry.');
+      return { name: entry['name'], description: entry['description'], relativeDirectory: entry['relativeDirectory'] };
+    }),
+    diagnostics: catalog['diagnostics'],
+  };
 }
 
 export function settingsTools(value: unknown): SettingsTool[] {
@@ -286,6 +317,11 @@ export function parseSection(value: unknown): SettingsSection {
   });
   const execution = section['id'] === 'agents:execution';
   if (execution && section['kind'] !== 'agent-execution') throw new Error('Malformed execution Settings section.');
+  if (section['effectiveSkills'] !== undefined) {
+    stringList(section['effectiveSkills']);
+    const settings = object(section['settings']);
+    if (settings['skills'] !== undefined) stringList(settings['skills']);
+  }
   return {
     id: section['id'], revision: section['revision'],
     name: typeof section['name'] === 'string' ? section['name'] : section['id'],
@@ -294,6 +330,10 @@ export function parseSection(value: unknown): SettingsSection {
     ...(typeof section['applicationStatus'] === 'string' ? { applicationStatus: section['applicationStatus'] } : {}),
     fields, credentials,
     diagnostics: Array.isArray(section['diagnostics']) ? section['diagnostics'] : [],
+    ...(section['effectiveSkills'] === undefined ? {} : { skills: {
+      effective: stringList(section['effectiveSkills']),
+      shared: section['kind'] === 'agent-skills' ? [] : stringList(section['sharedSkills']),
+    } }),
     ...(execution ? { execution: {
       defaults: parseExecutionSettings(section['defaults'], true),
       resolved: parseExecutionSettings(section['resolvedSettings'], true),

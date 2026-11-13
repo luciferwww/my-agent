@@ -21,6 +21,7 @@ import {
 } from '../../core/runner/index.js';
 import { createDefaultAgentConfig } from './default-composition.js';
 import type { AgentDefaults, DeepPartial } from './types.js';
+import { validateSkillSelection, SkillSelectionValidationError } from '../../core/skills/index.js';
 
 export function projectAgentCapabilities(value: unknown, fieldPath: string): DeepPartial<AgentDefaults> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -63,6 +64,7 @@ export function validateAgentLeafConfig(
   validateLeaf(leaves['tools'], joinFieldPath(fieldPath, 'tools'), validateToolPolicyConfig, ToolPolicyConfigValidationError);
   validateLeaf(leaves['context'], joinFieldPath(fieldPath, 'context'), validateAgentContextConfig, AgentContextConfigValidationError);
   validateLeaf(leaves['compaction'], joinFieldPath(fieldPath, 'compaction'), validateCompactionConfig, CompactionConfigValidationError);
+  validateLeaf(leaves['skills'], joinFieldPath(fieldPath, 'skills'), validateSkillSelection, SkillSelectionValidationError);
 }
 
 function joinFieldPath(parent: string, field: string): string {

@@ -12,14 +12,17 @@ import {
 } from '../../platform/config/index.js';
 import type { AgentConfigDocument, AgentsConfig, AppConfig } from '../../platform/config/types.js';
 import { createApplicationToolPolicy } from './tool-approval-policy.js';
-import { getAgentPolicySettings, ConfigEditError } from '../../platform/config/agent-config-editor.js';
+import { getAgentPolicySettings, getDefaultSkillSettings, ConfigEditError } from '../../platform/config/agent-config-editor.js';
+import { DEFAULT_SKILLS } from '../../core/skills/index.js';
 import { matchesAny } from './glob-match.js';
 
 export const SHARED_AGENT_TOOLS_SECTION = 'agents:defaults';
+export const DEFAULT_AGENT_SKILLS_SECTION = 'agents:skills';
 
 export interface AppliedAgentState extends SubagentProfileRegistry {
   readonly agents: AgentsConfig;
   readonly rootToolPolicy: ApplicationToolPolicy;
+  readonly rootSkills: readonly string[];
 }
 
 export class AgentPolicyState {
@@ -40,6 +43,7 @@ export class AgentPolicyState {
     this.sectionIds = Object.freeze([
       'agents:execution',
       SHARED_AGENT_TOOLS_SECTION,
+      DEFAULT_AGENT_SKILLS_SECTION,
       ...[...new Set([
         ...definitions.definitions.map(definition => definition.id),
         ...config.agents.list.map(entry => entry.id),
@@ -65,6 +69,7 @@ export class AgentPolicyState {
       defaults: {
         ...this.applied.agents.defaults,
         tools: candidate?.defaults?.tools ?? DEFAULT_TOOL_POLICY_CONFIG,
+        skills: candidate?.defaults?.skills ?? DEFAULT_SKILLS,
       },
       list: candidate?.list ?? [],
     };
@@ -77,6 +82,17 @@ export class AgentPolicyState {
 
   section(id: string, document: AgentConfigDocument) {
     const applied = this.applied;
+    if (id === DEFAULT_AGENT_SKILLS_SECTION) {
+      return {
+        id, kind: 'agent-skills', agentId: 'general-purpose', builtIn: true,
+        name: 'Default Skills', description: 'Shared Skill selection for subsequent Root and Child Turns.',
+        enabled: true, settings: getDefaultSkillSettings(document),
+        effectiveSkills: applied.agents.defaults.skills,
+        restartRequired: false, applicationStatus: isDeepStrictEqual(
+          document.agents?.defaults?.skills ?? DEFAULT_SKILLS, applied.agents.defaults.skills,
+        ) ? 'current' : 'not_applied',
+      };
+    }
     if (id === SHARED_AGENT_TOOLS_SECTION) {
       return {
         id, kind: 'agent-defaults', agentId: 'general-purpose', builtIn: true,
@@ -106,6 +122,8 @@ export class AgentPolicyState {
       sharedDeniedTools: [...this.getToolNames()]
         .filter(name => matchesAny(name, applied.agents.defaults.tools.deny ?? [])),
       effectiveTools: applied.profiles.get(agentId)?.tools,
+      sharedSkills: applied.agents.defaults.skills,
+      effectiveSkills: current?.skills ?? applied.agents.defaults.skills,
       contextFiles: definition?.sourceFiles ?? [],
       instructionFiles: definition?.contextFiles ?? [],
       metadata: definition === undefined ? {} : {
@@ -116,6 +134,7 @@ export class AgentPolicyState {
       contextRestartRequired: true,
       restartRequired: false,
       applicationStatus: isDeepStrictEqual(settings.tools, getAgentPolicySettings({ agents: applied.agents }, agentId).tools)
+        && isDeepStrictEqual(settings.skills, current?.skills)
         && (saved?.enabled !== false) === (current?.enabled !== false) ? 'current' : 'not_applied',
     };
   }
@@ -145,7 +164,8 @@ export class AgentPolicyState {
         tools: Object.freeze({ allow: Object.freeze(tools.allow), deny: Object.freeze(tools.deny) }),
       }));
     }
-    const root = resolveAgentConfig({ ...this.config, agents }, this.rootOptions).tools;
+    const resolvedRoot = resolveAgentConfig({ ...this.config, agents }, this.rootOptions);
+    const root = resolvedRoot.tools;
     const rootTools = agents.maxSubagentDepth === 0
       ? { allow: root.allow, deny: [...root.deny ?? [], 'task'] } : root;
     return Object.freeze({
@@ -153,6 +173,7 @@ export class AgentPolicyState {
       profiles,
       disabledIds: new Set(agents.list.filter(entry => entry.enabled === false).map(entry => entry.id)),
       rootToolPolicy: createApplicationToolPolicy(rootTools, this.config.agentHome),
+      rootSkills: Object.freeze([...resolvedRoot.skills]),
     });
   }
 }

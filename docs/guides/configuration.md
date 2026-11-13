@@ -589,6 +589,57 @@ Roles cannot override it and Child counters do not inherit Parent remaining
 capacity. Context files for a configured
 Agent belong under `<agentHome>/agents/<agentId>/`.
 
+### 5.6 Skills
+
+Place each Skill under `<agentHome>\skills`, with a `SKILL.md` containing YAML
+`name` and `description` followed by instructions. Name must match the containing
+directory; use 1–64 lowercase letters, digits and hyphens, without leading,
+trailing or consecutive hyphens. Description must be nonblank and at most 1024
+characters. For example:
+
+```text
+skills\
+  builtin\
+    code-review\
+      SKILL.md
+      scripts\
+```
+
+Classification folders do not affect names or priority. Discovery stops at each
+`SKILL.md`, even an invalid one, rather than treating its internal examples as
+Skills. Duplicate names are unavailable until resolved. Directory/instruction
+links are not followed. No bundled content is installed automatically.
+
+In **Agents → Global settings → Default Skills**, choose the default selection.
+Named Agents can inherit it or use a complete custom selection; a custom empty
+selection means no Skills. New discoveries are not enabled automatically.
+Settings updates the available list while open without discarding unsaved edits.
+Unavailable saved names remain visible and can be removed explicitly.
+If the library cannot be read, Settings shows the reason in the Skills area;
+other settings remain editable and saved selections are retained. Correcting
+the directory allows the next catalog read to recover without restart.
+
+```json
+{
+  "agents": {
+    "defaults": { "skills": ["code-review"] },
+    "list": [{ "id": "reviewer", "skills": [] }]
+  }
+}
+```
+
+Settings saves affect new Root/Child Turns; admitted Turns retain their selections.
+Catalogs are discovered on demand, without a background scanner or cache.
+Root and Child prompt preparation skip discovery when `skill` is not visible.
+The model sees selected names/descriptions and loads complete current instructions
+using `skill`. Requests such as `/skill code-review check these changes` are
+ordinary model-interpreted text, not a Host slash command.
+
+Loading grants no Tool permissions and installs nothing. Skills describe their
+own interpreter/dependency/environment requirements; subsequent setup and script
+execution use existing Tools and approval rules. Instruction/resource files
+remain live and can change or disappear; no whole-package snapshot is promised.
+
 ## 6. Logger
 
 ```json

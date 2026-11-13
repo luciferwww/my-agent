@@ -1,5 +1,6 @@
 import type { ContextFile } from '../agent-context/types.js';
 import type { AvailableSubagentEntry } from '../subagent/available-subagents.js';
+import type { SkillSummary } from '../skills/types.js';
 
 export type { ContextFile };
 
@@ -52,6 +53,7 @@ export interface SystemPromptBuildParams {
   agentHome?: string;
   /** Injected by prompt-factory only in full mode when subagents are enabled. */
   availableSubagents?: AvailableSubagentEntry[];
+  availableSkills?: readonly SkillSummary[];
 }
 
 export interface UserPromptInput {

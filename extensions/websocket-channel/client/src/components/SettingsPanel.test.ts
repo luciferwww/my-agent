@@ -35,6 +35,7 @@ afterEach(() => {
   app?.unmount();
   app = undefined;
   host?.remove();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   openPopovers.clear();
   for (const name of ['showPopover', 'hidePopover'] as const) {
@@ -53,6 +54,9 @@ const toolCatalog = [
   { name: 'edit_file', description: 'Edit file contents.' },
   { name: 'exec', description: 'Execute a command.' },
 ];
+const skillCatalog = { entries: [
+  { name: 'review', description: 'Review changes.', relativeDirectory: 'builtin/review' },
+], diagnostics: [] };
 
 function initialSettings(): Record<string, unknown> {
   return {
@@ -111,6 +115,7 @@ function agentSection(id: string, settings: Record<string, unknown> = {}) {
     metadata: { description: 'Startup description' },
     contextFiles: [{ path: 'IDENTITY.md', content: '---\ndescription: Startup description\n---\nStartup instructions' }],
     instructionFiles: [{ path: 'IDENTITY.md', content: 'Startup instructions' }],
+    ...(builtIn ? {} : { sharedSkills: ['review'], effectiveSkills: settings['skills'] ?? ['review'] }),
   };
 }
 
@@ -147,7 +152,11 @@ async function tool(name: string, selector: string) {
   await flush();
 }
 
-async function mount(settings = initialSettings(), extraSections: Record<string, unknown>[] = []) {
+async function mount(
+  settings = initialSettings(),
+  extraSections: Record<string, unknown>[] = [],
+  skillCatalogError?: { code: string; message: string },
+) {
   host = document.createElement('div');
   document.body.append(host);
   vi.spyOn(HTMLDialogElement.prototype, 'showModal').mockImplementation(function (this: HTMLDialogElement) {
@@ -160,6 +169,9 @@ async function mount(settings = initialSettings(), extraSections: Record<string,
   const state = reactive({ open: false, connected: true });
   let saved = settings;
   const reply = (action: string, input: unknown = {}): SettingsActionResult => {
+    if (action === 'skills_catalog' && skillCatalogError) {
+      return { requestId: action, action, ok: false, error: skillCatalogError };
+    }
     const sectionId = object(input)['sectionId'] ?? 'llm';
     const extra = extraSections.find(section => section['id'] === sectionId);
     if (action === 'update') {
@@ -186,7 +198,11 @@ async function mount(settings = initialSettings(), extraSections: Record<string,
     }
     return {
       requestId: action, action, ok: true,
-      output: action === 'load' ? { sections: [section(saved), ...extraSections], modelCatalog: catalog, toolCatalog, diagnostics: [] }
+      output: action === 'skills_catalog' ? skillCatalog
+        : action === 'load' ? {
+          sections: [section(saved), ...extraSections], modelCatalog: catalog, toolCatalog, diagnostics: [],
+          ...(skillCatalogError ? { skillCatalogError } : { skillCatalog }),
+        }
         : action === 'test_llm_model' ? { outcome: 'completed' }
           : { section: extra ?? section(saved), agentSections: extraSections.filter(item => item['kind'] !== 'agent-execution'), modelCatalog: catalog },
     };
@@ -218,6 +234,110 @@ function deferredResult() {
 }
 
 describe('SettingsPanel', () => {
+  it('loads and saves other settings during a Skill catalog failure and displays the specific error', async () => {
+    const f = await mount(initialSettings(), [agentSection('reviewer', { skills: ['review'] })], {
+      code: 'skills_catalog_failed', message: 'Skills root must be a regular directory, not a link.',
+    });
+    expect(host.textContent).toContain('Settings loaded.');
+    await click('Built-in details');
+    await fill('Base URL', 'https://updated.example.invalid/v1');
+    await click('Save LLM');
+    expect(object(object(latestUpdate(f.execute)['settings'])['builtin'])['baseURL'])
+      .toBe('https://updated.example.invalid/v1');
+    await category('Agents');
+    await click('Agent list');
+    await click('Configure reviewer');
+    expect(host.textContent).toContain('Skills root must be a regular directory, not a link.');
+    expect(host.textContent).toContain('review (unavailable)');
+    expect(element<HTMLInputElement>('.skill-options input').checked).toBe(true);
+    f.execute.mockImplementation(async (action, input) => action === 'skills_catalog'
+      ? { requestId: action, action, ok: true, output: skillCatalog } : f.reply(action, input));
+    f.state.connected = false;
+    await nextTick();
+    f.state.connected = true;
+    await flush();
+    expect(host.textContent).not.toContain('Skills root must be a regular directory, not a link.');
+    expect(host.textContent).toContain('Review changes.');
+    expect(element<HTMLInputElement>('.skill-options input').checked).toBe(true);
+  });
+
+  it('saves default and explicit-empty named Skills without losing Tools or sending credentials', async () => {
+    const defaults = {
+      id: 'agents:skills', kind: 'agent-skills', name: 'Default Skills', revision: 'skills-revision',
+      restartRequired: false, settings: {}, effectiveSkills: [], form: { credentials: {} },
+    };
+    const f = await mount({}, [defaults, agentSection('reviewer', { tools: { deny: ['exec'] } })]);
+    await category('Agents');
+    await click('Global settings');
+    await click('Configure Default Skills');
+    await checkbox('Use default (no Skills)');
+    const option = element<HTMLInputElement>('.skill-options input');
+    expect(option.checked).toBe(false);
+    option.click();
+    await flush();
+    await click('Save Default Skills');
+    expect(latestUpdate(f.execute)).toEqual({
+      sectionId: 'agents:skills', expectedRevision: 'skills-revision', settings: { skills: ['review'] },
+    });
+    await click('Back to Global settings');
+    await click('Back to Agents');
+    await click('Agent list');
+    await click('Configure reviewer');
+    await checkbox('Inherit default Skills');
+    expect(host.textContent).toContain('Custom empty selection');
+    await click('Save reviewer');
+    expect(latestUpdate(f.execute)).toEqual({
+      sectionId: 'agent:reviewer', expectedRevision: 'reviewer-revision',
+      settings: { tools: { deny: ['exec'] }, skills: [] },
+    });
+    await checkbox('Inherit default Skills');
+    await click('Save reviewer');
+    expect(object(latestUpdate(f.execute)['settings'])).not.toHaveProperty('skills');
+  });
+
+  it('polls catalogs without resetting drafts or revisions, and stops on close/disconnect/disposal', async () => {
+    const f = await mount({}, [agentSection('reviewer', { skills: ['missing'], tools: { deny: ['exec'] } })]);
+    await category('Agents');
+    await click('Agent list');
+    await click('Configure reviewer');
+    expect(host.textContent).toContain('missing (unavailable)');
+    await checkbox('Enabled');
+    const catalogCalls = () => f.execute.mock.calls.filter(([action]) => action === 'skills_catalog').length;
+    vi.useFakeTimers();
+    f.state.connected = false;
+    await nextTick();
+    const previous = catalogCalls();
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(catalogCalls()).toBe(previous);
+    f.execute.mockImplementation(async (action, input) => action === 'skills_catalog' ? {
+      requestId: action, action, ok: true, output: {
+        entries: [...skillCatalog.entries, { name: 'new', description: 'New Skill', relativeDirectory: 'new' }],
+        diagnostics: [],
+      },
+    } : f.reply(action, input));
+    f.state.connected = true;
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(host.textContent).toContain('New Skill');
+    expect(element<HTMLInputElement>('.settings-checkbox input').checked).toBe(false);
+    expect(host.textContent).toContain('missing (unavailable)');
+    expect([...host.querySelectorAll<HTMLInputElement>('.skill-options input')].filter(input => input.checked)).toHaveLength(1);
+    expect(host.textContent).toContain('Unsaved');
+    const count = catalogCalls();
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(catalogCalls()).toBe(count);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(catalogCalls()).toBe(count + 1);
+    f.state.open = false;
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(catalogCalls()).toBe(count + 1);
+    app?.unmount();
+    app = undefined;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(catalogCalls()).toBe(count + 1);
+  });
+
   it('groups globals and Agents, and exposes only one shared permission editor', async () => {
     const f = await mount({}, [executionSection(), agentSection('general-purpose', {
       tools: { allow: ['read_file'], deny: ['exec'] },

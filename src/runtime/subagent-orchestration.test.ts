@@ -87,6 +87,7 @@ function setup(options: {
     depth: 0,
     turnId: 'parent-turn',
     signal: controller.signal,
+    skills: ['parent-only'],
     effectiveReference: { providerId: 'parent', modelId: 'parent-model' },
     contextFiles: [],
     registrySnapshot,

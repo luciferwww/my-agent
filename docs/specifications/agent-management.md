@@ -367,15 +367,15 @@ selecting a Child Turn's profile. Pass that immutable policy to AgentRunner;
 Agent execution does not read `config.json` or query changing shared defaults.
 Already admitted Turns retain their selected policies.
 
-Only the Tool defaults under `agents.defaults` are dynamic. Other `agents.defaults`
+Tool defaults and Skills selections under `agents.defaults` are dynamic. Other `agents.defaults`
 fields retain startup-only application; this does not add memory, Context or
 compaction editors or change their existing Child support.
 
 ### Per-Agent settings
 
 The Agents group alongside LLM and Extensions contains Global settings and
-Agent list. Global settings opens independent Execution policy and Default Tool
-permissions editors. The former has steering, non-negative delegation depth and
+Agent list. Global settings opens independent Execution policy, Default Tool
+permissions and Default Skills editors. Execution policy has steering, non-negative delegation depth and
 an optional positive Model-call limit and per-field reset. Each editor saves
 independently, without restart.
 
@@ -383,7 +383,7 @@ Agent list contains the built-in general-purpose type, discovered definitions
 and unmatched saved overrides, with compact rows showing ID, effective
 description and enabled state. Selecting a named Agent opens:
 
-- **Configuration:** only enabled and approval allow/deny controls. Label allow
+- **Configuration:** enabled, approval allow/deny and inherited/custom Skills controls. Label allow
   as approval bypass, not exclusive Tool availability; explain deny precedence.
   Distinguish use-shared-default allow from an explicit empty allow list. Show
   current shared deny read-only alongside the editable local deny entries.
@@ -438,12 +438,24 @@ fields, other Agents, global Agent policy, LLM and Extensions. Removing an edita
 override restores default/inheritance; opening Settings or leaving it unchanged
 must not materialize defaults in config.
 
+Default Skills use the independent revisioned section `agents:skills`; named
+Skills share the existing `agent:<id>` revision with enabled and Tools. Omitted
+named selection inherits defaults; explicit `[]` selects none. The catalog is a
+flat name/description/relative-directory list. `load` includes `skillCatalog`;
+on discovery failure it includes `skillCatalogError: {code, message}` instead,
+without blocking other sections or erasing saved selections. The Skills area
+shows the error until a subsequent successful catalog read clears it.
+The read-only `skills_catalog` action scans on demand without replacing sections
+or changing revisions. While Settings is open/connected, the client requests it
+every two seconds after the preceding request settles, updating only catalog
+state and preserving drafts. Stop polling on close/disconnect/disposal.
+
 One Agent is one revisioned Settings section, ID `agent:<id>`. Reuse the
 existing generic `settings.execute` load/update flow and serialized persistence;
 shared Tool defaults have a separate revisioned section. Channel code must not
 parse MD or own Agent policy.
 
-For execution policy, enablement, shared Tool defaults and named-Agent Tool policy saves:
+For execution policy, enablement, shared Tool defaults and default/named Skills and Tool policy saves:
 
 1. Validate and prepare the complete resulting effective profile state before
    writing. Use the currently applied shared Tool defaults and named overrides,

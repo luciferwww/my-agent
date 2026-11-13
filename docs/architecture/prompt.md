@@ -24,8 +24,16 @@ Prompt does not own configuration precedence, canonical Tool schemas, Channel wi
 | 5 | Project Context | when non-empty Context files exist | when non-empty Context files exist |
 | 6 | Agent Home | when `agentHome` exists | when `agentHome` exists |
 | 7 | Available Subagents | when entries are supplied | no |
+| 8 | Available Skills | when selected summaries are supplied and `skill` is visible | same as Full |
 
 `mode: 'none'` returns an empty string regardless of the other inputs.
+
+Runtime supplies selected available summaries from on-demand discovery. Root
+preparation skips discovery when the loader is hidden; Child preparation invokes
+a Runtime-supplied catalog callback only after resolving loader visibility.
+Builder renders names/descriptions and current-load,
+explicit-use and delegation guidance; it does not scan files. Complete instruction
+files enter context only through the ordinary `skill` Tool result.
 
 Dynamic date and time are carried in the User prompt, not the System prompt.
 
@@ -74,7 +82,7 @@ as Provider wire fields.
 
 ## 5. Runtime projection
 
-`runtime/prompt-factory.ts` maps only Runtime-owned inputs into `SystemPromptBuildParams`: prompt mode, Context files, visible Tool names, Agent Home, and available Subagent entries. Even when prompt mode is `none`, Runtime selects the full Context-load mode so its cache remains warm; `minimal` selects minimal Context loading.
+`runtime/prompt-factory.ts` maps only Runtime-owned inputs into `SystemPromptBuildParams`: prompt mode, Context files, visible Tool names, Agent Home, available Subagent entries and Skill summaries. The Skills section is shared with the Child minimal-prompt path; `none` still emits no system content.
 
 Context-file initialization and loading belong to [Agent Context](agent-context.md). Runtime generation and Subagent lifecycle belong to [Runtime](runtime.md).
 

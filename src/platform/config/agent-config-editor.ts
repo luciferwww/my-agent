@@ -8,6 +8,7 @@ import { SubagentDepthValidationError, validateMaxSubagentDepth } from '../../co
 import { parseCredentialEnvironmentReference } from './credential-materialization.js';
 import { replaceAgentConfigFile } from './file-publication.js';
 import { extensionSettingsFields, prepareExtensionConfig } from '../../extension/acquisition/configuration.js';
+import { validateSkillSelection, SkillSelectionValidationError } from '../../core/skills/index.js';
 
 export type CredentialChange =
   | { readonly operation: 'keep' }
@@ -32,7 +33,8 @@ export type ConfigSectionEdit =
 
 export type AgentPolicyEdit =
   | { readonly kind: 'agent'; readonly agentId: string; readonly settings: unknown }
-  | { readonly kind: 'agent-defaults'; readonly settings: unknown };
+  | { readonly kind: 'agent-defaults'; readonly settings: unknown }
+  | { readonly kind: 'agent-skills'; readonly settings: unknown };
 
 export interface AgentExecutionEdit {
   readonly kind: 'agent-execution';
@@ -89,7 +91,7 @@ export function editAgentConfigSection(
     validateAgentConfigDocument(candidate);
     return { document: candidate, previous };
   }
-  if (edit.kind === 'agent' || edit.kind === 'agent-defaults') {
+  if (edit.kind === 'agent' || edit.kind === 'agent-defaults' || edit.kind === 'agent-skills') {
     return editAgentPolicy(document, edit, settings);
   }
   if (edit.kind === 'llm') {
@@ -185,7 +187,7 @@ export async function saveAgentConfigSection(
   const current = await readAgentConfigDocument(agentHome);
   const committed = editAgentConfigSection(current, edit);
   beforeCommit?.(committed.document);
-  if ((edit.kind !== 'agent' && edit.kind !== 'agent-defaults' && edit.kind !== 'agent-execution')
+  if ((edit.kind !== 'agent' && edit.kind !== 'agent-defaults' && edit.kind !== 'agent-skills' && edit.kind !== 'agent-execution')
     || !isDeepStrictEqual(committed.document, current)) {
     await replaceAgentConfigFile(agentHome, `${JSON.stringify(committed.document, null, 2)}\n`);
   }
@@ -222,7 +224,8 @@ function editAgentPolicy(
   edit: AgentPolicyEdit,
   settings: Record<string, unknown>,
 ): { document: AgentConfigDocument; previous: ConfigSectionPreimage } {
-  onlyKeys(settings, edit.kind === 'agent' ? ['enabled', 'tools'] : ['tools'], '/settings');
+  onlyKeys(settings, edit.kind === 'agent' ? ['enabled', 'tools', 'skills']
+    : edit.kind === 'agent-skills' ? ['skills'] : ['tools'], '/settings');
   if (settings['enabled'] !== undefined && typeof settings['enabled'] !== 'boolean') {
     throw new ConfigEditError('/settings/enabled');
   }
@@ -236,15 +239,30 @@ function editAgentPolicy(
     }
   }
   const tools: ToolsConfig | undefined = incomingTools === undefined ? undefined : structuredClone(incomingTools);
+  const skills = settings['skills'];
+  if (skills !== undefined) {
+    try { validateSkillSelection(skills); } catch (error) {
+      if (!(error instanceof SkillSelectionValidationError)) throw error;
+      throw new ConfigEditError('/settings/skills', error.message);
+    }
+  }
   if (edit.kind === 'agent' && !isNamedAgentId(edit.agentId)) throw new ConfigEditError('/sectionId');
   const agents = document.agents;
-  const savedSettings = getAgentPolicySettings(document, edit.kind === 'agent' ? edit.agentId : undefined);
+  const savedSettings = edit.kind === 'agent-skills'
+    ? getDefaultSkillSettings(document)
+    : getAgentPolicySettings(document, edit.kind === 'agent' ? edit.agentId : undefined);
   const previousEdit: AgentPolicyEdit = { ...edit, settings: savedSettings };
   if (isDeepStrictEqual(savedSettings, settings)) {
     return { document, previous: { kind: 'agent-policy', edit: previousEdit } };
   }
   let candidate: AgentConfigDocument;
-  if (edit.kind === 'agent-defaults') {
+  if (edit.kind === 'agent-skills') {
+    const defaults = { ...agents?.defaults };
+    delete defaults.skills;
+    if (skills !== undefined) defaults.skills = [...skills];
+    candidate = Object.keys(defaults).length === 0 && agents?.defaults === undefined
+      ? document : { ...document, agents: { ...agents, defaults } };
+  } else if (edit.kind === 'agent-defaults') {
     const defaults = { ...agents?.defaults };
     const updated = replaceTools(defaults.tools, tools);
     if (updated === undefined) delete defaults.tools;
@@ -259,6 +277,8 @@ function editAgentPolicy(
     const updated = replaceTools(entry.tools, tools);
     if (updated === undefined) delete entry.tools;
     else entry.tools = updated;
+    delete entry.skills;
+    if (skills !== undefined) entry.skills = [...skills];
     const list = [...agents?.list ?? []].filter(item => item.id !== edit.agentId);
     if (Object.keys(entry).some(key => key !== 'id')) {
       const index = old === undefined ? list.length : agents!.list!.indexOf(old);
@@ -276,11 +296,17 @@ export function getAgentPolicySettings(document: AgentConfigDocument, agentId?: 
   const tools = agentId === undefined ? document.agents?.defaults?.tools : entry?.tools;
   return {
     ...(entry?.enabled === undefined ? {} : { enabled: entry.enabled }),
+    ...(entry?.skills === undefined ? {} : { skills: [...entry.skills] }),
     ...(tools === undefined ? {} : { tools: {
       ...(tools.allow === undefined ? {} : { allow: [...tools.allow] }),
       ...(tools.deny === undefined ? {} : { deny: [...tools.deny] }),
     } }),
   };
+}
+
+export function getDefaultSkillSettings(document: AgentConfigDocument) {
+  const skills = document.agents?.defaults?.skills;
+  return skills === undefined ? {} : { skills: [...skills] };
 }
 
 function replaceTools(previous: ToolsConfig | undefined, incoming: ToolsConfig | undefined): ToolsConfig | undefined {

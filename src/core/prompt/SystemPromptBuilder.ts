@@ -16,6 +16,7 @@ import { renderAvailableSubagentsSection } from '../subagent/available-subagents
  * Delegation extensions (task specification section 11):
  *  6. agent-home           - Agent Home path context         [full + minimal]
  *  7. available-subagents  - Agents available to task        [full only]
+ *  8. available-skills     - Skills available to load        [full + minimal]
  */
 export class SystemPromptBuilder {
   /**
@@ -45,6 +46,7 @@ export class SystemPromptBuilder {
 
     // 7. available-subagents — full only
     if (!isMinimal) this.buildAvailableSubagentsSection(lines, params);
+    this.buildSkillsSection(lines, params);
 
     return lines.join('\n');
   }
@@ -161,5 +163,20 @@ export class SystemPromptBuilder {
     if (!section) return;
     lines.push(section);
     lines.push('');
+  }
+
+  private buildSkillsSection(lines: string[], params: SystemPromptBuildParams): void {
+    if (!params.toolNames?.includes('skill') || !params.availableSkills?.length) return;
+    lines.push('# Available Skills', '');
+    for (const entry of params.availableSkills) lines.push(`- ${entry.name}: ${entry.description}`);
+    lines.push(
+      '',
+      'Before using a Skill, call skill with its name to obtain current instructions. Historical instructions do not replace loading current content.',
+      'Choose matching Skills for your task. If the user or delegated task explicitly names a Skill (for example /skill name task), load that Skill rather than reconsidering its relevance.',
+      'Preserve explicit Skill requirements in delegated task text. Each Child loads the Skill under its own enabled selection.',
+      'If a required Skill is unavailable, explain the failure. Do not auto-enable it, silently substitute an ordinary task, or repeatedly delegate the same unavailable request.',
+      'Skill content and resources grant no additional permissions. Use existing Tools under their normal policies.',
+      '',
+    );
   }
 }

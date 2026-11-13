@@ -57,6 +57,8 @@ import { createApplicationToolPolicy } from '../policy/tool-approval-policy.js';
 import { createBuiltinLlmProviderUnit } from '../../builtins/providers/builtin/index.js';
 import { createMemoryToolsContribution } from '../../builtins/tools/memory/index.js';
 import { createTaskToolContribution } from '../../builtins/tools/task/index.js';
+import { createSkillToolContribution } from '../../builtins/tools/skill/index.js';
+import { discoverSkills } from '../../core/skills/index.js';
 import {
   createEnvironmentContribution,
   processRegistry,
@@ -733,6 +735,12 @@ function assembleLoadedRuntimeUnits(params: {
     routeContextByTurn: params.routeContextByTurn,
     sessionManager: resources.sessionManager,
     captureExecutionPolicy: () => params.captureAgentState().agents,
+    captureSkills: (agentId) => {
+      const agents = params.captureAgentState().agents;
+      return agents.list.find(entry => entry.id === agentId)?.skills ?? agents.defaults.skills;
+    },
+    getSkillsCatalog: async names => (await discoverSkills(options.agentHome)).entries
+      .filter(entry => names.includes(entry.name)),
     executor,
     onEvent: params.onAgentEvent,
   });
@@ -742,6 +750,13 @@ function assembleLoadedRuntimeUnits(params: {
       captureProfiles: params.captureAgentState,
       getCapabilities: (depth) => resolveSubagentCapabilities(depth, params.captureAgentState().agents.maxSubagentDepth),
       get maxDepth() { return params.captureAgentState().agents.maxSubagentDepth; },
+    }),
+    required: true,
+  }));
+  loadedUnits.push(createLoadedRuntimeUnit({
+    registration: createSkillToolContribution({
+      agentHome: options.agentHome,
+      getTurn: turnId => params.activeParentTurns.get(turnId),
     }),
     required: true,
   }));

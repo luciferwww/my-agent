@@ -7,7 +7,8 @@ import type { CompactionConfig } from '../../core/runner/index.js';
 import type { LoggerConfig } from '../logger/index.js';
 
 export type DeepPartial<T> = {
-  [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K];
+  [K in keyof T]?: T[K] extends readonly unknown[] ? T[K]
+    : T[K] extends object ? DeepPartial<T[K]> : T[K];
 };
 
 export type {
@@ -33,6 +34,7 @@ export interface AgentDefaults {
   readonly tools: ToolPolicyConfig;
   readonly context: AgentContextConfig;
   readonly compaction: CompactionConfig;
+  readonly skills: readonly string[];
 }
 
 export interface AgentEntry extends DeepPartial<AgentDefaults> {

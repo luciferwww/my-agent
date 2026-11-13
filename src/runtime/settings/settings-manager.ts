@@ -14,7 +14,8 @@ import type { RuntimeReloadResult } from '../composition/runtime-composition.js'
 import type { RuntimeDeadlineBudget, RuntimeDeadlineDriver } from '../runtime-deadline.js';
 import type { RuntimeSnapshotAccess } from '../composition/composition-coordinator.js';
 import type { RuntimeShutdownReport } from '../types.js';
-import { SHARED_AGENT_TOOLS_SECTION, type AgentPolicyState } from '../policy/agent-policy-state.js';
+import { SHARED_AGENT_TOOLS_SECTION, DEFAULT_AGENT_SKILLS_SECTION, type AgentPolicyState } from '../policy/agent-policy-state.js';
+import { discoverSkills, SkillLibraryError } from '../../core/skills/index.js';
 import { ModelTestRunner } from './model-test.js';
 import {
   buildExecutionSectionView, buildLlmSectionView, buildExtensionSectionView, type SettingsApplicationState,
@@ -84,6 +85,15 @@ export class SettingsManager implements SettingsCapability {
   }
 
   async execute(request: SettingsActionRequest): Promise<SettingsActionResult> {
+    if (request.action === 'skills_catalog') {
+      if (this.closing) return closingFailure(request);
+      try {
+        onlyKeys(object(request.input, '/input'), []);
+        return await this.readSkillCatalog(request);
+      } catch (error) {
+        return failure(request, error);
+      }
+    }
     if (request.action === 'load') {
       await this.tail;
       try {
@@ -92,6 +102,7 @@ export class SettingsManager implements SettingsCapability {
         if (this.fileStateUnknown) {
           return settingsFailure(request, 'file_state_unknown', 'The saved file state could not be confirmed after rollback failed.');
         }
+        const catalog = await this.readSkillCatalog(request);
         return success(request, {
           sections: [...this.revisions.keys()].map((id) => this.section(id)),
           modelCatalog: this.modelCatalog(),
@@ -99,6 +110,7 @@ export class SettingsManager implements SettingsCapability {
             .map(tool => ({ name: tool.name, description: tool.description })),
           diagnostics: this.options.extensionMetadata?.diagnostics ?? [],
           agentDiagnostics: this.options.agentPolicies?.diagnostics() ?? [],
+          ...(catalog.ok ? { skillCatalog: catalog.output } : { skillCatalogError: catalog.error }),
         });
       } catch (error) {
         return failure(request, error);
@@ -163,6 +175,16 @@ export class SettingsManager implements SettingsCapability {
     return { failed, residuals };
   }
 
+  private async readSkillCatalog(request: SettingsActionRequest): Promise<SettingsActionResult> {
+    try {
+      return success(request, await discoverSkills(this.options.agentHome));
+    } catch (error) {
+      return error instanceof SkillLibraryError
+        ? settingsFailure(request, 'skills_catalog_failed', error.message)
+        : failure(request, error);
+    }
+  }
+
   private async runQueued(job: QueuedUpdate): Promise<void> {
     this.queued.delete(job);
     const request = job.request;
@@ -188,19 +210,21 @@ export class SettingsManager implements SettingsCapability {
       return settingsFailure(request, 'revision_conflict', 'Reload and re-edit this section before saving.');
     }
     const descriptor = this.descriptors.get(id);
-    const agentSection = id === SHARED_AGENT_TOOLS_SECTION || id.startsWith('agent:');
+    const agentSection = id === SHARED_AGENT_TOOLS_SECTION || id === DEFAULT_AGENT_SKILLS_SECTION || id.startsWith('agent:');
     const executionSection = id === 'agents:execution';
     if ((agentSection || executionSection) && input['credentials'] !== undefined) throw new ConfigEditError('/credentials');
     const edit: ConfigSectionEdit = executionSection
       ? { kind: 'agent-execution', settings: input['settings'] }
       : agentSection
-      ? id === SHARED_AGENT_TOOLS_SECTION
+      ? id === DEFAULT_AGENT_SKILLS_SECTION
+        ? { kind: 'agent-skills', settings: input['settings'] }
+      : id === SHARED_AGENT_TOOLS_SECTION
         ? { kind: 'agent-defaults', settings: input['settings'] }
         : { kind: 'agent', agentId: id.slice('agent:'.length), settings: input['settings'] }
       : descriptor
       ? { kind: 'extension', extensionId: descriptor.id, schema: descriptor.configSchema, settings: input['settings'], credentials: input['credentials'] }
       : { kind: 'llm', settings: input['settings'], credentials: input['credentials'] };
-    const publishAgentPolicy = edit.kind === 'agent' || edit.kind === 'agent-defaults' || edit.kind === 'agent-execution'
+    const publishAgentPolicy = edit.kind === 'agent' || edit.kind === 'agent-defaults' || edit.kind === 'agent-skills' || edit.kind === 'agent-execution'
       ? this.options.agentPolicies!.prepare(edit) : undefined;
     const previousApplicationState = this.applicationState;
     const committed = await (this.options.saveSection ?? saveAgentConfigSection)(
@@ -322,7 +346,7 @@ export class SettingsManager implements SettingsCapability {
         applied: this.options.agentPolicies.capture().agents,
       });
     }
-    if (id === SHARED_AGENT_TOOLS_SECTION || id.startsWith('agent:')) {
+    if (id === SHARED_AGENT_TOOLS_SECTION || id === DEFAULT_AGENT_SKILLS_SECTION || id.startsWith('agent:')) {
       const section = this.options.agentPolicies!.section(id, this.document);
       const model = 'model' in section ? section.model : undefined;
       return {

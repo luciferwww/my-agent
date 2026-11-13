@@ -72,6 +72,41 @@ describe('applied Agent policies', () => {
   }
   const read = async (path: string): Promise<unknown> => JSON.parse(await readFile(path, 'utf8'));
 
+  it('publishes default and named Skills independently and keeps old captures stable', async () => {
+    const f = await fixture({});
+    const original = f.policies.capture();
+    expect(original.rootSkills).toEqual([]);
+    expect((await f.update('agents:skills', { skills: ['review'] })).ok).toBe(true);
+    expect(f.policies.capture().rootSkills).toEqual(['review']);
+    expect(original.rootSkills).toEqual([]);
+    await f.update('agent:reviewer', { skills: [] });
+    expect(f.policies.capture().agents.list.find(entry => entry.id === 'reviewer')?.skills).toEqual([]);
+    await f.update('agents:defaults', { tools: { allow: ['read_file'] } });
+    expect(f.policies.capture().rootSkills).toEqual(['review']);
+    await f.update('agents:skills', {});
+    expect(f.policies.capture().rootSkills).toEqual([]);
+    expect(f.policies.capture().agents.defaults.tools.allow).toEqual(['read_file']);
+    const restarted = await loadAgentConfig({ agentHome: home });
+    expect(restarted.application.agents.defaults.skills).toEqual([]);
+    expect(restarted.application.agents.list.find(entry => entry.id === 'reviewer')?.skills).toEqual([]);
+  });
+
+  it('resolves Root named overrides and does not publish on failed persistence', async () => {
+    const configuration = config();
+    const namedConfig = {
+      ...configuration, agents: {
+        ...configuration.agents, defaults: { ...configuration.agents.defaults, skills: ['default'] },
+        list: [{ id: 'reviewer', skills: ['named'] }],
+      },
+    };
+    expect(new AgentPolicyState(namedConfig, definitions, () => names, { agentId: 'reviewer' }).capture().rootSkills)
+      .toEqual(['named']);
+    const f = await fixture({}, vi.fn(async () => { throw new Error('Save failed.'); }));
+    const captured = f.policies.capture();
+    expect((await f.update('agents:skills', { skills: ['review'] })).ok).toBe(false);
+    expect(f.policies.capture()).toBe(captured);
+  });
+
   it('publishes execution and Tool settings independently while preserving previously captured state', async () => {
     const f = await fixture({});
     const original = f.policies.capture();

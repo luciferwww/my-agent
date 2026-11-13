@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -161,6 +161,59 @@ describe('SettingsManager', () => {
       manager.execute({ requestId: 'update', action: 'update', input: { sectionId, expectedRevision, settings: value, credentials } });
     return { manager, policies, apply, save, restore, load, update };
   }
+
+  it('scans catalog requests on demand without changing saved selections or section revisions', async () => {
+    const f = fixture();
+    const initial = await f.load();
+    const initialRevision = revision(initial, 'agents:skills');
+    expect(record(initial.output)['skillCatalog']).toEqual({ entries: [], diagnostics: [] });
+    const directory = join(agentHome, 'skills', 'group', 'review');
+    await mkdir(directory, { recursive: true });
+    const path = join(directory, 'SKILL.md');
+    const source = '---\nname: review\ndescription: Review changes\n---\nInstructions.';
+    await writeFile(path, source);
+    const request = () => f.manager.execute({ requestId: 'catalog', action: 'skills_catalog', input: {} });
+    expect(record((await request()).output)['entries']).toEqual([
+      { name: 'review', description: 'Review changes', relativeDirectory: join('group', 'review') },
+    ]);
+    expect(f.policies.capture().rootSkills).toEqual([]);
+    await writeFile(path, source.replace('Review changes', 'Changed description'));
+    expect(record((await request()).output)['entries']).toEqual([
+      expect.objectContaining({ description: 'Changed description' }),
+    ]);
+    await rm(path);
+    expect(record((await request()).output)['entries']).toEqual([]);
+    expect(revision(await f.load(), 'agents:skills')).toBe(initialRevision);
+    expect(f.save).not.toHaveBeenCalled();
+  });
+
+  it('isolates Skill catalog failures while keeping other sections editable and recovers on the next read', async () => {
+    const f = fixture();
+    const initial = await f.load();
+    await writeFile(join(agentHome, 'skills'), 'Not a directory');
+    const loaded = await f.load();
+    expect(loaded).toMatchObject({
+      ok: true, output: { skillCatalogError: {
+        code: 'skills_catalog_failed', message: expect.stringContaining('regular directory'),
+      } },
+    });
+    expect(record(loaded.output)).not.toHaveProperty('skillCatalog');
+    expect(section(loaded)).toEqual(section(initial));
+    const catalog = await f.manager.execute({ requestId: 'catalog', action: 'skills_catalog', input: {} });
+    expect(catalog).toMatchObject({
+      ok: false, error: { code: 'skills_catalog_failed', message: expect.stringContaining('regular directory') },
+    });
+    expect(await f.update(revision(loaded, 'agents:skills'), { skills: ['missing'] }, 'agents:skills'))
+      .toMatchObject({ ok: true });
+    expect(await f.update(revision(loaded, 'extension:relay'), {
+      enabled: true, config: { label: 'updated' },
+    }, 'extension:relay')).toMatchObject({ ok: true });
+    await rm(join(agentHome, 'skills'));
+    const recovered = await f.load();
+    expect(record(recovered.output)['skillCatalog']).toEqual({ entries: [], diagnostics: [] });
+    expect(record(recovered.output)).not.toHaveProperty('skillCatalogError');
+    expect(record(section(recovered, 'agents:skills')['settings'])['skills']).toEqual(['missing']);
+  });
 
   it('publishes execution policy after saving and preserves captured policies and independent revisions', async () => {
     const f = fixture();

@@ -1,4 +1,4 @@
-import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -142,6 +142,53 @@ describe('Extension acquisition to Runtime integration', () => {
               settings: {}, restartRequired: false, resolvedSettings: executionDefaults, applicationStatus: 'current',
             } } });
             const beforeLlm = JSON.parse(await readFile(join(freshHome, 'config.json'), 'utf8'));
+            const skillDirectory = join(freshHome, 'skills', 'builtin', 'review');
+            await mkdir(skillDirectory, { recursive: true });
+            await writeFile(join(skillDirectory, 'SKILL.md'),
+              '---\nname: review\ndescription: Review changes\n---\nReview instructions.');
+            expect(await request({
+              type: 'settings_action', requestId: 'skills-catalog', action: 'skills_catalog', input: {},
+            })).toMatchObject({ ok: true, output: { entries: [{
+              name: 'review', description: 'Review changes', relativeDirectory: join('builtin', 'review'),
+            }], diagnostics: [] } });
+            const skills = reloaded.output.sections.find((section: { id: string }) => section.id === 'agents:skills');
+            expect(await request({
+              type: 'settings_action', requestId: 'save-skills', action: 'update',
+              input: {
+                sectionId: 'agents:skills', expectedRevision: skills.revision,
+                settings: { skills: ['review'] },
+              },
+            })).toMatchObject({ ok: true, output: { section: {
+              effectiveSkills: ['review'], restartRequired: false, applicationStatus: 'current',
+            } } });
+            beforeLlm.agents.defaults.skills = ['review'];
+            expect((await loadAgentConfig({ agentHome: freshHome, environment: {} }))
+              .application.agents.defaults.skills).toEqual(['review']);
+            const skillRoot = join(freshHome, 'skills');
+            const healthySkills = join(freshHome, 'skills-backup');
+            await rename(skillRoot, healthySkills);
+            try {
+              await writeFile(skillRoot, 'Not a directory');
+              expect(await request({
+                type: 'settings_action', requestId: 'broken-skills', action: 'skills_catalog', input: {},
+              })).toMatchObject({
+                ok: false, error: { code: 'skills_catalog_failed', message: expect.stringContaining('regular directory') },
+              });
+              const partial = await request({
+                type: 'settings_action', requestId: 'partial-load', action: 'load', input: {},
+              });
+              expect(partial).toMatchObject({ ok: true, output: {
+                skillCatalogError: { code: 'skills_catalog_failed', message: expect.stringContaining('regular directory') },
+                sections: expect.arrayContaining([expect.objectContaining({ id: 'llm', revision: llm.revision })]),
+              } });
+              expect(partial.output).not.toHaveProperty('skillCatalog');
+            } finally {
+              await rm(skillRoot);
+              await rename(healthySkills, skillRoot);
+            }
+            expect(await request({
+              type: 'settings_action', requestId: 'recovered-skills', action: 'skills_catalog', input: {},
+            })).toMatchObject({ ok: true, output: { entries: [expect.objectContaining({ name: 'review' })] } });
             const settings = {
               builtin: { baseURL: 'http://127.0.0.1:9', models: [{ modelId: 'first', protocol: 'openai-responses' }] },
               defaultModel: { providerId: 'builtin', modelId: 'first' },

@@ -2,12 +2,13 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import type { SettingsActionResult } from 'my-agent/extension-api';
 import {
-  agentPolicySettings, executionPolicySettings, modelDraft, modelSettings, object, parseSection, settingsProviders, settingsTools,
-  type ModelDraft, type SettingsSection, type SettingsProvider, type SettingsTool, type SettingsField,
+  agentPolicySettings, executionPolicySettings, modelDraft, modelSettings, object, parseSection, settingsProviders, settingsTools, settingsSkills,
+  type ModelDraft, type SettingsSection, type SettingsProvider, type SettingsTool, type SettingsField, type SettingsSkill,
 } from '../client/settings';
 import SettingsCredential, { type SecretDraft } from './SettingsCredential.vue';
 import SettingsToolSelect from './SettingsToolSelect.vue';
 import SettingsSelect from './SettingsSelect.vue';
+import SettingsSkillSelect from './SettingsSkillSelect.vue';
 
 const props = defineProps<{
   open: boolean;
@@ -29,6 +30,8 @@ interface Draft {
   allowMode: 'inherit' | 'explicit';
   allow: string;
   deny: string;
+  skillMode: 'inherit' | 'explicit';
+  skills: string[];
 }
 const dialog = ref<HTMLDialogElement>();
 const drafts = ref<Draft[]>([]);
@@ -40,11 +43,11 @@ const extensions = computed(() => drafts.value.filter((draft) => draft.section.i
 const agents = computed(() => drafts.value.filter(draft => draft.section.agent));
 const sharedDefaults = computed(() => drafts.value.find(draft => draft.section.id === 'agents:defaults'));
 const globalSettings = computed(() => drafts.value.filter(draft =>
-  draft.section.id === 'agents:execution' || draft.section.id === 'agents:defaults'));
-const agentSettings = computed(() => drafts.value.filter(draft => draft.section.agent || draft.section.execution));
+  draft.section.id === 'agents:execution' || draft.section.id === 'agents:defaults' || draft.section.id === 'agents:skills'));
+const agentSettings = computed(() => drafts.value.filter(draft => draft.section.agent || draft.section.execution || draft.section.skills));
 const selectedCategory = computed(() => ['llm', 'builtin', 'provider'].includes(selectedSection.value) ? 'llm'
   : ['agents', 'agent-global', 'agent-list', 'general-purpose'].includes(selectedSection.value)
-    || visibleDrafts.value[0]?.section.agent || visibleDrafts.value[0]?.section.execution ? 'agents' : 'extensions');
+    || visibleDrafts.value[0]?.section.agent || visibleDrafts.value[0]?.section.execution || visibleDrafts.value[0]?.section.skills ? 'agents' : 'extensions');
 const categories = computed(() => [
   { id: 'llm', name: 'LLM', description: 'Models & providers', drafts: drafts.value.filter((draft) => draft.section.id === 'llm') },
   { id: 'agents', name: 'Agents', description: 'Global settings & Agent list', drafts: agentSettings.value },
@@ -66,6 +69,9 @@ const contextFile = ref('IDENTITY.md');
 const contextNames = ['IDENTITY.md', 'SOUL.md', 'AGENTS.md', 'TOOLS.md'];
 const providers = ref<SettingsProvider[]>([]);
 const tools = ref<SettingsTool[]>([]);
+const skills = ref<SettingsSkill[]>([]);
+const skillDiagnostics = ref<unknown[]>([]);
+const skillError = ref('');
 const selectedProvider = computed(() => providers.value.find((provider) => provider.providerId === selectedProviderId.value));
 const restartRequired = computed(() => drafts.value.some((draft) => draft.section.restartRequired));
 const llm = computed(() => drafts.value.find((draft) => draft.section.id === 'llm'));
@@ -127,6 +133,7 @@ function draftSignature(draft: Draft): string {
     draft.baseURL, draft.models, draft.defaultModel,
     draft.enabled, draft.config, draft.secrets,
     draft.allowMode, draft.allow, draft.deny,
+    draft.skillMode, draft.skills,
   ]);
 }
 function isDirty(draft: Draft): boolean {
@@ -151,6 +158,8 @@ function makeDraft(section: SettingsSection): Draft {
     allowMode: tools['allow'] === undefined ? 'inherit' : 'explicit',
     allow: Array.isArray(tools['allow']) ? tools['allow'].join('\n') : '',
     deny: Array.isArray(tools['deny']) ? tools['deny'].join('\n') : '',
+    skillMode: section.settings['skills'] === undefined ? 'inherit' : 'explicit',
+    skills: Array.isArray(section.settings['skills']) ? [...section.settings['skills']] : [],
     config: section.execution ? { ...section.settings } : Object.fromEntries(section.fields.filter((field) => field.editable && !field.sensitive)
       .map((field) => [field.name, Object.hasOwn(savedConfig, field.name) ? savedConfig[field.name] : undefined])),
     secrets: Object.fromEntries(Object.keys(section.credentials).map((path) => [path, { operation: 'keep', value: '' }])),
@@ -166,6 +175,12 @@ function applyCatalog(value: unknown) {
   providers.value = settingsProviders(value);
   emit('catalog', value);
 }
+function applySkillCatalog(value: unknown) {
+  const catalog = settingsSkills(value);
+  skills.value = catalog.entries;
+  skillDiagnostics.value = catalog.diagnostics;
+  skillError.value = '';
+}
 async function load() {
   if (busy.value || !props.connected) return;
   busy.value = true;
@@ -176,6 +191,17 @@ async function load() {
     const output = object(result.output);
     if (!Array.isArray(output['sections'])) throw new Error('Malformed Settings view.');
     tools.value = settingsTools(output['toolCatalog']);
+    if (output['skillCatalogError'] !== undefined) {
+      const catalogError = object(output['skillCatalogError']);
+      if (typeof catalogError['code'] !== 'string' || typeof catalogError['message'] !== 'string') {
+        throw new Error('Malformed Skill Catalog error.');
+      }
+      skills.value = [];
+      skillDiagnostics.value = [];
+      skillError.value = catalogError['message'];
+    } else {
+      applySkillCatalog(output['skillCatalog']);
+    }
     const loaded = output['sections'].map((section: unknown) => makeDraft(parseSection(section)));
     applyCatalog(output['modelCatalog']);
     clearSecretValues();
@@ -206,7 +232,15 @@ function builtin(draft: Draft) {
 }
 function settings(draft: Draft) {
   if (draft.section.execution) return executionPolicySettings(draft.config);
-  if (draft.section.agent) return agentPolicySettings(draft.section, draft);
+  if (draft.section.agent) {
+    const result = agentPolicySettings(draft.section, draft);
+    if (draft.section.skills) {
+      if (draft.skillMode === 'inherit') delete result['skills'];
+      else result['skills'] = [...draft.skills];
+    }
+    return result;
+  }
+  if (draft.section.skills) return draft.skillMode === 'inherit' ? {} : { skills: [...draft.skills] };
   if (draft.section.id === 'llm') return {
     ...(draft.section.settings['builtin'] !== undefined || draft.baseURL !== '' || draft.models.length > 0
       || draft.secrets['/builtin/apiKey']?.operation === 'replace' ? { builtin: builtin(draft) } : {}),
@@ -228,7 +262,7 @@ async function save(draft: Draft) {
     const input = {
       sectionId: draft.section.id, expectedRevision: draft.section.revision,
       settings: settings(draft),
-      ...(draft.section.agent || draft.section.execution ? {} : { credentials: credentials(draft) }),
+      ...(draft.section.agent || draft.section.execution || draft.section.skills ? {} : { credentials: credentials(draft) }),
     };
     const response = props.execute('update', input);
     clearSecretValues(draft);
@@ -253,6 +287,7 @@ async function save(draft: Draft) {
         const existing = drafts.value.find(item => item.section.id === view.id);
         if (existing) {
           existing.section.agent = view.agent;
+          existing.section.skills = view.skills;
           existing.section.applicationStatus = view.applicationStatus;
         }
       }
@@ -272,7 +307,7 @@ async function save(draft: Draft) {
       throw new Error('Save returned no confirmed section. Reload before saving again.');
     }
     const warnings = output['warnings'];
-    finishFeedback(version, 'success', `${draft.section.name}: saved.${draft.section.agent ? ' Applied to subsequent Turns.' : ''}${Array.isArray(warnings) && warnings.length ? ' Runtime reported retirement warnings; check service logs.' : ''}`);
+    finishFeedback(version, 'success', `${draft.section.name}: saved.${draft.section.agent || draft.section.skills ? ' Applied to subsequent Turns.' : ''}${Array.isArray(warnings) && warnings.length ? ' Runtime reported retirement warnings; check service logs.' : ''}`);
   } catch (failure) {
     finishFeedback(version, 'error', `${draft.section.name}: ${failure instanceof Error ? failure.message : 'Save outcome could not be confirmed.'}`);
   } finally { busy.value = false; }
@@ -288,7 +323,7 @@ function sharedToolSummary(field: 'allow' | 'deny'): string {
 }
 function backTarget(draft: Draft): string {
   if (draft.section.id === 'llm') return 'llm';
-  if (draft.section.execution || draft.section.id === 'agents:defaults') return 'agent-global';
+  if (draft.section.execution || draft.section.id === 'agents:defaults' || draft.section.id === 'agents:skills') return 'agent-global';
   return draft.section.agent ? 'agent-list' : 'extensions';
 }
 function backLabel(draft: Draft): string {
@@ -360,6 +395,25 @@ watch(() => props.connected, (connected) => {
   reportFeedback('error', 'Disconnected. Reload saved settings after reconnecting; unsaved drafts have not been retried.');
 });
 watch(selectedSection, () => { agentTab.value = 'configuration'; contextFile.value = 'IDENTITY.md'; });
+watch([() => props.open, () => props.connected], ([open, connected], _, onCleanup) => {
+  if (!open || !connected) return;
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => { stopped = true; clearTimeout(timer); });
+  async function refresh() {
+    try {
+      const result = await props.execute('skills_catalog', {});
+      if (stopped) return;
+      if (!result.ok) throw new Error(result.error.message);
+      applySkillCatalog(result.output);
+    } catch (error) {
+      if (!stopped) skillError.value = error instanceof Error ? error.message : 'Skill catalog could not be refreshed.';
+    } finally {
+      if (!stopped) timer = setTimeout(refresh, 2000);
+    }
+  }
+  void refresh();
+}, { immediate: true });
 </script>
 
 <template>
@@ -430,7 +484,7 @@ watch(selectedSection, () => { agentTab.value = 'configuration'; contextFile.val
       <h3>Agents</h3>
       <div class="settings-list">
         <div v-for="group in [
-          { id: 'agent-global', name: 'Global settings', description: 'Execution policy and default Tool permissions', drafts: globalSettings },
+          { id: 'agent-global', name: 'Global settings', description: 'Execution policy, default Tool permissions and Skills', drafts: globalSettings },
           { id: 'agent-list', name: 'Agent list', description: 'Built-in and named Agents', drafts: agents.filter(item => !item.section.agent?.builtIn) },
         ]" :key="group.id" class="settings-list-row">
           <div class="settings-list-copy">
@@ -449,12 +503,12 @@ watch(selectedSection, () => { agentTab.value = 'configuration'; contextFile.val
     <section v-if="selectedSection === 'agent-global'" class="settings-section">
       <button type="button" class="secondary settings-back" @click="selectedSection = 'agents'">Back to Agents</button>
       <h3>Global settings</h3>
-      <p class="settings-description">Configure execution policy and default Tool permissions. Save each section independently.</p>
+      <p class="settings-description">Configure execution policy, default Tool permissions and Skills. Save each section independently.</p>
       <div class="settings-list">
         <div v-for="draft in globalSettings" :key="draft.section.id" class="settings-list-row">
           <div class="settings-list-copy">
             <strong>{{ draft.section.name }}</strong>
-            <span>{{ draft.section.execution ? 'Global execution controls' : 'Shared approval bypass and prohibited Tools.' }}</span>
+            <span>{{ draft.section.execution ? 'Global execution controls' : draft.section.skills ? 'Default Skill selection for Root and Child Turns.' : 'Shared approval bypass and prohibited Tools.' }}</span>
             <div class="settings-markers">
               <span v-if="isDirty(draft)" class="settings-badge">Unsaved</span>
               <span v-if="draft.section.restartRequired" class="settings-badge">Restart required</span>
@@ -468,7 +522,7 @@ watch(selectedSection, () => { agentTab.value = 'configuration'; contextFile.val
     <section v-if="selectedSection === 'agent-list'" class="settings-section">
       <button type="button" class="secondary settings-back" @click="selectedSection = 'agents'">Back to Agents</button>
       <h3>Agent list</h3>
-      <p class="settings-description">Enablement and Tool policy apply to subsequent Turns. MD changes require restart.</p>
+      <p class="settings-description">Enablement, Tool policy and Skills apply to subsequent Turns. MD changes require restart.</p>
       <details v-if="agentDiagnostics.length"><summary>Agent definition diagnostics</summary><pre>{{ JSON.stringify(agentDiagnostics, null, 2) }}</pre></details>
       <div class="settings-list">
         <div v-if="sharedDefaults" class="settings-list-row">
@@ -497,6 +551,8 @@ watch(selectedSection, () => { agentTab.value = 'configuration'; contextFile.val
       <p>Shared approval bypass (read-only): {{ sharedToolSummary('allow') }}</p>
       <p>Shared deny (read-only): {{ sharedToolSummary('deny') }}</p>
       <button type="button" class="secondary" @click="selectedSection = 'agents:defaults'">Edit default Tool permissions</button>
+      <p>Uses the global default Skills selection, with no independent override.</p>
+      <button type="button" class="secondary" @click="selectedSection = 'agents:skills'">Edit default Skills</button>
     </section>
     <section v-if="selectedSection === 'extensions'" class="settings-section">
       <h3>Extensions</h3>
@@ -637,6 +693,15 @@ watch(selectedSection, () => { agentTab.value = 'configuration'; contextFile.val
             <button type="button" class="secondary" aria-label="Reset maxLlmCallsPerTurn" :disabled="!Object.hasOwn(draft.config, 'maxLlmCallsPerTurn')" @click="delete draft.config['maxLlmCallsPerTurn']">Reset to default</button>
           </div>
         </template>
+        <template v-else-if="draft.section.skills && !draft.section.agent">
+          <p class="settings-help">Default Skill selection for subsequent Root and Child Turns. Newly discovered Skills are not selected automatically.</p>
+          <label class="settings-checkbox"><input type="checkbox" :checked="draft.skillMode === 'inherit'"
+            @change="draft.skillMode = draft.skillMode === 'inherit' ? 'explicit' : 'inherit'"><span>Use default (no Skills)</span></label>
+          <SettingsSkillSelect :skills="skills" :model-value="draft.skillMode === 'inherit' ? [] : draft.skills"
+            :disabled="draft.skillMode === 'inherit'" @update:model-value="draft.skills = $event" />
+          <p v-if="skillError" class="settings-warning" role="status">{{ skillError }}</p>
+          <details v-if="skillDiagnostics.length"><summary>Skill diagnostics</summary><pre>{{ JSON.stringify(skillDiagnostics, null, 2) }}</pre></details>
+        </template>
         <template v-else-if="draft.section.agent">
           <div v-if="!draft.section.agent.builtIn" class="settings-actions settings-tabs" role="tablist" aria-label="Agent settings">
             <button type="button" role="tab" :aria-selected="agentTab === 'configuration'" @click="agentTab = 'configuration'">Configuration</button>
@@ -668,6 +733,17 @@ watch(selectedSection, () => { agentTab.value = 'configuration'; contextFile.val
             <p v-if="!draft.section.agent.builtIn" class="settings-help">Shared deny (read-only): {{ draft.section.agent.sharedDeny.join(', ') || '(none)' }}. Local settings cannot remove these entries.</p>
             <SettingsToolSelect v-model="draft.deny" :label="draft.section.agent.builtIn ? 'Shared prohibited tools' : 'Additional prohibited tools'"
               :tools="tools" :locked-tools="draft.section.agent.sharedDeniedTools" />
+            <template v-if="draft.section.skills">
+              <h4>Skills</h4>
+              <label class="settings-checkbox"><input type="checkbox" :checked="draft.skillMode === 'inherit'"
+                @change="draft.skillMode = draft.skillMode === 'inherit' ? 'explicit' : 'inherit'"><span>Inherit default Skills</span></label>
+              <p v-if="draft.skillMode === 'inherit'" class="settings-description">Default selection (read-only): {{ draft.section.skills.shared.join(', ') || '(none)' }}</p>
+              <p v-else-if="!draft.skills.length" class="settings-description">Custom empty selection: no Skills enabled.</p>
+              <SettingsSkillSelect :skills="skills" :model-value="draft.skillMode === 'inherit' ? draft.section.skills.shared : draft.skills"
+                :disabled="draft.skillMode === 'inherit'" @update:model-value="draft.skills = $event" />
+              <p v-if="skillError" class="settings-warning" role="status">{{ skillError }}</p>
+              <details v-if="skillDiagnostics.length"><summary>Skill diagnostics</summary><pre>{{ JSON.stringify(skillDiagnostics, null, 2) }}</pre></details>
+            </template>
           </template>
           <template v-else>
             <p class="settings-help">Read-only startup snapshot. Manual MD edits, additions and deletions require restart. Reload saved settings does not reread MD.</p>

@@ -68,6 +68,7 @@ Stages 3–5 apply only to Agent-scoped configuration. Global Agent execution po
 | `agents.maxLlmCallsPerTurn` | Global optional positive integer applied independently to each Root or Child Turn; omitted means no Model-call count limit |
 | `memory` | Enabled; local `Xenova/all-MiniLM-L6-v2`; chunk `1600/320`; search `6`, `0.25`, weights `0.7/0.3` |
 | `tools` | `allow=[]`; `deny=[]` |
+| `skills` | `[]`; default names under `agents.defaults.skills`; optional `agents.list[].skills` completely replaces defaults, including explicit `[]` |
 | `context` | Agent Context budgets: `maxFileChars=20000`; `maxTotalChars=150000` |
 | `compaction` | Enabled; maximum desired output headroom `20000` when only a total Context limit is known; keep 3 turns; result share `0.5`; head/tail `10000/5000`; timeout 300 seconds |
 | `agents.maxSubagentDepth` | Global non-negative safe integer; defaults to `1`; `0` removes `task` from the Root Agent's effective Tool policy |
@@ -79,6 +80,13 @@ Stages 3–5 apply only to Agent-scoped configuration. Global Agent execution po
 `tools.deny` removes matching definitions from the visible Tool projection and remains final at execution. The Runtime-owned Session permission mode is deliberately not configuration and does not alter these projected lists. In `manual`, structured targets outside Agent Home and all Exec calls require current-call Approval even when their Tool names are allowed; internal targets honor allow bypass, and other unmatched Tools request Approval. Missing required Approval fails closed. In process-local `allow_all`, every non-denied registered Tool is automatically authorized. Exact names and `*`/`?` globs are supported; `group:*` expansion is not.
 
 ### Configured Agents and delegation
+
+Skills selection is dynamic through Settings, independently of Tool policy.
+`agents:skills` edits only default Skills; existing `agent:<id>` sections edit
+named selections alongside enabled/Tools. Omission inherits and an explicit
+empty list selects none. Missing packages do not invalidate or erase saved names.
+Each Root/Child captures its own current selection; persistence precedes policy
+publication. Core Skills owns name/selection validation, not Agent Context budgets.
 
 Home `agents/<id>` definitions are the registration authority. Startup snapshots
 hold validated MD metadata and instruction bodies; sparse `agents.list[]` values
