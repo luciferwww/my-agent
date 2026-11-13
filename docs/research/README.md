@@ -6,6 +6,9 @@ This directory is reserved for external comparisons and exploratory analysis. Re
 
 ## Current research
 
+- [Skills 支持设计草稿](skills-support-design-draft.md) - 非权威讨论：统一 Home Skills 文件库、默认与按 Agent 类型覆盖、Settings 管理、自动发现及 Turn 生效边界；主 Agent / Subagent 由 LLM 通过同一加载工具处理自动与显式使用，不引入宿主 slash 预展开或专属消息协议；不授权实现或 Spike。
+- [Markdown 特殊渲染与 Mermaid 支持设计草稿](markdown-special-rendering-and-mermaid-design-draft.md) - 非权威讨论：特殊 Markdown 的闭合即显、稳定身份、结果复用与失效；以已有 KaTeX 优化和新增 Mermaid 为首批用例，覆盖安全、流式生命周期、主题、滚动及验证边界；不授权实现或 Spike。
+- [主流 Agent 的 Skills 实现机制调研](mainstream-agent-skills-implementation-research-2026-11-12.md) - 比较 Claude Code、Codex、Copilot、Gemini CLI、Cursor、OpenCode，并补充 OpenClaw；核对发现、渐进加载、调用、权限、Subagent 和更新边界，区分标准、厂商扩展及源码快照；不授权实现。
 - [代码结构调整建议](code-structure-recommendations.md) - 面向维护者的非权威结构分析，讨论 Settings 职责提取、Session 消息调度、应用能力契约归属、Core 基础设施边界与 Runtime 目录收敛；不授权实现。
 - [Dynamic Settings 设计草稿](dynamic-settings-design-draft.md) - 非权威讨论来源；[已归档 Change](../changes/archive/dynamic-settings/plan.md) 记录已交付的 Runtime Settings、WebSocket 编辑器与新 Home 启动行为。第一轮人工测试通过，2026-11-10 owner 授权收尾提交；联合回归及受控验证证据见 Plan。不加入 Extension 动态加载或 Agent 管理。
 - [Tool Use 可读性设计草稿](tool-use-readability-design-draft.md) - Group 操作类型计数、Single Tool 参数模式标题和统一宽度约束的非权威讨论来源；2026-11-06 已由 [Tool Use Readability Change](../changes/archive/tool-use-readability/plan.md) 交付、人工验收并归档，长期规则见 [Channel Specification](../specifications/channel.md#bundled-websocket-tool-readability)。
