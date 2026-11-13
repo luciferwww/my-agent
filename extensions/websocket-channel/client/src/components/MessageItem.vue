@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import {
   approvalStatusClass,
   approvalStatusLabel,
@@ -26,6 +27,14 @@ const props = defineProps<{
   scopes: SubagentScope[];
 }>();
 
+const showHeader = computed(() => {
+  const item = props.item;
+  if (item.kind !== 'turn' || item.label !== 'Assistant' || !item.turnId) return true;
+  const first = props.itemsBySession[props.sourceSessionId]?.find(candidate =>
+    candidate.kind === 'turn' && candidate.label === 'Assistant' && candidate.turnId === item.turnId);
+  return !first || first.id === item.id;
+});
+
 function childScope(segment: ConversationSegment): SubagentScope | undefined {
   return props.scopes.find(scope =>
     scope.callerSessionId === props.sourceSessionId
@@ -44,13 +53,16 @@ function childSessionId(segment: ConversationSegment): string | undefined {
     class="message"
     :class="[itemRoleClass(item), { 'is-interrupted': item.kind === 'turn' && item.interrupted }]"
   >
-    <div class="message-meta">
-      <span>{{ item.label }}</span>
+    <div
+      v-if="showHeader || item.kind === 'turn' && (item.isContinuation || item.interrupted)"
+      class="message-meta"
+    >
+      <span v-if="showHeader">{{ item.label }}</span>
       <span v-if="item.kind === 'user' && item.isSteer" class="meta-tag">steer</span>
       <span v-if="item.kind === 'turn' && item.isContinuation" class="meta-tag meta-tag-muted">continued</span>
       <span v-if="item.kind === 'turn' && item.interrupted" class="meta-tag meta-tag-warn">steered</span>
-      <span v-if="item.turnId">turn {{ item.turnId.slice(0, 8) }}</span>
-      <span>{{ formatTime(item.timestamp) }}</span>
+      <span v-if="showHeader && item.turnId">turn {{ item.turnId.slice(0, 8) }}</span>
+      <span v-if="showHeader">{{ formatTime(item.timestamp) }}</span>
     </div>
 
     <template v-if="item.kind === 'turn'">

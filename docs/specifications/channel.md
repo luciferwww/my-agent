@@ -114,6 +114,15 @@ presentation rather than an invented mapping. Tool execution updates still
 use callId/executionId; a history-only card can receive a live overlay so
 later results remain visible across History rebuilds.
 
+The bundled client shows one Assistant heading for each identified Turn within
+each source Session, using its first Assistant item's timestamp rather than
+the latest streamed delta. Further messages in that Turn keep their original
+order, identity, Tool groups, Thinking and disclosure state without repeating
+the heading. Interleaved user/steering messages and continuation/interruption
+markers remain in place. Child Sessions group independently, even if Turn IDs
+match; unidentified legacy messages and standalone Approval headings remain
+separate. This is presentation only, not a History or event-protocol merge.
+
 Model Catalog query, Abort, and Session management are narrow Runtime
 capabilities; Channel does not own model facts or lifecycle state.
 `settings.execute({ requestId, action, input })` is a transport-neutral Runtime
@@ -351,6 +360,7 @@ Replace `LLM call N` with neutral operation counts, such as
 | `list_dir` | `directory listing` / `directory listings` |
 | `process` | `process operation` / `process operations` |
 | `task` | `subagent task` / `subagent tasks` |
+| `skill` | `skill load` / `skill loads` |
 
 Count calls in the existing reconciled group, not distinct resources, returned
 matches, command fragments, or Child-internal calls. Keep the first three known
@@ -391,6 +401,7 @@ environment fields.
 | `memory_write:append` or omitted mode | `Append to memory <filename>` |
 | `memory_write:overwrite` | `Write memory <filename>` |
 | `task` | Original `description` as the main title, with a separate Agent-type label |
+| `skill` | `Load Skill <name>` |
 
 URL titles accept HTTP(S) only and show host plus the first two non-empty path
 segments, adding `/...` when more remain. Omit protocol, user information,

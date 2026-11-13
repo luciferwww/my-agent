@@ -15,6 +15,7 @@ const operationNames: Readonly<Record<string, readonly [string, string]>> = {
   list_dir: ['directory listing', 'directory listings'],
   process: ['process operation', 'process operations'],
   task: ['subagent task', 'subagent tasks'],
+  skill: ['skill load', 'skill loads'],
 };
 
 export function toolGroupTitle(segments: readonly ConversationSegment[]): string {
@@ -103,6 +104,7 @@ export function toolDisplayTitle(segment: ConversationSegment): string {
       return nonEmpty(input.query) ? `Search memory for "${input.query}"` : fallback;
     case 'exec': return nonEmpty(input.command) ? `Run ${input.command}` : fallback;
     case 'task': return nonEmpty(input.description) ? input.description : fallback;
+    case 'skill': return nonEmpty(input.name) ? `Load Skill ${input.name}` : fallback;
     case 'apply_patch': return nonEmpty(input.input) ? 'Apply patch' : fallback;
     case 'process':
       if (input.action === 'list') return 'List background processes';

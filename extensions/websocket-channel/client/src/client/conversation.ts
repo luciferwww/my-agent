@@ -737,7 +737,6 @@ function appendTextToTurn(
       ...(messageId === undefined ? {} : { messageId }),
     });
   }
-  turn.timestamp = now();
 }
 
 function findThinking(

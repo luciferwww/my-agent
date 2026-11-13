@@ -15,10 +15,12 @@ import { createSessionUiState } from '../client/session-state';
 
 let MessageItem: Component;
 let ApprovalPanel: Component;
+let ConversationPanel: Component;
 
 beforeAll(async () => {
   MessageItem = await loadComponent('./MessageItem.vue');
   ApprovalPanel = await loadComponent('./ApprovalPanel.vue');
+  ConversationPanel = await loadComponent('./ConversationPanel.vue');
 });
 
 async function loadComponent(path: string): Promise<Component> {
@@ -37,6 +39,7 @@ async function loadComponent(path: string): Promise<Component> {
       if (specifier === '../client/conversation') return conversation;
       if (specifier === '../client/markdown') return markdown;
       if (specifier === '../client/tool-presentation') return toolPresentation;
+      if (specifier === './MessageItem.vue') return { default: MessageItem };
       return require(specifier);
     },
     module,
@@ -52,6 +55,125 @@ function render(item: ConversationItem, itemsBySession: Record<string, Conversat
   }));
 }
 
+function renderConversation(items: ConversationItem[], children: Record<string, ConversationItem[]> = {}) {
+  return renderToString(createSSRApp(ConversationPanel, {
+    displayedChatItems: items, sessionId: 'root', itemsBySession: { root: items, ...children },
+    scopes: [], currentSessionLabel: 'Root', pendingApprovalCount: 0,
+    isConnected: true, connectionStatus: 'connected', historyStatus: 'loaded',
+    historyHasMore: false, historyError: '', canRetryHistory: false,
+  }));
+}
+
+describe('Assistant Turn headings', () => {
+  function messages(turnId = 'c5b64474-turn'): ConversationItem[] {
+    return buildHistoryItems([
+      { entryId: 'read', messageId: 'read', turnId, role: 'assistant', llmRound: 0,
+        timestamp: '2026-11-12T07:55:03Z',
+        content: [{ type: 'tool_use', id: 'read', name: 'read_file', input: { path: 'a.txt' } }] },
+      { entryId: 'change', messageId: 'change', turnId, role: 'assistant', llmRound: 1,
+        timestamp: '2026-11-12T07:55:06Z',
+        content: [{ type: 'tool_use', id: 'change', name: 'edit_file', input: { path: 'a.txt' } }] },
+      { entryId: 'answer', messageId: 'answer', turnId, role: 'assistant', llmRound: 2,
+        timestamp: '2026-11-12T07:55:09Z', content: [{ type: 'text', text: 'Finished.' }] },
+    ]);
+  }
+
+  it('renders one heading and first timestamp without merging messages or Tool groups', async () => {
+    const items = messages();
+    const html = await renderConversation(items);
+    expect(html.match(/>Assistant<\/span>/gu)).toHaveLength(1);
+    expect(html.match(/>turn c5b64474<\/span>/gu)).toHaveLength(1);
+    expect(html).toContain(conversation.formatTime(items[0].timestamp));
+    expect(html).not.toContain(conversation.formatTime(items[1].timestamp));
+    expect(html).not.toContain(conversation.formatTime(items[2].timestamp));
+    expect(html.match(/data-chat-item-id=/gu)).toHaveLength(3);
+    expect(html.match(/class="tool-call-group"/gu)).toHaveLength(2);
+    expect(html.indexOf('data-tool-call-id="read"')).toBeLessThan(html.indexOf('data-tool-call-id="change"'));
+    expect(html.indexOf('data-tool-call-id="change"')).toBeLessThan(html.indexOf('Finished.'));
+    expect(items.map(item => item.messageId)).toEqual(['read', 'change', 'answer']);
+  });
+
+  it('preserves interleaved text, Thinking and disclosure state', async () => {
+    const items = messages();
+    items[0].segments![0].toolGroup!.expanded = false;
+    items.splice(1, 0, {
+      kind: 'turn', label: 'Assistant', id: 'interleaved', turnId: items[0].turnId,
+      timestamp: items[0].timestamp + 1000,
+      segments: [
+        { id: 'text', type: 'text', text: 'Before editing.' },
+        { id: 'thinking', type: 'thinking', text: 'Keep this reasoning.', expanded: true, status: 'complete' },
+      ],
+    });
+    const html = await renderConversation(items);
+    expect(html.match(/>Assistant<\/span>/gu)).toHaveLength(1);
+    expect(html).not.toContain('data-tool-call-id="read"');
+    expect(html.indexOf('1 file read')).toBeLessThan(html.indexOf('Before editing.'));
+    expect(html.indexOf('Before editing.')).toBeLessThan(html.indexOf('Keep this reasoning.'));
+    expect(html.indexOf('Keep this reasoning.')).toBeLessThan(html.indexOf('data-tool-call-id="change"'));
+    expect(items[0].segments![0].toolGroup!.expanded).toBe(false);
+  });
+
+  it('does not group different full Turn IDs, legacy unidentified messages or Approval headings', async () => {
+    const first = messages()[0];
+    const second = { ...messages('c5b64474-other')[0], id: 'other' };
+    const legacy = [undefined, null, ''].map((turnId, index) => ({
+      ...first, id: `legacy-${index}`, turnId,
+    }));
+    const approval = { ...first, id: 'approval', label: 'Approval' };
+    const html = await renderConversation([first, second, ...legacy, approval]);
+    expect(html.match(/>Assistant<\/span>/gu)).toHaveLength(5);
+    expect(html).toContain('>Approval</span>');
+  });
+
+  it('keeps steering messages and status tags in place without repeating the Turn heading', async () => {
+    const items = messages();
+    items[0].interrupted = true;
+    items[1].isContinuation = true;
+    items.splice(1, 0, {
+      kind: 'user', label: 'You', id: 'steer', turnId: items[0].turnId,
+      timestamp: items[0].timestamp + 1000, isSteer: true, text: 'Change direction.',
+    });
+    const html = await renderConversation(items);
+    expect(html.match(/>Assistant<\/span>/gu)).toHaveLength(1);
+    expect(html).toContain('>steered</span>');
+    expect(html).toContain('>continued</span>');
+    expect(html).toContain('>steer</span>');
+    expect(html.indexOf('data-tool-call-id="read"')).toBeLessThan(html.indexOf('Change direction.'));
+    expect(html.indexOf('Change direction.')).toBeLessThan(html.indexOf('data-tool-call-id="change"'));
+  });
+
+  it('groups each Child independently from its Parent and sibling even when Turn IDs match', async () => {
+    const parent = messages()[0];
+    parent.segments = ['child-a', 'child-b'].map(id => ({
+      type: 'tool_call', id, callId: id, name: 'task', input: {}, status: 'success',
+      subagentSessionId: id, subagentExpanded: true,
+    }));
+    const children = Object.fromEntries(['child-a', 'child-b'].map(id => [
+      id, messages().map(item => ({ ...item, id: `${id}-${item.id}` })),
+    ]));
+    const html = await renderConversation([parent], children);
+    expect(html.match(/>Assistant<\/span>/gu)).toHaveLength(3);
+    expect(html.match(/>turn c5b64474<\/span>/gu)).toHaveLength(3);
+    expect(html.match(/Finished\./gu)).toHaveLength(2);
+  });
+
+  it('retains the first live timestamp as more text arrives', () => {
+    const state = createSessionUiState();
+    let id = 0;
+    let now = 1000;
+    const context = { clientId: 'observer', nextId: () => ++id, now: () => now };
+    conversation.applyAgentEvent(state, {
+      type: 'text_delta', turnId: 'turn', messageId: 'message', text: 'First',
+    }, context);
+    now = 5000;
+    conversation.applyAgentEvent(state, {
+      type: 'text_delta', turnId: 'turn', messageId: 'message', text: ' next',
+    }, context);
+    expect(state.chatItems[0].timestamp).toBe(1000);
+    expect(state.chatItems[0].segments![0].text).toBe('First next');
+  });
+});
+
 function history(toolCount: number): ConversationItem {
   return buildHistoryItems([{
     entryId: 'assistant', messageId: 'assistant', turnId: 'turn',
@@ -63,6 +185,34 @@ function history(toolCount: number): ConversationItem {
 }
 
 describe('Tool group presentation', () => {
+  it('labels Skill loading explicitly in live and historical groups', async () => {
+    const state = createSessionUiState();
+    let id = 0;
+    const context = { clientId: 'observer', nextId: () => ++id };
+    for (const event of [
+      { type: 'llm_call', messageId: 'skill-message', round: 0 },
+      { type: 'tool_call_requested', callId: 'skill-call', messageId: 'skill-message',
+        name: 'skill', input: { name: 'manual-test' } },
+      { type: 'tool_result', callId: 'skill-call', result: { status: 'success', content: 'Instructions' } },
+    ]) conversation.applyAgentEvent(state, { turnId: 'turn', ...event }, context);
+    const historical = buildHistoryItems([{
+      entryId: 'skill-message', messageId: 'skill-message', turnId: 'turn', role: 'assistant', llmRound: 0,
+      content: [{ type: 'tool_use', id: 'skill-call', name: 'skill', input: { name: 'manual-test' },
+        status: 'success', result_content: 'Instructions' }],
+    }]);
+    for (const item of [state.chatItems[0], historical[0]]) {
+      const collapsed = await render(item);
+      expect(collapsed).toContain('1 skill load');
+      expect(collapsed).not.toContain('other operation');
+      const group = item.segments![0].toolGroup;
+      if (!group) throw new Error('Missing Skill Tool group.');
+      group.expanded = true;
+      const expanded = await render(item);
+      expect(expanded).toContain('Load Skill manual-test');
+      expect(expanded).toContain('Succeeded');
+    }
+  });
+
   it.each(['success', 'aborted'])('exposes the %s status on historical Tool and Subagent badges', async status => {
     const item = buildHistoryItems([{
       entryId: 'message', turnId: 'turn', role: 'assistant',

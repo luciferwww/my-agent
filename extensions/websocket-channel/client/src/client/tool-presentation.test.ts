@@ -22,6 +22,7 @@ describe('Tool group titles', () => {
     ['list_dir', 'directory listing', 'directory listings'],
     ['process', 'process operation', 'process operations'],
     ['task', 'subagent task', 'subagent tasks'],
+    ['skill', 'skill load', 'skill loads'],
   ])('counts %s calls with singular and plural units', (name, singular, plural) => {
     expect(toolGroupTitle(tools(name))).toBe(`1 ${singular}`);
     expect(toolGroupTitle(tools(name, name))).toBe(`2 ${plural}`);
@@ -59,6 +60,7 @@ describe('Tool group titles', () => {
       ['memory_write', { path: 'MEMORY.md', mode: 'append' }, 'Append to memory MEMORY.md'],
       ['memory_write', { path: 'MEMORY.md', mode: 'overwrite' }, 'Write memory MEMORY.md'],
       ['task', { description: 'Find Bing results', prompt: 'hidden' }, 'Find Bing results'],
+      ['skill', { name: 'manual-test' }, 'Load Skill manual-test'],
     ])('formats %s without changing its input', (name, input, expected) => {
       const snapshot = structuredClone(input);
       const segment: ConversationSegment = { id: 'tool', type: 'tool_call', name, input };
@@ -91,6 +93,9 @@ describe('Tool group titles', () => {
       ['web_fetch', { url: 'invalid' }],
       ['web_fetch', { url: 'file:///local' }],
       ['task', { prompt: 'not used as a title' }],
+      ['skill', {}],
+      ['skill', { name: ' ' }],
+      ['skill', { name: 12 }],
       ['exec', { command: '' }],
       ['apply_patch', { input: '' }],
       ['grep_search', { query: {} }],
