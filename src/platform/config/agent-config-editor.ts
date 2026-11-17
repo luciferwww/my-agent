@@ -18,6 +18,7 @@ export type CredentialChange =
 export type ConfigSectionEdit =
   | AgentPolicyEdit
   | AgentExecutionEdit
+  | { readonly kind: 'memory'; readonly settings: unknown }
   | {
       readonly kind: 'llm';
       readonly settings: unknown;
@@ -42,6 +43,7 @@ export interface AgentExecutionEdit {
 }
 
 export type ConfigSectionPreimage =
+  | { readonly kind: 'memory'; readonly enabled: boolean | undefined; readonly present: boolean }
   | { readonly kind: 'agent-policy'; readonly edit: AgentPolicyEdit }
   | { readonly kind: 'agent-execution'; readonly settings: Partial<AgentExecutionConfig> }
   | { readonly kind: 'llm'; readonly value: AgentConfigDocument['llm'] }
@@ -59,6 +61,23 @@ export function editAgentConfigSection(
   edit: ConfigSectionEdit,
 ): { document: AgentConfigDocument; previous: ConfigSectionPreimage } {
   const settings = object(edit.settings, '/settings');
+  if (edit.kind === 'memory') {
+    onlyKeys(settings, ['enabled'], '/settings');
+    if (typeof settings['enabled'] !== 'boolean') throw new ConfigEditError('/settings/enabled');
+    const previous: ConfigSectionPreimage = {
+      kind: 'memory', enabled: document.agents?.memory?.enabled,
+      present: document.agents?.memory !== undefined,
+    };
+    const candidate: AgentConfigDocument = {
+      ...document,
+      agents: {
+        ...document.agents,
+        memory: { ...document.agents?.memory, enabled: settings['enabled'] },
+      },
+    };
+    validateAgentConfigDocument(candidate);
+    return { document: candidate, previous };
+  }
   if (edit.kind === 'agent-execution') {
     onlyKeys(settings, ['steeringEnabled', 'maxSubagentDepth', 'maxLlmCallsPerTurn'], '/settings');
     const runner = {
@@ -200,7 +219,18 @@ export async function restoreAgentConfigSection(
 ): Promise<AgentConfigDocument> {
   const current = await readAgentConfigDocument(agentHome);
   let restored: AgentConfigDocument;
-  if (previous.kind === 'agent-execution') {
+  if (previous.kind === 'memory') {
+    const memory = { ...current.agents?.memory };
+    if (previous.enabled === undefined) delete memory.enabled;
+    else memory.enabled = previous.enabled;
+    const agents = { ...current.agents };
+    agents.memory = memory;
+    if (!previous.present && Object.keys(memory).length === 0) delete agents.memory;
+    const document = { ...current, agents: current.agents };
+    if (Object.keys(agents).length === 0) delete document.agents;
+    else document.agents = agents;
+    restored = document;
+  } else if (previous.kind === 'agent-execution') {
     restored = editAgentConfigSection(current, { kind: 'agent-execution', settings: previous.settings }).document;
   } else if (previous.kind === 'agent-policy') {
     restored = editAgentConfigSection(current, previous.edit).document;

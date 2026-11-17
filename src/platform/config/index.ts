@@ -36,6 +36,7 @@ export { ensureAgentConfigDocument } from './agent-config-bootstrap.js';
 export {
   loadAgentConfig, validateLlm as validateLlmConfiguration,
   getAgentExecutionSettings, resolveAgentExecutionConfig,
+  resolveMemoryConfig,
 } from './agent-config-loader.js';
 export type { AgentConfigSnapshot } from './agent-config-loader.js';
 export { AgentConfigError } from './agent-config-errors.js';

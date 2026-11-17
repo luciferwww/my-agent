@@ -43,11 +43,12 @@ const extensions = computed(() => drafts.value.filter((draft) => draft.section.i
 const agents = computed(() => drafts.value.filter(draft => draft.section.agent));
 const sharedDefaults = computed(() => drafts.value.find(draft => draft.section.id === 'agents:defaults'));
 const globalSettings = computed(() => drafts.value.filter(draft =>
-  draft.section.id === 'agents:execution' || draft.section.id === 'agents:defaults' || draft.section.id === 'agents:skills'));
-const agentSettings = computed(() => drafts.value.filter(draft => draft.section.agent || draft.section.execution || draft.section.skills));
+  draft.section.id === 'agents:execution' || draft.section.id === 'agents:defaults' || draft.section.id === 'agents:skills' || draft.section.id === 'agents:memory'));
+const agentSettings = computed(() => drafts.value.filter(draft => draft.section.agent || draft.section.execution || draft.section.skills || draft.section.id === 'agents:memory'));
 const selectedCategory = computed(() => ['llm', 'builtin', 'provider'].includes(selectedSection.value) ? 'llm'
   : ['agents', 'agent-global', 'agent-list', 'general-purpose'].includes(selectedSection.value)
-    || visibleDrafts.value[0]?.section.agent || visibleDrafts.value[0]?.section.execution || visibleDrafts.value[0]?.section.skills ? 'agents' : 'extensions');
+    || visibleDrafts.value[0]?.section.agent || visibleDrafts.value[0]?.section.execution || visibleDrafts.value[0]?.section.skills
+    || visibleDrafts.value[0]?.section.id === 'agents:memory' ? 'agents' : 'extensions');
 const categories = computed(() => [
   { id: 'llm', name: 'LLM', description: 'Models & providers', drafts: drafts.value.filter((draft) => draft.section.id === 'llm') },
   { id: 'agents', name: 'Agents', description: 'Global settings & Agent list', drafts: agentSettings.value },
@@ -231,6 +232,7 @@ function builtin(draft: Draft) {
   return { baseURL: draft.baseURL, models: draft.models.map(modelSettings) };
 }
 function settings(draft: Draft) {
+  if (draft.section.id === 'agents:memory') return { enabled: draft.enabled };
   if (draft.section.execution) return executionPolicySettings(draft.config);
   if (draft.section.agent) {
     const result = agentPolicySettings(draft.section, draft);
@@ -262,7 +264,7 @@ async function save(draft: Draft) {
     const input = {
       sectionId: draft.section.id, expectedRevision: draft.section.revision,
       settings: settings(draft),
-      ...(draft.section.agent || draft.section.execution || draft.section.skills ? {} : { credentials: credentials(draft) }),
+      ...(draft.section.agent || draft.section.execution || draft.section.skills || draft.section.id === 'agents:memory' ? {} : { credentials: credentials(draft) }),
     };
     const response = props.execute('update', input);
     clearSecretValues(draft);
@@ -323,7 +325,7 @@ function sharedToolSummary(field: 'allow' | 'deny'): string {
 }
 function backTarget(draft: Draft): string {
   if (draft.section.id === 'llm') return 'llm';
-  if (draft.section.execution || draft.section.id === 'agents:defaults' || draft.section.id === 'agents:skills') return 'agent-global';
+  if (draft.section.execution || draft.section.id === 'agents:defaults' || draft.section.id === 'agents:skills' || draft.section.id === 'agents:memory') return 'agent-global';
   return draft.section.agent ? 'agent-list' : 'extensions';
 }
 function backLabel(draft: Draft): string {
@@ -503,12 +505,12 @@ watch([() => props.open, () => props.connected], ([open, connected], _, onCleanu
     <section v-if="selectedSection === 'agent-global'" class="settings-section">
       <button type="button" class="secondary settings-back" @click="selectedSection = 'agents'">Back to Agents</button>
       <h3>Global settings</h3>
-      <p class="settings-description">Configure execution policy, default Tool permissions and Skills. Save each section independently.</p>
+      <p class="settings-description">Configure execution policy, Memory, default Tool permissions and Skills. Save each section independently.</p>
       <div class="settings-list">
         <div v-for="draft in globalSettings" :key="draft.section.id" class="settings-list-row">
           <div class="settings-list-copy">
             <strong>{{ draft.section.name }}</strong>
-            <span>{{ draft.section.execution ? 'Global execution controls' : draft.section.skills ? 'Default Skill selection for Root and Child Turns.' : 'Shared approval bypass and prohibited Tools.' }}</span>
+            <span>{{ draft.section.execution ? 'Global execution controls' : draft.section.id === 'agents:memory' ? 'Global Memory enablement. Saved changes require a service restart.' : draft.section.skills ? 'Default Skill selection for Root and Child Turns.' : 'Shared approval bypass and prohibited Tools.' }}</span>
             <div class="settings-markers">
               <span v-if="isDirty(draft)" class="settings-badge">Unsaved</span>
               <span v-if="draft.section.restartRequired" class="settings-badge">Restart required</span>
@@ -660,6 +662,11 @@ watch([() => props.open, () => props.connected], ([open, connected], _, onCleanu
           </div>
           <p class="settings-description">Save LLM also saves the default model selected on the Providers page.</p>
           </template>
+        </template>
+        <template v-else-if="draft.section.id === 'agents:memory'">
+          <label class="settings-checkbox"><input v-model="draft.enabled" type="checkbox"><span>Enable Memory</span></label>
+          <p class="settings-help">Memory uses a local embedding model. When required files are not cached, they are downloaded from Hugging Face. If the source is unreachable, set HF_ENDPOINT to a trusted Hugging Face-compatible mirror and restart.</p>
+          <p class="settings-description">Saved changes require a service restart.</p>
         </template>
         <template v-else-if="draft.section.execution">
           <label class="settings-checkbox">

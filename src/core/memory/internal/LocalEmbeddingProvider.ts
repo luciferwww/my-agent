@@ -1,14 +1,12 @@
 import type { EmbeddingProvider } from '../types.js';
 import { DEFAULT_MEMORY_CONFIG } from '../config.js';
 import { Logger } from '../../../platform/logger/index.js';
+import type { FeatureExtractionPipeline } from '@xenova/transformers';
 
 const log = Logger.get('LocalEmbeddingProvider');
 
 /**
- * 常见 Xenova 模型的向量维度静态映射表。
- *
- * 命中此表 → 同步取值；未命中 → 加载 pipeline 后动态探测（首次启动多一次毫秒级推理）。
- * 以后遇到新常用 model 补上即可。
+ * Known model dimensions avoid loading a pipeline just to probe its output.
  */
 const KNOWN_DIMENSIONS: Record<string, number> = {
   'Xenova/all-MiniLM-L6-v2':       384,
@@ -20,19 +18,13 @@ const KNOWN_DIMENSIONS: Record<string, number> = {
 };
 
 /**
- * 本地嵌入提供者，使用 @xenova/transformers 在 Node.js 中运行轻量级模型。
- *
- * 默认模型: Xenova/all-MiniLM-L6-v2（384 维，~90MB）
- * - 维度由 createEmbeddingProvider 工厂确定后传入（命中表或运行时探测）
- * - 首次调用 embed() 时懒加载 pipeline（避免启动延迟；探测路径会提前加载一次）
- * - 模型自动缓存到 ~/.cache/huggingface/
+ * Local embeddings with lazy pipeline loading and the library's existing cache.
  */
 export class LocalEmbeddingProvider implements EmbeddingProvider {
   readonly modelId: string;
   readonly dimensions: number;
 
-  // 用 any 避免 @xenova/transformers 的复杂泛型
-  private pipelinePromise: Promise<any> | null = null;
+  private pipelinePromise: Promise<FeatureExtractionPipeline> | null = null;
 
   constructor(modelId: string, dimensions: number) {
     this.modelId = modelId;
@@ -51,9 +43,6 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
         normalize: true,
       });
 
-      // output.data 是 Float32Array → 普通数组。
-      // 不再 slice 截断：dimensions 由 model 反查得到，永远等于 output.data.length；
-      // 保留截断只会掩盖维度不匹配 bug（spec §7.5）。
       const embedding = Array.from(output.data as Float32Array);
       results.push(embedding);
     }
@@ -61,49 +50,74 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
     return results;
   }
 
-  // ── 内部方法 ──────────────────────────────────────────
-
-  /**
-   * 懒加载 pipeline。首次调用时初始化，后续复用同一个 Promise。
-   * 多个并发调用不会重复初始化。
-   */
-  private ensurePipeline(): Promise<any> {
+  private ensurePipeline(): Promise<FeatureExtractionPipeline> {
     if (!this.pipelinePromise) {
       this.pipelinePromise = this.initPipeline();
     }
     return this.pipelinePromise;
   }
 
-  private async initPipeline(): Promise<any> {
-    log.info('Loading embedding model', { modelId: this.modelId });
-    // 动态 import，避免未安装 @xenova/transformers 时模块加载失败
-    const { pipeline } = await import('@xenova/transformers');
-    const pipe = await pipeline('feature-extraction', this.modelId);
-    log.info('Embedding model loaded', { modelId: this.modelId });
-    return pipe;
+  private initPipeline(): Promise<FeatureExtractionPipeline> {
+    return loadEmbeddingPipeline(this.modelId);
   }
 }
 
-/**
- * 动态探测未知模型的向量维度：加载 pipeline → 跑一次空字符串推理 → 取 output.data.length。
- * 失败时抛出错误，由调用方决定如何降级。
- */
+async function loadEmbeddingPipeline(model: string): Promise<FeatureExtractionPipeline> {
+  let endpoint: string | undefined;
+  try {
+    const { pipeline, env } = await import('@xenova/transformers');
+    const configuredEndpoint = process.env['HF_ENDPOINT'];
+    if (configuredEndpoint !== undefined) {
+      let url: URL;
+      try {
+        url = new URL(configuredEndpoint);
+      } catch {
+        throw new Error('Invalid HF_ENDPOINT: expected a nonblank HTTP(S) base URL.');
+      }
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+        throw new Error('Invalid HF_ENDPOINT: use an HTTP(S) base URL without credentials, query or fragment.');
+      }
+      env.remoteHost = `${url.href.replace(/\/+$/u, '')}/`;
+    }
+    endpoint = env.remoteHost;
+    log.info('Loading local embedding model; missing files may be downloaded.', { model, endpoint });
+    const pipe = await pipeline('feature-extraction', model);
+    log.info('Local embedding model loaded.', { model });
+    return pipe;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const cause = error instanceof Error ? error.cause : undefined;
+    const code = errorCode(cause) ?? errorCode(error);
+    const network = code !== undefined && /^(?:ECONN|ENOTFOUND|EAI_|ETIMEDOUT|UND_ERR_)/u.test(code);
+    const fileFailure = /^(?:.+ error occurred while trying to load file|Unauthorized access to file|Forbidden access to file|Could not locate file|Error \(\d+\) occurred while trying to load file): "(https?:\/\/[^"]+)"\.$/u.exec(message);
+    log.error(network ? 'Embedding model loading failed: network request failed.'
+      : fileFailure ? 'Embedding model file request failed.' : 'Embedding model loading failed.', {
+      model, endpoint, error: message,
+      ...(cause instanceof Error ? { cause: cause.message } : {}),
+      ...(code === undefined ? {} : { code }),
+      ...(fileFailure ? { url: fileFailure[1] } : {}),
+      hint: network
+        ? 'Check network access. If the source is unreachable, set HF_ENDPOINT to a trusted Hugging Face-compatible mirror and restart.'
+        : fileFailure ? 'Check repository access and download endpoint configuration.'
+          : 'Check the reported model-loading error and local embedding configuration.',
+    });
+    throw error;
+  }
+}
+
+function errorCode(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+    ? error.code : undefined;
+}
+
 async function detectDimensions(modelId: string): Promise<number> {
-  const { pipeline } = await import('@xenova/transformers');
-  const pipe: any = await pipeline('feature-extraction', modelId);
+  const pipe = await loadEmbeddingPipeline(modelId);
   const output = await pipe('', { pooling: 'mean', normalize: true });
   return (output.data as Float32Array).length;
 }
 
 /**
- * 尝试创建嵌入提供者。返回 null 表示不可用（系统降级为纯关键词搜索）。
- *
- * 维度反查规则（spec §7.5）：
- *   1. 命中 KNOWN_DIMENSIONS → 直接用（无额外开销）
- *   2. 未命中 → 加载 pipeline 探测一次（毫秒级），同时 info log 提示「未知 model，
- *      探测到 dims=N」方便以后补表
- *
- * 后续扩展点：可在此处检测 OPENAI_API_KEY 等环境变量，创建对应的远程 provider。
+ * Return null when unavailable so callers retain keyword-only fallback.
  */
 export async function createEmbeddingProvider(
   config?: { provider?: string; model?: string },

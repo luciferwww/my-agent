@@ -11,6 +11,20 @@ describe('Settings client', () => {
     resolvedSettings: { steeringEnabled: false, maxSubagentDepth: 1 },
   };
 
+  it('parses Memory enablement and rejects extra fields or invalid values', () => {
+    const memory = {
+      id: 'agents:memory', kind: 'memory', revision: 'memory-revision',
+      restartRequired: true, settings: { enabled: false }, form: { credentials: {} },
+    };
+    expect(parseSection(memory)).toMatchObject({
+      id: 'agents:memory', settings: { enabled: false }, restartRequired: true,
+    });
+    for (const settings of [{}, { enabled: 'false' }, { enabled: true, embedding: {} }]) {
+      expect(() => parseSection({ ...memory, settings })).toThrow();
+    }
+    expect(() => parseSection({ ...memory, kind: 'extension' })).toThrow();
+  });
+
   it('parses execution defaults and sparse saved values without inventing a call limit', () => {
     const section = parseSection(execution);
     expect(section.settings).toEqual({});

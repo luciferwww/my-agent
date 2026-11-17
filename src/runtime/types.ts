@@ -49,9 +49,9 @@ export interface ManagedProcessLifecycle {
 export interface RuntimeMemoryOptions {
   agentHome: string;
   enabled: boolean;
-  embedding?: AgentDefaults['memory']['embedding'];
-  chunking?: AgentDefaults['memory']['chunking'];
-  search?: AgentDefaults['memory']['search'];
+  embedding?: AppConfig['agents']['memory']['embedding'];
+  chunking?: AppConfig['agents']['memory']['chunking'];
+  search?: AppConfig['agents']['memory']['search'];
 }
 
 export interface RuntimeBuiltinToolOptions {

@@ -62,7 +62,6 @@ describe('Extension acquisition to Runtime integration', () => {
       resolvePathContext: async () => ({ installDir: join(root, 'installation'), agentHome: freshHome }),
       createRuntime: async (options) => RuntimeApp.create({
         ...options,
-        cliOverrides: { memory: { enabled: false } },
         dependencies: {
           createMemoryManager: async () => null,
           acquireExtensions: async (options) => {
@@ -100,6 +99,29 @@ describe('Extension acquisition to Runtime integration', () => {
               },
             });
             const llm = loaded.output.sections.find((section: { id: string }) => section.id === 'llm');
+            const memory = loaded.output.sections.find((section: { id: string }) => section.id === 'agents:memory');
+            expect(memory).toMatchObject({ kind: 'memory', settings: { enabled: true }, restartRequired: false });
+            const savedMemory = await request({
+              type: 'settings_action', requestId: 'save-memory', action: 'update',
+              input: {
+                sectionId: 'agents:memory', expectedRevision: memory.revision, settings: { enabled: false },
+              },
+            });
+            expect(savedMemory).toMatchObject({ ok: true, output: { section: {
+              settings: { enabled: false }, restartRequired: true, applicationStatus: 'restart_required',
+            } } });
+            const afterMemory = await request({
+              type: 'settings_action', requestId: 'load-after-memory', action: 'load', input: {},
+            });
+            expect(afterMemory.output.toolCatalog).toEqual(loaded.output.toolCatalog);
+            expect((await loadAgentConfig({ agentHome: freshHome, environment: {} })).application.agents.memory.enabled)
+              .toBe(false);
+            expect(await request({
+              type: 'settings_action', requestId: 'reverse-memory', action: 'update',
+              input: {
+                sectionId: 'agents:memory', expectedRevision: savedMemory.output.section.revision, settings: { enabled: true },
+              },
+            })).toMatchObject({ ok: true, output: { section: { restartRequired: false, applicationStatus: 'current' } } });
             const execution = loaded.output.sections.find((section: { id: string }) => section.id === 'agents:execution');
             const executionDefaults = { steeringEnabled: true, maxSubagentDepth: 1 };
             expect(execution).toMatchObject({
@@ -239,9 +261,9 @@ describe('Extension acquisition to Runtime integration', () => {
       agentHome,
       loadedUnits: acquisition.loadedUnits,
       cliOverrides: {
-        memory: { enabled: false },
         tools: { deny: ['task'] },
       },
+      dependencies: { createMemoryManager: async () => null },
     });
     try {
       const catalog: ModelCatalogSnapshot = runtime.application.getModelCatalog();
@@ -293,9 +315,9 @@ describe('Extension acquisition to Runtime integration', () => {
       agentHome,
       loadedUnits: acquisition.loadedUnits,
       cliOverrides: {
-        memory: { enabled: false },
         tools: { deny: ['task'] },
       },
+      dependencies: { createMemoryManager: async () => null },
     });
     try {
       const catalog = runtime.application.getModelCatalog();

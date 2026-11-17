@@ -202,7 +202,7 @@ does not depend on SettingsManager. Update and Test shutdown convergence begin
 together against the same remaining budget, and SettingsManager aggregates their
 reports without inspecting the Test collection.
 
-Private stateless section-view functions build LLM, Extension and global execution responses,
+Private stateless section-view functions build LLM, Extension, Memory and global execution responses,
 including credential metadata, Extension startup-baseline restart comparison
 and global execution saved/applied consistency, using
 explicit facts supplied by SettingsManager. They do not read files, materialize
@@ -220,6 +220,11 @@ Each new Child captures the latest execution limits before asynchronous setup;
 depth admission and canSpawn use that same snapshot. Already captured parameters
 remain stable, even if a Parent's later Child uses newer limits. No watcher,
 additional policy manager or Child steering/message-ingress path is introduced.
+
+`agents:memory` persists only global enablement. Its restart marker compares
+resolved saved enablement with the immutable startup Application value, not
+manager readiness. Saving does not load a model, index files, update Agent policy
+or change registered Tools.
 
 Model Test either creates an unpublished temporary Built-in Unit from a candidate,
 or pins the current Registry generation to use a loaded Provider. It reuses model
@@ -264,7 +269,12 @@ Only a complete resolved candidate can publish. Optional startup failures are is
 
 An immutable Snapshot with no Providers is valid and can be published; Runtime does not invent an implicit Provider or reject application startup for that condition. A Turn without a valid explicit or configured Model Reference fails before Runner invocation.
 
-Memory is optional. Disabled Memory contributes no tools. Initialization failure emits a recoverable warning and continues with `memoryManager = null`; successful Memory contributes through a builtin Unit and is closed as a shared resource during Shutdown.
+Memory is global and optional. Bootstrap uses `appConfig.agents.memory` for one
+shared manager and startup incremental indexing; unchanged files are not
+unconditionally re-embedded. Disabled Memory contributes no Tools. Initialization
+failure emits a recoverable warning and continues with `memoryManager = null`;
+successful Memory contributes through a builtin Unit and is closed as a shared
+resource during Shutdown. Root and Child access remains ordinary Tool policy.
 
 ## 5. Model binding and Catalog query
 

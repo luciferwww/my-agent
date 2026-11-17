@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import {
   createDefaultAgentConfig,
   resolveAgentConfig,
+  resolveMemoryConfig,
 } from '../../platform/config/index.js';
 import { DEFAULT_RUNNER_CONFIG } from '../../core/runner/config.js';
 import type { AppConfig } from '../../platform/config/types.js';
@@ -48,6 +49,7 @@ export async function bootstrapRuntime(
         agents: {
           ...DEFAULT_RUNNER_CONFIG,
           maxSubagentDepth: DEFAULT_MAX_SUBAGENT_DEPTH,
+          memory: resolveMemoryConfig(),
           defaults: createDefaultAgentConfig(),
           list: [],
         },
@@ -128,10 +130,10 @@ export async function bootstrapRuntime(
     try {
       memoryManager = await deps.createMemoryManager({
         agentHome: options.agentHome,
-        enabled: resolvedConfig.memory.enabled,
-        embedding: resolvedConfig.memory.embedding,
-        chunking: resolvedConfig.memory.chunking,
-        search: resolvedConfig.memory.search,
+        enabled: appConfig.agents.memory.enabled,
+        embedding: appConfig.agents.memory.embedding,
+        chunking: appConfig.agents.memory.chunking,
+        search: appConfig.agents.memory.search,
       });
       if (memoryManager) {
         log.info('memory manager ready', { agentHome: options.agentHome });

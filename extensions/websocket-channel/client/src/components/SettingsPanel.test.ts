@@ -234,6 +234,39 @@ function deferredResult() {
 }
 
 describe('SettingsPanel', () => {
+  it('edits Memory through Global settings with the shared checkbox, restart badge, and enabled-only save', async () => {
+    const memory = {
+      id: 'agents:memory', kind: 'memory', name: 'Memory', revision: 'memory-revision',
+      settings: { enabled: true }, restartRequired: false, form: { credentials: {} },
+    };
+    const f = await mount(initialSettings(), [executionSection(), memory]);
+    await category('Agents');
+    await click('Global settings');
+    await click('Configure Memory');
+    expect(host.textContent).toContain('HF_ENDPOINT');
+    expect(host.textContent).toContain('Saved changes require a service restart.');
+    await checkbox('Enable Memory');
+    await click('Back to Global settings');
+    expect(host.textContent).toContain('Unsaved');
+    await click('Configure Memory');
+    const response = deferredResult();
+    f.execute.mockImplementationOnce(() => response.promise);
+    const saving = click('Save Memory');
+    await nextTick();
+    expect(latestUpdate(f.execute)).toEqual({
+      sectionId: 'agents:memory', expectedRevision: 'memory-revision', settings: { enabled: false },
+    });
+    response.resolve({
+      requestId: 'update', action: 'update', ok: true,
+      output: { section: { ...memory, settings: { enabled: false }, restartRequired: true } },
+    });
+    await saving;
+    expect(host.textContent).toContain('Restart required');
+    await click('Back to Global settings');
+    expect(host.textContent).toContain('Restart required');
+    expect(host.textContent).not.toContain('Unsaved');
+  });
+
   it('loads and saves other settings during a Skill catalog failure and displays the specific error', async () => {
     const f = await mount(initialSettings(), [agentSection('reviewer', { skills: ['review'] })], {
       code: 'skills_catalog_failed', message: 'Skills root must be a regular directory, not a link.',

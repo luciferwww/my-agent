@@ -6,6 +6,7 @@ This directory is reserved for external comparisons and exploratory analysis. Re
 
 ## Current research
 
+- [Memory Settings and Embedding Download Diagnostics Design Draft](memory-settings-design-draft.md) - 非权威讨论来源：全局 Memory 开关、模型加载失败诊断和 `HF_ENDPOINT`；后续已进入正式 Change，授权和交付检查见该文档中的 Plan 链接。
 - [Skills 支持设计草稿](skills-support-design-draft.md) - 非权威讨论：统一 Home Skills 文件库、默认与按 Agent 类型覆盖、Settings 管理、自动发现及 Turn 生效边界；主 Agent / Subagent 由 LLM 通过同一加载工具处理自动与显式使用，不引入宿主 slash 预展开或专属消息协议；不授权实现或 Spike。
 - [Markdown 特殊渲染与 Mermaid 支持设计草稿](markdown-special-rendering-and-mermaid-design-draft.md) - 非权威讨论：特殊 Markdown 的闭合即显、稳定身份、结果复用与失效；以已有 KaTeX 优化和新增 Mermaid 为首批用例，覆盖安全、流式生命周期、主题、滚动及验证边界；不授权实现或 Spike。
 - [主流 Agent 的 Skills 实现机制调研](mainstream-agent-skills-implementation-research-2026-11-12.md) - 比较 Claude Code、Codex、Copilot、Gemini CLI、Cursor、OpenCode，并补充 OpenClaw；核对发现、渐进加载、调用、权限、Subagent 和更新边界，区分标准、厂商扩展及源码快照；不授权实现。

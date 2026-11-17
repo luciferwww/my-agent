@@ -46,6 +46,39 @@ describe('Agent Home section editing', () => {
     return JSON.parse(await readFile(join(agentHome, 'config.json'), 'utf8'));
   }
 
+  it('saves only Memory enablement and restores it without reverting concurrent fields', async () => {
+    const memory = {
+      embedding: { model: 'local/model' },
+      chunking: { chunkChars: 800, overlapChars: 80 },
+      search: { maxResults: 4 },
+    };
+    const document = { agents: { memory, defaults: { skills: ['review'] } }, llm: {} };
+    await write(document);
+    const saved = await saveAgentConfigSection(agentHome, { kind: 'memory', settings: { enabled: false } });
+    expect(await read()).toEqual({ ...document, agents: { ...document.agents, memory: { ...memory, enabled: false } } });
+    await write({
+      ...(await read()),
+      agents: { ...document.agents, memory: { ...memory, enabled: false, search: { maxResults: 8 } } },
+    });
+    await restoreAgentConfigSection(agentHome, saved.previous);
+    expect(await read()).toEqual({
+      ...document, agents: { ...document.agents, memory: { ...memory, search: { maxResults: 8 } } },
+    });
+  });
+
+  it.each([{}, { agents: { memory: {} } }])('restores absent Memory enablement without materializing defaults %#', async document => {
+    await write(document);
+    const saved = await saveAgentConfigSection(agentHome, { kind: 'memory', settings: { enabled: true } });
+    await restoreAgentConfigSection(agentHome, saved.previous);
+    expect(await read()).toEqual(document);
+  });
+
+  it.each([{}, { enabled: 'true' }, { enabled: null }, { enabled: true, embedding: {} }])(
+    'rejects incomplete or non-editable Memory settings %#', settings => {
+      expect(() => editAgentConfigSection({}, { kind: 'memory', settings })).toThrow(ConfigEditError);
+    },
+  );
+
   it('saves and resets Skills independently, preserving Tools and unavailable references', async () => {
     const document = {
       agents: {
@@ -125,10 +158,11 @@ describe('Agent Home section editing', () => {
       llm: { builtin: { ...settings.builtin, apiKey: '${UNCHANGED_KEY}' } },
       agents: {
         steeringEnabled: true, maxLlmCallsPerTurn: 7,
-        defaults: { memory: { enabled: false }, tools: { allow: ['read_file'] } },
+        memory: { enabled: false },
+        defaults: { tools: { allow: ['read_file'] } },
         list: [
           { id: 'a', tools: { deny: ['exec'] } },
-          { id: 'reviewer', description: 'Keep', model: 'inherit', memory: { enabled: true }, tools: { allow: ['read_file'] } },
+          { id: 'reviewer', description: 'Keep', model: 'inherit', context: { maxFileChars: 2000 }, tools: { allow: ['read_file'] } },
           { id: 'z', enabled: false },
         ],
       },
@@ -153,7 +187,8 @@ describe('Agent Home section editing', () => {
   it('edits shared tools without replacing other defaults or named overrides', async () => {
     const document: AgentConfigDocument = { agents: {
       maxSubagentDepth: 2,
-      defaults: { memory: { enabled: false }, context: { maxFileChars: 2000 }, tools: { deny: ['exec'] } },
+      memory: { enabled: false },
+      defaults: { context: { maxFileChars: 2000 }, tools: { deny: ['exec'] } },
       list: [{ id: 'reviewer', enabled: false }],
     } };
     await write(document);

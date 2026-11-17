@@ -60,11 +60,14 @@ export function validateAgentLeafConfig(
   fieldPath: string,
 ): void {
   const leaves = value as Readonly<Record<string, unknown>>;
-  validateLeaf(leaves['memory'], joinFieldPath(fieldPath, 'memory'), validateMemoryConfig, MemoryConfigValidationError);
   validateLeaf(leaves['tools'], joinFieldPath(fieldPath, 'tools'), validateToolPolicyConfig, ToolPolicyConfigValidationError);
   validateLeaf(leaves['context'], joinFieldPath(fieldPath, 'context'), validateAgentContextConfig, AgentContextConfigValidationError);
   validateLeaf(leaves['compaction'], joinFieldPath(fieldPath, 'compaction'), validateCompactionConfig, CompactionConfigValidationError);
   validateLeaf(leaves['skills'], joinFieldPath(fieldPath, 'skills'), validateSkillSelection, SkillSelectionValidationError);
+}
+
+export function validateMemoryConfigSection(value: unknown): void {
+  validateLeaf(value, 'agents.memory', validateMemoryConfig, MemoryConfigValidationError);
 }
 
 function joinFieldPath(parent: string, field: string): string {

@@ -49,7 +49,13 @@ Global Agent execution policy precedence is `module default -> agents top-level 
 - The top-level `runner` namespace and `inTurnMessageMode` are removed with no alias or compatibility path.
 - Tool policy includes only allow and deny; there is no `tools.fs` subtree.
 - Agent Context owns the contract/defaults for per-file and total loading budgets; `AgentDefaults.context` composes that leaf.
-- Memory owns embedding, chunking, and search contracts/defaults. Resolved chunking values control actual indexing boundaries and require positive safe integers with overlap smaller than chunk size.
+- Memory owns enablement, embedding, chunking, and search contracts/defaults.
+  Platform composes them under global `agents.memory`, separately from
+  AgentDefaults and named-Agent/environment/caller capability overrides.
+  Precedence is `module defaults -> agents.memory`; partial nested values merge,
+  and the complete resolved leaf is validated. Resolved chunking values control
+  indexing boundaries and require positive safe integers with overlap smaller
+  than chunk size.
 - `agents.list[]` contains sparse named-Agent overrides, not registrations.
   Each entry requires a unique valid nonreserved ID and may provide `enabled`,
   nonblank `description`, `"inherit"` or a native Model Reference, and supported
@@ -87,6 +93,24 @@ parameters remain unchanged. No execution-policy restart notice is needed. The s
 execution-policy resolver is reused for startup and Settings, without copying
 default literals into the client or persisting defaults merely on inspection.
 
+`agents:memory` edits only `{ enabled: boolean }` with its own revision and no
+credential intents. Saves preserve embedding/chunking/search and unrelated
+content. Resolved saved enablement is compared with the actual startup Application
+value: differences require restart and saving that startup value clears the
+marker. Load/reload uses the saved server document, not a fresh disk read.
+Memory saves do not publish Agent policy, load models, index files or change Tools.
+
+Local embedding loading honors optional `HF_ENDPOINT` for a trusted
+Hugging Face-compatible source. It must be an absolute HTTP(S) URL without
+credentials, query or fragment; normalize its trailing slash and preserve the
+SDK's model/revision layout and cache behavior. Invalid input fails explicitly.
+Both lazy loading and dimension detection use the same path. Loading start and
+success are INFO; failures are ERROR with model, endpoint, original failure and
+available cause/code/actual file URL. Do not invent a URL, HTTP status or stage
+from file-progress order. Connectivity hints may suggest a mirror; local or
+authorization failures must not be mislabeled as connectivity failures.
+Preserve original-error propagation and existing keyword-only fallback decisions.
+
 Tool deny hides matching definitions and remains final at execution. Session permission mode is Runtime state, not configuration. In `manual`, lexically external structured targets and all Exec calls require current-call Approval even when the Tool name is allowed; internal allowed targets bypass Approval, while other unmatched Tools require Approval. Missing required Approval fails closed. In `allow_all`, every non-denied registered Tool is automatically authorized. Exact names and `*`/`?` globs are supported; `group:*` is not.
 
 Agent Home is the relative path anchor, not a confinement boundary. Approval is current-call only. Canonical/symlink-aware authorization, persistent grants, command patterns, and sandboxing are outside this contract.
@@ -95,7 +119,7 @@ Agent Home is the relative path anchor, not a confinement boundary. Approval is 
 
 Platform Configuration owns `saveAgentConfigSection` and
 `restoreAgentConfigSection`. A save reads the current document, edits only the
-identified LLM, Extension, named Agent or shared Tool-default section, validates without environment resolution,
+identified LLM, Extension, Memory, execution-policy, Skills, named Agent or shared Tool-default section, validates without environment resolution,
 then exclusively creates a same-directory temporary file and renames it over
 `config.json`. It returns the committed raw document and target preimage without
 rereading after publication. This does not provide external-write CAS protection.

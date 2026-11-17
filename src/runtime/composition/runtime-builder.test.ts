@@ -149,6 +149,7 @@ function createHarness(options: {
               },
             },
         agents: {
+          memory: { enabled: options.memoryClose !== undefined },
           maxSubagentDepth: 1,
           defaults: createDefaultAgentConfig(),
           list: [],

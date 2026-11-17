@@ -510,6 +510,7 @@ describe('WebSocketChannel', () => {
       let rejectNext = true;
       const manager = new SettingsManager({
         agentHome: directory, document, environment: { WIRE_KEY: 'fake-wire-secret' },
+        startupMemoryEnabled: true,
         getModelCatalog: () => ({ generation, defaultSelection: { state: 'unset' }, providers: [] }),
         createBuiltinProviderUnit: (config) => createBuiltinLlmProviderUnit(config, {
           createClient: () => ({ chat, chatStream: () => { throw new Error('Unexpected stream.'); } }),

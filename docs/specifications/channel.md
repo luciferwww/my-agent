@@ -160,7 +160,7 @@ The bundled Settings editor saves sections independently and replaces only the
 confirmed target view after success or rollback, including its new revision.
 Other drafts remain intact. Agent saves additionally refresh read-only shared
 policy/metadata projections without replacing other drafts or their revisions.
-Agent and execution-policy section requests omit credential intents. Explicit secret intents do not expose saved values;
+Agent, execution-policy and Memory section requests omit credential intents. Explicit secret intents do not expose saved values;
 submitted replacement buffers are cleared. Default selection remains local until
 LLM save. Extension restart state comes from confirmed server sections, survives
 editor closure and clears on a saved reversal. Model Test source and possible
@@ -173,7 +173,7 @@ a separate link to the owning Extension's single shared configuration draft.
 Extensions has its own list/detail view, including disabled discovered Extensions;
 those detail pages contain only enablement and configuration, not model actions.
 Agents separates Global settings from Agent list. Global settings has independent
-Execution policy and Default Tool permissions
+Execution policy, Memory, Default Tool permissions and Skills
 editors. Execution views preserve sparse overrides and show module defaults and
 resolved saved values, including no count limit when omitted.
 Agent list shows discovered definitions and unmatched saved overrides. Named controls
@@ -185,6 +185,11 @@ enablement and global execution saves apply to new Turns without restart;
 execution feedback is ordinary saved confirmation, without a running-policy
 duplicate or redundant subsequent-Turn notice. Manual MD changes require
 restart. Navigation preserves independent dirty drafts.
+Memory is global and exposes only the existing enabled checkbox. Its independent
+`agents:memory` save requires restart and does not change current Tool availability.
+Help explains local-model downloads when files are missing and `HF_ENDPOINT`
+for a trusted compatible mirror. Confirmed server restart state survives closure
+and clears on a saved reversal; use the existing badges, footer and error flow.
 Tool policy uses named checkbox multiselects with descriptions, locked shared
 deny entries and preserved read-only wildcard/unavailable-name rules. Inherited
 allow disables the local selector and shows the current shared value. The

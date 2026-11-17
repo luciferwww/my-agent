@@ -18,7 +18,7 @@ import { SHARED_AGENT_TOOLS_SECTION, DEFAULT_AGENT_SKILLS_SECTION, type AgentPol
 import { discoverSkills, SkillLibraryError } from '../../core/skills/index.js';
 import { ModelTestRunner } from './model-test.js';
 import {
-  buildExecutionSectionView, buildLlmSectionView, buildExtensionSectionView, type SettingsApplicationState,
+  buildExecutionSectionView, buildMemorySectionView, buildLlmSectionView, buildExtensionSectionView, type SettingsApplicationState,
 } from './section-views.js';
 import {
   SettingsClosingError,
@@ -30,6 +30,7 @@ const log = Logger.get('SettingsManager');
 interface SettingsManagerOptions {
   readonly agentHome: string;
   readonly document: AgentConfigDocument;
+  readonly startupMemoryEnabled: boolean;
   readonly agentPolicies?: AgentPolicyState;
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly extensionMetadata?: Readonly<Pick<ExtensionAcquisitionResult, 'discovery' | 'diagnostics'>>;
@@ -77,6 +78,7 @@ export class SettingsManager implements SettingsCapability {
       deadlineDriver: options.deadlineDriver,
     });
     this.revisions.set('llm', randomUUID());
+    this.revisions.set('agents:memory', randomUUID());
     for (const id of options.agentPolicies?.sectionIds ?? []) this.revisions.set(id, randomUUID());
     for (const candidate of options.extensionMetadata?.discovery.candidates ?? []) {
       this.descriptors.set(`extension:${candidate.descriptor.id}`, candidate.descriptor);
@@ -212,8 +214,11 @@ export class SettingsManager implements SettingsCapability {
     const descriptor = this.descriptors.get(id);
     const agentSection = id === SHARED_AGENT_TOOLS_SECTION || id === DEFAULT_AGENT_SKILLS_SECTION || id.startsWith('agent:');
     const executionSection = id === 'agents:execution';
-    if ((agentSection || executionSection) && input['credentials'] !== undefined) throw new ConfigEditError('/credentials');
-    const edit: ConfigSectionEdit = executionSection
+    const memorySection = id === 'agents:memory';
+    if ((agentSection || executionSection || memorySection) && input['credentials'] !== undefined) throw new ConfigEditError('/credentials');
+    const edit: ConfigSectionEdit = memorySection
+      ? { kind: 'memory', settings: input['settings'] }
+      : executionSection
       ? { kind: 'agent-execution', settings: input['settings'] }
       : agentSection
       ? id === DEFAULT_AGENT_SKILLS_SECTION
@@ -340,6 +345,12 @@ export class SettingsManager implements SettingsCapability {
   }
 
   private section(id: string) {
+    if (id === 'agents:memory') {
+      return buildMemorySectionView({
+        revision: this.revisions.get(id), document: this.document,
+        startupEnabled: this.options.startupMemoryEnabled,
+      });
+    }
     if (id === 'agents:execution' && this.options.agentPolicies) {
       return buildExecutionSectionView({
         revision: this.revisions.get(id), document: this.document,

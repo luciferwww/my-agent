@@ -60,9 +60,13 @@ than being silently corrected.
 Open **Settings** in the bundled WebSocket client's navigation. This requires a
 running, connected Channel; the automatically created empty configuration is valid.
 
-- The left navigation has **LLM** and **Extensions**; narrow screens use a top
+- The left navigation has **LLM**, **Agents** and **Extensions**; narrow screens use a top
   category selector. Navigation summarizes unsaved changes, restart requirements
   and unconfirmed state. Lists and detail pages preserve the same independent drafts.
+- **Agents -> Global settings -> Memory** has one **Enable Memory** checkbox.
+  **Save Memory** changes only that flag and requires a service restart. It does
+  not download models, index files or change running Tools. Saving the startup
+  value again clears the restart marker. Advanced Memory options remain file-only.
 - **LLM** starts with a default-model selector and Provider list, not all Provider
   forms expanded together. Built-in is always an entry, even before configuration;
   its model count describes the draft. Other entries and model counts come from
@@ -174,10 +178,10 @@ The following example configures:
     "steeringEnabled": true,
     "maxLlmCallsPerTurn": 12,
     "maxSubagentDepth": 1,
+    "memory": {
+      "enabled": false
+    },
     "defaults": {
-      "memory": {
-        "enabled": false
-      },
       "tools": {
         "allow": [
           "list_dir",
@@ -439,9 +443,6 @@ override the same Agent-scoped sections:
 {
   "agents": {
     "defaults": {
-      "memory": {
-        "enabled": false
-      },
       "tools": {
         "allow": ["read_file", "file_search"],
         "deny": ["exec"]
@@ -466,25 +467,30 @@ Runner, LLM, and workspace settings are not valid inside Agent entries.
 capability merge. `maxLlmCallsPerTurn` remains global policy and is not valid
 inside an Agent entry.
 
-### 5.1 Memory
+### 5.1 Global Memory
+
+Memory is configured under `agents.memory`, not as an Agent capability. Root and
+Child share one store/index; ordinary Tool policy controls access.
 
 ```json
 {
-  "memory": {
-    "enabled": true,
-    "embedding": {
-      "provider": "local",
-      "model": "Xenova/all-MiniLM-L6-v2"
-    },
-    "chunking": {
-      "chunkChars": 1600,
-      "overlapChars": 320
-    },
-    "search": {
-      "maxResults": 6,
-      "minScore": 0.25,
-      "vectorWeight": 0.7,
-      "textWeight": 0.3
+  "agents": {
+    "memory": {
+      "enabled": true,
+      "embedding": {
+        "provider": "local",
+        "model": "Xenova/all-MiniLM-L6-v2"
+      },
+      "chunking": {
+        "chunkChars": 1600,
+        "overlapChars": 320
+      },
+      "search": {
+        "maxResults": 6,
+        "minScore": 0.25,
+        "vectorWeight": 0.7,
+        "textWeight": 0.3
+      }
     }
   }
 }
@@ -495,6 +501,22 @@ the current built-in embedding factory implements `local`, while a non-local
 selection falls back to keyword-only search. Chunk sizes and `maxResults` are
 positive integers; overlap must be smaller than chunk size. Search scores and
 weights must be between `0` and `1`.
+
+Enabling Memory may load/download embedding files and update its index during
+startup; unchanged files are not always re-embedded. Local files are downloaded
+from Hugging Face when missing from the SDK cache. If that source is unreachable,
+set `HF_ENDPOINT` to a trusted Hugging Face-compatible mirror before restarting:
+
+```powershell
+$env:HF_ENDPOINT = "https://your-trusted-mirror.example"
+npm run agent -- --agent-home .\agent-home
+```
+
+Use an HTTP(S) URL without credentials, query or fragment. Arbitrary download
+URLs are not supported. Logs report loading start/success and failures with
+available network cause/code or actual requested file URL. Check the original
+error for authorization, missing-file or local model failures rather than
+assuming every failure needs a mirror.
 
 ### 5.2 Tool policy
 

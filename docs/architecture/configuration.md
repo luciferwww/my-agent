@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented configuration behavior
-> Verified: 2026-11-11
+> Verified: 2026-11-16
 > Ownership: Agent configuration shape, defaults, precedence, immutable projections, and environment overrides
 > Ownership key: application-configuration
 
@@ -25,6 +25,7 @@ AgentConfigDocument
 ├── agents.steeringEnabled?: boolean
 ├── agents.maxLlmCallsPerTurn?: number
 ├── agents.maxSubagentDepth?: number
+├── agents.memory?: DeepPartial<MemoryConfig>
 ├── agents.defaults?: DeepPartial<AgentDefaults>
 ├── agents.list?: AgentEntry[]
 ├── logger?: LoggerModuleConfig
@@ -56,7 +57,7 @@ Lowest to highest precedence:
 | 4 | environment overrides | `resolveAgentConfig()` |
 | 5 | caller/CLI overrides | `resolveAgentConfig()` |
 
-Stages 3–5 apply only to Agent-scoped configuration. Global Agent execution policy uses `module default -> agents top-level field`; Agent selection, environment overrides, and caller Agent overrides cannot change it. `deepMerge()` recursively merges plain objects, ignores `undefined`, and replaces arrays and scalars. `MY_AGENT_PROVIDER` and `MY_AGENT_MODEL` form one atomic per-run Model Reference override: both must be present or both absent. A supported Host rejects a partial pair rather than inferring a Provider or Model. Built-in and Extension `apiKey` fields support a literal or one exact `${ENV_VAR}` reference. Platform materializes that reference once; missing or blank referenced values fail without exposing the secret. Other Extension fields have no generic environment-reference syntax.
+Stages 3–5 apply only to Agent-scoped configuration. Global Agent execution policy and Memory use `module default -> agents top-level field`; Agent selection, environment overrides, and caller Agent overrides cannot change them. `deepMerge()` recursively merges plain objects, ignores `undefined`, and replaces arrays and scalars. `MY_AGENT_PROVIDER` and `MY_AGENT_MODEL` form one atomic per-run Model Reference override: both must be present or both absent. A supported Host rejects a partial pair rather than inferring a Provider or Model. Built-in and Extension `apiKey` fields support a literal or one exact `${ENV_VAR}` reference. Platform materializes that reference once; missing or blank referenced values fail without exposing the secret. Other Extension fields have no generic environment-reference syntax.
 
 ## 4. Current schema and defaults
 
@@ -66,7 +67,7 @@ Stages 3–5 apply only to Agent-scoped configuration. Global Agent execution po
 | `llm.builtin` | Optional `{ baseURL, apiKey?, models[] }`; each model has `modelId`, `protocol`, optional `displayName`, optional positive safe-integer capability facts `maximumContextTokens`, `maximumPromptTokens`, and `maximumOutputTokens`, plus separate optional invocation policy `outputTokenLimit`; omitting Prompt and Context limits uses `131072`; an empty model list is valid |
 | `agents.steeringEnabled` | Global boolean; defaults to `true`; explicit `false` disables steering |
 | `agents.maxLlmCallsPerTurn` | Global optional positive integer applied independently to each Root or Child Turn; omitted means no Model-call count limit |
-| `memory` | Enabled; local `Xenova/all-MiniLM-L6-v2`; chunk `1600/320`; search `6`, `0.25`, weights `0.7/0.3` |
+| `agents.memory` | Global; enabled; local `Xenova/all-MiniLM-L6-v2`; chunk `1600/320`; search `6`, `0.25`, weights `0.7/0.3` |
 | `tools` | `allow=[]`; `deny=[]` |
 | `skills` | `[]`; default names under `agents.defaults.skills`; optional `agents.list[].skills` completely replaces defaults, including explicit `[]` |
 | `context` | Agent Context budgets: `maxFileChars=20000`; `maxTotalChars=150000` |
@@ -74,6 +75,14 @@ Stages 3–5 apply only to Agent-scoped configuration. Global Agent execution po
 | `agents.maxSubagentDepth` | Global non-negative safe integer; defaults to `1`; `0` removes `task` from the Root Agent's effective Tool policy |
 | `agents.list[]` | Sparse overrides of Home-discovered Agents; unique nonreserved `id`, optional `enabled`, description, model reference or `"inherit"`, and supported capability overrides; not a registration source |
 | `logger` | Global `info`; console enabled; file disabled |
+
+### Global Memory
+
+Memory is composed by `resolveMemoryConfig()` separately from AgentDefaults.
+The `agents:memory` Settings section edits only its enabled flag, preserving
+embedding/chunking/search and unrelated fields. It compares resolved saved
+enablement with the actual startup Application value; changes require restart,
+and saving the startup value clears the marker. It does not publish Agent policy.
 
 ### Tool policy
 

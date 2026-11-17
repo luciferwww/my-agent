@@ -48,6 +48,10 @@ Agent Home anchoring is not confinement. Tool-name deny is always final. In the 
 - Candidate cleanup nonconvergence still blocks unsafe later reload. Retirement failures remain attributable and logged without rolling back publication.
 - Request completion sealing cannot release a generation pin before actual worker convergence.
 - Runtime library never calls `process.exit()`.
+- Global `agents.memory` creates at most one shared Memory manager during startup,
+  retaining incremental indexing and normal shutdown ownership. Root and Child
+  share it through ordinary Tool policies. Disabled or failed initialization
+  contributes no Memory Tools; Settings cannot enable/disable them at runtime.
 
 ## Reload and retirement
 
@@ -71,6 +75,12 @@ capability through Channel capabilities and `RuntimeApplication.settings`.
 Absent persisted startup editing input returns `settings_unavailable` rather
 than reading or synthesizing a file. Safe load waits for current updates, retains
 opaque per-section revisions, and exposes no raw credentials.
+
+The independent `agents:memory` section saves enablement only. Restart state
+compares resolved saved enablement with the immutable startup Application value,
+not whether manager creation succeeded. A saved reversal clears the marker.
+Viewing or saving it performs no model loading, indexing, policy publication
+or Tool registration changes.
 
 Known pre-publication LLM failure triggers target-only raw restoration with a new
 revision. Published outcomes and uncertain thrown publication errors do not

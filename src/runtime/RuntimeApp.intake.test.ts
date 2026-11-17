@@ -34,6 +34,7 @@ import type { RuntimeHandle } from './composition/runtime-composition.js';
 import type { RuntimeDependencies, RuntimeEvent } from './types.js';
 import { createDefaultAgentConfig } from '../platform/config/default-composition.js';
 import { DEFAULT_LOGGER_CONFIG } from '../platform/logger/index.js';
+import { DEFAULT_MEMORY_CONFIG } from '../core/memory/index.js';
 
 // Bypass image decoding so tests can inject normalized and dropped results.
 const processInboundMock = vi.fn<
@@ -1102,15 +1103,13 @@ async function buildApp(
         },
       },
       agents: {
+        memory: { ...DEFAULT_MEMORY_CONFIG, enabled: false },
         steeringEnabled: options.steerMode ?? false,
         maxSubagentDepth: 1,
         defaults: createDefaultAgentConfig(),
         list: [],
       },
       logger: structuredClone(DEFAULT_LOGGER_CONFIG),
-    },
-    cliOverrides: {
-      memory: { enabled: false },
     },
     dependencies: deps,
     onEvent: (e) => runtimeEvents.push(e),

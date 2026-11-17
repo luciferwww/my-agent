@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SettingsActionResult } from '../../core/settings/index.js';
-import { createDefaultAgentConfig, resolveAgentExecutionConfig, restoreAgentConfigSection, saveAgentConfigSection } from '../../platform/config/index.js';
+import { createDefaultAgentConfig, resolveAgentExecutionConfig, resolveMemoryConfig, restoreAgentConfigSection, saveAgentConfigSection } from '../../platform/config/index.js';
 import { AgentPolicyState } from '../policy/agent-policy-state.js';
 import type { AgentConfigDocument } from '../../platform/config/types.js';
 import type { ExtensionAcquisitionResult } from '../../extension/acquisition/types.js';
@@ -143,7 +143,7 @@ describe('SettingsManager', () => {
   function fixture(overrides: Partial<ConstructorParameters<typeof SettingsManager>[0]> = {}) {
     const policies = new AgentPolicyState({
       agentHome, llm: {}, logger: {},
-      agents: { ...resolveAgentExecutionConfig(document.agents), defaults: createDefaultAgentConfig(), list: [] },
+      agents: { ...resolveAgentExecutionConfig(document.agents), memory: resolveMemoryConfig(document.agents?.memory), defaults: createDefaultAgentConfig(), list: [] },
     }, { definitions: [], diagnostics: [] }, () => new Set(['read_file', 'exec', 'task']));
     const apply = vi.fn(async (): Promise<RuntimeReloadResult> => ({
       requestId: 'reload', change: { operation: 'configure-llm', unitId: 'builtin-llm-provider' },
@@ -153,6 +153,7 @@ describe('SettingsManager', () => {
     const restore = vi.fn(restoreAgentConfigSection);
     const manager = new SettingsManager({
       agentHome, document, agentPolicies: policies, environment: { SAVED_KEY: 'runtime-secret' }, extensionMetadata: metadata,
+      startupMemoryEnabled: policies.capture().agents.memory.enabled,
       getModelCatalog: () => ({ generation: 1, defaultSelection: { state: 'unset' }, providers: [] }),
       applyLlmConfiguration: apply, saveSection: save, restoreSection: restore, ...overrides,
     });
@@ -213,6 +214,58 @@ describe('SettingsManager', () => {
     expect(record(recovered.output)['skillCatalog']).toEqual({ entries: [], diagnostics: [] });
     expect(record(recovered.output)).not.toHaveProperty('skillCatalogError');
     expect(record(section(recovered, 'agents:skills')['settings'])['skills']).toEqual(['missing']);
+  });
+
+  it('saves Memory independently, keeps runtime policies unchanged, and reverses the restart marker', async () => {
+    document = { ...document, agents: { memory: { chunking: { chunkChars: 800, overlapChars: 80 } } } };
+    await write(document);
+    const f = fixture();
+    const captured = f.policies.capture();
+    const loaded = await f.load();
+    const llmRevision = revision(loaded);
+    const toolsRevision = revision(loaded, 'agents:defaults');
+    const memoryRevision = revision(loaded, 'agents:memory');
+    expect(section(loaded, 'agents:memory')).toMatchObject({
+      kind: 'memory', settings: { enabled: true }, restartRequired: false,
+    });
+    const saved = await f.update(memoryRevision, { enabled: false }, 'agents:memory');
+    expect(saved).toMatchObject({ ok: true, output: { section: {
+      settings: { enabled: false }, restartRequired: true, applicationStatus: 'restart_required',
+    } } });
+    expect((await read()).agents.memory).toEqual({ ...document.agents?.memory, enabled: false });
+    expect(revision(await f.load())).toBe(llmRevision);
+    expect(revision(await f.load(), 'agents:defaults')).toBe(toolsRevision);
+    expect(await f.update(memoryRevision, { enabled: true }, 'agents:memory')).toMatchObject({
+      ok: false, error: { code: 'revision_conflict' },
+    });
+    expect(await f.update(revision(saved, 'agents:memory'), { enabled: true }, 'agents:memory'))
+      .toMatchObject({ ok: true, output: { section: { restartRequired: false, applicationStatus: 'current' } } });
+    expect(f.policies.capture()).toBe(captured);
+    expect(f.apply).not.toHaveBeenCalled();
+    expect(f.restore).not.toHaveBeenCalled();
+  });
+
+  it('compares saved Memory with the actual startup baseline rather than config omission or manager readiness', async () => {
+    const f = fixture({ startupMemoryEnabled: false });
+    const loaded = await f.load();
+    expect(section(loaded, 'agents:memory')).toMatchObject({
+      settings: { enabled: true }, restartRequired: true,
+    });
+    expect(await f.update(revision(loaded, 'agents:memory'), { enabled: false }, 'agents:memory'))
+      .toMatchObject({ ok: true, output: { section: { restartRequired: false } } });
+  });
+
+  it('rejects Memory credentials and leaves revisions unchanged on persistence failure', async () => {
+    const saveSection = vi.fn(async () => { throw new Error('Memory save failed'); });
+    const f = fixture({ saveSection });
+    const loaded = await f.load();
+    const initial = revision(loaded, 'agents:memory');
+    expect(await f.update(initial, { enabled: false }, 'agents:memory', {})).toMatchObject({ ok: false });
+    expect(saveSection).not.toHaveBeenCalled();
+    expect(await f.update(initial, { enabled: false }, 'agents:memory')).toMatchObject({ ok: false });
+    expect(revision(await f.load(), 'agents:memory')).toBe(initial);
+    expect(section(await f.load(), 'agents:memory')['settings']).toEqual({ enabled: true });
+    expect(f.apply).not.toHaveBeenCalled();
   });
 
   it('publishes execution policy after saving and preserves captured policies and independent revisions', async () => {

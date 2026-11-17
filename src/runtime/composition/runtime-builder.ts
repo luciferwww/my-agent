@@ -387,6 +387,7 @@ export async function buildRuntimeHandle(
       settingsManager = new SettingsManager({
         agentHome: options.agentHome,
         document: editingDocument,
+        startupMemoryEnabled: bootstrap.resources.appConfig.agents.memory.enabled,
         agentPolicies,
         environment: startupContext.environment,
         extensionMetadata: bootstrap.extensionMetadata,

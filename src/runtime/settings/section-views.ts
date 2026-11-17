@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import {
   getAgentExecutionSettings, resolveAgentExecutionConfig, validateLlmConfiguration,
+  resolveMemoryConfig,
 } from '../../platform/config/index.js';
 import type { AgentConfigDocument, AgentExecutionConfig } from '../../platform/config/types.js';
 import {
@@ -18,6 +19,21 @@ import type {
 import { isObject } from './helpers.js';
 
 export type SettingsApplicationState = 'current' | 'not_applied' | 'unknown';
+
+export function buildMemorySectionView(input: {
+  readonly revision: string | undefined;
+  readonly document: AgentConfigDocument;
+  readonly startupEnabled: boolean;
+}) {
+  const enabled = resolveMemoryConfig(input.document.agents?.memory).enabled;
+  const restartRequired = enabled !== input.startupEnabled;
+  return {
+    id: 'agents:memory', kind: 'memory', name: 'Memory', revision: input.revision,
+    settings: { enabled }, restartRequired,
+    applicationStatus: restartRequired ? 'restart_required' : 'current',
+    form: { credentials: {} },
+  };
+}
 
 export function buildExecutionSectionView(input: {
   readonly revision: string | undefined;

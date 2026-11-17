@@ -316,6 +316,13 @@ export function parseSection(value: unknown): SettingsSection {
     };
   });
   const execution = section['id'] === 'agents:execution';
+  if (section['id'] === 'agents:memory') {
+    const settings = object(section['settings']);
+    if (section['kind'] !== 'memory' || typeof settings['enabled'] !== 'boolean'
+      || Object.keys(settings).some(key => key !== 'enabled')) {
+      throw new Error('Malformed Memory Settings section.');
+    }
+  }
   if (execution && section['kind'] !== 'agent-execution') throw new Error('Malformed execution Settings section.');
   if (section['effectiveSkills'] !== undefined) {
     stringList(section['effectiveSkills']);

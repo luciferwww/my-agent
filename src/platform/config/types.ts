@@ -30,7 +30,6 @@ export type {
 export type { LogLevel as LoggerLevel } from '../logger/index.js';
 
 export interface AgentDefaults {
-  readonly memory: MemoryConfig;
   readonly tools: ToolPolicyConfig;
   readonly context: AgentContextConfig;
   readonly compaction: CompactionConfig;
@@ -51,6 +50,7 @@ export interface AgentExecutionConfig {
 }
 
 export interface AgentsConfig extends AgentExecutionConfig {
+  readonly memory: MemoryConfig;
   readonly defaults: AgentDefaults;
   readonly list: readonly AgentEntry[];
 }
@@ -74,6 +74,7 @@ interface AgentApplicationDocument {
     readonly builtin?: unknown;
   };
   readonly agents?: {
+    readonly memory?: DeepPartial<MemoryConfig>;
     readonly steeringEnabled?: boolean;
     readonly maxLlmCallsPerTurn?: number;
     readonly maxSubagentDepth?: number;

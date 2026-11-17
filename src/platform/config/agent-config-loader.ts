@@ -8,6 +8,7 @@ import {
   type LLMConfig,
 } from '../../builtins/providers/builtin/index.js';
 import { DEFAULT_RUNNER_CONFIG } from '../../core/runner/config.js';
+import { DEFAULT_MEMORY_CONFIG } from '../../core/memory/index.js';
 import {
   DEFAULT_MAX_SUBAGENT_DEPTH,
   SubagentDepthValidationError,
@@ -28,13 +29,15 @@ import {
   materializeExactStringCredential,
   parseCredentialEnvironmentReference,
 } from './credential-materialization.js';
-import { projectAgentCapabilities, validateAgentLeafConfig, validateRunnerConfigSection } from './agent-leaf-validation.js';
+import { projectAgentCapabilities, validateAgentLeafConfig, validateRunnerConfigSection, validateMemoryConfigSection } from './agent-leaf-validation.js';
 import { isNamedAgentId } from '../../core/agent-context/index.js';
 import type {
   AgentConfigDocument,
   AgentExecutionConfig,
   AgentsConfig,
   ApplicationConfigProjection,
+  MemoryConfig,
+  DeepPartial,
 } from './types.js';
 
 const CONFIG_FILE_NAME = 'config.json';
@@ -79,6 +82,13 @@ export function resolveAgentExecutionConfig(
   };
 }
 
+export function resolveMemoryConfig(settings: DeepPartial<MemoryConfig> = {}): MemoryConfig {
+  validateMemoryConfigSection(settings);
+  const resolved = deepMerge(structuredClone(DEFAULT_MEMORY_CONFIG), settings);
+  validateMemoryConfigSection(resolved);
+  return resolved;
+}
+
 /** Reads `<agentHome>/config.json` once and returns immutable consumer projections. */
 export async function loadAgentConfig(options: {
   readonly agentHome: string;
@@ -113,6 +123,7 @@ export async function loadAgentConfig(options: {
   }
   const agents: AgentsConfig = {
     ...resolveAgentExecutionConfig(document.agents),
+    memory: resolveMemoryConfig(document.agents?.memory),
     defaults,
     list,
   };
@@ -234,6 +245,7 @@ export function validateLlm(
 function validateAgents(value: AgentConfigDocument['agents']): void {
   if (value === undefined) return;
   if (!isPlainObject(value)) throw invalidAgentConfigField('agents');
+  resolveMemoryConfig(value.memory);
   validateRunnerConfigSection({
     ...(value.steeringEnabled === undefined
       ? {}

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentPolicyState, SHARED_AGENT_TOOLS_SECTION } from './agent-policy-state.js';
 import { SettingsManager } from '../settings/index.js';
-import { createDefaultAgentConfig, loadAgentConfig, saveAgentConfigSection } from '../../platform/config/index.js';
+import { createDefaultAgentConfig, loadAgentConfig, saveAgentConfigSection, resolveMemoryConfig } from '../../platform/config/index.js';
 import type { AgentConfigDocument, AppConfig } from '../../platform/config/types.js';
 import type { SettingsActionResult } from '../../core/settings/index.js';
 import type { AgentDefinitionSnapshot } from '../../core/agent-context/index.js';
@@ -44,6 +44,7 @@ describe('applied Agent policies', () => {
     return {
       agentHome: home, llm: {}, logger: {},
       agents: {
+        memory: resolveMemoryConfig(),
         steeringEnabled: false, maxSubagentDepth: 3,
         defaults: { ...createDefaultAgentConfig(), tools: { allow: ['read_file'], deny: ['write_file'] } },
         list: [
@@ -59,6 +60,7 @@ describe('applied Agent policies', () => {
     const policies = new AgentPolicyState({ ...snapshot.application, agentHome: home }, definitions, () => names);
     const manager = new SettingsManager({
       agentHome: home, document, agentPolicies: policies, environment: {},
+      startupMemoryEnabled: snapshot.application.agents.memory.enabled,
       getModelCatalog: () => ({ generation: 1, defaultSelection: { state: 'unset' }, providers: [] }),
       applyLlmConfiguration: async () => { throw new Error('Agent saves must not reload Providers.'); },
       saveSection,
@@ -245,7 +247,8 @@ describe('applied Agent policies', () => {
     const startup: AgentConfigDocument = {
       agents: {
         steeringEnabled: false, maxLlmCallsPerTurn: 5, maxSubagentDepth: 3,
-        defaults: { memory: { enabled: false }, tools: { deny: ['write_file'] } },
+        memory: { enabled: false },
+        defaults: { tools: { deny: ['write_file'] } },
         list: [{ id: 'reviewer', description: 'Saved description', model: 'inherit', tools: { deny: ['exec'] } }],
       },
       extensions: { entries: { other: { config: { retain: true } } } },
@@ -255,7 +258,7 @@ describe('applied Agent policies', () => {
       ...startup,
       agents: {
         ...startup.agents, steeringEnabled: true, maxLlmCallsPerTurn: 99, maxSubagentDepth: 0,
-        defaults: { ...startup.agents?.defaults, memory: { enabled: true } },
+        memory: { enabled: true },
         list: [
           { ...startup.agents?.list?.[0], id: 'reviewer', description: 'Pending description' },
           { id: 'researcher', tools: { deny: ['task'] } },
@@ -270,7 +273,7 @@ describe('applied Agent policies', () => {
     const applied = f.policies.capture();
     expect(applied.agents).toMatchObject({
       steeringEnabled: false, maxLlmCallsPerTurn: 5, maxSubagentDepth: 3,
-      defaults: { memory: { enabled: false } },
+      memory: { enabled: false },
     });
     expect(applied.profiles.get('reviewer')?.description).toBe('Saved description');
     expect(applied.profiles.get('reviewer')?.tools?.deny).toEqual(['exec']);

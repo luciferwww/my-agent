@@ -52,6 +52,7 @@ import { randomUUID } from 'node:crypto';
 import { SessionManager } from '../core/session/SessionManager.js';
 import { SystemPromptBuilder } from '../core/prompt/SystemPromptBuilder.js';
 import { ensureAgentContext } from '../core/agent-context/index.js';
+import { DEFAULT_MEMORY_CONFIG } from '../core/memory/index.js';
 
 function testApplicationConfig(
   defaultModel: { readonly providerId: string; readonly modelId: string } | null = {
@@ -64,6 +65,7 @@ function testApplicationConfig(
     readonly maxSubagentDepth?: number;
     readonly list?: readonly AgentEntry[];
   } = {},
+  memoryEnabled = false,
 ): ApplicationConfigProjection {
   return {
     llm: {
@@ -74,6 +76,7 @@ function testApplicationConfig(
       },
     },
     agents: {
+      memory: { ...DEFAULT_MEMORY_CONFIG, enabled: memoryEnabled },
       steeringEnabled: configuredAgents.steeringEnabled ?? false,
       ...(configuredAgents.maxLlmCallsPerTurn === undefined
         ? {}
@@ -207,11 +210,8 @@ describe('RuntimeApp', () => {
 
     const app = await RuntimeApp.create({
       agentHome: selectedAgentHome,
-      applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: true },
-        tools: { deny: ['task'] },
-      },
+      applicationConfig: testApplicationConfig(undefined, {}, true),
+      cliOverrides: { tools: { deny: ['task'] } },
       dependencies: createTestDependencies({
         createSessionManager,
         createMemoryManager,
@@ -282,7 +282,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: { memory: { enabled: false } },
+
       dependencies: createTestDependencies({
         createSessionManager: () => ({
           getSubagentPresentationRoute: vi.fn(),
@@ -312,7 +312,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: { memory: { enabled: false } },
+
       dependencies: createTestDependencies({
         createSessionManager: () => ({
           getSubagentPresentationRoute: vi.fn(),
@@ -360,9 +360,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createSessionManager: () => ({
           getSubagentPresentationRoute: vi.fn(),
@@ -425,9 +423,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createSessionManager: () => ({
           getSubagentPresentationRoute: vi.fn(),
@@ -457,9 +453,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createSessionManager: () => ({
           getSubagentPresentationRoute: vi.fn(),
@@ -538,9 +532,7 @@ describe('RuntimeApp', () => {
           configuration: snapshot,
           environment,
         },
-        cliOverrides: {
-          memory: { enabled: false },
-        },
+
         dependencies: createTestDependencies({ acquireExtensions }),
       });
 
@@ -583,7 +575,7 @@ describe('RuntimeApp', () => {
       agentHome,
       startupContext: { installDir: join(agentHome, 'installation'), configuration, environment: {} },
       loadedUnits: [testChannel.unit],
-      cliOverrides: { memory: { enabled: false } },
+
       dependencies: createTestDependencies({
         createBuiltinProviderUnit: (config) => createBuiltinLlmProviderUnit(config, {
           createClient: () => ({ chat, chatStream: () => { throw new Error('Unexpected stream.'); } }),
@@ -681,9 +673,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: deps,
     });
 
@@ -724,18 +714,16 @@ describe('RuntimeApp', () => {
   it('uses the injected application projection without rereading Workspace configuration', async () => {
     await writeFile(join(agentHome, 'config.json'), JSON.stringify({
       agents: {
-        defaults: {
-          memory: {
-            enabled: false,
-            chunking: { chunkChars: 800, overlapChars: 80 },
-          },
+        memory: {
+          enabled: false,
+          chunking: { chunkChars: 800, overlapChars: 80 },
         },
       },
       logger: { console: { enabled: false } },
     }), 'utf8');
     const snapshot = await loadAgentConfig({ agentHome: agentHome });
     await writeFile(join(agentHome, 'config.json'), JSON.stringify({
-      agents: { defaults: { memory: { enabled: true } } },
+      agents: { memory: { enabled: true } },
     }), 'utf8');
     const createMemoryManager = vi.fn(async () => null);
 
@@ -763,9 +751,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({ createMemoryManager }),
     });
 
@@ -789,7 +775,7 @@ describe('RuntimeApp', () => {
       applicationConfig: testApplicationConfig(undefined, {
         maxLlmCallsPerTurn: 7,
       }),
-      cliOverrides: { memory: { enabled: false } },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: runnerRun }) as never,
       }),
@@ -816,9 +802,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({ createMemoryManager: async () => null }),
     });
 
@@ -876,6 +860,7 @@ describe('RuntimeApp', () => {
           builtin: { baseURL: 'https://example.test/v1', models: [] },
         },
         agents: {
+          memory: { ...DEFAULT_MEMORY_CONFIG, enabled: false },
           steeringEnabled: false,
           maxSubagentDepth: 1,
           defaults: createDefaultAgentConfig(),
@@ -883,10 +868,7 @@ describe('RuntimeApp', () => {
         },
         logger: structuredClone(DEFAULT_LOGGER_CONFIG),
       },
-      cliOverrides: {
-        memory: { enabled: false },
-        tools: { deny: ['task'] },
-      },
+      cliOverrides: { tools: { deny: ['task'] } },
       dependencies: { createMemoryManager: async () => null },
     });
 
@@ -942,9 +924,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(model ?? null),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({ createMemoryManager: async () => null }),
     });
 
@@ -963,9 +943,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({ createMemoryManager: async () => null }),
     });
 
@@ -1096,9 +1074,7 @@ describe('RuntimeApp', () => {
           }],
         },
       ),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createSystemPromptBuilder: () => new SystemPromptBuilder(),
         createBuiltinProviderUnit: () => createTestProviderUnit([
@@ -1481,7 +1457,7 @@ describe('RuntimeApp', () => {
       applicationConfig: testApplicationConfig(undefined, {
         maxSubagentDepth: 2, list: [{ id: 'reviewer', description: 'recursive reviewer' }],
       }),
-      cliOverrides: { memory: { enabled: false } },
+
       dependencies: createTestDependencies({
         createSessionManager: () => sessions,
         createAgentRunner: config => {
@@ -1550,7 +1526,7 @@ describe('RuntimeApp', () => {
       app = await RuntimeApp.create({
         agentHome,
         applicationConfig: { ...testApplicationConfig(), llm },
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({
           createBuiltinProviderUnit: createBuiltinLlmProviderUnit,
           createSessionManager: () => ({
@@ -1720,9 +1696,7 @@ describe('RuntimeApp', () => {
           }],
         },
       ),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: runnerRun }) as never,
         createSessionManager: () => ({
@@ -1797,9 +1771,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       onEvent: (event) => events.push(event),
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({ createMemoryManager: async () => null }),
     });
 
@@ -1847,9 +1819,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       onEvent: (event) => events.push(event),
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: async () => { throw runnerError; } }) as never,
         createMemoryManager: async () => null,
@@ -1931,9 +1901,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: async () => { throw runnerError; } }) as never,
         createMemoryManager: async () => null,
@@ -2023,9 +1991,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({
           run: async ({ sessionId: sessionKey }: RunParams) => { throw failures.get(sessionKey); },
@@ -2084,9 +2050,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [failingChannel.unit, receivingChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: deps,
       onAgentEvent: observedEvents,
     });
@@ -2129,9 +2093,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: deps,
       onAgentEvent: (event) => {
         if (event.type === 'user_message') throw observerError;
@@ -2156,7 +2118,7 @@ describe('RuntimeApp', () => {
 
     const app = await RuntimeApp.create({
       agentHome: agentHome,
-      applicationConfig: testApplicationConfig(),
+      applicationConfig: testApplicationConfig(undefined, {}, true),
       cliOverrides: {
       },
       dependencies: deps,
@@ -2178,10 +2140,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-        ...(subagentsEnabled ? {} : { tools: { deny: ['task'] } }),
-      },
+      cliOverrides: { ...(subagentsEnabled ? {} : { tools: { deny: ['task'] } }) },
       dependencies: createTestDependencies(),
       onEvent: (event) => events.push(event),
     });
@@ -2204,9 +2163,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies(),
       onEvent: (event) => events.push(event),
     });
@@ -2231,9 +2188,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies(),
       onEvent: (event) => {
         if (event.type === 'app_ready') throw observerError;
@@ -2254,10 +2209,8 @@ describe('RuntimeApp', () => {
 
     await expect(RuntimeApp.create({
       agentHome: agentHome,
-      applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: true },
-      },
+      applicationConfig: testApplicationConfig(undefined, {}, true),
+
       dependencies: createTestDependencies({
         createMemoryManager: async () => ({ close: memoryClose }) as never,
         getBuiltinContributionUnits: () => {
@@ -2281,10 +2234,8 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       deadlineDriver,
       deadlinePolicy: { candidateCleanupMs: 5_000 },
-      applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: true },
-      },
+      applicationConfig: testApplicationConfig(undefined, {}, true),
+
       dependencies: createTestDependencies({
         createMemoryManager: async () => ({ close: memoryClose }) as never,
         createAgentRunner: () => { throw startupError; },
@@ -2309,9 +2260,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(null),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: runnerRun }) as never,
         createMemoryManager: async () => null,
@@ -2380,10 +2329,8 @@ describe('RuntimeApp', () => {
 
     const app = await RuntimeApp.create({
       agentHome: agentHome,
-      applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: true },
-      },
+      applicationConfig: testApplicationConfig(undefined, {}, true),
+
       dependencies: deps,
     });
 
@@ -2416,9 +2363,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [successfulChannel.unit, failingChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({
           on: () => {},
@@ -2462,9 +2407,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [failingChannel.unit, successfulChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({
           on: () => {},
@@ -2519,9 +2462,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: deps,
     });
 
@@ -2593,7 +2534,7 @@ describe('RuntimeApp', () => {
       agentHome,
       loadedUnits: [testChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: { memory: { enabled: false } },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: runnerRun }) as never,
         createMemoryManager: async () => null,
@@ -2655,9 +2596,7 @@ describe('RuntimeApp', () => {
       applicationConfig: testApplicationConfig(undefined, {
         steeringEnabled: true,
       }),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: deps,
     });
 
@@ -2748,7 +2687,7 @@ describe('RuntimeApp', () => {
       applicationConfig: testApplicationConfig(undefined, {
         steeringEnabled: true,
       }),
-      cliOverrides: { memory: { enabled: false } },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: runnerRun } as never),
         createMemoryManager: async () => null,
@@ -2846,9 +2785,7 @@ describe('RuntimeApp', () => {
         agentHome: agentHome,
         loadedUnits: [testChannel.unit],
         applicationConfig: testApplicationConfig(),
-        cliOverrides: {
-          memory: { enabled: false },
-        },
+
         dependencies: deps,
       });
 
@@ -2958,10 +2895,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-        tools: { allow: [], deny: [] },
-      },
+      cliOverrides: { tools: { allow: [], deny: [] } },
       dependencies: deps,
     });
     await testChannel.dispatch({ sessionId: 'main', message: 'first request' });
@@ -3188,9 +3122,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => agentRunner as never,
         createMemoryManager: async () => null,
@@ -3232,9 +3164,7 @@ describe('RuntimeApp', () => {
       return RuntimeApp.create({
         agentHome: agentHome,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: {
-          memory: { enabled: false },
-        },
+
         dependencies: deps,
       });
     }
@@ -3254,7 +3184,7 @@ describe('RuntimeApp', () => {
       const app2 = await RuntimeApp.create({
         agentHome: agentHome,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
         onEvent: (e) => events.push(e),
       });
@@ -3286,7 +3216,7 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -3316,7 +3246,7 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
         onEvent: (e) => events.push(e),
       });
@@ -3365,7 +3295,7 @@ describe('RuntimeApp', () => {
         agentHome: agentHome,
         loadedUnits: [testChannel.unit],
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -3439,9 +3369,7 @@ describe('RuntimeApp', () => {
         applicationConfig: testApplicationConfig(undefined, {
           steeringEnabled: true,
         }),
-        cliOverrides: {
-          memory: { enabled: false },
-        },
+
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -3495,7 +3423,7 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
       });
 
@@ -3523,7 +3451,7 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -3550,7 +3478,7 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
         onEvent: (e) => {
           if (armed && e.type === 'messages_dropped') {
@@ -3602,7 +3530,7 @@ describe('RuntimeApp', () => {
         deadlineDriver,
         loadedUnits: [testChannel.unit],
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -3663,7 +3591,7 @@ describe('RuntimeApp', () => {
         agentHome: agentHome,
         deadlineDriver,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -3703,7 +3631,7 @@ describe('RuntimeApp', () => {
         loadedUnits: [testChannel.unit],
         onEvent: (event) => runtimeEvents.push(event),
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -3751,7 +3679,7 @@ describe('RuntimeApp', () => {
         deadlineDriver,
         onEvent: (event) => runtimeEvents.push(event),
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -3816,7 +3744,7 @@ describe('RuntimeApp', () => {
         loadedUnits: [testChannel.unit],
         deadlineDriver,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({
           createAgentRunner: (config) => ({
             run: async (params: RunParams) => {
@@ -3863,7 +3791,7 @@ describe('RuntimeApp', () => {
         agentHome: agentHome,
         loadedUnits: [testChannel.unit],
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
       });
 

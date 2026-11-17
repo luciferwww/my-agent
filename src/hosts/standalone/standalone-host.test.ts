@@ -11,7 +11,7 @@ import {
   validateStandaloneHostComposition,
 } from './standalone-host.js';
 import type { AgentConfigSnapshot } from '../../platform/config/index.js';
-import { loadAgentConfig } from '../../platform/config/index.js';
+import { loadAgentConfig, resolveMemoryConfig } from '../../platform/config/index.js';
 import type { RuntimeAppOptions } from '../../runtime/index.js';
 
 describe('standalone Host arguments', () => {
@@ -98,6 +98,7 @@ describe('standalone Host composition', () => {
       application: {
         llm: {},
         agents: {
+          memory: resolveMemoryConfig(),
           steeringEnabled: false,
           maxSubagentDepth: 1,
           defaults: {} as never,
@@ -513,6 +514,7 @@ function createSnapshot(consoleEnabled = true): AgentConfigSnapshot {
     application: {
       llm: {},
       agents: {
+        memory: resolveMemoryConfig(),
         steeringEnabled: false,
         maxSubagentDepth: 1,
         defaults: {} as never,

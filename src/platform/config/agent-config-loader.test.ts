@@ -23,6 +23,16 @@ describe('loadAgentConfig', () => {
     await writeFile(join(agentHome, 'config.json'), JSON.stringify(value), 'utf8');
   }
 
+  it('composes global Memory without putting it into Agent capabilities', async () => {
+    await writeConfig({ agents: { memory: { enabled: false, search: { maxResults: 9 } } } });
+    const snapshot = await loadAgentConfig({ agentHome });
+    expect(snapshot.application.agents).toHaveProperty('memory', {
+      ...DEFAULT_MEMORY_CONFIG, enabled: false,
+      search: { ...DEFAULT_MEMORY_CONFIG.search, maxResults: 9 },
+    });
+    expect(snapshot.application.agents.defaults).not.toHaveProperty('memory');
+  });
+
   it('rejects an absent document instead of synthesizing in-memory defaults', async () => {
     await expect(loadAgentConfig({ agentHome })).rejects.toMatchObject({
       code: 'FILE_MISSING',
@@ -102,12 +112,12 @@ describe('loadAgentConfig', () => {
         steeringEnabled: true,
         maxLlmCallsPerTurn: 3,
         maxSubagentDepth: 2,
+        memory: { enabled: false },
         defaults: {},
         list: [{
           id: 'reviewer',
           description: 'Reviews code',
           model: { providerId: 'builtin', modelId: 'model-a' },
-          memory: { enabled: false },
         }],
       },
       llm: {
@@ -156,7 +166,6 @@ describe('loadAgentConfig', () => {
         id: 'reviewer',
         description: 'Reviews code',
         model: { providerId: 'builtin', modelId: 'model-a' },
-        memory: { enabled: false },
       },
     ]);
     expect(snapshot.application.logger).toEqual({
@@ -187,7 +196,7 @@ describe('loadAgentConfig', () => {
   it('consumes sparse overrides and only supported Agent fields without modifying the source document', async () => {
     const document = { agents: {
       unrelated: { anything: true },
-      defaults: { surprise: true, memory: { extra: true }, tools: { extra: true, allow: ['read_file'] } },
+      defaults: { surprise: true, tools: { extra: true, allow: ['read_file'] } },
       list: [{ id: 'reviewer', enabled: false, model: 'inherit', surprise: true }],
     } };
     await writeConfig(document);
@@ -195,7 +204,7 @@ describe('loadAgentConfig', () => {
     expect(snapshot.document).toEqual(document);
     expect(snapshot.application.agents.list).toEqual([{ id: 'reviewer', enabled: false, model: 'inherit' }]);
     expect(snapshot.application.agents.defaults.tools).toEqual({ allow: ['read_file'], deny: [] });
-    expect(snapshot.application.agents.defaults.memory).toEqual(createDefaultAgentConfig().memory);
+    expect(snapshot.application.agents.memory).toEqual(DEFAULT_MEMORY_CONFIG);
     expect(snapshot.application.agents).not.toHaveProperty('unrelated');
   });
 
@@ -311,17 +320,11 @@ describe('loadAgentConfig', () => {
     [{ agents: { maxLlmCallsPerTurn: 0 } }, 'agents.maxLlmCallsPerTurn'],
     [{ agents: { maxLlmCallsPerTurn: 1.5 } }, 'agents.maxLlmCallsPerTurn'],
     [{ agents: { maxLlmCallsPerTurn: '12' } }, 'agents.maxLlmCallsPerTurn'],
-    [{ agents: { defaults: { memory: { chunking: { chunkChars: 0 } } } } }, 'agents.defaults.memory.chunking.chunkChars'],
-    [{ agents: { defaults: { memory: { chunking: { overlapChars: 1600 } } } } }, 'agents.defaults.memory.chunking.overlapChars'],
+    [{ agents: { memory: { chunking: { chunkChars: 0 } } } }, 'agents.memory.chunking.chunkChars'],
+    [{ agents: { memory: { chunking: { overlapChars: 1600 } } } }, 'agents.memory.chunking.overlapChars'],
     [{
-      agents: {
-        list: [{
-          id: 'a',
-          description: 'Agent A',
-          memory: { chunking: { chunkChars: 100, overlapChars: 100 } },
-        }],
-      },
-    }, 'agents.list[0].memory.chunking.overlapChars'],
+      agents: { memory: { chunking: { chunkChars: 100, overlapChars: 100 } } },
+    }, 'agents.memory.chunking.overlapChars'],
     [{ agents: { defaults: { tools: { allow: [1] } } } }, 'agents.defaults.tools.allow'],
     [{ agents: { defaults: { context: { maxFileChars: -1 } } } }, 'agents.defaults.context.maxFileChars'],
     [{ agents: { defaults: { compaction: { timeoutSeconds: 0 } } } }, 'agents.defaults.compaction.timeoutSeconds'],
