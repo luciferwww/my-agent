@@ -6,39 +6,39 @@ import type {
 } from './types.js';
 
 /**
- * 构建 User Prompt。
+ * Builds the user prompt.
  *
- * 拼接顺序（参考 OpenClaw prepend 模式）：
- *   本轮开始时间（UTC）
- *   hooks 前置文本块（按注册顺序）
- *   用户原始消息（永远在最后）
+ * Assembly order (following OpenClaw's prepend pattern):
+ *   Turn start time (UTC)
+ *   Prepended hook text blocks (in registration order)
+ *   Original user message (always last)
  *
- * 媒体附件单独返回，不嵌入文本（与 OpenClaw 一致）。
+ * Media attachments are returned separately, not embedded in the text (as in OpenClaw).
  */
 export class UserPromptBuilder {
   private prepender = new ContextPrepender();
 
-  /** 注册 context hook（链式） */
+  /** Registers a context hook (chainable). */
   useContextHook(hook: ContextHook): this {
     this.prepender.register(hook);
     return this;
   }
 
-  /** 注销 context hook（链式） */
+  /** Unregisters a context hook (chainable). */
   removeContextHook(id: string): this {
     this.prepender.unregister(id);
     return this;
   }
 
-  /** 构建 User Prompt */
+  /** Builds the user prompt. */
   async build(input: UserPromptInput): Promise<BuiltUserPrompt> {
     const timestamp = `<turn_start>${new Date().toISOString()}</turn_start>`;
     const { text: rawInput, attachments = [], metadata = {} } = input;
 
-    // 收集前置上下文
+    // Collect prepended context.
     const prependedChunks = await this.prepender.prepend(rawInput, metadata);
 
-    // 拼接：时间 → hooks → 原始消息
+    // Assemble: timestamp, hooks, then the original message.
     const parts = [timestamp, ...prependedChunks, rawInput].filter(Boolean);
     const text = parts.join('\n\n');
 

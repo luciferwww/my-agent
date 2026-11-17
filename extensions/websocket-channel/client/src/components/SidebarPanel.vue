@@ -64,6 +64,7 @@ export default {
     'deleteSession',
     'selectPermissionMode',
     'selectTheme',
+    'openSettings',
   ],
   data() {
     return {
@@ -84,12 +85,12 @@ export default {
       const query = this.modelSearch.trim().toLocaleLowerCase();
       if (!query) return this.availableModelProviders;
       return this.availableModelProviders.flatMap(provider => {
-        const providerMatches = `${provider.displayName} ${provider.providerId}`
+        const providerMatches = `${provider.displayName ?? provider.providerId} ${provider.providerId}`
           .toLocaleLowerCase()
           .includes(query);
         const models = providerMatches
           ? provider.models
-          : provider.models.filter(model => `${model.displayName} ${model.modelId}`
+          : provider.models.filter(model => `${model.displayName ?? model.modelId} ${model.modelId}`
               .toLocaleLowerCase()
               .includes(query));
         return models.length > 0 ? [{ ...provider, models }] : [];
@@ -407,7 +408,7 @@ export default {
               <span class="brand-mark" aria-hidden="true"></span>
               <h1 class="brand-title">my-agent</h1>
             </div>
-            <p class="brand-subtitle">Workspace assistant</p>
+            <p class="brand-subtitle">Personal assistant</p>
           </div>
           <div
             class="status-pill"
@@ -425,6 +426,8 @@ export default {
           >×</button>
         </header>
 
+        <button type="button" @click="$emit('openSettings')">Settings</button>
+
         <section class="section">
           <div class="section-title">
             <h2>Model</h2>
@@ -441,7 +444,7 @@ export default {
                 <span class="model-picker-trigger-copy">
                   <span class="model-picker-trigger-name">{{ modelPickerLabel }}</span>
                   <span v-if="selectedModelDetails" class="model-picker-trigger-provider">
-                    {{ selectedModelDetails.provider.displayName }}
+                    {{ selectedModelDetails.provider.displayName ?? selectedModelDetails.provider.providerId }}
                   </span>
                 </span>
                 <span class="model-picker-chevron">⌄</span>
@@ -479,7 +482,7 @@ export default {
                     class="model-provider-group"
                   >
                     <div class="model-provider-heading">
-                      <span>{{ provider.displayName }}</span>
+                      <span>{{ provider.displayName ?? provider.providerId }}</span>
                     </div>
                     <button
                       v-for="model in provider.models"
@@ -500,7 +503,7 @@ export default {
                         {{ isSelectedModel(provider.providerId, model.modelId) ? '✓' : '' }}
                       </span>
                       <span class="model-picker-option-copy">
-                        <span class="model-picker-option-name">{{ model.displayName }}</span>
+                        <span class="model-picker-option-name">{{ model.displayName ?? model.modelId }}</span>
                       </span>
                       <span
                         v-if="isRuntimeDefaultModel(provider.providerId, model.modelId)"

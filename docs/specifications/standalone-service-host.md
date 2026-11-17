@@ -13,17 +13,19 @@ CLI is an optional Host-local Channel, not the architecture. Runtime remains the
 
 ## Entry and path selection
 
-The canonical package command is `my-agent`; repository development uses `npm run agent`. The standalone entry accepts at most one Agent Home option across `-ah <path>`, `--agent-home <path>`, and `--agent-home=<path>`, plus the optional boolean `--cli` or `--initialize` flag. These flags are mutually exclusive and each may occur only once. Short equals forms are unsupported. Missing Agent Home values, blank values, duplicate options, conflicting flags, and unknown arguments fail with one `HOST_ARGUMENT_INVALID` diagnostic. The retired `-bc` and `--builtin-channels` forms are rejected as unknown arguments.
+The canonical package command is `my-agent`; repository development uses `npm run agent`. The standalone entry accepts at most one Agent Home option across `-ah <path>`, `--agent-home <path>`, and `--agent-home=<path>`, plus the optional boolean `--cli` flag, at most once. Short equals forms are unsupported. Missing Agent Home values, blank values, duplicate options, and unknown arguments fail with one `HOST_ARGUMENT_INVALID` diagnostic. The retired `--initialize`, `-bc`, and `--builtin-channels` forms are rejected as unknown arguments.
 
 Standalone derives `installDir` from the nearest containing npm package named `my-agent`. Agent Home defaults to `<user-home>/.my-agent`; an explicit absolute value is normalized, while an explicit relative value resolves once against startup `process.cwd()`. No custom environment or configuration source selects either path. `installDir` owns immutable program content and pre-provisioned Extensions; `agentHome` owns configuration and mutable Agent state and is the Runtime path context. Startup CWD has no architectural role after resolving a relative CLI value.
 
-After path resolution, ordinary startup performs one strict document-content read and never bootstraps an empty configuration. A missing `<agentHome>/config.json` fails before Runtime creation with guidance to run `my-agent --initialize --agent-home "<resolved path>"`. Other strict-loading failures propagate unchanged.
+After path resolution, ordinary startup loads the strict configuration snapshot.
+Only `FILE_MISSING` invokes Platform's `ensureAgentConfigDocument()` to create the
+Home recursively and exclusively write `{}\n`, followed by strict loading.
+Concurrent/existing files are never overwritten. Other strict-loading failures
+propagate unchanged. Existing configuration content is read once.
 
-`--initialize` routes to an interactive Standalone-owned Wizard and returns before ordinary configuration loading, Runtime creation, or Host lifetime. Missing configuration enters Initialize mode; existing valid configuration requires explicit Edit confirmation, defaulting to no. Cancellation publishes nothing. Initialize preserves existing Root Context, installs compatible fixed Agent Profile assets without overwrite, and exclusively creates `config.json` last after validation, live Model verification, candidate cleanup, and confirmation. A failed publication may leave compatible Context/Profile files. Edit preserves untouched supported configuration and does not install Profile assets; it checks the original configuration before and after writing an exclusive same-directory temporary file, then atomically replaces `config.json`. Temporary-file cleanup is attempted on failure.
-
-Changing LLM configuration preserves untouched Provider Extension entries. If Extensions are globally disabled, configuring an Extension Provider first requires explicit consent to enable them when saving that Provider. Declining leaves configuration unchanged; discarding verified LLM changes does not enable Extensions. The Wizard does not expose a global Extensions toggle. Before publication, the summary identifies authored credential sources without exposing secret values; literal credentials require a plaintext-storage warning. Environment-reference summaries show only the variable name.
-
-Known owner-deferred limitation: sensitive fields in non-Provider Extension configuration are checked for nonblank input but are not fully validated against Descriptor Schema constraints before saving; ordinary Extension acquisition may subsequently reject them.
+The initialization wizard, live verification prerequisite, and fixed named-Agent
+profile installer are removed. A new Home can start without a Provider or default
+Model, then use an available Channel's Settings to configure them.
 
 ## Host-local Channel selection
 
@@ -31,15 +33,15 @@ Standalone supplies no Host-local Channel when `--cli` is omitted. When
 `--cli` is present, it supplies exactly one CLI Runtime Unit.
 
 WebSocket is not a Host-local Channel. It is an independently installed
-Extension and is enabled only through
-`extensions.entries.websocket-channel`. Standalone does not import, configure,
+Extension, loaded by default unless its entry explicitly disables it.
+Standalone does not import, configure,
 identify, or observe that concrete Extension.
 
 Standalone supplies fixed CLI values prompt `> ` and approval enabled. The CLI starts in a new-conversation state without a Session ID; its first ordinary message obtains a server-issued `sessionId`, and later messages reuse it until the user selects another or new Session. These values are not configurable in the global Agent document. The only top-level configuration namespaces are `agents`, `logger`, and `extensions`; retired `host` content is rejected directly. CLI selection and enabled Console Logger are incompatible because both own terminal presentation. The Host rejects the combination with `HOST_OUTPUT_CONFLICT`; File Logger is compatible.
 
 ## Composition and liveness
 
-The ordinary Host follows `arguments -> paths -> one strict configuration read -> validation -> Runtime`. It passes generic `installDir`, the complete immutable configuration snapshot, and environment startup facts plus zero or one Host-local CLI Unit to `RuntimeApp.create()`. Runtime Bootstrap derives and invokes Extension Acquisition after Logger configuration; Runtime Builder combines acquired and Host-provided Units into the sole composition path. A configuration load failure prevents Runtime creation, while a Runtime Bootstrap or acquisition failure prevents composition. Explicit initialization is a separate terminal path, not an alternative Runtime composition root. Core Agent Context retains its independent Runtime-owned initialization.
+The ordinary Host follows `arguments -> paths -> strict load / missing-only bootstrap -> validation -> Runtime`. It passes generic `installDir`, the complete immutable configuration snapshot, and environment startup facts plus zero or one Host-local CLI Unit to `RuntimeApp.create()`. Runtime Bootstrap derives and invokes Extension Acquisition after Logger configuration; Runtime Builder combines acquired and Host-provided Units into the sole composition path. A configuration load failure prevents Runtime creation, while a fatal Runtime Bootstrap or discovery-root failure prevents composition. Individual optional Extension failures are diagnosed and isolated. Core Agent Context retains its independent Runtime-owned initialization.
 
 CLI completion controls Host lifetime only when `--cli` is present. Its normal
 or failed completion initiates shared Runtime shutdown, and failure sets process

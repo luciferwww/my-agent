@@ -4,7 +4,9 @@ import type {
   HistoryRequest,
   HistoryStatus,
   PresentationItem,
+  SubagentScope,
 } from './history';
+import type { LlmCallBoundary } from './conversation';
 
 export type PermissionMode = 'manual' | 'allow_all';
 
@@ -13,8 +15,12 @@ export interface SessionUiState {
   chatItems: PresentationItem[];
   turnMap: Record<string, PresentationItem>;
   activeTurnId: string | null;
+  terminalTurnId: string | null;
+  llmCall: LlmCallBoundary | null;
   historyRecords: HistoryRecord[];
   historyItems: PresentationItem[];
+  historyScopes: SubagentScope[];
+  subagentScopes: Record<string, SubagentScope>;
   historyStatus: HistoryStatus;
   historyError: string;
   historyNextCursor: string | null;
@@ -39,8 +45,12 @@ export function createSessionUiState(): SessionUiState {
     chatItems: [],
     turnMap: {},
     activeTurnId: null,
+    terminalTurnId: null,
+    llmCall: null,
     historyRecords: [],
     historyItems: [],
+    historyScopes: [],
+    subagentScopes: {},
     historyStatus: 'notLoaded',
     historyError: '',
     historyNextCursor: null,

@@ -4,26 +4,31 @@ import type { ModelReference, ResolutionFailureCategory } from '../model-resolut
 // ── Profile / role / capabilities ────────────────────────────
 
 /**
- * Static configuration for a named subagent profile.
+ * Selected configuration for a Child Turn.
  *
  * `agentDir` is the **absolute path** to the role-personality directory
  * (`<agentHome>/agents/<id>/`). The config-loader always
  * derives it from `id` + `agentHome`; users do not set it directly.
- * Whether the directory actually exists is probed at run time by the
- * internal Child executor (deciding anonymous vs named context-files behavior).
+ * Named Context is selected from the startup definition snapshot; the Child
+ * executor never probes or rereads this directory during task preparation.
  */
 export interface SubagentProfile {
-  id: string;
-  description: string;
-  agentDir: string;
+  readonly id: string;
+  readonly description: string;
+  readonly agentDir: string;
   /** Explicit Parent-reference inheritance or a native Model Reference. */
-  model: 'inherit' | ModelReference;
-  tools?: {
-    /** Replace semantics: when set, only listed tools are visible. */
-    allow?: string[];
-    /** Additive semantics: listed tools are removed on top of `allow`. */
-    deny?: string[];
+  readonly model: 'inherit' | ModelReference;
+  readonly tools?: {
+    /** Approval bypass, not exclusive Tool availability. */
+    readonly allow?: readonly string[];
+    /** Denied Tools are unavailable; deny takes precedence. */
+    readonly deny?: readonly string[];
   };
+}
+
+export interface SubagentProfileRegistry {
+  readonly profiles: ReadonlyMap<string, SubagentProfile>;
+  readonly disabledIds: ReadonlySet<string>;
 }
 
 export type SubagentRole = 'main' | 'orchestrator' | 'leaf';

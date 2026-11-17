@@ -220,16 +220,18 @@ is not submitted as Steering during an active Turn.
 Standalone Host-local Channel selection:
 
 ```bash
-npm run agent -- --initialize --agent-home ./agent-home # Initialize and exit
 npm run agent -- --agent-home ./agent-home       # No Host-local Channel
 npm run agent -- --agent-home ./agent-home --cli # CLI only
 ```
 
-Ordinary startup does not create a missing `config.json`; run the interactive
-initializer first.
+Ordinary startup creates a missing Agent Home and `config.json` containing `{}`.
+Configure Providers and models through the WebSocket client's Settings.
+The old `--initialize` wizard has been removed.
 
-Reusable Channels such as WebSocket are enabled through their Extension
-entries, independently of `--cli`.
+Installed Extensions are discovered and loaded by default, independently of
+`--cli`; set an entry's `enabled` to `false` to disable it. Failed Extensions
+are diagnosed without preventing healthy neighbors from loading. The bundled
+WebSocket client defaults to `http://127.0.0.1:8787/`.
 
 ## Configuration
 

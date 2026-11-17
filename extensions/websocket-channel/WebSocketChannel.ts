@@ -15,6 +15,7 @@ import {
   type ChannelOperationErrorCode,
   type ChannelRunRequest,
   type ChannelRuntimeCapabilities,
+  type ChannelEventRouting,
   type ExtensionLogger,
   type InboundContentBlock,
   type ModelCatalogSnapshot,
@@ -66,6 +67,12 @@ type ClientMessage =
       // (§13.1).
       type: 'abort_turn';
       sessionId: string;
+    }
+  | {
+      type: 'settings_action';
+      requestId: string;
+      action: string;
+      input: unknown;
     }
   | {
       type: 'get_model_catalog';
@@ -245,13 +252,12 @@ export class WebSocketChannel implements Channel {
     this.interaction = this.makeInteractionAdapter();
   }
 
-  send(event: AgentEvent): void {
+  send(event: AgentEvent, routing?: ChannelEventRouting): void {
     if (event.type === 'user_message') {
       this.sessionByOriginMessageId.set(event.messageId, event.sessionId);
     } else if (event.type === 'run_start' && event.originMessageId) {
       this.sessionByOriginMessageId.delete(event.originMessageId);
     }
-    // Subagent events carry the Child UUID, while clients subscribe to the caller Session.
     const requestAudience = event.type === 'request_end' && event.originMessageId
       ? this.sessionByOriginMessageId.get(event.originMessageId)
       : undefined;
@@ -260,23 +266,32 @@ export class WebSocketChannel implements Channel {
     }
     const eventSessionId = 'sessionId' in event ? event.sessionId : requestAudience;
     if (!eventSessionId) return;
-    const audienceKey = event.type === 'subagent_start' || event.type === 'subagent_end'
-      ? event.callerSessionId
-      : eventSessionId;
-    const sessionAudience = this.sessions.get(audienceKey);
-    if (!sessionAudience || sessionAudience.size === 0) return;
+    const ancestorSessionIds = routing?.ancestorSessionIds
+      ?? (event.type === 'subagent_start' || event.type === 'subagent_end'
+        ? [event.callerSessionId] : []);
+    const audienceKeys = [eventSessionId, ...ancestorSessionIds];
+    const sessionAudience = new Set<string>();
+    for (const key of audienceKeys) {
+      for (const clientId of this.sessions.get(key) ?? []) sessionAudience.add(clientId);
+    }
+    if (sessionAudience.size === 0) return;
 
     if (event.type !== 'text_delta' && event.type !== 'thinking_delta') {
       this.logger.debug('broadcasting event to session audience', {
         channelId: this.id,
         eventType: event.type,
         sessionId: eventSessionId,
-        audienceKey,
+        audienceKeys,
         audienceSize: sessionAudience.size,
       });
     }
 
-    const payload = this.serializeEvent(event, eventSessionId);
+    const payload = {
+      ...this.serializeEvent(event, eventSessionId),
+      ...(routing === undefined ? {} : {
+        rootTurnId: routing.rootTurnId, ancestorSessionIds: routing.ancestorSessionIds,
+      }),
+    };
     for (const clientId of sessionAudience) {
       const socket = this.clients.get(clientId);
       if (!socket || socket.readyState !== WebSocket.OPEN) continue;
@@ -556,6 +571,9 @@ export class WebSocketChannel implements Channel {
         case 'get_model_catalog':
           this.handleGetModelCatalog(socket, message);
           return;
+        case 'settings_action':
+          await this.handleSettingsAction(socket, message);
+          return;
         case 'create_session':
           await this.handleCreateSession(socket, message);
           return;
@@ -668,6 +686,15 @@ export class WebSocketChannel implements Channel {
         return {
           type,
           requestId: readNonEmptyString(parsed.requestId, 'requestId'),
+        };
+      case 'settings_action':
+        assertOnlyKeys(parsed, ['type', 'requestId', 'action', 'input'], type);
+        if (!Object.hasOwn(parsed, 'input')) {
+          throw new ProtocolError('INVALID_MESSAGE', 'settings_action requires input.');
+        }
+        return {
+          type, requestId: readNonEmptyString(parsed.requestId, 'requestId'),
+          action: readNonEmptyString(parsed.action, 'action'), input: parsed.input,
         };
       case 'create_session':
         assertOnlyKeys(parsed, ['type', 'requestId', 'permissionMode'], type);
@@ -863,6 +890,31 @@ export class WebSocketChannel implements Channel {
     });
   }
 
+  private async handleSettingsAction(
+    socket: WebSocket,
+    message: Extract<ClientMessage, { type: 'settings_action' }>,
+  ): Promise<void> {
+    this.requireBoundClientId(socket);
+    const request = { requestId: message.requestId, action: message.action, input: message.input };
+    if (!this.runtimeCapabilities) {
+      this.sendJson(socket, {
+        type: 'settings_action_result', requestId: request.requestId, action: request.action, ok: false,
+        error: { code: 'settings_not_ready', message: 'Runtime Settings are not bound.' },
+      });
+      return;
+    }
+    try {
+      const result = await this.runtimeCapabilities.settings.execute(request);
+      this.sendJson(socket, { type: 'settings_action_result', ...result });
+    } catch {
+      this.logger.error('Runtime Settings request failed', { channelId: this.id });
+      this.sendJson(socket, {
+        type: 'settings_action_result', requestId: message.requestId, action: message.action, ok: false,
+        error: { code: 'settings_failed', message: 'The Settings operation failed; its outcome could not be confirmed.' },
+      });
+    }
+  }
+
   private async handleCreateSession(
     socket: WebSocket,
     message: Extract<ClientMessage, { type: 'create_session' }>,
@@ -1037,7 +1089,7 @@ export class WebSocketChannel implements Channel {
     socket: WebSocket,
     message: Exclude<
       ClientMessage,
-      { type: 'hello' | 'run_turn' | 'approval_resolve' | 'abort_turn' | 'get_model_catalog' | 'create_session' | 'subscribe_session' | 'unsubscribe_session' | 'get_session_permission_mode' | 'set_session_permission_mode' | 'get_session_approvals' }
+      { type: 'hello' | 'run_turn' | 'approval_resolve' | 'abort_turn' | 'get_model_catalog' | 'settings_action' | 'create_session' | 'subscribe_session' | 'unsubscribe_session' | 'get_session_permission_mode' | 'set_session_permission_mode' | 'get_session_approvals' }
     >,
   ): Promise<void> {
     this.requireBoundClientId(socket);

@@ -25,18 +25,21 @@ If `--agent-home` is omitted, the default is:
 <user-home>/.my-agent
 ```
 
-Initialize a new Agent Home explicitly before first startup:
+Start normally with a new or empty Agent Home. The Host creates a missing Home
+and exclusively creates `config.json` containing `{}`; existing files are never
+overwritten. Existing malformed or zero-byte files still fail validation.
+The old `--initialize` wizard and its fixed named-Agent profile installer are removed.
 
-```bash
-npm run agent -- --initialize --agent-home ./agent-home
-```
+Startup discovers all installed Extensions and attempts to load each unless its
+entry explicitly sets `enabled: false`. Schema defaults apply without a saved
+entry. A failed Extension is reported and skipped without suppressing healthy
+neighbors. The bundled WebSocket client defaults to `http://127.0.0.1:8787/`;
+automatic browser opening is off. Open Settings there to configure the first
+Provider, models and default selection. Startup itself requires no Model call.
 
-The interactive initializer verifies at least one real Provider/Model call,
-lets you select one verified Default Model, installs Root and fixed named-Agent
-Context, and publishes `config.json` last. Ordinary startup never creates a
-missing configuration; it reports the initialization command instead.
-
-The file is read at startup. Restart the Runtime after changing it.
+Manual file edits are read at startup; restart the Runtime after editing the file
+directly. Browser Settings can apply Built-in/default changes to new execution
+trees without restarting, as described below. No external file watcher is added.
 
 The accepted top-level sections are:
 
@@ -51,6 +54,88 @@ Configuration is JSON, not JSONC: comments and trailing commas are invalid.
 Field names and values are case-sensitive. Unknown namespaces and invalid
 known fields normally fail startup or disable the affected Extension rather
 than being silently corrected.
+
+### Browser Settings
+
+Open **Settings** in the bundled WebSocket client's navigation. This requires a
+running, connected Channel; the automatically created empty configuration is valid.
+
+- The left navigation has **LLM**, **Agents** and **Extensions**; narrow screens use a top
+  category selector. Navigation summarizes unsaved changes, restart requirements
+  and unconfirmed state. Lists and detail pages preserve the same independent drafts.
+- **Agents -> Global settings -> Memory** has one **Enable Memory** checkbox.
+  **Save Memory** changes only that flag and requires a service restart. It does
+  not download models, index files or change running Tools. Saving the startup
+  value again clears the restart marker. Advanced Memory options remain file-only.
+- **LLM** starts with a default-model selector and Provider list, not all Provider
+  forms expanded together. Built-in is always an entry, even before configuration;
+  its model count describes the draft. Other entries and model counts come from
+  the loaded Runtime catalog, not saved Extension candidates.
+- **Details** opens a Provider detail page under LLM. Built-in details contain
+  connection and editable models; other Provider details contain their loaded
+  model list, Test and Set default. **Configure Extension** is a separate link to
+  the owning Extension's configuration. Ownership is supplied by Runtime, not
+  inferred from Provider IDs. Multiple Providers can link to the same Extension
+  and share its one configuration draft. Missing configuration links do not
+  prevent viewing a Provider's models.
+  **Extensions** lists all discovered editable Extensions, including disabled ones.
+- Default selection and Built-in details share **Save LLM**. **Set default** in
+  Provider details changes the LLM draft; use the fixed footer's Save LLM to
+  apply it. An Extension detail contains only enablement/configuration and saves
+  only that Extension, never model actions or the LLM default.
+- Built-in details always show the configuration form, without an enable/configure
+  checkbox. Deleting all models preserves the saved URL and key. Leaving a never
+  configured Built-in form empty does not create it when saving other LLM settings.
+- Save each section independently. Closing the editor preserves noncredential
+  drafts, not an automatic save. **Reload saved settings** explicitly discards
+  drafts. Replacement credential inputs are cleared on submission, close and
+  disconnect; submitting one section does not clear another section's inputs.
+- One fixed footer reports the latest operation's pending, successful or failed
+  outcome. Loading, saving and model Test use the same area; starting another
+  operation replaces the old message. Late responses cannot overwrite a newer
+  message such as a disconnect warning.
+  Feedback aligns with the content column; Save stays right-aligned. Success is
+  green, errors red, pending operations use the theme accent and informational
+  messages use muted text. The footer remains visible while scrolling.
+- Credential password inputs show a fixed `******` mask when already configured.
+  Leave the mask unchanged to retain the saved value, replace it with a literal
+  or exact `${ENV}`, or delete it to remove the credential on section save.
+  The mask is reserved as the keep marker for already-configured credentials.
+  The eye icon only reveals newly entered text, never the saved credential.
+  Credential controls do not display saved values or environment-reference names.
+  References resolve from the environment captured at startup when applying or
+  testing; save-time validation does not require the variable to be available.
+- Built-in models have add/edit/delete controls, protocol, relative endpoint and
+  optional display name. Advanced JSON retains limits and reasoning capabilities.
+  Models start as compact rows; Edit expands one inline form, preserving drafts
+  when collapsed. New models open for editing immediately. Test, Set default and
+  Delete align right. Built-in and Extension model lists show Default for the
+  current LLM draft selection; the existing unsaved indicator means Save LLM is
+  still required.
+  Omitted existing limit/reasoning fields on retained model IDs are preserved.
+- **Set default** changes only the default selection in the LLM
+  draft. **Save LLM** applies Built-in/default changes to new execution trees;
+  already-running trees keep their version. An existing Provider-free
+  configuration uses this same editor for its first Provider.
+- **Test** makes a real model request and may incur charges. Built-in tests use
+  the draft; other Providers use currently loaded instances, not saved Extension
+  parameters. Test does not save or change the default and has a fixed 30-second
+  total deadline including preparation. It never creates a conversation.
+- Extension sections expose supported scalar fields and explicit credential
+  intents. Unsupported/read-only values remain server-owned and are not exposed
+  or silently overwritten. Extension changes require a manual restart. Saving
+  the startup values again clears that Extension's restart flag, without clearing
+  outstanding differences in other Extensions. Closing the editor does not erase
+  restart requirements.
+- A known pre-publication LLM failure restores the file and the confirmed editor
+  values with a fresh revision, without reloading other sections. Failed rollback
+  reports unknown file state and retains the draft/latest revision for another
+  explicit save; it does not claim successful recovery. Saved-but-unconfirmed
+  Runtime application is shown separately from file-save success.
+- A disconnected or missing response may hide a completed save. The client never
+  retries it automatically: reconnect, then explicitly reload before saving again.
+  Its 60-second response-wait bound is not cancellation of server work and does
+  not replace the server's 30-second model Test deadline.
 
 ## 2. Practical starting configuration
 
@@ -93,10 +178,10 @@ The following example configures:
     "steeringEnabled": true,
     "maxLlmCallsPerTurn": 12,
     "maxSubagentDepth": 1,
+    "memory": {
+      "enabled": false
+    },
     "defaults": {
-      "memory": {
-        "enabled": false
-      },
       "tools": {
         "allow": [
           "list_dir",
@@ -358,9 +443,6 @@ override the same Agent-scoped sections:
 {
   "agents": {
     "defaults": {
-      "memory": {
-        "enabled": false
-      },
       "tools": {
         "allow": ["read_file", "file_search"],
         "deny": ["exec"]
@@ -385,25 +467,30 @@ Runner, LLM, and workspace settings are not valid inside Agent entries.
 capability merge. `maxLlmCallsPerTurn` remains global policy and is not valid
 inside an Agent entry.
 
-### 5.1 Memory
+### 5.1 Global Memory
+
+Memory is configured under `agents.memory`, not as an Agent capability. Root and
+Child share one store/index; ordinary Tool policy controls access.
 
 ```json
 {
-  "memory": {
-    "enabled": true,
-    "embedding": {
-      "provider": "local",
-      "model": "Xenova/all-MiniLM-L6-v2"
-    },
-    "chunking": {
-      "chunkChars": 1600,
-      "overlapChars": 320
-    },
-    "search": {
-      "maxResults": 6,
-      "minScore": 0.25,
-      "vectorWeight": 0.7,
-      "textWeight": 0.3
+  "agents": {
+    "memory": {
+      "enabled": true,
+      "embedding": {
+        "provider": "local",
+        "model": "Xenova/all-MiniLM-L6-v2"
+      },
+      "chunking": {
+        "chunkChars": 1600,
+        "overlapChars": 320
+      },
+      "search": {
+        "maxResults": 6,
+        "minScore": 0.25,
+        "vectorWeight": 0.7,
+        "textWeight": 0.3
+      }
     }
   }
 }
@@ -414,6 +501,22 @@ the current built-in embedding factory implements `local`, while a non-local
 selection falls back to keyword-only search. Chunk sizes and `maxResults` are
 positive integers; overlap must be smaller than chunk size. Search scores and
 weights must be between `0` and `1`.
+
+Enabling Memory may load/download embedding files and update its index during
+startup; unchanged files are not always re-embedded. Local files are downloaded
+from Hugging Face when missing from the SDK cache. If that source is unreachable,
+set `HF_ENDPOINT` to a trusted Hugging Face-compatible mirror before restarting:
+
+```powershell
+$env:HF_ENDPOINT = "https://your-trusted-mirror.example"
+npm run agent -- --agent-home .\agent-home
+```
+
+Use an HTTP(S) URL without credentials, query or fragment. Arbitrary download
+URLs are not supported. Logs report loading start/success and failures with
+available network cause/code or actual requested file URL. Check the original
+error for authorization, missing-file or local model failures rather than
+assuming every failure needs a mirror.
 
 ### 5.2 Tool policy
 
@@ -508,6 +611,63 @@ Roles cannot override it and Child counters do not inherit Parent remaining
 capacity. Context files for a configured
 Agent belong under `<agentHome>/agents/<agentId>/`.
 
+### 5.6 Skills
+
+Place each Skill under `<agentHome>\skills`, with a `SKILL.md` containing YAML
+`name` and `description` followed by instructions. Name must match the containing
+directory; use 1–64 lowercase letters, digits and hyphens, without leading,
+trailing or consecutive hyphens. Description must be nonblank and at most 1024
+characters. For example:
+
+```text
+skills\
+  builtin\
+    code-review\
+      SKILL.md
+      scripts\
+```
+
+Classification folders do not affect names or priority. Discovery stops at each
+`SKILL.md`, even an invalid one, rather than treating its internal examples as
+Skills. Duplicate names are unavailable until resolved. Directory/instruction
+links are not followed. No bundled content is installed automatically.
+
+In **Agents → Global settings → Default Skills**, choose the default selection.
+Named Agents can inherit it or use a complete custom selection; a custom empty
+selection means no Skills. New discoveries are not enabled automatically.
+Settings updates the available list while open without discarding unsaved edits.
+Unavailable saved names remain visible and can be removed explicitly.
+If the library cannot be read, Settings shows the reason in the Skills area;
+other settings remain editable and saved selections are retained. Correcting
+the directory allows the next catalog read to recover without restart.
+
+```json
+{
+  "agents": {
+    "defaults": { "skills": ["code-review"] },
+    "list": [{ "id": "reviewer", "skills": [] }]
+  }
+}
+```
+
+Settings saves affect new Root/Child Turns; admitted Turns retain their selections.
+Catalogs are discovered on demand, without a background scanner or cache.
+Root and Child prompt preparation skip discovery when `skill` is not visible.
+The model sees selected names/descriptions and loads complete current instructions
+using `skill`. Requests such as `/skill code-review check these changes` are
+ordinary model-interpreted text, not a Host slash command.
+
+Skill selection keeps the advertised catalog focused to reduce model confusion;
+it is not a security deny-list. Unselected Skill files can still be read through
+ordinary Tools when permitted. You may explicitly ask the Agent to read a
+specific directory's `SKILL.md` and follow it as a file-based workflow. This
+does not enable the Skill or bypass normal Tool permissions and approval rules.
+
+Loading grants no Tool permissions and installs nothing. Skills describe their
+own interpreter/dependency/environment requirements; subsequent setup and script
+execution use existing Tools and approval rules. Instruction/resource files
+remain live and can change or disappear; no whole-package snapshot is promised.
+
 ## 6. Logger
 
 ```json
@@ -545,13 +705,11 @@ The CLI owns terminal output, so disable Console Logger when using `--cli`:
 
 ## 7. Extensions
 
-Extensions are globally enabled by default, but an installed Extension is
-loaded only when it has a matching entry:
+An installed Extension is loaded only when it has a matching enabled entry:
 
 ```json
 {
   "extensions": {
-    "enabled": true,
     "entries": {
       "extension-id": {
         "enabled": true,
@@ -564,6 +722,12 @@ loaded only when it has a matching entry:
 
 An entry defaults to enabled when present. Setting its `enabled` field to
 `false` disables that Extension.
+
+The old global `extensions.enabled` field is no longer accepted, even when it is
+`false`. Startup reports the field and leaves the file unchanged. Before removing
+an old global `false`, set `"enabled": false` on each existing entry that should
+remain disabled. Simply removing the global field would enable entries whose
+per-entry `enabled` is omitted. There is no automatic migration.
 
 ### 7.1 WebSocket browser client
 

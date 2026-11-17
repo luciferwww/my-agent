@@ -1,8 +1,8 @@
-import { mkdir, readFile, writeFile } from 'fs/promises';
+import { cp, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
-/** 模板文件名列表 */
+/** Template file names. */
 const TEMPLATE_FILES = [
   'IDENTITY.md',
   'SOUL.md',
@@ -10,20 +10,20 @@ const TEMPLATE_FILES = [
   'TOOLS.md',
 ] as const;
 
-/** 模板目录（相对于当前文件） */
+/** Template directory relative to this module. */
 const TEMPLATES_DIR = join(dirname(fileURLToPath(import.meta.url)), 'templates');
 
 /**
- * 加载模板文件内容。
+ * Read a template file.
  */
 async function loadTemplate(name: string): Promise<string> {
   return readFile(join(TEMPLATES_DIR, name), 'utf-8');
 }
 
 /**
- * 将内容写入文件，仅当文件不存在时。
- * 使用 flag: "wx"（exclusive write），已存在则跳过。
- * 与 OpenClaw 的 writeFileIfMissing() 实现一致。
+ * Write content only when the file is absent.
+ * Exclusive creation ("wx") preserves existing files, as in OpenClaw's
+ * writeFileIfMissing().
  */
 async function writeFileIfMissing(filePath: string, content: string): Promise<boolean> {
   try {
@@ -39,17 +39,47 @@ async function writeFileIfMissing(filePath: string, content: string): Promise<bo
 }
 
 /**
- * 确保 Agent Home 和模板文件存在。
- * 文件已存在则跳过，不覆盖用户已编辑的内容。
+ * Ensure Agent Home and its template files exist.
+ * Preserve existing files, including user edits.
  *
- * @param agentHome - Agent 状态根目录路径
+ * @param agentHome - Root directory for Agent state.
  */
 export async function ensureAgentContext(agentHome: string): Promise<void> {
   await mkdir(agentHome, { recursive: true });
 
-  // 逐个加载模板并写入（已存在则跳过）
+  // Seed each Root template without replacing existing files.
   for (const name of TEMPLATE_FILES) {
     const content = await loadTemplate(name);
     await writeFileIfMissing(join(agentHome, name), content);
+  }
+
+  await ensureAgentDefinitions(agentHome);
+}
+
+async function ensureAgentDefinitions(agentHome: string): Promise<void> {
+  const destination = join(agentHome, 'agents');
+  try {
+    const entry = await lstat(destination);
+    if (!entry.isDirectory()) {
+      throw new Error(`Agent definitions path must be a directory: ${destination}`);
+    }
+    return;
+  } catch (error) {
+    if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') {
+      throw error;
+    }
+  }
+
+  const temporary = await mkdtemp(join(agentHome, '.agents-'));
+  try {
+    await cp(join(TEMPLATES_DIR, 'agents'), temporary, { recursive: true });
+    await rename(temporary, destination);
+  } catch (error) {
+    try {
+      await rm(temporary, { recursive: true, force: true });
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Agent template initialization and cleanup failed.');
+    }
+    throw error;
   }
 }

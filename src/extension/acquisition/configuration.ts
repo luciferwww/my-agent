@@ -7,6 +7,7 @@ import type {
 import {
   CredentialMaterializationError,
   materializeExactStringCredential,
+  parseCredentialEnvironmentReference,
 } from '../../platform/config/credential-materialization.js';
 
 const MAX_DIAGNOSTIC_FIELD_LENGTH = 200;
@@ -40,6 +41,7 @@ export function prepareExtensionConfig(
   input: Readonly<Record<string, unknown>>,
   schema: Readonly<Record<string, unknown>>,
   environment: Readonly<Record<string, string | undefined>>,
+  mode: 'runtime' | 'save' = 'runtime',
 ): ExtensionConfigPreparationResult {
   let config: Record<string, unknown>;
   try {
@@ -48,23 +50,57 @@ export function prepareExtensionConfig(
     return configFailure('config_invalid', 'config_validation_failed');
   }
 
-  const sensitiveFailure = materializeSensitiveStrings(config, schema, environment);
+  const sensitiveFailure = mode === 'runtime'
+    ? materializeSensitiveStrings(config, schema, environment)
+    : undefined;
   if (sensitiveFailure !== undefined) {
     return Object.freeze({ ok: false, ...sensitiveFailure });
   }
 
   let validate: ValidateFunction;
+  const ajv = new Ajv({
+    strict: true,
+    allErrors: true,
+    useDefaults: true,
+    coerceTypes: false,
+    removeAdditional: false,
+  });
   try {
-    const ajv = new Ajv({
-      strict: true,
-      allErrors: true,
-      useDefaults: true,
-      coerceTypes: false,
-      removeAdditional: false,
-    });
     validate = ajv.compile(cloneJsonObject(schema));
   } catch {
     return configFailure('config_invalid', 'config_schema_invalid');
+  }
+  if (mode === 'save') {
+    // Apply Schema defaults before checking raw environment references.
+    validate(config);
+    const syntaxSchema = cloneJsonObject(schema);
+    const properties = syntaxSchema['properties'];
+    let changed = false;
+    if (isPlainObject(properties)) {
+      for (const [name, propertySchema] of Object.entries(properties)) {
+        if (!isSensitiveRootString(propertySchema)) continue;
+        try {
+          if (parseCredentialEnvironmentReference(Object.hasOwn(config, name) ? config[name] : undefined) !== undefined) {
+            Object.defineProperty(properties, name, {
+              value: { type: 'string', writeOnly: true }, enumerable: true, configurable: true, writable: true,
+            });
+            changed = true;
+          }
+        } catch (error) {
+          if (!(error instanceof CredentialMaterializationError)) throw error;
+          return Object.freeze({
+            ok: false,
+            category: 'config_invalid',
+            code: 'config_validation_failed',
+            referencePath: boundedPropertyReferencePath(name),
+          });
+        }
+      }
+    }
+    if (changed) {
+      ajv.removeSchema();
+      validate = ajv.compile(syntaxSchema);
+    }
   }
 
   if (validate(config) !== true) {
@@ -74,6 +110,27 @@ export function prepareExtensionConfig(
   return Object.freeze({
     ok: true,
     config: deepFreeze(config),
+  });
+}
+
+export function extensionSettingsFields(schema: Readonly<Record<string, unknown>>) {
+  const properties = schema['properties'];
+  if (!isPlainObject(properties)) return [];
+  return Object.entries(properties).map(([name, value]) => {
+    const supported = isPlainObject(value)
+      && !hasReferenceOrComposition(value)
+      && ['string', 'integer', 'number', 'boolean'].includes(String(value['type']));
+    const sensitive = isPlainObject(value) && value['writeOnly'] === true;
+    return {
+      name,
+      path: `/${escapeJsonPointerSegment(name)}`,
+      supported,
+      editable: supported && value['readOnly'] !== true && (!sensitive || isSensitiveRootString(value)),
+      sensitive,
+      schema: supported && (!sensitive || isSensitiveRootString(value))
+        ? Object.fromEntries(Object.entries(value).filter(([key]) => !sensitive || key !== 'default'))
+        : undefined,
+    };
   });
 }
 

@@ -24,8 +24,16 @@ Prompt does not own configuration precedence, canonical Tool schemas, Channel wi
 | 5 | Project Context | when non-empty Context files exist | when non-empty Context files exist |
 | 6 | Agent Home | when `agentHome` exists | when `agentHome` exists |
 | 7 | Available Subagents | when entries are supplied | no |
+| 8 | Available Skills | when selected summaries are supplied and `skill` is visible | same as Full |
 
 `mode: 'none'` returns an empty string regardless of the other inputs.
+
+Runtime supplies selected available summaries from on-demand discovery. Root
+preparation skips discovery when the loader is hidden; Child preparation invokes
+a Runtime-supplied catalog callback only after resolving loader visibility.
+Builder renders names/descriptions and current-load,
+explicit-use and delegation guidance; it does not scan files. Complete instruction
+files enter context only through the ordinary `skill` Tool result.
 
 Dynamic date and time are carried in the User prompt, not the System prompt.
 
@@ -46,23 +54,35 @@ UserPromptBuilder.build(input)
 
 `ContextPrepender` owns registration and removal. For every `prepend()` call it passes the raw input, caller metadata, and a zero-based monotonically increasing `turnIndex` to each provider. Hook provider errors propagate to the caller; this layer does not add an error-isolation policy.
 
-The timestamp is part of the built User message for every protocol. Runner persists that message and replays its original timestamp rather than rebuilding historical prompts.
+The timestamp and Context Hook sections belong to the model-only User prompt,
+not the user's message. Runtime passes the original normalized `message` and a
+separate `userPrompt` to Runner. Runner persists only the original message;
+budgeting and the current model input use the prompt. Compaction retries reuse
+that prepared prompt. Subsequent Turns replay original Session messages without
+rebuilding historical prompt sections. Neither User nor System prompt sections
+are persisted as user-message facts. Old records are not rewritten.
 
 On the library Builder surface, attachments default to an empty array and otherwise pass through unchanged. The Builder neither embeds them in text nor converts them to Provider wire objects.
 
 ## 4. Runtime placement in normalized media
 
-Runtime applies User-prompt prepending only to text:
+Runtime builds a separate User prompt by prepending only to text, without
+changing the normalized message saved in Session:
 
-1. A string message is replaced by the built User-prompt text.
+1. A string input produces built User-prompt text.
 2. For a normalized block array, the first text block is the prepend host; all other blocks keep their order and values.
 3. If no text block exists, Runtime inserts a new text block containing the built prompt before the original blocks.
 
 Prompt does not revalidate, optimize, reorder, or convert media. Runtime intake tests prove block forwarding and position preservation; Prompt tests separately prove Context Hook composition. There is no dedicated test combining a non-empty Context Hook with media blocks.
 
+Claimed steering follows the same split: its original `content`, identity, and
+reasoning are retained for persistence, while its optional `userPrompt` supplies
+model-only content at either injection point. Prompt metadata is not forwarded
+as Provider wire fields.
+
 ## 5. Runtime projection
 
-`runtime/prompt-factory.ts` maps only Runtime-owned inputs into `SystemPromptBuildParams`: prompt mode, Context files, visible Tool names, Agent Home, and available Subagent entries. Even when prompt mode is `none`, Runtime selects the full Context-load mode so its cache remains warm; `minimal` selects minimal Context loading.
+`runtime/prompt-factory.ts` maps only Runtime-owned inputs into `SystemPromptBuildParams`: prompt mode, Context files, visible Tool names, Agent Home, available Subagent entries and Skill summaries. The Skills section is shared with the Child minimal-prompt path; `none` still emits no system content.
 
 Context-file initialization and loading belong to [Agent Context](agent-context.md). Runtime generation and Subagent lifecycle belong to [Runtime](runtime.md).
 

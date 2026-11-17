@@ -31,15 +31,18 @@ The standalone Host derives `installDir` from its installed package and passes i
 
 The Host-loaded `<agentHome>/config.json` snapshot owns:
 
-- `extensions.enabled`, the global boolean acquisition switch, defaulting to `true`;
-- `extensions.entries.<descriptor-id>.enabled`, an optional per-Descriptor boolean that defaults to `true` when the entry exists;
+- `extensions.entries.<descriptor-id>.enabled`, an optional per-Descriptor boolean that defaults to `true` even when the entry is absent;
 - `extensions.entries.<descriptor-id>.config`, the Descriptor-scoped configuration value.
 
 Configuration failures are classified before acquisition.
+The retired global `extensions.enabled` field is rejected, regardless of value,
+with guidance to configure each entry before removing it. Acquisition also rejects
+the legacy field when called directly; an old global `false` cannot silently enable
+configured entries.
 
 ## 3. Scoped configuration
 
-When global `extensions.enabled` is `false`, acquisition returns an empty result without discovery. An installed Extension without a matching configured entry remains disabled. For an existing entry, omitted `enabled` defaults to `true` and explicit `false` disables it. Before a factory receives its configuration, acquisition:
+Every discovered Extension is enabled by default; an absent entry supplies empty scoped configuration and receives Schema defaults. Only explicit `enabled: false` disables an otherwise valid entry without import. Discovery itself remains import-free, including for disabled entries. Before a factory receives its configuration, acquisition:
 
 1. selects the Descriptor-owned namespace;
 2. materializes an exact `${ENV_VAR}` reference only for a direct root Schema
@@ -74,17 +77,23 @@ A configured Descriptor ID with no installed candidate produces a `stale_configu
 `ExtensionAcquisitionResult` contains:
 
 ```text
+discovery: ExtensionDiscoveryResult
 loadedUnits: readonly LoadedRuntimeUnit[]
 diagnostics: readonly ExtensionAcquisitionDiagnostic[]
 ```
 
 The returned Units have not been created. Runtime combines them with required and Host-provided Units, then owns creation, registration staging, validation, immutable publication, retirement, and stop. This keeps discovery/import failures outside Runtime lifecycle state and prevents acquisition from becoming a second composition path.
 
+Runtime Bootstrap retains the frozen startup discovery result and combined
+diagnostics as `extensionMetadata`, without retaining a second Unit list there.
+Settings can reuse this import-free metadata rather than scan/import again.
+This does not discover newly copied packages while running or load disabled entries.
+
 ## 6. Supported Host and build boundary
 
 `src/hosts/standalone/standalone-host.ts` is the supported service-first Host composition root. The thin executable bootstrap is `src/hosts/standalone/entry.ts`.
 
-`--initialize` is a separate interactive Standalone path that returns before Runtime creation; its Initialize/Edit and publication contract is owned by the [Standalone Service Host Specification](../specifications/standalone-service-host.md). Ordinary startup follows the composition steps below.
+Ordinary startup bootstraps a missing Agent Home/configuration as `{}` through Platform, then follows the composition steps below. The old `--initialize` wizard is removed; see the [Standalone Service Host Specification](../specifications/standalone-service-host.md).
 
 1. derives `installDir` and selects `agentHome`;
 2. passes generic `installDir`, configuration snapshot, and environment startup facts to Runtime;

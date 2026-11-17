@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,7 +20,7 @@ import type {
 import type { RunParams, RunResult } from '../core/runner/types.js';
 import type { Tool } from '../core/tools/types.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
-import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
+import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './composition/runtime-unit.js';
 import type {
   ModelReference,
   ProviderProjectionEntry,
@@ -34,7 +34,12 @@ import { createDefaultAgentConfig } from '../platform/config/default-composition
 import { DEFAULT_LOGGER_CONFIG } from '../platform/logger/index.js';
 import { loadAgentConfig } from '../platform/config/agent-config-loader.js';
 import { RuntimeApp } from './RuntimeApp.js';
-import type { RuntimeHandle } from './runtime-composition.js';
+import { SessionMessageScheduler } from './scheduling/session-message-scheduler.js';
+import { CompositionCoordinator } from './composition/composition-coordinator.js';
+import * as runtimeBootstrap from './composition/bootstrap.js';
+import { RuntimeCompositionManager } from './composition/runtime-composition-manager.js';
+import { createBuiltinLlmProviderUnit } from '../builtins/providers/builtin/index.js';
+import type { RuntimeHandle } from './composition/runtime-composition.js';
 import type {
   RunTurnParams,
   RunTurnResult,
@@ -43,6 +48,11 @@ import type {
 } from './types.js';
 import type { RuntimeDeadlineDriver, RuntimeDeadlineRaceResult } from './runtime-deadline.js';
 import { Logger } from '../platform/logger/index.js';
+import { randomUUID } from 'node:crypto';
+import { SessionManager } from '../core/session/SessionManager.js';
+import { SystemPromptBuilder } from '../core/prompt/SystemPromptBuilder.js';
+import { ensureAgentContext } from '../core/agent-context/index.js';
+import { DEFAULT_MEMORY_CONFIG } from '../core/memory/index.js';
 
 function testApplicationConfig(
   defaultModel: { readonly providerId: string; readonly modelId: string } | null = {
@@ -55,6 +65,7 @@ function testApplicationConfig(
     readonly maxSubagentDepth?: number;
     readonly list?: readonly AgentEntry[];
   } = {},
+  memoryEnabled = false,
 ): ApplicationConfigProjection {
   return {
     llm: {
@@ -65,6 +76,7 @@ function testApplicationConfig(
       },
     },
     agents: {
+      memory: { ...DEFAULT_MEMORY_CONFIG, enabled: memoryEnabled },
       steeringEnabled: configuredAgents.steeringEnabled ?? false,
       ...(configuredAgents.maxLlmCallsPerTurn === undefined
         ? {}
@@ -79,7 +91,33 @@ function testApplicationConfig(
 
 let rootTurnSequence = 0;
 
-function runRootTurnForTest(
+function messageSchedulerForTest(handle: RuntimeHandle): SessionMessageScheduler {
+  const scheduler: unknown = Reflect.get(handle.application, 'messageScheduler');
+  if (!(scheduler instanceof SessionMessageScheduler)) {
+    throw new Error('Expected the Runtime Session scheduler.');
+  }
+  return scheduler;
+}
+
+function queueMessagesForTest(
+  handle: RuntimeHandle,
+  sessionId: string,
+  requestIds: readonly string[],
+): SessionMessageScheduler {
+  const scheduler = messageSchedulerForTest(handle);
+  for (const requestId of requestIds) {
+    scheduler.enqueue({
+      sessionId,
+      requestId,
+      originMessageId: `message-${requestId}`,
+      message: requestId,
+      reasoningPolicy: { effort: 'medium' },
+    });
+  }
+  return scheduler;
+}
+
+async function runRootTurnForTest(
   handle: RuntimeHandle,
   params: Omit<RunTurnParams, 'requestId' | 'turnId' | 'originMessageId'> & {
     requestId?: string;
@@ -91,6 +129,7 @@ function runRootTurnForTest(
   const application = handle.application as unknown as {
     startRootTurn(input: RunTurnParams): Promise<RunTurnResult>;
   };
+  messageSchedulerForTest(handle).reserve(params.sessionId);
   return application.startRootTurn({
     ...params,
     requestId: params.requestId ?? `test-request-${rootTurnSequence}`,
@@ -160,6 +199,7 @@ describe('RuntimeApp', () => {
   it('routes Agent state, Environment Tools, and prompts to agentHome', async () => {
     const selectedAgentHome = join(agentHome, 'agent-home');
     const createSessionManager = vi.fn(() => ({
+      getSubagentPresentationRoute: vi.fn(),
       initialize: vi.fn(async () => undefined),
       close: vi.fn(async () => undefined),
       getPersistedSession: vi.fn(() => sessionEntry('main')),
@@ -170,11 +210,8 @@ describe('RuntimeApp', () => {
 
     const app = await RuntimeApp.create({
       agentHome: selectedAgentHome,
-      applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: true },
-        tools: { deny: ['task'] },
-      },
+      applicationConfig: testApplicationConfig(undefined, {}, true),
+      cliOverrides: { tools: { deny: ['task'] } },
       dependencies: createTestDependencies({
         createSessionManager,
         createMemoryManager,
@@ -205,6 +242,35 @@ describe('RuntimeApp', () => {
     await app.close();
   });
 
+  it('captures named Agent metadata and bodies during bootstrap without refreshing them on Root reload', async () => {
+    const bootstrap = vi.spyOn(runtimeBootstrap, 'bootstrapRuntime');
+    let app: RuntimeHandle | undefined;
+    try {
+      app = await RuntimeApp.create({
+        agentHome,
+        applicationConfig: testApplicationConfig(),
+        dependencies: createTestDependencies(),
+      });
+      const result: Awaited<ReturnType<typeof runtimeBootstrap.bootstrapRuntime>> | undefined
+        = await bootstrap.mock.results[0]?.value;
+      const snapshot = result?.resources.agentDefinitions;
+      expect(snapshot?.definitions.map(definition => definition.id))
+        .toEqual(['explorer', 'researcher', 'reviewer']);
+      const reviewer = snapshot?.definitions.find(definition => definition.id === 'reviewer');
+      expect(reviewer?.contextFiles).toHaveLength(4);
+      expect(reviewer?.contextFiles[0].content).not.toContain('description:');
+      await writeFile(join(agentHome, 'agents', 'reviewer', 'IDENTITY.md'),
+        '---\ndescription: Changed on disk\n---\nChanged body');
+      await app.application.reloadContextFiles();
+      expect(result?.resources.agentDefinitions).toBe(snapshot);
+      expect(reviewer?.description).not.toBe('Changed on disk');
+      expect(reviewer?.contextFiles[0].content).not.toContain('Changed body');
+    } finally {
+      await app?.close();
+      bootstrap.mockRestore();
+    }
+  });
+
   it('closes SessionManager before managed processes and reports both resources', async () => {
     const cleanupOrder: string[] = [];
     const closeSessionManager = vi.fn(async () => {
@@ -216,9 +282,10 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: { memory: { enabled: false } },
+
       dependencies: createTestDependencies({
         createSessionManager: () => ({
+          getSubagentPresentationRoute: vi.fn(),
           initialize: vi.fn(async () => undefined),
           close: closeSessionManager,
           getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
@@ -245,9 +312,10 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: { memory: { enabled: false } },
+
       dependencies: createTestDependencies({
         createSessionManager: () => ({
+          getSubagentPresentationRoute: vi.fn(),
           initialize: vi.fn(async () => undefined),
           close: vi.fn(async () => {
             throw new Error('session cleanup failed');
@@ -292,11 +360,10 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createSessionManager: () => ({
+          getSubagentPresentationRoute: vi.fn(),
           initialize: vi.fn(async () => undefined),
           close: vi.fn(async () => undefined),
           getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
@@ -331,12 +398,9 @@ describe('RuntimeApp', () => {
     releaseRun.resolve();
     await activeTurn;
 
-    const queueMap = (app.application as unknown as {
-      messageQueueBySession: Map<string, unknown[]>;
-    }).messageQueueBySession;
-    queueMap.set('main', [{ queued: true }]);
+    const scheduler = queueMessagesForTest(app, 'main', ['queued']);
     await assertBusy();
-    queueMap.delete('main');
+    scheduler.dropPending('main');
 
     expect(archiveSession).not.toHaveBeenCalled();
     expect(deleteSession).not.toHaveBeenCalled();
@@ -359,11 +423,10 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createSessionManager: () => ({
+          getSubagentPresentationRoute: vi.fn(),
           initialize: vi.fn(async () => undefined),
           close: vi.fn(async () => undefined),
           getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
@@ -390,11 +453,10 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createSessionManager: () => ({
+          getSubagentPresentationRoute: vi.fn(),
           initialize: vi.fn(async () => undefined),
           close: vi.fn(async () => undefined),
           getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
@@ -435,34 +497,151 @@ describe('RuntimeApp', () => {
       dependencies: Object.freeze([]),
       create,
     });
-    const acquireExtensions = vi.fn(async () => Object.freeze({
-      loadedUnits: Object.freeze([acquiredUnit]),
+    const discovery = Object.freeze({
+      candidates: Object.freeze([Object.freeze({
+        descriptor: Object.freeze({
+          manifestVersion: 1 as const,
+          id: 'disabled-extension',
+          version: '1.0.0',
+          entry: 'entry.js',
+          configSchema: Object.freeze({ type: 'object' }),
+        }),
+        installationPath: join(installDir, 'extensions', 'disabled-extension'),
+        entryPath: join(installDir, 'extensions', 'disabled-extension', 'entry.js'),
+      })]),
       diagnostics: Object.freeze([]),
+    });
+    const diagnostics = Object.freeze([Object.freeze({
+      category: 'disabled' as const,
+      code: 'extension_disabled' as const,
+      extensionId: 'disabled-extension',
+    })]);
+    const acquireExtensions = vi.fn(async () => Object.freeze({
+      discovery,
+      loadedUnits: Object.freeze([acquiredUnit]),
+      diagnostics,
     }));
+    const bootstrap = vi.spyOn(runtimeBootstrap, 'bootstrapRuntime');
+    let app: RuntimeHandle | undefined;
+    try {
+      app = await RuntimeApp.create({
+        agentHome,
+        applicationConfig: testApplicationConfig(),
+        startupContext: {
+          installDir,
+          configuration: snapshot,
+          environment,
+        },
 
+        dependencies: createTestDependencies({ acquireExtensions }),
+      });
+
+      expect(acquireExtensions).toHaveBeenCalledOnce();
+      expect(acquireExtensions).toHaveBeenCalledWith({
+        extensionsDir: join(installDir, 'extensions'),
+        extensionsConfig: snapshot.extensions,
+        environment,
+      });
+      expect(create).toHaveBeenCalledOnce();
+      expect(acquireExtensions.mock.invocationCallOrder[0])
+        .toBeLessThan(create.mock.invocationCallOrder[0]!);
+      const result = await bootstrap.mock.results[0]?.value;
+      expect(result?.extensionMetadata?.discovery).toBe(discovery);
+      expect(result?.extensionMetadata?.diagnostics).toBe(diagnostics);
+      expect(Object.isFrozen(result?.extensionMetadata)).toBe(true);
+      expect(result?.extensionMetadata).not.toHaveProperty('loadedUnits');
+    } finally {
+      bootstrap.mockRestore();
+      await app?.close();
+    }
+  });
+
+  it('shares Settings with Channels and embedding, publishing saved LLM updates and restoring failed drafts', async () => {
+    const chat = vi.fn(async () => ({
+      content: [], toolCalls: [], stopReason: 'end_turn', usage: { inputTokens: 1, outputTokens: 1 },
+    }));
+    const builtin = {
+      baseURL: 'https://settings.example/v1',
+      models: [{ modelId: 'one', protocol: 'openai-responses' }],
+    };
+    await writeFile(join(agentHome, 'config.json'), JSON.stringify({
+      llm: { builtin, defaultModel: { providerId: 'builtin', modelId: 'one' } },
+    }));
+    const configuration = await loadAgentConfig({ agentHome, environment: {} });
+    const testChannel = createTestChannel('settings-channel');
+    let capabilities: ChannelRuntimeCapabilities | undefined;
+    testChannel.channel.bindRuntimeCapabilities = (value) => { capabilities = value; };
     const app = await RuntimeApp.create({
       agentHome,
-      applicationConfig: testApplicationConfig(),
-      startupContext: {
-        installDir,
-        configuration: snapshot,
-        environment,
-      },
-      cliOverrides: {
-        memory: { enabled: false },
-      },
-      dependencies: createTestDependencies({ acquireExtensions }),
-    });
+      startupContext: { installDir: join(agentHome, 'installation'), configuration, environment: {} },
+      loadedUnits: [testChannel.unit],
 
-    expect(acquireExtensions).toHaveBeenCalledWith({
-      extensionsDir: join(installDir, 'extensions'),
-      extensionsConfig: snapshot.extensions,
-      environment,
+      dependencies: createTestDependencies({
+        createBuiltinProviderUnit: (config) => createBuiltinLlmProviderUnit(config, {
+          createClient: () => ({ chat, chatStream: () => { throw new Error('Unexpected stream.'); } }),
+        }),
+        createMemoryManager: async () => null,
+      }),
     });
-    expect(create).toHaveBeenCalledOnce();
-    expect(acquireExtensions.mock.invocationCallOrder[0])
-      .toBeLessThan(create.mock.invocationCallOrder[0]!);
-    await app.close();
+    function revisionOf(output: unknown): string {
+      if (output === null || typeof output !== 'object') throw new Error('Expected Settings output.');
+      const value: unknown = 'section' in output ? output.section
+        : 'sections' in output && Array.isArray(output.sections) ? output.sections[0] : undefined;
+      if (value === null || typeof value !== 'object' || !('revision' in value) || typeof value.revision !== 'string') {
+        throw new Error('Expected section revision.');
+      }
+      return value.revision;
+    }
+    try {
+      expect(capabilities?.settings).toBe(app.application.settings);
+      const loaded = await app.application.settings.execute({ requestId: 'load', action: 'load', input: {} });
+      expect(loaded).toMatchObject({ ok: true, output: { modelCatalog: { providers: [
+        expect.objectContaining({ providerId: 'builtin', configurationSectionId: 'llm' }),
+      ] } } });
+      const beforeTest = await readFile(join(agentHome, 'config.json'), 'utf8');
+      const beforeCatalog = app.application.getModelCatalog();
+      expect(await app.application.settings.execute({
+        requestId: 'test-draft', action: 'test_llm_model',
+        input: {
+          reference: { providerId: 'builtin', modelId: 'one' },
+          builtin: { settings: builtin },
+        },
+      })).toMatchObject({ ok: true, output: { outcome: 'completed' } });
+      expect(chat).toHaveBeenCalledOnce();
+      expect(app.application.getModelCatalog()).toEqual(beforeCatalog);
+      expect(await readFile(join(agentHome, 'config.json'), 'utf8')).toBe(beforeTest);
+      const draft = {
+        builtin: { ...builtin, models: [...builtin.models, { modelId: 'two', protocol: 'openai-responses' }] },
+        defaultModel: { providerId: 'builtin', modelId: 'two' },
+      };
+      const saved = await app.application.settings.execute({
+        requestId: 'save', action: 'update',
+        input: { sectionId: 'llm', expectedRevision: revisionOf(loaded.output), settings: draft },
+      });
+      expect(saved).toMatchObject({ ok: true });
+      const catalog = app.application.getModelCatalog();
+      expect(catalog).toMatchObject({
+        generation: 2,
+        defaultSelection: { state: 'available', reference: { providerId: 'builtin', modelId: 'two' } },
+      });
+      const failed = await app.application.settings.execute({
+        requestId: 'failed-draft', action: 'update',
+        input: {
+          sectionId: 'llm', expectedRevision: revisionOf(saved.output), settings: draft,
+          credentials: { '/builtin/apiKey': { operation: 'replace', value: '${UNAVAILABLE_KEY}' } },
+        },
+      });
+      expect(failed).toMatchObject({ ok: false, error: { code: 'application_failed_rolled_back' } });
+      expect(app.application.getModelCatalog()).toEqual(catalog);
+      expect(JSON.parse(await readFile(join(agentHome, 'config.json'), 'utf8')).llm).toEqual(draft);
+      expect(revisionOf(failed.output)).not.toBe(revisionOf(saved.output));
+    } finally {
+      const report = await app.close();
+      expect(report.failed).toEqual([]);
+      expect(report.residuals).toEqual([]);
+    }
+    expect(await app.application.settings.execute({ requestId: 'closed', action: 'update', input: {} }))
+      .toMatchObject({ ok: false, error: { code: 'runtime_closing' } });
   });
 
   it('admits an existing canonical session and rejects an unknown identity', async () => {
@@ -481,6 +660,7 @@ describe('RuntimeApp', () => {
 
     const deps = createTestDependencies({
       createSessionManager: () => ({
+        getSubagentPresentationRoute: vi.fn(),
         initialize: vi.fn(async () => undefined),
         close: vi.fn(async () => undefined),
         getPersistedSession,
@@ -493,9 +673,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: deps,
     });
 
@@ -510,7 +688,8 @@ describe('RuntimeApp', () => {
     expect(runnerRun).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId,
-        message: expect.stringContaining('</turn_start>\n\nHello runtime'),
+        message: 'Hello runtime',
+        userPrompt: expect.stringContaining('</turn_start>\n\nHello runtime'),
         resolvedModel: expect.objectContaining({
           identity: { providerId: 'test', modelId: 'test-model' },
           referenceSource: 'config-default',
@@ -535,18 +714,16 @@ describe('RuntimeApp', () => {
   it('uses the injected application projection without rereading Workspace configuration', async () => {
     await writeFile(join(agentHome, 'config.json'), JSON.stringify({
       agents: {
-        defaults: {
-          memory: {
-            enabled: false,
-            chunking: { chunkChars: 800, overlapChars: 80 },
-          },
+        memory: {
+          enabled: false,
+          chunking: { chunkChars: 800, overlapChars: 80 },
         },
       },
       logger: { console: { enabled: false } },
     }), 'utf8');
     const snapshot = await loadAgentConfig({ agentHome: agentHome });
     await writeFile(join(agentHome, 'config.json'), JSON.stringify({
-      agents: { defaults: { memory: { enabled: true } } },
+      agents: { memory: { enabled: true } },
     }), 'utf8');
     const createMemoryManager = vi.fn(async () => null);
 
@@ -574,9 +751,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({ createMemoryManager }),
     });
 
@@ -600,7 +775,7 @@ describe('RuntimeApp', () => {
       applicationConfig: testApplicationConfig(undefined, {
         maxLlmCallsPerTurn: 7,
       }),
-      cliOverrides: { memory: { enabled: false } },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: runnerRun }) as never,
       }),
@@ -627,9 +802,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({ createMemoryManager: async () => null }),
     });
 
@@ -687,6 +860,7 @@ describe('RuntimeApp', () => {
           builtin: { baseURL: 'https://example.test/v1', models: [] },
         },
         agents: {
+          memory: { ...DEFAULT_MEMORY_CONFIG, enabled: false },
           steeringEnabled: false,
           maxSubagentDepth: 1,
           defaults: createDefaultAgentConfig(),
@@ -694,10 +868,7 @@ describe('RuntimeApp', () => {
         },
         logger: structuredClone(DEFAULT_LOGGER_CONFIG),
       },
-      cliOverrides: {
-        memory: { enabled: false },
-        tools: { deny: ['task'] },
-      },
+      cliOverrides: { tools: { deny: ['task'] } },
       dependencies: { createMemoryManager: async () => null },
     });
 
@@ -753,9 +924,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(model ?? null),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({ createMemoryManager: async () => null }),
     });
 
@@ -774,9 +943,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({ createMemoryManager: async () => null }),
     });
 
@@ -807,6 +974,9 @@ describe('RuntimeApp', () => {
     selection: ModelReference | undefined;
     expectedIdentity: { providerId: string; modelId: string };
   }) => {
+    const identityPath = join(agentHome, 'agents', 'reviewer', 'IDENTITY.md');
+    await mkdir(join(agentHome, 'agents', 'reviewer'), { recursive: true });
+    await writeFile(identityPath, '---\ndescription: Startup reviewer metadata\n---\nSTARTUP_REVIEWER_BODY');
     let parentModel: ResolvedModel | undefined;
     let childModel: ResolvedModel | undefined;
     let parentApprovalCapability: RunParams['approvalCapability'];
@@ -840,6 +1010,9 @@ describe('RuntimeApp', () => {
         };
       }
       childModel = params.resolvedModel;
+      expect(params.systemPrompt).toContain('STARTUP_REVIEWER_BODY');
+      expect(params.systemPrompt).not.toContain('Startup reviewer metadata');
+      expect(params.systemPrompt).not.toContain('EDITED_REVIEWER_BODY');
       expect(params.approvalCapability).toBe(parentApprovalCapability);
       if (!params.approvalCapability || !params.signal) {
         throw new Error('Child Approval capability is missing.');
@@ -901,15 +1074,15 @@ describe('RuntimeApp', () => {
           }],
         },
       ),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
+        createSystemPromptBuilder: () => new SystemPromptBuilder(),
         createBuiltinProviderUnit: () => createTestProviderUnit([
           makeProvider('test'),
           makeProvider('child'),
         ]),
         createSessionManager: () => ({
+          getSubagentPresentationRoute: vi.fn(),
           initialize: vi.fn(async () => undefined),
           close: vi.fn(async () => undefined),
           getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
@@ -917,6 +1090,9 @@ describe('RuntimeApp', () => {
           clearPreparingSubagentSession: vi.fn(),
           createTransientSubagentTranscript: vi.fn(async () => {}),
           retainTransientSubagentTranscript,
+          beginSubagentPresentation: vi.fn(async () => {}),
+          endSubagentPresentation: vi.fn(async () => {}),
+          clearSubagentPresentation: vi.fn(),
         }) as never,
         createAgentRunner: () => ({
           run: runnerRun,
@@ -926,6 +1102,7 @@ describe('RuntimeApp', () => {
       onAgentEvent: (event) => events.push(event),
     });
 
+    await writeFile(identityPath, '---\ndescription: Edited metadata\n---\nEDITED_REVIEWER_BODY');
     const result = await runRootTurnForTest(app, {
       sessionId: 'main',
       message: 'delegate',
@@ -953,6 +1130,455 @@ describe('RuntimeApp', () => {
     ]);
 
     await app.close();
+  });
+
+  it('captures independent Root/Child Skills and loads current instructions without retaining stale paths', async () => {
+    await ensureAgentContext(agentHome);
+    for (const name of ['root-skill', 'child-skill']) {
+      await mkdir(join(agentHome, 'skills', name), { recursive: true });
+      await writeFile(join(agentHome, 'skills', name, 'SKILL.md'),
+        `---\nname: ${name}\ndescription: ${name} summary\n---\n${name} instructions`);
+    }
+    await writeFile(join(agentHome, 'config.json'), JSON.stringify({
+      llm: testApplicationConfig().llm,
+      agents: { defaults: { skills: ['root-skill'] } },
+    }));
+    const configuration = await loadAgentConfig({ agentHome });
+    const entered = createDeferred<void>();
+    const proceed = createDeferred<void>();
+    let roots = 0;
+    const run = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      const loader = params.toolProjection.resolve('skill');
+      if (!loader || !params.signal) throw new Error('Missing Skill Tool wiring.');
+      const context = {
+        sessionId: params.sessionId, turnId: params.turnId, callId: 'load-skill',
+        executionId: 'execution', reportActivity: () => {},
+        subagentDepth: params.subagentDepth ?? 0, signal: params.signal,
+      };
+      if ((params.subagentDepth ?? 0) === 0 && ++roots === 1) {
+        expect(params.systemPrompt).toContain('- root-skill: root-skill summary');
+        expect(params.systemPrompt).not.toContain('root-skill instructions');
+        entered.resolve();
+        await proceed.promise;
+        expect((await loader.execute({ name: 'root-skill' }, context)).content).toContain('CURRENT instructions');
+        expect((await loader.execute({ name: 'child-skill' }, context)).outcome).toBe('failed');
+        const task = params.toolProjection.resolve('task');
+        if (!task) throw new Error('Missing Task Tool.');
+        expect((await task.execute({
+          subagent_type: 'reviewer', description: 'review', prompt: 'Use child-skill to review.',
+        }, context)).outcome).toBe('success');
+      } else {
+        expect(params.systemPrompt).toContain('- child-skill: child-skill summary');
+        expect(params.systemPrompt).not.toContain('- root-skill:');
+        expect((await loader.execute({ name: 'child-skill' }, context)).outcome).toBe('success');
+        expect((await loader.execute({ name: 'root-skill' }, context)).outcome).toBe('failed');
+      }
+      return {
+        text: 'done', content: [{ type: 'text', text: 'done' }], stopReason: 'end_turn',
+        usage: { inputTokens: 1, outputTokens: 1 }, toolRounds: 0,
+      };
+    });
+    const app = await RuntimeApp.create({
+      agentHome, startupContext: { installDir: agentHome, configuration, environment: {} },
+      dependencies: createTestDependencies({
+        acquireExtensions: async () => ({
+          loadedUnits: [], discovery: { candidates: [], diagnostics: [] }, diagnostics: [],
+        }),
+        createSystemPromptBuilder: () => new SystemPromptBuilder(),
+        createAgentRunner: () => ({ run }) as never,
+      }),
+    });
+    try {
+      const running = runRootTurnForTest(app, { sessionId: 'main', message: '/skill root-skill task', promptMode: 'full' });
+      await entered.promise;
+      const loaded = await app.application.settings.execute({ requestId: 'load', action: 'load', input: {} });
+      const output = loaded.output;
+      if (!output || typeof output !== 'object' || !('sections' in output) || !Array.isArray(output.sections)) {
+        throw new Error('Missing Settings sections.');
+      }
+      const section: unknown = output.sections.find((value: unknown) =>
+        value !== null && typeof value === 'object' && 'id' in value && value.id === 'agents:skills');
+      if (!section || typeof section !== 'object' || !('revision' in section)) throw new Error('Missing Skills revision.');
+      expect(await app.application.settings.execute({
+        requestId: 'update', action: 'update', input: {
+          sectionId: 'agents:skills', expectedRevision: section.revision, settings: { skills: ['child-skill'] },
+        },
+      })).toMatchObject({ ok: true });
+      await writeFile(join(agentHome, 'skills', 'root-skill', 'SKILL.md'),
+        '---\nname: root-skill\ndescription: root-skill summary\n---\nCURRENT instructions');
+      proceed.resolve();
+      await expect(running).resolves.toMatchObject({ text: 'done' });
+      await runRootTurnForTest(app, { sessionId: 'main', message: 'next', promptMode: 'full' });
+      expect(run).toHaveBeenCalledTimes(3);
+    } finally {
+      proceed.resolve();
+      await app.close();
+    }
+  });
+
+  it('runs a Child with a denied Skill Tool without scanning an invalid Skills root', async () => {
+    await ensureAgentContext(agentHome);
+    await writeFile(join(agentHome, 'skills'), 'Not a directory');
+    await writeFile(join(agentHome, 'config.json'), JSON.stringify({
+      llm: testApplicationConfig().llm,
+      agents: { list: [{ id: 'reviewer', skills: ['review'], tools: { deny: ['skill'] } }] },
+    }));
+    const configuration = await loadAgentConfig({ agentHome });
+    const run = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      if ((params.subagentDepth ?? 0) === 0) {
+        const task = params.toolProjection.resolve('task');
+        if (!task || !params.signal) throw new Error('Missing Task Tool or Turn signal.');
+        expect(await task.execute({
+          subagent_type: 'reviewer', description: 'review', prompt: 'Review without Skills.',
+        }, {
+          sessionId: params.sessionId, turnId: params.turnId, callId: 'delegate',
+          executionId: 'execution', reportActivity: () => {},
+          subagentDepth: 0, signal: params.signal,
+        })).toMatchObject({ outcome: 'success' });
+      } else {
+        if (!params.toolPolicy) throw new Error('Missing Child Tool policy.');
+        expect(params.toolProjection.visibleDefinitions(params.toolPolicy).map(tool => tool.name)).not.toContain('skill');
+        expect(params.systemPrompt).not.toContain('# Available Skills');
+      }
+      return {
+        text: 'done', content: [{ type: 'text', text: 'done' }], stopReason: 'end_turn',
+        usage: { inputTokens: 1, outputTokens: 1 }, toolRounds: 0,
+      };
+    });
+    const app = await RuntimeApp.create({
+      agentHome, startupContext: { installDir: agentHome, configuration, environment: {} },
+      dependencies: createTestDependencies({
+        acquireExtensions: async () => ({
+          loadedUnits: [], discovery: { candidates: [], diagnostics: [] }, diagnostics: [],
+        }),
+        createSystemPromptBuilder: () => new SystemPromptBuilder(),
+        createAgentRunner: () => ({ run }) as never,
+      }),
+    });
+    try {
+      await runRootTurnForTest(app, { sessionId: 'main', message: 'Delegate a review', promptMode: 'full' });
+      expect(run).toHaveBeenCalledTimes(2);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('uses latest global execution and Child Tool policies while keeping admitted Root parameters', async () => {
+    await ensureAgentContext(agentHome);
+    await writeFile(join(agentHome, 'agents', 'explorer', 'IDENTITY.md'), '# Invalid specialist');
+    await writeFile(join(agentHome, 'config.json'), JSON.stringify({
+      llm: testApplicationConfig().llm,
+      agents: {
+        steeringEnabled: false, maxLlmCallsPerTurn: 7,
+        maxSubagentDepth: 3,
+        defaults: { tools: { allow: ['demo_tool'], deny: ['write_file'] } },
+        list: [{ id: 'reviewer', tools: { deny: ['exec'] } }, { id: 'missing', enabled: false }],
+      },
+    }));
+    const configuration = await loadAgentConfig({ agentHome });
+    const entered = createDeferred<void>();
+    const proceed = createDeferred<void>();
+    const events: AgentEvent[] = [];
+    let roots = 0;
+    const result: RunResult = {
+      text: 'done', content: [{ type: 'text', text: 'done' }], stopReason: 'end_turn',
+      usage: { inputTokens: 1, outputTokens: 1 }, toolRounds: 0,
+    };
+    async function delegate(params: RunParams, id: string, prompt: string) {
+      const task = params.toolProjection.resolve('task');
+      if (!task || !params.signal) throw new Error('Task wiring is incomplete.');
+      expect(params.toolPolicy.isDenied('task')).toBe(false);
+      return task.execute({ subagent_type: id, description: prompt, prompt }, {
+        sessionId: params.sessionId, turnId: params.turnId, callId: `task-${prompt}`,
+        executionId: `execution-${prompt}`, reportActivity: () => {},
+        subagentDepth: params.subagentDepth ?? 0, signal: params.signal,
+      });
+    }
+    const run = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      const policy = params.toolPolicy;
+      if ((params.subagentDepth ?? 0) === 0) {
+        roots++;
+        if (roots === 1) {
+          expect(params.maxLlmCalls).toBe(7);
+          expect(params.steeringSource).toBeUndefined();
+          entered.resolve();
+          await proceed.promise;
+          expect(params.maxLlmCalls).toBe(7);
+          expect(params.steeringSource).toBeUndefined();
+          expect(policy.isDenied('write_file')).toBe(true);
+          expect(policy.isDenied('edit_file')).toBe(false);
+          expect(params.systemPrompt).toContain('- reviewer:');
+          expect(params.systemPrompt).not.toContain('- explorer:');
+          expect(await delegate(params, 'reviewer', 'review')).toMatchObject({ outcome: 'success' });
+          expect(await delegate(params, 'explorer', 'invalid-fallback')).toMatchObject({ outcome: 'success' });
+          expect(await delegate(params, 'unknown', 'unknown-fallback')).toMatchObject({ outcome: 'success' });
+          expect(await delegate(params, 'missing', 'disabled')).toMatchObject({
+            outcome: 'failed', content: expect.stringContaining('disabled'),
+          });
+        } else {
+          expect(params.maxLlmCalls).toBe(roots === 2 ? 2 : 4);
+          expect(params.steeringSource !== undefined).toBe(roots === 2);
+          expect(policy.isDenied('task')).toBe(roots === 3);
+          expect(policy.isDenied('write_file')).toBe(false);
+          expect(policy.isDenied('edit_file')).toBe(true);
+          expect(params.systemPrompt).not.toContain('- reviewer:');
+        }
+      } else {
+        expect(params.maxLlmCalls).toBe(2);
+        expect(policy.isDenied('task')).toBe(params.subagentDepth === 2);
+        expect(policy.isDenied('write_file')).toBe(false);
+        expect(policy.isDenied('edit_file')).toBe(true);
+        expect(policy.decide('demo_tool', {}, true)).toBe('allow');
+        if (params.message === 'review') {
+          expect(policy.isDenied('exec')).toBe(true);
+          expect(await delegate(params, 'researcher', 'recursive')).toMatchObject({ outcome: 'success' });
+          expect(policy.isDenied('exec')).toBe(true);
+        } else {
+          expect(policy.isDenied('exec')).toBe(false);
+        }
+      }
+      return result;
+    });
+    const app = await RuntimeApp.create({
+      agentHome,
+      startupContext: { installDir: agentHome, configuration, environment: {} },
+      dependencies: createTestDependencies({
+        acquireExtensions: async () => ({
+          loadedUnits: [], discovery: { candidates: [], diagnostics: [] }, diagnostics: [],
+        }),
+        createSystemPromptBuilder: () => new SystemPromptBuilder(),
+        createAgentRunner: () => ({ run }) as never,
+      }),
+      onAgentEvent: event => { events.push(event); },
+    });
+    async function update(sectionId: string, settings: unknown) {
+      const loaded = await app.application.settings.execute({ requestId: 'load', action: 'load', input: {} });
+      const output = loaded.output;
+      if (output === null || typeof output !== 'object' || !('sections' in output) || !Array.isArray(output.sections)) {
+        throw new Error('Expected Settings sections.');
+      }
+      const section: unknown = output.sections.find((value: unknown) =>
+        value !== null && typeof value === 'object' && 'id' in value && value.id === sectionId);
+      if (section === null || typeof section !== 'object' || !('revision' in section)) throw new Error('Missing revision.');
+      expect(await app.application.settings.execute({
+        requestId: `save-${sectionId}`, action: 'update',
+        input: { sectionId, expectedRevision: section.revision, settings },
+      })).toMatchObject({ ok: true });
+    }
+    try {
+      expect(app.application.getAvailableSubagents().map(entry => entry.id))
+        .toEqual(['general-purpose', 'researcher', 'reviewer']);
+      const running = runRootTurnForTest(app, { sessionId: 'main', message: 'delegate', promptMode: 'full' });
+      await entered.promise;
+      await update('agents:execution', { steeringEnabled: true, maxSubagentDepth: 2, maxLlmCallsPerTurn: 2 });
+      await update('agents:defaults', { tools: { allow: ['demo_tool'], deny: ['edit_file'] } });
+      proceed.resolve();
+      await expect(running).resolves.toMatchObject({ text: 'done' });
+      expect(events.filter(event => event.type === 'subagent_start').map(event => event.subagentType))
+        .toEqual(['reviewer', 'researcher', 'general-purpose', 'general-purpose']);
+      await update('agent:reviewer', { enabled: false });
+      expect(app.application.getAvailableSubagents().map(entry => entry.id))
+        .toEqual(['general-purpose', 'researcher']);
+      await runRootTurnForTest(app, { sessionId: 'main', message: 'next prompt', promptMode: 'full' });
+      expect(roots).toBe(2);
+      await update('agents:execution', { steeringEnabled: false, maxSubagentDepth: 0, maxLlmCallsPerTurn: 4 });
+      await runRootTurnForTest(app, { sessionId: 'main', message: 'delegation disabled', promptMode: 'full' });
+      expect(roots).toBe(3);
+    } finally {
+      proceed.resolve();
+      await app.close();
+    }
+  });
+
+  it('retains a recursive execution in the Root using real Session persistence', async () => {
+    const sessions = new SessionManager(agentHome);
+    const rootEntered = createDeferred<void>();
+    const continueRoot = createDeferred<void>();
+    const oldChannel = createTestChannel('old-observer');
+    const nextChannel = createTestChannel('next-observer');
+    const oldSend = vi.spyOn(oldChannel.channel, 'send');
+    const nextSend = vi.spyOn(nextChannel.channel, 'send');
+    let emit: ((event: AgentEvent) => void) | undefined;
+    const sessionId = randomUUID();
+    await sessions.materializeSession({ sessionId, createdAt: 1 });
+    const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
+      const depth = params.subagentDepth ?? 0;
+      if (depth === 0) {
+        rootEntered.resolve();
+        await continueRoot.promise;
+      }
+      await sessions.appendMessage(params.sessionId, {
+        turnId: params.turnId, role: 'user', messageId: randomUUID(), content: params.message,
+      });
+      emit?.({
+        type: 'text_delta', sessionId: params.sessionId, turnId: params.turnId,
+        messageId: `native-${depth}`, text: `depth-${depth}`,
+      });
+      if (depth < 2) {
+        const callId = `task-${depth}`;
+        await sessions.appendMessage(params.sessionId, {
+          turnId: params.turnId, role: 'assistant', messageId: randomUUID(),
+          content: [{ type: 'tool_use', id: callId, name: 'task', input: {} }],
+        });
+        const task = params.toolProjection.resolve('task');
+        if (!task || !params.signal) throw new Error('Recursive task wiring is incomplete.');
+        const result = await task.execute({
+          subagent_type: 'reviewer', description: 'nested task', prompt: 'continue',
+        }, {
+          sessionId: params.sessionId, turnId: params.turnId, callId,
+          executionId: `execution-${depth}`, reportActivity: () => {},
+          subagentDepth: depth, signal: params.signal,
+        });
+        expect(result.outcome).toBe('success');
+      }
+      const text = `completed-${depth}`;
+      await sessions.appendMessage(params.sessionId, {
+        turnId: params.turnId, role: 'assistant', messageId: randomUUID(), content: text,
+      });
+      return {
+        text, content: [{ type: 'text', text }], stopReason: 'end_turn',
+        usage: { inputTokens: 1, outputTokens: 1 }, toolRounds: depth < 2 ? 1 : 0,
+      };
+    });
+    const app = await RuntimeApp.create({
+      agentHome,
+      loadedUnits: [
+        oldChannel.unit,
+        createLoadedRuntimeUnit({
+          registration: {
+            id: 'next-observer-unit', source: 'external',
+            register(api) {
+              api.registerChannel({ id: nextChannel.channel.id, create: () => nextChannel.channel });
+            },
+          },
+          required: false, initiallyEnabled: false,
+        }),
+      ],
+      applicationConfig: testApplicationConfig(undefined, {
+        maxSubagentDepth: 2, list: [{ id: 'reviewer', description: 'recursive reviewer' }],
+      }),
+
+      dependencies: createTestDependencies({
+        createSessionManager: () => sessions,
+        createAgentRunner: config => {
+          emit = config.onEvent;
+          return { run: runnerRun } as never;
+        },
+      }),
+    });
+    try {
+      const running = runRootTurnForTest(app, {
+        sessionId, turnId: 'retention-root-turn', message: 'delegate', promptMode: 'full',
+      });
+      await rootEntered.promise;
+      await expect(app.composition.enableUnit('next-observer-unit')).resolves.toMatchObject({
+        outcome: 'published', generation: 2,
+      });
+      continueRoot.resolve();
+      await expect(running).resolves.toMatchObject({ text: 'completed-0' });
+      const page = sessions.getHistory({ sessionId, limit: 1 });
+      expect(page.scopes).toHaveLength(2);
+      expect(page.scopes?.every(scope => scope.status === 'terminal' && scope.outcome === 'ok')).toBe(true);
+      expect(page.items.filter(item => item.sourceSessionId).every(item => item.messageId)).toBe(true);
+      expect(page.items.filter(item => item.content === 'completed-2')).toHaveLength(1);
+      expect(sessions.getMessages(sessionId)).toHaveLength(3);
+      const a = page.scopes?.find(scope => scope.depth === 1);
+      const b = page.scopes?.find(scope => scope.depth === 2);
+      expect(oldSend).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'text_delta', sessionId: b?.sessionId }),
+        { rootTurnId: 'retention-root-turn', ancestorSessionIds: [a?.sessionId, sessionId] },
+      );
+      const descendants = new Set(page.scopes?.map(scope => scope.sessionId));
+      const descendantCalls = oldSend.mock.calls.filter(([event]) =>
+        'sessionId' in event && event.sessionId !== undefined && descendants.has(event.sessionId));
+      expect(descendantCalls).toHaveLength(6);
+      expect(descendantCalls.every(([, routing]) => routing?.rootTurnId === 'retention-root-turn')).toBe(true);
+      expect(nextSend.mock.calls.filter(([event]) =>
+        'sessionId' in event && event.sessionId !== undefined && descendants.has(event.sessionId))).toHaveLength(0);
+      for (const scope of page.scopes ?? []) {
+        await sessions.deleteTransientSubagentTranscript(scope.sessionId);
+      }
+      const reloaded = new SessionManager(agentHome);
+      expect(reloaded.getHistory({ sessionId }).items).toEqual(page.items);
+      await reloaded.close();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('uses the captured default for an old Root and the published default for a new Root', async () => {
+    const entered = createDeferred<void>();
+    const release = createDeferred<void>();
+    const observed = new Map<string, string>();
+    const llm = {
+      builtin: {
+        baseURL: 'https://example.test',
+        models: [
+          { modelId: 'first', protocol: 'openai-responses' as const },
+          { modelId: 'second', protocol: 'openai-responses' as const },
+        ],
+      },
+      defaultModel: { providerId: 'builtin', modelId: 'first' },
+    };
+    const start = vi.spyOn(RuntimeCompositionManager.prototype, 'start');
+    let app: RuntimeHandle | undefined;
+    try {
+      app = await RuntimeApp.create({
+        agentHome,
+        applicationConfig: { ...testApplicationConfig(), llm },
+
+        dependencies: createTestDependencies({
+          createBuiltinProviderUnit: createBuiltinLlmProviderUnit,
+          createSessionManager: () => ({
+            getSubagentPresentationRoute: vi.fn(),
+            initialize: vi.fn(async () => undefined),
+            close: vi.fn(async () => undefined),
+            getPersistedSession: vi.fn((id: string) => sessionEntry(id)),
+          }) as never,
+          createAgentRunner: () => ({
+            async run(params: RunParams): Promise<RunResult> {
+              if (params.sessionId === 'old-root') {
+                entered.resolve();
+                await release.promise;
+              }
+              observed.set(params.sessionId, params.resolvedModel.identity.modelId);
+              return {
+                text: 'done',
+                content: [{ type: 'text', text: 'done' }],
+                stopReason: 'end_turn',
+                usage: { inputTokens: 1, outputTokens: 1 },
+                toolRounds: 0,
+              };
+            },
+          }) as never,
+        }),
+      });
+      const manager = start.mock.contexts[0];
+      if (!(manager instanceof RuntimeCompositionManager)) {
+        throw new Error('Runtime composition manager was not created.');
+      }
+      const old = runRootTurnForTest(app, {
+        sessionId: 'old-root', message: 'hold', promptMode: 'full',
+      });
+      await entered.promise;
+      await expect(manager.applyLlmConfiguration({
+        ...llm, defaultModel: { providerId: 'builtin', modelId: 'second' },
+      })).resolves.toMatchObject({ outcome: 'published', generation: 2 });
+      expect(app.application.getModelCatalog().defaultSelection).toEqual({
+        state: 'available', reference: { providerId: 'builtin', modelId: 'second' },
+      });
+      await runRootTurnForTest(app, {
+        sessionId: 'new-root', message: 'new default', promptMode: 'full',
+      });
+      release.resolve();
+      await old;
+      expect(observed.get('old-root')).toBe('first');
+      expect(observed.get('new-root')).toBe('second');
+    } finally {
+      release.resolve();
+      await app?.close();
+      start.mockRestore();
+    }
   });
 
   it('keeps a Parent tree on N while Catalog/default recover on N+1', async () => {
@@ -1070,12 +1696,11 @@ describe('RuntimeApp', () => {
           }],
         },
       ),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: runnerRun }) as never,
         createSessionManager: () => ({
+          getSubagentPresentationRoute: vi.fn(),
           initialize: vi.fn(async () => undefined),
           close: vi.fn(async () => undefined),
           getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
@@ -1083,6 +1708,9 @@ describe('RuntimeApp', () => {
           clearPreparingSubagentSession: vi.fn(),
           createTransientSubagentTranscript: vi.fn(async () => {}),
           retainTransientSubagentTranscript: vi.fn(async () => {}),
+          beginSubagentPresentation: vi.fn(async () => {}),
+          endSubagentPresentation: vi.fn(async () => {}),
+          clearSubagentPresentation: vi.fn(),
         }) as never,
         createMemoryManager: async () => null,
       }),
@@ -1143,9 +1771,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       onEvent: (event) => events.push(event),
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({ createMemoryManager: async () => null }),
     });
 
@@ -1193,9 +1819,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       onEvent: (event) => events.push(event),
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: async () => { throw runnerError; } }) as never,
         createMemoryManager: async () => null,
@@ -1277,9 +1901,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: async () => { throw runnerError; } }) as never,
         createMemoryManager: async () => null,
@@ -1369,9 +1991,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({
           run: async ({ sessionId: sessionKey }: RunParams) => { throw failures.get(sessionKey); },
@@ -1430,9 +2050,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [failingChannel.unit, receivingChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: deps,
       onAgentEvent: observedEvents,
     });
@@ -1449,6 +2067,7 @@ describe('RuntimeApp', () => {
         sessionId: 'main',
         content: 'fan out',
       }),
+      undefined,
     );
     expect(observedEvents).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'user_message', sessionId: 'main' }),
@@ -1474,9 +2093,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: deps,
       onAgentEvent: (event) => {
         if (event.type === 'user_message') throw observerError;
@@ -1501,7 +2118,7 @@ describe('RuntimeApp', () => {
 
     const app = await RuntimeApp.create({
       agentHome: agentHome,
-      applicationConfig: testApplicationConfig(),
+      applicationConfig: testApplicationConfig(undefined, {}, true),
       cliOverrides: {
       },
       dependencies: deps,
@@ -1523,10 +2140,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-        ...(subagentsEnabled ? {} : { tools: { deny: ['task'] } }),
-      },
+      cliOverrides: { ...(subagentsEnabled ? {} : { tools: { deny: ['task'] } }) },
       dependencies: createTestDependencies(),
       onEvent: (event) => events.push(event),
     });
@@ -1549,9 +2163,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies(),
       onEvent: (event) => events.push(event),
     });
@@ -1576,9 +2188,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies(),
       onEvent: (event) => {
         if (event.type === 'app_ready') throw observerError;
@@ -1599,10 +2209,8 @@ describe('RuntimeApp', () => {
 
     await expect(RuntimeApp.create({
       agentHome: agentHome,
-      applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: true },
-      },
+      applicationConfig: testApplicationConfig(undefined, {}, true),
+
       dependencies: createTestDependencies({
         createMemoryManager: async () => ({ close: memoryClose }) as never,
         getBuiltinContributionUnits: () => {
@@ -1626,10 +2234,8 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       deadlineDriver,
       deadlinePolicy: { candidateCleanupMs: 5_000 },
-      applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: true },
-      },
+      applicationConfig: testApplicationConfig(undefined, {}, true),
+
       dependencies: createTestDependencies({
         createMemoryManager: async () => ({ close: memoryClose }) as never,
         createAgentRunner: () => { throw startupError; },
@@ -1654,9 +2260,7 @@ describe('RuntimeApp', () => {
     const app = await RuntimeApp.create({
       agentHome: agentHome,
       applicationConfig: testApplicationConfig(null),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: runnerRun }) as never,
         createMemoryManager: async () => null,
@@ -1725,10 +2329,8 @@ describe('RuntimeApp', () => {
 
     const app = await RuntimeApp.create({
       agentHome: agentHome,
-      applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: true },
-      },
+      applicationConfig: testApplicationConfig(undefined, {}, true),
+
       dependencies: deps,
     });
 
@@ -1761,9 +2363,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [successfulChannel.unit, failingChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({
           on: () => {},
@@ -1807,9 +2407,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [failingChannel.unit, successfulChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({
           on: () => {},
@@ -1838,7 +2436,7 @@ describe('RuntimeApp', () => {
     const secondRun = createDeferred<RunResult>();
     const otherRun = createDeferred<RunResult>();
     const runnerRun = vi.fn(async (params: { sessionId: string; message: string }): Promise<RunResult> => {
-      if (params.sessionId === 'main' && params.message.endsWith('\n\nfirst')) {
+      if (params.sessionId === 'main' && params.message === 'first') {
         return firstRun.promise;
       }
       if (params.sessionId === 'other') {
@@ -1864,9 +2462,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: deps,
     });
 
@@ -1899,8 +2495,8 @@ describe('RuntimeApp', () => {
       expect(runnerRun).toHaveBeenCalledTimes(2);
     });
     expect(runnerRun.mock.calls.map(([params]) => [params.sessionId, params.message])).toEqual([
-      ['main', expect.stringContaining('</turn_start>\n\nfirst')],
-      ['other', expect.stringContaining('</turn_start>\n\nparallel')],
+      ['main', 'first'],
+      ['other', 'parallel'],
     ]);
 
     firstRun.resolve(result('first'));
@@ -1912,7 +2508,8 @@ describe('RuntimeApp', () => {
     expect(runnerRun.mock.calls[2]?.[0]).toEqual(
       expect.objectContaining({
         sessionId: 'main',
-        message: expect.stringContaining('</turn_start>\n\nsecond'),
+        message: 'second',
+        userPrompt: expect.stringContaining('</turn_start>\n\nsecond'),
       }),
     );
 
@@ -1922,6 +2519,46 @@ describe('RuntimeApp', () => {
     await vi.waitFor(() => {
       expect(app.application.getState().activeRunCount).toBe(0);
     });
+  });
+
+  it('releases the Session reservation after generation capture fails without replaying input', async () => {
+    const testChannel = createTestChannel('failed-root-start');
+    const runnerRun = vi.fn(async (): Promise<RunResult> => ({
+      text: 'next',
+      content: [],
+      stopReason: 'end_turn',
+      usage: { inputTokens: 0, outputTokens: 0 },
+      toolRounds: 0,
+    }));
+    const app = await RuntimeApp.create({
+      agentHome,
+      loadedUnits: [testChannel.unit],
+      applicationConfig: testApplicationConfig(),
+
+      dependencies: createTestDependencies({
+        createAgentRunner: () => ({ run: runnerRun }) as never,
+        createMemoryManager: async () => null,
+      }),
+    });
+    const capture = vi.spyOn(CompositionCoordinator.prototype, 'captureRootGeneration');
+    try {
+      capture.mockImplementationOnce(() => {
+        throw new Error('capture failed before execution');
+      });
+      await expect(testChannel.dispatch({ sessionId: 'main', message: 'failed' }))
+        .rejects.toThrow('capture failed before execution');
+      expect(messageSchedulerForTest(app).isBusy('main')).toBe(false);
+      expect(app.application.getState().activeRunCount).toBe(0);
+      expect(runnerRun).not.toHaveBeenCalled();
+
+      await testChannel.dispatch({ sessionId: 'main', message: 'next' });
+      expect(runnerRun).toHaveBeenCalledTimes(1);
+      expect(runnerRun).toHaveBeenCalledWith(expect.objectContaining({ message: 'next' }));
+      expect(messageSchedulerForTest(app).isBusy('main')).toBe(false);
+    } finally {
+      capture.mockRestore();
+      await app.close();
+    }
   });
 
   it('wakes an active Turn before it claims busy-session FIFO input', async () => {
@@ -1959,9 +2596,7 @@ describe('RuntimeApp', () => {
       applicationConfig: testApplicationConfig(undefined, {
         steeringEnabled: true,
       }),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: deps,
     });
 
@@ -1991,7 +2626,9 @@ describe('RuntimeApp', () => {
     expect(drainedSteering).toEqual([
       {
         role: 'user',
-        content: expect.stringContaining('</turn_start>\n\nsteer now'),
+        content: 'steer now',
+        userPrompt: expect.stringContaining('</turn_start>\n\nsteer now'),
+        messageId: expect.any(String),
         reasoning: { effort: 'high' },
       },
     ]);
@@ -2050,7 +2687,7 @@ describe('RuntimeApp', () => {
       applicationConfig: testApplicationConfig(undefined, {
         steeringEnabled: true,
       }),
-      cliOverrides: { memory: { enabled: false } },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => ({ run: runnerRun } as never),
         createMemoryManager: async () => null,
@@ -2077,6 +2714,7 @@ describe('RuntimeApp', () => {
       {
         role: 'user',
         content: 'second',
+        messageId: expect.any(String),
         ...(overrides.reasoning === undefined ? {} : { reasoning: overrides.reasoning }),
       },
     ]]);
@@ -2147,9 +2785,7 @@ describe('RuntimeApp', () => {
         agentHome: agentHome,
         loadedUnits: [testChannel.unit],
         applicationConfig: testApplicationConfig(),
-        cliOverrides: {
-          memory: { enabled: false },
-        },
+
         dependencies: deps,
       });
 
@@ -2259,10 +2895,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-        tools: { allow: [], deny: [] },
-      },
+      cliOverrides: { tools: { allow: [], deny: [] } },
       dependencies: deps,
     });
     await testChannel.dispatch({ sessionId: 'main', message: 'first request' });
@@ -2489,9 +3122,7 @@ describe('RuntimeApp', () => {
       agentHome: agentHome,
       loadedUnits: [testChannel.unit],
       applicationConfig: testApplicationConfig(),
-      cliOverrides: {
-        memory: { enabled: false },
-      },
+
       dependencies: createTestDependencies({
         createAgentRunner: () => agentRunner as never,
         createMemoryManager: async () => null,
@@ -2533,15 +3164,13 @@ describe('RuntimeApp', () => {
       return RuntimeApp.create({
         agentHome: agentHome,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: {
-          memory: { enabled: false },
-        },
+
         dependencies: deps,
       });
     }
 
     // With no active Turn or queue, abortTurn reports no work and emits nothing.
-    it('abortTurn: 无 active + 无 queue → returns { false, 0 }, no emit', async () => {
+    it('abortTurn: no active turn or queue returns { false, 0 } without emitting', async () => {
       const events: RuntimeEvent[] = [];
       const app = await makeAppWithRunner(async () => ({
         text: 'ok',
@@ -2555,7 +3184,7 @@ describe('RuntimeApp', () => {
       const app2 = await RuntimeApp.create({
         agentHome: agentHome,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
         onEvent: (e) => events.push(e),
       });
@@ -2567,7 +3196,7 @@ describe('RuntimeApp', () => {
     });
 
     // An active Turn with an empty queue reports aborted without a drop event.
-    it('abortTurn: 有 active turn + queue 空 → aborts turn, no emit', async () => {
+    it('abortTurn: active turn with empty queue aborts the turn without emitting', async () => {
       const events: RuntimeEvent[] = [];
       const releaseRun = createDeferred<void>();
       let capturedSignal: AbortSignal | undefined;
@@ -2587,7 +3216,7 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -2612,25 +3241,23 @@ describe('RuntimeApp', () => {
     });
 
     // With no active Turn, abortTurn clears the queue and emits messages_dropped.
-    it('abortTurn: 无 active turn + queue 有 N → clears queue, emits messages_dropped', async () => {
+    it('abortTurn: queued messages without an active turn clears the queue and emits messages_dropped', async () => {
       const events: RuntimeEvent[] = [];
       const app = await RuntimeApp.create({
         agentHome: agentHome,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
         onEvent: (e) => events.push(e),
       });
 
-      // Seed three queued messages directly.
-      const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
-      queueMap.set('main', [{ dummy: 1 }, { dummy: 2 }, { dummy: 3 }]);
+      const scheduler = queueMessagesForTest(app, 'main', ['one', 'two', 'three']);
 
       const result = app.application.abortTurn('main');
       expect(result).toEqual({ aborted: false, dropped: 3 });
 
       // The queue is empty.
-      expect(queueMap.has('main')).toBe(false);
+      expect(scheduler.pendingCount('main')).toBe(0);
 
       // A messages_dropped event was emitted.
       const dropEvent = events.find((e) => e.type === 'messages_dropped');
@@ -2668,7 +3295,7 @@ describe('RuntimeApp', () => {
         agentHome: agentHome,
         loadedUnits: [testChannel.unit],
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -2714,7 +3341,7 @@ describe('RuntimeApp', () => {
         message: string;
         signal?: AbortSignal;
       }): Promise<RunResult> => {
-        if (params.message.endsWith('\n\nactive')) {
+        if (params.message === 'active') {
           capturedSignal = params.signal;
           await releaseRun.promise;
           return {
@@ -2742,9 +3369,7 @@ describe('RuntimeApp', () => {
         applicationConfig: testApplicationConfig(undefined, {
           steeringEnabled: true,
         }),
-        cliOverrides: {
-          memory: { enabled: false },
-        },
+
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -2798,18 +3423,17 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
       });
 
-      const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
-      queueMap.set('sk1', [{ x: 1 }]);
-      queueMap.set('sk2', [{ y: 1 }, { y: 2 }]);
+      const scheduler = queueMessagesForTest(app, 'sk1', ['one']);
+      queueMessagesForTest(app, 'sk2', ['two', 'three']);
 
       const result = app.application.abortTurn('sk1');
       expect(result).toEqual({ aborted: false, dropped: 1 });
-      expect(queueMap.has('sk1')).toBe(false);
-      expect(queueMap.get('sk2')?.length).toBe(2);
+      expect(scheduler.pendingCount('sk1')).toBe(0);
+      expect(scheduler.pendingCount('sk2')).toBe(2);
 
       await app.close();
     });
@@ -2827,7 +3451,7 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -2854,7 +3478,7 @@ describe('RuntimeApp', () => {
       const app = await RuntimeApp.create({
         agentHome: agentHome,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
         onEvent: (e) => {
           if (armed && e.type === 'messages_dropped') {
@@ -2864,13 +3488,12 @@ describe('RuntimeApp', () => {
       });
       armed = true;
 
-      const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
-      queueMap.set('main', [{ dummy: 1 }]);
+      const scheduler = queueMessagesForTest(app, 'main', ['one']);
 
       // The API does not throw and returns the actual state.
       const result = app.application.abortTurn('main');
       expect(result).toEqual({ aborted: false, dropped: 1 });
-      expect(queueMap.has('main')).toBe(false);
+      expect(scheduler.pendingCount('main')).toBe(0);
 
       await app.close();
     });
@@ -2907,7 +3530,7 @@ describe('RuntimeApp', () => {
         deadlineDriver,
         loadedUnits: [testChannel.unit],
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -2968,7 +3591,7 @@ describe('RuntimeApp', () => {
         agentHome: agentHome,
         deadlineDriver,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -3008,7 +3631,7 @@ describe('RuntimeApp', () => {
         loadedUnits: [testChannel.unit],
         onEvent: (event) => runtimeEvents.push(event),
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -3056,7 +3679,7 @@ describe('RuntimeApp', () => {
         deadlineDriver,
         onEvent: (event) => runtimeEvents.push(event),
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({
           createAgentRunner: () => ({ run: runnerRun }) as never,
           createMemoryManager: async () => null,
@@ -3088,12 +3711,16 @@ describe('RuntimeApp', () => {
       expect(report.turns.protectedGenerations).toEqual([1]);
       expect(report.instanceStops.skippedProtectedInstanceIds.length).toBeGreaterThan(0);
       expect(stop).not.toHaveBeenCalled();
+      expect(messageSchedulerForTest(app).isRunning('main')).toBe(true);
       expect(Object.isFrozen(report)).toBe(true);
       expect(Object.isFrozen(report.residuals)).toBe(true);
       const sealedResidualCount = report.residuals.length;
 
       releaseRun.resolve();
-      await vi.waitFor(() => expect(app.application.getState().activeRunCount).toBe(0));
+      await vi.waitFor(() => {
+        expect(app.application.getState().activeRunCount).toBe(0);
+        expect(messageSchedulerForTest(app).isRunning('main')).toBe(false);
+      });
       expect(runtimeEvents.filter((event) =>
         event.type === 'turn_end' && event.requestId === 'request-nonconverged')).toHaveLength(1);
       expect(report.residuals).toHaveLength(sealedResidualCount);
@@ -3117,7 +3744,7 @@ describe('RuntimeApp', () => {
         loadedUnits: [testChannel.unit],
         deadlineDriver,
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({
           createAgentRunner: (config) => ({
             run: async (params: RunParams) => {
@@ -3164,7 +3791,7 @@ describe('RuntimeApp', () => {
         agentHome: agentHome,
         loadedUnits: [testChannel.unit],
         applicationConfig: testApplicationConfig(),
-        cliOverrides: { memory: { enabled: false } },
+
         dependencies: createTestDependencies({ createMemoryManager: async () => null }),
       });
 
@@ -3181,6 +3808,9 @@ describe('RuntimeApp', () => {
       expect(Object.isFrozen(capturedCapabilities!.abort)).toBe(true);
       expect(Object.isFrozen(capturedCapabilities!.chatSessions)).toBe(true);
       expect(Object.isFrozen(capturedCapabilities!.sessionObservation)).toBe(true);
+      expect(capturedCapabilities!.settings).toBe(app.application.settings);
+      expect(await capturedCapabilities!.settings.execute({ requestId: 'load', action: 'load', input: {} }))
+        .toMatchObject({ ok: false, error: { code: 'settings_unavailable' } });
 
       const created = await capturedCapabilities!.chatSessions.createSession();
       expect(created.sessionId).toMatch(
@@ -3237,9 +3867,7 @@ describe('RuntimeApp', () => {
       ]);
       unsubscribeDeletion();
 
-      // Seed a queued message for one Session.
-      const queueMap = (app.application as any).messageQueueBySession as Map<string, unknown[]>;
-      queueMap.set('sk-with-queue', [{ x: 1 }, { x: 2 }]);
+      const scheduler = queueMessagesForTest(app, 'sk-with-queue', ['one', 'two']);
 
       // querySessionsNeedingAbort includes the queued Session.
       const sessions = capturedCapabilities!.abort.querySessionsNeedingAbort();
@@ -3248,7 +3876,7 @@ describe('RuntimeApp', () => {
       // Triggering abort through the hook clears the queue and returns the count.
       const result = capturedCapabilities!.abort.abortTurn('sk-with-queue');
       expect(result).toEqual({ aborted: false, dropped: 2 });
-      expect(queueMap.has('sk-with-queue')).toBe(false);
+      expect(scheduler.pendingCount('sk-with-queue')).toBe(0);
 
       capturedCapabilities!.chatSessions.setPermissionMode({
         sessionId: created.sessionId,
@@ -3459,6 +4087,7 @@ function createTestDependencies(
       }),
     }]),
     createSessionManager: () => ({
+      getSubagentPresentationRoute: vi.fn(),
       initialize: vi.fn(async () => undefined),
       close: vi.fn(async () => undefined),
       getPersistedSession: vi.fn((sessionId: string) => sessionEntry(sessionId)),
@@ -3466,6 +4095,9 @@ function createTestDependencies(
       clearPreparingSubagentSession: vi.fn(),
       createTransientSubagentTranscript: vi.fn(async () => {}),
       retainTransientSubagentTranscript: vi.fn(async () => {}),
+      beginSubagentPresentation: vi.fn(async () => {}),
+      endSubagentPresentation: vi.fn(async () => {}),
+      clearSubagentPresentation: vi.fn(),
     }) as never,
     createMemoryManager: async () => null,
     createSystemPromptBuilder: () => ({ build: () => 'SYSTEM_PROMPT' }) as never,

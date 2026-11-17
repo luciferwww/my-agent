@@ -7,7 +7,8 @@ import type { CompactionConfig } from '../../core/runner/index.js';
 import type { LoggerConfig } from '../logger/index.js';
 
 export type DeepPartial<T> = {
-  [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K];
+  [K in keyof T]?: T[K] extends readonly unknown[] ? T[K]
+    : T[K] extends object ? DeepPartial<T[K]> : T[K];
 };
 
 export type {
@@ -29,23 +30,27 @@ export type {
 export type { LogLevel as LoggerLevel } from '../logger/index.js';
 
 export interface AgentDefaults {
-  readonly memory: MemoryConfig;
   readonly tools: ToolPolicyConfig;
   readonly context: AgentContextConfig;
   readonly compaction: CompactionConfig;
+  readonly skills: readonly string[];
 }
 
 export interface AgentEntry extends DeepPartial<AgentDefaults> {
   readonly id: string;
-  readonly description: string;
-  readonly default?: boolean;
-  readonly model?: ModelReference;
+  readonly description?: string;
+  readonly enabled?: boolean;
+  readonly model?: 'inherit' | ModelReference;
 }
 
-export interface AgentsConfig {
+export interface AgentExecutionConfig {
   readonly steeringEnabled: boolean;
   readonly maxLlmCallsPerTurn?: number;
   readonly maxSubagentDepth: number;
+}
+
+export interface AgentsConfig extends AgentExecutionConfig {
+  readonly memory: MemoryConfig;
   readonly defaults: AgentDefaults;
   readonly list: readonly AgentEntry[];
 }
@@ -69,6 +74,7 @@ interface AgentApplicationDocument {
     readonly builtin?: unknown;
   };
   readonly agents?: {
+    readonly memory?: DeepPartial<MemoryConfig>;
     readonly steeringEnabled?: boolean;
     readonly maxLlmCallsPerTurn?: number;
     readonly maxSubagentDepth?: number;
@@ -80,7 +86,6 @@ interface AgentApplicationDocument {
 
 export interface AgentConfigDocument extends AgentApplicationDocument {
   readonly extensions?: {
-    readonly enabled?: boolean;
     readonly entries?: Record<string, unknown>;
   };
 }

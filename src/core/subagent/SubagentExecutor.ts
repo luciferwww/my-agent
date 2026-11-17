@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import type { ResolvedModel } from '../model-resolution/index.js';
 import type { ChatToolDefinition } from '../model-invocation/index.js';
 import type { AgentRunner, RunResult } from '../runner/index.js';
@@ -6,6 +5,7 @@ import type { HookProjection, ToolProjection } from '../registry/index.js';
 import type { ApplicationToolPolicy } from '../tools/index.js';
 import type { SystemPromptBuilder } from '../prompt/SystemPromptBuilder.js';
 import type { ContextFile } from '../agent-context/types.js';
+import type { SkillSummary } from '../skills/types.js';
 import { buildSubagentBehavioralAddendum } from './behavioral-addendum.js';
 import type { SubagentProfile } from './types.js';
 import type {
@@ -16,7 +16,7 @@ import type {
 export interface SubagentExecutorDeps {
   readonly agentRunner: AgentRunner;
   readonly systemPromptBuilder: SystemPromptBuilder;
-  readonly loadContextFilesFromDir: (absDir: string) => Promise<ContextFile[]>;
+  readonly getContextFiles: (agentId: string) => readonly Readonly<ContextFile>[];
   readonly agentHome: string;
   readonly resolveToolPolicy: (
     profile: SubagentProfile,
@@ -35,6 +35,7 @@ export interface SubagentExecutionRequest {
   readonly childSessionId: string;
   readonly childTurnId: string;
   readonly maxLlmCallsPerTurn?: number;
+  readonly getAvailableSkills?: () => Promise<readonly SkillSummary[]>;
   readonly signal: AbortSignal;
   readonly toolProjection: ToolProjection;
   readonly hookProjection: HookProjection;
@@ -43,6 +44,7 @@ export interface SubagentExecutionRequest {
 }
 
 export interface PreparedSubagentExecution {
+  readonly contextFiles: readonly ContextFile[];
   readonly requestId: string;
   readonly sessionId: string;
   readonly subagentDepth: number;
@@ -65,7 +67,7 @@ export class SubagentExecutor {
   constructor(private readonly deps: SubagentExecutorDeps) {}
 
   async prepare(request: SubagentExecutionRequest): Promise<PreparedSubagentExecution> {
-    const childFiles = await this.loadChildContextFiles(request.profile);
+    const childFiles = this.deps.getContextFiles(request.profile.id);
     const mergedFiles = mergeContextFilesByName(childFiles, request.parentContextFiles);
     const addendum = buildSubagentBehavioralAddendum({
       taskDescription: request.description,
@@ -74,14 +76,18 @@ export class SubagentExecutor {
     });
     const toolPolicy = this.deps.resolveToolPolicy(request.profile, request.canSpawn);
     const tools = request.toolProjection.visibleDefinitions(toolPolicy);
+    const availableSkills = tools.some(({ name }) => name === 'skill')
+      ? await request.getAvailableSkills?.() ?? [] : [];
     const basePrompt = this.deps.systemPromptBuilder.build({
       mode: 'minimal',
       contextFiles: mergedFiles,
       toolNames: tools.map(({ name }) => name),
       agentHome: this.deps.agentHome,
+      availableSkills,
     });
 
     return {
+      contextFiles: mergedFiles,
       requestId: request.requestId,
       sessionId: request.childSessionId,
       subagentDepth: request.childDepth,
@@ -104,6 +110,7 @@ export class SubagentExecutor {
     const {
       sessionId,
       profile: _profile,
+      contextFiles: _contextFiles,
       tools: _tools,
       toolPolicy,
       toolProjection,
@@ -124,14 +131,10 @@ export class SubagentExecutor {
     });
   }
 
-  private async loadChildContextFiles(profile: SubagentProfile): Promise<ContextFile[]> {
-    if (!existsSync(profile.agentDir)) return [];
-    return this.deps.loadContextFilesFromDir(profile.agentDir);
-  }
 }
 
 export function mergeContextFilesByName(
-  childFiles: ReadonlyArray<ContextFile>,
+  childFiles: readonly Readonly<ContextFile>[],
   parentFiles: ReadonlyArray<ContextFile>,
 ): ContextFile[] {
   const childByName = new Map<string, ContextFile>();

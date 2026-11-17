@@ -61,18 +61,20 @@
     "verify:websocket-host": "node scripts/verify-websocket-host.mjs"
   },
   "dependencies": {
-    "@clack/prompts": "^1.8.1",
     "@xenova/transformers": "^2.17.0",
     "ajv": "^8.20.0",
     "better-sqlite3": "^12.8.0",
     "jiti": "^2.7.0",
     "sharp": "^0.33.5",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "yaml": "^2.8.1"
   },
   "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.9",
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.18.1",
+    "happy-dom": "^21.0.4",
     "tsx": "^4.23.13",
     "typescript": "^5.7.0",
     "vitest": "^3.1.0"

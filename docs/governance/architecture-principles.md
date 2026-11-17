@@ -221,23 +221,38 @@ Arrows indicate source code dependency direction, not necessarily runtime call d
 
 **Validation:** Documentation index checks, status field checks, broken-link checks, and Legacy migration tables.
 
-## 5. Fitness Test Candidates
+## 5. Architecture Fitness Checks
 
-AF-04 should prioritize automating the following rules. Specific tools are determined by AF-01 governance decisions and AF-04 implementation constraints.
+The current suite protects the following bounded constraints. IDs preserve their
+history; a removed check does not need a replacement merely to keep its number.
 
 | ID | Automated Rule | Related Principles |
 |---|---|---|
 | FT-01 | Domain/Application do not import Infrastructure or Composition | AP-01 |
-| FT-02 | Provider/Channel SDKs appear only in their corresponding Integration Adapters | AP-01 |
-| FT-03 | Runner does not depend on a global Config loader, Provider SDK, or mutable Registry | AP-02, AP-03, AP-05 |
-| FT-04 | The new core does not depend on Compat/Legacy paths | AP-06, AP-07 |
-| FT-05 | Extensions/Modules do not access RuntimeApp private state or a Service Locator | AP-08, AP-11 |
-| FT-06 | Adding a Provider does not require Runner changes; adding an Extension does not require changes to central Runtime/Runner branches | AP-01, AP-04 |
-| FT-07 | Registry consumers receive only Snapshots, not internal mutable collections | AP-05 |
-| FT-08 | Public Events, Lifecycles, and Ports have corresponding Contract Tests | AP-09, AP-10 |
-| FT-09 | Active architecture documents have a status; Legacy documents are not dependencies of new implementations | AP-13 |
+| FT-02 | Configured SDK restrictions keep `ws` inside the WebSocket Channel | AP-01 |
+| FT-03 | Runner has no new global configuration, service, or mutable Registry coupling | AP-02, AP-03, AP-05 |
+| FT-05 | Capability packages do not directly import RuntimeApp, including through its barrel | AP-08, AP-11 |
+| FT-06 | Host, Runtime, and acquisition do not directly import concrete Extension modules | AP-01, AP-04 |
+| FT-07 | Actual Registry Snapshot fields and projection collections have readonly types | AP-05 |
+| FT-10 | Direct `process.exit()` calls belong to the standalone Runtime Host | AP-10 |
+| FT-12 | Current Architecture pages have status metadata, are discoverable, and have valid local links | AP-13 |
+| FT-13 | Established public module entries are respected; production and scripts do not import test fixtures | AP-01 |
+| FT-14 | Leaf modules do not import Platform Configuration | AP-03 |
 
 Fitness Tests prevent known regressions; they do not replace behavioral tests, architecture reviews, or Spike evidence.
+
+FT-04's deleted-path gate, FT-08's self-reported test inventory, and FT-09's
+historical document-path blacklist were retired. Their removal does not retire
+the architectural principles or the need for real Contract Tests. The suite
+does not freeze removed names, default values, document counts, prose, or test
+titles. Existing FT-01/03 exceptions permit known debt but do not require it to
+remain.
+
+Import checks inspect TypeScript/TSX module references, not arbitrary source
+text. Dependencies, generated output, declarations, and tests are excluded from
+production scans. These bounded checks do not prove all dependency paths through
+aliases, dynamic expressions, or Vue files, nor do they prove that adding any
+future capability requires no core changes.
 
 ## 6. Design Review Checklist
 

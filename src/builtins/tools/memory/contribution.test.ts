@@ -4,7 +4,7 @@ import {
   finalizeRegistrySnapshot,
   resolveStagedRegistryCandidate,
   stageRegistryUnit,
-} from '../../../runtime/registry-builder.js';
+} from '../../../runtime/composition/registry-builder.js';
 import { createMemoryToolsContribution } from './contribution.js';
 
 describe('Memory Tools Runtime Contribution', () => {

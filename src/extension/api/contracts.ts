@@ -1,4 +1,4 @@
-import type { LoadedRuntimeUnit } from '../../runtime/runtime-unit.js';
+import type { LoadedRuntimeUnit } from '../../runtime/composition/runtime-unit.js';
 
 export interface ExtensionLogger {
   debug(message: string, context?: Readonly<Record<string, unknown>>): void;

@@ -2,12 +2,11 @@ import type { SubagentProfile } from './types.js';
 
 /**
  * Result of resolving a subagent's effective tool policy against its
- * parent's policy.
+ * latest applied shared Tool defaults.
  *
- * - `allow`: when the child sets `tools.allow`, it REPLACES the parent's
- *   `allow` list. When unset, the parent's `allow` is inherited.
+ * - `allow`: explicit child allow REPLACES shared allow; omission uses shared allow.
  * - `deny`: when the child sets `tools.deny`, entries are APPENDED to the
- *   parent's `deny`. When unset, the parent's `deny` is inherited.
+ *   shared deny. Parent-specific denies do not participate.
  *
  * This function deliberately does NOT cross-filter `allow` against `deny`.
  * The Application Tool Policy owns deny precedence and Provider-definition
@@ -19,25 +18,25 @@ export interface ResolvedSubagentTools {
 }
 
 /**
- * Merge a subagent profile's tool policy with the parent agent's policy.
+ * Merge a subagent profile's own override with current shared Tool defaults.
  *
  * Returned arrays are fresh copies — never shared with parent references —
  * so callers can mutate them safely.
  */
 export function resolveSubagentTools(
   profile: SubagentProfile,
-  parentAllow: readonly string[],
-  parentDeny: readonly string[],
+  sharedAllow: readonly string[],
+  sharedDeny: readonly string[],
 ): ResolvedSubagentTools {
   const allow =
     profile.tools?.allow !== undefined
       ? [...profile.tools.allow] // replace
-      : [...parentAllow]; // inherit
+      : [...sharedAllow];
 
   const deny =
     profile.tools?.deny !== undefined
-      ? [...parentDeny, ...profile.tools.deny] // append on top of parent
-      : [...parentDeny]; // inherit
+      ? [...sharedDeny, ...profile.tools.deny]
+      : [...sharedDeny];
 
   return { allow, deny };
 }

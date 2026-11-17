@@ -8,6 +8,7 @@ import type {
   PresentationThinkingBlock,
   ReasoningPreference,
 } from '../model-invocation/index.js';
+import type { SubagentTerminalFailure, SubagentTerminalResult } from '../subagent/types.js';
 
 // Session metadata stored in sessions.json.
 
@@ -83,6 +84,8 @@ export interface SessionRecord extends TranscriptEntryBase {
 /** Persisted conversation message. */
 export interface MessageRecord extends TranscriptEntryBase {
   type: 'message';
+  messageId?: string;
+  llmRound?: number;
   turnId: string;
   turnStopReason?: 'max_llm_calls';
   message: {
@@ -162,11 +165,46 @@ export interface CompactionRecord extends TranscriptEntryBase {
   droppedMessages: number;
 }
 
+export interface SubagentPresentationIdentity {
+  readonly sessionId: string;
+  readonly turnId: string;
+  readonly callerSessionId: string;
+  readonly parentTurnId: string;
+  readonly parentToolUseId: string;
+  readonly runId: string;
+  readonly depth: number;
+  readonly subagentType: string;
+}
+
+export type SubagentPresentationEnd = SubagentPresentationIdentity & {
+  readonly outcome: SubagentTerminalResult['outcome'];
+  readonly failure?: SubagentTerminalFailure;
+  readonly usage: SubagentTerminalResult['usage'];
+  readonly durationMs: number;
+};
+
+export type PresentationBody =
+  | ({ readonly type: 'message' } & Pick<
+      SessionHistoryMessage, 'turnId' | 'role' | 'content' | 'messageId' | 'llmRound' | 'reasoning' | 'abortMeta'
+    >)
+  | Omit<ToolExecutionAcceptedRecord, 'id' | 'parentId' | 'timestamp'>
+  | Omit<ToolExecutionTerminalRecord, 'id' | 'parentId' | 'timestamp'>
+  | ({ readonly type: 'subagent_start' } & SubagentPresentationIdentity)
+  | ({ readonly type: 'subagent_end' } & SubagentPresentationEnd);
+
+export interface PresentationRecord extends TranscriptEntryBase {
+  type: 'presentation';
+  sourceSessionId: string;
+  sourceEntryId: string;
+  body: PresentationBody;
+}
+
 /** Union of all persisted Transcript records. */
 export type TranscriptEntry =
   | SessionRecord
   | MessageRecord
   | CompactionRecord
+  | PresentationRecord
   | AsyncToolTranscriptRecord;
 
 // Content blocks aligned with the model message format.
@@ -194,6 +232,10 @@ export interface SessionHistoryQuery {
 
 export interface SessionHistoryMessage {
   readonly entryId: string;
+  readonly messageId?: string;
+  readonly llmRound?: number;
+  readonly sourceSessionId?: string;
+  readonly sourceEntryId?: string;
   readonly turnId: string;
   readonly timestamp: string;
   readonly role: MessageRecord['message']['role'];
@@ -207,7 +249,14 @@ export interface SessionHistoryPage {
   readonly items: readonly SessionHistoryMessage[];
   readonly nextCursor: string | null;
   readonly hasMore: boolean;
+  readonly scopes?: readonly SessionHistoryScope[];
 }
+
+export type SessionHistoryScope = SubagentPresentationIdentity & {
+  readonly status: 'running' | 'terminal' | 'unknown';
+  readonly outcome?: SubagentTerminalResult['outcome'];
+  readonly failure?: SubagentTerminalFailure;
+};
 
 // Session Store.
 
@@ -219,7 +268,7 @@ export interface SessionStore {
 
 export interface TranscriptState {
   /** Transcript root schema version. */
-  version?: 1 | 2;
+  version?: 1 | 2 | 3;
   /** Record index by ID. */
   byId: Map<string, TranscriptEntry>;
   /** Active branch leaf. */

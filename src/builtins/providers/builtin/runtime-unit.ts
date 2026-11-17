@@ -1,5 +1,5 @@
 import type { ExtensionRegistrationApi } from '../../../core/registry/index.js';
-import type { LoadedRuntimeUnit } from '../../../runtime/runtime-unit.js';
+import type { LoadedRuntimeUnit } from '../../../runtime/composition/runtime-unit.js';
 import { BuiltinLlmProvider, type BuiltinLlmProviderOptions } from './BuiltinLlmProvider.js';
 import type { BuiltinLlmProviderConfig } from './config.js';
 

@@ -17,7 +17,7 @@ import type {
 import type { RunParams, RunResult } from '../core/runner/types.js';
 import { SessionManager } from '../core/session/SessionManager.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
-import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './runtime-unit.js';
+import { createLoadedRuntimeUnit, type LoadedRuntimeUnit } from './composition/runtime-unit.js';
 import type { Tool } from '../core/tools/types.js';
 import {
   AgentRunner,
@@ -29,10 +29,12 @@ import type {
   ProcessInboundResult,
 } from '../core/media/attachment-pipeline.js';
 import { RuntimeApp } from './RuntimeApp.js';
-import type { RuntimeHandle } from './runtime-composition.js';
+import type { SessionMessageScheduler } from './scheduling/session-message-scheduler.js';
+import type { RuntimeHandle } from './composition/runtime-composition.js';
 import type { RuntimeDependencies, RuntimeEvent } from './types.js';
 import { createDefaultAgentConfig } from '../platform/config/default-composition.js';
 import { DEFAULT_LOGGER_CONFIG } from '../platform/logger/index.js';
+import { DEFAULT_MEMORY_CONFIG } from '../core/memory/index.js';
 
 // Bypass image decoding so tests can inject normalized and dropped results.
 const processInboundMock = vi.fn<
@@ -56,7 +58,7 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     await rm(agentHome, { recursive: true, force: true });
   });
 
-  it('text-only message receives a timestamp before Runner execution', async () => {
+  it('preserves the message and builds a timestamped model-only user prompt', async () => {
     processInboundMock.mockResolvedValue({ normalized: 'hello', dropped: [] });
 
     const { app, runnerRun, testChannel, agentEvents, runtimeEvents } =
@@ -69,7 +71,8 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
     });
 
     expect(runnerRun).toHaveBeenCalledTimes(1);
-    expect(runnerRun.mock.calls[0]?.[0]?.message).toMatch(
+    expect(runnerRun.mock.calls[0]?.[0]?.message).toBe('hello');
+    expect(runnerRun.mock.calls[0]?.[0]?.userPrompt).toMatch(
       /^<turn_start>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z<\/turn_start>\n\nhello$/,
     );
     assertNoAttachmentEvents(runtimeEvents, agentEvents);
@@ -162,7 +165,12 @@ describe('RuntimeApp intake (PR-6 spec matrix)', () => {
 
     const got = runnerRun.mock.calls[0]?.[0]?.message as ChatContentBlock[];
     expect(Array.isArray(got)).toBe(true);
-    // First text block becomes prepend host → original "see image" text preserved within
+    expect(got).toEqual(normalized);
+    const prompt = runnerRun.mock.calls[0]?.[0]?.userPrompt as ChatContentBlock[];
+    expect(prompt[0]).toEqual({
+      type: 'text', text: expect.stringMatching(/^<turn_start>.*<\/turn_start>\n\nsee image$/u),
+    });
+    expect(prompt[1]).toEqual(normalized[1]);
     expect(got[0]?.type).toBe('text');
     expect((got[0] as { text: string }).text).toContain('see image');
     // Image block preserved unchanged (position + dimensions)
@@ -535,7 +543,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     const releaseRun = createDeferred<void>();
     let claimed: ChatMessage[] = [];
     const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
-      if (typeof params.message === 'string' && params.message.endsWith('\n\nfirst')) {
+      if (params.message === 'first') {
         await releaseRun.promise;
         claimed = params.steeringSource?.claimReady() ?? [];
       }
@@ -562,10 +570,10 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     await testChannel.dispatch({ sessionId: 'main', message: 'later' });
 
     const runtime = app.application as unknown as {
-      messageQueueBySession: Map<string, unknown[]>;
+      messageScheduler: SessionMessageScheduler;
       requestGates: Map<string, unknown>;
     };
-    expect(runtime.messageQueueBySession.get('main')).toHaveLength(3);
+    expect(runtime.messageScheduler.pendingCount('main')).toBe(3);
     expect(runtime.requestGates.size).toBe(1);
 
     releaseRun.resolve();
@@ -575,20 +583,19 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
       expect(app.application.getState().activeRunCount).toBe(0);
     });
 
-    expect(claimed).toEqual([
-      { role: 'user', content: 'same' },
-      { role: 'user', content: 'other' },
-      { role: 'user', content: 'later' },
-    ]);
-    expect(runnerRun.mock.calls.map(([params]) => params.message)).toEqual([
-      expect.stringContaining('</turn_start>\n\nfirst'),
-    ]);
-    expect(runtime.messageQueueBySession.has('main')).toBe(false);
-    expect(runtime.requestGates.size).toBe(0);
     const messages = agentEvents.filter(
       (event): event is Extract<AgentEvent, { type: 'user_message' }> =>
         event.type === 'user_message',
     );
+    expect(messages).toHaveLength(4);
+    expect(claimed).toEqual(['same', 'other', 'later'].map((content, index) => ({
+      role: 'user', content, messageId: messages[index + 1]?.messageId,
+    })));
+    expect(runnerRun.mock.calls.map(([params]) => params.message)).toEqual([
+      'first',
+    ]);
+    expect(runtime.messageScheduler.pendingCount('main')).toBe(0);
+    expect(runtime.requestGates.size).toBe(0);
     expect(agentEvents.filter((event) => event.type === 'user_message_bound')).toEqual(
       messages.slice(1).map((message) => expect.objectContaining({
         messageId: message.messageId,
@@ -621,9 +628,9 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     const releaseRun = createDeferred<void>();
     const releasePromotedRun = createDeferred<void>();
     const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
-      if (typeof params.message === 'string' && params.message.endsWith('\n\nfirst')) {
+      if (params.message === 'first') {
         await releaseRun.promise;
-      } else if (typeof params.message === 'string' && params.message.endsWith('\n\nsteer one')) {
+      } else if (params.message === 'steer one') {
         await releasePromotedRun.promise;
       }
       return defaultRunResult(String(params.message));
@@ -694,9 +701,9 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     releasePromotedRun.resolve();
     await vi.waitFor(() => expect(runnerRun).toHaveBeenCalledTimes(3));
     expect(runnerRun.mock.calls.map(([params]) => params.message)).toEqual([
-      expect.stringContaining('</turn_start>\n\nfirst'),
-      expect.stringContaining('</turn_start>\n\nsteer one'),
-      expect.stringContaining('</turn_start>\n\nsteer two'),
+      'first',
+      'steer one',
+      'steer two',
     ]);
     const starts = runtimeEvents.filter((event) => event.type === 'turn_start');
     expect(starts.map((event) => event.originMessageId)).toEqual([
@@ -717,7 +724,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
     async ({ stopReason }) => {
       const releaseRun = createDeferred<void>();
       const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
-        if (typeof params.message === 'string' && params.message.endsWith('\n\nfirst')) {
+        if (params.message === 'first') {
           await releaseRun.promise;
           return {
             ...defaultRunResult('first result'),
@@ -751,7 +758,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
         expect(app.application.getState().activeRunCount).toBe(0);
       });
       expect(runnerRun.mock.calls[1]![0].message).toEqual(
-        expect.stringContaining('</turn_start>\n\nlate'),
+        'late',
       );
 
       await app.close();
@@ -761,7 +768,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
   it('schedules unclaimed FIFO input when the active Turn throws', async () => {
     const releaseRun = createDeferred<void>();
     const runnerRun = vi.fn(async (params: RunParams): Promise<RunResult> => {
-      if (typeof params.message === 'string' && params.message.endsWith('\n\nfirst')) {
+      if (params.message === 'first') {
         await releaseRun.promise;
         throw new Error('test failure');
       }
@@ -792,7 +799,7 @@ describe('RuntimeApp handleInboundChannelMessage user_message emit', () => {
       expect(app.application.getState().activeRunCount).toBe(0);
     });
     expect(runnerRun.mock.calls[1]![0].message).toEqual(
-      expect.stringContaining('</turn_start>\n\nlate'),
+      'late',
     );
 
     await app.close();
@@ -1058,6 +1065,7 @@ async function buildApp(
           createSessionManager: () => ({
             initialize: vi.fn(async () => undefined),
             close: vi.fn(async () => undefined),
+            getSubagentPresentationRoute: vi.fn(() => undefined),
             getPersistedSession: vi.fn((sessionId: string) => ({
               sessionId,
               createdAt: 1,
@@ -1095,15 +1103,13 @@ async function buildApp(
         },
       },
       agents: {
+        memory: { ...DEFAULT_MEMORY_CONFIG, enabled: false },
         steeringEnabled: options.steerMode ?? false,
         maxSubagentDepth: 1,
         defaults: createDefaultAgentConfig(),
         list: [],
       },
       logger: structuredClone(DEFAULT_LOGGER_CONFIG),
-    },
-    cliOverrides: {
-      memory: { enabled: false },
     },
     dependencies: deps,
     onEvent: (e) => runtimeEvents.push(e),

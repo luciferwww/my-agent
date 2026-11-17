@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Runtime behavior
-> Verified: 2026-10-02
+> Verified: 2026-11-11
 > Ownership: Runtime composition, publication, generations, Turn orchestration, queues, routing, Fanout, Abort, Shutdown, and Subagent Parent/Child lifecycle
 > Ownership key: runtime-composition-and-lifecycle
 
@@ -15,6 +15,8 @@
 Runtime owns:
 
 - bootstrap coordination and narrow configuration projection;
+- SettingsManager admission, saved editing views/revisions, serialized section
+  updates and bounded pre-publication file rollback through Platform Configuration;
 - the loaded Runtime Unit catalog and Unit-instance lifecycle;
 - Registry candidate staging, validation, immutable Snapshot publication, generation capture, retirement, and reload admission;
 - per-session Turn admission and queueing;
@@ -32,22 +34,35 @@ Runtime also does not discover or load Extension files. [Extensions](extensions.
 src/runtime/
 ├── RuntimeApp.ts
 ├── config.ts
-├── bootstrap.ts
-├── runtime-builder.ts
-├── runtime-composition.ts
-├── runtime-composition-manager.ts
-├── composition-coordinator.ts
-├── reload-coordinator.ts
-├── registry-builder.ts
-├── runtime-unit.ts
-├── runtime-lifecycle.ts
+├── composition/
+│   ├── runtime-builder.ts
+│   ├── bootstrap.ts
+│   ├── agent-home-lock.ts
+│   ├── channel-lifecycle.ts
+│   ├── composition-coordinator.ts
+│   ├── registry-builder.ts
+│   ├── reload-coordinator.ts
+│   ├── runtime-composition-manager.ts
+│   ├── runtime-composition.ts
+│   ├── runtime-lifecycle.ts
+│   └── runtime-unit.ts
+├── settings/
+│   ├── settings-manager.ts
+│   ├── model-test.ts
+│   ├── section-views.ts
+│   ├── helpers.ts
+│   └── index.ts
+├── policy/
+│   ├── agent-policy-state.ts
+│   ├── tool-approval-policy.ts
+│   └── glob-match.ts
 ├── runtime-deadline.ts
-├── channel-lifecycle.ts
-├── request-completion-gate.ts
+├── scheduling/
+│   ├── session-message-scheduler.ts
+│   ├── queue-types.ts
+│   └── request-completion-gate.ts
 ├── subagent-orchestration.ts
 ├── prompt-factory.ts
-├── queue-types.ts
-├── tool-approval-policy.ts
 ├── turn-interaction/
 │   └── TurnInteractionManager.ts
 └── types.ts
@@ -61,6 +76,23 @@ src/builtins/
 The converged integration layout keeps concrete builtin capabilities and their Host entries under `src/builtins/`, Runtime-owned interaction state under `src/runtime/turn-interaction/`, generic Host acquisition under `src/extension/acquisition/`, and independently owned concrete Extension packages under repository-root `extensions/`. Runtime and its Builder do not import a concrete External Extension or the acquisition implementation.
 
 The public Runtime barrel exposes `RuntimeApp`, the frozen-handle contracts, Unit loading contracts, selected deadline/prompt/error helpers, and public types. Internal managers remain implementation details.
+
+Composition groups overall Runtime assembly, startup and component lifecycle,
+including Builder/bootstrap, the Agent Home process lock, Channel preparation
+and Unit/generation publication. Policy groups the existing applied Agent
+execution policy, Tool authorization decisions and their glob matching helper;
+it does not own Settings persistence transactions, Session permission state or
+approval interaction lifecycle. Physical grouping does not change logical
+layering: the process lock remains Infrastructure, AgentPolicyState remains
+Composition, and Tool policy/glob retain their existing Mixed classifications.
+
+These directories and scheduling group established responsibilities without
+introducing another API layer or new barrels. The existing private Settings
+entry is the entry for SettingsManager and its helpers; internal Settings files
+import their siblings directly. Tests remain colocated. RuntimeApp still owns
+request gates and execution even though their related source files are grouped
+under scheduling. Shared deadlines, public types/errors, prompt/message helpers
+and Parent/Child execution orchestration remain at the Runtime root.
 
 ## 3. Public composition surfaces
 
@@ -128,6 +160,88 @@ interface RuntimeHandle {
 
 `RuntimeApplication` owns Turn execution and queries. Composition control owns Unit enable/disable requests. `close()` caches and returns its first Promise.
 
+### 3.4 Settings capability
+
+Runtime Builder supplies the same frozen `settings` capability to Channels and
+`RuntimeApplication.settings`. SettingsManager implements transport-neutral `load`,
+`update` and dispatches `test_llm_model` to the Runtime-owned ModelTestRunner; it
+does not own file I/O or instantiate Extensions. Startup must
+provide the retained raw editing document to enable persistence. Embedding without
+that document remains supported and receives explicit `settings_unavailable`
+results, without an implicit file read or initialization.
+
+The request, result and capability contracts belong to `src/core/settings/`.
+Channel imports and composes that capability; Runtime implements it, and
+`my-agent/extension-api` re-exports the same types under its unchanged public names.
+Model Catalog contracts remain in Channel. [ADR-024](../decisions/adr-024-settings-contract-and-model-test-ownership.md)
+owns this boundary decision.
+
+Load uses the saved server-side document and startup discovery metadata, omits
+credentials and unexposed values, and returns current Runtime model facts.
+Updates serialize revision checking, current-file preparation, write, application
+and any required rollback. Preparing work rechecks shutdown admission immediately
+before file commit. Loads wait for in-flight updates instead of presenting a
+transient candidate as completed.
+
+Known pre-publication LLM failures restore the request's raw target preimage and
+return a fresh revision. A thrown application error without a confirmed publication
+outcome does not authorize rollback. Rollback failure reports unknown file state
+and both failures without blocking later updates; a later save rereads the file.
+Published retirement warnings never roll back the file. Extension restart state
+compares current saved values with the startup baseline and clears on reversal.
+
+Shutdown closes admission synchronously, cancels queued updates and converges
+admitted work before Unit stop under the existing budget. Unfinished file work is
+reported as a residual, not assumed cancelled; settled file/application divergence
+is a reported resource failure rather than a false deadline claim.
+ModelTestRunner exclusively owns active Tests, their cancellation, temporary
+Units and generation pins. SettingsManager supplies current saved-state facts at
+Test preparation without duplicating them in the Test module. Shared validation
+and safe result/error mapping live in private Settings helpers; the Test module
+does not depend on SettingsManager. Update and Test shutdown convergence begin
+together against the same remaining budget, and SettingsManager aggregates their
+reports without inspecting the Test collection.
+
+Private stateless section-view functions build LLM, Extension, Memory and global execution responses,
+including credential metadata, Extension startup-baseline restart comparison
+and global execution saved/applied consistency, using
+explicit facts supplied by SettingsManager. They do not read files, materialize
+credentials, retain state, or own transactions. SettingsManager still owns the
+document, baseline, revisions and application status and invokes these helpers
+after serialized work; AgentPolicyState retains Agent projection ownership.
+Model Catalog decoration and Agent view decoration remain in SettingsManager.
+
+`agents:execution` reuses AgentPolicyState's prepare/persist/publish flow.
+Execution and Tool sections save independently from current applied state,
+without adopting unrelated external file edits. Settings compares resolved saved
+execution values to the current applied snapshot, never requiring restart.
+Each new Root captures the published global policy alongside its Tool policy.
+Each new Child captures the latest execution limits before asynchronous setup;
+depth admission and canSpawn use that same snapshot. Already captured parameters
+remain stable, even if a Parent's later Child uses newer limits. No watcher,
+additional policy manager or Child steering/message-ingress path is introduced.
+
+`agents:memory` persists only global enablement. Its restart marker compares
+resolved saved enablement with the immutable startup Application value, not
+manager readiness. Saving does not load a model, index files, update Agent policy
+or change registered Tools.
+
+Model Test either creates an unpublished temporary Built-in Unit from a candidate,
+or pins the current Registry generation to use a loaded Provider. It reuses model
+resolution and invocation without a Runner, Session or Transcript. Retaining a saved
+draft credential requires the matching LLM revision. Replacement/clear are explicit;
+environment references use the captured startup environment. Test neither saves
+nor publishes, and returns no model response body or upstream error payload.
+
+The fixed 30,000 ms total Test deadline starts before preparation. Timeout and
+shutdown abort its signal and settle the request, but pending creation/invocation/
+cleanup retains its resources and generation pin until actual convergence.
+Shutdown waits within its existing budget and reports nonconvergence or failed
+temporary cleanup, never stopping a still-pinned composition instance.
+Bundled WebSocket exposes these actions through its generic Settings messages and
+section editor; neither the Channel nor client owns configuration transactions.
+Unsupported actions return explicit errors rather than simulated success.
+
 ## 4. Bootstrap, staging, and publication
 
 ```mermaid
@@ -155,19 +269,27 @@ Only a complete resolved candidate can publish. Optional startup failures are is
 
 An immutable Snapshot with no Providers is valid and can be published; Runtime does not invent an implicit Provider or reject application startup for that condition. A Turn without a valid explicit or configured Model Reference fails before Runner invocation.
 
-Memory is optional. Disabled Memory contributes no tools. Initialization failure emits a recoverable warning and continues with `memoryManager = null`; successful Memory contributes through a builtin Unit and is closed as a shared resource during Shutdown.
+Memory is global and optional. Bootstrap uses `appConfig.agents.memory` for one
+shared manager and startup incremental indexing; unchanged files are not
+unconditionally re-embedded. Disabled Memory contributes no Tools. Initialization
+failure emits a recoverable warning and continues with `memoryManager = null`;
+successful Memory contributes through a builtin Unit and is closed as a shared
+resource during Shutdown. Root and Child access remains ordinary Tool policy.
 
 ## 5. Model binding and Catalog query
 
 Each Root Turn captures the current immutable Snapshot before execution. Runtime passes the captured Provider projection and the requested reference to [Model Resolution](model-resolution.md). The selected model is a full structured reference; Provider order is deterministic projection order, not default-selection policy.
 
-When the Turn omits `modelReference`, Runtime uses the configured full Model Reference. It does not infer a Provider from Snapshot order and does not fall back when the configured reference is absent from the captured Catalog. Resolution failure occurs before Runner invocation.
+When the Turn omits `modelReference`, Runtime uses the default full Model Reference
+from its captured Registry Snapshot, not mutable/latest or startup-only configuration.
+It does not infer a Provider from Snapshot order and does not fall back when that
+reference is absent from the captured Catalog. Resolution failure occurs before Runner invocation.
 
 `RuntimeApplication.getModelCatalog()` synchronously reads the single current Snapshot pointer and returns a deeply frozen transport-safe DTO containing:
 
 - the current generation;
 - Provider and Model IDs/display names;
-- configured-default membership as `unset`, `available`, or `unavailable` with `provider_unregistered` or `model_rejected` reason.
+- current-Snapshot default membership as `unset`, `available`, or `unavailable` with `provider_unregistered` or `model_rejected` reason.
 
 The query does not capture a generation pin, call Provider code, or perform I/O. A previously started Turn continues on its pinned generation even after a later Catalog is published.
 
@@ -190,7 +312,19 @@ Media intake is atomic. Any attachment validation or optimization failure reject
 
 `handleInboundChannelMessage()` never calls the Turn body directly. The per-session scheduler starts only a queue head when that Session is idle. The request gate and Turn ID are generated when the item leaves the queue, then its origin Channel/client route is registered for that Turn. `RuntimeApplication` exposes no direct Root user-message execution API.
 
-`inFlightSessions` is the per-session serialization gate. Sessions are serialized independently, so different Sessions can run concurrently.
+The private `SessionMessageScheduler` owns the FIFO, Root busy/reservation
+state, and wake-only steering waiters. Standalone selection removes a queue
+head and reserves its Session synchronously before launch. RuntimeApp uses
+read-only work queries for Session operations and pending Abort discovery; it
+retains phase admission, actual execution, request gates, routing/events,
+generation pins, and cancellation controllers. There is no second scheduling
+state owner or public scheduler export.
+
+Sessions serialize independently, so different Sessions can run concurrently.
+RuntimeApp releases the scheduler reservation and checks the next head when
+the actual Root worker settles, not when its public request gate becomes
+terminal. Failed startup also releases its reservation without replaying the
+selected message.
 
 When `agents.steeringEnabled` is true, Runner may request a claim at a safe point after persistence and before another permitted Model call. Runtime synchronously peeks from the FIFO head and splices the largest contiguous compatible prefix:
 
@@ -232,7 +366,14 @@ Internal `RunTurnParams` carries the allocated request/Turn identities, Session 
 
 Before Runner starts, Runtime admits the message through the Session coordinator, materializing a live Pending `sessionId` when needed. It then optionally reloads context, computes policy-visible Tool definitions from the captured Snapshot, resolves the model, builds prompts, creates the per-session `AbortController`, and registers the active Parent record. Admission persists only Session metadata and a root record; Runner remains the sole user-message writer. Runtime passes the captured Tool and Hook projections unchanged; Provider wire conversion remains owned by [Providers](providers.md), and generic Tool execution remains owned by [Tools](tools.md).
 
-The request completion gate seals exactly one public terminal outcome. A run or resolution failure is contained to that request; Runtime records and emits the failure but the application remains usable. `finally` closes steering admission, promotes or discards the unread inbox according to terminal disposition, clears session/Turn/Abort/Parent state, decrements the active count, releases the Root member, and schedules the next queued item.
+The request completion gate seals exactly one public terminal outcome. A run
+or resolution failure is contained to that request; Runtime records and emits
+the failure but the application remains usable. Execution cleanup clears
+Session/Turn/Abort/Parent state, decrements the active count, and releases the
+Root member. Actual worker settlement releases the scheduler reservation and
+schedules the next unclaimed FIFO head. There is no unread inbox to promote
+or discard; only explicit Abort or Shutdown removes unclaimed queued input
+without running it.
 
 ## 8. Generations, reload, and retirement
 
@@ -241,12 +382,24 @@ The request completion gate seals exactly one public terminal outcome. A run or 
 - Generations are process-local positive integers and publish monotonically from 1.
 - Capture before publication pins the old Snapshot; capture after publication sees the new Snapshot.
 - Publication requires every instance to be handed off and atomically installs the new current pointer and lifecycle memberships.
-- A published previous generation enters `retiring`; another publication waits until that retirement reaches a terminal state.
+- A published previous generation enters `retiring`; later publication does not wait for it. Multiple generations can retire independently.
 - Reload uses latest-wins reduction before publication. A committed publication is not rolled back because later retirement fails.
-- Retirement waits for old-generation pins, then aborts only blocking trees after its graceful deadline. Nonconvergence or stop failure is retained as an attributable failed residual.
+- Unit-toggle retirement retains bounded drain/Abort behavior. LLM configuration retirement waits for old-generation pins without ordinary-operation timeout Abort. Nonconvergence or stop failure remains attributable and logged, but does not block later publication.
 - Shutdown admission rejects new capture, publication, and reload work.
 
 `RegistrySnapshot`, Provider, Tool, Hook, and Channel projections are immutable. RuntimeApp never mutates a captured projection or rebuilds a partial Snapshot.
+
+The internal composition manager's `applyLlmConfiguration` stages only the changed
+Built-in Unit and default selection, reusing unchanged active Units. A default-only
+update keeps the same Provider instance. Candidate failure preserves current
+applied input; same-ID replacement retires the old instance by identity.
+This seam does not yet expose Settings or load/reconfigure Extensions.
+
+Historical generation records contain no full Snapshot; live pins/current
+composition retain the versions they need. Lifecycle stop success, including
+late success after a deadline, clears owner references. Pending/protected/failed
+owners remain retained. Completed retirement tasks and shutdown listeners are
+removed; shutdown accounts for all outstanding retirements within its shared budget.
 
 ## 9. Subagent Parent/Child lifecycle
 
@@ -255,14 +408,24 @@ The Task Tool can delegate only from an active matching Parent Turn. Runtime rej
 An accepted Child:
 
 1. registers a Root-tree member before asynchronous setup;
-2. receives a new canonical `sessionId`, Turn ID, and root-only transient Transcript that is absent from Session Store/get/list;
-3. inherits the Parent route, context snapshot, Registry Snapshot, and Root Abort through its execution-local cancellation signal;
-4. prepares the Child prompt/tools;
-5. resolves either the Parent's effective Model Reference or the profile's concrete reference against the Parent generation;
-6. emits `subagent_start` and exactly one `subagent_end` terminal event;
-7. releases route, deletes the transient Transcript, and releases tree membership in `finally`.
+2. receives a new canonical `sessionId` and Turn ID, registers preparing state, and captures the existing presentation anchors and ancestor route;
+3. awaits ancestor start retention before emitting `subagent_start`;
+4. creates the isolated transient Transcript and prepares prompt/tools from inherited context, Registry Snapshot and execution-local cancellation;
+5. resolves the effective Child model against the Parent generation and registers the Child as a recursive active Parent;
+6. executes the Child, awaits ancestor terminal retention, and delivers `subagent_end`;
+7. waits for terminal Fanout to settle before clearing the route, applying existing Child retention/cleanup and releasing tree membership in `finally`.
 
 A Child never recaptures the latest generation. Independent sibling Task calls may run concurrently, with distinct execution signals, Child identities, routes, tree memberships, terminal events, and cleanup. Root pin release waits until the Parent and all registered Child members finish. Setup, resolution, execution, and Abort outcomes are classified separately; cleanup continues where possible if one cleanup step fails.
+
+Event routing reuses SessionManager's existing live presentation route, not a
+second execution-tree registry. It supplies optional `ChannelEventRouting`
+with `rootTurnId` and `ancestorSessionIds` through the Channel binding.
+Fanout selects the Root's captured Channel projection even for a Child
+turnId; the original event and source identity remain unchanged.
+`subagent_end` delivery is tracked as terminal Fanout for bounded Shutdown.
+WebSocket resolves the union of source and ancestor memberships per event,
+without changing membership or control authority. UI recursion remains
+outside Runtime.
 
 Detailed Child execution remains owned by [Runner](runner.md), while Runtime owns membership, inheritance, routing, and lifecycle convergence.
 
@@ -328,6 +491,6 @@ Registry startup diagnostics are logged locally by Runtime with bounded identity
 
 | Kind | Evidence |
 |---|---|
-| Source | [RuntimeApp](../../src/runtime/RuntimeApp.ts), [queue types](../../src/runtime/queue-types.ts), [composition manager](../../src/runtime/runtime-composition-manager.ts) |
-| Tests | [RuntimeApp tests](../../src/runtime/RuntimeApp.test.ts), [composition manager tests](../../src/runtime/runtime-composition-manager.test.ts) |
+| Source | [RuntimeApp](../../src/runtime/RuntimeApp.ts), [queue types](../../src/runtime/scheduling/queue-types.ts), [composition manager](../../src/runtime/composition/runtime-composition-manager.ts), [SettingsManager](../../src/runtime/settings/settings-manager.ts), [model Tests](../../src/runtime/settings/model-test.ts), [Settings contracts](../../src/core/settings/index.ts) |
+| Tests | [RuntimeApp tests](../../src/runtime/RuntimeApp.test.ts), [composition manager tests](../../src/runtime/composition/runtime-composition-manager.test.ts), [SettingsManager tests](../../src/runtime/settings/settings-manager.test.ts), [independent model Test tests](../../src/runtime/settings/model-test.test.ts) |
 | Controlling authority | [Runtime Composition Specification](../specifications/runtime-composition.md) |

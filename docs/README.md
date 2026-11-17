@@ -1,7 +1,7 @@
 # Documentation
 
-> Status: Active authority index
-> Authority: Documentation roles, precedence, and navigation
+> Status: Documentation navigation index
+> Role: Entry points and document classification; not decision or behavior authority
 
 This index separates current authority from active work and historical or non-authoritative supporting material.
 
@@ -22,13 +22,16 @@ For ordinary implementation work, start from source and focused tests, then read
 
 Do not routinely read or search archived Changes, Evidence, Deferred inputs, Research, superseded decisions, or Git history. Use them only for provenance, prior alternatives, migration reconstruction, or unresolved authority transfer.
 
-## Current authority and work
+## Current authority
 
 - [Governance](governance/README.md) — project workflow, principles, terminology, and coding conventions
 - [Current Architecture](architecture/README.md) — verified implementation topics and ownership
 - [Decisions](decisions/README.md) — accepted durable architectural decisions
 - [Stable Specifications](specifications/README.md) — durable behavioral and structural contracts
-- [Changes](changes/README.md) — active work under the Development Workflow; its archive is historical
+
+## Active work
+
+- [Changes](changes/README.md) — non-authoritative active/archived delivery records under the Development Workflow; all may be cleaned up at any time
 
 ## Opt-in supporting material
 
@@ -39,6 +42,8 @@ Do not routinely read or search archived Changes, Evidence, Deferred inputs, Res
 
 ## Authority order
 
-Source and tests provide implementation evidence. Current Architecture owns implemented boundaries; Stable Specifications own long-lived contracts; Accepted Decisions own durable rationale; Active Changes own approved unfinished work. Evidence, Deferred, Research, superseded Decisions, and archived Changes cannot override those surfaces.
+Source and tests provide implementation evidence. Current Architecture owns implemented boundaries; Stable Specifications own long-lived contracts; Accepted Decisions own durable rationale. Active Changes track approved unfinished work without becoming authority. All Change records, whether active or archived, are disposable and may be cleaned up at any time. Changes, Evidence, Deferred, Research and superseded Decisions cannot override authority documents.
+
+Authority documents contain their current accepted rules and status directly, without links to non-authoritative drafts or historical supporting records. Supporting documents may link to authority documents. This index only provides navigation; links here do not grant authority to their targets.
 
 The [Development Workflow](governance/development-workflow.md) is the sole development-process authority. Templates define artifact structure only and do not create another workflow.

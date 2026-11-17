@@ -65,15 +65,33 @@ describe('Host build audit', () => {
     }, async (root) => {
       await expect(auditHostBuild(root)).rejects.toThrow(/executable shebang/u);
     });
+
+  });
+
+  it('rejects a missing nested Agent template', async () => {
+    const assets = hostAssets();
+    delete assets['core/agent-context/templates/agents/reviewer/IDENTITY.md'];
+    await withHostBuild({
+      'hosts/standalone/entry.js': "#!/usr/bin/env node\nimport '../../extension/acquisition/index.js';\n",
+      'extension/acquisition/index.js': 'export {};\n',
+      'extension/api/index.d.ts': 'export {};\n',
+      'extension/api/index.js': 'export {};\n',
+      ...assets,
+    }, async root => {
+      await expect(auditHostBuild(root)).rejects.toThrow(
+        'missing required file: core/agent-context/templates/agents/reviewer/IDENTITY.md',
+      );
+    });
   });
 });
 
 function hostAssets() {
   return Object.fromEntries(
-    ['IDENTITY.md', 'SOUL.md', 'AGENTS.md', 'TOOLS.md'].map((name) => [
-      `core/agent-context/templates/${name}`,
-      `# ${name}\n`,
-    ]),
+    ['', ...['reviewer', 'explorer', 'researcher'].map(id => `agents/${id}/`)].flatMap(prefix =>
+      ['IDENTITY.md', 'SOUL.md', 'AGENTS.md', 'TOOLS.md'].map(name => [
+        `core/agent-context/templates/${prefix}${name}`,
+        `# ${name}\n`,
+      ])),
   );
 }
 

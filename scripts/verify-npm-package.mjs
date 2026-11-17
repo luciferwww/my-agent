@@ -92,23 +92,15 @@ async function main() {
     await verifyInstalledClientDist(installDir);
     const firstStartInstallationBefore = await snapshotTree(installDir);
     const firstStartStartupCwdBefore = await snapshotTree(startupCwd);
-    const firstStart = await runInstalledCommand(
+    host = startInstalledCommand(
       installationProject,
       startupCwd,
       [],
-      PROCESS_TIMEOUT_MS,
       createIsolatedHomeEnvironment(firstStartHomeDirectory),
     );
-    assert(firstStart.code === 1, 'Installed command accepted a missing Agent configuration.');
-    assert(firstStart.stdout === '', 'Missing configuration emitted unexpected standard output.');
-    assert(
-      firstStart.stderr === `Agent configuration file is missing. Run my-agent --initialize --agent-home ${JSON.stringify(firstStartAgentHome)}.\n`,
-      'Installed command emitted unexpected missing-configuration guidance.',
-    );
-    assert(
-      !await pathExists(firstStartHomeDirectory),
-      'First start modified the default home while reporting a missing configuration.',
-    );
+    await verifyEmptyHomeStartup(host, firstStartAgentHome);
+    await stopChild(host);
+    host = undefined;
     assertTreeUnchanged(
       firstStartInstallationBefore,
       await snapshotTree(installDir),
@@ -123,26 +115,15 @@ async function main() {
     const explicitInstallationBefore = await snapshotTree(installDir);
     const explicitStartupCwdBefore = await snapshotTree(startupCwd);
     const explicitFallbackHomeBefore = await snapshotTree(explicitHomeDirectory);
-    const explicitStart = await runInstalledCommand(
+    host = startInstalledCommand(
       installationProject,
       startupCwd,
       ['--agent-home', explicitAgentHome],
-      PROCESS_TIMEOUT_MS,
       createIsolatedHomeEnvironment(explicitHomeDirectory),
     );
-    assert(explicitStart.code === 1, 'Installed command accepted a missing explicit configuration.');
-    assert(
-      explicitStart.stdout === '',
-      'Missing explicit configuration emitted unexpected standard output.',
-    );
-    assert(
-      explicitStart.stderr === `Agent configuration file is missing. Run my-agent --initialize --agent-home ${JSON.stringify(explicitAgentHome)}.\n`,
-      'Installed command emitted unexpected explicit missing-configuration guidance.',
-    );
-    assert(
-      !await pathExists(explicitAgentHome),
-      'Missing explicit configuration modified the Agent Home.',
-    );
+    await verifyEmptyHomeStartup(host, explicitAgentHome);
+    await stopChild(host);
+    host = undefined;
     assertTreeUnchanged(
       explicitInstallationBefore,
       await snapshotTree(installDir),
@@ -277,7 +258,7 @@ async function main() {
   }
   if (failed) throw failure;
   console.log(
-    `Verified npm package (${packageFileCount} files), zero-Channel Host startup, explicit WebSocket Extension acquisition and client serving, legacy Host rejection, and installed my-agent command.`,
+    `Verified npm package (${packageFileCount} files), empty Agent Home startup, automatic Extension acquisition and WebSocket Settings, client serving, legacy Host rejection, and installed my-agent command.`,
   );
 }
 
@@ -294,11 +275,7 @@ async function verifyInstalledExtensionAcquisition(installationProject) {
   const result = await acquisitionModule.acquireExtensions({
     extensionsDir: join(installDir, 'extensions'),
     extensionsConfig: {
-      enabled: true,
-      entries: {
-        'copilot-relay-provider': {},
-        'websocket-channel': {},
-      },
+      entries: {},
     },
     environment: {},
   });
@@ -451,6 +428,64 @@ async function runNpm(args, cwd, timeoutMs = PROCESS_TIMEOUT_MS) {
 
 async function runInstalledCommand(binRoot, cwd, args, timeoutMs, environment) {
   return collectChild(startInstalledCommand(binRoot, cwd, args, environment), timeoutMs);
+}
+
+async function verifyEmptyHomeStartup(child, agentHome) {
+  await new Promise((resolve, reject) => {
+    let tail = '';
+    let stderrTail = '';
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.stdout.off('data', onData);
+      child.stderr.off('data', onStderr);
+      child.off('exit', onExit);
+      child.off('error', onError);
+    };
+    const onData = (chunk) => {
+      tail = (tail + chunk.toString()).slice(-8192);
+      if (!tail.includes('websocket channel started')) return;
+      cleanup();
+      resolve();
+    };
+    const onStderr = (chunk) => {
+      stderrTail = (stderrTail + chunk.toString()).slice(-8192);
+    };
+    const onExit = (code) => {
+      cleanup();
+      reject(new Error(
+        `Empty-Home Host exited before WebSocket startup (${String(code)}).\n`
+        + redactSubprocessOutput(`${tail}\n${stderrTail}`, agentHome),
+      ));
+    };
+    const onError = (error) => { cleanup(); reject(error); };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Empty-Home WebSocket startup timed out; default port 8787 must be available.'));
+    }, PROCESS_TIMEOUT_MS);
+    child.stdout.on('data', onData);
+    child.stderr.on('data', onStderr);
+    child.once('exit', onExit);
+    child.once('error', onError);
+  });
+  const client = await connectWithRetry('ws://127.0.0.1:8787/ws', child, PROCESS_TIMEOUT_MS);
+  try {
+    let response = nextJsonMessage(client, PROCESS_TIMEOUT_MS);
+    client.send(JSON.stringify({ type: 'hello', clientId: 'package-first-start' }));
+    assert((await response).type === 'hello_ack', 'First-start WebSocket hello failed.');
+    response = nextJsonMessage(client, PROCESS_TIMEOUT_MS);
+    client.send(JSON.stringify({ type: 'settings_action', requestId: 'first-load', action: 'load', input: {} }));
+    const settings = await response;
+    assert(
+      settings.type === 'settings_action_result' && settings.requestId === 'first-load' && settings.ok === true,
+      'First-start Settings load failed.',
+    );
+    assert(
+      await readFile(join(agentHome, 'config.json'), 'utf8') === '{}\n',
+      'First start did not exclusively bootstrap an empty configuration.',
+    );
+  } finally {
+    client.terminate();
+  }
 }
 
 function startInstalledCommand(binRoot, cwd, args, environment) {

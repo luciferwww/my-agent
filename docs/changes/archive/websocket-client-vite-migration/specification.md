@@ -5,7 +5,6 @@
 > Owner: Project owner
 > Related Plan: [Plan](plan.md)
 > Prerequisite Spike: [WVC-0 Specification](wvc-0-spike-specification.md)
-> Research input: [Design Draft](../../../research/websocket-client-vite-migration-design-draft.md)
 > Acceptance: Owner accepted the production contract on 2026-10-12.
 > Delivery: WVC-1 through WVC-4 were separately authorized, implemented, validated, and owner-accepted on 2026-10-12.
 

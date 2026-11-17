@@ -1,3 +1,3 @@
-import { bootstrapRuntime } from '../../runtime/bootstrap.js';
+import { bootstrapRuntime } from '../../runtime/composition/bootstrap.js';
 
 export const createRunner = bootstrapRuntime;

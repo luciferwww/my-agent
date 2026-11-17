@@ -8,6 +8,11 @@
 > Refines: [ADR-010](adr-010-install-and-agent-home-ownership.md) configuration initialization; its ownership decision remains accepted
 > Refined by: [ADR-012](adr-012-agent-home-path-unification.md), which allows standalone selection of Agent Home while preserving this document's bootstrap behavior for the selected path
 
+Owner-approved [Dynamic Settings](../changes/archive/dynamic-settings/specification.md)
+restored exclusive missing-only `{}` creation on 2026-11-10 and removed the terminal
+wizard. Platform ownership, strict physical loading and independent Core Context
+ownership remain.
+
 ## Context
 
 ADR-010 establishes `<agentHome>/config.json` as the sole standalone configuration document and keeps Agent Context, Memory, Sessions, logs, and other mutable state under the same Agent Home. The current standalone Host reads configuration before Runtime creation, but a missing file is represented only as an in-memory empty document. Runtime bootstrap later creates Agent Context Markdown files and may initialize Memory state. A fresh Agent Home can therefore contain Context and database files without a physical configuration document.

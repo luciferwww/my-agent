@@ -19,6 +19,34 @@ import {
   CompactionConfigValidationError,
   validateCompactionConfig,
 } from '../../core/runner/index.js';
+import { createDefaultAgentConfig } from './default-composition.js';
+import type { AgentDefaults, DeepPartial } from './types.js';
+import { validateSkillSelection, SkillSelectionValidationError } from '../../core/skills/index.js';
+
+export function projectAgentCapabilities(value: unknown, fieldPath: string): DeepPartial<AgentDefaults> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw invalidAgentConfigField(fieldPath);
+  }
+  const defaults = createDefaultAgentConfig();
+  const supported = projectSupportedFields(value, {
+    ...defaults,
+    compaction: { ...defaults.compaction, customInstructions: '' },
+  });
+  validateAgentLeafConfig(supported, fieldPath);
+  return supported as DeepPartial<AgentDefaults>;
+}
+
+function projectSupportedFields(value: object, template: object): Record<string, unknown> {
+  const source = value as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(template).flatMap(([key, shape]) => {
+    if (!Object.hasOwn(source, key)) return [];
+    const candidate = source[key];
+    return [[key, typeof shape === 'object' && shape !== null && !Array.isArray(shape)
+      && typeof candidate === 'object' && candidate !== null && !Array.isArray(candidate)
+      ? projectSupportedFields(candidate, shape)
+      : candidate]];
+  }));
+}
 
 export function validateRunnerConfigSection(
   value: unknown,
@@ -32,10 +60,14 @@ export function validateAgentLeafConfig(
   fieldPath: string,
 ): void {
   const leaves = value as Readonly<Record<string, unknown>>;
-  validateLeaf(leaves['memory'], joinFieldPath(fieldPath, 'memory'), validateMemoryConfig, MemoryConfigValidationError);
   validateLeaf(leaves['tools'], joinFieldPath(fieldPath, 'tools'), validateToolPolicyConfig, ToolPolicyConfigValidationError);
   validateLeaf(leaves['context'], joinFieldPath(fieldPath, 'context'), validateAgentContextConfig, AgentContextConfigValidationError);
   validateLeaf(leaves['compaction'], joinFieldPath(fieldPath, 'compaction'), validateCompactionConfig, CompactionConfigValidationError);
+  validateLeaf(leaves['skills'], joinFieldPath(fieldPath, 'skills'), validateSkillSelection, SkillSelectionValidationError);
+}
+
+export function validateMemoryConfigSection(value: unknown): void {
+  validateLeaf(value, 'agents.memory', validateMemoryConfig, MemoryConfigValidationError);
 }
 
 function joinFieldPath(parent: string, field: string): string {

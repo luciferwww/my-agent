@@ -16,7 +16,7 @@ import {
   finalizeRegistrySnapshot,
   resolveStagedRegistryCandidate,
   stageRegistryUnit,
-} from '../../runtime/registry-builder.js';
+} from '../../runtime/composition/registry-builder.js';
 import { AgentRunner } from './AgentRunner.js';
 import type { AgentEvent } from './types.js';
 

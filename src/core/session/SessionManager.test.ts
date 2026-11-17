@@ -91,6 +91,42 @@ describe('SessionManager transcript behavior', () => {
     });
   });
 
+  it.each([1, 2])('upgrades v%s for message identity without changing record IDs', async version => {
+    const sessionId = await materialize();
+    const transcriptPath = join(agentHome, 'sessions', `${sessionId}.jsonl`);
+    const lines = (await readFile(transcriptPath, 'utf8')).trimEnd().split('\n');
+    const root = JSON.parse(lines[0]!) as { version: number };
+    root.version = version;
+    await writeFile(transcriptPath, [JSON.stringify(root), ...lines.slice(1)].join('\n') + '\n');
+    const reloaded = new SessionManager(agentHome);
+    const oldIds = reloaded.getMessages(sessionId).map(record => record.id);
+    const record = await reloaded.appendMessage(sessionId, {
+      turnId: 'identity-turn', messageId: 'live-message', role: 'assistant', content: 'answer',
+    });
+
+    expect(record.id).not.toBe('live-message');
+    expect(record.message).not.toHaveProperty('messageId');
+    const restored = new SessionManager(agentHome);
+    expect(restored.getMessages(sessionId).map(item => item.id)).toEqual([...oldIds, record.id]);
+    expect(restored.getHistory({ sessionId }).items.at(-1)).toMatchObject({
+      entryId: record.id, messageId: 'live-message', content: 'answer',
+    });
+    expect(restored.getMessages(sessionId)[0]).not.toHaveProperty('messageId');
+    expect(JSON.parse((await readFile(transcriptPath, 'utf8')).split('\n')[0]!).version).toBe(3);
+    const fork = await restored.forkSession(sessionId);
+    expect(new SessionManager(agentHome).getMessages(fork.sessionId).at(-1))
+      .toMatchObject({ id: record.id, messageId: 'live-message' });
+  });
+
+  it.each(['', '   '])('rejects invalid message identity %j before writing', async messageId => {
+    const sessionId = await materialize();
+    const oldIds = manager.getMessages(sessionId).map(record => record.id);
+    await expect(manager.appendMessage(sessionId, {
+      turnId: 'identity-turn', messageId, role: 'assistant', content: 'answer',
+    })).rejects.toThrow('messageId must be a non-empty string');
+    expect(manager.getMessages(sessionId).map(record => record.id)).toEqual(oldIds);
+  });
+
   it('preserves omitted, empty, and explicit-default reasoning shapes in History and reload', async () => {
     const sessionId = await materialize(manager, 'omitted');
     await appendMessage(sessionId, {
@@ -218,6 +254,50 @@ describe('SessionManager transcript behavior', () => {
         content: [{ type: 'thinking', status: 'partial', text: 'partial summary' }],
       },
     });
+  });
+
+  it.each([1, 2])('upgrades v%i for actual LLM hints without changing existing entry IDs or model payloads', async version => {
+    const sessionId = await materialize();
+    if (version === 2) {
+      await appendMessage(sessionId, { role: 'user', content: 'reasoned', reasoning: { thinking: 'off' } });
+    }
+    const previousIds = manager.getMessages(sessionId).map(record => record.id);
+    const path = join(agentHome, 'sessions', `${sessionId}.jsonl`);
+    const lines = (await readFile(path, 'utf8')).trimEnd().split('\n');
+    const header = JSON.parse(lines[0]);
+    header.version = version;
+    lines[0] = JSON.stringify(header);
+    await writeFile(path, `${lines.join('\n')}\n`, 'utf8');
+    expect(JSON.parse((await readFile(path, 'utf8')).split('\n')[0]).version).toBe(version);
+    const legacy = new SessionManager(agentHome);
+    const record = await legacy.appendMessage(sessionId, {
+      turnId: 'test-turn', role: 'assistant', content: 'actual call', llmRound: 0,
+    });
+    expect(record.llmRound).toBe(0);
+    expect(record.message).not.toHaveProperty('llmRound');
+    expect(JSON.parse((await readFile(path, 'utf8')).split('\n')[0]).version).toBe(3);
+    const reloaded = new SessionManager(agentHome);
+    expect(reloaded.getMessages(sessionId).slice(0, -1).map(entry => entry.id)).toEqual(previousIds);
+    expect(reloaded.getHistory({ sessionId }).items.at(-1))
+      .toMatchObject({ entryId: record.id, llmRound: 0 });
+    await legacy.close();
+    await reloaded.close();
+  });
+
+  it.each([-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])('rejects invalid llmRound %s before writing', async llmRound => {
+    const sessionId = await materialize();
+    await expect(manager.appendMessage(sessionId, {
+      turnId: 'test-turn', role: 'assistant', content: '', llmRound,
+    })).rejects.toThrow('llmRound must be a non-negative safe integer on an Assistant message');
+    expect(manager.getMessages(sessionId)).toHaveLength(1);
+  });
+
+  it.each(['user', 'toolResult'] as const)('rejects an LLM hint on %s messages', async role => {
+    const sessionId = await materialize();
+    await expect(manager.appendMessage(sessionId, {
+      turnId: 'test-turn', role, content: '', llmRound: 0,
+    })).rejects.toThrow('llmRound must be a non-negative safe integer on an Assistant message');
+    expect(manager.getMessages(sessionId)).toHaveLength(1);
   });
 
   it('rejects max_llm_calls metadata on a non-Assistant message before persistence', async () => {
@@ -385,12 +465,12 @@ describe('SessionManager transcript behavior', () => {
 
   it('returns chronological active-branch History pages with exclusive cursors', async () => {
     const sessionId = await materialize(manager, 'first');
-    await appendMessage(sessionId, { role: 'assistant', content: 'second' });
-    await appendMessage(sessionId, { role: 'user', content: 'third' });
+    await manager.appendMessage(sessionId, { turnId: 'second-turn', role: 'assistant', content: 'second' });
+    await manager.appendMessage(sessionId, { turnId: 'second-turn', role: 'user', content: 'third' });
 
     const latest = manager.getHistory({ sessionId, limit: 2 });
     expect(latest.items.map((item) => item.content)).toEqual(['second', 'third']);
-    expect(latest.items.every((item) => item.turnId === 'test-turn')).toBe(true);
+    expect(latest.items.every((item) => item.turnId === 'second-turn')).toBe(true);
     expect(latest.hasMore).toBe(true);
     expect(latest.nextCursor).toBe(latest.items[0]?.entryId);
 

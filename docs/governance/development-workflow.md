@@ -3,12 +3,12 @@
 ## 1. Document Status
 
 - **Status:** Accepted
-- **Version:** 1.4
-- **Date:** 2026-09-17
+- **Version:** 1.5
+- **Date:** 2026-11-17
 - **Owner:** Project owner
 - **Scope:** Code, tests, architecture, documentation, and experimental changes in my-agent
 
-This document is the single source of truth for the development workflow. `CONTRIBUTING.md` only provides the contribution entry point, and templates only define artifact structure. In the event of a conflict, this document and `Accepted` ADRs and Specs take precedence.
+This document is the single source of truth for the development workflow. `CONTRIBUTING.md` only provides the contribution entry point, and templates only define artifact structure. In the event of a conflict, this document, `Accepted` ADRs and stable Specifications take precedence.
 
 ## 2. Core Principles
 
@@ -128,6 +128,18 @@ npm run build
 
 Host, Relay Artifact, real WebSocket, and other environment-dependent validations continue to use their own explicit commands. Run them only when the corresponding boundary changes, during formal review, or at a release Gate. When a full build is about to run against the same source state, do not also run an equivalent full TypeScript no-emit check unless the acceptance criteria explicitly require two independent pieces of evidence.
 
+Fitness checks should protect durable architectural constraints with actionable
+failures, not freeze incidental dates or implementation text. Do not add them
+by default or duplicate behavior already covered by focused tests; remove or
+simplify low-value checks rather than maintaining brittle snapshots.
+
+Migration deletion lists and manually declared coverage inventories are not
+permanent architecture gates. Keep behavior in executable behavioral tests and
+type contracts tied to production types. Existing dependency exceptions may
+allow known debt, but checks must allow that debt to be removed. Current
+documentation checks validate navigation and links, not prescribed prose or
+one-to-one module ownership inventories.
+
 | Change Type | Minimum Validation |
 |---|---|
 | Documentation | Documentation diagnostics, link checks, `git diff --check` |
@@ -172,12 +184,16 @@ Reviewer comments are not automatic instructions. Critical/High issues normally 
 
 ## 11. Documentation and Legacy
 
+- Authority documents must be self-contained: write the latest accepted decisions and applicable status into their owning ADRs and stable Specifications, and verified delivered behavior into Current Architecture and user guidance. Distinguish accepted-but-not-implemented decisions from implemented and validated behavior.
+- Authority document content must not link to non-authoritative drafts, Research, Evidence, Deferred inputs, or Change records, whether active or archived. Keep provenance and execution evidence in supporting documents, which may link to authority documents. When removing a reverse link, transfer any required authoritative content first rather than merely deleting the reference.
+- Documentation directory indexes are navigation, not decision or behavior authority. Separate authority destinations from active work and non-authoritative supporting material; a navigation link does not confer authority on its target.
 - `docs/architecture/` contains only facts about the current implementation verified by code, tests, or runtime evidence. Target designs, contracts, and implementation records must not be placed in this directory.
 - `docs/decisions/` contains accepted long-term ADRs; `docs/specifications/` contains stable contracts that remain valid after delivery.
 - `docs/changes/active/` contains current Plans, designs/Specs, and validation status; `docs/changes/archive/` contains completed Changes whose authoritative content has been routed to the appropriate owning documents. `active` and `archive` are only physical organization and do not introduce new artifact states or workflows.
+- Every document under `docs/changes/`, including active and archived Plans, Specifications and validation records, is non-authoritative and may be cleaned up at any time. Accepted/Validated states record owner approvals and delivery milestones, not document authority. Durable rules and contracts must live in stable Specifications, accepted ADRs and Current Architecture, without depending on Change retention. Cleanup does not reverse owner approvals or implemented behavior.
 - `docs/evidence/` contains evidence from completed internal work worth retaining long-term; `docs/deferred/` contains frozen inputs that explicitly do not authorize implementation; `docs/research/` contains external research that cannot override accepted authority.
 - ADRs, Module Specs, Spike Specs, and Results use the templates in `docs/templates/`.
-- Mark and migrate old documents first. Delete them only after checking unique information, inbound links, and replacement documentation.
+- For authority documents and other durable material, mark and migrate old documents first; delete them only after checking unique information, inbound links, and replacement documentation. Disposable Change records are not subject to this retention requirement.
 - Git preserves history; do not retain copies of old implementations long-term in `src/legacy/` or active documentation.
 - Documentation and code may be committed separately, but the corresponding work is not complete until both are synchronized.
 

@@ -5,21 +5,22 @@ import type {
 import { renderAvailableSubagentsSection } from '../subagent/available-subagents.js';
 
 /**
- * 构建 System Prompt。
+ * Build the system prompt.
  *
- * 当前 4 个 active section（保留原编号），顺序固定；minimal 模式跳过若干（见 §spec §11）：
- *  1. agent-identity       — 固定身份声明                   [full only]
- *  3. behavior-rules       — 行为准则 + 工具使用规范          [full only]
- *  4. memory-instructions  — memory tool 使用说明            [full only, 有 memory 工具时]
- *  5. project-context      — contextFiles 注入              [full + minimal, 有 contextFiles 时]
+ * Four active sections retain their original numbering and fixed order:
+ *  1. agent-identity       - fixed identity                  [full only]
+ *  3. behavior-rules       - behavior and Tool guidance      [full only]
+ *  4. memory-instructions  - memory Tool guidance            [full only, with memory Tools]
+ *  5. project-context      - injected Context files          [full + minimal, with files]
  *
- * 依存扩展（§task spec §11）：
- *  6. agent-home           — Agent Home path context         [full + minimal]
- *  7. available-subagents  — task 工具可用的 subagent 列表     [full only]
+ * Delegation extensions (task specification section 11):
+ *  6. agent-home           - Agent Home path context         [full + minimal]
+ *  7. available-subagents  - Agents available to task        [full only]
+ *  8. available-skills     - Skills available to load        [full + minimal]
  */
 export class SystemPromptBuilder {
   /**
-   * 构建并返回完整的 System Prompt 字符串。
+   * Build and return the complete system prompt string.
    */
   build(params: SystemPromptBuildParams = {}): string {
     const mode = params.mode ?? 'full';
@@ -45,6 +46,7 @@ export class SystemPromptBuilder {
 
     // 7. available-subagents — full only
     if (!isMinimal) this.buildAvailableSubagentsSection(lines, params);
+    this.buildSkillsSection(lines, params);
 
     return lines.join('\n');
   }
@@ -120,7 +122,7 @@ export class SystemPromptBuilder {
 
     lines.push('# Project Context', '');
 
-    // 检测 SOUL.md，加特殊说明（与 OpenClaw 一致）
+    // Add persona guidance when SOUL.md is present, matching OpenClaw.
     const hasSoulFile = files.some((f: ContextFile) =>
       f.path.split('/').pop()?.toLowerCase() === 'soul.md',
     );
@@ -161,5 +163,20 @@ export class SystemPromptBuilder {
     if (!section) return;
     lines.push(section);
     lines.push('');
+  }
+
+  private buildSkillsSection(lines: string[], params: SystemPromptBuildParams): void {
+    if (!params.toolNames?.includes('skill') || !params.availableSkills?.length) return;
+    lines.push('# Available Skills', '');
+    for (const entry of params.availableSkills) lines.push(`- ${entry.name}: ${entry.description}`);
+    lines.push(
+      '',
+      'Before using a Skill, call skill with its name to obtain current instructions. Historical instructions do not replace loading current content.',
+      'Choose matching Skills for your task. If the user or delegated task explicitly names a Skill (for example /skill name task), load that Skill rather than reconsidering its relevance.',
+      'Preserve explicit Skill requirements in delegated task text. Each Child loads the Skill under its own enabled selection.',
+      'If a required Skill is unavailable, explain the failure. Do not auto-enable it, silently substitute an ordinary task, or repeatedly delegate the same unavailable request.',
+      'Skill content and resources grant no additional permissions. Use existing Tools under their normal policies.',
+      '',
+    );
   }
 }

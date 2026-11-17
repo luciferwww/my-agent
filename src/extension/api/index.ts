@@ -16,12 +16,18 @@ export type {
   ChannelOperationErrorCode,
   ChannelRunRequest,
   ChannelRuntimeCapabilities,
+  ChannelEventRouting,
   InboundContentBlock,
   ModelCatalogSnapshot,
   SessionPermissionMode,
   SessionPermissionState,
   TurnInteractionResponse,
 } from '../../core/channel/index.js';
+export type {
+  SettingsActionRequest,
+  SettingsActionResult,
+  SettingsCapability,
+} from '../../core/settings/index.js';
 export type {
   ProviderConnection,
   ProviderModelFacts,
@@ -65,8 +71,8 @@ export {
 } from '../../core/model-invocation/index.js';
 export type { ToolCall } from '../../core/tools/index.js';
 export type { ExtensionRegistrationApi } from '../../core/registry/index.js';
-export { createLoadedRuntimeUnit } from '../../runtime/runtime-unit.js';
+export { createLoadedRuntimeUnit } from '../../runtime/composition/runtime-unit.js';
 export type {
   LoadedRuntimeUnit,
   RuntimeUnitInstance,
-} from '../../runtime/runtime-unit.js';
+} from '../../runtime/composition/runtime-unit.js';

@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-10-15
+> Verified: 2026-11-10
 > Authority: Stable Runtime Bootstrap acquisition contract
 
 ## Scope
@@ -26,6 +26,7 @@ interface ExtensionDescriptorV1 {
 interface ExtensionLoadContext { readonly config: Readonly<Record<string, unknown>> }
 interface ExternalExtensionModule { createExtension(context: ExtensionLoadContext): LoadedRuntimeUnit }
 interface ExtensionAcquisitionResult {
+  readonly discovery: ExtensionDiscoveryResult;
   readonly loadedUnits: readonly LoadedRuntimeUnit[];
   readonly diagnostics: readonly ExtensionAcquisitionDiagnostic[];
 }
@@ -43,7 +44,14 @@ Descriptor schema is Draft-07, root object, `additionalProperties: false`, with 
 
 ## Agent Extension configuration and loading
 
-Global `extensions.enabled` defaults true and short-circuits discovery when false. An installed candidate requires a matching `entries.<id>` object. Within that object, omitted `enabled` defaults to true and explicit `false` disables it.
+The global `extensions.enabled` switch is removed. Its presence, including `false`,
+is rejected with explicit per-entry configuration/removal guidance before discovery
+or execution; it is never silently treated as enablement. Every discovered
+candidate is enabled by default, including when `entries.<id>` is absent.
+An absent entry supplies empty scoped configuration before Schema defaults.
+Only explicit `enabled: false` disables an otherwise valid entry without import.
+Invalid entries and failed candidates are diagnosed and skipped independently.
+Discovery itself remains import-free and retains disabled candidates.
 
 A direct root Schema property with exact `type: "string"` and `writeOnly: true` may contain a literal string or one exact `${ENV_VAR}` credential reference. That reference is materialized before strict Ajv validation. Field names have no sensitive meaning; a root `apiKey` without this annotation remains literal. Nested, referenced, composed, non-string, and dynamically named properties receive no generic environment-reference syntax. Defaults are allowed; coercion and unknown-property removal are not. The synchronous factory receives only defensively frozen scoped config and must not create resources. After all static checks, one Host-owned Jiti Loader loads source and built entries through the same path.
 
@@ -63,11 +71,17 @@ Logs describe Acquisition only, not Runtime creation or publication. Logged cont
 
 ## Runtime boundary
 
-Acquisition ends at `LoadedRuntimeUnit[]`. [Runtime Composition](runtime-composition.md) exclusively owns `create -> stage -> start -> publish -> retire -> stop`. Generic acquisition never imports a concrete Extension.
+Acquisition returns uncreated `LoadedRuntimeUnit[]` together with its original frozen
+discovery result and combined diagnostics. Runtime Bootstrap retains discovery and
+diagnostics as startup metadata separately from Units. Consumers reuse this metadata
+without another scan/import; it does not introduce watchers or dynamic loading.
+[Runtime Composition](runtime-composition.md) exclusively owns
+`create -> stage -> start -> publish -> retire -> stop`. Generic acquisition never
+imports a concrete Extension.
 
 ## Acceptance scenarios
 
-Cover explicit-root handoff, missing/invalid roots, installation containment and immutability, reparse rejection, Descriptor/schema validation, optional name and Provider contribution metadata, renamed-directory invariance, duplicate isolation, explicit/global enablement, direct-root write-only string credential materialization and redaction, unannotated `apiKey` literal behavior, import/export/factory failure, Unit normalization, deterministic frozen output, bounded secret-free logs, bad-neighbor isolation, and Runtime publication integration.
+Cover explicit-root handoff, missing/invalid roots, installation containment and immutability, reparse rejection, Descriptor/schema validation, optional name and Provider contribution metadata, renamed-directory invariance, duplicate isolation, per-entry enablement and rejection of the removed global switch, retained import-free discovery metadata through Runtime Bootstrap, direct-root write-only string credential materialization and redaction, unannotated `apiKey` literal behavior, import/export/factory failure, Unit normalization, deterministic frozen output, bounded secret-free logs, bad-neighbor isolation, and Runtime publication integration.
 
 ## Related authority
 

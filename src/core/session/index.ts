@@ -20,6 +20,10 @@ export type {
   TranscriptEntryBase,
   SessionRecord,
   MessageRecord,
+  PresentationRecord,
+  PresentationBody,
+  SubagentPresentationIdentity,
+  SubagentPresentationEnd,
   CompactionRecord,
   ToolExecutionAcceptedRecord,
   ToolExecutionTerminalRecord,
@@ -32,5 +36,6 @@ export type {
   SessionHistoryContentBlock,
   SessionHistoryMessage,
   SessionHistoryPage,
+  SessionHistoryScope,
   SessionHistoryQuery,
 } from './types.js';

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createDefaultAgentConfig } from './default-composition.js';
 import { deepMerge, resolveAgentConfig } from './loader.js';
 import type { AppConfig, AgentEntry } from './types.js';
+import { resolveMemoryConfig } from './agent-config-loader.js';
 
 function appConfig(list: AgentEntry[] = []): AppConfig {
   return {
@@ -11,6 +12,7 @@ function appConfig(list: AgentEntry[] = []): AppConfig {
     agents: {
       steeringEnabled: false,
       maxSubagentDepth: 1,
+      memory: resolveMemoryConfig(),
       defaults: createDefaultAgentConfig(),
       list,
     },
@@ -52,19 +54,21 @@ describe('resolveAgentConfig', () => {
     const config = appConfig([{
       id: 'coding',
       description: 'coding agent',
-      memory: { enabled: false },
+      context: { maxFileChars: 100 },
     }]);
 
     const resolved = resolveAgentConfig(config, {
       agentId: 'coding',
       envOverrides: {
-        memory: { enabled: true },
+        context: { maxFileChars: 200 },
       },
       cliOverrides: {
-        memory: { enabled: false },
+        context: { maxFileChars: 300 },
       },
     });
 
-    expect(resolved.memory.enabled).toBe(false);
+    expect(resolved.context.maxFileChars).toBe(300);
+    expect(resolved).not.toHaveProperty('memory');
   });
+
 });

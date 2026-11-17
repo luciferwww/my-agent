@@ -14,6 +14,9 @@ const REQUIRED_FILES = Object.freeze([
   'core/agent-context/templates/SOUL.md',
   'core/agent-context/templates/AGENTS.md',
   'core/agent-context/templates/TOOLS.md',
+  ...['reviewer', 'explorer', 'researcher'].flatMap(id =>
+    ['IDENTITY.md', 'SOUL.md', 'AGENTS.md', 'TOOLS.md']
+      .map(name => `core/agent-context/templates/agents/${id}/${name}`)),
 ]);
 const FORBIDDEN_IDENTITIES = Object.freeze([
   'COPILOT_RELAY_',

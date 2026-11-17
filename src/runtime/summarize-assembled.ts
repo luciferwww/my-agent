@@ -6,10 +6,10 @@ import { Logger } from '../platform/logger/index.js';
 const log = Logger.get('summarizeAssembled');
 
 /**
- * 把 assembled user message 拆成「广播用文本 + 附件摘要」。
+ * Split an assembled user message into broadcast text and attachment summaries.
  *
- * 见 channel-multi-client-user-message-spec §5.2。
- * 原始字节永远不进事件流：图片仅记录 mime + bytes。
+ * See channel-multi-client-user-message-spec §5.2.
+ * Raw bytes never enter the event stream; images include only MIME type and byte count.
  */
 export function summarizeAssembled(
   assembled: string | ChatContentBlock[],

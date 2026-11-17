@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Runner behavior
-> Verified: 2026-09-18
+> Verified: 2026-11-04 (Assistant message identity and LLM-call presentation metadata)
 > Ownership: Turn loop, context budgeting, Compaction, Tool and Hook invocation, recovery, and Runner events
 > Ownership key: runner-execution-and-context
 
@@ -33,7 +33,9 @@ Each `runAttempt()` performs these steps before Model invocation:
 3. Runner reloads the current Session branch and applies Layer 1 in-memory Tool Result pruning.
 4. Layer 2 estimates System prompt, history, and the current prompt separately.
 5. If Tool-only reduction can cover overflow, Layer 1.5 aggregate pruning runs; if summary Compaction is required, preflight throws before persisting the current message.
-6. After preflight succeeds, Runner persists and appends the current user message.
+6. After preflight succeeds, Runner persists the original `message` and appends
+   `userPrompt ?? message` to the in-memory Model input. The optional prompt is
+   also used for current-input budgeting, but is never saved as message content.
 
 This delayed append keeps the current prompt out of summary input and prevents preemptive retries from duplicating it. Overflow later in an attempt can leave a trailing user; `compactHistory()` and the next attempt sanitize it before loading and re-appending.
 
@@ -54,11 +56,37 @@ Missing IDs receive `[tool call interrupted; session recovered]`. The event sour
 
 Each loop iteration must check Abort before quota, steering injection, event emission, and invocation. `AgentRunner` streams through the bound invocation Port and persists Assistant blocks before emitting `tool_call_requested`. Complete before-hook chains run serially in Provider order; validation, policy, Approval, and Framework submission then progress independently per call. The original response remains a pairing barrier: accepted receipts or immediate results are projected in Provider order before the next Model invocation even though accepted Tool Promises execute concurrently.
 
+Runner assigns each Assistant message a presentation messageId before its
+llm_call event. The same ID accompanies text/Thinking events, the persisted
+normal or abort-partial message, and tool_call_requested for that response.
+It is not the Transcript entry ID, invocation ID, Turn ID or round. Runtime
+input IDs are persisted unchanged, including claimed steering; steering
+identity is removed before constructing Provider messages. At the shared
+`run()` entry, Runner preserves a supplied `originMessageId` or generates one
+before `run_start`, without mutating caller parameters. The same initial-input
+identity is reused by every compaction attempt, including Child and direct
+execution; future Agent kinds use this same contract. No synthetic
+`user_message` event is emitted for retry or for inputs without Channel intake.
+Each post-preflight attempt still appends its own Transcript entry, while
+sanitation removes the earlier trailing input from the source active branch.
+
+For a real Model response, Runner also persists the call's zero-based round as
+top-level `llmRound` on both normal and abort-partial Assistant records.
+It is presentation metadata, not Provider content or a unique call identity:
+an overflow retry may reset the round. Synthetic Assistant messages do not
+invent this field. Clients use each actual `llm_call` boundary in realtime
+and each marked Assistant entry in History, never round equality, to group Tools.
+
 The Async Tool Execution Framework exclusively owns admitted implementation Promises, process-global execution slots, activity/deadline clocks, cancellation grace, terminal persistence, quarantine transfer, and late-settlement isolation. Runner waits on Framework events and wakeable steering rather than directly awaiting a Tool implementation. Accepted ownership closes the original Provider Tool Call with `execution_accepted`; real terminal facts are delivered later through trusted Host completion messages and one serialized continuation.
 
 An explicit positive quota counts actual Model calls and reserves one shared completion call while a Tool batch owns unfinished work. The last available Model call cannot start Hook, Approval, or Tool work: any Tool Calls it returns are paired as unavailable and the Assistant persists `turnStopReason='max_llm_calls'`. Abort releases the reserve without a later Model call. With no quota, Runner has no hidden numeric cutoff. Usage is summed from `message_end` records; if a later execution error occurs, `AgentExecutionFailure` carries usage already accumulated.
 
 Steering is read after every completed loop iteration, not only Tool-producing ones. The reader uses consume-and-clear semantics. Runner filters malformed entries and accepts only messages with `user` or `assistant` role plus a `content` property. Every accepted item is persisted and appended separately in FIFO order; one ready batch produces one continuation Model call. Locally pending steering is dropped and logged on Abort or an explicit limit.
+
+Steering preparation preserves original `content` for Session storage and may
+add a model-only `userPrompt`. Both injection paths append that prompt to the
+running Model conversation without persisting it. Later history loading reads
+the original messages; it neither persists nor regenerates prompt sections.
 
 ## 6. Tool and Hook semantics
 

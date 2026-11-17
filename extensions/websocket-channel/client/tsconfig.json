@@ -4,6 +4,9 @@
     "useDefineForClassFields": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "paths": {
+      "my-agent/extension-api": ["../../../src/extension/api/index.ts"]
+    },
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,

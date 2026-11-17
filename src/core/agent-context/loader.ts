@@ -3,7 +3,7 @@ import { join } from 'path';
 import type { ContextFile } from './types.js';
 import { DEFAULT_AGENT_CONTEXT_CONFIG } from './config.js';
 
-/** 所有支持的上下文文件，按固定顺序 */
+/** Supported Context files in their fixed loading order. */
 const ALL_FILES = [
   'IDENTITY.md',
   'SOUL.md',
@@ -17,8 +17,7 @@ const MINIMAL_FILES = [
 ] as const;
 
 /**
- * 截断策略的常量。
- * 参考 OpenClaw 的 bootstrap.ts：
+ * Truncation policy constants, following OpenClaw's bootstrap.ts:
  *   BOOTSTRAP_HEAD_RATIO = 0.7
  *   BOOTSTRAP_TAIL_RATIO = 0.2
  *   MIN_BOOTSTRAP_FILE_BUDGET_CHARS = 64
@@ -27,10 +26,10 @@ const HEAD_RATIO = 0.7;
 const TAIL_RATIO = 0.2;
 const MIN_FILE_BUDGET_CHARS = 64;
 
-/** 默认单文件最大字符数（与 OpenClaw 的 DEFAULT_BOOTSTRAP_MAX_CHARS 一致） */
+/** Default per-file character limit matches OpenClaw's DEFAULT_BOOTSTRAP_MAX_CHARS. */
 /**
- * 截断文件内容，保留前 70% + 后 20%，中间插入截断标记。
- * 参考 OpenClaw 的 trimBootstrapContent()。
+ * Truncate content to a 70% head and 20% tail with a marker between them.
+ * Follows OpenClaw's trimBootstrapContent().
  */
 function truncateContent(content: string, fileName: string, maxChars: number): {
   content: string;
@@ -62,20 +61,20 @@ function truncateContent(content: string, fileName: string, maxChars: number): {
 }
 
 export interface LoadContextFilesOptions {
-  /** 加载模式，默认 'full'。minimal 只加载 IDENTITY.md 和 SOUL.md。 */
+  /** Loading mode; defaults to full. Minimal loads only IDENTITY.md and SOUL.md. */
   mode?: 'full' | 'minimal';
-  /** 单文件最大字符数，默认 20,000（与 OpenClaw 一致） */
+  /** Per-file character limit; defaults to 20,000, matching OpenClaw. */
   maxFileChars?: number;
-  /** 所有文件总最大字符数，默认 150,000（与 OpenClaw 一致） */
+  /** Total character budget; defaults to 150,000, matching OpenClaw. */
   maxTotalChars?: number;
-  /** 警告回调，默认 console.warn。截断或跳过文件时调用。 */
+  /** Warning callback for truncated or budget-skipped files; defaults to console.warn. */
   warn?: (message: string) => void;
 }
 
 /**
- * 内部 helper：按给定 baseDir + 白名单文件序列读取并应用预算/截断。
+ * Read the supported file sequence from baseDir and apply loading budgets.
  *
- * 不修改给定路径；调用方负责传入完整 baseDir。
+ * The caller supplies the complete base directory; this helper does not alter it.
  */
 async function loadFilesFromBaseDir(
   baseDir: string,
@@ -86,48 +85,60 @@ async function loadFilesFromBaseDir(
     warn: (msg: string) => void;
   },
 ): Promise<ContextFile[]> {
+  const files: ContextFile[] = [];
+  for (const name of fileList) {
+    try {
+      files.push({ path: name, content: await readFile(join(baseDir, name), 'utf-8') });
+    } catch {
+      // Skip missing or unreadable files.
+      continue;
+    }
+  }
+  return prepareContextFiles(files, opts);
+}
+
+export function prepareContextFiles(
+  files: readonly Readonly<ContextFile>[],
+  options?: LoadContextFilesOptions,
+): ContextFile[] {
+  const opts = {
+    maxFileChars: options?.maxFileChars ?? DEFAULT_AGENT_CONTEXT_CONFIG.maxFileChars,
+    maxTotalChars: options?.maxTotalChars ?? DEFAULT_AGENT_CONTEXT_CONFIG.maxTotalChars,
+    warn: options?.warn ?? console.warn,
+  };
   const { maxFileChars, warn } = opts;
   const maxTotalChars = Math.max(1, opts.maxTotalChars);
   const results: ContextFile[] = [];
   let remainingTotalChars = maxTotalChars;
 
-  for (const name of fileList) {
-    // 总预算已用完
+  for (const { path: name, content: rawContent } of files) {
+    // The total budget is exhausted.
     if (remainingTotalChars <= 0) {
       break;
     }
 
-    // 剩余预算太少，跳过后续文件（参考 OpenClaw 的 MIN_BOOTSTRAP_FILE_BUDGET_CHARS）
+    // Skip remaining files below OpenClaw's minimum file budget.
     if (remainingTotalChars < MIN_FILE_BUDGET_CHARS) {
       warn(`remaining budget is ${remainingTotalChars} chars (<${MIN_FILE_BUDGET_CHARS}); skipping remaining files`);
       break;
     }
 
-    // 读取文件
-    let rawContent: string;
-    try {
-      rawContent = await readFile(join(baseDir, name), 'utf-8');
-    } catch {
-      // 文件不存在或无法读取，跳过
-      continue;
-    }
-
-    // 空文件跳过
+    // Skip empty files.
     const trimmedContent = rawContent.trim();
     if (!trimmedContent) {
       continue;
     }
 
-    // 单文件预算 = min(maxFileChars, 剩余总预算)
+    // Limit this file to the smaller of the per-file and remaining budgets.
     const fileBudget = Math.max(1, Math.min(maxFileChars, remainingTotalChars));
 
-    // 截断
+    // Truncate when necessary.
     const result = truncateContent(trimmedContent, name, fileBudget);
     if (result.truncated) {
       warn(`${name} is ${result.originalLength} chars (limit ${fileBudget}); truncating`);
     }
 
-    // 扣减总预算
+    // Deduct the loaded content from the total budget.
     remainingTotalChars = Math.max(0, remainingTotalChars - result.content.length);
 
     results.push({ path: name, content: result.content });
@@ -137,20 +148,20 @@ async function loadFilesFromBaseDir(
 }
 
 /**
- * 从 Agent Home 根目录读取上下文文件，返回 ContextFile[]。
+ * Load Context files from the Agent Home root.
  *
- * 行为规则：
- * - 按固定顺序读取：IDENTITY.md → SOUL.md → AGENTS.md → TOOLS.md
- * - 文件不存在 → 跳过（不报错）
- * - 文件为空（trim 后） → 跳过
- * - 文件超出 maxFileChars → 截断（前 70% + 后 20% + 截断标记）+ warn
- * - 累计超出 maxTotalChars → 截断当前文件或跳过后续文件 + warn
- * - 剩余预算 < 64 字符 → 跳过后续文件 + warn
+ * Loading rules:
+ * - Fixed order: IDENTITY.md, SOUL.md, AGENTS.md, TOOLS.md.
+ * - Skip missing and whitespace-only files.
+ * - Warn and truncate oversized files to a 70% head, 20% tail and marker.
+ * - Warn and truncate or skip files when the total budget is exhausted.
+ * - Warn and skip remaining files when fewer than 64 characters remain.
  *
- * 参考 OpenClaw 的 buildBootstrapContextFiles()（src/agents/pi-embedded-helpers/bootstrap.ts）。
+ * Follows OpenClaw's buildBootstrapContextFiles() in
+ * src/agents/pi-embedded-helpers/bootstrap.ts.
  *
- * @param agentHome - Agent Context 根目录路径
- * @param opts - 可选配置
+ * @param agentHome - Agent Context root directory.
+ * @param opts - Optional loading configuration.
  */
 export async function loadContextFiles(
   agentHome: string,
@@ -168,18 +179,17 @@ export async function loadContextFiles(
 }
 
 /**
- * 按**绝对目录**加载 contextFiles。文件白名单与 {@link loadContextFiles} 共享同一个
- * `ALL_FILES` / `MINIMAL_FILES` 常量（当前为 `IDENTITY.md / SOUL.md / AGENTS.md / TOOLS.md`）。
- * **不**读白名单之外的文件。
+ * Load supported Context files from an absolute directory, using the same
+ * ALL_FILES / MINIMAL_FILES lists as {@link loadContextFiles}.
+ * Files outside those lists are never read.
  *
- * 与 `loadContextFiles(agentHome, opts)` 的区别：
- *  - 直接读 `<absDir>/<filename>`
- *  - 调用方负责传完整路径（例如 Child executor 传 `<agentHome>/agents/<id>/`）
+ * Unlike loadContextFiles(agentHome, opts), read directly from the complete
+ * directory path supplied by the caller.
  *
- * 截断 / 预算 / mode 行为与 `loadContextFiles` 完全一致。
+ * Truncation, budgets and mode match loadContextFiles.
  *
- * @param absDir - 直接读取的绝对目录路径
- * @param opts - 可选配置
+ * @param absDir - Absolute directory to read.
+ * @param opts - Optional loading configuration.
  */
 export async function loadContextFilesFromDir(
   absDir: string,

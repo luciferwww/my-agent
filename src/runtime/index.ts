@@ -11,13 +11,13 @@ export type {
   RuntimeReloadChange,
   RuntimeReloadResult,
   RuntimeReloadWarning,
-} from './runtime-composition.js';
-export { RuntimeUnitCatalog, createLoadedRuntimeUnit } from './runtime-unit.js';
+} from './composition/runtime-composition.js';
+export { RuntimeUnitCatalog, createLoadedRuntimeUnit } from './composition/runtime-unit.js';
 export type {
   LoadedRuntimeUnit,
   RuntimeUnitChangePlan,
   RuntimeUnitInstance,
-} from './runtime-unit.js';
+} from './composition/runtime-unit.js';
 export {
   DEFAULT_RUNTIME_DEADLINE_POLICY,
   RuntimeDeadlineBudget,

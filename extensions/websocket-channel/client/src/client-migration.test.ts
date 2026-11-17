@@ -2,10 +2,23 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
+import { compileTemplate, parse } from 'vue/compiler-sfc';
 
 const CLIENT_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 describe('migrated WebSocket Client', () => {
+  it('compiles the recursive grouped message template', async () => {
+    const source = await readFile(`${CLIENT_ROOT}/src/components/MessageItem.vue`, 'utf8');
+    const parsed = parse(source, { filename: 'MessageItem.vue' });
+    expect(parsed.errors).toEqual([]);
+    if (!parsed.descriptor.template) throw new Error('Message template is missing');
+    const compiled = compileTemplate({
+      source: parsed.descriptor.template.content, filename: 'MessageItem.vue', id: 'message-item',
+      compilerOptions: { expressionPlugins: ['typescript'] },
+    });
+    expect(compiled.errors).toEqual([]);
+  });
+
   it('keeps the accepted coarse-component and typed-module layout', async () => {
     const requiredFiles = [
       'App.vue',
@@ -21,7 +34,7 @@ describe('migrated WebSocket Client', () => {
       'client/theme.ts',
       'attachments.ts',
       'client/markdown.ts',
-      'components/ChildDetailPanel.vue',
+      'client/execution.ts',
     ];
     const sources = await Promise.all(
       requiredFiles.map(path => readFile(`${CLIENT_ROOT}/src/${path}`, 'utf8')),
@@ -32,7 +45,6 @@ describe('migrated WebSocket Client', () => {
     const sidebarSource = sources[1];
     const conversationSource = sources[2];
     const messageSource = sources[4];
-    const childDetailSource = sources[13];
     for (const ownedState of [
       'isMobileLayout',
       'modelPickerOpen',
@@ -51,17 +63,14 @@ describe('migrated WebSocket Client', () => {
     expect(appSource).not.toContain('getOrCreateTurn');
     expect(appSource).toContain('if (this.form.sessionId && !this.focusedSessionSubscribed)');
     expect(appSource).toContain('this.focusedSessionSubscribed = true');
-    expect(appSource).toContain('openedChildSessionId');
-    expect(appSource).toContain("owner = 'parent'");
-    expect(appSource).toContain('completeChildTransition');
+    expect(appSource).not.toContain('openedChildSessionId');
+    expect(appSource).not.toContain('ChildDetailPanel');
+    expect(appSource).toContain('buildExecutionPresentation');
     expect(conversationSource).toContain('captureHistoryScrollAnchor');
     expect(conversationSource).toContain('restoreHistoryScrollAnchor');
-    expect(childDetailSource).toContain('scrollToBottom');
-    expect(childDetailSource).toContain('captureHistoryScrollAnchor');
-    expect(childDetailSource).toContain('restoreHistoryScrollAnchor');
-    expect(appSource).toContain('this.$refs.childDetailPanel?.scrollToBottom');
-    expect(messageSource).toContain("'is-subagent-selected'");
-    expect(messageSource).toContain('@click="openSubagentFromCard($event, segment)"');
+    expect(messageSource).toContain('data-subagent-session-id');
+    expect(messageSource).toContain('v-for="childItem in itemsBySession');
+    expect(messageSource).not.toContain('openSubagentFromCard');
     expect(messageSource).not.toContain('View detail');
     expect(messageSource).not.toContain('subagent-detail-action');
     expect(sources[9]).toContain('export function applyAgentEvent');
@@ -75,6 +84,7 @@ describe('migrated WebSocket Client', () => {
       'client/composer-methods.js',
       'client/events-methods.js',
       'client/presentation-methods.js',
+      'components/ChildDetailPanel.vue',
     ]) {
       await expect(readFile(`${CLIENT_ROOT}/src/${path}`, 'utf8')).rejects.toMatchObject({
         code: 'ENOENT',
@@ -93,13 +103,8 @@ describe('migrated WebSocket Client', () => {
     expect(styleSource).toContain('.permission-picker-panel.placement-top');
     expect(styleSource).toContain('bottom: calc(100% + 8px)');
     expect(styleSource).toContain("html[data-theme='botanical']");
-    expect(styleSource).toContain('.chat-shell.has-child-detail');
-    expect(styleSource).toContain('.child-detail-scrim');
-    expect(styleSource).toContain('@media (min-width: 1914px)');
-    expect(styleSource).toContain('@media (min-width: 1724px)');
-    expect(styleSource).toContain('grid-template-columns: minmax(0, 1fr) 450px');
-    expect(styleSource).toContain('grid-template-columns: minmax(998px, 1fr) 450px');
-    expect(styleSource).toContain('.tool-result-card.is-subagent-selected');
+    expect(styleSource).not.toContain('child-detail');
+    expect(styleSource).toContain('.subagent-content');
     expect(styleSource).toContain(
       "html[data-theme='botanical'] .message.assistant .bubble",
     );

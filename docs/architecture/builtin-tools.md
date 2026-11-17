@@ -18,8 +18,17 @@
 | Exec/Process | `exec`, `process` | Independently enabled by Environment contribution options |
 | Memory | `memory_search`, `memory_get`, `memory_write` | Memory manager and Unit are created; behavior belongs to [Memory](memory.md) |
 | Subagent | `task` | Subagent Tool Unit is created; orchestration belongs to [Runtime](runtime.md) |
+| Skills | `skill` | Runtime registers one Home-bound loading Tool; normal visibility, policy and approval apply |
 
 The default Runtime builder enables web, Exec, and Process, while explicit Unit options remain the publication control. All Builtins enter the same portable Tool Registry path described by [Tool Contract and Policy](tools.md); this page does not redefine generic validation, policy, approval, or Hook semantics.
+
+`skill` accepts only `{ name }`. It checks the active session/Turn and bound Turn
+authority plus that Turn's captured selection, discovers the name afresh and
+requires a unique valid package. It returns the resource base directory and
+complete current `SKILL.md`, including frontmatter, as ordinary Tool text.
+Loading executes no scripts and grants no permissions. Core Skills owns nested
+discovery and parsing; no background scanner, catalog cache or environment manager
+is introduced. Resources are accessed later through ordinary Tools.
 
 ## 2. Environment path and Approval policy
 
@@ -110,5 +119,13 @@ Pure foreground processes are not registered. Yield records start as `internal`;
 | Kind | Evidence |
 |---|---|
 | Source | [Environment contribution](../../src/builtins/tools/environment/contribution.ts), [process registry](../../src/builtins/tools/environment/process/process-registry.ts) |
-| Tests | [Environment contribution tests](../../src/builtins/tools/environment/contribution.test.ts), [process registry tests](../../src/builtins/tools/environment/process/process-registry.test.ts) |
+| Tests | [Environment contribution tests](../../src/builtins/tools/environment/contribution.test.ts), [process registry tests](../../src/builtins/tools/environment/process/process-registry.test.ts), [Process Tool unit tests](../../src/builtins/tools/environment/process/process-tool.test.ts), [command lifecycle unit tests](../../src/builtins/tools/environment/process/run-command.test.ts), [managed-process OS integration](../../src/builtins/tools/environment/process/managed-process.integration.test.ts), [parent/descendant termination integration](../../src/builtins/tools/environment/process/kill-process-tree.integration.test.ts) |
 | Controlling authority | [Tools and Hooks Specification](../specifications/tools-and-hooks.md) |
+
+Process Tool and command-lifecycle unit tests use controlled registry records,
+child-process events and termination results to verify state mapping without
+depending on operating-system termination latency. Integration tests exercise
+real background kill, Abort, deadline termination and parent/descendant cleanup.
+The managed-process integration cases use the existing process-tree integration
+layer's explicit 10-second test budget; the default unit timeout and production
+termination policy are unchanged.

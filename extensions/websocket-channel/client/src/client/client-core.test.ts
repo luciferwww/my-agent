@@ -224,6 +224,7 @@ describe('WebSocket Client core', () => {
     expect(items[0]?.segments?.[0]).toMatchObject({
       subagentSessionId: sessionId,
       subagentStatus: 'terminal',
+      subagentExpanded: false,
     });
 
   });
@@ -240,6 +241,26 @@ describe('WebSocket Client core', () => {
       sessionId: childSessionId,
       callerSessionId: 'parent',
     }, 'focused')).toBe(childSessionId);
+  });
+
+  it('does not terminate the Root when a descendant run_end arrives through its audience', () => {
+    const root = createSessionUiState();
+    const child = createSessionUiState();
+    let id = 0;
+    const context = { clientId: 'observer', nextId: () => ++id };
+    applyAgentEvent(root, { type: 'run_start', sessionId: 'root', turnId: 'root-turn' }, context);
+    const rootBefore = structuredClone(root);
+    applyAgentEvent(child, { type: 'run_start', sessionId: 'child', turnId: 'child-turn' }, context);
+    const event = {
+      type: 'run_end', sessionId: 'child', turnId: 'child-turn',
+      rootTurnId: 'root-turn', ancestorSessionIds: ['root'], result: { stopReason: 'end_turn' },
+    };
+    expect(resolveEventSessionId(event, 'root')).toBe('child');
+    const effects = applyAgentEvent(child, event, context);
+    expect(root.activeTurnId).toBe('root-turn');
+    expect(root).toEqual(rootBefore);
+    expect(child.activeTurnId).toBeNull();
+    expect(effects).toContainEqual({ type: 'refresh_history', turnId: 'child-turn' });
   });
 
   it('keeps protocol parsing and socket derivation bounded', () => {

@@ -14,8 +14,8 @@ import type { MemoryManager } from '../core/memory/MemoryManager.js';
 import type { SystemPromptBuilder } from '../core/prompt/SystemPromptBuilder.js';
 import type { SessionManager, SessionManagerOptions } from '../core/session/SessionManager.js';
 import type { RuntimeContributionUnit } from '../core/registry/index.js';
-import type { ApplicationToolPolicy } from '../core/tools/types.js';
 import type { ContextFile } from '../core/agent-context/types.js';
+import type { AgentDefinitionSnapshot } from '../core/agent-context/index.js';
 import type { AgentEvent, AgentRunner, AgentRunnerConfig } from '../core/runner/index.js';
 import type { RunnerConfig } from '../core/runner/config.js';
 import type { UserPromptBuilder } from '../core/prompt/UserPromptBuilder.js';
@@ -23,7 +23,7 @@ import type {
   ExtensionAcquisitionOptions,
   ExtensionAcquisitionResult,
 } from '../extension/acquisition/index.js';
-import type { LoadedRuntimeUnit } from './runtime-unit.js';
+import type { LoadedRuntimeUnit } from './composition/runtime-unit.js';
 import type { RuntimeDeadlineDriver, RuntimeDeadlinePolicy } from './runtime-deadline.js';
 
 export interface RuntimeResourceSet {
@@ -32,11 +32,11 @@ export interface RuntimeResourceSet {
   readonly resolvedConfig: AgentDefaults;
   readonly agentHome: string;
   readonly sessionManager: SessionManager;
-  readonly toolPolicy: ApplicationToolPolicy;
   readonly memoryManager: MemoryManager | null;
   readonly systemPromptBuilder: SystemPromptBuilder;
   readonly userPromptBuilder: UserPromptBuilder;
   contextFiles: ContextFile[];
+  readonly agentDefinitions: AgentDefinitionSnapshot;
   readonly agentRunner: AgentRunner;
   readonly managedProcessLifecycle: ManagedProcessLifecycle;
 }
@@ -49,9 +49,9 @@ export interface ManagedProcessLifecycle {
 export interface RuntimeMemoryOptions {
   agentHome: string;
   enabled: boolean;
-  embedding?: AgentDefaults['memory']['embedding'];
-  chunking?: AgentDefaults['memory']['chunking'];
-  search?: AgentDefaults['memory']['search'];
+  embedding?: AppConfig['agents']['memory']['embedding'];
+  chunking?: AppConfig['agents']['memory']['chunking'];
+  search?: AppConfig['agents']['memory']['search'];
 }
 
 export interface RuntimeBuiltinToolOptions {
@@ -300,4 +300,5 @@ export interface RuntimeBootstrapResult {
   readonly state: RuntimeLifecycleState;
   readonly dependencies: RuntimeDependencies;
   readonly acquiredUnits: readonly LoadedRuntimeUnit[];
+  readonly extensionMetadata?: Readonly<Pick<ExtensionAcquisitionResult, 'discovery' | 'diagnostics'>>;
 }

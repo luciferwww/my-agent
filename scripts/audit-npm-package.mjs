@@ -42,6 +42,9 @@ const REQUIRED_PACKAGE_FILES = Object.freeze([
   'dist/host/core/agent-context/templates/SOUL.md',
   'dist/host/core/agent-context/templates/AGENTS.md',
   'dist/host/core/agent-context/templates/TOOLS.md',
+  ...['reviewer', 'explorer', 'researcher'].flatMap(id =>
+    ['IDENTITY.md', 'SOUL.md', 'AGENTS.md', 'TOOLS.md']
+      .map(name => `dist/host/core/agent-context/templates/agents/${id}/${name}`)),
 ]);
 
 export function auditNpmPackage(packResult, manifest, lockfile, extensionManifests = []) {

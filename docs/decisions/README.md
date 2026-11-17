@@ -27,7 +27,10 @@ This directory contains durable architectural decisions. It does not own current
 | [ADR-017](adr-017-session-message-queue-and-steering-claim.md) | Accepted | One per-Session user-message FIFO with active-Turn safe-point claim |
 | [ADR-018](adr-018-unified-async-tool-execution-and-completion-delivery.md) | Accepted | Unified Async Tool Execution Framework replacing Runner direct-await invocation |
 | [ADR-020](adr-020-session-addressed-presentation-subscription-and-ephemeral-child-observation.md) | Accepted | Explicit Session presentation subscription, read-only transient Child observation, and bounded terminal retention |
-| [ADR-021](adr-021-shared-configured-agent-registry.md) | Accepted | Shared `agents.list[]` registry, `agents/<agentId>/` Context, and removal of public `subagents` profile configuration |
+| [ADR-021](adr-021-shared-configured-agent-registry.md) | Accepted; configuration-only registration superseded by ADR-023 | Shared Agent identity, `agents/<agentId>/` Context, and removal of public `subagents` profile configuration |
+| [ADR-023](adr-023-agent-definition-discovery-and-settings.md) | Accepted; implemented and validated | Directory-discovered definitions, startup MD snapshots, sparse config overrides and subsequent-Turn shared/named Tool-policy updates |
+| [ADR-024](adr-024-settings-contract-and-model-test-ownership.md) | Accepted | Transport-neutral Settings contract ownership and Runtime-owned model Test lifecycle extraction |
+| [ADR-025](adr-025-private-session-message-scheduler.md) | Accepted | One private Runtime owner for existing Session FIFO, Root busy state, and steering waiters; bounded amendment to ADR-017 |
 
 ## Authority rules
 

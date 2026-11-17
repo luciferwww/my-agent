@@ -1,11 +1,16 @@
-import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createServer } from 'node:net';
+import { once } from 'node:events';
+import WebSocket from 'ws';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { ModelCatalogSnapshot, ProviderCatalogEntry } from '../../core/channel/index.js';
 import { RuntimeApp } from '../../runtime/RuntimeApp.js';
+import { runStandaloneHost } from '../../hosts/standalone/standalone-host.js';
+import { loadAgentConfig } from '../../platform/config/index.js';
 import { acquireExtensions } from './loader.js';
 import type { ResolvedHostExtensionsConfig } from './types.js';
 
@@ -31,6 +36,202 @@ describe('Extension acquisition to Runtime integration', () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it('starts a new Home, loads an unconfigured WebSocket despite a bad neighbor and saves its first LLM settings', async () => {
+    const freshHome = join(root, 'fresh-home');
+    const listener = createServer();
+    listener.listen(0, '127.0.0.1');
+    await once(listener, 'listening');
+    const address = listener.address();
+    if (!address || typeof address === 'string') throw new Error('Expected loopback address.');
+    const port = address.port;
+    await new Promise<void>((resolve, reject) => listener.close((error) => error ? reject(error) : resolve()));
+    const packageDir = join(extensionsDir, 'websocket-channel');
+    await mkdir(packageDir, { recursive: true });
+    const descriptor = JSON.parse(await readFile(
+      new URL('../../../extensions/websocket-channel/extension.json', import.meta.url), 'utf8',
+    ));
+    descriptor.entry = 'entry.js';
+    descriptor.configSchema.properties.port.default = port;
+    await writeFile(join(packageDir, 'extension.json'), JSON.stringify(descriptor));
+    await writeFile(join(packageDir, 'entry.js'),
+      `export { createExtension } from ${JSON.stringify(new URL('../../../extensions/websocket-channel/entry.ts', import.meta.url).href)};\n`);
+    await installFixture(extensionsDir, 'bad-neighbor', 'bad-neighbor', 'invalid-export.js');
+
+    await runStandaloneHost({
+      argv: [], env: {},
+      resolvePathContext: async () => ({ installDir: join(root, 'installation'), agentHome: freshHome }),
+      createRuntime: async (options) => RuntimeApp.create({
+        ...options,
+        dependencies: {
+          createMemoryManager: async () => null,
+          acquireExtensions: async (options) => {
+            const result = await acquireExtensions(options);
+            expect(result.diagnostics).toEqual([
+              expect.objectContaining({ extensionId: 'bad-neighbor', code: 'entry_export_invalid' }),
+            ]);
+            return result;
+          },
+        },
+        onEvent: (event) => {
+          if (event.type === 'app_ready') expect(event.channelIds).toContain('websocket');
+        },
+      }),
+      createHost: (runtime) => ({
+        dispose: () => undefined,
+        shutdown: (reason) => runtime.close(reason),
+        completion: (async () => {
+          const client = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+          try {
+            await once(client, 'open');
+            const request = async (value: unknown) => {
+              const received = once(client, 'message');
+              client.send(JSON.stringify(value));
+              const [data] = await received;
+              return JSON.parse(data.toString());
+            };
+            expect(await request({ type: 'hello', clientId: 'fresh-home' })).toMatchObject({ type: 'hello_ack' });
+            expect(await readFile(join(freshHome, 'config.json'), 'utf8')).toBe('{}\n');
+            const loaded = await request({ type: 'settings_action', requestId: 'load', action: 'load', input: {} });
+            expect(loaded).toMatchObject({
+              ok: true, output: {
+                modelCatalog: { providers: [] },
+                diagnostics: expect.arrayContaining([expect.objectContaining({ extensionId: 'bad-neighbor', code: 'entry_export_invalid' })]),
+              },
+            });
+            const llm = loaded.output.sections.find((section: { id: string }) => section.id === 'llm');
+            const memory = loaded.output.sections.find((section: { id: string }) => section.id === 'agents:memory');
+            expect(memory).toMatchObject({ kind: 'memory', settings: { enabled: true }, restartRequired: false });
+            const savedMemory = await request({
+              type: 'settings_action', requestId: 'save-memory', action: 'update',
+              input: {
+                sectionId: 'agents:memory', expectedRevision: memory.revision, settings: { enabled: false },
+              },
+            });
+            expect(savedMemory).toMatchObject({ ok: true, output: { section: {
+              settings: { enabled: false }, restartRequired: true, applicationStatus: 'restart_required',
+            } } });
+            const afterMemory = await request({
+              type: 'settings_action', requestId: 'load-after-memory', action: 'load', input: {},
+            });
+            expect(afterMemory.output.toolCatalog).toEqual(loaded.output.toolCatalog);
+            expect((await loadAgentConfig({ agentHome: freshHome, environment: {} })).application.agents.memory.enabled)
+              .toBe(false);
+            expect(await request({
+              type: 'settings_action', requestId: 'reverse-memory', action: 'update',
+              input: {
+                sectionId: 'agents:memory', expectedRevision: savedMemory.output.section.revision, settings: { enabled: true },
+              },
+            })).toMatchObject({ ok: true, output: { section: { restartRequired: false, applicationStatus: 'current' } } });
+            const execution = loaded.output.sections.find((section: { id: string }) => section.id === 'agents:execution');
+            const executionDefaults = { steeringEnabled: true, maxSubagentDepth: 1 };
+            expect(execution).toMatchObject({
+              settings: {}, defaults: executionDefaults, resolvedSettings: executionDefaults, restartRequired: false,
+            });
+            expect(execution).not.toHaveProperty('runningSettings');
+            const savedExecution = await request({
+              type: 'settings_action', requestId: 'save-execution', action: 'update',
+              input: {
+                sectionId: 'agents:execution', expectedRevision: execution.revision,
+                settings: { steeringEnabled: false, maxSubagentDepth: 0, maxLlmCallsPerTurn: 3 },
+              },
+            });
+            expect(savedExecution).toMatchObject({ ok: true, output: { section: {
+              resolvedSettings: { steeringEnabled: false, maxSubagentDepth: 0, maxLlmCallsPerTurn: 3 },
+              restartRequired: false, applicationStatus: 'current',
+            } } });
+            const defaults = loaded.output.sections.find((section: { id: string }) => section.id === 'agents:defaults');
+            expect(await request({
+              type: 'settings_action', requestId: 'save-tools', action: 'update',
+              input: {
+                sectionId: 'agents:defaults', expectedRevision: defaults.revision,
+                settings: { tools: { allow: ['read_file'], deny: ['exec'] } },
+              },
+            })).toMatchObject({ ok: true, output: { section: {
+              restartRequired: false, effectiveTools: { allow: ['read_file'], deny: ['exec'] },
+            } } });
+            const reloaded = await request({ type: 'settings_action', requestId: 'reload', action: 'load', input: {} });
+            expect(reloaded.output.sections.find((section: { id: string }) => section.id === 'agents:execution'))
+              .toMatchObject({ revision: savedExecution.output.section.revision, restartRequired: false, applicationStatus: 'current' });
+            const restartProjection = await loadAgentConfig({ agentHome: freshHome, environment: {} });
+            expect(restartProjection.application.agents).toMatchObject({
+              steeringEnabled: false, maxSubagentDepth: 0, maxLlmCallsPerTurn: 3,
+              defaults: { tools: { allow: ['read_file'], deny: ['exec'] } },
+            });
+            expect(await request({
+              type: 'settings_action', requestId: 'reset-execution', action: 'update',
+              input: { sectionId: 'agents:execution', expectedRevision: savedExecution.output.section.revision, settings: {} },
+            })).toMatchObject({ ok: true, output: { section: {
+              settings: {}, restartRequired: false, resolvedSettings: executionDefaults, applicationStatus: 'current',
+            } } });
+            const beforeLlm = JSON.parse(await readFile(join(freshHome, 'config.json'), 'utf8'));
+            const skillDirectory = join(freshHome, 'skills', 'builtin', 'review');
+            await mkdir(skillDirectory, { recursive: true });
+            await writeFile(join(skillDirectory, 'SKILL.md'),
+              '---\nname: review\ndescription: Review changes\n---\nReview instructions.');
+            expect(await request({
+              type: 'settings_action', requestId: 'skills-catalog', action: 'skills_catalog', input: {},
+            })).toMatchObject({ ok: true, output: { entries: [{
+              name: 'review', description: 'Review changes', relativeDirectory: join('builtin', 'review'),
+            }], diagnostics: [] } });
+            const skills = reloaded.output.sections.find((section: { id: string }) => section.id === 'agents:skills');
+            expect(await request({
+              type: 'settings_action', requestId: 'save-skills', action: 'update',
+              input: {
+                sectionId: 'agents:skills', expectedRevision: skills.revision,
+                settings: { skills: ['review'] },
+              },
+            })).toMatchObject({ ok: true, output: { section: {
+              effectiveSkills: ['review'], restartRequired: false, applicationStatus: 'current',
+            } } });
+            beforeLlm.agents.defaults.skills = ['review'];
+            expect((await loadAgentConfig({ agentHome: freshHome, environment: {} }))
+              .application.agents.defaults.skills).toEqual(['review']);
+            const skillRoot = join(freshHome, 'skills');
+            const healthySkills = join(freshHome, 'skills-backup');
+            await rename(skillRoot, healthySkills);
+            try {
+              await writeFile(skillRoot, 'Not a directory');
+              expect(await request({
+                type: 'settings_action', requestId: 'broken-skills', action: 'skills_catalog', input: {},
+              })).toMatchObject({
+                ok: false, error: { code: 'skills_catalog_failed', message: expect.stringContaining('regular directory') },
+              });
+              const partial = await request({
+                type: 'settings_action', requestId: 'partial-load', action: 'load', input: {},
+              });
+              expect(partial).toMatchObject({ ok: true, output: {
+                skillCatalogError: { code: 'skills_catalog_failed', message: expect.stringContaining('regular directory') },
+                sections: expect.arrayContaining([expect.objectContaining({ id: 'llm', revision: llm.revision })]),
+              } });
+              expect(partial.output).not.toHaveProperty('skillCatalog');
+            } finally {
+              await rm(skillRoot);
+              await rename(healthySkills, skillRoot);
+            }
+            expect(await request({
+              type: 'settings_action', requestId: 'recovered-skills', action: 'skills_catalog', input: {},
+            })).toMatchObject({ ok: true, output: { entries: [expect.objectContaining({ name: 'review' })] } });
+            const settings = {
+              builtin: { baseURL: 'http://127.0.0.1:9', models: [{ modelId: 'first', protocol: 'openai-responses' }] },
+              defaultModel: { providerId: 'builtin', modelId: 'first' },
+            };
+            expect(await request({
+              type: 'settings_action', requestId: 'save', action: 'update',
+              input: { sectionId: 'llm', expectedRevision: llm.revision, settings },
+            })).toMatchObject({ ok: true, output: { modelCatalog: { providers: [
+              expect.objectContaining({ providerId: 'builtin', configurationSectionId: 'llm' }),
+            ] } } });
+            expect(JSON.parse(await readFile(join(freshHome, 'config.json'), 'utf8'))).toEqual({ ...beforeLlm, llm: settings });
+          } finally {
+            client.terminate();
+            await runtime.close('fresh Home validation complete');
+          }
+          return runtime.close('fresh Home validation complete');
+        })(),
+      }),
+    });
+  }, 15_000);
+
   it('publishes an acquired fixture Provider through the authoritative Runtime projection', async () => {
     await installFixture(
       extensionsDir,
@@ -43,10 +244,7 @@ describe('Extension acquisition to Runtime integration', () => {
 
     const acquisition = await acquireExtensions({
       extensionsDir,
-      extensionsConfig: hostConfig({
-        'fixture-runtime-provider': { enabled: true },
-        'invalid-export': { enabled: true },
-      }),
+      extensionsConfig: hostConfig({}),
       environment: {},
     });
 
@@ -63,9 +261,9 @@ describe('Extension acquisition to Runtime integration', () => {
       agentHome,
       loadedUnits: acquisition.loadedUnits,
       cliOverrides: {
-        memory: { enabled: false },
         tools: { deny: ['task'] },
       },
+      dependencies: { createMemoryManager: async () => null },
     });
     try {
       const catalog: ModelCatalogSnapshot = runtime.application.getModelCatalog();
@@ -117,9 +315,9 @@ describe('Extension acquisition to Runtime integration', () => {
       agentHome,
       loadedUnits: acquisition.loadedUnits,
       cliOverrides: {
-        memory: { enabled: false },
         tools: { deny: ['task'] },
       },
+      dependencies: { createMemoryManager: async () => null },
     });
     try {
       const catalog = runtime.application.getModelCatalog();
@@ -134,7 +332,7 @@ describe('Extension acquisition to Runtime integration', () => {
 });
 
 function hostConfig(entries: Record<string, unknown>): ResolvedHostExtensionsConfig {
-  return Object.freeze({ enabled: true, entries: Object.freeze(entries) });
+  return Object.freeze({ entries: Object.freeze(entries) });
 }
 
 async function installFixture(

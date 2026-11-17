@@ -1289,7 +1289,7 @@ extensions/playwright-browser/
 
 - [Tool 契约和 ToolExecutionContext](../../src/core/tools/types.ts) 已包含 `sessionId`、`callId`、AbortSignal 和活动报告；
 - [Registry 契约](../../src/core/registry/types.ts) 支持 Extension 注册 Tool；
-- [Runtime Unit](../../src/runtime/runtime-unit.ts) 负责资源创建、启动和停止；
+- [Runtime Unit](../../src/runtime/composition/runtime-unit.ts) 负责资源创建、启动和停止；
 - [Approval Lifecycle](../specifications/approval-lifecycle.md) 已拥有外部副作用审批。
 
 不要在第一个浏览器用例中建设通用 MCP Framework。先做 Extension 私有适配；出现第二个真实 MCP 集成后再判断是否抽象。

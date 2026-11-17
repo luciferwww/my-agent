@@ -15,7 +15,8 @@ import type {
 import type { SubagentExecutor } from '../core/subagent/SubagentExecutor.js';
 import type { ContextFile } from '../core/agent-context/types.js';
 import { Logger } from '../platform/logger/index.js';
-import type { MessageRouteContext } from './queue-types.js';
+import type { SkillSummary } from '../core/skills/index.js';
+import type { MessageRouteContext } from './scheduling/queue-types.js';
 import type {
   CurrentCallApprovalCapability,
   SessionPermissionMode,
@@ -29,6 +30,7 @@ export interface ActiveParentTurn {
   readonly depth: number;
   readonly turnId: string;
   readonly signal: AbortSignal;
+  readonly skills: readonly string[];
   readonly effectiveReference: ModelReference;
   readonly contextFiles: readonly ContextFile[];
   readonly registrySnapshot: RegistrySnapshot;
@@ -38,13 +40,17 @@ export interface ActiveParentTurn {
 }
 
 export interface CreateSubagentDelegationPortParams {
-  readonly activeParents: ReadonlyMap<string, ActiveParentTurn>;
+  readonly activeParents: Map<string, ActiveParentTurn>;
   readonly routeContextByTurn: Map<string, MessageRouteContext>;
   readonly sessionManager: SessionManager;
-  readonly maxDepth: number;
-  readonly maxLlmCallsPerTurn?: number;
+  readonly captureExecutionPolicy: () => {
+    readonly maxSubagentDepth: number;
+    readonly maxLlmCallsPerTurn?: number;
+  };
   readonly executor: SubagentExecutor;
-  readonly onEvent: (event: AgentEvent) => void;
+  readonly captureSkills?: (agentId: string) => readonly string[];
+  readonly getSkillsCatalog?: (names: readonly string[]) => Promise<readonly SkillSummary[]>;
+  readonly onEvent: (event: AgentEvent) => void | Promise<void>;
 }
 
 export class SubagentDelegationRejected extends Error {
@@ -67,11 +73,17 @@ export function createSubagentDelegationPort(
         throw new SubagentDelegationRejected('Subagent requires an active matching Parent Turn.');
       }
 
+      const executionPolicy = params.captureExecutionPolicy();
+      const skills = Object.freeze([...(params.captureSkills?.(request.profile.id) ?? [])]);
+      const childDepth = parent.depth + 1;
+      if (childDepth > executionPolicy.maxSubagentDepth) {
+        throw new SubagentDelegationRejected(`Cannot spawn subagent: depth limit (maxDepth=${executionPolicy.maxSubagentDepth}) reached.`);
+      }
+      const capabilities = resolveSubagentCapabilities(childDepth, executionPolicy.maxSubagentDepth);
       const startedAt = Date.now();
       const releaseChild = parent.registerChild();
       const runId = randomUUID();
       const childTurnId = randomUUID();
-      const childDepth = parent.depth + 1;
       const childSessionId = randomUUID();
       const eventIdentity = {
         requestId: parent.requestId,
@@ -89,6 +101,9 @@ export function createSubagentDelegationPort(
       let routeRegistered = false;
       let preparingRegistered = false;
       let transcriptAcquired = false;
+      let presentationAttempted = false;
+      let presentationStarted = false;
+      let childRegistered = false;
       let result: SubagentTerminalResult | undefined;
 
       try {
@@ -98,6 +113,9 @@ export function createSubagentDelegationPort(
           createdAt: startedAt,
         });
         preparingRegistered = true;
+        presentationAttempted = true;
+        await params.sessionManager.beginSubagentPresentation(eventIdentity);
+        presentationStarted = true;
         params.onEvent({ type: 'subagent_start', ...eventIdentity });
         request.reportActivity();
 
@@ -116,7 +134,6 @@ export function createSubagentDelegationPort(
         transcriptAcquired = true;
         throwIfAborted(request.signal);
 
-        const capabilities = resolveSubagentCapabilities(childDepth, params.maxDepth);
         const prepared = await params.executor.prepare({
           requestId: parent.requestId,
           profile: request.profile,
@@ -127,12 +144,13 @@ export function createSubagentDelegationPort(
           canSpawn: capabilities.canSpawn,
           childSessionId,
           childTurnId,
-          maxLlmCallsPerTurn: params.maxLlmCallsPerTurn,
+          maxLlmCallsPerTurn: executionPolicy.maxLlmCallsPerTurn,
           signal: request.signal,
           toolProjection: parent.registrySnapshot.tools,
           hookProjection: parent.registrySnapshot.hooks,
           approvalCapability: parent.approvalCapability,
           getSessionPermissionMode: parent.getSessionPermissionMode,
+          getAvailableSkills: async () => skills.length ? await params.getSkillsCatalog?.(skills) ?? [] : [],
         });
         throwIfAborted(request.signal);
 
@@ -151,6 +169,18 @@ export function createSubagentDelegationPort(
         });
         throwIfAborted(request.signal);
 
+        params.activeParents.set(childTurnId, {
+          ...parent,
+          sessionId: childSessionId,
+          turnId: childTurnId,
+          depth: childDepth,
+          signal: request.signal,
+          skills,
+          effectiveReference: resolvedModel.identity,
+          contextFiles: prepared.contextFiles,
+          registerChild: () => parent.registerChild(),
+        });
+        childRegistered = true;
         const runResult = await params.executor.execute(prepared, resolvedModel);
         const outcome: SubagentTerminalResult['outcome'] = runResult.stopReason === 'aborted'
           ? 'aborted'
@@ -167,6 +197,7 @@ export function createSubagentDelegationPort(
           durationMs: Date.now() - startedAt,
         };
       } catch (error) {
+        if (presentationAttempted && !presentationStarted) throw error;
         const aborted = isAbortError(error, request.signal);
         const failure = aborted ? undefined : classifyFailure(error);
         result = {
@@ -193,49 +224,63 @@ export function createSubagentDelegationPort(
           durationMs: Date.now() - startedAt,
         };
         try {
-          params.onEvent({
-            type: 'subagent_end',
-            ...eventIdentity,
-            outcome: terminal.outcome,
-            ...(terminal.failure ? { failure: terminal.failure } : {}),
-            usage: terminal.usage,
-            durationMs: terminal.durationMs,
-          });
-          request.reportActivity();
-        } catch (error) {
-          log.warn('child terminal event delivery failed', {
-            sessionId: childSessionId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
+          if (presentationStarted) {
+            await params.sessionManager.endSubagentPresentation({
+              ...eventIdentity,
+              outcome: terminal.outcome,
+              ...(terminal.failure ? { failure: terminal.failure } : {}),
+              usage: terminal.usage,
+              durationMs: terminal.durationMs,
+            });
+            try {
+              await params.onEvent({
+                type: 'subagent_end',
+                ...eventIdentity,
+                outcome: terminal.outcome,
+                ...(terminal.failure ? { failure: terminal.failure } : {}),
+                usage: terminal.usage,
+                durationMs: terminal.durationMs,
+              });
+              request.reportActivity();
+            } catch (error) {
+              log.warn('child terminal event delivery failed', {
+                sessionId: childSessionId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+        } finally {
+          if (childRegistered) params.activeParents.delete(childTurnId);
 
-        if (routeRegistered) {
-          try {
-            params.routeContextByTurn.delete(childTurnId);
-          } catch (error) {
-            log.warn('child route cleanup failed', {
-              sessionId: childSessionId,
-              error: error instanceof Error ? error.message : String(error),
-            });
+          if (routeRegistered) {
+            try {
+              params.routeContextByTurn.delete(childTurnId);
+            } catch (error) {
+              log.warn('child route cleanup failed', {
+                sessionId: childSessionId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
           }
-        }
-        if (preparingRegistered) {
-          params.sessionManager.clearPreparingSubagentSession(childSessionId);
-        }
-        if (transcriptAcquired) {
-          try {
-            await params.sessionManager.retainTransientSubagentTranscript(
-              childSessionId,
-              terminal.outcome,
-            );
-          } catch (error) {
-            log.warn('child Transcript retention failed', {
-              sessionId: childSessionId,
-              error: error instanceof Error ? error.message : String(error),
-            });
+          if (preparingRegistered) {
+            params.sessionManager.clearPreparingSubagentSession(childSessionId);
           }
+          if (transcriptAcquired) {
+            try {
+              await params.sessionManager.retainTransientSubagentTranscript(
+                childSessionId,
+                terminal.outcome,
+              );
+            } catch (error) {
+              log.warn('child Transcript retention failed', {
+                sessionId: childSessionId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+          params.sessionManager.clearSubagentPresentation(childSessionId);
+          releaseChild();
         }
-        releaseChild();
       }
 
       return result;

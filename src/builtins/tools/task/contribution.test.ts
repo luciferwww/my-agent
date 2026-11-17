@@ -3,7 +3,7 @@ import {
   finalizeRegistrySnapshot,
   resolveStagedRegistryCandidate,
   stageRegistryUnit,
-} from '../../../runtime/registry-builder.js';
+} from '../../../runtime/composition/registry-builder.js';
 import { createTaskToolContribution } from './contribution.js';
 
 describe('Task Tool Runtime Contribution', () => {
@@ -21,7 +21,7 @@ describe('Task Tool Runtime Contribution', () => {
       providers: [],
       units: [createTaskToolContribution({
         delegationPort: { delegate: async () => { throw new Error('not executed'); } },
-        profileRegistry,
+        captureProfiles: () => ({ profiles: profileRegistry, disabledIds: new Set<string>() }),
         getCapabilities: () => ({ depth: 0, role: 'main', canSpawn: true }),
         maxDepth: 1,
       })].map(stageRegistryUnit),

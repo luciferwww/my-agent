@@ -41,6 +41,14 @@ describe('npm package audit', () => {
     }])).toThrow(/Extension dependency example-runtime@\^1\.0\.0/u);
   });
 
+  it('rejects a missing nested Agent template', () => {
+    const result = packResult();
+    const missing = 'dist/host/core/agent-context/templates/agents/explorer/SOUL.md';
+    result[0].files = result[0].files.filter(({ path }) => path !== missing);
+    expect(() => auditNpmPackage(result, manifest(), lockfile()))
+      .toThrow(`missing package file: ${missing}`);
+  });
+
   it('rejects an incomplete or debug WebSocket Client dist', () => {
     const result = packResult();
     result[0].files = result[0].files.filter(
@@ -68,6 +76,9 @@ function packResult() {
       { path: 'dist/host/core/agent-context/templates/SOUL.md' },
       { path: 'dist/host/core/agent-context/templates/AGENTS.md' },
       { path: 'dist/host/core/agent-context/templates/TOOLS.md' },
+      ...['reviewer', 'explorer', 'researcher'].flatMap(id =>
+        ['IDENTITY.md', 'SOUL.md', 'AGENTS.md', 'TOOLS.md']
+          .map(name => ({ path: `dist/host/core/agent-context/templates/agents/${id}/${name}` }))),
       { path: 'extensions/copilot-relay-provider/entry.ts' },
       { path: 'extensions/copilot-relay-provider/chat-client.ts' },
       { path: 'extensions/copilot-relay-provider/extension.json' },

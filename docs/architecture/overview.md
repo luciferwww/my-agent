@@ -31,6 +31,7 @@ src/
 │   ├── model-resolution/  identity, Provider facts, limits and capability validation
 │   ├── registry/          immutable Provider, Tool, Hook and Channel projections
 │   ├── channel/           transport-neutral Channel and interaction contracts
+│   ├── settings/          transport-neutral Settings capability contracts
 │   ├── approval/          approval request/result contract
 │   ├── runner/            one Turn execution loop and context recovery
 │   ├── session/           JSONL transcript persistence
@@ -109,6 +110,6 @@ Topic pages own every detail behind these steps; this overview intentionally doe
 
 | Kind | Evidence |
 |---|---|
-| Source | [Runtime Builder](../../src/runtime/runtime-builder.ts), [Extension acquisition](../../src/extension/acquisition/index.ts), [standalone Host](../../src/hosts/standalone/standalone-host.ts) |
-| Tests | [Runtime Builder tests](../../src/runtime/runtime-builder.test.ts), [standalone Host tests](../../src/hosts/standalone/standalone-host.test.ts) |
+| Source | [Runtime Builder](../../src/runtime/composition/runtime-builder.ts), [Extension acquisition](../../src/extension/acquisition/index.ts), [standalone Host](../../src/hosts/standalone/standalone-host.ts) |
+| Tests | [Runtime Builder tests](../../src/runtime/composition/runtime-builder.test.ts), [standalone Host tests](../../src/hosts/standalone/standalone-host.test.ts) |
 | Controlling authority | [ADR-014](../decisions/adr-014-extension-packages-and-runtime-composition.md), [Runtime Composition Specification](../specifications/runtime-composition.md) |

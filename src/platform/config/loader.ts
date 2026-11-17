@@ -1,14 +1,15 @@
 import type { AppConfig, AgentDefaults, DeepPartial } from './types.js';
+import { projectAgentCapabilities } from './agent-leaf-validation.js';
 
-// ── 深度合并 ──────────────────────────────────────────────
+// Deep merge
 
 /**
- * 深度合并两个对象。source 中的非 undefined 值覆盖 target。
+ * Deep-merge two objects. Defined source values override the target.
  *
- * 规则：
- * - 两边都是普通对象 → 递归合并
- * - source 值为 undefined → 保留 target 值
- * - 其他情况 → source 覆盖 target
+ * Rules:
+ * - Plain objects on both sides are merged recursively.
+ * - Undefined source values preserve the target.
+ * - All other source values replace the target.
  */
 type MergeableObject<T> = {
   [K in keyof T]: unknown;
@@ -49,24 +50,23 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 // ── resolveAgentConfig ───────────────────────────────────
 
 export interface ResolveOptions {
-  /** agent 标识，从 agents.list 中查找 */
+  /** Agent ID to look up in agents.list. */
   agentId?: string;
-  /** 环境变量覆盖 */
+  /** Environment overrides. */
   envOverrides?: DeepPartial<AgentDefaults>;
-  /** CLI 参数覆盖 */
+  /** CLI overrides. */
   cliOverrides?: DeepPartial<AgentDefaults>;
 }
 
 /**
- * 产出指定 agent 的最终配置。
+ * Resolve the final configuration for the selected Agent.
  *
- * 在 loadConfig 已完成第 1、2 步（硬编码 + 文件 defaults 合并）的基础上，
- * 继续合并：
- *   1. agents.list 中匹配 agentId 的条目（per-agent 覆盖）
- *   2. envOverrides（环境变量）
- *   3. cliOverrides（CLI 参数）
+ * Starting with module and file defaults, merge:
+ *   1. The matching agents.list entry's capability overrides.
+ *   2. Environment overrides.
+ *   3. CLI overrides.
  *
- * 不传 agentId 或未找到时跳过第 1 步。
+ * Skip step 1 when agentId is absent or unmatched.
  */
 export function resolveAgentConfig(
   config: AppConfig,
@@ -74,28 +74,20 @@ export function resolveAgentConfig(
 ): AgentDefaults {
   let resolved = { ...config.agents.defaults };
 
-  // 1. per-agent 覆盖
+  // 1. Per-Agent overrides
   if (options?.agentId) {
     const entry = config.agents.list.find((e) => e.id === options.agentId);
     if (entry) {
-      // 从 AgentEntry 中提取能力覆盖字段（排除共享 Agent 元数据）
-      const {
-        id: _id,
-        description: _description,
-        default: _default,
-        model: _model,
-        ...overrides
-      } = entry;
-      resolved = deepMerge(resolved, overrides as DeepPartial<AgentDefaults>);
+      resolved = deepMerge(resolved, projectAgentCapabilities(entry, `agents.list["${entry.id}"]`));
     }
   }
 
-  // 2. 环境变量覆盖
+  // 2. Environment overrides
   if (options?.envOverrides) {
     resolved = deepMerge(resolved, options.envOverrides);
   }
 
-  // 3. CLI 覆盖
+  // 3. CLI overrides
   if (options?.cliOverrides) {
     resolved = deepMerge(resolved, options.cliOverrides);
   }

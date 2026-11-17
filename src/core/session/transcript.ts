@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { appendFile, rename, unlink, writeFile } from 'fs/promises';
-import { SessionDataError } from './store.js';
+import { isCanonicalSessionId, SessionDataError } from './store.js';
 import { withFileLock } from './lock.js';
 import type { CompactionRecord, TranscriptEntry, TranscriptState } from './types.js';
 import {
@@ -16,6 +16,7 @@ const TRANSCRIPT_RECORD_TYPES = new Set<string>([
   'tool_execution_terminal',
   'host_task_completion',
   'turn_aborted',
+  'presentation',
 ]);
 const EXECUTION_OUTCOMES = new Set([
   'success',
@@ -40,7 +41,7 @@ const TOOL_RESULT_STATUSES = new Set(['success', 'error', 'denied', 'aborted']);
 export function loadTranscript(filePath: string): TranscriptState {
   const byId = new Map<string, TranscriptEntry>();
   let leafId: string | null = null;
-  let version: 1 | 2 | undefined;
+  let version: 1 | 2 | 3 | undefined;
 
   let raw: string;
   try {
@@ -66,7 +67,7 @@ export function loadTranscript(filePath: string): TranscriptState {
     }
     assertTranscriptEntry(parsed, byId.size === 0, byId, version);
     const entry = parsed;
-    if (entry.type === 'session') version = entry.version as 1 | 2;
+    if (entry.type === 'session') version = entry.version as 1 | 2 | 3;
     byId.set(entry.id, entry);
     if (entry.type === 'session' || entry.type === 'message') {
       leafId = entry.id;
@@ -84,7 +85,7 @@ function assertTranscriptEntry(
   value: unknown,
   first: boolean,
   priorEntries: ReadonlyMap<string, TranscriptEntry>,
-  version: 1 | 2 | undefined,
+  version: 1 | 2 | 3 | undefined,
 ): asserts value is TranscriptEntry {
   if (!isRecord(value) || typeof value.id !== 'string' || !value.id) {
     throw new SessionDataError('Session Transcript contains an invalid record identity.');
@@ -98,7 +99,7 @@ function assertTranscriptEntry(
     if (
       entry.type !== 'session'
       || entry.parentId !== null
-      || (entry.version !== 1 && entry.version !== 2)
+      || (entry.version !== 1 && entry.version !== 2 && entry.version !== 3)
     ) {
       throw new SessionDataError('Session Transcript must begin with a supported root record.');
     }
@@ -112,9 +113,47 @@ function assertTranscriptEntry(
   }
 
   switch (entry.type) {
+    case 'presentation':
+      if (version !== 3 || priorEntries.get(entry.parentId)?.type !== 'message') {
+        throw new SessionDataError(`Session presentation "${id}" requires v3 and a message anchor.`);
+      }
+      if (typeof entry.sourceSessionId !== 'string' || !isCanonicalSessionId(entry.sourceSessionId)) {
+        throw new SessionDataError(`Session presentation "${id}" has an invalid source Session.`);
+      }
+      assertNonEmptyString(entry.sourceEntryId, `presentation "${id}" source entry`);
+      assertPresentationBody(entry.body, id);
+      const body = entry.body;
+      if ([...priorEntries.values()].some(record => record.type === 'presentation'
+        && record.sourceSessionId === entry.sourceSessionId
+        && (record.sourceEntryId === entry.sourceEntryId
+          || (record.body.type === body.type
+            && (body.type === 'subagent_start' || body.type === 'subagent_end'))))) {
+        throw new SessionDataError(`Session presentation "${id}" duplicates a source fact.`);
+      }
+      if (
+        (entry.body.type === 'subagent_start' || entry.body.type === 'subagent_end')
+        && entry.body.sessionId !== entry.sourceSessionId
+      ) {
+        throw new SessionDataError(`Session presentation "${id}" has conflicting lifecycle identity.`);
+      }
+      return;
     case 'message':
       assertTurnId(entry.turnId, `message "${entry.id}"`);
+      if (entry.messageId !== undefined) {
+        if (version !== 3) {
+          throw new SessionDataError(
+            `Session Transcript message "${entry.id}" requires v3 for messageId.`,
+          );
+        }
+        assertNonEmptyString(entry.messageId, `message "${entry.id}" messageId`);
+      }
       assertMessage(entry.message, id);
+      if (entry.llmRound !== undefined && (
+        version !== 3 || !isNonNegativeInteger(entry.llmRound)
+        || !isRecord(entry.message) || entry.message.role !== 'assistant'
+      )) {
+        throw new SessionDataError(`Session Transcript message "${entry.id}" has an invalid llmRound.`);
+      }
       if (
         entry.turnStopReason !== undefined
         && (
@@ -136,7 +175,7 @@ function assertTranscriptEntry(
           throw new SessionDataError(`Session Transcript message "${entryId}" has an invalid role.`);
         }
         if (value.invocation !== undefined) {
-          if (value.role !== 'assistant' || version !== 2) {
+          if (value.role !== 'assistant' || version === 1) {
             throw new SessionDataError(
               `Session Transcript message "${entryId}" has invalid invocation metadata.`,
             );
@@ -144,7 +183,7 @@ function assertTranscriptEntry(
           assertInvocation(value.invocation, entryId);
         }
         if (value.reasoning !== undefined) {
-          if (value.role !== 'user' || version !== 2) {
+          if (value.role !== 'user' || version === 1) {
             throw new SessionDataError(
               `Session Transcript message "${entryId}" has invalid reasoning metadata.`,
             );
@@ -182,7 +221,7 @@ function assertTranscriptEntry(
             }
           } else if (block.type === 'thinking') {
             hasThinking = true;
-            if (version !== 2) {
+            if (version === 1) {
               throw new SessionDataError(
                 `Session Transcript v1 message "${entryId}" contains Thinking state.`,
               );
@@ -449,6 +488,143 @@ function isNonNegativeInteger(value: unknown): boolean {
 function assertTurnId(value: unknown, subject: string): asserts value is string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new SessionDataError(`Session Transcript ${subject} has an invalid Turn identity.`);
+  }
+}
+
+export function assertPresentationBody(
+  value: unknown,
+  entryId: string,
+): asserts value is import('./types.js').PresentationBody {
+  const invalid = () => new SessionDataError(`Session presentation "${entryId}" has an invalid body.`);
+  const assertFields = (record: Record<string, unknown>, fields: readonly string[]): void => {
+    if (Object.keys(record).some(key => !fields.includes(key))) throw invalid();
+  };
+  if (!isRecord(value)) throw invalid();
+  const identityFields = [
+    'sessionId', 'turnId', 'callerSessionId', 'parentTurnId', 'parentToolUseId',
+    'runId', 'subagentType',
+  ];
+  switch (value.type) {
+    case 'message': {
+      const allowed = new Set(['type', 'turnId', 'role', 'content', 'messageId', 'llmRound', 'reasoning', 'abortMeta']);
+      if (Object.keys(value).some(key => !allowed.has(key))) throw invalid();
+      assertTurnId(value.turnId, `presentation "${entryId}"`);
+      if (!['user', 'assistant', 'toolResult'].includes(String(value.role))) throw invalid();
+      if (value.messageId !== undefined) assertNonEmptyString(value.messageId, 'presentation messageId');
+      if (value.llmRound !== undefined
+        && (value.role !== 'assistant' || !isNonNegativeInteger(value.llmRound))) throw invalid();
+      if (value.reasoning !== undefined) {
+        if (value.role !== 'user') throw invalid();
+        try {
+          normalizeReasoningPreference(value.reasoning);
+        } catch (error) {
+          if (!(error instanceof ReasoningPreferenceValidationError)) throw error;
+          throw invalid();
+        }
+      }
+      if (value.abortMeta !== undefined && (
+        value.role !== 'assistant' || !isRecord(value.abortMeta)
+        || typeof value.abortMeta.partial !== 'boolean' || value.abortMeta.stopReason !== 'aborted'
+      )) throw invalid();
+      if (isRecord(value.abortMeta)) assertFields(value.abortMeta, ['partial', 'stopReason']);
+      if (typeof value.content === 'string') return;
+      if (!Array.isArray(value.content)) throw invalid();
+      for (const block of value.content) {
+        if (!isRecord(block)) throw invalid();
+        switch (block.type) {
+          case 'thinking':
+            if (
+              Object.keys(block).some(key => !['type', 'id', 'text', 'status'].includes(key))
+              || typeof block.id !== 'string' || !block.id
+              || typeof block.text !== 'string'
+              || !['partial', 'complete'].includes(String(block.status))
+            ) throw invalid();
+            break;
+          case 'text':
+            assertFields(block, ['type', 'text']);
+            if (typeof block.text !== 'string') throw invalid();
+            break;
+          case 'tool_use':
+            assertFields(block, ['type', 'id', 'name', 'input']);
+            if (
+              typeof block.id !== 'string' || !block.id || typeof block.name !== 'string'
+              || !isRecord(block.input)
+            ) throw invalid();
+            break;
+          case 'tool_result':
+            assertFields(block, ['type', 'tool_use_id', 'content', 'status']);
+            if (typeof block.tool_use_id !== 'string' || typeof block.content !== 'string'
+              || !TOOL_RESULT_STATUSES.has(String(block.status))) throw invalid();
+            break;
+          case 'execution_accepted':
+            assertFields(block, ['type', 'tool_use_id', 'execution_id']);
+            if (typeof block.tool_use_id !== 'string' || typeof block.execution_id !== 'string') throw invalid();
+            break;
+          case 'image':
+            assertFields(block, ['type', 'source', 'dimensions']);
+            if (!isRecord(block.source) || block.source.type !== 'base64'
+              || typeof block.source.media_type !== 'string' || typeof block.source.data !== 'string'
+              || !isRecord(block.dimensions)
+              || typeof block.dimensions.width !== 'number'
+              || typeof block.dimensions.height !== 'number') throw invalid();
+            assertFields(block.source, ['type', 'media_type', 'data']);
+            assertFields(block.dimensions, ['width', 'height']);
+            break;
+          default:
+            throw invalid();
+        }
+      }
+      return;
+    }
+    case 'tool_execution_accepted':
+      for (const key of ['turnId', 'callId', 'executionId', 'toolName']) {
+        assertNonEmptyString(value[key], `presentation ${key}`);
+      }
+      if (Object.keys(value).some(key => !['type', 'turnId', 'callId', 'executionId', 'toolName'].includes(key))) throw invalid();
+      return;
+    case 'tool_execution_terminal':
+      assertNonEmptyString(value.executionId, 'presentation executionId');
+      if (!EXECUTION_OUTCOMES.has(String(value.outcome)) || typeof value.content !== 'string') throw invalid();
+      if (
+        ((value.outcome === 'success' || value.outcome === 'failed') && value.reason !== undefined)
+        || (value.outcome === 'aborted' && !ABORTED_REASONS.has(String(value.reason)))
+        || (value.outcome === 'outcome_unknown' && !OUTCOME_UNKNOWN_REASONS.has(String(value.reason)))
+        || Object.keys(value).some(key => !['type', 'executionId', 'outcome', 'content', 'reason'].includes(key))
+      ) throw invalid();
+      return;
+    case 'subagent_start':
+    case 'subagent_end': {
+      for (const key of identityFields) assertNonEmptyString(value[key], `presentation ${key}`);
+      if (!isCanonicalSessionId(String(value.sessionId))
+        || !isCanonicalSessionId(String(value.callerSessionId))
+        || !Number.isSafeInteger(value.depth) || Number(value.depth) < 1) throw invalid();
+      const allowed = ['type', ...identityFields, 'depth'];
+      if (value.type === 'subagent_end') {
+        allowed.push('outcome', 'failure', 'usage', 'durationMs');
+        if (!['ok', 'error', 'aborted', 'max_llm_calls'].includes(String(value.outcome))
+          || !isRecord(value.usage) || !isNonNegativeInteger(value.usage.inputTokens)
+          || !isNonNegativeInteger(value.usage.outputTokens)
+          || typeof value.durationMs !== 'number' || !Number.isFinite(value.durationMs)
+          || value.durationMs < 0) throw invalid();
+        assertFields(value.usage, ['inputTokens', 'outputTokens']);
+        if (value.failure !== undefined && (
+          !isRecord(value.failure) || typeof value.failure.message !== 'string'
+          || !['setup', 'resolution', 'execution'].includes(String(value.failure.phase))
+        )) throw invalid();
+        if (isRecord(value.failure)) {
+          assertFields(value.failure, ['phase', 'message', 'category']);
+          if (value.failure.phase === 'resolution') {
+            assertNonEmptyString(value.failure.category, 'presentation failure category');
+          } else if (value.failure.category !== undefined) {
+            throw invalid();
+          }
+        }
+      }
+      if (Object.keys(value).some(key => !allowed.includes(key))) throw invalid();
+      return;
+    }
+    default:
+      throw invalid();
   }
 }
 

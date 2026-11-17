@@ -34,52 +34,63 @@ describe('acquireExtensions', () => {
     await rm(installDir, { recursive: true, force: true });
   });
 
-  it('returns immediately when the global kill switch is disabled', async () => {
+  it.each([true, false, 'yes'])('rejects the removed global switch (%s) before discovery or execution', async (enabled) => {
     await writeFile(extensionsDir, 'discovery must not run');
-
-    const result = await acquireExtensions({
+    const extensionsConfig = { enabled, entries: {} };
+    await expect(acquireExtensions({
       extensionsDir,
-      extensionsConfig: hostConfig(false, {}),
+      extensionsConfig,
       environment: {},
+    })).rejects.toMatchObject({
+      code: 'NAMESPACE_INVALID',
+      fieldPath: 'extensions.enabled',
+      message: expect.stringContaining('extensions.entries.<id>.enabled'),
     });
-
-    expect(result).toEqual({ loadedUnits: [], diagnostics: [] });
-    expect(Object.isFrozen(result)).toBe(true);
+    expect(marker(EXECUTION_MARKER)).toBeUndefined();
   });
 
-  it('keeps missing and explicitly disabled entries structured without execution', async () => {
-    await installFixture(extensionsDir, 'missing-config', 'missing-config', 'never-execute.js');
+  it('loads unconfigured entries with defaults and skips explicitly disabled entries', async () => {
+    await installFixture(extensionsDir, 'missing-config', 'fixture-valid', 'valid-unit.js');
     await installFixture(extensionsDir, 'disabled', 'disabled', 'never-execute.js');
 
     const result = await acquireExtensions({
       extensionsDir: extensionsDir,
-      extensionsConfig: hostConfig(true, { disabled: { enabled: false } }),
+      extensionsConfig: hostConfig({ disabled: { enabled: false } }),
       environment: {},
     });
 
-    expect(result.loadedUnits).toEqual([]);
+    expect(result.loadedUnits.map((unit) => unit.unitId)).toEqual(['fixture-valid']);
+    expect(result.discovery.candidates.map((candidate) => candidate.descriptor.id)).toEqual(['disabled', 'fixture-valid']);
+    expect(Object.isFrozen(result.discovery)).toBe(true);
+    expect(Object.isFrozen(result.discovery.candidates)).toBe(true);
     expect(result.diagnostics).toEqual([
       expect.objectContaining({
         category: 'disabled',
         code: 'extension_disabled',
         extensionId: 'disabled',
       }),
-      expect.objectContaining({
-        category: 'disabled',
-        code: 'extension_disabled',
-        extensionId: 'missing-config',
-      }),
     ]);
+    expect(marker(EXECUTION_MARKER)).toBeUndefined();
+    expect(marker(IMPORT_MARKER)).toBe(true);
+  });
+
+  it('rejects legacy global disablement for a directly loaded candidate without importing it', async () => {
+    await installFixture(extensionsDir, 'disabled', 'disabled', 'never-execute.js');
+    const discovery = await discoverExtensionDescriptors(extensionsDir);
+    const candidate = discovery.candidates[0]!;
+    const extensionsConfig = { enabled: false, entries: { disabled: {} } };
+    await expect(loadExtensionCandidate(candidate, extensionsDir, extensionsConfig, {}))
+      .rejects.toMatchObject({ code: 'NAMESPACE_INVALID', fieldPath: 'extensions.enabled' });
     expect(marker(EXECUTION_MARKER)).toBeUndefined();
   });
 
-  it('defaults a configured Extension entry to enabled', async () => {
+  it.each([{}, { 'fixture-valid': {} }])('defaults an absent or empty entry to enabled: %j', async (entries) => {
     const info = vi.spyOn(Logger.get('ExtensionAcquisition'), 'info');
     await installFixture(extensionsDir, 'valid', 'fixture-valid', 'valid-unit.js');
 
     const result = await acquireExtensions({
       extensionsDir,
-      extensionsConfig: hostConfig(true, { 'fixture-valid': {} }),
+      extensionsConfig: hostConfig(entries),
       environment: {},
     });
 
@@ -99,7 +110,7 @@ describe('acquireExtensions', () => {
 
     const result = await acquireExtensions({
       extensionsDir,
-      extensionsConfig: hostConfig(true, { malformed: { enabled: true, unknown: true } }),
+      extensionsConfig: hostConfig({ malformed: { enabled: true, unknown: true } }),
       environment: {},
     });
 
@@ -121,7 +132,7 @@ describe('acquireExtensions', () => {
 
     const result = await acquireExtensions({
       extensionsDir: extensionsDir,
-      extensionsConfig: hostConfig(true, {
+      extensionsConfig: hostConfig({
         'missing-value': {
           enabled: true,
           config: { endpoint: { $env: 'MISSING_URL' } },
@@ -161,7 +172,7 @@ describe('acquireExtensions', () => {
 
     const result = await acquireExtensions({
       extensionsDir: extensionsDir,
-      extensionsConfig: hostConfig(true, {
+      extensionsConfig: hostConfig({
         'bad-schema': { enabled: true },
         'bad-input': { enabled: true, config: { count: '2' } },
       }),
@@ -186,7 +197,7 @@ describe('acquireExtensions', () => {
 
     const result = await acquireExtensions({
       extensionsDir: extensionsDir,
-      extensionsConfig: hostConfig(true, {
+      extensionsConfig: hostConfig({
         'fixture-valid': {
           enabled: true,
           config: { endpoint: 'https://relay.invalid' },
@@ -244,7 +255,7 @@ describe('acquireExtensions', () => {
 
     const result = await acquireExtensions({
       extensionsDir,
-      extensionsConfig: hostConfig(true, { 'typescript-entry': {} }),
+      extensionsConfig: hostConfig({ 'typescript-entry': {} }),
       environment: {},
     });
 
@@ -270,7 +281,7 @@ describe('acquireExtensions', () => {
 
     const result = await acquireExtensions({
       extensionsDir,
-      extensionsConfig: hostConfig(true, { 'javascript-entry': {} }),
+      extensionsConfig: hostConfig({ 'javascript-entry': {} }),
       environment: {},
     });
 
@@ -306,7 +317,7 @@ describe('acquireExtensions', () => {
 
     const result = await acquireExtensions({
       extensionsDir,
-      extensionsConfig: hostConfig(true, { 'package-dependency': {} }),
+      extensionsConfig: hostConfig({ 'package-dependency': {} }),
       environment: {},
     });
 
@@ -322,7 +333,7 @@ describe('acquireExtensions', () => {
 
     const result = await acquireExtensions({
       extensionsDir: extensionsDir,
-      extensionsConfig: hostConfig(true, {
+      extensionsConfig: hostConfig({
         'factory-throws': {
           enabled: true,
           config: { apiKey: '${FACTORY_SECRET}' },
@@ -360,7 +371,7 @@ describe('acquireExtensions', () => {
 
     const result = await acquireExtensions({
       extensionsDir: extensionsDir,
-      extensionsConfig: hostConfig(true, {
+      extensionsConfig: hostConfig({
         'syntax-error': { enabled: true },
         'invalid-export': { enabled: true },
         'extra-export': { enabled: true },
@@ -389,7 +400,7 @@ describe('acquireExtensions', () => {
 
     const result = await acquireExtensions({
       extensionsDir: extensionsDir,
-      extensionsConfig: hostConfig(true, { 'async-factory': { enabled: true } }),
+      extensionsConfig: hostConfig({ 'async-factory': { enabled: true } }),
       environment: {},
     });
 
@@ -414,7 +425,7 @@ describe('acquireExtensions', () => {
 
     const result = await acquireExtensions({
       extensionsDir: extensionsDir,
-      extensionsConfig: hostConfig(true, { 'metadata-case': { enabled: true } }),
+      extensionsConfig: hostConfig({ 'metadata-case': { enabled: true } }),
       environment: {},
     });
 
@@ -429,7 +440,7 @@ describe('acquireExtensions', () => {
 
     const result = await acquireExtensions({
       extensionsDir: extensionsDir,
-      extensionsConfig: hostConfig(true, { duplicate: { enabled: true } }),
+      extensionsConfig: hostConfig({ duplicate: { enabled: true } }),
       environment: {},
     });
 
@@ -437,13 +448,15 @@ describe('acquireExtensions', () => {
       'duplicate_identity',
       'duplicate_identity',
     ]);
+    expect(result.discovery.candidates).toEqual([]);
+    expect(result.discovery.diagnostics).toEqual(result.diagnostics);
     expect(marker(EXECUTION_MARKER)).toBeUndefined();
   });
 
   it('reports stale configured IDs without executing any entry', async () => {
     const result = await acquireExtensions({
       extensionsDir: extensionsDir,
-      extensionsConfig: hostConfig(true, { stale: { enabled: true } }),
+      extensionsConfig: hostConfig({ stale: { enabled: true } }),
       environment: {},
     });
 
@@ -460,7 +473,7 @@ describe('acquireExtensions', () => {
 
     const result = await acquireExtensions({
       extensionsDir: extensionsDir,
-      extensionsConfig: hostConfig(true, {
+      extensionsConfig: hostConfig({
         'fixture-valid': { enabled: true },
         'invalid-export': { enabled: true },
       }),
@@ -486,7 +499,7 @@ describe('acquireExtensions', () => {
     const result = await loadExtensionCandidate(
       candidate,
       extensionsDir,
-      hostConfig(true, { 'replace-entry': { enabled: true } }),
+      hostConfig({ 'replace-entry': { enabled: true } }),
       {},
     );
 
@@ -501,10 +514,9 @@ describe('acquireExtensions', () => {
 });
 
 function hostConfig(
-  enabled: boolean,
   entries: Record<string, unknown>,
 ): ResolvedHostExtensionsConfig {
-  return Object.freeze({ enabled, entries: Object.freeze(entries) });
+  return Object.freeze({ entries: Object.freeze(entries) });
 }
 
 function objectSchema(

@@ -5,11 +5,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createJiti } from 'jiti';
 
 import { Logger } from '../../platform/logger/index.js';
+import { removedGlobalExtensionsSwitch } from '../../platform/config/agent-config-errors.js';
 import type {
   ExtensionLoadContext,
   ExtensionLogger,
 } from '../api/contracts.js';
-import type { LoadedRuntimeUnit } from '../../runtime/runtime-unit.js';
+import type { LoadedRuntimeUnit } from '../../runtime/composition/runtime-unit.js';
 import { prepareExtensionConfig } from './configuration.js';
 import { discoverExtensionDescriptors } from './discovery.js';
 import type {
@@ -33,19 +34,11 @@ const extensionModuleLoader = createJiti(import.meta.url, {
   sourceMaps: true,
   tryNative: false,
 });
-const EMPTY_RESULT: ExtensionAcquisitionResult = Object.freeze({
-  loadedUnits: Object.freeze([]),
-  diagnostics: Object.freeze([]),
-});
-
 export async function acquireExtensions(
   options: ExtensionAcquisitionOptions,
 ): Promise<ExtensionAcquisitionResult> {
+  if (Object.hasOwn(options.extensionsConfig, 'enabled')) throw removedGlobalExtensionsSwitch();
   log.info('extension acquisition started', { root: options.extensionsDir });
-  if (!options.extensionsConfig.enabled) {
-    log.info('extension acquisition completed', { loadedCount: 0, extensionIds: [] });
-    return EMPTY_RESULT;
-  }
 
   const discovery = await discoverExtensionDescriptors(options.extensionsDir);
   const diagnostics: ExtensionAcquisitionDiagnostic[] = [...discovery.diagnostics];
@@ -85,6 +78,7 @@ export async function acquireExtensions(
     }
   }
   const result = Object.freeze({
+    discovery,
     loadedUnits: Object.freeze(loadedUnits),
     diagnostics: Object.freeze(diagnostics),
   });
@@ -103,13 +97,11 @@ export async function loadExtensionCandidate(
 ): Promise<Readonly<{ unit: LoadedRuntimeUnit }> | Readonly<{
   diagnostic: ExtensionLoaderDiagnostic;
 }>> {
+  if (Object.hasOwn(extensionsConfig, 'enabled')) throw removedGlobalExtensionsSwitch();
   const extensionId = candidate.descriptor.id;
   const locator = formatDiagnosticLocator(basename(candidate.installationPath));
-  const rawEntry = extensionsConfig.entries[extensionId];
-
-  if (rawEntry === undefined) {
-    return diagnosticOutcome('disabled', 'extension_disabled', extensionId, locator);
-  }
+  const configuredEntry = extensionsConfig.entries[extensionId];
+  const rawEntry = configuredEntry === undefined ? {} : configuredEntry;
   if (!isPlainObject(rawEntry)) {
     return diagnosticOutcome('config_invalid', 'entry_config_invalid', extensionId, locator);
   }
