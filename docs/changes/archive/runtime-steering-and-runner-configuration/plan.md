@@ -5,7 +5,6 @@
 > Owner: Project owner
 > Type: Architecture Slice
 > Specification: [Runtime Steering and Runner Configuration Specification](runtime-steering-and-runner-configuration-specification.md)
-> Research input: [Runtime Steering 与 Runner 配置设计草稿](../../../research/runner-configuration-and-steering-design-draft.md)
 > Decision: No new ADR proposed; this Change applies existing Runtime/Runner ownership and module-owned leaf configuration principles.
 > Authorization: Delivery approved by the project owner on 2026-09-21.
 

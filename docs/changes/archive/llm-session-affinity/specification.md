@@ -1,10 +1,11 @@
 # Built-in Endpoint and Session Affinity Support Specification
 
 > Status: Validated
+> Authority: Non-authoritative delivery record; may be cleaned up at any time.
 > Date: 2026-10-16
 > Owner: Project owner
 > Related Plan: [Built-in Endpoint and Session Affinity Support Plan](plan.md)
-> Implementation: Implemented and validated with focused automated tests; owner delivery acceptance pending
+> Implementation: Implemented and validated with focused automated tests; owner accepted delivery on 2026-11-17.
 
 ## 1. Scope
 

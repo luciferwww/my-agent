@@ -5,7 +5,6 @@
 > Owner: Project owner
 > Type: Architecture Slice with prerequisite Spike
 > Specification: [Accepted Specification](specification.md)
-> Research input: [Design Draft](../../../research/websocket-client-vite-migration-design-draft.md)
 > Acceptance: Owner selected the Active Change plus prerequisite Spike path, accepted the Specification, authorized WVC-1 through WVC-4 Delivery, accepted final validation after manual testing, and authorized archive on 2026-10-12.
 
 ## 1. Outcome and scope

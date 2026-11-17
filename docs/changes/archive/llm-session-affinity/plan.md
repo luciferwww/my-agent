@@ -1,10 +1,11 @@
 # Built-in Endpoint and Session Affinity Support Plan
 
 > Status: Accepted
+> Authority: Non-authoritative delivery record; may be cleaned up at any time.
 > Date: 2026-10-16
 > Owner: Project owner
 > Classification: Architecture Slice (additive Model invocation and Built-in configuration contracts)
-> Authorization: Owner accepted the design and authorized implementation, tests, and authority synchronization on 2026-10-16
+> Authorization: Owner accepted the design and authorized implementation, tests, and authority synchronization on 2026-10-16. Owner accepted delivery and subsequently authorized archive on 2026-11-17. No additional commit/push or merge is authorized.
 > Specification: [Built-in Endpoint and Session Affinity Support Specification](specification.md)
 
 ## 1. Outcome
@@ -13,7 +14,7 @@ Extend the existing Built-in Provider with three bounded, reusable capabilities:
 two HTTP headers, Session ID propagation, and an optional per-model relative
 endpoint. OpenCode Go is the first integration example, not the owner of a
 special routing branch. Keep one shared base URL and credential; do not create
-a new Provider. Retain the existing Change directory to preserve links.
+a new Provider. Preserve the Change name and update incoming links when archiving.
 
 ## 2. Confirmed design
 
@@ -53,9 +54,9 @@ path rather than introducing a new framework.
 | Item | Status | Work | Exit condition |
 |---|---|---|---|
 | LSA-0 Design | Completed | Review this Plan and Specification | Independent review found no blocking issues; owner accepted design and authorized implementation on 2026-10-16 |
-| LSA-1 Implementation | In Review | Add optional identity, Runner/Compaction propagation, Built-in headers, and per-model endpoint validation/routing | Implemented using existing protocol clients and one captured endpoint map per protocol; awaiting owner delivery acceptance |
-| LSA-2 Validation | In Review | Focused configuration, Provider routing, Runner, Compaction, and three-protocol tests; type-check | 292 focused tests passed and TypeScript no-emit passed on 2026-10-16 |
-| LSA-3 Documentation | In Review | Update owning current architecture and stable contracts, including OpenCode Go configuration | Configuration Specification, Provider architecture, user guide, and OpenCode reference synchronized; awaiting owner delivery acceptance |
+| LSA-1 Implementation | Completed | Add optional identity, Runner/Compaction propagation, Built-in headers, and per-model endpoint validation/routing | Implemented using existing protocol clients and one captured endpoint map per protocol; owner accepted delivery on 2026-11-17 |
+| LSA-2 Validation | Completed | Focused configuration, Provider routing, Runner, Compaction, and three-protocol tests; type-check | 292 focused tests passed and TypeScript no-emit passed on 2026-10-16; owner accepted delivery on 2026-11-17 |
+| LSA-3 Documentation | Completed | Update owning current architecture and stable contracts, including OpenCode Go configuration | Configuration Specification, Provider architecture, user guide, and OpenCode reference synchronized; owner accepted delivery on 2026-11-17 |
 
 ## 5. Validation and completion
 
@@ -84,4 +85,13 @@ This Change is not implemented or validated merely because these documents exist
   validation field paths, and endpoint preservation during configuration edits.
 - No paid or live upstream request was made for this delivery. No production
   changes were made to independent Extension Providers or initialization UI.
-- Owner delivery acceptance is pending; the Change remains active.
+- Owner delivery acceptance was pending at the time of this validation.
+
+### Owner acceptance (2026-11-17)
+
+The owner accepted delivery with "通过" after reviewing the Change status.
+All delivery items are complete. No new live upstream request was made or is
+claimed by this acceptance. The owner subsequently authorized continuing
+closeout; the Change was archived on 2026-11-17. The user guide links directly
+to stable configuration and current Provider documentation, not this disposable
+record. No additional commit/push or merge is authorized.

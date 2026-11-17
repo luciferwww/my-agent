@@ -4,7 +4,7 @@
 > Date: 2026-09-30
 > Authorization: 仅记录设计讨论，不授权实现，不覆盖 Accepted ADR、Stable Specifications 或当前实现
 > Scope: 所有 Tool Use 的 Turn 内异步执行、活动观测、期限、独立取消、steering 与结果交付边界
-> Related: [Subagent 专项设计来源](subagent-identity-event-routing-design-draft.md)、[Tool Result 状态与审批研究来源](tool-result-outcome-persistence-design-draft.md)
+> Related: [Subagent 专项设计来源](subagent-identity-event-routing-design-draft.md)、[Runner Architecture](../architecture/runner.md)、[Channel Specification](../specifications/channel.md)
 > Formalization: 已完成并归档的 [Plan](../changes/archive/async-tool-use/plan.md)、[implemented Specification](../changes/archive/async-tool-use/specification.md) 与 [Accepted ADR-018](../decisions/adr-018-unified-async-tool-execution-and-completion-delivery.md) 已承接“统一 Async Tool Execution Framework 替换 Runner direct-await”方向；accepted + Host completion 是其 Provider/Model 交付机制，不是独立后台特例。本文件保留研究来源，不再作为实施权威
 
 ## 1. 问题与目标

@@ -1,6 +1,7 @@
 # Skills Support Specification
 
-> Status: Implemented
+> Status: Validated
+> Authority: Non-authoritative delivery record; may be cleaned up at any time.
 > Date: 2026-11-13
 > Owner: Project owner
 > Related Plan: [Skills Support](plan.md)
@@ -9,7 +10,7 @@
 > Implementation: Discovery, loading, selection, prompt and Settings are wired.
 > Automated/native-browser and real-model evidence are recorded
 > in the [Plan](plan.md#preparation-record), including authorized real-model
-> adherence checks; Owner delivery acceptance is pending.
+> adherence checks; Owner accepted delivery on 2026-11-17.
 
 ## 1. Purpose and scope
 
@@ -155,6 +156,13 @@ guarantee spans instructions and resources.
 
 Disabled selections apply to future Turns, not erasure of historical bodies,
 revocation of unrelated Tool permissions or forced cancellation of current work.
+
+Selection focuses the advertised catalog to reduce model confusion and selection
+ambiguity; it is not a security deny-list. Unselected Skill files remain
+accessible through ordinary Tools when permitted. An explicitly requested
+file-based workflow is separate from named Skill loading: it does not enable
+the Skill or bypass Tool permissions. Do not silently substitute that workflow
+when a required Skill cannot be loaded.
 
 ## 8. Settings and compatibility
 

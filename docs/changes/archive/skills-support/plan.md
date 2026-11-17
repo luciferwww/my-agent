@@ -1,11 +1,12 @@
 # Skills Support
 
 > Status: Accepted
+> Authority: Non-authoritative delivery record; may be cleaned up at any time.
 > Date: 2026-11-13
 > Owner: Project owner
 > Classification: Architecture Slice
-> Design: [Accepted Specification](specification.md)
-> Authorization: Owner accepted Plan/Spec and authorized implementation on 2026-11-13; subsequently authorized committing all changes and pushing the current branch. No Spike, merge or archive is authorized.
+> Design: [Validated Specification](specification.md)
+> Authorization: Owner accepted Plan/Spec and authorized implementation on 2026-11-13; subsequently authorized committing all changes and pushing the current branch. Owner accepted delivery and separately authorized archive on 2026-11-17. No additional commit/push or merge is authorized. No Spike is authorized.
 
 ## Outcome
 
@@ -15,8 +16,7 @@ the same discovery and loading mechanism, with automatic selection or explicit
 instructions interpreted by the model. File changes and saved selections take
 effect without restarting the Agent.
 
-The [research draft](../../../research/skills-support-design-draft.md) records
-the discussion baseline and owner review on 2026-11-13. Subsequent owner
+The owner reviewed the research baseline on 2026-11-13. Subsequent owner
 clarifications include nested discovery with flat identity/listing and leaving
 script environments to Skill instructions and existing tools. Neither research
 approval alone authorized Delivery; explicit Plan/Spec acceptance is recorded below.
@@ -86,10 +86,10 @@ contracts and authorized Delivery on 2026-11-13.
 |---|---|---|
 | SK-1: Resolve delivery design | Completed | Static review closed; simplified discovery/loading contracts confirmed |
 | SK-2: Accept design | Completed | Owner accepted Plan/Spec and authorized implementation on 2026-11-13 |
-| SK-3: Deliver discovery and loading | In Review | Implemented; discovery/loading, live updates, duplicate rejection and focused tests pass |
-| SK-4: Deliver selection, prompt and Settings wiring | In Review | Implemented; selection persistence, independent Root/Child captures, prompt modes and Settings controls verified |
-| SK-5: Validate and synchronize | In Review | Automated, native-browser and authorized real-model checks pass; evidence is ready for Owner review |
-| SK-6: Accept delivery | Not Started | Owner reviews outcome and authorizes any subsequent closeout actions |
+| SK-3: Deliver discovery and loading | Completed | Implemented; discovery/loading, live updates, duplicate rejection and focused tests pass |
+| SK-4: Deliver selection, prompt and Settings wiring | Completed | Implemented; selection persistence, independent Root/Child captures, prompt modes and Settings controls verified |
+| SK-5: Validate and synchronize | Completed | Automated, native-browser and authorized real-model checks pass; Owner accepted delivery |
+| SK-6: Accept delivery | Completed | Owner accepted delivery on 2026-11-17; subsequent publication/archive requires separate authorization |
 
 SK-2 depends on SK-1. SK-3 and SK-4 depend on SK-2; shared contract prerequisites
 between their implementation steps must be recorded before Delivery. SK-5 depends
@@ -231,5 +231,20 @@ silently adding an alternative execution path.
 - 2026-11-13: Owner explicitly requested committing all changes and pushing to
   remote. This authorizes source-control publication, not delivery acceptance,
   merge or archive. Preserve the ignored manual-test Home outside commits.
+
+- 2026-11-17: Owner accepted delivery with "通过" after reviewing the Change
+  progress. SK-3 through SK-6 are complete. Clarified in the guide, Agent
+  management contract and this Change's Spec that Skills selection focuses the
+  advertised catalog to reduce model confusion; it is not a security deny-list
+  or a filesystem restriction. An explicitly requested file-based workflow
+  remains subject to ordinary Tool permissions and does not change selection.
+  No production behavior changed. No additional commit/push, merge or archive
+  is authorized by this acceptance.
+
+- 2026-11-17: Owner separately authorized archive and clarified that every
+  document under `docs/changes/`, active or archived, is non-authoritative and
+  may be cleaned up at any time. Durable contracts remain in stable
+  Specifications, accepted ADRs and Current Architecture, independently of
+  this record's retention. No additional commit/push or merge is authorized.
 
 Follow [Development Workflow](../../../governance/development-workflow.md).

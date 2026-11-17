@@ -1,12 +1,13 @@
 # Agent Global Settings
 
 > Status: Accepted
+> Authority: Non-authoritative delivery record; may be cleaned up at any time.
 > Date: 2026-11-11
 > Owner: Project owner
 > Classification: Architecture Slice
 > Design: [Accepted Specification](specification.md)
 > Authorization: Owner authorized Delivery conditional on independent review passing; independent read-only design review passed on 2026-11-11
-> Delivery acceptance: Owner accepted delivery and authorized a feature-only commit on 2026-11-12; no merge, push or archive authorized
+> Delivery acceptance: Owner accepted delivery and authorized a feature-only commit on 2026-11-12; owner separately authorized archive on 2026-11-17. No additional commit, push or merge is authorized.
 
 ## Outcome
 
@@ -288,3 +289,16 @@ code, tests and directly related documentation on `feat/agent-global-settings`.
 Exclude existing process-test changes, Built-in Tool documentation and owner
 research changes. Merge, push and archive remain unauthorized; retain the
 accepted Change in the active directory.
+
+## Archive authorization
+
+On 2026-11-17, after reviewing the completed delivery and acceptance status,
+the owner authorized continuing with archive closeout. The Plan and
+Specification are archived together, and the Changes index is updated.
+The feature was committed as `86ee960`; this closeout does not authorize an
+additional commit, push or merge. Earlier authorization limits above describe
+their historical stages, not the current archive status.
+
+These Change records are non-authoritative and may be cleaned up at any time.
+Durable behavior remains owned by the stable Configuration and Agent Management
+specifications and Current Architecture, not by retention of this archive.

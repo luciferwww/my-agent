@@ -1,11 +1,12 @@
 # Agent Global Settings Specification
 
 > Status: Implemented and Validated
+> Authority: Non-authoritative delivery record; may be cleaned up at any time.
 > Date: 2026-11-11
 > Owner: Project owner
 > Related Plan: [Agent Global Settings](plan.md)
 > Authorization: Owner's conditional Delivery authorization activated after independent design review passed on 2026-11-11
-> Delivery acceptance: Owner accepted delivery and validation on 2026-11-12; only the feature commit is authorized, not merge, push or archive
+> Delivery acceptance: Owner accepted delivery and validation on 2026-11-12 and separately authorized archive on 2026-11-17; no additional commit, push or merge is authorized.
 
 ## Purpose and observable outcome
 

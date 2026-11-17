@@ -6,7 +6,6 @@
 > Classification: Small Change
 > Archived: 2026-11-06，owner 人工验收通过后归档
 > Authorization: 2026-11-06 owner 确认 go，按 Group、Single 两步进入 Delivery；不自动 commit/push
-> Input: [Tool Use 可读性设计草稿](../../../research/tool-use-readability-design-draft.md)
 > Stable authority: [Channel Specification: Tool readability](../../../specifications/channel.md#bundled-websocket-tool-readability)
 > Related: [Session Execution Presentation Specification](../session-execution-presentation/specification.md)
 
@@ -19,7 +18,7 @@
 - Task 使用独立 Agent 类型标签、描述主标题和状态徽标。
 - 标题在折叠和展开时保持一致，长内容不能撑宽卡片。
 
-本 Change 记录已确认的展示要求、两步交付及验收证据，不新增 ADR、Spike 或单独 Specification。研究草稿保留工具清单和讨论来源。归档后，以下要求作为交付时快照保留，不是长期规范权威；可复用规则已提升至现有 Channel Specification。
+本 Change 记录已确认的展示要求、两步交付及验收证据，不新增 ADR、Spike 或单独 Specification。归档后，以下要求作为交付时快照保留，不是长期规范权威；可复用规则已提升至现有 Channel Specification。
 
 ## 2. Confirmed requirements
 

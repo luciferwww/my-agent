@@ -10,7 +10,6 @@
 > Specification: [Accepted Specification](specification.md)
 > Decision: [Accepted ancestor presentation decision](decision.md)
 > Validation: [阶段验证记录](validation.md)
-> Input: [设计讨论草稿](../../../research/session-execution-presentation-design-draft.md)
 
 ## 1. Outcome
 

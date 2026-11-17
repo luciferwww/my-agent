@@ -450,6 +450,11 @@ or changing revisions. While Settings is open/connected, the client requests it
 every two seconds after the preceding request settles, updating only catalog
 state and preserving drafts. Stop polling on close/disconnect/disposal.
 
+Skills selection scopes the model-advertised catalog and named Skill loading to
+reduce selection noise, not filesystem access or permission to perform a
+workflow. Explicit file-based requests remain subject to ordinary Tool policies
+and do not change the saved or captured Skill selection.
+
 One Agent is one revisioned Settings section, ID `agent:<id>`. Reuse the
 existing generic `settings.execute` load/update flow and serialized persistence;
 shared Tool defaults have a separate revisioned section. Channel code must not

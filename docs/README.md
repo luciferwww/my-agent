@@ -31,7 +31,7 @@ Do not routinely read or search archived Changes, Evidence, Deferred inputs, Res
 
 ## Active work
 
-- [Changes](changes/README.md) — active work under the Development Workflow; proposed drafts do not authorize delivery and its archive is historical
+- [Changes](changes/README.md) — non-authoritative active/archived delivery records under the Development Workflow; all may be cleaned up at any time
 
 ## Opt-in supporting material
 
@@ -42,7 +42,7 @@ Do not routinely read or search archived Changes, Evidence, Deferred inputs, Res
 
 ## Authority order
 
-Source and tests provide implementation evidence. Current Architecture owns implemented boundaries; Stable Specifications own long-lived contracts; Accepted Decisions own durable rationale; Active Changes own approved unfinished work. Evidence, Deferred, Research, superseded Decisions, and archived Changes cannot override those surfaces.
+Source and tests provide implementation evidence. Current Architecture owns implemented boundaries; Stable Specifications own long-lived contracts; Accepted Decisions own durable rationale. Active Changes track approved unfinished work without becoming authority. All Change records, whether active or archived, are disposable and may be cleaned up at any time. Changes, Evidence, Deferred, Research and superseded Decisions cannot override authority documents.
 
 Authority documents contain their current accepted rules and status directly, without links to non-authoritative drafts or historical supporting records. Supporting documents may link to authority documents. This index only provides navigation; links here do not grant authority to their targets.
 

@@ -5,7 +5,6 @@
 > Owner: Project owner
 > Classification: Architecture Slice
 > Design: [Validated Specification](specification.md)
-> Discussion source: [Research draft](../../../research/memory-settings-design-draft.md)
 > Authorization: Owner authorized document preparation, reviewed the design, then authorized controlled checks and implementation with "继续" on 2026-11-16 at 16:23. Owner completed manual testing with no issues, accepted delivery, and separately authorized archive and a scoped commit on 2026-11-17. Push and merge remain unauthorized.
 
 ## Outcome

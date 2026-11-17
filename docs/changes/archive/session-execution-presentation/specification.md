@@ -6,7 +6,6 @@
 > Owner: Project owner
 > Related Plan: [Plan](plan.md)
 > Related Decision: [Accepted decision](decision.md)
-> Design input: [Research draft](../../../research/session-execution-presentation-design-draft.md)
 
 ## Purpose and observable outcome
 

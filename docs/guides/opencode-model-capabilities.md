@@ -169,9 +169,8 @@ Google 原生模型仍不在 builtin 支持范围内；本文不推断旧统一�
 - 会话 ID 不是推理开关，不替代历史消息，也不保证缓存命中。缓存可能减少重复
   输入计算、降低首字延迟；费用或额度收益取决于对应模型的缓存价格与计量规则。
 
-本项目相关实现和验证记录见
-[Built-in Endpoint and Session Affinity Support Change](../changes/active/llm-session-affinity/specification.md)
-及其 [Plan](../changes/active/llm-session-affinity/plan.md)。
+本项目的配置契约见 [Configuration Specification](../specifications/configuration.md)，
+当前会话标识、Header 与 endpoint 行为见 [Provider Architecture](../architecture/providers.md)。
 传输与配置行为已通过聚焦自动化测试；未据此宣称所有模型已通过实网测试。
 调用方不传 Session ID 时使用 UUID；这是项目的兜底规则，
 不是 OpenCode 对会话 ID 格式的要求。

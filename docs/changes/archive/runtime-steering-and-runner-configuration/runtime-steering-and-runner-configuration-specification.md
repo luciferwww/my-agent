@@ -4,7 +4,6 @@
 > Date: 2026-09-21
 > Owner: Project owner
 > Related Plan: [Runtime Steering and Runner Configuration Plan](plan.md)
-> Research input: [Runtime Steering 与 Runner 配置设计草稿](../../../research/runner-configuration-and-steering-design-draft.md)
 > Authorization: Delivery approved by the project owner on 2026-09-21.
 
 ## 1. Purpose and observable outcome

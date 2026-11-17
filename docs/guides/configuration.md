@@ -657,6 +657,12 @@ The model sees selected names/descriptions and loads complete current instructio
 using `skill`. Requests such as `/skill code-review check these changes` are
 ordinary model-interpreted text, not a Host slash command.
 
+Skill selection keeps the advertised catalog focused to reduce model confusion;
+it is not a security deny-list. Unselected Skill files can still be read through
+ordinary Tools when permitted. You may explicitly ask the Agent to read a
+specific directory's `SKILL.md` and follow it as a file-based workflow. This
+does not enable the Skill or bypass normal Tool permissions and approval rules.
+
 Loading grants no Tool permissions and installs nothing. Skills describe their
 own interpreter/dependency/environment requirements; subsequent setup and script
 execution use existing Tools and approval rules. Instruction/resource files
