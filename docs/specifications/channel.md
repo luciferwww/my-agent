@@ -2,10 +2,21 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-11-04
+> Verified: 2026-11-18
 > Authority: Stable Channel contract
 
 ## Scope
+
+Model catalog reads
+are asynchronous and Core does not cache them. CLI/WebSocket check a 60-second
+presentation timestamp when displaying models and query again after explicit
+`provider_unregistered`, `model_rejected` or common `model_not_found` errors.
+No polling timer, force flag, automatic invocation retry or fallback is added.
+Query completion updates the timestamp; empty Provider lists replace old lists.
+Expected discovery failures appear as empty lists with server warning logs,
+not a new client availability/error protocol. Existing Agent error events carry
+the common missing-model category without exposing vendor-code interpretation
+to Channels. See [Model Resolution](model-resolution.md).
 
 This contract defines Channel contribution, instance, Runtime binding, lifecycle, completion, transport ingress, Fanout, and interaction capability. Builtin and External Channels use the same Unit staging and publication path.
 
@@ -148,6 +159,12 @@ Missing ownership/editable metadata leaves the link absent, never guessed from
 Provider IDs. This does not change the shared Model Catalog contract, duplicate
 configuration, scan or load Extensions again. Load, save and confirmed rollback
 results use the same projection.
+
+Catalog reads are asynchronous and remain outside atomic file edits. An
+unexpected catalog-enrichment failure after confirmed LLM publication returns
+`catalog_failed` with truthful saved/current state; it does not roll back an
+already-applied configuration. If file restoration succeeded, the same error
+reports restored/completed rollback state rather than a failed restoration.
 
 Settings load also includes a `toolCatalog` projection of registered Tool names
 and descriptions only, without schemas or implementations. It is not filtered
@@ -339,7 +356,7 @@ Classic is used. Only explicit selection writes preference. Theme changes do
 not reconnect WebSocket or clear Session state. The retired `/chat2.html`
 entry has no alias or redirect.
 
-When Runtime reports `provider_unregistered` or `model_rejected`, Channel presentation preserves the classified failure. A catalog-capable interactive client refreshes the current Catalog for explicit reselection; it does not substitute a Provider/Model or resubmit the failed Turn. Other resolution and invocation failures remain ordinary reported failures and retain the user's selection for an explicit retry.
+When Runtime reports `provider_unregistered`, `model_rejected` or `model_not_found`, Channel presentation preserves the classified failure. A catalog-capable interactive client refreshes the current Catalog for explicit reselection; it does not substitute a Provider/Model or resubmit the failed Turn. Other resolution and invocation failures remain ordinary reported failures and retain the user's selection for an explicit retry.
 
 ## Bundled WebSocket tool readability
 

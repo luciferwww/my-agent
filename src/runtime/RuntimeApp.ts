@@ -3,12 +3,11 @@ import type { AgentEvent, SteeringMessage } from '../core/runner/index.js';
 import {
   normalizeReasoningPreference,
   ReasoningPreferenceValidationError,
-  toModelInvocationError,
+  findModelInvocationError,
 } from '../core/model-invocation/index.js';
 import type {
   ChatContentBlock,
   ModelInvocationDiagnostics,
-  ModelInvocationError,
   ResolvedReasoningPolicy,
 } from '../core/model-invocation/index.js';
 import type {
@@ -26,6 +25,7 @@ import {
   ModelResolutionError,
   ModelResolver,
   normalizeModelReference,
+  readProviderModelCatalog,
 } from '../core/model-resolution/index.js';
 import { TurnInteractionManager } from './turn-interaction/index.js';
 import type {
@@ -98,38 +98,6 @@ import type {
 
 const log = Logger.get('RuntimeApp');
 const interactionLog = Logger.get('TurnInteractionManager');
-
-function findModelInvocationError(error: unknown): ModelInvocationError | undefined {
-  const seen = new Set<Error>();
-  let current = asSameRealmError(error);
-  for (let depth = 0; depth < 8 && current; depth += 1) {
-    const canonical = toModelInvocationError(current);
-    if (canonical) return canonical;
-    if (seen.has(current)) return undefined;
-    seen.add(current);
-    current = readOwnErrorCause(current);
-  }
-  return undefined;
-}
-
-function asSameRealmError(value: unknown): Error | undefined {
-  try {
-    return value instanceof Error ? value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function readOwnErrorCause(error: Error): Error | undefined {
-  try {
-    const descriptor = Object.getOwnPropertyDescriptor(error, 'cause');
-    return descriptor && 'value' in descriptor
-      ? asSameRealmError(descriptor.value)
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 interface ModelInvocationOperatorDiagnostics {
   readonly providerId: string;
@@ -410,12 +378,14 @@ export class RuntimeApp {
     return this.snapshotAccess.currentSnapshot().tools.definitions.map((tool) => tool.name);
   }
 
-  getModelCatalog(): ModelCatalogSnapshot {
+  async getModelCatalog(signal?: AbortSignal): Promise<ModelCatalogSnapshot> {
     const snapshot = this.snapshotAccess.currentSnapshot();
-    const providers = Object.freeze(snapshot.providers.map((provider) => Object.freeze({
+    const providers = Object.freeze(await Promise.all(snapshot.providers.map(async (provider) => {
+      const catalog = await readProviderModelCatalog(provider, signal);
+      return Object.freeze({
       providerId: provider.id,
       displayName: provider.displayName ?? provider.id,
-      models: Object.freeze(provider.models.map((model) => Object.freeze({
+      models: Object.freeze(catalog.models.map((model) => Object.freeze({
         modelId: model.modelId,
         displayName: model.displayName ?? model.modelId,
         ...(model.capabilities
@@ -451,6 +421,7 @@ export class RuntimeApp {
             }
           : {}),
       }))),
+      });
     })));
     const configured = snapshot.defaultModel;
     let defaultSelection: ModelCatalogSnapshot['defaultSelection'];
@@ -461,7 +432,7 @@ export class RuntimeApp {
         providerId: configured.providerId,
         modelId: configured.modelId,
       });
-      const provider = snapshot.providers.find((entry) => entry.id === reference.providerId);
+      const provider = providers.find((entry) => entry.providerId === reference.providerId);
       defaultSelection = provider?.models.some((model) => model.modelId === reference.modelId)
         ? Object.freeze({ state: 'available', reference })
         : Object.freeze({
@@ -1381,7 +1352,7 @@ export class RuntimeApp {
         toolPolicy,
       );
 
-      const resolvedModel = new ModelResolver(snapshot.providers).resolve({
+      const resolvedModel = await new ModelResolver(snapshot.providers).resolve({
         reference: params.modelReference ?? snapshot.defaultModel,
         referenceSource: params.modelReference === undefined ? 'config-default' : 'turn-explicit',
         request: {
@@ -1392,7 +1363,7 @@ export class RuntimeApp {
             : [],
         },
         policy: {},
-      });
+      }, controller.signal);
       const normalizedReasoning = normalizeReasoningPreference(params.reasoningPreference);
       const reasoningPolicy = params.reasoningPolicy ?? normalizedReasoning.policy;
       if (!supportsReasoningPolicy(reasoningPolicy, resolvedModel.facts.reasoning)) {

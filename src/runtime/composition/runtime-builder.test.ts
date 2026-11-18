@@ -87,10 +87,10 @@ function testProvider(id: string): ProviderProjectionEntry {
   return {
     id,
     protocol: 'test',
-    models: [{ modelId: 'test-model' }],
-    invocationPort: {} as never,
+    getModelCatalog: async () => ({ models: [{ modelId: 'test-model' }], resolveModel: () => ({ ok: false, category: 'model_rejected', message: 'unused' }),  }),
+
     resolveConnection: () => ({ ok: false, category: 'connection_missing', message: 'unused' }),
-    resolveModel: () => ({ ok: false, category: 'model_rejected', message: 'unused' }),
+
   };
 }
 
@@ -568,7 +568,10 @@ describe('Runtime Builder', () => {
   it('releases the agent home lock when bootstrap fails', async () => {
     const release = vi.fn().mockResolvedValue(undefined);
     vi.mocked(acquireAgentHomeLock).mockResolvedValueOnce({ release });
-    vi.mocked(bootstrapRuntime).mockRejectedValueOnce(new Error('bootstrap failed'));
+    vi.mocked(bootstrapRuntime).mockImplementationOnce(async (_options, _dependencies, cleanup) => {
+      cleanup.onCleanupCompleted?.(true);
+      throw new Error('bootstrap failed');
+    });
     const harness = createHarness();
 
     await expect(buildRuntimeHandle(harness.runtimeOptions, harness.createApplication))
@@ -605,7 +608,7 @@ describe('Runtime Builder', () => {
     expect(harness.events.some((event) => event.type === 'app_ready')).toBe(false);
     expect(harness.baseStop).toHaveBeenCalledTimes(1);
     const lock = await vi.mocked(acquireAgentHomeLock).mock.results[0]?.value;
-    expect(lock?.release).toHaveBeenCalledTimes(1);
+    expect(lock?.release).not.toHaveBeenCalled();
   });
 
   it('cleans up startup resources when application creation fails', async () => {
@@ -620,6 +623,58 @@ describe('Runtime Builder', () => {
 
     expect(harness.baseStop).toHaveBeenCalledTimes(1);
     expect(memoryClose).toHaveBeenCalledTimes(1);
+    expect(harness.sessionClose).toHaveBeenCalledTimes(1);
+    expect(harness.processShutdown).toHaveBeenCalledTimes(1);
+    const lock = await vi.mocked(acquireAgentHomeLock).mock.results[0]?.value;
+    expect(lock?.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains ownership when bootstrap cleanup cannot confirm closure', async () => {
+    const harness = createHarness();
+    const failure = new Error('bootstrap failed');
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    vi.mocked(bootstrapRuntime).mockImplementationOnce(async (_options, _dependencies, cleanup) => {
+      cleanup.onCleanupCompleted?.(false);
+      throw failure;
+    });
+    try {
+      await expect(buildRuntimeHandle(harness.runtimeOptions, harness.createApplication)).rejects.toBe(failure);
+      const lock = await vi.mocked(acquireAgentHomeLock).mock.results[0]?.value;
+      expect(lock?.release).not.toHaveBeenCalled();
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining('lock retained until process exit'));
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
+  it('retains ownership when a settled cleanup rejects', async () => {
+    const harness = createHarness({ sessionClose: async () => { throw new Error('session close failed'); } });
+    const handle = await buildRuntimeHandle(harness.runtimeOptions, harness.createApplication);
+    const report = await handle.close();
+    const lock = await vi.mocked(acquireAgentHomeLock).mock.results[0]?.value;
+    expect(lock?.release).not.toHaveBeenCalled();
+    expect(report.failed).toContainEqual({ resource: 'sessionManager', message: 'session close failed' });
+    expect(report.residuals).toContainEqual(expect.objectContaining({ phase: 'agent-home-lock' }));
+    expect(report.completed).not.toContain('agentHomeLock');
+  });
+
+  it('does not release ownership if application shutdown unexpectedly throws', async () => {
+    const harness = createHarness();
+    const failure = new Error('shutdown failed');
+    harness.close.mockRejectedValueOnce(failure);
+    const handle = await buildRuntimeHandle(harness.runtimeOptions, harness.createApplication);
+    await expect(handle.close()).rejects.toBe(failure);
+    const lock = await vi.mocked(acquireAgentHomeLock).mock.results[0]?.value;
+    expect(lock?.release).not.toHaveBeenCalled();
+  });
+
+  it('validates deadline options before acquiring Home ownership', async () => {
+    const harness = createHarness();
+    await expect(buildRuntimeHandle({
+      ...harness.runtimeOptions,
+      deadlinePolicy: { shutdownOverallMs: 0 },
+    }, harness.createApplication)).rejects.toThrow('shutdownOverallMs');
+    expect(acquireAgentHomeLock).not.toHaveBeenCalled();
   });
 
   it('shares one close operation across callers', async () => {
@@ -664,9 +719,12 @@ describe('Runtime Builder', () => {
     expect(report.residuals).toEqual(expect.arrayContaining([
       expect.objectContaining({ owner: 'resource', phase: 'memory-close' }),
       expect.objectContaining({ owner: 'resource', phase: 'logger-close' }),
+      expect.objectContaining({ owner: 'resource', phase: 'agent-home-lock' }),
     ]));
     expect(Object.isFrozen(report)).toBe(true);
     expect(Object.isFrozen(report.residuals)).toBe(true);
+    const lock = await vi.mocked(acquireAgentHomeLock).mock.results[0]?.value;
+    expect(lock?.release).not.toHaveBeenCalled();
   });
 
   it('returns a frozen residual report when Logger close never settles', async () => {
@@ -685,13 +743,15 @@ describe('Runtime Builder', () => {
     expect(deadlineDriver.pendingCount).toBeGreaterThan(0);
     deadlineDriver.advanceBy(60_000);
     const report = await close;
+    loggerClose.mockRestore();
 
     expect(report.outcome).toBe('deadline-exhausted');
-    expect(report.residuals).toEqual([
+    expect(report.residuals).toHaveLength(2);
+    expect(report.residuals).toEqual(expect.arrayContaining([
       expect.objectContaining({ owner: 'resource', phase: 'logger-close' }),
-    ]);
+      expect.objectContaining({ owner: 'resource', phase: 'agent-home-lock' }),
+    ]));
     expect(Object.isFrozen(report)).toBe(true);
-    loggerClose.mockRestore();
   });
 
   it('fans out turn events through the pinned Channel projection', async () => {

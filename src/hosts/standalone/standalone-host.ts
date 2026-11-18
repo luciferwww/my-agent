@@ -96,20 +96,6 @@ export function parseStandaloneHostArguments(
   });
 }
 
-export function validateStandaloneHostComposition(
-  snapshot: AgentConfigSnapshot,
-  cliEnabled: boolean,
-): void {
-  if (
-    cliEnabled
-    && snapshot.application.logger.console?.enabled !== false
-  ) {
-    throw new Error(
-      'HOST_OUTPUT_CONFLICT: CLI Channel and Console Logger cannot be enabled together.',
-    );
-  }
-}
-
 export function createStandaloneHostUnits(
   cliEnabled: boolean,
   cliConfig: CliChannelConfig = CLI_CHANNEL_CONFIG,
@@ -156,7 +142,6 @@ export async function runStandaloneHost(
       environment: env,
     });
   }
-  validateStandaloneHostComposition(snapshot, parsedArguments.cli);
 
   const hostUnits = createStandaloneHostUnits(parsedArguments.cli, {
     ...CLI_CHANNEL_CONFIG,
@@ -165,6 +150,7 @@ export async function runStandaloneHost(
   });
   const runtime = await (options.createRuntime ?? RuntimeApp.create)({
     agentHome: pathContext.agentHome,
+    consoleLogging: !parsedArguments.cli,
     startupContext: {
       installDir: pathContext.installDir,
       configuration: snapshot,

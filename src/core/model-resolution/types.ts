@@ -62,6 +62,7 @@ export interface ProviderModelFacts {
 }
 
 export interface ProviderModelDescriptor {
+  readonly invocationPort: ModelInvocationPort;
   readonly identity: CanonicalModelIdentity;
   readonly protocol: string;
   readonly connection: ProviderConnection;
@@ -100,11 +101,13 @@ export interface ProviderCatalogModel {
 export interface ProviderProjectionEntry {
   readonly id: string;
   readonly displayName?: string;
-  /** Catalog and resolveModel() must project the same immutable Provider-instance model snapshot. */
-  readonly models: readonly ProviderCatalogModel[];
   readonly protocol: string;
-  readonly invocationPort: ModelInvocationPort;
+  getModelCatalog(signal?: AbortSignal): Promise<ProviderModelSnapshot>;
   resolveConnection(): ProviderConnectionResult;
+}
+
+export interface ProviderModelSnapshot {
+  readonly models: readonly ProviderCatalogModel[];
   resolveModel(modelId: string, connection: ProviderConnection): ProviderModelResult;
 }
 

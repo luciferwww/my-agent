@@ -46,15 +46,15 @@ function testUnit(chat: ModelInvocationPort['chat'], stop: RuntimeUnitInstance['
 
 function publishProvider(coordinator: CompositionCoordinator, chat: ModelInvocationPort['chat'], generation = 1) {
   const provider: ProviderProjectionEntry = {
-    id: 'relay', protocol: 'test', models: [{ modelId: 'one' }],
-    invocationPort: { chat, chatStream: () => { throw new Error('Unexpected stream.'); } },
-    resolveConnection: () => ({ ok: true, connection: { endpointId: 'loaded-connection' } }),
-    resolveModel: (modelId, connection) => ({
-      ok: true, descriptor: {
+    id: 'relay', protocol: 'test', getModelCatalog: async () => ({ models: [{ modelId: 'one' }], resolveModel: (modelId, connection) => ({
+      ok: true, descriptor: { invocationPort: { chat, chatStream: () => { throw new Error('Unexpected stream.'); } },
         identity: { providerId: 'relay', modelId }, protocol: 'test', connection,
         facts: { effectiveContextLimit: 4096 },
       },
-    }),
+    }),  }),
+
+    resolveConnection: () => ({ ok: true, connection: { endpointId: 'loaded-connection' } }),
+
   };
   coordinator.commitPublish(finalizeRegistrySnapshot({
     candidate: { providers: [provider], units: [], diagnostics: [] },
@@ -311,7 +311,7 @@ describe('ModelTestRunner', () => {
     const { runner } = fixture({ snapshotAccess: coordinator.createSnapshotAccess() });
     const first = runner.execute(loaded);
     const second = runner.execute({ ...loaded, requestId: 'second-test' });
-    expect(chat).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(chat).toHaveBeenCalledTimes(2));
     expect(coordinator.pinCount(1)).toBe(2);
     const closing = runner.shutdown(new RuntimeDeadlineBudget(createSystemRuntimeDeadlineDriver(), DEFAULT_RUNTIME_DEADLINE_POLICY));
     expect(signals.every(signal => signal.aborted)).toBe(true);

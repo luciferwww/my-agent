@@ -11,6 +11,7 @@ import {
   normalizeReasoningCapabilities,
   ReasoningCapabilitiesValidationError,
 } from './reasoning-capabilities.js';
+import { readProviderModelCatalog } from './provider-catalog.js';
 
 const PROVIDER_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -39,7 +40,7 @@ export class ModelResolver {
     this.providers = entries;
   }
 
-  resolve(input: ModelResolutionInput): ResolvedModel {
+  async resolve(input: ModelResolutionInput, signal?: AbortSignal): Promise<ResolvedModel> {
     const reference = normalizeModelReference(input.reference);
     const provider = this.providers.get(reference.providerId);
     if (!provider) {
@@ -49,7 +50,8 @@ export class ModelResolver {
       );
     }
 
-    if (!provider.models.some((model) => model.modelId === reference.modelId)) {
+    const catalog = await readProviderModelCatalog(provider, signal);
+    if (!catalog.models.some((model) => model.modelId === reference.modelId)) {
       throw new ModelResolutionError(
         'model_rejected',
         `Model is not in the Provider Catalog for Provider "${reference.providerId}".`,
@@ -61,12 +63,16 @@ export class ModelResolver {
       throw new ModelResolutionError(connectionResult.category, connectionResult.message);
     }
 
-    const modelResult = provider.resolveModel(reference.modelId, connectionResult.connection);
+    const modelResult = catalog.resolveModel(reference.modelId, connectionResult.connection);
     if (!modelResult.ok) {
       throw new ModelResolutionError(modelResult.category, modelResult.message);
     }
 
     const { descriptor } = modelResult;
+    if (typeof descriptor.invocationPort?.chat !== 'function'
+      || typeof descriptor.invocationPort?.chatStream !== 'function') {
+      throw new ModelResolutionError('protocol_incompatible', 'Provider model has no valid invocation Port.');
+    }
     this.assertBindingConsistency(
       reference,
       provider,
@@ -115,7 +121,7 @@ export class ModelResolver {
       ...(descriptor.connection.deploymentId
         ? { deploymentId: descriptor.connection.deploymentId }
         : {}),
-      invocationPort: provider.invocationPort,
+      invocationPort: descriptor.invocationPort,
       invocationDefaults,
       facts: Object.freeze({
         effectiveContextLimit: facts.effectiveContextLimit,

@@ -101,7 +101,7 @@ export async function loadProductionSources(repositoryRoot: string): Promise<Sou
   const sources = await Promise.all([
     loadTypeScriptSources(
       join(repositoryRoot, 'src'),
-      ['src/architecture-fitness/', 'src/test-setup.ts'],
+      ['src/architecture-fitness/', 'src/test-fixtures/', 'src/test-setup.ts'],
       'src',
     ),
     loadTypeScriptSources(join(repositoryRoot, 'extensions'), [], 'extensions'),

@@ -675,11 +675,10 @@ remain live and can change or disappear; no whole-package snapshot is promised.
   "logger": {
     "minLevel": "info",
     "console": {
-      "enabled": true
+      "minLevel": "warn"
     },
     "file": {
-      "enabled": false,
-      "minLevel": "warn"
+      "minLevel": "info"
     }
   }
 }
@@ -688,20 +687,25 @@ remain live and can change or disappear; no whole-package snapshot is promised.
 Allowed levels are `debug`, `info`, `warn`, and `error`. Defaults:
 
 - global level: `info`
-- Console Logger: enabled
-- File Logger: disabled
+- File Logger: always enabled under `<agentHome>/logs`
+- Console Logger: selected by the Host, disabled for `--cli`, enabled otherwise
+- adapter-local levels: follow the global level unless explicitly set
 
-The CLI owns terminal output, so disable Console Logger when using `--cli`:
+The global threshold applies before either adapter's threshold. The minimal
+configuration is `{ "logger": { "minLevel": "info" } }`; omitting `logger` uses
+the same default level. Neither output has an `enabled` configuration field.
+Use the same document for CLI and service startup.
 
-```json
-{
-  "logger": {
-    "console": {
-      "enabled": false
-    }
-  }
-}
-```
+Files use UTC names such as `app.2026-11-18.log`. Startup and the next write after
+a UTC date advance remove recognized regular log files older than the current
+date and six preceding dates. No size cap or background cleanup timer is
+provided; idle processes clean expired files on the next write.
+
+An unusable current file prevents startup. Later write/queue-loss failures
+produce bounded emergency stderr diagnostics even in CLI mode, but do not stop
+the Agent. These errors are not sent back through the failing Logger. Data loss
+is also reported when Logger closes. Cleanup failure is reported without
+preventing otherwise usable logging.
 
 ## 7. Extensions
 
@@ -797,6 +801,16 @@ Keep it on loopback or place it behind an authenticated operational boundary.
 The Extension discovers models and their supported Responses or Chat
 Completions endpoint from `<baseURL>/v1/models`.
 
+If discovery is unavailable, the Provider still registers with no models and
+logs a warning containing the endpoint and cause. A later catalog query can
+recover without restarting or toggling the Extension. Successful discovery is
+cached for 60 seconds; failed discovery clears the list and becomes eligible
+for another query-driven attempt after 5 seconds. There is no background retry.
+CLI and WebSocket check their own 60-second presentation interval when showing
+models, so these independent intervals can delay visible changes beyond
+60 seconds. A structured missing-model invocation error triggers refresh but
+does not retry the invocation or select another model automatically.
+
 | Field | Default |
 |---|---|
 | `baseURL` | `http://127.0.0.1:5000` |
@@ -841,6 +855,24 @@ Global Agent execution settings use only module defaults followed by the
 
 ## 9. Common failures
 
+### Agent Home is already in use
+
+One cooperating Runtime may own a local Agent Home at a time. The
+`.my-agent.pid` file stays present after exit and records the last owner;
+file existence or a live process with that PID alone does not block startup.
+An OS lock held by another instance does. Inspect the reported process before
+stopping it; never delete or replace a live lock file to force entry.
+
+Normal completed shutdown releases ownership. If cleanup fails or times out,
+Runtime reports that the lock is retained until process exit. An embedding
+process must exit before retrying that Home; a later cleanup completion does
+not automatically release retained ownership.
+
+Stop all instances running the old PID-probe implementation once before
+upgrading. Mixed old/new binaries are not coordinated. Windows is validated;
+Linux/macOS actual execution remains a release gate. Network Homes are not
+supported by this ownership contract.
+
 ### Runtime starts but no model is available
 
 Check that:
@@ -869,7 +901,9 @@ Thinking.
 
 ### CLI startup rejects the logger configuration
 
-Disable `logger.console.enabled` when running with `--cli`.
+Logger supports `minLevel` and optional `console.minLevel` / `file.minLevel`.
+Remove unrecognized fields at the path reported by validation. Console output
+is selected automatically by startup mode; no output switch is needed.
 
 ### Startup reports an invalid field path
 

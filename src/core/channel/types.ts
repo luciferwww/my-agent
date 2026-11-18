@@ -168,7 +168,7 @@ export interface ModelCatalogSnapshot {
 }
 
 export interface ModelCatalogQuery {
-  getSnapshot(): ModelCatalogSnapshot;
+  getSnapshot(signal?: AbortSignal): Promise<ModelCatalogSnapshot>;
 }
 
 export interface TurnAbortCapability {

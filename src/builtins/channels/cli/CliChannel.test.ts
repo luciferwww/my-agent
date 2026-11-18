@@ -312,7 +312,7 @@ describe('CliChannel model commands', () => {
       settings: { execute: async () => { throw new Error('Unexpected Settings action.'); } },
       approvals: { getPending: () => [] },
       modelCatalog: {
-        getSnapshot: () => ({
+        getSnapshot: async () => ({
           generation: 7,
           defaultSelection,
           providers: [{
@@ -515,16 +515,60 @@ describe('CliChannel model commands', () => {
     }
   });
 
-  it('rechecks a stale override before ordinary input', async () => {
-    let current = catalogCapabilities().modelCatalog.getSnapshot();
+  it('reuses presentation within 60 seconds and refreshes immediately after a missing-model event', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(0);
+    try {
+      const { channel } = makeChannel();
+      const capabilities = catalogCapabilities();
+      const reads = vi.spyOn(capabilities.modelCatalog, 'getSnapshot');
+      channel.bindRuntimeCapabilities(capabilities);
+      const commands = channel as unknown as { handleModelCommand(input: string): Promise<boolean> };
+      await commands.handleModelCommand('/models');
+      now.mockReturnValue(59_999);
+      await commands.handleModelCommand('/models');
+      expect(reads).toHaveBeenCalledTimes(1);
+      now.mockReturnValue(60_000);
+      await commands.handleModelCommand('/models');
+      expect(reads).toHaveBeenCalledTimes(2);
+      await channel.send({
+        type: 'error', sessionId: CLI_SESSION_ID, requestId: 'request', turnId: 'turn',
+        error: new Error('gone'), category: 'model_not_found',
+      });
+      expect(reads).toHaveBeenCalledTimes(3);
+    } finally { now.mockRestore(); }
+  });
+
+  it('recovers after a synchronous catalog failure once the presentation interval expires', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(0);
     const capabilities = catalogCapabilities();
-    capabilities.modelCatalog.getSnapshot = () => current;
+    const reads = vi.spyOn(capabilities.modelCatalog, 'getSnapshot')
+      .mockImplementationOnce(() => { throw new Error('Runtime not ready'); });
+    const fixture = await startInteractive(undefined, capabilities);
+    try {
+      fixture.input.write('/models\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('Runtime Model Catalog query failed.'));
+      now.mockReturnValue(60_000);
+      fixture.input.write('/models\n');
+      await vi.waitFor(() => expect(fixture.captured()).toContain('Relay <Local> (relay)'));
+      expect(reads).toHaveBeenCalledTimes(2);
+    } finally {
+      now.mockRestore();
+      await fixture.close();
+    }
+  });
+
+  it('rechecks a stale override before ordinary input', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(0);
+    let current = (await catalogCapabilities().modelCatalog.getSnapshot());
+    const capabilities = catalogCapabilities();
+    capabilities.modelCatalog.getSnapshot = async () => current;
     const fixture = await startInteractive(undefined, capabilities);
     try {
       fixture.input.write('/model relay "model-b"\n');
       await vi.waitFor(() => expect(fixture.captured()).toContain('override set to relay/model-b'));
 
       current = { ...current, generation: 8, providers: [] };
+      now.mockReturnValue(60_000);
       fixture.input.write('must not dispatch\n');
 
       await vi.waitFor(() => expect(fixture.captured()).toContain(
@@ -532,6 +576,7 @@ describe('CliChannel model commands', () => {
       ));
       expect(fixture.handler).not.toHaveBeenCalled();
     } finally {
+      now.mockRestore();
       await fixture.close();
     }
   });
@@ -813,9 +858,10 @@ describe('CliChannel model commands', () => {
   });
 
   it('reconciles stale reasoning selections before dispatch', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(0);
     const capabilities = catalogCapabilities();
-    let snapshot = capabilities.modelCatalog.getSnapshot();
-    capabilities.modelCatalog.getSnapshot = () => snapshot;
+    let snapshot = (await capabilities.modelCatalog.getSnapshot());
+    capabilities.modelCatalog.getSnapshot = async () => snapshot;
     const fixture = await startInteractive(undefined, capabilities);
     try {
       fixture.input.write('/thinking on\n');
@@ -834,6 +880,7 @@ describe('CliChannel model commands', () => {
           })),
         })),
       };
+      now.mockReturnValue(60_000);
       fixture.input.write('after catalog change\n');
 
       await vi.waitFor(() => expect(fixture.handler).toHaveBeenCalledWith({
@@ -843,6 +890,7 @@ describe('CliChannel model commands', () => {
       expect(fixture.captured()).toContain('thinking reset from on to default');
       expect(fixture.captured()).toContain('effort reset from high to default');
     } finally {
+      now.mockRestore();
       await fixture.close();
     }
   });
@@ -1456,7 +1504,7 @@ describe('CliChannel Ctrl+C / abort handling', () => {
         settings: { execute: async () => { throw new Error('Unexpected Settings action.'); } },
         approvals: { getPending: () => [] },
         modelCatalog: {
-          getSnapshot: () => ({
+          getSnapshot: async () => ({
             generation: 1,
             defaultSelection: { state: 'unset' },
             providers: [],

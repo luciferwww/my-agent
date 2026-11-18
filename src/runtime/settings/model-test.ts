@@ -172,9 +172,9 @@ export class ModelTestRunner {
         pin = this.options.snapshotAccess.captureRootGeneration();
         resolver = new ModelResolver(pin.snapshot.providers);
       }
-      const resolved = resolver.resolve({
+      const resolved = await resolver.resolve({
         reference: test.reference, request: { tools: false, mediaKinds: [] }, policy: {},
-      });
+      }, test.controller.signal);
       this.assertTestActive(test);
       test.phase = 'settings-test-invoking';
       const response = await resolved.invocationPort.chat({

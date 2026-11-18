@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { providerPort } from '../../../test-fixtures/provider.js';
 import type {
   ModelInvocationPort,
   ModelInvocationRequest,
@@ -53,7 +54,7 @@ describe('BuiltinLlmProvider', () => {
     first.endpoint = 'must-not-replace-the-captured-path';
 
     await Promise.all(['responses', 'versioned', 'chat', 'messages', 'legacy'].map((model) =>
-      provider.entry.invocationPort.chat({ model, messages: [], sessionId: model })));
+      providerPort(provider.entry).chat({ model, messages: [], sessionId: model })));
 
     expect(fetchImpl.mock.calls.map((call) => call[0])).toEqual([
       'https://example.test/api/responses',
@@ -95,16 +96,18 @@ describe('BuiltinLlmProvider', () => {
       id: 'builtin',
       displayName: 'Built-in LLM',
       protocol: BUILTIN_MODEL_ROUTER_PROTOCOL,
-      models: [{ modelId: 'alpha', displayName: 'Alpha' }, { modelId: 'beta' }],
     });
+    expect((await provider.entry.getModelCatalog()).models).toEqual([
+      { modelId: 'alpha', displayName: 'Alpha' }, { modelId: 'beta' },
+    ]);
     expect(Object.isFrozen(provider.entry)).toBe(true);
-    expect(Object.isFrozen(provider.entry.models)).toBe(true);
+    expect(Object.isFrozen((await provider.entry.getModelCatalog()).models)).toBe(true);
     expect(created).toEqual(['openai-responses', 'anthropic-messages']);
-    await provider.entry.invocationPort.chat(request);
-    await provider.entry.invocationPort.chat({ ...request, model: 'beta' });
+    await providerPort(provider.entry).chat(request);
+    await providerPort(provider.entry).chat({ ...request, model: 'beta' });
     expect(calls).toEqual(['openai-responses:alpha', 'anthropic-messages:beta']);
-    await expect(provider.entry.invocationPort.chat({ ...request, model: 'Alpha' }))
-      .rejects.toThrow('no registration');
+    await expect(providerPort(provider.entry).chat({ ...request, model: 'Alpha' }))
+      .rejects.toThrow('outside its Catalog');
 
     const connection = provider.entry.resolveConnection();
     expect(connection).toEqual({
@@ -112,7 +115,7 @@ describe('BuiltinLlmProvider', () => {
       connection: { endpointId: 'https://example.test/v1' },
     });
     if (!connection.ok) throw new Error('Expected connection.');
-    expect(provider.entry.resolveModel('alpha', connection.connection)).toEqual({
+    expect((await provider.entry.getModelCatalog()).resolveModel('alpha', connection.connection)).toMatchObject({
       ok: true,
       descriptor: {
         identity: { providerId: 'builtin', modelId: 'alpha' },
@@ -127,7 +130,7 @@ describe('BuiltinLlmProvider', () => {
         invocationDefaults: { outputTokenLimit: 16_000 },
       },
     });
-    expect(provider.entry.resolveModel('beta', connection.connection)).toEqual({
+    expect((await provider.entry.getModelCatalog()).resolveModel('beta', connection.connection)).toMatchObject({
       ok: true,
       descriptor: {
         identity: { providerId: 'builtin', modelId: 'beta' },
@@ -136,20 +139,20 @@ describe('BuiltinLlmProvider', () => {
         facts: { effectiveContextLimit: 131_072 },
       },
     });
-    expect(provider.entry.resolveModel('missing', connection.connection)).toMatchObject({
+    expect((await provider.entry.getModelCatalog()).resolveModel('missing', connection.connection)).toMatchObject({
       ok: false,
       category: 'model_rejected',
     });
   });
 
-  it('creates no Clients for an empty model list', () => {
+  it('creates no Clients for an empty model list', async () => {
     const createClient = vi.fn();
     const provider = new BuiltinLlmProvider({
       baseURL: 'https://example.test/v1',
       models: [],
     }, { createClient });
     expect(createClient).not.toHaveBeenCalled();
-    expect(provider.entry.models).toEqual([]);
+    expect((await provider.entry.getModelCatalog()).models).toEqual([]);
   });
 
   it('creates one Client per referenced Protocol', () => {
@@ -164,7 +167,7 @@ describe('BuiltinLlmProvider', () => {
     expect(createClient).toHaveBeenCalledTimes(1);
   });
 
-  it('projects one captured empty reasoning capability snapshot to Catalog and Facts', () => {
+  it('projects one captured empty reasoning capability snapshot to Catalog and Facts', async () => {
     const thinking: Array<'on' | 'off'> = [];
     const efforts: Array<'high' | 'low'> = [];
     const provider = new BuiltinLlmProvider({
@@ -181,7 +184,7 @@ describe('BuiltinLlmProvider', () => {
     thinking.push('on');
     efforts.push('high');
 
-    const catalogReasoning = provider.entry.models[0]?.capabilities?.reasoning;
+    const catalogReasoning = (await provider.entry.getModelCatalog()).models[0]?.capabilities?.reasoning;
     expect(catalogReasoning).toEqual({
       thinking: [],
       efforts: [],
@@ -192,7 +195,7 @@ describe('BuiltinLlmProvider', () => {
 
     const connection = provider.entry.resolveConnection();
     if (!connection.ok) throw new Error('Expected connection.');
-    const model = provider.entry.resolveModel('one', connection.connection);
+    const model = (await provider.entry.getModelCatalog()).resolveModel('one', connection.connection);
     if (!model.ok) throw new Error('Expected model.');
     expect(model.descriptor.facts.reasoning).toBe(catalogReasoning);
   });
@@ -229,9 +232,9 @@ describe('BuiltinLlmProvider', () => {
       }),
     });
 
-    expect(provider.entry.models[0]?.capabilities?.reasoning)
+    expect((await provider.entry.getModelCatalog()).models[0]?.capabilities?.reasoning)
       .toEqual({ efforts: ['high'] });
-    await provider.entry.invocationPort.chat({
+    await providerPort(provider.entry).chat({
       ...request,
       model: 'one',
       reasoning: { effort: 'high' },
@@ -262,12 +265,12 @@ describe('BuiltinLlmProvider', () => {
       ],
     }, { fetch: fetchImpl });
 
-    await provider.entry.invocationPort.chat({
+    await providerPort(provider.entry).chat({
       model: 'responses',
       messages: [],
       reasoning: { thinking: 'on', effort: 'high' },
     });
-    await provider.entry.invocationPort.chat({
+    await providerPort(provider.entry).chat({
       model: 'responses',
       messages: [],
       reasoning: { effort: 'high' },
@@ -316,12 +319,12 @@ describe('BuiltinLlmProvider', () => {
       ],
     }, { fetch: fetchImpl });
 
-    await provider.entry.invocationPort.chat({
+    await providerPort(provider.entry).chat({
       ...request,
       model: 'responses',
       reasoning: { thinking: 'off', effort: 'default' },
     });
-    await provider.entry.invocationPort.chat({
+    await providerPort(provider.entry).chat({
       ...request,
       model: 'chat',
       reasoning: { thinking: 'off', effort: 'default' },
@@ -366,11 +369,11 @@ describe('BuiltinLlmProvider', () => {
       }),
     });
 
-    await provider.entry.invocationPort.chat({
+    await providerPort(provider.entry).chat({
       model: 'one',
       messages: [],
     });
-    await provider.entry.invocationPort.chat({
+    await providerPort(provider.entry).chat({
       model: 'one',
       messages: [],
       outputTokenLimit: 32_768,

@@ -511,7 +511,7 @@ describe('WebSocketChannel', () => {
       const manager = new SettingsManager({
         agentHome: directory, document, environment: { WIRE_KEY: 'fake-wire-secret' },
         startupMemoryEnabled: true,
-        getModelCatalog: () => ({ generation, defaultSelection: { state: 'unset' }, providers: [] }),
+        getModelCatalog: async () => ({ generation, defaultSelection: { state: 'unset' }, providers: [] }),
         createBuiltinProviderUnit: (config) => createBuiltinLlmProviderUnit(config, {
           createClient: () => ({ chat, chatStream: () => { throw new Error('Unexpected stream.'); } }),
         }),
@@ -2600,7 +2600,7 @@ function capabilities(
   const { resolveSession, getHistory, ...chatSessions } = sessions;
   return {
     settings: { execute: async () => { throw new Error('Unexpected Settings action.'); } },
-    modelCatalog: { getSnapshot },
+    modelCatalog: { getSnapshot: async () => getSnapshot() },
     abort,
     chatSessions,
     sessionObservation: { resolveSession, getHistory },

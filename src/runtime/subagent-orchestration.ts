@@ -161,12 +161,12 @@ export function createSubagentDelegationPort(
         const reference = request.profile.model === 'inherit'
           ? parent.effectiveReference
           : request.profile.model;
-        const resolvedModel = new ModelResolver(parent.registrySnapshot.providers).resolve({
+        const resolvedModel = await new ModelResolver(parent.registrySnapshot.providers).resolve({
           reference,
           referenceSource: 'native',
           request: requirements,
           policy: {},
-        });
+        }, request.signal);
         throwIfAborted(request.signal);
 
         params.activeParents.set(childTurnId, {

@@ -1,8 +1,5 @@
 import type { ChannelContribution, ChannelRuntimeBinding } from '../../core/channel/index.js';
 import {
-  normalizeReasoningCapabilities,
-  ReasoningCapabilitiesValidationError,
-  type ProviderCatalogModel,
   type ProviderProjectionEntry,
   type ModelReference,
 } from '../../core/model-resolution/index.js';
@@ -247,100 +244,20 @@ function normalizeProvider(provider: ProviderProjectionEntry): ProviderProjectio
   if (typeof provider.resolveConnection !== 'function') {
     throw new RegistryBuildError(`Provider "${provider.id}" must provide resolveConnection().`);
   }
-  if (typeof provider.resolveModel !== 'function') {
-    throw new RegistryBuildError(`Provider "${provider.id}" must provide resolveModel().`);
+  if (typeof provider.getModelCatalog !== 'function') {
+    throw new RegistryBuildError(`Provider "${provider.id}" must provide getModelCatalog().`);
   }
-  if (!Array.isArray(provider.models)) {
-    throw new RegistryBuildError(`Provider "${provider.id}" must publish a model Catalog.`);
-  }
-  const modelIds = new Set<string>();
-  const models = provider.models.map((model) => {
-    if (!model || typeof model !== 'object') {
-      throw new RegistryBuildError(`Provider "${provider.id}" published an invalid model entry.`);
-    }
-    assertModelIdentity(model.modelId);
-    if (modelIds.has(model.modelId)) {
-      throw new RegistryBuildError(
-        `Provider "${provider.id}" published duplicate model ${formatModelIdForDiagnostic(model.modelId)}.`,
-      );
-    }
-    modelIds.add(model.modelId);
-    if (model.displayName !== undefined
-      && (typeof model.displayName !== 'string' || model.displayName.trim() === '')) {
-      throw new RegistryBuildError(
-        `Provider "${provider.id}" model ${formatModelIdForDiagnostic(model.modelId)} has an invalid display name.`,
-      );
-    }
-    const capabilities = normalizeProviderModelCapabilities(provider.id, model);
-    return Object.freeze({
-      modelId: model.modelId,
-      ...(model.displayName !== undefined ? { displayName: model.displayName } : {}),
-      ...(capabilities === undefined ? {} : { capabilities }),
-    });
-  });
   if (provider.displayName !== undefined
     && (typeof provider.displayName !== 'string' || provider.displayName.trim() === '')) {
     throw new RegistryBuildError(`Provider "${provider.id}" has an invalid display name.`);
   }
 
-  function normalizeProviderModelCapabilities(
-    providerId: string,
-    model: ProviderCatalogModel,
-  ): ProviderCatalogModel['capabilities'] | undefined {
-    const capabilities = model.capabilities;
-    if (capabilities === undefined) return undefined;
-    if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities)) {
-      throw new RegistryBuildError(
-        `Provider "${providerId}" model ${formatModelIdForDiagnostic(model.modelId)} has invalid capabilities.`,
-      );
-    }
-    if (capabilities.toolUse !== undefined && typeof capabilities.toolUse !== 'boolean') {
-      throw new RegistryBuildError(
-        `Provider "${providerId}" model ${formatModelIdForDiagnostic(model.modelId)} has an invalid Tool capability.`,
-      );
-    }
-    if (
-      capabilities.mediaKinds !== undefined
-      && (
-        !Array.isArray(capabilities.mediaKinds)
-        || capabilities.mediaKinds.some(
-          (kind) => typeof kind !== 'string' || kind.length === 0,
-        )
-      )
-    ) {
-      throw new RegistryBuildError(
-        `Provider "${providerId}" model ${formatModelIdForDiagnostic(model.modelId)} has invalid Media capabilities.`,
-      );
-    }
-
-    let reasoning = capabilities.reasoning;
-    try {
-      reasoning = reasoning === undefined
-        ? undefined
-        : normalizeReasoningCapabilities(reasoning);
-    } catch (error) {
-      if (!(error instanceof ReasoningCapabilitiesValidationError)) throw error;
-      throw new RegistryBuildError(
-        `Provider "${providerId}" model ${formatModelIdForDiagnostic(model.modelId)} has invalid reasoning capabilities.`,
-        { cause: error },
-      );
-    }
-    return Object.freeze({
-      ...(capabilities.toolUse === undefined ? {} : { toolUse: capabilities.toolUse }),
-      ...(capabilities.mediaKinds === undefined
-        ? {}
-        : { mediaKinds: Object.freeze([...capabilities.mediaKinds]) }),
-      ...(reasoning === undefined ? {} : { reasoning }),
-    });
-  }
   return Object.freeze({
     id: provider.id,
     ...(provider.displayName !== undefined ? { displayName: provider.displayName } : {}),
-    models: Object.freeze(models),
     protocol: provider.protocol,
-    invocationPort: provider.invocationPort,
+    getModelCatalog: (signal?: AbortSignal) => provider.getModelCatalog(signal),
     resolveConnection: provider.resolveConnection,
-    resolveModel: provider.resolveModel,
   });
 }
 
@@ -478,17 +395,6 @@ function assertIdentity(identity: string, kind: string): void {
   if (!CONTRIBUTION_ID.test(identity)) {
     throw new RegistryBuildError(`${kind} identity "${identity}" must match ${CONTRIBUTION_ID.source}.`);
   }
-}
-
-function assertModelIdentity(identity: string): void {
-  if (typeof identity !== 'string') {
-    throw new RegistryBuildError('Model identity must be a Provider-owned string.');
-  }
-}
-
-function formatModelIdForDiagnostic(identity: string): string {
-  const preview = identity.length > 200 ? `${identity.slice(0, 200)}…` : identity;
-  return JSON.stringify(preview);
 }
 
 function hookIdentity(hookName: HookName, hookId: string): string {

@@ -14,6 +14,19 @@ const request: ModelInvocationRequest = {
 };
 
 describe('Copilot Relay Chat Completions client', () => {
+  it('preserves exact missing-model codes from explicit stream errors', async () => {
+    const client = new CopilotRelayChatCompletionsClient({
+      baseURL: 'http://127.0.0.1:5000',
+      fetch: vi.fn(async () => chatResponse([
+        chunk({ error: { code: 'model_not_found', message: 'gone' } }),
+      ])) as typeof fetch,
+    });
+    const events = [];
+    for await (const event of client.chatStream(request)) events.push(event);
+    expect(events.at(-1)).toMatchObject({
+      type: 'error', error: { category: 'model_not_found', diagnostics: { providerErrorCode: 'model_not_found' } },
+    });
+  });
   it('maps effort, output limit, tools, text, usage, and auth', async () => {
     const fetchImpl = vi.fn(async () => chatResponse([
       chunk({

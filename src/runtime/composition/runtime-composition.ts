@@ -50,7 +50,7 @@ export interface RuntimeApplication {
   onSessionPermissionModeChanged(
     handler: (state: SessionPermissionState) => void,
   ): () => void;
-  getModelCatalog(): ModelCatalogSnapshot;
+  getModelCatalog(signal?: AbortSignal): Promise<ModelCatalogSnapshot>;
   abortTurn(sessionId: string): { aborted: boolean; dropped: number };
   getState(): RuntimeLifecycleState;
   getToolNames(): string[];

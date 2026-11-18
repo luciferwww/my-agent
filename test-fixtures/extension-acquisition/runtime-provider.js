@@ -15,14 +15,17 @@ export function createExtension() {
             api.registerProvider({
               id: 'fixture-provider',
               displayName: 'Fixture Provider',
-              models: [{ modelId: 'fixture-model', displayName: 'Fixture Model' }],
               protocol: 'fixture',
-              invocationPort: {},
+              async getModelCatalog() {
+                return {
+                  models: [{ modelId: 'fixture-model', displayName: 'Fixture Model' }],
+                  resolveModel() {
+                    return { ok: false, category: 'model_rejected', message: 'unused' };
+                  },
+                };
+              },
               resolveConnection() {
                 return { ok: false, category: 'connection_missing', message: 'unused' };
-              },
-              resolveModel() {
-                return { ok: false, category: 'model_rejected', message: 'unused' };
               },
             });
           },

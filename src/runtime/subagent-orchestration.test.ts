@@ -27,12 +27,9 @@ function provider(id: string): ProviderProjectionEntry {
   return {
     id,
     protocol: `${id}-protocol`,
-    models: [{ modelId: `${id}-model` }],
-    invocationPort: invocationPorts[id]!,
-    resolveConnection: () => ({ ok: true, connection: { endpointId: `${id}-endpoint` } }),
-    resolveModel: (modelId, connection) => ({
+    getModelCatalog: async () => ({ models: [{ modelId: `${id}-model` }], resolveModel: (modelId, connection) => ({
       ok: true,
-      descriptor: {
+      descriptor: { invocationPort: invocationPorts[id]!,
         identity: { providerId: id, modelId },
         protocol: `${id}-protocol`,
         connection,
@@ -41,7 +38,10 @@ function provider(id: string): ProviderProjectionEntry {
           maximumOutputTokens: 100,
         },
       },
-    }),
+    }),  }),
+
+    resolveConnection: () => ({ ok: true, connection: { endpointId: `${id}-endpoint` } }),
+
   };
 }
 

@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { AgentRunner as ProductionAgentRunner } from './AgentRunner.js';
 import { AgentExecutionFailure, ContextOverflowError } from './errors.js';
+import { ModelInvocationError } from '../model-invocation/index.js';
 import { SessionManager } from '../session/SessionManager.js';
 import type { SessionMessageInput } from '../session/SessionManager.js';
 import { loadTranscript } from '../session/transcript.js';
@@ -2118,6 +2119,20 @@ describe('AgentRunner', () => {
   // ── Error handling ──────────────────────────────────
 
   describe('error handling', () => {
+    it('projects missing-model errors through the execution wrapper without retrying', async () => {
+      const llmClient = createMockLLMClient([[
+        { type: 'error', error: new ModelInvocationError('model_not_found') },
+      ]]);
+      const calls = vi.spyOn(llmClient, 'chatStream');
+      const events: AgentEvent[] = [];
+      const runner = new AgentRunner({ llmClient, sessionManager, onEvent: e => events.push(e) });
+      await expect(runner.run({
+        sessionId: MAIN_SESSION_ID, message: 'Hi', model: 'test',
+        systemPrompt: '', turnId: 'missing-model-turn',
+      })).rejects.toThrow();
+      expect(events).toContainEqual(expect.objectContaining({ type: 'error', category: 'model_not_found' }));
+      expect(calls).toHaveBeenCalledTimes(1);
+    });
     it('CH-13 emits error event and throws after one Provider stream call', async () => {
       const llmClient = createMockLLMClient([
         [

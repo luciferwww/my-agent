@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from 'fs/promises';
+import { unusedInvocationPort } from '../test-fixtures/provider.js';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1020,11 +1021,11 @@ async function buildApp(
           },
           async chat() { throw new Error('Not used in tests'); },
         }) as never
-        : ({}) as never;
+        : unusedInvocationPort;
       return createTestProviderUnit({
         id: 'test',
         protocol: 'test',
-        models: [
+        getModelCatalog: async () => ({ models: [
           {
             modelId: 'test-model',
             ...(options.reasoning
@@ -1037,12 +1038,9 @@ async function buildApp(
               ? { capabilities: { reasoning: options.reasoning } }
               : {}),
           },
-        ],
-        invocationPort,
-        resolveConnection: () => ({ ok: true, connection: { endpointId: 'test' } }),
-        resolveModel: (modelId, connection) => ({
+        ], resolveModel: (modelId, connection) => ({
           ok: true,
-          descriptor: {
+          descriptor: { invocationPort: invocationPort,
             identity: { providerId: 'test', modelId },
             protocol: 'test',
             connection,
@@ -1056,7 +1054,10 @@ async function buildApp(
               ...(options.reasoning ? { reasoning: options.reasoning } : {}),
             },
           },
-        }),
+        }),  }),
+
+        resolveConnection: () => ({ ok: true, connection: { endpointId: 'test' } }),
+
       });
     },
     ...(options.useRealRunner

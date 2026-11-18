@@ -9,6 +9,7 @@ import type {
 import {
   ModelStreamCollector,
   projectContentForPresentation,
+  findModelInvocationError,
 } from '../model-invocation/index.js';
 import { AgentExecutionFailure } from './errors.js';
 import type { ResolvedModel } from '../model-resolution/index.js';
@@ -473,7 +474,12 @@ export class AgentRunner {
             reason: err.message,
           });
         }
-        this.emit(turnCtx, { type: 'error', error });
+        const invocationError = findModelInvocationError(error);
+        this.emit(turnCtx, {
+          type: 'error',
+          error,
+          ...(invocationError?.category === 'model_not_found' ? { category: 'model_not_found' } : {}),
+        });
         throw error;
       }
     }

@@ -3,6 +3,7 @@ import type {
   ProviderCatalogModel,
   ProviderProjectionEntry,
 } from '../../core/model-resolution/index.js';
+import { readProviderModelCatalog } from '../../core/model-resolution/index.js';
 import type { RuntimeContributionUnit } from '../../core/registry/index.js';
 import type { ApplicationToolPolicy, Tool } from '../../core/tools/types.js';
 import {
@@ -25,19 +26,19 @@ function tool(name: string): Tool {
 function provider(id: string): ProviderProjectionEntry {
   return {
     id,
-    models: [{ modelId: 'test-model' }],
+    getModelCatalog: async () => ({ models: [{ modelId: 'test-model' }], resolveModel: () => ({
+      ok: false,
+      category: 'model_rejected',
+      message: 'not used',
+    }),  }),
     protocol: 'test',
-    invocationPort: {} as never,
+
     resolveConnection: () => ({
       ok: false,
       category: 'connection_missing',
       message: 'not used',
     }),
-    resolveModel: () => ({
-      ok: false,
-      category: 'model_rejected',
-      message: 'not used',
-    }),
+
   };
 }
 
@@ -93,7 +94,7 @@ describe('Registry staging and finalization', () => {
     expect(Object.isFrozen(snapshot.providers)).toBe(true);
   });
 
-  it('validates, defensively copies, and deeply freezes Provider model Catalogs', () => {
+  it('defers discovery until reads, which validate and defensively freeze results', async () => {
     const mediaKinds = ['image'];
     const efforts: Array<'high' | 'low'> = ['high', 'low'];
     const sourceModel: ProviderCatalogModel = {
@@ -106,11 +107,18 @@ describe('Registry staging and finalization', () => {
       },
     };
     const sourceModels = [sourceModel];
-    const sourceProvider = { ...provider('primary'), models: sourceModels };
+    const sourceProvider: ProviderProjectionEntry = {
+      ...provider('primary'),
+      getModelCatalog: vi.fn(async () => ({
+        models: sourceModels,
+        resolveModel: () => ({ ok: false, category: 'model_rejected', message: 'unused' } as const),
+      })),
+    };
     const staged = stageRegistryUnit(unit('provider-unit', 'builtin', (api) => {
       api.registerProvider(sourceProvider);
     }));
-    const published = staged.providers[0]!;
+    expect(sourceProvider.getModelCatalog).not.toHaveBeenCalled();
+    const published = await readProviderModelCatalog(staged.providers[0]!);
 
     (sourceModel as { displayName: string }).displayName = 'Changed';
     sourceModels.push({ modelId: 'late-model', displayName: 'Late' });
@@ -135,48 +143,38 @@ describe('Registry staging and finalization', () => {
     expect(Object.isFrozen(published.models[0]?.capabilities?.mediaKinds)).toBe(true);
     expect(Object.isFrozen(published.models[0]?.capabilities?.reasoning)).toBe(true);
     expect(Object.isFrozen(published.models[0]?.capabilities?.reasoning?.efforts)).toBe(true);
-    expect(published.invocationPort).toBe(sourceProvider.invocationPort);
+    expect((await readProviderModelCatalog(staged.providers[0]!)).models).toHaveLength(2);
   });
 
-  it('rejects structurally invalid reasoning capabilities during staging', () => {
-    expect(() => stageRegistryUnit(unit('invalid-reasoning', 'builtin', (api) => {
-      api.registerProvider({
-        ...provider('invalid-reasoning-provider'),
-        models: [{
-          modelId: 'invalid',
-          capabilities: {
-            reasoning: { efforts: ['default'] as never },
-          },
-        }],
-      });
-    }))).toThrow('invalid reasoning capabilities');
-  });
-
-  it('preserves arbitrary Provider-owned Model ID strings', () => {
+  it('preserves arbitrary Provider-owned Model ID strings on catalog reads', async () => {
     const modelIds = ['', ' ', ' model/vendor:v1?x=1\n\u0000 ', 'x'.repeat(512)];
     const staged = stageRegistryUnit(unit('opaque-models', 'builtin', (api) => {
       api.registerProvider({
         ...provider('opaque-provider'),
-        models: modelIds.map((modelId) => ({ modelId })),
+        getModelCatalog: async () => ({
+          models: modelIds.map((modelId) => ({ modelId })),
+          resolveModel: () => ({ ok: false, category: 'model_rejected', message: 'unused' }),
+        }),
       });
     }));
 
-    expect(staged.providers[0]?.models.map((model) => model.modelId)).toEqual(modelIds);
+    expect((await readProviderModelCatalog(staged.providers[0]!)).models.map((model) => model.modelId)).toEqual(modelIds);
   });
 
-  it('rejects missing, duplicate, and non-string Provider model Catalog entries', () => {
-    expect(() => stageRegistryUnit(unit('missing', 'builtin', (api) => {
-      api.registerProvider({ ...provider('missing-provider'), models: undefined as never });
-    }))).toThrow('must publish a model Catalog');
-    expect(() => stageRegistryUnit(unit('duplicate', 'builtin', (api) => {
-      api.registerProvider({
-        ...provider('duplicate-provider'),
-        models: [{ modelId: 'same' }, { modelId: 'same' }],
+  it('rejects missing, duplicate, non-string and invalid capability entries at read time', async () => {
+    for (const models of [
+      undefined,
+      [{ modelId: 'same' }, { modelId: 'same' }],
+      [{ modelId: 42 }],
+      [{ modelId: 'invalid', capabilities: { reasoning: { efforts: ['default'] } } }],
+    ]) {
+      const source = provider('invalid');
+      source.getModelCatalog = async () => ({
+        models: models as never,
+        resolveModel: () => ({ ok: false, category: 'model_rejected', message: 'unused' }),
       });
-    }))).toThrow('published duplicate model');
-    expect(() => stageRegistryUnit(unit('invalid', 'builtin', (api) => {
-      api.registerProvider({ ...provider('invalid-provider'), models: [{ modelId: 42 as never }] });
-    }))).toThrow('Model identity');
+      await expect(readProviderModelCatalog(source)).rejects.toThrow();
+    }
   });
 
   it('does not widen application-owned Unit identity rules for opaque Model IDs', () => {

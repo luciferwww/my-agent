@@ -317,6 +317,9 @@ export class CliChannel implements Channel {
   private lastCtrlCAt = 0;
   /** Runtime Composition 在 start 前注入；未绑定时模型查询和首次 Session 创建不可用。 */
   private runtimeCapabilities?: ChannelRuntimeCapabilities;
+  private catalog?: ModelCatalogSnapshot;
+  private catalogAttemptAt = Number.NEGATIVE_INFINITY;
+  private catalogPending?: Promise<ModelCatalogSnapshot | undefined>;
   private selectedModelOverride?: ModelReference;
   private thinkingSelection: ThinkingSelection = 'default';
   private effortSelection: ThinkingEffort = 'default';
@@ -340,7 +343,7 @@ export class CliChannel implements Channel {
 
   // ── Channel.send 实现 ───────────────────────────────────────────────
 
-  send(event: AgentEvent, routing?: ChannelEventRouting): void {
+  async send(event: AgentEvent, routing?: ChannelEventRouting): Promise<void> {
     switch (event.type) {
       case 'run_start':
         if (routing) break;
@@ -429,6 +432,10 @@ export class CliChannel implements Channel {
         break;
 
       case 'error':
+        if (event.category === 'model_not_found'
+          || event.category === 'provider_unregistered' || event.category === 'model_rejected') {
+          await this.getModelCatalog(true);
+        }
         // 不在 send 输出 error：runner 触发 error event 后会立刻 throw，
         // 由 start() 的 try/catch 统一以 [error] 输出，避免双行重复。
         // 其他 channel（如 WebSocketChannel）可能选择推送 error event 给 client。
@@ -584,7 +591,7 @@ export class CliChannel implements Channel {
           if (await this.handleSessionCommand(line)) continue;
           if (await this.handlePermissionCommand(line)) continue;
           if (await this.handleModelCommand(line)) continue;
-          const snapshot = this.getModelCatalog();
+          const snapshot = await this.getModelCatalog();
           if (this.selectedModelOverride) {
             if (!snapshot || !hasCatalogModel(snapshot, this.selectedModelOverride)) {
               this.breakStream();
@@ -693,13 +700,13 @@ export class CliChannel implements Channel {
     this.breakStream();
 
     if (input === '/reasoning') {
-      const snapshot = this.getModelCatalog();
+      const snapshot = await this.getModelCatalog();
       this.renderReasoningStatus(snapshot);
       return true;
     }
 
     if (input === '/thinking') {
-      const snapshot = this.getModelCatalog();
+      const snapshot = await this.getModelCatalog();
       if (!snapshot) return true;
       const supported = this.getSupportedThinking(snapshot);
       const result = await this.promptSelection(
@@ -726,14 +733,14 @@ export class CliChannel implements Channel {
         this.applyThinkingSelection('default');
         return true;
       }
-      const snapshot = this.getModelCatalog();
+      const snapshot = await this.getModelCatalog();
       if (!snapshot) return true;
       this.applyThinkingSelection(value as ThinkingSelection, snapshot);
       return true;
     }
 
     if (input === '/effort') {
-      const snapshot = this.getModelCatalog();
+      const snapshot = await this.getModelCatalog();
       if (!snapshot) return true;
       const supported = this.getSupportedEfforts(snapshot);
       const result = await this.promptSelection(
@@ -759,7 +766,7 @@ export class CliChannel implements Channel {
       this.applyEffortSelection('default');
       return true;
     }
-    const snapshot = this.getModelCatalog();
+    const snapshot = await this.getModelCatalog();
     if (!snapshot) return true;
     this.applyEffortSelection(value as ThinkingEffort, snapshot);
     return true;
@@ -1151,7 +1158,7 @@ export class CliChannel implements Channel {
       return false;
     }
     this.breakStream();
-    const snapshot = this.getModelCatalog();
+    const snapshot = await this.getModelCatalog();
     if (!snapshot) return true;
 
     if (input === '/models') {
@@ -1250,17 +1257,28 @@ export class CliChannel implements Channel {
     return sessionId;
   }
 
-  private getModelCatalog(): ModelCatalogSnapshot | undefined {
+  private async getModelCatalog(force = false): Promise<ModelCatalogSnapshot | undefined> {
     if (!this.runtimeCapabilities) {
       this.output.write(red('[model unavailable] Runtime Model Catalog is not bound.\n'));
       return undefined;
     }
-    try {
-      return this.runtimeCapabilities.modelCatalog.getSnapshot();
-    } catch {
-      this.output.write(red('[model unavailable] Runtime Model Catalog is not ready.\n'));
-      return undefined;
-    }
+    if (this.catalogPending) return this.catalogPending;
+    if (!force && Date.now() - this.catalogAttemptAt < 60_000) return this.catalog;
+    this.catalogPending = Promise.resolve().then(async () => {
+      try {
+        this.catalog = await this.runtimeCapabilities!.modelCatalog.getSnapshot();
+        return this.catalog;
+      } catch (error) {
+        this.catalog = undefined;
+        log.warn('CLI model catalog query failed', { detail: error instanceof Error ? error.message : String(error) });
+        this.output.write(red('[model unavailable] Runtime Model Catalog query failed.\n'));
+        return undefined;
+      } finally {
+        this.catalogAttemptAt = Date.now();
+        this.catalogPending = undefined;
+      }
+    });
+    return this.catalogPending;
   }
 
   private renderModelCatalog(snapshot: ModelCatalogSnapshot): void {

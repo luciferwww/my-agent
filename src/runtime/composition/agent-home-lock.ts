@@ -1,8 +1,17 @@
+/// <reference path="./fs-native-extensions.d.ts" />
+
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { mkdir, open, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
+import locks from 'fs-native-extensions';
 
 const LOCK_FILE = '.my-agent.pid';
+const MAX_METADATA_BYTES = 4096;
+const LOCK_OFFSET = process.platform === 'win32' ? 1024 * 1024 : 0;
+const LOCK_LENGTH = process.platform === 'win32' ? 1 : 0;
+// Keep ownership alive even if a failed Runtime is no longer referenced.
+const heldFiles = new Set<FileHandle>();
 
 interface AgentHomeLockRecord {
   readonly pid: number;
@@ -18,10 +27,12 @@ export class AgentHomeLockedError extends Error {
   constructor(
     readonly lockPath: string,
     readonly ownerPid?: number,
+    metadataError?: unknown,
   ) {
     super(ownerPid === undefined
-      ? `Agent home is locked by an unknown instance: "${lockPath}".`
-      : `Agent home is already in use by process ${ownerPid}: "${lockPath}".`);
+      ? `Agent home is locked; owner metadata is ${metadataError === undefined ? 'unavailable' : 'unreadable'}: "${lockPath}".`
+      : `Agent home is already in use by process ${ownerPid}: "${lockPath}".`,
+    metadataError === undefined ? undefined : { cause: metadataError });
     this.name = 'AgentHomeLockedError';
   }
 }
@@ -29,95 +40,74 @@ export class AgentHomeLockedError extends Error {
 export async function acquireAgentHomeLock(agentHome: string): Promise<AgentHomeLock> {
   await mkdir(agentHome, { recursive: true });
   const lockPath = join(agentHome, LOCK_FILE);
-
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const file = await open(lockPath, constants.O_CREAT | constants.O_RDWR, 0o600);
+  try {
+    if (!(await file.stat()).isFile()) {
+      throw new Error(`Agent Home lock destination is not a regular file: "${lockPath}".`);
+    }
+    if (!locks.tryLock(file.fd, LOCK_OFFSET, LOCK_LENGTH)) {
+      let existing: AgentHomeLockRecord | undefined;
+      try {
+        existing = await readLockRecord(file);
+      } catch (error) {
+        throw new AgentHomeLockedError(lockPath, undefined, error);
+      }
+      throw new AgentHomeLockedError(lockPath, existing?.pid);
+    }
+    heldFiles.add(file);
     const record: AgentHomeLockRecord = {
       pid: process.pid,
       instanceId: randomUUID(),
       startedAt: new Date().toISOString(),
     };
+    const metadata = `${JSON.stringify(record)}\n`;
+    if (Buffer.byteLength(metadata) > MAX_METADATA_BYTES) {
+      throw new Error('Agent Home lock metadata exceeds its size bound.');
+    }
+    await file.truncate(0);
+    await file.writeFile(metadata, 'utf8');
+    let releasePromise: Promise<void> | undefined;
+    return Object.freeze({
+      release(): Promise<void> {
+        releasePromise ??= file.close().then(() => { heldFiles.delete(file); });
+        return releasePromise;
+      },
+    });
+  } catch (error) {
     try {
-      const handle = await open(lockPath, 'wx');
-      try {
-        await handle.writeFile(`${JSON.stringify(record)}\n`, 'utf8');
-      } catch (error) {
-        await handle.close().catch(() => undefined);
-        await unlink(lockPath).catch(() => undefined);
-        throw error;
-      }
-      await handle.close();
-      return createLockHandle(lockPath, record.instanceId);
-    } catch (error) {
-      if (errorCode(error) !== 'EEXIST') throw error;
+      await file.close();
+      heldFiles.delete(file);
+    } catch (cleanupError) {
+      heldFiles.add(file);
+      throw new AggregateError(
+        [error, cleanupError],
+        'Agent Home lock acquisition failed and its descriptor could not be closed.',
+      );
     }
-
-    const existing = await readLockRecord(lockPath);
-    if (!existing || isProcessAlive(existing.pid) || attempt > 0) {
-      throw new AgentHomeLockedError(lockPath, existing?.pid);
-    }
-
-    const stalePath = `${lockPath}.${randomUUID()}.stale`;
-    try {
-      await rename(lockPath, stalePath);
-      await unlink(stalePath);
-    } catch (error) {
-      if (errorCode(error) !== 'ENOENT') throw error;
-    }
+    throw error;
   }
-
-  throw new AgentHomeLockedError(lockPath);
 }
 
-function createLockHandle(lockPath: string, instanceId: string): AgentHomeLock {
-  let released = false;
-  return Object.freeze({
-    async release(): Promise<void> {
-      if (released) return;
-      const record = await readLockRecord(lockPath);
-      if (!record || record.instanceId !== instanceId) {
-        throw new Error(`Agent home lock ownership was lost: "${lockPath}".`);
-      }
-      await unlink(lockPath);
-      released = true;
-    },
-  });
-}
-
-async function readLockRecord(lockPath: string): Promise<AgentHomeLockRecord | undefined> {
+async function readLockRecord(file: FileHandle): Promise<AgentHomeLockRecord | undefined> {
   let value: unknown;
   try {
-    value = JSON.parse(await readFile(lockPath, 'utf8'));
+    const buffer = Buffer.alloc(MAX_METADATA_BYTES + 1);
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > MAX_METADATA_BYTES) return undefined;
+    value = JSON.parse(buffer.toString('utf8', 0, bytesRead));
   } catch (error) {
-    if (errorCode(error) === 'ENOENT') return undefined;
     if (error instanceof SyntaxError) return undefined;
     throw error;
   }
   if (
     typeof value !== 'object'
     || value === null
-    || !Number.isSafeInteger((value as { pid?: unknown }).pid)
-    || (value as { pid: number }).pid < 1
-    || typeof (value as { instanceId?: unknown }).instanceId !== 'string'
-    || typeof (value as { startedAt?: unknown }).startedAt !== 'string'
+    || !('pid' in value) || typeof value.pid !== 'number'
+    || !Number.isSafeInteger(value.pid) || value.pid < 1
+    || !('instanceId' in value) || typeof value.instanceId !== 'string'
+    || !('startedAt' in value) || typeof value.startedAt !== 'string'
   ) {
     return undefined;
   }
-  return value as AgentHomeLockRecord;
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (errorCode(error) === 'ESRCH') return false;
-    if (errorCode(error) === 'EPERM') return true;
-    throw error;
-  }
-}
-
-function errorCode(error: unknown): string | undefined {
-  return error instanceof Error && 'code' in error
-    ? String((error as Error & { code?: unknown }).code)
-    : undefined;
+  return { pid: value.pid, instanceId: value.instanceId, startedAt: value.startedAt };
 }

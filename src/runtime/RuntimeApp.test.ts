@@ -3,6 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ModelInvocationError } from '../core/model-invocation/index.js';
+import { unusedInvocationPort } from '../test-fixtures/provider.js';
 import type {
   ApprovalClosedResult,
   ApprovalDecision,
@@ -599,7 +600,7 @@ describe('RuntimeApp', () => {
         expect.objectContaining({ providerId: 'builtin', configurationSectionId: 'llm' }),
       ] } } });
       const beforeTest = await readFile(join(agentHome, 'config.json'), 'utf8');
-      const beforeCatalog = app.application.getModelCatalog();
+      const beforeCatalog = (await app.application.getModelCatalog());
       expect(await app.application.settings.execute({
         requestId: 'test-draft', action: 'test_llm_model',
         input: {
@@ -608,7 +609,7 @@ describe('RuntimeApp', () => {
         },
       })).toMatchObject({ ok: true, output: { outcome: 'completed' } });
       expect(chat).toHaveBeenCalledOnce();
-      expect(app.application.getModelCatalog()).toEqual(beforeCatalog);
+      expect((await app.application.getModelCatalog())).toEqual(beforeCatalog);
       expect(await readFile(join(agentHome, 'config.json'), 'utf8')).toBe(beforeTest);
       const draft = {
         builtin: { ...builtin, models: [...builtin.models, { modelId: 'two', protocol: 'openai-responses' }] },
@@ -619,7 +620,7 @@ describe('RuntimeApp', () => {
         input: { sectionId: 'llm', expectedRevision: revisionOf(loaded.output), settings: draft },
       });
       expect(saved).toMatchObject({ ok: true });
-      const catalog = app.application.getModelCatalog();
+      const catalog = (await app.application.getModelCatalog());
       expect(catalog).toMatchObject({
         generation: 2,
         defaultSelection: { state: 'available', reference: { providerId: 'builtin', modelId: 'two' } },
@@ -632,7 +633,7 @@ describe('RuntimeApp', () => {
         },
       });
       expect(failed).toMatchObject({ ok: false, error: { code: 'application_failed_rolled_back' } });
-      expect(app.application.getModelCatalog()).toEqual(catalog);
+      expect((await app.application.getModelCatalog())).toEqual(catalog);
       expect(JSON.parse(await readFile(join(agentHome, 'config.json'), 'utf8')).llm).toEqual(draft);
       expect(revisionOf(failed.output)).not.toBe(revisionOf(saved.output));
     } finally {
@@ -719,7 +720,7 @@ describe('RuntimeApp', () => {
           chunking: { chunkChars: 800, overlapChars: 80 },
         },
       },
-      logger: { console: { enabled: false } },
+      logger: {},
     }), 'utf8');
     const snapshot = await loadAgentConfig({ agentHome: agentHome });
     await writeFile(join(agentHome, 'config.json'), JSON.stringify({
@@ -806,7 +807,7 @@ describe('RuntimeApp', () => {
       dependencies: createTestDependencies({ createMemoryManager: async () => null }),
     });
 
-    const catalog = app.application.getModelCatalog();
+    const catalog = (await app.application.getModelCatalog());
     expect(catalog).toEqual({
       generation: 1,
       defaultSelection: {
@@ -872,7 +873,7 @@ describe('RuntimeApp', () => {
       dependencies: { createMemoryManager: async () => null },
     });
 
-    expect(app.application.getModelCatalog()).toMatchObject({
+    expect((await app.application.getModelCatalog())).toMatchObject({
       defaultSelection: {
         state: 'unavailable',
         reference: { providerId: 'builtin', modelId: 'staged-model' },
@@ -928,7 +929,7 @@ describe('RuntimeApp', () => {
       dependencies: createTestDependencies({ createMemoryManager: async () => null }),
     });
 
-    expect(app.application.getModelCatalog().defaultSelection).toEqual(expected);
+    expect((await app.application.getModelCatalog()).defaultSelection).toEqual(expected);
     await expect(runRootTurnForTest(app, {
       sessionId: `default-${expectedCategory}`,
       message: 'must not fall back',
@@ -948,7 +949,7 @@ describe('RuntimeApp', () => {
     });
 
     const closing = app.close();
-    expect(app.application.getModelCatalog()).toMatchObject({
+    expect((await app.application.getModelCatalog())).toMatchObject({
       generation: 1,
       defaultSelection: { state: 'available' },
       providers: [{ providerId: 'test' }],
@@ -1036,12 +1037,9 @@ describe('RuntimeApp', () => {
     const makeProvider = (id: string) => ({
       id,
       protocol: 'test',
-      models: [{ modelId: id === 'child' ? 'child-model' : 'parent-model' }],
-      invocationPort: {} as never,
-      resolveConnection: () => ({ ok: true as const, connection: { endpointId: `${id}-endpoint` } }),
-      resolveModel: (modelId: string, connection: { endpointId: string }) => ({
+      getModelCatalog: async () => ({ models: [{ modelId: id === 'child' ? 'child-model' : 'parent-model' }], resolveModel: (modelId: string, connection: { endpointId: string }) => ({
         ok: true as const,
-        descriptor: {
+        descriptor: { invocationPort: unusedInvocationPort,
           identity: { providerId: id, modelId },
           protocol: 'test',
           connection,
@@ -1051,7 +1049,10 @@ describe('RuntimeApp', () => {
             toolUse: true,
           },
         },
-      }),
+      }),  }),
+
+      resolveConnection: () => ({ ok: true as const, connection: { endpointId: `${id}-endpoint` } }),
+
     });
     const events: AgentEvent[] = [];
     const approvalChannel = createApprovalTestChannel('subagent-approval', {
@@ -1564,7 +1565,7 @@ describe('RuntimeApp', () => {
       await expect(manager.applyLlmConfiguration({
         ...llm, defaultModel: { providerId: 'builtin', modelId: 'second' },
       })).resolves.toMatchObject({ outcome: 'published', generation: 2 });
-      expect(app.application.getModelCatalog().defaultSelection).toEqual({
+      expect((await app.application.getModelCatalog()).defaultSelection).toEqual({
         state: 'available', reference: { providerId: 'builtin', modelId: 'second' },
       });
       await runRootTurnForTest(app, {
@@ -1634,12 +1635,9 @@ describe('RuntimeApp', () => {
     const nextProvider = {
       id: 'next-provider',
       protocol: 'test',
-      models: [{ modelId: 'root-model' }],
-      invocationPort: {} as never,
-      resolveConnection: () => ({ ok: true as const, connection: { endpointId: 'next' } }),
-      resolveModel: (modelId: string, connection: { endpointId: string }) => ({
+      getModelCatalog: async () => ({ models: [{ modelId: 'root-model' }], resolveModel: (modelId: string, connection: { endpointId: string }) => ({
         ok: true as const,
-        descriptor: {
+        descriptor: { invocationPort: unusedInvocationPort,
           identity: { providerId: 'next-provider', modelId },
           protocol: 'test',
           connection,
@@ -1649,7 +1647,10 @@ describe('RuntimeApp', () => {
             toolUse: true,
           },
         },
-      }),
+      }),  }),
+
+      resolveConnection: () => ({ ok: true as const, connection: { endpointId: 'next' } }),
+
     };
     const nextProviderUnit = createLoadedRuntimeUnit({
       registration: {
@@ -1716,7 +1717,7 @@ describe('RuntimeApp', () => {
       }),
     });
 
-    expect(app.application.getModelCatalog()).toMatchObject({
+    expect((await app.application.getModelCatalog())).toMatchObject({
       generation: 1,
       defaultSelection: {
         state: 'unavailable',
@@ -1735,7 +1736,7 @@ describe('RuntimeApp', () => {
     await expect(app.composition.enableUnit('next-provider-unit')).resolves.toEqual(
       expect.objectContaining({ outcome: 'published', generation: 2 }),
     );
-    expect(app.application.getModelCatalog()).toMatchObject({
+    expect((await app.application.getModelCatalog())).toMatchObject({
       generation: 2,
       defaultSelection: { state: 'available' },
       providers: [{ providerId: 'test' }, { providerId: 'next-provider' }],
@@ -3796,7 +3797,7 @@ describe('RuntimeApp', () => {
       });
 
       expect(capturedCapabilities).toBeDefined();
-      expect(capturedCapabilities!.modelCatalog.getSnapshot()).toMatchObject({
+      expect((await capturedCapabilities!.modelCatalog.getSnapshot())).toMatchObject({
         generation: 1,
         defaultSelection: {
           state: 'available',
@@ -4052,7 +4053,7 @@ function createTestDependencies(
     createBuiltinProviderUnit: () => createTestProviderUnit([{
       id: 'test',
       protocol: 'test',
-      models: [
+      getModelCatalog: async () => ({ models: [
         {
           modelId: 'test-model',
           displayName: 'Test Model',
@@ -4064,12 +4065,9 @@ function createTestDependencies(
           },
         },
         { modelId: 'parent-model' },
-      ],
-      invocationPort: {} as never,
-      resolveConnection: () => ({ ok: true, connection: { endpointId: 'test' } }),
-      resolveModel: (modelId, connection) => ({
+      ], resolveModel: (modelId, connection) => ({
         ok: true,
-        descriptor: {
+        descriptor: { invocationPort: unusedInvocationPort,
           identity: { providerId: 'test', modelId },
           protocol: 'test',
           connection,
@@ -4084,7 +4082,10 @@ function createTestDependencies(
             },
           },
         },
-      }),
+      }),  }),
+
+      resolveConnection: () => ({ ok: true, connection: { endpointId: 'test' } }),
+
     }]),
     createSessionManager: () => ({
       getSubagentPresentationRoute: vi.fn(),

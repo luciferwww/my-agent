@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Channel behavior
-> Verified: 2026-11-04 (ancestor routing, recursive presentation and History reconciliation)
+> Verified: 2026-11-18
 > Ownership: Channel contracts, Host-local CLI, Extension-delivered WebSocket protocol, interaction, attachment ingress, and client routing
 > Ownership key: channel-transport-and-ingress
 
@@ -149,8 +149,19 @@ Before `start()`, candidate activation may call:
 bindRuntimeCapabilities({ modelCatalog, abort, sessions, approvals })
 ```
 
-`modelCatalog.getSnapshot()` is a live query over the current published
-generation. `abort.querySessionsNeedingAbort()` and
+`modelCatalog.getSnapshot(signal?)` is an asynchronous query over the current
+published Provider registrations. Core reads and validates each Provider
+without retaining a catalog cache. CLI and the bundled WebSocket Client keep
+only presentation state: they check a 60-second completion timestamp when
+displaying models and refresh after explicit `provider_unregistered`,
+`model_rejected` or `model_not_found` errors, without polling or invocation retry.
+An empty model picker remains openable so a later display can recover. A
+correlated WebSocket catalog-query failure uses the existing `channel_error`
+envelope, clears the pending query and records its completion time.
+Expected Relay discovery outages instead appear as empty model lists with
+server warnings, not a new availability protocol.
+
+`abort.querySessionsNeedingAbort()` and
 `abort.abortTurn(sessionId)` form the abort capability; aborting a session can
 terminate its active Turn and drop ordinary queued requests. `sessions`
 exposes Session lifecycle, permission, and read-only paginated History

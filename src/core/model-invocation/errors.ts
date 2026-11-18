@@ -4,6 +4,7 @@ export interface ContextLimitCorrection {
 }
 
 export type ModelInvocationFailureCategory =
+  | 'model_not_found'
   | 'authentication'
   | 'rate_limit'
   | 'invalid_request'
@@ -45,6 +46,7 @@ export interface ModelInvocationStructuralErrorV1 extends Error {
 
 const MODEL_INVOCATION_ERROR_PROTOCOL = 'my-agent.model-invocation-error';
 const MODEL_INVOCATION_FAILURE_CATEGORIES = new Set<ModelInvocationFailureCategory>([
+  'model_not_found',
   'authentication',
   'rate_limit',
   'invalid_request',
@@ -107,6 +109,38 @@ export function toModelInvocationError(value: unknown): ModelInvocationError | u
       category,
       diagnostics.state === 'data' ? canonicalizeDiagnostics(diagnostics.value) : undefined,
     );
+  } catch {
+    return undefined;
+  }
+}
+
+export function findModelInvocationError(error: unknown): ModelInvocationError | undefined {
+  const seen = new Set<Error>();
+  let current = asSameRealmError(error);
+  for (let depth = 0; depth < 8 && current; depth += 1) {
+    const canonical = toModelInvocationError(current);
+    if (canonical) return canonical;
+    if (seen.has(current)) return undefined;
+    seen.add(current);
+    current = readOwnErrorCause(current);
+  }
+  return undefined;
+}
+
+function asSameRealmError(value: unknown): Error | undefined {
+  try {
+    return value instanceof Error ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readOwnErrorCause(error: Error): Error | undefined {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(error, 'cause');
+    return descriptor && 'value' in descriptor
+      ? asSameRealmError(descriptor.value)
+      : undefined;
   } catch {
     return undefined;
   }

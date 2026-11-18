@@ -99,15 +99,15 @@ function testUnit(chat: ModelInvocationPort['chat'], stop: RuntimeUnitInstance['
 
 function publishProvider(coordinator: CompositionCoordinator, chat: ModelInvocationPort['chat'], generation = 1) {
   const provider: ProviderProjectionEntry = {
-    id: 'relay', protocol: 'test', models: [{ modelId: 'one' }],
-    invocationPort: { chat, chatStream: () => { throw new Error('Unexpected stream.'); } },
-    resolveConnection: () => ({ ok: true, connection: { endpointId: 'loaded-connection' } }),
-    resolveModel: (modelId, connection) => ({
-      ok: true, descriptor: {
+    id: 'relay', protocol: 'test', getModelCatalog: async () => ({ models: [{ modelId: 'one' }], resolveModel: (modelId, connection) => ({
+      ok: true, descriptor: { invocationPort: { chat, chatStream: () => { throw new Error('Unexpected stream.'); } },
         identity: { providerId: 'relay', modelId }, protocol: 'test', connection,
         facts: { effectiveContextLimit: 4096 },
       },
-    }),
+    }),  }),
+
+    resolveConnection: () => ({ ok: true, connection: { endpointId: 'loaded-connection' } }),
+
   };
   coordinator.commitPublish(finalizeRegistrySnapshot({
     candidate: { providers: [provider], units: [], diagnostics: [] },
@@ -154,7 +154,7 @@ describe('SettingsManager', () => {
     const manager = new SettingsManager({
       agentHome, document, agentPolicies: policies, environment: { SAVED_KEY: 'runtime-secret' }, extensionMetadata: metadata,
       startupMemoryEnabled: policies.capture().agents.memory.enabled,
-      getModelCatalog: () => ({ generation: 1, defaultSelection: { state: 'unset' }, providers: [] }),
+      getModelCatalog: async () => ({ generation: 1, defaultSelection: { state: 'unset' }, providers: [] }),
       applyLlmConfiguration: apply, saveSection: save, restoreSection: restore, ...overrides,
     });
     const load = () => manager.execute({ requestId: 'load', action: 'load', input: {} });
@@ -393,7 +393,7 @@ describe('SettingsManager', () => {
   it('links Settings catalog Providers to their actual discovered configuration sections', async () => {
     let active = true;
     const f = fixture({
-      getModelCatalog: () => ({
+      getModelCatalog: async () => ({
         generation: active ? 1 : 2, defaultSelection: { state: 'unset' },
         providers: (active ? ['builtin', 'provider-one', 'provider-two', 'other', 'embedded'] : ['builtin'])
           .map((providerId) => ({ providerId, displayName: providerId, models: [] })),
@@ -436,6 +436,35 @@ describe('SettingsManager', () => {
       .toMatchObject({ ok: true });
     expect(f.apply).not.toHaveBeenCalled();
   });
+
+  it.each(['published', 'rejected'] as const)(
+    'reports truthful file state when catalog enrichment fails after %s',
+    async outcome => {
+      const catalog = vi.fn(async () => ({
+        generation: 1, defaultSelection: { state: 'unset' as const }, providers: [],
+      }));
+      const f = fixture({ getModelCatalog: catalog });
+      const initial = revision(await f.load());
+      if (outcome !== 'published') {
+        f.apply.mockResolvedValueOnce(rejected());
+      }
+      catalog.mockResolvedValueOnce({ generation: 1, defaultSelection: { state: 'unset' }, providers: [] })
+        .mockRejectedValueOnce(new Error('Provider contract failure'));
+      const updated = { ...settings, builtin: { ...settings.builtin, baseURL: 'https://updated.test/v1' } };
+      const result = await f.update(initial, updated);
+      expect(result).toMatchObject({
+        ok: false, error: { code: 'catalog_failed' },
+        output: outcome === 'published'
+          ? { fileState: 'saved', applicationState: 'current', section: { applicationStatus: 'current' } }
+          : { fileState: 'restored', rollback: 'completed' },
+      });
+      expect(f.restore).toHaveBeenCalledTimes(outcome === 'published' ? 0 : 1);
+      expect(revision(result)).not.toBe(initial);
+      const saved = await read();
+      if (outcome === 'published') expect(saved.llm.builtin.baseURL).toBe(updated.builtin.baseURL);
+      else expect(saved).toEqual(document);
+    },
+  );
 
   it('restores original LLM absence when post-write materialization fails and returns a fresh revision', async () => {
     document = {};

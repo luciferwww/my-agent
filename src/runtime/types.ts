@@ -77,6 +77,8 @@ export interface RuntimeDependencies {
 
 export interface RuntimeAppOptions {
   readonly agentHome: string;
+  /** Host-selected ordinary Console output; file logging is always enabled. */
+  readonly consoleLogging?: boolean;
   /** Generic Host startup facts consumed only during Runtime Bootstrap. */
   readonly startupContext?: Readonly<{
     installDir: string;

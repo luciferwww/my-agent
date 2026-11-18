@@ -64,6 +64,7 @@
     "@xenova/transformers": "^2.17.0",
     "ajv": "^8.20.0",
     "better-sqlite3": "^12.8.0",
+    "fs-native-extensions": "1.5.3",
     "jiti": "^2.7.0",
     "sharp": "^0.33.5",
     "ws": "^8.18.3",

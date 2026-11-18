@@ -159,7 +159,7 @@ type OutboundMessage =
       outcome: ApprovalClosedResult['outcome'];
       reason: string;
     }
-  | { type: 'channel_error'; code: ChannelErrorCode; message: string }
+  | { type: 'channel_error'; code: ChannelErrorCode; message: string; requestId?: string }
   | Record<string, unknown>;
 
 export type BrowserLauncher = (url: string) => Promise<void>;
@@ -569,7 +569,7 @@ export class WebSocketChannel implements Channel {
           this.handleAbortTurn(socket, message);
           return;
         case 'get_model_catalog':
-          this.handleGetModelCatalog(socket, message);
+          await this.handleGetModelCatalog(socket, message);
           return;
         case 'settings_action':
           await this.handleSettingsAction(socket, message);
@@ -869,19 +869,26 @@ export class WebSocketChannel implements Channel {
     this.logger.debug('Runtime capabilities bound', { channelId: this.id });
   }
 
-  private handleGetModelCatalog(
+  private async handleGetModelCatalog(
     socket: WebSocket,
     message: Extract<ClientMessage, { type: 'get_model_catalog' }>,
-  ): void {
+  ): Promise<void> {
     this.requireBoundClientId(socket);
     if (!this.runtimeCapabilities) {
       throw new ProtocolError('SERVER_NOT_READY', 'Runtime Model Catalog is not bound.');
     }
     let snapshot: ModelCatalogSnapshot;
     try {
-      snapshot = this.runtimeCapabilities.modelCatalog.getSnapshot();
-    } catch {
-      throw new ProtocolError('SERVER_NOT_READY', 'Runtime Model Catalog is not ready.');
+      snapshot = await this.runtimeCapabilities.modelCatalog.getSnapshot();
+    } catch (error) {
+      this.logger.warn('model catalog query failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.sendJson(socket, {
+        type: 'channel_error', code: 'SERVER_NOT_READY',
+        message: 'Runtime Model Catalog is not ready.', requestId: message.requestId,
+      });
+      return;
     }
     this.sendJson(socket, {
       type: 'model_catalog',

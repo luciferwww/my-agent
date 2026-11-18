@@ -74,7 +74,7 @@ Stages 3–5 apply only to Agent-scoped configuration. Global Agent execution po
 | `compaction` | Enabled; maximum desired output headroom `20000` when only a total Context limit is known; keep 3 turns; result share `0.5`; head/tail `10000/5000`; timeout 300 seconds |
 | `agents.maxSubagentDepth` | Global non-negative safe integer; defaults to `1`; `0` removes `task` from the Root Agent's effective Tool policy |
 | `agents.list[]` | Sparse overrides of Home-discovered Agents; unique nonreserved `id`, optional `enabled`, description, model reference or `"inherit"`, and supported capability overrides; not a registration source |
-| `logger` | Global `info`; console enabled; file disabled |
+| `logger` | Global `info`; file always enabled; Console output selected by Host startup policy |
 
 ### Global Memory
 

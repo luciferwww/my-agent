@@ -326,8 +326,8 @@ describe('Thinking replay spike', () => {
     });
   }
 
-  it('resolved identity/protocol do not identify the actual Built-in wire protocol or auth scope', () => {
-    const descriptor = (protocol: BuiltinProtocol, baseURL: string, apiKey: string) => {
+  it('resolved identity/protocol do not identify the actual Built-in wire protocol or auth scope', async () => {
+    const descriptor = async (protocol: BuiltinProtocol, baseURL: string, apiKey: string) => {
       const provider = new BuiltinLlmProvider({
         baseURL,
         apiKey,
@@ -335,14 +335,19 @@ describe('Thinking replay spike', () => {
       });
       const connection = provider.entry.resolveConnection();
       if (!connection.ok) throw new Error(connection.message);
-      const resolved = provider.entry.resolveModel(model, connection.connection);
+      const resolved = (await provider.entry.getModelCatalog()).resolveModel(model, connection.connection);
       if (!resolved.ok) throw new Error(resolved.message);
-      return resolved.descriptor;
+      return {
+        identity: resolved.descriptor.identity,
+        protocol: resolved.descriptor.protocol,
+        connection: resolved.descriptor.connection,
+        facts: resolved.descriptor.facts,
+      };
     };
-    const original = descriptor('anthropic-messages', 'https://fixture.invalid', 'fixture-key-a');
-    expect(descriptor('openai-responses', 'https://fixture.invalid', 'fixture-key-a')).toEqual(original);
-    expect(descriptor('anthropic-messages', 'https://fixture.invalid', 'fixture-key-b')).toEqual(original);
-    expect(descriptor('anthropic-messages', 'https://different.invalid', 'fixture-key-a').connection)
+    const original = await descriptor('anthropic-messages', 'https://fixture.invalid', 'fixture-key-a');
+    expect(await descriptor('openai-responses', 'https://fixture.invalid', 'fixture-key-a')).toEqual(original);
+    expect(await descriptor('anthropic-messages', 'https://fixture.invalid', 'fixture-key-b')).toEqual(original);
+    expect((await descriptor('anthropic-messages', 'https://different.invalid', 'fixture-key-a')).connection)
       .not.toEqual(original.connection);
     expect(original.protocol).toBe('builtin-model-router');
   });

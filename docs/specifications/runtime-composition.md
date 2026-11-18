@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-11-10
+> Verified: 2026-11-18
 > Authority: Stable Unit, generation, reload, retirement, and Shutdown contract
 
 ## Scope
@@ -34,6 +34,35 @@ Runtime does not infer this path from process globals and never reads configurat
 Agent Home anchoring is not confinement. Tool-name deny is always final. In the default `manual` Session mode, structured Tool targets outside Agent Home and every Exec call require current-call Approval even when the Tool name is statically allowed; missing Approval capability fails closed. Internal allowed targets bypass Approval. A live Session may be elevated to process-local `allow_all`, which automatically authorizes every non-denied Tool without claiming that its concrete input was reviewed. Runtime does not parse command text or `cwd` as a confinement mechanism. Canonical/symlink-aware authorization, persistent grants, command patterns, executable integrity verification, and sandboxing are excluded.
 
 ## Composition invariants
+
+### Agent Home ownership
+
+Acquire a nonblocking, continuously held OS lock on the stable `.my-agent.pid`
+before Bootstrap. File presence and recorded PID liveness are not occupancy
+tests. Keep bounded, inspectable PID/instance/start-time metadata and write it
+only after acquisition; contenders must not truncate it. Neither normal release
+nor the next startup deletes or renames the file. Process death releases the
+lock regardless of remaining diagnostic content.
+
+Release only after confirmed cleanup. Failed or residual startup/shutdown
+cleanup conservatively retains the owned descriptor until process exit, without
+automatic late release or retries. Report retained shutdown ownership as a
+resource residual with phase `agent-home-lock`, never as completed. Emit bounded
+direct stderr diagnostics for retention, including startup failure where no
+shutdown report can be returned. Preserve primary errors and shared deadline
+policy; Runtime does not terminate an embedding process.
+
+Only lock contention is an occupied Home. Metadata identity can be unavailable;
+permission, native-loading and I/O failures must not silently become contention
+or an unlocked fallback. This is a local cooperating-process contract, not
+protection against manual live-file replacement or network filesystems. Stop
+all old-protocol instances before cutover. No platform-name allowlist or
+unvalidated-platform warning gates startup; actual native capability decides
+availability. Windows is validated; Linux/macOS
+execution remains a pre-release gate under
+[ADR-026](../decisions/adr-026-held-agent-home-pid-file-lock.md).
+
+### Unit and generation invariants
 
 - There is one authoritative composition path.
 - Builtin and External Units share create, staging, start, publication, retirement, and stop.

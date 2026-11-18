@@ -14,6 +14,7 @@ import {
 } from '../../platform/logger/index.js';
 import type { LogAdapter } from '../../platform/logger/index.js';
 import type { MemoryManager } from '../../core/memory/index.js';
+import type { SessionManager } from '../../core/session/index.js';
 import { UserPromptBuilder } from '../../core/prompt/index.js';
 import { ensureAgentContext, loadAgentDefinitions, loadContextFiles } from '../../core/agent-context/index.js';
 import { classifyRuntimeError } from '../errors.js';
@@ -26,11 +27,16 @@ const log = Logger.get('RuntimeBootstrap');
 export async function bootstrapRuntime(
   options: RuntimeAppOptions,
   deps: RuntimeDependencies,
-  cleanupDeadline: { readonly driver: RuntimeDeadlineDriver; readonly timeoutMs: number },
+  cleanupDeadline: {
+    readonly driver: RuntimeDeadlineDriver;
+    readonly timeoutMs: number;
+    readonly onCleanupCompleted?: (converged: boolean) => void;
+  },
 ): Promise<RuntimeBootstrapResult> {
   const startedAt = Date.now();
   let loggerConfigured = false;
   let memoryManager: MemoryManager | null = null;
+  let sessionManager: SessionManager | undefined;
   log.info('bootstrap start', {
     agentHome: options.agentHome,
     agentId: options.agentId,
@@ -63,18 +69,14 @@ export async function bootstrapRuntime(
       logger: applicationConfig.logger,
     };
 
-    const adapters: LogAdapter[] = [];
-    if (appConfig.logger.console?.enabled !== false) {
+    const adapters: LogAdapter[] = [new FileAdapter({
+      dir: join(options.agentHome, 'logs'),
+      ...(appConfig.logger.file?.minLevel !== undefined
+        ? { minLevel: appConfig.logger.file.minLevel } : {}),
+    })];
+    if (options.consoleLogging !== false) {
       const consoleMin = appConfig.logger.console?.minLevel;
       adapters.push(new ConsoleAdapter(consoleMin ? { minLevel: consoleMin } : {}));
-    }
-    if (appConfig.logger.file?.enabled) {
-      const fileCfg = appConfig.logger.file;
-      adapters.push(new FileAdapter({
-        // Agent Home owns the log directory; FileAdapter owns the remaining defaults.
-        dir: join(options.agentHome, 'logs'),
-        ...(fileCfg.minLevel !== undefined ? { minLevel: fileCfg.minLevel } : {}),
-      }));
     }
     await Logger.configure({
       adapters,
@@ -119,7 +121,7 @@ export async function bootstrapRuntime(
       fileCount: contextFiles.length,
     });
 
-    const sessionManager = deps.createSessionManager(options.agentHome, {
+    sessionManager = deps.createSessionManager(options.agentHome, {
       toolResultHeadChars: resolvedConfig.compaction.toolResultHeadChars,
       toolResultTailChars: resolvedConfig.compaction.toolResultTailChars,
     });
@@ -207,25 +209,30 @@ export async function bootstrapRuntime(
       message: info.message,
     });
     emit(options.onEvent, { type: 'error', info });
-    if (memoryManager) {
-      const cleanup = await cleanupDeadline.driver.race(
-        Promise.resolve().then(() => memoryManager!.close()),
-        cleanupDeadline.driver.now() + cleanupDeadline.timeoutMs,
-      );
-      if (cleanup.outcome === 'failed') {
-        log.warn('Memory cleanup after bootstrap failure failed', {
-          error: cleanup.message,
+    let converged = true;
+    const deadline = cleanupDeadline.driver.now() + cleanupDeadline.timeoutMs;
+    const initializedSessionManager = sessionManager;
+    const initializedMemoryManager = memoryManager;
+    const cleanups: readonly [string, (() => void | Promise<void>) | undefined][] = [
+      ['sessionManager', initializedSessionManager ? () => initializedSessionManager.close() : undefined],
+      ['memoryManager', initializedMemoryManager ? () => initializedMemoryManager.close() : undefined],
+      ['logger', loggerConfigured ? () => Logger.close() : undefined],
+    ];
+    for (const [resource, cleanup] of cleanups) {
+      if (!cleanup) continue;
+      const result = cleanupDeadline.driver.now() >= deadline
+        ? { outcome: 'deadline-exhausted' as const }
+        : await cleanupDeadline.driver.race(Promise.resolve().then(cleanup), deadline);
+      if (result.outcome !== 'completed') {
+        converged = false;
+        log.warn('Resource cleanup after bootstrap failure did not complete', {
+          resource,
+          outcome: result.outcome,
+          ...(result.outcome === 'failed' ? { error: result.message } : {}),
         });
-      } else if (cleanup.outcome === 'deadline-exhausted') {
-        log.warn('Memory cleanup after bootstrap failure timed out');
       }
     }
-    if (loggerConfigured) {
-      await cleanupDeadline.driver.race(
-        Logger.close(),
-        cleanupDeadline.driver.now() + cleanupDeadline.timeoutMs,
-      );
-    }
+    cleanupDeadline.onCleanupCompleted?.(converged);
     throw error;
   }
 }

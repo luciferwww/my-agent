@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Runtime behavior
-> Verified: 2026-11-11
+> Verified: 2026-11-18
 > Ownership: Runtime composition, publication, generations, Turn orchestration, queues, routing, Fanout, Abort, Shutdown, and Subagent Parent/Child lifecycle
 > Ownership key: runtime-composition-and-lifecycle
 
@@ -101,6 +101,7 @@ and Parent/Child execution orchestration remain at the Runtime root.
 ```ts
 interface RuntimeAppOptions {
   agentHome: string;
+  consoleLogging?: boolean;
   startupContext?: {
     installDir: string;
     configuration: AgentConfigSnapshot;
@@ -121,9 +122,53 @@ interface RuntimeAppOptions {
 
 `agentHome` is the sole required architecture path input. Root Agent Context, configured-Agent Context under `agents/<agentId>/`, Sessions, Memory and recall, logs, temporary state, prompt path context, Environment Tool relative paths, default Search roots, and default Exec `cwd` use `agentHome`. Startup CWD is used only by the standalone Host to resolve a relative Agent Home CLI value before Runtime creation. A supported Host supplies generic `startupContext`; Runtime Bootstrap owns application projection selection, environment override derivation, and Extension Acquisition. Direct library callers may omit it and use explicit `applicationConfig`, `envOverrides`, and `loadedUnits`. `dependencies` is a narrow construction seam used by tests and embedding.
 
-Runtime Builder exclusively claims `<agentHome>/.my-agent.pid` before Bootstrap. A live owner causes startup to fail; a lock whose PID no longer exists is reclaimed once. Startup failure and completed shutdown release only the lock instance they acquired. This enforces one Runtime process per Agent Home while the Session Store's in-process queue and temporary-file replacement continue to own concurrent mutation and file integrity.
+Runtime Builder holds an OS lock on the stable `<agentHome>/.my-agent.pid`
+before Bootstrap. The pinned native binding uses a one-byte range at offset
+1 MiB on Windows, outside the 4096-byte metadata bound, and whole-file locking
+elsewhere. There is no operating-system allowlist or warning solely for an
+unvalidated platform; native loading and locking errors remain explicit.
+Windows process exclusion and ordinary metadata inspection
+are verified; Linux/macOS execution remains a pre-release validation gate.
+
+The file contains diagnostic PID, instance ID and start time. Its existence or
+PID liveness does not decide admission. Open does not truncate; metadata is
+written only after nonblocking acquisition. Neither release nor the next
+startup deletes or renames the file. Descriptor closure/process death releases
+the OS lock. A process-rooted handle set prevents GC from releasing a failed
+Runtime's ownership.
+
+Confirmed startup cleanup and completed clean shutdown close the owned
+descriptor. Failed or residual cleanup conservatively retains ownership until
+process exit, including cleanup that later settles; no automatic late handoff
+or retry is added. Direct stderr diagnoses retention, and shutdown includes a
+resource residual with phase `agent-home-lock`, not a completed lock resource.
+Startup cleanup accounts for Session, Memory and Logger; post-Bootstrap failure
+also accounts for Settings, Units and managed processes. A blocked candidate
+cleanup cannot be mistaken for safe closure merely because the later composition
+shutdown report is empty.
+
+Handed-off Channel owners reuse their first stop Promise, including rejection,
+so a prior attempt is not mistaken for confirmed closure. The lifecycle ledger
+continues reporting retained stop failures when no further retry is permitted.
+
+Only native contention becomes an occupied-Home error; invalid metadata leaves
+owner identity unavailable, while I/O/native-loading errors remain explicit.
+Stop old-protocol instances once before upgrading; mixed-version exclusion,
+network shares and manual removal of a live lock file are unsupported. See
+[ADR-026](../decisions/adr-026-held-agent-home-pid-file-lock.md).
+
+This enforces one cooperating Runtime owner per Agent Home while the Session
+Store's in-process queue and temporary-file replacement continue to own
+concurrent mutation and file integrity. Behavior is covered by
+[lock Unit tests](../../src/runtime/composition/agent-home-lock.test.ts) and
+[real-process integration](../../src/runtime/composition/agent-home-lock.integration.test.ts).
 
 `onEvent` observes application and lifecycle events. `onAgentEvent` observes Runner/Turn events in parallel with Channel Fanout; one plane does not replace the other.
+
+`consoleLogging` is startup-only and defaults to true for direct Runtime callers.
+Bootstrap always configures File logging first; the Host can suppress ordinary
+Console logging without disabling file records. Runtime does not infer a mode
+from CLI arguments, TTY state or concrete Channels.
 
 ### 3.2 Generic loaded-Unit path
 

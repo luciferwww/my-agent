@@ -14,6 +14,7 @@ import {
   COPILOT_RELAY_PROVIDER_ID,
   asRecord,
   createHttpError,
+  createStreamError,
   createRelayInvalidRequestError,
   normalizeError,
   parseJsonRecord,
@@ -86,7 +87,7 @@ export class CopilotRelayChatCompletionsClient implements ModelInvocationPort {
         if (done) throw new Error('Copilot Relay Chat sent an event after [DONE].');
         const chunk = parseJsonRecord(data, 'Copilot Relay Chat sent malformed SSE JSON.');
         if (chunk.type === 'error' || chunk.error !== undefined) {
-          throw new Error('Copilot Relay Chat returned a stream error.');
+          throw createStreamError(chunk.error ?? chunk, request);
         }
         if (!started) {
           started = true;

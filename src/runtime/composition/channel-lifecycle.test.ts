@@ -29,7 +29,7 @@ function host(): ChannelRuntimeHost {
       settings: { execute: async () => { throw new Error('Unexpected Settings action.'); } },
       approvals: { getPending: vi.fn(() => []) },
       modelCatalog: {
-        getSnapshot: vi.fn(() => ({
+        getSnapshot: vi.fn(async () => ({
           generation: 1,
           defaultSelection: { state: 'unset' as const },
           providers: [],

@@ -37,7 +37,14 @@ Extension, loaded by default unless its entry explicitly disables it.
 Standalone does not import, configure,
 identify, or observe that concrete Extension.
 
-Standalone supplies fixed CLI values prompt `> ` and approval enabled. The CLI starts in a new-conversation state without a Session ID; its first ordinary message obtains a server-issued `sessionId`, and later messages reuse it until the user selects another or new Session. These values are not configurable in the global Agent document. The only top-level configuration namespaces are `agents`, `logger`, and `extensions`; retired `host` content is rejected directly. CLI selection and enabled Console Logger are incompatible because both own terminal presentation. The Host rejects the combination with `HOST_OUTPUT_CONFLICT`; File Logger is compatible.
+Standalone supplies fixed CLI values prompt `> ` and approval enabled. The CLI starts in a new-conversation state without a Session ID; its first ordinary message obtains a server-issued `sessionId`, and later messages reuse it until the user selects another or new Session. These values are not configurable in the global Agent document. The top-level configuration namespaces are `llm`, `agents`, `logger`, and `extensions`; retired `host` content is rejected directly.
+
+The Host supplies `consoleLogging: false` to Runtime with `--cli`, and true
+otherwise. No configuration edits or output-conflict rejection are needed.
+Product Runtime always writes File logs; Console records at every severity
+are suppressed in CLI mode. CLI interaction/readiness and fatal/emergency
+stderr diagnostics remain visible. Failure to initialize a usable current file
+prevents startup; later file-write loss is reported without stopping the Agent.
 
 ## Composition and liveness
 
@@ -54,6 +61,12 @@ second signal forces the conventional signal status; the Host deadline forces
 status 1. Runtime library code never exits the process.
 
 Startup failures set process exit status 1 and emit bounded `stderr` diagnostics. Candidate-local acquisition failures remain isolated, bounded warnings. Diagnostics never expose secrets or raw configuration.
+
+Runtime owns the held PID-file lock described by
+[Runtime Composition](runtime-composition.md#agent-home-ownership). Host startup
+must not delete that file or kill a reported owner. Incomplete cleanup may
+retain ownership until the Host process exits; the Host preserves failure/
+residual exit status rather than claiming a clean shutdown.
 
 ## Build and compatibility
 

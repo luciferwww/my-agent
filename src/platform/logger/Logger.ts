@@ -71,7 +71,7 @@ export class Logger {
   //
   // adapters 必须以空数组初始化（不能塞默认 ConsoleAdapter）。
   // 否则启动期会变成"adapter 立即输出 + buffer 也存一份"，
-  // configure() drain 时双倍输出，且绕过用户的 console.enabled 配置。
+  // configure() drain 时双倍输出，且绕过 Host 选择的 Console 输出策略。
   private static adapters: LogAdapter[] = [];
   private static instances = new Map<string, LoggerInstance>();
   private static minLevel: LogLevel = 'info';
@@ -104,11 +104,25 @@ export class Logger {
    */
   static async configure(config: LoggerRuntimeConfig): Promise<void> {
     await Logger.closeAdapters(Logger.adapters);
+    Logger.adapters = [];
+    const started: LogAdapter[] = [];
+    try {
+      for (const adapter of config.adapters) {
+        started.push(adapter);
+        await adapter.start?.();
+      }
+    } catch (error) {
+      for (const adapter of started.reverse()) {
+        try {
+          await adapter.close?.();
+        } catch {
+          process.stderr.write('[Logger] Adapter cleanup after initialization failure failed.\n');
+        }
+      }
+      throw error;
+    }
     Logger.adapters = config.adapters;
     Logger.minLevel = config.minLevel ?? DEFAULT_LOGGER_CONFIG.minLevel;
-    for (const adapter of Logger.adapters) {
-      await adapter.start?.();
-    }
 
     const buf = Logger.startupBuffer;
     Logger.startupBuffer = null;     // 启动期结束的唯一信号
@@ -145,8 +159,12 @@ export class Logger {
    * 与"启动期已结束"的契约一致。
    */
   static async close(): Promise<void> {
-    await Logger.closeAdapters(Logger.adapters);
-    Logger.adapters = [];
+    const adapters = Logger.adapters;
+    try {
+      await Logger.closeAdapters(adapters);
+    } finally {
+      Logger.adapters = [];
+    }
   }
 
   /** 运行时调整全局最低级别（无需重新 configure）。 */
@@ -199,9 +217,15 @@ export class Logger {
   }
 
   private static async closeAdapters(adapters: LogAdapter[]): Promise<void> {
+    const errors: unknown[] = [];
     for (const adapter of adapters) {
-      await adapter.close?.();
+      try {
+        await adapter.close?.();
+      } catch (error) {
+        errors.push(error);
+      }
     }
+    if (errors.length > 0) throw new AggregateError(errors, 'Log adapter close failed.');
   }
 
   /**

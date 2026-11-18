@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Provider behavior
-> Verified: 2026-10-16
+> Verified: 2026-11-18
 > Ownership: Provider-neutral invocation, normalized invocation failures, and concrete Built-in and Copilot Relay integrations
 > Ownership key: provider-protocol-and-builtin-adapter
 
@@ -114,11 +114,12 @@ Session, Runtime, or Channel protocol branches.
 
 ## 4. Model Invocation failure boundary
 
-Core defines six categories:
+Core defines seven categories:
 
 - `authentication`;
 - `rate_limit`;
 - `invalid_request`;
+- `model_not_found`;
 - `unavailable`;
 - `transport`;
 - `provider_failure`.
@@ -216,14 +217,26 @@ An empty model registration list publishes an empty Catalog and creates no Proto
 
 `copilot-relay-provider` is an optional external Unit. `create(signal)` validates a credential-free HTTP(S) base URL, then performs one bounded `/v1/models` discovery. The default discovery deadline is 5 seconds and the response body is capped at 2 MiB. A blank API key emits no Authorization header. The default endpoint is loopback. A configured non-loopback endpoint sends model discovery, prompts, Tool definitions and results, media, and credentials over the selected network path; operators should use a trusted endpoint and HTTPS outside a trusted local network.
 
-Discovery publishes only exact `/responses` models with positive safe-integer
+Discovery publishes exact `/responses` or `/chat/completions` models with positive safe-integer
 output limits and at least one Prompt/Context limit. Relay preserves the exact
 known total Context, Prompt, and output facts; the smaller known Prompt/Context
 input boundary remains the compatibility effective limit. Tool support and
 image support are published only when metadata proves them; supported image
 MIME values are intersected with Core PNG/JPEG/WebP/GIF support. Duplicate
-eligible opaque Model IDs fail discovery. Unit creation failure follows
-optional external-Unit isolation and publishes no partial Provider.
+eligible opaque Model IDs fail discovery. Models supporting both routes prefer
+Responses. Expected network/HTTP/timeout/body/metadata discovery failures clear
+the current model collection, warn with the endpoint and cause, and permit
+Provider registration with an empty list. Invalid local configuration,
+cancellation and programming errors still fail explicitly.
+
+The same Unit instance owns query-driven discovery: successful results expire
+60 seconds after completion; failures allow another attempt after 5 seconds.
+Reads within either interval reuse the Provider's state. Concurrent reads share
+one bounded attempt, while cancellation ends only the individual caller's wait.
+Revision checks prevent an invalidated in-flight attempt from publishing stale
+models and prevent an old Turn binding from clearing a newer collection.
+There is no background refresh, Core cache, client force flag or Unit reload.
+Already-bound Turns keep their captured map, facts and private wire route.
 
 ### 7.1 Responses protocol
 
@@ -239,6 +252,14 @@ optional external-Unit isolation and publishes no partial Provider.
 Malformed JSON/SSE framing, events before creation or after terminal, duplicate/unknown terminal states, invalid Tool identity, duplicate call IDs, invalid Usage, early stream close, HTTP failure, and explicit SSE failure all fail closed without a successful terminal.
 
 The Relay emits a local `Error` satisfying the V1 structural invocation-error contract through type-only Core imports. It neither runtime-imports nor subclasses Host `ModelInvocationError`; Runtime canonicalizes the structural value at the existing Core boundary.
+
+Both Relay Clients recognize the exact structured `model_not_found` code in
+HTTP and explicit SSE errors, preserving bounded diagnostics. Authentication,
+rate-limit and server status classifications take precedence. Generic 404,
+`invalid_model`, free text and transport failures do not assert model absence.
+The captured router invalidates only its still-current model collection before
+forwarding that error. Runner preserves the common category through its
+execution wrapper for Channel refresh, without retry or automatic reselection.
 
 ### 8.2 Package and supported Host
 

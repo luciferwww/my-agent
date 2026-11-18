@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-10-02
+> Verified: 2026-11-18
 > Authority: Stable Parent/Child resolution contract
 
 ## Scope
@@ -23,7 +23,14 @@ ultimately inheriting the Parent. Built-in `general-purpose` always uses `inheri
 
 Delegation supplies profile, description, prompt, real Parent session/Turn/Tool-call identity, the original Parent-authority signal, and a Framework-owned execution cancellation signal. Runtime validates the authority signal by object identity against an active non-aborted Parent. The execution signal drives Child setup and execution so one Task cancellation cannot cancel a sibling. `inherit` means the Parent's canonical effective Model Reference, not a global default and not the Parent Resolved Model object.
 
-A concrete or inherited Child reference is independently resolved against the Parent's captured generation. Child receives a fresh Resolved Model, invocation Port, facts, limits, and request state. Requirements derive from the actual Child execution request. Resolution failure occurs before Provider invocation.
+A concrete or inherited Child reference is independently resolved against the
+Parent's captured Provider registration generation, using current Provider-owned
+model state. Async resolution uses the existing Child cancellation signal.
+Child receives
+a fresh Resolved Model and stable model-bound invocation Port, facts, limits,
+and request state. Requirements derive from the actual Child execution request.
+Resolution failure occurs before model invocation (catalog discovery may use
+the network).
 
 ## Runtime ownership
 

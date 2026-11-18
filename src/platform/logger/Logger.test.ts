@@ -67,6 +67,31 @@ describe('Logger', () => {
       await Logger.configure({ adapters: [adapter] });
       expect(started).toBe(true);
     });
+
+    it('cleans partially started adapters and preserves the startup error and buffered entries', async () => {
+      Logger.__resetForTesting();
+      const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+      const failure = new Error('start failed');
+      const closed: string[] = [];
+      const first: LogAdapter = {
+        write: vi.fn(),
+        close: async () => { closed.push('first'); },
+      };
+      const failing: LogAdapter = {
+        write: vi.fn(),
+        start: async () => { throw failure; },
+        close: async () => { closed.push('failing'); throw new Error('cleanup failed'); },
+      };
+      Logger.get('startup').info('buffered');
+      await expect(Logger.configure({ adapters: [first, failing] })).rejects.toBe(failure);
+      expect(closed).toEqual(['failing', 'first']);
+      expect(stderr).toHaveBeenCalledOnce();
+      expect(first.write).not.toHaveBeenCalled();
+      const recovered = makeMockAdapter();
+      await Logger.configure({ adapters: [recovered] });
+      expect(recovered.entries.map(entry => entry.message)).toEqual(['buffered']);
+      stderr.mockRestore();
+    });
   });
 
   describe('minLevel filtering', () => {
@@ -122,6 +147,20 @@ describe('Logger', () => {
       await Logger.configure({ adapters: [a, b] });
       await Logger.close();
       expect(closed).toEqual(['a', 'b']);
+    });
+
+    it('closes remaining adapters after a failure and does not keep dispatching to closed adapters', async () => {
+      const next = makeMockAdapter();
+      const failure = new Error('flush failed');
+      const close = vi.fn(async () => {});
+      await Logger.configure({ adapters: [
+        { write: () => {}, close: async () => { throw failure; } },
+        { ...next, close },
+      ] });
+      await expect(Logger.close()).rejects.toMatchObject({ errors: [failure] });
+      expect(close).toHaveBeenCalledOnce();
+      Logger.get('after-close').error('not dispatched');
+      expect(next.entries).toEqual([]);
     });
   });
 

@@ -76,6 +76,7 @@ function createClientId() {
             helloAcknowledged: false,
             modelCatalog: null,
             pendingCatalogRequestId: null,
+            catalogAttemptAt: Number.NEGATIVE_INFINITY,
             nextCatalogRequestId: 1,
             pendingSessionRequestId: null,
             nextSessionRequestId: 1,
@@ -357,6 +358,7 @@ function createClientId() {
             this.helloAcknowledged = false;
             this.modelCatalog = null;
             this.pendingCatalogRequestId = null;
+            this.catalogAttemptAt = Number.NEGATIVE_INFINITY;
             this.pendingSessionRequestId = null;
             this.pendingFirstTurn = null;
             this.focusedSessionSubscribed = false;
@@ -397,10 +399,13 @@ function createClientId() {
             return this.settingsRequests.execute(action, input);
           },
           requestModelCatalog() {
-            if (this.pendingCatalogRequestId !== null) return;
+            if (!this.isConnected || this.pendingCatalogRequestId !== null) return;
             const requestId = `catalog-${this.nextCatalogRequestId++}`;
             this.pendingCatalogRequestId = requestId;
             this.sendJson({ type: 'get_model_catalog', requestId });
+          },
+          checkModelCatalogAge() {
+            if (this.isConnected && Date.now() - this.catalogAttemptAt >= 60_000) this.requestModelCatalog();
           },
           requestSessionList() {
             if (!this.isConnected || this.pendingSessionsRequestId !== null) return;
@@ -990,6 +995,7 @@ function createClientId() {
                   return;
                 }
                 this.pendingCatalogRequestId = null;
+                this.catalogAttemptAt = Date.now();
                 this.applyModelCatalog(message.catalog);
                 return;
               case 'session_created': {
@@ -1224,6 +1230,14 @@ function createClientId() {
                 return;
               }
               case 'channel_error':
+                if (message.requestId && message.requestId === this.pendingCatalogRequestId) {
+                  this.pendingCatalogRequestId = null;
+                  this.catalogAttemptAt = Date.now();
+                  this.modelCatalog = null;
+                  this.pushEvent('channel_error', `${message.code}: ${message.message}`);
+                  this.appendChatItem({ kind: 'error', label: 'Channel', text: `${message.code}: ${message.message}` });
+                  return;
+                }
                 this.activeSessionState.isSending = false;
                 this.pendingSessionRequestId = null;
                 this.pendingFirstTurn = null;
@@ -1442,6 +1456,7 @@ function createClientId() {
   @sidebar-visibility-changed="$refs.conversationPanel?.setSidebarOpen($event)"
   @mobile-sidebar-closed="$refs.conversationPanel?.getMobileSidebarTrigger()?.focus()"
   @select-model="selectModel"
+  @model-picker-opening="checkModelCatalogAge"
   @select-reasoning-option="selectReasoningOption"
   @start-new-session="startNewSession"
   @select-session="selectSession"

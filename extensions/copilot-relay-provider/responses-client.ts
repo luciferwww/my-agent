@@ -249,7 +249,10 @@ export class CopilotRelayResponsesClient implements ModelInvocationPort {
             break;
           case 'response.failed':
           case 'error':
-            throw new Error('Copilot Relay reported a failed response.');
+            throw createStreamError(
+              asRecord(event.response)?.error ?? event.error ?? event,
+              request,
+            );
           default:
             if (isUnknownResponseState(type)) {
               throw new Error(`Copilot Relay sent unsupported response state "${type}".`);
@@ -669,12 +672,27 @@ export async function createHttpError(
     ? 'authentication'
     : response.status === 429
       ? 'rate_limit'
+    : response.status < 500 && diagnostics.providerErrorCode === 'model_not_found'
+      ? 'model_not_found'
       : [400, 404, 409, 422].includes(response.status)
         ? 'invalid_request'
         : response.status >= 500
           ? 'unavailable'
           : 'provider_failure';
   return new CopilotRelayInvocationError(category, diagnostics);
+}
+
+export function createStreamError(payload: unknown, request: ModelInvocationRequest): Error {
+  const error = asRecord(payload);
+  const code = sanitize(readString(error?.code));
+  return new CopilotRelayInvocationError(
+    code === 'model_not_found' ? 'model_not_found' : 'provider_failure',
+    invocationDiagnostics(request, {
+      providerErrorCode: code,
+      providerErrorType: sanitize(readString(error?.type)),
+      providerMessage: sanitize(readString(error?.message)),
+    }),
+  );
 }
 
 export function normalizeError(error: unknown, request: ModelInvocationRequest): Error {

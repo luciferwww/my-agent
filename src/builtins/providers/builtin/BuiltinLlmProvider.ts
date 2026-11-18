@@ -61,9 +61,7 @@ export class BuiltinLlmProvider {
     }
     const invocationPort = new BuiltinModelRouter(registrations, clients);
 
-    this.entry = Object.freeze({
-      id: BUILTIN_PROVIDER_ID,
-      displayName: BUILTIN_PROVIDER_DISPLAY_NAME,
+    const snapshot = Object.freeze({
       models: Object.freeze(capturedConfig.models.map((model) => Object.freeze({
         modelId: model.modelId,
         ...(model.displayName === undefined ? {} : { displayName: model.displayName }),
@@ -75,12 +73,6 @@ export class BuiltinLlmProvider {
               }),
             }),
       }))),
-      protocol: BUILTIN_MODEL_ROUTER_PROTOCOL,
-      invocationPort,
-      resolveConnection: () => ({
-        ok: true,
-        connection: Object.freeze({ endpointId: capturedConfig.baseURL }),
-      } as const),
       resolveModel: (modelId: string, connection: ProviderConnection) => {
         const registration = registrations.get(modelId);
         if (!registration) {
@@ -93,6 +85,7 @@ export class BuiltinLlmProvider {
         return {
           ok: true,
           descriptor: Object.freeze({
+            invocationPort,
             identity: Object.freeze({ providerId: BUILTIN_PROVIDER_ID, modelId }),
             protocol: BUILTIN_MODEL_ROUTER_PROTOCOL,
             connection,
@@ -127,6 +120,19 @@ export class BuiltinLlmProvider {
           }),
         } as const;
       },
+    });
+    this.entry = Object.freeze({
+      id: BUILTIN_PROVIDER_ID,
+      displayName: BUILTIN_PROVIDER_DISPLAY_NAME,
+      protocol: BUILTIN_MODEL_ROUTER_PROTOCOL,
+      getModelCatalog: async (signal?: AbortSignal) => {
+        signal?.throwIfAborted();
+        return snapshot;
+      },
+      resolveConnection: () => ({
+        ok: true,
+        connection: Object.freeze({ endpointId: capturedConfig.baseURL }),
+      } as const),
     });
   }
 }
