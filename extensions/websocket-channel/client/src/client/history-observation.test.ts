@@ -136,7 +136,7 @@ describe('running History observation timing', () => {
     socketChannel.bindRuntimeCapabilities({
       settings: { execute: async () => { throw new Error('Unexpected Settings action.'); } },
       modelCatalog: {
-        getSnapshot: () => ({ generation: 1, defaultSelection: { state: 'unset' }, providers: [] }),
+        getSnapshot: async () => ({ generation: 1, defaultSelection: { state: 'unset' }, providers: [] }),
       },
       abort: {
         querySessionsNeedingAbort: () => [],

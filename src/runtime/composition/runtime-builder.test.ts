@@ -87,10 +87,10 @@ function testProvider(id: string): ProviderProjectionEntry {
   return {
     id,
     protocol: 'test',
-    models: [{ modelId: 'test-model' }],
-    invocationPort: {} as never,
+    getModelCatalog: async () => ({ models: [{ modelId: 'test-model' }], resolveModel: () => ({ ok: false, category: 'model_rejected', message: 'unused' }),  }),
+
     resolveConnection: () => ({ ok: false, category: 'connection_missing', message: 'unused' }),
-    resolveModel: () => ({ ok: false, category: 'model_rejected', message: 'unused' }),
+
   };
 }
 

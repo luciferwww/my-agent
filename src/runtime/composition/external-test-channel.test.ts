@@ -82,7 +82,7 @@ function host(): ChannelRuntimeHost {
       settings: { execute: async () => { throw new Error('Unexpected Settings action.'); } },
       approvals: { getPending: () => [] },
       modelCatalog: {
-        getSnapshot: () => ({
+        getSnapshot: async () => ({
           generation: 1,
           defaultSelection: { state: 'unset' },
           providers: [],

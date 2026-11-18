@@ -489,7 +489,8 @@ export function applyAgentEvent(
         turnId: event.turnId,
         text: event.error || 'Unknown runtime error',
       }, context);
-      if (event.category === 'provider_unregistered' || event.category === 'model_rejected') {
+      if (event.category === 'provider_unregistered' || event.category === 'model_rejected'
+        || event.category === 'model_not_found') {
         effects.push({ type: 'refresh_model_catalog' });
       }
       pushEvent(

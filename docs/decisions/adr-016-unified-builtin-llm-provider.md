@@ -3,9 +3,10 @@
 > Status: Accepted
 > Decision date: 2026-09-20
 > Owner: Project owner
-> Related Plan/Specification: [Unified Built-in LLM Provider Plan](../changes/active/builtin-llm-provider/plan.md), [Unified Built-in LLM Provider Specification](../changes/active/builtin-llm-provider/builtin-llm-provider-specification.md)
+> Related authority: [Model Resolution Specification](../specifications/model-resolution.md), [Providers and Model Invocation](../architecture/providers.md)
 > Supersedes: the built-in Anthropic-only assembly after validated cutover, and ADR-004's requirement that every published model fact retain provenance
 > Amendment: Model-Aware Output Control (2026-09-24) supersedes Decision 11 only for the new separate per-model invocation policy; the legacy global control remains removed.
+> Amendment: [ADR-027](adr-027-provider-owned-model-catalog.md) supersedes Decision 3 only for the Provider ABI with Provider-owned async catalog reads and model-bound invocation.
 
 ## Context
 

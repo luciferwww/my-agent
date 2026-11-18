@@ -266,7 +266,7 @@ describe('Extension acquisition to Runtime integration', () => {
       dependencies: { createMemoryManager: async () => null },
     });
     try {
-      const catalog: ModelCatalogSnapshot = runtime.application.getModelCatalog();
+      const catalog: ModelCatalogSnapshot = (await runtime.application.getModelCatalog());
       expect(catalog.providers).toContainEqual({
         providerId: 'fixture-provider',
         displayName: 'Fixture Provider',
@@ -320,7 +320,7 @@ describe('Extension acquisition to Runtime integration', () => {
       dependencies: { createMemoryManager: async () => null },
     });
     try {
-      const catalog = runtime.application.getModelCatalog();
+      const catalog = (await runtime.application.getModelCatalog());
       expect(catalog.providers.map(({ providerId }) => providerId))
         .not.toContain('fixture-provider');
       expect(catalog.providers).toEqual([]);

@@ -13,9 +13,11 @@ retaining a Change record.
 
 ## Active
 
-No active Changes.
+None.
 
 ## Archived
+
+- [Provider-owned Model Catalog](archive/provider-owned-model-catalog/plan.md), with its [validated Specification](archive/provider-owned-model-catalog/specification.md) - Provider-owned async reads, cache-free Core, CLI/WebSocket display-time queries, Relay invalidation and nonfatal discovery delivered. Final lint/build and all 2,111 Unit cases passed; relevant integration/Fitness results and review follow-up are retained in the Plan. Owner accepted delivery and authorized archive, commit and current-branch push on 2026-11-18.
 
 Archived changes preserve bounded delivery and acceptance provenance. They are neither Current Architecture nor stable contract authority.
 

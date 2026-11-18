@@ -7,6 +7,7 @@ import {
 import {
   CopilotRelayResponsesClient,
   normalizeError,
+  createHttpError,
 } from './responses-client.js';
 
 const request: ModelInvocationRequest = {
@@ -18,6 +19,36 @@ const request: ModelInvocationRequest = {
   ],
   tools: [{ name: 'lookup', description: 'Look up a value', inputSchema: { type: 'object' } }],
 };
+
+describe('Relay missing-model classification', () => {
+  it.each([
+    [404, 'model_not_found', 'model_not_found'],
+    [404, undefined, 'invalid_request'],
+    [400, 'invalid_model', 'invalid_request'],
+    [401, 'model_not_found', 'authentication'],
+    [403, 'model_not_found', 'authentication'],
+    [429, 'model_not_found', 'rate_limit'],
+    [503, 'model_not_found', 'unavailable'],
+  ] as const)('classifies HTTP %s / %s without guessing from status', async (status, code, category) => {
+    const error = await createHttpError(Response.json({ error: { code } }, { status }), request);
+    expect(error.category).toBe(category);
+  });
+
+  it.each([
+    ['error', { code: 'model_not_found', message: 'gone' }],
+    ['response.failed', { response: { error: { code: 'model_not_found', message: 'gone' } } }],
+  ])('preserves structured missing-model errors in %s stream events', async (type, payload) => {
+    const client = new CopilotRelayResponsesClient({
+      baseURL: 'http://localhost:5000',
+      fetch: vi.fn(async () => sseResponse(event(type as string, payload))) as typeof fetch,
+    });
+    const events = [];
+    for await (const item of client.chatStream(request)) events.push(item);
+    expect(events.at(-1)).toMatchObject({
+      type: 'error', error: { category: 'model_not_found', diagnostics: { providerErrorCode: 'model_not_found' } },
+    });
+  });
+});
 
 function event(type: string, extra: Record<string, unknown> = {}): string {
   return `data: ${JSON.stringify({ type, ...extra })}\n\n`;

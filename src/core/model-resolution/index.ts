@@ -16,6 +16,7 @@ export type {
   ProviderModelDescriptor,
   ProviderModelFacts,
   ProviderModelResult,
+  ProviderModelSnapshot,
   ProviderProjectionEntry,
   ReasoningCapabilities,
   ResolvedModel,
@@ -25,3 +26,4 @@ export {
   normalizeReasoningCapabilities,
   ReasoningCapabilitiesValidationError,
 } from './reasoning-capabilities.js';
+export { readProviderModelCatalog } from './provider-catalog.js';

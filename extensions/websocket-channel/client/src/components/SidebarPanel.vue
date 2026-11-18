@@ -54,6 +54,7 @@ export default {
     'shortSessionId',
   ],
   emits: [
+    'modelPickerOpening',
     'sidebarVisibilityChanged',
     'mobileSidebarClosed',
     'selectModel',
@@ -179,7 +180,7 @@ export default {
         this.closeModelPicker();
         return;
       }
-      if (!this.modelCatalog || this.availableModels.length === 0) return;
+      this.$emit('modelPickerOpening');
       this.closeThemePicker();
       this.closePermissionPicker();
       this.closeReasoningPicker();
@@ -436,7 +437,7 @@ export default {
             <button
               class="model-picker-trigger"
               type="button"
-              :disabled="!modelCatalog || availableModels.length === 0"
+              :disabled="!isConnected"
               :aria-expanded="String(modelPickerOpen)"
               aria-haspopup="listbox"
               @click="toggleModelPicker"

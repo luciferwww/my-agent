@@ -34,7 +34,7 @@ interface SettingsManagerOptions {
   readonly agentPolicies?: AgentPolicyState;
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly extensionMetadata?: Readonly<Pick<ExtensionAcquisitionResult, 'discovery' | 'diagnostics'>>;
-  readonly getModelCatalog: () => ModelCatalogSnapshot;
+  readonly getModelCatalog: () => Promise<ModelCatalogSnapshot>;
   readonly getProviderUnitId?: (providerId: string) => string | undefined;
   readonly applyLlmConfiguration: (configuration: LLMConfig) => Promise<RuntimeReloadResult>;
   readonly snapshotAccess?: RuntimeSnapshotAccess;
@@ -105,9 +105,10 @@ export class SettingsManager implements SettingsCapability {
           return settingsFailure(request, 'file_state_unknown', 'The saved file state could not be confirmed after rollback failed.');
         }
         const catalog = await this.readSkillCatalog(request);
+        const modelCatalog = await this.modelCatalog();
         return success(request, {
-          sections: [...this.revisions.keys()].map((id) => this.section(id)),
-          modelCatalog: this.modelCatalog(),
+          sections: [...this.revisions.keys()].map((id) => this.section(id, modelCatalog)),
+          modelCatalog,
           toolCatalog: (this.options.snapshotAccess?.currentSnapshot().tools.definitions ?? [])
             .map(tool => ({ name: tool.name, description: tool.description })),
           diagnostics: this.options.extensionMetadata?.diagnostics ?? [],
@@ -232,10 +233,11 @@ export class SettingsManager implements SettingsCapability {
     const publishAgentPolicy = edit.kind === 'agent' || edit.kind === 'agent-defaults' || edit.kind === 'agent-skills' || edit.kind === 'agent-execution'
       ? this.options.agentPolicies!.prepare(edit) : undefined;
     const previousApplicationState = this.applicationState;
+    const catalog = await this.options.getModelCatalog();
     const committed = await (this.options.saveSection ?? saveAgentConfigSection)(
       this.options.agentHome, edit, (candidate) => {
         if (this.closing) throw new SettingsClosingError();
-        if (id === 'llm') this.validateReference(candidate);
+        if (id === 'llm') this.validateReference(candidate, catalog);
         this.active = { requestId: request.requestId, phase: 'settings-writing' };
       },
     );
@@ -244,9 +246,9 @@ export class SettingsManager implements SettingsCapability {
     this.fileStateUnknown = false;
     this.revisions.set(id, randomUUID());
     if (id !== 'llm') return success(request, {
-      section: this.section(id),
+      section: this.section(id, catalog),
       ...(agentSection || executionSection ? {
-        agentSections: this.options.agentPolicies!.sectionIds.map(sectionId => this.section(sectionId)),
+        agentSections: this.options.agentPolicies!.sectionIds.map(sectionId => this.section(sectionId, catalog)),
         agentDiagnostics: this.options.agentPolicies!.diagnostics(),
       } : {}),
     });
@@ -274,8 +276,17 @@ export class SettingsManager implements SettingsCapability {
     }
     if (application.outcome === 'published' || application.outcome === 'no-op') {
       this.applicationState = 'current';
+      let modelCatalog: ModelCatalogSnapshot;
+      try {
+        modelCatalog = await this.modelCatalog();
+      } catch (error) {
+        log.error('LLM configuration applied but catalog query failed', { code: errorCode(error) });
+        return settingsFailure(request, 'catalog_failed', 'Configuration was saved and applied, but querying models failed.', {
+          section: this.section(id), fileState: 'saved', applicationState: 'current',
+        });
+      }
       return success(request, {
-        section: this.section(id), modelCatalog: this.modelCatalog(),
+        section: this.section(id), modelCatalog,
         warnings: application.warnings.map(({ code, unitId }) => ({
           code, ...(unitId === undefined ? {} : { unitId }),
         })),
@@ -311,26 +322,35 @@ export class SettingsManager implements SettingsCapability {
         fileState: 'unknown', rollback: 'failed', applicationFailure, rollbackFailure: 'file_restore_failed',
       });
     }
+    let modelCatalog: ModelCatalogSnapshot;
+    try {
+      modelCatalog = await this.modelCatalog();
+    } catch (error) {
+      log.error('LLM rollback completed but catalog query failed', { code: errorCode(error) });
+      return settingsFailure(request, 'catalog_failed', 'Runtime application failed and the saved file was restored, but querying models failed.', {
+        section: this.section('llm'), fileState: 'restored', rollback: 'completed', applicationFailure,
+      });
+    }
     return settingsFailure(request, 'application_failed_rolled_back', 'Runtime application failed; the saved LLM section was restored.', {
-      section: this.section('llm'), modelCatalog: this.modelCatalog(),
+      section: this.section('llm'), modelCatalog,
       fileState: 'restored', rollback: 'completed', applicationFailure,
     });
   }
 
-  private validateReference(document: AgentConfigDocument): void {
+  private validateReference(document: AgentConfigDocument, catalog: ModelCatalogSnapshot): void {
     const configuration = validateLlmConfiguration(document.llm);
     const reference = configuration.defaultModel;
     if (!reference) return;
     const models = reference.providerId === BUILTIN_PROVIDER_ID
       ? configuration.builtin?.models
-      : this.options.getModelCatalog().providers.find((provider) => provider.providerId === reference.providerId)?.models;
+      : catalog.providers.find((provider) => provider.providerId === reference.providerId)?.models;
     if (!models?.some((model) => model.modelId === reference.modelId)) {
       throw new ConfigEditError('/settings/defaultModel', 'The selected default model is not in the candidate Built-in or current Runtime model catalog.');
     }
   }
 
-  private modelCatalog() {
-    const catalog = this.options.getModelCatalog();
+  private async modelCatalog() {
+    const catalog = await this.options.getModelCatalog();
     return {
       ...catalog,
       providers: catalog.providers.map((provider) => {
@@ -344,7 +364,7 @@ export class SettingsManager implements SettingsCapability {
     };
   }
 
-  private section(id: string) {
+  private section(id: string, catalog?: ModelCatalogSnapshot) {
     if (id === 'agents:memory') {
       return buildMemorySectionView({
         revision: this.revisions.get(id), document: this.document,
@@ -365,7 +385,7 @@ export class SettingsManager implements SettingsCapability {
         revision: this.revisions.get(id),
         form: { credentials: {} },
         ...(typeof model !== 'object' ? {} : {
-          modelAvailable: this.options.getModelCatalog().providers
+          modelAvailable: catalog?.providers
             .some(provider => provider.providerId === model.providerId
               && provider.models.some(candidate => candidate.modelId === model.modelId)),
         }),

@@ -61,7 +61,7 @@ describe('applied Agent policies', () => {
     const manager = new SettingsManager({
       agentHome: home, document, agentPolicies: policies, environment: {},
       startupMemoryEnabled: snapshot.application.agents.memory.enabled,
-      getModelCatalog: () => ({ generation: 1, defaultSelection: { state: 'unset' }, providers: [] }),
+      getModelCatalog: async () => ({ generation: 1, defaultSelection: { state: 'unset' }, providers: [] }),
       applyLlmConfiguration: async () => { throw new Error('Agent saves must not reload Providers.'); },
       saveSection,
     });

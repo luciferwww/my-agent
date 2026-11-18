@@ -2,7 +2,7 @@
 
 > Status: Current Authority
 > Authority: Current implemented Model Resolution behavior
-> Verified: 2026-09-18
+> Verified: 2026-11-18
 > Ownership: Model references, Provider projections, canonical identity, Model Facts, capability validation, and resolution failures
 > Ownership key: model-resolution-and-facts
 
@@ -16,9 +16,9 @@ Providers publish connection/model facts and a `ModelInvocationPort` through `Pr
 
 ## 2. Inputs and output
 
-`ModelResolver.resolve(...)` accepts one structured reference and provenance, Tool/media requirements, and application policy. It returns one frozen `ResolvedModel` containing canonical identity, protocol/deployment identity, a Turn-bound invocation Port, plain model facts, and separate frozen invocation defaults.
+`ModelResolver.resolve(..., signal?)` accepts one structured reference and provenance, Tool/media requirements, and application policy. It asynchronously reads the selected Provider and returns one frozen `ResolvedModel` containing canonical identity, protocol/deployment identity, a Turn-bound invocation Port, plain model facts, and separate frozen invocation defaults.
 
-A root Turn resolves against the Provider projection from its captured published generation. A Child resolves independently from the same immutable Parent-generation projection, using either the Parent's effective reference or the Child profile's explicit reference; it does not sample the latest publication.
+A root Turn resolves against the Provider registration from its captured published generation. A Child resolves independently from the same Parent-generation registration set, using either the Parent's effective reference or the Child profile's explicit reference. It reads that Provider's current model state, not the Parent's earlier catalog or the latest registration publication.
 
 Runtime supplies one complete structured reference from the Turn or configured default. Resolution never selects the first Provider/model, reprioritizes Providers, or inspects a pre-staging projection.
 
@@ -26,7 +26,21 @@ Runtime supplies one complete structured reference from the Turn or configured d
 
 The implementation canonicalizes the application-owned Provider ID while preserving the Provider-owned Model ID as opaque identity. It checks exact closed-Catalog membership before resolving the connection and descriptor, then validates identity/protocol consistency, policy, and requested capabilities before freezing the result. No failure changes Provider or Model identity.
 
-For each Provider instance, `models` and `resolveModel()` must derive from the same immutable model snapshot. Registry and Model Resolution enforce unique membership and observable identity/protocol/selected-endpoint consistency; `resolveModel()` may add the selected model's deployment identity. The Provider owns the private fact source and compliance with the shared-snapshot obligation. The current unified Built-in and Copilot Relay implementations use one captured model map for both projections.
+Each `ProviderProjectionEntry.getModelCatalog(signal?)` returns a Provider-owned
+snapshot with `models` and `resolveModel()` over one captured collection.
+Registry validates and retains the callable registration without reading or
+copying its model directory. `readProviderModelCatalog()` validates each read
+and freezes a detached listing; Core retains no catalog cache. Runtime queries
+all captured registrations and aggregates a frozen transport DTO. Providers
+alone own caching and model updates; Registry generation is not model freshness.
+
+Resolution checks unique membership and observable identity/protocol/selected
+endpoint consistency; `resolveModel()` may add deployment identity. Its
+descriptor supplies the invocation Port captured in the Turn binding. Later
+model removal or private wire-protocol changes cannot reroute that binding.
+Built-in returns its configured snapshot; Relay swaps whole captured maps.
+Catalog queries add no generation pin: a pre-disable query may finish later,
+but cannot re-register a disabled Provider.
 
 ## 4. Facts and capabilities
 

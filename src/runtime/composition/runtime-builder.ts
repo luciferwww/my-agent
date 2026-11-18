@@ -214,9 +214,9 @@ export async function buildRuntimeHandle(
     capabilities: Object.freeze({
       settings,
       modelCatalog: Object.freeze({
-        getSnapshot() {
+        getSnapshot(signal?: AbortSignal) {
           if (!kernel) throw new Error('Runtime Model Catalog is not ready.');
-          return kernel.application.getModelCatalog();
+          return kernel.application.getModelCatalog(signal);
         },
       }),
       abort: Object.freeze({

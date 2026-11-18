@@ -1,7 +1,7 @@
 import type { ExtensionRegistrationApi, LoadedRuntimeUnit } from 'my-agent/extension-api';
 import { CopilotRelayProvider } from './copilot-relay-provider.js';
 import { CopilotRelayChatCompletionsClient } from './chat-client.js';
-import { parseRelayModelCatalog } from './model-metadata.js';
+import { parseRelayModelCatalog, RelayMetadataError } from './model-metadata.js';
 import { CopilotRelayResponsesClient } from './responses-client.js';
 import type { CopilotRelayProviderUnitOptions } from './types.js';
 import type { RelayWireProtocol } from './types.js';
@@ -10,6 +10,10 @@ export const COPILOT_RELAY_PROVIDER_UNIT_ID = 'copilot-relay-provider';
 export const DEFAULT_COPILOT_RELAY_BASE_URL = 'http://127.0.0.1:5000';
 export const DEFAULT_COPILOT_RELAY_DISCOVERY_TIMEOUT_MS = 5_000;
 const MAX_DISCOVERY_BYTES = 2 * 1024 * 1024;
+const CATALOG_TTL_MS = 60_000;
+const DISCOVERY_RETRY_MS = 5_000;
+
+class RelayDiscoveryError extends Error {}
 
 export function createCopilotRelayProviderUnit(
   options: CopilotRelayProviderUnitOptions,
@@ -26,7 +30,6 @@ export function createCopilotRelayProviderUnit(
       const baseURL = normalizeCopilotRelayBaseURL(
         captured.baseURL ?? DEFAULT_COPILOT_RELAY_BASE_URL,
       );
-      const models = await discoverModels(baseURL, captured, signal);
       const clientOptions = {
         baseURL,
         apiKey: captured.apiKey,
@@ -36,13 +39,59 @@ export function createCopilotRelayProviderUnit(
         ['openai-responses', new CopilotRelayResponsesClient(clientOptions)],
         ['openai-chat-completions', new CopilotRelayChatCompletionsClient(clientOptions)],
       ]);
-      const provider = new CopilotRelayProvider(baseURL, clients, models);
+      let revision = 0;
+      let nextAttemptAt = 0;
+      let pending: Promise<void> | undefined;
+      const emptyProvider = () => new CopilotRelayProvider(baseURL, clients, new Map()).entry;
+      let current = emptyProvider();
+      const refresh = async (attemptRevision: number, discoverySignal: AbortSignal) => {
+        try {
+          const models = await discoverModels(baseURL, captured, discoverySignal);
+          discoverySignal.throwIfAborted();
+          if (revision !== attemptRevision) return;
+          const publishedRevision = ++revision;
+          const provider = new CopilotRelayProvider(baseURL, clients, models, () => {
+            if (revision !== publishedRevision) return;
+            revision++;
+            current = emptyProvider();
+            nextAttemptAt = 0;
+          });
+          current = provider.entry;
+          nextAttemptAt = Date.now() + CATALOG_TTL_MS;
+        } catch (error) {
+          if (discoverySignal.aborted) throw discoverySignal.reason;
+          if (!(error instanceof RelayDiscoveryError) && !(error instanceof RelayMetadataError)) throw error;
+          if (revision !== attemptRevision) return;
+          revision++;
+          current = emptyProvider();
+          nextAttemptAt = Date.now() + DISCOVERY_RETRY_MS;
+          (captured.logger ?? console).warn('Copilot Relay model discovery failed; model catalog cleared.', {
+            endpoint: `${baseURL}/v1/models`,
+            detail: error.message,
+          });
+        }
+      };
+      await refresh(revision, signal);
+      signal.throwIfAborted();
+      const provider = Object.freeze({
+        ...current,
+        async getModelCatalog(querySignal?: AbortSignal) {
+          querySignal?.throwIfAborted();
+          if (Date.now() >= nextAttemptAt && !pending) {
+            pending = refresh(revision, new AbortController().signal)
+              .finally(() => { pending = undefined; });
+          }
+          if (pending) await waitForDiscovery(pending, querySignal);
+          querySignal?.throwIfAborted();
+          return current.getModelCatalog(querySignal);
+        },
+      });
       return Object.freeze({
         registration: Object.freeze({
           id: COPILOT_RELAY_PROVIDER_UNIT_ID,
           source: 'external' as const,
           register(api: ExtensionRegistrationApi) {
-            api.registerProvider(provider.entry);
+            api.registerProvider(provider);
           },
         }),
         start() {},
@@ -120,21 +169,29 @@ async function discoverModels(
       const detail = error instanceof Error && error.cause instanceof Error
         ? error.cause.message
         : error instanceof Error ? error.message : String(error);
-      throw new Error(
+      throw new RelayDiscoveryError(
         `Copilot Relay model discovery request to "${discoveryURL}" failed: ${detail}`,
         { cause: error },
       );
     }
     if (!response.ok) {
       void response.body?.cancel().catch(() => undefined);
-      throw new Error(`Copilot Relay model discovery failed with HTTP ${response.status}.`);
+      throw new RelayDiscoveryError(`Copilot Relay model discovery failed with HTTP ${response.status}.`);
     }
-    const text = await readBoundedBody(response, MAX_DISCOVERY_BYTES, controller.signal);
+    let text: string;
+    try {
+      text = await readBoundedBody(response, MAX_DISCOVERY_BYTES, controller.signal);
+    } catch (error) {
+      if (error instanceof TypeError) {
+        throw new RelayDiscoveryError(`Copilot Relay model discovery body failed: ${error.message}`, { cause: error });
+      }
+      throw error;
+    }
     let payload: unknown;
     try {
       payload = JSON.parse(text);
     } catch {
-      throw new Error('Copilot Relay model discovery returned invalid JSON.');
+      throw new RelayDiscoveryError('Copilot Relay model discovery returned invalid JSON.');
     }
     return parseRelayModelCatalog(payload, (diagnostic) => {
       options.logger?.warn('Copilot Relay ignored unknown reasoning effort values.', {
@@ -142,6 +199,12 @@ async function discoverModels(
         ignoredValueCount: diagnostic.ignoredValueCount,
       });
     });
+  } catch (error) {
+    if (parentSignal.aborted) throw parentSignal.reason;
+    if (controller.signal.aborted) {
+      throw new RelayDiscoveryError('Copilot Relay model discovery timed out.', { cause: error });
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
     parentSignal.removeEventListener('abort', onAbort);
@@ -153,7 +216,7 @@ async function readBoundedBody(
   maximumBytes: number,
   signal: AbortSignal,
 ): Promise<string> {
-  if (!response.body) throw new Error('Copilot Relay model discovery response has no body.');
+  if (!response.body) throw new RelayDiscoveryError('Copilot Relay model discovery response has no body.');
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -163,7 +226,7 @@ async function readBoundedBody(
       if (result.done) break;
       size += result.value.byteLength;
       if (size > maximumBytes) {
-        throw new Error('Copilot Relay model discovery response exceeded its size limit.');
+        throw new RelayDiscoveryError('Copilot Relay model discovery response exceeded its size limit.');
       }
       chunks.push(result.value);
     }
@@ -209,4 +272,14 @@ function abortReason(reason: unknown): Error {
   return reason instanceof Error
     ? reason
     : new DOMException('The operation was aborted.', 'AbortError');
+}
+
+function waitForDiscovery(operation: Promise<void>, signal?: AbortSignal): Promise<void> {
+  if (!signal) return operation;
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    void operation.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
 }

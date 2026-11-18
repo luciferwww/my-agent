@@ -40,6 +40,7 @@ export {
   ContextOverflowError,
   ModelInvocationError,
   toModelInvocationError,
+  findModelInvocationError,
 } from './errors.js';
 export {
   renderExecutionAcceptedReceipt,

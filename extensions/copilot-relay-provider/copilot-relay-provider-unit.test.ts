@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ProviderProjectionEntry } from 'my-agent/extension-api';
+import type { ProviderProjectionEntry, ProviderModelSnapshot, ModelInvocationPort } from 'my-agent/extension-api';
+import { providerPort } from '../../src/test-fixtures/provider.js';
 import {
   COPILOT_RELAY_PROVIDER_UNIT_ID,
   createCopilotRelayProviderUnit,
@@ -36,15 +37,15 @@ async function createProvider(
     discoveryTimeoutMs?: number;
     logger?: { warn: ReturnType<typeof vi.fn> };
   } = {},
-): Promise<ProviderProjectionEntry> {
-  const unit = createCopilotRelayProviderUnit({ ...options, fetch: fetchImpl });
+): Promise<ProviderProjectionEntry & ProviderModelSnapshot & { invocationPort: ModelInvocationPort }> {
+  const unit = createCopilotRelayProviderUnit({ logger: { warn: vi.fn() }, ...options, fetch: fetchImpl });
   const instance = await unit.create(new AbortController().signal);
   let provider: ProviderProjectionEntry | undefined;
   instance.registration.register({
     registerProvider(entry: ProviderProjectionEntry) { provider = entry; },
   } as never);
   if (!provider) throw new Error('Provider was not registered.');
-  return provider;
+  return { ...provider, ...await provider.getModelCatalog(), invocationPort: providerPort(provider) };
 }
 
 describe('Copilot Relay Provider Unit', () => {
@@ -352,13 +353,13 @@ describe('Copilot Relay Provider Unit', () => {
     expect(headers).not.toHaveProperty('authorization');
   });
 
-  it('rejects duplicate eligible model ids and malformed discovery responses', async () => {
+  it('registers empty catalogs for duplicate ids and malformed discovery responses', async () => {
     await expect(createProvider(
       vi.fn(async () => discoveryResponse([validModel(), validModel()])) as unknown as typeof fetch,
-    )).rejects.toThrow('duplicate model id');
+    )).resolves.toMatchObject({ models: [] });
     await expect(createProvider(
       vi.fn(async () => Response.json({ models: [] })) as unknown as typeof fetch,
-    )).rejects.toThrow('data array');
+    )).resolves.toMatchObject({ models: [] });
   });
 
   it.each([
@@ -367,7 +368,7 @@ describe('Copilot Relay Provider Unit', () => {
     ['high', 1],
     ['high', ' '],
     ['high', 'high'],
-  ])('rejects structurally invalid reasoning_effort metadata %j', async (reasoningEffort) => {
+  ])('clears catalogs for structurally invalid reasoning_effort metadata %j', async (reasoningEffort) => {
     await expect(createProvider(
       vi.fn(async () => discoveryResponse([validModel({
         capabilities: {
@@ -378,7 +379,7 @@ describe('Copilot Relay Provider Unit', () => {
           supports: { reasoning_effort: reasoningEffort },
         },
       })])) as unknown as typeof fetch,
-    )).rejects.toThrow('reasoning_effort');
+    )).resolves.toMatchObject({ models: [] });
   });
 
   it('keeps an all-unknown effort model without publishing explicit effort capability', async () => {
@@ -409,7 +410,9 @@ describe('Copilot Relay Provider Unit', () => {
     const fetchImpl = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
       cancel,
     }), { status: 503 })) as unknown as typeof fetch;
-    await expect(createProvider(fetchImpl)).rejects.toThrow('HTTP 503');
+    const logger = { warn: vi.fn() };
+    await expect(createProvider(fetchImpl, { logger })).resolves.toMatchObject({ models: [] });
+    expect(logger.warn).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ detail: expect.stringContaining('HTTP 503') }));
     await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
   });
 
@@ -419,9 +422,11 @@ describe('Copilot Relay Provider Unit', () => {
     });
     const fetchImpl = vi.fn(async () => { throw failure; }) as unknown as typeof fetch;
 
-    await expect(createProvider(fetchImpl)).rejects.toThrow(
-      'Copilot Relay model discovery request to "http://127.0.0.1:5000/v1/models" failed: connect ECONNREFUSED 127.0.0.1:5000',
-    );
+    const logger = { warn: vi.fn() };
+    await expect(createProvider(fetchImpl, { logger })).resolves.toMatchObject({ models: [] });
+    expect(logger.warn).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      detail: 'Copilot Relay model discovery request to "http://127.0.0.1:5000/v1/models" failed: connect ECONNREFUSED 127.0.0.1:5000',
+    }));
   });
 
   it('aborts bounded discovery at its timeout', async () => {
@@ -429,9 +434,7 @@ describe('Copilot Relay Provider Unit', () => {
       init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
     })) as unknown as typeof fetch;
     const unit = createCopilotRelayProviderUnit({ fetch: fetchImpl, discoveryTimeoutMs: 10 });
-    await expect(unit.create(new AbortController().signal)).rejects.toMatchObject({
-      name: 'TimeoutError',
-    });
+    await expect(unit.create(new AbortController().signal)).resolves.toHaveProperty('registration');
   });
 
   it('aborts discovery while a response body read is pending', async () => {
@@ -439,9 +442,7 @@ describe('Copilot Relay Provider Unit', () => {
       start() {},
     }))) as unknown as typeof fetch;
     const unit = createCopilotRelayProviderUnit({ fetch: fetchImpl, discoveryTimeoutMs: 10 });
-    await expect(unit.create(new AbortController().signal)).rejects.toMatchObject({
-      name: 'TimeoutError',
-    });
+    await expect(unit.create(new AbortController().signal)).resolves.toHaveProperty('registration');
   });
 
   it('validates HTTP(S) base URLs before discovery', () => {
@@ -457,5 +458,161 @@ describe('Copilot Relay Provider Unit', () => {
       .toThrow('credential-free');
     expect(() => normalizeCopilotRelayBaseURL('http://localhost:5000?secret=yes'))
       .toThrow('without query or fragment');
+  });
+
+  it('refreshes at 60 seconds, clears on failure, and retries only after 5 seconds', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(0);
+    try {
+      const logger = { warn: vi.fn() };
+      const fetchImpl = vi.fn()
+        .mockResolvedValueOnce(discoveryResponse([validModel()]))
+        .mockResolvedValueOnce(new Response(null, { status: 503 }))
+        .mockResolvedValueOnce(discoveryResponse([validModel({ id: 'recovered' })]));
+      const provider = await createProvider(fetchImpl, { logger });
+      now.mockReturnValue(59_999);
+      expect((await provider.getModelCatalog()).models).toHaveLength(1);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      now.mockReturnValue(60_000);
+      expect((await provider.getModelCatalog()).models).toEqual([]);
+      now.mockReturnValue(64_999);
+      expect((await provider.getModelCatalog()).models).toEqual([]);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      now.mockReturnValue(65_000);
+      expect((await provider.getModelCatalog()).models[0]?.modelId).toBe('recovered');
+      expect(fetchImpl).toHaveBeenCalledTimes(3);
+    } finally { now.mockRestore(); }
+  });
+
+  it('isolates query cancellation while sharing a bounded discovery', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(0);
+    try {
+      let complete!: (response: Response) => void;
+      const fetchImpl = vi.fn()
+        .mockResolvedValueOnce(discoveryResponse([validModel()]))
+        .mockImplementationOnce(() => new Promise<Response>(resolve => { complete = resolve; }));
+      const provider = await createProvider(fetchImpl);
+      now.mockReturnValue(60_000);
+      const controller = new AbortController();
+      const cancelled = provider.getModelCatalog(controller.signal);
+      const other = provider.getModelCatalog();
+      controller.abort();
+      await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+      complete(discoveryResponse([validModel({ id: 'new' })]));
+      expect((await other).models[0]?.modelId).toBe('new');
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    } finally { now.mockRestore(); }
+  });
+
+  it('invalidates before missing-model error delivery and keeps old routing stable', async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).endsWith('/models')) return discoveryResponse([validModel()]);
+      return Response.json({ error: { code: 'model_not_found', message: 'gone' } }, { status: 404 });
+    });
+    const provider = await createProvider(fetchImpl);
+    const snapshot = await provider.getModelCatalog();
+    const connection = provider.resolveConnection();
+    if (!connection.ok) throw new Error('Expected connection.');
+    const result = snapshot.resolveModel('gpt-5.6-sol', connection.connection);
+    if (!result.ok) throw new Error('Expected model.');
+    await expect(result.descriptor.invocationPort.chat({
+      model: 'gpt-5.6-sol', messages: [],
+    })).rejects.toMatchObject({ category: 'model_not_found' });
+    await provider.getModelCatalog();
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).endsWith('/models'))).toHaveLength(2);
+    await expect(result.descriptor.invocationPort.chat({
+      model: 'gpt-5.6-sol', messages: [],
+    })).rejects.toMatchObject({ category: 'model_not_found' });
+    await provider.getModelCatalog();
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).endsWith('/models'))).toHaveLength(2);
+  });
+
+  it('propagates parent cancellation without tolerating it as an outage', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const logger = { warn: vi.fn() };
+    const unit = createCopilotRelayProviderUnit({ logger, fetch: vi.fn(async () => { throw controller.signal.reason; }) });
+    await expect(unit.create(controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('invalidates before yielding a streaming missing-model error', async () => {
+    const discovery = vi.fn()
+      .mockResolvedValueOnce(discoveryResponse([validModel()]))
+      .mockResolvedValueOnce(discoveryResponse([validModel({ id: 'replacement' })]));
+    const fetchImpl = vi.fn(async (input: string | URL | Request) =>
+      String(input).endsWith('/models')
+        ? discovery()
+        : Response.json({ error: { code: 'model_not_found' } }, { status: 404 }));
+    const provider = await createProvider(fetchImpl);
+    const connection = provider.resolveConnection();
+    if (!connection.ok) throw new Error('Expected connection.');
+    const bound = provider.resolveModel('gpt-5.6-sol', connection.connection);
+    if (!bound.ok) throw new Error('Expected model.');
+    const events = [];
+    for await (const event of bound.descriptor.invocationPort.chatStream({
+      model: 'gpt-5.6-sol', messages: [],
+    })) {
+      events.push(event);
+      if (event.type === 'error') {
+        expect((await provider.getModelCatalog()).models.map(model => model.modelId)).toEqual(['replacement']);
+      }
+    }
+    expect(events).toContainEqual(expect.objectContaining({ type: 'error' }));
+    expect(discovery).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not republish a discovery invalidated while it was in flight', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(0);
+    try {
+      let complete!: (response: Response) => void;
+      const discovery = vi.fn()
+        .mockResolvedValueOnce(discoveryResponse([validModel()]))
+        .mockImplementationOnce(() => new Promise<Response>(resolve => { complete = resolve; }))
+        .mockResolvedValueOnce(discoveryResponse([validModel({ id: 'fresh' })]));
+      const fetchImpl = vi.fn(async (input: string | URL | Request) =>
+        String(input).endsWith('/models')
+          ? discovery()
+          : Response.json({ error: { code: 'model_not_found' } }, { status: 404 }));
+      const provider = await createProvider(fetchImpl);
+      const connection = provider.resolveConnection();
+      if (!connection.ok) throw new Error('Expected connection.');
+      const bound = provider.resolveModel('gpt-5.6-sol', connection.connection);
+      if (!bound.ok) throw new Error('Expected model.');
+      now.mockReturnValue(60_000);
+      const pending = provider.getModelCatalog();
+      await expect(bound.descriptor.invocationPort.chat({
+        model: 'gpt-5.6-sol', messages: [],
+      })).rejects.toMatchObject({ category: 'model_not_found' });
+      complete(discoveryResponse([validModel({ id: 'stale' })]));
+      expect((await pending).models).toEqual([]);
+      expect((await provider.getModelCatalog()).models.map(model => model.modelId)).toEqual(['fresh']);
+      expect(discovery).toHaveBeenCalledTimes(3);
+    } finally { now.mockRestore(); }
+  });
+
+  it('retains the captured wire route when the same model changes protocols', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(0);
+    try {
+      const discovery = vi.fn()
+        .mockResolvedValueOnce(discoveryResponse([validModel()]))
+        .mockResolvedValueOnce(discoveryResponse([validModel({ supported_endpoints: ['/chat/completions'] })]));
+      const fetchImpl = vi.fn(async (input: string | URL | Request) =>
+        String(input).endsWith('/models')
+          ? discovery()
+          : Response.json({ error: { code: 'invalid_model' } }, { status: 400 }));
+      const provider = await createProvider(fetchImpl);
+      const connection = provider.resolveConnection();
+      if (!connection.ok) throw new Error('Expected connection.');
+      const old = provider.resolveModel('gpt-5.6-sol', connection.connection);
+      now.mockReturnValue(60_000);
+      const current = (await provider.getModelCatalog()).resolveModel('gpt-5.6-sol', connection.connection);
+      if (!old.ok || !current.ok) throw new Error('Expected both bindings.');
+      const request = { model: 'gpt-5.6-sol', messages: [] };
+      await expect(old.descriptor.invocationPort.chat(request)).rejects.toThrow();
+      await expect(current.descriptor.invocationPort.chat(request)).rejects.toThrow();
+      expect(fetchImpl.mock.calls.map(([url]) => String(url)).filter(url => !url.endsWith('/models')))
+        .toEqual(['http://127.0.0.1:5000/v1/responses', 'http://127.0.0.1:5000/v1/chat/completions']);
+    } finally { now.mockRestore(); }
   });
 });

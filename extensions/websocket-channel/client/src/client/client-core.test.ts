@@ -30,6 +30,15 @@ import {
 } from './theme';
 
 describe('WebSocket Client core', () => {
+  it('refreshes catalogs only for explicit missing/unregistered/rejected model errors', () => {
+    for (const category of ['model_not_found', 'provider_unregistered', 'model_rejected', 'transport']) {
+      let nextId = 0;
+      const effects = applyAgentEvent(createSessionUiState(), {
+        type: 'error', turnId: 'turn', error: 'Request failed', category,
+      }, { clientId: 'client', nextId: () => ++nextId });
+      expect(effects.some(effect => effect.type === 'refresh_model_catalog')).toBe(category !== 'transport');
+    }
+  });
   it('keeps richer realtime text and its stable presentation identity', () => {
     const history: PresentationItem[] = [{
       id: 'history-turn',

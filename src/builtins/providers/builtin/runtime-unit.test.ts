@@ -34,8 +34,11 @@ describe('Built-in LLM Provider Runtime Unit', () => {
 
     expect(registerProvider).toHaveBeenCalledWith(expect.objectContaining({
       id: 'builtin',
-      models: [{ modelId: 'model-a', displayName: 'Model A' }],
+      getModelCatalog: expect.any(Function),
     }));
+    expect((await registerProvider.mock.calls[0]![0].getModelCatalog()).models).toEqual([
+      { modelId: 'model-a', displayName: 'Model A' },
+    ]);
     expect(createClient).toHaveBeenCalledOnce();
   });
 
@@ -52,8 +55,9 @@ describe('Built-in LLM Provider Runtime Unit', () => {
 
     expect(registerProvider).toHaveBeenCalledWith(expect.objectContaining({
       id: 'builtin',
-      models: [],
+      getModelCatalog: expect.any(Function),
     }));
+    expect((await registerProvider.mock.calls[0]![0].getModelCatalog()).models).toEqual([]);
     expect(createClient).not.toHaveBeenCalled();
   });
 });

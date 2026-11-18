@@ -239,7 +239,7 @@ export type AgentEvent =
       turnId: string;
       requestId: string;
       error: Error;
-      category?: import('../model-resolution/index.js').ResolutionFailureCategory;
+      category?: import('../model-resolution/index.js').ResolutionFailureCategory | 'model_not_found';
       originMessageId?: string;
     }
   | {

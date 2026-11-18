@@ -32,6 +32,9 @@ export type {
   ProviderConnection,
   ProviderModelFacts,
   ProviderProjectionEntry,
+  ProviderModelSnapshot,
+  ProviderCatalogModel,
+  ProviderModelResult,
   ReasoningCapabilities,
 } from '../../core/model-resolution/index.js';
 export {

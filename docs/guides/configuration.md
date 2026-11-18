@@ -801,6 +801,16 @@ Keep it on loopback or place it behind an authenticated operational boundary.
 The Extension discovers models and their supported Responses or Chat
 Completions endpoint from `<baseURL>/v1/models`.
 
+If discovery is unavailable, the Provider still registers with no models and
+logs a warning containing the endpoint and cause. A later catalog query can
+recover without restarting or toggling the Extension. Successful discovery is
+cached for 60 seconds; failed discovery clears the list and becomes eligible
+for another query-driven attempt after 5 seconds. There is no background retry.
+CLI and WebSocket check their own 60-second presentation interval when showing
+models, so these independent intervals can delay visible changes beyond
+60 seconds. A structured missing-model invocation error triggers refresh but
+does not retry the invocation or select another model automatically.
+
 | Field | Default |
 |---|---|
 | `baseURL` | `http://127.0.0.1:5000` |

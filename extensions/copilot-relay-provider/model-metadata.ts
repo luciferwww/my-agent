@@ -28,6 +28,7 @@ export interface RelayDiscoveryDiagnostic {
   readonly code: 'unknown_reasoning_effort';
   readonly ignoredValueCount: number;
 }
+export class RelayMetadataError extends Error {}
 
 export function parseRelayModelCatalog(
   payload: unknown,
@@ -35,7 +36,7 @@ export function parseRelayModelCatalog(
 ): ReadonlyMap<string, RelayModelBinding> {
   const root = asRecord(payload);
   if (!root || !Array.isArray(root.data)) {
-    throw new Error('Copilot Relay model discovery response must contain a data array.');
+    throw new RelayMetadataError('Copilot Relay model discovery response must contain a data array.');
   }
 
   const models = new Map<string, RelayModelBinding>();
@@ -43,7 +44,7 @@ export function parseRelayModelCatalog(
     const binding = parseModel(raw, onDiagnostic);
     if (!binding) continue;
     if (models.has(binding.metadata.id)) {
-      throw new Error(`Copilot Relay returned duplicate model id "${binding.metadata.id}".`);
+      throw new RelayMetadataError(`Copilot Relay returned duplicate model id "${binding.metadata.id}".`);
     }
     models.set(binding.metadata.id, binding);
   }
@@ -139,14 +140,14 @@ function parseReasoningCapabilities(
   if (!supports || !Object.hasOwn(supports, 'reasoning_effort')) return undefined;
   const raw = supports.reasoning_effort;
   if (!Array.isArray(raw)) {
-    throw new Error('Copilot Relay reasoning_effort must be an array.');
+    throw new RelayMetadataError('Copilot Relay reasoning_effort must be an array.');
   }
   const efforts: ExplicitThinkingEffort[] = [];
   let unknownCount = 0;
   for (let index = 0; index < raw.length; index++) {
     const value = raw[index];
     if (typeof value !== 'string' || value.trim().length === 0) {
-      throw new Error(
+      throw new RelayMetadataError(
         `Copilot Relay reasoning_effort[${index}] must be a non-empty string.`,
       );
     }
@@ -156,7 +157,7 @@ function parseReasoningCapabilities(
     }
     const effort = value as ExplicitThinkingEffort;
     if (efforts.includes(effort)) {
-      throw new Error(
+      throw new RelayMetadataError(
         `Copilot Relay reasoning_effort[${index}] duplicates "${effort}".`,
       );
     }

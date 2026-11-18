@@ -2,7 +2,7 @@
 
 > Status: Stable Authority
 > Contract status: Implemented and Validated
-> Verified: 2026-09-14
+> Verified: 2026-11-18
 > Authority: Stable structural invocation-error contract
 
 ## Scope
@@ -20,7 +20,14 @@ interface ModelInvocationStructuralErrorV1 extends Error {
 }
 ```
 
-Categories are exactly `authentication`, `rate_limit`, `invalid_request`, `unavailable`, `transport`, and `provider_failure`.
+Categories are exactly `authentication`, `rate_limit`, `invalid_request`,
+`unavailable`, `transport`, `provider_failure`, and `model_not_found`.
+Relay recognizes exact structured `model_not_found` in HTTP or explicit SSE
+error envelopes; authentication/rate-limit/server-failure HTTP statuses retain
+their original classification. Generic 404, `invalid_model`, free text, and
+unknown codes do not imply missing models. Both collected and streaming
+invocations preserve bounded diagnostics. The Provider invalidates its current
+catalog before delivering the missing-model error, without retrying invocation.
 
 `toModelInvocationError(value)` returns a Host-local canonical error or `undefined`. Protocol and version must match exactly; identity is not inferred from name/message. Only own data discriminator properties are accepted—accessors and inherited values are rejected. Canonicalization is total and non-throwing.
 

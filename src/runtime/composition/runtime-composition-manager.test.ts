@@ -36,7 +36,7 @@ function host(): ChannelRuntimeHost {
       settings: { execute: async () => { throw new Error('Unexpected Settings action.'); } },
       approvals: { getPending: vi.fn(() => []) },
       modelCatalog: {
-        getSnapshot: vi.fn(() => ({
+        getSnapshot: vi.fn(async () => ({
           generation: 1,
           defaultSelection: { state: 'unset' as const },
           providers: [],
@@ -202,7 +202,7 @@ describe('RuntimeCompositionManager', () => {
     expect(second).toMatchObject({ outcome: 'published', generation: 3 });
     expect(third).toMatchObject({ outcome: 'published', generation: 4 });
     expect(oldTree.snapshot.defaultModel?.modelId).toBe('first');
-    expect(oldTree.snapshot.providers[0]?.models[0]?.modelId).toBe('first');
+    expect((await oldTree.snapshot.providers[0]!.getModelCatalog()).models[0]?.modelId).toBe('first');
     expect(manager.currentSnapshot().defaultModel?.modelId).toBe('third');
     expect(coordinator.generationState(2)).toBe('retiring');
     expect(ledger.view(oldInstanceId)).toMatchObject({
@@ -296,7 +296,7 @@ describe('RuntimeCompositionManager', () => {
     });
     expect(manager.currentSnapshot().providers).toEqual([]);
     expect(manager.currentSnapshot().defaultModel).toBeUndefined();
-    expect(tree.snapshot.providers[0]?.models[0]?.modelId).toBe('first');
+    expect((await tree.snapshot.providers[0]!.getModelCatalog()).models[0]?.modelId).toBe('first');
     expect(tree.snapshot.defaultModel?.modelId).toBe('first');
     tree.release();
     await manager.shutdown();
@@ -550,18 +550,18 @@ describe('RuntimeCompositionManager', () => {
     const provider: ProviderProjectionEntry = {
       id: 'stable-provider',
       protocol: 'test',
-      models: [{ modelId: 'stable-model' }],
-      invocationPort: {} as never,
+      getModelCatalog: async () => ({ models: [{ modelId: 'stable-model' }], resolveModel: () => ({
+        ok: false,
+        category: 'model_rejected',
+        message: 'not used',
+      }),  }),
+
       resolveConnection: () => ({
         ok: false,
         category: 'connection_missing',
         message: 'not used',
       }),
-      resolveModel: () => ({
-        ok: false,
-        category: 'model_rejected',
-        message: 'not used',
-      }),
+
     };
     const providerCreate = vi.fn();
     const channelCreate = vi.fn();

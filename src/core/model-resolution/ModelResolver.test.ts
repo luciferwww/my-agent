@@ -4,6 +4,7 @@ import { ModelResolutionError, ModelResolver } from './ModelResolver.js';
 import type {
   ModelResolutionInput,
   ProviderModelFacts,
+  ProviderModelSnapshot,
   ProviderProjectionEntry,
 } from './types.js';
 
@@ -12,19 +13,12 @@ const port: ModelInvocationPort = {
   chat: vi.fn(),
 };
 
-function provider(overrides: Partial<ProviderProjectionEntry> = {}): ProviderProjectionEntry {
+function provider(overrides: Partial<ProviderProjectionEntry & ProviderModelSnapshot> = {}): ProviderProjectionEntry {
   return {
     id: 'test-provider',
-    models: [{ modelId: 'test-model' }],
-    protocol: 'anthropic-messages',
-    invocationPort: port,
-    resolveConnection: () => ({
+    getModelCatalog: async () => ({ models: [{ modelId: 'test-model' }], resolveModel: (modelId, connection) => ({
       ok: true,
-      connection: { endpointId: 'https://example.test' },
-    }),
-    resolveModel: (modelId, connection) => ({
-      ok: true,
-      descriptor: {
+      descriptor: { invocationPort: port,
         identity: { providerId: 'test-provider', modelId },
         protocol: 'anthropic-messages',
         connection,
@@ -40,7 +34,14 @@ function provider(overrides: Partial<ProviderProjectionEntry> = {}): ProviderPro
           mediaKinds: ['image'],
         },
       },
+    }), ...overrides }),
+    protocol: 'anthropic-messages',
+
+    resolveConnection: () => ({
+      ok: true,
+      connection: { endpointId: 'https://example.test' },
     }),
+
     ...overrides,
   };
 }
@@ -54,9 +55,9 @@ function input(overrides: Partial<ModelResolutionInput> = {}): ModelResolutionIn
   };
 }
 
-function expectCategory(action: () => unknown, category: ModelResolutionError['category']): void {
+async function expectCategory(action: () => unknown, category: ModelResolutionError['category']): Promise<void> {
   try {
-    action();
+    await action();
     throw new Error('Expected model resolution to fail.');
   } catch (error) {
     expect(error).toBeInstanceOf(ModelResolutionError);
@@ -65,9 +66,9 @@ function expectCategory(action: () => unknown, category: ModelResolutionError['c
 }
 
 describe('ModelResolver', () => {
-  it('atomically resolves an immutable identity, Port, and plain Facts binding', () => {
+  it('atomically resolves an immutable identity, Port, and plain Facts binding', async () => {
     const resolver = new ModelResolver([provider()]);
-    const resolved = resolver.resolve(input());
+    const resolved = (await resolver.resolve(input()));
 
     expect(resolved.identity).toEqual({ providerId: 'test-provider', modelId: 'test-model' });
     expect(resolved.referenceSource).toBe('native');
@@ -83,35 +84,35 @@ describe('ModelResolver', () => {
     expect(Object.isFrozen(resolved.facts)).toBe(true);
   });
 
-  it('preserves an opaque Provider-owned Model ID exactly through resolution', () => {
+  it('preserves an opaque Provider-owned Model ID exactly through resolution', async () => {
     const modelId = ' model/vendor:v1?x=1\n\u0000 ';
-    const resolveModel = vi.fn(provider().resolveModel);
+    const resolveModel = vi.fn((await provider().getModelCatalog()).resolveModel);
     const resolver = new ModelResolver([provider({
       models: [{ modelId }],
       resolveModel,
     })]);
 
-    const resolved = resolver.resolve(input({
+    const resolved = (await resolver.resolve(input({
       reference: { providerId: 'test-provider', modelId },
-    }));
+    })));
 
     expect(resolveModel).toHaveBeenCalledWith(modelId, { endpointId: 'https://example.test' });
     expect(resolved.identity.modelId).toBe(modelId);
   });
 
-  it('distinguishes an empty Model ID from a missing Model ID', () => {
+  it('distinguishes an empty Model ID from a missing Model ID', async () => {
     const resolver = new ModelResolver([provider({ models: [{ modelId: '' }] })]);
 
-    expect(resolver.resolve(input({
+    expect((await resolver.resolve(input({
       reference: { providerId: 'test-provider', modelId: '' },
-    })).identity.modelId).toBe('');
-    expectCategory(() => resolver.resolve(input({
+    }))).identity.modelId).toBe('');
+    await expectCategory(async () => (await resolver.resolve(input({
       reference: { providerId: 'test-provider' } as never,
-    })), 'reference_invalid');
+    }))), 'reference_invalid');
   });
 
-  it('rejects a Provider descriptor that changes the selected opaque Model ID', () => {
-    const base = provider();
+  it('rejects a Provider descriptor that changes the selected opaque Model ID', async () => {
+    const base = await provider().getModelCatalog();
     const resolver = new ModelResolver([provider({
       resolveModel: (modelId, connection) => {
         const result = base.resolveModel(modelId, connection);
@@ -126,19 +127,19 @@ describe('ModelResolver', () => {
       },
     })]);
 
-    expectCategory(() => resolver.resolve(input()), 'protocol_incompatible');
+    await expectCategory(async () => (await resolver.resolve(input())), 'protocol_incompatible');
   });
 
-  it('validates application-owned Provider IDs without constraining Model IDs', () => {
+  it('validates application-owned Provider IDs without constraining Model IDs', async () => {
     expect(() => new ModelResolver([provider({ id: 'provider/name' })]))
       .toThrow('invalid or duplicate identity');
-    expectCategory(() => new ModelResolver([provider()]).resolve(input({
+    await expectCategory(async () => (await new ModelResolver([provider()]).resolve(input({
       reference: { providerId: 'provider/name', modelId: 'test-model' },
-    })), 'reference_invalid');
+    }))), 'reference_invalid');
   });
 
-  it('rejects an invalid Provider ID returned by the Provider descriptor', () => {
-    const base = provider();
+  it('rejects an invalid Provider ID returned by the Provider descriptor', async () => {
+    const base = await provider().getModelCatalog();
     const resolver = new ModelResolver([provider({
       resolveModel: (modelId, connection) => {
         const result = base.resolveModel(modelId, connection);
@@ -153,31 +154,31 @@ describe('ModelResolver', () => {
       },
     })]);
 
-    expectCategory(() => resolver.resolve(input()), 'protocol_incompatible');
+    await expectCategory(async () => (await resolver.resolve(input())), 'protocol_incompatible');
   });
 
   it.each([
-    ['reference_invalid', () => new ModelResolver([provider()]).resolve(input({ reference: { providerId: ' ', modelId: 'test-model' } }))],
-    ['provider_unregistered', () => new ModelResolver([]).resolve(input())],
-    ['connection_missing', () => new ModelResolver([provider({ resolveConnection: () => ({ ok: false, category: 'connection_missing', message: 'missing' }) })]).resolve(input())],
-    ['connection_invalid', () => new ModelResolver([provider({ resolveConnection: () => ({ ok: false, category: 'connection_invalid', message: 'invalid' }) })]).resolve(input())],
-    ['model_rejected', () => new ModelResolver([provider({ resolveModel: () => ({ ok: false, category: 'model_rejected', message: 'rejected' }) })]).resolve(input())],
-    ['model_ambiguous', () => new ModelResolver([provider({ resolveModel: () => ({ ok: false, category: 'model_ambiguous', message: 'ambiguous' }) })]).resolve(input())],
-    ['facts_insufficient', () => new ModelResolver([provider({ resolveModel: (modelId, connection) => ({ ok: true, descriptor: { identity: { providerId: 'test-provider', modelId }, protocol: 'anthropic-messages', connection, facts: {} } }) })]).resolve(input())],
-    ['policy_denied', () => new ModelResolver([provider()]).resolve(input({ policy: { allowModel: () => false } }))],
-    ['protocol_incompatible', () => new ModelResolver([provider({ protocol: 'other' })]).resolve(input())],
-    ['capability_unsupported', () => new ModelResolver([provider()]).resolve(input({ request: { tools: false, mediaKinds: ['audio'] } }))],
-  ] as const)('fails closed with %s before invoking the Port', (category, action) => {
+    ['reference_invalid', async () => (await new ModelResolver([provider()]).resolve(input({ reference: { providerId: ' ', modelId: 'test-model' } })))],
+    ['provider_unregistered', async () => (await new ModelResolver([]).resolve(input()))],
+    ['connection_missing', async () => (await new ModelResolver([provider({ resolveConnection: () => ({ ok: false, category: 'connection_missing', message: 'missing' }) })]).resolve(input()))],
+    ['connection_invalid', async () => (await new ModelResolver([provider({ resolveConnection: () => ({ ok: false, category: 'connection_invalid', message: 'invalid' }) })]).resolve(input()))],
+    ['model_rejected', async () => (await new ModelResolver([provider({ resolveModel: () => ({ ok: false, category: 'model_rejected', message: 'rejected' }) })]).resolve(input()))],
+    ['model_ambiguous', async () => (await new ModelResolver([provider({ resolveModel: () => ({ ok: false, category: 'model_ambiguous', message: 'ambiguous' }) })]).resolve(input()))],
+    ['facts_insufficient', async () => (await new ModelResolver([provider({ resolveModel: (modelId, connection) => ({ ok: true, descriptor: { invocationPort: port, identity: { providerId: 'test-provider', modelId }, protocol: 'anthropic-messages', connection, facts: {} } }) })]).resolve(input()))],
+    ['policy_denied', async () => (await new ModelResolver([provider()]).resolve(input({ policy: { allowModel: () => false } })))],
+    ['protocol_incompatible', async () => (await new ModelResolver([provider({ protocol: 'other' })]).resolve(input()))],
+    ['capability_unsupported', async () => (await new ModelResolver([provider()]).resolve(input({ request: { tools: false, mediaKinds: ['audio'] } })))],
+  ] as const)('fails closed with %s before invoking the Port', async (category, action) => {
     vi.mocked(port.chatStream).mockClear();
     vi.mocked(port.chat).mockClear();
 
-    expectCategory(action, category);
+    await expectCategory(action, category);
     expect(port.chatStream).not.toHaveBeenCalled();
     expect(port.chat).not.toHaveBeenCalled();
   });
 
-  it('fails open for unknown Tool and Media capabilities', () => {
-    const base = provider();
+  it('fails open for unknown Tool and Media capabilities', async () => {
+    const base = await provider().getModelCatalog();
     const resolver = new ModelResolver([provider({
       resolveModel: (modelId, connection) => {
         const result = base.resolveModel(modelId, connection);
@@ -192,13 +193,13 @@ describe('ModelResolver', () => {
       },
     })]);
 
-    expect(() => resolver.resolve(input({
+    expect(async () => (await resolver.resolve(input({
       request: { tools: true, mediaKinds: ['image'] },
-    }))).not.toThrow();
+    })))).not.toThrow();
   });
 
-  it('defensively copies and deeply freezes valid reasoning capabilities', () => {
-    const base = provider();
+  it('defensively copies and deeply freezes valid reasoning capabilities', async () => {
+    const base = await provider().getModelCatalog();
     const thinking: Array<'off' | 'on'> = ['off', 'on'];
     const efforts: Array<'high' | 'low'> = ['high', 'low'];
     const resolver = new ModelResolver([provider({
@@ -218,7 +219,7 @@ describe('ModelResolver', () => {
       },
     })]);
 
-    const resolved = resolver.resolve(input());
+    const resolved = (await resolver.resolve(input()));
     thinking.reverse();
     efforts.reverse();
 
@@ -237,8 +238,8 @@ describe('ModelResolver', () => {
     { thinking: ['on', 'unknown'] },
     { thinking: 'on' },
     { unknown: [] },
-  ])('rejects invalid reasoning capabilities %#', (reasoning) => {
-    const base = provider();
+  ])('rejects invalid reasoning capabilities %#', async (reasoning) => {
+    const base = await provider().getModelCatalog();
     const resolver = new ModelResolver([provider({
       resolveModel: (modelId, connection) => {
         const result = base.resolveModel(modelId, connection);
@@ -256,11 +257,11 @@ describe('ModelResolver', () => {
       },
     })]);
 
-    expectCategory(() => resolver.resolve(input()), 'facts_insufficient');
+    await expectCategory(async () => (await resolver.resolve(input())), 'facts_insufficient');
   });
 
-  it('rejects explicit negative Tool and Media capabilities', () => {
-    const base = provider();
+  it('rejects explicit negative Tool and Media capabilities', async () => {
+    const base = await provider().getModelCatalog();
     const withFacts = (facts: ProviderModelFacts) => provider({
       resolveModel: (modelId, connection) => {
         const result = base.resolveModel(modelId, connection);
@@ -269,18 +270,18 @@ describe('ModelResolver', () => {
       },
     });
 
-    expectCategory(() => new ModelResolver([withFacts({
+    await expectCategory(async () => (await new ModelResolver([withFacts({
       effectiveContextLimit: 32_768,
       toolUse: false,
-    })]).resolve(input({ request: { tools: true, mediaKinds: [] } })), 'capability_unsupported');
-    expectCategory(() => new ModelResolver([withFacts({
+    })]).resolve(input({ request: { tools: true, mediaKinds: [] } }))), 'capability_unsupported');
+    await expectCategory(async () => (await new ModelResolver([withFacts({
       effectiveContextLimit: 32_768,
       mediaKinds: [],
-    })]).resolve(input({ request: { tools: false, mediaKinds: ['image'] } })), 'capability_unsupported');
+    })]).resolve(input({ request: { tools: false, mediaKinds: ['image'] } }))), 'capability_unsupported');
   });
 
-  it('rejects invalid or Context-inconsistent optional model limits', () => {
-    const base = provider();
+  it('rejects invalid or Context-inconsistent optional model limits', async () => {
+    const base = await provider().getModelCatalog();
     const withFacts = (facts: ProviderModelFacts) => provider({
       resolveModel: (modelId, connection) => {
         const result = base.resolveModel(modelId, connection);
@@ -303,15 +304,15 @@ describe('ModelResolver', () => {
         maximumOutputTokens: 101,
       },
     ]) {
-      expectCategory(
-        () => new ModelResolver([withFacts(facts)]).resolve(input()),
+      await expectCategory(
+        async () => (await new ModelResolver([withFacts(facts)]).resolve(input())),
         'facts_insufficient',
       );
     }
   });
 
-  it('rejects invalid invocation defaults', () => {
-    const base = provider();
+  it('rejects invalid invocation defaults', async () => {
+    const base = await provider().getModelCatalog();
     const resolver = new ModelResolver([provider({
       resolveModel: (modelId, connection) => {
         const result = base.resolveModel(modelId, connection);
@@ -326,17 +327,17 @@ describe('ModelResolver', () => {
       },
     })]);
 
-    expectCategory(() => resolver.resolve(input()), 'facts_insufficient');
+    await expectCategory(async () => (await resolver.resolve(input())), 'facts_insufficient');
   });
 
-  it('rejects a model outside the closed Catalog before resolving a connection or model', () => {
+  it('rejects a model outside the closed Catalog before resolving a connection or model', async () => {
     const resolveConnection = vi.fn(provider().resolveConnection);
-    const resolveModel = vi.fn(provider().resolveModel);
+    const resolveModel = vi.fn((await provider().getModelCatalog()).resolveModel);
     const resolver = new ModelResolver([provider({ resolveConnection, resolveModel })]);
 
-    expectCategory(() => resolver.resolve(input({
+    await expectCategory(async () => (await resolver.resolve(input({
       reference: { providerId: 'test-provider', modelId: 'not-published' },
-    })), 'model_rejected');
+    }))), 'model_rejected');
     expect(resolveConnection).not.toHaveBeenCalled();
     expect(resolveModel).not.toHaveBeenCalled();
   });
