@@ -21,7 +21,11 @@ import { RuntimeCompositionManager } from './runtime-composition-manager.js';
 import type { RuntimeCompositionManagerOptions } from './runtime-composition-manager.js';
 import type { RuntimeReloadDeadlineDriver } from './reload-coordinator.js';
 import { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
-import { RuntimeDeadlineBudget, resolveRuntimeDeadlinePolicy } from '../runtime-deadline.js';
+import {
+  RuntimeDeadlineBudget,
+  createSystemRuntimeDeadlineDriver,
+  resolveRuntimeDeadlinePolicy,
+} from '../runtime-deadline.js';
 import { RuntimeUnitCatalog, type LoadedRuntimeUnit } from './runtime-unit.js';
 
 function host(): ChannelRuntimeHost {
@@ -1017,6 +1021,71 @@ describe('RuntimeCompositionManager', () => {
       }),
     );
     expect(manager.currentSnapshot().generation).toBe(3);
+  });
+
+  it.each(['throw', 'reject'])('preserves a retired Channel stop failure during shutdown: %s', async mode => {
+    const stop = vi.fn(() => {
+      const error = new Error('channel still owns resources');
+      if (mode === 'throw') throw error;
+      return Promise.reject(error);
+    });
+    const { coordinator, ledger, manager } = harness([{
+      unitId: 'failing-channel',
+      source: 'external',
+      orderKey: 'failing-channel',
+      required: false,
+      initiallyEnabled: true,
+      dependencies: [],
+      async create() {
+        return {
+          registration: {
+            id: 'failing-channel',
+            source: 'external',
+            register(api) {
+              api.registerChannel({
+                id: 'failing-channel',
+                create: () => ({
+                  id: 'failing-channel',
+                  interaction: unavailableInteraction(),
+                  completion: new Promise<ChannelCompletion>(() => {}),
+                  send: vi.fn(),
+                  onMessage: vi.fn(),
+                  start: vi.fn(),
+                  stop,
+                }),
+              });
+            },
+          },
+          start: vi.fn(),
+          stop: vi.fn(),
+        };
+      },
+    }]);
+    await manager.start();
+    await expect(manager.compositionControl().disableUnit('failing-channel')).resolves.toMatchObject({
+      outcome: 'published',
+      generation: 2,
+    });
+    await vi.waitFor(() => {
+      expect(coordinator.generationState(1)).toBe('failed-residual');
+      expect(Reflect.get(manager, 'activeRetirements').size).toBe(0);
+    });
+
+    const instanceId = 'unit:failing-channel:1:channel:failing-channel';
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const budget = new RuntimeDeadlineBudget(
+        createSystemRuntimeDeadlineDriver(),
+        resolveRuntimeDeadlinePolicy(undefined),
+      );
+      const report = await manager.shutdown(budget);
+      expect(report.failed).toEqual([{ instanceId, message: 'channel still owns resources' }]);
+      expect(report.completed).not.toContain(instanceId);
+      expect(ledger.view(instanceId)).toMatchObject({
+        state: 'stop-failed',
+        ownerRetained: true,
+      });
+    }
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 
   it('retries an old-generation stop failure once during shutdown', async () => {

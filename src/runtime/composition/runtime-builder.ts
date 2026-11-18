@@ -42,6 +42,7 @@ import type {
 } from '../types.js';
 import { RuntimeLifecycleLedger } from './runtime-lifecycle.js';
 import { RuntimeCompositionManager } from './runtime-composition-manager.js';
+import { RuntimeReloadBlockedError } from './reload-coordinator.js';
 import { SettingsManager, settingsFailure } from '../settings/index.js';
 import { AgentPolicyState, type AppliedAgentState } from '../policy/agent-policy-state.js';
 import {
@@ -115,6 +116,9 @@ export async function buildRuntimeHandle(
   options: RuntimeAppOptions,
   createApplication: RuntimeApplicationKernelFactory,
 ): Promise<RuntimeHandle> {
+  const deadlinePolicy = resolveRuntimeDeadlinePolicy(options.deadlinePolicy);
+  const deadlineDriver = options.deadlineDriver ?? createSystemRuntimeDeadlineDriver();
+  const dependencies = createRuntimeDependencies(options.dependencies);
   const agentHomeLock = await acquireAgentHomeLock(options.agentHome);
   const lifecycleLedger = new RuntimeLifecycleLedger();
   const coordinator = new CompositionCoordinator(lifecycleLedger);
@@ -131,8 +135,6 @@ export async function buildRuntimeHandle(
     },
   });
   const userObserver = options.onAgentEvent;
-  const deadlinePolicy = resolveRuntimeDeadlinePolicy(options.deadlinePolicy);
-  const deadlineDriver = options.deadlineDriver ?? createSystemRuntimeDeadlineDriver();
   const pendingTerminalFanouts = new Map<
     string,
     { readonly owner: string; readonly eventType: string; readonly promise: Promise<void> }
@@ -141,7 +143,6 @@ export async function buildRuntimeHandle(
   const sessionPermissionListeners = new Set<(state: SessionPermissionState) => void>();
   let unsubscribeSessionPermissionBridge: (() => void) | undefined;
   let fanoutSequence = 0;
-  const dependencies = createRuntimeDependencies(options.dependencies);
 
   const fanoutAgentEvent = (event: AgentEvent): Promise<void> => {
     if (kernel && !kernel.shouldDeliverAgentEvent(event)) {
@@ -328,6 +329,7 @@ export async function buildRuntimeHandle(
   });
 
   let bootstrap!: Awaited<ReturnType<typeof bootstrapRuntime>>;
+  let bootstrapCleanupConverged = false;
   try {
     bootstrap = await bootstrapRuntime({
       ...options,
@@ -335,9 +337,10 @@ export async function buildRuntimeHandle(
     }, dependencies, {
       driver: deadlineDriver,
       timeoutMs: deadlinePolicy.candidateCleanupMs,
+      onCleanupCompleted: (converged) => { bootstrapCleanupConverged = converged; },
     });
   } catch (error) {
-    await releaseAgentHomeLockAfterFailure(agentHomeLock, error);
+    await releaseAgentHomeLockAfterFailure(agentHomeLock, error, bootstrapCleanupConverged);
   }
 
   try {
@@ -442,46 +445,55 @@ export async function buildRuntimeHandle(
     });
     emitStartupDiagnostics(options, registrySnapshot);
   } catch (error) {
-    unsubscribeSessionPermissionBridge?.();
-    options.onEvent?.({ type: 'error', info: classifyRuntimeError('startup', error) });
-    const cleanupBudget = new RuntimeDeadlineBudget(deadlineDriver, deadlinePolicy);
-    settingsManager?.beginShutdown(cleanupBudget);
-    compositionManager?.beginShutdown(cleanupBudget);
-    const settingsCleanup = await settingsManager?.shutdown(cleanupBudget);
-    for (const failure of settingsCleanup?.failed ?? []) {
-      log.error('Settings cleanup after Runtime application creation failure failed', { resource: failure.resource });
-    }
-    for (const residual of settingsCleanup?.residuals ?? []) {
-      log.error('Settings cleanup after Runtime application creation failure did not converge', { phase: residual.phase });
-    }
-    const report = await compositionManager?.shutdown(cleanupBudget);
-    for (const failure of report?.failed ?? []) {
-      log.warn('Unit cleanup after Runtime application creation failure failed', {
-        instanceId: failure.instanceId,
-        error: failure.message,
-      });
-    }
-    const memoryManager = bootstrap.resources.memoryManager as {
-      close?: () => void | Promise<void>;
-    } | null;
-    if (typeof memoryManager?.close === 'function') {
-      const cleanup = await deadlineDriver.race(
-        Promise.resolve().then(() => memoryManager.close!()),
-        deadlineDriver.now() + deadlinePolicy.candidateCleanupMs,
-      );
-      if (cleanup.outcome === 'failed') {
-        log.warn('Memory cleanup after Runtime application creation failure failed', {
-          error: cleanup.message,
-        });
-      } else if (cleanup.outcome === 'deadline-exhausted') {
-        log.warn('Memory cleanup after Runtime application creation failure timed out');
+    let cleanupConverged = !(error instanceof RuntimeReloadBlockedError);
+    try {
+      unsubscribeSessionPermissionBridge?.();
+      options.onEvent?.({ type: 'error', info: classifyRuntimeError('startup', error) });
+      const cleanupBudget = new RuntimeDeadlineBudget(deadlineDriver, deadlinePolicy);
+      settingsManager?.beginShutdown(cleanupBudget);
+      compositionManager?.beginShutdown(cleanupBudget);
+      const settingsCleanup = await settingsManager?.shutdown(cleanupBudget);
+      if (settingsCleanup?.failed.length || settingsCleanup?.residuals.length) cleanupConverged = false;
+      for (const failure of settingsCleanup?.failed ?? []) {
+        log.error('Settings cleanup after Runtime application creation failure failed', { resource: failure.resource });
       }
+      for (const residual of settingsCleanup?.residuals ?? []) {
+        log.error('Settings cleanup after Runtime application creation failure did not converge', { phase: residual.phase });
+      }
+      const report = await compositionManager?.shutdown(cleanupBudget);
+      if (report?.failed.length || report?.residuals.length || report?.pending.length) cleanupConverged = false;
+      for (const failure of report?.failed ?? []) {
+        log.warn('Unit cleanup after Runtime application creation failure failed', {
+          instanceId: failure.instanceId,
+          error: failure.message,
+        });
+      }
+      const memoryManager = bootstrap.resources.memoryManager as {
+        close?: () => void | Promise<void>;
+      } | null;
+      const cleanups: ReadonlyArray<readonly [string, () => void | Promise<void>]> = [
+        ['sessionManager', () => bootstrap.resources.sessionManager.close()],
+        ['managedProcesses', () => bootstrap.resources.managedProcessLifecycle.shutdown()],
+        ...(typeof memoryManager?.close === 'function'
+          ? [['memoryManager', () => memoryManager.close!()] as const] : []),
+        ['logger', () => Logger.close()],
+      ];
+      for (const [resource, cleanup] of cleanups) {
+        const result = await cleanupBudget.raceRemainingLazy(() => Promise.resolve().then(cleanup));
+        if (result.outcome !== 'completed') {
+          cleanupConverged = false;
+          log.warn('Resource cleanup after Runtime application creation failure did not complete', {
+            resource,
+            outcome: result.outcome,
+            ...(result.outcome === 'failed' ? { error: result.message } : {}),
+          });
+        }
+      }
+    } catch (cleanupError) {
+      reportRetainedAgentHomeLock('startup cleanup failed');
+      throw new AggregateError([error, cleanupError], 'Runtime startup and its cleanup failed; Agent Home remains locked until process exit.');
     }
-    await deadlineDriver.race(
-      Logger.close(),
-      deadlineDriver.now() + deadlinePolicy.candidateCleanupMs,
-    );
-    await releaseAgentHomeLockAfterFailure(agentHomeLock, error);
+    await releaseAgentHomeLockAfterFailure(agentHomeLock, error, cleanupConverged);
   }
 
   let closePromise: Promise<RuntimeShutdownReport> | undefined;
@@ -490,7 +502,6 @@ export async function buildRuntimeHandle(
     const budget = new RuntimeDeadlineBudget(deadlineDriver, deadlinePolicy);
     settingsManager?.beginShutdown(budget);
     compositionManager!.beginShutdown(budget);
-    let releaseAttempted = false;
     closePromise = (async () => {
       const applicationReport = await kernel!.close(reason, budget);
       const completed = [...applicationReport.completed];
@@ -613,12 +624,23 @@ export async function buildRuntimeHandle(
         });
       }
 
-      try {
-        releaseAttempted = true;
-        await agentHomeLock.release();
-        completed.push('agentHomeLock');
-      } catch (error) {
-        failed.push({ resource: 'agentHomeLock', message: messageOf(error) });
+      let released = false;
+      if (applicationReport.outcome === 'completed' && failed.length === 0 && residuals.length === 0) {
+        try {
+          await agentHomeLock.release();
+          completed.push('agentHomeLock');
+          released = true;
+        } catch (error) {
+          failed.push({ resource: 'agentHomeLock', message: messageOf(error) });
+        }
+      }
+      if (!released) {
+        residuals.push({
+          owner: 'resource',
+          phase: 'agent-home-lock',
+          message: 'Agent Home ownership is retained until process exit because cleanup could not be confirmed.',
+        });
+        reportRetainedAgentHomeLock('shutdown cleanup could not be confirmed');
       }
 
       return sealShutdownReport({
@@ -639,8 +661,9 @@ export async function buildRuntimeHandle(
         },
         residuals,
       });
-    })().finally(async () => {
-      if (!releaseAttempted) await agentHomeLock.release();
+    })().catch((error: unknown) => {
+      reportRetainedAgentHomeLock('shutdown failed');
+      throw error;
     });
     return closePromise;
   };
@@ -655,7 +678,12 @@ export async function buildRuntimeHandle(
 async function releaseAgentHomeLockAfterFailure(
   lock: AgentHomeLock,
   startupError: unknown,
+  cleanupConverged: boolean,
 ): Promise<never> {
+  if (!cleanupConverged) {
+    reportRetainedAgentHomeLock('startup cleanup could not be confirmed');
+    throw startupError;
+  }
   try {
     await lock.release();
   } catch (releaseError) {
@@ -665,6 +693,10 @@ async function releaseAgentHomeLockAfterFailure(
     );
   }
   throw startupError;
+}
+
+function reportRetainedAgentHomeLock(reason: string): void {
+  process.stderr.write(`[Runtime] Agent Home lock retained until process exit: ${reason}.\n`);
 }
 
 async function invokeSessionCapability<T>(operation: () => Promise<T>): Promise<T> {

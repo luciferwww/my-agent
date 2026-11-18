@@ -620,16 +620,17 @@ export class RuntimeCompositionManager implements ChannelCompletionObserver {
     this.lifecycleLedger.markReady(unit.unitInstanceId);
     this.lifecycleLedger.handoff(unit.unitInstanceId);
     for (const record of unit.channels.records) {
+      let stopPromise: Promise<void> | undefined;
       this.lifecycleLedger.create({
         instanceId: record.instanceId,
         unitId: unit.loaded.unitId,
         source: unit.loaded.source,
         dependencies: unit.loaded.dependencies,
         owner: {
-          async stop() {
-            if (record.stopStarted) return;
+          stop() {
             record.stopStarted = true;
-            await record.instance.stop();
+            stopPromise ??= Promise.resolve().then(() => record.instance.stop());
+            return stopPromise;
           },
         },
       });

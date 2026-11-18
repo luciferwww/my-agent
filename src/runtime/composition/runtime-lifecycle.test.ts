@@ -121,9 +121,12 @@ describe('RuntimeLifecycleLedger', () => {
     ledger.markReady('failed-1');
     ledger.handoff('failed-1');
 
-    await ledger.stopEligible(['failed-1']);
-    await ledger.stopEligible(['failed-1'], { retryFailed: true });
-    await ledger.stopEligible(['failed-1']);
+    const failure = [{ instanceId: 'failed-1', message: 'persistent failure' }];
+    expect((await ledger.stopEligible(['failed-1'])).failed).toEqual(failure);
+    expect((await ledger.stopEligible(['failed-1'])).failed).toEqual(failure);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect((await ledger.stopEligible(['failed-1'], { retryFailed: true })).failed).toEqual(failure);
+    expect((await ledger.stopEligible(['failed-1'], { retryFailed: true })).failed).toEqual(failure);
 
     expect(stop).toHaveBeenCalledTimes(2);
     expect(ledger.view('failed-1')).toMatchObject({

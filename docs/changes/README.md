@@ -13,7 +13,7 @@ retaining a Change record.
 
 ## Active
 
-No active Changes.
+- [Agent Home PID File Lock](active/agent-home-pid-lock/plan.md), with its [Specification](active/agent-home-pid-lock/specification.md) and [native-lock Spike Results](active/agent-home-pid-lock/spike-results.md) - continuously held OS lock on an inspectable PID file, without PID-liveness admission or heartbeat recovery. Owner approved the native dependency, Windows-first implementation and retained ownership on incomplete cleanup. The independent review's High finding is corrected, and scoped follow-up found no blocker. Owner accepted the approved Windows-scoped delivery and separately authorized a PID-only commit on 2026-11-18; the isolated source candidate passed 76 Unit cases, seven real-process integration cases and full build. Push and archive are not authorized. Fresh tarball installation remains unverified; Linux/macOS execution remains a pre-release gate.
 
 ## Archived
 

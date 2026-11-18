@@ -841,6 +841,24 @@ Global Agent execution settings use only module defaults followed by the
 
 ## 9. Common failures
 
+### Agent Home is already in use
+
+One cooperating Runtime may own a local Agent Home at a time. The
+`.my-agent.pid` file stays present after exit and records the last owner;
+file existence or a live process with that PID alone does not block startup.
+An OS lock held by another instance does. Inspect the reported process before
+stopping it; never delete or replace a live lock file to force entry.
+
+Normal completed shutdown releases ownership. If cleanup fails or times out,
+Runtime reports that the lock is retained until process exit. An embedding
+process must exit before retrying that Home; a later cleanup completion does
+not automatically release retained ownership.
+
+Stop all instances running the old PID-probe implementation once before
+upgrading. Mixed old/new binaries are not coordinated. Windows is validated;
+Linux/macOS actual execution remains a release gate. Network Homes are not
+supported by this ownership contract.
+
 ### Runtime starts but no model is available
 
 Check that:

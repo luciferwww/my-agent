@@ -55,6 +55,12 @@ status 1. Runtime library code never exits the process.
 
 Startup failures set process exit status 1 and emit bounded `stderr` diagnostics. Candidate-local acquisition failures remain isolated, bounded warnings. Diagnostics never expose secrets or raw configuration.
 
+Runtime owns the held PID-file lock described by
+[Runtime Composition](runtime-composition.md#agent-home-ownership). Host startup
+must not delete that file or kill a reported owner. Incomplete cleanup may
+retain ownership until the Host process exits; the Host preserves failure/
+residual exit status rather than claiming a clean shutdown.
+
 ## Build and compatibility
 
 The thin executable bootstrap is `src/hosts/standalone/entry.ts`; testable composition is owned by `src/hosts/standalone/standalone-host.ts`. The Host build emits `dist/host/hosts/standalone/entry.js` and audits a closed generic Extension boundary plus required Agent Context templates. The npm `bin` maps `my-agent` directly to that entry, and the package allowlist contains only `dist/host` besides npm-standard root metadata/README inclusion. Removed scripts-based, WebSocket-only, and prototype entries are not forwarding composition roots.

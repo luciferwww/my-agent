@@ -156,6 +156,7 @@ export class RuntimeLifecycleLedger {
         continue;
       }
       if (record.state === 'stop-failed' && (!options.retryFailed || record.stopAttempts >= 2)) {
+        failed.push({ instanceId, message: record.stopError! });
         continue;
       }
       if (record.state !== 'handed-off' && record.state !== 'stop-failed') {
