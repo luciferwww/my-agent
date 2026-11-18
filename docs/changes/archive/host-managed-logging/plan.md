@@ -1,12 +1,12 @@
 # Host-managed Logging
 
-> Status: Delivery accepted; Logging-only source candidate validated, scoped commit authorized
+> Status: Delivery accepted and committed; archived on 2026-11-18
 > Authority: Non-authoritative delivery record; may be cleaned up at any time.
 > Date: 2026-11-18
 > Owner: Project owner
 > Classification: Architecture Slice
 > Design: [Accepted Specification](specification.md)
-> Authorization: Owner accepted the independently reviewed design, authorized Delivery, reported manual verification passed, and explicitly accepted delivery on 2026-11-18. After isolated validation, the owner separately authorized the 23-path Logging-only commit. Push, merge and archive are not authorized.
+> Authorization: Owner accepted the independently reviewed design, authorized Delivery, reported manual verification passed, and explicitly accepted delivery on 2026-11-18. Implementation committed as b98d1e1 after the scoped commit was authorized. The owner subsequently authorized archiving this Change and committing the archive, without push or merge.
 
 ## Outcome
 
@@ -297,3 +297,16 @@ Commit preparation updates authorization records only; the validated production
 and test implementation is unchanged. Retain the isolated validation results
 and their dependency/platform limitations above. Keep this Change active until
 archive is separately authorized.
+
+### Archive closeout
+
+On 2026-11-18, after Logging delivery was committed as `b98d1e1` and the separate
+PID-lock delivery as `77ca2c7`, the owner authorized archiving both Changes and
+committing the documentation-only archive. This later authorization supersedes
+the earlier archive restrictions; it does not authorize push or merge.
+
+Preserve the recorded manual acceptance, isolated-source validation and its
+dependency/platform limits. No production behavior changes during archival.
+Durable contracts remain in the owning Specifications and Current Architecture;
+this delivery record remains non-authoritative. The five unrelated
+sharp/native-image paths remain outside the archive commit.

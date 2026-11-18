@@ -1,11 +1,11 @@
 # Host-managed Logging Specification
 
-> Status: Validated on a Logging-only source snapshot and owner delivery-accepted on 2026-11-18; scoped commit authorized
+> Status: Validated on a Logging-only source snapshot and owner delivery-accepted; archived on 2026-11-18
 > Authority: Non-authoritative design record; may be cleaned up at any time.
 > Date: 2026-11-18
 > Owner: Project owner
 > Related Plan: [Host-managed Logging](plan.md)
-> Authorization: Owner accepted the independently reviewed design, authorized Delivery, and explicitly accepted delivery on 2026-11-18 after manual verification passed. Following isolated validation, the owner authorized the scoped Logging-only commit. Push, merge and archive are not authorized.
+> Authorization: Owner accepted the independently reviewed design, authorized Delivery, and explicitly accepted delivery on 2026-11-18 after manual verification passed. Following isolated validation, the owner authorized the scoped Logging-only commit, then the archive and archive-only commit. Push and merge are not authorized.
 
 ## Purpose and observable outcome
 

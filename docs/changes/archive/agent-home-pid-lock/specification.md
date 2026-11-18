@@ -1,6 +1,6 @@
 # Agent Home PID File Lock Specification
 
-> Status: Validated and owner-accepted for the approved Windows scope on 2026-11-18; platform/install limitations retained
+> Status: Validated and owner-accepted for the approved Windows scope; archived on 2026-11-18 with platform/install limitations retained
 > Authority: Non-authoritative target design; not implemented behavior.
 > Date: 2026-11-18
 > Owner: Project owner

@@ -1,13 +1,13 @@
 # Agent Home PID File Lock
 
-> Status: Delivery accepted for the approved Windows scope; scoped commit authorized, archive pending
+> Status: Delivery accepted for the approved Windows scope and committed; archived on 2026-11-18
 > Authority: Non-authoritative preparation record; may be cleaned up at any time.
 > Date: 2026-11-18
 > Owner: Project owner
 > Classification: Architecture Slice
 > Related design: [Specification](specification.md)
 > Validation prerequisite: [Native-lock Spike](spike-specification.md), [Results](spike-results.md)
-> Authorization: Owner authorized isolated validation, then explicitly approved fs-native-extensions, Windows-first implementation with Linux/macOS pre-release validation, and retained locks on incomplete cleanup on 2026-11-18. Owner accepted the approved delivery scope, then separately authorized the PID-only commit on the same date. Push, merge and archive are not authorized.
+> Authorization: Owner approved the Windows-first implementation and retained ownership on incomplete cleanup, accepted delivery, and separately authorized the PID-only commit on 2026-11-18. Implementation committed as 77ca2c7. The owner subsequently authorized archiving this Change and committing the archive, without push or merge.
 
 ## Outcome and boundaries
 
@@ -280,3 +280,16 @@ remain open.
 
 The original worktree's Logging and unrelated sharp/native-image changes are
 excluded from this commit and remain available for separate delivery.
+
+## Archive closeout
+
+On 2026-11-18, after PID delivery was committed as `77ca2c7` and the separate
+Logging delivery as `b98d1e1`, the owner authorized archiving both Changes and
+committing the documentation-only archive. This later authorization supersedes
+the earlier archive restrictions; it does not authorize push or merge.
+
+The approved Windows scope, Linux/macOS pre-release gate and unverified fresh
+installed-tarball execution remain exactly as recorded above. Archival does
+not extend platform support or turn those limitations into passing evidence.
+Durable behavior remains owned by ADR-026, Runtime contracts and Current
+Architecture; this record remains non-authoritative.
