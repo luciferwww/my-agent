@@ -67,6 +67,22 @@ Global Agent execution policy precedence is `module default -> agents top-level 
   to `1`. Effective `task` Tool policy controls delegation enablement; Runtime
   removes `task` at the configured depth boundary.
 - Platform Logger owns Logger contracts/defaults/validation; Platform Configuration only composes the `logger` namespace.
+- Logger's document admits global `minLevel` and optional `console.minLevel`
+  and `file.minLevel`, using `debug`, `info`, `warn` or `error`; the global
+  threshold defaults to `info` and is applied before local thresholds.
+  File logging is always enabled by product Runtime startup. Console logging
+  is Host-selected, not a document switch. Both adapter `enabled` fields are
+  unsupported and follow ordinary unknown-field validation, with no migration
+  or special retired-field handling. Configuration never chooses a CLI mode.
+- Product File logs reside in `<agentHome>/logs`, using UTC daily names and
+  retaining today plus the six preceding UTC calendar dates. Cleanup runs at
+  startup and on the next write after the date advances, targeting only
+  recognized regular log files; there is no timer, size cap or disk quota.
+  Initialization must verify a usable current file or fail startup. Later
+  append/queue-loss and cleanup failures emit bounded emergency stderr
+  diagnostics without stopping the Agent; write loss remains attributable at
+  shutdown. See [Observability](../architecture/observability.md) for the
+  implemented lifecycle and diagnostic boundaries.
 - Configuration does not own Catalog membership, canonical Model identity, effective facts, Provider semantics, or Runtime lifecycle.
 - The only top-level namespaces are `llm`, `agents`, `logger`, and `extensions`.
   The physical-load snapshot contains immutable `application` and `extensions`

@@ -1,4 +1,4 @@
-import { appendFile, mkdir } from 'node:fs/promises';
+import { appendFile, mkdir, open, readdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { LogAdapter, LogEntry, LogLevel } from './types.js';
 
@@ -27,9 +27,11 @@ export class FileAdapter implements LogAdapter {
   private readonly maxQueueSize: number;
 
   private queue: LogEntry[] = [];
-  private flushing = false;
   private closed = false;
   private flushPromise: Promise<void> | null = null;
+  private cleanupDate = '';
+  private failures = new Set<string>();
+  private writeFailure: Error | undefined;
 
   onError?: (err: Error, entry: LogEntry) => void;
 
@@ -42,6 +44,13 @@ export class FileAdapter implements LogAdapter {
 
   async start(): Promise<void> {
     await mkdir(this.dir, { recursive: true });
+    const file = await open(join(this.dir, `${this.prefix}.${utcDate()}.log`), 'a');
+    try {
+      if (!(await file.stat()).isFile()) throw new Error('File log destination is not a regular file.');
+    } finally {
+      await file.close();
+    }
+    await this.cleanup();
   }
 
   write(entry: LogEntry): void {
@@ -50,7 +59,7 @@ export class FileAdapter implements LogAdapter {
       return;
     }
     if (this.queue.length >= this.maxQueueSize) {
-      this.onError?.(new Error('FileAdapter queue full, dropping entry'), entry);
+      this.reportFailure('queue-overflow', new Error('File log queue overflow'), entry);
       return;
     }
     this.queue.push(entry);
@@ -59,22 +68,25 @@ export class FileAdapter implements LogAdapter {
 
   async close(): Promise<void> {
     this.closed = true;
-    // 等当前 flush 完成，再 flush 剩余
-    if (this.flushPromise) await this.flushPromise;
-    if (this.queue.length > 0) await this.flush();
+    while (this.flushPromise) await this.flushPromise;
+    if (this.writeFailure) throw this.writeFailure;
   }
 
   // ── 内部 ─────────────────────────────────────────────────
 
   private scheduleFlush(): void {
-    if (this.flushing) return;
-    this.flushing = true;
-    this.flushPromise = Promise.resolve().then(() => this.flush());
+    if (this.flushPromise) return;
+    this.flushPromise = Promise.resolve().then(() => this.flush()).finally(() => {
+      this.flushPromise = null;
+      if (this.queue.length > 0) this.scheduleFlush();
+    });
   }
 
   private async flush(): Promise<void> {
     while (this.queue.length > 0) {
       const batch = this.queue.splice(0, this.queue.length);
+      this.failures.delete('queue-overflow');
+      if (utcDate() > this.cleanupDate) await this.cleanup();
       const byDate = new Map<string, LogEntry[]>();
 
       for (const entry of batch) {
@@ -86,25 +98,72 @@ export class FileAdapter implements LogAdapter {
 
       for (const [date, entries] of byDate) {
         const filePath = join(this.dir, `${this.prefix}.${date}.log`);
-        const lines = entries.map((e) => JSON.stringify({
-          level: e.level,
-          module: e.module,
-          message: e.message,
-          timestamp: e.timestamp.toISOString(),
-          ...(e.context !== undefined ? { context: e.context } : {}),
-        })).join('\n') + '\n';
-
         try {
+          const lines = entries.map((e) => JSON.stringify({
+            level: e.level,
+            module: e.module,
+            message: e.message,
+            timestamp: e.timestamp.toISOString(),
+            ...(e.context !== undefined ? { context: e.context } : {}),
+          })).join('\n') + '\n';
           await appendFile(filePath, lines, 'utf-8');
+          this.failures.delete('append');
         } catch (err) {
-          const error = err instanceof Error ? err : new Error(String(err));
-          for (const entry of entries) {
-            this.onError?.(error, entry);
-          }
+          this.reportFailure('append', err, entries[0]);
         }
       }
     }
-    this.flushing = false;
-    this.flushPromise = null;
   }
+
+  private async cleanup(): Promise<void> {
+    const today = utcDate();
+    this.cleanupDate = today;
+    const cutoff = new Date(`${today}T00:00:00.000Z`);
+    cutoff.setUTCDate(cutoff.getUTCDate() - 6);
+    const oldest = cutoff.toISOString().slice(0, 10);
+    try {
+      const entries = await readdir(this.dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.startsWith(`${this.prefix}.`)) continue;
+        const date = entry.name.slice(this.prefix.length + 1, -4);
+        if (
+          !entry.name.endsWith('.log')
+          || !/^\d{4}-\d{2}-\d{2}$/.test(date)
+          || !isValidDate(date)
+          || date >= oldest
+        ) continue;
+        await unlink(join(this.dir, entry.name));
+      }
+      this.failures.delete('cleanup');
+    } catch (error) {
+      this.reportFailure('cleanup', error);
+    }
+  }
+
+  private reportFailure(operation: string, error: unknown, entry?: LogEntry): void {
+    const code = error instanceof Error && 'code' in error
+      && typeof error.code === 'string' && /^[A-Z0-9_]{1,40}$/.test(error.code)
+      ? ` (${error.code})` : '';
+    const diagnostic = new Error(`File logging ${operation} failed${code}.`);
+    if (operation !== 'cleanup') this.writeFailure ??= diagnostic;
+    if (this.failures.has(operation)) return;
+    this.failures.add(operation);
+    process.stderr.write(`[Logger] ${diagnostic.message}\n`);
+    if (entry && this.onError) {
+      try {
+        this.onError(diagnostic, entry);
+      } catch {
+        process.stderr.write('[Logger] File error callback failed.\n');
+      }
+    }
+  }
+}
+
+function utcDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isValidDate(date: string): boolean {
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date;
 }

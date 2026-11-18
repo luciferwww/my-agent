@@ -130,8 +130,8 @@ describe('loadAgentConfig', () => {
       },
       logger: {
         minLevel: 'warn',
-        console: { enabled: false },
-        file: { enabled: true, minLevel: 'info' },
+        console: { minLevel: 'error' },
+        file: { minLevel: 'info' },
       },
       extensions: {
         entries: {
@@ -170,8 +170,8 @@ describe('loadAgentConfig', () => {
     ]);
     expect(snapshot.application.logger).toEqual({
       minLevel: 'warn',
-      console: { enabled: false },
-      file: { enabled: true, minLevel: 'info' },
+      console: { minLevel: 'error' },
+      file: { minLevel: 'info' },
     });
     expect(snapshot.extensions).toEqual({
       entries: {
@@ -333,6 +333,10 @@ describe('loadAgentConfig', () => {
     [{ logger: { minLevel: 'verbose' } }, 'logger.minLevel'],
     [{ logger: { console: true } }, 'logger.console'],
     [{ logger: { console: { enabled: 'yes' } } }, 'logger.console.enabled'],
+    [{ logger: { console: { enabled: true } } }, 'logger.console.enabled'],
+    [{ logger: { console: { enabled: false } } }, 'logger.console.enabled'],
+    [{ logger: { file: { enabled: true } } }, 'logger.file.enabled'],
+    [{ logger: { file: { enabled: false } } }, 'logger.file.enabled'],
     [{ logger: { console: { bogus: true } } }, 'logger.console.bogus'],
     [{ logger: { file: { minLevel: 1 } } }, 'logger.file.minLevel'],
     [{ extensions: [] }, 'extensions'],

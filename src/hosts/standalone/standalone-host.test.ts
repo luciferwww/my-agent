@@ -8,7 +8,6 @@ import {
   createStandaloneHostUnits,
   parseStandaloneHostArguments,
   runStandaloneHost,
-  validateStandaloneHostComposition,
 } from './standalone-host.js';
 import type { AgentConfigSnapshot } from '../../platform/config/index.js';
 import { loadAgentConfig, resolveMemoryConfig } from '../../platform/config/index.js';
@@ -93,28 +92,6 @@ describe('standalone Host composition', () => {
     expect(Object.isFrozen(units)).toBe(true);
   });
 
-  it('rejects CLI with Console Logger and accepts CLI with File-only Logger', () => {
-    const snapshot = (consoleEnabled: boolean): AgentConfigSnapshot => ({
-      application: {
-        llm: {},
-        agents: {
-          memory: resolveMemoryConfig(),
-          steeringEnabled: false,
-          maxSubagentDepth: 1,
-          defaults: {} as never,
-          list: [],
-        },
-        logger: { console: { enabled: consoleEnabled }, file: { enabled: true } },
-      },
-      extensions: { entries: {} },
-    });
-
-    expect(() => validateStandaloneHostComposition(snapshot(true), true))
-      .toThrow('HOST_OUTPUT_CONFLICT');
-    expect(() => validateStandaloneHostComposition(snapshot(false), true)).not.toThrow();
-    expect(() => validateStandaloneHostComposition(snapshot(true), false)).not.toThrow();
-  });
-
   it('reports CLI startup immediately and readiness after Runtime creation', async () => {
     const output = new PassThrough();
     const chunks: Buffer[] = [];
@@ -134,8 +111,9 @@ describe('standalone Host composition', () => {
       env: {},
       cliOutput: output,
       resolvePathContext: async () => createPathContext(),
-      loadConfig: async () => createSnapshot(false),
-      createRuntime: async () => {
+      loadConfig: async () => createSnapshot(),
+      createRuntime: async (options) => {
+        expect(options.consoleLogging).toBe(false);
         expect(captured()).toBe('Starting my-agent...\n');
         await runtimeReady;
         return {
@@ -186,20 +164,6 @@ describe('standalone Host composition', () => {
     });
 
     expect(Buffer.concat(chunks).toString('utf8')).toBe('');
-  });
-
-  it('rejects a CLI output conflict before Runtime creation', async () => {
-    const createRuntime = vi.fn();
-
-    await expect(runStandaloneHost({
-      argv: ['--cli'],
-      env: {},
-      resolvePathContext: async () => createPathContext(),
-      loadConfig: async () => createSnapshot(true),
-      createRuntime,
-    })).rejects.toThrow('HOST_OUTPUT_CONFLICT');
-
-    expect(createRuntime).not.toHaveBeenCalled();
   });
 
   it('rejects invalid arguments before path and configuration side effects', async () => {
@@ -273,6 +237,7 @@ describe('standalone Host composition', () => {
     expect(events).toEqual(['paths', 'load', 'Runtime']);
     expect(createRuntime).toHaveBeenCalledWith(expect.objectContaining({
       agentHome: pathContext.agentHome,
+      consoleLogging: true,
       startupContext: {
         installDir: pathContext.installDir,
         configuration: snapshot,
@@ -432,7 +397,7 @@ describe('standalone Host composition', () => {
         argv: ['--cli'],
         env: {},
         resolvePathContext: async () => createPathContext(),
-        loadConfig: async () => createSnapshot(false),
+        loadConfig: async () => createSnapshot(),
         createRuntime: async () => ({
           application: {
             waitForChannelCompletion: async () => ({
@@ -465,7 +430,7 @@ describe('standalone Host composition', () => {
       argv: ['--cli'],
       env: {},
       resolvePathContext: async () => createPathContext(),
-      loadConfig: async () => createSnapshot(false),
+      loadConfig: async () => createSnapshot(),
       createRuntime: async () => ({
         application: { waitForChannelCompletion: async () => { throw failure; } },
         close: vi.fn(),
@@ -491,7 +456,7 @@ describe('standalone Host composition', () => {
       argv: ['--cli'],
       env: {},
       resolvePathContext: async () => createPathContext(),
-      loadConfig: async () => createSnapshot(false),
+      loadConfig: async () => createSnapshot(),
       createRuntime: async () => ({
         application: { waitForChannelCompletion },
         close: vi.fn(),
@@ -509,7 +474,7 @@ describe('standalone Host composition', () => {
 
 });
 
-function createSnapshot(consoleEnabled = true): AgentConfigSnapshot {
+function createSnapshot(): AgentConfigSnapshot {
   return {
     application: {
       llm: {},
@@ -520,7 +485,7 @@ function createSnapshot(consoleEnabled = true): AgentConfigSnapshot {
         defaults: {} as never,
         list: [],
       },
-      logger: { console: { enabled: consoleEnabled } },
+      logger: {},
     },
     extensions: { entries: {} },
   };

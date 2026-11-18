@@ -26,6 +26,7 @@ const childSource = `
           const snapshot = await loadAgentConfig({ agentHome: home });
           handle = await RuntimeApp.create({
             agentHome: home,
+            consoleLogging: false,
             applicationConfig: snapshot.application,
             deadlinePolicy: { shutdownOverallMs: 200, candidateCleanupMs: 200 },
             ...(mode === 'failed-retirement' ? {

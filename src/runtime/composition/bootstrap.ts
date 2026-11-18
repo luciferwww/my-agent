@@ -69,18 +69,14 @@ export async function bootstrapRuntime(
       logger: applicationConfig.logger,
     };
 
-    const adapters: LogAdapter[] = [];
-    if (appConfig.logger.console?.enabled !== false) {
+    const adapters: LogAdapter[] = [new FileAdapter({
+      dir: join(options.agentHome, 'logs'),
+      ...(appConfig.logger.file?.minLevel !== undefined
+        ? { minLevel: appConfig.logger.file.minLevel } : {}),
+    })];
+    if (options.consoleLogging !== false) {
       const consoleMin = appConfig.logger.console?.minLevel;
       adapters.push(new ConsoleAdapter(consoleMin ? { minLevel: consoleMin } : {}));
-    }
-    if (appConfig.logger.file?.enabled) {
-      const fileCfg = appConfig.logger.file;
-      adapters.push(new FileAdapter({
-        // Agent Home owns the log directory; FileAdapter owns the remaining defaults.
-        dir: join(options.agentHome, 'logs'),
-        ...(fileCfg.minLevel !== undefined ? { minLevel: fileCfg.minLevel } : {}),
-      }));
     }
     await Logger.configure({
       adapters,

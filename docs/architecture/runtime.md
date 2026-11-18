@@ -101,6 +101,7 @@ and Parent/Child execution orchestration remain at the Runtime root.
 ```ts
 interface RuntimeAppOptions {
   agentHome: string;
+  consoleLogging?: boolean;
   startupContext?: {
     installDir: string;
     configuration: AgentConfigSnapshot;
@@ -163,6 +164,11 @@ concurrent mutation and file integrity. Behavior is covered by
 [real-process integration](../../src/runtime/composition/agent-home-lock.integration.test.ts).
 
 `onEvent` observes application and lifecycle events. `onAgentEvent` observes Runner/Turn events in parallel with Channel Fanout; one plane does not replace the other.
+
+`consoleLogging` is startup-only and defaults to true for direct Runtime callers.
+Bootstrap always configures File logging first; the Host can suppress ordinary
+Console logging without disabling file records. Runtime does not infer a mode
+from CLI arguments, TTY state or concrete Channels.
 
 ### 3.2 Generic loaded-Unit path
 

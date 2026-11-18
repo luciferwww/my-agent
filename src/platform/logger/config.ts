@@ -1,7 +1,6 @@
 import type { LogLevel } from './types.js';
 
 export interface LoggerAdapterConfig {
-  readonly enabled?: boolean;
   readonly minLevel?: LogLevel;
 }
 
@@ -13,14 +12,10 @@ export interface LoggerConfig {
 
 type CompleteLoggerDefaults = LoggerConfig & {
   readonly minLevel: LogLevel;
-  readonly console: LoggerAdapterConfig & { readonly enabled: boolean };
-  readonly file: LoggerAdapterConfig & { readonly enabled: boolean };
 };
 
 export const DEFAULT_LOGGER_CONFIG: Readonly<CompleteLoggerDefaults> = deepFreeze({
   minLevel: 'info',
-  console: { enabled: true },
-  file: { enabled: false },
 });
 
 export class LoggerConfigValidationError extends Error {
@@ -41,10 +36,7 @@ export function validateLoggerConfig(value: unknown): asserts value is Partial<L
 function validateAdapter(value: unknown, path: string): void {
   if (value === undefined) return;
   if (!isObject(value)) throw new LoggerConfigValidationError(path);
-  rejectUnknownFields(value, ['enabled', 'minLevel'], path);
-  if (value['enabled'] !== undefined && typeof value['enabled'] !== 'boolean') {
-    throw new LoggerConfigValidationError(`${path}.enabled`);
-  }
+  rejectUnknownFields(value, ['minLevel'], path);
   validateLevel(value['minLevel'], `${path}.minLevel`);
 }
 

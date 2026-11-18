@@ -675,11 +675,10 @@ remain live and can change or disappear; no whole-package snapshot is promised.
   "logger": {
     "minLevel": "info",
     "console": {
-      "enabled": true
+      "minLevel": "warn"
     },
     "file": {
-      "enabled": false,
-      "minLevel": "warn"
+      "minLevel": "info"
     }
   }
 }
@@ -688,20 +687,25 @@ remain live and can change or disappear; no whole-package snapshot is promised.
 Allowed levels are `debug`, `info`, `warn`, and `error`. Defaults:
 
 - global level: `info`
-- Console Logger: enabled
-- File Logger: disabled
+- File Logger: always enabled under `<agentHome>/logs`
+- Console Logger: selected by the Host, disabled for `--cli`, enabled otherwise
+- adapter-local levels: follow the global level unless explicitly set
 
-The CLI owns terminal output, so disable Console Logger when using `--cli`:
+The global threshold applies before either adapter's threshold. The minimal
+configuration is `{ "logger": { "minLevel": "info" } }`; omitting `logger` uses
+the same default level. Neither output has an `enabled` configuration field.
+Use the same document for CLI and service startup.
 
-```json
-{
-  "logger": {
-    "console": {
-      "enabled": false
-    }
-  }
-}
-```
+Files use UTC names such as `app.2026-11-18.log`. Startup and the next write after
+a UTC date advance remove recognized regular log files older than the current
+date and six preceding dates. No size cap or background cleanup timer is
+provided; idle processes clean expired files on the next write.
+
+An unusable current file prevents startup. Later write/queue-loss failures
+produce bounded emergency stderr diagnostics even in CLI mode, but do not stop
+the Agent. These errors are not sent back through the failing Logger. Data loss
+is also reported when Logger closes. Cleanup failure is reported without
+preventing otherwise usable logging.
 
 ## 7. Extensions
 
@@ -887,7 +891,9 @@ Thinking.
 
 ### CLI startup rejects the logger configuration
 
-Disable `logger.console.enabled` when running with `--cli`.
+Logger supports `minLevel` and optional `console.minLevel` / `file.minLevel`.
+Remove unrecognized fields at the path reported by validation. Console output
+is selected automatically by startup mode; no output switch is needed.
 
 ### Startup reports an invalid field path
 

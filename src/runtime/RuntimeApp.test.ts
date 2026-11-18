@@ -719,7 +719,7 @@ describe('RuntimeApp', () => {
           chunking: { chunkChars: 800, overlapChars: 80 },
         },
       },
-      logger: { console: { enabled: false } },
+      logger: {},
     }), 'utf8');
     const snapshot = await loadAgentConfig({ agentHome: agentHome });
     await writeFile(join(agentHome, 'config.json'), JSON.stringify({

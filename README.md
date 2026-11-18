@@ -156,17 +156,9 @@ configuration does not select a Provider or Model.
 
 ## Run with the CLI
 
-The CLI owns terminal output, so Console Logger must be disabled:
-
-```json
-{
-  "logger": {
-    "console": {
-      "enabled": false
-    }
-  }
-}
-```
+The Host automatically suppresses ordinary Console logs in CLI mode. File
+logging stays enabled under `<agentHome>/logs`; no per-mode configuration edit
+is needed. Service mode writes both File and Console logs.
 
 Keep the LLM configuration from the Quick Start and run:
 
