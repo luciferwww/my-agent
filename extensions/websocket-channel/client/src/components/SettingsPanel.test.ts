@@ -5,6 +5,7 @@ import { createApp, h, nextTick, reactive, type App } from 'vue';
 import type { SettingsActionResult } from 'my-agent/extension-api';
 import { object } from '../client/settings';
 import SettingsPanel from './SettingsPanel.vue';
+import type { ThemeId } from '../client/theme';
 
 let app: App | undefined;
 let host: HTMLDivElement;
@@ -166,7 +167,10 @@ async function mount(
     this.open = false;
     this.dispatchEvent(new Event('close'));
   });
-  const state = reactive({ open: false, connected: true });
+  const state = reactive<{ open: boolean; connected: boolean; theme: ThemeId }>({
+    open: false, connected: true, theme: 'classic',
+  });
+  const themeSelected = vi.fn((theme: ThemeId) => { state.theme = theme; });
   let saved = settings;
   const reply = (action: string, input: unknown = {}): SettingsActionResult => {
     if (action === 'skills_catalog' && skillCatalogError) {
@@ -210,12 +214,41 @@ async function mount(
   const execute = vi.fn<(action: string, input: unknown) => Promise<SettingsActionResult>>(
     async (action, input) => reply(action, input),
   );
-  app = createApp({ setup: () => () => h(SettingsPanel, { open: state.open, connected: state.connected, execute }) });
+  app = createApp({ setup: () => () => h(SettingsPanel, {
+    open: state.open, connected: state.connected, theme: state.theme, execute, onSelectTheme: themeSelected,
+  }) });
   app.mount(host);
   state.open = true;
   await flush();
-  return { execute, state, reply };
+  return { execute, state, reply, themeSelected };
 }
+
+describe('General client preferences', () => {
+  it('changes Theme immediately without a service save, including while disconnected', async () => {
+    const { execute, state, themeSelected } = await mount();
+    await category('General');
+    expect(host.querySelector('.settings-savebar')).toBeNull();
+    const callsBeforeThemeChange = execute.mock.calls.length;
+    await click('Theme');
+    await click('Botanical');
+    expect(themeSelected).toHaveBeenLastCalledWith('botanical');
+    expect(element('[aria-label="Theme"]').textContent).toContain('Botanical');
+    expect(execute).toHaveBeenCalledTimes(callsBeforeThemeChange);
+
+    await click('Reload saved settings');
+    expect(element('h3').textContent).toBe('General');
+    expect(element('[aria-label="Theme"]').textContent).toContain('Botanical');
+
+    state.connected = false;
+    await flush();
+    const callsBeforeOfflineChange = execute.mock.calls.length;
+    await click('Theme');
+    await click('Classic');
+    expect(themeSelected).toHaveBeenLastCalledWith('classic');
+    expect(element('[aria-label="Theme"]').textContent).toContain('Classic');
+    expect(execute).toHaveBeenCalledTimes(callsBeforeOfflineChange);
+  });
+});
 
 function rows() {
   return [...host.querySelectorAll<HTMLElement>('.settings-model-item')];

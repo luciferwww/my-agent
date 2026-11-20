@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["*.ts"],
+  "exclude": ["*.test.ts", "dist", "entry.ts", "model-metadata.ts", "inference.ts", "responses-client.ts", "chat-client.ts", "catalog-metadata.ts", "client-types.ts"]
+}

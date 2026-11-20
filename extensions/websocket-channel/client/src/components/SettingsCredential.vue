@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { Eye, EyeOff } from '@lucide/vue';
 import { credentialDraft, SAVED_CREDENTIAL_MASK, type CredentialMetadata, type SecretDraft } from '../client/settings';
 
 export type { SecretDraft } from '../client/settings';
@@ -27,11 +28,7 @@ function changeValue(event: Event) {
       <button type="button" class="icon-button credential-eye" :disabled="!canReveal"
         :aria-label="revealed ? 'Hide new credential' : 'Show new credential'" :aria-pressed="revealed"
         title="Show or hide new input; saved credentials are never revealed" @click="revealed = !revealed">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-          <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
-          <circle cx="12" cy="12" r="3" />
-          <path v-if="!revealed" d="m3 3 18 18" />
-        </svg>
+        <component :is="revealed ? Eye : EyeOff" aria-hidden="true" />
       </button>
     </span>
     <small v-if="keeping">Saved value retained. Replace the mask to change it, or delete it to remove the credential.</small>

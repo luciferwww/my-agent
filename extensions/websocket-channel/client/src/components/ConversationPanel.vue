@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue';
+import { Menu } from '@lucide/vue';
 
 import type {
   ConversationItem,
@@ -126,7 +127,7 @@ defineExpose({
           aria-controls="sidebar-panel"
           :aria-expanded="sidebarOpen"
           @click="emit('openSidebar')"
-        >☰</button>
+        ><Menu aria-hidden="true" /></button>
         <div v-if="pendingApprovalCount > 0" class="waiting-badge">
           {{ pendingApprovalCount }} approval request waiting
         </div>

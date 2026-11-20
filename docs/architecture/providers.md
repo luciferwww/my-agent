@@ -2,8 +2,8 @@
 
 > Status: Current Authority
 > Authority: Current implemented Provider behavior
-> Verified: 2026-11-18
-> Ownership: Provider-neutral invocation, normalized invocation failures, and concrete Built-in and Copilot Relay integrations
+> Verified: 2026-11-19
+> Ownership: Provider-neutral invocation, normalized invocation failures, and concrete Built-in and Copilot integrations
 > Ownership key: provider-protocol-and-builtin-adapter
 
 ---
@@ -33,11 +33,15 @@ src/builtins/providers/builtin/
 ├── runtime-unit.ts             # optional configured builtin Provider Unit
 └── index.ts
 
-extensions/copilot-relay-provider/
+extensions/copilot-provider/
 ├── entry.ts
-├── copilot-relay-provider-unit.ts
-├── copilot-relay-provider.ts
+├── auth.ts
+├── credentials.ts
+├── login-server.ts
+├── inference.ts
 ├── responses-client.ts
+├── chat-client.ts
+├── catalog-metadata.ts
 ├── model-metadata.ts
 └── extension.json
 ```
@@ -128,18 +132,17 @@ Core defines seven categories:
 
 Only allowlisted diagnostics are copied: Provider ID, bounded Provider status/type/code/message/request ID, and a content-free request summary. The summary preserves the opaque model string exactly and counts roles/content block types/Tool definitions without retaining prompts, image data, Tool input, schema, foreign message, stack, cause, or unknown fields. Invalid diagnostics are discarded while a valid category remains usable. Canonical diagnostics and the nested request summary are frozen.
 
-Copilot Relay includes bounded, single-line local adapter error messages in
-`providerMessage`, including replay validation failures before HTTP is sent.
+Copilot's protocol Clients emit local structural invocation errors with bounded
+diagnostics, including replay validation failures before HTTP is sent. They do
+not reflect raw upstream error messages into public invocation diagnostics.
 Absent optional diagnostic fields are omitted rather than emitted as
 `undefined`, so partial HTTP error details survive Host structural validation.
-HTTP errors accept message/type details from the nested `error` object or the
-top-level response object.
 Thinking blocks are not counted as Tool Results. Runner filters historical
 Thinking from another Provider, model, or connection before budget checks and
 invocation, so normal model switching does not require a new session.
 Direct Client callers remain responsible for supplying source-compatible replay.
 
-Relay Clients encode `execution_accepted` as a correlated tool output containing
+Copilot Clients encode `execution_accepted` as a correlated tool output containing
 `{"status":"accepted","executionId":"..."}`, matching Built-in receipt content.
 Later Host completion notifications remain separate context, not a second
 output for the original tool call.
@@ -185,7 +188,7 @@ OpenAI Chat Completions captures ordered reasoning text and at most one non-empt
 opaque reasoning value per Assistant response. OpenAI Responses captures summary
 deltas for presentation and treats the complete reasoning item as replay
 authority. Abort, stream failure, or incomplete item state may preserve readable
-partial text but never replay state. Copilot Relay applies the same canonical
+partial text but never replay state. Copilot applies the same canonical
 Responses boundary through its own Client implementation.
 
 ### 5.2 Provider facts and Catalog
@@ -202,7 +205,7 @@ closed. Optional `outputTokenLimit` is published separately as an invocation
 default and clamped to known maximum output capability.
 
 Each registration may also publish strictly validated reasoning capabilities
-and protocol-private mapping facts. The Copilot Relay Provider derives effort
+and protocol-private mapping facts. The Copilot Provider derives effort
 capabilities from discovery metadata, binds each model immutably to Responses
 or Chat Completions with Responses precedence, and keeps one stable public
 router protocol without retrying through the other wire protocol.
@@ -213,34 +216,46 @@ router protocol without retrying through the other wire protocol.
 
 An empty model registration list publishes an empty Catalog and creates no Protocol Clients or network traffic. Without `llm.builtin`, Runtime does not create the Unit, so empty and Extension-only configurations remain valid. Generic Runtime composition continues to own Unit creation, staging, publication, generation reload, rollback, retirement, and immutable per-Turn binding.
 
-## 7. Copilot Relay external Unit
+## 7. Copilot external Unit
 
-`copilot-relay-provider` is an optional external Unit. `create(signal)` validates a credential-free HTTP(S) base URL, then performs one bounded `/v1/models` discovery. The default discovery deadline is 5 seconds and the response body is capped at 2 MiB. A blank API key emits no Authorization header. The default endpoint is loopback. A configured non-loopback endpoint sends model discovery, prompts, Tool definitions and results, media, and credentials over the selected network path; operators should use a trusted endpoint and HTTPS outside a trusted local network.
+The experimental `copilot-provider` Unit registers Provider
+`copilot-login-experiment`. Registration performs no credential reads, network
+requests, or browser launch. Catalog reads or invocations can initiate sign-in
+when a valid saved sign-in is unavailable.
 
-Discovery publishes exact `/responses` or `/chat/completions` models with positive safe-integer
-output limits and at least one Prompt/Context limit. Relay preserves the exact
+The Extension owns GitHub device authorization, its loopback account page,
+cross-platform filesystem credentials, and short-lived Copilot access exchange.
+Discovery requests `/models` on the authenticated account's HTTPS API endpoint;
+inference uses `/responses` or `/chat/completions` directly, without `/v1` or an
+intermediate Relay. The Extension does not accept a configured base URL or API key.
+Credential and headless-login details are in the
+[Copilot Provider guide](../../extensions/copilot-provider/README.md).
+
+Discovery publishes declared `/responses` or `/chat/completions` models with positive safe-integer
+output limits and at least one Prompt/Context limit. Copilot preserves the exact
 known total Context, Prompt, and output facts; the smaller known Prompt/Context
 input boundary remains the compatibility effective limit. Tool support and
 image support are published only when metadata proves them; supported image
 MIME values are intersected with Core PNG/JPEG/WebP/GIF support. Duplicate
 eligible opaque Model IDs fail discovery. Models supporting both routes prefer
-Responses. Expected network/HTTP/timeout/body/metadata discovery failures clear
-the current model collection, warn with the endpoint and cause, and permit
-Provider registration with an empty list. Invalid local configuration,
-cancellation and programming errors still fail explicitly.
+Responses. Genuine network, HTTP, metadata and programming failures remain
+explicit errors.
 
-The same Unit instance owns query-driven discovery: successful results expire
-60 seconds after completion; failures allow another attempt after 5 seconds.
-Reads within either interval reuse the Provider's state. Concurrent reads share
-one bounded attempt, while cancellation ends only the individual caller's wait.
-Revision checks prevent an invalidated in-flight attempt from publishing stale
-models and prevent an old Turn binding from clearing a newer collection.
-There is no background refresh, Core cache, client force flag or Unit reload.
-Already-bound Turns keep their captured map, facts and private wire route.
+Discovery is query-driven, without a Provider TTL or background refresh.
+Closing the sign-in page or choosing Cancel returns an empty Copilot catalog
+and pauses automatic sign-in for the lifetime of that Provider instance.
+Restarting the Host or disabling and re-enabling the Extension resets the pause.
+Caller cancellation and Host shutdown do not count as dismissing sign-in.
+Unauthenticated bound invocations still fail explicitly, without reopening a
+dismissed page or returning an empty successful response.
+
+Already-bound Turns keep their captured facts, account endpoint and private wire
+route. A later catalog cannot reroute them; an account endpoint change requires
+refresh and reselection.
 
 ### 7.1 Responses protocol
 
-`CopilotRelayResponsesClient` uses raw `fetch` and SSE with `stream: true`; no OpenAI SDK or Runtime protocol branch exists. It:
+The Copilot Responses Client uses raw `fetch` and SSE with `stream: true`; no OpenAI SDK or Runtime protocol branch exists. It:
 
 - maps canonical text/image/Tool history to stateless Responses input;
 - uses stable `call_id` for Tool replay instead of response item IDs;
@@ -251,26 +266,29 @@ Already-bound Turns keep their captured map, facts and private wire route.
 
 Malformed JSON/SSE framing, events before creation or after terminal, duplicate/unknown terminal states, invalid Tool identity, duplicate call IDs, invalid Usage, early stream close, HTTP failure, and explicit SSE failure all fail closed without a successful terminal.
 
-The Relay emits a local `Error` satisfying the V1 structural invocation-error contract through type-only Core imports. It neither runtime-imports nor subclasses Host `ModelInvocationError`; Runtime canonicalizes the structural value at the existing Core boundary.
+The Extension emits a local `Error` satisfying the V1 structural invocation-error contract through type-only public Extension API imports. It neither runtime-imports nor subclasses Host `ModelInvocationError`; Runtime canonicalizes the structural value at the existing Core boundary.
 
-Both Relay Clients recognize the exact structured `model_not_found` code in
+Both Copilot Clients recognize the exact structured `model_not_found` code in
 HTTP and explicit SSE errors, preserving bounded diagnostics. Authentication,
 rate-limit and server status classifications take precedence. Generic 404,
 `invalid_model`, free text and transport failures do not assert model absence.
-The captured router invalidates only its still-current model collection before
-forwarding that error. Runner preserves the common category through its
-execution wrapper for Channel refresh, without retry or automatic reselection.
+Runner preserves the common category through its execution wrapper for Channel
+refresh, without retry or automatic reselection.
 
-### 8.2 Package and supported Host
+### 7.2 Package and supported Host
 
-Copilot Relay is an npm workspace package under `extensions/copilot-relay-provider`. Its Descriptor points to `entry.ts`; Runtime Bootstrap loads it through the same Jiti path used for other source or built entries. The package imports Host contracts only from `my-agent/extension-api` and owns any package-manager dependencies it adds.
+Copilot is an npm workspace package under `extensions/copilot-provider`. Its Descriptor points to `entry.ts`; Runtime Bootstrap loads it through the same Jiti path used for other source or built entries. The package imports Host contracts only from `my-agent/extension-api` and owns any package-manager dependencies it adds. Its protocol implementations are local adaptations of the retired Relay implementation, not cross-Extension private imports.
 
-Development uses the tracked package directly. The npm package includes the same Extension package beneath `<installDir>/extensions`. Agent configuration under `<agentHome>/config.json` enables Descriptor ID `copilot-relay-provider`; its scoped config may materialize `baseURL`, `apiKey`, and `discoveryTimeoutMs`. The Extension entry reads only its validated `ExtensionLoadContext.config`, not process environment.
+Development uses the source workspace package directly; it is not included in
+the root npm release. Agent configuration under `<agentHome>/config.json` controls
+Descriptor ID `copilot-provider` through the ordinary `enabled` flag. Its scoped
+configuration is empty and rejects unknown fields; there is no separate `active`
+switch.
 
 `src/hosts/standalone/standalone-host.ts` passes generic startup facts and zero
 or one argument-selected Host-local CLI Unit to Runtime. Runtime Bootstrap
 invokes the generic Extension Acquisition boundary and hands acquired
-`LoadedRuntimeUnit[]` to composition. Neither Host nor Runtime imports Relay
+`LoadedRuntimeUnit[]` to composition. Neither Host nor Runtime imports Copilot
 or WebSocket Extension implementation or infers their identities. A default
 Model Reference comes from ordinary Agent configuration or the atomic
 `MY_AGENT_PROVIDER` plus `MY_AGENT_MODEL` environment override.
@@ -279,6 +297,6 @@ Model Reference comes from ordinary Agent configuration or the atomic
 
 | Kind | Evidence |
 |---|---|
-| Source | [Invocation errors](../../src/core/model-invocation/errors.ts), [Built-in Runtime Unit](../../src/builtins/providers/builtin/runtime-unit.ts), [Relay client](../../extensions/copilot-relay-provider/responses-client.ts) |
-| Tests | [Invocation error tests](../../src/core/model-invocation/errors.test.ts), [Built-in protocol tests](../../src/builtins/providers/builtin/protocol-clients.test.ts), [Relay client tests](../../extensions/copilot-relay-provider/responses-client.test.ts) |
+| Source | [Invocation errors](../../src/core/model-invocation/errors.ts), [Built-in Runtime Unit](../../src/builtins/providers/builtin/runtime-unit.ts), [Copilot client](../../extensions/copilot-provider/responses-client.ts) |
+| Tests | [Invocation error tests](../../src/core/model-invocation/errors.test.ts), [Built-in protocol tests](../../src/builtins/providers/builtin/protocol-clients.test.ts), [Copilot inference tests](../../extensions/copilot-provider/inference.test.ts) |
 | Controlling authority | [Model Resolution Specification](../specifications/model-resolution.md), [Model Invocation Errors Specification](../specifications/model-invocation-errors.md) |

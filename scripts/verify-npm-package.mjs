@@ -37,10 +37,6 @@ async function main() {
     ]);
     const manifest = JSON.parse(await readFile(join(REPOSITORY_ROOT, 'package.json'), 'utf8'));
     const lockfile = JSON.parse(await readFile(join(REPOSITORY_ROOT, 'package-lock.json'), 'utf8'));
-    const relayManifest = JSON.parse(await readFile(
-      join(REPOSITORY_ROOT, 'extensions', 'copilot-relay-provider', 'package.json'),
-      'utf8',
-    ));
     const webSocketManifest = JSON.parse(await readFile(
       join(REPOSITORY_ROOT, 'extensions', 'websocket-channel', 'package.json'),
       'utf8',
@@ -55,7 +51,7 @@ async function main() {
       packed,
       manifest,
       lockfile,
-      [relayManifest, webSocketManifest],
+      [webSocketManifest],
     );
     const tarball = join(temporaryRoot, basename(packed[0].filename));
 
@@ -281,9 +277,8 @@ async function verifyInstalledExtensionAcquisition(installationProject) {
   });
   assert(result.diagnostics.length === 0, 'Installed official Extensions produced diagnostics.');
   assert(
-    result.loadedUnits.length === 2
-      && result.loadedUnits[0]?.unitId === 'copilot-relay-provider'
-      && result.loadedUnits[1]?.unitId === 'websocket-channel',
+    result.loadedUnits.length === 1
+      && result.loadedUnits[0]?.unitId === 'websocket-channel',
     'Installed official Extensions did not load through Host acquisition.',
   );
 }

@@ -15,7 +15,7 @@ import type {
 } from 'my-agent/extension-api';
 import { ModelStreamCollector } from 'my-agent/extension-api';
 
-export const COPILOT_RELAY_PROVIDER_ID = 'copilot-relay';
+export const COPILOT_PROVIDER_ID = 'copilot-login-experiment';
 export const OPENAI_RESPONSES_PROTOCOL = 'openai-responses';
 const RESPONSES_REASONING_REPLAY_FORMAT = 'openai-responses.reasoning-item.v1';
 
@@ -39,18 +39,18 @@ interface PendingTerminal {
   readonly usage: TokenUsage;
 }
 
-interface RelayInvocationDiagnostics extends ModelInvocationDiagnostics {
-  readonly providerId: typeof COPILOT_RELAY_PROVIDER_ID;
+interface CopilotInvocationDiagnostics extends ModelInvocationDiagnostics {
+  readonly providerId: typeof COPILOT_PROVIDER_ID;
 }
 
-export class CopilotRelayInvocationError extends Error implements ModelInvocationStructuralErrorV1 {
+export class CopilotInvocationError extends Error implements ModelInvocationStructuralErrorV1 {
   readonly protocol = 'my-agent.model-invocation-error';
   readonly version = 1 as const;
-  readonly diagnostics: RelayInvocationDiagnostics;
+  readonly diagnostics: CopilotInvocationDiagnostics;
 
   constructor(
     readonly category: ModelInvocationFailureCategory,
-    diagnostics: RelayInvocationDiagnostics,
+    diagnostics: CopilotInvocationDiagnostics,
   ) {
     super(`Model invocation failed: ${category}.`);
     this.name = 'ModelInvocationError';
@@ -61,7 +61,7 @@ export class CopilotRelayInvocationError extends Error implements ModelInvocatio
   }
 }
 
-export class CopilotRelayResponsesClient implements ModelInvocationPort {
+export class CopilotResponsesClient implements ModelInvocationPort {
   private readonly fetchImpl: typeof fetch;
   private readonly authorization?: string;
 
@@ -84,7 +84,7 @@ export class CopilotRelayResponsesClient implements ModelInvocationPort {
       ended: boolean;
     }>();
     try {
-      const response = await this.fetchImpl(`${this.options.baseURL}/v1/responses`, {
+      const response = await this.fetchImpl(`${this.options.baseURL}/responses`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -95,7 +95,7 @@ export class CopilotRelayResponsesClient implements ModelInvocationPort {
         signal: request.signal,
       });
       if (!response.ok) throw await createHttpError(response, request);
-      if (!response.body) throw new Error('Copilot Relay streaming response has no body.');
+      if (!response.body) throw new Error('GitHub Copilot streaming response has no body.');
 
       let started = false;
       let pendingTerminal: PendingTerminal | undefined;
@@ -103,29 +103,29 @@ export class CopilotRelayResponsesClient implements ModelInvocationPort {
       const seenCallIds = new Set<string>();
       for await (const data of readSseData(response.body, request.signal)) {
         if (data === '[DONE]') {
-          if (!pendingTerminal) throw new Error('Copilot Relay sent [DONE] before a terminal event.');
-          if (sawDone) throw new Error('Copilot Relay sent duplicate [DONE] markers.');
+          if (!pendingTerminal) throw new Error('GitHub Copilot sent [DONE] before a terminal event.');
+          if (sawDone) throw new Error('GitHub Copilot sent duplicate [DONE] markers.');
           sawDone = true;
           continue;
         }
-        if (sawDone) throw new Error('Copilot Relay sent an event after [DONE].');
+        if (sawDone) throw new Error('GitHub Copilot sent an event after [DONE].');
 
-        const event = parseJsonRecord(data, 'Copilot Relay sent malformed SSE JSON.');
+        const event = parseJsonRecord(data, 'GitHub Copilot sent malformed SSE JSON.');
         const type = readString(event.type);
-        if (!type) throw new Error('Copilot Relay SSE event type is missing.');
+        if (!type) throw new Error('GitHub Copilot SSE event type is missing.');
         if (!started && isOutputEventType(type)) {
-          throw new Error(`Copilot Relay sent "${type}" before response.created.`);
+          throw new Error(`GitHub Copilot sent "${type}" before response.created.`);
         }
         if (pendingTerminal) {
           if (isTerminalType(type)) {
-            throw new Error('Copilot Relay sent duplicate terminal events.');
+            throw new Error('GitHub Copilot sent duplicate terminal events.');
           }
-          throw new Error(`Copilot Relay sent "${type}" after its terminal event.`);
+          throw new Error(`GitHub Copilot sent "${type}" after its terminal event.`);
         }
 
         switch (type) {
           case 'response.created':
-            if (started) throw new Error('Copilot Relay sent duplicate response.created events.');
+            if (started) throw new Error('GitHub Copilot sent duplicate response.created events.');
             started = true;
             {
               const created = asRecord(event.response);
@@ -135,7 +135,7 @@ export class CopilotRelayResponsesClient implements ModelInvocationPort {
                 invocation: {
                   id: invocationId,
                   source: {
-                    providerId: COPILOT_RELAY_PROVIDER_ID,
+                    providerId: COPILOT_PROVIDER_ID,
                     connectionId: this.options.baseURL,
                     requestModelId: request.model,
                     wireProtocol: 'openai-responses',
@@ -148,16 +148,16 @@ export class CopilotRelayResponsesClient implements ModelInvocationPort {
           case 'response.output_item.added': {
             const item = asRecord(event.item);
             if (item?.type !== 'reasoning') break;
-            const itemId = readNonEmptyString(item.id, 'Copilot Relay reasoning item id');
+            const itemId = readNonEmptyString(item.id, 'GitHub Copilot reasoning item id');
             if (reasoning.has(itemId)) {
-              throw new Error('Copilot Relay sent a duplicate reasoning item id.');
+              throw new Error('GitHub Copilot sent a duplicate reasoning item id.');
             }
             const outputIndex = readNonNegativeInteger(
               event.output_index,
-              'Copilot Relay reasoning output_index',
+              'GitHub Copilot reasoning output_index',
             );
             if (reasoningByOutputIndex.has(outputIndex)) {
-              throw new Error('Copilot Relay sent a duplicate reasoning output_index.');
+              throw new Error('GitHub Copilot sent a duplicate reasoning output_index.');
             }
             const blockId = `thinking-${outputIndex}`;
             const pending = { blockId, summaries: new Map<number, string>(), ended: false };
@@ -169,19 +169,19 @@ export class CopilotRelayResponsesClient implements ModelInvocationPort {
           case 'response.reasoning_summary_text.delta': {
             const itemId = readNonEmptyString(
               event.item_id,
-              'Copilot Relay reasoning summary item_id',
+              'GitHub Copilot reasoning summary item_id',
             );
             const pending = reasoning.get(itemId);
             if (!pending || pending.ended) {
-              throw new Error('Copilot Relay referenced an unknown reasoning item.');
+              throw new Error('GitHub Copilot referenced an unknown reasoning item.');
             }
             const summaryIndex = readNonNegativeInteger(
               event.summary_index,
-              'Copilot Relay reasoning summary_index',
+              'GitHub Copilot reasoning summary_index',
             );
             const delta = readString(event.delta);
             if (delta === undefined) {
-              throw new Error('Copilot Relay reasoning summary delta is invalid.');
+              throw new Error('GitHub Copilot reasoning summary delta is invalid.');
             }
             pending.summaries.set(
               summaryIndex,
@@ -191,32 +191,32 @@ export class CopilotRelayResponsesClient implements ModelInvocationPort {
             break;
           }
           case 'response.output_text.delta': {
-            if (!started) throw new Error('Copilot Relay sent text before response.created.');
+            if (!started) throw new Error('GitHub Copilot sent text before response.created.');
             const text = readString(event.delta);
-            if (text === undefined) throw new Error('Copilot Relay text delta is invalid.');
+            if (text === undefined) throw new Error('GitHub Copilot text delta is invalid.');
             yield { type: 'text_delta', text };
             break;
           }
           case 'response.output_item.done': {
             const item = asRecord(event.item);
             if (item?.type === 'reasoning') {
-              const itemId = readNonEmptyString(item.id, 'Copilot Relay reasoning item id');
+              const itemId = readNonEmptyString(item.id, 'GitHub Copilot reasoning item id');
               const outputIndex = event.output_index === undefined
                 ? undefined
                 : readNonNegativeInteger(
                     event.output_index,
-                    'Copilot Relay reasoning output_index',
+                    'GitHub Copilot reasoning output_index',
                   );
               const pendingById = reasoning.get(itemId);
               const pendingByIndex = outputIndex === undefined
                 ? undefined
                 : reasoningByOutputIndex.get(outputIndex);
               if (pendingById && pendingByIndex && pendingById !== pendingByIndex) {
-                throw new Error('Copilot Relay reasoning item correlation is ambiguous.');
+                throw new Error('GitHub Copilot reasoning item correlation is ambiguous.');
               }
               const pending = pendingById ?? pendingByIndex;
               if (!pending || pending.ended) {
-                throw new Error('Copilot Relay completed an unknown reasoning item.');
+                throw new Error('GitHub Copilot completed an unknown reasoning item.');
               }
               const parsed = parseReasoningItem(item);
               pending.ended = true;
@@ -255,16 +255,16 @@ export class CopilotRelayResponsesClient implements ModelInvocationPort {
             );
           default:
             if (isUnknownResponseState(type)) {
-              throw new Error(`Copilot Relay sent unsupported response state "${type}".`);
+              throw new Error(`GitHub Copilot sent unsupported response state "${type}".`);
             }
             break;
         }
       }
-      if (!started) throw new Error('Copilot Relay stream ended before response.created.');
-      if (!pendingTerminal) throw new Error('Copilot Relay stream ended before a terminal event.');
+      if (!started) throw new Error('GitHub Copilot stream ended before response.created.');
+      if (!pendingTerminal) throw new Error('GitHub Copilot stream ended before a terminal event.');
       for (const pending of reasoning.values()) {
         if (!pending.ended) {
-          throw new Error('Copilot Relay left a reasoning item incomplete.');
+          throw new Error('GitHub Copilot left a reasoning item incomplete.');
         }
       }
       yield { type: 'message_end', ...pendingTerminal };
@@ -304,9 +304,9 @@ function buildResponsesRequest(
   connectionId: string,
 ): Record<string, unknown> {
   if (request.reasoning?.thinking !== undefined) {
-    throw createRelayInvalidRequestError(
+    throw createCopilotInvalidRequestError(
       request,
-      'Copilot Relay Responses does not support the requested Thinking switch.',
+      'GitHub Copilot Responses does not support the requested Thinking switch.',
     );
   }
   const reasoningEffort = request.reasoning?.effort === 'default'
@@ -315,6 +315,9 @@ function buildResponsesRequest(
   return {
     model: request.model,
     stream: true,
+    store: false,
+    include: ['reasoning.encrypted_content'],
+    ...(request.outputTokenLimit === undefined ? {} : { max_output_tokens: request.outputTokenLimit }),
     ...(request.system ? { instructions: request.system } : {}),
     ...(reasoningEffort === undefined
       ? {}
@@ -339,9 +342,10 @@ function convertMessages(
 ): unknown[] {
   const input: unknown[] = [];
   for (const message of messages) {
+    const role = message.origin === 'host' ? 'user' : message.role;
     if (typeof message.content === 'string') {
-      input.push(messageItem(message.role, [{
-        type: message.role === 'assistant' ? 'output_text' : 'input_text',
+      input.push(messageItem(role, [{
+        type: role === 'assistant' ? 'output_text' : 'input_text',
         text: message.content,
       }]));
       continue;
@@ -350,14 +354,14 @@ function convertMessages(
     let pendingContent: unknown[] = [];
     const flush = (): void => {
       if (pendingContent.length === 0) return;
-      input.push(messageItem(message.role, pendingContent));
+      input.push(messageItem(role, pendingContent));
       pendingContent = [];
     };
     for (const block of message.content) {
       switch (block.type) {
         case 'text':
           pendingContent.push({
-            type: message.role === 'assistant' ? 'output_text' : 'input_text',
+            type: role === 'assistant' ? 'output_text' : 'input_text',
             text: block.text,
           });
           break;
@@ -397,7 +401,7 @@ function convertMessages(
           break;
         case 'thinking':
           if (message.role !== 'assistant') {
-            throw new Error('Copilot Relay cannot project Thinking on a user message.');
+            throw new Error('GitHub Copilot cannot project Thinking on a user message.');
           }
           if (block.status === 'partial') break;
           assertReplaySource(message, block.id, connectionId);
@@ -421,11 +425,11 @@ function assertReplaySource(
   if (
     !invocation
     || !thinkingId.startsWith(`${invocation.id}:`)
-    || invocation.source.providerId !== COPILOT_RELAY_PROVIDER_ID
+    || invocation.source.providerId !== COPILOT_PROVIDER_ID
     || invocation.source.connectionId !== connectionId
     || invocation.source.wireProtocol !== OPENAI_RESPONSES_PROTOCOL
   ) {
-    throw new Error('Copilot Relay replay source is unsupported.');
+    throw new Error('GitHub Copilot replay source is unsupported.');
   }
 }
 
@@ -434,22 +438,22 @@ function parseReasoningItem(value: Record<string, unknown>): {
   readonly item: ResponsesReasoningItem;
   readonly summary: ResponsesReasoningItem['summary'];
 } {
-  const id = readNonEmptyString(value.id, 'Copilot Relay reasoning item id');
-  if (!Array.isArray(value.summary)) throw new Error('Copilot Relay reasoning summary is invalid.');
+  const id = readNonEmptyString(value.id, 'GitHub Copilot reasoning item id');
+  if (!Array.isArray(value.summary)) throw new Error('GitHub Copilot reasoning summary is invalid.');
   const summary = value.summary.map((raw, index) => {
     const part = asRecord(raw);
     if (part?.type !== 'summary_text' || typeof part.text !== 'string') {
-      throw new Error(`Copilot Relay reasoning summary item ${index} is invalid.`);
+      throw new Error(`GitHub Copilot reasoning summary item ${index} is invalid.`);
     }
     return { type: 'summary_text' as const, text: part.text };
   });
   let content: ResponsesReasoningItem['content'];
   if (value.content !== undefined) {
-    if (!Array.isArray(value.content)) throw new Error('Copilot Relay reasoning content is invalid.');
+    if (!Array.isArray(value.content)) throw new Error('GitHub Copilot reasoning content is invalid.');
     content = value.content.map((raw, index) => {
       const part = asRecord(raw);
       if (part?.type !== 'reasoning_text' || typeof part.text !== 'string') {
-        throw new Error(`Copilot Relay reasoning content item ${index} is invalid.`);
+        throw new Error(`GitHub Copilot reasoning content item ${index} is invalid.`);
       }
       return { type: 'reasoning_text' as const, text: part.text };
     });
@@ -457,7 +461,7 @@ function parseReasoningItem(value: Record<string, unknown>): {
   let encryptedContent: string | null | undefined;
   if (Object.hasOwn(value, 'encrypted_content')) {
     if (value.encrypted_content !== null && typeof value.encrypted_content !== 'string') {
-      throw new Error('Copilot Relay reasoning encrypted_content is invalid.');
+      throw new Error('GitHub Copilot reasoning encrypted_content is invalid.');
     }
     encryptedContent = value.encrypted_content;
   }
@@ -468,7 +472,7 @@ function parseReasoningItem(value: Record<string, unknown>): {
     && status !== 'in_progress'
     && status !== 'incomplete'
   ) {
-    throw new Error('Copilot Relay reasoning status is invalid.');
+    throw new Error('GitHub Copilot reasoning status is invalid.');
   }
   return {
     complete: status === undefined || status === 'completed',
@@ -488,12 +492,12 @@ function parseReasoningItem(value: Record<string, unknown>): {
 
 function readResponsesReplay(replay: ProviderReplayState): ResponsesReasoningItem {
   if (replay.format !== RESPONSES_REASONING_REPLAY_FORMAT) {
-    throw new Error('Copilot Relay received unsupported replay state.');
+    throw new Error('GitHub Copilot received unsupported replay state.');
   }
   const item = asRecord(replay.payload.item);
-  if (!item) throw new Error('Copilot Relay replay item is invalid.');
+  if (!item) throw new Error('GitHub Copilot replay item is invalid.');
   const parsed = parseReasoningItem(item);
-  if (!parsed.complete) throw new Error('Copilot Relay replay item is incomplete.');
+  if (!parsed.complete) throw new Error('GitHub Copilot replay item is incomplete.');
   return parsed.item;
 }
 
@@ -545,12 +549,15 @@ export async function* readSseData(
         const boundary = findEventBoundary(buffer);
         if (!boundary) break;
         const block = buffer.slice(0, boundary.index);
+        if (block.length > 1024 * 1024) throw new Error('Copilot SSE event exceeds one MiB.');
         buffer = buffer.slice(boundary.index + boundary.length);
         const data = parseSseBlock(block);
         if (data !== undefined) yield data;
       }
+      if (buffer.length > 1024 * 1024) throw new Error('Copilot SSE event exceeds one MiB.');
     }
     if (buffer.trim()) {
+      if (buffer.length > 1024 * 1024) throw new Error('Copilot SSE event exceeds one MiB.');
       const data = parseSseBlock(buffer);
       if (data !== undefined) yield data;
     }
@@ -603,7 +610,7 @@ function parseSseBlock(block: string): string | undefined {
 function parseToolCall(item: Record<string, unknown>, seen: Set<string>): ToolCall {
   const callId = readNonEmptyString(item.call_id, 'Tool Call call_id');
   const name = readNonEmptyString(item.name, 'Tool Call name');
-  if (seen.has(callId)) throw new Error(`Copilot Relay sent duplicate Tool Call id "${callId}".`);
+  if (seen.has(callId)) throw new Error(`GitHub Copilot sent duplicate Tool Call id "${callId}".`);
   seen.add(callId);
 
   let input: ToolCall['input'];
@@ -625,12 +632,12 @@ function terminalFromResponse(
   incomplete: boolean,
 ): PendingTerminal {
   const response = asRecord(value);
-  if (!response) throw new Error('Copilot Relay terminal response is invalid.');
+  if (!response) throw new Error('GitHub Copilot terminal response is invalid.');
   let stopReason: PendingTerminal['stopReason'];
   if (incomplete) {
     const details = asRecord(response.incomplete_details);
     if (details?.reason !== 'max_output_tokens') {
-      throw new Error('Copilot Relay returned an unsupported incomplete reason.');
+      throw new Error('GitHub Copilot returned an unsupported incomplete reason.');
     }
     stopReason = 'max_tokens';
   } else {
@@ -648,7 +655,7 @@ function terminalFromResponse(
 export async function createHttpError(
   response: Response,
   request: ModelInvocationRequest,
-): Promise<CopilotRelayInvocationError> {
+): Promise<CopilotInvocationError> {
   const body = await readBoundedText(response, 64 * 1024, request.signal);
   let payload: Record<string, unknown> | undefined;
   try {
@@ -661,7 +668,7 @@ export async function createHttpError(
     httpStatus: response.status,
     providerErrorType: sanitize(readString(nested?.type) ?? readString(payload?.type)),
     providerErrorCode: sanitize(readString(nested?.code)),
-    providerMessage: sanitize(readString(nested?.message) ?? readString(payload?.message)),
+    providerMessage: `Copilot request failed (HTTP ${response.status}).`,
     requestId: sanitize(
       response.headers.get('x-request-id')
         ?? response.headers.get('x-github-request-id')
@@ -679,29 +686,29 @@ export async function createHttpError(
         : response.status >= 500
           ? 'unavailable'
           : 'provider_failure';
-  return new CopilotRelayInvocationError(category, diagnostics);
+  return new CopilotInvocationError(category, diagnostics);
 }
 
 export function createStreamError(payload: unknown, request: ModelInvocationRequest): Error {
   const error = asRecord(payload);
   const code = sanitize(readString(error?.code));
-  return new CopilotRelayInvocationError(
+  return new CopilotInvocationError(
     code === 'model_not_found' ? 'model_not_found' : 'provider_failure',
     invocationDiagnostics(request, {
       providerErrorCode: code,
       providerErrorType: sanitize(readString(error?.type)),
-      providerMessage: sanitize(readString(error?.message)),
+      providerMessage: 'Copilot reported an unsuccessful stream.',
     }),
   );
 }
 
 export function normalizeError(error: unknown, request: ModelInvocationRequest): Error {
-  if (error instanceof CopilotRelayInvocationError) return error;
+  if (error instanceof CopilotInvocationError) return error;
   if (error instanceof Error && error.name === 'AbortError') return error;
-  return new CopilotRelayInvocationError(
+  return new CopilotInvocationError(
     error instanceof TypeError ? 'transport' : 'provider_failure',
     invocationDiagnostics(request, {
-      ...(error instanceof Error ? { providerMessage: sanitize(error.message) } : {}),
+      providerMessage: 'Copilot did not complete a valid invocation.',
     }),
   );
 }
@@ -715,7 +722,7 @@ export function invocationDiagnostics(
     providerMessage?: string;
     requestId?: string;
   },
-): RelayInvocationDiagnostics {
+): CopilotInvocationDiagnostics {
   let userMessageCount = 0;
   let assistantMessageCount = 0;
   let stringContentMessageCount = 0;
@@ -738,7 +745,7 @@ export function invocationDiagnostics(
     }
   }
   return {
-    providerId: COPILOT_RELAY_PROVIDER_ID,
+    providerId: COPILOT_PROVIDER_ID,
     ...(provider.httpStatus === undefined ? {} : { httpStatus: provider.httpStatus }),
     ...(provider.providerErrorType === undefined
       ? {} : { providerErrorType: provider.providerErrorType }),
@@ -835,13 +842,13 @@ export function readString(value: unknown): string | undefined {
 
 export function readNonEmptyString(value: unknown, field: string): string {
   const result = readString(value)?.trim();
-  if (!result) throw new Error(`Copilot Relay ${field} is missing.`);
+  if (!result) throw new Error(`GitHub Copilot ${field} is missing.`);
   return result;
 }
 
 export function readNonNegativeInteger(value: unknown, field: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    throw new Error(`Copilot Relay ${field} must be a non-negative integer.`);
+    throw new Error(`GitHub Copilot ${field} must be a non-negative integer.`);
   }
   return value as number;
 }
@@ -852,11 +859,11 @@ function sanitize(value: string | null | undefined): string | undefined {
   return normalized ? normalized.slice(0, 500) : undefined;
 }
 
-export function createRelayInvalidRequestError(
+export function createCopilotInvalidRequestError(
   request: ModelInvocationRequest,
   providerMessage: string,
-): CopilotRelayInvocationError {
-  return new CopilotRelayInvocationError(
+): CopilotInvocationError {
+  return new CopilotInvocationError(
     'invalid_request',
     invocationDiagnostics(request, {
       providerMessage: sanitize(providerMessage),

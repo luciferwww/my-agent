@@ -775,47 +775,41 @@ be valid, distinct absolute URL paths.
 The bundled Channel has no authentication, TLS, or public-network hardening.
 Keep it on loopback or place it behind an authenticated operational boundary.
 
-### 7.2 Copilot Relay Provider
+### 7.2 Copilot Provider (source workspace experiment)
 
 ```json
 {
   "llm": {
     "defaultModel": {
-      "providerId": "copilot-relay",
+      "providerId": "copilot-login-experiment",
       "modelId": "gpt-model-id"
     }
   },
   "extensions": {
     "entries": {
-      "copilot-relay-provider": {
-        "config": {
-          "baseURL": "http://127.0.0.1:5000",
-          "discoveryTimeoutMs": 5000
-        }
+      "copilot-provider": {
+        "enabled": true
       }
     }
   }
 }
 ```
 
-The Extension discovers models and their supported Responses or Chat
-Completions endpoint from `<baseURL>/v1/models`.
+Replace `gpt-model-id` with an ID from the discovered catalog. This experimental
+Extension is available in the source checkout, not the root npm release.
+Its configuration has no `active`, `baseURL`, `apiKey`, or discovery-TTL options.
 
-If discovery is unavailable, the Provider still registers with no models and
-logs a warning containing the endpoint and cause. A later catalog query can
-recover without restarting or toggling the Extension. Successful discovery is
-cached for 60 seconds; failed discovery clears the list and becomes eligible
-for another query-driven attempt after 5 seconds. There is no background retry.
-CLI and WebSocket check their own 60-second presentation interval when showing
-models, so these independent intervals can delay visible changes beyond
-60 seconds. A structured missing-model invocation error triggers refresh but
-does not retry the invocation or select another model automatically.
+Registration is inert. A catalog query, including an automatic startup query,
+can open the Extension's sign-in page when no valid saved sign-in is available.
+Discovery and inference use the authenticated Copilot account endpoint directly;
+no Relay process is required.
 
-| Field | Default |
-|---|---|
-| `baseURL` | `http://127.0.0.1:5000` |
-| `apiKey` | omitted |
-| `discoveryTimeoutMs` | `5000` |
+Closing the sign-in page or choosing Cancel returns an empty Copilot catalog
+and pauses automatic sign-in for that Provider instance. Restart the Host or
+disable and re-enable the Extension to reset the pause. Genuine discovery
+failures and invocation failures remain errors rather than empty successes.
+See the [Copilot Provider guide](../../extensions/copilot-provider/README.md)
+for account management, headless login, and credential storage.
 
 ### 7.3 Extension API key
 
@@ -825,8 +819,8 @@ can be a literal string or one exact `"${ENV_VAR}"` reference.
 ```json
 {
   "config": {
-    "baseURL": "http://127.0.0.1:5000",
-    "apiKey": "${COPILOT_RELAY_API_KEY}"
+    "baseURL": "https://api.example.com",
+    "apiKey": "${EXAMPLE_API_KEY}"
   }
 }
 ```
@@ -836,6 +830,8 @@ environment variable disables the affected Extension with a bounded
 diagnostic; its value is never included in diagnostics. Other Extension
 configuration fields, including `baseURL`, are ordinary values defined by that
 Extension's schema.
+This generic example applies only to Extensions that declare these fields;
+the Copilot Provider above does not.
 
 ## 8. Precedence
 

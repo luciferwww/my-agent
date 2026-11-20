@@ -68,8 +68,10 @@ URLs preserve configured nested Client paths. Published packages include
 `client/dist` and exclude Client source, build configuration, source maps, and
 build-only scripts.
 
-The bundled Client has one component tree. Classic and Botanical are
-presentation-only Themes selected in the Sidebar and persisted origin-locally;
+The bundled Client has one component tree. Interaction icons use named imports
+from locally bundled Lucide Vue SVG components, without an icon font or CDN.
+Classic and Botanical are
+presentation-only Themes selected in Settings > General and persisted origin-locally;
 Theme changes do not reconnect transport or clear Session state. The retired
 `/chat2.html` entry has no alias or redirect and returns 404 unless an operator
 explicitly configures that exact path as the primary `clientPath`.
@@ -361,14 +363,20 @@ running refresh and terminal History takeover. Missing call facts are not
 guessed. Root-addressed Child Approvals attach by delegation plus Child
 Turn/Call identity and continue submitting only the existing Approval ID.
 
-The bundled client's only Allow/Deny controls live in a non-modal approval deck
-at the top of the fixed composer, outside the scrolling conversation. The deck
+The bundled client's non-modal approval deck replaces the focused Session's
+normal composer input, model/reasoning selectors, and attachment controls, outside the scrolling
+conversation. Its right-aligned footer contains Stop and the only Allow/Deny
+controls, without the normal message-entry hint. Stop uses the existing Turn
+Abort action and composer button style. Pending approval hides model and
+reasoning selection, while conversation history and Session switching remain
+accessible; resolving the last request restores the Session's draft and
+attachment controls. The deck
 shows one pending request for the focused audience Session, with previous/next
 navigation, position/count, source context, Tool name, and scroll-bounded input.
 Tool slots retain status but no duplicate decision buttons. New requests do not
 replace a selected request, steal focus, or scroll the conversation. Canonical
 closure removes a request and advances the deck; no pending requests means no
-deck. Disconnection disables decisions, and recovery uses the existing pending
+deck. Disconnection disables decisions and Stop, and recovery uses the existing pending
 query independently of whether the corresponding Tool slot is loaded.
 
 `run_turn.reasoning` accepts only own `thinking` and `effort` fields with the
@@ -376,9 +384,17 @@ public enum values; unknown fields, inherited/non-plain objects, and conflicting
 combinations fail before Runtime routing. Catalog DTOs expose cloned reasoning
 capability arrays. The bundled client orders options independently of Provider
 metadata, starts at Default, preserves supported selections across model
-switches, resets only unsupported dimensions with a notice, snapshots the
+switches, resets only unsupported dimensions without a reset notice, snapshots the
 preference at send time, and renders message/History summaries from structured
-reasoning fields. Dimensions with no explicit capability are hidden.
+reasoning fields. Dimensions with no explicit capability are hidden. Model,
+Thinking, and Effort dropdowns sit below the message input, opposite the action
+buttons; Enter and attachment guidance is part of the input placeholder.
+These preferences are stored independently in page-local Session state. A new
+Session inherits a copy of the current selections, including across its first
+`session_created` transition. Switching Sessions restores and reconciles the
+saved selections against the current Catalog. Valid selections survive a socket
+reconnect; refreshing the page resets them. No server or browser-storage
+persistence is involved.
 
 Clients should treat “new Session” as local state only. When the user submits the first message, the client issues `create_session` with the selected initial permission mode, waits for `session_created`, and immediately issues `run_turn` with the returned ID. This makes initial elevation atomic and avoids abandoned UI create actions producing even a Pending registration. For an existing Session, the HTML client queries Runtime truth on selection/reconnect, stores no grant locally, requires confirmation before Allow All, shows a persistent warning while elevated, and can revoke to Manual for future calls.
 

@@ -12,6 +12,9 @@ export type PermissionMode = 'manual' | 'allow_all';
 
 export interface SessionUiState {
   draft: string;
+  modelSelection: Readonly<{ providerId: string; modelId: string }> | null;
+  modelSelectionSource: 'none' | 'user' | 'default' | 'fallback';
+  reasoningSelection: { thinking: string; effort: string };
   chatItems: PresentationItem[];
   turnMap: Record<string, PresentationItem>;
   activeTurnId: string | null;
@@ -39,9 +42,14 @@ export interface SessionUiState {
 
 export type SessionUiStateMap = Record<string, SessionUiState>;
 
-export function createSessionUiState(): SessionUiState {
+export function createSessionUiState(
+  preferences?: Pick<SessionUiState, 'modelSelection' | 'modelSelectionSource' | 'reasoningSelection'>,
+): SessionUiState {
   return {
     draft: '',
+    modelSelection: preferences?.modelSelection ? Object.freeze({ ...preferences.modelSelection }) : null,
+    modelSelectionSource: preferences?.modelSelectionSource ?? 'none',
+    reasoningSelection: preferences ? { ...preferences.reasoningSelection } : { thinking: 'default', effort: 'default' },
     chatItems: [],
     turnMap: {},
     activeTurnId: null,

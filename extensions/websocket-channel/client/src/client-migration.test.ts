@@ -35,6 +35,7 @@ describe('migrated WebSocket Client', () => {
       'attachments.ts',
       'client/markdown.ts',
       'client/execution.ts',
+      'components/ModelReasoningPicker.vue',
     ];
     const sources = await Promise.all(
       requiredFiles.map(path => readFile(`${CLIENT_ROOT}/src/${path}`, 'utf8')),
@@ -47,13 +48,17 @@ describe('migrated WebSocket Client', () => {
     const messageSource = sources[4];
     for (const ownedState of [
       'isMobileLayout',
-      'modelPickerOpen',
-      'reasoningPickerOpen',
       'permissionPickerOpen',
       'sessionActionMenu',
     ]) {
       expect(appSource).not.toContain(`${ownedState}:`);
       expect(sidebarSource).toContain(`${ownedState}:`);
+    }
+    const pickerSource = sources[sources.length - 1];
+    for (const ownedState of ['modelPickerOpen', 'reasoningPickerOpen']) {
+      expect(appSource).not.toContain(`${ownedState}:`);
+      expect(sidebarSource).not.toContain(`${ownedState}:`);
+      expect(pickerSource).toContain(`${ownedState}:`);
     }
     expect(appSource).not.toContain('getChatLogElement');
     expect(appSource).not.toContain('CHAT_FOLLOW_THRESHOLD_PX');

@@ -305,10 +305,11 @@ Stop the Host before replacing installed Extensions. Partial overwrite,
 symlink-based installation, mutation while running, and running `npm install`
 inside the live installation are unsupported.
 
-The source checkout uses the tracked `extensions/copilot-relay-provider` and
-`extensions/websocket-channel` workspace packages. The npm package ships both
-Extensions under its installation directory. The standalone Host acquires
-them generically and does not hard-code either Extension.
+The source checkout includes the experimental [Copilot Provider](extensions/copilot-provider/README.md)
+and [WebSocket Channel](extensions/websocket-channel/) workspace packages.
+The npm package ships the WebSocket Channel; the Copilot Provider remains
+source-workspace-only. The standalone Host acquires Extensions generically
+and does not hard-code their identities.
 
 ## Development
 

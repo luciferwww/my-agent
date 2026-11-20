@@ -79,10 +79,6 @@ function packResult() {
       ...['reviewer', 'explorer', 'researcher'].flatMap(id =>
         ['IDENTITY.md', 'SOUL.md', 'AGENTS.md', 'TOOLS.md']
           .map(name => ({ path: `dist/host/core/agent-context/templates/agents/${id}/${name}` }))),
-      { path: 'extensions/copilot-relay-provider/entry.ts' },
-      { path: 'extensions/copilot-relay-provider/chat-client.ts' },
-      { path: 'extensions/copilot-relay-provider/extension.json' },
-      { path: 'extensions/copilot-relay-provider/package.json' },
       { path: 'extensions/websocket-channel/WebSocketChannel.ts' },
       { path: 'extensions/websocket-channel/client-assets.ts' },
       { path: 'extensions/websocket-channel/client/dist/assets/index-abc.css' },
@@ -100,16 +96,6 @@ function manifest() {
     dependencies: { ws: '^8.18.3' },
     files: [
       'dist/host',
-      'extensions/copilot-relay-provider/chat-client.ts',
-      'extensions/copilot-relay-provider/copilot-relay-provider-unit.ts',
-      'extensions/copilot-relay-provider/copilot-relay-provider.ts',
-      'extensions/copilot-relay-provider/entry.ts',
-      'extensions/copilot-relay-provider/extension.json',
-      'extensions/copilot-relay-provider/index.ts',
-      'extensions/copilot-relay-provider/model-metadata.ts',
-      'extensions/copilot-relay-provider/package.json',
-      'extensions/copilot-relay-provider/responses-client.ts',
-      'extensions/copilot-relay-provider/types.ts',
       'extensions/websocket-channel/WebSocketChannel.ts',
       'extensions/websocket-channel/client-assets.ts',
       'extensions/websocket-channel/client/dist',

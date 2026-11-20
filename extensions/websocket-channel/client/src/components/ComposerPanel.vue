@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import { Paperclip, Square, X } from '@lucide/vue';
 
 interface Attachment {
   readonly id: string | number;
@@ -42,6 +43,7 @@ function onPaste(event: ClipboardEvent): void {
 
 function onDragEnter(event: DragEvent): void {
   event.preventDefault();
+  if (props.pendingApprovalCount > 0) return;
   dragDepth.value += 1;
   dragHover.value = true;
 }
@@ -55,6 +57,7 @@ function onDrop(event: DragEvent): void {
   event.preventDefault();
   dragDepth.value = 0;
   dragHover.value = false;
+  if (props.pendingApprovalCount > 0) return;
   if (event.dataTransfer?.files.length) emit('files', event.dataTransfer.files);
 }
 
@@ -84,7 +87,8 @@ function formatBytes(value: number): string {
     @dragleave="onDragLeave"
     @drop="onDrop"
   >
-    <slot />
+    <slot v-if="pendingApprovalCount > 0" />
+    <template v-else>
     <div
       v-if="attachments.length > 0 || attachError || !selectedModelSupportsImages"
       class="composer-attachments"
@@ -105,7 +109,7 @@ function formatBytes(value: number): string {
             class="attachment-chip-remove"
             aria-label="Remove attachment"
             @click="emit('removeAttachment', attachment.id)"
-          >×</button>
+          ><X aria-hidden="true" /></button>
         </div>
       </div>
       <div
@@ -120,7 +124,7 @@ function formatBytes(value: number): string {
       Message
       <textarea
         :value="modelValue"
-        placeholder="Send a message to the agent…"
+        :placeholder="`Send a message to the agent… \nPress Enter to send or Shift+Enter for a new line. Attach up to ${maxAttachmentsPerMessage} images (10 MB total) by button, drop, or paste.`"
         @input="updateDraft"
         @keydown.enter.exact.prevent="emit('send')"
         @paste="onPaste"
@@ -137,16 +141,14 @@ function formatBytes(value: number): string {
     />
 
     <div class="composer-row">
-      <div class="composer-hint">
-        <span>Press Enter to send or Shift+Enter for a new line. Attach up to {{ maxAttachmentsPerMessage }} images (10 MB total) by button, drop, or paste.</span>
-      </div>
-      <div class="button-row">
+      <slot name="controls" />
+      <div class="button-row composer-actions">
         <button
           class="secondary"
           :disabled="!isConnected || isWaitingForReply || !selectedModelSupportsImages"
           :title="isWaitingForReply ? 'Steering does not support attachments' : attachmentCapabilityExplanation"
           @click="fileInput?.click()"
-        >📎 Images</button>
+        ><Paperclip aria-hidden="true" /> Images</button>
         <button
           class="secondary"
           :disabled="!modelValue && attachments.length === 0"
@@ -158,11 +160,12 @@ function formatBytes(value: number): string {
           :disabled="!isConnected"
           title="Abort the current turn and discard queued messages"
           @click="emit('abort')"
-        >⏹ Stop</button>
+        ><Square aria-hidden="true" /> Stop</button>
         <button class="primary" :disabled="!canSend" @click="emit('send')">
           {{ pendingApprovalCount > 0 ? 'Approval pending…' : isWaitingForReply ? 'Steer' : 'Send' }}
         </button>
       </div>
     </div>
+    </template>
   </footer>
 </template>
