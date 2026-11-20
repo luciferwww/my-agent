@@ -12,6 +12,21 @@ npm run build
 npm test
 ```
 
+### Native image dependency compatibility
+
+`sharp` is pinned to `0.33.5`, the existing attachment-processing version.
+The targeted npm override makes `@xenova/transformers` reuse that version:
+its own `sharp` 0.32.x loads conflicting libvips DLLs on Windows, even for
+text embeddings. Keeping the pin avoids changing attachment encoding and
+the embedding runtime at the same time. This intentionally overrides
+Transformers 2.x's declared sharp range; it is not an upstream compatibility
+guarantee.
+
+When changing either dependency, run the native image compatibility integration
+tests in both import orders, the attachment tests, and real local embedding
+inference. Check that the dependency tree remains deduplicated. Do not remove
+the override until the upstream dependency ranges and native libraries align.
+
 ## Before Changing Files
 
 1. Classify the work as a Small Change, Defect, Documentation, Architecture Slice, or Architecture Spike.

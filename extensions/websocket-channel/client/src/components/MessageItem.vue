@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { ChevronDown, ChevronUp } from '@lucide/vue';
 import {
   approvalStatusClass,
   approvalStatusLabel,
@@ -84,7 +85,7 @@ function childSessionId(segment: ConversationSegment): string | undefined {
           <span v-if="block.segments.some(segment => segment.approval?.status === 'pending')">
             Approval required
           </span>
-          <span>{{ block.group.expanded ? '⌃' : '⌄' }}</span>
+          <component :is="block.group.expanded ? ChevronUp : ChevronDown" aria-hidden="true" />
         </button>
         <template
           v-for="segment in block.group?.expanded === false ? [] : block.segments"
@@ -102,7 +103,7 @@ function childSessionId(segment: ConversationSegment): string | undefined {
             @click="segment.expanded = !segment.expanded"
           >
             <span>{{ segment.status === 'running' ? 'Thinking…' : 'Thinking' }}</span>
-            <span>{{ segment.expanded ? '⌃' : '⌄' }}</span>
+            <component :is="segment.expanded ? ChevronUp : ChevronDown" aria-hidden="true" />
           </button>
           <pre v-if="segment.expanded" class="thinking-text">{{ segment.text }}</pre>
         </section>
@@ -129,8 +130,9 @@ function childSessionId(segment: ConversationSegment): string | undefined {
               class="tool-card-toggle"
               type="button"
               :aria-expanded="Boolean(segment.expanded)"
+              :aria-label="segment.expanded ? 'Collapse tool details' : 'Expand tool details'"
               @click="segment.expanded = !segment.expanded"
-            >{{ segment.expanded ? '⌃' : '⌄' }}</button>
+            ><component :is="segment.expanded ? ChevronUp : ChevronDown" aria-hidden="true" /></button>
           </div>
           <div
             v-if="!segment.expanded"
@@ -178,7 +180,7 @@ function childSessionId(segment: ConversationSegment): string | undefined {
                 {{ childScope(segment)?.outcome ?? segment.subagentOutcome
                   ?? childScope(segment)?.status ?? segment.subagentStatus ?? 'unknown' }}
               </span>
-              <span>{{ segment.subagentExpanded === false ? '⌄' : '⌃' }}</span>
+              <component :is="segment.subagentExpanded === false ? ChevronDown : ChevronUp" aria-hidden="true" />
             </button>
             <div v-if="segment.subagentExpanded !== false" class="subagent-content">
               <MessageItem
@@ -220,8 +222,9 @@ function childSessionId(segment: ConversationSegment): string | undefined {
               class="tool-card-toggle"
               type="button"
               :aria-expanded="Boolean(segment.expanded)"
+              :aria-label="segment.expanded ? 'Collapse approval details' : 'Expand approval details'"
               @click="segment.expanded = !segment.expanded"
-            >{{ segment.expanded ? '⌃' : '⌄' }}</button>
+            ><component :is="segment.expanded ? ChevronUp : ChevronDown" aria-hidden="true" /></button>
           </div>
           <div
             v-if="!segment.expanded"

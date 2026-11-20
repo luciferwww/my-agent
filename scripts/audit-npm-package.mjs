@@ -2,16 +2,6 @@ const EXPECTED_BIN = 'dist/host/hosts/standalone/entry.js';
 const CLIENT_DIST_PREFIX = 'extensions/websocket-channel/client/dist/';
 const EXPECTED_FILES_ALLOWLIST = Object.freeze([
   'dist/host',
-  'extensions/copilot-relay-provider/chat-client.ts',
-  'extensions/copilot-relay-provider/copilot-relay-provider-unit.ts',
-  'extensions/copilot-relay-provider/copilot-relay-provider.ts',
-  'extensions/copilot-relay-provider/entry.ts',
-  'extensions/copilot-relay-provider/extension.json',
-  'extensions/copilot-relay-provider/index.ts',
-  'extensions/copilot-relay-provider/model-metadata.ts',
-  'extensions/copilot-relay-provider/package.json',
-  'extensions/copilot-relay-provider/responses-client.ts',
-  'extensions/copilot-relay-provider/types.ts',
   'extensions/websocket-channel/WebSocketChannel.ts',
   'extensions/websocket-channel/client-assets.ts',
   'extensions/websocket-channel/client/dist',
@@ -29,9 +19,6 @@ const REQUIRED_PACKAGE_FILES = Object.freeze([
   EXPECTED_BIN,
   'dist/host/extension/api/index.d.ts',
   'dist/host/extension/api/index.js',
-  'extensions/copilot-relay-provider/entry.ts',
-  'extensions/copilot-relay-provider/extension.json',
-  'extensions/copilot-relay-provider/package.json',
   'extensions/websocket-channel/WebSocketChannel.ts',
   'extensions/websocket-channel/client-assets.ts',
   `${CLIENT_DIST_PREFIX}index.html`,
@@ -66,7 +53,6 @@ export function auditNpmPackage(packResult, manifest, lockfile, extensionManifes
     if (path === 'package.json'
       || path === 'README.md'
       || path.startsWith('dist/host/')
-      || path.startsWith('extensions/copilot-relay-provider/')
       || path.startsWith('extensions/websocket-channel/')) {
       continue;
     }

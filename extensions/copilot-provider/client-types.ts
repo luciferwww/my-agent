@@ -3,22 +3,11 @@ import type {
   ReasoningCapabilities,
 } from 'my-agent/extension-api';
 
-export type RelayWireProtocol =
+export type CopilotWireProtocol =
   | 'openai-responses'
   | 'openai-chat-completions';
 
-export interface CopilotRelayProviderUnitOptions {
-  readonly baseURL?: string;
-  readonly apiKey?: string;
-  readonly discoveryTimeoutMs?: number;
-  /** Test seam; production uses global fetch. */
-  readonly fetch?: typeof fetch;
-  readonly logger?: {
-    warn(message: string, context?: Readonly<Record<string, unknown>>): void;
-  };
-}
-
-export interface RelayModelMetadata {
+export interface CopilotModelMetadata {
   readonly id: string;
   readonly displayName?: string;
   readonly vendor?: string;
@@ -33,8 +22,8 @@ export interface RelayModelMetadata {
   readonly reasoning?: ReasoningCapabilities;
 }
 
-export interface RelayModelBinding {
-  readonly metadata: RelayModelMetadata;
+export interface CopilotCatalogBinding {
+  readonly metadata: CopilotModelMetadata;
   readonly facts: ProviderModelFacts;
-  readonly protocol: RelayWireProtocol;
+  readonly protocol: CopilotWireProtocol;
 }

@@ -2,10 +2,10 @@ import type {
   ExplicitThinkingEffort,
 } from 'my-agent/extension-api';
 import type {
-  RelayModelBinding,
-  RelayModelMetadata,
-  RelayWireProtocol,
-} from './types.js';
+  CopilotCatalogBinding,
+  CopilotModelMetadata,
+  CopilotWireProtocol,
+} from './client-types.js';
 
 const CORE_IMAGE_MEDIA_TYPES = new Set([
   'image/gif',
@@ -24,27 +24,27 @@ const KNOWN_REASONING_EFFORTS = new Set([
   'max',
 ]);
 
-export interface RelayDiscoveryDiagnostic {
+export interface CopilotDiscoveryDiagnostic {
   readonly code: 'unknown_reasoning_effort';
   readonly ignoredValueCount: number;
 }
-export class RelayMetadataError extends Error {}
+export class CopilotMetadataError extends Error {}
 
-export function parseRelayModelCatalog(
+export function parseCopilotModelCatalog(
   payload: unknown,
-  onDiagnostic?: (diagnostic: RelayDiscoveryDiagnostic) => void,
-): ReadonlyMap<string, RelayModelBinding> {
+  onDiagnostic?: (diagnostic: CopilotDiscoveryDiagnostic) => void,
+): ReadonlyMap<string, CopilotCatalogBinding> {
   const root = asRecord(payload);
   if (!root || !Array.isArray(root.data)) {
-    throw new RelayMetadataError('Copilot Relay model discovery response must contain a data array.');
+    throw new CopilotMetadataError('GitHub Copilot model discovery response must contain a data array.');
   }
 
-  const models = new Map<string, RelayModelBinding>();
+  const models = new Map<string, CopilotCatalogBinding>();
   for (const raw of root.data) {
     const binding = parseModel(raw, onDiagnostic);
     if (!binding) continue;
     if (models.has(binding.metadata.id)) {
-      throw new RelayMetadataError(`Copilot Relay returned duplicate model id "${binding.metadata.id}".`);
+      throw new CopilotMetadataError(`GitHub Copilot returned duplicate model id "${binding.metadata.id}".`);
     }
     models.set(binding.metadata.id, binding);
   }
@@ -53,14 +53,14 @@ export function parseRelayModelCatalog(
 
 function parseModel(
   value: unknown,
-  onDiagnostic: ((diagnostic: RelayDiscoveryDiagnostic) => void) | undefined,
-): RelayModelBinding | undefined {
+  onDiagnostic: ((diagnostic: CopilotDiscoveryDiagnostic) => void) | undefined,
+): CopilotCatalogBinding | undefined {
   const entry = asRecord(value);
   if (!entry) return undefined;
   const id = readOpaqueModelId(entry.id);
   if (id === undefined) return undefined;
   if (!Array.isArray(entry.supported_endpoints)) return undefined;
-  const protocol: RelayWireProtocol | undefined =
+  const protocol: CopilotWireProtocol | undefined =
     entry.supported_endpoints.includes('/responses')
       ? 'openai-responses'
       : entry.supported_endpoints.includes('/chat/completions')
@@ -93,7 +93,7 @@ function parseModel(
     supports,
     onDiagnostic,
   );
-  const metadata: RelayModelMetadata = Object.freeze({
+  const metadata: CopilotModelMetadata = Object.freeze({
     id,
     ...(readTrimmedString(entry.name) ? { displayName: readTrimmedString(entry.name) } : {}),
     ...(readTrimmedString(entry.vendor) ? { vendor: readTrimmedString(entry.vendor) } : {}),
@@ -135,20 +135,20 @@ function parseModel(
 
 function parseReasoningCapabilities(
   supports: Record<string, unknown> | undefined,
-  onDiagnostic: ((diagnostic: RelayDiscoveryDiagnostic) => void) | undefined,
-): RelayModelMetadata['reasoning'] {
+  onDiagnostic: ((diagnostic: CopilotDiscoveryDiagnostic) => void) | undefined,
+): CopilotModelMetadata['reasoning'] {
   if (!supports || !Object.hasOwn(supports, 'reasoning_effort')) return undefined;
   const raw = supports.reasoning_effort;
   if (!Array.isArray(raw)) {
-    throw new RelayMetadataError('Copilot Relay reasoning_effort must be an array.');
+    throw new CopilotMetadataError('GitHub Copilot reasoning_effort must be an array.');
   }
   const efforts: ExplicitThinkingEffort[] = [];
   let unknownCount = 0;
   for (let index = 0; index < raw.length; index++) {
     const value = raw[index];
     if (typeof value !== 'string' || value.trim().length === 0) {
-      throw new RelayMetadataError(
-        `Copilot Relay reasoning_effort[${index}] must be a non-empty string.`,
+      throw new CopilotMetadataError(
+        `GitHub Copilot reasoning_effort[${index}] must be a non-empty string.`,
       );
     }
     if (!KNOWN_REASONING_EFFORTS.has(value)) {
@@ -157,8 +157,8 @@ function parseReasoningCapabilities(
     }
     const effort = value as ExplicitThinkingEffort;
     if (efforts.includes(effort)) {
-      throw new RelayMetadataError(
-        `Copilot Relay reasoning_effort[${index}] duplicates "${effort}".`,
+      throw new CopilotMetadataError(
+        `GitHub Copilot reasoning_effort[${index}] duplicates "${effort}".`,
       );
     }
     efforts.push(effort);

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { ChevronLeft, ChevronRight, Square } from '@lucide/vue';
 import { prettyJson, type PendingApproval } from '../client/conversation';
 
 const props = defineProps<{
@@ -10,6 +11,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{
   resolveApproval: [id: string, decision: 'allow' | 'deny'];
+  abort: [];
 }>();
 
 const selectedId = ref<string>();
@@ -31,28 +33,33 @@ function move(offset: number): void {
 </script>
 
 <template>
-  <section v-if="selected" class="approval-deck" aria-label="Pending approvals">
+  <template v-if="selected">
+  <section class="approval-deck" aria-label="Pending approvals">
     <header class="approval-deck-header">
       <strong>Approval required</strong>
       <nav v-if="approvals.length > 1" class="approval-deck-navigation" aria-label="Approval navigation">
         <button type="button" class="secondary" aria-label="Previous approval"
-          :disabled="selectedIndex === 0" @click="move(-1)">&lt;</button>
+          :disabled="selectedIndex === 0" @click="move(-1)"><ChevronLeft aria-hidden="true" /></button>
         <span aria-live="polite">{{ selectedIndex + 1 }} / {{ approvals.length }}</span>
         <button type="button" class="secondary" aria-label="Next approval"
-          :disabled="selectedIndex === approvals.length - 1" @click="move(1)">&gt;</button>
+          :disabled="selectedIndex === approvals.length - 1" @click="move(1)"><ChevronRight aria-hidden="true" /></button>
       </nav>
     </header>
     <div :key="selected.id" class="approval-deck-request" :data-approval-id="selected.id">
       <div class="approval-deck-source">{{ sources[selected.id] ?? 'Source unavailable' }}</div>
       <div class="tool-result-name">{{ selected.toolName }}</div>
       <pre class="approval-deck-input">{{ prettyJson(selected.input) }}</pre>
-      <div class="approval-actions">
-        <span v-if="!isConnected" role="status">Reconnect to respond</span>
-        <button type="button" class="secondary" :disabled="!isConnected"
-          @click="emit('resolveApproval', selected!.id, 'deny')">Deny</button>
-        <button type="button" class="primary" :disabled="!isConnected"
-          @click="emit('resolveApproval', selected!.id, 'allow')">Allow</button>
-      </div>
     </div>
   </section>
+  <div class="approval-actions">
+    <span v-if="!isConnected" role="status">Reconnect to respond</span>
+    <button type="button" class="secondary abort-btn" :disabled="!isConnected"
+      title="Abort the current turn and discard queued messages"
+      @click="emit('abort')"><Square aria-hidden="true" /> Stop</button>
+    <button type="button" class="secondary" :disabled="!isConnected"
+      @click="emit('resolveApproval', selected!.id, 'deny')">Deny</button>
+    <button type="button" class="primary" :disabled="!isConnected"
+      @click="emit('resolveApproval', selected!.id, 'allow')">Allow</button>
+  </div>
+  </template>
 </template>

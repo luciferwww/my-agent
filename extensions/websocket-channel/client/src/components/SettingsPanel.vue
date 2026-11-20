@@ -9,13 +9,15 @@ import SettingsCredential, { type SecretDraft } from './SettingsCredential.vue';
 import SettingsToolSelect from './SettingsToolSelect.vue';
 import SettingsSelect from './SettingsSelect.vue';
 import SettingsSkillSelect from './SettingsSkillSelect.vue';
+import type { ThemeId } from '../client/theme';
 
 const props = defineProps<{
   open: boolean;
   connected: boolean;
+  theme: ThemeId;
   execute: (action: string, input: unknown) => Promise<SettingsActionResult>;
 }>();
-const emit = defineEmits<{ close: []; catalog: [catalog: unknown] }>();
+const emit = defineEmits<{ close: []; catalog: [catalog: unknown]; selectTheme: [theme: ThemeId] }>();
 interface Draft {
   section: SettingsSection;
   baseline: string;
@@ -45,11 +47,13 @@ const sharedDefaults = computed(() => drafts.value.find(draft => draft.section.i
 const globalSettings = computed(() => drafts.value.filter(draft =>
   draft.section.id === 'agents:execution' || draft.section.id === 'agents:defaults' || draft.section.id === 'agents:skills' || draft.section.id === 'agents:memory'));
 const agentSettings = computed(() => drafts.value.filter(draft => draft.section.agent || draft.section.execution || draft.section.skills || draft.section.id === 'agents:memory'));
-const selectedCategory = computed(() => ['llm', 'builtin', 'provider'].includes(selectedSection.value) ? 'llm'
+const selectedCategory = computed(() => selectedSection.value === 'general' ? 'general'
+  : ['llm', 'builtin', 'provider'].includes(selectedSection.value) ? 'llm'
   : ['agents', 'agent-global', 'agent-list', 'general-purpose'].includes(selectedSection.value)
     || visibleDrafts.value[0]?.section.agent || visibleDrafts.value[0]?.section.execution || visibleDrafts.value[0]?.section.skills
     || visibleDrafts.value[0]?.section.id === 'agents:memory' ? 'agents' : 'extensions');
 const categories = computed(() => [
+  { id: 'general', name: 'General', description: 'Web client preferences', drafts: [] },
   { id: 'llm', name: 'LLM', description: 'Models & providers', drafts: drafts.value.filter((draft) => draft.section.id === 'llm') },
   { id: 'agents', name: 'Agents', description: 'Global settings & Agent list', drafts: agentSettings.value },
   { id: 'extensions', name: 'Extensions', description: 'Installed extensions', drafts: extensions.value },
@@ -208,7 +212,7 @@ async function load() {
     clearSecretValues();
     drafts.value = loaded;
     editingModel.value = undefined;
-    if (!['llm', 'builtin', 'provider', 'extensions', 'agents', 'agent-global', 'agent-list', 'general-purpose'].includes(selectedSection.value)
+    if (!['general', 'llm', 'builtin', 'provider', 'extensions', 'agents', 'agent-global', 'agent-list', 'general-purpose'].includes(selectedSection.value)
       && !loaded.some((draft) => draft.section.id === selectedSection.value)) {
       selectedSection.value = 'extensions';
     }
@@ -424,7 +428,7 @@ watch([() => props.open, () => props.connected], ([open, connected], _, onCleanu
     <header class="settings-header">
       <div>
         <h2 id="settings-heading">Settings</h2>
-        <p>Configure models, Agents and installed Extensions. Save each section independently.</p>
+        <p>Web client preferences and service configuration. Save service sections independently.</p>
       </div>
       <div class="settings-header-actions">
         <div class="settings-reload">
@@ -453,6 +457,13 @@ watch([() => props.open, () => props.connected], ([open, connected], _, onCleanu
           :options="categoryOptions" @update:model-value="selectedSection = $event" />
       </nav>
       <div class="settings-content" :key="selectedSection">
+    <section v-if="selectedSection === 'general'" class="settings-section">
+      <h3>General</h3>
+      <SettingsSelect label="Theme" :model-value="theme"
+        :options="[{ value: 'classic', label: 'Classic' }, { value: 'botanical', label: 'Botanical' }]"
+        description="Applies immediately and is saved automatically in this browser only."
+        @update:model-value="emit('selectTheme', $event)" />
+    </section>
     <p v-if="restartRequired" class="settings-warning" role="status">Saved settings require a manual service restart. Reverting to startup values clears the corresponding requirement.</p>
     <details v-if="diagnostics.length"><summary>Startup diagnostics</summary><pre>{{ JSON.stringify(diagnostics, null, 2) }}</pre></details>
     <section v-if="selectedSection === 'provider'" class="settings-section">

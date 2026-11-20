@@ -1,5 +1,6 @@
 <script>
 import { nextTick } from 'vue';
+import { Check, ChevronDown, Ellipsis, Pencil, Plus, Settings, Trash, X } from '@lucide/vue';
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -12,6 +13,7 @@ function focusAfterRender(resolveElement) {
 }
 
 export default {
+  components: { Check, ChevronDown, Ellipsis, Pencil, Plus, Settings, Trash, X },
   name: 'SidebarPanel',
   expose: [
     'openMobileSidebar',
@@ -22,16 +24,6 @@ export default {
     'statusClass',
     'lastStatusMessage',
     'connectionStatusLabel',
-    'modelCatalog',
-    'availableModels',
-    'availableModelProviders',
-    'modelPickerLabel',
-    'selectedModelDetails',
-    'showThinkingControl',
-    'showEffortControl',
-    'reasoningSelection',
-    'reasoningNotice',
-    'reasoningConstraintNotice',
     'pendingSessionRequestId',
     'pendingSessionOperation',
     'selectedSessionId',
@@ -41,74 +33,32 @@ export default {
     'sessionsError',
     'isConnected',
     'permissionMode',
-    'theme',
     'pendingPermissionRequestId',
-    'formatReasoningOption',
-    'reasoningPickerOptions',
-    'isReasoningPickerOptionDisabled',
-    'modelOptionToken',
-    'isSelectedModel',
-    'isRuntimeDefaultModel',
     'hasSessionApprovals',
     'formatSessionTime',
     'shortSessionId',
   ],
   emits: [
-    'modelPickerOpening',
+    'transientUiOpening',
     'sidebarVisibilityChanged',
     'mobileSidebarClosed',
-    'selectModel',
-    'selectReasoningOption',
     'startNewSession',
     'selectSession',
     'renameSession',
     'deleteSession',
     'selectPermissionMode',
-    'selectTheme',
     'openSettings',
   ],
   data() {
     return {
       sidebarOpen: false,
       isMobileLayout: window.innerWidth <= 980,
-      modelPickerOpen: false,
-      reasoningPickerOpen: null,
-      themePickerOpen: false,
       permissionPickerOpen: false,
       permissionPickerPlacement: 'bottom',
-      modelSearch: '',
-      activeModelOptionIndex: -1,
       sessionActionMenu: null,
     };
   },
   computed: {
-    filteredModelProviders() {
-      const query = this.modelSearch.trim().toLocaleLowerCase();
-      if (!query) return this.availableModelProviders;
-      return this.availableModelProviders.flatMap(provider => {
-        const providerMatches = `${provider.displayName ?? provider.providerId} ${provider.providerId}`
-          .toLocaleLowerCase()
-          .includes(query);
-        const models = providerMatches
-          ? provider.models
-          : provider.models.filter(model => `${model.displayName ?? model.modelId} ${model.modelId}`
-              .toLocaleLowerCase()
-              .includes(query));
-        return models.length > 0 ? [{ ...provider, models }] : [];
-      });
-    },
-    filteredModelOptions() {
-      return this.filteredModelProviders.flatMap(provider => provider.models.map(model => ({
-        providerId: provider.providerId,
-        modelId: model.modelId,
-      })));
-    },
-    activeModelOptionId() {
-      return this.activeModelOptionIndex >= 0
-        && this.activeModelOptionIndex < this.filteredModelOptions.length
-        ? `model-picker-option-${this.activeModelOptionIndex}`
-        : null;
-    },
     sessionActionMenuEntry() {
       if (!this.sessionActionMenu) return null;
       return this.sessions.find(
@@ -175,101 +125,6 @@ export default {
         first.focus();
       }
     },
-    toggleModelPicker() {
-      if (this.modelPickerOpen) {
-        this.closeModelPicker();
-        return;
-      }
-      this.$emit('modelPickerOpening');
-      this.closeThemePicker();
-      this.closePermissionPicker();
-      this.closeReasoningPicker();
-      this.modelSearch = '';
-      this.modelPickerOpen = true;
-      this.activeModelOptionIndex = this.modelOptionIndex(
-        this.selectedModelDetails?.reference?.providerId,
-        this.selectedModelDetails?.reference?.modelId,
-      );
-      focusAfterRender(() => {
-        this.scrollActiveModelOptionIntoView();
-        return this.$refs.modelSearchEl;
-      });
-    },
-    closeModelPicker() {
-      this.modelPickerOpen = false;
-      this.modelSearch = '';
-      this.activeModelOptionIndex = -1;
-    },
-    onModelSearchInput(event) {
-      this.modelSearch = event.target.value;
-      nextTick(() => {
-        this.activeModelOptionIndex = this.filteredModelOptions.length > 0 ? 0 : -1;
-        this.scrollActiveModelOptionIntoView();
-      });
-    },
-    onModelSearchKeydown(event) {
-      const options = this.filteredModelOptions;
-      if (event.key === 'ArrowDown') {
-        event.preventDefault();
-        this.activeModelOptionIndex = options.length === 0
-          ? -1
-          : Math.min(this.activeModelOptionIndex + 1, options.length - 1);
-        this.scrollActiveModelOptionIntoView();
-        return;
-      }
-      if (event.key === 'ArrowUp') {
-        event.preventDefault();
-        this.activeModelOptionIndex = options.length === 0
-          ? -1
-          : Math.max(this.activeModelOptionIndex - 1, 0);
-        this.scrollActiveModelOptionIntoView();
-        return;
-      }
-      if (event.key === 'Enter' && options.length > 0) {
-        event.preventDefault();
-        const option = options[clamp(this.activeModelOptionIndex, 0, options.length - 1)];
-        this.selectModel(option.providerId, option.modelId);
-      }
-    },
-    activateModelOption(providerId, modelId) {
-      this.activeModelOptionIndex = this.modelOptionIndex(providerId, modelId);
-    },
-    modelOptionIndex(providerId, modelId) {
-      return this.filteredModelOptions.findIndex(option =>
-        option.providerId === providerId && option.modelId === modelId);
-    },
-    modelOptionId(providerId, modelId) {
-      const index = this.modelOptionIndex(providerId, modelId);
-      return index >= 0 ? `model-picker-option-${index}` : undefined;
-    },
-    scrollActiveModelOptionIntoView() {
-      nextTick(() => {
-        this.$refs.modelSearchEl
-          ?.closest('.model-picker-panel')
-          ?.querySelector('.model-picker-option.active')
-          ?.scrollIntoView({ block: 'nearest' });
-      });
-    },
-    selectModel(providerId, modelId) {
-      this.closeModelPicker();
-      this.$emit('selectModel', providerId, modelId);
-    },
-    toggleReasoningPicker(kind) {
-      if (this.reasoningPickerOpen === kind) {
-        this.closeReasoningPicker();
-        return;
-      }
-      this.closeModelPicker();
-      this.closeThemePicker();
-      this.closePermissionPicker();
-      this.reasoningPickerOpen = kind;
-    },
-    closeReasoningPicker() { this.reasoningPickerOpen = null; },
-    selectReasoningOption(kind, value) {
-      if (this.isReasoningPickerOptionDisabled(kind, value)) return;
-      this.closeReasoningPicker();
-      this.$emit('selectReasoningOption', kind, value);
-    },
     startNewSession() {
       this.closeSessionActionMenu();
       this.closeMobileSidebar();
@@ -288,6 +143,7 @@ export default {
         this.closeSessionActionMenu();
         return;
       }
+      this.$emit('transientUiOpening');
       this.positionSessionActionMenu(session.sessionId, event.currentTarget);
       focusAfterRender(() => this.$refs.sessionActionFirstItem);
     },
@@ -334,30 +190,13 @@ export default {
       this.closeSessionActionMenu();
       if (session) this.$emit('deleteSession', session);
     },
-    toggleThemePicker() {
-      if (this.themePickerOpen) {
-        this.closeThemePicker();
-        return;
-      }
-      this.closeModelPicker();
-      this.closeReasoningPicker();
-      this.closePermissionPicker();
-      this.themePickerOpen = true;
-    },
-    closeThemePicker() { this.themePickerOpen = false; },
-    selectTheme(theme) {
-      this.closeThemePicker();
-      this.$emit('selectTheme', theme);
-    },
     togglePermissionPicker() {
       if (this.permissionPickerOpen) {
         this.closePermissionPicker();
         return;
       }
       if (!this.isConnected || this.pendingPermissionRequestId !== null) return;
-      this.closeModelPicker();
-      this.closeReasoningPicker();
-      this.closeThemePicker();
+      this.$emit('transientUiOpening');
       this.updatePermissionPickerPlacement(120);
       this.permissionPickerOpen = true;
       nextTick(() => this.updatePermissionPickerPlacement());
@@ -383,9 +222,6 @@ export default {
       this.$emit('selectPermissionMode', mode);
     },
     closeTransientUi() {
-      this.closeModelPicker();
-      this.closeReasoningPicker();
-      this.closeThemePicker();
       this.closePermissionPicker();
       this.closeSessionActionMenu();
     },
@@ -424,212 +260,8 @@ export default {
             title="Close navigation"
             aria-label="Close navigation"
             @click="closeMobileSidebar"
-          >×</button>
+          ><X aria-hidden="true" /></button>
         </header>
-
-        <button type="button" @click="$emit('openSettings')">Settings</button>
-
-        <section class="section">
-          <div class="section-title">
-            <h2>Model</h2>
-          </div>
-          <div class="model-picker" :class="{ open: modelPickerOpen }">
-            <button
-              class="model-picker-trigger"
-              type="button"
-              :disabled="!isConnected"
-              :aria-expanded="String(modelPickerOpen)"
-              aria-haspopup="listbox"
-              @click="toggleModelPicker"
-            >
-                <span class="model-picker-trigger-copy">
-                  <span class="model-picker-trigger-name">{{ modelPickerLabel }}</span>
-                  <span v-if="selectedModelDetails" class="model-picker-trigger-provider">
-                    {{ selectedModelDetails.provider.displayName ?? selectedModelDetails.provider.providerId }}
-                  </span>
-                </span>
-                <span class="model-picker-chevron">⌄</span>
-            </button>
-            <div v-if="modelPickerOpen" class="model-picker-scrim" @click="closeModelPicker"></div>
-            <div
-              v-if="modelPickerOpen"
-              class="model-picker-panel"
-              role="dialog"
-              aria-label="Select model"
-              @keydown.esc.stop="closeModelPicker"
-            >
-                <input
-                  ref="modelSearchEl"
-                  :value="modelSearch"
-                  class="model-picker-search"
-                  type="search"
-                  role="combobox"
-                  aria-label="Search models or providers"
-                  aria-autocomplete="list"
-                  aria-controls="model-picker-options"
-                  aria-expanded="true"
-                  :aria-activedescendant="activeModelOptionId"
-                  placeholder="Search models or providers"
-                  @input="onModelSearchInput"
-                  @keydown="onModelSearchKeydown"
-                />
-                <div id="model-picker-options" class="model-picker-list" role="listbox">
-                  <div v-if="filteredModelProviders.length === 0" class="model-picker-empty">
-                    {{ availableModels.length === 0 ? 'No models available' : 'No matching models' }}
-                  </div>
-                  <section
-                    v-for="provider in filteredModelProviders"
-                    :key="provider.providerId"
-                    class="model-provider-group"
-                  >
-                    <div class="model-provider-heading">
-                      <span>{{ provider.displayName ?? provider.providerId }}</span>
-                    </div>
-                    <button
-                      v-for="model in provider.models"
-                      :key="modelOptionToken(provider.providerId, model.modelId)"
-                      class="model-picker-option"
-                      :class="{
-                        selected: isSelectedModel(provider.providerId, model.modelId),
-                        active: activeModelOptionIndex === modelOptionIndex(provider.providerId, model.modelId),
-                      }"
-                      type="button"
-                      role="option"
-                      :id="modelOptionId(provider.providerId, model.modelId)"
-                      :aria-selected="String(isSelectedModel(provider.providerId, model.modelId))"
-                      @mouseenter="activateModelOption(provider.providerId, model.modelId)"
-                      @click="selectModel(provider.providerId, model.modelId)"
-                    >
-                      <span class="model-picker-check">
-                        {{ isSelectedModel(provider.providerId, model.modelId) ? '✓' : '' }}
-                      </span>
-                      <span class="model-picker-option-copy">
-                        <span class="model-picker-option-name">{{ model.displayName ?? model.modelId }}</span>
-                      </span>
-                      <span
-                        v-if="isRuntimeDefaultModel(provider.providerId, model.modelId)"
-                        class="model-picker-default-badge"
-                      >Default</span>
-                    </button>
-                  </section>
-                </div>
-            </div>
-          </div>
-          <div v-if="showThinkingControl || showEffortControl" class="reasoning-controls">
-            <div
-              v-if="showThinkingControl"
-              class="reasoning-control model-picker"
-              :class="{ open: reasoningPickerOpen === 'thinking' }"
-            >
-              <span class="field-label-text">Thinking</span>
-              <button
-                class="model-picker-trigger reasoning-picker-trigger"
-                type="button"
-                :aria-label="`Thinking: ${formatReasoningOption(reasoningSelection.thinking)}`"
-                :aria-expanded="String(reasoningPickerOpen === 'thinking')"
-                aria-haspopup="listbox"
-                @click="toggleReasoningPicker('thinking')"
-              >
-                <span class="model-picker-trigger-copy">
-                  <span class="model-picker-trigger-name">
-                    {{ formatReasoningOption(reasoningSelection.thinking) }}
-                  </span>
-                </span>
-                <span class="model-picker-chevron">⌄</span>
-              </button>
-              <div
-                v-if="reasoningPickerOpen === 'thinking'"
-                class="model-picker-scrim"
-                @click="closeReasoningPicker"
-              ></div>
-              <div
-                v-if="reasoningPickerOpen === 'thinking'"
-                class="model-picker-panel reasoning-picker-panel"
-                role="listbox"
-                aria-label="Thinking options"
-                @keydown.esc.stop="closeReasoningPicker"
-              >
-                <button
-                  v-for="value in reasoningPickerOptions('thinking')"
-                  :key="value"
-                  class="model-picker-option reasoning-picker-option"
-                  :class="{ selected: reasoningSelection.thinking === value }"
-                  type="button"
-                  role="option"
-                  :aria-selected="String(reasoningSelection.thinking === value)"
-                  :disabled="isReasoningPickerOptionDisabled('thinking', value)"
-                  @click="selectReasoningOption('thinking', value)"
-                >
-                  <span class="model-picker-check">
-                    {{ reasoningSelection.thinking === value ? '✓' : '' }}
-                  </span>
-                  <span class="model-picker-option-copy">
-                    <span class="model-picker-option-name">{{ formatReasoningOption(value) }}</span>
-                  </span>
-                </button>
-              </div>
-            </div>
-            <div
-              v-if="showEffortControl"
-              class="reasoning-control model-picker"
-              :class="{ open: reasoningPickerOpen === 'effort' }"
-            >
-              <span class="field-label-text">Effort</span>
-              <button
-                class="model-picker-trigger reasoning-picker-trigger"
-                type="button"
-                :aria-label="`Reasoning effort: ${formatReasoningOption(reasoningSelection.effort)}`"
-                :aria-expanded="String(reasoningPickerOpen === 'effort')"
-                aria-haspopup="listbox"
-                @click="toggleReasoningPicker('effort')"
-              >
-                <span class="model-picker-trigger-copy">
-                  <span class="model-picker-trigger-name">
-                    {{ formatReasoningOption(reasoningSelection.effort) }}
-                  </span>
-                </span>
-                <span class="model-picker-chevron">⌄</span>
-              </button>
-              <div
-                v-if="reasoningPickerOpen === 'effort'"
-                class="model-picker-scrim"
-                @click="closeReasoningPicker"
-              ></div>
-              <div
-                v-if="reasoningPickerOpen === 'effort'"
-                class="model-picker-panel reasoning-picker-panel"
-                role="listbox"
-                aria-label="Reasoning effort options"
-                @keydown.esc.stop="closeReasoningPicker"
-              >
-                <button
-                  v-for="value in reasoningPickerOptions('effort')"
-                  :key="value"
-                  class="model-picker-option reasoning-picker-option"
-                  :class="{ selected: reasoningSelection.effort === value }"
-                  type="button"
-                  role="option"
-                  :aria-selected="String(reasoningSelection.effort === value)"
-                  :disabled="isReasoningPickerOptionDisabled('effort', value)"
-                  @click="selectReasoningOption('effort', value)"
-                >
-                  <span class="model-picker-check">
-                    {{ reasoningSelection.effort === value ? '✓' : '' }}
-                  </span>
-                  <span class="model-picker-option-copy">
-                    <span class="model-picker-option-name">{{ formatReasoningOption(value) }}</span>
-                  </span>
-                </button>
-              </div>
-            </div>
-          </div>
-          <div v-if="reasoningNotice" class="reasoning-notice" role="status">
-            {{ reasoningNotice }}
-          </div>
-          <div v-if="reasoningConstraintNotice" class="reasoning-notice">
-            {{ reasoningConstraintNotice }}
-          </div>
-        </section>
 
         <section class="section">
           <div class="section-title">
@@ -642,7 +274,7 @@ export default {
                 aria-label="New Session"
                 @click="startNewSession"
                 :disabled="pendingSessionRequestId !== null || (!selectedSessionId && chatItemCount === 0)"
-              >＋</button>
+              ><Plus aria-hidden="true" /></button>
             </div>
           </div>
           <div class="session-list" aria-live="polite">
@@ -682,7 +314,7 @@ export default {
                 :disabled="!isConnected || pendingSessionRequestId !== null || pendingSessionOperation !== null"
                 @click.stop="toggleSessionActionMenu(session, $event)"
                 @keydown.escape.stop="closeSessionActionMenu"
-              >⋯</button>
+              ><Ellipsis aria-hidden="true" /></button>
             </div>
           </div>
           <Teleport to="body">
@@ -708,7 +340,7 @@ export default {
                 role="menuitem"
                 @click="renameSessionFromMenu"
               >
-                <span class="session-action-icon" aria-hidden="true">✎</span>
+                <Pencil class="session-action-icon" aria-hidden="true" />
                 <span>Rename</span>
               </button>
               <button
@@ -717,74 +349,11 @@ export default {
                 role="menuitem"
                 @click="deleteSessionFromMenu"
               >
-                <span class="session-action-icon" aria-hidden="true">⌫</span>
+                <Trash class="session-action-icon" aria-hidden="true" />
                 <span>Delete</span>
               </button>
             </div>
           </Teleport>
-        </section>
-
-        <section class="section appearance-panel">
-          <div class="section-title">
-            <h2>Appearance</h2>
-          </div>
-          <div class="model-picker" :class="{ open: themePickerOpen }">
-            <span class="field-label-text">Theme</span>
-            <button
-              class="model-picker-trigger"
-              type="button"
-              aria-label="Theme"
-              :aria-expanded="String(themePickerOpen)"
-              aria-haspopup="listbox"
-              @click="toggleThemePicker"
-            >
-              <span class="model-picker-trigger-copy">
-                <span class="model-picker-trigger-name">
-                  {{ theme === 'botanical' ? 'Botanical' : 'Classic' }}
-                </span>
-              </span>
-              <span class="model-picker-chevron">⌄</span>
-            </button>
-            <div
-              v-if="themePickerOpen"
-              class="model-picker-scrim"
-              @click="closeThemePicker"
-            ></div>
-            <div
-              v-if="themePickerOpen"
-              class="model-picker-panel"
-              role="listbox"
-              aria-label="Theme options"
-              @keydown.esc.stop="closeThemePicker"
-            >
-              <button
-                class="model-picker-option"
-                :class="{ selected: theme === 'classic' }"
-                type="button"
-                role="option"
-                :aria-selected="String(theme === 'classic')"
-                @click="selectTheme('classic')"
-              >
-                <span class="model-picker-check">{{ theme === 'classic' ? '✓' : '' }}</span>
-                <span class="model-picker-option-copy">
-                  <span class="model-picker-option-name">Classic</span>
-                </span>
-              </button>
-              <button
-                class="model-picker-option"
-                :class="{ selected: theme === 'botanical' }"
-                type="button"
-                role="option"
-                :aria-selected="String(theme === 'botanical')"
-                @click="selectTheme('botanical')"
-              >
-                <span class="model-picker-check">{{ theme === 'botanical' ? '✓' : '' }}</span>
-                <span class="model-picker-option-copy">
-                  <span class="model-picker-option-name">Botanical</span>
-                </span>
-              </button>
-            </div>
-          </div>
         </section>
 
         <section class="section permission-panel">
@@ -807,7 +376,7 @@ export default {
                   {{ permissionMode === 'allow_all' ? 'Allow all for this Session' : 'Manual permissions' }}
                 </span>
               </span>
-              <span class="model-picker-chevron">⌄</span>
+              <ChevronDown class="model-picker-chevron" aria-hidden="true" />
             </button>
             <div v-if="permissionPickerOpen" class="model-picker-scrim" @click="closePermissionPicker"></div>
             <div
@@ -827,7 +396,7 @@ export default {
                 :aria-selected="String(permissionMode === 'manual')"
                 @click="selectPermissionMode('manual')"
               >
-                <span class="model-picker-check">{{ permissionMode === 'manual' ? '✓' : '' }}</span>
+                <span class="model-picker-check" aria-hidden="true"><Check v-if="permissionMode === 'manual'" /></span>
                 <span class="model-picker-option-copy">
                   <span class="model-picker-option-name">Manual permissions</span>
                   <span class="model-picker-option-id">Ask before protected tool calls</span>
@@ -841,7 +410,7 @@ export default {
                 :aria-selected="String(permissionMode === 'allow_all')"
                 @click="selectPermissionMode('allow_all')"
               >
-                <span class="model-picker-check">{{ permissionMode === 'allow_all' ? '✓' : '' }}</span>
+                <span class="model-picker-check" aria-hidden="true"><Check v-if="permissionMode === 'allow_all'" /></span>
                 <span class="model-picker-option-copy">
                   <span class="model-picker-option-name">Allow all for this Session</span>
                   <span class="model-picker-option-id">Run every non-denied tool without asking</span>
@@ -861,6 +430,10 @@ export default {
             active for the Session until you switch it off.
           </p>
         </section>
+        <button type="button" class="sidebar-settings" @click="$emit('openSettings')">
+          <Settings aria-hidden="true" />
+          <span class="model-picker-trigger-name">Settings</span>
+        </button>
       </aside>
 
       <button

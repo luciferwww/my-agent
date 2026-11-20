@@ -33,6 +33,7 @@ import {
   selectTheme as persistTheme,
 } from './client/theme';
 import ComposerPanel from './components/ComposerPanel.vue';
+import ModelReasoningPicker from './components/ModelReasoningPicker.vue';
 import ApprovalPanel from './components/ApprovalPanel.vue';
 import ConversationPanel from './components/ConversationPanel.vue';
 import SidebarPanel from './components/SidebarPanel.vue';
@@ -58,6 +59,7 @@ function createClientId() {
       export default defineComponent({
         components: {
           ComposerPanel,
+          ModelReasoningPicker,
           ApprovalPanel,
           ConversationPanel,
           SidebarPanel,
@@ -98,13 +100,6 @@ function createClientId() {
             nextSessionOperationRequestId: 1,
             nextHistoryRequestId: 1,
             sessionsError: '',
-            modelSelection: null,
-            modelSelectionSource: 'none',
-            reasoningSelection: {
-              thinking: 'default',
-              effort: 'default',
-            },
-            reasoningNotice: '',
             theme: currentTheme(),
             sessionStates: { '': createSessionUiState() },
             nextId: 1,
@@ -152,6 +147,18 @@ function createClientId() {
         computed: {
           activeSessionState() {
             return this.ensureSessionState(this.form.sessionId);
+          },
+          modelSelection: {
+            get() { return this.activeSessionState.modelSelection; },
+            set(value) { this.activeSessionState.modelSelection = value; },
+          },
+          modelSelectionSource: {
+            get() { return this.activeSessionState.modelSelectionSource; },
+            set(value) { this.activeSessionState.modelSelectionSource = value; },
+          },
+          reasoningSelection: {
+            get() { return this.activeSessionState.reasoningSelection; },
+            set(value) { this.activeSessionState.reasoningSelection = value; },
           },
           draft: {
             get() { return this.activeSessionState.draft; },
@@ -366,7 +373,6 @@ function createClientId() {
             this.pendingSessionsRequestId = null;
             this.pendingSessionOperation = null;
             this.closeSidebarTransientUi();
-            this.clearModelSelection();
             for (const state of Object.values(this.sessionStates)) {
               state.permissionMode = 'manual';
               state.permissionChangedAt = 0;
@@ -463,6 +469,7 @@ function createClientId() {
             this.form.sessionId = sessionId;
             this.focusedSessionSubscribed = false;
             this.ensureSessionState(sessionId);
+            if (this.modelCatalog) this.reconcileModelSelection(this.modelCatalog);
             if (!sessionId) {
               this.$refs.sidebarPanel?.closeMobileSidebar();
               return;
@@ -571,6 +578,7 @@ function createClientId() {
           },
           closeSidebarTransientUi() {
             this.$refs.sidebarPanel?.closeTransientUi();
+            this.$refs.modelPicker?.closeTransientUi();
           },
           beginSessionOperation(type, sessionId, payload = {}) {
             if (!this.isConnected || this.pendingSessionOperation !== null) return;
@@ -695,7 +703,6 @@ function createClientId() {
             this.modelSelectionSource = 'none';
             this.reasoningSelection.thinking = 'default';
             this.reasoningSelection.effort = 'default';
-            this.reasoningNotice = '';
             this.closeSidebarTransientUi();
           },
           sameModelReference(left, right) {
@@ -756,12 +763,19 @@ function createClientId() {
               this.pushEvent('model_catalog', 'Ignored malformed Model Catalog response');
               return;
             }
+            this.modelCatalog = catalog;
+            this.reconcileModelSelection(catalog);
+            this.pushEvent(
+              'model_catalog',
+              `Loaded generation ${catalog.generation} with ${catalog.providers.length} provider(s)`,
+            );
+          },
+          reconcileModelSelection(catalog) {
             const previousSelection = this.modelSelection
               ? { ...this.modelSelection }
               : null;
             const preserveUserSelection = this.modelSelectionSource === 'user'
               && this.catalogHasModel(catalog, previousSelection);
-            this.modelCatalog = catalog;
             if (preserveUserSelection) {
               this.modelSelection = Object.freeze(previousSelection);
               this.modelSelectionSource = 'user';
@@ -780,10 +794,6 @@ function createClientId() {
             }
             this.reconcileReasoningSelection();
             this.closeSidebarTransientUi();
-            this.pushEvent(
-              'model_catalog',
-              `Loaded generation ${catalog.generation} with ${catalog.providers.length} provider(s)`,
-            );
           },
           sendMessage() {
             if (!this.canSend) return;
@@ -1329,7 +1339,7 @@ function createClientId() {
           },
 
           startNewSession() {
-            this.sessionStates[''] = createSessionUiState();
+            this.sessionStates[''] = createSessionUiState(this.activeSessionState);
             this.switchFocusedSession('');
           },
           selectSession(session) {
@@ -1355,24 +1365,18 @@ function createClientId() {
 
           reconcileReasoningSelection() {
             this.closeSidebarTransientUi();
-            const reset = [];
             if (
               this.reasoningSelection.thinking !== 'default'
               && !this.thinkingOptions.includes(this.reasoningSelection.thinking)
             ) {
               this.reasoningSelection.thinking = 'default';
-              reset.push('Thinking');
             }
             if (
               this.reasoningSelection.effort !== 'default'
               && !this.effortOptions.includes(this.reasoningSelection.effort)
             ) {
               this.reasoningSelection.effort = 'default';
-              reset.push('Effort');
             }
-            this.reasoningNotice = reset.length > 0
-              ? `${reset.join(' and ')} reset to Default because the selected model does not support the previous value.`
-              : '';
           },
           isThinkingOptionDisabled(value) {
             return value === 'on' && this.reasoningSelection.effort === 'none';
@@ -1423,16 +1427,6 @@ function createClientId() {
   :status-class="statusClass"
   :last-status-message="lastStatusMessage"
   :connection-status-label="connectionStatusLabel"
-  :model-catalog="modelCatalog"
-  :available-models="availableModels"
-  :available-model-providers="availableModelProviders"
-  :model-picker-label="modelPickerLabel"
-  :selected-model-details="selectedModelDetails"
-  :show-thinking-control="showThinkingControl"
-  :show-effort-control="showEffortControl"
-  :reasoning-selection="reasoningSelection"
-  :reasoning-notice="reasoningNotice"
-  :reasoning-constraint-notice="reasoningConstraintNotice"
   :pending-session-request-id="pendingSessionRequestId"
   :pending-session-operation="pendingSessionOperation"
   :selected-session-id="form.sessionId"
@@ -1442,37 +1436,29 @@ function createClientId() {
   :sessions-error="sessionsError"
   :is-connected="isConnected"
   :permission-mode="permissionMode"
-  :theme="theme"
   :pending-permission-request-id="pendingPermissionRequestId"
-  :format-reasoning-option="formatReasoningOption"
-  :reasoning-picker-options="reasoningPickerOptions"
-  :is-reasoning-picker-option-disabled="isReasoningPickerOptionDisabled"
-  :model-option-token="modelOptionToken"
-  :is-selected-model="isSelectedModel"
-  :is-runtime-default-model="isRuntimeDefaultModel"
   :has-session-approvals="hasSessionApprovals"
   :format-session-time="formatSessionTime"
   :short-session-id="shortSessionId"
-  @sidebar-visibility-changed="$refs.conversationPanel?.setSidebarOpen($event)"
+  @sidebar-visibility-changed="$refs.conversationPanel?.setSidebarOpen($event); $event && $refs.modelPicker?.closeTransientUi()"
+  @transient-ui-opening="$refs.modelPicker?.closeTransientUi()"
   @mobile-sidebar-closed="$refs.conversationPanel?.getMobileSidebarTrigger()?.focus()"
-  @select-model="selectModel"
-  @model-picker-opening="checkModelCatalogAge"
-  @select-reasoning-option="selectReasoningOption"
   @start-new-session="startNewSession"
   @select-session="selectSession"
   @rename-session="renameSessionFromMenu"
   @delete-session="deleteSessionFromMenu"
   @select-permission-mode="selectPermissionMode"
-  @select-theme="selectTheme"
   @open-settings="openSettings"
 />
 
 <SettingsPanel
   :open="settingsOpen"
+  :theme="theme"
   :connected="isConnected && helloAcknowledged"
   :execute="executeSettings"
   @close="settingsOpen = false"
   @catalog="applyModelCatalog"
+  @select-theme="selectTheme"
 />
 
 <main class="panel chat-shell">
@@ -1513,12 +1499,39 @@ function createClientId() {
       @abort="abortTurn"
       @send="sendMessage"
     >
+      <template #controls>
+        <ModelReasoningPicker
+          ref="modelPicker"
+          :model-catalog="modelCatalog"
+          :available-models="availableModels"
+          :available-model-providers="availableModelProviders"
+          :model-picker-label="modelPickerLabel"
+          :selected-model-details="selectedModelDetails"
+          :model-controls-disabled="pendingApprovalCount > 0"
+          :show-thinking-control="showThinkingControl"
+          :show-effort-control="showEffortControl"
+          :reasoning-selection="reasoningSelection"
+          :reasoning-constraint-notice="reasoningConstraintNotice"
+          :is-connected="isConnected"
+          :format-reasoning-option="formatReasoningOption"
+          :reasoning-picker-options="reasoningPickerOptions"
+          :is-reasoning-picker-option-disabled="isReasoningPickerOptionDisabled"
+          :model-option-token="modelOptionToken"
+          :is-selected-model="isSelectedModel"
+          :is-runtime-default-model="isRuntimeDefaultModel"
+          @select-model="selectModel"
+          @model-picker-opening="checkModelCatalogAge"
+          @picker-opening="$refs.sidebarPanel?.closeTransientUi()"
+          @select-reasoning-option="selectReasoningOption"
+        />
+      </template>
       <ApprovalPanel
         :session-id="form.sessionId"
         :approvals="focusedApprovals"
         :sources="approvalSources"
         :is-connected="isConnected"
         @resolve-approval="resolveApproval"
+        @abort="abortTurn"
       />
     </ComposerPanel>
   </div>

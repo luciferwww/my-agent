@@ -11,11 +11,11 @@ import type {
 } from 'my-agent/extension-api';
 import { ModelStreamCollector } from 'my-agent/extension-api';
 import {
-  COPILOT_RELAY_PROVIDER_ID,
+  COPILOT_PROVIDER_ID,
   asRecord,
   createHttpError,
   createStreamError,
-  createRelayInvalidRequestError,
+  createCopilotInvalidRequestError,
   normalizeError,
   parseJsonRecord,
   readNonNegativeInteger,
@@ -38,7 +38,7 @@ interface PendingTool {
   arguments: string;
 }
 
-export class CopilotRelayChatCompletionsClient implements ModelInvocationPort {
+export class CopilotChatCompletionsClient implements ModelInvocationPort {
   private readonly fetchImpl: typeof fetch;
   private readonly authorization?: string;
 
@@ -56,7 +56,7 @@ export class CopilotRelayChatCompletionsClient implements ModelInvocationPort {
     let reasoningOpaque: string | undefined;
     try {
       const response = await this.fetchImpl(
-        `${this.options.baseURL}/v1/chat/completions`,
+        `${this.options.baseURL}/chat/completions`,
         {
           method: 'POST',
           headers: {
@@ -69,7 +69,7 @@ export class CopilotRelayChatCompletionsClient implements ModelInvocationPort {
         },
       );
       if (!response.ok) throw await createHttpError(response, request);
-      if (!response.body) throw new Error('Copilot Relay Chat streaming response has no body.');
+      if (!response.body) throw new Error('GitHub Copilot Chat streaming response has no body.');
 
       let started = false;
       let done = false;
@@ -79,13 +79,13 @@ export class CopilotRelayChatCompletionsClient implements ModelInvocationPort {
       for await (const data of readSseData(response.body, request.signal)) {
         if (data === '[DONE]') {
           if (done || !finishReason) {
-            throw new Error('Copilot Relay Chat sent an invalid [DONE] marker.');
+            throw new Error('GitHub Copilot Chat sent an invalid [DONE] marker.');
           }
           done = true;
           continue;
         }
-        if (done) throw new Error('Copilot Relay Chat sent an event after [DONE].');
-        const chunk = parseJsonRecord(data, 'Copilot Relay Chat sent malformed SSE JSON.');
+        if (done) throw new Error('GitHub Copilot Chat sent an event after [DONE].');
+        const chunk = parseJsonRecord(data, 'GitHub Copilot Chat sent malformed SSE JSON.');
         if (chunk.type === 'error' || chunk.error !== undefined) {
           throw createStreamError(chunk.error ?? chunk, request);
         }
@@ -97,7 +97,7 @@ export class CopilotRelayChatCompletionsClient implements ModelInvocationPort {
             invocation: {
               id: invocationId,
               source: {
-                providerId: COPILOT_RELAY_PROVIDER_ID,
+                providerId: COPILOT_PROVIDER_ID,
                 connectionId: this.options.baseURL,
                 requestModelId: request.model,
                 wireProtocol: OPENAI_CHAT_COMPLETIONS_PROTOCOL,
@@ -112,32 +112,32 @@ export class CopilotRelayChatCompletionsClient implements ModelInvocationPort {
           usage = {
             inputTokens: readNonNegativeInteger(
               rawUsage.prompt_tokens,
-              'Copilot Relay Chat usage.prompt_tokens',
+              'GitHub Copilot Chat usage.prompt_tokens',
             ),
             outputTokens: readNonNegativeInteger(
               rawUsage.completion_tokens,
-              'Copilot Relay Chat usage.completion_tokens',
+              'GitHub Copilot Chat usage.completion_tokens',
             ),
           };
         }
         if (!Array.isArray(chunk.choices)) {
-          throw new Error('Copilot Relay Chat choices are invalid.');
+          throw new Error('GitHub Copilot Chat choices are invalid.');
         }
         for (const rawChoice of chunk.choices) {
           const choice = asRecord(rawChoice);
-          if (!choice) throw new Error('Copilot Relay Chat choice is invalid.');
+          if (!choice) throw new Error('GitHub Copilot Chat choice is invalid.');
           if (readNonNegativeInteger(
             choice.index,
-            'Copilot Relay Chat choice.index',
+            'GitHub Copilot Chat choice.index',
           ) !== 0) {
-            throw new Error('Copilot Relay Chat returned multiple choices.');
+            throw new Error('GitHub Copilot Chat returned multiple choices.');
           }
           const delta = asRecord(choice.delta);
-          if (!delta) throw new Error('Copilot Relay Chat choice delta is invalid.');
+          if (!delta) throw new Error('GitHub Copilot Chat choice delta is invalid.');
           const nextReasoningText = delta.reasoning_text;
           if (nextReasoningText !== undefined && nextReasoningText !== null) {
             if (typeof nextReasoningText !== 'string') {
-              throw new Error('Copilot Relay Chat reasoning_text is invalid.');
+              throw new Error('GitHub Copilot Chat reasoning_text is invalid.');
             }
             if (nextReasoningText) {
               if (!thinkingStarted) {
@@ -155,11 +155,11 @@ export class CopilotRelayChatCompletionsClient implements ModelInvocationPort {
           const nextOpaque = delta.reasoning_opaque;
           if (nextOpaque !== undefined && nextOpaque !== null) {
             if (typeof nextOpaque !== 'string') {
-              throw new Error('Copilot Relay Chat reasoning_opaque is invalid.');
+              throw new Error('GitHub Copilot Chat reasoning_opaque is invalid.');
             }
             if (nextOpaque) {
               if (reasoningOpaque !== undefined) {
-                throw new Error('Copilot Relay Chat sent multiple reasoning_opaque values.');
+                throw new Error('GitHub Copilot Chat sent multiple reasoning_opaque values.');
               }
               reasoningOpaque = nextOpaque;
               if (!thinkingStarted) {
@@ -174,16 +174,16 @@ export class CopilotRelayChatCompletionsClient implements ModelInvocationPort {
           const nextFinishReason = readString(choice.finish_reason);
           if (nextFinishReason !== undefined) {
             if (finishReason !== undefined) {
-              throw new Error('Copilot Relay Chat sent duplicate terminal choices.');
+              throw new Error('GitHub Copilot Chat sent duplicate terminal choices.');
             }
             finishReason = nextFinishReason;
           }
         }
       }
 
-      if (!started) throw new Error('Copilot Relay Chat stream ended before a response chunk.');
-      if (!finishReason) throw new Error('Copilot Relay Chat stream ended before a terminal choice.');
-      if (!usage) throw new Error('Copilot Relay Chat stream ended without usage.');
+      if (!started) throw new Error('GitHub Copilot Chat stream ended before a response chunk.');
+      if (!finishReason) throw new Error('GitHub Copilot Chat stream ended before a terminal choice.');
+      if (!usage) throw new Error('GitHub Copilot Chat stream ended without usage.');
       if (thinkingStarted) {
         thinkingEnded = true;
         yield {
@@ -209,10 +209,10 @@ export class CopilotRelayChatCompletionsClient implements ModelInvocationPort {
         const callId = pending.id.trim();
         const name = pending.name.trim();
         if (!callId || !name) {
-          throw new Error('Copilot Relay Chat Tool Call is incomplete.');
+          throw new Error('GitHub Copilot Chat Tool Call is incomplete.');
         }
         if (seenCallIds.has(callId)) {
-          throw new Error(`Copilot Relay Chat sent duplicate Tool Call id "${callId}".`);
+          throw new Error(`GitHub Copilot Chat sent duplicate Tool Call id "${callId}".`);
         }
         seenCallIds.add(callId);
         const call: ToolCall = Object.freeze({
@@ -251,9 +251,9 @@ function buildChatRequest(
   connectionId: string,
 ): Record<string, unknown> {
   if (request.reasoning?.thinking !== undefined) {
-    throw createRelayInvalidRequestError(
+    throw createCopilotInvalidRequestError(
       request,
-      'Copilot Relay Chat does not support the requested Thinking switch.',
+      'GitHub Copilot Chat does not support the requested Thinking switch.',
     );
   }
   const reasoningEffort = request.reasoning?.effort === 'default'
@@ -342,7 +342,7 @@ function convertMessages(
         });
       } else if (block.type === 'thinking') {
         if (message.role !== 'assistant') {
-          throw new Error('Copilot Relay Chat cannot project Thinking on a user message.');
+          throw new Error('GitHub Copilot Chat cannot project Thinking on a user message.');
         }
         if (block.status === 'partial') continue;
         if (message.invocation?.source.wireProtocol !== OPENAI_CHAT_COMPLETIONS_PROTOCOL) {
@@ -350,7 +350,7 @@ function convertMessages(
         }
         assertReplaySource(message, block.id, connectionId);
         if (replay) {
-          throw new Error('Copilot Relay Chat supports one replay block per assistant message.');
+          throw new Error('GitHub Copilot Chat supports one replay block per assistant message.');
         }
         replay = block;
       }
@@ -386,11 +386,11 @@ function assertReplaySource(
   if (
     !invocation
     || !thinkingId.startsWith(`${invocation.id}:`)
-    || invocation.source.providerId !== COPILOT_RELAY_PROVIDER_ID
+    || invocation.source.providerId !== COPILOT_PROVIDER_ID
     || invocation.source.connectionId !== connectionId
     || invocation.source.wireProtocol !== OPENAI_CHAT_COMPLETIONS_PROTOCOL
   ) {
-    throw new Error('Copilot Relay Chat replay source is unsupported.');
+    throw new Error('GitHub Copilot Chat replay source is unsupported.');
   }
 }
 
@@ -398,18 +398,18 @@ function readChatReplay(
   replay: ProviderReplayState,
 ): { reasoning_text?: string; reasoning_opaque?: string } {
   if (replay.format !== CHAT_REASONING_REPLAY_FORMAT) {
-    throw new Error('Copilot Relay Chat received unsupported replay state.');
+    throw new Error('GitHub Copilot Chat received unsupported replay state.');
   }
   const reasoningText = replay.payload.reasoning_text;
   const reasoningOpaque = replay.payload.reasoning_opaque;
   if (reasoningText !== undefined && typeof reasoningText !== 'string') {
-    throw new Error('Copilot Relay Chat replay reasoning_text is invalid.');
+    throw new Error('GitHub Copilot Chat replay reasoning_text is invalid.');
   }
   if (reasoningOpaque !== undefined && typeof reasoningOpaque !== 'string') {
-    throw new Error('Copilot Relay Chat replay reasoning_opaque is invalid.');
+    throw new Error('GitHub Copilot Chat replay reasoning_opaque is invalid.');
   }
   if (!reasoningText && !reasoningOpaque) {
-    throw new Error('Copilot Relay Chat replay state is empty.');
+    throw new Error('GitHub Copilot Chat replay state is empty.');
   }
   return {
     ...(reasoningText === undefined ? {} : { reasoning_text: reasoningText }),
@@ -420,14 +420,14 @@ function readChatReplay(
 function appendToolDeltas(value: unknown, tools: Map<number, PendingTool>): void {
   if (value === undefined) return;
   if (!Array.isArray(value)) {
-    throw new Error('Copilot Relay Chat Tool deltas are invalid.');
+    throw new Error('GitHub Copilot Chat Tool deltas are invalid.');
   }
   for (const raw of value) {
     const delta = asRecord(raw);
-    if (!delta) throw new Error('Copilot Relay Chat Tool delta is invalid.');
+    if (!delta) throw new Error('GitHub Copilot Chat Tool delta is invalid.');
     const index = readNonNegativeInteger(
       delta.index,
-      'Copilot Relay Chat Tool delta index',
+      'GitHub Copilot Chat Tool delta index',
     );
     let pending = tools.get(index);
     if (!pending) {

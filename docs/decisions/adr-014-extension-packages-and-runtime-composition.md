@@ -80,7 +80,7 @@ Runtime Composition 统一观察已发布 Channel 的 completion，并以受控 
 - 用户不再接触 `.js` 入口约束；
 - Extension 依赖和 Host 依赖的所有权明确；
 - Runtime 的原子发布与生命周期模型保持不变；
-- Copilot Relay 作为真实 Extension 持续验证整个边界。
+- Copilot Provider 作为源码工作区中的真实 Extension 持续验证整个边界。
 
 ### 代价
 
@@ -99,6 +99,6 @@ Runtime Composition 统一观察已发布 Channel 的 completion，并以受控 
 |---|---|
 | 当前事实 | [Extensions](../architecture/extensions.md)、[Runtime](../architecture/runtime.md)、[Providers](../architecture/providers.md) |
 | 稳定契约 | [Extension Acquisition](../specifications/extension-acquisition.md)、[Runtime Composition](../specifications/runtime-composition.md) |
-| 实现 | [Extension API](../../src/extension/api/index.ts)、[Acquisition Loader](../../src/extension/acquisition/loader.ts)、[Copilot Relay package](../../extensions/copilot-relay-provider/package.json) |
-| 测试 | [Loader tests](../../src/extension/acquisition/loader.test.ts)、[Relay tests](../../extensions/copilot-relay-provider/entry.test.ts)、[npm package verifier](../../scripts/verify-npm-package.mjs) |
+| 实现 | [Extension API](../../src/extension/api/index.ts)、[Acquisition Loader](../../src/extension/acquisition/loader.ts)、[Copilot package](../../extensions/copilot-provider/package.json) |
+| 测试 | [Loader tests](../../src/extension/acquisition/loader.test.ts)、[Copilot tests](../../extensions/copilot-provider/entry.test.ts)、[npm package verifier](../../scripts/verify-npm-package.mjs) |
 | 历史证据 | [AF-06 Extension Framework](../evidence/spikes/af-06-extension-framework.md) |

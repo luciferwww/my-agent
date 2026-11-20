@@ -17,16 +17,6 @@
   },
   "files": [
     "dist/host",
-    "extensions/copilot-relay-provider/chat-client.ts",
-    "extensions/copilot-relay-provider/copilot-relay-provider-unit.ts",
-    "extensions/copilot-relay-provider/copilot-relay-provider.ts",
-    "extensions/copilot-relay-provider/entry.ts",
-    "extensions/copilot-relay-provider/extension.json",
-    "extensions/copilot-relay-provider/index.ts",
-    "extensions/copilot-relay-provider/model-metadata.ts",
-    "extensions/copilot-relay-provider/package.json",
-    "extensions/copilot-relay-provider/responses-client.ts",
-    "extensions/copilot-relay-provider/types.ts",
     "extensions/websocket-channel/WebSocketChannel.ts",
     "extensions/websocket-channel/client-assets.ts",
     "extensions/websocket-channel/client/dist",
@@ -42,7 +32,7 @@
     "node": "22.x"
   },
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && npm run prepare:websocket-client && tsc && npm run build:host && npm run verify:host-build && npm run verify:relay",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && npm run prepare:websocket-client && tsc && npm run build:host && npm run verify:host-build",
     "build:client": "npm run build:client --workspace @my-agent/websocket-channel",
     "build:host": "node -e \"require('node:fs').rmSync('dist/host', { recursive: true, force: true })\" && tsc -p tsconfig.host.json && node scripts/copy-host-assets.mjs",
     "test": "vitest run --config vitest.unit.config.ts",
@@ -56,7 +46,6 @@
     "prepare:websocket-client": "npm run build:client && npm run verify:websocket-client",
     "verify:host-build": "node scripts/audit-host-build.mjs",
     "verify:package": "node scripts/verify-npm-package.mjs",
-    "verify:relay": "npm run test --workspace @my-agent/copilot-relay-provider",
     "verify:websocket-client": "npm run verify:client --workspace @my-agent/websocket-channel",
     "verify:websocket-host": "node scripts/verify-websocket-host.mjs"
   },
@@ -66,9 +55,14 @@
     "better-sqlite3": "^12.8.0",
     "fs-native-extensions": "1.5.3",
     "jiti": "^2.7.0",
-    "sharp": "^0.33.5",
+    "sharp": "0.33.5",
     "ws": "^8.18.3",
     "yaml": "^2.8.1"
+  },
+  "overrides": {
+    "@xenova/transformers": {
+      "sharp": "$sharp"
+    }
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.9",

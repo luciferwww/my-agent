@@ -28,7 +28,7 @@ async function main() {
   const homeDirectory = join(temporaryRoot, 'home');
   const agentHome = join(homeDirectory, '.my-agent');
   const startupCwd = join(temporaryRoot, 'startup-cwd');
-  let relay;
+  let endpoint;
   let child;
   let client;
   let failure;
@@ -40,12 +40,12 @@ async function main() {
       mkdir(agentHome, { recursive: true }),
       mkdir(startupCwd, { recursive: true }),
     ]);
-    relay = await startLoopbackRelay();
+    endpoint = await startLoopbackModel();
     const webSocketPort = await findAvailableLoopbackPort();
-    await createAgentHome(agentHome, webSocketPort);
+    await createAgentHome(agentHome, webSocketPort, endpoint.baseURL);
     const installationBefore = await snapshotTree(EXTENSIONS_ROOT);
     const startupCwdBefore = await snapshotTree(startupCwd);
-    child = startHost(homeDirectory, startupCwd, relay.baseURL, output);
+    child = startHost(homeDirectory, startupCwd, output);
 
     client = await connectWithRetry(`ws://127.0.0.1:${webSocketPort}/ws`, child);
     const messages = createMessageQueue(client);
@@ -76,15 +76,14 @@ async function main() {
       else result = message.result;
     }
 
-    assert(text.join('') === 'smoke ok', 'Host did not stream the loopback Relay response.');
+    assert(text.join('') === 'smoke ok', 'Host did not stream the loopback model response.');
     assert(result?.text === 'smoke ok', 'Host returned an unexpected final response.');
     assert(result?.stopReason === 'end_turn', 'Host returned an unexpected stop reason.');
-    assert(relay.requests.models === 1, 'Host did not discover the Relay model catalog exactly once.');
-    assert(relay.requests.responses === 1, 'Host did not invoke the Relay exactly once.');
-    assert(relay.requests.authorizationValid, 'Host did not materialize the configured API key.');
-    assert(relay.requests.requestedModel === MODEL_ID, 'Host invoked an unexpected Relay model.');
+    assert(endpoint.requests.responses === 1, 'Host did not invoke the model endpoint exactly once.');
+    assert(endpoint.requests.authorizationValid, 'Host did not materialize the configured API key.');
+    assert(endpoint.requests.requestedModel === MODEL_ID, 'Host invoked an unexpected model.');
     assert(
-      relay.requests.requestedReasoningEffort === 'high',
+      endpoint.requests.requestedReasoningEffort === 'high',
       'Host did not forward the selected reasoning effort.',
     );
     assert(!output.join('').includes(API_KEY), 'Host output retained the configured API key.');
@@ -109,7 +108,7 @@ async function main() {
       'Startup CWD',
     );
 
-    console.log('Verified generic WebSocket Host with install-owned Relay acquisition and immutable installation contents.');
+    console.log('Verified generic WebSocket Host with Built-in model invocation, install-owned Channel acquisition and immutable installation contents.');
   } catch (error) {
     const logs = redact(output.join(''), [API_KEY, temporaryRoot]);
     if (logs.trim()) console.error(`Host output:\n${logs.trimEnd()}`);
@@ -125,8 +124,8 @@ async function main() {
     if (child) {
       await attemptCleanup(() => stopHostProcess(child), cleanupErrors);
     }
-    if (relay) {
-      await attemptCleanup(() => relay.close(), cleanupErrors);
+    if (endpoint) {
+      await attemptCleanup(() => endpoint.close(), cleanupErrors);
     }
     await attemptCleanup(
       () => rm(temporaryRoot, { recursive: true, force: true }),
@@ -144,7 +143,7 @@ async function main() {
 
 async function assertBuildInputs() {
   await Promise.all([
-    readFile(join(EXTENSIONS_ROOT, 'copilot-relay-provider', 'extension.json')),
+    readFile(join(EXTENSIONS_ROOT, 'websocket-channel', 'extension.json')),
     readFile(HOST_ENTRY),
     readFile(join(REPOSITORY_ROOT, 'dist', 'host', 'extension', 'api', 'index.js')),
   ]).catch(() => {
@@ -152,27 +151,26 @@ async function assertBuildInputs() {
   });
 }
 
-async function createAgentHome(agentHome, webSocketPort) {
+async function createAgentHome(agentHome, webSocketPort, modelBaseURL) {
   await writeFile(join(agentHome, 'config.json'), `${JSON.stringify({
     llm: {
       defaultModel: {
-        providerId: 'copilot-relay',
+        providerId: 'builtin',
         modelId: MODEL_ID,
+      },
+      builtin: {
+        baseURL: `${modelBaseURL}/v1`,
+        apiKey: '${MY_AGENT_SMOKE_API_KEY}',
+        models: [{
+          modelId: MODEL_ID, protocol: 'openai-responses',
+          maximumPromptTokens: 100_000, maximumOutputTokens: 256,
+          reasoning: { efforts: ['high'] },
+        }],
       },
     },
     extensions: {
-      enabled: true,
       entries: {
-        'copilot-relay-provider': {
-          enabled: true,
-          config: {
-            baseURL: { $env: 'COPILOT_RELAY_BASE_URL' },
-            apiKey: {
-              $secret: { source: 'env', name: 'COPILOT_RELAY_API_KEY' },
-            },
-            discoveryTimeoutMs: 5_000,
-          },
-        },
+        'copilot-provider': { enabled: false },
         'websocket-channel': {
           config: {
             port: webSocketPort,
@@ -198,13 +196,12 @@ async function findAvailableLoopbackPort() {
   return port;
 }
 
-function startHost(homeDirectory, startupCwd, relayBaseURL, output) {
+function startHost(homeDirectory, startupCwd, output) {
   const child = spawn(process.execPath, [HOST_ENTRY], {
     cwd: startupCwd,
     env: createIsolatedHomeEnvironment(homeDirectory, {
       ...process.env,
-      COPILOT_RELAY_BASE_URL: relayBaseURL,
-      COPILOT_RELAY_API_KEY: API_KEY,
+      MY_AGENT_SMOKE_API_KEY: API_KEY,
     }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -241,9 +238,8 @@ function assertChildExited(child) {
   }
 }
 
-async function startLoopbackRelay() {
+async function startLoopbackModel() {
   const requests = {
-    models: 0,
     responses: 0,
     authorizationValid: true,
     requestedModel: undefined,
@@ -251,26 +247,6 @@ async function startLoopbackRelay() {
   };
   const server = createServer(async (request, response) => {
     requests.authorizationValid &&= request.headers.authorization === `Bearer ${API_KEY}`;
-    if (request.method === 'GET' && request.url === '/v1/models') {
-      requests.models += 1;
-      response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({
-        data: [{
-          id: MODEL_ID,
-          name: 'Smoke Model',
-          supported_endpoints: ['/responses'],
-          capabilities: {
-            limits: { max_prompt_tokens: 100_000, max_output_tokens: 256 },
-            supports: {
-              tool_calls: true,
-              vision: false,
-              reasoning_effort: ['high'],
-            },
-          },
-        }],
-      }));
-      return;
-    }
     if (request.method === 'POST' && request.url === '/v1/responses') {
       requests.responses += 1;
       const body = await readRequestBody(request);
@@ -282,11 +258,11 @@ async function startLoopbackRelay() {
         'cache-control': 'no-cache',
       });
       response.end([
-        'data: {"type":"response.created"}',
+        'data: {"type":"response.created","response":{"id":"smoke-response"}}',
         '',
         'data: {"type":"response.output_text.delta","delta":"smoke ok"}',
         '',
-        'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":2}}}',
+        'data: {"type":"response.completed","response":{"id":"smoke-response","status":"completed","usage":{"input_tokens":1,"output_tokens":2}}}',
         '',
         'data: [DONE]',
         '',
@@ -299,7 +275,7 @@ async function startLoopbackRelay() {
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Relay address is unavailable.');
+  if (!address || typeof address === 'string') throw new Error('Model endpoint address is unavailable.');
   return {
     baseURL: `http://127.0.0.1:${address.port}`,
     requests,

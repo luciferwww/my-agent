@@ -9,6 +9,8 @@
  * Returns a discriminated union — never throws on sharp errors.
  */
 
+// package.json pins sharp 0.33.5 and shares it with Transformers 2.x:
+// its nested sharp 0.32.x otherwise mixes incompatible libvips DLLs on Windows.
 import sharp from 'sharp';
 import type { ImageMetadata } from './image-metadata.js';
 

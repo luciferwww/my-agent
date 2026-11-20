@@ -1,5 +1,6 @@
 <script setup lang="ts" generic="T">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch, type CSSProperties } from 'vue';
+import { Check, ChevronDown } from '@lucide/vue';
 import { settingsDropdownPosition } from './settings-dropdown-position';
 
 const props = withDefaults(defineProps<{
@@ -93,7 +94,7 @@ onBeforeUnmount(() => {
       <span class="model-picker-trigger-copy">
         <span class="model-picker-trigger-name">{{ options[selectedIndex]?.label ?? 'Select an option' }}</span>
       </span>
-      <span class="model-picker-chevron" aria-hidden="true">⌄</span>
+      <ChevronDown class="model-picker-chevron" aria-hidden="true" />
     </button>
     <div v-if="open" :id="id" ref="panel" class="model-picker-panel settings-select-panel"
       role="listbox" :aria-label="`${label} options`" :style="position">
@@ -101,7 +102,7 @@ onBeforeUnmount(() => {
         <button v-for="(option, index) in options" :key="index" class="model-picker-option"
           :class="{ selected: selectedIndex === index }" type="button" role="option" tabindex="-1"
           :aria-selected="selectedIndex === index" :disabled="option.disabled" @click="choose(index)">
-          <span class="model-picker-check" aria-hidden="true">{{ selectedIndex === index ? '✓' : '' }}</span>
+          <span class="model-picker-check" aria-hidden="true"><Check v-if="selectedIndex === index" /></span>
           <span class="model-picker-option-copy"><span class="model-picker-option-name">{{ option.label }}</span></span>
         </button>
       </div>
