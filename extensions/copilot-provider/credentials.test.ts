@@ -1,17 +1,71 @@
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { FileCredentials } from './credentials.js';
 
 const directories: string[] = [];
-afterEach(async () => { await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))); });
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, homedir: vi.fn(actual.homedir) };
+});
+afterEach(async () => {
+  vi.mocked(homedir).mockReset();
+  await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+});
 
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'copilot-credentials-test-'));
   directories.push(directory);
   return new FileCredentials(directory);
 }
+
+async function defaultFixture() {
+  const home = await mkdtemp(join(tmpdir(), 'copilot-directory-migration-test-'));
+  directories.push(home);
+  vi.mocked(homedir).mockReturnValue(home);
+  return {
+    credentials: new FileCredentials(),
+    legacy: new FileCredentials(join(home, '.my-agent', 'copilot-provider-login-spike')),
+  };
+}
+
+it('migrates a valid legacy credential only after saving it in the new directory', async () => {
+  const { credentials, legacy } = await defaultFixture();
+  await legacy.save('synthetic-legacy-token', new AbortController().signal);
+  await writeFile(join(legacy.directory, 'unrelated.txt'), 'keep');
+  expect(await credentials.load()).toBe('synthetic-legacy-token');
+  expect(await new FileCredentials().load()).toBe('synthetic-legacy-token');
+  await expect(readFile(legacy.file)).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(await readFile(join(legacy.directory, 'unrelated.txt'), 'utf8')).toBe('keep');
+});
+
+it('prefers the new credential without reading or migrating the legacy file', async () => {
+  const { credentials, legacy } = await defaultFixture();
+  await credentials.save('synthetic-new-token', new AbortController().signal);
+  await mkdir(legacy.directory, { recursive: true });
+  await writeFile(legacy.file, 'invalid legacy JSON');
+  expect(await credentials.load()).toBe('synthetic-new-token');
+  expect(await readFile(legacy.file, 'utf8')).toBe('invalid legacy JSON');
+});
+
+it('rejects invalid legacy credentials without migrating or deleting them', async () => {
+  const { credentials, legacy } = await defaultFixture();
+  await mkdir(legacy.directory, { recursive: true });
+  await writeFile(legacy.file, 'invalid legacy JSON');
+  await expect(credentials.load()).rejects.toThrow('credential file is invalid');
+  await expect(readFile(credentials.file)).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(await readFile(legacy.file, 'utf8')).toBe('invalid legacy JSON');
+});
+
+it('sign-out clears both credential locations so legacy access cannot return', async () => {
+  const { credentials, legacy } = await defaultFixture();
+  await legacy.save('synthetic-legacy-token', new AbortController().signal);
+  await credentials.save('synthetic-new-token', new AbortController().signal);
+  await credentials.clear();
+  expect(await credentials.load()).toBeUndefined();
+  await expect(readFile(legacy.file)).rejects.toMatchObject({ code: 'ENOENT' });
+});
 
 it('persists and replaces a credential across instances without leaving temporary files', async () => {
   const credentials = await fixture();

@@ -13,7 +13,7 @@ export interface Credentials {
 export class FileCredentials implements Credentials {
   readonly file: string;
 
-  constructor(readonly directory = join(homedir(), '.my-agent', 'copilot-provider-login-spike')) {
+  constructor(readonly directory = join(homedir(), '.my-agent', 'copilot-provider')) {
     this.file = join(directory, 'github-token.json');
   }
 
@@ -22,7 +22,15 @@ export class FileCredentials implements Credentials {
     try {
       text = await readFile(this.file, 'utf8');
     } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+        const legacy = this.legacyCredentials();
+        if (!legacy) return undefined;
+        const token = await legacy.load();
+        if (token === undefined) return undefined;
+        await this.save(token, new AbortController().signal);
+        await legacy.clear();
+        return token;
+      }
       throw new LoginError('Could not read the Copilot credential file. Check file permissions.');
     }
     let value: unknown;
@@ -56,6 +64,12 @@ export class FileCredentials implements Credentials {
   }
 
   async clear(): Promise<void> {
+    await this.legacyCredentials()?.clear();
     await rm(this.file, { force: true });
+  }
+
+  private legacyCredentials(): FileCredentials | undefined {
+    if (this.directory !== join(homedir(), '.my-agent', 'copilot-provider')) return undefined;
+    return new FileCredentials(join(homedir(), '.my-agent', 'copilot-provider-login-spike'));
   }
 }
