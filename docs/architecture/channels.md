@@ -83,6 +83,10 @@ Streaming expressions remain source text until their closing delimiter
 arrives, and invalid expressions remain visible rather than interrupting
 message rendering.
 
+Thinking remains expanded on completion until subsequent text or a Tool Call
+arrives. If that content arrives before `thinking_end`, completion folds the
+Thinking block instead; preceding content alone does not trigger this fold.
+
 ### 3.2 Client to Runtime
 
 ```text

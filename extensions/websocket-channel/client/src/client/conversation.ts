@@ -294,6 +294,12 @@ export function applyAgentEvent(
       } else {
         segment.text = event.text;
         segment.status = event.status;
+        const followingSegments = turn.segments!.slice(turn.segments!.indexOf(segment) + 1);
+        if (segment.status !== 'running' && followingSegments.some(
+          candidate => candidate.type === 'text' || candidate.type === 'tool_call',
+        )) {
+          segment.expanded = false;
+        }
       }
       scroll();
       break;

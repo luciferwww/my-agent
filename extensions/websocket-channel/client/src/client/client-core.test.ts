@@ -30,6 +30,48 @@ import {
 } from './theme';
 
 describe('WebSocket Client core', () => {
+  it.each([
+    { successor: 'text_delta', endFirst: false },
+    { successor: 'tool_call_requested', endFirst: false },
+    { successor: 'text_delta', endFirst: true },
+    { successor: 'tool_call_requested', endFirst: true },
+    { successor: undefined, endFirst: false },
+  ])('collapses Thinking only with subsequent content: $successor, endFirst=$endFirst', ({
+    successor, endFirst,
+  }) => {
+    const state = createSessionUiState();
+    let nextId = 0;
+    const context = { clientId: 'browser', nextId: () => ++nextId };
+    applyAgentEvent(state, {
+      type: 'text_delta', turnId: 'turn', text: 'Earlier content',
+    }, context);
+    applyAgentEvent(state, {
+      type: 'thinking_start', turnId: 'turn', thinkingId: 'thinking',
+    }, context);
+    const thinking = state.turnMap.turn.segments!.find(segment => segment.type === 'thinking')!;
+    const end = {
+      type: 'thinking_end', turnId: 'turn', thinkingId: 'thinking',
+      text: 'Reasoning', status: 'complete',
+    };
+    if (endFirst) {
+      applyAgentEvent(state, end, context);
+      expect(thinking.expanded).toBe(true);
+    }
+    if (successor) {
+      applyAgentEvent(state, {
+        type: successor, turnId: 'turn', text: 'Answer', callId: 'call', name: 'read_file',
+      }, context);
+    }
+    if (!endFirst) {
+      expect(thinking.expanded).toBe(true);
+      applyAgentEvent(state, end, context);
+    }
+    applyAgentEvent(state, {
+      type: 'run_end', turnId: 'turn', result: { stopReason: 'end_turn' },
+    }, context);
+    expect(thinking.expanded).toBe(successor === undefined);
+  });
+
   it('refreshes catalogs only for explicit missing/unregistered/rejected model errors', () => {
     for (const category of ['model_not_found', 'provider_unregistered', 'model_rejected', 'transport']) {
       let nextId = 0;
