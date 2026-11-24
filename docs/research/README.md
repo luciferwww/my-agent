@@ -6,6 +6,7 @@ This directory is reserved for external comparisons and exploratory analysis. Re
 
 ## Current research
 
+- [本地个人 Agent 的工具后果风险评估、Smart Approval 与跨平台 Sandbox 调研](smart-approval-and-cross-platform-sandbox-research-2026-11-23.md) - 非权威调研：以可能有害的操作后果而非恶意意图为核心，分离效果证据、损害维度、授权与审批；讨论可信 State、轻量模型领域适配及训练评测、Windows 优先的三平台隔离能力与失败边界；不授权实现。
 - [Markdown 特殊渲染与 Mermaid 支持设计草稿](markdown-special-rendering-and-mermaid-design-draft.md) - 非权威讨论：特殊 Markdown 的闭合即显、稳定身份、结果复用与失效；以已有 KaTeX 优化和新增 Mermaid 为首批用例，覆盖安全、流式生命周期、主题、滚动及验证边界；不授权实现或 Spike。
 - [主流 Agent 的 Skills 实现机制调研](mainstream-agent-skills-implementation-research-2026-11-12.md) - 比较 Claude Code、Codex、Copilot、Gemini CLI、Cursor、OpenCode，并补充 OpenClaw；核对发现、渐进加载、调用、权限、Subagent 和更新边界，区分标准、厂商扩展及源码快照；不授权实现。
 - [代码结构调整建议](code-structure-recommendations.md) - 面向维护者的非权威结构分析，讨论 Settings 职责提取、Session 消息调度、应用能力契约归属、Core 基础设施边界与 Runtime 目录收敛；不授权实现。

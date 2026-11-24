@@ -13,7 +13,7 @@ retaining a Change record.
 
 ## Active
 
-None.
+- [MXC Sandbox Adoption](active/mxc-sandbox/plan.md), with its [Draft Specification](active/mxc-sandbox/specification.md), [Spike Specification](active/mxc-sandbox/spike-specification.md) and [Results](active/mxc-sandbox/spike-results.md) - Bounded Windows Node SDK/Node 24 and offline-tooling feasibility provisionally passed. The default draft selects the public SDK and explicit metadata-only access; external metadata visibility is an expected boundary, not a compatibility blocker. Runtime migration and integration contracts remain pending acceptance. No production delivery approval.
 
 ## Archived
 
