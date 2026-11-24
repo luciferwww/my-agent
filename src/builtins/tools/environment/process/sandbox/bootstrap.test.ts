@@ -15,8 +15,14 @@ describe('sandbox bootstrap', () => {
   it('keeps intentional Node hooks in the command environment and rejects reserved/case-duplicate values', () => {
     expect(validateCommandEnvironment({ NODE_OPTIONS: '--require ./hook.cjs' }))
       .toEqual({ NODE_OPTIONS: '--require ./hook.cjs' });
-    expect(() => validateCommandEnvironment({ temp: 'other' })).toThrow('Reserved');
-    expect(() => validateCommandEnvironment({ CUSTOM: 'one', custom: 'two' })).toThrow('Duplicate');
+    if (process.platform === 'win32') {
+      expect(() => validateCommandEnvironment({ temp: 'other' })).toThrow('Reserved');
+      expect(() => validateCommandEnvironment({ CUSTOM: 'one', custom: 'two' })).toThrow('Duplicate');
+    } else {
+      expect(validateCommandEnvironment({ home: 'other', CUSTOM: 'one', custom: 'two' }))
+        .toEqual({ home: 'other', CUSTOM: 'one', custom: 'two' });
+      expect(() => validateCommandEnvironment({ HOME: 'other' })).toThrow('Reserved');
+    }
     expect(() => parseBootstrapRequest('{"command":"x","root":"x","environment":{}}')).toThrow('Invalid');
   });
 
@@ -29,8 +35,20 @@ describe('sandbox bootstrap', () => {
       const result = prepareChildEnvironment({ command: 'x', root, environment: { NODE_OPTIONS: '--require ./hook.cjs' } }, environment);
       expect(result.NODE_OPTIONS).toBe('--require ./hook.cjs');
       expect(result[ROOT_VARIABLE]).toBeUndefined();
-      expect(() => prepareChildEnvironment({ command: 'x', root, environment: {} },
-        { ...environment, TEMP: join(root, 'link', 'not-created') })).toThrow('outside');
+      if (process.platform === 'win32') {
+        expect(() => prepareChildEnvironment({ command: 'x', root, environment: {} },
+          { ...environment, TEMP: join(root, 'link', 'not-created') })).toThrow('outside');
+      } else {
+        expect(() => prepareChildEnvironment({ command: 'x', root: root.toUpperCase(), environment: {} }, environment))
+          .toThrow('does not match');
+        expect(result.TMPDIR).toBe('/tmp');
+        expect(result.SHELL).toBe('/bin/sh');
+        expect(result).not.toHaveProperty('USERPROFILE');
+        await rm(join(root, 'home'), { recursive: true });
+        await symlink(outside, join(root, 'home'), 'dir');
+        expect(() => prepareChildEnvironment({ command: 'x', root, environment: {} }, environment))
+          .toThrow('outside');
+      }
     } finally {
       await rm(join(root, 'link'), { force: true });
       await rm(root, { recursive: true, force: true });

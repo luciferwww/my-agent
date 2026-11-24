@@ -1,6 +1,6 @@
-import { mkdtemp, realpath, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
@@ -21,6 +21,12 @@ interface SandboxProcess {
 }
 
 interface SandboxSdk {
+  getPlatformSupport(): {
+    isSupported: boolean;
+    reason?: string;
+    availableMethods: readonly string[];
+    unavailableReasons?: { bubblewrap?: string };
+  };
   probe(request?: ContainerRequest): {
     tier?: string;
     error?: string;
@@ -36,7 +42,7 @@ const bootstrapPath = fileURLToPath(new URL(
 
 function contains(root: string, path: string): boolean {
   const target = relative(root, path);
-  return !isAbsolute(target) && target !== '..' && !target.startsWith('..\\');
+  return !isAbsolute(target) && target !== '..' && !target.startsWith(`..${sep}`);
 }
 
 function requirePaths(config: SandboxConfig, paths: readonly string[]): void {
@@ -48,6 +54,18 @@ function requirePaths(config: SandboxConfig, paths: readonly string[]): void {
 }
 
 function environment(root: string) {
+  if (process.platform === 'linux') {
+    return {
+      PATH: `${dirname(process.execPath)}:/usr/local/bin:/usr/bin:/bin`,
+      SHELL: '/bin/sh',
+      HOME: join(root, 'home'),
+      TMPDIR: '/tmp',
+      npm_config_cache: join(root, 'npm-cache'),
+      npm_config_offline: 'true',
+      npm_config_update_notifier: 'false',
+      [ROOT_VARIABLE]: root,
+    };
+  }
   const systemRoot = process.env.SystemRoot;
   if (!systemRoot || !isAbsolute(systemRoot)) throw new Error('Windows SystemRoot is unavailable');
   const comSpec = process.env.ComSpec ?? join(systemRoot, 'System32', 'cmd.exe');
@@ -68,19 +86,55 @@ export async function createMxcCommandRunner(
   agentHome: string,
   loadSdk: () => Promise<SandboxSdk> = async () => import('@microsoft/mxc-sdk/v1'),
 ): Promise<CommandRunner> {
-  if (process.platform !== 'win32') throw new Error('Exec sandbox requires supported Windows BaseContainer');
+  if (process.platform !== 'win32' && process.platform !== 'linux') {
+    throw new Error('Exec sandbox requires supported Windows BaseContainer or Linux bubblewrap');
+  }
   const [major, minor] = process.versions.node.split('.').map(Number);
   if (major !== 24 || minor === undefined || minor < 21) {
     throw new Error('Exec sandbox requires Node 24.21 or later within Node 24 LTS');
   }
   const sdk = await loadSdk();
-  const support = sdk.probe();
-  if (support.tier !== 'base-container' || !support.probes.baseContainerSupportsEnumeratePaths
-    || (config.deniedPaths.length > 0 && !support.probes.baseContainerSupportsDenyPaths)) {
-    throw new Error(`Exec sandbox is unavailable: ${support.error ?? 'required native capabilities are missing'}`);
+  if (process.platform === 'win32') {
+    const support = sdk.probe();
+    if (support.tier !== 'base-container' || !support.probes.baseContainerSupportsEnumeratePaths
+      || (config.deniedPaths.length > 0 && !support.probes.baseContainerSupportsDenyPaths)) {
+      throw new Error(`Exec sandbox is unavailable: ${support.error ?? 'required native capabilities are missing'}`);
+    }
+  } else {
+    const support = sdk.getPlatformSupport();
+    if (!support.isSupported || !support.availableMethods.includes('bubblewrap')) {
+      throw new Error(`Exec sandbox is unavailable: ${support.unavailableReasons?.bubblewrap
+        ?? support.reason ?? 'Linux bubblewrap is unavailable'}`);
+    }
+    const hostTemp = await realpath('/tmp');
+    for (const path of [...config.readonlyPaths, ...config.readwritePaths, ...config.deniedPaths]) {
+      let target: string;
+      try {
+        target = await realpath(path);
+      } catch (error) {
+        // The SDK still validates missing policy targets; no permission is added here.
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
+        throw error;
+      }
+      if (contains(target, hostTemp)) {
+        throw new Error(`Linux sandbox policy conflicts with private /tmp: ${path}`);
+      }
+    }
   }
-  const systemRoot = environment(tmpdir()).SystemRoot;
-  const reads = [bootstrapPath, dirname(process.execPath), join(systemRoot, 'System32')];
+  const reads = [bootstrapPath, dirname(process.execPath)];
+  if (process.platform === 'win32') {
+    const systemRoot = process.env.SystemRoot;
+    if (!systemRoot || !isAbsolute(systemRoot)) throw new Error('Windows SystemRoot is unavailable');
+    reads.push(join(systemRoot, 'System32'));
+  } else {
+    // Linux npm's entry is a bin symlink to its runtime library, unlike the Windows layout.
+    const npmLibrary = resolve(dirname(process.execPath), '../lib/node_modules/npm');
+    try {
+      if ((await stat(npmLibrary)).isDirectory()) reads.push(npmLibrary);
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    }
+  }
   // Node determines the entry's module type from its nearest package manifest.
   let directory = dirname(bootstrapPath);
   while (true) {
@@ -99,7 +153,7 @@ export async function createMxcCommandRunner(
   }
   requirePaths(config, reads);
   const temporaryBase = await realpath(tmpdir());
-  if (contains(resolve(agentHome), temporaryBase)) throw new Error('Sandbox temporary base must be outside Agent Home');
+  if (contains(await realpath(agentHome), temporaryBase)) throw new Error('Sandbox temporary base must be outside Agent Home');
   return options => runSandboxCommand(sdk, config, reads, temporaryBase, options);
 }
 
@@ -213,9 +267,14 @@ function runSandboxCommand(
             header = Buffer.alloc(0);
             if (stopReason) rejectStart(canceled);
             else {
-              options.onSpawn?.(frame.pid);
+              // Linux reports namespace PIDs; only the SDK root is a meaningful host process ID.
+              const pid = process.platform === 'linux' ? native?.id : frame.pid;
+              if (pid === undefined || !Number.isSafeInteger(pid) || pid <= 0) {
+                throw new Error('Sandbox host process ID is unavailable');
+              }
+              options.onSpawn?.(pid);
               startedSettled = true;
-              resolveStarted(frame.pid);
+              resolveStarted(pid);
             }
           }
           push(kind, decoder.write(bytes));
@@ -267,32 +326,43 @@ function runSandboxCommand(
           released = true;
           throw canceled;
         }
-        if (!/^[a-z]:\\/iu.test(options.cwd) || options.cwd.includes('\0')) {
-          throw new Error('Sandbox cwd must be an absolute local Windows path');
+        if (!isAbsolute(options.cwd) || options.cwd.includes('\0')
+          || (process.platform === 'win32' && !/^[a-z]:\\/iu.test(options.cwd))) {
+          throw new Error('Sandbox cwd must be an absolute path in the execution OS');
         }
         const userEnvironment = validateCommandEnvironment(options.env);
         root = await mkdtemp(join(temporaryBase, 'my-agent-exec-'));
         requirePaths(config, [root]);
+        if (process.platform === 'linux') {
+          await Promise.all([mkdir(join(root, 'home')), mkdir(join(root, 'npm-cache'))]);
+        }
         const envelope = JSON.stringify({ command: options.command, root, environment: userEnvironment });
         if (Buffer.byteLength(envelope) > BOOTSTRAP_REQUEST_BYTES) throw new Error('Sandbox request exceeds 64 KiB');
+        const linuxQuote = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
         const request: ContainerRequest = {
-          command: `"${process.execPath}" "${bootstrapPath}"`,
+          command: process.platform === 'win32'
+            ? `"${process.execPath}" "${bootstrapPath}"`
+            : `${linuxQuote(process.execPath)} ${linuxQuote(bootstrapPath)}`,
           workingDirectory: options.cwd,
           environment: environment(root),
           inheritDefaultEnvironment: false,
           filesystem: { readonlyPaths: [...reads, ...config.readonlyPaths], readwritePaths: [root, ...config.readwritePaths], deniedPaths: [...config.deniedPaths] },
           network: { egress: { default: 'deny' }, ingress: { default: 'deny', hostLoopback: 'deny' } },
-          ui: { disable: false, clipboard: 'none', allowInputInjection: false },
-          containment: { type: 'processcontainer', config: {
-            filesystem: { enumeratePaths: [...new Set([
-              process.execPath, bootstrapPath, options.cwd, root,
-              ...config.readonlyPaths, ...config.readwritePaths,
-            ].map(path => resolve(path).slice(0, 3)))] },
-            ui: { isolation: 'container', desktopSystemControl: false, systemSettings: 'none', ime: false },
-          } },
+          ...(process.platform === 'win32' ? {
+            ui: { disable: false, clipboard: 'none' as const, allowInputInjection: false },
+            containment: { type: 'processcontainer' as const, config: {
+              filesystem: { enumeratePaths: [...new Set([
+                process.execPath, bootstrapPath, options.cwd, root,
+                ...config.readonlyPaths, ...config.readwritePaths,
+              ].map(path => resolve(path).slice(0, 3)))] },
+              ui: { isolation: 'container' as const, desktopSystemControl: false, systemSettings: 'none', ime: false },
+            } },
+          } : { containment: { type: 'bubblewrap' as const } }),
         };
-        const probe = sdk.probe(request);
-        if (probe.tier !== 'base-container') throw new Error(`Sandbox request is unsupported: ${probe.error ?? 'native policy unavailable'}`);
+        if (process.platform === 'win32') {
+          const probe = sdk.probe(request);
+          if (probe.tier !== 'base-container') throw new Error(`Sandbox request is unsupported: ${probe.error ?? 'native policy unavailable'}`);
+        }
         if (stopReason) throw canceled;
         native = await sdk.spawn(request);
         const input = native.standardInput;

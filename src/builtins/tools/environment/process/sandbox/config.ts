@@ -1,4 +1,4 @@
-import { isAbsolute, normalize } from 'node:path';
+import { isAbsolute, normalize, relative, sep } from 'node:path';
 
 export interface SandboxConfig {
   readonly enabled: boolean;
@@ -43,7 +43,14 @@ export function resolveSandboxConfig(value: unknown = undefined): SandboxConfig 
         || entry.includes('\0') || entry.startsWith('\\\\')) {
         throw new SandboxConfigValidationError(`${name}[${index}]`);
       }
-      return normalize(entry);
+      const path = normalize(entry);
+      if (process.platform === 'linux') {
+        const temp = relative(path, '/tmp');
+        if (temp === '' || (!isAbsolute(temp) && temp !== '..' && !temp.startsWith(`..${sep}`))) {
+          throw new SandboxConfigValidationError(`${name}[${index}]`);
+        }
+      }
+      return path;
     }));
   }
   return Object.freeze({

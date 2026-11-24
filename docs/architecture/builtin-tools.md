@@ -97,10 +97,10 @@ Exec is always blocked by an effective Tool-name deny. In `manual` Session mode 
 
 An explicit timeout applies to every mode. Background and yield modes have no implicit 30-second timeout. Host-direct foreground commands bypass the registry; sandbox foreground execution has a private resource entry that is not Process-visible. Managed yield/background commands create records. Output combines stdout and stderr chunks in observed timestamp order and reports real Framework activity. Non-zero exit, timeout, and Abort are failed Tool executions; `ToolExecutionContext.signal` is passed to process execution until ownership is handed to ProcessRegistry.
 
-### Opt-in Windows sandbox
+### Opt-in native sandbox
 
 Global startup-only `agents.sandbox` selects public MXC SDK 1.1.0 on supported
-Windows BaseContainer with Node 24.21+ in the Node 24 line. Off leaves host-direct
+Windows BaseContainer or Linux bubblewrap with Node 24.21+ in the Node 24 line. Off leaves host-direct
 execution unchanged. Startup awaits SDK validation before publication; unsupported
 enabled hosts/requests fail without fallback.
 
@@ -109,6 +109,18 @@ offline npm data before unchanged cmd execution. Its initial frame confirms
 actual Shell spawn; later output remains user data. Host/caller Node startup hooks
 cannot run in the bootstrap. Necessary installed package metadata is read-only,
 not a whole-project read grant.
+
+Linux reuses the control/framing/supervision path but launches `/bin/sh -c`,
+with a ready private HOME/cache and namespace-private `/tmp`; no Windows profile
+variables or enumeration are applied. Runtime requires bubblewrap availability,
+and unsupported actual mount/setup requests fail before successful handoff.
+Linux path/environment identity is case-sensitive. Broad host-temp mounts,
+including aliases, are rejected rather than replacing private `/tmp`.
+
+The trusted first frame confirms the namespace Shell; the Linux management PID
+is the SDK's positive host root (`bwrap`), not the namespace PID. Explicit Node
+runtime/npm-library reads cover necessary installed tool paths without exposing
+all user data. Windows Shell PID presentation and bootstrap behavior are unchanged.
 
 Content access follows the configured/native effective policy; cwd is not a
 grant. External networking and host loopback are denied for Shell descendants.

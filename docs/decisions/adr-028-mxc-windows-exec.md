@@ -1,10 +1,11 @@
-# ADR-028: MXC-backed Windows Exec
+# ADR-028: MXC-backed Native Exec
 
 > Status: Accepted
 > Decision date: 2026-11-24
 > Owner: Project owner
 > Supersedes: none
-> Implementation: Implemented with automated Windows and owner-reported manual validation; delivery closeout pending
+> Implementation: Implemented with recorded Windows/Linux automated and owner manual validation
+> Linux amendment: Owner accepted recorded delivery and manual scope on 2026-11-24; additional platforms/policies remain outside validation
 
 ## Context
 
@@ -21,6 +22,9 @@ original cwd and ordinary approval semantics remain unchanged.
 
 - Use `@microsoft/mxc-sdk/v1` with Windows BaseContainer, initially SDK 1.1.0.
   Node 24.21 or later in the Node 24 LTS line is required.
+- The accepted Linux extension uses bubblewrap and the same public SDK/control
+  ownership. Private HOME/cache is mounted narrowly and `/tmp` stays namespace-
+  private. Operator-provisioned backend tools and unsupported policies fail closed.
 - Configure global startup-only `agents.sandbox`, disabled by default. Enabled
   unsupported hosts/requests fail closed; no native CLI/.NET or host fallback.
 - First scope is Exec and descendants, in the original directory with explicit
@@ -31,6 +35,10 @@ original cwd and ordinary approval semantics remain unchanged.
 - A fixed trusted Node entry inside the sandbox prepares private TEMP and
   launches unchanged cmd argv. Bootstrap environment is Host-only; user
   environment is applied only to the actual command after preparation.
+- On Linux the entry launches unchanged `/bin/sh -c` without Windows profile
+  preparation. A startup frame confirms the namespace Shell, while management
+  uses the SDK host-root ID, never the child namespace PID. Path/environment
+  identity is case-sensitive; no broad host mount may shadow private `/tmp`.
 - Preserve the existing ProcessRegistry as lifecycle owner, including private
   foreground sandbox resources and terminal cleanup failures. Do not discard
   unreleased controls or add a second registry.

@@ -434,10 +434,11 @@ individual Agent entry.
 `steeringEnabled` must be a boolean. `maxLlmCallsPerTurn`, when present, must
 be a positive integer.
 
-### 4.1 Windows Exec sandbox
+### 4.1 Exec sandbox (Windows and Linux)
 
-With Node 24.21+ and a Windows host supporting MXC BaseContainer, opt in through
-the global startup-only field below. It is independent of Tool approvals:
+With Node 24.21+, opt in through the global startup-only field below.
+Windows requires MXC BaseContainer; Linux requires operator-installed bubblewrap
+and supported unprivileged namespaces. Tool approvals remain independent:
 
 ```json
 {
@@ -452,10 +453,35 @@ the global startup-only field below. It is independent of Tool approvals:
 }
 ```
 
+On Linux use paths from that Linux filesystem, for example:
+
+```json
+{
+  "agents": {
+    "sandbox": {
+      "enabled": true,
+      "readonlyPaths": ["/home/user/shared-reference"],
+      "readwritePaths": ["/home/user/project"],
+      "deniedPaths": ["/home/user/project/private-data"]
+    }
+  }
+}
+```
+
+The Agent does not install bubblewrap or change OS permissions. The tested
+offline backend used Ubuntu 22.04/WSL2 and bubblewrap 0.6.1; basic requests require
+0.5+ according to the SDK. Unsupported policies, including some missing deny
+targets requiring newer bubblewrap/OverlayFS support, fail rather than degrade.
+Network-enabled helpers and proxy support are not part of this profile.
+
 Omission is disabled. Paths must be absolute local paths, not globs or UNC/device
 policy roots. Restart after editing; there is no live Settings toggle. Other
 Settings saves preserve this section. Enabling on an unsupported host/runtime
 fails startup, and an unsupported command policy fails execution without fallback.
+Linux path/environment matching is case-sensitive. Do not reuse Windows paths or
+Windows `node_modules` inside WSL. Grants/denies at `/` or `/tmp`, including aliases
+to the host temp root, are rejected to preserve private temporary isolation;
+narrow descendant paths remain supported.
 
 Exec uses its original cwd. It does not automatically write-enable cwd or Agent
 Home, copy the project or provide rollback. Supply a permitted cwd for the task;
@@ -478,9 +504,12 @@ environment overrides fail explicitly; other values are passed only to the
 actual command, not the trusted bootstrap. Interactive command stdin is not
 supported. Background/yield processes retain the sandbox until completion or
 termination, but descendants cannot outlive a completed root.
+Linux uses a precreated private HOME/cache and the namespace's `/tmp` without
+Windows profile rewriting. Its displayed managed PID belongs to the SDK host
+root, not the private-namespace Shell; termination always uses the SDK handle.
 
-MXC diagnostic-data collection follows the installed SDK's documented behavior;
-it is not disabled by setting `telemetry=false`. No credentials are forwarded
+MXC diagnostic-data collection on Windows follows the installed SDK's documented
+behavior; it is not disabled by setting `telemetry=false`. No credentials are forwarded
 automatically. See [Sandbox Execution](../specifications/sandbox-execution.md)
 for the contract and limits; CPU/memory/disk quotas are not provided.
 

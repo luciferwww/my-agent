@@ -20,7 +20,7 @@ These documents define durable contracts that must remain true across implementa
 - [Subagent Model Resolution](subagent-model-resolution.md)
 - [Agent Management](agent-management.md) — implemented, validated and owner-accepted discovery, sparse overrides, dynamic Tool policy and Settings
 - [Tools and Hooks](tools-and-hooks.md)
-- [Sandbox Execution](sandbox-execution.md) — implemented opt-in Windows MXC contract; automated checks passed, owner closeout pending
+- [Sandbox Execution](sandbox-execution.md) — implemented native Windows/Linux MXC contract; recorded automated/manual scope validated
 
 ## Host, configuration, and composition
 

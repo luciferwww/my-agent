@@ -17,6 +17,8 @@ retaining a Change record.
 
 ## Archived
 
+- [Linux MXC support](archive/mxc-linux-support/plan.md), with its [Specification](archive/mxc-linux-support/specification.md), [completed Spike](archive/mxc-linux-support/spike-specification.md) and [Results](archive/mxc-linux-support/spike-results.md) - Owner accepted the recorded Linux delivery and manual results on 2026-11-24, with manual networking excluded. Automated evidence includes 2,109 Unit cases, 11 WSL execution checks, build/lint/Fitness, full installed-package verification and Windows regression; independent review found no significant issue. Archive and scoped commit authorized, independent WSL test service stopped with Home/credentials preserved; no push.
+
 - [Provider-owned Model Catalog](archive/provider-owned-model-catalog/plan.md), with its [validated Specification](archive/provider-owned-model-catalog/specification.md) - Provider-owned async reads, cache-free Core, CLI/WebSocket display-time queries, Relay invalidation and nonfatal discovery delivered. Final lint/build and all 2,111 Unit cases passed; relevant integration/Fitness results and review follow-up are retained in the Plan. Owner accepted delivery and authorized archive, commit and current-branch push on 2026-11-18.
 
 Archived changes preserve bounded delivery and acceptance provenance. They are neither Current Architecture nor stable contract authority.

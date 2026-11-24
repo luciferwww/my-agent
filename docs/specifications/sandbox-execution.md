@@ -1,8 +1,9 @@
 # Sandbox Execution
 
 > Status: Stable Authority
-> Contract status: Implemented; automated Windows checks and owner-reported manual tests passed; delivery closeout pending
+> Contract status: Implemented and Validated for the recorded Windows/Linux scope
 > Accepted: 2026-11-24
+> Linux amendment: Automated WSL/package and recorded Agent manual results accepted by owner on 2026-11-24
 > Authority: Opt-in Builtin Exec containment and private lifecycle contract
 
 ## Scope and configuration
@@ -28,7 +29,11 @@ saves preserve the file-only value without pretending to apply it live.
 Enabled means Windows MXC BaseContainer, initially public Node SDK 1.1.0 on Node
 24.21+ within Node 24 LTS. Off means unchanged host-direct execution without SDK
 load/probe. Unavailable or unmet enabled policies fail; no backend, permission or
-host-direct fallback. Other platforms are not enabled by this first slice.
+host-direct fallback. The accepted Linux extension selects bubblewrap through the
+same SDK and requires operator-provisioned tools; macOS remains unsupported.
+Linux paths and environment keys are case-sensitive. Reject configured mounts,
+including resolved aliases, that replace/expose the host `/tmp` or its parent,
+and denies that block required private temp.
 
 The execution directory is the ordinary resolved `cwd`, not a grant. Explicit
 read/write/denied paths, necessary runtime/OS reads, owned private temporary data
@@ -57,6 +62,11 @@ capacity/history. Terminal status alone does not release control ownership.
 Pending managed cleanup keeps its resource reservation and cannot be evicted.
 Session and Host cleanup visit unreleased controls even after terminal settlement.
 Failure remains visible and prevents claiming cleanup/lock release succeeded.
+
+On Linux SDK root spawn can precede mount/cwd setup failure. Confirm the trusted
+initial Shell-start frame before command publication. The frame's PID is private
+namespace data; the managed host PID is the SDK's positive root ID. Termination
+uses the retained SDK handle and never signals a namespace PID on the host.
 
 Pure host-direct foreground behavior and normal Tool/Process presentation remain
 unchanged. Immediate-background startup now retains Parent Abort until handoff;
@@ -91,6 +101,12 @@ Launch original `cmd.exe /d /s /c` args with verbatim Windows arguments, without
 concatenating setup commands or rewriting original paths/command text.
 The private stdin envelope is not interactive command input; the user Shell has
 stdin closed. Interactive-input support is not part of the Exec contract.
+
+The Linux entry uses `/bin/sh -c`, prepares mounted owned HOME/cache and uses the
+namespace's private `/tmp`, without ComSpec/LOCALAPPDATA or Windows directory
+rewriting. Root matching is case-sensitive. Bootstrap environment remains Host-
+only; caller Node/preload variables apply only after preparation to the actual
+Shell. Do not mount host HOME/Windows drives implicitly or auto-install tools.
 
 ## Output and terminal semantics
 

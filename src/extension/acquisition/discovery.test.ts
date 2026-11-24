@@ -280,7 +280,10 @@ describe('discoverExtensionDescriptors', () => {
   });
 
   it('keeps a long non-BMP diagnostic locator bounded and validly escaped', async () => {
-    const installationName = `invalid-${'😀'.repeat(100)}`;
+    // POSIX names must fit 255 UTF-8 bytes; backslash escaping still exceeds the locator budget.
+    const installationName = process.platform === 'win32'
+      ? `invalid-${'😀'.repeat(100)}`
+      : `invalid-${'😀'.repeat(40)}${'\\'.repeat(60)}`;
     await mkdir(join(extensionsDir, installationName), { recursive: true });
 
     const result = await discoverExtensionDescriptors(extensionsDir);

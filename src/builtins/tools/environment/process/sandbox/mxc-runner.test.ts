@@ -1,4 +1,6 @@
-import { stat, rm } from 'node:fs/promises';
+import { mkdtemp, stat, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import type { ContainerRequest } from '@microsoft/mxc-sdk/v1';
@@ -29,6 +31,7 @@ function fixture() {
   let envelope = '';
   native.standardInput.on('data', chunk => { envelope += chunk.toString(); });
   const sdk = {
+    getPlatformSupport: vi.fn(() => ({ isSupported: true, availableMethods: ['bubblewrap'] })),
     probe: vi.fn(() => ({
       tier: 'base-container',
       probes: { baseContainerSupportsDenyPaths: true, baseContainerSupportsEnumeratePaths: true },
@@ -47,7 +50,42 @@ function fixture() {
   };
 }
 
-describe.skipIf(process.platform !== 'win32')('MXC command control', () => {
+describe.skipIf(process.platform !== 'win32' && process.platform !== 'linux')('MXC command control', () => {
+  it.skipIf(process.platform !== 'linux')('rejects an alias that exposes the host /tmp root', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'mxc-tmp-alias-'));
+    const alias = join(directory, 'alias');
+    await symlink('/tmp', alias, 'dir');
+    try {
+      const test = fixture();
+      await expect(createMxcCommandRunner(resolveSandboxConfig({ enabled: true, readonlyPaths: [alias] }),
+        process.cwd(), async () => test.sdk)).rejects.toThrow('conflicts with private /tmp');
+      expect(test.sdk.spawn).not.toHaveBeenCalled();
+    } finally {
+      await rm(alias);
+      await rm(directory, { recursive: true });
+    }
+  });
+
+  it.skipIf(process.platform !== 'linux')('requires bubblewrap rather than accepting another available backend', async () => {
+    const test = fixture();
+    test.sdk.getPlatformSupport.mockReturnValue({ isSupported: true, availableMethods: ['lxc'] });
+    await expect(createMxcCommandRunner(resolveSandboxConfig({ enabled: true }), process.cwd(), async () => test.sdk))
+      .rejects.toThrow('Linux bubblewrap is unavailable');
+    expect(test.sdk.spawn).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform !== 'linux')('rejects a namespace startup frame without a meaningful host ID', async () => {
+    const test = fixture();
+    test.native.id = 0;
+    const runner = await createMxcCommandRunner(resolveSandboxConfig({ enabled: true }), process.cwd(), async () => test.sdk);
+    const running = runner({ command: 'x', cwd: process.cwd(), env: {} });
+    await vi.waitFor(() => expect(test.native.wait).toHaveBeenCalled());
+    test.native.standardOutput.write('{"type":"started","pid":123}\n');
+    await expect(running.started).rejects.toThrow('host process ID is unavailable');
+    expect((await running.completion).status).toBe('failed');
+    expect(running.control.released).toBe(true);
+  });
+
   it.each(['start', 'terminal'])('settles a $0 callback failure without stranding its owner', async stage => {
     const test = fixture();
     const runner = await createMxcCommandRunner(resolveSandboxConfig({ enabled: true }), process.cwd(), async () => test.sdk);
@@ -60,7 +98,7 @@ describe.skipIf(process.platform !== 'win32')('MXC command control', () => {
     test.native.standardOutput.write('{"type":"started","pid":123}\n');
     if (stage === 'start') await expect(running.started).rejects.toThrow('observer failed');
     else {
-      await expect(running.started).resolves.toBe(123);
+      await expect(running.started).resolves.toBe(process.platform === 'linux' ? 321 : 123);
       test.finish();
     }
     expect((await running.completion).status).toBe('failed');
@@ -76,7 +114,13 @@ describe.skipIf(process.platform !== 'win32')('MXC command control', () => {
     expect(test.envelope()).toContain('NODE_OPTIONS');
     test.native.standardOutput.write('{"type":"star');
     test.native.standardOutput.write('ted","pid":123}\n{"type":"started","pid":999}\n' + 'x'.repeat(10000));
-    await expect(running.started).resolves.toBe(123);
+    await expect(running.started).resolves.toBe(process.platform === 'linux' ? 321 : 123);
+    if (process.platform === 'linux') {
+      expect(test.sdk.probe).not.toHaveBeenCalled();
+      expect(test.request()?.containment).toEqual({ type: 'bubblewrap' });
+      expect(test.request()?.environment).not.toHaveProperty('ComSpec');
+      expect(test.request()?.environment).not.toHaveProperty('LOCALAPPDATA');
+    }
     const root: unknown = JSON.parse(test.envelope());
     expect(root).toHaveProperty('root');
     test.finish();

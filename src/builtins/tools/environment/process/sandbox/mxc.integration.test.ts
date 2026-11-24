@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createConnection, createServer } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { probe } from '@microsoft/mxc-sdk/v1';
+import { getPlatformSupport, probe } from '@microsoft/mxc-sdk/v1';
 import { TEST_TOOL_CONTEXT } from '../../../../../core/tools/test-utils.js';
 import { createExecTool } from '../exec-tool.js';
 import type { CommandRunner } from '../exec-types.js';
@@ -12,9 +12,10 @@ import { processRegistry } from '../process-registry.js';
 import { resolveSandboxConfig } from './config.js';
 import { createMxcCommandRunner } from './mxc-runner.js';
 
-const supported = process.platform === 'win32' && probe().tier === 'base-container';
+const supported = process.platform === 'win32' ? probe().tier === 'base-container'
+  : process.platform === 'linux' && getPlatformSupport().availableMethods.includes('bubblewrap');
 
-describe.skipIf(!supported)('Windows MXC execution boundary', () => {
+describe.skipIf(!supported)('MXC execution boundary', () => {
   let root: string;
   let home: string;
   let work: string;
@@ -33,8 +34,9 @@ describe.skipIf(!supported)('Windows MXC execution boundary', () => {
     await mkdir(work);
     await mkdir(join(work, 'private'));
     await writeFile(join(work, 'allowed.txt'), 'SYNTHETIC_ALLOWED');
+    await writeFile(join(work, 'wait.cjs'), 'console.log("READY");setInterval(()=>{},1000);');
     await writeFile(join(work, 'private', 'secret.txt'), 'SYNTHETIC_DENIED');
-    await symlink(join(work, 'private'), join(work, 'private-alias'), 'junction');
+    await symlink(join(work, 'private'), join(work, 'private-alias'), process.platform === 'win32' ? 'junction' : 'dir');
     runner = await createMxcCommandRunner(resolveSandboxConfig({
       enabled: true, readwritePaths: [work], deniedPaths: [join(work, 'private')],
     }), home);
@@ -49,8 +51,8 @@ describe.skipIf(!supported)('Windows MXC execution boundary', () => {
     await writeFile(join(work, 'check.cjs'), [
       'const fs=require("node:fs"),os=require("node:os"),path=require("node:path"),assert=require("node:assert/strict");',
       'assert.equal(fs.readFileSync("allowed.txt","utf8"),"SYNTHETIC_ALLOWED");',
-      'assert.throws(()=>fs.readFileSync("private/secret.txt"),{code:"EPERM"});',
-      'assert.throws(()=>fs.readFileSync("private-alias/secret.txt"),{code:"EPERM"});',
+      `assert.throws(()=>fs.readFileSync("private/secret.txt"),{code:"${process.platform === 'win32' ? 'EPERM' : 'ENOENT'}"});`,
+      `assert.throws(()=>fs.readFileSync("private-alias/secret.txt"),{code:"${process.platform === 'win32' ? 'EPERM' : 'ENOENT'}"});`,
       'fs.writeFileSync("generated.txt","SYNTHETIC_GENERATED");',
       'const temporary=fs.mkdtempSync(path.join(os.tmpdir(),"node-data-"));',
       'console.log(JSON.stringify({cwd:process.cwd(),temporary}));',
@@ -65,6 +67,32 @@ describe.skipIf(!supported)('Windows MXC execution boundary', () => {
     await expect(stat(output.temporary)).rejects.toMatchObject({ code: 'ENOENT' });
     expect(await readFile(join(work, 'generated.txt'), 'utf8')).toBe('SYNTHETIC_GENERATED');
     expect(await readFile(join(work, 'private', 'secret.txt'), 'utf8')).toBe('SYNTHETIC_DENIED');
+  }, 10_000);
+
+  it.skipIf(process.platform !== 'linux')('does not hand off a bwrap launch that cannot reach the cwd', async () => {
+    const result = await createExecTool(home, runner).execute({
+      command: 'echo MUST_NOT_RUN', cwd: join(work, 'missing'), background: true,
+    }, context());
+    expect(result.outcome).toBe('failed');
+    expect(result.content).not.toContain('runId:');
+    expect(processRegistry.listVisible(sessionId)).toEqual([]);
+  }, 10_000);
+
+  it.skipIf(process.platform !== 'linux')('runs an ordinary offline npm task with ready private HOME/cache', async () => {
+    await writeFile(join(work, 'package.json'), JSON.stringify({
+      name: 'linux-mxc-fixture', private: true, scripts: { test: 'node home.cjs' },
+    }));
+    await writeFile(join(work, 'home.cjs'), [
+      'const fs=require("node:fs"),os=require("node:os"),path=require("node:path");',
+      'fs.writeFileSync(path.join(os.homedir(),"marker.txt"),"SYNTHETIC_HOME");',
+      'fs.writeFileSync(path.join(process.env.npm_config_cache,"cache-marker.txt"),"SYNTHETIC_CACHE");',
+      'console.log("OFFLINE_NPM_PASSED");',
+    ].join('\n'));
+    const result = await createExecTool(home, runner).execute({
+      command: 'npm run test --ignore-scripts --no-audit --no-fund', cwd: work,
+    }, context());
+    expect(result.outcome).toBe('success');
+    expect(result.content).toContain('OFFLINE_NPM_PASSED');
   }, 10_000);
 
   it('applies caller Node hooks only to the command and leaves fake frames as user output', async () => {
@@ -84,7 +112,6 @@ describe.skipIf(!supported)('Windows MXC execution boundary', () => {
   }, 10_000);
 
   it('hands off background ownership and kills the native tree through Process Tool', async () => {
-    await writeFile(join(work, 'wait.cjs'), 'console.log("READY");setInterval(()=>{},1000);');
     const parent = new AbortController();
     const ctx = context(parent.signal);
     const result = await createExecTool(home, runner).execute({
@@ -119,6 +146,10 @@ describe.skipIf(!supported)('Windows MXC execution boundary', () => {
     if (!id) throw new Error('No yielded sandbox runId');
     const record = processRegistry.get(id, sessionId);
     if (!record?.pid) throw new Error('No owned Shell PID');
+    if (process.platform === 'linux') {
+      const command = await readFile(`/proc/${record.pid}/comm`, 'utf8');
+      expect(command.trim()).toBe('bwrap');
+    }
     parent.abort();
     await processRegistry.cleanupSession(sessionId);
     expect(processRegistry.get(id, sessionId)).toBeUndefined();

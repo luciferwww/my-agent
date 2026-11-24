@@ -20,4 +20,12 @@ describe('sandbox configuration', () => {
   ])('rejects invalid or unsupported configuration at $field', ({ value, field }) => {
     expect(() => resolveSandboxConfig(value)).toThrow(`Invalid sandbox configuration: ${field}`);
   });
+
+  it.skipIf(process.platform !== 'linux').each(['/', '/tmp'])(
+    'rejects a host mount that would shadow private /tmp: %s', path => {
+      expect(() => resolveSandboxConfig({ readwritePaths: [path] })).toThrow('readwritePaths[0]');
+      expect(() => resolveSandboxConfig({ readonlyPaths: [path] })).toThrow('readonlyPaths[0]');
+      expect(() => resolveSandboxConfig({ deniedPaths: [path] })).toThrow('deniedPaths[0]');
+    },
+  );
 });

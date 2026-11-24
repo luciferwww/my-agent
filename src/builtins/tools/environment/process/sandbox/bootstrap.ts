@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
@@ -14,6 +14,10 @@ const RESERVED_ENVIRONMENT = new Set([
   'home', 'userprofile', 'localappdata', 'temp', 'tmp', 'tmpdir',
   ROOT_VARIABLE.toLowerCase(), 'npm_config_cache', 'npm_config_offline',
   'npm_config_update_notifier',
+]);
+const LINUX_RESERVED_ENVIRONMENT = new Set([
+  'PATH', 'SHELL', 'HOME', 'TEMP', 'TMP', 'TMPDIR', ROOT_VARIABLE,
+  'npm_config_cache', 'npm_config_offline', 'npm_config_update_notifier',
 ]);
 
 export interface BootstrapRequest {
@@ -32,12 +36,13 @@ export function validateCommandEnvironment(value: unknown): Record<string, strin
   const names = new Set<string>();
   const entries: Array<[string, string]> = [];
   for (const [name, content] of Object.entries(value)) {
-    const normalized = name.toLowerCase();
+    const normalized = process.platform === 'win32' ? name.toLowerCase() : name;
     if (!name || /[=\0]/u.test(name) || typeof content !== 'string' || content.includes('\0')) {
       throw new Error('Invalid exec environment entry');
     }
     if (names.has(normalized)) throw new Error(`Duplicate exec environment name: ${name}`);
-    if (RESERVED_ENVIRONMENT.has(normalized)) throw new Error(`Reserved sandbox environment name: ${name}`);
+    const reserved = process.platform === 'win32' ? RESERVED_ENVIRONMENT : LINUX_RESERVED_ENVIRONMENT;
+    if (reserved.has(normalized)) throw new Error(`Reserved sandbox environment name: ${name}`);
     names.add(normalized);
     entries.push([name, content]);
   }
@@ -62,7 +67,11 @@ export function parseBootstrapRequest(text: string): BootstrapRequest {
 
 function within(root: string, target: string): boolean {
   const path = relative(root, target);
-  return !isAbsolute(path) && path !== '..' && !path.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`);
+  return !isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`);
+}
+
+function pathIdentity(path: string): string {
+  return process.platform === 'win32' ? resolve(path).toLowerCase() : resolve(path);
 }
 
 export function prepareChildEnvironment(
@@ -70,7 +79,7 @@ export function prepareChildEnvironment(
   bootstrapEnvironment: Readonly<Record<string, string | undefined>>,
 ): Record<string, string> {
   const boundRoot = bootstrapEnvironment[ROOT_VARIABLE];
-  if (!boundRoot || resolve(boundRoot).toLowerCase() !== resolve(request.root).toLowerCase()) {
+  if (!boundRoot || pathIdentity(boundRoot) !== pathIdentity(request.root)) {
     throw new Error('Sandbox request does not match the owned temporary root');
   }
   const root = realpathSync.native(request.root);
@@ -85,17 +94,26 @@ export function prepareChildEnvironment(
     if (!within(root, realpathSync.native(path))) throw new Error('Sandbox temporary path resolves outside the owned root');
     return path;
   }
-  for (const name of ['TEMP', 'TMP', 'LOCALAPPDATA']) prepare(bootstrapEnvironment[name]);
+  if (process.platform === 'win32') {
+    for (const name of ['TEMP', 'TMP', 'LOCALAPPDATA']) prepare(bootstrapEnvironment[name]);
+  }
   const inherited = Object.fromEntries(Object.entries(bootstrapEnvironment)
     .filter((entry): entry is [string, string] => typeof entry[1] === 'string'
-      && entry[0].toLowerCase() !== ROOT_VARIABLE.toLowerCase()));
+      && (process.platform === 'win32'
+        ? entry[0].toLowerCase() !== ROOT_VARIABLE.toLowerCase()
+        : entry[0] !== ROOT_VARIABLE)));
+  const platformEnvironment: Record<string, string> = process.platform === 'win32'
+    ? {
+        TEMP: prepare(join(root, 'tmp')),
+        TMP: prepare(join(root, 'tmp')),
+        LOCALAPPDATA: prepare(join(root, 'appdata')),
+        USERPROFILE: prepare(join(root, 'home')),
+      }
+    : { TMPDIR: '/tmp', SHELL: '/bin/sh' };
   return {
     ...inherited,
-    TEMP: prepare(join(root, 'tmp')),
-    TMP: prepare(join(root, 'tmp')),
-    LOCALAPPDATA: prepare(join(root, 'appdata')),
+    ...platformEnvironment,
     HOME: prepare(join(root, 'home')),
-    USERPROFILE: prepare(join(root, 'home')),
     npm_config_cache: prepare(join(root, 'npm-cache')),
     npm_config_offline: 'true',
     npm_config_update_notifier: 'false',
@@ -169,11 +187,12 @@ async function main(): Promise<void> {
   try {
     const request = parseBootstrapRequest(await readRequest(process.stdin));
     const environment = prepareChildEnvironment(request, process.env);
-    const comSpec = environment.ComSpec;
-    if (!comSpec || !isAbsolute(comSpec)) throw new Error('Sandbox Shell is unavailable');
-    const child = spawn(comSpec, ['/d', '/s', '/c', request.command], {
+    const shell = process.platform === 'win32' ? environment.ComSpec : '/bin/sh';
+    if (!shell || !isAbsolute(shell)) throw new Error('Sandbox Shell is unavailable');
+    const args = process.platform === 'win32' ? ['/d', '/s', '/c', request.command] : ['-c', request.command];
+    const child = spawn(shell, args, {
       cwd: process.cwd(), env: environment, shell: false,
-      windowsHide: true, windowsVerbatimArguments: true,
+      ...(process.platform === 'win32' ? { windowsHide: true, windowsVerbatimArguments: true } : {}),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     superviseChild(child, process.stdout, process.stderr, code => process.exit(code));
@@ -183,6 +202,6 @@ async function main(): Promise<void> {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]).toLowerCase() === fileURLToPath(import.meta.url).toLowerCase()) {
+if (process.argv[1] && pathIdentity(process.argv[1]) === pathIdentity(fileURLToPath(import.meta.url))) {
   void main();
 }
