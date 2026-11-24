@@ -27,6 +27,19 @@ tests in both import orders, the attachment tests, and real local embedding
 inference. Check that the dependency tree remains deduplicated. Do not remove
 the override until the upstream dependency ranges and native libraries align.
 
+### ONNX protobuf dependency security
+
+The targeted `onnx-proto` override pins `protobufjs` to `6.11.6`, within ONNX's
+declared 6.x range, to fix
+[GHSA-xq3m-2v4x-88gg](https://github.com/advisories/GHSA-xq3m-2v4x-88gg).
+When changing this override, verify the resolved dependency tree and ONNX
+model encode/decode compatibility, including 64-bit integer and byte fields.
+This minimal fix does not resolve
+[GHSA-66ff-xgx4-vchm](https://github.com/advisories/GHSA-66ff-xgx4-vchm) or
+[GHSA-75px-5xx7-5xc7](https://github.com/advisories/GHSA-75px-5xx7-5xc7);
+their published fixes require a newer major version and separate compatibility
+validation.
+
 ## Before Changing Files
 
 1. Classify the work as a Small Change, Defect, Documentation, Architecture Slice, or Architecture Spike.
