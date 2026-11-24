@@ -59,6 +59,7 @@ export interface RuntimeBuiltinToolOptions {
   webFetchEnabled?: boolean;
   execEnabled?: boolean;
   processEnabled?: boolean;
+  sandbox?: AppConfig['agents']['sandbox'];
 }
 
 export interface RuntimeDependencies {
@@ -72,7 +73,7 @@ export interface RuntimeDependencies {
   getBuiltinContributionUnits(
     options: RuntimeBuiltinToolOptions,
     memoryManager: MemoryManager | null,
-  ): readonly RuntimeContributionUnit[];
+  ): readonly RuntimeContributionUnit[] | Promise<readonly RuntimeContributionUnit[]>;
 }
 
 export interface RuntimeAppOptions {

@@ -1,11 +1,11 @@
 # Windows MXC Execution Feasibility Spike
 
-> Status: Provisional Pass
+> Status: Completed
 > Date: 2026-11-23
 > Owner: Project owner
 > Decision unlocked: Binding and supported boundary for the [Draft Specification](specification.md)
 > Execution authorization: Owner accepted the bounded native-executor experiment on 2026-11-23
-> Readiness: Bounded Windows SDK/toolchain route provisionally passed; owner Results/design acceptance pending
+> Readiness: Owner accepted the bounded Windows results and design on 2026-11-24; production validation remains required
 
 The owner-approved native round and metadata/portable-Node-SDK follow-up have
 stopped with no active probes or workload processes. See

@@ -26,6 +26,7 @@ AgentConfigDocument
 ├── agents.maxLlmCallsPerTurn?: number
 ├── agents.maxSubagentDepth?: number
 ├── agents.memory?: DeepPartial<MemoryConfig>
+├── agents.sandbox?: Partial<SandboxConfig>
 ├── agents.defaults?: DeepPartial<AgentDefaults>
 ├── agents.list?: AgentEntry[]
 ├── logger?: LoggerModuleConfig
@@ -68,6 +69,7 @@ Stages 3–5 apply only to Agent-scoped configuration. Global Agent execution po
 | `agents.steeringEnabled` | Global boolean; defaults to `true`; explicit `false` disables steering |
 | `agents.maxLlmCallsPerTurn` | Global optional positive integer applied independently to each Root or Child Turn; omitted means no Model-call count limit |
 | `agents.memory` | Global; enabled; local `Xenova/all-MiniLM-L6-v2`; chunk `1600/320`; search `6`, `0.25`, weights `0.7/0.3` |
+| `agents.sandbox` | Global startup-only opt-in; disabled; explicit read/write/denied paths; Windows MXC enforcement belongs to Builtins Environment |
 | `tools` | `allow=[]`; `deny=[]` |
 | `skills` | `[]`; default names under `agents.defaults.skills`; optional `agents.list[].skills` completely replaces defaults, including explicit `[]` |
 | `context` | Agent Context budgets: `maxFileChars=20000`; `maxTotalChars=150000` |
@@ -77,6 +79,13 @@ Stages 3–5 apply only to Agent-scoped configuration. Global Agent execution po
 | `logger` | Global `info`; file always enabled; Console output selected by Host startup policy |
 
 ### Global Memory
+
+Sandbox configuration is separately resolved by the Builtins-owned leaf validator.
+It is not an Agent capability or live execution setting; per-Agent placement is
+rejected. Runtime's asynchronous Builtin assembly prepares the SDK before Registry
+publication when enabled, while ordinary section saves preserve the file-only
+configuration. [Sandbox Execution](../specifications/sandbox-execution.md) owns
+the enforcement and lifecycle contract.
 
 Memory is composed by `resolveMemoryConfig()` separately from AgentDefaults.
 The `agents:memory` Settings section edits only its enabled flag, preserving

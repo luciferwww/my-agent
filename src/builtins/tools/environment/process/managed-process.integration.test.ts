@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { TEST_TOOL_CONTEXT } from '../../../../core/tools/test-utils.js';
 import type { RunningCommand } from './exec-types.js';
 import { createExecTool } from './exec-tool.js';
-import { killProcessTree } from './kill-process-tree.js';
 import { processRegistry } from './process-registry.js';
 import { processTool } from './process-tool.js';
 import { runCommand } from './run-command.js';
@@ -15,12 +14,7 @@ const runningCommands: RunningCommand[] = [];
 afterEach(async () => {
   await processRegistry.cleanupSession(context.sessionId);
   for (const running of runningCommands.splice(0)) {
-    if (running.child.exitCode === null && running.child.signalCode === null) {
-      const result = await killProcessTree({
-        pid: running.child.pid, child: running.child, reason: 'abort', graceMs: 0,
-      });
-      expect(result.ok).toBe(true);
-    }
+    if (!running.control.released) await running.control.terminate('abort');
     await running.completion;
   }
 });

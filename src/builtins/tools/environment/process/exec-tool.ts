@@ -5,6 +5,7 @@ import type {
   NormalizedExecRequest,
   ProcessRecord,
   TerminalProcessStatus,
+  CommandRunner,
 } from './exec-types.js';
 import {
   ProcessRegistryCapacityError,
@@ -150,11 +151,13 @@ function startManagedCommand(
   sessionId: string,
   reportActivity: () => void,
   signal?: AbortSignal,
+  runner: CommandRunner = runCommand,
 ) {
   processRegistry.create(buildManagedRecord(request, runId, visibility, sessionId));
 
-  let childRef: ReturnType<typeof runCommand>['child'] | undefined;
-  const running = runCommand({
+  let running: ReturnType<CommandRunner>;
+  try {
+    running = runner({
     command: request.command,
     cwd: request.cwd,
     env: request.env,
@@ -173,7 +176,6 @@ function startManagedCommand(
       processRegistry.markRunning(runId, {
         pid,
         startedAt: Date.now(),
-        child: childRef,
       });
     },
     onExit: (result) => {
@@ -185,10 +187,13 @@ function startManagedCommand(
         errorMessage: result.errorMessage,
       });
     },
-  });
+    });
+  } catch (error) {
+    processRegistry.delete(runId);
+    throw error;
+  }
 
-  childRef = running.child;
-  processRegistry.setChild(runId, running.child);
+  processRegistry.setControl(runId, running.control);
 
   return running;
 }
@@ -199,7 +204,7 @@ function formatBackgroundStarted(runId: string, yielded: boolean): string {
     : `Process started in background.\nrunId: ${runId}\nUse the process tool to check status, read logs, or kill it.`;
 }
 
-export function createExecTool(agentHome: string): Tool {
+export function createExecTool(agentHome: string, runner: CommandRunner = runCommand): Tool {
   return {
   name: 'exec',
   description: 'Execute a shell command. Supports foreground execution, yield continuation with yieldMs, and immediate background execution with background=true.',
@@ -244,10 +249,11 @@ export function createExecTool(agentHome: string): Tool {
     }
 
     const { request } = normalized;
+    if (context.signal.aborted) return { outcome: 'failed', content: 'Process aborted before startup' };
 
     if (request.mode === 'foreground') {
       // The pure foreground path bypasses the registry and behaves like a synchronous command run.
-      const running = runCommand({
+      const running = runner({
         command: request.command,
         cwd: request.cwd,
         env: request.env,
@@ -256,7 +262,24 @@ export function createExecTool(agentHome: string): Tool {
         onStdout: context.reportActivity,
         onStderr: context.reportActivity,
       });
+      const ownerId = `foreground_${context.executionId}`;
+      if (running.control.sandboxed) {
+        try {
+          processRegistry.create({
+            ...buildManagedRecord(request, ownerId, 'internal', context.sessionId),
+            kind: 'foreground', control: running.control,
+          });
+        } catch (error) {
+          // Cancel the queued native start if ownership could not be installed.
+          await running.control.terminate('abort');
+          throw error;
+        }
+      }
       const outcome = await running.completion;
+      if (running.control.sandboxed) {
+        processRegistry.complete(ownerId, { status: outcome.status, endedAt: Date.now(), exitCode: outcome.exitCode });
+        processRegistry.delete(ownerId);
+      }
       return mapForegroundStatusToToolResult(
         outcome.status,
         outcome.output,
@@ -267,13 +290,11 @@ export function createExecTool(agentHome: string): Tool {
     }
 
     const runId = createRunId();
-    const visibility = request.mode === 'background' ? 'background' : 'internal';
+    const visibility = 'internal';
     const handoffController = new AbortController();
     const onParentAbort = () => handoffController.abort(context.signal.reason);
-    if (request.mode !== 'background') {
-      if (context.signal.aborted) onParentAbort();
-      else context.signal.addEventListener('abort', onParentAbort, { once: true });
-    }
+    if (context.signal.aborted) onParentAbort();
+    else context.signal.addEventListener('abort', onParentAbort, { once: true });
     let running: ReturnType<typeof startManagedCommand>;
     try {
       running = startManagedCommand(
@@ -282,7 +303,8 @@ export function createExecTool(agentHome: string): Tool {
         visibility,
         context.sessionId,
         context.reportActivity,
-        request.mode === 'background' ? undefined : handoffController.signal,
+        handoffController.signal,
+        runner,
       );
     } catch (error) {
       context.signal.removeEventListener('abort', onParentAbort);
@@ -304,6 +326,13 @@ export function createExecTool(agentHome: string): Tool {
     }
 
     if (request.mode === 'background') {
+      context.signal.removeEventListener('abort', onParentAbort);
+      if (context.signal.aborted) {
+        await running.control.terminate('abort');
+        processRegistry.delete(runId);
+        return { outcome: 'failed', content: 'Process aborted before background handoff' };
+      }
+      processRegistry.exposeToBackground(runId, { exposedAt: Date.now(), yielded: false });
       return {
         outcome: 'success',
         content: formatBackgroundStarted(runId, false),
@@ -346,6 +375,12 @@ export function createExecTool(agentHome: string): Tool {
     }
 
     // Only still-running tasks are promoted from an internal record to a background-visible record.
+    if (context.signal.aborted) {
+      await running.control.terminate('abort');
+      context.signal.removeEventListener('abort', onParentAbort);
+      processRegistry.delete(runId);
+      return { outcome: 'failed', content: 'Process aborted before yield handoff' };
+    }
     context.signal.removeEventListener('abort', onParentAbort);
     processRegistry.exposeToBackground(runId, {
       exposedAt: Date.now(),

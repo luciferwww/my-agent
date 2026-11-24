@@ -1,5 +1,3 @@
-import type { ChildProcess } from 'node:child_process';
-
 export type ProcessStatus =
   | 'starting'
   | 'running'
@@ -34,7 +32,8 @@ export interface ProcessRecord {
   chunks: OutputChunk[];
   output: string;
   errorMessage?: string;
-  child?: Pick<ChildProcess, 'kill'>;
+  control?: CommandControl;
+  kind?: 'managed' | 'foreground';
   yielded?: boolean;
   outputTruncated?: boolean;
 }
@@ -156,7 +155,15 @@ export interface RunCommandOptions {
 }
 
 export interface RunningCommand {
-  child: ChildProcess;
+  control: CommandControl;
   started: Promise<number>;
   completion: Promise<Extract<CommandRunOutcome, { mode: 'foreground' }>>;
 }
+
+export interface CommandControl {
+  readonly sandboxed: boolean;
+  readonly released: boolean;
+  terminate(reason: 'manual' | 'timeout' | 'abort'): Promise<void>;
+}
+
+export type CommandRunner = (options: RunCommandOptions) => RunningCommand;

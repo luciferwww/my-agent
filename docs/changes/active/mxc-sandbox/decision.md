@@ -1,11 +1,15 @@
 # Decision Draft: MXC-backed Windows Exec
 
-> Status: Proposed
+> Status: Accepted
 > Decision date: 2026-11-24
 > Owner: Project owner
 > Related Plan/Specification: [Plan](plan.md), [Draft Specification](specification.md)
 > Supersedes: none
-> Authority: Change-local decision proposal; not an accepted durable ADR
+> Authority: Non-authoritative acceptance record; durable decision is [ADR-028](../../../decisions/adr-028-mxc-windows-exec.md)
+
+The owner accepted the design, bounded Spike results and Node 24 project
+migration and authorized implementation on 2026-11-24. Global runtime changes,
+automatic commits and push are not authorized.
 
 ## Context
 
@@ -46,6 +50,10 @@ Use the public `@microsoft/mxc-sdk/v1` binding on supported Node 24 LTS, with
 an initially Windows-only opt-in profile. Configuration is a Builtins-owned
 leaf composed under global startup-only `agents.sandbox`.
 
+Await optional SDK loading/probing during the existing Builder-side assembly
+before publication. The Builtin factory may return an array or its Promise;
+registration stays synchronous and failures reuse the current startup cleanup.
+
 Execute in original `cwd`, with configured content grants, explicit metadata
 permissions and external networking denied. Do not automatically grant write
 access to `cwd` or Agent Home. Allowed project data can still be destroyed;
@@ -56,9 +64,19 @@ then spawn the unchanged cmd invocation. The private first frame represents
 actual Shell startup; all later output is user-command data. Keep the native SDK
 root handle as the cleanup authority. No Core contract imports MXC types.
 
+Bootstrap environment is Host-only. Carry caller environment in the private
+request and apply it to the user Shell after preparation; do not let ambient
+or caller `NODE_OPTIONS` run code before the trusted entry.
+
 Replace the existing private ChildProcess-based cross-caller cleanup dependency
 with a termination control, retaining the existing ProcessRegistry rather than
 adding a registry. Complete canceled pending launch cleanup before forgetting it.
+
+Private foreground-sandbox owners and terminal managed owners stay discoverable
+there until release is confirmed. Foreground entries do not change managed
+capacity/history or Process Tool visibility; pending cleanup prevents eviction.
+Output-drain failure is an execution failure, not success with a warning, even
+if the original Shell exited zero. Preserve partial output and diagnostic cause.
 
 ## Consequences
 
@@ -81,7 +99,9 @@ adding a registry. Complete canceled pending launch cleanup before forgetting it
 
 Use the recorded SDK/TEMP evidence, then validate the accepted private protocol,
 pending-start Abort, handoff, Session/shutdown cleanup, reparse/denied content,
-output fidelity and installed native assets in the implementation.
+output fidelity and installed native assets in the implementation. Include caller
+startup-hook isolation, asynchronous startup failure, retained cleanup failures,
+and a forced output-cutoff case; previous happy-path probes do not cover them.
 
 Owner acceptance must name the Node migration, bootstrap, file-only configuration
 and first-profile limits. Publish accepted durable rationale/contracts to their

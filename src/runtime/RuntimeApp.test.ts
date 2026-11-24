@@ -2203,7 +2203,7 @@ describe('RuntimeApp', () => {
     });
   });
 
-  it('cleans Memory exactly once after Builder-side Unit assembly failure', async () => {
+  it.each([false, true])('cleans Memory once after Unit assembly failure (async=$0)', async (asynchronous) => {
     const events: RuntimeEvent[] = [];
     const memoryClose = vi.fn();
     const startupError = new Error('tool assembly failed');
@@ -2215,6 +2215,7 @@ describe('RuntimeApp', () => {
       dependencies: createTestDependencies({
         createMemoryManager: async () => ({ close: memoryClose }) as never,
         getBuiltinContributionUnits: () => {
+          if (asynchronous) return Promise.reject(startupError);
           throw startupError;
         },
       }),

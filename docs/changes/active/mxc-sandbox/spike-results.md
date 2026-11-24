@@ -1,11 +1,11 @@
 # Windows MXC Spike: Execution Results
 
-> Status: Provisional Pass
+> Status: Completed
 > Executed: 2026-11-23 through 2026-11-24
 > Environment: Windows 11 26H2 x64, build 26300.9911; MXC v1.1.0 native executor and Node SDK; Node 20.16.0 / portable Node 24.22.3
 > Owner: Project owner
 > Authority: Evidence only
-> Overall assessment: Bounded Windows SDK/toolchain feasibility passed; owner review and production design/migration gates remain
+> Overall assessment: Owner accepted bounded feasibility on 2026-11-24; production delivery is not yet validated
 
 ## Latest follow-up: metadata and SDK binding
 

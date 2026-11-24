@@ -4,7 +4,10 @@ This repository uses a spec-driven workflow. The authoritative process is [Devel
 
 ## Setup
 
-The project requires Node.js 22.
+The project requires Node.js 24 LTS, version 24.21.0 or later.
+Restore native dependencies for that runtime rather than reusing Node 22 ABI
+binaries, particularly `better-sqlite3`. MXC's Windows stdio binding requires
+this runtime floor; no machine-wide Node installation is performed by the agent.
 
 ```bash
 npm install

@@ -48,6 +48,11 @@ Global Agent execution policy precedence is `module default -> agents top-level 
 - An explicit internal `RunTurnParams.maxLlmCalls` may override the configured value for that Root Turn. Child Turns still apply the global `agents.maxLlmCallsPerTurn`; Role-level limits and Parent remaining-budget inheritance are not supported.
 - The top-level `runner` namespace and `inTurnMessageMode` are removed with no alias or compatibility path.
 - Tool policy includes only allow and deny; there is no `tools.fs` subtree.
+- Builtins Environment owns the separate global startup-only `agents.sandbox`
+  leaf. Omission is disabled; explicit read/write/denied absolute local paths and
+  enabled state are validated with exact composed field paths. Per-Agent placement
+  is rejected. Section saves preserve it without live application.
+  [Sandbox Execution](sandbox-execution.md) owns OS enforcement and lifecycle.
 - Agent Context owns the contract/defaults for per-file and total loading budgets; `AgentDefaults.context` composes that leaf.
 - Memory owns enablement, embedding, chunking, and search contracts/defaults.
   Platform composes them under global `agents.memory`, separately from
@@ -129,7 +134,7 @@ Preserve original-error propagation and existing keyword-only fallback decisions
 
 Tool deny hides matching definitions and remains final at execution. Session permission mode is Runtime state, not configuration. In `manual`, lexically external structured targets and all Exec calls require current-call Approval even when the Tool name is allowed; internal allowed targets bypass Approval, while other unmatched Tools require Approval. Missing required Approval fails closed. In `allow_all`, every non-denied registered Tool is automatically authorized. Exact names and `*`/`?` globs are supported; `group:*` is not.
 
-Agent Home is the relative path anchor, not a confinement boundary. Approval is current-call only. Canonical/symlink-aware authorization, persistent grants, command patterns, and sandboxing are outside this contract.
+Agent Home is the relative path anchor, not a confinement boundary. Approval is current-call only. Canonical/symlink-aware authorization, persistent grants and command patterns remain outside this contract; separately configured sandbox enforcement belongs to [Sandbox Execution](sandbox-execution.md), not Tool approval or configuration loading.
 
 ## Section editing primitives
 

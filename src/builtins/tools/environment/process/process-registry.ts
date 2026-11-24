@@ -1,13 +1,13 @@
 import type { OutputChunk, ProcessRecord, ProcessStatus } from './exec-types.js';
-import { killProcessTree } from './kill-process-tree.js';
 
 export interface ProcessRegistry {
   create(record: ProcessRecord): void;
   get(runId: string, sessionId: string): ProcessRecord | undefined;
   listVisible(sessionId: string): ProcessRecord[];
   delete(runId: string): void;
-  setChild(runId: string, child: NonNullable<ProcessRecord['child']>): void;
-  markRunning(runId: string, update: { pid: number; startedAt: number; child?: ProcessRecord['child'] }): void;
+  setControl(runId: string, control: NonNullable<ProcessRecord['control']>): void;
+  markRunning(runId: string, update: { pid: number; startedAt: number }): void;
+  terminate(runId: string, sessionId: string, reason: 'manual' | 'timeout' | 'abort'): Promise<void>;
   exposeToBackground(runId: string, update: { exposedAt: number; yielded: boolean }): void;
   appendOutput(runId: string, chunk: OutputChunk): void;
   complete(
@@ -53,9 +53,10 @@ export class InMemoryProcessRegistry implements ProcessRegistry {
 
   create(record: ProcessRecord): void {
     const activeCount = [...this.records.values()].filter(
-      (candidate) => !TERMINAL_STATUSES.has(candidate.status),
+      (candidate) => candidate.kind !== 'foreground'
+        && (!TERMINAL_STATUSES.has(candidate.status) || candidate.control?.released === false),
     ).length;
-    if (activeCount >= MAX_ACTIVE_MANAGED_PROCESSES) {
+    if (record.kind !== 'foreground' && activeCount >= MAX_ACTIVE_MANAGED_PROCESSES) {
       throw new ProcessRegistryCapacityError();
     }
     this.records.set(record.runId, { ...record, chunks: [...record.chunks] });
@@ -63,7 +64,7 @@ export class InMemoryProcessRegistry implements ProcessRegistry {
 
   get(runId: string, sessionId: string): ProcessRecord | undefined {
     const record = this.records.get(runId);
-    if (!record || record.sessionId !== sessionId) {
+    if (!record || record.sessionId !== sessionId || record.kind === 'foreground') {
       return undefined;
     }
 
@@ -76,7 +77,7 @@ export class InMemoryProcessRegistry implements ProcessRegistry {
   listVisible(sessionId: string): ProcessRecord[] {
     return Array.from(this.records.values())
       .filter((record) => (
-        record.sessionId === sessionId && record.visibility === 'background'
+        record.kind !== 'foreground' && record.sessionId === sessionId && record.visibility === 'background'
       ))
       .sort((left, right) => left.createdAt - right.createdAt)
       .map((record) => ({
@@ -86,16 +87,17 @@ export class InMemoryProcessRegistry implements ProcessRegistry {
   }
 
   delete(runId: string): void {
+    if (this.records.get(runId)?.control?.released === false) return;
     this.records.delete(runId);
   }
 
-  setChild(runId: string, child: NonNullable<ProcessRecord['child']>): void {
+  setControl(runId: string, control: NonNullable<ProcessRecord['control']>): void {
     const record = this.records.get(runId);
-    if (!record || TERMINAL_STATUSES.has(record.status)) return;
-    record.child = child;
+    if (!record) throw new Error(`Unknown process owner: ${runId}`);
+    record.control = control;
   }
 
-  markRunning(runId: string, update: { pid: number; startedAt: number; child?: ProcessRecord['child'] }): void {
+  markRunning(runId: string, update: { pid: number; startedAt: number }): void {
     const record = this.records.get(runId);
     if (!record) {
       return;
@@ -108,7 +110,6 @@ export class InMemoryProcessRegistry implements ProcessRegistry {
     record.status = 'running';
     record.pid = update.pid;
     record.startedAt = update.startedAt;
-    record.child = update.child;
   }
 
   exposeToBackground(runId: string, update: { exposedAt: number; yielded: boolean }): void {
@@ -117,7 +118,7 @@ export class InMemoryProcessRegistry implements ProcessRegistry {
       return;
     }
 
-    if (TERMINAL_STATUSES.has(record.status)) {
+    if (TERMINAL_STATUSES.has(record.status) && update.yielded) {
       return;
     }
 
@@ -173,7 +174,7 @@ export class InMemoryProcessRegistry implements ProcessRegistry {
     record.exitCode = update.exitCode;
     record.signal = update.signal;
     record.errorMessage = update.errorMessage;
-    record.child = undefined;
+    if (record.control?.released) record.control = undefined;
     this.evictOldTerminalRecords();
   }
 
@@ -198,24 +199,34 @@ export class InMemoryProcessRegistry implements ProcessRegistry {
     record.exitCode = update.exitCode;
     record.signal = update.signal;
     record.errorMessage = update.errorMessage;
-    record.child = undefined;
+    if (record.control?.released) record.control = undefined;
     this.evictOldTerminalRecords();
   }
 
   reset(): void {
-    for (const record of this.records.values()) {
-      if ((record.child || record.pid) && !TERMINAL_STATUSES.has(record.status)) {
-        // reset is best-effort cleanup for tests and process teardown, so failures are intentionally ignored here.
-        void killProcessTree({
-          pid: record.pid,
-          child: record.child,
-          reason: 'abort',
-          graceMs: 0,
+    for (const [id, record] of this.records) {
+      if (record.control?.released === false) {
+        void record.control.terminate('abort').then(() => {
+          if (this.records.get(id) === record && record.control?.released) this.records.delete(id);
+        }, () => {
+          process.stderr.write(`[Process] Cleanup remains unconfirmed for ${id}\n`);
         });
-      }
+      } else this.records.delete(id);
     }
+  }
 
-    this.records.clear();
+  async terminate(runId: string, sessionId: string, reason: 'manual' | 'timeout' | 'abort'): Promise<void> {
+    const record = this.records.get(runId);
+    if (!record || record.sessionId !== sessionId) throw new Error(`Unknown process owner: ${runId}`);
+    if (!record.control) {
+      if (TERMINAL_STATUSES.has(record.status)) return;
+      throw new Error(`Process control is unavailable: ${runId}`);
+    }
+    const control = record.control;
+    if (!control.released) await control.terminate(reason);
+    if (!control.released) throw new Error(`Process cleanup remains unconfirmed: ${runId}`);
+    if (record.control === control) record.control = undefined;
+    this.evictOldTerminalRecords();
   }
 
   async cleanupSession(sessionId: string): Promise<void> {
@@ -224,13 +235,10 @@ export class InMemoryProcessRegistry implements ProcessRegistry {
     );
     const failures: string[] = [];
     await Promise.all(owned.map(async (record) => {
-      if (!TERMINAL_STATUSES.has(record.status) && (record.child || record.pid)) {
-        const result = await killProcessTree({
-          pid: record.pid,
-          child: record.child,
-          reason: 'abort',
-        });
-        if (!result.ok && (record.child || record.pid)) {
+      if (record.control?.released === false || !TERMINAL_STATUSES.has(record.status)) {
+        try {
+          await this.terminate(record.runId, sessionId, 'abort');
+        } catch {
           failures.push(record.runId);
           return;
         }
@@ -262,7 +270,8 @@ export class InMemoryProcessRegistry implements ProcessRegistry {
 
   private evictOldTerminalRecords(): void {
     const terminal = [...this.records.values()]
-      .filter((record) => TERMINAL_STATUSES.has(record.status))
+      .filter((record) => record.kind !== 'foreground' && TERMINAL_STATUSES.has(record.status)
+        && record.control?.released !== false)
       .sort((left, right) => (
         (left.endedAt ?? left.createdAt) - (right.endedAt ?? right.createdAt)
         || left.createdAt - right.createdAt

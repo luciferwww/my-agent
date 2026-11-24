@@ -33,6 +33,7 @@ This directory contains durable architectural decisions. It does not own current
 | [ADR-025](adr-025-private-session-message-scheduler.md) | Accepted | One private Runtime owner for existing Session FIFO, Root busy state, and steering waiters; bounded amendment to ADR-017 |
 | [ADR-026](adr-026-held-agent-home-pid-file-lock.md) | Accepted; implemented and Windows-validated | Held OS lock on an inspectable PID file, with fail-closed incomplete cleanup; Linux/macOS pre-release validation remains open |
 | [ADR-027](adr-027-provider-owned-model-catalog.md) | Accepted | Provider-owned async model discovery/catalogs, no Core cache, stable Turn-bound invocation |
+| [ADR-028](adr-028-mxc-windows-exec.md) | Accepted; implemented and automatically Windows-checked | Opt-in MXC Windows Exec, Node 24 migration, contained TEMP bootstrap and retained private process ownership; owner closeout pending |
 
 ## Authority rules
 

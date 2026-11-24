@@ -1,0 +1,142 @@
+# Sandbox Execution
+
+> Status: Stable Authority
+> Contract status: Implemented; automated Windows checks and owner-reported manual tests passed; delivery closeout pending
+> Accepted: 2026-11-24
+> Authority: Opt-in Builtin Exec containment and private lifecycle contract
+
+## Scope and configuration
+
+`agents.sandbox` is global, file-configured and startup-only. Builtins Environment
+owns the leaf validator/defaults; Platform composes it; Runtime passes immutable
+startup facts and awaits preparation before publishing Tools.
+
+```typescript
+interface SandboxConfig {
+  readonly enabled: boolean;
+  readonly readonlyPaths: readonly string[];
+  readonly readwritePaths: readonly string[];
+  readonly deniedPaths: readonly string[];
+}
+```
+
+Omission resolves to disabled and empty configured lists. Concrete absolute local
+paths are supported, not globs, UNC/device policy roots or per-Agent overrides.
+Invalid recognized fields fail with configuration field paths. Settings section
+saves preserve the file-only value without pretending to apply it live.
+
+Enabled means Windows MXC BaseContainer, initially public Node SDK 1.1.0 on Node
+24.21+ within Node 24 LTS. Off means unchanged host-direct execution without SDK
+load/probe. Unavailable or unmet enabled policies fail; no backend, permission or
+host-direct fallback. Other platforms are not enabled by this first slice.
+
+The execution directory is the ordinary resolved `cwd`, not a grant. Explicit
+read/write/denied paths, necessary runtime/OS reads, owned private temporary data
+and execution-volume metadata form the effective request. Follow native
+path/alias precedence; report baseline OS access rather than claiming configured
+lists are the entire filesystem. Do not implicitly write-enable Agent Home/cwd.
+
+External networking, including host loopback, is denied. Approval remains
+separate: `manual` still requires Exec approval, `allow_all` does not remove
+confinement, and Tool-name deny stays final.
+
+## Ownership and startup
+
+Core has no SDK dependency. Runtime's Builtin factory may return an array or
+Promise; Builder awaits it in its existing startup cleanup boundary before
+publication. Tool registration stays synchronous.
+
+A private control exists before asynchronous native launch. SDK spawn establishes
+the sandbox root; the actual Shell-start confirmation establishes command
+readiness. A canceled pending spawn is retained until rejection or termination
+of its late returned handle. Do not publish a successful background ID after Abort.
+
+The existing ProcessRegistry owns managed controls and private foreground-sandbox
+controls. Foreground entries are invisible and do not count against managed
+capacity/history. Terminal status alone does not release control ownership.
+Pending managed cleanup keeps its resource reservation and cannot be evicted.
+Session and Host cleanup visit unreleased controls even after terminal settlement.
+Failure remains visible and prevents claiming cleanup/lock release succeeded.
+
+Pure host-direct foreground behavior and normal Tool/Process presentation remain
+unchanged. Immediate-background startup now retains Parent Abort until handoff;
+yield retains it until promotion. Parent Abort cannot terminate a handed-off
+process. Root completion removes descendants; no detached descendant lifetime
+outside its managed root is promised.
+
+## Trusted bootstrap and environment
+
+The fixed Node bootstrap runs inside MXC, not as a native helper/service. Host
+creates one unique temp root outside Agent Home and grants the installed bootstrap
+and its necessary package manifest read-only access. The bootstrap receives only Host-selected environment values,
+not ambient or caller Node startup hooks.
+
+One private stdin JSON envelope contains unchanged command, owned root and
+validated caller environment. Limit the UTF-8 envelope to 64 KiB and the initial
+stdout control frame to 4 KiB. Oversize/invalid inputs fail explicitly.
+
+Bind the root to a reserved Host-generated environment value; reject another root
+even when writable. Verify existing-parent and final realpaths before using
+directories; do not present lexical checks as a complete TOCTOU solution. Prepare
+Windows-rewritten directories and stable private home/appdata/tmp/cache within
+the owned root before user code. Set child TEMP/TMP/LOCALAPPDATA accordingly.
+
+Reserved path/bootstrap/offline/cache names cannot be overridden by caller env;
+Windows matching is case-insensitive and duplicate case variants fail. Permitted
+caller values, including intentional Node options, apply only to the user Shell.
+Enforce offline npm, a private cache and disabled update notification. Never merge
+or log the entire Host environment or caller values.
+
+Launch original `cmd.exe /d /s /c` args with verbatim Windows arguments, without
+concatenating setup commands or rewriting original paths/command text.
+The private stdin envelope is not interactive command input; the user Shell has
+stdin closed. Interactive-input support is not part of the Exec contract.
+
+## Output and terminal semantics
+
+Buffer child output until one startup frame reports actual Shell spawn. Host
+validates and consumes that first frame only; later bytes are ordinary output,
+including text resembling control messages. Native/entry failure before
+readiness is not a successful start.
+
+Normal EOF preserves Shell code and forwarded bytes. The internal post-exit
+drain deadline is 1,000 ms, not a configurable command timeout. At cutoff or
+read/forwarding failure, exit nonzero and emit an explicit incomplete-output
+diagnostic including original Shell code. The adapter returns existing failed
+outcome with available partial output, never success plus a warning. This differs
+from the existing managed-output history truncation marker.
+
+Use a single adapter command deadline with existing foreground default and
+explicit/no-timeout managed rules; do not let SDK and adapter independently
+settle results. Deadline/Abort/manual kill use the retained SDK control; native
+wait, stream closure and owned TEMP cleanup precede confirmed release. The
+Framework keeps its existing outer deadlines and terminal precedence.
+
+Cleanup failure retains its owner and diagnostic. Retry only supported control
+operations through existing bounded lifecycle hooks, not indefinite background
+retries or invented recovery of a failed native handle.
+
+## Limits and validation
+
+No automatic project copy/rollback, resource-quota framework, Smart Approval,
+MCP/Extension isolation or host file-tool migration. Writable data can be
+destroyed. Metadata visibility, tool compatibility and implicit OS access must
+be described honestly. Shared software path checks for host file tools are a
+separate future decision, not equivalent OS enforcement.
+
+Required focused checks cover configuration/preservation, SDK startup failure
+without publication, caller-hook separation, startup frames, precise drain
+threshold/failure, original output/cwd, pending-start Abort, handoff, terminal and
+foreground retained cleanup, Session/shutdown and installed bootstrap/native
+assets. Real Windows tests verify allowed/denied content, metadata, aliases,
+network denial, private TEMP and process-tree termination.
+
+Native ABI migration, lint/build/package and existing approval/Exec regressions
+must pass. No other-platform or absolute escape-proof guarantee follows from
+Windows fixture results. Diagnostics disclose SDK behavior without storing secrets.
+
+## Related decisions and contracts
+
+[ADR-028](../decisions/adr-028-mxc-windows-exec.md),
+[Tools and Hooks](tools-and-hooks.md), [Approval Lifecycle](approval-lifecycle.md)
+and [Configuration](configuration.md) retain their separate authorities.

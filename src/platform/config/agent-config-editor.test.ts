@@ -60,10 +60,20 @@ describe('Agent Home section editing', () => {
       ...(await read()),
       agents: { ...document.agents, memory: { ...memory, enabled: false, search: { maxResults: 8 } } },
     });
+
     await restoreAgentConfigSection(agentHome, saved.previous);
     expect(await read()).toEqual({
       ...document, agents: { ...document.agents, memory: { ...memory, search: { maxResults: 8 } } },
     });
+  });
+
+  it('preserves startup-only Sandbox settings across unrelated section saves and restores', async () => {
+    const sandbox = { enabled: true, readwritePaths: [agentHome] };
+    await write({ agents: { sandbox }, llm: {} });
+    const saved = await saveAgentConfigSection(agentHome, { kind: 'memory', settings: { enabled: false } });
+    expect((await read()).agents?.sandbox).toEqual(sandbox);
+    await restoreAgentConfigSection(agentHome, saved.previous);
+    expect((await read()).agents?.sandbox).toEqual(sandbox);
   });
 
   it.each([{}, { agents: { memory: {} } }])('restores absent Memory enablement without materializing defaults %#', async document => {

@@ -1,17 +1,27 @@
 # MXC-backed Tool Execution
 
-> Status: Draft
+> Status: Implemented; Windows automated and owner-reported Agent manual tests passed; closeout pending
 > Date: 2026-11-23
 > Revised: 2026-11-24
 > Owner: Project owner
 > Related Plan: [MXC Sandbox Adoption](plan.md)
-> Readiness: Bounded [MXC Spike](spike-specification.md) provisionally passed; owner design/migration acceptance required
+> Readiness: Owner accepted the design, bounded Spike and Node 24 project migration on 2026-11-24
+
+This Change records delivery details without owning durable authority.
+[Sandbox Execution](../../../specifications/sandbox-execution.md) and
+[ADR-028](../../../decisions/adr-028-mxc-windows-exec.md) own the accepted contract
+and rationale. Implementation is authorized; validation/closeout is not complete.
+
+The owner reported all discussed Agent manual tests passed on 2026-11-24.
+The Plan records this validation separately from formal closeout and the
+remaining package-smoke limitation.
 
 The [Results](spike-results.md) now include Node 24 SDK, ordinary offline npm-task
 and metadata-boundary validation, plus a contained private-TEMP bootstrap.
-The default design candidate is the public in-process Node SDK V1 on Node 24
-LTS with explicit enumeration-only metadata access and a small trusted Node
-bootstrap. These are evidence-backed proposals, not production acceptance.
+The implemented route is the public in-process Node SDK V1 on Node 24 LTS with
+explicit enumeration-only metadata access and a small trusted Node bootstrap.
+The owner accepted the design and authorized this implementation; automated
+validation and its remaining limits are recorded in [the Plan](plan.md).
 
 ## Purpose and observable outcome
 
@@ -51,6 +61,23 @@ or synchronize that copy. Do not describe access confinement as recovery.
 
 The Agent host remains outside the sandbox. Its direct filesystem and network
 operations are not OS-confined by sandboxing `exec`.
+
+### Deferred evaluation: shared path checks for host file tools
+
+On 2026-11-24 the owner identified policy checks for host file tools as a useful
+follow-up candidate. Evaluate whether reads, writes, listing/search and patch
+targets should consult the same effective Sandbox path policy so an Exec denial
+cannot simply be bypassed through an otherwise approved host file Tool.
+
+Prefer reusing one policy evaluator over separate per-Tool path rules. The later
+decision must cover read versus write effects, every patch/move target, error
+reporting, and the limits of path/alias checks. These would be software checks,
+not OS confinement of host I/O or arbitrary Extension code; do not claim they
+provide the same hard boundary as MXC or eliminate TOCTOU.
+
+This is not required by the first Exec slice and does not authorize file-tool
+changes, a broker/service implementation, or a new policy mode. Assess value,
+coverage and complexity separately after the execution boundary is established.
 
 ## Boundaries and dependency direction
 
@@ -112,6 +139,20 @@ When off, retain current host-direct behavior and avoid loading/probing native
 MXC. When on, import/probe at Environment startup, fail startup if the required
 Windows backend is unavailable, and check each actual request before launch.
 Do not silently disable the flag, omit Exec, or switch backends.
+
+The initialization barrier belongs to Runtime's existing Builder-side assembly
+stage, before the Unit catalog and Registry are published. Extend
+`RuntimeDependencies.getBuiltinContributionUnits()` to accept synchronous arrays
+or Promises of arrays, and make `assembleLoadedRuntimeUnits()` await the result.
+Existing synchronous callers remain valid; Tool registration itself stays
+synchronous and receives an already prepared executor.
+
+The default Environment factory loads/probes the SDK only when enabled. Rejection
+propagates through the existing Builder startup failure/cleanup path, including
+Memory, Session and Agent Home lock handling; no `app_ready` or usable Tool
+generation is published on failure. Do not defer this check to the first command
+or add a second startup coordinator. This changes Runtime's composition contract,
+not Core Tool/Registry contracts.
 
 An illustrative configuration is:
 
@@ -265,6 +306,36 @@ release and temporary cleanup. Dispose terminal handles idempotently; active
 disposal is not a substitute for proof of cleanup. A failed cleanup retains its
 owner and reports failure instead of marking the record cleaned or deleting it.
 
+### Cleanup ownership after command settlement
+
+Separate user-visible command status from private resource release. The existing
+ProcessRegistry remains the single process-lifecycle owner and additionally owns
+private foreground-sandbox entries before SDK launch. These entries are internal,
+never returned by the Process Tool, and removed after confirmed release; they do
+not consume the eight managed-process slots or retained managed-history quota.
+Ordinary host-direct foreground behavior remains unchanged.
+
+For managed records, terminal settlement does not clear the termination control
+until native release, stream closure and owned temporary cleanup are confirmed.
+Pending/failed cleanup retains the control and diagnostic cause even when command
+status is already terminal. Such managed records keep their resource reservation
+and are not eligible for terminal-history eviction. Do not apply the old
+`complete()` behavior of discarding the child reference unconditionally.
+
+Session deletion, startup failure and Host shutdown visit unreleased owners
+regardless of foreground/managed kind or terminal command status. Delete a record
+only after release confirmation. Retry only through supported control operations
+and existing bounded lifecycle hooks; do not introduce unbounded background
+retries or claim that a failed SDK handle has been revived. An unconfirmed
+cleanup is reported as failed/pending under the existing shutdown report and
+lock-retention behavior, not successful cleanup.
+
+No second registry or new public process status is introduced. Foreground
+completion reports cleanup failure when it cannot confirm its own release;
+retaining that failure's internal entry lets later Session/Host cleanup still
+find the owner. Existing canonical terminal facts remain single-winner and are
+not rewritten just to report a later cleanup diagnostic.
+
 ## Failure, Abort, deadline, and concurrency semantics
 
 - Unsupported host, request, artifact or binding: explicit failure before target
@@ -296,6 +367,20 @@ LOCALAPPDATA, TEMP/TMP and trusted PATH preparation from call-level override;
 reject conflicting supplied entries explicitly in sandbox mode. Preserve ordinary
 call-level environment additions that do not change the reserved bootstrap.
 
+Use two distinct environments. SDK spawn receives only Host-generated bootstrap
+values, never the host's ambient `NODE_OPTIONS`/`NODE_PATH` or caller additions.
+In particular, a caller's `NODE_OPTIONS` can run `--require`/`--import` hooks before
+the trusted entry; applying it to the bootstrap would invalidate the startup-frame
+and pre-command cancellation guarantees.
+
+Carry validated caller `env` separately in the bounded private stdin envelope.
+After TEMP preparation, apply nonreserved entries only to the user Shell's
+environment, where an intentional `NODE_OPTIONS` affects the user's Node program,
+not the trusted entry. Windows name validation is case-insensitive; reject
+duplicate case variants and reserved-name conflicts before SDK launch. Reserve
+the owned-root binding and enforced offline/cache settings as well as the
+bootstrap paths. Do not silently strip or override rejected caller values.
+
 Configure offline npm/cache/update-notifier values for the initial no-network
 profile. Never merge the whole host environment or log its values. Keep temporary
 directories until the workload tree and native resource release settle; Session
@@ -318,7 +403,8 @@ the accepted contract.
    path to SDK spawn. Grant that entry read-only access, not writable access to
    the installed application. Preserve original `cwd` as the bootstrap's cwd.
 2. Attach SDK streams before wait. Pass one bounded private JSON envelope on
-   stdin with the unchanged command and trusted owned root; do not put the
+   stdin with the unchanged command, trusted owned root and separately validated
+   user-command environment; do not put the
    envelope in executable argv or an Agent-supplied environment variable.
    Check Abort before sending it. SDK startup alone never resolves `started`.
 3. Bind the root to a reserved Host-generated bootstrap environment value; reject
@@ -329,7 +415,8 @@ the accepted contract.
    Reject outside-root, malformed and reparse escapes before launching user code.
    Cleanup later targets the original owned root only.
 4. Set the child TEMP/TMP and LOCALAPPDATA to the now-existing owned directories,
-   with explicit offline npm/cache settings. Do not alter host environment,
+   with explicit offline npm/cache settings, then apply permitted caller entries
+   to this Shell environment only. Do not alter host environment,
    machine permissions or the configured project/content grants.
 5. Launch the original command via the existing `cmd.exe /d /s /c` argv
    convention and `windowsVerbatimArguments: true`. Do not concatenate setup
@@ -339,11 +426,34 @@ the accepted contract.
    failure, not readiness. Host consumes this private first frame, validates it
    and then treats every following byte as ordinary command output; user output
    resembling a frame must not trigger a new handshake.
-7. Shell exit propagates its code, drains output, and closes the bootstrap root
+7. Normal Shell exit propagates its code, drains output, and closes the bootstrap root
    so native job cleanup removes remaining descendants. Do not wait indefinitely
    for descendant-held pipes: any output-drain cutoff must be bounded, explicit
    and separately tested, never silently drop data. SDK termination remains the
    operation for Abort/timeout/manual kill and whole-tree release.
+
+### Output-drain failure semantics
+
+Natural EOF preserves the Shell exit code and complete forwarded bytes. If
+output cannot be fully drained by the selected drain deadline, treat the run as
+an execution failure, even when the Shell exited with code zero. The bootstrap
+exits nonzero and writes an explicit incomplete-output diagnostic including the
+original Shell code; that Shell code is diagnostic context, not proof of success.
+The adapter maps this path to the existing failed outcome and keeps already
+captured output. Do not introduce a new canonical result or parse user-generated
+stderr as a trusted control message.
+
+No completion frame is appended to ordinary stdout: only the initial startup
+frame is interpreted, and all later stdout remains byte-for-byte user data.
+An output read/forwarding error follows the same failure and cleanup contract.
+This is distinct from the ProcessRegistry's existing bounded history truncation,
+which retains its explicit marker and does not itself fail an otherwise complete
+command.
+
+The drain timer never retries, widens permissions or extends the command timeout.
+Validate the selected numeric drain deadline and a forced cutoff before accepting
+the implementation. The prototype's untested 250 ms cutoff is not adopted by
+this design, and a stderr warning plus exit code zero is not an acceptable substitute.
 
 The prototype verified unchanged cmd commands, ordinary file-backed Node temp
 creation, offline npm, failure before command start, exact 512 KiB stdout /
@@ -385,8 +495,7 @@ experiments do not authorize transmitting project data or credentials.
 
 ## Compatibility and migration
 
-The repository currently requires Node `22.x`. The default candidate moves to
-the supported Node 24 LTS SDK route; this Draft does not authorize the upgrade.
+The repository now requires Node 24.21+ within Node 24 LTS for the accepted SDK route.
 Node 24 native-addon installation must be validated rather than reusing Node 22
 binaries. The Spike verified a fresh SQLite 12.8.0 Node 24 prebuild; installed
 Sharp/filesystem-native smoke checks also passed, not a complete app regression.
@@ -413,16 +522,26 @@ on an unsupported execution host must not silently use host-direct execution.
 5. Perform focused independent review of boundary and lifecycle changes, and
    owner acceptance; synchronize only directly affected authority/guidance.
 
-## Open questions
+Focused delivery cases must additionally falsify the reviewed contract gaps:
 
-- Will the owner accept the validated SDK/Node 24 route and its runtime migration?
-- Will the owner accept the startup-only configuration/private-control proposals
-  and intentional background-startup/descendant-lifetime differences?
-- Will the owner accept the measured contained Node bootstrap and its private
-  startup/output protocol, rather than treating SDK-root spawn as Shell readiness?
-- Will the owner accept the first profile's explicit resource/UI/path limitations,
-  with focused enforcement, reparse and output-drain checks during Delivery?
-- What installation and diagnostic-data requirements are acceptable?
+- A caller Node startup hook does not run in the bootstrap, cannot provide a
+  fake startup frame, and is applied only to the permitted user command.
+- Synchronous Unit factories still work; asynchronous SDK failure publishes no
+  ready generation and runs the existing startup cleanup exactly once.
+- Foreground and terminal managed cleanup failures retain discoverable owners;
+  failed/pending resources survive history eviction and later shutdown visits them.
+- A forced drain cutoff after Shell exit zero produces a failed Tool result
+  with partial output and an explicit diagnostic; complete output still preserves
+  the original result and bytes. Subsequent user text resembling control frames
+  cannot change readiness or terminal status.
 
-These questions block acceptance when they affect architectural conclusions.
-They are not permission to add speculative runtime paths.
+## Delivery follow-up
+
+The owner accepted the Node migration, startup-only policy, contained bootstrap
+and first-profile limits. Implementation and automated Windows checks are complete;
+owner delivery acceptance remains pending. The full default-port installed-Host
+check was blocked by an existing 8787 listener; a separate installed-MXC smoke
+passed without altering that listener. See [the Plan](plan.md) for exact evidence.
+
+Host file-tool policy checking and additional platform/resource guarantees remain
+deferred, not implied by the Windows execution boundary.

@@ -97,6 +97,8 @@ export function runCommand(options: RunCommandOptions): RunningCommand {
     resolveStarted = resolve;
     rejectStarted = reject;
   });
+  // Foreground calls report startup failure through completion instead of awaiting started.
+  void started.catch(() => undefined);
 
   child.once('spawn', () => {
     const pid = child.pid;
@@ -126,7 +128,7 @@ export function runCommand(options: RunCommandOptions): RunningCommand {
   let settled = false;
   let terminationPromise: Promise<void> | undefined;
 
-  const terminate = (reason: 'timeout' | 'abort') => {
+  const terminate = (reason: 'manual' | 'timeout' | 'abort') => {
     terminationState = reason === 'timeout' ? 'timed_out' : 'aborted';
     if (terminationPromise) {
       return terminationPromise;
@@ -134,11 +136,12 @@ export function runCommand(options: RunCommandOptions): RunningCommand {
 
     // timeout, AbortSignal, and manual process cleanup should all reuse the same tree-kill semantics.
     terminationPromise = (async () => {
-      await killProcessTree({
+      const killed = await killProcessTree({
         pid: child.pid,
         child,
         reason,
       });
+      if (!killed.ok) throw new Error('Process tree termination failed');
     })();
 
     return terminationPromise;
@@ -166,12 +169,16 @@ export function runCommand(options: RunCommandOptions): RunningCommand {
 
   const timer = options.timeoutMs
     ? setTimeout(() => {
-        void terminate('timeout');
+        void terminate('timeout').catch(error => {
+          process.stderr.write(`[Exec] ${error instanceof Error ? error.message : 'Termination failed'}\n`);
+        });
       }, options.timeoutMs)
     : undefined;
 
   const abortHandler = () => {
-    void terminate('abort');
+    void terminate('abort').catch(error => {
+      process.stderr.write(`[Exec] ${error instanceof Error ? error.message : 'Termination failed'}\n`);
+    });
   };
 
   if (options.signal) {
@@ -273,7 +280,14 @@ export function runCommand(options: RunCommandOptions): RunningCommand {
   });
 
   return {
-    child,
+    control: {
+      sandboxed: false,
+      get released() { return settled; },
+      async terminate(reason) {
+        await terminate(reason);
+        await completion;
+      },
+    },
     started,
     completion,
   };

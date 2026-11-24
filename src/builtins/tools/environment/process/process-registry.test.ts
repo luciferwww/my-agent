@@ -129,11 +129,12 @@ describe('InMemoryProcessRegistry', () => {
 
   it('cleans up only the requested Session processes', async () => {
     const registry = new InMemoryProcessRegistry();
-    const kill = vi.fn(() => true);
+    let released = false;
+    const terminate = vi.fn(async () => { released = true; });
     registry.create(createRecord({
       runId: 'owned',
       status: 'running',
-      child: { kill },
+      control: { sandboxed: false, get released() { return released; }, terminate },
     }));
     registry.create(createRecord({
       runId: 'other',
@@ -143,8 +144,46 @@ describe('InMemoryProcessRegistry', () => {
 
     await registry.cleanupSession('session-1');
 
-    expect(kill).toHaveBeenCalled();
+    expect(terminate).toHaveBeenCalledWith('abort');
     expect(registry.get('owned', 'session-1')).toBeUndefined();
     expect(registry.get('other', 'session-2')).toBeDefined();
+  });
+
+  it('keeps terminal cleanup failures through history eviction and shutdown', async () => {
+    const registry = new InMemoryProcessRegistry();
+    const terminate = vi.fn(async () => { throw new Error('unconfirmed'); });
+    registry.create(createRecord({ runId: 'retained', control: { sandboxed: true, released: false, terminate } }));
+    registry.complete('retained', { status: 'failed', endedAt: 0 });
+    for (let index = 0; index <= MAX_RETAINED_TERMINAL_PROCESSES; index++) {
+      registry.create(createRecord({ runId: `history-${index}` }));
+      registry.complete(`history-${index}`, { status: 'completed', endedAt: index + 1 });
+    }
+    registry.delete('retained');
+    expect(registry.get('retained', 'session-1')?.control).toBeDefined();
+    await expect(registry.shutdown()).rejects.toThrow('shutdown did not converge');
+    expect(terminate).toHaveBeenCalledWith('abort');
+    expect(registry.get('retained', 'session-1')).toBeDefined();
+  });
+
+  it('owns invisible foreground cleanup without consuming managed capacity', async () => {
+    const registry = new InMemoryProcessRegistry();
+    let released = false;
+    const terminate = vi.fn(async () => { released = true; });
+    for (let index = 0; index < MAX_ACTIVE_MANAGED_PROCESSES; index++) {
+      registry.create(createRecord({ runId: `managed-${index}`, sessionId: 'session-2' }));
+    }
+    for (let index = 0; index <= MAX_ACTIVE_MANAGED_PROCESSES; index++) {
+      registry.create(createRecord({
+        runId: `foreground-${index}`, kind: 'foreground', status: 'completed',
+        control: { sandboxed: true, get released() { return released; }, terminate },
+      }));
+    }
+    expect(registry.get('foreground-0', 'session-1')).toBeUndefined();
+    expect(registry.listVisible('session-1')).toEqual([]);
+    expect(() => registry.create(createRecord({ runId: 'managed-overflow', sessionId: 'session-2' })))
+      .toThrow(ProcessRegistryCapacityError);
+    await registry.cleanupSession('session-1');
+    expect(terminate).toHaveBeenCalled();
+    expect(registry.get('managed-0', 'session-2')).toBeDefined();
   });
 });

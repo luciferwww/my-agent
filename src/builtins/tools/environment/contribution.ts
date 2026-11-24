@@ -9,12 +9,14 @@ import { createGrepSearchTool } from './search/grep-search-tool.js';
 import { webFetchTool } from './web/web-fetch-tool.js';
 import { createExecTool } from './process/exec-tool.js';
 import { processTool } from './process/process-tool.js';
+import type { CommandRunner } from './process/exec-types.js';
 
 export interface EnvironmentContributionOptions {
   readonly agentHome: string;
   readonly webFetchEnabled: boolean;
   readonly execEnabled: boolean;
   readonly processEnabled: boolean;
+  readonly commandRunner?: CommandRunner;
 }
 
 export function createEnvironmentContribution(
@@ -32,7 +34,7 @@ export function createEnvironmentContribution(
       api.registerTool(createWriteFileTool(options.agentHome));
       api.registerTool(createEditFileTool(options.agentHome));
       if (options.webFetchEnabled) api.registerTool(webFetchTool);
-      if (options.execEnabled) api.registerTool(createExecTool(options.agentHome));
+      if (options.execEnabled) api.registerTool(createExecTool(options.agentHome, options.commandRunner));
       if (options.processEnabled) api.registerTool(processTool);
     },
   });

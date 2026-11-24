@@ -23,7 +23,7 @@ building Provider, Tool, Channel, Session, and lifecycle boundaries.
 
 ## Requirements
 
-- Node.js 22.x
+- Node.js 24 LTS, version 24.21.0 or later
 - npm
 - An LLM endpoint and, when required, an API key
 

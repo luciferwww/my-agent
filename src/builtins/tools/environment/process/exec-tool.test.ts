@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { CommandRunner } from './exec-types.js';
 
 import { createExecTool } from './exec-tool.js';
 import { processTool } from './process-tool.js';
@@ -32,11 +33,43 @@ async function waitFor(predicate: () => Promise<boolean> | boolean, timeoutMs = 
   throw new Error('Timed out waiting for condition');
 }
 
-afterEach(() => {
+afterEach(async () => {
+  await processRegistry.shutdown();
   processRegistry.reset();
 });
 
 describe('execTool', () => {
+  it('releases managed admission when process construction fails synchronously', async () => {
+    await expect(execTool.execute({ command: 'invalid\0command', background: true }, TEST_TOOL_CONTEXT))
+      .rejects.toThrow();
+    await expect(processRegistry.cleanupSession(TEST_TOOL_CONTEXT.sessionId)).resolves.toBeUndefined();
+  });
+
+  it('cancels deferred sandbox startup if foreground ownership registration fails', async () => {
+    let canceled = false;
+    let started = false;
+    const terminate = vi.fn(async () => { canceled = true; });
+    const runner: CommandRunner = () => {
+      queueMicrotask(() => { if (!canceled) started = true; });
+      return {
+        started: new Promise<number>(() => {}),
+        completion: Promise.resolve({ mode: 'foreground', status: 'aborted', output: '' }),
+        control: { sandboxed: true, get released() { return canceled; }, terminate },
+      };
+    };
+    const registration = vi.spyOn(processRegistry, 'create').mockImplementation(() => {
+      throw new Error('registration failed');
+    });
+    try {
+      await expect(createExecTool(process.cwd(), runner).execute({ command: 'x' }, TEST_TOOL_CONTEXT))
+        .rejects.toThrow('registration failed');
+      expect(terminate).toHaveBeenCalledWith('abort');
+      expect(started).toBe(false);
+    } finally {
+      registration.mockRestore();
+    }
+  });
+
   it('defaults to the injected Agent Home', async () => {
     const agentHome = await mkdtemp(join(tmpdir(), 'exec-agent-home-'));
     try {

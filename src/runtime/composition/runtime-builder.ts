@@ -62,6 +62,8 @@ import { createSkillToolContribution } from '../../builtins/tools/skill/index.js
 import { discoverSkills } from '../../core/skills/index.js';
 import {
   createEnvironmentContribution,
+  createMxcCommandRunner,
+  resolveSandboxConfig,
   processRegistry,
 } from '../../builtins/tools/environment/index.js';
 import { createSubagentDelegationPort } from '../subagent-orchestration.js';
@@ -347,7 +349,7 @@ export async function buildRuntimeHandle(
     const activeParentTurns = new Map<string, ActiveParentTurn>();
     const routeContextByTurn = new Map<string, MessageRouteContext>();
     let agentPolicies!: AgentPolicyState;
-    const assembly = assembleLoadedRuntimeUnits({
+    const assembly = await assembleLoadedRuntimeUnits({
       options,
       acquiredUnits: bootstrap.acquiredUnits,
       resources: bootstrap.resources,
@@ -722,7 +724,7 @@ function throwChannelOperationError(error: unknown): never {
   throw error;
 }
 
-function assembleLoadedRuntimeUnits(params: {
+async function assembleLoadedRuntimeUnits(params: {
   readonly options: RuntimeAppOptions;
   readonly acquiredUnits: readonly LoadedRuntimeUnit[];
   readonly resources: RuntimeResourceSet;
@@ -731,7 +733,7 @@ function assembleLoadedRuntimeUnits(params: {
   readonly routeContextByTurn: Map<string, MessageRouteContext>;
   readonly captureAgentState: () => AppliedAgentState;
   readonly onAgentEvent: (event: AgentEvent) => Promise<void>;
-}): readonly LoadedRuntimeUnit[] {
+}): Promise<readonly LoadedRuntimeUnit[]> {
   const { options, resources, dependencies } = params;
   const builtinProviderConfig = resources.appConfig.llm.builtin;
   const toolOptions = {
@@ -739,12 +741,13 @@ function assembleLoadedRuntimeUnits(params: {
     webFetchEnabled: true,
     execEnabled: true,
     processEnabled: true,
+    sandbox: resolveSandboxConfig(resources.appConfig.agents.sandbox),
   };
   const loadedUnits: LoadedRuntimeUnit[] = [
     ...(builtinProviderConfig
       ? [dependencies.createBuiltinProviderUnit(builtinProviderConfig)]
       : []),
-    ...dependencies.getBuiltinContributionUnits(toolOptions, resources.memoryManager)
+    ...(await dependencies.getBuiltinContributionUnits(toolOptions, resources.memoryManager))
       .map((registration) => createLoadedRuntimeUnit({ registration, required: true })),
     ...params.acquiredUnits,
     ...(options.loadedUnits ?? []),
@@ -825,13 +828,17 @@ function createRuntimeDependencies(
       return new AgentRunner(config);
     },
     managedProcessLifecycle: processRegistry,
-    getBuiltinContributionUnits(options, memoryManager) {
+    async getBuiltinContributionUnits(options, memoryManager) {
+      const commandRunner = options.sandbox?.enabled
+        ? await createMxcCommandRunner(options.sandbox, options.agentHome)
+        : undefined;
       return Object.freeze([
         createEnvironmentContribution({
           agentHome: options.agentHome,
           webFetchEnabled: options.webFetchEnabled ?? true,
           execEnabled: options.execEnabled ?? true,
           processEnabled: options.processEnabled ?? true,
+          commandRunner,
         }),
         ...(memoryManager ? [createMemoryToolsContribution(memoryManager)] : []),
       ]);

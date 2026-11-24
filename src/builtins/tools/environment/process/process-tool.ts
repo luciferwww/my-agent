@@ -1,6 +1,5 @@
 import type { Tool } from '../../../../core/tools/types.js';
 import type { ProcessRecord, ProcessStatus, ProcessToolInput } from './exec-types.js';
-import { killProcessTree } from './kill-process-tree.js';
 import { processRegistry } from './process-registry.js';
 
 function isNonEmptyString(value: unknown): value is string {
@@ -147,7 +146,7 @@ export const processTool: Tool = {
         };
       }
 
-      if (record.status !== 'starting' && record.status !== 'running') {
+      if (record.status !== 'starting' && record.status !== 'running' && record.control?.released !== false) {
         // kill stays idempotent for completed tasks by returning the current terminal summary.
         return {
           outcome: 'success',
@@ -155,27 +154,19 @@ export const processTool: Tool = {
         };
       }
 
-      const killed = await killProcessTree({
-        pid: record.pid,
-        child: record.child,
-        reason: 'manual',
-      });
-
-      if (!killed.ok) {
-        // Keep kill idempotent even if the process has already disappeared between lookup and termination.
-        const current = processRegistry.get(record.runId, context.sessionId);
-        return {
-          outcome: 'success',
-          content: formatRecordSummary(current ?? record),
-        };
+      try {
+        await processRegistry.terminate(record.runId, context.sessionId, 'manual');
+      } catch (error) {
+        return { outcome: 'failed', content: error instanceof Error ? error.message : 'Process termination failed' };
       }
 
       // taskkill on Windows can surface as a non-zero exit first, so manual kill writes the final semantic state explicitly.
-      processRegistry.forceComplete(record.runId, {
-        status: 'aborted',
-        endedAt: Date.now(),
-        signal: 'SIGTERM',
-      });
+      if (record.status === 'starting' || record.status === 'running') {
+        processRegistry.forceComplete(record.runId, {
+          status: 'aborted', endedAt: Date.now(),
+          ...(record.control?.sandboxed ? {} : { signal: 'SIGTERM' }),
+        });
+      }
 
       const updated = processRegistry.get(record.runId, context.sessionId);
       return {

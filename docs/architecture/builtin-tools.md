@@ -85,7 +85,7 @@ yieldMs?: number        # positive milliseconds
 background?: boolean
 ```
 
-Only `string:string` environment entries are accepted and merged over string-valued `process.env` entries. Execution uses an explicit `cmd.exe /d /s /c` wrapper on Windows and `/bin/sh -c` on Unix; `shell` is false. Unix managed commands use detached process groups.
+Only `string:string` environment entries are accepted. Host-direct execution merges them over string-valued `process.env` entries and uses `cmd.exe /d /s /c` on Windows or `/bin/sh -c` on Unix; `shell` is false. Unix managed commands use detached process groups. Enabled sandbox execution uses a minimal trusted bootstrap environment and applies validated nonreserved caller entries only to the actual command.
 
 Exec is always blocked by an effective Tool-name deny. In `manual` Session mode every Exec call requires current-call Approval, even when `tools.allow` matches, and fails closed when Approval is unavailable. In `allow_all`, non-denied Exec calls are automatically authorized. The full validated input, including the exact command, is the current-call Approval subject. `cwd` is execution context, not confinement, and policy does not infer command effects from either command text or `cwd`. Neither approval mode verifies the executable selected by the Shell or provides process, filesystem, or network isolation.
 
@@ -95,7 +95,26 @@ Exec is always blocked by an effective Tool-name deny. In `manual` Session mode 
 | Yield | Positive `yieldMs`, without `background` | Races completion against the deadline; completed commands return normally, still-running commands become background-visible |
 | Background | `background: true` | Waits only for successful spawn and returns a `runId` immediately |
 
-An explicit timeout applies to every mode. Background and yield modes have no implicit 30-second timeout. Foreground commands bypass the registry; managed yield/background commands create records. Output combines stdout and stderr chunks in observed timestamp order and reports real Framework activity. Non-zero exit, timeout, and Abort are failed Tool executions; `ToolExecutionContext.signal` is passed to process execution until ownership is handed to ProcessRegistry.
+An explicit timeout applies to every mode. Background and yield modes have no implicit 30-second timeout. Host-direct foreground commands bypass the registry; sandbox foreground execution has a private resource entry that is not Process-visible. Managed yield/background commands create records. Output combines stdout and stderr chunks in observed timestamp order and reports real Framework activity. Non-zero exit, timeout, and Abort are failed Tool executions; `ToolExecutionContext.signal` is passed to process execution until ownership is handed to ProcessRegistry.
+
+### Opt-in Windows sandbox
+
+Global startup-only `agents.sandbox` selects public MXC SDK 1.1.0 on supported
+Windows BaseContainer with Node 24.21+ in the Node 24 line. Off leaves host-direct
+execution unchanged. Startup awaits SDK validation before publication; unsupported
+enabled hosts/requests fail without fallback.
+
+A fixed Node entry inside the boundary prepares private HOME/appdata/TEMP and
+offline npm data before unchanged cmd execution. Its initial frame confirms
+actual Shell spawn; later output remains user data. Host/caller Node startup hooks
+cannot run in the bootstrap. Necessary installed package metadata is read-only,
+not a whole-project read grant.
+
+Content access follows the configured/native effective policy; cwd is not a
+grant. External networking and host loopback are denied for Shell descendants.
+The original directory remains in use; no copy/rollback or resource-quota service
+is provided. Host file/web tools and arbitrary Extensions remain outside this
+boundary. [Sandbox Execution](../specifications/sandbox-execution.md) owns details.
 
 ## 7. Process management
 
@@ -108,11 +127,11 @@ An explicit timeout applies to every mode. Background and yield modes have no im
 { action: 'kill', runId }
 ```
 
-`ProcessRegistry` is a module-level in-memory singleton shared by both Tools. Records are owned and queried by Session. It admits at most eight active managed processes, retains only the newest 1 MiB of combined output per process with an explicit truncation marker, and retains at most 32 terminal records. Records track command, working directory, lifecycle status, visibility, timing, PID, bounded output, exit data, and whether a yield promoted the process.
+`ProcessRegistry` is a module-level in-memory singleton shared by both Tools. Records are owned and queried by Session. It admits at most eight managed resource reservations, including terminal records whose cleanup remains unconfirmed, retains only the newest 1 MiB of managed output with an explicit truncation marker, and retains at most 32 released terminal managed records. Private foreground sandbox resources do not consume those quotas or appear in Process queries. Records track command, working directory, lifecycle status, visibility, timing, PID, bounded output, exit data, control ownership and whether a yield promoted the process.
 
-Pure foreground processes are not registered. Yield records start as `internal`; a still-running record becomes `background` only at the yield deadline. Immediate background records are visible from creation. Successful background/yield handoff removes Parent Abort ownership. `list` returns only visible records owned by the calling Session in creation order; status, log, and kill reject internal, unknown, or cross-Session IDs. Logs may return a positive `tailLines` suffix. Forks inherit no records; Session deletion cleans owned processes before committing deletion, and bounded Host shutdown cleans every remaining managed process.
+Pure host-direct foreground processes are not registered. Managed startup records are internal; immediate background becomes visible after successful startup/handoff, and yield promotes only a still-running record. Successful handoff removes Parent Abort ownership. `list` returns only visible managed records owned by the calling Session in creation order; status, log, and kill reject internal, foreground, unknown, or cross-Session IDs. Logs may return a positive `tailLines` suffix. Forks inherit no records. Session deletion and bounded Host shutdown visit unreleased controls even after command termination, including private foreground entries; unconfirmed cleanup remains owned and is reported as failure.
 
-`kill` is idempotent for terminal or concurrently disappeared processes and records manual termination as `aborted`. On Windows, tree termination tries `taskkill /T /PID` and escalates after a grace window to `/F /T /PID`. On Unix, it prefers process-group `SIGTERM`, falls back to a single PID when needed, and escalates to `SIGKILL` after the grace window. Timeout and Abort reuse the same tree-kill path. The registry's normal completion does not overwrite an existing terminal state; manual kill has a force-complete path to settle platform races.
+`kill` is idempotent for released terminal or concurrently disappeared processes and records manual termination as `aborted`. Host-direct Windows termination tries `taskkill /T /PID` and escalates to `/F /T /PID`; Unix uses process groups/signals as before. Sandbox termination uses its retained SDK handle, not the displayed Shell PID. Timeout and Abort reuse the corresponding control. Cleanup failure is not reported as successful kill. The registry's normal completion does not overwrite an existing terminal state; manual kill has a force-complete path to settle active-process platform races.
 
 ## 8. Evidence
 

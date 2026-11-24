@@ -1,14 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ProcessRecord } from './exec-types.js';
-import { killProcessTree } from './kill-process-tree.js';
 import { processTool } from './process-tool.js';
 import { processRegistry } from './process-registry.js';
 import { TEST_TOOL_CONTEXT } from '../../../../core/tools/test-utils.js';
 
-vi.mock('./kill-process-tree.js', () => ({
-  killProcessTree: vi.fn(),
-}));
+const terminate = vi.fn<() => Promise<void>>();
+let released = false;
 
 function registerProcess(update: Partial<ProcessRecord> = {}): string {
   const record: ProcessRecord = {
@@ -23,6 +21,7 @@ function registerProcess(update: Partial<ProcessRecord> = {}): string {
     pid: 123,
     chunks: [],
     output: '',
+    control: { sandboxed: false, get released() { return released; }, terminate },
     ...update,
   };
   processRegistry.create(record);
@@ -30,10 +29,9 @@ function registerProcess(update: Partial<ProcessRecord> = {}): string {
 }
 
 beforeEach(() => {
-  vi.mocked(killProcessTree).mockReset();
-  vi.mocked(killProcessTree).mockResolvedValue({
-    ok: true, attemptedForce: false, method: 'child-kill',
-  });
+  released = false;
+  terminate.mockReset();
+  terminate.mockImplementation(async () => { released = true; });
 });
 
 afterEach(() => {
@@ -55,16 +53,14 @@ describe('processTool', () => {
 
   it('kills a running background process', async () => {
     const runId = registerProcess();
-    vi.mocked(killProcessTree).mockImplementation(async () => {
+    terminate.mockImplementation(async () => {
       // Windows process exit can reach the registry before manual kill returns.
       processRegistry.complete(runId, { status: 'failed', endedAt: 2, exitCode: 1 });
-      return { ok: true, attemptedForce: true, method: 'windows-taskkill' };
+      released = true;
     });
 
     const killed = await processTool.execute({ action: 'kill', runId }, TEST_TOOL_CONTEXT);
-    expect(killProcessTree).toHaveBeenCalledExactlyOnceWith({
-      pid: 123, child: undefined, reason: 'manual',
-    });
+    expect(terminate).toHaveBeenCalledExactlyOnceWith('manual');
     expect(killed).toMatchObject({ outcome: 'success' });
     expect(killed.content).toContain('status: aborted');
 
@@ -73,7 +69,7 @@ describe('processTool', () => {
   });
 
   it('keeps kill idempotent after a background process completes', async () => {
-    const runId = registerProcess({ status: 'completed', endedAt: 2, exitCode: 0 });
+    const runId = registerProcess({ status: 'completed', endedAt: 2, exitCode: 0, control: undefined });
     const firstKill = await processTool.execute({ action: 'kill', runId }, TEST_TOOL_CONTEXT);
     const secondKill = await processTool.execute({ action: 'kill', runId }, TEST_TOOL_CONTEXT);
 
@@ -81,7 +77,7 @@ describe('processTool', () => {
     expect(firstKill.content).toContain('status: completed');
     expect(secondKill).toMatchObject({ outcome: 'success' });
     expect(secondKill.content).toContain('status: completed');
-    expect(killProcessTree).not.toHaveBeenCalled();
+    expect(terminate).not.toHaveBeenCalled();
   });
 
   it('returns not found for unknown runId', async () => {

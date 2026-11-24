@@ -5,6 +5,7 @@ import type { ToolPolicyConfig } from '../../core/tools/index.js';
 import type { AgentContextConfig } from '../../core/agent-context/index.js';
 import type { CompactionConfig } from '../../core/runner/index.js';
 import type { LoggerConfig } from '../logger/index.js';
+import type { SandboxConfig } from '../../builtins/tools/environment/index.js';
 
 export type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends readonly unknown[] ? T[K]
@@ -50,6 +51,7 @@ export interface AgentExecutionConfig {
 }
 
 export interface AgentsConfig extends AgentExecutionConfig {
+  readonly sandbox?: SandboxConfig;
   readonly memory: MemoryConfig;
   readonly defaults: AgentDefaults;
   readonly list: readonly AgentEntry[];
@@ -74,6 +76,7 @@ interface AgentApplicationDocument {
     readonly builtin?: unknown;
   };
   readonly agents?: {
+    readonly sandbox?: Partial<SandboxConfig>;
     readonly memory?: DeepPartial<MemoryConfig>;
     readonly steeringEnabled?: boolean;
     readonly maxLlmCallsPerTurn?: number;

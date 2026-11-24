@@ -31,6 +31,7 @@ import {
 } from './credential-materialization.js';
 import { projectAgentCapabilities, validateAgentLeafConfig, validateRunnerConfigSection, validateMemoryConfigSection } from './agent-leaf-validation.js';
 import { isNamedAgentId } from '../../core/agent-context/index.js';
+import { resolveSandboxConfig, SandboxConfigValidationError } from '../../builtins/tools/environment/index.js';
 import type {
   AgentConfigDocument,
   AgentExecutionConfig,
@@ -123,6 +124,7 @@ export async function loadAgentConfig(options: {
   }
   const agents: AgentsConfig = {
     ...resolveAgentExecutionConfig(document.agents),
+    ...(document.agents?.sandbox === undefined ? {} : { sandbox: validateSandbox(document.agents.sandbox) }),
     memory: resolveMemoryConfig(document.agents?.memory),
     defaults,
     list,
@@ -246,6 +248,7 @@ function validateAgents(value: AgentConfigDocument['agents']): void {
   if (value === undefined) return;
   if (!isPlainObject(value)) throw invalidAgentConfigField('agents');
   resolveMemoryConfig(value.memory);
+  validateSandbox(value.sandbox);
   validateRunnerConfigSection({
     ...(value.steeringEnabled === undefined
       ? {}
@@ -266,6 +269,7 @@ function validateAgents(value: AgentConfigDocument['agents']): void {
     throw invalidAgentConfigField('agents.defaults');
   }
   if (value.defaults !== undefined) {
+    if ('sandbox' in value.defaults) throw invalidAgentConfigField('agents.defaults.sandbox');
     projectAgentCapabilities(value.defaults, 'agents.defaults');
   }
   if (value.list === undefined) return;
@@ -278,6 +282,7 @@ function validateAgents(value: AgentConfigDocument['agents']): void {
       throw invalidAgentConfigField(`${entryPath}.id`);
     }
     seen.add(entry['id']);
+    if ('sandbox' in entry) throw invalidAgentConfigField(`${entryPath}.sandbox`);
     if (entry['description'] !== undefined && (
       typeof entry['description'] !== 'string'
       || entry['description'].trim().length === 0
@@ -291,6 +296,15 @@ function validateAgents(value: AgentConfigDocument['agents']): void {
       validateModelReference(entry['model'], `${entryPath}.model`);
     }
     projectAgentCapabilities(entry, entryPath);
+  }
+}
+
+function validateSandbox(value: unknown) {
+  try {
+    return resolveSandboxConfig(value);
+  } catch (error) {
+    if (!(error instanceof SandboxConfigValidationError)) throw error;
+    throw invalidAgentConfigField(error.fieldPath ? `agents.sandbox.${error.fieldPath}` : 'agents.sandbox');
   }
 }
 

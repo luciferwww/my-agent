@@ -434,6 +434,56 @@ individual Agent entry.
 `steeringEnabled` must be a boolean. `maxLlmCallsPerTurn`, when present, must
 be a positive integer.
 
+### 4.1 Windows Exec sandbox
+
+With Node 24.21+ and a Windows host supporting MXC BaseContainer, opt in through
+the global startup-only field below. It is independent of Tool approvals:
+
+```json
+{
+  "agents": {
+    "sandbox": {
+      "enabled": true,
+      "readonlyPaths": ["C:\\tools\\shared-runtime"],
+      "readwritePaths": ["C:\\work\\project"],
+      "deniedPaths": ["C:\\work\\project\\private-data"]
+    }
+  }
+}
+```
+
+Omission is disabled. Paths must be absolute local paths, not globs or UNC/device
+policy roots. Restart after editing; there is no live Settings toggle. Other
+Settings saves preserve this section. Enabling on an unsupported host/runtime
+fails startup, and an unsupported command policy fails execution without fallback.
+
+Exec uses its original cwd. It does not automatically write-enable cwd or Agent
+Home, copy the project or provide rollback. Supply a permitted cwd for the task;
+allowed writable project files can still be deleted or overwritten.
+
+The effective policy also grants necessary Node/OS/bootstrap reads, module
+package metadata and private temporary data. Directory metadata can be visible
+outside the writable directory; content permissions remain separate. Native
+overlap/alias rules apply, and implicit Windows access is not hidden.
+Externally required runtime paths cannot be silently made readable through an
+explicit denied parent; such a conflicting request is rejected.
+
+Shell commands and descendants, including Node/Python programs, have external
+networking and host-loopback access denied. `allow_all` does not disable the
+sandbox. Host file/web tools and arbitrary Extension code remain outside this OS
+boundary; their existing Tool policy is not replaced by the path lists.
+
+Commands get a private HOME/appdata/TEMP and offline npm cache. Sandbox-reserved
+environment overrides fail explicitly; other values are passed only to the
+actual command, not the trusted bootstrap. Interactive command stdin is not
+supported. Background/yield processes retain the sandbox until completion or
+termination, but descendants cannot outlive a completed root.
+
+MXC diagnostic-data collection follows the installed SDK's documented behavior;
+it is not disabled by setting `telemetry=false`. No credentials are forwarded
+automatically. See [Sandbox Execution](../specifications/sandbox-execution.md)
+for the contract and limits; CPU/memory/disk quotas are not provided.
+
 ## 5. Agent defaults and per-Agent overrides
 
 `agents.defaults` applies to every Agent. An entry in `agents.list` can
